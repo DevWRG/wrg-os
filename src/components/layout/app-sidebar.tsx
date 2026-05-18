@@ -13,6 +13,7 @@ import {
   BarChart3,
   Settings,
   HeartPulse,
+  Sparkles,
 } from "lucide-react";
 
 import {
@@ -41,6 +42,10 @@ const navMain = [
 const navSecondary = [
   { title: "Reports", url: "/reports", icon: BarChart3 },
   { title: "Settings", url: "/settings", icon: Settings },
+];
+
+const navDev = [
+  { title: "UI Showcase", url: "/showcase", icon: Sparkles },
 ];
 
 export function AppSidebar() {
@@ -92,6 +97,26 @@ export function AppSidebar() {
           <SidebarGroupContent>
             <SidebarMenu>
               {navSecondary.map((item) => (
+                <SidebarMenuItem key={item.url}>
+                  <SidebarMenuButton
+                    isActive={pathname.startsWith(item.url)}
+                    tooltip={item.title}
+                    render={<Link href={item.url} />}
+                  >
+                    <item.icon />
+                    <span>{item.title}</span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              ))}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+
+        <SidebarGroup>
+          <SidebarGroupLabel>Developer</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {navDev.map((item) => (
                 <SidebarMenuItem key={item.url}>
                   <SidebarMenuButton
                     isActive={pathname.startsWith(item.url)}
