@@ -17,6 +17,14 @@ import {
   WON,
   type TransitionRow,
 } from "./pipeline.js";
+import {
+  getDealValueSeries,
+  getArAmountSeries,
+  enqueueAnomalyFlag,
+  median,
+  mad,
+  type SeriesPoint,
+} from "./anomaly.js";
 
 // A2 — AR Aging Watch (Blueprint v2.3, R1/L2). Baca ar_aging_mv, prioritaskan
 // piutang berisiko, log run ke audit_log (Layer 4 Output) + update registry.
@@ -448,4 +456,126 @@ export async function runPipelineAuthenticity(): Promise<{
   await sql`UPDATE agent_registry SET last_health_check = now() WHERE agent_id = 'A4'`;
 
   return { agent_id: "A4", audit_id: a.id as string, summary, findings: top };
+}
+
+// A5 — Anomaly Detection (Blueprint v2.3, R2/L3/MED). Deteksi outlier numerik
+// lintas-domain (nilai deal, nominal AR) dengan statistik robust: modified
+// z-score berbasis median + MAD (Iglewicz-Hoaglin), tahan terhadap outlier
+// itu sendiri. Anomali ekstrem dieskalasi ke hitl_queue (L3). Log run ke
+// audit_log (Layer 4, R2, D6 governance/observability) + update registry.
+
+const A5_Z = Number(process.env.A5_Z_THRESHOLD ?? 3.5);
+const A5_CRITICAL_Z = Number(process.env.A5_CRITICAL_Z ?? 5);
+const A5_MIN_SAMPLES = Number(process.env.A5_MIN_SAMPLES ?? 5);
+
+export interface AnomalyFinding {
+  stream: string;
+  entity_id: string;
+  label: string | null;
+  value: number;
+  score: number; // |modified z|
+  direction: "high" | "low";
+  median: number;
+  critical: boolean;
+}
+
+// Deteksi outlier satu stream via modified z-score. Stream < MIN_SAMPLES atau
+// MAD=0 (tak ada sebaran) dilewati — statistik tak bermakna.
+function detectStream(stream: string, points: SeriesPoint[]): AnomalyFinding[] {
+  if (points.length < A5_MIN_SAMPLES) return [];
+  const values = points.map((p) => p.value);
+  const med = median(values);
+  const m = mad(values, med);
+  if (m === 0) return [];
+  const out: AnomalyFinding[] = [];
+  for (const p of points) {
+    const mz = Math.abs((0.6745 * (p.value - med)) / m);
+    if (mz < A5_Z) continue;
+    out.push({
+      stream,
+      entity_id: p.entity_id,
+      label: p.label,
+      value: p.value,
+      score: Math.round(mz * 100) / 100,
+      direction: p.value >= med ? "high" : "low",
+      median: med,
+      critical: mz >= A5_CRITICAL_Z,
+    });
+  }
+  return out;
+}
+
+export async function runAnomalyDetection(): Promise<{
+  agent_id: string;
+  audit_id: string;
+  summary: {
+    streams_analyzed: number;
+    samples: number;
+    anomalies: number;
+    critical: number;
+    escalated: number;
+    by_stream: Record<string, number>;
+  };
+  findings: AnomalyFinding[];
+}> {
+  const sql = db();
+  const streams: { name: string; points: SeriesPoint[] }[] = [
+    { name: "deal_value", points: await getDealValueSeries() },
+    { name: "ar_amount", points: await getArAmountSeries() },
+  ];
+
+  let samples = 0;
+  let analyzed = 0;
+  const findings: AnomalyFinding[] = [];
+  for (const s of streams) {
+    samples += s.points.length;
+    if (s.points.length >= A5_MIN_SAMPLES) analyzed += 1;
+    findings.push(...detectStream(s.name, s.points));
+  }
+  findings.sort((a, b) => b.score - a.score);
+
+  const byStream: Record<string, number> = {};
+  for (const f of findings) byStream[f.stream] = (byStream[f.stream] ?? 0) + 1;
+  const critical = findings.filter((f) => f.critical);
+
+  let escalated = 0;
+  for (const f of critical) {
+    const id = await enqueueAnomalyFlag({
+      stream: f.stream,
+      entity_id: f.entity_id,
+      label: f.label,
+      value: f.value,
+      score: f.score,
+      direction: f.direction,
+      median: f.median,
+    });
+    if (id) escalated += 1;
+  }
+
+  const summary = {
+    streams_analyzed: analyzed,
+    samples,
+    anomalies: findings.length,
+    critical: critical.length,
+    escalated,
+    by_stream: byStream,
+  };
+  const top = findings.slice(0, 25);
+  const inputHash = createHash("sha256")
+    .update(JSON.stringify(streams.map((s) => s.points)))
+    .digest("hex");
+  const outputHash = createHash("sha256").update(JSON.stringify({ summary, top })).digest("hex");
+  const payload = { summary, anomalies: top };
+
+  const [a] = await sql`
+    INSERT INTO audit_log
+      (use_case_id, correlation_id, agent_id, layer, event_type, r_tier, input_hash, output_hash, payload)
+    VALUES
+      ('D6', ${`a5-${inputHash.slice(0, 8)}`}, 'A5', 4, 'anomaly.detection.run', 'R2',
+       ${inputHash}, ${outputHash}, ${sql.json(payload as unknown as Parameters<typeof sql.json>[0])})
+    RETURNING id
+  `;
+  await sql`UPDATE agent_registry SET last_health_check = now() WHERE agent_id = 'A5'`;
+
+  return { agent_id: "A5", audit_id: a.id as string, summary, findings: top };
 }

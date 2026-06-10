@@ -28,7 +28,17 @@ interface AuthenticityPayload {
   flags: string[];
   score: number;
 }
-type HitlPayload = ReportPayload | AuthenticityPayload;
+interface AnomalyPayload {
+  type: "anomaly_flag";
+  stream: string;
+  entity_id: string;
+  label: string | null;
+  value: number;
+  score: number;
+  direction: string;
+  median: number;
+}
+type HitlPayload = ReportPayload | AuthenticityPayload | AnomalyPayload;
 interface HitlItem {
   id: string;
   r_tier: string;
@@ -131,7 +141,57 @@ export default function HitlPage() {
       ) : (
         <div className="grid gap-4 md:grid-cols-2">
           {items.map((it) =>
-            it.payload.type === "pipeline_authenticity_flag" ? (
+            it.payload.type === "anomaly_flag" ? (
+              <Card key={it.id}>
+                <CardHeader className="flex flex-row items-start justify-between space-y-0">
+                  <CardTitle className="text-base">
+                    Anomali: {it.payload.label ?? it.payload.entity_id}
+                  </CardTitle>
+                  <div className="flex gap-1">
+                    {it.agent_id && <Badge variant="outline">{it.agent_id}</Badge>}
+                    <Badge variant="outline">{it.r_tier}</Badge>
+                    <Badge variant="outline">{it.hitl_level}</Badge>
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="text-sm">
+                    <p>
+                      <span className="text-muted-foreground">Stream:</span>{" "}
+                      <Badge variant="secondary">{it.payload.stream}</Badge>
+                    </p>
+                    <p>
+                      <span className="text-muted-foreground">Nilai:</span>{" "}
+                      {it.payload.value.toLocaleString("id-ID")}{" "}
+                      <Badge variant="destructive">
+                        {it.payload.direction === "high" ? "↑" : "↓"} z={it.payload.score}
+                      </Badge>
+                    </p>
+                    <p className="text-muted-foreground text-xs">
+                      median {it.payload.median.toLocaleString("id-ID")}
+                    </p>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button
+                      size="sm"
+                      className="flex-1"
+                      disabled={busy === it.id}
+                      onClick={() => void resolve(it.id, "approve")}
+                    >
+                      Akui & tindak lanjut
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="flex-1"
+                      disabled={busy === it.id}
+                      onClick={() => void resolve(it.id, "reject")}
+                    >
+                      False positive
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            ) : it.payload.type === "pipeline_authenticity_flag" ? (
               <Card key={it.id}>
                 <CardHeader className="flex flex-row items-start justify-between space-y-0">
                   <CardTitle className="text-base">

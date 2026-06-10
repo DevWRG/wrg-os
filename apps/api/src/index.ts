@@ -19,6 +19,7 @@ import {
   runDistillationCascade,
   runCollectionDrafter,
   runPipelineAuthenticity,
+  runAnomalyDetection,
 } from "./repo/agents.js";
 import { listCollectionDrafts } from "./repo/collection.js";
 import { ingestWaMessages, type WaMessageInput } from "./repo/wa.js";
@@ -344,6 +345,12 @@ app.post("/agents/a3/run", async (c) => {
 app.post("/agents/a4/run", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json(await runPipelineAuthenticity(), 201);
+});
+
+// A5 Anomaly Detection — outlier numerik lintas-domain, eskalasi kritis ke HITL.
+app.post("/agents/a5/run", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await runAnomalyDetection(), 201);
 });
 
 // Read model draft penagihan (status: draft|approved|sent).
