@@ -12,6 +12,7 @@ import { upsertDealsFromPlan, logReportToDeals, getPipeline } from "./repo/deal.
 import { enqueueAmbiguous, listHitl, resolveHitl } from "./repo/hitl.js";
 import { insertRekap, insertResume } from "./repo/digest.js";
 import { getDashboardStats } from "./repo/stats.js";
+import { getCustomers } from "./repo/customer.js";
 
 const app = new Hono();
 
@@ -292,6 +293,14 @@ app.get("/stats", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const amId = c.req.query("am_id") || undefined;
   return c.json(await getDashboardStats(amId));
+});
+
+// ── Customers read model (diturunkan dari deal) ──
+app.get("/customers", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const amId = c.req.query("am_id") || undefined;
+  const customers = await getCustomers(amId);
+  return c.json({ count: customers.length, customers });
 });
 
 // ── Pipeline read model (dashboard): deal per-stage ──
