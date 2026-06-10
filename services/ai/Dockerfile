@@ -3,7 +3,7 @@
 # Build context = monorepo root (docker-compose: `context: .`).
 #   docker build -f services/ai/Dockerfile -t wrg-ai .
 
-FROM python:3.12-slim AS base
+FROM python:3.14-slim AS base
 WORKDIR /app
 
 # Deps dulu → layer cache
