@@ -65,6 +65,12 @@ import {
 } from "./repo/leave.js";
 import { recordCompetitor, listCompetitor, competitorSummary } from "./repo/competitor.js";
 import {
+  upsertCustomers,
+  upsertBranches,
+  upsertItems,
+  listMirror,
+} from "./repo/accurateMirror.js";
+import {
   createReminder,
   listReminders,
   runReminders,
@@ -918,6 +924,52 @@ app.get("/competitor/summary", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const summary = await competitorSummary();
   return c.json({ count: summary.length, summary });
+});
+
+// ── Accurate master mirror (port legacy accurate_customer/item/branch) ──
+async function accBody<T>(c: Context): Promise<T[] | null> {
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return null;
+  }
+  if (Array.isArray(body)) return body as T[];
+  const b = body as { records?: unknown; data?: unknown };
+  if (Array.isArray(b.records)) return b.records as T[];
+  if (Array.isArray(b.data)) return b.data as T[];
+  return null;
+}
+
+app.post("/accurate/customers", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const recs = await accBody<{ id: number; no?: string; name?: string; branch_id?: number; raw?: unknown }>(c);
+  if (!recs) return c.json({ error: "body array / {records|data:[...]} wajib" }, 400);
+  return c.json({ upserted: await upsertCustomers(recs) }, 201);
+});
+
+app.post("/accurate/branches", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const recs = await accBody<{ id: number; name?: string; suspended?: boolean; raw?: unknown }>(c);
+  if (!recs) return c.json({ error: "body array / {records|data:[...]} wajib" }, 400);
+  return c.json({ upserted: await upsertBranches(recs) }, 201);
+});
+
+app.post("/accurate/items", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const recs = await accBody<{ id: number; no?: string; name?: string; category?: string; unit_price?: number; raw?: unknown }>(c);
+  if (!recs) return c.json({ error: "body array / {records|data:[...]} wajib" }, 400);
+  return c.json({ upserted: await upsertItems(recs) }, 201);
+});
+
+app.get("/accurate/:entity", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const entity = c.req.param("entity");
+  if (entity !== "customers" && entity !== "items" && entity !== "branches") {
+    return c.json({ error: "entity harus customers|items|branches" }, 400);
+  }
+  const rows = await listMirror(entity);
+  return c.json({ entity, count: rows.length, rows });
 });
 
 // Read model draft penagihan (status: draft|approved|sent|canceled).
