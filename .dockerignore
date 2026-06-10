@@ -13,6 +13,11 @@
 .env.*
 !.env.example
 
+# Python
+**/__pycache__
+**/.venv
+*.pyc
+
 # Logs & OS cruft
 **/*.log
 .DS_Store
