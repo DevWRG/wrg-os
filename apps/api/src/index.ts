@@ -11,6 +11,7 @@ import { insertAuditEvent } from "./repo/audit.js";
 import { upsertDealsFromPlan, logReportToDeals, getPipeline } from "./repo/deal.js";
 import { enqueueAmbiguous, listHitl, resolveHitl } from "./repo/hitl.js";
 import { insertRekap, insertResume } from "./repo/digest.js";
+import { getDashboardStats } from "./repo/stats.js";
 
 const app = new Hono();
 
@@ -284,6 +285,13 @@ app.post("/report", async (c) => {
   } catch (e) {
     return c.json({ error: "gagal persist report", detail: String(e) }, 500);
   }
+});
+
+// ── Dashboard KPI read model ──
+app.get("/stats", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const amId = c.req.query("am_id") || undefined;
+  return c.json(await getDashboardStats(amId));
 });
 
 // ── Pipeline read model (dashboard): deal per-stage ──
