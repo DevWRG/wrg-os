@@ -60,12 +60,75 @@ import {
 } from "./repo/wa.js";
 import { aiBaseUrl, callAi } from "./ai.js";
 import { startScheduler, getScheduleStatus } from "./scheduler.js";
+import { signJwt, verifyJwt } from "./auth.js";
+import { verifyCredentials, createUser, countUsers } from "./repo/users.js";
 
 const app = new Hono();
+
+// Auth enforcement (opsional, default MATI). Saat AUTH_ENABLED=true, semua
+// endpoint butuh otorisasi KECUALI: /health, /auth/*, /webhooks/* (punya
+// secret sendiri). Diterima: x-service-token (BFF tepercaya) ATAU Bearer JWT.
+const authEnabled = (): boolean => (process.env.AUTH_ENABLED ?? "").toLowerCase() === "true";
+function authExempt(path: string): boolean {
+  return path === "/health" || path.startsWith("/auth/") || path.startsWith("/webhooks/");
+}
+app.use("*", async (c, next) => {
+  if (!authEnabled() || authExempt(c.req.path)) return next();
+  const svc = process.env.API_SERVICE_TOKEN;
+  if (svc && c.req.header("x-service-token") === svc) return next();
+  const authz = c.req.header("authorization") ?? "";
+  const token = authz.startsWith("Bearer ") ? authz.slice(7) : "";
+  if (token && verifyJwt(token)) return next();
+  return c.json({ error: "unauthorized" }, 401);
+});
 
 app.get("/health", async (c) => {
   const db = isDbEnabled() ? (await pingDb()) ? "ok" : "down" : "disabled";
   return c.json({ status: "ok", service: "wrg-api", db });
+});
+
+// ── Auth/session ──
+app.post("/auth/login", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { email?: string; password?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.email || !body.password) return c.json({ error: "email & password wajib" }, 400);
+  const user = await verifyCredentials(body.email, body.password);
+  if (!user) return c.json({ error: "kredensial salah" }, 401);
+  const token = signJwt({ sub: user.id, email: user.email, role: user.role });
+  return c.json({ token, user });
+});
+
+app.get("/auth/me", (c) => {
+  const authz = c.req.header("authorization") ?? "";
+  const token = authz.startsWith("Bearer ") ? authz.slice(7) : "";
+  const payload = token ? verifyJwt(token) : null;
+  if (!payload) return c.json({ error: "unauthorized" }, 401);
+  return c.json({ user: { id: payload.sub, email: payload.email, role: payload.role } });
+});
+
+// Register ops: butuh x-service-token bila API_SERVICE_TOKEN di-set; atau saat
+// belum ada user sama sekali (bootstrap admin pertama).
+app.post("/auth/register", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const svc = process.env.API_SERVICE_TOKEN;
+  const bootstrap = (await countUsers()) === 0;
+  if (svc && c.req.header("x-service-token") !== svc && !bootstrap) {
+    return c.json({ error: "forbidden" }, 403);
+  }
+  let body: { email?: string; password?: string; name?: string; role?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.email || !body.password) return c.json({ error: "email & password wajib" }, 400);
+  const user = await createUser(body.email, body.password, body.name, body.role ?? "user");
+  return c.json({ user }, 201);
 });
 
 // Event ingestion (ADR-024). Body harus berupa EventEnvelope yang valid.
