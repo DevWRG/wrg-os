@@ -6,10 +6,15 @@ import { isEventEnvelope } from "./envelope.js";
 import { parsePlan } from "./parsers/plan.js";
 import { parseReport } from "./parsers/report.js";
 import { matchCustomer, type PlanCandidate } from "./parsers/fuzzy.js";
+import { isDbEnabled, pingDb } from "./db.js";
+import { insertAuditEvent } from "./repo/audit.js";
 
 const app = new Hono();
 
-app.get("/health", (c) => c.json({ status: "ok", service: "wrg-api" }));
+app.get("/health", async (c) => {
+  const db = isDbEnabled() ? (await pingDb()) ? "ok" : "down" : "disabled";
+  return c.json({ status: "ok", service: "wrg-api", db });
+});
 
 // Event ingestion (ADR-024). Body harus berupa EventEnvelope yang valid.
 app.post("/events", async (c) => {
@@ -28,14 +33,23 @@ app.post("/events", async (c) => {
   }
 
   const event: EventEnvelope = body;
-  // TODO: route by event.type → persist / publish ke event bus.
-  // Scaffold: terima & echo metadata penting.
+  // Persist ke audit_log (Layer 2 Input) kalau DB tersambung; else echo saja.
+  let auditId: string | null = null;
+  if (isDbEnabled()) {
+    try {
+      auditId = await insertAuditEvent(event);
+    } catch (e) {
+      return c.json({ error: "gagal persist audit_log", detail: String(e) }, 500);
+    }
+  }
   return c.json(
     {
       accepted: true,
       event_id: event.event_id,
       type: event.type,
       correlation_id: event.correlation_id,
+      audit_id: auditId,
+      persisted: auditId !== null,
     },
     202,
   );
