@@ -3,14 +3,17 @@ import os
 from fastapi import FastAPI
 
 from .compress import wrg_compress
-from .openrouter import chat, rekap_models
+from .openrouter import chat, rekap_models, resume_models
 from .rekap import build_messages_block, build_rekap_system
+from .resume import build_gabungan, build_resume_system
 from .schemas import (
     DailySummaryRequest,
     DailySummaryResponse,
     DigestResponse,
     RekapRequest,
     RekapResponse,
+    ResumeRequest,
+    ResumeResponse,
     SummarizeRequest,
 )
 
@@ -134,6 +137,48 @@ def rekap(req: RekapRequest) -> RekapResponse:
         model=model,
         grup_aktif=grup_aktif,
         jumlah_pesan=len(req.messages),
+        tokens_in=tin,
+        tokens_out=tout,
+        dry_run=False,
+    )
+
+
+@app.post("/resume", response_model=ResumeResponse)
+def resume(req: ResumeRequest) -> ResumeResponse:
+    """Resume eksekutif (port legacy/monitor rekap.sh mode 'resume'): gabung rekap
+    7-jam → 8-section + tracking konfirmasi lintas-rekap + routing Direktur/HOD.
+
+    dry_run / tanpa OPENROUTER_API_KEY → kembalikan prompt yang dirakit.
+    """
+    jumlah = len(req.rekaps)
+    system = build_resume_system(
+        jam=req.jam,
+        tanggal=req.tanggal,
+        jumlah=jumlah,
+        nama_direktur=req.nama_direktur,
+        members=req.members,
+        groups=req.groups,
+    )
+    user = (
+        f"Berikut {jumlah} rekap WhatsApp WRG dari {req.window_label.lower()} "
+        f"({req.tanggal}):\n\n{build_gabungan(req.rekaps)}"
+    )
+
+    if req.dry_run or not os.environ.get("OPENROUTER_API_KEY"):
+        return ResumeResponse(
+            resume=f"[DRY RUN — tanpa LLM]\n\nSYSTEM:\n{system}\n\nUSER:\n{user}",
+            model="dry-run",
+            jumlah_rekap=jumlah,
+            dry_run=True,
+        )
+
+    text, model, tin, tout = chat(
+        system, user, max_tokens=2500, models=resume_models()
+    )
+    return ResumeResponse(
+        resume=text,
+        model=model,
+        jumlah_rekap=jumlah,
         tokens_in=tin,
         tokens_out=tout,
         dry_run=False,

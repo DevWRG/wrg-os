@@ -68,6 +68,7 @@ async function forwardToAi(c: Context, aiPath: string): Promise<Response> {
 
 app.post("/daily-summary", (c) => forwardToAi(c, "/daily-summary"));
 app.post("/rekap", (c) => forwardToAi(c, "/rekap"));
+app.post("/resume", (c) => forwardToAi(c, "/resume"));
 
 const port = Number(process.env.PORT ?? 4000);
 serve({ fetch: app.fetch, port }, (info) => {
