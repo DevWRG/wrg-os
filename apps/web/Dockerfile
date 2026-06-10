@@ -3,7 +3,7 @@
 # Build context = monorepo root (docker-compose: `context: .`).
 #   docker build -f apps/web/Dockerfile -t wrg-web .
 
-FROM node:20-slim AS base
+FROM node:22-slim AS base
 RUN corepack enable
 WORKDIR /repo
 
