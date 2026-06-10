@@ -27,6 +27,7 @@ const AGENT_LABEL: Record<string, string> = {
   A1: "Distillation Cascade",
   A2: "AR Aging Watch",
   A3: "Sari Collection Drafter",
+  A4: "Pipeline Authenticity",
 };
 
 // Ringkas hasil run-now per agen jadi satu baris status.
@@ -45,6 +46,10 @@ function summarize(agentId: string, data: Record<string, unknown>): string {
     return data.drafted
       ? `${data.count ?? 0} draft penagihan (${data.draft_type ?? "whatsapp"}) → review`
       : "tidak ada invoice overdue baru — no-op";
+  }
+  if (agentId === "A4") {
+    const s = (data.summary ?? {}) as Record<string, unknown>;
+    return `${s.flagged ?? 0} flagged · ${s.critical ?? 0} kritis → ${s.escalated ?? 0} eskalasi HITL`;
   }
   return "selesai";
 }

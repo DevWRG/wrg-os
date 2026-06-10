@@ -9,6 +9,14 @@ import {
   insertCollectionDraft,
   type OverdueItem,
 } from "./collection.js";
+import {
+  getDealsForAudit,
+  getDealTransitions,
+  enqueuePipelineFlag,
+  advIdx,
+  WON,
+  type TransitionRow,
+} from "./pipeline.js";
 
 // A2 — AR Aging Watch (Blueprint v2.3, R1/L2). Baca ar_aging_mv, prioritaskan
 // piutang berisiko, log run ke audit_log (Layer 4 Output) + update registry.
@@ -308,4 +316,136 @@ export async function runCollectionDrafter(opts: {
     model,
     drafts: saved,
   };
+}
+
+// A4 — Pipeline Authenticity (Blueprint v2.3, R2/L3/MED). Audit keaslian
+// pipeline secara deterministik: deteksi deal yang maju ke stage lanjut tanpa
+// jejak #REPORT, mangkrak, lompat-stage, atau menang implausibel cepat. Temuan
+// kritis dieskalasi ke hitl_queue (L3 gate) untuk verifikasi manusia. Log run
+// ke audit_log (Layer 4, R2) + update registry.
+
+const STALE_DAYS = Number(process.env.A4_STALE_DAYS ?? 30);
+const MIN_CYCLE_DAYS = Number(process.env.A4_MIN_CYCLE_DAYS ?? 3);
+
+export interface PipelineFinding {
+  deal_id: string;
+  customer_name: string | null;
+  am_id: string;
+  stage: string;
+  estimated_value: number | null;
+  flags: string[];
+  score: number;
+  critical: boolean;
+}
+
+export async function runPipelineAuthenticity(): Promise<{
+  agent_id: string;
+  audit_id: string;
+  summary: {
+    deals_scanned: number;
+    flagged: number;
+    critical: number;
+    escalated: number;
+    by_flag: Record<string, number>;
+  };
+  findings: PipelineFinding[];
+}> {
+  const sql = db();
+  const deals = await getDealsForAudit();
+  const transitions = await getDealTransitions();
+
+  const byDeal = new Map<string, TransitionRow[]>();
+  for (const t of transitions) {
+    const arr = byDeal.get(t.deal_id) ?? [];
+    arr.push(t);
+    byDeal.set(t.deal_id, arr);
+  }
+
+  const findings: PipelineFinding[] = [];
+  for (const d of deals) {
+    const flags: string[] = [];
+    const criticalFlags = new Set<string>();
+    const adv = advIdx(d.stage);
+    const trail = byDeal.get(d.deal_id) ?? [];
+    const isWon = WON.has(d.stage);
+
+    // 1. Maju ke SPH+ tanpa satupun transisi tercatat → tidak didukung jejak.
+    if (adv >= 2 && d.log_count === 0) {
+      flags.push("unsupported");
+      criticalFlags.add("unsupported");
+    }
+    // 2. Mangkrak: masih terbuka tapi tak bergerak > STALE_DAYS.
+    if (!isWon && d.days_idle > STALE_DAYS) flags.push("stale");
+    // 3. Lompat-stage: ada transisi yang melompati >=2 tingkat maju.
+    for (const t of trail) {
+      const from = t.from_stage ? advIdx(t.from_stage) : -1;
+      const to = advIdx(t.to_stage);
+      if (from >= 0 && to >= 0 && to - from >= 2) {
+        flags.push("stage_skip");
+        if (WON.has(t.to_stage)) criticalFlags.add("stage_skip");
+        break;
+      }
+    }
+    // 4. Menang implausibel cepat: transisi ke WON < MIN_CYCLE_DAYS dari created.
+    if (isWon) {
+      const wonT = trail.find((t) => WON.has(t.to_stage));
+      const wonMs = wonT ? wonT.ts_ms : null;
+      if (wonMs !== null) {
+        const cycleDays = (wonMs - d.created_ms) / 86_400_000;
+        if (cycleDays < MIN_CYCLE_DAYS) {
+          flags.push("rapid_win");
+          criticalFlags.add("rapid_win");
+        }
+      }
+    }
+
+    if (flags.length === 0) continue;
+    const uniqFlags = [...new Set(flags)];
+    findings.push({
+      deal_id: d.deal_id,
+      customer_name: d.customer_name,
+      am_id: d.am_id,
+      stage: d.stage,
+      estimated_value: d.estimated_value,
+      flags: uniqFlags,
+      score: uniqFlags.length + criticalFlags.size,
+      critical: criticalFlags.size > 0,
+    });
+  }
+  findings.sort((a, b) => b.score - a.score);
+
+  const byFlag: Record<string, number> = {};
+  for (const f of findings) for (const fl of f.flags) byFlag[fl] = (byFlag[fl] ?? 0) + 1;
+  const critical = findings.filter((f) => f.critical);
+
+  // Eskalasi temuan kritis ke HITL (L3), idempoten per deal.
+  let escalated = 0;
+  for (const f of critical) {
+    const id = await enqueuePipelineFlag(f);
+    if (id) escalated += 1;
+  }
+
+  const summary = {
+    deals_scanned: deals.length,
+    flagged: findings.length,
+    critical: critical.length,
+    escalated,
+    by_flag: byFlag,
+  };
+  const top = findings.slice(0, 25);
+  const inputHash = createHash("sha256").update(JSON.stringify(deals)).digest("hex");
+  const outputHash = createHash("sha256").update(JSON.stringify({ summary, top })).digest("hex");
+  const payload = { summary, flagged_deals: top };
+
+  const [a] = await sql`
+    INSERT INTO audit_log
+      (use_case_id, correlation_id, agent_id, layer, event_type, r_tier, input_hash, output_hash, payload)
+    VALUES
+      ('D1', ${`a4-${inputHash.slice(0, 8)}`}, 'A4', 4, 'pipeline.authenticity.run', 'R2',
+       ${inputHash}, ${outputHash}, ${sql.json(payload as unknown as Parameters<typeof sql.json>[0])})
+    RETURNING id
+  `;
+  await sql`UPDATE agent_registry SET last_health_check = now() WHERE agent_id = 'A4'`;
+
+  return { agent_id: "A4", audit_id: a.id as string, summary, findings: top };
 }
