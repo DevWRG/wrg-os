@@ -24,6 +24,13 @@ def rekap_models() -> List[str]:
     return [primary, fallback]
 
 
+def resume_models() -> List[str]:
+    """Model OpenRouter untuk resume eksekutif (env-configurable, default sama)."""
+    primary = os.environ.get("RESUME_MODEL_PRIMARY", "anthropic/claude-haiku-4.5")
+    fallback = os.environ.get("RESUME_MODEL_FALLBACK", "deepseek/deepseek-r1")
+    return [primary, fallback]
+
+
 def chat(
     system: str,
     user: str,

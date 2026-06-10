@@ -94,3 +94,31 @@ class RekapResponse(BaseModel):
     tokens_in: Optional[int] = None
     tokens_out: Optional[int] = None
     dry_run: bool = False
+
+
+# === Monitor Resume (port legacy/monitor rekap.sh, mode "resume") ===
+
+
+class RekapDoc(BaseModel):
+    label: str  # header rekap, mis. "2026-05-21 1400"
+    text: str  # isi rekap
+
+
+class ResumeRequest(BaseModel):
+    jam: str
+    tanggal: str
+    rekaps: List[RekapDoc] = Field(default_factory=list)
+    window_label: str = "7 Jam Terakhir"
+    nama_direktur: str = "Pak Gilang"
+    members: Optional[Dict[str, str]] = None
+    groups: Optional[Dict[str, str]] = None
+    dry_run: bool = False
+
+
+class ResumeResponse(BaseModel):
+    resume: str
+    model: str
+    jumlah_rekap: int = 0
+    tokens_in: Optional[int] = None
+    tokens_out: Optional[int] = None
+    dry_run: bool = False
