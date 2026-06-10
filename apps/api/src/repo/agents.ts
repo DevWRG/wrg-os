@@ -40,6 +40,7 @@ import {
   type MessageToAnnotate,
 } from "./sentiment.js";
 import { getNetworkInput, computeNetwork, type NetworkGraph } from "./network.js";
+import { gatherExecutiveSignals, insertBriefing } from "./executive.js";
 
 // A2 — AR Aging Watch (Blueprint v2.3, R1/L2). Baca ar_aging_mv, prioritaskan
 // piutang berisiko, log run ke audit_log (Layer 4 Output) + update registry.
@@ -890,5 +891,64 @@ export async function runSpiderNetwork(opts: { windowDays?: number }): Promise<{
     summary: graph.summary,
     top_nodes: graph.top_nodes,
     top_edges: graph.top_edges,
+  };
+}
+
+// A10 — Executive Synthesis (Blueprint v2.3, R1/L2/HIGH). Kumpulkan sinyal
+// lintas-domain (pipeline, AR, HITL, sentimen, aktivitas agen) → services/ai
+// mensintesis briefing eksekutif → simpan ke digest_briefing (hitl_status
+// 'pending', menunggu review) → log audit_log (Layer 4, R1, D6) + registry.
+// Capstone yang merangkum keluaran A1–A9.
+
+export async function runExecutiveSynthesis(opts: { periodLabel?: string }): Promise<{
+  agent_id: string;
+  audit_id: string;
+  briefing_id: string;
+  week_start: string;
+  model: string | null;
+  preview: string;
+}> {
+  const sql = db();
+  const periodLabel = opts.periodLabel ?? "harian";
+  const signals = await gatherExecutiveSignals();
+
+  const { status, data } = await callAi("/executive-synthesis", {
+    signals,
+    period_label: periodLabel,
+    dry_run: !process.env.OPENROUTER_API_KEY,
+  });
+  if (status >= 400) {
+    throw new Error(`services/ai /executive-synthesis status ${status}: ${JSON.stringify(data)}`);
+  }
+  const briefingText = String(data.briefing ?? "");
+  const model = (data.model as string | undefined) ?? null;
+
+  const { id: briefingId, week_start } = await insertBriefing({
+    sections: signals,
+    raw_output: briefingText,
+    model_used: model,
+  });
+
+  const inputHash = createHash("sha256").update(JSON.stringify(signals)).digest("hex");
+  const outputHash = createHash("sha256").update(briefingText).digest("hex");
+  const payload = { briefing_id: briefingId, week_start, period_label: periodLabel };
+
+  const [a] = await sql`
+    INSERT INTO audit_log
+      (use_case_id, correlation_id, agent_id, layer, event_type, r_tier, input_hash, output_hash, payload)
+    VALUES
+      ('D6', ${`a10-${inputHash.slice(0, 8)}`}, 'A10', 4, 'executive.synthesis.run', 'R1',
+       ${inputHash}, ${outputHash}, ${sql.json(payload as unknown as Parameters<typeof sql.json>[0])})
+    RETURNING id
+  `;
+  await sql`UPDATE agent_registry SET last_health_check = now() WHERE agent_id = 'A10'`;
+
+  return {
+    agent_id: "A10",
+    audit_id: a.id as string,
+    briefing_id: briefingId,
+    week_start,
+    model,
+    preview: briefingText.slice(0, 320),
   };
 }

@@ -33,6 +33,7 @@ const AGENT_LABEL: Record<string, string> = {
   A7: "Product Intelligence",
   A8: "Sentiment & Entity Extraction",
   A9: "Spider Network Analyst",
+  A10: "Executive Synthesis",
 };
 
 // Ringkas hasil run-now per agen jadi satu baris status.
@@ -77,6 +78,9 @@ function summarize(agentId: string, data: Record<string, unknown>): string {
   if (agentId === "A9") {
     const s = (data.summary ?? {}) as Record<string, unknown>;
     return `${s.nodes ?? 0} node · ${s.edges ?? 0} edge · ${s.components ?? 0} komponen`;
+  }
+  if (agentId === "A10") {
+    return `briefing ${data.week_start ?? ""} tersusun → review`;
   }
   return "selesai";
 }
