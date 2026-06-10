@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="id">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Login · WRG CRM</title>
+    <script>
+      (function () {
+        try {
+          var saved = localStorage.getItem('dash26-theme');
+          var prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+          document.documentElement.setAttribute('data-theme', saved || (prefersDark ? 'dark' : 'light'));
+        } catch (e) {
+          document.documentElement.setAttribute('data-theme', 'light');
+        }
+      })();
+    </script>
+    <style>
+      /* Login aside selalu pakai logo monochrome putih (logo-dark) supaya
+         tidak clash dengan teal gradient. Theme toggle hanya berlaku di main panel. */
+      .auth-brand .logo-img { max-width: 180px; max-height: 56px; object-fit: contain; opacity: 0.92; }
+    </style>
+  </head>
+  <body>
+    <div class="auth-shell">
+      <aside class="auth-aside">
+        <div class="auth-brand" style="display:flex; align-items:center; gap:10px;">
+          <img class="logo-img" src="assets/static/images/wrg/logo-dark.png" alt="Wahana LifeLine">
+        </div>
+        <div class="auth-aside-body">
+          <span class="auth-aside-eyebrow">WRG CRM · Plan & Report</span>
+          <h1>Dashboard untuk plan &amp; report harian tim.</h1>
+          <p>Submit #PLAN pagi via WA, kirim #REPORT sore, lihat progress per orang/divisi/cabang/HOD area. Geotag verifikasi untuk AM sales visit.</p>
+          <div class="auth-quote">
+            "Sekali submit di WA, semua HOD bisa lihat real-time di dashboard. Lebih cepat, lebih akurat."
+            <div class="auth-quote-author">
+              <div class="av">WL</div>
+              <div>Wahana LifeLine · Operations Team</div>
+            </div>
+          </div>
+        </div>
+        <div class="auth-aside-footer">
+          <span>© 2026 Wahana LifeLine</span>
+          <span>Plan &amp; Report v5</span>
+        </div>
+      </aside>
+      <main class="auth-main">
+        <div class="auth-main-top">
+          <span style="font-size:12.5px; color: var(--t-muted);">WRG CRM</span>
+          <div class="switch-link">Lupa password? <a href="#" onclick="alert('Hubungi admin sistem untuk reset.'); return false;">Hubungi admin</a></div>
+        </div>
+
+        <div class="auth-card">
+          <h2>Welcome back</h2>
+          <p class="sub">Login pakai panggilan, nama, atau nomor WA. Password awal: <code>&lt;panggilan_lowercase&gt;123</code> — ganti ASAP.</p>
+
+          <form id="loginForm" class="auth-form">
+            <div class="field">
+              <label class="field-label" for="fIdent">Username</label>
+              <div class="input-icon">
+                <span class="ico"><svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span>
+                <input id="fIdent" class="input" type="text" placeholder="Husni / boni / +6285…" autocomplete="username" required>
+              </div>
+            </div>
+
+            <div class="field">
+              <label class="field-label" for="fPw">Password</label>
+              <div class="input-icon">
+                <span class="ico"><svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span>
+                <input id="fPw" class="input" type="password" placeholder="••••••••" autocomplete="current-password" required>
+              </div>
+            </div>
+
+            <button id="btnLogin" class="btn btn--primary auth-submit" type="submit">
+              Login
+              <svg viewBox="0 0 24 24"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
+            </button>
+
+            <div id="loginErr" style="color: var(--danger); font-size:13px; margin-top:8px; min-height:18px;"></div>
+          </form>
+        </div>
+
+        <div class="auth-main-footer" style="font-size:11px; color: var(--t-light); margin-top:auto; padding-top:24px;">
+          Belum punya password? Hubungi admin sistem (Husni).
+        </div>
+      </main>
+    </div>
+
+    <script>
+      (function () {
+        'use strict';
+        const $ = (id) => document.getElementById(id);
+
+        // If already logged in, redirect to dashboard
+        fetch('/api/auth/me').then((r) => { if (r.ok) location.href = '/index.html'; });
+
+        $('loginForm').addEventListener('submit', async (e) => {
+          e.preventDefault();
+          $('btnLogin').disabled = true;
+          const original = $('btnLogin').innerHTML;
+          $('btnLogin').textContent = 'Memproses…';
+          $('loginErr').textContent = '';
+          try {
+            const r = await fetch('/api/auth/login', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ identifier: $('fIdent').value.trim(), password: $('fPw').value }),
+            });
+            const json = await r.json();
+            if (!r.ok) {
+              $('loginErr').textContent = json.error || 'Login gagal.';
+              $('btnLogin').disabled = false;
+              $('btnLogin').innerHTML = original;
+              return;
+            }
+            const nextUrl = new URLSearchParams(location.search).get('next') || '/index.html';
+            location.href = nextUrl;
+          } catch (err) {
+            $('loginErr').textContent = 'Network error: ' + err.message;
+            $('btnLogin').disabled = false;
+            $('btnLogin').innerHTML = original;
+          }
+        });
+      })();
+    </script>
+  </body>
+</html>
