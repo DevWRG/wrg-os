@@ -71,6 +71,7 @@ import {
   listMirror,
 } from "./repo/accurateMirror.js";
 import { recordDelivery, recordEmail, recordAlert, listLogs } from "./repo/logs.js";
+import { renderSalesDocHtml, renderBriefingHtml } from "./repo/exportdoc.js";
 import {
   createReminder,
   listReminders,
@@ -1005,6 +1006,21 @@ app.get("/logs/:type", async (c) => {
   }
   const rows = await listLogs(type);
   return c.json({ type, count: rows.length, rows });
+});
+
+// ── Export dokumen → HTML siap-print (port legacy export_pdf, tanpa lib PDF) ──
+app.get("/export/sales-doc/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const html = await renderSalesDocHtml(c.req.param("id"));
+  if (!html) return c.json({ error: "dokumen tidak ditemukan" }, 404);
+  return c.html(html);
+});
+
+app.get("/export/briefing/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const html = await renderBriefingHtml(c.req.param("id"));
+  if (!html) return c.json({ error: "briefing tidak ditemukan" }, 404);
+  return c.html(html);
 });
 
 // Read model draft penagihan (status: draft|approved|sent|canceled).
