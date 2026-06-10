@@ -37,7 +37,7 @@ app.post("/events", async (c) => {
   );
 });
 
-const port = Number(process.env.PORT ?? 8092);
+const port = Number(process.env.PORT ?? 4000);
 serve({ fetch: app.fetch, port }, (info) => {
   console.log(`wrg-api listening on http://localhost:${info.port}`);
 });

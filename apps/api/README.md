@@ -10,7 +10,7 @@ pnpm --filter @wrg/api build    # tsc → dist/
 pnpm --filter @wrg/api start    # node dist/index.js
 ```
 
-Default port **8092** (override via `PORT`). Port lain di workspace: 3000 (os), 8090 (monitor), 8091 (crm).
+Default port **4000** (override via `PORT`). Port Python WRG yang LIVE di mesin: 8090 (monitor), 8091 (crm-prod), 8092 (crm-dev) — JANGAN dipakai. 3000 = apps/web.
 
 ## Endpoints
 
@@ -24,7 +24,7 @@ Tipe `EventEnvelope` berasal dari [`@wrg/types`](../../packages/types) (compile-
 ### Contoh
 
 ```bash
-curl -X POST localhost:8092/events -H 'content-type: application/json' -d '{
+curl -X POST localhost:4000/events -H 'content-type: application/json' -d '{
   "event_id":"01J...","correlation_id":"sess-1","causation_id":"01J...",
   "type":"accurate.invoice.owing.v1","source":"accurate-sync","occurred_at":"2026-06-10T10:00:00Z",
   "use_case_id":"D2","r_tier":"R2","schema_version":"1","payload":{},"input_hash":"sha256:..."

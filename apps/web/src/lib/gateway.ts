@@ -4,8 +4,8 @@
 // NEXT_PUBLIC_* di sini supaya base URL backend tidak ter-expose ke browser.
 
 export function apiBaseUrl(): string {
-  // Default: port dev @wrg/api (8092). Di docker set API_URL=http://api:4000.
-  return process.env.API_URL ?? "http://localhost:8092";
+  // Default: port @wrg/api (4000, sama di lokal & docker). Override via API_URL.
+  return process.env.API_URL ?? "http://localhost:4000";
 }
 
 /** Fetch ke backend domain dengan base URL tergabung + no-store. */

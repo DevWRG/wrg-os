@@ -23,7 +23,7 @@ COPY . .
 RUN pnpm --filter @wrg/api build
 
 # 3) Runtime. PORT=4000 agar cocok dengan mapping compose (4000:4000)
-#    & NEXT_PUBLIC_API_URL. Default lokal non-docker tetap 8092.
+#    & NEXT_PUBLIC_API_URL. Default app juga 4000 (lokal & docker sama).
 ENV NODE_ENV=production
 ENV PORT=4000
 EXPOSE 4000
