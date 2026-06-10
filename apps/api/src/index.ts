@@ -8,6 +8,7 @@ import { parseReport } from "./parsers/report.js";
 import { matchCustomer, type PlanCandidate } from "./parsers/fuzzy.js";
 import { isDbEnabled, pingDb } from "./db.js";
 import { insertAuditEvent } from "./repo/audit.js";
+import { upsertDealsFromPlan, logReportToDeals } from "./repo/deal.js";
 
 const app = new Hono();
 
@@ -123,6 +124,57 @@ app.post("/parse/report", async (c) => {
     match: matchCustomer(it.customer, plans),
   }));
   return c.json({ ...parsed, items });
+});
+
+// ── Domain action: parse + persist ke D1 (deal/spt_state_log) ──
+// #PLAN → upsert deal pipeline; #REPORT → fuzzy-match deal + spt_state_log.
+// Butuh DATABASE_URL + am_id. Tanpa DB → 503 (pakai /parse/* utk preview).
+
+app.post("/plan", async (c) => {
+  let body: { message?: string; am_id?: string; now?: string; deadline?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (typeof body.message !== "string") {
+    return c.json({ error: "body.message (string) wajib" }, 400);
+  }
+  const parsed = parsePlan(body.message, { now: body.now, deadline: body.deadline });
+  if (!isDbEnabled()) {
+    return c.json({ ...parsed, persisted: false, note: "DATABASE_URL off — pakai /parse/plan utk preview" });
+  }
+  if (!body.am_id) return c.json({ error: "body.am_id wajib untuk persist" }, 400);
+  if (parsed.customers.length === 0) return c.json({ ...parsed, persisted: false }, 400);
+  try {
+    const deals = await upsertDealsFromPlan(body.am_id, parsed.customers);
+    return c.json({ ...parsed, persisted: true, deals }, 201);
+  } catch (e) {
+    return c.json({ error: "gagal persist deal", detail: String(e) }, 500);
+  }
+});
+
+app.post("/report", async (c) => {
+  let body: { message?: string; am_id?: string; to_stage?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (typeof body.message !== "string") {
+    return c.json({ error: "body.message (string) wajib" }, 400);
+  }
+  const parsed = parseReport(body.message);
+  if (!isDbEnabled()) {
+    return c.json({ ...parsed, persisted: false, note: "DATABASE_URL off — pakai /parse/report utk preview" });
+  }
+  if (!body.am_id) return c.json({ error: "body.am_id wajib untuk persist" }, 400);
+  try {
+    const items = await logReportToDeals(body.am_id, parsed.items, body.to_stage);
+    return c.json({ mode: parsed.mode, tanggal: parsed.tanggal, errors: parsed.errors, persisted: true, items }, 201);
+  } catch (e) {
+    return c.json({ error: "gagal persist report", detail: String(e) }, 500);
+  }
 });
 
 const port = Number(process.env.PORT ?? 4000);
