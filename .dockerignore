@@ -18,6 +18,6 @@
 .DS_Store
 
 # Aset berat non-build (regenerable)
-apps/crm/frontend/screenshots
-apps/crm/frontend/docs/assets
-apps/crm/docs/images
+legacy/crm/frontend/screenshots
+legacy/crm/frontend/docs/assets
+legacy/crm/docs/images
