@@ -60,3 +60,19 @@ CREATE TABLE IF NOT EXISTS sales_doc (
   created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_sales_doc_deal ON sales_doc (deal_id);
+
+-- Catatan coaching per Account Manager hasil sintesis A11 (Coaching Outcome
+-- Synthesis). Satu baris per AM per periode (YYYY-MM).
+CREATE TABLE IF NOT EXISTS coaching_note (
+  id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  am_id           VARCHAR(50) NOT NULL,
+  period          VARCHAR(7),    -- YYYY-MM
+  metrics         JSONB DEFAULT '{}',
+  strengths       JSONB DEFAULT '[]',
+  gaps            JSONB DEFAULT '[]',
+  recommendations JSONB DEFAULT '[]',
+  score           NUMERIC(5,2),
+  generated_by    VARCHAR(10),   -- A11
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_coaching_note_am ON coaching_note (am_id);

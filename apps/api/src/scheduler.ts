@@ -12,6 +12,7 @@ import {
   runSentimentExtraction,
   runSpiderNetwork,
   runExecutiveSynthesis,
+  runCoachingSynthesis,
 } from "./repo/agents.js";
 
 // Penjadwal agen in-process (Blueprint v2.3). Default MATI — aktif hanya bila
@@ -102,6 +103,12 @@ export function startScheduler(): ScheduleStatus {
       id: "A10",
       expr: process.env.A10_CRON ?? "30 7 * * *",
       run: () => runExecutiveSynthesis({}),
+    },
+    {
+      // A11 sintesis coaching per AM — bulanan (tgl 1, 07:00).
+      id: "A11",
+      expr: process.env.A11_CRON ?? "0 7 1 * *",
+      run: () => runCoachingSynthesis({}),
     },
   ];
 
