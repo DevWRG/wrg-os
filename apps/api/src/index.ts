@@ -53,6 +53,12 @@ import { listBriefings } from "./repo/executive.js";
 import { listCoachingNotes } from "./repo/coaching.js";
 import { getLatestCoachingNotes, computePeopleAnalytics } from "./repo/people.js";
 import {
+  createReminder,
+  listReminders,
+  runReminders,
+  type ReminderMode,
+} from "./repo/reminder.js";
+import {
   ingestWaMessages,
   ingestOpenclawMessages,
   type WaMessageInput,
@@ -700,6 +706,48 @@ app.post("/ar/collection-drafts/:id/cancel", async (c) => {
   }
   const r = await cancelCollectionDraft(c.req.param("id"), body.approver_id);
   return c.json(r, r.ok ? 200 : 400);
+});
+
+// ── CRM reminder AM (port legacy am_reminder) ──
+app.post("/reminders", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { am_id?: string; am_name?: string; reminder_date?: string; note?: string; customer_name?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.am_id || !body.reminder_date || !body.note) {
+    return c.json({ error: "am_id, reminder_date (YYYY-MM-DD), note wajib" }, 400);
+  }
+  const id = await createReminder({
+    am_id: body.am_id,
+    am_name: body.am_name,
+    reminder_date: body.reminder_date,
+    note: body.note,
+    customer_name: body.customer_name,
+  });
+  return c.json({ id }, 201);
+});
+
+app.get("/reminders", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const reminders = await listReminders();
+  return c.json({ count: reminders.length, reminders });
+});
+
+// Fire reminder due untuk mode (h | h-minus-1). Body opsional { to }.
+app.post("/reminders/run", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { mode?: string; to?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    /* body opsional */
+  }
+  const mode: ReminderMode = body.mode === "h-minus-1" ? "h-minus-1" : "h";
+  const r = await runReminders(mode, body.to);
+  return c.json(r, r.count > 0 ? 201 : 200);
 });
 
 // Status penjadwal agen (cron in-process) — observabilitas konfigurasi.
