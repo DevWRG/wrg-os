@@ -12,6 +12,7 @@ import {
   Factory,
   Workflow,
   BarChart3,
+  ClipboardCheck,
   Settings,
   HeartPulse,
   Sparkles,
@@ -42,6 +43,7 @@ const navMain = [
 ];
 
 const navSecondary = [
+  { title: "HITL Review", url: "/hitl", icon: ClipboardCheck },
   { title: "Reports", url: "/reports", icon: BarChart3 },
   { title: "Settings", url: "/settings", icon: Settings },
 ];
