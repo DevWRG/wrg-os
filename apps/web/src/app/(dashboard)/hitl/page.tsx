@@ -11,16 +11,29 @@ interface Candidate {
   customer_name: string;
   score: number;
 }
-interface HitlPayload {
+interface ReportPayload {
+  type?: "report_ambiguous_match";
   am_id: string;
   item: { customer: string; hasil: string; next_action: string };
   candidates: Candidate[];
   to_stage: string | null;
 }
+interface AuthenticityPayload {
+  type: "pipeline_authenticity_flag";
+  deal_id: string;
+  customer_name: string | null;
+  am_id: string;
+  stage: string;
+  estimated_value: number | null;
+  flags: string[];
+  score: number;
+}
+type HitlPayload = ReportPayload | AuthenticityPayload;
 interface HitlItem {
   id: string;
   r_tier: string;
   hitl_level: string;
+  agent_id: string | null;
   payload: HitlPayload;
   created_at: string;
 }
@@ -117,61 +130,113 @@ export default function HitlPage() {
         <p className="text-muted-foreground">Tidak ada item pending. 🎉</p>
       ) : (
         <div className="grid gap-4 md:grid-cols-2">
-          {items.map((it) => (
-            <Card key={it.id}>
-              <CardHeader className="flex flex-row items-start justify-between space-y-0">
-                <CardTitle className="text-base">
-                  Report: {it.payload.item.customer}
-                </CardTitle>
-                <div className="flex gap-1">
-                  <Badge variant="outline">{it.r_tier}</Badge>
-                  <Badge variant="outline">{it.hitl_level}</Badge>
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <div className="text-sm">
-                  <p>
-                    <span className="text-muted-foreground">Hasil:</span>{" "}
-                    {it.payload.item.hasil}
-                  </p>
-                  <p>
-                    <span className="text-muted-foreground">Next:</span>{" "}
-                    {it.payload.item.next_action || "—"}
-                  </p>
-                  {it.payload.to_stage && (
+          {items.map((it) =>
+            it.payload.type === "pipeline_authenticity_flag" ? (
+              <Card key={it.id}>
+                <CardHeader className="flex flex-row items-start justify-between space-y-0">
+                  <CardTitle className="text-base">
+                    Pipeline flag: {it.payload.customer_name ?? it.payload.deal_id}
+                  </CardTitle>
+                  <div className="flex gap-1">
+                    {it.agent_id && <Badge variant="outline">{it.agent_id}</Badge>}
+                    <Badge variant="outline">{it.r_tier}</Badge>
+                    <Badge variant="outline">{it.hitl_level}</Badge>
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="text-sm">
                     <p>
-                      <span className="text-muted-foreground">Akan transisi ke:</span>{" "}
-                      <Badge variant="secondary">{it.payload.to_stage}</Badge>
+                      <span className="text-muted-foreground">AM:</span> {it.payload.am_id}
                     </p>
-                  )}
-                </div>
-                <div className="space-y-2">
-                  <p className="text-muted-foreground text-xs">Pilih deal yang cocok:</p>
-                  {it.payload.candidates.map((c) => (
+                    <p>
+                      <span className="text-muted-foreground">Stage:</span>{" "}
+                      <Badge variant="secondary">{it.payload.stage}</Badge>
+                    </p>
+                    <div className="mt-1 flex flex-wrap gap-1">
+                      {it.payload.flags.map((f) => (
+                        <Badge key={f} variant="destructive">
+                          {f}
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
                     <Button
-                      key={c.deal_id}
                       size="sm"
-                      className="w-full justify-between"
+                      className="flex-1"
                       disabled={busy === it.id}
-                      onClick={() => void resolve(it.id, "approve", c.deal_id)}
+                      onClick={() => void resolve(it.id, "approve")}
                     >
-                      <span className="truncate">{c.customer_name}</span>
-                      <span className="opacity-70">{(c.score * 100).toFixed(0)}%</span>
+                      Akui & tindak lanjut
                     </Button>
-                  ))}
-                  <Button
-                    variant="destructive"
-                    size="sm"
-                    className="w-full"
-                    disabled={busy === it.id}
-                    onClick={() => void resolve(it.id, "reject")}
-                  >
-                    Tolak (bukan keduanya)
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="flex-1"
+                      disabled={busy === it.id}
+                      onClick={() => void resolve(it.id, "reject")}
+                    >
+                      False positive
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            ) : (
+              <Card key={it.id}>
+                <CardHeader className="flex flex-row items-start justify-between space-y-0">
+                  <CardTitle className="text-base">
+                    Report: {it.payload.item.customer}
+                  </CardTitle>
+                  <div className="flex gap-1">
+                    <Badge variant="outline">{it.r_tier}</Badge>
+                    <Badge variant="outline">{it.hitl_level}</Badge>
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="text-sm">
+                    <p>
+                      <span className="text-muted-foreground">Hasil:</span>{" "}
+                      {it.payload.item.hasil}
+                    </p>
+                    <p>
+                      <span className="text-muted-foreground">Next:</span>{" "}
+                      {it.payload.item.next_action || "—"}
+                    </p>
+                    {it.payload.to_stage && (
+                      <p>
+                        <span className="text-muted-foreground">Akan transisi ke:</span>{" "}
+                        <Badge variant="secondary">{it.payload.to_stage}</Badge>
+                      </p>
+                    )}
+                  </div>
+                  <div className="space-y-2">
+                    <p className="text-muted-foreground text-xs">Pilih deal yang cocok:</p>
+                    {it.payload.candidates.map((c) => (
+                      <Button
+                        key={c.deal_id}
+                        size="sm"
+                        className="w-full justify-between"
+                        disabled={busy === it.id}
+                        onClick={() => void resolve(it.id, "approve", c.deal_id)}
+                      >
+                        <span className="truncate">{c.customer_name}</span>
+                        <span className="opacity-70">{(c.score * 100).toFixed(0)}%</span>
+                      </Button>
+                    ))}
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      className="w-full"
+                      disabled={busy === it.id}
+                      onClick={() => void resolve(it.id, "reject")}
+                    >
+                      Tolak (bukan keduanya)
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            ),
+          )}
         </div>
       )}
     </div>

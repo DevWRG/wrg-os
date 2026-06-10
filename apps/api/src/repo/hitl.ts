@@ -44,7 +44,7 @@ export async function enqueueAmbiguous(opts: {
 export async function listHitl(status = "pending") {
   const sql = db();
   return sql`
-    SELECT id, correlation_id, r_tier, hitl_level, status, payload, created_at
+    SELECT id, correlation_id, agent_id, r_tier, hitl_level, status, payload, created_at
     FROM hitl_queue WHERE status = ${status} ORDER BY created_at
   `;
 }
@@ -67,12 +67,21 @@ export async function resolveHitl(
   if (rows.length === 0) return { ok: false, error: "hitl item tidak ditemukan" };
   if (rows[0].status !== "pending") return { ok: false, error: `item sudah ${rows[0].status}` };
 
+  const payloadType = (rows[0].payload as { type?: string }).type;
+
   if (opts.decision === "reject") {
     await sql`UPDATE hitl_queue SET status='rejected', approver_id=${opts.approver_id ?? null}, decided_at=now() WHERE id=${id}`;
     return { ok: true, status: "rejected" };
   }
 
-  // approve: butuh chosen_deal_id → terapkan transisi yang tertunda
+  // Item generik (mis. A4 pipeline_authenticity_flag): approve = "diakui /
+  // ditindaklanjuti" — cukup set status, tanpa transisi #REPORT.
+  if (payloadType && payloadType !== "report_ambiguous_match") {
+    await sql`UPDATE hitl_queue SET status='approved', approver_id=${opts.approver_id ?? null}, decided_at=now() WHERE id=${id}`;
+    return { ok: true, status: "approved" };
+  }
+
+  // approve #REPORT ambiguous: butuh chosen_deal_id → terapkan transisi tertunda
   if (!opts.chosen_deal_id) return { ok: false, error: "chosen_deal_id wajib untuk approve" };
   const p = rows[0].payload as {
     am_id: string;

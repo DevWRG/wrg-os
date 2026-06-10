@@ -14,7 +14,12 @@ import { insertRekap, insertResume, getDigestHistory } from "./repo/digest.js";
 import { getDashboardStats } from "./repo/stats.js";
 import { getCustomers } from "./repo/customer.js";
 import { ingestInvoices, getAging, type InvoiceInput } from "./repo/ar.js";
-import { runArWatch, runDistillationCascade, runCollectionDrafter } from "./repo/agents.js";
+import {
+  runArWatch,
+  runDistillationCascade,
+  runCollectionDrafter,
+  runPipelineAuthenticity,
+} from "./repo/agents.js";
 import { listCollectionDrafts } from "./repo/collection.js";
 import { ingestWaMessages, type WaMessageInput } from "./repo/wa.js";
 import { aiBaseUrl, callAi } from "./ai.js";
@@ -333,6 +338,12 @@ app.post("/agents/a3/run", async (c) => {
   }
   const r = await runCollectionDrafter({ draftType: body.draft_type, limit: body.limit });
   return c.json(r, r.drafted ? 201 : 200);
+});
+
+// A4 Pipeline Authenticity — audit keaslian pipeline, eskalasi kritis ke HITL (D1).
+app.post("/agents/a4/run", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await runPipelineAuthenticity(), 201);
 });
 
 // Read model draft penagihan (status: draft|approved|sent).
