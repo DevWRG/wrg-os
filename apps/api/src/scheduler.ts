@@ -15,6 +15,7 @@ import {
   runCoachingSynthesis,
   runPeopleAnalytics,
 } from "./repo/agents.js";
+import { runReminders } from "./repo/reminder.js";
 
 // Penjadwal agen in-process (Blueprint v2.3). Default MATI — aktif hanya bila
 // AGENT_SCHEDULE_ENABLED=true. Tiap run tetap menulis ke audit_log via repo
@@ -156,6 +157,34 @@ export function startScheduler(): ScheduleStatus {
     );
     live.push(`${j.id}=${j.expr}`);
   }
+
+  // Reminder CRM (fitur, bukan Blueprint agent → dijadwalkan langsung, tidak
+  // masuk daftar agen). H pagi 07:00 + heads-up H-1 sore 17:00.
+  const reminderJobs = [
+    { label: "reminder-h", expr: process.env.REMINDER_H_CRON ?? "0 7 * * *", mode: "h" as const },
+    { label: "reminder-h-1", expr: process.env.REMINDER_HMINUS1_CRON ?? "0 17 * * *", mode: "h-minus-1" as const },
+  ];
+  for (const j of reminderJobs) {
+    if (!cron.validate(j.expr)) {
+      console.error(`[scheduler] ${j.label} cron-expr tidak valid: "${j.expr}" — dilewati`);
+      continue;
+    }
+    cron.schedule(
+      j.expr,
+      async () => {
+        const startedAt = new Date().toISOString();
+        try {
+          const r = await runReminders(j.mode);
+          console.log(`[scheduler] ${j.label} ok @ ${startedAt} ${JSON.stringify(r).slice(0, 200)}`);
+        } catch (e) {
+          console.error(`[scheduler] ${j.label} gagal @ ${startedAt}:`, e);
+        }
+      },
+      { timezone },
+    );
+    live.push(`${j.label}=${j.expr}`);
+  }
+
   console.log(`[scheduler] aktif (TZ=${timezone}): ${live.join(", ") || "(tidak ada job valid)"}`);
   return status;
 }
