@@ -52,6 +52,7 @@ import { getNetworkInput, computeNetwork } from "./repo/network.js";
 import { listBriefings } from "./repo/executive.js";
 import { listCoachingNotes } from "./repo/coaching.js";
 import { getLatestCoachingNotes, computePeopleAnalytics } from "./repo/people.js";
+import { createVisit, listVisits, visitSummary } from "./repo/visit.js";
 import {
   createReminder,
   listReminders,
@@ -660,6 +661,53 @@ app.post("/agents/a12/run", async (c) => {
 app.get("/people/analytics", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json(computePeopleAnalytics(await getLatestCoachingNotes()));
+});
+
+// ── Visit report AM (geotag + foto-URL; port legacy visit_geo/report_photo) ──
+app.post("/visits", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: {
+    am_id?: string;
+    deal_id?: string;
+    customer_name?: string;
+    photo_url?: string;
+    lat?: number;
+    lon?: number;
+    visit_timestamp?: string;
+    visit_date?: string;
+    note?: string;
+  };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.am_id) return c.json({ error: "am_id wajib" }, 400);
+  const r = await createVisit({
+    am_id: body.am_id,
+    deal_id: body.deal_id,
+    customer_name: body.customer_name,
+    photo_url: body.photo_url,
+    lat: body.lat,
+    lon: body.lon,
+    visit_timestamp: body.visit_timestamp,
+    visit_date: body.visit_date,
+    note: body.note,
+  });
+  return c.json(r, 201);
+});
+
+// Read model visit (filter geo_status: ok|out_of_bounds|no_geo|date_mismatch).
+app.get("/visits", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const visits = await listVisits(c.req.query("status") || undefined);
+  return c.json({ count: visits.length, visits });
+});
+
+// Brief kepatuhan geotag (per-status + flagged).
+app.get("/visits/summary", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await visitSummary());
 });
 
 // Read model draft penagihan (status: draft|approved|sent|canceled).
