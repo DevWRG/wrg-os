@@ -17,6 +17,7 @@ import { ingestInvoices, getAging, type InvoiceInput } from "./repo/ar.js";
 import { runArWatch, runDistillationCascade } from "./repo/agents.js";
 import { ingestWaMessages, type WaMessageInput } from "./repo/wa.js";
 import { aiBaseUrl, callAi } from "./ai.js";
+import { startScheduler, getScheduleStatus } from "./scheduler.js";
 
 const app = new Hono();
 
@@ -319,6 +320,9 @@ app.post("/agents/a2/run", async (c) => {
   return c.json(await runArWatch(), 201);
 });
 
+// Status penjadwal agen (cron in-process) — observabilitas konfigurasi.
+app.get("/agents/schedule", (c) => c.json(getScheduleStatus()));
+
 // ── WhatsApp raw store (D1b): feeder pesan mentah → wa_message ──
 app.post("/wa/messages", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
@@ -401,4 +405,5 @@ app.post("/hitl/resolve", async (c) => {
 const port = Number(process.env.PORT ?? 4000);
 serve({ fetch: app.fetch, port }, (info) => {
   console.log(`wrg-api listening on http://localhost:${info.port}`);
+  startScheduler();
 });
