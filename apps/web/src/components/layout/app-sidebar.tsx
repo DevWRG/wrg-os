@@ -19,6 +19,7 @@ import {
   HeartPulse,
   Sparkles,
   Send,
+  FileText,
 } from "lucide-react";
 
 import {
@@ -49,6 +50,7 @@ const navMain = [
 const navSecondary = [
   { title: "HITL Review", url: "/hitl", icon: ClipboardCheck },
   { title: "Collection Drafts", url: "/collection-drafts", icon: Send },
+  { title: "Sales Docs", url: "/sales-docs", icon: FileText },
   { title: "Digest History", url: "/digests", icon: History },
   { title: "Reports", url: "/reports", icon: BarChart3 },
   { title: "Settings", url: "/settings", icon: Settings },
