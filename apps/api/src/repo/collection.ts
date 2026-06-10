@@ -1,4 +1,7 @@
+import { createHash } from "node:crypto";
+
 import { db } from "../db.js";
+import { sendViaWaGateway, type WaSendResult } from "../wasend.js";
 
 // D2 — collection_draft. Sumber: invoice overdue di ar_aging_mv. A3 (Sari
 // Collection Drafter) menyusun draft per invoice; status awal 'draft' (R2/L2 —
@@ -65,6 +68,97 @@ export interface CollectionDraftRow {
   generated_by: string | null;
   approved_by: string | null;
   created_at: string;
+}
+
+// ── Siklus kirim A3: draft → (approve) → approved → (send) → sent ──
+// Tiap aksi manusia dicatat sebagai event audit_log Layer 5 (Human), terkait
+// agen A3 — menutup loop tata kelola agen→manusia.
+
+async function logHumanAction(
+  eventType: string,
+  actor: string | undefined,
+  payload: Record<string, unknown>,
+  decision: string,
+): Promise<void> {
+  const sql = db();
+  const hash = createHash("sha256").update(JSON.stringify({ eventType, payload })).digest("hex");
+  await sql`
+    INSERT INTO audit_log
+      (use_case_id, correlation_id, agent_id, layer, event_type, r_tier, input_hash, output_hash, payload, human_actor, decision)
+    VALUES
+      ('D2', ${`a3-act-${hash.slice(0, 8)}`}, 'A3', 5, ${eventType}, 'R2', ${hash}, ${hash},
+       ${sql.json(payload as unknown as Parameters<typeof sql.json>[0])}, ${actor ?? null}, ${decision})
+  `;
+}
+
+export interface DraftActionResult {
+  ok: boolean;
+  error?: string;
+  status?: string;
+  gateway?: WaSendResult;
+}
+
+export async function approveCollectionDraft(
+  id: string,
+  approverId?: string,
+): Promise<DraftActionResult> {
+  const sql = db();
+  const rows = await sql`SELECT id, status, customer_id, invoice_no FROM collection_draft WHERE id = ${id}`;
+  if (rows.length === 0) return { ok: false, error: "draft tidak ditemukan" };
+  if (rows[0].status !== "draft") return { ok: false, error: `draft sudah ${rows[0].status}` };
+  await sql`UPDATE collection_draft SET status = 'approved', approved_by = ${approverId ?? null} WHERE id = ${id}`;
+  await logHumanAction(
+    "collection.draft.approve",
+    approverId,
+    { draft_id: id, customer_id: rows[0].customer_id, invoice_no: rows[0].invoice_no },
+    "approve",
+  );
+  return { ok: true, status: "approved" };
+}
+
+export async function sendCollectionDraft(
+  id: string,
+  to: string,
+  approverId?: string,
+): Promise<DraftActionResult> {
+  const sql = db();
+  if (!to) return { ok: false, error: "tujuan (to) wajib" };
+  const rows = await sql`SELECT id, status, draft_text, customer_id, invoice_no FROM collection_draft WHERE id = ${id}`;
+  if (rows.length === 0) return { ok: false, error: "draft tidak ditemukan" };
+  if (rows[0].status !== "approved") {
+    return { ok: false, error: `harus di-approve dulu (status sekarang: ${rows[0].status})` };
+  }
+  const gateway = await sendViaWaGateway(to, String(rows[0].draft_text));
+  if (!gateway.sent) {
+    return { ok: false, error: `gateway WA gagal: ${gateway.error ?? gateway.status}`, gateway };
+  }
+  await sql`UPDATE collection_draft SET status = 'sent' WHERE id = ${id}`;
+  await logHumanAction(
+    "collection.draft.send",
+    approverId,
+    { draft_id: id, to, customer_id: rows[0].customer_id, invoice_no: rows[0].invoice_no, gateway },
+    "send",
+  );
+  return { ok: true, status: "sent", gateway };
+}
+
+export async function cancelCollectionDraft(
+  id: string,
+  approverId?: string,
+): Promise<DraftActionResult> {
+  const sql = db();
+  const rows = await sql`SELECT id, status, customer_id, invoice_no FROM collection_draft WHERE id = ${id}`;
+  if (rows.length === 0) return { ok: false, error: "draft tidak ditemukan" };
+  if (rows[0].status === "sent") return { ok: false, error: "draft sudah terkirim, tak bisa dibatalkan" };
+  if (rows[0].status === "canceled") return { ok: false, error: "draft sudah dibatalkan" };
+  await sql`UPDATE collection_draft SET status = 'canceled', approved_by = ${approverId ?? null} WHERE id = ${id}`;
+  await logHumanAction(
+    "collection.draft.cancel",
+    approverId,
+    { draft_id: id, customer_id: rows[0].customer_id, invoice_no: rows[0].invoice_no },
+    "reject",
+  );
+  return { ok: true, status: "canceled" };
 }
 
 export async function listCollectionDrafts(
