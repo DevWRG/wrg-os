@@ -13,6 +13,7 @@ import {
   Workflow,
   BarChart3,
   ClipboardCheck,
+  History,
   Settings,
   HeartPulse,
   Sparkles,
@@ -44,6 +45,7 @@ const navMain = [
 
 const navSecondary = [
   { title: "HITL Review", url: "/hitl", icon: ClipboardCheck },
+  { title: "Digest History", url: "/digests", icon: History },
   { title: "Reports", url: "/reports", icon: BarChart3 },
   { title: "Settings", url: "/settings", icon: Settings },
 ];
