@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 
 import { db } from "../db.js";
-import { callAi } from "../ai.js";
+import { callAi, aiDryRun } from "../ai.js";
 import { getWaMessages } from "./wa.js";
 import { insertRekap } from "./digest.js";
 import {
@@ -210,7 +210,7 @@ export async function runDistillationCascade(opts: {
     })),
     members: Object.keys(members).length ? members : undefined,
     groups: Object.keys(groups).length ? groups : undefined,
-    dry_run: !process.env.OPENROUTER_API_KEY,
+    dry_run: aiDryRun(),
   };
 
   const { status, data } = await callAi("/rekap", rekapReq);
@@ -305,7 +305,7 @@ export async function runCollectionDrafter(opts: {
   const { status, data } = await callAi("/collection-draft", {
     items: overdue,
     draft_type: draftType,
-    dry_run: !process.env.OPENROUTER_API_KEY,
+    dry_run: aiDryRun(),
   });
   if (status >= 400) {
     throw new Error(`services/ai /collection-draft status ${status}: ${JSON.stringify(data)}`);
@@ -658,7 +658,7 @@ export async function runSalesDocDrafter(opts: {
       product_ids: deal.product_ids,
       notes: deal.notes,
       doc_type: docType,
-      dry_run: !process.env.OPENROUTER_API_KEY,
+      dry_run: aiDryRun(),
     });
     if (status >= 400) {
       throw new Error(`services/ai /sales-doc status ${status}: ${JSON.stringify(data)}`);
@@ -801,7 +801,7 @@ export async function runSentimentExtraction(opts: {
 
   const { status, data } = await callAi("/extract", {
     messages: messages.map((m) => ({ id: m.id, sender: m.sender_name, body: m.body })),
-    dry_run: !process.env.OPENROUTER_API_KEY,
+    dry_run: aiDryRun(),
   });
   if (status >= 400) {
     throw new Error(`services/ai /extract status ${status}: ${JSON.stringify(data)}`);
@@ -925,7 +925,7 @@ export async function runExecutiveSynthesis(opts: { periodLabel?: string }): Pro
   const { status, data } = await callAi("/executive-synthesis", {
     signals,
     period_label: periodLabel,
-    dry_run: !process.env.OPENROUTER_API_KEY,
+    dry_run: aiDryRun(),
   });
   if (status >= 400) {
     throw new Error(`services/ai /executive-synthesis status ${status}: ${JSON.stringify(data)}`);

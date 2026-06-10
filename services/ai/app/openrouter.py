@@ -63,6 +63,26 @@ def exec_models() -> List[str]:
     return [primary, fallback]
 
 
+def chat_or_fallback(
+    system: str,
+    user: str,
+    fallback_text: str,
+    max_tokens: int = 1500,
+    models: Optional[List[str]] = None,
+) -> Tuple[str, str, Optional[int], Optional[int]]:
+    """chat() yang tahan gagal: degradasi anggun bila LLM error.
+
+    Sukses → (text, model, tin, tout). Gagal (key invalid, rate-limit, semua
+    model gagal) → (fallback_text, "dry-run-fallback", None, None) — endpoint
+    tetap balas 200 dengan template, tidak 500. Live integration tetap jalan
+    meski OpenRouter sesekali hiccup.
+    """
+    try:
+        return chat(system, user, max_tokens=max_tokens, models=models)
+    except Exception:  # noqa: BLE001 — degradasi ke template
+        return fallback_text, "dry-run-fallback", None, None
+
+
 def chat(
     system: str,
     user: str,

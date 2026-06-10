@@ -8,6 +8,7 @@ from .executive import build_exec_system, build_exec_user, template_briefing
 from .extract import build_extract_system, parse_llm, rule_based
 from .openrouter import (
     chat,
+    chat_or_fallback,
     collection_models,
     exec_models,
     extract_models,
@@ -108,16 +109,14 @@ def daily_summary(req: DailySummaryRequest) -> DailySummaryResponse:
         "{tanggal}", req.tanggal
     )
 
+    fallback = f"[DRY RUN — tanpa LLM]\n\nSYSTEM:\n{system}\n\nUSER:\n{user_msg}"
     if req.dry_run or not os.environ.get("OPENROUTER_API_KEY"):
-        return DailySummaryResponse(
-            summary=f"[DRY RUN — tanpa LLM]\n\nSYSTEM:\n{system}\n\nUSER:\n{user_msg}",
-            model="dry-run",
-            dry_run=True,
-        )
+        return DailySummaryResponse(summary=fallback, model="dry-run", dry_run=True)
 
-    text, model, tin, tout = chat(system, user_msg)
+    text, model, tin, tout = chat_or_fallback(system, user_msg, fallback)
     return DailySummaryResponse(
-        summary=text, model=model, tokens_in=tin, tokens_out=tout, dry_run=False
+        summary=text, model=model, tokens_in=tin, tokens_out=tout,
+        dry_run=model == "dry-run-fallback",
     )
 
 
@@ -141,17 +140,15 @@ def rekap(req: RekapRequest) -> RekapResponse:
         f"{build_messages_block(req.messages)}"
     )
 
+    fallback = f"[DRY RUN — tanpa LLM]\n\nSYSTEM:\n{system}\n\nUSER:\n{user}"
     if req.dry_run or not os.environ.get("OPENROUTER_API_KEY"):
         return RekapResponse(
-            rekap=f"[DRY RUN — tanpa LLM]\n\nSYSTEM:\n{system}\n\nUSER:\n{user}",
-            model="dry-run",
-            grup_aktif=grup_aktif,
-            jumlah_pesan=len(req.messages),
-            dry_run=True,
+            rekap=fallback, model="dry-run", grup_aktif=grup_aktif,
+            jumlah_pesan=len(req.messages), dry_run=True,
         )
 
-    text, model, tin, tout = chat(
-        system, user, max_tokens=2000, models=rekap_models()
+    text, model, tin, tout = chat_or_fallback(
+        system, user, fallback, max_tokens=2000, models=rekap_models()
     )
     return RekapResponse(
         rekap=text,
@@ -160,7 +157,7 @@ def rekap(req: RekapRequest) -> RekapResponse:
         jumlah_pesan=len(req.messages),
         tokens_in=tin,
         tokens_out=tout,
-        dry_run=False,
+        dry_run=model == "dry-run-fallback",
     )
 
 
@@ -185,16 +182,14 @@ def resume(req: ResumeRequest) -> ResumeResponse:
         f"({req.tanggal}):\n\n{build_gabungan(req.rekaps)}"
     )
 
+    fallback = f"[DRY RUN — tanpa LLM]\n\nSYSTEM:\n{system}\n\nUSER:\n{user}"
     if req.dry_run or not os.environ.get("OPENROUTER_API_KEY"):
         return ResumeResponse(
-            resume=f"[DRY RUN — tanpa LLM]\n\nSYSTEM:\n{system}\n\nUSER:\n{user}",
-            model="dry-run",
-            jumlah_rekap=jumlah,
-            dry_run=True,
+            resume=fallback, model="dry-run", jumlah_rekap=jumlah, dry_run=True,
         )
 
-    text, model, tin, tout = chat(
-        system, user, max_tokens=2500, models=resume_models()
+    text, model, tin, tout = chat_or_fallback(
+        system, user, fallback, max_tokens=2500, models=resume_models()
     )
     return ResumeResponse(
         resume=text,
@@ -202,7 +197,7 @@ def resume(req: ResumeRequest) -> ResumeResponse:
         jumlah_rekap=jumlah,
         tokens_in=tin,
         tokens_out=tout,
-        dry_run=False,
+        dry_run=model == "dry-run-fallback",
     )
 
 
@@ -218,15 +213,17 @@ def collection_draft(req: CollectionDraftRequest) -> CollectionDraftResponse:
     drafts = []
     model_used = "dry-run"
     for item in req.items:
+        tmpl = template_draft(item, req.draft_type)
         if use_llm:
-            text, model_used, _, _ = chat(
+            text, model_used, _, _ = chat_or_fallback(
                 system,
                 build_collection_user(item),
+                tmpl,
                 max_tokens=600,
                 models=collection_models(),
             )
         else:
-            text = template_draft(item, req.draft_type)
+            text = tmpl
         drafts.append(
             DraftedItem(
                 customer_id=item.customer_id,
@@ -251,21 +248,23 @@ def sales_doc(req: SalesDocRequest) -> SalesDocResponse:
     dry_run / tanpa OPENROUTER_API_KEY → template deterministik (siap review).
     """
     use_llm = not req.dry_run and bool(os.environ.get("OPENROUTER_API_KEY"))
+    tmpl = template_doc(req)
     if use_llm:
-        text, model_used, _, _ = chat(
+        text, model_used, _, _ = chat_or_fallback(
             build_salesdoc_system(req.doc_type),
             build_salesdoc_user(req),
+            tmpl,
             max_tokens=3000,
             models=salesdoc_models(),
         )
     else:
-        text, model_used = template_doc(req), "dry-run"
+        text, model_used = tmpl, "dry-run"
     return SalesDocResponse(
         doc_type=req.doc_type,
         title=doc_title(req),
         draft_text=text,
         model=model_used,
-        dry_run=not use_llm,
+        dry_run=not use_llm or model_used == "dry-run-fallback",
     )
 
 
@@ -309,13 +308,18 @@ def executive_synthesis(req: ExecSynthesisRequest) -> ExecSynthesisResponse:
     dry_run / tanpa OPENROUTER_API_KEY → template deterministik dari sinyal.
     """
     use_llm = not req.dry_run and bool(os.environ.get("OPENROUTER_API_KEY"))
+    tmpl = template_briefing(req.signals, req.period_label)
     if use_llm:
-        text, model_used, _, _ = chat(
+        text, model_used, _, _ = chat_or_fallback(
             build_exec_system(req.period_label),
             build_exec_user(req.signals),
+            tmpl,
             max_tokens=2500,
             models=exec_models(),
         )
     else:
-        text, model_used = template_briefing(req.signals, req.period_label), "dry-run"
-    return ExecSynthesisResponse(briefing=text, model=model_used, dry_run=not use_llm)
+        text, model_used = tmpl, "dry-run"
+    return ExecSynthesisResponse(
+        briefing=text, model=model_used,
+        dry_run=not use_llm or model_used == "dry-run-fallback",
+    )
