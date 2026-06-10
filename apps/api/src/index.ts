@@ -14,7 +14,8 @@ import { insertRekap, insertResume, getDigestHistory } from "./repo/digest.js";
 import { getDashboardStats } from "./repo/stats.js";
 import { getCustomers } from "./repo/customer.js";
 import { ingestInvoices, getAging, type InvoiceInput } from "./repo/ar.js";
-import { runArWatch, runDistillationCascade } from "./repo/agents.js";
+import { runArWatch, runDistillationCascade, runCollectionDrafter } from "./repo/agents.js";
+import { listCollectionDrafts } from "./repo/collection.js";
 import { ingestWaMessages, type WaMessageInput } from "./repo/wa.js";
 import { aiBaseUrl, callAi } from "./ai.js";
 import { startScheduler, getScheduleStatus } from "./scheduler.js";
@@ -318,6 +319,28 @@ app.get("/ar/aging", async (c) => {
 app.post("/agents/a2/run", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json(await runArWatch(), 201);
+});
+
+// A3 Sari Collection Drafter — draft pesan penagihan invoice overdue (D2).
+// Body opsional: { draft_type: whatsapp|email|formal_letter, limit }.
+app.post("/agents/a3/run", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { draft_type?: string; limit?: number } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    // body opsional — default: whatsapp, limit 10.
+  }
+  const r = await runCollectionDrafter({ draftType: body.draft_type, limit: body.limit });
+  return c.json(r, r.drafted ? 201 : 200);
+});
+
+// Read model draft penagihan (status: draft|approved|sent).
+app.get("/ar/collection-drafts", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const status = c.req.query("status") || undefined;
+  const drafts = await listCollectionDrafts(status);
+  return c.json({ count: drafts.length, drafts });
 });
 
 // Status penjadwal agen (cron in-process) — observabilitas konfigurasi.
