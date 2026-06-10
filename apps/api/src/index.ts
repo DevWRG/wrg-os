@@ -63,6 +63,7 @@ import {
   isOnLeave,
   detectLeave,
 } from "./repo/leave.js";
+import { recordCompetitor, listCompetitor, competitorSummary } from "./repo/competitor.js";
 import {
   createReminder,
   listReminders,
@@ -882,6 +883,41 @@ app.post("/leave/detect", async (c) => {
   if (!body.am_id || !body.text) return c.json({ error: "am_id + text wajib" }, 400);
   const r = await detectLeave(body.am_id, body.text, body.date);
   return c.json(r, r.detected ? 201 : 200);
+});
+
+// ── Competitor intelligence (port legacy competitor_intel) ──
+app.post("/competitor", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: {
+    am_id?: string; customer_name?: string; tanggal?: string; vendor?: string;
+    produk?: string; produk_kategori?: string; harga_text?: string; harga_numeric?: number; konteks?: string;
+  };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.tanggal || !body.vendor) return c.json({ error: "tanggal + vendor wajib" }, 400);
+  return c.json(
+    await recordCompetitor({
+      am_id: body.am_id, customer_name: body.customer_name, tanggal: body.tanggal,
+      vendor: body.vendor, produk: body.produk, produk_kategori: body.produk_kategori,
+      harga_text: body.harga_text, harga_numeric: body.harga_numeric, konteks: body.konteks,
+    }),
+    201,
+  );
+});
+
+app.get("/competitor", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const items = await listCompetitor(c.req.query("vendor") || undefined);
+  return c.json({ count: items.length, items });
+});
+
+app.get("/competitor/summary", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const summary = await competitorSummary();
+  return c.json({ count: summary.length, summary });
 });
 
 // Read model draft penagihan (status: draft|approved|sent|canceled).
