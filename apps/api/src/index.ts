@@ -3,6 +3,9 @@ import { Hono } from "hono";
 import type { Context } from "hono";
 import type { EventEnvelope } from "@wrg/types";
 import { isEventEnvelope } from "./envelope.js";
+import { parsePlan } from "./parsers/plan.js";
+import { parseReport } from "./parsers/report.js";
+import { matchCustomer, type PlanCandidate } from "./parsers/fuzzy.js";
 
 const app = new Hono();
 
@@ -69,6 +72,44 @@ async function forwardToAi(c: Context, aiPath: string): Promise<Response> {
 app.post("/daily-summary", (c) => forwardToAi(c, "/daily-summary"));
 app.post("/rekap", (c) => forwardToAi(c, "/rekap"));
 app.post("/resume", (c) => forwardToAi(c, "/resume"));
+
+// ── CRM parser domain (port legacy/crm wrg-plan / wrg-report) ──
+// Pure parsing/normalisasi/klasifikasi. Persistensi ke PostgreSQL (INSERT
+// sales_plan/activity_log) menyusul saat DB tersambung — endpoint ini balas
+// struktur yang AKAN disimpan + (untuk report) hasil fuzzy-match ke plan.
+
+app.post("/parse/plan", async (c) => {
+  let body: { message?: string; now?: string; deadline?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (typeof body.message !== "string") {
+    return c.json({ error: "body.message (string) wajib" }, 400);
+  }
+  return c.json(parsePlan(body.message, { now: body.now, deadline: body.deadline }));
+});
+
+app.post("/parse/report", async (c) => {
+  let body: { message?: string; plans?: PlanCandidate[] };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (typeof body.message !== "string") {
+    return c.json({ error: "body.message (string) wajib" }, 400);
+  }
+  const parsed = parseReport(body.message);
+  const plans = body.plans ?? [];
+  // Lampirkan fuzzy-match per item ke plan kandidat (sales_plan hari itu).
+  const items = parsed.items.map((it) => ({
+    ...it,
+    match: matchCustomer(it.customer, plans),
+  }));
+  return c.json({ ...parsed, items });
+});
 
 const port = Number(process.env.PORT ?? 4000);
 serve({ fetch: app.fetch, port }, (info) => {
