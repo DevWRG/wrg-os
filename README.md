@@ -1,68 +1,47 @@
-# WRG OS
+# WRG Monorepo
 
-Internal operations dashboard untuk **Wahana Lifeline** — perusahaan distribusi alat kesehatan B2B.
+Monorepo untuk platform operasional **Wahana Lifeline / PT Wahana Rizky Gumilang (WRG)** — distribusi alat kesehatan B2B. Dikelola dengan [Turborepo](https://turbo.build) + [pnpm workspaces](https://pnpm.io/workspaces).
 
-Port dari template [Adminator](https://github.com/puikinsh/Adminator-admin-dashboard) ke stack modern.
+## Struktur
 
-## Stack
+```
+.
+├── apps/
+│   ├── os/          # WRG OS — operations dashboard (Next.js 16 / React 19 / TS) — LIVE
+│   ├── crm/         # WRG CRM (Python + shell, PostgreSQL) — 🚧 scaffold kosong
+│   ├── monitor/     # WRG Monitor (Python + shell) — 🚧 scaffold kosong
+│   └── api/         # API layer bersama — 🚧 scaffold kosong
+├── packages/
+│   ├── ui/          # Komponen UI bersama (shadcn/Base UI) — 🚧 kosong
+│   ├── config/      # Config bersama (eslint, tsconfig, tailwind) — 🚧 kosong
+│   └── types/       # Tipe TypeScript bersama — 🚧 kosong
+├── infra/
+│   ├── docker/      # Dockerfile / compose
+│   ├── nginx/       # Reverse proxy config
+│   └── postgres/    # Init scripts / migrasi
+└── .github/workflows/  # CI
+```
 
-- **Next.js 16** (App Router, Turbopack) + **React 19** + **TypeScript 5**
-- **Tailwind CSS 4** + **shadcn/ui** (base-nova preset, zinc theme) + **Base UI** primitives
-- **lucide-react** icons
-- **pnpm** package manager
+> **Status (2026-06-10):** baru `apps/os` yang berisi (port dari single-repo
+> `wrg-os`). `apps/crm`, `apps/monitor`, `apps/api`, dan seluruh `packages/*`
+> masih scaffold kosong — integrasi menyusul. CRM & Monitor saat ini berbasis
+> Python + shell di repo terpisah (`DevWRG/wrg-crm`, `DevWRG/wrg-monitor`);
+> strategi memasukkannya (copy / submodule / subtree) belum diputuskan.
 
-## Modules
+## Prasyarat
 
-| Section | Pages |
-|---|---|
-| Operations | Dashboard, Customers, Products, Inventory, Orders, Shipments, Suppliers |
-| Analytics | Reports, Settings |
+- Node.js ≥ 20 (dev memakai v25)
+- pnpm (`npm install -g pnpm`)
 
-Semua data masih mock — backend integration menyusul.
-
-## Getting Started
+## Perintah
 
 ```bash
-pnpm install
-pnpm dev
-```
+pnpm install            # install semua workspace
+pnpm dev                # turbo run dev (semua app yang punya script dev)
+pnpm build              # turbo run build
+pnpm lint               # turbo run lint
+pnpm typecheck          # turbo run typecheck
 
-Buka http://localhost:3000 — auto-redirect ke `/dashboard`.
-
-## Scripts
-
-```bash
-pnpm dev     # Next dev server (Turbopack)
-pnpm build   # Production build
-pnpm start   # Run production build
-pnpm lint    # ESLint
-```
-
-## Project Structure
-
-```
-src/
-  app/
-    (dashboard)/           # Route group with sidebar+topbar layout
-      dashboard/page.tsx
-      customers/page.tsx
-      products/page.tsx
-      inventory/page.tsx
-      orders/page.tsx
-      shipments/page.tsx
-      suppliers/page.tsx
-      reports/page.tsx
-      settings/page.tsx
-      layout.tsx
-    layout.tsx             # Root layout (fonts, TooltipProvider)
-    page.tsx               # Redirects to /dashboard
-    globals.css            # Tailwind + shadcn theme tokens
-  components/
-    layout/                # AppSidebar, Topbar, UserMenu
-    dashboard/             # StatCard, PageHeader
-    ui/                    # shadcn primitives
-  lib/
-    utils.ts               # cn() helper
-  hooks/
-    use-mobile.ts
+# Per-app:
+pnpm --filter wrg-os dev
 ```
