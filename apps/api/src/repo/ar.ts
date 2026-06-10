@@ -26,6 +26,21 @@ export async function ingestInvoices(
   asof?: string,
 ): Promise<{ ingested: number; webhook_id: string }> {
   const sql = db();
+  await upsertAging(invoices, asof);
+
+  // Catat ingest sebagai event Accurate (audit feeder).
+  const hash = createHash("sha256").update(JSON.stringify(invoices)).digest("hex");
+  const [wh] = await sql`
+    INSERT INTO accurate_webhook_log (event_type, payload, input_hash, processed)
+    VALUES ('ar.invoices.ingest', ${sql.json(invoices as unknown as Parameters<typeof sql.json>[0])}, ${hash}, true)
+    RETURNING id
+  `;
+  return { ingested: invoices.length, webhook_id: wh.id as string };
+}
+
+// Upsert state aging (idempoten by customer_id+invoice_no). Tanpa logging.
+async function upsertAging(invoices: InvoiceInput[], asof?: string): Promise<void> {
+  const sql = db();
   const base =
     asof && /^\d{4}-\d{2}-\d{2}$/.test(asof) ? new Date(`${asof}T00:00:00Z`) : new Date();
 
@@ -51,15 +66,70 @@ export async function ingestInvoices(
         refreshed_at  = now()
     `;
   }
+}
 
-  // Catat ingest sebagai event Accurate (audit feeder).
-  const hash = createHash("sha256").update(JSON.stringify(invoices)).digest("hex");
+// ── Accurate webhook adapter ──
+// Objek invoice Accurate (envelope .d / REST). Lihat legacy/crm sync_accurate.sh.
+export interface AccurateInvoice {
+  id?: number | string;
+  number?: string;
+  transNumber?: string;
+  customerId?: number | string;
+  customer?: { id?: number | string; name?: string };
+  retailWpName?: string;
+  dueDate?: string;
+  transDate?: string;
+  totalDue?: number | string;
+  totalAmount?: number | string;
+}
+
+// Accurate pakai dd/MM/yyyy; normalisasi ke yyyy-MM-dd. Toleran ISO & dd-MM-yyyy.
+export function normalizeAccurateDate(s?: string): string | null {
+  if (!s) return null;
+  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+  const dmy = s.match(/^(\d{2})[/-](\d{2})[/-](\d{4})/);
+  if (dmy) return `${dmy[3]}-${dmy[2]}-${dmy[1]}`;
+  return null;
+}
+
+export function mapAccurateInvoice(rec: AccurateInvoice): InvoiceInput | null {
+  const invoiceNo = String(rec.number ?? rec.transNumber ?? rec.id ?? "").trim();
+  const customerId = String(rec.customerId ?? rec.customer?.id ?? "").trim();
+  const dueDate = normalizeAccurateDate(rec.dueDate ?? rec.transDate);
+  if (!invoiceNo || !customerId || !dueDate) return null;
+  const amount = Number(rec.totalDue ?? rec.totalAmount ?? 0) || 0;
+  return {
+    customer_id: customerId,
+    customer_name: rec.customer?.name ?? rec.retailWpName ?? undefined,
+    invoice_no: invoiceNo,
+    due_date: dueDate,
+    amount,
+  };
+}
+
+// Ingest payload webhook Accurate → ar_aging_mv (upsert idempoten) + log raw.
+export async function ingestAccurateWebhook(
+  records: AccurateInvoice[],
+  asof?: string,
+): Promise<{ ingested: number; skipped: number; webhook_id: string }> {
+  const sql = db();
+  const mapped: InvoiceInput[] = [];
+  let skipped = 0;
+  for (const rec of records) {
+    const m = mapAccurateInvoice(rec);
+    if (m) mapped.push(m);
+    else skipped += 1;
+  }
+  if (mapped.length > 0) await upsertAging(mapped, asof);
+
+  const hash = createHash("sha256").update(JSON.stringify(records)).digest("hex");
   const [wh] = await sql`
     INSERT INTO accurate_webhook_log (event_type, payload, input_hash, processed)
-    VALUES ('ar.invoices.ingest', ${sql.json(invoices as unknown as Parameters<typeof sql.json>[0])}, ${hash}, true)
+    VALUES ('accurate.webhook', ${sql.json(records as unknown as Parameters<typeof sql.json>[0])}, ${hash}, ${mapped.length > 0})
     RETURNING id
   `;
-  return { ingested: invoices.length, webhook_id: wh.id as string };
+  return { ingested: mapped.length, skipped, webhook_id: wh.id as string };
 }
 
 export interface AgingInvoice {
