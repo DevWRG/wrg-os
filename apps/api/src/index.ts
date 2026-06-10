@@ -22,10 +22,12 @@ import {
   runAnomalyDetection,
   runSalesDocDrafter,
   runProductIntelligence,
+  runSentimentExtraction,
 } from "./repo/agents.js";
 import { listCollectionDrafts } from "./repo/collection.js";
 import { listSalesDocs } from "./repo/salesdoc.js";
 import { getProductIntelligence } from "./repo/product.js";
+import { listAnnotations } from "./repo/sentiment.js";
 import { ingestWaMessages, type WaMessageInput } from "./repo/wa.js";
 import { aiBaseUrl, callAi } from "./ai.js";
 import { startScheduler, getScheduleStatus } from "./scheduler.js";
@@ -393,6 +395,31 @@ app.get("/products/intelligence", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const products = await getProductIntelligence();
   return c.json({ count: products.length, products });
+});
+
+// A8 Sentiment & Entity Extraction — anotasi wa_message (D1b). Body opsional:
+// { window_hours, group_jid, limit }.
+app.post("/agents/a8/run", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { window_hours?: number; group_jid?: string; limit?: number } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    // body opsional
+  }
+  const r = await runSentimentExtraction({
+    windowHours: body.window_hours,
+    groupJid: body.group_jid,
+    limit: body.limit,
+  });
+  return c.json(r, r.annotated ? 201 : 200);
+});
+
+// Read model anotasi (filter sentiment: positive|neutral|negative).
+app.get("/messages/annotations", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const annotations = await listAnnotations(c.req.query("sentiment") || undefined);
+  return c.json({ count: annotations.length, annotations });
 });
 
 // Read model draft penagihan (status: draft|approved|sent).

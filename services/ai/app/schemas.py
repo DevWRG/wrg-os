@@ -176,3 +176,36 @@ class SalesDocResponse(BaseModel):
     draft_text: str
     model: str
     dry_run: bool = False
+
+
+# === A8 Sentiment & Entity Extraction (anotasi per pesan WhatsApp) ===
+
+
+class ExtractMessage(BaseModel):
+    id: str
+    sender: Optional[str] = None
+    body: str = ""
+
+
+class ExtractRequest(BaseModel):
+    messages: List[ExtractMessage] = Field(default_factory=list)
+    dry_run: bool = False
+
+
+class Entity(BaseModel):
+    type: str  # customer, product, person, amount, org
+    value: str
+
+
+class Annotation(BaseModel):
+    id: str
+    sentiment: str  # positive, neutral, negative
+    sentiment_score: float = 0.0  # -1..1
+    entities: List[Entity] = Field(default_factory=list)
+
+
+class ExtractResponse(BaseModel):
+    annotations: List[Annotation] = Field(default_factory=list)
+    model: str
+    count: int = 0
+    dry_run: bool = False

@@ -49,6 +49,13 @@ def salesdoc_models() -> List[str]:
     return [primary, fallback]
 
 
+def extract_models() -> List[str]:
+    """Model OpenRouter untuk A8 sentiment/entity (token tier LOW → Haiku)."""
+    primary = os.environ.get("EXTRACT_MODEL_PRIMARY", "anthropic/claude-haiku-4.5")
+    fallback = os.environ.get("EXTRACT_MODEL_FALLBACK", "deepseek/deepseek-r1")
+    return [primary, fallback]
+
+
 def chat(
     system: str,
     user: str,

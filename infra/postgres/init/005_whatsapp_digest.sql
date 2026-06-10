@@ -46,3 +46,19 @@ CREATE TABLE IF NOT EXISTS digest_briefing (
   hitl_status     VARCHAR(20) DEFAULT 'pending',
   created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Anotasi sentiment + entity per wa_message hasil A8 (Sentiment & Entity
+-- Extraction). Satu baris per pesan yang dianalisis.
+CREATE TABLE IF NOT EXISTS message_annotation (
+  id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  wa_message_id   UUID REFERENCES wa_message(id),
+  group_jid       VARCHAR(100),
+  sender_name     VARCHAR(200),
+  sentiment       VARCHAR(10),   -- positive, neutral, negative
+  sentiment_score NUMERIC(4,3),
+  entities        JSONB DEFAULT '[]',  -- [{type, value}]
+  generated_by    VARCHAR(10),   -- A8
+  model_used      VARCHAR(50),
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_msg_annotation_msg ON message_annotation (wa_message_id);

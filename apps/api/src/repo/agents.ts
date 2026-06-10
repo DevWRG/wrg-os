@@ -34,6 +34,11 @@ import {
   type DealForDoc,
 } from "./salesdoc.js";
 import { getProductIntelligence, type ProductIntel } from "./product.js";
+import {
+  getMessagesToAnnotate,
+  insertAnnotation,
+  type MessageToAnnotate,
+} from "./sentiment.js";
 
 // A2 — AR Aging Watch (Blueprint v2.3, R1/L2). Baca ar_aging_mv, prioritaskan
 // piutang berisiko, log run ke audit_log (Layer 4 Output) + update registry.
@@ -736,4 +741,107 @@ export async function runProductIntelligence(): Promise<{
   await sql`UPDATE agent_registry SET last_health_check = now() WHERE agent_id = 'A7'`;
 
   return { agent_id: "A7", audit_id: a.id as string, summary, products: rows };
+}
+
+// A8 — Sentiment & Entity Extraction (Blueprint v2.3, R1/L2/LOW). Baca
+// wa_message dalam window yang belum dianotasi → services/ai (/extract,
+// per-pesan sentiment+entity, fallback rule-based) → simpan ke
+// message_annotation → log audit_log (Layer 4, R1, D1b) + update registry.
+
+interface ExtractedAnnotation {
+  id: string;
+  sentiment: string;
+  sentiment_score: number;
+  entities: { type: string; value: string }[];
+}
+
+export async function runSentimentExtraction(opts: {
+  windowHours?: number;
+  groupJid?: string;
+  limit?: number;
+}): Promise<{
+  agent_id: string;
+  annotated: boolean;
+  audit_id: string | null;
+  count: number;
+  model: string | null;
+  summary: { positive: number; neutral: number; negative: number; entities: number };
+}> {
+  const sql = db();
+  const windowHours = opts.windowHours && opts.windowHours > 0 ? opts.windowHours : 24;
+  const limit = opts.limit && opts.limit > 0 ? Math.min(opts.limit, 100) : 50;
+  const messages: MessageToAnnotate[] = await getMessagesToAnnotate(
+    windowHours,
+    opts.groupJid,
+    limit,
+  );
+
+  if (messages.length === 0) {
+    return {
+      agent_id: "A8",
+      annotated: false,
+      audit_id: null,
+      count: 0,
+      model: null,
+      summary: { positive: 0, neutral: 0, negative: 0, entities: 0 },
+    };
+  }
+
+  const { status, data } = await callAi("/extract", {
+    messages: messages.map((m) => ({ id: m.id, sender: m.sender_name, body: m.body })),
+    dry_run: !process.env.OPENROUTER_API_KEY,
+  });
+  if (status >= 400) {
+    throw new Error(`services/ai /extract status ${status}: ${JSON.stringify(data)}`);
+  }
+  const annotations = (data.annotations as ExtractedAnnotation[]) ?? [];
+  const model = (data.model as string | undefined) ?? null;
+  const byMsg = new Map(messages.map((m) => [m.id, m]));
+
+  const dist = { positive: 0, neutral: 0, negative: 0, entities: 0 };
+  let saved = 0;
+  for (const ann of annotations) {
+    const msg = byMsg.get(ann.id);
+    if (!msg) continue;
+    const entities = Array.isArray(ann.entities) ? ann.entities : [];
+    await insertAnnotation({
+      wa_message_id: msg.id,
+      group_jid: msg.group_jid,
+      sender_name: msg.sender_name,
+      sentiment: ann.sentiment,
+      sentiment_score: ann.sentiment_score,
+      entities,
+      model_used: model,
+    });
+    saved += 1;
+    if (ann.sentiment === "positive") dist.positive += 1;
+    else if (ann.sentiment === "negative") dist.negative += 1;
+    else dist.neutral += 1;
+    dist.entities += entities.length;
+  }
+
+  const inputHash = createHash("sha256")
+    .update(JSON.stringify(messages.map((m) => m.id)))
+    .digest("hex");
+  const outputHash = createHash("sha256").update(JSON.stringify(annotations)).digest("hex");
+  const payload = { count: saved, summary: dist };
+
+  const [a] = await sql`
+    INSERT INTO audit_log
+      (use_case_id, correlation_id, agent_id, layer, event_type, r_tier, input_hash, output_hash, payload)
+    VALUES
+      ('D1b', ${`a8-${inputHash.slice(0, 8)}`}, 'A8', 4, 'sentiment.extract.run', 'R1',
+       ${inputHash}, ${outputHash}, ${sql.json(payload as unknown as Parameters<typeof sql.json>[0])})
+    RETURNING id
+  `;
+  await sql`UPDATE agent_registry SET last_health_check = now() WHERE agent_id = 'A8'`;
+
+  return {
+    agent_id: "A8",
+    annotated: saved > 0,
+    audit_id: a.id as string,
+    count: saved,
+    model,
+    summary: dist,
+  };
 }

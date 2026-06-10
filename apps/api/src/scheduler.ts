@@ -9,6 +9,7 @@ import {
   runAnomalyDetection,
   runSalesDocDrafter,
   runProductIntelligence,
+  runSentimentExtraction,
 } from "./repo/agents.js";
 
 // Penjadwal agen in-process (Blueprint v2.3). Default MATI — aktif hanya bila
@@ -81,6 +82,12 @@ export function startScheduler(): ScheduleStatus {
       id: "A7",
       expr: process.env.A7_CRON ?? "30 10 * * *",
       run: () => runProductIntelligence(),
+    },
+    {
+      // A8 anotasi sentiment/entity wa_message (tiap 6 jam, ikut arus pesan).
+      id: "A8",
+      expr: process.env.A8_CRON ?? "0 */6 * * *",
+      run: () => runSentimentExtraction({}),
     },
   ];
 
