@@ -23,11 +23,13 @@ import {
   runSalesDocDrafter,
   runProductIntelligence,
   runSentimentExtraction,
+  runSpiderNetwork,
 } from "./repo/agents.js";
 import { listCollectionDrafts } from "./repo/collection.js";
 import { listSalesDocs } from "./repo/salesdoc.js";
 import { getProductIntelligence } from "./repo/product.js";
 import { listAnnotations } from "./repo/sentiment.js";
+import { getNetworkInput, computeNetwork } from "./repo/network.js";
 import { ingestWaMessages, type WaMessageInput } from "./repo/wa.js";
 import { aiBaseUrl, callAi } from "./ai.js";
 import { startScheduler, getScheduleStatus } from "./scheduler.js";
@@ -420,6 +422,26 @@ app.get("/messages/annotations", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const annotations = await listAnnotations(c.req.query("sentiment") || undefined);
   return c.json({ count: annotations.length, annotations });
+});
+
+// A9 Spider Network Analyst — graf relasi dari anotasi (D1b).
+app.post("/agents/a9/run", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { window_days?: number } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    // body opsional
+  }
+  return c.json(await runSpiderNetwork({ windowDays: body.window_days }), 201);
+});
+
+// Read model graf jaringan (live compute, tanpa audit) untuk visualisasi UI.
+app.get("/network/graph", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const days = Number(c.req.query("window_days")) || 30;
+  const graph = computeNetwork(await getNetworkInput(days));
+  return c.json(graph);
 });
 
 // Read model draft penagihan (status: draft|approved|sent).
