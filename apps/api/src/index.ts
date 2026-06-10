@@ -9,6 +9,7 @@ import { matchCustomer, type PlanCandidate } from "./parsers/fuzzy.js";
 import { isDbEnabled, pingDb } from "./db.js";
 import { insertAuditEvent } from "./repo/audit.js";
 import { upsertDealsFromPlan, logReportToDeals } from "./repo/deal.js";
+import { enqueueAmbiguous, listHitl, resolveHitl } from "./repo/hitl.js";
 
 const app = new Hono();
 
@@ -169,12 +170,61 @@ app.post("/report", async (c) => {
     return c.json({ ...parsed, persisted: false, note: "DATABASE_URL off — pakai /parse/report utk preview" });
   }
   if (!body.am_id) return c.json({ error: "body.am_id wajib untuk persist" }, 400);
+  const amId = body.am_id;
+  const toStage = body.to_stage;
   try {
-    const items = await logReportToDeals(body.am_id, parsed.items, body.to_stage);
+    const matched = await logReportToDeals(amId, parsed.items, toStage);
+    // Match ambiguous → masuk HITL queue (gate D6), tidak auto-transisi.
+    const items = [];
+    for (const it of matched) {
+      if (it.match.kind === "ambiguous") {
+        const hitlId = await enqueueAmbiguous({
+          amId,
+          item: { customer: it.customer, hasil: it.hasil, next_action: it.next_action },
+          candidates: it.match.candidates,
+          toStage,
+        });
+        items.push({ ...it, hitl_id: hitlId });
+      } else {
+        items.push(it);
+      }
+    }
     return c.json({ mode: parsed.mode, tanggal: parsed.tanggal, errors: parsed.errors, persisted: true, items }, 201);
   } catch (e) {
     return c.json({ error: "gagal persist report", detail: String(e) }, 500);
   }
+});
+
+// ── HITL gate (D6): antrian konfirmasi untuk match ambiguous ──
+app.get("/hitl", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const status = c.req.query("status") ?? "pending";
+  const rows = await listHitl(status);
+  return c.json({ status, count: rows.length, items: rows });
+});
+
+app.post("/hitl/resolve", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: {
+    id?: string;
+    decision?: "approve" | "reject";
+    chosen_deal_id?: string;
+    approver_id?: string;
+  };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.id || (body.decision !== "approve" && body.decision !== "reject")) {
+    return c.json({ error: "id + decision (approve|reject) wajib" }, 400);
+  }
+  const r = await resolveHitl(body.id, {
+    decision: body.decision,
+    chosen_deal_id: body.chosen_deal_id,
+    approver_id: body.approver_id,
+  });
+  return c.json(r, r.ok ? 200 : 400);
 });
 
 const port = Number(process.env.PORT ?? 4000);
