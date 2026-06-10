@@ -4,7 +4,7 @@
 #
 # ⚠️  STATUS: SPEC TOPOLOGI — BELUM RUNNABLE (per 2026-06-10).
 #     `docker compose up` akan gagal sampai item di bawah dibuat:
-#       [ ] apps/api/Dockerfile        (Hono/Node — sudah ada source)
+#       [x] apps/api/Dockerfile        (Hono/Node — DONE; build di PORT 4000)
 #       [ ] apps/crm/Dockerfile        (crm = Python + shell, BUKAN Next →
 #           service di bawah pakai asumsi NEXTAUTH/port 3000 yg perlu disesuaikan)
 #       [ ] apps/monitor/Dockerfile    (monitor = Python + shell, sama)

@@ -1,0 +1,23 @@
+# Deps & build artifacts — install/build terjadi di dalam image
+**/node_modules
+**/dist
+**/.next
+**/.turbo
+
+# VCS
+.git
+.gitignore
+
+# Env & rahasia lokal (jangan masuk image)
+.env
+.env.*
+!.env.example
+
+# Logs & OS cruft
+**/*.log
+.DS_Store
+
+# Aset berat non-build (regenerable)
+apps/crm/frontend/screenshots
+apps/crm/frontend/docs/assets
+apps/crm/docs/images
