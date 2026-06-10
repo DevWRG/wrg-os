@@ -37,6 +37,33 @@ app.post("/events", async (c) => {
   );
 });
 
+// Tier AI/data: forward ke services/ai (FastAPI). api = orkestrator domain;
+// nanti di-enrich (query DB utk rows) sebelum call ai — sekarang passthrough.
+const aiBaseUrl = (): string => process.env.AI_URL ?? "http://localhost:8000";
+
+app.post("/daily-summary", async (c) => {
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  try {
+    const res = await fetch(`${aiBaseUrl()}/daily-summary`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const text = await res.text();
+    return new Response(text, {
+      status: res.status,
+      headers: { "content-type": "application/json" },
+    });
+  } catch {
+    return c.json({ error: "ai service unreachable" }, 502);
+  }
+});
+
 const port = Number(process.env.PORT ?? 4000);
 serve({ fetch: app.fetch, port }, (info) => {
   console.log(`wrg-api listening on http://localhost:${info.port}`);
