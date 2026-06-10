@@ -70,6 +70,7 @@ import {
   upsertItems,
   listMirror,
 } from "./repo/accurateMirror.js";
+import { recordDelivery, recordEmail, recordAlert, listLogs } from "./repo/logs.js";
 import {
   createReminder,
   listReminders,
@@ -970,6 +971,40 @@ app.get("/accurate/:entity", async (c) => {
   }
   const rows = await listMirror(entity);
   return c.json({ entity, count: rows.length, rows });
+});
+
+// ── Log operasional: delivery / email / alert (port legacy *_log) ──
+app.post("/logs/delivery", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let b: Record<string, unknown> = {};
+  try { b = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  return c.json(await recordDelivery(b as Parameters<typeof recordDelivery>[0]), 201);
+});
+
+app.post("/logs/email", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let b: { kind?: string; subject?: string } = {};
+  try { b = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  if (!b.kind || !b.subject) return c.json({ error: "kind + subject wajib" }, 400);
+  return c.json(await recordEmail(b as Parameters<typeof recordEmail>[0]), 201);
+});
+
+app.post("/logs/alert", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let b: { kind?: string; title?: string } = {};
+  try { b = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  if (!b.kind || !b.title) return c.json({ error: "kind + title wajib" }, 400);
+  return c.json(await recordAlert(b as Parameters<typeof recordAlert>[0]), 201);
+});
+
+app.get("/logs/:type", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const type = c.req.param("type");
+  if (type !== "delivery" && type !== "email" && type !== "alert") {
+    return c.json({ error: "type harus delivery|email|alert" }, 400);
+  }
+  const rows = await listLogs(type);
+  return c.json({ type, count: rows.length, rows });
 });
 
 // Read model draft penagihan (status: draft|approved|sent|canceled).
