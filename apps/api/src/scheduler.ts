@@ -13,6 +13,7 @@ import {
   runSpiderNetwork,
   runExecutiveSynthesis,
   runCoachingSynthesis,
+  runPeopleAnalytics,
 } from "./repo/agents.js";
 
 // Penjadwal agen in-process (Blueprint v2.3). Default MATI — aktif hanya bila
@@ -109,6 +110,12 @@ export function startScheduler(): ScheduleStatus {
       id: "A11",
       expr: process.env.A11_CRON ?? "0 7 1 * *",
       run: () => runCoachingSynthesis({}),
+    },
+    {
+      // A12 people analytics — bulanan (tgl 1, 07:30, setelah A11).
+      id: "A12",
+      expr: process.env.A12_CRON ?? "30 7 1 * *",
+      run: () => runPeopleAnalytics(),
     },
   ];
 

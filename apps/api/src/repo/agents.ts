@@ -46,6 +46,11 @@ import {
   insertCoachingNote,
   type AmMetrics,
 } from "./coaching.js";
+import {
+  getLatestCoachingNotes,
+  computePeopleAnalytics,
+  type PeopleAnalytics,
+} from "./people.js";
 
 // A2 — AR Aging Watch (Blueprint v2.3, R1/L2). Baca ar_aging_mv, prioritaskan
 // piutang berisiko, log run ke audit_log (Layer 4 Output) + update registry.
@@ -1061,4 +1066,35 @@ export async function runCoachingSynthesis(opts: { period?: string }): Promise<{
     count: notes.length,
     notes,
   };
+}
+
+// A12 — People Analytics (Blueprint v2.3, R1/L2/MED). Rollup SDM tingkat-
+// organisasi dari coaching_note A11 (note terbaru per AM): distribusi skor,
+// ranking, AM butuh perhatian, gap paling umum se-tim. Deterministik, read-only;
+// log audit_log (Layer 4, R1, D6) + update registry. Penutup registry A1–A12.
+
+export async function runPeopleAnalytics(): Promise<{
+  agent_id: string;
+  audit_id: string;
+  analytics: PeopleAnalytics;
+}> {
+  const sql = db();
+  const notes = await getLatestCoachingNotes();
+  const analytics = computePeopleAnalytics(notes);
+
+  const inputHash = createHash("sha256").update(JSON.stringify(notes)).digest("hex");
+  const outputHash = createHash("sha256").update(JSON.stringify(analytics)).digest("hex");
+  const payload = analytics;
+
+  const [a] = await sql`
+    INSERT INTO audit_log
+      (use_case_id, correlation_id, agent_id, layer, event_type, r_tier, input_hash, output_hash, payload)
+    VALUES
+      ('D6', ${`a12-${inputHash.slice(0, 8)}`}, 'A12', 4, 'people.analytics.run', 'R1',
+       ${inputHash}, ${outputHash}, ${sql.json(payload as unknown as Parameters<typeof sql.json>[0])})
+    RETURNING id
+  `;
+  await sql`UPDATE agent_registry SET last_health_check = now() WHERE agent_id = 'A12'`;
+
+  return { agent_id: "A12", audit_id: a.id as string, analytics };
 }
