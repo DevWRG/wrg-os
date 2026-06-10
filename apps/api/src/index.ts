@@ -10,6 +10,7 @@ import { isDbEnabled, pingDb } from "./db.js";
 import { insertAuditEvent } from "./repo/audit.js";
 import { upsertDealsFromPlan, logReportToDeals } from "./repo/deal.js";
 import { enqueueAmbiguous, listHitl, resolveHitl } from "./repo/hitl.js";
+import { insertRekap, insertResume } from "./repo/digest.js";
 
 const app = new Hono();
 
@@ -85,9 +86,99 @@ async function forwardToAi(c: Context, aiPath: string): Promise<Response> {
   }
 }
 
+// Call services/ai dan parse JSON (untuk endpoint yang perlu persist hasilnya).
+async function callAi(
+  aiPath: string,
+  body: unknown,
+): Promise<{ status: number; data: Record<string, unknown> }> {
+  const res = await fetch(`${aiBaseUrl()}${aiPath}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return { status: res.status, data: (await res.json()) as Record<string, unknown> };
+}
+
+// Window periode rekap dari jam+tanggal (default mundur N jam), bisa di-override.
+function deriveWindow(
+  tanggal?: string,
+  jam?: string,
+  hours = 5,
+  ps?: string,
+  pe?: string,
+): { periodStart: string; periodEnd: string } {
+  if (ps && pe) return { periodStart: ps, periodEnd: pe };
+  const t = jam && /^\d{2}:\d{2}$/.test(jam) ? jam : "00:00";
+  const base = tanggal ? new Date(`${tanggal}T${t}:00Z`) : new Date();
+  const end = Number.isNaN(base.getTime()) ? new Date() : base;
+  const start = new Date(end.getTime() - hours * 3600 * 1000);
+  return { periodStart: start.toISOString(), periodEnd: end.toISOString() };
+}
+
 app.post("/daily-summary", (c) => forwardToAi(c, "/daily-summary"));
-app.post("/rekap", (c) => forwardToAi(c, "/rekap"));
-app.post("/resume", (c) => forwardToAi(c, "/resume"));
+
+app.post("/rekap", async (c) => {
+  let body: Record<string, unknown>;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  let r;
+  try {
+    r = await callAi("/rekap", body);
+  } catch {
+    return c.json({ error: "ai service unreachable" }, 502);
+  }
+  if (r.status >= 400 || !isDbEnabled()) return c.json(r.data, r.status === 200 ? 200 : (r.status as 200));
+  try {
+    const { periodStart, periodEnd } = deriveWindow(
+      body.tanggal as string | undefined,
+      body.jam as string | undefined,
+      5,
+      body.period_start as string | undefined,
+      body.period_end as string | undefined,
+    );
+    const digestId = await insertRekap({
+      group_jid: (body.group_jid as string) ?? "_all",
+      group_name: (body.group_name as string) ?? "WRG (agregat semua grup aktif)",
+      period_start: periodStart,
+      period_end: periodEnd,
+      raw_output: String(r.data.rekap ?? ""),
+      model_used: r.data.model as string | undefined,
+    });
+    return c.json({ ...r.data, persisted: true, digest_id: digestId });
+  } catch (e) {
+    return c.json({ ...r.data, persisted: false, persist_error: String(e) });
+  }
+});
+
+app.post("/resume", async (c) => {
+  let body: Record<string, unknown>;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  let r;
+  try {
+    r = await callAi("/resume", body);
+  } catch {
+    return c.json({ error: "ai service unreachable" }, 502);
+  }
+  if (r.status >= 400 || !isDbEnabled()) return c.json(r.data, r.status === 200 ? 200 : (r.status as 200));
+  try {
+    const digestId = await insertResume({
+      period_date: (body.tanggal as string) ?? new Date().toISOString().slice(0, 10),
+      period_type: (body.period_type as string) ?? "evening",
+      raw_output: String(r.data.resume ?? ""),
+      model_used: r.data.model as string | undefined,
+    });
+    return c.json({ ...r.data, persisted: true, digest_id: digestId });
+  } catch (e) {
+    return c.json({ ...r.data, persisted: false, persist_error: String(e) });
+  }
+});
 
 // ── CRM parser domain (port legacy/crm wrg-plan / wrg-report) ──
 // Pure parsing/normalisasi/klasifikasi. Persistensi ke PostgreSQL (INSERT
