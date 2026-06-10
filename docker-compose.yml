@@ -1,22 +1,27 @@
-# WRG-OS Docker Compose — Crawl Phase (Mac Mini)
-# Stack: PostgreSQL 16 + pgvector · Redis 7 · Langfuse · Nginx
-# Apps: CRM · Monitor · API (build dari monorepo)
+# WRG-OS Docker Compose — runnable 3-tier stack.
+# Stack: PostgreSQL 16 (pgvector) + services/ai (FastAPI) + apps/api (Hono) +
+#        apps/web (Next.js dashboard/BFF).
 #
-# ⚠️  STATUS: SPEC TOPOLOGI — BELUM RUNNABLE (per 2026-06-10).
-#     `docker compose up` akan gagal sampai item di bawah dibuat:
-#       [x] apps/api/Dockerfile        (Hono/Node — DONE; build di PORT 4000)
-#       [x] services/ai/Dockerfile     (FastAPI — DONE; PORT 8000)
-#       [ ] legacy/crm/Dockerfile      (crm = Python + shell, BUKAN Next →
-#           service di bawah pakai asumsi NEXTAUTH/port 3000 yg perlu disesuaikan)
-#       [ ] legacy/monitor/Dockerfile  (monitor = Python + shell, sama)
-#       [ ] apps/wa-gateway/ + Dockerfile  (dir app-nya belum ada)
-#       [ ] infra/postgres/init/       (init .sql; mis. CREATE DATABASE langfuse,
-#           CREATE EXTENSION vector — langfuse di bawah pakai DB "langfuse")
-#       [ ] infra/nginx/nginx.conf
-#     Catatan: apps/web (Next nyata) belum masuk compose; port 3000 dipakai crm.
-#     Fase 2+: service crm/monitor akan digantikan web (gateway) + api + services/ai.
-#     langfuse:latest (v3) mungkin butuh ClickHouse/worker tambahan.
-#     Lihat PR untuk daftar lengkap.
+#   cp .env.example .env   # isi PG_PASSWORD dll
+#   docker compose up --build
+#
+# Akses: web http://localhost:3000 · api http://localhost:4000 ·
+#        ai http://localhost:8000 · postgres host :5433 (internal :5432).
+#
+# Catatan:
+#  • postgres init (infra/postgres/init/001-006.sql) jalan SEKALI saat volume
+#    pg_data kosong — di image pgvector, 001 mengaktifkan extension `vector` &
+#    membuat DB `langfuse` (jalur init penuh, beda dari subset lokal).
+#  • Host pg dipetakan ke 5433 agar tak bentrok dengan postgres lokal (:5432).
+#    Antar-service tetap memakai host internal `postgres:5432`.
+#  • Service opsional (redis, langfuse, nginx) & legacy (crm/monitor) DIHAPUS
+#    dari stack inti — bisa ditambah belakangan (langfuse v3 butuh ClickHouse;
+#    nginx butuh upstream web/api di nginx.conf). Ingest WA kini = webhook di
+#    apps/api (POST /webhooks/wa), bukan service wa-gateway terpisah.
+#  • Auth default MATI (AUTH_ENABLED=false). Set true + JWT_SECRET +
+#    API_SERVICE_TOKEN untuk mengaktifkan gerbang sesi.
+
+name: wrg-os
 
 networks:
   wrg-internal:
@@ -24,12 +29,8 @@ networks:
 
 volumes:
   pg_data:
-  redis_data:
-  wa_sessions:
-  langfuse_data:
 
 services:
-
   # ── DATABASE ──────────────────────────────────────────
   postgres:
     image: pgvector/pgvector:pg16
@@ -39,119 +40,17 @@ services:
     environment:
       POSTGRES_DB: ${PG_DB:-wrg_os}
       POSTGRES_USER: ${PG_USER:-wrg}
-      POSTGRES_PASSWORD: ${PG_PASSWORD}
+      POSTGRES_PASSWORD: ${PG_PASSWORD:-wrg_dev_password}
     volumes:
       - pg_data:/var/lib/postgresql/data
       - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro
     ports:
-      - "5432:5432"
+      - "5433:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${PG_USER:-wrg} -d ${PG_DB:-wrg_os}"]
       interval: 10s
       timeout: 5s
       retries: 5
-
-  # ── BROKER / CACHE ────────────────────────────────────
-  redis:
-    image: redis:7-alpine
-    container_name: wrg-redis
-    restart: unless-stopped
-    networks: [wrg-internal]
-    command: >
-      redis-server
-      --appendonly yes
-      --maxmemory 512mb
-      --maxmemory-policy allkeys-lru
-      --requirepass ${REDIS_PASSWORD}
-    volumes:
-      - redis_data:/data
-    ports:
-      - "6379:6379"
-    healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  # ── OBSERVABILITY ─────────────────────────────────────
-  langfuse:
-    image: langfuse/langfuse:latest
-    container_name: wrg-langfuse
-    restart: unless-stopped
-    networks: [wrg-internal]
-    depends_on:
-      postgres:
-        condition: service_healthy
-    environment:
-      DATABASE_URL: postgresql://${PG_USER:-wrg}:${PG_PASSWORD}@postgres:5432/langfuse
-      NEXTAUTH_SECRET: ${LANGFUSE_SECRET}
-      NEXTAUTH_URL: http://localhost:3001
-      LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES: "true"
-    ports:
-      - "3001:3000"
-
-  # ── APPS ─────────────────────────────────────────────
-  crm:
-    build:
-      context: .
-      dockerfile: legacy/crm/Dockerfile
-      args:
-        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
-    container_name: wrg-crm
-    restart: unless-stopped
-    networks: [wrg-internal]
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    environment:
-      DATABASE_URL: postgresql://${PG_USER:-wrg}:${PG_PASSWORD}@postgres:5432/${PG_DB:-wrg_os}
-      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
-      NEXTAUTH_SECRET: ${JWT_SECRET}
-      NEXTAUTH_URL: http://localhost:3000
-    ports:
-      - "3000:3000"
-
-  monitor:
-    build:
-      context: .
-      dockerfile: legacy/monitor/Dockerfile
-    container_name: wrg-monitor
-    restart: unless-stopped
-    networks: [wrg-internal]
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    environment:
-      DATABASE_URL: postgresql://${PG_USER:-wrg}:${PG_PASSWORD}@postgres:5432/${PG_DB:-wrg_os}
-      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
-    ports:
-      - "3002:3000"
-
-  api:
-    build:
-      context: .
-      dockerfile: apps/api/Dockerfile
-    container_name: wrg-api
-    restart: unless-stopped
-    networks: [wrg-internal]
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    environment:
-      DATABASE_URL: postgresql://${PG_USER:-wrg}:${PG_PASSWORD}@postgres:5432/${PG_DB:-wrg_os}
-      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
-      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
-      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY}
-      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY}
-      JWT_SECRET: ${JWT_SECRET}
-    ports:
-      - "4000:4000"
 
   # ── AI & DATA (Python FastAPI) ────────────────────────
   ai:
@@ -164,49 +63,64 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
-        condition: service_healthy
     environment:
-      DATABASE_URL: postgresql://${PG_USER:-wrg}:${PG_PASSWORD}@postgres:5432/${PG_DB:-wrg_os}
-      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
-      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
-      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY}
-      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY}
+      DATABASE_URL: postgresql://${PG_USER:-wrg}:${PG_PASSWORD:-wrg_dev_password}@postgres:5432/${PG_DB:-wrg_os}
+      # OpenRouter: kunci LIVE ditaruh di sini (services/ai pemanggil LLM).
+      # Kosong → semua endpoint AI fallback ke template (dry-run).
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       PORT: "8000"
     ports:
       - "8000:8000"
 
-  # ── GATEWAY WA ────────────────────────────────────────
-  wa-gateway:
+  # ── DOMAIN BACKEND (Hono) ─────────────────────────────
+  api:
     build:
       context: .
-      dockerfile: apps/wa-gateway/Dockerfile
-    container_name: wrg-wa-gateway
+      dockerfile: apps/api/Dockerfile
+    container_name: wrg-api
     restart: unless-stopped
     networks: [wrg-internal]
     depends_on:
-      redis:
+      postgres:
         condition: service_healthy
-    volumes:
-      - wa_sessions:/app/sessions
+      ai:
+        condition: service_started
     environment:
-      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
-      WA_TOPIC: wa.raw.message.v1
-      WA_DEVICE_COUNT: ${WA_DEVICE_COUNT:-3}
+      DATABASE_URL: postgresql://${PG_USER:-wrg}:${PG_PASSWORD:-wrg_dev_password}@postgres:5432/${PG_DB:-wrg_os}
+      AI_URL: http://ai:8000
+      PORT: "4000"
+      # Auth (default off). Service token = kepercayaan BFF→api.
+      AUTH_ENABLED: ${AUTH_ENABLED:-false}
+      JWT_SECRET: ${JWT_SECRET:-dev-insecure-secret-change-me}
+      API_SERVICE_TOKEN: ${API_SERVICE_TOKEN:-}
+      # Scheduler agen (default off).
+      AGENT_SCHEDULE_ENABLED: ${AGENT_SCHEDULE_ENABLED:-false}
+      AGENT_CRON_TZ: ${AGENT_CRON_TZ:-Asia/Jakarta}
+      AI_DRY_RUN: ${AI_DRY_RUN:-false}
+      # Secret webhook & pengiriman keluar (kosong = mode dev/stub).
+      WA_WEBHOOK_SECRET: ${WA_WEBHOOK_SECRET:-}
+      ACCURATE_WEBHOOK_SECRET: ${ACCURATE_WEBHOOK_SECRET:-}
+      WA_SEND_URL: ${WA_SEND_URL:-}
+      WA_SEND_SECRET: ${WA_SEND_SECRET:-}
     ports:
-      - "3003:3003"
+      - "4000:4000"
 
-  # ── REVERSE PROXY ─────────────────────────────────────
-  nginx:
-    image: nginx:alpine
-    container_name: wrg-nginx
+  # ── FRONTEND + BFF (Next.js) ──────────────────────────
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    container_name: wrg-web
     restart: unless-stopped
     networks: [wrg-internal]
-    volumes:
-      - ./infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-    ports:
-      - "80:80"
     depends_on:
-      - crm
-      - monitor
-      - api
+      api:
+        condition: service_started
+    environment:
+      # BFF server-side → api lewat host internal compose.
+      API_URL: http://api:4000
+      AUTH_ENABLED: ${AUTH_ENABLED:-false}
+      API_SERVICE_TOKEN: ${API_SERVICE_TOKEN:-}
+      NODE_ENV: production
+    ports:
+      - "3000:3000"
