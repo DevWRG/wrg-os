@@ -1,32 +1,30 @@
-# dependencies
+# Dependencies
 node_modules/
 .pnp
-.pnp.*
+.pnp.js
 
-# turbo
+# Build outputs
+.next/
+dist/
+build/
+out/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Turbo
 .turbo/
 
-# build outputs
-.next/
-out/
-build/
-dist/
+# Docker
+infra/postgres/data/
 
-# testing
-coverage/
-
-# misc
-.DS_Store
-*.pem
-*.tsbuildinfo
+# Next.js / TypeScript generated
 next-env.d.ts
-
-# debug logs
-*-debug.log*
-.pnpm-debug.log*
-
-# env files
-.env*
-
-# vercel
+*.tsbuildinfo
 .vercel
+
+# Misc
+.DS_Store
+*.log
