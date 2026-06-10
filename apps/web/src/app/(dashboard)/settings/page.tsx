@@ -1,4 +1,5 @@
 import { PageHeader } from "@/components/dashboard/page-header";
+import { AgentSchedulerCard } from "@/components/dashboard/agent-scheduler-card";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -73,6 +74,10 @@ export default function SettingsPage() {
             </div>
           </CardContent>
         </Card>
+
+        <div className="lg:col-span-2">
+          <AgentSchedulerCard />
+        </div>
       </div>
     </>
   );
