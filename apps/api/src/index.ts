@@ -14,7 +14,9 @@ import { insertRekap, insertResume, getDigestHistory } from "./repo/digest.js";
 import { getDashboardStats } from "./repo/stats.js";
 import { getCustomers } from "./repo/customer.js";
 import { ingestInvoices, getAging, type InvoiceInput } from "./repo/ar.js";
-import { runArWatch } from "./repo/agents.js";
+import { runArWatch, runDistillationCascade } from "./repo/agents.js";
+import { ingestWaMessages, type WaMessageInput } from "./repo/wa.js";
+import { aiBaseUrl, callAi } from "./ai.js";
 
 const app = new Hono();
 
@@ -62,9 +64,9 @@ app.post("/events", async (c) => {
   );
 });
 
-// Tier AI/data: forward ke services/ai (FastAPI). api = orkestrator domain;
-// nanti di-enrich (query DB utk rows) sebelum call ai — sekarang passthrough.
-const aiBaseUrl = (): string => process.env.AI_URL ?? "http://localhost:8000";
+// Tier AI/data: forward ke services/ai (FastAPI). api = orkestrator domain yang
+// meng-enrich data dari DB sebelum memanggil tier AI. Klien (aiBaseUrl/callAi)
+// dipindah ke ./ai.js agar dipakai bersama repo/agents (A1 distillation cascade).
 
 // Proxy generik ke services/ai untuk operasi AI/data passthrough.
 async function forwardToAi(c: Context, aiPath: string): Promise<Response> {
@@ -88,19 +90,6 @@ async function forwardToAi(c: Context, aiPath: string): Promise<Response> {
   } catch {
     return c.json({ error: "ai service unreachable" }, 502);
   }
-}
-
-// Call services/ai dan parse JSON (untuk endpoint yang perlu persist hasilnya).
-async function callAi(
-  aiPath: string,
-  body: unknown,
-): Promise<{ status: number; data: Record<string, unknown> }> {
-  const res = await fetch(`${aiBaseUrl()}${aiPath}`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  return { status: res.status, data: (await res.json()) as Record<string, unknown> };
 }
 
 // Window periode rekap dari jam+tanggal (default mundur N jam), bisa di-override.
@@ -328,6 +317,38 @@ app.get("/ar/aging", async (c) => {
 app.post("/agents/a2/run", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json(await runArWatch(), 201);
+});
+
+// ── WhatsApp raw store (D1b): feeder pesan mentah → wa_message ──
+app.post("/wa/messages", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { messages?: WaMessageInput[] };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!Array.isArray(body.messages) || body.messages.length === 0) {
+    return c.json({ error: "body.messages (array non-kosong) wajib" }, 400);
+  }
+  return c.json(await ingestWaMessages(body.messages), 201);
+});
+
+// A1 Distillation Cascade agent — baca wa_message (raw) → distilasi via
+// services/ai (/rekap) → simpan digest_rekap + log ke audit_log (D6/D1b).
+app.post("/agents/a1/run", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { group_jid?: string; window_hours?: number } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    // body opsional — default: semua grup, window 5 jam.
+  }
+  const r = await runDistillationCascade({
+    groupJid: body.group_jid,
+    windowHours: body.window_hours,
+  });
+  return c.json(r, r.distilled ? 201 : 200);
 });
 
 // ── Customers read model (diturunkan dari deal) ──
