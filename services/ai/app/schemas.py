@@ -122,3 +122,35 @@ class ResumeResponse(BaseModel):
     tokens_in: Optional[int] = None
     tokens_out: Optional[int] = None
     dry_run: bool = False
+
+
+# === A3 Sari Collection Drafter (draft pesan penagihan per invoice overdue) ===
+
+
+class CollectionItem(BaseModel):
+    customer_id: str
+    customer_name: Optional[str] = None
+    invoice_no: str
+    amount: float = 0
+    days_overdue: int = 0
+    bucket: str = ""
+
+
+class CollectionDraftRequest(BaseModel):
+    items: List[CollectionItem] = Field(default_factory=list)
+    draft_type: str = "whatsapp"  # whatsapp, email, formal_letter
+    dry_run: bool = False
+
+
+class DraftedItem(BaseModel):
+    customer_id: str
+    invoice_no: str
+    draft_text: str
+
+
+class CollectionDraftResponse(BaseModel):
+    drafts: List[DraftedItem] = Field(default_factory=list)
+    draft_type: str
+    model: str
+    count: int = 0
+    dry_run: bool = False

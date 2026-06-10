@@ -4,6 +4,11 @@ import { db } from "../db.js";
 import { callAi } from "../ai.js";
 import { getWaMessages } from "./wa.js";
 import { insertRekap } from "./digest.js";
+import {
+  getOverdueForDrafting,
+  insertCollectionDraft,
+  type OverdueItem,
+} from "./collection.js";
 
 // A2 — AR Aging Watch (Blueprint v2.3, R1/L2). Baca ar_aging_mv, prioritaskan
 // piutang berisiko, log run ke audit_log (Layer 4 Output) + update registry.
@@ -212,5 +217,95 @@ export async function runDistillationCascade(opts: {
     digest_id: digestId,
     summary,
     rekap_preview: rekapText.slice(0, 280),
+  };
+}
+
+// A3 — Sari Collection Drafter (Blueprint v2.3, R2/L2/MED). Baca invoice
+// overdue (ar_aging_mv) yang belum punya draft → minta services/ai menyusun
+// draft pesan penagihan per invoice → simpan ke collection_draft (status
+// 'draft', menunggu approval HITL — TIDAK auto-kirim) → log audit_log
+// (Layer 4, R2) + update registry.
+
+const VALID_DRAFT_TYPES = new Set(["whatsapp", "email", "formal_letter"]);
+
+export interface DraftResult {
+  agent_id: string;
+  drafted: boolean;
+  audit_id: string | null;
+  draft_type: string;
+  count: number;
+  model: string | null;
+  drafts: { customer_id: string; invoice_no: string; draft_id: string }[];
+}
+
+export async function runCollectionDrafter(opts: {
+  draftType?: string;
+  limit?: number;
+}): Promise<DraftResult> {
+  const sql = db();
+  const draftType =
+    opts.draftType && VALID_DRAFT_TYPES.has(opts.draftType) ? opts.draftType : "whatsapp";
+  const limit = opts.limit && opts.limit > 0 ? Math.min(opts.limit, 25) : 10;
+  const overdue: OverdueItem[] = await getOverdueForDrafting(limit);
+
+  if (overdue.length === 0) {
+    return {
+      agent_id: "A3",
+      drafted: false,
+      audit_id: null,
+      draft_type: draftType,
+      count: 0,
+      model: null,
+      drafts: [],
+    };
+  }
+
+  const { status, data } = await callAi("/collection-draft", {
+    items: overdue,
+    draft_type: draftType,
+    dry_run: !process.env.OPENROUTER_API_KEY,
+  });
+  if (status >= 400) {
+    throw new Error(`services/ai /collection-draft status ${status}: ${JSON.stringify(data)}`);
+  }
+  const drafted = (data.drafts as { customer_id: string; invoice_no: string; draft_text: string }[]) ?? [];
+  const model = (data.model as string | undefined) ?? null;
+
+  const saved: { customer_id: string; invoice_no: string; draft_id: string }[] = [];
+  for (const d of drafted) {
+    if (!d.draft_text) continue;
+    const draftId = await insertCollectionDraft({
+      customer_id: d.customer_id,
+      invoice_no: d.invoice_no,
+      draft_text: d.draft_text,
+      draft_type: draftType,
+    });
+    saved.push({ customer_id: d.customer_id, invoice_no: d.invoice_no, draft_id: draftId });
+  }
+
+  const inputHash = createHash("sha256").update(JSON.stringify(overdue)).digest("hex");
+  const outputHash = createHash("sha256")
+    .update(JSON.stringify(drafted.map((d) => d.draft_text)))
+    .digest("hex");
+  const payload = { draft_type: draftType, count: saved.length, draft_ids: saved.map((s) => s.draft_id) };
+
+  const [a] = await sql`
+    INSERT INTO audit_log
+      (use_case_id, correlation_id, agent_id, layer, event_type, r_tier, input_hash, output_hash, payload)
+    VALUES
+      ('D2', ${`a3-${inputHash.slice(0, 8)}`}, 'A3', 4, 'collection.draft.run', 'R2',
+       ${inputHash}, ${outputHash}, ${sql.json(payload as unknown as Parameters<typeof sql.json>[0])})
+    RETURNING id
+  `;
+  await sql`UPDATE agent_registry SET last_health_check = now() WHERE agent_id = 'A3'`;
+
+  return {
+    agent_id: "A3",
+    drafted: true,
+    audit_id: a.id as string,
+    draft_type: draftType,
+    count: saved.length,
+    model,
+    drafts: saved,
   };
 }

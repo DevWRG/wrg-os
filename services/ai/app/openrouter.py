@@ -31,6 +31,13 @@ def resume_models() -> List[str]:
     return [primary, fallback]
 
 
+def collection_models() -> List[str]:
+    """Model OpenRouter untuk A3 collection drafter (env-configurable, default sama)."""
+    primary = os.environ.get("COLLECTION_MODEL_PRIMARY", "anthropic/claude-haiku-4.5")
+    fallback = os.environ.get("COLLECTION_MODEL_FALLBACK", "deepseek/deepseek-r1")
+    return [primary, fallback]
+
+
 def chat(
     system: str,
     user: str,

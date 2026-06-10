@@ -26,6 +26,7 @@ interface ScheduleStatus {
 const AGENT_LABEL: Record<string, string> = {
   A1: "Distillation Cascade",
   A2: "AR Aging Watch",
+  A3: "Sari Collection Drafter",
 };
 
 // Ringkas hasil run-now per agen jadi satu baris status.
@@ -39,6 +40,11 @@ function summarize(agentId: string, data: Record<string, unknown>): string {
   if (agentId === "A2") {
     const s = (data.summary ?? {}) as Record<string, unknown>;
     return `overdue ${s.overdue_invoices ?? 0} · critical ${s.critical_count ?? 0}`;
+  }
+  if (agentId === "A3") {
+    return data.drafted
+      ? `${data.count ?? 0} draft penagihan (${data.draft_type ?? "whatsapp"}) → review`
+      : "tidak ada invoice overdue baru — no-op";
   }
   return "selesai";
 }

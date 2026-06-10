@@ -1,7 +1,7 @@
 import cron from "node-cron";
 
 import { isDbEnabled } from "./db.js";
-import { runArWatch, runDistillationCascade } from "./repo/agents.js";
+import { runArWatch, runCollectionDrafter, runDistillationCascade } from "./repo/agents.js";
 
 // Penjadwal agen in-process (Blueprint v2.3). Default MATI — aktif hanya bila
 // AGENT_SCHEDULE_ENABLED=true. Tiap run tetap menulis ke audit_log via repo
@@ -43,6 +43,12 @@ export function startScheduler(): ScheduleStatus {
       id: "A2",
       expr: process.env.A2_CRON ?? "0 8 * * *",
       run: () => runArWatch(),
+    },
+    {
+      // A3 setelah A2 (08:30) — AR aging fresh dulu baru draft penagihan.
+      id: "A3",
+      expr: process.env.A3_CRON ?? "30 8 * * *",
+      run: () => runCollectionDrafter({}),
     },
   ];
 

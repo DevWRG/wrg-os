@@ -2,14 +2,18 @@ import os
 
 from fastapi import FastAPI
 
+from .collection import build_collection_system, build_collection_user, template_draft
 from .compress import wrg_compress
-from .openrouter import chat, rekap_models, resume_models
+from .openrouter import chat, collection_models, rekap_models, resume_models
 from .rekap import build_messages_block, build_rekap_system
 from .resume import build_gabungan, build_resume_system
 from .schemas import (
+    CollectionDraftRequest,
+    CollectionDraftResponse,
     DailySummaryRequest,
     DailySummaryResponse,
     DigestResponse,
+    DraftedItem,
     RekapRequest,
     RekapResponse,
     ResumeRequest,
@@ -182,4 +186,41 @@ def resume(req: ResumeRequest) -> ResumeResponse:
         tokens_in=tin,
         tokens_out=tout,
         dry_run=False,
+    )
+
+
+@app.post("/collection-draft", response_model=CollectionDraftResponse)
+def collection_draft(req: CollectionDraftRequest) -> CollectionDraftResponse:
+    """A3 Sari Collection Drafter: satu draft pesan penagihan per invoice overdue.
+
+    dry_run / tanpa OPENROUTER_API_KEY → template deterministik (siap-pakai).
+    Dengan LLM → satu panggilan per item (gaya 'Sari', sesuai draft_type).
+    """
+    use_llm = not req.dry_run and bool(os.environ.get("OPENROUTER_API_KEY"))
+    system = build_collection_system(req.draft_type)
+    drafts = []
+    model_used = "dry-run"
+    for item in req.items:
+        if use_llm:
+            text, model_used, _, _ = chat(
+                system,
+                build_collection_user(item),
+                max_tokens=600,
+                models=collection_models(),
+            )
+        else:
+            text = template_draft(item, req.draft_type)
+        drafts.append(
+            DraftedItem(
+                customer_id=item.customer_id,
+                invoice_no=item.invoice_no,
+                draft_text=text,
+            )
+        )
+    return CollectionDraftResponse(
+        drafts=drafts,
+        draft_type=req.draft_type,
+        model=model_used,
+        count=len(drafts),
+        dry_run=not use_llm,
     )
