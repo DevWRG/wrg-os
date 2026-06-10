@@ -34,6 +34,7 @@ const AGENT_LABEL: Record<string, string> = {
   A8: "Sentiment & Entity Extraction",
   A9: "Spider Network Analyst",
   A10: "Executive Synthesis",
+  A11: "Coaching Outcome Synthesis",
 };
 
 // Ringkas hasil run-now per agen jadi satu baris status.
@@ -81,6 +82,11 @@ function summarize(agentId: string, data: Record<string, unknown>): string {
   }
   if (agentId === "A10") {
     return `briefing ${data.week_start ?? ""} tersusun → review`;
+  }
+  if (agentId === "A11") {
+    return data.synthesized
+      ? `${data.count ?? 0} catatan coaching (${data.period ?? ""}) → review`
+      : "semua AM sudah punya coaching periode ini — no-op";
   }
   return "selesai";
 }

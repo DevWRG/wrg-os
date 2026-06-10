@@ -25,6 +25,7 @@ import {
   runSentimentExtraction,
   runSpiderNetwork,
   runExecutiveSynthesis,
+  runCoachingSynthesis,
 } from "./repo/agents.js";
 import { listCollectionDrafts } from "./repo/collection.js";
 import { listSalesDocs } from "./repo/salesdoc.js";
@@ -32,6 +33,7 @@ import { getProductIntelligence } from "./repo/product.js";
 import { listAnnotations } from "./repo/sentiment.js";
 import { getNetworkInput, computeNetwork } from "./repo/network.js";
 import { listBriefings } from "./repo/executive.js";
+import { listCoachingNotes } from "./repo/coaching.js";
 import { ingestWaMessages, type WaMessageInput } from "./repo/wa.js";
 import { aiBaseUrl, callAi } from "./ai.js";
 import { startScheduler, getScheduleStatus } from "./scheduler.js";
@@ -463,6 +465,26 @@ app.get("/briefings", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const briefings = await listBriefings();
   return c.json({ count: briefings.length, briefings });
+});
+
+// A11 Coaching Outcome Synthesis — coaching per AM (D1). Body opsional: { period }.
+app.post("/agents/a11/run", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { period?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    // body opsional
+  }
+  const r = await runCoachingSynthesis({ period: body.period });
+  return c.json(r, r.synthesized ? 201 : 200);
+});
+
+// Read model catatan coaching (filter am_id).
+app.get("/coaching/notes", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const notes = await listCoachingNotes(c.req.query("am_id") || undefined);
+  return c.json({ count: notes.length, notes });
 });
 
 // Read model draft penagihan (status: draft|approved|sent).

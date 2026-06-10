@@ -41,6 +41,11 @@ import {
 } from "./sentiment.js";
 import { getNetworkInput, computeNetwork, type NetworkGraph } from "./network.js";
 import { gatherExecutiveSignals, insertBriefing } from "./executive.js";
+import {
+  getAmsNeedingCoaching,
+  insertCoachingNote,
+  type AmMetrics,
+} from "./coaching.js";
 
 // A2 — AR Aging Watch (Blueprint v2.3, R1/L2). Baca ar_aging_mv, prioritaskan
 // piutang berisiko, log run ke audit_log (Layer 4 Output) + update registry.
@@ -950,5 +955,110 @@ export async function runExecutiveSynthesis(opts: { periodLabel?: string }): Pro
     week_start,
     model,
     preview: briefingText.slice(0, 320),
+  };
+}
+
+// A11 — Coaching Outcome Synthesis (Blueprint v2.3, R1/L2/MED). Sintesis
+// outcome coaching per Account Manager dari metrik kinerja (deal, win-rate,
+// aktivitas) → strengths/gaps/recommendations + skor → simpan ke coaching_note
+// (idempoten per AM+periode). Deterministik; log audit_log (Layer 4, R1, D1) +
+// registry. Tanpa LLM/HITL. Berorientasi pengembangan tim.
+
+const COACH_WIN_GOOD = Number(process.env.A11_WIN_GOOD ?? 0.5);
+const COACH_WIN_LOW = Number(process.env.A11_WIN_LOW ?? 0.3);
+const COACH_ACTIVITY_LOW = Number(process.env.A11_ACTIVITY_LOW ?? 1);
+
+function synthesizeCoaching(m: AmMetrics): {
+  strengths: string[];
+  gaps: string[];
+  recommendations: string[];
+  score: number;
+} {
+  const strengths: string[] = [];
+  const gaps: string[] = [];
+  const recommendations: string[] = [];
+  const wr = m.win_rate;
+
+  if (wr !== null && wr >= COACH_WIN_GOOD) strengths.push(`Win-rate kuat (${Math.round(wr * 100)}%)`);
+  if (m.activity > 5) strengths.push(`Aktivitas pelaporan aktif (${m.activity} update)`);
+  if (m.total_value > 0) strengths.push(`Mengelola pipeline senilai Rp${Math.round(m.total_value).toLocaleString("id-ID")}`);
+
+  if (wr !== null && wr < COACH_WIN_LOW) {
+    gaps.push(`Win-rate rendah (${Math.round(wr * 100)}%)`);
+    recommendations.push("Tinjau kualifikasi prospek & strategi closing bersama mentor.");
+  }
+  if (m.activity <= COACH_ACTIVITY_LOW) {
+    gaps.push("Aktivitas pelaporan minim");
+    recommendations.push("Tingkatkan disiplin #REPORT harian untuk visibilitas pipeline.");
+  }
+  if (m.open >= 5 && m.activity <= m.open) {
+    gaps.push(`Pipeline pasif (${m.open} deal terbuka, sedikit update)`);
+    recommendations.push("Jadwalkan follow-up rutin untuk deal terbuka yang menua.");
+  }
+  if (wr === null && m.deals > 0) {
+    gaps.push("Belum ada deal yang ditutup (menang/kalah)");
+    recommendations.push("Fokuskan effort untuk membawa minimal satu deal ke keputusan.");
+  }
+  if (gaps.length === 0) recommendations.push("Pertahankan ritme; ambil deal bernilai lebih besar.");
+
+  // Skor komposit 0-100: win-rate (40) + aktivitas (30) + volume deal (30).
+  const score =
+    Math.round(
+      ((wr ?? 0) * 40 + Math.min(m.activity / 10, 1) * 30 + Math.min(m.deals / 10, 1) * 30) * 100,
+    ) / 100;
+
+  return { strengths, gaps, recommendations, score };
+}
+
+export async function runCoachingSynthesis(opts: { period?: string }): Promise<{
+  agent_id: string;
+  audit_id: string;
+  period: string;
+  synthesized: boolean;
+  count: number;
+  notes: { am_id: string; note_id: string; score: number }[];
+}> {
+  const sql = db();
+  const now = new Date();
+  const period =
+    opts.period ?? `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
+  const ams = await getAmsNeedingCoaching(period);
+
+  const notes: { am_id: string; note_id: string; score: number }[] = [];
+  for (const m of ams) {
+    const syn = synthesizeCoaching(m);
+    const noteId = await insertCoachingNote({
+      am_id: m.am_id,
+      period,
+      metrics: m,
+      strengths: syn.strengths,
+      gaps: syn.gaps,
+      recommendations: syn.recommendations,
+      score: syn.score,
+    });
+    notes.push({ am_id: m.am_id, note_id: noteId, score: syn.score });
+  }
+
+  const inputHash = createHash("sha256").update(JSON.stringify(ams)).digest("hex");
+  const outputHash = createHash("sha256").update(JSON.stringify(notes)).digest("hex");
+  const payload = { period, count: notes.length, notes };
+
+  const [a] = await sql`
+    INSERT INTO audit_log
+      (use_case_id, correlation_id, agent_id, layer, event_type, r_tier, input_hash, output_hash, payload)
+    VALUES
+      ('D1', ${`a11-${inputHash.slice(0, 8)}`}, 'A11', 4, 'coaching.synthesis.run', 'R1',
+       ${inputHash}, ${outputHash}, ${sql.json(payload as unknown as Parameters<typeof sql.json>[0])})
+    RETURNING id
+  `;
+  await sql`UPDATE agent_registry SET last_health_check = now() WHERE agent_id = 'A11'`;
+
+  return {
+    agent_id: "A11",
+    audit_id: a.id as string,
+    period,
+    synthesized: notes.length > 0,
+    count: notes.length,
+    notes,
   };
 }
