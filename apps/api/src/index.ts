@@ -34,7 +34,12 @@ import {
   runCoachingSynthesis,
   runPeopleAnalytics,
 } from "./repo/agents.js";
-import { listCollectionDrafts } from "./repo/collection.js";
+import {
+  listCollectionDrafts,
+  approveCollectionDraft,
+  sendCollectionDraft,
+  cancelCollectionDraft,
+} from "./repo/collection.js";
 import { listSalesDocs } from "./repo/salesdoc.js";
 import { getProductIntelligence } from "./repo/product.js";
 import { listAnnotations } from "./repo/sentiment.js";
@@ -545,12 +550,50 @@ app.get("/people/analytics", async (c) => {
   return c.json(computePeopleAnalytics(await getLatestCoachingNotes()));
 });
 
-// Read model draft penagihan (status: draft|approved|sent).
+// Read model draft penagihan (status: draft|approved|sent|canceled).
 app.get("/ar/collection-drafts", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const status = c.req.query("status") || undefined;
   const drafts = await listCollectionDrafts(status);
   return c.json({ count: drafts.length, drafts });
+});
+
+// Siklus kirim A3 (aksi manusia, Layer 5): approve → send → (atau cancel).
+app.post("/ar/collection-drafts/:id/approve", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { approver_id?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    /* body opsional */
+  }
+  const r = await approveCollectionDraft(c.req.param("id"), body.approver_id);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.post("/ar/collection-drafts/:id/send", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { to?: string; approver_id?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.to) return c.json({ error: "body.to (tujuan WA) wajib" }, 400);
+  const r = await sendCollectionDraft(c.req.param("id"), body.to, body.approver_id);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.post("/ar/collection-drafts/:id/cancel", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { approver_id?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    /* body opsional */
+  }
+  const r = await cancelCollectionDraft(c.req.param("id"), body.approver_id);
+  return c.json(r, r.ok ? 200 : 400);
 });
 
 // Status penjadwal agen (cron in-process) — observabilitas konfigurasi.
