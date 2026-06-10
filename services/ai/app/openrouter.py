@@ -56,6 +56,13 @@ def extract_models() -> List[str]:
     return [primary, fallback]
 
 
+def exec_models() -> List[str]:
+    """Model OpenRouter untuk A10 executive synthesis (token tier HIGH → Sonnet)."""
+    primary = os.environ.get("EXEC_MODEL_PRIMARY", "anthropic/claude-sonnet-4.6")
+    fallback = os.environ.get("EXEC_MODEL_FALLBACK", "anthropic/claude-haiku-4.5")
+    return [primary, fallback]
+
+
 def chat(
     system: str,
     user: str,

@@ -24,12 +24,14 @@ import {
   runProductIntelligence,
   runSentimentExtraction,
   runSpiderNetwork,
+  runExecutiveSynthesis,
 } from "./repo/agents.js";
 import { listCollectionDrafts } from "./repo/collection.js";
 import { listSalesDocs } from "./repo/salesdoc.js";
 import { getProductIntelligence } from "./repo/product.js";
 import { listAnnotations } from "./repo/sentiment.js";
 import { getNetworkInput, computeNetwork } from "./repo/network.js";
+import { listBriefings } from "./repo/executive.js";
 import { ingestWaMessages, type WaMessageInput } from "./repo/wa.js";
 import { aiBaseUrl, callAi } from "./ai.js";
 import { startScheduler, getScheduleStatus } from "./scheduler.js";
@@ -442,6 +444,25 @@ app.get("/network/graph", async (c) => {
   const days = Number(c.req.query("window_days")) || 30;
   const graph = computeNetwork(await getNetworkInput(days));
   return c.json(graph);
+});
+
+// A10 Executive Synthesis — briefing eksekutif lintas-domain (D6).
+app.post("/agents/a10/run", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { period_label?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    // body opsional
+  }
+  return c.json(await runExecutiveSynthesis({ periodLabel: body.period_label }), 201);
+});
+
+// Read model briefing eksekutif.
+app.get("/briefings", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const briefings = await listBriefings();
+  return c.json({ count: briefings.length, briefings });
 });
 
 // Read model draft penagihan (status: draft|approved|sent).

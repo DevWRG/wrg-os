@@ -209,3 +209,18 @@ class ExtractResponse(BaseModel):
     model: str
     count: int = 0
     dry_run: bool = False
+
+
+# === A10 Executive Synthesis (briefing eksekutif lintas-domain) ===
+
+
+class ExecSynthesisRequest(BaseModel):
+    signals: dict = Field(default_factory=dict)
+    period_label: str = "harian"
+    dry_run: bool = False
+
+
+class ExecSynthesisResponse(BaseModel):
+    briefing: str
+    model: str
+    dry_run: bool = False

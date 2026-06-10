@@ -11,6 +11,7 @@ import {
   runProductIntelligence,
   runSentimentExtraction,
   runSpiderNetwork,
+  runExecutiveSynthesis,
 } from "./repo/agents.js";
 
 // Penjadwal agen in-process (Blueprint v2.3). Default MATI — aktif hanya bila
@@ -95,6 +96,12 @@ export function startScheduler(): ScheduleStatus {
       id: "A9",
       expr: process.env.A9_CRON ?? "0 11 * * *",
       run: () => runSpiderNetwork({}),
+    },
+    {
+      // A10 briefing eksekutif (07:30 — capstone, merangkum semalam + pagi).
+      id: "A10",
+      expr: process.env.A10_CRON ?? "30 7 * * *",
+      run: () => runExecutiveSynthesis({}),
     },
   ];
 

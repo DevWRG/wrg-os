@@ -4,10 +4,12 @@ from fastapi import FastAPI
 
 from .collection import build_collection_system, build_collection_user, template_draft
 from .compress import wrg_compress
+from .executive import build_exec_system, build_exec_user, template_briefing
 from .extract import build_extract_system, parse_llm, rule_based
 from .openrouter import (
     chat,
     collection_models,
+    exec_models,
     extract_models,
     rekap_models,
     resume_models,
@@ -23,6 +25,8 @@ from .schemas import (
     DailySummaryResponse,
     DigestResponse,
     DraftedItem,
+    ExecSynthesisRequest,
+    ExecSynthesisResponse,
     ExtractRequest,
     ExtractResponse,
     RekapRequest,
@@ -296,3 +300,22 @@ def extract(req: ExtractRequest) -> ExtractResponse:
         count=len(annotations),
         dry_run=not use_llm,
     )
+
+
+@app.post("/executive-synthesis", response_model=ExecSynthesisResponse)
+def executive_synthesis(req: ExecSynthesisRequest) -> ExecSynthesisResponse:
+    """A10 Executive Synthesis: briefing eksekutif lintas-domain dari sinyal.
+
+    dry_run / tanpa OPENROUTER_API_KEY → template deterministik dari sinyal.
+    """
+    use_llm = not req.dry_run and bool(os.environ.get("OPENROUTER_API_KEY"))
+    if use_llm:
+        text, model_used, _, _ = chat(
+            build_exec_system(req.period_label),
+            build_exec_user(req.signals),
+            max_tokens=2500,
+            models=exec_models(),
+        )
+    else:
+        text, model_used = template_briefing(req.signals, req.period_label), "dry-run"
+    return ExecSynthesisResponse(briefing=text, model=model_used, dry_run=not use_llm)
