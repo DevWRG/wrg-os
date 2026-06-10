@@ -56,6 +56,14 @@ import { createVisit, listVisits, visitSummary } from "./repo/visit.js";
 import { upsertDailyTodo, listTodos, markTodoReported } from "./repo/todo.js";
 import { upsertUser, listUsers, upsertTerritory, listTerritories } from "./repo/master.js";
 import {
+  upsertHoliday,
+  listHolidays,
+  createLeave,
+  listLeave,
+  isOnLeave,
+  detectLeave,
+} from "./repo/leave.js";
+import {
   createReminder,
   listReminders,
   runReminders,
@@ -800,6 +808,80 @@ app.get("/master/territories", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const territories = await listTerritories();
   return c.json({ count: territories.length, territories });
+});
+
+// ── Leave/cuti + holiday (port legacy user_leave + master_holiday) ──
+app.post("/holidays", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { tanggal?: string; keterangan?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.tanggal || !body.keterangan) return c.json({ error: "tanggal + keterangan wajib" }, 400);
+  return c.json(await upsertHoliday(body.tanggal, body.keterangan), 201);
+});
+
+app.get("/holidays", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const holidays = await listHolidays();
+  return c.json({ count: holidays.length, holidays });
+});
+
+app.post("/leave", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { am_id?: string; start_date?: string; end_date?: string; jenis?: string; keterangan?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.am_id || !body.start_date || !body.end_date || !body.jenis) {
+    return c.json({ error: "am_id, start_date, end_date, jenis(sakit|cuti|ijin) wajib" }, 400);
+  }
+  if (!["sakit", "cuti", "ijin"].includes(body.jenis)) {
+    return c.json({ error: "jenis harus sakit|cuti|ijin" }, 400);
+  }
+  return c.json(
+    await createLeave({
+      am_id: body.am_id,
+      start_date: body.start_date,
+      end_date: body.end_date,
+      jenis: body.jenis as "sakit" | "cuti" | "ijin",
+      keterangan: body.keterangan,
+    }),
+    201,
+  );
+});
+
+app.get("/leave", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const leave = await listLeave(c.req.query("am_id") || undefined);
+  return c.json({ count: leave.length, leave });
+});
+
+// Cek apakah AM sedang cuti/libur pada tanggal tertentu (untuk exempt reminder).
+app.get("/leave/check", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const amId = c.req.query("am_id");
+  const date = c.req.query("date");
+  if (!amId || !date) return c.json({ error: "am_id + date wajib" }, 400);
+  return c.json(await isOnLeave(amId, date));
+});
+
+// Auto-deteksi cuti dari teks bebas (keyword + tanggal).
+app.post("/leave/detect", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { am_id?: string; text?: string; date?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.am_id || !body.text) return c.json({ error: "am_id + text wajib" }, 400);
+  const r = await detectLeave(body.am_id, body.text, body.date);
+  return c.json(r, r.detected ? 201 : 200);
 });
 
 // Read model draft penagihan (status: draft|approved|sent|canceled).
