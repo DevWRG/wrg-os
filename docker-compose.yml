@@ -1,0 +1,187 @@
+# WRG-OS Docker Compose — Crawl Phase (Mac Mini)
+# Stack: PostgreSQL 16 + pgvector · Redis 7 · Langfuse · Nginx
+# Apps: CRM · Monitor · API (build dari monorepo)
+#
+# ⚠️  STATUS: SPEC TOPOLOGI — BELUM RUNNABLE (per 2026-06-10).
+#     `docker compose up` akan gagal sampai item di bawah dibuat:
+#       [ ] apps/api/Dockerfile        (Hono/Node — sudah ada source)
+#       [ ] apps/crm/Dockerfile        (crm = Python + shell, BUKAN Next →
+#           service di bawah pakai asumsi NEXTAUTH/port 3000 yg perlu disesuaikan)
+#       [ ] apps/monitor/Dockerfile    (monitor = Python + shell, sama)
+#       [ ] apps/wa-gateway/ + Dockerfile  (dir app-nya belum ada)
+#       [ ] infra/postgres/init/       (init .sql; mis. CREATE DATABASE langfuse,
+#           CREATE EXTENSION vector — langfuse di bawah pakai DB "langfuse")
+#       [ ] infra/nginx/nginx.conf
+#     Catatan: apps/os (Next nyata) belum masuk compose; port 3000 dipakai crm.
+#     langfuse:latest (v3) mungkin butuh ClickHouse/worker tambahan.
+#     Lihat PR untuk daftar lengkap.
+
+networks:
+  wrg-internal:
+    driver: bridge
+
+volumes:
+  pg_data:
+  redis_data:
+  wa_sessions:
+  langfuse_data:
+
+services:
+
+  # ── DATABASE ──────────────────────────────────────────
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: wrg-postgres
+    restart: unless-stopped
+    networks: [wrg-internal]
+    environment:
+      POSTGRES_DB: ${PG_DB:-wrg_os}
+      POSTGRES_USER: ${PG_USER:-wrg}
+      POSTGRES_PASSWORD: ${PG_PASSWORD}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PG_USER:-wrg} -d ${PG_DB:-wrg_os}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── BROKER / CACHE ────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: wrg-redis
+    restart: unless-stopped
+    networks: [wrg-internal]
+    command: >
+      redis-server
+      --appendonly yes
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
+      --requirepass ${REDIS_PASSWORD}
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── OBSERVABILITY ─────────────────────────────────────
+  langfuse:
+    image: langfuse/langfuse:latest
+    container_name: wrg-langfuse
+    restart: unless-stopped
+    networks: [wrg-internal]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${PG_USER:-wrg}:${PG_PASSWORD}@postgres:5432/langfuse
+      NEXTAUTH_SECRET: ${LANGFUSE_SECRET}
+      NEXTAUTH_URL: http://localhost:3001
+      LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES: "true"
+    ports:
+      - "3001:3000"
+
+  # ── APPS ─────────────────────────────────────────────
+  crm:
+    build:
+      context: .
+      dockerfile: apps/crm/Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
+    container_name: wrg-crm
+    restart: unless-stopped
+    networks: [wrg-internal]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${PG_USER:-wrg}:${PG_PASSWORD}@postgres:5432/${PG_DB:-wrg_os}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      NEXTAUTH_SECRET: ${JWT_SECRET}
+      NEXTAUTH_URL: http://localhost:3000
+    ports:
+      - "3000:3000"
+
+  monitor:
+    build:
+      context: .
+      dockerfile: apps/monitor/Dockerfile
+    container_name: wrg-monitor
+    restart: unless-stopped
+    networks: [wrg-internal]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${PG_USER:-wrg}:${PG_PASSWORD}@postgres:5432/${PG_DB:-wrg_os}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+    ports:
+      - "3002:3000"
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    container_name: wrg-api
+    restart: unless-stopped
+    networks: [wrg-internal]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${PG_USER:-wrg}:${PG_PASSWORD}@postgres:5432/${PG_DB:-wrg_os}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY}
+      JWT_SECRET: ${JWT_SECRET}
+    ports:
+      - "4000:4000"
+
+  # ── GATEWAY WA ────────────────────────────────────────
+  wa-gateway:
+    build:
+      context: .
+      dockerfile: apps/wa-gateway/Dockerfile
+    container_name: wrg-wa-gateway
+    restart: unless-stopped
+    networks: [wrg-internal]
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - wa_sessions:/app/sessions
+    environment:
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      WA_TOPIC: wa.raw.message.v1
+      WA_DEVICE_COUNT: ${WA_DEVICE_COUNT:-3}
+    ports:
+      - "3003:3003"
+
+  # ── REVERSE PROXY ─────────────────────────────────────
+  nginx:
+    image: nginx:alpine
+    container_name: wrg-nginx
+    restart: unless-stopped
+    networks: [wrg-internal]
+    volumes:
+      - ./infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "80:80"
+    depends_on:
+      - crm
+      - monitor
+      - api
