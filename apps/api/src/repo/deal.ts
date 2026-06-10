@@ -34,6 +34,54 @@ function custId(name: string): string {
   );
 }
 
+export interface PipelineDeal {
+  deal_id: string;
+  customer_name: string;
+  am_id: string;
+  estimated_value: number | null;
+  updated_at: string;
+}
+
+export interface PipelineStage {
+  stage: string;
+  count: number;
+  total_value: number;
+  deals: PipelineDeal[];
+}
+
+export async function getPipeline(
+  amId?: string,
+): Promise<{ stages: PipelineStage[]; total_deals: number; total_value: number }> {
+  const sql = db();
+  const rows = amId
+    ? await sql`SELECT deal_id, customer_name, am_id, stage, estimated_value, updated_at FROM deal WHERE am_id = ${amId} ORDER BY updated_at DESC`
+    : await sql`SELECT deal_id, customer_name, am_id, stage, estimated_value, updated_at FROM deal ORDER BY updated_at DESC`;
+
+  const byStage = new Map<string, PipelineDeal[]>();
+  for (const s of DEAL_STAGES) byStage.set(s, []);
+  let totalValue = 0;
+  for (const r of rows) {
+    const val = r.estimated_value != null ? Number(r.estimated_value) : null;
+    const d: PipelineDeal = {
+      deal_id: String(r.deal_id),
+      customer_name: String(r.customer_name),
+      am_id: String(r.am_id),
+      estimated_value: val,
+      updated_at: String(r.updated_at),
+    };
+    if (!byStage.has(String(r.stage))) byStage.set(String(r.stage), []);
+    byStage.get(String(r.stage))!.push(d);
+    totalValue += val ?? 0;
+  }
+  const stages: PipelineStage[] = [...byStage.entries()].map(([stage, deals]) => ({
+    stage,
+    count: deals.length,
+    total_value: deals.reduce((a, d) => a + (d.estimated_value ?? 0), 0),
+    deals,
+  }));
+  return { stages, total_deals: rows.length, total_value: totalValue };
+}
+
 export interface PlanDealResult {
   customer: string;
   deal_id: string;

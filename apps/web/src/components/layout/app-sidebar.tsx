@@ -10,6 +10,7 @@ import {
   ShoppingCart,
   Truck,
   Factory,
+  Workflow,
   BarChart3,
   Settings,
   HeartPulse,
@@ -31,6 +32,7 @@ import {
 
 const navMain = [
   { title: "Dashboard", url: "/dashboard", icon: LayoutDashboard },
+  { title: "Pipeline", url: "/pipeline", icon: Workflow },
   { title: "Customers", url: "/customers", icon: Building2 },
   { title: "Products", url: "/products", icon: Package },
   { title: "Inventory", url: "/inventory", icon: Boxes },

@@ -8,7 +8,7 @@ import { parseReport } from "./parsers/report.js";
 import { matchCustomer, type PlanCandidate } from "./parsers/fuzzy.js";
 import { isDbEnabled, pingDb } from "./db.js";
 import { insertAuditEvent } from "./repo/audit.js";
-import { upsertDealsFromPlan, logReportToDeals } from "./repo/deal.js";
+import { upsertDealsFromPlan, logReportToDeals, getPipeline } from "./repo/deal.js";
 import { enqueueAmbiguous, listHitl, resolveHitl } from "./repo/hitl.js";
 import { insertRekap, insertResume } from "./repo/digest.js";
 
@@ -284,6 +284,13 @@ app.post("/report", async (c) => {
   } catch (e) {
     return c.json({ error: "gagal persist report", detail: String(e) }, 500);
   }
+});
+
+// ── Pipeline read model (dashboard): deal per-stage ──
+app.get("/pipeline", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const amId = c.req.query("am_id") || undefined;
+  return c.json(await getPipeline(amId));
 });
 
 // ── HITL gate (D6): antrian konfirmasi untuk match ambiguous ──
