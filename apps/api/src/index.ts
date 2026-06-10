@@ -54,6 +54,7 @@ import { listCoachingNotes } from "./repo/coaching.js";
 import { getLatestCoachingNotes, computePeopleAnalytics } from "./repo/people.js";
 import { createVisit, listVisits, visitSummary } from "./repo/visit.js";
 import { upsertDailyTodo, listTodos, markTodoReported } from "./repo/todo.js";
+import { upsertUser, listUsers, upsertTerritory, listTerritories } from "./repo/master.js";
 import {
   createReminder,
   listReminders,
@@ -752,6 +753,53 @@ app.post("/todos/report", async (c) => {
   if (!body.am_id || !body.tanggal) return c.json({ error: "am_id + tanggal wajib" }, 400);
   const r = await markTodoReported(body.am_id, body.tanggal);
   return c.json(r, r.ok ? 200 : 404);
+});
+
+// ── Master data CRM: user/AM roster + territory (port legacy master_*) ──
+app.post("/master/users", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: {
+    am_id?: string; nama?: string; panggilan?: string; wa_number?: string;
+    role?: string; posisi?: string; cabang?: string; area?: string;
+    aktif?: boolean; wajib_plan_report?: boolean;
+  };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.am_id || !body.nama) return c.json({ error: "am_id + nama wajib" }, 400);
+  return c.json(await upsertUser({ am_id: body.am_id, nama: body.nama, panggilan: body.panggilan, wa_number: body.wa_number, role: body.role, posisi: body.posisi, cabang: body.cabang, area: body.area, aktif: body.aktif, wajib_plan_report: body.wajib_plan_report }), 201);
+});
+
+app.get("/master/users", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const aktifQ = c.req.query("aktif");
+  const users = await listUsers({
+    role: c.req.query("role") || undefined,
+    aktif: aktifQ === undefined ? undefined : aktifQ === "true",
+  });
+  return c.json({ count: users.length, users });
+});
+
+app.post("/master/territories", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { am_panggilan?: string; hod_panggilan?: string; cabang?: string; kota?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.am_panggilan || !body.hod_panggilan || !body.cabang || !body.kota) {
+    return c.json({ error: "am_panggilan, hod_panggilan, cabang, kota wajib" }, 400);
+  }
+  return c.json(await upsertTerritory({ am_panggilan: body.am_panggilan, hod_panggilan: body.hod_panggilan, cabang: body.cabang, kota: body.kota }), 201);
+});
+
+app.get("/master/territories", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const territories = await listTerritories();
+  return c.json({ count: territories.length, territories });
 });
 
 // Read model draft penagihan (status: draft|approved|sent|canceled).
