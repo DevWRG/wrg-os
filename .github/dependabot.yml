@@ -1,0 +1,31 @@
+version: 2
+updates:
+  # JS/TS monorepo (npm ecosystem mendukung pnpm-lock.yaml).
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      all-deps:
+        patterns: ["*"]
+
+  # GitHub Actions yang dipakai di workflow.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+
+  # Base image Dockerfile (lokasinya per-service, bukan root).
+  - package-ecosystem: "docker"
+    directories:
+      - "/apps/web"
+      - "/apps/api"
+      - "/services/ai"
+    schedule:
+      interval: "weekly"
+
+  # Python deps services/ai.
+  - package-ecosystem: "pip"
+    directory: "/services/ai"
+    schedule:
+      interval: "weekly"
