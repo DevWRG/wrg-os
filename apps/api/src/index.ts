@@ -13,7 +13,13 @@ import { enqueueAmbiguous, listHitl, resolveHitl } from "./repo/hitl.js";
 import { insertRekap, insertResume, getDigestHistory } from "./repo/digest.js";
 import { getDashboardStats } from "./repo/stats.js";
 import { getCustomers } from "./repo/customer.js";
-import { ingestInvoices, getAging, type InvoiceInput } from "./repo/ar.js";
+import {
+  ingestInvoices,
+  ingestAccurateWebhook,
+  getAging,
+  type InvoiceInput,
+  type AccurateInvoice,
+} from "./repo/ar.js";
 import {
   runArWatch,
   runDistillationCascade,
@@ -338,6 +344,39 @@ app.post("/ar/invoices", async (c) => {
 app.get("/ar/aging", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json(await getAging(c.req.query("bucket") || undefined));
+});
+
+// Webhook Accurate → ar_aging_mv. Menerima invoice Accurate (single | array |
+// {d} | {data} | {invoices}). Upsert idempoten by customer_id+invoice_no.
+// Jika ACCURATE_WEBHOOK_SECRET di-set, header x-accurate-secret wajib cocok.
+app.post("/webhooks/accurate", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const secret = process.env.ACCURATE_WEBHOOK_SECRET;
+  if (secret && c.req.header("x-accurate-secret") !== secret) {
+    return c.json({ error: "unauthorized" }, 401);
+  }
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  // Normalisasi ke array objek invoice Accurate.
+  let records: AccurateInvoice[];
+  if (Array.isArray(body)) records = body as AccurateInvoice[];
+  else if (body && typeof body === "object") {
+    const b = body as { d?: unknown; data?: unknown; invoices?: unknown };
+    if (Array.isArray(b.invoices)) records = b.invoices as AccurateInvoice[];
+    else if (Array.isArray(b.data)) records = b.data as AccurateInvoice[];
+    else if (b.data && typeof b.data === "object") records = [b.data as AccurateInvoice];
+    else if (b.d && typeof b.d === "object") records = [b.d as AccurateInvoice];
+    else records = [body as AccurateInvoice]; // single invoice object
+  } else {
+    return c.json({ error: "payload tidak dikenali" }, 400);
+  }
+  if (records.length === 0) return c.json({ ingested: 0, skipped: 0 });
+  const asof = c.req.query("asof") || undefined;
+  return c.json(await ingestAccurateWebhook(records, asof), 201);
 });
 
 // A2 AR Aging Watch agent — analisis ar_aging_mv + log ke audit_log (D6).
