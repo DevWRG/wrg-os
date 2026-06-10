@@ -39,6 +39,90 @@ export async function ingestWaMessages(
   return { ingested, groups: [...groups] };
 }
 
+// ── WA gateway (openclaw) webhook adapter ──
+// Bentuk record mengikuti tap monitor openclaw (lihat legacy/monitor
+// reapply-patch.sh): satu objek per pesan inbound.
+export interface OpenclawRecord {
+  ts?: string; // ISO
+  ts_ms?: number;
+  chat_type?: string; // "group" | "direct"
+  group_jid?: string | null;
+  sender?: string | null; // inbound.from (jid asal chat)
+  sender_name?: string | null; // pushName
+  body?: string | null;
+  media_type?: string | null;
+  message_id?: string | null;
+  fromMe?: boolean;
+}
+
+function mapOpenclaw(rec: OpenclawRecord): {
+  input: WaMessageInput;
+  hash: string;
+} | null {
+  // Tentukan jid chat: group_jid untuk grup, sender untuk direct.
+  const chatJid = rec.group_jid || rec.sender || null;
+  const body = rec.body ?? null;
+  const media = rec.media_type ?? null;
+  // Lewati pesan keluar & yang tak punya konten (tanpa body & tanpa media).
+  if (rec.fromMe) return null;
+  if (!chatJid) return null;
+  if (!body && !media) return null;
+
+  const receivedAt =
+    rec.ts ??
+    (typeof rec.ts_ms === "number" ? new Date(rec.ts_ms).toISOString() : undefined);
+
+  const input: WaMessageInput = {
+    group_jid: String(chatJid),
+    group_name: null,
+    sender_jid: rec.sender ?? null,
+    sender_name: rec.sender_name ?? null,
+    message_type: media ?? "text",
+    body,
+    received_at: receivedAt,
+  };
+  // Hash stabil → idempoten terhadap retry webhook (pakai message_id bila ada).
+  const basis =
+    rec.message_id ??
+    `${input.group_jid}|${input.sender_jid ?? ""}|${receivedAt ?? ""}|${body ?? ""}`;
+  const hash = createHash("sha256").update(`wa:${basis}`).digest("hex");
+  return { input, hash };
+}
+
+// Ingest record openclaw → wa_message, idempoten by input_hash (skip duplikat).
+export async function ingestOpenclawMessages(
+  records: OpenclawRecord[],
+): Promise<{ ingested: number; skipped: number; groups: string[] }> {
+  const sql = db();
+  const groups = new Set<string>();
+  let ingested = 0;
+  let skipped = 0;
+  for (const rec of records) {
+    const mapped = mapOpenclaw(rec);
+    if (!mapped) {
+      skipped += 1;
+      continue;
+    }
+    const { input, hash } = mapped;
+    const exists = await sql`SELECT 1 FROM wa_message WHERE input_hash = ${hash} LIMIT 1`;
+    if (exists.length > 0) {
+      skipped += 1;
+      continue;
+    }
+    await sql`
+      INSERT INTO wa_message
+        (group_jid, group_name, sender_jid, sender_name, message_type, body, input_hash, received_at)
+      VALUES
+        (${input.group_jid}, ${input.group_name ?? null}, ${input.sender_jid ?? null},
+         ${input.sender_name ?? null}, ${input.message_type ?? "text"}, ${input.body ?? null},
+         ${hash}, ${input.received_at ?? sql`now()`})
+    `;
+    groups.add(input.group_jid);
+    ingested += 1;
+  }
+  return { ingested, skipped, groups: [...groups] };
+}
+
 export interface WaMessageRow {
   group_jid: string;
   group_name: string | null;

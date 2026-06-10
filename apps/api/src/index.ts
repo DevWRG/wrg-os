@@ -36,7 +36,12 @@ import { getNetworkInput, computeNetwork } from "./repo/network.js";
 import { listBriefings } from "./repo/executive.js";
 import { listCoachingNotes } from "./repo/coaching.js";
 import { getLatestCoachingNotes, computePeopleAnalytics } from "./repo/people.js";
-import { ingestWaMessages, type WaMessageInput } from "./repo/wa.js";
+import {
+  ingestWaMessages,
+  ingestOpenclawMessages,
+  type WaMessageInput,
+  type OpenclawRecord,
+} from "./repo/wa.js";
 import { aiBaseUrl, callAi } from "./ai.js";
 import { startScheduler, getScheduleStatus } from "./scheduler.js";
 
@@ -525,6 +530,37 @@ app.post("/wa/messages", async (c) => {
     return c.json({ error: "body.messages (array non-kosong) wajib" }, 400);
   }
   return c.json(await ingestWaMessages(body.messages), 201);
+});
+
+// Webhook gateway WA (openclaw) → wa_message. Menerima record format tap
+// openclaw (single | array | {messages:[...]} | {events:[...]}). Idempoten
+// (skip duplikat by input_hash). Jika WA_WEBHOOK_SECRET di-set, header
+// x-wa-secret wajib cocok.
+app.post("/webhooks/wa", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const secret = process.env.WA_WEBHOOK_SECRET;
+  if (secret && c.req.header("x-wa-secret") !== secret) {
+    return c.json({ error: "unauthorized" }, 401);
+  }
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  // Normalisasi ke array record openclaw.
+  let records: OpenclawRecord[];
+  if (Array.isArray(body)) records = body as OpenclawRecord[];
+  else if (body && typeof body === "object") {
+    const b = body as { messages?: unknown; events?: unknown };
+    if (Array.isArray(b.messages)) records = b.messages as OpenclawRecord[];
+    else if (Array.isArray(b.events)) records = b.events as OpenclawRecord[];
+    else records = [body as OpenclawRecord]; // single record
+  } else {
+    return c.json({ error: "payload tidak dikenali" }, 400);
+  }
+  if (records.length === 0) return c.json({ ingested: 0, skipped: 0, groups: [] });
+  return c.json(await ingestOpenclawMessages(records), 201);
 });
 
 // A1 Distillation Cascade agent — baca wa_message (raw) → distilasi via
