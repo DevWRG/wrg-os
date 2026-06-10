@@ -192,15 +192,17 @@ export interface SalesDocRow {
   customer_name: string | null;
   doc_type: string | null;
   title: string | null;
+  draft_text: string;
   status: string;
   model_used: string | null;
+  approved_by: string | null;
   created_at: string;
 }
 
 export async function listSalesDocs(status?: string, limit = 50): Promise<SalesDocRow[]> {
   const sql = db();
   const rows = await sql`
-    SELECT id, deal_id, customer_name, doc_type, title, status, model_used, created_at::text
+    SELECT id, deal_id, customer_name, doc_type, title, draft_text, status, model_used, approved_by, created_at::text
     FROM sales_doc
     WHERE ${status ? sql`status = ${status}` : sql`true`}
     ORDER BY created_at DESC
@@ -212,8 +214,10 @@ export async function listSalesDocs(status?: string, limit = 50): Promise<SalesD
     customer_name: r.customer_name ? String(r.customer_name) : null,
     doc_type: r.doc_type ? String(r.doc_type) : null,
     title: r.title ? String(r.title) : null,
+    draft_text: String(r.draft_text ?? ""),
     status: String(r.status),
     model_used: r.model_used ? String(r.model_used) : null,
+    approved_by: r.approved_by ? String(r.approved_by) : null,
     created_at: String(r.created_at),
   }));
 }
