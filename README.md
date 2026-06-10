@@ -1,32 +1,32 @@
 # WRG Monorepo
 
-Monorepo untuk platform operasional **Wahana Lifeline / PT Wahana Rizky Gumilang (WRG)** — distribusi alat kesehatan B2B. Dikelola dengan [Turborepo](https://turbo.build) + [pnpm workspaces](https://pnpm.io/workspaces).
+Monorepo platform operasional **Wahana Lifeline / PT Wahana Rizky Gumilang (WRG)** — distribusi alat kesehatan B2B. Dikelola dengan [Turborepo](https://turbo.build) + [pnpm workspaces](https://pnpm.io/workspaces).
 
-## Struktur
+## Arsitektur target (3-tier)
 
 ```
-.
-├── apps/
-│   ├── os/          # WRG OS — operations dashboard (Next.js 16 / React 19 / TS) — LIVE
-│   ├── crm/         # WRG CRM (Python + shell, PostgreSQL) — 🚧 scaffold kosong
-│   ├── monitor/     # WRG Monitor (Python + shell) — 🚧 scaffold kosong
-│   └── api/         # API layer bersama — 🚧 scaffold kosong
-├── packages/
-│   ├── ui/          # Komponen UI bersama (shadcn/Base UI) — 🚧 kosong
-│   ├── config/      # Config bersama (eslint, tsconfig, tailwind) — 🚧 kosong
-│   └── types/       # Tipe TypeScript bersama — 🚧 kosong
-├── infra/
-│   ├── docker/      # Dockerfile / compose
-│   ├── nginx/       # Reverse proxy config
-│   └── postgres/    # Init scripts / migrasi
-└── .github/workflows/  # CI
+apps/
+  web/        Next.js — FRONTEND + API GATEWAY (BFF)
+  api/        Node/Hono — BACKEND domain API (TS; event ingestion ADR-024)
+services/
+  ai/         Python FastAPI — microservice AI & DATA  (🚧 menyusul, Fase 3)
+packages/
+  config/     @wrg/config — shared tsconfig / eslint / tailwind
+  types/      @wrg/types — tipe domain bersama (Blueprint v2.3)
+  ui/         🚧 kosong
+legacy/
+  crm/        WRG CRM Python+shell — sistem PROD (referensi, dipensiunkan bertahap)
+  monitor/    WRG Monitor Python+shell — referensi prod
+infra/        docker (compose), nginx, postgres
 ```
 
-> **Status (2026-06-10):** baru `apps/os` yang berisi (port dari single-repo
-> `wrg-os`). `apps/crm`, `apps/monitor`, `apps/api`, dan seluruh `packages/*`
-> masih scaffold kosong — integrasi menyusul. CRM & Monitor saat ini berbasis
-> Python + shell di repo terpisah (`DevWRG/wrg-crm`, `DevWRG/wrg-monitor`);
-> strategi memasukkannya (copy / submodule / subtree) belum diputuskan.
+Alur: **web (gateway)** → **api (domain, Hono)** → **services/ai (FastAPI, AI/data)**.
+
+> **Status (Fase 1 — restruktur):** `apps/web` = frontend Next.js (eks `apps/os`,
+> masih mock data). `apps/api` = backend Hono (event ingestion). `legacy/crm` &
+> `legacy/monitor` = kode Python prod yang masih jalan, dipindah ke `legacy/`
+> sebagai referensi; logikanya dimigrasikan bertahap ke `api` (domain) &
+> `services/ai` (AI/data) di fase berikutnya. `services/ai` belum dibuat.
 
 ## Prasyarat
 
@@ -37,11 +37,12 @@ Monorepo untuk platform operasional **Wahana Lifeline / PT Wahana Rizky Gumilang
 
 ```bash
 pnpm install            # install semua workspace
-pnpm dev                # turbo run dev (semua app yang punya script dev)
+pnpm dev                # turbo run dev
 pnpm build              # turbo run build
 pnpm lint               # turbo run lint
 pnpm typecheck          # turbo run typecheck
 
 # Per-app:
-pnpm --filter wrg-os dev
+pnpm --filter @wrg/web dev      # frontend Next.js (port 3000)
+pnpm --filter @wrg/api dev      # backend Hono (port 8092 / 4000 di docker)
 ```

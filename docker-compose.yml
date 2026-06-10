@@ -5,14 +5,15 @@
 # ⚠️  STATUS: SPEC TOPOLOGI — BELUM RUNNABLE (per 2026-06-10).
 #     `docker compose up` akan gagal sampai item di bawah dibuat:
 #       [x] apps/api/Dockerfile        (Hono/Node — DONE; build di PORT 4000)
-#       [ ] apps/crm/Dockerfile        (crm = Python + shell, BUKAN Next →
+#       [ ] legacy/crm/Dockerfile      (crm = Python + shell, BUKAN Next →
 #           service di bawah pakai asumsi NEXTAUTH/port 3000 yg perlu disesuaikan)
-#       [ ] apps/monitor/Dockerfile    (monitor = Python + shell, sama)
+#       [ ] legacy/monitor/Dockerfile  (monitor = Python + shell, sama)
 #       [ ] apps/wa-gateway/ + Dockerfile  (dir app-nya belum ada)
 #       [ ] infra/postgres/init/       (init .sql; mis. CREATE DATABASE langfuse,
 #           CREATE EXTENSION vector — langfuse di bawah pakai DB "langfuse")
 #       [ ] infra/nginx/nginx.conf
-#     Catatan: apps/os (Next nyata) belum masuk compose; port 3000 dipakai crm.
+#     Catatan: apps/web (Next nyata) belum masuk compose; port 3000 dipakai crm.
+#     Fase 2+: service crm/monitor akan digantikan web (gateway) + api + services/ai.
 #     langfuse:latest (v3) mungkin butuh ClickHouse/worker tambahan.
 #     Lihat PR untuk daftar lengkap.
 
@@ -92,7 +93,7 @@ services:
   crm:
     build:
       context: .
-      dockerfile: apps/crm/Dockerfile
+      dockerfile: legacy/crm/Dockerfile
       args:
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
     container_name: wrg-crm
@@ -114,7 +115,7 @@ services:
   monitor:
     build:
       context: .
-      dockerfile: apps/monitor/Dockerfile
+      dockerfile: legacy/monitor/Dockerfile
     container_name: wrg-monitor
     restart: unless-stopped
     networks: [wrg-internal]

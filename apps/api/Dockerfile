@@ -10,7 +10,7 @@ WORKDIR /repo
 # 1) Manifests dulu → layer cache untuk pnpm install.
 #    Semua workspace member harus ada agar --frozen-lockfile cocok.
 COPY pnpm-workspace.yaml pnpm-lock.yaml package.json turbo.json ./
-COPY apps/os/package.json         apps/os/
+COPY apps/web/package.json        apps/web/
 COPY apps/api/package.json        apps/api/
 COPY packages/config/package.json packages/config/
 COPY packages/types/package.json  packages/types/
@@ -31,5 +31,5 @@ WORKDIR /repo/apps/api
 CMD ["node", "dist/index.js"]
 
 # CATATAN: image ini belum size-optimized — masih membawa devDependencies
-# & deps workspace lain (mis. apps/os). Optimasi lanjutan: multi-stage +
+# & deps workspace lain (mis. apps/web). Optimasi lanjutan: multi-stage +
 # `pnpm --filter @wrg/api deploy --prod` untuk runner yang ramping.
