@@ -21,9 +21,11 @@ import {
   runPipelineAuthenticity,
   runAnomalyDetection,
   runSalesDocDrafter,
+  runProductIntelligence,
 } from "./repo/agents.js";
 import { listCollectionDrafts } from "./repo/collection.js";
 import { listSalesDocs } from "./repo/salesdoc.js";
+import { getProductIntelligence } from "./repo/product.js";
 import { ingestWaMessages, type WaMessageInput } from "./repo/wa.js";
 import { aiBaseUrl, callAi } from "./ai.js";
 import { startScheduler, getScheduleStatus } from "./scheduler.js";
@@ -378,6 +380,19 @@ app.get("/sales/docs", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const docs = await listSalesDocs(c.req.query("status") || undefined);
   return c.json({ count: docs.length, docs });
+});
+
+// A7 Product Intelligence — agregasi intelijen produk dari pipeline (D1).
+app.post("/agents/a7/run", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await runProductIntelligence(), 201);
+});
+
+// Read model intelijen produk (live compute, tanpa audit) untuk UI.
+app.get("/products/intelligence", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const products = await getProductIntelligence();
+  return c.json({ count: products.length, products });
 });
 
 // Read model draft penagihan (status: draft|approved|sent).

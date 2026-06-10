@@ -33,6 +33,7 @@ import {
   VALID_DOC_TYPES,
   type DealForDoc,
 } from "./salesdoc.js";
+import { getProductIntelligence, type ProductIntel } from "./product.js";
 
 // A2 — AR Aging Watch (Blueprint v2.3, R1/L2). Baca ar_aging_mv, prioritaskan
 // piutang berisiko, log run ke audit_log (Layer 4 Output) + update registry.
@@ -687,4 +688,52 @@ export async function runSalesDocDrafter(opts: {
     model: lastModel,
     docs: saved,
   };
+}
+
+// A7 — Product Intelligence (Blueprint v2.3, R1/L2/LOW). Agregasi intelijen
+// produk dari deal.product_ids (jumlah deal, nilai pipeline, win-rate per
+// produk). Deterministik, read-only terhadap domain; log run ke audit_log
+// (Layer 4, R1, D1) + update registry. Tanpa eskalasi HITL (sifatnya laporan).
+
+export async function runProductIntelligence(): Promise<{
+  agent_id: string;
+  audit_id: string;
+  summary: {
+    products: number;
+    total_pipeline_value: number;
+    open_pipeline_value: number;
+    top_by_value: { product_id: string; total_value: number }[];
+  };
+  products: ProductIntel[];
+}> {
+  const sql = db();
+  const rows = await getProductIntelligence();
+
+  const totalValue = rows.reduce((a, r) => a + r.total_value, 0);
+  const openValue = rows.reduce((a, r) => a + r.open_value, 0);
+  const summary = {
+    products: rows.length,
+    total_pipeline_value: totalValue,
+    open_pipeline_value: openValue,
+    top_by_value: rows.slice(0, 5).map((r) => ({
+      product_id: r.product_id,
+      total_value: r.total_value,
+    })),
+  };
+
+  const inputHash = createHash("sha256").update(JSON.stringify(rows)).digest("hex");
+  const outputHash = createHash("sha256").update(JSON.stringify(summary)).digest("hex");
+  const payload = { summary, products: rows.slice(0, 50) };
+
+  const [a] = await sql`
+    INSERT INTO audit_log
+      (use_case_id, correlation_id, agent_id, layer, event_type, r_tier, input_hash, output_hash, payload)
+    VALUES
+      ('D1', ${`a7-${inputHash.slice(0, 8)}`}, 'A7', 4, 'product.intel.run', 'R1',
+       ${inputHash}, ${outputHash}, ${sql.json(payload as unknown as Parameters<typeof sql.json>[0])})
+    RETURNING id
+  `;
+  await sql`UPDATE agent_registry SET last_health_check = now() WHERE agent_id = 'A7'`;
+
+  return { agent_id: "A7", audit_id: a.id as string, summary, products: rows };
 }
