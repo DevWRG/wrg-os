@@ -1,12 +1,13 @@
 {
   "name": "@wrg/config",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "private": true,
-  "type": "module",
   "exports": {
-    "./tsconfig.base.json": "./tsconfig.base.json",
-    "./tsconfig.nextjs.json": "./tsconfig.nextjs.json",
-    "./eslint/next": "./eslint/next.mjs"
+    "./tailwind": "./tailwind.config.js",
+    "./eslint": "./eslint/next.mjs",
+    "./eslint/next": "./eslint/next.mjs",
+    "./typescript": "./tsconfig.json",
+    "./tsconfig.nextjs.json": "./tsconfig.nextjs.json"
   },
   "dependencies": {
     "eslint": "^9",
