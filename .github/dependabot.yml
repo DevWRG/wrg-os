@@ -11,6 +11,17 @@ updates:
     groups:
       minor-and-patch:
         update-types: ["minor", "patch"]
+    # Major yang sengaja DITUNDA — minor/patch tetap diterima, hanya bump major
+    # yang diabaikan sampai upgrade terencana (lihat triage PR #65/#67/#68).
+    ignore:
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "eslint"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@eslint/js"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@hono/node-server"
+        update-types: ["version-update:semver-major"]
 
   # GitHub Actions — gabung semua.
   - package-ecosystem: "github-actions"
