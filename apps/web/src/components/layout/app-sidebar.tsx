@@ -11,6 +11,7 @@ import {
   Truck,
   Factory,
   Workflow,
+  Receipt,
   BarChart3,
   ClipboardCheck,
   History,
@@ -35,6 +36,7 @@ import {
 const navMain = [
   { title: "Dashboard", url: "/dashboard", icon: LayoutDashboard },
   { title: "Pipeline", url: "/pipeline", icon: Workflow },
+  { title: "AR Aging", url: "/ar", icon: Receipt },
   { title: "Customers", url: "/customers", icon: Building2 },
   { title: "Products", url: "/products", icon: Package },
   { title: "Inventory", url: "/inventory", icon: Boxes },
