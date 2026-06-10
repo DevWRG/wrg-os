@@ -20,6 +20,10 @@ import {
   Sparkles,
   Send,
   FileText,
+  ScrollText,
+  GraduationCap,
+  UsersRound,
+  Network,
 } from "lucide-react";
 
 import {
@@ -51,6 +55,10 @@ const navSecondary = [
   { title: "HITL Review", url: "/hitl", icon: ClipboardCheck },
   { title: "Collection Drafts", url: "/collection-drafts", icon: Send },
   { title: "Sales Docs", url: "/sales-docs", icon: FileText },
+  { title: "Executive Briefings", url: "/briefings", icon: ScrollText },
+  { title: "Coaching Notes", url: "/coaching", icon: GraduationCap },
+  { title: "People Analytics", url: "/people", icon: UsersRound },
+  { title: "Spider Network", url: "/network", icon: Network },
   { title: "Digest History", url: "/digests", icon: History },
   { title: "Reports", url: "/reports", icon: BarChart3 },
   { title: "Settings", url: "/settings", icon: Settings },
