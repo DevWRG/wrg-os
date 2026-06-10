@@ -10,7 +10,7 @@ import { isDbEnabled, pingDb } from "./db.js";
 import { insertAuditEvent } from "./repo/audit.js";
 import { upsertDealsFromPlan, logReportToDeals, getPipeline } from "./repo/deal.js";
 import { enqueueAmbiguous, listHitl, resolveHitl } from "./repo/hitl.js";
-import { insertRekap, insertResume } from "./repo/digest.js";
+import { insertRekap, insertResume, getDigestHistory } from "./repo/digest.js";
 import { getDashboardStats } from "./repo/stats.js";
 import { getCustomers } from "./repo/customer.js";
 
@@ -293,6 +293,13 @@ app.get("/stats", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const amId = c.req.query("am_id") || undefined;
   return c.json(await getDashboardStats(amId));
+});
+
+// ── Digest history (monitor rekap/resume tersimpan) ──
+app.get("/digests", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const limit = Math.min(Number(c.req.query("limit") ?? 20) || 20, 100);
+  return c.json(await getDigestHistory(limit));
 });
 
 // ── Customers read model (diturunkan dari deal) ──
