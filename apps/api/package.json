@@ -23,6 +23,6 @@
     "@wrg/types": "workspace:*",
     "eslint": "^9",
     "tsx": "^4.19.2",
-    "typescript": "^5"
+    "typescript": "^6"
   }
 }
