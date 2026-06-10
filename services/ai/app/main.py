@@ -3,11 +3,14 @@ import os
 from fastapi import FastAPI
 
 from .compress import wrg_compress
-from .openrouter import chat
+from .openrouter import chat, rekap_models
+from .rekap import build_messages_block, build_rekap_system
 from .schemas import (
     DailySummaryRequest,
     DailySummaryResponse,
     DigestResponse,
+    RekapRequest,
+    RekapResponse,
     SummarizeRequest,
 )
 
@@ -91,4 +94,47 @@ def daily_summary(req: DailySummaryRequest) -> DailySummaryResponse:
     text, model, tin, tout = chat(system, user_msg)
     return DailySummaryResponse(
         summary=text, model=model, tokens_in=tin, tokens_out=tout, dry_run=False
+    )
+
+
+@app.post("/rekap", response_model=RekapResponse)
+def rekap(req: RekapRequest) -> RekapResponse:
+    """Monitor rekap (port legacy/monitor rekap.sh): pesan grup WA → REKAP terstruktur.
+
+    dry_run / tanpa OPENROUTER_API_KEY → kembalikan prompt yang dirakit.
+    """
+    grup_aktif = len({m.jid for m in req.messages})
+    system = build_rekap_system(
+        jam=req.jam,
+        tanggal=req.tanggal,
+        grup_aktif=grup_aktif,
+        members=req.members,
+        groups=req.groups,
+    )
+    user = (
+        f"Pesan dari {grup_aktif} grup WhatsApp WRG ({req.window_label}, urut waktu, "
+        "format [grup_jid] [timestamp_ms] sender: body):\n\n"
+        f"{build_messages_block(req.messages)}"
+    )
+
+    if req.dry_run or not os.environ.get("OPENROUTER_API_KEY"):
+        return RekapResponse(
+            rekap=f"[DRY RUN — tanpa LLM]\n\nSYSTEM:\n{system}\n\nUSER:\n{user}",
+            model="dry-run",
+            grup_aktif=grup_aktif,
+            jumlah_pesan=len(req.messages),
+            dry_run=True,
+        )
+
+    text, model, tin, tout = chat(
+        system, user, max_tokens=2000, models=rekap_models()
+    )
+    return RekapResponse(
+        rekap=text,
+        model=model,
+        grup_aktif=grup_aktif,
+        jumlah_pesan=len(req.messages),
+        tokens_in=tin,
+        tokens_out=tout,
+        dry_run=False,
     )

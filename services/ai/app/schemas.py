@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -60,6 +60,37 @@ class DailySummaryRequest(BaseModel):
 class DailySummaryResponse(BaseModel):
     summary: str
     model: str
+    tokens_in: Optional[int] = None
+    tokens_out: Optional[int] = None
+    dry_run: bool = False
+
+
+# === Monitor Rekap (port legacy/monitor rekap.sh, mode "rekap") ===
+
+
+class RekapMessage(BaseModel):
+    jid: str  # group JID
+    ts_ms: int  # timestamp ms
+    sender: str  # sender_name atau nomor
+    body: str
+    media: Optional[str] = None  # media_type kalau ada
+
+
+class RekapRequest(BaseModel):
+    jam: str  # "14:00"
+    tanggal: str  # "2026-05-21"
+    window_label: str = "5 jam terakhir"
+    messages: List[RekapMessage] = Field(default_factory=list)
+    members: Optional[Dict[str, str]] = None  # nomor → nama
+    groups: Optional[Dict[str, str]] = None  # JID → nama grup
+    dry_run: bool = False
+
+
+class RekapResponse(BaseModel):
+    rekap: str
+    model: str
+    grup_aktif: int = 0
+    jumlah_pesan: int = 0
     tokens_in: Optional[int] = None
     tokens_out: Optional[int] = None
     dry_run: bool = False

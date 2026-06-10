@@ -17,8 +17,18 @@ def daily_models() -> List[str]:
     return [primary, fallback]
 
 
+def rekap_models() -> List[str]:
+    """Model OpenRouter untuk monitor rekap (env-configurable, default sama)."""
+    primary = os.environ.get("REKAP_MODEL_PRIMARY", "anthropic/claude-haiku-4.5")
+    fallback = os.environ.get("REKAP_MODEL_FALLBACK", "deepseek/deepseek-r1")
+    return [primary, fallback]
+
+
 def chat(
-    system: str, user: str, max_tokens: int = 1500
+    system: str,
+    user: str,
+    max_tokens: int = 1500,
+    models: Optional[List[str]] = None,
 ) -> Tuple[str, str, Optional[int], Optional[int]]:
     """Panggil OpenRouter chat-completions dgn primary→fallback.
 
@@ -32,7 +42,7 @@ def chat(
     headers = {"Authorization": f"Bearer {key}", "content-type": "application/json"}
     last_err: Optional[Exception] = None
     with httpx.Client(timeout=60) as client:
-        for model in daily_models():
+        for model in models or daily_models():
             try:
                 resp = client.post(
                     OPENROUTER_URL,
