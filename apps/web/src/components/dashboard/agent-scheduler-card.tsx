@@ -35,6 +35,7 @@ const AGENT_LABEL: Record<string, string> = {
   A9: "Spider Network Analyst",
   A10: "Executive Synthesis",
   A11: "Coaching Outcome Synthesis",
+  A12: "People Analytics",
 };
 
 // Ringkas hasil run-now per agen jadi satu baris status.
@@ -87,6 +88,12 @@ function summarize(agentId: string, data: Record<string, unknown>): string {
     return data.synthesized
       ? `${data.count ?? 0} catatan coaching (${data.period ?? ""}) → review`
       : "semua AM sudah punya coaching periode ini — no-op";
+  }
+  if (agentId === "A12") {
+    const s = ((data.analytics ?? {}) as Record<string, unknown>).summary as
+      | Record<string, unknown>
+      | undefined;
+    return `${s?.team_size ?? 0} AM · skor rata-rata ${s?.avg_score ?? "—"}`;
   }
   return "selesai";
 }

@@ -26,6 +26,7 @@ import {
   runSpiderNetwork,
   runExecutiveSynthesis,
   runCoachingSynthesis,
+  runPeopleAnalytics,
 } from "./repo/agents.js";
 import { listCollectionDrafts } from "./repo/collection.js";
 import { listSalesDocs } from "./repo/salesdoc.js";
@@ -34,6 +35,7 @@ import { listAnnotations } from "./repo/sentiment.js";
 import { getNetworkInput, computeNetwork } from "./repo/network.js";
 import { listBriefings } from "./repo/executive.js";
 import { listCoachingNotes } from "./repo/coaching.js";
+import { getLatestCoachingNotes, computePeopleAnalytics } from "./repo/people.js";
 import { ingestWaMessages, type WaMessageInput } from "./repo/wa.js";
 import { aiBaseUrl, callAi } from "./ai.js";
 import { startScheduler, getScheduleStatus } from "./scheduler.js";
@@ -485,6 +487,18 @@ app.get("/coaching/notes", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const notes = await listCoachingNotes(c.req.query("am_id") || undefined);
   return c.json({ count: notes.length, notes });
+});
+
+// A12 People Analytics — rollup SDM tingkat-organisasi dari coaching_note (D6).
+app.post("/agents/a12/run", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await runPeopleAnalytics(), 201);
+});
+
+// Read model people analytics (live compute, tanpa audit) untuk UI.
+app.get("/people/analytics", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(computePeopleAnalytics(await getLatestCoachingNotes()));
 });
 
 // Read model draft penagihan (status: draft|approved|sent).
