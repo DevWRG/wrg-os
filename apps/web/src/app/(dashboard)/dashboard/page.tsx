@@ -1,13 +1,8 @@
-import {
-  ShoppingCart,
-  DollarSign,
-  Package,
-  AlertTriangle,
-} from "lucide-react";
+import { Workflow, TrendingUp, CheckCircle2, ClipboardCheck } from "lucide-react";
 
+import { apiBaseUrl } from "@/lib/gateway";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { StatCard } from "@/components/dashboard/stat-card";
-import { Badge } from "@/components/ui/badge";
 import {
   Card,
   CardContent,
@@ -24,149 +19,124 @@ import {
   TableRow,
 } from "@/components/ui/table";
 
-const recentOrders = [
-  {
-    id: "PO-2026-0421",
-    customer: "RS Premier Bintaro",
-    items: 12,
-    total: "Rp 184.500.000",
-    status: "Processing",
-  },
-  {
-    id: "PO-2026-0420",
-    customer: "Klinik Kimia Farma Sudirman",
-    items: 4,
-    total: "Rp 24.800.000",
-    status: "Shipped",
-  },
-  {
-    id: "PO-2026-0419",
-    customer: "RSUD Tangerang",
-    items: 28,
-    total: "Rp 412.300.000",
-    status: "Awaiting Payment",
-  },
-  {
-    id: "PO-2026-0418",
-    customer: "Apotek Century Kelapa Gading",
-    items: 6,
-    total: "Rp 8.150.000",
-    status: "Delivered",
-  },
-  {
-    id: "PO-2026-0417",
-    customer: "Puskesmas Pasar Minggu",
-    items: 9,
-    total: "Rp 17.620.000",
-    status: "Shipped",
-  },
-];
+export const dynamic = "force-dynamic";
 
-const statusTone: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
-  Processing: "default",
-  Shipped: "secondary",
-  "Awaiting Payment": "outline",
-  Delivered: "secondary",
-};
+interface Stats {
+  deals: {
+    total: number;
+    open: number;
+    won: number;
+    lost: number;
+    total_value: number;
+    open_value: number;
+  };
+  hitl_pending: number;
+  activity_total: number;
+  audit_events: number;
+  by_stage: { stage: string; count: number }[];
+}
 
-export default function DashboardPage() {
+const rupiah = (n: number) =>
+  new Intl.NumberFormat("id-ID", {
+    style: "currency",
+    currency: "IDR",
+    notation: "compact",
+    maximumFractionDigits: 1,
+  }).format(n);
+
+async function getStats(): Promise<Stats | null> {
+  try {
+    const res = await fetch(`${apiBaseUrl()}/stats`, { cache: "no-store" });
+    if (!res.ok) return null;
+    return (await res.json()) as Stats;
+  } catch {
+    return null;
+  }
+}
+
+export default async function DashboardPage() {
+  const s = await getStats();
+
   return (
     <>
       <PageHeader
         title="Dashboard"
-        description="Overview operasional distribusi alat kesehatan."
+        description="Overview operasional WRG-OS — data live dari DB."
       />
 
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        <StatCard
-          title="Active Orders"
-          value="42"
-          delta="+8 vs minggu lalu"
-          deltaTone="positive"
-          icon={ShoppingCart}
-        />
-        <StatCard
-          title="Monthly Sales"
-          value="Rp 2.84 M"
-          delta="+12.4% MoM"
-          deltaTone="positive"
-          icon={DollarSign}
-        />
-        <StatCard
-          title="Total SKUs"
-          value="1,284"
-          delta="24 baru ditambahkan"
-          icon={Package}
-        />
-        <StatCard
-          title="Low Stock Alerts"
-          value="17"
-          delta="6 perlu PO segera"
-          deltaTone="negative"
-          icon={AlertTriangle}
-        />
-      </div>
+      {!s ? (
+        <p className="text-muted-foreground">
+          Data tidak tersedia. Pastikan <code>apps/api</code> jalan dengan{" "}
+          <code>DATABASE_URL</code>.
+        </p>
+      ) : (
+        <>
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+            <StatCard
+              title="Total Deal (Pipeline)"
+              value={String(s.deals.total)}
+              delta={`${rupiah(s.deals.total_value)} total estimasi`}
+              icon={Workflow}
+            />
+            <StatCard
+              title="Pipeline Aktif"
+              value={String(s.deals.open)}
+              delta={`${rupiah(s.deals.open_value)} nilai terbuka`}
+              deltaTone="positive"
+              icon={TrendingUp}
+            />
+            <StatCard
+              title="Deal Closed"
+              value={String(s.deals.won)}
+              delta={`${s.deals.lost} lost`}
+              deltaTone={s.deals.lost > 0 ? "negative" : "neutral"}
+              icon={CheckCircle2}
+            />
+            <StatCard
+              title="HITL Pending"
+              value={String(s.hitl_pending)}
+              delta={s.hitl_pending > 0 ? "perlu review" : "bersih"}
+              deltaTone={s.hitl_pending > 0 ? "negative" : "positive"}
+              icon={ClipboardCheck}
+            />
+          </div>
 
-      <div className="grid gap-4 lg:grid-cols-7">
-        <Card className="lg:col-span-4">
-          <CardHeader>
-            <CardTitle>Sales Trend</CardTitle>
-            <CardDescription>30 hari terakhir</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="text-muted-foreground flex h-64 items-center justify-center rounded-md border border-dashed text-sm">
-              Chart placeholder — wiring chart library nanti
-            </div>
-          </CardContent>
-        </Card>
+          <Card>
+            <CardHeader>
+              <CardTitle>Pipeline per Stage</CardTitle>
+              <CardDescription>Distribusi deal (live dari DB)</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {s.by_stage.length === 0 ? (
+                <p className="text-muted-foreground text-sm">
+                  Belum ada deal. Kirim <code>#PLAN</code> via <code>/api/plan</code>.
+                </p>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Stage</TableHead>
+                      <TableHead className="text-right">Deal</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {s.by_stage.map((row) => (
+                      <TableRow key={row.stage}>
+                        <TableCell className="font-medium">{row.stage}</TableCell>
+                        <TableCell className="text-right">{row.count}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+            </CardContent>
+          </Card>
 
-        <Card className="lg:col-span-3">
-          <CardHeader>
-            <CardTitle>Top Categories</CardTitle>
-            <CardDescription>By revenue bulan ini</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="text-muted-foreground flex h-64 items-center justify-center rounded-md border border-dashed text-sm">
-              Donut chart placeholder
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Recent Orders</CardTitle>
-          <CardDescription>5 pesanan terbaru dari customer.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Order #</TableHead>
-                <TableHead>Customer</TableHead>
-                <TableHead className="text-right">Items</TableHead>
-                <TableHead className="text-right">Total</TableHead>
-                <TableHead>Status</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {recentOrders.map((order) => (
-                <TableRow key={order.id}>
-                  <TableCell className="font-medium">{order.id}</TableCell>
-                  <TableCell>{order.customer}</TableCell>
-                  <TableCell className="text-right">{order.items}</TableCell>
-                  <TableCell className="text-right">{order.total}</TableCell>
-                  <TableCell>
-                    <Badge variant={statusTone[order.status] ?? "outline"}>
-                      {order.status}
-                    </Badge>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
+          <p className="text-muted-foreground text-xs">
+            Governance: {s.audit_events} audit events · {s.activity_total} stage transitions tercatat.
+          </p>
+        </>
+      )}
     </>
   );
 }
