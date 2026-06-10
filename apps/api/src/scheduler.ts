@@ -6,6 +6,7 @@ import {
   runCollectionDrafter,
   runDistillationCascade,
   runPipelineAuthenticity,
+  runAnomalyDetection,
 } from "./repo/agents.js";
 
 // Penjadwal agen in-process (Blueprint v2.3). Default MATI — aktif hanya bila
@@ -60,6 +61,12 @@ export function startScheduler(): ScheduleStatus {
       id: "A4",
       expr: process.env.A4_CRON ?? "0 9 * * *",
       run: () => runPipelineAuthenticity(),
+    },
+    {
+      // A5 deteksi anomali numerik (09:15, setelah audit pipeline).
+      id: "A5",
+      expr: process.env.A5_CRON ?? "15 9 * * *",
+      run: () => runAnomalyDetection(),
     },
   ];
 
