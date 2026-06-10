@@ -6,11 +6,14 @@
     "./tailwind": "./tailwind.config.js",
     "./eslint": "./eslint/next.mjs",
     "./eslint/next": "./eslint/next.mjs",
+    "./eslint/base": "./eslint/base.mjs",
     "./typescript": "./tsconfig.json",
     "./tsconfig.nextjs.json": "./tsconfig.nextjs.json"
   },
   "dependencies": {
+    "@eslint/js": "^9",
     "eslint": "^9",
-    "eslint-config-next": "16.2.6"
+    "eslint-config-next": "16.2.6",
+    "typescript-eslint": "^8.18.0"
   }
 }
