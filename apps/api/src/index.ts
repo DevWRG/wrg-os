@@ -13,6 +13,7 @@ import { enqueueAmbiguous, listHitl, resolveHitl } from "./repo/hitl.js";
 import { insertRekap, insertResume, getDigestHistory } from "./repo/digest.js";
 import { getDashboardStats } from "./repo/stats.js";
 import { getCustomers } from "./repo/customer.js";
+import { ingestInvoices, getAging, type InvoiceInput } from "./repo/ar.js";
 
 const app = new Hono();
 
@@ -300,6 +301,26 @@ app.get("/digests", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const limit = Math.min(Number(c.req.query("limit") ?? 20) || 20, 100);
   return c.json(await getDigestHistory(limit));
+});
+
+// ── AR Aging (D2): feeder Accurate + read model ──
+app.post("/ar/invoices", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { invoices?: InvoiceInput[]; asof?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!Array.isArray(body.invoices) || body.invoices.length === 0) {
+    return c.json({ error: "body.invoices (array non-kosong) wajib" }, 400);
+  }
+  return c.json(await ingestInvoices(body.invoices, body.asof), 201);
+});
+
+app.get("/ar/aging", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await getAging(c.req.query("bucket") || undefined));
 });
 
 // ── Customers read model (diturunkan dari deal) ──
