@@ -1,6 +1,9 @@
 import { createHash } from "node:crypto";
 
 import { db } from "../db.js";
+import { callAi } from "../ai.js";
+import { getWaMessages } from "./wa.js";
+import { insertRekap } from "./digest.js";
 
 // A2 — AR Aging Watch (Blueprint v2.3, R1/L2). Baca ar_aging_mv, prioritaskan
 // piutang berisiko, log run ke audit_log (Layer 4 Output) + update registry.
@@ -82,4 +85,132 @@ export async function runArWatch(): Promise<{
   await sql`UPDATE agent_registry SET last_health_check = now() WHERE agent_id = 'A2'`;
 
   return { agent_id: "A2", audit_id: a.id as string, summary, top_findings: top };
+}
+
+// A1 — Distillation Cascade (Blueprint v2.3, R1/L2/LOW). Baca raw wa_message
+// dalam satu window → distilasi via services/ai (/rekap, kompresi + LLM) →
+// simpan artefak ke digest_rekap → log run ke audit_log (Layer 4) + registry.
+// Tanpa OPENROUTER_API_KEY, panggilan ai jatuh ke dry_run (prompt sebagai
+// output) sehingga cascade tetap berjalan offline.
+
+export interface DistillResult {
+  agent_id: string;
+  distilled: boolean;
+  audit_id: string | null;
+  digest_id: string | null;
+  summary: {
+    messages: number;
+    groups: number;
+    window_hours: number;
+    group_jid: string;
+    model: string | null;
+  };
+  rekap_preview: string | null;
+}
+
+export async function runDistillationCascade(opts: {
+  groupJid?: string;
+  windowHours?: number;
+}): Promise<DistillResult> {
+  const sql = db();
+  const windowHours = opts.windowHours && opts.windowHours > 0 ? opts.windowHours : 5;
+  const groupJid = opts.groupJid;
+  const rows = await getWaMessages(windowHours, groupJid);
+
+  const groupCount = new Set(rows.map((r) => r.group_jid)).size;
+  const baseSummary = {
+    messages: rows.length,
+    groups: groupCount,
+    window_hours: windowHours,
+    group_jid: groupJid ?? "_all",
+    model: null as string | null,
+  };
+
+  // Tidak ada pesan dalam window → tidak ada yang didistilasi (no-op, no digest).
+  if (rows.length === 0) {
+    return {
+      agent_id: "A1",
+      distilled: false,
+      audit_id: null,
+      digest_id: null,
+      summary: baseSummary,
+      rekap_preview: null,
+    };
+  }
+
+  // Bangun RekapRequest untuk services/ai dari raw wa_message.
+  const endMs = Math.max(...rows.map((r) => r.ts_ms));
+  const end = new Date(endMs);
+  const start = new Date(endMs - windowHours * 3600 * 1000);
+  const tanggal = end.toISOString().slice(0, 10);
+  const jam = end.toISOString().slice(11, 16);
+  const members: Record<string, string> = {};
+  const groups: Record<string, string> = {};
+  for (const r of rows) {
+    if (r.sender_jid && r.sender_name) members[r.sender_jid] = r.sender_name;
+    if (r.group_name) groups[r.group_jid] = r.group_name;
+  }
+  const rekapReq = {
+    jam,
+    tanggal,
+    window_label: `${windowHours} jam terakhir`,
+    messages: rows.map((r) => ({
+      jid: r.group_jid,
+      ts_ms: r.ts_ms,
+      sender: r.sender_name ?? r.sender_jid ?? "unknown",
+      body: r.body ?? "",
+      media: r.message_type && r.message_type !== "text" ? r.message_type : null,
+    })),
+    members: Object.keys(members).length ? members : undefined,
+    groups: Object.keys(groups).length ? groups : undefined,
+    dry_run: !process.env.OPENROUTER_API_KEY,
+  };
+
+  const { status, data } = await callAi("/rekap", rekapReq);
+  if (status >= 400) {
+    throw new Error(`services/ai /rekap status ${status}: ${JSON.stringify(data)}`);
+  }
+  const rekapText = String(data.rekap ?? "");
+  const model = (data.model as string | undefined) ?? null;
+
+  const groupName =
+    groupJid && groups[groupJid]
+      ? groups[groupJid]
+      : groupJid
+        ? null
+        : "WRG (agregat semua grup aktif)";
+  const digestId = await insertRekap({
+    group_jid: groupJid ?? "_all",
+    group_name: groupName,
+    period_start: start.toISOString(),
+    period_end: end.toISOString(),
+    raw_output: rekapText,
+    model_used: model,
+  });
+
+  const summary = { ...baseSummary, model };
+  const inputHash = createHash("sha256")
+    .update(JSON.stringify(rekapReq.messages))
+    .digest("hex");
+  const outputHash = createHash("sha256").update(rekapText).digest("hex");
+  const payload = { summary, digest_id: digestId, window: { start: start.toISOString(), end: end.toISOString() } };
+
+  const [a] = await sql`
+    INSERT INTO audit_log
+      (use_case_id, correlation_id, agent_id, layer, event_type, r_tier, input_hash, output_hash, payload)
+    VALUES
+      ('D1b', ${`a1-${inputHash.slice(0, 8)}`}, 'A1', 4, 'distill.rekap.run', 'R1',
+       ${inputHash}, ${outputHash}, ${sql.json(payload as unknown as Parameters<typeof sql.json>[0])})
+    RETURNING id
+  `;
+  await sql`UPDATE agent_registry SET last_health_check = now() WHERE agent_id = 'A1'`;
+
+  return {
+    agent_id: "A1",
+    distilled: true,
+    audit_id: a.id as string,
+    digest_id: digestId,
+    summary,
+    rekap_preview: rekapText.slice(0, 280),
+  };
 }
