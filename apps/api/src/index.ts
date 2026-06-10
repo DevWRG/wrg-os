@@ -72,6 +72,7 @@ import {
 } from "./repo/accurateMirror.js";
 import { recordDelivery, recordEmail, recordAlert, listLogs } from "./repo/logs.js";
 import { renderSalesDocHtml, renderBriefingHtml } from "./repo/exportdoc.js";
+import { runHodDaily } from "./repo/hodreminder.js";
 import {
   createReminder,
   listReminders,
@@ -1021,6 +1022,18 @@ app.get("/export/briefing/:id", async (c) => {
   const html = await renderBriefingHtml(c.req.param("id"));
   if (!html) return c.json({ error: "briefing tidak ditemukan" }, 404);
   return c.html(html);
+});
+
+// HOD daily reminder — rekap kepatuhan plan/report (port cron_hod_daily_reminder).
+app.post("/reminders/hod/run", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { to?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    /* body opsional */
+  }
+  return c.json(await runHodDaily(body.to), 201);
 });
 
 // Read model draft penagihan (status: draft|approved|sent|canceled).

@@ -16,6 +16,7 @@ import {
   runPeopleAnalytics,
 } from "./repo/agents.js";
 import { runReminders } from "./repo/reminder.js";
+import { runHodDaily } from "./repo/hodreminder.js";
 
 // Penjadwal agen in-process (Blueprint v2.3). Default MATI — aktif hanya bila
 // AGENT_SCHEDULE_ENABLED=true. Tiap run tetap menulis ke audit_log via repo
@@ -183,6 +184,25 @@ export function startScheduler(): ScheduleStatus {
       { timezone },
     );
     live.push(`${j.label}=${j.expr}`);
+  }
+
+  // HOD daily reminder — rekap kepatuhan plan/report (08:30, setelah AM plan pagi).
+  const hodExpr = process.env.HOD_REMINDER_CRON ?? "30 8 * * *";
+  if (cron.validate(hodExpr)) {
+    cron.schedule(
+      hodExpr,
+      async () => {
+        const startedAt = new Date().toISOString();
+        try {
+          const r = await runHodDaily();
+          console.log(`[scheduler] reminder-hod ok @ ${startedAt} ${JSON.stringify(r).slice(0, 200)}`);
+        } catch (e) {
+          console.error(`[scheduler] reminder-hod gagal @ ${startedAt}:`, e);
+        }
+      },
+      { timezone },
+    );
+    live.push(`reminder-hod=${hodExpr}`);
   }
 
   console.log(`[scheduler] aktif (TZ=${timezone}): ${live.join(", ") || "(tidak ada job valid)"}`);
