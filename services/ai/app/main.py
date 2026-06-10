@@ -4,7 +4,15 @@ from fastapi import FastAPI
 
 from .collection import build_collection_system, build_collection_user, template_draft
 from .compress import wrg_compress
-from .openrouter import chat, collection_models, rekap_models, resume_models, salesdoc_models
+from .extract import build_extract_system, parse_llm, rule_based
+from .openrouter import (
+    chat,
+    collection_models,
+    extract_models,
+    rekap_models,
+    resume_models,
+    salesdoc_models,
+)
 from .rekap import build_messages_block, build_rekap_system
 from .resume import build_gabungan, build_resume_system
 from .salesdoc import build_salesdoc_system, build_salesdoc_user, doc_title, template_doc
@@ -15,6 +23,8 @@ from .schemas import (
     DailySummaryResponse,
     DigestResponse,
     DraftedItem,
+    ExtractRequest,
+    ExtractResponse,
     RekapRequest,
     RekapResponse,
     ResumeRequest,
@@ -251,5 +261,38 @@ def sales_doc(req: SalesDocRequest) -> SalesDocResponse:
         title=doc_title(req),
         draft_text=text,
         model=model_used,
+        dry_run=not use_llm,
+    )
+
+
+@app.post("/extract", response_model=ExtractResponse)
+def extract(req: ExtractRequest) -> ExtractResponse:
+    """A8 Sentiment & Entity Extraction: anotasi sentiment + entity per pesan.
+
+    LLM (Haiku) per pesan, fallback rule-based bila gagal parse / tanpa key.
+    """
+    use_llm = not req.dry_run and bool(os.environ.get("OPENROUTER_API_KEY"))
+    system = build_extract_system()
+    annotations = []
+    model_used = "dry-run"
+    for m in req.messages:
+        if use_llm:
+            try:
+                raw, model_used, _, _ = chat(
+                    system,
+                    f"Pesan dari {m.sender or 'anon'}:\n{m.body}",
+                    max_tokens=400,
+                    models=extract_models(),
+                )
+                annotations.append(parse_llm(m.id, raw))
+                continue
+            except Exception:
+                # fallback rule-based untuk pesan ini
+                pass
+        annotations.append(rule_based(m))
+    return ExtractResponse(
+        annotations=annotations,
+        model=model_used if use_llm else "dry-run",
+        count=len(annotations),
         dry_run=not use_llm,
     )

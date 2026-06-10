@@ -31,6 +31,7 @@ const AGENT_LABEL: Record<string, string> = {
   A5: "Anomaly Detection",
   A6: "Sales Doc Drafter",
   A7: "Product Intelligence",
+  A8: "Sentiment & Entity Extraction",
 };
 
 // Ringkas hasil run-now per agen jadi satu baris status.
@@ -66,6 +67,11 @@ function summarize(agentId: string, data: Record<string, unknown>): string {
   if (agentId === "A7") {
     const s = (data.summary ?? {}) as Record<string, unknown>;
     return `${s.products ?? 0} produk dianalisis dari pipeline`;
+  }
+  if (agentId === "A8") {
+    if (!data.annotated) return "tidak ada pesan baru untuk dianotasi — no-op";
+    const s = (data.summary ?? {}) as Record<string, unknown>;
+    return `${data.count ?? 0} pesan: +${s.positive ?? 0}/${s.neutral ?? 0}/-${s.negative ?? 0} · ${s.entities ?? 0} entity`;
   }
   return "selesai";
 }
