@@ -53,6 +53,7 @@ import { listBriefings } from "./repo/executive.js";
 import { listCoachingNotes } from "./repo/coaching.js";
 import { getLatestCoachingNotes, computePeopleAnalytics } from "./repo/people.js";
 import { createVisit, listVisits, visitSummary } from "./repo/visit.js";
+import { upsertDailyTodo, listTodos, markTodoReported } from "./repo/todo.js";
 import {
   createReminder,
   listReminders,
@@ -708,6 +709,49 @@ app.get("/visits", async (c) => {
 app.get("/visits/summary", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json(await visitSummary());
+});
+
+// ── Daily TODO/plan per AM (port legacy sales_todo) ──
+app.post("/todos", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { am_id?: string; am_name?: string; tanggal?: string; items?: string[]; raw_body?: string; is_late_plan?: boolean };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.am_id || !body.tanggal || !Array.isArray(body.items)) {
+    return c.json({ error: "am_id, tanggal (YYYY-MM-DD), items[] wajib" }, 400);
+  }
+  const r = await upsertDailyTodo({
+    am_id: body.am_id,
+    am_name: body.am_name,
+    tanggal: body.tanggal,
+    items: body.items,
+    raw_body: body.raw_body,
+    is_late_plan: body.is_late_plan,
+  });
+  return c.json(r, 201);
+});
+
+app.get("/todos", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const todos = await listTodos(c.req.query("am_id") || undefined, c.req.query("date") || undefined);
+  return c.json({ count: todos.length, todos });
+});
+
+// Tandai plan harian sudah di-#REPORT (am_id + tanggal).
+app.post("/todos/report", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { am_id?: string; tanggal?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.am_id || !body.tanggal) return c.json({ error: "am_id + tanggal wajib" }, 400);
+  const r = await markTodoReported(body.am_id, body.tanggal);
+  return c.json(r, r.ok ? 200 : 404);
 });
 
 // Read model draft penagihan (status: draft|approved|sent|canceled).
