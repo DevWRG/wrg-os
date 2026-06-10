@@ -28,6 +28,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@wrg/config": "workspace:*",
+    "@wrg/types": "workspace:*",
     "eslint": "^9",
     "tailwindcss": "^4",
     "typescript": "^5"
