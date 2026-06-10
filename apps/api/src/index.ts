@@ -40,7 +40,12 @@ import {
   sendCollectionDraft,
   cancelCollectionDraft,
 } from "./repo/collection.js";
-import { listSalesDocs } from "./repo/salesdoc.js";
+import {
+  listSalesDocs,
+  approveSalesDoc,
+  sendSalesDoc,
+  cancelSalesDoc,
+} from "./repo/salesdoc.js";
 import { getProductIntelligence } from "./repo/product.js";
 import { listAnnotations } from "./repo/sentiment.js";
 import { getNetworkInput, computeNetwork } from "./repo/network.js";
@@ -434,11 +439,49 @@ app.post("/agents/a6/run", async (c) => {
   return c.json(r, r.drafted ? 201 : 200);
 });
 
-// Read model dokumen penjualan (status: draft|approved|sent).
+// Read model dokumen penjualan (status: draft|approved|sent|canceled).
 app.get("/sales/docs", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const docs = await listSalesDocs(c.req.query("status") || undefined);
   return c.json({ count: docs.length, docs });
+});
+
+// Siklus kirim A6 (aksi manusia, Layer 5): approve → send → (atau cancel).
+app.post("/sales/docs/:id/approve", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { approver_id?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    /* body opsional */
+  }
+  const r = await approveSalesDoc(c.req.param("id"), body.approver_id);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.post("/sales/docs/:id/send", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { to?: string; approver_id?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.to) return c.json({ error: "body.to (tujuan) wajib" }, 400);
+  const r = await sendSalesDoc(c.req.param("id"), body.to, body.approver_id);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.post("/sales/docs/:id/cancel", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { approver_id?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    /* body opsional */
+  }
+  const r = await cancelSalesDoc(c.req.param("id"), body.approver_id);
+  return c.json(r, r.ok ? 200 : 400);
 });
 
 // A7 Product Intelligence — agregasi intelijen produk dari pipeline (D1).
