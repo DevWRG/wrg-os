@@ -1,8 +1,6 @@
-import { Plus } from "lucide-react";
-
+import { apiBaseUrl } from "@/lib/gateway";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
   Table,
@@ -13,105 +11,108 @@ import {
   TableRow,
 } from "@/components/ui/table";
 
-const customers = [
-  {
-    code: "CUST-0142",
-    name: "RS Premier Bintaro",
-    type: "Rumah Sakit",
-    city: "Tangerang Selatan",
-    pic: "dr. Adi Nugroho",
-    status: "Active",
-  },
-  {
-    code: "CUST-0141",
-    name: "RSUD Tangerang",
-    type: "Rumah Sakit",
-    city: "Tangerang",
-    pic: "Bpk. Sutrisno",
-    status: "Active",
-  },
-  {
-    code: "CUST-0140",
-    name: "Klinik Kimia Farma Sudirman",
-    type: "Klinik",
-    city: "Jakarta Pusat",
-    pic: "Ibu Lestari",
-    status: "Active",
-  },
-  {
-    code: "CUST-0139",
-    name: "Apotek Century Kelapa Gading",
-    type: "Apotek",
-    city: "Jakarta Utara",
-    pic: "Bpk. Rahmat",
-    status: "Active",
-  },
-  {
-    code: "CUST-0138",
-    name: "Puskesmas Pasar Minggu",
-    type: "Puskesmas",
-    city: "Jakarta Selatan",
-    pic: "dr. Maria",
-    status: "On Hold",
-  },
-  {
-    code: "CUST-0137",
-    name: "RS Hermina Bekasi",
-    type: "Rumah Sakit",
-    city: "Bekasi",
-    pic: "Ibu Yuli",
-    status: "Active",
-  },
-];
+export const dynamic = "force-dynamic";
 
-export default function CustomersPage() {
+interface Customer {
+  customer_id: string;
+  customer_name: string;
+  deal_count: number;
+  total_value: number;
+  ams: string[];
+  stages: string[];
+  last_activity: string;
+}
+
+const rupiah = (n: number) =>
+  new Intl.NumberFormat("id-ID", {
+    style: "currency",
+    currency: "IDR",
+    notation: "compact",
+    maximumFractionDigits: 1,
+  }).format(n);
+
+const tanggal = (iso: string) => {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime())
+    ? "—"
+    : d.toLocaleDateString("id-ID", { day: "2-digit", month: "short", year: "numeric" });
+};
+
+async function getCustomers(): Promise<Customer[] | null> {
+  try {
+    const res = await fetch(`${apiBaseUrl()}/customers`, { cache: "no-store" });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { customers: Customer[] };
+    return data.customers;
+  } catch {
+    return null;
+  }
+}
+
+export default async function CustomersPage() {
+  const customers = await getCustomers();
+
   return (
     <>
       <PageHeader
         title="Customers"
-        description="Daftar rumah sakit, klinik, apotek, dan puskesmas yang dilayani."
-        action={
-          <Button>
-            <Plus />
-            New Customer
-          </Button>
-        }
+        description="Customer aktif diturunkan dari pipeline deal — data live dari DB."
       />
 
-      <Card>
-        <CardContent className="p-0">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Code</TableHead>
-                <TableHead>Name</TableHead>
-                <TableHead>Type</TableHead>
-                <TableHead>City</TableHead>
-                <TableHead>PIC</TableHead>
-                <TableHead>Status</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {customers.map((c) => (
-                <TableRow key={c.code}>
-                  <TableCell className="font-medium">{c.code}</TableCell>
-                  <TableCell>{c.name}</TableCell>
-                  <TableCell>{c.type}</TableCell>
-                  <TableCell>{c.city}</TableCell>
-                  <TableCell>{c.pic}</TableCell>
-                  <TableCell>
-                    <Badge
-                      variant={c.status === "Active" ? "secondary" : "outline"}
-                    >
-                      {c.status}
-                    </Badge>
-                  </TableCell>
+      {!customers ? (
+        <p className="text-muted-foreground">
+          Data tidak tersedia. Pastikan <code>apps/api</code> jalan dengan{" "}
+          <code>DATABASE_URL</code>.
+        </p>
+      ) : customers.length === 0 ? (
+        <p className="text-muted-foreground">
+          Belum ada customer. Kirim <code>#PLAN</code> via <code>/api/plan</code> untuk
+          membuat deal pertama.
+        </p>
+      ) : (
+        <Card>
+          <CardContent className="pt-6">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Customer</TableHead>
+                  <TableHead className="text-right">Deal</TableHead>
+                  <TableHead className="text-right">Nilai</TableHead>
+                  <TableHead>Stage</TableHead>
+                  <TableHead>AM</TableHead>
+                  <TableHead>Aktivitas terakhir</TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
+              </TableHeader>
+              <TableBody>
+                {customers.map((c) => (
+                  <TableRow key={c.customer_id}>
+                    <TableCell className="font-medium">{c.customer_name}</TableCell>
+                    <TableCell className="text-right">{c.deal_count}</TableCell>
+                    <TableCell className="text-right">
+                      {c.total_value ? rupiah(c.total_value) : "—"}
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex flex-wrap gap-1">
+                        {c.stages.map((s) => (
+                          <Badge key={s} variant="secondary">
+                            {s}
+                          </Badge>
+                        ))}
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {c.ams.join(", ")}
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {tanggal(c.last_activity)}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      )}
     </>
   );
 }
