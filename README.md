@@ -44,5 +44,5 @@ pnpm typecheck          # turbo run typecheck
 
 # Per-app:
 pnpm --filter @wrg/web dev      # frontend Next.js (port 3000)
-pnpm --filter @wrg/api dev      # backend Hono (port 8092 / 4000 di docker)
+pnpm --filter @wrg/api dev      # backend Hono (port 4000)
 ```
