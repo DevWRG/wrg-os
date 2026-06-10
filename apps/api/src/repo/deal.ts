@@ -84,13 +84,41 @@ export interface ReportDealMatch {
   stage: string | null;
 }
 
+/**
+ * Catat hasil report ke satu deal eksplisit: spt_state_log (touch) + update deal.
+ * Dipakai jalur auto (logReportToDeals) DAN saat ambiguous di-approve via HITL.
+ */
+export async function recordReportTouch(
+  amId: string,
+  dealId: string,
+  hasil: string,
+  nextAction: string,
+  toStage?: string,
+): Promise<{ state_log_id: string; stage: string }> {
+  const sql = db();
+  const cur = await sql`SELECT stage FROM deal WHERE deal_id = ${dealId}`;
+  if (cur.length === 0) throw new Error("deal tidak ditemukan");
+  const fromStage = cur[0].stage as string;
+  const target = toStage && DEAL_STAGES.includes(toStage) ? toStage : fromStage;
+  const rows = await sql`
+    INSERT INTO spt_state_log (deal_id, from_stage, to_stage, changed_by, reason)
+    VALUES (${dealId}, ${fromStage}, ${target}, ${amId}, ${`${hasil} | next: ${nextAction}`})
+    RETURNING id
+  `;
+  if (target !== fromStage) {
+    await sql`UPDATE deal SET stage = ${target}, updated_at = now() WHERE deal_id = ${dealId}`;
+  } else {
+    await sql`UPDATE deal SET updated_at = now() WHERE deal_id = ${dealId}`;
+  }
+  return { state_log_id: rows[0].id as string, stage: target };
+}
+
 export async function logReportToDeals(
   amId: string,
   items: ReportItem[],
   toStage?: string,
 ): Promise<ReportDealMatch[]> {
   const sql = db();
-  const target = toStage && DEAL_STAGES.includes(toStage) ? toStage : null;
   const out: ReportDealMatch[] = [];
   for (const it of items) {
     const cands = await sql`
@@ -116,20 +144,9 @@ export async function logReportToDeals(
     } else if (Number(top.score) >= AUTO) {
       kind = "auto";
       dealId = top.deal_id as string;
-      const fromStage = top.stage as string;
-      const to = target ?? fromStage; // touch (no-op) atau transisi
-      const rows = await sql`
-        INSERT INTO spt_state_log (deal_id, from_stage, to_stage, changed_by, reason)
-        VALUES (${dealId}, ${fromStage}, ${to}, ${amId}, ${`${it.hasil} | next: ${it.next_action}`})
-        RETURNING id
-      `;
-      stateLogId = rows[0].id as string;
-      stage = to;
-      if (to !== fromStage) {
-        await sql`UPDATE deal SET stage = ${to}, updated_at = now() WHERE deal_id = ${dealId}`;
-      } else {
-        await sql`UPDATE deal SET updated_at = now() WHERE deal_id = ${dealId}`;
-      }
+      const r = await recordReportTouch(amId, dealId, it.hasil, it.next_action, toStage);
+      stateLogId = r.state_log_id;
+      stage = r.stage;
     } else {
       kind = "ambiguous";
     }
