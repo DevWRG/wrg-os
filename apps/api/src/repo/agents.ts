@@ -39,6 +39,7 @@ import {
   insertAnnotation,
   type MessageToAnnotate,
 } from "./sentiment.js";
+import { getNetworkInput, computeNetwork, type NetworkGraph } from "./network.js";
 
 // A2 — AR Aging Watch (Blueprint v2.3, R1/L2). Baca ar_aging_mv, prioritaskan
 // piutang berisiko, log run ke audit_log (Layer 4 Output) + update registry.
@@ -843,5 +844,51 @@ export async function runSentimentExtraction(opts: {
     count: saved,
     model,
     summary: dist,
+  };
+}
+
+// A9 — Spider Network Analyst (Blueprint v2.3, R1/L2/MED). Bangun graf relasi
+// dari anotasi A8 (entity + pengirim yang muncul bersama) → metrik jaringan
+// (sentralitas, pasangan teratas, komponen). Deterministik, read-only; log run
+// ke audit_log (Layer 4, R1, D1b) + update registry. Tanpa HITL.
+
+export async function runSpiderNetwork(opts: { windowDays?: number }): Promise<{
+  agent_id: string;
+  audit_id: string;
+  summary: NetworkGraph["summary"];
+  top_nodes: NetworkGraph["top_nodes"];
+  top_edges: NetworkGraph["top_edges"];
+}> {
+  const sql = db();
+  const windowDays = opts.windowDays && opts.windowDays > 0 ? opts.windowDays : 30;
+  const rows = await getNetworkInput(windowDays);
+  const graph = computeNetwork(rows);
+
+  const inputHash = createHash("sha256").update(JSON.stringify(rows)).digest("hex");
+  const outputHash = createHash("sha256")
+    .update(JSON.stringify({ summary: graph.summary, top_nodes: graph.top_nodes }))
+    .digest("hex");
+  const payload = {
+    summary: graph.summary,
+    top_nodes: graph.top_nodes,
+    top_edges: graph.top_edges,
+  };
+
+  const [a] = await sql`
+    INSERT INTO audit_log
+      (use_case_id, correlation_id, agent_id, layer, event_type, r_tier, input_hash, output_hash, payload)
+    VALUES
+      ('D1b', ${`a9-${inputHash.slice(0, 8)}`}, 'A9', 4, 'network.analysis.run', 'R1',
+       ${inputHash}, ${outputHash}, ${sql.json(payload as unknown as Parameters<typeof sql.json>[0])})
+    RETURNING id
+  `;
+  await sql`UPDATE agent_registry SET last_health_check = now() WHERE agent_id = 'A9'`;
+
+  return {
+    agent_id: "A9",
+    audit_id: a.id as string,
+    summary: graph.summary,
+    top_nodes: graph.top_nodes,
+    top_edges: graph.top_edges,
   };
 }
