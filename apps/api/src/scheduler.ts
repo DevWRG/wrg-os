@@ -7,6 +7,7 @@ import {
   runDistillationCascade,
   runPipelineAuthenticity,
   runAnomalyDetection,
+  runSalesDocDrafter,
 } from "./repo/agents.js";
 
 // Penjadwal agen in-process (Blueprint v2.3). Default MATI — aktif hanya bila
@@ -67,6 +68,12 @@ export function startScheduler(): ScheduleStatus {
       id: "A5",
       expr: process.env.A5_CRON ?? "15 9 * * *",
       run: () => runAnomalyDetection(),
+    },
+    {
+      // A6 draft dokumen penjualan (10:00). Token tier HIGH — batch dibatasi.
+      id: "A6",
+      expr: process.env.A6_CRON ?? "0 10 * * *",
+      run: () => runSalesDocDrafter({}),
     },
   ];
 

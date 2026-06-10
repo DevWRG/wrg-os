@@ -4,9 +4,10 @@ from fastapi import FastAPI
 
 from .collection import build_collection_system, build_collection_user, template_draft
 from .compress import wrg_compress
-from .openrouter import chat, collection_models, rekap_models, resume_models
+from .openrouter import chat, collection_models, rekap_models, resume_models, salesdoc_models
 from .rekap import build_messages_block, build_rekap_system
 from .resume import build_gabungan, build_resume_system
+from .salesdoc import build_salesdoc_system, build_salesdoc_user, doc_title, template_doc
 from .schemas import (
     CollectionDraftRequest,
     CollectionDraftResponse,
@@ -18,6 +19,8 @@ from .schemas import (
     RekapResponse,
     ResumeRequest,
     ResumeResponse,
+    SalesDocRequest,
+    SalesDocResponse,
     SummarizeRequest,
 )
 
@@ -222,5 +225,31 @@ def collection_draft(req: CollectionDraftRequest) -> CollectionDraftResponse:
         draft_type=req.draft_type,
         model=model_used,
         count=len(drafts),
+        dry_run=not use_llm,
+    )
+
+
+@app.post("/sales-doc", response_model=SalesDocResponse)
+def sales_doc(req: SalesDocRequest) -> SalesDocResponse:
+    """A6 Sales Doc Drafter: dokumen penjualan (SPH/offering/presentation/MOU)
+    dari konteks deal.
+
+    dry_run / tanpa OPENROUTER_API_KEY → template deterministik (siap review).
+    """
+    use_llm = not req.dry_run and bool(os.environ.get("OPENROUTER_API_KEY"))
+    if use_llm:
+        text, model_used, _, _ = chat(
+            build_salesdoc_system(req.doc_type),
+            build_salesdoc_user(req),
+            max_tokens=3000,
+            models=salesdoc_models(),
+        )
+    else:
+        text, model_used = template_doc(req), "dry-run"
+    return SalesDocResponse(
+        doc_type=req.doc_type,
+        title=doc_title(req),
+        draft_text=text,
+        model=model_used,
         dry_run=not use_llm,
     )

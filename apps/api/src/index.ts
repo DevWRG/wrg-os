@@ -20,8 +20,10 @@ import {
   runCollectionDrafter,
   runPipelineAuthenticity,
   runAnomalyDetection,
+  runSalesDocDrafter,
 } from "./repo/agents.js";
 import { listCollectionDrafts } from "./repo/collection.js";
+import { listSalesDocs } from "./repo/salesdoc.js";
 import { ingestWaMessages, type WaMessageInput } from "./repo/wa.js";
 import { aiBaseUrl, callAi } from "./ai.js";
 import { startScheduler, getScheduleStatus } from "./scheduler.js";
@@ -351,6 +353,31 @@ app.post("/agents/a4/run", async (c) => {
 app.post("/agents/a5/run", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json(await runAnomalyDetection(), 201);
+});
+
+// A6 Sales Doc Drafter — draft dokumen penjualan (D1). Body opsional:
+// { deal_id, doc_type: sph|offering_letter|presentation|mou, limit }.
+app.post("/agents/a6/run", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { deal_id?: string; doc_type?: string; limit?: number } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    // body opsional — default: batch, limit 5.
+  }
+  const r = await runSalesDocDrafter({
+    dealId: body.deal_id,
+    docType: body.doc_type,
+    limit: body.limit,
+  });
+  return c.json(r, r.drafted ? 201 : 200);
+});
+
+// Read model dokumen penjualan (status: draft|approved|sent).
+app.get("/sales/docs", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const docs = await listSalesDocs(c.req.query("status") || undefined);
+  return c.json({ count: docs.length, docs });
 });
 
 // Read model draft penagihan (status: draft|approved|sent).

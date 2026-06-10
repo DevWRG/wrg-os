@@ -38,6 +38,17 @@ def collection_models() -> List[str]:
     return [primary, fallback]
 
 
+def salesdoc_models() -> List[str]:
+    """Model OpenRouter untuk A6 sales-doc drafter (token tier HIGH).
+
+    Default primary Claude Sonnet 4.6 (dokumen lebih panjang/terstruktur),
+    fallback Haiku. Override lewat env.
+    """
+    primary = os.environ.get("SALESDOC_MODEL_PRIMARY", "anthropic/claude-sonnet-4.6")
+    fallback = os.environ.get("SALESDOC_MODEL_FALLBACK", "anthropic/claude-haiku-4.5")
+    return [primary, fallback]
+
+
 def chat(
     system: str,
     user: str,
