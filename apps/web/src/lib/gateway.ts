@@ -8,7 +8,12 @@ export function apiBaseUrl(): string {
   return process.env.API_URL ?? "http://localhost:4000";
 }
 
-/** Fetch ke backend domain dengan base URL tergabung + no-store. */
+/** Fetch ke backend domain dengan base URL tergabung + no-store.
+ * BFF tepercaya: sertakan x-service-token (API_SERVICE_TOKEN) bila di-set,
+ * supaya apps/api mengotorisasi panggilan dari gateway saat AUTH_ENABLED. */
 export function gatewayFetch(path: string, init?: RequestInit): Promise<Response> {
-  return fetch(`${apiBaseUrl()}${path}`, { cache: "no-store", ...init });
+  const headers = new Headers(init?.headers);
+  const svc = process.env.API_SERVICE_TOKEN;
+  if (svc) headers.set("x-service-token", svc);
+  return fetch(`${apiBaseUrl()}${path}`, { cache: "no-store", ...init, headers });
 }
