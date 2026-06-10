@@ -1,0 +1,690 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Dashboard · 2026 Redesign Preview</title>
+    <script>
+      (function () {
+        try {
+          var saved = localStorage.getItem('dash26-theme');
+          var prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+          document.documentElement.setAttribute('data-theme', saved || (prefersDark ? 'dark' : 'light'));
+        } catch (e) {
+          document.documentElement.setAttribute('data-theme', 'light');
+        }
+      })();
+    </script>
+  </head>
+  <body data-active="dashboard" data-crumbs="WRG CRM &gt; Plan &amp; Report">
+    <div class="shell">
+      <div data-shell-sidebar></div>
+      <div class="main">
+        <div data-shell-topbar></div>
+        <main class="content">
+        <!-- HERO -->
+        <section class="hero">
+          <div class="hero-text">
+            <span class="eyebrow" id="heroDate">— · — · —</span>
+            <h1 class="hero-title">WRG CRM — <span class="accent">Plan &amp; Report</span></h1>
+            <p class="hero-sub" id="heroSub">Memuat data dari <strong id="heroDb">…</strong>. Range: <span id="heroRange">…</span>.</p>
+          </div>
+          <div class="hero-actions">
+            <input type="date" id="dateFrom" class="btn btn--ghost" style="padding:6px 10px;">
+            <input type="date" id="dateTo" class="btn btn--ghost" style="padding:6px 10px;">
+            <button class="btn btn--ghost" data-preset="today">Hari ini</button>
+            <button class="btn btn--ghost" data-preset="week">Minggu ini</button>
+            <button class="btn btn--primary" id="btnApply">
+              <svg viewBox="0 0 24 24"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
+              Apply
+            </button>
+          </div>
+        </section>
+
+        <!-- KPI CARDS — WRG: Hari Kerja, Wajib, Plan items, Reported, Late, Aktivitas, Unmatched -->
+        <section class="kpi-grid" aria-label="WRG metrics" id="kpiGrid">
+          <article class="kpi-card c-purple" data-kpi="working_days">
+            <div class="kpi-top"><div class="kpi-identity"><div class="kpi-label">Hari kerja</div></div></div>
+            <div class="kpi-value" id="kpiWorking">—</div>
+            <div class="kpi-compare" id="kpiWorkingSub">range</div>
+          </article>
+          <article class="kpi-card c-info" data-kpi="users_wajib">
+            <div class="kpi-top"><div class="kpi-identity"><div class="kpi-label">Karyawan wajib</div></div></div>
+            <div class="kpi-value" id="kpiWajib">—</div>
+            <div class="kpi-compare" id="kpiWajibSub">aktif</div>
+          </article>
+          <article class="kpi-card c-success" data-kpi="total_plan">
+            <div class="kpi-top"><div class="kpi-identity"><div class="kpi-label">Total Plan</div></div></div>
+            <div class="kpi-value" id="kpiPlan">—</div>
+            <div class="kpi-compare" id="kpiPlanSub">kunjungan + todo</div>
+          </article>
+          <article class="kpi-card c-success" data-kpi="reported">
+            <div class="kpi-top"><div class="kpi-identity"><div class="kpi-label">Reported</div></div></div>
+            <div class="kpi-value" id="kpiReported">—</div>
+            <div class="kpi-compare" id="kpiReportedSub">selesai</div>
+          </article>
+          <article class="kpi-card c-danger" data-kpi="late">
+            <div class="kpi-top"><div class="kpi-identity"><div class="kpi-label">Late submission</div></div></div>
+            <div class="kpi-value" id="kpiLate">—</div>
+            <div class="kpi-compare" id="kpiLateSub">submit lewat batas</div>
+          </article>
+          <article class="kpi-card c-info" data-kpi="aktivitas">
+            <div class="kpi-top"><div class="kpi-identity"><div class="kpi-label">Aktivitas (report)</div></div></div>
+            <div class="kpi-value" id="kpiAkt">—</div>
+            <div class="kpi-compare" id="kpiAktSub">items report</div>
+          </article>
+          <article class="kpi-card c-warning" data-kpi="unmatched">
+            <div class="kpi-top"><div class="kpi-identity"><div class="kpi-label">Unmatched report</div></div></div>
+            <div class="kpi-value" id="kpiUnm">—</div>
+            <div class="kpi-compare" id="kpiUnmSub">tidak match plan</div>
+          </article>
+        </section>
+
+        <!-- ============ REMINDER PENDING REPORT WIDGET ============ -->
+        <section class="card" id="reminderPendingCard" style="margin-top:16px; margin-bottom:24px; display:none;">
+          <div class="card-head">
+            <div class="card-title-wrap">
+              <span class="eyebrow" style="color:#ef4444;">⚠️ Reminder</span>
+              <h2 class="card-title" id="reminderTitle">Belum Report Hari Ini</h2>
+            </div>
+            <button class="btn btn--ghost" id="reminderToggle" style="font-size:13px;">Sembunyikan</button>
+          </div>
+          <div id="reminderBody">
+            <div style="display:flex; gap:12px; flex-wrap:wrap; margin-bottom:12px;">
+              <div class="reminder-pill reminder-am" data-tier="am" style="flex:1; min-width:120px; padding:10px 14px; border-radius:10px; background:rgba(59,130,246,0.1); border:1px solid rgba(59,130,246,0.3); cursor:pointer;">
+                <div style="font-size:11px; opacity:0.7;">AM (visit pending)</div>
+                <div style="font-size:24px; font-weight:600;" id="reminderCountAm">—</div>
+              </div>
+              <div class="reminder-pill reminder-todo" data-tier="todo" style="flex:1; min-width:120px; padding:10px 14px; border-radius:10px; background:rgba(156,163,175,0.15); border:1px solid rgba(156,163,175,0.3); cursor:pointer;">
+                <div style="font-size:11px; opacity:0.7;">TODO (report pending)</div>
+                <div style="font-size:24px; font-weight:600;" id="reminderCountTodo">—</div>
+              </div>
+              <div class="reminder-pill reminder-zero" data-tier="zero" style="flex:1; min-width:120px; padding:10px 14px; border-radius:10px; background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.3); cursor:pointer;">
+                <div style="font-size:11px; opacity:0.7;">Zero submission</div>
+                <div style="font-size:24px; font-weight:600;" id="reminderCountZero">—</div>
+              </div>
+            </div>
+            <div id="reminderList"></div>
+          </div>
+        </section>
+
+        <!-- WRG inline JS — fetch /api endpoints + populate KPI strip -->
+        <script>
+          (function () {
+            'use strict';
+            const $ = (id) => document.getElementById(id);
+            const fmtNum = (n) => (n == null ? '—' : Number(n).toLocaleString('id-ID'));
+
+            function defaultRange() {
+              const today = new Date();
+              const dow = today.getDay() || 7; // Mon=1..Sun=7
+              const mon = new Date(today); mon.setDate(today.getDate() - (dow - 1));
+              const sun = new Date(mon);   sun.setDate(mon.getDate() + 6);
+              const end = sun < today ? sun : today;
+              const iso = (d) => d.toISOString().slice(0, 10);
+              return [iso(mon), iso(end)];
+            }
+
+            const state = { from: null, to: null, env: null, db: null };
+
+            async function fetchEnv() {
+              const r = await fetch('/api/env');
+              if (!r.ok) throw new Error('env failed');
+              return r.json();
+            }
+            async function fetchSummary(d1, d2) {
+              const r = await fetch(`/api/summary?from=${d1}&to=${d2}`);
+              if (!r.ok) throw new Error('summary failed');
+              return r.json();
+            }
+
+            function renderKpi(s) {
+              const totalPlan = (s.total_plan_visits || 0) + (s.total_todo_items || 0);
+              const reported  = (s.plan_reported || 0) + (s.todo_items_matched || 0);
+              const aktivitas = (s.total_activity || 0) + (s.todo_items_matched || 0) + (s.todo_items_unmatched || 0);
+              const unmatched = (s.unmatched_activity || 0) + (s.todo_items_unmatched || 0);
+              const late      = (s.plan_late || 0) + (s.todo_late || 0);
+              const compPct   = totalPlan > 0 ? Math.round(reported / totalPlan * 100) : null;
+
+              $('kpiWorking').textContent  = fmtNum(s.working_days);
+              $('kpiWorkingSub').textContent = `${state.from} → ${state.to}`;
+              $('kpiWajib').textContent    = fmtNum(s.users_wajib);
+              $('kpiWajibSub').textContent = `dari ${s.users_aktif || 0} aktif`;
+              $('kpiPlan').textContent     = fmtNum(totalPlan);
+              $('kpiPlanSub').textContent  = `${s.total_plan_visits || 0} kunjungan + ${s.total_todo_items || 0} todo`;
+              $('kpiReported').textContent = fmtNum(reported);
+              $('kpiReportedSub').textContent = compPct == null ? '—' : `${compPct}% selesai`;
+              $('kpiLate').textContent     = fmtNum(late);
+              $('kpiAkt').textContent      = fmtNum(aktivitas);
+              $('kpiUnm').textContent      = fmtNum(unmatched);
+            }
+
+            async function fetchPendingReminders(date) {
+              const r = await fetch(`/api/reminders/pending?date=${date}`);
+              if (!r.ok) throw new Error('pending failed');
+              return r.json();
+            }
+
+            let isAdmin = false;
+            let selectedTier = null; // null = collapsed; 'am' | 'todo' | 'zero'
+
+            function renderReminderList(data) {
+              const list = $('reminderList');
+              // Sync pill outline highlight to current selection
+              document.querySelectorAll('.reminder-pill').forEach((p) => {
+                p.style.outline = (p.dataset.tier === selectedTier) ? '2px solid currentColor' : 'none';
+              });
+              if (selectedTier === null) {
+                list.innerHTML = '';
+                return;
+              }
+              const tier = selectedTier;
+              const rows = (tier === 'am' ? data.am_pending :
+                            tier === 'todo' ? data.todo_pending :
+                            data.zero_submission) || [];
+              if (rows.length === 0) {
+                list.innerHTML = `<div style="padding:16px; text-align:center; opacity:0.6; font-size:13px;">✅ Tier ${tier.toUpperCase()} bersih — semua reported</div>`;
+                return;
+              }
+              const html = rows.map((r) => {
+                const meta = tier === 'am'
+                  ? `${r.pending}/${r.total} visit pending`
+                  : tier === 'todo'
+                  ? `${r.pending} item · ${r.role}`
+                  : `tidak ada plan/todo · ${r.role}`;
+                const pushBtn = isAdmin
+                  ? `<button class="btn btn--ghost reminder-push" data-user="${r.id}" data-tier="${tier}" style="font-size:12px; padding:4px 10px;">📲 Push WA</button>`
+                  : '';
+                return `<div style="display:flex; align-items:center; justify-content:space-between; padding:8px 12px; border-bottom:1px solid var(--border); gap:8px;">
+                  <div style="flex:1;">
+                    <div style="font-weight:500;">${r.panggilan || r.nama}</div>
+                    <div style="font-size:11px; opacity:0.7;">${r.cabang || '—'} · ${meta}</div>
+                  </div>
+                  ${pushBtn}
+                </div>`;
+              }).join('');
+              list.innerHTML = html;
+              // Wire push buttons
+              list.querySelectorAll('.reminder-push').forEach((btn) => {
+                btn.addEventListener('click', async () => {
+                  const uid = parseInt(btn.dataset.user, 10);
+                  const t = btn.dataset.tier;
+                  if (!confirm(`Kirim WA reminder ke user ${uid}?`)) return;
+                  btn.disabled = true; btn.textContent = '⏳ Sending...';
+                  try {
+                    const r = await fetch('/api/reminders/push', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ user_id: uid, tier: t }),
+                    });
+                    const j = await r.json();
+                    if (j.ok) {
+                      btn.textContent = '✅ Sent';
+                      btn.style.background = 'rgba(34,197,94,0.2)';
+                    } else {
+                      btn.textContent = '❌ Failed';
+                      btn.disabled = false;
+                      alert('Push gagal: ' + (j.error || JSON.stringify(j)));
+                    }
+                  } catch (e) {
+                    btn.textContent = '❌ Error';
+                    btn.disabled = false;
+                    alert('Push error: ' + e.message);
+                  }
+                });
+              });
+            }
+
+            async function refreshReminders() {
+              try {
+                const today = new Date().toISOString().slice(0, 10);
+                const data = await fetchPendingReminders(today);
+                const amN = (data.am_pending || []).length;
+                const todoN = (data.todo_pending || []).length;
+                const zeroN = (data.zero_submission || []).length;
+                $('reminderCountAm').textContent = amN;
+                $('reminderCountTodo').textContent = todoN;
+                $('reminderCountZero').textContent = zeroN;
+                $('reminderTitle').textContent = `Belum Report Hari Ini · ${today}`;
+                const card = $('reminderPendingCard');
+                card.style.display = (amN + todoN + zeroN) > 0 ? '' : 'none';
+                window._reminderData = data;
+                renderReminderList(data);
+              } catch (e) {
+                console.warn('reminder fetch failed:', e);
+              }
+            }
+
+            async function refresh() {
+              try {
+                const env = await fetchEnv();
+                state.env = env.env; state.db = env.db;
+                if (!state.from || !state.to) {
+                  state.from = env.default_from; state.to = env.default_to;
+                }
+                $('dateFrom').value = state.from;
+                $('dateTo').value = state.to;
+                $('heroDb').textContent = state.db;
+                $('heroRange').textContent = `${state.from} → ${state.to}`;
+                $('heroDate').textContent = new Date(env.today).toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+
+                // Check admin role for push button
+                try {
+                  const me = await fetch('/api/auth/me').then((r) => r.json());
+                  isAdmin = !!(me.user && me.user.is_admin);
+                } catch (e) { isAdmin = false; }
+
+                const sum = await fetchSummary(state.from, state.to);
+                renderKpi(sum.summary || {});
+
+                refreshReminders();
+              } catch (e) {
+                console.error('WRG refresh failed:', e);
+                $('heroSub').textContent = 'Gagal load data: ' + e.message;
+              }
+            }
+
+            document.addEventListener('DOMContentLoaded', () => {
+              // Reminder card: tier pill click → toggle (same tier collapses, different tier switches)
+              document.querySelectorAll('.reminder-pill').forEach((p) => {
+                p.addEventListener('click', () => {
+                  selectedTier = (selectedTier === p.dataset.tier) ? null : p.dataset.tier;
+                  if (window._reminderData) renderReminderList(window._reminderData);
+                });
+              });
+              // Collapse toggle
+              const tog = $('reminderToggle');
+              if (tog) tog.addEventListener('click', () => {
+                const body = $('reminderBody');
+                const hidden = body.style.display === 'none';
+                body.style.display = hidden ? '' : 'none';
+                tog.textContent = hidden ? 'Sembunyikan' : 'Tampilkan';
+              });
+
+              $('btnApply').addEventListener('click', () => {
+                state.from = $('dateFrom').value;
+                state.to = $('dateTo').value;
+                refresh();
+              });
+              document.querySelectorAll('[data-preset]').forEach((btn) => {
+                btn.addEventListener('click', () => {
+                  const preset = btn.dataset.preset;
+                  const today = new Date().toISOString().slice(0, 10);
+                  if (preset === 'today') {
+                    state.from = today; state.to = today;
+                  } else if (preset === 'week') {
+                    [state.from, state.to] = defaultRange();
+                  }
+                  refresh();
+                });
+              });
+              refresh();
+            });
+          })();
+        </script>
+
+        <!-- ============ TREN CHART ============ -->
+        <div class="grid">
+          <section class="col-12 card">
+            <div class="card-head">
+              <div class="card-title-wrap">
+                <span class="eyebrow">Aktivitas</span>
+                <h2 class="card-title">Tren Plan &amp; Report Harian</h2>
+              </div>
+            </div>
+            <div class="chart-canvas-wrap" style="height: 280px;">
+              <canvas id="wrgTrenChart"></canvas>
+            </div>
+          </section>
+
+          <!-- ============ TABS + TABLE ============ -->
+          <section class="col-12 card">
+            <div class="card-head">
+              <div class="card-title-wrap">
+                <span class="eyebrow">Drilldown</span>
+                <h2 class="card-title" id="tabTitle">Per Orang</h2>
+              </div>
+              <div style="display:flex; gap:8px;" id="tabNav">
+                <button class="btn btn--primary" data-tab="orang">Per Orang</button>
+                <button class="btn btn--ghost" data-tab="divisi">Per Divisi</button>
+                <button class="btn btn--ghost" data-tab="cabang">Per Cabang</button>
+                <button class="btn btn--ghost" data-tab="hod">Per HOD Sales</button>
+              </div>
+            </div>
+            <div class="table-responsive" style="max-height: 560px; overflow-y: auto;">
+              <table class="table" id="wrgTable" style="width:100%; font-size:13px;">
+                <thead id="wrgTableHead"></thead>
+                <tbody id="wrgTableBody">
+                  <tr><td colspan="10" style="text-align:center; padding:24px; color:#94a3b8;">Memuat…</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+
+        <!-- ============ DRILLDOWN MODAL ============ -->
+        <div id="drilldownModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:9999; align-items:center; justify-content:center;">
+          <div style="background:#fff; max-width:900px; width:90%; max-height:85vh; overflow-y:auto; border-radius:12px; padding:24px; position:relative;">
+            <button id="drilldownClose" style="position:absolute; top:12px; right:12px; background:none; border:none; font-size:24px; cursor:pointer;">×</button>
+            <h2 id="drilldownTitle" style="margin-top:0;">Detail</h2>
+            <div id="drilldownBody">Memuat…</div>
+          </div>
+        </div>
+
+        <!-- ============ WRG TAB + TREN CHART JS ============ -->
+        <script>
+          (function () {
+            'use strict';
+            const $ = (id) => document.getElementById(id);
+            const escapeHtml = (s) => (s == null ? '' : String(s)).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+            function getRange() { return [$('dateFrom').value, $('dateTo').value]; }
+
+            const tabState = { current: 'orang', data: { orang: [], divisi: [], cabang: [], hod: [] } };
+
+            const COLUMNS = {
+              orang: [
+                { key: 'panggilan', label: 'Panggilan' },
+                { key: 'nama', label: 'Nama' },
+                { key: 'role', label: 'Role' },
+                { key: 'cabang', label: 'Cabang' },
+                { key: 'active_days', label: 'Hari', align: 'right' },
+                { key: 'plan_count', label: 'Plan', align: 'right' },
+                { key: 'report_count', label: 'Report', align: 'right' },
+                { key: 'completion', label: '% Selesai', align: 'right', render: (v) => v == null ? '—' : `${v}%` },
+                { key: 'late', label: 'Late', align: 'right' },
+                { key: 'unmatched', label: 'Unmatched', align: 'right' },
+              ],
+              divisi: [
+                { key: 'role', label: 'Role/Divisi' },
+                { key: 'jumlah_orang', label: 'Anggota', align: 'right' },
+                { key: 'orang_dgn_plan', label: 'Submit Plan', align: 'right' },
+                { key: 'total_plan', label: 'Total Plan', align: 'right' },
+                { key: 'reported', label: 'Reported', align: 'right' },
+                { key: 'completion', label: '% Selesai', align: 'right', render: (v) => v == null ? '—' : `${v}%` },
+                { key: 'total_late', label: 'Late', align: 'right' },
+                { key: 'unmatched_activity', label: 'Unmatched', align: 'right' },
+              ],
+              cabang: [
+                { key: 'cabang', label: 'Cabang' },
+                { key: 'jumlah_orang', label: 'Anggota', align: 'right' },
+                { key: 'roles', label: 'Role aktif' },
+                { key: 'orang_dgn_plan', label: 'Submit Plan', align: 'right' },
+                { key: 'total_plan', label: 'Plan', align: 'right' },
+                { key: 'reported', label: 'Reported', align: 'right' },
+                { key: 'completion', label: '% Selesai', align: 'right', render: (v) => v == null ? '—' : `${v}%` },
+                { key: 'total_late', label: 'Late', align: 'right' },
+                { key: 'unmatched', label: 'Unmatched', align: 'right' },
+              ],
+              hod: [
+                { key: 'hod_panggilan', label: 'HOD' },
+                { key: 'hod_nama', label: 'Nama Lengkap' },
+                { key: 'jumlah_am', label: 'AM', align: 'right' },
+                { key: 'am_dgn_plan', label: 'Submit', align: 'right' },
+                { key: 'total_plan_visits', label: 'Plan', align: 'right' },
+                { key: 'plan_reported', label: 'Reported', align: 'right' },
+                { key: 'completion', label: '% Selesai', align: 'right', render: (v) => v == null ? '—' : `${v}%` },
+                { key: 'plan_late', label: 'Late', align: 'right' },
+                { key: 'unmatched_activity', label: 'Unmatched', align: 'right' },
+              ],
+            };
+
+            function enrichOrang(r) {
+              r.is_am = r.role === 'AM';
+              r.plan_count = r.is_am ? r.total_plan_visits : r.total_todo_items;
+              r.report_count = r.is_am ? r.plan_reported : r.todo_items_matched;
+              r.late = (r.plan_late || 0) + (r.todo_late || 0);
+              r.unmatched = r.is_am ? r.unmatched_activity : r.todo_items_unmatched;
+              const d = r.plan_count || 0;
+              r.completion = d > 0 ? Math.round((r.report_count / d) * 100) : null;
+              return r;
+            }
+            function enrichDivisi(r) {
+              r.reported = (r.plan_reported || 0) + (r.todo_items_matched || 0);
+              r.unmatched_activity = (r.unmatched_activity || 0) + (r.todo_items_unmatched || 0);
+              const d = r.total_plan || 0;
+              r.completion = d > 0 ? Math.round((r.reported / d) * 100) : null;
+              return r;
+            }
+            function enrichCabang(r) {
+              r.reported = (r.plan_reported || 0) + (r.todo_items_matched || 0);
+              r.unmatched = (r.unmatched_activity || 0) + (r.todo_items_unmatched || 0);
+              const d = r.total_plan || 0;
+              r.completion = d > 0 ? Math.round((r.reported / d) * 100) : null;
+              return r;
+            }
+            function enrichHod(r) {
+              r.completion = r.total_plan_visits > 0 ? Math.round((r.plan_reported / r.total_plan_visits) * 100) : null;
+              return r;
+            }
+
+            function renderTable(tab) {
+              const cols = COLUMNS[tab];
+              const rows = tabState.data[tab];
+              $('wrgTableHead').innerHTML = '<tr>' + cols.map((c) =>
+                `<th style="padding:8px 10px; text-align:${c.align || 'left'}; border-bottom:2px solid #e2e8f0; font-size:12px; color:#64748b; position:sticky; top:0; background:#fff;">${escapeHtml(c.label)}</th>`
+              ).join('') + '</tr>';
+
+              if (!rows || rows.length === 0) {
+                $('wrgTableBody').innerHTML = `<tr><td colspan="${cols.length}" style="text-align:center; padding:24px; color:#94a3b8;">Tidak ada data pada periode ini.</td></tr>`;
+                return;
+              }
+
+              $('wrgTableBody').innerHTML = rows.map((r) => {
+                const clickable = tab === 'orang' && r.user_id ? `style="cursor:pointer;" onclick="openDrilldown(${r.user_id})"` : '';
+                const tds = cols.map((c) => {
+                  let v = r[c.key];
+                  if (c.render) v = c.render(v);
+                  if (v == null) v = '';
+                  return `<td style="padding:8px 10px; text-align:${c.align || 'left'}; border-bottom:1px solid #f1f5f9;">${typeof v === 'string' ? escapeHtml(v) : v}</td>`;
+                }).join('');
+                return `<tr ${clickable}>${tds}</tr>`;
+              }).join('');
+            }
+
+            async function loadTab(tab) {
+              tabState.current = tab;
+              $('tabTitle').textContent = ({ orang: 'Per Orang', divisi: 'Per Divisi', cabang: 'Per Cabang', hod: 'Per HOD Sales' })[tab];
+              // Update active state on tab nav buttons
+              document.querySelectorAll('#tabNav [data-tab]').forEach((btn) => {
+                btn.classList.remove('btn--primary');
+                btn.classList.add('btn--ghost');
+                if (btn.dataset.tab === tab) {
+                  btn.classList.remove('btn--ghost');
+                  btn.classList.add('btn--primary');
+                }
+              });
+              const [d1, d2] = getRange();
+              if (!d1 || !d2) return;
+              const r = await fetch(`/api/per-${tab}?from=${d1}&to=${d2}`);
+              if (!r.ok) { $('wrgTableBody').innerHTML = `<tr><td colspan="10" style="text-align:center;">Error ${r.status}</td></tr>`; return; }
+              const json = await r.json();
+              const enrich = ({ orang: enrichOrang, divisi: enrichDivisi, cabang: enrichCabang, hod: enrichHod })[tab];
+              tabState.data[tab] = (json.rows || []).map(enrich);
+              renderTable(tab);
+            }
+
+            window.openDrilldown = (userId) => {
+              const [d1, d2] = getRange();
+              location.href = `/drilldown.html?user_id=${userId}&from=${d1}&to=${d2}`;
+            };
+            // Legacy modal logic kept di bawah (unused — di-route ke drilldown.html sekarang)
+            window.__legacyDrilldown = async (userId) => {
+              $('drilldownModal').style.display = 'flex';
+              $('drilldownBody').innerHTML = 'Memuat…';
+              const [d1, d2] = getRange();
+              const r = await fetch(`/api/drilldown?user_id=${userId}&from=${d1}&to=${d2}`);
+              if (!r.ok) { $('drilldownBody').textContent = 'Error: ' + r.status; return; }
+              const json = await r.json();
+              const d = json.detail || {};
+              const u = d.user || {};
+              $('drilldownTitle').textContent = `${u.panggilan || ''} — ${u.nama || ''}`;
+
+              const fmtDate = (iso) => iso ? new Date(iso).toLocaleDateString('id-ID', { weekday: 'short', day: 'numeric', month: 'short' }) : '—';
+              const fmtTime = (iso) => iso ? new Date(iso).toLocaleString('id-ID', { hour: '2-digit', minute: '2-digit' }) : '—';
+              const badge = (text, color) => `<span style="background:${color}1a; color:${color}; padding:2px 8px; border-radius:6px; font-size:11px; font-weight:600;">${escapeHtml(text)}</span>`;
+
+              // Info card
+              const info = `
+                <div style="background:#f8fafc; border-radius:8px; padding:14px; margin-bottom:16px; display:grid; grid-template-columns:repeat(4, 1fr); gap:8px 16px; font-size:13px;">
+                  <div><div style="color:#94a3b8; font-size:10px; text-transform:uppercase;">Role</div><strong>${escapeHtml(u.role || '—')}</strong></div>
+                  <div><div style="color:#94a3b8; font-size:10px; text-transform:uppercase;">Posisi</div><strong>${escapeHtml(u.posisi || '—')}</strong></div>
+                  <div><div style="color:#94a3b8; font-size:10px; text-transform:uppercase;">Cabang</div><strong>${escapeHtml(u.cabang || '—')}</strong></div>
+                  <div><div style="color:#94a3b8; font-size:10px; text-transform:uppercase;">WA</div><strong style="font-family:monospace;">${escapeHtml(u.wa_number || '—')}</strong></div>
+                </div>`;
+
+              // PLAN (AM mode — sales_plan rows)
+              const planRows = (d.plan || []);
+              const planHtml = planRows.length === 0
+                ? `<div style="color:#94a3b8; font-style:italic; padding:8px;">Tidak ada plan kunjungan AM pada periode ini.</div>`
+                : `<table style="width:100%; font-size:12px; border-collapse:collapse;">
+                    <thead><tr style="background:#f8fafc;">
+                      <th style="padding:6px 8px; text-align:left;">Tgl</th>
+                      <th style="padding:6px 8px; text-align:left;">Customer</th>
+                      <th style="padding:6px 8px; text-align:left;">Tujuan</th>
+                      <th style="padding:6px 8px; text-align:left;">Goal</th>
+                      <th style="padding:6px 8px; text-align:center;">Status</th>
+                      <th style="padding:6px 8px; text-align:left;">Hasil</th>
+                      <th style="padding:6px 8px; text-align:left;">Visit Geotag</th>
+                    </tr></thead><tbody>
+                    ${planRows.map((p) => {
+                      const visitCell = p.visit_lat && p.visit_lon
+                        ? `<a href="https://www.google.com/maps?q=${p.visit_lat},${p.visit_lon}" target="_blank" style="text-decoration:none;">📍 ${p.visit_lat}, ${p.visit_lon}</a>`
+                          + (p.visit_timestamp ? `<div style="font-size:10px; color:#94a3b8;">${escapeHtml(p.visit_timestamp.replace('T',' ').slice(0,16))}</div>` : '')
+                          + (p.visit_date_mismatch ? `<div style="margin-top:2px;">${badge('⚠️ tanggal mismatch', '#dc2626')}</div>` : '')
+                        : (p.reported ? `<span style="color:#dc2626; font-size:11px;">⚠️ no geotag</span>` : '<span style="color:#94a3b8;">—</span>');
+                      return `
+                      <tr style="border-top:1px solid #f1f5f9;">
+                        <td style="padding:6px 8px; white-space:nowrap;">${fmtDate(p.tanggal)}</td>
+                        <td style="padding:6px 8px;"><strong>${escapeHtml(p.customer_name)}</strong></td>
+                        <td style="padding:6px 8px;">${escapeHtml(p.tujuan || '—')}</td>
+                        <td style="padding:6px 8px; color:#64748b;">${escapeHtml(p.goal || '—')}</td>
+                        <td style="padding:6px 8px; text-align:center;">${p.reported ? badge('reported', '#16a34a') : (p.is_late_plan ? badge('late', '#dc2626') : badge('pending', '#94a3b8'))}</td>
+                        <td style="padding:6px 8px; font-size:11px; color:#475569;">${escapeHtml(p.hasil || '—')}</td>
+                        <td style="padding:6px 8px; font-size:11px;">${visitCell}</td>
+                      </tr>`;
+                    }).join('')}
+                  </tbody></table>`;
+
+              // TODO (non-AM mode — sales_todo rows)
+              const todoRows = (d.todo || []);
+              const todoHtml = todoRows.length === 0
+                ? `<div style="color:#94a3b8; font-style:italic; padding:8px;">Tidak ada todo list pada periode ini.</div>`
+                : todoRows.map((t) => {
+                    const items = Array.isArray(t.items) ? t.items : [];
+                    const reportItems = Array.isArray(t.report_data) ? t.report_data : [];
+                    const statusBadge = t.reported
+                      ? badge(`✓ reported ${reportItems.length}/${items.length}`, '#16a34a')
+                      : (t.is_late_plan ? badge('late, belum report', '#dc2626') : badge('pending', '#94a3b8'));
+                    // Match item to report by idx
+                    const reportByIdx = {};
+                    reportItems.forEach((r) => { reportByIdx[r.idx - 1] = r; });
+                    return `
+                      <div style="border:1px solid #e2e8f0; border-radius:8px; margin-bottom:10px;">
+                        <div style="background:#f8fafc; padding:8px 12px; display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #e2e8f0;">
+                          <div><strong>${fmtDate(t.tanggal)}</strong> <span style="color:#94a3b8; font-size:11px; margin-left:8px;">${items.length} item · submit ${fmtTime(t.submitted_at)}</span></div>
+                          ${statusBadge}
+                        </div>
+                        <ol style="margin:0; padding:8px 24px; font-size:12px;">
+                          ${items.map((it, i) => {
+                            const rep = reportByIdx[i];
+                            const matched = rep && rep.status === 'matched';
+                            const ambig = rep && rep.status === 'ambiguous';
+                            const unm = rep && rep.status === 'unmatched';
+                            return `<li style="margin:4px 0; ${rep ? '' : 'color:#94a3b8;'}">
+                              <span>${escapeHtml(it)}</span>
+                              ${rep ? `<div style="margin-left:0; padding:4px 8px; background:${matched ? '#f0fdf4' : (ambig ? '#fffbeb' : '#fef2f2')}; border-radius:4px; margin-top:2px; font-size:11px; color:#475569;">→ ${escapeHtml(rep.result || rep.task || '')} ${matched ? badge('matched','#16a34a') : (ambig ? badge('ambiguous','#d97706') : badge('baru','#dc2626'))}</div>` : ''}
+                            </li>`;
+                          }).join('')}
+                        </ol>
+                      </div>`;
+                  }).join('');
+
+              // Unmatched activity (AM mode extras)
+              const actRows = (d.unmatched_activity || []);
+              const actHtml = actRows.length === 0
+                ? ''
+                : `<h3 style="margin:16px 0 8px; font-size:13px; color:#dc2626;">Aktivitas Unmatched (di luar plan)</h3>
+                  <table style="width:100%; font-size:12px; border-collapse:collapse;">
+                    <thead><tr style="background:#fef2f2;">
+                      <th style="padding:6px 8px; text-align:left;">Tgl</th>
+                      <th style="padding:6px 8px; text-align:left;">Customer</th>
+                      <th style="padding:6px 8px; text-align:left;">Hasil</th>
+                      <th style="padding:6px 8px; text-align:left;">Next</th>
+                    </tr></thead><tbody>
+                    ${actRows.map((a) => `
+                      <tr style="border-top:1px solid #fee2e2;">
+                        <td style="padding:6px 8px;">${fmtDate(a.tanggal)}</td>
+                        <td style="padding:6px 8px;"><strong>${escapeHtml(a.customer_name)}</strong></td>
+                        <td style="padding:6px 8px;">${escapeHtml(a.hasil || '—')}</td>
+                        <td style="padding:6px 8px; color:#64748b;">${escapeHtml(a.next_action || '—')}</td>
+                      </tr>`).join('')}
+                  </tbody></table>`;
+
+              const isAM = u.role === 'AM';
+              $('drilldownBody').innerHTML = `
+                ${info}
+                <h3 style="margin:16px 0 8px; font-size:13px;">${isAM ? `Plan Kunjungan (${planRows.length})` : `Todo List (${todoRows.length} hari)`}</h3>
+                ${isAM ? planHtml : todoHtml}
+                ${actHtml}
+              `;
+            };
+
+            let wrgChart = null;
+            async function loadTrenChart() {
+              if (typeof Chart === 'undefined') { setTimeout(loadTrenChart, 500); return; }
+              const [d1, d2] = getRange();
+              if (!d1 || !d2) return;
+              const r = await fetch(`/api/daily-trend?from=${d1}&to=${d2}`);
+              if (!r.ok) return;
+              const json = await r.json();
+              const days = json.days || [];
+              const labels = days.map((d) => d.date);
+              const planData = days.map((d) => (d.plan_visits || 0) + (d.todo_items || 0));
+              const reportData = days.map((d) => (d.total_activity || 0) + (d.todo_reported || 0));
+              const lateData = days.map((d) => (d.plan_late || 0) + (d.todo_late || 0));
+
+              if (wrgChart) wrgChart.destroy();
+              wrgChart = new Chart($('wrgTrenChart'), {
+                type: 'line',
+                data: {
+                  labels,
+                  datasets: [
+                    { label: 'Plan', data: planData, borderColor: '#10b981', backgroundColor: 'rgba(16,185,129,0.1)', tension: 0.3 },
+                    { label: 'Report', data: reportData, borderColor: '#2563eb', backgroundColor: 'rgba(37,99,235,0.1)', tension: 0.3 },
+                    { label: 'Late', data: lateData, borderColor: '#dc2626', borderDash: [5,5], backgroundColor: 'transparent', tension: 0.3 },
+                  ],
+                },
+                options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false } },
+              });
+            }
+
+            document.addEventListener('DOMContentLoaded', () => {
+              document.querySelectorAll('[data-tab]').forEach((btn) => {
+                btn.addEventListener('click', () => loadTab(btn.dataset.tab));
+              });
+              $('drilldownClose').addEventListener('click', () => { $('drilldownModal').style.display = 'none'; });
+              $('drilldownModal').addEventListener('click', (e) => { if (e.target.id === 'drilldownModal') $('drilldownModal').style.display = 'none'; });
+
+              const checkAndLoad = () => {
+                if ($('dateFrom').value && $('dateTo').value) {
+                  loadTab('orang');
+                  loadTrenChart();
+                } else {
+                  setTimeout(checkAndLoad, 100);
+                }
+              };
+              checkAndLoad();
+
+              $('btnApply').addEventListener('click', () => {
+                setTimeout(() => { loadTab(tabState.current); loadTrenChart(); }, 200);
+              });
+            });
+          })();
+        </script>
+
+        </main>
+        <div data-shell-footer></div>
+      </div>
+    </div>
+  </body>
+</html>
