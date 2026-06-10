@@ -1,5 +1,6 @@
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
+import type { Context } from "hono";
 import type { EventEnvelope } from "@wrg/types";
 import { isEventEnvelope } from "./envelope.js";
 
@@ -41,7 +42,8 @@ app.post("/events", async (c) => {
 // nanti di-enrich (query DB utk rows) sebelum call ai — sekarang passthrough.
 const aiBaseUrl = (): string => process.env.AI_URL ?? "http://localhost:8000";
 
-app.post("/daily-summary", async (c) => {
+// Proxy generik ke services/ai untuk operasi AI/data passthrough.
+async function forwardToAi(c: Context, aiPath: string): Promise<Response> {
   let body: unknown;
   try {
     body = await c.req.json();
@@ -49,7 +51,7 @@ app.post("/daily-summary", async (c) => {
     return c.json({ error: "invalid JSON body" }, 400);
   }
   try {
-    const res = await fetch(`${aiBaseUrl()}/daily-summary`, {
+    const res = await fetch(`${aiBaseUrl()}${aiPath}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
@@ -62,7 +64,10 @@ app.post("/daily-summary", async (c) => {
   } catch {
     return c.json({ error: "ai service unreachable" }, 502);
   }
-});
+}
+
+app.post("/daily-summary", (c) => forwardToAi(c, "/daily-summary"));
+app.post("/rekap", (c) => forwardToAi(c, "/rekap"));
 
 const port = Number(process.env.PORT ?? 4000);
 serve({ fetch: app.fetch, port }, (info) => {
