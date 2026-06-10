@@ -5,6 +5,7 @@
 # ⚠️  STATUS: SPEC TOPOLOGI — BELUM RUNNABLE (per 2026-06-10).
 #     `docker compose up` akan gagal sampai item di bawah dibuat:
 #       [x] apps/api/Dockerfile        (Hono/Node — DONE; build di PORT 4000)
+#       [x] services/ai/Dockerfile     (FastAPI — DONE; PORT 8000)
 #       [ ] legacy/crm/Dockerfile      (crm = Python + shell, BUKAN Next →
 #           service di bawah pakai asumsi NEXTAUTH/port 3000 yg perlu disesuaikan)
 #       [ ] legacy/monitor/Dockerfile  (monitor = Python + shell, sama)
@@ -151,6 +152,29 @@ services:
       JWT_SECRET: ${JWT_SECRET}
     ports:
       - "4000:4000"
+
+  # ── AI & DATA (Python FastAPI) ────────────────────────
+  ai:
+    build:
+      context: .
+      dockerfile: services/ai/Dockerfile
+    container_name: wrg-ai
+    restart: unless-stopped
+    networks: [wrg-internal]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${PG_USER:-wrg}:${PG_PASSWORD}@postgres:5432/${PG_DB:-wrg_os}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY}
+      PORT: "8000"
+    ports:
+      - "8000:8000"
 
   # ── GATEWAY WA ────────────────────────────────────────
   wa-gateway:

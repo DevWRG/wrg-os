@@ -25,6 +25,12 @@ next-env.d.ts
 *.tsbuildinfo
 .vercel
 
+# Python (services/ai)
+**/__pycache__/
+**/.venv/
+*.pyc
+*.pyo
+
 # Misc
 .DS_Store
 *.log
