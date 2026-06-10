@@ -25,6 +25,14 @@ import {
   mad,
   type SeriesPoint,
 } from "./anomaly.js";
+import {
+  getDealsNeedingDoc,
+  getDealById,
+  insertSalesDoc,
+  DOC_TYPE_FOR_STAGE,
+  VALID_DOC_TYPES,
+  type DealForDoc,
+} from "./salesdoc.js";
 
 // A2 — AR Aging Watch (Blueprint v2.3, R1/L2). Baca ar_aging_mv, prioritaskan
 // piutang berisiko, log run ke audit_log (Layer 4 Output) + update registry.
@@ -578,4 +586,105 @@ export async function runAnomalyDetection(): Promise<{
   await sql`UPDATE agent_registry SET last_health_check = now() WHERE agent_id = 'A5'`;
 
   return { agent_id: "A5", audit_id: a.id as string, summary, findings: top };
+}
+
+// A6 — Sales Doc Drafter (Blueprint v2.3, R2/L2/HIGH). Susun dokumen penjualan
+// (SPH/offering/presentation/MOU) dari konteks deal via services/ai → simpan ke
+// sales_doc (status 'draft', menunggu review — TIDAK auto-kirim) → log
+// audit_log (Layer 4, R2, D1) + update registry. Mode: targeted (deal_id) atau
+// batch (deal di stage ber-dokumen yang belum punya doc).
+
+function docTypeFor(deal: DealForDoc, requested?: string): string {
+  if (requested && VALID_DOC_TYPES.has(requested)) return requested;
+  return DOC_TYPE_FOR_STAGE[deal.stage] ?? "sph";
+}
+
+export interface SalesDocResult {
+  agent_id: string;
+  drafted: boolean;
+  audit_id: string | null;
+  count: number;
+  model: string | null;
+  docs: { deal_id: string; doc_type: string; doc_id: string; title: string }[];
+}
+
+export async function runSalesDocDrafter(opts: {
+  dealId?: string;
+  docType?: string;
+  limit?: number;
+}): Promise<SalesDocResult> {
+  const sql = db();
+  const limit = opts.limit && opts.limit > 0 ? Math.min(opts.limit, 10) : 5;
+
+  let targets: { deal: DealForDoc; docType: string }[] = [];
+  if (opts.dealId) {
+    const deal = await getDealById(opts.dealId);
+    if (deal) targets = [{ deal, docType: docTypeFor(deal, opts.docType) }];
+  } else {
+    const deals = await getDealsNeedingDoc(limit);
+    targets = deals.map((deal) => ({ deal, docType: docTypeFor(deal, opts.docType) }));
+  }
+
+  if (targets.length === 0) {
+    return { agent_id: "A6", drafted: false, audit_id: null, count: 0, model: null, docs: [] };
+  }
+
+  const saved: { deal_id: string; doc_type: string; doc_id: string; title: string }[] = [];
+  let lastModel: string | null = null;
+  for (const { deal, docType } of targets) {
+    const { status, data } = await callAi("/sales-doc", {
+      customer_name: deal.customer_name,
+      am_id: deal.am_id,
+      stage: deal.stage,
+      estimated_value: deal.estimated_value ?? 0,
+      product_ids: deal.product_ids,
+      notes: deal.notes,
+      doc_type: docType,
+      dry_run: !process.env.OPENROUTER_API_KEY,
+    });
+    if (status >= 400) {
+      throw new Error(`services/ai /sales-doc status ${status}: ${JSON.stringify(data)}`);
+    }
+    const draftText = String(data.draft_text ?? "");
+    if (!draftText) continue;
+    const title = String(data.title ?? `${docType} — ${deal.customer_name ?? deal.customer_id}`);
+    lastModel = (data.model as string | undefined) ?? lastModel;
+    const docId = await insertSalesDoc({
+      deal_id: deal.deal_id,
+      customer_id: deal.customer_id,
+      customer_name: deal.customer_name,
+      doc_type: docType,
+      title,
+      draft_text: draftText,
+      model_used: data.model as string | undefined,
+    });
+    saved.push({ deal_id: deal.deal_id, doc_type: docType, doc_id: docId, title });
+  }
+
+  const inputHash = createHash("sha256")
+    .update(JSON.stringify(targets.map((t) => ({ deal_id: t.deal.deal_id, doc_type: t.docType }))))
+    .digest("hex");
+  const outputHash = createHash("sha256")
+    .update(JSON.stringify(saved.map((s) => s.doc_id)))
+    .digest("hex");
+  const payload = { count: saved.length, docs: saved };
+
+  const [a] = await sql`
+    INSERT INTO audit_log
+      (use_case_id, correlation_id, agent_id, layer, event_type, r_tier, input_hash, output_hash, payload)
+    VALUES
+      ('D1', ${`a6-${inputHash.slice(0, 8)}`}, 'A6', 4, 'sales.doc.draft.run', 'R2',
+       ${inputHash}, ${outputHash}, ${sql.json(payload as unknown as Parameters<typeof sql.json>[0])})
+    RETURNING id
+  `;
+  await sql`UPDATE agent_registry SET last_health_check = now() WHERE agent_id = 'A6'`;
+
+  return {
+    agent_id: "A6",
+    drafted: saved.length > 0,
+    audit_id: a.id as string,
+    count: saved.length,
+    model: lastModel,
+    docs: saved,
+  };
 }

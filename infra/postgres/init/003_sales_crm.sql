@@ -42,3 +42,21 @@ CREATE TABLE IF NOT EXISTS sps_mv (
   refreshed_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY (am_id, period)
 );
+
+-- Dokumen penjualan hasil draft A6 (Sales Doc Drafter). Status awal 'draft'
+-- (R2/L2: direview manusia sebelum approved/sent, tidak auto-kirim).
+CREATE TABLE IF NOT EXISTS sales_doc (
+  id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  deal_id         UUID REFERENCES deal(deal_id),
+  customer_id     VARCHAR(50),
+  customer_name   VARCHAR(200),
+  doc_type        VARCHAR(30),   -- sph, offering_letter, presentation, mou
+  title           VARCHAR(200),
+  draft_text      TEXT NOT NULL,
+  status          VARCHAR(20) DEFAULT 'draft',  -- draft, approved, sent
+  generated_by    VARCHAR(10),   -- A6
+  model_used      VARCHAR(50),
+  approved_by     VARCHAR(100),
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_sales_doc_deal ON sales_doc (deal_id);

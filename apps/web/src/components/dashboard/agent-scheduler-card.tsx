@@ -29,6 +29,7 @@ const AGENT_LABEL: Record<string, string> = {
   A3: "Sari Collection Drafter",
   A4: "Pipeline Authenticity",
   A5: "Anomaly Detection",
+  A6: "Sales Doc Drafter",
 };
 
 // Ringkas hasil run-now per agen jadi satu baris status.
@@ -55,6 +56,11 @@ function summarize(agentId: string, data: Record<string, unknown>): string {
   if (agentId === "A5") {
     const s = (data.summary ?? {}) as Record<string, unknown>;
     return `${s.anomalies ?? 0} anomali · ${s.critical ?? 0} kritis → ${s.escalated ?? 0} eskalasi HITL`;
+  }
+  if (agentId === "A6") {
+    return data.drafted
+      ? `${data.count ?? 0} dokumen penjualan → review`
+      : "tidak ada deal butuh dokumen — no-op";
   }
   return "selesai";
 }

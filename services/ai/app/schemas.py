@@ -154,3 +154,25 @@ class CollectionDraftResponse(BaseModel):
     model: str
     count: int = 0
     dry_run: bool = False
+
+
+# === A6 Sales Doc Drafter (draft dokumen penjualan dari konteks deal) ===
+
+
+class SalesDocRequest(BaseModel):
+    customer_name: Optional[str] = None
+    am_id: str = ""
+    stage: str = ""
+    estimated_value: float = 0
+    product_ids: List[str] = Field(default_factory=list)
+    notes: Optional[str] = None
+    doc_type: str = "sph"  # sph, offering_letter, presentation, mou
+    dry_run: bool = False
+
+
+class SalesDocResponse(BaseModel):
+    doc_type: str
+    title: str
+    draft_text: str
+    model: str
+    dry_run: bool = False
