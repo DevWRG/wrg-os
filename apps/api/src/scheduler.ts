@@ -8,6 +8,7 @@ import {
   runPipelineAuthenticity,
   runAnomalyDetection,
   runSalesDocDrafter,
+  runProductIntelligence,
 } from "./repo/agents.js";
 
 // Penjadwal agen in-process (Blueprint v2.3). Default MATI — aktif hanya bila
@@ -74,6 +75,12 @@ export function startScheduler(): ScheduleStatus {
       id: "A6",
       expr: process.env.A6_CRON ?? "0 10 * * *",
       run: () => runSalesDocDrafter({}),
+    },
+    {
+      // A7 intelijen produk (10:30). Deterministik, murah (LOW).
+      id: "A7",
+      expr: process.env.A7_CRON ?? "30 10 * * *",
+      run: () => runProductIntelligence(),
     },
   ];
 
