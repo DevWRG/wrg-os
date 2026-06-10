@@ -14,6 +14,7 @@ import { insertRekap, insertResume, getDigestHistory } from "./repo/digest.js";
 import { getDashboardStats } from "./repo/stats.js";
 import { getCustomers } from "./repo/customer.js";
 import { ingestInvoices, getAging, type InvoiceInput } from "./repo/ar.js";
+import { runArWatch } from "./repo/agents.js";
 
 const app = new Hono();
 
@@ -321,6 +322,12 @@ app.post("/ar/invoices", async (c) => {
 app.get("/ar/aging", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json(await getAging(c.req.query("bucket") || undefined));
+});
+
+// A2 AR Aging Watch agent — analisis ar_aging_mv + log ke audit_log (D6).
+app.post("/agents/a2/run", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await runArWatch(), 201);
 });
 
 // ── Customers read model (diturunkan dari deal) ──
