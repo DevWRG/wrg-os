@@ -1,17 +1,8 @@
 import { apiBaseUrl } from "@/lib/gateway";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { AddUserSheet } from "@/components/crm/add-user-sheet";
-import { UserRowActions } from "@/components/crm/user-row-actions";
-import { Badge } from "@/components/ui/badge";
+import { UsersTable } from "@/components/tables/users-table";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 
 export const dynamic = "force-dynamic";
 
@@ -73,39 +64,7 @@ export default async function UsersPage() {
           </div>
           <Card>
             <CardContent className="pt-6">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Panggilan</TableHead>
-                    <TableHead>Nama</TableHead>
-                    <TableHead>Role</TableHead>
-                    <TableHead>Posisi</TableHead>
-                    <TableHead>Cabang</TableHead>
-                    <TableHead>WA</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead className="text-right">Aksi</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {users.map((u) => (
-                    <TableRow key={u.am_id}>
-                      <TableCell className="font-medium">{u.panggilan ?? u.am_id}</TableCell>
-                      <TableCell className="text-muted-foreground">{u.nama}</TableCell>
-                      <TableCell><Badge variant="outline">{u.role}</Badge></TableCell>
-                      <TableCell className="text-muted-foreground">{u.posisi ?? "—"}</TableCell>
-                      <TableCell className="text-muted-foreground">{u.cabang ?? "—"}</TableCell>
-                      <TableCell className="text-muted-foreground">{u.wa_number ?? "—"}</TableCell>
-                      <TableCell>
-                        <div className="flex gap-1">
-                          {u.aktif ? <Badge variant="secondary">aktif</Badge> : <Badge variant="outline">nonaktif</Badge>}
-                          {u.wajib_plan_report && <Badge variant="outline">wajib report</Badge>}
-                        </div>
-                      </TableCell>
-                      <TableCell><UserRowActions user={u} /></TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+              <UsersTable users={users} />
             </CardContent>
           </Card>
         </>

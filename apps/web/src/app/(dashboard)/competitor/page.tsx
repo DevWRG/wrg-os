@@ -4,18 +4,10 @@ import { apiBaseUrl } from "@/lib/gateway";
 import { cn } from "@/lib/utils";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { AddCompetitorSheet } from "@/components/crm/add-competitor-sheet";
-import { Badge } from "@/components/ui/badge";
+import { CompetitorTable } from "@/components/tables/competitor-table";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 
 export const dynamic = "force-dynamic";
 
@@ -46,20 +38,6 @@ interface CompetitorSummary {
   summary: VendorStat[];
 }
 
-const rupiah = (n: number) =>
-  new Intl.NumberFormat("id-ID", {
-    style: "currency",
-    currency: "IDR",
-    notation: "compact",
-    maximumFractionDigits: 1,
-  }).format(n);
-
-const tanggal = (iso: string) => {
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime())
-    ? "—"
-    : d.toLocaleDateString("id-ID", { day: "2-digit", month: "short", year: "numeric" });
-};
 
 async function getJson<T>(path: string): Promise<T | null> {
   try {
@@ -168,46 +146,7 @@ export default async function CompetitorPage({
               ) : items.length === 0 ? (
                 <p className="text-muted-foreground">Tidak ada catatan untuk vendor &ldquo;{vendor}&rdquo;.</p>
               ) : (
-                <>
-                  {items.length >= 50 && (
-                    <p className="text-muted-foreground mb-3 text-xs">
-                      Menampilkan 50 catatan terbaru{vendor ? ` (vendor: ${vendor})` : ""}.
-                    </p>
-                  )}
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Tanggal</TableHead>
-                        <TableHead>Kompetitor</TableHead>
-                        <TableHead>Produk</TableHead>
-                        <TableHead className="text-right">Harga</TableHead>
-                        <TableHead>Customer</TableHead>
-                        <TableHead>Konteks</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {items.map((i) => (
-                        <TableRow key={i.id}>
-                          <TableCell className="text-muted-foreground">{tanggal(i.tanggal)}</TableCell>
-                          <TableCell className="font-medium">{i.vendor}</TableCell>
-                          <TableCell>
-                            {i.produk ?? "—"}
-                            {i.produk_kategori && (
-                              <Badge variant="outline" className="ml-2">
-                                {i.produk_kategori}
-                              </Badge>
-                            )}
-                          </TableCell>
-                          <TableCell className="text-right">
-                            {i.harga_numeric !== null ? rupiah(i.harga_numeric) : (i.harga_text ?? "—")}
-                          </TableCell>
-                          <TableCell className="text-muted-foreground">{i.customer_name ?? "—"}</TableCell>
-                          <TableCell className="text-muted-foreground max-w-xs truncate">{i.konteks ?? "—"}</TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </>
+                <CompetitorTable items={items} />
               )}
             </CardContent>
           </Card>
