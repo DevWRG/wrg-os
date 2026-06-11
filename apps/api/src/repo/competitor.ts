@@ -36,7 +36,7 @@ export async function listCompetitor(vendor?: string, limit = 50) {
     SELECT id, am_id, customer_name, tanggal::text, vendor, produk, produk_kategori,
            harga_text, harga_numeric, konteks
     FROM competitor_intel
-    WHERE ${vendor ? sql`vendor ILIKE ${vendor}` : sql`true`}
+    WHERE ${vendor ? sql`vendor ILIKE ${"%" + vendor + "%"}` : sql`true`}
     ORDER BY tanggal DESC, created_at DESC
     LIMIT ${limit}
   `;
