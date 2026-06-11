@@ -43,6 +43,7 @@ import {
   SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
+  SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
@@ -51,6 +52,7 @@ interface NavItem {
   title: string;
   url: string;
   icon: LucideIcon;
+  badge?: string;
 }
 interface NavGroup {
   label: string;
@@ -76,7 +78,7 @@ const NAV: NavGroup[] = [
   {
     label: "Sales",
     items: [
-      { title: "Sales Performance", url: "/sales", icon: BarChart3 },
+      { title: "Sales Performance", url: "/sales", icon: BarChart3, badge: "NEW" },
       { title: "Competitor Intel", url: "/competitor", icon: Swords },
       { title: "Pipeline", url: "/pipeline", icon: Workflow },
       { title: "Customers", url: "/customers", icon: Building2 },
@@ -126,12 +128,12 @@ export function AppSidebar() {
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton size="lg" render={<Link href="/dashboard" />}>
-              <div className="bg-primary text-primary-foreground flex aspect-square size-8 items-center justify-center rounded-lg">
+              <div className="text-primary-foreground flex aspect-square size-8 items-center justify-center rounded-lg bg-gradient-to-br from-primary to-[#1d4ed8] shadow-sm">
                 <HeartPulse className="size-4" />
               </div>
               <div className="flex flex-col gap-0.5 leading-none">
                 <span className="font-semibold">WRG OS</span>
-                <span className="text-xs text-muted-foreground">Wahana Lifeline</span>
+                <span className="text-muted-foreground text-[11px]">v0.1.0 · Wahana Lifeline</span>
               </div>
             </SidebarMenuButton>
           </SidebarMenuItem>
@@ -141,7 +143,7 @@ export function AppSidebar() {
       <SidebarContent>
         {NAV.map((group) => (
           <SidebarGroup key={group.label}>
-            <SidebarGroupLabel>{group.label}</SidebarGroupLabel>
+            <SidebarGroupLabel className="text-[10px] font-semibold tracking-wider uppercase">{group.label}</SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu>
                 {group.items.map((item) => (
@@ -149,11 +151,17 @@ export function AppSidebar() {
                     <SidebarMenuButton
                       isActive={pathname === item.url || pathname.startsWith(`${item.url}/`)}
                       tooltip={item.title}
+                      className="rounded-lg"
                       render={<Link href={item.url} />}
                     >
                       <item.icon />
                       <span>{item.title}</span>
                     </SidebarMenuButton>
+                    {item.badge && (
+                      <SidebarMenuBadge className="bg-success-soft text-success top-1.5 rounded-full px-1.5 text-[9px] font-bold tracking-wide">
+                        {item.badge}
+                      </SidebarMenuBadge>
+                    )}
                   </SidebarMenuItem>
                 ))}
               </SidebarMenu>
