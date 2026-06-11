@@ -47,6 +47,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
+import { SidebarUser } from "@/components/layout/sidebar-user";
 
 interface NavItem {
   title: string;
@@ -171,7 +172,7 @@ export function AppSidebar() {
       </SidebarContent>
 
       <SidebarFooter>
-        <div className="px-2 py-1.5 text-xs text-muted-foreground">v0.1.0 · Adminator</div>
+        <SidebarUser />
       </SidebarFooter>
     </Sidebar>
   );
