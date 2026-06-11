@@ -151,7 +151,7 @@ export function AppSidebar() {
                     <SidebarMenuButton
                       isActive={pathname === item.url || pathname.startsWith(`${item.url}/`)}
                       tooltip={item.title}
-                      className="rounded-lg"
+                      className="rounded-md focus-visible:ring-0 data-active:bg-primary/10 data-active:font-medium data-active:text-primary data-active:shadow-[inset_3px_0_0_var(--primary)]"
                       render={<Link href={item.url} />}
                     >
                       <item.icon />

@@ -135,7 +135,7 @@ export default async function VisitsPage({
                   className={cn(
                     "inline-flex items-center gap-1.5 rounded-lg border px-3 py-1 text-sm transition-colors",
                     active === f.key
-                      ? "border-primary bg-primary text-primary-foreground"
+                      ? "border-primary bg-primary-soft text-primary"
                       : "border-border hover:bg-muted",
                   )}
                 >
