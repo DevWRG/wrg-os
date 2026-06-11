@@ -1,5 +1,6 @@
 import { apiBaseUrl } from "@/lib/gateway";
 import { PageHeader } from "@/components/dashboard/page-header";
+import { AddVisitSheet } from "@/components/crm/add-visit-sheet";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -70,6 +71,7 @@ export default async function VisitsPage() {
       <PageHeader
         title="Visits"
         description="Kunjungan AM dengan geotag + foto (port visit). Geo divalidasi terhadap bbox Indonesia."
+        action={<AddVisitSheet />}
       />
 
       {!visits ? (

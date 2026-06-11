@@ -1,5 +1,6 @@
 import { apiBaseUrl } from "@/lib/gateway";
 import { PageHeader } from "@/components/dashboard/page-header";
+import { AddTodoSheet } from "@/components/crm/add-todo-sheet";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -55,6 +56,7 @@ export default async function TodosPage() {
       <PageHeader
         title="Sales TODO / Plan"
         description="Rencana harian AM (port sales_todo). Late plan = disubmit setelah jam 08:00 lokal."
+        action={<AddTodoSheet />}
       />
 
       {!todos ? (

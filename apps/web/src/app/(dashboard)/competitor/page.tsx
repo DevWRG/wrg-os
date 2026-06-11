@@ -1,5 +1,6 @@
 import { apiBaseUrl } from "@/lib/gateway";
 import { PageHeader } from "@/components/dashboard/page-header";
+import { AddCompetitorSheet } from "@/components/crm/add-competitor-sheet";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -69,6 +70,7 @@ export default async function CompetitorPage() {
             ? `${items.length} catatan dari ${vendors} kompetitor (port competitor_intel).`
             : "Intelijen kompetitor dari lapangan (port competitor_intel)."
         }
+        action={<AddCompetitorSheet />}
       />
 
       {!items ? (
