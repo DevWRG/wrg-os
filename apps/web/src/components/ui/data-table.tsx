@@ -35,6 +35,7 @@ export function DataTable<T>({
   searchPlaceholder = "Cari…",
   pageSize = 10,
   empty = "Tidak ada data.",
+  toolbar,
 }: {
   columns: DataColumn<T>[];
   data: T[];
@@ -42,6 +43,8 @@ export function DataTable<T>({
   searchPlaceholder?: string;
   pageSize?: number;
   empty?: string;
+  /** kontrol tambahan (mis. filter date-range) di sisi kanan baris search. */
+  toolbar?: React.ReactNode;
 }) {
   const [q, setQ] = useState("");
   const [sort, setSort] = useState<{ id: string; dir: "asc" | "desc" } | null>(null);
@@ -85,8 +88,8 @@ export function DataTable<T>({
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between gap-2">
-        <div className="relative max-w-xs flex-1">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="relative w-full max-w-xs min-w-[180px]">
           <Search className="text-muted-foreground absolute top-1/2 left-2.5 size-4 -translate-y-1/2" />
           <Input
             value={q}
@@ -98,7 +101,10 @@ export function DataTable<T>({
             className="h-8 pl-8"
           />
         </div>
-        <div className="text-muted-foreground text-xs whitespace-nowrap">{sorted.length} baris</div>
+        <div className="flex flex-wrap items-center gap-2">
+          {toolbar}
+          <span className="text-muted-foreground text-xs whitespace-nowrap">{sorted.length} baris</span>
+        </div>
       </div>
 
       <Table>
