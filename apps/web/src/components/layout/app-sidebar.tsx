@@ -76,6 +76,7 @@ const NAV: NavGroup[] = [
   {
     label: "Sales",
     items: [
+      { title: "Sales Performance", url: "/sales", icon: BarChart3 },
       { title: "Competitor Intel", url: "/competitor", icon: Swords },
       { title: "Pipeline", url: "/pipeline", icon: Workflow },
       { title: "Customers", url: "/customers", icon: Building2 },
