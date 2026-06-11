@@ -128,7 +128,7 @@ export function AppSidebar() {
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton size="lg" render={<Link href="/dashboard" />}>
-              <div className="text-primary-foreground flex aspect-square size-8 items-center justify-center rounded-lg bg-gradient-to-br from-primary to-[#1d4ed8] shadow-sm">
+              <div className="text-primary-foreground flex aspect-square size-8 items-center justify-center rounded-lg bg-gradient-to-br from-primary to-purple shadow-sm">
                 <HeartPulse className="size-4" />
               </div>
               <div className="flex flex-col gap-0.5 leading-none">
