@@ -34,7 +34,7 @@ const tgl = (iso: string) => {
 const planColumns: DataColumn<PlanRow>[] = [
   { id: "tanggal", header: "Tgl", sortable: true, accessor: (p) => p.tanggal, cell: (p) => <span className="text-muted-foreground whitespace-nowrap">{tgl(p.tanggal)}</span> },
   { id: "customer", header: "Customer", sortable: true, accessor: (p) => p.customer_name ?? "", cell: (p) => <span className="font-medium">{p.customer_name ?? "—"}</span> },
-  { id: "tujuan", header: "Tujuan", accessor: (p) => p.tujuan ?? p.goal ?? "", cell: (p) => <span className="text-muted-foreground max-w-xs truncate">{p.tujuan ?? p.goal ?? "—"}</span> },
+  { id: "tujuan", header: "Tujuan", accessor: (p) => p.tujuan ?? p.goal ?? "", cell: (p) => <span className="text-muted-foreground block max-w-[220px] truncate">{p.tujuan ?? p.goal ?? "—"}</span> },
   {
     id: "status",
     header: "Status",
@@ -43,7 +43,7 @@ const planColumns: DataColumn<PlanRow>[] = [
     cell: (p) =>
       p.reported ? <Badge variant="secondary">reported</Badge> : p.is_late_plan ? <Badge variant="destructive">late</Badge> : <Badge variant="outline">pending</Badge>,
   },
-  { id: "hasil", header: "Hasil", accessor: (p) => p.hasil ?? "", cell: (p) => <span className="text-muted-foreground max-w-xs truncate">{p.hasil ?? "—"}</span> },
+  { id: "hasil", header: "Hasil", accessor: (p) => p.hasil ?? "", cell: (p) => <span className="text-muted-foreground block max-w-[220px] truncate">{p.hasil ?? "—"}</span> },
   {
     id: "geo",
     header: "Geotag",
@@ -71,8 +71,8 @@ export function DrilldownPlanTable({ plan }: { plan: PlanRow[] }) {
 const unmatchedColumns: DataColumn<UnmatchedRow>[] = [
   { id: "tanggal", header: "Tgl", sortable: true, accessor: (a) => a.tanggal, cell: (a) => <span className="text-muted-foreground whitespace-nowrap">{tgl(a.tanggal)}</span> },
   { id: "customer", header: "Customer", sortable: true, accessor: (a) => a.customer_name ?? "", cell: (a) => a.customer_name ?? "—" },
-  { id: "hasil", header: "Hasil", accessor: (a) => a.hasil ?? "", cell: (a) => <span className="text-muted-foreground max-w-xs truncate">{a.hasil ?? "—"}</span> },
-  { id: "next", header: "Next", accessor: (a) => a.next_action ?? "", cell: (a) => <span className="text-muted-foreground max-w-xs truncate">{a.next_action ?? "—"}</span> },
+  { id: "hasil", header: "Hasil", accessor: (a) => a.hasil ?? "", cell: (a) => <span className="text-muted-foreground block max-w-[220px] truncate">{a.hasil ?? "—"}</span> },
+  { id: "next", header: "Next", accessor: (a) => a.next_action ?? "", cell: (a) => <span className="text-muted-foreground block max-w-[220px] truncate">{a.next_action ?? "—"}</span> },
 ];
 
 export function DrilldownUnmatchedTable({ rows }: { rows: UnmatchedRow[] }) {
