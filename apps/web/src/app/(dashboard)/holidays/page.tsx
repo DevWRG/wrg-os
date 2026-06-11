@@ -1,5 +1,6 @@
 import { apiBaseUrl } from "@/lib/gateway";
 import { PageHeader } from "@/components/dashboard/page-header";
+import { AddHolidaySheet } from "@/components/crm/add-holiday-sheet";
 import { Card, CardContent } from "@/components/ui/card";
 import {
   Table,
@@ -39,7 +40,7 @@ export default async function HolidaysPage() {
 
   return (
     <>
-      <PageHeader title="Holidays" description="Hari libur nasional (master_holiday) — dipakai menghitung hari kerja & mengecualikan dari reminder." />
+      <PageHeader title="Holidays" description="Hari libur nasional (master_holiday) — dipakai menghitung hari kerja & mengecualikan dari reminder." action={<AddHolidaySheet />} />
       {!holidays ? (
         <p className="text-muted-foreground">
           Data tidak tersedia. Pastikan <code>apps/api</code> jalan dengan <code>DATABASE_URL</code>.

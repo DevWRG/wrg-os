@@ -1,5 +1,6 @@
 import { apiBaseUrl } from "@/lib/gateway";
 import { PageHeader } from "@/components/dashboard/page-header";
+import { AddUserSheet } from "@/components/crm/add-user-sheet";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -44,7 +45,7 @@ export default async function UsersPage() {
 
   return (
     <>
-      <PageHeader title="Users" description="Roster karyawan (master_user) — di-key am_id, dipakai lintas plan/report/reminder/territory." />
+      <PageHeader title="Users" description="Roster karyawan (master_user) — di-key am_id, dipakai lintas plan/report/reminder/territory." action={<AddUserSheet />} />
       {!users ? (
         <p className="text-muted-foreground">
           Data tidak tersedia. Pastikan <code>apps/api</code> jalan dengan <code>DATABASE_URL</code>.
