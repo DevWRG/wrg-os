@@ -43,6 +43,54 @@ export async function upsertMembers(rows: MonitorMemberInput[]): Promise<number>
   return n;
 }
 
+// ── Digest (rekap / resume) ──
+export interface DigestInput {
+  kind: "rekap" | "resume";
+  tanggal: string;
+  waktu?: string | null;
+  content: string;
+  source_file?: string | null;
+}
+export interface DigestEntry {
+  waktu: string | null;
+  content: string;
+}
+
+export async function upsertDigests(rows: DigestInput[]): Promise<number> {
+  const sql = db();
+  let n = 0;
+  for (const r of rows) {
+    if (!r.kind || !r.tanggal || !r.content) continue;
+    await sql`
+      INSERT INTO monitor_digest (kind, tanggal, waktu, content, source_file)
+      VALUES (${r.kind}, ${r.tanggal}, ${r.waktu ?? null}, ${r.content}, ${r.source_file ?? null})
+      ON CONFLICT (kind, tanggal, waktu) DO UPDATE SET
+        content = EXCLUDED.content, source_file = EXCLUDED.source_file, created_at = NOW()
+    `;
+    n++;
+  }
+  return n;
+}
+
+// Daftar tanggal yang punya digest + entri untuk satu tanggal (default terbaru).
+export async function listDigest(kind: "rekap" | "resume", date?: string) {
+  const sql = db();
+  const dateRows = await sql`
+    SELECT DISTINCT tanggal::text AS d FROM monitor_digest WHERE kind = ${kind} ORDER BY d DESC
+  `;
+  const dates = dateRows.map((r) => String(r.d));
+  const target = date && dates.includes(date) ? date : (dates[0] ?? null);
+  const entries: DigestEntry[] = target
+    ? (
+        await sql`
+          SELECT waktu, content FROM monitor_digest
+          WHERE kind = ${kind} AND tanggal = ${target} ORDER BY waktu DESC NULLS LAST
+        `
+      ).map((e) => ({ waktu: e.waktu ? String(e.waktu) : null, content: String(e.content) }))
+    : [];
+  return { dates, date: target, entries };
+}
+
 export async function listMembers(): Promise<MonitorMember[]> {
   const sql = db();
   const rows = await sql`

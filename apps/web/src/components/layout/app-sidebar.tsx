@@ -105,7 +105,8 @@ const NAV: NavGroup[] = [
   {
     label: "Monitor",
     items: [
-      { title: "Members", url: "/monitor/members", icon: MessagesSquare },
+      { title: "Rekap", url: "/monitor/rekap", icon: MessagesSquare },
+      { title: "Members", url: "/monitor/members", icon: Users },
     ],
   },
   {
