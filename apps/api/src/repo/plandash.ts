@@ -373,20 +373,6 @@ export async function reportCalendar(from: string, to: string, amId?: string, ca
     SELECT am_id::text AS am_id, COALESCE(panggilan, nama) AS name, cabang
     FROM master_user WHERE role='AM' AND aktif ORDER BY cabang, name
   `;
-  const rows = await sql`
-    SELECT sp.tanggal::text AS d, sp.am_id::text AS am_id,
-           COALESCE(mu.panggilan, mu.nama) AS name, mu.cabang,
-           count(*)::int AS total,
-           count(*) FILTER (WHERE sp.reported)::int AS reported,
-           count(*) FILTER (WHERE sp.visit_lat IS NOT NULL)::int AS geo,
-           bool_or(sp.is_late_plan) AS late
-    FROM sales_plan sp JOIN master_user mu ON mu.am_id = sp.am_id
-    WHERE sp.tanggal BETWEEN ${from} AND ${to} AND mu.role='AM' AND mu.aktif
-      ${amId ? sql`AND sp.am_id = ${amId}` : sql``}
-      ${cabang ? sql`AND mu.cabang = ${cabang}` : sql``}
-    GROUP BY sp.tanggal, sp.am_id, name, mu.cabang
-    ORDER BY sp.tanggal, name
-  `;
   // Catatan reminder AM (am_reminder) yang jatuh pada rentang — pill 📌 ala legacy.
   const reminders = await sql`
     SELECT ar.reminder_date::text AS d, ar.am_id::text AS am_id,
@@ -409,16 +395,6 @@ export async function reportCalendar(from: string, to: string, amId?: string, ca
       cabang: r.cabang ? String(r.cabang) : null,
       note: r.note ? String(r.note) : "",
     })),
-    rows: rows.map((r) => ({
-      d: String(r.d),
-      am_id: String(r.am_id),
-      name: r.name ? String(r.name) : "—",
-      cabang: r.cabang ? String(r.cabang) : null,
-      total: Number(r.total),
-      reported: Number(r.reported),
-      geo: Number(r.geo),
-      late: Boolean(r.late),
-    })),
   };
 }
 
@@ -435,53 +411,10 @@ export async function reportCalendarDay(date: string, amId?: string, cabang?: st
       ${cabang ? sql`AND mu.cabang = ${cabang}` : sql``}
     ORDER BY name
   `;
-  const plans = await sql`
-    SELECT sp.am_id::text AS am_id, COALESCE(mu.panggilan, mu.nama) AS name, mu.cabang,
-           sp.id::text AS plan_id, sp.seq, sp.customer_name, sp.tujuan, sp.goal,
-           sp.reported, sp.is_late_plan, sp.visit_lat, sp.visit_timestamp::text AS visit_ts,
-           al.hasil, al.next_action
-    FROM sales_plan sp JOIN master_user mu ON mu.am_id = sp.am_id
-    LEFT JOIN activity_log al ON al.id = sp.activity_id
-    WHERE sp.tanggal = ${date} AND mu.role='AM' AND mu.aktif
-      ${amId ? sql`AND sp.am_id = ${amId}` : sql``}
-      ${cabang ? sql`AND mu.cabang = ${cabang}` : sql``}
-    ORDER BY name, sp.seq NULLS LAST, sp.id
-  `;
-  // Kelompokkan plan per AM
-  const map = new Map<string, {
-    am_id: string; name: string; cabang: string | null;
-    total: number; reported: number; geo: number; late: boolean;
-    plans: { customer_name: string | null; tujuan: string | null; goal: string | null; reported: boolean; is_late_plan: boolean; geo: boolean; hasil: string | null; next_action: string | null }[];
-  }>();
-  for (const r of plans) {
-    const id = String(r.am_id);
-    let am = map.get(id);
-    if (!am) {
-      am = { am_id: id, name: r.name ? String(r.name) : "—", cabang: r.cabang ? String(r.cabang) : null, total: 0, reported: 0, geo: 0, late: false, plans: [] };
-      map.set(id, am);
-    }
-    const reported = Boolean(r.reported);
-    const geo = r.visit_lat != null;
-    am.total++;
-    if (reported) am.reported++;
-    if (geo) am.geo++;
-    if (r.is_late_plan) am.late = true;
-    am.plans.push({
-      customer_name: r.customer_name ? String(r.customer_name) : null,
-      tujuan: r.tujuan ? String(r.tujuan) : null,
-      goal: r.goal ? String(r.goal) : null,
-      reported,
-      is_late_plan: Boolean(r.is_late_plan),
-      geo,
-      hasil: r.hasil ? String(r.hasil) : null,
-      next_action: r.next_action ? String(r.next_action) : null,
-    });
-  }
   return {
     date,
     holiday: holidays[0]?.keterangan ? String(holidays[0].keterangan) : null,
     reminders: reminders.map((r) => ({ am_id: String(r.am_id), name: r.name ? String(r.name) : "—", cabang: r.cabang ? String(r.cabang) : null, note: r.note ? String(r.note) : "" })),
-    ams: [...map.values()].sort((a, b) => a.name.localeCompare(b.name)),
   };
 }
 
