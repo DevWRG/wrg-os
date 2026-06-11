@@ -1,18 +1,11 @@
 import Link from "next/link";
-import { ArrowLeft, MapPin } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
 
 import { apiBaseUrl } from "@/lib/gateway";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { DrilldownPlanTable, DrilldownUnmatchedTable } from "@/components/tables/drilldown-tables";
 
 export const dynamic = "force-dynamic";
 
@@ -150,54 +143,7 @@ export default async function DrilldownPage({
                 {d.plan.length === 0 ? (
                   <p className="text-muted-foreground text-sm">Tidak ada plan kunjungan di rentang ini.</p>
                 ) : (
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Tgl</TableHead>
-                        <TableHead>Customer</TableHead>
-                        <TableHead>Tujuan</TableHead>
-                        <TableHead>Status</TableHead>
-                        <TableHead>Hasil</TableHead>
-                        <TableHead>Geotag</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {d.plan.map((p, i) => (
-                        <TableRow key={i}>
-                          <TableCell className="text-muted-foreground whitespace-nowrap">{tgl(p.tanggal)}</TableCell>
-                          <TableCell className="font-medium">{p.customer_name ?? "—"}</TableCell>
-                          <TableCell className="text-muted-foreground max-w-xs truncate">{p.tujuan ?? p.goal ?? "—"}</TableCell>
-                          <TableCell>
-                            {p.reported ? (
-                              <Badge variant="secondary">reported</Badge>
-                            ) : p.is_late_plan ? (
-                              <Badge variant="destructive">late</Badge>
-                            ) : (
-                              <Badge variant="outline">pending</Badge>
-                            )}
-                          </TableCell>
-                          <TableCell className="text-muted-foreground max-w-xs truncate">{p.hasil ?? "—"}</TableCell>
-                          <TableCell>
-                            {p.visit_lat !== null && p.visit_lon !== null ? (
-                              <a
-                                href={`https://www.google.com/maps?q=${p.visit_lat},${p.visit_lon}`}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="text-primary inline-flex items-center gap-1 underline underline-offset-2"
-                              >
-                                <MapPin className="size-3" /> peta
-                              </a>
-                            ) : p.reported ? (
-                              <span className="text-warning text-xs">⚠ no geotag</span>
-                            ) : (
-                              <span className="text-muted-foreground">—</span>
-                            )}
-                            {p.visit_date_mismatch && <Badge variant="destructive" className="ml-1">tgl mismatch</Badge>}
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
+                  <DrilldownPlanTable plan={d.plan} />
                 )}
               </CardContent>
             </Card>
@@ -247,26 +193,7 @@ export default async function DrilldownPage({
                 <CardTitle className="text-sm font-medium">Aktivitas di luar plan / unmatched ({d.unmatched.length})</CardTitle>
               </CardHeader>
               <CardContent>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Tgl</TableHead>
-                      <TableHead>Customer</TableHead>
-                      <TableHead>Hasil</TableHead>
-                      <TableHead>Next</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {d.unmatched.map((a, i) => (
-                      <TableRow key={i}>
-                        <TableCell className="text-muted-foreground whitespace-nowrap">{tgl(a.tanggal)}</TableCell>
-                        <TableCell>{a.customer_name ?? "—"}</TableCell>
-                        <TableCell className="text-muted-foreground max-w-xs truncate">{a.hasil ?? "—"}</TableCell>
-                        <TableCell className="text-muted-foreground max-w-xs truncate">{a.next_action ?? "—"}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                <DrilldownUnmatchedTable rows={d.unmatched} />
               </CardContent>
             </Card>
           )}
