@@ -1,6 +1,7 @@
 import { apiBaseUrl } from "@/lib/gateway";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { AddLeaveSheet } from "@/components/crm/add-leave-sheet";
+import { LeaveRowActions } from "@/components/crm/leave-row-actions";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -75,6 +76,7 @@ export default async function LeavePage() {
                   <TableHead>Selesai</TableHead>
                   <TableHead>Keterangan</TableHead>
                   <TableHead>Sumber</TableHead>
+                  <TableHead className="text-right">Aksi</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -86,6 +88,7 @@ export default async function LeavePage() {
                     <TableCell className="text-muted-foreground whitespace-nowrap">{tgl(l.end_date)}</TableCell>
                     <TableCell className="text-muted-foreground max-w-xs truncate">{l.keterangan ?? "—"}</TableCell>
                     <TableCell><Badge variant="outline">{l.source}</Badge></TableCell>
+                    <TableCell><LeaveRowActions row={l} label={nameById.get(l.am_id) ?? l.am_id} /></TableCell>
                   </TableRow>
                 ))}
               </TableBody>

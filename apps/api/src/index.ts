@@ -62,6 +62,9 @@ import {
   listLeave,
   isOnLeave,
   detectLeave,
+  deleteHoliday,
+  deleteLeave,
+  updateLeave,
 } from "./repo/leave.js";
 import { recordCompetitor, listCompetitor, competitorSummary } from "./repo/competitor.js";
 import {
@@ -852,6 +855,12 @@ app.get("/holidays", async (c) => {
   return c.json({ count: holidays.length, holidays });
 });
 
+app.delete("/holidays/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await deleteHoliday(c.req.param("id"));
+  return c.json(r, r.deleted ? 200 : 404);
+});
+
 app.post("/leave", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   let body: { am_id?: string; start_date?: string; end_date?: string; jenis?: string; keterangan?: string };
@@ -882,6 +891,32 @@ app.get("/leave", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const leave = await listLeave(c.req.query("am_id") || undefined);
   return c.json({ count: leave.length, leave });
+});
+
+app.patch("/leave/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { start_date?: string; end_date?: string; jenis?: string; keterangan?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (body.jenis && !["sakit", "cuti", "ijin"].includes(body.jenis)) {
+    return c.json({ error: "jenis harus sakit|cuti|ijin" }, 400);
+  }
+  const r = await updateLeave(c.req.param("id"), {
+    start_date: body.start_date,
+    end_date: body.end_date,
+    jenis: body.jenis as "sakit" | "cuti" | "ijin" | undefined,
+    keterangan: body.keterangan,
+  });
+  return c.json(r, r.updated ? 200 : 404);
+});
+
+app.delete("/leave/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await deleteLeave(c.req.param("id"));
+  return c.json(r, r.deleted ? 200 : 404);
 });
 
 // Cek apakah AM sedang cuti/libur pada tanggal tertentu (untuk exempt reminder).
