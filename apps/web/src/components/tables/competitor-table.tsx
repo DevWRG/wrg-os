@@ -22,6 +22,7 @@ const tgl = (iso: string) => {
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? "—" : d.toLocaleDateString("id-ID", { day: "2-digit", month: "short", year: "numeric" });
 };
+const clip = (s: string, n = 48) => (s.length > n ? `${s.slice(0, n)}…` : s);
 
 const columns: DataColumn<CompetitorItem>[] = [
   { id: "tanggal", header: "Tanggal", sortable: true, accessor: (i) => i.tanggal, cell: (i) => <span className="text-muted-foreground">{tgl(i.tanggal)}</span> },
@@ -47,7 +48,7 @@ const columns: DataColumn<CompetitorItem>[] = [
     cell: (i) => (i.harga_numeric !== null ? rupiah(i.harga_numeric) : (i.harga_text ?? "—")),
   },
   { id: "customer", header: "Customer", sortable: true, accessor: (i) => i.customer_name ?? "", cell: (i) => <span className="text-muted-foreground">{i.customer_name ?? "—"}</span> },
-  { id: "konteks", header: "Konteks", accessor: (i) => i.konteks ?? "", cell: (i) => <div className="text-muted-foreground max-w-[240px] truncate" title={i.konteks ?? undefined}>{i.konteks ?? "—"}</div> },
+  { id: "konteks", header: "Konteks", accessor: (i) => i.konteks ?? "", cell: (i) => <span className="text-muted-foreground" title={i.konteks ?? undefined}>{i.konteks ? clip(i.konteks) : "—"}</span> },
 ];
 
 export function CompetitorTable({ items }: { items: CompetitorItem[] }) {
