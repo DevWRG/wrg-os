@@ -2,14 +2,7 @@ import { apiBaseUrl } from "@/lib/gateway";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { NetworkNodesTable, NetworkEdgesTable } from "@/components/tables/network-tables";
 
 export const dynamic = "force-dynamic";
 
@@ -47,8 +40,6 @@ async function getGraph(): Promise<Graph | null> {
   }
 }
 
-const labelOf = (id: string) => id.split(":").slice(1).join(":") || id;
-
 export default async function NetworkPage() {
   const g = await getGraph();
 
@@ -84,28 +75,7 @@ export default async function NetworkPage() {
                 <CardTitle className="text-base">Node Tersentral</CardTitle>
               </CardHeader>
               <CardContent>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Entity</TableHead>
-                      <TableHead>Tipe</TableHead>
-                      <TableHead className="text-right">Degree</TableHead>
-                      <TableHead className="text-right">Freq</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {g.top_nodes.map((n) => (
-                      <TableRow key={n.id}>
-                        <TableCell className="font-medium">{n.label}</TableCell>
-                        <TableCell>
-                          <Badge variant="secondary">{n.type}</Badge>
-                        </TableCell>
-                        <TableCell className="text-right">{n.degree}</TableCell>
-                        <TableCell className="text-right">{n.frequency}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                <NetworkNodesTable nodes={g.top_nodes} />
               </CardContent>
             </Card>
 
@@ -114,25 +84,7 @@ export default async function NetworkPage() {
                 <CardTitle className="text-base">Pasangan Terkuat</CardTitle>
               </CardHeader>
               <CardContent>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Relasi</TableHead>
-                      <TableHead className="text-right">Bobot</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {g.top_edges.map((e, i) => (
-                      <TableRow key={i}>
-                        <TableCell>
-                          {labelOf(e.source)} <span className="text-muted-foreground">↔</span>{" "}
-                          {labelOf(e.target)}
-                        </TableCell>
-                        <TableCell className="text-right">{e.weight}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                <NetworkEdgesTable edges={g.top_edges} />
               </CardContent>
             </Card>
           </div>
