@@ -28,6 +28,7 @@ import {
   MapPin,
   ListChecks,
   Swords,
+  type LucideIcon,
 } from "lucide-react";
 
 import {
@@ -43,37 +44,70 @@ import {
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
 
-const navMain = [
-  { title: "Dashboard", url: "/dashboard", icon: LayoutDashboard },
-  { title: "Pipeline", url: "/pipeline", icon: Workflow },
-  { title: "AR Aging", url: "/ar", icon: Receipt },
-  { title: "Customers", url: "/customers", icon: Building2 },
-  { title: "Products", url: "/products", icon: Package },
-  { title: "Inventory", url: "/inventory", icon: Boxes },
-  { title: "Orders", url: "/orders", icon: ShoppingCart },
-  { title: "Shipments", url: "/shipments", icon: Truck },
-  { title: "Suppliers", url: "/suppliers", icon: Factory },
-];
+interface NavItem {
+  title: string;
+  url: string;
+  icon: LucideIcon;
+}
+interface NavGroup {
+  label: string;
+  items: NavItem[];
+}
 
-const navSecondary = [
-  { title: "HITL Review", url: "/hitl", icon: ClipboardCheck },
-  { title: "Collection Drafts", url: "/collection-drafts", icon: Send },
-  { title: "Sales Docs", url: "/sales-docs", icon: FileText },
-  { title: "Executive Briefings", url: "/briefings", icon: ScrollText },
-  { title: "Coaching Notes", url: "/coaching", icon: GraduationCap },
-  { title: "People Analytics", url: "/people", icon: UsersRound },
-  { title: "Spider Network", url: "/network", icon: Network },
-  { title: "Reminders", url: "/reminders", icon: Bell },
-  { title: "Visits", url: "/visits", icon: MapPin },
-  { title: "Sales TODO", url: "/todos", icon: ListChecks },
-  { title: "Competitor Intel", url: "/competitor", icon: Swords },
-  { title: "Digest History", url: "/digests", icon: History },
-  { title: "Reports", url: "/reports", icon: BarChart3 },
-  { title: "Settings", url: "/settings", icon: Settings },
-];
-
-const navDev = [
-  { title: "UI Showcase", url: "/showcase", icon: Sparkles },
+// IA bergaya WRG-CRM (sidebar Adminator: HR / Sales / Admin), diperluas dengan
+// kapabilitas wrg-os di bawah Analytics & Operations. Tiap item menunjuk route
+// yang sudah ada (nol 404); halaman khas WRG-CRM (Holidays, Manage Leave, Users,
+// Sales Calendar, Sales Performance, AR submenu) menyusul di fase berikutnya.
+const NAV: NavGroup[] = [
+  {
+    label: "HR",
+    items: [
+      { title: "Plan & Report", url: "/dashboard", icon: LayoutDashboard },
+      { title: "Sales TODO", url: "/todos", icon: ListChecks },
+      { title: "Visits", url: "/visits", icon: MapPin },
+      { title: "Reminders", url: "/reminders", icon: Bell },
+    ],
+  },
+  {
+    label: "Sales",
+    items: [
+      { title: "Competitor Intel", url: "/competitor", icon: Swords },
+      { title: "Pipeline", url: "/pipeline", icon: Workflow },
+      { title: "Customers", url: "/customers", icon: Building2 },
+      { title: "AR Aging", url: "/ar", icon: Receipt },
+      { title: "Sales Docs", url: "/sales-docs", icon: FileText },
+      { title: "Collection Drafts", url: "/collection-drafts", icon: Send },
+    ],
+  },
+  {
+    label: "Analytics",
+    items: [
+      { title: "People Analytics", url: "/people", icon: UsersRound },
+      { title: "Spider Network", url: "/network", icon: Network },
+      { title: "Executive Briefings", url: "/briefings", icon: ScrollText },
+      { title: "Coaching Notes", url: "/coaching", icon: GraduationCap },
+      { title: "Reports", url: "/reports", icon: BarChart3 },
+      { title: "Digest History", url: "/digests", icon: History },
+    ],
+  },
+  {
+    label: "Operations",
+    items: [
+      { title: "Products", url: "/products", icon: Package },
+      { title: "Inventory", url: "/inventory", icon: Boxes },
+      { title: "Orders", url: "/orders", icon: ShoppingCart },
+      { title: "Shipments", url: "/shipments", icon: Truck },
+      { title: "Suppliers", url: "/suppliers", icon: Factory },
+      { title: "HITL Review", url: "/hitl", icon: ClipboardCheck },
+    ],
+  },
+  {
+    label: "Admin",
+    items: [
+      { title: "Settings", url: "/settings", icon: Settings },
+      { title: "UI Showcase", url: "/showcase", icon: Sparkles },
+    ],
+  },
 ];
 
 export function AppSidebar() {
@@ -90,9 +124,7 @@ export function AppSidebar() {
               </div>
               <div className="flex flex-col gap-0.5 leading-none">
                 <span className="font-semibold">WRG OS</span>
-                <span className="text-xs text-muted-foreground">
-                  Wahana Lifeline
-                </span>
+                <span className="text-xs text-muted-foreground">Wahana Lifeline</span>
               </div>
             </SidebarMenuButton>
           </SidebarMenuItem>
@@ -100,71 +132,31 @@ export function AppSidebar() {
       </SidebarHeader>
 
       <SidebarContent>
-        <SidebarGroup>
-          <SidebarGroupLabel>Operations</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {navMain.map((item) => (
-                <SidebarMenuItem key={item.url}>
-                  <SidebarMenuButton
-                    isActive={pathname.startsWith(item.url)}
-                    tooltip={item.title}
-                    render={<Link href={item.url} />}
-                  >
-                    <item.icon />
-                    <span>{item.title}</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-
-        <SidebarGroup>
-          <SidebarGroupLabel>Analytics</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {navSecondary.map((item) => (
-                <SidebarMenuItem key={item.url}>
-                  <SidebarMenuButton
-                    isActive={pathname.startsWith(item.url)}
-                    tooltip={item.title}
-                    render={<Link href={item.url} />}
-                  >
-                    <item.icon />
-                    <span>{item.title}</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-
-        <SidebarGroup>
-          <SidebarGroupLabel>Developer</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {navDev.map((item) => (
-                <SidebarMenuItem key={item.url}>
-                  <SidebarMenuButton
-                    isActive={pathname.startsWith(item.url)}
-                    tooltip={item.title}
-                    render={<Link href={item.url} />}
-                  >
-                    <item.icon />
-                    <span>{item.title}</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
+        {NAV.map((group) => (
+          <SidebarGroup key={group.label}>
+            <SidebarGroupLabel>{group.label}</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {group.items.map((item) => (
+                  <SidebarMenuItem key={item.url}>
+                    <SidebarMenuButton
+                      isActive={pathname === item.url || pathname.startsWith(`${item.url}/`)}
+                      tooltip={item.title}
+                      render={<Link href={item.url} />}
+                    >
+                      <item.icon />
+                      <span>{item.title}</span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                ))}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        ))}
       </SidebarContent>
 
       <SidebarFooter>
-        <div className="px-2 py-1.5 text-xs text-muted-foreground">
-          v0.1.0
-        </div>
+        <div className="px-2 py-1.5 text-xs text-muted-foreground">v0.1.0 · Adminator</div>
       </SidebarFooter>
     </Sidebar>
   );
