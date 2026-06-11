@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { CartesianGrid, Line, LineChart, XAxis } from "recharts";
+import { Activity, AlertTriangle, CalendarDays, CheckCircle2, ClipboardList, Clock, UsersRound, type LucideIcon } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -109,24 +110,27 @@ async function getJson<T>(path: string): Promise<T | null> {
 }
 
 function Kpis({ k }: { k: Kpi }) {
-  const cards: { label: string; value: number | string; sub: string; tone: string }[] = [
-    { label: "Hari kerja", value: k.working_days, sub: "dalam rentang", tone: "text-info" },
-    { label: "Karyawan wajib", value: k.users_wajib, sub: `dari ${k.users_aktif} aktif`, tone: "text-primary" },
-    { label: "Total Plan", value: k.total_plan, sub: `${k.total_plan_visits} kunjungan + ${k.total_todo_items} todo`, tone: "text-primary" },
-    { label: "Reported", value: k.reported, sub: `${k.completion}% selesai`, tone: "text-success" },
-    { label: "Late submission", value: k.late, sub: "submit lewat batas", tone: "text-danger" },
-    { label: "Aktivitas (report)", value: k.aktivitas, sub: "items report", tone: "text-info" },
-    { label: "Unmatched report", value: k.unmatched, sub: "tidak match plan", tone: "text-warning" },
+  const cards: { label: string; value: number | string; sub: string; icon: LucideIcon; chip: string }[] = [
+    { label: "Hari kerja", value: k.working_days, sub: "dalam rentang", icon: CalendarDays, chip: "bg-info-soft text-info" },
+    { label: "Karyawan wajib", value: k.users_wajib, sub: `dari ${k.users_aktif} aktif`, icon: UsersRound, chip: "bg-primary-soft text-primary" },
+    { label: "Total Plan", value: k.total_plan, sub: `${k.total_plan_visits} kunjungan + ${k.total_todo_items} todo`, icon: ClipboardList, chip: "bg-primary-soft text-primary" },
+    { label: "Reported", value: k.reported, sub: `${k.completion}% selesai`, icon: CheckCircle2, chip: "bg-success-soft text-success" },
+    { label: "Late submission", value: k.late, sub: "submit lewat batas", icon: Clock, chip: "bg-danger-soft text-danger" },
+    { label: "Aktivitas (report)", value: k.aktivitas, sub: "items report", icon: Activity, chip: "bg-info-soft text-info" },
+    { label: "Unmatched report", value: k.unmatched, sub: "tidak match plan", icon: AlertTriangle, chip: "bg-warning-soft text-warning" },
   ];
   return (
     <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
       {cards.map((c) => (
         <Card key={c.label}>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-muted-foreground text-xs font-medium">{c.label}</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className={cn("text-2xl font-semibold tabular-nums", c.tone)}>{c.value}</div>
+          <CardContent className="pt-4">
+            <div className="flex items-center gap-2.5">
+              <div className={cn("flex size-9 shrink-0 items-center justify-center rounded-lg", c.chip)}>
+                <c.icon className="size-4" />
+              </div>
+              <span className="text-muted-foreground text-xs leading-tight font-medium">{c.label}</span>
+            </div>
+            <div className="mt-3 text-2xl font-semibold tabular-nums">{c.value}</div>
             <p className="text-muted-foreground text-xs">{c.sub}</p>
           </CardContent>
         </Card>
@@ -227,6 +231,11 @@ export default function DashboardPage() {
     <>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
+          {today && (
+            <p className="text-muted-foreground text-[11px] font-semibold tracking-wider uppercase">
+              {new Date(today).toLocaleDateString("id-ID", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}
+            </p>
+          )}
           <h1 className="text-2xl font-semibold tracking-tight">Plan &amp; Report</h1>
           <p className="text-muted-foreground text-sm">
             Kepatuhan plan/report harian per karyawan {range ? `· ${range.from} → ${range.to}` : ""}
