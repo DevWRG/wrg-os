@@ -33,12 +33,19 @@ const rupiah = (n: number) =>
     maximumFractionDigits: 1,
   }).format(n);
 
+interface AreaAr {
+  area: string;
+  customers: number;
+  invoices: number;
+  outstanding: number;
+}
 interface SalesAr {
   total_outstanding: number;
   total_invoices: number;
   by_customer: ArGroup[];
   by_cabang: ArGroup[];
   by_sales: ArGroup[];
+  areas: { east: AreaAr; west: AreaAr; unmapped: AreaAr };
 }
 
 async function getAging(): Promise<Aging | null> {
@@ -73,15 +80,41 @@ export default async function ArAgingPage() {
 
       {ar && ar.total_invoices > 0 && (
         <>
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-muted-foreground text-sm font-medium">Total Piutang (OPEN)</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-semibold tabular-nums">{rupiah(ar.total_outstanding)}</div>
-              <p className="text-muted-foreground text-xs">{ar.total_invoices} invoice belum lunas</p>
-            </CardContent>
-          </Card>
+          <div className="grid gap-4 sm:grid-cols-3">
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-muted-foreground text-sm font-medium">Total Piutang (OPEN)</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-semibold tabular-nums">{rupiah(ar.total_outstanding)}</div>
+                <p className="text-muted-foreground text-xs">{ar.total_invoices} invoice belum lunas</p>
+              </CardContent>
+            </Card>
+            <Card className="border-primary/30 bg-primary-soft">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-primary text-sm font-medium">East Area</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-semibold tabular-nums">{rupiah(ar.areas.east.outstanding)}</div>
+                <p className="text-muted-foreground text-xs">{ar.areas.east.customers} customer · {ar.areas.east.invoices} open inv</p>
+              </CardContent>
+            </Card>
+            <Card className="border-warning/30 bg-warning-soft">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-warning text-sm font-medium">West Area</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-semibold tabular-nums">{rupiah(ar.areas.west.outstanding)}</div>
+                <p className="text-muted-foreground text-xs">{ar.areas.west.customers} customer · {ar.areas.west.invoices} open inv</p>
+              </CardContent>
+            </Card>
+          </div>
+          {ar.areas.unmapped.invoices > 0 && (
+            <p className="text-muted-foreground text-xs">
+              {ar.areas.unmapped.invoices} invoice ({rupiah(ar.areas.unmapped.outstanding)}) belum terpetakan ke area —
+              salesman tanpa cabang/master_user di data Accurate.
+            </p>
+          )}
           <Card>
             <CardContent className="pt-6">
               <ArBreakdownTabs byCustomer={ar.by_customer} byCabang={ar.by_cabang} bySales={ar.by_sales} />
