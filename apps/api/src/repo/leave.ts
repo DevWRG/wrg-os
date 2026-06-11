@@ -16,10 +16,39 @@ export async function upsertHoliday(tanggal: string, keterangan: string): Promis
   return { id: String(rows[0].id) };
 }
 
-export async function listHolidays(): Promise<{ tanggal: string; keterangan: string }[]> {
+export async function listHolidays(): Promise<{ id: string; tanggal: string; keterangan: string }[]> {
   const sql = db();
-  const rows = await sql`SELECT tanggal::text, keterangan FROM master_holiday ORDER BY tanggal`;
-  return rows.map((r) => ({ tanggal: String(r.tanggal), keterangan: String(r.keterangan) }));
+  const rows = await sql`SELECT id, tanggal::text, keterangan FROM master_holiday ORDER BY tanggal`;
+  return rows.map((r) => ({ id: String(r.id), tanggal: String(r.tanggal), keterangan: String(r.keterangan) }));
+}
+
+export async function deleteHoliday(id: string): Promise<{ deleted: number }> {
+  const sql = db();
+  const rows = await sql`DELETE FROM master_holiday WHERE id = ${id} RETURNING id`;
+  return { deleted: rows.length };
+}
+
+export async function deleteLeave(id: string): Promise<{ deleted: number }> {
+  const sql = db();
+  const rows = await sql`DELETE FROM user_leave WHERE id = ${id} RETURNING id`;
+  return { deleted: rows.length };
+}
+
+export async function updateLeave(
+  id: string,
+  fields: { start_date?: string; end_date?: string; jenis?: Jenis; keterangan?: string },
+): Promise<{ updated: number }> {
+  const sql = db();
+  const rows = await sql`
+    UPDATE user_leave SET
+      start_date = COALESCE(${fields.start_date ?? null}, start_date),
+      end_date   = COALESCE(${fields.end_date ?? null}, end_date),
+      jenis      = COALESCE(${fields.jenis ?? null}, jenis),
+      keterangan = ${fields.keterangan ?? null}
+    WHERE id = ${id}
+    RETURNING id
+  `;
+  return { updated: rows.length };
 }
 
 export async function createLeave(opts: {

@@ -1,6 +1,7 @@
 import { apiBaseUrl } from "@/lib/gateway";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { AddUserSheet } from "@/components/crm/add-user-sheet";
+import { UserRowActions } from "@/components/crm/user-row-actions";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -82,6 +83,7 @@ export default async function UsersPage() {
                     <TableHead>Cabang</TableHead>
                     <TableHead>WA</TableHead>
                     <TableHead>Status</TableHead>
+                    <TableHead className="text-right">Aksi</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -99,6 +101,7 @@ export default async function UsersPage() {
                           {u.wajib_plan_report && <Badge variant="outline">wajib report</Badge>}
                         </div>
                       </TableCell>
+                      <TableCell><UserRowActions user={u} /></TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
