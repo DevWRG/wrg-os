@@ -110,14 +110,15 @@ async function getJson<T>(path: string): Promise<T | null> {
 }
 
 function Kpis({ k }: { k: Kpi }) {
-  const cards: { label: string; value: number | string; sub: string; icon: LucideIcon; chip: string }[] = [
+  const compTone = k.completion >= 80 ? "bg-success-soft text-success" : k.completion >= 50 ? "bg-warning-soft text-warning" : "bg-danger-soft text-danger";
+  const cards: { label: string; value: number | string; sub: string; icon: LucideIcon; chip: string; pill?: string; pillCls?: string }[] = [
     { label: "Hari kerja", value: k.working_days, sub: "dalam rentang", icon: CalendarDays, chip: "bg-info-soft text-info" },
     { label: "Karyawan wajib", value: k.users_wajib, sub: `dari ${k.users_aktif} aktif`, icon: UsersRound, chip: "bg-primary-soft text-primary" },
     { label: "Total Plan", value: k.total_plan, sub: `${k.total_plan_visits} kunjungan + ${k.total_todo_items} todo`, icon: ClipboardList, chip: "bg-primary-soft text-primary" },
-    { label: "Reported", value: k.reported, sub: `${k.completion}% selesai`, icon: CheckCircle2, chip: "bg-success-soft text-success" },
-    { label: "Late submission", value: k.late, sub: "submit lewat batas", icon: Clock, chip: "bg-danger-soft text-danger" },
+    { label: "Reported", value: k.reported, sub: "dari plan terkirim", icon: CheckCircle2, chip: "bg-success-soft text-success", pill: `${k.completion}% selesai`, pillCls: compTone },
+    { label: "Late submission", value: k.late, sub: "submit lewat batas", icon: Clock, chip: "bg-danger-soft text-danger", pill: k.late > 0 ? "perlu cek" : undefined, pillCls: "bg-danger-soft text-danger" },
     { label: "Aktivitas (report)", value: k.aktivitas, sub: "items report", icon: Activity, chip: "bg-info-soft text-info" },
-    { label: "Unmatched report", value: k.unmatched, sub: "tidak match plan", icon: AlertTriangle, chip: "bg-warning-soft text-warning" },
+    { label: "Unmatched report", value: k.unmatched, sub: "tidak match plan", icon: AlertTriangle, chip: "bg-warning-soft text-warning", pill: k.unmatched > 0 ? "tinjau" : undefined, pillCls: "bg-warning-soft text-warning" },
   ];
   return (
     <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
@@ -129,6 +130,7 @@ function Kpis({ k }: { k: Kpi }) {
                 <c.icon className="size-4" />
               </div>
               <span className="text-muted-foreground text-xs leading-tight font-medium">{c.label}</span>
+              {c.pill && <span className={cn("ml-auto rounded-full px-2 py-0.5 text-[10px] font-semibold whitespace-nowrap", c.pillCls)}>{c.pill}</span>}
             </div>
             <div className="mt-3 text-2xl font-semibold tabular-nums">{c.value}</div>
             <p className="text-muted-foreground text-xs">{c.sub}</p>
@@ -154,6 +156,7 @@ export default function DashboardPage() {
   const [orang, setOrang] = useState<OrangRow[]>([]);
   const [groups, setGroups] = useState<GroupRow[]>([]);
   const [hod, setHod] = useState<HodRow[]>([]);
+  const [cabangStat, setCabangStat] = useState<GroupRow[]>([]);
   const [reminderOpen, setReminderOpen] = useState(true);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -174,15 +177,17 @@ export default function DashboardPage() {
 
   const loadCore = useCallback(async (r: { from: string; to: string }) => {
     const qs = `from=${r.from}&to=${r.to}`;
-    const [s, t, p] = await Promise.all([
+    const [s, t, p, c] = await Promise.all([
       getJson<{ kpi: Kpi }>(`/api/report/summary?${qs}`),
       getJson<{ days: TrendDay[] }>(`/api/report/daily-trend?${qs}`),
       getJson<Pending>(`/api/report/reminders-pending`),
+      getJson<{ rows: GroupRow[] }>(`/api/report/per-cabang?${qs}`),
     ]);
     setError(s ? null : "Gagal memuat ringkasan.");
     setKpi(s?.kpi ?? null);
     setTrend(t?.days ?? []);
     setPending(p);
+    setCabangStat(c?.rows ?? []);
     setLoading(false);
   }, []);
 
@@ -313,6 +318,42 @@ export default function DashboardPage() {
               )}
             </CardContent>
           </Card>
+
+          {cabangStat.length > 0 && (
+            <Card>
+              <CardHeader className="pb-2">
+                <p className="text-muted-foreground text-[11px] font-semibold tracking-wider uppercase">Kepatuhan</p>
+                <CardTitle className="text-sm font-medium">Per Cabang</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid gap-x-8 gap-y-4 sm:grid-cols-2">
+                  {[...cabangStat]
+                    .sort((a, b) => b.plan_count - a.plan_count)
+                    .slice(0, 8)
+                    .map((g) => {
+                      const v = g.completion ?? 0;
+                      const tone = g.completion === null ? "bg-muted-foreground" : v >= 80 ? "bg-success" : v >= 50 ? "bg-warning" : "bg-danger";
+                      return (
+                        <div key={g.key}>
+                          <div className="flex items-center justify-between text-sm">
+                            <span className="flex items-center gap-2 font-medium">
+                              <span className={cn("size-2 rounded-full", tone)} />
+                              {g.key}
+                            </span>
+                            <span className="text-muted-foreground text-xs tabular-nums">
+                              {g.plan_count} plan · <span className="text-foreground font-medium">{v}%</span>
+                            </span>
+                          </div>
+                          <div className="bg-muted mt-1.5 h-1.5 w-full overflow-hidden rounded-full">
+                            <div className={cn("h-full rounded-full", tone)} style={{ width: `${v}%` }} />
+                          </div>
+                        </div>
+                      );
+                    })}
+                </div>
+              </CardContent>
+            </Card>
+          )}
 
           <Card>
             <CardHeader className="pb-0">
