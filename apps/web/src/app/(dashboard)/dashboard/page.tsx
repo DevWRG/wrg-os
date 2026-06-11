@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { CartesianGrid, Line, LineChart, XAxis } from "recharts";
+import { Area, CartesianGrid, ComposedChart, Line, XAxis } from "recharts";
 import { Activity, AlertTriangle, CalendarDays, CheckCircle2, ClipboardList, Clock, UsersRound, type LucideIcon } from "lucide-react";
 
 import { cn } from "@/lib/utils";
@@ -291,14 +291,24 @@ export default function DashboardPage() {
                 <p className="text-muted-foreground text-sm">Tidak ada data tren.</p>
               ) : (
                 <ChartContainer config={trendConfig} className="h-64 w-full">
-                  <LineChart data={trend} margin={{ left: 12, right: 12 }}>
-                    <CartesianGrid vertical={false} />
+                  <ComposedChart data={trend} margin={{ left: 12, right: 12 }}>
+                    <defs>
+                      <linearGradient id="fillPlan" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="var(--color-plan)" stopOpacity={0.25} />
+                        <stop offset="95%" stopColor="var(--color-plan)" stopOpacity={0.02} />
+                      </linearGradient>
+                      <linearGradient id="fillReport" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="var(--color-report)" stopOpacity={0.2} />
+                        <stop offset="95%" stopColor="var(--color-report)" stopOpacity={0.02} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid vertical={false} strokeDasharray="3 3" />
                     <XAxis dataKey="tanggal" tickFormatter={dmy} tickLine={false} axisLine={false} minTickGap={24} />
                     <ChartTooltip content={<ChartTooltipContent />} />
-                    <Line dataKey="plan" stroke="var(--color-plan)" strokeWidth={2} dot={false} />
-                    <Line dataKey="report" stroke="var(--color-report)" strokeWidth={2} dot={false} />
-                    <Line dataKey="late" stroke="var(--color-late)" strokeWidth={2} strokeDasharray="5 5" dot={false} />
-                  </LineChart>
+                    <Area dataKey="plan" type="monotone" stroke="var(--color-plan)" strokeWidth={2} fill="url(#fillPlan)" dot={false} />
+                    <Area dataKey="report" type="monotone" stroke="var(--color-report)" strokeWidth={2} fill="url(#fillReport)" dot={false} />
+                    <Line dataKey="late" type="monotone" stroke="var(--color-late)" strokeWidth={2} strokeDasharray="5 5" dot={false} />
+                  </ComposedChart>
                 </ChartContainer>
               )}
             </CardContent>
