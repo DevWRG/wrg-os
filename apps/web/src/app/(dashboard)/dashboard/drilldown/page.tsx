@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 
-import { apiBaseUrl } from "@/lib/gateway";
+import { gatewayFetch } from "@/lib/gateway";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -69,7 +69,7 @@ const statusTone = (s?: string): "default" | "secondary" | "destructive" | "outl
 async function getDetail(amId: string, from: string, to: string): Promise<Detail | null> {
   try {
     const qs = `am_id=${encodeURIComponent(amId)}${from ? `&from=${from}` : ""}${to ? `&to=${to}` : ""}`;
-    const res = await fetch(`${apiBaseUrl()}/report/drilldown?${qs}`, { cache: "no-store" });
+    const res = await gatewayFetch(`/report/drilldown?${qs}`);
     if (!res.ok) return null;
     return ((await res.json()) as { detail: Detail }).detail;
   } catch {

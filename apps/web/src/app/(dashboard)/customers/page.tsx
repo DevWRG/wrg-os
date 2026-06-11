@@ -1,4 +1,4 @@
-import { apiBaseUrl } from "@/lib/gateway";
+import { gatewayFetch } from "@/lib/gateway";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { CustomersTable } from "@/components/tables/customers-table";
 import { Card, CardContent } from "@/components/ui/card";
@@ -17,7 +17,7 @@ interface Customer {
 
 async function getCustomers(): Promise<Customer[] | null> {
   try {
-    const res = await fetch(`${apiBaseUrl()}/customers`, { cache: "no-store" });
+    const res = await gatewayFetch(`/customers`);
     if (!res.ok) return null;
     return ((await res.json()) as { customers: Customer[] }).customers;
   } catch {

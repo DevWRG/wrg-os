@@ -1,4 +1,4 @@
-import { apiBaseUrl } from "@/lib/gateway";
+import { gatewayFetch } from "@/lib/gateway";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { AddReminderSheet } from "@/components/crm/add-reminder-sheet";
 import { RemindersTable } from "@/components/tables/reminders-table";
@@ -19,7 +19,7 @@ interface ReminderItem {
 
 async function getReminders(): Promise<ReminderItem[] | null> {
   try {
-    const res = await fetch(`${apiBaseUrl()}/reminders`, { cache: "no-store" });
+    const res = await gatewayFetch(`/reminders`);
     if (!res.ok) return null;
     return ((await res.json()) as { reminders: ReminderItem[] }).reminders;
   } catch {

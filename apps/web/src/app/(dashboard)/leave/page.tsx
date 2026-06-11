@@ -1,4 +1,4 @@
-import { apiBaseUrl } from "@/lib/gateway";
+import { gatewayFetch } from "@/lib/gateway";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { AddLeaveSheet } from "@/components/crm/add-leave-sheet";
 import { LeaveTable } from "@/components/tables/leave-table";
@@ -23,7 +23,7 @@ interface User {
 
 async function getJson<T>(path: string): Promise<T | null> {
   try {
-    const res = await fetch(`${apiBaseUrl()}${path}`, { cache: "no-store" });
+    const res = await gatewayFetch(`${path}`);
     if (!res.ok) return null;
     return (await res.json()) as T;
   } catch {

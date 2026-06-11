@@ -1,4 +1,4 @@
-import { apiBaseUrl } from "@/lib/gateway";
+import { gatewayFetch } from "@/lib/gateway";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { AddTodoSheet } from "@/components/crm/add-todo-sheet";
 import { TodosTable } from "@/components/tables/todos-table";
@@ -19,7 +19,7 @@ interface TodoItem {
 
 async function getTodos(): Promise<TodoItem[] | null> {
   try {
-    const res = await fetch(`${apiBaseUrl()}/todos`, { cache: "no-store" });
+    const res = await gatewayFetch(`/todos`);
     if (!res.ok) return null;
     return ((await res.json()) as { todos: TodoItem[] }).todos;
   } catch {

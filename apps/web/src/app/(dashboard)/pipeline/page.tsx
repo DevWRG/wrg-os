@@ -1,4 +1,4 @@
-import { apiBaseUrl } from "@/lib/gateway";
+import { gatewayFetch } from "@/lib/gateway";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 
@@ -31,7 +31,7 @@ const rupiah = (n: number) =>
 
 async function getPipeline(): Promise<Pipeline | null> {
   try {
-    const res = await fetch(`${apiBaseUrl()}/pipeline`, { cache: "no-store" });
+    const res = await gatewayFetch(`/pipeline`);
     if (!res.ok) return null;
     return (await res.json()) as Pipeline;
   } catch {

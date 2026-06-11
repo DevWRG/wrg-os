@@ -1,4 +1,4 @@
-import { apiBaseUrl } from "@/lib/gateway";
+import { gatewayFetch } from "@/lib/gateway";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -20,7 +20,7 @@ interface Analytics {
 
 async function getAnalytics(): Promise<Analytics | null> {
   try {
-    const res = await fetch(`${apiBaseUrl()}/people/analytics`, { cache: "no-store" });
+    const res = await gatewayFetch(`/people/analytics`);
     if (!res.ok) return null;
     return (await res.json()) as Analytics;
   } catch {

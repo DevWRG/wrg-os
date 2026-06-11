@@ -1,4 +1,4 @@
-import { apiBaseUrl } from "@/lib/gateway";
+import { gatewayFetch } from "@/lib/gateway";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { AddUserSheet } from "@/components/crm/add-user-sheet";
 import { UsersTable } from "@/components/tables/users-table";
@@ -21,7 +21,7 @@ interface User {
 
 async function getUsers(): Promise<User[] | null> {
   try {
-    const res = await fetch(`${apiBaseUrl()}/master/users`, { cache: "no-store" });
+    const res = await gatewayFetch(`/master/users`);
     if (!res.ok) return null;
     return ((await res.json()) as { users: User[] }).users;
   } catch {

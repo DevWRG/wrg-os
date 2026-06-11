@@ -1,6 +1,6 @@
 import Link from "next/link";
 
-import { apiBaseUrl } from "@/lib/gateway";
+import { gatewayFetch } from "@/lib/gateway";
 import { cn } from "@/lib/utils";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { SalesTable } from "@/components/tables/sales-table";
@@ -41,7 +41,7 @@ const TABS: { key: Tab; label: string; field: keyof Pick<Revenue, "per_customer"
 
 async function getRevenue(from: string, to: string): Promise<Revenue | null> {
   try {
-    const res = await fetch(`${apiBaseUrl()}/sales/revenue?from=${from}&to=${to}`, { cache: "no-store" });
+    const res = await gatewayFetch(`/sales/revenue?from=${from}&to=${to}`);
     if (!res.ok) return null;
     return (await res.json()) as Revenue;
   } catch {
