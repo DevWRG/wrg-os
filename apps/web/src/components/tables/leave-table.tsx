@@ -26,6 +26,11 @@ const tgl = (iso: string) => {
 const jenisTone = (j: string): "default" | "secondary" | "destructive" | "outline" =>
   j === "sakit" ? "destructive" : j === "cuti" ? "secondary" : "outline";
 const clip = (s: string, n = 56) => (s.length > n ? `${s.slice(0, n)}…` : s);
+const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const thisMonth = () => {
+  const now = new Date();
+  return { from: ymd(new Date(now.getFullYear(), now.getMonth(), 1)), to: ymd(new Date(now.getFullYear(), now.getMonth() + 1, 0)) };
+};
 
 export function LeaveTable({ leave, nameById }: { leave: Leave[]; nameById: Record<string, string> }) {
   const name = (id: string) => nameById[id] ?? id;
@@ -59,6 +64,7 @@ export function LeaveTable({ leave, nameById }: { leave: Leave[]; nameById: Reco
           <Label htmlFor="lv-to" className="text-muted-foreground text-xs">Sampai</Label>
           <Input id="lv-to" type="date" value={to} onChange={(e) => setTo(e.target.value)} className="h-8 w-auto" />
         </div>
+        <Button variant="outline" size="sm" onClick={() => { const r = thisMonth(); setFrom(r.from); setTo(r.to); }}>Bulan ini</Button>
         {(from || to) && (
           <Button variant="ghost" size="sm" onClick={() => { setFrom(""); setTo(""); }}>Reset</Button>
         )}
