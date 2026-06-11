@@ -82,8 +82,8 @@ export async function upsertTerritory(t: TerritoryInput): Promise<{ id: string }
   const rows = await sql`
     INSERT INTO master_territory (am_panggilan, hod_panggilan, cabang, kota)
     VALUES (${t.am_panggilan}, ${t.hod_panggilan}, ${t.cabang}, ${t.kota})
-    ON CONFLICT (am_panggilan) DO UPDATE SET
-      hod_panggilan = EXCLUDED.hod_panggilan, cabang = EXCLUDED.cabang, kota = EXCLUDED.kota
+    ON CONFLICT (am_panggilan, cabang, kota) DO UPDATE SET
+      hod_panggilan = EXCLUDED.hod_panggilan
     RETURNING id
   `;
   return { id: String(rows[0].id) };
