@@ -1,4 +1,5 @@
 import { db } from "../db.js";
+import { sendViaWaGateway } from "../wasend.js";
 
 // Replikasi metrik dashboard Plan & Report WRG-CRM (port wrg_queries.py).
 // Sumber: sales_plan (AM), sales_todo (+report_data, non-AM), activity_log,
@@ -416,6 +417,25 @@ export async function reportCalendarDay(date: string, amId?: string, cabang?: st
     holiday: holidays[0]?.keterangan ? String(holidays[0].keterangan) : null,
     reminders: reminders.map((r) => ({ am_id: String(r.am_id), name: r.name ? String(r.name) : "—", cabang: r.cabang ? String(r.cabang) : null, note: r.note ? String(r.note) : "" })),
   };
+}
+
+// Push WA nudge ke satu AM tentang yang belum di-report (dari panel reminder
+// dashboard). Pesan disesuaikan kategori. Kirim via gateway (stub di dev bila
+// WA_SEND_URL kosong). Fallback target = REMINDER_WA_TARGET bila wa_number kosong.
+export async function pushReminderToAm(amId: string, kind: "am" | "todo" | "zero", date: string) {
+  const sql = db();
+  const [u] = await sql`SELECT COALESCE(panggilan, nama) AS name, wa_number FROM master_user WHERE am_id = ${amId}`;
+  if (!u) return { sent: false, stub: false, error: "AM tidak ditemukan", name: null as string | null };
+  const name = u.name ? String(u.name) : amId;
+  const msg =
+    kind === "todo"
+      ? `Halo ${name}, masih ada item TODO yang belum di-report untuk ${date}. Mohon segera dilaporkan. 🙏`
+      : kind === "zero"
+        ? `Halo ${name}, belum ada plan/report sama sekali untuk ${date}. Mohon submit plan & report hari ini. 🙏`
+        : `Halo ${name}, masih ada kunjungan yang belum di-report untuk ${date}. Mohon segera kirim visit-report. 🙏`;
+  const to = u.wa_number ? String(u.wa_number) : process.env.REMINDER_WA_TARGET || "_reminder_group";
+  const r = await sendViaWaGateway(to, msg);
+  return { sent: r.sent, stub: r.stub, error: r.error, name, to: u.wa_number ? String(u.wa_number) : null };
 }
 
 // Reminder 3-tier (selalu "hari ini"): AM belum visit-report, todo belum report, zero-submission.

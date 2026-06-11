@@ -78,6 +78,7 @@ import {
   reportDailyTrend,
   reportDrilldown,
   reportRemindersPending,
+  pushReminderToAm,
   reportCalendar,
   reportCalendarDay,
 } from "./repo/plandash.js";
@@ -1046,6 +1047,24 @@ app.get("/report/calendar/day", async (c) => {
   const amId = c.req.query("am_id") || undefined;
   const cabang = c.req.query("cabang") || undefined;
   return c.json(await reportCalendarDay(date, amId, cabang));
+});
+
+// Push WA nudge ke satu AM (dari panel reminder dashboard). Stub di dev.
+app.post("/report/reminders/push", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { am_id?: string; kind?: string; date?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.am_id) return c.json({ error: "am_id wajib" }, 400);
+  const kind = (["am", "todo", "zero"] as const).includes(body.kind as "am" | "todo" | "zero")
+    ? (body.kind as "am" | "todo" | "zero")
+    : "am";
+  const date = body.date || defaultRange().today;
+  const r = await pushReminderToAm(body.am_id, kind, date);
+  return c.json(r, r.sent ? 200 : 502);
 });
 
 app.get("/report/reminders-pending", async (c) => {

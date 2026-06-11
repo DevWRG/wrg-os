@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { Area, CartesianGrid, ComposedChart, Line, XAxis } from "recharts";
-import { Activity, AlertTriangle, CalendarDays, CheckCircle2, ClipboardList, Clock, UsersRound, type LucideIcon } from "lucide-react";
+import { Activity, AlertTriangle, CalendarDays, Check, CheckCircle2, ClipboardList, Clock, MessageCircle, UsersRound, X, type LucideIcon } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -170,6 +170,22 @@ export default function DashboardPage() {
   const [cabangStat, setCabangStat] = useState<GroupRow[]>([]);
   const [reminderOpen, setReminderOpen] = useState(true);
   const [reminderTab, setReminderTab] = useState<ReminderTab>("am");
+  const [pushState, setPushState] = useState<Record<string, "sending" | "sent" | "error">>({});
+
+  async function pushWa(amId: string, kind: ReminderTab, date: string) {
+    const key = `${kind}:${amId}`;
+    setPushState((s) => ({ ...s, [key]: "sending" }));
+    try {
+      const res = await fetch("/api/report/reminders/push", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ am_id: amId, kind, date }),
+      });
+      setPushState((s) => ({ ...s, [key]: res.ok ? "sent" : "error" }));
+    } catch {
+      setPushState((s) => ({ ...s, [key]: "error" }));
+    }
+  }
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -329,16 +345,34 @@ export default function DashboardPage() {
                       <p className="text-muted-foreground py-8 text-center text-sm">Tidak ada yang pending. 🎉</p>
                     ) : (
                       <div className="max-h-80 divide-y overflow-y-auto rounded-lg border">
-                        {active.list.map((r) => (
-                          <div key={r.am_id} className="flex items-center justify-between px-3 py-2.5">
-                            <div className="min-w-0">
-                              <div className="truncate text-sm font-medium">{r.name}</div>
-                              <div className="text-muted-foreground truncate text-xs">
-                                {[r.region, detail(r)].filter(Boolean).join(" · ")}
+                        {active.list.map((r) => {
+                          const st = pushState[`${active.key}:${r.am_id}`];
+                          return (
+                            <div key={r.am_id} className="flex items-center justify-between gap-2 px-3 py-2.5">
+                              <div className="min-w-0">
+                                <div className="truncate text-sm font-medium">{r.name}</div>
+                                <div className="text-muted-foreground truncate text-xs">
+                                  {[r.region, detail(r)].filter(Boolean).join(" · ")}
+                                </div>
                               </div>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="shrink-0"
+                                disabled={st === "sending" || st === "sent"}
+                                onClick={() => void pushWa(r.am_id, active.key, pending.date)}
+                              >
+                                {st === "sent" ? (
+                                  <><Check className="text-success" /> Terkirim</>
+                                ) : st === "error" ? (
+                                  <><X className="text-destructive" /> Gagal</>
+                                ) : (
+                                  <><MessageCircle /> {st === "sending" ? "Mengirim…" : "Push WA"}</>
+                                )}
+                              </Button>
                             </div>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     )}
                   </CardContent>
