@@ -20,6 +20,7 @@ const tgl = (iso: string) => {
 };
 const jenisTone = (j: string): "default" | "secondary" | "destructive" | "outline" =>
   j === "sakit" ? "destructive" : j === "cuti" ? "secondary" : "outline";
+const clip = (s: string, n = 56) => (s.length > n ? `${s.slice(0, n)}…` : s);
 
 export function LeaveTable({ leave, nameById }: { leave: Leave[]; nameById: Record<string, string> }) {
   const name = (id: string) => nameById[id] ?? id;
@@ -28,7 +29,7 @@ export function LeaveTable({ leave, nameById }: { leave: Leave[]; nameById: Reco
     { id: "jenis", header: "Jenis", sortable: true, accessor: (l) => l.jenis, cell: (l) => <Badge variant={jenisTone(l.jenis)}>{l.jenis}</Badge> },
     { id: "start", header: "Mulai", sortable: true, accessor: (l) => l.start_date, cell: (l) => <span className="text-muted-foreground whitespace-nowrap">{tgl(l.start_date)}</span> },
     { id: "end", header: "Selesai", sortable: true, accessor: (l) => l.end_date, cell: (l) => <span className="text-muted-foreground whitespace-nowrap">{tgl(l.end_date)}</span> },
-    { id: "ket", header: "Keterangan", accessor: (l) => l.keterangan ?? "", cell: (l) => <div className="text-muted-foreground max-w-[280px] truncate" title={l.keterangan ?? undefined}>{l.keterangan ?? "—"}</div> },
+    { id: "ket", header: "Keterangan", accessor: (l) => l.keterangan ?? "", cell: (l) => <span className="text-muted-foreground" title={l.keterangan ?? undefined}>{l.keterangan ? clip(l.keterangan) : "—"}</span> },
     { id: "source", header: "Sumber", sortable: true, accessor: (l) => l.source, cell: (l) => <Badge variant="outline">{l.source}</Badge> },
     { id: "aksi", header: "Aksi", align: "right", cell: (l) => <LeaveRowActions row={l} label={name(l.am_id)} /> },
   ];
