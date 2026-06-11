@@ -78,6 +78,7 @@ import {
   reportDailyTrend,
   reportDrilldown,
   reportRemindersPending,
+  reportCalendar,
 } from "./repo/plandash.js";
 import { salesRange, reportRevenue } from "./repo/sales.js";
 import {
@@ -1023,6 +1024,16 @@ app.get("/report/drilldown", async (c) => {
   if (!amId) return c.json({ error: "am_id wajib" }, 400);
   const { from, to } = parseRange(c.req.query("from"), c.req.query("to"));
   return c.json({ from, to, detail: await reportDrilldown(amId, from, to) });
+});
+
+// Sales Calendar: agregat plan/report per (tanggal, AM) + libur + katalog AM
+// untuk filter. from/to = rentang grid kalender (mis. awal–akhir 6 minggu).
+app.get("/report/calendar", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const { from, to } = parseRange(c.req.query("from"), c.req.query("to"));
+  const amId = c.req.query("am_id") || undefined;
+  const cabang = c.req.query("cabang") || undefined;
+  return c.json(await reportCalendar(from, to, amId, cabang));
 });
 
 app.get("/report/reminders-pending", async (c) => {
