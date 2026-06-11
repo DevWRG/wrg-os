@@ -101,10 +101,7 @@ export function DataTable<T>({
             className="h-8 pl-8"
           />
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {toolbar}
-          <span className="text-muted-foreground text-xs whitespace-nowrap">{sorted.length} baris</span>
-        </div>
+        {toolbar && <div className="flex flex-wrap items-center gap-2">{toolbar}</div>}
       </div>
 
       <Table>
@@ -159,8 +156,10 @@ export function DataTable<T>({
         </TableBody>
       </Table>
 
-      {sorted.length > PAGE_SIZES[0] && (
-        <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+      <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+        <span className="text-muted-foreground text-xs">{sorted.length} baris</span>
+        {sorted.length > PAGE_SIZES[0] && (
+          <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-2">
             <span className="text-muted-foreground text-xs">Baris/hal:</span>
             <select
@@ -197,8 +196,9 @@ export function DataTable<T>({
               Next
             </button>
           </div>
-        </div>
-      )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
