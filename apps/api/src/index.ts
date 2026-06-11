@@ -83,7 +83,7 @@ import {
   reportCalendarDay,
 } from "./repo/plandash.js";
 import { salesRange, reportRevenue, reportSalesAr } from "./repo/sales.js";
-import { upsertMembers, listMembers, type MonitorMemberInput } from "./repo/monitor.js";
+import { upsertMembers, listMembers, upsertDigests, listDigest, type MonitorMemberInput, type DigestInput } from "./repo/monitor.js";
 import {
   upsertCustomers,
   upsertBranches,
@@ -493,6 +493,30 @@ app.post("/monitor/members", async (c) => {
     return c.json({ error: "body.members (array non-kosong) wajib" }, 400);
   }
   return c.json({ upserted: await upsertMembers(body.members) }, 201);
+});
+
+app.get("/monitor/rekap", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await listDigest("rekap", c.req.query("date") || undefined));
+});
+
+app.get("/monitor/resume", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await listDigest("resume", c.req.query("date") || undefined));
+});
+
+app.post("/monitor/digests", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { digests?: DigestInput[] };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!Array.isArray(body.digests) || body.digests.length === 0) {
+    return c.json({ error: "body.digests (array non-kosong) wajib" }, 400);
+  }
+  return c.json({ upserted: await upsertDigests(body.digests) }, 201);
 });
 
 // Webhook Accurate → ar_aging_mv. Menerima invoice Accurate (single | array |
