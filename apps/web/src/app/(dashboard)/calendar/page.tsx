@@ -77,6 +77,7 @@ export default function CalendarPage() {
   }, [range.gridStart, range.gridEnd, amFilter, cabFilter]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- load() men-setState (loading) saat fetch; disengaja.
     void load();
   }, [load]);
 
