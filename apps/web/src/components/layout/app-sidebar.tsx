@@ -28,6 +28,9 @@ import {
   MapPin,
   ListChecks,
   Swords,
+  CalendarOff,
+  CalendarDays,
+  Users,
   type LucideIcon,
 } from "lucide-react";
 
@@ -66,6 +69,8 @@ const NAV: NavGroup[] = [
       { title: "Sales TODO", url: "/todos", icon: ListChecks },
       { title: "Visits", url: "/visits", icon: MapPin },
       { title: "Reminders", url: "/reminders", icon: Bell },
+      { title: "Holidays", url: "/holidays", icon: CalendarOff },
+      { title: "Manage Leave", url: "/leave", icon: CalendarDays },
     ],
   },
   {
@@ -104,6 +109,7 @@ const NAV: NavGroup[] = [
   {
     label: "Admin",
     items: [
+      { title: "Users", url: "/users", icon: Users },
       { title: "Settings", url: "/settings", icon: Settings },
       { title: "UI Showcase", url: "/showcase", icon: Sparkles },
     ],
