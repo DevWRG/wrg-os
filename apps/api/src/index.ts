@@ -82,7 +82,7 @@ import {
   reportCalendar,
   reportCalendarDay,
 } from "./repo/plandash.js";
-import { salesRange, reportRevenue } from "./repo/sales.js";
+import { salesRange, reportRevenue, reportSalesAr } from "./repo/sales.js";
 import {
   upsertCustomers,
   upsertBranches,
@@ -465,6 +465,12 @@ app.post("/ar/invoices", async (c) => {
 app.get("/ar/aging", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json(await getAging(c.req.query("bucket") || undefined));
+});
+
+// AR (piutang) per customer / cabang / sales — dari accurate_invoice OPEN.
+app.get("/ar/sales", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await reportSalesAr(c.req.query("from") || undefined, c.req.query("to") || undefined));
 });
 
 // Webhook Accurate → ar_aging_mv. Menerima invoice Accurate (single | array |

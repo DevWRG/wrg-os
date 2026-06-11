@@ -1,6 +1,7 @@
 import { gatewayFetch } from "@/lib/gateway";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { ArTable } from "@/components/tables/ar-table";
+import { ArBreakdownTabs, type ArGroup } from "@/components/tables/ar-breakdown-tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 export const dynamic = "force-dynamic";
@@ -32,6 +33,14 @@ const rupiah = (n: number) =>
     maximumFractionDigits: 1,
   }).format(n);
 
+interface SalesAr {
+  total_outstanding: number;
+  total_invoices: number;
+  by_customer: ArGroup[];
+  by_cabang: ArGroup[];
+  by_sales: ArGroup[];
+}
+
 async function getAging(): Promise<Aging | null> {
   try {
     const res = await gatewayFetch(`/ar/aging`);
@@ -42,27 +51,48 @@ async function getAging(): Promise<Aging | null> {
   }
 }
 
+async function getSalesAr(): Promise<SalesAr | null> {
+  try {
+    const res = await gatewayFetch(`/ar/sales`);
+    if (!res.ok) return null;
+    return (await res.json()) as SalesAr;
+  } catch {
+    return null;
+  }
+}
+
 export default async function ArAgingPage() {
-  const data = await getAging();
+  const [data, ar] = await Promise.all([getAging(), getSalesAr()]);
 
   return (
     <>
       <PageHeader
         title="AR Aging"
-        description="Piutang per bucket umur (D2) — feeder dari Accurate, data live dari DB."
+        description="Piutang (outstanding invoice OPEN) per customer / cabang / sales + aging per bucket umur. Data live dari Accurate."
       />
 
-      {!data ? (
-        <p className="text-muted-foreground">
-          Data tidak tersedia. Pastikan <code>apps/api</code> jalan dengan{" "}
-          <code>DATABASE_URL</code>.
-        </p>
-      ) : data.total_invoices === 0 ? (
-        <p className="text-muted-foreground">
-          Belum ada data piutang. Ingest via <code>POST /api/ar/invoices</code>.
-        </p>
-      ) : (
+      {ar && ar.total_invoices > 0 && (
         <>
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-muted-foreground text-sm font-medium">Total Piutang (OPEN)</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-semibold tabular-nums">{rupiah(ar.total_outstanding)}</div>
+              <p className="text-muted-foreground text-xs">{ar.total_invoices} invoice belum lunas</p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="pt-6">
+              <ArBreakdownTabs byCustomer={ar.by_customer} byCabang={ar.by_cabang} bySales={ar.by_sales} />
+            </CardContent>
+          </Card>
+        </>
+      )}
+
+      {data && data.total_invoices > 0 && (
+        <>
+          <h2 className="text-muted-foreground pt-2 text-[11px] font-semibold tracking-wider uppercase">Aging per bucket umur</h2>
           <div className="grid gap-4 md:grid-cols-3 lg:grid-cols-6">
             <Card>
               <CardHeader className="pb-2">
@@ -99,6 +129,12 @@ export default async function ArAgingPage() {
             </CardContent>
           </Card>
         </>
+      )}
+
+      {(!ar || ar.total_invoices === 0) && (!data || data.total_invoices === 0) && (
+        <p className="text-muted-foreground">
+          Belum ada data piutang. Pastikan <code>apps/api</code> jalan &amp; data Accurate ter-sync.
+        </p>
       )}
     </>
   );
