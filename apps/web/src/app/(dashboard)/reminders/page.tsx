@@ -1,5 +1,6 @@
 import { apiBaseUrl } from "@/lib/gateway";
 import { PageHeader } from "@/components/dashboard/page-header";
+import { AddReminderSheet } from "@/components/crm/add-reminder-sheet";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -54,6 +55,7 @@ export default async function RemindersPage() {
       <PageHeader
         title="Reminders"
         description="Reminder AM (port am_reminder) — heads-up H-1 sore & pengingat H pagi. Data live dari DB."
+        action={<AddReminderSheet />}
       />
 
       {!reminders ? (
