@@ -8,12 +8,24 @@ export interface AppUser {
   email: string;
   name: string | null;
   role: string;
+  title: string | null;
+}
+
+// Map baris DB → AppUser (title bisa null untuk user lama tanpa jabatan).
+function toAppUser(r: Record<string, unknown>): AppUser {
+  return {
+    id: String(r.id),
+    email: String(r.email),
+    name: r.name ? String(r.name) : null,
+    role: String(r.role),
+    title: r.title ? String(r.title) : null,
+  };
 }
 
 export async function getUserByEmail(email: string) {
   const sql = db();
   const rows = await sql`
-    SELECT id, email, password_hash, name, role FROM app_user WHERE email = ${email.toLowerCase()}
+    SELECT id, email, password_hash, name, role, title FROM app_user WHERE email = ${email.toLowerCase()}
   `;
   return rows[0] ?? null;
 }
@@ -24,29 +36,17 @@ export async function createUser(
   password: string,
   name?: string,
   role = "user",
+  title?: string,
 ): Promise<AppUser> {
   const sql = db();
   const rows = await sql`
-    INSERT INTO app_user (email, password_hash, name, role)
-    VALUES (${email.toLowerCase()}, ${hashPassword(password)}, ${name ?? null}, ${role})
+    INSERT INTO app_user (email, password_hash, name, role, title)
+    VALUES (${email.toLowerCase()}, ${hashPassword(password)}, ${name ?? null}, ${role}, ${title ?? null})
     ON CONFLICT (email) DO NOTHING
-    RETURNING id, email, name, role
+    RETURNING id, email, name, role, title
   `;
-  if (rows.length > 0) {
-    return {
-      id: String(rows[0].id),
-      email: String(rows[0].email),
-      name: rows[0].name ? String(rows[0].name) : null,
-      role: String(rows[0].role),
-    };
-  }
-  const existing = await getUserByEmail(email);
-  return {
-    id: String(existing.id),
-    email: String(existing.email),
-    name: existing.name ? String(existing.name) : null,
-    role: String(existing.role),
-  };
+  if (rows.length > 0) return toAppUser(rows[0]);
+  return toAppUser(await getUserByEmail(email));
 }
 
 export async function verifyCredentials(
@@ -56,12 +56,7 @@ export async function verifyCredentials(
   const u = await getUserByEmail(email);
   if (!u) return null;
   if (!verifyPassword(password, String(u.password_hash))) return null;
-  return {
-    id: String(u.id),
-    email: String(u.email),
-    name: u.name ? String(u.name) : null,
-    role: String(u.role),
-  };
+  return toAppUser(u);
 }
 
 export async function countUsers(): Promise<number> {
