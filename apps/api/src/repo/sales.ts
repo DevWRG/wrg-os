@@ -104,14 +104,32 @@ export async function reportSalesAr(from?: string, to?: string) {
     WHERE ai.status = 'OPEN' ${dateClause}
     GROUP BY key ORDER BY outstanding DESC
   `;
+  // cabang via salesman → master_user (am_id = master_user_id) → mu.cabang;
+  // fallback cabang_override. Jauh lebih ter-petakan drpd branch (yg kosong).
   const byCabang = await sql`
-    SELECT COALESCE(NULLIF(acs.cabang_override, ''), ab.name, '?') AS key,
+    SELECT COALESCE(NULLIF(mu.cabang, ''), NULLIF(acs.cabang_override, ''), '?') AS key,
            count(*)::int AS invoices, COALESCE(sum(ai.total), 0)::float8 AS outstanding
     FROM accurate_invoice ai
     LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
-    LEFT JOIN accurate_branch ab ON ab.id = ai.branch_id
+    LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
     WHERE ai.status = 'OPEN' ${dateClause}
     GROUP BY key ORDER BY outstanding DESC
+  `;
+  // Area East/West: cabang (mu.cabang) dinormalisasi → sales_target_branch.area.
+  const byArea = await sql`
+    SELECT COALESCE(stb.area, 'Belum terpetakan') AS area,
+           count(DISTINCT ai.customer_id)::int AS customers,
+           count(*)::int AS invoices, COALESCE(sum(ai.total), 0)::float8 AS outstanding
+    FROM accurate_invoice ai
+    LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
+    LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
+    LEFT JOIN sales_target_branch stb ON UPPER(stb.cabang) = CASE UPPER(COALESCE(mu.cabang, ''))
+      WHEN 'SBY 2' THEN 'SURABAYA 2'
+      WHEN 'SOLO & YOGYAKARTA' THEN 'JAWA TENGAH'
+      WHEN 'CIREBON' THEN 'JAWA BARAT'
+      ELSE UPPER(COALESCE(mu.cabang, '')) END
+    WHERE ai.status = 'OPEN' ${dateClause}
+    GROUP BY stb.area
   `;
   const bySales = await sql`
     SELECT COALESCE(NULLIF(ai.salesman_name, ''), acs.name, 'Sales #' || ai.salesman_id) AS key,
@@ -127,11 +145,25 @@ export async function reportSalesAr(from?: string, to?: string) {
   `;
   const map = (rows: Record<string, unknown>[]): ArGroup[] =>
     rows.map((r) => ({ key: String(r.key), invoices: Number(r.invoices), outstanding: Number(r.outstanding) }));
+  const areaOf = (name: string) => {
+    const r = byArea.find((x) => String(x.area) === name);
+    return {
+      area: name,
+      customers: r ? Number(r.customers) : 0,
+      invoices: r ? Number(r.invoices) : 0,
+      outstanding: r ? Number(r.outstanding) : 0,
+    };
+  };
   return {
     total_outstanding: Number(tot?.outstanding ?? 0),
     total_invoices: Number(tot?.invoices ?? 0),
     by_customer: map(byCustomer),
     by_cabang: map(byCabang),
     by_sales: map(bySales),
+    areas: {
+      east: areaOf("East"),
+      west: areaOf("West"),
+      unmapped: areaOf("Belum terpetakan"),
+    },
   };
 }
