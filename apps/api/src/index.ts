@@ -76,6 +76,7 @@ import {
   reportDrilldown,
   reportRemindersPending,
 } from "./repo/plandash.js";
+import { salesRange, reportRevenue } from "./repo/sales.js";
 import {
   upsertCustomers,
   upsertBranches,
@@ -993,6 +994,13 @@ app.get("/report/reminders-pending", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const date = c.req.query("date") || defaultRange().today;
   return c.json(await reportRemindersPending(date));
+});
+
+// Sales Performance (revenue dari accurate_invoice). Default = year-to-date.
+app.get("/sales/revenue", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const { from, to } = salesRange(c.req.query("from"), c.req.query("to"));
+  return c.json(await reportRevenue(from, to));
 });
 
 // ── Accurate master mirror (port legacy accurate_customer/item/branch) ──
