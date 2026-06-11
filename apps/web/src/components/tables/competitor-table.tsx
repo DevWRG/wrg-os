@@ -47,7 +47,7 @@ const columns: DataColumn<CompetitorItem>[] = [
     cell: (i) => (i.harga_numeric !== null ? rupiah(i.harga_numeric) : (i.harga_text ?? "—")),
   },
   { id: "customer", header: "Customer", sortable: true, accessor: (i) => i.customer_name ?? "", cell: (i) => <span className="text-muted-foreground">{i.customer_name ?? "—"}</span> },
-  { id: "konteks", header: "Konteks", accessor: (i) => i.konteks ?? "", cell: (i) => <span className="text-muted-foreground max-w-xs truncate">{i.konteks ?? "—"}</span> },
+  { id: "konteks", header: "Konteks", accessor: (i) => i.konteks ?? "", cell: (i) => <div className="text-muted-foreground max-w-[240px] truncate" title={i.konteks ?? undefined}>{i.konteks ?? "—"}</div> },
 ];
 
 export function CompetitorTable({ items }: { items: CompetitorItem[] }) {
