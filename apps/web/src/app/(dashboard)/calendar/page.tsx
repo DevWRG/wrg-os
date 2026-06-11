@@ -2,21 +2,11 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronLeft, ChevronRight, MapPin, Pin, Star } from "lucide-react";
+import { ChevronLeft, ChevronRight, Pin, Star } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 
-interface AmRow {
-  d: string;
-  am_id: string;
-  name: string;
-  cabang: string | null;
-  total: number;
-  reported: number;
-  geo: number;
-  late: boolean;
-}
 interface Reminder {
   d: string;
   am_id: string;
@@ -28,7 +18,6 @@ interface CalendarData {
   holidays: { tanggal: string; keterangan: string }[];
   ams: { am_id: string; name: string; cabang: string | null }[];
   reminders: Reminder[];
-  rows: AmRow[];
 }
 
 const MONTHS = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
@@ -101,11 +90,6 @@ export default function CalendarPage() {
     return m;
   }, [data?.holidays]);
 
-  const byDate = useMemo(() => {
-    const m: Record<string, AmRow[]> = {};
-    (data?.rows ?? []).forEach((r) => (m[r.d] = m[r.d] || []).push(r));
-    return m;
-  }, [data?.rows]);
 
   const remByDate = useMemo(() => {
     const m: Record<string, Reminder[]> = {};
@@ -138,7 +122,7 @@ export default function CalendarPage() {
           <h1 className="text-2xl font-semibold tracking-tight">
             Sales <span className="text-primary">Calendar</span>
           </h1>
-          <p className="text-muted-foreground text-sm">Kalender plan &amp; report Account Manager + libur nasional. Klik tanggal untuk drilldown.</p>
+          <p className="text-muted-foreground text-sm">Libur nasional + catatan reminder Account Manager. Klik tanggal untuk detail hari itu.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <select
@@ -209,7 +193,6 @@ export default function CalendarPage() {
             const isWknd = d.getDay() === 0 || d.getDay() === 6;
             const holiday = holByDate[ds];
             const dayReminders = remByDate[ds] ?? [];
-            const ams = (byDate[ds] ?? []).slice().sort((a, b) => a.name.localeCompare(b.name));
 
             return (
               <button
@@ -248,22 +231,6 @@ export default function CalendarPage() {
                 ))}
                 {dayReminders.length > 2 && (
                   <span className="text-danger px-1.5 text-[10px] font-medium">+{dayReminders.length - 2} reminder</span>
-                )}
-                {ams.slice(0, 5).map((am) => {
-                  const tone =
-                    am.reported === am.total ? "bg-success-soft text-success"
-                    : am.reported > 0 ? "bg-warning-soft text-warning"
-                    : am.late ? "bg-danger-soft text-danger"
-                    : "bg-muted text-muted-foreground";
-                  return (
-                    <span key={am.am_id} className={cn("flex items-center gap-1 truncate rounded px-1.5 py-0.5 text-[10px] font-medium", tone)} title={`${am.name}${am.cabang ? ` (${am.cabang})` : ""}: ${am.reported}/${am.total} reported`}>
-                      <span className="truncate">{am.name} {am.reported}/{am.total}</span>
-                      {am.geo > 0 && <span className="inline-flex shrink-0 items-center"><MapPin className="size-2.5" />{am.geo}</span>}
-                    </span>
-                  );
-                })}
-                {ams.length > 5 && (
-                  <span className="text-muted-foreground px-1.5 text-[10px] font-medium">+{ams.length - 5} AM</span>
                 )}
               </button>
             );
