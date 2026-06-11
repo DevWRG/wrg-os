@@ -117,7 +117,11 @@ export async function reportSalesAr(from?: string, to?: string) {
   `;
   // Area East/West: cabang (mu.cabang) dinormalisasi → sales_target_branch.area.
   const byArea = await sql`
-    SELECT COALESCE(stb.area, 'Belum terpetakan') AS area,
+    SELECT COALESCE(
+             stb.area,
+             CASE WHEN UPPER(COALESCE(NULLIF(mu.cabang, ''), NULLIF(acs.cabang_override, ''), '')) = 'OFFICE' THEN 'Office' END,
+             'Belum terpetakan'
+           ) AS area,
            count(DISTINCT ai.customer_id)::int AS customers,
            count(*)::int AS invoices, COALESCE(sum(ai.total), 0)::float8 AS outstanding
     FROM accurate_invoice ai
@@ -129,7 +133,7 @@ export async function reportSalesAr(from?: string, to?: string) {
       WHEN 'CIREBON' THEN 'JAWA BARAT'
       ELSE UPPER(COALESCE(mu.cabang, '')) END
     WHERE ai.status = 'OPEN' ${dateClause}
-    GROUP BY stb.area
+    GROUP BY 1
   `;
   const bySales = await sql`
     SELECT COALESCE(NULLIF(ai.salesman_name, ''), acs.name, 'Sales #' || ai.salesman_id) AS key,
@@ -163,6 +167,7 @@ export async function reportSalesAr(from?: string, to?: string) {
     areas: {
       east: areaOf("East"),
       west: areaOf("West"),
+      office: areaOf("Office"),
       unmapped: areaOf("Belum terpetakan"),
     },
   };

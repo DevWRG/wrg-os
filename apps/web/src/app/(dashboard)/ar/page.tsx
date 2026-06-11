@@ -45,7 +45,7 @@ interface SalesAr {
   by_customer: ArGroup[];
   by_cabang: ArGroup[];
   by_sales: ArGroup[];
-  areas: { east: AreaAr; west: AreaAr; unmapped: AreaAr };
+  areas: { east: AreaAr; west: AreaAr; office: AreaAr; unmapped: AreaAr };
 }
 
 async function getAging(): Promise<Aging | null> {
@@ -80,7 +80,7 @@ export default async function ArAgingPage() {
 
       {ar && ar.total_invoices > 0 && (
         <>
-          <div className="grid gap-4 sm:grid-cols-3">
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <Card>
               <CardHeader className="pb-2">
                 <CardTitle className="text-muted-foreground text-sm font-medium">Total Piutang (OPEN)</CardTitle>
@@ -106,6 +106,15 @@ export default async function ArAgingPage() {
               <CardContent>
                 <div className="text-2xl font-semibold tabular-nums">{rupiah(ar.areas.west.outstanding)}</div>
                 <p className="text-muted-foreground text-xs">{ar.areas.west.customers} customer · {ar.areas.west.invoices} open inv</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-muted-foreground text-sm font-medium">Office</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-semibold tabular-nums">{rupiah(ar.areas.office.outstanding)}</div>
+                <p className="text-muted-foreground text-xs">{ar.areas.office.customers} customer · {ar.areas.office.invoices} open inv</p>
               </CardContent>
             </Card>
           </div>
