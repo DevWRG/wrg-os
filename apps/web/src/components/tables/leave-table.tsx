@@ -56,9 +56,9 @@ export function LeaveTable({ leave, nameById }: { leave: Leave[]; nameById: Reco
   const toolbar = (
     <div className="flex flex-wrap items-center gap-2">
       <Label htmlFor="lv-from" className="text-muted-foreground text-xs">Dari</Label>
-      <Input id="lv-from" type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="h-8 w-auto" />
+      <Input id="lv-from" type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="bg-card h-8 w-auto" />
       <Label htmlFor="lv-to" className="text-muted-foreground text-xs">Sampai</Label>
-      <Input id="lv-to" type="date" value={to} onChange={(e) => setTo(e.target.value)} className="h-8 w-auto" />
+      <Input id="lv-to" type="date" value={to} onChange={(e) => setTo(e.target.value)} className="bg-card h-8 w-auto" />
       <Button variant="outline" size="sm" onClick={() => { const r = thisMonth(); setFrom(r.from); setTo(r.to); }}>Bulan ini</Button>
       {(from || to) && (
         <Button variant="ghost" size="sm" onClick={() => { setFrom(""); setTo(""); }}>Reset</Button>

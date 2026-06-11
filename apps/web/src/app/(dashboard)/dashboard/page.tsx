@@ -247,9 +247,9 @@ export default function DashboardPage() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Input type="date" value={draft.from} onChange={(e) => setDraft((p) => ({ ...p, from: e.target.value }))} className="h-8 w-auto" />
+          <Input type="date" value={draft.from} onChange={(e) => setDraft((p) => ({ ...p, from: e.target.value }))} className="bg-card h-8 w-auto" />
           <span className="text-muted-foreground">→</span>
-          <Input type="date" value={draft.to} onChange={(e) => setDraft((p) => ({ ...p, to: e.target.value }))} className="h-8 w-auto" />
+          <Input type="date" value={draft.to} onChange={(e) => setDraft((p) => ({ ...p, to: e.target.value }))} className="bg-card h-8 w-auto" />
           <Button size="sm" variant="outline" onClick={() => preset("today")}>Hari ini</Button>
           <Button size="sm" variant="outline" onClick={() => preset("week")}>Minggu ini</Button>
           <Button size="sm" onClick={apply}>Terapkan</Button>
