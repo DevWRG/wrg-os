@@ -32,6 +32,7 @@ import {
   CalendarDays,
   CalendarRange,
   Users,
+  MessagesSquare,
   type LucideIcon,
 } from "lucide-react";
 
@@ -99,6 +100,12 @@ const NAV: NavGroup[] = [
       { title: "Coaching Notes", url: "/coaching", icon: GraduationCap },
       { title: "Reports", url: "/reports", icon: BarChart3 },
       { title: "Digest History", url: "/digests", icon: History },
+    ],
+  },
+  {
+    label: "Monitor",
+    items: [
+      { title: "Members", url: "/monitor/members", icon: MessagesSquare },
     ],
   },
   {
