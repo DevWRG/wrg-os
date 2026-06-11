@@ -1,7 +1,10 @@
 "use client";
 
+import { useMemo, useState } from "react";
+
 import { Badge } from "@/components/ui/badge";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
+import { DateRangeToolbar } from "@/components/ui/date-range-toolbar";
 
 interface VisitItem {
   id: string;
@@ -57,5 +60,23 @@ const columns: DataColumn<VisitItem>[] = [
 ];
 
 export function VisitsTable({ visits }: { visits: VisitItem[] }) {
-  return <DataTable columns={columns} data={visits} getKey={(v) => v.id} searchPlaceholder="Cari AM / customer…" pageSize={25} />;
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const filtered = useMemo(() => {
+    if (!from && !to) return visits;
+    return visits.filter((v) => {
+      const d = (v.visit_date ?? v.visit_timestamp ?? "").slice(0, 10);
+      return d ? (!from || d >= from) && (!to || d <= to) : false;
+    });
+  }, [visits, from, to]);
+  return (
+    <DataTable
+      columns={columns}
+      data={filtered}
+      getKey={(v) => v.id}
+      searchPlaceholder="Cari AM / customer…"
+      pageSize={25}
+      toolbar={<DateRangeToolbar from={from} to={to} onFrom={setFrom} onTo={setTo} idPrefix="vs" />}
+    />
+  );
 }

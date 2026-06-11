@@ -1,7 +1,10 @@
 "use client";
 
+import { useMemo, useState } from "react";
+
 import { Badge } from "@/components/ui/badge";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
+import { DateRangeToolbar } from "@/components/ui/date-range-toolbar";
 
 interface TodoItem {
   id: string;
@@ -52,5 +55,23 @@ const columns: DataColumn<TodoItem>[] = [
 ];
 
 export function TodosTable({ todos }: { todos: TodoItem[] }) {
-  return <DataTable columns={columns} data={todos} getKey={(t) => t.id} searchPlaceholder="Cari AM / item…" pageSize={25} />;
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const filtered = useMemo(() => {
+    if (!from && !to) return todos;
+    return todos.filter((t) => {
+      const d = (t.tanggal ?? "").slice(0, 10);
+      return d ? (!from || d >= from) && (!to || d <= to) : false;
+    });
+  }, [todos, from, to]);
+  return (
+    <DataTable
+      columns={columns}
+      data={filtered}
+      getKey={(t) => t.id}
+      searchPlaceholder="Cari AM / item…"
+      pageSize={25}
+      toolbar={<DateRangeToolbar from={from} to={to} onFrom={setFrom} onTo={setTo} idPrefix="td" />}
+    />
+  );
 }
