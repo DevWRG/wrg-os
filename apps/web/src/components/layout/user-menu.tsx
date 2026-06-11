@@ -1,6 +1,5 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { KeyRound, LogOut, Users } from "lucide-react";
@@ -14,42 +13,14 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-
-interface Me {
-  name?: string | null;
-  email?: string;
-  role?: string;
-}
-
-const initials = (s: string) =>
-  s
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((w) => w[0]?.toUpperCase() ?? "")
-    .join("") || "WL";
+import { displayName, displayRole, initials, useSession } from "@/lib/use-session";
 
 export function UserMenu() {
   const router = useRouter();
-  const [me, setMe] = useState<Me | null>(null);
+  const me = useSession();
 
-  useEffect(() => {
-    let active = true;
-    fetch("/api/auth/me", { cache: "no-store" })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => {
-        // apps/api membungkus payload sebagai { user: {...} }.
-        const u = d?.user ?? d;
-        if (active && u && (u.name || u.email)) setMe(u as Me);
-      })
-      .catch(() => {});
-    return () => {
-      active = false;
-    };
-  }, []);
-
-  const name = me?.name || me?.email?.split("@")[0] || "Admin";
-  const sub = me ? me.role || "user" : "Auth nonaktif · dev";
+  const name = displayName(me);
+  const sub = displayRole(me);
 
   async function logout() {
     try {
