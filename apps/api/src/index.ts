@@ -65,6 +65,18 @@ import {
 } from "./repo/leave.js";
 import { recordCompetitor, listCompetitor, competitorSummary } from "./repo/competitor.js";
 import {
+  defaultRange,
+  parseRange,
+  reportSummary,
+  reportPerOrang,
+  reportPerDivisi,
+  reportPerCabang,
+  reportPerHod,
+  reportDailyTrend,
+  reportDrilldown,
+  reportRemindersPending,
+} from "./repo/plandash.js";
+import {
   upsertCustomers,
   upsertBranches,
   upsertItems,
@@ -927,6 +939,60 @@ app.get("/competitor/summary", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const summary = await competitorSummary();
   return c.json({ count: summary.length, summary });
+});
+
+// ── Plan & Report dashboard (replikasi WRG-CRM Adminator) ──
+app.get("/report/range-default", (c) => c.json(defaultRange()));
+
+app.get("/report/summary", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const { from, to } = parseRange(c.req.query("from"), c.req.query("to"));
+  return c.json(await reportSummary(from, to));
+});
+
+app.get("/report/per-orang", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const { from, to } = parseRange(c.req.query("from"), c.req.query("to"));
+  const rows = await reportPerOrang(from, to);
+  return c.json({ from, to, count: rows.length, rows });
+});
+
+app.get("/report/per-divisi", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const { from, to } = parseRange(c.req.query("from"), c.req.query("to"));
+  return c.json({ from, to, rows: await reportPerDivisi(from, to) });
+});
+
+app.get("/report/per-cabang", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const { from, to } = parseRange(c.req.query("from"), c.req.query("to"));
+  return c.json({ from, to, rows: await reportPerCabang(from, to) });
+});
+
+app.get("/report/per-hod", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const { from, to } = parseRange(c.req.query("from"), c.req.query("to"));
+  return c.json({ from, to, rows: await reportPerHod(from, to) });
+});
+
+app.get("/report/daily-trend", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const { from, to } = parseRange(c.req.query("from"), c.req.query("to"));
+  return c.json({ from, to, days: await reportDailyTrend(from, to) });
+});
+
+app.get("/report/drilldown", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const amId = c.req.query("am_id");
+  if (!amId) return c.json({ error: "am_id wajib" }, 400);
+  const { from, to } = parseRange(c.req.query("from"), c.req.query("to"));
+  return c.json({ from, to, detail: await reportDrilldown(amId, from, to) });
+});
+
+app.get("/report/reminders-pending", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const date = c.req.query("date") || defaultRange().today;
+  return c.json(await reportRemindersPending(date));
 });
 
 // ── Accurate master mirror (port legacy accurate_customer/item/branch) ──
