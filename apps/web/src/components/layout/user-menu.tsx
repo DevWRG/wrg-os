@@ -1,6 +1,9 @@
 "use client";
 
-import { LogOut, Settings, User } from "lucide-react";
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import Link from "next/link";
+import { KeyRound, LogOut, Users } from "lucide-react";
 
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -13,45 +16,81 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
+interface Me {
+  nama?: string;
+  name?: string;
+  panggilan?: string;
+  role?: string;
+  posisi?: string;
+}
+
+const initials = (s: string) =>
+  s
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((w) => w[0]?.toUpperCase() ?? "")
+    .join("") || "WL";
+
 export function UserMenu() {
+  const router = useRouter();
+  const [me, setMe] = useState<Me | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    fetch("/api/auth/me", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (active && d && (d.nama || d.name)) setMe(d as Me);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const name = me?.panggilan || me?.nama || me?.name || "Admin";
+  const sub = me ? [me.role, me.posisi].filter(Boolean).join(" · ") || "user" : "Auth nonaktif · dev";
+
+  async function logout() {
+    try {
+      await fetch("/api/auth/logout", { method: "POST" });
+    } catch {
+      /* ignore */
+    }
+    router.push("/login");
+    router.refresh();
+  }
+
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
-        render={
-          <Button
-            variant="ghost"
-            className="relative h-9 gap-2 px-2"
-            aria-label="Open user menu"
-          />
-        }
+        render={<Button variant="ghost" className="relative size-9 rounded-full p-0" aria-label="Menu pengguna" />}
       >
-        <Avatar className="size-7">
-          <AvatarFallback className="text-xs">WL</AvatarFallback>
+        <Avatar className="ring-primary/30 size-8 ring-2">
+          <AvatarFallback className="bg-primary text-primary-foreground text-xs">{initials(name)}</AvatarFallback>
         </Avatar>
-        <span className="hidden text-sm font-medium sm:inline">Admin</span>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-56">
         <DropdownMenuLabel>
           <div className="flex flex-col gap-0.5">
-            <span className="text-sm font-medium">Admin User</span>
-            <span className="text-xs text-muted-foreground">
-              admin@wahanalifeline.co.id
-            </span>
+            <span className="text-sm font-medium">{name}</span>
+            <span className="text-muted-foreground text-xs">{sub}</span>
           </div>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
-        <DropdownMenuItem>
-          <User className="mr-2 size-4" />
-          Profile
+        <DropdownMenuItem render={<Link href="/settings" />}>
+          <KeyRound className="mr-2 size-4" />
+          Ganti password
         </DropdownMenuItem>
-        <DropdownMenuItem>
-          <Settings className="mr-2 size-4" />
-          Settings
+        <DropdownMenuItem render={<Link href="/users" />}>
+          <Users className="mr-2 size-4" />
+          Users
         </DropdownMenuItem>
         <DropdownMenuSeparator />
-        <DropdownMenuItem variant="destructive">
+        <DropdownMenuItem variant="destructive" onClick={() => void logout()}>
           <LogOut className="mr-2 size-4" />
-          Sign out
+          Logout
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
