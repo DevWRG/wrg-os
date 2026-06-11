@@ -73,12 +73,23 @@ interface TrendDay {
   report: number;
   late: number;
 }
+interface PendingRow {
+  am_id: string;
+  name: string;
+  region: string | null;
+  pending?: number;
+  total?: number;
+}
 interface Pending {
   date: string;
   am_pending: { pending: number; total: number };
   todo_pending: { pending: number; total: number };
   zero_submission: { pending: number };
+  am_list: PendingRow[];
+  todo_list: PendingRow[];
+  zero_list: PendingRow[];
 }
+type ReminderTab = "am" | "todo" | "zero";
 
 type Tab = "orang" | "divisi" | "cabang" | "hod";
 const TABS: { key: Tab; label: string }[] = [
@@ -158,6 +169,7 @@ export default function DashboardPage() {
   const [hod, setHod] = useState<HodRow[]>([]);
   const [cabangStat, setCabangStat] = useState<GroupRow[]>([]);
   const [reminderOpen, setReminderOpen] = useState(true);
+  const [reminderTab, setReminderTab] = useState<ReminderTab>("am");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -265,25 +277,73 @@ export default function DashboardPage() {
 
           {showReminder && (
             <Card>
-              <CardHeader className="flex flex-row items-center justify-between pb-2">
-                <CardTitle className="text-sm font-medium">Belum Report Hari Ini · {pending?.date}</CardTitle>
-                <button className="text-muted-foreground hover:text-foreground text-xs" onClick={() => setReminderOpen((o) => !o)}>
+              <CardHeader className="flex flex-row items-start justify-between pb-2">
+                <div>
+                  <p className="text-danger flex items-center gap-1 text-[11px] font-semibold tracking-wider uppercase">
+                    <AlertTriangle className="size-3.5" /> Reminder
+                  </p>
+                  <CardTitle className="mt-0.5 text-base font-semibold">Belum Report Hari Ini · {pending?.date}</CardTitle>
+                </div>
+                <button className="text-muted-foreground hover:text-foreground rounded-md border px-2.5 py-1 text-xs" onClick={() => setReminderOpen((o) => !o)}>
                   {reminderOpen ? "Sembunyikan" : "Tampilkan"}
                 </button>
               </CardHeader>
-              {reminderOpen && pending && (
-                <CardContent className="flex flex-wrap gap-2">
-                  <span className="border-danger/30 bg-danger-soft text-danger inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm">
-                    AM belum visit-report <b>{pending.am_pending.pending}</b>/{pending.am_pending.total}
-                  </span>
-                  <span className="border-warning/30 bg-warning-soft text-warning inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm">
-                    Todo belum report <b>{pending.todo_pending.pending}</b>
-                  </span>
-                  <span className="border-info/30 bg-info-soft text-info inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm">
-                    Zero submission <b>{pending.zero_submission.pending}</b>
-                  </span>
-                </CardContent>
-              )}
+              {reminderOpen && pending && (() => {
+                const tabs = [
+                  { key: "am" as const, label: "AM (visit pending)", list: pending.am_list, tone: "info" },
+                  { key: "todo" as const, label: "TODO (report pending)", list: pending.todo_list, tone: "warning" },
+                  { key: "zero" as const, label: "Zero submission", list: pending.zero_list, tone: "danger" },
+                ];
+                const active = tabs.find((t) => t.key === reminderTab) ?? tabs[0];
+                const onCls: Record<string, string> = {
+                  info: "border-primary bg-primary-soft ring-primary/30",
+                  warning: "border-warning bg-warning-soft ring-warning/30",
+                  danger: "border-danger bg-danger-soft ring-danger/30",
+                };
+                const detail = (r: PendingRow) =>
+                  active.key === "am" ? `${r.pending}/${r.total} visit pending`
+                  : active.key === "todo" ? `${r.pending} report pending`
+                  : "tanpa plan & report";
+                return (
+                  <CardContent className="space-y-3">
+                    <div className="grid gap-3 sm:grid-cols-3">
+                      {tabs.map((t) => {
+                        const on = t.key === reminderTab;
+                        return (
+                          <button
+                            key={t.key}
+                            type="button"
+                            onClick={() => setReminderTab(t.key)}
+                            className={cn(
+                              "rounded-xl border px-4 py-3 text-left transition-all",
+                              on ? `${onCls[t.tone]} ring-2` : "border-border bg-card hover:bg-muted",
+                            )}
+                          >
+                            <div className="text-muted-foreground text-xs font-medium">{t.label}</div>
+                            <div className="mt-1 text-2xl font-semibold tabular-nums">{t.list.length}</div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {active.list.length === 0 ? (
+                      <p className="text-muted-foreground py-8 text-center text-sm">Tidak ada yang pending. 🎉</p>
+                    ) : (
+                      <div className="max-h-80 divide-y overflow-y-auto rounded-lg border">
+                        {active.list.map((r) => (
+                          <div key={r.am_id} className="flex items-center justify-between px-3 py-2.5">
+                            <div className="min-w-0">
+                              <div className="truncate text-sm font-medium">{r.name}</div>
+                              <div className="text-muted-foreground truncate text-xs">
+                                {[r.region, detail(r)].filter(Boolean).join(" · ")}
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </CardContent>
+                );
+              })()}
             </Card>
           )}
 
