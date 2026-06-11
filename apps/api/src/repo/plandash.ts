@@ -422,6 +422,69 @@ export async function reportCalendar(from: string, to: string, amId?: string, ca
   };
 }
 
+// Detail satu hari: per-AM + daftar plan-nya (customer/tujuan/hasil via activity_log)
+// untuk drilldown harian Sales Calendar. Satu query plan, dikelompokkan per AM.
+export async function reportCalendarDay(date: string, amId?: string, cabang?: string) {
+  const sql = db();
+  const holidays = await sql`SELECT keterangan FROM master_holiday WHERE tanggal = ${date}`;
+  const reminders = await sql`
+    SELECT ar.am_id::text AS am_id, COALESCE(ar.am_name, mu.panggilan, mu.nama) AS name, mu.cabang, ar.note
+    FROM am_reminder ar LEFT JOIN master_user mu ON mu.am_id = ar.am_id
+    WHERE ar.reminder_date = ${date}
+      ${amId ? sql`AND ar.am_id = ${amId}` : sql``}
+      ${cabang ? sql`AND mu.cabang = ${cabang}` : sql``}
+    ORDER BY name
+  `;
+  const plans = await sql`
+    SELECT sp.am_id::text AS am_id, COALESCE(mu.panggilan, mu.nama) AS name, mu.cabang,
+           sp.id::text AS plan_id, sp.seq, sp.customer_name, sp.tujuan, sp.goal,
+           sp.reported, sp.is_late_plan, sp.visit_lat, sp.visit_timestamp::text AS visit_ts,
+           al.hasil, al.next_action
+    FROM sales_plan sp JOIN master_user mu ON mu.am_id = sp.am_id
+    LEFT JOIN activity_log al ON al.id = sp.activity_id
+    WHERE sp.tanggal = ${date} AND mu.role='AM' AND mu.aktif
+      ${amId ? sql`AND sp.am_id = ${amId}` : sql``}
+      ${cabang ? sql`AND mu.cabang = ${cabang}` : sql``}
+    ORDER BY name, sp.seq NULLS LAST, sp.id
+  `;
+  // Kelompokkan plan per AM
+  const map = new Map<string, {
+    am_id: string; name: string; cabang: string | null;
+    total: number; reported: number; geo: number; late: boolean;
+    plans: { customer_name: string | null; tujuan: string | null; goal: string | null; reported: boolean; is_late_plan: boolean; geo: boolean; hasil: string | null; next_action: string | null }[];
+  }>();
+  for (const r of plans) {
+    const id = String(r.am_id);
+    let am = map.get(id);
+    if (!am) {
+      am = { am_id: id, name: r.name ? String(r.name) : "—", cabang: r.cabang ? String(r.cabang) : null, total: 0, reported: 0, geo: 0, late: false, plans: [] };
+      map.set(id, am);
+    }
+    const reported = Boolean(r.reported);
+    const geo = r.visit_lat != null;
+    am.total++;
+    if (reported) am.reported++;
+    if (geo) am.geo++;
+    if (r.is_late_plan) am.late = true;
+    am.plans.push({
+      customer_name: r.customer_name ? String(r.customer_name) : null,
+      tujuan: r.tujuan ? String(r.tujuan) : null,
+      goal: r.goal ? String(r.goal) : null,
+      reported,
+      is_late_plan: Boolean(r.is_late_plan),
+      geo,
+      hasil: r.hasil ? String(r.hasil) : null,
+      next_action: r.next_action ? String(r.next_action) : null,
+    });
+  }
+  return {
+    date,
+    holiday: holidays[0]?.keterangan ? String(holidays[0].keterangan) : null,
+    reminders: reminders.map((r) => ({ am_id: String(r.am_id), name: r.name ? String(r.name) : "—", cabang: r.cabang ? String(r.cabang) : null, note: r.note ? String(r.note) : "" })),
+    ams: [...map.values()].sort((a, b) => a.name.localeCompare(b.name)),
+  };
+}
+
 // Reminder 3-tier (selalu "hari ini"): AM belum visit-report, todo belum report, zero-submission.
 export async function reportRemindersPending(date: string) {
   const sql = db();

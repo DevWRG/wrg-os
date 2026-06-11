@@ -79,6 +79,7 @@ import {
   reportDrilldown,
   reportRemindersPending,
   reportCalendar,
+  reportCalendarDay,
 } from "./repo/plandash.js";
 import { salesRange, reportRevenue } from "./repo/sales.js";
 import {
@@ -1034,6 +1035,15 @@ app.get("/report/calendar", async (c) => {
   const amId = c.req.query("am_id") || undefined;
   const cabang = c.req.query("cabang") || undefined;
   return c.json(await reportCalendar(from, to, amId, cabang));
+});
+
+// Drilldown harian Sales Calendar: per-AM + daftar plan (customer/hasil).
+app.get("/report/calendar/day", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const date = c.req.query("date") || defaultRange().today;
+  const amId = c.req.query("am_id") || undefined;
+  const cabang = c.req.query("cabang") || undefined;
+  return c.json(await reportCalendarDay(date, amId, cabang));
 });
 
 app.get("/report/reminders-pending", async (c) => {
