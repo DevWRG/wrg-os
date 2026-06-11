@@ -80,3 +80,58 @@ export async function reportRevenue(from: string, to: string) {
     per_product: mapRank(perProduct),
   };
 }
+
+// AR (piutang) per customer / cabang / sales. Sumber: accurate_invoice status
+// OPEN. Kolom `outstanding` tak ter-import (0) → AR diturunkan dari `total`
+// invoice OPEN (paid=0). Cabang = cabang_override salesman, fallback nama branch.
+// from/to opsional (filter tanggal invoice); default semua OPEN.
+export interface ArGroup {
+  key: string;
+  invoices: number;
+  outstanding: number;
+}
+export async function reportSalesAr(from?: string, to?: string) {
+  const sql = db();
+  const dateClause =
+    from && ISO.test(from) && to && ISO.test(to)
+      ? sql`AND ai.tanggal BETWEEN ${from} AND ${to}`
+      : sql``;
+
+  const byCustomer = await sql`
+    SELECT COALESCE(ac.name, 'Customer #' || ai.customer_id) AS key,
+           count(*)::int AS invoices, COALESCE(sum(ai.total), 0)::float8 AS outstanding
+    FROM accurate_invoice ai LEFT JOIN accurate_customer ac ON ac.id = ai.customer_id
+    WHERE ai.status = 'OPEN' ${dateClause}
+    GROUP BY key ORDER BY outstanding DESC
+  `;
+  const byCabang = await sql`
+    SELECT COALESCE(NULLIF(acs.cabang_override, ''), ab.name, '?') AS key,
+           count(*)::int AS invoices, COALESCE(sum(ai.total), 0)::float8 AS outstanding
+    FROM accurate_invoice ai
+    LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
+    LEFT JOIN accurate_branch ab ON ab.id = ai.branch_id
+    WHERE ai.status = 'OPEN' ${dateClause}
+    GROUP BY key ORDER BY outstanding DESC
+  `;
+  const bySales = await sql`
+    SELECT COALESCE(NULLIF(ai.salesman_name, ''), acs.name, 'Sales #' || ai.salesman_id) AS key,
+           count(*)::int AS invoices, COALESCE(sum(ai.total), 0)::float8 AS outstanding
+    FROM accurate_invoice ai LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
+    WHERE ai.status = 'OPEN' ${dateClause}
+    GROUP BY key ORDER BY outstanding DESC
+  `;
+  const [tot] = await sql`
+    SELECT count(*)::int AS invoices, COALESCE(sum(total), 0)::float8 AS outstanding
+    FROM accurate_invoice WHERE status = 'OPEN'
+      ${from && ISO.test(from) && to && ISO.test(to) ? sql`AND tanggal BETWEEN ${from} AND ${to}` : sql``}
+  `;
+  const map = (rows: Record<string, unknown>[]): ArGroup[] =>
+    rows.map((r) => ({ key: String(r.key), invoices: Number(r.invoices), outstanding: Number(r.outstanding) }));
+  return {
+    total_outstanding: Number(tot?.outstanding ?? 0),
+    total_invoices: Number(tot?.invoices ?? 0),
+    by_customer: map(byCustomer),
+    by_cabang: map(byCabang),
+    by_sales: map(bySales),
+  };
+}
