@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ChevronLeft, MapPin, Star } from "lucide-react";
+import { ChevronLeft, MapPin, Pin, Star } from "lucide-react";
 
 import { gatewayFetch } from "@/lib/gateway";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -24,6 +24,7 @@ interface AmRow {
 }
 interface CalendarData {
   holidays: { tanggal: string; keterangan: string }[];
+  reminders: { am_id: string; name: string; cabang: string | null; note: string }[];
   rows: AmRow[];
 }
 
@@ -60,6 +61,7 @@ export default async function CalendarDayPage({ params }: { params: Promise<{ da
     data = null;
   }
   const rows = (data?.rows ?? []).slice().sort((a, b) => a.name.localeCompare(b.name));
+  const reminders = data?.reminders ?? [];
   const holiday = data?.holidays?.[0]?.keterangan;
   const totalPlan = rows.reduce((s, r) => s + r.total, 0);
   const totalReported = rows.reduce((s, r) => s + r.reported, 0);
@@ -80,6 +82,24 @@ export default async function CalendarDayPage({ params }: { params: Promise<{ da
           </p>
         )}
       </div>
+
+      {reminders.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm font-medium">Catatan Reminder</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {reminders.map((r, i) => (
+              <div key={`${r.am_id}-${i}`} className="border-danger/30 bg-danger-soft text-danger flex items-start gap-2 rounded-lg border px-3 py-2 text-sm">
+                <Pin className="mt-0.5 size-4 shrink-0" />
+                <span>
+                  <b>{r.name}</b>{r.cabang ? ` (${r.cabang})` : ""}: {r.note}
+                </span>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader>

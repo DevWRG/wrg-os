@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronLeft, ChevronRight, MapPin, Star } from "lucide-react";
+import { ChevronLeft, ChevronRight, MapPin, Pin, Star } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -17,9 +17,17 @@ interface AmRow {
   geo: number;
   late: boolean;
 }
+interface Reminder {
+  d: string;
+  am_id: string;
+  name: string;
+  cabang: string | null;
+  note: string;
+}
 interface CalendarData {
   holidays: { tanggal: string; keterangan: string }[];
   ams: { am_id: string; name: string; cabang: string | null }[];
+  reminders: Reminder[];
   rows: AmRow[];
 }
 
@@ -98,6 +106,12 @@ export default function CalendarPage() {
     (data?.rows ?? []).forEach((r) => (m[r.d] = m[r.d] || []).push(r));
     return m;
   }, [data?.rows]);
+
+  const remByDate = useMemo(() => {
+    const m: Record<string, Reminder[]> = {};
+    (data?.reminders ?? []).forEach((r) => (m[r.d] = m[r.d] || []).push(r));
+    return m;
+  }, [data?.reminders]);
 
   const title =
     view === "month"
@@ -194,6 +208,7 @@ export default function CalendarPage() {
             const isToday = ds === today;
             const isWknd = d.getDay() === 0 || d.getDay() === 6;
             const holiday = holByDate[ds];
+            const dayReminders = remByDate[ds] ?? [];
             const ams = (byDate[ds] ?? []).slice().sort((a, b) => a.name.localeCompare(b.name));
 
             return (
@@ -221,6 +236,18 @@ export default function CalendarPage() {
                   <span className="bg-purple/10 text-purple flex items-center gap-1 truncate rounded px-1.5 py-0.5 text-[10px] font-medium" title={holiday}>
                     <Star className="size-2.5 shrink-0" /> <span className="truncate">{holiday}</span>
                   </span>
+                )}
+                {dayReminders.slice(0, 2).map((r, idx) => (
+                  <span
+                    key={`rem-${r.am_id}-${idx}`}
+                    className="bg-danger-soft text-danger flex items-center gap-1 truncate rounded px-1.5 py-0.5 text-[10px] font-medium"
+                    title={`📌 ${r.name}${r.cabang ? ` (${r.cabang})` : ""}: ${r.note}`}
+                  >
+                    <Pin className="size-2.5 shrink-0" /> <span className="truncate">{r.name}: {r.note}</span>
+                  </span>
+                ))}
+                {dayReminders.length > 2 && (
+                  <span className="text-danger px-1.5 text-[10px] font-medium">+{dayReminders.length - 2} reminder</span>
                 )}
                 {ams.slice(0, 5).map((am) => {
                   const tone =

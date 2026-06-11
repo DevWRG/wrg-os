@@ -387,11 +387,28 @@ export async function reportCalendar(from: string, to: string, amId?: string, ca
     GROUP BY sp.tanggal, sp.am_id, name, mu.cabang
     ORDER BY sp.tanggal, name
   `;
+  // Catatan reminder AM (am_reminder) yang jatuh pada rentang — pill 📌 ala legacy.
+  const reminders = await sql`
+    SELECT ar.reminder_date::text AS d, ar.am_id::text AS am_id,
+           COALESCE(ar.am_name, mu.panggilan, mu.nama) AS name, mu.cabang, ar.note
+    FROM am_reminder ar LEFT JOIN master_user mu ON mu.am_id = ar.am_id
+    WHERE ar.reminder_date BETWEEN ${from} AND ${to}
+      ${amId ? sql`AND ar.am_id = ${amId}` : sql``}
+      ${cabang ? sql`AND mu.cabang = ${cabang}` : sql``}
+    ORDER BY ar.reminder_date, name
+  `;
   return {
     from,
     to,
     holidays: holidays.map((h) => ({ tanggal: String(h.tanggal), keterangan: String(h.keterangan) })),
     ams: ams.map((a) => ({ am_id: String(a.am_id), name: a.name ? String(a.name) : "—", cabang: a.cabang ? String(a.cabang) : null })),
+    reminders: reminders.map((r) => ({
+      d: String(r.d),
+      am_id: String(r.am_id),
+      name: r.name ? String(r.name) : "—",
+      cabang: r.cabang ? String(r.cabang) : null,
+      note: r.note ? String(r.note) : "",
+    })),
     rows: rows.map((r) => ({
       d: String(r.d),
       am_id: String(r.am_id),
