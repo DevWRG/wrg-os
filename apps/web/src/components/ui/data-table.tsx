@@ -1,9 +1,10 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { ChevronDown, ChevronUp, ChevronsUpDown, Search } from "lucide-react";
+import { ChevronDown, ChevronUp, ChevronsUpDown, SearchX, Search } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import {
   Table,
@@ -138,8 +139,12 @@ export function DataTable<T>({
         <TableBody>
           {rows.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={columns.length} className="text-muted-foreground text-center">
-                {q ? "Tidak ada hasil untuk pencarian ini." : empty}
+              <TableCell colSpan={columns.length} className="p-0">
+                {q ? (
+                  <EmptyState icon={SearchX} title="Tidak ada hasil" description={`Tak ada baris cocok untuk "${q}".`} />
+                ) : (
+                  <EmptyState title={empty} />
+                )}
               </TableCell>
             </TableRow>
           ) : (
