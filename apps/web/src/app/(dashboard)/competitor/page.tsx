@@ -112,7 +112,7 @@ export default async function CompetitorPage({
               className={cn(
                 "inline-flex items-center gap-1.5 rounded-lg border px-3 py-1 text-sm transition-colors",
                 vendor === ""
-                  ? "border-primary bg-primary text-primary-foreground"
+                  ? "border-primary bg-primary-soft text-primary"
                   : "border-border hover:bg-muted",
               )}
             >
@@ -128,7 +128,7 @@ export default async function CompetitorPage({
                   className={cn(
                     "inline-flex items-center gap-1.5 rounded-lg border px-3 py-1 text-sm transition-colors",
                     isActive
-                      ? "border-primary bg-primary text-primary-foreground"
+                      ? "border-primary bg-primary-soft text-primary"
                       : "border-border hover:bg-muted",
                   )}
                 >

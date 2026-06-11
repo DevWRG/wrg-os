@@ -99,7 +99,7 @@ export default async function SalesPage({
                     href={`/sales?tab=${t.key}${rangeQs}`}
                     className={cn(
                       "rounded-lg border px-3 py-1 text-sm transition-colors",
-                      tab === t.key ? "border-primary bg-primary text-primary-foreground" : "border-border hover:bg-muted",
+                      tab === t.key ? "border-primary bg-primary-soft text-primary" : "border-border hover:bg-muted",
                     )}
                   >
                     {t.label}
