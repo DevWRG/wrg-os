@@ -16,11 +16,9 @@ import {
 } from "@/components/ui/dropdown-menu";
 
 interface Me {
-  nama?: string;
-  name?: string;
-  panggilan?: string;
+  name?: string | null;
+  email?: string;
   role?: string;
-  posisi?: string;
 }
 
 const initials = (s: string) =>
@@ -40,7 +38,9 @@ export function UserMenu() {
     fetch("/api/auth/me", { cache: "no-store" })
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
-        if (active && d && (d.nama || d.name)) setMe(d as Me);
+        // apps/api membungkus payload sebagai { user: {...} }.
+        const u = d?.user ?? d;
+        if (active && u && (u.name || u.email)) setMe(u as Me);
       })
       .catch(() => {});
     return () => {
@@ -48,8 +48,8 @@ export function UserMenu() {
     };
   }, []);
 
-  const name = me?.panggilan || me?.nama || me?.name || "Admin";
-  const sub = me ? [me.role, me.posisi].filter(Boolean).join(" · ") || "user" : "Auth nonaktif · dev";
+  const name = me?.name || me?.email?.split("@")[0] || "Admin";
+  const sub = me ? me.role || "user" : "Auth nonaktif · dev";
 
   async function logout() {
     try {
