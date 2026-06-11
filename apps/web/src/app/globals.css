@@ -54,6 +54,7 @@
   --info-foreground: #ffffff;
   --info-soft: #f0f9ff;
   --primary-soft: #eff6ff;
+  --primary-dark: #1d4ed8;
   --shadow-card: 0 1px 3px 0 rgb(15 23 42 / 0.06), 0 1px 2px -1px rgb(15 23 42 / 0.04);
   --shadow-lg: 0 10px 15px -3px rgb(15 23 42 / 0.08), 0 4px 6px -4px rgb(15 23 42 / 0.05);
 }
@@ -104,6 +105,7 @@
   --info-foreground: #0b1120;
   --info-soft: #0d2232;
   --primary-soft: #0f2847;
+  --primary-dark: #3b82f6;
   --shadow-card: 0 1px 3px 0 rgb(0 0 0 / 0.3), 0 1px 2px -1px rgb(0 0 0 / 0.25);
   --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.5), 0 4px 6px -4px rgb(0 0 0 / 0.4);
 }
@@ -161,6 +163,7 @@
   --color-info-foreground: var(--info-foreground);
   --color-info-soft: var(--info-soft);
   --color-primary-soft: var(--primary-soft);
+  --color-primary-dark: var(--primary-dark);
 
   /* WRG Brand Colors (dari design system / @wrg/config) */
   --color-wrg-cyan: #15c8dc;
