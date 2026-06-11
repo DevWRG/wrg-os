@@ -11,7 +11,6 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -72,12 +71,10 @@ export function UserMenu() {
         </Avatar>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-56">
-        <DropdownMenuLabel>
-          <div className="flex flex-col gap-0.5">
-            <span className="text-sm font-medium">{name}</span>
-            <span className="text-muted-foreground text-xs">{sub}</span>
-          </div>
-        </DropdownMenuLabel>
+        <div className="flex flex-col gap-0.5 px-2 py-1.5">
+          <span className="text-sm font-medium">{name}</span>
+          <span className="text-muted-foreground text-xs">{sub}</span>
+        </div>
         <DropdownMenuSeparator />
         <DropdownMenuItem render={<Link href="/settings" />}>
           <KeyRound className="mr-2 size-4" />
