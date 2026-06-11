@@ -3,15 +3,8 @@ import Link from "next/link";
 import { apiBaseUrl } from "@/lib/gateway";
 import { cn } from "@/lib/utils";
 import { PageHeader } from "@/components/dashboard/page-header";
+import { SalesTable } from "@/components/tables/sales-table";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 
 export const dynamic = "force-dynamic";
 
@@ -115,28 +108,7 @@ export default async function SalesPage({
               </div>
             </CardHeader>
             <CardContent className="pt-4">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-12">#</TableHead>
-                    <TableHead>{TABS.find((t) => t.key === tab)!.label.replace("Per ", "")}</TableHead>
-                    <TableHead className="text-right">Faktur</TableHead>
-                    <TableHead className="text-right">Revenue</TableHead>
-                    <TableHead className="text-right">Share</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {rows.map((r, i) => (
-                    <TableRow key={r.key}>
-                      <TableCell className="text-muted-foreground">{i + 1}</TableCell>
-                      <TableCell className="font-medium">{r.label}</TableCell>
-                      <TableCell className="text-right">{r.count}</TableCell>
-                      <TableCell className="text-right font-medium">{rupiahFull(r.total)}</TableCell>
-                      <TableCell className="text-muted-foreground text-right">{data.total > 0 ? `${Math.round((r.total / data.total) * 100)}%` : "—"}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+              <SalesTable rows={rows} header={TABS.find((t) => t.key === tab)!.label.replace("Per ", "")} grandTotal={data.total} />
             </CardContent>
           </Card>
         </>

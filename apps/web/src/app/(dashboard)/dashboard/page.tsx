@@ -15,14 +15,7 @@ import {
   ChartTooltipContent,
   type ChartConfig,
 } from "@/components/ui/chart";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { DataTable, type DataColumn } from "@/components/ui/data-table";
 
 interface Kpi {
   working_days: number;
@@ -321,100 +314,58 @@ export default function DashboardPage() {
             </CardHeader>
             <CardContent className="pt-4">
               {tab === "orang" ? (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Panggilan</TableHead>
-                      <TableHead>Nama</TableHead>
-                      <TableHead>Role</TableHead>
-                      <TableHead>Cabang</TableHead>
-                      <TableHead className="text-right">Hari</TableHead>
-                      <TableHead className="text-right">Plan</TableHead>
-                      <TableHead className="text-right">Report</TableHead>
-                      <TableHead className="text-right">% Selesai</TableHead>
-                      <TableHead className="text-right">Late</TableHead>
-                      <TableHead className="text-right">Unmatched</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {orang.map((r) => (
-                      <TableRow key={r.am_id} className="hover:bg-muted/50">
-                        <TableCell className="font-medium">
-                          <Link href={`/dashboard/drilldown?am_id=${r.am_id}&from=${range?.from}&to=${range?.to}`} className="hover:text-primary hover:underline">
-                            {r.panggilan ?? r.am_id}
-                          </Link>
-                        </TableCell>
-                        <TableCell className="text-muted-foreground">{r.nama}</TableCell>
-                        <TableCell><Badge variant="outline">{r.role}</Badge></TableCell>
-                        <TableCell className="text-muted-foreground">{r.cabang ?? "—"}</TableCell>
-                        <TableCell className="text-right">{r.active_days}</TableCell>
-                        <TableCell className="text-right">{r.plan_count}</TableCell>
-                        <TableCell className="text-right">{r.report_count}</TableCell>
-                        <TableCell className={cn("text-right font-medium", pctTone(r.completion))}>{pct(r.completion)}</TableCell>
-                        <TableCell className="text-right">{r.late > 0 ? <span className="text-danger">{r.late}</span> : 0}</TableCell>
-                        <TableCell className="text-right">{r.unmatched > 0 ? <span className="text-warning">{r.unmatched}</span> : 0}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                <DataTable
+                  data={orang}
+                  getKey={(r) => r.am_id}
+                  searchPlaceholder="Cari nama / cabang / role…"
+                  pageSize={25}
+                  columns={[
+                    { id: "panggilan", header: "Panggilan", sortable: true, accessor: (r) => r.panggilan ?? r.am_id, cell: (r) => <Link href={`/dashboard/drilldown?am_id=${r.am_id}&from=${range?.from}&to=${range?.to}`} className="font-medium hover:text-primary hover:underline">{r.panggilan ?? r.am_id}</Link> },
+                    { id: "nama", header: "Nama", sortable: true, accessor: (r) => r.nama, cell: (r) => <span className="text-muted-foreground">{r.nama}</span> },
+                    { id: "role", header: "Role", sortable: true, accessor: (r) => r.role, cell: (r) => <Badge variant="outline">{r.role}</Badge> },
+                    { id: "cabang", header: "Cabang", sortable: true, accessor: (r) => r.cabang ?? "", cell: (r) => <span className="text-muted-foreground">{r.cabang ?? "—"}</span> },
+                    { id: "hari", header: "Hari", align: "right", sortable: true, accessor: (r) => r.active_days },
+                    { id: "plan", header: "Plan", align: "right", sortable: true, accessor: (r) => r.plan_count },
+                    { id: "report", header: "Report", align: "right", sortable: true, accessor: (r) => r.report_count },
+                    { id: "completion", header: "% Selesai", align: "right", sortable: true, accessor: (r) => r.completion ?? -1, cell: (r) => <span className={cn("font-medium", pctTone(r.completion))}>{pct(r.completion)}</span> },
+                    { id: "late", header: "Late", align: "right", sortable: true, accessor: (r) => r.late, cell: (r) => (r.late > 0 ? <span className="text-danger">{r.late}</span> : 0) },
+                    { id: "unmatched", header: "Unmatched", align: "right", sortable: true, accessor: (r) => r.unmatched, cell: (r) => (r.unmatched > 0 ? <span className="text-warning">{r.unmatched}</span> : 0) },
+                  ] satisfies DataColumn<OrangRow>[]}
+                />
               ) : tab === "hod" ? (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>HOD</TableHead>
-                      <TableHead>Nama Lengkap</TableHead>
-                      <TableHead className="text-right">AM</TableHead>
-                      <TableHead className="text-right">Submit</TableHead>
-                      <TableHead className="text-right">Plan</TableHead>
-                      <TableHead className="text-right">Reported</TableHead>
-                      <TableHead className="text-right">% Selesai</TableHead>
-                      <TableHead className="text-right">Late</TableHead>
-                      <TableHead className="text-right">Unmatched</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {hod.map((r) => (
-                      <TableRow key={r.hod}>
-                        <TableCell className="font-medium">{r.hod}</TableCell>
-                        <TableCell className="text-muted-foreground">{r.hod_nama ?? "—"}</TableCell>
-                        <TableCell className="text-right">{r.jumlah_am}</TableCell>
-                        <TableCell className="text-right">{r.am_submit}</TableCell>
-                        <TableCell className="text-right">{r.plan_count}</TableCell>
-                        <TableCell className="text-right">{r.report_count}</TableCell>
-                        <TableCell className={cn("text-right font-medium", pctTone(r.completion))}>{pct(r.completion)}</TableCell>
-                        <TableCell className="text-right">{r.late}</TableCell>
-                        <TableCell className="text-right">{r.unmatched}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                <DataTable
+                  data={hod}
+                  getKey={(r) => r.hod}
+                  searchPlaceholder="Cari HOD…"
+                  pageSize={25}
+                  columns={[
+                    { id: "hod", header: "HOD", sortable: true, accessor: (r) => r.hod, cell: (r) => <span className="font-medium">{r.hod}</span> },
+                    { id: "nama", header: "Nama Lengkap", sortable: true, accessor: (r) => r.hod_nama ?? "", cell: (r) => <span className="text-muted-foreground">{r.hod_nama ?? "—"}</span> },
+                    { id: "am", header: "AM", align: "right", sortable: true, accessor: (r) => r.jumlah_am },
+                    { id: "submit", header: "Submit", align: "right", sortable: true, accessor: (r) => r.am_submit },
+                    { id: "plan", header: "Plan", align: "right", sortable: true, accessor: (r) => r.plan_count },
+                    { id: "report", header: "Reported", align: "right", sortable: true, accessor: (r) => r.report_count },
+                    { id: "completion", header: "% Selesai", align: "right", sortable: true, accessor: (r) => r.completion ?? -1, cell: (r) => <span className={cn("font-medium", pctTone(r.completion))}>{pct(r.completion)}</span> },
+                    { id: "late", header: "Late", align: "right", sortable: true, accessor: (r) => r.late },
+                    { id: "unmatched", header: "Unmatched", align: "right", sortable: true, accessor: (r) => r.unmatched },
+                  ] satisfies DataColumn<HodRow>[]}
+                />
               ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>{tab === "divisi" ? "Divisi" : "Cabang"}</TableHead>
-                      <TableHead className="text-right">Orang</TableHead>
-                      <TableHead className="text-right">Plan</TableHead>
-                      <TableHead className="text-right">Report</TableHead>
-                      <TableHead className="text-right">% Selesai</TableHead>
-                      <TableHead className="text-right">Late</TableHead>
-                      <TableHead className="text-right">Unmatched</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {groups.map((r) => (
-                      <TableRow key={r.key}>
-                        <TableCell className="font-medium">{r.key}</TableCell>
-                        <TableCell className="text-right">{r.count}</TableCell>
-                        <TableCell className="text-right">{r.plan_count}</TableCell>
-                        <TableCell className="text-right">{r.report_count}</TableCell>
-                        <TableCell className={cn("text-right font-medium", pctTone(r.completion))}>{pct(r.completion)}</TableCell>
-                        <TableCell className="text-right">{r.late}</TableCell>
-                        <TableCell className="text-right">{r.unmatched}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                <DataTable
+                  data={groups}
+                  getKey={(r) => r.key}
+                  searchPlaceholder={tab === "divisi" ? "Cari divisi…" : "Cari cabang…"}
+                  pageSize={25}
+                  columns={[
+                    { id: "key", header: tab === "divisi" ? "Divisi" : "Cabang", sortable: true, accessor: (r) => r.key, cell: (r) => <span className="font-medium">{r.key}</span> },
+                    { id: "count", header: "Orang", align: "right", sortable: true, accessor: (r) => r.count },
+                    { id: "plan", header: "Plan", align: "right", sortable: true, accessor: (r) => r.plan_count },
+                    { id: "report", header: "Report", align: "right", sortable: true, accessor: (r) => r.report_count },
+                    { id: "completion", header: "% Selesai", align: "right", sortable: true, accessor: (r) => r.completion ?? -1, cell: (r) => <span className={cn("font-medium", pctTone(r.completion))}>{pct(r.completion)}</span> },
+                    { id: "late", header: "Late", align: "right", sortable: true, accessor: (r) => r.late },
+                    { id: "unmatched", header: "Unmatched", align: "right", sortable: true, accessor: (r) => r.unmatched },
+                  ] satisfies DataColumn<GroupRow>[]}
+                />
               )}
             </CardContent>
           </Card>
