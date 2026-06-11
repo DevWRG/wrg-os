@@ -83,6 +83,7 @@ import {
   reportCalendarDay,
 } from "./repo/plandash.js";
 import { salesRange, reportRevenue, reportSalesAr } from "./repo/sales.js";
+import { upsertMembers, listMembers, type MonitorMemberInput } from "./repo/monitor.js";
 import {
   upsertCustomers,
   upsertBranches,
@@ -471,6 +472,27 @@ app.get("/ar/aging", async (c) => {
 app.get("/ar/sales", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json(await reportSalesAr(c.req.query("from") || undefined, c.req.query("to") || undefined));
+});
+
+// ── WRG Monitor: direktori member WA (port wrg-monitor) ──
+app.get("/monitor/members", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const members = await listMembers();
+  return c.json({ count: members.length, members });
+});
+
+app.post("/monitor/members", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { members?: MonitorMemberInput[] };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!Array.isArray(body.members) || body.members.length === 0) {
+    return c.json({ error: "body.members (array non-kosong) wajib" }, 400);
+  }
+  return c.json({ upserted: await upsertMembers(body.members) }, 201);
 });
 
 // Webhook Accurate → ar_aging_mv. Menerima invoice Accurate (single | array |
