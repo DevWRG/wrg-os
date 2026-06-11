@@ -24,6 +24,10 @@ import {
   GraduationCap,
   UsersRound,
   Network,
+  Bell,
+  MapPin,
+  ListChecks,
+  Swords,
 } from "lucide-react";
 
 import {
@@ -59,6 +63,10 @@ const navSecondary = [
   { title: "Coaching Notes", url: "/coaching", icon: GraduationCap },
   { title: "People Analytics", url: "/people", icon: UsersRound },
   { title: "Spider Network", url: "/network", icon: Network },
+  { title: "Reminders", url: "/reminders", icon: Bell },
+  { title: "Visits", url: "/visits", icon: MapPin },
+  { title: "Sales TODO", url: "/todos", icon: ListChecks },
+  { title: "Competitor Intel", url: "/competitor", icon: Swords },
   { title: "Digest History", url: "/digests", icon: History },
   { title: "Reports", url: "/reports", icon: BarChart3 },
   { title: "Settings", url: "/settings", icon: Settings },
