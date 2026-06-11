@@ -142,7 +142,7 @@ app.post("/auth/login", async (c) => {
   if (!body.email || !body.password) return c.json({ error: "email & password wajib" }, 400);
   const user = await verifyCredentials(body.email, body.password);
   if (!user) return c.json({ error: "kredensial salah" }, 401);
-  const token = signJwt({ sub: user.id, email: user.email, role: user.role, name: user.name });
+  const token = signJwt({ sub: user.id, email: user.email, role: user.role, name: user.name, title: user.title });
   return c.json({ token, user });
 });
 
@@ -151,7 +151,7 @@ app.get("/auth/me", (c) => {
   const token = authz.startsWith("Bearer ") ? authz.slice(7) : "";
   const payload = token ? verifyJwt(token) : null;
   if (!payload) return c.json({ error: "unauthorized" }, 401);
-  return c.json({ user: { id: payload.sub, email: payload.email, role: payload.role, name: payload.name ?? null } });
+  return c.json({ user: { id: payload.sub, email: payload.email, role: payload.role, name: payload.name ?? null, title: payload.title ?? null } });
 });
 
 // Register ops: butuh x-service-token bila API_SERVICE_TOKEN di-set; atau saat
@@ -163,14 +163,14 @@ app.post("/auth/register", async (c) => {
   if (svc && c.req.header("x-service-token") !== svc && !bootstrap) {
     return c.json({ error: "forbidden" }, 403);
   }
-  let body: { email?: string; password?: string; name?: string; role?: string };
+  let body: { email?: string; password?: string; name?: string; role?: string; title?: string };
   try {
     body = await c.req.json();
   } catch {
     return c.json({ error: "invalid JSON body" }, 400);
   }
   if (!body.email || !body.password) return c.json({ error: "email & password wajib" }, 400);
-  const user = await createUser(body.email, body.password, body.name, body.role ?? "user");
+  const user = await createUser(body.email, body.password, body.name, body.role ?? "user", body.title);
   return c.json({ user }, 201);
 });
 

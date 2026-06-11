@@ -6,6 +6,7 @@ export interface SessionUser {
   name?: string | null;
   email?: string;
   role?: string;
+  title?: string | null;
 }
 
 /** Ambil user sesi dari /api/auth/me (apps/api membungkus { user: {...} }). */
@@ -37,5 +38,6 @@ export function initials(s: string): string {
 export const displayName = (me: SessionUser | null): string =>
   me?.name || me?.email?.split("@")[0] || "Admin";
 
+// "<jabatan> · <role>" (mis. "HOD · admin"); tanpa jabatan → role saja.
 export const displayRole = (me: SessionUser | null): string =>
-  me ? me.role || "user" : "Auth nonaktif · dev";
+  me ? [me.title, me.role || "user"].filter(Boolean).join(" · ") : "Auth nonaktif · dev";
