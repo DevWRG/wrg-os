@@ -1,15 +1,7 @@
 import { apiBaseUrl } from "@/lib/gateway";
 import { PageHeader } from "@/components/dashboard/page-header";
-import { Badge } from "@/components/ui/badge";
+import { ArTable } from "@/components/tables/ar-table";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 
 export const dynamic = "force-dynamic";
 
@@ -39,9 +31,6 @@ const rupiah = (n: number) =>
     notation: "compact",
     maximumFractionDigits: 1,
   }).format(n);
-
-const bucketTone = (b: string): "default" | "secondary" | "destructive" | "outline" =>
-  b === "90+" ? "destructive" : b === "61-90" ? "outline" : "secondary";
 
 async function getAging(): Promise<Aging | null> {
   try {
@@ -106,39 +95,7 @@ export default async function ArAgingPage() {
 
           <Card>
             <CardContent className="pt-6">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Customer</TableHead>
-                    <TableHead>Invoice</TableHead>
-                    <TableHead>Jatuh tempo</TableHead>
-                    <TableHead className="text-right">Nilai</TableHead>
-                    <TableHead className="text-right">Overdue</TableHead>
-                    <TableHead>Bucket</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {data.invoices.map((inv) => (
-                    <TableRow key={`${inv.customer_id}-${inv.invoice_no}`}>
-                      <TableCell className="font-medium">
-                        {inv.customer_name ?? inv.customer_id}
-                        {inv.is_anomaly && (
-                          <Badge variant="destructive" className="ml-2">
-                            anomali
-                          </Badge>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-muted-foreground">{inv.invoice_no}</TableCell>
-                      <TableCell className="text-muted-foreground">{inv.due_date}</TableCell>
-                      <TableCell className="text-right">{rupiah(inv.amount)}</TableCell>
-                      <TableCell className="text-right">{inv.days_overdue} hari</TableCell>
-                      <TableCell>
-                        <Badge variant={bucketTone(inv.bucket)}>{inv.bucket}</Badge>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+              <ArTable invoices={data.invoices} />
             </CardContent>
           </Card>
         </>
