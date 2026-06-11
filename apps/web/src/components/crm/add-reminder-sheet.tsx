@@ -20,14 +20,30 @@ import {
 } from "@/components/ui/sheet";
 
 const today = () => new Date().toISOString().slice(0, 10);
-const blank = () => ({ am_id: "", am_name: "", reminder_date: today(), customer_name: "", note: "" });
+const blank = (date?: string) => ({ am_id: "", am_name: "", reminder_date: date || today(), customer_name: "", note: "" });
 
-export function AddReminderSheet() {
+interface AmOption {
+  am_id: string;
+  name: string;
+  cabang: string | null;
+}
+
+export function AddReminderSheet({
+  ams,
+  defaultDate,
+  onCreated,
+}: {
+  /** Bila diberikan → pilih AM via dropdown (am_id + nama otomatis). */
+  ams?: AmOption[];
+  defaultDate?: string;
+  /** Dipanggil setelah sukses (mis. untuk refresh data client-fetch). */
+  onCreated?: () => void;
+} = {}) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [f, setF] = useState(blank());
+  const [f, setF] = useState(blank(defaultDate));
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -47,8 +63,9 @@ export function AddReminderSheet() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "gagal menyimpan");
-      setF(blank());
+      setF(blank(defaultDate));
       setOpen(false);
+      onCreated?.();
       router.refresh();
     } catch (err) {
       setError(String(err instanceof Error ? err.message : err));
@@ -69,14 +86,37 @@ export function AddReminderSheet() {
         </SheetHeader>
         <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col">
           <div className="flex flex-1 flex-col gap-4 overflow-y-auto px-4">
-            <div className="grid gap-1.5">
-              <Label htmlFor="r-am-id">AM ID *</Label>
-              <Input id="r-am-id" required value={f.am_id} onChange={(e) => setF((p) => ({ ...p, am_id: e.target.value }))} placeholder="AM-001" />
-            </div>
-            <div className="grid gap-1.5">
-              <Label htmlFor="r-am-name">Nama AM</Label>
-              <Input id="r-am-name" value={f.am_name} onChange={(e) => setF((p) => ({ ...p, am_name: e.target.value }))} placeholder="Budi" />
-            </div>
+            {ams && ams.length > 0 ? (
+              <div className="grid gap-1.5">
+                <Label htmlFor="r-am">Account Manager *</Label>
+                <select
+                  id="r-am"
+                  required
+                  value={f.am_id}
+                  onChange={(e) => {
+                    const sel = ams.find((a) => a.am_id === e.target.value);
+                    setF((p) => ({ ...p, am_id: e.target.value, am_name: sel?.name ?? "" }));
+                  }}
+                  className="border-input bg-card h-9 rounded-md border px-2.5 text-sm outline-none focus-visible:border-primary"
+                >
+                  <option value="" disabled>Pilih AM…</option>
+                  {ams.map((a) => (
+                    <option key={a.am_id} value={a.am_id}>{a.name}{a.cabang ? ` (${a.cabang})` : ""}</option>
+                  ))}
+                </select>
+              </div>
+            ) : (
+              <>
+                <div className="grid gap-1.5">
+                  <Label htmlFor="r-am-id">AM ID *</Label>
+                  <Input id="r-am-id" required value={f.am_id} onChange={(e) => setF((p) => ({ ...p, am_id: e.target.value }))} placeholder="AM-001" />
+                </div>
+                <div className="grid gap-1.5">
+                  <Label htmlFor="r-am-name">Nama AM</Label>
+                  <Input id="r-am-name" value={f.am_name} onChange={(e) => setF((p) => ({ ...p, am_name: e.target.value }))} placeholder="Budi" />
+                </div>
+              </>
+            )}
             <div className="grid gap-1.5">
               <Label htmlFor="r-date">Tanggal reminder *</Label>
               <Input id="r-date" type="date" required value={f.reminder_date} onChange={(e) => setF((p) => ({ ...p, reminder_date: e.target.value }))} />

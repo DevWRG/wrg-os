@@ -6,6 +6,7 @@ import { ChevronLeft, ChevronRight, Pin, Star } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { AddReminderSheet } from "@/components/crm/add-reminder-sheet";
 
 interface Reminder {
   d: string;
@@ -145,6 +146,7 @@ export default function CalendarPage() {
               <option key={c} value={c}>{c}</option>
             ))}
           </select>
+          <AddReminderSheet ams={data?.ams ?? []} onCreated={load} />
         </div>
       </div>
 
