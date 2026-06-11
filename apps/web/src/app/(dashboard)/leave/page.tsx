@@ -1,5 +1,6 @@
 import { apiBaseUrl } from "@/lib/gateway";
 import { PageHeader } from "@/components/dashboard/page-header";
+import { AddLeaveSheet } from "@/components/crm/add-leave-sheet";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -55,7 +56,7 @@ export default async function LeavePage() {
 
   return (
     <>
-      <PageHeader title="Manage Leave" description="Cuti / sakit / izin karyawan (user_leave) — sumber 'auto' = terdeteksi dari pesan WA." />
+      <PageHeader title="Manage Leave" description="Cuti / sakit / izin karyawan (user_leave) — sumber 'auto' = terdeteksi dari pesan WA." action={<AddLeaveSheet />} />
       {!leave ? (
         <p className="text-muted-foreground">
           Data tidak tersedia. Pastikan <code>apps/api</code> jalan dengan <code>DATABASE_URL</code>.
