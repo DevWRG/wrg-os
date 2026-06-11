@@ -386,10 +386,54 @@ export async function reportRemindersPending(date: string) {
       AND NOT EXISTS (SELECT 1 FROM sales_plan WHERE am_id=mu.am_id AND tanggal=${date})
       AND NOT EXISTS (SELECT 1 FROM sales_todo WHERE am_id=mu.am_id AND tanggal=${date})
   `;
+  // Daftar detail per kategori (untuk panel reminder yang bisa di-drill-down).
+  const amList = await sql`
+    WITH am_plan AS (
+      SELECT sp.am_id, sp.id AS plan_id, bool_or(al.id IS NOT NULL) AS has_report
+      FROM sales_plan sp LEFT JOIN activity_log al ON al.plan_id = sp.id
+      WHERE sp.tanggal = ${date} GROUP BY sp.am_id, sp.id
+    )
+    SELECT mu.am_id::text AS am_id, COALESCE(mu.panggilan, mu.nama) AS name, mu.cabang AS region,
+           count(*) FILTER (WHERE NOT ap.has_report)::int AS pending,
+           count(*)::int AS total
+    FROM master_user mu
+    JOIN am_plan ap ON ap.am_id = mu.am_id
+    WHERE mu.role='AM' AND mu.aktif AND mu.wajib_plan_report
+    GROUP BY mu.am_id, mu.panggilan, mu.nama, mu.cabang
+    HAVING count(*) FILTER (WHERE NOT ap.has_report) > 0
+    ORDER BY pending DESC, name
+  `;
+  const todoList = await sql`
+    SELECT mu.am_id::text AS am_id, COALESCE(mu.panggilan, mu.nama) AS name, mu.cabang AS region,
+           COALESCE(sum(st.total_items),0)::int AS pending
+    FROM sales_todo st JOIN master_user mu ON mu.am_id = st.am_id
+    WHERE st.tanggal = ${date} AND NOT st.reported AND mu.aktif AND mu.wajib_plan_report
+    GROUP BY mu.am_id, mu.panggilan, mu.nama, mu.cabang
+    HAVING COALESCE(sum(st.total_items),0) > 0
+    ORDER BY pending DESC, name
+  `;
+  const zeroList = await sql`
+    SELECT mu.am_id::text AS am_id, COALESCE(mu.panggilan, mu.nama) AS name, mu.cabang AS region
+    FROM master_user mu
+    WHERE mu.aktif AND mu.wajib_plan_report
+      AND NOT EXISTS (SELECT 1 FROM sales_plan WHERE am_id = mu.am_id AND tanggal = ${date})
+      AND NOT EXISTS (SELECT 1 FROM sales_todo WHERE am_id = mu.am_id AND tanggal = ${date})
+    ORDER BY name
+  `;
+  const mapRow = (r: Record<string, unknown>) => ({
+    am_id: String(r.am_id),
+    name: r.name ? String(r.name) : "—",
+    region: r.region ? String(r.region) : null,
+    ...(r.pending != null ? { pending: Number(r.pending) } : {}),
+    ...(r.total != null ? { total: Number(r.total) } : {}),
+  });
   return {
     date,
     am_pending: { pending: Number(am?.pending ?? 0), total: Number(am?.total ?? 0) },
     todo_pending: { pending: Number(todo?.pending ?? 0), total: Number(todo?.total ?? 0) },
     zero_submission: { pending: Number(zero?.pending ?? 0) },
+    am_list: amList.map(mapRow),
+    todo_list: todoList.map(mapRow),
+    zero_list: zeroList.map(mapRow),
   };
 }
