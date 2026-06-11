@@ -360,6 +360,68 @@ export async function reportDrilldown(amId: string, from: string, to: string) {
   };
 }
 
+// Sales Calendar: agregat plan/report per (tanggal, AM) untuk rentang grid +
+// libur nasional + katalog AM (untuk filter). Satu query agregat (efisien),
+// pengganti N-fetch per-AM ala legacy.
+export async function reportCalendar(from: string, to: string, amId?: string, cabang?: string) {
+  const sql = db();
+  const holidays = await sql`
+    SELECT tanggal::text, keterangan FROM master_holiday
+    WHERE tanggal BETWEEN ${from} AND ${to} ORDER BY tanggal
+  `;
+  const ams = await sql`
+    SELECT am_id::text AS am_id, COALESCE(panggilan, nama) AS name, cabang
+    FROM master_user WHERE role='AM' AND aktif ORDER BY cabang, name
+  `;
+  const rows = await sql`
+    SELECT sp.tanggal::text AS d, sp.am_id::text AS am_id,
+           COALESCE(mu.panggilan, mu.nama) AS name, mu.cabang,
+           count(*)::int AS total,
+           count(*) FILTER (WHERE sp.reported)::int AS reported,
+           count(*) FILTER (WHERE sp.visit_lat IS NOT NULL)::int AS geo,
+           bool_or(sp.is_late_plan) AS late
+    FROM sales_plan sp JOIN master_user mu ON mu.am_id = sp.am_id
+    WHERE sp.tanggal BETWEEN ${from} AND ${to} AND mu.role='AM' AND mu.aktif
+      ${amId ? sql`AND sp.am_id = ${amId}` : sql``}
+      ${cabang ? sql`AND mu.cabang = ${cabang}` : sql``}
+    GROUP BY sp.tanggal, sp.am_id, name, mu.cabang
+    ORDER BY sp.tanggal, name
+  `;
+  // Catatan reminder AM (am_reminder) yang jatuh pada rentang — pill 📌 ala legacy.
+  const reminders = await sql`
+    SELECT ar.reminder_date::text AS d, ar.am_id::text AS am_id,
+           COALESCE(ar.am_name, mu.panggilan, mu.nama) AS name, mu.cabang, ar.note
+    FROM am_reminder ar LEFT JOIN master_user mu ON mu.am_id = ar.am_id
+    WHERE ar.reminder_date BETWEEN ${from} AND ${to}
+      ${amId ? sql`AND ar.am_id = ${amId}` : sql``}
+      ${cabang ? sql`AND mu.cabang = ${cabang}` : sql``}
+    ORDER BY ar.reminder_date, name
+  `;
+  return {
+    from,
+    to,
+    holidays: holidays.map((h) => ({ tanggal: String(h.tanggal), keterangan: String(h.keterangan) })),
+    ams: ams.map((a) => ({ am_id: String(a.am_id), name: a.name ? String(a.name) : "—", cabang: a.cabang ? String(a.cabang) : null })),
+    reminders: reminders.map((r) => ({
+      d: String(r.d),
+      am_id: String(r.am_id),
+      name: r.name ? String(r.name) : "—",
+      cabang: r.cabang ? String(r.cabang) : null,
+      note: r.note ? String(r.note) : "",
+    })),
+    rows: rows.map((r) => ({
+      d: String(r.d),
+      am_id: String(r.am_id),
+      name: r.name ? String(r.name) : "—",
+      cabang: r.cabang ? String(r.cabang) : null,
+      total: Number(r.total),
+      reported: Number(r.reported),
+      geo: Number(r.geo),
+      late: Boolean(r.late),
+    })),
+  };
+}
+
 // Reminder 3-tier (selalu "hari ini"): AM belum visit-report, todo belum report, zero-submission.
 export async function reportRemindersPending(date: string) {
   const sql = db();

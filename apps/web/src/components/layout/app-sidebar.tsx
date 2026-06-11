@@ -30,6 +30,7 @@ import {
   Swords,
   CalendarOff,
   CalendarDays,
+  CalendarRange,
   Users,
   type LucideIcon,
 } from "lucide-react";
@@ -79,6 +80,7 @@ const NAV: NavGroup[] = [
   {
     label: "Sales",
     items: [
+      { title: "Sales Calendar", url: "/calendar", icon: CalendarRange },
       { title: "Sales Performance", url: "/sales", icon: BarChart3, badge: "NEW" },
       { title: "Competitor Intel", url: "/competitor", icon: Swords },
       { title: "Pipeline", url: "/pipeline", icon: Workflow },
