@@ -1,16 +1,8 @@
 import { apiBaseUrl } from "@/lib/gateway";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { AddHolidaySheet } from "@/components/crm/add-holiday-sheet";
-import { HolidayRowActions } from "@/components/crm/holiday-row-actions";
+import { HolidaysTable } from "@/components/tables/holidays-table";
 import { Card, CardContent } from "@/components/ui/card";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 
 export const dynamic = "force-dynamic";
 
@@ -19,13 +11,6 @@ interface Holiday {
   tanggal: string;
   keterangan: string;
 }
-
-const tgl = (iso: string) => {
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime())
-    ? iso
-    : d.toLocaleDateString("id-ID", { weekday: "long", day: "2-digit", month: "long", year: "numeric" });
-};
 
 async function getHolidays(): Promise<Holiday[] | null> {
   try {
@@ -52,24 +37,7 @@ export default async function HolidaysPage() {
       ) : (
         <Card>
           <CardContent className="pt-6">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Tanggal</TableHead>
-                  <TableHead>Keterangan</TableHead>
-                  <TableHead className="text-right">Aksi</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {holidays.map((h) => (
-                  <TableRow key={h.id}>
-                    <TableCell className="font-medium whitespace-nowrap">{tgl(h.tanggal)}</TableCell>
-                    <TableCell>{h.keterangan}</TableCell>
-                    <TableCell><HolidayRowActions id={h.id} tanggal={h.tanggal} keterangan={h.keterangan} /></TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <HolidaysTable holidays={holidays} />
           </CardContent>
         </Card>
       )}

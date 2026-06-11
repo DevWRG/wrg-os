@@ -76,7 +76,7 @@ export interface VisitRow {
   created_at: string;
 }
 
-export async function listVisits(status?: string, limit = 50): Promise<VisitRow[]> {
+export async function listVisits(status?: string, limit = 1000): Promise<VisitRow[]> {
   const sql = db();
   const rows = await sql`
     SELECT id, am_id, customer_name, photo_url, visit_lat, visit_lon,

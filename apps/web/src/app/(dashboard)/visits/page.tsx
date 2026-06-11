@@ -4,16 +4,8 @@ import { apiBaseUrl } from "@/lib/gateway";
 import { cn } from "@/lib/utils";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { AddVisitSheet } from "@/components/crm/add-visit-sheet";
-import { Badge } from "@/components/ui/badge";
+import { VisitsTable } from "@/components/tables/visits-table";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 
 export const dynamic = "force-dynamic";
 
@@ -39,16 +31,6 @@ interface VisitSummary {
   flagged: number;
 }
 
-const GEO_LABEL: Record<string, string> = {
-  ok: "Valid",
-  out_of_bounds: "Di luar Indonesia",
-  no_geo: "Tanpa GPS",
-  date_mismatch: "Tanggal tak cocok",
-};
-
-const geoTone = (s: string): "default" | "secondary" | "destructive" | "outline" =>
-  s === "ok" ? "secondary" : s === "no_geo" ? "outline" : "destructive";
-
 const FILTERS: { key: string; label: string }[] = [
   { key: "", label: "Semua" },
   { key: "ok", label: "Valid" },
@@ -56,14 +38,6 @@ const FILTERS: { key: string; label: string }[] = [
   { key: "date_mismatch", label: "Tanggal tak cocok" },
   { key: "out_of_bounds", label: "Di luar Indonesia" },
 ];
-
-const tanggal = (iso: string | null) => {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime())
-    ? "—"
-    : d.toLocaleDateString("id-ID", { day: "2-digit", month: "short", year: "numeric" });
-};
 
 async function getJson<T>(path: string): Promise<T | null> {
   try {
@@ -179,54 +153,7 @@ export default async function VisitsPage({
               ) : visits.length === 0 ? (
                 <p className="text-muted-foreground">Tidak ada kunjungan untuk filter ini.</p>
               ) : (
-                <>
-                  {visits.length >= 50 && (
-                    <p className="text-muted-foreground mb-3 text-xs">Menampilkan 50 kunjungan terbaru{active ? ` (filter: ${GEO_LABEL[active] ?? active})` : ""}.</p>
-                  )}
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>AM</TableHead>
-                        <TableHead>Customer</TableHead>
-                        <TableHead>Tanggal</TableHead>
-                        <TableHead>Koordinat</TableHead>
-                        <TableHead>Foto</TableHead>
-                        <TableHead>Geo</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {visits.map((v) => (
-                        <TableRow key={v.id}>
-                          <TableCell className="font-medium">{v.am_id}</TableCell>
-                          <TableCell>{v.customer_name ?? "—"}</TableCell>
-                          <TableCell className="text-muted-foreground">{tanggal(v.visit_date ?? v.visit_timestamp)}</TableCell>
-                          <TableCell className="text-muted-foreground">
-                            {v.visit_lat !== null && v.visit_lon !== null
-                              ? `${v.visit_lat.toFixed(5)}, ${v.visit_lon.toFixed(5)}`
-                              : "—"}
-                          </TableCell>
-                          <TableCell>
-                            {v.photo_url ? (
-                              <a
-                                href={v.photo_url}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="text-primary underline underline-offset-2"
-                              >
-                                lihat
-                              </a>
-                            ) : (
-                              <span className="text-muted-foreground">—</span>
-                            )}
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant={geoTone(v.geo_status)}>{GEO_LABEL[v.geo_status] ?? v.geo_status}</Badge>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </>
+                <VisitsTable visits={visits} />
               )}
             </CardContent>
           </Card>

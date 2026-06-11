@@ -60,7 +60,7 @@ export interface TodoRow {
   created_at: string;
 }
 
-export async function listTodos(amId?: string, date?: string, limit = 50): Promise<TodoRow[]> {
+export async function listTodos(amId?: string, date?: string, limit = 1000): Promise<TodoRow[]> {
   const sql = db();
   const rows = await sql`
     SELECT id, am_id, am_name, tanggal::text, items, total_items, is_late_plan,

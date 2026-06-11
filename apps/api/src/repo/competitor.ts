@@ -30,7 +30,7 @@ export async function recordCompetitor(c: CompetitorInput): Promise<{ id: string
   return { id: String(rows[0].id) };
 }
 
-export async function listCompetitor(vendor?: string, limit = 50) {
+export async function listCompetitor(vendor?: string, limit = 1000) {
   const sql = db();
   const rows = await sql`
     SELECT id, am_id, customer_name, tanggal::text, vendor, produk, produk_kategori,

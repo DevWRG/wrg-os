@@ -1,0 +1,61 @@
+"use client";
+
+import { Badge } from "@/components/ui/badge";
+import { DataTable, type DataColumn } from "@/components/ui/data-table";
+
+interface VisitItem {
+  id: string;
+  am_id: string;
+  customer_name: string | null;
+  photo_url: string | null;
+  visit_lat: number | null;
+  visit_lon: number | null;
+  visit_timestamp: string | null;
+  visit_date: string | null;
+  geo_status: string;
+}
+
+const GEO_LABEL: Record<string, string> = {
+  ok: "Valid",
+  out_of_bounds: "Di luar Indonesia",
+  no_geo: "Tanpa GPS",
+  date_mismatch: "Tanggal tak cocok",
+};
+const geoTone = (s: string): "default" | "secondary" | "destructive" | "outline" =>
+  s === "ok" ? "secondary" : s === "no_geo" ? "outline" : "destructive";
+const tgl = (iso: string | null) => {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? "—" : d.toLocaleDateString("id-ID", { day: "2-digit", month: "short", year: "numeric" });
+};
+
+const columns: DataColumn<VisitItem>[] = [
+  { id: "am", header: "AM", sortable: true, accessor: (v) => v.am_id, cell: (v) => <span className="font-medium">{v.am_id}</span> },
+  { id: "customer", header: "Customer", sortable: true, accessor: (v) => v.customer_name ?? "", cell: (v) => v.customer_name ?? "—" },
+  { id: "tanggal", header: "Tanggal", sortable: true, accessor: (v) => v.visit_date ?? v.visit_timestamp ?? "", cell: (v) => <span className="text-muted-foreground">{tgl(v.visit_date ?? v.visit_timestamp)}</span> },
+  {
+    id: "koord",
+    header: "Koordinat",
+    accessor: (v) => (v.visit_lat !== null ? `${v.visit_lat},${v.visit_lon}` : ""),
+    cell: (v) => (
+      <span className="text-muted-foreground">
+        {v.visit_lat !== null && v.visit_lon !== null ? `${v.visit_lat.toFixed(5)}, ${v.visit_lon.toFixed(5)}` : "—"}
+      </span>
+    ),
+  },
+  {
+    id: "foto",
+    header: "Foto",
+    cell: (v) =>
+      v.photo_url ? (
+        <a href={v.photo_url} target="_blank" rel="noreferrer" className="text-primary underline underline-offset-2">lihat</a>
+      ) : (
+        <span className="text-muted-foreground">—</span>
+      ),
+  },
+  { id: "geo", header: "Geo", sortable: true, accessor: (v) => v.geo_status, cell: (v) => <Badge variant={geoTone(v.geo_status)}>{GEO_LABEL[v.geo_status] ?? v.geo_status}</Badge> },
+];
+
+export function VisitsTable({ visits }: { visits: VisitItem[] }) {
+  return <DataTable columns={columns} data={visits} getKey={(v) => v.id} searchPlaceholder="Cari AM / customer…" pageSize={25} />;
+}

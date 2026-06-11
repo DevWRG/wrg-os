@@ -1,17 +1,8 @@
 import { apiBaseUrl } from "@/lib/gateway";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { AddLeaveSheet } from "@/components/crm/add-leave-sheet";
-import { LeaveRowActions } from "@/components/crm/leave-row-actions";
-import { Badge } from "@/components/ui/badge";
+import { LeaveTable } from "@/components/tables/leave-table";
 import { Card, CardContent } from "@/components/ui/card";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 
 export const dynamic = "force-dynamic";
 
@@ -30,13 +21,6 @@ interface User {
   panggilan: string | null;
 }
 
-const tgl = (iso: string) => {
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString("id-ID", { day: "2-digit", month: "short", year: "numeric" });
-};
-const jenisTone = (j: string): "default" | "secondary" | "destructive" | "outline" =>
-  j === "sakit" ? "destructive" : j === "cuti" ? "secondary" : "outline";
-
 async function getJson<T>(path: string): Promise<T | null> {
   try {
     const res = await fetch(`${apiBaseUrl()}${path}`, { cache: "no-store" });
@@ -53,7 +37,8 @@ export default async function LeavePage() {
     getJson<{ users: User[] }>("/master/users"),
   ]);
   const leave = leaveRes?.leave ?? null;
-  const nameById = new Map((usersRes?.users ?? []).map((u) => [u.am_id, u.panggilan ?? u.nama]));
+  const nameById: Record<string, string> = {};
+  for (const u of usersRes?.users ?? []) nameById[u.am_id] = u.panggilan ?? u.nama;
 
   return (
     <>
@@ -67,32 +52,7 @@ export default async function LeavePage() {
       ) : (
         <Card>
           <CardContent className="pt-6">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Karyawan</TableHead>
-                  <TableHead>Jenis</TableHead>
-                  <TableHead>Mulai</TableHead>
-                  <TableHead>Selesai</TableHead>
-                  <TableHead>Keterangan</TableHead>
-                  <TableHead>Sumber</TableHead>
-                  <TableHead className="text-right">Aksi</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {leave.map((l) => (
-                  <TableRow key={l.id}>
-                    <TableCell className="font-medium">{nameById.get(l.am_id) ?? l.am_id}</TableCell>
-                    <TableCell><Badge variant={jenisTone(l.jenis)}>{l.jenis}</Badge></TableCell>
-                    <TableCell className="text-muted-foreground whitespace-nowrap">{tgl(l.start_date)}</TableCell>
-                    <TableCell className="text-muted-foreground whitespace-nowrap">{tgl(l.end_date)}</TableCell>
-                    <TableCell className="text-muted-foreground max-w-xs truncate">{l.keterangan ?? "—"}</TableCell>
-                    <TableCell><Badge variant="outline">{l.source}</Badge></TableCell>
-                    <TableCell><LeaveRowActions row={l} label={nameById.get(l.am_id) ?? l.am_id} /></TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <LeaveTable leave={leave} nameById={nameById} />
           </CardContent>
         </Card>
       )}
