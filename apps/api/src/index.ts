@@ -93,6 +93,8 @@ import { renderSalesDocHtml, renderBriefingHtml } from "./repo/exportdoc.js";
 import { runHodDaily } from "./repo/hodreminder.js";
 import {
   createReminder,
+  updateReminder,
+  deleteReminder,
   listReminders,
   runReminders,
   type ReminderMode,
@@ -1232,6 +1234,29 @@ app.post("/reminders", async (c) => {
     customer_name: body.customer_name,
   });
   return c.json({ id }, 201);
+});
+
+app.patch("/reminders/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { am_name?: string; reminder_date?: string; note?: string; customer_name?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const r = await updateReminder(c.req.param("id"), {
+    am_name: body.am_name,
+    reminder_date: body.reminder_date,
+    note: body.note,
+    customer_name: body.customer_name,
+  });
+  return c.json(r, r.updated ? 200 : 404);
+});
+
+app.delete("/reminders/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await deleteReminder(c.req.param("id"));
+  return c.json(r, r.deleted ? 200 : 404);
 });
 
 app.get("/reminders", async (c) => {

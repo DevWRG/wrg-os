@@ -2,6 +2,7 @@
 
 import { Badge } from "@/components/ui/badge";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
+import { ReminderRowActions } from "@/components/crm/reminder-row-actions";
 
 interface ReminderItem {
   id: string;
@@ -35,6 +36,7 @@ const columns: DataColumn<ReminderItem>[] = [
       </div>
     ),
   },
+  { id: "aksi", header: "Aksi", align: "right", cell: (r) => <ReminderRowActions row={r} /> },
 ];
 
 export function RemindersTable({ reminders }: { reminders: ReminderItem[] }) {
