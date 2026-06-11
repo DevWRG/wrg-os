@@ -182,3 +182,20 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* Scrollbar tipis ala Adminator (thumb = border, hover = muted-foreground) */
+@layer base {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+  }
+}
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--muted-foreground); background-clip: padding-box; }
