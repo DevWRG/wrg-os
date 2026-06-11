@@ -1,4 +1,4 @@
-import { apiBaseUrl } from "@/lib/gateway";
+import { gatewayFetch } from "@/lib/gateway";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -16,7 +16,7 @@ interface Briefing {
 
 async function getBriefings(): Promise<Briefing[] | null> {
   try {
-    const res = await fetch(`${apiBaseUrl()}/briefings`, { cache: "no-store" });
+    const res = await gatewayFetch(`/briefings`);
     if (!res.ok) return null;
     return ((await res.json()) as { briefings: Briefing[] }).briefings;
   } catch {

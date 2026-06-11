@@ -1,6 +1,6 @@
 import Link from "next/link";
 
-import { apiBaseUrl } from "@/lib/gateway";
+import { gatewayFetch } from "@/lib/gateway";
 import { cn } from "@/lib/utils";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { AddVisitSheet } from "@/components/crm/add-visit-sheet";
@@ -41,7 +41,7 @@ const FILTERS: { key: string; label: string }[] = [
 
 async function getJson<T>(path: string): Promise<T | null> {
   try {
-    const res = await fetch(`${apiBaseUrl()}${path}`, { cache: "no-store" });
+    const res = await gatewayFetch(`${path}`);
     if (!res.ok) return null;
     return (await res.json()) as T;
   } catch {

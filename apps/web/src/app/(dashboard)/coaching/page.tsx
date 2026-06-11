@@ -1,4 +1,4 @@
-import { apiBaseUrl } from "@/lib/gateway";
+import { gatewayFetch } from "@/lib/gateway";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -17,7 +17,7 @@ interface Note {
 
 async function getNotes(): Promise<Note[] | null> {
   try {
-    const res = await fetch(`${apiBaseUrl()}/coaching/notes`, { cache: "no-store" });
+    const res = await gatewayFetch(`/coaching/notes`);
     if (!res.ok) return null;
     return ((await res.json()) as { notes: Note[] }).notes;
   } catch {

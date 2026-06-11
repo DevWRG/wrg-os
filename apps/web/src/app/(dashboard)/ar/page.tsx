@@ -1,4 +1,4 @@
-import { apiBaseUrl } from "@/lib/gateway";
+import { gatewayFetch } from "@/lib/gateway";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { ArTable } from "@/components/tables/ar-table";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -34,7 +34,7 @@ const rupiah = (n: number) =>
 
 async function getAging(): Promise<Aging | null> {
   try {
-    const res = await fetch(`${apiBaseUrl()}/ar/aging`, { cache: "no-store" });
+    const res = await gatewayFetch(`/ar/aging`);
     if (!res.ok) return null;
     return (await res.json()) as Aging;
   } catch {

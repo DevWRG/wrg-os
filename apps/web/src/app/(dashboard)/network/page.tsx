@@ -1,4 +1,4 @@
-import { apiBaseUrl } from "@/lib/gateway";
+import { gatewayFetch } from "@/lib/gateway";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -32,7 +32,7 @@ interface Graph {
 
 async function getGraph(): Promise<Graph | null> {
   try {
-    const res = await fetch(`${apiBaseUrl()}/network/graph`, { cache: "no-store" });
+    const res = await gatewayFetch(`/network/graph`);
     if (!res.ok) return null;
     return (await res.json()) as Graph;
   } catch {
