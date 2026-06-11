@@ -15,3 +15,25 @@ export async function GET(req: Request, ctx: { params: Promise<{ path: string[] 
     return Response.json({ error: "backend unreachable" }, { status: 502 });
   }
 }
+
+// POST → apps/api POST /report/* (mis. /report/reminders/push).
+export async function POST(req: Request, ctx: { params: Promise<{ path: string[] }> }) {
+  const { path } = await ctx.params;
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return Response.json({ error: "invalid JSON body" }, { status: 400 });
+  }
+  try {
+    const res = await gatewayFetch(`/report/${path.join("/")}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    return Response.json(data, { status: res.status });
+  } catch {
+    return Response.json({ error: "backend unreachable" }, { status: 502 });
+  }
+}
