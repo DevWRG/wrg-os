@@ -14,31 +14,31 @@
   --card-foreground: #1e293b;
   --popover: #ffffff;
   --popover-foreground: #1e293b;
-  --primary: #2563eb;
+  --primary: #0ca6bd;
   --primary-foreground: #ffffff;
   --secondary: #f1f5f9;
   --secondary-foreground: #1e293b;
   --muted: #f1f5f9;
   --muted-foreground: #64748b;
-  --accent: #eff6ff;
-  --accent-foreground: #1d4ed8;
+  --accent: #e0f7fb;
+  --accent-foreground: #0a7c8c;
   --destructive: #ef4444;
   --border: #e4e8ef;
   --input: #e4e8ef;
-  --ring: #2563eb;
+  --ring: #0ca6bd;
   --chart-1: #10b981; /* plan / success */
-  --chart-2: #2563eb; /* report / primary */
+  --chart-2: #0ca6bd; /* report / primary */
   --chart-3: #ef4444; /* late / danger */
   --chart-4: #f59e0b; /* warning */
   --chart-5: #8b5cf6; /* purple */
   --sidebar: #ffffff;
   --sidebar-foreground: #1e293b;
-  --sidebar-primary: #2563eb;
+  --sidebar-primary: #0ca6bd;
   --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #eff6ff;
-  --sidebar-accent-foreground: #1d4ed8;
+  --sidebar-accent: #e0f7fb;
+  --sidebar-accent-foreground: #0a7c8c;
   --sidebar-border: #eef1f5;
-  --sidebar-ring: #2563eb;
+  --sidebar-ring: #0ca6bd;
 
   /* Token semantik Adminator (dipakai KPI strip / badge status di fase berikut) */
   --success: #10b981;
@@ -53,8 +53,8 @@
   --info: #0ea5e9;
   --info-foreground: #ffffff;
   --info-soft: #f0f9ff;
-  --primary-soft: #eff6ff;
-  --primary-dark: #1d4ed8;
+  --primary-soft: #e0f7fb;
+  --primary-dark: #0a8a9e;
   --purple: #8b5cf6;
   --shadow-card: 0 1px 3px 0 rgb(15 23 42 / 0.06), 0 1px 2px -1px rgb(15 23 42 / 0.04);
   --shadow-lg: 0 10px 15px -3px rgb(15 23 42 / 0.08), 0 4px 6px -4px rgb(15 23 42 / 0.05);
@@ -67,31 +67,31 @@
   --card-foreground: #f1f5f9;
   --popover: #141b2d;
   --popover-foreground: #f1f5f9;
-  --primary: #60a5fa;
+  --primary: #22c8dc;
   --primary-foreground: #0b1120;
   --secondary: #1a2237;
   --secondary-foreground: #f1f5f9;
   --muted: #1a2237;
   --muted-foreground: #94a3b8;
-  --accent: #0f2847;
-  --accent-foreground: #93c5fd;
+  --accent: #0a2e34;
+  --accent-foreground: #5fe0f0;
   --destructive: #f87171;
   --border: #222c42;
   --input: #222c42;
-  --ring: #60a5fa;
+  --ring: #22c8dc;
   --chart-1: #34d399;
-  --chart-2: #60a5fa;
+  --chart-2: #22c8dc;
   --chart-3: #f87171;
   --chart-4: #fbbf24;
   --chart-5: #a78bfa;
   --sidebar: #141b2d;
   --sidebar-foreground: #f1f5f9;
-  --sidebar-primary: #60a5fa;
+  --sidebar-primary: #22c8dc;
   --sidebar-primary-foreground: #0b1120;
-  --sidebar-accent: #0f2847;
-  --sidebar-accent-foreground: #93c5fd;
+  --sidebar-accent: #0a2e34;
+  --sidebar-accent-foreground: #5fe0f0;
   --sidebar-border: #222c42;
-  --sidebar-ring: #60a5fa;
+  --sidebar-ring: #22c8dc;
 
   --success: #34d399;
   --success-foreground: #0b1120;
@@ -105,8 +105,8 @@
   --info: #38bdf8;
   --info-foreground: #0b1120;
   --info-soft: #0d2232;
-  --primary-soft: #0f2847;
-  --primary-dark: #3b82f6;
+  --primary-soft: #0a2e34;
+  --primary-dark: #15c8dc;
   --purple: #a78bfa;
   --shadow-card: 0 1px 3px 0 rgb(0 0 0 / 0.3), 0 1px 2px -1px rgb(0 0 0 / 0.25);
   --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.5), 0 4px 6px -4px rgb(0 0 0 / 0.4);

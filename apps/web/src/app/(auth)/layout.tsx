@@ -1,22 +1,16 @@
 import Link from "next/link";
-import { HeartPulse } from "lucide-react";
 
 export default function AuthLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className="grid min-h-screen lg:grid-cols-2">
-      {/* Aside kiri — panel brand gradient (Adminator auth-aside), sembunyi di mobile */}
-      <div className="from-primary to-purple relative hidden flex-col justify-between overflow-hidden bg-gradient-to-br p-10 text-white lg:flex">
+      {/* Aside kiri — panel brand gradient cyan→coral (WRG), sembunyi di mobile */}
+      <div className="from-primary to-wrg-coral relative hidden flex-col justify-between overflow-hidden bg-gradient-to-br p-10 text-white lg:flex">
         <div className="pointer-events-none absolute -top-1/4 -right-1/4 aspect-square w-3/4 rounded-full bg-[radial-gradient(circle,rgba(255,255,255,0.18),transparent_60%)]" />
         <div className="pointer-events-none absolute -bottom-1/4 -left-1/4 aspect-square w-3/4 rounded-full bg-[radial-gradient(circle,rgba(255,255,255,0.10),transparent_60%)]" />
 
-        <Link href="/dashboard" className="relative flex items-center gap-2.5">
-          <div className="flex size-9 items-center justify-center rounded-lg bg-white/15">
-            <HeartPulse className="size-5" />
-          </div>
-          <div className="flex flex-col leading-none">
-            <span className="font-semibold">WRG OS</span>
-            <span className="text-xs text-white/70">Wahana Lifeline</span>
-          </div>
+        <Link href="/dashboard" className="relative">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/brand/wahana-lifeline-white.png" alt="Wahana Lifeline" className="h-11 w-auto" />
         </Link>
 
         <div className="relative">
@@ -33,14 +27,11 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
       {/* Main kanan — area form */}
       <div className="flex items-center justify-center px-4 py-12">
         <div className="w-full max-w-sm">
-          <Link href="/dashboard" className="mb-8 flex items-center gap-2 text-sm font-semibold lg:hidden">
-            <div className="from-primary to-purple text-primary-foreground flex size-8 items-center justify-center rounded-md bg-gradient-to-br">
-              <HeartPulse className="size-4" />
-            </div>
-            <div className="flex flex-col leading-none">
-              <span>WRG OS</span>
-              <span className="text-muted-foreground text-xs font-normal">Wahana Lifeline</span>
-            </div>
+          <Link href="/dashboard" className="mb-8 flex lg:hidden">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/brand/wahana-lifeline-color.png" alt="Wahana Lifeline" className="h-9 w-auto dark:hidden" />
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/brand/wahana-lifeline-white.png" alt="Wahana Lifeline" className="hidden h-9 w-auto dark:block" />
           </Link>
           {children}
         </div>

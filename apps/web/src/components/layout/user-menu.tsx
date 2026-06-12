@@ -38,7 +38,7 @@ export function UserMenu() {
         render={<Button variant="ghost" className="relative size-9 rounded-full p-0" aria-label="Menu pengguna" />}
       >
         <Avatar className="ring-primary/30 size-8 ring-2">
-          <AvatarFallback className="bg-gradient-to-br from-primary to-purple text-primary-foreground text-xs">{initials(name)}</AvatarFallback>
+          <AvatarFallback className="bg-gradient-to-br from-primary to-wrg-coral text-primary-foreground text-xs">{initials(name)}</AvatarFallback>
         </Avatar>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-56">
