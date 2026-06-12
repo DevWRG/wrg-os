@@ -135,12 +135,12 @@ export default async function VisitsPage({
                   className={cn(
                     "inline-flex items-center gap-1.5 rounded-lg border px-3 py-1 text-sm transition-colors",
                     active === f.key
-                      ? "border-primary bg-primary-soft text-primary"
-                      : "border-border hover:bg-muted",
+                      ? "border-primary bg-primary-soft text-primary font-medium"
+                      : "border-border bg-card text-foreground shadow-[var(--shadow-card)] hover:border-primary/40 hover:bg-muted",
                   )}
                 >
                   {f.label}
-                  <span className={cn("text-xs", active === f.key ? "opacity-80" : "text-muted-foreground")}>{count}</span>
+                  <span className={cn("text-xs tabular-nums", active === f.key ? "opacity-80" : "text-muted-foreground")}>{count}</span>
                 </Link>
               );
             })}
