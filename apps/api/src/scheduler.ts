@@ -17,6 +17,7 @@ import {
 } from "./repo/agents.js";
 import { runReminders } from "./repo/reminder.js";
 import { runHodDaily } from "./repo/hodreminder.js";
+import { generateRekap, generateResume } from "./repo/monitor.js";
 
 // Penjadwal agen in-process (Blueprint v2.3). Default MATI — aktif hanya bila
 // AGENT_SCHEDULE_ENABLED=true. Tiap run tetap menulis ke audit_log via repo
@@ -44,6 +45,11 @@ export function getScheduleStatus(): ScheduleStatus {
 }
 
 const TZ = (): string => process.env.AGENT_CRON_TZ ?? "Asia/Jakarta";
+
+// Tanggal & jam WIB (UTC+7) untuk job monitor — selaras dgn endpoint /monitor/*/generate.
+const wibNow = (): Date => new Date(Date.now() + 7 * 3600 * 1000);
+const wibDate = (): string => wibNow().toISOString().slice(0, 10);
+const wibJam = (): string => wibNow().toISOString().slice(11, 16);
 
 export function startScheduler(): ScheduleStatus {
   const enabled = (process.env.AGENT_SCHEDULE_ENABLED ?? "false").toLowerCase() === "true";
@@ -203,6 +209,36 @@ export function startScheduler(): ScheduleStatus {
       { timezone },
     );
     live.push(`reminder-hod=${hodExpr}`);
+  }
+
+  // Monitor (port wrg-monitor) — rekap & resume GENERATE-ONLY (tidak kirim WA;
+  // tidak mengganggu cron wrg-monitor lama). Cadence mengikuti legacy:
+  // rekap 07/12/17/22 WIB, resume 14:00 & 22:10 WIB. Kirim WA (notif TUA) belum
+  // diport — lihat docs/CUTOVER.md.
+  const monitorJobs = [
+    { label: "monitor-rekap", expr: process.env.MONITOR_REKAP_CRON ?? "0 7,12,17,22 * * *", run: () => generateRekap(wibDate(), wibJam()) },
+    { label: "monitor-resume", expr: process.env.MONITOR_RESUME_CRON ?? "0 14 * * *", run: () => generateResume(wibDate(), wibJam()) },
+    { label: "monitor-resume-malam", expr: process.env.MONITOR_RESUME2_CRON ?? "10 22 * * *", run: () => generateResume(wibDate(), wibJam()) },
+  ];
+  for (const j of monitorJobs) {
+    if (!cron.validate(j.expr)) {
+      console.error(`[scheduler] ${j.label} cron-expr tidak valid: "${j.expr}" — dilewati`);
+      continue;
+    }
+    cron.schedule(
+      j.expr,
+      async () => {
+        const startedAt = new Date().toISOString();
+        try {
+          const r = await j.run();
+          console.log(`[scheduler] ${j.label} ok @ ${startedAt} ${JSON.stringify(r).slice(0, 200)}`);
+        } catch (e) {
+          console.error(`[scheduler] ${j.label} gagal @ ${startedAt}:`, e);
+        }
+      },
+      { timezone },
+    );
+    live.push(`${j.label}=${j.expr}`);
   }
 
   console.log(`[scheduler] aktif (TZ=${timezone}): ${live.join(", ") || "(tidak ada job valid)"}`);
