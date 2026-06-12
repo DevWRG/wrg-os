@@ -46,7 +46,7 @@ export function SidebarUser() {
             }
           >
             <Avatar className="ring-primary/30 size-8 ring-2">
-              <AvatarFallback className="from-primary to-purple text-primary-foreground bg-gradient-to-br text-xs font-semibold">
+              <AvatarFallback className="from-primary to-wrg-coral text-primary-foreground bg-gradient-to-br text-xs font-semibold">
                 {initials(name)}
               </AvatarFallback>
             </Avatar>

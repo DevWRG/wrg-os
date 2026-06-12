@@ -16,7 +16,6 @@ import {
   ClipboardCheck,
   History,
   Settings,
-  HeartPulse,
   Sparkles,
   Send,
   FileText,
@@ -140,14 +139,11 @@ export function AppSidebar() {
       <SidebarHeader>
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton size="lg" render={<Link href="/dashboard" />}>
-              <div className="text-primary-foreground flex aspect-square size-8 items-center justify-center rounded-lg bg-gradient-to-br from-primary to-purple shadow-sm">
-                <HeartPulse className="size-4" />
-              </div>
-              <div className="flex flex-col gap-0.5 leading-none">
-                <span className="font-semibold">WRG OS</span>
-                <span className="text-muted-foreground text-[11px]">v0.1.0 · Wahana Lifeline</span>
-              </div>
+            <SidebarMenuButton size="lg" render={<Link href="/dashboard" />} className="overflow-hidden">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src="/brand/wahana-lifeline-color.png" alt="Wahana Lifeline" className="h-8 w-auto max-w-none object-contain object-left dark:hidden" />
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src="/brand/wahana-lifeline-white.png" alt="Wahana Lifeline" className="hidden h-8 w-auto max-w-none object-contain object-left dark:block" />
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
