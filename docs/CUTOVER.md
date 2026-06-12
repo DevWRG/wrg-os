@@ -11,7 +11,8 @@ semua blocker hijau** — mematikan cron lama saat wrg-os belum siap = produksi 
 | Prasyarat | Status | Aksi |
 |---|---|---|
 | Data prod ter-migrasi ke wrg-os | ✅ selesai | `scripts/migrate/crm-to-os.sql` (re-run untuk delta saat cutover) |
-| Kirim WhatsApp produksi | ❌ **stub** | isi `WA_SEND_URL` (+`WA_SEND_SECRET`) ke gateway nyata, uji 1 pesan |
+| Wiring gateway WA | ⚙️ siap (dry-run) | isi `WA_SEND_URL`/`WA_SEND_SECRET`; `WA_DRY_RUN=true` (default) = terwiring, belum kirim live. Cek `GET /wa/preflight` |
+| Kirim WhatsApp **live** | ❌ belum | uji dgn `WA_TEST_TARGET`=nomor sendiri, lalu `WA_DRY_RUN=false` (langkah go-live terakhir) |
 | Inbound WA (terima #PLAN/#REPORT) | ❌ belum | arahkan gateway push → `POST /webhooks/wa`, atau bangun poller |
 | Sync Accurate (invoice) | ❌ belum | konfigurasi webhook Accurate → `POST /webhooks/accurate`, atau bangun puller |
 | Scheduler wrg-os | ⏸️ OFF | set `AGENT_SCHEDULE_ENABLED=true` setelah job di-review |
@@ -67,6 +68,8 @@ AGENT_SCHEDULE_ENABLED=true
 AGENT_CRON_TZ=Asia/Jakarta
 WA_SEND_URL=<gateway-kirim-WA>          # WAJIB sebelum cutover (kosong = stub)
 WA_SEND_SECRET=<header x-wa-secret>
+WA_DRY_RUN=true                         # tetap true saat wiring; "false" = go-live
+WA_TEST_TARGET=                         # isi nomor sendiri utk uji live aman
 REMINDER_WA_TARGET=<jid grup AM>
 HOD_WA_TARGET=<jid grup HOD>
 # cron monitor (default sudah sesuai legacy):
@@ -75,7 +78,12 @@ MONITOR_RESUME_CRON=0 14 * * *
 MONITOR_RESUME2_CRON=10 22 * * *
 ```
 
-Uji kirim WA dulu: `POST /reminders/run` (mode dry → cek log gateway) sebelum live.
+**Go-live WA bertahap (aman):**
+1. Set `WA_SEND_URL`/`WA_SEND_SECRET`, biarkan `WA_DRY_RUN=true`. Cek
+   `GET /wa/preflight?probe=1` → `mode:"dry-run"`, `reachable:true`.
+2. Jalankan job/`POST /reminders/run` → cek log `[wa] DRY-RUN …` (tak ada pesan terkirim).
+3. Set `WA_TEST_TARGET`=nomor sendiri + `WA_DRY_RUN=false`, restart → uji 1 pesan masuk ke HP sendiri.
+4. Kosongkan `WA_TEST_TARGET`, restart → broadcast ke target nyata (go-live penuh).
 
 ---
 
