@@ -83,7 +83,7 @@ import {
   reportCalendarDay,
 } from "./repo/plandash.js";
 import { salesRange, reportRevenue, reportSalesAr } from "./repo/sales.js";
-import { upsertMembers, listMembers, upsertDigests, listDigest, upsertPola, listPola, type MonitorMemberInput, type DigestInput, type PolaInput } from "./repo/monitor.js";
+import { upsertMembers, listMembers, upsertDigests, listDigest, upsertPola, listPola, generateRekap, generateResume, type MonitorMemberInput, type DigestInput, type PolaInput } from "./repo/monitor.js";
 import {
   upsertCustomers,
   upsertBranches,
@@ -522,6 +522,34 @@ app.post("/monitor/digests", async (c) => {
 app.get("/monitor/pola", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json(await listPola(c.req.query("jid") || undefined));
+});
+
+// Generate rekap/resume via services/ai dari wa_message (generate-only — TIDAK
+// kirim WA, tak mengganggu cron wrg-monitor lama). Trigger manual dari UI.
+const wibJam = () => new Date(Date.now() + 7 * 3600 * 1000).toISOString().slice(11, 16);
+app.post("/monitor/rekap/generate", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { date?: string; jam?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    /* body opsional */
+  }
+  const date = body.date || defaultRange().today;
+  const r = await generateRekap(date, body.jam || wibJam());
+  return c.json(r, r.stored ? 200 : 502);
+});
+app.post("/monitor/resume/generate", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { date?: string; jam?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    /* body opsional */
+  }
+  const date = body.date || defaultRange().today;
+  const r = await generateResume(date, body.jam || wibJam());
+  return c.json(r, r.stored ? 200 : 502);
 });
 
 app.post("/monitor/pola", async (c) => {

@@ -1,4 +1,5 @@
 import { db } from "../db.js";
+import { callAi, aiDryRun } from "../ai.js";
 
 // WRG Monitor — direktori member WA (gabungan roster + members.json), di-key HP.
 
@@ -70,6 +71,63 @@ export async function upsertDigests(rows: DigestInput[]): Promise<number> {
     n++;
   }
   return n;
+}
+
+// ── Generate (pipeline AI, generate-only — TIDAK mengirim WA) ──
+// Baca wa_message tanggal tsb → services/ai POST /rekap → simpan monitor_digest.
+async function memberGroupMaps() {
+  const sql = db();
+  const mem = await sql`SELECT phone, COALESCE(panggilan, nama) AS nm FROM monitor_member WHERE COALESCE(panggilan, nama) IS NOT NULL`;
+  const grp = await sql`SELECT group_jid, group_name FROM monitor_pola WHERE group_name IS NOT NULL`;
+  const members: Record<string, string> = {};
+  for (const m of mem) members[String(m.phone)] = String(m.nm);
+  const groups: Record<string, string> = {};
+  for (const g of grp) groups[String(g.group_jid)] = String(g.group_name);
+  return { members, groups };
+}
+
+export async function generateRekap(date: string, jam: string) {
+  const sql = db();
+  const rows = await sql`
+    SELECT group_jid, COALESCE(sender_name, sender_jid, '?') AS sender, body, message_type,
+           (extract(epoch from received_at) * 1000)::bigint AS ts_ms
+    FROM wa_message
+    WHERE received_at::date = ${date} AND body IS NOT NULL AND body <> ''
+    ORDER BY received_at
+  `;
+  if (rows.length === 0) return { stored: false, jumlah_pesan: 0, dry_run: false, error: "tak ada pesan WA untuk tanggal ini" };
+  const messages = rows.map((r) => ({
+    jid: String(r.group_jid),
+    ts_ms: Number(r.ts_ms),
+    sender: String(r.sender),
+    body: String(r.body),
+    media: r.message_type && r.message_type !== "text" ? String(r.message_type) : null,
+  }));
+  const { members, groups } = await memberGroupMaps();
+  const { status, data } = await callAi("/rekap", { jam, tanggal: date, window_label: "hari ini", messages, members, groups, dry_run: aiDryRun() });
+  if (status !== 200) return { stored: false, jumlah_pesan: messages.length, dry_run: false, error: `services/ai ${status}` };
+  const rekap = String(data.rekap ?? "");
+  if (rekap) await upsertDigests([{ kind: "rekap", tanggal: date, waktu: jam, content: rekap, source_file: "generated" }]);
+  return { stored: !!rekap, jumlah_pesan: messages.length, dry_run: Boolean(data.dry_run), model: data.model ? String(data.model) : null };
+}
+
+export async function generateResume(date: string, jam: string) {
+  const sql = db();
+  const rekaps = await sql`SELECT waktu, content FROM monitor_digest WHERE kind = 'rekap' AND tanggal = ${date} ORDER BY waktu`;
+  if (rekaps.length === 0) return { stored: false, jumlah_rekap: 0, dry_run: false, error: "tak ada rekap untuk tanggal ini (generate rekap dulu)" };
+  const { members, groups } = await memberGroupMaps();
+  const { status, data } = await callAi("/resume", {
+    jam,
+    tanggal: date,
+    rekaps: rekaps.map((r) => ({ label: `${date} ${r.waktu ?? ""}`.trim(), text: String(r.content) })),
+    members,
+    groups,
+    dry_run: aiDryRun(),
+  });
+  if (status !== 200) return { stored: false, jumlah_rekap: rekaps.length, dry_run: false, error: `services/ai ${status}` };
+  const resume = String(data.resume ?? "");
+  if (resume) await upsertDigests([{ kind: "resume", tanggal: date, waktu: jam, content: resume, source_file: "generated" }]);
+  return { stored: !!resume, jumlah_rekap: rekaps.length, dry_run: Boolean(data.dry_run), model: data.model ? String(data.model) : null };
 }
 
 // Daftar tanggal yang punya digest + entri untuk satu tanggal (default terbaru).
