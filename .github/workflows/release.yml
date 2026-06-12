@@ -1,0 +1,53 @@
+name: Release
+
+# Auto-versioning: tiap push ke main (hasil merge dev→main yang sudah di-approve)
+# hitung versi semver berikut dari commit sejak tag terakhir, lalu buat git tag +
+# GitHub Release. Aturan bump: ada "BREAKING CHANGE"/"<type>!:" → major;
+# ada "feat:" → minor; selain itu → patch. Hanya tag+release (tak push ke main),
+# jadi aman dengan branch protection. Tak menyentuh sistem produksi.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Hitung versi berikutnya
+        id: ver
+        run: |
+          set -e
+          last=$(git tag --list 'v*' --sort=-v:refname | head -1)
+          if [ -z "$last" ]; then
+            base=$(node -p "require('./package.json').version")
+            echo "new=v${base}" >> "$GITHUB_OUTPUT"
+            echo "Pertama: tag v${base}"
+          else
+            cur=${last#v}; IFS=. read -r MA MI PA <<< "$cur"
+            log=$(git log "${last}..HEAD" --pretty='%s%n%b')
+            if echo "$log" | grep -qiE 'BREAKING CHANGE|^[a-z]+(\(.+\))?!:'; then
+              MA=$((MA+1)); MI=0; PA=0
+            elif echo "$log" | grep -qiE '^feat(\(.+\))?:'; then
+              MI=$((MI+1)); PA=0
+            else
+              PA=$((PA+1))
+            fi
+            echo "new=v${MA}.${MI}.${PA}" >> "$GITHUB_OUTPUT"
+            echo "Bump ${last} → v${MA}.${MI}.${PA}"
+          fi
+      - name: Buat tag + release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          NEW="${{ steps.ver.outputs.new }}"
+          if git rev-parse "$NEW" >/dev/null 2>&1; then
+            echo "Tag $NEW sudah ada — lewati."; exit 0
+          fi
+          gh release create "$NEW" --target "$GITHUB_SHA" --title "$NEW" --generate-notes
