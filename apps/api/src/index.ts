@@ -7,6 +7,7 @@ import { parsePlan } from "./parsers/plan.js";
 import { parseReport } from "./parsers/report.js";
 import { matchCustomer, type PlanCandidate } from "./parsers/fuzzy.js";
 import { isDbEnabled, pingDb } from "./db.js";
+import { waPreflight } from "./wasend.js";
 import { insertAuditEvent } from "./repo/audit.js";
 import { upsertDealsFromPlan, logReportToDeals, getPipeline } from "./repo/deal.js";
 import { enqueueAmbiguous, listHitl, resolveHitl } from "./repo/hitl.js";
@@ -134,6 +135,12 @@ app.use("*", async (c, next) => {
 app.get("/health", async (c) => {
   const db = isDbEnabled() ? (await pingDb()) ? "ok" : "down" : "disabled";
   return c.json({ status: "ok", service: "wrg-api", db });
+});
+
+// Status wiring gateway WA — TIDAK kirim pesan. ?probe=1 → cek konektivitas gateway.
+app.get("/wa/preflight", async (c) => {
+  const probe = c.req.query("probe") === "1" || c.req.query("probe") === "true";
+  return c.json(await waPreflight(probe));
 });
 
 // ── Auth/session ──
