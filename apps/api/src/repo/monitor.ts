@@ -91,6 +91,47 @@ export async function listDigest(kind: "rekap" | "resume", date?: string) {
   return { dates, date: target, entries };
 }
 
+// ── Pola (profil komunikasi grup) ──
+export interface PolaInput {
+  group_jid: string;
+  group_name?: string | null;
+  content: string;
+}
+export async function upsertPola(rows: PolaInput[]): Promise<number> {
+  const sql = db();
+  let n = 0;
+  for (const r of rows) {
+    if (!r.group_jid || !r.content) continue;
+    await sql`
+      INSERT INTO monitor_pola (group_jid, group_name, content, updated_at)
+      VALUES (${r.group_jid}, ${r.group_name ?? null}, ${r.content}, NOW())
+      ON CONFLICT (group_jid) DO UPDATE SET
+        group_name = EXCLUDED.group_name, content = EXCLUDED.content, updated_at = NOW()
+    `;
+    n++;
+  }
+  return n;
+}
+
+// Daftar grup + profil satu grup (default grup pertama).
+export async function listPola(jid?: string) {
+  const sql = db();
+  const groupRows = await sql`
+    SELECT group_jid, COALESCE(group_name, group_jid) AS group_name FROM monitor_pola
+    ORDER BY group_name
+  `;
+  const groups = groupRows.map((g) => ({ group_jid: String(g.group_jid), group_name: String(g.group_name) }));
+  const target = jid && groups.some((g) => g.group_jid === jid) ? jid : (groups[0]?.group_jid ?? null);
+  let content: string | null = null;
+  let group_name: string | null = null;
+  if (target) {
+    const [row] = await sql`SELECT group_name, content FROM monitor_pola WHERE group_jid = ${target}`;
+    content = row ? String(row.content) : null;
+    group_name = row?.group_name ? String(row.group_name) : target;
+  }
+  return { groups, group_jid: target, group_name, content };
+}
+
 export async function listMembers(): Promise<MonitorMember[]> {
   const sql = db();
   const rows = await sql`
