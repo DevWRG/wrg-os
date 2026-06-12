@@ -46,32 +46,35 @@ export async function getDigestHistory(
   limit = 20,
 ): Promise<{ rekaps: RekapHistory[]; resumes: ResumeHistory[] }> {
   const sql = db();
+  // Sumber: monitor_digest (port wrg-monitor) — rekap kolektif & resume eksekutif.
   const rekaps = await sql`
-    SELECT id, group_jid, group_name, period_start::text, period_end::text,
-           model_used, raw_output, created_at::text
-    FROM digest_rekap ORDER BY created_at DESC LIMIT ${limit}
+    SELECT id::text AS id, tanggal::text, waktu, content, source_file, created_at::text
+    FROM monitor_digest WHERE kind = 'rekap'
+    ORDER BY tanggal DESC, waktu DESC NULLS LAST LIMIT ${limit}
   `;
   const resumes = await sql`
-    SELECT id, period_date::text, period_type, model_used, raw_output, created_at::text
-    FROM digest_resume ORDER BY created_at DESC LIMIT ${limit}
+    SELECT id::text AS id, tanggal::text, waktu, content, source_file, created_at::text
+    FROM monitor_digest WHERE kind = 'resume'
+    ORDER BY tanggal DESC, waktu DESC NULLS LAST LIMIT ${limit}
   `;
+  const model = (sf: unknown) => (sf === "generated" ? "generated (wrg-os)" : null);
   return {
     rekaps: rekaps.map((r) => ({
       id: String(r.id),
-      group_jid: String(r.group_jid),
-      group_name: r.group_name ? String(r.group_name) : null,
-      period_start: String(r.period_start),
-      period_end: String(r.period_end),
-      model_used: r.model_used ? String(r.model_used) : null,
-      raw_output: String(r.raw_output ?? ""),
+      group_jid: "—",
+      group_name: `Rekap${r.waktu ? ` ${String(r.waktu)} WIB` : ""} · ${String(r.tanggal)}`,
+      period_start: String(r.tanggal),
+      period_end: String(r.tanggal),
+      model_used: model(r.source_file),
+      raw_output: String(r.content ?? ""),
       created_at: String(r.created_at),
     })),
     resumes: resumes.map((r) => ({
       id: String(r.id),
-      period_date: String(r.period_date),
-      period_type: String(r.period_type),
-      model_used: r.model_used ? String(r.model_used) : null,
-      raw_output: String(r.raw_output ?? ""),
+      period_date: String(r.tanggal),
+      period_type: r.waktu ? `${String(r.waktu)} WIB` : "—",
+      model_used: model(r.source_file),
+      raw_output: String(r.content ?? ""),
       created_at: String(r.created_at),
     })),
   };
