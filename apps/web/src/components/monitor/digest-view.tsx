@@ -1,7 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { Sparkles } from "lucide-react";
 
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 
@@ -25,6 +27,8 @@ export function DigestView({ kind, initial }: { kind: "rekap" | "resume"; initia
   const [data, setData] = useState<DigestData>(initial);
   const [date, setDate] = useState<string>(initial.date ?? "");
   const [loading, setLoading] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [genMsg, setGenMsg] = useState<string | null>(null);
 
   const load = useCallback(
     async (d: string) => {
@@ -46,6 +50,30 @@ export function DigestView({ kind, initial }: { kind: "rekap" | "resume"; initia
     if (date && date !== data.date) void load(date);
   }, [date, data.date, load]);
 
+  async function generate() {
+    setGenerating(true);
+    setGenMsg(null);
+    try {
+      const res = await fetch(`/api/monitor/${kind}/generate`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(date ? { date } : {}),
+      });
+      const j = await res.json();
+      if (!res.ok) {
+        setGenMsg(j.error ?? "gagal generate");
+      } else {
+        setGenMsg(j.dry_run ? "Tersimpan (mode template — OPENROUTER key tak aktif)" : "Tersimpan via AI");
+        const d = date || data.date;
+        if (d) await load(d);
+      }
+    } catch {
+      setGenMsg("gagal generate");
+    } finally {
+      setGenerating(false);
+    }
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2">
@@ -61,7 +89,11 @@ export function DigestView({ kind, initial }: { kind: "rekap" | "resume"; initia
           ))}
         </select>
         {loading && <span className="text-muted-foreground text-xs">memuat…</span>}
+        <Button variant="outline" size="sm" className="ml-auto" disabled={generating} onClick={() => void generate()}>
+          <Sparkles /> {generating ? "Generate…" : `Generate ${kind} hari ini`}
+        </Button>
       </div>
+      {genMsg && <p className="text-muted-foreground text-xs">{genMsg}</p>}
 
       {data.entries.length === 0 ? (
         <Card>
