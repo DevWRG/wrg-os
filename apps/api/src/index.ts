@@ -83,7 +83,7 @@ import {
   reportCalendarDay,
 } from "./repo/plandash.js";
 import { salesRange, reportRevenue, reportSalesAr } from "./repo/sales.js";
-import { upsertMembers, listMembers, upsertDigests, listDigest, type MonitorMemberInput, type DigestInput } from "./repo/monitor.js";
+import { upsertMembers, listMembers, upsertDigests, listDigest, upsertPola, listPola, type MonitorMemberInput, type DigestInput, type PolaInput } from "./repo/monitor.js";
 import {
   upsertCustomers,
   upsertBranches,
@@ -517,6 +517,25 @@ app.post("/monitor/digests", async (c) => {
     return c.json({ error: "body.digests (array non-kosong) wajib" }, 400);
   }
   return c.json({ upserted: await upsertDigests(body.digests) }, 201);
+});
+
+app.get("/monitor/pola", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await listPola(c.req.query("jid") || undefined));
+});
+
+app.post("/monitor/pola", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { pola?: PolaInput[] };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!Array.isArray(body.pola) || body.pola.length === 0) {
+    return c.json({ error: "body.pola (array non-kosong) wajib" }, 400);
+  }
+  return c.json({ upserted: await upsertPola(body.pola) }, 201);
 });
 
 // Webhook Accurate → ar_aging_mv. Menerima invoice Accurate (single | array |

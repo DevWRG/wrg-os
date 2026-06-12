@@ -107,6 +107,7 @@ const NAV: NavGroup[] = [
     items: [
       { title: "Rekap", url: "/monitor/rekap", icon: MessagesSquare },
       { title: "Resume", url: "/monitor/resume", icon: ScrollText },
+      { title: "Pola Komunikasi", url: "/monitor/pola", icon: Network },
       { title: "Members", url: "/monitor/members", icon: Users },
     ],
   },
