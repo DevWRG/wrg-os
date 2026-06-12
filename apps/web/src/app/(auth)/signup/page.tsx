@@ -1,54 +1,49 @@
 import Link from "next/link";
+import { AtSign, Lock, UserRound } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
 export default function SignupPage() {
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Create account</CardTitle>
-        <CardDescription>
-          Pendaftaran user dilakukan oleh admin. Hubungi tim IT untuk request akses.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="grid gap-4">
+    <div>
+      <h1 className="text-3xl font-bold tracking-tight">Create account</h1>
+      <p className="text-muted-foreground mt-2 max-w-sm text-sm leading-relaxed">
+        Pendaftaran user dilakukan oleh admin. Hubungi tim IT untuk request akses.
+      </p>
+
+      <div className="mt-8 space-y-5">
         <div className="grid gap-2">
           <Label htmlFor="name">Full Name</Label>
-          <Input id="name" placeholder="Nama lengkap" required />
+          <div className="relative">
+            <UserRound className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2" />
+            <Input id="name" placeholder="Nama lengkap" required className="pl-9" />
+          </div>
         </div>
         <div className="grid gap-2">
           <Label htmlFor="email">Email</Label>
-          <Input
-            id="email"
-            type="email"
-            placeholder="nama@wahanalifeline.co.id"
-            required
-          />
+          <div className="relative">
+            <AtSign className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2" />
+            <Input id="email" type="email" placeholder="nama@wahanalifeline.co.id" required className="pl-9" />
+          </div>
         </div>
         <div className="grid gap-2">
           <Label htmlFor="password">Password</Label>
-          <Input id="password" type="password" required />
+          <div className="relative">
+            <Lock className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2" />
+            <Input id="password" type="password" placeholder="••••••••" required className="pl-9" />
+          </div>
         </div>
-      </CardContent>
-      <CardFooter className="flex flex-col gap-3">
         <Button className="w-full">Create account</Button>
-        <p className="text-muted-foreground text-center text-xs">
-          Sudah punya akun?{" "}
-          <Link href="/login" className="text-foreground underline">
-            Sign in
-          </Link>
-        </p>
-      </CardFooter>
-    </Card>
+      </div>
+
+      <p className="text-muted-foreground mt-6 text-sm">
+        Sudah punya akun?{" "}
+        <Link href="/login" className="text-primary font-medium hover:underline">
+          Sign in
+        </Link>
+      </p>
+    </div>
   );
 }
