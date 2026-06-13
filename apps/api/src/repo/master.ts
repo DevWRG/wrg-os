@@ -95,24 +95,152 @@ export async function resolveAmByWa(
   return { am_id: String(rows[0].am_id), nama: String(rows[0].nama), aktif: Boolean(rows[0].aktif) };
 }
 
-// Resolve pengirim via pushname (sender_name) — dipakai untuk pesan GRUP, karena
-// capture openclaw sering menaruh JID grup di field sender (bukan nomor individu),
-// sehingga satu-satunya pengenal orang = pushname. Normalisasi: lowercase +
-// huruf-saja (port logika legacy wrg-inbound.sh). Cocokkan ke panggilan/nama.
-// Ambiguous (>1) atau tak ada → null (aman, hindari salah atribusi).
-export async function resolveAmByPushname(
-  pushname: string,
-): Promise<{ am_id: string; nama: string; aktif: boolean } | null> {
+export interface ResolvedAm {
+  am_id: string;
+  nama: string;
+  aktif: boolean;
+  via?: string;
+  score?: number;
+}
+
+// Tier C — resolve via pushname (sender_name), 6 sub-strategi (port legacy
+// resolve_user_by_pushname): exact nama/panggilan → nama-prefix → first-token
+// → strip-separator → normalized-prefix kedua arah. Order by spesifisitas.
+export async function resolveAmByPushname(pushname: string): Promise<ResolvedAm | null> {
+  const name = String(pushname ?? "").trim();
+  if (!name) return null;
   const sql = db();
-  const norm = String(pushname ?? "").toLowerCase().replace(/[^a-z]/g, "");
-  if (!norm) return null;
   const rows = await sql`
-    SELECT am_id, nama, aktif FROM master_user
-    WHERE regexp_replace(lower(panggilan), '[^a-z]', '', 'g') = ${norm}
-       OR regexp_replace(lower(nama), '[^a-z]', '', 'g') = ${norm}
+    WITH p AS (SELECT regexp_replace(lower(${name}), '[^a-z]', '', 'g') AS norm)
+    SELECT am_id, nama, aktif FROM master_user, p
+    WHERE lower(nama) = lower(${name})
+       OR lower(panggilan) = lower(${name})
+       OR lower(nama) LIKE lower(${name}) || ' %'
+       OR lower(panggilan) = lower(split_part(${name}, ' ', 1))
+       OR lower(panggilan) = lower(regexp_replace(${name}, '[-_|/[:space:]].*$', ''))
+       OR (length(p.norm) >= 5 AND regexp_replace(lower(nama), '[^a-z]', '', 'g') LIKE p.norm || '%')
+       OR (length(p.norm) >= 5 AND p.norm LIKE regexp_replace(lower(nama), '[^a-z]', '', 'g') || '%')
+    ORDER BY CASE
+        WHEN lower(nama) = lower(${name}) THEN 1
+        WHEN lower(panggilan) = lower(${name}) THEN 2
+        WHEN lower(nama) LIKE lower(${name}) || ' %' THEN 3
+        WHEN lower(panggilan) = lower(split_part(${name}, ' ', 1)) THEN 4
+        WHEN lower(panggilan) = lower(regexp_replace(${name}, '[-_|/[:space:]].*$', '')) THEN 5
+        ELSE 6
+      END, length(nama)
+    LIMIT 1
   `;
-  if (rows.length !== 1) return null;
+  if (rows.length === 0) return null;
   return { am_id: String(rows[0].am_id), nama: String(rows[0].nama), aktif: Boolean(rows[0].aktif) };
+}
+
+// Stop-words token body (form-label, bukan nama orang) — port legacy.
+const BODY_STOP = new Set([
+  "cust", "hasil", "next", "tujuan", "goal", "tgl", "tanggal", "cabang",
+  "rs", "rsu", "rsd", "rsud", "rsia", "rspau", "rsau", "rsab", "rsi", "rsgm",
+  "klinik", "lab", "labkesda", "pkm", "puskesmas", "pmi", "dinkes", "dinas",
+  "note", "visit", "jv", "join", "silaturahmi",
+]);
+
+function bodyTokens(name: string | null | undefined): string[] {
+  const raw = String(name ?? "").match(/[A-Za-z]+/g) ?? [];
+  return raw.filter((t) => !BODY_STOP.has(t.toLowerCase())).slice(0, 3);
+}
+
+// Tier A/D — skor kandidat body-name (nama setelah #plan/#report). Multi-token
+// substring 100/95/…, panggilan exact 80, nama exact 70, nama-prefix 60,
+// fuzzy panggilan 40. Tie-break nama terpendek. Port legacy BODY_BEST_ROW.
+async function scoreBodyName(
+  tokens: string[],
+): Promise<{ am_id: string; nama: string; aktif: boolean; score: number; matched: string } | null> {
+  if (tokens.length === 0) return null;
+  const phrases: string[] = [];
+  const scores: number[] = [];
+  if (tokens.length >= 2) {
+    let sc = 100;
+    for (let n = tokens.length; n >= 2; n--) {
+      for (let i = 0; i + n <= tokens.length; i++) {
+        phrases.push(tokens.slice(i, i + n).join(" "));
+        scores.push(sc);
+        sc -= 5;
+      }
+    }
+  }
+  const sql = db();
+  const rows = await sql`
+    WITH toks AS (SELECT tok, ord FROM unnest(${tokens}::text[]) WITH ORDINALITY AS t(tok, ord)),
+    phr AS (
+      SELECT phrase, sc FROM unnest(${phrases.length ? phrases : [""]}::text[], ${scores.length ? scores : [0]}::int[]) AS p(phrase, sc)
+      WHERE phrase <> ''
+    ),
+    cand AS (
+      SELECT m.am_id, m.nama, m.aktif, p.sc AS s, p.phrase AS matched
+        FROM master_user m JOIN phr p ON position(lower(p.phrase) IN lower(m.nama)) > 0
+      UNION ALL
+      SELECT m.am_id, m.nama, m.aktif, 80 - (t.ord - 1) * 2, t.tok
+        FROM master_user m JOIN toks t ON lower(m.panggilan) = lower(t.tok)
+      UNION ALL
+      SELECT m.am_id, m.nama, m.aktif, 70 - (t.ord - 1) * 2, t.tok
+        FROM master_user m JOIN toks t ON lower(m.nama) = lower(t.tok)
+      UNION ALL
+      SELECT m.am_id, m.nama, m.aktif, 60 - (t.ord - 1) * 2, t.tok
+        FROM master_user m JOIN toks t ON lower(m.nama) LIKE lower(t.tok) || ' %'
+      UNION ALL
+      SELECT m.am_id, m.nama, m.aktif, 40 - (t.ord - 1) * 2, t.tok
+        FROM master_user m JOIN toks t
+          ON m.panggilan IS NOT NULL AND abs(length(m.panggilan) - length(t.tok)) <= 2
+         AND similarity(lower(m.panggilan), lower(t.tok)) >= 0.4
+    )
+    SELECT am_id, nama, aktif, s, matched FROM cand ORDER BY s DESC, length(nama) ASC LIMIT 1
+  `;
+  if (rows.length === 0) return null;
+  return {
+    am_id: String(rows[0].am_id),
+    nama: String(rows[0].nama),
+    aktif: Boolean(rows[0].aktif),
+    score: Number(rows[0].s),
+    matched: String(rows[0].matched),
+  };
+}
+
+function jidNumber(jid: string | null | undefined): string {
+  if (!jid) return "";
+  return String(jid).split("@")[0].split(":")[0];
+}
+
+// Resolver pengirim 5-tier (port legacy wrg-inbound.sh). Urutan:
+//   A. body-name override (score ≥ 70) — `#plan <nama>` menang dulu (shared-HP)
+//   B. sender phone (wa_number), hanya bila JID individu
+//   C. sender pushname (6 sub-strategi)
+//   D. body-name fuzzy (40 ≤ score < 70)
+export async function resolveSender(opts: {
+  bodyName?: string | null;
+  senderJid?: string | null;
+  pushname?: string | null;
+}): Promise<ResolvedAm | null> {
+  const tokens = bodyTokens(opts.bodyName);
+  const bb = await scoreBodyName(tokens);
+
+  // Tier A
+  if (bb && bb.score >= 70) {
+    return { am_id: bb.am_id, nama: bb.nama, aktif: bb.aktif, via: "body-name", score: bb.score };
+  }
+  // Tier B — sender phone (JID individu @s.whatsapp.net atau nomor ≤14 digit)
+  const waNum = jidNumber(opts.senderJid);
+  const norm = normalizeWa(waNum);
+  const isIndividual = String(opts.senderJid ?? "").includes("@s.whatsapp.net") || (norm.length > 0 && norm.length <= 14);
+  if (isIndividual && norm) {
+    const b = await resolveAmByWa(norm);
+    if (b) return { ...b, via: "phone" };
+  }
+  // Tier C — pushname
+  const c = await resolveAmByPushname(opts.pushname ?? "");
+  if (c) return { ...c, via: "pushname" };
+  // Tier D — body fuzzy
+  if (bb && bb.score >= 40) {
+    return { am_id: bb.am_id, nama: bb.nama, aktif: bb.aktif, via: "body-fuzzy", score: bb.score };
+  }
+  return null;
 }
 
 export interface TerritoryInput {
