@@ -4,6 +4,7 @@ import { parseAmPlan, parseAmReport } from "../parsers/am.js";
 import { sendViaWaGateway, type WaSendResult } from "../wasend.js";
 import { resolveSender } from "./master.js";
 import { upsertDailyTodo, computeIsLate } from "./todo.js";
+import { createReminder } from "./reminder.js";
 
 // Role yang pakai alur AM per-customer (sales_plan/activity_log + foto), bukan todo.
 const AM_ROLES = new Set(["AM", "Teknisi"]);
@@ -415,11 +416,23 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
       WHERE am_id = ${am.am_id} AND tanggal = ${tgl} AND photo_path IS NULL ORDER BY id
     `;
     const pendingNames = pend.map((p) => String(p.customer_name));
-    const reply = await sendViaWaGateway(
-      target,
-      buildAmReportReply(am.nama, tgl, ar.items.length, res, Number(tot.plan_total), Number(tot.reported), pendingNames),
-    );
-    return finish({ am_id: am.am_id, via: am.via, mode: "am", tanggal: tgl, matched: res.matched, unmatched: res.unmatched, reply });
+    // note: TGL ket → am_reminder (fired H-1/H oleh scheduler reminder-h/h-1).
+    let reminders = 0;
+    for (const nt of ar.notes) {
+      if (!nt.reminder_date || !nt.keterangan) continue;
+      await createReminder({
+        am_id: am.am_id,
+        am_name: am.nama,
+        reminder_date: nt.reminder_date,
+        note: nt.keterangan,
+        customer_name: nt.customer ?? undefined,
+      });
+      reminders += 1;
+    }
+    let body = buildAmReportReply(am.nama, tgl, ar.items.length, res, Number(tot.plan_total), Number(tot.reported), pendingNames);
+    if (reminders > 0) body += `\n\n📌 ${reminders} reminder dijadwalkan.`;
+    const reply = await sendViaWaGateway(target, body);
+    return finish({ am_id: am.am_id, via: am.via, mode: "am", tanggal: tgl, matched: res.matched, unmatched: res.unmatched, reminders, reply });
   }
   // report todo — cocokkan vs plan + balasan kaya (match/baru)
   const rep = await markReported(am.am_id, am.nama, tanggal, parsed.items, row.body ?? "");
