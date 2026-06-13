@@ -87,6 +87,7 @@ import {
 } from "./repo/plandash.js";
 import { salesRange, reportRevenue, reportSalesAr } from "./repo/sales.js";
 import { upsertMembers, listMembers, upsertDigests, listDigest, upsertPola, listPola, generateRekap, generateResume, type MonitorMemberInput, type DigestInput, type PolaInput } from "./repo/monitor.js";
+import { runNotifTua } from "./repo/notiftua.js";
 import {
   upsertCustomers,
   upsertBranches,
@@ -579,6 +580,20 @@ app.post("/monitor/resume/generate", async (c) => {
   const date = body.date || defaultRange().today;
   const r = await generateResume(date, body.jam || wibJam());
   return c.json(r, r.stored ? 200 : 502);
+});
+
+// Notif item TUA (port notif_tua.sh) — kirim item OUTSTANDING TUA dari resume
+// terbaru ke NOTIF_TUA_TARGET. body: {dry_run?, target?}. dry_run → payload saja.
+app.post("/notif/tua", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { dry_run?: boolean; target?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    /* body opsional */
+  }
+  const r = await runNotifTua({ dryRun: body.dry_run, target: body.target });
+  return c.json(r);
 });
 
 app.post("/monitor/pola", async (c) => {
