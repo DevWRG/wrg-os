@@ -25,6 +25,7 @@ import { runDailySummary } from "./repo/dailysummary.js";
 import { runWeeklyReport } from "./repo/weeklyreport.js";
 import { runDetectLeaveScan } from "./repo/detectleave.js";
 import { runExtractCompetitor } from "./repo/extractcompetitor.js";
+import { runWeekendBriefing } from "./repo/weekendbriefing.js";
 
 // Penjadwal agen in-process (Blueprint v2.3). Default MATI — aktif hanya bila
 // AGENT_SCHEDULE_ENABLED=true. Tiap run tetap menulis ke audit_log via repo
@@ -97,6 +98,9 @@ export function startScheduler(): ScheduleStatus {
   // extract-competitor (port extract_competitor.sh) — LLM ekstrak sebutan
   // kompetitor dari activity_log → competitor_intel. TANPA kirim WA. Harian 23:00.
   const extractCompetitorEnabled = (process.env.EXTRACT_COMPETITOR_ENABLED ?? "false").toLowerCase() === "true";
+  // weekend-briefing (port briefing_weekend.sh) — briefing direktur dari resume
+  // 7 hari, GENERATE-ONLY (simpan kind='briefing', tanpa kirim WA). Sabtu & Minggu 07:00.
+  const weekendBriefingEnabled = (process.env.WEEKEND_BRIEFING_ENABLED ?? "false").toLowerCase() === "true";
   const timezone = TZ();
   const jobs: JobDef[] = [
     {
@@ -172,12 +176,12 @@ export function startScheduler(): ScheduleStatus {
   ];
 
   status = {
-    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled,
+    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled,
     timezone,
     jobs: jobs.map((j) => ({ id: j.id, expr: j.expr, valid: cron.validate(j.expr) })),
   };
 
-  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled) {
+  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled) {
     console.log("[scheduler] semua *_SCHEDULE/_ENABLED flag != true — tidak dijadwalkan");
     return status;
   }
@@ -467,6 +471,25 @@ export function startScheduler(): ScheduleStatus {
       { timezone },
     );
     live.push(`extract-competitor=${ecExpr}`);
+  }
+
+  // weekend-briefing (port briefing_weekend.sh) — Sabtu & Minggu 07:00, generate-only.
+  const wbExpr = process.env.WEEKEND_BRIEFING_CRON ?? "0 7 * * 6,0";
+  if ((enabled || weekendBriefingEnabled) && cron.validate(wbExpr)) {
+    cron.schedule(
+      wbExpr,
+      async () => {
+        const startedAt = new Date().toISOString();
+        try {
+          const r = await runWeekendBriefing({});
+          console.log(`[scheduler] weekend-briefing @ ${startedAt} ${JSON.stringify(r).slice(0, 200)}`);
+        } catch (e) {
+          console.error(`[scheduler] weekend-briefing gagal @ ${startedAt}:`, e);
+        }
+      },
+      { timezone },
+    );
+    live.push(`weekend-briefing=${wbExpr}`);
   }
 
   console.log(`[scheduler] aktif (TZ=${timezone}): ${live.join(", ") || "(tidak ada job valid)"}`);
