@@ -1,0 +1,101 @@
+# WRG-OS Production (Phase 1: co-locate di Mac, dual-run dengan legacy).
+#
+# Beda dari docker-compose.yml (dev):
+#  • PULL image ghcr (bukan build).         • TANPA service postgres — pakai
+#    Postgres HOST (cluster lokal, DB wrg_os_prod) via host.docker.internal,
+#    satu cluster dgn wrg_crm_prod → ETL/FDW tetap jalan.
+#  • Semua flag (WA/scheduler/Accurate) ter-wire dari .env (default GATED/dry-run).
+#
+#   cp .env.prod.example .env.prod && nano .env.prod   # isi secret + DATABASE_URL
+#   docker login ghcr.io                                # PAT (package privat)
+#   docker compose -f docker-compose.prod.yml --env-file .env.prod pull
+#   docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
+#
+# Akses: web :3000 (taruh di belakang Caddy/Tailscale utk TLS). Legacy
+# (8090-8092) TIDAK disentuh. WA kirim/inbound lewat wa-bridge HOST (lihat
+# infra/wa-bridge/), bukan container.
+#
+# Prasyarat Postgres HOST: listen_addresses + pg_hba mengizinkan koneksi TCP
+# dari subnet docker bridge dgn role berpassword (lihat infra/wa-bridge/README
+# / docs/CUTOVER.md). DATABASE_URL di .env.prod menunjuk host.docker.internal.
+
+name: wrg-os-prod
+
+networks:
+  wrg-internal:
+    driver: bridge
+
+services:
+  ai:
+    image: ghcr.io/devwrg/wrg-ai:${WRG_IMAGE_TAG:-latest}
+    container_name: wrg-prod-ai
+    restart: unless-stopped
+    networks: [wrg-internal]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      PORT: "8000"
+    ports:
+      - "127.0.0.1:8000:8000"
+
+  api:
+    image: ghcr.io/devwrg/wrg-api:${WRG_IMAGE_TAG:-latest}
+    container_name: wrg-prod-api
+    restart: unless-stopped
+    networks: [wrg-internal]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      ai:
+        condition: service_started
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      AI_URL: http://ai:8000
+      PORT: "4000"
+      # Auth (WAJIB di prod).
+      AUTH_ENABLED: ${AUTH_ENABLED:-true}
+      JWT_SECRET: ${JWT_SECRET}
+      API_SERVICE_TOKEN: ${API_SERVICE_TOKEN}
+      # Scheduler agen + cron monitor/accurate (default OFF — nyalakan saat cutover).
+      AGENT_SCHEDULE_ENABLED: ${AGENT_SCHEDULE_ENABLED:-false}
+      AGENT_CRON_TZ: ${AGENT_CRON_TZ:-Asia/Jakarta}
+      AI_DRY_RUN: ${AI_DRY_RUN:-false}
+      MONITOR_REKAP_CRON: ${MONITOR_REKAP_CRON:-0 7,12,17,22 * * *}
+      MONITOR_RESUME_CRON: ${MONITOR_RESUME_CRON:-0 14 * * *}
+      MONITOR_RESUME2_CRON: ${MONITOR_RESUME2_CRON:-10 22 * * *}
+      # WA: kirim lewat wa-bridge HOST. DRY-RUN default true (tak kirim live).
+      WA_WEBHOOK_SECRET: ${WA_WEBHOOK_SECRET:-}
+      WA_SEND_URL: ${WA_SEND_URL:-}
+      WA_SEND_SECRET: ${WA_SEND_SECRET:-}
+      WA_DRY_RUN: ${WA_DRY_RUN:-true}
+      WA_TEST_TARGET: ${WA_TEST_TARGET:-}
+      WA_INBOUND_PROCESS: ${WA_INBOUND_PROCESS:-false}
+      WA_INBOUND_GROUPS: ${WA_INBOUND_GROUPS:-}
+      REMINDER_WA_TARGET: ${REMINDER_WA_TARGET:-}
+      HOD_WA_TARGET: ${HOD_WA_TARGET:-}
+      # Accurate puller.
+      ACCURATE_WEBHOOK_SECRET: ${ACCURATE_WEBHOOK_SECRET:-}
+      ACCURATE_ACCESS_TOKEN: ${ACCURATE_ACCESS_TOKEN:-}
+      ACCURATE_SIGNATURE_SECRET: ${ACCURATE_SIGNATURE_SECRET:-}
+      ACCURATE_HOST: ${ACCURATE_HOST:-zeus.accurate.id}
+      ACCURATE_SYNC_CRON: ${ACCURATE_SYNC_CRON:-0 10,12,14,16,18,20 * * 1-5}
+    ports:
+      - "127.0.0.1:4000:4000"
+
+  web:
+    image: ghcr.io/devwrg/wrg-web:${WRG_IMAGE_TAG:-latest}
+    container_name: wrg-prod-web
+    restart: unless-stopped
+    networks: [wrg-internal]
+    depends_on:
+      api:
+        condition: service_started
+    environment:
+      API_URL: http://api:4000
+      AUTH_ENABLED: ${AUTH_ENABLED:-true}
+      API_SERVICE_TOKEN: ${API_SERVICE_TOKEN}
+      NODE_ENV: production
+    ports:
+      - "127.0.0.1:3000:3000"
