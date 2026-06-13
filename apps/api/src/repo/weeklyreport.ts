@@ -116,8 +116,9 @@ export async function runWeeklyReport(
   const kpi = await computeWeeklyKpi(period.from, period.to);
   const payload = buildMessage(kpi);
 
-  // Arsip ke monitor_digest (kind='weekly', waktu=periode-to).
-  await upsertDigests([{ kind: "weekly", tanggal: period.to, waktu: period.from, content: payload, source_file: "generated" }]);
+  // Arsip ke monitor_digest (kind='weekly', tanggal=periode-to jadi kunci minggu;
+  // waktu kolom varchar(8) → pakai placeholder pendek, periode lengkap ada di content).
+  await upsertDigests([{ kind: "weekly", tanggal: period.to, waktu: "00:00", content: payload, source_file: "generated" }]);
 
   if (opts.dryRun) return { sent: false, from: period.from, to: period.to, dryRun: true, to_target: target, payload };
   const g = await sendViaWaGateway(target, payload);
