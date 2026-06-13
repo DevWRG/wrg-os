@@ -22,6 +22,7 @@ import { syncAccurateInvoices } from "./repo/accurateSync.js";
 import { runPlanCheck, runReportCheck } from "./repo/compliance.js";
 import { runNotifTua } from "./repo/notiftua.js";
 import { runDailySummary } from "./repo/dailysummary.js";
+import { runWeeklyReport } from "./repo/weeklyreport.js";
 
 // Penjadwal agen in-process (Blueprint v2.3). Default MATI — aktif hanya bila
 // AGENT_SCHEDULE_ENABLED=true. Tiap run tetap menulis ke audit_log via repo
@@ -86,6 +87,8 @@ export function startScheduler(): ScheduleStatus {
   // daily-summary (port wrg-daily.sh daily_summary) — KIRIM ringkasan harian AI
   // ke grup HOD Squad, 22:00 hari kerja. Nyala sendiri via flag.
   const dailySummaryEnabled = (process.env.DAILY_SUMMARY_ENABLED ?? "false").toLowerCase() === "true";
+  // weekly-report (port cron_weekly_report.sh) — KPI mingguan ke HOD Squad, Senin 07:00.
+  const weeklyReportEnabled = (process.env.WEEKLY_REPORT_ENABLED ?? "false").toLowerCase() === "true";
   const timezone = TZ();
   const jobs: JobDef[] = [
     {
@@ -161,13 +164,13 @@ export function startScheduler(): ScheduleStatus {
   ];
 
   status = {
-    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled,
+    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || weeklyReportEnabled,
     timezone,
     jobs: jobs.map((j) => ({ id: j.id, expr: j.expr, valid: cron.validate(j.expr) })),
   };
 
-  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled) {
-    console.log("[scheduler] AGENT_/REMINDER_/ACCURATE_/MONITOR_/NOTIF_TUA_/DAILY_SUMMARY_ENABLED != true — tidak dijadwalkan");
+  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !weeklyReportEnabled) {
+    console.log("[scheduler] AGENT_/REMINDER_/ACCURATE_/MONITOR_/NOTIF_TUA_/DAILY_SUMMARY_/WEEKLY_REPORT_ENABLED != true — tidak dijadwalkan");
     return status;
   }
   if (!isDbEnabled()) {
@@ -396,6 +399,26 @@ export function startScheduler(): ScheduleStatus {
       { timezone },
     );
     live.push(`daily-summary=${dsExpr}`);
+  }
+
+  // weekly-report (port cron_weekly_report.sh) — KPI minggu kerja lalu ke HOD
+  // Squad, Senin 07:00. Tanpa skip workday (Senin pagi merangkum minggu lalu).
+  const wrExpr = process.env.WEEKLY_REPORT_CRON ?? "0 7 * * 1";
+  if ((enabled || weeklyReportEnabled) && cron.validate(wrExpr)) {
+    cron.schedule(
+      wrExpr,
+      async () => {
+        const startedAt = new Date().toISOString();
+        try {
+          const r = await runWeeklyReport({});
+          console.log(`[scheduler] weekly-report @ ${startedAt} ${JSON.stringify(r).slice(0, 200)}`);
+        } catch (e) {
+          console.error(`[scheduler] weekly-report gagal @ ${startedAt}:`, e);
+        }
+      },
+      { timezone },
+    );
+    live.push(`weekly-report=${wrExpr}`);
   }
 
   console.log(`[scheduler] aktif (TZ=${timezone}): ${live.join(", ") || "(tidak ada job valid)"}`);

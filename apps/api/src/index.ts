@@ -89,6 +89,7 @@ import { salesRange, reportRevenue, reportSalesAr } from "./repo/sales.js";
 import { upsertMembers, listMembers, upsertDigests, listDigest, upsertPola, listPola, generateRekap, generateResume, type MonitorMemberInput, type DigestInput, type PolaInput } from "./repo/monitor.js";
 import { runNotifTua } from "./repo/notiftua.js";
 import { runDailySummary } from "./repo/dailysummary.js";
+import { runWeeklyReport } from "./repo/weeklyreport.js";
 import {
   upsertCustomers,
   upsertBranches,
@@ -608,6 +609,20 @@ app.post("/daily-summary/run", async (c) => {
     /* body opsional */
   }
   const r = await runDailySummary({ dryRun: body.dry_run, target: body.target });
+  return c.json(r);
+});
+
+// Weekly Report (port cron_weekly_report.sh) — KPI minggu kerja lalu ke grup.
+// body: {dry_run?, target?, from?, to?}. dry_run → susun + simpan, TANPA kirim.
+app.post("/weekly-report/run", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { dry_run?: boolean; target?: string; from?: string; to?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    /* body opsional */
+  }
+  const r = await runWeeklyReport({ dryRun: body.dry_run, target: body.target, from: body.from, to: body.to });
   return c.json(r);
 });
 
