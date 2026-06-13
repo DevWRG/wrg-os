@@ -1,3 +1,4 @@
+import json
 import os
 
 from fastapi import FastAPI
@@ -30,6 +31,8 @@ from .schemas import (
     ExecSynthesisResponse,
     ExtractRequest,
     ExtractResponse,
+    LeaveDetectRequest,
+    LeaveDetectResponse,
     RekapRequest,
     RekapResponse,
     ResumeRequest,
@@ -341,4 +344,60 @@ def executive_synthesis(req: ExecSynthesisRequest) -> ExecSynthesisResponse:
     return ExecSynthesisResponse(
         briefing=text, model=model_used,
         dry_run=not use_llm or model_used == "dry-run-fallback",
+    )
+
+
+# === detect_leave: deteksi izin/sakit/cuti individual dari grup HRD ===
+LEAVE_SYSTEM_PROMPT = """You parse a single WhatsApp message from an Indonesian company HR group and decide if it announces that a SPECIFIC employee will be ABSENT from work (izin/sakit/cuti).
+
+CRITICAL: the word "izin"/"ijin" is usually just a POLITENESS particle in Indonesian business chat ("izin bertanya", "izin mengingatkan", "izin update", "mohon izin untuk...") — those are NOT leave. Only treat as leave when the message clearly says a named person will NOT come to work / tidak masuk kerja / tidak bisa masuk / sedang sakit / mengajukan cuti.
+
+Also: ignore COMPANY-WIDE holiday announcements (libur nasional, Idul Adha, cuti bersama) — those are not individual leave. Ignore third-party mentions that are not a real absence.
+
+The input gives "Pengirim" (sender display name) and "Pesan" (body). If the message is first-person ("saya tidak masuk"...) and no other name appears, the absent person IS the sender — use the sender name. If the body forwards/quotes someone or names a person ("pengajuan cuti mba Kolis"), use THAT person.
+
+Message date (for resolving "hari ini"/"besok"): {msgdate}
+
+Return STRICT JSON (no markdown):
+{"is_leave": true|false, "nama": "name of the ABSENT employee, or null", "jenis": "ijin"|"sakit"|"cuti"|null, "start_date": "YYYY-MM-DD" or null, "end_date": "YYYY-MM-DD" or null, "confidence": 0.0-1.0}
+Rules: end_date = start_date if single day. If date unclear, use message date. confidence < 0.6 if unsure. Output JSON only."""
+
+
+@app.post("/detect-leave", response_model=LeaveDetectResponse)
+def detect_leave(req: LeaveDetectRequest) -> LeaveDetectResponse:
+    """Ekstrak pengumuman izin/sakit/cuti dari satu pesan grup HRD via LLM.
+
+    dry_run / tanpa OPENROUTER_API_KEY → is_leave=False (tak bisa deteksi tanpa LLM).
+    """
+    if req.dry_run or not os.environ.get("OPENROUTER_API_KEY"):
+        return LeaveDetectResponse(is_leave=False, model="dry-run", dry_run=True)
+    system = LEAVE_SYSTEM_PROMPT.replace("{msgdate}", req.msgdate)
+    user_msg = f"Pengirim: {req.sender or '?'}\nPesan:\n{req.body}"
+    text, model, _, _ = chat_or_fallback(system, user_msg, "", max_tokens=500)
+    if not text:
+        return LeaveDetectResponse(is_leave=False, model=model, dry_run=model == "dry-run-fallback")
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        cleaned = "\n".join(ln for ln in cleaned.splitlines() if not ln.strip().startswith("```"))
+    cleaned = cleaned.strip()
+    if cleaned.lower().startswith("json"):
+        cleaned = cleaned[4:].strip()
+    try:
+        d = json.loads(cleaned)
+    except (ValueError, TypeError):
+        return LeaveDetectResponse(is_leave=False, model=model, dry_run=model == "dry-run-fallback")
+    jenis = (d.get("jenis") or "").lower() or None
+    if jenis == "izin":
+        jenis = "ijin"
+    if jenis not in (None, "ijin", "sakit", "cuti"):
+        jenis = "ijin"
+    return LeaveDetectResponse(
+        is_leave=bool(d.get("is_leave")),
+        nama=(d.get("nama") or None),
+        jenis=jenis,
+        start_date=(d.get("start_date") or None),
+        end_date=(d.get("end_date") or None),
+        confidence=float(d.get("confidence") or 0.0),
+        model=model,
+        dry_run=model == "dry-run-fallback",
     )
