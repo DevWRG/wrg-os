@@ -27,6 +27,7 @@ import { runDetectLeaveScan } from "./repo/detectleave.js";
 import { runExtractCompetitor } from "./repo/extractcompetitor.js";
 import { runWeekendBriefing } from "./repo/weekendbriefing.js";
 import { runPolaKomunikasi } from "./repo/polakomunikasi.js";
+import { runRefreshMembers } from "./repo/listmembers.js";
 
 // Penjadwal agen in-process (Blueprint v2.3). Default MATI — aktif hanya bila
 // AGENT_SCHEDULE_ENABLED=true. Tiap run tetap menulis ke audit_log via repo
@@ -105,6 +106,9 @@ export function startScheduler(): ScheduleStatus {
   // pola-komunikasi (port pola_komunikasi.sh) — profil pola per-grup, GENERATE-ONLY
   // (isi monitor_pola.content, feeds weekend-briefing), nightly 23:30.
   const polaEnabled = (process.env.POLA_ENABLED ?? "false").toLowerCase() === "true";
+  // list-members (port list_members.sh, versi pragmatis) — sync roster master_user
+  // → monitor_member. Tanpa WA/LLM. Harian 22:30.
+  const listMembersEnabled = (process.env.LIST_MEMBERS_ENABLED ?? "false").toLowerCase() === "true";
   const timezone = TZ();
   const jobs: JobDef[] = [
     {
@@ -180,12 +184,12 @@ export function startScheduler(): ScheduleStatus {
   ];
 
   status = {
-    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled,
+    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled,
     timezone,
     jobs: jobs.map((j) => ({ id: j.id, expr: j.expr, valid: cron.validate(j.expr) })),
   };
 
-  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled) {
+  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled) {
     console.log("[scheduler] semua *_SCHEDULE/_ENABLED flag != true — tidak dijadwalkan");
     return status;
   }
@@ -513,6 +517,25 @@ export function startScheduler(): ScheduleStatus {
       { timezone },
     );
     live.push(`pola-komunikasi=${polaExpr}`);
+  }
+
+  // list-members (port list_members.sh, pragmatis) — sync roster → monitor_member, harian 22:30.
+  const lmExpr = process.env.LIST_MEMBERS_CRON ?? "30 22 * * *";
+  if ((enabled || listMembersEnabled) && cron.validate(lmExpr)) {
+    cron.schedule(
+      lmExpr,
+      async () => {
+        const startedAt = new Date().toISOString();
+        try {
+          const r = await runRefreshMembers({});
+          console.log(`[scheduler] list-members @ ${startedAt} ${JSON.stringify(r).slice(0, 200)}`);
+        } catch (e) {
+          console.error(`[scheduler] list-members gagal @ ${startedAt}:`, e);
+        }
+      },
+      { timezone },
+    );
+    live.push(`list-members=${lmExpr}`);
   }
 
   console.log(`[scheduler] aktif (TZ=${timezone}): ${live.join(", ") || "(tidak ada job valid)"}`);
