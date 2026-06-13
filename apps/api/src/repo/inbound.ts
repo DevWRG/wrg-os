@@ -56,24 +56,83 @@ export interface WaRow {
 
 // #REPORT → tandai sales_todo hari itu reported + simpan report_data. Buat baris
 // bila plan hari itu belum ada (report tanpa plan).
+const REPORT_AUTO_MATCH = 0.7;
+
+interface ReportOutcome {
+  n: number;
+  matched: number;
+  baru: number;
+  newItems: string[];
+  planExists: boolean;
+}
+
+// #REPORT → cocokkan tiap item report vs item #PLAN hari itu (pg_trgm
+// GREATEST(similarity, word_similarity(plan,report)) ≥ 0.70 = matched, port
+// legacy). Simpan report_data + tandai reported. Return breakdown utk balasan.
 async function markReported(
   amId: string,
   amName: string | null,
   tanggal: string,
   items: string[],
   rawBody: string,
-): Promise<void> {
+): Promise<ReportOutcome> {
   const sql = db();
+  const [plan] = await sql`
+    SELECT items FROM sales_todo WHERE am_id = ${amId} AND tanggal = ${tanggal}
+    ORDER BY submitted_at DESC NULLS LAST LIMIT 1
+  `;
+  const planItems: string[] = Array.isArray(plan?.items) ? (plan.items as string[]) : [];
+  const planArr = planItems.length ? planItems : [""];
+
+  const scored = items.length
+    ? await sql`
+        SELECT r.item AS task,
+          COALESCE((
+            SELECT max(greatest(similarity(r.item, p.item), word_similarity(p.item, r.item)))
+            FROM unnest(${planArr}::text[]) p(item) WHERE p.item <> ''
+          ), 0) AS score
+        FROM unnest(${items}::text[]) WITH ORDINALITY r(item, ord)
+        ORDER BY r.ord
+      `
+    : [];
+  const rd = scored.map((r) => ({
+    task: String(r.task),
+    score: Number(r.score),
+    matched: Number(r.score) >= REPORT_AUTO_MATCH,
+  }));
+  const matched = rd.filter((x) => x.matched).length;
+  const newItems = rd.filter((x) => !x.matched).map((x) => x.task);
+
   await sql`
     INSERT INTO sales_todo (am_id, am_name, tanggal, items, raw_body, reported, reported_at, report_data)
     VALUES (${amId}, ${amName}, ${tanggal},
             ${sql.json(items as unknown as Parameters<typeof sql.json>[0])}, ${rawBody},
-            true, now(), ${sql.json({ items } as unknown as Parameters<typeof sql.json>[0])})
+            true, now(), ${sql.json(rd as unknown as Parameters<typeof sql.json>[0])})
     ON CONFLICT (am_id, tanggal) DO UPDATE SET
       reported = true, reported_at = now(),
-      report_data = ${sql.json({ items } as unknown as Parameters<typeof sql.json>[0])},
+      report_data = ${sql.json(rd as unknown as Parameters<typeof sql.json>[0])},
       am_name = COALESCE(EXCLUDED.am_name, sales_todo.am_name)
   `;
+  return { n: items.length, matched, baru: newItems.length, newItems, planExists: !!plan };
+}
+
+const WD = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const MO = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+function fmtTanggalDisplay(tanggal: string): string {
+  const d = new Date(`${tanggal.slice(0, 10)}T12:00:00Z`);
+  if (Number.isNaN(d.getTime())) return tanggal;
+  return `${WD[d.getUTCDay()]}, ${d.getUTCDate()} ${MO[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
+}
+
+function buildReportReply(nama: string, tanggal: string, r: ReportOutcome): string {
+  let s = `✅ Report tercatat, ${nama}\n\n📅 ${fmtTanggalDisplay(tanggal)}\n🗒️ ${r.n} tasklist reported\n🎯 Match plan: ${r.matched} ✓`;
+  if (r.baru > 0) s += `  ⚠️ Baru : ${r.baru}`;
+  if (r.baru > 0) {
+    s += `\n━━━━━━━━━━━━━━━━━━━━`;
+    for (const it of r.newItems) s += `\n  ⚠️ ${it}`;
+  }
+  if (!r.planExists) s += `\n⚠️ Tidak ada #PLAN hari ini untuk match.`;
+  return s;
 }
 
 // Proses SATU pesan; selalu tandai processed_at (idempoten). Pengirim tak dikenal
@@ -139,13 +198,10 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
     return finish({ am_id: am.am_id, via: am.via, tanggal, total_items: r.total_items, todo_id: r.id, reply });
   }
 
-  // report
-  await markReported(am.am_id, am.nama, tanggal, parsed.items, row.body ?? "");
-  const reply = await sendViaWaGateway(
-    target,
-    `✅ Report tercatat, ${am.nama} — ${parsed.itemCount} item — ${tanggal}`,
-  );
-  return finish({ am_id: am.am_id, via: am.via, tanggal, items: parsed.itemCount, reply });
+  // report — cocokkan vs plan + balasan kaya (match/baru)
+  const rep = await markReported(am.am_id, am.nama, tanggal, parsed.items, row.body ?? "");
+  const reply = await sendViaWaGateway(target, buildReportReply(am.nama, tanggal, rep));
+  return finish({ am_id: am.am_id, via: am.via, tanggal, items: rep.n, matched: rep.matched, baru: rep.baru, reply });
 }
 
 // Proses batch pesan wa_message yang belum diproses & mengandung hashtag.
