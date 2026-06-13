@@ -46,7 +46,7 @@ export async function upsertMembers(rows: MonitorMemberInput[]): Promise<number>
 
 // ── Digest (rekap / resume) ──
 export interface DigestInput {
-  kind: "rekap" | "resume" | "daily" | "weekly";
+  kind: "rekap" | "resume" | "daily" | "weekly" | "briefing";
   tanggal: string;
   waktu?: string | null;
   content: string;
@@ -75,7 +75,7 @@ export async function upsertDigests(rows: DigestInput[]): Promise<number> {
 
 // ── Generate (pipeline AI, generate-only — TIDAK mengirim WA) ──
 // Baca wa_message tanggal tsb → services/ai POST /rekap → simpan monitor_digest.
-async function memberGroupMaps() {
+export async function memberGroupMaps() {
   const sql = db();
   const mem = await sql`SELECT phone, COALESCE(panggilan, nama) AS nm FROM monitor_member WHERE COALESCE(panggilan, nama) IS NOT NULL`;
   const grp = await sql`SELECT group_jid, group_name FROM monitor_pola WHERE group_name IS NOT NULL`;
