@@ -1,39 +1,39 @@
 import { db } from "../db.js";
-import { parsePlan } from "../parsers/plan.js";
-import { parseReport } from "../parsers/report.js";
+import { detectDaily, parseDaily } from "../parsers/dailyplan.js";
 import { sendViaWaGateway, type WaSendResult } from "../wasend.js";
 import { resolveAmByWa, resolveAmByPushname } from "./master.js";
 import { upsertDailyTodo } from "./todo.js";
-import { upsertDealsFromPlan, logReportToDeals } from "./deal.js";
 
 // Pemrosesan inbound WA (#PLAN/#REPORT/#LEADS/#UPDATE) — pengganti legacy
-// wrg-inbound.sh. Alur: resolve pengirim → parse → persist (sales_plan /
-// sales_todo / activity_log + deal) → balas grup via gateway WA.
+// wrg-inbound.sh. Format NYATA tim (lihat parsers/dailyplan.ts): #plan/#report
+// + nama + daftar bernomor (TODO harian). Alur: resolve pengirim → parse →
+// sales_todo → balas grup.
 //
-// GATED: hanya jalan bila WA_INBOUND_PROCESS=true. Balasan lewat sendViaWaGateway
-// → patuh WA_DRY_RUN (default dry-run, tidak kirim live). Idempoten: tiap
-// wa_message ditandai processed_at setelah diproses (tak diproses ulang).
-//
-// Belum diport (butuh infra/metadata gateway): geotag foto, OCR caption, link
-// foto→visit, handler #LEADS/#UPDATE (saat ini dibalas "belum tersedia").
+// GATED: hanya jalan bila WA_INBOUND_PROCESS=true. Balasan via sendViaWaGateway
+// → patuh WA_DRY_RUN. Idempoten: wa_message.processed_at. Pengirim tak dikenal →
+// SILENT (tak balas) supaya tak spam non-AM/pesan bot di grup campuran.
 
 export type InboundKind = "plan" | "report" | "leads" | "update" | "none";
 
-const HASHTAG = /#(plan|report|leads|update)\b/i;
+const LEADS_UPDATE_LINE = /^\s*#\s*(leads|update)\b/i;
 
 export function detectKind(body: string | null): InboundKind {
-  if (!body) return "none";
-  const m = body.match(HASHTAG);
-  return m ? (m[1].toLowerCase() as InboundKind) : "none";
+  const daily = detectDaily(body); // line-anchored #plan/#report
+  if (daily) return daily;
+  if (body) {
+    for (const line of body.split(/\r?\n/)) {
+      const m = line.match(LEADS_UPDATE_LINE);
+      if (m) return m[1].toLowerCase() as "leads" | "update";
+    }
+  }
+  return "none";
 }
 
 export function isInboundEnabled(): boolean {
   return (process.env.WA_INBOUND_PROCESS ?? "false").toLowerCase() === "true";
 }
 
-const wibNow = (): Date => new Date(Date.now() + 7 * 3600 * 1000);
-const wibDate = (): string => wibNow().toISOString().slice(0, 10);
-const wibWall = (): string => wibNow().toISOString().slice(0, 16); // YYYY-MM-DDTHH:MM
+const wibDate = (): string => new Date(Date.now() + 7 * 3600 * 1000).toISOString().slice(0, 10);
 
 function allowedGroups(): string[] {
   return (process.env.WA_INBOUND_GROUPS ?? "").split(",").map((s) => s.trim()).filter(Boolean);
@@ -54,80 +54,35 @@ export interface WaRow {
   received_at: string;
 }
 
-// ── writer: sales_plan (satu baris per customer, seq per am/tanggal) ──
-async function insertSalesPlan(
-  amId: string,
-  tanggal: string,
-  customers: { customer: string; tujuan: string; goal: string }[],
-  isLate: boolean,
-): Promise<number[]> {
-  const sql = db();
-  const [{ maxseq }] = await sql`
-    SELECT COALESCE(max(seq), 0) AS maxseq FROM sales_plan WHERE am_id = ${amId} AND tanggal = ${tanggal}
-  `;
-  let seq = Number(maxseq);
-  const ids: number[] = [];
-  for (const c of customers) {
-    seq += 1;
-    const rows = await sql`
-      INSERT INTO sales_plan (am_id, tanggal, customer_name, tujuan, goal, seq, is_late_plan, submitted_at)
-      VALUES (${amId}, ${tanggal}, ${c.customer}, ${c.tujuan || null}, ${c.goal || null},
-              ${seq}, ${isLate}, now())
-      RETURNING id
-    `;
-    ids.push(Number(rows[0].id));
-  }
-  return ids;
-}
-
-// ── writer: activity_log (satu baris per item report) + tandai plan reported ──
-async function insertActivities(
-  amId: string,
-  tanggal: string,
-  items: { customer: string; hasil: string; next_action: string }[],
-  messageId: string | null,
-): Promise<{ matched: number; ids: number[] }> {
-  const sql = db();
-  const ids: number[] = [];
-  let matched = 0;
-  for (const it of items) {
-    // Fuzzy-match ke sales_plan customer hari itu (pg_trgm; sama spt logReportToDeals).
-    const cands = await sql`
-      SELECT id, similarity(customer_name, ${it.customer}) AS score
-      FROM sales_plan
-      WHERE am_id = ${amId} AND tanggal = ${tanggal}
-        AND similarity(customer_name, ${it.customer}) > 0.3
-      ORDER BY score DESC LIMIT 1
-    `;
-    const planId = cands[0] ? Number(cands[0].id) : null;
-    const score = cands[0] ? Number(cands[0].score) : null;
-    const rows = await sql`
-      INSERT INTO activity_log
-        (am_id, plan_id, tanggal, customer_name, hasil, next_action, source, is_unmatched, match_score, message_id)
-      VALUES
-        (${amId}, ${planId}, ${tanggal}, ${it.customer}, ${it.hasil || null}, ${it.next_action || null},
-         'wa-inbound', ${planId === null}, ${score}, ${messageId})
-      RETURNING id
-    `;
-    const actId = Number(rows[0].id);
-    ids.push(actId);
-    if (planId !== null) {
-      matched += 1;
-      await sql`
-        UPDATE sales_plan SET reported = true, reported_at = now(), activity_id = ${actId}
-        WHERE id = ${planId} AND reported = false
-      `;
-    }
-  }
-  return { matched, ids };
-}
-
 function senderWaFromJid(jid: string | null): string {
   if (!jid) return "";
   return jid.split("@")[0].split(":")[0];
 }
 
-// Proses SATU pesan; selalu tandai processed_at (idempoten). Mengembalikan ringkasan.
+// #REPORT → tandai sales_todo hari itu reported + simpan report_data. Buat baris
+// bila plan hari itu belum ada (report tanpa plan).
+async function markReported(
+  amId: string,
+  amName: string | null,
+  tanggal: string,
+  items: string[],
+  rawBody: string,
+): Promise<void> {
+  const sql = db();
+  await sql`
+    INSERT INTO sales_todo (am_id, am_name, tanggal, items, raw_body, reported, reported_at, report_data)
+    VALUES (${amId}, ${amName}, ${tanggal},
+            ${sql.json(items as unknown as Parameters<typeof sql.json>[0])}, ${rawBody},
+            true, now(), ${sql.json({ items } as unknown as Parameters<typeof sql.json>[0])})
+    ON CONFLICT (am_id, tanggal) DO UPDATE SET
+      reported = true, reported_at = now(),
+      report_data = ${sql.json({ items } as unknown as Parameters<typeof sql.json>[0])},
+      am_name = COALESCE(EXCLUDED.am_name, sales_todo.am_name)
+  `;
+}
+
+// Proses SATU pesan; selalu tandai processed_at (idempoten). Pengirim tak dikenal
+// / non-submission → SILENT.
 export async function processInboundMessage(row: WaRow): Promise<Record<string, unknown>> {
   const sql = db();
   const kind = detectKind(row.body);
@@ -142,79 +97,54 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
 
   if (kind === "none") return finish({ skipped: "no-hashtag" });
 
-  // Resolve pengirim: coba via nomor (pesan direct/individu), lalu fallback
-  // pushname (pesan GRUP — capture openclaw taruh JID grup di sender, bukan nomor).
   const am =
     (await resolveAmByWa(senderWaFromJid(row.sender_jid))) ??
     (await resolveAmByPushname(row.sender_name ?? ""));
+  // Pengirim tak dikenal / nonaktif → SILENT (tak balas).
+  if (!am) return finish({ skipped: "unknown-sender", sender_name: row.sender_name });
+  if (!am.aktif) return finish({ skipped: "inactive", am_id: am.am_id });
+
   const target = row.group_jid;
-  if (!am) {
-    const reply = await sendViaWaGateway(target, "❌ Nomor kamu belum terdaftar di sistem WRG OS. Hubungi admin.");
-    return finish({ error: "unknown-sender", reply });
-  }
-  if (!am.aktif) {
-    const reply = await sendViaWaGateway(target, "❌ Akun kamu sedang nonaktif. Hubungi admin.");
-    return finish({ error: "inactive", reply });
-  }
 
   if (kind === "leads" || kind === "update") {
     const reply = await sendViaWaGateway(target, `ℹ️ #${kind.toUpperCase()} belum tersedia di wrg-os (menyusul).`);
     return finish({ note: "not-implemented", reply });
   }
 
+  // plan | report (format daily-todo nyata)
+  const parsed = parseDaily(row.body ?? "");
+  if (!parsed || parsed.itemCount === 0) {
+    // submission terdeteksi tapi tak ada item → kemungkinan salah format (hint).
+    const reply = await sendViaWaGateway(
+      target,
+      `⚠️ ${kind === "plan" ? "Plan" : "Report"} terdeteksi tapi item kosong, ${am.nama}. Pakai daftar bernomor (1. 2. 3. …).`,
+    );
+    return finish({ error: "empty-items", reply });
+  }
+  const tanggal = parsed.tanggal ?? wibDate();
+
   if (kind === "plan") {
-    const parsed = parsePlan(row.body ?? "", { now: wibWall() });
-    if (parsed.errors.length > 0 || parsed.customers.length === 0) {
-      const reply = await sendViaWaGateway(
-        target,
-        `⚠️ Plan gagal diproses: ${parsed.errors.join("; ") || "format tidak dikenali"}`,
-      );
-      return finish({ error: "parse", errors: parsed.errors, reply });
-    }
-    const tanggal = parsed.tanggal ?? wibDate();
-    const planIds = await insertSalesPlan(am.am_id, tanggal, parsed.customers, parsed.is_late ?? false);
-    await upsertDailyTodo({
+    const r = await upsertDailyTodo({
       am_id: am.am_id,
       am_name: am.nama,
       tanggal,
-      items: parsed.customers.map((c) => `${c.customer} — ${c.tujuan}`.trim()),
+      items: parsed.items,
       raw_body: row.body ?? undefined,
-      is_late_plan: parsed.is_late ?? undefined,
     });
-    let deals = 0;
-    try {
-      deals = (await upsertDealsFromPlan(am.am_id, parsed.customers)).length;
-    } catch {
-      /* pipeline deal opsional — tak fatal utk pencatatan plan */
-    }
     const reply = await sendViaWaGateway(
       target,
-      `✅ Plan tercatat, ${am.nama} — ${parsed.customers.length} customer — ${tanggal}`,
+      `✅ Plan tercatat, ${am.nama} — ${r.total_items} item — ${tanggal}${r.is_late_plan ? " (telat)" : ""}`,
     );
-    return finish({ am_id: am.am_id, tanggal, plan_ids: planIds, deals, reply });
+    return finish({ am_id: am.am_id, tanggal, total_items: r.total_items, todo_id: r.id, reply });
   }
 
-  // kind === "report"
-  const parsed = parseReport(row.body ?? "");
-  if (parsed.errors.length > 0 || parsed.items.length === 0) {
-    const reply = await sendViaWaGateway(
-      target,
-      `⚠️ Report gagal diproses: ${parsed.errors.join("; ") || "format tidak dikenali"}`,
-    );
-    return finish({ error: "parse", errors: parsed.errors, reply });
-  }
-  const tanggal = parsed.tanggal ?? wibDate();
-  const act = await insertActivities(am.am_id, tanggal, parsed.items, row.message_id);
-  try {
-    await logReportToDeals(am.am_id, parsed.items);
-  } catch {
-    /* pipeline deal opsional */
-  }
+  // report
+  await markReported(am.am_id, am.nama, tanggal, parsed.items, row.body ?? "");
   const reply = await sendViaWaGateway(
     target,
-    `✅ Report tercatat, ${am.nama} — ${parsed.items.length} item (${act.matched} match ke plan) — ${tanggal}`,
+    `✅ Report tercatat, ${am.nama} — ${parsed.itemCount} item — ${tanggal}`,
   );
-  return finish({ am_id: am.am_id, tanggal, activity_ids: act.ids, matched: act.matched, reply });
+  return finish({ am_id: am.am_id, tanggal, items: parsed.itemCount, reply });
 }
 
 // Proses batch pesan wa_message yang belum diproses & mengandung hashtag.
@@ -228,7 +158,7 @@ export async function processUnprocessed(
   const rows = await sql`
     SELECT id::text, group_jid, sender_jid, sender_name, body, message_type, message_id, received_at::text
     FROM wa_message
-    WHERE processed_at IS NULL AND body ~* '#(plan|report|leads|update)'
+    WHERE processed_at IS NULL AND body ~* '#\\s*(plan|report|leads|update)'
     ORDER BY received_at ASC LIMIT ${limit}
   `;
   const results: Record<string, unknown>[] = [];
