@@ -1,4 +1,5 @@
 import json
+from typing import Optional
 import os
 
 from fastapi import FastAPI
@@ -43,7 +44,10 @@ from .schemas import (
     SalesDocRequest,
     SalesDocResponse,
     SummarizeRequest,
+    WeekendBriefingRequest,
+    WeekendBriefingResponse,
 )
+from .executive import NAMA_PERUSAHAAN
 
 # System prompt stabil (cache-friendly) — port dari legacy/crm wrg-daily SKILL.md.
 DAILY_SYSTEM_PROMPT = """Kamu adalah WRG CRM Daily Summary Generator.
@@ -461,3 +465,90 @@ def extract_competitor(req: CompetitorExtractRequest) -> CompetitorExtractRespon
             konteks=(m.get("konteks") or None),
         ))
     return CompetitorExtractResponse(mentions=mentions, model=model, dry_run=model == "dry-run-fallback")
+
+
+# === briefing_weekend: briefing direktur akhir pekan (port briefing_weekend.sh) ===
+WEEKEND_BRIEFING_FORMAT = """Tugas: Buat BRIEFING KOMPREHENSIF dan TERSTRUKTUR untuk sesi meeting {nama_direktur} di akhir pekan, dari resume harian seminggu terakhir. Briefing harus cukup lengkap sehingga direktur bisa langsung berdiskusi tanpa membaca chat mentah.
+
+Format output (plain text, ikuti EKSAK; ganti placeholder [..] dengan isi nyata dari data):
+
+BRIEFING DIREKTUR — {perusahaan}
+**{minggu_label}**
+Disiapkan: {tanggal}
+============================================
+
+A. RINGKASAN EKSEKUTIF
+[4-5 kalimat: situasi bisnis minggu ini, tone keseluruhan, highlight utama]
+
+============================================
+B. UPDATE SALES & PIPELINE
+Prospek Baru Minggu Ini:
+• [nama prospek — tahap — PIC]
+Deal yang Maju:
+• [detail]
+Deal Perlu Perhatian / Stuck:
+• [detail + alasan + rekomendasi aksi]
+
+============================================
+C. OPERASIONAL
+Koordinasi Berjalan Baik:
+• [item]
+Bottleneck / Kendala:
+• [masalah — resolved? — butuh eskalasi?]
+
+============================================
+D. ACTION ITEMS CARRY-OVER
+• [PIC] → [tugas] | Deadline: [waktu] | Status: [on track/at risk/terlambat]
+
+============================================
+E. AGENDA MEETING DENGAN {nama_direktur} (urut prioritas)
+1. [TOPIK] — Konteks: [..] — Data: [..] — Butuh dari direktur: [keputusan/arahan]
+
+============================================
+F. PROYEKSI & ANTISIPASI MINGGU DEPAN
+• [hal yang perlu disiapkan/diantisipasi]
+
+============================================
+G. KEPUTUSAN YANG PERLU DARI DIREKTUR
+Tabel markdown: | # | Item | Decision Needed | Recommended Decision | dengan rekomendasi pre-marked ✅ APPROVE / 🔴 HOLD. Target 5-10 item, urut prioritas.
+
+============================================
+H. EXECUTIVE SUMMARY (ringkas, time-pressed)
+**WRG Status:** 📊 [sales] 📦 [delivery] ⚠️ [supply risk] 🚨 [approval bottleneck] ✅ [ops] 💰 [finance]
+**Key Asks:** 1. ✅ [..] 2. ✅ [..] (3-5 item)
+**Tone:** [1-2 kalimat outlook]
+
+ATURAN: JANGAN mengarang nama/angka yg tak ada di resume. Substitusi JID grup → nama grup & nomor → nama member bila ada di direktori. Gunakan label periode EKSAK '{minggu_label}' — JANGAN tulis 'Minggu N'. Bahasa Indonesia."""
+
+
+def _dir_block(title: str, d: Optional[dict]) -> str:
+    if not d:
+        return f"{title}: (belum ada)"
+    lines = "\n".join(f"• {k} → {v}" for k, v in d.items() if v)
+    return f"{title}:\n{lines or '(kosong)'}"
+
+
+@app.post("/weekend-briefing", response_model=WeekendBriefingResponse)
+def weekend_briefing(req: WeekendBriefingRequest) -> WeekendBriefingResponse:
+    """Briefing direktur akhir pekan dari resume 7 hari → LLM (token tier HIGH).
+
+    dry_run / tanpa OPENROUTER_API_KEY → kembalikan prompt yang dirakit.
+    """
+    system = WEEKEND_BRIEFING_FORMAT.format(
+        nama_direktur=req.nama_direktur, perusahaan=NAMA_PERUSAHAAN,
+        minggu_label=req.minggu_label, tanggal=req.tanggal,
+    )
+    pola_block = "\n\n".join(f"=== POLA GRUP {p.jid} ===\n{p.content}" for p in req.pola) or "(belum ada profile pola)"
+    resume_block = "\n\n".join(f"====== {r.label} ======\n{r.text}" for r in req.resumes) or "(tak ada resume)"
+    user = (
+        f"{_dir_block('DIREKTORI GRUP (substitusi JID → nama)', req.groups)}\n\n"
+        f"{_dir_block('DIREKTORI MEMBER (substitusi nomor → nama; jangan tebak)', req.members)}\n\n"
+        f"PROFILE POLA KOMUNIKASI per-grup:\n{pola_block}\n\n"
+        "============================================\n"
+        f"DATA INPUT — resume harian seminggu terakhir ({req.minggu_label}):\n\n{resume_block}"
+    )
+    fallback = f"[DRY RUN — tanpa LLM]\n\nSYSTEM:\n{system}\n\nUSER:\n{user[:2000]}"
+    if req.dry_run or not os.environ.get("OPENROUTER_API_KEY"):
+        return WeekendBriefingResponse(briefing=fallback, model="dry-run", dry_run=True)
+    text, model, _, _ = chat_or_fallback(system, user, fallback, max_tokens=4000, models=exec_models())
+    return WeekendBriefingResponse(briefing=text, model=model, dry_run=model == "dry-run-fallback")

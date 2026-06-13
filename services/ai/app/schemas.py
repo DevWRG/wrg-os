@@ -276,3 +276,28 @@ class CompetitorExtractResponse(BaseModel):
     mentions: List[CompetitorMention] = Field(default_factory=list)
     model: str = "dry-run"
     dry_run: bool = False
+
+
+# === briefing_weekend (briefing direktur akhir pekan dari resume 7 hari) ===
+
+
+class PolaProfile(BaseModel):
+    jid: str
+    content: str
+
+
+class WeekendBriefingRequest(BaseModel):
+    tanggal: str
+    minggu_label: str
+    nama_direktur: str = "Pak Gilang"
+    resumes: List[RekapDoc] = Field(default_factory=list)
+    members: Optional[Dict[str, str]] = None
+    groups: Optional[Dict[str, str]] = None
+    pola: List[PolaProfile] = Field(default_factory=list)
+    dry_run: bool = False
+
+
+class WeekendBriefingResponse(BaseModel):
+    briefing: str
+    model: str = "dry-run"
+    dry_run: bool = False
