@@ -1,7 +1,7 @@
 import { db } from "../db.js";
 import { detectDaily, parseDaily } from "../parsers/dailyplan.js";
 import { sendViaWaGateway, type WaSendResult } from "../wasend.js";
-import { resolveAmByWa, resolveAmByPushname } from "./master.js";
+import { resolveSender } from "./master.js";
 import { upsertDailyTodo } from "./todo.js";
 
 // Pemrosesan inbound WA (#PLAN/#REPORT/#LEADS/#UPDATE) — pengganti legacy
@@ -54,11 +54,6 @@ export interface WaRow {
   received_at: string;
 }
 
-function senderWaFromJid(jid: string | null): string {
-  if (!jid) return "";
-  return jid.split("@")[0].split(":")[0];
-}
-
 // #REPORT → tandai sales_todo hari itu reported + simpan report_data. Buat baris
 // bila plan hari itu belum ada (report tanpa plan).
 async function markReported(
@@ -96,30 +91,34 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
   };
 
   if (kind === "none") return finish({ skipped: "no-hashtag" });
+  const target = row.group_jid;
 
-  const am =
-    (await resolveAmByWa(senderWaFromJid(row.sender_jid))) ??
-    (await resolveAmByPushname(row.sender_name ?? ""));
+  // #LEADS/#UPDATE — tanpa body-name; resolve by phone/pushname saja.
+  if (kind === "leads" || kind === "update") {
+    const amx = await resolveSender({ senderJid: row.sender_jid, pushname: row.sender_name });
+    if (!amx) return finish({ skipped: "unknown-sender", sender_name: row.sender_name });
+    const reply = await sendViaWaGateway(target, `ℹ️ #${kind.toUpperCase()} belum tersedia di wrg-os (menyusul).`);
+    return finish({ note: "not-implemented", via: amx.via, reply });
+  }
+
+  // #PLAN/#REPORT — parse DULU (body-name dibutuhkan untuk resolusi Tier-A).
+  const parsed = parseDaily(row.body ?? "");
+  const am = await resolveSender({
+    bodyName: parsed?.name ?? null,
+    senderJid: row.sender_jid,
+    pushname: row.sender_name,
+  });
   // Pengirim tak dikenal / nonaktif → SILENT (tak balas).
   if (!am) return finish({ skipped: "unknown-sender", sender_name: row.sender_name });
   if (!am.aktif) return finish({ skipped: "inactive", am_id: am.am_id });
 
-  const target = row.group_jid;
-
-  if (kind === "leads" || kind === "update") {
-    const reply = await sendViaWaGateway(target, `ℹ️ #${kind.toUpperCase()} belum tersedia di wrg-os (menyusul).`);
-    return finish({ note: "not-implemented", reply });
-  }
-
-  // plan | report (format daily-todo nyata)
-  const parsed = parseDaily(row.body ?? "");
   if (!parsed || parsed.itemCount === 0) {
     // submission terdeteksi tapi tak ada item → kemungkinan salah format (hint).
     const reply = await sendViaWaGateway(
       target,
       `⚠️ ${kind === "plan" ? "Plan" : "Report"} terdeteksi tapi item kosong, ${am.nama}. Pakai daftar bernomor (1. 2. 3. …).`,
     );
-    return finish({ error: "empty-items", reply });
+    return finish({ error: "empty-items", via: am.via, reply });
   }
   const tanggal = parsed.tanggal ?? wibDate();
 
@@ -135,7 +134,7 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
       target,
       `✅ Plan tercatat, ${am.nama} — ${r.total_items} item — ${tanggal}${r.is_late_plan ? " (telat)" : ""}`,
     );
-    return finish({ am_id: am.am_id, tanggal, total_items: r.total_items, todo_id: r.id, reply });
+    return finish({ am_id: am.am_id, via: am.via, tanggal, total_items: r.total_items, todo_id: r.id, reply });
   }
 
   // report
@@ -144,7 +143,7 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
     target,
     `✅ Report tercatat, ${am.nama} — ${parsed.itemCount} item — ${tanggal}`,
   );
-  return finish({ am_id: am.am_id, tanggal, items: parsed.itemCount, reply });
+  return finish({ am_id: am.am_id, via: am.via, tanggal, items: parsed.itemCount, reply });
 }
 
 // Proses batch pesan wa_message yang belum diproses & mengandung hashtag.
