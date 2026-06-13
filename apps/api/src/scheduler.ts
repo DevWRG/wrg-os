@@ -26,6 +26,7 @@ import { runWeeklyReport } from "./repo/weeklyreport.js";
 import { runDetectLeaveScan } from "./repo/detectleave.js";
 import { runExtractCompetitor } from "./repo/extractcompetitor.js";
 import { runWeekendBriefing } from "./repo/weekendbriefing.js";
+import { runPolaKomunikasi } from "./repo/polakomunikasi.js";
 
 // Penjadwal agen in-process (Blueprint v2.3). Default MATI — aktif hanya bila
 // AGENT_SCHEDULE_ENABLED=true. Tiap run tetap menulis ke audit_log via repo
@@ -101,6 +102,9 @@ export function startScheduler(): ScheduleStatus {
   // weekend-briefing (port briefing_weekend.sh) — briefing direktur dari resume
   // 7 hari, GENERATE-ONLY (simpan kind='briefing', tanpa kirim WA). Sabtu & Minggu 07:00.
   const weekendBriefingEnabled = (process.env.WEEKEND_BRIEFING_ENABLED ?? "false").toLowerCase() === "true";
+  // pola-komunikasi (port pola_komunikasi.sh) — profil pola per-grup, GENERATE-ONLY
+  // (isi monitor_pola.content, feeds weekend-briefing), nightly 23:30.
+  const polaEnabled = (process.env.POLA_ENABLED ?? "false").toLowerCase() === "true";
   const timezone = TZ();
   const jobs: JobDef[] = [
     {
@@ -176,12 +180,12 @@ export function startScheduler(): ScheduleStatus {
   ];
 
   status = {
-    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled,
+    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled,
     timezone,
     jobs: jobs.map((j) => ({ id: j.id, expr: j.expr, valid: cron.validate(j.expr) })),
   };
 
-  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled) {
+  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled) {
     console.log("[scheduler] semua *_SCHEDULE/_ENABLED flag != true — tidak dijadwalkan");
     return status;
   }
@@ -490,6 +494,25 @@ export function startScheduler(): ScheduleStatus {
       { timezone },
     );
     live.push(`weekend-briefing=${wbExpr}`);
+  }
+
+  // pola-komunikasi (port pola_komunikasi.sh) — profil per-grup, nightly 23:30, generate-only.
+  const polaExpr = process.env.POLA_CRON ?? "30 23 * * *";
+  if ((enabled || polaEnabled) && cron.validate(polaExpr)) {
+    cron.schedule(
+      polaExpr,
+      async () => {
+        const startedAt = new Date().toISOString();
+        try {
+          const r = await runPolaKomunikasi({});
+          console.log(`[scheduler] pola-komunikasi @ ${startedAt} ${JSON.stringify(r).slice(0, 200)}`);
+        } catch (e) {
+          console.error(`[scheduler] pola-komunikasi gagal @ ${startedAt}:`, e);
+        }
+      },
+      { timezone },
+    );
+    live.push(`pola-komunikasi=${polaExpr}`);
   }
 
   console.log(`[scheduler] aktif (TZ=${timezone}): ${live.join(", ") || "(tidak ada job valid)"}`);
