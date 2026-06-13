@@ -91,6 +91,7 @@ import { runNotifTua } from "./repo/notiftua.js";
 import { runDailySummary } from "./repo/dailysummary.js";
 import { runWeeklyReport } from "./repo/weeklyreport.js";
 import { runDetectLeaveScan } from "./repo/detectleave.js";
+import { runExtractCompetitor } from "./repo/extractcompetitor.js";
 import {
   upsertCustomers,
   upsertBranches,
@@ -638,6 +639,20 @@ app.post("/detect-leave/scan", async (c) => {
     /* body opsional */
   }
   const r = await runDetectLeaveScan({ dryRun: body.dry_run });
+  return c.json(r);
+});
+
+// extract_competitor (port extract_competitor.sh) — LLM ekstrak sebutan kompetitor
+// dari activity_log → competitor_intel. body: {dry_run?, limit?, backfill_days?}.
+app.post("/extract-competitor/run", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { dry_run?: boolean; limit?: number; backfill_days?: number } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    /* body opsional */
+  }
+  const r = await runExtractCompetitor({ dryRun: body.dry_run, limit: body.limit, backfillDays: body.backfill_days });
   return c.json(r);
 });
 
