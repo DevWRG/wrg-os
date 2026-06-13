@@ -85,14 +85,19 @@ export async function runPolaKomunikasi(
     `;
 
     const label = groupName ? `${groupName} (${jid})` : jid;
+    const ts = wibTimestamp();
     const { status, data } = await callAi("/pola-profile", {
       group_label: label, group_name: groupName, window_days: w, count,
-      stats_json: statsJson, sample: sample?.s ? String(sample.s) : "", timestamp: wibTimestamp(),
+      stats_json: statsJson, sample: sample?.s ? String(sample.s) : "", timestamp: ts,
       dry_run: aiDryRun(),
     });
     if (status !== 200) { res.ai_failures += 1; continue; }
-    const profile = String(data.profile ?? "");
+    let profile = String(data.profile ?? "");
     if (profile.length < 50) { res.ai_failures += 1; continue; }
+
+    // Layer-2 anti-halusinasi (port pelajaran legacy): paksa baris "Generated:"
+    // pakai timestamp bash-known (AI suka ngarang tahun/bulan).
+    profile = profile.replace(/^-?\s*Generated:.*$/m, `- Generated: ${ts}`);
 
     if (!opts.dryRun) {
       await upsertPola([{ group_jid: jid, group_name: groupName || null, content: profile }]);

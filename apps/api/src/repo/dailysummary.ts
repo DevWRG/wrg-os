@@ -141,8 +141,13 @@ export async function runDailySummary(
   });
 
   if (status !== 200) return { sent: false, error: `services/ai ${status}`, rows: rows.length };
-  const summary = String(data.summary ?? "");
+  let summary = String(data.summary ?? "");
   if (summary.length < 50) return { sent: false, error: "AI returned empty/short", rows: rows.length };
+
+  // Layer-2 anti-halusinasi (port pelajaran legacy ai-placeholder-hallucination):
+  // prompt-only "jangan ngarang tanggal" gagal ~10% → paksa baris header tanggal
+  // pakai nilai bash-known. Header format: "📊 *Daily Summary — {hari}, {tanggal}*".
+  summary = summary.replace(/^.*Daily Summary\b.*$/m, `📊 *Daily Summary — ${hari}, ${tanggal}*`);
 
   // Simpan untuk arsip/inspeksi (monitor_digest kind='daily').
   const dateStr = wibNow().toISOString().slice(0, 10);
