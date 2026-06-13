@@ -251,3 +251,28 @@ class LeaveDetectResponse(BaseModel):
     confidence: float = 0.0
     model: str = "dry-run"
     dry_run: bool = False
+
+
+# === extract_competitor (ekstrak sebutan kompetitor dari activity_log.hasil) ===
+
+
+class CompetitorMention(BaseModel):
+    vendor: Optional[str] = None
+    produk: Optional[str] = None
+    produk_kategori: Optional[str] = None
+    harga_text: Optional[str] = None
+    harga_numeric: Optional[float] = None
+    konteks: Optional[str] = None
+
+
+class CompetitorExtractRequest(BaseModel):
+    customer: str = ""
+    tanggal: str = ""
+    hasil: str
+    dry_run: bool = False
+
+
+class CompetitorExtractResponse(BaseModel):
+    mentions: List[CompetitorMention] = Field(default_factory=list)
+    model: str = "dry-run"
+    dry_run: bool = False

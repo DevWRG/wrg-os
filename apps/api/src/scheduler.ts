@@ -24,6 +24,7 @@ import { runNotifTua } from "./repo/notiftua.js";
 import { runDailySummary } from "./repo/dailysummary.js";
 import { runWeeklyReport } from "./repo/weeklyreport.js";
 import { runDetectLeaveScan } from "./repo/detectleave.js";
+import { runExtractCompetitor } from "./repo/extractcompetitor.js";
 
 // Penjadwal agen in-process (Blueprint v2.3). Default MATI — aktif hanya bila
 // AGENT_SCHEDULE_ENABLED=true. Tiap run tetap menulis ke audit_log via repo
@@ -93,6 +94,9 @@ export function startScheduler(): ScheduleStatus {
   // detect-leave (port detect_leave.sh) — scan grup HRD tiap 10 menit, deteksi
   // izin/sakit/cuti via LLM + approval admin. KIRIM WA ke grup HRD.
   const detectLeaveEnabled = (process.env.DETECT_LEAVE_ENABLED ?? "false").toLowerCase() === "true";
+  // extract-competitor (port extract_competitor.sh) — LLM ekstrak sebutan
+  // kompetitor dari activity_log → competitor_intel. TANPA kirim WA. Harian 23:00.
+  const extractCompetitorEnabled = (process.env.EXTRACT_COMPETITOR_ENABLED ?? "false").toLowerCase() === "true";
   const timezone = TZ();
   const jobs: JobDef[] = [
     {
@@ -168,12 +172,12 @@ export function startScheduler(): ScheduleStatus {
   ];
 
   status = {
-    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || weeklyReportEnabled || detectLeaveEnabled,
+    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled,
     timezone,
     jobs: jobs.map((j) => ({ id: j.id, expr: j.expr, valid: cron.validate(j.expr) })),
   };
 
-  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !weeklyReportEnabled && !detectLeaveEnabled) {
+  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled) {
     console.log("[scheduler] semua *_SCHEDULE/_ENABLED flag != true — tidak dijadwalkan");
     return status;
   }
@@ -444,6 +448,25 @@ export function startScheduler(): ScheduleStatus {
       { timezone },
     );
     live.push(`detect-leave=${dlExpr}`);
+  }
+
+  // extract-competitor (port extract_competitor.sh) — harian 23:00, tanpa WA.
+  const ecExpr = process.env.EXTRACT_COMPETITOR_CRON ?? "0 23 * * *";
+  if ((enabled || extractCompetitorEnabled) && cron.validate(ecExpr)) {
+    cron.schedule(
+      ecExpr,
+      async () => {
+        const startedAt = new Date().toISOString();
+        try {
+          const r = await runExtractCompetitor({});
+          console.log(`[scheduler] extract-competitor @ ${startedAt} ${JSON.stringify(r).slice(0, 200)}`);
+        } catch (e) {
+          console.error(`[scheduler] extract-competitor gagal @ ${startedAt}:`, e);
+        }
+      },
+      { timezone },
+    );
+    live.push(`extract-competitor=${ecExpr}`);
   }
 
   console.log(`[scheduler] aktif (TZ=${timezone}): ${live.join(", ") || "(tidak ada job valid)"}`);
