@@ -20,6 +20,7 @@ import { runHodDaily } from "./repo/hodreminder.js";
 import { generateRekap, generateResume } from "./repo/monitor.js";
 import { syncAccurateInvoices } from "./repo/accurateSync.js";
 import { runPlanCheck, runReportCheck } from "./repo/compliance.js";
+import { runNotifTua } from "./repo/notiftua.js";
 
 // Penjadwal agen in-process (Blueprint v2.3). Default MATI — aktif hanya bila
 // AGENT_SCHEDULE_ENABLED=true. Tiap run tetap menulis ke audit_log via repo
@@ -77,6 +78,10 @@ export function startScheduler(): ScheduleStatus {
   // monitor rekap/resume (GENERATE-ONLY, simpan ke monitor_digest, tanpa kirim WA)
   // bisa nyala SENDIRI tanpa ikut menyalakan A1-12 / accurate-sync.
   const monitorEnabled = (process.env.MONITOR_SCHEDULE_ENABLED ?? "false").toLowerCase() === "true";
+  // notif-tua (port notif_tua.sh) — KIRIM WA item TUA dari resume ke grup tujuan.
+  // Nyala sendiri; hanya dijadwalkan bila NOTIF_TUA_TARGET di-set (anti broadcast
+  // tak sengaja). Butuh resume → praktis berpasangan dgn monitor generate.
+  const notifTuaEnabled = (process.env.NOTIF_TUA_ENABLED ?? "false").toLowerCase() === "true";
   const timezone = TZ();
   const jobs: JobDef[] = [
     {
@@ -152,13 +157,13 @@ export function startScheduler(): ScheduleStatus {
   ];
 
   status = {
-    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled,
+    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled,
     timezone,
     jobs: jobs.map((j) => ({ id: j.id, expr: j.expr, valid: cron.validate(j.expr) })),
   };
 
-  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled) {
-    console.log("[scheduler] AGENT_SCHEDULE_ENABLED / REMINDER_SCHEDULE_ENABLED / ACCURATE_SCHEDULE_ENABLED / MONITOR_SCHEDULE_ENABLED != true — tidak dijadwalkan");
+  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled) {
+    console.log("[scheduler] AGENT_/REMINDER_/ACCURATE_/MONITOR_/NOTIF_TUA_SCHEDULE_ENABLED != true — tidak dijadwalkan");
     return status;
   }
   if (!isDbEnabled()) {
@@ -332,6 +337,37 @@ export function startScheduler(): ScheduleStatus {
       { timezone },
     );
     live.push(`accurate-sync=${accExpr}`);
+  }
+
+  // notif-tua (port notif_tua.sh) — KIRIM WA item TUA dari resume terbaru ke
+  // NOTIF_TUA_TARGET. Cadence legacy: 14:05 & 22:15 (sesudah resume 14:00/22:10).
+  // Hanya dijadwalkan bila target di-set (hindari kirim tanpa tujuan jelas).
+  const notifTuaTarget = process.env.NOTIF_TUA_TARGET ?? "";
+  if ((enabled || notifTuaEnabled) && notifTuaTarget) {
+    const tuaJobs = [
+      { label: "notif-tua-siang", expr: process.env.NOTIF_TUA_CRON1 ?? "5 14 * * *" },
+      { label: "notif-tua-malam", expr: process.env.NOTIF_TUA_CRON2 ?? "15 22 * * *" },
+    ];
+    for (const j of tuaJobs) {
+      if (!cron.validate(j.expr)) {
+        console.error(`[scheduler] ${j.label} cron-expr tidak valid: "${j.expr}" — dilewati`);
+        continue;
+      }
+      cron.schedule(
+        j.expr,
+        async () => {
+          const startedAt = new Date().toISOString();
+          try {
+            const r = await runNotifTua({});
+            console.log(`[scheduler] ${j.label} @ ${startedAt} ${JSON.stringify(r).slice(0, 200)}`);
+          } catch (e) {
+            console.error(`[scheduler] ${j.label} gagal @ ${startedAt}:`, e);
+          }
+        },
+        { timezone },
+      );
+      live.push(`${j.label}=${j.expr}`);
+    }
   }
 
   console.log(`[scheduler] aktif (TZ=${timezone}): ${live.join(", ") || "(tidak ada job valid)"}`);
