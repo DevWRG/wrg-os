@@ -70,6 +70,31 @@ export async function listUsers(opts: { role?: string; aktif?: boolean } = {}): 
   }));
 }
 
+// Normalisasi nomor WA ke format 62xxxx (buang +, spasi, -, 0 awal → 62).
+export function normalizeWa(raw: string): string {
+  let n = String(raw).replace(/[^\d]/g, "");
+  if (n.startsWith("0")) n = "62" + n.slice(1);
+  if (n.startsWith("620")) n = "62" + n.slice(3);
+  return n;
+}
+
+// Resolve nomor WA pengirim → AM (master_user). Cocokkan setelah normalisasi
+// kedua sisi. Hanya user aktif. null bila tak dikenal.
+export async function resolveAmByWa(
+  waNumber: string,
+): Promise<{ am_id: string; nama: string; aktif: boolean } | null> {
+  const sql = db();
+  const norm = normalizeWa(waNumber);
+  if (!norm) return null;
+  const rows = await sql`
+    SELECT am_id, nama, aktif FROM master_user
+    WHERE regexp_replace(COALESCE(wa_number,''), '[^0-9]', '', 'g') = ${norm}
+    LIMIT 1
+  `;
+  if (rows.length === 0) return null;
+  return { am_id: String(rows[0].am_id), nama: String(rows[0].nama), aktif: Boolean(rows[0].aktif) };
+}
+
 export interface TerritoryInput {
   am_panggilan: string;
   hod_panggilan: string;
