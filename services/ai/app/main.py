@@ -23,6 +23,9 @@ from .salesdoc import build_salesdoc_system, build_salesdoc_user, doc_title, tem
 from .schemas import (
     CollectionDraftRequest,
     CollectionDraftResponse,
+    CompetitorExtractRequest,
+    CompetitorExtractResponse,
+    CompetitorMention,
     DailySummaryRequest,
     DailySummaryResponse,
     DigestResponse,
@@ -401,3 +404,60 @@ def detect_leave(req: LeaveDetectRequest) -> LeaveDetectResponse:
         model=model,
         dry_run=model == "dry-run-fallback",
     )
+
+
+# === extract_competitor: ekstrak sebutan kompetitor dari hasil kunjungan ===
+COMPETITOR_SYSTEM_PROMPT = """You extract competitor intelligence from Indonesian sales-visit reports for a medical/lab equipment distributor (Wahana Lifeline).
+
+Given a `hasil` (visit narrative), extract mentions of COMPETITOR vendors, products, and prices. A competitor is any OTHER vendor/PT/distributor or product brand the customer mentioned using, comparing, or buying from — NOT Wahana itself.
+
+Return STRICT JSON array. Each item:
+{"vendor": "PT name OR brand (e.g., PT Dexa, Mindray)", "produk": "specific product (e.g., HBA1C, Hematologi analyzer)", "produk_kategori": "Hematologi | Kimia Klinik | POCT | BMHP | BGA | Imunologi | Mikrobiologi | Alkes | Reagen | Other", "harga_text": "raw price text or null", "harga_numeric": numeric IDR value or null, "konteks": "short 1-sentence snippet (<=120 chars)"}
+
+Rules:
+- Output JSON array only — no preamble, no markdown fence.
+- Empty array [] if no competitor mention.
+- Skip generic "vendor lain" tanpa nama spesifik.
+- Skip Wahana own brand (Family Dr, Lysun, Snibe Maglumi, Clover, Wahana, WGI).
+- One row per distinct (vendor, produk) pair.
+- harga_numeric: parse "50 ribu" -> 50000, "1.5 jt" -> 1500000. null if unclear."""
+
+
+@app.post("/extract-competitor", response_model=CompetitorExtractResponse)
+def extract_competitor(req: CompetitorExtractRequest) -> CompetitorExtractResponse:
+    """Ekstrak sebutan kompetitor dari satu narasi hasil kunjungan via LLM.
+
+    dry_run / tanpa OPENROUTER_API_KEY → mentions=[] (tak bisa ekstrak tanpa LLM).
+    """
+    if req.dry_run or not os.environ.get("OPENROUTER_API_KEY"):
+        return CompetitorExtractResponse(mentions=[], model="dry-run", dry_run=True)
+    user_msg = f"Customer: {req.customer or '?'}\nTanggal: {req.tanggal}\n\nHasil:\n{req.hasil}"
+    text, model, _, _ = chat_or_fallback(COMPETITOR_SYSTEM_PROMPT, user_msg, "[]", max_tokens=2000)
+    cleaned = (text or "").strip()
+    if cleaned.startswith("```"):
+        cleaned = "\n".join(ln for ln in cleaned.splitlines() if not ln.strip().startswith("```"))
+    cleaned = cleaned.strip()
+    if cleaned.lower().startswith("json"):
+        cleaned = cleaned[4:].strip()
+    try:
+        arr = json.loads(cleaned)
+        if not isinstance(arr, list):
+            arr = []
+    except (ValueError, TypeError):
+        arr = []
+    mentions = []
+    for m in arr:
+        if not isinstance(m, dict):
+            continue
+        hn = m.get("harga_numeric")
+        try:
+            hn = float(hn) if hn not in (None, "", "null") else None
+        except (ValueError, TypeError):
+            hn = None
+        mentions.append(CompetitorMention(
+            vendor=(m.get("vendor") or None), produk=(m.get("produk") or None),
+            produk_kategori=(m.get("produk_kategori") or None),
+            harga_text=(m.get("harga_text") or None), harga_numeric=hn,
+            konteks=(m.get("konteks") or None),
+        ))
+    return CompetitorExtractResponse(mentions=mentions, model=model, dry_run=model == "dry-run-fallback")
