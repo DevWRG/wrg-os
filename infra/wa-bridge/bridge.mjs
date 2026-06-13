@@ -36,8 +36,28 @@ const WEBHOOK_SECRET = process.env.WRG_WEBHOOK_SECRET || "";
 const CAPTURE_DIR = process.env.CAPTURE_DIR || join(homedir(), ".openclaw/tmp/wrg-monitor/messages");
 const POLL_MS = Number(process.env.POLL_MS || 4000);
 const OFFSET_FILE = process.env.OFFSET_FILE || join(homedir(), ".wrg-wa-bridge-offsets.json");
+const OCR_ENABLED = (process.env.WA_BRIDGE_OCR || "true").toLowerCase() !== "false";
+const PYTHON_BIN = process.env.PYTHON_BIN || "python3";
+const OCR_SCRIPT = process.env.OCR_SCRIPT || new URL("./check_photo_geotag.py", import.meta.url).pathname;
 
 const log = (...a) => console.log(new Date().toISOString(), ...a);
+
+// OCR geotag dari foto (check_photo_geotag.py). Return {lat,lon,ts,address} | null.
+function ocrGeo(mediaPath) {
+  return new Promise((resolve) => {
+    if (!OCR_ENABLED || !mediaPath) return resolve(null);
+    execFile(PYTHON_BIN, [OCR_SCRIPT, mediaPath], { timeout: 30000, maxBuffer: 4 * 1024 * 1024 }, (err, stdout) => {
+      if (err) return resolve(null);
+      try {
+        const d = JSON.parse(stdout);
+        if (d && d.has_geotag) resolve({ lat: d.lat, lon: d.lon, ts: d.timestamp ?? null, address: d.address ?? null });
+        else resolve(null);
+      } catch {
+        resolve(null);
+      }
+    });
+  });
+}
 
 // ── 1. SEND via openclaw CLI ─────────────────────────────────────────────
 function openclawSend(to, message) {
@@ -165,6 +185,17 @@ async function pollInbound() {
         continue;
       }
       if (rec.fromMe) continue; // jangan proses pesan keluar
+      // OCR geotag utk pesan media image (host punya tesseract + file media).
+      if (String(rec.media_type || "").startsWith("image") && rec.media_path) {
+        const geo = await ocrGeo(rec.media_path);
+        if (geo) {
+          rec.geo_lat = geo.lat;
+          rec.geo_lon = geo.lon;
+          rec.geo_ts = geo.ts;
+          rec.geo_address = geo.address;
+          log(`[ocr] geotag → ${geo.lat},${geo.lon} ${geo.ts || ""}`);
+        }
+      }
       try {
         await postWebhook(rec); // format capture = OpenclawRecord (idempoten di wrg-os)
       } catch (e) {
