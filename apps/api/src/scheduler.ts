@@ -71,6 +71,9 @@ export function startScheduler(): ScheduleStatus {
   // Gating granular: reminder (AM note + HOD) bisa nyala SENDIRI tanpa memicu
   // A1-12 / monitor / accurate-sync (yang ikut AGENT_SCHEDULE_ENABLED).
   const remindersEnabled = (process.env.REMINDER_SCHEDULE_ENABLED ?? "false").toLowerCase() === "true";
+  // accurate-sync (puller invoice, read-only ke API Accurate, tanpa kirim WA)
+  // bisa nyala SENDIRI tanpa ikut menyalakan A1-12 / monitor.
+  const accurateEnabled = (process.env.ACCURATE_SCHEDULE_ENABLED ?? "false").toLowerCase() === "true";
   const timezone = TZ();
   const jobs: JobDef[] = [
     {
@@ -146,13 +149,13 @@ export function startScheduler(): ScheduleStatus {
   ];
 
   status = {
-    enabled: enabled || remindersEnabled,
+    enabled: enabled || remindersEnabled || accurateEnabled,
     timezone,
     jobs: jobs.map((j) => ({ id: j.id, expr: j.expr, valid: cron.validate(j.expr) })),
   };
 
-  if (!enabled && !remindersEnabled) {
-    console.log("[scheduler] AGENT_SCHEDULE_ENABLED & REMINDER_SCHEDULE_ENABLED != true — tidak dijadwalkan");
+  if (!enabled && !remindersEnabled && !accurateEnabled) {
+    console.log("[scheduler] AGENT_SCHEDULE_ENABLED / REMINDER_SCHEDULE_ENABLED / ACCURATE_SCHEDULE_ENABLED != true — tidak dijadwalkan");
     return status;
   }
   if (!isDbEnabled()) {
@@ -305,7 +308,7 @@ export function startScheduler(): ScheduleStatus {
   // Sync Accurate (port sync_accurate.sh) — puller invoice, weekday 6× (jam kerja).
   // Read-only ke API Accurate; skip otomatis bila hari ini libur (master_holiday).
   const accExpr = process.env.ACCURATE_SYNC_CRON ?? "0 10,12,14,16,18,20 * * 1-5";
-  if (enabled && cron.validate(accExpr)) {
+  if ((enabled || accurateEnabled) && cron.validate(accExpr)) {
     cron.schedule(
       accExpr,
       async () => {
