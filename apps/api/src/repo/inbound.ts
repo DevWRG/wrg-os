@@ -1,8 +1,13 @@
 import { db } from "../db.js";
 import { detectDaily, parseDaily } from "../parsers/dailyplan.js";
+import { parseAmPlan, parseAmReport } from "../parsers/am.js";
 import { sendViaWaGateway, type WaSendResult } from "../wasend.js";
 import { resolveSender } from "./master.js";
-import { upsertDailyTodo } from "./todo.js";
+import { upsertDailyTodo, computeIsLate } from "./todo.js";
+
+// Role yang pakai alur AM per-customer (sales_plan/activity_log + foto), bukan todo.
+const AM_ROLES = new Set(["AM", "Teknisi"]);
+const isAmRole = (role?: string | null) => AM_ROLES.has((role ?? "").trim());
 
 // Pemrosesan inbound WA (#PLAN/#REPORT/#LEADS/#UPDATE) — pengganti legacy
 // wrg-inbound.sh. Format NYATA tim (lihat parsers/dailyplan.ts): #plan/#report
@@ -135,6 +140,83 @@ function buildReportReply(nama: string, tanggal: string, r: ReportOutcome): stri
   return s;
 }
 
+function buildAmReportReply(
+  nama: string,
+  tanggal: string,
+  n: number,
+  res: { matched: number; unmatched: number; unmatchedNames: string[] },
+): string {
+  let s = `✅ Report tercatat, ${nama}\n\n📅 ${fmtTanggalDisplay(tanggal)}\n🗒️ ${n} customer reported\n🎯 Match plan: ${res.matched} ✓`;
+  if (res.unmatched > 0) {
+    s += `  ⚠️ Baru : ${res.unmatched}\n━━━━━━━━━━━━━━━━━━━━`;
+    for (const c of res.unmatchedNames) s += `\n  ⚠️ ${c}`;
+  }
+  return s;
+}
+
+// ── Alur AM per-customer ──
+// #PLAN AM → sales_plan (per customer). Re-submit: hapus plan belum-direport
+// hari itu lalu insert ulang (preserve yg sudah reported). seq lanjut dari max.
+async function insertSalesPlan(
+  amId: string,
+  tanggal: string,
+  customers: { customer: string; tujuan: string; goal: string }[],
+  role: string | null | undefined,
+  submittedAt: string | Date,
+): Promise<{ count: number; late: boolean }> {
+  const sql = db();
+  const late = computeIsLate(tanggal, role, submittedAt);
+  await sql`DELETE FROM sales_plan WHERE am_id = ${amId} AND tanggal = ${tanggal} AND reported = false`;
+  const [{ maxseq }] = await sql`SELECT COALESCE(max(seq), 0) AS maxseq FROM sales_plan WHERE am_id = ${amId} AND tanggal = ${tanggal}`;
+  let seq = Number(maxseq);
+  for (const c of customers) {
+    seq += 1;
+    await sql`
+      INSERT INTO sales_plan (am_id, tanggal, customer_name, tujuan, goal, seq, is_late_plan, submitted_at)
+      VALUES (${amId}, ${tanggal}, ${c.customer}, ${c.tujuan || null}, ${c.goal || null}, ${seq}, ${late}, ${new Date(submittedAt)})
+    `;
+  }
+  return { count: customers.length, late };
+}
+
+// #REPORT AM → activity_log (per customer) + fuzzy-match ke sales_plan hari itu
+// (pg_trgm > 0.3) → set plan_id + tandai plan reported. is_unmatched bila tak match.
+async function insertAmActivities(
+  amId: string,
+  tanggal: string,
+  items: { customer: string; hasil: string; next_action: string }[],
+  messageId: string | null,
+): Promise<{ matched: number; unmatched: number; unmatchedNames: string[] }> {
+  const sql = db();
+  let matched = 0;
+  const unmatchedNames: string[] = [];
+  for (const it of items) {
+    const cands = await sql`
+      SELECT id, similarity(customer_name, ${it.customer}) AS score
+      FROM sales_plan WHERE am_id = ${amId} AND tanggal = ${tanggal}
+        AND similarity(customer_name, ${it.customer}) > 0.3
+      ORDER BY score DESC LIMIT 1
+    `;
+    const planId = cands[0] ? Number(cands[0].id) : null;
+    const score = cands[0] ? Number(cands[0].score) : null;
+    const rows = await sql`
+      INSERT INTO activity_log
+        (am_id, plan_id, tanggal, customer_name, hasil, next_action, source, is_unmatched, match_score, message_id)
+      VALUES
+        (${amId}, ${planId}, ${tanggal}, ${it.customer}, ${it.hasil || null}, ${it.next_action || null},
+         'wa-inbound', ${planId === null}, ${score}, ${messageId})
+      RETURNING id
+    `;
+    if (planId !== null) {
+      matched += 1;
+      await sql`UPDATE sales_plan SET reported = true, reported_at = now(), activity_id = ${Number(rows[0].id)} WHERE id = ${planId} AND reported = false`;
+    } else {
+      unmatchedNames.push(it.customer);
+    }
+  }
+  return { matched, unmatched: unmatchedNames.length, unmatchedNames };
+}
+
 // Proses SATU pesan; selalu tandai processed_at (idempoten). Pengirim tak dikenal
 // / non-submission → SILENT.
 export async function processInboundMessage(row: WaRow): Promise<Record<string, unknown>> {
@@ -181,7 +263,23 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
   }
   const tanggal = parsed.tanggal ?? wibDate();
 
+  const amFlow = isAmRole(am.role);
+
   if (kind === "plan") {
+    if (amFlow) {
+      const ap = parseAmPlan(row.body ?? "");
+      if (ap.customers.length === 0) {
+        const reply = await sendViaWaGateway(target, `⚠️ Plan AM tak terbaca, ${am.nama}. Format: 1. Customer | tujuan | goal`);
+        return finish({ error: "am-plan-empty", via: am.via, reply });
+      }
+      const tgl = ap.tanggal ?? wibDate();
+      const r = await insertSalesPlan(am.am_id, tgl, ap.customers, am.role, row.received_at);
+      const reply = await sendViaWaGateway(
+        target,
+        `✅ Plan tercatat, ${am.nama} — ${r.count} customer — ${tgl}${r.late ? " (telat)" : ""}`,
+      );
+      return finish({ am_id: am.am_id, via: am.via, mode: "am", tanggal: tgl, customers: r.count, reply });
+    }
     const r = await upsertDailyTodo({
       am_id: am.am_id,
       am_name: am.nama,
@@ -198,7 +296,19 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
     return finish({ am_id: am.am_id, via: am.via, tanggal, total_items: r.total_items, todo_id: r.id, reply });
   }
 
-  // report — cocokkan vs plan + balasan kaya (match/baru)
+  // report
+  if (amFlow) {
+    const ar = parseAmReport(row.body ?? "");
+    if (ar.items.length === 0) {
+      const reply = await sendViaWaGateway(target, `⚠️ Report AM tak terbaca, ${am.nama}. Format: 1. Customer / hasil: … / next: …`);
+      return finish({ error: "am-report-empty", via: am.via, reply });
+    }
+    const tgl = ar.tanggal ?? wibDate();
+    const res = await insertAmActivities(am.am_id, tgl, ar.items, row.message_id);
+    const reply = await sendViaWaGateway(target, buildAmReportReply(am.nama, tgl, ar.items.length, res));
+    return finish({ am_id: am.am_id, via: am.via, mode: "am", tanggal: tgl, matched: res.matched, unmatched: res.unmatched, reply });
+  }
+  // report todo — cocokkan vs plan + balasan kaya (match/baru)
   const rep = await markReported(am.am_id, am.nama, tanggal, parsed.items, row.body ?? "");
   const reply = await sendViaWaGateway(target, buildReportReply(am.nama, tanggal, rep));
   return finish({ am_id: am.am_id, via: am.via, tanggal, items: rep.n, matched: rep.matched, baru: rep.baru, reply });
