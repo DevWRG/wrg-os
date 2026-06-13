@@ -301,3 +301,23 @@ class WeekendBriefingResponse(BaseModel):
     briefing: str
     model: str = "dry-run"
     dry_run: bool = False
+
+
+# === pola_komunikasi (profil pola komunikasi per grup) ===
+
+
+class PolaProfileRequest(BaseModel):
+    group_label: str
+    group_name: str = ""
+    window_days: int = 7
+    count: int = 0
+    stats_json: str = "{}"  # statistik lokal (top_senders/active_hours/media) sbg JSON string
+    sample: str = ""        # sample pesan terakhir (urut waktu, body dipotong)
+    timestamp: str = ""     # untuk baris "Generated:"
+    dry_run: bool = False
+
+
+class PolaProfileResponse(BaseModel):
+    profile: str
+    model: str = "dry-run"
+    dry_run: bool = False
