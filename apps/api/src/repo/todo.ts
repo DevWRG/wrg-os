@@ -1,16 +1,36 @@
 import { db } from "../db.js";
 
 // D1 — daily TODO/plan per AM (port legacy sales_todo). Satu plan per AM per
-// tanggal (upsert). items = array kegiatan harian; is_late_plan bila plan
-// hari-ini disubmit lewat 08:00 (waktu lokal). reported = sudah ada #REPORT.
+// tanggal (upsert). items = array kegiatan harian. reported = sudah ada #REPORT.
 
-// Plan dianggap "late" bila untuk tanggal hari ini & jam submit (lokal) >= 8.
-export function isLatePlan(tanggal: string, now = new Date()): boolean {
-  const y = now.getFullYear();
-  const m = String(now.getMonth() + 1).padStart(2, "0");
-  const d = String(now.getDate()).padStart(2, "0");
-  const todayLocal = `${y}-${m}-${d}`;
-  return tanggal.slice(0, 10) === todayLocal && now.getHours() >= 8;
+// Threshold telat per role (port legacy late_threshold_for_role): batch-1
+// non-lapangan 08:30, selainnya (AM/Teknisi/HOD/dll) 08:00.
+export function lateThresholdForRole(role?: string | null): number {
+  switch ((role ?? "").trim()) {
+    case "Admin":
+    case "Finance":
+    case "Accounting":
+    case "Purchasing":
+    case "Supply Chain":
+    case "Logistik":
+    case "GA":
+    case "Operasional":
+      return 830;
+    default:
+      return 800;
+  }
+}
+
+// Late = plan untuk HARI INI (WIB) & jam KIRIM (WIB) > threshold role. Pakai
+// waktu kirim pesan (submittedAt), bukan waktu proses — message telat-proses
+// tetap dinilai dari kapan user kirim (port legacy compute_is_late).
+export function computeIsLate(tanggal: string, role?: string | null, submittedAt?: string | Date | null): boolean {
+  const d = submittedAt ? new Date(submittedAt) : new Date();
+  if (Number.isNaN(d.getTime())) return false;
+  const wib = new Date(d.getTime() + 7 * 3600 * 1000);
+  const submitDate = wib.toISOString().slice(0, 10);
+  const hhmm = Number(wib.toISOString().slice(11, 16).replace(":", ""));
+  return tanggal.slice(0, 10) === submitDate && hhmm > lateThresholdForRole(role);
 }
 
 export interface TodoInput {
@@ -19,25 +39,31 @@ export interface TodoInput {
   tanggal: string; // YYYY-MM-DD
   items: string[];
   raw_body?: string;
-  is_late_plan?: boolean;
+  role?: string | null; // untuk threshold telat
+  submitted_at?: string | Date | null; // waktu kirim pesan (ts JSONL)
+  is_late_plan?: boolean; // override eksplisit (jarang)
 }
 
 export async function upsertDailyTodo(
   t: TodoInput,
 ): Promise<{ id: string; total_items: number; is_late_plan: boolean }> {
   const sql = db();
-  const late = t.is_late_plan ?? isLatePlan(t.tanggal);
+  const submittedAt = t.submitted_at ? new Date(t.submitted_at) : new Date();
+  const late = t.is_late_plan ?? computeIsLate(t.tanggal, t.role, submittedAt);
   const items = Array.isArray(t.items) ? t.items : [];
+  // ON CONFLICT: PRESERVE is_late_plan + earliest submitted_at (re-submit tak
+  // boleh balikkan ontime→late atau geser waktu submit awal — port legacy).
   const rows = await sql`
-    INSERT INTO sales_todo (am_id, am_name, tanggal, items, raw_body, is_late_plan)
+    INSERT INTO sales_todo (am_id, am_name, tanggal, items, raw_body, is_late_plan, submitted_at)
     VALUES (${t.am_id}, ${t.am_name ?? null}, ${t.tanggal},
             ${sql.json(items as unknown as Parameters<typeof sql.json>[0])},
-            ${t.raw_body ?? null}, ${late})
+            ${t.raw_body ?? null}, ${late}, ${submittedAt})
     ON CONFLICT (am_id, tanggal) DO UPDATE SET
       am_name      = EXCLUDED.am_name,
       items        = EXCLUDED.items,
       raw_body     = EXCLUDED.raw_body,
-      is_late_plan = EXCLUDED.is_late_plan
+      is_late_plan = sales_todo.is_late_plan,
+      submitted_at = LEAST(sales_todo.submitted_at, EXCLUDED.submitted_at)
     RETURNING id, total_items, is_late_plan
   `;
   return {
