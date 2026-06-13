@@ -85,9 +85,18 @@ export function parseAmPlan(body: string): AmPlanResult {
 }
 
 export interface ReportItem { customer: string; hasil: string; next_action: string }
-export interface AmReportResult { tanggal: string | null; items: ReportItem[] }
+export interface ReportNote { customer: string | null; reminder_date: string | null; keterangan: string }
+export interface AmReportResult { tanggal: string | null; items: ReportItem[]; notes: ReportNote[] }
 
 const FIELD = /^\s*(hasil(?:nya)?|next|tindak\s*lanjut)\s*:?\s*(.*)$/i;
+const NOTE = /^\s*note\s*:?\s*(.+)$/i;
+// bersihkan tanggal dari teks → sisanya keterangan
+function dateMatchText(s: string): string | null {
+  const m1 = s.match(/\d{1,2}\s+[A-Za-z]{3,9}\.?(?:\s+\d{2,4})?/);
+  if (m1 && MONTHS[m1[0].match(/[A-Za-z]{3,}/)?.[0]?.slice(0, 3).toLowerCase() ?? ""]) return m1[0];
+  const m2 = s.match(/\d{1,2}[/-]\s?\d{1,2}[/-]\s?\d{2,4}/);
+  return m2 ? m2[0] : null;
+}
 
 export function parseAmReport(body: string): AmReportResult {
   const lines = body.split(/\r?\n/);
@@ -95,6 +104,7 @@ export function parseAmReport(body: string): AmReportResult {
   if (hIdx < 0) hIdx = 0;
   const tanggal = headerDate(lines, hIdx);
   const items: ReportItem[] = [];
+  const notes: ReportNote[] = [];
   let cur: ReportItem | null = null;
   const push = () => { if (cur && cur.customer) items.push(cur); };
 
@@ -103,6 +113,17 @@ export function parseAmReport(body: string): AmReportResult {
     const t = raw.trim();
     if (!t) continue;
     if (HASH.test(raw) || /^\s*tgl\b|^\s*tanggal\b/i.test(raw)) continue;
+
+    // note: TGL keterangan → reminder, bind ke customer berjalan (positional).
+    const nm = t.match(NOTE);
+    if (nm) {
+      const content = nm[1].trim();
+      const dm = dateMatchText(content);
+      const reminder_date = dm ? findDate(dm) : null;
+      const keterangan = (dm ? content.replace(dm, " ") : content).replace(/\s+/g, " ").trim();
+      notes.push({ customer: cur?.customer ?? null, reminder_date, keterangan });
+      continue;
+    }
 
     const fm = t.match(FIELD);
     const numbered = /^\s*\d+\s*[.)]/.test(raw);
@@ -137,5 +158,5 @@ export function parseAmReport(body: string): AmReportResult {
     if (cur && !fm) cur.hasil = (cur.hasil ? cur.hasil + " " : "") + t;
   }
   push();
-  return { tanggal, items: items.filter((it) => it.customer) };
+  return { tanggal, items: items.filter((it) => it.customer), notes };
 }
