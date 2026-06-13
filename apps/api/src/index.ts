@@ -88,6 +88,7 @@ import {
 import { salesRange, reportRevenue, reportSalesAr } from "./repo/sales.js";
 import { upsertMembers, listMembers, upsertDigests, listDigest, upsertPola, listPola, generateRekap, generateResume, type MonitorMemberInput, type DigestInput, type PolaInput } from "./repo/monitor.js";
 import { runNotifTua } from "./repo/notiftua.js";
+import { runDailySummary } from "./repo/dailysummary.js";
 import {
   upsertCustomers,
   upsertBranches,
@@ -593,6 +594,20 @@ app.post("/notif/tua", async (c) => {
     /* body opsional */
   }
   const r = await runNotifTua({ dryRun: body.dry_run, target: body.target });
+  return c.json(r);
+});
+
+// Daily Summary (port wrg-daily.sh daily_summary) — ringkasan harian AI ke grup.
+// body: {dry_run?, target?}. dry_run → generate + simpan, TANPA kirim WA.
+app.post("/daily-summary/run", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { dry_run?: boolean; target?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    /* body opsional */
+  }
+  const r = await runDailySummary({ dryRun: body.dry_run, target: body.target });
   return c.json(r);
 });
 
