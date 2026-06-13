@@ -46,7 +46,7 @@ export async function upsertMembers(rows: MonitorMemberInput[]): Promise<number>
 
 // ── Digest (rekap / resume) ──
 export interface DigestInput {
-  kind: "rekap" | "resume";
+  kind: "rekap" | "resume" | "daily";
   tanggal: string;
   waktu?: string | null;
   content: string;
