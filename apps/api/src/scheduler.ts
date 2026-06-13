@@ -19,6 +19,7 @@ import { runReminders } from "./repo/reminder.js";
 import { runHodDaily } from "./repo/hodreminder.js";
 import { generateRekap, generateResume } from "./repo/monitor.js";
 import { syncAccurateInvoices } from "./repo/accurateSync.js";
+import { runPlanCheck, runReportCheck } from "./repo/compliance.js";
 
 // Penjadwal agen in-process (Blueprint v2.3). Default MATI — aktif hanya bila
 // AGENT_SCHEDULE_ENABLED=true. Tiap run tetap menulis ke audit_log via repo
@@ -51,6 +52,19 @@ const TZ = (): string => process.env.AGENT_CRON_TZ ?? "Asia/Jakarta";
 const wibNow = (): Date => new Date(Date.now() + 7 * 3600 * 1000);
 const wibDate = (): string => wibNow().toISOString().slice(0, 10);
 const wibJam = (): string => wibNow().toISOString().slice(11, 16);
+
+// Hari kerja WIB: bukan Sabtu/Minggu & bukan libur (master_holiday).
+async function isWorkday(): Promise<boolean> {
+  const wib = wibNow();
+  const dow = wib.getUTCDay();
+  if (dow === 0 || dow === 6) return false;
+  try {
+    const [h] = await db()`SELECT 1 FROM master_holiday WHERE tanggal = ${wib.toISOString().slice(0, 10)} LIMIT 1`;
+    return !h;
+  } catch {
+    return true;
+  }
+}
 
 export function startScheduler(): ScheduleStatus {
   const enabled = (process.env.AGENT_SCHEDULE_ENABLED ?? "false").toLowerCase() === "true";
@@ -214,6 +228,48 @@ export function startScheduler(): ScheduleStatus {
       { timezone },
     );
     live.push(`reminder-hod=${hodExpr}`);
+  }
+
+  // Compliance reminder per-grup (port plan_check/report_check) — ikut gating
+  // reminder. plan-check skip non-hari-kerja; report-check weekend opt-in.
+  const planCheckExpr = process.env.PLAN_CHECK_CRON ?? "15 8 * * *";
+  if (cron.validate(planCheckExpr)) {
+    cron.schedule(
+      planCheckExpr,
+      async () => {
+        const startedAt = new Date().toISOString();
+        try {
+          if (!(await isWorkday())) {
+            console.log(`[scheduler] plan-check skip (bukan hari kerja)`);
+            return;
+          }
+          const r = await runPlanCheck();
+          console.log(`[scheduler] plan-check @ ${startedAt} ${JSON.stringify(r)}`);
+        } catch (e) {
+          console.error(`[scheduler] plan-check gagal @ ${startedAt}:`, e);
+        }
+      },
+      { timezone },
+    );
+    live.push(`plan-check=${planCheckExpr}`);
+  }
+  const reportCheckExpr = process.env.REPORT_CHECK_CRON ?? "30 20 * * *";
+  if (cron.validate(reportCheckExpr)) {
+    cron.schedule(
+      reportCheckExpr,
+      async () => {
+        const startedAt = new Date().toISOString();
+        try {
+          const wd = await isWorkday();
+          const r = await runReportCheck(wd);
+          console.log(`[scheduler] report-check @ ${startedAt} wd=${wd} ${JSON.stringify(r)}`);
+        } catch (e) {
+          console.error(`[scheduler] report-check gagal @ ${startedAt}:`, e);
+        }
+      },
+      { timezone },
+    );
+    live.push(`report-check=${reportCheckExpr}`);
   }
 
   // Monitor (port wrg-monitor) — rekap & resume GENERATE-ONLY (tidak kirim WA;
