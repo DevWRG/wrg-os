@@ -230,3 +230,24 @@ class ExecSynthesisResponse(BaseModel):
     briefing: str
     model: str
     dry_run: bool = False
+
+
+# === detect_leave (deteksi izin/sakit/cuti dari grup HRD via LLM) ===
+
+
+class LeaveDetectRequest(BaseModel):
+    sender: str = ""  # nama tampilan pengirim
+    body: str  # isi pesan WA
+    msgdate: str  # tanggal pesan YYYY-MM-DD (untuk resolve "hari ini"/"besok")
+    dry_run: bool = False
+
+
+class LeaveDetectResponse(BaseModel):
+    is_leave: bool = False
+    nama: Optional[str] = None
+    jenis: Optional[str] = None  # ijin | sakit | cuti
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    confidence: float = 0.0
+    model: str = "dry-run"
+    dry_run: bool = False

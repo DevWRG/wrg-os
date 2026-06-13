@@ -90,6 +90,7 @@ import { upsertMembers, listMembers, upsertDigests, listDigest, upsertPola, list
 import { runNotifTua } from "./repo/notiftua.js";
 import { runDailySummary } from "./repo/dailysummary.js";
 import { runWeeklyReport } from "./repo/weeklyreport.js";
+import { runDetectLeaveScan } from "./repo/detectleave.js";
 import {
   upsertCustomers,
   upsertBranches,
@@ -623,6 +624,20 @@ app.post("/weekly-report/run", async (c) => {
     /* body opsional */
   }
   const r = await runWeeklyReport({ dryRun: body.dry_run, target: body.target, from: body.from, to: body.to });
+  return c.json(r);
+});
+
+// detect_leave (port detect_leave.sh) — scan grup HRD: deteksi izin/cuti + approval.
+// body: {dry_run?}. dry_run → scan + LLM, TANPA insert pending/kirim/approve.
+app.post("/detect-leave/scan", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { dry_run?: boolean } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    /* body opsional */
+  }
+  const r = await runDetectLeaveScan({ dryRun: body.dry_run });
   return c.json(r);
 });
 

@@ -23,6 +23,7 @@ import { runPlanCheck, runReportCheck } from "./repo/compliance.js";
 import { runNotifTua } from "./repo/notiftua.js";
 import { runDailySummary } from "./repo/dailysummary.js";
 import { runWeeklyReport } from "./repo/weeklyreport.js";
+import { runDetectLeaveScan } from "./repo/detectleave.js";
 
 // Penjadwal agen in-process (Blueprint v2.3). Default MATI — aktif hanya bila
 // AGENT_SCHEDULE_ENABLED=true. Tiap run tetap menulis ke audit_log via repo
@@ -89,6 +90,9 @@ export function startScheduler(): ScheduleStatus {
   const dailySummaryEnabled = (process.env.DAILY_SUMMARY_ENABLED ?? "false").toLowerCase() === "true";
   // weekly-report (port cron_weekly_report.sh) — KPI mingguan ke HOD Squad, Senin 07:00.
   const weeklyReportEnabled = (process.env.WEEKLY_REPORT_ENABLED ?? "false").toLowerCase() === "true";
+  // detect-leave (port detect_leave.sh) — scan grup HRD tiap 10 menit, deteksi
+  // izin/sakit/cuti via LLM + approval admin. KIRIM WA ke grup HRD.
+  const detectLeaveEnabled = (process.env.DETECT_LEAVE_ENABLED ?? "false").toLowerCase() === "true";
   const timezone = TZ();
   const jobs: JobDef[] = [
     {
@@ -164,13 +168,13 @@ export function startScheduler(): ScheduleStatus {
   ];
 
   status = {
-    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || weeklyReportEnabled,
+    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || weeklyReportEnabled || detectLeaveEnabled,
     timezone,
     jobs: jobs.map((j) => ({ id: j.id, expr: j.expr, valid: cron.validate(j.expr) })),
   };
 
-  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !weeklyReportEnabled) {
-    console.log("[scheduler] AGENT_/REMINDER_/ACCURATE_/MONITOR_/NOTIF_TUA_/DAILY_SUMMARY_/WEEKLY_REPORT_ENABLED != true — tidak dijadwalkan");
+  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !weeklyReportEnabled && !detectLeaveEnabled) {
+    console.log("[scheduler] semua *_SCHEDULE/_ENABLED flag != true — tidak dijadwalkan");
     return status;
   }
   if (!isDbEnabled()) {
@@ -419,6 +423,27 @@ export function startScheduler(): ScheduleStatus {
       { timezone },
     );
     live.push(`weekly-report=${wrExpr}`);
+  }
+
+  // detect-leave (port detect_leave.sh) — scan grup HRD tiap 10 menit.
+  const dlExpr = process.env.DETECT_LEAVE_CRON ?? "*/10 * * * *";
+  if ((enabled || detectLeaveEnabled) && cron.validate(dlExpr)) {
+    cron.schedule(
+      dlExpr,
+      async () => {
+        const startedAt = new Date().toISOString();
+        try {
+          const r = await runDetectLeaveScan({});
+          if (r.scanned > 0 || r.pending_created > 0 || r.approved > 0 || r.rejected > 0) {
+            console.log(`[scheduler] detect-leave @ ${startedAt} ${JSON.stringify(r).slice(0, 200)}`);
+          }
+        } catch (e) {
+          console.error(`[scheduler] detect-leave gagal @ ${startedAt}:`, e);
+        }
+      },
+      { timezone },
+    );
+    live.push(`detect-leave=${dlExpr}`);
   }
 
   console.log(`[scheduler] aktif (TZ=${timezone}): ${live.join(", ") || "(tidak ada job valid)"}`);
