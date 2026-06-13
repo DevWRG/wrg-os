@@ -95,6 +95,26 @@ export async function resolveAmByWa(
   return { am_id: String(rows[0].am_id), nama: String(rows[0].nama), aktif: Boolean(rows[0].aktif) };
 }
 
+// Resolve pengirim via pushname (sender_name) — dipakai untuk pesan GRUP, karena
+// capture openclaw sering menaruh JID grup di field sender (bukan nomor individu),
+// sehingga satu-satunya pengenal orang = pushname. Normalisasi: lowercase +
+// huruf-saja (port logika legacy wrg-inbound.sh). Cocokkan ke panggilan/nama.
+// Ambiguous (>1) atau tak ada → null (aman, hindari salah atribusi).
+export async function resolveAmByPushname(
+  pushname: string,
+): Promise<{ am_id: string; nama: string; aktif: boolean } | null> {
+  const sql = db();
+  const norm = String(pushname ?? "").toLowerCase().replace(/[^a-z]/g, "");
+  if (!norm) return null;
+  const rows = await sql`
+    SELECT am_id, nama, aktif FROM master_user
+    WHERE regexp_replace(lower(panggilan), '[^a-z]', '', 'g') = ${norm}
+       OR regexp_replace(lower(nama), '[^a-z]', '', 'g') = ${norm}
+  `;
+  if (rows.length !== 1) return null;
+  return { am_id: String(rows[0].am_id), nama: String(rows[0].nama), aktif: Boolean(rows[0].aktif) };
+}
+
 export interface TerritoryInput {
   am_panggilan: string;
   hod_panggilan: string;
