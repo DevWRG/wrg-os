@@ -93,6 +93,7 @@ import { runWeeklyReport } from "./repo/weeklyreport.js";
 import { runDetectLeaveScan } from "./repo/detectleave.js";
 import { runExtractCompetitor } from "./repo/extractcompetitor.js";
 import { runWeekendBriefing } from "./repo/weekendbriefing.js";
+import { runPolaKomunikasi } from "./repo/polakomunikasi.js";
 import {
   upsertCustomers,
   upsertBranches,
@@ -668,6 +669,20 @@ app.post("/weekend-briefing/run", async (c) => {
     /* body opsional */
   }
   const r = await runWeekendBriefing({ dryRun: body.dry_run });
+  return c.json(r);
+});
+
+// pola_komunikasi (port pola_komunikasi.sh) — profil pola per-grup → monitor_pola.
+// body: {dry_run?, window_days?, min_messages?}. GENERATE-ONLY (tanpa WA).
+app.post("/pola/run", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { dry_run?: boolean; window_days?: number; min_messages?: number } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    /* body opsional */
+  }
+  const r = await runPolaKomunikasi({ dryRun: body.dry_run, windowDays: body.window_days, minMessages: body.min_messages });
   return c.json(r);
 });
 

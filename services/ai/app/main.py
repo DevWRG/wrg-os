@@ -41,6 +41,8 @@ from .schemas import (
     RekapResponse,
     ResumeRequest,
     ResumeResponse,
+    PolaProfileRequest,
+    PolaProfileResponse,
     SalesDocRequest,
     SalesDocResponse,
     SummarizeRequest,
@@ -552,3 +554,31 @@ def weekend_briefing(req: WeekendBriefingRequest) -> WeekendBriefingResponse:
         return WeekendBriefingResponse(briefing=fallback, model="dry-run", dry_run=True)
     text, model, _, _ = chat_or_fallback(system, user, fallback, max_tokens=4000, models=exec_models())
     return WeekendBriefingResponse(briefing=text, model=model, dry_run=model == "dry-run-fallback")
+
+
+# === pola_komunikasi: profil pola komunikasi per grup (port pola_komunikasi.sh) ===
+@app.post("/pola-profile", response_model=PolaProfileResponse)
+def pola_profile(req: PolaProfileRequest) -> PolaProfileResponse:
+    """Profil pola komunikasi 1 grup dari statistik + sample → LLM (markdown).
+
+    dry_run / tanpa OPENROUTER_API_KEY → kembalikan prompt yang dirakit.
+    """
+    system = (
+        f"Kamu adalah analis komunikasi internal {NAMA_PERUSAHAAN}. Buat PROFILE POLA "
+        "KOMUNIKASI satu grup WhatsApp dari statistik & sample pesan. Output markdown EKSAK "
+        "dengan section: # Pola Komunikasi: <label>, ## Identitas Grup (Nama, Tipe, Total pesan, "
+        f"Generated: {req.timestamp or '?'}), ## Jam Aktif, ## Top Senders, ## Topik Dominan, "
+        "## Tone & Style Komunikasi, ## Distribusi Tipe Pesan, ## Karakter Khusus / Pola Operasional, "
+        "## Rekomendasi untuk Rekap AI (3-5 bullet spesifik: apa yang HARUS di-flag asisten saat "
+        "merekap grup ini). JANGAN mengarang nama/angka di luar data. Bahasa Indonesia."
+    )
+    user = (
+        f"Grup: {req.group_label}\nTotal pesan ({req.window_days} hari): {req.count}\n\n"
+        f"Statistik (JSON):\n{req.stats_json}\n\n"
+        f"Sample pesan terakhir (urut waktu, body dipotong):\n{req.sample}"
+    )
+    fallback = f"[DRY RUN — tanpa LLM]\n\nSYSTEM:\n{system}\n\nUSER:\n{user[:1500]}"
+    if req.dry_run or not os.environ.get("OPENROUTER_API_KEY"):
+        return PolaProfileResponse(profile=fallback, model="dry-run", dry_run=True)
+    text, model, _, _ = chat_or_fallback(system, user, fallback, max_tokens=2000, models=exec_models())
+    return PolaProfileResponse(profile=text, model=model, dry_run=model == "dry-run-fallback")
