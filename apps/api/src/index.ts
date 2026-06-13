@@ -9,6 +9,7 @@ import { matchCustomer, type PlanCandidate } from "./parsers/fuzzy.js";
 import { isDbEnabled, pingDb } from "./db.js";
 import { waPreflight } from "./wasend.js";
 import { processUnprocessed, isInboundEnabled } from "./repo/inbound.js";
+import { syncAccurateInvoices, accurateConfigured } from "./repo/accurateSync.js";
 import { insertAuditEvent } from "./repo/audit.js";
 import { upsertDealsFromPlan, logReportToDeals, getPipeline } from "./repo/deal.js";
 import { enqueueAmbiguous, listHitl, resolveHitl } from "./repo/hitl.js";
@@ -474,6 +475,26 @@ app.post("/ar/invoices", async (c) => {
 app.get("/ar/aging", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json(await getAging(c.req.query("bucket") || undefined));
+});
+
+// Sync Accurate (puller, pengganti sync_accurate.sh). Read-only ke API Accurate
+// → mirror accurate_* + refresh ar_aging. body: {days?, invoice_id?}.
+app.post("/accurate/sync", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  if (!accurateConfigured()) return c.json({ error: "kredensial Accurate tak tersedia" }, 503);
+  let body: { days?: number; invoice_id?: number } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    /* body opsional */
+  }
+  const r = await syncAccurateInvoices({ days: body.days, invoiceId: body.invoice_id });
+  return c.json(r, r.ok ? 200 : 502);
+});
+
+app.get("/accurate/sync/state", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json({ configured: accurateConfigured() });
 });
 
 // AR (piutang) per customer / cabang / sales — dari accurate_invoice OPEN.

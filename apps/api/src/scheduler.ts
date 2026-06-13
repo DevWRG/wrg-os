@@ -1,6 +1,6 @@
 import cron from "node-cron";
 
-import { isDbEnabled } from "./db.js";
+import { db, isDbEnabled } from "./db.js";
 import {
   runArWatch,
   runCollectionDrafter,
@@ -18,6 +18,7 @@ import {
 import { runReminders } from "./repo/reminder.js";
 import { runHodDaily } from "./repo/hodreminder.js";
 import { generateRekap, generateResume } from "./repo/monitor.js";
+import { syncAccurateInvoices } from "./repo/accurateSync.js";
 
 // Penjadwal agen in-process (Blueprint v2.3). Default MATI — aktif hanya bila
 // AGENT_SCHEDULE_ENABLED=true. Tiap run tetap menulis ke audit_log via repo
@@ -239,6 +240,32 @@ export function startScheduler(): ScheduleStatus {
       { timezone },
     );
     live.push(`${j.label}=${j.expr}`);
+  }
+
+  // Sync Accurate (port sync_accurate.sh) — puller invoice, weekday 6× (jam kerja).
+  // Read-only ke API Accurate; skip otomatis bila hari ini libur (master_holiday).
+  const accExpr = process.env.ACCURATE_SYNC_CRON ?? "0 10,12,14,16,18,20 * * 1-5";
+  if (cron.validate(accExpr)) {
+    cron.schedule(
+      accExpr,
+      async () => {
+        const startedAt = new Date().toISOString();
+        try {
+          const today = new Date(Date.now() + 7 * 3600 * 1000).toISOString().slice(0, 10);
+          const [h] = await db()`SELECT 1 FROM master_holiday WHERE tanggal = ${today} LIMIT 1`;
+          if (h) {
+            console.log(`[scheduler] accurate-sync skip (libur ${today})`);
+            return;
+          }
+          const r = await syncAccurateInvoices({});
+          console.log(`[scheduler] accurate-sync @ ${startedAt} ${JSON.stringify(r).slice(0, 200)}`);
+        } catch (e) {
+          console.error(`[scheduler] accurate-sync gagal @ ${startedAt}:`, e);
+        }
+      },
+      { timezone },
+    );
+    live.push(`accurate-sync=${accExpr}`);
   }
 
   console.log(`[scheduler] aktif (TZ=${timezone}): ${live.join(", ") || "(tidak ada job valid)"}`);

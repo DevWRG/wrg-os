@@ -14,7 +14,7 @@ semua blocker hijau** — mematikan cron lama saat wrg-os belum siap = produksi 
 | Wiring gateway WA | ⚙️ siap (dry-run) | isi `WA_SEND_URL`/`WA_SEND_SECRET`; `WA_DRY_RUN=true` (default) = terwiring, belum kirim live. Cek `GET /wa/preflight` |
 | Kirim WhatsApp **live** | ❌ belum | uji dgn `WA_TEST_TARGET`=nomor sendiri, lalu `WA_DRY_RUN=false` (langkah go-live terakhir) |
 | Inbound WA (terima #PLAN/#REPORT) | ⚙️ siap (gated, dry-run) | proses di `/webhooks/wa` (+`POST /wa/inbound/process`) → set `WA_INBOUND_PROCESS=true`; arahkan gateway push ke `/webhooks/wa` |
-| Sync Accurate (invoice) | ❌ belum | konfigurasi webhook Accurate → `POST /webhooks/accurate`, atau bangun puller |
+| Sync Accurate (invoice) | ✅ puller siap | `POST /accurate/sync` + scheduler `accurate-sync` (gated). Set kredensial (env/`ACCURATE_CRED_FILE`) |
 | Scheduler wrg-os | ⏸️ OFF | set `AGENT_SCHEDULE_ENABLED=true` setelah job di-review |
 | Deploy wrg-os ke produksi | ❌ dev lokal | deploy apps/api + web + services/ai (DB produksi, bukan `wrg_os_dev`) |
 
@@ -52,7 +52,7 @@ Legend: ✅ siap · ⚙️ siap, perlu config (WA target/gateway) · 🔨 perlu 
 | `cron_weekly_report.sh` | Sen 07:00 | laporan KPI mingguan (generate) + kirim | 🔨 kirim/PDF |
 | `extract_competitor.sh` | 23:00 | ekstraksi kompetitor dari activity_log | 🔨 autonomous (endpoint `/competitor` manual ada) |
 | `detect_leave.sh` | tiap 10m | `/leave/detect` dari feed WA HRD | 🔨 autonomous (butuh feed) |
-| `sync_accurate.sh` | 6×/hari W | mirror invoice Accurate | 🔨 webhook/puller |
+| `sync_accurate.sh` | 6×/hari W | puller `accurate-sync` → mirror accurate_* + ar_aging | ✅ gated `AGENT_SCHEDULE_ENABLED` (`ACCURATE_SYNC_CRON`) |
 | `backup_pg.sh` | 02:00 | dump Postgres | 🔨 ops (di luar app) |
 | `wrg-inbound.sh` | tiap 1m | proses #PLAN/#REPORT → sales_plan/sales_todo/activity_log + balas | ⚙️ siap, gated `WA_INBOUND_PROCESS` (foto/geotag/OCR & #LEADS/#UPDATE 🔨 menyusul) |
 
