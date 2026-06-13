@@ -145,16 +145,31 @@ function buildReportReply(nama: string, tanggal: string, r: ReportOutcome): stri
   return s;
 }
 
+function progressBar(filled: number, total: number): string {
+  if (total <= 0) return "";
+  const f = Math.max(0, Math.min(total, filled));
+  return "▓".repeat(f) + "░".repeat(total - f);
+}
+
+// Balasan #REPORT AM — selaras format legacy "Kapten" (EOD + progress + foto pending).
 function buildAmReportReply(
   nama: string,
   tanggal: string,
   n: number,
-  res: { matched: number; unmatched: number; unmatchedNames: string[] },
+  res: { matched: number; unmatched: number },
+  planTotal: number,
+  reported: number,
+  pendingPhoto: string[],
 ): string {
-  let s = `✅ Report tercatat, ${nama}\n\n📅 ${fmtTanggalDisplay(tanggal)}\n🗒️ ${n} customer reported\n🎯 Match plan: ${res.matched} ✓`;
-  if (res.unmatched > 0) {
-    s += `  ⚠️ Baru : ${res.unmatched}\n━━━━━━━━━━━━━━━━━━━━`;
-    for (const c of res.unmatchedNames) s += `\n  ⚠️ ${c}`;
+  let s = `✅ Report EOD tercatat, ${nama}\n\n📅 ${fmtTanggalDisplay(tanggal)}\n🗒️ ${n} customer reported`;
+  if (planTotal > 0) s += `\n📊 ${reported}/${planTotal} customer selesai  ${progressBar(reported, planTotal)}`;
+  s += `\n🎯 Match plan: ${res.matched}✓`;
+  if (res.unmatched > 0) s += ` ${res.unmatched}⚠️`;
+  if (pendingPhoto.length > 0) {
+    s += `\n\n⚠️ *Foto visit belum ada (${pendingPhoto.length} customer):*\n${pendingPhoto.join(", ")}`;
+    s += "\n\nKirim foto Geo-Tagging Camera per customer dgn caption `Nama Customer` — fuzzy match auto-pair ke pending.";
+  } else {
+    s += `\n✅ Semua foto visit lengkap.`;
   }
   return s;
 }
@@ -277,11 +292,20 @@ async function photoFollowup(row: WaRow, am: { am_id: string; nama: string }): P
       WHERE id = ${top.plan_id}
     `;
   }
-  const reply = await sendViaWaGateway(
-    row.group_jid,
-    `✅ Foto tersimpan: ${top.customer_name}${hasGeo ? " (geo ✓)" : ""}${mismatch ? " ⚠️ tanggal foto ≠ plan" : ""}`,
-  );
-  return { matched: top.customer_name, score, geo: hasGeo, reply };
+  const remain = await sql`
+    SELECT customer_name FROM activity_log
+    WHERE am_id = ${am.am_id} AND tanggal = ${String(top.tanggal)} AND photo_path IS NULL ORDER BY id
+  `;
+  let msg = hasGeo
+    ? `✅ Foto ${top.customer_name} tersimpan.${mismatch ? " ⚠️ tanggal foto ≠ tanggal plan." : ""}`
+    : `⚠️ Foto ${top.customer_name} tersimpan, tapi *tidak ada geotag*. Pakai Geo-Tagging Camera supaya coord ke-burn di pixel.`;
+  if (remain.length > 0) {
+    msg += `\nSisa ${remain.length} customer belum ada foto:\n⚠️ ${remain.map((r) => String(r.customer_name)).join(", ")}`;
+  } else {
+    msg += `\n✅ Semua foto visit lengkap.`;
+  }
+  const reply = await sendViaWaGateway(row.group_jid, msg);
+  return { matched: top.customer_name, score, geo: hasGeo, remaining: remain.length, reply };
 }
 
 // Proses SATU pesan; selalu tandai processed_at (idempoten). Pengirim tak dikenal
@@ -353,7 +377,7 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
       const r = await insertSalesPlan(am.am_id, tgl, ap.customers, am.role, row.received_at);
       const reply = await sendViaWaGateway(
         target,
-        `✅ Plan tercatat, ${am.nama} — ${r.count} customer — ${tgl}${r.late ? " (telat)" : ""}`,
+        `✅ Plan tercatat, ${am.nama}\n\n📅 ${fmtTanggalDisplay(tgl)}\n🗒️ ${r.count} customer visit${r.late ? "\n⚠️ telat (lewat batas)" : ""}`,
       );
       return finish({ am_id: am.am_id, via: am.via, mode: "am", tanggal: tgl, customers: r.count, reply });
     }
@@ -382,7 +406,19 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
     }
     const tgl = ar.tanggal ?? wibDate();
     const res = await insertAmActivities(am.am_id, tgl, ar.items, row.message_id);
-    const reply = await sendViaWaGateway(target, buildAmReportReply(am.nama, tgl, ar.items.length, res));
+    const [tot] = await sql`
+      SELECT count(*)::int AS plan_total, count(*) FILTER (WHERE reported)::int AS reported
+      FROM sales_plan WHERE am_id = ${am.am_id} AND tanggal = ${tgl}
+    `;
+    const pend = await sql`
+      SELECT customer_name FROM activity_log
+      WHERE am_id = ${am.am_id} AND tanggal = ${tgl} AND photo_path IS NULL ORDER BY id
+    `;
+    const pendingNames = pend.map((p) => String(p.customer_name));
+    const reply = await sendViaWaGateway(
+      target,
+      buildAmReportReply(am.nama, tgl, ar.items.length, res, Number(tot.plan_total), Number(tot.reported), pendingNames),
+    );
     return finish({ am_id: am.am_id, via: am.via, mode: "am", tanggal: tgl, matched: res.matched, unmatched: res.unmatched, reply });
   }
   // report todo — cocokkan vs plan + balasan kaya (match/baru)
