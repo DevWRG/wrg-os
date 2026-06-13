@@ -55,8 +55,17 @@ export async function runWeekendBriefing(
   });
   if (status !== 200) return { stored: false, jumlah_resume: resumes.length, dry_run: false, error: `services/ai ${status}` };
 
-  const briefing = String(data.briefing ?? "");
+  let briefing = String(data.briefing ?? "");
   if (briefing.length < 50) return { stored: false, jumlah_resume: resumes.length, dry_run: Boolean(data.dry_run), error: "AI returned empty/short" };
+
+  // Layer-2 anti-halusinasi (port pelajaran legacy): "Minggu" ambigu di B.Indonesia
+  // (Week vs Sunday) → AI suka ngarang range tanggal. Paksa label periode kanonik:
+  // (a) baris **Briefing Mingguan: ...**, (b) defensive "Minggu N[, ]Bulan YYYY" di mana pun.
+  briefing = briefing.replace(/\*\*Briefing Mingguan:[^\n*]*\*\*/g, `**${mingguLabel}**`);
+  briefing = briefing.replace(
+    /Minggu \d+(?:[–-]\d+)?,?\s+(?:Januari|Februari|Maret|April|Mei|Juni|Juli|Agustus|September|Oktober|November|Desember|January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4}/g,
+    mingguLabel,
+  );
 
   if (!opts.dryRun) {
     const jam = now.toISOString().slice(11, 16);
