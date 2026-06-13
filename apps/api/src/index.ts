@@ -95,6 +95,7 @@ import { runExtractCompetitor } from "./repo/extractcompetitor.js";
 import { runWeekendBriefing } from "./repo/weekendbriefing.js";
 import { runPolaKomunikasi } from "./repo/polakomunikasi.js";
 import { runRefreshMembers } from "./repo/listmembers.js";
+import { runNotifQuota } from "./repo/notifquota.js";
 import {
   upsertCustomers,
   upsertBranches,
@@ -698,6 +699,19 @@ app.post("/members/sync", async (c) => {
     /* body opsional */
   }
   const r = await runRefreshMembers({ dryRun: body.dry_run });
+  return c.json(r);
+});
+
+// notif_quota (port notif_quota.sh) — probe OpenRouter, alert owner bila key/limit bermasalah.
+// body: {dry_run?, force?}.
+app.post("/notif/quota", async (c) => {
+  let body: { dry_run?: boolean; force?: boolean } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    /* body opsional */
+  }
+  const r = await runNotifQuota({ dryRun: body.dry_run, force: body.force });
   return c.json(r);
 });
 
