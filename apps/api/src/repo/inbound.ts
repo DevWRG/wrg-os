@@ -329,6 +329,7 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
     if (String(row.message_type ?? "").toLowerCase().startsWith("image") && row.media_path) {
       const amp = await resolveSender({ senderJid: row.sender_jid, pushname: row.sender_name });
       if (!amp) return finish({ skipped: "unknown-sender" }, "photo");
+      await sql`UPDATE master_user SET last_active_group = ${row.group_jid}, last_active_at = now() WHERE am_id = ${amp.am_id}`;
       const r = await photoFollowup(row, amp);
       return finish({ via: amp.via, ...r }, "photo");
     }
@@ -354,6 +355,8 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
   // Pengirim tak dikenal / nonaktif → SILENT (tak balas).
   if (!am) return finish({ skipped: "unknown-sender", sender_name: row.sender_name });
   if (!am.aktif) return finish({ skipped: "inactive", am_id: am.am_id });
+  // Track grup terakhir submit (untuk compliance reminder per-grup).
+  await sql`UPDATE master_user SET last_active_group = ${row.group_jid}, last_active_at = now() WHERE am_id = ${am.am_id}`;
 
   if (!parsed || parsed.itemCount === 0) {
     // submission terdeteksi tapi tak ada item → kemungkinan salah format (hint).
