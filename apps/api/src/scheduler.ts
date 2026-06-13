@@ -54,6 +54,9 @@ const wibJam = (): string => wibNow().toISOString().slice(11, 16);
 
 export function startScheduler(): ScheduleStatus {
   const enabled = (process.env.AGENT_SCHEDULE_ENABLED ?? "false").toLowerCase() === "true";
+  // Gating granular: reminder (AM note + HOD) bisa nyala SENDIRI tanpa memicu
+  // A1-12 / monitor / accurate-sync (yang ikut AGENT_SCHEDULE_ENABLED).
+  const remindersEnabled = (process.env.REMINDER_SCHEDULE_ENABLED ?? "false").toLowerCase() === "true";
   const timezone = TZ();
   const jobs: JobDef[] = [
     {
@@ -129,23 +132,24 @@ export function startScheduler(): ScheduleStatus {
   ];
 
   status = {
-    enabled,
+    enabled: enabled || remindersEnabled,
     timezone,
     jobs: jobs.map((j) => ({ id: j.id, expr: j.expr, valid: cron.validate(j.expr) })),
   };
 
-  if (!enabled) {
-    console.log("[scheduler] AGENT_SCHEDULE_ENABLED!=true — agen tidak dijadwalkan");
+  if (!enabled && !remindersEnabled) {
+    console.log("[scheduler] AGENT_SCHEDULE_ENABLED & REMINDER_SCHEDULE_ENABLED != true — tidak dijadwalkan");
     return status;
   }
   if (!isDbEnabled()) {
-    console.warn("[scheduler] DATABASE_URL off — agen tidak dijadwalkan");
+    console.warn("[scheduler] DATABASE_URL off — tidak dijadwalkan");
     status = { ...status, enabled: false };
     return status;
   }
 
   const live: string[] = [];
-  for (const j of jobs) {
+  // A1-12 hanya bila AGENT_SCHEDULE_ENABLED.
+  if (enabled) for (const j of jobs) {
     if (!cron.validate(j.expr)) {
       console.error(`[scheduler] ${j.id} cron-expr tidak valid: "${j.expr}" — dilewati`);
       continue;
@@ -221,7 +225,7 @@ export function startScheduler(): ScheduleStatus {
     { label: "monitor-resume", expr: process.env.MONITOR_RESUME_CRON ?? "0 14 * * *", run: () => generateResume(wibDate(), wibJam()) },
     { label: "monitor-resume-malam", expr: process.env.MONITOR_RESUME2_CRON ?? "10 22 * * *", run: () => generateResume(wibDate(), wibJam()) },
   ];
-  for (const j of monitorJobs) {
+  if (enabled) for (const j of monitorJobs) {
     if (!cron.validate(j.expr)) {
       console.error(`[scheduler] ${j.label} cron-expr tidak valid: "${j.expr}" — dilewati`);
       continue;
@@ -245,7 +249,7 @@ export function startScheduler(): ScheduleStatus {
   // Sync Accurate (port sync_accurate.sh) — puller invoice, weekday 6× (jam kerja).
   // Read-only ke API Accurate; skip otomatis bila hari ini libur (master_holiday).
   const accExpr = process.env.ACCURATE_SYNC_CRON ?? "0 10,12,14,16,18,20 * * 1-5";
-  if (cron.validate(accExpr)) {
+  if (enabled && cron.validate(accExpr)) {
     cron.schedule(
       accExpr,
       async () => {
