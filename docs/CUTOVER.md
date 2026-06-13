@@ -13,7 +13,7 @@ semua blocker hijau** — mematikan cron lama saat wrg-os belum siap = produksi 
 | Data prod ter-migrasi ke wrg-os | ✅ selesai | `scripts/migrate/crm-to-os.sql` (re-run untuk delta saat cutover) |
 | Wiring gateway WA | ⚙️ siap (dry-run) | isi `WA_SEND_URL`/`WA_SEND_SECRET`; `WA_DRY_RUN=true` (default) = terwiring, belum kirim live. Cek `GET /wa/preflight` |
 | Kirim WhatsApp **live** | ❌ belum | uji dgn `WA_TEST_TARGET`=nomor sendiri, lalu `WA_DRY_RUN=false` (langkah go-live terakhir) |
-| Inbound WA (terima #PLAN/#REPORT) | ❌ belum | arahkan gateway push → `POST /webhooks/wa`, atau bangun poller |
+| Inbound WA (terima #PLAN/#REPORT) | ⚙️ siap (gated, dry-run) | proses di `/webhooks/wa` (+`POST /wa/inbound/process`) → set `WA_INBOUND_PROCESS=true`; arahkan gateway push ke `/webhooks/wa` |
 | Sync Accurate (invoice) | ❌ belum | konfigurasi webhook Accurate → `POST /webhooks/accurate`, atau bangun puller |
 | Scheduler wrg-os | ⏸️ OFF | set `AGENT_SCHEDULE_ENABLED=true` setelah job di-review |
 | Deploy wrg-os ke produksi | ❌ dev lokal | deploy apps/api + web + services/ai (DB produksi, bukan `wrg_os_dev`) |
@@ -54,7 +54,7 @@ Legend: ✅ siap · ⚙️ siap, perlu config (WA target/gateway) · 🔨 perlu 
 | `detect_leave.sh` | tiap 10m | `/leave/detect` dari feed WA HRD | 🔨 autonomous (butuh feed) |
 | `sync_accurate.sh` | 6×/hari W | mirror invoice Accurate | 🔨 webhook/puller |
 | `backup_pg.sh` | 02:00 | dump Postgres | 🔨 ops (di luar app) |
-| `wrg-inbound.sh` | tiap 1m | ingest #PLAN/#REPORT | 🔨 webhook `/webhooks/wa` / poller |
+| `wrg-inbound.sh` | tiap 1m | proses #PLAN/#REPORT → sales_plan/sales_todo/activity_log + balas | ⚙️ siap, gated `WA_INBOUND_PROCESS` (foto/geotag/OCR & #LEADS/#UPDATE 🔨 menyusul) |
 
 **Sudah aktif-able sekarang (generate-only / gated, tanpa kirim WA):**
 `monitor-rekap`, `monitor-resume`, `reminder-h/-h-1`, `reminder-hod`, `A1–A12`.

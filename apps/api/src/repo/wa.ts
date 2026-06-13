@@ -58,6 +58,7 @@ export interface OpenclawRecord {
 function mapOpenclaw(rec: OpenclawRecord): {
   input: WaMessageInput;
   hash: string;
+  messageId: string | null;
 } | null {
   // Tentukan jid chat: group_jid untuk grup, sender untuk direct.
   const chatJid = rec.group_jid || rec.sender || null;
@@ -86,7 +87,7 @@ function mapOpenclaw(rec: OpenclawRecord): {
     rec.message_id ??
     `${input.group_jid}|${input.sender_jid ?? ""}|${receivedAt ?? ""}|${body ?? ""}`;
   const hash = createHash("sha256").update(`wa:${basis}`).digest("hex");
-  return { input, hash };
+  return { input, hash, messageId: rec.message_id ?? null };
 }
 
 // Ingest record openclaw → wa_message, idempoten by input_hash (skip duplikat).
@@ -103,7 +104,7 @@ export async function ingestOpenclawMessages(
       skipped += 1;
       continue;
     }
-    const { input, hash } = mapped;
+    const { input, hash, messageId } = mapped;
     const exists = await sql`SELECT 1 FROM wa_message WHERE input_hash = ${hash} LIMIT 1`;
     if (exists.length > 0) {
       skipped += 1;
@@ -111,11 +112,11 @@ export async function ingestOpenclawMessages(
     }
     await sql`
       INSERT INTO wa_message
-        (group_jid, group_name, sender_jid, sender_name, message_type, body, input_hash, received_at)
+        (group_jid, group_name, sender_jid, sender_name, message_type, body, input_hash, received_at, message_id)
       VALUES
         (${input.group_jid}, ${input.group_name ?? null}, ${input.sender_jid ?? null},
          ${input.sender_name ?? null}, ${input.message_type ?? "text"}, ${input.body ?? null},
-         ${hash}, ${input.received_at ?? sql`now()`})
+         ${hash}, ${input.received_at ?? sql`now()`}, ${messageId})
     `;
     groups.add(input.group_jid);
     ingested += 1;

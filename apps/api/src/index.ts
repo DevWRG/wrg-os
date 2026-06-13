@@ -8,6 +8,7 @@ import { parseReport } from "./parsers/report.js";
 import { matchCustomer, type PlanCandidate } from "./parsers/fuzzy.js";
 import { isDbEnabled, pingDb } from "./db.js";
 import { waPreflight } from "./wasend.js";
+import { processUnprocessed, isInboundEnabled } from "./repo/inbound.js";
 import { insertAuditEvent } from "./repo/audit.js";
 import { upsertDealsFromPlan, logReportToDeals, getPipeline } from "./repo/deal.js";
 import { enqueueAmbiguous, listHitl, resolveHitl } from "./repo/hitl.js";
@@ -1450,7 +1451,32 @@ app.post("/webhooks/wa", async (c) => {
     return c.json({ error: "payload tidak dikenali" }, 400);
   }
   if (records.length === 0) return c.json({ ingested: 0, skipped: 0, groups: [] });
-  return c.json(await ingestOpenclawMessages(records), 201);
+  const result = await ingestOpenclawMessages(records);
+  // Proses inbound (#PLAN/#REPORT → tabel + balas) bila WA_INBOUND_PROCESS=true.
+  // Self-guard di processUnprocessed; balasan patuh WA_DRY_RUN (default dry-run).
+  let inbound;
+  if (isInboundEnabled()) {
+    try {
+      inbound = await processUnprocessed();
+    } catch (e) {
+      console.error("[webhooks/wa] inbound process gagal:", e);
+    }
+  }
+  return c.json({ ...result, inbound }, 201);
+});
+
+// Trigger manual / batch pemrosesan inbound yang belum diproses (selain auto dari
+// webhook). Berguna untuk catch-up. Self-guard WA_INBOUND_PROCESS.
+app.post("/wa/inbound/process", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { limit?: number } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    /* body opsional */
+  }
+  const limit = Math.min(Number(body.limit ?? 50) || 50, 500);
+  return c.json(await processUnprocessed(limit));
 });
 
 // A1 Distillation Cascade agent — baca wa_message (raw) → distilasi via
