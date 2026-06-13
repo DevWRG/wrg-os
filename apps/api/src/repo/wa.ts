@@ -13,6 +13,11 @@ export interface WaMessageInput {
   message_type?: string | null;
   body?: string | null;
   received_at?: string; // ISO; default now()
+  media_path?: string | null;
+  geo_lat?: number | null;
+  geo_lon?: number | null;
+  geo_ts?: string | null;
+  geo_address?: string | null;
 }
 
 export async function ingestWaMessages(
@@ -53,6 +58,12 @@ export interface OpenclawRecord {
   media_type?: string | null;
   message_id?: string | null;
   fromMe?: boolean;
+  // diisi wa-bridge (host) via OCR check_photo_geotag.py utk pesan media image
+  media_path?: string | null;
+  geo_lat?: number | null;
+  geo_lon?: number | null;
+  geo_ts?: string | null;
+  geo_address?: string | null;
 }
 
 function mapOpenclaw(rec: OpenclawRecord): {
@@ -81,6 +92,11 @@ function mapOpenclaw(rec: OpenclawRecord): {
     message_type: media ?? "text",
     body,
     received_at: receivedAt,
+    media_path: rec.media_path ?? null,
+    geo_lat: typeof rec.geo_lat === "number" ? rec.geo_lat : null,
+    geo_lon: typeof rec.geo_lon === "number" ? rec.geo_lon : null,
+    geo_ts: rec.geo_ts ?? null,
+    geo_address: rec.geo_address ?? null,
   };
   // Hash stabil → idempoten terhadap retry webhook (pakai message_id bila ada).
   const basis =
@@ -112,11 +128,14 @@ export async function ingestOpenclawMessages(
     }
     await sql`
       INSERT INTO wa_message
-        (group_jid, group_name, sender_jid, sender_name, message_type, body, input_hash, received_at, message_id)
+        (group_jid, group_name, sender_jid, sender_name, message_type, body, input_hash, received_at, message_id,
+         media_path, geo_lat, geo_lon, geo_ts, geo_address)
       VALUES
         (${input.group_jid}, ${input.group_name ?? null}, ${input.sender_jid ?? null},
          ${input.sender_name ?? null}, ${input.message_type ?? "text"}, ${input.body ?? null},
-         ${hash}, ${input.received_at ?? sql`now()`}, ${messageId})
+         ${hash}, ${input.received_at ?? sql`now()`}, ${messageId},
+         ${input.media_path ?? null}, ${input.geo_lat ?? null}, ${input.geo_lon ?? null},
+         ${input.geo_ts ?? null}, ${input.geo_address ?? null})
     `;
     groups.add(input.group_jid);
     ingested += 1;
