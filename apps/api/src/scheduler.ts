@@ -74,6 +74,9 @@ export function startScheduler(): ScheduleStatus {
   // accurate-sync (puller invoice, read-only ke API Accurate, tanpa kirim WA)
   // bisa nyala SENDIRI tanpa ikut menyalakan A1-12 / monitor.
   const accurateEnabled = (process.env.ACCURATE_SCHEDULE_ENABLED ?? "false").toLowerCase() === "true";
+  // monitor rekap/resume (GENERATE-ONLY, simpan ke monitor_digest, tanpa kirim WA)
+  // bisa nyala SENDIRI tanpa ikut menyalakan A1-12 / accurate-sync.
+  const monitorEnabled = (process.env.MONITOR_SCHEDULE_ENABLED ?? "false").toLowerCase() === "true";
   const timezone = TZ();
   const jobs: JobDef[] = [
     {
@@ -149,13 +152,13 @@ export function startScheduler(): ScheduleStatus {
   ];
 
   status = {
-    enabled: enabled || remindersEnabled || accurateEnabled,
+    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled,
     timezone,
     jobs: jobs.map((j) => ({ id: j.id, expr: j.expr, valid: cron.validate(j.expr) })),
   };
 
-  if (!enabled && !remindersEnabled && !accurateEnabled) {
-    console.log("[scheduler] AGENT_SCHEDULE_ENABLED / REMINDER_SCHEDULE_ENABLED / ACCURATE_SCHEDULE_ENABLED != true — tidak dijadwalkan");
+  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled) {
+    console.log("[scheduler] AGENT_SCHEDULE_ENABLED / REMINDER_SCHEDULE_ENABLED / ACCURATE_SCHEDULE_ENABLED / MONITOR_SCHEDULE_ENABLED != true — tidak dijadwalkan");
     return status;
   }
   if (!isDbEnabled()) {
@@ -284,7 +287,7 @@ export function startScheduler(): ScheduleStatus {
     { label: "monitor-resume", expr: process.env.MONITOR_RESUME_CRON ?? "0 14 * * *", run: () => generateResume(wibDate(), wibJam()) },
     { label: "monitor-resume-malam", expr: process.env.MONITOR_RESUME2_CRON ?? "10 22 * * *", run: () => generateResume(wibDate(), wibJam()) },
   ];
-  if (enabled) for (const j of monitorJobs) {
+  if (enabled || monitorEnabled) for (const j of monitorJobs) {
     if (!cron.validate(j.expr)) {
       console.error(`[scheduler] ${j.label} cron-expr tidak valid: "${j.expr}" — dilewati`);
       continue;
