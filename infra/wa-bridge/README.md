@@ -37,6 +37,9 @@ Daemonize (pilih salah satu): `launchd` plist, `pm2 start bridge.mjs`, atau
 | `CAPTURE_DIR` | `~/.openclaw/tmp/wrg-monitor/messages` | sumber capture inbound |
 | `POLL_MS` | 4000 | interval tail |
 | `OFFSET_FILE` | `~/.wrg-wa-bridge-offsets.json` | posisi baca per-file (restart-safe) |
+| `WA_BRIDGE_OCR` | true | OCR geotag foto (`check_photo_geotag.py`) sebelum forward |
+| `PYTHON_BIN` | python3 | interpreter OCR (butuh pytesseract+Pillow+tesseract) |
+| `OCR_SCRIPT` | `./check_photo_geotag.py` | path skrip OCR (vendored di folder ini) |
 
 ## Catatan
 
