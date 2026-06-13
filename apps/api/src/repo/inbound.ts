@@ -57,6 +57,11 @@ export interface WaRow {
   message_type: string | null;
   message_id: string | null;
   received_at: string;
+  media_path?: string | null;
+  geo_lat?: number | null;
+  geo_lon?: number | null;
+  geo_ts?: string | null;
+  geo_address?: string | null;
 }
 
 // #REPORT → tandai sales_todo hari itu reported + simpan report_data. Buat baris
@@ -217,21 +222,93 @@ async function insertAmActivities(
   return { matched, unmatched: unmatchedNames.length, unmatchedNames };
 }
 
+// ── Foto-followup (Fase 3) ──
+const PHOTO_MATCH = 0.3, PHOTO_DUP = 0.5, PHOTO_SILENT = 0.2;
+
+function parseGeoTs(ts?: string | null): { iso: string | null; dt: string | null } {
+  if (!ts) return { iso: null, dt: null };
+  const m = ts.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})(?:[ ,]+(\d{1,2}):(\d{2}))?/);
+  if (!m) return { iso: null, dt: null };
+  const iso = `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+  const dt = m[4] != null ? `${iso}T${m[4].padStart(2, "0")}:${m[5]}:00+07:00` : `${iso}T00:00:00+07:00`;
+  return { iso, dt };
+}
+
+// Foto (caption=nama customer, geo dari OCR) → match ke activity_log customer
+// hari itu (≥0.30) → tempel photo_path+geotag + update sales_plan.visit_*.
+async function photoFollowup(row: WaRow, am: { am_id: string; nama: string }): Promise<Record<string, unknown>> {
+  const sql = db();
+  let caption = (row.body ?? "").trim();
+  if (caption === "<media:image>") caption = "";
+  if (!caption) return { skipped: "no-caption" };
+  const cands = await sql`
+    SELECT id, customer_name, plan_id, tanggal::text AS tanggal, photo_path,
+           similarity(customer_name, ${caption}) AS score
+    FROM activity_log
+    WHERE am_id = ${am.am_id} AND tanggal >= (CURRENT_DATE - 7)
+      AND similarity(customer_name, ${caption}) >= ${PHOTO_SILENT}
+    ORDER BY score DESC LIMIT 1
+  `;
+  const top = cands[0];
+  if (!top) return { skipped: "no-match-silent", caption };
+  const score = Number(top.score);
+  if (score < PHOTO_MATCH) {
+    const reply = await sendViaWaGateway(row.group_jid, `⚠️ Foto "${caption}" tak cocok ke customer manapun, ${am.nama}.`);
+    return { error: "weak-match", score, reply };
+  }
+  if (top.photo_path && score >= PHOTO_DUP) {
+    const reply = await sendViaWaGateway(row.group_jid, `ℹ️ Foto ${top.customer_name} sudah tersimpan, ${am.nama}.`);
+    return { note: "already-saved", reply };
+  }
+  const hasGeo = row.geo_lat != null && row.geo_lon != null;
+  const geo = hasGeo ? { lat: row.geo_lat, lon: row.geo_lon, ts: row.geo_ts ?? null, address: row.geo_address ?? null } : null;
+  await sql`
+    UPDATE activity_log SET photo_path = ${row.media_path ?? null},
+      photo_geotag = ${geo ? sql.json(geo as unknown as Parameters<typeof sql.json>[0]) : null}
+    WHERE id = ${top.id}
+  `;
+  let mismatch = false;
+  if (top.plan_id && hasGeo) {
+    const g = parseGeoTs(row.geo_ts);
+    mismatch = g.iso ? g.iso !== String(top.tanggal) : false;
+    await sql`
+      UPDATE sales_plan SET visit_lat = ${row.geo_lat ?? null}, visit_lon = ${row.geo_lon ?? null},
+        visit_timestamp = ${g.dt}, visit_date_mismatch = ${mismatch}
+      WHERE id = ${top.plan_id}
+    `;
+  }
+  const reply = await sendViaWaGateway(
+    row.group_jid,
+    `✅ Foto tersimpan: ${top.customer_name}${hasGeo ? " (geo ✓)" : ""}${mismatch ? " ⚠️ tanggal foto ≠ plan" : ""}`,
+  );
+  return { matched: top.customer_name, score, geo: hasGeo, reply };
+}
+
 // Proses SATU pesan; selalu tandai processed_at (idempoten). Pengirim tak dikenal
 // / non-submission → SILENT.
 export async function processInboundMessage(row: WaRow): Promise<Record<string, unknown>> {
   const sql = db();
   const kind = detectKind(row.body);
-  const finish = async (result: Record<string, unknown>): Promise<Record<string, unknown>> => {
+  const finish = async (result: Record<string, unknown>, kindOverride?: string): Promise<Record<string, unknown>> => {
+    const k = kindOverride ?? kind;
     await sql`
-      UPDATE wa_message SET processed_at = now(), processed_kind = ${kind},
+      UPDATE wa_message SET processed_at = now(), processed_kind = ${k},
         processed_result = ${sql.json(result as unknown as Parameters<typeof sql.json>[0])}
       WHERE id = ${row.id}
     `;
-    return { id: row.id, kind, ...result };
+    return { id: row.id, kind: k, ...result };
   };
 
-  if (kind === "none") return finish({ skipped: "no-hashtag" });
+  if (kind === "none") {
+    // Foto tanpa hashtag (caption = customer) → foto-followup ke activity_log.
+    if (String(row.message_type ?? "").toLowerCase().startsWith("image") && row.media_path) {
+      const amp = await resolveSender({ senderJid: row.sender_jid, pushname: row.sender_name });
+      if (!amp) return finish({ skipped: "unknown-sender" }, "photo");
+      const r = await photoFollowup(row, amp);
+      return finish({ via: amp.via, ...r }, "photo");
+    }
+    return finish({ skipped: "no-hashtag" });
+  }
   const target = row.group_jid;
 
   // #LEADS/#UPDATE — tanpa body-name; resolve by phone/pushname saja.
@@ -323,9 +400,12 @@ export async function processUnprocessed(
   }
   const sql = db();
   const rows = await sql`
-    SELECT id::text, group_jid, sender_jid, sender_name, body, message_type, message_id, received_at::text
+    SELECT id::text, group_jid, sender_jid, sender_name, body, message_type, message_id, received_at::text,
+           media_path, geo_lat, geo_lon, geo_ts, geo_address
     FROM wa_message
-    WHERE processed_at IS NULL AND body ~* '#\\s*(plan|report|leads|update)'
+    WHERE processed_at IS NULL
+      AND (body ~* '#\\s*(plan|report|leads|update)'
+           OR (message_type ~* '^image' AND media_path IS NOT NULL))
     ORDER BY received_at ASC LIMIT ${limit}
   `;
   const results: Record<string, unknown>[] = [];
