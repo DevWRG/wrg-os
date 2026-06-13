@@ -16,7 +16,7 @@ semua blocker hijau** — mematikan cron lama saat wrg-os belum siap = produksi 
 | Inbound WA (terima #PLAN/#REPORT) | ⚙️ siap (gated, dry-run) | proses di `/webhooks/wa` (+`POST /wa/inbound/process`) → set `WA_INBOUND_PROCESS=true`; arahkan gateway push ke `/webhooks/wa` |
 | Sync Accurate (invoice) | ✅ puller siap | `POST /accurate/sync` + scheduler `accurate-sync` (gated). Set kredensial (env/`ACCURATE_CRED_FILE`) |
 | Scheduler wrg-os | ⏸️ OFF | set `AGENT_SCHEDULE_ENABLED=true` setelah job di-review |
-| Deploy wrg-os ke produksi | ❌ dev lokal | deploy apps/api + web + services/ai (DB produksi, bukan `wrg_os_dev`) |
+| Deploy wrg-os ke produksi | ⚙️ artefak siap | `docker-compose.prod.yml` + `wrg_os_prod` (clone ✅) + `wa-bridge`. Lihat §3b. Tinggal jalankan di host |
 
 > Catatan keamanan: Python produksi lama (port 8090/8091/8092) **jangan disentuh**.
 > Cron lama tetap hidup sampai langkah Eksekusi dijalankan eksplisit.
@@ -86,6 +86,36 @@ MONITOR_RESUME2_CRON=10 22 * * *
 4. Kosongkan `WA_TEST_TARGET`, restart → broadcast ke target nyata (go-live penuh).
 
 ---
+
+## 3b. Deploy Phase 1 (co-locate di Mac, dual-run)
+
+Stack prod = `docker-compose.prod.yml` (pull image ghcr) + Postgres HOST
+(`wrg_os_prod`) + **wa-bridge** HOST (`infra/wa-bridge/`). Legacy 8090-8092 tetap.
+
+```bash
+# 1. DB prod (sekali): clone dari dev (sudah berisi data+migrasi+teruji)
+createdb wrg_os_prod && pg_dump wrg_os_dev | psql wrg_os_prod
+# Role app berpassword + izinkan koneksi container:
+#   CREATE ROLE wrg_app LOGIN PASSWORD '...'; GRANT ALL ON DATABASE wrg_os_prod TO wrg_app; (+ schema/tables)
+#   postgresql.conf: listen_addresses='*'   pg_hba.conf: host wrg_os_prod wrg_app <docker-subnet> scram-sha-256
+#   (restart postgres)
+
+# 2. Image ghcr (package privat)
+docker login ghcr.io                       # username + PAT (read:packages)
+
+# 3. Env + up (semua flag default GATED/dry-run)
+cp .env.prod.example .env.prod && nano .env.prod
+docker compose -f docker-compose.prod.yml --env-file .env.prod pull
+docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
+
+# 4. wa-bridge di HOST (lihat infra/wa-bridge/README.md) — mulai DRY:
+WA_BRIDGE_SECRET=$WA_SEND_SECRET WRG_WEBHOOK_URL=http://localhost:4000/webhooks/wa \
+WRG_WEBHOOK_SECRET=$WA_WEBHOOK_SECRET node infra/wa-bridge/bridge.mjs   # WA_BRIDGE_SEND_LIVE belum di-set
+
+# 5. Smoke: GET /health, /wa/preflight, /accurate/sync/state; login web :3000
+```
+
+Akses tim: taruh web :3000 di belakang **Caddy** (auto-TLS) atau **Tailscale**.
 
 ## 4. Eksekusi cutover (JALANKAN HANYA SAAT SEMUA BLOCKER HIJAU)
 
