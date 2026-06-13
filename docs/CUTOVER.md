@@ -117,6 +117,30 @@ WRG_WEBHOOK_SECRET=$WA_WEBHOOK_SECRET node infra/wa-bridge/bridge.mjs   # WA_BRI
 
 Akses tim: taruh web :3000 di belakang **Caddy** (auto-TLS) atau **Tailscale**.
 
+## 3c. Deploy Phase 1 NATIVE (tanpa Docker — jalur aktual di Mac)
+
+Mac ini tak punya container runtime → wrg-os dijalankan **native via pm2**
+(konsisten dgn legacy & dev yang juga bare-metal). Port prod terpisah:
+**ai 8100 · api 4100 · web 3100**. DB = `wrg_os_prod` (peer auth lokal → tak perlu
+pg_hba/host.docker.internal/ghcr). Config: `ecosystem.config.cjs` (baca `.env.prod`,
+gitignored). Dual-run dgn legacy (8090-8092) & dev (3000/4000/8000).
+
+```bash
+# prasyarat: npm i -g pm2 ; pnpm --filter api build ; pnpm --filter web build
+cp .env.prod.example .env.prod   # native: DATABASE_URL=postgres://localhost:5432/wrg_os_prod,
+                                 # AI_URL/API_URL ke :8100/:4100, secret di-generate (openssl rand)
+pm2 start ecosystem.config.cjs
+pm2 save
+sudo env PATH=$PATH:<node-bin> $(which pm2) startup launchd -u $USER --hp $HOME   # auto-boot
+pm2 status ; pm2 logs
+
+# smoke: curl :4100/health ; :4100/wa/preflight (x-service-token) ; :4100/accurate/sync/state ; :3100/login
+```
+
+Akses tim: **Tailscale** (`tailscale serve --bg 3100` → HTTPS tailnet) atau Caddy.
+
+> Untuk Phase 2 (VPS/always-on) pakai jalur Docker §3b (image ghcr + compose).
+
 ## 4. Eksekusi cutover (JALANKAN HANYA SAAT SEMUA BLOCKER HIJAU)
 
 ```bash
