@@ -21,6 +21,7 @@ import { generateRekap, generateResume } from "./repo/monitor.js";
 import { syncAccurateInvoices } from "./repo/accurateSync.js";
 import { runPlanCheck, runReportCheck } from "./repo/compliance.js";
 import { runNotifTua } from "./repo/notiftua.js";
+import { runDailySummary } from "./repo/dailysummary.js";
 
 // Penjadwal agen in-process (Blueprint v2.3). Default MATI — aktif hanya bila
 // AGENT_SCHEDULE_ENABLED=true. Tiap run tetap menulis ke audit_log via repo
@@ -82,6 +83,9 @@ export function startScheduler(): ScheduleStatus {
   // Nyala sendiri; hanya dijadwalkan bila NOTIF_TUA_TARGET di-set (anti broadcast
   // tak sengaja). Butuh resume → praktis berpasangan dgn monitor generate.
   const notifTuaEnabled = (process.env.NOTIF_TUA_ENABLED ?? "false").toLowerCase() === "true";
+  // daily-summary (port wrg-daily.sh daily_summary) — KIRIM ringkasan harian AI
+  // ke grup HOD Squad, 22:00 hari kerja. Nyala sendiri via flag.
+  const dailySummaryEnabled = (process.env.DAILY_SUMMARY_ENABLED ?? "false").toLowerCase() === "true";
   const timezone = TZ();
   const jobs: JobDef[] = [
     {
@@ -157,13 +161,13 @@ export function startScheduler(): ScheduleStatus {
   ];
 
   status = {
-    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled,
+    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled,
     timezone,
     jobs: jobs.map((j) => ({ id: j.id, expr: j.expr, valid: cron.validate(j.expr) })),
   };
 
-  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled) {
-    console.log("[scheduler] AGENT_/REMINDER_/ACCURATE_/MONITOR_/NOTIF_TUA_SCHEDULE_ENABLED != true — tidak dijadwalkan");
+  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled) {
+    console.log("[scheduler] AGENT_/REMINDER_/ACCURATE_/MONITOR_/NOTIF_TUA_/DAILY_SUMMARY_ENABLED != true — tidak dijadwalkan");
     return status;
   }
   if (!isDbEnabled()) {
@@ -368,6 +372,30 @@ export function startScheduler(): ScheduleStatus {
       );
       live.push(`${j.label}=${j.expr}`);
     }
+  }
+
+  // daily-summary (port wrg-daily.sh daily_summary) — ringkasan harian AI ke
+  // HOD Squad, 22:00 hari kerja (skip Sabtu/Minggu & libur master_holiday).
+  const dsExpr = process.env.DAILY_SUMMARY_CRON ?? "0 22 * * 1-5";
+  if ((enabled || dailySummaryEnabled) && cron.validate(dsExpr)) {
+    cron.schedule(
+      dsExpr,
+      async () => {
+        const startedAt = new Date().toISOString();
+        try {
+          if (!(await isWorkday())) {
+            console.log(`[scheduler] daily-summary skip (bukan hari kerja)`);
+            return;
+          }
+          const r = await runDailySummary({});
+          console.log(`[scheduler] daily-summary @ ${startedAt} ${JSON.stringify(r).slice(0, 200)}`);
+        } catch (e) {
+          console.error(`[scheduler] daily-summary gagal @ ${startedAt}:`, e);
+        }
+      },
+      { timezone },
+    );
+    live.push(`daily-summary=${dsExpr}`);
   }
 
   console.log(`[scheduler] aktif (TZ=${timezone}): ${live.join(", ") || "(tidak ada job valid)"}`);

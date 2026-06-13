@@ -47,6 +47,7 @@ class SummaryStats(BaseModel):
     matched: int = 0
     unmatched: int = 0
     anggota_plan: int = 0
+    wajib_total: int = 0  # total user wajib lapor (sudah exclude yg ijin hari ini)
 
 
 class DailySummaryRequest(BaseModel):
@@ -54,6 +55,11 @@ class DailySummaryRequest(BaseModel):
     tanggal: str  # mis. "21 Mei 2026"
     stats: SummaryStats
     rows: List[ActivityRow] = Field(default_factory=list)
+    # List nama eksplisit untuk section Perhatian/Ijin — anti-halusinasi: LLM hanya
+    # boleh pakai nama dari list ini, tidak mengarang.
+    no_plan: List[str] = Field(default_factory=list)
+    non_reporters: List[str] = Field(default_factory=list)
+    on_leave: List[str] = Field(default_factory=list)
     dry_run: bool = False
 
 

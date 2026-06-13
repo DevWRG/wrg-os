@@ -43,22 +43,34 @@ from .schemas import (
 DAILY_SYSTEM_PROMPT = """Kamu adalah WRG CRM Daily Summary Generator.
 Buat ringkasan harian aktivitas tim sales PT Wahana Rizky Gumilang.
 
-FORMAT OUTPUT WAJIB:
+CRITICAL RULES:
+- JANGAN mengarang nama, angka, atau fakta yg tidak ada di data input.
+- Section 'Perhatian' HANYA pakai nama dari list NON_REPORTERS & NO_PLAN yg di-input.
+  Kalau kedua list kosong, tulis '(semua wajib user sudah submit)'.
+- Section 'Ijin' HANYA pakai nama dari list ON_LEAVE. Skip section ini kalau list kosong.
+- Angka overview 'anggota aktif dari N tim wajib' pakai anggota_aktif & wajib_total dari STATS
+  (wajib_total sudah exclude yg ijin hari ini).
+- Per Area hanya sebut area/cabang yg muncul di DATA INPUT.
+
+FORMAT OUTPUT WAJIB (plain text, JANGAN pakai markdown header ##):
 📊 *Daily Summary — {hari}, {tanggal}*
 
 *Overview*
-• {N} anggota aktif dari {total} tim
+• {anggota_aktif} dari {wajib_total} tim wajib aktif lapor
 • {total_report} laporan masuk
 • {matched}% sesuai plan, {unmatched} aktivitas di luar plan
 
 *Per Area*
-[untuk setiap area: ringkasan 2-3 kalimat tentang aktivitas hari ini]
+[untuk setiap area yg muncul di data: ringkasan 2-3 kalimat]
 
 *Highlight*
 [maks 3 poin penting hari ini — deal hot, prospek baru, warning]
 
 *Perhatian*
-[anggota yang tidak plan/report hari ini, jika ada]
+[copy nama dari NON_REPORTERS & NO_PLAN list, jangan ngarang]
+
+*Ijin*
+[copy nama dari ON_LEAVE list. Skip section kalau kosong]
 
 Gunakan Bahasa Indonesia. Singkat, informatif, eksekutif. Maksimal 30 baris."""
 
@@ -96,13 +108,20 @@ def daily_summary(req: DailySummaryRequest) -> DailySummaryResponse:
     """
     compressed = wrg_compress(req.rows)
     s = req.stats
+    no_plan = ", ".join(req.no_plan) or "(kosong)"
+    non_reporters = ", ".join(req.non_reporters) or "(kosong)"
+    on_leave = ", ".join(req.on_leave) or "(kosong)"
     user_msg = (
         "============================================\n"
         "DATA INPUT (compressed):\n"
         f"{compressed}\n\n"
         "STATS:\n"
-        f"anggota_aktif={s.anggota_aktif} | total_report={s.total_report} | "
-        f"matched={s.matched} | unmatched={s.unmatched} | anggota_plan={s.anggota_plan}\n"
+        f"anggota_aktif={s.anggota_aktif} | wajib_total={s.wajib_total} | "
+        f"total_report={s.total_report} | matched={s.matched} | "
+        f"unmatched={s.unmatched} | anggota_plan={s.anggota_plan}\n\n"
+        f"NO_PLAN (wajib tapi tidak submit plan hari ini):\n{no_plan}\n\n"
+        f"NON_REPORTERS (sudah submit plan tapi belum report):\n{non_reporters}\n\n"
+        f"ON_LEAVE (wajib tapi ijin/cuti hari ini — sudah di-exclude dari wajib_total):\n{on_leave}\n"
         "============================================"
     )
     system = DAILY_SYSTEM_PROMPT.replace("{hari}", req.hari).replace(
