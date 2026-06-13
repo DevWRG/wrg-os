@@ -80,25 +80,24 @@ export function normalizeWa(raw: string): string {
 
 // Resolve nomor WA pengirim → AM (master_user). Cocokkan setelah normalisasi
 // kedua sisi. Hanya user aktif. null bila tak dikenal.
-export async function resolveAmByWa(
-  waNumber: string,
-): Promise<{ am_id: string; nama: string; aktif: boolean } | null> {
+export async function resolveAmByWa(waNumber: string): Promise<ResolvedAm | null> {
   const sql = db();
   const norm = normalizeWa(waNumber);
   if (!norm) return null;
   const rows = await sql`
-    SELECT am_id, nama, aktif FROM master_user
+    SELECT am_id, nama, aktif, role FROM master_user
     WHERE regexp_replace(COALESCE(wa_number,''), '[^0-9]', '', 'g') = ${norm}
     LIMIT 1
   `;
   if (rows.length === 0) return null;
-  return { am_id: String(rows[0].am_id), nama: String(rows[0].nama), aktif: Boolean(rows[0].aktif) };
+  return { am_id: String(rows[0].am_id), nama: String(rows[0].nama), aktif: Boolean(rows[0].aktif), role: rows[0].role ? String(rows[0].role) : null };
 }
 
 export interface ResolvedAm {
   am_id: string;
   nama: string;
   aktif: boolean;
+  role?: string | null;
   via?: string;
   score?: number;
 }
@@ -112,7 +111,7 @@ export async function resolveAmByPushname(pushname: string): Promise<ResolvedAm 
   const sql = db();
   const rows = await sql`
     WITH p AS (SELECT regexp_replace(lower(${name}), '[^a-z]', '', 'g') AS norm)
-    SELECT am_id, nama, aktif FROM master_user, p
+    SELECT am_id, nama, aktif, role FROM master_user, p
     WHERE lower(nama) = lower(${name})
        OR lower(panggilan) = lower(${name})
        OR lower(nama) LIKE lower(${name}) || ' %'
@@ -131,7 +130,7 @@ export async function resolveAmByPushname(pushname: string): Promise<ResolvedAm 
     LIMIT 1
   `;
   if (rows.length === 0) return null;
-  return { am_id: String(rows[0].am_id), nama: String(rows[0].nama), aktif: Boolean(rows[0].aktif) };
+  return { am_id: String(rows[0].am_id), nama: String(rows[0].nama), aktif: Boolean(rows[0].aktif), role: rows[0].role ? String(rows[0].role) : null };
 }
 
 // Stop-words token body (form-label, bukan nama orang) — port legacy.
@@ -152,7 +151,7 @@ function bodyTokens(name: string | null | undefined): string[] {
 // fuzzy panggilan 40. Tie-break nama terpendek. Port legacy BODY_BEST_ROW.
 async function scoreBodyName(
   tokens: string[],
-): Promise<{ am_id: string; nama: string; aktif: boolean; score: number; matched: string } | null> {
+): Promise<{ am_id: string; nama: string; aktif: boolean; role: string | null; score: number; matched: string } | null> {
   if (tokens.length === 0) return null;
   const phrases: string[] = [];
   const scores: number[] = [];
@@ -191,13 +190,16 @@ async function scoreBodyName(
           ON m.panggilan IS NOT NULL AND abs(length(m.panggilan) - length(t.tok)) <= 2
          AND similarity(lower(m.panggilan), lower(t.tok)) >= 0.4
     )
-    SELECT am_id, nama, aktif, s, matched FROM cand ORDER BY s DESC, length(nama) ASC LIMIT 1
+    SELECT c.am_id, c.nama, c.aktif, c.s, c.matched, mu.role
+    FROM cand c JOIN master_user mu ON mu.am_id = c.am_id
+    ORDER BY c.s DESC, length(c.nama) ASC LIMIT 1
   `;
   if (rows.length === 0) return null;
   return {
     am_id: String(rows[0].am_id),
     nama: String(rows[0].nama),
     aktif: Boolean(rows[0].aktif),
+    role: rows[0].role ? String(rows[0].role) : null,
     score: Number(rows[0].s),
     matched: String(rows[0].matched),
   };
@@ -223,7 +225,7 @@ export async function resolveSender(opts: {
 
   // Tier A
   if (bb && bb.score >= 70) {
-    return { am_id: bb.am_id, nama: bb.nama, aktif: bb.aktif, via: "body-name", score: bb.score };
+    return { am_id: bb.am_id, nama: bb.nama, aktif: bb.aktif, role: bb.role, via: "body-name", score: bb.score };
   }
   // Tier B — sender phone (JID individu @s.whatsapp.net atau nomor ≤14 digit)
   const waNum = jidNumber(opts.senderJid);
@@ -238,7 +240,7 @@ export async function resolveSender(opts: {
   if (c) return { ...c, via: "pushname" };
   // Tier D — body fuzzy
   if (bb && bb.score >= 40) {
-    return { am_id: bb.am_id, nama: bb.nama, aktif: bb.aktif, via: "body-fuzzy", score: bb.score };
+    return { am_id: bb.am_id, nama: bb.nama, aktif: bb.aktif, role: bb.role, via: "body-fuzzy", score: bb.score };
   }
   return null;
 }

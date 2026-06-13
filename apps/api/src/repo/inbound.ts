@@ -129,6 +129,8 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
       tanggal,
       items: parsed.items,
       raw_body: row.body ?? undefined,
+      role: am.role,
+      submitted_at: row.received_at,
     });
     const reply = await sendViaWaGateway(
       target,
