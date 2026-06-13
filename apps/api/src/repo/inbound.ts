@@ -2,7 +2,7 @@ import { db } from "../db.js";
 import { parsePlan } from "../parsers/plan.js";
 import { parseReport } from "../parsers/report.js";
 import { sendViaWaGateway, type WaSendResult } from "../wasend.js";
-import { resolveAmByWa } from "./master.js";
+import { resolveAmByWa, resolveAmByPushname } from "./master.js";
 import { upsertDailyTodo } from "./todo.js";
 import { upsertDealsFromPlan, logReportToDeals } from "./deal.js";
 
@@ -142,7 +142,11 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
 
   if (kind === "none") return finish({ skipped: "no-hashtag" });
 
-  const am = await resolveAmByWa(senderWaFromJid(row.sender_jid));
+  // Resolve pengirim: coba via nomor (pesan direct/individu), lalu fallback
+  // pushname (pesan GRUP — capture openclaw taruh JID grup di sender, bukan nomor).
+  const am =
+    (await resolveAmByWa(senderWaFromJid(row.sender_jid))) ??
+    (await resolveAmByPushname(row.sender_name ?? ""));
   const target = row.group_jid;
   if (!am) {
     const reply = await sendViaWaGateway(target, "❌ Nomor kamu belum terdaftar di sistem WRG OS. Hubungi admin.");
