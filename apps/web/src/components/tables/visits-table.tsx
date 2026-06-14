@@ -53,7 +53,15 @@ const columns: DataColumn<VisitItem>[] = [
     header: "Foto",
     cell: (v) =>
       v.photo_url ? (
-        <a href={v.photo_url} target="_blank" rel="noreferrer" className="text-primary underline underline-offset-2">lihat</a>
+        <a
+          href={`/api/media?p=${encodeURIComponent(v.photo_url)}`}
+          target="_blank"
+          rel="noreferrer"
+          onClick={(e) => e.stopPropagation()}
+          className="text-primary underline underline-offset-2"
+        >
+          lihat
+        </a>
       ) : (
         <span className="text-muted-foreground">—</span>
       ),

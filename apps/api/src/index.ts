@@ -1,3 +1,7 @@
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
+import { homedir } from "node:os";
+
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import type { Context } from "hono";
@@ -1018,6 +1022,32 @@ app.get("/visits/:id", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const v = await getVisit(c.req.param("id"));
   return v ? c.json(v) : c.json({ error: "visit tak ditemukan" }, 404);
+});
+
+// Serve file media (foto kunjungan) dari capture openclaw — HANYA di bawah
+// MEDIA_ROOT (default ~/.openclaw/media), path-validated anti traversal.
+const MEDIA_ROOT = resolve(process.env.MEDIA_ROOT ?? `${homedir()}/.openclaw/media`);
+const MIME: Record<string, string> = {
+  jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", webp: "image/webp",
+  gif: "image/gif", pdf: "application/pdf",
+};
+app.get("/media", async (c) => {
+  const p = c.req.query("p");
+  if (!p) return c.json({ error: "param p wajib" }, 400);
+  const abs = resolve(p);
+  if (abs !== MEDIA_ROOT && !abs.startsWith(MEDIA_ROOT + "/")) {
+    return c.json({ error: "path di luar MEDIA_ROOT" }, 403);
+  }
+  try {
+    const buf = await readFile(abs);
+    const ext = abs.split(".").pop()?.toLowerCase() ?? "";
+    return c.body(buf, 200, {
+      "content-type": MIME[ext] ?? "application/octet-stream",
+      "cache-control": "private, max-age=86400",
+    });
+  } catch {
+    return c.json({ error: "file tak ditemukan" }, 404);
+  }
 });
 
 // ── Daily TODO/plan per AM (port legacy sales_todo) ──

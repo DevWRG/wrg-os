@@ -77,55 +77,66 @@ export interface VisitRow {
   created_at: string;
 }
 
-export async function listVisits(status?: string, limit = 1000): Promise<VisitRow[]> {
-  const sql = db();
-  const rows = await sql`
-    SELECT v.id, v.am_id, COALESCE(initcap(mu.panggilan), mu.nama) AS nama,
-           v.customer_name, v.photo_url, v.visit_lat, v.visit_lon,
-           v.visit_timestamp::text, v.visit_date::text, v.geo_status, v.created_at::text
-    FROM visit v
-    LEFT JOIN master_user mu ON mu.am_id = v.am_id
-    WHERE ${status ? sql`v.geo_status = ${status}` : sql`true`}
-    ORDER BY v.created_at DESC
-    LIMIT ${limit}
-  `;
-  return rows.map((r) => ({
+// SUMBER: sales_plan (kunjungan AM ber-geotag dari inbound) — bukan tabel `visit`
+// legacy yang sparse. visit_lat/lon dari report inbound; foto dari
+// activity_log.photo_path / wa_message.media_path (via activity_id→message_id).
+// geo_status dihitung on-the-fly (bbox Indonesia + flag visit_date_mismatch).
+function rowToVisit(r: Record<string, unknown>): VisitRow {
+  const lat = r.visit_lat === null || r.visit_lat === undefined ? null : Number(r.visit_lat);
+  const lon = r.visit_lon === null || r.visit_lon === undefined ? null : Number(r.visit_lon);
+  const geo_status = r.visit_date_mismatch
+    ? "date_mismatch"
+    : verifyGeo({ lat, lon });
+  return {
     id: String(r.id),
     am_id: String(r.am_id),
     nama: r.nama ? String(r.nama) : null,
     customer_name: r.customer_name ? String(r.customer_name) : null,
-    photo_url: r.photo_url ? String(r.photo_url) : null,
-    visit_lat: r.visit_lat === null ? null : Number(r.visit_lat),
-    visit_lon: r.visit_lon === null ? null : Number(r.visit_lon),
+    photo_url: r.photo_path ? String(r.photo_path) : null, // raw media path; web → /api/media?p=
+    visit_lat: lat,
+    visit_lon: lon,
     visit_timestamp: r.visit_timestamp ? String(r.visit_timestamp) : null,
     visit_date: r.visit_date ? String(r.visit_date) : null,
-    geo_status: String(r.geo_status),
+    geo_status,
     created_at: String(r.created_at),
-  }));
+  };
 }
 
-// Detail 1 visit (by id) — sama bentuk dgn VisitRow + note.
+const VISIT_SELECT = `
+  SELECT sp.id::text AS id, sp.am_id, COALESCE(initcap(mu.panggilan), mu.nama) AS nama,
+         sp.customer_name, sp.visit_lat, sp.visit_lon, sp.visit_timestamp::text AS visit_timestamp,
+         sp.tanggal::text AS visit_date, sp.visit_date_mismatch,
+         COALESCE(al.photo_path, wm.media_path) AS photo_path, sp.created_at::text AS created_at
+  FROM sales_plan sp
+  JOIN master_user mu ON mu.am_id = sp.am_id
+  LEFT JOIN activity_log al ON al.id = sp.activity_id
+  LEFT JOIN wa_message wm ON wm.message_id = al.message_id
+  WHERE sp.visit_lat IS NOT NULL`;
+
+export async function listVisits(status?: string, limit = 1000): Promise<VisitRow[]> {
+  const sql = db();
+  const rows = await sql.unsafe(`${VISIT_SELECT} ORDER BY sp.created_at DESC LIMIT ${Number(limit) || 1000}`);
+  const all = (rows as Record<string, unknown>[]).map(rowToVisit);
+  return status ? all.filter((v) => v.geo_status === status) : all;
+}
+
+// Detail 1 visit (sales_plan by id) — VisitRow + note (dari plan goal/tujuan).
 export async function getVisit(id: string): Promise<(VisitRow & { note: string | null }) | null> {
   const sql = db();
   const [r] = await sql`
-    SELECT v.id, v.am_id, COALESCE(initcap(mu.panggilan), mu.nama) AS nama,
-           v.customer_name, v.photo_url, v.visit_lat, v.visit_lon,
-           v.visit_timestamp::text, v.visit_date::text, v.geo_status, v.created_at::text, v.note
-    FROM visit v LEFT JOIN master_user mu ON mu.am_id = v.am_id
-    WHERE v.id = ${id}
+    SELECT sp.id::text AS id, sp.am_id, COALESCE(initcap(mu.panggilan), mu.nama) AS nama,
+           sp.customer_name, sp.visit_lat, sp.visit_lon, sp.visit_timestamp::text AS visit_timestamp,
+           sp.tanggal::text AS visit_date, sp.visit_date_mismatch,
+           COALESCE(al.photo_path, wm.media_path) AS photo_path, sp.created_at::text AS created_at,
+           NULLIF(concat_ws(' — ', NULLIF(sp.tujuan,''), NULLIF(sp.goal,'')), '') AS note
+    FROM sales_plan sp
+    JOIN master_user mu ON mu.am_id = sp.am_id
+    LEFT JOIN activity_log al ON al.id = sp.activity_id
+    LEFT JOIN wa_message wm ON wm.message_id = al.message_id
+    WHERE sp.id::text = ${id} AND sp.visit_lat IS NOT NULL
   `;
   if (!r) return null;
-  return {
-    id: String(r.id), am_id: String(r.am_id), nama: r.nama ? String(r.nama) : null,
-    customer_name: r.customer_name ? String(r.customer_name) : null,
-    photo_url: r.photo_url ? String(r.photo_url) : null,
-    visit_lat: r.visit_lat === null ? null : Number(r.visit_lat),
-    visit_lon: r.visit_lon === null ? null : Number(r.visit_lon),
-    visit_timestamp: r.visit_timestamp ? String(r.visit_timestamp) : null,
-    visit_date: r.visit_date ? String(r.visit_date) : null,
-    geo_status: String(r.geo_status), created_at: String(r.created_at),
-    note: r.note ? String(r.note) : null,
-  };
+  return { ...rowToVisit(r), note: r.note ? String(r.note) : null };
 }
 
 // Brief kepatuhan geotag (port send_geotag_brief): hitung per-status + flagged.

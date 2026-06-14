@@ -98,7 +98,7 @@ export default async function VisitDetailPage({ params }: { params: Promise<{ id
             <CardContent>
               {v.photo_url ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={v.photo_url} alt="foto kunjungan" className="max-h-[480px] w-full rounded-md object-contain" />
+                <img src={`/api/media?p=${encodeURIComponent(v.photo_url)}`} alt="foto kunjungan" className="max-h-[480px] w-full rounded-md object-contain" />
               ) : (
                 <p className="text-muted-foreground text-sm">Tidak ada foto.</p>
               )}
