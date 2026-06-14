@@ -44,7 +44,7 @@ const planColumns: DataColumn<PlanRow>[] = [
     cell: (p) =>
       p.reported ? <Badge variant="secondary">reported</Badge> : p.is_late_plan ? <Badge variant="destructive">late</Badge> : <Badge variant="outline">pending</Badge>,
   },
-  { id: "hasil", header: "Hasil", accessor: (p) => p.hasil ?? "", cell: (p) => <span className="text-muted-foreground" title={p.hasil ?? undefined}>{p.hasil ? clip(p.hasil) : "—"}</span> },
+  { id: "hasil", header: "Hasil", accessor: (p) => p.hasil ?? "", cell: (p) => <span className="text-muted-foreground block max-w-[32rem] whitespace-pre-wrap break-words">{p.hasil ?? "—"}</span> },
   {
     id: "geo",
     header: "Geotag",
@@ -72,8 +72,8 @@ export function DrilldownPlanTable({ plan }: { plan: PlanRow[] }) {
 const unmatchedColumns: DataColumn<UnmatchedRow>[] = [
   { id: "tanggal", header: "Tgl", sortable: true, accessor: (a) => a.tanggal, cell: (a) => <span className="text-muted-foreground whitespace-nowrap">{tgl(a.tanggal)}</span> },
   { id: "customer", header: "Customer", sortable: true, accessor: (a) => a.customer_name ?? "", cell: (a) => a.customer_name ?? "—" },
-  { id: "hasil", header: "Hasil", accessor: (a) => a.hasil ?? "", cell: (a) => <span className="text-muted-foreground" title={a.hasil ?? undefined}>{a.hasil ? clip(a.hasil) : "—"}</span> },
-  { id: "next", header: "Next", accessor: (a) => a.next_action ?? "", cell: (a) => <span className="text-muted-foreground" title={a.next_action ?? undefined}>{a.next_action ? clip(a.next_action) : "—"}</span> },
+  { id: "hasil", header: "Hasil", accessor: (a) => a.hasil ?? "", cell: (a) => <span className="text-muted-foreground block max-w-[32rem] whitespace-pre-wrap break-words">{a.hasil ?? "—"}</span> },
+  { id: "next", header: "Next", accessor: (a) => a.next_action ?? "", cell: (a) => <span className="text-muted-foreground block max-w-[24rem] whitespace-pre-wrap break-words">{a.next_action ?? "—"}</span> },
 ];
 
 export function DrilldownUnmatchedTable({ rows }: { rows: UnmatchedRow[] }) {
