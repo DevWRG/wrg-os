@@ -55,7 +55,7 @@ import { getNetworkInput, computeNetwork } from "./repo/network.js";
 import { listBriefings } from "./repo/executive.js";
 import { listCoachingNotes } from "./repo/coaching.js";
 import { getLatestCoachingNotes, computePeopleAnalytics } from "./repo/people.js";
-import { createVisit, listVisits, visitSummary } from "./repo/visit.js";
+import { createVisit, getVisit, listVisits, visitSummary } from "./repo/visit.js";
 import { upsertDailyTodo, listTodos, markTodoReported } from "./repo/todo.js";
 import { upsertUser, listUsers, upsertTerritory, listTerritories } from "./repo/master.js";
 import {
@@ -1011,6 +1011,13 @@ app.get("/visits", async (c) => {
 app.get("/visits/summary", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json(await visitSummary());
+});
+
+// Detail 1 visit (didaftarkan SETELAH /visits/summary biar literal menang).
+app.get("/visits/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const v = await getVisit(c.req.param("id"));
+  return v ? c.json(v) : c.json({ error: "visit tak ditemukan" }, 404);
 });
 
 // ── Daily TODO/plan per AM (port legacy sales_todo) ──

@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 
 import { Badge } from "@/components/ui/badge";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
@@ -61,6 +62,7 @@ const columns: DataColumn<VisitItem>[] = [
 ];
 
 export function VisitsTable({ visits }: { visits: VisitItem[] }) {
+  const router = useRouter();
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const filtered = useMemo(() => {
@@ -77,6 +79,7 @@ export function VisitsTable({ visits }: { visits: VisitItem[] }) {
       getKey={(v) => v.id}
       searchPlaceholder="Cari AM / customer…"
       pageSize={25}
+      onRowClick={(v) => router.push(`/visits/${v.id}`)}
       toolbar={<DateRangeToolbar from={from} to={to} onFrom={setFrom} onTo={setTo} idPrefix="vs" />}
     />
   );

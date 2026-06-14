@@ -37,6 +37,7 @@ export function DataTable<T>({
   pageSize = 10,
   empty = "Tidak ada data.",
   toolbar,
+  onRowClick,
 }: {
   columns: DataColumn<T>[];
   data: T[];
@@ -46,6 +47,8 @@ export function DataTable<T>({
   empty?: string;
   /** kontrol tambahan (mis. filter date-range) di sisi kanan baris search. */
   toolbar?: React.ReactNode;
+  /** klik baris → mis. navigasi ke detail. Baris jadi cursor-pointer. */
+  onRowClick?: (row: T) => void;
 }) {
   const [q, setQ] = useState("");
   const [sort, setSort] = useState<{ id: string; dir: "asc" | "desc" } | null>(null);
@@ -149,7 +152,11 @@ export function DataTable<T>({
             </TableRow>
           ) : (
             rows.map((row, i) => (
-              <TableRow key={getKey(row, cur * size + i)}>
+              <TableRow
+                key={getKey(row, cur * size + i)}
+                onClick={onRowClick ? () => onRowClick(row) : undefined}
+                className={onRowClick ? "cursor-pointer" : undefined}
+              >
                 {columns.map((c) => (
                   <TableCell key={c.id} className={cn(c.align === "right" && "text-right", c.className)}>
                     {c.cell ? c.cell(row) : String(c.accessor?.(row) ?? "—")}
