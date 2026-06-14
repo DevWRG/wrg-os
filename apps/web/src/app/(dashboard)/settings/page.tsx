@@ -1,5 +1,6 @@
 import { PageHeader } from "@/components/dashboard/page-header";
 import { AgentSchedulerCard } from "@/components/dashboard/agent-scheduler-card";
+import { ChangeOwnPassword } from "@/components/crm/change-own-password";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -18,6 +19,10 @@ export default function SettingsPage() {
         title="Settings"
         description="Konfigurasi profil perusahaan, perizinan, dan preferensi sistem."
       />
+
+      <div className="mb-4">
+        <ChangeOwnPassword />
+      </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
         <Card>

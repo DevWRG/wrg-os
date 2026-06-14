@@ -31,6 +31,7 @@ import {
   CalendarDays,
   CalendarRange,
   Users,
+  KeyRound,
   MessagesSquare,
   type LucideIcon,
 } from "lucide-react";
@@ -125,6 +126,7 @@ const NAV: NavGroup[] = [
     label: "Admin",
     items: [
       { title: "Users", url: "/users", icon: Users },
+      { title: "User Access", url: "/user-access", icon: KeyRound },
       { title: "Settings", url: "/settings", icon: Settings },
       { title: "UI Showcase", url: "/showcase", icon: Sparkles },
     ],
