@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Area, CartesianGrid, ComposedChart, Line, XAxis } from "recharts";
 import { Activity, AlertTriangle, CalendarDays, Check, CheckCircle2, ClipboardList, Clock, MessageCircle, UsersRound, X, type LucideIcon } from "lucide-react";
 
@@ -157,6 +158,7 @@ const pctTone = (v: number | null) =>
   v === null ? "" : v >= 80 ? "text-success" : v >= 50 ? "text-warning" : "text-danger";
 
 export default function DashboardPage() {
+  const router = useRouter();
   const [range, setRange] = useState<{ from: string; to: string } | null>(null);
   const [draft, setDraft] = useState<{ from: string; to: string }>({ from: "", to: "" });
   const [today, setToday] = useState("");
@@ -473,6 +475,7 @@ export default function DashboardPage() {
                   getKey={(r) => r.am_id}
                   searchPlaceholder="Cari nama / cabang / role…"
                   pageSize={25}
+                  onRowClick={(r) => router.push(`/dashboard/drilldown?am_id=${r.am_id}&from=${range?.from ?? ""}&to=${range?.to ?? ""}`)}
                   columns={[
                     { id: "panggilan", header: "Panggilan", sortable: true, accessor: (r) => r.panggilan ?? r.am_id, cell: (r) => <Link href={`/dashboard/drilldown?am_id=${r.am_id}&from=${range?.from}&to=${range?.to}`} className="font-medium hover:text-primary hover:underline">{r.panggilan ?? r.am_id}</Link> },
                     { id: "nama", header: "Nama", sortable: true, accessor: (r) => r.nama, cell: (r) => <span className="text-muted-foreground">{r.nama}</span> },
