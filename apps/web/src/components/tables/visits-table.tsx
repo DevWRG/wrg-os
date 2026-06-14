@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 
 import { Badge } from "@/components/ui/badge";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
@@ -9,6 +10,7 @@ import { DateRangeToolbar } from "@/components/ui/date-range-toolbar";
 interface VisitItem {
   id: string;
   am_id: string;
+  nama: string | null;
   customer_name: string | null;
   photo_url: string | null;
   visit_lat: number | null;
@@ -33,7 +35,7 @@ const tgl = (iso: string | null) => {
 };
 
 const columns: DataColumn<VisitItem>[] = [
-  { id: "am", header: "AM", sortable: true, accessor: (v) => v.am_id, cell: (v) => <span className="font-medium">{v.am_id}</span> },
+  { id: "am", header: "AM", sortable: true, accessor: (v) => v.nama ?? v.am_id, cell: (v) => <span className="font-medium">{v.nama ?? v.am_id}</span> },
   { id: "customer", header: "Customer", sortable: true, accessor: (v) => v.customer_name ?? "", cell: (v) => v.customer_name ?? "—" },
   { id: "tanggal", header: "Tanggal", sortable: true, accessor: (v) => v.visit_date ?? v.visit_timestamp ?? "", cell: (v) => <span className="text-muted-foreground">{tgl(v.visit_date ?? v.visit_timestamp)}</span> },
   {
@@ -51,7 +53,15 @@ const columns: DataColumn<VisitItem>[] = [
     header: "Foto",
     cell: (v) =>
       v.photo_url ? (
-        <a href={v.photo_url} target="_blank" rel="noreferrer" className="text-primary underline underline-offset-2">lihat</a>
+        <a
+          href={`/api/media?p=${encodeURIComponent(v.photo_url)}`}
+          target="_blank"
+          rel="noreferrer"
+          onClick={(e) => e.stopPropagation()}
+          className="text-primary underline underline-offset-2"
+        >
+          lihat
+        </a>
       ) : (
         <span className="text-muted-foreground">—</span>
       ),
@@ -60,6 +70,7 @@ const columns: DataColumn<VisitItem>[] = [
 ];
 
 export function VisitsTable({ visits }: { visits: VisitItem[] }) {
+  const router = useRouter();
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const filtered = useMemo(() => {
@@ -76,6 +87,7 @@ export function VisitsTable({ visits }: { visits: VisitItem[] }) {
       getKey={(v) => v.id}
       searchPlaceholder="Cari AM / customer…"
       pageSize={25}
+      onRowClick={(v) => router.push(`/visits/${v.id}`)}
       toolbar={<DateRangeToolbar from={from} to={to} onFrom={setFrom} onTo={setTo} idPrefix="vs" />}
     />
   );
