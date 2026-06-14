@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
 import { DateRangeToolbar } from "@/components/ui/date-range-toolbar";
+import { ExportButton } from "@/components/ui/export-button";
 
 interface VisitItem {
   id: string;
@@ -88,7 +89,23 @@ export function VisitsTable({ visits }: { visits: VisitItem[] }) {
       searchPlaceholder="Cari AM / customer…"
       pageSize={25}
       onRowClick={(v) => router.push(`/visits/${v.id}`)}
-      toolbar={<DateRangeToolbar from={from} to={to} onFrom={setFrom} onTo={setTo} idPrefix="vs" />}
+      toolbar={
+        <>
+          <ExportButton
+            filename="visits"
+            data={filtered}
+            columns={[
+              { header: "AM", value: (v) => v.nama ?? v.am_id },
+              { header: "Customer", value: (v) => v.customer_name },
+              { header: "Tanggal", value: (v) => v.visit_date ?? v.visit_timestamp },
+              { header: "Lat", value: (v) => v.visit_lat },
+              { header: "Lon", value: (v) => v.visit_lon },
+              { header: "Geo", value: (v) => v.geo_status },
+            ]}
+          />
+          <DateRangeToolbar from={from} to={to} onFrom={setFrom} onTo={setTo} idPrefix="vs" />
+        </>
+      }
     />
   );
 }
