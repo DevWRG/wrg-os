@@ -1,3 +1,7 @@
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
+import { homedir } from "node:os";
+
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import type { Context } from "hono";
@@ -7,7 +11,7 @@ import { parsePlan } from "./parsers/plan.js";
 import { parseReport } from "./parsers/report.js";
 import { matchCustomer, type PlanCandidate } from "./parsers/fuzzy.js";
 import { isDbEnabled, pingDb } from "./db.js";
-import { waPreflight } from "./wasend.js";
+import { waPreflight, sendViaWaGateway } from "./wasend.js";
 import { processUnprocessed, isInboundEnabled } from "./repo/inbound.js";
 import { syncAccurateInvoices, accurateConfigured } from "./repo/accurateSync.js";
 import { insertAuditEvent } from "./repo/audit.js";
@@ -55,7 +59,7 @@ import { getNetworkInput, computeNetwork } from "./repo/network.js";
 import { listBriefings } from "./repo/executive.js";
 import { listCoachingNotes } from "./repo/coaching.js";
 import { getLatestCoachingNotes, computePeopleAnalytics } from "./repo/people.js";
-import { createVisit, listVisits, visitSummary } from "./repo/visit.js";
+import { createVisit, getVisit, listVisits, visitSummary } from "./repo/visit.js";
 import { upsertDailyTodo, listTodos, markTodoReported } from "./repo/todo.js";
 import { upsertUser, listUsers, upsertTerritory, listTerritories } from "./repo/master.js";
 import {
@@ -122,7 +126,7 @@ import {
 import { aiBaseUrl, callAi } from "./ai.js";
 import { startScheduler, getScheduleStatus } from "./scheduler.js";
 import { signJwt, verifyJwt } from "./auth.js";
-import { verifyCredentials, createUser, countUsers } from "./repo/users.js";
+import { verifyCredentials, createUser, countUsers, listAppUsers, setUserPassword, updateAppUser, deleteAppUser, getAppUserById, createUserFromRoster, generatePassword, changeOwnPassword } from "./repo/users.js";
 
 const app = new Hono();
 
@@ -196,6 +200,81 @@ app.post("/auth/register", async (c) => {
   if (!body.email || !body.password) return c.json({ error: "email & password wajib" }, 400);
   const user = await createUser(body.email, body.password, body.name, body.role ?? "user", body.title);
   return c.json({ user }, 201);
+});
+
+// Self change-password — verifikasi Bearer JWT (BUKAN service-token) untuk dapat id.
+app.post("/auth/change-password", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const authz = c.req.header("authorization") ?? "";
+  const claims = authz.startsWith("Bearer ") ? verifyJwt(authz.slice(7)) : null;
+  if (!claims?.sub) return c.json({ error: "unauthorized" }, 401);
+  let body: { current?: string; next?: string };
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  if (!body.current || !body.next || body.next.length < 6) return c.json({ error: "current & next (min 6) wajib" }, 400);
+  const r = await changeOwnPassword(String(claims.sub), body.current, body.next);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+// ── User Access (admin) — BFF tepercaya via service-token; role-guard di web ──
+app.get("/admin/users", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json({ users: await listAppUsers() });
+});
+
+app.post("/admin/users", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let b: { email?: string; password?: string; generate?: boolean; name?: string; role?: string; title?: string; wa_number?: string } = {};
+  try { b = await c.req.json(); } catch { /* opsional */ }
+  if (!b.email) return c.json({ error: "email wajib" }, 400);
+  const pw = b.password || (b.generate !== false ? generatePassword() : "");
+  if (!pw) return c.json({ error: "password atau generate wajib" }, 400);
+  const user = await createUser(b.email, pw, b.name, b.role ?? "user", b.title);
+  if (b.wa_number) await updateAppUser(user.id, { wa_number: b.wa_number });
+  return c.json({ user, password: pw }, 201); // password ditampilkan sekali ke admin
+});
+
+app.post("/admin/users/from-roster", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let b: { am_id?: string; email?: string; role?: string } = {};
+  try { b = await c.req.json(); } catch { /* opsional */ }
+  if (!b.am_id || !b.email) return c.json({ error: "am_id & email wajib" }, 400);
+  const pw = generatePassword();
+  const r = await createUserFromRoster(b.am_id, b.email, pw, b.role ?? "user");
+  return r.ok ? c.json({ user: r.user, password: pw }, 201) : c.json({ error: r.error }, 400);
+});
+
+app.patch("/admin/users/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let b: { name?: string; role?: string; title?: string | null; active?: boolean; wa_number?: string | null } = {};
+  try { b = await c.req.json(); } catch { /* opsional */ }
+  const u = await updateAppUser(c.req.param("id"), b);
+  return u ? c.json({ user: u }) : c.json({ error: "user tak ditemukan" }, 404);
+});
+
+app.delete("/admin/users/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return (await deleteAppUser(c.req.param("id"))) ? c.json({ ok: true }) : c.json({ error: "user tak ditemukan" }, 404);
+});
+
+// Set/reset password. body {password?|generate, force?, send_wa?}. Return password (sekali) + status WA.
+app.post("/admin/users/:id/password", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const id = c.req.param("id");
+  let b: { password?: string; force?: boolean; send_wa?: boolean } = {};
+  try { b = await c.req.json(); } catch { /* opsional */ }
+  const pw = b.password || generatePassword();
+  if (!(await setUserPassword(id, pw, b.force ?? false))) return c.json({ error: "user tak ditemukan" }, 404);
+  let wa_sent = false;
+  if (b.send_wa) {
+    const u = await getAppUserById(id);
+    if (u?.wa_number) {
+      const url = (process.env.WEB_PUBLIC_URL || "").replace(/\/$/, "");
+      const msg = `🔐 *Akses WRG OS*\nEmail: ${u.email}\nPassword: ${pw}\n${url ? `Login: ${url}/login\n` : ""}Mohon ganti password setelah login.`;
+      const g = await sendViaWaGateway(u.wa_number, msg);
+      wa_sent = g.sent;
+    }
+  }
+  return c.json({ ok: true, password: pw, wa_sent });
 });
 
 // Event ingestion (ADR-024). Body harus berupa EventEnvelope yang valid.
@@ -1011,6 +1090,39 @@ app.get("/visits", async (c) => {
 app.get("/visits/summary", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json(await visitSummary());
+});
+
+// Detail 1 visit (didaftarkan SETELAH /visits/summary biar literal menang).
+app.get("/visits/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const v = await getVisit(c.req.param("id"));
+  return v ? c.json(v) : c.json({ error: "visit tak ditemukan" }, 404);
+});
+
+// Serve file media (foto kunjungan) dari capture openclaw — HANYA di bawah
+// MEDIA_ROOT (default ~/.openclaw/media), path-validated anti traversal.
+const MEDIA_ROOT = resolve(process.env.MEDIA_ROOT ?? `${homedir()}/.openclaw/media`);
+const MIME: Record<string, string> = {
+  jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", webp: "image/webp",
+  gif: "image/gif", pdf: "application/pdf",
+};
+app.get("/media", async (c) => {
+  const p = c.req.query("p");
+  if (!p) return c.json({ error: "param p wajib" }, 400);
+  const abs = resolve(p);
+  if (abs !== MEDIA_ROOT && !abs.startsWith(MEDIA_ROOT + "/")) {
+    return c.json({ error: "path di luar MEDIA_ROOT" }, 403);
+  }
+  try {
+    const buf = await readFile(abs);
+    const ext = abs.split(".").pop()?.toLowerCase() ?? "";
+    return c.body(buf, 200, {
+      "content-type": MIME[ext] ?? "application/octet-stream",
+      "cache-control": "private, max-age=86400",
+    });
+  } catch {
+    return c.json({ error: "file tak ditemukan" }, 404);
+  }
 });
 
 // ── Daily TODO/plan per AM (port legacy sales_todo) ──
