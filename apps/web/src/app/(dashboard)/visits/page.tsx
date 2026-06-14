@@ -12,6 +12,7 @@ export const dynamic = "force-dynamic";
 interface VisitItem {
   id: string;
   am_id: string;
+  nama: string | null;
   customer_name: string | null;
   photo_url: string | null;
   visit_lat: number | null;

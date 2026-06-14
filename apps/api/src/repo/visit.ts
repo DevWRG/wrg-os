@@ -66,6 +66,7 @@ export async function createVisit(v: VisitInput): Promise<{ id: string; geo_stat
 export interface VisitRow {
   id: string;
   am_id: string;
+  nama: string | null;
   customer_name: string | null;
   photo_url: string | null;
   visit_lat: number | null;
@@ -79,16 +80,19 @@ export interface VisitRow {
 export async function listVisits(status?: string, limit = 1000): Promise<VisitRow[]> {
   const sql = db();
   const rows = await sql`
-    SELECT id, am_id, customer_name, photo_url, visit_lat, visit_lon,
-           visit_timestamp::text, visit_date::text, geo_status, created_at::text
-    FROM visit
-    WHERE ${status ? sql`geo_status = ${status}` : sql`true`}
-    ORDER BY created_at DESC
+    SELECT v.id, v.am_id, COALESCE(initcap(mu.panggilan), mu.nama) AS nama,
+           v.customer_name, v.photo_url, v.visit_lat, v.visit_lon,
+           v.visit_timestamp::text, v.visit_date::text, v.geo_status, v.created_at::text
+    FROM visit v
+    LEFT JOIN master_user mu ON mu.am_id = v.am_id
+    WHERE ${status ? sql`v.geo_status = ${status}` : sql`true`}
+    ORDER BY v.created_at DESC
     LIMIT ${limit}
   `;
   return rows.map((r) => ({
     id: String(r.id),
     am_id: String(r.am_id),
+    nama: r.nama ? String(r.nama) : null,
     customer_name: r.customer_name ? String(r.customer_name) : null,
     photo_url: r.photo_url ? String(r.photo_url) : null,
     visit_lat: r.visit_lat === null ? null : Number(r.visit_lat),

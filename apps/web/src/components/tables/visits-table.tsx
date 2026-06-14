@@ -9,6 +9,7 @@ import { DateRangeToolbar } from "@/components/ui/date-range-toolbar";
 interface VisitItem {
   id: string;
   am_id: string;
+  nama: string | null;
   customer_name: string | null;
   photo_url: string | null;
   visit_lat: number | null;
@@ -33,7 +34,7 @@ const tgl = (iso: string | null) => {
 };
 
 const columns: DataColumn<VisitItem>[] = [
-  { id: "am", header: "AM", sortable: true, accessor: (v) => v.am_id, cell: (v) => <span className="font-medium">{v.am_id}</span> },
+  { id: "am", header: "AM", sortable: true, accessor: (v) => v.nama ?? v.am_id, cell: (v) => <span className="font-medium">{v.nama ?? v.am_id}</span> },
   { id: "customer", header: "Customer", sortable: true, accessor: (v) => v.customer_name ?? "", cell: (v) => v.customer_name ?? "—" },
   { id: "tanggal", header: "Tanggal", sortable: true, accessor: (v) => v.visit_date ?? v.visit_timestamp ?? "", cell: (v) => <span className="text-muted-foreground">{tgl(v.visit_date ?? v.visit_timestamp)}</span> },
   {
