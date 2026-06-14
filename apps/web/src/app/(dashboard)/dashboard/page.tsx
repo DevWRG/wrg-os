@@ -33,6 +33,21 @@ interface Kpi {
   aktivitas: number;
   unmatched: number;
 }
+interface PlanDetailRow {
+  tanggal: string;
+  am_id: string;
+  nama: string | null;
+  role: string | null;
+  cabang: string | null;
+  customer_name: string | null;
+  tujuan: string | null;
+  goal: string | null;
+  status: string;
+  hasil: string | null;
+  next_action: string | null;
+  visit_lat: number | null;
+  visit_lon: number | null;
+}
 interface OrangRow {
   am_id: string;
   panggilan: string | null;
@@ -478,20 +493,26 @@ export default function DashboardPage() {
                   pageSize={25}
                   onRowClick={(r) => router.push(`/dashboard/drilldown?am_id=${r.am_id}&from=${range?.from ?? ""}&to=${range?.to ?? ""}`)}
                   toolbar={
-                    <ExportButton
-                      filename="plan-report"
-                      data={orang}
+                    <ExportButton<PlanDetailRow>
+                      filename="plan-report-detail"
+                      label="Export Excel (detail)"
+                      fetchData={async () => {
+                        const d = await getJson<{ detail: PlanDetailRow[] }>(`/api/report/detail?from=${range?.from ?? ""}&to=${range?.to ?? ""}`);
+                        return d?.detail ?? [];
+                      }}
                       columns={[
-                        { header: "Panggilan", value: (r) => r.panggilan ?? r.am_id },
-                        { header: "Nama", value: (r) => r.nama },
+                        { header: "Tgl", value: (r) => r.tanggal },
+                        { header: "AM", value: (r) => r.nama ?? r.am_id },
                         { header: "Role", value: (r) => r.role },
                         { header: "Cabang", value: (r) => r.cabang },
-                        { header: "Hari", value: (r) => r.active_days },
-                        { header: "Plan", value: (r) => r.plan_count },
-                        { header: "Report", value: (r) => r.report_count },
-                        { header: "% Selesai", value: (r) => r.completion ?? "" },
-                        { header: "Late", value: (r) => r.late },
-                        { header: "Unmatched", value: (r) => r.unmatched },
+                        { header: "Customer", value: (r) => r.customer_name },
+                        { header: "Tujuan", value: (r) => r.tujuan },
+                        { header: "Goal", value: (r) => r.goal },
+                        { header: "Status", value: (r) => r.status },
+                        { header: "Hasil", value: (r) => r.hasil },
+                        { header: "Next", value: (r) => r.next_action },
+                        { header: "Lat", value: (r) => r.visit_lat },
+                        { header: "Lon", value: (r) => r.visit_lon },
                       ]}
                     />
                   }

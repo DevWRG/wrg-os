@@ -92,7 +92,7 @@ export function VisitsTable({ visits }: { visits: VisitItem[] }) {
       toolbar={
         <>
           <ExportButton
-            filename="visits"
+            filename="visits-detail"
             data={filtered}
             columns={[
               { header: "AM", value: (v) => v.nama ?? v.am_id },
@@ -100,7 +100,9 @@ export function VisitsTable({ visits }: { visits: VisitItem[] }) {
               { header: "Tanggal", value: (v) => v.visit_date ?? v.visit_timestamp },
               { header: "Lat", value: (v) => v.visit_lat },
               { header: "Lon", value: (v) => v.visit_lon },
-              { header: "Geo", value: (v) => v.geo_status },
+              { header: "Geo", value: (v) => GEO_LABEL[v.geo_status] ?? v.geo_status },
+              { header: "Maps", value: (v) => (v.visit_lat !== null && v.visit_lon !== null ? `https://maps.google.com/?q=${v.visit_lat},${v.visit_lon}` : "") },
+              { header: "Foto", value: (v) => v.photo_url ?? "" },
             ]}
           />
           <DateRangeToolbar from={from} to={to} onFrom={setFrom} onTo={setTo} idPrefix="vs" />

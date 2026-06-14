@@ -296,6 +296,40 @@ export async function reportDailyTrend(from: string, to: string) {
   }));
 }
 
+// Detail plan kunjungan SEMUA AM dalam rentang (buat export Excel) — rata,
+// 1 baris per plan + hasil/next dari activity terkait.
+export async function reportDetailAll(from: string, to: string) {
+  const sql = db();
+  const rows = await sql`
+    SELECT sp.tanggal::text AS tanggal, sp.am_id,
+           COALESCE(initcap(mu.panggilan), mu.nama) AS nama, mu.role, mu.cabang,
+           sp.customer_name, sp.tujuan, sp.goal,
+           CASE WHEN sp.reported THEN 'reported' WHEN sp.is_late_plan THEN 'late' ELSE 'pending' END AS status,
+           al.hasil, al.next_action, sp.visit_lat, sp.visit_lon, sp.visit_date_mismatch
+    FROM sales_plan sp
+    JOIN master_user mu ON mu.am_id = sp.am_id
+    LEFT JOIN activity_log al ON al.id = sp.activity_id
+    WHERE sp.tanggal BETWEEN ${from} AND ${to}
+    ORDER BY sp.tanggal DESC, nama, sp.seq
+  `;
+  return rows.map((r) => ({
+    tanggal: String(r.tanggal),
+    am_id: String(r.am_id),
+    nama: r.nama ? String(r.nama) : null,
+    role: r.role ? String(r.role) : null,
+    cabang: r.cabang ? String(r.cabang) : null,
+    customer_name: r.customer_name ? String(r.customer_name) : null,
+    tujuan: r.tujuan ? String(r.tujuan) : null,
+    goal: r.goal ? String(r.goal) : null,
+    status: String(r.status),
+    hasil: r.hasil ? String(r.hasil) : null,
+    next_action: r.next_action ? String(r.next_action) : null,
+    visit_lat: r.visit_lat === null ? null : Number(r.visit_lat),
+    visit_lon: r.visit_lon === null ? null : Number(r.visit_lon),
+    visit_date_mismatch: Boolean(r.visit_date_mismatch),
+  }));
+}
+
 // Drilldown 1 AM: identitas + plan rows + todo rows + unmatched activity.
 export async function reportDrilldown(amId: string, from: string, to: string) {
   const sql = db();

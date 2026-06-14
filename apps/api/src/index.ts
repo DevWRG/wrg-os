@@ -84,6 +84,7 @@ import {
   reportPerHod,
   reportDailyTrend,
   reportDrilldown,
+  reportDetailAll,
   reportRemindersPending,
   pushReminderToAm,
   reportCalendar,
@@ -1402,6 +1403,13 @@ app.get("/report/drilldown", async (c) => {
   if (!amId) return c.json({ error: "am_id wajib" }, 400);
   const { from, to } = parseRange(c.req.query("from"), c.req.query("to"));
   return c.json({ from, to, detail: await reportDrilldown(amId, from, to) });
+});
+
+// Detail plan kunjungan SEMUA AM (buat export Excel detail).
+app.get("/report/detail", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const { from, to } = parseRange(c.req.query("from"), c.req.query("to"));
+  return c.json({ from, to, detail: await reportDetailAll(from, to) });
 });
 
 // Sales Calendar: agregat plan/report per (tanggal, AM) + libur + katalog AM
