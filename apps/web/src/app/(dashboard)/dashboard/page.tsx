@@ -18,6 +18,7 @@ import {
   type ChartConfig,
 } from "@/components/ui/chart";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
+import { ExportButton } from "@/components/ui/export-button";
 
 interface Kpi {
   working_days: number;
@@ -476,6 +477,24 @@ export default function DashboardPage() {
                   searchPlaceholder="Cari nama / cabang / role…"
                   pageSize={25}
                   onRowClick={(r) => router.push(`/dashboard/drilldown?am_id=${r.am_id}&from=${range?.from ?? ""}&to=${range?.to ?? ""}`)}
+                  toolbar={
+                    <ExportButton
+                      filename="plan-report"
+                      data={orang}
+                      columns={[
+                        { header: "Panggilan", value: (r) => r.panggilan ?? r.am_id },
+                        { header: "Nama", value: (r) => r.nama },
+                        { header: "Role", value: (r) => r.role },
+                        { header: "Cabang", value: (r) => r.cabang },
+                        { header: "Hari", value: (r) => r.active_days },
+                        { header: "Plan", value: (r) => r.plan_count },
+                        { header: "Report", value: (r) => r.report_count },
+                        { header: "% Selesai", value: (r) => r.completion ?? "" },
+                        { header: "Late", value: (r) => r.late },
+                        { header: "Unmatched", value: (r) => r.unmatched },
+                      ]}
+                    />
+                  }
                   columns={[
                     { id: "panggilan", header: "Panggilan", sortable: true, accessor: (r) => r.panggilan ?? r.am_id, cell: (r) => <Link href={`/dashboard/drilldown?am_id=${r.am_id}&from=${range?.from}&to=${range?.to}`} className="font-medium hover:text-primary hover:underline">{r.panggilan ?? r.am_id}</Link> },
                     { id: "nama", header: "Nama", sortable: true, accessor: (r) => r.nama, cell: (r) => <span className="text-muted-foreground">{r.nama}</span> },
