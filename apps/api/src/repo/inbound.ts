@@ -293,20 +293,39 @@ async function photoFollowup(row: WaRow, am: { am_id: string; nama: string }): P
       WHERE id = ${top.plan_id}
     `;
   }
+  // Debounce: kalau masih ada foto lain dari AM/grup yg sama BELUM diproses,
+  // tahan balasan — cuma foto TERAKHIR batch yg reply (hindari spam saat foto
+  // dikirim barengan). Baris ini sendiri sudah ter-claim (processed_at di-set
+  // oleh processUnprocessed sebelum proses) → tak terhitung.
+  const [{ pending_photos }] = await sql`
+    SELECT count(*)::int AS pending_photos FROM wa_message
+    WHERE processed_at IS NULL AND message_type ~* '^image' AND media_path IS NOT NULL
+      AND sender_jid = ${row.sender_jid} AND group_jid = ${row.group_jid}
+  `;
+  if (Number(pending_photos) > 0) {
+    return { matched: top.customer_name, score, geo: hasGeo, deferred: true };
+  }
+  // Foto terakhir batch → 1 reply ringkas. "Sisa" hanya customer asli (ke-match
+  // plan, plan_id NOT NULL) — buang baris hasil-parse-jelek tanpa plan_id.
   const remain = await sql`
     SELECT customer_name FROM activity_log
-    WHERE am_id = ${am.am_id} AND tanggal = ${String(top.tanggal)} AND photo_path IS NULL ORDER BY id
+    WHERE am_id = ${am.am_id} AND tanggal = ${String(top.tanggal)} AND photo_path IS NULL AND plan_id IS NOT NULL ORDER BY id
   `;
-  let msg = hasGeo
-    ? `✅ Foto ${top.customer_name} tersimpan.${mismatch ? " ⚠️ tanggal foto ≠ tanggal plan." : ""}`
-    : `⚠️ Foto ${top.customer_name} tersimpan, tapi *tidak ada geotag*. Pakai Geo-Tagging Camera supaya coord ke-burn di pixel.`;
+  const [{ no_geo }] = await sql`
+    SELECT count(*)::int AS no_geo FROM activity_log
+    WHERE am_id = ${am.am_id} AND tanggal = ${String(top.tanggal)} AND photo_path IS NOT NULL AND photo_geotag IS NULL
+  `;
+  let msg = `✅ Foto tersimpan, ${am.nama}.${mismatch ? " ⚠️ tanggal foto ≠ tanggal plan." : ""}`;
   if (remain.length > 0) {
-    msg += `\nSisa ${remain.length} customer belum ada foto:\n⚠️ ${remain.map((r) => String(r.customer_name)).join(", ")}`;
+    msg += `\nSisa ${remain.length} customer belum ada foto:\n• ${remain.map((r) => String(r.customer_name)).join("\n• ")}`;
   } else {
     msg += `\n✅ Semua foto visit lengkap.`;
   }
+  if (Number(no_geo) > 0) {
+    msg += `\n⚠️ ${no_geo} foto tanpa geotag — pakai Geo-Tagging Camera supaya koordinat ke-burn di pixel.`;
+  }
   const reply = await sendViaWaGateway(row.group_jid, msg);
-  return { matched: top.customer_name, score, geo: hasGeo, remaining: remain.length, reply };
+  return { matched: top.customer_name, score, geo: hasGeo, remaining: remain.length, no_geo: Number(no_geo), reply };
 }
 
 // Proses SATU pesan; selalu tandai processed_at (idempoten). Pengirim tak dikenal
@@ -417,7 +436,7 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
     `;
     const pend = await sql`
       SELECT customer_name FROM activity_log
-      WHERE am_id = ${am.am_id} AND tanggal = ${tgl} AND photo_path IS NULL ORDER BY id
+      WHERE am_id = ${am.am_id} AND tanggal = ${tgl} AND photo_path IS NULL AND plan_id IS NOT NULL ORDER BY id
     `;
     const pendingNames = pend.map((p) => String(p.customer_name));
     // note: TGL ket → am_reminder (fired H-1/H oleh scheduler reminder-h/h-1).
