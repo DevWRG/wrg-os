@@ -8,11 +8,21 @@ import { sendViaWaGateway } from "../wasend.js";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+// Role AM dikoordinir di satu grup sales (The ALLIANCE) — reminder/warning AM
+// SELALU ke situ, TAK ikut last_active_group (yg bisa drift / salah karena
+// backfill manual). Non-AM (admin/gudang/ops) tetap ke grup aktif masing-masing.
+// Override via env COMPLIANCE_AM_GROUP, fallback REMINDER_WA_TARGET.
+const AM_REMINDER_GROUP = process.env.COMPLIANCE_AM_GROUP || process.env.REMINDER_WA_TARGET || "";
+function targetGroup(role: unknown, lastActiveGroup: unknown): string {
+  if (String(role ?? "").toUpperCase() === "AM" && AM_REMINDER_GROUP) return AM_REMINDER_GROUP;
+  return lastActiveGroup ? String(lastActiveGroup) : "";
+}
+
 // #PLAN belum submit → "⚠️ Pengingat #PLAN" ke grup. (panggil hanya hari kerja.)
 export async function runPlanCheck(): Promise<{ warned: number; skippedNoGroup: number; total: number }> {
   const sql = db();
   const rows = await sql`
-    SELECT mu.am_id, COALESCE(initcap(mu.panggilan), mu.nama, '') AS nama, mu.last_active_group AS grp
+    SELECT mu.am_id, COALESCE(initcap(mu.panggilan), mu.nama, '') AS nama, mu.last_active_group AS grp, mu.role AS role
     FROM master_user mu
     WHERE mu.aktif AND COALESCE(mu.wajib_plan_report, true)
       AND NOT EXISTS (SELECT 1 FROM user_leave ul WHERE ul.am_id = mu.am_id AND CURRENT_DATE BETWEEN ul.start_date AND ul.end_date)
@@ -22,7 +32,7 @@ export async function runPlanCheck(): Promise<{ warned: number; skippedNoGroup: 
   `;
   let warned = 0, skippedNoGroup = 0;
   for (const r of rows) {
-    const grp = r.grp ? String(r.grp) : "";
+    const grp = targetGroup(r.role, r.grp);
     if (!grp) { skippedNoGroup += 1; continue; }
     const body = `⚠️ *Pengingat #PLAN*\n${String(r.nama)} belum submit plan hari ini.\nSilakan kirim #PLAN sebelum mulai aktivitas.`;
     const g = await sendViaWaGateway(grp, body);
@@ -38,7 +48,7 @@ export async function runReportCheck(isWorkday: boolean): Promise<{ partial: num
   const sql = db();
   const rows = await sql`
     WITH ts AS (
-      SELECT mu.am_id, COALESCE(initcap(mu.panggilan), mu.nama, '') AS nama, mu.last_active_group AS grp,
+      SELECT mu.am_id, COALESCE(initcap(mu.panggilan), mu.nama, '') AS nama, mu.last_active_group AS grp, mu.role AS role,
         (SELECT count(*)::int FROM sales_plan sp WHERE sp.am_id = mu.am_id AND sp.tanggal = CURRENT_DATE) AS sp_total,
         (SELECT count(*)::int FROM sales_plan sp WHERE sp.am_id = mu.am_id AND sp.tanggal = CURRENT_DATE AND sp.reported = false) AS sp_unrep,
         (SELECT count(*)::int FROM sales_todo st WHERE st.am_id = mu.am_id AND st.tanggal = CURRENT_DATE) AS st_total,
@@ -56,7 +66,7 @@ export async function runReportCheck(isWorkday: boolean): Promise<{ partial: num
   `;
   let partial = 0, noplan = 0, skipped = 0;
   for (const r of rows) {
-    const grp = r.grp ? String(r.grp) : "";
+    const grp = targetGroup(r.role, r.grp);
     if (!grp) { skipped += 1; continue; }
     const totalPlan = Number(r.sp_total) + Number(r.st_total);
     let body: string;
