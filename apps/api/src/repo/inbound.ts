@@ -327,7 +327,7 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
   if (kind === "none") {
     // Foto tanpa hashtag (caption = customer) → foto-followup ke activity_log.
     if (String(row.message_type ?? "").toLowerCase().startsWith("image") && row.media_path) {
-      const amp = await resolveSender({ senderJid: row.sender_jid, pushname: row.sender_name });
+      const amp = await resolveSender({ senderJid: row.sender_jid, groupJid: row.group_jid, pushname: row.sender_name });
       if (!amp) return finish({ skipped: "unknown-sender" }, "photo");
       await sql`UPDATE master_user SET last_active_group = ${row.group_jid}, last_active_at = now() WHERE am_id = ${amp.am_id}`;
       const r = await photoFollowup(row, amp);
@@ -339,7 +339,7 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
 
   // #LEADS/#UPDATE — tanpa body-name; resolve by phone/pushname saja.
   if (kind === "leads" || kind === "update") {
-    const amx = await resolveSender({ senderJid: row.sender_jid, pushname: row.sender_name });
+    const amx = await resolveSender({ senderJid: row.sender_jid, groupJid: row.group_jid, pushname: row.sender_name });
     if (!amx) return finish({ skipped: "unknown-sender", sender_name: row.sender_name });
     const reply = await sendViaWaGateway(target, `ℹ️ #${kind.toUpperCase()} belum tersedia di wrg-os (menyusul).`);
     return finish({ note: "not-implemented", via: amx.via, reply });
@@ -350,6 +350,7 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
   const am = await resolveSender({
     bodyName: parsed?.name ?? null,
     senderJid: row.sender_jid,
+    groupJid: row.group_jid,
     pushname: row.sender_name,
   });
   // Pengirim tak dikenal / nonaktif → SILENT (tak balas).

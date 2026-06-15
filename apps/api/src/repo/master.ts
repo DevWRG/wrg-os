@@ -210,14 +210,34 @@ function jidNumber(jid: string | null | undefined): string {
   return String(jid).split("@")[0].split(":")[0];
 }
 
-// Resolver pengirim 5-tier (port legacy wrg-inbound.sh). Urutan:
+// Alias manual (group_jid + pushname) → am. Untuk shared-HP / pushname generik
+// (mis. "d" di grup gudang = Diana) yang tak teratasi 5-tier. Lihat tabel
+// sender_alias (migrasi 032).
+export async function resolveAmByAlias(groupJid: string, pushname: string): Promise<ResolvedAm | null> {
+  const name = String(pushname ?? "").trim();
+  if (!groupJid || !name) return null;
+  const sql = db();
+  const rows = await sql`
+    SELECT mu.am_id, mu.nama, mu.aktif, mu.role
+    FROM sender_alias sa
+    JOIN master_user mu ON mu.am_id = sa.am_id
+    WHERE sa.group_jid = ${groupJid} AND lower(sa.pushname) = lower(${name})
+    LIMIT 1
+  `;
+  if (rows.length === 0) return null;
+  return { am_id: String(rows[0].am_id), nama: String(rows[0].nama), aktif: Boolean(rows[0].aktif), role: rows[0].role ? String(rows[0].role) : null };
+}
+
+// Resolver pengirim (port legacy wrg-inbound.sh). Urutan:
 //   A. body-name override (score ≥ 70) — `#plan <nama>` menang dulu (shared-HP)
+//   A'. alias manual (group_jid + pushname) — override shared-HP/pushname generik
 //   B. sender phone (wa_number), hanya bila JID individu
 //   C. sender pushname (6 sub-strategi)
 //   D. body-name fuzzy (40 ≤ score < 70)
 export async function resolveSender(opts: {
   bodyName?: string | null;
   senderJid?: string | null;
+  groupJid?: string | null;
   pushname?: string | null;
 }): Promise<ResolvedAm | null> {
   const tokens = bodyTokens(opts.bodyName);
@@ -226,6 +246,11 @@ export async function resolveSender(opts: {
   // Tier A
   if (bb && bb.score >= 70) {
     return { am_id: bb.am_id, nama: bb.nama, aktif: bb.aktif, role: bb.role, via: "body-name", score: bb.score };
+  }
+  // Tier A' — alias manual (group_jid + pushname). Authoritative setelah body-name.
+  if (opts.groupJid && opts.pushname) {
+    const al = await resolveAmByAlias(opts.groupJid, opts.pushname);
+    if (al) return { ...al, via: "alias" };
   }
   // Tier B — sender phone (JID individu @s.whatsapp.net atau nomor ≤14 digit)
   const waNum = jidNumber(opts.senderJid);
