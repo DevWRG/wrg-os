@@ -123,9 +123,20 @@ function saveOffsets(o) {
     log("[inbound] gagal simpan offset:", String(e));
   }
 }
-function todayDir() {
-  const d = new Date(Date.now() + 7 * 3600 * 1000).toISOString().slice(0, 10); // WIB
-  return join(CAPTURE_DIR, d);
+// openclaw menulis capture ke <CAPTURE_DIR>/<TANGGAL-UTC>/<group>.jsonl. Bridge
+// HARUS scan per tanggal UTC — kalau pakai WIB (UTC+7), tiap 00:00–06:59 WIB
+// (masih tanggal UTC kemarin) bridge ngintip dir salah → pesan pagi hilang
+// (insiden 15 Jun: plan 05:52–06:55 kelewat). Scan UTC today + yesterday (+ WIB
+// today sbg fallback kalau skema openclaw berubah), dedup. Offset per-file bikin
+// scan ekstra idempoten & murah.
+function scanDirs() {
+  const now = Date.now();
+  const dates = new Set([
+    new Date(now).toISOString().slice(0, 10), // UTC hari ini
+    new Date(now - 86400000).toISOString().slice(0, 10), // UTC kemarin (boundary)
+    new Date(now + 7 * 3600 * 1000).toISOString().slice(0, 10), // WIB hari ini (fallback)
+  ]);
+  return [...dates].map((d) => join(CAPTURE_DIR, d));
 }
 async function postWebhook(rec) {
   const headers = { "content-type": "application/json" };
@@ -137,79 +148,83 @@ async function postWebhook(rec) {
 let offsets = loadOffsets();
 let firstScan = true;
 async function pollInbound() {
-  const dir = todayDir();
-  if (!existsSync(dir)) return;
-  let files;
-  try {
-    files = readdirSync(dir).filter((f) => f.endsWith(".jsonl"));
-  } catch {
-    return;
-  }
-  for (const f of files) {
-    const path = join(dir, f);
-    let size;
+  for (const dir of scanDirs()) {
+    if (!existsSync(dir)) continue;
+    let files;
     try {
-      size = statSync(path).size;
+      files = readdirSync(dir).filter((f) => f.endsWith(".jsonl"));
     } catch {
       continue;
     }
-    const prev = offsets[path] ?? null;
-    // Scan pertama: set offset = EOF (jangan replay histori), kecuali file baru.
-    if (prev === null) {
-      offsets[path] = firstScan ? size : 0;
-      if (firstScan) continue;
+    for (const f of files) {
+      await pollFile(join(dir, f));
     }
-    const from = offsets[path];
-    if (size <= from) continue;
-    let chunk = "";
-    try {
-      const fd = openSync(path, "r");
-      const buf = Buffer.alloc(size - from);
-      readSync(fd, buf, 0, buf.length, from);
-      closeSync(fd);
-      chunk = buf.toString("utf8");
-    } catch (e) {
-      log("[inbound] baca gagal", path, String(e));
-      continue;
-    }
-    const lines = chunk.split("\n");
-    let consumed = from;
-    for (const line of lines) {
-      const raw = line.trim();
-      consumed += Buffer.byteLength(line) + 1;
-      if (!raw) continue;
-      let rec;
-      try {
-        rec = JSON.parse(raw);
-      } catch {
-        continue;
-      }
-      if (rec.fromMe) continue; // jangan proses pesan keluar
-      // OCR geotag utk pesan media image (host punya tesseract + file media).
-      if (String(rec.media_type || "").startsWith("image") && rec.media_path) {
-        const geo = await ocrGeo(rec.media_path);
-        if (geo) {
-          rec.geo_lat = geo.lat;
-          rec.geo_lon = geo.lon;
-          rec.geo_ts = geo.ts;
-          rec.geo_address = geo.address;
-          log(`[ocr] geotag → ${geo.lat},${geo.lon} ${geo.ts || ""}`);
-        }
-      }
-      try {
-        await postWebhook(rec); // format capture = OpenclawRecord (idempoten di wrg-os)
-      } catch (e) {
-        log("[inbound] forward gagal:", String(e));
-        // jangan majukan offset jika gagal → retry lain kali
-        offsets[path] = Math.min(consumed - Buffer.byteLength(line) - 1, size);
-        saveOffsets(offsets);
-        break;
-      }
-    }
-    offsets[path] = Math.min(consumed, size);
-    saveOffsets(offsets);
   }
   firstScan = false;
+}
+
+async function pollFile(path) {
+  let size;
+  try {
+    size = statSync(path).size;
+  } catch {
+    return;
+  }
+  const prev = offsets[path] ?? null;
+  // Scan pertama: set offset = EOF (jangan replay histori), kecuali file baru.
+  if (prev === null) {
+    offsets[path] = firstScan ? size : 0;
+    if (firstScan) return;
+  }
+  const from = offsets[path];
+  if (size <= from) return;
+  let chunk = "";
+  try {
+    const fd = openSync(path, "r");
+    const buf = Buffer.alloc(size - from);
+    readSync(fd, buf, 0, buf.length, from);
+    closeSync(fd);
+    chunk = buf.toString("utf8");
+  } catch (e) {
+    log("[inbound] baca gagal", path, String(e));
+    return;
+  }
+  const lines = chunk.split("\n");
+  let consumed = from;
+  for (const line of lines) {
+    const raw = line.trim();
+    consumed += Buffer.byteLength(line) + 1;
+    if (!raw) continue;
+    let rec;
+    try {
+      rec = JSON.parse(raw);
+    } catch {
+      continue;
+    }
+    if (rec.fromMe) continue; // jangan proses pesan keluar
+    // OCR geotag utk pesan media image (host punya tesseract + file media).
+    if (String(rec.media_type || "").startsWith("image") && rec.media_path) {
+      const geo = await ocrGeo(rec.media_path);
+      if (geo) {
+        rec.geo_lat = geo.lat;
+        rec.geo_lon = geo.lon;
+        rec.geo_ts = geo.ts;
+        rec.geo_address = geo.address;
+        log(`[ocr] geotag → ${geo.lat},${geo.lon} ${geo.ts || ""}`);
+      }
+    }
+    try {
+      await postWebhook(rec); // format capture = OpenclawRecord (idempoten di wrg-os)
+    } catch (e) {
+      log("[inbound] forward gagal:", String(e));
+      // jangan majukan offset jika gagal → retry lain kali
+      offsets[path] = Math.min(consumed - Buffer.byteLength(line) - 1, size);
+      saveOffsets(offsets);
+      return;
+    }
+  }
+  offsets[path] = Math.min(consumed, size);
+  saveOffsets(offsets);
 }
 
 if (WEBHOOK_URL) {
