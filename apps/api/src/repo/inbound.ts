@@ -464,8 +464,18 @@ export async function processUnprocessed(
   let processed = 0;
   let replied = 0;
   for (const r of rows) {
+    // Klaim atomik sebelum proses: cegah dua invocation konkuren (mis. webhook
+    // ke-deliver 2× / overlap webhook+cron) memproses & MEMBALAS baris yang
+    // sama. UPDATE …WHERE processed_at IS NULL mengunci baris; hanya pemenang
+    // yg dapat RETURNING, yg kalah skip → tidak ada double-reply.
+    const claim = await sql`
+      UPDATE wa_message SET processed_at = now()
+      WHERE id = ${r.id} AND processed_at IS NULL
+      RETURNING id
+    `;
+    if (claim.length === 0) continue;
     if (!groupAllowed(String(r.group_jid))) {
-      await sql`UPDATE wa_message SET processed_at = now(), processed_kind = 'group-skip' WHERE id = ${r.id}`;
+      await sql`UPDATE wa_message SET processed_kind = 'group-skip' WHERE id = ${r.id}`;
       continue;
     }
     const out = await processInboundMessage(r as unknown as WaRow);
