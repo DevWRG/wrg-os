@@ -56,5 +56,26 @@ module.exports = {
       autorestart: true,
       max_restarts: 10,
     },
+    {
+      // WA host-adapter (openclaw): /send (outbound) + tail capture → /webhooks/wa
+      // (inbound). Sebelumnya dilaunch manual di luar ecosystem → restart via
+      // ecosystem no-op & fix bridge sempat tak ke-deploy (insiden 16 Jun). Secret
+      // diturunkan dari sisi api: bridge /send terima x-wa-secret=WA_SEND_SECRET;
+      // bridge→webhook pakai WA_WEBHOOK_SECRET yg dicek api.
+      name: "wrg-prod-wabridge",
+      cwd: ROOT,
+      script: "infra/wa-bridge/bridge.mjs",
+      interpreter: "node",
+      env: {
+        ...base,
+        WA_BRIDGE_PORT: "18080",
+        WA_BRIDGE_SECRET: base.WA_SEND_SECRET,
+        WRG_WEBHOOK_URL: "http://127.0.0.1:4100/webhooks/wa",
+        WRG_WEBHOOK_SECRET: base.WA_WEBHOOK_SECRET,
+        WA_BRIDGE_SEND_LIVE: "true",
+      },
+      autorestart: true,
+      max_restarts: 10,
+    },
   ],
 };
