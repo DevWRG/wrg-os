@@ -58,11 +58,27 @@ const HASHTAG_LINE = /^\s*#\s*(plan|report)\b/i;
 // item bernomor: "1." "2)" "3:" "1 ." dst di awal baris
 const ITEM_LINE = /^\s*(\d{1,2})\s*[.):]\s*(.*)$/;
 
+// Zero-width & bidi formatting marks. WhatsApp sering menyisipkan U+200E (LRM)
+// tepat sebelum '#' atau nomor pada konten campur RTL/LTR → anchor ^\s*# /
+// ^\s*\d gagal (\s tak match karakter ini) → submission terbaca "no-hashtag".
+// Buang dulu sebelum parsing. ZWSP/ZWNJ/ZWJ/LRM/RLM, bidi embed/override/isolate,
+// word-joiner, BOM.
+// Rentang code point (ASCII source, tanpa karakter literal tak terlihat):
+// 200B-200F (ZWSP/ZWNJ/ZWJ/LRM/RLM), 202A-202E (bidi embed/override),
+// 2060-2064 (word-joiner/invisible ops), 2066-2069 (bidi isolate), FEFF (BOM).
+const INVISIBLE_MARKS = new RegExp(
+  "[\\u200B-\\u200F\\u202A-\\u202E\\u2060-\\u2064\\u2066-\\u2069\\uFEFF]",
+  "g",
+);
+export function stripInvisible(s: string): string {
+  return s.replace(INVISIBLE_MARKS, "");
+}
+
 // Deteksi apakah body submission #plan/#report (line-anchored). Hindari
 // false-positive teks tengah kalimat ("FORMAT #PLAN"). Return kind atau null.
 export function detectDaily(body: string | null): "plan" | "report" | null {
   if (!body) return null;
-  for (const line of body.split(/\r?\n/)) {
+  for (const line of stripInvisible(body).split(/\r?\n/)) {
     const m = line.match(HASHTAG_LINE);
     if (m) return m[1].toLowerCase() as "plan" | "report";
   }
@@ -70,7 +86,7 @@ export function detectDaily(body: string | null): "plan" | "report" | null {
 }
 
 export function parseDaily(body: string): DailyParse | null {
-  const lines = body.split(/\r?\n/);
+  const lines = stripInvisible(body).split(/\r?\n/);
   // index baris hashtag
   let hIdx = -1;
   let kind: "plan" | "report" = "plan";

@@ -1,5 +1,5 @@
 import { db } from "../db.js";
-import { detectDaily, parseDaily } from "../parsers/dailyplan.js";
+import { detectDaily, parseDaily, stripInvisible } from "../parsers/dailyplan.js";
 import { parseAmPlan, parseAmReport } from "../parsers/am.js";
 import { sendViaWaGateway, type WaSendResult } from "../wasend.js";
 import { resolveSender } from "./master.js";
@@ -24,10 +24,10 @@ export type InboundKind = "plan" | "report" | "leads" | "update" | "none";
 const LEADS_UPDATE_LINE = /^\s*#\s*(leads|update)\b/i;
 
 export function detectKind(body: string | null): InboundKind {
-  const daily = detectDaily(body); // line-anchored #plan/#report
+  const daily = detectDaily(body); // line-anchored #plan/#report (sudah strip invisible)
   if (daily) return daily;
   if (body) {
-    for (const line of body.split(/\r?\n/)) {
+    for (const line of stripInvisible(body).split(/\r?\n/)) {
       const m = line.match(LEADS_UPDATE_LINE);
       if (m) return m[1].toLowerCase() as "leads" | "update";
     }
