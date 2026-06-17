@@ -37,7 +37,7 @@ const columns: DataColumn<TodoItem>[] = [
     header: "Item rencana",
     accessor: (t) => t.items.join(" "),
     cell: (t) => (
-      <span className="text-muted-foreground truncate">
+      <span className="text-muted-foreground block max-w-[22rem] truncate" title={t.items.join(" · ")}>
         {t.items[0] ? `${t.items[0]}${t.total_items > 1 ? ` +${t.total_items - 1} lainnya` : ""}` : "—"}
       </span>
     ),
