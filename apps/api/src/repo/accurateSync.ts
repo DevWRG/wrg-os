@@ -335,6 +335,25 @@ export async function getDeliveryOrderItems(
   return { ok: true, items };
 }
 
+// Idem getDeliveryOrderItems, tapi utk sales-order (Orders) — sertakan subtotal.
+export async function getSalesOrderItems(
+  id: number,
+): Promise<{ ok: boolean; items: { no: string | null; name: string | null; quantity: number | null; unit: string | null; total: number | null }[]; error?: string }> {
+  const creds = loadCreds();
+  if (!creds) return { ok: false, items: [], error: "kredensial Accurate tak tersedia" };
+  const det = await accGet(creds, "/accurate/api/sales-order/detail.do", `id=${id}`);
+  if (det?.s !== true) return { ok: false, items: [], error: `detail gagal: ${JSON.stringify(det?.d).slice(0, 160)}` };
+  const d = det.d as Detail;
+  const items = ((d?.detailItem ?? []) as Detail[]).map((it) => ({
+    no: it.item?.no ?? null,
+    name: it.item?.name ?? it.detailName ?? null,
+    quantity: it.quantity != null ? Number(it.quantity) : null,
+    unit: it.itemUnit?.name ?? it.itemUnitName ?? null,
+    total: it.totalPrice != null ? Number(it.totalPrice) : null,
+  }));
+  return { ok: true, items };
+}
+
 export async function syncAccurateInvoices(
   opts: { days?: number; invoiceId?: number } = {},
 ): Promise<AccurateSyncResult> {
