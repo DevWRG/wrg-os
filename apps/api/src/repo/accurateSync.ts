@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 
 import { db } from "../db.js";
 import { ingestAccurateWebhook, normalizeAccurateDate, type AccurateInvoice } from "./ar.js";
+import { upsertVendors, upsertItems, upsertSalesOrders, upsertDeliveryOrders } from "./accurateMirror.js";
 
 // Puller Accurate Online (pengganti legacy sync_accurate.sh). Tarik sales-invoice
 // header+items dari zeus.accurate.id → mirror penuh accurate_* + refresh ar_aging.
@@ -178,6 +179,143 @@ export interface AccurateSyncResult {
 
 // Sync sales-invoice. invoiceId → satu invoice; selainnya incremental (window
 // `days` hari, recent-first, stop saat transDate < threshold).
+// Tarik master vendor (vendor/list.do) → mirror accurate_vendor. Paginated (100/hal).
+export async function syncVendors(): Promise<{ ok: boolean; synced: number; error?: string }> {
+  const creds = loadCreds();
+  if (!creds) return { ok: false, synced: 0, error: "kredensial Accurate tak tersedia" };
+  let page = 1;
+  let synced = 0;
+  for (;;) {
+    const list = await accGet(creds, "/accurate/api/vendor/list.do", `sp.page=${page}&sp.pageSize=100&fields=id,name,vendorBranchName`);
+    const rows = Array.isArray(list.d) ? (list.d as Array<Record<string, unknown>>) : [];
+    if (rows.length === 0) break;
+    await upsertVendors(
+      rows.map((v) => ({
+        id: Number(v.id),
+        name: v.name != null ? String(v.name) : undefined,
+        branch_name: v.vendorBranchName != null ? String(v.vendorBranchName) : undefined,
+        raw: v,
+      })),
+    );
+    synced += rows.length;
+    if (rows.length < 100 || page >= 50) break;
+    page += 1;
+  }
+  return { ok: true, synced };
+}
+
+// Tarik full katalog item (item/list.do) + STOK → mirror accurate_item.
+// Paginated (100/hal, ~58 hal utk 5.794 item). Untuk menu Inventory & Products.
+export async function syncItems(): Promise<{ ok: boolean; synced: number; error?: string }> {
+  const creds = loadCreds();
+  if (!creds) return { ok: false, synced: 0, error: "kredensial Accurate tak tersedia" };
+  let page = 1;
+  let synced = 0;
+  for (;;) {
+    const list = await accGet(creds, "/accurate/api/item/list.do", `sp.page=${page}&sp.pageSize=100&fields=id,no,name,itemType,unitPrice,quantity,availableToSell`);
+    const rows = Array.isArray(list.d) ? (list.d as Array<Record<string, unknown>>) : [];
+    if (rows.length === 0) break;
+    await upsertItems(
+      rows.map((v) => ({
+        id: Number(v.id),
+        no: v.no != null ? String(v.no) : undefined,
+        name: v.name != null ? String(v.name) : undefined,
+        category: v.itemType != null ? String(v.itemType) : undefined,
+        unit_price: v.unitPrice != null ? Number(v.unitPrice) : undefined,
+        quantity: v.quantity != null ? Number(v.quantity) : undefined,
+        available: v.availableToSell != null ? Number(v.availableToSell) : undefined,
+        raw: v,
+      })),
+    );
+    synced += rows.length;
+    if (rows.length < 100 || page >= 100) break;
+    page += 1;
+    await new Promise((r) => setTimeout(r, 150));
+  }
+  return { ok: true, synced };
+}
+
+// Tarik sales-order TERBARU (sales-order/list.do, sort transDate desc) → mirror
+// accurate_sales_order utk menu Orders. Volume total ~11.8rb, jadi cuma recent
+// (default 5 hal = 500 order). customer di-nested (customer.name).
+export async function syncSalesOrders(opts: { maxPages?: number } = {}): Promise<{ ok: boolean; synced: number; error?: string }> {
+  const creds = loadCreds();
+  if (!creds) return { ok: false, synced: 0, error: "kredensial Accurate tak tersedia" };
+  const maxPages = opts.maxPages ?? 5;
+  let page = 1;
+  let synced = 0;
+  for (; page <= maxPages; page++) {
+    const list = await accGet(
+      creds,
+      "/accurate/api/sales-order/list.do",
+      `sp.page=${page}&sp.pageSize=100&sp.sort=transDate|desc&fields=id,number,transDate,statusName,totalAmount,customer`,
+    );
+    const rows = Array.isArray(list.d) ? (list.d as Array<Record<string, unknown>>) : [];
+    if (rows.length === 0) break;
+    await upsertSalesOrders(
+      rows.map((v) => {
+        const td = v.transDate != null ? String(v.transDate) : "";
+        const [dd, mm, yy] = td.split("/");
+        const iso = dd && mm && yy ? `${yy}-${mm}-${dd}` : null;
+        const cust = v.customer && typeof v.customer === "object" ? (v.customer as { name?: unknown }).name : null;
+        return {
+          id: Number(v.id),
+          number: v.number != null ? String(v.number) : undefined,
+          trans_date: iso,
+          customer_name: cust != null ? String(cust) : undefined,
+          status: v.statusName != null ? String(v.statusName) : undefined,
+          total_amount: v.totalAmount != null ? Number(v.totalAmount) : undefined,
+          raw: v,
+        };
+      }),
+    );
+    synced += rows.length;
+    if (rows.length < 100) break;
+    await sleep(150);
+  }
+  return { ok: true, synced };
+}
+
+// Tarik delivery-order TERBARU (delivery-order/list.do, sort transDate desc) →
+// mirror accurate_delivery_order utk menu Shipments. Volume ~11.9rb → recent saja.
+export async function syncDeliveryOrders(opts: { maxPages?: number } = {}): Promise<{ ok: boolean; synced: number; error?: string }> {
+  const creds = loadCreds();
+  if (!creds) return { ok: false, synced: 0, error: "kredensial Accurate tak tersedia" };
+  const maxPages = opts.maxPages ?? 5;
+  let page = 1;
+  let synced = 0;
+  for (; page <= maxPages; page++) {
+    const list = await accGet(
+      creds,
+      "/accurate/api/delivery-order/list.do",
+      `sp.page=${page}&sp.pageSize=100&sp.sort=transDate|desc&fields=id,number,transDate,statusName,customer,toAddress`,
+    );
+    const rows = Array.isArray(list.d) ? (list.d as Array<Record<string, unknown>>) : [];
+    if (rows.length === 0) break;
+    await upsertDeliveryOrders(
+      rows.map((v) => {
+        const td = v.transDate != null ? String(v.transDate) : "";
+        const [dd, mm, yy] = td.split("/");
+        const iso = dd && mm && yy ? `${yy}-${mm}-${dd}` : null;
+        const cust = v.customer && typeof v.customer === "object" ? (v.customer as { name?: unknown }).name : null;
+        return {
+          id: Number(v.id),
+          number: v.number != null ? String(v.number) : undefined,
+          trans_date: iso,
+          customer_name: cust != null ? String(cust) : undefined,
+          ship_to: v.toAddress != null ? String(v.toAddress) : undefined,
+          status: v.statusName != null ? String(v.statusName) : undefined,
+          raw: v,
+        };
+      }),
+    );
+    synced += rows.length;
+    if (rows.length < 100) break;
+    await sleep(150);
+  }
+  return { ok: true, synced };
+}
+
 export async function syncAccurateInvoices(
   opts: { days?: number; invoiceId?: number } = {},
 ): Promise<AccurateSyncResult> {
