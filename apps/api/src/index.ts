@@ -13,7 +13,7 @@ import { matchCustomer, type PlanCandidate } from "./parsers/fuzzy.js";
 import { isDbEnabled, pingDb } from "./db.js";
 import { waPreflight, sendViaWaGateway } from "./wasend.js";
 import { processUnprocessed, isInboundEnabled } from "./repo/inbound.js";
-import { syncAccurateInvoices, syncVendors, syncItems, syncSalesOrders, accurateConfigured } from "./repo/accurateSync.js";
+import { syncAccurateInvoices, syncVendors, syncItems, syncSalesOrders, syncDeliveryOrders, accurateConfigured } from "./repo/accurateSync.js";
 import { insertAuditEvent } from "./repo/audit.js";
 import { upsertDealsFromPlan, logReportToDeals, getPipeline } from "./repo/deal.js";
 import { enqueueAmbiguous, listHitl, resolveHitl } from "./repo/hitl.js";
@@ -109,6 +109,7 @@ import {
   upsertItems,
   listMirror,
   listSalesOrders,
+  listDeliveryOrders,
 } from "./repo/accurateMirror.js";
 import { recordDelivery, recordEmail, recordAlert, listLogs } from "./repo/logs.js";
 import { renderSalesDocHtml, renderBriefingHtml } from "./repo/exportdoc.js";
@@ -621,6 +622,23 @@ app.get("/accurate/sales-orders", async (c) => {
   const limit = Math.min(Math.max(Number(c.req.query("limit")) || 500, 1), 10000);
   const rows = await listSalesOrders(limit);
   return c.json({ entity: "sales-orders", count: rows.length, rows });
+});
+
+// Sinkron delivery-order terbaru Accurate → accurate_delivery_order (menu Shipments). ?pages=N (default 5).
+app.post("/accurate/sync/shipments", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  if (!accurateConfigured()) return c.json({ error: "kredensial Accurate tak tersedia" }, 503);
+  const pages = Math.min(Math.max(Number(c.req.query("pages")) || 5, 1), 120);
+  const r = await syncDeliveryOrders({ maxPages: pages });
+  return c.json(r, r.ok ? 200 : 502);
+});
+
+// List delivery-order (recent-first) utk menu Shipments.
+app.get("/accurate/shipments", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const limit = Math.min(Math.max(Number(c.req.query("limit")) || 500, 1), 10000);
+  const rows = await listDeliveryOrders(limit);
+  return c.json({ entity: "shipments", count: rows.length, rows });
 });
 
 // AR (piutang) per customer / cabang / sales — dari accurate_invoice OPEN.

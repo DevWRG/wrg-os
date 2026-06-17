@@ -107,6 +107,34 @@ export async function listSalesOrders(limit = 500) {
   return rows.map((r) => ({ ...r }));
 }
 
+export async function upsertDeliveryOrders(
+  rows: { id: number; number?: string; trans_date?: string | null; customer_name?: string; ship_to?: string; status?: string; raw?: unknown }[],
+): Promise<number> {
+  const sql = db();
+  let n = 0;
+  for (const r of rows) {
+    if (r.id === undefined || r.id === null) continue;
+    await sql`
+      INSERT INTO accurate_delivery_order (id, number, trans_date, customer_name, ship_to, status, raw, last_synced_at)
+      VALUES (${r.id}, ${r.number ?? null}, ${r.trans_date ?? null}, ${r.customer_name ?? null}, ${r.ship_to ?? null}, ${r.status ?? null}, ${sql.json(j(r.raw ?? {}))}, now())
+      ON CONFLICT (id) DO UPDATE SET number=EXCLUDED.number, trans_date=EXCLUDED.trans_date,
+        customer_name=EXCLUDED.customer_name, ship_to=EXCLUDED.ship_to, status=EXCLUDED.status,
+        raw=EXCLUDED.raw, last_synced_at=now()
+    `;
+    n += 1;
+  }
+  return n;
+}
+
+export async function listDeliveryOrders(limit = 500) {
+  const sql = db();
+  const rows = await sql`
+    SELECT id, number, trans_date::text AS trans_date, customer_name, ship_to, status
+    FROM accurate_delivery_order ORDER BY trans_date DESC NULLS LAST, id DESC LIMIT ${limit}
+  `;
+  return rows.map((r) => ({ ...r }));
+}
+
 export async function listMirror(entity: "customers" | "items" | "branches" | "vendors", limit = 100) {
   const sql = db();
   const table = entity === "customers" ? sql`accurate_customer` : entity === "items" ? sql`accurate_item` : entity === "vendors" ? sql`accurate_vendor` : sql`accurate_branch`;

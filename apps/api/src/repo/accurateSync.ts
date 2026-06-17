@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 
 import { db } from "../db.js";
 import { ingestAccurateWebhook, normalizeAccurateDate, type AccurateInvoice } from "./ar.js";
-import { upsertVendors, upsertItems, upsertSalesOrders } from "./accurateMirror.js";
+import { upsertVendors, upsertItems, upsertSalesOrders, upsertDeliveryOrders } from "./accurateMirror.js";
 
 // Puller Accurate Online (pengganti legacy sync_accurate.sh). Tarik sales-invoice
 // header+items dari zeus.accurate.id → mirror penuh accurate_* + refresh ar_aging.
@@ -265,6 +265,46 @@ export async function syncSalesOrders(opts: { maxPages?: number } = {}): Promise
           customer_name: cust != null ? String(cust) : undefined,
           status: v.statusName != null ? String(v.statusName) : undefined,
           total_amount: v.totalAmount != null ? Number(v.totalAmount) : undefined,
+          raw: v,
+        };
+      }),
+    );
+    synced += rows.length;
+    if (rows.length < 100) break;
+    await sleep(150);
+  }
+  return { ok: true, synced };
+}
+
+// Tarik delivery-order TERBARU (delivery-order/list.do, sort transDate desc) →
+// mirror accurate_delivery_order utk menu Shipments. Volume ~11.9rb → recent saja.
+export async function syncDeliveryOrders(opts: { maxPages?: number } = {}): Promise<{ ok: boolean; synced: number; error?: string }> {
+  const creds = loadCreds();
+  if (!creds) return { ok: false, synced: 0, error: "kredensial Accurate tak tersedia" };
+  const maxPages = opts.maxPages ?? 5;
+  let page = 1;
+  let synced = 0;
+  for (; page <= maxPages; page++) {
+    const list = await accGet(
+      creds,
+      "/accurate/api/delivery-order/list.do",
+      `sp.page=${page}&sp.pageSize=100&sp.sort=transDate|desc&fields=id,number,transDate,statusName,customer,toAddress`,
+    );
+    const rows = Array.isArray(list.d) ? (list.d as Array<Record<string, unknown>>) : [];
+    if (rows.length === 0) break;
+    await upsertDeliveryOrders(
+      rows.map((v) => {
+        const td = v.transDate != null ? String(v.transDate) : "";
+        const [dd, mm, yy] = td.split("/");
+        const iso = dd && mm && yy ? `${yy}-${mm}-${dd}` : null;
+        const cust = v.customer && typeof v.customer === "object" ? (v.customer as { name?: unknown }).name : null;
+        return {
+          id: Number(v.id),
+          number: v.number != null ? String(v.number) : undefined,
+          trans_date: iso,
+          customer_name: cust != null ? String(cust) : undefined,
+          ship_to: v.toAddress != null ? String(v.toAddress) : undefined,
+          status: v.statusName != null ? String(v.statusName) : undefined,
           raw: v,
         };
       }),
