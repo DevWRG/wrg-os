@@ -33,22 +33,15 @@ const columns: DataColumn<TodoItem>[] = [
   { id: "am", header: "AM", sortable: true, accessor: (t) => t.am_name ?? t.am_id, cell: (t) => <span className="font-medium">{t.am_name ?? t.am_id}</span> },
   { id: "tanggal", header: "Tanggal", sortable: true, accessor: (t) => t.tanggal, cell: (t) => <span className="text-muted-foreground">{tgl(t.tanggal)}</span> },
   {
-    id: "items",
+    id: "ringkas",
     header: "Item rencana",
     accessor: (t) => t.items.join(" "),
-    cell: (t) =>
-      t.items.length > 0 ? (
-        <ol className="list-decimal space-y-0.5 pl-4 text-sm">
-          {t.items.map((it, i) => (
-            <li key={i} className="truncate" title={it}>
-              {it}
-            </li>
-          ))}
-        </ol>
-      ) : (
-        <span className="text-muted-foreground">—</span>
-      ),
-    className: "w-[26rem] max-w-[26rem]",
+    cell: (t) => (
+      <span className="text-muted-foreground truncate">
+        {t.items[0] ? `${t.items[0]}${t.total_items > 1 ? ` +${t.total_items - 1} lainnya` : ""}` : "—"}
+      </span>
+    ),
+    className: "max-w-[22rem]",
   },
   { id: "total", header: "Jumlah", align: "right", sortable: true, accessor: (t) => t.total_items, className: "w-16 whitespace-nowrap" },
   {
