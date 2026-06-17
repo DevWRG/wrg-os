@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Area, CartesianGrid, ComposedChart, Line, XAxis } from "recharts";
-import { Activity, AlertTriangle, CalendarDays, Check, CheckCircle2, ClipboardList, Clock, MessageCircle, UsersRound, X, type LucideIcon } from "lucide-react";
+import { Activity, AlertTriangle, CalendarDays, Check, CheckCircle2, ChevronDown, ClipboardList, Clock, MessageCircle, UsersRound, X, type LucideIcon } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -187,7 +187,7 @@ export default function DashboardPage() {
   const [hod, setHod] = useState<HodRow[]>([]);
   const [cabangStat, setCabangStat] = useState<GroupRow[]>([]);
   const [reminderOpen, setReminderOpen] = useState(true);
-  const [reminderTab, setReminderTab] = useState<ReminderTab>("am");
+  const [reminderTab, setReminderTab] = useState<ReminderTab | null>("am");
   const [pushState, setPushState] = useState<Record<string, "sending" | "sent" | "error">>({});
 
   async function pushWa(amId: string, kind: ReminderTab, date: string) {
@@ -328,15 +328,15 @@ export default function DashboardPage() {
                   { key: "todo" as const, label: "TODO (report pending)", list: pending.todo_list, tone: "warning" },
                   { key: "zero" as const, label: "Zero submission", list: pending.zero_list, tone: "danger" },
                 ];
-                const active = tabs.find((t) => t.key === reminderTab) ?? tabs[0];
+                const active = reminderTab ? (tabs.find((t) => t.key === reminderTab) ?? null) : null;
                 const onCls: Record<string, string> = {
                   info: "border-primary bg-primary-soft ring-primary/30",
                   warning: "border-warning bg-warning-soft ring-warning/30",
                   danger: "border-danger bg-danger-soft ring-danger/30",
                 };
-                const detail = (r: PendingRow) =>
-                  active.key === "am" ? `${r.pending}/${r.total} visit pending`
-                  : active.key === "todo" ? `${r.pending} report pending`
+                const detail = (key: ReminderTab, r: PendingRow) =>
+                  key === "am" ? `${r.pending}/${r.total} visit pending`
+                  : key === "todo" ? `${r.pending} report pending`
                   : "tanpa plan & report";
                 return (
                   <CardContent className="space-y-3">
@@ -347,19 +347,23 @@ export default function DashboardPage() {
                           <button
                             key={t.key}
                             type="button"
-                            onClick={() => setReminderTab(t.key)}
+                            aria-expanded={on}
+                            onClick={() => setReminderTab((prev) => (prev === t.key ? null : t.key))}
                             className={cn(
                               "rounded-xl border px-4 py-3 text-left transition-all",
                               on ? `${onCls[t.tone]} ring-2` : "border-border bg-card hover:bg-muted",
                             )}
                           >
-                            <div className="text-muted-foreground text-xs font-medium">{t.label}</div>
+                            <div className="text-muted-foreground flex items-center justify-between gap-2 text-xs font-medium">
+                              <span>{t.label}</span>
+                              <ChevronDown className={cn("size-3.5 transition-transform", on && "rotate-180")} />
+                            </div>
                             <div className="mt-1 text-2xl font-semibold tabular-nums">{t.list.length}</div>
                           </button>
                         );
                       })}
                     </div>
-                    {active.list.length === 0 ? (
+                    {active && (active.list.length === 0 ? (
                       <p className="text-muted-foreground py-8 text-center text-sm">Tidak ada yang pending. 🎉</p>
                     ) : (
                       <div className="max-h-80 divide-y overflow-y-auto rounded-lg border">
@@ -370,7 +374,7 @@ export default function DashboardPage() {
                               <div className="min-w-0">
                                 <div className="truncate text-sm font-medium">{r.name}</div>
                                 <div className="text-muted-foreground truncate text-xs">
-                                  {[r.region, detail(r)].filter(Boolean).join(" · ")}
+                                  {[r.region, detail(active.key, r)].filter(Boolean).join(" · ")}
                                 </div>
                               </div>
                               <Button
@@ -392,7 +396,7 @@ export default function DashboardPage() {
                           );
                         })}
                       </div>
-                    )}
+                    ))}
                   </CardContent>
                 );
               })()}
