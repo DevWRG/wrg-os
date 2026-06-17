@@ -13,7 +13,7 @@ import { matchCustomer, type PlanCandidate } from "./parsers/fuzzy.js";
 import { isDbEnabled, pingDb } from "./db.js";
 import { waPreflight, sendViaWaGateway } from "./wasend.js";
 import { processUnprocessed, isInboundEnabled } from "./repo/inbound.js";
-import { syncAccurateInvoices, syncVendors, syncItems, accurateConfigured } from "./repo/accurateSync.js";
+import { syncAccurateInvoices, syncVendors, syncItems, syncSalesOrders, accurateConfigured } from "./repo/accurateSync.js";
 import { insertAuditEvent } from "./repo/audit.js";
 import { upsertDealsFromPlan, logReportToDeals, getPipeline } from "./repo/deal.js";
 import { enqueueAmbiguous, listHitl, resolveHitl } from "./repo/hitl.js";
@@ -108,6 +108,7 @@ import {
   upsertBranches,
   upsertItems,
   listMirror,
+  listSalesOrders,
 } from "./repo/accurateMirror.js";
 import { recordDelivery, recordEmail, recordAlert, listLogs } from "./repo/logs.js";
 import { renderSalesDocHtml, renderBriefingHtml } from "./repo/exportdoc.js";
@@ -603,6 +604,23 @@ app.post("/accurate/sync/items", async (c) => {
   if (!accurateConfigured()) return c.json({ error: "kredensial Accurate tak tersedia" }, 503);
   const r = await syncItems();
   return c.json(r, r.ok ? 200 : 502);
+});
+
+// Sinkron sales-order terbaru Accurate → accurate_sales_order (menu Orders). ?pages=N (default 5).
+app.post("/accurate/sync/orders", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  if (!accurateConfigured()) return c.json({ error: "kredensial Accurate tak tersedia" }, 503);
+  const pages = Math.min(Math.max(Number(c.req.query("pages")) || 5, 1), 120);
+  const r = await syncSalesOrders({ maxPages: pages });
+  return c.json(r, r.ok ? 200 : 502);
+});
+
+// List sales-order (recent-first) utk menu Orders.
+app.get("/accurate/sales-orders", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const limit = Math.min(Math.max(Number(c.req.query("limit")) || 500, 1), 10000);
+  const rows = await listSalesOrders(limit);
+  return c.json({ entity: "sales-orders", count: rows.length, rows });
 });
 
 // AR (piutang) per customer / cabang / sales — dari accurate_invoice OPEN.
