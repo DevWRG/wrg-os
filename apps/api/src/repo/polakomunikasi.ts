@@ -1,6 +1,7 @@
 import { aiDryRun, callAi } from "../ai.js";
 import { db } from "../db.js";
 import { upsertPola } from "./monitor.js";
+import { loadGroupSubjects, syncGroupNamesFromSessions } from "./group-names.js";
 
 // pola_komunikasi — port wrg-monitor/scripts/pola_komunikasi.sh.
 // Untuk tiap grup aktif (>= MIN pesan dalam window), hitung statistik lokal +
@@ -28,6 +29,11 @@ export async function runPolaKomunikasi(
   const minMsg = opts.minMessages ?? 5;
   const res: PolaResult = { total_groups: 0, processed: 0, skipped: 0, ai_failures: 0 };
 
+  // Auto-label grup dari subject sessions.json (nama tak ada di wa_message).
+  // Backfill nama yg masih kosong/JID; map dipakai juga utk grup baru di bawah.
+  const subjects = loadGroupSubjects();
+  if (!opts.dryRun) await syncGroupNamesFromSessions();
+
   // Grup aktif dalam window (>= minMsg), + nama & waktu update pola terakhir.
   const groups = await sql`
     SELECT m.group_jid,
@@ -50,7 +56,9 @@ export async function runPolaKomunikasi(
     // Fingerprint: pola sudah ada & pesan baru < threshold → skip.
     if (g.pola_updated && Number(g.new_since) < NEW_THRESHOLD) { res.skipped += 1; continue; }
 
-    const groupName = g.group_name ? String(g.group_name) : "";
+    const existing = g.group_name ? String(g.group_name) : "";
+    // Pakai subject sessions.json kalau nama existing kosong/JID (grup baru).
+    const groupName = !existing || existing.endsWith("@g.us") ? (subjects[jid] || existing) : existing;
     const count = Number(g.cnt);
 
     // Statistik lokal (top senders, jam aktif WIB, distribusi tipe).
