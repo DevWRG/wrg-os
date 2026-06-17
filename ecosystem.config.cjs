@@ -77,5 +77,18 @@ module.exports = {
       autorestart: true,
       max_restarts: 10,
     },
+    {
+      // Cloudflare Tunnel: expose dashboard ke os.wahanalifeline.co.id (publik
+      // HTTPS, tanpa Tailscale). Config + creds di ~/.cloudflared/ (gitignored,
+      // di luar repo). Akses di-gate oleh login app (Cloudflare Access opsional,
+      // belum dipasang). Didaftar di ecosystem biar restart/auto-boot konsisten.
+      name: "wrg-prod-cftunnel",
+      cwd: ROOT,
+      script: "/opt/homebrew/bin/cloudflared",
+      args: "tunnel --config /Users/development/.cloudflared/config.yml run",
+      interpreter: "none",
+      autorestart: true,
+      max_restarts: 10,
+    },
   ],
 };
