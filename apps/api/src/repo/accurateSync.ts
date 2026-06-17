@@ -85,7 +85,9 @@ async function upsertInvoiceDetail(d: Detail): Promise<boolean> {
     await sql`
       INSERT INTO accurate_customer (id, name, branch_id, last_synced_at)
       VALUES (${custId}, ${custName}, ${branchId}, now())
-      ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, branch_id = EXCLUDED.branch_id, last_synced_at = now()
+      ON CONFLICT (id) DO UPDATE SET
+        name = COALESCE(NULLIF(EXCLUDED.name, ''), accurate_customer.name),
+        branch_id = EXCLUDED.branch_id, last_synced_at = now()
     `;
   }
   if (branchId != null) {
