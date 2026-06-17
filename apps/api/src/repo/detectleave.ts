@@ -10,7 +10,10 @@ import { sendViaWaGateway } from "../wasend.js";
 //   B. balasan "ya L<id>"/"tidak L<id>" dari ADMIN → user_leave (approve) atau batal.
 // Idempotent via leave_scan_seen. Skema wrg-os: am_id (bukan user_id).
 
-const HRD_GROUP = (): string => process.env.LEAVE_HRD_GROUP_JID || "120363048384809457@g.us";
+// Bisa multi-grup HRD (comma-separated). Default: Pengumuman HR WGI.
+const hrdGroups = (): string[] =>
+  (process.env.LEAVE_HRD_GROUP_JID || "120363048384809457@g.us")
+    .split(",").map((s) => s.trim()).filter(Boolean);
 // Nomor admin yg boleh approve (comma-separated). Kosong → approval di-ignore.
 const approverList = (): string[] =>
   (process.env.LEAVE_APPROVER_WA || "").split(",").map((s) => normalizeWa(s.trim())).filter(Boolean);
@@ -45,7 +48,7 @@ async function resolveWajib(raw: string): Promise<{ am_id: string; nama: string 
   return row ? { am_id: String(row.am_id), nama: String(row.nama) } : null;
 }
 
-async function handleApproval(decision: string, pid: number, senderWa: string): Promise<string> {
+async function handleApproval(decision: string, pid: number, senderWa: string, grp: string): Promise<string> {
   const sql = db();
   const approvers = approverList();
   const sender = normalizeWa(senderWa);
@@ -54,7 +57,6 @@ async function handleApproval(decision: string, pid: number, senderWa: string): 
   }
   const [p] = await sql`SELECT * FROM leave_pending WHERE id = ${pid} AND status = 'pending'`;
   if (!p) return "approval-not-found";
-  const grp = HRD_GROUP();
   const rt = p.start_date === p.end_date ? String(p.start_date) : `${p.start_date} s/d ${p.end_date}`;
   if (/^(ya|iya|ok|setuju)$/i.test(decision)) {
     // Idempoten: hanya insert bila tak ada overlap user_leave.
@@ -82,14 +84,14 @@ export interface DetectLeaveResult {
 
 export async function runDetectLeaveScan(opts: { dryRun?: boolean } = {}): Promise<DetectLeaveResult> {
   const sql = db();
-  const grp = HRD_GROUP();
+  const groups = hrdGroups();
   const res: DetectLeaveResult = { scanned: 0, pending_created: 0, approved: 0, rejected: 0, skipped: {} };
   const skip = (k: string) => { res.skipped[k] = (res.skipped[k] ?? 0) + 1; };
 
   const msgs = await sql`
-    SELECT message_id, sender_name, sender_jid, body, received_at
+    SELECT message_id, sender_name, sender_jid, group_jid, body, received_at
     FROM wa_message
-    WHERE group_jid = ${grp} AND body IS NOT NULL AND body <> ''
+    WHERE group_jid = ANY(${groups}) AND body IS NOT NULL AND body <> ''
       AND received_at >= now() - interval '2 days'
       AND message_id NOT IN (SELECT message_id FROM leave_scan_seen)
     ORDER BY received_at
@@ -100,6 +102,7 @@ export async function runDetectLeaveScan(opts: { dryRun?: boolean } = {}): Promi
     const mid = String(m.message_id);
     const body = String(m.body);
     const senderWa = String(m.sender_jid ?? "");
+    const grp = String(m.group_jid ?? "");
     const msgDate = m.received_at ? new Date(m.received_at).toISOString().slice(0, 10) : wibDate();
 
     // ── PHASE B: balasan approval ──
@@ -108,7 +111,7 @@ export async function runDetectLeaveScan(opts: { dryRun?: boolean } = {}): Promi
       const decision = am[1].toLowerCase();
       const pid = Number(am[2]);
       if (opts.dryRun) { skip("approval-dryrun"); continue; }
-      const out = await handleApproval(decision, pid, senderWa);
+      const out = await handleApproval(decision, pid, senderWa, grp);
       if (out === "approved") res.approved += 1;
       else if (out === "rejected") res.rejected += 1;
       else skip(out);
