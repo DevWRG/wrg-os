@@ -50,11 +50,31 @@ export async function createUser(
   return toAppUser(await getUserByEmail(email));
 }
 
+// Login fleksibel: identifier bisa EMAIL, username (name/panggilan), atau nomor WA.
+export async function getUserByIdentifier(identifier: string) {
+  const sql = db();
+  const v = String(identifier ?? "").trim();
+  if (!v) return null;
+  const digits = v.replace(/\D/g, "");
+  const phoneOk = digits.length >= 6;
+  const rows = await sql`
+    SELECT id, email, password_hash, name, role, title, active
+    FROM app_user
+    WHERE lower(email) = lower(${v})
+       OR lower(name) = lower(${v})
+       OR (${phoneOk} AND wa_number IS NOT NULL
+           AND regexp_replace(wa_number, '[^0-9]', '', 'g') = ${digits})
+    ORDER BY (lower(email) = lower(${v})) DESC, (lower(name) = lower(${v})) DESC
+    LIMIT 1
+  `;
+  return rows[0] ?? null;
+}
+
 export async function verifyCredentials(
-  email: string,
+  identifier: string,
   password: string,
 ): Promise<AppUser | null> {
-  const u = await getUserByEmail(email);
+  const u = await getUserByIdentifier(identifier);
   if (!u) return null;
   if (u.active === false) return null; // akun nonaktif tak bisa login
   if (!verifyPassword(password, String(u.password_hash))) return null;
