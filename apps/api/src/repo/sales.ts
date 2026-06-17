@@ -22,6 +22,7 @@ export function salesRange(from?: string, to?: string) {
 interface RankRow {
   key: string;
   label: string;
+  sub?: string;
   total: number;
   count: number;
 }
@@ -29,6 +30,7 @@ const mapRank = (rows: Record<string, unknown>[]): RankRow[] =>
   rows.map((r) => ({
     key: String(r.key ?? ""),
     label: r.label ? String(r.label) : String(r.key ?? "—"),
+    sub: r.sub != null && String(r.sub) !== "" ? String(r.sub) : undefined,
     total: Number(r.total ?? 0),
     count: Number(r.count ?? 0),
   }));
@@ -48,13 +50,20 @@ export async function reportRevenue(from: string, to: string) {
     GROUP BY ai.customer_id, ac.name ORDER BY sum(ai.total) DESC LIMIT 25
   `;
   const perSalesman = await sql`
-    SELECT COALESCE(salesman_name,'—') AS key, COALESCE(salesman_name,'—') AS label,
-           sum(total)::numeric AS total, count(*)::int AS count
-    FROM accurate_invoice WHERE tanggal BETWEEN ${from} AND ${to}
-    GROUP BY salesman_name ORDER BY sum(total) DESC
+    SELECT COALESCE(NULLIF(ai.salesman_name,''),'—') AS key,
+           COALESCE(NULLIF(mu.nama,''), NULLIF(ai.salesman_name,''),'—') AS label,
+           CASE WHEN NULLIF(mu.nama,'') IS NOT NULL
+                THEN ai.salesman_name || COALESCE(' · ' || NULLIF(mu.cabang,''), '')
+                ELSE NULLIF(mu.cabang,'') END AS sub,
+           sum(ai.total)::numeric AS total, count(*)::int AS count
+    FROM accurate_invoice ai
+    LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
+    LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
+    WHERE ai.tanggal BETWEEN ${from} AND ${to}
+    GROUP BY ai.salesman_name, mu.nama, mu.cabang ORDER BY sum(ai.total) DESC
   `;
   const perCabang = await sql`
-    SELECT ai.branch_id::text AS key, COALESCE(ab.name, ai.branch_id::text) AS label,
+    SELECT ai.branch_id::text AS key, COALESCE(NULLIF(ab.name,''), ai.branch_id::text) AS label,
            sum(ai.total)::numeric AS total, count(*)::int AS count
     FROM accurate_invoice ai LEFT JOIN accurate_branch ab ON ab.id = ai.branch_id
     WHERE ai.tanggal BETWEEN ${from} AND ${to}

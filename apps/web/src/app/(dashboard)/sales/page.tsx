@@ -11,6 +11,7 @@ export const dynamic = "force-dynamic";
 interface RankRow {
   key: string;
   label: string;
+  sub?: string;
   total: number;
   count: number;
 }
