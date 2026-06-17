@@ -5,6 +5,13 @@ import { useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
 import { DateRangeToolbar } from "@/components/ui/date-range-toolbar";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 
 interface TodoItem {
   id: string;
@@ -60,6 +67,7 @@ const columns: DataColumn<TodoItem>[] = [
 export function TodosTable({ todos }: { todos: TodoItem[] }) {
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
+  const [selected, setSelected] = useState<TodoItem | null>(null);
   const filtered = useMemo(() => {
     if (!from && !to) return todos;
     return todos.filter((t) => {
@@ -68,13 +76,44 @@ export function TodosTable({ todos }: { todos: TodoItem[] }) {
     });
   }, [todos, from, to]);
   return (
-    <DataTable
-      columns={columns}
-      data={filtered}
-      getKey={(t) => t.id}
-      searchPlaceholder="Cari AM / item…"
-      pageSize={25}
-      toolbar={<DateRangeToolbar from={from} to={to} onFrom={setFrom} onTo={setTo} idPrefix="td" />}
-    />
+    <>
+      <DataTable
+        columns={columns}
+        data={filtered}
+        getKey={(t) => t.id}
+        searchPlaceholder="Cari AM / item…"
+        pageSize={25}
+        onRowClick={(t) => setSelected(t)}
+        toolbar={<DateRangeToolbar from={from} to={to} onFrom={setFrom} onTo={setTo} idPrefix="td" />}
+      />
+
+      <Sheet open={!!selected} onOpenChange={(o) => !o && setSelected(null)}>
+        <SheetContent className="w-full overflow-y-auto sm:max-w-lg">
+          {selected && (
+            <>
+              <SheetHeader>
+                <SheetTitle>{selected.am_name ?? selected.am_id}</SheetTitle>
+                <SheetDescription>
+                  {tgl(selected.tanggal)} · {selected.total_items} item
+                </SheetDescription>
+              </SheetHeader>
+              <div className="space-y-4 px-4 pb-6">
+                <div className="flex flex-wrap gap-1">
+                  {selected.is_late_plan && <Badge variant="destructive">late plan</Badge>}
+                  {selected.reported ? <Badge variant="secondary">reported</Badge> : <Badge variant="outline">belum report</Badge>}
+                </div>
+                <ol className="list-decimal space-y-2 pl-5 text-sm leading-relaxed">
+                  {selected.items.map((it, i) => (
+                    <li key={i} className="break-words whitespace-pre-wrap">
+                      {it}
+                    </li>
+                  ))}
+                </ol>
+              </div>
+            </>
+          )}
+        </SheetContent>
+      </Sheet>
+    </>
   );
 }
