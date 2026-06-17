@@ -23,7 +23,7 @@ function parse(content: string): { header: string[]; blocks: Block[] } {
   for (const line of lines) {
     const t = line.trim();
     if (isSep(t)) { flush(); pendingTitle = true; continue; }
-    if (pendingTitle && t) { cur.title = t.replace(/[#*]+$/, "").trim(); pendingTitle = false; continue; }
+    if (pendingTitle && t) { cur.title = t.replace(/^\d+[.)]\s+/, "").replace(/[#*]+$/, "").trim(); pendingTitle = false; continue; }
     const head = t.match(/^#{1,3}\s+(.*)$/);
     const numCaps = t.match(/^\d+[.)]\s+([A-Z][A-Za-z0-9 &/().,'-]{2,})$/);
     if (head || numCaps) {
