@@ -1527,7 +1527,8 @@ app.get("/accurate/:entity", async (c) => {
   if (entity !== "customers" && entity !== "items" && entity !== "branches") {
     return c.json({ error: "entity harus customers|items|branches" }, 400);
   }
-  const rows = await listMirror(entity);
+  const limit = Math.min(Math.max(Number(c.req.query("limit")) || 100, 1), 2000);
+  const rows = await listMirror(entity, limit);
   return c.json({ entity, count: rows.length, rows });
 });
 
