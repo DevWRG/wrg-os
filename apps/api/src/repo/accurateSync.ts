@@ -402,6 +402,32 @@ export async function getSalesOrderItems(
   return { ok: true, items, summary };
 }
 
+// Detail satu vendor (on-demand) utk rincian supplier — kontak/alamat/NPWP/notes.
+export async function getVendorDetail(
+  id: number,
+): Promise<{ ok: boolean; vendor?: Record<string, string | null>; error?: string }> {
+  const creds = loadCreds();
+  if (!creds) return { ok: false, error: "kredensial Accurate tak tersedia" };
+  const det = await accGet(creds, "/accurate/api/vendor/detail.do", `id=${id}`);
+  if (det?.s !== true) return { ok: false, error: `detail gagal: ${JSON.stringify(det?.d).slice(0, 160)}` };
+  const v = det.d as Detail;
+  const s = (x: unknown): string | null => (x == null || String(x).trim() === "" ? null : String(x));
+  const addr = [v.billStreet, v.billCity, v.billProvince].map(s).filter(Boolean).join(", ");
+  return {
+    ok: true,
+    vendor: {
+      name: s(v.name),
+      no: s(v.vendorNo),
+      branch: s(v.vendorBranchName),
+      email: s(v.email),
+      phone: s(v.mobilePhone) ?? s(v.phone),
+      npwp: s(v.npwpNo),
+      address: addr || null,
+      notes: s(v.notes),
+    },
+  };
+}
+
 export async function syncAccurateInvoices(
   opts: { days?: number; invoiceId?: number } = {},
 ): Promise<AccurateSyncResult> {

@@ -157,10 +157,12 @@ function Kpis({ k }: { k: Kpi }) {
               <div className={cn("flex size-9 shrink-0 items-center justify-center rounded-lg", c.chip)}>
                 <c.icon className="size-4" />
               </div>
-              <span className="text-muted-foreground text-xs leading-tight font-medium">{c.label}</span>
-              {c.pill && <span className={cn("ml-auto rounded-full px-2 py-0.5 text-[10px] font-semibold whitespace-nowrap", c.pillCls)}>{c.pill}</span>}
+              <span className="text-muted-foreground min-w-0 text-xs leading-tight font-medium">{c.label}</span>
             </div>
-            <div className="mt-3 text-2xl font-semibold tabular-nums">{c.value}</div>
+            <div className="mt-3 flex flex-wrap items-baseline gap-x-2 gap-y-1">
+              <span className="text-2xl font-semibold tabular-nums">{c.value}</span>
+              {c.pill && <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-semibold whitespace-nowrap", c.pillCls)}>{c.pill}</span>}
+            </div>
             <p className="text-muted-foreground text-xs">{c.sub}</p>
           </CardContent>
         </Card>
