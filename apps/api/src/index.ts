@@ -72,6 +72,8 @@ import {
   deleteHoliday,
   deleteLeave,
   updateLeave,
+  listPendingLeave,
+  decidePendingLeave,
 } from "./repo/leave.js";
 import { recordCompetitor, listCompetitor, competitorSummary } from "./repo/competitor.js";
 import {
@@ -1271,6 +1273,26 @@ app.get("/leave", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const leave = await listLeave(c.req.query("am_id") || undefined);
   return c.json({ count: leave.length, leave });
+});
+
+// Pending leave (detect-leave HRD) yg belum diputus — buat dashboard.
+app.get("/leave/pending", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const pending = await listPendingLeave();
+  return c.json({ count: pending.length, pending });
+});
+
+// Approve/reject pending dari dashboard. body: {approve: boolean, decided_by?}.
+app.post("/leave/pending/:id/decide", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { approve?: boolean; decided_by?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    /* body opsional */
+  }
+  const r = await decidePendingLeave(Number(c.req.param("id")), body.approve === true, body.decided_by);
+  return c.json(r, r.ok ? 200 : 404);
 });
 
 app.patch("/leave/:id", async (c) => {

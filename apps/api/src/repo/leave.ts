@@ -89,6 +89,54 @@ export async function listLeave(amId?: string, limit = 100) {
   }));
 }
 
+// Pending leave hasil detect-leave (HRD group) yg belum diputus — buat dikelola
+// dari dashboard (selain via balasan WA approver).
+export async function listPendingLeave() {
+  const sql = db();
+  const rows = await sql`
+    SELECT id, am_id, nama, jenis, start_date::text AS start_date, end_date::text AS end_date,
+           source_message_id, status, created_at::text AS created_at
+    FROM leave_pending WHERE status = 'pending' ORDER BY created_at DESC
+  `;
+  return rows.map((r) => ({
+    id: Number(r.id),
+    am_id: String(r.am_id),
+    nama: String(r.nama),
+    jenis: String(r.jenis),
+    start_date: String(r.start_date),
+    end_date: String(r.end_date),
+    source_message_id: r.source_message_id ? String(r.source_message_id) : null,
+    status: String(r.status),
+    created_at: String(r.created_at),
+  }));
+}
+
+// Approve/reject pending dari dashboard. Approve → insert user_leave (idempoten,
+// anti-overlap) + tandai approved. Selaras handleApproval (jalur WA approver).
+export async function decidePendingLeave(
+  id: number,
+  approve: boolean,
+  decidedBy = "dashboard",
+): Promise<{ ok: boolean; status?: string; nama?: string; error?: string }> {
+  const sql = db();
+  const [p] = await sql`SELECT * FROM leave_pending WHERE id = ${id} AND status = 'pending'`;
+  if (!p) return { ok: false, error: "not-found-or-decided" };
+  if (approve) {
+    await sql`
+      INSERT INTO user_leave (am_id, start_date, end_date, jenis, keterangan, source)
+      SELECT ${p.am_id}, ${p.start_date}, ${p.end_date}, ${p.jenis}, 'Approved via dashboard', 'detect_leave'
+      WHERE NOT EXISTS (
+        SELECT 1 FROM user_leave WHERE am_id = ${p.am_id}
+          AND daterange(start_date, end_date, '[]') && daterange(${p.start_date}, ${p.end_date}, '[]')
+      )
+    `;
+    await sql`UPDATE leave_pending SET status='approved', decided_at=now(), decided_by=${decidedBy} WHERE id=${id}`;
+    return { ok: true, status: "approved", nama: String(p.nama) };
+  }
+  await sql`UPDATE leave_pending SET status='rejected', decided_at=now(), decided_by=${decidedBy} WHERE id=${id}`;
+  return { ok: true, status: "rejected", nama: String(p.nama) };
+}
+
 export async function isOnLeave(
   amId: string,
   date: string,
