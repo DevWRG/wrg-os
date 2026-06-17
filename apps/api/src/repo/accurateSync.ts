@@ -335,23 +335,71 @@ export async function getDeliveryOrderItems(
   return { ok: true, items };
 }
 
-// Idem getDeliveryOrderItems, tapi utk sales-order (Orders) — sertakan subtotal.
+// Idem getDeliveryOrderItems, tapi utk sales-order (Orders) — sertakan ringkasan
+// header (subtotal/diskon/PPN/total/DP/termin/salesman/PO) + diskon per-baris.
+interface SoLine {
+  no: string | null;
+  name: string | null;
+  quantity: number | null;
+  unit: string | null;
+  unit_price: number | null;
+  disc_percent: string | null;
+  disc_amount: number | null;
+  total: number | null;
+}
+interface SoSummary {
+  subtotal: number | null;
+  discount: number | null;
+  tax: number | null;
+  total: number | null;
+  down_payment: number | null;
+  term: string | null;
+  salesman: string | null;
+  po_number: string | null;
+  ship_date: string | null;
+  note: string | null;
+}
+const numOrNull = (v: unknown): number | null => (v == null || v === "" ? null : Number(v) || 0);
+const toIso = (v: unknown): string | null => {
+  if (v == null) return null;
+  const [dd, mm, yy] = String(v).split("/");
+  return dd && mm && yy ? `${yy}-${mm}-${dd}` : null;
+};
 export async function getSalesOrderItems(
   id: number,
-): Promise<{ ok: boolean; items: { no: string | null; name: string | null; quantity: number | null; unit: string | null; total: number | null }[]; error?: string }> {
+): Promise<{ ok: boolean; items: SoLine[]; summary?: SoSummary; error?: string }> {
   const creds = loadCreds();
   if (!creds) return { ok: false, items: [], error: "kredensial Accurate tak tersedia" };
   const det = await accGet(creds, "/accurate/api/sales-order/detail.do", `id=${id}`);
   if (det?.s !== true) return { ok: false, items: [], error: `detail gagal: ${JSON.stringify(det?.d).slice(0, 160)}` };
   const d = det.d as Detail;
-  const items = ((d?.detailItem ?? []) as Detail[]).map((it) => ({
-    no: it.item?.no ?? null,
-    name: it.item?.name ?? it.detailName ?? null,
-    quantity: it.quantity != null ? Number(it.quantity) : null,
-    unit: it.itemUnit?.name ?? it.itemUnitName ?? null,
-    total: it.totalPrice != null ? Number(it.totalPrice) : null,
-  }));
-  return { ok: true, items };
+  const lines = (d?.detailItem ?? []) as Detail[];
+  const items: SoLine[] = lines.map((it) => {
+    const dp = it.itemDiscPercent != null && String(it.itemDiscPercent).trim() !== "" && String(it.itemDiscPercent) !== "0" ? String(it.itemDiscPercent) : null;
+    return {
+      no: it.item?.no ?? null,
+      name: it.item?.name ?? it.detailName ?? null,
+      quantity: it.quantity != null ? Number(it.quantity) : null,
+      unit: it.itemUnit?.name ?? it.itemUnitName ?? null,
+      unit_price: numOrNull(it.unitPrice),
+      disc_percent: dp,
+      disc_amount: numOrNull(it.itemCashDiscount),
+      total: numOrNull(it.totalPrice),
+    };
+  });
+  const summary: SoSummary = {
+    subtotal: numOrNull(d.subTotal),
+    discount: numOrNull(d.cashDiscount),
+    tax: numOrNull(d.tax1Amount),
+    total: numOrNull(d.totalAmount),
+    down_payment: numOrNull(d.totalDownPayment),
+    term: d.paymentTerm?.name ?? null,
+    salesman: lines.find((l) => l.salesmanName)?.salesmanName ?? d.salesmanName ?? null,
+    po_number: d.poNumber != null && String(d.poNumber).trim() !== "" ? String(d.poNumber) : null,
+    ship_date: toIso(d.shipDate),
+    note: d.description != null && String(d.description).trim() !== "" ? String(d.description) : null,
+  };
+  return { ok: true, items, summary };
 }
 
 export async function syncAccurateInvoices(

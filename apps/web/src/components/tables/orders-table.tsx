@@ -56,21 +56,70 @@ interface LineItem {
   name: string | null;
   quantity: number | null;
   unit: string | null;
+  unit_price: number | null;
+  disc_percent: string | null;
+  disc_amount: number | null;
   total: number | null;
+}
+
+interface Summary {
+  subtotal: number | null;
+  discount: number | null;
+  tax: number | null;
+  total: number | null;
+  down_payment: number | null;
+  term: string | null;
+  salesman: string | null;
+  po_number: string | null;
+  ship_date: string | null;
+  note: string | null;
+}
+
+function Meta({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0">
+      <div className="text-muted-foreground text-xs font-medium tracking-wide uppercase">{label}</div>
+      <div className="break-words">{value}</div>
+    </div>
+  );
+}
+
+function Row({ label, value, tone }: { label: string; value: string; tone?: "discount" | "total" }) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <span className={tone === "total" ? "font-medium" : "text-muted-foreground"}>{label}</span>
+      <span
+        className={
+          tone === "total"
+            ? "font-semibold tabular-nums"
+            : tone === "discount"
+              ? "tabular-nums text-emerald-600 dark:text-emerald-400"
+              : "tabular-nums"
+        }
+      >
+        {value}
+      </span>
+    </div>
+  );
 }
 
 export function OrdersTable({ orders }: { orders: SalesOrder[] }) {
   const [sel, setSel] = useState<SalesOrder | null>(null);
   const [items, setItems] = useState<LineItem[] | null>(null);
+  const [summary, setSummary] = useState<Summary | null>(null);
   const [itemsErr, setItemsErr] = useState(false);
 
   function openDetail(o: SalesOrder) {
     setSel(o);
     setItems(null);
+    setSummary(null);
     setItemsErr(false);
     fetch(`/api/orders/${encodeURIComponent(o.id)}/items`)
       .then((r) => r.json())
-      .then((d: { items?: LineItem[] }) => setItems(d.items ?? []))
+      .then((d: { items?: LineItem[]; summary?: Summary }) => {
+        setItems(d.items ?? []);
+        setSummary(d.summary ?? null);
+      })
       .catch(() => {
         setItems([]);
         setItemsErr(true);
@@ -105,10 +154,19 @@ export function OrdersTable({ orders }: { orders: SalesOrder[] }) {
                   <dt className="text-muted-foreground mb-1 text-xs font-medium tracking-wide uppercase">Customer</dt>
                   <dd className="font-medium break-words">{sel.customer_name ?? "—"}</dd>
                 </div>
-                <div className="border-t py-3">
-                  <dt className="text-muted-foreground mb-1 text-xs font-medium tracking-wide uppercase">Total</dt>
-                  <dd className="font-medium">{rupiah(sel.total_amount)}</dd>
-                </div>
+
+                {/* Info order (salesman / termin / PO / tgl kirim / keterangan) */}
+                {summary && (
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-3 border-t py-3">
+                    {summary.salesman && <Meta label="Salesman" value={summary.salesman} />}
+                    {summary.term && <Meta label="Termin" value={summary.term} />}
+                    {summary.po_number && <Meta label="No. PO" value={summary.po_number} />}
+                    {summary.ship_date && <Meta label="Tgl Kirim" value={tgl(summary.ship_date)} />}
+                    {summary.note && <div className="col-span-2"><Meta label="Keterangan" value={summary.note} /></div>}
+                  </div>
+                )}
+
+                {/* Produk + diskon per baris */}
                 <div className="border-t py-3">
                   <dt className="text-muted-foreground mb-2 flex items-center gap-2 text-xs font-medium tracking-wide uppercase">
                     Produk
@@ -129,7 +187,13 @@ export function OrdersTable({ orders }: { orders: SalesOrder[] }) {
                           <li key={i} className="flex items-start justify-between gap-3 py-2">
                             <div className="min-w-0">
                               <div className="break-words">{it.name ?? "—"}</div>
-                              {it.no && <div className="text-muted-foreground font-mono text-xs">{it.no}</div>}
+                              <div className="text-muted-foreground text-xs">
+                                {it.no && <span className="font-mono">{it.no}</span>}
+                                {it.unit_price != null && <span>{it.no ? " · " : ""}@{rupiah(it.unit_price)}</span>}
+                                {(it.disc_percent || (it.disc_amount ?? 0) > 0) && (
+                                  <span className="text-emerald-600 dark:text-emerald-400"> · disc {it.disc_percent ? `${it.disc_percent}%` : rupiah(it.disc_amount)}</span>
+                                )}
+                              </div>
                             </div>
                             <div className="shrink-0 text-right whitespace-nowrap">
                               <div className="text-sm font-medium tabular-nums">
@@ -144,6 +208,22 @@ export function OrdersTable({ orders }: { orders: SalesOrder[] }) {
                     )}
                   </dd>
                 </div>
+
+                {/* Rincian nilai */}
+                {summary && (
+                  <div className="border-t py-3">
+                    <dt className="text-muted-foreground mb-2 text-xs font-medium tracking-wide uppercase">Rincian</dt>
+                    <dd className="space-y-1.5">
+                      <Row label="Subtotal" value={rupiah(summary.subtotal)} />
+                      {(summary.discount ?? 0) > 0 && <Row label="Diskon" value={`- ${rupiah(summary.discount)}`} tone="discount" />}
+                      {(summary.tax ?? 0) > 0 && <Row label="PPN" value={rupiah(summary.tax)} />}
+                      {(summary.down_payment ?? 0) > 0 && <Row label="Uang Muka (DP)" value={`- ${rupiah(summary.down_payment)}`} tone="discount" />}
+                      <div className="mt-1 border-t pt-1.5">
+                        <Row label="Total" value={rupiah(summary.total ?? sel.total_amount)} tone="total" />
+                      </div>
+                    </dd>
+                  </div>
+                )}
               </dl>
             </>
           )}
