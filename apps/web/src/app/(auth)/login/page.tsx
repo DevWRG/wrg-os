@@ -2,7 +2,6 @@
 
 import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import Link from "next/link";
 import { ArrowRight, Lock, User } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -12,7 +11,7 @@ import { Label } from "@/components/ui/label";
 function LoginForm() {
   const router = useRouter();
   const params = useSearchParams();
-  const [email, setEmail] = useState("");
+  const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -25,7 +24,7 @@ function LoginForm() {
       const res = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ identifier, password }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "login gagal");
@@ -42,22 +41,24 @@ function LoginForm() {
     <div>
       <h1 className="text-3xl font-bold tracking-tight">Welcome back</h1>
       <p className="text-muted-foreground mt-2 max-w-sm text-sm leading-relaxed">
-        Masuk ke dashboard internal WRG OS dengan email perusahaan.
+        Login pakai email, panggilan, nama, atau nomor WA. Password awal:{" "}
+        <code className="text-foreground/80">&lt;panggilan_lowercase&gt;123</code> — ganti ASAP.
       </p>
 
       <form onSubmit={onSubmit} className="mt-8 space-y-5">
         <div className="grid gap-2">
-          <Label htmlFor="email">Email</Label>
+          <Label htmlFor="identifier">Username</Label>
           <div className="relative">
             <User className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2" />
             <Input
-              id="email"
-              type="email"
-              placeholder="nama@wahanalifeline.co.id"
-              autoComplete="email"
+              id="identifier"
+              type="text"
+              placeholder="Husni / boni / +6285…"
+              autoComplete="username"
+              autoCapitalize="off"
               required
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              value={identifier}
+              onChange={(e) => setIdentifier(e.target.value)}
               className="pl-9"
             />
           </div>
@@ -87,13 +88,6 @@ function LoginForm() {
           {!busy && <ArrowRight className="size-4" />}
         </Button>
       </form>
-
-      <p className="text-muted-foreground mt-6 text-sm">
-        Belum punya akun?{" "}
-        <Link href="/signup" className="text-primary font-medium hover:underline">
-          Daftar
-        </Link>
-      </p>
     </div>
   );
 }

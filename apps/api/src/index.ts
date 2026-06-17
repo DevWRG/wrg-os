@@ -164,14 +164,15 @@ app.get("/wa/preflight", async (c) => {
 // ── Auth/session ──
 app.post("/auth/login", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let body: { email?: string; password?: string };
+  let body: { email?: string; username?: string; identifier?: string; password?: string };
   try {
     body = await c.req.json();
   } catch {
     return c.json({ error: "invalid JSON body" }, 400);
   }
-  if (!body.email || !body.password) return c.json({ error: "email & password wajib" }, 400);
-  const user = await verifyCredentials(body.email, body.password);
+  const ident = body.identifier || body.username || body.email;
+  if (!ident || !body.password) return c.json({ error: "username & password wajib" }, 400);
+  const user = await verifyCredentials(ident, body.password);
   if (!user) return c.json({ error: "kredensial salah" }, 401);
   const token = signJwt({ sub: user.id, email: user.email, role: user.role, name: user.name, title: user.title });
   return c.json({ token, user });
