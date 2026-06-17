@@ -18,7 +18,7 @@ import {
 import { runReminders } from "./repo/reminder.js";
 import { runHodDaily } from "./repo/hodreminder.js";
 import { generateRekap, generateResume } from "./repo/monitor.js";
-import { syncAccurateInvoices } from "./repo/accurateSync.js";
+import { syncAccurateInvoices, syncSalesOrders, syncDeliveryOrders } from "./repo/accurateSync.js";
 import { runPlanCheck, runReportCheck } from "./repo/compliance.js";
 import { runNotifTua } from "./repo/notiftua.js";
 import { runDailySummary } from "./repo/dailysummary.js";
@@ -360,6 +360,14 @@ export function startScheduler(): ScheduleStatus {
           }
           const r = await syncAccurateInvoices({});
           console.log(`[scheduler] accurate-sync @ ${startedAt} ${JSON.stringify(r).slice(0, 200)}`);
+          // Mirror sales-order/delivery-order TERBARU (recent-only) utk menu Orders/Shipments.
+          try {
+            const so = await syncSalesOrders({});
+            const so2 = await syncDeliveryOrders({});
+            console.log(`[scheduler] accurate-sync orders=${JSON.stringify(so)} shipments=${JSON.stringify(so2)}`);
+          } catch (e2) {
+            console.error(`[scheduler] accurate-sync orders/shipments gagal @ ${startedAt}:`, e2);
+          }
         } catch (e) {
           console.error(`[scheduler] accurate-sync gagal @ ${startedAt}:`, e);
         }
