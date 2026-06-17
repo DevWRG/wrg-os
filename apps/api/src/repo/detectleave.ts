@@ -60,10 +60,10 @@ async function handleApproval(decision: string, pid: number, senderWa: string): 
     // Idempoten: hanya insert bila tak ada overlap user_leave.
     await sql`
       INSERT INTO user_leave (am_id, start_date, end_date, jenis, keterangan, source)
-      SELECT ${p.am_id}, ${p.start_date}, ${p.end_date}, ${p.jenis}, 'Auto-detect HRD group, approved via WA', 'detect_leave'
+      SELECT ${p.am_id}, ${p.start_date}::date, ${p.end_date}::date, ${p.jenis}, 'Auto-detect HRD group, approved via WA', 'detect_leave'
       WHERE NOT EXISTS (
         SELECT 1 FROM user_leave WHERE am_id = ${p.am_id}
-          AND daterange(start_date, end_date, '[]') && daterange(${p.start_date}, ${p.end_date}, '[]')
+          AND daterange(start_date, end_date, '[]') && daterange(${p.start_date}::date, ${p.end_date}::date, '[]')
       )
     `;
     await sql`UPDATE leave_pending SET status='approved', decided_at=now(), decided_by=${sender} WHERE id=${pid}`;
