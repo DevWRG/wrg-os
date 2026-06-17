@@ -113,26 +113,28 @@ export async function salesOverview(from: string, to: string) {
     GROUP BY tanggal ORDER BY tanggal`;
 
   const perCabang = await sql`
-    SELECT COALESCE(ab.name, ai.branch_id::text) AS key, COALESCE(ab.name, ai.branch_id::text) AS label,
+    SELECT ai.branch_id::text AS key, COALESCE(NULLIF(ab.name,''), 'Cabang #' || ai.branch_id::text) AS label,
            sum(ai.total)::numeric AS total, count(*)::int AS count
     FROM accurate_invoice ai LEFT JOIN accurate_branch ab ON ab.id = ai.branch_id
     WHERE ai.tanggal BETWEEN ${from} AND ${to}
-    GROUP BY ab.name, ai.branch_id ORDER BY sum(ai.total) DESC`;
+    GROUP BY ai.branch_id, ab.name ORDER BY sum(ai.total) DESC`;
   const perProduct = await sql`
-    SELECT COALESCE(it.name, aii.item_id::text) AS key, COALESCE(it.name, aii.item_id::text) AS label,
+    SELECT aii.item_id::text AS key,
+           COALESCE(NULLIF(it.name,''), NULLIF(max(aii.raw->'item'->>'name'),''), 'Item #' || aii.item_id::text) AS label,
            sum(aii.total)::numeric AS total, sum(aii.qty)::numeric AS count
     FROM accurate_invoice_item aii JOIN accurate_invoice ai ON ai.id = aii.invoice_id
     LEFT JOIN accurate_item it ON it.id = aii.item_id
     WHERE ai.tanggal BETWEEN ${from} AND ${to}
-    GROUP BY it.name, aii.item_id ORDER BY sum(aii.total) DESC LIMIT 8`;
+    GROUP BY aii.item_id, it.name ORDER BY sum(aii.total) DESC LIMIT 8`;
   const perCustomer = await sql`
-    SELECT COALESCE(ac.name, ai.customer_id::text) AS key, COALESCE(ac.name, ai.customer_id::text) AS label,
+    SELECT ai.customer_id::text AS key,
+           COALESCE(NULLIF(ac.name,''), NULLIF(max(ai.raw->'customer'->>'name'),''), NULLIF(max(ai.raw->>'retailWpName'),''), 'Customer #' || ai.customer_id::text) AS label,
            sum(ai.total)::numeric AS total, count(*)::int AS count
     FROM accurate_invoice ai LEFT JOIN accurate_customer ac ON ac.id = ai.customer_id
     WHERE ai.tanggal BETWEEN ${from} AND ${to}
-    GROUP BY ac.name, ai.customer_id ORDER BY sum(ai.total) DESC LIMIT 8`;
+    GROUP BY ai.customer_id, ac.name ORDER BY sum(ai.total) DESC LIMIT 8`;
   const perSalesman = await sql`
-    SELECT COALESCE(salesman_name,'—') AS key, COALESCE(salesman_name,'—') AS label,
+    SELECT COALESCE(NULLIF(salesman_name,''),'—') AS key, COALESCE(NULLIF(salesman_name,''),'—') AS label,
            sum(total)::numeric AS total, count(*)::int AS count
     FROM accurate_invoice WHERE tanggal BETWEEN ${from} AND ${to}
     GROUP BY salesman_name ORDER BY sum(total) DESC LIMIT 8`;
