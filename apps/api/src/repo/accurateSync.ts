@@ -316,6 +316,25 @@ export async function syncDeliveryOrders(opts: { maxPages?: number } = {}): Prom
   return { ok: true, synced };
 }
 
+// Ambil baris produk (detailItem) satu delivery-order via detail.do — dipakai
+// on-demand saat user buka detail Shipments (bukan disimpan tiap sync).
+export async function getDeliveryOrderItems(
+  id: number,
+): Promise<{ ok: boolean; items: { no: string | null; name: string | null; quantity: number | null; unit: string | null }[]; error?: string }> {
+  const creds = loadCreds();
+  if (!creds) return { ok: false, items: [], error: "kredensial Accurate tak tersedia" };
+  const det = await accGet(creds, "/accurate/api/delivery-order/detail.do", `id=${id}`);
+  if (det?.s !== true) return { ok: false, items: [], error: `detail gagal: ${JSON.stringify(det?.d).slice(0, 160)}` };
+  const d = det.d as Detail;
+  const items = ((d?.detailItem ?? []) as Detail[]).map((it) => ({
+    no: it.item?.no ?? null,
+    name: it.item?.name ?? it.detailName ?? null,
+    quantity: it.quantity != null ? Number(it.quantity) : null,
+    unit: it.itemUnit?.name ?? it.itemUnitName ?? null,
+  }));
+  return { ok: true, items };
+}
+
 export async function syncAccurateInvoices(
   opts: { days?: number; invoiceId?: number } = {},
 ): Promise<AccurateSyncResult> {
