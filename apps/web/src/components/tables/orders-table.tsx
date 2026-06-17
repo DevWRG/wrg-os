@@ -36,7 +36,7 @@ const statusTone = (s: string | null): "default" | "secondary" | "destructive" |
 const columns: DataColumn<SalesOrder>[] = [
   { id: "number", header: "Order #", sortable: true, accessor: (o) => o.number ?? "", cell: (o) => <span className="font-medium whitespace-nowrap">{o.number ?? "—"}</span> },
   { id: "trans_date", header: "Tanggal", sortable: true, accessor: (o) => o.trans_date ?? "", cell: (o) => <span className="whitespace-nowrap">{tgl(o.trans_date)}</span>, className: "whitespace-nowrap" },
-  { id: "customer", header: "Customer", sortable: true, accessor: (o) => o.customer_name ?? "", cell: (o) => <span className="block max-w-[24rem] truncate" title={o.customer_name ?? ""}>{o.customer_name ?? "—"}</span>, className: "max-w-[24rem]" },
+  { id: "customer", header: "Customer", sortable: true, accessor: (o) => o.customer_name ?? "", cell: (o) => <span className="block max-w-[20rem] truncate" title={o.customer_name ?? ""}>{o.customer_name ?? "—"}</span>, className: "max-w-[20rem]" },
   { id: "status", header: "Status", sortable: true, accessor: (o) => o.status ?? "", cell: (o) => (o.status ? <Badge variant={statusTone(o.status)}>{o.status}</Badge> : <span className="text-muted-foreground">—</span>) },
   { id: "total", header: "Total", align: "right", sortable: true, accessor: (o) => Number(o.total_amount) || 0, cell: (o) => <span className="whitespace-nowrap font-medium">{rupiah(o.total_amount)}</span>, className: "whitespace-nowrap" },
 ];

@@ -1,7 +1,16 @@
 "use client";
 
+import { useState } from "react";
+
 import { Badge } from "@/components/ui/badge";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 
 export interface DeliveryOrder {
   id: string;
@@ -28,16 +37,45 @@ const statusTone = (s: string | null): "default" | "secondary" | "destructive" |
   return "outline";
 };
 
-const oneLine = (v: string | null) => (v ? v.replace(/\s*\n\s*/g, ", ").trim() : "");
-
 const columns: DataColumn<DeliveryOrder>[] = [
   { id: "number", header: "Surat Jalan #", sortable: true, accessor: (s) => s.number ?? "", cell: (s) => <span className="font-medium whitespace-nowrap">{s.number ?? "—"}</span> },
   { id: "trans_date", header: "Tanggal", sortable: true, accessor: (s) => s.trans_date ?? "", cell: (s) => <span className="whitespace-nowrap">{tgl(s.trans_date)}</span>, className: "whitespace-nowrap" },
-  { id: "customer", header: "Customer", sortable: true, accessor: (s) => s.customer_name ?? "", cell: (s) => <span className="block max-w-[22rem] truncate" title={s.customer_name ?? ""}>{s.customer_name ?? "—"}</span>, className: "max-w-[22rem]" },
-  { id: "ship_to", header: "Tujuan", sortable: false, accessor: (s) => oneLine(s.ship_to), cell: (s) => <span className="block max-w-[24rem] truncate text-muted-foreground" title={oneLine(s.ship_to)}>{oneLine(s.ship_to) || "—"}</span>, className: "max-w-[24rem]" },
+  { id: "customer", header: "Customer", sortable: true, accessor: (s) => s.customer_name ?? "", cell: (s) => <span className="block max-w-[20rem] truncate" title={s.customer_name ?? ""}>{s.customer_name ?? "—"}</span>, className: "max-w-[20rem]" },
   { id: "status", header: "Status", sortable: true, accessor: (s) => s.status ?? "", cell: (s) => (s.status ? <Badge variant={statusTone(s.status)}>{s.status}</Badge> : <span className="text-muted-foreground">—</span>) },
 ];
 
 export function ShipmentsTable({ shipments }: { shipments: DeliveryOrder[] }) {
-  return <DataTable columns={columns} data={shipments} getKey={(s) => s.id} searchPlaceholder="Cari surat jalan / customer / status…" pageSize={25} />;
+  const [sel, setSel] = useState<DeliveryOrder | null>(null);
+  return (
+    <>
+      <DataTable
+        columns={columns}
+        data={shipments}
+        getKey={(s) => s.id}
+        searchPlaceholder="Cari surat jalan / customer / status…"
+        pageSize={25}
+        onRowClick={(s) => setSel(s)}
+      />
+
+      <Sheet open={!!sel} onOpenChange={(o) => !o && setSel(null)}>
+        <SheetContent className="w-full overflow-y-auto sm:max-w-lg">
+          {sel && (
+            <>
+              <SheetHeader>
+                <SheetTitle className="flex items-center gap-2 break-words">
+                  {sel.number ?? "—"}
+                  {sel.status && <Badge variant={statusTone(sel.status)} className="shrink-0">{sel.status}</Badge>}
+                </SheetTitle>
+                <SheetDescription>{tgl(sel.trans_date)}</SheetDescription>
+              </SheetHeader>
+              <dl className="space-y-3 px-4 pb-6 text-sm">
+                <div><dt className="text-muted-foreground text-xs">Customer</dt><dd className="break-words">{sel.customer_name ?? "—"}</dd></div>
+                <div><dt className="text-muted-foreground text-xs">Tujuan</dt><dd className="break-words whitespace-pre-wrap leading-relaxed">{sel.ship_to ?? "—"}</dd></div>
+              </dl>
+            </>
+          )}
+        </SheetContent>
+      </Sheet>
+    </>
+  );
 }
