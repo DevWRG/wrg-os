@@ -13,7 +13,7 @@ import { matchCustomer, type PlanCandidate } from "./parsers/fuzzy.js";
 import { isDbEnabled, pingDb } from "./db.js";
 import { waPreflight, sendViaWaGateway } from "./wasend.js";
 import { processUnprocessed, isInboundEnabled } from "./repo/inbound.js";
-import { syncAccurateInvoices, syncVendors, accurateConfigured } from "./repo/accurateSync.js";
+import { syncAccurateInvoices, syncVendors, syncItems, accurateConfigured } from "./repo/accurateSync.js";
 import { insertAuditEvent } from "./repo/audit.js";
 import { upsertDealsFromPlan, logReportToDeals, getPipeline } from "./repo/deal.js";
 import { enqueueAmbiguous, listHitl, resolveHitl } from "./repo/hitl.js";
@@ -594,6 +594,14 @@ app.post("/accurate/sync/vendors", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   if (!accurateConfigured()) return c.json({ error: "kredensial Accurate tak tersedia" }, 503);
   const r = await syncVendors();
+  return c.json(r, r.ok ? 200 : 502);
+});
+
+// Sinkron full katalog item + stok Accurate → accurate_item (menu Inventory & Products).
+app.post("/accurate/sync/items", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  if (!accurateConfigured()) return c.json({ error: "kredensial Accurate tak tersedia" }, 503);
+  const r = await syncItems();
   return c.json(r, r.ok ? 200 : 502);
 });
 
@@ -1535,7 +1543,7 @@ app.get("/accurate/:entity", async (c) => {
   if (entity !== "customers" && entity !== "items" && entity !== "branches" && entity !== "vendors") {
     return c.json({ error: "entity harus customers|items|branches|vendors" }, 400);
   }
-  const limit = Math.min(Math.max(Number(c.req.query("limit")) || 100, 1), 2000);
+  const limit = Math.min(Math.max(Number(c.req.query("limit")) || 100, 1), 10000);
   const rows = await listMirror(entity, limit);
   return c.json({ entity, count: rows.length, rows });
 });
