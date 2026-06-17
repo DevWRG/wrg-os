@@ -6,7 +6,7 @@ import { Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
-import { MonitorMarkdown } from "@/components/monitor/monitor-markdown";
+import { MonitorReport } from "@/components/monitor/monitor-report";
 
 interface DigestEntry {
   waktu: string | null;
@@ -111,7 +111,7 @@ export function DigestView({ kind, initial }: { kind: "rekap" | "resume"; initia
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <MonitorMarkdown content={e.content} />
+              <MonitorReport content={e.content} />
             </CardContent>
           </Card>
         ))
