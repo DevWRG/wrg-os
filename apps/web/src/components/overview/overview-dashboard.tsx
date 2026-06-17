@@ -111,29 +111,31 @@ function BarList({ rows, money }: { rows: Rank[]; money?: boolean }) {
 
 const trendConfig = { revenue: { label: "Revenue", color: "var(--chart-1)" } } satisfies ChartConfig;
 
-// Donut dgn teks tengah (untuk Inventory Availability & Order Fulfillment)
-function CenterDonut({ slices, center, sub, semicircle }: { slices: { name: string; value: number; fill: string }[]; center: string; sub?: string; semicircle?: boolean }) {
+// Donut dgn teks tengah (Inventory Availability & Order Fulfillment) — full ring,
+// anti-clip (radius muat di tinggi container).
+function CenterDonut({ slices, center, sub }: { slices: { name: string; value: number; fill: string }[]; center: string; sub?: string }) {
   const total = slices.reduce((a, b) => a + b.value, 0);
   return (
     <div className="relative">
-      <ChartContainer config={{}} className={cn("mx-auto w-full", semicircle ? "h-32" : "h-40")}>
+      <ChartContainer config={{}} className="mx-auto h-40 w-full">
         <PieChart>
           <ChartTooltip content={<ChartTooltipContent nameKey="name" />} />
           <Pie
             data={total > 0 ? slices : [{ name: "—", value: 1, fill: "var(--muted)" }]}
             dataKey="value"
             nameKey="name"
-            innerRadius={semicircle ? 50 : 48}
-            outerRadius={70}
-            startAngle={semicircle ? 180 : 90}
-            endAngle={semicircle ? 0 : -270}
+            innerRadius={50}
+            outerRadius={72}
+            startAngle={90}
+            endAngle={-270}
             paddingAngle={2}
+            cornerRadius={4}
           >
-            {(total > 0 ? slices : [{ fill: "var(--muted)" }]).map((s, i) => <Cell key={i} fill={s.fill} />)}
+            {(total > 0 ? slices : [{ fill: "var(--muted)" }]).map((s, i) => <Cell key={i} fill={s.fill} stroke="none" />)}
           </Pie>
         </PieChart>
       </ChartContainer>
-      <div className={cn("pointer-events-none absolute inset-x-0 flex flex-col items-center", semicircle ? "bottom-1" : "top-1/2 -translate-y-1/2")}>
+      <div className="pointer-events-none absolute inset-x-0 top-1/2 flex -translate-y-1/2 flex-col items-center">
         <span className="text-2xl font-semibold tabular-nums">{center}</span>
         {sub && <span className="text-muted-foreground text-xs">{sub}</span>}
       </div>
@@ -199,13 +201,13 @@ export function OverviewDashboard({ initial }: { initial: OverviewData | null })
       {/* Hero + stats + gauges */}
       <div className="grid gap-4 lg:grid-cols-12">
         {/* Hero: produk terlaris */}
-        <Card className="from-primary to-primary-dark text-primary-foreground overflow-hidden border-0 bg-gradient-to-br lg:col-span-5">
+        <Card className="relative overflow-hidden border-0 bg-gradient-to-br from-teal-500 via-[#0ca6bd] to-emerald-600 text-white shadow-lg lg:col-span-5 before:pointer-events-none before:absolute before:-top-16 before:-right-16 before:size-48 before:rounded-full before:bg-white/10 before:blur-2xl after:pointer-events-none after:absolute after:-bottom-20 after:-left-12 after:size-52 after:rounded-full after:bg-emerald-300/20 after:blur-3xl">
           <CardContent className="flex h-full flex-col gap-4 pt-5">
             <div className="flex items-center gap-2 text-xs font-medium tracking-wide uppercase opacity-90">
               <Crown className="size-4" /> Produk Terlaris
             </div>
             {top ? (
-              <>
+              <div className="relative z-10 flex h-full flex-col gap-4">
                 <div>
                   <div className="text-lg leading-snug font-semibold">{top.label}</div>
                   {top.category && <span className="mt-1 inline-block rounded-full bg-white/20 px-2 py-0.5 text-xs">{top.category}</span>}
@@ -224,9 +226,9 @@ export function OverviewDashboard({ initial }: { initial: OverviewData | null })
                     </div>
                   ))}
                 </div>
-              </>
+              </div>
             ) : (
-              <p className="text-sm opacity-80">Tidak ada data produk.</p>
+              <p className="relative z-10 text-sm opacity-80">Tidak ada data produk.</p>
             )}
           </CardContent>
         </Card>
@@ -262,7 +264,6 @@ export function OverviewDashboard({ initial }: { initial: OverviewData | null })
               <CardHeader className="pb-0"><CardTitle className="text-sm font-medium">Order Fulfillment</CardTitle></CardHeader>
               <CardContent>
                 <CenterDonut
-                  semicircle
                   slices={[
                     { name: "Terproses", value: data.orders_stat.fulfilled, fill: "var(--chart-1)" },
                     { name: "Pending", value: Math.max(0, data.orders_stat.total - data.orders_stat.fulfilled), fill: "var(--muted)" },
@@ -302,7 +303,7 @@ export function OverviewDashboard({ initial }: { initial: OverviewData | null })
           </CardContent>
         </Card>
 
-        <Card className="from-danger/10 to-warning/10 border-0 bg-gradient-to-br">
+        <Card className="border-0 bg-gradient-to-br from-rose-500/15 via-fuchsia-400/10 to-amber-300/15">
           <CardHeader className="pb-2"><CardTitle className="text-sm font-medium">Top Customers</CardTitle></CardHeader>
           <CardContent className="space-y-3">
             <div>
