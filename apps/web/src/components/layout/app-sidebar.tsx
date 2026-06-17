@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   LayoutDashboard,
+  LayoutGrid,
   Building2,
   Package,
   Boxes,
@@ -67,6 +68,10 @@ interface NavGroup {
 // yang sudah ada (nol 404); halaman khas WRG-CRM (Holidays, Manage Leave, Users,
 // Sales Calendar, Sales Performance, AR submenu) menyusul di fase berikutnya.
 const NAV: NavGroup[] = [
+  {
+    label: "Overview",
+    items: [{ title: "Sales Overview", url: "/overview", icon: LayoutGrid, badge: "NEW" }],
+  },
   {
     label: "HR",
     items: [

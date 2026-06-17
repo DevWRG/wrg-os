@@ -92,7 +92,7 @@ import {
   reportCalendar,
   reportCalendarDay,
 } from "./repo/plandash.js";
-import { salesRange, reportRevenue, reportSalesAr } from "./repo/sales.js";
+import { salesRange, reportRevenue, reportSalesAr, salesOverview } from "./repo/sales.js";
 import { upsertMembers, listMembers, upsertDigests, listDigest, upsertPola, listPola, generateRekap, generateResume, type MonitorMemberInput, type DigestInput, type PolaInput } from "./repo/monitor.js";
 import { runNotifTua } from "./repo/notiftua.js";
 import { runDailySummary } from "./repo/dailysummary.js";
@@ -1565,6 +1565,13 @@ app.get("/sales/revenue", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const { from, to } = salesRange(c.req.query("from"), c.req.query("to"));
   return c.json(await reportRevenue(from, to));
+});
+
+// Dashboard Sales Overview (gabungan) — KPI+delta, tren, breakdown, recent, low-stock, AR.
+app.get("/dashboard/overview", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const { from, to } = salesRange(c.req.query("from"), c.req.query("to"));
+  return c.json(await salesOverview(from, to));
 });
 
 // ── Accurate master mirror (port legacy accurate_customer/item/branch) ──
