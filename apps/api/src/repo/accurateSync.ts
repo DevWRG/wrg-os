@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 
 import { db } from "../db.js";
 import { ingestAccurateWebhook, normalizeAccurateDate, type AccurateInvoice } from "./ar.js";
-import { upsertVendors } from "./accurateMirror.js";
+import { upsertVendors, upsertItems } from "./accurateMirror.js";
 
 // Puller Accurate Online (pengganti legacy sync_accurate.sh). Tarik sales-invoice
 // header+items dari zeus.accurate.id → mirror penuh accurate_* + refresh ar_aging.
@@ -200,6 +200,37 @@ export async function syncVendors(): Promise<{ ok: boolean; synced: number; erro
     synced += rows.length;
     if (rows.length < 100 || page >= 50) break;
     page += 1;
+  }
+  return { ok: true, synced };
+}
+
+// Tarik full katalog item (item/list.do) + STOK → mirror accurate_item.
+// Paginated (100/hal, ~58 hal utk 5.794 item). Untuk menu Inventory & Products.
+export async function syncItems(): Promise<{ ok: boolean; synced: number; error?: string }> {
+  const creds = loadCreds();
+  if (!creds) return { ok: false, synced: 0, error: "kredensial Accurate tak tersedia" };
+  let page = 1;
+  let synced = 0;
+  for (;;) {
+    const list = await accGet(creds, "/accurate/api/item/list.do", `sp.page=${page}&sp.pageSize=100&fields=id,no,name,itemType,unitPrice,quantity,availableToSell`);
+    const rows = Array.isArray(list.d) ? (list.d as Array<Record<string, unknown>>) : [];
+    if (rows.length === 0) break;
+    await upsertItems(
+      rows.map((v) => ({
+        id: Number(v.id),
+        no: v.no != null ? String(v.no) : undefined,
+        name: v.name != null ? String(v.name) : undefined,
+        category: v.itemType != null ? String(v.itemType) : undefined,
+        unit_price: v.unitPrice != null ? Number(v.unitPrice) : undefined,
+        quantity: v.quantity != null ? Number(v.quantity) : undefined,
+        available: v.availableToSell != null ? Number(v.availableToSell) : undefined,
+        raw: v,
+      })),
+    );
+    synced += rows.length;
+    if (rows.length < 100 || page >= 100) break;
+    page += 1;
+    await new Promise((r) => setTimeout(r, 150));
   }
   return { ok: true, synced };
 }

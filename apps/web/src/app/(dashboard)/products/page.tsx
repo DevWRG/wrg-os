@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 
 async function getItems(): Promise<AccurateItem[] | null> {
   try {
-    const res = await gatewayFetch(`/accurate/items?limit=2000`);
+    const res = await gatewayFetch(`/accurate/items?limit=10000`);
     if (!res.ok) return null;
     const data = (await res.json()) as { rows: AccurateItem[] };
     return data.rows ?? [];
