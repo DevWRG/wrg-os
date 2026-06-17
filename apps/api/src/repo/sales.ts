@@ -130,6 +130,7 @@ export async function salesOverview(from: string, to: string) {
   const perProduct = await sql`
     SELECT aii.item_id::text AS key,
            COALESCE(NULLIF(it.name,''), NULLIF(max(aii.raw->'item'->>'name'),''), 'Item #' || aii.item_id::text) AS label,
+           NULLIF(max(it.category),'') AS category,
            sum(aii.total)::numeric AS total, sum(aii.qty)::numeric AS count
     FROM accurate_invoice_item aii JOIN accurate_invoice ai ON ai.id = aii.invoice_id
     LEFT JOIN accurate_item it ON it.id = aii.item_id
@@ -143,10 +144,30 @@ export async function salesOverview(from: string, to: string) {
     WHERE ai.tanggal BETWEEN ${from} AND ${to}
     GROUP BY ai.customer_id, ac.name ORDER BY sum(ai.total) DESC LIMIT 8`;
   const perSalesman = await sql`
-    SELECT COALESCE(NULLIF(salesman_name,''),'—') AS key, COALESCE(NULLIF(salesman_name,''),'—') AS label,
-           sum(total)::numeric AS total, count(*)::int AS count
-    FROM accurate_invoice WHERE tanggal BETWEEN ${from} AND ${to}
-    GROUP BY salesman_name ORDER BY sum(total) DESC LIMIT 8`;
+    SELECT COALESCE(NULLIF(ai.salesman_name,''),'—') AS key,
+           COALESCE(NULLIF(mu.nama,''), NULLIF(ai.salesman_name,''),'—') AS label,
+           CASE WHEN NULLIF(mu.nama,'') IS NOT NULL
+                THEN ai.salesman_name || COALESCE(' · ' || NULLIF(mu.cabang,''), '')
+                ELSE NULLIF(mu.cabang,'') END AS sub,
+           sum(ai.total)::numeric AS total, count(*)::int AS count
+    FROM accurate_invoice ai
+    LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
+    LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
+    WHERE ai.tanggal BETWEEN ${from} AND ${to}
+    GROUP BY ai.salesman_name, mu.nama, mu.cabang ORDER BY sum(ai.total) DESC LIMIT 8`;
+
+  // Inventory & order stats (gaya dashboard: total produk, ketersediaan stok, fulfillment).
+  const [inv] = await sql`
+    SELECT count(*)::int AS total,
+           count(*) FILTER (WHERE quantity <= 0)::int AS out_stock,
+           count(*) FILTER (WHERE quantity > 0 AND quantity <= 5)::int AS low_stock,
+           count(*) FILTER (WHERE quantity > 5)::int AS in_stock
+    FROM accurate_item WHERE quantity IS NOT NULL`;
+  const [soStat] = await sql`
+    SELECT count(*)::int AS total,
+           count(*) FILTER (WHERE status ILIKE '%terproses%' OR status ILIKE '%selesai%')::int AS fulfilled,
+           count(*) FILTER (WHERE status NOT ILIKE '%tutup%' AND status NOT ILIKE '%batal%')::int AS active
+    FROM accurate_sales_order`;
 
   const recentOrders = await sql`
     SELECT id::text, number, trans_date::text AS trans_date, customer_name, status, total_amount::numeric
@@ -187,9 +208,27 @@ export async function salesOverview(from: string, to: string) {
       ar_outstanding: aging.total_outstanding,
       ar_invoices: aging.total_invoices,
     },
+    inventory: {
+      total: Number(inv?.total ?? 0),
+      out: Number(inv?.out_stock ?? 0),
+      low: Number(inv?.low_stock ?? 0),
+      in_stock: Number(inv?.in_stock ?? 0),
+    },
+    orders_stat: {
+      total: Number(soStat?.total ?? 0),
+      active: Number(soStat?.active ?? 0),
+      fulfilled: Number(soStat?.fulfilled ?? 0),
+      fulfillment_pct: Number(soStat?.total ?? 0) > 0 ? Math.round((Number(soStat.fulfilled) / Number(soStat.total)) * 100) : 0,
+    },
     trend: trend.map((r) => ({ date: String(r.date), revenue: Number(r.revenue), orders: Number(r.orders) })),
     per_cabang: mapRank(perCabang),
-    per_product: mapRank(perProduct),
+    per_product: perProduct.map((r) => ({
+      key: String(r.key ?? ""),
+      label: r.label ? String(r.label) : "—",
+      category: r.category != null && String(r.category) !== "" ? String(r.category) : null,
+      total: Number(r.total ?? 0),
+      count: Number(r.count ?? 0),
+    })),
     per_customer: mapRank(perCustomer),
     per_salesman: mapRank(perSalesman),
     recent_orders: recentOrders.map((r) => ({
