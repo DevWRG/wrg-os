@@ -13,7 +13,7 @@ import { matchCustomer, type PlanCandidate } from "./parsers/fuzzy.js";
 import { isDbEnabled, pingDb } from "./db.js";
 import { waPreflight, sendViaWaGateway } from "./wasend.js";
 import { processUnprocessed, isInboundEnabled } from "./repo/inbound.js";
-import { syncAccurateInvoices, syncVendors, syncItems, syncSalesOrders, syncDeliveryOrders, accurateConfigured } from "./repo/accurateSync.js";
+import { syncAccurateInvoices, syncVendors, syncItems, syncSalesOrders, syncDeliveryOrders, getDeliveryOrderItems, accurateConfigured } from "./repo/accurateSync.js";
 import { insertAuditEvent } from "./repo/audit.js";
 import { upsertDealsFromPlan, logReportToDeals, getPipeline } from "./repo/deal.js";
 import { enqueueAmbiguous, listHitl, resolveHitl } from "./repo/hitl.js";
@@ -630,6 +630,16 @@ app.post("/accurate/sync/shipments", async (c) => {
   if (!accurateConfigured()) return c.json({ error: "kredensial Accurate tak tersedia" }, 503);
   const pages = Math.min(Math.max(Number(c.req.query("pages")) || 5, 1), 120);
   const r = await syncDeliveryOrders({ maxPages: pages });
+  return c.json(r, r.ok ? 200 : 502);
+});
+
+// Baris produk satu surat jalan (on-demand dari Accurate detail.do).
+app.get("/accurate/shipments/:id/items", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  if (!accurateConfigured()) return c.json({ error: "kredensial Accurate tak tersedia" }, 503);
+  const id = Number(c.req.param("id"));
+  if (!id) return c.json({ error: "id invalid" }, 400);
+  const r = await getDeliveryOrderItems(id);
   return c.json(r, r.ok ? 200 : 502);
 });
 

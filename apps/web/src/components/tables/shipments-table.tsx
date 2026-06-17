@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { Loader2 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
@@ -44,8 +45,31 @@ const columns: DataColumn<DeliveryOrder>[] = [
   { id: "status", header: "Status", sortable: true, accessor: (s) => s.status ?? "", cell: (s) => (s.status ? <Badge variant={statusTone(s.status)}>{s.status}</Badge> : <span className="text-muted-foreground">—</span>) },
 ];
 
+interface LineItem {
+  no: string | null;
+  name: string | null;
+  quantity: number | null;
+  unit: string | null;
+}
+
 export function ShipmentsTable({ shipments }: { shipments: DeliveryOrder[] }) {
   const [sel, setSel] = useState<DeliveryOrder | null>(null);
+  const [items, setItems] = useState<LineItem[] | null>(null);
+  const [itemsErr, setItemsErr] = useState(false);
+
+  function openDetail(s: DeliveryOrder) {
+    setSel(s);
+    setItems(null);
+    setItemsErr(false);
+    fetch(`/api/shipments/${encodeURIComponent(s.id)}/items`)
+      .then((r) => r.json())
+      .then((d: { items?: LineItem[] }) => setItems(d.items ?? []))
+      .catch(() => {
+        setItems([]);
+        setItemsErr(true);
+      });
+  }
+
   return (
     <>
       <DataTable
@@ -54,7 +78,7 @@ export function ShipmentsTable({ shipments }: { shipments: DeliveryOrder[] }) {
         getKey={(s) => s.id}
         searchPlaceholder="Cari surat jalan / customer / status…"
         pageSize={25}
-        onRowClick={(s) => setSel(s)}
+        onRowClick={openDetail}
       />
 
       <Sheet open={!!sel} onOpenChange={(o) => !o && setSel(null)}>
@@ -77,6 +101,38 @@ export function ShipmentsTable({ shipments }: { shipments: DeliveryOrder[] }) {
                 <div className="border-t py-3">
                   <dt className="text-muted-foreground mb-1 text-xs font-medium tracking-wide uppercase">Tujuan</dt>
                   <dd className="break-words whitespace-pre-wrap leading-relaxed">{sel.ship_to ?? "—"}</dd>
+                </div>
+                <div className="border-t py-3">
+                  <dt className="text-muted-foreground mb-2 flex items-center gap-2 text-xs font-medium tracking-wide uppercase">
+                    Produk
+                    {items && items.length > 0 && <span className="text-muted-foreground/70 normal-case">({items.length})</span>}
+                  </dt>
+                  <dd>
+                    {items === null ? (
+                      <div className="text-muted-foreground flex items-center gap-2 py-1 text-xs">
+                        <Loader2 className="size-3.5 animate-spin" /> Memuat produk…
+                      </div>
+                    ) : itemsErr ? (
+                      <div className="text-muted-foreground py-1 text-xs">Gagal memuat produk.</div>
+                    ) : items.length === 0 ? (
+                      <div className="text-muted-foreground py-1 text-xs">Tidak ada baris produk.</div>
+                    ) : (
+                      <ul className="divide-border divide-y">
+                        {items.map((it, i) => (
+                          <li key={i} className="flex items-start justify-between gap-3 py-2">
+                            <div className="min-w-0">
+                              <div className="break-words">{it.name ?? "—"}</div>
+                              {it.no && <div className="text-muted-foreground font-mono text-xs">{it.no}</div>}
+                            </div>
+                            <div className="shrink-0 text-right text-sm font-medium whitespace-nowrap tabular-nums">
+                              {it.quantity ?? "—"}
+                              {it.unit && <span className="text-muted-foreground ml-1 text-xs font-normal">{it.unit}</span>}
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </dd>
                 </div>
               </dl>
             </>
