@@ -59,9 +59,26 @@ export async function upsertItems(
   return n;
 }
 
-export async function listMirror(entity: "customers" | "items" | "branches", limit = 100) {
+export async function upsertVendors(
+  rows: { id: number; name?: string; branch_name?: string; raw?: unknown }[],
+): Promise<number> {
   const sql = db();
-  const table = entity === "customers" ? sql`accurate_customer` : entity === "items" ? sql`accurate_item` : sql`accurate_branch`;
+  let n = 0;
+  for (const r of rows) {
+    if (r.id === undefined || r.id === null) continue;
+    await sql`
+      INSERT INTO accurate_vendor (id, name, branch_name, raw, last_synced_at)
+      VALUES (${r.id}, ${r.name ?? null}, ${r.branch_name ?? null}, ${sql.json(j(r.raw ?? {}))}, now())
+      ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name, branch_name=EXCLUDED.branch_name, raw=EXCLUDED.raw, last_synced_at=now()
+    `;
+    n += 1;
+  }
+  return n;
+}
+
+export async function listMirror(entity: "customers" | "items" | "branches" | "vendors", limit = 100) {
+  const sql = db();
+  const table = entity === "customers" ? sql`accurate_customer` : entity === "items" ? sql`accurate_item` : entity === "vendors" ? sql`accurate_vendor` : sql`accurate_branch`;
   const rows = await sql`SELECT * FROM ${table} ORDER BY last_synced_at DESC LIMIT ${limit}`;
   return rows.map((r) => {
     const { raw, ...rest } = r as Record<string, unknown>;

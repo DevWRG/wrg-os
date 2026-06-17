@@ -13,7 +13,7 @@ import { matchCustomer, type PlanCandidate } from "./parsers/fuzzy.js";
 import { isDbEnabled, pingDb } from "./db.js";
 import { waPreflight, sendViaWaGateway } from "./wasend.js";
 import { processUnprocessed, isInboundEnabled } from "./repo/inbound.js";
-import { syncAccurateInvoices, accurateConfigured } from "./repo/accurateSync.js";
+import { syncAccurateInvoices, syncVendors, accurateConfigured } from "./repo/accurateSync.js";
 import { insertAuditEvent } from "./repo/audit.js";
 import { upsertDealsFromPlan, logReportToDeals, getPipeline } from "./repo/deal.js";
 import { enqueueAmbiguous, listHitl, resolveHitl } from "./repo/hitl.js";
@@ -587,6 +587,14 @@ app.post("/accurate/sync", async (c) => {
 app.get("/accurate/sync/state", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json({ configured: accurateConfigured() });
+});
+
+// Sinkron master vendor Accurate → accurate_vendor (menu Suppliers).
+app.post("/accurate/sync/vendors", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  if (!accurateConfigured()) return c.json({ error: "kredensial Accurate tak tersedia" }, 503);
+  const r = await syncVendors();
+  return c.json(r, r.ok ? 200 : 502);
 });
 
 // AR (piutang) per customer / cabang / sales — dari accurate_invoice OPEN.
@@ -1524,8 +1532,8 @@ app.post("/accurate/items", async (c) => {
 app.get("/accurate/:entity", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const entity = c.req.param("entity");
-  if (entity !== "customers" && entity !== "items" && entity !== "branches") {
-    return c.json({ error: "entity harus customers|items|branches" }, 400);
+  if (entity !== "customers" && entity !== "items" && entity !== "branches" && entity !== "vendors") {
+    return c.json({ error: "entity harus customers|items|branches|vendors" }, 400);
   }
   const limit = Math.min(Math.max(Number(c.req.query("limit")) || 100, 1), 2000);
   const rows = await listMirror(entity, limit);

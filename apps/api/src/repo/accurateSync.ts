@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 
 import { db } from "../db.js";
 import { ingestAccurateWebhook, normalizeAccurateDate, type AccurateInvoice } from "./ar.js";
+import { upsertVendors } from "./accurateMirror.js";
 
 // Puller Accurate Online (pengganti legacy sync_accurate.sh). Tarik sales-invoice
 // header+items dari zeus.accurate.id → mirror penuh accurate_* + refresh ar_aging.
@@ -178,6 +179,31 @@ export interface AccurateSyncResult {
 
 // Sync sales-invoice. invoiceId → satu invoice; selainnya incremental (window
 // `days` hari, recent-first, stop saat transDate < threshold).
+// Tarik master vendor (vendor/list.do) → mirror accurate_vendor. Paginated (100/hal).
+export async function syncVendors(): Promise<{ ok: boolean; synced: number; error?: string }> {
+  const creds = loadCreds();
+  if (!creds) return { ok: false, synced: 0, error: "kredensial Accurate tak tersedia" };
+  let page = 1;
+  let synced = 0;
+  for (;;) {
+    const list = await accGet(creds, "/accurate/api/vendor/list.do", `sp.page=${page}&sp.pageSize=100&fields=id,name,vendorBranchName`);
+    const rows = Array.isArray(list.d) ? (list.d as Array<Record<string, unknown>>) : [];
+    if (rows.length === 0) break;
+    await upsertVendors(
+      rows.map((v) => ({
+        id: Number(v.id),
+        name: v.name != null ? String(v.name) : undefined,
+        branch_name: v.vendorBranchName != null ? String(v.vendorBranchName) : undefined,
+        raw: v,
+      })),
+    );
+    synced += rows.length;
+    if (rows.length < 100 || page >= 50) break;
+    page += 1;
+  }
+  return { ok: true, synced };
+}
+
 export async function syncAccurateInvoices(
   opts: { days?: number; invoiceId?: number } = {},
 ): Promise<AccurateSyncResult> {
