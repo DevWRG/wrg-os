@@ -348,6 +348,12 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
     if (String(row.message_type ?? "").toLowerCase().startsWith("image") && row.media_path) {
       const amp = await resolveSender({ senderJid: row.sender_jid, groupJid: row.group_jid, pushname: row.sender_name });
       if (!amp) return finish({ skipped: "unknown-sender" }, "photo");
+      // Foto AM cuma divalidasi di grup AM (The ALLIANCE). Di grup lain (mis. AM
+      // forward surat/dokumen ke grup diskusi) → skip diam, jangan balas "tak cocok".
+      const AM_PHOTO_GROUP = process.env.COMPLIANCE_AM_GROUP || process.env.REMINDER_WA_TARGET || "";
+      if (String(amp.role ?? "").toUpperCase() === "AM" && AM_PHOTO_GROUP && row.group_jid !== AM_PHOTO_GROUP) {
+        return finish({ skipped: "am-photo-non-alliance", am_id: amp.am_id }, "photo");
+      }
       await sql`UPDATE master_user SET last_active_group = ${row.group_jid}, last_active_at = now() WHERE am_id = ${amp.am_id}`;
       const r = await photoFollowup(row, amp);
       return finish({ via: amp.via, ...r }, "photo");
