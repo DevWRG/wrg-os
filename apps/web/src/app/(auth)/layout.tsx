@@ -9,7 +9,7 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
       {/* ── Panel kiri: brand + value prop (gradient WRG) ── */}
       <aside className="relative hidden flex-col justify-between p-10 text-white lg:flex" style={{ background: WRG_GRADIENT }}>
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src="/brand/wahana-lifeline-white.png" alt="Wahana LifeLine" className="h-9 w-auto" />
+        <img src="/brand/wahana-lifeline-white.png" alt="Wahana LifeLine" className="h-9 w-auto max-w-[210px] object-contain" />
 
         <div className="max-w-md">
           <p className="text-xs font-medium tracking-[0.2em] text-white/70">WRG CRM · PLAN &amp; REPORT</p>
