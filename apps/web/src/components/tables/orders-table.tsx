@@ -1,17 +1,18 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Loader2 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
+import { DateRangeToolbar } from "@/components/ui/date-range-toolbar";
 import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 export interface SalesOrder {
   id: string;
@@ -104,10 +105,20 @@ function Row({ label, value, tone }: { label: string; value: string; tone?: "dis
 }
 
 export function OrdersTable({ orders }: { orders: SalesOrder[] }) {
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
   const [sel, setSel] = useState<SalesOrder | null>(null);
   const [items, setItems] = useState<LineItem[] | null>(null);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [itemsErr, setItemsErr] = useState(false);
+
+  const filtered = useMemo(() => {
+    if (!from && !to) return orders;
+    return orders.filter((o) => {
+      const d = (o.trans_date ?? "").slice(0, 10);
+      return d ? (!from || d >= from) && (!to || d <= to) : false;
+    });
+  }, [orders, from, to]);
 
   function openDetail(o: SalesOrder) {
     setSel(o);
@@ -130,90 +141,81 @@ export function OrdersTable({ orders }: { orders: SalesOrder[] }) {
     <>
       <DataTable
         columns={columns}
-        data={orders}
+        data={filtered}
         getKey={(o) => o.id}
         searchPlaceholder="Cari order # / customer / status…"
         pageSize={25}
         onRowClick={openDetail}
+        toolbar={<DateRangeToolbar from={from} to={to} onFrom={setFrom} onTo={setTo} idPrefix="so" />}
       />
 
-      <Sheet open={!!sel} onOpenChange={(o) => !o && setSel(null)}>
-        <SheetContent className="w-full overflow-y-auto sm:max-w-md">
+      <Dialog open={!!sel} onOpenChange={(o) => !o && setSel(null)}>
+        <DialogContent>
           {sel && (
             <>
-              <SheetHeader className="gap-2">
+              <DialogHeader>
                 <div className="text-muted-foreground text-xs font-medium tracking-wide uppercase">Sales Order</div>
-                <SheetTitle className="font-mono text-sm leading-snug break-all">{sel.number ?? "—"}</SheetTitle>
-                <SheetDescription className="flex items-center gap-2">
-                  <span>{tgl(sel.trans_date)}</span>
+                <DialogTitle className="font-mono text-sm leading-snug break-all">{sel.number ?? "—"}</DialogTitle>
+                <div className="flex items-center gap-2 text-sm">
+                  <span className="text-muted-foreground">{tgl(sel.trans_date)}</span>
                   {sel.status && <Badge variant={statusTone(sel.status)} className="shrink-0">{sel.status}</Badge>}
-                </SheetDescription>
-              </SheetHeader>
-              <dl className="px-4 pb-6 text-sm">
-                <div className="border-t py-3">
-                  <dt className="text-muted-foreground mb-1 text-xs font-medium tracking-wide uppercase">Customer</dt>
-                  <dd className="font-medium break-words">{sel.customer_name ?? "—"}</dd>
+                </div>
+              </DialogHeader>
+              <DialogBody className="space-y-4 text-sm">
+                <div className="grid grid-cols-2 gap-x-4 gap-y-3">
+                  <div className="col-span-2"><Meta label="Customer" value={sel.customer_name ?? "—"} /></div>
+                  {summary?.salesman && <Meta label="Salesman" value={summary.salesman} />}
+                  {summary?.term && <Meta label="Termin" value={summary.term} />}
+                  {summary?.po_number && <Meta label="No. PO" value={summary.po_number} />}
+                  {summary?.ship_date && <Meta label="Tgl Kirim" value={tgl(summary.ship_date)} />}
+                  {summary?.note && <div className="col-span-2"><Meta label="Keterangan" value={summary.note} /></div>}
                 </div>
 
-                {/* Info order (salesman / termin / PO / tgl kirim / keterangan) */}
-                {summary && (
-                  <div className="grid grid-cols-2 gap-x-4 gap-y-3 border-t py-3">
-                    {summary.salesman && <Meta label="Salesman" value={summary.salesman} />}
-                    {summary.term && <Meta label="Termin" value={summary.term} />}
-                    {summary.po_number && <Meta label="No. PO" value={summary.po_number} />}
-                    {summary.ship_date && <Meta label="Tgl Kirim" value={tgl(summary.ship_date)} />}
-                    {summary.note && <div className="col-span-2"><Meta label="Keterangan" value={summary.note} /></div>}
-                  </div>
-                )}
-
                 {/* Produk + diskon per baris */}
-                <div className="border-t py-3">
-                  <dt className="text-muted-foreground mb-2 flex items-center gap-2 text-xs font-medium tracking-wide uppercase">
+                <div>
+                  <div className="text-muted-foreground mb-2 flex items-center gap-2 text-xs font-medium tracking-wide uppercase">
                     Produk
                     {items && items.length > 0 && <span className="text-muted-foreground/70 normal-case">({items.length})</span>}
-                  </dt>
-                  <dd>
-                    {items === null ? (
-                      <div className="text-muted-foreground flex items-center gap-2 py-1 text-xs">
-                        <Loader2 className="size-3.5 animate-spin" /> Memuat produk…
-                      </div>
-                    ) : itemsErr ? (
-                      <div className="text-muted-foreground py-1 text-xs">Gagal memuat produk.</div>
-                    ) : items.length === 0 ? (
-                      <div className="text-muted-foreground py-1 text-xs">Tidak ada baris produk.</div>
-                    ) : (
-                      <ul className="divide-border divide-y">
-                        {items.map((it, i) => (
-                          <li key={i} className="flex items-start justify-between gap-3 py-2">
-                            <div className="min-w-0">
-                              <div className="break-words">{it.name ?? "—"}</div>
-                              <div className="text-muted-foreground text-xs">
-                                {it.no && <span className="font-mono">{it.no}</span>}
-                                {it.unit_price != null && <span>{it.no ? " · " : ""}@{rupiah(it.unit_price)}</span>}
-                                {(it.disc_percent || (it.disc_amount ?? 0) > 0) && (
-                                  <span className="text-emerald-600 dark:text-emerald-400"> · disc {it.disc_percent ? `${it.disc_percent}%` : rupiah(it.disc_amount)}</span>
-                                )}
-                              </div>
+                  </div>
+                  {items === null ? (
+                    <div className="text-muted-foreground flex items-center gap-2 py-1 text-xs">
+                      <Loader2 className="size-3.5 animate-spin" /> Memuat produk…
+                    </div>
+                  ) : itemsErr ? (
+                    <div className="text-muted-foreground py-1 text-xs">Gagal memuat produk.</div>
+                  ) : items.length === 0 ? (
+                    <div className="text-muted-foreground py-1 text-xs">Tidak ada baris produk.</div>
+                  ) : (
+                    <ul className="divide-border divide-y rounded-lg border">
+                      {items.map((it, i) => (
+                        <li key={i} className="flex items-start justify-between gap-3 px-3 py-2">
+                          <div className="min-w-0">
+                            <div className="break-words">{it.name ?? "—"}</div>
+                            <div className="text-muted-foreground text-xs">
+                              {it.no && <span className="font-mono">{it.no}</span>}
+                              {it.unit_price != null && <span>{it.no ? " · " : ""}@{rupiah(it.unit_price)}</span>}
+                              {(it.disc_percent || (it.disc_amount ?? 0) > 0) && (
+                                <span className="text-emerald-600 dark:text-emerald-400"> · disc {it.disc_percent ? `${it.disc_percent}%` : rupiah(it.disc_amount)}</span>
+                              )}
                             </div>
-                            <div className="shrink-0 text-right whitespace-nowrap">
-                              <div className="text-sm font-medium tabular-nums">
-                                {it.quantity ?? "—"}
-                                {it.unit && <span className="text-muted-foreground ml-1 text-xs font-normal">{it.unit}</span>}
-                              </div>
-                              {it.total != null && <div className="text-muted-foreground text-xs tabular-nums">{rupiah(it.total)}</div>}
+                          </div>
+                          <div className="shrink-0 text-right whitespace-nowrap">
+                            <div className="text-sm font-medium tabular-nums">
+                              {it.quantity ?? "—"}
+                              {it.unit && <span className="text-muted-foreground ml-1 text-xs font-normal">{it.unit}</span>}
                             </div>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </dd>
+                            {it.total != null && <div className="text-muted-foreground text-xs tabular-nums">{rupiah(it.total)}</div>}
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                 </div>
 
                 {/* Rincian nilai */}
                 {summary && (
-                  <div className="border-t py-3">
-                    <dt className="text-muted-foreground mb-2 text-xs font-medium tracking-wide uppercase">Rincian</dt>
-                    <dd className="space-y-1.5">
+                  <div className="bg-muted/40 rounded-lg p-3">
+                    <div className="space-y-1.5">
                       <Row label="Subtotal" value={rupiah(summary.subtotal)} />
                       {(summary.discount ?? 0) > 0 && <Row label="Diskon" value={`- ${rupiah(summary.discount)}`} tone="discount" />}
                       {(summary.tax ?? 0) > 0 && <Row label="PPN" value={rupiah(summary.tax)} />}
@@ -221,14 +223,14 @@ export function OrdersTable({ orders }: { orders: SalesOrder[] }) {
                       <div className="mt-1 border-t pt-1.5">
                         <Row label="Total" value={rupiah(summary.total ?? sel.total_amount)} tone="total" />
                       </div>
-                    </dd>
+                    </div>
                   </div>
                 )}
-              </dl>
+              </DialogBody>
             </>
           )}
-        </SheetContent>
-      </Sheet>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }
