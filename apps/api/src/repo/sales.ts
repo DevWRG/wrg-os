@@ -1,4 +1,5 @@
 import { db } from "../db.js";
+import { getAging } from "./ar.js";
 
 // Revenue analytics (port wrg-crm Sales Performance) dari accurate_invoice +
 // accurate_invoice_item. Outstanding/AR di-skip krn sumber 0. Rentang default
@@ -78,6 +79,124 @@ export async function reportRevenue(from: string, to: string) {
     per_salesman: mapRank(perSalesman),
     per_cabang: mapRank(perCabang),
     per_product: mapRank(perProduct),
+  };
+}
+
+// Dashboard "Sales Overview" (gabungan sales + operasional + finance). Satu
+// panggilan → KPI (+delta vs periode setara sebelumnya), tren revenue harian,
+// breakdown (cabang/produk/customer/sales), recent orders, low-stock, AR aging.
+function prevRange(from: string, to: string): { from: string; to: string } {
+  const f = new Date(`${from}T00:00:00Z`).getTime();
+  const t = new Date(`${to}T00:00:00Z`).getTime();
+  const span = Math.max(t - f, 0) + 86_400_000; // inklusif
+  return {
+    from: new Date(f - span).toISOString().slice(0, 10),
+    to: new Date(f - 86_400_000).toISOString().slice(0, 10),
+  };
+}
+const pctDelta = (cur: number, prev: number): number | null =>
+  prev > 0 ? Math.round(((cur - prev) / prev) * 1000) / 10 : null;
+
+export async function salesOverview(from: string, to: string) {
+  const sql = db();
+  const prev = prevRange(from, to);
+  const [cur] = await sql`
+    SELECT COALESCE(sum(total),0)::numeric AS revenue, count(*)::int AS orders, count(DISTINCT customer_id)::int AS customers
+    FROM accurate_invoice WHERE tanggal BETWEEN ${from} AND ${to}`;
+  const [pre] = await sql`
+    SELECT COALESCE(sum(total),0)::numeric AS revenue, count(*)::int AS orders, count(DISTINCT customer_id)::int AS customers
+    FROM accurate_invoice WHERE tanggal BETWEEN ${prev.from} AND ${prev.to}`;
+
+  const trend = await sql`
+    SELECT tanggal::text AS date, COALESCE(sum(total),0)::numeric AS revenue, count(*)::int AS orders
+    FROM accurate_invoice WHERE tanggal BETWEEN ${from} AND ${to}
+    GROUP BY tanggal ORDER BY tanggal`;
+
+  const perCabang = await sql`
+    SELECT COALESCE(ab.name, ai.branch_id::text) AS key, COALESCE(ab.name, ai.branch_id::text) AS label,
+           sum(ai.total)::numeric AS total, count(*)::int AS count
+    FROM accurate_invoice ai LEFT JOIN accurate_branch ab ON ab.id = ai.branch_id
+    WHERE ai.tanggal BETWEEN ${from} AND ${to}
+    GROUP BY ab.name, ai.branch_id ORDER BY sum(ai.total) DESC`;
+  const perProduct = await sql`
+    SELECT COALESCE(it.name, aii.item_id::text) AS key, COALESCE(it.name, aii.item_id::text) AS label,
+           sum(aii.total)::numeric AS total, sum(aii.qty)::numeric AS count
+    FROM accurate_invoice_item aii JOIN accurate_invoice ai ON ai.id = aii.invoice_id
+    LEFT JOIN accurate_item it ON it.id = aii.item_id
+    WHERE ai.tanggal BETWEEN ${from} AND ${to}
+    GROUP BY it.name, aii.item_id ORDER BY sum(aii.total) DESC LIMIT 8`;
+  const perCustomer = await sql`
+    SELECT COALESCE(ac.name, ai.customer_id::text) AS key, COALESCE(ac.name, ai.customer_id::text) AS label,
+           sum(ai.total)::numeric AS total, count(*)::int AS count
+    FROM accurate_invoice ai LEFT JOIN accurate_customer ac ON ac.id = ai.customer_id
+    WHERE ai.tanggal BETWEEN ${from} AND ${to}
+    GROUP BY ac.name, ai.customer_id ORDER BY sum(ai.total) DESC LIMIT 8`;
+  const perSalesman = await sql`
+    SELECT COALESCE(salesman_name,'—') AS key, COALESCE(salesman_name,'—') AS label,
+           sum(total)::numeric AS total, count(*)::int AS count
+    FROM accurate_invoice WHERE tanggal BETWEEN ${from} AND ${to}
+    GROUP BY salesman_name ORDER BY sum(total) DESC LIMIT 8`;
+
+  const recentOrders = await sql`
+    SELECT id::text, number, trans_date::text AS trans_date, customer_name, status, total_amount::numeric
+    FROM accurate_sales_order ORDER BY trans_date DESC NULLS LAST, id DESC LIMIT 8`;
+  const lowStock = await sql`
+    SELECT id::text, no, name, quantity::numeric, available::numeric
+    FROM accurate_item WHERE quantity IS NOT NULL AND quantity <= 5
+    ORDER BY quantity ASC LIMIT 8`;
+
+  let aging: { total_outstanding: number; total_invoices: number; buckets: { bucket: string; count: number; total: number }[] } = {
+    total_outstanding: 0,
+    total_invoices: 0,
+    buckets: [],
+  };
+  try {
+    const ag = await getAging();
+    aging = { total_outstanding: ag.total_outstanding, total_invoices: ag.total_invoices, buckets: ag.buckets };
+  } catch {
+    /* ar_aging_mv mungkin belum ada → kosongkan */
+  }
+
+  const revenue = Number(cur?.revenue ?? 0);
+  const orders = Number(cur?.orders ?? 0);
+  const customers = Number(cur?.customers ?? 0);
+  const pRev = Number(pre?.revenue ?? 0);
+  const pOrd = Number(pre?.orders ?? 0);
+  const pCust = Number(pre?.customers ?? 0);
+  return {
+    range: { from, to },
+    prev_range: prev,
+    kpi: {
+      revenue,
+      revenue_delta: pctDelta(revenue, pRev),
+      orders,
+      orders_delta: pctDelta(orders, pOrd),
+      customers,
+      customers_delta: pctDelta(customers, pCust),
+      ar_outstanding: aging.total_outstanding,
+      ar_invoices: aging.total_invoices,
+    },
+    trend: trend.map((r) => ({ date: String(r.date), revenue: Number(r.revenue), orders: Number(r.orders) })),
+    per_cabang: mapRank(perCabang),
+    per_product: mapRank(perProduct),
+    per_customer: mapRank(perCustomer),
+    per_salesman: mapRank(perSalesman),
+    recent_orders: recentOrders.map((r) => ({
+      id: String(r.id),
+      number: r.number ? String(r.number) : null,
+      trans_date: r.trans_date ? String(r.trans_date) : null,
+      customer_name: r.customer_name ? String(r.customer_name) : null,
+      status: r.status ? String(r.status) : null,
+      total_amount: Number(r.total_amount ?? 0),
+    })),
+    low_stock: lowStock.map((r) => ({
+      id: String(r.id),
+      no: r.no ? String(r.no) : null,
+      name: r.name ? String(r.name) : null,
+      quantity: r.quantity == null ? null : Number(r.quantity),
+      available: r.available == null ? null : Number(r.available),
+    })),
+    ar_aging: aging,
   };
 }
 
