@@ -14,9 +14,14 @@ import { sendViaWaGateway } from "../wasend.js";
 const hrdGroups = (): string[] =>
   (process.env.LEAVE_HRD_GROUP_JID || "120363048384809457@g.us")
     .split(",").map((s) => s.trim()).filter(Boolean);
-// Nomor admin yg boleh approve (comma-separated). Kosong → approval di-ignore.
+// Nomor admin yg boleh approve (comma-separated). Kosong → cek nomor di-skip.
 const approverList = (): string[] =>
   (process.env.LEAVE_APPROVER_WA || "").split(",").map((s) => normalizeWa(s.trim())).filter(Boolean);
+// Nama display WA admin yg boleh approve (comma-sep, case-insensitive). Dipakai
+// karena di grup sender_jid = group_jid (nomor individual tak ke-capture) →
+// approver dikenali by pushname. Approver balas dari HP-nya sendiri (bukan bot).
+const approverNames = (): string[] =>
+  (process.env.LEAVE_APPROVER_NAME || "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
 
 const KEYWORD = /izin|ijin|sakit|cuti|tidak masuk|tdk masuk|ndak masuk|tidak bisa masuk|tidak dapat masuk|pengajuan/i;
 const APPROVAL = /^\s*(ya|iya|ok|setuju|tidak|tdk|gak|batal|no)\s*#?L?(\d+)/i;
@@ -48,13 +53,16 @@ async function resolveWajib(raw: string): Promise<{ am_id: string; nama: string 
   return row ? { am_id: String(row.am_id), nama: String(row.nama) } : null;
 }
 
-async function handleApproval(decision: string, pid: number, senderWa: string, grp: string): Promise<string> {
+async function handleApproval(decision: string, pid: number, senderWa: string, senderName: string, grp: string): Promise<string> {
   const sql = db();
   const approvers = approverList();
-  const sender = normalizeWa(senderWa);
-  if (approvers.length === 0 || !approvers.includes(sender)) {
+  const names = approverNames();
+  const okPhone = approvers.length > 0 && approvers.includes(normalizeWa(senderWa));
+  const okName = names.length > 0 && names.includes(String(senderName ?? "").trim().toLowerCase());
+  if (!okPhone && !okName) {
     return "approval-ignored-not-admin";
   }
+  const decidedBy = okName ? `name:${senderName}` : normalizeWa(senderWa);
   const [p] = await sql`SELECT * FROM leave_pending WHERE id = ${pid} AND status = 'pending'`;
   if (!p) return "approval-not-found";
   const rt = p.start_date === p.end_date ? String(p.start_date) : `${p.start_date} s/d ${p.end_date}`;
@@ -68,11 +76,11 @@ async function handleApproval(decision: string, pid: number, senderWa: string, g
           AND daterange(start_date, end_date, '[]') && daterange(${p.start_date}::date, ${p.end_date}::date, '[]')
       )
     `;
-    await sql`UPDATE leave_pending SET status='approved', decided_at=now(), decided_by=${sender} WHERE id=${pid}`;
+    await sql`UPDATE leave_pending SET status='approved', decided_at=now(), decided_by=${decidedBy} WHERE id=${pid}`;
     await sendViaWaGateway(grp, `✅ Tercatat: *${p.nama}* ${p.jenis} ${rt}. Tidak akan kena reminder/summary.`);
     return "approved";
   }
-  await sql`UPDATE leave_pending SET status='rejected', decided_at=now(), decided_by=${sender} WHERE id=${pid}`;
+  await sql`UPDATE leave_pending SET status='rejected', decided_at=now(), decided_by=${decidedBy} WHERE id=${pid}`;
   await sendViaWaGateway(grp, `❌ Dibatalkan — *${p.nama}* tidak direkam (L${pid}).`);
   return "rejected";
 }
@@ -111,7 +119,7 @@ export async function runDetectLeaveScan(opts: { dryRun?: boolean } = {}): Promi
       const decision = am[1].toLowerCase();
       const pid = Number(am[2]);
       if (opts.dryRun) { skip("approval-dryrun"); continue; }
-      const out = await handleApproval(decision, pid, senderWa, grp);
+      const out = await handleApproval(decision, pid, senderWa, String(m.sender_name ?? ""), grp);
       if (out === "approved") res.approved += 1;
       else if (out === "rejected") res.rejected += 1;
       else skip(out);
