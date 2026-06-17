@@ -58,19 +58,26 @@ export function ShipmentsTable({ shipments }: { shipments: DeliveryOrder[] }) {
       />
 
       <Sheet open={!!sel} onOpenChange={(o) => !o && setSel(null)}>
-        <SheetContent className="w-full overflow-y-auto sm:max-w-lg">
+        <SheetContent className="w-full overflow-y-auto sm:max-w-md">
           {sel && (
             <>
-              <SheetHeader>
-                <SheetTitle className="flex items-center gap-2 break-words">
-                  {sel.number ?? "—"}
+              <SheetHeader className="gap-2">
+                <div className="text-muted-foreground text-xs font-medium tracking-wide uppercase">Surat Jalan</div>
+                <SheetTitle className="font-mono text-sm leading-snug break-all">{sel.number ?? "—"}</SheetTitle>
+                <SheetDescription className="flex items-center gap-2">
+                  <span>{tgl(sel.trans_date)}</span>
                   {sel.status && <Badge variant={statusTone(sel.status)} className="shrink-0">{sel.status}</Badge>}
-                </SheetTitle>
-                <SheetDescription>{tgl(sel.trans_date)}</SheetDescription>
+                </SheetDescription>
               </SheetHeader>
-              <dl className="space-y-3 px-4 pb-6 text-sm">
-                <div><dt className="text-muted-foreground text-xs">Customer</dt><dd className="break-words">{sel.customer_name ?? "—"}</dd></div>
-                <div><dt className="text-muted-foreground text-xs">Tujuan</dt><dd className="break-words whitespace-pre-wrap leading-relaxed">{sel.ship_to ?? "—"}</dd></div>
+              <dl className="px-4 pb-6 text-sm">
+                <div className="border-t py-3">
+                  <dt className="text-muted-foreground mb-1 text-xs font-medium tracking-wide uppercase">Customer</dt>
+                  <dd className="font-medium break-words">{sel.customer_name ?? "—"}</dd>
+                </div>
+                <div className="border-t py-3">
+                  <dt className="text-muted-foreground mb-1 text-xs font-medium tracking-wide uppercase">Tujuan</dt>
+                  <dd className="break-words whitespace-pre-wrap leading-relaxed">{sel.ship_to ?? "—"}</dd>
+                </div>
               </dl>
             </>
           )}
