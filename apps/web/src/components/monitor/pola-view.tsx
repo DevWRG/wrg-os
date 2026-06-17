@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
+import { MonitorMarkdown } from "@/components/monitor/monitor-markdown";
 
 interface PolaData {
   groups: { group_jid: string; group_name: string }[];
@@ -65,7 +66,7 @@ export function PolaView({ initial }: { initial: PolaData }) {
           <CardTitle className="text-sm font-medium">{data.group_name ?? "—"}</CardTitle>
         </CardHeader>
         <CardContent>
-          <pre className="text-foreground/90 font-sans text-sm whitespace-pre-wrap">{data.content ?? "—"}</pre>
+          <MonitorMarkdown content={data.content} />
         </CardContent>
       </Card>
     </div>
