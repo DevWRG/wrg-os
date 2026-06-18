@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 
 import { db } from "../db.js";
 import { ingestAccurateWebhook, normalizeAccurateDate, type AccurateInvoice } from "./ar.js";
-import { upsertVendors, upsertItems, upsertSalesOrders, upsertDeliveryOrders } from "./accurateMirror.js";
+import { upsertVendors, upsertItems, upsertSalesOrders, upsertDeliveryOrders, upsertCustomers } from "./accurateMirror.js";
 
 // Puller Accurate Online (pengganti legacy sync_accurate.sh). Tarik sales-invoice
 // header+items dari zeus.accurate.id → mirror penuh accurate_* + refresh ar_aging.
@@ -202,6 +202,34 @@ export async function syncVendors(): Promise<{ ok: boolean; synced: number; erro
     synced += rows.length;
     if (rows.length < 100 || page >= 50) break;
     page += 1;
+  }
+  return { ok: true, synced };
+}
+
+// Tarik master customer (customer/list.do) → mirror accurate_customer (id/no/name).
+// Backfill nama yg kosong (mirror cuma diisi dari raw invoice yg kadang tanpa nama).
+// Paginated 100/hal. Guard upsert COALESCE(NULLIF(...)) → gak nge-blank nama yg udah ada.
+export async function syncCustomers(): Promise<{ ok: boolean; synced: number; error?: string }> {
+  const creds = loadCreds();
+  if (!creds) return { ok: false, synced: 0, error: "kredensial Accurate tak tersedia" };
+  let page = 1;
+  let synced = 0;
+  for (;;) {
+    const list = await accGet(creds, "/accurate/api/customer/list.do", `sp.page=${page}&sp.pageSize=100&fields=id,name,customerNo`);
+    const rows = Array.isArray(list.d) ? (list.d as Array<Record<string, unknown>>) : [];
+    if (rows.length === 0) break;
+    await upsertCustomers(
+      rows.map((v) => ({
+        id: Number(v.id),
+        no: v.customerNo != null ? String(v.customerNo) : undefined,
+        name: v.name != null ? String(v.name) : undefined,
+        raw: v,
+      })),
+    );
+    synced += rows.length;
+    if (rows.length < 100 || page >= 100) break;
+    page += 1;
+    await new Promise((r) => setTimeout(r, 150));
   }
   return { ok: true, synced };
 }
