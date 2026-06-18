@@ -346,42 +346,69 @@ export async function reportSalesAr(from?: string, to?: string) {
 // total revenue, jumlah faktur, transaksi terakhir, hari sejak transaksi terakhir,
 // revenue bulan ini, + flag dormant (>60 hari tanpa faktur).
 const DORMANT_DAYS = 60;
+// Tier prioritas follow-up dari hari sejak transaksi terakhir.
+function priorityOf(days: number | null): "AKTIF" | "MONITOR" | "TINGGI" | "KRITIS" {
+  if (days == null || days < DORMANT_DAYS) return "AKTIF";
+  if (days >= 120) return "KRITIS";
+  if (days >= 100) return "TINGGI";
+  return "MONITOR";
+}
+const BLN_ID = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"];
+
 export async function customersRevenue() {
   const sql = db();
   const rows = await sql`
     SELECT ai.customer_id::text AS id,
       COALESCE(NULLIF(ac.name,''), NULLIF(max(ai.raw->'customer'->>'name'),''), NULLIF(max(ai.raw->>'retailWpName'),''), 'Customer #' || ai.customer_id::text) AS name,
+      NULLIF(mode() WITHIN GROUP (ORDER BY NULLIF(mu.cabang,'')), '') AS cabang,
       sum(ai.total)::float8 AS total,
       count(*)::int AS invoices,
       max(ai.tanggal)::text AS last_date,
       (CURRENT_DATE - max(ai.tanggal))::int AS days_since,
-      COALESCE(sum(ai.total) FILTER (WHERE ai.tanggal >= date_trunc('month', CURRENT_DATE)), 0)::float8 AS this_month,
+      COALESCE(sum(ai.total) FILTER (WHERE ai.tanggal >= date_trunc('month', CURRENT_DATE) - interval '2 month' AND ai.tanggal < date_trunc('month', CURRENT_DATE) - interval '1 month'), 0)::float8 AS m2,
+      COALESCE(sum(ai.total) FILTER (WHERE ai.tanggal >= date_trunc('month', CURRENT_DATE) - interval '1 month' AND ai.tanggal < date_trunc('month', CURRENT_DATE)), 0)::float8 AS m1,
+      COALESCE(sum(ai.total) FILTER (WHERE ai.tanggal >= date_trunc('month', CURRENT_DATE)), 0)::float8 AS m0,
       count(*) FILTER (WHERE ai.tanggal >= date_trunc('month', CURRENT_DATE))::int AS this_month_inv
-    FROM accurate_invoice ai LEFT JOIN accurate_customer ac ON ac.id = ai.customer_id
+    FROM accurate_invoice ai
+    LEFT JOIN accurate_customer ac ON ac.id = ai.customer_id
+    LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
+    LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
     WHERE ai.customer_id IS NOT NULL
     GROUP BY ai.customer_id, ac.name
-    ORDER BY max(ai.tanggal) DESC NULLS LAST
+    ORDER BY sum(ai.total) DESC NULLS LAST
   `;
-  const customers = rows.map((r) => ({
-    id: String(r.id),
-    name: String(r.name),
-    total: Number(r.total),
-    invoices: Number(r.invoices),
-    last_date: r.last_date ? String(r.last_date) : null,
-    days_since: r.days_since == null ? null : Number(r.days_since),
-    this_month: Number(r.this_month),
-    this_month_inv: Number(r.this_month_inv),
-    dormant: r.days_since != null && Number(r.days_since) > DORMANT_DAYS,
-  }));
+  const customers = rows.map((r) => {
+    const days = r.days_since == null ? null : Number(r.days_since);
+    return {
+      id: String(r.id),
+      name: String(r.name),
+      cabang: r.cabang ? String(r.cabang) : null,
+      total: Number(r.total),
+      invoices: Number(r.invoices),
+      last_date: r.last_date ? String(r.last_date) : null,
+      days_since: days,
+      m2: Number(r.m2),
+      m1: Number(r.m1),
+      m0: Number(r.m0),
+      this_month: Number(r.m0),
+      this_month_inv: Number(r.this_month_inv),
+      priority: priorityOf(days),
+      dormant: days != null && days > DORMANT_DAYS,
+    };
+  });
+  const now = new Date();
+  const lab = (back: number) => BLN_ID[new Date(now.getFullYear(), now.getMonth() - back, 1).getMonth()];
   const summary = {
     total_customers: customers.length,
     active: customers.filter((c) => !c.dormant).length,
     dormant: customers.filter((c) => c.dormant).length,
+    kritis: customers.filter((c) => c.priority === "KRITIS").length,
+    tinggi: customers.filter((c) => c.priority === "TINGGI").length,
     revenue_total: customers.reduce((a, c) => a + c.total, 0),
-    revenue_month: customers.reduce((a, c) => a + c.this_month, 0),
+    revenue_month: customers.reduce((a, c) => a + c.m0, 0),
     invoices_month: customers.reduce((a, c) => a + c.this_month_inv, 0),
   };
-  return { dormant_days: DORMANT_DAYS, summary, customers };
+  return { dormant_days: DORMANT_DAYS, months: [lab(2), lab(1), lab(0)], summary, customers };
 }
 
 // Rincian revenue per bulan satu customer (default 12 bulan terakhir) — on-demand.
