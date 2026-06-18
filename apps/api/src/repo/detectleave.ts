@@ -25,6 +25,9 @@ const approverNames = (): string[] =>
 
 const KEYWORD = /izin|ijin|sakit|cuti|tidak masuk|tdk masuk|ndak masuk|tidak bisa masuk|tidak dapat masuk|pengajuan/i;
 const APPROVAL = /^\s*(ya|iya|ok|setuju|tidak|tdk|gak|batal|no)\s*#?L?(\d+)/i;
+// Buang format WhatsApp (*bold* _italic_ ~strike~ `mono`) sebelum match — balasan
+// approval sering ke-bold ("*ya L3*") yg bikin anchor ^ gagal.
+const stripWaFmt = (s: string) => s.replace(/[*_~`]/g, "").trim();
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const wibDate = (): string => new Date(Date.now() + 7 * 3600 * 1000).toISOString().slice(0, 10);
 
@@ -114,7 +117,7 @@ export async function runDetectLeaveScan(opts: { dryRun?: boolean } = {}): Promi
     const msgDate = m.received_at ? new Date(m.received_at).toISOString().slice(0, 10) : wibDate();
 
     // ── PHASE B: balasan approval ──
-    const am = body.match(APPROVAL);
+    const am = stripWaFmt(body).match(APPROVAL);
     if (am) {
       const decision = am[1].toLowerCase();
       const pid = Number(am[2]);
