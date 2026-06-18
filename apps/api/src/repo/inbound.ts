@@ -241,6 +241,13 @@ async function insertAmActivities(
 // ── Foto-followup (Fase 3) ──
 const PHOTO_MATCH = 0.3, PHOTO_DUP = 0.5, PHOTO_SILENT = 0.2;
 
+// Cooldown anti-spam balasan foto (in-memory; apps/api single-process via pm2).
+// Foto visit sering dikirim BERURUTAN (bukan barengan) → debounce pending_photos
+// di bawah sering lihat 0 → tiap foto bales. Tahan balasan kalau baru aja balas
+// utk AM yg sama < 90 dtk → cukup 1 balasan ringkas per burst.
+const PHOTO_REPLY_COOLDOWN_MS = 90_000;
+const lastPhotoReplyAt = new Map<string, number>();
+
 function parseGeoTs(ts?: string | null): { iso: string | null; dt: string | null } {
   if (!ts) return { iso: null, dt: null };
   const m = ts.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})(?:[ ,]+(\d{1,2}):(\d{2}))?/);
@@ -324,6 +331,13 @@ async function photoFollowup(row: WaRow, am: { am_id: string; nama: string }): P
   if (Number(no_geo) > 0) {
     msg += `\n⚠️ ${no_geo} foto tanpa geotag — pakai Geo-Tagging Camera supaya koordinat ke-burn di pixel.`;
   }
+  // Cooldown per-AM: foto burst yg datang berurutan jangan bales berkali-kali.
+  const cdKey = am.am_id;
+  const nowMs = Date.now();
+  if (nowMs - (lastPhotoReplyAt.get(cdKey) ?? 0) < PHOTO_REPLY_COOLDOWN_MS) {
+    return { matched: top.customer_name, score, geo: hasGeo, remaining: remain.length, suppressed: "reply-cooldown" };
+  }
+  lastPhotoReplyAt.set(cdKey, nowMs);
   const reply = await sendViaWaGateway(row.group_jid, msg);
   return { matched: top.customer_name, score, geo: hasGeo, remaining: remain.length, no_geo: Number(no_geo), reply };
 }
