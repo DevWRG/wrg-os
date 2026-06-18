@@ -51,23 +51,29 @@ export async function reportRevenue(from: string, to: string) {
   `;
   const perSalesman = await sql`
     SELECT COALESCE(NULLIF(ai.salesman_name,''),'tanpa') AS key,
-           COALESCE(NULLIF(max(mu.nama),''), NULLIF(ai.salesman_name,''),'Tanpa sales') AS label,
+           COALESCE(NULLIF(max(mu.nama),''), NULLIF(max(ai.salesman_name),''),'Tanpa sales') AS label,
            CASE WHEN NULLIF(max(mu.nama),'') IS NOT NULL
-                THEN NULLIF(ai.salesman_name,'') || COALESCE(' · ' || NULLIF(max(mu.cabang),''), '')
+                THEN NULLIF(max(ai.salesman_name),'') || COALESCE(' · ' || NULLIF(max(mu.cabang),''), '')
                 ELSE NULLIF(max(mu.cabang),'') END AS sub,
            sum(ai.total)::numeric AS total, count(*)::int AS count
     FROM accurate_invoice ai
     LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
     LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
     WHERE ai.tanggal BETWEEN ${from} AND ${to}
-    GROUP BY ai.salesman_name ORDER BY sum(ai.total) DESC
+    GROUP BY COALESCE(NULLIF(ai.salesman_name,''),'tanpa') ORDER BY sum(ai.total) DESC
   `;
+  // Cabang via salesman → master_user.cabang (fallback cabang_override). branch_id
+  // di accurate_invoice tak ter-isi (semua = 50, accurate_branch.name kosong) →
+  // pakai pemetaan salesman spt AR-aging. Lihat reportAr().
   const perCabang = await sql`
-    SELECT ai.branch_id::text AS key, COALESCE(NULLIF(ab.name,''), ai.branch_id::text) AS label,
+    SELECT COALESCE(NULLIF(mu.cabang,''), NULLIF(acs.cabang_override,''), 'Tanpa cabang') AS key,
+           COALESCE(NULLIF(mu.cabang,''), NULLIF(acs.cabang_override,''), 'Tanpa cabang') AS label,
            sum(ai.total)::numeric AS total, count(*)::int AS count
-    FROM accurate_invoice ai LEFT JOIN accurate_branch ab ON ab.id = ai.branch_id
+    FROM accurate_invoice ai
+    LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
+    LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
     WHERE ai.tanggal BETWEEN ${from} AND ${to}
-    GROUP BY ai.branch_id, ab.name ORDER BY sum(ai.total) DESC
+    GROUP BY 1 ORDER BY sum(ai.total) DESC
   `;
   const perProduct = await sql`
     SELECT aii.item_id::text AS key, COALESCE(it.name, aii.item_id::text) AS label,
@@ -121,12 +127,16 @@ export async function salesOverview(from: string, to: string) {
     FROM accurate_invoice WHERE tanggal BETWEEN ${from} AND ${to}
     GROUP BY tanggal ORDER BY tanggal`;
 
+  // Cabang via salesman → master_user.cabang (branch_id invoice kosong, semua=50).
   const perCabang = await sql`
-    SELECT ai.branch_id::text AS key, COALESCE(NULLIF(ab.name,''), 'Cabang #' || ai.branch_id::text) AS label,
+    SELECT COALESCE(NULLIF(mu.cabang,''), NULLIF(acs.cabang_override,''), 'Tanpa cabang') AS key,
+           COALESCE(NULLIF(mu.cabang,''), NULLIF(acs.cabang_override,''), 'Tanpa cabang') AS label,
            sum(ai.total)::numeric AS total, count(*)::int AS count
-    FROM accurate_invoice ai LEFT JOIN accurate_branch ab ON ab.id = ai.branch_id
+    FROM accurate_invoice ai
+    LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
+    LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
     WHERE ai.tanggal BETWEEN ${from} AND ${to}
-    GROUP BY ai.branch_id, ab.name ORDER BY sum(ai.total) DESC`;
+    GROUP BY 1 ORDER BY sum(ai.total) DESC`;
   const perProduct = await sql`
     SELECT aii.item_id::text AS key,
            COALESCE(NULLIF(it.name,''), NULLIF(max(aii.raw->'item'->>'name'),''), 'Item #' || aii.item_id::text) AS label,
@@ -145,16 +155,16 @@ export async function salesOverview(from: string, to: string) {
     GROUP BY ai.customer_id, ac.name ORDER BY sum(ai.total) DESC LIMIT 8`;
   const perSalesman = await sql`
     SELECT COALESCE(NULLIF(ai.salesman_name,''),'tanpa') AS key,
-           COALESCE(NULLIF(max(mu.nama),''), NULLIF(ai.salesman_name,''),'Tanpa sales') AS label,
+           COALESCE(NULLIF(max(mu.nama),''), NULLIF(max(ai.salesman_name),''),'Tanpa sales') AS label,
            CASE WHEN NULLIF(max(mu.nama),'') IS NOT NULL
-                THEN NULLIF(ai.salesman_name,'') || COALESCE(' · ' || NULLIF(max(mu.cabang),''), '')
+                THEN NULLIF(max(ai.salesman_name),'') || COALESCE(' · ' || NULLIF(max(mu.cabang),''), '')
                 ELSE NULLIF(max(mu.cabang),'') END AS sub,
            sum(ai.total)::numeric AS total, count(*)::int AS count
     FROM accurate_invoice ai
     LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
     LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
     WHERE ai.tanggal BETWEEN ${from} AND ${to}
-    GROUP BY ai.salesman_name ORDER BY sum(ai.total) DESC LIMIT 8`;
+    GROUP BY COALESCE(NULLIF(ai.salesman_name,''),'tanpa') ORDER BY sum(ai.total) DESC LIMIT 8`;
 
   // Inventory & order stats (gaya dashboard: total produk, ketersediaan stok, fulfillment).
   const [inv] = await sql`
