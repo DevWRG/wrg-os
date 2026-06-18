@@ -1,50 +1,35 @@
 import { gatewayFetch } from "@/lib/gateway";
 import { PageHeader } from "@/components/dashboard/page-header";
-import { CustomersTable } from "@/components/tables/customers-table";
 import { Card, CardContent } from "@/components/ui/card";
+import { EmptyState } from "@/components/ui/empty-state";
+import { CustomersRevenueView, type CustomersRevenue } from "@/components/customers/customers-revenue-view";
 
 export const dynamic = "force-dynamic";
 
-interface Customer {
-  customer_id: string;
-  customer_name: string;
-  deal_count: number;
-  total_value: number;
-  ams: string[];
-  stages: string[];
-  last_activity: string;
-}
-
-async function getCustomers(): Promise<Customer[] | null> {
+async function getData(): Promise<CustomersRevenue | null> {
   try {
-    const res = await gatewayFetch(`/customers`);
+    const res = await gatewayFetch(`/customers/revenue`);
     if (!res.ok) return null;
-    return ((await res.json()) as { customers: Customer[] }).customers;
+    return (await res.json()) as CustomersRevenue;
   } catch {
     return null;
   }
 }
 
 export default async function CustomersPage() {
-  const customers = await getCustomers();
-
+  const data = await getData();
   return (
     <>
-      <PageHeader title="Customers" description="Customer aktif diturunkan dari pipeline deal — data live dari DB." />
-      {!customers ? (
-        <p className="text-muted-foreground">
-          Data tidak tersedia. Pastikan <code>apps/api</code> jalan dengan <code>DATABASE_URL</code>.
-        </p>
-      ) : customers.length === 0 ? (
-        <p className="text-muted-foreground">
-          Belum ada customer. Kirim <code>#PLAN</code> via <code>/api/plan</code> untuk membuat deal pertama.
-        </p>
+      <PageHeader
+        title="Customers"
+        description="Revenue ter-faktur per customer (Accurate) — transaksi bulan ini & deteksi dormant >60 hari."
+      />
+      {!data ? (
+        <Card><CardContent className="pt-6"><EmptyState title="Data tidak tersedia" description="Pastikan apps/api jalan & sinkron Accurate aktif." /></CardContent></Card>
+      ) : data.customers.length === 0 ? (
+        <Card><CardContent className="pt-6"><EmptyState title="Belum ada faktur" description="Belum ada data accurate_invoice. Jalankan sinkron Accurate." /></CardContent></Card>
       ) : (
-        <Card>
-          <CardContent className="pt-6">
-            <CustomersTable customers={customers} />
-          </CardContent>
-        </Card>
+        <CustomersRevenueView data={data} />
       )}
     </>
   );

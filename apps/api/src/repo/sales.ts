@@ -341,3 +341,71 @@ export async function reportSalesAr(from?: string, to?: string) {
     },
   };
 }
+
+// Monitoring revenue ter-faktur per customer (dari accurate_invoice). Per customer:
+// total revenue, jumlah faktur, transaksi terakhir, hari sejak transaksi terakhir,
+// revenue bulan ini, + flag dormant (>60 hari tanpa faktur).
+const DORMANT_DAYS = 60;
+export async function customersRevenue() {
+  const sql = db();
+  const rows = await sql`
+    SELECT ai.customer_id::text AS id,
+      COALESCE(NULLIF(ac.name,''), NULLIF(max(ai.raw->'customer'->>'name'),''), NULLIF(max(ai.raw->>'retailWpName'),''), 'Customer #' || ai.customer_id::text) AS name,
+      sum(ai.total)::float8 AS total,
+      count(*)::int AS invoices,
+      max(ai.tanggal)::text AS last_date,
+      (CURRENT_DATE - max(ai.tanggal))::int AS days_since,
+      COALESCE(sum(ai.total) FILTER (WHERE ai.tanggal >= date_trunc('month', CURRENT_DATE)), 0)::float8 AS this_month,
+      count(*) FILTER (WHERE ai.tanggal >= date_trunc('month', CURRENT_DATE))::int AS this_month_inv
+    FROM accurate_invoice ai LEFT JOIN accurate_customer ac ON ac.id = ai.customer_id
+    WHERE ai.customer_id IS NOT NULL
+    GROUP BY ai.customer_id, ac.name
+    ORDER BY max(ai.tanggal) DESC NULLS LAST
+  `;
+  const customers = rows.map((r) => ({
+    id: String(r.id),
+    name: String(r.name),
+    total: Number(r.total),
+    invoices: Number(r.invoices),
+    last_date: r.last_date ? String(r.last_date) : null,
+    days_since: r.days_since == null ? null : Number(r.days_since),
+    this_month: Number(r.this_month),
+    this_month_inv: Number(r.this_month_inv),
+    dormant: r.days_since != null && Number(r.days_since) > DORMANT_DAYS,
+  }));
+  const summary = {
+    total_customers: customers.length,
+    active: customers.filter((c) => !c.dormant).length,
+    dormant: customers.filter((c) => c.dormant).length,
+    revenue_total: customers.reduce((a, c) => a + c.total, 0),
+    revenue_month: customers.reduce((a, c) => a + c.this_month, 0),
+    invoices_month: customers.reduce((a, c) => a + c.this_month_inv, 0),
+  };
+  return { dormant_days: DORMANT_DAYS, summary, customers };
+}
+
+// Rincian revenue per bulan satu customer (default 12 bulan terakhir) — on-demand.
+export async function customerMonthly(id: string, months = 12): Promise<{
+  name: string | null;
+  monthly: { month: string; total: number; count: number }[];
+}> {
+  const sql = db();
+  const m = Math.min(Math.max(months, 1), 36);
+  const [meta] = await sql`
+    SELECT COALESCE(NULLIF(ac.name,''), NULLIF(max(ai.raw->'customer'->>'name'),''), 'Customer #' || ${id}) AS name
+    FROM accurate_invoice ai LEFT JOIN accurate_customer ac ON ac.id = ai.customer_id
+    WHERE ai.customer_id = ${Number(id)} GROUP BY ac.name LIMIT 1
+  `;
+  const rows = await sql`
+    SELECT to_char(date_trunc('month', tanggal), 'YYYY-MM') AS month,
+      sum(total)::float8 AS total, count(*)::int AS count
+    FROM accurate_invoice
+    WHERE customer_id = ${Number(id)}
+      AND tanggal >= date_trunc('month', CURRENT_DATE) - make_interval(months => ${m - 1})
+    GROUP BY 1 ORDER BY 1
+  `;
+  return {
+    name: meta?.name ? String(meta.name) : null,
+    monthly: rows.map((r) => ({ month: String(r.month), total: Number(r.total), count: Number(r.count) })),
+  };
+}

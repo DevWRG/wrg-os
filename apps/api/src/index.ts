@@ -92,7 +92,7 @@ import {
   reportCalendar,
   reportCalendarDay,
 } from "./repo/plandash.js";
-import { salesRange, reportRevenue, reportSalesAr, salesOverview } from "./repo/sales.js";
+import { salesRange, reportRevenue, reportSalesAr, salesOverview, customersRevenue, customerMonthly } from "./repo/sales.js";
 import { upsertMembers, listMembers, upsertDigests, listDigest, upsertPola, listPola, generateRekap, generateResume, type MonitorMemberInput, type DigestInput, type PolaInput } from "./repo/monitor.js";
 import { runNotifTua } from "./repo/notiftua.js";
 import { runDailySummary } from "./repo/dailysummary.js";
@@ -1890,6 +1890,21 @@ app.get("/customers", async (c) => {
   const amId = c.req.query("am_id") || undefined;
   const customers = await getCustomers(amId);
   return c.json({ count: customers.length, customers });
+});
+
+// Monitoring revenue ter-faktur per customer (total/faktur/transaksi terakhir/dormant).
+app.get("/customers/revenue", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await customersRevenue());
+});
+
+// Rincian revenue per bulan satu customer (on-demand). ?months=N (default 12).
+app.get("/customers/:id/monthly", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const id = c.req.param("id");
+  if (!id || Number.isNaN(Number(id))) return c.json({ error: "id invalid" }, 400);
+  const months = Math.min(Math.max(Number(c.req.query("months")) || 12, 1), 36);
+  return c.json(await customerMonthly(id, months));
 });
 
 // ── Pipeline read model (dashboard): deal per-stage ──
