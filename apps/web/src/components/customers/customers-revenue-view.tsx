@@ -103,8 +103,8 @@ export function CustomersRevenueView({ data }: { data: CustomersRevenue }) {
   const [mL2, mL1, mL0] = data.months;
   const monthCell = (v: number) => <span className="tabular-nums whitespace-nowrap text-sky-600 dark:text-sky-400">{jt(v)}</span>;
   const columns: DataColumn<CustomerRow>[] = [
-    { id: "name", header: "Customer", sortable: true, accessor: (c) => c.name, cell: (c) => <span className={cn("block max-w-[22rem] truncate font-medium", c.priority === "KRITIS" && "text-red-600")} title={c.name}>{c.name}</span>, className: "max-w-[22rem]" },
-    { id: "cabang", header: "Cabang", sortable: true, accessor: (c) => c.cabang ?? "", cell: (c) => <span className="text-muted-foreground whitespace-nowrap">{c.cabang ?? "—"}</span>, className: "whitespace-nowrap" },
+    { id: "name", header: "Customer", sortable: true, accessor: (c) => c.name, cell: (c) => <span className={cn("block max-w-[15rem] truncate font-medium", c.priority === "KRITIS" && "text-red-600")} title={c.name}>{c.name}</span>, className: "max-w-[15rem]" },
+    { id: "cabang", header: "Cabang", sortable: true, accessor: (c) => c.cabang ?? "", cell: (c) => <span className="text-muted-foreground block max-w-[7.5rem] truncate" title={c.cabang ?? undefined}>{c.cabang ?? "—"}</span>, className: "max-w-[7.5rem]" },
     { id: "last", header: "Last Order", sortable: true, accessor: (c) => c.last_date ?? "", cell: (c) => <span className="text-muted-foreground tabular-nums whitespace-nowrap">{tgl(c.last_date)}</span>, className: "whitespace-nowrap" },
     { id: "hari", header: "Hari", align: "right", sortable: true, accessor: (c) => c.days_since ?? -1, cell: (c) => <span className={cn("tabular-nums whitespace-nowrap", hariCls(c.priority))}>{c.days_since != null ? `${c.days_since}h` : "—"}</span>, className: "whitespace-nowrap" },
     { id: "omzet", header: "Omzet", align: "right", sortable: true, accessor: (c) => c.total, cell: (c) => <span className="font-semibold tabular-nums whitespace-nowrap">{jt(c.total)}</span>, className: "whitespace-nowrap" },
