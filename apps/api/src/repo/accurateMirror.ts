@@ -15,8 +15,11 @@ export async function upsertCustomers(
     await sql`
       INSERT INTO accurate_customer (id, no, name, branch_id, raw, last_synced_at)
       VALUES (${r.id}, ${r.no ?? null}, ${r.name ?? null}, ${r.branch_id ?? null}, ${sql.json(j(r.raw ?? {}))}, now())
-      ON CONFLICT (id) DO UPDATE SET no=EXCLUDED.no, name=EXCLUDED.name,
-        branch_id=EXCLUDED.branch_id, raw=EXCLUDED.raw, last_synced_at=now()
+      ON CONFLICT (id) DO UPDATE SET
+        no=COALESCE(NULLIF(EXCLUDED.no,''), accurate_customer.no),
+        name=COALESCE(NULLIF(EXCLUDED.name,''), accurate_customer.name),
+        branch_id=COALESCE(EXCLUDED.branch_id, accurate_customer.branch_id),
+        raw=EXCLUDED.raw, last_synced_at=now()
     `;
     n += 1;
   }

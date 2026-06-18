@@ -18,7 +18,7 @@ import {
 import { runReminders } from "./repo/reminder.js";
 import { runHodDaily } from "./repo/hodreminder.js";
 import { generateRekap, generateResume } from "./repo/monitor.js";
-import { syncAccurateInvoices, syncSalesOrders, syncDeliveryOrders } from "./repo/accurateSync.js";
+import { syncAccurateInvoices, syncSalesOrders, syncDeliveryOrders, syncCustomers } from "./repo/accurateSync.js";
 import { runPlanCheck, runReportCheck } from "./repo/compliance.js";
 import { runNotifTua } from "./repo/notiftua.js";
 import { runDailySummary } from "./repo/dailysummary.js";
@@ -364,7 +364,8 @@ export function startScheduler(): ScheduleStatus {
           try {
             const so = await syncSalesOrders({});
             const so2 = await syncDeliveryOrders({});
-            console.log(`[scheduler] accurate-sync orders=${JSON.stringify(so)} shipments=${JSON.stringify(so2)}`);
+            const cu = await syncCustomers();
+            console.log(`[scheduler] accurate-sync orders=${JSON.stringify(so)} shipments=${JSON.stringify(so2)} customers=${JSON.stringify(cu)}`);
           } catch (e2) {
             console.error(`[scheduler] accurate-sync orders/shipments gagal @ ${startedAt}:`, e2);
           }
