@@ -34,6 +34,24 @@ docs/       CUTOVER.md.
   `body`. Backfill WAJIB set `processed_at` atau disapu `processUnprocessed`.
 - `activity_log` — hasil/next_action kunjungan. `monitor_digest` — kind ∈ rekap|resume|daily|weekly|briefing, `waktu` varchar(8) (jangan overflow).
 
+## Accurate mirror + menu OPERATIONS & dashboards
+
+Mirror Accurate Online (read-only puller di `apps/api/src/repo/accurateSync.ts`, auth Bearer + X-Api-Timestamp WIB + X-Api-Signature HMAC). Tabel `accurate_customer/_item/_branch/_vendor/_invoice/_invoice_item/_sales_order/_delivery_order` + `ar_aging_mv`.
+
+| Menu / fitur | Sumber | Endpoint | Catatan |
+|---|---|---|---|
+| Products / Inventory | `item/list.do` (+stok) | `/accurate/items`, sync `/accurate/sync/items` | full katalog (~5.8rb) |
+| Suppliers | `vendor/list.do` (+detail on-demand) | `/accurate/vendors`, `/accurate/vendors/:id/detail` | full |
+| Orders | `sales-order/list.do` | `/accurate/sales-orders`, item `/accurate/sales-orders/:id/items` | **recent-only ~500** (sort transDate desc) |
+| Shipments | `delivery-order/list.do` | `/accurate/shipments`, item `/accurate/shipments/:id/items` | **recent-only ~500** |
+| Sales Overview (OVERVIEW) | invoice/order/item/AR | `/dashboard/overview` | KPI+delta, tren, donut, best-selling, top customer/sales, AR aging |
+| Customers (revenue monitor) | `accurate_invoice` | `/customers/revenue`, `/customers/:id/monthly` | per-customer total/bulan-ini/transaksi-terakhir + **dormant >60 hari** |
+| Sales Performance | invoice | `/sales/revenue` | Per Sales pakai nama lengkap+cabang (resolve `accurate_salesman.master_user_id → master_user`) |
+
+- Orders & Shipments **recent-only by design** (volume ~11.8rb/11.9rb) → di-mirror via `syncSalesOrders`/`syncDeliveryOrders`, ikut job `accurate-sync` (auto-refresh).
+- Detail Orders/Shipments/Suppliers/Customers pakai komponen **Dialog** (modal center, `components/ui/dialog.tsx`), bukan Sheet samping.
+- Resolusi nama: `COALESCE(NULLIF(name,''), raw->'customer'->>'name', …)` — kolom mirror bisa empty-string (bukan NULL), `COALESCE` saja tak cukup.
+
 ## Workflow Git/Rilis (WAJIB diikuti)
 
 1. `feature/*` → PR → **dev**. Tunggu CI hijau (Lint·Typecheck·Build + services/ai import check), lalu merge.
@@ -74,8 +92,12 @@ Job: reminder-h/h-1, hod-reminder, plan-check, report-check, monitor rekap/resum
 accurate-sync, notif-tua, daily-summary, weekly-report, detect-leave, extract-competitor,
 weekend-briefing, pola-komunikasi, list-members, notif-quota.
 
+- `accurate-sync` (weekday 6×) sekarang juga refresh mirror **sales-order + delivery-order** (recent) setelah pull invoice → menu Orders/Shipments auto-update.
+
 **Target broadcast WA harus ditentukan user, bukan diinferensi agent.** Crontab legacy
 sudah cutover (dash-free file di-install user; sandbox blok edit crontab).
+
+**Reminder "Daily Sales Update HoD"** (rotasi Yogi=ganjil/Rocky=genap ke grup Koord HoD, 20:00 Sen–Jum) BUKAN di sini — itu **cron openclaw** (`openclaw cron list`, store `~/.openclaw/cron/jobs.json`), agent menyusun pesannya dinamis. Pernah hilang & di-recreate; lihat memory `wrg-os-openclaw-hod-reminder`.
 
 ## Gotcha penting
 
@@ -83,3 +105,4 @@ sudah cutover (dash-free file di-install user; sandbox blok edit crontab).
 - Recovery sales_plan: NOT EXISTS keyed (am_id, tanggal, customer_name, seq); set created_at dari legacy (hindari stamp hari-ini).
 - Export dashboard: CSV `sep=,\n` + BOM UTF-8 (`﻿`) → buka mulus di Excel lokal apa pun, tanpa dependency.
 - Admin-gate di layer WEB (admin-guard.ts requireAdmin role==admin), bukan di api.
+- **Inbound foto**: balasan ack pakai cooldown in-memory per-AM (90 dtk, `lastPhotoReplyAt` di inbound.ts) — foto visit sering datang berurutan (bukan barengan) jadi debounce `pending_photos` saja tak cukup; tanpa cooldown bot bales tiap foto (spam).
