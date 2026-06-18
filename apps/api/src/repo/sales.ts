@@ -47,7 +47,7 @@ export async function reportRevenue(from: string, to: string) {
            sum(ai.total)::numeric AS total, count(*)::int AS count
     FROM accurate_invoice ai LEFT JOIN accurate_customer ac ON ac.id = ai.customer_id
     WHERE ai.tanggal BETWEEN ${from} AND ${to}
-    GROUP BY ai.customer_id, ac.name ORDER BY sum(ai.total) DESC LIMIT 25
+    GROUP BY ai.customer_id, ac.name ORDER BY sum(ai.total) DESC
   `;
   const perSalesman = await sql`
     SELECT COALESCE(NULLIF(ai.salesman_name,''),'tanpa') AS key,
@@ -82,7 +82,7 @@ export async function reportRevenue(from: string, to: string) {
     JOIN accurate_invoice ai ON ai.id = aii.invoice_id
     LEFT JOIN accurate_item it ON it.id = aii.item_id
     WHERE ai.tanggal BETWEEN ${from} AND ${to}
-    GROUP BY aii.item_id, it.name ORDER BY sum(aii.total) DESC LIMIT 25
+    GROUP BY aii.item_id, it.name ORDER BY sum(aii.total) DESC
   `;
   return {
     from,
