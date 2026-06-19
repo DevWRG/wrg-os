@@ -387,6 +387,26 @@ export async function customersRevenue() {
     GROUP BY ai.customer_id, ac.name
     ORDER BY sum(ai.total) DESC NULLS LAST
   `;
+  // Breakdown bulanan YTD (sejak Januari tahun berjalan) per customer — dipakai export.
+  const now = new Date();
+  const ytdKeys: string[] = [];
+  const ytdLabels: string[] = [];
+  for (let mo = 0; mo <= now.getMonth(); mo++) {
+    ytdKeys.push(`${now.getFullYear()}-${String(mo + 1).padStart(2, "0")}`);
+    ytdLabels.push(`${BLN_ID[mo]} ${now.getFullYear()}`);
+  }
+  const ytdRows = await sql`
+    SELECT ai.customer_id::text AS id, to_char(date_trunc('month', ai.tanggal), 'YYYY-MM') AS ym, sum(ai.total)::float8 AS total
+    FROM accurate_invoice ai
+    WHERE ai.customer_id IS NOT NULL AND ai.tanggal >= date_trunc('year', CURRENT_DATE)
+    GROUP BY 1, 2
+  `;
+  const ytdMap = new Map<string, Record<string, number>>();
+  for (const r of ytdRows) {
+    const id = String(r.id);
+    if (!ytdMap.has(id)) ytdMap.set(id, {});
+    ytdMap.get(id)![String(r.ym)] = Number(r.total);
+  }
   const customers = rows.map((r) => {
     const days = r.days_since == null ? null : Number(r.days_since);
     return {
@@ -400,13 +420,13 @@ export async function customersRevenue() {
       m2: Number(r.m2),
       m1: Number(r.m1),
       m0: Number(r.m0),
+      ytd: ytdKeys.map((k) => ytdMap.get(String(r.id))?.[k] ?? 0),
       this_month: Number(r.m0),
       this_month_inv: Number(r.this_month_inv),
       priority: priorityOf(days),
       dormant: days != null && days > DORMANT_DAYS,
     };
   });
-  const now = new Date();
   const lab = (back: number) => BLN_ID[new Date(now.getFullYear(), now.getMonth() - back, 1).getMonth()];
   const summary = {
     total_customers: customers.length,
@@ -418,7 +438,7 @@ export async function customersRevenue() {
     revenue_month: customers.reduce((a, c) => a + c.m0, 0),
     invoices_month: customers.reduce((a, c) => a + c.this_month_inv, 0),
   };
-  return { dormant_days: DORMANT_DAYS, months: [lab(2), lab(1), lab(0)], summary, customers };
+  return { dormant_days: DORMANT_DAYS, months: [lab(2), lab(1), lab(0)], ytd_months: ytdLabels, summary, customers };
 }
 
 // Rincian revenue per bulan satu customer (default 12 bulan terakhir) — on-demand.
