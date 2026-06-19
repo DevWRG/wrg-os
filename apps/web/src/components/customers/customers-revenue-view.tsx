@@ -27,6 +27,7 @@ interface CustomerRow {
   m2: number;
   m1: number;
   m0: number;
+  ytd: number[];
   this_month: number;
   this_month_inv: number;
   priority: Priority;
@@ -35,6 +36,7 @@ interface CustomerRow {
 export interface CustomersRevenue {
   dormant_days: number;
   months: [string, string, string];
+  ytd_months: string[];
   summary: { total_customers: number; active: number; dormant: number; kritis: number; tinggi: number; revenue_total: number; revenue_month: number; invoices_month: number };
   customers: CustomerRow[];
 }
@@ -106,9 +108,9 @@ export function CustomersRevenueView({ data }: { data: CustomersRevenue }) {
   // (rupiah penuh) biar bisa di-sum/sort; ikut filter dormant yg aktif.
   function exportCsv() {
     const esc = (v: string | number | null) => `"${String(v ?? "").replace(/"/g, '""')}"`;
-    const headers = ["Customer", "Cabang", "Last Order", "Hari", "Omzet", mL2, mL1, mL0, "Faktur", "Prioritas", "Dormant"];
+    const headers = ["Customer", "Cabang", "Last Order", "Hari", "Omzet", ...data.ytd_months, "Faktur", "Prioritas", "Dormant"];
     const lines = rows.map((c) =>
-      [c.name, c.cabang ?? "", tgl(c.last_date), c.days_since ?? "", c.total, c.m2, c.m1, c.m0, c.invoices, c.priority, c.dormant ? "Ya" : "Tidak"]
+      [c.name, c.cabang ?? "", tgl(c.last_date), c.days_since ?? "", c.total, ...c.ytd, c.invoices, c.priority, c.dormant ? "Ya" : "Tidak"]
         .map(esc)
         .join(","),
     );
