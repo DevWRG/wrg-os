@@ -105,11 +105,11 @@ export function CustomersRevenueView({ data }: { data: CustomersRevenue }) {
   const [mL2, mL1, mL0] = data.months;
 
   // Export CSV (UTF-8 BOM → Excel buka langsung, kolom kepisah). Angka mentah
-  // (rupiah penuh) biar bisa di-sum/sort; ikut filter dormant yg aktif.
+  // (rupiah penuh) biar bisa di-sum/sort. SELALU semua customer (abaikan filter dormant).
   function exportCsv() {
     const esc = (v: string | number | null) => `"${String(v ?? "").replace(/"/g, '""')}"`;
     const headers = ["Customer", "Cabang", "Last Order", "Hari", "Omzet", ...data.ytd_months, "Faktur", "Prioritas", "Dormant"];
-    const lines = rows.map((c) =>
+    const lines = data.customers.map((c) =>
       [c.name, c.cabang ?? "", tgl(c.last_date), c.days_since ?? "", c.total, ...c.ytd, c.invoices, c.priority, c.dormant ? "Ya" : "Tidak"]
         .map(esc)
         .join(","),
@@ -120,7 +120,7 @@ export function CustomersRevenueView({ data }: { data: CustomersRevenue }) {
     const a = document.createElement("a");
     const stamp = new Date().toISOString().slice(0, 10);
     a.href = url;
-    a.download = `customers-revenue-${dormantOnly ? "dormant-" : ""}${stamp}.csv`;
+    a.download = `customers-revenue-${stamp}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   }
