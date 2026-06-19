@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Loader2, Users2, MoonStar, Wallet, Flame } from "lucide-react";
+import { Loader2, Users2, MoonStar, Wallet, Flame, FileDown } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -101,6 +101,28 @@ export function CustomersRevenueView({ data }: { data: CustomersRevenue }) {
   }
 
   const [mL2, mL1, mL0] = data.months;
+
+  // Export CSV (UTF-8 BOM → Excel buka langsung, kolom kepisah). Angka mentah
+  // (rupiah penuh) biar bisa di-sum/sort; ikut filter dormant yg aktif.
+  function exportCsv() {
+    const esc = (v: string | number | null) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const headers = ["Customer", "Cabang", "Last Order", "Hari", "Omzet", mL2, mL1, mL0, "Faktur", "Prioritas", "Dormant"];
+    const lines = rows.map((c) =>
+      [c.name, c.cabang ?? "", tgl(c.last_date), c.days_since ?? "", c.total, c.m2, c.m1, c.m0, c.invoices, c.priority, c.dormant ? "Ya" : "Tidak"]
+        .map(esc)
+        .join(","),
+    );
+    const csv = "﻿" + [headers.map(esc).join(","), ...lines].join("\r\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const stamp = new Date().toISOString().slice(0, 10);
+    a.href = url;
+    a.download = `customers-revenue-${dormantOnly ? "dormant-" : ""}${stamp}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   const monthCell = (v: number) => <span className="tabular-nums whitespace-nowrap text-sky-600 dark:text-sky-400">{jt(v)}</span>;
   const columns: DataColumn<CustomerRow>[] = [
     { id: "name", header: "Customer", sortable: true, accessor: (c) => c.name, cell: (c) => <span className={cn("block max-w-[15rem] truncate font-medium", c.priority === "KRITIS" && "text-red-600")} title={c.name}>{c.name}</span>, className: "max-w-[15rem]" },
@@ -135,9 +157,14 @@ export function CustomersRevenueView({ data }: { data: CustomersRevenue }) {
             pageSize={25}
             onRowClick={openDetail}
             toolbar={
-              <Button size="sm" variant={dormantOnly ? "default" : "outline"} onClick={() => setDormantOnly((v) => !v)}>
-                <MoonStar className="size-3.5" /> Dormant &gt;{data.dormant_days}h ({data.summary.dormant})
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button size="sm" variant="outline" onClick={exportCsv}>
+                  <FileDown className="size-3.5" /> Export Excel
+                </Button>
+                <Button size="sm" variant={dormantOnly ? "default" : "outline"} onClick={() => setDormantOnly((v) => !v)}>
+                  <MoonStar className="size-3.5" /> Dormant &gt;{data.dormant_days}h ({data.summary.dormant})
+                </Button>
+              </div>
             }
           />
         </CardContent>
