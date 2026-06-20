@@ -34,6 +34,7 @@ import {
   Users,
   KeyRound,
   MessagesSquare,
+  Gauge,
   type LucideIcon,
 } from "lucide-react";
 
@@ -70,7 +71,10 @@ interface NavGroup {
 const NAV: NavGroup[] = [
   {
     label: "Overview",
-    items: [{ title: "Sales Overview", url: "/overview", icon: LayoutGrid, badge: "NEW" }],
+    items: [
+      { title: "Sales Overview", url: "/overview", icon: LayoutGrid, badge: "NEW" },
+      { title: "WatchPoint HoD", url: "/watchpoint", icon: Gauge, badge: "NEW" },
+    ],
   },
   {
     label: "HR",
