@@ -1,0 +1,54 @@
+{
+  "schemaVersion": "1.0.0",
+  "lastUpdate": "2026-06-20T11:12:15Z",
+  "sprint": {
+    "current": "B1!",
+    "weekNumber": "W25",
+    "weekDates": "2026-06-22 to 2026-06-28",
+    "phase": "Crawl → Walk transition (production live + fitur baru)"
+  },
+  "topLeverage": [
+    {
+      "priority": 1,
+      "leverage": "F76 WatchPoint HoD Dashboard implementation",
+      "deadline": "2026-06-27",
+      "pic": "Husni → AI Platform Engineer",
+      "blockedBy": "Drive folder Presentasi HoD WRG access grant"
+    },
+    {
+      "priority": 2,
+      "leverage": "F85 Senin Morning Brief Auto-Generator (replicate Briefing_PraMeeting format)",
+      "deadline": "2026-06-27",
+      "pic": "Husni",
+      "blockedBy": null
+    },
+    {
+      "priority": 3,
+      "leverage": "F110 Pre-Meeting Briefing Auto-Generator (companion F85)",
+      "deadline": "2026-06-30",
+      "pic": "Husni",
+      "blockedBy": null
+    }
+  ],
+  "decisionsPending": {
+    "count": 24,
+    "topUrgent": [
+      "ADR-033 Framework BSC-OKR-KPI-PDCA-RACI sign-off",
+      "ADR-034 RACI Struktur Organisasi canonical sign-off",
+      "F76 WatchPoint threshold per perspective standard atau per-HoD",
+      "F106 OKR cadence quarterly atau biannual",
+      "Dashboard HOD baru spec (interview pending)"
+    ],
+    "klarifikasiFile": "00-Direktur-Sync-2026-06-16/Klarifikasi-Direktur-WRG-OS.md"
+  },
+  "watchPointStatus": {
+    "rocky": {"hod": "Sales East", "lastWeekStatus": "MERAH", "trend": "improving"},
+    "yogi": {"hod": "Sales West", "lastWeekStatus": "MERAH", "trend": "stable"},
+    "pakMuhid": {"hod": "Aftersales", "lastWeekStatus": "SIAP", "trend": "stable"},
+    "ika": {"hod": "Finance & SC", "lastWeekStatus": "SIAP", "trend": "stable", "concern": "Defisit Rp 4.62M W23"},
+    "mufid": {"hod": "Business IVD", "lastWeekStatus": "PERLU KLARIFIKASI", "trend": "stable", "concern": "CLIA 0 site aktif 2 minggu berturut"},
+    "arman": {"hod": "Business Medical", "lastWeekStatus": "PERLU KLARIFIKASI", "trend": "stable", "concern": "0/3 survei co-location CLIA"},
+    "fafa": {"hod": "Accounting & Tax", "lastWeekStatus": "PERLU KLARIFIKASI", "trend": "improving", "concern": "OPEX 45.4% target ≤35%"},
+    "husni": {"hod": "BD & GA ⭐", "lastWeekStatus": "BREAKTHROUGH", "trend": "improving", "achievement": "Data Spine MVP HIJAU/GO Monday-ready"}
+  }
+}

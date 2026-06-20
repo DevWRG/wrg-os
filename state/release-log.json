@@ -1,0 +1,30 @@
+{
+  "schemaVersion": "1.0.0",
+  "lastUpdate": "2026-06-20T11:12:15Z",
+  "totalReleases": 65,
+  "latest": "v1.54.3",
+  "releases": [
+    {"tag": "v1.54.3", "date": "2026-06-20", "pr": [332], "summary": "Watchdog auto-restart terverifikasi (tes stop gateway nyata)"},
+    {"tag": "v1.54.2", "date": "2026-06-20", "pr": [331], "summary": "Gateway Watchdog + Capture-Gap Recovery Runbook"},
+    {"tag": "v1.54.1", "date": "2026-06-19", "pr": [329, 330], "summary": "Export Excel Customers semua (bukan cuma dormant)"},
+    {"tag": "v1.54.0", "date": "2026-06-19", "pr": [327, 328], "summary": "Export Excel Customers YTD sejak Januari"},
+    {"tag": "v1.53.0", "date": "2026-06-19", "pr": [325, 326], "summary": "Tombol Export Excel di revenue monitor"},
+    {"tag": "v1.52.4", "date": "2026-06-18", "pr": [323, 324], "summary": "Sales Performance tampil semua baris (buang LIMIT 25)"},
+    {"tag": "v1.52.3", "date": "2026-06-18", "pr": [320, 321, 322], "summary": "Sales per-Cabang via salesman → master_user.cabang"},
+    {"tag": "v1.52.2", "date": "2026-06-18", "pr": [318, 319], "summary": "wa_message.message_type widen to text (migrasi 038)"},
+    {"tag": "v1.52.1", "date": "2026-06-18", "pr": [316, 317], "summary": "WA leave approval *bold*-tolerant"},
+    {"tag": "v1.52.0", "date": "2026-06-18", "pr": [314, 315], "summary": "Sync nama customer master Accurate"},
+    {"tag": "v1.49.2", "date": "2026-06-18", "pr": [300, 301], "summary": "Photo Cooldown 90-sec per-AM (anti-spam)"},
+    {"tag": "v1.43.0", "date": "2026-06-17", "summary": "accurate-sync weekday 6× auto-refresh Orders+Shipments"},
+    {"tag": "v1.42.0", "date": "2026-06-17", "summary": "Accurate Operations menu LIVE + Cloudflare Tunnel LIVE"},
+    {"tag": "v1.34.2", "date": "2026-06-16", "summary": "wabridge masuk ecosystem + photo-followup debounce"},
+    {"tag": "v1.34.1", "date": "2026-06-15", "pr": [234, 235], "summary": "Warning AM route ke The ALLIANCE"},
+    {"tag": "v1.34.0", "date": "2026-06-15", "pr": [232, 233], "summary": "sender_alias shared-HP (migrasi 032)"},
+    {"tag": "v1.33.2", "date": "2026-06-15", "pr": [230, 231], "summary": "Parser U+200E + bridge UTC-vs-WIB dir"},
+    {"tag": "v1.33.1", "date": "2026-06-15", "pr": [228, 229], "summary": "Double-reply race atomic claim fix"}
+  ],
+  "_meta": {
+    "fullList": "https://github.com/DevWRG/wrg-os/releases",
+    "filterOpenPRs": "https://github.com/DevWRG/wrg-os/pulls?state=open"
+  }
+}
