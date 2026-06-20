@@ -25,8 +25,16 @@ for a in "$@"; do case "$a" in
 esac; done
 
 # ── resolve DATABASE_URL ──
+# Migrasi butuh role OWNER (DDL). App DATABASE_URL prod = wrg_app (DML-only, least-priv)
+# → JANGAN dipakai utk migrasi. Utk --prod, konek sbg owner via socket (peer) ke db
+# yang sama. Override eksplisit: MIGRATE_DATABASE_URL.
 if [ -n "${DATABASE_URL:-}" ]; then URL="$DATABASE_URL"
-elif [ "$USE_PROD" = 1 ]; then URL=$(grep -E '^DATABASE_URL=' .env.prod 2>/dev/null | cut -d= -f2- | tr -d '"')
+elif [ "$USE_PROD" = 1 ]; then
+  if [ -n "${MIGRATE_DATABASE_URL:-}" ]; then URL="$MIGRATE_DATABASE_URL"
+  else
+    DB=$(grep -E '^DATABASE_URL=' .env.prod 2>/dev/null | sed -E 's#.*/([^/?]+).*#\1#' || true)
+    URL="postgres:///${DB:-wrg_os_prod}"   # socket → peer (OS user owner, DDL-capable)
+  fi
 else URL=$(grep -E '^DATABASE_URL=' .env 2>/dev/null | cut -d= -f2- | tr -d '"'); fi
 [ -z "$URL" ] && { echo "ERROR: DATABASE_URL tak ketemu (set env, atau --prod, atau isi .env)."; exit 1; }
 # tampilkan target tanpa bocorin password
