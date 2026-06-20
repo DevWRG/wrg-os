@@ -31,8 +31,11 @@ Aksi (debounce 2× cek ≈ 4 menit):
 
 Catatan teknis:
 - macOS tidak punya `timeout`/`gtimeout` → skrip pakai `perl -e 'alarm shift; exec @ARGV'`.
-- Belum 100% terbukti `launchctl kickstart` jalan dari konteks cron (jalur no-op
-  sudah terverifikasi). Cek `gateway-watchdog.log` saat ada event restart nyata.
+- **Terverifikasi 2026-06-20** lewat tes stop gateway sungguhan: kill gateway →
+  watchdog deteksi `connected=0` → `launchctl kickstart` → `post-restart:
+  connected` (PID berubah), recovery ~22 dtk; alert ter-suppress via cooldown.
+  Akses `launchctl gui-domain` dari konteks **cron** juga OK (uid=501) →
+  auto-restart valid dijalankan cron.
 
 Manual cek:
 ```bash
