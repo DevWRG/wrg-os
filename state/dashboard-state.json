@@ -1,0 +1,80 @@
+{
+  "schemaVersion": "1.0.0",
+  "lastUpdate": "2026-06-20T11:12:15Z",
+  "production": {
+    "version": "v1.54.3",
+    "releasedAt": "2026-06-20T08:34:00Z",
+    "totalReleases": 65,
+    "releasesSinceGoLive": 20,
+    "goLiveDate": "2026-06-15"
+  },
+  "infrastructure": {
+    "stack": "Next.js 16 + Hono + FastAPI (3-tier)",
+    "deployment": "Native pm2 Mac (BUKAN Docker)",
+    "services": [
+      {"name": "wrg-prod-ai", "port": 8100, "status": "LIVE", "role": "FastAPI AI microservice"},
+      {"name": "wrg-prod-api", "port": 4100, "status": "LIVE", "role": "Hono backend + 18 scheduler"},
+      {"name": "wrg-prod-web", "port": 3100, "status": "LIVE", "role": "Next.js dashboard"},
+      {"name": "wrg-prod-wabridge", "port": 18080, "status": "LIVE", "role": "WhatsApp gateway"},
+      {"name": "wrg-prod-cftunnel", "port": null, "status": "LIVE", "role": "Cloudflare Tunnel"}
+    ],
+    "schedulerJobs": 18,
+    "cutoverMarkers": 22,
+    "cutoverStatus": "TUNTAS"
+  },
+  "access": {
+    "internal": "https://mac-mini-development.tail88405f.ts.net/",
+    "public": "https://os.wahanalifeline.co.id",
+    "publicSince": "2026-06-17",
+    "githubRepo": "https://github.com/DevWRG/wrg-os"
+  },
+  "catalog": {
+    "totalFeatures": 149,
+    "range": "F1-F117",
+    "byStatus": {
+      "BUILT": 23,
+      "PROD-LIVE-WRGCRM": 8,
+      "UPGRADE-IN-WRGCRM": 5,
+      "DRAFT-SB1": 12,
+      "DRAFT-SB2": 14,
+      "DRAFT-SB3": 18,
+      "DRAFT-FRAMEWORK": 5,
+      "DRAFT-WP": 3,
+      "DRAFT-KMP": 7,
+      "DRAFT-W24": 2,
+      "WIP-WARP": 0
+    },
+    "topPriority": ["F76 WatchPoint", "F77 Churn EW", "F85 Senin Brief", "F110 Pre-Meeting", "F1 SPT v2"]
+  },
+  "framework": {
+    "name": "BSC-OKR-KPI-PDCA-RACI",
+    "approvedDate": "2026-06-16",
+    "newFeatures": ["F105 BSC Dashboard", "F106 OKR Cascade", "F107 PDCA Tracker", "F108 RACI Matrix", "F109 Post-Mortem"],
+    "sprintAllocation": "B3 (Sept 2026)",
+    "year1CostUSD": "1550-1860"
+  },
+  "wave2Highlights": {
+    "period": "2026-06-17 to 2026-06-20",
+    "deliveries": [
+      {"date": "2026-06-17", "version": "v1.42.0", "feature": "Accurate Operations menu LIVE (Sales Overview + Customers + Performance)"},
+      {"date": "2026-06-17", "version": "v1.42.0", "feature": "Cloudflare Tunnel LIVE (os.wahanalifeline.co.id)"},
+      {"date": "2026-06-18", "version": "v1.49.2", "feature": "Photo Cooldown 90-sec per-AM (anti-spam)"},
+      {"date": "2026-06-18", "version": "v1.52.1", "feature": "Detect Leave 2-jalur (WA bold-tolerant + Web)"},
+      {"date": "2026-06-18", "version": "v1.52.2", "feature": "wa_message.message_type widen (migrasi 038)"},
+      {"date": "2026-06-19", "version": "v1.54.1", "feature": "Customers Export Excel YTD all customers"},
+      {"date": "2026-06-20", "version": "v1.54.3", "feature": "Gateway Watchdog terverifikasi (PR #331/#332)"}
+    ]
+  },
+  "metaDirektur": {
+    "directorName": "Dr. Gilang Satrya Pratama, MBA, CIB",
+    "coBuilder": "Husni Mubarrak (HoD BD & GA)",
+    "directorWhatsApp": "+6285733048855",
+    "ownerEmail": "development@wahanalifeline.co.id"
+  },
+  "_meta": {
+    "source": "GitHub: DevWRG/wrg-os/state/dashboard-state.json",
+    "updatedBy": ["github-actions-on-release", "warp-cron-daily", "husni-manual-sync"],
+    "readBy": ["Sprint-Dashboard.html browser", "Cowork agent session bootstrap"],
+    "auditTrail": "git log state/ — siapa update apa kapan"
+  }
+}
