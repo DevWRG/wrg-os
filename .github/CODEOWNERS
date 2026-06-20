@@ -1,0 +1,26 @@
+# CODEOWNERS — path sensitif WAJIB di-review owner (Husni) sebelum merge ke main.
+# Lindungi prod dari PR tim outsource: walau punya write-access, perubahan ke
+# DB/migrasi/deploy/secret/infra TIDAK bisa di-merge tanpa approval @gspmna.
+#
+# Syarat aktif: branch protection main → "Require review from Code Owners" ON.
+
+# Migrasi & schema DB
+/infra/                          @gspmna
+/scripts/db/                     @gspmna
+/scripts/migrate/                @gspmna
+
+# Ops, deploy, scheduler, konfigurasi proses
+/scripts/ops/                    @gspmna
+/ecosystem.config.cjs            @gspmna
+/docker-compose.yml              @gspmna
+/docker-compose.prod.yml         @gspmna
+
+# CI/CD & repo policy
+/.github/                        @gspmna
+
+# Template env & dokumen ops/keamanan (jangan bocor pola secret)
+/.env.example                    @gspmna
+/.env.prod.example               @gspmna
+/docs/MIGRATIONS.md              @gspmna
+/docs/SECURITY-DEV-ACCESS.md     @gspmna
+/docs/runbook-gateway-recovery.md @gspmna
