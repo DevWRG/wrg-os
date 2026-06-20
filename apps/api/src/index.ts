@@ -1,3 +1,4 @@
+// auto-deploy build-path smoke test (2026-06-20) — comment-only, no behavior change
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { homedir } from "node:os";
