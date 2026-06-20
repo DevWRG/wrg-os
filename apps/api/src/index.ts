@@ -57,6 +57,7 @@ import { getProductIntelligence } from "./repo/product.js";
 import { listAnnotations } from "./repo/sentiment.js";
 import { getNetworkInput, computeNetwork } from "./repo/network.js";
 import { listBriefings } from "./repo/executive.js";
+import { getWatchPointBoard } from "./repo/watchpoint.js";
 import { listCoachingNotes } from "./repo/coaching.js";
 import { getLatestCoachingNotes, computePeopleAnalytics } from "./repo/people.js";
 import { createVisit, getVisit, listVisits, visitSummary } from "./repo/visit.js";
@@ -1581,6 +1582,9 @@ app.get("/dashboard/overview", async (c) => {
   const { from, to } = salesRange(c.req.query("from"), c.req.query("to"));
   return c.json(await salesOverview(from, to));
 });
+
+// ── F76 WatchPoint HoD (SCAFFOLD, SEED data — tidak butuh DB) ──
+app.get("/watchpoint", (c) => c.json(getWatchPointBoard()));
 
 // ── Accurate master mirror (port legacy accurate_customer/item/branch) ──
 async function accBody<T>(c: Context): Promise<T[] | null> {
