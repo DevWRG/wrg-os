@@ -57,7 +57,7 @@ import { getProductIntelligence } from "./repo/product.js";
 import { listAnnotations } from "./repo/sentiment.js";
 import { getNetworkInput, computeNetwork } from "./repo/network.js";
 import { listBriefings } from "./repo/executive.js";
-import { getWatchPointBoard } from "./repo/watchpoint.js";
+import { getWatchBoard } from "./repo/watchpoint.js";
 import { listCoachingNotes } from "./repo/coaching.js";
 import { getLatestCoachingNotes, computePeopleAnalytics } from "./repo/people.js";
 import { createVisit, getVisit, listVisits, visitSummary } from "./repo/visit.js";
@@ -1583,8 +1583,8 @@ app.get("/dashboard/overview", async (c) => {
   return c.json(await salesOverview(from, to));
 });
 
-// ── F76 WatchPoint HoD (SCAFFOLD, SEED data — tidak butuh DB) ──
-app.get("/watchpoint", (c) => c.json(getWatchPointBoard()));
+// ── F76 WatchPoint HoD (metric-based, DB-backed + fallback manual) ──
+app.get("/watchpoint", async (c) => c.json(await getWatchBoard()));
 
 // ── Accurate master mirror (port legacy accurate_customer/item/branch) ──
 async function accBody<T>(c: Context): Promise<T[] | null> {
