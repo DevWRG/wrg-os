@@ -7,10 +7,10 @@
 //   🔴 RED    : attainment < 50%
 // Metric "lower is better" (AR overdue, churn, lead time) di-invert.
 //
-// Sumber aktual — TIDAK ADA angka hardcoded:
-//   - source 'db'     → dihitung live dari Accurate mirror + sales_plan + ar_aging_mv
-//   - source 'manual' → diambil dari tabel `watchpoint_metric` (diisi HoD). Bila
-//     belum ada barisnya → actual NULL → status NA (jujur, bukan dummy).
+// Sumber — nol angka/ konfigurasi hardcoded:
+//   - computed live dari DB: Accurate mirror + sales_plan + ar_aging_mv
+//   - mapping HoD→cabang: tabel `hod_territory` (import dari AREA PER HOD.xlsx)
+//   - metric manual: tabel `watchpoint_metric` (diisi HoD). Kosong → status NA.
 
 import { db, isDbEnabled } from "../db.js";
 
@@ -20,12 +20,12 @@ export type WatchTrend = "improving" | "stable" | "declining";
 export interface WatchMetric {
   key: string;
   label: string;
-  target: number | null; // null = kualitatif (tanpa target numerik)
+  target: number | null;
   actual: number | null;
-  unit: string; // "Rp" | "%" | "kunjungan" | "customer" | "hari" | "site" | ""
+  unit: string;
   direction: "higher" | "lower";
   source: "db" | "manual";
-  pct: number | null; // attainment %
+  pct: number | null;
   status: WatchStatus;
   trend: WatchTrend;
   note?: string;
@@ -35,7 +35,7 @@ export interface HodWatch {
   key: string;
   name: string;
   role: string;
-  status: WatchStatus; // agregat: worst-of metric
+  status: WatchStatus;
   metrics: WatchMetric[];
 }
 
@@ -55,7 +55,7 @@ export interface WatchBoard {
 function attainment(target: number | null, actual: number | null, dir: "higher" | "lower"): number | null {
   if (target === null || actual === null) return null;
   if (dir === "lower") {
-    if (target === 0) return actual <= 0 ? 100 : 0; // mis. "0 churn"
+    if (target === 0) return actual <= 0 ? 100 : 0;
     if (actual <= 0) return 100;
     return Math.min((target / actual) * 100, 999);
   }
@@ -77,10 +77,11 @@ function worst(metrics: WatchMetric[]): WatchStatus {
   return "NA";
 }
 
-// ── DB derivations (Accurate mirror + AR + plan) ──────────────────
+// ── DB derivations (Accurate mirror + AR + plan). cabang dari hod_territory. ──
 type Sql = ReturnType<typeof db>;
 
 async function revenueThisMonth(sql: Sql, cabang: string[]): Promise<number> {
+  if (!cabang.length) return 0;
   const rows = await sql<{ v: number }[]>`
     SELECT COALESCE(sum(ai.total),0)::float8 AS v
     FROM accurate_invoice ai
@@ -92,12 +93,19 @@ async function revenueThisMonth(sql: Sql, cabang: string[]): Promise<number> {
 }
 
 async function amCount(sql: Sql, cabang: string[]): Promise<number> {
+  if (!cabang.length) return 0;
   const rows = await sql<{ n: number }[]>`
     SELECT count(DISTINCT acs.id)::int AS n
     FROM accurate_salesman acs
     LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
     WHERE mu.cabang = ANY(${cabang})`;
   return Number(rows[0]?.n ?? 0);
+}
+
+async function productivity(sql: Sql, cabang: string[]): Promise<number> {
+  const r = await revenueThisMonth(sql, cabang);
+  const n = await amCount(sql, cabang);
+  return n ? r / n : 0;
 }
 
 async function arOver90(sql: Sql): Promise<number> {
@@ -116,6 +124,7 @@ async function noOrderOver(sql: Sql, days: number): Promise<number> {
 }
 
 async function churnRutin(sql: Sql, cabang: string[]): Promise<number> {
+  if (!cabang.length) return 0;
   const rows = await sql<{ n: number }[]>`
     SELECT count(*)::int AS n FROM (
       SELECT ai.customer_id
@@ -130,6 +139,7 @@ async function churnRutin(sql: Sql, cabang: string[]): Promise<number> {
 }
 
 async function visitsThisMonth(sql: Sql, cabang: string[]): Promise<number> {
+  if (!cabang.length) return 0;
   const rows = await sql<{ n: number }[]>`
     SELECT count(*)::int AS n
     FROM sales_plan sp
@@ -139,52 +149,41 @@ async function visitsThisMonth(sql: Sql, cabang: string[]): Promise<number> {
   return Number(rows[0]?.n ?? 0);
 }
 
-// ── Definisi metric per HoD (TANPA nilai aktual hardcoded) ────────
+// ── Definisi metric per HoD (tanpa nilai/konfig cabang hardcoded) ──
 interface MetricDef {
   key: string;
   label: string;
-  target: number | null; // null = kualitatif (aktual diisi via status_override)
+  target: number | null;
   unit: string;
   direction: "higher" | "lower";
   trend: WatchTrend;
-  compute?: (sql: Sql) => Promise<number>; // ada = source 'db'; tidak = 'manual'
+  // compute ada = source 'db' (terima cabang HoD dari hod_territory)
+  compute?: (sql: Sql, cabang: string[]) => Promise<number>;
 }
 
 interface HodDef {
   key: string;
   name: string;
   role: string;
-  cabang: string[]; // demo mapping (ganti dgn AREA PER HOD.xlsx)
   metrics: MetricDef[];
 }
 
 const BIO = 1_000_000_000;
 const JT = 1_000_000;
 
+const SALES_METRICS = (): MetricDef[] => [
+  { key: "revenue", label: "Revenue/bln", target: 2.5 * BIO, unit: "Rp", direction: "higher", trend: "stable", compute: (s, c) => revenueThisMonth(s, c) },
+  { key: "prod", label: "Produktivitas/AM", target: 500 * JT, unit: "Rp", direction: "higher", trend: "stable", compute: (s, c) => productivity(s, c) },
+  { key: "visits", label: "Kunjungan/bln", target: 48, unit: "kunjungan", direction: "higher", trend: "stable", compute: (s, c) => visitsThisMonth(s, c) },
+  { key: "newacct", label: "Akun baru/bln", target: 2, unit: "akun", direction: "higher", trend: "stable" },
+  { key: "churn", label: "Churn RUTIN", target: 0, unit: "customer", direction: "lower", trend: "stable", compute: (s, c) => churnRutin(s, c) },
+];
+
 const HOD_DEFS: HodDef[] = [
+  { key: "rocky", name: "Rocky", role: "Sales East", metrics: SALES_METRICS() },
+  { key: "yogi", name: "Yogi", role: "Sales West", metrics: SALES_METRICS() },
   {
-    key: "rocky", name: "Rocky", role: "Sales East", cabang: ["Surabaya", "Medan"],
-    metrics: [
-      { key: "revenue", label: "Revenue/bln", target: 2.5 * BIO, unit: "Rp", direction: "higher", trend: "improving", compute: (s) => revenueThisMonth(s, ["Surabaya", "Medan"]) },
-      { key: "prod", label: "Produktivitas/AM", target: 500 * JT, unit: "Rp", direction: "higher", trend: "stable", compute: async (s) => { const r = await revenueThisMonth(s, ["Surabaya", "Medan"]); const n = await amCount(s, ["Surabaya", "Medan"]); return n ? r / n : 0; } },
-      { key: "visits", label: "Kunjungan/bln", target: 48, unit: "kunjungan", direction: "higher", trend: "stable", compute: (s) => visitsThisMonth(s, ["Surabaya", "Medan"]) },
-      { key: "newacct", label: "Akun baru/bln", target: 2, unit: "akun", direction: "higher", trend: "stable" },
-      { key: "churn", label: "Churn RUTIN", target: 0, unit: "customer", direction: "lower", trend: "improving", compute: (s) => churnRutin(s, ["Surabaya", "Medan"]) },
-    ],
-  },
-  {
-    key: "yogi", name: "Yogi", role: "Sales West", cabang: ["Bandung", "Jakarta"],
-    metrics: [
-      { key: "revenue", label: "Revenue/bln", target: 2.5 * BIO, unit: "Rp", direction: "higher", trend: "stable", compute: (s) => revenueThisMonth(s, ["Bandung", "Jakarta"]) },
-      { key: "prod", label: "Produktivitas/AM", target: 500 * JT, unit: "Rp", direction: "higher", trend: "stable", compute: async (s) => { const r = await revenueThisMonth(s, ["Bandung", "Jakarta"]); const n = await amCount(s, ["Bandung", "Jakarta"]); return n ? r / n : 0; } },
-      { key: "visits", label: "Kunjungan/bln", target: 48, unit: "kunjungan", direction: "higher", trend: "stable", compute: (s) => visitsThisMonth(s, ["Bandung", "Jakarta"]) },
-      { key: "newacct", label: "Akun baru/bln", target: 2, unit: "akun", direction: "higher", trend: "declining" },
-      { key: "churn", label: "Churn RUTIN", target: 0, unit: "customer", direction: "lower", trend: "stable", compute: (s) => churnRutin(s, ["Bandung", "Jakarta"]) },
-    ],
-  },
-  {
-    key: "mufid", name: "Mufid", role: "Business IVD", cabang: [],
-    metrics: [
+    key: "mufid", name: "Mufid", role: "Business IVD", metrics: [
       { key: "clia", label: "Site CLIA ≥800 tes/bln", target: 3, unit: "site", direction: "higher", trend: "stable" },
       { key: "fia", label: "FIA customer", target: 20, unit: "customer", direction: "higher", trend: "stable" },
       { key: "jv", label: "JV principal baru", target: 1, unit: "JV", direction: "higher", trend: "stable" },
@@ -193,8 +192,7 @@ const HOD_DEFS: HodDef[] = [
     ],
   },
   {
-    key: "arman", name: "Arman", role: "Business Medical & HD", cabang: [],
-    metrics: [
+    key: "arman", name: "Arman", role: "Business Medical & HD", metrics: [
       { key: "hd", label: "Site HD maju 1 milestone", target: 1, unit: "site", direction: "higher", trend: "stable" },
       { key: "okupansi", label: "Okupansi tindakan/mesin/bln", target: 48, unit: "tindakan", direction: "higher", trend: "stable" },
       { key: "coloc", label: "Co-location CLIA (Permenkes 3/2023)", target: 3, unit: "site", direction: "higher", trend: "stable" },
@@ -203,8 +201,7 @@ const HOD_DEFS: HodDef[] = [
     ],
   },
   {
-    key: "pakMuhid", name: "Pak Muhid", role: "Aftersales", cabang: [],
-    metrics: [
+    key: "pakMuhid", name: "Pak Muhid", role: "Aftersales", metrics: [
       { key: "uptime", label: "Uptime/analyzer", target: 95, unit: "%", direction: "higher", trend: "stable" },
       { key: "rar", label: "RaR/cabang", target: 202 * JT, unit: "Rp", direction: "higher", trend: "stable" },
       { key: "install", label: "Lead time install", target: 7, unit: "hari", direction: "lower", trend: "stable" },
@@ -212,8 +209,7 @@ const HOD_DEFS: HodDef[] = [
     ],
   },
   {
-    key: "ika", name: "Ika", role: "Finance & SC", cabang: [],
-    metrics: [
+    key: "ika", name: "Ika", role: "Finance & SC", metrics: [
       { key: "ar90", label: "AR overdue >90 hari", target: 500 * JT, unit: "Rp", direction: "lower", trend: "stable", compute: (s) => arOver90(s) },
       { key: "fillrate", label: "Fill rate", target: 95, unit: "%", direction: "higher", trend: "stable" },
       { key: "refi", label: "Milestone refinancing", target: 1, unit: "milestone", direction: "higher", trend: "stable" },
@@ -221,8 +217,7 @@ const HOD_DEFS: HodDef[] = [
     ],
   },
   {
-    key: "fafa", name: "Fafa", role: "Accounting & Tax", cabang: [],
-    metrics: [
+    key: "fafa", name: "Fafa", role: "Accounting & Tax", metrics: [
       { key: "close", label: "Close cycle", target: 10, unit: "hari", direction: "lower", trend: "stable" },
       { key: "opex", label: "OPEX ratio", target: 35, unit: "%", direction: "lower", trend: "stable" },
       { key: "revstream", label: "Revenue-by-stream report", target: null, unit: "", direction: "higher", trend: "stable" },
@@ -230,8 +225,7 @@ const HOD_DEFS: HodDef[] = [
     ],
   },
   {
-    key: "husni", name: "Husni", role: "BD & GA ⭐ KEYSTONE", cabang: [],
-    metrics: [
+    key: "husni", name: "Husni", role: "BD & GA ⭐ KEYSTONE", metrics: [
       { key: "spine", label: "Data Spine MVP LIVE", target: null, unit: "", direction: "higher", trend: "improving" },
       { key: "orch", label: "Orchestrating database", target: null, unit: "", direction: "higher", trend: "improving" },
       { key: "dash", label: "Dashboard LIVE", target: null, unit: "", direction: "higher", trend: "improving" },
@@ -248,11 +242,11 @@ const LEGEND: Record<WatchStatus, string> = {
 
 const PENDING: string[] = [
   "Metric manual (JV, CLIA, uptime, refinancing, dll) diisi via tabel watchpoint_metric — kosong → N/A",
-  "Mapping HoD→cabang pakai data dummy; ganti dgn AREA PER HOD.xlsx (62 AM-territory)",
+  "Mapping HoD→cabang dari tabel hod_territory (import AREA PER HOD.xlsx) — kosong → metric cabang = 0",
   "3 leverage AI-suggest per HoD (F85) menyusul",
 ];
 
-// Nilai manual dari DB: key `${hod_key}:${metric_key}`.
+// ── Loader manual & territory dari DB ─────────────────────────────
 interface ManualRow { actual: number | null; status_override: string | null; note: string | null }
 
 async function loadManual(sql: Sql): Promise<Map<string, ManualRow>> {
@@ -263,6 +257,17 @@ async function loadManual(sql: Sql): Promise<Map<string, ManualRow>> {
   return m;
 }
 
+async function loadTerritory(sql: Sql): Promise<Map<string, string[]>> {
+  const rows = await sql<{ hod_key: string; cabang: string }[]>`SELECT hod_key, cabang FROM hod_territory`;
+  const m = new Map<string, string[]>();
+  for (const r of rows) {
+    const a = m.get(r.hod_key) ?? [];
+    a.push(r.cabang);
+    m.set(r.hod_key, a);
+  }
+  return m;
+}
+
 const VALID_STATUS = new Set<WatchStatus>(["GREEN", "YELLOW", "RED", "NA"]);
 
 async function buildMetric(
@@ -270,6 +275,7 @@ async function buildMetric(
   hodKey: string,
   d: MetricDef,
   manual: Map<string, ManualRow>,
+  cabang: string[],
 ): Promise<WatchMetric> {
   let actual: number | null;
   let source: "db" | "manual";
@@ -279,7 +285,7 @@ async function buildMetric(
   if (d.compute && sql) {
     source = "db";
     try {
-      actual = await d.compute(sql);
+      actual = await d.compute(sql, cabang);
     } catch {
       actual = null;
       source = "manual";
@@ -302,13 +308,15 @@ async function buildMetric(
   };
 }
 
-/** Papan WatchPoint per HoD — computed metric dari DB, manual dari watchpoint_metric. */
+/** Papan WatchPoint per HoD — computed dari DB, cabang dari hod_territory, manual dari watchpoint_metric. */
 export async function getWatchBoard(): Promise<WatchBoard> {
   const sql = isDbEnabled() ? db() : null;
   const manual = sql ? await loadManual(sql) : new Map<string, ManualRow>();
+  const territory = sql ? await loadTerritory(sql) : new Map<string, string[]>();
   const hods: HodWatch[] = [];
   for (const h of HOD_DEFS) {
-    const metrics = await Promise.all(h.metrics.map((m) => buildMetric(sql, h.key, m, manual)));
+    const cabang = territory.get(h.key) ?? [];
+    const metrics = await Promise.all(h.metrics.map((m) => buildMetric(sql, h.key, m, manual, cabang)));
     hods.push({ key: h.key, name: h.name, role: h.role, status: worst(metrics), metrics });
   }
   return {
@@ -316,10 +324,6 @@ export async function getWatchBoard(): Promise<WatchBoard> {
     generatedFor: "Sprint B1! / W25 (2026-06-22 — 2026-06-28)",
     asOf: new Date().toISOString(),
     hods,
-    meta: {
-      gate: "🟢 ≥ target · 🟡 50–99% · 🔴 < 50%",
-      legend: LEGEND,
-      pending: PENDING,
-    },
+    meta: { gate: "🟢 ≥ target · 🟡 50–99% · 🔴 < 50%", legend: LEGEND, pending: PENDING },
   };
 }
