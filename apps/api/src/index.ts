@@ -58,6 +58,7 @@ import { listAnnotations } from "./repo/sentiment.js";
 import { getNetworkInput, computeNetwork } from "./repo/network.js";
 import { listBriefings } from "./repo/executive.js";
 import { getWatchBoard } from "./repo/watchpoint.js";
+import { listTerritory, createTerritory, updateTerritory, deleteTerritory } from "./repo/territory.js";
 import { listCoachingNotes } from "./repo/coaching.js";
 import { getLatestCoachingNotes, computePeopleAnalytics } from "./repo/people.js";
 import { createVisit, getVisit, listVisits, visitSummary } from "./repo/visit.js";
@@ -1585,6 +1586,44 @@ app.get("/dashboard/overview", async (c) => {
 
 // ── F76 WatchPoint HoD (metric-based, DB-backed + fallback manual) ──
 app.get("/watchpoint", async (c) => c.json(await getWatchBoard()));
+
+// ── F76 WatchPoint — CRUD mapping HoD→cabang (hod_territory) ──
+app.get("/watchpoint/territory", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listTerritory();
+  return c.json({ count: rows.length, rows });
+});
+
+app.post("/watchpoint/territory", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { hod_key?: string; cabang?: string };
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  const hod = (body.hod_key ?? "").trim();
+  const cabang = (body.cabang ?? "").trim();
+  if (!hod || !cabang) return c.json({ error: "hod_key + cabang wajib" }, 400);
+  return c.json(await createTerritory(hod, cabang), 201);
+});
+
+app.put("/watchpoint/territory/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { hod_key?: string; cabang?: string };
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  const hod = (body.hod_key ?? "").trim();
+  const cabang = (body.cabang ?? "").trim();
+  if (!hod || !cabang) return c.json({ error: "hod_key + cabang wajib" }, 400);
+  try {
+    const r = await updateTerritory(c.req.param("id"), hod, cabang);
+    return r ? c.json(r) : c.json({ error: "not found" }, 404);
+  } catch {
+    return c.json({ error: "kombinasi hod_key+cabang sudah ada" }, 409);
+  }
+});
+
+app.delete("/watchpoint/territory/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await deleteTerritory(c.req.param("id"));
+  return c.json(r, r.deleted ? 200 : 404);
+});
 
 // ── Accurate master mirror (port legacy accurate_customer/item/branch) ──
 async function accBody<T>(c: Context): Promise<T[] | null> {
