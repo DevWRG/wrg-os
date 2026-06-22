@@ -2,7 +2,10 @@
 // kanan = meta build monospace. Di-port dari template 2026 (_shell.scss) ke
 // utilitas Tailwind + token shadcn, dengan konten WRG (bukan Colorlib/4.1.5).
 
-const APP_VERSION = "v0.1.0"; // selaras dengan label versi di app-sidebar
+// Versi + channel di-resolve dari git saat build-time (lihat next.config.ts):
+// `main` → tag rilis terakhir + "production", `dev`/lainnya → git describe + "dev build".
+const APP_VERSION = process.env.NEXT_PUBLIC_APP_VERSION ?? "dev";
+const BUILD_CHANNEL = process.env.NEXT_PUBLIC_BUILD_CHANNEL ?? "dev build";
 
 export function Footer() {
   return (
@@ -21,7 +24,7 @@ export function Footer() {
       </div>
       <div className="text-muted-foreground/70 flex gap-5 font-mono text-[10.5px] tracking-wider uppercase">
         <span>{APP_VERSION}</span>
-        <span>dev build</span>
+        <span>{BUILD_CHANNEL}</span>
       </div>
     </footer>
   );
