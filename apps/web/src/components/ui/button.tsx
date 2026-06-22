@@ -43,12 +43,18 @@ function Button({
   className,
   variant = "default",
   size = "default",
+  nativeButton,
   ...props
 }: ButtonPrimitive.Props & VariantProps<typeof buttonVariants>) {
+  // Kalau pakai `render` (mis. <Link>/<a>), elemen yang dirender BUKAN <button>
+  // native → default nativeButton=false biar semantik/a11y benar & tak memicu
+  // warning Base UI. Override eksplisit via prop `nativeButton` tetap menang.
+  const renderedAsButton = props.render === undefined
   return (
     <ButtonPrimitive
       data-slot="button"
       className={cn(buttonVariants({ variant, size, className }))}
+      nativeButton={nativeButton ?? renderedAsButton}
       {...props}
     />
   )
