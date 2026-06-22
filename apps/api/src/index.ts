@@ -57,7 +57,7 @@ import { getProductIntelligence } from "./repo/product.js";
 import { listAnnotations } from "./repo/sentiment.js";
 import { getNetworkInput, computeNetwork } from "./repo/network.js";
 import { listBriefings } from "./repo/executive.js";
-import { getWatchBoard } from "./repo/watchpoint.js";
+import { getWatchBoard, formatHodWatchWa } from "./repo/watchpoint.js";
 import { listTerritory, createTerritory, updateTerritory, deleteTerritory } from "./repo/territory.js";
 import { listCoachingNotes } from "./repo/coaching.js";
 import { getLatestCoachingNotes, computePeopleAnalytics } from "./repo/people.js";
@@ -1586,6 +1586,26 @@ app.get("/dashboard/overview", async (c) => {
 
 // ── F76 WatchPoint HoD (metric-based, DB-backed + fallback manual) ──
 app.get("/watchpoint", async (c) => c.json(await getWatchBoard()));
+
+// Kirim ringkasan WatchPoint 1 HoD via WA. Target diisi pemanggil (body.to).
+// Pengiriman patuh WA_DRY_RUN (default dry-run → aman, tak kirim live).
+app.post("/watchpoint/:hodKey/send-wa", async (c) => {
+  const hodKey = c.req.param("hodKey");
+  let body: { to?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const to = (body.to ?? "").trim();
+  if (!to) return c.json({ error: "field 'to' (nomor/jid WA tujuan) wajib" }, 400);
+  const board = await getWatchBoard();
+  const hod = board.hods.find((h) => h.key === hodKey);
+  if (!hod) return c.json({ error: `HoD '${hodKey}' tidak ditemukan` }, 404);
+  const message = formatHodWatchWa(hod, board.asOf);
+  const result = await sendViaWaGateway(to, message);
+  return c.json({ ...result, hodKey, preview: message }, result.sent ? 200 : 502);
+});
 
 // ── F76 WatchPoint — CRUD mapping HoD→cabang (hod_territory) ──
 app.get("/watchpoint/territory", async (c) => {
