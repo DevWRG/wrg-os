@@ -60,6 +60,16 @@ const TREND: Record<WatchTrend, { icon: LucideIcon; tone: string }> = {
   declining: { icon: TrendingDown, tone: "text-destructive" },
 };
 
+// Metric milestone (target null) tak punya angka — nilainya = state dari status.
+const MILESTONE_VALUE: Record<WatchStatus, string> = {
+  GREEN: "Live", YELLOW: "WIP", RED: "Off", NA: "—",
+};
+
+// Kelas warna teks dari STATUS_TONE (buang bg, sisakan text-*).
+function statusText(status: WatchStatus): string {
+  return STATUS_TONE[status].split(" ").slice(1).join(" ");
+}
+
 // Format nilai metric sesuai unit.
 function fmt(v: number | null, unit: string): string {
   if (v === null) return "—";
@@ -82,16 +92,19 @@ function MetricRow({ m }: { m: WatchMetric }) {
         <SourceIcon className="text-muted-foreground/50 size-3 shrink-0" aria-label={m.source} />
       </div>
       <div className="flex items-center gap-2 text-xs tabular-nums">
-        <span className="font-medium">{fmt(m.actual, m.unit)}</span>
-        {m.target !== null ? (
-          <span className="text-muted-foreground">/ {fmt(m.target, m.unit)}</span>
-        ) : null}
-        {m.pct !== null ? (
-          <span className={cn("w-10 text-right", STATUS_TONE[m.status].split(" ").slice(1).join(" "))}>
-            {Math.round(m.pct)}%
-          </span>
+        {m.target === null ? (
+          // Milestone: tampilkan state (Live/WIP/Off) ganti angka actual/target.
+          <span className={cn("font-medium", statusText(m.status))}>{MILESTONE_VALUE[m.status]}</span>
         ) : (
-          <span className="w-10 text-right">—</span>
+          <>
+            <span className="font-medium">{fmt(m.actual, m.unit)}</span>
+            <span className="text-muted-foreground">/ {fmt(m.target, m.unit)}</span>
+            {m.pct !== null ? (
+              <span className={cn("w-10 text-right", statusText(m.status))}>{Math.round(m.pct)}%</span>
+            ) : (
+              <span className="w-10 text-right">—</span>
+            )}
+          </>
         )}
         <TrendIcon className={cn("size-3.5 shrink-0", t.tone)} />
       </div>
