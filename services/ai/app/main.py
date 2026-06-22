@@ -365,6 +365,8 @@ Also: ignore COMPANY-WIDE holiday announcements (libur nasional, Idul Adha, cuti
 
 The input gives "Pengirim" (sender display name) and "Pesan" (body). If the message is first-person ("saya tidak masuk"...) and no other name appears, the absent person IS the sender — use the sender name. If the body forwards/quotes someone or names a person ("pengajuan cuti mba Kolis"), use THAT person.
 
+ADDRESSEE vs ABSENTEE (important): a message often starts by ADDRESSING/notifying people — @mentions (e.g. "@Ika @Muthia") or "mbk X & mbk Y" / "pak/bu Z" greetings. Those addressed people are usually HR staff being NOTIFIED and are NOT the absent person. If the message addresses some people AND then states a DIFFERENT name is absent (e.g. "@Ika & @Muthia, Navisa hari ini izin tidak masuk karena sakit"), the absent employee is that OTHER name (Navisa) — NOT the addressees (Ika/Muthia). Pick the name attached to the absence phrase (tidak/tdk masuk, sakit, izin tidak masuk, cuti), and ignore @mentions and the names being greeted/notified. Tolerate typos (e.g. "todak"="tidak").
+
 Message date (for resolving "hari ini"/"besok"): {msgdate}
 
 Return STRICT JSON (no markdown):
