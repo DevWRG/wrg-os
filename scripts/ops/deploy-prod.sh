@@ -1,0 +1,125 @@
+#!/usr/bin/env bash
+# deploy-prod.sh — deploy sekali-jalan untuk WRG-OS produksi (native pm2 di Mac mini).
+#
+# Urutan aman: pull main → build api+web → migrasi DB (backup dulu) → restart pm2 → smoke test.
+# TIDAK menyentuh layanan Python legacy (8090–8092) maupun wa-bridge.
+#
+# Pemakaian (di server, dari root repo):
+#   bash scripts/ops/deploy-prod.sh                 # interaktif (konfirmasi sebelum migrasi & restart)
+#   bash scripts/ops/deploy-prod.sh --yes           # tanpa konfirmasi (non-interaktif)
+#   bash scripts/ops/deploy-prod.sh --skip-migrate  # lewati langkah migrasi DB
+#   bash scripts/ops/deploy-prod.sh --skip-build    # lewati build (cuma migrasi + restart)
+#   bash scripts/ops/deploy-prod.sh --no-pull       # jangan git pull (pakai working tree apa adanya)
+#   bash scripts/ops/deploy-prod.sh --dry-run       # tampilkan rencana + migrasi pending, tak eksekusi
+set -euo pipefail
+
+# ── flags ─────────────────────────────────────────────────────────
+YES=0; SKIP_MIGRATE=0; SKIP_BUILD=0; NO_PULL=0; DRY=0
+for a in "$@"; do case "$a" in
+  --yes|-y) YES=1 ;;
+  --skip-migrate) SKIP_MIGRATE=1 ;;
+  --skip-build) SKIP_BUILD=1 ;;
+  --no-pull) NO_PULL=1 ;;
+  --dry-run) DRY=1 ;;
+  -h|--help) sed -n '2,13p' "$0"; exit 0 ;;
+  *) echo "arg tak dikenal: $a (lihat --help)"; exit 2 ;;
+esac; done
+
+# ── lokasi: pindah ke root repo (script ada di scripts/ops/) ───────
+cd "$(dirname "$0")/../.."
+ROOT="$(pwd)"
+
+say(){ printf '\n\033[1;36m── %s\033[0m\n' "$*"; }
+ok(){ printf '  \033[32m✓\033[0m %s\n' "$*"; }
+warn(){ printf '  \033[33m! %s\033[0m\n' "$*"; }
+die(){ printf '\n\033[31m✗ %s\033[0m\n' "$*" >&2; exit 1; }
+confirm(){ # confirm "pesan" — auto-yes kalau --yes
+  [ "$YES" = 1 ] && return 0
+  read -r -p "  → $1 [y/N] " r </dev/tty || true
+  [[ "$r" =~ ^[Yy]$ ]] || die "dibatalkan user."
+}
+
+# ── prasyarat ─────────────────────────────────────────────────────
+say "Prasyarat"
+[ -f package.json ] && [ -f ecosystem.config.cjs ] || die "bukan root repo WRG-OS (package.json + ecosystem.config.cjs tak ada)."
+command -v git >/dev/null  || die "git tak ada."
+command -v pnpm >/dev/null || die "pnpm tak ada."
+command -v pm2 >/dev/null  || die "pm2 tak ada."
+[ -f .env.prod ] || die ".env.prod tak ada — deploy prod butuh ini."
+BR="$(git rev-parse --abbrev-ref HEAD)"
+[ "$BR" = "main" ] || { warn "branch saat ini '$BR' (bukan main)."; confirm "lanjut deploy dari '$BR'?"; }
+ok "repo: $ROOT (branch $BR)"
+
+# ── 0) pull main + tag, lalu re-exec versi terbaru script ──────────
+if [ "$NO_PULL" = 0 ] && [ "${_REEXEC:-0}" = 0 ]; then
+  say "Pull $BR + tags"
+  git pull --ff-only origin "$BR"
+  git fetch --tags --quiet || true
+  ok "now at $(git describe --tags --always)"
+  # jalankan ulang sekali dgn script yang barusan ke-pull (kalau script ini ikut berubah)
+  export _REEXEC=1; exec bash "$0" "$@"
+fi
+
+VER="$(git describe --tags --always 2>/dev/null || echo unknown)"
+say "Target deploy: $VER  (commit $(git rev-parse --short HEAD))"
+[ "$DRY" = 1 ] && warn "DRY-RUN: tak ada yg dieksekusi di bawah ini (selain dry-run migrasi)."
+
+# ── 1) install + build ────────────────────────────────────────────
+if [ "$SKIP_BUILD" = 0 ]; then
+  say "Install + build (api, web)"
+  if [ "$DRY" = 1 ]; then
+    warn "akan: pnpm install --frozen-lockfile && build @wrg/api + @wrg/web"
+  else
+    pnpm install --frozen-lockfile
+    pnpm --filter @wrg/api build
+    pnpm --filter @wrg/web build
+    ok "build api + web sukses"
+  fi
+else warn "build dilewati (--skip-build)"; fi
+
+# ── 2) migrasi DB (dry-run dulu → konfirmasi → apply --backup) ─────
+if [ "$SKIP_MIGRATE" = 0 ]; then
+  say "Migrasi DB (prod)"
+  echo "Pending:"
+  PEND="$(bash scripts/db/migrate.sh --prod --dry-run 2>&1 | sed -n 's/^  - //p' || true)"
+  if [ -z "$PEND" ]; then
+    ok "tidak ada migrasi pending — DB up-to-date."
+  else
+    printf '%s\n' "$PEND" | sed 's/^/    - /'
+    N="$(printf '%s\n' "$PEND" | grep -c . || true)"
+    [ "$N" -gt 1 ] && warn "ADA $N file pending. Kalau schema_migrations belum di-baseline, file lama ikut ke-apply (idempoten, tapi cek dulu). Baseline sekali: bash scripts/db/migrate.sh --prod --baseline"
+    if [ "$DRY" = 1 ]; then
+      warn "DRY-RUN: migrasi tidak di-apply."
+    else
+      confirm "apply $N migrasi di atas (pg_dump backup dulu)?"
+      bash scripts/db/migrate.sh --prod --backup
+      ok "migrasi ter-apply (+ backup di ~/DevWRG/ops/db-backups/)"
+    fi
+  fi
+else warn "migrasi dilewati (--skip-migrate)"; fi
+
+# ── 3) restart pm2 (bentuk ecosystem — reload .env.prod) ──────────
+say "Restart pm2 (wrg-prod-api, wrg-prod-web)"
+if [ "$DRY" = 1 ]; then
+  warn "akan: pm2 restart ecosystem.config.cjs --only wrg-prod-api,wrg-prod-web --update-env"
+else
+  pm2 restart ecosystem.config.cjs --only wrg-prod-api,wrg-prod-web --update-env
+  ok "pm2 di-restart"
+fi
+
+# ── 4) smoke test ─────────────────────────────────────────────────
+if [ "$DRY" = 0 ]; then
+  say "Smoke test"
+  sleep 3
+  WEB="$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 http://localhost:3100/ || echo 000)"
+  [ "$WEB" = 200 ] || [ "$WEB" = 307 ] || [ "$WEB" = 308 ] && ok "web :3100 → HTTP $WEB" || warn "web :3100 → HTTP $WEB (cek: pm2 logs wrg-prod-web)"
+  TOK="$(grep -E '^API_SERVICE_TOKEN=' .env.prod | cut -d= -f2- | tr -d '\"' || true)"
+  if [ -n "$TOK" ]; then
+    API="$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 -H "x-service-token: $TOK" http://localhost:4100/watchpoint || echo 000)"
+    [ "$API" = 200 ] && ok "api :4100/watchpoint → HTTP $API" || warn "api :4100/watchpoint → HTTP $API (cek: pm2 logs wrg-prod-api)"
+  else warn "API_SERVICE_TOKEN tak ketemu di .env.prod — skip smoke test api."; fi
+fi
+
+say "Selesai — deploy $VER"
+echo "  pm2 status   → cek proses"
+echo "  Dashboard    → kartu Husni harusnya 3 dot hijau + 'Live' (badge Hijau); footer → $VER · production"
