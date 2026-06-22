@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # deploy-prod.sh — deploy sekali-jalan untuk WRG-OS produksi (native pm2 di Mac mini).
 #
-# Urutan aman: pull main → build api+web → migrasi DB (backup dulu) → restart pm2 → smoke test.
+# Urutan aman: pull main(+tags) → resolve versi → build api+web → migrasi DB
+# (backup dulu) → restart pm2 → smoke test.
 # TIDAK menyentuh layanan Python legacy (8090–8092) maupun wa-bridge.
 #
 # Pemakaian (di server, dari root repo):
@@ -21,7 +22,7 @@ for a in "$@"; do case "$a" in
   --skip-build) SKIP_BUILD=1 ;;
   --no-pull) NO_PULL=1 ;;
   --dry-run) DRY=1 ;;
-  -h|--help) sed -n '2,13p' "$0"; exit 0 ;;
+  -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
   *) echo "arg tak dikenal: $a (lihat --help)"; exit 2 ;;
 esac; done
 
@@ -31,7 +32,7 @@ ROOT="$(pwd)"
 
 say(){ printf '\n\033[1;36m── %s\033[0m\n' "$*"; }
 ok(){ printf '  \033[32m✓\033[0m %s\n' "$*"; }
-warn(){ printf '  \033[33m! %s\033[0m\n' "$*"; }
+warn(){ printf '  \033[33m! %s\033[0m\n' "$*" >&2; }
 die(){ printf '\n\033[31m✗ %s\033[0m\n' "$*" >&2; exit 1; }
 confirm(){ # confirm "pesan" — auto-yes kalau --yes
   [ "$YES" = 1 ] && return 0
@@ -50,25 +51,55 @@ BR="$(git rev-parse --abbrev-ref HEAD)"
 [ "$BR" = "main" ] || { warn "branch saat ini '$BR' (bukan main)."; confirm "lanjut deploy dari '$BR'?"; }
 ok "repo: $ROOT (branch $BR)"
 
-# ── 0) pull main + tag, lalu re-exec versi terbaru script ──────────
+# ── 0) pull + SEMUA tag (force), lalu re-exec versi terbaru script ─
+# Tag rilis dibuat GitHub Actions (release.yml) di REMOTE, bukan di server. Tanpa
+# --force/--tags, `git describe` di server bisa jatuh ke tag lama → footer salah
+# (mis. v1.52.0-66-g… padahal rilisnya v1.58.2). Force-fetch menjamin tag sinkron.
 if [ "$NO_PULL" = 0 ] && [ "${_REEXEC:-0}" = 0 ]; then
-  say "Pull $BR + tags"
+  say "Pull $BR + tags (force)"
   git pull --ff-only origin "$BR"
-  git fetch --tags --quiet || true
-  ok "now at $(git describe --tags --always)"
+  git fetch --tags --force --prune --prune-tags origin 2>/dev/null || git fetch --tags --force origin || true
+  ok "now at $(git rev-parse --short HEAD)"
   # jalankan ulang sekali dgn script yang barusan ke-pull (kalau script ini ikut berubah)
   export _REEXEC=1; exec bash "$0" "$@"
 fi
+[ "$NO_PULL" = 1 ] && warn "git pull dilewati (--no-pull) — tag mungkin tak sinkron."
 
-VER="$(git describe --tags --always 2>/dev/null || echo unknown)"
-say "Target deploy: $VER  (commit $(git rev-parse --short HEAD))"
+# ── resolve versi footer (deterministik; tahan thd race tag CI) ────
+# release.yml cut tag ~beberapa detik SETELAH push ke main. Kalau HEAD belum
+# bertag (CI belum selesai), tunggu sebentar; baru fallback ke describe penuh.
+resolve_ver(){
+  local t i
+  t="$(git describe --tags --exact-match HEAD 2>/dev/null || true)"
+  if [ -z "$t" ] && [ "$BR" = "main" ] && [ "$NO_PULL" = 0 ]; then
+    warn "HEAD belum punya tag rilis — nunggu CI release.yml (maks ~30s)…"
+    for i in 1 2 3 4 5 6; do
+      sleep 5
+      git fetch --tags --force origin >/dev/null 2>&1 || true
+      t="$(git describe --tags --exact-match HEAD 2>/dev/null || true)"
+      [ -n "$t" ] && break
+    done
+  fi
+  [ -z "$t" ] && t="$(git describe --tags --always 2>/dev/null || echo unknown)"
+  printf '%s' "$t"
+}
+VER="$(resolve_ver)"
+CHANNEL="$([ "$BR" = "main" ] && echo production || echo "dev build")"
+say "Target deploy: $VER · $CHANNEL  (commit $(git rev-parse --short HEAD))"
+case "$VER" in
+  v[0-9]*-[0-9]*-g*) warn "versi bukan tag bersih ($VER) — tag rilis belum sinkron / CI belum cut. Footer akan tampil versi ini." ;;
+esac
 [ "$DRY" = 1 ] && warn "DRY-RUN: tak ada yg dieksekusi di bawah ini (selain dry-run migrasi)."
 
-# ── 1) install + build ────────────────────────────────────────────
+# ── 1) install + build (suntik versi/channel → footer deterministik) ─
+# Build baca NEXT_PUBLIC_APP_VERSION/_BUILD_CHANNEL (next.config.ts). Di-set di sini
+# biar footer tak bergantung pada `git describe` saat build (lebih tahan banting).
+export NEXT_PUBLIC_APP_VERSION="$VER"
+export NEXT_PUBLIC_BUILD_CHANNEL="$CHANNEL"
 if [ "$SKIP_BUILD" = 0 ]; then
-  say "Install + build (api, web)"
+  say "Install + build (api, web) — versi $VER"
   if [ "$DRY" = 1 ]; then
-    warn "akan: pnpm install --frozen-lockfile && build @wrg/api + @wrg/web"
+    warn "akan: pnpm install --frozen-lockfile && build @wrg/api + @wrg/web (NEXT_PUBLIC_APP_VERSION=$VER)"
   else
     pnpm install --frozen-lockfile
     pnpm --filter @wrg/api build
@@ -120,6 +151,6 @@ if [ "$DRY" = 0 ]; then
   else warn "API_SERVICE_TOKEN tak ketemu di .env.prod — skip smoke test api."; fi
 fi
 
-say "Selesai — deploy $VER"
+say "Selesai — deploy $VER · $CHANNEL"
 echo "  pm2 status   → cek proses"
-echo "  Dashboard    → kartu Husni harusnya 3 dot hijau + 'Live' (badge Hijau); footer → $VER · production"
+echo "  Dashboard    → kartu Husni 3 dot hijau + 'Live' (badge Hijau); footer → $VER · $CHANNEL"
