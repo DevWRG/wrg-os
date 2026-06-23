@@ -2,42 +2,10 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import {
-  LayoutDashboard,
-  LayoutGrid,
-  Building2,
-  Package,
-  Boxes,
-  ShoppingCart,
-  Truck,
-  Factory,
-  Workflow,
-  Receipt,
-  BarChart3,
-  ClipboardCheck,
-  History,
-  Settings,
-  Sparkles,
-  Send,
-  FileText,
-  ScrollText,
-  GraduationCap,
-  UsersRound,
-  Network,
-  Bell,
-  MapPin,
-  ListChecks,
-  Swords,
-  CalendarOff,
-  CalendarDays,
-  CalendarRange,
-  Users,
-  KeyRound,
-  MessagesSquare,
-  Gauge,
-  type LucideIcon,
-} from "lucide-react";
 
+import { NAV, featureKey } from "@/lib/nav";
+import { useSession } from "@/lib/use-session";
+import { can } from "@/lib/perms";
 import {
   Sidebar,
   SidebarContent,
@@ -53,97 +21,15 @@ import {
 } from "@/components/ui/sidebar";
 import { SidebarUser } from "@/components/layout/sidebar-user";
 
-interface NavItem {
-  title: string;
-  url: string;
-  icon: LucideIcon;
-  badge?: string;
-}
-interface NavGroup {
-  label: string;
-  items: NavItem[];
-}
-
-// IA bergaya WRG-CRM (sidebar Adminator: HR / Sales / Admin), diperluas dengan
-// kapabilitas wrg-os di bawah Analytics & Operations. Tiap item menunjuk route
-// yang sudah ada (nol 404); halaman khas WRG-CRM (Holidays, Manage Leave, Users,
-// Sales Calendar, Sales Performance, AR submenu) menyusul di fase berikutnya.
-const NAV: NavGroup[] = [
-  {
-    label: "Overview",
-    items: [
-      { title: "Sales Overview", url: "/overview", icon: LayoutGrid, badge: "NEW" },
-      { title: "WatchPoint HoD", url: "/watchpoint", icon: Gauge, badge: "NEW" },
-    ],
-  },
-  {
-    label: "HR",
-    items: [
-      { title: "Plan & Report", url: "/dashboard", icon: LayoutDashboard },
-      { title: "Sales TODO", url: "/todos", icon: ListChecks },
-      { title: "Visits", url: "/visits", icon: MapPin },
-      { title: "Reminders", url: "/reminders", icon: Bell },
-      { title: "Holidays", url: "/holidays", icon: CalendarOff },
-      { title: "Manage Leave", url: "/leave", icon: CalendarDays },
-    ],
-  },
-  {
-    label: "Sales",
-    items: [
-      { title: "Sales Calendar", url: "/calendar", icon: CalendarRange },
-      { title: "Sales Performance", url: "/sales", icon: BarChart3, badge: "NEW" },
-      { title: "Competitor Intel", url: "/competitor", icon: Swords },
-      { title: "Pipeline", url: "/pipeline", icon: Workflow },
-      { title: "Customers", url: "/customers", icon: Building2 },
-      { title: "AR Aging", url: "/ar", icon: Receipt },
-      { title: "Sales Docs", url: "/sales-docs", icon: FileText },
-      { title: "Collection Drafts", url: "/collection-drafts", icon: Send },
-    ],
-  },
-  {
-    label: "Analytics",
-    items: [
-      { title: "People Analytics", url: "/people", icon: UsersRound },
-      { title: "Spider Network", url: "/network", icon: Network },
-      { title: "Executive Briefings", url: "/briefings", icon: ScrollText },
-      { title: "Coaching Notes", url: "/coaching", icon: GraduationCap },
-      { title: "Reports", url: "/reports", icon: BarChart3 },
-      { title: "Digest History", url: "/digests", icon: History },
-    ],
-  },
-  {
-    label: "Monitor",
-    items: [
-      { title: "Rekap", url: "/monitor/rekap", icon: MessagesSquare },
-      { title: "Resume", url: "/monitor/resume", icon: ScrollText },
-      { title: "Pola Komunikasi", url: "/monitor/pola", icon: Network },
-      { title: "Members", url: "/monitor/members", icon: Users },
-    ],
-  },
-  {
-    label: "Operations",
-    items: [
-      { title: "Products", url: "/products", icon: Package },
-      { title: "Inventory", url: "/inventory", icon: Boxes },
-      { title: "Orders", url: "/orders", icon: ShoppingCart },
-      { title: "Shipments", url: "/shipments", icon: Truck },
-      { title: "Suppliers", url: "/suppliers", icon: Factory },
-      { title: "HITL Review", url: "/hitl", icon: ClipboardCheck },
-    ],
-  },
-  {
-    label: "Admin",
-    items: [
-      { title: "Users", url: "/users", icon: Users },
-      { title: "User Access", url: "/user-access", icon: KeyRound },
-      { title: "Settings", url: "/settings", icon: Settings },
-      { title: "UI Showcase", url: "/showcase", icon: Sparkles },
-    ],
-  },
-];
-
 export function AppSidebar() {
   const pathname = usePathname();
+  const me = useSession();
+
+  // Gate per izin 'view'. Bila izin tak tersedia (auth mati / belum login),
+  // can() = true → semua tampil (non-breaking). Grup tanpa item disembunyikan.
+  const nav = NAV
+    .map((g) => ({ ...g, items: g.items.filter((it) => can(me, featureKey(it.url), "view")) }))
+    .filter((g) => g.items.length > 0);
 
   return (
     <Sidebar variant="inset" collapsible="icon">
@@ -161,7 +47,7 @@ export function AppSidebar() {
       </SidebarHeader>
 
       <SidebarContent>
-        {NAV.map((group) => (
+        {nav.map((group) => (
           <SidebarGroup key={group.label}>
             <SidebarGroupLabel className="text-[10px] font-semibold tracking-wider uppercase">{group.label}</SidebarGroupLabel>
             <SidebarGroupContent>
