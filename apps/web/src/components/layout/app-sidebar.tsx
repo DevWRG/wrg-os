@@ -33,10 +33,14 @@ import {
   CalendarRange,
   Users,
   KeyRound,
+  ShieldCheck,
   MessagesSquare,
   Gauge,
   type LucideIcon,
 } from "lucide-react";
+
+import { useSession } from "@/lib/use-session";
+import { can } from "@/lib/perms";
 
 import {
   Sidebar,
@@ -136,14 +140,25 @@ const NAV: NavGroup[] = [
     items: [
       { title: "Users", url: "/users", icon: Users },
       { title: "User Access", url: "/user-access", icon: KeyRound },
+      { title: "Akses Grup", url: "/access-groups", icon: ShieldCheck },
       { title: "Settings", url: "/settings", icon: Settings },
       { title: "UI Showcase", url: "/showcase", icon: Sparkles },
     ],
   },
 ];
 
+// Fitur (RBAC) per item = slug route: /monitor/rekap → "monitor-rekap" (selaras feature.key).
+const featureKey = (url: string) => url.replace(/^\//, "").replace(/\//g, "-");
+
 export function AppSidebar() {
   const pathname = usePathname();
+  const me = useSession();
+
+  // Gate per izin 'view'. Bila izin tak tersedia (auth mati / belum login),
+  // can() = true → semua tampil (non-breaking). Grup tanpa item disembunyikan.
+  const nav = NAV
+    .map((g) => ({ ...g, items: g.items.filter((it) => can(me, featureKey(it.url), "view")) }))
+    .filter((g) => g.items.length > 0);
 
   return (
     <Sidebar variant="inset" collapsible="icon">
@@ -161,7 +176,7 @@ export function AppSidebar() {
       </SidebarHeader>
 
       <SidebarContent>
-        {NAV.map((group) => (
+        {nav.map((group) => (
           <SidebarGroup key={group.label}>
             <SidebarGroupLabel className="text-[10px] font-semibold tracking-wider uppercase">{group.label}</SidebarGroupLabel>
             <SidebarGroupContent>

@@ -58,6 +58,10 @@ import { listAnnotations } from "./repo/sentiment.js";
 import { getNetworkInput, computeNetwork } from "./repo/network.js";
 import { listBriefings } from "./repo/executive.js";
 import { getWatchBoard, formatHodWatchWa } from "./repo/watchpoint.js";
+import {
+  effectivePermissions, listFeatures, listGroups, getGroup, createGroup, updateGroup,
+  deleteGroup, setPermissions, setMembers, copyPermissions, type PermRow,
+} from "./repo/rbac.js";
 import { listTerritory, createTerritory, updateTerritory, deleteTerritory } from "./repo/territory.js";
 import { listCoachingNotes } from "./repo/coaching.js";
 import { getLatestCoachingNotes, computePeopleAnalytics } from "./repo/people.js";
@@ -182,12 +186,29 @@ app.post("/auth/login", async (c) => {
   return c.json({ token, user });
 });
 
-app.get("/auth/me", (c) => {
+app.get("/auth/me", async (c) => {
   const authz = c.req.header("authorization") ?? "";
   const token = authz.startsWith("Bearer ") ? authz.slice(7) : "";
   const payload = token ? verifyJwt(token) : null;
   if (!payload) return c.json({ error: "unauthorized" }, 401);
-  return c.json({ user: { id: payload.sub, email: payload.email, role: payload.role, name: payload.name ?? null, title: payload.title ?? null } });
+  // Lampirkan izin efektif RBAC (grup + matriks per-fitur) — dipakai web utk
+  // gate menu/aksi. Fallback ke role lama bila DB mati / belum ada keanggotaan.
+  let superuser = false;
+  let groups: { id: number; key: string; name: string }[] = [];
+  let permissions: Record<string, unknown> = {};
+  if (isDbEnabled() && payload.sub) {
+    try {
+      const eff = await effectivePermissions(String(payload.sub));
+      superuser = eff.superuser; groups = eff.groups; permissions = eff.permissions;
+    } catch { /* abaikan — pakai role lama */ }
+  }
+  return c.json({
+    user: {
+      id: payload.sub, email: payload.email, role: payload.role,
+      name: payload.name ?? null, title: payload.title ?? null,
+      superuser, groups, permissions,
+    },
+  });
 });
 
 // Register ops: butuh x-service-token bila API_SERVICE_TOKEN di-set; atau saat
@@ -283,6 +304,70 @@ app.post("/admin/users/:id/password", async (c) => {
     }
   }
   return c.json({ ok: true, password: pw, wa_sent });
+});
+
+// ── Akses Grup (RBAC, admin) — role-guard di web BFF (requireAdmin) ──
+app.get("/admin/access/features", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json({ features: await listFeatures() });
+});
+
+app.get("/admin/access/groups", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json({ groups: await listGroups() });
+});
+
+app.get("/admin/access/groups/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const g = await getGroup(Number(c.req.param("id")));
+  return g ? c.json({ group: g }) : c.json({ error: "grup tak ditemukan" }, 404);
+});
+
+app.post("/admin/access/groups", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let b: { name?: string; description?: string } = {};
+  try { b = await c.req.json(); } catch { /* opsional */ }
+  if (!b.name) return c.json({ error: "name wajib" }, 400);
+  const r = await createGroup(b.name, b.description ?? null);
+  return r.ok ? c.json({ id: r.id }, 201) : c.json({ error: r.error }, 409);
+});
+
+app.patch("/admin/access/groups/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let b: { name?: string; description?: string | null } = {};
+  try { b = await c.req.json(); } catch { /* opsional */ }
+  const ok = await updateGroup(Number(c.req.param("id")), b);
+  return ok ? c.json({ ok: true }) : c.json({ error: "grup tak ditemukan" }, 404);
+});
+
+app.delete("/admin/access/groups/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await deleteGroup(Number(c.req.param("id")));
+  return r.ok ? c.json({ ok: true }) : c.json({ error: r.error }, 400);
+});
+
+app.put("/admin/access/groups/:id/permissions", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let b: { permissions?: PermRow[] } = {};
+  try { b = await c.req.json(); } catch { /* opsional */ }
+  if (!Array.isArray(b.permissions)) return c.json({ error: "permissions (array) wajib" }, 400);
+  const ok = await setPermissions(Number(c.req.param("id")), b.permissions);
+  return ok ? c.json({ ok: true }) : c.json({ error: "grup tak ditemukan" }, 404);
+});
+
+app.put("/admin/access/groups/:id/members", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let b: { userIds?: string[] } = {};
+  try { b = await c.req.json(); } catch { /* opsional */ }
+  if (!Array.isArray(b.userIds)) return c.json({ error: "userIds (array) wajib" }, 400);
+  const ok = await setMembers(Number(c.req.param("id")), b.userIds);
+  return ok ? c.json({ ok: true }) : c.json({ error: "grup tak ditemukan" }, 404);
+});
+
+app.post("/admin/access/groups/:id/copy-from/:srcId", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await copyPermissions(Number(c.req.param("srcId")), Number(c.req.param("id")));
+  return r.ok ? c.json({ ok: true }) : c.json({ error: r.error }, 400);
 });
 
 // Event ingestion (ADR-024). Body harus berupa EventEnvelope yang valid.

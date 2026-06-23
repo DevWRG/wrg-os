@@ -2,7 +2,9 @@
 
 import { useEffect, useState } from "react";
 
-export interface SessionUser {
+import type { PermBag } from "@/lib/perms";
+
+export interface SessionUser extends PermBag {
   name?: string | null;
   email?: string;
   role?: string;
