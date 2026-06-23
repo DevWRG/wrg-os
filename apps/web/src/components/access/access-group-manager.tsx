@@ -1,9 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ChevronLeft, Plus, Users, ShieldCheck, Search, Copy } from "lucide-react";
+import { ChevronLeft, Plus, Users, ShieldCheck, Search, Copy, RefreshCw } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import { featureCatalog } from "@/lib/nav";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -49,11 +50,25 @@ function GroupList({ onOpen }: { onOpen: (id: number) => void }) {
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState("");
+  const [syncing, setSyncing] = useState(false);
+  const [syncMsg, setSyncMsg] = useState<string | null>(null);
 
   const load = useCallback(() => {
     jget<{ groups: GroupRow[] }>("/api/admin/access/groups").then((d) => setGroups(d.groups)).catch((e) => setError(String(e.message ?? e)));
   }, []);
   useEffect(load, [load]);
+
+  async function syncFeatures() {
+    setSyncing(true); setSyncMsg(null);
+    try {
+      const r = await fetch("/api/admin/access/features/sync", {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ features: featureCatalog() }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error ?? "gagal sync");
+      setSyncMsg(`${d.upserted} fitur tersinkron ✓`);
+    } catch (e) { setSyncMsg(String((e as Error).message ?? e)); } finally { setSyncing(false); }
+  }
 
   async function create(e: React.FormEvent) {
     e.preventDefault();
@@ -73,8 +88,14 @@ function GroupList({ onOpen }: { onOpen: (id: number) => void }) {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <p className="text-muted-foreground text-sm">{groups.length} grup</p>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-3">
+          <p className="text-muted-foreground text-sm">{groups.length} grup</p>
+          <Button size="sm" variant="outline" onClick={syncFeatures} disabled={syncing}>
+            <RefreshCw className={syncing ? "animate-spin" : ""} /> {syncing ? "Sync…" : "Sync Fitur"}
+          </Button>
+          {syncMsg && <span className={cn("text-xs", syncMsg.includes("✓") ? "text-emerald-600 dark:text-emerald-500" : "text-destructive")}>{syncMsg}</span>}
+        </div>
         {creating ? (
           <form onSubmit={create} className="flex items-center gap-2">
             <Input autoFocus value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Nama grup baru" className="h-8 w-48" />

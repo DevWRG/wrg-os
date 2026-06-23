@@ -36,6 +36,25 @@ export async function listFeatures(): Promise<FeatureRow[]> {
   return rows.map((r) => ({ key: String(r.key), name: String(r.name), section: String(r.section), path: String(r.path), sort: Number(r.sort), active: r.active !== false }));
 }
 
+export interface FeatureInput { key: string; name: string; section: string; path: string; sort: number }
+
+// Upsert katalog fitur dari menu (tombol "Sync Fitur"). Idempoten; fitur yang
+// hilang dari menu TIDAK dihapus (izin historis aman) — hanya upsert + aktifkan.
+export async function syncFeatures(rows: FeatureInput[]): Promise<{ upserted: number }> {
+  const sql = db();
+  let n = 0;
+  for (const r of rows) {
+    if (!r.key) continue;
+    await sql`
+      INSERT INTO feature (key, name, section, path, sort, active)
+      VALUES (${r.key}, ${r.name}, ${r.section}, ${r.path}, ${r.sort ?? 0}, true)
+      ON CONFLICT (key) DO UPDATE SET
+        name = EXCLUDED.name, section = EXCLUDED.section, path = EXCLUDED.path, sort = EXCLUDED.sort, active = true`;
+    n++;
+  }
+  return { upserted: n };
+}
+
 export async function listGroups(): Promise<GroupRow[]> {
   const rows = await db()`
     SELECT g.id, g.key, g.name, g.description, g.is_system, g.superuser,
