@@ -60,7 +60,8 @@ import { listBriefings } from "./repo/executive.js";
 import { getWatchBoard, formatHodWatchWa } from "./repo/watchpoint.js";
 import {
   effectivePermissions, listFeatures, listGroups, getGroup, createGroup, updateGroup,
-  deleteGroup, setPermissions, setMembers, copyPermissions, type PermRow,
+  deleteGroup, setPermissions, setMembers, copyPermissions, syncFeatures,
+  type PermRow, type FeatureInput,
 } from "./repo/rbac.js";
 import { listTerritory, createTerritory, updateTerritory, deleteTerritory } from "./repo/territory.js";
 import { listCoachingNotes } from "./repo/coaching.js";
@@ -310,6 +311,15 @@ app.post("/admin/users/:id/password", async (c) => {
 app.get("/admin/access/features", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json({ features: await listFeatures() });
+});
+
+// Sync katalog fitur dari menu (upsert) — dipanggil web dgn daftar item menu.
+app.post("/admin/access/features/sync", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let b: { features?: FeatureInput[] } = {};
+  try { b = await c.req.json(); } catch { /* opsional */ }
+  if (!Array.isArray(b.features)) return c.json({ error: "features (array) wajib" }, 400);
+  return c.json(await syncFeatures(b.features));
 });
 
 app.get("/admin/access/groups", async (c) => {
