@@ -3,7 +3,9 @@
 # launchd: infra/launchd/com.wrg.autodeploy.plist). Tanpa GitHub runner / tanpa
 # scope token: cukup script ini + 1 launchd job di server.
 #
-# Logika: fetch origin/main → kalau maju dari HEAD lokal → deploy-prod.sh --yes.
+# Logika: fetch origin/main → kalau maju → deploy KODE (deploy-prod.sh --yes
+# --skip-migrate). Migrasi DB TIDAK auto-apply (alert-only, prinsip MIGRATIONS.md)
+# — kalau ada yg pending, di-LOG sbg peringatan; apply manual oleh manusia.
 # Idempoten, lockdir anti-tumpang-tindih, semua ter-log. Promote dev→main →
 # dalam <interval> menit server otomatis ke versi baru.
 #
@@ -38,9 +40,19 @@ LOCAL="$(git rev-parse HEAD)"
 REMOTE="$(git rev-parse origin/main)"
 if [ "$LOCAL" = "$REMOTE" ]; then exit 0; fi   # tak ada yg baru → diam
 
-log "main maju ${LOCAL:0:7} → ${REMOTE:0:7} — mulai deploy"
-if bash scripts/ops/deploy-prod.sh --yes >>"$LOG" 2>&1; then
-  log "deploy OK → $(git rev-parse --short HEAD)"
+log "main maju ${LOCAL:0:7} → ${REMOTE:0:7} — deploy KODE (migrasi alert-only)"
+
+# ALERT-ONLY: deteksi migrasi pending, JANGAN auto-apply ke prod (prinsip
+# MIGRATIONS.md — skema prod hanya diubah manusia + backup). Cuma di-log.
+PEND="$(git fetch origin main --quiet 2>/dev/null; bash scripts/db/migrate.sh --prod --dry-run 2>/dev/null | sed -n 's/^  - //p')"
+if [ -n "$PEND" ]; then
+  log "⚠️ MIGRASI PENDING (TIDAK di-apply otomatis): $(printf '%s ' $PEND)"
+  log "   → apply manual saat siap: bash scripts/ops/deploy-prod.sh   (migrasi + pg_dump backup)"
+fi
+
+# Deploy KODE saja: pull → build → restart. --skip-migrate = migrasi tetap manual.
+if bash scripts/ops/deploy-prod.sh --yes --skip-migrate >>"$LOG" 2>&1; then
+  log "deploy OK (kode) → $(git rev-parse --short HEAD)"
 else
   log "deploy GAGAL (cek log di atas) — akan dicoba lagi tiap interval"
 fi
