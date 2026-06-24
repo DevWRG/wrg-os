@@ -9,6 +9,7 @@ export interface EffectivePerm {
   active: boolean; view: boolean; create: boolean; edit: boolean; delete: boolean;
 }
 export interface PermBag {
+  role?: string;
   superuser?: boolean;
   groups?: { id: number; key: string; name: string }[];
   permissions?: Record<string, EffectivePerm>;
@@ -16,7 +17,9 @@ export interface PermBag {
 
 export function can(s: PermBag | null | undefined, feature: string, action: Action = "view"): boolean {
   if (!s || !s.permissions) return true; // izin tak tersedia → jangan blokir
-  if (s.superuser) return true;
+  // superuser ATAU role admin lama = all-access (anti-lockout; selaras requireAdmin).
+  // Penting: tetap berlaku walau data RBAC (grup/membership) belum lengkap.
+  if (s.superuser || s.role === "admin") return true;
   const p = s.permissions[feature];
   if (!p || !p.active) return false;
   return action === "view" ? p.view : action === "create" ? p.create : action === "edit" ? p.edit : p.delete;
