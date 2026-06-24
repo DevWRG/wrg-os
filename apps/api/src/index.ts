@@ -142,6 +142,15 @@ import { verifyCredentials, createUser, countUsers, listAppUsers, setUserPasswor
 
 const app = new Hono();
 
+// Selalu balas JSON saat error / route tak ada — supaya BFF & client tak pernah
+// dapat body kosong/HTML (penyebab "Unexpected end of JSON input" di klien).
+app.onError((err, c) => {
+  console.error("[api] unhandled:", err);
+  const msg = err instanceof Error ? err.message : "internal error";
+  return c.json({ error: msg }, 500);
+});
+app.notFound((c) => c.json({ error: `route tak ada: ${c.req.method} ${c.req.path}` }, 404));
+
 // Auth enforcement (opsional, default MATI). Saat AUTH_ENABLED=true, semua
 // endpoint butuh otorisasi KECUALI: /health, /auth/*, /webhooks/* (punya
 // secret sendiri). Diterima: x-service-token (BFF tepercaya) ATAU Bearer JWT.
