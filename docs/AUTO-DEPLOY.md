@@ -5,9 +5,14 @@ runner, tanpa scope token — cukup 1 script + 1 LaunchAgent di Mac mini (pola s
 dgn pm2 `com.PM2`).
 
 Alur: `scripts/ops/auto-deploy.sh` (dipanggil launchd tiap 120 dtk) → `git fetch
-origin main` → kalau maju dari HEAD lokal → `scripts/ops/deploy-prod.sh --yes`
-(pull → migrasi `--backup` → build → restart `wrg-prod-api`/`wrg-prod-web` →
-smoke test).
+origin main` → kalau maju dari HEAD lokal → deploy **KODE** via
+`scripts/ops/deploy-prod.sh --yes --skip-migrate` (pull → build → restart
+`wrg-prod-api`/`wrg-prod-web` → smoke test).
+
+> **Migrasi DB = alert-only, BUKAN auto-apply** (prinsip `MIGRATIONS.md`: skema
+> prod hanya diubah manusia + `pg_dump` backup). Kalau ada migrasi pending, poller
+> hanya **mencatat peringatan** di log; kamu apply manual saat siap:
+> `bash scripts/ops/deploy-prod.sh` (atau langsung `migrate.sh --prod --backup`).
 
 **Hanya** menyentuh `wrg-prod-api` & `wrg-prod-web`. Layanan Python legacy
 (8090–8092) & wa-bridge **tidak pernah** disentuh.
