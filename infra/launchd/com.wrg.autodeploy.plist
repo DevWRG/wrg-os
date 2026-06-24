@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  LaunchAgent auto-deploy WRG-OS (Mac mini, user `development`).
+  Tiap 120 dtk: scripts/ops/auto-deploy.sh → kalau origin/main maju, jalankan
+  deploy-prod.sh --yes. Pola sama dgn pm2 LaunchAgent (com.PM2).
+
+  Pasang sekali (lihat docs/AUTO-DEPLOY.md):
+    cp infra/launchd/com.wrg.autodeploy.plist ~/Library/LaunchAgents/
+    launchctl load -w ~/Library/LaunchAgents/com.wrg.autodeploy.plist
+
+  Catatan: jalur StandardOut/Error WAJIB absolut (launchd tak expand $HOME) —
+  sesuaikan 'development' bila username server beda. Path script di-resolve via
+  $HOME oleh login shell, jadi aman lintas username.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.wrg.autodeploy</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/zsh</string>
+    <string>-lc</string>
+    <string>exec "$HOME/DevWRG/wrg-os/scripts/ops/auto-deploy.sh"</string>
+  </array>
+
+  <key>StartInterval</key>
+  <integer>120</integer>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>/Users/development/DevWRG/ops/autodeploy.launchd.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/development/DevWRG/ops/autodeploy.launchd.log</string>
+</dict>
+</plist>
