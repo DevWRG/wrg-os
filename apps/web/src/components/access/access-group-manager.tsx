@@ -31,10 +31,14 @@ const ACTIONS = [
 type ActionKey = (typeof ACTIONS)[number]["key"];
 type Cell = Record<ActionKey, boolean>;
 
+// Parse aman: tak pernah lempar "Unexpected end of JSON input" walau body kosong/
+// bukan JSON — tampilkan pesan asli (mis. error backend) atau status HTTP.
 async function jget<T>(url: string): Promise<T> {
   const r = await fetch(url, { cache: "no-store" });
-  const d = await r.json();
-  if (!r.ok) throw new Error(d.error ?? "gagal memuat");
+  const text = await r.text();
+  let d: { error?: string } = {};
+  try { d = text ? JSON.parse(text) : {}; } catch { d = { error: text.slice(0, 200) }; }
+  if (!r.ok) throw new Error(d.error ?? `gagal memuat (HTTP ${r.status})`);
   return d as T;
 }
 
