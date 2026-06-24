@@ -3,6 +3,7 @@ import { PageHeader } from "@/components/dashboard/page-header";
 import { Card, CardContent } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { OrdersTable, type SalesOrder } from "@/components/tables/orders-table";
+import { SummaryChart } from "@/components/charts/summary-chart";
 
 export const dynamic = "force-dynamic";
 
@@ -22,6 +23,7 @@ export default async function OrdersPage() {
   return (
     <>
       <PageHeader title="Orders" description="Sales order terbaru dari Accurate (accurate_sales_order)." />
+      {orders && orders.length > 0 ? <SummaryChart rows={orders} countLabel="Order" withAmount /> : null}
       <Card>
         <CardContent className="pt-6">
           {!orders ? (
