@@ -11,7 +11,6 @@ import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 // ── Tipe (mirror apps/api/src/repo/rbac.ts) ──
 interface GroupRow { id: number; key: string; name: string; description: string | null; is_system: boolean; superuser: boolean; member_count: number }
@@ -143,6 +142,7 @@ function GroupEditor({ id, onBack }: { id: number; onBack: () => void }) {
   const [grid, setGrid] = useState<Record<string, Cell>>({});
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [tab, setTab] = useState<"umum" | "hak">("umum");
 
   // Catatan: setState dilakukan di dalam .then (asinkron) — bukan sinkron di
   // body effect — agar tidak memicu cascading-render (react-hooks lint).
@@ -209,14 +209,25 @@ function GroupEditor({ id, onBack }: { id: number; onBack: () => void }) {
         </div>
       </div>
 
-      <Tabs defaultValue="umum">
-        <TabsList>
-          <TabsTrigger value="umum">Umum</TabsTrigger>
-          <TabsTrigger value="hak">Hak Akses</TabsTrigger>
-        </TabsList>
+      {/* Tab menu (button) di atas blok konten/tabel — pola sama UI Showcase. */}
+      <div className="flex gap-6 border-b">
+        {([["umum", "Umum"], ["hak", "Hak Akses"]] as const).map(([key, label]) => (
+          <button
+            key={key}
+            type="button"
+            onClick={() => setTab(key)}
+            className={cn(
+              "relative -mb-px border-b-2 px-1 pb-2.5 text-sm font-medium transition-colors",
+              tab === key ? "border-primary text-foreground" : "border-transparent text-muted-foreground hover:text-foreground",
+            )}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
 
-        {/* ── Umum ── */}
-        <TabsContent value="umum">
+      {tab === "umum" ? (
+        <div>
           <Card><CardContent className="grid gap-5 py-5">
             <div className="grid max-w-md gap-1.5">
               <Label htmlFor="g-name">Nama Grup *</Label>
@@ -237,24 +248,21 @@ function GroupEditor({ id, onBack }: { id: number; onBack: () => void }) {
             </div>
             <div><Button onClick={saveUmum} disabled={busy}>{busy ? "Menyimpan…" : "Simpan"}</Button></div>
           </CardContent></Card>
-        </TabsContent>
-
-        {/* ── Hak Akses ── */}
-        <TabsContent value="hak">
-          <PermMatrix
-            features={features} grid={grid} setGrid={setGrid} groups={groups} selfId={id}
-            onSave={savePerms} busy={busy}
-            onCopyFrom={async (srcId) => {
-              setBusy(true); setMsg(null);
-              try {
-                const r = await fetch(`/api/admin/access/groups/${id}/copy-from/${srcId}`, { method: "POST" });
-                if (!r.ok) throw new Error((await r.json()).error ?? "gagal salin hak");
-                await load(); setMsg("Hak disalin ✓");
-              } catch (e) { setMsg(String((e as Error).message ?? e)); } finally { setBusy(false); }
-            }}
-          />
-        </TabsContent>
-      </Tabs>
+        </div>
+      ) : (
+        <PermMatrix
+          features={features} grid={grid} setGrid={setGrid} groups={groups} selfId={id}
+          onSave={savePerms} busy={busy}
+          onCopyFrom={async (srcId) => {
+            setBusy(true); setMsg(null);
+            try {
+              const r = await fetch(`/api/admin/access/groups/${id}/copy-from/${srcId}`, { method: "POST" });
+              if (!r.ok) throw new Error((await r.json()).error ?? "gagal salin hak");
+              await load(); setMsg("Hak disalin ✓");
+            } catch (e) { setMsg(String((e as Error).message ?? e)); } finally { setBusy(false); }
+          }}
+        />
+      )}
     </div>
   );
 }
