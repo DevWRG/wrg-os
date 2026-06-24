@@ -112,7 +112,7 @@ function GroupList({ onOpen }: { onOpen: (id: number) => void }) {
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {groups.map((g) => (
           <button key={g.id} type="button" onClick={() => onOpen(g.id)}
-            className="hover:border-primary/50 hover:bg-muted/40 rounded-lg border p-4 text-left transition-colors">
+            className="bg-card hover:border-primary/50 rounded-lg border p-4 text-left shadow-xs transition-colors hover:shadow-sm">
             <div className="flex items-center justify-between">
               <span className="font-semibold">{g.name}</span>
               {g.superuser ? <Badge variant="default" className="gap-1"><ShieldCheck className="size-3" />Super</Badge>
