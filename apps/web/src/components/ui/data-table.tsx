@@ -38,6 +38,7 @@ export function DataTable<T>({
   empty = "Tidak ada data.",
   toolbar,
   onRowClick,
+  initialSort,
 }: {
   columns: DataColumn<T>[];
   data: T[];
@@ -49,9 +50,11 @@ export function DataTable<T>({
   toolbar?: React.ReactNode;
   /** klik baris → mis. navigasi ke detail. Baris jadi cursor-pointer. */
   onRowClick?: (row: T) => void;
+  /** sort awal saat tabel pertama dirender (mis. {id:"total",dir:"desc"} = top Revenue). */
+  initialSort?: { id: string; dir: "asc" | "desc" };
 }) {
   const [q, setQ] = useState("");
-  const [sort, setSort] = useState<{ id: string; dir: "asc" | "desc" } | null>(null);
+  const [sort, setSort] = useState<{ id: string; dir: "asc" | "desc" } | null>(initialSort ?? null);
   const [page, setPage] = useState(0);
   const [size, setSize] = useState(pageSize);
 
