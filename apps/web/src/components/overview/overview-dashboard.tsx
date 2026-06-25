@@ -1,12 +1,13 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { Area, AreaChart, CartesianGrid, Cell, Pie, PieChart, XAxis } from "recharts";
-import { TrendingUp, TrendingDown, Loader2, Package, ShoppingCart, Wallet, Boxes, Crown, Users2 } from "lucide-react";
+import { TrendingUp, TrendingDown, Loader2, Package, ShoppingCart, Wallet, Boxes, Crown, Users2, ArrowRight } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart";
@@ -66,7 +67,21 @@ function Delta({ v }: { v: number | null }) {
   );
 }
 
-function Stat({ icon: Icon, chip, label, value, delta, sub }: { icon: typeof Wallet; chip: string; label: string; value: string; delta?: number | null; sub?: string }) {
+// Link "Lihat Detail" konsisten antar-card → halaman detail terkait.
+function DetailLink({ href, className }: { href: string; className?: string }) {
+  return (
+    <Button
+      render={<Link href={href} />}
+      variant="link"
+      size="sm"
+      className={cn("text-muted-foreground hover:text-primary h-auto gap-1 p-0 text-xs font-normal", className)}
+    >
+      Lihat Detail <ArrowRight className="size-3" />
+    </Button>
+  );
+}
+
+function Stat({ icon: Icon, chip, label, value, delta, sub, href }: { icon: typeof Wallet; chip: string; label: string; value: string; delta?: number | null; sub?: string; href?: string }) {
   return (
     <Card>
       <CardContent className="pt-4">
@@ -81,6 +96,7 @@ function Stat({ icon: Icon, chip, label, value, delta, sub }: { icon: typeof Wal
           {delta !== undefined && <Delta v={delta} />}
         </div>
         {sub && <p className="text-muted-foreground text-xs">{sub}</p>}
+        {href && <div className="mt-2"><DetailLink href={href} /></div>}
       </CardContent>
     </Card>
   );
@@ -226,6 +242,9 @@ export function OverviewDashboard({ initial }: { initial: OverviewData | null })
                     </div>
                   ))}
                 </div>
+                <Link href="/products" className="inline-flex items-center gap-1 text-xs font-medium text-white/90 transition-colors hover:text-white">
+                  Lihat Detail <ArrowRight className="size-3" />
+                </Link>
               </div>
             ) : (
               <p className="relative z-10 text-sm opacity-80">Tidak ada data produk.</p>
@@ -236,13 +255,13 @@ export function OverviewDashboard({ initial }: { initial: OverviewData | null })
         {/* Stats + gauges */}
         <div className="space-y-4 lg:col-span-7">
           <div className="grid gap-4 sm:grid-cols-3">
-            <Stat icon={Package} chip="bg-primary-soft text-primary" label="Total Produk" value={numC(inv.total)} sub={`${inv.in_stock} stok aman`} />
-            <Stat icon={ShoppingCart} chip="bg-info-soft text-info" label="Order Aktif" value={String(data.orders_stat.active)} sub={`dari ${data.orders_stat.total} order`} />
-            <Stat icon={Wallet} chip="bg-success-soft text-success" label="Total Penjualan" value={rpC(k.revenue)} delta={k.revenue_delta} />
+            <Stat icon={Package} chip="bg-primary-soft text-primary" label="Total Produk" value={numC(inv.total)} sub={`${inv.in_stock} stok aman`} href="/products" />
+            <Stat icon={ShoppingCart} chip="bg-info-soft text-info" label="Order Aktif" value={String(data.orders_stat.active)} sub={`dari ${data.orders_stat.total} order`} href="/orders" />
+            <Stat icon={Wallet} chip="bg-success-soft text-success" label="Total Penjualan" value={rpC(k.revenue)} delta={k.revenue_delta} href="/sales" />
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <Card>
-              <CardHeader className="pb-0"><CardTitle className="text-sm font-medium">Ketersediaan Stok</CardTitle></CardHeader>
+              <CardHeader className="pb-0"><CardTitle className="text-sm font-medium">Ketersediaan Stok</CardTitle><CardAction><DetailLink href="/inventory" /></CardAction></CardHeader>
               <CardContent>
                 <CenterDonut
                   slices={[
@@ -261,7 +280,7 @@ export function OverviewDashboard({ initial }: { initial: OverviewData | null })
               </CardContent>
             </Card>
             <Card>
-              <CardHeader className="pb-0"><CardTitle className="text-sm font-medium">Order Fulfillment</CardTitle></CardHeader>
+              <CardHeader className="pb-0"><CardTitle className="text-sm font-medium">Order Fulfillment</CardTitle><CardAction><DetailLink href="/orders" /></CardAction></CardHeader>
               <CardContent>
                 <CenterDonut
                   slices={[
@@ -280,7 +299,7 @@ export function OverviewDashboard({ initial }: { initial: OverviewData | null })
       {/* Best selling + top customers */}
       <div className="grid gap-4 lg:grid-cols-3">
         <Card className="lg:col-span-2">
-          <CardHeader className="pb-2"><CardTitle className="text-sm font-medium">Produk Terlaris (Best Selling)</CardTitle></CardHeader>
+          <CardHeader className="pb-2"><CardTitle className="text-sm font-medium">Produk Terlaris (Best Selling)</CardTitle><CardAction><DetailLink href="/products" /></CardAction></CardHeader>
           <CardContent>
             {data.per_product.length === 0 ? (
               <p className="text-muted-foreground text-sm">Tidak ada data.</p>
@@ -304,7 +323,7 @@ export function OverviewDashboard({ initial }: { initial: OverviewData | null })
         </Card>
 
         <Card className="border-0 bg-gradient-to-br from-rose-500/15 via-fuchsia-400/10 to-amber-300/15">
-          <CardHeader className="pb-2"><CardTitle className="text-sm font-medium">Top Customers</CardTitle></CardHeader>
+          <CardHeader className="pb-2"><CardTitle className="text-sm font-medium">Top Customers</CardTitle><CardAction><DetailLink href="/customers" /></CardAction></CardHeader>
           <CardContent className="space-y-3">
             <div>
               <div className="text-2xl font-bold tabular-nums">{rpC(customersTotal)}</div>
@@ -326,7 +345,7 @@ export function OverviewDashboard({ initial }: { initial: OverviewData | null })
       {/* Trend + top sales */}
       <div className="grid gap-4 lg:grid-cols-3">
         <Card className="lg:col-span-2">
-          <CardHeader className="pb-2"><CardTitle className="text-sm font-medium">Tren Penjualan Harian</CardTitle></CardHeader>
+          <CardHeader className="pb-2"><CardTitle className="text-sm font-medium">Tren Penjualan Harian</CardTitle><CardAction><DetailLink href="/sales" /></CardAction></CardHeader>
           <CardContent>
             {data.trend.length === 0 ? (
               <p className="text-muted-foreground text-sm">Tidak ada data tren.</p>
@@ -349,7 +368,7 @@ export function OverviewDashboard({ initial }: { initial: OverviewData | null })
           </CardContent>
         </Card>
         <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-sm font-medium">Top Sales (AM)</CardTitle></CardHeader>
+          <CardHeader className="pb-2"><CardTitle className="text-sm font-medium">Top Sales (AM)</CardTitle><CardAction><DetailLink href="/people" /></CardAction></CardHeader>
           <CardContent><BarList rows={data.per_salesman} money /></CardContent>
         </Card>
       </div>
@@ -359,7 +378,10 @@ export function OverviewDashboard({ initial }: { initial: OverviewData | null })
         <CardHeader className="pb-2">
           <CardTitle className="flex items-center justify-between gap-2 text-sm font-medium">
             <span className="flex items-center gap-2"><Users2 className="text-warning size-4" /> AR Aging — Piutang</span>
-            <span className="text-muted-foreground text-xs font-normal">Total {rp(data.ar_aging.total_outstanding)} · {data.ar_aging.total_invoices} invoice</span>
+            <span className="flex items-center gap-3">
+              <span className="text-muted-foreground text-xs font-normal">Total {rp(data.ar_aging.total_outstanding)} · {data.ar_aging.total_invoices} invoice</span>
+              <DetailLink href="/ar" />
+            </span>
           </CardTitle>
         </CardHeader>
         <CardContent>
