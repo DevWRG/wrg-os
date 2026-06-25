@@ -4,6 +4,7 @@ import { gatewayFetch } from "@/lib/gateway";
 import { cn } from "@/lib/utils";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { SalesTable } from "@/components/tables/sales-table";
+import { SalesDateRange } from "@/components/sales/sales-date-range";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 export const dynamic = "force-dynamic";
@@ -63,10 +64,13 @@ export default async function SalesPage({
 
   return (
     <>
-      <PageHeader
-        title="Sales Performance"
-        description={data ? `Revenue Accurate · ${data.from} → ${data.to}` : "Revenue dari faktur Accurate (accurate_invoice)."}
-      />
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <PageHeader
+          title="Sales Performance"
+          description={data ? `Revenue Accurate · ${data.from} → ${data.to}` : "Revenue dari faktur Accurate (accurate_invoice)."}
+        />
+        <SalesDateRange tab={tab} from={data?.from ?? sp.from ?? ""} to={data?.to ?? sp.to ?? ""} />
+      </div>
 
       {!data ? (
         <p className="text-muted-foreground">
