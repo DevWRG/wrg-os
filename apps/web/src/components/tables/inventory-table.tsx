@@ -11,6 +11,7 @@ export interface InventoryItem {
   unit_price: string | null;
   quantity: string | null;
   available: string | null;
+  unit: string | null;
 }
 
 const num = (v: string | null) => (v == null || v === "" ? null : Number(v));
@@ -37,6 +38,7 @@ const columns: DataColumn<InventoryItem>[] = [
   { id: "category", header: "Tipe", sortable: true, accessor: (i) => i.category ?? "", cell: (i) => i.category ? <Badge variant="outline">{i.category}</Badge> : <span className="text-muted-foreground">—</span> },
   { id: "quantity", header: "Stok", align: "right", sortable: true, accessor: (i) => num(i.quantity) ?? -1, cell: (i) => <span className="whitespace-nowrap font-medium">{fmtNum(i.quantity)}</span>, className: "whitespace-nowrap" },
   { id: "available", header: "Tersedia", align: "right", sortable: true, accessor: (i) => num(i.available) ?? -1, cell: (i) => <span className="whitespace-nowrap">{fmtNum(i.available)}</span>, className: "whitespace-nowrap" },
+  { id: "unit", header: "Satuan", sortable: true, accessor: (i) => i.unit ?? "", cell: (i) => i.unit ? <span className="whitespace-nowrap">{i.unit}</span> : <span className="text-muted-foreground">—</span>, className: "whitespace-nowrap" },
   { id: "harga", header: "Harga", align: "right", sortable: true, accessor: (i) => num(i.unit_price) ?? 0, cell: (i) => <span className="whitespace-nowrap">{rupiah(i.unit_price)}</span>, className: "whitespace-nowrap" },
   { id: "status", header: "Status", sortable: true, accessor: (i) => num(i.quantity) ?? -1, cell: stok },
 ];
