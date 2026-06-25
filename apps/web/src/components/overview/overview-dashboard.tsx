@@ -74,7 +74,7 @@ function DetailLink({ href, className }: { href: string; className?: string }) {
       render={<Link href={href} />}
       variant="link"
       size="sm"
-      className={cn("text-muted-foreground hover:text-primary h-auto gap-1 p-0 text-xs font-normal", className)}
+      className={cn("text-primary hover:text-primary-dark h-auto gap-1 rounded-md bg-primary-soft px-2 py-1 text-xs font-medium hover:bg-primary-soft/70 hover:no-underline", className)}
     >
       Lihat Detail <ArrowRight className="size-3" />
     </Button>
