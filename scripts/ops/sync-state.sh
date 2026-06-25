@@ -27,6 +27,12 @@ log "=== sync-state.sh START ==="
 
 cd "$REPO_DIR" || { log "ERROR: $REPO_DIR not found"; exit 1; }
 
+# SELALU balik ke main saat keluar (sukses/gagal/abort set -e). Tanpa ini, kalau
+# push/PR gagal (mis. cron tanpa kredensial git) repo nyangkut di branch
+# state-sync-* → auto-deploy poller skip ("branch bukan main") → deploy MATI.
+# -f buang perubahan state/*.json uncommitted (di-regen tiap run); untracked aman.
+trap 'git checkout -f main --quiet 2>/dev/null || true' EXIT
+
 # === SANITY CHECKS ===
 command -v gh >/dev/null || { log "ERROR: gh CLI not installed"; exit 1; }
 command -v pm2 >/dev/null || { log "ERROR: pm2 not installed"; exit 1; }
