@@ -45,19 +45,20 @@ export async function upsertBranches(
 }
 
 export async function upsertItems(
-  rows: { id: number; no?: string; name?: string; category?: string; unit_price?: number; quantity?: number; available?: number; raw?: unknown }[],
+  rows: { id: number; no?: string; name?: string; category?: string; unit_price?: number; quantity?: number; available?: number; unit?: string; raw?: unknown }[],
 ): Promise<number> {
   const sql = db();
   let n = 0;
   for (const r of rows) {
     if (r.id === undefined || r.id === null) continue;
     await sql`
-      INSERT INTO accurate_item (id, no, name, category, unit_price, quantity, available, raw, last_synced_at)
-      VALUES (${r.id}, ${r.no ?? null}, ${r.name ?? null}, ${r.category ?? null}, ${r.unit_price ?? null}, ${r.quantity ?? null}, ${r.available ?? null}, ${sql.json(j(r.raw ?? {}))}, now())
+      INSERT INTO accurate_item (id, no, name, category, unit_price, quantity, available, unit, raw, last_synced_at)
+      VALUES (${r.id}, ${r.no ?? null}, ${r.name ?? null}, ${r.category ?? null}, ${r.unit_price ?? null}, ${r.quantity ?? null}, ${r.available ?? null}, ${r.unit ?? null}, ${sql.json(j(r.raw ?? {}))}, now())
       ON CONFLICT (id) DO UPDATE SET no=EXCLUDED.no, name=EXCLUDED.name,
         category=EXCLUDED.category, unit_price=EXCLUDED.unit_price,
         quantity=COALESCE(EXCLUDED.quantity, accurate_item.quantity),
         available=COALESCE(EXCLUDED.available, accurate_item.available),
+        unit=COALESCE(EXCLUDED.unit, accurate_item.unit),
         raw=EXCLUDED.raw, last_synced_at=now()
     `;
     n += 1;

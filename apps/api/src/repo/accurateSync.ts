@@ -242,7 +242,7 @@ export async function syncItems(): Promise<{ ok: boolean; synced: number; error?
   let page = 1;
   let synced = 0;
   for (;;) {
-    const list = await accGet(creds, "/accurate/api/item/list.do", `sp.page=${page}&sp.pageSize=100&fields=id,no,name,itemType,unitPrice,quantity,availableToSell`);
+    const list = await accGet(creds, "/accurate/api/item/list.do", `sp.page=${page}&sp.pageSize=100&fields=id,no,name,itemType,unitPrice,quantity,availableToSell,unit1`);
     const rows = Array.isArray(list.d) ? (list.d as Array<Record<string, unknown>>) : [];
     if (rows.length === 0) break;
     await upsertItems(
@@ -254,6 +254,7 @@ export async function syncItems(): Promise<{ ok: boolean; synced: number; error?
         unit_price: v.unitPrice != null ? Number(v.unitPrice) : undefined,
         quantity: v.quantity != null ? Number(v.quantity) : undefined,
         available: v.availableToSell != null ? Number(v.availableToSell) : undefined,
+        unit: (v.unit1 as { name?: string } | null | undefined)?.name ?? undefined,
         raw: v,
       })),
     );
