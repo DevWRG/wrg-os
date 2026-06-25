@@ -14,6 +14,11 @@ export interface InventoryItem {
 }
 
 const num = (v: string | null) => (v == null || v === "" ? null : Number(v));
+// Angka stok dgn pemisah ribuan id-ID (mis. 22712 → "22.712").
+const fmtNum = (v: string | null) => {
+  const n = num(v);
+  return n == null || Number.isNaN(n) ? "—" : new Intl.NumberFormat("id-ID").format(n);
+};
 const rupiah = (v: string | null) => {
   const n = num(v);
   return n == null || Number.isNaN(n) ? "—" : new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(n);
@@ -30,8 +35,8 @@ const columns: DataColumn<InventoryItem>[] = [
   { id: "no", header: "SKU", sortable: true, accessor: (i) => i.no, cell: (i) => <span className="font-medium whitespace-nowrap">{i.no}</span> },
   { id: "name", header: "Nama", sortable: true, accessor: (i) => i.name, cell: (i) => <span className="block max-w-[26rem] truncate" title={i.name}>{i.name}</span>, className: "max-w-[26rem]" },
   { id: "category", header: "Tipe", sortable: true, accessor: (i) => i.category ?? "", cell: (i) => i.category ? <Badge variant="outline">{i.category}</Badge> : <span className="text-muted-foreground">—</span> },
-  { id: "quantity", header: "Stok", align: "right", sortable: true, accessor: (i) => num(i.quantity) ?? -1, cell: (i) => <span className="whitespace-nowrap font-medium">{num(i.quantity) ?? "—"}</span>, className: "whitespace-nowrap" },
-  { id: "available", header: "Tersedia", align: "right", sortable: true, accessor: (i) => num(i.available) ?? -1, cell: (i) => <span className="whitespace-nowrap">{num(i.available) ?? "—"}</span>, className: "whitespace-nowrap" },
+  { id: "quantity", header: "Stok", align: "right", sortable: true, accessor: (i) => num(i.quantity) ?? -1, cell: (i) => <span className="whitespace-nowrap font-medium">{fmtNum(i.quantity)}</span>, className: "whitespace-nowrap" },
+  { id: "available", header: "Tersedia", align: "right", sortable: true, accessor: (i) => num(i.available) ?? -1, cell: (i) => <span className="whitespace-nowrap">{fmtNum(i.available)}</span>, className: "whitespace-nowrap" },
   { id: "harga", header: "Harga", align: "right", sortable: true, accessor: (i) => num(i.unit_price) ?? 0, cell: (i) => <span className="whitespace-nowrap">{rupiah(i.unit_price)}</span>, className: "whitespace-nowrap" },
   { id: "status", header: "Status", sortable: true, accessor: (i) => num(i.quantity) ?? -1, cell: stok },
 ];
