@@ -299,7 +299,7 @@ export function OverviewDashboard({ initial }: { initial: OverviewData | null })
       {/* Best selling + top customers */}
       <div className="grid gap-4 lg:grid-cols-3">
         <Card className="lg:col-span-2">
-          <CardHeader className="pb-2"><CardTitle className="text-sm font-medium">Produk Terlaris (Best Selling)</CardTitle><CardAction><DetailLink href="/products" /></CardAction></CardHeader>
+          <CardHeader className="pb-2"><CardTitle className="text-sm font-medium">Produk Terlaris (Best Selling)</CardTitle><CardAction><DetailLink href="/sales?tab=product" /></CardAction></CardHeader>
           <CardContent>
             {data.per_product.length === 0 ? (
               <p className="text-muted-foreground text-sm">Tidak ada data.</p>
@@ -323,7 +323,7 @@ export function OverviewDashboard({ initial }: { initial: OverviewData | null })
         </Card>
 
         <Card className="border-0 bg-gradient-to-br from-rose-500/15 via-fuchsia-400/10 to-amber-300/15">
-          <CardHeader className="pb-2"><CardTitle className="text-sm font-medium">Top Customers</CardTitle><CardAction><DetailLink href="/customers" /></CardAction></CardHeader>
+          <CardHeader className="pb-2"><CardTitle className="text-sm font-medium">Top Customers</CardTitle><CardAction><DetailLink href="/sales" /></CardAction></CardHeader>
           <CardContent className="space-y-3">
             <div>
               <div className="text-2xl font-bold tabular-nums">{rpC(customersTotal)}</div>
@@ -368,7 +368,7 @@ export function OverviewDashboard({ initial }: { initial: OverviewData | null })
           </CardContent>
         </Card>
         <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-sm font-medium">Top Sales (AM)</CardTitle><CardAction><DetailLink href="/people" /></CardAction></CardHeader>
+          <CardHeader className="pb-2"><CardTitle className="text-sm font-medium">Top Sales (AM)</CardTitle><CardAction><DetailLink href="/sales?tab=salesman" /></CardAction></CardHeader>
           <CardContent><BarList rows={data.per_salesman} money /></CardContent>
         </Card>
       </div>
