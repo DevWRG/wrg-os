@@ -38,10 +38,14 @@ command -v gh >/dev/null || { log "ERROR: gh CLI not installed"; exit 1; }
 command -v pm2 >/dev/null || { log "ERROR: pm2 not installed"; exit 1; }
 command -v jq >/dev/null || { log "ERROR: jq not installed (brew install jq)"; exit 1; }
 
-# Ensure on main branch + fresh
-git fetch origin main --quiet
-git checkout main --quiet
-git pull origin main --quiet
+# Base dari DEV (bukan main): state PR target dev, jadi branch-nya HARUS based-on
+# dev biar merge bersih. Dulu based-on main → tiap state lama yg udah merge ke dev
+# bikin PR berikutnya konflik (state files). Reset --hard origin/dev (server tak
+# punya commit lokal di dev; state di-regen fresh jadi aman). Trap EXIT tetap balik
+# ke main utk auto-deploy.
+git fetch origin dev --quiet
+git checkout dev --quiet 2>/dev/null || git checkout -b dev --quiet origin/dev
+git reset --hard origin/dev --quiet
 
 mkdir -p "$STATE_DIR"
 
