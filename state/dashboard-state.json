@@ -1,17 +1,17 @@
 {
   "schemaVersion": "1.0.0",
-  "lastUpdate": "2026-06-29T00:00:10Z",
+  "lastUpdate": "2026-06-30T00:00:10Z",
   "generatedBy": "sync-state.sh (Warp cron/manual)",
   "production": {
-    "version": "v1.65.1",
-    "releasedAt": "2026-06-26T04:33:30Z",
-    "totalReleases": 116,
+    "version": "v1.65.2",
+    "releasedAt": "2026-06-29T04:41:26Z",
+    "totalReleases": 117,
     "goLiveDate": "2026-06-15"
   },
   "infrastructure": {
     "stack": "Next.js 16 + Hono + FastAPI (3-tier)",
     "deployment": "Native pm2 Mac (BUKAN Docker)",
-    "services": [{"name":"wrg-prod-ai","port":"8100","status":"LIVE","uptime_sec":584287},{"name":"wrg-prod-api","port":"4100","status":"LIVE","uptime_sec":242690},{"name":"wrg-prod-web","port":"3100","status":"LIVE","uptime_sec":242690},{"name":"wrg-prod-wabridge","port":null,"status":"LIVE","uptime_sec":814424},{"name":"wrg-prod-cftunnel","port":null,"status":"LIVE","uptime_sec":730676},{"name":"wrg-prod-deployhook","port":null,"status":"LIVE","uptime_sec":730166}],
+    "services": [{"name":"wrg-prod-ai","port":"8100","status":"LIVE","uptime_sec":670687},{"name":"wrg-prod-api","port":"4100","status":"LIVE","uptime_sec":69418},{"name":"wrg-prod-web","port":"3100","status":"LIVE","uptime_sec":69418},{"name":"wrg-prod-wabridge","port":null,"status":"LIVE","uptime_sec":900824},{"name":"wrg-prod-cftunnel","port":null,"status":"LIVE","uptime_sec":817076},{"name":"wrg-prod-deployhook","port":null,"status":"LIVE","uptime_sec":816566}],
     "servicesLive": 6,
     "schedulerJobs": 13,
     "cutoverMarkers": 22,
@@ -30,7 +30,7 @@
   },
   "_meta": {
     "source": "Auto-generated dari pm2 jlist + gh CLI + .env.prod",
-    "syncedAt": "2026-06-29T00:00:10Z",
+    "syncedAt": "2026-06-30T00:00:10Z",
     "host": "Mac-mini-Development.local"
   }
 }
