@@ -59,6 +59,7 @@ import { getNetworkInput, computeNetwork } from "./repo/network.js";
 import { listBriefings } from "./repo/executive.js";
 import { getWatchBoard } from "./repo/watchpoint.js";
 import { listTerritory, createTerritory, updateTerritory, deleteTerritory } from "./repo/territory.js";
+import { listPricelist, upsertPricelist, publishPricelist, unpublishPricelist, deletePricelist, type PricelistInput } from "./repo/pricelist.js";
 import { listCoachingNotes } from "./repo/coaching.js";
 import { getLatestCoachingNotes, computePeopleAnalytics } from "./repo/people.js";
 import { createVisit, getVisit, listVisits, visitSummary } from "./repo/visit.js";
@@ -1622,6 +1623,44 @@ app.put("/watchpoint/territory/:id", async (c) => {
 app.delete("/watchpoint/territory/:id", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const r = await deleteTerritory(c.req.param("id"));
+  return c.json(r, r.deleted ? 200 : 404);
+});
+
+// ── Pricelist — harga jual per produk (setup HoD/Purchasing → publish → AM) ──
+// Role-guard ada di BFF (apps/web /api/pricelist*); di sini hanya validasi DB.
+app.get("/pricelist", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const status = c.req.query("status");
+  const rows = await listPricelist(status === "draft" || status === "published" ? status : undefined);
+  return c.json({ count: rows.length, rows });
+});
+
+app.post("/pricelist", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: PricelistInput;
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  if (body.product_id == null || body.product_id === "") return c.json({ error: "product_id wajib" }, 400);
+  const row = await upsertPricelist(body);
+  return row ? c.json(row, 201) : c.json({ error: "gagal menyimpan" }, 400);
+});
+
+app.post("/pricelist/publish", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { ids?: string[]; published_by?: string };
+  try { body = await c.req.json(); } catch { body = {}; }
+  return c.json(await publishPricelist(body.ids, body.published_by ?? null));
+});
+
+app.post("/pricelist/unpublish", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { ids?: string[] };
+  try { body = await c.req.json(); } catch { body = {}; }
+  return c.json(await unpublishPricelist(body.ids));
+});
+
+app.delete("/pricelist/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await deletePricelist(c.req.param("id"));
   return c.json(r, r.deleted ? 200 : 404);
 });
 

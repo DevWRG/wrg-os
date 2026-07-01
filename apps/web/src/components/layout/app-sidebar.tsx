@@ -35,6 +35,8 @@ import {
   KeyRound,
   MessagesSquare,
   Gauge,
+  Tags,
+  SlidersHorizontal,
   type LucideIcon,
 } from "lucide-react";
 
@@ -52,12 +54,18 @@ import {
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
 import { SidebarUser } from "@/components/layout/sidebar-user";
+import { useSession, type SessionUser } from "@/lib/use-session";
+import { canEditPricelistSetup, canViewPricelist } from "@/lib/pricelist-access";
 
 interface NavItem {
   title: string;
   url: string;
   icon: LucideIcon;
   badge?: string;
+  /** sorot aktif hanya saat path persis sama (untuk route induk yang punya child). */
+  exact?: boolean;
+  /** tampilkan item hanya bila predikat true (gating per role/jabatan). */
+  show?: (me: SessionUser | null) => boolean;
 }
 interface NavGroup {
   label: string;
@@ -98,6 +106,8 @@ const NAV: NavGroup[] = [
       { title: "AR Aging", url: "/ar", icon: Receipt },
       { title: "Sales Docs", url: "/sales-docs", icon: FileText },
       { title: "Collection Drafts", url: "/collection-drafts", icon: Send },
+      { title: "Pricelist Setup", url: "/pricelist/setup", icon: SlidersHorizontal, show: canEditPricelistSetup },
+      { title: "Pricelist", url: "/pricelist", icon: Tags, exact: true, show: canViewPricelist },
     ],
   },
   {
@@ -144,6 +154,7 @@ const NAV: NavGroup[] = [
 
 export function AppSidebar() {
   const pathname = usePathname();
+  const me = useSession();
 
   return (
     <Sidebar variant="inset" collapsible="icon">
@@ -161,15 +172,18 @@ export function AppSidebar() {
       </SidebarHeader>
 
       <SidebarContent>
-        {NAV.map((group) => (
+        {NAV.map((group) => {
+          const items = group.items.filter((item) => !item.show || item.show(me));
+          if (items.length === 0) return null;
+          return (
           <SidebarGroup key={group.label}>
             <SidebarGroupLabel className="text-[10px] font-semibold tracking-wider uppercase">{group.label}</SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu>
-                {group.items.map((item) => (
+                {items.map((item) => (
                   <SidebarMenuItem key={item.url}>
                     <SidebarMenuButton
-                      isActive={pathname === item.url || pathname.startsWith(`${item.url}/`)}
+                      isActive={item.exact ? pathname === item.url : pathname === item.url || pathname.startsWith(`${item.url}/`)}
                       tooltip={item.title}
                       className="rounded-md focus-visible:ring-0 data-active:bg-primary/10 data-active:font-medium data-active:text-primary data-active:shadow-[inset_3px_0_0_var(--primary)]"
                       render={<Link href={item.url} />}
@@ -187,7 +201,8 @@ export function AppSidebar() {
               </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>
-        ))}
+          );
+        })}
       </SidebarContent>
 
       <SidebarFooter>

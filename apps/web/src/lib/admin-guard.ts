@@ -4,7 +4,7 @@ import { gatewayFetch } from "./gateway";
 import { SESSION_COOKIE } from "@/app/api/auth/login/route";
 
 // Session user dari cookie JWT (via apps/api /auth/me). null kalau tak login.
-export async function sessionUser(): Promise<{ id: string; email: string; role: string; name?: string } | null> {
+export async function sessionUser(): Promise<{ id: string; email: string; role: string; name?: string; title?: string | null } | null> {
   const jar = await cookies();
   const token = jar.get(SESSION_COOKIE)?.value;
   if (!token) return null;
