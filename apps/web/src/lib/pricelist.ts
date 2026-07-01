@@ -30,11 +30,24 @@ export interface PricelistRow {
   updated_at: string;
 }
 
+// Konstanta insentif (dari spreadsheet sumber, verified 61/61 baris).
+export const POINT_DIVISOR = 500; // Total Point = Nett WRG / 500
+export const MIN_INCENTIVE_RATE = 0.05; // Min Incentive Pts = Total Point * 5%
+export const MAX_INCENTIVE_RATE = 0.08; // Max Incentive Pts = Total Point * 8%
+
 export interface PricelistDerived {
   priceList: number; // Harga Principal(HPP) / (1 - margin)
   valueDiskon: number; // priceList * diskon
   nettPrice: number; // priceList - valueDiskon
   pricePpn: number; // priceList * (1 + PPN)
+  // Insentif — Value = Price List × % (basis gross, sama seperti diskon/PPN).
+  valueWrg: number; // priceList * pctWrg
+  valuePromosi: number; // priceList * pctPromosi
+  valueHodSales: number; // priceList * pctHodSales (a.k.a. "Value Lain Lain")
+  nettWrg: number; // priceList * (pctWrg + pctPromosi + pctHodSales) = total alokasi
+  totalPoint: number; // nettWrg / 500
+  minIncentivePts: number; // totalPoint * 5%
+  maxIncentivePts: number; // totalPoint * 8%
 }
 
 export const num = (v: string | number | null | undefined): number => {
@@ -42,19 +55,45 @@ export const num = (v: string | number | null | undefined): number => {
   return Number.isFinite(n) ? n : 0;
 };
 
-export function derivePricing(hpp: number, marginPct: number, diskonPct: number): PricelistDerived {
+export function derivePricing(
+  hpp: number,
+  marginPct: number,
+  diskonPct: number,
+  pctWrg = 0,
+  pctPromosi = 0,
+  pctHodSales = 0,
+): PricelistDerived {
   const priceList = marginPct >= 1 ? hpp : hpp / (1 - marginPct);
   const valueDiskon = priceList * diskonPct;
+  const valueWrg = priceList * pctWrg;
+  const valuePromosi = priceList * pctPromosi;
+  const valueHodSales = priceList * pctHodSales;
+  const nettWrg = priceList * (pctWrg + pctPromosi + pctHodSales);
+  const totalPoint = nettWrg / POINT_DIVISOR;
   return {
     priceList,
     valueDiskon,
     nettPrice: priceList - valueDiskon,
     pricePpn: priceList * (1 + PPN_RATE),
+    valueWrg,
+    valuePromosi,
+    valueHodSales,
+    nettWrg,
+    totalPoint,
+    minIncentivePts: totalPoint * MIN_INCENTIVE_RATE,
+    maxIncentivePts: totalPoint * MAX_INCENTIVE_RATE,
   };
 }
 
 export function deriveRow(row: PricelistRow): PricelistDerived {
-  return derivePricing(num(row.hpp), num(row.margin_pct), num(row.diskon_pct));
+  return derivePricing(
+    num(row.hpp),
+    num(row.margin_pct),
+    num(row.diskon_pct),
+    num(row.pct_wrg),
+    num(row.pct_promosi),
+    num(row.pct_hod_sales),
+  );
 }
 
 const rupiahFmt = new Intl.NumberFormat("id-ID", {

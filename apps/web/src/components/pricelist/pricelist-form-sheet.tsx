@@ -57,6 +57,18 @@ function PercentInput({ id, value, onChange }: { id: string; value: string; onCh
   );
 }
 
+// Angka poin (bisa desimal) → format id-ID, maks 2 desimal.
+const fmtPts = (n: number) => n.toLocaleString("id-ID", { maximumFractionDigits: 2 });
+
+// Field turunan read-only (bergaya seperti input, latar redup).
+function ReadonlyField({ value }: { value: string }) {
+  return (
+    <div className="bg-muted/40 text-muted-foreground flex h-9 items-center rounded-md border px-3 text-sm tabular-nums">
+      {value}
+    </div>
+  );
+}
+
 function Section({
   icon: Icon, title, desc, children,
 }: { icon: typeof Package; title: string; desc?: string; children: React.ReactNode }) {
@@ -128,16 +140,14 @@ function PricelistFormBody({
   const [wrg, setWrg] = useState(initial ? toPctStr(num(initial.pct_wrg)) : "0");
   const [promosi, setPromosi] = useState(initial ? toPctStr(num(initial.pct_promosi)) : "0");
   const [hodSales, setHodSales] = useState(initial ? toPctStr(num(initial.pct_hod_sales)) : "0");
-  const [totalPoint, setTotalPoint] = useState(initial ? String(initial.total_point) : "0");
-  const [minPts, setMinPts] = useState(initial ? String(initial.min_incentive_pts) : "0");
-  const [maxPts, setMaxPts] = useState(initial ? String(initial.max_incentive_pts) : "0");
   const [minRedemption, setMinRedemption] = useState(initial ? String(initial.min_redemption) : "0");
   const [cutoffDays, setCutoffDays] = useState(initial ? String(initial.cutoff_days) : "0");
   const [west, setWest] = useState(initial?.west_area_confirmation ?? false);
   const [east, setEast] = useState(initial?.east_area_confirmation ?? false);
 
   const pct = (s: string) => num(s) / 100;
-  const d = derivePricing(num(hpp), pct(margin), pct(diskon));
+  // Total Point & Min/Max Incentive Pts DITURUNKAN (bukan input) — dari Nett WRG.
+  const d = derivePricing(num(hpp), pct(margin), pct(diskon), pct(wrg), pct(promosi), pct(hodSales));
 
   async function run(fn: () => Promise<Response>) {
     setBusy(true);
@@ -170,9 +180,10 @@ function PricelistFormBody({
           pct_wrg: pct(wrg),
           pct_promosi: pct(promosi),
           pct_hod_sales: pct(hodSales),
-          total_point: Math.trunc(num(totalPoint)),
-          min_incentive_pts: Math.trunc(num(minPts)),
-          max_incentive_pts: Math.trunc(num(maxPts)),
+          // Diturunkan dari Nett WRG (lihat lib/pricelist derivePricing), bukan input.
+          total_point: Math.round(d.totalPoint),
+          min_incentive_pts: Math.round(d.minIncentivePts),
+          max_incentive_pts: Math.round(d.maxIncentivePts),
           min_redemption: Math.trunc(num(minRedemption)),
           cutoff_days: Math.trunc(num(cutoffDays)),
           west_area_confirmation: west,
@@ -254,19 +265,19 @@ function PricelistFormBody({
               </div>
             </Section>
 
-            <Section icon={Sparkles} title="Loyalty &amp; Poin" desc="Opsional.">
+            <Section icon={Sparkles} title="Loyalty &amp; Poin" desc="Total Point & Min/Max Incentive Pts dihitung otomatis dari Nett WRG.">
               <div className="grid gap-3 sm:grid-cols-3">
                 <div className="grid gap-1.5">
-                  <Label htmlFor="pl-tp">Total Point</Label>
-                  <GroupedInput id="pl-tp" value={totalPoint} onChange={setTotalPoint} />
+                  <Label>Total Point</Label>
+                  <ReadonlyField value={fmtPts(d.totalPoint)} />
                 </div>
                 <div className="grid gap-1.5">
-                  <Label htmlFor="pl-minpts">Min Incentive Pts</Label>
-                  <GroupedInput id="pl-minpts" value={minPts} onChange={setMinPts} />
+                  <Label>Min Incentive Pts</Label>
+                  <ReadonlyField value={fmtPts(d.minIncentivePts)} />
                 </div>
                 <div className="grid gap-1.5">
-                  <Label htmlFor="pl-maxpts">Max Incentive Pts</Label>
-                  <GroupedInput id="pl-maxpts" value={maxPts} onChange={setMaxPts} />
+                  <Label>Max Incentive Pts</Label>
+                  <ReadonlyField value={fmtPts(d.maxIncentivePts)} />
                 </div>
                 <div className="grid gap-1.5">
                   <Label htmlFor="pl-minred">Min Redemption</Label>
@@ -283,7 +294,7 @@ function PricelistFormBody({
           </div>
 
           {/* ── Kanan: hero ringkasan harga (pinned) + konfirmasi area ── */}
-          <aside className="h-fit space-y-4 sm:sticky sm:top-0">
+          <aside className="h-fit space-y-4 sm:sticky sm:top-0 sm:border-l sm:pl-6">
             <div className="border-primary/25 from-primary/10 to-primary/5 space-y-3 rounded-xl border bg-gradient-to-b p-4">
               <div className="flex items-center gap-1.5">
                 <Calculator className="text-primary size-3.5" />
@@ -303,19 +314,32 @@ function PricelistFormBody({
               </div>
             </div>
 
-            <Section icon={Award} title="Insentif" desc="Alokasi persentase di atas Price List.">
+            <Section icon={Award} title="Insentif" desc="Alokasi persentase di atas Price List. Value = Price List × %.">
               <div className="grid gap-3">
                 <div className="grid gap-1.5">
-                  <Label htmlFor="pl-wrg">WRG</Label>
+                  <div className="flex items-baseline justify-between gap-2">
+                    <Label htmlFor="pl-wrg">WRG</Label>
+                    <span className="text-muted-foreground text-xs tabular-nums">{formatRupiah(d.valueWrg)}</span>
+                  </div>
                   <PercentInput id="pl-wrg" value={wrg} onChange={setWrg} />
                 </div>
                 <div className="grid gap-1.5">
-                  <Label htmlFor="pl-promosi">Promosi</Label>
+                  <div className="flex items-baseline justify-between gap-2">
+                    <Label htmlFor="pl-promosi">Promosi</Label>
+                    <span className="text-muted-foreground text-xs tabular-nums">{formatRupiah(d.valuePromosi)}</span>
+                  </div>
                   <PercentInput id="pl-promosi" value={promosi} onChange={setPromosi} />
                 </div>
                 <div className="grid gap-1.5">
-                  <Label htmlFor="pl-hod">HOD Sales</Label>
+                  <div className="flex items-baseline justify-between gap-2">
+                    <Label htmlFor="pl-hod">HOD Sales</Label>
+                    <span className="text-muted-foreground text-xs tabular-nums">{formatRupiah(d.valueHodSales)}</span>
+                  </div>
                   <PercentInput id="pl-hod" value={hodSales} onChange={setHodSales} />
+                </div>
+                <div className="border-primary/20 flex items-baseline justify-between gap-2 border-t pt-2.5">
+                  <span className="text-sm font-medium">Nett WRG</span>
+                  <span className="text-sm font-semibold tabular-nums">{formatRupiah(d.nettWrg)}</span>
                 </div>
               </div>
             </Section>
