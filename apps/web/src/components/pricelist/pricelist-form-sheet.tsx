@@ -259,23 +259,6 @@ function PricelistFormBody({
               </div>
             </Section>
 
-            <Section icon={Award} title="Insentif" desc="Alokasi persentase di atas Price List.">
-              <div className="grid gap-3 sm:grid-cols-3">
-                <div className="grid gap-1.5">
-                  <Label htmlFor="pl-wrg">WRG</Label>
-                  <PercentInput id="pl-wrg" value={wrg} onChange={setWrg} />
-                </div>
-                <div className="grid gap-1.5">
-                  <Label htmlFor="pl-promosi">Promosi</Label>
-                  <PercentInput id="pl-promosi" value={promosi} onChange={setPromosi} />
-                </div>
-                <div className="grid gap-1.5">
-                  <Label htmlFor="pl-hod">HOD Sales</Label>
-                  <PercentInput id="pl-hod" value={hodSales} onChange={setHodSales} />
-                </div>
-              </div>
-            </Section>
-
             {/* Loyalty (opsional) — disembunyikan agar tidak overwhelming */}
             <div className="space-y-4">
               <button
@@ -347,6 +330,23 @@ function PricelistFormBody({
                 <p className="text-primary text-2xl leading-tight font-bold tabular-nums">{formatRupiah(d.pricePpn)}</p>
               </div>
             </div>
+
+            <Section icon={Award} title="Insentif" desc="Alokasi persentase di atas Price List.">
+              <div className="grid gap-3">
+                <div className="grid gap-1.5">
+                  <Label htmlFor="pl-wrg">WRG</Label>
+                  <PercentInput id="pl-wrg" value={wrg} onChange={setWrg} />
+                </div>
+                <div className="grid gap-1.5">
+                  <Label htmlFor="pl-promosi">Promosi</Label>
+                  <PercentInput id="pl-promosi" value={promosi} onChange={setPromosi} />
+                </div>
+                <div className="grid gap-1.5">
+                  <Label htmlFor="pl-hod">HOD Sales</Label>
+                  <PercentInput id="pl-hod" value={hodSales} onChange={setHodSales} />
+                </div>
+              </div>
+            </Section>
 
             <Section icon={MapPin} title="Konfirmasi Area" desc="Penanda kesiapan harga per wilayah.">
               <div className="grid gap-2">
