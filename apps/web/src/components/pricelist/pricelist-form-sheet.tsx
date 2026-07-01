@@ -140,9 +140,8 @@ function PricelistFormBody({
 
   const pct = (s: string) => num(s) / 100;
   const d = derivePricing(num(hpp), pct(margin), pct(diskon));
-  // Tanda bila ada isi di bagian lanjutan (untuk badge "terisi" saat collapse).
-  const advancedFilled =
-    num(wrg) > 0 || num(promosi) > 0 || num(hodSales) > 0 ||
+  // Tanda bila ada isi di bagian loyalty (untuk badge "terisi" saat collapse).
+  const loyaltyFilled =
     num(totalPoint) > 0 || num(minPts) > 0 || num(maxPts) > 0 || num(minRedemption) > 0;
 
   async function run(fn: () => Promise<Response>) {
@@ -260,7 +259,24 @@ function PricelistFormBody({
               </div>
             </Section>
 
-            {/* Lanjutan (opsional) — disembunyikan agar tidak overwhelming */}
+            <Section icon={Award} title="Insentif" desc="Alokasi persentase di atas Price List.">
+              <div className="grid gap-3 sm:grid-cols-3">
+                <div className="grid gap-1.5">
+                  <Label htmlFor="pl-wrg">WRG</Label>
+                  <PercentInput id="pl-wrg" value={wrg} onChange={setWrg} />
+                </div>
+                <div className="grid gap-1.5">
+                  <Label htmlFor="pl-promosi">Promosi</Label>
+                  <PercentInput id="pl-promosi" value={promosi} onChange={setPromosi} />
+                </div>
+                <div className="grid gap-1.5">
+                  <Label htmlFor="pl-hod">HOD Sales</Label>
+                  <PercentInput id="pl-hod" value={hodSales} onChange={setHodSales} />
+                </div>
+              </div>
+            </Section>
+
+            {/* Loyalty (opsional) — disembunyikan agar tidak overwhelming */}
             <div className="space-y-4">
               <button
                 type="button"
@@ -268,10 +284,10 @@ function PricelistFormBody({
                 className="hover:bg-muted/50 flex w-full items-center justify-between rounded-lg border px-3 py-2.5 text-sm font-medium"
               >
                 <span className="flex items-center gap-2">
-                  <Award className="text-muted-foreground size-4" />
-                  Insentif &amp; Loyalty
+                  <Sparkles className="text-muted-foreground size-4" />
+                  Loyalty &amp; Poin
                   <span className="text-muted-foreground text-xs font-normal">(opsional)</span>
-                  {!showAdvanced && advancedFilled && (
+                  {!showAdvanced && loyaltyFilled && (
                     <Badge variant="secondary" className="text-[10px]">terisi</Badge>
                   )}
                 </span>
@@ -279,24 +295,7 @@ function PricelistFormBody({
               </button>
 
               {showAdvanced && (
-                <div className="space-y-6 pt-1">
-                  <Section icon={Award} title="Insentif" desc="Alokasi persentase di atas Price List.">
-                    <div className="grid gap-3 sm:grid-cols-3">
-                      <div className="grid gap-1.5">
-                        <Label htmlFor="pl-wrg">WRG</Label>
-                        <PercentInput id="pl-wrg" value={wrg} onChange={setWrg} />
-                      </div>
-                      <div className="grid gap-1.5">
-                        <Label htmlFor="pl-promosi">Promosi</Label>
-                        <PercentInput id="pl-promosi" value={promosi} onChange={setPromosi} />
-                      </div>
-                      <div className="grid gap-1.5">
-                        <Label htmlFor="pl-hod">HOD Sales</Label>
-                        <PercentInput id="pl-hod" value={hodSales} onChange={setHodSales} />
-                      </div>
-                    </div>
-                  </Section>
-
+                <div className="pt-1">
                   <Section icon={Sparkles} title="Loyalty &amp; Poin">
                     <div className="grid gap-3 sm:grid-cols-3">
                       <div className="grid gap-1.5">
@@ -325,24 +324,11 @@ function PricelistFormBody({
               )}
             </div>
 
-            <Section icon={MapPin} title="Konfirmasi Area" desc="Penanda kesiapan harga per wilayah.">
-              <div className="grid gap-3 sm:grid-cols-2">
-                <label htmlFor="pl-west" className="flex cursor-pointer items-center justify-between rounded-lg border px-3 py-2.5">
-                  <span className="text-sm">West Area</span>
-                  <Switch id="pl-west" checked={west} onCheckedChange={setWest} />
-                </label>
-                <label htmlFor="pl-east" className="flex cursor-pointer items-center justify-between rounded-lg border px-3 py-2.5">
-                  <span className="text-sm">East Area</span>
-                  <Switch id="pl-east" checked={east} onCheckedChange={setEast} />
-                </label>
-              </div>
-            </Section>
-
             {error && <p className="text-destructive text-sm">{error}</p>}
           </div>
 
-          {/* ── Kanan: hero ringkasan harga (pinned) ── */}
-          <aside className="h-fit sm:sticky sm:top-0">
+          {/* ── Kanan: hero ringkasan harga (pinned) + konfirmasi area ── */}
+          <aside className="h-fit space-y-4 sm:sticky sm:top-0">
             <div className="border-primary/25 from-primary/10 to-primary/5 space-y-3 rounded-xl border bg-gradient-to-b p-4">
               <div className="flex items-center gap-1.5">
                 <Calculator className="text-primary size-3.5" />
@@ -361,6 +347,19 @@ function PricelistFormBody({
                 <p className="text-primary text-2xl leading-tight font-bold tabular-nums">{formatRupiah(d.pricePpn)}</p>
               </div>
             </div>
+
+            <Section icon={MapPin} title="Konfirmasi Area" desc="Penanda kesiapan harga per wilayah.">
+              <div className="grid gap-2">
+                <label htmlFor="pl-west" className="flex cursor-pointer items-center justify-between rounded-lg border px-3 py-2.5">
+                  <span className="text-sm">West Area</span>
+                  <Switch id="pl-west" checked={west} onCheckedChange={setWest} />
+                </label>
+                <label htmlFor="pl-east" className="flex cursor-pointer items-center justify-between rounded-lg border px-3 py-2.5">
+                  <span className="text-sm">East Area</span>
+                  <Switch id="pl-east" checked={east} onCheckedChange={setEast} />
+                </label>
+              </div>
+            </Section>
           </aside>
         </DialogBody>
 
