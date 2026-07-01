@@ -314,7 +314,7 @@ function PricelistFormBody({
               </div>
             </div>
 
-            <Section icon={Award} title="Insentif" desc="Alokasi persentase di atas Price List. Value = Price List × %.">
+            <Section icon={Award} title="Insentif" desc="Alokasi persentase dari margin. Value = Margin × %.">
               <div className="grid gap-3">
                 <div className="grid gap-1.5">
                   <div className="flex items-baseline justify-between gap-2">

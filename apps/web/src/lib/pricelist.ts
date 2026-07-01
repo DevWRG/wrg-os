@@ -40,11 +40,12 @@ export interface PricelistDerived {
   valueDiskon: number; // priceList * diskon
   nettPrice: number; // priceList - valueDiskon
   pricePpn: number; // priceList * (1 + PPN)
-  // Insentif — Value = Price List × % (basis gross, sama seperti diskon/PPN).
-  valueWrg: number; // priceList * pctWrg
-  valuePromosi: number; // priceList * pctPromosi
-  valueHodSales: number; // priceList * pctHodSales (a.k.a. "Value Lain Lain")
-  nettWrg: number; // priceList * (pctWrg + pctPromosi + pctHodSales) = total alokasi
+  margin: number; // priceList - hpp (margin kotor Rupiah = basis alokasi insentif)
+  // Insentif — Value = Margin × % (alokasi dari margin, bukan Price List).
+  valueWrg: number; // margin * pctWrg
+  valuePromosi: number; // margin * pctPromosi
+  valueHodSales: number; // margin * pctHodSales (a.k.a. "Value Lain Lain")
+  nettWrg: number; // margin * (pctWrg + pctPromosi + pctHodSales) = total alokasi
   totalPoint: number; // nettWrg / 500
   minIncentivePts: number; // totalPoint * 5%
   maxIncentivePts: number; // totalPoint * 8%
@@ -65,16 +66,18 @@ export function derivePricing(
 ): PricelistDerived {
   const priceList = marginPct >= 1 ? hpp : hpp / (1 - marginPct);
   const valueDiskon = priceList * diskonPct;
-  const valueWrg = priceList * pctWrg;
-  const valuePromosi = priceList * pctPromosi;
-  const valueHodSales = priceList * pctHodSales;
-  const nettWrg = priceList * (pctWrg + pctPromosi + pctHodSales);
+  const margin = priceList - hpp; // margin kotor Rupiah = basis alokasi insentif
+  const valueWrg = margin * pctWrg;
+  const valuePromosi = margin * pctPromosi;
+  const valueHodSales = margin * pctHodSales;
+  const nettWrg = margin * (pctWrg + pctPromosi + pctHodSales);
   const totalPoint = nettWrg / POINT_DIVISOR;
   return {
     priceList,
     valueDiskon,
     nettPrice: priceList - valueDiskon,
     pricePpn: priceList * (1 + PPN_RATE),
+    margin,
     valueWrg,
     valuePromosi,
     valueHodSales,
