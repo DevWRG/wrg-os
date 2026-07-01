@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Award, Calculator, ChevronDown, MapPin, Package, Sparkles } from "lucide-react";
+import { Award, Calculator, MapPin, Package, Sparkles } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -135,14 +135,9 @@ function PricelistFormBody({
   const [cutoffDays, setCutoffDays] = useState(initial ? String(initial.cutoff_days) : "0");
   const [west, setWest] = useState(initial?.west_area_confirmation ?? false);
   const [east, setEast] = useState(initial?.east_area_confirmation ?? false);
-  // Field lanjutan (insentif/loyalty) selalu collapse default agar fokus ke inti.
-  const [showAdvanced, setShowAdvanced] = useState(false);
 
   const pct = (s: string) => num(s) / 100;
   const d = derivePricing(num(hpp), pct(margin), pct(diskon));
-  // Tanda bila ada isi di bagian loyalty (untuk badge "terisi" saat collapse).
-  const loyaltyFilled =
-    num(totalPoint) > 0 || num(minPts) > 0 || num(maxPts) > 0 || num(minRedemption) > 0;
 
   async function run(fn: () => Promise<Response>) {
     setBusy(true);
@@ -259,53 +254,30 @@ function PricelistFormBody({
               </div>
             </Section>
 
-            {/* Loyalty (opsional) — disembunyikan agar tidak overwhelming */}
-            <div className="space-y-4">
-              <button
-                type="button"
-                onClick={() => setShowAdvanced((v) => !v)}
-                className="hover:bg-muted/50 flex w-full items-center justify-between rounded-lg border px-3 py-2.5 text-sm font-medium"
-              >
-                <span className="flex items-center gap-2">
-                  <Sparkles className="text-muted-foreground size-4" />
-                  Loyalty &amp; Poin
-                  <span className="text-muted-foreground text-xs font-normal">(opsional)</span>
-                  {!showAdvanced && loyaltyFilled && (
-                    <Badge variant="secondary" className="text-[10px]">terisi</Badge>
-                  )}
-                </span>
-                <ChevronDown className={`text-muted-foreground size-4 transition-transform ${showAdvanced ? "rotate-180" : ""}`} />
-              </button>
-
-              {showAdvanced && (
-                <div className="pt-1">
-                  <Section icon={Sparkles} title="Loyalty &amp; Poin">
-                    <div className="grid gap-3 sm:grid-cols-3">
-                      <div className="grid gap-1.5">
-                        <Label htmlFor="pl-tp">Total Point</Label>
-                        <GroupedInput id="pl-tp" value={totalPoint} onChange={setTotalPoint} />
-                      </div>
-                      <div className="grid gap-1.5">
-                        <Label htmlFor="pl-minpts">Min Incentive Pts</Label>
-                        <GroupedInput id="pl-minpts" value={minPts} onChange={setMinPts} />
-                      </div>
-                      <div className="grid gap-1.5">
-                        <Label htmlFor="pl-maxpts">Max Incentive Pts</Label>
-                        <GroupedInput id="pl-maxpts" value={maxPts} onChange={setMaxPts} />
-                      </div>
-                      <div className="grid gap-1.5">
-                        <Label htmlFor="pl-minred">Min Redemption</Label>
-                        <GroupedInput id="pl-minred" value={minRedemption} onChange={setMinRedemption} />
-                      </div>
-                      <div className="grid gap-1.5">
-                        <Label htmlFor="pl-cutoff">Cutoff Days</Label>
-                        <GroupedInput id="pl-cutoff" value={cutoffDays} onChange={setCutoffDays} />
-                      </div>
-                    </div>
-                  </Section>
+            <Section icon={Sparkles} title="Loyalty &amp; Poin" desc="Opsional.">
+              <div className="grid gap-3 sm:grid-cols-3">
+                <div className="grid gap-1.5">
+                  <Label htmlFor="pl-tp">Total Point</Label>
+                  <GroupedInput id="pl-tp" value={totalPoint} onChange={setTotalPoint} />
                 </div>
-              )}
-            </div>
+                <div className="grid gap-1.5">
+                  <Label htmlFor="pl-minpts">Min Incentive Pts</Label>
+                  <GroupedInput id="pl-minpts" value={minPts} onChange={setMinPts} />
+                </div>
+                <div className="grid gap-1.5">
+                  <Label htmlFor="pl-maxpts">Max Incentive Pts</Label>
+                  <GroupedInput id="pl-maxpts" value={maxPts} onChange={setMaxPts} />
+                </div>
+                <div className="grid gap-1.5">
+                  <Label htmlFor="pl-minred">Min Redemption</Label>
+                  <GroupedInput id="pl-minred" value={minRedemption} onChange={setMinRedemption} />
+                </div>
+                <div className="grid gap-1.5">
+                  <Label htmlFor="pl-cutoff">Cutoff Days</Label>
+                  <GroupedInput id="pl-cutoff" value={cutoffDays} onChange={setCutoffDays} />
+                </div>
+              </div>
+            </Section>
 
             {error && <p className="text-destructive text-sm">{error}</p>}
           </div>
