@@ -8,10 +8,13 @@ import {
   Factory, Workflow, Receipt, BarChart3, ClipboardCheck, History, Settings,
   Sparkles, Send, FileText, ScrollText, GraduationCap, UsersRound, Network,
   Bell, MapPin, ListChecks, Swords, CalendarOff, CalendarDays, CalendarRange,
-  Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, type LucideIcon,
+  Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, Tags, SlidersHorizontal,
+  type LucideIcon,
 } from "lucide-react";
 
-export interface NavItem { title: string; url: string; icon: LucideIcon; badge?: string }
+// exact: sorot aktif hanya saat path persis (untuk route induk yg punya child,
+// mis. /pricelist vs /pricelist/setup).
+export interface NavItem { title: string; url: string; icon: LucideIcon; badge?: string; exact?: boolean }
 export interface NavGroup { label: string; items: NavItem[] }
 
 export const NAV: NavGroup[] = [
@@ -44,6 +47,8 @@ export const NAV: NavGroup[] = [
       { title: "AR Aging", url: "/ar", icon: Receipt },
       { title: "Sales Docs", url: "/sales-docs", icon: FileText },
       { title: "Collection Drafts", url: "/collection-drafts", icon: Send },
+      { title: "Pricelist Setup", url: "/pricelist/setup", icon: SlidersHorizontal },
+      { title: "Pricelist", url: "/pricelist", icon: Tags, exact: true },
     ],
   },
   {
