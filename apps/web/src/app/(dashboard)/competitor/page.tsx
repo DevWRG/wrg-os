@@ -100,7 +100,7 @@ export default async function CompetitorPage({
               Cari
             </Button>
             {vendor && (
-              <Button render={<Link href="/competitor" />} variant="ghost" size="sm">
+              <Button render={<Link href="/competitor" />} nativeButton={false} variant="ghost" size="sm">
                 Reset
               </Button>
             )}

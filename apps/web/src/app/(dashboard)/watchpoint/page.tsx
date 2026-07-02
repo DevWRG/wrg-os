@@ -26,7 +26,7 @@ export default async function WatchPointPage() {
         title="WatchPoint HoD"
         description="Status mingguan per Head of Department — metric WatchPoint vs target (brief Direktur Juni 2026)."
         action={
-          <Button render={<Link href="/watchpoint/territory" />} variant="outline" size="sm">
+          <Button render={<Link href="/watchpoint/territory" />} nativeButton={false} variant="outline" size="sm">
             <MapPin /> Kelola Territory
           </Button>
         }
