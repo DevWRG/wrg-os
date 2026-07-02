@@ -98,7 +98,7 @@ export default async function DrilldownPage({
   return (
     <>
       <div className="flex items-center gap-3">
-        <Button render={<Link href="/dashboard" />} variant="outline" size="icon-sm">
+        <Button render={<Link href="/dashboard" />} nativeButton={false} variant="outline" size="icon-sm">
           <ArrowLeft />
         </Button>
         <div>
