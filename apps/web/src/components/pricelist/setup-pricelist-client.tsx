@@ -28,6 +28,7 @@ export function SetupPricelistClient({
   const money = (v: string | number | null) => formatRupiah(num(v));
 
   async function publishAll() {
+    if (!confirm(`Publish semua ${draftCount} draft? Semua harga akan langsung tampil ke Account Manager.`)) return;
     setBusy(true);
     try {
       const res = await fetch("/api/pricelist/publish", {

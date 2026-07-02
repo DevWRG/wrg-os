@@ -168,6 +168,7 @@ function PricelistFormBody({
   function save(e: React.FormEvent) {
     e.preventDefault();
     if (!productId) { setError("Produk wajib dipilih"); return; }
+    if (!confirm("Simpan perubahan pricelist ini?")) return;
     void run(() =>
       fetch("/api/pricelist", {
         method: "POST",
@@ -193,10 +194,14 @@ function PricelistFormBody({
     );
   }
 
-  const publish = () =>
+  const publish = () => {
+    if (!confirm("Publish pricelist ini? Harga akan tampil ke Account Manager.")) return;
     void run(() => fetch("/api/pricelist/publish", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ids: [initial!.id] }) }));
-  const unpublish = () =>
+  };
+  const unpublish = () => {
+    if (!confirm("Unpublish pricelist ini? Harga akan hilang dari tampilan Account Manager.")) return;
     void run(() => fetch("/api/pricelist/unpublish", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ids: [initial!.id] }) }));
+  };
   const remove = () => {
     if (!confirm("Hapus baris pricelist ini?")) return;
     void run(() => fetch(`/api/pricelist?id=${encodeURIComponent(initial!.id)}`, { method: "DELETE" }));
