@@ -54,7 +54,7 @@ import {
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
 import { SidebarUser } from "@/components/layout/sidebar-user";
-import { useSession, type SessionUser } from "@/lib/use-session";
+import { type SessionUser } from "@/lib/use-session";
 import { canEditPricelistSetup, canViewPricelist } from "@/lib/pricelist-access";
 
 interface NavItem {
@@ -152,9 +152,8 @@ const NAV: NavGroup[] = [
   },
 ];
 
-export function AppSidebar() {
+export function AppSidebar({ me }: { me: SessionUser | null }) {
   const pathname = usePathname();
-  const me = useSession();
 
   return (
     <Sidebar variant="inset" collapsible="icon">
@@ -206,7 +205,7 @@ export function AppSidebar() {
       </SidebarContent>
 
       <SidebarFooter>
-        <SidebarUser />
+        <SidebarUser me={me} />
       </SidebarFooter>
     </Sidebar>
   );
