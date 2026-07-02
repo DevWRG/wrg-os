@@ -6,6 +6,7 @@ import { Plus, Send } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
 import { deriveRow, formatPercent, formatRupiah, num, type PricelistRow } from "@/lib/pricelist";
 import { PricelistFormDialog, type ProductOption } from "@/components/pricelist/pricelist-form-sheet";
@@ -23,12 +24,12 @@ export function SetupPricelistClient({
   const [sheetOpen, setSheetOpen] = useState(false);
   const [editing, setEditing] = useState<PricelistRow | null>(null);
   const [busy, setBusy] = useState(false);
+  const [confirmPublishAll, setConfirmPublishAll] = useState(false);
 
   const draftCount = rows.filter((r) => r.status === "draft").length;
   const money = (v: string | number | null) => formatRupiah(num(v));
 
   async function publishAll() {
-    if (!confirm(`Publish semua ${draftCount} draft? Semua harga akan langsung tampil ke Account Manager.`)) return;
     setBusy(true);
     try {
       const res = await fetch("/api/pricelist/publish", {
@@ -74,7 +75,7 @@ export function SetupPricelistClient({
         toolbar={
           <>
             {canPublish && (
-              <Button size="sm" variant="outline" onClick={publishAll} disabled={busy || draftCount === 0}>
+              <Button size="sm" variant="outline" onClick={() => setConfirmPublishAll(true)} disabled={busy || draftCount === 0}>
                 <Send /> Publish Semua{draftCount > 0 ? ` (${draftCount})` : ""}
               </Button>
             )}
@@ -93,6 +94,15 @@ export function SetupPricelistClient({
         initial={editing}
         canPublish={canPublish}
         onSaved={() => router.refresh()}
+      />
+
+      <ConfirmDialog
+        open={confirmPublishAll}
+        onOpenChange={setConfirmPublishAll}
+        title="Publish semua draft?"
+        description={`Semua ${draftCount} draft akan langsung tampil ke Account Manager.`}
+        confirmLabel="Publish Semua"
+        onConfirm={() => void publishAll()}
       />
     </>
   );

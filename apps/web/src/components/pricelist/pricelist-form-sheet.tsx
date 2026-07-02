@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import {
   Dialog, DialogBody, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
@@ -132,6 +133,13 @@ function PricelistFormBody({
   const editing = !!initial;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState<{
+    title: string;
+    description?: string;
+    confirmLabel: string;
+    destructive?: boolean;
+    action: () => void;
+  } | null>(null);
 
   const [productId, setProductId] = useState(initial?.product_id ?? "");
   const [hpp, setHpp] = useState(initial ? String(num(initial.hpp)) : "0");
@@ -165,10 +173,7 @@ function PricelistFormBody({
     }
   }
 
-  function save(e: React.FormEvent) {
-    e.preventDefault();
-    if (!productId) { setError("Produk wajib dipilih"); return; }
-    if (!confirm("Simpan perubahan pricelist ini?")) return;
+  const doSave = () =>
     void run(() =>
       fetch("/api/pricelist", {
         method: "POST",
@@ -192,20 +197,24 @@ function PricelistFormBody({
         }),
       }),
     );
-  }
-
-  const publish = () => {
-    if (!confirm("Publish pricelist ini? Harga akan tampil ke Account Manager.")) return;
+  const doPublish = () =>
     void run(() => fetch("/api/pricelist/publish", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ids: [initial!.id] }) }));
-  };
-  const unpublish = () => {
-    if (!confirm("Unpublish pricelist ini? Harga akan hilang dari tampilan Account Manager.")) return;
+  const doUnpublish = () =>
     void run(() => fetch("/api/pricelist/unpublish", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ids: [initial!.id] }) }));
-  };
-  const remove = () => {
-    if (!confirm("Hapus baris pricelist ini?")) return;
+  const doRemove = () =>
     void run(() => fetch(`/api/pricelist?id=${encodeURIComponent(initial!.id)}`, { method: "DELETE" }));
-  };
+
+  function save(e: React.FormEvent) {
+    e.preventDefault();
+    if (!productId) { setError("Produk wajib dipilih"); return; }
+    setPending({ title: "Simpan pricelist?", description: "Simpan perubahan pricelist ini?", confirmLabel: "Simpan", action: doSave });
+  }
+  const publish = () =>
+    setPending({ title: "Publish pricelist?", description: "Harga akan tampil ke Account Manager.", confirmLabel: "Publish", action: doPublish });
+  const unpublish = () =>
+    setPending({ title: "Unpublish pricelist?", description: "Harga akan hilang dari tampilan Account Manager.", confirmLabel: "Unpublish", action: doUnpublish });
+  const remove = () =>
+    setPending({ title: "Hapus pricelist?", description: "Baris pricelist ini akan dihapus permanen.", confirmLabel: "Hapus", destructive: true, action: doRemove });
 
   return (
     <>
@@ -378,6 +387,20 @@ function PricelistFormBody({
           <Button type="submit" disabled={busy}>{busy ? "Menyimpan…" : "Simpan"}</Button>
         </DialogFooter>
       </form>
+
+      <ConfirmDialog
+        open={!!pending}
+        onOpenChange={(v) => { if (!v) setPending(null); }}
+        title={pending?.title ?? ""}
+        description={pending?.description}
+        confirmLabel={pending?.confirmLabel ?? "OK"}
+        destructive={pending?.destructive}
+        onConfirm={() => {
+          const act = pending?.action;
+          setPending(null);
+          act?.();
+        }}
+      />
     </>
   );
 }
