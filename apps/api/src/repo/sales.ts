@@ -1,5 +1,7 @@
 import { db } from "../db.js";
 import { getAging } from "./ar.js";
+import { regionOf, REGIONS, type Region } from "../config/sales-regions.js";
+import { SALES_TARGETS, type PeriodKey } from "../config/sales-targets.js";
 
 // Revenue analytics (port wrg-crm Sales Performance) dari accurate_invoice +
 // accurate_invoice_item. Outstanding/AR di-skip krn sumber 0. Rentang default
@@ -464,5 +466,114 @@ export async function customerMonthly(id: string, months = 12): Promise<{
   return {
     name: meta?.name ? String(meta.name) : null,
     monthly: rows.map((r) => ({ month: String(r.month), total: Number(r.total), count: Number(r.count) })),
+  };
+}
+
+// ── Sales Performance (kartu target vs realisasi per periode + region) ──
+// Kartu bersifat periodik (YTD / kuartal / bulan berjalan) relatif "hari ini",
+// independen dari filter Dari/Sampai (yg menggerakkan tabel breakdown). Target &
+// pemetaan region diambil dari config (../config/sales-targets, ../config/sales-regions).
+
+const p2 = (n: number) => String(n).padStart(2, "0");
+const isoDate = (y: number, m: number, d: number) => `${y}-${p2(m)}-${p2(d)}`;
+
+interface Range {
+  from: string;
+  to: string;
+}
+// Boundary periode dari as-of (YYYY-MM-DD): YTD, kuartal-to-date, month-to-date,
+// dan periode setara bulan lalu (tgl 1 → hari yg sama, di-clamp ke akhir bulan).
+function periodRanges(asOf: string): { year: Range; quarter: Range; month: Range; monthPrev: Range } {
+  const [Y, M, D] = asOf.split("-").map(Number);
+  const qStartMonth = Math.floor((M - 1) / 3) * 3 + 1;
+  const pmY = M === 1 ? Y - 1 : Y;
+  const pmM = M === 1 ? 12 : M - 1;
+  const daysInPrevMonth = new Date(Date.UTC(pmY, pmM, 0)).getUTCDate(); // hari terakhir bulan lalu
+  const pmD = Math.min(D, daysInPrevMonth);
+  return {
+    year: { from: isoDate(Y, 1, 1), to: asOf },
+    quarter: { from: isoDate(Y, qStartMonth, 1), to: asOf },
+    month: { from: isoDate(Y, M, 1), to: asOf },
+    monthPrev: { from: isoDate(pmY, pmM, 1), to: isoDate(pmY, pmM, pmD) },
+  };
+}
+
+type RegionTotals = Record<Region, number>;
+const zeroRegions = (): RegionTotals => ({ OFFICE: 0, West: 0, East: 0 });
+
+// Total revenue + breakdown per region untuk satu rentang. Cabang dipetakan lewat
+// salesman → master_user.cabang (fallback cabang_override), sama spt reportRevenue.
+async function periodAgg(
+  sql: ReturnType<typeof db>,
+  from: string,
+  to: string,
+): Promise<{ total: number; regions: RegionTotals }> {
+  const rows = await sql`
+    SELECT COALESCE(NULLIF(mu.cabang,''), NULLIF(acs.cabang_override,''), 'Tanpa cabang') AS cabang,
+           sum(ai.total)::numeric AS total
+    FROM accurate_invoice ai
+    LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
+    LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
+    WHERE ai.tanggal BETWEEN ${from} AND ${to}
+    GROUP BY 1
+  `;
+  const regions = zeroRegions();
+  let total = 0;
+  for (const r of rows) {
+    const v = Number((r as Record<string, unknown>).total ?? 0);
+    total += v;
+    regions[regionOf(String((r as Record<string, unknown>).cabang ?? ""))] += v;
+  }
+  return { total, regions };
+}
+
+const pctOr = (num: number, den: number | null): number | null =>
+  den == null || den <= 0 ? null : Math.round((num / den) * 1000) / 10;
+
+export async function reportSalesPerformance(asOf?: string) {
+  const sql = db();
+  const today = asOf && ISO.test(asOf) ? asOf : salesDefaultRange().to;
+  const R = periodRanges(today);
+  const [year, quarter, month, monthPrev] = await Promise.all([
+    periodAgg(sql, R.year.from, R.year.to),
+    periodAgg(sql, R.quarter.from, R.quarter.to),
+    periodAgg(sql, R.month.from, R.month.to),
+    periodAgg(sql, R.monthPrev.from, R.monthPrev.to),
+  ]);
+
+  const mk = (
+    key: PeriodKey,
+    label: string,
+    range: Range,
+    agg: { total: number; regions: RegionTotals },
+  ) => {
+    const t = SALES_TARGETS[key];
+    const total = t.east != null && t.west != null ? t.east + t.west : null;
+    return {
+      key,
+      label,
+      from: range.from,
+      to: range.to,
+      total: agg.total,
+      regions: REGIONS.map((r) => ({ region: r, total: agg.regions[r] })),
+      target: { east: t.east, west: t.west, total },
+      pct: { total: pctOr(agg.total, total), east: pctOr(agg.regions.East, t.east), west: pctOr(agg.regions.West, t.west) },
+    };
+  };
+
+  const growth = monthPrev.total > 0 ? Math.round(((month.total - monthPrev.total) / monthPrev.total) * 1000) / 10 : null;
+
+  return {
+    as_of: today,
+    periods: [
+      mk("year", "Sales YTD", R.year, year),
+      mk("quarter", "Sales This Quarter", R.quarter, quarter),
+      mk("month", "Sales This Month", R.month, month),
+    ],
+    mtd_vs_last: {
+      current: { from: R.month.from, to: R.month.to, total: month.total },
+      previous: { from: R.monthPrev.from, to: R.monthPrev.to, total: monthPrev.total },
+      growth_pct: growth,
+    },
   };
 }

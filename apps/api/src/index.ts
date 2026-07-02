@@ -100,7 +100,7 @@ import {
   reportCalendar,
   reportCalendarDay,
 } from "./repo/plandash.js";
-import { salesRange, reportRevenue, reportSalesAr, salesOverview, customersRevenue, customerMonthly } from "./repo/sales.js";
+import { salesRange, reportRevenue, reportSalesAr, salesOverview, customersRevenue, customerMonthly, reportSalesPerformance } from "./repo/sales.js";
 import { upsertMembers, listMembers, upsertDigests, listDigest, upsertPola, listPola, generateRekap, generateResume, type MonitorMemberInput, type DigestInput, type PolaInput } from "./repo/monitor.js";
 import { runNotifTua } from "./repo/notiftua.js";
 import { runDailySummary } from "./repo/dailysummary.js";
@@ -1680,6 +1680,13 @@ app.get("/sales/revenue", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const { from, to } = salesRange(c.req.query("from"), c.req.query("to"));
   return c.json(await reportRevenue(from, to));
+});
+
+// Kartu Sales Performance: target vs realisasi per periode (YTD/kuartal/bulan) +
+// breakdown region. Periodik relatif "hari ini" (asOf opsional, YYYY-MM-DD).
+app.get("/sales/performance", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await reportSalesPerformance(c.req.query("asOf")));
 });
 
 // Dashboard Sales Overview (gabungan) — KPI+delta, tren, breakdown, recent, low-stock, AR.
