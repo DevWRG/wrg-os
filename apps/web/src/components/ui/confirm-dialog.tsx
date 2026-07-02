@@ -27,7 +27,7 @@ export function ConfirmDialog({
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-sm" showCloseButton={false}>
+      <DialogContent className="max-w-sm" showCloseButton={false} forceOverlay>
         <div className="flex flex-col gap-1.5 p-4">
           <DialogTitle>{title}</DialogTitle>
           {description && <DialogDescription>{description}</DialogDescription>}
