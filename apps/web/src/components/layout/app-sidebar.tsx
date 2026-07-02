@@ -28,7 +28,11 @@ export function AppSidebar({ me }: { me: SessionUser | null }) {
   const pathname = usePathname();
 
   const nav = NAV
-    .map((g) => ({ ...g, items: g.items.filter((it) => can(me, featureKey(it.url), "view")) }))
+    .map((g) => ({
+      ...g,
+      // Item ber-`show` (Pricelist) di-gate title-based; sisanya via izin RBAC can().
+      items: g.items.filter((it) => (it.show ? it.show(me) : can(me, featureKey(it.url), "view"))),
+    }))
     .filter((g) => g.items.length > 0);
 
   return (
