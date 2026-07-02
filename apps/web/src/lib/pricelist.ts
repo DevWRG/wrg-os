@@ -45,7 +45,7 @@ export interface PricelistDerived {
   valueWrg: number; // margin * pctWrg
   valuePromosi: number; // margin * pctPromosi
   valueHodSales: number; // margin * pctHodSales (a.k.a. "Value Lain Lain")
-  nettWrg: number; // margin * (pctWrg + pctPromosi + pctHodSales) = total alokasi
+  nettWrg: number; // margin - (valueWrg + valuePromosi + valueHodSales) = sisa margin
   totalPoint: number; // nettWrg / 500
   minIncentivePts: number; // totalPoint * 5%
   maxIncentivePts: number; // totalPoint * 8%
@@ -70,7 +70,7 @@ export function derivePricing(
   const valueWrg = margin * pctWrg;
   const valuePromosi = margin * pctPromosi;
   const valueHodSales = margin * pctHodSales;
-  const nettWrg = margin * (pctWrg + pctPromosi + pctHodSales);
+  const nettWrg = margin - (valueWrg + valuePromosi + valueHodSales);
   const totalPoint = nettWrg / POINT_DIVISOR;
   return {
     priceList,
