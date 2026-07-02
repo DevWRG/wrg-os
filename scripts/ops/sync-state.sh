@@ -27,15 +27,25 @@ log "=== sync-state.sh START ==="
 
 cd "$REPO_DIR" || { log "ERROR: $REPO_DIR not found"; exit 1; }
 
+# SELALU balik ke main saat keluar (sukses/gagal/abort set -e). Tanpa ini, kalau
+# push/PR gagal (mis. cron tanpa kredensial git) repo nyangkut di branch
+# state-sync-* → auto-deploy poller skip ("branch bukan main") → deploy MATI.
+# -f buang perubahan state/*.json uncommitted (di-regen tiap run); untracked aman.
+trap 'git checkout -f main --quiet 2>/dev/null || true' EXIT
+
 # === SANITY CHECKS ===
 command -v gh >/dev/null || { log "ERROR: gh CLI not installed"; exit 1; }
 command -v pm2 >/dev/null || { log "ERROR: pm2 not installed"; exit 1; }
 command -v jq >/dev/null || { log "ERROR: jq not installed (brew install jq)"; exit 1; }
 
-# Ensure on main branch + fresh
-git fetch origin main --quiet
-git checkout main --quiet
-git pull origin main --quiet
+# Base dari DEV (bukan main): state PR target dev, jadi branch-nya HARUS based-on
+# dev biar merge bersih. Dulu based-on main → tiap state lama yg udah merge ke dev
+# bikin PR berikutnya konflik (state files). Reset --hard origin/dev (server tak
+# punya commit lokal di dev; state di-regen fresh jadi aman). Trap EXIT tetap balik
+# ke main utk auto-deploy.
+git fetch origin dev --quiet
+git checkout dev --quiet 2>/dev/null || git checkout -b dev --quiet origin/dev
+git reset --hard origin/dev --quiet
 
 mkdir -p "$STATE_DIR"
 

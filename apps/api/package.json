@@ -13,11 +13,11 @@
   "dependencies": {
     "@hono/node-server": "^1.13.7",
     "hono": "^4.12.25",
-    "node-cron": "^3.0.3",
+    "node-cron": "^4.5.0",
     "postgres": "^3.4.5"
   },
   "devDependencies": {
-    "@types/node": "^25",
+    "@types/node": "^26",
     "@types/node-cron": "^3.0.11",
     "@wrg/config": "workspace:*",
     "@wrg/types": "workspace:*",

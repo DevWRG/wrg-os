@@ -2,9 +2,14 @@ import { cookies } from "next/headers";
 
 import { gatewayFetch } from "./gateway";
 import { SESSION_COOKIE } from "@/app/api/auth/login/route";
+import type { PermBag } from "@/lib/perms";
+
+export interface SessionUserSrv extends PermBag {
+  id: string; email: string; role: string; name?: string; title?: string | null;
+}
 
 // Session user dari cookie JWT (via apps/api /auth/me). null kalau tak login.
-export async function sessionUser(): Promise<{ id: string; email: string; role: string; name?: string; title?: string | null } | null> {
+export async function sessionUser(): Promise<SessionUserSrv | null> {
   const jar = await cookies();
   const token = jar.get(SESSION_COOKIE)?.value;
   if (!token) return null;
@@ -19,9 +24,12 @@ export async function sessionUser(): Promise<{ id: string; email: string; role: 
 }
 
 // Guard untuk route admin: balikan {ok} atau Response 401/403 siap-return.
+// Admin = role 'admin' (lama) ATAU anggota grup superuser (RBAC).
 export async function requireAdmin(): Promise<{ ok: true } | { ok: false; res: Response }> {
   const u = await sessionUser();
   if (!u) return { ok: false, res: Response.json({ error: "unauthenticated" }, { status: 401 }) };
-  if (u.role !== "admin") return { ok: false, res: Response.json({ error: "forbidden (admin only)" }, { status: 403 }) };
+  if (u.role !== "admin" && u.superuser !== true) {
+    return { ok: false, res: Response.json({ error: "forbidden (admin only)" }, { status: 403 }) };
+  }
   return { ok: true };
 }

@@ -1,10 +1,16 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { TrendingUp, TrendingDown, Minus, AlertTriangle, Database, PencilLine, type LucideIcon } from "lucide-react";
+import { TrendingUp, TrendingDown, Minus, AlertTriangle, Database, PencilLine, Send, type LucideIcon } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Dialog, DialogBody, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger,
+} from "@/components/ui/dialog";
 
 // Tipe di-mirror dari apps/api/src/repo/watchpoint.ts.
 type WatchStatus = "GREEN" | "YELLOW" | "RED" | "NA";
@@ -60,6 +66,16 @@ const TREND: Record<WatchTrend, { icon: LucideIcon; tone: string }> = {
   declining: { icon: TrendingDown, tone: "text-destructive" },
 };
 
+// Metric milestone (target null) tak punya angka — nilainya = state dari status.
+const MILESTONE_VALUE: Record<WatchStatus, string> = {
+  GREEN: "Live", YELLOW: "WIP", RED: "Off", NA: "—",
+};
+
+// Kelas warna teks dari STATUS_TONE (buang bg, sisakan text-*).
+function statusText(status: WatchStatus): string {
+  return STATUS_TONE[status].split(" ").slice(1).join(" ");
+}
+
 // Format nilai metric sesuai unit.
 function fmt(v: number | null, unit: string): string {
   if (v === null) return "—";
@@ -82,16 +98,19 @@ function MetricRow({ m }: { m: WatchMetric }) {
         <SourceIcon className="text-muted-foreground/50 size-3 shrink-0" aria-label={m.source} />
       </div>
       <div className="flex items-center gap-2 text-xs tabular-nums">
-        <span className="font-medium">{fmt(m.actual, m.unit)}</span>
-        {m.target !== null ? (
-          <span className="text-muted-foreground">/ {fmt(m.target, m.unit)}</span>
-        ) : null}
-        {m.pct !== null ? (
-          <span className={cn("w-10 text-right", STATUS_TONE[m.status].split(" ").slice(1).join(" "))}>
-            {Math.round(m.pct)}%
-          </span>
+        {m.target === null ? (
+          // Milestone: tampilkan state (Live/WIP/Off) ganti angka actual/target.
+          <span className={cn("font-medium", statusText(m.status))}>{MILESTONE_VALUE[m.status]}</span>
         ) : (
-          <span className="w-10 text-right">—</span>
+          <>
+            <span className="font-medium">{fmt(m.actual, m.unit)}</span>
+            <span className="text-muted-foreground">/ {fmt(m.target, m.unit)}</span>
+            {m.pct !== null ? (
+              <span className={cn("w-10 text-right", statusText(m.status))}>{Math.round(m.pct)}%</span>
+            ) : (
+              <span className="w-10 text-right">—</span>
+            )}
+          </>
         )}
         <TrendIcon className={cn("size-3.5 shrink-0", t.tone)} />
       </div>
@@ -115,8 +134,101 @@ function HodCard({ hod }: { hod: HodWatch }) {
         {hod.metrics.map((m) => (
           <MetricRow key={m.key} m={m} />
         ))}
+        <div className="flex justify-end pt-2">
+          <SendWaButton hod={hod} />
+        </div>
       </CardContent>
     </Card>
+  );
+}
+
+// Tombol "Kirim WA": dialog isi nomor/jid tujuan → POST /api/watchpoint/:hod/send-wa.
+// Pengiriman patuh WA_DRY_RUN di server (default dry-run → aman). Ingat target
+// terakhir di localStorage biar tak ketik ulang.
+function SendWaButton({ hod }: { hod: HodWatch }) {
+  const [open, setOpen] = useState(false);
+  const [to, setTo] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setResult(null);
+    const target = to.trim();
+    try {
+      const res = await fetch(`/api/watchpoint/${hod.key}/send-wa`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ to: target }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "gagal kirim");
+      try {
+        localStorage.setItem("wp:wa:lastTarget", target);
+      } catch {}
+      const mode = data.stub
+        ? "stub (gateway belum diset)"
+        : data.dryRun
+          ? "dry-run (tak kirim live)"
+          : "live ✓";
+      setResult({ ok: true, text: `Terkirim ke ${data.to} — mode: ${mode}` });
+    } catch (err) {
+      setResult({ ok: false, text: String(err instanceof Error ? err.message : err) });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(o) => {
+        setOpen(o);
+        if (o) {
+          setResult(null);
+          if (!to) {
+            try {
+              const v = localStorage.getItem("wp:wa:lastTarget");
+              if (v) setTo(v);
+            } catch {}
+          }
+        }
+      }}
+    >
+      <DialogTrigger render={<Button variant="ghost" size="xs" />}>
+        <Send /> Kirim WA
+      </DialogTrigger>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle>Kirim WatchPoint — {hod.name}</DialogTitle>
+          <DialogDescription>Kirim ringkasan status {hod.name} ke nomor/JID WA tujuan.</DialogDescription>
+        </DialogHeader>
+        <form onSubmit={submit}>
+          <DialogBody className="grid gap-3">
+            <div className="grid gap-1.5">
+              <Label htmlFor={`wa-${hod.key}`}>Nomor / JID tujuan *</Label>
+              <Input
+                id={`wa-${hod.key}`}
+                required
+                value={to}
+                onChange={(e) => setTo(e.target.value)}
+                placeholder="62812… atau 1203…@g.us"
+              />
+            </div>
+            {result && (
+              <p className={cn("text-sm", result.ok ? "text-emerald-600 dark:text-emerald-500" : "text-destructive")}>
+                {result.text}
+              </p>
+            )}
+          </DialogBody>
+          <DialogFooter>
+            <Button type="submit" disabled={busy || !to.trim()}>{busy ? "Mengirim…" : "Kirim"}</Button>
+            <DialogClose render={<Button type="button" variant="outline" />}>Tutup</DialogClose>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 

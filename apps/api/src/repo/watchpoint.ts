@@ -327,3 +327,41 @@ export async function getWatchBoard(): Promise<WatchBoard> {
     meta: { gate: "🟢 ≥ target · 🟡 50–99% · 🔴 < 50%", legend: LEGEND, pending: PENDING },
   };
 }
+
+// ── Formatter pesan WA per-HoD (dipakai endpoint kirim WA) ────────
+const WA_STATUS: Record<WatchStatus, string> = {
+  GREEN: "🟢 Hijau",
+  YELLOW: "🟡 Kuning",
+  RED: "🔴 Merah",
+  NA: "⚪ N/A",
+};
+const WA_TREND: Record<WatchTrend, string> = { improving: "↗︎", stable: "→", declining: "↘︎" };
+const WA_MILESTONE: Record<WatchStatus, string> = { GREEN: "Live", YELLOW: "WIP", RED: "Off", NA: "—" };
+
+function fmtWaVal(v: number | null, unit: string): string {
+  if (v === null) return "—";
+  if (unit === "Rp") return "Rp " + new Intl.NumberFormat("id-ID", { notation: "compact", maximumFractionDigits: 1 }).format(v);
+  if (unit === "%") return `${v % 1 === 0 ? v : v.toFixed(1)}%`;
+  return `${new Intl.NumberFormat("id-ID", { maximumFractionDigits: 0 }).format(v)}${unit ? " " + unit : ""}`;
+}
+
+/** Ringkasan WatchPoint 1 HoD jadi teks WA (markdown WA: *bold* / _italic_). */
+export function formatHodWatchWa(hod: HodWatch, asOf: string): string {
+  const lines: string[] = [
+    `*WatchPoint HoD — ${hod.name}*`,
+    hod.role,
+    `Status: ${WA_STATUS[hod.status]}`,
+    "",
+  ];
+  for (const m of hod.metrics) {
+    const dot = WA_STATUS[m.status].split(" ")[0];
+    const val =
+      m.target === null
+        ? WA_MILESTONE[m.status]
+        : `${fmtWaVal(m.actual, m.unit)} / ${fmtWaVal(m.target, m.unit)}${m.pct !== null ? ` (${Math.round(m.pct)}%)` : ""}`;
+    lines.push(`${dot} ${m.label}: ${val} ${WA_TREND[m.trend]}`);
+  }
+  const ts = new Date(asOf).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" });
+  lines.push("", `_per ${ts} WIB · WRG-OS_`);
+  return lines.join("\n");
+}

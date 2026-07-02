@@ -17,3 +17,17 @@ export function gatewayFetch(path: string, init?: RequestInit): Promise<Response
   if (svc) headers.set("x-service-token", svc);
   return fetch(`${apiBaseUrl()}${path}`, { cache: "no-store", ...init, headers });
 }
+
+/** Teruskan respons backend sbg JSON dgn AMAN — tak pernah throw walau body
+ * kosong / bukan JSON (mis. backend lama balas 404 teks). Mencegah BFF route
+ * crash → klien dapat pesan jelas, bukan "Unexpected end of JSON input". */
+export async function relay(res: Response): Promise<Response> {
+  const text = await res.text();
+  let body: unknown;
+  try {
+    body = text ? JSON.parse(text) : { error: `backend ${res.status} (body kosong)` };
+  } catch {
+    body = { error: text.slice(0, 300) || `backend ${res.status}` };
+  }
+  return Response.json(body, { status: res.status });
+}

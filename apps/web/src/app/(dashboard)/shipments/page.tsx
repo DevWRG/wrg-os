@@ -3,6 +3,7 @@ import { PageHeader } from "@/components/dashboard/page-header";
 import { Card, CardContent } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ShipmentsTable, type DeliveryOrder } from "@/components/tables/shipments-table";
+import { SummaryChart } from "@/components/charts/summary-chart";
 
 export const dynamic = "force-dynamic";
 
@@ -22,6 +23,7 @@ export default async function ShipmentsPage() {
   return (
     <>
       <PageHeader title="Shipments" description="Surat jalan / pengiriman terbaru dari Accurate (accurate_delivery_order)." />
+      {shipments && shipments.length > 0 ? <SummaryChart rows={shipments} countLabel="Pengiriman" /> : null}
       <Card>
         <CardContent className="pt-6">
           {!shipments ? (

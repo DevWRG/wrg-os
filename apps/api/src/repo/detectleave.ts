@@ -38,11 +38,15 @@ async function markSeen(messageId: string, status: string): Promise<void> {
   `;
 }
 
-// Resolve nama → am wajib (fuzzy, port resolve_user). null bila tak ketemu.
+// Resolve nama → karyawan aktif (fuzzy, port resolve_user). null bila tak ketemu.
+// HRD ngumumin cuti utk SEMUA karyawan, bukan cuma tim wajib plan/report → resolve
+// ke seluruh roster aktif. wajib_plan_report TIDAK lagi jadi filter (dulu bikin Nopa
+// Andriawan dkk yg flag-nya false ke-drop diam2), tapi tetap diprioritaskan di
+// ORDER BY pas nama ambigu biar behavior tim plan/report stabil.
 async function resolveWajib(raw: string): Promise<{ am_id: string; nama: string } | null> {
   const [row] = await db()`
     SELECT am_id, nama FROM master_user
-    WHERE wajib_plan_report AND aktif AND (
+    WHERE aktif AND (
         lower(panggilan) = lower(${raw})
      OR lower(nama) = lower(${raw})
      OR lower(nama) LIKE lower(${raw}) || ' %'
@@ -50,7 +54,7 @@ async function resolveWajib(raw: string): Promise<{ am_id: string; nama: string 
      OR (length(regexp_replace(lower(${raw}), '[^a-z]', '', 'g')) >= 4
          AND regexp_replace(lower(nama), '[^a-z]', '', 'g') LIKE regexp_replace(lower(${raw}), '[^a-z]', '', 'g') || '%')
     )
-    ORDER BY CASE WHEN lower(panggilan) = lower(${raw}) THEN 1 WHEN lower(nama) = lower(${raw}) THEN 2 ELSE 3 END, length(nama)
+    ORDER BY CASE WHEN lower(panggilan) = lower(${raw}) THEN 1 WHEN lower(nama) = lower(${raw}) THEN 2 ELSE 3 END, wajib_plan_report DESC, length(nama)
     LIMIT 1
   `;
   return row ? { am_id: String(row.am_id), nama: String(row.nama) } : null;
