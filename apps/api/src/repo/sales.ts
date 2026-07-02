@@ -1,7 +1,6 @@
 import { db } from "../db.js";
 import { getAging } from "./ar.js";
-import { regionOf, REGIONS, type Region } from "../config/sales-regions.js";
-import { SALES_TARGETS, type PeriodKey } from "../config/sales-targets.js";
+import { listTargets, type TargetPeriod } from "./sales-target.js";
 
 // Revenue analytics (port wrg-crm Sales Performance) dari accurate_invoice +
 // accurate_invoice_item. Outstanding/AR di-skip krn sumber 0. Rentang default
@@ -471,8 +470,13 @@ export async function customerMonthly(id: string, months = 12): Promise<{
 
 // ── Sales Performance (kartu target vs realisasi per periode + region) ──
 // Kartu bersifat periodik (YTD / kuartal / bulan berjalan) relatif "hari ini",
-// independen dari filter Dari/Sampai (yg menggerakkan tabel breakdown). Target &
-// pemetaan region diambil dari config (../config/sales-targets, ../config/sales-regions).
+// independen dari filter Dari/Sampai (yg menggerakkan tabel breakdown).
+//   - Target  : tabel sales_target per tahun (menu Admin → Sales Targets).
+//   - Region  : cabang → HoD (tabel hod_territory / menu WatchPoint Territory) →
+//               rocky=East, yogi=West (dua HoD Sales), selain itu → OFFICE.
+
+type Region = "OFFICE" | "West" | "East";
+const REGIONS: Region[] = ["East", "West", "OFFICE"];
 
 const p2 = (n: number) => String(n).padStart(2, "0");
 const isoDate = (y: number, m: number, d: number) => `${y}-${p2(m)}-${p2(d)}`;
@@ -498,6 +502,18 @@ function periodRanges(asOf: string): { year: Range; quarter: Range; month: Range
   };
 }
 
+// Peta cabang → region dari hod_territory (WatchPoint). Hanya HoD Sales yg jadi
+// region: rocky→East, yogi→West. Cabang lain / tak ter-map → OFFICE (default).
+async function cabangRegionMap(sql: ReturnType<typeof db>): Promise<Record<string, Region>> {
+  const rows = await sql<{ hod_key: string; cabang: string }[]>`SELECT hod_key, cabang FROM hod_territory`;
+  const map: Record<string, Region> = {};
+  for (const r of rows) {
+    const region: Region | null = r.hod_key === "rocky" ? "East" : r.hod_key === "yogi" ? "West" : null;
+    if (region) map[r.cabang] = region;
+  }
+  return map;
+}
+
 type RegionTotals = Record<Region, number>;
 const zeroRegions = (): RegionTotals => ({ OFFICE: 0, West: 0, East: 0 });
 
@@ -507,6 +523,7 @@ async function periodAgg(
   sql: ReturnType<typeof db>,
   from: string,
   to: string,
+  regionMap: Record<string, Region>,
 ): Promise<{ total: number; regions: RegionTotals }> {
   const rows = await sql`
     SELECT COALESCE(NULLIF(mu.cabang,''), NULLIF(acs.cabang_override,''), 'Tanpa cabang') AS cabang,
@@ -522,7 +539,8 @@ async function periodAgg(
   for (const r of rows) {
     const v = Number((r as Record<string, unknown>).total ?? 0);
     total += v;
-    regions[regionOf(String((r as Record<string, unknown>).cabang ?? ""))] += v;
+    const cabang = String((r as Record<string, unknown>).cabang ?? "");
+    regions[regionMap[cabang] ?? "OFFICE"] += v;
   }
   return { total, regions };
 }
@@ -534,21 +552,29 @@ export async function reportSalesPerformance(asOf?: string) {
   const sql = db();
   const today = asOf && ISO.test(asOf) ? asOf : salesDefaultRange().to;
   const R = periodRanges(today);
-  const [year, quarter, month, monthPrev] = await Promise.all([
-    periodAgg(sql, R.year.from, R.year.to),
-    periodAgg(sql, R.quarter.from, R.quarter.to),
-    periodAgg(sql, R.month.from, R.month.to),
-    periodAgg(sql, R.monthPrev.from, R.monthPrev.to),
+  const yr = Number(today.slice(0, 4));
+  const regionMap = await cabangRegionMap(sql);
+  const [targets, year, quarter, month, monthPrev] = await Promise.all([
+    listTargets(yr),
+    periodAgg(sql, R.year.from, R.year.to, regionMap),
+    periodAgg(sql, R.quarter.from, R.quarter.to, regionMap),
+    periodAgg(sql, R.month.from, R.month.to, regionMap),
+    periodAgg(sql, R.monthPrev.from, R.monthPrev.to, regionMap),
   ]);
 
+  // Lookup target[period][region] (null bila belum diisi utk tahun ini).
+  const tgt = (period: TargetPeriod, region: "East" | "West"): number | null =>
+    targets.find((t) => t.period === period && t.region === region)?.target ?? null;
+
   const mk = (
-    key: PeriodKey,
+    key: TargetPeriod,
     label: string,
     range: Range,
     agg: { total: number; regions: RegionTotals },
   ) => {
-    const t = SALES_TARGETS[key];
-    const total = t.east != null && t.west != null ? t.east + t.west : null;
+    const east = tgt(key, "East");
+    const west = tgt(key, "West");
+    const total = east != null && west != null ? east + west : null;
     return {
       key,
       label,
@@ -556,8 +582,8 @@ export async function reportSalesPerformance(asOf?: string) {
       to: range.to,
       total: agg.total,
       regions: REGIONS.map((r) => ({ region: r, total: agg.regions[r] })),
-      target: { east: t.east, west: t.west, total },
-      pct: { total: pctOr(agg.total, total), east: pctOr(agg.regions.East, t.east), west: pctOr(agg.regions.West, t.west) },
+      target: { east, west, total },
+      pct: { total: pctOr(agg.total, total), east: pctOr(agg.regions.East, east), west: pctOr(agg.regions.West, west) },
     };
   };
 
