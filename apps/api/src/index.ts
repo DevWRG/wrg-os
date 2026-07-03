@@ -70,7 +70,7 @@ import { getLatestCoachingNotes, computePeopleAnalytics } from "./repo/people.js
 import { createVisit, getVisit, listVisits, visitSummary } from "./repo/visit.js";
 import { upsertDailyTodo, listTodos, markTodoReported } from "./repo/todo.js";
 import { upsertUser, listUsers, upsertTerritory, listTerritories, updateUserCabang } from "./repo/master.js";
-import { listTargets, upsertTargets } from "./repo/sales-target.js";
+import { listTargets, upsertTargets, listCabangTargets, upsertCabangTargets, listAmTargets, upsertAmTargets } from "./repo/sales-target.js";
 import {
   upsertHoliday,
   listHolidays,
@@ -1728,6 +1728,42 @@ app.put("/sales/targets", async (c) => {
     .filter((e) => PERIODS.includes(String(e.period)) && REGIONS.includes(String(e.region)) && Number.isFinite(Number(e.target)))
     .map((e) => ({ period: e.period as "year" | "quarter" | "month", region: e.region as "East" | "West", target: Math.max(0, Number(e.target)) }));
   return c.json(await upsertTargets(year, entries));
+});
+
+// Target per Cabang (tahunan, migration 047). Region turunan dari hod_territory.
+app.get("/sales/targets/cabang", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const year = Number(c.req.query("year")) || new Date().getUTCFullYear();
+  return c.json({ year, rows: await listCabangTargets(year) });
+});
+app.put("/sales/targets/cabang", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let b: { year?: number; entries?: { cabang?: string; target?: number }[] } = {};
+  try { b = await c.req.json(); } catch { /* opsional */ }
+  const year = Number(b.year);
+  if (!Number.isInteger(year) || year < 2000 || year > 2100) return c.json({ error: "year tidak valid" }, 400);
+  const entries = (b.entries ?? [])
+    .filter((e) => String(e.cabang ?? "").trim() !== "" && Number.isFinite(Number(e.target)))
+    .map((e) => ({ cabang: String(e.cabang), target: Math.max(0, Number(e.target)) }));
+  return c.json(await upsertCabangTargets(year, entries));
+});
+
+// Target per AM (tahunan, migration 047). Region turunan dari cabang AM.
+app.get("/sales/targets/am", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const year = Number(c.req.query("year")) || new Date().getUTCFullYear();
+  return c.json({ year, rows: await listAmTargets(year) });
+});
+app.put("/sales/targets/am", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let b: { year?: number; entries?: { am_id?: string; target?: number }[] } = {};
+  try { b = await c.req.json(); } catch { /* opsional */ }
+  const year = Number(b.year);
+  if (!Number.isInteger(year) || year < 2000 || year > 2100) return c.json({ error: "year tidak valid" }, 400);
+  const entries = (b.entries ?? [])
+    .filter((e) => String(e.am_id ?? "").trim() !== "" && Number.isFinite(Number(e.target)))
+    .map((e) => ({ am_id: String(e.am_id), target: Math.max(0, Number(e.target)) }));
+  return c.json(await upsertAmTargets(year, entries));
 });
 
 // Dashboard Sales Overview (gabungan) — KPI+delta, tren, breakdown, recent, low-stock, AR.
