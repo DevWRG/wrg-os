@@ -82,7 +82,7 @@ function LoginForm() {
           type="submit"
           disabled={busy}
           className="mt-2 h-11 w-full rounded-xl font-semibold text-white shadow-sm transition-opacity hover:opacity-95 disabled:opacity-60"
-          style={{ backgroundImage: "linear-gradient(90deg, #c0392b 0%, #0ca6bd 100%)" }}
+          style={{ backgroundImage: "linear-gradient(90deg, #0fa5bc 0%, #0ca6bd 100%)" }}
         >
           {busy ? "Memproses…" : "Login"}
         </button>
