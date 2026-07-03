@@ -21,13 +21,23 @@ export interface AppUserRow {
   created_at: string;
 }
 interface RosterItem { am_id: string; nama?: string | null; wa_number?: string | null }
+interface WaStatus { mode: "stub" | "dry-run" | "live"; delivered: boolean; error?: string }
 
 const ROLES = ["admin", "user", "viewer"];
+
+// Status WA jujur: delivered hanya di mode live sukses; dry-run/stub = belum live.
+function waLabel(wa: WaStatus): { text: string; ok: boolean } {
+  if (wa.delivered) return { text: "terkirim via WA ✓", ok: true };
+  if (wa.error) return { text: `WA gagal: ${wa.error}`, ok: false };
+  if (wa.mode === "dry-run") return { text: "WA DRY-RUN — tidak terkirim live (set WA_DRY_RUN=false)", ok: false };
+  if (wa.mode === "stub") return { text: "WA belum aktif — gateway belum diset (WA_SEND_URL)", ok: false };
+  return { text: "WA tidak terkirim", ok: false };
+}
 
 export function UserAccessManager({ users, roster }: { users: AppUserRow[]; roster: RosterItem[] }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState<{ email: string; password: string; wa_sent?: boolean } | null>(null);
+  const [result, setResult] = useState<{ email: string; password: string; wa?: WaStatus } | null>(null);
   const [err, setErr] = useState("");
 
   // form tambah manual
@@ -59,7 +69,7 @@ export function UserAccessManager({ users, roster }: { users: AppUserRow[]; rost
     if (!email) { setErr("email wajib"); return; }
     const d = await call("/api/admin/users", "POST", { email, name, role, wa_number: wa || undefined, generate: true });
     if (d?.user) {
-      setResult({ email: String((d.user as { email: string }).email), password: String(d.password) });
+      setResult({ email: String((d.user as { email: string }).email), password: String(d.password), wa: d.wa as WaStatus | undefined });
       setEmail(""); setName(""); setWa(""); setRole("user");
       router.refresh();
     }
@@ -75,7 +85,7 @@ export function UserAccessManager({ users, roster }: { users: AppUserRow[]; rost
   }
   async function resetPw(u: AppUserRow, sendWa: boolean) {
     const d = await call(`/api/admin/users/${u.id}/password`, "POST", { generate: true, force: true, send_wa: sendWa });
-    if (d) { setResult({ email: u.email, password: String(d.password), wa_sent: Boolean(d.wa_sent) }); router.refresh(); }
+    if (d) { setResult({ email: u.email, password: String(d.password), wa: d.wa as WaStatus | undefined }); router.refresh(); }
   }
   async function toggleActive(u: AppUserRow) {
     if (await call(`/api/admin/users/${u.id}`, "PATCH", { active: !u.active })) router.refresh();
@@ -94,12 +104,16 @@ export function UserAccessManager({ users, roster }: { users: AppUserRow[]; rost
       {result ? (
         <Card className="border-[#5a7a1a]/40 bg-[#5a7a1a]/5">
           <CardContent className="space-y-1 py-3 text-sm">
-            <div className="font-semibold">Password untuk {result.email}{result.wa_sent ? " — terkirim via WA ✓" : ""}</div>
+            <div className="font-semibold">Password untuk {result.email}</div>
             <div className="flex items-center gap-2">
               <code className="rounded bg-background px-2 py-1 text-base">{result.password}</code>
               <Button size="sm" variant="outline" onClick={() => navigator.clipboard?.writeText(result.password)}>Copy</Button>
               <Button size="sm" variant="ghost" onClick={() => setResult(null)}>Tutup</Button>
             </div>
+            {result.wa && (() => {
+              const l = waLabel(result.wa);
+              return <div className={l.ok ? "text-success text-xs font-medium" : "text-warning text-xs font-medium"}>{l.text}</div>;
+            })()}
             <div className="text-muted-foreground text-xs">Tampil sekali — share ke karyawan, minta ganti setelah login.</div>
           </CardContent>
         </Card>
