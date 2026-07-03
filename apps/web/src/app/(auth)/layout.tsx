@@ -1,57 +1,57 @@
-import Link from "next/link";
-
-// Gradient identitas WRG (brand teal #0ca6bd) → emerald, diagonal.
-const WRG_GRADIENT = "linear-gradient(145deg, #0a8a9e 0%, #0ca6bd 48%, #2bd4a8 100%)";
+// Gradient identitas WRG (brand teal → emerald). Dipakai sebagai FALLBACK panel
+// kiri bila foto hero (/brand/hero-login.jpg) belum tersedia — jadi tak pernah
+// broken: kalau file ada, foto menutupi gradient; kalau tidak, gradient tampil.
+const WRG_GRADIENT = "linear-gradient(160deg, #0a8a9e 0%, #0ca6bd 45%, #2bd4a8 100%)";
 
 export default function AuthLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="grid min-h-screen lg:grid-cols-2">
-      {/* ── Panel kiri: brand + value prop (gradient WRG) ── */}
-      <aside className="relative hidden flex-col justify-between p-10 text-white lg:flex" style={{ background: WRG_GRADIENT }}>
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src="/brand/wahana-lifeline-white.png" alt="Wahana LifeLine" className="h-9 w-auto max-w-[210px] object-contain" />
+    <div className="bg-muted/40 flex min-h-screen p-3 sm:p-4">
+      <div className="bg-background grid w-full overflow-hidden rounded-3xl shadow-sm lg:grid-cols-[1.05fr_1fr]">
+        {/* ── Panel kiri: hero (foto di atas gradient brand + overlay) ── */}
+        <aside className="relative hidden overflow-hidden rounded-3xl lg:block" style={{ background: WRG_GRADIENT }}>
+          <div
+            className="absolute inset-0 bg-cover bg-center"
+            style={{ backgroundImage: "url('/brand/hero-login.jpg')" }}
+            aria-hidden
+          />
+          <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-black/10 to-black/30" aria-hidden />
 
-        <div className="max-w-md">
-          <p className="text-xs font-medium tracking-[0.2em] text-white/70">WRG CRM · PLAN &amp; REPORT</p>
-          <h1 className="mt-4 text-4xl font-bold leading-tight">Dashboard untuk plan &amp; report harian tim.</h1>
-          <p className="mt-4 text-sm leading-relaxed text-white/80">
-            Submit #PLAN pagi via WA, kirim #REPORT sore, lihat progress per orang/divisi/cabang/HOD area.
-            Geotag verifikasi untuk AM sales visit.
-          </p>
+          <div className="relative flex h-full flex-col justify-between p-8 text-white sm:p-10">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/brand/wahana-lifeline-white.png" alt="Wahana LifeLine" className="h-8 w-auto max-w-[190px] object-contain drop-shadow" />
 
-          <figure className="mt-8 rounded-xl border border-white/20 bg-white/10 p-5 backdrop-blur-sm">
-            <blockquote className="text-sm leading-relaxed text-white/90">
-              &ldquo;Sekali submit di WA, semua HOD bisa lihat real-time di dashboard. Lebih cepat, lebih akurat.&rdquo;
-            </blockquote>
-            <figcaption className="mt-4 flex items-center gap-2 text-xs text-white/70">
-              <span className="flex size-7 items-center justify-center rounded-full bg-white/20 text-[10px] font-semibold">WL</span>
-              Wahana LifeLine · Operations Team
-            </figcaption>
-          </figure>
+            <div className="max-w-md">
+              <p className="text-xs font-medium tracking-[0.2em] text-white/70">WRG OS · PLAN &amp; REPORT</p>
+              <h2 className="mt-3 text-3xl font-bold leading-tight sm:text-4xl">Plan &amp; report harian tim, real-time.</h2>
+
+              <figure className="mt-6 rounded-2xl border border-white/15 bg-white/10 p-4 backdrop-blur-md">
+                <figcaption className="flex items-center gap-3">
+                  <span className="flex size-10 items-center justify-center rounded-full bg-white/20 text-sm font-semibold">WL</span>
+                  <span className="leading-tight">
+                    <span className="block text-sm font-semibold">Wahana LifeLine</span>
+                    <span className="block text-xs text-white/70">Operations Team</span>
+                  </span>
+                </figcaption>
+              </figure>
+            </div>
+          </div>
+        </aside>
+
+        {/* ── Panel kanan: form ── */}
+        <div className="bg-background flex flex-col">
+          <div className="flex flex-1 items-center justify-center px-6 py-10 sm:px-12">
+            <div className="w-full max-w-sm">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src="/brand/wahana-lifeline-color.png" alt="Wahana LifeLine" className="mx-auto h-10 w-auto object-contain dark:hidden" />
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src="/brand/wahana-lifeline-white.png" alt="Wahana LifeLine" className="mx-auto hidden h-10 w-auto object-contain dark:block" />
+              <div className="mt-8">{children}</div>
+            </div>
+          </div>
+          <footer className="text-muted-foreground/70 px-6 pb-8 text-center text-xs">
+            © 2026 Wahana LifeLine · WRG OS
+          </footer>
         </div>
-
-        <p className="font-mono text-xs text-white/50">© 2026 Wahana LifeLine · Plan &amp; Report v5</p>
-      </aside>
-
-      {/* ── Panel kanan: form ── */}
-      <div className="bg-background flex flex-col">
-        <header className="flex items-center justify-between px-6 py-6 sm:px-10">
-          <span className="text-muted-foreground text-sm font-medium">WRG CRM</span>
-          <p className="text-muted-foreground text-sm">
-            Lupa password?{" "}
-            <Link href="/forgot-password" className="text-primary font-medium hover:underline">
-              Hubungi admin
-            </Link>
-          </p>
-        </header>
-
-        <main className="flex flex-1 items-center px-6 sm:px-10">
-          <div className="mx-auto w-full max-w-md">{children}</div>
-        </main>
-
-        <footer className="text-muted-foreground/70 px-6 py-6 text-center text-xs sm:px-10">
-          Belum punya password? Hubungi admin sistem (Husni).
-        </footer>
       </div>
     </div>
   );
