@@ -76,7 +76,7 @@ export function AddReminderSheet({
 
   return (
     <Sheet open={open} onOpenChange={setOpen}>
-      <SheetTrigger render={<Button size="sm" />}>
+      <SheetTrigger render={<Button className="shrink-0" />}>
         <Plus /> Tambah reminder
       </SheetTrigger>
       <SheetContent side="right" className="w-full sm:max-w-md">
