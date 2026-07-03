@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { SalesTable } from "@/components/tables/sales-table";
 import { SalesDateRange } from "@/components/sales/sales-date-range";
+import { RevenueExportButton } from "@/components/sales/revenue-export-button";
 import { SalesPerformanceCards, type SalesPerformance } from "@/components/sales/sales-performance-cards";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
@@ -111,19 +112,22 @@ export default async function SalesPage({
 
           <Card>
             <CardHeader className="pb-0">
-              <div className="flex flex-wrap gap-2">
-                {TABS.map((t) => (
-                  <Link
-                    key={t.key}
-                    href={`/sales?tab=${t.key}${rangeQs}`}
-                    className={cn(
-                      "rounded-lg border px-3 py-1 text-sm transition-colors",
-                      tab === t.key ? "border-primary bg-primary-soft text-primary font-medium" : "border-border bg-card text-foreground shadow-[var(--shadow-card)] hover:border-primary/40 hover:bg-muted",
-                    )}
-                  >
-                    {t.label}
-                  </Link>
-                ))}
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-wrap gap-2">
+                  {TABS.map((t) => (
+                    <Link
+                      key={t.key}
+                      href={`/sales?tab=${t.key}${rangeQs}`}
+                      className={cn(
+                        "rounded-lg border px-3 py-1 text-sm transition-colors",
+                        tab === t.key ? "border-primary bg-primary-soft text-primary font-medium" : "border-border bg-card text-foreground shadow-[var(--shadow-card)] hover:border-primary/40 hover:bg-muted",
+                      )}
+                    >
+                      {t.label}
+                    </Link>
+                  ))}
+                </div>
+                <RevenueExportButton data={data} />
               </div>
             </CardHeader>
             <CardContent className="pt-4">
