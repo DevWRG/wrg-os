@@ -21,8 +21,8 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
             <img src="/brand/wahana-lifeline-white.png" alt="Wahana LifeLine" className="h-8 w-auto max-w-[190px] object-contain drop-shadow" />
 
             <div className="max-w-md">
-              <p className="text-xs font-medium tracking-[0.2em] text-white/70">WRG OS · PLAN &amp; REPORT</p>
-              <h2 className="mt-3 text-3xl font-bold leading-tight sm:text-4xl">Plan &amp; report harian tim, real-time.</h2>
+              <p className="text-xs font-medium tracking-[0.2em] text-white/70">WRG OPERATING SYSTEM</p>
+              <h2 className="mt-3 text-4xl font-bold leading-tight sm:text-5xl">WRG OS</h2>
 
               <figure className="mt-6 rounded-2xl border border-white/15 bg-white/10 p-4 backdrop-blur-md">
                 <figcaption className="flex items-center gap-3">
