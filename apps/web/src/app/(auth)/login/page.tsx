@@ -53,7 +53,7 @@ function LoginForm() {
             required
             value={identifier}
             onChange={(e) => setIdentifier(e.target.value)}
-            className="h-11 rounded-xl"
+            className="h-11 rounded-xl bg-white"
           />
         </div>
 
@@ -67,7 +67,7 @@ function LoginForm() {
             required
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className="h-11 rounded-xl"
+            className="h-11 rounded-xl bg-white"
           />
           <div className="flex justify-end">
             <Link href="/forgot-password" className="text-primary text-xs font-medium hover:underline">
@@ -82,7 +82,7 @@ function LoginForm() {
           type="submit"
           disabled={busy}
           className="mt-2 h-11 w-full rounded-xl font-semibold text-white shadow-sm transition-opacity hover:opacity-95 disabled:opacity-60"
-          style={{ backgroundImage: "linear-gradient(90deg, #4f46e5 0%, #0ca6bd 100%)" }}
+          style={{ backgroundImage: "linear-gradient(90deg, #c0392b 0%, #0ca6bd 100%)" }}
         >
           {busy ? "Memproses…" : "Login"}
         </button>
