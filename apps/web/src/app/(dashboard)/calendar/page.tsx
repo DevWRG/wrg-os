@@ -125,7 +125,7 @@ export default function CalendarPage() {
           </h1>
           <p className="text-muted-foreground text-sm">Libur nasional + catatan reminder Account Manager. Klik tanggal untuk detail hari itu.</p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 sm:flex-nowrap">
           <select
             value={amFilter}
             onChange={(e) => setAmFilter(e.target.value)}
