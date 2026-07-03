@@ -1,11 +1,7 @@
-import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
-
 import { gatewayFetch } from "@/lib/gateway";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { AddTerritorySheet } from "@/components/watchpoint/add-territory-sheet";
 import { TerritoryTable, type TerritoryRow } from "@/components/watchpoint/territory-table";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 
 export const dynamic = "force-dynamic";
@@ -27,14 +23,7 @@ export default async function TerritoryPage() {
       <PageHeader
         title="WatchPoint — Territory HoD"
         description="Mapping HoD→cabang (hod_territory). Dipakai menghitung metric per-HoD. Cabang harus cocok dengan master_user.cabang."
-        action={
-          <div className="flex items-center gap-2">
-            <Button render={<Link href="/watchpoint" />} nativeButton={false} variant="outline" size="sm">
-              <ArrowLeft /> WatchPoint
-            </Button>
-            <AddTerritorySheet />
-          </div>
-        }
+        action={<AddTerritorySheet />}
       />
       {!rows ? (
         <p className="text-muted-foreground">
