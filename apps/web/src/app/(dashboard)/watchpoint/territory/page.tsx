@@ -29,7 +29,7 @@ export default async function TerritoryPage() {
         description="Mapping HoD→cabang (hod_territory). Dipakai menghitung metric per-HoD. Cabang harus cocok dengan master_user.cabang."
         action={
           <div className="flex items-center gap-2">
-            <Button render={<Link href="/watchpoint" />} variant="outline" size="sm">
+            <Button render={<Link href="/watchpoint" />} nativeButton={false} variant="outline" size="sm">
               <ArrowLeft /> WatchPoint
             </Button>
             <AddTerritorySheet />

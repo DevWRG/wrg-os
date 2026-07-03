@@ -5,7 +5,7 @@ import { SESSION_COOKIE } from "@/app/api/auth/login/route";
 import type { PermBag } from "@/lib/perms";
 
 export interface SessionUserSrv extends PermBag {
-  id: string; email: string; role: string; name?: string;
+  id: string; email: string; role: string; name?: string; title?: string | null;
 }
 
 // Session user dari cookie JWT (via apps/api /auth/me). null kalau tak login.

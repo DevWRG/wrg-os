@@ -2,9 +2,8 @@
 
 import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ArrowRight, Lock, User } from "lucide-react";
+import Link from "next/link";
 
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
@@ -38,56 +37,66 @@ function LoginForm() {
   }
 
   return (
-    <div>
-      <h1 className="text-3xl font-bold tracking-tight">Welcome back</h1>
-      <p className="text-muted-foreground mt-2 max-w-sm text-sm leading-relaxed">
-        Login pakai email, panggilan, nama, atau nomor WA. Password awal:{" "}
-        <code className="text-foreground/80">&lt;panggilan_lowercase&gt;123</code> — ganti ASAP.
-      </p>
+    <div className="text-center">
+      <h1 className="text-3xl font-bold tracking-tight">Halo, Tim 👋</h1>
+      <p className="text-muted-foreground mt-2 text-sm">Masuk ke WRG OS</p>
 
-      <form onSubmit={onSubmit} className="mt-8 space-y-5">
-        <div className="grid gap-2">
-          <Label htmlFor="identifier">Username</Label>
-          <div className="relative">
-            <User className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2" />
-            <Input
-              id="identifier"
-              type="text"
-              placeholder="Husni / boni / +6285…"
-              autoComplete="username"
-              autoCapitalize="off"
-              required
-              value={identifier}
-              onChange={(e) => setIdentifier(e.target.value)}
-              className="pl-9"
-            />
-          </div>
+      <form onSubmit={onSubmit} className="mt-8 space-y-4 text-left">
+        <div className="grid gap-1.5">
+          <Label htmlFor="identifier" className="sr-only">Email atau Username</Label>
+          <Input
+            id="identifier"
+            type="text"
+            placeholder="Email, panggilan, atau nomor WA"
+            autoComplete="username"
+            autoCapitalize="off"
+            required
+            value={identifier}
+            onChange={(e) => setIdentifier(e.target.value)}
+            className="h-11 rounded-xl bg-white"
+          />
         </div>
 
-        <div className="grid gap-2">
-          <Label htmlFor="password">Password</Label>
-          <div className="relative">
-            <Lock className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2" />
-            <Input
-              id="password"
-              type="password"
-              placeholder="••••••••"
-              autoComplete="current-password"
-              required
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="pl-9"
-            />
+        <div className="grid gap-1.5">
+          <Label htmlFor="password" className="sr-only">Password</Label>
+          <Input
+            id="password"
+            type="password"
+            placeholder="Password"
+            autoComplete="current-password"
+            required
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            className="h-11 rounded-xl bg-white"
+          />
+          <div className="flex justify-end">
+            <Link href="/forgot-password" className="text-primary text-xs font-medium hover:underline">
+              Lupa password?
+            </Link>
           </div>
         </div>
 
         {error && <p className="text-destructive text-sm">{error}</p>}
 
-        <Button type="submit" className="w-full" disabled={busy}>
+        <button
+          type="submit"
+          disabled={busy}
+          className="mt-2 h-11 w-full rounded-xl font-semibold text-white shadow-sm transition-opacity hover:opacity-95 disabled:opacity-60"
+          style={{ backgroundImage: "linear-gradient(90deg, #0fa5bc 0%, #0ca6bd 100%)" }}
+        >
           {busy ? "Memproses…" : "Login"}
-          {!busy && <ArrowRight className="size-4" />}
-        </Button>
+        </button>
       </form>
+
+      <p className="text-muted-foreground mt-6 text-sm">
+        Belum punya akun?{" "}
+        <Link href="/forgot-password" className="text-primary font-medium hover:underline">
+          Hubungi admin
+        </Link>
+      </p>
+      <p className="text-muted-foreground/70 mt-4 text-xs leading-relaxed">
+        Password awal: <code className="text-foreground/70">&lt;panggilan&gt;123</code> — segera ganti.
+      </p>
     </div>
   );
 }

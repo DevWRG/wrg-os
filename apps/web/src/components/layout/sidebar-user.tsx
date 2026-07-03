@@ -13,13 +13,12 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem } from "@/components/ui/sidebar";
-import { displayName, displayRole, initials, useSession } from "@/lib/use-session";
+import { displayName, displayRole, initials, type SessionUser } from "@/lib/use-session";
 
 // User-card di footer sidebar (gaya Adminator: avatar + nama + role + chevron),
 // jadi trigger dropdown akun. Identitas diambil dari sesi (/api/auth/me).
-export function SidebarUser() {
+export function SidebarUser({ me }: { me: SessionUser | null }) {
   const router = useRouter();
-  const me = useSession();
   const name = displayName(me);
   const sub = displayRole(me);
 

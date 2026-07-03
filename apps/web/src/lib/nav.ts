@@ -8,10 +8,20 @@ import {
   Factory, Workflow, Receipt, BarChart3, ClipboardCheck, History, Settings,
   Sparkles, Send, FileText, ScrollText, GraduationCap, UsersRound, Network,
   Bell, MapPin, ListChecks, Swords, CalendarOff, CalendarDays, CalendarRange,
-  Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, type LucideIcon,
+  Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, Tags, SlidersHorizontal,
+  Target, MapPinned, type LucideIcon,
 } from "lucide-react";
 
-export interface NavItem { title: string; url: string; icon: LucideIcon; badge?: string }
+import { canEditPricelistSetup, canViewPricelist, type AccessUser } from "@/lib/pricelist-access";
+
+// exact: sorot aktif hanya saat path persis (untuk route induk yg punya child,
+// mis. /pricelist vs /pricelist/setup).
+// show: gating khusus title-based (mis. Pricelist) — dievaluasi MENGGANTIKAN
+// can() untuk item ini (lihat app-sidebar).
+export interface NavItem {
+  title: string; url: string; icon: LucideIcon; badge?: string; exact?: boolean;
+  show?: (me: AccessUser | null) => boolean;
+}
 export interface NavGroup { label: string; items: NavItem[] }
 
 export const NAV: NavGroup[] = [
@@ -37,13 +47,15 @@ export const NAV: NavGroup[] = [
     label: "Sales",
     items: [
       { title: "Sales Calendar", url: "/calendar", icon: CalendarRange },
-      { title: "Sales Performance", url: "/sales", icon: BarChart3, badge: "NEW" },
+      { title: "Sales Performance", url: "/sales", icon: BarChart3, badge: "NEW", exact: true },
       { title: "Competitor Intel", url: "/competitor", icon: Swords },
       { title: "Pipeline", url: "/pipeline", icon: Workflow },
       { title: "Customers", url: "/customers", icon: Building2 },
       { title: "AR Aging", url: "/ar", icon: Receipt },
       { title: "Sales Docs", url: "/sales-docs", icon: FileText },
       { title: "Collection Drafts", url: "/collection-drafts", icon: Send },
+      { title: "Pricelist Setup", url: "/pricelist/setup", icon: SlidersHorizontal, show: canEditPricelistSetup },
+      { title: "Pricelist", url: "/pricelist", icon: Tags, exact: true, show: canViewPricelist },
     ],
   },
   {
@@ -80,6 +92,8 @@ export const NAV: NavGroup[] = [
   {
     label: "Admin",
     items: [
+      { title: "Sales Targets", url: "/sales/targets", icon: Target },
+      { title: "AM → Cabang", url: "/am-cabang", icon: MapPinned },
       { title: "Users", url: "/users", icon: Users },
       { title: "User Access", url: "/user-access", icon: KeyRound },
       { title: "Akses Grup", url: "/access-groups", icon: ShieldCheck },

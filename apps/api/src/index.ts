@@ -64,11 +64,13 @@ import {
   type PermRow, type FeatureInput,
 } from "./repo/rbac.js";
 import { listTerritory, createTerritory, updateTerritory, deleteTerritory } from "./repo/territory.js";
+import { listPricelist, upsertPricelist, publishPricelist, unpublishPricelist, deletePricelist, type PricelistInput } from "./repo/pricelist.js";
 import { listCoachingNotes } from "./repo/coaching.js";
 import { getLatestCoachingNotes, computePeopleAnalytics } from "./repo/people.js";
 import { createVisit, getVisit, listVisits, visitSummary } from "./repo/visit.js";
 import { upsertDailyTodo, listTodos, markTodoReported } from "./repo/todo.js";
-import { upsertUser, listUsers, upsertTerritory, listTerritories } from "./repo/master.js";
+import { upsertUser, listUsers, upsertTerritory, listTerritories, updateUserCabang } from "./repo/master.js";
+import { listTargets, upsertTargets } from "./repo/sales-target.js";
 import {
   upsertHoliday,
   listHolidays,
@@ -99,7 +101,7 @@ import {
   reportCalendar,
   reportCalendarDay,
 } from "./repo/plandash.js";
-import { salesRange, reportRevenue, reportSalesAr, salesOverview, customersRevenue, customerMonthly } from "./repo/sales.js";
+import { salesRange, reportRevenue, reportSalesAr, salesOverview, customersRevenue, customerMonthly, reportSalesPerformance } from "./repo/sales.js";
 import { upsertMembers, listMembers, upsertDigests, listDigest, upsertPola, listPola, generateRekap, generateResume, type MonitorMemberInput, type DigestInput, type PolaInput } from "./repo/monitor.js";
 import { runNotifTua } from "./repo/notiftua.js";
 import { runDailySummary } from "./repo/dailysummary.js";
@@ -293,6 +295,26 @@ app.patch("/admin/users/:id", async (c) => {
 app.delete("/admin/users/:id", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return (await deleteAppUser(c.req.param("id"))) ? c.json({ ok: true }) : c.json({ error: "user tak ditemukan" }, 404);
+});
+
+// AM → Cabang (menu Admin). List AM (roster master_user) + opsi cabang dari
+// hod_territory (WatchPoint). cabang menentukan region kartu Sales Performance.
+app.get("/admin/am-cabang", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const [users, territory] = await Promise.all([listUsers({ role: "AM" }), listTerritory()]);
+  const cabangOptions = [...new Set(territory.map((t) => t.cabang))].sort((a, b) => a.localeCompare(b));
+  return c.json({
+    rows: users.map((u) => ({ am_id: u.am_id, nama: u.nama, panggilan: u.panggilan, cabang: u.cabang, aktif: u.aktif })),
+    cabang_options: cabangOptions,
+  });
+});
+app.put("/admin/am-cabang", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let b: { am_id?: string; cabang?: string | null } = {};
+  try { b = await c.req.json(); } catch { /* opsional */ }
+  if (!b.am_id) return c.json({ error: "am_id wajib" }, 400);
+  const r = await updateUserCabang(String(b.am_id), b.cabang ?? null);
+  return r.updated ? c.json(r) : c.json({ error: "AM tak ditemukan" }, 404);
 });
 
 // Set/reset password. body {password?|generate, force?, send_wa?}. Return password (sekali) + status WA.
@@ -1681,6 +1703,33 @@ app.get("/sales/revenue", async (c) => {
   return c.json(await reportRevenue(from, to));
 });
 
+// Kartu Sales Performance: target vs realisasi per periode (YTD/kuartal/bulan) +
+// breakdown region. Periodik relatif "hari ini" (asOf opsional, YYYY-MM-DD).
+app.get("/sales/performance", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await reportSalesPerformance(c.req.query("asOf")));
+});
+
+// Sales Targets (menu Admin → Sales Targets). BFF-trusted; role-guard di web.
+app.get("/sales/targets", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const year = Number(c.req.query("year")) || new Date().getUTCFullYear();
+  return c.json({ year, rows: await listTargets(year) });
+});
+app.put("/sales/targets", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let b: { year?: number; entries?: { period?: string; region?: string; target?: number }[] } = {};
+  try { b = await c.req.json(); } catch { /* opsional */ }
+  const year = Number(b.year);
+  if (!Number.isInteger(year) || year < 2000 || year > 2100) return c.json({ error: "year tidak valid" }, 400);
+  const PERIODS = ["year", "quarter", "month"];
+  const REGIONS = ["East", "West"];
+  const entries = (b.entries ?? [])
+    .filter((e) => PERIODS.includes(String(e.period)) && REGIONS.includes(String(e.region)) && Number.isFinite(Number(e.target)))
+    .map((e) => ({ period: e.period as "year" | "quarter" | "month", region: e.region as "East" | "West", target: Math.max(0, Number(e.target)) }));
+  return c.json(await upsertTargets(year, entries));
+});
+
 // Dashboard Sales Overview (gabungan) — KPI+delta, tren, breakdown, recent, low-stock, AR.
 app.get("/dashboard/overview", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
@@ -1746,6 +1795,44 @@ app.put("/watchpoint/territory/:id", async (c) => {
 app.delete("/watchpoint/territory/:id", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const r = await deleteTerritory(c.req.param("id"));
+  return c.json(r, r.deleted ? 200 : 404);
+});
+
+// ── Pricelist — harga jual per produk (setup HoD/Purchasing → publish → AM) ──
+// Role-guard ada di BFF (apps/web /api/pricelist*); di sini hanya validasi DB.
+app.get("/pricelist", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const status = c.req.query("status");
+  const rows = await listPricelist(status === "draft" || status === "published" ? status : undefined);
+  return c.json({ count: rows.length, rows });
+});
+
+app.post("/pricelist", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: PricelistInput;
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  if (body.product_id == null || body.product_id === "") return c.json({ error: "product_id wajib" }, 400);
+  const row = await upsertPricelist(body);
+  return row ? c.json(row, 201) : c.json({ error: "gagal menyimpan" }, 400);
+});
+
+app.post("/pricelist/publish", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { ids?: string[]; published_by?: string };
+  try { body = await c.req.json(); } catch { body = {}; }
+  return c.json(await publishPricelist(body.ids, body.published_by ?? null));
+});
+
+app.post("/pricelist/unpublish", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { ids?: string[] };
+  try { body = await c.req.json(); } catch { body = {}; }
+  return c.json(await unpublishPricelist(body.ids));
+});
+
+app.delete("/pricelist/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await deletePricelist(c.req.param("id"));
   return c.json(r, r.deleted ? 200 : 404);
 });
 

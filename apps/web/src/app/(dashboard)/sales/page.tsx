@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { SalesTable } from "@/components/tables/sales-table";
 import { SalesDateRange } from "@/components/sales/sales-date-range";
+import { SalesPerformanceCards, type SalesPerformance } from "@/components/sales/sales-performance-cards";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 export const dynamic = "force-dynamic";
@@ -51,6 +52,17 @@ async function getRevenue(from: string, to: string): Promise<Revenue | null> {
   }
 }
 
+// Kartu periodik (YTD/kuartal/bulan) — independen dari filter Dari/Sampai.
+async function getPerformance(): Promise<SalesPerformance | null> {
+  try {
+    const res = await gatewayFetch(`/sales/performance`);
+    if (!res.ok) return null;
+    return (await res.json()) as SalesPerformance;
+  } catch {
+    return null;
+  }
+}
+
 export default async function SalesPage({
   searchParams,
 }: {
@@ -58,7 +70,7 @@ export default async function SalesPage({
 }) {
   const sp = await searchParams;
   const tab = (TABS.find((t) => t.key === sp.tab)?.key ?? "customer") as Tab;
-  const data = await getRevenue(sp.from ?? "", sp.to ?? "");
+  const [data, perf] = await Promise.all([getRevenue(sp.from ?? "", sp.to ?? ""), getPerformance()]);
   const rangeQs = sp.from && sp.to ? `&from=${sp.from}&to=${sp.to}` : "";
   const rows = data ? data[TABS.find((t) => t.key === tab)!.field] : [];
 
@@ -71,6 +83,8 @@ export default async function SalesPage({
         />
         <SalesDateRange tab={tab} from={data?.from ?? sp.from ?? ""} to={data?.to ?? sp.to ?? ""} />
       </div>
+
+      {perf && <SalesPerformanceCards data={perf} />}
 
       {!data ? (
         <p className="text-muted-foreground">

@@ -34,6 +34,16 @@ export async function upsertUser(u: MasterUserInput): Promise<{ am_id: string }>
   return { am_id: String(rows[0].am_id) };
 }
 
+// Set cabang satu AM (menu Admin → AM→Cabang). Region kartu Sales Performance
+// diturunkan dari cabang ini via hod_territory. null = kosongkan cabang.
+export async function updateUserCabang(am_id: string, cabang: string | null): Promise<{ updated: boolean }> {
+  const sql = db();
+  const rows = await sql`
+    UPDATE master_user SET cabang = ${cabang && cabang.trim() !== "" ? cabang : null}
+    WHERE am_id = ${am_id} RETURNING am_id`;
+  return { updated: rows.length > 0 };
+}
+
 export interface MasterUserRow {
   am_id: string;
   nama: string;

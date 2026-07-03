@@ -15,7 +15,7 @@ export default function NotFound() {
           Halaman yang lo cari ga ketemu. Mungkin URL salah atau halamannya sudah dipindah.
         </p>
       </div>
-      <Button render={<Link href="/dashboard" />}>Back to dashboard</Button>
+      <Button render={<Link href="/dashboard" />} nativeButton={false}>Back to dashboard</Button>
     </div>
   );
 }

@@ -38,11 +38,13 @@ function DialogContent({
   className,
   children,
   showCloseButton = true,
+  forceOverlay = false,
   ...props
-}: DialogPrimitive.Popup.Props & { showCloseButton?: boolean }) {
+}: DialogPrimitive.Popup.Props & { showCloseButton?: boolean; forceOverlay?: boolean }) {
   return (
     <DialogPrimitive.Portal data-slot="dialog-portal">
-      <DialogOverlay />
+      {/* forceOverlay: base-ui menyembunyikan backdrop dialog nested (enabled = forceRender || !nested) — paksa render agar modal bertingkat tetap punya overlay. */}
+      <DialogOverlay forceRender={forceOverlay} />
       <DialogPrimitive.Popup
         data-slot="dialog-content"
         className={cn(

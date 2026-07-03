@@ -1,5 +1,6 @@
 import { db } from "../db.js";
 import { getAging } from "./ar.js";
+import { listTargets, type TargetPeriod } from "./sales-target.js";
 
 // Revenue analytics (port wrg-crm Sales Performance) dari accurate_invoice +
 // accurate_invoice_item. Outstanding/AR di-skip krn sumber 0. Rentang default
@@ -464,5 +465,141 @@ export async function customerMonthly(id: string, months = 12): Promise<{
   return {
     name: meta?.name ? String(meta.name) : null,
     monthly: rows.map((r) => ({ month: String(r.month), total: Number(r.total), count: Number(r.count) })),
+  };
+}
+
+// ── Sales Performance (kartu target vs realisasi per periode + region) ──
+// Kartu bersifat periodik (YTD / kuartal / bulan berjalan) relatif "hari ini",
+// independen dari filter Dari/Sampai (yg menggerakkan tabel breakdown).
+//   - Target  : tabel sales_target per tahun (menu Admin → Sales Targets).
+//   - Region  : cabang → HoD (tabel hod_territory / menu WatchPoint Territory) →
+//               rocky=East, yogi=West (dua HoD Sales), selain itu → OFFICE.
+
+type Region = "OFFICE" | "West" | "East";
+const REGIONS: Region[] = ["East", "West", "OFFICE"];
+
+const p2 = (n: number) => String(n).padStart(2, "0");
+const isoDate = (y: number, m: number, d: number) => `${y}-${p2(m)}-${p2(d)}`;
+
+interface Range {
+  from: string;
+  to: string;
+}
+// Boundary periode dari as-of (YYYY-MM-DD): YTD, kuartal-to-date, month-to-date,
+// dan periode setara bulan lalu (tgl 1 → hari yg sama, di-clamp ke akhir bulan).
+function periodRanges(asOf: string): { year: Range; quarter: Range; month: Range; monthPrev: Range } {
+  const [Y, M, D] = asOf.split("-").map(Number);
+  const qStartMonth = Math.floor((M - 1) / 3) * 3 + 1;
+  const pmY = M === 1 ? Y - 1 : Y;
+  const pmM = M === 1 ? 12 : M - 1;
+  const daysInPrevMonth = new Date(Date.UTC(pmY, pmM, 0)).getUTCDate(); // hari terakhir bulan lalu
+  const pmD = Math.min(D, daysInPrevMonth);
+  return {
+    year: { from: isoDate(Y, 1, 1), to: asOf },
+    quarter: { from: isoDate(Y, qStartMonth, 1), to: asOf },
+    month: { from: isoDate(Y, M, 1), to: asOf },
+    monthPrev: { from: isoDate(pmY, pmM, 1), to: isoDate(pmY, pmM, pmD) },
+  };
+}
+
+// Peta cabang → region dari hod_territory (WatchPoint). Hanya HoD Sales yg jadi
+// region: rocky→East, yogi→West. Cabang lain / tak ter-map → OFFICE (default).
+async function cabangRegionMap(sql: ReturnType<typeof db>): Promise<Record<string, Region>> {
+  const rows = await sql<{ hod_key: string; cabang: string }[]>`SELECT hod_key, cabang FROM hod_territory`;
+  const map: Record<string, Region> = {};
+  for (const r of rows) {
+    const region: Region | null = r.hod_key === "rocky" ? "East" : r.hod_key === "yogi" ? "West" : null;
+    if (region) map[r.cabang] = region;
+  }
+  return map;
+}
+
+type RegionTotals = Record<Region, number>;
+const zeroRegions = (): RegionTotals => ({ OFFICE: 0, West: 0, East: 0 });
+
+// Total revenue + breakdown per region untuk satu rentang. Cabang dipetakan lewat
+// salesman → master_user.cabang (fallback cabang_override), sama spt reportRevenue.
+async function periodAgg(
+  sql: ReturnType<typeof db>,
+  from: string,
+  to: string,
+  regionMap: Record<string, Region>,
+): Promise<{ total: number; regions: RegionTotals }> {
+  const rows = await sql`
+    SELECT COALESCE(NULLIF(mu.cabang,''), NULLIF(acs.cabang_override,''), 'Tanpa cabang') AS cabang,
+           sum(ai.total)::numeric AS total
+    FROM accurate_invoice ai
+    LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
+    LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
+    WHERE ai.tanggal BETWEEN ${from} AND ${to}
+    GROUP BY 1
+  `;
+  const regions = zeroRegions();
+  let total = 0;
+  for (const r of rows) {
+    const v = Number((r as Record<string, unknown>).total ?? 0);
+    total += v;
+    const cabang = String((r as Record<string, unknown>).cabang ?? "");
+    regions[regionMap[cabang] ?? "OFFICE"] += v;
+  }
+  return { total, regions };
+}
+
+const pctOr = (num: number, den: number | null): number | null =>
+  den == null || den <= 0 ? null : Math.round((num / den) * 1000) / 10;
+
+export async function reportSalesPerformance(asOf?: string) {
+  const sql = db();
+  const today = asOf && ISO.test(asOf) ? asOf : salesDefaultRange().to;
+  const R = periodRanges(today);
+  const yr = Number(today.slice(0, 4));
+  const regionMap = await cabangRegionMap(sql);
+  const [targets, year, quarter, month, monthPrev] = await Promise.all([
+    listTargets(yr),
+    periodAgg(sql, R.year.from, R.year.to, regionMap),
+    periodAgg(sql, R.quarter.from, R.quarter.to, regionMap),
+    periodAgg(sql, R.month.from, R.month.to, regionMap),
+    periodAgg(sql, R.monthPrev.from, R.monthPrev.to, regionMap),
+  ]);
+
+  // Lookup target[period][region] (null bila belum diisi utk tahun ini).
+  const tgt = (period: TargetPeriod, region: "East" | "West"): number | null =>
+    targets.find((t) => t.period === period && t.region === region)?.target ?? null;
+
+  const mk = (
+    key: TargetPeriod,
+    label: string,
+    range: Range,
+    agg: { total: number; regions: RegionTotals },
+  ) => {
+    const east = tgt(key, "East");
+    const west = tgt(key, "West");
+    const total = east != null && west != null ? east + west : null;
+    return {
+      key,
+      label,
+      from: range.from,
+      to: range.to,
+      total: agg.total,
+      regions: REGIONS.map((r) => ({ region: r, total: agg.regions[r] })),
+      target: { east, west, total },
+      pct: { total: pctOr(agg.total, total), east: pctOr(agg.regions.East, east), west: pctOr(agg.regions.West, west) },
+    };
+  };
+
+  const growth = monthPrev.total > 0 ? Math.round(((month.total - monthPrev.total) / monthPrev.total) * 1000) / 10 : null;
+
+  return {
+    as_of: today,
+    periods: [
+      mk("year", "Sales YTD", R.year, year),
+      mk("quarter", "Sales This Quarter", R.quarter, quarter),
+      mk("month", "Sales This Month", R.month, month),
+    ],
+    mtd_vs_last: {
+      current: { from: R.month.from, to: R.month.to, total: month.total },
+      previous: { from: R.monthPrev.from, to: R.monthPrev.to, total: monthPrev.total },
+      growth_pct: growth,
+    },
   };
 }

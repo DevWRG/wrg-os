@@ -4,8 +4,8 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 import { NAV, featureKey } from "@/lib/nav";
-import { useSession } from "@/lib/use-session";
 import { can } from "@/lib/perms";
+import { type SessionUser } from "@/lib/use-session";
 import {
   Sidebar,
   SidebarContent,
@@ -21,14 +21,18 @@ import {
 } from "@/components/ui/sidebar";
 import { SidebarUser } from "@/components/layout/sidebar-user";
 
-export function AppSidebar() {
+// Sesi di-pass sebagai prop SSR (anti-flicker menu saat hydrate). Gate per izin
+// 'view' RBAC: bila izin tak tersedia (auth mati / belum login), can() = true →
+// semua tampil (non-breaking). Grup tanpa item disembunyikan.
+export function AppSidebar({ me }: { me: SessionUser | null }) {
   const pathname = usePathname();
-  const me = useSession();
 
-  // Gate per izin 'view'. Bila izin tak tersedia (auth mati / belum login),
-  // can() = true → semua tampil (non-breaking). Grup tanpa item disembunyikan.
   const nav = NAV
-    .map((g) => ({ ...g, items: g.items.filter((it) => can(me, featureKey(it.url), "view")) }))
+    .map((g) => ({
+      ...g,
+      // Item ber-`show` (Pricelist) di-gate title-based; sisanya via izin RBAC can().
+      items: g.items.filter((it) => (it.show ? it.show(me) : can(me, featureKey(it.url), "view"))),
+    }))
     .filter((g) => g.items.length > 0);
 
   return (
@@ -55,7 +59,7 @@ export function AppSidebar() {
                 {group.items.map((item) => (
                   <SidebarMenuItem key={item.url}>
                     <SidebarMenuButton
-                      isActive={pathname === item.url || pathname.startsWith(`${item.url}/`)}
+                      isActive={item.exact ? pathname === item.url : pathname === item.url || pathname.startsWith(`${item.url}/`)}
                       tooltip={item.title}
                       className="rounded-md focus-visible:ring-0 data-active:bg-primary/10 data-active:font-medium data-active:text-primary data-active:shadow-[inset_3px_0_0_var(--primary)]"
                       render={<Link href={item.url} />}
@@ -77,7 +81,7 @@ export function AppSidebar() {
       </SidebarContent>
 
       <SidebarFooter>
-        <SidebarUser />
+        <SidebarUser me={me} />
       </SidebarFooter>
     </Sidebar>
   );
