@@ -12,9 +12,16 @@ import {
   Target, MapPinned, type LucideIcon,
 } from "lucide-react";
 
+import { canEditPricelistSetup, canViewPricelist, type AccessUser } from "@/lib/pricelist-access";
+
 // exact: sorot aktif hanya saat path persis (untuk route induk yg punya child,
 // mis. /pricelist vs /pricelist/setup).
-export interface NavItem { title: string; url: string; icon: LucideIcon; badge?: string; exact?: boolean }
+// show: gating khusus title-based (mis. Pricelist) — dievaluasi MENGGANTIKAN
+// can() untuk item ini (lihat app-sidebar).
+export interface NavItem {
+  title: string; url: string; icon: LucideIcon; badge?: string; exact?: boolean;
+  show?: (me: AccessUser | null) => boolean;
+}
 export interface NavGroup { label: string; items: NavItem[] }
 
 export const NAV: NavGroup[] = [
@@ -47,8 +54,8 @@ export const NAV: NavGroup[] = [
       { title: "AR Aging", url: "/ar", icon: Receipt },
       { title: "Sales Docs", url: "/sales-docs", icon: FileText },
       { title: "Collection Drafts", url: "/collection-drafts", icon: Send },
-      { title: "Pricelist Setup", url: "/pricelist/setup", icon: SlidersHorizontal },
-      { title: "Pricelist", url: "/pricelist", icon: Tags, exact: true },
+      { title: "Pricelist Setup", url: "/pricelist/setup", icon: SlidersHorizontal, show: canEditPricelistSetup },
+      { title: "Pricelist", url: "/pricelist", icon: Tags, exact: true, show: canViewPricelist },
     ],
   },
   {
