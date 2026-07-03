@@ -9,7 +9,7 @@ import {
   Sparkles, Send, FileText, ScrollText, GraduationCap, UsersRound, Network,
   Bell, MapPin, ListChecks, Swords, CalendarOff, CalendarDays, CalendarRange,
   Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, Tags, SlidersHorizontal,
-  type LucideIcon,
+  Target, MapPinned, type LucideIcon,
 } from "lucide-react";
 
 // exact: sorot aktif hanya saat path persis (untuk route induk yg punya child,
@@ -40,7 +40,7 @@ export const NAV: NavGroup[] = [
     label: "Sales",
     items: [
       { title: "Sales Calendar", url: "/calendar", icon: CalendarRange },
-      { title: "Sales Performance", url: "/sales", icon: BarChart3, badge: "NEW" },
+      { title: "Sales Performance", url: "/sales", icon: BarChart3, badge: "NEW", exact: true },
       { title: "Competitor Intel", url: "/competitor", icon: Swords },
       { title: "Pipeline", url: "/pipeline", icon: Workflow },
       { title: "Customers", url: "/customers", icon: Building2 },
@@ -85,6 +85,8 @@ export const NAV: NavGroup[] = [
   {
     label: "Admin",
     items: [
+      { title: "Sales Targets", url: "/sales/targets", icon: Target },
+      { title: "AM → Cabang", url: "/am-cabang", icon: MapPinned },
       { title: "Users", url: "/users", icon: Users },
       { title: "User Access", url: "/user-access", icon: KeyRound },
       { title: "Akses Grup", url: "/access-groups", icon: ShieldCheck },
