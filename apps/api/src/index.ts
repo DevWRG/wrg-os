@@ -70,7 +70,7 @@ import { getLatestCoachingNotes, computePeopleAnalytics } from "./repo/people.js
 import { createVisit, getVisit, listVisits, visitSummary } from "./repo/visit.js";
 import { upsertDailyTodo, listTodos, markTodoReported } from "./repo/todo.js";
 import { upsertUser, listUsers, upsertTerritory, listTerritories, updateUserCabang } from "./repo/master.js";
-import { listTargets, upsertTargets, listCabangTargets, upsertCabangTargets, listAmTargets, upsertAmTargets } from "./repo/sales-target.js";
+import { listTargets, upsertTargets, listCabangTargets, upsertCabangTargets, listAmTargets, upsertAmTargets, listAmCandidates, deleteAmTarget } from "./repo/sales-target.js";
 import {
   upsertHoliday,
   listHolidays,
@@ -1763,7 +1763,8 @@ app.put("/sales/targets/cabang", async (c) => {
 app.get("/sales/targets/am", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const year = Number(c.req.query("year")) || new Date().getUTCFullYear();
-  return c.json({ year, rows: await listAmTargets(year) });
+  const [rows, candidates] = await Promise.all([listAmTargets(year), listAmCandidates(year)]);
+  return c.json({ year, rows, candidates });
 });
 app.put("/sales/targets/am", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
@@ -1775,6 +1776,13 @@ app.put("/sales/targets/am", async (c) => {
     .filter((e) => String(e.am_id ?? "").trim() !== "" && Number.isFinite(Number(e.target)))
     .map((e) => ({ am_id: String(e.am_id), target: Math.max(0, Number(e.target)) }));
   return c.json(await upsertAmTargets(year, entries));
+});
+app.delete("/sales/targets/am", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const year = Number(c.req.query("year")) || new Date().getUTCFullYear();
+  const am_id = String(c.req.query("am_id") ?? "").trim();
+  if (!am_id) return c.json({ error: "am_id wajib" }, 400);
+  return c.json(await deleteAmTarget(year, am_id));
 });
 
 // Dashboard Sales Overview (gabungan) — KPI+delta, tren, breakdown, recent, low-stock, AR.
