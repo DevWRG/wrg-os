@@ -77,6 +77,9 @@ export default async function SalesPage({
   const [data, perf] = await Promise.all([getRevenue(sp.from ?? "", sp.to ?? ""), getPerformance()]);
   const rangeQs = sp.from && sp.to ? `&from=${sp.from}&to=${sp.to}` : "";
   const rows = data ? data[TABS.find((t) => t.key === tab)!.field] : [];
+  // Share dihitung relatif ke jumlah baris tab ini (produk/kategori pakai total item,
+  // basis beda dari total faktur) → selalu ≤100% & konsisten per-tab.
+  const tabTotal = rows.reduce((s, r) => s + r.total, 0);
 
   return (
     <>
@@ -134,7 +137,7 @@ export default async function SalesPage({
               </div>
             </CardHeader>
             <CardContent className="pt-4">
-              <SalesTable rows={rows} header={TABS.find((t) => t.key === tab)!.label.replace("Per ", "")} grandTotal={data.total} showTarget={tab === "salesman" || tab === "cabang"} />
+              <SalesTable rows={rows} header={TABS.find((t) => t.key === tab)!.label.replace("Per ", "")} grandTotal={tabTotal} showTarget={tab === "salesman" || tab === "cabang"} />
             </CardContent>
           </Card>
         </>
