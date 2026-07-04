@@ -51,7 +51,9 @@ export function RevenueExportButton({ data }: { data: RevenueExport }) {
           { type: Number, value: r.total, format: "#,##0" },
           { type: Number, value: r.count },
         ]);
-        return { sheet: s.name, data: [header, ...body], columns: COLS };
+        // Baris judul periode (rentang tanggal aktif) di atas tabel.
+        const title = [{ value: `Periode: ${data.from} → ${data.to}`, fontWeight: "bold" as const, span: 4 }];
+        return { sheet: s.name, data: [title, header, ...body], columns: COLS };
       });
       // Browser: writeXlsxFile(...) → { toFile } untuk trigger download.
       await writeXlsxFile(sheets).toFile(`revenue_${data.from}_${data.to}.xlsx`);

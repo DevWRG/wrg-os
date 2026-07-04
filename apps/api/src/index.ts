@@ -11,7 +11,7 @@ import { parsePlan } from "./parsers/plan.js";
 import { parseReport } from "./parsers/report.js";
 import { matchCustomer, type PlanCandidate } from "./parsers/fuzzy.js";
 import { isDbEnabled, pingDb } from "./db.js";
-import { waPreflight, sendViaWaGateway } from "./wasend.js";
+import { waPreflight, sendViaWaGateway, type WaSendResult } from "./wasend.js";
 import { processUnprocessed, isInboundEnabled } from "./repo/inbound.js";
 import { syncAccurateInvoices, syncVendors, syncItems, syncSalesOrders, syncDeliveryOrders, syncCustomers, getDeliveryOrderItems, getSalesOrderItems, getVendorDetail, accurateConfigured } from "./repo/accurateSync.js";
 import { insertAuditEvent } from "./repo/audit.js";
@@ -262,6 +262,19 @@ app.get("/admin/users", async (c) => {
   return c.json({ users: await listAppUsers() });
 });
 
+// Pesan WA berisi kredensial akses (dipakai create + reset password).
+function accessWaMsg(email: string, pw: string): string {
+  const url = (process.env.WEB_PUBLIC_URL || "").replace(/\/$/, "");
+  return `🔐 *Akses WRG OS*\nEmail: ${email}\nPassword: ${pw}\n${url ? `Login: ${url}/login\n` : ""}Mohon ganti password setelah login.`;
+}
+// Ringkas hasil gateway → mode + delivered. stub/dry-run = tidak benar-benar
+// terkirim (walau sendViaWaGateway balikan sent:true), jadi delivered hanya true
+// pada mode live yang sukses. Dipakai UI utk status jujur.
+function waSummary(g: WaSendResult): { mode: "stub" | "dry-run" | "live"; delivered: boolean; error?: string } {
+  const mode = g.stub ? "stub" : g.dryRun ? "dry-run" : "live";
+  return { mode, delivered: mode === "live" && g.sent, error: g.error };
+}
+
 app.post("/admin/users", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   let b: { email?: string; password?: string; generate?: boolean; name?: string; role?: string; title?: string; wa_number?: string } = {};
@@ -271,7 +284,9 @@ app.post("/admin/users", async (c) => {
   if (!pw) return c.json({ error: "password atau generate wajib" }, 400);
   const user = await createUser(b.email, pw, b.name, b.role ?? "user", b.title);
   if (b.wa_number) await updateAppUser(user.id, { wa_number: b.wa_number });
-  return c.json({ user, password: pw }, 201); // password ditampilkan sekali ke admin
+  // Kirim password via WA bila nomor diisi (sebelumnya tak pernah dikirim).
+  const wa = b.wa_number ? waSummary(await sendViaWaGateway(b.wa_number, accessWaMsg(b.email, pw))) : undefined;
+  return c.json({ user, password: pw, wa }, 201); // password ditampilkan sekali ke admin
 });
 
 app.post("/admin/users/from-roster", async (c) => {
@@ -325,17 +340,13 @@ app.post("/admin/users/:id/password", async (c) => {
   try { b = await c.req.json(); } catch { /* opsional */ }
   const pw = b.password || generatePassword();
   if (!(await setUserPassword(id, pw, b.force ?? false))) return c.json({ error: "user tak ditemukan" }, 404);
-  let wa_sent = false;
+  let wa: ReturnType<typeof waSummary> | undefined;
   if (b.send_wa) {
     const u = await getAppUserById(id);
-    if (u?.wa_number) {
-      const url = (process.env.WEB_PUBLIC_URL || "").replace(/\/$/, "");
-      const msg = `🔐 *Akses WRG OS*\nEmail: ${u.email}\nPassword: ${pw}\n${url ? `Login: ${url}/login\n` : ""}Mohon ganti password setelah login.`;
-      const g = await sendViaWaGateway(u.wa_number, msg);
-      wa_sent = g.sent;
-    }
+    if (u?.wa_number) wa = waSummary(await sendViaWaGateway(u.wa_number, accessWaMsg(u.email, pw)));
+    else wa = { mode: "live", delivered: false, error: "nomor WA kosong" };
   }
-  return c.json({ ok: true, password: pw, wa_sent });
+  return c.json({ ok: true, password: pw, wa, wa_sent: wa?.delivered ?? false });
 });
 
 // ── Akses Grup (RBAC, admin) — role-guard di web BFF (requireAdmin) ──
