@@ -121,9 +121,9 @@ function RegionTargets({ year }: { year: number }) {
           </table>
         </div>
         {error && <p className="text-danger text-sm">{error}</p>}
-        <div className="flex items-center gap-2">
-          <SaveButton saving={saving} saved={saved} disabled={loading} onClick={save} />
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <span className="text-muted-foreground text-xs">Nilai dalam Rupiah penuh (mis. 125000000000).</span>
+          <SaveButton saving={saving} saved={saved} disabled={loading} onClick={save} />
         </div>
       </CardContent>
     </Card>
@@ -202,7 +202,9 @@ function CabangTargets({ year }: { year: number }) {
           </table>
         </div>
         {error && <p className="text-danger text-sm">{error}</p>}
-        <SaveButton saving={saving} saved={saved} disabled={loading || rows.length === 0} onClick={save} label="Simpan target cabang" />
+        <div className="flex justify-end">
+          <SaveButton saving={saving} saved={saved} disabled={loading || rows.length === 0} onClick={save} label="Simpan target cabang" />
+        </div>
       </CardContent>
     </Card>
   );
@@ -333,9 +335,9 @@ function AmTargets({ year }: { year: number }) {
           </table>
         </div>
         {error && <p className="text-danger text-sm">{error}</p>}
-        <div className="flex flex-wrap items-center gap-2">
-          <SaveButton saving={saving} saved={saved} disabled={loading || rows.length === 0} onClick={save} label="Simpan target AM" />
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <span className="text-muted-foreground text-xs">Kelola AM/cabang di <Link href="/users" className="text-primary hover:underline">Users</Link>, <Link href="/am-cabang" className="text-primary hover:underline">AM → Cabang</Link> &amp; <Link href="/watchpoint/territory" className="text-primary hover:underline">Territory</Link>.</span>
+          <SaveButton saving={saving} saved={saved} disabled={loading || rows.length === 0} onClick={save} label="Simpan target AM" />
         </div>
       </CardContent>
     </Card>
