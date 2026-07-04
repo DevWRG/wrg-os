@@ -293,7 +293,7 @@ function AmTargets({ year }: { year: number }) {
                 </option>
               ))}
             </select>
-            <Button size="sm" variant="outline" onClick={() => addAm(addSel)} disabled={!addSel || busy}>
+            <Button size="sm" onClick={() => addAm(addSel)} disabled={!addSel || busy} className="bg-[#e44830] text-white shadow-sm hover:bg-[#c93c27]">
               <Plus /> Tambah AM
             </Button>
           </div>
