@@ -21,6 +21,7 @@ export interface RevenueExport {
   per_salesman: RankRow[];
   per_cabang: RankRow[];
   per_product: RankRow[];
+  per_pengadaan: RankRow[];
 }
 
 // Sheet terpisah sesuai tab tabel Revenue. withTarget → tambah kolom Target & Capai.
@@ -29,6 +30,7 @@ const SHEETS: { name: string; field: keyof Omit<RevenueExport, "from" | "to">; n
   { name: "Per Sales", field: "per_salesman", nameCol: "Sales", withTarget: true },
   { name: "Per Cabang", field: "per_cabang", nameCol: "Cabang", withTarget: true },
   { name: "Per Produk", field: "per_product", nameCol: "Produk" },
+  { name: "Per Pengadaan", field: "per_pengadaan", nameCol: "Pengadaan" },
 ];
 const COLS = [{ width: 40 }, { width: 24 }, { width: 18 }, { width: 10 }];
 const COLS_TARGET = [{ width: 40 }, { width: 24 }, { width: 18 }, { width: 10 }, { width: 18 }, { width: 8 }];
