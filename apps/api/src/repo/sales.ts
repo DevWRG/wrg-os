@@ -101,17 +101,6 @@ export async function reportRevenue(from: string, to: string) {
     WHERE ai.tanggal BETWEEN ${from} AND ${to}
     GROUP BY aii.item_id, it.name ORDER BY sum(aii.total) DESC
   `;
-  // Per-kategori penjualan: accurate_item.category. Faktur = jumlah faktur unik.
-  const perCategory = await sql`
-    SELECT COALESCE(NULLIF(it.category,''),'Tanpa kategori') AS key,
-           COALESCE(NULLIF(it.category,''),'Tanpa kategori') AS label,
-           sum(aii.total)::numeric AS total, count(DISTINCT ai.id)::int AS count
-    FROM accurate_invoice_item aii
-    JOIN accurate_invoice ai ON ai.id = aii.invoice_id
-    LEFT JOIN accurate_item it ON it.id = aii.item_id
-    WHERE ai.tanggal BETWEEN ${from} AND ${to}
-    GROUP BY 1 ORDER BY sum(aii.total) DESC
-  `;
   return {
     from,
     to,
@@ -122,7 +111,6 @@ export async function reportRevenue(from: string, to: string) {
     per_salesman: mapRank(perSalesman),
     per_cabang: mapRank(perCabang),
     per_product: mapRank(perProduct),
-    per_category: mapRank(perCategory),
   };
 }
 

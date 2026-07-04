@@ -29,7 +29,6 @@ interface Revenue {
   per_salesman: RankRow[];
   per_cabang: RankRow[];
   per_product: RankRow[];
-  per_category: RankRow[];
 }
 
 const rupiah = (n: number) =>
@@ -37,13 +36,12 @@ const rupiah = (n: number) =>
 const rupiahFull = (n: number) =>
   new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(n);
 
-type Tab = "customer" | "salesman" | "cabang" | "product" | "category";
-const TABS: { key: Tab; label: string; field: keyof Pick<Revenue, "per_customer" | "per_salesman" | "per_cabang" | "per_product" | "per_category"> }[] = [
+type Tab = "customer" | "salesman" | "cabang" | "product";
+const TABS: { key: Tab; label: string; field: keyof Pick<Revenue, "per_customer" | "per_salesman" | "per_cabang" | "per_product"> }[] = [
   { key: "customer", label: "Per Customer", field: "per_customer" },
   { key: "salesman", label: "Per Sales", field: "per_salesman" },
   { key: "cabang", label: "Per Cabang", field: "per_cabang" },
   { key: "product", label: "Per Produk", field: "per_product" },
-  { key: "category", label: "Per Kategori", field: "per_category" },
 ];
 
 async function getRevenue(from: string, to: string): Promise<Revenue | null> {
