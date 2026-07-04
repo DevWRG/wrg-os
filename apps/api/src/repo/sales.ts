@@ -26,6 +26,7 @@ interface RankRow {
   sub?: string;
   total: number;
   count: number;
+  target?: number; // target tahunan (hanya utk per-sales & per-cabang)
 }
 const mapRank = (rows: Record<string, unknown>[]): RankRow[] =>
   rows.map((r) => ({
@@ -34,10 +35,12 @@ const mapRank = (rows: Record<string, unknown>[]): RankRow[] =>
     sub: r.sub != null && String(r.sub) !== "" ? String(r.sub) : undefined,
     total: Number(r.total ?? 0),
     count: Number(r.count ?? 0),
+    target: r.target != null && Number(r.target) > 0 ? Number(r.target) : undefined,
   }));
 
 export async function reportRevenue(from: string, to: string) {
   const sql = db();
+  const year = Number(to.slice(0, 4)); // target tahunan diambil dari tahun akhir rentang
   const [tot] = await sql`
     SELECT COALESCE(sum(total),0)::numeric AS total, count(*)::int AS invoices,
            count(DISTINCT customer_id)::int AS customers
@@ -50,31 +53,44 @@ export async function reportRevenue(from: string, to: string) {
     WHERE ai.tanggal BETWEEN ${from} AND ${to}
     GROUP BY ai.customer_id, ac.name ORDER BY sum(ai.total) DESC
   `;
+  // Per-sales + target AM: am_id per grup (via master_user) → join sales_target_am tahun ${year}.
   const perSalesman = await sql`
-    SELECT COALESCE(NULLIF(ai.salesman_name,''),'tanpa') AS key,
-           COALESCE(NULLIF(max(mu.nama),''), NULLIF(max(ai.salesman_name),''),'Tanpa sales') AS label,
-           CASE WHEN NULLIF(max(mu.nama),'') IS NOT NULL
-                THEN NULLIF(max(ai.salesman_name),'') || COALESCE(' · ' || NULLIF(max(mu.cabang),''), '')
-                ELSE NULLIF(max(mu.cabang),'') END AS sub,
-           sum(ai.total)::numeric AS total, count(*)::int AS count
-    FROM accurate_invoice ai
-    LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
-    LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
-    WHERE ai.tanggal BETWEEN ${from} AND ${to}
-    GROUP BY COALESCE(NULLIF(ai.salesman_name,''),'tanpa') ORDER BY sum(ai.total) DESC
+    SELECT s.key, s.label, s.sub, s.total, s.count, sta.target::numeric AS target
+    FROM (
+      SELECT COALESCE(NULLIF(ai.salesman_name,''),'tanpa') AS key,
+             COALESCE(NULLIF(max(mu.nama),''), NULLIF(max(ai.salesman_name),''),'Tanpa sales') AS label,
+             CASE WHEN NULLIF(max(mu.nama),'') IS NOT NULL
+                  THEN NULLIF(max(ai.salesman_name),'') || COALESCE(' · ' || NULLIF(max(mu.cabang),''), '')
+                  ELSE NULLIF(max(mu.cabang),'') END AS sub,
+             max(mu.am_id) AS am_id,
+             sum(ai.total)::numeric AS total, count(*)::int AS count
+      FROM accurate_invoice ai
+      LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
+      LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
+      WHERE ai.tanggal BETWEEN ${from} AND ${to}
+      GROUP BY COALESCE(NULLIF(ai.salesman_name,''),'tanpa')
+    ) s
+    LEFT JOIN sales_target_am sta ON sta.am_id = s.am_id AND sta.year = ${year}
+    ORDER BY s.total DESC
   `;
   // Cabang via salesman → master_user.cabang (fallback cabang_override). branch_id
   // di accurate_invoice tak ter-isi (semua = 50, accurate_branch.name kosong) →
   // pakai pemetaan salesman spt AR-aging. Lihat reportAr().
+  // Per-cabang + target cabang: join langsung sales_target_cabang (cabang text) tahun ${year}.
   const perCabang = await sql`
-    SELECT COALESCE(NULLIF(mu.cabang,''), NULLIF(acs.cabang_override,''), 'Tanpa cabang') AS key,
-           COALESCE(NULLIF(mu.cabang,''), NULLIF(acs.cabang_override,''), 'Tanpa cabang') AS label,
-           sum(ai.total)::numeric AS total, count(*)::int AS count
-    FROM accurate_invoice ai
-    LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
-    LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
-    WHERE ai.tanggal BETWEEN ${from} AND ${to}
-    GROUP BY 1 ORDER BY sum(ai.total) DESC
+    SELECT c.key, c.label, c.total, c.count, stc.target::numeric AS target
+    FROM (
+      SELECT COALESCE(NULLIF(mu.cabang,''), NULLIF(acs.cabang_override,''), 'Tanpa cabang') AS key,
+             COALESCE(NULLIF(mu.cabang,''), NULLIF(acs.cabang_override,''), 'Tanpa cabang') AS label,
+             sum(ai.total)::numeric AS total, count(*)::int AS count
+      FROM accurate_invoice ai
+      LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
+      LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
+      WHERE ai.tanggal BETWEEN ${from} AND ${to}
+      GROUP BY 1
+    ) c
+    LEFT JOIN sales_target_cabang stc ON stc.cabang = c.key AND stc.year = ${year}
+    ORDER BY c.total DESC
   `;
   const perProduct = await sql`
     SELECT aii.item_id::text AS key, COALESCE(it.name, aii.item_id::text) AS label,
@@ -84,6 +100,17 @@ export async function reportRevenue(from: string, to: string) {
     LEFT JOIN accurate_item it ON it.id = aii.item_id
     WHERE ai.tanggal BETWEEN ${from} AND ${to}
     GROUP BY aii.item_id, it.name ORDER BY sum(aii.total) DESC
+  `;
+  // Per-kategori penjualan: accurate_item.category. Faktur = jumlah faktur unik.
+  const perCategory = await sql`
+    SELECT COALESCE(NULLIF(it.category,''),'Tanpa kategori') AS key,
+           COALESCE(NULLIF(it.category,''),'Tanpa kategori') AS label,
+           sum(aii.total)::numeric AS total, count(DISTINCT ai.id)::int AS count
+    FROM accurate_invoice_item aii
+    JOIN accurate_invoice ai ON ai.id = aii.invoice_id
+    LEFT JOIN accurate_item it ON it.id = aii.item_id
+    WHERE ai.tanggal BETWEEN ${from} AND ${to}
+    GROUP BY 1 ORDER BY sum(aii.total) DESC
   `;
   return {
     from,
@@ -95,6 +122,7 @@ export async function reportRevenue(from: string, to: string) {
     per_salesman: mapRank(perSalesman),
     per_cabang: mapRank(perCabang),
     per_product: mapRank(perProduct),
+    per_category: mapRank(perCategory),
   };
 }
 

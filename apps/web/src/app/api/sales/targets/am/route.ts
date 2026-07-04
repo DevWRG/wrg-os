@@ -29,3 +29,16 @@ export async function PUT(req: Request) {
     return Response.json({ error: "backend unreachable" }, { status: 502 });
   }
 }
+
+export async function DELETE(req: Request) {
+  const g = await requireAdmin();
+  if (!g.ok) return g.res;
+  const url = new URL(req.url);
+  const qs = new URLSearchParams({ year: url.searchParams.get("year") ?? "", am_id: url.searchParams.get("am_id") ?? "" });
+  try {
+    const res = await gatewayFetch(`/sales/targets/am?${qs}`, { method: "DELETE" });
+    return Response.json(await res.json(), { status: res.status });
+  } catch {
+    return Response.json({ error: "backend unreachable" }, { status: 502 });
+  }
+}

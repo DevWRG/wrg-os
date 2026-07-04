@@ -112,25 +112,57 @@ export interface AmTargetRow {
   target: number;
 }
 
-// Roster AM (master_user role AM, aktif) + cabang + region turunan + target tahun tsb.
+// Daftar terkurasi: hanya AM yang sudah punya row sales_target_am (ditambah via
+// picker). nama/cabang di-join dari master_user; region turunan dari cabang.
 export async function listAmTargets(year: number): Promise<AmTargetRow[]> {
   const sql = db();
-  const [ams, targets] = await Promise.all([
-    sql<{ am_id: string; nama: string; cabang: string | null }[]>`
-      SELECT am_id, nama, NULLIF(cabang, '') AS cabang FROM master_user
-      WHERE upper(role) = 'AM' AND aktif IS NOT FALSE ORDER BY nama`,
-    sql<{ am_id: string; target: number }[]>`
-      SELECT am_id, target::float8 AS target FROM sales_target_am WHERE year = ${year}`,
-  ]);
+  const rows = await sql<{ am_id: string; nama: string | null; cabang: string | null; target: number }[]>`
+    SELECT sta.am_id, mu.nama, NULLIF(mu.cabang, '') AS cabang, sta.target::float8 AS target
+    FROM sales_target_am sta
+    LEFT JOIN master_user mu ON mu.am_id = sta.am_id
+    WHERE sta.year = ${year}
+    ORDER BY mu.nama NULLS LAST, sta.am_id`;
   const regionMap = await cabangRegionMap(sql);
-  const tMap = new Map(targets.map((t) => [t.am_id, Number(t.target ?? 0)]));
-  return ams.map((a) => ({
-    am_id: a.am_id,
-    nama: a.nama,
-    cabang: a.cabang,
-    region: (a.cabang && regionMap[a.cabang]) || "OFFICE",
-    target: tMap.get(a.am_id) ?? 0,
+  return rows.map((r) => ({
+    am_id: r.am_id,
+    nama: r.nama ?? r.am_id,
+    cabang: r.cabang,
+    region: (r.cabang && regionMap[r.cabang]) || "OFFICE",
+    target: Number(r.target ?? 0),
   }));
+}
+
+export interface AmCandidate {
+  am_id: string;
+  nama: string;
+  cabang: string | null;
+  region: ScopeRegion;
+  role: string | null;
+}
+
+// Kandidat untuk picker "+ Tambah AM": orang di master_user (aktif) yang BELUM
+// ada di daftar target tahun tsb.
+export async function listAmCandidates(year: number): Promise<AmCandidate[]> {
+  const sql = db();
+  const rows = await sql<{ am_id: string; nama: string; cabang: string | null; role: string | null }[]>`
+    SELECT am_id, nama, NULLIF(cabang, '') AS cabang, role FROM master_user
+    WHERE aktif IS NOT FALSE
+      AND am_id NOT IN (SELECT am_id FROM sales_target_am WHERE year = ${year})
+    ORDER BY nama`;
+  const regionMap = await cabangRegionMap(sql);
+  return rows.map((r) => ({
+    am_id: r.am_id,
+    nama: r.nama,
+    cabang: r.cabang,
+    region: (r.cabang && regionMap[r.cabang]) || "OFFICE",
+    role: r.role,
+  }));
+}
+
+export async function deleteAmTarget(year: number, am_id: string): Promise<{ deleted: number }> {
+  const sql = db();
+  const rows = await sql`DELETE FROM sales_target_am WHERE year = ${year} AND am_id = ${am_id} RETURNING am_id`;
+  return { deleted: rows.length };
 }
 
 export async function upsertAmTargets(

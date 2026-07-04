@@ -1,6 +1,7 @@
 "use client";
 
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
+import { cn } from "@/lib/utils";
 
 interface RankRow {
   key: string;
@@ -8,12 +9,16 @@ interface RankRow {
   sub?: string;
   total: number;
   count: number;
+  target?: number;
 }
 
 const rupiahFull = (n: number) =>
   new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(n);
 
-export function SalesTable({ rows, header, grandTotal }: { rows: RankRow[]; header: string; grandTotal: number }) {
+// Warna % pencapaian: hijau ≥100, kuning ≥60, merah <60.
+const achColor = (pct: number) => (pct >= 100 ? "text-success" : pct >= 60 ? "text-warning" : "text-danger");
+
+export function SalesTable({ rows, header, grandTotal, showTarget = false }: { rows: RankRow[]; header: string; grandTotal: number; showTarget?: boolean }) {
   const columns: DataColumn<RankRow>[] = [
     {
       id: "label",
@@ -29,6 +34,30 @@ export function SalesTable({ rows, header, grandTotal }: { rows: RankRow[]; head
     },
     { id: "count", header: "Faktur", align: "right", sortable: true, accessor: (r) => r.count },
     { id: "total", header: "Revenue", align: "right", sortable: true, accessor: (r) => r.total, cell: (r) => <span className="font-medium">{rupiahFull(r.total)}</span> },
+    ...(showTarget
+      ? ([
+          {
+            id: "target",
+            header: "Target (thn)",
+            align: "right",
+            sortable: true,
+            accessor: (r: RankRow) => r.target ?? 0,
+            cell: (r: RankRow) => <span className="text-muted-foreground">{r.target ? rupiahFull(r.target) : "—"}</span>,
+          },
+          {
+            id: "achievement",
+            header: "Capai",
+            align: "right",
+            sortable: true,
+            accessor: (r: RankRow) => (r.target ? r.total / r.target : -1),
+            cell: (r: RankRow) => {
+              if (!r.target) return <span className="text-muted-foreground">—</span>;
+              const pct = Math.round((r.total / r.target) * 100);
+              return <span className={cn("font-medium", achColor(pct))}>{pct}%</span>;
+            },
+          },
+        ] as DataColumn<RankRow>[])
+      : []),
     {
       id: "share",
       header: "Share",
