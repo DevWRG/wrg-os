@@ -21,6 +21,19 @@ const fmtRpShort = (n: number) => {
 };
 const fmtPct = (n: number | null | undefined) => (n == null ? "—" : `${n}%`);
 
+// Export CSV (UTF-8 BOM → Excel buka langsung). Angka mentah (bukan terformat).
+function downloadCsv(name: string, headers: string[], rows: (string | number | null)[][]) {
+  const esc = (v: string | number | null) => {
+    const s = v == null ? "" : String(v);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const csv = "﻿" + [headers.map(esc).join(","), ...rows.map((r) => r.map(esc).join(","))].join("\r\n");
+  const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8;" }));
+  const a = document.createElement("a");
+  a.href = url; a.download = name; a.click();
+  URL.revokeObjectURL(url);
+}
+
 // ── Tipe ───────────────────────────────────────────────────────────
 interface Range { from: string; to: string }
 interface TrendPt { date: string; revenue: number; orders: number; anomaly?: boolean }
@@ -135,6 +148,41 @@ export function SalesAnalyticsDashboard({ initial }: { initial: OverviewResult |
   const cur = cache[tab] as unknown;
   const apply = () => { setCache({}); load(tab, true); };
 
+  const exportCsv = () => {
+    if (!cur) return;
+    const suffix = `${from || "ytd"}_${to || "now"}`;
+    if (tab === "per-am") {
+      const d = cur as { rows: AmRow[] };
+      downloadCsv(`sales-analytics_per-am_${suffix}.csv`, ["Rank", "AM", "Cabang", "Region", "Revenue", "Target", "Achievement%", "Faktur"],
+        d.rows.map((r) => [r.rank, r.nama, r.cabang, r.region, r.total, r.target, r.achievement_pct, r.count]));
+    } else if (tab === "per-produk") {
+      const d = cur as { rows: ProdRow[] };
+      downloadCsv(`sales-analytics_per-produk_${suffix}.csv`, ["Produk", "Kategori", "Unit", "Customer", "Stok", "Revenue"],
+        d.rows.map((r) => [r.label, r.category, r.unit_sold, r.customer_count, r.stock_on_hand, r.total]));
+    } else if (tab === "per-cabang") {
+      const d = cur as { rows: CabangRow[] };
+      downloadCsv(`sales-analytics_per-cabang_${suffix}.csv`, ["Cabang", "Region", "AM", "Customer", "Revenue", "Target", "Achievement%", "Faktur"],
+        d.rows.map((r) => [r.cabang, r.region, r.am_count, r.customers, r.total, r.target, r.achievement_pct, r.count]));
+    } else if (tab === "per-customer") {
+      const d = cur as { customers: CustRow[] };
+      downloadCsv(`sales-analytics_per-customer_${suffix}.csv`, ["Customer", "Faktur", "Terakhir", "Hari", "Revenue"],
+        d.customers.map((r) => [r.name, r.invoices, r.last_date, r.days_since, r.total]));
+    } else if (tab === "trending") {
+      const d = cur as { points: TrendPt[] };
+      downloadCsv(`sales-analytics_trending_${suffix}.csv`, ["Tanggal", "Revenue", "Faktur", "Anomali"],
+        d.points.map((p) => [p.date, p.revenue, p.orders, p.anomaly ? "YA" : ""]));
+    } else {
+      const d = cur as OverviewResult;
+      if (d.scope === "all") {
+        downloadCsv(`sales-analytics_overview_${suffix}.csv`, ["Cabang", "Faktur", "Revenue"],
+          d.per_cabang.map((r) => [r.label, r.count, r.total]));
+      } else {
+        downloadCsv(`sales-analytics_overview_${suffix}.csv`, ["Tanggal", "Revenue", "Faktur"],
+          d.trend.map((p) => [p.date, p.revenue, p.orders]));
+      }
+    }
+  };
+
   const openDrill = async (amId: string) => {
     const qs = new URLSearchParams();
     if (from) qs.set("from", from);
@@ -153,6 +201,7 @@ export function SalesAnalyticsDashboard({ initial }: { initial: OverviewResult |
         <div className="grid gap-1"><Label htmlFor="sa-from" className="text-xs">Dari</Label><Input id="sa-from" type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="h-9 w-40" /></div>
         <div className="grid gap-1"><Label htmlFor="sa-to" className="text-xs">Sampai</Label><Input id="sa-to" type="date" value={to} onChange={(e) => setTo(e.target.value)} className="h-9 w-40" /></div>
         <Button size="sm" variant="outline" onClick={apply}>Terapkan</Button>
+        <Button size="sm" variant="outline" onClick={exportCsv} disabled={!cur}>Export CSV</Button>
         <span className="text-muted-foreground text-xs">Kosongkan = year-to-date.</span>
       </div>
 

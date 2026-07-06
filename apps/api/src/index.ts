@@ -112,6 +112,7 @@ import {
   analyticsPerCustomer,
   analyticsTrending,
 } from "./repo/sales-analytics.js";
+import { listViews, saveView, deleteView, listAlerts, createAlert, deleteAlert } from "./repo/sales-analytics-config.js";
 import { upsertMembers, listMembers, upsertDigests, listDigest, upsertPola, listPola, generateRekap, generateResume, type MonitorMemberInput, type DigestInput, type PolaInput } from "./repo/monitor.js";
 import { runNotifTua } from "./repo/notiftua.js";
 import { runDailySummary } from "./repo/dailysummary.js";
@@ -1840,6 +1841,54 @@ app.get("/sales-analytics/per-customer", async (c) => {
 app.get("/sales-analytics/trending", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json(await analyticsTrending(c.req.query("from"), c.req.query("to"), await scopeOf(c)));
+});
+
+// Saved views + threshold alert (per user; butuh x-user-id dari BFF).
+const userIdOf = (c: { req: { header: (k: string) => string | undefined } }): string =>
+  (c.req.header("x-user-id") ?? "").trim();
+
+app.get("/sales-analytics/views", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const uid = userIdOf(c);
+  if (!uid) return c.json({ error: "x-user-id wajib" }, 401);
+  return c.json({ views: await listViews(uid) });
+});
+app.post("/sales-analytics/views", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const uid = userIdOf(c);
+  if (!uid) return c.json({ error: "x-user-id wajib" }, 401);
+  let b = {};
+  try { b = await c.req.json(); } catch { /* opsional */ }
+  const r = await saveView(uid, b);
+  return r.ok ? c.json(r, 201) : c.json({ error: r.error }, 400);
+});
+app.delete("/sales-analytics/views/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const uid = userIdOf(c);
+  if (!uid) return c.json({ error: "x-user-id wajib" }, 401);
+  return (await deleteView(uid, c.req.param("id"))) ? c.json({ ok: true }) : c.json({ error: "view tak ditemukan" }, 404);
+});
+
+app.get("/sales-analytics/alerts", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const uid = userIdOf(c);
+  if (!uid) return c.json({ error: "x-user-id wajib" }, 401);
+  return c.json({ alerts: await listAlerts(uid) });
+});
+app.post("/sales-analytics/alerts", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const uid = userIdOf(c);
+  if (!uid) return c.json({ error: "x-user-id wajib" }, 401);
+  let b = {};
+  try { b = await c.req.json(); } catch { /* opsional */ }
+  const r = await createAlert(uid, b);
+  return r.ok ? c.json(r, 201) : c.json({ error: r.error }, 400);
+});
+app.delete("/sales-analytics/alerts/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const uid = userIdOf(c);
+  if (!uid) return c.json({ error: "x-user-id wajib" }, 401);
+  return (await deleteAlert(uid, c.req.param("id"))) ? c.json({ ok: true }) : c.json({ error: "alert tak ditemukan" }, 404);
 });
 
 // ── F76 WatchPoint HoD (metric-based, DB-backed + fallback manual) ──
