@@ -183,7 +183,16 @@ PR_URL=$(gh pr create \
 
 log "✓ PR created: $PR_URL"
 
-# Optional: auto-merge ke dev kalau bypass CI gate (state file only)
-# gh pr merge --auto --squash
+# Auto-merge langsung ke dev (state file only, no code → aman skip CI; dev tak
+# protected). Cegah PR state numpuk yg bikin konflik antar-hari (PR belakangan
+# nabrak PR sebelumnya yg merge telat). Squash + hapus branch.
+PR_NUM="$(printf '%s' "$PR_URL" | grep -oE '[0-9]+$')"
+if [ -n "$PR_NUM" ]; then
+  if gh pr merge "$PR_NUM" --squash --delete-branch >/dev/null 2>&1; then
+    log "✓ auto-merged PR #$PR_NUM ke dev"
+  else
+    log "⚠️ auto-merge PR #$PR_NUM gagal — merge manual (mungkin konflik/CI)"
+  fi
+fi
 
 log "=== sync-state.sh END ==="
