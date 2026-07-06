@@ -102,6 +102,16 @@ import {
   reportCalendarDay,
 } from "./repo/plandash.js";
 import { salesRange, reportRevenue, reportSalesAr, salesOverview, customersRevenue, customerMonthly, reportSalesPerformance } from "./repo/sales.js";
+import { resolveScope } from "./repo/access-scope.js";
+import {
+  analyticsOverview,
+  analyticsPerAm,
+  analyticsPerAmDrilldown,
+  analyticsPerProduk,
+  analyticsPerCabang,
+  analyticsPerCustomer,
+  analyticsTrending,
+} from "./repo/sales-analytics.js";
 import { upsertMembers, listMembers, upsertDigests, listDigest, upsertPola, listPola, generateRekap, generateResume, type MonitorMemberInput, type DigestInput, type PolaInput } from "./repo/monitor.js";
 import { runNotifTua } from "./repo/notiftua.js";
 import { runDailySummary } from "./repo/dailysummary.js";
@@ -1790,6 +1800,46 @@ app.get("/dashboard/overview", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const { from, to } = salesRange(c.req.query("from"), c.req.query("to"));
   return c.json(await salesOverview(from, to));
+});
+
+// ── F127 Sales Analytics (multi-dimensi; row-level scope via x-user-id) ──
+// BFF tepercaya meneruskan identitas user lewat header x-user-id → resolveScope
+// (AM → data sendiri). Feature-permission `sales-analytics` dijaga di web BFF.
+const scopeOf = (c: { req: { header: (k: string) => string | undefined } }) =>
+  resolveScope(c.req.header("x-user-id"));
+
+app.get("/sales-analytics/overview", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await analyticsOverview(c.req.query("from"), c.req.query("to"), await scopeOf(c)));
+});
+app.get("/sales-analytics/per-am", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await analyticsPerAm(c.req.query("from"), c.req.query("to"), await scopeOf(c)));
+});
+app.get("/sales-analytics/per-am/:amId/drilldown", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    return c.json(await analyticsPerAmDrilldown(c.req.param("amId"), c.req.query("from"), c.req.query("to"), await scopeOf(c)));
+  } catch (e) {
+    const status = (e as { status?: number }).status === 403 ? 403 : 500;
+    return c.json({ error: (e as Error).message }, status);
+  }
+});
+app.get("/sales-analytics/per-produk", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await analyticsPerProduk(c.req.query("from"), c.req.query("to"), await scopeOf(c)));
+});
+app.get("/sales-analytics/per-cabang", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await analyticsPerCabang(c.req.query("from"), c.req.query("to"), await scopeOf(c)));
+});
+app.get("/sales-analytics/per-customer", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await analyticsPerCustomer(c.req.query("from"), c.req.query("to"), await scopeOf(c)));
+});
+app.get("/sales-analytics/trending", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await analyticsTrending(c.req.query("from"), c.req.query("to"), await scopeOf(c)));
 });
 
 // ── F76 WatchPoint HoD (metric-based, DB-backed + fallback manual) ──

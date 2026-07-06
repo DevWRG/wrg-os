@@ -504,7 +504,7 @@ export async function customerMonthly(id: string, months = 12): Promise<{
 //   - Region  : cabang → HoD (tabel hod_territory / menu WatchPoint Territory) →
 //               rocky=East, yogi=West (dua HoD Sales), selain itu → OFFICE.
 
-type Region = "OFFICE" | "West" | "East";
+export type Region = "OFFICE" | "West" | "East";
 const REGIONS: Region[] = ["East", "West", "OFFICE"];
 
 const p2 = (n: number) => String(n).padStart(2, "0");
@@ -516,7 +516,7 @@ interface Range {
 }
 // Boundary periode dari as-of (YYYY-MM-DD): YTD, kuartal-to-date, month-to-date,
 // dan periode setara bulan lalu (tgl 1 → hari yg sama, di-clamp ke akhir bulan).
-function periodRanges(asOf: string): { year: Range; quarter: Range; month: Range; monthPrev: Range } {
+export function periodRanges(asOf: string): { year: Range; quarter: Range; month: Range; monthPrev: Range } {
   const [Y, M, D] = asOf.split("-").map(Number);
   const qStartMonth = Math.floor((M - 1) / 3) * 3 + 1;
   const pmY = M === 1 ? Y - 1 : Y;
@@ -533,7 +533,7 @@ function periodRanges(asOf: string): { year: Range; quarter: Range; month: Range
 
 // Peta cabang → region dari hod_territory (WatchPoint). Hanya HoD Sales yg jadi
 // region: rocky→East, yogi→West. Cabang lain / tak ter-map → OFFICE (default).
-async function cabangRegionMap(sql: ReturnType<typeof db>): Promise<Record<string, Region>> {
+export async function cabangRegionMap(sql: ReturnType<typeof db>): Promise<Record<string, Region>> {
   const rows = await sql<{ hod_key: string; cabang: string }[]>`SELECT hod_key, cabang FROM hod_territory`;
   const map: Record<string, Region> = {};
   for (const r of rows) {
