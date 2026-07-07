@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import writeXlsxFile from "write-excel-file/browser";
 import {
   Bar, BarChart, CartesianGrid, Cell, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
@@ -76,6 +77,17 @@ const TABS: { key: ViewKey; label: string }[] = [
   { key: "per-customer", label: "Per-Customer" },
   { key: "trending", label: "Trending" },
 ];
+// tab (ViewKey) → view_type enum DB (migrasi 049).
+const VIEW_TYPE: Record<ViewKey, string> = {
+  overview: "executive", "per-am": "per_am", "per-produk": "per_produk",
+  "per-cabang": "per_cabang", "per-customer": "per_customer", trending: "trending",
+};
+
+interface SavedView { id: string; view_name: string; view_type: string; filter_config: { from?: string; to?: string; tab?: ViewKey }; }
+interface SalesAlert { id: string; alert_name: string; metric_key: string; threshold_operator: string; threshold_value: number; window_days: number; }
+
+const ALERT_METRICS = ["revenue", "ar_gt_90", "customer_count", "new_customer_count", "churn_count"];
+const ALERT_OPS = [["gt", ">"], ["gte", "≥"], ["lt", "<"], ["lte", "≤"]];
 
 // ── Sub-komponen ───────────────────────────────────────────────────
 function Kpi({ label, value, delta }: { label: string; value: string; delta?: number | null }) {
@@ -123,6 +135,16 @@ export function SalesAnalyticsDashboard({ initial }: { initial: OverviewResult |
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
   const [drill, setDrill] = useState<Drilldown | null>(null);
+  const [views, setViews] = useState<SavedView[]>([]);
+  const [alerts, setAlerts] = useState<SalesAlert[]>([]);
+  const [showAlerts, setShowAlerts] = useState(false);
+
+  const loadViews = useCallback(async () => {
+    try { const r = await fetch("/api/sales-analytics/views"); if (r.ok) setViews(((await r.json()).views ?? []) as SavedView[]); } catch { /* abaikan */ }
+  }, []);
+  const loadAlerts = useCallback(async () => {
+    try { const r = await fetch("/api/sales-analytics/alerts"); if (r.ok) setAlerts(((await r.json()).alerts ?? []) as SalesAlert[]); } catch { /* abaikan */ }
+  }, []);
 
   const load = useCallback(async (view: ViewKey, force = false) => {
     const qs = new URLSearchParams();
@@ -151,39 +173,56 @@ export function SalesAnalyticsDashboard({ initial }: { initial: OverviewResult |
   const cur = cache[tab] as unknown;
   const apply = () => { setCache({}); load(tab, true); };
 
-  const exportCsv = () => {
-    if (!cur) return;
-    const suffix = `${from || "ytd"}_${to || "now"}`;
+  // Data view aktif → {name, headers, rows} (angka mentah) dipakai CSV & XLSX.
+  const viewData = (): { name: string; headers: string[]; rows: (string | number | null)[][] } | null => {
+    if (!cur) return null;
+    const s = `${from || "ytd"}_${to || "now"}`;
     if (tab === "per-am") {
       const d = cur as { rows: AmRow[] };
-      downloadCsv(`sales-analytics_per-am_${suffix}.csv`, ["Rank", "AM", "Cabang", "Region", "Revenue", "Target", "Achievement%", "Faktur"],
-        d.rows.map((r) => [r.rank, r.nama, r.cabang, r.region, r.total, r.target, r.achievement_pct, r.count]));
-    } else if (tab === "per-produk") {
-      const d = cur as { rows: ProdRow[] };
-      downloadCsv(`sales-analytics_per-produk_${suffix}.csv`, ["Produk", "Kategori", "Unit", "Customer", "Stok", "Revenue"],
-        d.rows.map((r) => [r.label, r.category, r.unit_sold, r.customer_count, r.stock_on_hand, r.total]));
-    } else if (tab === "per-cabang") {
-      const d = cur as { rows: CabangRow[] };
-      downloadCsv(`sales-analytics_per-cabang_${suffix}.csv`, ["Cabang", "Region", "AM", "Customer", "Revenue", "Target", "Achievement%", "Faktur"],
-        d.rows.map((r) => [r.cabang, r.region, r.am_count, r.customers, r.total, r.target, r.achievement_pct, r.count]));
-    } else if (tab === "per-customer") {
-      const d = cur as { customers: CustRow[] };
-      downloadCsv(`sales-analytics_per-customer_${suffix}.csv`, ["Customer", "Faktur", "Terakhir", "Hari", "Revenue"],
-        d.customers.map((r) => [r.name, r.invoices, r.last_date, r.days_since, r.total]));
-    } else if (tab === "trending") {
-      const d = cur as { points: TrendPt[] };
-      downloadCsv(`sales-analytics_trending_${suffix}.csv`, ["Tanggal", "Revenue", "Faktur", "Anomali"],
-        d.points.map((p) => [p.date, p.revenue, p.orders, p.anomaly ? "YA" : ""]));
-    } else {
-      const d = cur as OverviewResult;
-      if (d.scope === "all") {
-        downloadCsv(`sales-analytics_overview_${suffix}.csv`, ["Cabang", "Faktur", "Revenue"],
-          d.per_cabang.map((r) => [r.label, r.count, r.total]));
-      } else {
-        downloadCsv(`sales-analytics_overview_${suffix}.csv`, ["Tanggal", "Revenue", "Faktur"],
-          d.trend.map((p) => [p.date, p.revenue, p.orders]));
-      }
+      return { name: `sales-analytics_per-am_${s}`, headers: ["Rank", "AM", "Cabang", "Region", "Revenue", "Target", "Achievement%", "Faktur"],
+        rows: d.rows.map((r) => [r.rank, r.nama, r.cabang, r.region, r.total, r.target, r.achievement_pct, r.count]) };
     }
+    if (tab === "per-produk") {
+      const d = cur as { rows: ProdRow[] };
+      return { name: `sales-analytics_per-produk_${s}`, headers: ["Produk", "Kategori", "Unit", "Customer", "Stok", "Revenue"],
+        rows: d.rows.map((r) => [r.label, r.category, r.unit_sold, r.customer_count, r.stock_on_hand, r.total]) };
+    }
+    if (tab === "per-cabang") {
+      const d = cur as { rows: CabangRow[] };
+      return { name: `sales-analytics_per-cabang_${s}`, headers: ["Cabang", "Region", "AM", "Customer", "Revenue", "Target", "Achievement%", "Faktur"],
+        rows: d.rows.map((r) => [r.cabang, r.region, r.am_count, r.customers, r.total, r.target, r.achievement_pct, r.count]) };
+    }
+    if (tab === "per-customer") {
+      const d = cur as { customers: CustRow[] };
+      return { name: `sales-analytics_per-customer_${s}`, headers: ["Customer", "Faktur", "Terakhir", "Hari", "Revenue"],
+        rows: d.customers.map((r) => [r.name, r.invoices, r.last_date, r.days_since, r.total]) };
+    }
+    if (tab === "trending") {
+      const d = cur as { points: TrendPt[] };
+      return { name: `sales-analytics_trending_${s}`, headers: ["Tanggal", "Revenue", "Faktur", "Anomali"],
+        rows: d.points.map((p) => [p.date, p.revenue, p.orders, p.anomaly ? "YA" : ""]) };
+    }
+    const d = cur as OverviewResult;
+    if (d.scope === "all") {
+      return { name: `sales-analytics_overview_${s}`, headers: ["Cabang", "Faktur", "Revenue"], rows: d.per_cabang.map((r) => [r.label, r.count, r.total]) };
+    }
+    return { name: `sales-analytics_overview_${s}`, headers: ["Tanggal", "Revenue", "Faktur"], rows: d.trend.map((p) => [p.date, p.revenue, p.orders]) };
+  };
+
+  const exportCsv = () => {
+    const v = viewData();
+    if (v) downloadCsv(`${v.name}.csv`, v.headers, v.rows);
+  };
+
+  const exportXlsx = async () => {
+    const v = viewData();
+    if (!v) return;
+    const header = v.headers.map((h) => ({ value: h, fontWeight: "bold" as const }));
+    const body = v.rows.map((r) => r.map((c) =>
+      typeof c === "number"
+        ? { type: Number, value: c, format: "#,##0" }
+        : { type: String, value: c == null ? "" : String(c) }));
+    await writeXlsxFile([header, ...body]).toFile(`${v.name}.xlsx`);
   };
 
   const openDrill = async (amId: string) => {
@@ -197,6 +236,36 @@ export function SalesAnalyticsDashboard({ initial }: { initial: OverviewResult |
     } catch { /* abaikan */ }
   };
 
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- load*() men-setState setelah fetch; disengaja.
+    void loadViews(); void loadAlerts();
+  }, [loadViews, loadAlerts]);
+
+  const saveCurrentView = async () => {
+    const name = window.prompt("Nama view:");
+    if (!name) return;
+    await fetch("/api/sales-analytics/views", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ view_name: name, view_type: VIEW_TYPE[tab], filter_config: { from, to, tab } }),
+    });
+    void loadViews();
+  };
+  const applyView = (v: SavedView) => {
+    setFrom(v.filter_config.from ?? ""); setTo(v.filter_config.to ?? "");
+    if (v.filter_config.tab) setTab(v.filter_config.tab);
+    setCache({});
+  };
+  const delView = async (id: string) => { await fetch(`/api/sales-analytics/views/${id}`, { method: "DELETE" }); void loadViews(); };
+
+  const addAlert = async (a: { alert_name: string; metric_key: string; threshold_operator: string; threshold_value: number; window_days: number }) => {
+    const r = await fetch("/api/sales-analytics/alerts", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(a),
+    });
+    if (r.ok) void loadAlerts();
+    else setErr(String((await r.json().catch(() => ({}))).error ?? "gagal simpan alert"));
+  };
+  const delAlert = async (id: string) => { await fetch(`/api/sales-analytics/alerts/${id}`, { method: "DELETE" }); void loadAlerts(); };
+
   return (
     <div className="space-y-4">
       {/* Filter periode + tabs */}
@@ -205,8 +274,25 @@ export function SalesAnalyticsDashboard({ initial }: { initial: OverviewResult |
         <div className="grid gap-1"><Label htmlFor="sa-to" className="text-xs">Sampai</Label><Input id="sa-to" type="date" value={to} onChange={(e) => setTo(e.target.value)} className="h-9 w-40" /></div>
         <Button size="sm" variant="outline" onClick={apply}>Terapkan</Button>
         <Button size="sm" variant="outline" onClick={exportCsv} disabled={!cur}>Export CSV</Button>
+        <Button size="sm" variant="outline" onClick={() => void exportXlsx()} disabled={!cur}>Export XLSX</Button>
+        <Button size="sm" variant="outline" onClick={saveCurrentView}>Simpan view</Button>
+        <Button size="sm" variant={showAlerts ? "default" : "outline"} onClick={() => setShowAlerts((s) => !s)}>Alert{alerts.length ? ` (${alerts.length})` : ""}</Button>
         <span className="text-muted-foreground text-xs">Kosongkan = year-to-date.</span>
       </div>
+
+      {views.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-muted-foreground text-xs">Saved views:</span>
+          {views.map((v) => (
+            <span key={v.id} className="bg-muted flex items-center gap-1 rounded-full px-2.5 py-1 text-xs">
+              <button className="font-medium hover:underline" onClick={() => applyView(v)}>{v.view_name}</button>
+              <button className="text-muted-foreground hover:text-destructive" onClick={() => void delView(v.id)} aria-label="Hapus">×</button>
+            </span>
+          ))}
+        </div>
+      )}
+
+      {showAlerts && <AlertsPanel alerts={alerts} onAdd={addAlert} onDelete={delAlert} />}
 
       <div className="flex flex-wrap gap-1 rounded-lg border p-1">
         {TABS.map((t) => (
@@ -240,6 +326,53 @@ export function SalesAnalyticsDashboard({ initial }: { initial: OverviewResult |
         </Card>
       )}
     </div>
+  );
+}
+
+// ── Alerts panel ───────────────────────────────────────────────────
+function AlertsPanel({ alerts, onAdd, onDelete }: {
+  alerts: SalesAlert[];
+  onAdd: (a: { alert_name: string; metric_key: string; threshold_operator: string; threshold_value: number; window_days: number }) => Promise<void>;
+  onDelete: (id: string) => Promise<void>;
+}) {
+  const [name, setName] = useState("");
+  const [metric, setMetric] = useState(ALERT_METRICS[0]);
+  const [op, setOp] = useState("lt");
+  const [value, setValue] = useState("");
+  const [win, setWin] = useState("7");
+  const submit = async () => {
+    if (!name.trim() || value === "") return;
+    await onAdd({ alert_name: name.trim(), metric_key: metric, threshold_operator: op, threshold_value: Number(value), window_days: Number(win) || 7 });
+    setName(""); setValue("");
+  };
+  return (
+    <Card>
+      <CardHeader><CardTitle className="text-base">Alert threshold</CardTitle></CardHeader>
+      <CardContent className="space-y-3">
+        <div className="flex flex-wrap items-end gap-2">
+          <Input placeholder="Nama alert" value={name} onChange={(e) => setName(e.target.value)} className="h-9 w-40" />
+          <select value={metric} onChange={(e) => setMetric(e.target.value)} className="h-9 rounded-md border bg-background px-2 text-sm">
+            {ALERT_METRICS.map((m) => <option key={m} value={m}>{m}</option>)}
+          </select>
+          <select value={op} onChange={(e) => setOp(e.target.value)} className="h-9 rounded-md border bg-background px-2 text-sm">
+            {ALERT_OPS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+          </select>
+          <Input type="number" placeholder="nilai" value={value} onChange={(e) => setValue(e.target.value)} className="h-9 w-32" />
+          <Input type="number" placeholder="hari" value={win} onChange={(e) => setWin(e.target.value)} className="h-9 w-24" />
+          <Button size="sm" onClick={() => void submit()}>Tambah</Button>
+        </div>
+        {alerts.length === 0 ? <p className="text-muted-foreground text-sm">Belum ada alert.</p> : (
+          <ul className="space-y-1 text-sm">
+            {alerts.map((a) => (
+              <li key={a.id} className="flex items-center justify-between border-b py-1 last:border-0">
+                <span>{a.alert_name} — <code className="bg-muted rounded px-1">{a.metric_key} {a.threshold_operator} {a.threshold_value.toLocaleString("id-ID")}</code> · {a.window_days}h</span>
+                <Button size="sm" variant="ghost" onClick={() => void onDelete(a.id)}>Hapus</Button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
