@@ -29,6 +29,7 @@ import { runWeekendBriefing } from "./repo/weekendbriefing.js";
 import { runPolaKomunikasi } from "./repo/polakomunikasi.js";
 import { runRefreshMembers } from "./repo/listmembers.js";
 import { runNotifQuota } from "./repo/notifquota.js";
+import { evaluateSalesAlerts } from "./repo/sales-analytics-alert-eval.js";
 
 // Penjadwal agen in-process (Blueprint v2.3). Default MATI — aktif hanya bila
 // AGENT_SCHEDULE_ENABLED=true. Tiap run tetap menulis ke audit_log via repo
@@ -112,6 +113,7 @@ export function startScheduler(): ScheduleStatus {
   const listMembersEnabled = (process.env.LIST_MEMBERS_ENABLED ?? "false").toLowerCase() === "true";
   // notif-quota (port notif_quota.sh) — probe OpenRouter key/limit → alert owner WA. Tiap 6 jam.
   const notifQuotaEnabled = (process.env.NOTIF_QUOTA_ENABLED ?? "false").toLowerCase() === "true";
+  const salesAlertEvalEnabled = (process.env.SALES_ALERT_EVAL_ENABLED ?? "false").toLowerCase() === "true";
   const timezone = TZ();
   const jobs: JobDef[] = [
     {
@@ -187,12 +189,12 @@ export function startScheduler(): ScheduleStatus {
   ];
 
   status = {
-    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled,
+    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled,
     timezone,
     jobs: jobs.map((j) => ({ id: j.id, expr: j.expr, valid: cron.validate(j.expr) })),
   };
 
-  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled) {
+  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled) {
     console.log("[scheduler] semua *_SCHEDULE/_ENABLED flag != true — tidak dijadwalkan");
     return status;
   }
@@ -376,6 +378,26 @@ export function startScheduler(): ScheduleStatus {
       { timezone },
     );
     live.push(`accurate-sync=${accExpr}`);
+  }
+
+  // F127 sales-alert-eval — evaluasi threshold alert & kirim WA saat transisi
+  // ke breach (edge-triggered). Default tiap jam 08–20 WIB. Gated SALES_ALERT_EVAL_ENABLED.
+  const alertEvalExpr = process.env.SALES_ALERT_EVAL_CRON ?? "0 8-20 * * *";
+  if ((enabled || salesAlertEvalEnabled) && cron.validate(alertEvalExpr)) {
+    cron.schedule(
+      alertEvalExpr,
+      async () => {
+        const startedAt = new Date().toISOString();
+        try {
+          const r = await evaluateSalesAlerts();
+          console.log(`[scheduler] sales-alert-eval @ ${startedAt} ${JSON.stringify(r)}`);
+        } catch (e) {
+          console.error(`[scheduler] sales-alert-eval gagal @ ${startedAt}:`, e);
+        }
+      },
+      { timezone },
+    );
+    live.push(`sales-alert-eval=${alertEvalExpr}`);
   }
 
   // notif-tua (port notif_tua.sh) — KIRIM WA item TUA dari resume terbaru ke
