@@ -143,7 +143,10 @@ export function SalesAnalyticsDashboard({ initial }: { initial: OverviewResult |
     }
   }, [from, to, cache]);
 
-  useEffect(() => { load(tab); }, [tab, load]);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- load() men-setState saat fetch; disengaja.
+    void load(tab);
+  }, [tab, load]);
 
   const cur = cache[tab] as unknown;
   const apply = () => { setCache({}); load(tab, true); };
