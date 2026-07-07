@@ -102,6 +102,17 @@ import {
   reportCalendarDay,
 } from "./repo/plandash.js";
 import { salesRange, reportRevenue, reportSalesAr, salesOverview, customersRevenue, customerMonthly, reportSalesPerformance } from "./repo/sales.js";
+import { resolveScope } from "./repo/access-scope.js";
+import {
+  analyticsOverview,
+  analyticsPerAm,
+  analyticsPerAmDrilldown,
+  analyticsPerProduk,
+  analyticsPerCabang,
+  analyticsPerCustomer,
+  analyticsTrending,
+} from "./repo/sales-analytics.js";
+import { listViews, saveView, deleteView, listAlerts, createAlert, deleteAlert } from "./repo/sales-analytics-config.js";
 import { upsertMembers, listMembers, upsertDigests, listDigest, upsertPola, listPola, generateRekap, generateResume, type MonitorMemberInput, type DigestInput, type PolaInput } from "./repo/monitor.js";
 import { runNotifTua } from "./repo/notiftua.js";
 import { runDailySummary } from "./repo/dailysummary.js";
@@ -1790,6 +1801,94 @@ app.get("/dashboard/overview", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const { from, to } = salesRange(c.req.query("from"), c.req.query("to"));
   return c.json(await salesOverview(from, to));
+});
+
+// ── F127 Sales Analytics (multi-dimensi; row-level scope via x-user-id) ──
+// BFF tepercaya meneruskan identitas user lewat header x-user-id → resolveScope
+// (AM → data sendiri). Feature-permission `sales-analytics` dijaga di web BFF.
+const scopeOf = (c: { req: { header: (k: string) => string | undefined } }) =>
+  resolveScope(c.req.header("x-user-id"));
+
+app.get("/sales-analytics/overview", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await analyticsOverview(c.req.query("from"), c.req.query("to"), await scopeOf(c)));
+});
+app.get("/sales-analytics/per-am", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await analyticsPerAm(c.req.query("from"), c.req.query("to"), await scopeOf(c)));
+});
+app.get("/sales-analytics/per-am/:amId/drilldown", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    return c.json(await analyticsPerAmDrilldown(c.req.param("amId"), c.req.query("from"), c.req.query("to"), await scopeOf(c)));
+  } catch (e) {
+    const status = (e as { status?: number }).status === 403 ? 403 : 500;
+    return c.json({ error: (e as Error).message }, status);
+  }
+});
+app.get("/sales-analytics/per-produk", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await analyticsPerProduk(c.req.query("from"), c.req.query("to"), await scopeOf(c)));
+});
+app.get("/sales-analytics/per-cabang", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await analyticsPerCabang(c.req.query("from"), c.req.query("to"), await scopeOf(c)));
+});
+app.get("/sales-analytics/per-customer", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await analyticsPerCustomer(c.req.query("from"), c.req.query("to"), await scopeOf(c)));
+});
+app.get("/sales-analytics/trending", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await analyticsTrending(c.req.query("from"), c.req.query("to"), await scopeOf(c)));
+});
+
+// Saved views + threshold alert (per user; butuh x-user-id dari BFF).
+const userIdOf = (c: { req: { header: (k: string) => string | undefined } }): string =>
+  (c.req.header("x-user-id") ?? "").trim();
+
+app.get("/sales-analytics/views", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const uid = userIdOf(c);
+  if (!uid) return c.json({ error: "x-user-id wajib" }, 401);
+  return c.json({ views: await listViews(uid) });
+});
+app.post("/sales-analytics/views", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const uid = userIdOf(c);
+  if (!uid) return c.json({ error: "x-user-id wajib" }, 401);
+  let b = {};
+  try { b = await c.req.json(); } catch { /* opsional */ }
+  const r = await saveView(uid, b);
+  return r.ok ? c.json(r, 201) : c.json({ error: r.error }, 400);
+});
+app.delete("/sales-analytics/views/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const uid = userIdOf(c);
+  if (!uid) return c.json({ error: "x-user-id wajib" }, 401);
+  return (await deleteView(uid, c.req.param("id"))) ? c.json({ ok: true }) : c.json({ error: "view tak ditemukan" }, 404);
+});
+
+app.get("/sales-analytics/alerts", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const uid = userIdOf(c);
+  if (!uid) return c.json({ error: "x-user-id wajib" }, 401);
+  return c.json({ alerts: await listAlerts(uid) });
+});
+app.post("/sales-analytics/alerts", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const uid = userIdOf(c);
+  if (!uid) return c.json({ error: "x-user-id wajib" }, 401);
+  let b = {};
+  try { b = await c.req.json(); } catch { /* opsional */ }
+  const r = await createAlert(uid, b);
+  return r.ok ? c.json(r, 201) : c.json({ error: r.error }, 400);
+});
+app.delete("/sales-analytics/alerts/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const uid = userIdOf(c);
+  if (!uid) return c.json({ error: "x-user-id wajib" }, 401);
+  return (await deleteAlert(uid, c.req.param("id"))) ? c.json({ ok: true }) : c.json({ error: "alert tak ditemukan" }, 404);
 });
 
 // ── F76 WatchPoint HoD (metric-based, DB-backed + fallback manual) ──

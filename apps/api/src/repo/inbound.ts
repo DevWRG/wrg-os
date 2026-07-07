@@ -2,6 +2,7 @@ import { db } from "../db.js";
 import { detectDaily, parseDaily, stripInvisible } from "../parsers/dailyplan.js";
 import { parseAmPlan, parseAmReport } from "../parsers/am.js";
 import { sendViaWaGateway, type WaSendResult } from "../wasend.js";
+import { handleSalesAnalyticsQuery } from "./inbound-sales-analytics.js";
 import { resolveSender } from "./master.js";
 import { upsertDailyTodo, computeIsLate } from "./todo.js";
 import { createReminder } from "./reminder.js";
@@ -19,9 +20,10 @@ const isAmRole = (role?: string | null) => AM_ROLES.has((role ?? "").trim());
 // → patuh WA_DRY_RUN. Idempoten: wa_message.processed_at. Pengirim tak dikenal →
 // SILENT (tak balas) supaya tak spam non-AM/pesan bot di grup campuran.
 
-export type InboundKind = "plan" | "report" | "leads" | "update" | "none";
+export type InboundKind = "plan" | "report" | "leads" | "update" | "sales" | "none";
 
 const LEADS_UPDATE_LINE = /^\s*#\s*(leads|update)\b/i;
+const SALES_LINE = /^\s*#\s*sales\b/i;
 
 export function detectKind(body: string | null): InboundKind {
   const daily = detectDaily(body); // line-anchored #plan/#report (sudah strip invisible)
@@ -30,6 +32,7 @@ export function detectKind(body: string | null): InboundKind {
     for (const line of stripInvisible(body).split(/\r?\n/)) {
       const m = line.match(LEADS_UPDATE_LINE);
       if (m) return m[1].toLowerCase() as "leads" | "update";
+      if (SALES_LINE.test(line)) return "sales";
     }
   }
   return "none";
@@ -384,6 +387,21 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
     return finish({ note: "not-implemented", via: amx.via, reply });
   }
 
+  // #SALES — query analitik on-demand. Resolve pengirim (by phone/pushname),
+  // scope AM→self via role, jawab teks ringkas.
+  if (kind === "sales") {
+    const ams = await resolveSender({ senderJid: row.sender_jid, groupJid: row.group_jid, pushname: row.sender_name });
+    if (!ams) return finish({ skipped: "unknown-sender", sender_name: row.sender_name });
+    let text: string;
+    try {
+      text = await handleSalesAnalyticsQuery(row.body ?? "", { am_id: ams.am_id, nama: ams.nama ?? null, role: ams.role ?? null });
+    } catch (e) {
+      text = `⚠️ Query #SALES gagal diproses: ${(e as Error).message}`;
+    }
+    const reply = await sendViaWaGateway(target, text);
+    return finish({ kind: "sales", via: ams.via, reply });
+  }
+
   // #PLAN/#REPORT — parse DULU (body-name dibutuhkan untuk resolusi Tier-A).
   const parsed = parseDaily(row.body ?? "");
   const am = await resolveSender({
@@ -496,7 +514,7 @@ export async function processUnprocessed(
            media_path, geo_lat, geo_lon, geo_ts, geo_address
     FROM wa_message
     WHERE processed_at IS NULL
-      AND (body ~* '#\\s*(plan|report|leads|update)'
+      AND (body ~* '#\\s*(plan|report|leads|update|sales)'
            OR (message_type ~* '^image' AND media_path IS NOT NULL))
     ORDER BY received_at ASC LIMIT ${limit}
   `;
