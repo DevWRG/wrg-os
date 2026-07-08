@@ -36,6 +36,38 @@ function downloadCsv(name: string, headers: string[], rows: (string | number | n
   URL.revokeObjectURL(url);
 }
 
+// Export PDF: buka tab HTML print-friendly (pola apps/api/src/repo/exportdoc.ts),
+// user pilih "Save as PDF" dari dialog print. Tanpa lib PDF.
+function escHtml(v: string | number | null): string {
+  const s = v == null ? "" : String(v);
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+function openPrintable(title: string, subtitle: string, headers: string[], rows: (string | number | null)[][]) {
+  const thead = headers.map((h, i) => `<th class="${i > 0 ? "num" : ""}">${escHtml(h)}</th>`).join("");
+  const tbody = rows
+    .map((r) => `<tr>${r.map((c, i) => `<td class="${i > 0 && typeof c === "number" ? "num" : ""}">${typeof c === "number" ? c.toLocaleString("id-ID") : escHtml(c)}</td>`).join("")}</tr>`)
+    .join("");
+  const html = `<!doctype html><html lang="id"><head><meta charset="utf-8"><title>${escHtml(title)}</title>
+<style>
+  @page { margin: 14mm; size: A4 landscape; }
+  body { font: 12px/1.4 -apple-system,Segoe UI,Roboto,sans-serif; color:#111; margin:20px; }
+  h1 { font-size:16px; margin:0 0 2px; } .meta { color:#666; font-size:11px; margin-bottom:12px; }
+  table { border-collapse:collapse; width:100%; } th,td { border:1px solid #ddd; padding:5px 8px; text-align:left; }
+  th { background:#f3f4f6; } td.num,th.num { text-align:right; white-space:nowrap; }
+  tbody tr:nth-child(even){ background:#fafafa; }
+  .print { margin-top:14px; } button { font:inherit; padding:8px 14px; border:1px solid #888; border-radius:6px; background:#fff; cursor:pointer; }
+  @media print { .print { display:none } body{margin:0} }
+</style></head><body>
+<h1>${escHtml(title)}</h1><div class="meta">${escHtml(subtitle)}</div>
+<table><thead><tr>${thead}</tr></thead><tbody>${tbody}</tbody></table>
+<div class="print"><button onclick="window.print()">🖨️ Print / Save as PDF</button></div>
+</body></html>`;
+  const w = window.open("", "_blank");
+  if (!w) { window.alert("Popup diblokir — izinkan popup untuk export PDF."); return; }
+  w.document.write(html);
+  w.document.close();
+}
+
 // ── Tipe ───────────────────────────────────────────────────────────
 interface Range { from: string; to: string }
 interface TrendPt { date: string; revenue: number; orders: number; anomaly?: boolean }
@@ -226,6 +258,13 @@ export function SalesAnalyticsDashboard({ initial }: { initial: OverviewResult |
     await writeXlsxFile([header, ...body]).toFile(`${v.name}.xlsx`);
   };
 
+  const exportPdf = () => {
+    const v = viewData();
+    if (!v) return;
+    const label = TABS.find((t) => t.key === tab)?.label ?? tab;
+    openPrintable(`Sales Analytics — ${label}`, `Periode: ${from || "YTD"} → ${to || "now"} · ${v.rows.length} baris`, v.headers, v.rows);
+  };
+
   const openDrill = async (amId: string) => {
     const qs = new URLSearchParams();
     if (from) qs.set("from", from);
@@ -276,6 +315,7 @@ export function SalesAnalyticsDashboard({ initial }: { initial: OverviewResult |
         <Button size="sm" variant="outline" onClick={apply}>Terapkan</Button>
         <Button size="sm" variant="outline" onClick={exportCsv} disabled={!cur}>Export CSV</Button>
         <Button size="sm" variant="outline" onClick={() => void exportXlsx()} disabled={!cur}>Export XLSX</Button>
+        <Button size="sm" variant="outline" onClick={exportPdf} disabled={!cur}>Export PDF</Button>
         <Button size="sm" variant="outline" onClick={saveCurrentView}>Simpan view</Button>
         <Button size="sm" variant={showAlerts ? "default" : "outline"} onClick={() => setShowAlerts((s) => !s)}>Alert{alerts.length ? ` (${alerts.length})` : ""}</Button>
         <span className="text-muted-foreground text-xs">Kosongkan = year-to-date.</span>
