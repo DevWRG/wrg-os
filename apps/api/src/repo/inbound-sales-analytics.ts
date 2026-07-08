@@ -1,10 +1,12 @@
 // Handler WA `#SALES` — jawab query analitik singkat via WA. Dipanggil dari
-// inbound.ts (kind === "sales"). Scope: pengirim AM → data sendiri; lainnya →
-// semua. Reuse repo sales-analytics.ts. Return TEKS balasan (bukan kirim).
+// inbound.ts (kind === "sales"). Scope: pengirim dipetakan ke app_user (via
+// am_id) lalu resolveScope() → AM=self, HoD=cabang tim, admin=semua. Fallback
+// (tanpa akun login): AM=self / lainnya=semua. Reuse repo sales-analytics.ts.
 
+import { db } from "../db.js";
 import { parseSalesQuery } from "../parsers/sales-query.js";
 import { analyticsOverview, analyticsPerAm, analyticsPerCabang } from "./sales-analytics.js";
-import type { DataScope } from "./access-scope.js";
+import { resolveScope, type DataScope } from "./access-scope.js";
 
 const isAm = (r?: string | null): boolean => (r ?? "").trim().toUpperCase() === "AM";
 
@@ -21,7 +23,15 @@ export async function handleSalesAnalyticsQuery(
   sender: { am_id: string; nama: string | null; role: string | null },
 ): Promise<string> {
   const q = parseSalesQuery(body);
-  const scope: DataScope = { userId: null, amOnly: isAm(sender.role), amId: sender.am_id, cabang: null, superuser: false };
+  // Petakan pengirim WA → app_user (via am_id) → resolveScope (AM/HoD/admin).
+  // Tanpa akun login: fallback AM=self / lainnya=semua.
+  let scope: DataScope;
+  const [au] = await db()`SELECT id FROM app_user WHERE am_id = ${sender.am_id}`;
+  if (au) {
+    scope = await resolveScope(String(au.id));
+  } else {
+    scope = { userId: null, amOnly: isAm(sender.role), amId: sender.am_id, cabang: null, superuser: false };
+  }
   const head = `📊 *Sales — ${q.periodLabel}*`;
 
   if (q.scope === "per_cabang") {
@@ -41,7 +51,12 @@ export async function handleSalesAnalyticsQuery(
   // overview
   const d = await analyticsOverview(q.from, q.to, scope);
   if (d.scope === "am") {
-    return `${head} · Anda (${sender.nama ?? sender.am_id})\nRevenue: ${fmtRp(d.kpi.revenue)}\nFaktur: ${d.kpi.orders} · Customer: ${d.kpi.customers}\nAchievement: ${pctStr(d.kpi.achievement_pct)}`;
+    const who = scope.amOnly
+      ? `Anda (${sender.nama ?? sender.am_id})`
+      : scope.cabangScope && scope.cabangScope.length
+        ? `Tim ${scope.hodKey ?? "HoD"}`
+        : "Terbatas";
+    return `${head} · ${who}\nRevenue: ${fmtRp(d.kpi.revenue)}\nFaktur: ${d.kpi.orders} · Customer: ${d.kpi.customers}\nAchievement: ${pctStr(d.kpi.achievement_pct)}`;
   }
   return `${head}\nRevenue: ${fmtRp(d.kpi.revenue)}\nFaktur: ${d.kpi.orders} · Customer: ${d.kpi.customers}\nAR outstanding: ${fmtRp(d.kpi.ar_outstanding)}\n\nKetik: #SALES bulan_ini per_cabang  /  per_am`;
 }
