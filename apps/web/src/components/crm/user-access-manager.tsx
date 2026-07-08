@@ -17,6 +17,7 @@ export interface AppUserRow {
   title: string | null;
   active: boolean;
   wa_number: string | null;
+  hod_key: string | null;
   last_login_at: string | null;
   created_at: string;
 }
@@ -93,6 +94,12 @@ export function UserAccessManager({ users, roster }: { users: AppUserRow[]; rost
   async function setRoleFor(u: AppUserRow, newRole: string) {
     if (await call(`/api/admin/users/${u.id}`, "PATCH", { role: newRole })) router.refresh();
   }
+  // Set hod_key (F127 scope tim per-cabang). Kosong → null (lihat semua).
+  async function setHodKey(u: AppUserRow, val: string) {
+    const next = val.trim() || null;
+    if (next === (u.hod_key ?? null)) return;
+    if (await call(`/api/admin/users/${u.id}`, "PATCH", { hod_key: next })) router.refresh();
+  }
   async function del(u: AppUserRow) {
     if (!confirm(`Hapus akun ${u.email}?`)) return;
     if (await call(`/api/admin/users/${u.id}`, "DELETE")) router.refresh();
@@ -160,7 +167,7 @@ export function UserAccessManager({ users, roster }: { users: AppUserRow[]; rost
             <thead className="text-muted-foreground text-left">
               <tr className="border-b">
                 <th className="py-2 pr-3">Email</th><th className="pr-3">Nama</th><th className="pr-3">Role</th>
-                <th className="pr-3">Status</th><th className="pr-3">WA</th><th className="pr-3">Login terakhir</th><th>Aksi</th>
+                <th className="pr-3">Status</th><th className="pr-3">WA</th><th className="pr-3">HoD key</th><th className="pr-3">Login terakhir</th><th>Aksi</th>
               </tr>
             </thead>
             <tbody>
@@ -175,6 +182,11 @@ export function UserAccessManager({ users, roster }: { users: AppUserRow[]; rost
                   </td>
                   <td className="pr-3"><Badge variant={u.active ? "secondary" : "outline"}>{u.active ? "aktif" : "nonaktif"}</Badge></td>
                   <td className="pr-3 text-muted-foreground">{u.wa_number ?? "—"}</td>
+                  <td className="pr-3">
+                    <input defaultValue={u.hod_key ?? ""} onBlur={(e) => setHodKey(u, e.target.value)} disabled={busy}
+                      placeholder="rocky/yogi…" title="hod_key (hod_territory) → HoD lihat cabang timnya. Kosong = lihat semua."
+                      className="h-7 w-24 rounded border bg-background px-1 text-xs" />
+                  </td>
                   <td className="pr-3 text-muted-foreground text-xs">{u.last_login_at ? new Date(u.last_login_at).toLocaleString("id-ID") : "belum"}</td>
                   <td className="space-x-1 whitespace-nowrap py-1">
                     <Button size="sm" variant="outline" onClick={() => resetPw(u, false)} disabled={busy}>Reset</Button>
