@@ -49,6 +49,7 @@ export const NAV: NavGroup[] = [
       { title: "Sales Calendar", url: "/calendar", icon: CalendarRange },
       { title: "Sales Performance", url: "/sales", icon: BarChart3, badge: "NEW", exact: true },
       { title: "Sales Analytics", url: "/sales-analytics", icon: Target, badge: "NEW" },
+      { title: "Sales Alerts", url: "/sales-alerts", icon: Bell, badge: "NEW" },
       { title: "Competitor Intel", url: "/competitor", icon: Swords },
       { title: "Pipeline", url: "/pipeline", icon: Workflow },
       { title: "Customers", url: "/customers", icon: Building2 },
