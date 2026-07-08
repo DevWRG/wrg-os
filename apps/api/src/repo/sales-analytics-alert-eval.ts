@@ -166,11 +166,13 @@ export interface AlertEvalResult { enabled: boolean; evaluated: number; breached
 export async function evaluateSalesAlerts(): Promise<AlertEvalResult> {
   const sql = db();
   const alerts = await sql`
-    SELECT id::text, alert_name, metric_key, dimension_filter, threshold_operator,
-           threshold_value::float8 AS threshold_value, window_days, wa_target_jid, last_state
-    FROM sales_analytics_alert WHERE active`;
+    SELECT sa.id::text, sa.alert_name, sa.metric_key, sa.dimension_filter, sa.threshold_operator,
+           sa.threshold_value::float8 AS threshold_value, sa.window_days, sa.wa_target_jid, sa.last_state,
+           au.wa_number AS owner_wa_number
+    FROM sales_analytics_alert sa
+    LEFT JOIN app_user au ON au.id = sa.owner_user_id
+    WHERE sa.active`;
   let sent = 0, breachedN = 0, skipped = 0;
-  const fallbackTarget = process.env.HOD_WA_TARGET || process.env.NOTIF_TUA_TARGET || "";
 
   for (const a of alerts) {
     const res = await evalAlert(sql, {
@@ -185,9 +187,14 @@ export async function evaluateSalesAlerts(): Promise<AlertEvalResult> {
 
     const wasBreach = a.last_state === "breach";
     if (res.breach && !wasBreach) {
-      const target = (a.wa_target_jid && String(a.wa_target_jid)) || fallbackTarget;
+      // Fallback empty target → WA personal OWNER alert (BUKAN grup). Cegah test
+      // alert nyasar broadcast ke grup Sales (insiden 8 Jul 2026: alert target
+      // kosong → dulu fallback HOD_WA_TARGET=grup Sales ~21 org). Kalau owner gak
+      // punya wa_number & wa_target_jid kosong → JANGAN kirim (warn), bukan ke grup.
+      const target = (a.wa_target_jid && String(a.wa_target_jid)) || (a.owner_wa_number && String(a.owner_wa_number)) || "";
       const msg = `🚨 *Alert: ${a.alert_name}*\n${a.metric_key} = ${res.valStr} ${res.thrStr} (window ${a.window_days}h)`;
       if (target) { await sendViaWaGateway(target, msg); sent++; }
+      else { console.warn(`[sales-alert-eval] alert ${a.id} "${a.alert_name}" breach tapi tanpa target (wa_target_jid & owner wa_number kosong) → tidak dikirim`); }
       await sql`UPDATE sales_analytics_alert SET last_state = 'breach', last_triggered_at = now() WHERE id = ${a.id}`;
     } else {
       await sql`UPDATE sales_analytics_alert SET last_state = ${res.breach ? "breach" : "ok"} WHERE id = ${a.id}`;
