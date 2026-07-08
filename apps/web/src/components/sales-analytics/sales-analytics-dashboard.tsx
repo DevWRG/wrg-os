@@ -8,6 +8,7 @@ import {
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { DataTable, type DataColumn } from "@/components/ui/data-table";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
@@ -320,8 +321,26 @@ export function SalesAnalyticsDashboard({ initial }: { initial: OverviewResult |
             <Button size="sm" variant="ghost" onClick={() => setDrill(null)}>Tutup</Button>
           </CardHeader>
           <CardContent className="grid gap-4 md:grid-cols-2">
-            <div><div className="mb-1 text-sm font-semibold">Per Produk</div><SimpleTable head={["Produk", "Qty", "Revenue"]} rows={drill.per_produk.map((p) => [p.label, p.qty, fmtRp(p.total)])} /></div>
-            <div><div className="mb-1 text-sm font-semibold">Per Customer</div><SimpleTable head={["Customer", "Faktur", "Revenue"]} rows={drill.per_customer.map((p) => [p.label, p.count, fmtRp(p.total)])} /></div>
+            <div>
+              <div className="mb-1 text-sm font-semibold">Per Produk</div>
+              <DataTable
+                data={drill.per_produk} getKey={(r) => r.key} searchPlaceholder="Cari produk…" initialSort={{ id: "total", dir: "desc" }}
+                columns={[
+                  { id: "label", header: "Produk", sortable: true, accessor: (r) => r.label },
+                  { id: "qty", header: "Qty", align: "right", sortable: true, accessor: (r) => r.qty },
+                  { id: "total", header: "Revenue", align: "right", sortable: true, accessor: (r) => r.total, cell: (r) => fmtRp(r.total) },
+                ]} />
+            </div>
+            <div>
+              <div className="mb-1 text-sm font-semibold">Per Customer</div>
+              <DataTable
+                data={drill.per_customer} getKey={(r) => r.key} searchPlaceholder="Cari customer…" initialSort={{ id: "total", dir: "desc" }}
+                columns={[
+                  { id: "label", header: "Customer", sortable: true, accessor: (r) => r.label },
+                  { id: "count", header: "Faktur", align: "right", sortable: true, accessor: (r) => r.count },
+                  { id: "total", header: "Revenue", align: "right", sortable: true, accessor: (r) => r.total, cell: (r) => fmtRp(r.total) },
+                ]} />
+            </div>
           </CardContent>
         </Card>
       )}
@@ -405,67 +424,96 @@ function OverviewView({ data }: { data: OverviewResult }) {
           <CardContent><SimpleTable head={["Periode", "Realisasi", "Target", "%"]}
             rows={data.performance.periods.map((p) => [p.label, fmtRpShort(p.total), p.target.total != null ? fmtRpShort(p.target.total) : "—", fmtPct(p.pct.total)])} /></CardContent></Card>
         <Card><CardHeader><CardTitle className="text-base">Per Cabang</CardTitle></CardHeader>
-          <CardContent><SimpleTable head={["Cabang", "Faktur", "Revenue"]} rows={data.per_cabang.slice(0, 10).map((r) => [r.label, r.count, fmtRp(r.total)])} /></CardContent></Card>
+          <CardContent><DataTable data={data.per_cabang} getKey={(r) => r.key} searchPlaceholder="Cari cabang…" initialSort={{ id: "total", dir: "desc" }}
+            columns={[
+              { id: "label", header: "Cabang", sortable: true, accessor: (r) => r.label },
+              { id: "count", header: "Faktur", align: "right", sortable: true, accessor: (r) => r.count },
+              { id: "total", header: "Revenue", align: "right", sortable: true, accessor: (r) => r.total, cell: (r) => fmtRp(r.total) },
+            ]} /></CardContent></Card>
         <Card><CardHeader><CardTitle className="text-base">Top Produk</CardTitle></CardHeader>
-          <CardContent><SimpleTable head={["Produk", "Revenue"]} rows={data.per_product.slice(0, 10).map((r) => [r.label, fmtRp(r.total)])} /></CardContent></Card>
+          <CardContent><DataTable data={data.per_product} getKey={(r) => r.key} searchPlaceholder="Cari produk…" initialSort={{ id: "total", dir: "desc" }}
+            columns={[
+              { id: "label", header: "Produk", sortable: true, accessor: (r) => r.label },
+              { id: "total", header: "Revenue", align: "right", sortable: true, accessor: (r) => r.total, cell: (r) => fmtRp(r.total) },
+            ]} /></CardContent></Card>
         <Card><CardHeader><CardTitle className="text-base">Top Sales</CardTitle></CardHeader>
-          <CardContent><SimpleTable head={["Sales", "Revenue"]} rows={data.per_salesman.slice(0, 10).map((r) => [r.label, fmtRp(r.total)])} /></CardContent></Card>
+          <CardContent><DataTable data={data.per_salesman} getKey={(r) => r.key} searchPlaceholder="Cari sales…" initialSort={{ id: "total", dir: "desc" }}
+            columns={[
+              { id: "label", header: "Sales", sortable: true, accessor: (r) => r.label },
+              { id: "total", header: "Revenue", align: "right", sortable: true, accessor: (r) => r.total, cell: (r) => fmtRp(r.total) },
+            ]} /></CardContent></Card>
       </div>
     </div>
   );
 }
 
+const amColumns = (onDrill: (amId: string) => void): DataColumn<AmRow>[] => [
+  { id: "rank", header: "#", sortable: true, accessor: (r) => r.rank },
+  { id: "nama", header: "AM", sortable: true, accessor: (r) => r.nama, cell: (r) => <span className={r.self ? "font-semibold text-primary" : ""}>{r.nama ?? "—"}{r.self ? " (Anda)" : ""}</span> },
+  { id: "cabang", header: "Cabang", sortable: true, accessor: (r) => r.cabang },
+  { id: "region", header: "Region", sortable: true, accessor: (r) => r.region },
+  { id: "total", header: "Revenue", align: "right", sortable: true, accessor: (r) => r.total, cell: (r) => fmtRp(r.total) },
+  { id: "target", header: "Target", align: "right", sortable: true, accessor: (r) => r.target, cell: (r) => (r.target != null ? fmtRp(r.target) : "—") },
+  { id: "ach", header: "%", align: "right", sortable: true, accessor: (r) => r.achievement_pct, cell: (r) => fmtPct(r.achievement_pct) },
+  { id: "aksi", header: "", align: "right", cell: (r) => (r.am_id ? <Button size="sm" variant="ghost" onClick={() => onDrill(r.am_id!)}>Detail</Button> : null) },
+];
+
 function PerAmView({ data, onDrill }: { data: { rows: AmRow[]; scope: string }; onDrill: (amId: string) => void }) {
   return (
     <Card>
       <CardHeader><CardTitle className="text-base">Performa per-AM {data.scope === "am" && <span className="text-muted-foreground text-xs font-normal">(peer dianonimkan)</span>}</CardTitle></CardHeader>
-      <CardContent className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead className="text-muted-foreground text-left"><tr className="border-b">
-            <th className="py-2 pr-3">#</th><th className="pr-3">AM</th><th className="pr-3">Cabang</th><th className="pr-3">Region</th>
-            <th className="pr-3 text-right">Revenue</th><th className="pr-3 text-right">Target</th><th className="pr-3 text-right">%</th><th></th>
-          </tr></thead>
-          <tbody>
-            {data.rows.map((r) => (
-              <tr key={r.rank} className={`border-b last:border-0 ${r.self ? "bg-primary/5 font-semibold" : ""}`}>
-                <td className="py-1.5 pr-3">{r.rank}</td>
-                <td className="pr-3">{r.nama ?? "—"}{r.self && " (Anda)"}</td>
-                <td className="pr-3">{r.cabang ?? "—"}</td>
-                <td className="pr-3">{r.region}</td>
-                <td className="pr-3 text-right whitespace-nowrap">{fmtRp(r.total)}</td>
-                <td className="pr-3 text-right whitespace-nowrap">{r.target != null ? fmtRp(r.target) : "—"}</td>
-                <td className="pr-3 text-right">{fmtPct(r.achievement_pct)}</td>
-                <td className="text-right">{r.am_id && <Button size="sm" variant="ghost" onClick={() => onDrill(r.am_id!)}>Detail</Button>}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <CardContent>
+        <DataTable data={data.rows} columns={amColumns(onDrill)} getKey={(r) => String(r.rank)} searchPlaceholder="Cari AM/cabang…" initialSort={{ id: "total", dir: "desc" }} pageSize={25} empty="Tidak ada data AM." />
       </CardContent>
     </Card>
   );
 }
 
+const prodColumns: DataColumn<ProdRow>[] = [
+  { id: "label", header: "Produk", sortable: true, accessor: (r) => r.label },
+  { id: "category", header: "Kategori", sortable: true, accessor: (r) => r.category },
+  { id: "unit_sold", header: "Unit", align: "right", sortable: true, accessor: (r) => r.unit_sold },
+  { id: "customer_count", header: "Customer", align: "right", sortable: true, accessor: (r) => r.customer_count },
+  { id: "stock_on_hand", header: "Stok", align: "right", sortable: true, accessor: (r) => r.stock_on_hand, cell: (r) => (r.stock_on_hand ?? "—") },
+  { id: "total", header: "Revenue", align: "right", sortable: true, accessor: (r) => r.total, cell: (r) => fmtRp(r.total) },
+];
+
 function PerProdukView({ data }: { data: { rows: ProdRow[] } }) {
   return (
     <Card><CardHeader><CardTitle className="text-base">Portfolio Produk</CardTitle></CardHeader>
-      <CardContent><SimpleTable head={["Produk", "Kategori", "Unit", "Customer", "Stok", "Revenue"]}
-        rows={data.rows.slice(0, 100).map((r) => [r.label, r.category ?? "—", r.unit_sold, r.customer_count, r.stock_on_hand ?? "—", fmtRp(r.total)])} /></CardContent></Card>
+      <CardContent><DataTable data={data.rows} columns={prodColumns} getKey={(r) => r.key} searchPlaceholder="Cari produk/kategori…" initialSort={{ id: "total", dir: "desc" }} pageSize={25} empty="Tidak ada data produk." /></CardContent></Card>
   );
 }
+
+const cabangColumns: DataColumn<CabangRow>[] = [
+  { id: "cabang", header: "Cabang", sortable: true, accessor: (r) => r.cabang },
+  { id: "region", header: "Region", sortable: true, accessor: (r) => r.region },
+  { id: "am_count", header: "AM", align: "right", sortable: true, accessor: (r) => r.am_count },
+  { id: "customers", header: "Customer", align: "right", sortable: true, accessor: (r) => r.customers },
+  { id: "total", header: "Revenue", align: "right", sortable: true, accessor: (r) => r.total, cell: (r) => fmtRp(r.total) },
+  { id: "target", header: "Target", align: "right", sortable: true, accessor: (r) => r.target, cell: (r) => (r.target != null ? fmtRpShort(r.target) : "—") },
+  { id: "ach", header: "%", align: "right", sortable: true, accessor: (r) => r.achievement_pct, cell: (r) => fmtPct(r.achievement_pct) },
+];
 
 function PerCabangView({ data }: { data: { rows: CabangRow[] } }) {
   return (
     <Card><CardHeader><CardTitle className="text-base">Territory per-Cabang</CardTitle></CardHeader>
-      <CardContent><SimpleTable head={["Cabang", "Region", "AM", "Customer", "Revenue", "Target", "%"]}
-        rows={data.rows.map((r) => [r.cabang, r.region, r.am_count, r.customers, fmtRp(r.total), r.target != null ? fmtRpShort(r.target) : "—", fmtPct(r.achievement_pct)])} /></CardContent></Card>
+      <CardContent><DataTable data={data.rows} columns={cabangColumns} getKey={(r) => r.cabang} searchPlaceholder="Cari cabang…" initialSort={{ id: "total", dir: "desc" }} pageSize={25} empty="Tidak ada data cabang." /></CardContent></Card>
   );
 }
+
+const custColumns: DataColumn<CustRow>[] = [
+  { id: "name", header: "Customer", sortable: true, accessor: (r) => r.name },
+  { id: "invoices", header: "Faktur", align: "right", sortable: true, accessor: (r) => r.invoices },
+  { id: "last_date", header: "Terakhir", sortable: true, accessor: (r) => r.last_date, cell: (r) => (r.last_date ?? "—") },
+  { id: "days_since", header: "Hari", align: "right", sortable: true, accessor: (r) => r.days_since, cell: (r) => (r.days_since ?? "—") },
+  { id: "total", header: "Revenue", align: "right", sortable: true, accessor: (r) => r.total, cell: (r) => fmtRp(r.total) },
+];
 
 function PerCustomerView({ data }: { data: { scope: string; customers: CustRow[]; summary?: Record<string, number> } }) {
   return (
     <Card><CardHeader><CardTitle className="text-base">Customer {data.scope === "am" && <span className="text-muted-foreground text-xs font-normal">(customer Anda)</span>}</CardTitle></CardHeader>
-      <CardContent><SimpleTable head={["Customer", "Faktur", "Terakhir", "Hari", "Revenue"]}
-        rows={data.customers.slice(0, 100).map((r) => [r.name, r.invoices, r.last_date ?? "—", r.days_since ?? "—", fmtRp(r.total)])} /></CardContent></Card>
+      <CardContent><DataTable data={data.customers} columns={custColumns} getKey={(r) => r.id} searchPlaceholder="Cari customer…" initialSort={{ id: "total", dir: "desc" }} pageSize={25} empty="Tidak ada data customer." /></CardContent></Card>
   );
 }
 
