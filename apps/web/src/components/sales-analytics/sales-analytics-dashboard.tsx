@@ -120,7 +120,11 @@ interface SavedView { id: string; view_name: string; view_type: string; filter_c
 interface SalesAlert { id: string; alert_name: string; metric_key: string; threshold_operator: string; threshold_value: number; window_days: number; }
 
 const ALERT_METRICS = ["revenue", "ar_gt_90", "customer_count", "new_customer_count", "churn_count"];
-const ALERT_OPS = [["gt", ">"], ["gte", "≥"], ["lt", "<"], ["lte", "≤"]];
+// nilai absolut: gt/gte/lt/lte/eq · Δ% vs window sebelumnya · anomali z-score (σ)
+const ALERT_OPS = [
+  ["gt", ">"], ["gte", "≥"], ["lt", "<"], ["lte", "≤"], ["eq", "="],
+  ["delta_pct_gt", "Δ% naik >"], ["delta_pct_lt", "Δ% turun <"], ["anomaly_std_gt", "anomali σ >"],
+];
 
 // ── Sub-komponen ───────────────────────────────────────────────────
 function Kpi({ label, value, delta }: { label: string; value: string; delta?: number | null }) {
