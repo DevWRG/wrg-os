@@ -15,15 +15,21 @@ import {
   cabangRegionMap,
   type Region,
 } from "./sales.js";
-import type { DataScope } from "./access-scope.js";
+import { isRestricted, type DataScope } from "./access-scope.js";
 
 const yearOf = (to: string): number => Number(to.slice(0, 4));
 const pct = (num: number, den: number | null | undefined): number | null =>
   den && den > 0 ? Math.round((num / den) * 1000) / 10 : null;
 
-// Klausa scope AM (dipakai di query yang join accurate_salesman→master_user).
-function amClause(sql: ReturnType<typeof db>, scope: DataScope) {
-  return scope.amOnly && scope.amId ? sql`AND mu.am_id = ${scope.amId}` : sql``;
+// Klausa scope row-level (query yang join accurate_salesman→master_user):
+//   AM  → AND mu.am_id = <amId>
+//   HoD → AND cabang ∈ cabangScope (tim HoD)
+//   lainnya → kosong (lihat semua)
+function scopeClause(sql: ReturnType<typeof db>, scope: DataScope) {
+  if (scope.amOnly && scope.amId) return sql`AND mu.am_id = ${scope.amId}`;
+  if (scope.cabangScope && scope.cabangScope.length)
+    return sql`AND COALESCE(NULLIF(mu.cabang,''), NULLIF(acs.cabang_override,'')) = ANY(${scope.cabangScope}::text[])`;
+  return sql``;
 }
 
 // ── View #1: Executive Overview ───────────────────────────────────
@@ -31,24 +37,29 @@ export async function analyticsOverview(from0?: string, to0?: string, scope?: Da
   const { from, to } = salesRange(from0, to0);
   const sc = scope ?? { userId: null, amOnly: false, amId: null, cabang: null, superuser: false };
 
-  if (sc.amOnly && sc.amId) {
-    // Overview ber-scope: hanya angka AM ybs.
+  if (isRestricted(sc)) {
+    // Overview ber-scope (AM = data sendiri; HoD = cabang tim). Shape "am".
     const sql = db();
+    const scl = scopeClause(sql, sc);
     const [kpi] = await sql`
       SELECT COALESCE(sum(ai.total),0)::float8 AS revenue, count(*)::int AS orders,
              count(DISTINCT ai.customer_id)::int AS customers
       FROM accurate_invoice ai
       LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
       LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
-      WHERE ai.tanggal BETWEEN ${from} AND ${to} AND mu.am_id = ${sc.amId}`;
+      WHERE ai.tanggal BETWEEN ${from} AND ${to} ${scl}`;
     const trend = await sql`
       SELECT ai.tanggal::text AS date, COALESCE(sum(ai.total),0)::float8 AS revenue, count(*)::int AS orders
       FROM accurate_invoice ai
       LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
       LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
-      WHERE ai.tanggal BETWEEN ${from} AND ${to} AND mu.am_id = ${sc.amId}
+      WHERE ai.tanggal BETWEEN ${from} AND ${to} ${scl}
       GROUP BY ai.tanggal ORDER BY ai.tanggal`;
-    const [tgt] = await sql`SELECT target::float8 FROM sales_target_am WHERE am_id = ${sc.amId} AND year = ${yearOf(to)}`;
+    // Target hanya untuk AM (target per-AM). HoD lintas-cabang → target null.
+    const tgt = sc.amOnly && sc.amId
+      ? (await sql`SELECT target::float8 FROM sales_target_am WHERE am_id = ${sc.amId} AND year = ${yearOf(to)}`)[0]
+      : undefined;
+    const target = tgt?.target != null ? Number(tgt.target) : null;
     return {
       scope: "am" as const,
       range: { from, to },
@@ -56,8 +67,8 @@ export async function analyticsOverview(from0?: string, to0?: string, scope?: Da
         revenue: Number(kpi?.revenue ?? 0),
         orders: Number(kpi?.orders ?? 0),
         customers: Number(kpi?.customers ?? 0),
-        target: tgt?.target != null ? Number(tgt.target) : null,
-        achievement_pct: pct(Number(kpi?.revenue ?? 0), tgt?.target != null ? Number(tgt.target) : null),
+        target,
+        achievement_pct: pct(Number(kpi?.revenue ?? 0), target),
       },
       trend: trend.map((r) => ({ date: String(r.date), revenue: Number(r.revenue), orders: Number(r.orders) })),
     };
@@ -98,7 +109,7 @@ export async function analyticsPerAm(from0?: string, to0?: string, scope?: DataS
     LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
     LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
     LEFT JOIN sales_target_am sta ON sta.am_id = mu.am_id AND sta.year = ${year}
-    WHERE ai.tanggal BETWEEN ${from} AND ${to}
+    WHERE ai.tanggal BETWEEN ${from} AND ${to} ${scopeClause(sql, sc)}
     GROUP BY mu.am_id
     ORDER BY sum(ai.total) DESC NULLS LAST`;
 
@@ -184,7 +195,7 @@ export async function analyticsPerProduk(from0?: string, to0?: string, scope?: D
     LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
     LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
     LEFT JOIN accurate_item it ON it.id = aii.item_id
-    WHERE ai.tanggal BETWEEN ${from} AND ${to} ${amClause(sql, sc)}
+    WHERE ai.tanggal BETWEEN ${from} AND ${to} ${scopeClause(sql, sc)}
     GROUP BY aii.item_id, it.name ORDER BY sum(aii.total) DESC LIMIT 200`;
   return {
     scope: sc.amOnly ? ("am" as const) : ("all" as const),
@@ -218,7 +229,7 @@ export async function analyticsPerCabang(from0?: string, to0?: string, scope?: D
     LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
     LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
     LEFT JOIN sales_target_cabang stc ON stc.cabang = COALESCE(NULLIF(mu.cabang,''), NULLIF(acs.cabang_override,''), 'Tanpa cabang') AND stc.year = ${year}
-    WHERE ai.tanggal BETWEEN ${from} AND ${to} ${amClause(sql, sc)}
+    WHERE ai.tanggal BETWEEN ${from} AND ${to} ${scopeClause(sql, sc)}
     GROUP BY 1 ORDER BY sum(ai.total) DESC`;
   return {
     scope: sc.amOnly ? ("am" as const) : ("all" as const),
@@ -246,7 +257,7 @@ export async function analyticsPerCabang(from0?: string, to0?: string, scope?: D
 // Scope AM: daftar customer yang dilayani AM ybs.
 export async function analyticsPerCustomer(from0?: string, to0?: string, scope?: DataScope) {
   const sc = scope ?? { userId: null, amOnly: false, amId: null, cabang: null, superuser: false };
-  if (!sc.amOnly || !sc.amId) {
+  if (!isRestricted(sc)) {
     const full = await customersRevenue();
     return { scope: "all" as const, ...full };
   }
@@ -262,7 +273,7 @@ export async function analyticsPerCustomer(from0?: string, to0?: string, scope?:
     LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
     LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
     LEFT JOIN accurate_customer ac ON ac.id = ai.customer_id
-    WHERE ai.tanggal BETWEEN ${from} AND ${to} AND mu.am_id = ${sc.amId}
+    WHERE ai.tanggal BETWEEN ${from} AND ${to} ${scopeClause(sql, sc)}
     GROUP BY ai.customer_id, ac.name ORDER BY sum(ai.total) DESC`;
   return {
     scope: "am" as const,
@@ -289,7 +300,7 @@ export async function analyticsTrending(from0?: string, to0?: string, scope?: Da
     FROM accurate_invoice ai
     LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
     LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
-    WHERE ai.tanggal BETWEEN ${from} AND ${to} ${amClause(sql, sc)}
+    WHERE ai.tanggal BETWEEN ${from} AND ${to} ${scopeClause(sql, sc)}
     GROUP BY ai.tanggal ORDER BY ai.tanggal`;
   const series = rows.map((r) => ({ date: String(r.date), revenue: Number(r.revenue), orders: Number(r.orders) }));
   // Anomali: |rev - mean| > 2σ.

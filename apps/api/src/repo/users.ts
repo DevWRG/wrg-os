@@ -92,26 +92,33 @@ export async function countUsers(): Promise<number> {
 export interface AppUserRow extends AppUser {
   active: boolean;
   wa_number: string | null;
+  hod_key: string | null;
   last_login_at: string | null;
   force_change: boolean;
   created_at: string;
 }
 
-export async function listAppUsers(): Promise<AppUserRow[]> {
-  const sql = db();
-  const rows = await sql`
-    SELECT id, email, name, role, title, active, wa_number,
-           last_login_at::text AS last_login_at, force_change, created_at::text AS created_at
-    FROM app_user ORDER BY created_at
-  `;
-  return rows.map((r) => ({
+// Map baris DB → AppUserRow (hindari duplikasi 3 tempat).
+function toAppUserRow(r: Record<string, unknown>): AppUserRow {
+  return {
     ...toAppUser(r),
     active: r.active !== false,
     wa_number: r.wa_number ? String(r.wa_number) : null,
+    hod_key: r.hod_key ? String(r.hod_key) : null,
     last_login_at: r.last_login_at ? String(r.last_login_at) : null,
     force_change: r.force_change === true,
     created_at: String(r.created_at),
-  }));
+  };
+}
+
+export async function listAppUsers(): Promise<AppUserRow[]> {
+  const sql = db();
+  const rows = await sql`
+    SELECT id, email, name, role, title, active, wa_number, hod_key,
+           last_login_at::text AS last_login_at, force_change, created_at::text AS created_at
+    FROM app_user ORDER BY created_at
+  `;
+  return rows.map(toAppUserRow);
 }
 
 // Password acak ramah-ketik (tanpa karakter ambigu).
@@ -145,7 +152,7 @@ export async function changeOwnPassword(id: string, current: string, next: strin
 
 export async function updateAppUser(
   id: string,
-  patch: { name?: string | null; role?: string; title?: string | null; active?: boolean; wa_number?: string | null },
+  patch: { name?: string | null; role?: string; title?: string | null; active?: boolean; wa_number?: string | null; hod_key?: string | null },
 ): Promise<AppUserRow | null> {
   const sql = db();
   await sql`
@@ -154,11 +161,12 @@ export async function updateAppUser(
       role = COALESCE(${patch.role ?? null}, role),
       title = ${patch.title === undefined ? sql`title` : patch.title},
       active = COALESCE(${patch.active ?? null}, active),
-      wa_number = ${patch.wa_number === undefined ? sql`wa_number` : patch.wa_number}
+      wa_number = ${patch.wa_number === undefined ? sql`wa_number` : patch.wa_number},
+      hod_key = ${patch.hod_key === undefined ? sql`hod_key` : (patch.hod_key || null)}
     WHERE id = ${id}
   `;
-  const [r] = await sql`SELECT id, email, name, role, title, active, wa_number, last_login_at::text AS last_login_at, force_change, created_at::text AS created_at FROM app_user WHERE id = ${id}`;
-  return r ? { ...toAppUser(r), active: r.active !== false, wa_number: r.wa_number ? String(r.wa_number) : null, last_login_at: r.last_login_at ? String(r.last_login_at) : null, force_change: r.force_change === true, created_at: String(r.created_at) } : null;
+  const [r] = await sql`SELECT id, email, name, role, title, active, wa_number, hod_key, last_login_at::text AS last_login_at, force_change, created_at::text AS created_at FROM app_user WHERE id = ${id}`;
+  return r ? toAppUserRow(r) : null;
 }
 
 export async function deleteAppUser(id: string): Promise<boolean> {
@@ -167,8 +175,8 @@ export async function deleteAppUser(id: string): Promise<boolean> {
 }
 
 export async function getAppUserById(id: string): Promise<AppUserRow | null> {
-  const [r] = await db()`SELECT id, email, name, role, title, active, wa_number, last_login_at::text AS last_login_at, force_change, created_at::text AS created_at FROM app_user WHERE id = ${id}`;
-  return r ? { ...toAppUser(r), active: r.active !== false, wa_number: r.wa_number ? String(r.wa_number) : null, last_login_at: r.last_login_at ? String(r.last_login_at) : null, force_change: r.force_change === true, created_at: String(r.created_at) } : null;
+  const [r] = await db()`SELECT id, email, name, role, title, active, wa_number, hod_key, last_login_at::text AS last_login_at, force_change, created_at::text AS created_at FROM app_user WHERE id = ${id}`;
+  return r ? toAppUserRow(r) : null;
 }
 
 // Bikin akun login dari roster master_user (by am_id) — butuh email.
