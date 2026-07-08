@@ -12,8 +12,8 @@
   },
   "dependencies": {
     "@hono/node-server": "^1.13.7",
-    "hono": "^4.12.27",
-    "node-cron": "^4.5.0",
+    "hono": "^4.12.28",
+    "node-cron": "^4.6.0",
     "postgres": "^3.4.5"
   },
   "devDependencies": {
@@ -22,7 +22,7 @@
     "@wrg/config": "workspace:*",
     "@wrg/types": "workspace:*",
     "eslint": "^9",
-    "tsx": "^4.19.2",
+    "tsx": "^4.23.0",
     "typescript": "^5"
   }
 }
