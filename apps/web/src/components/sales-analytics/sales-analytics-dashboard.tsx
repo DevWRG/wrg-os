@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import writeXlsxFile from "write-excel-file/browser";
 import {
   Bar, BarChart, CartesianGrid, Cell, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
@@ -99,7 +100,6 @@ interface ProdRow { key: string; label: string; category: string | null; satuan:
 interface PengadaanRow { key: string; label: string; total: number; count: number }
 interface CabangRow { cabang: string; region: string; total: number; count: number; customers: number; am_count: number; target: number | null; achievement_pct: number | null }
 interface CustRow { id: string; name: string; total: number; invoices: number; last_date: string | null; days_since: number | null; priority?: string }
-interface Drilldown { am_id: string; per_produk: { key: string; label: string; total: number; qty: number }[]; per_customer: { key: string; label: string; total: number; count: number }[] }
 
 type ViewKey = "overview" | "per-am" | "per-produk" | "per-pengadaan" | "per-cabang" | "per-customer" | "trending";
 const TABS: { key: ViewKey; label: string }[] = [
@@ -147,8 +147,8 @@ export function SalesAnalyticsDashboard({ initial, initialView }: { initial: Ove
   const [cache, setCache] = useState<Record<string, unknown>>(initial ? { overview: initial } : {});
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
-  const [drill, setDrill] = useState<Drilldown | null>(null);
   const [views, setViews] = useState<SavedView[]>([]);
+  const router = useRouter();
 
   const loadViews = useCallback(async () => {
     try { const r = await fetch("/api/sales-analytics/views"); if (r.ok) setViews(((await r.json()).views ?? []) as SavedView[]); } catch { /* abaikan */ }
@@ -245,15 +245,14 @@ export function SalesAnalyticsDashboard({ initial, initialView }: { initial: Ove
     openPrintable(`Sales Analytics — ${label}`, `Periode: ${from || "YTD"} → ${to || "now"} · ${v.rows.length} baris`, v.headers, v.rows);
   };
 
-  const openDrill = async (amId: string) => {
+  // Drilldown AM dibuka di HALAMAN terpisah (bukan section di bawah tabel) —
+  // bawa rentang tanggal aktif sebagai query supaya konsisten.
+  const openDrill = (amId: string) => {
     const qs = new URLSearchParams();
     if (from) qs.set("from", from);
     if (to) qs.set("to", to);
-    try {
-      const res = await fetch(`/api/sales-analytics/per-am/${amId}/drilldown?${qs.toString()}`);
-      const data = await res.json();
-      if (res.ok) setDrill(data as Drilldown);
-    } catch { /* abaikan */ }
+    const s = qs.toString();
+    router.push(`/sales-analytics/am/${amId}${s ? `?${s}` : ""}`);
   };
 
   useEffect(() => {
@@ -323,41 +322,6 @@ export function SalesAnalyticsDashboard({ initial, initialView }: { initial: Ove
       {tab === "per-cabang" && cur != null && <PerCabangView data={cur as { rows: CabangRow[] }} />}
       {tab === "per-customer" && cur != null && <PerCustomerView data={cur as { scope: string; customers: CustRow[]; summary?: Record<string, number> }} />}
       {tab === "trending" && cur != null && <TrendingView data={cur as { points: TrendPt[]; mean: number; std: number }} />}
-
-      {drill && (
-        <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <h3 className="text-base font-semibold">Drilldown AM {drill.am_id}</h3>
-            <Button size="sm" variant="ghost" onClick={() => setDrill(null)}>Tutup</Button>
-          </div>
-          <div className="grid gap-4 md:grid-cols-2">
-            <Card>
-              <CardHeader><CardTitle className="text-base">Per Produk</CardTitle></CardHeader>
-              <CardContent>
-                <DataTable
-                  data={drill.per_produk} getKey={(r) => r.key} searchPlaceholder="Cari produk…" initialSort={{ id: "total", dir: "desc" }}
-                  columns={[
-                    { id: "label", header: "Produk", sortable: true, accessor: (r) => r.label },
-                    { id: "qty", header: "Qty", align: "right", sortable: true, accessor: (r) => r.qty },
-                    { id: "total", header: "Revenue", align: "right", sortable: true, accessor: (r) => r.total, cell: (r) => fmtRp(r.total) },
-                  ]} />
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader><CardTitle className="text-base">Per Customer</CardTitle></CardHeader>
-              <CardContent>
-                <DataTable
-                  data={drill.per_customer} getKey={(r) => r.key} searchPlaceholder="Cari customer…" initialSort={{ id: "total", dir: "desc" }}
-                  columns={[
-                    { id: "label", header: "Customer", sortable: true, accessor: (r) => r.label },
-                    { id: "count", header: "Faktur", align: "right", sortable: true, accessor: (r) => r.count },
-                    { id: "total", header: "Revenue", align: "right", sortable: true, accessor: (r) => r.total, cell: (r) => fmtRp(r.total) },
-                  ]} />
-              </CardContent>
-            </Card>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -400,22 +364,22 @@ function OverviewView({ data, onNav }: { data: OverviewResult; onNav: (t: ViewKe
         <Kpi label="AR Outstanding" value={fmtRp(data.kpi.ar_outstanding)} />
       </div>
       <SalesPerformanceCards data={data.performance} />
-      <Card><CardHeader className="flex-row items-center justify-between"><CardTitle className="text-base">Tren Revenue Harian</CardTitle><DetailLink onClick={() => onNav("trending")} /></CardHeader><CardContent><TrendChart points={data.trend} /></CardContent></Card>
+      <Card><CardHeader className="flex flex-row items-center justify-between"><CardTitle className="text-base">Tren Revenue Harian</CardTitle><DetailLink onClick={() => onNav("trending")} /></CardHeader><CardContent><TrendChart points={data.trend} /></CardContent></Card>
       <div className="grid gap-4 lg:grid-cols-2">
-        <Card><CardHeader className="flex-row items-center justify-between"><CardTitle className="text-base">Per Cabang</CardTitle><DetailLink onClick={() => onNav("per-cabang")} /></CardHeader>
+        <Card><CardHeader className="flex flex-row items-center justify-between"><CardTitle className="text-base">Per Cabang</CardTitle><DetailLink onClick={() => onNav("per-cabang")} /></CardHeader>
           <CardContent><DataTable data={data.per_cabang} getKey={(r) => r.key} searchPlaceholder="Cari cabang…" initialSort={{ id: "total", dir: "desc" }}
             columns={[
               { id: "label", header: "Cabang", sortable: true, accessor: (r) => r.label },
               { id: "count", header: "Faktur", align: "right", sortable: true, accessor: (r) => r.count },
               { id: "total", header: "Revenue", align: "right", sortable: true, accessor: (r) => r.total, cell: (r) => fmtRp(r.total) },
             ]} /></CardContent></Card>
-        <Card><CardHeader className="flex-row items-center justify-between"><CardTitle className="text-base">Top Produk</CardTitle><DetailLink onClick={() => onNav("per-produk")} /></CardHeader>
+        <Card><CardHeader className="flex flex-row items-center justify-between"><CardTitle className="text-base">Top Produk</CardTitle><DetailLink onClick={() => onNav("per-produk")} /></CardHeader>
           <CardContent><DataTable data={data.per_product} getKey={(r) => r.key} searchPlaceholder="Cari produk…" initialSort={{ id: "total", dir: "desc" }}
             columns={[
               { id: "label", header: "Produk", sortable: true, accessor: (r) => r.label },
               { id: "total", header: "Revenue", align: "right", sortable: true, accessor: (r) => r.total, cell: (r) => fmtRp(r.total) },
             ]} /></CardContent></Card>
-        <Card><CardHeader className="flex-row items-center justify-between"><CardTitle className="text-base">Top Sales</CardTitle><DetailLink onClick={() => onNav("per-am")} /></CardHeader>
+        <Card><CardHeader className="flex flex-row items-center justify-between"><CardTitle className="text-base">Top Sales</CardTitle><DetailLink onClick={() => onNav("per-am")} /></CardHeader>
           <CardContent><DataTable data={data.per_salesman} getKey={(r) => r.key} searchPlaceholder="Cari sales…" initialSort={{ id: "total", dir: "desc" }}
             columns={[
               { id: "label", header: "Sales", sortable: true, accessor: (r) => r.label },
