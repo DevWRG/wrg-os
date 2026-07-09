@@ -108,12 +108,14 @@ import {
   analyticsPerAm,
   analyticsPerAmDrilldown,
   analyticsPerProduk,
+  analyticsPerPengadaan,
   analyticsPerCabang,
   analyticsPerCustomer,
   analyticsTrending,
 } from "./repo/sales-analytics.js";
 import { listViews, saveView, deleteView, listAlerts, createAlert, deleteAlert, updateAlert, listAlertTargets } from "./repo/sales-analytics-config.js";
 import { evaluateSalesAlerts } from "./repo/sales-analytics-alert-eval.js";
+import { listDepartments, listEmployees, getEmployee } from "./repo/employee-spine.js";
 import { upsertMembers, listMembers, upsertDigests, listDigest, upsertPola, listPola, generateRekap, generateResume, type MonitorMemberInput, type DigestInput, type PolaInput } from "./repo/monitor.js";
 import { runNotifTua } from "./repo/notiftua.js";
 import { runDailySummary } from "./repo/dailysummary.js";
@@ -1831,6 +1833,10 @@ app.get("/sales-analytics/per-produk", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json(await analyticsPerProduk(c.req.query("from"), c.req.query("to"), await scopeOf(c)));
 });
+app.get("/sales-analytics/per-pengadaan", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await analyticsPerPengadaan(c.req.query("from"), c.req.query("to"), await scopeOf(c)));
+});
 app.get("/sales-analytics/per-cabang", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json(await analyticsPerCabang(c.req.query("from"), c.req.query("to"), await scopeOf(c)));
@@ -1903,6 +1909,21 @@ app.delete("/sales-analytics/alerts/:id", async (c) => {
 app.get("/sales-analytics/alert-targets", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json(await listAlertTargets());
+});
+
+// ── F118 Employee Spine (+ F119 bobot BSC) ──
+app.get("/employee-spine/departments", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json({ departments: await listDepartments() });
+});
+app.get("/employee-spine/employees", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json({ employees: await listEmployees() });
+});
+app.get("/employee-spine/employees/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const e = await getEmployee(c.req.param("id"));
+  return e ? c.json(e) : c.json({ error: "karyawan tak ditemukan" }, 404);
 });
 // Trigger manual evaluasi semua alert aktif (uji/ops) — kirim WA saat transisi ke breach.
 app.post("/sales-analytics/alerts/evaluate", async (c) => {

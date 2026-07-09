@@ -7,8 +7,12 @@ export const dynamic = "force-dynamic";
 
 // F127 Sales Analytics — halaman multi-dimensi. Ambil Executive Overview awal
 // (server) lalu client component memuat view lain on-demand via BFF.
-export default async function SalesAnalyticsPage() {
-  const me = await sessionUser();
+export default async function SalesAnalyticsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ view?: string }>;
+}) {
+  const [me, sp] = await Promise.all([sessionUser(), searchParams]);
   let initial: OverviewResult | null = null;
   try {
     const res = await gatewayFetch("/sales-analytics/overview", {
@@ -22,9 +26,9 @@ export default async function SalesAnalyticsPage() {
     <>
       <PageHeader
         title="Sales Analytics"
-        description="Analitik penjualan multi-dimensi: overview, per-AM, per-produk, per-cabang, per-customer, tren. (F127)"
+        description="Analitik penjualan multi-dimensi: overview, per-AM, per-produk, per-pengadaan, per-cabang, per-customer, tren. (F127)"
       />
-      <SalesAnalyticsDashboard initial={initial} />
+      <SalesAnalyticsDashboard initial={initial} initialView={sp.view} />
     </>
   );
 }

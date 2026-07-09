@@ -47,7 +47,6 @@ export const NAV: NavGroup[] = [
     label: "Sales",
     items: [
       { title: "Sales Calendar", url: "/calendar", icon: CalendarRange },
-      { title: "Sales Performance", url: "/sales", icon: BarChart3, badge: "NEW", exact: true },
       { title: "Sales Analytics", url: "/sales-analytics", icon: Target, badge: "NEW" },
       { title: "Sales Alerts", url: "/sales-alerts", icon: Bell, badge: "NEW" },
       { title: "Competitor Intel", url: "/competitor", icon: Swords },
@@ -63,7 +62,7 @@ export const NAV: NavGroup[] = [
   {
     label: "Analytics",
     items: [
-      { title: "People Analytics", url: "/people", icon: UsersRound },
+      { title: "People Analytics", url: "/people", icon: UsersRound, badge: "NEW" },
       { title: "Spider Network", url: "/network", icon: Network },
       { title: "Executive Briefings", url: "/briefings", icon: ScrollText },
       { title: "Coaching Notes", url: "/coaching", icon: GraduationCap },
