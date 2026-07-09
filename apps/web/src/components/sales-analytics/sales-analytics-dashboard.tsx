@@ -117,14 +117,6 @@ const VIEW_TYPE: Record<ViewKey, string> = {
 };
 
 interface SavedView { id: string; view_name: string; view_type: string; filter_config: { from?: string; to?: string; tab?: ViewKey }; }
-interface SalesAlert { id: string; alert_name: string; metric_key: string; threshold_operator: string; threshold_value: number; window_days: number; }
-
-const ALERT_METRICS = ["revenue", "ar_gt_90", "customer_count", "new_customer_count", "churn_count"];
-// nilai absolut: gt/gte/lt/lte/eq · Δ% vs window sebelumnya · anomali z-score (σ)
-const ALERT_OPS = [
-  ["gt", ">"], ["gte", "≥"], ["lt", "<"], ["lte", "≤"], ["eq", "="],
-  ["delta_pct_gt", "Δ% naik >"], ["delta_pct_lt", "Δ% turun <"], ["anomaly_std_gt", "anomali σ >"],
-];
 
 // ── Sub-komponen ───────────────────────────────────────────────────
 function Kpi({ label, value, delta }: { label: string; value: string; delta?: number | null }) {
@@ -173,14 +165,9 @@ export function SalesAnalyticsDashboard({ initial }: { initial: OverviewResult |
   const [err, setErr] = useState("");
   const [drill, setDrill] = useState<Drilldown | null>(null);
   const [views, setViews] = useState<SavedView[]>([]);
-  const [alerts, setAlerts] = useState<SalesAlert[]>([]);
-  const [showAlerts, setShowAlerts] = useState(false);
 
   const loadViews = useCallback(async () => {
     try { const r = await fetch("/api/sales-analytics/views"); if (r.ok) setViews(((await r.json()).views ?? []) as SavedView[]); } catch { /* abaikan */ }
-  }, []);
-  const loadAlerts = useCallback(async () => {
-    try { const r = await fetch("/api/sales-analytics/alerts"); if (r.ok) setAlerts(((await r.json()).alerts ?? []) as SalesAlert[]); } catch { /* abaikan */ }
   }, []);
 
   const load = useCallback(async (view: ViewKey, force = false) => {
@@ -281,9 +268,9 @@ export function SalesAnalyticsDashboard({ initial }: { initial: OverviewResult |
   };
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- load*() men-setState setelah fetch; disengaja.
-    void loadViews(); void loadAlerts();
-  }, [loadViews, loadAlerts]);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- loadViews() men-setState setelah fetch; disengaja.
+    void loadViews();
+  }, [loadViews]);
 
   const saveCurrentView = async () => {
     const name = window.prompt("Nama view:");
@@ -301,15 +288,6 @@ export function SalesAnalyticsDashboard({ initial }: { initial: OverviewResult |
   };
   const delView = async (id: string) => { await fetch(`/api/sales-analytics/views/${id}`, { method: "DELETE" }); void loadViews(); };
 
-  const addAlert = async (a: { alert_name: string; metric_key: string; threshold_operator: string; threshold_value: number; window_days: number }) => {
-    const r = await fetch("/api/sales-analytics/alerts", {
-      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(a),
-    });
-    if (r.ok) void loadAlerts();
-    else setErr(String((await r.json().catch(() => ({}))).error ?? "gagal simpan alert"));
-  };
-  const delAlert = async (id: string) => { await fetch(`/api/sales-analytics/alerts/${id}`, { method: "DELETE" }); void loadAlerts(); };
-
   return (
     <div className="space-y-4">
       {/* Filter periode + tabs */}
@@ -321,7 +299,6 @@ export function SalesAnalyticsDashboard({ initial }: { initial: OverviewResult |
         <Button size="sm" variant="outline" onClick={() => void exportXlsx()} disabled={!cur}>Export XLSX</Button>
         <Button size="sm" variant="outline" onClick={exportPdf} disabled={!cur}>Export PDF</Button>
         <Button size="sm" variant="outline" onClick={saveCurrentView}>Simpan view</Button>
-        <Button size="sm" variant={showAlerts ? "default" : "outline"} onClick={() => setShowAlerts((s) => !s)}>Alert{alerts.length ? ` (${alerts.length})` : ""}</Button>
         <span className="text-muted-foreground text-xs">Kosongkan = year-to-date.</span>
       </div>
 
@@ -337,7 +314,6 @@ export function SalesAnalyticsDashboard({ initial }: { initial: OverviewResult |
         </div>
       )}
 
-      {showAlerts && <AlertsPanel alerts={alerts} onAdd={addAlert} onDelete={delAlert} />}
 
       <div className="flex flex-wrap gap-1 rounded-lg border p-1">
         {TABS.map((t) => (
@@ -389,53 +365,6 @@ export function SalesAnalyticsDashboard({ initial }: { initial: OverviewResult |
         </Card>
       )}
     </div>
-  );
-}
-
-// ── Alerts panel ───────────────────────────────────────────────────
-function AlertsPanel({ alerts, onAdd, onDelete }: {
-  alerts: SalesAlert[];
-  onAdd: (a: { alert_name: string; metric_key: string; threshold_operator: string; threshold_value: number; window_days: number }) => Promise<void>;
-  onDelete: (id: string) => Promise<void>;
-}) {
-  const [name, setName] = useState("");
-  const [metric, setMetric] = useState(ALERT_METRICS[0]);
-  const [op, setOp] = useState("lt");
-  const [value, setValue] = useState("");
-  const [win, setWin] = useState("7");
-  const submit = async () => {
-    if (!name.trim() || value === "") return;
-    await onAdd({ alert_name: name.trim(), metric_key: metric, threshold_operator: op, threshold_value: Number(value), window_days: Number(win) || 7 });
-    setName(""); setValue("");
-  };
-  return (
-    <Card>
-      <CardHeader><CardTitle className="text-base">Alert threshold</CardTitle></CardHeader>
-      <CardContent className="space-y-3">
-        <div className="flex flex-wrap items-end gap-2">
-          <Input placeholder="Nama alert" value={name} onChange={(e) => setName(e.target.value)} className="h-9 w-40" />
-          <select value={metric} onChange={(e) => setMetric(e.target.value)} className="h-9 rounded-md border bg-background px-2 text-sm">
-            {ALERT_METRICS.map((m) => <option key={m} value={m}>{m}</option>)}
-          </select>
-          <select value={op} onChange={(e) => setOp(e.target.value)} className="h-9 rounded-md border bg-background px-2 text-sm">
-            {ALERT_OPS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-          </select>
-          <Input type="number" placeholder="nilai" value={value} onChange={(e) => setValue(e.target.value)} className="h-9 w-32" />
-          <Input type="number" placeholder="hari" value={win} onChange={(e) => setWin(e.target.value)} className="h-9 w-24" />
-          <Button size="sm" onClick={() => void submit()}>Tambah</Button>
-        </div>
-        {alerts.length === 0 ? <p className="text-muted-foreground text-sm">Belum ada alert.</p> : (
-          <ul className="space-y-1 text-sm">
-            {alerts.map((a) => (
-              <li key={a.id} className="flex items-center justify-between border-b py-1 last:border-0">
-                <span>{a.alert_name} — <code className="bg-muted rounded px-1">{a.metric_key} {a.threshold_operator} {a.threshold_value.toLocaleString("id-ID")}</code> · {a.window_days}h</span>
-                <Button size="sm" variant="ghost" onClick={() => void onDelete(a.id)}>Hapus</Button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </CardContent>
-    </Card>
   );
 }
 

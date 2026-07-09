@@ -92,3 +92,32 @@ export async function deleteAlert(userId: string, id: string): Promise<boolean> 
   const rows = await db()`DELETE FROM sales_analytics_alert WHERE id = ${id} AND owner_user_id = ${userId} RETURNING id`;
   return rows.length > 0;
 }
+
+// Toggle aktif/nonaktif (scoped ke owner).
+export async function updateAlert(userId: string, id: string, patch: { active?: boolean }): Promise<boolean> {
+  const rows = await db()`
+    UPDATE sales_analytics_alert SET active = COALESCE(${patch.active ?? null}, active)
+    WHERE id = ${id} AND owner_user_id = ${userId} RETURNING id`;
+  return rows.length > 0;
+}
+
+// Kandidat tujuan notif alert: grup WA (dari wa_message) + user (master_user + wa_number).
+export interface AlertTargets {
+  groups: { jid: string; name: string }[];
+  users: { am_id: string; nama: string; wa_number: string }[];
+}
+export async function listAlertTargets(): Promise<AlertTargets> {
+  const sql = db();
+  const g = await sql`
+    SELECT group_jid AS jid, COALESCE(NULLIF(max(group_name),''), group_jid) AS name
+    FROM wa_message WHERE group_jid LIKE '%@g.us'
+    GROUP BY group_jid ORDER BY 2 LIMIT 300`;
+  const u = await sql`
+    SELECT am_id, nama, wa_number FROM master_user
+    WHERE wa_number IS NOT NULL AND wa_number <> '' AND aktif IS NOT false
+    ORDER BY nama LIMIT 500`;
+  return {
+    groups: g.map((r) => ({ jid: String(r.jid), name: String(r.name) })),
+    users: u.map((r) => ({ am_id: String(r.am_id), nama: r.nama ? String(r.nama) : String(r.am_id), wa_number: String(r.wa_number) })),
+  };
+}
