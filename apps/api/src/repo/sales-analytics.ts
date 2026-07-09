@@ -181,7 +181,7 @@ export async function analyticsPerAmDrilldown(amId: string, from0?: string, to0?
     LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
     LEFT JOIN accurate_customer ac ON ac.id = ai.customer_id
     WHERE ai.tanggal BETWEEN ${from} AND ${to} AND mu.am_id = ${amId}
-    GROUP BY ai.customer_id, ac.name ORDER BY sum(ai.total - COALESCE(ai.tax_amount,0)) DESC LIMIT 10`;
+    GROUP BY ai.customer_id, ac.name ORDER BY sum(ai.total - COALESCE(ai.tax_amount,0)) DESC`;
   return {
     am_id: amId,
     range: { from, to },
