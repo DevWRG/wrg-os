@@ -63,8 +63,7 @@ export const NAV: NavGroup[] = [
   {
     label: "Analytics",
     items: [
-      { title: "People Analytics", url: "/people", icon: UsersRound },
-      { title: "Employee Spine", url: "/employee-spine", icon: UsersRound, badge: "NEW" },
+      { title: "People Analytics", url: "/people", icon: UsersRound, badge: "NEW" },
       { title: "Spider Network", url: "/network", icon: Network },
       { title: "Executive Briefings", url: "/briefings", icon: ScrollText },
       { title: "Coaching Notes", url: "/coaching", icon: GraduationCap },
