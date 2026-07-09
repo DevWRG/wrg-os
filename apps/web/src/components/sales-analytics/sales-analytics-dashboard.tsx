@@ -13,6 +13,9 @@ import { SalesPerformanceCards, type SalesPerformance } from "@/components/sales
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
+// Tombol sekunder toolbar: tint teal lembut (bukan putih) — kontras di atas bg terang.
+const SEC_BTN = "bg-primary-soft text-primary-dark border-primary/20 hover:bg-primary/15";
+
 // ── Format ─────────────────────────────────────────────────────────
 const rp = new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 });
 const fmtRp = (n: number) => rp.format(n || 0);
@@ -267,13 +270,13 @@ export function SalesAnalyticsDashboard({ initial }: { initial: OverviewResult |
     <div className="space-y-4">
       {/* Filter periode + tabs */}
       <div className="flex flex-wrap items-end gap-3">
-        <div className="grid gap-1"><Label htmlFor="sa-from" className="text-xs">Dari</Label><Input id="sa-from" type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="h-9 w-40" /></div>
-        <div className="grid gap-1"><Label htmlFor="sa-to" className="text-xs">Sampai</Label><Input id="sa-to" type="date" value={to} onChange={(e) => setTo(e.target.value)} className="h-9 w-40" /></div>
-        <Button size="sm" variant="outline" onClick={apply}>Terapkan</Button>
-        <Button size="sm" variant="outline" onClick={exportCsv} disabled={!cur}>Export CSV</Button>
-        <Button size="sm" variant="outline" onClick={() => void exportXlsx()} disabled={!cur}>Export XLSX</Button>
-        <Button size="sm" variant="outline" onClick={exportPdf} disabled={!cur}>Export PDF</Button>
-        <Button size="sm" variant="outline" onClick={saveCurrentView}>Simpan view</Button>
+        <div className="grid gap-1"><Label htmlFor="sa-from" className="text-xs">Dari</Label><Input id="sa-from" type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="h-9 w-40 bg-card border-border" /></div>
+        <div className="grid gap-1"><Label htmlFor="sa-to" className="text-xs">Sampai</Label><Input id="sa-to" type="date" value={to} onChange={(e) => setTo(e.target.value)} className="h-9 w-40 bg-card border-border" /></div>
+        <Button size="sm" onClick={apply}>Terapkan</Button>
+        <Button size="sm" className={SEC_BTN} onClick={exportCsv} disabled={!cur}>Export CSV</Button>
+        <Button size="sm" className={SEC_BTN} onClick={() => void exportXlsx()} disabled={!cur}>Export XLSX</Button>
+        <Button size="sm" className={SEC_BTN} onClick={exportPdf} disabled={!cur}>Export PDF</Button>
+        <Button size="sm" className={SEC_BTN} onClick={saveCurrentView}>Simpan view</Button>
         <span className="text-muted-foreground text-xs">Kosongkan = year-to-date.</span>
       </div>
 
