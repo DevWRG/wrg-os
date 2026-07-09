@@ -140,7 +140,7 @@ export function SalesAlertsManager({ initialAlerts, targets }: { initialAlerts: 
                   <td className="pr-3 text-muted-foreground text-xs">{targetLabel(a.wa_target_jid)}</td>
                   <td className="pr-3"><Badge variant={a.active ? "secondary" : "outline"}>{a.active ? "aktif" : "nonaktif"}</Badge></td>
                   <td className="space-x-1 whitespace-nowrap py-1">
-                    <Button size="sm" variant="outline" onClick={() => void toggle(a)}>{a.active ? "Nonaktifkan" : "Aktifkan"}</Button>
+                    <Button size="sm" onClick={() => void toggle(a)} className={a.active ? "bg-red-600 text-white hover:bg-red-700" : "bg-emerald-600 text-white hover:bg-emerald-700"}>{a.active ? "Nonaktifkan" : "Aktifkan"}</Button>
                     <Button size="sm" variant="ghost" onClick={() => void del(a.id)}>Hapus</Button>
                   </td>
                 </tr>
