@@ -2,6 +2,7 @@
 // (app_user.id). Dipakai endpoint /sales-analytics/views & /alerts.
 
 import { db } from "../db.js";
+import { loadGroupSubjects } from "./group-names.js";
 
 const VIEW_TYPES = new Set(["executive", "per_am", "per_produk", "per_cabang", "per_customer", "trending", "custom"]);
 const METRICS = new Set(["revenue", "gp", "unit_sold", "customer_count", "ar_balance", "ar_gt_90", "churn_count", "new_customer_count", "kso_count"]);
@@ -108,16 +109,28 @@ export interface AlertTargets {
 }
 export async function listAlertTargets(): Promise<AlertTargets> {
   const sql = db();
+  // Nama grup: sumber utama subject openclaw (sessions.json) — wa_message.group_name
+  // selalu kosong. Fallback monitor_pola.group_name (bila bukan JID), lalu JID.
+  const subjects = loadGroupSubjects();
   const g = await sql`
-    SELECT group_jid AS jid, COALESCE(NULLIF(max(group_name),''), group_jid) AS name
-    FROM wa_message WHERE group_jid LIKE '%@g.us'
-    GROUP BY group_jid ORDER BY 2 LIMIT 300`;
+    SELECT j.jid, mp.group_name FROM (
+      SELECT DISTINCT group_jid AS jid FROM wa_message WHERE group_jid LIKE '%@g.us'
+      UNION SELECT group_jid FROM monitor_pola WHERE group_jid LIKE '%@g.us'
+    ) j LEFT JOIN monitor_pola mp ON mp.group_jid = j.jid`;
+  const groups = g
+    .map((r) => {
+      const jid = String(r.jid);
+      const dbname = r.group_name && !String(r.group_name).endsWith("@g.us") ? String(r.group_name) : "";
+      return { jid, name: subjects[jid] || dbname || jid };
+    })
+    .sort((a, b) => a.name.localeCompare(b.name, "id"))
+    .slice(0, 300);
   const u = await sql`
     SELECT am_id, nama, wa_number FROM master_user
     WHERE wa_number IS NOT NULL AND wa_number <> '' AND aktif IS NOT false
     ORDER BY nama LIMIT 500`;
   return {
-    groups: g.map((r) => ({ jid: String(r.jid), name: String(r.name) })),
+    groups,
     users: u.map((r) => ({ am_id: String(r.am_id), nama: r.nama ? String(r.nama) : String(r.am_id), wa_number: String(r.wa_number) })),
   };
 }
