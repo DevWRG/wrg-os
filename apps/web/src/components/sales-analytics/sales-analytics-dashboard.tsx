@@ -95,22 +95,26 @@ export type OverviewResult = OverviewAll | OverviewAm;
 
 interface AmRow { am_id: string | null; nama: string | null; cabang: string | null; region: string; total: number; count: number; target: number | null; achievement_pct: number | null; rank: number; self?: boolean }
 interface ProdRow { key: string; label: string; category: string | null; satuan: string | null; stock_on_hand: number | null; total: number; unit_sold: number; customer_count: number }
+interface PengadaanRow { key: string; label: string; total: number; count: number }
 interface CabangRow { cabang: string; region: string; total: number; count: number; customers: number; am_count: number; target: number | null; achievement_pct: number | null }
 interface CustRow { id: string; name: string; total: number; invoices: number; last_date: string | null; days_since: number | null; priority?: string }
 interface Drilldown { am_id: string; per_produk: { key: string; label: string; total: number; qty: number }[]; per_customer: { key: string; label: string; total: number; count: number }[] }
 
-type ViewKey = "overview" | "per-am" | "per-produk" | "per-cabang" | "per-customer" | "trending";
+type ViewKey = "overview" | "per-am" | "per-produk" | "per-pengadaan" | "per-cabang" | "per-customer" | "trending";
 const TABS: { key: ViewKey; label: string }[] = [
   { key: "overview", label: "Executive" },
   { key: "per-am", label: "Per-AM" },
   { key: "per-produk", label: "Per-Produk" },
+  { key: "per-pengadaan", label: "Per-Pengadaan" },
   { key: "per-cabang", label: "Per-Cabang" },
   { key: "per-customer", label: "Per-Customer" },
   { key: "trending", label: "Trending" },
 ];
-// tab (ViewKey) → view_type enum DB (migrasi 049).
+// tab (ViewKey) → view_type enum DB (migrasi 049). per-pengadaan reuse enum per_produk
+// (belum ada enum tersendiri; cukup utk saved-view routing).
 const VIEW_TYPE: Record<ViewKey, string> = {
   overview: "executive", "per-am": "per_am", "per-produk": "per_produk",
+  "per-pengadaan": "per_produk",
   "per-cabang": "per_cabang", "per-customer": "per_customer", trending: "trending",
 };
 
@@ -134,8 +138,9 @@ function Kpi({ label, value, delta }: { label: string; value: string; delta?: nu
 }
 
 // ── Main ───────────────────────────────────────────────────────────
-export function SalesAnalyticsDashboard({ initial }: { initial: OverviewResult | null }) {
-  const [tab, setTab] = useState<ViewKey>("overview");
+export function SalesAnalyticsDashboard({ initial, initialView }: { initial: OverviewResult | null; initialView?: string }) {
+  const startTab = (TABS.find((t) => t.key === initialView)?.key ?? "overview") as ViewKey;
+  const [tab, setTab] = useState<ViewKey>(startTab);
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [cache, setCache] = useState<Record<string, unknown>>(initial ? { overview: initial } : {});
@@ -188,6 +193,11 @@ export function SalesAnalyticsDashboard({ initial }: { initial: OverviewResult |
       const d = cur as { rows: ProdRow[] };
       return { name: `sales-analytics_per-produk_${s}`, headers: ["Produk", "Kategori", "Unit", "Satuan", "Customer", "Stok", "Revenue"],
         rows: d.rows.map((r) => [r.label, r.category, r.unit_sold, r.satuan, r.customer_count, r.stock_on_hand, r.total]) };
+    }
+    if (tab === "per-pengadaan") {
+      const d = cur as { rows: PengadaanRow[] };
+      return { name: `sales-analytics_per-pengadaan_${s}`, headers: ["Kategori Pengadaan", "Faktur", "Revenue"],
+        rows: d.rows.map((r) => [r.label, r.count, r.total]) };
     }
     if (tab === "per-cabang") {
       const d = cur as { rows: CabangRow[] };
@@ -308,6 +318,7 @@ export function SalesAnalyticsDashboard({ initial }: { initial: OverviewResult |
       {tab === "overview" && cur != null && <OverviewView data={cur as OverviewResult} onNav={setTab} />}
       {tab === "per-am" && cur != null && <PerAmView data={cur as { rows: AmRow[]; scope: string }} onDrill={openDrill} />}
       {tab === "per-produk" && cur != null && <PerProdukView data={cur as { rows: ProdRow[] }} />}
+      {tab === "per-pengadaan" && cur != null && <PerPengadaanView data={cur as { rows: PengadaanRow[] }} />}
       {tab === "per-cabang" && cur != null && <PerCabangView data={cur as { rows: CabangRow[] }} />}
       {tab === "per-customer" && cur != null && <PerCustomerView data={cur as { scope: string; customers: CustRow[]; summary?: Record<string, number> }} />}
       {tab === "trending" && cur != null && <TrendingView data={cur as { points: TrendPt[]; mean: number; std: number }} />}
@@ -440,6 +451,19 @@ function PerProdukView({ data }: { data: { rows: ProdRow[] } }) {
   return (
     <Card><CardHeader><CardTitle className="text-base">Portfolio Produk</CardTitle></CardHeader>
       <CardContent><DataTable data={data.rows} columns={prodColumns} getKey={(r) => r.key} searchPlaceholder="Cari produk/kategori…" initialSort={{ id: "total", dir: "desc" }} pageSize={25} empty="Tidak ada data produk." /></CardContent></Card>
+  );
+}
+
+const pengadaanColumns: DataColumn<PengadaanRow>[] = [
+  { id: "label", header: "Kategori Pengadaan", sortable: true, accessor: (r) => r.label },
+  { id: "count", header: "Faktur", align: "right", sortable: true, accessor: (r) => r.count },
+  { id: "total", header: "Revenue", align: "right", sortable: true, accessor: (r) => r.total, cell: (r) => fmtRp(r.total) },
+];
+
+function PerPengadaanView({ data }: { data: { rows: PengadaanRow[] } }) {
+  return (
+    <Card><CardHeader><CardTitle className="text-base">Per Pengadaan (kategori penjualan)</CardTitle></CardHeader>
+      <CardContent><DataTable data={data.rows} columns={pengadaanColumns} getKey={(r) => r.key} searchPlaceholder="Cari kategori…" initialSort={{ id: "total", dir: "desc" }} pageSize={25} empty="Tidak ada data pengadaan." /></CardContent></Card>
   );
 }
 
