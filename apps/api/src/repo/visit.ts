@@ -74,6 +74,9 @@ export interface VisitRow {
   visit_timestamp: string | null;
   visit_date: string | null;
   geo_status: string;
+  tujuan: string | null;
+  goal: string | null;
+  catatan: string | null;
   created_at: string;
 }
 
@@ -98,6 +101,9 @@ function rowToVisit(r: Record<string, unknown>): VisitRow {
     visit_timestamp: r.visit_timestamp ? String(r.visit_timestamp) : null,
     visit_date: r.visit_date ? String(r.visit_date) : null,
     geo_status,
+    tujuan: r.tujuan ? String(r.tujuan) : null,
+    goal: r.goal ? String(r.goal) : null,
+    catatan: r.catatan ? String(r.catatan) : null,
     created_at: String(r.created_at),
   };
 }
@@ -106,6 +112,8 @@ const VISIT_SELECT = `
   SELECT sp.id::text AS id, sp.am_id, COALESCE(initcap(mu.panggilan), mu.nama) AS nama,
          sp.customer_name, sp.visit_lat, sp.visit_lon, sp.visit_timestamp::text AS visit_timestamp,
          sp.tanggal::text AS visit_date, sp.visit_date_mismatch,
+         sp.tujuan, sp.goal,
+         NULLIF(concat_ws(' — ', NULLIF(al.hasil,''), NULLIF(al.next_action,'')), '') AS catatan,
          COALESCE(al.photo_path, wm.media_path) AS photo_path, sp.created_at::text AS created_at
   FROM sales_plan sp
   JOIN master_user mu ON mu.am_id = sp.am_id

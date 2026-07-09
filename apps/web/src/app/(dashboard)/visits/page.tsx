@@ -20,6 +20,9 @@ interface VisitItem {
   visit_timestamp: string | null;
   visit_date: string | null;
   geo_status: string;
+  tujuan: string | null;
+  goal: string | null;
+  catatan: string | null;
   created_at: string;
 }
 interface VisitResponse {

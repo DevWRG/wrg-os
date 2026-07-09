@@ -19,6 +19,9 @@ interface VisitItem {
   visit_timestamp: string | null;
   visit_date: string | null;
   geo_status: string;
+  tujuan: string | null;
+  goal: string | null;
+  catatan: string | null;
 }
 
 const GEO_LABEL: Record<string, string> = {
@@ -95,9 +98,13 @@ export function VisitsTable({ visits }: { visits: VisitItem[] }) {
             filename="visits-detail"
             data={filtered}
             columns={[
+              { header: "Periode", value: (v) => v.visit_date ?? v.visit_timestamp },
               { header: "AM", value: (v) => v.nama ?? v.am_id },
               { header: "Customer", value: (v) => v.customer_name },
               { header: "Tanggal", value: (v) => v.visit_date ?? v.visit_timestamp },
+              { header: "Tujuan", value: (v) => v.tujuan ?? "" },
+              { header: "Goal", value: (v) => v.goal ?? "" },
+              { header: "Catatan", value: (v) => v.catatan ?? "" },
               { header: "Lat", value: (v) => v.visit_lat },
               { header: "Lon", value: (v) => v.visit_lon },
               { header: "Geo", value: (v) => GEO_LABEL[v.geo_status] ?? v.geo_status },
