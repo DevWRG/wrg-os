@@ -6,6 +6,7 @@ import {
   Bar, BarChart, CartesianGrid, Cell, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
 
+import { ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
@@ -363,7 +364,17 @@ export function SalesAnalyticsDashboard({ initial, initialView }: { initial: Ove
 
 // ── Views ──────────────────────────────────────────────────────────
 function DetailLink({ onClick }: { onClick: () => void }) {
-  return <button type="button" onClick={onClick} className="text-primary text-xs font-medium hover:underline">Lihat detail →</button>;
+  return (
+    <Button
+      type="button"
+      onClick={onClick}
+      variant="link"
+      size="sm"
+      className="text-primary hover:text-primary-dark h-auto gap-1 rounded-md bg-primary-soft px-2 py-1 text-xs font-medium hover:bg-primary-soft/70 hover:no-underline"
+    >
+      Lihat Detail <ArrowRight className="size-3" />
+    </Button>
+  );
 }
 
 function OverviewView({ data, onNav }: { data: OverviewResult; onNav: (t: ViewKey) => void }) {
