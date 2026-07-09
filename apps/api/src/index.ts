@@ -112,7 +112,7 @@ import {
   analyticsPerCustomer,
   analyticsTrending,
 } from "./repo/sales-analytics.js";
-import { listViews, saveView, deleteView, listAlerts, createAlert, deleteAlert } from "./repo/sales-analytics-config.js";
+import { listViews, saveView, deleteView, listAlerts, createAlert, deleteAlert, updateAlert, listAlertTargets } from "./repo/sales-analytics-config.js";
 import { evaluateSalesAlerts } from "./repo/sales-analytics-alert-eval.js";
 import { upsertMembers, listMembers, upsertDigests, listDigest, upsertPola, listPola, generateRekap, generateResume, type MonitorMemberInput, type DigestInput, type PolaInput } from "./repo/monitor.js";
 import { runNotifTua } from "./repo/notiftua.js";
@@ -1885,11 +1885,24 @@ app.post("/sales-analytics/alerts", async (c) => {
   const r = await createAlert(uid, b);
   return r.ok ? c.json(r, 201) : c.json({ error: r.error }, 400);
 });
+app.patch("/sales-analytics/alerts/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const uid = userIdOf(c);
+  if (!uid) return c.json({ error: "x-user-id wajib" }, 401);
+  let b: { active?: boolean } = {};
+  try { b = await c.req.json(); } catch { /* opsional */ }
+  return (await updateAlert(uid, c.req.param("id"), b)) ? c.json({ ok: true }) : c.json({ error: "alert tak ditemukan" }, 404);
+});
 app.delete("/sales-analytics/alerts/:id", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const uid = userIdOf(c);
   if (!uid) return c.json({ error: "x-user-id wajib" }, 401);
   return (await deleteAlert(uid, c.req.param("id"))) ? c.json({ ok: true }) : c.json({ error: "alert tak ditemukan" }, 404);
+});
+// Kandidat tujuan notif (grup WA + user) utk form alert.
+app.get("/sales-analytics/alert-targets", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await listAlertTargets());
 });
 // Trigger manual evaluasi semua alert aktif (uji/ops) — kirim WA saat transisi ke breach.
 app.post("/sales-analytics/alerts/evaluate", async (c) => {

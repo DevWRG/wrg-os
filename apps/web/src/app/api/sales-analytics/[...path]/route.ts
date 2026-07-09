@@ -14,7 +14,7 @@ async function proxy(req: Request, path: string[], method: string) {
   const qs = searchParams.toString();
   const headers: Record<string, string> = { "x-user-id": me.id };
   let body: string | undefined;
-  if (method === "POST" || method === "PUT") {
+  if (method === "POST" || method === "PUT" || method === "PATCH") {
     headers["content-type"] = "application/json";
     body = await req.text();
   }
@@ -32,6 +32,9 @@ export async function GET(req: Request, ctx: { params: Promise<{ path: string[] 
 }
 export async function POST(req: Request, ctx: { params: Promise<{ path: string[] }> }) {
   return proxy(req, (await ctx.params).path, "POST");
+}
+export async function PATCH(req: Request, ctx: { params: Promise<{ path: string[] }> }) {
+  return proxy(req, (await ctx.params).path, "PATCH");
 }
 export async function DELETE(req: Request, ctx: { params: Promise<{ path: string[] }> }) {
   return proxy(req, (await ctx.params).path, "DELETE");

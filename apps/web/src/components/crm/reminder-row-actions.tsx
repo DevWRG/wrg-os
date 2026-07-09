@@ -7,6 +7,7 @@ import { Pencil, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useConfirm } from "@/components/ui/use-confirm";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Sheet,
@@ -40,6 +41,8 @@ export function ReminderRowActions({ row, onChanged }: { row: ReminderRow; onCha
     note: row.note,
   });
 
+  const { confirm, dialog } = useConfirm();
+
   async function save(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
@@ -67,22 +70,24 @@ export function ReminderRowActions({ row, onChanged }: { row: ReminderRow; onCha
     }
   }
 
-  async function del() {
+  function del() {
     const who = row.am_name ?? row.am_id;
-    if (!confirm(`Hapus reminder ${who} (${row.reminder_date.slice(0, 10)})?`)) return;
-    setBusy(true);
-    try {
-      const res = await fetch(`/api/reminders/${row.id}`, { method: "DELETE" });
-      if (!res.ok) throw new Error("gagal hapus");
-      onChanged?.();
-      router.refresh();
-    } catch {
-      setBusy(false);
-    }
+    confirm({ title: "Hapus reminder?", description: `Reminder ${who} (${row.reminder_date.slice(0, 10)}) akan dihapus.`, destructive: true, confirmLabel: "Hapus" }, async () => {
+      setBusy(true);
+      try {
+        const res = await fetch(`/api/reminders/${row.id}`, { method: "DELETE" });
+        if (!res.ok) throw new Error("gagal hapus");
+        onChanged?.();
+        router.refresh();
+      } catch {
+        setBusy(false);
+      }
+    });
   }
 
   return (
     <div className="flex justify-end gap-1">
+      {dialog}
       <Sheet open={open} onOpenChange={setOpen}>
         <SheetTrigger render={<Button variant="ghost" size="icon-sm" aria-label="Edit reminder" />}>
           <Pencil />

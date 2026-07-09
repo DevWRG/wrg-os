@@ -2,6 +2,7 @@
 // (app_user.id). Dipakai endpoint /sales-analytics/views & /alerts.
 
 import { db } from "../db.js";
+import { loadGroupSubjects } from "./group-names.js";
 
 const VIEW_TYPES = new Set(["executive", "per_am", "per_produk", "per_cabang", "per_customer", "trending", "custom"]);
 const METRICS = new Set(["revenue", "gp", "unit_sold", "customer_count", "ar_balance", "ar_gt_90", "churn_count", "new_customer_count", "kso_count"]);
@@ -91,4 +92,45 @@ export async function createAlert(
 export async function deleteAlert(userId: string, id: string): Promise<boolean> {
   const rows = await db()`DELETE FROM sales_analytics_alert WHERE id = ${id} AND owner_user_id = ${userId} RETURNING id`;
   return rows.length > 0;
+}
+
+// Toggle aktif/nonaktif (scoped ke owner).
+export async function updateAlert(userId: string, id: string, patch: { active?: boolean }): Promise<boolean> {
+  const rows = await db()`
+    UPDATE sales_analytics_alert SET active = COALESCE(${patch.active ?? null}, active)
+    WHERE id = ${id} AND owner_user_id = ${userId} RETURNING id`;
+  return rows.length > 0;
+}
+
+// Kandidat tujuan notif alert: grup WA (dari wa_message) + user (master_user + wa_number).
+export interface AlertTargets {
+  groups: { jid: string; name: string }[];
+  users: { am_id: string; nama: string; wa_number: string }[];
+}
+export async function listAlertTargets(): Promise<AlertTargets> {
+  const sql = db();
+  // Nama grup: sumber utama subject openclaw (sessions.json) — wa_message.group_name
+  // selalu kosong. Fallback monitor_pola.group_name (bila bukan JID), lalu JID.
+  const subjects = loadGroupSubjects();
+  const g = await sql`
+    SELECT j.jid, mp.group_name FROM (
+      SELECT DISTINCT group_jid AS jid FROM wa_message WHERE group_jid LIKE '%@g.us'
+      UNION SELECT group_jid FROM monitor_pola WHERE group_jid LIKE '%@g.us'
+    ) j LEFT JOIN monitor_pola mp ON mp.group_jid = j.jid`;
+  const groups = g
+    .map((r) => {
+      const jid = String(r.jid);
+      const dbname = r.group_name && !String(r.group_name).endsWith("@g.us") ? String(r.group_name) : "";
+      return { jid, name: subjects[jid] || dbname || jid };
+    })
+    .sort((a, b) => a.name.localeCompare(b.name, "id"))
+    .slice(0, 300);
+  const u = await sql`
+    SELECT am_id, nama, wa_number FROM master_user
+    WHERE wa_number IS NOT NULL AND wa_number <> '' AND aktif IS NOT false
+    ORDER BY nama LIMIT 500`;
+  return {
+    groups,
+    users: u.map((r) => ({ am_id: String(r.am_id), nama: r.nama ? String(r.nama) : String(r.am_id), wa_number: String(r.wa_number) })),
+  };
 }
