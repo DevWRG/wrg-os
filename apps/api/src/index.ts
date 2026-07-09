@@ -108,6 +108,7 @@ import {
   analyticsPerAm,
   analyticsPerAmDrilldown,
   analyticsPerProduk,
+  analyticsPerPengadaan,
   analyticsPerCabang,
   analyticsPerCustomer,
   analyticsTrending,
@@ -1831,6 +1832,10 @@ app.get("/sales-analytics/per-am/:amId/drilldown", async (c) => {
 app.get("/sales-analytics/per-produk", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json(await analyticsPerProduk(c.req.query("from"), c.req.query("to"), await scopeOf(c)));
+});
+app.get("/sales-analytics/per-pengadaan", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await analyticsPerPengadaan(c.req.query("from"), c.req.query("to"), await scopeOf(c)));
 });
 app.get("/sales-analytics/per-cabang", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);

@@ -257,7 +257,7 @@ export function OverviewDashboard({ initial }: { initial: OverviewData | null })
           <div className="grid gap-4 sm:grid-cols-3">
             <Stat icon={Package} chip="bg-primary-soft text-primary" label="Total Produk" value={numC(inv.total)} sub={`${inv.in_stock} stok aman`} href="/products" />
             <Stat icon={ShoppingCart} chip="bg-info-soft text-info" label="Order Aktif" value={String(data.orders_stat.active)} sub={`dari ${data.orders_stat.total} order`} href="/orders" />
-            <Stat icon={Wallet} chip="bg-success-soft text-success" label="Total Penjualan" value={rpC(k.revenue)} delta={k.revenue_delta} href="/sales" />
+            <Stat icon={Wallet} chip="bg-success-soft text-success" label="Total Penjualan" value={rpC(k.revenue)} delta={k.revenue_delta} href="/sales-analytics" />
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <Card>
@@ -299,7 +299,7 @@ export function OverviewDashboard({ initial }: { initial: OverviewData | null })
       {/* Best selling + top customers */}
       <div className="grid gap-4 lg:grid-cols-3">
         <Card className="lg:col-span-2">
-          <CardHeader className="pb-2"><CardTitle className="text-sm font-medium">Produk Terlaris (Best Selling)</CardTitle><CardAction><DetailLink href="/sales?tab=product" /></CardAction></CardHeader>
+          <CardHeader className="pb-2"><CardTitle className="text-sm font-medium">Produk Terlaris (Best Selling)</CardTitle><CardAction><DetailLink href="/sales-analytics?view=per-produk" /></CardAction></CardHeader>
           <CardContent>
             {data.per_product.length === 0 ? (
               <p className="text-muted-foreground text-sm">Tidak ada data.</p>
@@ -323,7 +323,7 @@ export function OverviewDashboard({ initial }: { initial: OverviewData | null })
         </Card>
 
         <Card className="border-0 bg-gradient-to-br from-rose-500/15 via-fuchsia-400/10 to-amber-300/15">
-          <CardHeader className="pb-2"><CardTitle className="text-sm font-medium">Top Customers</CardTitle><CardAction><DetailLink href="/sales" /></CardAction></CardHeader>
+          <CardHeader className="pb-2"><CardTitle className="text-sm font-medium">Top Customers</CardTitle><CardAction><DetailLink href="/sales-analytics?view=per-customer" /></CardAction></CardHeader>
           <CardContent className="space-y-3">
             <div>
               <div className="text-2xl font-bold tabular-nums">{rpC(customersTotal)}</div>
@@ -345,7 +345,7 @@ export function OverviewDashboard({ initial }: { initial: OverviewData | null })
       {/* Trend + top sales */}
       <div className="grid gap-4 lg:grid-cols-3">
         <Card className="lg:col-span-2">
-          <CardHeader className="pb-2"><CardTitle className="text-sm font-medium">Tren Penjualan Harian</CardTitle><CardAction><DetailLink href="/sales" /></CardAction></CardHeader>
+          <CardHeader className="pb-2"><CardTitle className="text-sm font-medium">Tren Penjualan Harian</CardTitle><CardAction><DetailLink href="/sales-analytics?view=trending" /></CardAction></CardHeader>
           <CardContent>
             {data.trend.length === 0 ? (
               <p className="text-muted-foreground text-sm">Tidak ada data tren.</p>
@@ -368,7 +368,7 @@ export function OverviewDashboard({ initial }: { initial: OverviewData | null })
           </CardContent>
         </Card>
         <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-sm font-medium">Top Sales (AM)</CardTitle><CardAction><DetailLink href="/sales?tab=salesman" /></CardAction></CardHeader>
+          <CardHeader className="pb-2"><CardTitle className="text-sm font-medium">Top Sales (AM)</CardTitle><CardAction><DetailLink href="/sales-analytics?view=per-am" /></CardAction></CardHeader>
           <CardContent><BarList rows={data.per_salesman} money /></CardContent>
         </Card>
       </div>

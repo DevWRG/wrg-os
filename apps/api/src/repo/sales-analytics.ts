@@ -214,6 +214,37 @@ export async function analyticsPerProduk(from0?: string, to0?: string, scope?: D
   };
 }
 
+// ── View: Per-Pengadaan (kategori penjualan REGULAR/KSO) ──────────
+// Di-konsolidasi dari Sales Performance (sales.ts). Kategori = custom field
+// Accurate level baris: detailItem[].charField1. Revenue = totalPrice baris.
+// Scope: join accurate_salesman→master_user agar bisa difilter AM/HoD.
+export async function analyticsPerPengadaan(from0?: string, to0?: string, scope?: DataScope) {
+  const { from, to } = salesRange(from0, to0);
+  const sc = scope ?? { userId: null, amOnly: false, amId: null, cabang: null, superuser: false };
+  const sql = db();
+  const rows = await sql`
+    SELECT COALESCE(NULLIF(di->>'charField1',''),'Tanpa kategori') AS key,
+           COALESCE(NULLIF(di->>'charField1',''),'Tanpa kategori') AS label,
+           sum((di->>'totalPrice')::numeric)::float8 AS total,
+           count(DISTINCT ai.id)::int AS count
+    FROM accurate_invoice ai
+    LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
+    LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text,
+         jsonb_array_elements(COALESCE(ai.raw->'detailItem','[]'::jsonb)) di
+    WHERE ai.tanggal BETWEEN ${from} AND ${to} AND ai.raw IS NOT NULL ${scopeClause(sql, sc)}
+    GROUP BY 1 ORDER BY sum((di->>'totalPrice')::numeric) DESC`;
+  return {
+    scope: sc.amOnly ? ("am" as const) : ("all" as const),
+    range: { from, to },
+    rows: rows.map((r) => ({
+      key: String(r.key),
+      label: String(r.label),
+      total: Number(r.total),
+      count: Number(r.count),
+    })),
+  };
+}
+
 // ── View #4: Per-Cabang Territory ─────────────────────────────────
 export async function analyticsPerCabang(from0?: string, to0?: string, scope?: DataScope) {
   const { from, to } = salesRange(from0, to0);
