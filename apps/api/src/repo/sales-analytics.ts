@@ -214,34 +214,44 @@ export async function analyticsPerProduk(from0?: string, to0?: string, scope?: D
   };
 }
 
-// ── View: Per-Pengadaan (kategori penjualan REGULAR/KSO) ──────────
-// Di-konsolidasi dari Sales Performance. Kategori = custom field Accurate level
-// baris: detailItem[].charField1. DIHITUNG LEVEL-FAKTUR (bukan sum totalPrice
-// baris) supaya total-nya REKONSILIASI PERSIS ke Total Revenue (= sum ai.total,
-// tax-inclusive). Tiap faktur diklasifikasi by set kategori baris-nya: satu
-// kategori → labelnya; campuran → "A + B"; tanpa raw/charField1 → "Tanpa
-// kategori" (tetap ikut, jadi grand total = revenue). Scope AM/HoD via join.
+// ── View: Per-Pengadaan (kategori penjualan REGULAR/KSO/RUTIN/PL/ECAT) ──
+// Kategori = custom field Accurate level baris: detailItem[].charField1.
+// Dikelompokkan HANYA per kategori DASAR (tanpa label gabungan "A + B").
+// Faktur campur di-ALOKASIKAN proporsional: revenue faktur (ai.total, tax-incl)
+// dibagi ke tiap kategori sesuai porsi nilai baris-nya (totalPrice). Karena tiap
+// faktur teralokasi utuh (Σ porsi = 1), grand total REKONSILIASI PERSIS ke Total
+// Revenue. Faktur tanpa raw/charField1 → "Tanpa kategori". count = jumlah faktur
+// yg menyentuh kategori (faktur campur terhitung di >1 kategori). Scope AM/HoD.
 export async function analyticsPerPengadaan(from0?: string, to0?: string, scope?: DataScope) {
   const { from, to } = salesRange(from0, to0);
   const sc = scope ?? { userId: null, amOnly: false, amId: null, cabang: null, superuser: false };
   const sql = db();
   const rows = await sql`
     WITH inv AS (
-      SELECT ai.id, ai.total::float8 AS total,
-        COALESCE(NULLIF((
-          SELECT string_agg(DISTINCT c, ' + ' ORDER BY c)
-          FROM (SELECT NULLIF(d->>'charField1','') AS c
-                FROM jsonb_array_elements(COALESCE(ai.raw->'detailItem','[]'::jsonb)) d) s
-          WHERE c IS NOT NULL
-        ),''),'Tanpa kategori') AS kategori
+      SELECT ai.id, ai.total::float8 AS inv_total, ai.raw
       FROM accurate_invoice ai
       LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
       LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
       WHERE ai.tanggal BETWEEN ${from} AND ${to} ${scopeClause(sql, sc)}
+    ),
+    cat AS (  -- per faktur × kategori dasar; bobot = Σ totalPrice baris (>=0)
+      SELECT inv.id, inv.inv_total,
+             COALESCE(NULLIF(d.val->>'charField1',''),'Tanpa kategori') AS kategori,
+             COALESCE(sum(GREATEST((d.val->>'totalPrice')::numeric, 0)), 0)::float8 AS w
+      FROM inv
+      LEFT JOIN LATERAL jsonb_array_elements(COALESCE(inv.raw->'detailItem','[]'::jsonb)) AS d(val) ON true
+      GROUP BY inv.id, inv.inv_total, COALESCE(NULLIF(d.val->>'charField1',''),'Tanpa kategori')
+    ),
+    share AS (
+      SELECT id, inv_total, kategori, w,
+             sum(w) OVER (PARTITION BY id) AS wsum,
+             count(*) OVER (PARTITION BY id) AS cnt
+      FROM cat
     )
     SELECT kategori AS key, kategori AS label,
-           sum(total)::float8 AS total, count(*)::int AS count
-    FROM inv GROUP BY kategori ORDER BY sum(total) DESC`;
+           sum(CASE WHEN wsum > 0 THEN inv_total * w / wsum ELSE inv_total / cnt END)::float8 AS total,
+           count(DISTINCT id)::int AS count
+    FROM share GROUP BY kategori ORDER BY total DESC`;
   return {
     scope: sc.amOnly ? ("am" as const) : ("all" as const),
     range: { from, to },
