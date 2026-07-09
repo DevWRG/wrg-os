@@ -10,9 +10,28 @@ origin main` → kalau maju dari HEAD lokal → deploy **KODE** via
 `wrg-prod-api`/`wrg-prod-web` → smoke test).
 
 > **Migrasi DB = alert-only, BUKAN auto-apply** (prinsip `MIGRATIONS.md`: skema
-> prod hanya diubah manusia + `pg_dump` backup). Kalau ada migrasi pending, poller
-> hanya **mencatat peringatan** di log; kamu apply manual saat siap:
+> prod hanya diubah manusia + `pg_dump` backup). Kamu apply manual saat siap:
 > `bash scripts/ops/deploy-prod.sh` (atau langsung `migrate.sh --prod --backup`).
+
+### 🔔 Gate migrasi (biar tidak "silent break")
+Sebelumnya poller hanya menulis peringatan ke **log file** → deploy migrasi bisa
+lolos diam-diam (kode nge-500 sampai ada yg sadar). Sekarang poller:
+
+1. **Deteksi akurat (pre-pull):** banding daftar `infra/postgres/init/*.sql` di
+   `origin/main` vs tabel `schema_migrations` prod. (Deteksi lama baca *working
+   tree lama* → migrasi yg baru di-push luput. Ini yg bikin 050 & 051–053 lolos.)
+2. **Alert WA LOUD:** kalau ada pending → kirim WA ke `WRG_DEPLOY_ALERT_TO`
+   (nomor/JID di `.env.prod`) lewat gateway openclaw (`WA_SEND_URL` + `x-wa-secret`).
+   **Edge-trigger:** hanya dikirim saat set pending *berubah* (tak spam tiap siklus).
+   Kalau `WRG_DEPLOY_ALERT_TO` kosong → jatuh ke log-only (perilaku lama).
+3. **Opsi blok:** set env `WRG_DEPLOY_BLOCK_ON_PENDING=1` (di plist
+   `EnvironmentVariables`) → poller **menahan deploy KODE** selama ada migrasi
+   pending, sampai di-apply manual. Default `0` = deploy kode tetap jalan (alert-only).
+
+Set tujuan alert (sekali, di `.env.prod` prod):
+```bash
+echo 'WRG_DEPLOY_ALERT_TO=6285733048855' >> ~/DevWRG/wrg-os/.env.prod   # nomor/JID ops/HoD
+```
 
 **Hanya** menyentuh `wrg-prod-api` & `wrg-prod-web`. Layanan Python legacy
 (8090–8092) & wa-bridge **tidak pernah** disentuh.
