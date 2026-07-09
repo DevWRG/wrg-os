@@ -76,7 +76,7 @@ export async function analyticsOverview(from0?: string, to0?: string, scope?: Da
 
   // Full: reuse salesOverview (KPI+delta+tren+breakdown) + kartu region (F5).
   const [ov, perf] = await Promise.all([salesOverview(from, to), reportSalesPerformance(to)]);
-  return { scope: "all" as const, ...ov, performance: { periods: perf.periods, mtd_vs_last: perf.mtd_vs_last } };
+  return { scope: "all" as const, ...ov, performance: perf };
 }
 
 // ── View #2: Per-AM Performance ───────────────────────────────────
@@ -187,6 +187,7 @@ export async function analyticsPerProduk(from0?: string, to0?: string, scope?: D
     SELECT aii.item_id::text AS key,
            COALESCE(NULLIF(it.name,''), NULLIF(max(aii.raw->'item'->>'name'),''), 'Item #' || aii.item_id::text) AS label,
            NULLIF(max(it.category),'') AS category,
+           NULLIF(max(it.unit),'') AS satuan,
            max(it.quantity)::float8 AS stock_on_hand,
            sum(aii.total)::float8 AS total, sum(aii.qty)::float8 AS unit_sold,
            count(DISTINCT ai.customer_id)::int AS customer_count
@@ -204,6 +205,7 @@ export async function analyticsPerProduk(from0?: string, to0?: string, scope?: D
       key: String(r.key),
       label: String(r.label),
       category: r.category ? String(r.category) : null,
+      satuan: r.satuan ? String(r.satuan) : null,
       stock_on_hand: r.stock_on_hand == null ? null : Number(r.stock_on_hand),
       total: Number(r.total),
       unit_sold: Number(r.unit_sold),

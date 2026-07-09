@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useConfirm } from "@/components/ui/use-confirm";
 
 export interface AppUserRow {
   id: string;
@@ -40,6 +41,7 @@ export function UserAccessManager({ users, roster }: { users: AppUserRow[]; rost
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<{ email: string; password: string; wa?: WaStatus } | null>(null);
   const [err, setErr] = useState("");
+  const { confirm, dialog } = useConfirm();
 
   // form tambah manual
   const [email, setEmail] = useState("");
@@ -100,9 +102,10 @@ export function UserAccessManager({ users, roster }: { users: AppUserRow[]; rost
     if (next === (u.hod_key ?? null)) return;
     if (await call(`/api/admin/users/${u.id}`, "PATCH", { hod_key: next })) router.refresh();
   }
-  async function del(u: AppUserRow) {
-    if (!confirm(`Hapus akun ${u.email}?`)) return;
-    if (await call(`/api/admin/users/${u.id}`, "DELETE")) router.refresh();
+  function del(u: AppUserRow) {
+    confirm({ title: "Hapus akun?", description: `Akun ${u.email} akan dihapus.`, destructive: true, confirmLabel: "Hapus" }, async () => {
+      if (await call(`/api/admin/users/${u.id}`, "DELETE")) router.refresh();
+    });
   }
 
   return (
@@ -200,6 +203,7 @@ export function UserAccessManager({ users, roster }: { users: AppUserRow[]; rost
           </table>
         </CardContent>
       </Card>
+      {dialog}
     </div>
   );
 }

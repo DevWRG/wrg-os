@@ -7,6 +7,7 @@ import { Pencil, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useConfirm } from "@/components/ui/use-confirm";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Sheet,
@@ -43,6 +44,8 @@ export function LeaveRowActions({ row, label }: { row: LeaveRow; label: string }
     keterangan: row.keterangan ?? "",
   });
 
+  const { confirm, dialog } = useConfirm();
+
   async function save(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
@@ -69,20 +72,22 @@ export function LeaveRowActions({ row, label }: { row: LeaveRow; label: string }
     }
   }
 
-  async function del() {
-    if (!confirm(`Hapus cuti ${label} (${row.start_date} → ${row.end_date})?`)) return;
-    setBusy(true);
-    try {
-      const res = await fetch(`/api/leave/${row.id}`, { method: "DELETE" });
-      if (!res.ok) throw new Error("gagal hapus");
-      router.refresh();
-    } catch {
-      setBusy(false);
-    }
+  function del() {
+    confirm({ title: "Hapus cuti?", description: `${label} (${row.start_date} → ${row.end_date}) akan dihapus.`, destructive: true, confirmLabel: "Hapus" }, async () => {
+      setBusy(true);
+      try {
+        const res = await fetch(`/api/leave/${row.id}`, { method: "DELETE" });
+        if (!res.ok) throw new Error("gagal hapus");
+        router.refresh();
+      } catch {
+        setBusy(false);
+      }
+    });
   }
 
   return (
     <div className="flex justify-end gap-1">
+      {dialog}
       <Sheet open={open} onOpenChange={setOpen}>
         <SheetTrigger render={<Button variant="ghost" size="icon-sm" aria-label="Edit" />}>
           <Pencil />

@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useConfirm } from "@/components/ui/use-confirm";
 
 export interface SalesAlert {
   id: string;
@@ -36,6 +37,7 @@ export function SalesAlertsManager({ initialAlerts, targets }: { initialAlerts: 
   const [alerts, setAlerts] = useState<SalesAlert[]>(initialAlerts);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
+  const { confirm, dialog } = useConfirm();
 
   const [name, setName] = useState("");
   const [metric, setMetric] = useState(METRICS[0]);
@@ -69,10 +71,11 @@ export function SalesAlertsManager({ initialAlerts, targets }: { initialAlerts: 
     await fetch(`/api/sales-analytics/alerts/${a.id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ active: !a.active }) });
     await reload();
   }
-  async function del(id: string) {
-    if (!confirm("Hapus alert ini?")) return;
-    await fetch(`/api/sales-analytics/alerts/${id}`, { method: "DELETE" });
-    await reload();
+  function del(id: string, nama: string) {
+    confirm({ title: "Hapus alert?", description: `Alert "${nama}" akan dihapus.`, destructive: true, confirmLabel: "Hapus" }, async () => {
+      await fetch(`/api/sales-analytics/alerts/${id}`, { method: "DELETE" });
+      await reload();
+    });
   }
 
   const targetLabel = (jid: string | null): string => {
@@ -141,7 +144,7 @@ export function SalesAlertsManager({ initialAlerts, targets }: { initialAlerts: 
                   <td className="pr-3"><Badge variant={a.active ? "secondary" : "outline"}>{a.active ? "aktif" : "nonaktif"}</Badge></td>
                   <td className="space-x-1 whitespace-nowrap py-1">
                     <Button size="sm" onClick={() => void toggle(a)} className={a.active ? "bg-red-600 text-white hover:bg-red-700" : "bg-emerald-600 text-white hover:bg-emerald-700"}>{a.active ? "Nonaktifkan" : "Aktifkan"}</Button>
-                    <Button size="sm" variant="ghost" onClick={() => void del(a.id)}>Hapus</Button>
+                    <Button size="sm" variant="ghost" onClick={() => del(a.id, a.alert_name)}>Hapus</Button>
                   </td>
                 </tr>
               ))}
@@ -150,6 +153,7 @@ export function SalesAlertsManager({ initialAlerts, targets }: { initialAlerts: 
           </table>
         </CardContent>
       </Card>
+      {dialog}
     </div>
   );
 }
