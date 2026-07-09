@@ -42,16 +42,16 @@ export async function reportRevenue(from: string, to: string) {
   const sql = db();
   const year = Number(to.slice(0, 4)); // target tahunan diambil dari tahun akhir rentang
   const [tot] = await sql`
-    SELECT COALESCE(sum(total),0)::numeric AS total, count(*)::int AS invoices,
+    SELECT COALESCE(sum(total - COALESCE(tax_amount,0)),0)::numeric AS total, count(*)::int AS invoices,
            count(DISTINCT customer_id)::int AS customers
     FROM accurate_invoice WHERE tanggal BETWEEN ${from} AND ${to}
   `;
   const perCustomer = await sql`
     SELECT ai.customer_id::text AS key, COALESCE(ac.name, ai.customer_id::text) AS label,
-           sum(ai.total)::numeric AS total, count(*)::int AS count
+           sum(ai.total - COALESCE(ai.tax_amount,0))::numeric AS total, count(*)::int AS count
     FROM accurate_invoice ai LEFT JOIN accurate_customer ac ON ac.id = ai.customer_id
     WHERE ai.tanggal BETWEEN ${from} AND ${to}
-    GROUP BY ai.customer_id, ac.name ORDER BY sum(ai.total) DESC
+    GROUP BY ai.customer_id, ac.name ORDER BY sum(ai.total - COALESCE(ai.tax_amount,0)) DESC
   `;
   // Per-sales + target AM: am_id per grup (via master_user) → join sales_target_am tahun ${year}.
   const perSalesman = await sql`
@@ -63,7 +63,7 @@ export async function reportRevenue(from: string, to: string) {
                   THEN NULLIF(max(ai.salesman_name),'') || COALESCE(' · ' || NULLIF(max(mu.cabang),''), '')
                   ELSE NULLIF(max(mu.cabang),'') END AS sub,
              max(mu.am_id) AS am_id,
-             sum(ai.total)::numeric AS total, count(*)::int AS count
+             sum(ai.total - COALESCE(ai.tax_amount,0))::numeric AS total, count(*)::int AS count
       FROM accurate_invoice ai
       LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
       LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
@@ -82,7 +82,7 @@ export async function reportRevenue(from: string, to: string) {
     FROM (
       SELECT COALESCE(NULLIF(mu.cabang,''), NULLIF(acs.cabang_override,''), 'Tanpa cabang') AS key,
              COALESCE(NULLIF(mu.cabang,''), NULLIF(acs.cabang_override,''), 'Tanpa cabang') AS label,
-             sum(ai.total)::numeric AS total, count(*)::int AS count
+             sum(ai.total - COALESCE(ai.tax_amount,0))::numeric AS total, count(*)::int AS count
       FROM accurate_invoice ai
       LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
       LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
@@ -92,26 +92,48 @@ export async function reportRevenue(from: string, to: string) {
     LEFT JOIN sales_target_cabang stc ON stc.cabang = c.key AND stc.year = ${year}
     ORDER BY c.total DESC
   `;
+  // Revenue = netto (total−PPN) faktur teralokasi proporsional ke baris → rekonsiliasi ke total.
   const perProduct = await sql`
-    SELECT aii.item_id::text AS key, COALESCE(it.name, aii.item_id::text) AS label,
-           sum(aii.total)::numeric AS total, count(*)::int AS count
-    FROM accurate_invoice_item aii
-    JOIN accurate_invoice ai ON ai.id = aii.invoice_id
-    LEFT JOIN accurate_item it ON it.id = aii.item_id
-    WHERE ai.tanggal BETWEEN ${from} AND ${to}
-    GROUP BY aii.item_id, it.name ORDER BY sum(aii.total) DESC
+    WITH inv AS (
+      SELECT ai.id, (ai.total - COALESCE(ai.tax_amount,0))::numeric AS inv_net
+      FROM accurate_invoice ai WHERE ai.tanggal BETWEEN ${from} AND ${to}
+    ),
+    line AS (
+      SELECT aii.item_id, inv.inv_net, GREATEST(aii.total,0) AS w,
+             sum(GREATEST(aii.total,0)) OVER (PARTITION BY aii.invoice_id) AS wsum,
+             count(*) OVER (PARTITION BY aii.invoice_id) AS cnt
+      FROM accurate_invoice_item aii JOIN inv ON inv.id = aii.invoice_id
+    )
+    SELECT l.item_id::text AS key, COALESCE(it.name, l.item_id::text) AS label,
+           sum(CASE WHEN l.wsum > 0 THEN l.inv_net * l.w / l.wsum ELSE l.inv_net / l.cnt END)::numeric AS total,
+           count(*)::int AS count
+    FROM line l LEFT JOIN accurate_item it ON it.id = l.item_id
+    GROUP BY l.item_id, it.name ORDER BY total DESC
   `;
-  // Per-pengadaan (kategori penjualan): custom field Accurate di level baris,
-  // detailItem[].charField1 (mis. REGULAR/KSO). Revenue = total baris (totalPrice).
+  // Per-pengadaan (kategori penjualan): custom field Accurate level baris
+  // detailItem[].charField1 (REGULAR/KSO/...). Netto faktur teralokasi ke kategori
+  // sesuai porsi nilai baris → rekonsiliasi persis ke total (pola analyticsPerPengadaan).
   const perPengadaan = await sql`
-    SELECT COALESCE(NULLIF(di->>'charField1',''),'Tanpa kategori') AS key,
-           COALESCE(NULLIF(di->>'charField1',''),'Tanpa kategori') AS label,
-           sum((di->>'totalPrice')::numeric)::numeric AS total,
-           count(DISTINCT ai.id)::int AS count
-    FROM accurate_invoice ai,
-         jsonb_array_elements(COALESCE(ai.raw->'detailItem','[]'::jsonb)) di
-    WHERE ai.tanggal BETWEEN ${from} AND ${to} AND ai.raw IS NOT NULL
-    GROUP BY 1 ORDER BY sum((di->>'totalPrice')::numeric) DESC
+    WITH inv AS (
+      SELECT ai.id, (ai.total - COALESCE(ai.tax_amount,0))::numeric AS inv_net, ai.raw
+      FROM accurate_invoice ai WHERE ai.tanggal BETWEEN ${from} AND ${to} AND ai.raw IS NOT NULL
+    ),
+    cat AS (
+      SELECT inv.id, inv.inv_net,
+             COALESCE(NULLIF(d.val->>'charField1',''),'Tanpa kategori') AS kategori,
+             COALESCE(sum(GREATEST((d.val->>'totalPrice')::numeric, 0)), 0)::numeric AS w
+      FROM inv LEFT JOIN LATERAL jsonb_array_elements(COALESCE(inv.raw->'detailItem','[]'::jsonb)) AS d(val) ON true
+      GROUP BY inv.id, inv.inv_net, COALESCE(NULLIF(d.val->>'charField1',''),'Tanpa kategori')
+    ),
+    share AS (
+      SELECT id, inv_net, kategori, w,
+             sum(w) OVER (PARTITION BY id) AS wsum, count(*) OVER (PARTITION BY id) AS cnt
+      FROM cat
+    )
+    SELECT kategori AS key, kategori AS label,
+           sum(CASE WHEN wsum > 0 THEN inv_net * w / wsum ELSE inv_net / cnt END)::numeric AS total,
+           count(DISTINCT id)::int AS count
+    FROM share GROUP BY kategori ORDER BY total DESC
   `;
   return {
     from,
@@ -146,14 +168,14 @@ export async function salesOverview(from: string, to: string) {
   const sql = db();
   const prev = prevRange(from, to);
   const [cur] = await sql`
-    SELECT COALESCE(sum(total),0)::numeric AS revenue, count(*)::int AS orders, count(DISTINCT customer_id)::int AS customers
+    SELECT COALESCE(sum(total - COALESCE(tax_amount,0)),0)::numeric AS revenue, count(*)::int AS orders, count(DISTINCT customer_id)::int AS customers
     FROM accurate_invoice WHERE tanggal BETWEEN ${from} AND ${to}`;
   const [pre] = await sql`
-    SELECT COALESCE(sum(total),0)::numeric AS revenue, count(*)::int AS orders, count(DISTINCT customer_id)::int AS customers
+    SELECT COALESCE(sum(total - COALESCE(tax_amount,0)),0)::numeric AS revenue, count(*)::int AS orders, count(DISTINCT customer_id)::int AS customers
     FROM accurate_invoice WHERE tanggal BETWEEN ${prev.from} AND ${prev.to}`;
 
   const trend = await sql`
-    SELECT tanggal::text AS date, COALESCE(sum(total),0)::numeric AS revenue, count(*)::int AS orders
+    SELECT tanggal::text AS date, COALESCE(sum(total - COALESCE(tax_amount,0)),0)::numeric AS revenue, count(*)::int AS orders
     FROM accurate_invoice WHERE tanggal BETWEEN ${from} AND ${to}
     GROUP BY tanggal ORDER BY tanggal`;
 
@@ -161,40 +183,51 @@ export async function salesOverview(from: string, to: string) {
   const perCabang = await sql`
     SELECT COALESCE(NULLIF(mu.cabang,''), NULLIF(acs.cabang_override,''), 'Tanpa cabang') AS key,
            COALESCE(NULLIF(mu.cabang,''), NULLIF(acs.cabang_override,''), 'Tanpa cabang') AS label,
-           sum(ai.total)::numeric AS total, count(*)::int AS count
+           sum(ai.total - COALESCE(ai.tax_amount,0))::numeric AS total, count(*)::int AS count
     FROM accurate_invoice ai
     LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
     LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
     WHERE ai.tanggal BETWEEN ${from} AND ${to}
-    GROUP BY 1 ORDER BY sum(ai.total) DESC`;
+    GROUP BY 1 ORDER BY sum(ai.total - COALESCE(ai.tax_amount,0)) DESC`;
+  // Top Produk = netto faktur teralokasi proporsional ke baris (rekonsiliasi ke KPI revenue).
   const perProduct = await sql`
-    SELECT aii.item_id::text AS key,
-           COALESCE(NULLIF(it.name,''), NULLIF(max(aii.raw->'item'->>'name'),''), 'Item #' || aii.item_id::text) AS label,
+    WITH inv AS (
+      SELECT ai.id, (ai.total - COALESCE(ai.tax_amount,0))::numeric AS inv_net
+      FROM accurate_invoice ai WHERE ai.tanggal BETWEEN ${from} AND ${to}
+    ),
+    line AS (
+      SELECT aii.item_id, aii.qty, inv.inv_net, aii.raw->'item'->>'name' AS raw_name,
+             GREATEST(aii.total,0) AS w,
+             sum(GREATEST(aii.total,0)) OVER (PARTITION BY aii.invoice_id) AS wsum,
+             count(*) OVER (PARTITION BY aii.invoice_id) AS cnt
+      FROM accurate_invoice_item aii JOIN inv ON inv.id = aii.invoice_id
+    )
+    SELECT l.item_id::text AS key,
+           COALESCE(NULLIF(it.name,''), NULLIF(max(l.raw_name),''), 'Item #' || l.item_id::text) AS label,
            NULLIF(max(it.category),'') AS category,
-           sum(aii.total)::numeric AS total, sum(aii.qty)::numeric AS count
-    FROM accurate_invoice_item aii JOIN accurate_invoice ai ON ai.id = aii.invoice_id
-    LEFT JOIN accurate_item it ON it.id = aii.item_id
-    WHERE ai.tanggal BETWEEN ${from} AND ${to}
-    GROUP BY aii.item_id, it.name ORDER BY sum(aii.total) DESC LIMIT 8`;
+           sum(CASE WHEN l.wsum > 0 THEN l.inv_net * l.w / l.wsum ELSE l.inv_net / l.cnt END)::numeric AS total,
+           sum(l.qty)::numeric AS count
+    FROM line l LEFT JOIN accurate_item it ON it.id = l.item_id
+    GROUP BY l.item_id, it.name ORDER BY total DESC LIMIT 8`;
   const perCustomer = await sql`
     SELECT ai.customer_id::text AS key,
            COALESCE(NULLIF(ac.name,''), NULLIF(max(ai.raw->'customer'->>'name'),''), NULLIF(max(ai.raw->>'retailWpName'),''), 'Customer #' || ai.customer_id::text) AS label,
-           sum(ai.total)::numeric AS total, count(*)::int AS count
+           sum(ai.total - COALESCE(ai.tax_amount,0))::numeric AS total, count(*)::int AS count
     FROM accurate_invoice ai LEFT JOIN accurate_customer ac ON ac.id = ai.customer_id
     WHERE ai.tanggal BETWEEN ${from} AND ${to}
-    GROUP BY ai.customer_id, ac.name ORDER BY sum(ai.total) DESC LIMIT 8`;
+    GROUP BY ai.customer_id, ac.name ORDER BY sum(ai.total - COALESCE(ai.tax_amount,0)) DESC LIMIT 8`;
   const perSalesman = await sql`
     SELECT COALESCE(NULLIF(ai.salesman_name,''),'tanpa') AS key,
            COALESCE(NULLIF(max(mu.nama),''), NULLIF(max(ai.salesman_name),''),'Tanpa sales') AS label,
            CASE WHEN NULLIF(max(mu.nama),'') IS NOT NULL
                 THEN NULLIF(max(ai.salesman_name),'') || COALESCE(' · ' || NULLIF(max(mu.cabang),''), '')
                 ELSE NULLIF(max(mu.cabang),'') END AS sub,
-           sum(ai.total)::numeric AS total, count(*)::int AS count
+           sum(ai.total - COALESCE(ai.tax_amount,0))::numeric AS total, count(*)::int AS count
     FROM accurate_invoice ai
     LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
     LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
     WHERE ai.tanggal BETWEEN ${from} AND ${to}
-    GROUP BY COALESCE(NULLIF(ai.salesman_name,''),'tanpa') ORDER BY sum(ai.total) DESC LIMIT 8`;
+    GROUP BY COALESCE(NULLIF(ai.salesman_name,''),'tanpa') ORDER BY sum(ai.total - COALESCE(ai.tax_amount,0)) DESC LIMIT 8`;
 
   // Inventory & order stats (gaya dashboard: total produk, ketersediaan stok, fulfillment).
   const [inv] = await sql`
@@ -401,13 +434,13 @@ export async function customersRevenue() {
     SELECT ai.customer_id::text AS id,
       COALESCE(NULLIF(ac.name,''), NULLIF(max(ai.raw->'customer'->>'name'),''), NULLIF(max(ai.raw->>'retailWpName'),''), 'Customer #' || ai.customer_id::text) AS name,
       NULLIF(mode() WITHIN GROUP (ORDER BY NULLIF(mu.cabang,'')), '') AS cabang,
-      sum(ai.total)::float8 AS total,
+      sum(ai.total - COALESCE(ai.tax_amount,0))::float8 AS total,
       count(*)::int AS invoices,
       max(ai.tanggal)::text AS last_date,
       (CURRENT_DATE - max(ai.tanggal))::int AS days_since,
-      COALESCE(sum(ai.total) FILTER (WHERE ai.tanggal >= date_trunc('month', CURRENT_DATE) - interval '2 month' AND ai.tanggal < date_trunc('month', CURRENT_DATE) - interval '1 month'), 0)::float8 AS m2,
-      COALESCE(sum(ai.total) FILTER (WHERE ai.tanggal >= date_trunc('month', CURRENT_DATE) - interval '1 month' AND ai.tanggal < date_trunc('month', CURRENT_DATE)), 0)::float8 AS m1,
-      COALESCE(sum(ai.total) FILTER (WHERE ai.tanggal >= date_trunc('month', CURRENT_DATE)), 0)::float8 AS m0,
+      COALESCE(sum(ai.total - COALESCE(ai.tax_amount,0)) FILTER (WHERE ai.tanggal >= date_trunc('month', CURRENT_DATE) - interval '2 month' AND ai.tanggal < date_trunc('month', CURRENT_DATE) - interval '1 month'), 0)::float8 AS m2,
+      COALESCE(sum(ai.total - COALESCE(ai.tax_amount,0)) FILTER (WHERE ai.tanggal >= date_trunc('month', CURRENT_DATE) - interval '1 month' AND ai.tanggal < date_trunc('month', CURRENT_DATE)), 0)::float8 AS m1,
+      COALESCE(sum(ai.total - COALESCE(ai.tax_amount,0)) FILTER (WHERE ai.tanggal >= date_trunc('month', CURRENT_DATE)), 0)::float8 AS m0,
       count(*) FILTER (WHERE ai.tanggal >= date_trunc('month', CURRENT_DATE))::int AS this_month_inv
     FROM accurate_invoice ai
     LEFT JOIN accurate_customer ac ON ac.id = ai.customer_id
@@ -415,7 +448,7 @@ export async function customersRevenue() {
     LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
     WHERE ai.customer_id IS NOT NULL
     GROUP BY ai.customer_id, ac.name
-    ORDER BY sum(ai.total) DESC NULLS LAST
+    ORDER BY sum(ai.total - COALESCE(ai.tax_amount,0)) DESC NULLS LAST
   `;
   // Breakdown bulanan YTD (sejak Januari tahun berjalan) per customer — dipakai export.
   const now = new Date();
@@ -426,7 +459,7 @@ export async function customersRevenue() {
     ytdLabels.push(`${BLN_ID[mo]} ${now.getFullYear()}`);
   }
   const ytdRows = await sql`
-    SELECT ai.customer_id::text AS id, to_char(date_trunc('month', ai.tanggal), 'YYYY-MM') AS ym, sum(ai.total)::float8 AS total
+    SELECT ai.customer_id::text AS id, to_char(date_trunc('month', ai.tanggal), 'YYYY-MM') AS ym, sum(ai.total - COALESCE(ai.tax_amount,0))::float8 AS total
     FROM accurate_invoice ai
     WHERE ai.customer_id IS NOT NULL AND ai.tanggal >= date_trunc('year', CURRENT_DATE)
     GROUP BY 1, 2
@@ -485,7 +518,7 @@ export async function customerMonthly(id: string, months = 12): Promise<{
   `;
   const rows = await sql`
     SELECT to_char(date_trunc('month', tanggal), 'YYYY-MM') AS month,
-      sum(total)::float8 AS total, count(*)::int AS count
+      sum(total - COALESCE(tax_amount,0))::float8 AS total, count(*)::int AS count
     FROM accurate_invoice
     WHERE customer_id = ${Number(id)}
       AND tanggal >= date_trunc('month', CURRENT_DATE) - make_interval(months => ${m - 1})
@@ -556,7 +589,7 @@ async function periodAgg(
 ): Promise<{ total: number; regions: RegionTotals }> {
   const rows = await sql`
     SELECT COALESCE(NULLIF(mu.cabang,''), NULLIF(acs.cabang_override,''), 'Tanpa cabang') AS cabang,
-           sum(ai.total)::numeric AS total
+           sum(ai.total - COALESCE(ai.tax_amount,0))::numeric AS total
     FROM accurate_invoice ai
     LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
     LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
