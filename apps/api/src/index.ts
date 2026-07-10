@@ -1734,11 +1734,6 @@ app.get("/sales/performance", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json(await reportSalesPerformance(c.req.query("asOf")));
 });
-// Target pacing (target vs actual + proyeksi) per AM & cabang. ?year=YYYY.
-app.get("/sales/pacing", async (c) => {
-  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  return c.json(await targetPacing(Number(c.req.query("year")) || undefined));
-});
 
 // Sales Targets (menu Admin → Sales Targets). BFF-trusted; role-guard di web.
 app.get("/sales/targets", async (c) => {
@@ -1853,6 +1848,11 @@ app.get("/sales-analytics/per-customer", async (c) => {
 app.get("/sales-analytics/trending", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json(await analyticsTrending(c.req.query("from"), c.req.query("to"), await scopeOf(c)));
+});
+// Pacing sbg tab Sales Analytics (unscoped; berbasis tahun, bukan from/to).
+app.get("/sales-analytics/pacing", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await targetPacing(Number(c.req.query("year")) || undefined));
 });
 
 // Saved views + threshold alert (per user; butuh x-user-id dari BFF).

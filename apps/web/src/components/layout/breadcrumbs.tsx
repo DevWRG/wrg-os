@@ -13,7 +13,7 @@ const LABELS: Record<string, string> = {
   reminders: "Reminders",
   holidays: "Holidays",
   leave: "Manage Leave",
-  sales: "Sales Performance",
+  sales: "Sales",
   competitor: "Competitor Intel",
   pipeline: "Pipeline",
   customers: "Customers",

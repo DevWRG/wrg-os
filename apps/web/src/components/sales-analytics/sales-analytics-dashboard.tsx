@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
 import { SalesPerformanceCards, type SalesPerformance } from "@/components/sales/sales-performance-cards";
+import { TargetPacingView, type PacingData } from "@/components/sales/target-pacing-view";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
@@ -101,7 +102,7 @@ interface PengadaanRow { key: string; label: string; total: number; count: numbe
 interface CabangRow { cabang: string; region: string; total: number; count: number; customers: number; am_count: number; target: number | null; achievement_pct: number | null }
 interface CustRow { id: string; name: string; total: number; invoices: number; last_date: string | null; days_since: number | null; priority?: string }
 
-type ViewKey = "overview" | "per-am" | "per-produk" | "per-pengadaan" | "per-cabang" | "per-customer" | "trending";
+type ViewKey = "overview" | "per-am" | "per-produk" | "per-pengadaan" | "per-cabang" | "per-customer" | "trending" | "pacing";
 const TABS: { key: ViewKey; label: string }[] = [
   { key: "overview", label: "Executive" },
   { key: "per-am", label: "Per-AM" },
@@ -110,12 +111,13 @@ const TABS: { key: ViewKey; label: string }[] = [
   { key: "per-cabang", label: "Per-Cabang" },
   { key: "per-customer", label: "Per-Customer" },
   { key: "trending", label: "Trending" },
+  { key: "pacing", label: "Pacing" },
 ];
-// tab (ViewKey) → view_type enum DB (migrasi 049). per-pengadaan reuse enum per_produk
-// (belum ada enum tersendiri; cukup utk saved-view routing).
+// tab (ViewKey) → view_type enum DB (migrasi 049). per-pengadaan/pacing reuse enum
+// yang ada (belum ada enum tersendiri; cukup utk saved-view routing).
 const VIEW_TYPE: Record<ViewKey, string> = {
   overview: "executive", "per-am": "per_am", "per-produk": "per_produk",
-  "per-pengadaan": "per_produk",
+  "per-pengadaan": "per_produk", pacing: "per_am",
   "per-cabang": "per_cabang", "per-customer": "per_customer", trending: "trending",
 };
 
@@ -214,6 +216,11 @@ export function SalesAnalyticsDashboard({ initial, initialView }: { initial: Ove
       const d = cur as { points: TrendPt[] };
       return { name: `sales-analytics_trending_${s}`, headers: ["Tanggal", "Revenue", "Faktur", "Anomali"],
         rows: d.points.map((p) => [p.date, p.revenue, p.orders, p.anomaly ? "YA" : ""]) };
+    }
+    if (tab === "pacing") {
+      const d = cur as PacingData;
+      return { name: `sales-analytics_pacing_${d.year}`, headers: ["AM", "Cabang", "Target", "Actual", "Achievement%", "Pace%", "Status", "Proyeksi%"],
+        rows: d.am.map((r) => [r.nama, r.cabang, r.target, r.actual, r.achievement_pct, r.pace, r.status, r.projected_pct]) };
     }
     const d = cur as OverviewResult;
     if (d.scope === "all") {
@@ -322,6 +329,7 @@ export function SalesAnalyticsDashboard({ initial, initialView }: { initial: Ove
       {tab === "per-cabang" && cur != null && <PerCabangView data={cur as { rows: CabangRow[] }} />}
       {tab === "per-customer" && cur != null && <PerCustomerView data={cur as { scope: string; customers: CustRow[]; summary?: Record<string, number> }} />}
       {tab === "trending" && cur != null && <TrendingView data={cur as { points: TrendPt[]; mean: number; std: number }} />}
+      {tab === "pacing" && cur != null && <TargetPacingView data={cur as PacingData} />}
     </div>
   );
 }
