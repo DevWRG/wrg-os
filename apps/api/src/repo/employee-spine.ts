@@ -269,7 +269,7 @@ export async function getVoiceAggregate() {
 // Foundation utk populate hod_key + Org Chart reporting-line (ORG_OPTIMAL).
 export async function getHodResolution() {
   const emps = await db()`
-    SELECT e.id, e.nama, e.atasan_raw, d.label AS dept_label
+    SELECT e.id, e.nama, e.atasan_raw, e.hod_key, d.label AS dept_label
     FROM employee e LEFT JOIN department d ON d.key = e.dept
     ORDER BY d.label NULLS LAST, e.nama`;
   const nameByKey = Object.fromEntries(HODS.map((h) => [h.key, h.name]));
@@ -280,6 +280,7 @@ export async function getHodResolution() {
     return {
       id: String(e.id), nama: String(e.nama), dept_label: e.dept_label ? String(e.dept_label) : null,
       atasan_raw: raw, hod_keys: keys, hod_names: keys.map((k) => nameByKey[k] ?? k), status,
+      hod_key: e.hod_key ? String(e.hod_key) : null,
     };
   });
   const summary = {
@@ -316,4 +317,21 @@ export async function getOrgReporting() {
   const hods = HODS.map((h) => ({ key: h.key, name: h.name, role: h.role, reports: byHod[h.key] }));
   const mapped = hods.reduce((s, h) => s + h.reports.length, 0);
   return { hods, ambiguous, unmapped, counts: { total: emps.length, mapped, ambiguous: ambiguous.length, unmapped: unmapped.length } };
+}
+
+// F121 — persist hasil resolver ke employee.hod_key (full-sync idempotent).
+// resolved (1 HoD) → set key; ambiguous/none → NULL (perlu review manual).
+// Aman diulang; hod_key jadi bisa dipakai fitur HoD-aware lain.
+export async function populateHodKey(): Promise<{ total: number; set: number; cleared: number }> {
+  const sql = db();
+  const emps = await sql`SELECT id, atasan_raw FROM employee`;
+  let set = 0, cleared = 0;
+  for (const e of emps) {
+    const raw = e.atasan_raw ? String(e.atasan_raw) : "";
+    const keys = raw ? resolveHods(raw) : [];
+    const val = keys.length === 1 ? keys[0] : null;
+    await sql`UPDATE employee SET hod_key = ${val} WHERE id = ${String(e.id)}`;
+    if (val) set++; else cleared++;
+  }
+  return { total: emps.length, set, cleared };
 }
