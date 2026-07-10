@@ -115,7 +115,7 @@ import {
 } from "./repo/sales-analytics.js";
 import { listViews, saveView, deleteView, listAlerts, createAlert, deleteAlert, updateAlert, listAlertTargets } from "./repo/sales-analytics-config.js";
 import { evaluateSalesAlerts } from "./repo/sales-analytics-alert-eval.js";
-import { listDepartments, listEmployees, getEmployee, getRaciMatrix, getMeasurements, saveMeasurements, createEmployee, updateEmployee, deleteEmployee, replaceEmployeeDetail, getVoiceAggregate, getHodResolution, type MeasurementInput, type EmployeeWrite, type SpineDetail } from "./repo/employee-spine.js";
+import { listDepartments, listEmployees, getEmployee, getRaciMatrix, getMeasurements, saveMeasurements, createEmployee, updateEmployee, deleteEmployee, replaceEmployeeDetail, getVoiceAggregate, getHodResolution, getOrgReporting, type MeasurementInput, type EmployeeWrite, type SpineDetail } from "./repo/employee-spine.js";
 import { upsertMembers, listMembers, upsertDigests, listDigest, upsertPola, listPola, generateRekap, generateResume, type MonitorMemberInput, type DigestInput, type PolaInput } from "./repo/monitor.js";
 import { runNotifTua } from "./repo/notiftua.js";
 import { runDailySummary } from "./repo/dailysummary.js";
@@ -1931,6 +1931,10 @@ app.get("/employee-spine/voice", async (c) => {
 app.get("/employee-spine/hod-resolution", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json(await getHodResolution());
+});
+app.get("/employee-spine/org-reporting", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await getOrgReporting());
 });
 app.get("/employee-spine/employees/:id", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
