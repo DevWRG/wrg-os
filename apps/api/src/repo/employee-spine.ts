@@ -290,3 +290,30 @@ export async function getHodResolution() {
   };
   return { rows, summary, hods: HODS.map((h) => ({ key: h.key, name: h.name, role: h.role })) };
 }
+
+// F129 ORG_OPTIMAL — struktur reporting-line: karyawan dikelompokkan di bawah HoD
+// hasil resolve atasan_raw (on-the-fly, tanpa persist hod_key). Multi-HOD → bucket
+// "ambiguous"; tak ter-resolve → "unmapped". HoD = registry kanonik (mostly bukan
+// bagian roster spine).
+interface OrgReport { id: string; nama: string; role: string | null; dept_label: string | null }
+export async function getOrgReporting() {
+  const emps = await db()`
+    SELECT e.id, e.nama, e.role, e.atasan_raw, d.label AS dept_label
+    FROM employee e LEFT JOIN department d ON d.key = e.dept
+    ORDER BY d.label NULLS LAST, e.nama`;
+  const nameByKey = Object.fromEntries(HODS.map((h) => [h.key, h.name]));
+  const byHod: Record<string, OrgReport[]> = Object.fromEntries(HODS.map((h) => [h.key, [] as OrgReport[]]));
+  const ambiguous: (OrgReport & { hod_names: string[] })[] = [];
+  const unmapped: (OrgReport & { atasan_raw: string })[] = [];
+  for (const e of emps) {
+    const base: OrgReport = { id: String(e.id), nama: String(e.nama), role: e.role ? String(e.role) : null, dept_label: e.dept_label ? String(e.dept_label) : null };
+    const raw = e.atasan_raw ? String(e.atasan_raw) : "";
+    const keys = raw ? resolveHods(raw) : [];
+    if (keys.length === 1) byHod[keys[0]].push(base);
+    else if (keys.length > 1) ambiguous.push({ ...base, hod_names: keys.map((k) => nameByKey[k] ?? k) });
+    else unmapped.push({ ...base, atasan_raw: raw });
+  }
+  const hods = HODS.map((h) => ({ key: h.key, name: h.name, role: h.role, reports: byHod[h.key] }));
+  const mapped = hods.reduce((s, h) => s + h.reports.length, 0);
+  return { hods, ambiguous, unmapped, counts: { total: emps.length, mapped, ambiguous: ambiguous.length, unmapped: unmapped.length } };
+}
