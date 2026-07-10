@@ -101,7 +101,7 @@ import {
   reportCalendar,
   reportCalendarDay,
 } from "./repo/plandash.js";
-import { salesRange, reportRevenue, reportSalesAr, salesOverview, customersRevenue, customerMonthly, reportSalesPerformance } from "./repo/sales.js";
+import { salesRange, reportRevenue, reportSalesAr, salesOverview, customersRevenue, customerMonthly, dormantCustomers, reportSalesPerformance } from "./repo/sales.js";
 import { resolveScope } from "./repo/access-scope.js";
 import {
   analyticsOverview,
@@ -2419,6 +2419,12 @@ app.get("/customers", async (c) => {
 app.get("/customers/revenue", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json(await customersRevenue());
+});
+
+// Win-back: customer dormant ≥ ?days (default 60), prioritas revenue historis.
+app.get("/customers/dormant", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await dormantCustomers(Number(c.req.query("days")) || 60));
 });
 
 // Rincian revenue per bulan satu customer (on-demand). ?months=N (default 12).
