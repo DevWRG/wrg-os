@@ -504,6 +504,50 @@ export async function customersRevenue() {
   return { dormant_days: DORMANT_DAYS, months: [lab(2), lab(1), lab(0)], ytd_months: ytdLabels, summary, customers };
 }
 
+// Win-back: customer dormant ≥ minDays sejak invoice TERAKHIR, prioritas revenue
+// historis (all-time). AM = salesman invoice terakhir (paling relevan utk follow-up).
+export async function dormantCustomers(minDays = 60) {
+  const sql = db();
+  const md = Math.min(Math.max(Math.trunc(Number(minDays) || 60), 1), 3650);
+  const rows = await sql`
+    WITH cust AS (
+      SELECT ai.customer_id AS cid,
+        COALESCE(NULLIF(ac.name,''), NULLIF(max(ai.raw->'customer'->>'name'),''), NULLIF(max(ai.raw->>'retailWpName'),''), 'Customer #' || ai.customer_id::text) AS name,
+        NULLIF(mode() WITHIN GROUP (ORDER BY NULLIF(mu.cabang,'')), '') AS cabang,
+        sum(ai.total - COALESCE(ai.tax_amount,0))::float8 AS total,
+        count(*)::int AS invoices,
+        max(ai.tanggal)::text AS last_date,
+        (CURRENT_DATE - max(ai.tanggal))::int AS days_since
+      FROM accurate_invoice ai
+      LEFT JOIN accurate_customer ac ON ac.id = ai.customer_id
+      LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
+      LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
+      WHERE ai.customer_id IS NOT NULL
+      GROUP BY ai.customer_id, ac.name
+    ),
+    last_am AS (
+      SELECT DISTINCT ON (ai.customer_id) ai.customer_id AS cid,
+        COALESCE(NULLIF(mu.nama,''), NULLIF(ai.salesman_name,'')) AS am
+      FROM accurate_invoice ai
+      LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
+      LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
+      WHERE ai.customer_id IS NOT NULL
+      ORDER BY ai.customer_id, ai.tanggal DESC
+    )
+    SELECT c.cid::text AS id, c.name, c.cabang, c.total, c.invoices, c.last_date, c.days_since, la.am
+    FROM cust c LEFT JOIN last_am la ON la.cid = c.cid
+    WHERE c.days_since >= ${md}
+    ORDER BY c.total DESC NULLS LAST`;
+  const customers = rows.map((r) => ({
+    id: String(r.id), name: String(r.name), cabang: r.cabang ? String(r.cabang) : null,
+    total: Number(r.total), invoices: Number(r.invoices),
+    last_date: r.last_date ? String(r.last_date) : null,
+    days_since: r.days_since == null ? null : Number(r.days_since),
+    am: r.am ? String(r.am) : null,
+  }));
+  return { summary: { min_days: md, count: customers.length, value_at_risk: customers.reduce((a, c) => a + c.total, 0) }, customers };
+}
+
 // Rincian revenue per bulan satu customer (default 12 bulan terakhir) — on-demand.
 export async function customerMonthly(id: string, months = 12): Promise<{
   name: string | null;
