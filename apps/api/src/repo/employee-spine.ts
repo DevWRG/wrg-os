@@ -38,6 +38,39 @@ export async function listEmployees(): Promise<EmployeeListItem[]> {
   }));
 }
 
+// F120 RACI Matrix global — proses (baris) × karyawan (kolom, dikelompokkan dept),
+// sel = role_type (R/A/C/I atau gabungan A/R). Proses diurut by jumlah assignment
+// (proses inti di atas); karyawan diurut dept→nama (sama spt listEmployees).
+export async function getRaciMatrix() {
+  const rows = await db()`
+    SELECT ra.process, ra.employee_id, ra.role_type, ra.note,
+           e.nama, e.role, e.dept, d.label AS dept_label, d.color AS dept_color
+    FROM raci_assignment ra
+    JOIN employee e ON e.id = ra.employee_id
+    LEFT JOIN department d ON d.key = e.dept
+    ORDER BY d.label NULLS LAST, e.nama`;
+  const procCount = new Map<string, number>();
+  const peopleMap = new Map<string, { id: string; nama: string; role: string | null; dept: string | null; dept_label: string | null; dept_color: string | null }>();
+  const cells: { process: string; employee_id: string; role_type: string; note: string | null }[] = [];
+  for (const r of rows) {
+    const process = String(r.process);
+    const eid = String(r.employee_id);
+    procCount.set(process, (procCount.get(process) ?? 0) + 1);
+    if (!peopleMap.has(eid)) {
+      peopleMap.set(eid, {
+        id: eid, nama: String(r.nama), role: r.role ? String(r.role) : null,
+        dept: r.dept ? String(r.dept) : null, dept_label: r.dept_label ? String(r.dept_label) : null,
+        dept_color: r.dept_color ? String(r.dept_color) : null,
+      });
+    }
+    cells.push({ process, employee_id: eid, role_type: String(r.role_type), note: r.note ? String(r.note) : null });
+  }
+  const processes = [...procCount.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([name, count]) => ({ name, count }));
+  return { processes, people: [...peopleMap.values()], cells };
+}
+
 export async function getEmployee(id: string) {
   const sql = db();
   const [e] = await sql`
