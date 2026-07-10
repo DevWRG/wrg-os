@@ -101,7 +101,7 @@ import {
   reportCalendar,
   reportCalendarDay,
 } from "./repo/plandash.js";
-import { salesRange, reportRevenue, reportSalesAr, salesOverview, customersRevenue, customerMonthly, dormantCustomers, reportSalesPerformance } from "./repo/sales.js";
+import { salesRange, reportRevenue, reportSalesAr, salesOverview, customersRevenue, customerMonthly, dormantCustomers, targetPacing, reportSalesPerformance } from "./repo/sales.js";
 import { resolveScope } from "./repo/access-scope.js";
 import {
   analyticsOverview,
@@ -1733,6 +1733,11 @@ app.get("/sales/revenue", async (c) => {
 app.get("/sales/performance", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json(await reportSalesPerformance(c.req.query("asOf")));
+});
+// Target pacing (target vs actual + proyeksi) per AM & cabang. ?year=YYYY.
+app.get("/sales/pacing", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await targetPacing(Number(c.req.query("year")) || undefined));
 });
 
 // Sales Targets (menu Admin → Sales Targets). BFF-trusted; role-guard di web.
