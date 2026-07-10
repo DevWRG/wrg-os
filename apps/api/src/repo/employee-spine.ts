@@ -111,3 +111,37 @@ export async function getEmployee(id: string) {
     idea: voice.filter((r) => r.kind === "idea").map((r) => String(r.content)),
   };
 }
+
+// F119b — persistensi pengukuran KPI per periode (kpi_measurement, migrasi 055).
+export interface MeasurementInput { kpi_id: string | number; achievement_pct: number; actual?: string | null; note?: string | null }
+
+export async function getMeasurements(employeeId: string, period: string) {
+  const rows = await db()`
+    SELECT m.kpi_id::text AS kpi_id, m.achievement_pct::float8 AS achievement_pct, m.actual, m.note
+    FROM kpi_measurement m JOIN kpi k ON k.id = m.kpi_id
+    WHERE k.employee_id = ${employeeId} AND m.period = ${period}`;
+  return rows.map((r) => ({
+    kpi_id: String(r.kpi_id), achievement_pct: Number(r.achievement_pct),
+    actual: r.actual ? String(r.actual) : null, note: r.note ? String(r.note) : null,
+  }));
+}
+
+// Upsert (kpi_id, period). Hanya KPI milik karyawan ybs yang diterima (validasi
+// ownership) — cegah nulis measurement ke KPI orang lain.
+export async function saveMeasurements(employeeId: string, period: string, items: MeasurementInput[]) {
+  const sql = db();
+  const owned = new Set((await sql`SELECT id::text FROM kpi WHERE employee_id = ${employeeId}`).map((r) => String(r.id)));
+  let saved = 0;
+  for (const it of items) {
+    const kid = String(it.kpi_id);
+    const pct = Number(it.achievement_pct);
+    if (!owned.has(kid) || !Number.isFinite(pct)) continue;
+    await sql`
+      INSERT INTO kpi_measurement (kpi_id, period, achievement_pct, actual, note, updated_at)
+      VALUES (${Number(kid)}, ${period}, ${pct}, ${it.actual ?? null}, ${it.note ?? null}, now())
+      ON CONFLICT (kpi_id, period) DO UPDATE
+        SET achievement_pct = EXCLUDED.achievement_pct, actual = EXCLUDED.actual, note = EXCLUDED.note, updated_at = now()`;
+    saved++;
+  }
+  return { saved, period, skipped: items.length - saved };
+}
