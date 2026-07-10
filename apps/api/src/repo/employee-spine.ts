@@ -246,7 +246,7 @@ export async function replaceEmployeeDetail(id: string, d: SpineDetail): Promise
   return { ok: true };
 }
 
-// F121 Voice of Employee — agregat pain/idea lintas semua karyawan (+dept) untuk
+// F128 Voice of Employee (tab Kendala & Usulan) — agregat pain/idea lintas karyawan (+dept) untuk
 // surface tema/keluhan org-wide. Read-only; sumber voice_item (spine F118).
 export async function getVoiceAggregate() {
   const rows = await db()`

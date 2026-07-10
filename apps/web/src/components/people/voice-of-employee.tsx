@@ -16,7 +16,7 @@ const kindStyle = (k: string) =>
     : "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300";
 const kindLabel = (k: string) => (k === "pain" ? "Kendala" : "Ide");
 
-// F121 Voice of Employee — agregat pain/ide lintas karyawan; filter kind + dept + cari.
+// F128 Voice of Employee (tab Kendala & Usulan) — agregat pain/ide lintas karyawan; filter kind + dept + cari.
 export function VoiceOfEmployee({ items }: { items: VoiceItem[] }) {
   const [kind, setKind] = useState<"all" | "pain" | "idea">("all");
   const [dept, setDept] = useState<string>("all");
