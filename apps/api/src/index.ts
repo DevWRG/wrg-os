@@ -115,7 +115,7 @@ import {
 } from "./repo/sales-analytics.js";
 import { listViews, saveView, deleteView, listAlerts, createAlert, deleteAlert, updateAlert, listAlertTargets } from "./repo/sales-analytics-config.js";
 import { evaluateSalesAlerts } from "./repo/sales-analytics-alert-eval.js";
-import { listDepartments, listEmployees, getEmployee, getRaciMatrix } from "./repo/employee-spine.js";
+import { listDepartments, listEmployees, getEmployee, getRaciMatrix, getMeasurements, saveMeasurements, type MeasurementInput } from "./repo/employee-spine.js";
 import { upsertMembers, listMembers, upsertDigests, listDigest, upsertPola, listPola, generateRekap, generateResume, type MonitorMemberInput, type DigestInput, type PolaInput } from "./repo/monitor.js";
 import { runNotifTua } from "./repo/notiftua.js";
 import { runDailySummary } from "./repo/dailysummary.js";
@@ -1928,6 +1928,22 @@ app.get("/employee-spine/employees/:id", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const e = await getEmployee(c.req.param("id"));
   return e ? c.json(e) : c.json({ error: "karyawan tak ditemukan" }, 404);
+});
+// F119b KPI measurement per periode (baca + upsert).
+app.get("/employee-spine/employees/:id/measurements", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const period = (c.req.query("period") ?? "").trim();
+  if (!period) return c.json({ error: "param 'period' wajib (mis. 2026-07)" }, 400);
+  return c.json({ period, measurements: await getMeasurements(c.req.param("id"), period) });
+});
+app.post("/employee-spine/employees/:id/measurements", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { period?: string; items?: MeasurementInput[] };
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  const period = (body.period ?? "").trim();
+  if (!period) return c.json({ error: "field 'period' wajib" }, 400);
+  if (!Array.isArray(body.items)) return c.json({ error: "field 'items' wajib array" }, 400);
+  return c.json(await saveMeasurements(c.req.param("id"), period, body.items));
 });
 // Trigger manual evaluasi semua alert aktif (uji/ops) — kirim WA saat transisi ke breach.
 app.post("/sales-analytics/alerts/evaluate", async (c) => {

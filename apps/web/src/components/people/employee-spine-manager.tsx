@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -57,7 +57,6 @@ export function EmployeeSpineManager({ departments, employees }: { departments: 
   const [q, setQ] = useState("");
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(false);
-  const [inputs, setInputs] = useState<Record<string, number>>({});
 
   const filtered = useMemo(() => {
     const term = q.trim().toLowerCase();
@@ -74,13 +73,12 @@ export function EmployeeSpineManager({ departments, employees }: { departments: 
       if (r.ok) {
         const p = (await r.json()) as Profile;
         setProfile(p);
-        setInputs(Object.fromEntries(p.kpi.map((k) => [k.id, 100])));
         window.scrollTo({ top: 0, behavior: "smooth" });
       }
     } finally { setLoading(false); }
   }, []);
 
-  if (profile) return <ProfileView p={profile} inputs={inputs} setInputs={setInputs} onBack={() => setProfile(null)} />;
+  if (profile) return <ProfileView key={profile.id} p={profile} onBack={() => setProfile(null)} />;
 
   return (
     <div className="space-y-4">
@@ -117,8 +115,51 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   return <Card><CardHeader><CardTitle className="text-base">{title}</CardTitle></CardHeader><CardContent>{children}</CardContent></Card>;
 }
 
-function ProfileView({ p, inputs, setInputs, onBack }: { p: Profile; inputs: Record<string, number>; setInputs: (u: Record<string, number>) => void; onBack: () => void }) {
+function currentMonth(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function ProfileView({ p, onBack }: { p: Profile; onBack: () => void }) {
+  const [inputs, setInputs] = useState<Record<string, number>>(() => Object.fromEntries(p.kpi.map((k) => [k.id, 100])));
+  const [period, setPeriod] = useState(currentMonth);
+  const [loadingM, setLoadingM] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [savedMsg, setSavedMsg] = useState<string | null>(null);
   const sc = computeScore(p.kpi, p.weights, inputs);
+
+  // Prefill % dari measurement tersimpan utk periode terpilih (default 100).
+  const loadMeasurements = useCallback(async (per: string) => {
+    setLoadingM(true); setSavedMsg(null);
+    try {
+      const r = await fetch(`/api/employee-spine/employees/${p.id}/measurements?period=${encodeURIComponent(per)}`);
+      const base = Object.fromEntries(p.kpi.map((k) => [k.id, 100])) as Record<string, number>;
+      if (r.ok) {
+        const data = (await r.json()) as { measurements: { kpi_id: string; achievement_pct: number }[] };
+        for (const m of data.measurements ?? []) base[m.kpi_id] = m.achievement_pct;
+      }
+      setInputs(base);
+    } finally { setLoadingM(false); }
+  }, [p.id, p.kpi]);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- prefill inputs dari measurement tersimpan; disengaja.
+    void loadMeasurements(period);
+  }, [period, loadMeasurements]);
+
+  const save = useCallback(async () => {
+    setSaving(true); setSavedMsg(null);
+    try {
+      const items = p.kpi.map((k) => ({ kpi_id: k.id, achievement_pct: Math.round(inputs[k.id] ?? 100) }));
+      const r = await fetch(`/api/employee-spine/employees/${p.id}/measurements`, {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ period, items }),
+      });
+      const data = await r.json();
+      setSavedMsg(r.ok ? `Tersimpan ${data.saved ?? items.length} KPI · ${period}` : `Gagal: ${data.error ?? r.status}`);
+    } catch {
+      setSavedMsg("Gagal: backend tak terjangkau");
+    } finally { setSaving(false); }
+  }, [p.id, p.kpi, inputs, period]);
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -164,8 +205,17 @@ function ProfileView({ p, inputs, setInputs, onBack }: { p: Profile; inputs: Rec
         </div>
       </Section>
 
-      <Section title="Kalkulator Skor BSC (F119)">
-        <p className="text-muted-foreground mb-3 text-xs">Isi % pencapaian tiap KPI (cap 120%). Skor per-perspektif dirata-ratakan, bobot dinormalisasi ke perspektif ber-KPI. Perspektif &lt;80% memicu PDCA.</p>
+      <Section title="Kalkulator & Scorecard BSC (F119)">
+        <div className="mb-3 flex flex-wrap items-center gap-3">
+          <label className="flex items-center gap-2 text-sm">
+            <span className="text-muted-foreground text-xs">Periode</span>
+            <Input type="month" value={period} onChange={(e) => setPeriod(e.target.value)} className="h-8 w-40" />
+          </label>
+          <Button size="sm" onClick={() => void save()} disabled={saving || loadingM}>{saving ? "Menyimpan…" : "Simpan"}</Button>
+          {loadingM && <span className="text-muted-foreground text-xs">Memuat data periode…</span>}
+          {savedMsg && <span className={`text-xs font-medium ${savedMsg.startsWith("Gagal") ? "text-red-600" : "text-emerald-600"}`}>{savedMsg}</span>}
+        </div>
+        <p className="text-muted-foreground mb-3 text-xs">Isi % pencapaian tiap KPI (cap 120%) untuk periode di atas, lalu <b>Simpan</b>. Skor per-perspektif dirata-ratakan, bobot dinormalisasi ke perspektif ber-KPI. Perspektif &lt;80% memicu PDCA. Nilai tersimpan per periode &amp; dimuat ulang saat periode diganti.</p>
         <div className="grid gap-2 sm:grid-cols-2">
           {p.kpi.map((k) => (
             <label key={k.id} className="flex items-center justify-between gap-2 text-sm">
