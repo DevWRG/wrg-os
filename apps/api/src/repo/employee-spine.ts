@@ -188,3 +188,60 @@ export async function deleteEmployee(id: string): Promise<{ deleted: boolean }> 
   const r = await db()`DELETE FROM employee WHERE id = ${id}`;
   return { deleted: r.count > 0 };
 }
+
+// F118c — replace SEMUA sub-koleksi profil (transaksional). Koleksi tanpa dependen
+// (tools/tasks/OKR-KR/BSC/PDCA/RACI/Voice) delete+reinsert. KPI id-aware (UPDATE yg
+// ber-id, INSERT yg baru, DELETE yg dibuang) supaya kpi_measurement (F119b) yang
+// ter-taut ke KPI lama TIDAK ikut ke-cascade-hapus.
+export interface SpineDetail {
+  tools: string[]; tasks: string[]; okr_kr: string[]; pain: string[]; idea: string[];
+  bsc: { fin: string[]; cust: string[]; proc: string[]; learn: string[] };
+  pdca: { plan: string | null; do: string | null; check: string | null; act: string | null } | null;
+  kpi: { id?: string | null; name: string; target?: string | null; frequency?: string | null; perspective?: string | null; lower_better?: boolean }[];
+  raci: { process: string; role_type: string; note?: string | null }[];
+}
+
+export async function replaceEmployeeDetail(id: string, d: SpineDetail): Promise<{ ok: boolean }> {
+  const sql = db();
+  if (!(await sql`SELECT 1 FROM employee WHERE id = ${id}`).length) return { ok: false };
+  const clean = (a: string[]) => a.map((s) => s.trim()).filter(Boolean);
+  await sql.begin(async (tx) => {
+    // ── list sederhana: delete + reinsert ──
+    await tx`DELETE FROM employee_tool WHERE employee_id = ${id}`;
+    { const arr = clean(d.tools); for (let i = 0; i < arr.length; i++) await tx`INSERT INTO employee_tool (employee_id, tool, seq) VALUES (${id}, ${arr[i]}, ${i})`; }
+    await tx`DELETE FROM employee_task WHERE employee_id = ${id}`;
+    { const arr = clean(d.tasks); for (let i = 0; i < arr.length; i++) await tx`INSERT INTO employee_task (employee_id, task, seq) VALUES (${id}, ${arr[i]}, ${i})`; }
+    await tx`DELETE FROM okr_key_result WHERE employee_id = ${id}`;
+    { const arr = clean(d.okr_kr); for (let i = 0; i < arr.length; i++) await tx`INSERT INTO okr_key_result (employee_id, key_result, seq) VALUES (${id}, ${arr[i]}, ${i})`; }
+    await tx`DELETE FROM bsc_objective WHERE employee_id = ${id}`;
+    for (const p of ["fin", "cust", "proc", "learn"] as const) {
+      const arr = clean(d.bsc?.[p] ?? []);
+      for (let i = 0; i < arr.length; i++) await tx`INSERT INTO bsc_objective (employee_id, perspective, objective, seq) VALUES (${id}, ${p}, ${arr[i]}, ${i})`;
+    }
+    await tx`DELETE FROM voice_item WHERE employee_id = ${id}`;
+    { const arr = clean(d.pain); for (let i = 0; i < arr.length; i++) await tx`INSERT INTO voice_item (employee_id, kind, content, seq) VALUES (${id}, 'pain', ${arr[i]}, ${i})`; }
+    { const arr = clean(d.idea); for (let i = 0; i < arr.length; i++) await tx`INSERT INTO voice_item (employee_id, kind, content, seq) VALUES (${id}, 'idea', ${arr[i]}, ${i})`; }
+    await tx`DELETE FROM pdca_cycle WHERE employee_id = ${id}`;
+    const pd = d.pdca;
+    if (pd && (pd.plan || pd.do || pd.check || pd.act)) {
+      await tx`INSERT INTO pdca_cycle (employee_id, plan_step, do_step, check_step, act_step, seq) VALUES (${id}, ${pd.plan ?? null}, ${pd.do ?? null}, ${pd.check ?? null}, ${pd.act ?? null}, 0)`;
+    }
+    await tx`DELETE FROM raci_assignment WHERE employee_id = ${id}`;
+    { let s = 0; for (const r of d.raci ?? []) { if (r.process?.trim() && r.role_type?.trim()) { await tx`INSERT INTO raci_assignment (employee_id, process, role_type, note, seq) VALUES (${id}, ${r.process.trim()}, ${r.role_type.trim()}, ${r.note?.trim() || null}, ${s++})`; } } }
+    // ── KPI: id-aware (jaga kpi_measurement) ──
+    const rows = (d.kpi ?? []).filter((k) => k.name?.trim());
+    const keep = rows.filter((k) => k.id).map((k) => String(k.id));
+    if (keep.length) await tx`DELETE FROM kpi WHERE employee_id = ${id} AND id::text <> ALL(${keep})`;
+    else await tx`DELETE FROM kpi WHERE employee_id = ${id}`;
+    for (let i = 0; i < rows.length; i++) {
+      const k = rows[i];
+      const persp = k.perspective && ["fin", "cust", "proc", "learn"].includes(k.perspective) ? k.perspective : null;
+      if (k.id) {
+        await tx`UPDATE kpi SET name = ${k.name.trim()}, target = ${k.target ?? null}, frequency = ${k.frequency ?? null}, perspective = ${persp}, lower_better = ${k.lower_better ?? false}, seq = ${i} WHERE id = ${Number(k.id)} AND employee_id = ${id}`;
+      } else {
+        await tx`INSERT INTO kpi (employee_id, name, target, frequency, perspective, lower_better, seq) VALUES (${id}, ${k.name.trim()}, ${k.target ?? null}, ${k.frequency ?? null}, ${persp}, ${k.lower_better ?? false}, ${i})`;
+      }
+    }
+  });
+  return { ok: true };
+}
