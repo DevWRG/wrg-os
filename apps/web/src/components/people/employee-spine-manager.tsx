@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { useConfirm } from "@/components/ui/use-confirm";
+import { SpineDetailEditor, type DetailInit } from "@/components/people/spine-detail-editor";
 
 export interface Dept { key: string; label: string; color: string | null; weights: Record<string, number>; count: number }
 export interface EmployeeItem {
@@ -159,6 +160,7 @@ function ProfileView({ p, departments, onBack, onUpdated }: { p: Profile; depart
   const router = useRouter();
   const { confirm, dialog } = useConfirm();
   const [editing, setEditing] = useState(false);
+  const [editingDetail, setEditingDetail] = useState(false);
   const [savingEmp, setSavingEmp] = useState(false);
   const [empErr, setEmpErr] = useState<string | null>(null);
 
@@ -221,6 +223,7 @@ function ProfileView({ p, departments, onBack, onUpdated }: { p: Profile; depart
         </div>
         <div className="flex gap-2">
           <Button size="sm" variant="outline" onClick={() => { setEditing((v) => !v); setEmpErr(null); }}>{editing ? "Batal Edit" : "Edit"}</Button>
+          <Button size="sm" variant="outline" onClick={() => setEditingDetail((v) => !v)}>{editingDetail ? "Tutup Detail" : "Edit Detail"}</Button>
           <Button size="sm" variant="outline" className="text-destructive hover:bg-destructive/10" onClick={removeEmp}>Hapus</Button>
           <Button size="sm" variant="outline" onClick={onBack}>← Kembali</Button>
         </div>
@@ -234,6 +237,15 @@ function ProfileView({ p, departments, onBack, onUpdated }: { p: Profile; depart
             <EmployeeForm departments={departments} initial={profileToForm(p)} submitting={savingEmp} onCancel={() => setEditing(false)} onSubmit={saveEmp} />
           </CardContent>
         </Card>
+      )}
+
+      {editingDetail && (
+        <SpineDetailEditor
+          id={p.id}
+          init={profileToDetail(p)}
+          onCancel={() => setEditingDetail(false)}
+          onSaved={async () => { const rr = await fetch(`/api/employee-spine/employees/${p.id}`); if (rr.ok) onUpdated((await rr.json()) as Profile); setEditingDetail(false); router.refresh(); }}
+        />
       )}
 
       {p.quote && <blockquote className="border-primary text-muted-foreground border-l-4 pl-3 text-sm italic">“{p.quote}”</blockquote>}
@@ -340,6 +352,17 @@ function ProfileView({ p, departments, onBack, onUpdated }: { p: Profile; depart
       {dialog}
     </div>
   );
+}
+
+// Profile → init editor detail (F118c). List kosong → array kosong; pdca null → string kosong.
+function profileToDetail(p: Profile): DetailInit {
+  return {
+    tools: p.tools ?? [], tasks: p.tasks ?? [], okr_kr: p.okr_kr ?? [], pain: p.pain ?? [], idea: p.idea ?? [],
+    bsc: { fin: p.bsc?.fin ?? [], cust: p.bsc?.cust ?? [], proc: p.bsc?.proc ?? [], learn: p.bsc?.learn ?? [] },
+    pdca: { plan: p.pdca?.plan ?? "", do: p.pdca?.do ?? "", check: p.pdca?.check ?? "", act: p.pdca?.act ?? "" },
+    kpi: p.kpi.map((k) => ({ id: k.id, name: k.name, target: k.target ?? "", frequency: k.frequency ?? "", perspective: k.perspective ?? "", lower_better: k.lower_better })),
+    raci: p.raci.map((r) => ({ process: r.process, role_type: r.role_type, note: r.note ?? "" })),
+  };
 }
 
 // ── Form CRUD karyawan (dipakai create & edit) ──

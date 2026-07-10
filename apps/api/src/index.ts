@@ -115,7 +115,7 @@ import {
 } from "./repo/sales-analytics.js";
 import { listViews, saveView, deleteView, listAlerts, createAlert, deleteAlert, updateAlert, listAlertTargets } from "./repo/sales-analytics-config.js";
 import { evaluateSalesAlerts } from "./repo/sales-analytics-alert-eval.js";
-import { listDepartments, listEmployees, getEmployee, getRaciMatrix, getMeasurements, saveMeasurements, createEmployee, updateEmployee, deleteEmployee, type MeasurementInput, type EmployeeWrite } from "./repo/employee-spine.js";
+import { listDepartments, listEmployees, getEmployee, getRaciMatrix, getMeasurements, saveMeasurements, createEmployee, updateEmployee, deleteEmployee, replaceEmployeeDetail, type MeasurementInput, type EmployeeWrite, type SpineDetail } from "./repo/employee-spine.js";
 import { upsertMembers, listMembers, upsertDigests, listDigest, upsertPola, listPola, generateRekap, generateResume, type MonitorMemberInput, type DigestInput, type PolaInput } from "./repo/monitor.js";
 import { runNotifTua } from "./repo/notiftua.js";
 import { runDailySummary } from "./repo/dailysummary.js";
@@ -1965,6 +1965,14 @@ app.delete("/employee-spine/employees/:id", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const r = await deleteEmployee(c.req.param("id"));
   return r.deleted ? c.json(r) : c.json({ error: "karyawan tak ditemukan" }, 404);
+});
+// F118c replace sub-koleksi profil (transaksional; KPI id-aware jaga measurement).
+app.put("/employee-spine/employees/:id/detail", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: SpineDetail;
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  const r = await replaceEmployeeDetail(c.req.param("id"), body);
+  return r.ok ? c.json(r) : c.json({ error: "karyawan tak ditemukan" }, 404);
 });
 // Trigger manual evaluasi semua alert aktif (uji/ops) — kirim WA saat transisi ke breach.
 app.post("/sales-analytics/alerts/evaluate", async (c) => {

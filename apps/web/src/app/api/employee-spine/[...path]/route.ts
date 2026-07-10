@@ -54,6 +54,12 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ path: string[
   return forward(((await ctx.params).path ?? []).join("/"), "PATCH", req);
 }
 
+export async function PUT(req: Request, ctx: { params: Promise<{ path: string[] }> }) {
+  const g = await requireAdmin();
+  if (!g.ok) return g.res;
+  return forward(((await ctx.params).path ?? []).join("/"), "PUT", req);
+}
+
 export async function DELETE(_req: Request, ctx: { params: Promise<{ path: string[] }> }) {
   const g = await requireAdmin();
   if (!g.ok) return g.res;
