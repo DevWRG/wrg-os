@@ -548,6 +548,61 @@ export async function dormantCustomers(minDays = 60) {
   return { summary: { min_days: md, count: customers.length, value_at_risk: customers.reduce((a, c) => a + c.total, 0) }, customers };
 }
 
+// Target Pacing — target vs actual (YTD tahun berjalan) per AM & cabang + proyeksi.
+// Pace = actual / (target × fraksi tahun berlalu). status: on-track ≥1 · at-risk ≥0.9 ·
+// behind <0.9. projected = actual / fraksi (ekstrapolasi linear ke akhir tahun).
+export async function targetPacing(year0?: number) {
+  const sql = db();
+  const now = new Date();
+  const year = year0 && year0 > 2000 ? Math.trunc(year0) : now.getFullYear();
+  const start = Date.UTC(year, 0, 1), end = Date.UTC(year + 1, 0, 1);
+  const f = Math.min(1, Math.max(0, (now.getTime() - start) / (end - start)));
+  const elapsed = f <= 0 ? 0.0001 : f;
+  const round1 = (n: number) => Math.round(n * 10) / 10;
+  const enrich = (target: number, actual: number) => {
+    const achievement_pct = target > 0 ? round1((actual / target) * 100) : null;
+    const expected = target * f;
+    const pace = expected > 0 ? actual / expected : null;
+    const projected = actual / elapsed;
+    const projected_pct = target > 0 ? round1((projected / target) * 100) : null;
+    const status = pace == null ? "n/a" : pace >= 1 ? "on-track" : pace >= 0.9 ? "at-risk" : "behind";
+    return { target, actual, achievement_pct, expected: Math.round(expected), pace: pace == null ? null : round1(pace * 100), projected: Math.round(projected), projected_pct, status };
+  };
+  const amRows = await sql`
+    WITH act AS (
+      SELECT mu.am_id AS am_id, sum(ai.total - COALESCE(ai.tax_amount,0))::float8 AS actual
+      FROM accurate_invoice ai
+      JOIN accurate_salesman acs ON acs.id = ai.salesman_id
+      JOIN master_user mu ON mu.am_id = acs.master_user_id::text
+      WHERE date_part('year', ai.tanggal) = ${year}
+      GROUP BY mu.am_id
+    )
+    SELECT t.am_id, COALESCE(NULLIF(mu.nama,''), t.am_id) AS nama, NULLIF(mu.cabang,'') AS cabang,
+           t.target::float8 AS target, COALESCE(a.actual,0)::float8 AS actual
+    FROM sales_target_am t
+    LEFT JOIN master_user mu ON mu.am_id = t.am_id
+    LEFT JOIN act a ON a.am_id = t.am_id
+    WHERE t.year = ${year} AND t.target > 0
+    ORDER BY t.target DESC`;
+  const cbRows = await sql`
+    WITH act AS (
+      SELECT COALESCE(NULLIF(mu.cabang,''), NULLIF(acs.cabang_override,'')) AS cabang, sum(ai.total - COALESCE(ai.tax_amount,0))::float8 AS actual
+      FROM accurate_invoice ai
+      JOIN accurate_salesman acs ON acs.id = ai.salesman_id
+      LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
+      WHERE date_part('year', ai.tanggal) = ${year}
+      GROUP BY 1
+    )
+    SELECT t.cabang, t.target::float8 AS target, COALESCE(a.actual,0)::float8 AS actual
+    FROM sales_target_cabang t LEFT JOIN act a ON a.cabang = t.cabang
+    WHERE t.year = ${year} AND t.target > 0
+    ORDER BY t.target DESC`;
+  const am = amRows.map((r) => ({ am_id: String(r.am_id), nama: String(r.nama), cabang: r.cabang ? String(r.cabang) : null, ...enrich(Number(r.target), Number(r.actual)) }));
+  const cabang = cbRows.map((r) => ({ cabang: String(r.cabang), ...enrich(Number(r.target), Number(r.actual)) }));
+  const sum = (arr: { target: number; actual: number }[]) => ({ target: arr.reduce((a, x) => a + x.target, 0), actual: arr.reduce((a, x) => a + x.actual, 0) });
+  return { year, elapsed_pct: Math.round(f * 1000) / 10, am, cabang, summary: { am: sum(am), cabang: sum(cabang) } };
+}
+
 // Rincian revenue per bulan satu customer (default 12 bulan terakhir) — on-demand.
 export async function customerMonthly(id: string, months = 12): Promise<{
   name: string | null;
