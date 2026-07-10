@@ -3,6 +3,7 @@
 // Voice) + bobot BSC per-dept utk kalkulator skor (F119, dihitung di klien).
 
 import { db } from "../db.js";
+import { resolveHods, HODS } from "../hod-resolver.js";
 
 export type Perspective = "fin" | "cust" | "proc" | "learn";
 
@@ -261,4 +262,31 @@ export async function getVoiceAggregate() {
       dept: r.dept ? String(r.dept) : null, dept_label: r.dept_label ? String(r.dept_label) : null, dept_color: r.dept_color ? String(r.dept_color) : null,
     })),
   };
+}
+
+// F121 — jalankan HoD resolver atas atasan_raw semua karyawan (read-only preview).
+// status: resolved (1 HoD) · ambiguous (multi-HOD) · none (perlu review manual).
+// Foundation utk populate hod_key + Org Chart reporting-line (ORG_OPTIMAL).
+export async function getHodResolution() {
+  const emps = await db()`
+    SELECT e.id, e.nama, e.atasan_raw, d.label AS dept_label
+    FROM employee e LEFT JOIN department d ON d.key = e.dept
+    ORDER BY d.label NULLS LAST, e.nama`;
+  const nameByKey = Object.fromEntries(HODS.map((h) => [h.key, h.name]));
+  const rows = emps.map((e) => {
+    const raw = e.atasan_raw ? String(e.atasan_raw) : "";
+    const keys = raw ? resolveHods(raw) : [];
+    const status = keys.length === 1 ? "resolved" : keys.length > 1 ? "ambiguous" : "none";
+    return {
+      id: String(e.id), nama: String(e.nama), dept_label: e.dept_label ? String(e.dept_label) : null,
+      atasan_raw: raw, hod_keys: keys, hod_names: keys.map((k) => nameByKey[k] ?? k), status,
+    };
+  });
+  const summary = {
+    total: rows.length,
+    resolved: rows.filter((r) => r.status === "resolved").length,
+    ambiguous: rows.filter((r) => r.status === "ambiguous").length,
+    none: rows.filter((r) => r.status === "none").length,
+  };
+  return { rows, summary, hods: HODS.map((h) => ({ key: h.key, name: h.name, role: h.role })) };
 }
