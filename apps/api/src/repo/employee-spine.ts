@@ -245,3 +245,20 @@ export async function replaceEmployeeDetail(id: string, d: SpineDetail): Promise
   });
   return { ok: true };
 }
+
+// F121 Voice of Employee — agregat pain/idea lintas semua karyawan (+dept) untuk
+// surface tema/keluhan org-wide. Read-only; sumber voice_item (spine F118).
+export async function getVoiceAggregate() {
+  const rows = await db()`
+    SELECT v.kind, v.content, v.employee_id, e.nama, e.dept, d.label AS dept_label, d.color AS dept_color
+    FROM voice_item v
+    JOIN employee e ON e.id = v.employee_id
+    LEFT JOIN department d ON d.key = e.dept
+    ORDER BY d.label NULLS LAST, e.nama, v.kind, v.seq`;
+  return {
+    items: rows.map((r) => ({
+      kind: String(r.kind), content: String(r.content), employee_id: String(r.employee_id), nama: String(r.nama),
+      dept: r.dept ? String(r.dept) : null, dept_label: r.dept_label ? String(r.dept_label) : null, dept_color: r.dept_color ? String(r.dept_color) : null,
+    })),
+  };
+}
