@@ -100,6 +100,7 @@ export async function getEmployee(id: string) {
     panggilan: e.panggilan ? String(e.panggilan) : null, cabang: e.cabang ? String(e.cabang) : null,
     whatsapp: e.whatsapp ? String(e.whatsapp) : null, roster_pending: e.roster_pending === true,
     quote: e.quote ? String(e.quote) : null, okr_objective: e.okr_objective ? String(e.okr_objective) : null,
+    hod_key: e.hod_key ? String(e.hod_key) : null,
     weights: (e.weights ?? {}) as Record<Perspective, number>,
     tools: tools.map((r) => String(r.tool)),
     tasks: tasks.map((r) => String(r.task)),
@@ -153,6 +154,17 @@ export interface EmployeeWrite {
   nama: string; dept?: string | null; role?: string | null; atasan_raw?: string | null;
   lokasi?: string | null; masa?: string | null; panggilan?: string | null; cabang?: string | null;
   whatsapp?: string | null; roster_pending?: boolean; okr_objective?: string | null; quote?: string | null;
+  hod_key?: string | null;
+}
+
+// Validasi hod_key = salah satu key HoD kanonik, atau null.
+function normHodKey(v: string | null | undefined): string | null {
+  return v && HODS.some((h) => h.key === v) ? v : null;
+}
+
+// Daftar HoD kanonik (buat dropdown assign hod_key di UI).
+export function getHods() {
+  return HODS.map((h) => ({ key: h.key, name: h.name, role: h.role }));
 }
 
 function slugify(s: string): string {
@@ -165,10 +177,10 @@ export async function createEmployee(data: EmployeeWrite): Promise<{ id: string 
   let id = base, n = 1;
   while ((await sql`SELECT 1 FROM employee WHERE id = ${id}`).length) id = `${base}-${++n}`;
   await sql`
-    INSERT INTO employee (id, nama, dept, role, atasan_raw, lokasi, masa, panggilan, cabang, whatsapp, roster_pending, okr_objective, quote)
+    INSERT INTO employee (id, nama, dept, role, atasan_raw, lokasi, masa, panggilan, cabang, whatsapp, roster_pending, okr_objective, quote, hod_key)
     VALUES (${id}, ${data.nama}, ${data.dept ?? null}, ${data.role ?? null}, ${data.atasan_raw ?? null}, ${data.lokasi ?? null},
             ${data.masa ?? null}, ${data.panggilan ?? null}, ${data.cabang ?? null}, ${data.whatsapp ?? null},
-            ${data.roster_pending ?? false}, ${data.okr_objective ?? null}, ${data.quote ?? null})`;
+            ${data.roster_pending ?? false}, ${data.okr_objective ?? null}, ${data.quote ?? null}, ${normHodKey(data.hod_key)})`;
   return { id };
 }
 
@@ -178,7 +190,7 @@ export async function updateEmployee(id: string, data: EmployeeWrite): Promise<{
       nama = ${data.nama}, dept = ${data.dept ?? null}, role = ${data.role ?? null}, atasan_raw = ${data.atasan_raw ?? null},
       lokasi = ${data.lokasi ?? null}, masa = ${data.masa ?? null}, panggilan = ${data.panggilan ?? null},
       cabang = ${data.cabang ?? null}, whatsapp = ${data.whatsapp ?? null}, roster_pending = ${data.roster_pending ?? false},
-      okr_objective = ${data.okr_objective ?? null}, quote = ${data.quote ?? null}
+      okr_objective = ${data.okr_objective ?? null}, quote = ${data.quote ?? null}, hod_key = ${normHodKey(data.hod_key)}
     WHERE id = ${id}`;
   return { updated: r.count > 0 };
 }

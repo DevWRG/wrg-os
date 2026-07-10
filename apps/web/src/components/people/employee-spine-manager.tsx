@@ -15,11 +15,12 @@ export interface EmployeeItem {
   id: string; nama: string; dept: string | null; dept_label: string | null; dept_color: string | null;
   role: string | null; cabang: string | null; lokasi: string | null; roster_pending: boolean; kpi_count: number;
 }
+export interface HodOpt { key: string; name: string; role: string }
 interface Kpi { id: string; name: string; target: string | null; frequency: string | null; perspective: string | null; lower_better: boolean }
 interface Profile {
   id: string; nama: string; dept: string | null; dept_label: string | null; dept_color: string | null; role: string | null;
   atasan_raw: string | null; lokasi: string | null; masa: string | null; panggilan: string | null; cabang: string | null;
-  whatsapp: string | null; roster_pending: boolean; quote: string | null; okr_objective: string | null;
+  whatsapp: string | null; roster_pending: boolean; quote: string | null; okr_objective: string | null; hod_key: string | null;
   weights: Record<string, number>; tools: string[]; tasks: string[]; bsc: Record<string, string[]>;
   okr_kr: string[]; kpi: Kpi[]; pdca: { plan: string | null; do: string | null; check: string | null; act: string | null } | null;
   raci: { process: string; role_type: string; note: string | null }[]; pain: string[]; idea: string[];
@@ -55,7 +56,7 @@ function computeScore(kpi: Kpi[], weights: Record<string, number>, inputs: Recor
 const ratingOf = (s: number) => (s >= 110 ? "Istimewa" : s >= 95 ? "Sesuai Target" : s >= 80 ? "Perlu Perhatian" : "Perlu Perbaikan");
 const ratingTone = (s: number) => (s >= 95 ? "text-emerald-600" : s >= 80 ? "text-amber-600" : "text-red-600");
 
-export function EmployeeSpineManager({ departments, employees }: { departments: Dept[]; employees: EmployeeItem[] }) {
+export function EmployeeSpineManager({ departments, employees, hods = [] }: { departments: Dept[]; employees: EmployeeItem[]; hods?: HodOpt[] }) {
   const [dept, setDept] = useState("");
   const [q, setQ] = useState("");
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -96,7 +97,7 @@ export function EmployeeSpineManager({ departments, employees }: { departments: 
     finally { setSaving(false); }
   };
 
-  if (profile) return <ProfileView key={profile.id} p={profile} departments={departments} onBack={() => setProfile(null)} onUpdated={setProfile} />;
+  if (profile) return <ProfileView key={profile.id} p={profile} departments={departments} hods={hods} onBack={() => setProfile(null)} onUpdated={setProfile} />;
 
   return (
     <div className="space-y-4">
@@ -115,7 +116,7 @@ export function EmployeeSpineManager({ departments, employees }: { departments: 
           <CardHeader><CardTitle className="text-base">Tambah Karyawan</CardTitle></CardHeader>
           <CardContent>
             {err && <div className="mb-3 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">{err}</div>}
-            <EmployeeForm departments={departments} initial={emptyForm()} submitting={saving} onCancel={() => setCreating(false)} onSubmit={createEmp} />
+            <EmployeeForm departments={departments} hods={hods} initial={emptyForm()} submitting={saving} onCancel={() => setCreating(false)} onSubmit={createEmp} />
           </CardContent>
         </Card>
       )}
@@ -149,7 +150,7 @@ function currentMonth(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
 
-function ProfileView({ p, departments, onBack, onUpdated }: { p: Profile; departments: Dept[]; onBack: () => void; onUpdated: (p: Profile) => void }) {
+function ProfileView({ p, departments, hods, onBack, onUpdated }: { p: Profile; departments: Dept[]; hods: HodOpt[]; onBack: () => void; onUpdated: (p: Profile) => void }) {
   const [inputs, setInputs] = useState<Record<string, number>>(() => Object.fromEntries(p.kpi.map((k) => [k.id, 100])));
   const [period, setPeriod] = useState(currentMonth);
   const [loadingM, setLoadingM] = useState(false);
@@ -234,7 +235,7 @@ function ProfileView({ p, departments, onBack, onUpdated }: { p: Profile; depart
           <CardHeader><CardTitle className="text-base">Edit Karyawan</CardTitle></CardHeader>
           <CardContent>
             {empErr && <div className="mb-3 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">{empErr}</div>}
-            <EmployeeForm departments={departments} initial={profileToForm(p)} submitting={savingEmp} onCancel={() => setEditing(false)} onSubmit={saveEmp} />
+            <EmployeeForm departments={departments} hods={hods} initial={profileToForm(p)} submitting={savingEmp} onCancel={() => setEditing(false)} onSubmit={saveEmp} />
           </CardContent>
         </Card>
       )}
@@ -368,21 +369,21 @@ function profileToDetail(p: Profile): DetailInit {
 // ── Form CRUD karyawan (dipakai create & edit) ──
 interface EmpFormData {
   nama: string; dept: string; role: string; panggilan: string; cabang: string; lokasi: string;
-  whatsapp: string; masa: string; atasan_raw: string; okr_objective: string; quote: string; roster_pending: boolean;
+  whatsapp: string; masa: string; atasan_raw: string; okr_objective: string; quote: string; roster_pending: boolean; hod_key: string;
 }
 function emptyForm(): EmpFormData {
-  return { nama: "", dept: "", role: "", panggilan: "", cabang: "", lokasi: "", whatsapp: "", masa: "", atasan_raw: "", okr_objective: "", quote: "", roster_pending: false };
+  return { nama: "", dept: "", role: "", panggilan: "", cabang: "", lokasi: "", whatsapp: "", masa: "", atasan_raw: "", okr_objective: "", quote: "", roster_pending: false, hod_key: "" };
 }
 function profileToForm(p: Profile): EmpFormData {
   return {
     nama: p.nama ?? "", dept: p.dept ?? "", role: p.role ?? "", panggilan: p.panggilan ?? "",
     cabang: p.cabang ?? "", lokasi: p.lokasi ?? "", whatsapp: p.whatsapp ?? "", masa: p.masa ?? "",
-    atasan_raw: p.atasan_raw ?? "", okr_objective: p.okr_objective ?? "", quote: p.quote ?? "", roster_pending: p.roster_pending,
+    atasan_raw: p.atasan_raw ?? "", okr_objective: p.okr_objective ?? "", quote: p.quote ?? "", roster_pending: p.roster_pending, hod_key: p.hod_key ?? "",
   };
 }
 
-function EmployeeForm({ departments, initial, submitting, onCancel, onSubmit }: {
-  departments: Dept[]; initial: EmpFormData; submitting: boolean; onCancel: () => void; onSubmit: (d: EmpFormData) => void;
+function EmployeeForm({ departments, hods, initial, submitting, onCancel, onSubmit }: {
+  departments: Dept[]; hods: HodOpt[]; initial: EmpFormData; submitting: boolean; onCancel: () => void; onSubmit: (d: EmpFormData) => void;
 }) {
   const [f, setF] = useState<EmpFormData>(initial);
   const set = (k: keyof EmpFormData, v: string | boolean) => setF((prev) => ({ ...prev, [k]: v }) as EmpFormData);
@@ -404,6 +405,13 @@ function EmployeeForm({ departments, initial, submitting, onCancel, onSubmit }: 
           <select value={f.dept} onChange={(e) => set("dept", e.target.value)} className="border-input bg-background h-8 rounded-md border px-2 text-sm">
             <option value="">— pilih —</option>
             {departments.map((d) => <option key={d.key} value={d.key}>{d.label}</option>)}
+          </select>
+        </label>
+        <label className="grid gap-1 text-sm">
+          <span className="text-muted-foreground text-xs">HoD (hod_key)</span>
+          <select value={f.hod_key} onChange={(e) => set("hod_key", e.target.value)} className="border-input bg-background h-8 rounded-md border px-2 text-sm">
+            <option value="">— (kosong) —</option>
+            {hods.map((h) => <option key={h.key} value={h.key}>{h.name} · {h.role}</option>)}
           </select>
         </label>
         {field("Panggilan", "panggilan")}
