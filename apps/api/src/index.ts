@@ -115,7 +115,7 @@ import {
 } from "./repo/sales-analytics.js";
 import { listViews, saveView, deleteView, listAlerts, createAlert, deleteAlert, updateAlert, listAlertTargets } from "./repo/sales-analytics-config.js";
 import { evaluateSalesAlerts } from "./repo/sales-analytics-alert-eval.js";
-import { listDepartments, listEmployees, getEmployee, getRaciMatrix, getMeasurements, saveMeasurements, type MeasurementInput } from "./repo/employee-spine.js";
+import { listDepartments, listEmployees, getEmployee, getRaciMatrix, getMeasurements, saveMeasurements, createEmployee, updateEmployee, deleteEmployee, type MeasurementInput, type EmployeeWrite } from "./repo/employee-spine.js";
 import { upsertMembers, listMembers, upsertDigests, listDigest, upsertPola, listPola, generateRekap, generateResume, type MonitorMemberInput, type DigestInput, type PolaInput } from "./repo/monitor.js";
 import { runNotifTua } from "./repo/notiftua.js";
 import { runDailySummary } from "./repo/dailysummary.js";
@@ -1944,6 +1944,27 @@ app.post("/employee-spine/employees/:id/measurements", async (c) => {
   if (!period) return c.json({ error: "field 'period' wajib" }, 400);
   if (!Array.isArray(body.items)) return c.json({ error: "field 'items' wajib array" }, 400);
   return c.json(await saveMeasurements(c.req.param("id"), period, body.items));
+});
+// F118b CRUD core karyawan (gating admin di BFF web).
+app.post("/employee-spine/employees", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: EmployeeWrite;
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  if (!body?.nama?.trim()) return c.json({ error: "field 'nama' wajib" }, 400);
+  return c.json(await createEmployee(body), 201);
+});
+app.patch("/employee-spine/employees/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: EmployeeWrite;
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  if (!body?.nama?.trim()) return c.json({ error: "field 'nama' wajib" }, 400);
+  const r = await updateEmployee(c.req.param("id"), body);
+  return r.updated ? c.json(r) : c.json({ error: "karyawan tak ditemukan" }, 404);
+});
+app.delete("/employee-spine/employees/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await deleteEmployee(c.req.param("id"));
+  return r.deleted ? c.json(r) : c.json({ error: "karyawan tak ditemukan" }, 404);
 });
 // Trigger manual evaluasi semua alert aktif (uji/ops) — kirim WA saat transisi ke breach.
 app.post("/sales-analytics/alerts/evaluate", async (c) => {

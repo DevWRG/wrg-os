@@ -145,3 +145,46 @@ export async function saveMeasurements(employeeId: string, period: string, items
   }
   return { saved, period, skipped: items.length - saved };
 }
+
+// F118b — CRUD core karyawan (edit field inti + tambah + hapus). Sub-koleksi
+// (KPI/BSC/RACI/dst) belum di-CRUD di sini. id = slug (auto dari nama saat create).
+export interface EmployeeWrite {
+  nama: string; dept?: string | null; role?: string | null; atasan_raw?: string | null;
+  lokasi?: string | null; masa?: string | null; panggilan?: string | null; cabang?: string | null;
+  whatsapp?: string | null; roster_pending?: boolean; okr_objective?: string | null; quote?: string | null;
+}
+
+function slugify(s: string): string {
+  return s.toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "emp";
+}
+
+export async function createEmployee(data: EmployeeWrite): Promise<{ id: string }> {
+  const sql = db();
+  const base = slugify(data.nama);
+  let id = base, n = 1;
+  while ((await sql`SELECT 1 FROM employee WHERE id = ${id}`).length) id = `${base}-${++n}`;
+  await sql`
+    INSERT INTO employee (id, nama, dept, role, atasan_raw, lokasi, masa, panggilan, cabang, whatsapp, roster_pending, okr_objective, quote)
+    VALUES (${id}, ${data.nama}, ${data.dept ?? null}, ${data.role ?? null}, ${data.atasan_raw ?? null}, ${data.lokasi ?? null},
+            ${data.masa ?? null}, ${data.panggilan ?? null}, ${data.cabang ?? null}, ${data.whatsapp ?? null},
+            ${data.roster_pending ?? false}, ${data.okr_objective ?? null}, ${data.quote ?? null})`;
+  return { id };
+}
+
+export async function updateEmployee(id: string, data: EmployeeWrite): Promise<{ updated: boolean }> {
+  const r = await db()`
+    UPDATE employee SET
+      nama = ${data.nama}, dept = ${data.dept ?? null}, role = ${data.role ?? null}, atasan_raw = ${data.atasan_raw ?? null},
+      lokasi = ${data.lokasi ?? null}, masa = ${data.masa ?? null}, panggilan = ${data.panggilan ?? null},
+      cabang = ${data.cabang ?? null}, whatsapp = ${data.whatsapp ?? null}, roster_pending = ${data.roster_pending ?? false},
+      okr_objective = ${data.okr_objective ?? null}, quote = ${data.quote ?? null}
+    WHERE id = ${id}`;
+  return { updated: r.count > 0 };
+}
+
+// Hapus karyawan — child (kpi/bsc/okr/pdca/raci/voice/tool/task + kpi_measurement)
+// ikut terhapus via ON DELETE CASCADE.
+export async function deleteEmployee(id: string): Promise<{ deleted: boolean }> {
+  const r = await db()`DELETE FROM employee WHERE id = ${id}`;
+  return { deleted: r.count > 0 };
+}

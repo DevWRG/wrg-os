@@ -1,11 +1,13 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { useConfirm } from "@/components/ui/use-confirm";
 
 export interface Dept { key: string; label: string; color: string | null; weights: Record<string, number>; count: number }
 export interface EmployeeItem {
@@ -14,7 +16,7 @@ export interface EmployeeItem {
 }
 interface Kpi { id: string; name: string; target: string | null; frequency: string | null; perspective: string | null; lower_better: boolean }
 interface Profile {
-  id: string; nama: string; dept_label: string | null; dept_color: string | null; role: string | null;
+  id: string; nama: string; dept: string | null; dept_label: string | null; dept_color: string | null; role: string | null;
   atasan_raw: string | null; lokasi: string | null; masa: string | null; panggilan: string | null; cabang: string | null;
   whatsapp: string | null; roster_pending: boolean; quote: string | null; okr_objective: string | null;
   weights: Record<string, number>; tools: string[]; tasks: string[]; bsc: Record<string, string[]>;
@@ -57,6 +59,10 @@ export function EmployeeSpineManager({ departments, employees }: { departments: 
   const [q, setQ] = useState("");
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const router = useRouter();
 
   const filtered = useMemo(() => {
     const term = q.trim().toLowerCase();
@@ -78,7 +84,18 @@ export function EmployeeSpineManager({ departments, employees }: { departments: 
     } finally { setLoading(false); }
   }, []);
 
-  if (profile) return <ProfileView key={profile.id} p={profile} onBack={() => setProfile(null)} />;
+  const createEmp = async (data: EmpFormData) => {
+    setSaving(true); setErr(null);
+    try {
+      const r = await fetch("/api/employee-spine/employees", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(data) });
+      const j = await r.json();
+      if (!r.ok) { setErr(String(j.error ?? `HTTP ${r.status}`)); return; }
+      setCreating(false); router.refresh();
+    } catch { setErr("Gagal menyimpan (backend tak terjangkau)"); }
+    finally { setSaving(false); }
+  };
+
+  if (profile) return <ProfileView key={profile.id} p={profile} departments={departments} onBack={() => setProfile(null)} onUpdated={setProfile} />;
 
   return (
     <div className="space-y-4">
@@ -89,7 +106,18 @@ export function EmployeeSpineManager({ departments, employees }: { departments: 
         ))}
         <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari nama/role/cabang…" className="h-8 w-56" />
         {loading && <span className="text-muted-foreground text-sm">Memuat…</span>}
+        <Button size="sm" className="ml-auto" onClick={() => { setCreating((v) => !v); setErr(null); }}>{creating ? "Batal" : "+ Tambah Karyawan"}</Button>
       </div>
+
+      {creating && (
+        <Card>
+          <CardHeader><CardTitle className="text-base">Tambah Karyawan</CardTitle></CardHeader>
+          <CardContent>
+            {err && <div className="mb-3 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">{err}</div>}
+            <EmployeeForm departments={departments} initial={emptyForm()} submitting={saving} onCancel={() => setCreating(false)} onSubmit={createEmp} />
+          </CardContent>
+        </Card>
+      )}
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
         {filtered.map((e) => (
@@ -120,13 +148,37 @@ function currentMonth(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
 
-function ProfileView({ p, onBack }: { p: Profile; onBack: () => void }) {
+function ProfileView({ p, departments, onBack, onUpdated }: { p: Profile; departments: Dept[]; onBack: () => void; onUpdated: (p: Profile) => void }) {
   const [inputs, setInputs] = useState<Record<string, number>>(() => Object.fromEntries(p.kpi.map((k) => [k.id, 100])));
   const [period, setPeriod] = useState(currentMonth);
   const [loadingM, setLoadingM] = useState(false);
   const [saving, setSaving] = useState(false);
   const [savedMsg, setSavedMsg] = useState<string | null>(null);
   const sc = computeScore(p.kpi, p.weights, inputs);
+
+  const router = useRouter();
+  const { confirm, dialog } = useConfirm();
+  const [editing, setEditing] = useState(false);
+  const [savingEmp, setSavingEmp] = useState(false);
+  const [empErr, setEmpErr] = useState<string | null>(null);
+
+  const saveEmp = async (data: EmpFormData) => {
+    setSavingEmp(true); setEmpErr(null);
+    try {
+      const r = await fetch(`/api/employee-spine/employees/${p.id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(data) });
+      const j = await r.json();
+      if (!r.ok) { setEmpErr(String(j.error ?? `HTTP ${r.status}`)); return; }
+      const rr = await fetch(`/api/employee-spine/employees/${p.id}`);
+      if (rr.ok) onUpdated((await rr.json()) as Profile);
+      setEditing(false); router.refresh();
+    } catch { setEmpErr("Gagal menyimpan (backend tak terjangkau)"); }
+    finally { setSavingEmp(false); }
+  };
+
+  const removeEmp = () => confirm(
+    { title: `Hapus ${p.nama}?`, description: "Profil + semua KPI/BSC/OKR/PDCA/RACI/Voice/measurement karyawan ini dihapus permanen.", destructive: true, confirmLabel: "Hapus" },
+    async () => { const r = await fetch(`/api/employee-spine/employees/${p.id}`, { method: "DELETE" }); if (r.ok) { router.refresh(); onBack(); } },
+  );
 
   // Prefill % dari measurement tersimpan utk periode terpilih (default 100).
   const loadMeasurements = useCallback(async (per: string) => {
@@ -167,8 +219,23 @@ function ProfileView({ p, onBack }: { p: Profile; onBack: () => void }) {
           <h3 className="text-lg font-semibold">{p.nama}{p.panggilan ? ` (${p.panggilan})` : ""}</h3>
           <div className="text-muted-foreground text-sm">{p.role ?? "—"} · {p.dept_label ?? "—"}{p.cabang ? ` · ${p.cabang}` : ""}</div>
         </div>
-        <Button size="sm" variant="outline" onClick={onBack}>← Kembali</Button>
+        <div className="flex gap-2">
+          <Button size="sm" variant="outline" onClick={() => { setEditing((v) => !v); setEmpErr(null); }}>{editing ? "Batal Edit" : "Edit"}</Button>
+          <Button size="sm" variant="outline" className="text-destructive hover:bg-destructive/10" onClick={removeEmp}>Hapus</Button>
+          <Button size="sm" variant="outline" onClick={onBack}>← Kembali</Button>
+        </div>
       </div>
+
+      {editing && (
+        <Card>
+          <CardHeader><CardTitle className="text-base">Edit Karyawan</CardTitle></CardHeader>
+          <CardContent>
+            {empErr && <div className="mb-3 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">{empErr}</div>}
+            <EmployeeForm departments={departments} initial={profileToForm(p)} submitting={savingEmp} onCancel={() => setEditing(false)} onSubmit={saveEmp} />
+          </CardContent>
+        </Card>
+      )}
+
       {p.quote && <blockquote className="border-primary text-muted-foreground border-l-4 pl-3 text-sm italic">“{p.quote}”</blockquote>}
 
       <div className="grid gap-4 lg:grid-cols-2">
@@ -269,6 +336,70 @@ function ProfileView({ p, onBack }: { p: Profile; onBack: () => void }) {
       <div className="grid gap-4 lg:grid-cols-2">
         <Section title="Tools"><div className="flex flex-wrap gap-1.5">{p.tools.map((t, i) => <Badge key={i} variant="secondary">{t}</Badge>)}{p.tools.length === 0 && <span className="text-muted-foreground text-sm">—</span>}</div></Section>
         <Section title="Tugas Utama"><ul className="list-inside list-disc space-y-1 text-sm">{p.tasks.map((t, i) => <li key={i}>{t}</li>)}{p.tasks.length === 0 && <li className="text-muted-foreground">—</li>}</ul></Section>
+      </div>
+      {dialog}
+    </div>
+  );
+}
+
+// ── Form CRUD karyawan (dipakai create & edit) ──
+interface EmpFormData {
+  nama: string; dept: string; role: string; panggilan: string; cabang: string; lokasi: string;
+  whatsapp: string; masa: string; atasan_raw: string; okr_objective: string; quote: string; roster_pending: boolean;
+}
+function emptyForm(): EmpFormData {
+  return { nama: "", dept: "", role: "", panggilan: "", cabang: "", lokasi: "", whatsapp: "", masa: "", atasan_raw: "", okr_objective: "", quote: "", roster_pending: false };
+}
+function profileToForm(p: Profile): EmpFormData {
+  return {
+    nama: p.nama ?? "", dept: p.dept ?? "", role: p.role ?? "", panggilan: p.panggilan ?? "",
+    cabang: p.cabang ?? "", lokasi: p.lokasi ?? "", whatsapp: p.whatsapp ?? "", masa: p.masa ?? "",
+    atasan_raw: p.atasan_raw ?? "", okr_objective: p.okr_objective ?? "", quote: p.quote ?? "", roster_pending: p.roster_pending,
+  };
+}
+
+function EmployeeForm({ departments, initial, submitting, onCancel, onSubmit }: {
+  departments: Dept[]; initial: EmpFormData; submitting: boolean; onCancel: () => void; onSubmit: (d: EmpFormData) => void;
+}) {
+  const [f, setF] = useState<EmpFormData>(initial);
+  const set = (k: keyof EmpFormData, v: string | boolean) => setF((prev) => ({ ...prev, [k]: v }) as EmpFormData);
+  const field = (label: string, k: keyof EmpFormData) => (
+    <label className="grid gap-1 text-sm">
+      <span className="text-muted-foreground text-xs">{label}</span>
+      <Input value={f[k] as string} onChange={(e) => set(k, e.target.value)} className="h-8" />
+    </label>
+  );
+  return (
+    <div className="space-y-3">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <label className="grid gap-1 text-sm">
+          <span className="text-muted-foreground text-xs">Nama *</span>
+          <Input value={f.nama} onChange={(e) => set("nama", e.target.value)} className="h-8" />
+        </label>
+        <label className="grid gap-1 text-sm">
+          <span className="text-muted-foreground text-xs">Departemen</span>
+          <select value={f.dept} onChange={(e) => set("dept", e.target.value)} className="border-input bg-background h-8 rounded-md border px-2 text-sm">
+            <option value="">— pilih —</option>
+            {departments.map((d) => <option key={d.key} value={d.key}>{d.label}</option>)}
+          </select>
+        </label>
+        {field("Panggilan", "panggilan")}
+        {field("Role / Jabatan", "role")}
+        {field("Cabang", "cabang")}
+        {field("Lokasi", "lokasi")}
+        {field("WhatsApp", "whatsapp")}
+        {field("Masa kerja", "masa")}
+        {field("Atasan (mentah)", "atasan_raw")}
+        {field("OKR objektif", "okr_objective")}
+        {field("Quote", "quote")}
+        <label className="flex items-center gap-2 self-end text-sm">
+          <input type="checkbox" checked={f.roster_pending} onChange={(e) => set("roster_pending", e.target.checked)} />
+          <span>Roster pending</span>
+        </label>
+      </div>
+      <div className="flex gap-2">
+        <Button size="sm" disabled={submitting || !f.nama.trim()} onClick={() => onSubmit({ ...f, nama: f.nama.trim() })}>{submitting ? "Menyimpan…" : "Simpan"}</Button>
+        <Button size="sm" variant="outline" onClick={onCancel}>Batal</Button>
       </div>
     </div>
   );
