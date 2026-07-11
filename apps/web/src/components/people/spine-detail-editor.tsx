@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 
 export interface KpiRow { id: string | null; name: string; target: string; frequency: string; perspective: string; lower_better: boolean }
@@ -70,7 +71,7 @@ export function SpineDetailEditor({ id, init, onCancel, onSaved }: { id: string;
   };
 
   return (
-    <div className="space-y-4 rounded-lg border p-4">
+    <Card><CardContent className="space-y-4">
       <div className="flex items-center justify-between">
         <h4 className="text-base font-semibold">Edit Detail Profil</h4>
         <div className="flex items-center gap-2">
@@ -143,6 +144,6 @@ export function SpineDetailEditor({ id, init, onCancel, onSaved }: { id: string;
         <ListArea label="Tools" value={tools} onChange={setTools} hint="1 per baris" />
         <ListArea label="Tugas Utama" value={tasks} onChange={setTasks} hint="1 per baris" />
       </div>
-    </div>
+    </CardContent></Card>
   );
 }

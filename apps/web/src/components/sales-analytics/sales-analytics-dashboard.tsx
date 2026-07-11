@@ -11,6 +11,7 @@ import { ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { SalesPerformanceCards, type SalesPerformance } from "@/components/sales/sales-performance-cards";
 import { TargetPacingView, type PacingData } from "@/components/sales/target-pacing-view";
 import { Input } from "@/components/ui/input";
@@ -285,17 +286,24 @@ export function SalesAnalyticsDashboard({ initial, initialView }: { initial: Ove
 
   return (
     <div className="space-y-4">
-      {/* Filter periode + tabs */}
-      <div className="flex flex-wrap items-end gap-3">
-        <div className="grid gap-1"><Label htmlFor="sa-from" className="text-xs">Dari</Label><Input id="sa-from" type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="h-9 w-40 bg-card border-border" /></div>
-        <div className="grid gap-1"><Label htmlFor="sa-to" className="text-xs">Sampai</Label><Input id="sa-to" type="date" value={to} onChange={(e) => setTo(e.target.value)} className="h-9 w-40 bg-card border-border" /></div>
-        <Button size="sm" onClick={apply}>Terapkan</Button>
-        <Button size="sm" className={SEC_BTN} onClick={exportCsv} disabled={!cur}>Export CSV</Button>
-        <Button size="sm" className={SEC_BTN} onClick={() => void exportXlsx()} disabled={!cur}>Export XLSX</Button>
-        <Button size="sm" className={SEC_BTN} onClick={exportPdf} disabled={!cur}>Export PDF</Button>
-        <Button size="sm" className={SEC_BTN} onClick={saveCurrentView}>Simpan view</Button>
-        <span className="text-muted-foreground text-xs">Kosongkan = year-to-date.</span>
-      </div>
+      {/* Filter periode + aksi */}
+      <Card>
+        <CardContent className="flex flex-wrap items-end gap-3">
+          <div className="grid gap-1"><Label htmlFor="sa-from" className="text-xs">Dari</Label><Input id="sa-from" type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="h-9 w-40 bg-card border-border" /></div>
+          <div className="grid gap-1"><Label htmlFor="sa-to" className="text-xs">Sampai</Label><Input id="sa-to" type="date" value={to} onChange={(e) => setTo(e.target.value)} className="h-9 w-40 bg-card border-border" /></div>
+          <Button size="sm" onClick={apply}>Terapkan</Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger render={<Button size="sm" className={SEC_BTN} disabled={!cur} />}>Export data ▾</DropdownMenuTrigger>
+            <DropdownMenuContent align="start">
+              <DropdownMenuItem onClick={exportCsv}>Export CSV</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => void exportXlsx()}>Export XLSX</DropdownMenuItem>
+              <DropdownMenuItem onClick={exportPdf}>Export PDF</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <Button size="sm" className={SEC_BTN} onClick={saveCurrentView}>Simpan view</Button>
+          <span className="text-muted-foreground text-xs">Kosongkan = year-to-date.</span>
+        </CardContent>
+      </Card>
 
       {views.length > 0 && (
         <div className="flex flex-wrap items-center gap-2">

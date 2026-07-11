@@ -88,16 +88,18 @@ export function HodResolverView({ data }: { data: HodResolution }) {
         {msg && <span className={`text-xs font-medium ${msg.startsWith("Gagal") ? "text-red-600" : "text-emerald-600"}`}>{msg}</span>}
       </div>
 
+      <Card><CardContent className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
         <div className="flex gap-1 rounded-lg border p-1">
           {([["all", "Semua"], ["resolved", "Resolved"], ["ambiguous", "Ambigu"], ["none", "Perlu review"]] as const).map(([k, lbl]) => (
             <button key={k} onClick={() => setStatus(k)} className={`rounded-md px-3 py-1 text-sm font-medium ${status === k ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`}>{lbl}</button>
           ))}
         </div>
-        <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari nama / atasan…" className="h-8 w-56" />
+        <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari nama / atasan…" className="h-8 w-56 bg-card border-border" />
       </div>
 
       <DataTable data={filtered} columns={columns} getKey={(r) => r.id} initialSort={{ id: "status", dir: "asc" }} pageSize={25} empty="Tidak ada baris cocok." />
+      </CardContent></Card>
       {dialog}
     </div>
   );

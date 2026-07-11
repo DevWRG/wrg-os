@@ -49,13 +49,14 @@ export function VoiceOfEmployee({ items }: { items: VoiceItem[] }) {
         <Card><CardContent className="py-4"><div className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">Kontributor</div><div className="mt-1 text-2xl font-bold">{contributors}</div></CardContent></Card>
       </div>
 
+      <Card><CardContent className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
         <div className="flex gap-1 rounded-lg border p-1">
           {([["all", "Semua"], ["pain", "Kendala"], ["idea", "Ide"]] as const).map(([k, lbl]) => (
             <button key={k} onClick={() => setKind(k)} className={`rounded-md px-3 py-1 text-sm font-medium ${kind === k ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`}>{lbl}</button>
           ))}
         </div>
-        <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari isi / nama…" className="h-8 w-56" />
+        <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari isi / nama…" className="h-8 w-56 bg-card border-border" />
         <span className="text-muted-foreground text-xs">{filtered.length} item</span>
       </div>
 
@@ -82,6 +83,7 @@ export function VoiceOfEmployee({ items }: { items: VoiceItem[] }) {
         ))}
         {filtered.length === 0 && <p className="text-muted-foreground col-span-full py-8 text-center text-sm">Tidak ada item cocok.</p>}
       </div>
+      </CardContent></Card>
     </div>
   );
 }

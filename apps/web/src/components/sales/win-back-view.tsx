@@ -74,7 +74,7 @@ export function WinBackView({ customers }: { customers: DormantCustomer[] }) {
             <button key={d} onClick={() => setMinDays(d)} className={`rounded-md px-3 py-1 text-sm font-medium ${minDays === d ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`}>≥{d}h</button>
           ))}
         </div>
-        <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari customer / AM / cabang…" className="h-8 w-64" />
+        <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari customer / AM / cabang…" className="h-8 w-64 bg-card border-border" />
         <Button size="sm" variant="outline" onClick={exportCsv} disabled={!filtered.length}>Export CSV</Button>
         <span className="text-muted-foreground text-xs">{filtered.length} customer</span>
       </div>

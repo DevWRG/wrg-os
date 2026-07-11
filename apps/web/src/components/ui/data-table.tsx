@@ -105,7 +105,7 @@ export function DataTable<T>({
               setPage(0);
             }}
             placeholder={searchPlaceholder}
-            className="h-8 pl-8"
+            className="h-8 pl-8 bg-card border-border"
           />
         </div>
         {toolbar && <div className="flex flex-wrap items-center gap-2">{toolbar}</div>}

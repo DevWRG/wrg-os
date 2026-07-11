@@ -106,7 +106,7 @@ export function EmployeeSpineManager({ departments, employees, hods = [] }: { de
         {departments.map((d) => (
           <button key={d.key} onClick={() => setDept(d.key)} className={`rounded-full px-3 py-1 text-xs font-medium ${dept === d.key ? "bg-primary text-primary-foreground" : "bg-muted hover:bg-muted/70"}`}>{d.label} ({d.count})</button>
         ))}
-        <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari nama/role/cabang…" className="h-8 w-56" />
+        <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari nama/role/cabang…" className="h-8 w-56 bg-card border-border" />
         {loading && <span className="text-muted-foreground text-sm">Memuat…</span>}
         <Button size="sm" className="ml-auto" onClick={() => { setCreating((v) => !v); setErr(null); }}>{creating ? "Batal" : "+ Tambah Karyawan"}</Button>
       </div>
@@ -217,6 +217,9 @@ function ProfileView({ p, departments, hods, onBack, onUpdated }: { p: Profile; 
   }, [p.id, p.kpi, inputs, period]);
   return (
     <div className="space-y-4">
+      <div>
+        <Button size="sm" variant="outline" className="bg-card" onClick={onBack}>← Kembali ke daftar</Button>
+      </div>
       <div className="flex items-center justify-between">
         <div>
           <h3 className="text-lg font-semibold">{p.nama}{p.panggilan ? ` (${p.panggilan})` : ""}</h3>
@@ -226,7 +229,6 @@ function ProfileView({ p, departments, hods, onBack, onUpdated }: { p: Profile; 
           <Button size="sm" variant="outline" onClick={() => { setEditing((v) => !v); setEmpErr(null); }}>{editing ? "Batal Edit" : "Edit"}</Button>
           <Button size="sm" variant="outline" onClick={() => setEditingDetail((v) => !v)}>{editingDetail ? "Tutup Detail" : "Edit Detail"}</Button>
           <Button size="sm" variant="outline" className="text-destructive hover:bg-destructive/10" onClick={removeEmp}>Hapus</Button>
-          <Button size="sm" variant="outline" onClick={onBack}>← Kembali</Button>
         </div>
       </div>
 
