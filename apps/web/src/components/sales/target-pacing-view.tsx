@@ -63,8 +63,12 @@ export function TargetPacingView({ data }: { data: PacingData }) {
         ))}
       </div>
 
-      <DataTable data={rows} columns={columns} getKey={(r) => ("am_id" in r ? r.am_id : r.cabang)} initialSort={{ id: "pace", dir: "asc" }} pageSize={25} empty="Belum ada target di-set utk tahun ini (menu Admin → Sales Targets)." />
-      <p className="text-muted-foreground text-xs">Pace = actual ÷ (target × {data.elapsed_pct}% periode berlalu). ≥100% on-track · 90–99% at-risk · &lt;90% behind. Proyeksi = ekstrapolasi linear actual ke akhir tahun.</p>
+      <Card>
+        <CardContent>
+          <DataTable data={rows} columns={columns} getKey={(r) => ("am_id" in r ? r.am_id : r.cabang)} initialSort={{ id: "pace", dir: "asc" }} pageSize={25} empty="Belum ada target di-set utk tahun ini (menu Admin → Sales Targets)." />
+          <p className="text-muted-foreground mt-3 text-xs">Pace = actual ÷ (target × {data.elapsed_pct}% periode berlalu). ≥100% on-track · 90–99% at-risk · &lt;90% behind. Proyeksi = ekstrapolasi linear actual ke akhir tahun.</p>
+        </CardContent>
+      </Card>
     </div>
   );
 }
