@@ -24,7 +24,7 @@ const statusStyle = (s: string) =>
   : s === "at-risk" ? "bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300"
   : s === "behind" ? "bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-300"
   : "bg-slate-100 text-slate-600 dark:bg-slate-500/20 dark:text-slate-300";
-const statusLabel = (s: string) => (s === "on-track" ? "On-track" : s === "at-risk" ? "At-risk" : s === "behind" ? "Behind" : "—");
+const statusLabel = (s: string) => (s === "on-track" ? "Sesuai Target" : s === "at-risk" ? "Perlu Perhatian" : s === "behind" ? "Tertinggal" : "—");
 
 // Target Pacing — target vs actual YTD + proyeksi akhir tahun, per AM & cabang.
 export function TargetPacingView({ data }: { data: PacingData }) {
@@ -66,7 +66,7 @@ export function TargetPacingView({ data }: { data: PacingData }) {
       <Card>
         <CardContent>
           <DataTable data={rows} columns={columns} getKey={(r) => ("am_id" in r ? r.am_id : r.cabang)} initialSort={{ id: "pace", dir: "asc" }} pageSize={25} empty="Belum ada target di-set utk tahun ini (menu Admin → Sales Targets)." />
-          <p className="text-muted-foreground mt-3 text-xs">Pace = actual ÷ (target × {data.elapsed_pct}% periode berlalu). ≥100% on-track · 90–99% at-risk · &lt;90% behind. Proyeksi = ekstrapolasi linear actual ke akhir tahun.</p>
+          <p className="text-muted-foreground mt-3 text-xs">Pace = actual ÷ (target × {data.elapsed_pct}% periode berlalu). ≥100% Sesuai Target · 90–99% Perlu Perhatian · &lt;90% Tertinggal. Proyeksi = ekstrapolasi linear actual ke akhir tahun.</p>
         </CardContent>
       </Card>
     </div>
