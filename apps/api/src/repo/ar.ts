@@ -150,15 +150,15 @@ export async function getAging(bucket?: string): Promise<{
   invoices: AgingInvoice[];
 }> {
   const sql = db();
-  // Hanya invoice yg MASIH outstanding di mirror (yg sudah lunas dikecualikan);
-  // amount = outstanding hidup (partial-paid ikut sisanya). due_date/bucket dari
-  // ar_aging_mv (berbasis jatuh tempo). JOIN ke accurate_invoice = sumber otoritatif.
+  // Buang invoice yg TERKONFIRMASI lunas di mirror (outstanding=0); amount =
+  // outstanding hidup bila cocok (partial-paid ikut sisanya), else fallback
+  // ar_aging_mv.amount agar baris tak-cocok tak hilang. due_date/bucket dari ar_aging_mv.
   const rows = await sql`
     SELECT m.customer_id, m.customer_name, m.invoice_no, m.due_date::text AS due_date,
-      ai.outstanding::float8 AS amount, m.days_overdue, m.bucket, m.is_anomaly
+      COALESCE(ai.outstanding, m.amount)::float8 AS amount, m.days_overdue, m.bucket, m.is_anomaly
     FROM ar_aging_mv m
-    JOIN accurate_invoice ai ON ai.number = m.invoice_no AND ai.customer_id::text = m.customer_id
-    WHERE ai.outstanding > 0
+    LEFT JOIN accurate_invoice ai ON ai.number = m.invoice_no AND ai.customer_id::text = m.customer_id
+    WHERE COALESCE(ai.outstanding, m.amount) > 0
     ORDER BY m.days_overdue DESC`;
   const bmap = new Map<string, { count: number; total: number }>();
   let totAmt = 0;
@@ -247,11 +247,13 @@ export async function arAgingByCustomer() {
   const sql = db();
   const rows = await sql`
     WITH src AS (
-      -- hanya invoice yg masih outstanding (lunas dikecualikan); amount = outstanding hidup
-      SELECT m.customer_id, m.bucket, m.days_overdue, m.customer_name, ai.outstanding::float8 AS amount
+      -- buang hanya invoice yg TERKONFIRMASI lunas di mirror (outstanding=0); baris tak
+      -- cocok di mirror tetap dihitung (fallback ar_aging_mv.amount) agar tak hilang.
+      SELECT m.customer_id, m.bucket, m.days_overdue, m.customer_name,
+        COALESCE(ai.outstanding, m.amount)::float8 AS amount
       FROM ar_aging_mv m
-      JOIN accurate_invoice ai ON ai.number = m.invoice_no AND ai.customer_id::text = m.customer_id
-      WHERE ai.outstanding > 0
+      LEFT JOIN accurate_invoice ai ON ai.number = m.invoice_no AND ai.customer_id::text = m.customer_id
+      WHERE COALESCE(ai.outstanding, m.amount) > 0
     ),
     agg AS (
       SELECT s.customer_id AS cid,
