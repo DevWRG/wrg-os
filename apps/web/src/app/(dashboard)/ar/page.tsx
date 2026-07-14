@@ -1,6 +1,6 @@
 import { gatewayFetch } from "@/lib/gateway";
 import { PageHeader } from "@/components/dashboard/page-header";
-import { ArBreakdownTabs, type ArGroup } from "@/components/tables/ar-breakdown-tabs";
+import { type ArGroup } from "@/components/tables/ar-breakdown-tabs";
 import { ArAgingTabs } from "@/components/tables/ar-aging-tabs";
 import { type ArCustomer } from "@/components/tables/ar-by-customer-view";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -139,11 +139,6 @@ export default async function ArAgingPage() {
               salesman tanpa cabang/master_user di data Accurate.
             </p>
           )}
-          <Card>
-            <CardContent className="pt-6">
-              <ArBreakdownTabs byCustomer={ar.by_customer} byCabang={ar.by_cabang} bySales={ar.by_sales} />
-            </CardContent>
-          </Card>
         </>
       )}
 
@@ -180,10 +175,10 @@ export default async function ArAgingPage() {
             })}
           </div>
 
-          <h2 className="text-muted-foreground pt-2 text-[11px] font-semibold tracking-wider uppercase">Rincian aging (per customer · klik baris untuk detail invoice)</h2>
+          <h2 className="text-muted-foreground pt-2 text-[11px] font-semibold tracking-wider uppercase">Rincian piutang (klik baris untuk detail invoice)</h2>
           <Card>
             <CardContent className="pt-6">
-              <ArAgingTabs customers={byCust?.customers ?? []} invoices={data.invoices} />
+              <ArAgingTabs customers={byCust?.customers ?? []} invoices={data.invoices} byCabang={ar?.by_cabang ?? []} bySales={ar?.by_sales ?? []} />
             </CardContent>
           </Card>
         </>
