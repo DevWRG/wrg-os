@@ -177,3 +177,119 @@ export async function getAging(bucket?: string): Promise<{
     })),
   };
 }
+
+// F30 AR Aging per Customer — agregasi ar_aging_mv per customer + breakdown 5 bucket
+// umur + prioritas tagih + resolve AM/cabang (invoice terakhir, dari accurate_invoice).
+// Read-only utk drill-down UI (bucket = konvensi existing: current/1-30/31-60/61-90/90+).
+export type ArPriority = "KRITIS" | "TINGGI" | "SEDANG" | "RENDAH";
+// Prioritas tagih dari bucket tertua yg punya nominal: 90+ → KRITIS, dst.
+function arPriorityOf(b31_60: number, b61_90: number, b90plus: number): ArPriority {
+  if (b90plus > 0) return "KRITIS";
+  if (b61_90 > 0) return "TINGGI";
+  if (b31_60 > 0) return "SEDANG";
+  return "RENDAH";
+}
+// Detail satu invoice (header + line item) dari mirror Accurate, di-lookup by
+// nomor invoice (ar_aging_mv.invoice_no = accurate_invoice.number). Read-only.
+export async function invoiceDetail(no: string) {
+  const sql = db();
+  const [inv] = await sql`
+    SELECT ai.id, ai.number,
+      COALESCE(NULLIF(ac.name,''), NULLIF(ai.raw->'customer'->>'name',''), NULLIF(ai.raw->>'retailWpName',''), 'Customer #'||ai.customer_id::text) AS customer_name,
+      ai.tanggal::text AS tanggal, ai.total::float8 AS total, ai.taxable_amount::float8 AS taxable,
+      ai.tax_amount::float8 AS tax, ai.paid::float8 AS paid, ai.outstanding::float8 AS outstanding,
+      ai.status, COALESCE(NULLIF(mu.nama,''), NULLIF(ai.salesman_name,'')) AS am, NULLIF(mu.cabang,'') AS cabang
+    FROM accurate_invoice ai
+    LEFT JOIN accurate_customer ac ON ac.id = ai.customer_id
+    LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
+    LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
+    WHERE ai.number = ${no}
+    LIMIT 1`;
+  if (!inv) return { ok: false as const, invoice: null, items: [] };
+  const items = await sql`
+    SELECT aii.line_no,
+      COALESCE(NULLIF(it.name,''), NULLIF(aii.raw->>'detailName',''), 'Item #'||aii.item_id::text) AS name,
+      aii.qty::float8 AS qty, aii.unit, aii.unit_price::float8 AS unit_price,
+      aii.discount_amount::float8 AS discount, aii.total::float8 AS total
+    FROM accurate_invoice_item aii
+    LEFT JOIN accurate_item it ON it.id = aii.item_id
+    WHERE aii.invoice_id = ${inv.id}
+    ORDER BY aii.line_no NULLS LAST, aii.id`;
+  return {
+    ok: true as const,
+    invoice: {
+      number: String(inv.number),
+      customer_name: String(inv.customer_name),
+      tanggal: inv.tanggal ? String(inv.tanggal) : null,
+      total: Number(inv.total), taxable: Number(inv.taxable), tax: Number(inv.tax),
+      paid: Number(inv.paid), outstanding: Number(inv.outstanding),
+      status: inv.status ? String(inv.status) : null,
+      am: inv.am ? String(inv.am) : null, cabang: inv.cabang ? String(inv.cabang) : null,
+    },
+    items: items.map((r) => ({
+      line_no: r.line_no == null ? null : Number(r.line_no),
+      name: String(r.name), qty: r.qty == null ? null : Number(r.qty), unit: r.unit ? String(r.unit) : null,
+      unit_price: Number(r.unit_price), discount: Number(r.discount), total: Number(r.total),
+    })),
+  };
+}
+
+export async function arAgingByCustomer() {
+  const sql = db();
+  const rows = await sql`
+    WITH agg AS (
+      SELECT m.customer_id AS cid,
+        max(m.customer_name) AS name,
+        count(*)::int AS invoices,
+        COALESCE(sum(m.amount),0)::float8 AS total,
+        COALESCE(sum(m.amount) FILTER (WHERE m.bucket = 'current'),0)::float8 AS b_current,
+        COALESCE(sum(m.amount) FILTER (WHERE m.bucket = '1-30'),0)::float8 AS b_1_30,
+        COALESCE(sum(m.amount) FILTER (WHERE m.bucket = '31-60'),0)::float8 AS b_31_60,
+        COALESCE(sum(m.amount) FILTER (WHERE m.bucket = '61-90'),0)::float8 AS b_61_90,
+        COALESCE(sum(m.amount) FILTER (WHERE m.bucket = '90+'),0)::float8 AS b_90plus,
+        max(m.days_overdue)::int AS max_overdue
+      FROM ar_aging_mv m
+      GROUP BY m.customer_id
+    ),
+    last_am AS (
+      SELECT DISTINCT ON (ai.customer_id::text) ai.customer_id::text AS cid,
+        COALESCE(NULLIF(mu.nama,''), NULLIF(ai.salesman_name,'')) AS am,
+        NULLIF(mu.cabang,'') AS cabang
+      FROM accurate_invoice ai
+      LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
+      LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
+      WHERE ai.customer_id IS NOT NULL
+      ORDER BY ai.customer_id::text, ai.tanggal DESC
+    )
+    SELECT a.cid, a.name, a.invoices, a.total, a.b_current, a.b_1_30, a.b_31_60, a.b_61_90, a.b_90plus, a.max_overdue, la.am, la.cabang
+    FROM agg a LEFT JOIN last_am la ON la.cid = a.cid
+    ORDER BY a.b_90plus DESC, a.total DESC`;
+  const customers = rows.map((r) => {
+    const b31_60 = Number(r.b_31_60), b61_90 = Number(r.b_61_90), b90plus = Number(r.b_90plus);
+    return {
+      id: String(r.cid),
+      name: r.name ? String(r.name) : `Customer #${r.cid}`,
+      cabang: r.cabang ? String(r.cabang) : null,
+      am: r.am ? String(r.am) : null,
+      invoices: Number(r.invoices),
+      total: Number(r.total),
+      current: Number(r.b_current),
+      b1_30: Number(r.b_1_30),
+      b31_60, b61_90, b90plus,
+      overdue: b31_60 + b61_90 + b90plus + Number(r.b_1_30),
+      max_overdue: Number(r.max_overdue),
+      priority: arPriorityOf(b31_60, b61_90, b90plus),
+    };
+  });
+  const sum = (k: "total" | "current" | "b1_30" | "b31_60" | "b61_90" | "b90plus" | "overdue") => customers.reduce((a, c) => a + c[k], 0);
+  return {
+    summary: {
+      total_customers: customers.length,
+      total_outstanding: sum("total"),
+      overdue_outstanding: sum("overdue"),
+      kritis: customers.filter((c) => c.priority === "KRITIS").length,
+      buckets: { current: sum("current"), "1-30": sum("b1_30"), "31-60": sum("b31_60"), "61-90": sum("b61_90"), "90+": sum("b90plus") },
+    },
+    customers,
+  };
+}
