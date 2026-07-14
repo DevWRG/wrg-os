@@ -93,8 +93,44 @@ export default async function ArAgingPage() {
         description="Piutang (outstanding invoice OPEN) per customer / cabang / sales + aging per bucket umur. Data live dari Accurate."
       />
 
+      {data && data.total_invoices > 0 && (
+        <>
+          <h2 className="text-muted-foreground pt-2 text-[11px] font-semibold tracking-wider uppercase">Aging per bucket umur</h2>
+          <div className="grid gap-4 md:grid-cols-3 lg:grid-cols-6">
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-muted-foreground text-sm font-medium">
+                  Total Outstanding
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-xl font-semibold">{rupiah(data.total_outstanding)}</div>
+                <p className="text-muted-foreground text-xs">{data.total_invoices} invoice</p>
+              </CardContent>
+            </Card>
+            {BUCKET_ORDER.map((b) => {
+              const row = data.buckets.find((x) => x.bucket === b);
+              return (
+                <Card key={b}>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-muted-foreground text-sm font-medium">
+                      {b}
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-xl font-semibold">{rupiah(row?.total ?? 0)}</div>
+                    <p className="text-muted-foreground text-xs">{row?.count ?? 0} invoice</p>
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+        </>
+      )}
+
       {ar && ar.total_invoices > 0 && (
         <>
+          <h2 className="text-muted-foreground pt-2 text-[11px] font-semibold tracking-wider uppercase">Per area</h2>
           <div className="grid gap-4 sm:grid-cols-3">
             <Card className="border-primary/30 bg-primary-soft">
               <CardHeader className="pb-2">
@@ -135,37 +171,6 @@ export default async function ArAgingPage() {
 
       {data && data.total_invoices > 0 && (
         <>
-          <h2 className="text-muted-foreground pt-2 text-[11px] font-semibold tracking-wider uppercase">Aging per bucket umur</h2>
-          <div className="grid gap-4 md:grid-cols-3 lg:grid-cols-6">
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-muted-foreground text-sm font-medium">
-                  Total Outstanding
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="text-xl font-semibold">{rupiah(data.total_outstanding)}</div>
-                <p className="text-muted-foreground text-xs">{data.total_invoices} invoice</p>
-              </CardContent>
-            </Card>
-            {BUCKET_ORDER.map((b) => {
-              const row = data.buckets.find((x) => x.bucket === b);
-              return (
-                <Card key={b}>
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-muted-foreground text-sm font-medium">
-                      {b}
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="text-xl font-semibold">{rupiah(row?.total ?? 0)}</div>
-                    <p className="text-muted-foreground text-xs">{row?.count ?? 0} invoice</p>
-                  </CardContent>
-                </Card>
-              );
-            })}
-          </div>
-
           <h2 className="text-muted-foreground pt-2 text-[11px] font-semibold tracking-wider uppercase">Rincian piutang (klik baris untuk detail invoice)</h2>
           <Card>
             <CardContent className="pt-6">
