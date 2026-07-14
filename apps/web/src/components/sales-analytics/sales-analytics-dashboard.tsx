@@ -220,8 +220,8 @@ export function SalesAnalyticsDashboard({ initial, initialView }: { initial: Ove
     }
     if (tab === "pacing") {
       const d = cur as PacingData;
-      return { name: `sales-analytics_pacing_${d.year}`, headers: ["AM", "Cabang", "Target", "Actual", "Achievement%", "Pace%", "Status", "Proyeksi%"],
-        rows: d.am.map((r) => [r.nama, r.cabang, r.target, r.actual, r.achievement_pct, r.pace, r.status === "on-track" ? "Sesuai Target" : r.status === "at-risk" ? "Perlu Perhatian" : r.status === "behind" ? "Tertinggal" : "—", r.projected_pct]) };
+      return { name: `sales-analytics_pacing_${d.year}`, headers: ["AM", "Cabang", "Target", "Actual", "Achievement%", "Status", "Proyeksi%"],
+        rows: d.am.map((r) => [r.nama, r.cabang, r.target, r.actual, r.achievement_pct, r.status === "on-track" ? "Sesuai Target" : r.status === "at-risk" ? "Perlu Perhatian" : r.status === "behind" ? "Tertinggal" : "—", r.projected_pct]) };
     }
     const d = cur as OverviewResult;
     if (d.scope === "all") {
