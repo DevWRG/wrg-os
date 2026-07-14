@@ -177,3 +177,74 @@ export async function getAging(bucket?: string): Promise<{
     })),
   };
 }
+
+// F30 AR Aging per Customer — agregasi ar_aging_mv per customer + breakdown 5 bucket
+// umur + prioritas tagih + resolve AM/cabang (invoice terakhir, dari accurate_invoice).
+// Read-only utk drill-down UI (bucket = konvensi existing: current/1-30/31-60/61-90/90+).
+export type ArPriority = "KRITIS" | "TINGGI" | "SEDANG" | "RENDAH";
+// Prioritas tagih dari bucket tertua yg punya nominal: 90+ → KRITIS, dst.
+function arPriorityOf(b31_60: number, b61_90: number, b90plus: number): ArPriority {
+  if (b90plus > 0) return "KRITIS";
+  if (b61_90 > 0) return "TINGGI";
+  if (b31_60 > 0) return "SEDANG";
+  return "RENDAH";
+}
+export async function arAgingByCustomer() {
+  const sql = db();
+  const rows = await sql`
+    WITH agg AS (
+      SELECT m.customer_id AS cid,
+        max(m.customer_name) AS name,
+        count(*)::int AS invoices,
+        COALESCE(sum(m.amount),0)::float8 AS total,
+        COALESCE(sum(m.amount) FILTER (WHERE m.bucket = 'current'),0)::float8 AS b_current,
+        COALESCE(sum(m.amount) FILTER (WHERE m.bucket = '1-30'),0)::float8 AS b_1_30,
+        COALESCE(sum(m.amount) FILTER (WHERE m.bucket = '31-60'),0)::float8 AS b_31_60,
+        COALESCE(sum(m.amount) FILTER (WHERE m.bucket = '61-90'),0)::float8 AS b_61_90,
+        COALESCE(sum(m.amount) FILTER (WHERE m.bucket = '90+'),0)::float8 AS b_90plus,
+        max(m.days_overdue)::int AS max_overdue
+      FROM ar_aging_mv m
+      GROUP BY m.customer_id
+    ),
+    last_am AS (
+      SELECT DISTINCT ON (ai.customer_id::text) ai.customer_id::text AS cid,
+        COALESCE(NULLIF(mu.nama,''), NULLIF(ai.salesman_name,'')) AS am,
+        NULLIF(mu.cabang,'') AS cabang
+      FROM accurate_invoice ai
+      LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
+      LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
+      WHERE ai.customer_id IS NOT NULL
+      ORDER BY ai.customer_id::text, ai.tanggal DESC
+    )
+    SELECT a.cid, a.name, a.invoices, a.total, a.b_current, a.b_1_30, a.b_31_60, a.b_61_90, a.b_90plus, a.max_overdue, la.am, la.cabang
+    FROM agg a LEFT JOIN last_am la ON la.cid = a.cid
+    ORDER BY a.b_90plus DESC, a.total DESC`;
+  const customers = rows.map((r) => {
+    const b31_60 = Number(r.b_31_60), b61_90 = Number(r.b_61_90), b90plus = Number(r.b_90plus);
+    return {
+      id: String(r.cid),
+      name: r.name ? String(r.name) : `Customer #${r.cid}`,
+      cabang: r.cabang ? String(r.cabang) : null,
+      am: r.am ? String(r.am) : null,
+      invoices: Number(r.invoices),
+      total: Number(r.total),
+      current: Number(r.b_current),
+      b1_30: Number(r.b_1_30),
+      b31_60, b61_90, b90plus,
+      overdue: b31_60 + b61_90 + b90plus + Number(r.b_1_30),
+      max_overdue: Number(r.max_overdue),
+      priority: arPriorityOf(b31_60, b61_90, b90plus),
+    };
+  });
+  const sum = (k: "total" | "current" | "b1_30" | "b31_60" | "b61_90" | "b90plus" | "overdue") => customers.reduce((a, c) => a + c[k], 0);
+  return {
+    summary: {
+      total_customers: customers.length,
+      total_outstanding: sum("total"),
+      overdue_outstanding: sum("overdue"),
+      kritis: customers.filter((c) => c.priority === "KRITIS").length,
+      buckets: { current: sum("current"), "1-30": sum("b1_30"), "31-60": sum("b31_60"), "61-90": sum("b61_90"), "90+": sum("b90plus") },
+    },
+    customers,
+  };
+}

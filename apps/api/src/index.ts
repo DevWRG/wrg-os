@@ -24,6 +24,7 @@ import {
   ingestInvoices,
   ingestAccurateWebhook,
   getAging,
+  arAgingByCustomer,
   type InvoiceInput,
   type AccurateInvoice,
 } from "./repo/ar.js";
@@ -722,6 +723,12 @@ app.post("/ar/invoices", async (c) => {
 app.get("/ar/aging", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json(await getAging(c.req.query("bucket") || undefined));
+});
+
+// F30 — AR aging per customer (breakdown 5 bucket + prioritas tagih). Read-only.
+app.get("/ar/aging/by-customer", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await arAgingByCustomer());
 });
 
 // Sync Accurate (puller, pengganti sync_accurate.sh). Read-only ke API Accurate

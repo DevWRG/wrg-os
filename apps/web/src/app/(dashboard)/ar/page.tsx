@@ -2,6 +2,7 @@ import { gatewayFetch } from "@/lib/gateway";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { ArTable } from "@/components/tables/ar-table";
 import { ArBreakdownTabs, type ArGroup } from "@/components/tables/ar-breakdown-tabs";
+import { ArByCustomerView, type ArCustomer } from "@/components/tables/ar-by-customer-view";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 export const dynamic = "force-dynamic";
@@ -68,8 +69,22 @@ async function getSalesAr(): Promise<SalesAr | null> {
   }
 }
 
+interface ByCustomer {
+  summary: { total_customers: number; total_outstanding: number; overdue_outstanding: number; kritis: number };
+  customers: ArCustomer[];
+}
+async function getByCustomer(): Promise<ByCustomer | null> {
+  try {
+    const res = await gatewayFetch(`/ar/aging/by-customer`);
+    if (!res.ok) return null;
+    return (await res.json()) as ByCustomer;
+  } catch {
+    return null;
+  }
+}
+
 export default async function ArAgingPage() {
-  const [data, ar] = await Promise.all([getAging(), getSalesAr()]);
+  const [data, ar, byCust] = await Promise.all([getAging(), getSalesAr(), getByCustomer()]);
 
   return (
     <>
@@ -165,6 +180,18 @@ export default async function ArAgingPage() {
             })}
           </div>
 
+          {byCust && byCust.customers.length > 0 && (
+            <>
+              <h2 className="text-muted-foreground pt-2 text-[11px] font-semibold tracking-wider uppercase">Aging per customer (klik untuk rincian invoice)</h2>
+              <Card>
+                <CardContent className="pt-6">
+                  <ArByCustomerView customers={byCust.customers} invoices={data.invoices} />
+                </CardContent>
+              </Card>
+            </>
+          )}
+
+          <h2 className="text-muted-foreground pt-2 text-[11px] font-semibold tracking-wider uppercase">Semua invoice</h2>
           <Card>
             <CardContent className="pt-6">
               <ArTable invoices={data.invoices} />
