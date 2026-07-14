@@ -1,9 +1,9 @@
 {
   "schemaVersion": "1.0.0",
-  "lastUpdate": "2026-07-13T00:00:10Z",
-  "totalReleases": 170,
-  "latest": "v1.99.2",
-  "releases": [{"tag":"v1.99.2","date":"2026-07-11","summary":"v1.99.2"},{"tag":"v1.99.1","date":"2026-07-10","summary":"v1.99.1"},{"tag":"v1.99.0","date":"2026-07-10","summary":"v1.99.0"},{"tag":"v1.98.1","date":"2026-07-10","summary":"v1.98.1"},{"tag":"v1.98.0","date":"2026-07-10","summary":"v1.98.0"},{"tag":"v1.97.0","date":"2026-07-10","summary":"v1.97.0"},{"tag":"v1.96.0","date":"2026-07-10","summary":"v1.96.0"},{"tag":"v1.95.0","date":"2026-07-10","summary":"v1.95.0"},{"tag":"v1.94.0","date":"2026-07-10","summary":"v1.94.0"},{"tag":"v1.93.1","date":"2026-07-10","summary":"v1.93.1"},{"tag":"v1.93.0","date":"2026-07-10","summary":"v1.93.0"},{"tag":"v1.92.0","date":"2026-07-10","summary":"v1.92.0"},{"tag":"v1.91.0","date":"2026-07-10","summary":"v1.91.0"},{"tag":"v1.90.0","date":"2026-07-10","summary":"v1.90.0"},{"tag":"v1.89.0","date":"2026-07-10","summary":"v1.89.0"},{"tag":"v1.88.0","date":"2026-07-10","summary":"v1.88.0"},{"tag":"v1.87.0","date":"2026-07-10","summary":"v1.87.0"},{"tag":"v1.86.2","date":"2026-07-10","summary":"v1.86.2"},{"tag":"v1.86.1","date":"2026-07-09","summary":"v1.86.1"},{"tag":"v1.86.0","date":"2026-07-09","summary":"v1.86.0"}],
+  "lastUpdate": "2026-07-14T00:00:09Z",
+  "totalReleases": 171,
+  "latest": "v1.99.3",
+  "releases": [{"tag":"v1.99.3","date":"2026-07-13","summary":"v1.99.3"},{"tag":"v1.99.2","date":"2026-07-11","summary":"v1.99.2"},{"tag":"v1.99.1","date":"2026-07-10","summary":"v1.99.1"},{"tag":"v1.99.0","date":"2026-07-10","summary":"v1.99.0"},{"tag":"v1.98.1","date":"2026-07-10","summary":"v1.98.1"},{"tag":"v1.98.0","date":"2026-07-10","summary":"v1.98.0"},{"tag":"v1.97.0","date":"2026-07-10","summary":"v1.97.0"},{"tag":"v1.96.0","date":"2026-07-10","summary":"v1.96.0"},{"tag":"v1.95.0","date":"2026-07-10","summary":"v1.95.0"},{"tag":"v1.94.0","date":"2026-07-10","summary":"v1.94.0"},{"tag":"v1.93.1","date":"2026-07-10","summary":"v1.93.1"},{"tag":"v1.93.0","date":"2026-07-10","summary":"v1.93.0"},{"tag":"v1.92.0","date":"2026-07-10","summary":"v1.92.0"},{"tag":"v1.91.0","date":"2026-07-10","summary":"v1.91.0"},{"tag":"v1.90.0","date":"2026-07-10","summary":"v1.90.0"},{"tag":"v1.89.0","date":"2026-07-10","summary":"v1.89.0"},{"tag":"v1.88.0","date":"2026-07-10","summary":"v1.88.0"},{"tag":"v1.87.0","date":"2026-07-10","summary":"v1.87.0"},{"tag":"v1.86.2","date":"2026-07-10","summary":"v1.86.2"},{"tag":"v1.86.1","date":"2026-07-09","summary":"v1.86.1"}],
   "_meta": {
     "fullList": "https://github.com/DevWRG/wrg-os/releases",
     "openPRs": "https://github.com/DevWRG/wrg-os/pulls?state=open"
