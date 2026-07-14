@@ -347,13 +347,21 @@ export async function reportSalesAr(from?: string, to?: string) {
     GROUP BY key ORDER BY outstanding DESC
   `;
   // cabang via salesman → master_user (am_id = master_user_id) → mu.cabang;
-  // fallback cabang_override. Jauh lebih ter-petakan drpd branch (yg kosong).
+  // fallback cabang_override, lalu map via NAMA kode salesman (sm_map) utk invoice
+  // yg salesman_id-nya tak nge-link tapi salesman_name = kode ter-mapping.
   const byCabang = await sql`
-    SELECT COALESCE(NULLIF(mu.cabang, ''), NULLIF(acs.cabang_override, ''), '(Tanpa cabang)') AS key,
+    WITH sm_map AS (
+      SELECT DISTINCT ON (s.name) s.name AS code, mu.cabang AS cabang
+      FROM accurate_salesman s JOIN master_user mu ON mu.am_id = s.master_user_id::text
+      WHERE NULLIF(s.name, '') IS NOT NULL AND NULLIF(mu.cabang, '') IS NOT NULL
+      ORDER BY s.name, s.id
+    )
+    SELECT COALESCE(NULLIF(mu.cabang, ''), NULLIF(acs.cabang_override, ''), NULLIF(sm.cabang, ''), '(Tanpa cabang)') AS key,
            count(*)::int AS invoices, COALESCE(sum(ai.total), 0)::float8 AS outstanding
     FROM accurate_invoice ai
     LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
     LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
+    LEFT JOIN sm_map sm ON sm.code = ai.salesman_name
     WHERE ai.status = 'OPEN' ${dateClause}
     GROUP BY key ORDER BY outstanding DESC
   `;
@@ -378,13 +386,22 @@ export async function reportSalesAr(from?: string, to?: string) {
     GROUP BY 1
   `;
   // Per sales pakai NAMA lengkap (master_user.nama via salesman→am_id), bukan
-  // kode salesman Accurate (LRI/GGA/…). Fallback ke salesman_name/acs.name.
+  // kode Accurate (LRI/GGA/…). sm_map = fallback map NAMA-kode → master_user utk
+  // invoice yg salesman_id-nya tak nge-link tapi salesman_name = kode ter-mapping
+  // (mis. WDA/CHS nyangkut). Fallback akhir 'Tanpa sales' (bukan null).
   const bySales = await sql`
-    SELECT COALESCE(NULLIF(mu.nama, ''), NULLIF(ai.salesman_name, ''), acs.name, 'Sales #' || ai.salesman_id) AS key,
+    WITH sm_map AS (
+      SELECT DISTINCT ON (s.name) s.name AS code, mu.nama AS nama
+      FROM accurate_salesman s JOIN master_user mu ON mu.am_id = s.master_user_id::text
+      WHERE NULLIF(s.name, '') IS NOT NULL
+      ORDER BY s.name, s.id
+    )
+    SELECT COALESCE(NULLIF(mu.nama, ''), NULLIF(sm.nama, ''), NULLIF(ai.salesman_name, ''), acs.name, 'Tanpa sales') AS key,
            count(*)::int AS invoices, COALESCE(sum(ai.total), 0)::float8 AS outstanding
     FROM accurate_invoice ai
     LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
     LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
+    LEFT JOIN sm_map sm ON sm.code = ai.salesman_name
     WHERE ai.status = 'OPEN' ${dateClause}
     GROUP BY key ORDER BY outstanding DESC
   `;
