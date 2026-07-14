@@ -75,6 +75,11 @@ async function upsertInvoiceDetail(d: Detail): Promise<boolean> {
   const custName = d.retailWpName ?? d.customer?.name ?? null;
   const branchId = d.branchId ?? null;
   const status = d.outstanding ? "OPEN" : "PAID";
+  // Outstanding/paid: Accurate pakai primeOwing(+taxOwing) utk sisa tagihan, BUKAN
+  // totalDue/totalPaid (yg kosong di payload detail → dulu bikin kolom selalu 0 →
+  // laporan AR buang 99% invoice). paid = total − owing (clamp ≥0). Fix B 2026-07-14.
+  const owing = num(d.primeOwing) + num(d.taxOwing);
+  const paidAmt = Math.max(0, num(d.totalAmount) - owing);
   const smId = d.masterSalesmanId ?? null;
   const allSm: Detail[] = (d.detailItem ?? []).flatMap((it: Detail) => it.salesmanList ?? []);
   let smName: string | null = null;
@@ -104,8 +109,8 @@ async function upsertInvoiceDetail(d: Detail): Promise<boolean> {
        outstanding, status, salesman_id, salesman_name, raw, last_synced_at)
     VALUES
       (${invId}, ${d.number ?? d.transNumber ?? null}, ${custId}, ${branchId}, ${tgl},
-       ${num(d.taxableAmount1)}, ${num(d.tax1Amount)}, ${num(d.totalAmount)}, ${num(d.totalPaid)},
-       ${num(d.totalDue)}, ${status}, ${smId}, ${smName},
+       ${num(d.taxableAmount1)}, ${num(d.tax1Amount)}, ${num(d.totalAmount)}, ${paidAmt},
+       ${owing}, ${status}, ${smId}, ${smName},
        ${sql.json(d as Parameters<typeof sql.json>[0])}, now())
     ON CONFLICT (id) DO UPDATE SET
       number = EXCLUDED.number, customer_id = EXCLUDED.customer_id, branch_id = EXCLUDED.branch_id,

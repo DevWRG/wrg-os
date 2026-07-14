@@ -155,10 +155,10 @@ export async function getAging(bucket?: string): Promise<{
   // ar_aging_mv.amount agar baris tak-cocok tak hilang. due_date/bucket dari ar_aging_mv.
   const rows = await sql`
     SELECT m.customer_id, m.customer_name, m.invoice_no, m.due_date::text AS due_date,
-      COALESCE(ai.outstanding, m.amount)::float8 AS amount, m.days_overdue, m.bucket, m.is_anomaly
+      COALESCE(NULLIF(ai.outstanding, 0), m.amount)::float8 AS amount, m.days_overdue, m.bucket, m.is_anomaly
     FROM ar_aging_mv m
     LEFT JOIN accurate_invoice ai ON ai.number = m.invoice_no AND ai.customer_id::text = m.customer_id
-    WHERE COALESCE(ai.outstanding, m.amount) > 0
+    WHERE COALESCE(NULLIF(ai.outstanding, 0), m.amount) > 0
     ORDER BY m.days_overdue DESC`;
   const bmap = new Map<string, { count: number; total: number }>();
   let totAmt = 0;
@@ -250,10 +250,10 @@ export async function arAgingByCustomer() {
       -- buang hanya invoice yg TERKONFIRMASI lunas di mirror (outstanding=0); baris tak
       -- cocok di mirror tetap dihitung (fallback ar_aging_mv.amount) agar tak hilang.
       SELECT m.customer_id, m.bucket, m.days_overdue, m.customer_name,
-        COALESCE(ai.outstanding, m.amount)::float8 AS amount
+        COALESCE(NULLIF(ai.outstanding, 0), m.amount)::float8 AS amount
       FROM ar_aging_mv m
       LEFT JOIN accurate_invoice ai ON ai.number = m.invoice_no AND ai.customer_id::text = m.customer_id
-      WHERE COALESCE(ai.outstanding, m.amount) > 0
+      WHERE COALESCE(NULLIF(ai.outstanding, 0), m.amount) > 0
     ),
     agg AS (
       SELECT s.customer_id AS cid,
