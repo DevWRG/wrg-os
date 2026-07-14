@@ -95,16 +95,7 @@ export default async function ArAgingPage() {
 
       {ar && ar.total_invoices > 0 && (
         <>
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-muted-foreground text-sm font-medium">Total Piutang (OPEN)</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-semibold tabular-nums">{rupiah(ar.total_outstanding)}</div>
-                <p className="text-muted-foreground text-xs">{ar.total_invoices} invoice belum lunas</p>
-              </CardContent>
-            </Card>
+          <div className="grid gap-4 sm:grid-cols-3">
             <Card className="border-primary/30 bg-primary-soft">
               <CardHeader className="pb-2">
                 <CardTitle className="text-primary text-sm font-medium">East Area</CardTitle>
