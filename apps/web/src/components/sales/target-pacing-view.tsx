@@ -7,7 +7,7 @@ import { DataTable, type DataColumn } from "@/components/ui/data-table";
 
 interface PacingBase {
   target: number; actual: number; achievement_pct: number | null; expected: number;
-  pace: number | null; projected: number; projected_pct: number | null; status: string;
+  projected: number; projected_pct: number | null; status: string;
 }
 export interface PacingAm extends PacingBase { am_id: string; nama: string; cabang: string | null }
 export interface PacingCabang extends PacingBase { cabang: string }
@@ -32,7 +32,6 @@ export function TargetPacingView({ data }: { data: PacingData }) {
   const rows = tab === "am" ? data.am : data.cabang;
   const sum = tab === "am" ? data.summary.am : data.summary.cabang;
   const ach = sum.target > 0 ? Math.round((sum.actual / sum.target) * 1000) / 10 : 0;
-  const pace = sum.target > 0 && data.elapsed_pct > 0 ? Math.round((sum.actual / (sum.target * (data.elapsed_pct / 100))) * 100) : null;
 
   const nameCol: DataColumn<PacingAm | PacingCabang> = tab === "am"
     ? { id: "nama", header: "AM", sortable: true, accessor: (r) => (r as PacingAm).nama, cell: (r) => (<div><div className="font-medium">{(r as PacingAm).nama}</div>{(r as PacingAm).cabang && <div className="text-muted-foreground text-xs">{(r as PacingAm).cabang}</div>}</div>) }
@@ -43,18 +42,16 @@ export function TargetPacingView({ data }: { data: PacingData }) {
     { id: "target", header: "Target", align: "right", sortable: true, accessor: (r) => r.target, cell: (r) => <span title={rpFull.format(r.target)}>{rpC(r.target)}</span> },
     { id: "actual", header: "Actual (YTD)", align: "right", sortable: true, accessor: (r) => r.actual, cell: (r) => <span title={rpFull.format(r.actual)}>{rpC(r.actual)}</span> },
     { id: "achievement_pct", header: "%Ach", align: "right", sortable: true, accessor: (r) => r.achievement_pct ?? 0, cell: (r) => (r.achievement_pct == null ? "—" : `${r.achievement_pct}%`) },
-    { id: "pace", header: "Pace", align: "right", sortable: true, accessor: (r) => r.pace ?? 0, cell: (r) => (r.pace == null ? "—" : `${r.pace}%`) },
     { id: "status", header: "Status", sortable: true, accessor: (r) => r.status, cell: (r) => <span className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${statusStyle(r.status)}`}>{statusLabel(r.status)}</span> },
     { id: "projected_pct", header: "Proyeksi %", align: "right", sortable: true, accessor: (r) => r.projected_pct ?? 0, cell: (r) => (r.projected_pct == null ? "—" : <span title={`proyeksi ${rpFull.format(r.projected)}`}>{r.projected_pct}%</span>) },
   ];
 
   return (
     <div className="space-y-4">
-      <div className="grid gap-3 sm:grid-cols-4">
+      <div className="grid gap-3 sm:grid-cols-3">
         <Card><CardContent className="py-4"><div className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">Tahun berjalan</div><div className="mt-1 text-2xl font-bold">{data.year}</div><div className="text-muted-foreground text-xs">{data.elapsed_pct}% periode berlalu</div></CardContent></Card>
         <Card><CardContent className="py-4"><div className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">Total Target</div><div className="mt-1 text-2xl font-bold" title={rpFull.format(sum.target)}>{rpC(sum.target)}</div></CardContent></Card>
         <Card><CardContent className="py-4"><div className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">Actual YTD</div><div className="mt-1 text-2xl font-bold text-emerald-600" title={rpFull.format(sum.actual)}>{rpC(sum.actual)}</div><div className="text-muted-foreground text-xs">{ach}% dari target</div></CardContent></Card>
-        <Card><CardContent className="py-4"><div className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">Pace agregat</div><div className={`mt-1 text-2xl font-bold ${pace == null ? "" : pace >= 100 ? "text-emerald-600" : pace >= 90 ? "text-amber-600" : "text-rose-600"}`}>{pace == null ? "—" : `${pace}%`}</div><div className="text-muted-foreground text-xs">actual vs ekspektasi to-date</div></CardContent></Card>
       </div>
 
       <div className="flex gap-1 rounded-lg border p-1 w-fit">
@@ -65,8 +62,8 @@ export function TargetPacingView({ data }: { data: PacingData }) {
 
       <Card>
         <CardContent>
-          <DataTable data={rows} columns={columns} getKey={(r) => ("am_id" in r ? r.am_id : r.cabang)} initialSort={{ id: "pace", dir: "asc" }} pageSize={25} empty="Belum ada target di-set utk tahun ini (menu Admin → Sales Targets)." />
-          <p className="text-muted-foreground mt-3 text-xs">Pace = actual ÷ (target × {data.elapsed_pct}% periode berlalu). ≥100% Sesuai Target · 90–99% Perlu Perhatian · &lt;90% Tertinggal. Proyeksi = ekstrapolasi linear actual ke akhir tahun.</p>
+          <DataTable data={rows} columns={columns} getKey={(r) => ("am_id" in r ? r.am_id : r.cabang)} initialSort={{ id: "achievement_pct", dir: "asc" }} pageSize={25} empty="Belum ada target di-set utk tahun ini (menu Admin → Sales Targets)." />
+          <p className="text-muted-foreground mt-3 text-xs">Status = actual vs ekspektasi to-date ({data.elapsed_pct}% periode berlalu): ≥100% Sesuai Target · 90–99% Perlu Perhatian · &lt;90% Tertinggal. Proyeksi = ekstrapolasi linear actual ke akhir tahun.</p>
         </CardContent>
       </Card>
     </div>
