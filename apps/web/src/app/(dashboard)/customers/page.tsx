@@ -3,6 +3,7 @@ import { PageHeader } from "@/components/dashboard/page-header";
 import { Card, CardContent } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { type CustomersRevenue } from "@/components/customers/customers-revenue-view";
+import { type ChurnData } from "@/components/customers/churn-view";
 import { type DormantCustomer } from "@/components/sales/win-back-view";
 import { CustomersTabs } from "@/components/customers/customers-tabs";
 
@@ -13,8 +14,9 @@ async function get<T>(path: string): Promise<T | null> {
 }
 
 export default async function CustomersPage() {
-  const [rev, dorm] = await Promise.all([
+  const [rev, churn, dorm] = await Promise.all([
     get<CustomersRevenue>("/customers/revenue"),
+    get<ChurnData>("/customers/churn?days=60"),
     get<{ customers: DormantCustomer[] }>("/customers/dormant?days=30"),
   ]);
   return (
@@ -28,7 +30,7 @@ export default async function CustomersPage() {
       ) : rev.customers.length === 0 ? (
         <Card><CardContent className="pt-6"><EmptyState title="Belum ada faktur" description="Belum ada data accurate_invoice. Jalankan sinkron Accurate." /></CardContent></Card>
       ) : (
-        <CustomersTabs revenue={rev} dormant={dorm?.customers ?? []} />
+        <CustomersTabs revenue={rev} churn={churn} dormant={dorm?.customers ?? []} />
       )}
     </>
   );
