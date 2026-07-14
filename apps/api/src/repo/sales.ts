@@ -349,7 +349,7 @@ export async function reportSalesAr(from?: string, to?: string) {
   // cabang via salesman → master_user (am_id = master_user_id) → mu.cabang;
   // fallback cabang_override. Jauh lebih ter-petakan drpd branch (yg kosong).
   const byCabang = await sql`
-    SELECT COALESCE(NULLIF(mu.cabang, ''), NULLIF(acs.cabang_override, ''), '?') AS key,
+    SELECT COALESCE(NULLIF(mu.cabang, ''), NULLIF(acs.cabang_override, ''), '(Tanpa cabang)') AS key,
            count(*)::int AS invoices, COALESCE(sum(ai.total), 0)::float8 AS outstanding
     FROM accurate_invoice ai
     LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
@@ -377,10 +377,14 @@ export async function reportSalesAr(from?: string, to?: string) {
     WHERE ai.status = 'OPEN' ${dateClause}
     GROUP BY 1
   `;
+  // Per sales pakai NAMA lengkap (master_user.nama via salesman→am_id), bukan
+  // kode salesman Accurate (LRI/GGA/…). Fallback ke salesman_name/acs.name.
   const bySales = await sql`
-    SELECT COALESCE(NULLIF(ai.salesman_name, ''), acs.name, 'Sales #' || ai.salesman_id) AS key,
+    SELECT COALESCE(NULLIF(mu.nama, ''), NULLIF(ai.salesman_name, ''), acs.name, 'Sales #' || ai.salesman_id) AS key,
            count(*)::int AS invoices, COALESCE(sum(ai.total), 0)::float8 AS outstanding
-    FROM accurate_invoice ai LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
+    FROM accurate_invoice ai
+    LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
+    LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
     WHERE ai.status = 'OPEN' ${dateClause}
     GROUP BY key ORDER BY outstanding DESC
   `;
