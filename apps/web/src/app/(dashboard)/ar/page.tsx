@@ -1,8 +1,8 @@
 import { gatewayFetch } from "@/lib/gateway";
 import { PageHeader } from "@/components/dashboard/page-header";
-import { ArTable } from "@/components/tables/ar-table";
 import { ArBreakdownTabs, type ArGroup } from "@/components/tables/ar-breakdown-tabs";
-import { ArByCustomerView, type ArCustomer } from "@/components/tables/ar-by-customer-view";
+import { ArAgingTabs } from "@/components/tables/ar-aging-tabs";
+import { type ArCustomer } from "@/components/tables/ar-by-customer-view";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 export const dynamic = "force-dynamic";
@@ -180,21 +180,10 @@ export default async function ArAgingPage() {
             })}
           </div>
 
-          {byCust && byCust.customers.length > 0 && (
-            <>
-              <h2 className="text-muted-foreground pt-2 text-[11px] font-semibold tracking-wider uppercase">Aging per customer (klik untuk rincian invoice)</h2>
-              <Card>
-                <CardContent className="pt-6">
-                  <ArByCustomerView customers={byCust.customers} invoices={data.invoices} />
-                </CardContent>
-              </Card>
-            </>
-          )}
-
-          <h2 className="text-muted-foreground pt-2 text-[11px] font-semibold tracking-wider uppercase">Semua invoice</h2>
+          <h2 className="text-muted-foreground pt-2 text-[11px] font-semibold tracking-wider uppercase">Rincian aging (per customer · klik baris untuk detail invoice)</h2>
           <Card>
             <CardContent className="pt-6">
-              <ArTable invoices={data.invoices} />
+              <ArAgingTabs customers={byCust?.customers ?? []} invoices={data.invoices} />
             </CardContent>
           </Card>
         </>
