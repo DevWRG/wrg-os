@@ -71,24 +71,20 @@ export function ChurnView({ data }: { data: ChurnData }) {
     filtered.map((c) => [TIER_META[c.tier].label, c.name, c.cabang, c.am, Math.round(c.total), c.last_date, c.days_since, c.invoices]),
   );
 
-  const TierCard = ({ t }: { t: ChurnTier }) => (
-    <button onClick={() => setTier((cur) => (cur === t ? "all" : t))} className="text-left">
-      <Card className={tier === t ? "ring-2 ring-primary" : ""}>
-        <CardContent className="py-4">
-          <div className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">{TIER_META[t].label}</div>
-          <div className={`mt-1 text-2xl font-bold ${TIER_META[t].dot}`}>{summary[t]}</div>
-          <div className="text-muted-foreground text-xs">customer</div>
-        </CardContent>
-      </Card>
-    </button>
-  );
-
   return (
     <div className="space-y-4">
       <div className="grid gap-3 sm:grid-cols-4">
-        <TierCard t="active" />
-        <TierCard t="risk" />
-        <TierCard t="watch" />
+        {(["active", "risk", "watch"] as const).map((t) => (
+          <button key={t} onClick={() => setTier((cur) => (cur === t ? "all" : t))} className="text-left">
+            <Card className={tier === t ? "ring-2 ring-primary" : ""}>
+              <CardContent className="py-4">
+                <div className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">{TIER_META[t].label}</div>
+                <div className={`mt-1 text-2xl font-bold ${TIER_META[t].dot}`}>{summary[t]}</div>
+                <div className="text-muted-foreground text-xs">customer</div>
+              </CardContent>
+            </Card>
+          </button>
+        ))}
         <Card><CardContent className="py-4"><div className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">Nilai historis (at-risk)</div><div className="mt-1 text-2xl font-bold" title={rpFull.format(summary.value_at_risk)}>{rpC(summary.value_at_risk)}</div></CardContent></Card>
       </div>
 
