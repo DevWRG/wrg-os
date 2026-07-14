@@ -21,9 +21,9 @@ const rpFull = new Intl.NumberFormat("id-ID", { style: "currency", currency: "ID
 const rpC = (n: number) => (Math.abs(n) >= 1e9 ? `Rp ${(n / 1e9).toFixed(1)}M` : Math.abs(n) >= 1e6 ? `Rp ${(n / 1e6).toFixed(0)}jt` : rpFull.format(n));
 
 const TIER_META: Record<ChurnTier, { label: string; badge: string; dot: string; border: string }> = {
-  active: { label: "🔴 Churn Active", badge: "bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-300", dot: "text-rose-600", border: "border-l-rose-400" },
-  risk: { label: "🟡 Churn Risk", badge: "bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300", dot: "text-amber-600", border: "border-l-amber-400" },
-  watch: { label: "⚠️ No-order Watch", badge: "bg-slate-100 text-slate-600 dark:bg-slate-500/20 dark:text-slate-300", dot: "text-slate-500", border: "border-l-slate-300 dark:border-l-slate-600" },
+  active: { label: "🔴 Churn Aktif", badge: "bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-300", dot: "text-rose-600", border: "border-l-rose-400" },
+  risk: { label: "🟡 Risiko Churn", badge: "bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300", dot: "text-amber-600", border: "border-l-amber-400" },
+  watch: { label: "⚠️ Pantau Tanpa Order", badge: "bg-slate-100 text-slate-600 dark:bg-slate-500/20 dark:text-slate-300", dot: "text-slate-500", border: "border-l-slate-300 dark:border-l-slate-600" },
 };
 
 function downloadCsv(name: string, headers: string[], rows: (string | number | null)[][]) {
@@ -58,7 +58,7 @@ export function ChurnView({ data }: { data: ChurnData }) {
 
   const exportCsv = () => downloadCsv(
     `churn_${tier}_${new Date().toISOString().slice(0, 10)}.csv`,
-    ["Tier", "Customer", "Cabang", "AM", "Revenue historis", "Order terakhir", "Hari no-order", "Total order"],
+    ["Tier", "Pelanggan", "Cabang", "AM", "Revenue historis", "Order terakhir", "Hari tanpa order", "Total order"],
     filtered.map((c) => [TIER_META[c.tier].label, c.name, c.cabang, c.am, Math.round(c.total), c.last_date, c.days_since, c.invoices]),
   );
 
@@ -71,28 +71,28 @@ export function ChurnView({ data }: { data: ChurnData }) {
               <CardContent className="py-4">
                 <div className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">{TIER_META[t].label}</div>
                 <div className={`mt-1 text-2xl font-bold ${TIER_META[t].dot}`}>{summary[t]}</div>
-                <div className="text-muted-foreground text-xs">customer</div>
+                <div className="text-muted-foreground text-xs">pelanggan</div>
               </CardContent>
             </Card>
           </button>
         ))}
-        <Card><CardContent className="py-4"><div className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">Nilai historis (at-risk)</div><div className="mt-1 text-2xl font-bold" title={rpFull.format(summary.value_at_risk)}>{rpC(summary.value_at_risk)}</div></CardContent></Card>
+        <Card><CardContent className="py-4"><div className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">Nilai historis (berisiko)</div><div className="mt-1 text-2xl font-bold" title={rpFull.format(summary.value_at_risk)}>{rpC(summary.value_at_risk)}</div></CardContent></Card>
       </div>
 
       <div className="flex flex-wrap items-center gap-3">
         <div className="flex gap-1 rounded-lg border p-1">
-          {([["all", "Semua"], ["active", "🔴 Active"], ["risk", "🟡 Risk"], ["watch", "⚠️ Watch"]] as const).map(([k, lbl]) => (
+          {([["all", "Semua"], ["active", "🔴 Aktif"], ["risk", "🟡 Risiko"], ["watch", "⚠️ Pantau"]] as const).map(([k, lbl]) => (
             <button key={k} onClick={() => setTier(k)} className={`rounded-md px-3 py-1 text-sm font-medium ${tier === k ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`}>{lbl}</button>
           ))}
         </div>
-        <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari customer / AM / cabang…" className="h-8 w-64 bg-card border-border" />
+        <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari pelanggan / AM / cabang…" className="h-8 w-64 bg-card border-border" />
         <div className="flex gap-1 rounded-lg border p-1">
-          {([["days", "Hari no-order"], ["total", "Revenue"]] as const).map(([k, lbl]) => (
+          {([["days", "Hari tanpa order"], ["total", "Revenue"]] as const).map(([k, lbl]) => (
             <button key={k} onClick={() => setSort(k)} className={`rounded-md px-3 py-1 text-sm font-medium ${sort === k ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`}>{lbl}</button>
           ))}
         </div>
-        <Button size="sm" variant="outline" onClick={exportCsv} disabled={!filtered.length}>Export CSV</Button>
-        <span className="text-muted-foreground text-xs">{filtered.length} customer</span>
+        <Button size="sm" variant="outline" onClick={exportCsv} disabled={!filtered.length}>Ekspor CSV</Button>
+        <span className="text-muted-foreground text-xs">{filtered.length} pelanggan</span>
       </div>
 
       {ams.length > 0 && (
@@ -105,7 +105,7 @@ export function ChurnView({ data }: { data: ChurnData }) {
       )}
 
       {filtered.length === 0 ? (
-        <p className="text-muted-foreground text-sm">Tidak ada customer churn di filter ini.</p>
+        <p className="text-muted-foreground text-sm">Tidak ada pelanggan churn di filter ini.</p>
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {filtered.map((c) => (
@@ -115,7 +115,7 @@ export function ChurnView({ data }: { data: ChurnData }) {
                   <span className={`whitespace-nowrap rounded px-1.5 py-0.5 text-[11px] font-semibold ${TIER_META[c.tier].badge}`}>{TIER_META[c.tier].label}</span>
                   <div className="text-right leading-none">
                     <div className={`text-xl font-bold tabular-nums ${TIER_META[c.tier].dot}`}>{c.days_since ?? "—"}</div>
-                    <div className="text-muted-foreground text-[10px] uppercase tracking-wide">hari no-order</div>
+                    <div className="text-muted-foreground text-[10px] uppercase tracking-wide">hari tanpa order</div>
                   </div>
                 </div>
                 <div className="mt-2 font-semibold leading-snug" title={c.name}>{c.name}</div>
@@ -132,7 +132,7 @@ export function ChurnView({ data }: { data: ChurnData }) {
         </div>
       )}
       <p className="text-muted-foreground text-xs">
-        🔴 Active = pelanggan rutin (≥{summary.routine_min} order) berhenti &gt;{summary.churn_days} hari · 🟡 Risk = masih order tapi frekuensi turun &gt;50% vs baseline 3 bulan · ⚠️ Watch = pelanggan umum berhenti &gt;{summary.churn_days} hari. Sumber: faktur Accurate. Handoff WA ke AM menyusul (Fase 2).
+        🔴 Churn Aktif = pelanggan rutin (≥{summary.routine_min} order) berhenti &gt;{summary.churn_days} hari · 🟡 Risiko Churn = masih order tapi frekuensi turun &gt;50% vs rata-rata 3 bulan · ⚠️ Pantau Tanpa Order = pelanggan umum berhenti &gt;{summary.churn_days} hari. Sumber: faktur Accurate. Kirim otomatis ke WA AM menyusul (Fase 2).
       </p>
     </div>
   );

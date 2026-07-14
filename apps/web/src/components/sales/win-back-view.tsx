@@ -51,15 +51,15 @@ export function WinBackView({ customers }: { customers: DormantCustomer[] }) {
 
   const exportCsv = () => downloadCsv(
     `win-back_${minDays}hari_${new Date().toISOString().slice(0, 10)}.csv`,
-    ["Customer", "Cabang", "AM", "Revenue historis", "Order terakhir", "Dormant (hari)", "Faktur"],
+    ["Pelanggan", "Cabang", "AM", "Revenue historis", "Order terakhir", "Tidak aktif (hari)", "Faktur"],
     filtered.map((c) => [c.name, c.cabang, c.am, Math.round(c.total), c.last_date, c.days_since, c.invoices]),
   );
 
   return (
     <div className="space-y-4">
       <div className="grid gap-3 sm:grid-cols-3">
-        <Card><CardContent className="py-4"><div className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">Dormant ≥ {minDays} hari</div><div className="mt-1 text-2xl font-bold text-rose-600">{filtered.length}</div><div className="text-muted-foreground text-xs">customer</div></CardContent></Card>
-        <Card><CardContent className="py-4"><div className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">Nilai historis (at-risk)</div><div className="mt-1 text-2xl font-bold" title={rpFull.format(atRisk)}>{rpC(atRisk)}</div></CardContent></Card>
+        <Card><CardContent className="py-4"><div className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">Tidak aktif ≥ {minDays} hari</div><div className="mt-1 text-2xl font-bold text-rose-600">{filtered.length}</div><div className="text-muted-foreground text-xs">pelanggan</div></CardContent></Card>
+        <Card><CardContent className="py-4"><div className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">Nilai historis (berisiko)</div><div className="mt-1 text-2xl font-bold" title={rpFull.format(atRisk)}>{rpC(atRisk)}</div></CardContent></Card>
         <Card><CardContent className="py-4"><div className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">AM terlibat</div><div className="mt-1 text-2xl font-bold">{new Set(filtered.map((c) => c.am).filter(Boolean)).size}</div></CardContent></Card>
       </div>
 
@@ -69,14 +69,14 @@ export function WinBackView({ customers }: { customers: DormantCustomer[] }) {
             <button key={d} onClick={() => setMinDays(d)} className={`rounded-md px-3 py-1 text-sm font-medium ${minDays === d ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`}>≥{d}h</button>
           ))}
         </div>
-        <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari customer / AM / cabang…" className="h-8 w-64 bg-card border-border" />
+        <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari pelanggan / AM / cabang…" className="h-8 w-64 bg-card border-border" />
         <div className="flex gap-1 rounded-lg border p-1">
-          {([["total", "Revenue"], ["days", "Dormant"]] as const).map(([k, lbl]) => (
+          {([["total", "Revenue"], ["days", "Tidak aktif"]] as const).map(([k, lbl]) => (
             <button key={k} onClick={() => setSort(k)} className={`rounded-md px-3 py-1 text-sm font-medium ${sort === k ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`}>{lbl}</button>
           ))}
         </div>
-        <Button size="sm" variant="outline" onClick={exportCsv} disabled={!filtered.length}>Export CSV</Button>
-        <span className="text-muted-foreground text-xs">{filtered.length} customer</span>
+        <Button size="sm" variant="outline" onClick={exportCsv} disabled={!filtered.length}>Ekspor CSV</Button>
+        <span className="text-muted-foreground text-xs">{filtered.length} pelanggan</span>
       </div>
 
       {ams.length > 0 && (
@@ -89,7 +89,7 @@ export function WinBackView({ customers }: { customers: DormantCustomer[] }) {
       )}
 
       {filtered.length === 0 ? (
-        <p className="text-muted-foreground text-sm">Tidak ada customer dormant di filter ini.</p>
+        <p className="text-muted-foreground text-sm">Tidak ada pelanggan tidak aktif di filter ini.</p>
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {filtered.map((c) => (
@@ -102,7 +102,7 @@ export function WinBackView({ customers }: { customers: DormantCustomer[] }) {
                   </div>
                   <div className="shrink-0 text-right leading-none">
                     <div className={`text-xl font-bold tabular-nums ${sevDays(c.days_since)}`}>{c.days_since ?? "—"}</div>
-                    <div className="text-muted-foreground text-[10px] uppercase tracking-wide">hari dormant</div>
+                    <div className="text-muted-foreground text-[10px] uppercase tracking-wide">hari tidak aktif</div>
                   </div>
                 </div>
                 <div className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 border-t pt-3 text-xs">

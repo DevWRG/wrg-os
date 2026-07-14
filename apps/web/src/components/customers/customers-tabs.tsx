@@ -13,7 +13,7 @@ export function CustomersTabs({ revenue, churn, dormant }: { revenue: CustomersR
   return (
     <div className="space-y-4">
       <div className="flex w-fit gap-1 rounded-lg border p-1">
-        {([["monitor", "Revenue Monitor"], ["churn", "Churn (Early Warning)"], ["winback", "Win-back (Dormant)"]] as const).map(([k, lbl]) => (
+        {([["monitor", "Monitor Revenue"], ["churn", "Churn (Deteksi Dini)"], ["winback", "Win-back (Tidak Aktif)"]] as const).map(([k, lbl]) => (
           <button key={k} onClick={() => setTab(k)} className={`rounded-md px-3 py-1.5 text-sm font-medium ${tab === k ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`}>{lbl}</button>
         ))}
       </div>

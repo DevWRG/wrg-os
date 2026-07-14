@@ -23,7 +23,7 @@ export default async function CustomersPage() {
     <>
       <PageHeader
         title="Customers"
-        description="Revenue per customer (monitor + tren) & Win-back customer dormant (re-engagement). Sumber Accurate."
+        description="Revenue per pelanggan (monitor + tren), deteksi dini Churn, & Win-back pelanggan tidak aktif. Sumber Accurate."
       />
       {!rev ? (
         <Card><CardContent className="pt-6"><EmptyState title="Data tidak tersedia" description="Pastikan apps/api jalan & sinkron Accurate aktif." /></CardContent></Card>
