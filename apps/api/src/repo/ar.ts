@@ -150,22 +150,31 @@ export async function getAging(bucket?: string): Promise<{
   invoices: AgingInvoice[];
 }> {
   const sql = db();
-  const cols = sql`customer_id, customer_name, invoice_no, due_date::text, amount, days_overdue, bucket, is_anomaly`;
-  const rows = bucket
-    ? await sql`SELECT ${cols} FROM ar_aging_mv WHERE bucket = ${bucket} ORDER BY days_overdue DESC`
-    : await sql`SELECT ${cols} FROM ar_aging_mv ORDER BY days_overdue DESC`;
-  const summary = await sql`SELECT bucket, count(*) AS count, COALESCE(sum(amount),0) AS total FROM ar_aging_mv GROUP BY bucket`;
-  const [tot] = await sql`SELECT COALESCE(sum(amount),0) AS total, count(*) AS count FROM ar_aging_mv`;
+  // Hanya invoice yg MASIH outstanding di mirror (yg sudah lunas dikecualikan);
+  // amount = outstanding hidup (partial-paid ikut sisanya). due_date/bucket dari
+  // ar_aging_mv (berbasis jatuh tempo). JOIN ke accurate_invoice = sumber otoritatif.
+  const rows = await sql`
+    SELECT m.customer_id, m.customer_name, m.invoice_no, m.due_date::text AS due_date,
+      ai.outstanding::float8 AS amount, m.days_overdue, m.bucket, m.is_anomaly
+    FROM ar_aging_mv m
+    JOIN accurate_invoice ai ON ai.number = m.invoice_no AND ai.customer_id::text = m.customer_id
+    WHERE ai.outstanding > 0
+    ORDER BY m.days_overdue DESC`;
+  const bmap = new Map<string, { count: number; total: number }>();
+  let totAmt = 0;
+  for (const r of rows) {
+    totAmt += Number(r.amount);
+    const b = bmap.get(String(r.bucket)) ?? { count: 0, total: 0 };
+    b.count += 1; b.total += Number(r.amount);
+    bmap.set(String(r.bucket), b);
+  }
+  const shown = bucket ? rows.filter((r) => String(r.bucket) === bucket) : rows;
 
   return {
-    total_outstanding: Number(tot.total),
-    total_invoices: Number(tot.count),
-    buckets: summary.map((r) => ({
-      bucket: String(r.bucket),
-      count: Number(r.count),
-      total: Number(r.total),
-    })),
-    invoices: rows.map((r) => ({
+    total_outstanding: totAmt,
+    total_invoices: rows.length,
+    buckets: [...bmap.entries()].map(([b, v]) => ({ bucket: b, count: v.count, total: v.total })),
+    invoices: shown.map((r) => ({
       customer_id: String(r.customer_id),
       customer_name: r.customer_name ? String(r.customer_name) : null,
       invoice_no: String(r.invoice_no),
@@ -237,19 +246,26 @@ export async function invoiceDetail(no: string) {
 export async function arAgingByCustomer() {
   const sql = db();
   const rows = await sql`
-    WITH agg AS (
-      SELECT m.customer_id AS cid,
-        max(m.customer_name) AS name,
-        count(*)::int AS invoices,
-        COALESCE(sum(m.amount),0)::float8 AS total,
-        COALESCE(sum(m.amount) FILTER (WHERE m.bucket = 'current'),0)::float8 AS b_current,
-        COALESCE(sum(m.amount) FILTER (WHERE m.bucket = '1-30'),0)::float8 AS b_1_30,
-        COALESCE(sum(m.amount) FILTER (WHERE m.bucket = '31-60'),0)::float8 AS b_31_60,
-        COALESCE(sum(m.amount) FILTER (WHERE m.bucket = '61-90'),0)::float8 AS b_61_90,
-        COALESCE(sum(m.amount) FILTER (WHERE m.bucket = '90+'),0)::float8 AS b_90plus,
-        max(m.days_overdue)::int AS max_overdue
+    WITH src AS (
+      -- hanya invoice yg masih outstanding (lunas dikecualikan); amount = outstanding hidup
+      SELECT m.customer_id, m.bucket, m.days_overdue, m.customer_name, ai.outstanding::float8 AS amount
       FROM ar_aging_mv m
-      GROUP BY m.customer_id
+      JOIN accurate_invoice ai ON ai.number = m.invoice_no AND ai.customer_id::text = m.customer_id
+      WHERE ai.outstanding > 0
+    ),
+    agg AS (
+      SELECT s.customer_id AS cid,
+        max(s.customer_name) AS name,
+        count(*)::int AS invoices,
+        COALESCE(sum(s.amount),0)::float8 AS total,
+        COALESCE(sum(s.amount) FILTER (WHERE s.bucket = 'current'),0)::float8 AS b_current,
+        COALESCE(sum(s.amount) FILTER (WHERE s.bucket = '1-30'),0)::float8 AS b_1_30,
+        COALESCE(sum(s.amount) FILTER (WHERE s.bucket = '31-60'),0)::float8 AS b_31_60,
+        COALESCE(sum(s.amount) FILTER (WHERE s.bucket = '61-90'),0)::float8 AS b_61_90,
+        COALESCE(sum(s.amount) FILTER (WHERE s.bucket = '90+'),0)::float8 AS b_90plus,
+        max(s.days_overdue)::int AS max_overdue
+      FROM src s
+      GROUP BY s.customer_id
     ),
     last_am AS (
       SELECT DISTINCT ON (ai.customer_id::text) ai.customer_id::text AS cid,
