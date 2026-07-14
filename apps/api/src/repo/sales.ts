@@ -548,6 +548,83 @@ export async function dormantCustomers(minDays = 60) {
   return { summary: { min_days: md, count: customers.length, value_at_risk: customers.reduce((a, c) => a + c.total, 0) }, customers };
 }
 
+// F77 Churn Early Warning — klasifikasi 3-tier per customer dari histori faktur
+// Accurate (recency-based, sesuai blueprint). Threshold parameter (default sinkron
+// dgn DORMANT_DAYS=60, rutin=≥3 order). Fase 1 = deteksi/dashboard read-only
+// (belum cron/WA). Tier:
+//   active = pelanggan RUTIN (≥ROUTINE_MIN order) & no-order >churnDays  → sudah berhenti
+//   risk   = masih order (≤churnDays) tapi frekuensi turun >50% vs baseline 3 bln
+//   watch  = pelanggan umum (<ROUTINE_MIN order) & no-order >churnDays   → sinyal ringan
+export type ChurnTier = "active" | "risk" | "watch";
+const ROUTINE_MIN = 3; // ambang "pelanggan rutin" (Decision Ask #14 masih tentatif)
+function classifyChurn(invoices: number, days: number | null, recent90: number, prior90: number, churnDays: number): ChurnTier | null {
+  if (days != null && days > churnDays) return invoices >= ROUTINE_MIN ? "active" : "watch";
+  // masih aktif (≤churnDays): deteksi penurunan frekuensi vs baseline 3 bln sebelumnya
+  if (prior90 >= 2 && recent90 < prior90 * 0.5) return "risk";
+  return null; // sehat — bukan churn
+}
+export async function churnCustomers(churnDays0 = DORMANT_DAYS) {
+  const sql = db();
+  const churnDays = Math.min(Math.max(Math.trunc(Number(churnDays0) || DORMANT_DAYS), 1), 3650);
+  const rows = await sql`
+    WITH cust AS (
+      SELECT ai.customer_id AS cid,
+        COALESCE(NULLIF(ac.name,''), NULLIF(max(ai.raw->'customer'->>'name'),''), NULLIF(max(ai.raw->>'retailWpName'),''), 'Customer #' || ai.customer_id::text) AS name,
+        NULLIF(mode() WITHIN GROUP (ORDER BY NULLIF(mu.cabang,'')), '') AS cabang,
+        sum(ai.total - COALESCE(ai.tax_amount,0))::float8 AS total,
+        count(*)::int AS invoices,
+        max(ai.tanggal)::text AS last_date,
+        (CURRENT_DATE - max(ai.tanggal))::int AS days_since,
+        count(*) FILTER (WHERE ai.tanggal > CURRENT_DATE - 90)::int AS recent90,
+        count(*) FILTER (WHERE ai.tanggal <= CURRENT_DATE - 90 AND ai.tanggal > CURRENT_DATE - 180)::int AS prior90
+      FROM accurate_invoice ai
+      LEFT JOIN accurate_customer ac ON ac.id = ai.customer_id
+      LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
+      LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
+      WHERE ai.customer_id IS NOT NULL
+      GROUP BY ai.customer_id, ac.name
+    ),
+    last_am AS (
+      SELECT DISTINCT ON (ai.customer_id) ai.customer_id AS cid,
+        COALESCE(NULLIF(mu.nama,''), NULLIF(ai.salesman_name,'')) AS am
+      FROM accurate_invoice ai
+      LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
+      LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
+      WHERE ai.customer_id IS NOT NULL
+      ORDER BY ai.customer_id, ai.tanggal DESC
+    )
+    SELECT c.cid::text AS id, c.name, c.cabang, c.total, c.invoices, c.last_date, c.days_since, c.recent90, c.prior90, la.am
+    FROM cust c LEFT JOIN last_am la ON la.cid = c.cid
+    ORDER BY c.total DESC NULLS LAST`;
+  const customers = rows.flatMap((r) => {
+    const days = r.days_since == null ? null : Number(r.days_since);
+    const invoices = Number(r.invoices);
+    const recent90 = Number(r.recent90);
+    const prior90 = Number(r.prior90);
+    const tier = classifyChurn(invoices, days, recent90, prior90, churnDays);
+    if (!tier) return [];
+    return [{
+      id: String(r.id), name: String(r.name), cabang: r.cabang ? String(r.cabang) : null,
+      total: Number(r.total), invoices,
+      last_date: r.last_date ? String(r.last_date) : null,
+      days_since: days, recent90, prior90,
+      am: r.am ? String(r.am) : null,
+      tier,
+    }];
+  });
+  const byTier = (t: ChurnTier) => customers.filter((c) => c.tier === t);
+  const summary = {
+    churn_days: churnDays,
+    routine_min: ROUTINE_MIN,
+    total: customers.length,
+    active: byTier("active").length,
+    risk: byTier("risk").length,
+    watch: byTier("watch").length,
+    value_at_risk: customers.reduce((a, c) => a + c.total, 0),
+  };
+  return { summary, customers };
+}
+
 // Target Pacing — target vs actual (YTD tahun berjalan) per AM & cabang + proyeksi.
 // Pace = actual / (target × fraksi tahun berlalu). status: on-track ≥1 · at-risk ≥0.9 ·
 // behind <0.9. projected = actual / fraksi (ekstrapolasi linear ke akhir tahun).

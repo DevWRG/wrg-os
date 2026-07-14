@@ -101,7 +101,7 @@ import {
   reportCalendar,
   reportCalendarDay,
 } from "./repo/plandash.js";
-import { salesRange, reportRevenue, reportSalesAr, salesOverview, customersRevenue, customerMonthly, dormantCustomers, targetPacing, reportSalesPerformance } from "./repo/sales.js";
+import { salesRange, reportRevenue, reportSalesAr, salesOverview, customersRevenue, customerMonthly, dormantCustomers, churnCustomers, targetPacing, reportSalesPerformance } from "./repo/sales.js";
 import { resolveScope } from "./repo/access-scope.js";
 import {
   analyticsOverview,
@@ -2430,6 +2430,13 @@ app.get("/customers/revenue", async (c) => {
 app.get("/customers/dormant", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json(await dormantCustomers(Number(c.req.query("days")) || 60));
+});
+
+// F77 Churn Early Warning — klasifikasi 3-tier per customer (active/risk/watch).
+// ?days=N ambang no-order (default 60). Read-only (Fase 1, tanpa WA/cron).
+app.get("/customers/churn", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await churnCustomers(Number(c.req.query("days")) || 60));
 });
 
 // Rincian revenue per bulan satu customer (on-demand). ?months=N (default 12).
