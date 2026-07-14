@@ -1,7 +1,6 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { FileDown } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -97,9 +96,7 @@ export function ArByCustomerView({ customers, invoices }: { customers: ArCustome
                 <button key={k} onClick={() => setPri(k)} className={cn("rounded-md px-2.5 py-1 text-xs font-medium", pri === k ? "bg-primary text-primary-foreground" : "hover:bg-muted")}>{k === "all" ? "Semua" : k}</button>
               ))}
             </div>
-            <Button size="sm" variant="outline" onClick={exportCsv} disabled={!filtered.length}>
-              <FileDown className="size-3.5" /> Ekspor CSV
-            </Button>
+            <Button size="sm" variant="outline" onClick={exportCsv} disabled={!filtered.length}>Ekspor CSV</Button>
           </div>
         }
       />
