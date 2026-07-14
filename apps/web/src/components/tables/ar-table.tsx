@@ -1,7 +1,10 @@
 "use client";
 
+import { useState } from "react";
+
 import { Badge } from "@/components/ui/badge";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
+import { InvoiceDetailDialog } from "@/components/tables/invoice-detail-dialog";
 
 interface Invoice {
   customer_id: string;
@@ -40,5 +43,11 @@ const columns: DataColumn<Invoice>[] = [
 ];
 
 export function ArTable({ invoices }: { invoices: Invoice[] }) {
-  return <DataTable columns={columns} data={invoices} getKey={(inv) => `${inv.customer_id}-${inv.invoice_no}`} searchPlaceholder="Cari customer / invoice / bucket…" pageSize={25} />;
+  const [detail, setDetail] = useState<string | null>(null);
+  return (
+    <>
+      <DataTable columns={columns} data={invoices} getKey={(inv) => `${inv.customer_id}-${inv.invoice_no}`} searchPlaceholder="Cari customer / invoice / bucket…" pageSize={25} onRowClick={(inv) => setDetail(inv.invoice_no)} />
+      <InvoiceDetailDialog no={detail} onClose={() => setDetail(null)} />
+    </>
+  );
 }

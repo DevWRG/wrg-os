@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
 import { Dialog, DialogBody, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { InvoiceDetailDialog } from "@/components/tables/invoice-detail-dialog";
 
 export type ArPriority = "KRITIS" | "TINGGI" | "SEDANG" | "RENDAH";
 export interface ArCustomer {
@@ -50,6 +51,7 @@ function downloadCsv(name: string, headers: string[], rows: (string | number | n
 export function ArByCustomerView({ customers, invoices }: { customers: ArCustomer[]; invoices: ArInvoice[] }) {
   const [pri, setPri] = useState<"all" | ArPriority>("all");
   const [sel, setSel] = useState<ArCustomer | null>(null);
+  const [detailNo, setDetailNo] = useState<string | null>(null);
 
   const filtered = useMemo(() => (pri === "all" ? customers : customers.filter((c) => c.priority === pri)), [customers, pri]);
 
@@ -118,7 +120,7 @@ export function ArByCustomerView({ customers, invoices }: { customers: ArCustome
                 ) : (
                   <div className="space-y-1.5">
                     {detail.map((i) => (
-                      <div key={i.invoice_no} className="flex items-center justify-between gap-2 border-b pb-1.5 text-sm last:border-0">
+                      <button key={i.invoice_no} onClick={() => setDetailNo(i.invoice_no)} className="hover:bg-muted flex w-full items-center justify-between gap-2 rounded-md border-b px-1.5 py-1.5 text-left text-sm last:border-0">
                         <div className="min-w-0">
                           <div className="font-medium">{i.invoice_no}</div>
                           <div className="text-muted-foreground text-xs">jatuh tempo {tgl(i.due_date)} · {i.days_overdue > 0 ? `${i.days_overdue} hari lewat` : "belum jatuh tempo"}</div>
@@ -127,7 +129,7 @@ export function ArByCustomerView({ customers, invoices }: { customers: ArCustome
                           <div className="tabular-nums">{rpFull.format(i.amount)}</div>
                           <div className={cn("text-xs", i.bucket === "90+" ? "text-rose-600 font-semibold" : i.bucket === "61-90" ? "text-orange-600" : "text-muted-foreground")}>{i.bucket}</div>
                         </div>
-                      </div>
+                      </button>
                     ))}
                   </div>
                 )}
@@ -136,6 +138,8 @@ export function ArByCustomerView({ customers, invoices }: { customers: ArCustome
           )}
         </DialogContent>
       </Dialog>
+
+      <InvoiceDetailDialog no={detailNo} onClose={() => setDetailNo(null)} />
     </>
   );
 }

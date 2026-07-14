@@ -25,6 +25,7 @@ import {
   ingestAccurateWebhook,
   getAging,
   arAgingByCustomer,
+  invoiceDetail,
   type InvoiceInput,
   type AccurateInvoice,
 } from "./repo/ar.js";
@@ -729,6 +730,15 @@ app.get("/ar/aging", async (c) => {
 app.get("/ar/aging/by-customer", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json(await arAgingByCustomer());
+});
+
+// Detail satu invoice (header + line item) by nomor invoice. Read-only.
+app.get("/ar/invoice/:no", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const no = c.req.param("no");
+  if (!no) return c.json({ error: "no invoice wajib" }, 400);
+  const r = await invoiceDetail(no);
+  return c.json(r, r.ok ? 200 : 404);
 });
 
 // Sync Accurate (puller, pengganti sync_accurate.sh). Read-only ke API Accurate

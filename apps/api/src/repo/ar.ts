@@ -189,6 +189,51 @@ function arPriorityOf(b31_60: number, b61_90: number, b90plus: number): ArPriori
   if (b31_60 > 0) return "SEDANG";
   return "RENDAH";
 }
+// Detail satu invoice (header + line item) dari mirror Accurate, di-lookup by
+// nomor invoice (ar_aging_mv.invoice_no = accurate_invoice.number). Read-only.
+export async function invoiceDetail(no: string) {
+  const sql = db();
+  const [inv] = await sql`
+    SELECT ai.id, ai.number,
+      COALESCE(NULLIF(ac.name,''), NULLIF(ai.raw->'customer'->>'name',''), NULLIF(ai.raw->>'retailWpName',''), 'Customer #'||ai.customer_id::text) AS customer_name,
+      ai.tanggal::text AS tanggal, ai.total::float8 AS total, ai.taxable_amount::float8 AS taxable,
+      ai.tax_amount::float8 AS tax, ai.paid::float8 AS paid, ai.outstanding::float8 AS outstanding,
+      ai.status, COALESCE(NULLIF(mu.nama,''), NULLIF(ai.salesman_name,'')) AS am, NULLIF(mu.cabang,'') AS cabang
+    FROM accurate_invoice ai
+    LEFT JOIN accurate_customer ac ON ac.id = ai.customer_id
+    LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
+    LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
+    WHERE ai.number = ${no}
+    LIMIT 1`;
+  if (!inv) return { ok: false as const, invoice: null, items: [] };
+  const items = await sql`
+    SELECT aii.line_no,
+      COALESCE(NULLIF(it.name,''), NULLIF(aii.raw->>'detailName',''), 'Item #'||aii.item_id::text) AS name,
+      aii.qty::float8 AS qty, aii.unit, aii.unit_price::float8 AS unit_price,
+      aii.discount_amount::float8 AS discount, aii.total::float8 AS total
+    FROM accurate_invoice_item aii
+    LEFT JOIN accurate_item it ON it.id = aii.item_id
+    WHERE aii.invoice_id = ${inv.id}
+    ORDER BY aii.line_no NULLS LAST, aii.id`;
+  return {
+    ok: true as const,
+    invoice: {
+      number: String(inv.number),
+      customer_name: String(inv.customer_name),
+      tanggal: inv.tanggal ? String(inv.tanggal) : null,
+      total: Number(inv.total), taxable: Number(inv.taxable), tax: Number(inv.tax),
+      paid: Number(inv.paid), outstanding: Number(inv.outstanding),
+      status: inv.status ? String(inv.status) : null,
+      am: inv.am ? String(inv.am) : null, cabang: inv.cabang ? String(inv.cabang) : null,
+    },
+    items: items.map((r) => ({
+      line_no: r.line_no == null ? null : Number(r.line_no),
+      name: String(r.name), qty: r.qty == null ? null : Number(r.qty), unit: r.unit ? String(r.unit) : null,
+      unit_price: Number(r.unit_price), discount: Number(r.discount), total: Number(r.total),
+    })),
+  };
+}
+
 export async function arAgingByCustomer() {
   const sql = db();
   const rows = await sql`
