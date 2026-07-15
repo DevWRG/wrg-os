@@ -92,6 +92,7 @@ import {
   parseRange,
   reportSummary,
   reportPerOrang,
+  reportCompliance,
   reportPerDivisi,
   reportPerCabang,
   reportPerHod,
@@ -1654,6 +1655,13 @@ app.get("/report/per-orang", async (c) => {
   const { from, to } = parseRange(c.req.query("from"), c.req.query("to"));
   const rows = await reportPerOrang(from, to);
   return c.json({ from, to, count: rows.length, rows });
+});
+
+// F64 — compliance rate per AM (on-time/telat/miss atas hari-kerja diharapkan).
+app.get("/report/compliance", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const { from, to } = parseRange(c.req.query("from"), c.req.query("to"));
+  return c.json({ from, to, ...(await reportCompliance(from, to)) });
 });
 
 app.get("/report/per-divisi", async (c) => {

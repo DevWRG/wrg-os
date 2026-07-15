@@ -185,6 +185,78 @@ export async function reportPerOrang(from: string, to: string): Promise<OrangRow
   });
 }
 
+// ── F64: Compliance rate (granular per hari-kerja) ──
+// Per AM (aktif, wajib): tiap hari-kerja dlm rentang (skip weekend/libur & cuti)
+// diklasifikasi jadi 3 bucket yg saling lepas: on_time (ada plan, tepat waktu, report
+// lengkap) · late (ada plan tapi telat / report belum lengkap) · miss (tak ada plan).
+// compliance_rate = on_time / expected. Denominator = hari-kerja diharapkan (minus cuti).
+export interface ComplianceRow {
+  am_id: string; nama: string; panggilan: string | null; role: string; cabang: string | null;
+  expected: number; on_time: number; late: number; miss: number; compliance_rate: number | null;
+}
+export async function reportCompliance(from: string, to: string): Promise<{
+  summary: { users: number; expected: number; on_time: number; late: number; miss: number;
+    on_time_pct: number | null; late_pct: number | null; miss_pct: number | null };
+  rows: ComplianceRow[];
+}> {
+  const sql = db();
+  const rows = await sql`
+    WITH wdays AS (
+      SELECT g.d::date AS tanggal
+      FROM generate_series(${from}::date, ${to}::date, '1 day') g(d)
+      WHERE EXTRACT(DOW FROM g.d) NOT IN (0,6)
+        AND NOT EXISTS (SELECT 1 FROM master_holiday h WHERE h.tanggal = g.d::date)
+    ),
+    am AS (
+      SELECT am_id, nama, panggilan, role, cabang FROM master_user WHERE aktif AND wajib_plan_report
+    ),
+    cls AS (
+      SELECT a.am_id,
+        (sp_total + st_total) > 0 AS has_plan,
+        (sp_late + st_late) > 0 AS is_late,
+        ((sp_total + st_total) > 0 AND (sp_unrep + st_unrep) = 0) AS fully_reported
+      FROM am a CROSS JOIN wdays w
+      CROSS JOIN LATERAL (
+        SELECT
+          (SELECT count(*) FROM sales_plan sp WHERE sp.am_id=a.am_id AND sp.tanggal=w.tanggal) AS sp_total,
+          (SELECT count(*) FROM sales_plan sp WHERE sp.am_id=a.am_id AND sp.tanggal=w.tanggal AND sp.reported=false) AS sp_unrep,
+          (SELECT count(*) FROM sales_plan sp WHERE sp.am_id=a.am_id AND sp.tanggal=w.tanggal AND sp.is_late_plan) AS sp_late,
+          (SELECT count(*) FROM sales_todo st WHERE st.am_id=a.am_id AND st.tanggal=w.tanggal) AS st_total,
+          (SELECT count(*) FROM sales_todo st WHERE st.am_id=a.am_id AND st.tanggal=w.tanggal AND st.reported=false) AS st_unrep,
+          (SELECT count(*) FROM sales_todo st WHERE st.am_id=a.am_id AND st.tanggal=w.tanggal AND st.is_late_plan) AS st_late
+      ) x
+      WHERE NOT EXISTS (SELECT 1 FROM user_leave ul WHERE ul.am_id=a.am_id AND w.tanggal BETWEEN ul.start_date AND ul.end_date)
+    )
+    SELECT a.am_id, a.nama, a.panggilan, a.role, a.cabang,
+      count(c.*)::int AS expected,
+      count(*) FILTER (WHERE c.has_plan AND NOT c.is_late AND c.fully_reported)::int AS on_time,
+      count(*) FILTER (WHERE c.has_plan AND (c.is_late OR NOT c.fully_reported))::int AS late,
+      count(*) FILTER (WHERE NOT c.has_plan)::int AS miss
+    FROM am a LEFT JOIN cls c ON c.am_id = a.am_id
+    GROUP BY a.am_id, a.nama, a.panggilan, a.role, a.cabang
+    ORDER BY a.cabang NULLS LAST, a.nama
+  `;
+  const pct = (n: number, d: number) => (d > 0 ? Math.round((n / d) * 1000) / 10 : null);
+  const out: ComplianceRow[] = rows.map((r) => {
+    const expected = Number(r.expected), on_time = Number(r.on_time);
+    return {
+      am_id: String(r.am_id), nama: String(r.nama), panggilan: r.panggilan ? String(r.panggilan) : null,
+      role: String(r.role), cabang: r.cabang ? String(r.cabang) : null,
+      expected, on_time, late: Number(r.late), miss: Number(r.miss),
+      compliance_rate: pct(on_time, expected),
+    };
+  });
+  const sum = (k: "expected" | "on_time" | "late" | "miss") => out.reduce((a, c) => a + c[k], 0);
+  const expected = sum("expected"), on_time = sum("on_time"), late = sum("late"), miss = sum("miss");
+  return {
+    summary: {
+      users: out.length, expected, on_time, late, miss,
+      on_time_pct: pct(on_time, expected), late_pct: pct(late, expected), miss_pct: pct(miss, expected),
+    },
+    rows: out,
+  };
+}
+
 interface GroupRow {
   key: string;
   count: number;
