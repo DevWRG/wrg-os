@@ -18,18 +18,28 @@ export async function runHodDaily(to?: string): Promise<{
   audit_id: string | null;
 }> {
   const sql = db();
+  // Plan/report AM ada di sales_plan (sales_todo = jalur non-AM). Cek KEDUANYA
+  // (selaras compliance.ts) — dulu cuma cek sales_todo → semua AM keliatan "Belum
+  // PLAN". planned = ada plan/todo; reported = semua sudah di-report.
   const rows = await sql`
-    SELECT coalesce(mu.panggilan, mu.nama) AS nm,
-      EXISTS(SELECT 1 FROM sales_todo st WHERE st.am_id = mu.am_id AND st.tanggal = current_date) AS planned,
-      EXISTS(SELECT 1 FROM sales_todo st WHERE st.am_id = mu.am_id AND st.tanggal = current_date AND st.reported) AS reported
-    FROM master_user mu
-    WHERE mu.role = 'AM' AND mu.aktif AND mu.wajib_plan_report
-      AND NOT EXISTS (
-        SELECT 1 FROM user_leave ul
-        WHERE ul.am_id = mu.am_id AND current_date BETWEEN ul.start_date AND ul.end_date
-      )
-      AND NOT EXISTS (SELECT 1 FROM master_holiday h WHERE h.tanggal = current_date)
-    ORDER BY nm
+    WITH base AS (
+      SELECT coalesce(mu.panggilan, mu.nama) AS nm,
+        (SELECT count(*) FROM sales_plan sp WHERE sp.am_id = mu.am_id AND sp.tanggal = current_date)::int AS sp_total,
+        (SELECT count(*) FROM sales_plan sp WHERE sp.am_id = mu.am_id AND sp.tanggal = current_date AND sp.reported = false)::int AS sp_unrep,
+        (SELECT count(*) FROM sales_todo st WHERE st.am_id = mu.am_id AND st.tanggal = current_date)::int AS st_total,
+        (SELECT count(*) FROM sales_todo st WHERE st.am_id = mu.am_id AND st.tanggal = current_date AND NOT st.reported)::int AS st_unrep
+      FROM master_user mu
+      WHERE mu.role = 'AM' AND mu.aktif AND mu.wajib_plan_report
+        AND NOT EXISTS (
+          SELECT 1 FROM user_leave ul
+          WHERE ul.am_id = mu.am_id AND current_date BETWEEN ul.start_date AND ul.end_date
+        )
+        AND NOT EXISTS (SELECT 1 FROM master_holiday h WHERE h.tanggal = current_date)
+    )
+    SELECT nm,
+      (sp_total + st_total) > 0 AS planned,
+      ((sp_total + st_total) > 0 AND (sp_unrep + st_unrep) = 0) AS reported
+    FROM base ORDER BY nm
   `;
   const [{ d }] = await sql`SELECT current_date::text AS d`;
   const date = String(d);
