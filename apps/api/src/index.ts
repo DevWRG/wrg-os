@@ -20,6 +20,7 @@ import { enqueueAmbiguous, listHitl, resolveHitl } from "./repo/hitl.js";
 import { insertRekap, insertResume, getDigestHistory } from "./repo/digest.js";
 import { getDashboardStats } from "./repo/stats.js";
 import { getCustomers } from "./repo/customer.js";
+import { listAccounts, getAccount, upsertAccountFields, createContact, updateContact, deleteContact } from "./repo/account.js";
 import {
   ingestInvoices,
   ingestAccurateWebhook,
@@ -2443,6 +2444,38 @@ app.get("/customers", async (c) => {
   const amId = c.req.query("am_id") || undefined;
   const customers = await getCustomers(amId);
   return c.json({ count: customers.length, customers });
+});
+
+// F62 Account & Contact 360 (Fase 1) — account = accurate_customer + ekstensi CRM + kontak.
+app.get("/accounts", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listAccounts();
+  return c.json({ count: rows.length, accounts: rows });
+});
+app.get("/accounts/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const a = await getAccount(c.req.param("id"));
+  return a ? c.json(a) : c.json({ error: "account tak ditemukan" }, 404);
+});
+app.patch("/accounts/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try { return c.json(await upsertAccountFields(c.req.param("id"), await c.req.json())); }
+  catch (e) { return c.json({ error: String((e as Error).message) }, 400); }
+});
+app.post("/accounts/:id/contacts", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try { return c.json(await createContact(c.req.param("id"), await c.req.json()), 201); }
+  catch (e) { return c.json({ error: String((e as Error).message) }, 400); }
+});
+app.patch("/accounts/:id/contacts/:cid", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try { return c.json(await updateContact(c.req.param("cid"), await c.req.json())); }
+  catch (e) { return c.json({ error: String((e as Error).message) }, 400); }
+});
+app.delete("/accounts/:id/contacts/:cid", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try { return c.json(await deleteContact(c.req.param("cid"))); }
+  catch (e) { return c.json({ error: String((e as Error).message) }, 400); }
 });
 
 // Monitoring revenue ter-faktur per customer (total/faktur/transaksi terakhir/dormant).
