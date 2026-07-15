@@ -16,7 +16,7 @@ import {
   runPeopleAnalytics,
 } from "./repo/agents.js";
 import { runReminders } from "./repo/reminder.js";
-import { runHodDaily } from "./repo/hodreminder.js";
+import { runHodDaily, runMissStreakEscalation } from "./repo/hodreminder.js";
 import { generateRekap, generateResume } from "./repo/monitor.js";
 import { syncAccurateInvoices, syncSalesOrders, syncDeliveryOrders, syncCustomers } from "./repo/accurateSync.js";
 import { runPlanCheck, runReportCheck } from "./repo/compliance.js";
@@ -81,6 +81,9 @@ export function startScheduler(): ScheduleStatus {
   // Gating granular: reminder (AM note + HOD) bisa nyala SENDIRI tanpa memicu
   // A1-12 / monitor / accurate-sync (yang ikut AGENT_SCHEDULE_ENABLED).
   const remindersEnabled = (process.env.REMINDER_SCHEDULE_ENABLED ?? "false").toLowerCase() === "true";
+  // Eskalasi kepatuhan (F57): AM miss plan/report N hari-kerja berturut → rekap ke
+  // grup HoD. Flag SENDIRI (default off) supaya tak surprise-kirim WA saat deploy.
+  const missEscalationEnabled = (process.env.MISS_ESCALATION_ENABLED ?? "false").toLowerCase() === "true";
   // accurate-sync (puller invoice, read-only ke API Accurate, tanpa kirim WA)
   // bisa nyala SENDIRI tanpa ikut menyalakan A1-12 / monitor.
   const accurateEnabled = (process.env.ACCURATE_SCHEDULE_ENABLED ?? "false").toLowerCase() === "true";
@@ -189,12 +192,12 @@ export function startScheduler(): ScheduleStatus {
   ];
 
   status = {
-    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled,
+    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled,
     timezone,
     jobs: jobs.map((j) => ({ id: j.id, expr: j.expr, valid: cron.validate(j.expr) })),
   };
 
-  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled) {
+  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled) {
     console.log("[scheduler] semua *_SCHEDULE/_ENABLED flag != true — tidak dijadwalkan");
     return status;
   }
@@ -313,6 +316,29 @@ export function startScheduler(): ScheduleStatus {
       { timezone },
     );
     live.push(`report-check=${reportCheckExpr}`);
+  }
+
+  // Eskalasi kepatuhan (F57): AM miss plan/report N hari-kerja berturut → rekap ke
+  // grup HoD. Pagi hari kerja, lihat N hari-kerja SELESAI sebelum hari ini. Flag
+  // sendiri MISS_ESCALATION_ENABLED (default off). Target = MISS_ESCALATION_WA_TARGET
+  // / HOD_WA_TARGET / REMINDER_WA_TARGET. Hari libur otomatis ke-skip (hari-kerja saja).
+  const missExpr = process.env.MISS_ESCALATION_CRON ?? "0 8 * * 1-5";
+  const missDays = Math.max(2, Number(process.env.MISS_ESCALATION_DAYS) || 2);
+  if (missEscalationEnabled && cron.validate(missExpr)) {
+    cron.schedule(
+      missExpr,
+      async () => {
+        const startedAt = new Date().toISOString();
+        try {
+          const r = await runMissStreakEscalation(missDays);
+          console.log(`[scheduler] miss-escalation @ ${startedAt} ${JSON.stringify({ escalated: r.escalated.length, workdays: r.workdays }).slice(0, 200)}`);
+        } catch (e) {
+          console.error(`[scheduler] miss-escalation gagal @ ${startedAt}:`, e);
+        }
+      },
+      { timezone },
+    );
+    live.push(`miss-escalation=${missExpr}`);
   }
 
   // Monitor (port wrg-monitor) — rekap & resume GENERATE-ONLY (tidak kirim WA;
