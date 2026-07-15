@@ -4,6 +4,7 @@ name: Roadmap Project Sync
 # - PR dibuka/reopened/ready  -> item ber-F-number cocok jadi "In Progress"
 # - PR merged                 -> jadi "Done" (closed tanpa merge = diabaikan)
 # F-number diambil dari nama branch + judul PR (mis. feat/f127-... / feat(F127): ...).
+# Jika F-number belum ada di board, item draft baru DIBUAT otomatis lalu di-set status.
 # Butuh secret PROJECTS_TOKEN (PAT dgn izin project) karena GITHUB_TOKEN default
 # tidak bisa menulis Projects v2.
 
@@ -57,11 +58,24 @@ jobs:
               cursor = conn.pageInfo.hasNextPage ? conn.pageInfo.endCursor : null;
             } while (cursor);
 
-            let touched = 0;
+            let touched = 0, created = 0;
             for (const f of fnums) {
               const re = new RegExp(`${f}(?!\\d)`, 'i'); // F12 tidak match F127
-              const matches = items.filter(it => re.test(it.content?.title || ''));
-              if (!matches.length) { core.info(`${f}: tidak ada item board yang cocok`); continue; }
+              let matches = items.filter(it => re.test(it.content?.title || ''));
+              if (!matches.length) {
+                // F-number belum ada di board → buat draft item baru.
+                // Judul dijamin memuat F-number (di depan) agar match di run berikutnya.
+                const cleaned = pr.title.replace(/^\s*[a-z]+(\([^)]*\))?!?:\s*/i, '').trim();
+                const newTitle = `${f} — ${cleaned || pr.title}`;
+                const res = await github.graphql(
+                  `mutation($p:ID!,$t:String!){
+                     addProjectV2DraftIssue(input:{ projectId:$p, title:$t }){
+                       projectItem{ id content{ ... on DraftIssue{ title } } } } }`,
+                  { p: projectId, t: newTitle });
+                matches = [res.addProjectV2DraftIssue.projectItem];
+                created++;
+                core.info(`${f}: item baru dibuat → "${newTitle}"`);
+              }
               for (const m of matches) {
                 await github.graphql(
                   `mutation($p:ID!,$i:ID!,$fld:ID!,$o:String!){
@@ -73,4 +87,4 @@ jobs:
                 touched++;
               }
             }
-            core.info(`Selesai — ${touched} item diperbarui.`);
+            core.info(`Selesai — ${touched} item diperbarui, ${created} item baru dibuat.`);
