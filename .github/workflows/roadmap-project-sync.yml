@@ -1,0 +1,90 @@
+name: Roadmap Project Sync
+
+# Sinkronkan status item board "WRG-OS Roadmap" (project #2) dari event PR.
+# - PR dibuka/reopened/ready  -> item ber-F-number cocok jadi "In Progress"
+# - PR merged                 -> jadi "Done" (closed tanpa merge = diabaikan)
+# F-number diambil dari nama branch + judul PR (mis. feat/f127-... / feat(F127): ...).
+# Jika F-number belum ada di board, item draft baru DIBUAT otomatis lalu di-set status.
+# Butuh secret PROJECTS_TOKEN (PAT dgn izin project) karena GITHUB_TOKEN default
+# tidak bisa menulis Projects v2.
+
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review, closed]
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.PROJECTS_TOKEN }}
+          script: |
+            const projectId     = 'PVT_kwHOEMRLCs4BbQ3-';
+            const statusFieldId = 'PVTSSF_lAHOEMRLCs4BbQ3-zhWCl6w';
+            const OPT = { 'In Progress': '47fc9ee4', 'Done': '98236657' };
+
+            const pr = context.payload.pull_request;
+            let target;
+            if (context.payload.action === 'closed') {
+              if (pr.merged) target = 'Done';
+              else { core.info('PR closed tanpa merge — skip'); return; }
+            } else {
+              target = 'In Progress';
+            }
+
+            const text  = `${pr.head.ref}\n${pr.title}`;
+            const fnums = [...new Set((text.match(/F\d{2,3}/gi) || []).map(s => s.toUpperCase()))];
+            if (!fnums.length) { core.info('Tidak ada F-number — skip'); return; }
+            core.info(`F-number: ${fnums.join(', ')} → ${target}`);
+
+            // ambil semua item board (paginate)
+            let items = [], cursor = null;
+            do {
+              const r = await github.graphql(
+                `query($id:ID!,$c:String){ node(id:$id){ ... on ProjectV2 {
+                   items(first:100, after:$c){
+                     pageInfo{ hasNextPage endCursor }
+                     nodes{ id content{
+                       ... on DraftIssue{ title }
+                       ... on Issue{ title }
+                       ... on PullRequest{ title } } } } } } }`,
+                { id: projectId, c: cursor });
+              const conn = r.node.items;
+              items.push(...conn.nodes);
+              cursor = conn.pageInfo.hasNextPage ? conn.pageInfo.endCursor : null;
+            } while (cursor);
+
+            let touched = 0, created = 0;
+            for (const f of fnums) {
+              const re = new RegExp(`${f}(?!\\d)`, 'i'); // F12 tidak match F127
+              let matches = items.filter(it => re.test(it.content?.title || ''));
+              if (!matches.length) {
+                // F-number belum ada di board → buat draft item baru.
+                // Judul dijamin memuat F-number (di depan) agar match di run berikutnya.
+                const cleaned = pr.title.replace(/^\s*[a-z]+(\([^)]*\))?!?:\s*/i, '').trim();
+                const newTitle = `${f} — ${cleaned || pr.title}`;
+                const res = await github.graphql(
+                  `mutation($p:ID!,$t:String!){
+                     addProjectV2DraftIssue(input:{ projectId:$p, title:$t }){
+                       projectItem{ id content{ ... on DraftIssue{ title } } } } }`,
+                  { p: projectId, t: newTitle });
+                matches = [res.addProjectV2DraftIssue.projectItem];
+                created++;
+                core.info(`${f}: item baru dibuat → "${newTitle}"`);
+              }
+              for (const m of matches) {
+                await github.graphql(
+                  `mutation($p:ID!,$i:ID!,$fld:ID!,$o:String!){
+                     updateProjectV2ItemFieldValue(input:{
+                       projectId:$p, itemId:$i, fieldId:$fld,
+                       value:{ singleSelectOptionId:$o } }){ projectV2Item{ id } } }`,
+                  { p: projectId, i: m.id, fld: statusFieldId, o: OPT[target] });
+                core.info(`${f}: "${m.content?.title}" → ${target}`);
+                touched++;
+              }
+            }
+            core.info(`Selesai — ${touched} item diperbarui, ${created} item baru dibuat.`);
