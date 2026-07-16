@@ -17,7 +17,7 @@ import { syncAccurateInvoices, syncVendors, syncItems, syncSalesOrders, syncDeli
 import { insertAuditEvent } from "./repo/audit.js";
 import { upsertDealsFromPlan, logReportToDeals, getPipeline } from "./repo/deal.js";
 import { enqueueAmbiguous, listHitl, resolveHitl } from "./repo/hitl.js";
-import { insertRekap, insertResume, getDigestHistory } from "./repo/digest.js";
+import { insertRekap, insertResume, getDigestHistory, getDigestInsights } from "./repo/digest.js";
 import { getDashboardStats } from "./repo/stats.js";
 import { getCustomers } from "./repo/customer.js";
 import { listAccounts, getAccount, upsertAccountFields, createContact, updateContact, deleteContact } from "./repo/account.js";
@@ -706,6 +706,13 @@ app.get("/digests", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const limit = Math.min(Number(c.req.query("limit") ?? 20) || 20, 100);
   return c.json(await getDigestHistory(limit));
+});
+
+// Infografis Digest History — metadata (monitor_digest) + metrik konten (recompute).
+app.get("/digests/stats", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const days = Number(c.req.query("days") ?? 30) || 30;
+  return c.json(await getDigestInsights(days));
 });
 
 // ── AR Aging (D2): feeder Accurate + read model ──
