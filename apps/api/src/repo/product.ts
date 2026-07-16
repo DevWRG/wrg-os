@@ -21,9 +21,9 @@ export async function getProductIntelligence(limit = 100): Promise<ProductIntel[
            count(*)::int AS deal_count,
            coalesce(sum(d.estimated_value), 0) AS total_value,
            coalesce(sum(d.estimated_value)
-             FILTER (WHERE d.stage NOT IN ('Deal', 'MOU', 'Lose')), 0) AS open_value,
-           count(*) FILTER (WHERE d.stage IN ('Deal', 'MOU'))::int AS won,
-           count(*) FILTER (WHERE d.stage = 'Lose')::int AS lost
+             FILTER (WHERE d.stage NOT IN ('Closing-Won', 'Closing-Lost')), 0) AS open_value,
+           count(*) FILTER (WHERE d.stage IN ('Closing-Won'))::int AS won,
+           count(*) FILTER (WHERE d.stage = 'Closing-Lost')::int AS lost
     FROM deal d
     CROSS JOIN LATERAL jsonb_array_elements_text(coalesce(d.product_ids, '[]'::jsonb)) AS pid
     GROUP BY pid

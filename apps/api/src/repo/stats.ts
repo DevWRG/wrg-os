@@ -24,11 +24,11 @@ export async function getDashboardStats(amId?: string): Promise<DashboardStats> 
   const [agg] = await sql`
     SELECT
       count(*)                                                          AS total,
-      count(*) FILTER (WHERE stage NOT IN ('Deal','MOU','Lose'))        AS open,
-      count(*) FILTER (WHERE stage IN ('Deal','MOU'))                   AS won,
-      count(*) FILTER (WHERE stage = 'Lose')                            AS lost,
+      count(*) FILTER (WHERE stage NOT IN ('Closing-Won','Closing-Lost'))        AS open,
+      count(*) FILTER (WHERE stage IN ('Closing-Won'))                   AS won,
+      count(*) FILTER (WHERE stage = 'Closing-Lost')                            AS lost,
       COALESCE(sum(estimated_value), 0)                                 AS total_value,
-      COALESCE(sum(estimated_value) FILTER (WHERE stage NOT IN ('Deal','MOU','Lose')), 0) AS open_value
+      COALESCE(sum(estimated_value) FILTER (WHERE stage NOT IN ('Closing-Won','Closing-Lost')), 0) AS open_value
     FROM deal ${filter}
   `;
 

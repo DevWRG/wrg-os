@@ -53,15 +53,15 @@ export async function getDealsNeedingDoc(limit = 5): Promise<DealForDoc[]> {
     SELECT d.deal_id, d.customer_id, d.customer_name, d.am_id, d.stage,
            d.estimated_value, d.product_ids, d.notes
     FROM deal d
-    WHERE d.stage IN ('SPH', 'Offering Letter', 'Presentation', 'MOU')
+    WHERE d.stage IN ('Quotation', 'Offering', 'Presentation', 'Closing-Won')
       AND NOT EXISTS (
         SELECT 1 FROM sales_doc sd
         WHERE sd.deal_id = d.deal_id
           AND sd.doc_type = CASE d.stage
-            WHEN 'SPH' THEN 'sph'
-            WHEN 'Offering Letter' THEN 'offering_letter'
+            WHEN 'Quotation' THEN 'sph'
+            WHEN 'Offering' THEN 'offering_letter'
             WHEN 'Presentation' THEN 'presentation'
-            WHEN 'MOU' THEN 'mou'
+            WHEN 'Closing-Won' THEN 'mou'
           END
       )
     ORDER BY d.updated_at DESC
