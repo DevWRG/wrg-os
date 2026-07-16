@@ -510,7 +510,7 @@ export default function DashboardPage() {
                   getKey={(r) => r.am_id}
                   searchPlaceholder="Cari nama / cabang / role…"
                   pageSize={25}
-                  onRowClick={(r) => router.push(`/dashboard/drilldown?am_id=${r.am_id}&from=${range?.from ?? ""}&to=${range?.to ?? ""}`)}
+                  onRowClick={(r) => router.push(`/dashboard/drilldown?am_id=${r.am_id}`)}
                   toolbar={
                     <ExportButton<PlanDetailRow>
                       filename="plan-report-detail"
@@ -536,7 +536,7 @@ export default function DashboardPage() {
                     />
                   }
                   columns={[
-                    { id: "panggilan", header: "Panggilan", sortable: true, accessor: (r) => r.panggilan ?? r.am_id, cell: (r) => <Link href={`/dashboard/drilldown?am_id=${r.am_id}&from=${range?.from}&to=${range?.to}`} className="font-medium hover:text-primary hover:underline">{r.panggilan ?? r.am_id}</Link> },
+                    { id: "panggilan", header: "Panggilan", sortable: true, accessor: (r) => r.panggilan ?? r.am_id, cell: (r) => <Link href={`/dashboard/drilldown?am_id=${r.am_id}`} className="font-medium hover:text-primary hover:underline">{r.panggilan ?? r.am_id}</Link> },
                     { id: "nama", header: "Nama", sortable: true, accessor: (r) => r.nama, cell: (r) => <span className="text-muted-foreground">{r.nama}</span> },
                     { id: "role", header: "Role", sortable: true, accessor: (r) => r.role, cell: (r) => <Badge variant="outline">{r.role}</Badge> },
                     { id: "cabang", header: "Cabang", sortable: true, accessor: (r) => r.cabang ?? "", cell: (r) => <span className="text-muted-foreground">{r.cabang ?? "—"}</span> },
