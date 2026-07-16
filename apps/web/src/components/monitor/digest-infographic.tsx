@@ -19,7 +19,19 @@ interface DigestStats {
 }
 
 const nf = (n: number) => n.toLocaleString("id-ID");
-const CHART_VARS = ["var(--chart-1)", "var(--chart-2)", "var(--chart-3)", "var(--chart-4)", "var(--chart-5)"];
+
+// Warna TETAP per-kategori (bukan cycle by-rank) dengan hue menyebar → slice donut
+// kontras satu sama lain. Pasangan light/dark biar tetap enak di kedua tema.
+const TYPE_COLORS: Record<string, { light: string; dark: string }> = {
+  text: { light: "#0ca6bd", dark: "#22c8dc" }, // cyan
+  image: { light: "#f59e0b", dark: "#fbbf24" }, // amber
+  video: { light: "#8b5cf6", dark: "#a78bfa" }, // ungu
+  audio: { light: "#10b981", dark: "#34d399" }, // hijau
+  document: { light: "#ef4444", dark: "#f87171" }, // merah
+  sticker: { light: "#ec4899", dark: "#f472b6" }, // pink
+  location: { light: "#3b82f6", dark: "#60a5fa" }, // biru
+  other: { light: "#64748b", dark: "#94a3b8" }, // abu
+};
 
 export function DigestInfographic({ date }: { date: string }) {
   const [stats, setStats] = useState<DigestStats | null>(null);
@@ -63,8 +75,8 @@ export function DigestInfographic({ date }: { date: string }) {
   }));
 
   const typeConfig: ChartConfig = {};
-  stats.by_type.forEach((t, i) => {
-    typeConfig[t.type] = { label: t.label, color: CHART_VARS[i % CHART_VARS.length] };
+  stats.by_type.forEach((t) => {
+    typeConfig[t.type] = { label: t.label, theme: TYPE_COLORS[t.type] ?? TYPE_COLORS.other };
   });
 
   const hourConfig = { count: { label: "Pesan", color: "var(--chart-1)" } } satisfies ChartConfig;
