@@ -160,6 +160,7 @@ function Infografis() {
 
   useEffect(() => {
     let alive = true;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch infografis saat ganti rentang; disengaja.
     setState("loading");
     fetch(`/api/digests/stats?days=${days}`)
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
