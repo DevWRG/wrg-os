@@ -3,11 +3,11 @@
 # launchd: infra/launchd/com.wrg.autodeploy.plist). Tanpa GitHub runner / tanpa
 # scope token: cukup script ini + 1 launchd job di server.
 #
-# Logika: fetch origin/main → kalau maju → deploy KODE (deploy-prod.sh --yes
-# --skip-migrate). Migrasi DB TIDAK auto-apply (alert-only, prinsip MIGRATIONS.md)
-# — kalau ada yg pending, di-LOG + ALERT WA LOUD (gate migrasi); apply manual.
-# Idempoten, lockdir anti-tumpang-tindih, semua ter-log. Promote dev→main →
-# dalam <interval> menit server otomatis ke versi baru.
+# Logika: fetch origin/main → kalau maju → deploy PENUH (deploy-prod.sh --yes:
+# pull→build→migrasi[pg_dump backup]→restart). Migrasi DB AUTO-APPLY sejak 2026-07-16
+# (dulu alert-only, tapi apply manual sering kelewat → fitur 500 berjam-jam 4x).
+# Kalau ada pending → di-LOG + ALERT WA (rekam "auto-applying"). Idempoten, lockdir
+# anti-tumpang-tindih, semua ter-log. Promote dev→main → <interval> menit auto ke versi baru.
 #
 # HANYA menyentuh wrg-prod-api/web (via deploy-prod.sh). Python legacy (8090–8092)
 # & wa-bridge TIDAK pernah disentuh.
@@ -16,11 +16,11 @@
 #   - deteksi migrasi pending dg banding daftar file di origin/main vs tabel
 #     schema_migrations prod (PRE-pull → migrasi baru yg belum masuk working tree
 #     tetap kedeteksi; deteksi lama baca working tree lama → luput).
-#   - ada pending → kirim ALERT WA (bukan cuma log). Edge-trigger via state file
+#   - ada pending → kirim ALERT WA (rekam, bukan alarm). Edge-trigger via state file
 #     supaya tidak spam tiap siklus utk set yg sama.
-#   - default tetap alert-only (deploy kode jalan terus). Set
-#     WRG_DEPLOY_BLOCK_ON_PENDING=1 untuk MENAHAN deploy kode sampai migrasi
-#     di-apply (cegah kode yg 500 sampai schema siap).
+#   - default AUTO-APPLY (migrasi + backup, sebelum restart). Set
+#     WRG_DEPLOY_BLOCK_ON_PENDING=1 untuk MENAHAN deploy (auto-apply di-skip) &
+#     apply manual — dipakai utk migrasi destruktif yg butuh review dulu.
 #
 # Env opsional: WRG_PROD_DIR (default ~/DevWRG/wrg-os), WRG_DEPLOY_LOG,
 #   WRG_DEPLOY_BLOCK_ON_PENDING (0/1). Tujuan alert WA dibaca dari .env.prod
@@ -95,44 +95,46 @@ LOCAL="$(git rev-parse HEAD)"
 REMOTE="$(git rev-parse origin/main)"
 if [ "$LOCAL" = "$REMOTE" ]; then exit 0; fi   # tak ada yg baru → diam
 
-log "main maju ${LOCAL:0:7} → ${REMOTE:0:7} — deploy KODE (migrasi alert-only)"
+log "main maju ${LOCAL:0:7} → ${REMOTE:0:7} — deploy KODE + AUTO-APPLY migrasi (backup)"
 
 # ── GATE MIGRASI: deteksi migrasi pending (origin/main vs schema_migrations prod).
-# Auto-deploy tetap code-only (--skip-migrate); schema TIDAK di-apply otomatis.
-# Kalau pending → ALERT WA LOUD (edge-trigger, tak spam) + opsi blok deploy.
+# Sejak 2026-07-16: migrasi AUTO-APPLY (pg_dump backup dulu) via deploy-prod.sh --yes,
+# TIDAK lagi alert-only. Alasan: manual-apply sering kelewat (050/051-053/056 → fitur
+# 500 berjam-jam, 4x) walau gate WA fire. WA alert tetap dikirim sbg REKAM ("auto-applying").
+# Escape hatch: set WRG_DEPLOY_BLOCK_ON_PENDING=1 → deploy DITAHAN, apply manual (utk migrasi destruktif).
 PEND="$(detect_pending || true)"
 if [ -n "$PEND" ]; then
   N="$(printf '%s\n' "$PEND" | grep -c . || true)"
   PLIST="$(printf '%s ' $PEND)"
-  log "⚠️ MIGRASI PENDING ($N, TIDAK di-apply otomatis): $PLIST"
+  log "⚠️ MIGRASI PENDING ($N) → AUTO-APPLY (backup): $PLIST"
 
   # edge-trigger: hanya kirim WA kalau set pending BERUBAH dari siklus terakhir
   CUR="$(printf '%s\n' "$PEND" | sort | tr '\n' ',')"
   PREV=""; [ -f "$STATE" ] && PREV="$(cat "$STATE" 2>/dev/null || true)"
   if [ "$CUR" != "$PREV" ]; then
     mkdir -p "$(dirname "$STATE")"; printf '%s' "$CUR" >"$STATE"
-    wa_alert "$(prod_env WRG_DEPLOY_ALERT_TO)" "🔴 WRG-OS PROD — $N migrasi DB PENDING belum ke-apply.
-Auto-deploy hanya rebuild KODE (--skip-migrate); endpoint yg butuh schema ini bisa 500 sampai di-apply manual.
+    wa_alert "$(prod_env WRG_DEPLOY_ALERT_TO)" "🟠 WRG-OS PROD — $N migrasi DB PENDING → AUTO-APPLY (pg_dump backup dulu) oleh deploy ini.
 File: $PLIST
-Apply: cd ~/DevWRG/wrg-os && bash scripts/ops/deploy-prod.sh   (migrasi + pg_dump backup)
+Kalau ada yg destruktif & tak boleh auto: set WRG_DEPLOY_BLOCK_ON_PENDING=1 (deploy ditahan, apply manual).
 [main ${LOCAL:0:7}→${REMOTE:0:7}]"
   else
     log "   (set pending sama spt siklus lalu — alert WA tidak diulang)"
   fi
 
   if [ "${WRG_DEPLOY_BLOCK_ON_PENDING:-0}" = 1 ]; then
-    log "   ⛔ WRG_DEPLOY_BLOCK_ON_PENDING=1 → deploy KODE DITAHAN sampai migrasi di-apply (retry tiap siklus)."
+    log "   ⛔ WRG_DEPLOY_BLOCK_ON_PENDING=1 → deploy DITAHAN (auto-apply di-skip); apply manual saat siap."
     exit 0
   fi
-  log "   → deploy KODE tetap lanjut (alert-only). Apply migrasi manual saat siap."
+  log "   → lanjut deploy + auto-apply migrasi (pg_dump backup)."
 else
   # tak ada pending → bersihkan state supaya pending BARU berikutnya tetap ter-alert
   [ -f "$STATE" ] && rm -f "$STATE"
 fi
 
-# Deploy KODE saja: pull → build → restart. --skip-migrate = migrasi tetap manual.
-if bash scripts/ops/deploy-prod.sh --yes --skip-migrate >>"$LOG" 2>&1; then
-  log "deploy OK (kode) → $(git rev-parse --short HEAD)"
+# Deploy penuh: pull → build → migrasi (pg_dump backup) → restart. Auto-apply sejak 2026-07-16.
+# deploy-prod.sh --yes: confirm() auto-yes → migrate.sh --prod --backup non-interaktif, urutan aman.
+if bash scripts/ops/deploy-prod.sh --yes >>"$LOG" 2>&1; then
+  log "deploy OK (kode+migrasi) → $(git rev-parse --short HEAD)"
 else
   log "deploy GAGAL (cek log di atas) — akan dicoba lagi tiap interval"
 fi
