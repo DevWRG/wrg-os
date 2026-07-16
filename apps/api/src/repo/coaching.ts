@@ -21,11 +21,11 @@ export async function getAmsNeedingCoaching(period: string): Promise<AmMetrics[]
   const rows = await sql`
     SELECT d.am_id,
            count(*)::int AS deals,
-           count(*) FILTER (WHERE stage NOT IN ('Deal','MOU','Lose'))::int AS open,
-           count(*) FILTER (WHERE stage IN ('Deal','MOU'))::int AS won,
-           count(*) FILTER (WHERE stage = 'Lose')::int AS lost,
+           count(*) FILTER (WHERE stage NOT IN ('Closing-Won','Closing-Lost'))::int AS open,
+           count(*) FILTER (WHERE stage IN ('Closing-Won'))::int AS won,
+           count(*) FILTER (WHERE stage = 'Closing-Lost')::int AS lost,
            coalesce(sum(estimated_value), 0) AS total_value,
-           coalesce(sum(estimated_value) FILTER (WHERE stage NOT IN ('Deal','MOU','Lose')), 0) AS open_value,
+           coalesce(sum(estimated_value) FILTER (WHERE stage NOT IN ('Closing-Won','Closing-Lost')), 0) AS open_value,
            (SELECT count(*) FROM spt_state_log s WHERE s.changed_by = d.am_id)::int AS activity
     FROM deal d
     WHERE NOT EXISTS (
