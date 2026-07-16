@@ -11,17 +11,17 @@ import type { ReportItem } from "../parsers/report.js";
 
 const AUTO = 0.7;
 const AMBIGUOUS = 0.4;
-const CLOSED = ["Deal", "MOU", "Lose"];
+// F1-SPT: 8-stage kanonik (selaras enum deal_stage migrasi 057). Ganti stage lama.
+const CLOSED = ["Closing-Won", "Closing-Lost"];
 export const DEAL_STAGES = [
-  "Cold",
-  "Follow Up",
-  "SPH",
-  "Offering Letter",
+  "Prospecting",
+  "First Contact",
   "Presentation",
-  "Negotiating",
-  "Deal",
-  "MOU",
-  "Lose",
+  "Quotation",
+  "Offering",
+  "Negotiation",
+  "Closing-Won",
+  "Closing-Lost",
 ];
 
 function custId(name: string): string {
@@ -53,9 +53,10 @@ export async function getPipeline(
   amId?: string,
 ): Promise<{ stages: PipelineStage[]; total_deals: number; total_value: number }> {
   const sql = db();
+  // F1-SPT: value pakai estimate_amount (kolom SPT) kalau estimated_value (WA lama) kosong.
   const rows = amId
-    ? await sql`SELECT deal_id, customer_name, am_id, stage, estimated_value, updated_at FROM deal WHERE am_id = ${amId} ORDER BY updated_at DESC`
-    : await sql`SELECT deal_id, customer_name, am_id, stage, estimated_value, updated_at FROM deal ORDER BY updated_at DESC`;
+    ? await sql`SELECT deal_id, customer_name, am_id, stage, COALESCE(estimated_value, estimate_amount) AS estimated_value, updated_at FROM deal WHERE am_id = ${amId} ORDER BY updated_at DESC`
+    : await sql`SELECT deal_id, customer_name, am_id, stage, COALESCE(estimated_value, estimate_amount) AS estimated_value, updated_at FROM deal ORDER BY updated_at DESC`;
 
   const byStage = new Map<string, PipelineDeal[]>();
   for (const s of DEAL_STAGES) byStage.set(s, []);
@@ -109,7 +110,7 @@ export async function upsertDealsFromPlan(
     } else {
       const rows = await sql`
         INSERT INTO deal (customer_id, customer_name, am_id, stage, notes)
-        VALUES (${custId(c.customer)}, ${c.customer}, ${amId}, 'Cold', ${notes})
+        VALUES (${custId(c.customer)}, ${c.customer}, ${amId}, 'Prospecting', ${notes})
         RETURNING deal_id, stage
       `;
       out.push({ customer: c.customer, deal_id: rows[0].deal_id as string, stage: rows[0].stage as string, created: true });

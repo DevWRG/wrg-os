@@ -17,7 +17,7 @@ export async function getDealValueSeries(): Promise<SeriesPoint[]> {
   const rows = await sql`
     SELECT deal_id, customer_name, estimated_value
     FROM deal
-    WHERE estimated_value IS NOT NULL AND stage <> 'Lose'
+    WHERE estimated_value IS NOT NULL AND stage <> 'Closing-Lost'
   `;
   return rows.map((r) => ({
     entity_id: String(r.deal_id),
