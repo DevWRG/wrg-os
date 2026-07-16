@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { MonitorReport } from "@/components/monitor/monitor-report";
+import { DigestInfographic } from "@/components/monitor/digest-infographic";
 
 interface DigestEntry {
   waktu: string | null;
@@ -95,6 +96,9 @@ export function DigestView({ kind, initial }: { kind: "rekap" | "resume"; initia
         </Button>
       </div>
       {genMsg && <p className="text-muted-foreground text-xs">{genMsg}</p>}
+
+      {/* Infografis: KPI + grafik aktivitas WA untuk tanggal terpilih. */}
+      {(data.date ?? date) && <DigestInfographic date={data.date ?? date} />}
 
       {data.entries.length === 0 ? (
         <Card>

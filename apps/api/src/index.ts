@@ -120,7 +120,7 @@ import {
 import { listViews, saveView, deleteView, listAlerts, createAlert, deleteAlert, updateAlert, listAlertTargets } from "./repo/sales-analytics-config.js";
 import { evaluateSalesAlerts } from "./repo/sales-analytics-alert-eval.js";
 import { listDepartments, listEmployees, getEmployee, getRaciMatrix, getMeasurements, saveMeasurements, createEmployee, updateEmployee, deleteEmployee, replaceEmployeeDetail, getVoiceAggregate, getHodResolution, getOrgReporting, populateHodKey, getHods, type MeasurementInput, type EmployeeWrite, type SpineDetail } from "./repo/employee-spine.js";
-import { upsertMembers, listMembers, upsertDigests, listDigest, upsertPola, listPola, generateRekap, generateResume, type MonitorMemberInput, type DigestInput, type PolaInput } from "./repo/monitor.js";
+import { upsertMembers, listMembers, upsertDigests, listDigest, digestStats, upsertPola, listPola, generateRekap, generateResume, type MonitorMemberInput, type DigestInput, type PolaInput } from "./repo/monitor.js";
 import { runNotifTua } from "./repo/notiftua.js";
 import { runDailySummary } from "./repo/dailysummary.js";
 import { runWeeklyReport } from "./repo/weeklyreport.js";
@@ -886,6 +886,14 @@ app.get("/monitor/rekap", async (c) => {
 app.get("/monitor/resume", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json(await listDigest("resume", c.req.query("date") || undefined));
+});
+
+// Infografis rekap/resume — agregasi aktivitas WA (KPI + chart) untuk satu tanggal.
+app.get("/monitor/stats", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const date = c.req.query("date");
+  if (!date) return c.json({ error: "query date (YYYY-MM-DD) wajib" }, 400);
+  return c.json(await digestStats(date));
 });
 
 app.post("/monitor/digests", async (c) => {
