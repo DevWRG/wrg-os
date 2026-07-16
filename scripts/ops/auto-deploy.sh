@@ -3,11 +3,11 @@
 # launchd: infra/launchd/com.wrg.autodeploy.plist). Tanpa GitHub runner / tanpa
 # scope token: cukup script ini + 1 launchd job di server.
 #
-# Logika: fetch origin/main → kalau maju → deploy KODE (deploy-prod.sh --yes
-# --skip-migrate). Migrasi DB TIDAK auto-apply (alert-only, prinsip MIGRATIONS.md)
-# — kalau ada yg pending, di-LOG + ALERT WA LOUD (gate migrasi); apply manual.
-# Idempoten, lockdir anti-tumpang-tindih, semua ter-log. Promote dev→main →
-# dalam <interval> menit server otomatis ke versi baru.
+# Logika: fetch origin/main → kalau maju → deploy PENUH (deploy-prod.sh --yes:
+# pull→build→migrasi[pg_dump backup]→restart). Migrasi DB AUTO-APPLY sejak 2026-07-16
+# (dulu alert-only, tapi apply manual sering kelewat → fitur 500 berjam-jam 4x).
+# Kalau ada pending → di-LOG + ALERT WA (rekam "auto-applying"). Idempoten, lockdir
+# anti-tumpang-tindih, semua ter-log. Promote dev→main → <interval> menit auto ke versi baru.
 #
 # HANYA menyentuh wrg-prod-api/web (via deploy-prod.sh). Python legacy (8090–8092)
 # & wa-bridge TIDAK pernah disentuh.
@@ -16,11 +16,11 @@
 #   - deteksi migrasi pending dg banding daftar file di origin/main vs tabel
 #     schema_migrations prod (PRE-pull → migrasi baru yg belum masuk working tree
 #     tetap kedeteksi; deteksi lama baca working tree lama → luput).
-#   - ada pending → kirim ALERT WA (bukan cuma log). Edge-trigger via state file
+#   - ada pending → kirim ALERT WA (rekam, bukan alarm). Edge-trigger via state file
 #     supaya tidak spam tiap siklus utk set yg sama.
-#   - default tetap alert-only (deploy kode jalan terus). Set
-#     WRG_DEPLOY_BLOCK_ON_PENDING=1 untuk MENAHAN deploy kode sampai migrasi
-#     di-apply (cegah kode yg 500 sampai schema siap).
+#   - default AUTO-APPLY (migrasi + backup, sebelum restart). Set
+#     WRG_DEPLOY_BLOCK_ON_PENDING=1 untuk MENAHAN deploy (auto-apply di-skip) &
+#     apply manual — dipakai utk migrasi destruktif yg butuh review dulu.
 #
 # Env opsional: WRG_PROD_DIR (default ~/DevWRG/wrg-os), WRG_DEPLOY_LOG,
 #   WRG_DEPLOY_BLOCK_ON_PENDING (0/1). Tujuan alert WA dibaca dari .env.prod
