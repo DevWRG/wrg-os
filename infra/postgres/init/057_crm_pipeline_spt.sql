@@ -48,6 +48,11 @@ ALTER TABLE deal ALTER COLUMN stage TYPE deal_stage USING (
 );
 ALTER TABLE deal ALTER COLUMN stage SET DEFAULT 'Prospecting';
 
+-- customer_id (varchar WA-fed lama) tak wajib utk deal SPT (pakai account_id+facility_name).
+ALTER TABLE deal ALTER COLUMN customer_id DROP NOT NULL;
+-- am_id boleh NULL: deal HS-S-1 dgn Sales VACANT/tak ter-map di-import tetap (am_id null + tandai).
+ALTER TABLE deal ALTER COLUMN am_id DROP NOT NULL;
+
 -- 4) Kolom baru (additive). am_id sudah ada.
 ALTER TABLE deal
   -- sumbu & derive-snapshot (kategori/prob/forecast diturunkan dari stage di app-layer)
