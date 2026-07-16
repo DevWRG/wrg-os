@@ -108,13 +108,22 @@ interface Pending {
 }
 type ReminderTab = "am" | "todo" | "zero";
 
-type Tab = "orang" | "divisi" | "cabang" | "hod";
+type Tab = "orang" | "divisi" | "cabang" | "hod" | "compliance";
 const TABS: { key: Tab; label: string }[] = [
   { key: "orang", label: "Per Orang" },
   { key: "divisi", label: "Per Divisi" },
   { key: "cabang", label: "Per Cabang" },
   { key: "hod", label: "Per HOD Sales" },
+  { key: "compliance", label: "Compliance" },
 ];
+interface ComplianceRow {
+  am_id: string; nama: string; panggilan: string | null; role: string; cabang: string | null;
+  expected: number; on_time: number; late: number; miss: number; compliance_rate: number | null;
+}
+interface ComplianceResp {
+  summary: { users: number; expected: number; on_time: number; late: number; miss: number; on_time_pct: number | null; late_pct: number | null; miss_pct: number | null };
+  rows: ComplianceRow[];
+}
 
 const trendConfig = {
   plan: { label: "Plan", color: "var(--chart-1)" },
@@ -188,6 +197,7 @@ export default function DashboardPage() {
   const [groups, setGroups] = useState<GroupRow[]>([]);
   const [hod, setHod] = useState<HodRow[]>([]);
   const [cabangStat, setCabangStat] = useState<GroupRow[]>([]);
+  const [compliance, setCompliance] = useState<ComplianceResp | null>(null);
   const [reminderOpen, setReminderOpen] = useState(true);
   const [reminderTab, setReminderTab] = useState<ReminderTab | null>("am");
   const [pushState, setPushState] = useState<Record<string, "sending" | "sent" | "error">>({});
@@ -247,6 +257,9 @@ export default function DashboardPage() {
     } else if (t === "hod") {
       const d = await getJson<{ rows: HodRow[] }>(`/api/report/per-hod?${qs}`);
       setHod(d?.rows ?? []);
+    } else if (t === "compliance") {
+      const d = await getJson<ComplianceResp>(`/api/report/compliance?${qs}`);
+      setCompliance(d ?? null);
     } else {
       const d = await getJson<{ rows: GroupRow[] }>(`/api/report/per-${t}?${qs}`);
       setGroups(d?.rows ?? []);
@@ -553,6 +566,50 @@ export default function DashboardPage() {
                     { id: "unmatched", header: "Unmatched", align: "right", sortable: true, accessor: (r) => r.unmatched },
                   ] satisfies DataColumn<HodRow>[]}
                 />
+              ) : tab === "compliance" ? (
+                <div className="space-y-4">
+                  {compliance && (
+                    <div className="grid gap-3 sm:grid-cols-3">
+                      <div className="rounded-lg border p-3"><div className="text-muted-foreground text-xs">On-time</div><div className="text-xl font-semibold text-emerald-600">{compliance.summary.on_time_pct ?? "—"}%</div><div className="text-muted-foreground text-xs">{compliance.summary.on_time} hari</div></div>
+                      <div className="rounded-lg border p-3"><div className="text-muted-foreground text-xs">Telat / Parsial</div><div className="text-xl font-semibold text-amber-600">{compliance.summary.late_pct ?? "—"}%</div><div className="text-muted-foreground text-xs">{compliance.summary.late} hari</div></div>
+                      <div className="rounded-lg border p-3"><div className="text-muted-foreground text-xs">Miss</div><div className="text-xl font-semibold text-rose-600">{compliance.summary.miss_pct ?? "—"}%</div><div className="text-muted-foreground text-xs">{compliance.summary.miss} hari</div></div>
+                    </div>
+                  )}
+                  <DataTable
+                    data={compliance?.rows ?? []}
+                    getKey={(r) => r.am_id}
+                    searchPlaceholder="Cari nama / cabang…"
+                    pageSize={25}
+                    toolbar={
+                      <ExportButton<ComplianceRow>
+                        filename="compliance"
+                        label="Export Excel"
+                        data={compliance?.rows ?? []}
+                        columns={[
+                          { header: "Nama", value: (r) => r.nama },
+                          { header: "Role", value: (r) => r.role },
+                          { header: "Cabang", value: (r) => r.cabang ?? "" },
+                          { header: "Hari diharapkan", value: (r) => r.expected },
+                          { header: "On-time", value: (r) => r.on_time },
+                          { header: "Telat/Parsial", value: (r) => r.late },
+                          { header: "Miss", value: (r) => r.miss },
+                          { header: "Compliance %", value: (r) => r.compliance_rate ?? "" },
+                        ]}
+                      />
+                    }
+                    columns={[
+                      { id: "nama", header: "Nama", sortable: true, accessor: (r) => r.panggilan ?? r.nama, cell: (r) => <span className="font-medium">{r.panggilan ?? r.nama}</span> },
+                      { id: "role", header: "Role", sortable: true, accessor: (r) => r.role, cell: (r) => <Badge variant="outline">{r.role}</Badge> },
+                      { id: "cabang", header: "Cabang", sortable: true, accessor: (r) => r.cabang ?? "", cell: (r) => <span className="text-muted-foreground">{r.cabang ?? "—"}</span> },
+                      { id: "expected", header: "Hari", align: "right", sortable: true, accessor: (r) => r.expected },
+                      { id: "on_time", header: "On-time", align: "right", sortable: true, accessor: (r) => r.on_time, cell: (r) => <span className="text-emerald-600">{r.on_time}</span> },
+                      { id: "late", header: "Telat/Parsial", align: "right", sortable: true, accessor: (r) => r.late, cell: (r) => (r.late > 0 ? <span className="text-amber-600">{r.late}</span> : 0) },
+                      { id: "miss", header: "Miss", align: "right", sortable: true, accessor: (r) => r.miss, cell: (r) => (r.miss > 0 ? <span className="text-rose-600">{r.miss}</span> : 0) },
+                      { id: "rate", header: "Compliance %", align: "right", sortable: true, accessor: (r) => r.compliance_rate ?? -1, cell: (r) => <span className={cn("font-medium", pctTone(r.compliance_rate))}>{pct(r.compliance_rate)}</span> },
+                    ] satisfies DataColumn<ComplianceRow>[]}
+                  />
+                  <p className="text-muted-foreground text-xs">Compliance% = hari-kerja saat AM submit plan tepat waktu &amp; report lengkap ÷ hari-kerja diharapkan (skip weekend/libur & cuti). On-time = plan tepat waktu + report lengkap · Telat/Parsial = ada plan tapi telat / report belum lengkap · Miss = tak ada plan.</p>
+                </div>
               ) : (
                 <DataTable
                   data={groups}
