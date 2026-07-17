@@ -93,6 +93,7 @@ function geoOf(p: PlanRow): GeoStatus {
 
 const isoToday = () => new Date().toISOString().slice(0, 10);
 const ALL_FROM = "2000-01-01";
+const TODO_PAGE_SIZE = 5;
 
 const dmy = (iso: string) => {
   const d = new Date(iso);
@@ -212,6 +213,7 @@ export function UserInfographic({ amId, initialFrom, initialTo }: { amId: string
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showDetail, setShowDetail] = useState(false);
+  const [todoPage, setTodoPage] = useState(0);
 
   const load = useCallback(async (r: { from: string; to: string }) => {
     setLoading(true);
@@ -220,6 +222,7 @@ export function UserInfographic({ amId, initialFrom, initialTo }: { amId: string
     );
     setError(d ? null : "Gagal memuat data. Pastikan apps/api jalan.");
     setDetail(d?.detail ?? null);
+    setTodoPage(0);
     setLoading(false);
   }, [amId]);
 
@@ -489,7 +492,11 @@ export function UserInfographic({ amId, initialFrom, initialTo }: { amId: string
               </CardContent>
             </Card>
           ) : (
-            detail.todo.length > 0 && (
+            detail.todo.length > 0 && (() => {
+              const pageCount = Math.max(1, Math.ceil(detail.todo.length / TODO_PAGE_SIZE));
+              const cur = Math.min(todoPage, pageCount - 1);
+              const slice = detail.todo.slice(cur * TODO_PAGE_SIZE, cur * TODO_PAGE_SIZE + TODO_PAGE_SIZE);
+              return (
               <Card>
                 <CardHeader className="pb-2">
                   <CardTitle className="flex items-center gap-2 text-sm font-medium">
@@ -497,11 +504,11 @@ export function UserInfographic({ amId, initialFrom, initialTo }: { amId: string
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  {detail.todo.map((t, i) => {
+                  {slice.map((t) => {
                     const rd = Array.isArray(t.report_data) ? t.report_data : [];
                     const byIdx = new Map(rd.map((r) => [r.idx, r]));
                     return (
-                      <div key={i} className="rounded-lg border p-3">
+                      <div key={t.tanggal} className="rounded-lg border p-3">
                         <div className="mb-2 flex items-center gap-2 text-sm">
                           <span className="font-medium">{tgl(t.tanggal)}</span>
                           <span className="text-muted-foreground">{t.total_items} item</span>
@@ -526,9 +533,31 @@ export function UserInfographic({ amId, initialFrom, initialTo }: { amId: string
                       </div>
                     );
                   })}
+                  {pageCount > 1 && (
+                    <div className="flex items-center justify-end gap-2 pt-1">
+                      <span className="text-muted-foreground text-xs">Hal {cur + 1}/{pageCount}</span>
+                      <button
+                        type="button"
+                        onClick={() => setTodoPage((p) => Math.max(0, p - 1))}
+                        disabled={cur === 0}
+                        className="rounded-md border px-2 py-1 text-xs hover:bg-muted disabled:opacity-40"
+                      >
+                        Prev
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setTodoPage((p) => Math.min(pageCount - 1, p + 1))}
+                        disabled={cur >= pageCount - 1}
+                        className="rounded-md border px-2 py-1 text-xs hover:bg-muted disabled:opacity-40"
+                      >
+                        Next
+                      </button>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
-            )
+              );
+            })()
           )}
 
           {/* Detail tabel (collapsible) */}
