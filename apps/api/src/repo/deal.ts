@@ -37,8 +37,26 @@ function custId(name: string): string {
 export interface PipelineDeal {
   deal_id: string;
   customer_name: string;
-  am_id: string;
-  estimated_value: number | null;
+  facility_name: string | null;
+  am_id: string | null;
+  brand: string | null;
+  product: string | null;
+  product_category: string | null;    // IVD / Medical
+  prospect_category: string | null;    // Cold / Warm / Hot
+  stage: string;
+  probability: number | null;
+  forecast_category: string | null;
+  estimate_amount: number | null;
+  weighted: number;                    // estimate_amount × probability(stage)
+  pic_hod: string | null;
+  cabang: string | null;
+  coop_model: string | null;
+  city: string | null;
+  province: string | null;
+  purchase_year: number | null;
+  days_in_stage: number | null;
+  stale: boolean;                      // >14 hari di stage non-terminal
+  notes: string | null;
   updated_at: string;
 }
 
@@ -46,41 +64,97 @@ export interface PipelineStage {
   stage: string;
   count: number;
   total_value: number;
+  weighted_value: number;
   deals: PipelineDeal[];
 }
 
+export interface PipelineSummary {
+  total_deals: number;
+  total_value: number;
+  weighted_value: number;
+  stale_count: number;
+  by_forecast: { forecast: string; count: number; value: number }[];
+}
+
+// F1-SPT read model: board by 8-stage + weighted (estimate×prob) + stale flag + summary.
 export async function getPipeline(
   amId?: string,
-): Promise<{ stages: PipelineStage[]; total_deals: number; total_value: number }> {
+): Promise<{ stages: PipelineStage[]; summary: PipelineSummary; total_deals: number; total_value: number }> {
   const sql = db();
-  // F1-SPT: value pakai estimate_amount (kolom SPT) kalau estimated_value (WA lama) kosong.
+  const cols = sql`deal_id, customer_name, facility_name, am_id, brand, product, product_category,
+    prospect_category, stage, probability, forecast_category,
+    COALESCE(estimated_value, estimate_amount) AS estimate_amount,
+    pic_hod, cabang, coop_model, city, province, purchase_year, notes, updated_at,
+    GREATEST(0, EXTRACT(DAY FROM (now() - stage_entered_at))::int) AS days_in_stage`;
   const rows = amId
-    ? await sql`SELECT deal_id, customer_name, am_id, stage, COALESCE(estimated_value, estimate_amount) AS estimated_value, updated_at FROM deal WHERE am_id = ${amId} ORDER BY updated_at DESC`
-    : await sql`SELECT deal_id, customer_name, am_id, stage, COALESCE(estimated_value, estimate_amount) AS estimated_value, updated_at FROM deal ORDER BY updated_at DESC`;
+    ? await sql`SELECT ${cols} FROM deal WHERE am_id = ${amId} ORDER BY updated_at DESC`
+    : await sql`SELECT ${cols} FROM deal ORDER BY updated_at DESC`;
 
+  const TERMINAL = new Set(["Closing-Won", "Closing-Lost"]);
   const byStage = new Map<string, PipelineDeal[]>();
   for (const s of DEAL_STAGES) byStage.set(s, []);
-  let totalValue = 0;
+  let totalValue = 0, weightedTotal = 0, staleCount = 0;
+  const byForecast = new Map<string, { count: number; value: number }>();
+
   for (const r of rows) {
-    const val = r.estimated_value != null ? Number(r.estimated_value) : null;
+    const stage = String(r.stage);
+    const est = r.estimate_amount != null ? Number(r.estimate_amount) : null;
+    const prob = r.probability != null ? Number(r.probability) : null;
+    const weighted = (est ?? 0) * (prob ?? 0);
+    const dis = r.days_in_stage != null ? Number(r.days_in_stage) : null;
+    const stale = !TERMINAL.has(stage) && dis != null && dis > 14;
+    if (stale) staleCount += 1;
     const d: PipelineDeal = {
       deal_id: String(r.deal_id),
-      customer_name: String(r.customer_name),
-      am_id: String(r.am_id),
-      estimated_value: val,
+      customer_name: String(r.customer_name ?? ""),
+      facility_name: r.facility_name ? String(r.facility_name) : null,
+      am_id: r.am_id ? String(r.am_id) : null,
+      brand: r.brand ? String(r.brand) : null,
+      product: r.product ? String(r.product) : null,
+      product_category: r.product_category ? String(r.product_category) : null,
+      prospect_category: r.prospect_category ? String(r.prospect_category) : null,
+      stage,
+      probability: prob,
+      forecast_category: r.forecast_category ? String(r.forecast_category) : null,
+      estimate_amount: est,
+      weighted,
+      pic_hod: r.pic_hod ? String(r.pic_hod) : null,
+      cabang: r.cabang ? String(r.cabang) : null,
+      coop_model: r.coop_model ? String(r.coop_model) : null,
+      city: r.city ? String(r.city) : null,
+      province: r.province ? String(r.province) : null,
+      purchase_year: r.purchase_year != null ? Number(r.purchase_year) : null,
+      days_in_stage: dis,
+      stale,
+      notes: r.notes ? String(r.notes) : null,
       updated_at: String(r.updated_at),
     };
-    if (!byStage.has(String(r.stage))) byStage.set(String(r.stage), []);
-    byStage.get(String(r.stage))!.push(d);
-    totalValue += val ?? 0;
+    if (!byStage.has(stage)) byStage.set(stage, []);
+    byStage.get(stage)!.push(d);
+    totalValue += est ?? 0;
+    weightedTotal += weighted;
+    const fc = d.forecast_category ?? "—";
+    const cur = byForecast.get(fc) ?? { count: 0, value: 0 };
+    cur.count += 1; cur.value += est ?? 0;
+    byForecast.set(fc, cur);
   }
   const stages: PipelineStage[] = [...byStage.entries()].map(([stage, deals]) => ({
     stage,
     count: deals.length,
-    total_value: deals.reduce((a, d) => a + (d.estimated_value ?? 0), 0),
+    total_value: deals.reduce((a, d) => a + (d.estimate_amount ?? 0), 0),
+    weighted_value: deals.reduce((a, d) => a + d.weighted, 0),
     deals,
   }));
-  return { stages, total_deals: rows.length, total_value: totalValue };
+  const summary: PipelineSummary = {
+    total_deals: rows.length,
+    total_value: totalValue,
+    weighted_value: weightedTotal,
+    stale_count: staleCount,
+    by_forecast: [...byForecast.entries()]
+      .map(([forecast, v]) => ({ forecast, count: v.count, value: v.value }))
+      .sort((a, b) => b.value - a.value),
+  };
+  return { stages, summary, total_deals: rows.length, total_value: totalValue };
 }
 
 export interface PlanDealResult {
