@@ -15,7 +15,7 @@ import { waPreflight, sendViaWaGateway, type WaSendResult } from "./wasend.js";
 import { processUnprocessed, isInboundEnabled } from "./repo/inbound.js";
 import { syncAccurateInvoices, syncVendors, syncItems, syncSalesOrders, syncDeliveryOrders, syncCustomers, getDeliveryOrderItems, getSalesOrderItems, getVendorDetail, accurateConfigured } from "./repo/accurateSync.js";
 import { insertAuditEvent } from "./repo/audit.js";
-import { upsertDealsFromPlan, logReportToDeals, getPipeline } from "./repo/deal.js";
+import { upsertDealsFromPlan, logReportToDeals, getPipeline, transitionStage, DealError } from "./repo/deal.js";
 import { enqueueAmbiguous, listHitl, resolveHitl } from "./repo/hitl.js";
 import { insertRekap, insertResume, getDigestHistory, getDigestInsights } from "./repo/digest.js";
 import { getDashboardStats } from "./repo/stats.js";
@@ -2524,8 +2524,29 @@ app.get("/customers/:id/monthly", async (c) => {
 // ── Pipeline read model (dashboard): deal per-stage ──
 app.get("/pipeline", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  const amId = c.req.query("am_id") || undefined;
-  return c.json(await getPipeline(amId));
+  // Row-level scope via x-user-id (AM → deal sendiri, HoD → cabang, admin → semua).
+  return c.json(await getPipeline(await scopeOf(c)));
+});
+
+// F1-SPT: transisi stage satu deal (drag kanban / aksi manual). Write-guard +
+// gate Closing-Lost (loss_reason wajib) + timeline spt_state_log. Body:
+// { to_stage: string, loss_reason?: string, note?: string }.
+app.patch("/deals/:id/stage", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const scope = await scopeOf(c);
+  const body = await c.req.json().catch(() => ({}));
+  const toStage = typeof body?.to_stage === "string" ? body.to_stage : "";
+  if (!toStage) return c.json({ error: "to_stage wajib" }, 400);
+  try {
+    const res = await transitionStage(c.req.param("id"), toStage, scope, {
+      lossReason: typeof body?.loss_reason === "string" ? body.loss_reason : undefined,
+      note: typeof body?.note === "string" ? body.note : undefined,
+    });
+    return c.json(res);
+  } catch (e) {
+    if (e instanceof DealError) return c.json({ error: e.message }, e.status as 400 | 403 | 404);
+    throw e;
+  }
 });
 
 // ── HITL gate (D6): antrian konfirmasi untuk match ambiguous ──

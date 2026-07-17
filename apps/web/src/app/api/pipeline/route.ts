@@ -1,13 +1,16 @@
 import { gatewayFetch } from "@/lib/gateway";
+import { sessionUser } from "@/lib/admin-guard";
 
 export const dynamic = "force-dynamic";
 
-// Gateway → apps/api GET /pipeline?am_id= (deal pipeline read model).
-export async function GET(req: Request) {
-  const amId = new URL(req.url).searchParams.get("am_id");
-  const qs = amId ? `?am_id=${encodeURIComponent(amId)}` : "";
+// Gateway → apps/api GET /pipeline (deal pipeline read model). Meneruskan identitas
+// user via header x-user-id agar backend menerapkan row-level scope (AM → deal
+// sendiri, HoD → cabang, admin → semua). resolveScope di backend yg memfilter.
+export async function GET() {
+  const me = await sessionUser();
+  if (!me) return Response.json({ error: "unauthenticated" }, { status: 401 });
   try {
-    const res = await gatewayFetch(`/pipeline${qs}`);
+    const res = await gatewayFetch(`/pipeline`, { headers: { "x-user-id": me.id } });
     const data = await res.json();
     return Response.json(data, { status: res.status });
   } catch {
