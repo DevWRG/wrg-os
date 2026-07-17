@@ -1,6 +1,6 @@
 import { gatewayFetch } from "@/lib/gateway";
 import { PageHeader } from "@/components/dashboard/page-header";
-import { DigestView } from "@/components/monitor/digest-view";
+import { ResumeView } from "@/components/monitor/resume-view";
 
 export const dynamic = "force-dynamic";
 
@@ -28,7 +28,7 @@ export default async function MonitorResumePage() {
         title="Resume"
         description="Resume eksekutif harian grup WhatsApp (ringkasan AI mid-day & end-of-day) — port wrg-monitor."
       />
-      <DigestView kind="resume" initial={initial} />
+      <ResumeView initial={initial} />
     </>
   );
 }
