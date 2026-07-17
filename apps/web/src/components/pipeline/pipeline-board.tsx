@@ -1,11 +1,13 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 
-// F1-SPT kanban read-only: board 8-stage + filter + ringkasan weighted + deal detail.
-// Interaktivitas (drag/CRUD/timeline/approval) = tahap B (butuh endpoint write PR3).
+// F1-SPT kanban interaktif (tahap B): board 8-stage + filter + ringkasan weighted +
+// deal detail + DRAG pindah stage (PATCH /api/deals/:id/stage, write-guard di backend).
+// Drop ke Closing-Lost → wajib pilih loss_reason (gate approval HoD, loss_status=pending).
 
 export interface PipelineDeal {
   deal_id: string;
@@ -61,6 +63,14 @@ const STAGE_COLOR: Record<string, string> = {
   "Closing-Won": "border-t-emerald-500", "Closing-Lost": "border-t-rose-500",
 };
 const PCAT_COLOR: Record<string, string> = { Cold: "bg-sky-100 text-sky-700", Warm: "bg-amber-100 text-amber-700", Hot: "bg-rose-100 text-rose-700" };
+// enum deal_loss_reason (migrasi 057) — wajib saat drag ke Closing-Lost.
+const LOSS_REASONS: { val: string; label: string }[] = [
+  { val: "harga", label: "Harga" },
+  { val: "kompetitor", label: "Kompetitor" },
+  { val: "no-budget", label: "Tidak ada budget" },
+  { val: "kalah-tender", label: "Kalah tender" },
+  { val: "internal-RS", label: "Internal RS/faskes" },
+];
 
 const jt = (n: number | null) => {
   const v = n ?? 0;
@@ -81,9 +91,57 @@ function Sel({ label, val, set, options }: { label: string; val: string; set: (v
 }
 
 export function PipelineBoard({ data }: { data: PipelineData }) {
+  const router = useRouter();
   const allDeals = useMemo(() => data.stages.flatMap((s) => s.deals), [data]);
   const [f, setF] = useState({ pcat: "", cabang: "", hod: "", brand: "", coop: "", year: "", q: "" });
   const [sel, setSel] = useState<PipelineDeal | null>(null);
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [overStage, setOverStage] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+  // Modal loss_reason saat drop ke Closing-Lost: {deal, from}.
+  const [lossModal, setLossModal] = useState<{ deal: PipelineDeal; reason: string; note: string } | null>(null);
+
+  // Kirim transisi stage ke backend, lalu refresh data server-rendered.
+  async function patchStage(dealId: string, toStage: string, extra?: { loss_reason?: string; note?: string }) {
+    setBusy(true);
+    setMsg(null);
+    try {
+      const res = await fetch(`/api/deals/${encodeURIComponent(dealId)}/stage`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ to_stage: toStage, ...extra }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setMsg({ kind: "err", text: body?.error || `gagal (${res.status})` });
+        return false;
+      }
+      setMsg({ kind: "ok", text: `Dipindah ke ${toStage}${toStage === "Closing-Lost" ? " — menunggu approval HoD" : ""}` });
+      router.refresh();
+      return true;
+    } catch {
+      setMsg({ kind: "err", text: "koneksi gagal" });
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Drop kartu ke kolom stage. Closing-Lost → buka modal loss_reason dulu.
+  function onDropStage(toStage: string) {
+    const id = dragId;
+    setDragId(null);
+    setOverStage(null);
+    if (!id) return;
+    const deal = allDeals.find((d) => d.deal_id === id);
+    if (!deal || deal.stage === toStage) return;
+    if (toStage === "Closing-Lost") {
+      setLossModal({ deal, reason: "", note: "" });
+      return;
+    }
+    void patchStage(id, toStage);
+  }
 
   const opts = useMemo(() => ({
     pcat: uniq(allDeals.map((d) => d.product_category)),
@@ -141,22 +199,42 @@ export function PipelineBoard({ data }: { data: PipelineData }) {
         )}
       </div>
 
+      {/* Hint + status */}
+      <div className="flex items-center gap-3 text-xs">
+        <span className="text-muted-foreground">💡 Seret kartu untuk pindah stage. Drop ke <b>Closing-Lost</b> minta alasan.</span>
+        {busy && <span className="text-muted-foreground animate-pulse">menyimpan…</span>}
+        {msg && (
+          <span className={`px-2 py-0.5 rounded ${msg.kind === "ok" ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"}`}>
+            {msg.text}
+          </span>
+        )}
+      </div>
+
       {/* Board kanban */}
       <div className="flex gap-3 overflow-x-auto pb-3">
         {STAGES.map((stage) => {
           const deals = byStage.get(stage) ?? [];
           const w = deals.reduce((a, d) => a + d.weighted, 0);
+          const isOver = overStage === stage && dragId !== null;
+          const isTarget = dragId !== null && !isOver;
           return (
-            <div key={stage} className={`min-w-[240px] max-w-[240px] flex-shrink-0 rounded-lg border border-t-4 bg-muted/30 ${STAGE_COLOR[stage] ?? "border-t-slate-300"}`}>
+            <div key={stage}
+              onDragOver={(e) => { if (dragId) { e.preventDefault(); if (overStage !== stage) setOverStage(stage); } }}
+              onDragLeave={(e) => { if (overStage === stage && !e.currentTarget.contains(e.relatedTarget as Node)) setOverStage(null); }}
+              onDrop={(e) => { e.preventDefault(); onDropStage(stage); }}
+              className={`min-w-[240px] max-w-[240px] flex-shrink-0 rounded-lg border border-t-4 bg-muted/30 transition-colors ${STAGE_COLOR[stage] ?? "border-t-slate-300"} ${isOver ? "ring-2 ring-primary bg-primary/5" : isTarget ? "border-dashed" : ""}`}>
               <div className="p-2 border-b">
                 <div className="font-medium text-sm">{stage}</div>
                 <div className="text-xs text-muted-foreground">{deals.length} deal · {jt(w)} weighted</div>
               </div>
               <div className="p-2 space-y-2 max-h-[65vh] overflow-y-auto">
-                {deals.length === 0 && <div className="text-xs text-muted-foreground italic py-2">—</div>}
+                {deals.length === 0 && <div className="text-xs text-muted-foreground italic py-2">{isTarget ? "drop di sini" : "—"}</div>}
                 {deals.map((d) => (
                   <button key={d.deal_id} onClick={() => setSel(d)}
-                    className="w-full text-left rounded-md border bg-background p-2 hover:border-primary transition-colors">
+                    draggable={!busy}
+                    onDragStart={(e) => { setDragId(d.deal_id); e.dataTransfer.effectAllowed = "move"; }}
+                    onDragEnd={() => { setDragId(null); setOverStage(null); }}
+                    className={`w-full text-left rounded-md border bg-background p-2 hover:border-primary transition-colors cursor-grab active:cursor-grabbing ${dragId === d.deal_id ? "opacity-40" : ""}`}>
                     <div className="flex items-start justify-between gap-1">
                       <div className="text-sm font-medium leading-tight line-clamp-2">{d.facility_name || d.customer_name}</div>
                       {d.stale && <span title="Stale >2mg" className="text-rose-500 text-xs shrink-0">●</span>}
@@ -202,7 +280,46 @@ export function PipelineBoard({ data }: { data: PipelineData }) {
               ))}
             </dl>
             {sel.notes && <div className="mt-4"><div className="text-xs text-muted-foreground">Catatan</div><div className="text-sm whitespace-pre-wrap mt-1">{sel.notes}</div></div>}
-            <div className="mt-4 text-xs text-muted-foreground border-t pt-2">Read-only. Edit/pindah stage/timeline menyusul (tahap B).</div>
+            <div className="mt-4 text-xs text-muted-foreground border-t pt-2">Seret kartu di board untuk pindah stage. Timeline & approval menyusul.</div>
+          </Card>
+        </div>
+      )}
+
+      {/* Modal loss_reason (drop ke Closing-Lost) */}
+      {lossModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setLossModal(null)}>
+          <Card className="max-w-sm w-full p-5" onClick={(e) => e.stopPropagation()}>
+            <h2 className="text-base font-semibold">Tandai Closing-Lost</h2>
+            <p className="text-sm text-muted-foreground mt-1 leading-snug">
+              {lossModal.deal.facility_name || lossModal.deal.customer_name} → <b>Closing-Lost</b>. Pilih alasan (wajib, menunggu approval HoD).
+            </p>
+            <div className="mt-3 space-y-2">
+              {LOSS_REASONS.map((r) => (
+                <label key={r.val} className="flex items-center gap-2 text-sm cursor-pointer">
+                  <input type="radio" name="loss-reason" value={r.val}
+                    checked={lossModal.reason === r.val}
+                    onChange={() => setLossModal({ ...lossModal, reason: r.val })} />
+                  {r.label}
+                </label>
+              ))}
+            </div>
+            <textarea placeholder="Catatan (opsional)…" value={lossModal.note}
+              onChange={(e) => setLossModal({ ...lossModal, note: e.target.value })}
+              className="mt-3 w-full rounded-md border border-input bg-background px-2 py-1 text-sm" rows={2} />
+            <div className="mt-4 flex justify-end gap-2">
+              <button onClick={() => setLossModal(null)}
+                className="text-sm px-3 py-1.5 rounded-md border hover:bg-muted">Batal</button>
+              <button disabled={!lossModal.reason || busy}
+                onClick={async () => {
+                  const ok = await patchStage(lossModal.deal.deal_id, "Closing-Lost", {
+                    loss_reason: lossModal.reason, note: lossModal.note || undefined,
+                  });
+                  if (ok) setLossModal(null);
+                }}
+                className="text-sm px-3 py-1.5 rounded-md bg-rose-600 text-white hover:bg-rose-700 disabled:opacity-50">
+                Tandai Lost
+              </button>
+            </div>
           </Card>
         </div>
       )}
