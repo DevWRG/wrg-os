@@ -1,6 +1,7 @@
 import { db } from "../db.js";
 import type { PlanCustomer } from "../parsers/plan.js";
 import type { ReportItem } from "../parsers/report.js";
+import type { DataScope } from "./access-scope.js";
 
 // Jembatan parser CRM (legacy #PLAN/#REPORT) ke schema kanonik D1 (deal/spt_state_log).
 // MAPPING:
@@ -23,6 +24,41 @@ export const DEAL_STAGES = [
   "Closing-Won",
   "Closing-Lost",
 ];
+
+// F1-SPT: derive kategori/probabilitas/forecast dari stage (selaras STAGE_DERIVE
+// importer scripts/db/import_hs_s1.py — SATU sumber kebenaran, jaga tetap sinkron).
+const STAGE_META: Record<string, { prospect: string; prob: number; forecast: string }> = {
+  "Prospecting":   { prospect: "Cold", prob: 0.1,  forecast: "D - Omit" },
+  "First Contact": { prospect: "Cold", prob: 0.2,  forecast: "C - Pipeline" },
+  "Presentation":  { prospect: "Cold", prob: 0.5,  forecast: "C - Pipeline" },
+  "Quotation":     { prospect: "Cold", prob: 0.4,  forecast: "C - Pipeline" },
+  "Offering":      { prospect: "Warm", prob: 0.6,  forecast: "B - Best Case" },
+  "Negotiation":   { prospect: "Hot",  prob: 0.85, forecast: "A - Commit" },
+  "Closing-Won":   { prospect: "Hot",  prob: 1.0,  forecast: "Won" },
+  "Closing-Lost":  { prospect: "",     prob: 0.0,  forecast: "Lost" },
+};
+
+// enum deal_loss_reason (migrasi 057) — wajib saat transisi ke Closing-Lost.
+export const DEAL_LOSS_REASONS = ["harga", "kompetitor", "no-budget", "kalah-tender", "internal-RS"];
+
+// Error dgn status HTTP eksplisit → endpoint map ke response code yg tepat.
+export class DealError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+    this.name = "DealError";
+  }
+}
+
+// Write-guard: boleh ubah deal kalau superuser, ATAU deal miliknya (am_id match),
+// ATAU deal di cabang yg dia pegang (HoD via cabangScope). Reuse resolveScope shape.
+function canWrite(scope: DataScope, deal: { am_id: string | null; cabang: string | null }): boolean {
+  if (scope.superuser) return true;
+  if (scope.amId && deal.am_id && deal.am_id === scope.amId) return true;
+  if (scope.cabangScope && deal.cabang && scope.cabangScope.includes(deal.cabang)) return true;
+  return false;
+}
 
 function custId(name: string): string {
   return (
@@ -78,7 +114,7 @@ export interface PipelineSummary {
 
 // F1-SPT read model: board by 8-stage + weighted (estimate×prob) + stale flag + summary.
 export async function getPipeline(
-  amId?: string,
+  scope?: DataScope,
 ): Promise<{ stages: PipelineStage[]; summary: PipelineSummary; total_deals: number; total_value: number }> {
   const sql = db();
   const cols = sql`deal_id, customer_name, facility_name, am_id, brand, product, product_category,
@@ -86,9 +122,20 @@ export async function getPipeline(
     COALESCE(estimated_value, estimate_amount) AS estimate_amount,
     pic_hod, cabang, coop_model, city, province, purchase_year, notes, updated_at,
     GREATEST(0, EXTRACT(DAY FROM (now() - stage_entered_at))::int) AS days_in_stage`;
-  const rows = amId
-    ? await sql`SELECT ${cols} FROM deal WHERE am_id = ${amId} ORDER BY updated_at DESC`
-    : await sql`SELECT ${cols} FROM deal ORDER BY updated_at DESC`;
+  // Row-level scope: superuser/admin → semua; AM → deal sendiri; HoD → deal di
+  // cabang yg dipegang (cabangScope). Tanpa scope (mis. dipanggil internal) → semua.
+  let rows;
+  if (!scope || scope.superuser) {
+    rows = await sql`SELECT ${cols} FROM deal ORDER BY updated_at DESC`;
+  } else if (scope.amOnly && scope.amId) {
+    rows = await sql`SELECT ${cols} FROM deal WHERE am_id = ${scope.amId} ORDER BY updated_at DESC`;
+  } else if (scope.cabangScope && scope.cabangScope.length > 0) {
+    rows = await sql`SELECT ${cols} FROM deal WHERE cabang = ANY(${scope.cabangScope}) ORDER BY updated_at DESC`;
+  } else if (scope.amId) {
+    rows = await sql`SELECT ${cols} FROM deal WHERE am_id = ${scope.amId} ORDER BY updated_at DESC`;
+  } else {
+    rows = await sql`SELECT ${cols} FROM deal WHERE false`;
+  }
 
   const TERMINAL = new Set(["Closing-Won", "Closing-Lost"]);
   const byStage = new Map<string, PipelineDeal[]>();
@@ -155,6 +202,88 @@ export async function getPipeline(
       .sort((a, b) => b.value - a.value),
   };
   return { stages, summary, total_deals: rows.length, total_value: totalValue };
+}
+
+export interface TransitionResult {
+  deal_id: string;
+  from_stage: string;
+  stage: string;
+  probability: number;
+  prospect_category: string;
+  forecast_category: string;
+  loss_status: string | null;
+  state_log_id: string;
+}
+
+/**
+ * Transisi stage satu deal (drag kanban / aksi manual). Menerapkan:
+ *  - write-guard via resolveScope (AM data sendiri, HoD cabang, admin semua),
+ *  - validasi stage target ∈ DEAL_STAGES,
+ *  - gate Closing-Lost WAJIB loss_reason (∈ enum) → loss_status='pending' (nunggu HoD),
+ *  - derive probability/kategori/forecast dari stage (STAGE_META),
+ *  - reset stage_entered_at (days_in_stage/stale mulai ulang),
+ *  - catat timeline di spt_state_log.
+ * Melempar DealError(status) → endpoint map ke 400/403/404.
+ */
+export async function transitionStage(
+  dealId: string,
+  toStage: string,
+  scope: DataScope,
+  opts?: { lossReason?: string; note?: string },
+): Promise<TransitionResult> {
+  const sql = db();
+  if (!DEAL_STAGES.includes(toStage)) {
+    throw new DealError(400, `stage tidak valid: ${toStage}`);
+  }
+  const cur = await sql`SELECT stage, am_id, cabang FROM deal WHERE deal_id = ${dealId}`;
+  if (cur.length === 0) throw new DealError(404, "deal tidak ditemukan");
+  const fromStage = String(cur[0].stage);
+  const deal = { am_id: cur[0].am_id ? String(cur[0].am_id) : null, cabang: cur[0].cabang ? String(cur[0].cabang) : null };
+  if (!canWrite(scope, deal)) throw new DealError(403, "tidak berwenang mengubah deal ini");
+
+  const meta = STAGE_META[toStage];
+  const toLost = toStage === "Closing-Lost";
+  let lossReason: string | null = null;
+  let lossStatus: string | null = null;
+  if (toLost) {
+    lossReason = (opts?.lossReason ?? "").trim();
+    if (!DEAL_LOSS_REASONS.includes(lossReason)) {
+      throw new DealError(400, `Closing-Lost wajib loss_reason (${DEAL_LOSS_REASONS.join(", ")})`);
+    }
+    lossStatus = "pending"; // nunggu approval HoD
+  }
+
+  // Update deal: stage + derive + reset stage_entered_at. Pindah KELUAR dari Lost → bersihin loss fields.
+  await sql`
+    UPDATE deal SET
+      stage = ${toStage},
+      prospect_category = ${meta.prospect || null},
+      probability = ${meta.prob},
+      forecast_category = ${meta.forecast},
+      loss_reason = ${lossReason}::deal_loss_reason,
+      loss_status = ${lossStatus},
+      stage_entered_at = now(),
+      updated_at = now()
+    WHERE deal_id = ${dealId}
+  `;
+  const reason = toLost
+    ? `stage ${fromStage}→${toStage} | loss: ${lossReason}${opts?.note ? ` | ${opts.note}` : ""}`
+    : `stage ${fromStage}→${toStage}${opts?.note ? ` | ${opts.note}` : ""}`;
+  const logged = await sql`
+    INSERT INTO spt_state_log (deal_id, from_stage, to_stage, changed_by, reason)
+    VALUES (${dealId}, ${fromStage}, ${toStage}, ${scope.userId ?? scope.amId}, ${reason})
+    RETURNING id
+  `;
+  return {
+    deal_id: dealId,
+    from_stage: fromStage,
+    stage: toStage,
+    probability: meta.prob,
+    prospect_category: meta.prospect,
+    forecast_category: meta.forecast,
+    loss_status: lossStatus,
+    state_log_id: String(logged[0].id),
+  };
 }
 
 export interface PlanDealResult {
