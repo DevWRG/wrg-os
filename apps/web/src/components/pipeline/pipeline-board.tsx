@@ -70,6 +70,16 @@ const jt = (n: number | null) => {
 };
 const uniq = (arr: (string | null)[]) => [...new Set(arr.filter((x): x is string => !!x))].sort();
 
+function Sel({ label, val, set, options }: { label: string; val: string; set: (v: string) => void; options: string[] }) {
+  return (
+    <select value={val} onChange={(e) => set(e.target.value)}
+      className="rounded-md border border-input bg-background px-2 py-1 text-sm">
+      <option value="">{label}: semua</option>
+      {options.map((o) => <option key={o} value={o}>{o}</option>)}
+    </select>
+  );
+}
+
 export function PipelineBoard({ data }: { data: PipelineData }) {
   const allDeals = useMemo(() => data.stages.flatMap((s) => s.deals), [data]);
   const [f, setF] = useState({ pcat: "", cabang: "", hod: "", brand: "", coop: "", year: "", q: "" });
@@ -104,14 +114,6 @@ export function PipelineBoard({ data }: { data: PipelineData }) {
   const sumVal = filtered.reduce((a, d) => a + (d.estimate_amount ?? 0), 0);
   const sumW = filtered.reduce((a, d) => a + d.weighted, 0);
   const staleN = filtered.filter((d) => d.stale).length;
-
-  const Sel = ({ label, val, set, options }: { label: string; val: string; set: (v: string) => void; options: string[] }) => (
-    <select value={val} onChange={(e) => set(e.target.value)}
-      className="rounded-md border border-input bg-background px-2 py-1 text-sm">
-      <option value="">{label}: semua</option>
-      {options.map((o) => <option key={o} value={o}>{o}</option>)}
-    </select>
-  );
 
   return (
     <div className="space-y-4">
