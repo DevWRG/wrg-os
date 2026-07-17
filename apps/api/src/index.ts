@@ -15,7 +15,7 @@ import { waPreflight, sendViaWaGateway, type WaSendResult } from "./wasend.js";
 import { processUnprocessed, isInboundEnabled } from "./repo/inbound.js";
 import { syncAccurateInvoices, syncVendors, syncItems, syncSalesOrders, syncDeliveryOrders, syncCustomers, getDeliveryOrderItems, getSalesOrderItems, getVendorDetail, accurateConfigured } from "./repo/accurateSync.js";
 import { insertAuditEvent } from "./repo/audit.js";
-import { upsertDealsFromPlan, logReportToDeals, getPipeline, transitionStage, DealError } from "./repo/deal.js";
+import { upsertDealsFromPlan, logReportToDeals, getPipeline, transitionStage, DealError, listPendingLosses, decideLoss } from "./repo/deal.js";
 import { enqueueAmbiguous, listHitl, resolveHitl } from "./repo/hitl.js";
 import { insertRekap, insertResume, getDigestHistory, getDigestInsights } from "./repo/digest.js";
 import { getDashboardStats } from "./repo/stats.js";
@@ -2545,6 +2545,31 @@ app.patch("/deals/:id/stage", async (c) => {
     return c.json(res);
   } catch (e) {
     if (e instanceof DealError) return c.json({ error: e.message }, e.status as 400 | 403 | 404);
+    throw e;
+  }
+});
+
+// F1-SPT: panel approval Lost. GET daftar deal loss_status='pending' yg boleh
+// diputus user ini (HoD cabangnya / admin semua; AM → kosong).
+app.get("/deals/loss-approvals", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json({ pending: await listPendingLosses(await scopeOf(c)) });
+});
+
+// Putus loss pending. Body: { decision: "approved"|"rejected", note?: string }.
+// approved → tetap Closing-Lost (loss_status=approved). rejected → deal balik ke
+// stage sebelum Lost. Guard: hanya HoD/admin (AM ditolak 403).
+app.patch("/deals/:id/loss-approval", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const scope = await scopeOf(c);
+  const body = await c.req.json().catch(() => ({}));
+  const decision = body?.decision === "approved" || body?.decision === "rejected" ? body.decision : "";
+  if (!decision) return c.json({ error: "decision wajib (approved/rejected)" }, 400);
+  try {
+    const res = await decideLoss(c.req.param("id"), decision, scope, typeof body?.note === "string" ? body.note : undefined);
+    return c.json(res);
+  } catch (e) {
+    if (e instanceof DealError) return c.json({ error: e.message }, e.status as 400 | 403 | 404 | 409);
     throw e;
   }
 });
