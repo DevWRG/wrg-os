@@ -1,11 +1,16 @@
 import { gatewayFetch } from "@/lib/gateway";
+import { sessionUser } from "@/lib/admin-guard";
 import { PipelineBoard, type PipelineData } from "@/components/pipeline/pipeline-board";
+import { LossApprovalPanel } from "@/components/pipeline/loss-approval-panel";
 
 export const dynamic = "force-dynamic";
 
-async function getPipeline(): Promise<PipelineData | null> {
+// Teruskan x-user-id → backend resolveScope (AM deal sendiri / HoD cabang / admin
+// semua). Tanpa header ini scope jadi FULL_SCOPE (lihat semua) — tetap aman, tapi
+// tak ter-scope per user; maka kita kirim identitas dari sesi.
+async function getPipeline(userId: string | undefined): Promise<PipelineData | null> {
   try {
-    const res = await gatewayFetch(`/pipeline`);
+    const res = await gatewayFetch(`/pipeline`, userId ? { headers: { "x-user-id": userId } } : undefined);
     if (!res.ok) return null;
     return (await res.json()) as PipelineData;
   } catch {
@@ -14,16 +19,19 @@ async function getPipeline(): Promise<PipelineData | null> {
 }
 
 export default async function PipelinePage() {
-  const data = await getPipeline();
+  const me = await sessionUser();
+  const data = await getPipeline(me?.id);
 
   return (
     <div className="p-6 space-y-4">
       <div>
         <h1 className="text-2xl font-semibold">Sales Pipeline (F1)</h1>
         <p className="text-muted-foreground text-sm mt-1">
-          Board 8-stage pipeline penjualan (digitalisasi HS-S-1). Read-only — klik deal untuk detail.
+          Board 8-stage pipeline penjualan (digitalisasi HS-S-1). Seret kartu untuk pindah stage; klik untuk detail.
         </p>
       </div>
+      {/* Panel approval Lost — hanya tampil bila user (HoD/admin) punya loss pending. */}
+      <LossApprovalPanel />
       {data ? (
         <PipelineBoard data={data} />
       ) : (
