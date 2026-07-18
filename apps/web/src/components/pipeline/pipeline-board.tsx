@@ -245,8 +245,8 @@ export function PipelineBoard({ data, isAdmin = false }: { data: PipelineData; i
         <Card className="p-3"><div className="text-xs text-muted-foreground">Stale &gt;2mg</div><div className="text-xl font-semibold tabular-nums text-rose-600">{staleN}</div></Card>
       </div>
 
-      {/* Filter */}
-      <Card className="flex flex-wrap items-center gap-2 p-3">
+      {/* Filter toolbar */}
+      <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-border bg-card p-3 shadow-[var(--shadow-card)]">
         <input placeholder="Cari faskes/produk…" value={f.q} onChange={(e) => setF({ ...f, q: e.target.value })}
           className="h-9 rounded-md border border-input bg-muted px-3 text-sm min-w-[200px] shadow-sm focus:outline-none focus:ring-2 focus:ring-ring/40 focus:border-ring" />
         <Sel label="Kategori" val={f.pcat} set={(v) => setF({ ...f, pcat: v })} options={opts.pcat} />
@@ -260,10 +260,10 @@ export function PipelineBoard({ data, isAdmin = false }: { data: PipelineData; i
             className="text-sm text-muted-foreground hover:text-foreground underline">reset</button>
         )}
         <button onClick={() => setFormModal({ mode: "create" })}
-          className="ml-auto text-sm px-3 py-1 rounded-md bg-primary text-primary-foreground hover:opacity-90">
+          className="ml-auto inline-flex h-9 items-center rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground shadow-sm hover:opacity-90">
           + Deal Baru
         </button>
-      </Card>
+      </div>
 
       {/* Hint + status */}
       <div className="flex items-center gap-3 text-xs">
