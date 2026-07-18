@@ -60,6 +60,15 @@ function canWrite(scope: DataScope, deal: { am_id: string | null; cabang: string
   return false;
 }
 
+// Read-guard: sejalan dgn filter getPipeline. Scope TAK membatasi (FULL_SCOPE/
+// superuser/HoD-tanpa-territory) → boleh baca semua; AM → deal sendiri; HoD → cabang.
+function canRead(scope: DataScope, deal: { am_id: string | null; cabang: string | null }): boolean {
+  if (!isRestricted(scope)) return true;
+  if (scope.amOnly && scope.amId && deal.am_id === scope.amId) return true;
+  if (scope.cabangScope && deal.cabang && scope.cabangScope.includes(deal.cabang)) return true;
+  return false;
+}
+
 function custId(name: string): string {
   return (
     name
@@ -428,6 +437,42 @@ export async function decideLoss(
     RETURNING id
   `;
   return { deal_id: dealId, decision, stage: revertStage, loss_status: null, state_log_id: String(logged[0].id) };
+}
+
+export interface TimelineEntry {
+  id: string;
+  from_stage: string | null;
+  to_stage: string;
+  changed_by: string | null;
+  reason: string | null;
+  occurred_at: string;
+}
+
+/**
+ * Riwayat spt_state_log satu deal (perpindahan stage + approval/reject Lost),
+ * terbaru dulu. Guard baca (canRead) sejalan dgn akses board — deal yg tak boleh
+ * dilihat user → 403.
+ */
+export async function getDealTimeline(dealId: string, scope: DataScope): Promise<TimelineEntry[]> {
+  const sql = db();
+  const cur = await sql`SELECT am_id, cabang FROM deal WHERE deal_id = ${dealId}`;
+  if (cur.length === 0) throw new DealError(404, "deal tidak ditemukan");
+  const deal = { am_id: cur[0].am_id ? String(cur[0].am_id) : null, cabang: cur[0].cabang ? String(cur[0].cabang) : null };
+  if (!canRead(scope, deal)) throw new DealError(403, "tidak berwenang melihat deal ini");
+  const rows = await sql`
+    SELECT id, from_stage, to_stage, changed_by, reason, occurred_at
+    FROM spt_state_log
+    WHERE deal_id = ${dealId}
+    ORDER BY occurred_at DESC, id DESC
+  `;
+  return rows.map((r) => ({
+    id: String(r.id),
+    from_stage: r.from_stage ? String(r.from_stage) : null,
+    to_stage: String(r.to_stage),
+    changed_by: r.changed_by ? String(r.changed_by) : null,
+    reason: r.reason ? String(r.reason) : null,
+    occurred_at: String(r.occurred_at),
+  }));
 }
 
 export interface PlanDealResult {
