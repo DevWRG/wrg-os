@@ -15,7 +15,7 @@ import { waPreflight, sendViaWaGateway, type WaSendResult } from "./wasend.js";
 import { processUnprocessed, isInboundEnabled } from "./repo/inbound.js";
 import { syncAccurateInvoices, syncVendors, syncItems, syncSalesOrders, syncDeliveryOrders, syncCustomers, getDeliveryOrderItems, getSalesOrderItems, getVendorDetail, accurateConfigured } from "./repo/accurateSync.js";
 import { insertAuditEvent } from "./repo/audit.js";
-import { upsertDealsFromPlan, logReportToDeals, getPipeline, transitionStage, DealError, listPendingLosses, decideLoss, getDealTimeline } from "./repo/deal.js";
+import { upsertDealsFromPlan, logReportToDeals, getPipeline, transitionStage, DealError, listPendingLosses, decideLoss, getDealTimeline, createDeal, updateDeal, deleteDeal } from "./repo/deal.js";
 import { enqueueAmbiguous, listHitl, resolveHitl } from "./repo/hitl.js";
 import { insertRekap, insertResume, getDigestHistory, getDigestInsights } from "./repo/digest.js";
 import { getDashboardStats } from "./repo/stats.js";
@@ -2580,6 +2580,40 @@ app.get("/deals/:id/timeline", async (c) => {
   try {
     const entries = await getDealTimeline(c.req.param("id"), await scopeOf(c));
     return c.json({ entries });
+  } catch (e) {
+    if (e instanceof DealError) return c.json({ error: e.message }, e.status as 403 | 404);
+    throw e;
+  }
+});
+
+// F1-SPT: CRUD deal. POST buat deal baru (stage awal Prospecting), PATCH edit field
+// (whitelist, write-guard), DELETE hapus (admin only, + spt_state_log).
+app.post("/deals", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const body = await c.req.json().catch(() => ({}));
+  try {
+    return c.json(await createDeal(await scopeOf(c), body ?? {}), 201);
+  } catch (e) {
+    if (e instanceof DealError) return c.json({ error: e.message }, e.status as 400 | 403);
+    throw e;
+  }
+});
+
+app.patch("/deals/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const body = await c.req.json().catch(() => ({}));
+  try {
+    return c.json(await updateDeal(c.req.param("id"), await scopeOf(c), body ?? {}));
+  } catch (e) {
+    if (e instanceof DealError) return c.json({ error: e.message }, e.status as 400 | 403 | 404);
+    throw e;
+  }
+});
+
+app.delete("/deals/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    return c.json(await deleteDeal(c.req.param("id"), await scopeOf(c)));
   } catch (e) {
     if (e instanceof DealError) return c.json({ error: e.message }, e.status as 403 | 404);
     throw e;
