@@ -395,6 +395,8 @@ export function PipelineBoard({ data, isAdmin = false }: { data: PipelineData; i
                   {deleting ? "menghapus…" : "Hapus"}
                 </button>
               )}
+              <button onClick={() => setSel(null)}
+                className="text-sm px-3 py-1 rounded-md bg-primary text-primary-foreground font-medium hover:opacity-90">Tutup</button>
             </div>
           </Card>
         </div>
