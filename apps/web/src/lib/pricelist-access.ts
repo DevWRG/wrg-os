@@ -8,6 +8,8 @@
 export interface AccessUser {
   role?: string | null;
   title?: string | null;
+  superuser?: boolean;
+  hod_key?: string | null;
 }
 
 const norm = (s?: string | null): string => (s ?? "").trim().toLowerCase();
