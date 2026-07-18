@@ -10,7 +10,7 @@ import { isEventEnvelope } from "./envelope.js";
 import { parsePlan } from "./parsers/plan.js";
 import { parseReport } from "./parsers/report.js";
 import { matchCustomer, type PlanCandidate } from "./parsers/fuzzy.js";
-import { db, isDbEnabled, pingDb } from "./db.js";
+import { isDbEnabled, pingDb } from "./db.js";
 import { waPreflight, sendViaWaGateway, type WaSendResult } from "./wasend.js";
 import { processUnprocessed, isInboundEnabled } from "./repo/inbound.js";
 import { syncAccurateInvoices, syncVendors, syncItems, syncSalesOrders, syncDeliveryOrders, syncCustomers, getDeliveryOrderItems, getSalesOrderItems, getVendorDetail, accurateConfigured } from "./repo/accurateSync.js";
