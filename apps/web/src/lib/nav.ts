@@ -9,10 +9,11 @@ import {
   Sparkles, Send, FileText, ScrollText, GraduationCap, UsersRound, Network,
   Bell, MapPin, ListChecks, Swords, CalendarOff, CalendarDays, CalendarRange,
   Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, Tags, SlidersHorizontal,
-  Target, MapPinned, Contact, UserRound, Award, UserCheck, type LucideIcon,
+  Target, MapPinned, Contact, UserRound, Award, UserCheck, ClipboardList, type LucideIcon,
 } from "lucide-react";
 
 import { canEditPricelistSetup, canViewPricelist, type AccessUser } from "@/lib/pricelist-access";
+import { canViewRaportList } from "@/lib/raport-access";
 
 // exact: sorot aktif hanya saat path persis (untuk route induk yg punya child,
 // mis. /pricelist vs /pricelist/setup).
@@ -41,6 +42,8 @@ export const NAV: NavGroup[] = [
       { title: "Reminders", url: "/reminders", icon: Bell },
       { title: "Holidays", url: "/holidays", icon: CalendarOff },
       { title: "Manage Leave", url: "/leave", icon: CalendarDays },
+      { title: "Raport Saya", url: "/raport", icon: Award, exact: true, badge: "NEW" },
+      { title: "Raport Karyawan", url: "/raport/karyawan", icon: ClipboardList, badge: "NEW", show: canViewRaportList },
     ],
   },
   {
