@@ -222,7 +222,7 @@ export function PipelineBoard({ data }: { data: PipelineData }) {
               onDragOver={(e) => { if (dragId) { e.preventDefault(); if (overStage !== stage) setOverStage(stage); } }}
               onDragLeave={(e) => { if (overStage === stage && !e.currentTarget.contains(e.relatedTarget as Node)) setOverStage(null); }}
               onDrop={(e) => { e.preventDefault(); onDropStage(stage); }}
-              className={`min-w-[240px] max-w-[240px] flex-shrink-0 rounded-lg border border-t-4 bg-muted/30 transition-colors ${STAGE_COLOR[stage] ?? "border-t-slate-300"} ${isOver ? "ring-2 ring-primary bg-primary/5" : isTarget ? "border-dashed" : ""}`}>
+              className={`min-w-[240px] max-w-[240px] flex-shrink-0 rounded-lg border border-t-4 bg-card transition-colors ${STAGE_COLOR[stage] ?? "border-t-slate-300"} ${isOver ? "ring-2 ring-primary bg-primary/5" : isTarget ? "border-dashed" : ""}`}>
               <div className="p-2 border-b">
                 <div className="font-medium text-sm">{stage}</div>
                 <div className="text-xs text-muted-foreground">{deals.length} deal · {jt(w)} weighted</div>
