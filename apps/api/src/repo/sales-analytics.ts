@@ -366,6 +366,109 @@ export async function analyticsPerCustomer(from0?: string, to0?: string, scope?:
   };
 }
 
+// ── Kinerja Saya: AR Aging ber-scope ──────────────────────────────
+// AR aging piutang milik AM/HoD login (bukan lintas-tim). Basis = ar_aging_mv
+// (sumber bucket/hari-lewat, konvensi current/1-30/31-60/61-90/90+), di-JOIN ke
+// accurate_invoice utk outstanding hidup + salesman → master_user (agar scopeClause
+// AM/HoD bisa memfilter). Outstanding = accurate_invoice.outstanding, yaitu
+// primeOwing+taxOwing (net, sesuai pola AR existing; lihat accurateSync.ts) dgn
+// fallback ar_aging_mv.amount bila baris belum ter-mirror. Baris tanpa salesman
+// otomatis tersaring saat scope AM/HoD (mu.am_id NULL). Number() semua.
+export type ArPriority = "KRITIS" | "TINGGI" | "SEDANG" | "RENDAH";
+const AR_BUCKET_LABEL: Record<string, string> = {
+  current: "Belum jatuh tempo",
+  "1-30": "1-30 hari",
+  "31-60": "31-60 hari",
+  "61-90": "61-90 hari",
+  "90+": ">90 hari",
+};
+const AR_BUCKET_ORDER = ["current", "1-30", "31-60", "61-90", "90+"];
+function arPriorityOf(b31_60: number, b61_90: number, b90plus: number): ArPriority {
+  if (b90plus > 0) return "KRITIS";
+  if (b61_90 > 0) return "TINGGI";
+  if (b31_60 > 0) return "SEDANG";
+  return "RENDAH";
+}
+
+export async function getMyArAging(scope?: DataScope, from0?: string, to0?: string) {
+  const sc = scope ?? { userId: null, amOnly: false, amId: null, cabang: null, superuser: false };
+  const sql = db();
+  const scl = scopeClause(sql, sc);
+  // Filter tanggal opsional (dipakai bila from+to lengkap) — AR default snapshot.
+  const rangeOk = !!(from0 && to0 && /^\d{4}-\d{2}-\d{2}$/.test(from0) && /^\d{4}-\d{2}-\d{2}$/.test(to0));
+  const dateClause = rangeOk ? sql`AND ai.tanggal BETWEEN ${from0} AND ${to0}` : sql``;
+  const rows = await sql`
+    SELECT m.customer_id::text AS customer_id,
+           COALESCE(NULLIF(ac.name,''), NULLIF(m.customer_name,''), 'Customer #' || m.customer_id::text) AS customer_name,
+           m.invoice_no, m.bucket, m.days_overdue::int AS days_overdue,
+           COALESCE(ai.outstanding, m.amount)::float8 AS amount,
+           NULLIF(mu.cabang,'') AS cabang,
+           COALESCE(NULLIF(mu.nama,''), NULLIF(ai.salesman_name,'')) AS am
+    FROM ar_aging_mv m
+    LEFT JOIN accurate_invoice ai ON ai.number = m.invoice_no AND ai.customer_id::text = m.customer_id
+    LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
+    LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
+    LEFT JOIN accurate_customer ac ON ac.id = ai.customer_id
+    WHERE COALESCE(ai.outstanding, m.amount) > 0 ${scl} ${dateClause}`;
+
+  // Agregasi bucket + per-customer di JS (pola getAging).
+  const bmap = new Map<string, { count: number; total: number }>();
+  const cmap = new Map<string, {
+    id: string; name: string; cabang: string | null; am: string | null;
+    total: number; invoices: number; max_overdue: number;
+    b31_60: number; b61_90: number; b90plus: number;
+  }>();
+  let totalOutstanding = 0;
+  let overdueOutstanding = 0;
+  for (const r of rows) {
+    const amt = Number(r.amount);
+    const bucket = String(r.bucket);
+    const overdue = Number(r.days_overdue);
+    totalOutstanding += amt;
+    if (bucket !== "current") overdueOutstanding += amt;
+    const b = bmap.get(bucket) ?? { count: 0, total: 0 };
+    b.count += 1; b.total += amt;
+    bmap.set(bucket, b);
+    const cid = String(r.customer_id);
+    const c = cmap.get(cid) ?? {
+      id: cid, name: String(r.customer_name), cabang: r.cabang ? String(r.cabang) : null,
+      am: r.am ? String(r.am) : null, total: 0, invoices: 0, max_overdue: 0,
+      b31_60: 0, b61_90: 0, b90plus: 0,
+    };
+    c.total += amt; c.invoices += 1; c.max_overdue = Math.max(c.max_overdue, overdue);
+    if (bucket === "31-60") c.b31_60 += amt;
+    else if (bucket === "61-90") c.b61_90 += amt;
+    else if (bucket === "90+") c.b90plus += amt;
+    cmap.set(cid, c);
+  }
+
+  const buckets = AR_BUCKET_ORDER.map((b) => ({
+    bucket: b,
+    label: AR_BUCKET_LABEL[b] ?? b,
+    count: bmap.get(b)?.count ?? 0,
+    total: Number(bmap.get(b)?.total ?? 0),
+  }));
+  const top_customers = [...cmap.values()]
+    .map((c) => ({
+      id: c.id, name: c.name, cabang: c.cabang, am: c.am,
+      total: Number(c.total), invoices: Number(c.invoices), max_overdue: Number(c.max_overdue),
+      priority: arPriorityOf(c.b31_60, c.b61_90, c.b90plus),
+    }))
+    .sort((a, b) => b.total - a.total)
+    .slice(0, 20);
+
+  return {
+    scope: sc.amOnly ? ("am" as const) : (sc.cabangScope && sc.cabangScope.length ? ("hod" as const) : ("all" as const)),
+    range: rangeOk ? { from: from0!, to: to0! } : null,
+    total_outstanding: Number(totalOutstanding),
+    overdue_outstanding: Number(overdueOutstanding),
+    total_invoices: rows.length,
+    total_customers: cmap.size,
+    buckets,
+    top_customers,
+  };
+}
+
 // ── View #6: Trending ─────────────────────────────────────────────
 // Tren harian revenue+orders untuk rentang, + anomaly sederhana (≥2σ, tanpa LLM).
 export async function analyticsTrending(from0?: string, to0?: string, scope?: DataScope) {

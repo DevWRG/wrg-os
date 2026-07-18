@@ -116,6 +116,7 @@ import {
   analyticsPerCabang,
   analyticsPerCustomer,
   analyticsTrending,
+  getMyArAging,
 } from "./repo/sales-analytics.js";
 import { listViews, saveView, deleteView, listAlerts, createAlert, deleteAlert, updateAlert, listAlertTargets } from "./repo/sales-analytics-config.js";
 import { evaluateSalesAlerts } from "./repo/sales-analytics-alert-eval.js";
@@ -1894,6 +1895,11 @@ app.get("/sales-analytics/trending", async (c) => {
 app.get("/sales-analytics/pacing", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json(await targetPacing(Number(c.req.query("year")) || undefined));
+});
+// Kinerja Saya — AR aging ber-scope (AM=piutang sendiri, HoD=tim, admin=semua).
+app.get("/sales-analytics/my-ar", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await getMyArAging(await scopeOf(c), c.req.query("from"), c.req.query("to")));
 });
 // Pipeline report (F127 tab "Pipeline"): funnel/forecast/win-loss dari `deal`, row-level scope.
 app.get("/sales-analytics/pipeline", async (c) => {
