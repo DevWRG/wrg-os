@@ -217,6 +217,117 @@ export async function getPipeline(
   return { stages, summary, total_deals: rows.length, total_value: totalValue };
 }
 
+// ── F127 Pipeline Report (tab "Pipeline" di Sales Analytics) ────────────────
+// 3 report agregasi baca `deal`: Funnel per stage, Weighted Forecast per
+// kategori, Win-Loss. Row-level scope IDENTIK getPipeline (AM→deal sendiri,
+// HoD→cabang timnya, admin/superuser/tanpa-batas→semua).
+export interface PipelineFunnelRow {
+  stage: string;
+  count: number;
+  value: number;
+  weighted: number;
+}
+export interface PipelineForecastRow {
+  category: string;
+  count: number;
+  value: number;
+  weighted: number;
+}
+export interface PipelineWinLoss {
+  won: number;
+  lost: number;
+  open: number;
+  win_rate: number;
+  by_reason: { reason: string; count: number }[];
+}
+export interface PipelineReport {
+  funnel: PipelineFunnelRow[];
+  forecast: PipelineForecastRow[];
+  winloss: PipelineWinLoss;
+}
+
+export async function getPipelineReport(scope?: DataScope): Promise<PipelineReport> {
+  const sql = db();
+  // Fragment kondisi reusable (tanpa keyword WHERE → gampang di-AND untuk by_reason).
+  // Semantik sama isRestricted spt getPipeline: scope TAK membatasi → TRUE (semua).
+  const cond =
+    !scope || !isRestricted(scope)
+      ? sql`TRUE`
+      : scope.amOnly && scope.amId
+        ? sql`am_id = ${scope.amId}`
+        : sql`cabang = ANY(${scope.cabangScope!})`;
+  const val = sql`COALESCE(estimated_value, estimate_amount)`;
+  const weighted = sql`COALESCE(estimated_value, estimate_amount) * COALESCE(probability, 0)`;
+
+  // Funnel: agregasi per stage (isi 0 utk stage kosong, urut DEAL_STAGES).
+  const funnelRows = await sql`
+    SELECT stage,
+      COUNT(*)::bigint AS count,
+      COALESCE(SUM(${val}), 0) AS value,
+      COALESCE(SUM(${weighted}), 0) AS weighted
+    FROM deal WHERE ${cond}
+    GROUP BY stage
+  `;
+  const funnelMap = new Map(
+    funnelRows.map((r) => [
+      String(r.stage),
+      { count: Number(r.count), value: Number(r.value), weighted: Number(r.weighted) },
+    ]),
+  );
+  const funnel: PipelineFunnelRow[] = DEAL_STAGES.map((stage) => {
+    const m = funnelMap.get(stage);
+    return { stage, count: m?.count ?? 0, value: m?.value ?? 0, weighted: m?.weighted ?? 0 };
+  });
+
+  // Weighted Forecast: group by forecast_category (null → '—').
+  const forecastRows = await sql`
+    SELECT COALESCE(forecast_category, '—') AS category,
+      COUNT(*)::bigint AS count,
+      COALESCE(SUM(${val}), 0) AS value,
+      COALESCE(SUM(${weighted}), 0) AS weighted
+    FROM deal WHERE ${cond}
+    GROUP BY COALESCE(forecast_category, '—')
+    ORDER BY weighted DESC
+  `;
+  const forecast: PipelineForecastRow[] = forecastRows.map((r) => ({
+    category: String(r.category),
+    count: Number(r.count),
+    value: Number(r.value),
+    weighted: Number(r.weighted),
+  }));
+
+  // Win-Loss: won/lost/open dari stage; by_reason group loss_reason (Closing-Lost).
+  const stageCounts = await sql`
+    SELECT stage, COUNT(*)::bigint AS count
+    FROM deal WHERE ${cond}
+    GROUP BY stage
+  `;
+  let won = 0,
+    lost = 0,
+    open = 0;
+  for (const r of stageCounts) {
+    const n = Number(r.count);
+    if (String(r.stage) === "Closing-Won") won += n;
+    else if (String(r.stage) === "Closing-Lost") lost += n;
+    else open += n;
+  }
+  const reasonRows = await sql`
+    SELECT COALESCE(loss_reason::text, '—') AS reason, COUNT(*)::bigint AS count
+    FROM deal WHERE ${cond} AND stage = 'Closing-Lost'
+    GROUP BY COALESCE(loss_reason::text, '—')
+    ORDER BY count DESC
+  `;
+  const winloss: PipelineWinLoss = {
+    won,
+    lost,
+    open,
+    win_rate: won + lost > 0 ? won / (won + lost) : 0,
+    by_reason: reasonRows.map((r) => ({ reason: String(r.reason), count: Number(r.count) })),
+  };
+
+  return { funnel, forecast, winloss };
+}
+
 export interface TransitionResult {
   deal_id: string;
   from_stage: string;
