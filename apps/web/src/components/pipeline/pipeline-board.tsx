@@ -118,6 +118,8 @@ export function PipelineBoard({ data, isAdmin = false }: { data: PipelineData; i
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   // Modal loss_reason saat drop ke Closing-Lost: {deal, from}.
   const [lossModal, setLossModal] = useState<{ deal: PipelineDeal; reason: string; note: string } | null>(null);
+  // Modal keterangan WAJIB untuk setiap pemindahan stage non-Lost: {deal, toStage, note}.
+  const [moveModal, setMoveModal] = useState<{ deal: PipelineDeal; toStage: string; note: string } | null>(null);
   // Simpan bareng dealId → loading & stale-guard bisa DITURUNKAN (derived), jadi
   // effect gak perlu setState sync (react-hooks/set-state-in-effect). Semua setState
   // setelah await + guard alive.
@@ -199,7 +201,8 @@ export function PipelineBoard({ data, isAdmin = false }: { data: PipelineData; i
       setLossModal({ deal, reason: "", note: "" });
       return;
     }
-    void patchStage(id, toStage);
+    // Setiap pemindahan wajib disertai keterangan → tercatat di Riwayat (spt_state_log).
+    setMoveModal({ deal, toStage, note: "" });
   }
 
   const opts = useMemo(() => ({
@@ -264,7 +267,7 @@ export function PipelineBoard({ data, isAdmin = false }: { data: PipelineData; i
 
       {/* Hint + status */}
       <div className="flex items-center gap-3 text-xs">
-        <span className="text-muted-foreground">💡 Seret kartu untuk pindah stage. Drop ke <b>Closing-Lost</b> minta alasan.</span>
+        <span className="text-muted-foreground">💡 Seret kartu untuk pindah stage — tiap perpindahan minta <b>keterangan</b>. Drop ke <b>Closing-Lost</b> minta alasan.</span>
         {busy && <span className="text-muted-foreground animate-pulse">menyimpan…</span>}
         {msg && (
           <span className={`px-2 py-0.5 rounded ${msg.kind === "ok" ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"}`}>
@@ -386,7 +389,7 @@ export function PipelineBoard({ data, isAdmin = false }: { data: PipelineData; i
                 </ol>
               )}
             </div>
-            <div className="mt-4 text-xs text-muted-foreground border-t pt-2">Seret kartu di board untuk pindah stage.</div>
+            <div className="mt-4 text-xs text-muted-foreground border-t pt-2">Seret kartu di board untuk pindah stage (isi keterangan tiap perpindahan).</div>
           </Card>
         </div>
       )}
@@ -424,6 +427,34 @@ export function PipelineBoard({ data, isAdmin = false }: { data: PipelineData; i
                 }}
                 className="text-sm px-3 py-1.5 rounded-md bg-rose-600 text-white hover:bg-rose-700 disabled:opacity-50">
                 Tandai Lost
+              </button>
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {/* Modal keterangan wajib tiap pemindahan stage (non-Lost) → tercatat di Riwayat */}
+      {moveModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setMoveModal(null)}>
+          <Card className="max-w-sm w-full p-5" onClick={(e) => e.stopPropagation()}>
+            <h2 className="text-base font-semibold">Pindah stage</h2>
+            <p className="text-sm text-muted-foreground mt-1 leading-snug">
+              {moveModal.deal.facility_name || moveModal.deal.customer_name}: <b>{moveModal.deal.stage}</b> → <b>{moveModal.toStage}</b>. Isi keterangan (wajib) — tercatat di Riwayat.
+            </p>
+            <textarea placeholder="Keterangan perpindahan… (mis. hasil follow-up / alasan pindah)" value={moveModal.note}
+              onChange={(e) => setMoveModal({ ...moveModal, note: e.target.value })}
+              autoFocus rows={3}
+              className="mt-3 w-full rounded-md border border-input bg-background px-2 py-1 text-sm" />
+            <div className="mt-4 flex justify-end gap-2">
+              <button onClick={() => setMoveModal(null)}
+                className="text-sm px-3 py-1.5 rounded-md border hover:bg-muted">Batal</button>
+              <button disabled={!moveModal.note.trim() || busy}
+                onClick={async () => {
+                  const ok = await patchStage(moveModal.deal.deal_id, moveModal.toStage, { note: moveModal.note.trim() });
+                  if (ok) setMoveModal(null);
+                }}
+                className="text-sm px-3 py-1.5 rounded-md bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-50">
+                Pindah
               </button>
             </div>
           </Card>
