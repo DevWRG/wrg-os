@@ -8,23 +8,36 @@
 
 import { db } from "../db.js";
 import { reportPerOrang, reportCompliance, type OrangRow, type ComplianceRow } from "./plandash.js";
-import { getEmployee, getMeasurements } from "./employee-spine.js";
+import { getEmployee } from "./employee-spine.js";
 import { listLeave } from "./leave.js";
 
-// ── Periode (bulanan, WIB) ──
-function periodBounds(period?: string): { period: string; from: string; to: string } {
-  let y: number, m: number; // m = 1..12
-  if (period && /^\d{4}-\d{2}$/.test(period)) {
-    y = Number(period.slice(0, 4));
-    m = Number(period.slice(5, 7));
-  } else {
-    const w = new Date(Date.now() + 7 * 3600 * 1000); // WIB
-    y = w.getUTCFullYear();
-    m = w.getUTCMonth() + 1;
-  }
-  const pad = (n: number) => String(n).padStart(2, "0");
-  const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate();
-  return { period: `${y}-${pad(m)}`, from: `${y}-${pad(m)}-01`, to: `${y}-${pad(m)}-${pad(lastDay)}` };
+// ── Periode (WIB): kuartal (YYYY-Q1..4), semester (YYYY-H1/H2), tahunan (YYYY),
+// atau bulanan (YYYY-MM). months[] = daftar 'YYYY-MM' penyusun (utk agregasi KPI
+// kpi_measurement yg per-bulan). Default = kuartal berjalan. ──
+const PAD = (n: number) => String(n).padStart(2, "0");
+function periodBounds(period?: string): { key: string; label: string; from: string; to: string; months: string[] } {
+  const build = (y: number, m1: number, m2: number, key: string, label: string) => {
+    const months: string[] = [];
+    for (let m = m1; m <= m2; m++) months.push(`${y}-${PAD(m)}`);
+    return {
+      key, label,
+      from: `${y}-${PAD(m1)}-01`,
+      to: `${y}-${PAD(m2)}-${PAD(new Date(Date.UTC(y, m2, 0)).getUTCDate())}`,
+      months,
+    };
+  };
+  const p = (period ?? "").trim();
+  let mm = p.match(/^(\d{4})-Q([1-4])$/i);
+  if (mm) { const y = +mm[1], q = +mm[2]; return build(y, (q - 1) * 3 + 1, q * 3, `${y}-Q${q}`, `Kuartal ${q} ${y}`); }
+  mm = p.match(/^(\d{4})-H([1-2])$/i);
+  if (mm) { const y = +mm[1], h = +mm[2]; return build(y, h === 1 ? 1 : 7, h === 1 ? 6 : 12, `${y}-H${h}`, `Semester ${h} ${y}`); }
+  mm = p.match(/^(\d{4})-(\d{2})$/);
+  if (mm) { const y = +mm[1], m = +mm[2]; if (m >= 1 && m <= 12) return build(y, m, m, `${y}-${PAD(m)}`, `${PAD(m)}/${y}`); }
+  mm = p.match(/^(\d{4})$/);
+  if (mm) { const y = +mm[1]; return build(y, 1, 12, `${y}`, `Tahun ${y}`); }
+  const w = new Date(Date.now() + 7 * 3600 * 1000); // default: kuartal berjalan
+  const y = w.getUTCFullYear(), q = Math.ceil((w.getUTCMonth() + 1) / 3);
+  return build(y, (q - 1) * 3 + 1, q * 3, `${y}-Q${q}`, `Kuartal ${q} ${y}`);
 }
 
 // ── Bobot komposit (default; iterasi berikutnya = konfigurasi) ──
@@ -118,7 +131,7 @@ interface Maps {
   bsc: Map<string, { score: number; measured: number }>; // by am_id (via employee.am_id)
 }
 
-async function collectMaps(from: string, to: string, period: string): Promise<Maps> {
+async function collectMaps(from: string, to: string, months: string[]): Promise<Maps> {
   const sql = db();
   const year = Number(to.slice(0, 4));
 
@@ -157,11 +170,12 @@ async function collectMaps(from: string, to: string, period: string): Promise<Ma
       GROUP BY am_id
     `,
     sql`
-      SELECT e.am_id, k.id::text AS kpi_id, k.perspective, e.dept, m.achievement_pct::float8 AS achievement_pct
+      SELECT e.am_id, k.id::text AS kpi_id, k.perspective, e.dept, avg(m.achievement_pct)::float8 AS achievement_pct
       FROM employee e
       JOIN kpi k ON k.employee_id = e.id
-      LEFT JOIN kpi_measurement m ON m.kpi_id = k.id AND m.period = ${period}
+      LEFT JOIN kpi_measurement m ON m.kpi_id = k.id AND m.period = ANY(${months})
       WHERE e.am_id IS NOT NULL
+      GROUP BY e.am_id, k.id, k.perspective, e.dept
     `,
     sql`SELECT dept, perspective, weight::float8 AS weight FROM bsc_weight`,
   ]);
@@ -213,11 +227,11 @@ export interface RaportListRow {
   active_days: number; leave_days: number;
 }
 
-export async function getRaportList(period?: string): Promise<{ period: string; from: string; to: string; rows: RaportListRow[] }> {
-  const { period: p, from, to } = periodBounds(period);
+export async function getRaportList(period?: string): Promise<{ period: string; period_label: string; from: string; to: string; rows: RaportListRow[] }> {
+  const { key: p, label, from, to, months } = periodBounds(period);
   const sql = db();
   const roster = await sql`SELECT am_id, nama, panggilan, role, cabang FROM master_user WHERE aktif ORDER BY cabang NULLS LAST, nama`;
-  const M = await collectMaps(from, to, p);
+  const M = await collectMaps(from, to, months);
 
   const rows: RaportListRow[] = roster.map((u) => {
     const amId = String(u.am_id);
@@ -260,7 +274,7 @@ export async function getRaportList(period?: string): Promise<{ period: string; 
     };
   });
 
-  return { period: p, from, to, rows };
+  return { period: p, period_label: label, from, to, rows };
 }
 
 // ── DETAIL (1 karyawan) ──
@@ -268,7 +282,7 @@ export async function getRaportDetail(amId: string, period?: string): Promise<
   | { found: false }
   | {
       found: true;
-      period: string; from: string; to: string;
+      period: string; period_label: string; from: string; to: string;
       employee: { am_id: string; nama: string; panggilan: string | null; role: string; cabang: string | null; is_am: boolean; spine_id: string | null };
       score: { overall: number | null; rating: string; parts: ScorePart[] };
       plan_report: { plan_count: number; report_count: number; completion: number | null; active_days: number; late: number; unmatched: number; expected: number; on_time: number; late_days: number; miss: number; compliance_rate: number | null } | null;
@@ -282,7 +296,7 @@ export async function getRaportDetail(amId: string, period?: string): Promise<
       context_note: string;
     }
 > {
-  const { period: p, from, to } = periodBounds(period);
+  const { key: p, label: periodLabel, from, to, months } = periodBounds(period);
   const sql = db();
   const [u] = await sql`SELECT am_id, nama, panggilan, role, cabang FROM master_user WHERE am_id = ${amId}`;
   if (!u) return { found: false };
@@ -333,10 +347,18 @@ export async function getRaportDetail(amId: string, period?: string): Promise<
   let okr: { objective: string | null; key_results: string[] } | null = null;
   let raci: { process: string; role_type: string; note: string | null }[] = [];
   if (spineId) {
-    const [spine, meas] = await Promise.all([getEmployee(spineId), getMeasurements(spineId, p)]);
+    const [spine, meas] = await Promise.all([
+      getEmployee(spineId),
+      sql`
+        SELECT m.kpi_id::text AS kpi_id, avg(m.achievement_pct)::float8 AS achievement_pct
+        FROM kpi_measurement m JOIN kpi k ON k.id = m.kpi_id
+        WHERE k.employee_id = ${spineId} AND m.period = ANY(${months})
+        GROUP BY m.kpi_id
+      `,
+    ]);
     if (spine) {
       const inputs: Record<string, number> = {};
-      for (const m of meas) inputs[m.kpi_id] = m.achievement_pct;
+      for (const m of meas) inputs[String(m.kpi_id)] = Number(m.achievement_pct);
       const s = meas.length ? bscScore(spine.kpi, spine.weights as Record<string, number>, inputs) : null;
       bsc = {
         score: s?.score ?? null,
@@ -389,7 +411,7 @@ export async function getRaportDetail(amId: string, period?: string): Promise<
 
   return {
     found: true,
-    period: p, from, to,
+    period: p, period_label: periodLabel, from, to,
     employee: { am_id: amId, nama: String(u.nama), panggilan: u.panggilan ? String(u.panggilan) : null, role: String(u.role), cabang: u.cabang ? String(u.cabang) : null, is_am, spine_id: spineId },
     score: { overall, rating: ratingOf(overall), parts: scoreParts },
     plan_report: o || c
