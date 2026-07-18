@@ -15,6 +15,7 @@ export interface PipelineDeal {
   customer_name: string;
   facility_name: string | null;
   am_id: string | null;
+  am_name: string | null;
   brand: string | null;
   product: string | null;
   product_category: string | null;
@@ -108,7 +109,7 @@ function Sel({ label, val, set, options }: { label: string; val: string; set: (v
 export function PipelineBoard({ data, isAdmin = false }: { data: PipelineData; isAdmin?: boolean }) {
   const router = useRouter();
   const allDeals = useMemo(() => data.stages.flatMap((s) => s.deals), [data]);
-  const [f, setF] = useState({ pcat: "", cabang: "", hod: "", brand: "", coop: "", year: "", q: "" });
+  const [f, setF] = useState({ pcat: "", cabang: "", hod: "", am: "", brand: "", coop: "", year: "", q: "" });
   const [sel, setSel] = useState<PipelineDeal | null>(null);
   const [formModal, setFormModal] = useState<{ mode: "create" } | { mode: "edit"; deal: DealFormInit } | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -209,6 +210,7 @@ export function PipelineBoard({ data, isAdmin = false }: { data: PipelineData; i
     pcat: uniq(allDeals.map((d) => d.product_category)),
     cabang: uniq(allDeals.map((d) => d.cabang)),
     hod: uniq(allDeals.map((d) => d.pic_hod)),
+    am: uniq(allDeals.map((d) => d.am_name)),
     brand: uniq(allDeals.map((d) => d.brand)),
     coop: uniq(allDeals.map((d) => d.coop_model)),
     year: uniq(allDeals.map((d) => (d.purchase_year ? String(d.purchase_year) : null))),
@@ -218,6 +220,7 @@ export function PipelineBoard({ data, isAdmin = false }: { data: PipelineData; i
     (!f.pcat || d.product_category === f.pcat) &&
     (!f.cabang || d.cabang === f.cabang) &&
     (!f.hod || d.pic_hod === f.hod) &&
+    (!f.am || d.am_name === f.am) &&
     (!f.brand || d.brand === f.brand) &&
     (!f.coop || d.coop_model === f.coop) &&
     (!f.year || String(d.purchase_year) === f.year) &&
@@ -252,11 +255,12 @@ export function PipelineBoard({ data, isAdmin = false }: { data: PipelineData; i
         <Sel label="Kategori" val={f.pcat} set={(v) => setF({ ...f, pcat: v })} options={opts.pcat} />
         <Sel label="Cabang" val={f.cabang} set={(v) => setF({ ...f, cabang: v })} options={opts.cabang} />
         <Sel label="HOD" val={f.hod} set={(v) => setF({ ...f, hod: v })} options={opts.hod} />
+        <Sel label="AM" val={f.am} set={(v) => setF({ ...f, am: v })} options={opts.am} />
         <Sel label="Brand" val={f.brand} set={(v) => setF({ ...f, brand: v })} options={opts.brand} />
         <Sel label="Coop" val={f.coop} set={(v) => setF({ ...f, coop: v })} options={opts.coop} />
         <Sel label="Tahun" val={f.year} set={(v) => setF({ ...f, year: v })} options={opts.year} />
-        {(f.pcat || f.cabang || f.hod || f.brand || f.coop || f.year || f.q) && (
-          <button onClick={() => setF({ pcat: "", cabang: "", hod: "", brand: "", coop: "", year: "", q: "" })}
+        {(f.pcat || f.cabang || f.hod || f.am || f.brand || f.coop || f.year || f.q) && (
+          <button onClick={() => setF({ pcat: "", cabang: "", hod: "", am: "", brand: "", coop: "", year: "", q: "" })}
             className="text-sm text-muted-foreground hover:text-foreground underline">reset</button>
         )}
         <button onClick={() => setFormModal({ mode: "create" })}
@@ -333,22 +337,12 @@ export function PipelineBoard({ data, isAdmin = false }: { data: PipelineData; i
               {sel.forecast_category && <Badge variant="outline">{sel.forecast_category}</Badge>}
               {sel.stale && <Badge variant="destructive">Stale {sel.days_in_stage}h</Badge>}
             </div>
-            <div className="flex gap-2 mt-3">
-              <button onClick={() => { const d = sel; setSel(null); setFormModal({ mode: "edit", deal: d as DealFormInit }); }}
-                className="text-sm px-3 py-1 rounded-md border hover:bg-muted">Edit</button>
-              {isAdmin && (
-                <button disabled={deleting} onClick={() => deleteDeal(sel.deal_id)}
-                  className="text-sm px-3 py-1 rounded-md border border-rose-300 text-rose-700 hover:bg-rose-50 disabled:opacity-50">
-                  {deleting ? "menghapus…" : "Hapus"}
-                </button>
-              )}
-            </div>
             <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 mt-4 text-sm">
               {([
                 ["Brand", sel.brand], ["Produk", sel.product], ["Coop", sel.coop_model],
                 ["Estimate", jt(sel.estimate_amount)], ["Weighted", jt(sel.weighted)],
                 ["Probabilitas", sel.probability != null ? `${Math.round(sel.probability * 100)}%` : "—"],
-                ["Cabang", sel.cabang], ["PIC HOD", sel.pic_hod], ["AM (am_id)", sel.am_id],
+                ["Cabang", sel.cabang], ["PIC HOD", sel.pic_hod], ["AM", sel.am_name ?? sel.am_id],
                 ["Kota", sel.city], ["Provinsi", sel.province], ["Tahun beli", sel.purchase_year],
                 ["Hari di stage", sel.days_in_stage],
               ] as [string, string | number | null][]).map(([k, v]) => (
@@ -389,7 +383,17 @@ export function PipelineBoard({ data, isAdmin = false }: { data: PipelineData; i
                 </ol>
               )}
             </div>
-            <div className="mt-4 text-xs text-muted-foreground border-t pt-2">Seret kartu di board untuk pindah stage (isi keterangan tiap perpindahan).</div>
+            <div className="mt-4 flex items-center gap-2 border-t pt-3">
+              <span className="text-xs text-muted-foreground">Seret kartu di board untuk pindah stage (isi keterangan tiap perpindahan).</span>
+              <button onClick={() => { const d = sel; setSel(null); setFormModal({ mode: "edit", deal: d as DealFormInit }); }}
+                className="ml-auto text-sm px-3 py-1 rounded-md border hover:bg-muted">Edit</button>
+              {isAdmin && (
+                <button disabled={deleting} onClick={() => deleteDeal(sel.deal_id)}
+                  className="text-sm px-3 py-1 rounded-md border border-rose-300 text-rose-700 hover:bg-rose-50 disabled:opacity-50">
+                  {deleting ? "menghapus…" : "Hapus"}
+                </button>
+              )}
+            </div>
           </Card>
         </div>
       )}

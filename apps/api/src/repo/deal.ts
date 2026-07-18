@@ -84,6 +84,7 @@ export interface PipelineDeal {
   customer_name: string;
   facility_name: string | null;
   am_id: string | null;
+  am_name: string | null;              // panggilan AM (resolve dari master_user)
   brand: string | null;
   product: string | null;
   product_category: string | null;    // IVD / Medical
@@ -144,6 +145,10 @@ export async function getPipeline(
     rows = await sql`SELECT ${cols} FROM deal WHERE cabang = ANY(${scope.cabangScope!}) ORDER BY updated_at DESC`;
   }
 
+  // Resolve am_id → panggilan (master_user) untuk tampilan & filter AM.
+  const amRows = await sql`SELECT am_id, panggilan FROM master_user WHERE COALESCE(panggilan,'') <> ''`;
+  const amMap = new Map(amRows.map((r) => [String(r.am_id), String(r.panggilan)]));
+
   const TERMINAL = new Set(["Closing-Won", "Closing-Lost"]);
   const byStage = new Map<string, PipelineDeal[]>();
   for (const s of DEAL_STAGES) byStage.set(s, []);
@@ -163,6 +168,7 @@ export async function getPipeline(
       customer_name: String(r.customer_name ?? ""),
       facility_name: r.facility_name ? String(r.facility_name) : null,
       am_id: r.am_id ? String(r.am_id) : null,
+      am_name: r.am_id ? (amMap.get(String(r.am_id)) ?? null) : null,
       brand: r.brand ? String(r.brand) : null,
       product: r.product ? String(r.product) : null,
       product_category: r.product_category ? String(r.product_category) : null,
