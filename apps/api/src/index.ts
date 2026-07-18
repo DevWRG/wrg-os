@@ -10,7 +10,7 @@ import { isEventEnvelope } from "./envelope.js";
 import { parsePlan } from "./parsers/plan.js";
 import { parseReport } from "./parsers/report.js";
 import { matchCustomer, type PlanCandidate } from "./parsers/fuzzy.js";
-import { isDbEnabled, pingDb } from "./db.js";
+import { db, isDbEnabled, pingDb } from "./db.js";
 import { waPreflight, sendViaWaGateway, type WaSendResult } from "./wasend.js";
 import { processUnprocessed, isInboundEnabled } from "./repo/inbound.js";
 import { syncAccurateInvoices, syncVendors, syncItems, syncSalesOrders, syncDeliveryOrders, syncCustomers, getDeliveryOrderItems, getSalesOrderItems, getVendorDetail, accurateConfigured } from "./repo/accurateSync.js";
@@ -120,6 +120,7 @@ import {
 } from "./repo/sales-analytics.js";
 import { listViews, saveView, deleteView, listAlerts, createAlert, deleteAlert, updateAlert, listAlertTargets } from "./repo/sales-analytics-config.js";
 import { evaluateSalesAlerts } from "./repo/sales-analytics-alert-eval.js";
+import { computeNpk, getNpkScores, getNpkDetail, currentPeriod, type Period } from "./repo/npk.js";
 import { listDepartments, listEmployees, getEmployee, getRaciMatrix, getMeasurements, saveMeasurements, createEmployee, updateEmployee, deleteEmployee, replaceEmployeeDetail, getVoiceAggregate, getHodResolution, getOrgReporting, populateHodKey, getHods, type MeasurementInput, type EmployeeWrite, type SpineDetail } from "./repo/employee-spine.js";
 import { upsertMembers, listMembers, upsertDigests, listDigest, digestStats, upsertPola, listPola, generateRekap, generateResume, type MonitorMemberInput, type DigestInput, type PolaInput } from "./repo/monitor.js";
 import { runNotifTua } from "./repo/notiftua.js";
@@ -227,16 +228,22 @@ app.get("/auth/me", async (c) => {
   let superuser = false;
   let groups: { id: number; key: string; name: string }[] = [];
   let permissions: Record<string, unknown> = {};
+  let hodKey: string | null = null; // utk gate menu NPK Saya (HoD) di web
   if (isDbEnabled() && payload.sub) {
     try {
       const eff = await effectivePermissions(String(payload.sub));
       superuser = eff.superuser; groups = eff.groups; permissions = eff.permissions;
     } catch { /* abaikan — pakai role lama */ }
+    try {
+      const [u] = await db()`SELECT hod_key FROM app_user WHERE id = ${String(payload.sub)}`;
+      hodKey = u?.hod_key ? String(u.hod_key) : null;
+    } catch { /* abaikan */ }
   }
   return c.json({
     user: {
       id: payload.sub, email: payload.email, role: payload.role,
       name: payload.name ?? null, title: payload.title ?? null,
+      hod_key: hodKey,
       superuser, groups, permissions,
     },
   });
@@ -1910,6 +1917,42 @@ app.get("/sales-analytics/pipeline", async (c) => {
 app.get("/sales-analytics/leaderboard", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json(await getPipelineLeaderboard(await scopeOf(c)));
+});
+
+// ── F66 NPK Engine (per HoD per semester; row-level scope via x-user-id) ──
+// Formula SK Pasal 3 (npk-calc.ts). Feature-permission `npk`/`npk-self` + gate
+// identitas (admin/hod_key) dijaga di web BFF. Compute = tulis → butuh service-token.
+const npkParams = (c: { req: { query: (k: string) => string | undefined } }): { year: number; period: Period } => {
+  const cur = currentPeriod();
+  const year = Number(c.req.query("year")) || cur.year;
+  const p = (c.req.query("period") ?? "").toUpperCase();
+  const period: Period = p === "S1" || p === "S2" ? (p as Period) : cur.period;
+  return { year, period };
+};
+
+app.post("/npk/compute", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const svc = process.env.API_SERVICE_TOKEN;
+  if (svc && c.req.header("x-service-token") !== svc) return c.json({ error: "forbidden" }, 403);
+  const { year, period } = npkParams(c);
+  return c.json(await computeNpk({ year, period }));
+});
+
+app.get("/npk/scores", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const { year, period } = npkParams(c);
+  return c.json(await getNpkScores(await scopeOf(c), year, period));
+});
+
+app.get("/npk/scores/:userId", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const { year, period } = npkParams(c);
+  try {
+    return c.json(await getNpkDetail(await scopeOf(c), c.req.param("userId"), year, period));
+  } catch (e) {
+    const status = (e as { status?: number }).status ?? 500;
+    return c.json({ error: (e as Error).message }, status as 403 | 404 | 500);
+  }
 });
 
 // Saved views + threshold alert (per user; butuh x-user-id dari BFF).
