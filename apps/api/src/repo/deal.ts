@@ -240,9 +240,17 @@ export interface PipelineWinLoss {
   win_rate: number;
   by_reason: { reason: string; count: number }[];
 }
+export interface PipelineGroupRow {
+  key: string;
+  count: number;
+  value: number;
+  weighted: number;
+}
 export interface PipelineReport {
   funnel: PipelineFunnelRow[];
   forecast: PipelineForecastRow[];
+  by_category: PipelineGroupRow[];
+  by_brand: PipelineGroupRow[];
   winloss: PipelineWinLoss;
 }
 
@@ -296,6 +304,29 @@ export async function getPipelineReport(scope?: DataScope): Promise<PipelineRepo
     weighted: Number(r.weighted),
   }));
 
+  // Breakdown per kategori produk (IVD/Medical) & brand (top 15 by weighted).
+  const catRows = await sql`
+    SELECT COALESCE(product_category, '—') AS key,
+      COUNT(*)::bigint AS count,
+      COALESCE(SUM(${val}), 0) AS value,
+      COALESCE(SUM(${weighted}), 0) AS weighted
+    FROM deal WHERE ${cond}
+    GROUP BY COALESCE(product_category, '—')
+    ORDER BY weighted DESC
+  `;
+  const brandRows = await sql`
+    SELECT COALESCE(NULLIF(brand, ''), '—') AS key,
+      COUNT(*)::bigint AS count,
+      COALESCE(SUM(${val}), 0) AS value,
+      COALESCE(SUM(${weighted}), 0) AS weighted
+    FROM deal WHERE ${cond}
+    GROUP BY COALESCE(NULLIF(brand, ''), '—')
+    ORDER BY weighted DESC
+    LIMIT 15
+  `;
+  const by_category: PipelineGroupRow[] = catRows.map((r) => ({ key: String(r.key), count: Number(r.count), value: Number(r.value), weighted: Number(r.weighted) }));
+  const by_brand: PipelineGroupRow[] = brandRows.map((r) => ({ key: String(r.key), count: Number(r.count), value: Number(r.value), weighted: Number(r.weighted) }));
+
   // Win-Loss: won/lost/open dari stage; by_reason group loss_reason (Closing-Lost).
   const stageCounts = await sql`
     SELECT stage, COUNT(*)::bigint AS count
@@ -325,7 +356,7 @@ export async function getPipelineReport(scope?: DataScope): Promise<PipelineRepo
     by_reason: reasonRows.map((r) => ({ reason: String(r.reason), count: Number(r.count) })),
   };
 
-  return { funnel, forecast, winloss };
+  return { funnel, forecast, by_category, by_brand, winloss };
 }
 
 // F127 tab "Leaderboard": ranking per-AM dari `deal` (F1 SPT).
