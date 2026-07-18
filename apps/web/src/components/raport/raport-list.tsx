@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
+import { PeriodPicker, defaultPeriod } from "@/components/raport/period-picker";
 
 interface Row {
   am_id: string; nama: string; panggilan: string | null; role: string; cabang: string | null; is_am: boolean;
@@ -18,21 +19,8 @@ const rp = (n: number) => "Rp " + new Intl.NumberFormat("id-ID", { notation: "co
 const scoreTone = (s: number | null) =>
   s == null ? "text-muted-foreground" : s >= 95 ? "text-emerald-600" : s >= 80 ? "text-amber-600" : "text-red-600";
 
-function recentPeriods(n = 6): string[] {
-  const out: string[] = [];
-  const now = new Date(Date.now() + 7 * 3600 * 1000);
-  let y = now.getUTCFullYear();
-  let m = now.getUTCMonth() + 1;
-  for (let i = 0; i < n; i++) {
-    out.push(`${y}-${String(m).padStart(2, "0")}`);
-    m--;
-    if (m < 1) { m = 12; y--; }
-  }
-  return out;
-}
-
 export function RaportList() {
-  const [period, setPeriod] = useState<string>(recentPeriods(1)[0]);
+  const [period, setPeriod] = useState<string>(defaultPeriod());
   const [rows, setRows] = useState<Row[]>([]);
   const [state, setState] = useState<"idle" | "loading" | "error" | "forbidden">("loading");
   const [q, setQ] = useState("");
@@ -63,8 +51,6 @@ export function RaportList() {
     return rows.filter((r) => r.nama.toLowerCase().includes(s) || (r.cabang ?? "").toLowerCase().includes(s) || r.role.toLowerCase().includes(s));
   }, [rows, q]);
 
-  const periods = recentPeriods(6);
-
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -74,12 +60,7 @@ export function RaportList() {
           placeholder="Cari nama / cabang / role…"
           className="bg-background w-64 max-w-full rounded-md border px-3 py-1.5 text-sm"
         />
-        <div className="flex items-center gap-2">
-          <span className="text-muted-foreground text-sm">Periode</span>
-          <select value={period} onChange={(e) => setPeriod(e.target.value)} className="bg-background rounded-md border px-2 py-1 text-sm">
-            {periods.map((p) => <option key={p} value={p}>{p}</option>)}
-          </select>
-        </div>
+        <PeriodPicker period={period} onChange={setPeriod} />
       </div>
 
       {state === "forbidden" ? (
