@@ -138,7 +138,7 @@ export function ActivityReportView({ data }: { data: ActivityReportData }) {
               </table>
             </div>
           )}
-          <div className="text-muted-foreground mt-2 text-xs">Urut menurun berdasarkan total aktivitas. "(Tanpa AM)" = deal tanpa owner.</div>
+          <div className="text-muted-foreground mt-2 text-xs">Urut menurun berdasarkan total aktivitas. (Tanpa AM) = deal tanpa owner.</div>
         </CardContent>
       </Card>
     </div>
