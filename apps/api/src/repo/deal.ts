@@ -398,6 +398,91 @@ export async function getPipelineLeaderboard(scope?: DataScope): Promise<Leaderb
   });
 }
 
+// F127 tab "Activity": rekap aktivitas (perpindahan stage / touch) dari
+// `spt_state_log` di-JOIN ke `deal` (owner am_id + scope). Per-AM + tren mingguan.
+export interface ActivityAmRow {
+  am_id: string | null;
+  am_name: string;           // panggilan (master_user) / am_id / '(Tanpa AM)'
+  activity_count: number;    // COUNT(*) spt_state_log
+  last_7d: number;           // aktivitas 7 hari terakhir
+  last_30d: number;          // aktivitas 30 hari terakhir
+  last_activity: string | null; // ISO string occurred_at terbaru / null
+}
+export interface ActivityTrendPoint {
+  week: string;              // ISO string awal minggu (date_trunc week)
+  count: number;
+}
+export interface ActivityReport {
+  per_am: ActivityAmRow[];
+  trend: ActivityTrendPoint[];
+  total: number;
+}
+
+/**
+ * Rekap aktivitas F127: satu baris per am_id (owner deal) dari spt_state_log,
+ * urut activity_count DESC; deal tanpa owner → "(Tanpa AM)". Tren = aktivitas per
+ * minggu (12 minggu terakhir, urut menaik) utk line/bar chart. Row-level scope
+ * IDENTIK leaderboard/report — TAPI karena JOIN, kolom scope WAJIB dikualifikasi
+ * `d.am_id`/`d.cabang` (bukan ambigu antara spt_state_log & deal).
+ */
+export async function getActivityReport(scope?: DataScope): Promise<ActivityReport> {
+  const sql = db();
+  const cond =
+    !scope || !isRestricted(scope)
+      ? sql`TRUE`
+      : scope.amOnly && scope.amId
+        ? sql`d.am_id = ${scope.amId}`
+        : sql`d.cabang = ANY(${scope.cabangScope!})`;
+
+  // Per-AM: group by d.am_id; window count via FILTER; last_activity = MAX occurred_at.
+  const perAmRows = await sql`
+    SELECT d.am_id AS am_id,
+      COUNT(*)::bigint AS activity_count,
+      COUNT(*) FILTER (WHERE s.occurred_at > now() - interval '7 days')::bigint AS last_7d,
+      COUNT(*) FILTER (WHERE s.occurred_at > now() - interval '30 days')::bigint AS last_30d,
+      MAX(s.occurred_at) AS last_activity
+    FROM spt_state_log s
+    JOIN deal d ON s.deal_id = d.deal_id
+    WHERE ${cond}
+    GROUP BY d.am_id
+    ORDER BY activity_count DESC
+  `;
+
+  // Tren mingguan (12 minggu terakhir), urut menaik.
+  const trendRows = await sql`
+    SELECT date_trunc('week', s.occurred_at) AS week, COUNT(*)::bigint AS count
+    FROM spt_state_log s
+    JOIN deal d ON s.deal_id = d.deal_id
+    WHERE ${cond} AND s.occurred_at > now() - interval '12 weeks'
+    GROUP BY date_trunc('week', s.occurred_at)
+    ORDER BY week ASC
+  `;
+
+  // Resolve am_id → panggilan (master_user) — sama spt getPipelineLeaderboard.
+  const amRows = await sql`SELECT am_id, panggilan FROM master_user WHERE COALESCE(panggilan,'') <> ''`;
+  const amMap = new Map(amRows.map((r) => [String(r.am_id), String(r.panggilan)]));
+
+  const per_am: ActivityAmRow[] = perAmRows.map((r) => {
+    const amId = r.am_id ? String(r.am_id) : null;
+    return {
+      am_id: amId,
+      am_name: amId ? (amMap.get(amId) ?? amId) : "(Tanpa AM)",
+      activity_count: Number(r.activity_count),
+      last_7d: Number(r.last_7d),
+      last_30d: Number(r.last_30d),
+      last_activity: r.last_activity ? new Date(r.last_activity as string | Date).toISOString() : null,
+    };
+  });
+
+  const trend: ActivityTrendPoint[] = trendRows.map((r) => ({
+    week: new Date(r.week as string | Date).toISOString(),
+    count: Number(r.count),
+  }));
+
+  const total = per_am.reduce((a, r) => a + r.activity_count, 0);
+  return { per_am, trend, total };
+}
+
 export interface TransitionResult {
   deal_id: string;
   from_stage: string;
