@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { PeriodPicker, defaultPeriod } from "@/components/raport/period-picker";
 
 // ── Tipe (selaras apps/api getRaportDetail) ──
 interface ScorePart { key: string; label: string; score: number | null; weight: number; eff_weight: number }
@@ -33,22 +34,8 @@ const scoreTone = (s: number | null) =>
 const barTone = (s: number | null) =>
   s == null ? "bg-muted" : s >= 95 ? "bg-emerald-500" : s >= 80 ? "bg-amber-500" : "bg-red-500";
 
-// Selektor periode: 6 bulan terakhir (YYYY-MM).
-function recentPeriods(n = 6): string[] {
-  const out: string[] = [];
-  const now = new Date(Date.now() + 7 * 3600 * 1000);
-  let y = now.getUTCFullYear();
-  let m = now.getUTCMonth() + 1;
-  for (let i = 0; i < n; i++) {
-    out.push(`${y}-${String(m).padStart(2, "0")}`);
-    m--;
-    if (m < 1) { m = 12; y--; }
-  }
-  return out;
-}
-
 export function RaportView({ endpoint }: { endpoint: string }) {
-  const [period, setPeriod] = useState<string>(recentPeriods(1)[0]);
+  const [period, setPeriod] = useState<string>(defaultPeriod());
   const [data, setData] = useState<RaportDetail | null>(null);
   const [state, setState] = useState<"idle" | "loading" | "error">("loading");
 
@@ -67,19 +54,10 @@ export function RaportView({ endpoint }: { endpoint: string }) {
     return () => { alive = false; };
   }, [endpoint, period]);
 
-  const periods = recentPeriods(6);
-
   return (
     <div className="space-y-5">
-      <div className="flex flex-wrap items-center justify-end gap-2">
-        <span className="text-muted-foreground text-sm">Periode</span>
-        <select
-          value={period}
-          onChange={(e) => setPeriod(e.target.value)}
-          className="bg-background rounded-md border px-2 py-1 text-sm"
-        >
-          {periods.map((p) => <option key={p} value={p}>{p}</option>)}
-        </select>
+      <div className="flex justify-end">
+        <PeriodPicker period={period} onChange={setPeriod} />
       </div>
 
       {state === "error" ? (
