@@ -115,6 +115,7 @@ export function PipelineBoard({ data, isAdmin = false }: { data: PipelineData; i
   const [sel, setSel] = useState<PipelineDeal | null>(null);
   const [formModal, setFormModal] = useState<{ mode: "create" } | { mode: "edit"; deal: DealFormInit } | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [confirmDel, setConfirmDel] = useState<PipelineDeal | null>(null);
   const [dragId, setDragId] = useState<string | null>(null);
   const [overStage, setOverStage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -173,9 +174,8 @@ export function PipelineBoard({ data, isAdmin = false }: { data: PipelineData; i
     }
   }
 
-  // Hapus deal (admin). Konfirmasi via window.confirm; refresh + tutup modal.
+  // Hapus deal (admin) setelah konfirmasi modal; refresh + tutup modal.
   async function deleteDeal(dealId: string) {
-    if (!window.confirm("Hapus deal ini permanen (termasuk riwayatnya)? Tindakan ini tidak bisa dibatalkan.")) return;
     setDeleting(true);
     setMsg(null);
     try {
@@ -189,6 +189,7 @@ export function PipelineBoard({ data, isAdmin = false }: { data: PipelineData; i
       setMsg({ kind: "err", text: "koneksi gagal" });
     } finally {
       setDeleting(false);
+      setConfirmDel(null);
     }
   }
 
@@ -390,9 +391,9 @@ export function PipelineBoard({ data, isAdmin = false }: { data: PipelineData; i
               <button onClick={() => { const d = sel; setSel(null); setFormModal({ mode: "edit", deal: d as DealFormInit }); }}
                 className="ml-auto text-sm px-3 py-1 rounded-md border hover:bg-muted">Edit</button>
               {isAdmin && (
-                <button disabled={deleting} onClick={() => deleteDeal(sel.deal_id)}
-                  className="text-sm px-3 py-1 rounded-md border border-rose-300 text-rose-700 hover:bg-rose-50 disabled:opacity-50">
-                  {deleting ? "menghapus…" : "Hapus"}
+                <button onClick={() => setConfirmDel(sel)}
+                  className="text-sm px-3 py-1 rounded-md border border-rose-300 text-rose-700 hover:bg-rose-50">
+                  Hapus
                 </button>
               )}
               <button onClick={() => setSel(null)}
@@ -476,6 +477,26 @@ export function PipelineBoard({ data, isAdmin = false }: { data: PipelineData; i
           deal={formModal.mode === "edit" ? formModal.deal : undefined}
           onClose={() => setFormModal(null)}
         />
+      )}
+
+      {/* Modal konfirmasi hapus deal */}
+      {confirmDel && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4" onClick={() => !deleting && setConfirmDel(null)}>
+          <Card className="max-w-sm w-full p-5" onClick={(e) => e.stopPropagation()}>
+            <h2 className="text-base font-semibold">Hapus deal?</h2>
+            <p className="text-sm text-muted-foreground mt-1 leading-snug">
+              <b>{confirmDel.facility_name || confirmDel.customer_name}</b> akan dihapus permanen termasuk riwayatnya. Tindakan ini tidak bisa dibatalkan.
+            </p>
+            <div className="mt-4 flex justify-end gap-2">
+              <button disabled={deleting} onClick={() => setConfirmDel(null)}
+                className="text-sm px-3 py-1.5 rounded-md border hover:bg-muted disabled:opacity-50">Batal</button>
+              <button disabled={deleting} onClick={() => deleteDeal(confirmDel.deal_id)}
+                className="text-sm px-3 py-1.5 rounded-md bg-rose-600 text-white hover:bg-rose-700 disabled:opacity-50">
+                {deleting ? "menghapus…" : "Hapus"}
+              </button>
+            </div>
+          </Card>
+        </div>
       )}
     </div>
   );
