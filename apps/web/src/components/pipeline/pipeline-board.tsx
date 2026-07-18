@@ -97,7 +97,7 @@ interface TimelineEntry {
 function Sel({ label, val, set, options }: { label: string; val: string; set: (v: string) => void; options: string[] }) {
   return (
     <select value={val} onChange={(e) => set(e.target.value)}
-      className="rounded-md border border-input bg-background px-2 py-1 text-sm">
+      className="h-9 rounded-md border border-input bg-muted px-3 text-sm shadow-sm cursor-pointer hover:bg-muted/80 focus:outline-none focus:ring-2 focus:ring-ring/40 focus:border-ring">
       <option value="">{label}: semua</option>
       {options.map((o) => <option key={o} value={o}>{o}</option>)}
     </select>
@@ -224,9 +224,9 @@ export function PipelineBoard({ data }: { data: PipelineData }) {
       </div>
 
       {/* Filter */}
-      <div className="flex flex-wrap gap-2">
+      <Card className="flex flex-wrap items-center gap-2 p-3">
         <input placeholder="Cari faskes/produk…" value={f.q} onChange={(e) => setF({ ...f, q: e.target.value })}
-          className="rounded-md border border-input bg-background px-3 py-1 text-sm min-w-[180px]" />
+          className="h-9 rounded-md border border-input bg-muted px-3 text-sm min-w-[200px] shadow-sm focus:outline-none focus:ring-2 focus:ring-ring/40 focus:border-ring" />
         <Sel label="Kategori" val={f.pcat} set={(v) => setF({ ...f, pcat: v })} options={opts.pcat} />
         <Sel label="Cabang" val={f.cabang} set={(v) => setF({ ...f, cabang: v })} options={opts.cabang} />
         <Sel label="HOD" val={f.hod} set={(v) => setF({ ...f, hod: v })} options={opts.hod} />
@@ -237,7 +237,7 @@ export function PipelineBoard({ data }: { data: PipelineData }) {
           <button onClick={() => setF({ pcat: "", cabang: "", hod: "", brand: "", coop: "", year: "", q: "" })}
             className="text-sm text-muted-foreground hover:text-foreground underline">reset</button>
         )}
-      </div>
+      </Card>
 
       {/* Hint + status */}
       <div className="flex items-center gap-3 text-xs">
