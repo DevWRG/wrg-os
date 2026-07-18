@@ -120,6 +120,7 @@ import {
   getMyArAging,
 } from "./repo/sales-analytics.js";
 import { listViews, saveView, deleteView, listAlerts, createAlert, deleteAlert, updateAlert, listAlertTargets } from "./repo/sales-analytics-config.js";
+import { execCommand, execAmRadar, execOutletMatrix, execDormantIntel, execKpiBaseline } from "./repo/exec-dashboard.js";
 import { evaluateSalesAlerts } from "./repo/sales-analytics-alert-eval.js";
 import { computeNpk, getNpkScores, getNpkDetail, currentPeriod, type Period } from "./repo/npk.js";
 import { listDepartments, listEmployees, getEmployee, getRaciMatrix, getMeasurements, saveMeasurements, createEmployee, updateEmployee, deleteEmployee, replaceEmployeeDetail, getVoiceAggregate, getHodResolution, getOrgReporting, populateHodKey, getHods, type MeasurementInput, type EmployeeWrite, type SpineDetail } from "./repo/employee-spine.js";
@@ -2050,6 +2051,29 @@ app.delete("/sales-analytics/alerts/:id", async (c) => {
 app.get("/sales-analytics/alert-targets", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json(await listAlertTargets());
+});
+
+// ── F76 Executive Command Center (Director Dashboard) — agregasi read-only ──
+// COMMAND/OUTLET/KPI = level direktur (full company). AM-RADAR ikut scope x-user-id.
+app.get("/executive/command", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await execCommand(await scopeOf(c)));
+});
+app.get("/executive/am-radar", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await execAmRadar(await scopeOf(c)));
+});
+app.get("/executive/outlet-matrix", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await execOutletMatrix());
+});
+app.get("/executive/dormant-intel", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await execDormantIntel());
+});
+app.get("/executive/kpi-baseline", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await execKpiBaseline());
 });
 
 // ── F118 Employee Spine (+ F119 bobot BSC) ──
