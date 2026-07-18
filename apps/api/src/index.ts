@@ -107,6 +107,7 @@ import {
 } from "./repo/plandash.js";
 import { salesRange, reportRevenue, reportSalesAr, salesOverview, customersRevenue, customerMonthly, dormantCustomers, churnCustomers, targetPacing, reportSalesPerformance } from "./repo/sales.js";
 import { resolveScope } from "./repo/access-scope.js";
+import { getRaportList, getRaportDetail } from "./repo/raport.js";
 import {
   analyticsOverview,
   analyticsPerAm,
@@ -227,19 +228,60 @@ app.get("/auth/me", async (c) => {
   let superuser = false;
   let groups: { id: number; key: string; name: string }[] = [];
   let permissions: Record<string, unknown> = {};
+  let am_id: string | null = null;
+  let hod_key: string | null = null;
+  let is_am = false;
+  let is_hod = false;
   if (isDbEnabled() && payload.sub) {
     try {
       const eff = await effectivePermissions(String(payload.sub));
       superuser = eff.superuser; groups = eff.groups; permissions = eff.permissions;
     } catch { /* abaikan — pakai role lama */ }
+    try {
+      // Identitas karyawan (utk gate menu Raport & scoping). scope.amOnly = AM sejati;
+      // hod_key/cabangScope = HoD (lihat semua karyawan di menu List Raport).
+      const scope = await resolveScope(String(payload.sub));
+      am_id = scope.amId; hod_key = scope.hodKey ?? null;
+      is_am = scope.amOnly; is_hod = !!scope.hodKey || !!(scope.cabangScope && scope.cabangScope.length);
+    } catch { /* abaikan */ }
   }
   return c.json({
     user: {
       id: payload.sub, email: payload.email, role: payload.role,
       name: payload.name ?? null, title: payload.title ?? null,
+      am_id, hod_key, is_am, is_hod,
       superuser, groups, permissions,
     },
   });
+});
+
+// ── HR Raport 360 (scorecard per karyawan) ──
+// /raport/me = diri sendiri (identitas dari sesi via x-user-id, bukan param — cegah
+// akses raport orang lain). /raport/list & /raport/:amId = admin/HoD.
+app.get("/raport/me", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const scope = await resolveScope(c.req.header("x-user-id"));
+  if (!scope.amId) return c.json({ linked: false, message: "Akun belum tertaut ke karyawan (am_id)." });
+  const r = await getRaportDetail(scope.amId, c.req.query("period") || undefined);
+  if (!r.found) return c.json({ error: "not found" }, 404);
+  return c.json({ linked: true, ...r });
+});
+
+app.get("/raport/list", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const scope = await resolveScope(c.req.header("x-user-id"));
+  if (scope.amOnly) return c.json({ error: "forbidden" }, 403); // AM murni tak boleh daftar semua
+  return c.json(await getRaportList(c.req.query("period") || undefined));
+});
+
+app.get("/raport/:amId", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const amId = c.req.param("amId");
+  const scope = await resolveScope(c.req.header("x-user-id"));
+  if (scope.amOnly && scope.amId !== amId) return c.json({ error: "forbidden" }, 403);
+  const r = await getRaportDetail(amId, c.req.query("period") || undefined);
+  if (!r.found) return c.json({ error: "not found" }, 404);
+  return c.json(r);
 });
 
 // Register ops: butuh x-service-token bila API_SERVICE_TOKEN di-set; atau saat
