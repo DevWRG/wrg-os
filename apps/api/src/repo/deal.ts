@@ -328,6 +328,76 @@ export async function getPipelineReport(scope?: DataScope): Promise<PipelineRepo
   return { funnel, forecast, winloss };
 }
 
+// F127 tab "Leaderboard": ranking per-AM dari `deal` (F1 SPT).
+export interface LeaderboardRow {
+  am_id: string | null;
+  am_name: string;           // panggilan (master_user) / am_id / '(Tanpa AM)'
+  cabang: string | null;
+  deal_count: number;
+  total_value: number;       // SUM COALESCE(estimated_value, estimate_amount)
+  weighted_value: number;    // SUM value × COALESCE(probability, 0)
+  won: number;               // stage Closing-Won
+  lost: number;              // stage Closing-Lost
+  open: number;              // sisanya (non-terminal)
+  win_rate: number;          // won / (won+lost); 0 kalau penyebut 0
+}
+
+/**
+ * Leaderboard AM: satu baris per am_id yg punya deal, urut weighted_value DESC.
+ * Deal dgn am_id NULL dikelompokkan jadi satu baris "(Tanpa AM)" (am_id=null) —
+ * pilihan informatif (visibilitas pipeline tak ber-owner) ketimbang di-skip.
+ * Scope pakai fragment `cond` IDENTIK getPipelineReport (AM→am_id sendiri,
+ * HoD→cabang tim, admin/tak-terbatas→semua) — row-level, tak bocor lintas-AM.
+ */
+export async function getPipelineLeaderboard(scope?: DataScope): Promise<LeaderboardRow[]> {
+  const sql = db();
+  const cond =
+    !scope || !isRestricted(scope)
+      ? sql`TRUE`
+      : scope.amOnly && scope.amId
+        ? sql`am_id = ${scope.amId}`
+        : sql`cabang = ANY(${scope.cabangScope!})`;
+  const val = sql`COALESCE(estimated_value, estimate_amount)`;
+  const weighted = sql`COALESCE(estimated_value, estimate_amount) * COALESCE(probability, 0)`;
+
+  // Agregasi per am_id (NULL jadi grup tersendiri). MAX(cabang) → salah satu cabang.
+  const rows = await sql`
+    SELECT am_id,
+      MAX(cabang) AS cabang,
+      COUNT(*)::bigint AS deal_count,
+      COALESCE(SUM(${val}), 0) AS total_value,
+      COALESCE(SUM(${weighted}), 0) AS weighted_value,
+      COUNT(*) FILTER (WHERE stage = 'Closing-Won')::bigint AS won,
+      COUNT(*) FILTER (WHERE stage = 'Closing-Lost')::bigint AS lost
+    FROM deal WHERE ${cond}
+    GROUP BY am_id
+    ORDER BY weighted_value DESC
+  `;
+
+  // Resolve am_id → panggilan (master_user) — sama spt getPipeline.
+  const amRows = await sql`SELECT am_id, panggilan FROM master_user WHERE COALESCE(panggilan,'') <> ''`;
+  const amMap = new Map(amRows.map((r) => [String(r.am_id), String(r.panggilan)]));
+
+  return rows.map((r) => {
+    const amId = r.am_id ? String(r.am_id) : null;
+    const won = Number(r.won);
+    const lost = Number(r.lost);
+    const dealCount = Number(r.deal_count);
+    return {
+      am_id: amId,
+      am_name: amId ? (amMap.get(amId) ?? amId) : "(Tanpa AM)",
+      cabang: r.cabang ? String(r.cabang) : null,
+      deal_count: dealCount,
+      total_value: Number(r.total_value),
+      weighted_value: Number(r.weighted_value),
+      won,
+      lost,
+      open: dealCount - won - lost,
+      win_rate: won + lost > 0 ? won / (won + lost) : 0,
+    };
+  });
+}
+
 export interface TransitionResult {
   deal_id: string;
   from_stage: string;
