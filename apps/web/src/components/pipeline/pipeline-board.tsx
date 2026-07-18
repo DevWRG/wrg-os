@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -79,6 +79,20 @@ const jt = (n: number | null) => {
   return `Rp ${v.toLocaleString("id-ID")}`;
 };
 const uniq = (arr: (string | null)[]) => [...new Set(arr.filter((x): x is string => !!x))].sort();
+const fmtDateTime = (iso: string) => {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? "—" : d.toLocaleString("id-ID", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+};
+
+interface TimelineEntry {
+  id: string;
+  from_stage: string | null;
+  to_stage: string;
+  changed_by: string | null;
+  reason: string | null;
+  occurred_at: string;
+}
 
 function Sel({ label, val, set, options }: { label: string; val: string; set: (v: string) => void; options: string[] }) {
   return (
@@ -101,6 +115,29 @@ export function PipelineBoard({ data }: { data: PipelineData }) {
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   // Modal loss_reason saat drop ke Closing-Lost: {deal, from}.
   const [lossModal, setLossModal] = useState<{ deal: PipelineDeal; reason: string; note: string } | null>(null);
+  // Simpan bareng dealId → loading & stale-guard bisa DITURUNKAN (derived), jadi
+  // effect gak perlu setState sync (react-hooks/set-state-in-effect). Semua setState
+  // setelah await + guard alive.
+  const [timeline, setTimeline] = useState<{ dealId: string; entries: TimelineEntry[] } | null>(null);
+
+  useEffect(() => {
+    if (!sel) return;
+    const dealId = sel.deal_id;
+    let alive = true;
+    (async () => {
+      try {
+        const res = await fetch(`/api/deals/${encodeURIComponent(dealId)}/timeline`, { cache: "no-store" });
+        const data = res.ok ? await res.json() : { entries: [] };
+        if (alive) setTimeline({ dealId, entries: Array.isArray(data?.entries) ? data.entries : [] });
+      } catch {
+        if (alive) setTimeline({ dealId, entries: [] });
+      }
+    })();
+    return () => { alive = false; };
+  }, [sel]);
+  // Timeline utk deal yg sedang dibuka (abaikan data deal lain yg belum ke-refresh).
+  const tl = sel && timeline && timeline.dealId === sel.deal_id ? timeline.entries : null;
+  const tlLoading = !!sel && tl === null;
 
   // Kirim transisi stage ke backend, lalu refresh data server-rendered.
   async function patchStage(dealId: string, toStage: string, extra?: { loss_reason?: string; note?: string }) {
@@ -222,7 +259,7 @@ export function PipelineBoard({ data }: { data: PipelineData }) {
               onDragOver={(e) => { if (dragId) { e.preventDefault(); if (overStage !== stage) setOverStage(stage); } }}
               onDragLeave={(e) => { if (overStage === stage && !e.currentTarget.contains(e.relatedTarget as Node)) setOverStage(null); }}
               onDrop={(e) => { e.preventDefault(); onDropStage(stage); }}
-              className={`min-w-[240px] max-w-[240px] flex-shrink-0 rounded-lg border border-t-4 bg-muted/30 transition-colors ${STAGE_COLOR[stage] ?? "border-t-slate-300"} ${isOver ? "ring-2 ring-primary bg-primary/5" : isTarget ? "border-dashed" : ""}`}>
+              className={`min-w-[240px] max-w-[240px] flex-shrink-0 rounded-lg border border-t-4 bg-card transition-colors ${STAGE_COLOR[stage] ?? "border-t-slate-300"} ${isOver ? "ring-2 ring-primary bg-primary/5" : isTarget ? "border-dashed" : ""}`}>
               <div className="p-2 border-b">
                 <div className="font-medium text-sm">{stage}</div>
                 <div className="text-xs text-muted-foreground">{deals.length} deal · {jt(w)} weighted</div>
@@ -280,7 +317,40 @@ export function PipelineBoard({ data }: { data: PipelineData }) {
               ))}
             </dl>
             {sel.notes && <div className="mt-4"><div className="text-xs text-muted-foreground">Catatan</div><div className="text-sm whitespace-pre-wrap mt-1">{sel.notes}</div></div>}
-            <div className="mt-4 text-xs text-muted-foreground border-t pt-2">Seret kartu di board untuk pindah stage. Timeline & approval menyusul.</div>
+
+            {/* Riwayat perpindahan stage + approval (spt_state_log) */}
+            <div className="mt-4 border-t pt-3">
+              <div className="text-xs text-muted-foreground mb-2">Riwayat</div>
+              {tlLoading && <div className="text-sm text-muted-foreground italic">memuat…</div>}
+              {!tlLoading && tl && tl.length === 0 && (
+                <div className="text-sm text-muted-foreground italic">Belum ada perpindahan tercatat.</div>
+              )}
+              {!tlLoading && tl && tl.length > 0 && (
+                <ol className="space-y-2">
+                  {tl.map((t) => {
+                    const moved = t.from_stage && t.from_stage !== t.to_stage;
+                    return (
+                      <li key={t.id} className="text-sm flex gap-2">
+                        <span className="text-muted-foreground shrink-0 mt-0.5">•</span>
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            {moved ? (
+                              <span className="font-medium">{t.from_stage} → {t.to_stage}</span>
+                            ) : (
+                              <span className="font-medium">{t.to_stage}</span>
+                            )}
+                            <span className="text-xs text-muted-foreground">{fmtDateTime(t.occurred_at)}</span>
+                          </div>
+                          {t.reason && <div className="text-xs text-muted-foreground mt-0.5 break-words">{t.reason}</div>}
+                          {t.changed_by && <div className="text-[11px] text-muted-foreground/70 mt-0.5">oleh {t.changed_by}</div>}
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ol>
+              )}
+            </div>
+            <div className="mt-4 text-xs text-muted-foreground border-t pt-2">Seret kartu di board untuk pindah stage.</div>
           </Card>
         </div>
       )}
