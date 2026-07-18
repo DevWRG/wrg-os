@@ -12,9 +12,12 @@ export interface PipelineWinLoss {
   won: number; lost: number; open: number; win_rate: number;
   by_reason: { reason: string; count: number }[];
 }
+export interface PipelineGroupRow { key: string; count: number; value: number; weighted: number }
 export interface PipelineReportData {
   funnel: PipelineFunnelRow[];
   forecast: PipelineForecastRow[];
+  by_category: PipelineGroupRow[];
+  by_brand: PipelineGroupRow[];
   winloss: PipelineWinLoss;
 }
 
@@ -108,6 +111,39 @@ function ValueTooltip({ active, payload, label }: {
   );
 }
 
+// Palet siklik untuk grup (kategori/brand) — konsisten light & dark.
+const GROUP_PALETTE = ["#2563a8", "#0d9488", "#7c3aed", "#d97706", "#dc2626", "#0891b2", "#65a30d", "#db2777", "#4f46e5", "#0ea5e9", "#ca8a04", "#059669", "#e11d48", "#8b5cf6", "#f97316"];
+
+// Section bar horizontal per grup (weighted per kategori/brand). Reuse ValueTooltip.
+function GroupBarSection({ title, rows, hint }: { title: string; rows: PipelineGroupRow[]; hint?: string }) {
+  const data = rows.map((r) => ({ ...r, label: r.key }));
+  return (
+    <Card>
+      <CardHeader><CardTitle className="text-base">{title}</CardTitle></CardHeader>
+      <CardContent>
+        {data.length === 0 ? (
+          <div className="text-muted-foreground text-sm">Belum ada data.</div>
+        ) : (
+          <>
+            <ResponsiveContainer width="100%" height={Math.max(200, data.length * 34)}>
+              <BarChart data={data} layout="vertical" margin={{ left: 24, right: 16 }}>
+                <CartesianGrid strokeDasharray="3 3" opacity={0.3} horizontal={false} />
+                <XAxis type="number" tickFormatter={(v) => rpC(Number(v))} fontSize={11} />
+                <YAxis type="category" dataKey="label" fontSize={11} width={130} />
+                <Tooltip content={<ValueTooltip />} cursor={{ fill: "var(--muted)", opacity: 0.4 }} />
+                <Bar dataKey="weighted" radius={[0, 4, 4, 0]}>
+                  {data.map((r, i) => <Cell key={r.key} fill={GROUP_PALETTE[i % GROUP_PALETTE.length]} />)}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+            {hint && <div className="text-muted-foreground mt-2 text-xs">{hint}</div>}
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 export function PipelineReportView({ data }: { data: PipelineReportData }) {
   const funnel = data.funnel.map((r) => ({ ...r, label: stageLabel(r.stage) }));
   const forecast = data.forecast.map((r) => ({ ...r, label: r.category }));
@@ -178,6 +214,10 @@ export function PipelineReportView({ data }: { data: PipelineReportData }) {
           )}
         </CardContent>
       </Card>
+
+      {/* Pipeline per Kategori Produk & Brand */}
+      <GroupBarSection title="Pipeline per Kategori Produk" rows={data.by_category} hint="Panjang bar = perkiraan tertimbang (nilai × peluang) per kategori produk (IVD / Medical)." />
+      <GroupBarSection title="Pipeline per Brand (top 15)" rows={data.by_brand} hint="15 brand teratas menurut perkiraan tertimbang." />
 
       {/* Menang-Kalah */}
       <Card>
