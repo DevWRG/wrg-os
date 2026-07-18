@@ -11,6 +11,7 @@ export interface EffectivePerm {
 export interface PermBag {
   role?: string;
   superuser?: boolean;
+  hod_key?: string | null; // key HoD (rocky/yogi/...) → gate menu "NPK Saya"
   groups?: { id: number; key: string; name: string }[];
   permissions?: Record<string, EffectivePerm>;
 }
