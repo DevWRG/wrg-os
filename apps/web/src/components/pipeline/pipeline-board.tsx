@@ -81,6 +81,8 @@ const jt = (n: number | null) => {
   return `Rp ${v.toLocaleString("id-ID")}`;
 };
 const uniq = (arr: (string | null)[]) => [...new Set(arr.filter((x): x is string => !!x))].sort();
+// Coop model → bahasa awam: KSO tetap KSO; SALE/Sale → "Beli Putus".
+const coopLabel = (c: string | null) => (c == null ? c : /sale/i.test(c) ? "Beli Putus" : c);
 const fmtDateTime = (iso: string) => {
   if (!iso) return "—";
   const d = new Date(iso);
@@ -244,8 +246,8 @@ export function PipelineBoard({ data, isAdmin = false }: { data: PipelineData; i
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Card className="p-3"><div className="text-xs text-muted-foreground">Total Deal</div><div className="text-xl font-semibold tabular-nums">{filtered.length}</div></Card>
         <Card className="p-3"><div className="text-xs text-muted-foreground">Total Nilai</div><div className="text-xl font-semibold tabular-nums">{jt(sumVal)}</div></Card>
-        <Card className="p-3"><div className="text-xs text-muted-foreground">Weighted (est×prob)</div><div className="text-xl font-semibold tabular-nums text-primary">{jt(sumW)}</div></Card>
-        <Card className="p-3"><div className="text-xs text-muted-foreground">Stale &gt;2mg</div><div className="text-xl font-semibold tabular-nums text-rose-600">{staleN}</div></Card>
+        <Card className="p-3"><div className="text-xs text-muted-foreground">Nilai × Peluang</div><div className="text-xl font-semibold tabular-nums text-primary">{jt(sumW)}</div></Card>
+        <Card className="p-3"><div className="text-xs text-muted-foreground">Mangkrak &gt;2mg</div><div className="text-xl font-semibold tabular-nums text-rose-600">{staleN}</div></Card>
       </div>
 
       {/* Filter toolbar */}
@@ -307,7 +309,7 @@ export function PipelineBoard({ data, isAdmin = false }: { data: PipelineData; i
                     className={`w-full text-left rounded-md border bg-background p-2 hover:border-primary transition-colors cursor-grab active:cursor-grabbing ${dragId === d.deal_id ? "opacity-40" : ""}`}>
                     <div className="flex items-start justify-between gap-1">
                       <div className="text-sm font-medium leading-tight line-clamp-2">{d.facility_name || d.customer_name}</div>
-                      {d.stale && <span title="Stale >2mg" className="text-rose-500 text-xs shrink-0">●</span>}
+                      {d.stale && <span title="Mangkrak >2 minggu" className="text-rose-500 text-xs shrink-0">●</span>}
                     </div>
                     <div className="text-xs text-muted-foreground mt-1 line-clamp-1">{[d.brand, d.product].filter(Boolean).join(" · ") || "—"}</div>
                     <div className="flex items-center justify-between mt-1.5">
@@ -335,16 +337,16 @@ export function PipelineBoard({ data, isAdmin = false }: { data: PipelineData; i
               {sel.product_category && <Badge variant="secondary">{sel.product_category}</Badge>}
               {sel.prospect_category && <Badge variant="outline">{sel.prospect_category}</Badge>}
               {sel.forecast_category && <Badge variant="outline">{sel.forecast_category}</Badge>}
-              {sel.stale && <Badge variant="destructive">Stale {sel.days_in_stage}h</Badge>}
+              {sel.stale && <Badge variant="destructive">Mangkrak {sel.days_in_stage}h</Badge>}
             </div>
             <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 mt-4 text-sm">
               {([
-                ["Brand", sel.brand], ["Produk", sel.product], ["Coop", sel.coop_model],
-                ["Estimate", jt(sel.estimate_amount)], ["Weighted", jt(sel.weighted)],
-                ["Probabilitas", sel.probability != null ? `${Math.round(sel.probability * 100)}%` : "—"],
-                ["Cabang", sel.cabang], ["PIC HOD", sel.pic_hod], ["AM", sel.am_name ?? sel.am_id],
+                ["Brand", sel.brand], ["Produk", sel.product], ["Kerja Sama", coopLabel(sel.coop_model)],
+                ["Perkiraan Nilai", jt(sel.estimate_amount)], ["Nilai × Peluang", jt(sel.weighted)],
+                ["Peluang", sel.probability != null ? `${Math.round(sel.probability * 100)}%` : "—"],
+                ["Cabang", sel.cabang], ["HOD", sel.pic_hod], ["AM", sel.am_name ?? sel.am_id],
                 ["Kota", sel.city], ["Provinsi", sel.province], ["Tahun beli", sel.purchase_year],
-                ["Hari di stage", sel.days_in_stage],
+                ["Hari di tahap ini", sel.days_in_stage],
               ] as [string, string | number | null][]).map(([k, v]) => (
                 <div key={k}><dt className="text-xs text-muted-foreground">{k}</dt><dd className="tabular-nums">{v ?? "—"}</dd></div>
               ))}
