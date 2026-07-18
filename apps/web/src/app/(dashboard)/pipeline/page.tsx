@@ -21,6 +21,8 @@ async function getPipeline(userId: string | undefined): Promise<PipelineData | n
 export default async function PipelinePage() {
   const me = await sessionUser();
   const data = await getPipeline(me?.id);
+  // Admin = role 'admin' (lama) atau superuser (RBAC) — gate tombol Hapus deal.
+  const isAdmin = me?.role === "admin" || me?.superuser === true;
 
   return (
     <div className="p-6 space-y-4">
@@ -33,7 +35,7 @@ export default async function PipelinePage() {
       {/* Panel approval Lost — hanya tampil bila user (HoD/admin) punya loss pending. */}
       <LossApprovalPanel />
       {data ? (
-        <PipelineBoard data={data} />
+        <PipelineBoard data={data} isAdmin={isAdmin} />
       ) : (
         <p className="text-muted-foreground">
           Data tidak tersedia. Pastikan <code>apps/api</code> jalan dengan <code>DATABASE_URL</code>.
