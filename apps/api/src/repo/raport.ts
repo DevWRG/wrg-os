@@ -286,9 +286,12 @@ export async function getRaportDetail(amId: string, period?: string): Promise<
       employee: { am_id: string; nama: string; panggilan: string | null; role: string; cabang: string | null; is_am: boolean; spine_id: string | null };
       score: { overall: number | null; rating: string; parts: ScorePart[] };
       plan_report: { plan_count: number; report_count: number; completion: number | null; active_days: number; late: number; unmatched: number; expected: number; on_time: number; late_days: number; miss: number; compliance_rate: number | null } | null;
-      bsc: { score: number | null; persp: Record<string, number>; kpi: { id: string; name: string; target: string | null; perspective: string | null; achievement_pct: number | null }[] } | null;
+      bsc: { score: number | null; persp: Record<string, number>; objectives: Record<string, string[]>; kpi: { id: string; name: string; target: string | null; perspective: string | null; achievement_pct: number | null }[] } | null;
       okr: { objective: string | null; key_results: string[] } | null;
       raci: { process: string; role_type: string; note: string | null }[];
+      pdca: { plan: string | null; do: string | null; check: string | null; act: string | null } | null;
+      daily: { date: string; total: number; success: number }[];
+      workload: { total: number; success: number; pending: number };
       absensi: { active_days: number; expected: number; leave_days: number; leave: { start_date: string; end_date: string; jenis: string; keterangan: string | null }[] };
       coaching: { period: string | null; score: number | null; strengths: string[]; gaps: string[]; recommendations: string[] } | null;
       revenue: { total: number; invoices: number; target_year: number | null; target_month: number | null; pct: number | null } | null;
@@ -343,9 +346,10 @@ export async function getRaportDetail(amId: string, period?: string): Promise<
   const c = comp.rows.find((r) => r.am_id === amId);
 
   // Spine (BSC/KPI/OKR/RACI) bila ter-bridge.
-  let bsc: { score: number | null; persp: Record<string, number>; kpi: { id: string; name: string; target: string | null; perspective: string | null; achievement_pct: number | null }[] } | null = null;
+  let bsc: { score: number | null; persp: Record<string, number>; objectives: Record<string, string[]>; kpi: { id: string; name: string; target: string | null; perspective: string | null; achievement_pct: number | null }[] } | null = null;
   let okr: { objective: string | null; key_results: string[] } | null = null;
   let raci: { process: string; role_type: string; note: string | null }[] = [];
+  let pdca: { plan: string | null; do: string | null; check: string | null; act: string | null } | null = null;
   if (spineId) {
     const [spine, meas] = await Promise.all([
       getEmployee(spineId),
@@ -363,12 +367,37 @@ export async function getRaportDetail(amId: string, period?: string): Promise<
       bsc = {
         score: s?.score ?? null,
         persp: s?.perspScore ?? {},
+        objectives: spine.bsc as Record<string, string[]>,
         kpi: spine.kpi.map((k) => ({ id: k.id, name: k.name, target: k.target, perspective: k.perspective, achievement_pct: inputs[k.id] ?? null })),
       };
       okr = { objective: spine.okr_objective, key_results: spine.okr_kr };
       raci = spine.raci;
+      pdca = spine.pdca;
     }
   }
+
+  // Beban & keberhasilan harian (chart) + total item/berhasil. AM = sales_plan;
+  // non-AM = item TODO (sales_todo.report_data, status 'matched' = berhasil).
+  const dailyRows = is_am
+    ? await sql`
+        SELECT tanggal::text AS d, count(*)::int AS total, count(*) FILTER (WHERE reported)::int AS success
+        FROM sales_plan WHERE am_id = ${amId} AND tanggal BETWEEN ${from} AND ${to}
+        GROUP BY tanggal ORDER BY tanggal
+      `
+    : await sql`
+        SELECT tanggal::text AS d,
+          sum(CASE WHEN jsonb_typeof(report_data)='array' THEN jsonb_array_length(report_data) ELSE 0 END)::int AS total,
+          COALESCE(sum((SELECT count(*) FROM jsonb_array_elements(CASE WHEN jsonb_typeof(report_data)='array' THEN report_data ELSE '[]'::jsonb END) e WHERE e->>'status'='matched')),0)::int AS success
+        FROM sales_todo WHERE am_id = ${amId} AND tanggal BETWEEN ${from} AND ${to} AND reported
+        GROUP BY tanggal ORDER BY tanggal
+      `;
+  const daily = dailyRows.map((r) => ({ date: String(r.d), total: Number(r.total), success: Number(r.success) }));
+  const workload = {
+    total: daily.reduce((a, r) => a + r.total, 0),
+    success: daily.reduce((a, r) => a + r.success, 0),
+    pending: 0,
+  };
+  workload.pending = Math.max(0, workload.total - workload.success);
 
   const rev = (revRow as { total: number; invoices: number; target: number | null }[])[0];
   const arr = (arRow as { outstanding: number; invoices: number }[])[0];
@@ -424,6 +453,9 @@ export async function getRaportDetail(amId: string, period?: string): Promise<
     bsc,
     okr,
     raci,
+    pdca,
+    daily,
+    workload,
     absensi: {
       active_days: o?.active_days ?? 0, expected: c?.expected ?? 0, leave_days: leave.reduce((a, l) => a + overlapDays(l.start_date, l.end_date, from, to), 0),
       leave: leave.map((l) => ({ start_date: l.start_date, end_date: l.end_date, jenis: l.jenis, keterangan: l.keterangan })),
