@@ -14,6 +14,7 @@ import { DataTable, type DataColumn } from "@/components/ui/data-table";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { SalesPerformanceCards, type SalesPerformance } from "@/components/sales/sales-performance-cards";
 import { TargetPacingView, type PacingData } from "@/components/sales/target-pacing-view";
+import { PipelineReportView, type PipelineReportData } from "@/components/sales-analytics/pipeline-report-view";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
@@ -103,7 +104,7 @@ interface PengadaanRow { key: string; label: string; total: number; count: numbe
 interface CabangRow { cabang: string; region: string; total: number; count: number; customers: number; am_count: number; target: number | null; achievement_pct: number | null }
 interface CustRow { id: string; name: string; total: number; invoices: number; last_date: string | null; days_since: number | null; priority?: string }
 
-type ViewKey = "overview" | "per-am" | "per-produk" | "per-pengadaan" | "per-cabang" | "per-customer" | "trending" | "pacing";
+type ViewKey = "overview" | "per-am" | "per-produk" | "per-pengadaan" | "per-cabang" | "per-customer" | "trending" | "pacing" | "pipeline";
 const TABS: { key: ViewKey; label: string }[] = [
   { key: "overview", label: "Executive" },
   { key: "per-am", label: "Per-AM" },
@@ -113,12 +114,13 @@ const TABS: { key: ViewKey; label: string }[] = [
   { key: "per-customer", label: "Per-Customer" },
   { key: "trending", label: "Trending" },
   { key: "pacing", label: "Pacing" },
+  { key: "pipeline", label: "Pipeline" },
 ];
-// tab (ViewKey) → view_type enum DB (migrasi 049). per-pengadaan/pacing reuse enum
-// yang ada (belum ada enum tersendiri; cukup utk saved-view routing).
+// tab (ViewKey) → view_type enum DB (migrasi 049). per-pengadaan/pacing/pipeline reuse
+// enum yang ada (belum ada enum tersendiri; cukup utk saved-view routing).
 const VIEW_TYPE: Record<ViewKey, string> = {
   overview: "executive", "per-am": "per_am", "per-produk": "per_produk",
-  "per-pengadaan": "per_produk", pacing: "per_am",
+  "per-pengadaan": "per_produk", pacing: "per_am", pipeline: "per_am",
   "per-cabang": "per_cabang", "per-customer": "per_customer", trending: "trending",
 };
 
@@ -222,6 +224,11 @@ export function SalesAnalyticsDashboard({ initial, initialView }: { initial: Ove
       const d = cur as PacingData;
       return { name: `sales-analytics_pacing_${d.year}`, headers: ["AM", "Cabang", "Target", "Actual", "Achievement%", "Status", "Proyeksi%"],
         rows: d.am.map((r) => [r.nama, r.cabang, r.target, r.actual, r.achievement_pct, r.status === "on-track" ? "Sesuai Target" : r.status === "at-risk" ? "Perlu Perhatian" : r.status === "behind" ? "Tertinggal" : "—", r.projected_pct]) };
+    }
+    if (tab === "pipeline") {
+      const d = cur as PipelineReportData;
+      return { name: `sales-analytics_pipeline_${s}`, headers: ["Tahap", "Jumlah Deal", "Nilai", "Perkiraan (×Peluang)"],
+        rows: d.funnel.map((r) => [r.stage, r.count, r.value, r.weighted]) };
     }
     const d = cur as OverviewResult;
     if (d.scope === "all") {
@@ -338,6 +345,7 @@ export function SalesAnalyticsDashboard({ initial, initialView }: { initial: Ove
       {tab === "per-customer" && cur != null && <PerCustomerView data={cur as { scope: string; customers: CustRow[]; summary?: Record<string, number> }} />}
       {tab === "trending" && cur != null && <TrendingView data={cur as { points: TrendPt[]; mean: number; std: number }} />}
       {tab === "pacing" && cur != null && <TargetPacingView data={cur as PacingData} />}
+      {tab === "pipeline" && cur != null && <PipelineReportView data={cur as PipelineReportData} />}
     </div>
   );
 }
