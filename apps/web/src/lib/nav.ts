@@ -9,7 +9,7 @@ import {
   Sparkles, Send, FileText, ScrollText, GraduationCap, UsersRound, Network,
   Bell, MapPin, ListChecks, Swords, CalendarOff, CalendarDays, CalendarRange,
   Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, Tags, SlidersHorizontal,
-  Target, MapPinned, Contact, type LucideIcon,
+  Target, MapPinned, Contact, UserRound, type LucideIcon,
 } from "lucide-react";
 
 import { canEditPricelistSetup, canViewPricelist, type AccessUser } from "@/lib/pricelist-access";
@@ -51,6 +51,7 @@ export const NAV: NavGroup[] = [
       { title: "Sales Alerts", url: "/sales-alerts", icon: Bell, badge: "NEW" },
       { title: "Competitor Intel", url: "/competitor", icon: Swords },
       { title: "Pipeline", url: "/pipeline", icon: Workflow },
+      { title: "Kinerja Saya", url: "/me", icon: UserRound, badge: "NEW" },
       { title: "Customers", url: "/customers", icon: Building2 },
       { title: "Accounts", url: "/accounts", icon: Contact, badge: "NEW" },
       { title: "AR Aging", url: "/ar", icon: Receipt },
