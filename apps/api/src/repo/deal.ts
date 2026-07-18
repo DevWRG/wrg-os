@@ -475,6 +475,103 @@ export async function getDealTimeline(dealId: string, scope: DataScope): Promise
   }));
 }
 
+// Field deal yg boleh di-set user via form create/edit (whitelist — cegah user
+// nyetel stage/loss/am_id/probability langsung; itu lewat jalur khusus).
+const DEAL_EDITABLE = [
+  "customer_name", "facility_name", "brand", "product", "product_category",
+  "estimate_amount", "cabang", "coop_model", "city", "province", "purchase_year",
+  "pic_hod", "notes",
+] as const;
+
+const PRODUCT_CATEGORIES = ["IVD", "Medical"];
+
+// Ambil hanya field whitelist dari input; "" → null; angka di-cast.
+function pickEditable(input: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const k of DEAL_EDITABLE) {
+    if (input[k] === undefined) continue;
+    let v: unknown = input[k];
+    if (v === "") v = null;
+    if ((k === "estimate_amount" || k === "purchase_year") && v != null) {
+      const n = Number(v);
+      v = Number.isFinite(n) ? n : null;
+    }
+    out[k] = v;
+  }
+  return out;
+}
+
+export interface DealMutationResult {
+  deal_id: string;
+  stage: string;
+}
+
+/**
+ * Buat deal baru. AM → am_id dipaksa ke dirinya; HoD/admin boleh set am_id (opsional).
+ * Stage awal 'Prospecting' (derive prob/kategori/forecast), catat spt_state_log.
+ */
+export async function createDeal(scope: DataScope, input: Record<string, unknown>): Promise<DealMutationResult> {
+  const sql = db();
+  const fields = pickEditable(input);
+  const name = (fields.customer_name ?? fields.facility_name) as string | null;
+  if (!name || !String(name).trim()) throw new DealError(400, "customer_name atau facility_name wajib diisi");
+  if (fields.product_category && !PRODUCT_CATEGORIES.includes(String(fields.product_category))) {
+    throw new DealError(400, "product_category harus IVD atau Medical");
+  }
+  fields.customer_name = String(name).trim();
+  fields.customer_id = custId(String(name));
+  // AM cuma boleh bikin deal atas namanya sendiri; HoD/admin boleh tunjuk am_id.
+  fields.am_id = scope.amOnly ? scope.amId : (typeof input.am_id === "string" && input.am_id ? input.am_id : null);
+  const meta = STAGE_META["Prospecting"];
+  fields.prospect_category = meta.prospect || null;
+  fields.probability = meta.prob;
+  fields.forecast_category = meta.forecast;
+  // stage sengaja tak di-set → pakai default kolom 'Prospecting'.
+  const rows = await sql`INSERT INTO deal ${sql(fields)} RETURNING deal_id, stage`;
+  const dealId = String(rows[0].deal_id);
+  await sql`
+    INSERT INTO spt_state_log (deal_id, from_stage, to_stage, changed_by, reason)
+    VALUES (${dealId}, NULL, 'Prospecting', ${scope.userId ?? scope.amId}, 'deal dibuat')
+  `;
+  return { deal_id: dealId, stage: String(rows[0].stage) };
+}
+
+/**
+ * Edit field deal (whitelist). Write-guard canWrite (AM deal sendiri / HoD cabang /
+ * admin). TIDAK menyentuh stage/loss (jalur khusus).
+ */
+export async function updateDeal(dealId: string, scope: DataScope, input: Record<string, unknown>): Promise<DealMutationResult> {
+  const sql = db();
+  const cur = await sql`SELECT stage, am_id, cabang FROM deal WHERE deal_id = ${dealId}`;
+  if (cur.length === 0) throw new DealError(404, "deal tidak ditemukan");
+  const deal = { am_id: cur[0].am_id ? String(cur[0].am_id) : null, cabang: cur[0].cabang ? String(cur[0].cabang) : null };
+  if (!canWrite(scope, deal)) throw new DealError(403, "tidak berwenang mengubah deal ini");
+  const fields = pickEditable(input);
+  if (Object.keys(fields).length === 0) throw new DealError(400, "tidak ada field untuk diupdate");
+  if (fields.product_category && !PRODUCT_CATEGORIES.includes(String(fields.product_category))) {
+    throw new DealError(400, "product_category harus IVD atau Medical");
+  }
+  if (fields.customer_name != null) fields.customer_id = custId(String(fields.customer_name));
+  await sql`UPDATE deal SET ${sql(fields)}, updated_at = now() WHERE deal_id = ${dealId}`;
+  return { deal_id: dealId, stage: String(cur[0].stage) };
+}
+
+/**
+ * Hapus deal (+ riwayat spt_state_log-nya) dalam transaksi. Destruktif → hanya
+ * admin/superuser.
+ */
+export async function deleteDeal(dealId: string, scope: DataScope): Promise<{ deleted: string }> {
+  if (!scope.superuser) throw new DealError(403, "hanya admin yang boleh menghapus deal");
+  const sql = db();
+  const cur = await sql`SELECT deal_id FROM deal WHERE deal_id = ${dealId}`;
+  if (cur.length === 0) throw new DealError(404, "deal tidak ditemukan");
+  await sql.begin(async (tx) => {
+    await tx`DELETE FROM spt_state_log WHERE deal_id = ${dealId}`;
+    await tx`DELETE FROM deal WHERE deal_id = ${dealId}`;
+  });
+  return { deleted: dealId };
+}
+
 export interface PlanDealResult {
   customer: string;
   deal_id: string;

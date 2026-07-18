@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { DealFormModal, type DealFormInit } from "./deal-form-modal";
 
 // F1-SPT kanban interaktif (tahap B): board 8-stage + filter + ringkasan weighted +
 // deal detail + DRAG pindah stage (PATCH /api/deals/:id/stage, write-guard di backend).
@@ -104,11 +105,13 @@ function Sel({ label, val, set, options }: { label: string; val: string; set: (v
   );
 }
 
-export function PipelineBoard({ data }: { data: PipelineData }) {
+export function PipelineBoard({ data, isAdmin = false }: { data: PipelineData; isAdmin?: boolean }) {
   const router = useRouter();
   const allDeals = useMemo(() => data.stages.flatMap((s) => s.deals), [data]);
   const [f, setF] = useState({ pcat: "", cabang: "", hod: "", brand: "", coop: "", year: "", q: "" });
   const [sel, setSel] = useState<PipelineDeal | null>(null);
+  const [formModal, setFormModal] = useState<{ mode: "create" } | { mode: "edit"; deal: DealFormInit } | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const [dragId, setDragId] = useState<string | null>(null);
   const [overStage, setOverStage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -164,6 +167,25 @@ export function PipelineBoard({ data }: { data: PipelineData }) {
       return false;
     } finally {
       setBusy(false);
+    }
+  }
+
+  // Hapus deal (admin). Konfirmasi via window.confirm; refresh + tutup modal.
+  async function deleteDeal(dealId: string) {
+    if (!window.confirm("Hapus deal ini permanen (termasuk riwayatnya)? Tindakan ini tidak bisa dibatalkan.")) return;
+    setDeleting(true);
+    setMsg(null);
+    try {
+      const res = await fetch(`/api/deals/${encodeURIComponent(dealId)}`, { method: "DELETE" });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) { setMsg({ kind: "err", text: body?.error || `gagal (${res.status})` }); return; }
+      setMsg({ kind: "ok", text: "Deal dihapus" });
+      setSel(null);
+      router.refresh();
+    } catch {
+      setMsg({ kind: "err", text: "koneksi gagal" });
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -237,6 +259,10 @@ export function PipelineBoard({ data }: { data: PipelineData }) {
           <button onClick={() => setF({ pcat: "", cabang: "", hod: "", brand: "", coop: "", year: "", q: "" })}
             className="text-sm text-muted-foreground hover:text-foreground underline">reset</button>
         )}
+        <button onClick={() => setFormModal({ mode: "create" })}
+          className="ml-auto text-sm px-3 py-1 rounded-md bg-primary text-primary-foreground hover:opacity-90">
+          + Deal Baru
+        </button>
       </Card>
 
       {/* Hint + status */}
@@ -306,6 +332,16 @@ export function PipelineBoard({ data }: { data: PipelineData }) {
               {sel.prospect_category && <Badge variant="outline">{sel.prospect_category}</Badge>}
               {sel.forecast_category && <Badge variant="outline">{sel.forecast_category}</Badge>}
               {sel.stale && <Badge variant="destructive">Stale {sel.days_in_stage}h</Badge>}
+            </div>
+            <div className="flex gap-2 mt-3">
+              <button onClick={() => { const d = sel; setSel(null); setFormModal({ mode: "edit", deal: d as DealFormInit }); }}
+                className="text-sm px-3 py-1 rounded-md border hover:bg-muted">Edit</button>
+              {isAdmin && (
+                <button disabled={deleting} onClick={() => deleteDeal(sel.deal_id)}
+                  className="text-sm px-3 py-1 rounded-md border border-rose-300 text-rose-700 hover:bg-rose-50 disabled:opacity-50">
+                  {deleting ? "menghapus…" : "Hapus"}
+                </button>
+              )}
             </div>
             <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 mt-4 text-sm">
               {([
@@ -423,6 +459,15 @@ export function PipelineBoard({ data }: { data: PipelineData }) {
             </div>
           </Card>
         </div>
+      )}
+
+      {/* Form deal (create / edit) */}
+      {formModal && (
+        <DealFormModal
+          mode={formModal.mode}
+          deal={formModal.mode === "edit" ? formModal.deal : undefined}
+          onClose={() => setFormModal(null)}
+        />
       )}
     </div>
   );
