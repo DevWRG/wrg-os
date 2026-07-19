@@ -108,6 +108,7 @@ import {
 import { salesRange, reportRevenue, reportSalesAr, salesOverview, customersRevenue, customerMonthly, dormantCustomers, churnCustomers, targetPacing, reportSalesPerformance } from "./repo/sales.js";
 import { resolveScope } from "./repo/access-scope.js";
 import { getRaportList, getRaportDetail } from "./repo/raport.js";
+import { generateRaportNarrative, runRaportNarrative } from "./repo/raportnarrative.js";
 import {
   analyticsOverview,
   analyticsPerAm,
@@ -284,6 +285,20 @@ app.get("/raport/:amId", async (c) => {
   const r = await getRaportDetail(amId, c.req.query("period") || undefined);
   if (!r.found) return c.json({ error: "not found" }, 404);
   return c.json(r);
+});
+
+// Fase 3 — generate narasi AI raport (admin/superuser). Batch (test/manual) + per-orang.
+app.post("/raport/narrative/run", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const scope = await resolveScope(c.req.header("x-user-id"));
+  if (!scope.superuser) return c.json({ error: "forbidden" }, 403);
+  return c.json(await runRaportNarrative({ period: c.req.query("period") || undefined }));
+});
+app.post("/raport/:amId/narrative", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const scope = await resolveScope(c.req.header("x-user-id"));
+  if (!scope.superuser) return c.json({ error: "forbidden" }, 403);
+  return c.json(await generateRaportNarrative(c.req.param("amId"), c.req.query("period") || undefined));
 });
 
 // Register ops: butuh x-service-token bila API_SERVICE_TOKEN di-set; atau saat

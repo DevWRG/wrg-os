@@ -63,6 +63,13 @@ def exec_models() -> List[str]:
     return [primary, fallback]
 
 
+def raport_models() -> List[str]:
+    """Model OpenRouter untuk narasi Raport 360 (token tier HIGH → Sonnet)."""
+    primary = os.environ.get("RAPORT_MODEL_PRIMARY", "anthropic/claude-sonnet-4.6")
+    fallback = os.environ.get("RAPORT_MODEL_FALLBACK", "anthropic/claude-haiku-4.5")
+    return [primary, fallback]
+
+
 def chat_or_fallback(
     system: str,
     user: str,
