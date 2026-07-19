@@ -80,7 +80,6 @@ export const NAV: NavGroup[] = [
       { title: "RACI Matrix", url: "/people/raci", icon: Workflow, badge: "NEW" },
       { title: "Org Chart", url: "/people/org", icon: Building2, badge: "NEW" },
       { title: "Voice of Employee", url: "/people/voice", icon: MessagesSquare, badge: "NEW" },
-      { title: "HoD Resolver", url: "/people/hod-resolve", icon: KeyRound, badge: "NEW" },
       { title: "Spider Network", url: "/network", icon: Network },
       { title: "Executive Briefings", url: "/briefings", icon: ScrollText },
       { title: "Coaching Notes", url: "/coaching", icon: GraduationCap },
@@ -116,6 +115,9 @@ export const NAV: NavGroup[] = [
       { title: "Users", url: "/users", icon: Users },
       { title: "User Access", url: "/user-access", icon: KeyRound },
       { title: "Akses Grup", url: "/access-groups", icon: ShieldCheck },
+      // F121 HoD Resolver: utilitas data-quality (preview atasan_raw → HoD kanonik),
+      // bukan analytics harian → grup Admin, gate admin/superuser.
+      { title: "HoD Resolver", url: "/people/hod-resolve", icon: KeyRound, show: (me) => me?.role === "admin" || me?.superuser === true },
       { title: "Settings", url: "/settings", icon: Settings },
       { title: "UI Showcase", url: "/showcase", icon: Sparkles },
     ],
