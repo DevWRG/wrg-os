@@ -95,7 +95,8 @@ function rpc(n: number | null | undefined): string {
   if (a >= 1e6) return `Rp ${(n / 1e6).toFixed(0)} jt`;
   return rp.format(n);
 }
-const pctStr = (n: number | null | undefined) => (n == null ? "—" : `${n}%`);
+const pctFmt = new Intl.NumberFormat("id-ID", { maximumFractionDigits: 2 });
+const pctStr = (n: number | null | undefined) => (n == null ? "—" : `${pctFmt.format(n)}%`);
 const numFmt = new Intl.NumberFormat("id-ID");
 const clamp = (n: number) => Math.min(Math.max(n, 0), 100);
 
@@ -325,7 +326,7 @@ function CommandView({ d }: { d: CommandData | undefined }) {
               <EmptyRow icon={Sparkles} text="Tidak ada red flag." />
             ) : d.red_flags.map((r, i) => (
               <ListRow key={i} title={r.metric} sub={`HoD ${r.hod}${r.target != null ? ` · target ${r.unit === "Rp" ? rpc(r.target) : numFmt.format(r.target)}` : ""}`}
-                right={<StatusChip status="crit">{r.pct != null ? `${r.pct}%` : "RED"}</StatusChip>} />
+                right={<StatusChip status="crit">{r.pct != null ? pctStr(r.pct) : "RED"}</StatusChip>} />
             ))}
           </CardContent>
         </Card>
