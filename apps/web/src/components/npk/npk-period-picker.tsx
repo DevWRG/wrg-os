@@ -24,7 +24,7 @@ export function NpkPeriodPicker({ year, period }: { year: number; period: "S1" |
   return (
     <div className="flex items-center gap-2">
       <Select value={String(year)} onValueChange={(v) => go(Number(v), period)}>
-        <SelectTrigger size="sm" className="w-[92px]" aria-label="Tahun">
+        <SelectTrigger size="sm" className="w-[92px] bg-card border-border" aria-label="Tahun">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
@@ -35,7 +35,7 @@ export function NpkPeriodPicker({ year, period }: { year: number; period: "S1" |
       </Select>
 
       <Select value={period} onValueChange={(v) => go(year, v as "S1" | "S2")}>
-        <SelectTrigger size="sm" className="w-[132px]" aria-label="Semester">
+        <SelectTrigger size="sm" className="w-[132px] bg-card border-border" aria-label="Semester">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
