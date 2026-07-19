@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from .collection import build_collection_system, build_collection_user, template_draft
 from .compress import wrg_compress
 from .executive import build_exec_system, build_exec_user, template_briefing
+from .growth_levers import build_levers_system, build_levers_user, template_levers, parse_levers
 from .extract import build_extract_system, parse_llm, rule_based
 from .openrouter import (
     chat,
@@ -33,6 +34,8 @@ from .schemas import (
     DraftedItem,
     ExecSynthesisRequest,
     ExecSynthesisResponse,
+    GrowthLeversRequest,
+    GrowthLeversResponse,
     ExtractRequest,
     ExtractResponse,
     LeaveDetectRequest,
@@ -352,6 +355,32 @@ def executive_synthesis(req: ExecSynthesisRequest) -> ExecSynthesisResponse:
         text, model_used = tmpl, "dry-run"
     return ExecSynthesisResponse(
         briefing=text, model=model_used,
+        dry_run=not use_llm or model_used == "dry-run-fallback",
+    )
+
+
+@app.post("/growth-levers", response_model=GrowthLeversResponse)
+def growth_levers(req: GrowthLeversRequest) -> GrowthLeversResponse:
+    """F76 View 4: 3-5 growth lever aksi Direktur dari sinyal lintas-domain.
+
+    dry_run / tanpa OPENROUTER_API_KEY → template deterministik. LLM yang gagal
+    parse → jatuh ke template (tetap 200).
+    """
+    tmpl = template_levers(req.signals)
+    use_llm = not req.dry_run and bool(os.environ.get("OPENROUTER_API_KEY"))
+    if use_llm:
+        text, model_used, _, _ = chat_or_fallback(
+            build_levers_system(req.period_label),
+            build_levers_user(req.signals),
+            json.dumps({"levers": tmpl}, ensure_ascii=False),
+            max_tokens=1500,
+            models=exec_models(),
+        )
+        levers = parse_levers(text) or tmpl
+    else:
+        levers, model_used = tmpl, "dry-run"
+    return GrowthLeversResponse(
+        levers=levers, model=model_used,
         dry_run=not use_llm or model_used == "dry-run-fallback",
     )
 
