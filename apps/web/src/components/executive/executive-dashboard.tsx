@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import {
   Activity, AlertTriangle, TrendingUp, TrendingDown, Wallet, MoonStar,
   Target, Building2, Sparkles, RefreshCw, Swords, Rocket, ArrowUpCircle, UserCog, Info,
-  Lightbulb, Clock, User,
+  Lightbulb, Clock, User, LayoutDashboard, Radar, Users, ListChecks, type LucideIcon,
 } from "lucide-react";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -76,14 +76,14 @@ interface RotationData {
 }
 
 type ViewKey = "command" | "am-radar" | "outlet-matrix" | "growth-levers" | "dormant-intel" | "rotation" | "kpi-baseline";
-const TABS: { key: ViewKey; label: string }[] = [
-  { key: "command", label: "Command" },
-  { key: "am-radar", label: "AM Radar" },
-  { key: "outlet-matrix", label: "Outlet Matrix" },
-  { key: "growth-levers", label: "Growth Levers" },
-  { key: "dormant-intel", label: "Dormant Intel" },
-  { key: "rotation", label: "Rotation" },
-  { key: "kpi-baseline", label: "KPI Baseline" },
+const TABS: { key: ViewKey; label: string; icon: LucideIcon; skel: "tiles" | "table" | "cards" }[] = [
+  { key: "command", label: "Command", icon: LayoutDashboard, skel: "tiles" },
+  { key: "am-radar", label: "AM Radar", icon: Radar, skel: "table" },
+  { key: "outlet-matrix", label: "Outlet Matrix", icon: Building2, skel: "tiles" },
+  { key: "growth-levers", label: "Growth Levers", icon: Lightbulb, skel: "cards" },
+  { key: "dormant-intel", label: "Dormant Intel", icon: MoonStar, skel: "cards" },
+  { key: "rotation", label: "Rotation", icon: Users, skel: "cards" },
+  { key: "kpi-baseline", label: "KPI Baseline", icon: ListChecks, skel: "table" },
 ];
 
 // ── Formatter ──────────────────────────────────────────────────────
@@ -91,48 +91,83 @@ const rp = new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", 
 function rpc(n: number | null | undefined): string {
   if (n == null) return "—";
   const a = Math.abs(n);
-  if (a >= 1e9) return `Rp ${(n / 1e9).toFixed(1)} M`;
+  if (a >= 1e9) return `Rp ${(n / 1e9).toFixed(2).replace(".", ",")} M`;
   if (a >= 1e6) return `Rp ${(n / 1e6).toFixed(0)} jt`;
   return rp.format(n);
 }
 const pctStr = (n: number | null | undefined) => (n == null ? "—" : `${n}%`);
 const numFmt = new Intl.NumberFormat("id-ID");
+const clamp = (n: number) => Math.min(Math.max(n, 0), 100);
 
-const LIGHT_DOT: Record<Light, string> = {
-  green: "bg-emerald-500", yellow: "bg-amber-500", red: "bg-red-500", na: "bg-muted-foreground/40",
+// ── Sistem warna status (reserved; selalu dot/chip + label, tak pernah warna-saja) ──
+type Status = "good" | "warn" | "crit" | "na" | "info";
+const ST: Record<Status, { chip: string; dot: string; fill: string; text: string; label: string }> = {
+  good: { chip: "bg-emerald-500/12 text-emerald-700 dark:text-emerald-400", dot: "bg-emerald-500", fill: "bg-emerald-500", text: "text-emerald-600 dark:text-emerald-400", label: "On Track" },
+  warn: { chip: "bg-amber-500/14 text-amber-700 dark:text-amber-400", dot: "bg-amber-500", fill: "bg-amber-500", text: "text-amber-600 dark:text-amber-400", label: "Perhatian" },
+  crit: { chip: "bg-red-500/12 text-red-700 dark:text-red-400", dot: "bg-red-500", fill: "bg-red-500", text: "text-red-600 dark:text-red-400", label: "Kritis" },
+  info: { chip: "bg-sky-500/12 text-sky-700 dark:text-sky-400", dot: "bg-sky-500", fill: "bg-sky-500", text: "text-sky-600 dark:text-sky-400", label: "Stable" },
+  na: { chip: "bg-muted text-muted-foreground", dot: "bg-muted-foreground/40", fill: "bg-muted-foreground/40", text: "text-muted-foreground", label: "N/A" },
 };
-const LIGHT_LABEL: Record<Light, string> = { green: "On Track", yellow: "Perhatian", red: "Kritis", na: "N/A" };
+const lightToStatus = (l: Light): Status => (l === "green" ? "good" : l === "yellow" ? "warn" : l === "red" ? "crit" : "na");
+const pctStatus = (p: number | null | undefined): Status => (p == null ? "na" : p >= 90 ? "good" : p >= 75 ? "warn" : "crit");
+const readinessStatus: Record<Readiness, Status> = {
+  "ready-to-scale": "good", stable: "info", "accelerated-dev": "warn", pip: "crit", "belum-dinilai": "na",
+};
+const readinessLabel: Record<Readiness, string> = {
+  "ready-to-scale": "Ready to Scale", stable: "Stable", "accelerated-dev": "Accelerated Dev", pip: "PIP", "belum-dinilai": "Belum Dinilai",
+};
 
-function Dot({ light }: { light: Light }) {
+// ── Primitif visual ────────────────────────────────────────────────
+function StatusChip({ status, children }: { status: Status; children: React.ReactNode }) {
   return (
-    <span className="inline-flex items-center gap-1.5">
-      <span className={cn("size-2.5 rounded-full", LIGHT_DOT[light])} />
-      <span className="text-xs text-muted-foreground">{LIGHT_LABEL[light]}</span>
+    <span className={cn("inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11.5px] font-medium", ST[status].chip)}>
+      <span className={cn("size-1.5 rounded-full", ST[status].dot)} />
+      {children}
     </span>
   );
 }
-
-// KPI card ringkas untuk view Command.
-function Kpi({ title, value, sub, tone, icon: Icon }: {
-  title: string; value: string; sub?: string; tone?: "positive" | "negative" | "neutral";
-  icon: typeof Activity;
+// Progress bar dgn marker ambang (default 75/90).
+function Meter({ pct, status, markers = [75, 90], className }: { pct: number | null | undefined; status: Status; markers?: number[]; className?: string }) {
+  return (
+    <div className={cn("relative h-1.5 rounded-full bg-muted", className)}>
+      <div className={cn("absolute inset-y-0 left-0 rounded-full", ST[status].fill)} style={{ width: `${clamp(pct ?? 0)}%` }} />
+      {markers.map((m) => (
+        <span key={m} className="absolute -top-1 -bottom-1 w-px rounded bg-foreground/35" style={{ left: `${m}%` }} />
+      ))}
+    </div>
+  );
+}
+// Bar inline utk tabel: track + fill + nilai.
+function InlineMeter({ pct, status, label, width = "w-[150px]" }: { pct: number | null; status: Status; label: string; width?: string }) {
+  return (
+    <div className={cn("inline-flex items-center gap-2", width)}>
+      <span className="relative h-1.5 flex-1 rounded-full bg-muted">
+        <span className={cn("absolute inset-y-0 left-0 rounded-full", ST[status].fill)} style={{ width: `${clamp(pct ?? 0)}%` }} />
+      </span>
+      <span className="w-10 shrink-0 text-right text-xs font-medium tabular-nums">{label}</span>
+    </div>
+  );
+}
+function StatTile({ label, value, icon: Icon, sub, subTone, children }: {
+  label: string; value: string; icon: LucideIcon; sub?: string;
+  subTone?: "up" | "down" | "muted"; children?: React.ReactNode;
 }) {
   return (
-    <Card>
-      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-        <CardTitle className="text-muted-foreground text-sm font-medium">{title}</CardTitle>
-        <Icon className="text-muted-foreground size-4" />
-      </CardHeader>
-      <CardContent>
-        <div className="text-2xl font-semibold tracking-tight">{value}</div>
-        {sub ? (
-          <p className={cn("text-muted-foreground mt-1 text-xs",
-            tone === "positive" && "text-emerald-600 dark:text-emerald-500",
-            tone === "negative" && "text-destructive")}>{sub}</p>
-        ) : null}
-      </CardContent>
+    <Card className="gap-0 p-3.5">
+      <div className="flex items-center justify-between text-muted-foreground">
+        <span className="text-xs font-medium">{label}</span>
+        <Icon className="size-4" />
+      </div>
+      <div className="mt-1.5 text-[23px] font-bold leading-none tracking-tight tabular-nums">{value}</div>
+      {children}
+      {sub ? (
+        <p className={cn("mt-1.5 text-[11.5px]", subTone === "up" && ST.good.text, subTone === "down" && ST.crit.text, (!subTone || subTone === "muted") && "text-muted-foreground")}>{sub}</p>
+      ) : null}
     </Card>
   );
+}
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{children}</div>;
 }
 
 // ── Komponen utama ─────────────────────────────────────────────────
@@ -164,30 +199,34 @@ export function ExecutiveDashboard({ initial, initialView }: { initial: CommandD
   }, [tab, load]);
 
   const cur = cache[tab];
+  const activeTab = TABS.find((t) => t.key === tab)!;
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex flex-wrap gap-1">
-          {TABS.map((t) => (
-            <button key={t.key} onClick={() => setTab(t.key)}
-              className={cn("rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
-                tab === t.key ? "bg-primary text-primary-foreground" : "hover:bg-muted")}>
-              {t.label}
-            </button>
-          ))}
-        </div>
-        <Button size="sm" variant="outline" onClick={() => void load(tab, true)} disabled={loading}>
+      {/* Toolbar: tab bar ber-ikon (sticky, scroll di mobil) + Refresh */}
+      <div className="sticky top-0 z-10 -mx-4 flex items-center gap-2 border-b bg-background/85 px-4 py-1 backdrop-blur md:-mx-6 md:px-6">
+        <nav className="flex flex-1 gap-0.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          {TABS.map((t) => {
+            const active = tab === t.key;
+            return (
+              <button key={t.key} onClick={() => setTab(t.key)}
+                className={cn("flex flex-none items-center gap-1.5 whitespace-nowrap border-b-2 px-3 py-2 text-[13px] font-medium transition-colors",
+                  active ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground")}>
+                <t.icon className="size-4 opacity-90" />
+                {t.label}
+              </button>
+            );
+          })}
+        </nav>
+        <Button size="sm" variant="outline" className="flex-none" onClick={() => void load(tab, true)} disabled={loading}>
           <RefreshCw className={cn("size-4", loading && "animate-spin")} /> Refresh
         </Button>
       </div>
 
       {err ? (
-        <Card><CardContent className="py-6 text-sm text-destructive">Gagal memuat: {err}</CardContent></Card>
+        <Card><CardContent className="flex items-center gap-2 py-6 text-sm text-destructive"><AlertTriangle className="size-4" /> Gagal memuat: {err}</CardContent></Card>
       ) : loading && !cur ? (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-28 w-full" />)}
-        </div>
+        <ViewSkeleton kind={activeTab.skel} />
       ) : (
         <>
           {tab === "command" && <CommandView d={cur as CommandData | undefined} />}
@@ -203,75 +242,126 @@ export function ExecutiveDashboard({ initial, initialView }: { initial: CommandD
   );
 }
 
+function ViewSkeleton({ kind }: { kind: "tiles" | "table" | "cards" }) {
+  if (kind === "table") {
+    return (
+      <div className="flex flex-col gap-3">
+        <div className="flex gap-2">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-6 w-24 rounded-full" />)}</div>
+        <Skeleton className="h-72 w-full" />
+      </div>
+    );
+  }
+  if (kind === "cards") {
+    return <div className="grid gap-3 lg:grid-cols-2">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-36 w-full" />)}</div>;
+  }
+  return (
+    <div className="flex flex-col gap-3">
+      <Skeleton className="h-32 w-full" />
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-28 w-full" />)}</div>
+    </div>
+  );
+}
+
 // ── View 1: COMMAND ────────────────────────────────────────────────
 function CommandView({ d }: { d: CommandData | undefined }) {
   if (!d) return null;
-  const momTone = d.delta_mom_pct == null ? "neutral" : d.delta_mom_pct >= 0 ? "positive" : "negative";
+  const momTone = d.delta_mom_pct == null ? "muted" : d.delta_mom_pct >= 0 ? "up" : "down";
+  const mtdStatus = pctStatus(d.achievement_mtd_pct);
   return (
-    <div className="flex flex-col gap-4">
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        <Kpi title="Revenue MTD" value={rpc(d.revenue_mtd)} icon={Activity}
-          sub={d.target_mtd != null ? `Target ${rpc(d.target_mtd)} · ${pctStr(d.achievement_mtd_pct)}` : "Target belum diisi"}
-          tone={d.achievement_mtd_pct != null && d.achievement_mtd_pct >= 90 ? "positive" : d.achievement_mtd_pct != null && d.achievement_mtd_pct < 75 ? "negative" : "neutral"} />
-        <Kpi title="Revenue YTD" value={rpc(d.revenue_ytd)} icon={Target}
-          sub={d.target_ytd != null ? `Target ${rpc(d.target_ytd)} · ${pctStr(d.achievement_ytd_pct)}` : "Target belum diisi"} />
-        <Kpi title="Growth MoM" value={pctStr(d.delta_mom_pct)} icon={momTone === "negative" ? TrendingDown : TrendingUp}
-          sub="vs bulan lalu" tone={momTone} />
-        <Kpi title="AR > 90 hari" value={rpc(d.ar_over_90)} icon={Wallet}
-          sub={d.ar_total != null ? `dari total AR ${rpc(d.ar_total)}` : undefined}
-          tone={d.ar_over_90 && d.ar_over_90 > 0 ? "negative" : "neutral"} />
-        <Kpi title="Customer Dormant" value={d.dormant_count != null ? numFmt.format(d.dormant_count) : "—"} icon={MoonStar}
-          sub={d.dormant_value != null ? `nilai at-risk ${rpc(d.dormant_value)}` : undefined} tone="neutral" />
-        <Kpi title="Red Flags (WatchPoint)" value={numFmt.format(d.red_flags_count)} icon={AlertTriangle}
-          sub="metric HoD status merah" tone={d.red_flags_count > 0 ? "negative" : "positive"} />
+    <div className="flex flex-col gap-3">
+      {/* Hero: Revenue MTD vs target */}
+      <Card className="overflow-hidden p-0">
+        <div className="grid md:grid-cols-[1.15fr_1fr]">
+          <div className="p-5">
+            <SectionLabel>Revenue MTD{d.range ? ` · ${d.range.from} – ${d.range.to}` : ""}</SectionLabel>
+            <div className="mt-1.5 text-[32px] font-bold leading-none tracking-tight tabular-nums">{rpc(d.revenue_mtd)}</div>
+            <p className="mt-1.5 text-[13px] text-muted-foreground">
+              {d.target_mtd != null ? (<>Target <span className="font-semibold text-foreground tabular-nums">{rpc(d.target_mtd)}</span> · <span className={cn("font-semibold", ST[mtdStatus].text)}>{pctStr(d.achievement_mtd_pct)} tercapai</span></>) : "Target belum diisi"}
+            </p>
+            <Meter className="mt-3" pct={d.achievement_mtd_pct} status={mtdStatus} />
+            <div className="mt-1.5 flex justify-between text-[10.5px] tabular-nums text-muted-foreground"><span>0</span><span>75%</span><span>90%</span><span>target</span></div>
+          </div>
+          <div className="flex flex-col justify-center gap-2.5 border-t bg-muted/30 p-5 md:border-l md:border-t-0">
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-muted-foreground">Growth MoM</span>
+              <span className={cn("inline-flex items-center gap-1 text-sm font-semibold tabular-nums", momTone === "up" && ST.good.text, momTone === "down" && ST.crit.text)}>
+                {momTone === "down" ? <TrendingDown className="size-4" /> : <TrendingUp className="size-4" />}{pctStr(d.delta_mom_pct)}
+              </span>
+            </div>
+            <div className="h-px bg-border" />
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-muted-foreground">Revenue YTD</span>
+              <span className="text-sm font-semibold tabular-nums">{rpc(d.revenue_ytd)}</span>
+            </div>
+            {d.target_ytd != null ? <Meter pct={d.achievement_ytd_pct} status={pctStatus(d.achievement_ytd_pct)} className="h-1" markers={[]} /> : null}
+            <p className="text-[11px] text-muted-foreground">{d.target_ytd != null ? `${pctStr(d.achievement_ytd_pct)} dari target ${rpc(d.target_ytd)}` : "Target YTD belum diisi"}</p>
+          </div>
+        </div>
+      </Card>
+
+      {/* KPI risiko */}
+      <div className="grid gap-3 sm:grid-cols-3">
+        <StatTile label="AR > 90 hari" value={rpc(d.ar_over_90)} icon={Wallet}
+          sub={d.ar_total != null ? `${d.ar_total > 0 ? Math.round((d.ar_over_90 ?? 0) / d.ar_total * 100) : 0}% dari total AR ${rpc(d.ar_total)}` : undefined}
+          subTone={d.ar_over_90 && d.ar_over_90 > 0 ? "down" : "muted"}>
+          {d.ar_total && d.ar_over_90 != null ? <Meter className="mt-2.5" markers={[]} pct={(d.ar_over_90 / d.ar_total) * 100} status="crit" /> : null}
+        </StatTile>
+        <StatTile label="Customer Dormant" value={d.dormant_count != null ? numFmt.format(d.dormant_count) : "—"} icon={MoonStar}
+          sub={d.dormant_value != null ? `nilai at-risk ${rpc(d.dormant_value)} · >60 hari` : undefined} />
+        <StatTile label="Red Flags · WatchPoint" value={numFmt.format(d.red_flags_count)} icon={AlertTriangle}
+          sub="metric HoD status merah" subTone={d.red_flags_count > 0 ? "down" : "up"} />
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-2">
+      {/* Risk + Opportunity */}
+      <div className="grid gap-3 lg:grid-cols-2">
         <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="flex items-center gap-2 text-base">
-              <AlertTriangle className="size-4 text-destructive" /> Top Risk
-            </CardTitle>
+          <CardHeader className="flex items-center gap-2 space-y-0 pb-3">
+            <AlertTriangle className={cn("size-4", ST.crit.text)} />
+            <CardTitle className="text-base">Top Risk</CardTitle>
+            {d.red_flags.length > 0 ? <StatusChip status="crit">{d.red_flags.length} kritis</StatusChip> : null}
           </CardHeader>
           <CardContent className="flex flex-col gap-2">
             {d.red_flags.length === 0 ? (
-              <p className="text-sm text-muted-foreground">Tidak ada red flag. 🎉</p>
+              <EmptyRow icon={Sparkles} text="Tidak ada red flag." />
             ) : d.red_flags.map((r, i) => (
-              <div key={i} className="flex items-start justify-between gap-3 rounded-md border p-2.5">
-                <div>
-                  <p className="text-sm font-medium">{r.metric}</p>
-                  <p className="text-xs text-muted-foreground">HoD {r.hod}</p>
-                </div>
-                <Badge variant="destructive">{r.pct != null ? `${r.pct}%` : "RED"}</Badge>
-              </div>
+              <ListRow key={i} title={r.metric} sub={`HoD ${r.hod}${r.target != null ? ` · target ${r.unit === "Rp" ? rpc(r.target) : numFmt.format(r.target)}` : ""}`}
+                right={<StatusChip status="crit">{r.pct != null ? `${r.pct}%` : "RED"}</StatusChip>} />
             ))}
           </CardContent>
         </Card>
-
         <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="flex items-center gap-2 text-base">
-              <Sparkles className="size-4 text-emerald-500" /> Opportunities · Deal Negosiasi
-            </CardTitle>
+          <CardHeader className="flex items-center gap-2 space-y-0 pb-3">
+            <Rocket className={cn("size-4", ST.good.text)} />
+            <CardTitle className="text-base">Opportunities · Deal Negosiasi</CardTitle>
           </CardHeader>
           <CardContent className="flex flex-col gap-2">
             {d.opportunities.length === 0 ? (
-              <p className="text-sm text-muted-foreground">Belum ada deal di stage Negosiasi.</p>
+              <EmptyRow icon={Info} text="Belum ada deal di stage Negosiasi." />
             ) : d.opportunities.map((o, i) => (
-              <div key={i} className="flex items-start justify-between gap-3 rounded-md border p-2.5">
-                <div>
-                  <p className="text-sm font-medium">{o.customer ?? "—"}</p>
-                  <p className="text-xs text-muted-foreground">{o.stage}{o.am_id ? ` · AM ${o.am_id}` : ""}</p>
-                </div>
-                <span className="text-sm font-semibold">{rpc(o.value)}</span>
-              </div>
+              <ListRow key={i} rank={i + 1} title={o.customer ?? "—"} sub={`${o.stage}${o.am_id ? ` · AM ${o.am_id}` : ""}`}
+                right={<span className="text-sm font-bold tabular-nums">{rpc(o.value)}</span>} />
             ))}
           </CardContent>
         </Card>
       </div>
-      {d.range ? <p className="text-xs text-muted-foreground">Periode MTD: {d.range.from} – {d.range.to}</p> : null}
     </div>
   );
+}
+
+function ListRow({ rank, title, sub, right }: { rank?: number; title: string; sub?: string; right?: React.ReactNode }) {
+  return (
+    <div className="flex items-center gap-3 rounded-lg border bg-muted/30 px-3 py-2">
+      {rank != null ? <span className="grid size-6 flex-none place-items-center rounded-md bg-primary/10 text-[11.5px] font-bold text-primary tabular-nums">{rank}</span> : null}
+      <div className="min-w-0">
+        <p className="truncate text-sm font-medium">{title}</p>
+        {sub ? <p className="truncate text-[11px] text-muted-foreground">{sub}</p> : null}
+      </div>
+      {right ? <div className="ml-auto flex-none text-right">{right}</div> : null}
+    </div>
+  );
+}
+function EmptyRow({ icon: Icon, text }: { icon: LucideIcon; text: string }) {
+  return <div className="flex items-center justify-center gap-2 py-4 text-[13px] text-muted-foreground"><Icon className="size-4" /> {text}</div>;
 }
 
 // ── View 2: AM RADAR ───────────────────────────────────────────────
@@ -281,21 +371,22 @@ function AmRadarView({ d }: { d: AmRadarData | undefined }) {
   const [asc, setAsc] = useState(true);
   if (!d) return null;
 
+  const maxRev = Math.max(1, ...d.rows.map((r) => r.total));
   const rows = [...d.rows].sort((a, b) => {
     const va = a[sortKey] ?? -Infinity, vb = b[sortKey] ?? -Infinity;
     return asc ? Number(va) - Number(vb) : Number(vb) - Number(va);
   });
   const toggle = (k: SortKey) => { if (k === sortKey) setAsc(!asc); else { setSortKey(k); setAsc(k === "rank"); } };
-  const arrow = (k: SortKey) => (k === sortKey ? (asc ? " ▲" : " ▼") : "");
+  const arrow = (k: SortKey) => (k === sortKey ? (asc ? " ↑" : " ↓") : "");
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-3">
       <div className="flex flex-wrap gap-2">
-        <Badge variant="outline">{d.summary.total} AM</Badge>
-        <Badge className="bg-emerald-500/15 text-emerald-600 dark:text-emerald-400">{d.summary.green} On Track</Badge>
-        <Badge className="bg-amber-500/15 text-amber-600 dark:text-amber-400">{d.summary.yellow} Perhatian</Badge>
-        <Badge variant="destructive">{d.summary.red} Kritis</Badge>
-        {d.summary.na > 0 ? <Badge variant="secondary">{d.summary.na} N/A</Badge> : null}
+        <StatusChip status="na">{d.summary.total} AM</StatusChip>
+        <StatusChip status="good">{d.summary.green} On Track</StatusChip>
+        <StatusChip status="warn">{d.summary.yellow} Perhatian</StatusChip>
+        <StatusChip status="crit">{d.summary.red} Kritis</StatusChip>
+        {d.summary.na > 0 ? <StatusChip status="na">{d.summary.na} N/A</StatusChip> : null}
       </div>
       <Card>
         <CardContent className="overflow-x-auto p-0">
@@ -307,24 +398,28 @@ function AmRadarView({ d }: { d: AmRadarData | undefined }) {
                 <TableHead>Cabang</TableHead>
                 <TableHead>Region</TableHead>
                 <TableHead className="cursor-pointer select-none text-right" onClick={() => toggle("total")}>Revenue{arrow("total")}</TableHead>
-                <TableHead className="text-right">Target</TableHead>
-                <TableHead className="cursor-pointer select-none text-right" onClick={() => toggle("achievement_pct")}>Ach %{arrow("achievement_pct")}</TableHead>
+                <TableHead className="cursor-pointer select-none" onClick={() => toggle("achievement_pct")}>Achievement{arrow("achievement_pct")}</TableHead>
                 <TableHead>Status</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {rows.map((r) => (
-                <TableRow key={`${r.rank}-${r.am_id ?? r.nama}`} className={cn(r.self && "bg-primary/5")}>
-                  <TableCell className="text-muted-foreground">{r.rank}</TableCell>
-                  <TableCell className="font-medium">{r.nama ?? "—"}{r.self ? <Badge variant="secondary" className="ml-2">Anda</Badge> : null}</TableCell>
-                  <TableCell>{r.cabang ?? "—"}</TableCell>
-                  <TableCell>{r.region}</TableCell>
-                  <TableCell className="text-right tabular-nums">{rpc(r.total)}</TableCell>
-                  <TableCell className="text-right tabular-nums text-muted-foreground">{r.target != null ? rpc(r.target) : "—"}</TableCell>
-                  <TableCell className="text-right tabular-nums font-medium">{pctStr(r.achievement_pct)}</TableCell>
-                  <TableCell><Dot light={r.light} /></TableCell>
-                </TableRow>
-              ))}
+              {rows.map((r) => {
+                const st = lightToStatus(r.light);
+                return (
+                  <TableRow key={`${r.rank}-${r.am_id ?? r.nama}`} className={cn(r.self && "bg-primary/5")}>
+                    <TableCell className="text-muted-foreground tabular-nums">{r.rank}</TableCell>
+                    <TableCell className="font-medium">{r.nama ?? "—"}{r.self ? <Badge variant="secondary" className="ml-2">Anda</Badge> : null}</TableCell>
+                    <TableCell className="text-muted-foreground">{r.cabang ?? "—"}</TableCell>
+                    <TableCell className="text-muted-foreground">{r.region}</TableCell>
+                    <TableCell className="text-right">
+                      <div className="tabular-nums">{rpc(r.total)}</div>
+                      <span className="mt-1 inline-block h-1.5 rounded-full bg-primary/80" style={{ width: `${Math.round((r.total / maxRev) * 88)}px` }} />
+                    </TableCell>
+                    <TableCell><InlineMeter pct={r.achievement_pct} status={st} label={pctStr(r.achievement_pct)} /></TableCell>
+                    <TableCell><StatusChip status={st}>{ST[st].label}</StatusChip></TableCell>
+                  </TableRow>
+                );
+              })}
             </TableBody>
           </Table>
         </CardContent>
@@ -336,45 +431,53 @@ function AmRadarView({ d }: { d: AmRadarData | undefined }) {
 // ── View 3: OUTLET MATRIX ──────────────────────────────────────────
 function OutletView({ d }: { d: OutletData | undefined }) {
   if (!d) return null;
+  const top1 = d.concentration.top_share_pct ?? 0;
+  const top5 = d.concentration.top5_share_pct ?? 0;
+  const mid = Math.max(0, top5 - top1);
+  const rest = Math.max(0, 100 - top5);
+  const maxShare = Math.max(1, ...d.top_customers.map((c) => c.share_pct ?? 0));
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-3">
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <Kpi title="Total Customer" value={numFmt.format(d.summary.total_customers)} icon={Building2}
-          sub={`${d.summary.active} aktif · ${d.summary.dormant} dormant`} />
-        <Kpi title="Revenue Bulan Ini" value={rpc(d.summary.revenue_month)} icon={Activity} />
-        <Kpi title="Konsentrasi Top-1" value={pctStr(d.concentration.top_share_pct)} icon={Target}
-          sub={d.concentration.top_customer ?? undefined}
-          tone={d.concentration.flag ? "negative" : "neutral"} />
-        <Kpi title="Konsentrasi Top-5" value={pctStr(d.concentration.top5_share_pct)} icon={Target} />
+        <StatTile label="Total Faskes" value={numFmt.format(d.summary.total_customers)} icon={Building2} sub={`${d.summary.active} aktif · ${d.summary.dormant} dormant`} />
+        <StatTile label="Revenue Bulan Ini" value={rpc(d.summary.revenue_month)} icon={Activity} />
+        <StatTile label="Konsentrasi Top-1" value={pctStr(d.concentration.top_share_pct)} icon={Target} sub={d.concentration.top_customer ?? undefined} subTone={d.concentration.flag ? "down" : "muted"} />
+        <StatTile label="Konsentrasi Top-5" value={pctStr(d.concentration.top5_share_pct)} icon={Target} sub="5 faskes teratas" />
       </div>
-      {d.concentration.flag ? (
-        <Card className="border-destructive/40">
-          <CardContent className="flex items-center gap-2 py-3 text-sm text-destructive">
+
+      <Card className="gap-0 p-4">
+        <SectionLabel>Konsentrasi revenue</SectionLabel>
+        <div className="mt-2.5 flex h-6 gap-0.5 overflow-hidden rounded-lg bg-muted p-0.5">
+          <span className="grid place-items-center rounded bg-primary text-[11px] font-semibold text-primary-foreground" style={{ width: `${clamp(top1)}%` }} title={`Top-1 ${pctStr(top1)}`}>{top1 >= 6 ? `${Math.round(top1)}%` : ""}</span>
+          <span className="grid place-items-center rounded bg-sky-500 text-[11px] font-semibold text-white" style={{ width: `${clamp(mid)}%` }} title={`Top 2–5 ${mid.toFixed(1)}%`}>{mid >= 8 ? `${Math.round(mid)}%` : ""}</span>
+          <span className="grid place-items-center rounded bg-muted-foreground/40 px-1 text-[11px] font-medium text-foreground/70" style={{ width: `${clamp(rest)}%` }} title={`Sisanya ${rest.toFixed(1)}%`}>Sisa · {Math.round(rest)}%</span>
+        </div>
+        <div className="mt-2 flex flex-wrap gap-2 text-[11px]">
+          <StatusChip status="na">Top-1</StatusChip><StatusChip status="info">Top 2–5</StatusChip><StatusChip status="na">Sisanya</StatusChip>
+        </div>
+        {d.concentration.flag ? (
+          <p className={cn("mt-3 flex items-center gap-2 rounded-md px-3 py-2 text-[12.5px]", ST.crit.chip)}>
             <AlertTriangle className="size-4" /> Risiko konsentrasi: <strong>{d.concentration.top_customer}</strong> menyumbang {pctStr(d.concentration.top_share_pct)} revenue (&gt;30%).
-          </CardContent>
-        </Card>
-      ) : null}
+          </p>
+        ) : null}
+      </Card>
 
       <Card>
         <CardHeader className="pb-2"><CardTitle className="text-base">Top 20 Customer by Revenue</CardTitle></CardHeader>
         <CardContent className="overflow-x-auto p-0">
           <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>#</TableHead><TableHead>Customer</TableHead><TableHead>Cabang</TableHead>
-                <TableHead className="text-right">Revenue</TableHead><TableHead className="text-right">Bulan Ini</TableHead>
-                <TableHead className="text-right">Share</TableHead><TableHead className="text-right">Faktur</TableHead>
-              </TableRow>
-            </TableHeader>
+            <TableHeader><TableRow>
+              <TableHead>#</TableHead><TableHead>Customer</TableHead><TableHead>Cabang</TableHead>
+              <TableHead className="text-right">Revenue</TableHead><TableHead>Share</TableHead><TableHead className="text-right">Faktur</TableHead>
+            </TableRow></TableHeader>
             <TableBody>
               {d.top_customers.map((c, i) => (
                 <TableRow key={c.id}>
-                  <TableCell className="text-muted-foreground">{i + 1}</TableCell>
+                  <TableCell className="text-muted-foreground tabular-nums">{i + 1}</TableCell>
                   <TableCell className="font-medium">{c.name}</TableCell>
-                  <TableCell>{c.cabang ?? "—"}</TableCell>
+                  <TableCell className="text-muted-foreground">{c.cabang ?? "—"}</TableCell>
                   <TableCell className="text-right tabular-nums">{rpc(c.total)}</TableCell>
-                  <TableCell className="text-right tabular-nums text-muted-foreground">{rpc(c.this_month)}</TableCell>
-                  <TableCell className="text-right tabular-nums">{pctStr(c.share_pct)}</TableCell>
+                  <TableCell><InlineMeter pct={((c.share_pct ?? 0) / maxShare) * 100} status="na" label={pctStr(c.share_pct)} width="w-[120px]" /></TableCell>
                   <TableCell className="text-right tabular-nums">{c.invoices}</TableCell>
                 </TableRow>
               ))}
@@ -384,26 +487,25 @@ function OutletView({ d }: { d: OutletData | undefined }) {
       </Card>
 
       <Card>
-        <CardHeader className="pb-2"><CardTitle className="text-base">Customer Dormant (&gt;60 hari)</CardTitle></CardHeader>
+        <CardHeader className="flex items-center gap-2 space-y-0 pb-2">
+          <MoonStar className={cn("size-4", ST.warn.text)} /><CardTitle className="text-base">Dormant Bernilai Tinggi (&gt;60 hari)</CardTitle>
+        </CardHeader>
         <CardContent className="overflow-x-auto p-0">
           <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Customer</TableHead><TableHead>Cabang</TableHead>
-                <TableHead className="text-right">Revenue Hist.</TableHead>
-                <TableHead className="text-right">Order Terakhir</TableHead><TableHead className="text-right">Hari</TableHead>
-              </TableRow>
-            </TableHeader>
+            <TableHeader><TableRow>
+              <TableHead>Customer</TableHead><TableHead>Cabang</TableHead><TableHead className="text-right">Revenue Hist.</TableHead>
+              <TableHead className="text-right">Order Terakhir</TableHead><TableHead className="text-right">Hari</TableHead>
+            </TableRow></TableHeader>
             <TableBody>
               {d.dormant.length === 0 ? (
-                <TableRow><TableCell colSpan={5} className="text-center text-sm text-muted-foreground">Tidak ada.</TableCell></TableRow>
+                <TableRow><TableCell colSpan={5} className="py-4 text-center text-sm text-muted-foreground">Tidak ada.</TableCell></TableRow>
               ) : d.dormant.map((c) => (
                 <TableRow key={c.id}>
                   <TableCell className="font-medium">{c.name}</TableCell>
-                  <TableCell>{c.cabang ?? "—"}</TableCell>
+                  <TableCell className="text-muted-foreground">{c.cabang ?? "—"}</TableCell>
                   <TableCell className="text-right tabular-nums">{rpc(c.total)}</TableCell>
                   <TableCell className="text-right tabular-nums text-muted-foreground">{c.last_date ?? "—"}</TableCell>
-                  <TableCell className="text-right tabular-nums text-destructive">{c.days_since ?? "—"}</TableCell>
+                  <TableCell className={cn("text-right tabular-nums font-medium", ST.warn.text)}>{c.days_since ?? "—"}</TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -414,204 +516,134 @@ function OutletView({ d }: { d: OutletData | undefined }) {
   );
 }
 
-// ── View 4: GROWTH LEVERS (sintesis LLM services/ai) ───────────────
+// ── View 4: GROWTH LEVERS ──────────────────────────────────────────
 function LeversView({ d }: { d: LeversData | undefined }) {
   if (!d) return null;
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center gap-2">
-        <Badge variant="outline"><Lightbulb className="mr-1 size-3.5" /> {d.levers.length} Lever</Badge>
-        {d.dry_run ? <Badge variant="secondary">template (tanpa LLM)</Badge> : <Badge className="bg-emerald-500/15 text-emerald-600 dark:text-emerald-400">LLM: {d.model}</Badge>}
-        {d.cached ? <Badge variant="ghost" className="text-muted-foreground">cached</Badge> : null}
+        <span className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-2 py-0.5 text-[11.5px] font-medium text-primary"><Lightbulb className="size-3.5" /> {d.levers.length} Lever</span>
+        {d.dry_run ? <StatusChip status="na">template (tanpa LLM)</StatusChip> : <StatusChip status="good">LLM · {d.model}</StatusChip>}
+        {d.cached ? <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">cached</span> : null}
       </div>
       {d.levers.length === 0 ? (
-        <Card><CardContent className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
-          <Info className="size-4" /> Belum ada lever — sinyal minim atau layanan AI tak tersedia. Coba Refresh.
-        </CardContent></Card>
+        <Card><CardContent className="flex items-center gap-2 py-8 text-sm text-muted-foreground"><Info className="size-4" /> Belum ada lever — sinyal minim atau layanan AI tak tersedia. Coba Refresh.</CardContent></Card>
       ) : (
         <div className="grid gap-3 lg:grid-cols-2">
           {d.levers.map((lv, i) => (
-            <Card key={lv.id ?? i} className="overflow-hidden">
-              <CardHeader className="pb-2">
-                <CardTitle className="flex items-start gap-2 text-base">
-                  <span className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary">{i + 1}</span>
-                  <span className="leading-snug">{lv.title}</span>
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="flex flex-col gap-2">
-                {lv.rationale ? <p className="text-sm text-muted-foreground">{lv.rationale}</p> : null}
-                <div className="flex flex-wrap items-center gap-2 pt-1">
-                  {lv.impact_idr > 0 ? (
-                    <Badge className="bg-emerald-500/15 text-emerald-600 dark:text-emerald-400">
-                      <TrendingUp className="mr-1 size-3.5" /> Impact {rpc(lv.impact_idr)}
-                    </Badge>
-                  ) : null}
-                  <Badge variant="outline"><User className="mr-1 size-3.5" /> {lv.owner || "—"}</Badge>
-                  <Badge variant="outline"><Clock className="mr-1 size-3.5" /> SLA {lv.sla_days} hari</Badge>
-                </div>
-              </CardContent>
+            <Card key={lv.id ?? i} className="gap-0 p-4">
+              <div className="flex items-start gap-3">
+                <span className="grid size-7 flex-none place-items-center rounded-lg bg-primary text-sm font-bold text-primary-foreground tabular-nums">{i + 1}</span>
+                <p className="text-[14px] font-semibold leading-snug tracking-tight">{lv.title}</p>
+              </div>
+              {lv.rationale ? <p className="mt-2 text-[12.5px] text-muted-foreground">{lv.rationale}</p> : null}
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                {lv.impact_idr > 0 ? <span className={cn("inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11.5px] font-medium", ST.good.chip)}><TrendingUp className="size-3.5" /> Impact {rpc(lv.impact_idr)}</span> : null}
+                <span className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11.5px] text-muted-foreground"><User className="size-3.5" /> {lv.owner || "—"}</span>
+                <span className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11.5px] text-muted-foreground"><Clock className="size-3.5" /> SLA {lv.sla_days} hari</span>
+              </div>
             </Card>
           ))}
         </div>
       )}
-      <p className="text-xs text-muted-foreground">Sintesis dari stuck deals (F1) · red flags (F76) · AR&gt;90 · dormant. Cache 6 jam — pakai Refresh untuk generate ulang.</p>
+      <p className="flex items-center gap-2 text-[11.5px] text-muted-foreground"><Info className="size-3.5" /> Prioritas impact × urgency × ease · sintesis dari stuck deals (F1) · red flags (F76) · AR&gt;90 · dormant. Cache 6 jam — pakai Refresh untuk generate ulang.</p>
     </div>
   );
 }
 
 // ── View 5: DORMANT INTEL ──────────────────────────────────────────
-function IntelSection<T>({ title, icon: Icon, items, empty, render }: {
-  title: string; icon: typeof Activity; items: T[]; empty: string; render: (it: T) => React.ReactNode;
+function IntelSection<T>({ title, icon: Icon, iconStatus, items, empty, render }: {
+  title: string; icon: LucideIcon; iconStatus: Status; items: T[]; empty: string; render: (it: T) => React.ReactNode;
 }) {
   return (
     <Card>
-      <CardHeader className="pb-2">
-        <CardTitle className="flex items-center gap-2 text-base"><Icon className="size-4" /> {title}
-          <Badge variant="secondary" className="ml-auto">{items.length}</Badge></CardTitle>
+      <CardHeader className="flex items-center gap-2 space-y-0 pb-2">
+        <Icon className={cn("size-4", ST[iconStatus].text)} />
+        <CardTitle className="text-base">{title}</CardTitle>
+        <span className="ml-auto rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground tabular-nums">{items.length}</span>
       </CardHeader>
       <CardContent className="flex flex-col gap-1.5">
-        {items.length === 0 ? <p className="text-sm text-muted-foreground">{empty}</p> : items.map(render)}
+        {items.length === 0 ? <EmptyRow icon={Info} text={empty} /> : items.map(render)}
       </CardContent>
     </Card>
   );
 }
 function DormantView({ d }: { d: DormantIntelData | undefined }) {
   if (!d) return null;
-  const row = (left: React.ReactNode, right: React.ReactNode) => (
-    <div className="flex items-center justify-between gap-3 rounded-md border p-2">
-      <div className="min-w-0">{left}</div><div className="shrink-0 text-right">{right}</div>
-    </div>
-  );
   return (
-    <div className="grid gap-4 lg:grid-cols-2">
-      <IntelSection title="Customer Baru (7 hari)" icon={Sparkles} items={d.new_customers}
-        empty="Belum ada customer baru minggu ini."
-        render={(c) => <div key={c.id}>{row(
-          <><p className="truncate text-sm font-medium">{c.name}</p><p className="text-xs text-muted-foreground">{c.first_date} · {c.invoices} faktur</p></>,
-          <span className="text-sm font-semibold">{rpc(c.total)}</span>)}</div>} />
-      <IntelSection title="Reaktivasi (order setelah >60 hari)" icon={TrendingUp} items={d.reactivated}
-        empty="Belum ada reaktivasi."
-        render={(c) => <div key={c.id + c.reactivated_date}>{row(
-          <><p className="truncate text-sm font-medium">{c.name}</p><p className="text-xs text-muted-foreground">{c.reactivated_date}</p></>,
-          <Badge className="bg-emerald-500/15 text-emerald-600 dark:text-emerald-400">senyap {c.gap_days} hari</Badge>)}</div>} />
-      <IntelSection title="Suddenly Silent (30–60 hari)" icon={MoonStar} items={d.silent}
-        empty="Tidak ada sinyal early-churn."
-        render={(c) => <div key={c.id}>{row(
-          <><p className="truncate text-sm font-medium">{c.name}</p><p className="text-xs text-muted-foreground">terakhir {c.last_date} · {c.invoices} faktur</p></>,
-          <Badge variant="destructive">{c.days_since} hari</Badge>)}</div>} />
-      <IntelSection title="Competitor Mentions" icon={Swords} items={d.competitor_mentions}
-        empty="Belum ada mention kompetitor."
-        render={(c) => <div key={c.id}>{row(
-          <><p className="truncate text-sm font-medium">{c.vendor}{c.produk ? ` · ${c.produk}` : ""}</p><p className="truncate text-xs text-muted-foreground">{c.customer_name ?? "—"}{c.konteks ? ` — ${c.konteks}` : ""}</p></>,
-          <span className="text-xs text-muted-foreground">{c.tanggal}</span>)}</div>} />
+    <div className="grid gap-3 lg:grid-cols-2">
+      <IntelSection title="Customer Baru (7 hari)" icon={Sparkles} iconStatus="good" items={d.new_customers} empty="Belum ada customer baru minggu ini."
+        render={(c) => <ListRow key={c.id} title={c.name} sub={`${c.first_date} · ${c.invoices} faktur`} right={<span className="text-sm font-semibold tabular-nums">{rpc(c.total)}</span>} />} />
+      <IntelSection title="Reaktivasi (setelah >60 hari)" icon={TrendingUp} iconStatus="good" items={d.reactivated} empty="Belum ada reaktivasi."
+        render={(c) => <ListRow key={c.id + c.reactivated_date} title={c.name} sub={c.reactivated_date} right={<StatusChip status="good">senyap {c.gap_days} hari</StatusChip>} />} />
+      <IntelSection title="Suddenly Silent (30–60 hari)" icon={MoonStar} iconStatus="crit" items={d.silent} empty="Tidak ada sinyal early-churn."
+        render={(c) => <ListRow key={c.id} title={c.name} sub={`terakhir ${c.last_date} · ${c.invoices} faktur`} right={<StatusChip status="crit">{c.days_since} hari</StatusChip>} />} />
+      <IntelSection title="Competitor Mentions" icon={Swords} iconStatus="warn" items={d.competitor_mentions} empty="Belum ada mention kompetitor."
+        render={(c) => <ListRow key={c.id} title={`${c.vendor}${c.produk ? ` · ${c.produk}` : ""}`} sub={`${c.customer_name ?? "—"}${c.konteks ? ` — ${c.konteks}` : ""}`} right={<span className="text-[11px] text-muted-foreground">{c.tanggal}</span>} />} />
     </div>
   );
 }
 
-// ── View 6: ROTATION (F66 NPK — HoD readiness & promosi) ───────────
-const READINESS_LABEL: Record<Readiness, string> = {
-  "ready-to-scale": "Ready to Scale", stable: "Stable", "accelerated-dev": "Accelerated Dev",
-  pip: "PIP", "belum-dinilai": "Belum Dinilai",
-};
-const READINESS_CLR: Record<Readiness, string> = {
-  "ready-to-scale": "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
-  stable: "bg-sky-500/15 text-sky-600 dark:text-sky-400",
-  "accelerated-dev": "bg-amber-500/15 text-amber-600 dark:text-amber-400",
-  pip: "bg-red-500/15 text-red-600 dark:text-red-400",
-  "belum-dinilai": "bg-muted text-muted-foreground",
-};
+// ── View 6: ROTATION (F66 NPK) ─────────────────────────────────────
 function RotationView({ d }: { d: RotationData | undefined }) {
   if (!d) return null;
   if (!d.accessible) {
-    return (
-      <Card><CardContent className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
-        <Info className="size-4" /> Data NPK bersifat sensitif (HR) — akun ini tidak berwenang melihat skor NPK seluruh HoD.
-      </CardContent></Card>
-    );
+    return <Card><CardContent className="flex items-center gap-2 py-8 text-sm text-muted-foreground"><Info className="size-4" /> Data NPK bersifat sensitif (HR) — akun ini tidak berwenang melihat skor NPK seluruh HoD.</CardContent></Card>;
   }
   const perStr = (p: { year: number; period: string }) => `${p.period} ${p.year}`;
+  const distAll: { s: Status; n: number }[] = [
+    { s: "good", n: d.summary.ready }, { s: "info", n: d.summary.stable },
+    { s: "warn", n: d.summary.accel }, { s: "crit", n: d.summary.pip },
+  ];
+  const dist = distAll.filter((x) => x.n > 0);
+  const distTotal = Math.max(1, dist.reduce((a, x) => a + x.n, 0));
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-center gap-2">
-        <Badge variant="outline">{d.summary.total} HoD · {perStr(d.period)}</Badge>
-        <Badge className={READINESS_CLR["ready-to-scale"]}>{d.summary.ready} Ready to Scale</Badge>
-        <Badge className={READINESS_CLR["stable"]}>{d.summary.stable} Stable</Badge>
-        <Badge className={READINESS_CLR["accelerated-dev"]}>{d.summary.accel} Accelerated Dev</Badge>
-        <Badge className={READINESS_CLR["pip"]}>{d.summary.pip} PIP</Badge>
-        {d.summary.belum > 0 ? <Badge variant="secondary">{d.summary.belum} Belum Dinilai</Badge> : null}
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-wrap gap-2">
+        <StatusChip status="na">{d.summary.total} HoD · {perStr(d.period)}</StatusChip>
+        <StatusChip status="good">{d.summary.ready} Ready to Scale</StatusChip>
+        <StatusChip status="info">{d.summary.stable} Stable</StatusChip>
+        <StatusChip status="warn">{d.summary.accel} Accelerated Dev</StatusChip>
+        <StatusChip status="crit">{d.summary.pip} PIP</StatusChip>
+        {d.summary.belum > 0 ? <StatusChip status="na">{d.summary.belum} Belum Dinilai</StatusChip> : null}
       </div>
+      {dist.length > 0 ? (
+        <Card className="gap-0 p-4">
+          <SectionLabel>Distribusi readiness</SectionLabel>
+          <div className="mt-2.5 flex h-6 gap-0.5 overflow-hidden rounded-lg bg-muted p-0.5">
+            {dist.map((x) => (
+              <span key={x.s} className={cn("grid place-items-center rounded text-[11px] font-semibold text-white", ST[x.s].fill)} style={{ width: `${(x.n / distTotal) * 100}%` }}>{x.n}</span>
+            ))}
+          </div>
+        </Card>
+      ) : null}
       {!d.computed ? (
-        <Card><CardContent className="flex items-center gap-2 py-3 text-sm text-muted-foreground">
-          <Info className="size-4" /> NPK {perStr(d.period)} belum di-compute — jalankan compute NPK dulu (menu NPK Direktur).
-        </CardContent></Card>
+        <p className={cn("flex items-center gap-2 rounded-md px-3 py-2 text-[12.5px]", ST.na.chip)}><Info className="size-4" /> NPK {perStr(d.period)} belum di-compute — jalankan compute NPK dulu (menu NPK Direktur).</p>
       ) : null}
 
-      <div className="grid gap-4 lg:grid-cols-3">
-        <Card>
-          <CardHeader className="pb-2"><CardTitle className="flex items-center gap-2 text-base">
-            <ArrowUpCircle className="size-4 text-emerald-500" /> Kandidat Promosi
-            <Badge variant="secondary" className="ml-auto">{d.promotion_candidates.length}</Badge></CardTitle></CardHeader>
-          <CardContent className="flex flex-col gap-1.5">
-            <p className="text-xs text-muted-foreground">NPK ≥75 dua semester berturut (SK Ps. 2.2)</p>
-            {d.promotion_candidates.length === 0 ? <p className="text-sm text-muted-foreground">Belum ada.</p>
-              : d.promotion_candidates.map((r) => (
-                <div key={r.hod_key} className="flex items-center justify-between gap-2 rounded-md border p-2">
-                  <div><p className="text-sm font-medium">{r.hod_name}</p><p className="text-xs text-muted-foreground">{r.role}</p></div>
-                  <span className="text-sm font-semibold text-emerald-600 dark:text-emerald-400">{r.npk} <span className="text-xs text-muted-foreground">(prev {r.npk_prev})</span></span>
-                </div>))}
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2"><CardTitle className="flex items-center gap-2 text-base">
-            <Rocket className="size-4 text-emerald-500" /> Top Performer
-            <Badge variant="secondary" className="ml-auto">{d.top_performers.length}</Badge></CardTitle></CardHeader>
-          <CardContent className="flex flex-col gap-1.5">
-            <p className="text-xs text-muted-foreground">NPK ≥90 (Sangat Baik)</p>
-            {d.top_performers.length === 0 ? <p className="text-sm text-muted-foreground">Belum ada.</p>
-              : d.top_performers.map((r) => (
-                <div key={r.hod_key} className="flex items-center justify-between gap-2 rounded-md border p-2">
-                  <p className="text-sm font-medium">{r.hod_name}</p>
-                  <span className="text-sm font-semibold">{r.npk}</span>
-                </div>))}
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2"><CardTitle className="flex items-center gap-2 text-base">
-            <AlertTriangle className="size-4 text-destructive" /> Underperformer
-            <Badge variant="secondary" className="ml-auto">{d.underperformers.length}</Badge></CardTitle></CardHeader>
-          <CardContent className="flex flex-col gap-1.5">
-            <p className="text-xs text-muted-foreground">NPK &lt;60 — perlu intervensi</p>
-            {d.underperformers.length === 0 ? <p className="text-sm text-muted-foreground">Belum ada.</p>
-              : d.underperformers.map((r) => (
-                <div key={r.hod_key} className="flex items-center justify-between gap-2 rounded-md border p-2">
-                  <p className="text-sm font-medium">{r.hod_name}</p>
-                  <span className="text-sm font-semibold text-destructive">{r.npk}</span>
-                </div>))}
-          </CardContent>
-        </Card>
+      <div className="grid gap-3 lg:grid-cols-3">
+        <NpkCard title="Kandidat Promosi" icon={ArrowUpCircle} iconStatus="good" hint="NPK ≥75 dua semester berturut · SK Ps. 2.2" rows={d.promotion_candidates} showPrev valTone="good" />
+        <NpkCard title="Top Performer" icon={Rocket} iconStatus="good" hint="NPK ≥90 · Sangat Baik" rows={d.top_performers} />
+        <NpkCard title="Underperformer" icon={AlertTriangle} iconStatus="crit" hint="NPK <60 · perlu intervensi" rows={d.underperformers} valTone="crit" />
       </div>
 
       <Card>
-        <CardHeader className="pb-2"><CardTitle className="flex items-center gap-2 text-base">
-          <UserCog className="size-4" /> HoD Readiness</CardTitle></CardHeader>
+        <CardHeader className="flex items-center gap-2 space-y-0 pb-2"><UserCog className="size-4" /><CardTitle className="text-base">HoD Readiness</CardTitle></CardHeader>
         <CardContent className="overflow-x-auto p-0">
           <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>HoD</TableHead><TableHead>Role</TableHead>
-                <TableHead className="text-right">NPK</TableHead><TableHead className="text-right">{perStr(d.prev)}</TableHead>
-                <TableHead>Predikat</TableHead><TableHead>Readiness</TableHead>
-              </TableRow>
-            </TableHeader>
+            <TableHeader><TableRow>
+              <TableHead>HoD</TableHead><TableHead>Role</TableHead><TableHead className="text-right">NPK</TableHead>
+              <TableHead className="text-right">{perStr(d.prev)}</TableHead><TableHead>Predikat</TableHead><TableHead>Readiness</TableHead>
+            </TableRow></TableHeader>
             <TableBody>
               {d.rows.map((r) => (
                 <TableRow key={r.hod_key}>
-                  <TableCell className="font-medium">{r.hod_name}{r.promotion_candidate ? <ArrowUpCircle className="ml-1.5 inline size-3.5 text-emerald-500" /> : null}</TableCell>
+                  <TableCell className="font-medium">{r.hod_name}{r.promotion_candidate ? <ArrowUpCircle className={cn("ml-1.5 inline size-3.5", ST.good.text)} /> : null}</TableCell>
                   <TableCell className="text-muted-foreground">{r.role}</TableCell>
-                  <TableCell className="text-right tabular-nums font-medium">{r.available_count > 0 ? r.npk : "—"}</TableCell>
-                  <TableCell className="text-right tabular-nums text-muted-foreground">{r.npk_prev ?? "—"}</TableCell>
+                  <TableCell className="text-right font-medium tabular-nums">{r.available_count > 0 ? r.npk : "—"}</TableCell>
+                  <TableCell className="text-right text-muted-foreground tabular-nums">{r.npk_prev ?? "—"}</TableCell>
                   <TableCell className="capitalize text-muted-foreground">{r.available_count > 0 ? r.predikat.replace(/_/g, " ") : "—"}</TableCell>
-                  <TableCell><Badge className={READINESS_CLR[r.readiness]}>{READINESS_LABEL[r.readiness]}</Badge></TableCell>
+                  <TableCell><StatusChip status={readinessStatus[r.readiness]}>{readinessLabel[r.readiness]}</StatusChip></TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -621,38 +653,66 @@ function RotationView({ d }: { d: RotationData | undefined }) {
     </div>
   );
 }
+function NpkCard({ title, icon: Icon, iconStatus, hint, rows, showPrev, valTone }: {
+  title: string; icon: LucideIcon; iconStatus: Status; hint: string; rows: RotationRow[]; showPrev?: boolean; valTone?: Status;
+}) {
+  return (
+    <Card>
+      <CardHeader className="flex items-center gap-2 space-y-0 pb-2">
+        <Icon className={cn("size-4", ST[iconStatus].text)} />
+        <CardTitle className="text-base">{title}</CardTitle>
+        <span className="ml-auto rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground tabular-nums">{rows.length}</span>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-1.5">
+        <p className="text-[11px] text-muted-foreground">{hint}</p>
+        {rows.length === 0 ? <p className="py-1 text-sm text-muted-foreground">Belum ada.</p> : rows.map((r) => (
+          <div key={r.hod_key} className="flex items-center gap-2 rounded-lg border bg-muted/30 px-3 py-2">
+            <div className="min-w-0"><p className="truncate text-sm font-medium">{r.hod_name}</p><p className="text-[11px] text-muted-foreground">{r.role}</p></div>
+            <span className="ml-auto flex-none text-right">
+              <b className={cn("text-sm tabular-nums", valTone && ST[valTone].text)}>{r.npk}</b>
+              {showPrev && r.npk_prev != null ? <span className="ml-1 text-[11px] text-muted-foreground tabular-nums">(prev {r.npk_prev})</span> : null}
+            </span>
+          </div>
+        ))}
+      </CardContent>
+    </Card>
+  );
+}
 
 // ── View 7: KPI BASELINE ───────────────────────────────────────────
 function KpiView({ d }: { d: KpiData | undefined }) {
   if (!d) return null;
-  const fmt = (v: number | null, unit: "IDR" | "%" | "count") =>
-    v == null ? "—" : unit === "IDR" ? rpc(v) : unit === "%" ? `${v}%` : numFmt.format(v);
+  const fmt = (v: number | null, unit: "IDR" | "%" | "count") => v == null ? "—" : unit === "IDR" ? rpc(v) : unit === "%" ? `${v}%` : numFmt.format(v);
+  const barPct = (k: KpiData["kpis"][number]) => {
+    if (k.actual == null) return 0;
+    if (k.unit === "%") return clamp(k.lower_is_better ? k.actual * 2 : k.actual);
+    if (k.unit === "IDR" && k.target) return clamp((k.actual / k.target) * 100);
+    return clamp(k.actual * 10);
+  };
   return (
     <div className="flex flex-col gap-3">
-      <p className="text-xs text-muted-foreground">Per {d.as_of} · {d.note}</p>
+      <p className="flex items-center gap-2 text-[11.5px] text-muted-foreground"><Info className="size-3.5" /> Per {d.as_of} · {d.note}</p>
       <Card>
         <CardContent className="overflow-x-auto p-0">
           <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>KPI</TableHead><TableHead>Formula</TableHead>
-                <TableHead className="text-right">Target</TableHead><TableHead className="text-right">Aktual</TableHead>
-                <TableHead>Status</TableHead><TableHead className="text-right">Trend</TableHead>
-              </TableRow>
-            </TableHeader>
+            <TableHeader><TableRow>
+              <TableHead>KPI</TableHead><TableHead className="text-right">Target</TableHead>
+              <TableHead>Aktual vs Target</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Trend</TableHead>
+            </TableRow></TableHeader>
             <TableBody>
-              {d.kpis.map((k) => (
-                <TableRow key={k.name}>
-                  <TableCell className="font-medium">{k.name}</TableCell>
-                  <TableCell className="text-xs text-muted-foreground">{k.formula}</TableCell>
-                  <TableCell className="text-right tabular-nums text-muted-foreground">{fmt(k.target, k.unit)}</TableCell>
-                  <TableCell className="text-right tabular-nums font-medium">{fmt(k.actual, k.unit)}</TableCell>
-                  <TableCell><Dot light={k.status} /></TableCell>
-                  <TableCell className="text-right tabular-nums">{k.trend == null ? "—" : (
-                    <span className={cn(k.trend >= 0 ? "text-emerald-600 dark:text-emerald-500" : "text-destructive")}>
-                      {k.trend >= 0 ? "▲" : "▼"} {Math.abs(k.trend)}%</span>)}</TableCell>
-                </TableRow>
-              ))}
+              {d.kpis.map((k) => {
+                const st = lightToStatus(k.status);
+                return (
+                  <TableRow key={k.name}>
+                    <TableCell className="font-medium">{k.name}<span className="block text-[11px] font-normal text-muted-foreground">{k.formula}</span></TableCell>
+                    <TableCell className="text-right text-muted-foreground tabular-nums">{fmt(k.target, k.unit)}</TableCell>
+                    <TableCell><InlineMeter pct={barPct(k)} status={st} label={fmt(k.actual, k.unit)} /></TableCell>
+                    <TableCell><StatusChip status={st}>{ST[st].label}</StatusChip></TableCell>
+                    <TableCell className="text-right tabular-nums">{k.trend == null ? <span className="text-muted-foreground">—</span> : (
+                      <span className={cn(k.trend >= 0 ? ST.good.text : ST.crit.text)}>{k.trend >= 0 ? "▲" : "▼"} {Math.abs(k.trend)}%</span>)}</TableCell>
+                  </TableRow>
+                );
+              })}
             </TableBody>
           </Table>
         </CardContent>
