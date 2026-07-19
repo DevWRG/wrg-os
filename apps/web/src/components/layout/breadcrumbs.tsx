@@ -6,7 +6,7 @@ import { ChevronRight } from "lucide-react";
 
 // Label per segmen rute (gaya WRG-CRM). Fallback: kapitalisasi segmen.
 const LABELS: Record<string, string> = {
-  dashboard: "Plan & Report",
+  "plan-report": "Plan & Report",
   drilldown: "Detail",
   todos: "Sales TODO",
   visits: "Visits",
@@ -46,7 +46,7 @@ export function Breadcrumbs() {
 
   return (
     <nav className="flex min-w-0 items-center gap-1.5 text-sm" aria-label="Breadcrumb">
-      <Link href="/dashboard" className="text-muted-foreground hover:text-foreground shrink-0">
+      <Link href="/overview" className="text-muted-foreground hover:text-foreground shrink-0">
         WRG CRM
       </Link>
       {segs.map((seg, i) => {
