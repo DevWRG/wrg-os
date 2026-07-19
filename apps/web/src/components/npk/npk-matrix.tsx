@@ -5,11 +5,11 @@ import { ArrowDown, ArrowUp, ChevronsUpDown, Info } from "lucide-react";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
-import { PredikatBadge } from "./predikat-badge";
 import {
   fmt1, periodLabel, scoreBand,
   type AspectKey, type NpkMatrixResult, type NpkMatrixRow,
 } from "./npk-format";
+import { zoneOf } from "./npk-status";
 
 const SHORT: Record<AspectKey, string> = {
   revenue: "Revenue", customer: "Customer", ar: "AR", kso: "KSO", gp: "GP", crm: "CRM", coaching: "Coaching",
@@ -57,10 +57,13 @@ export function NpkMatrix({ data }: { data: NpkMatrixResult | null }) {
 
       <Card>
         <CardHeader className="flex-row items-center justify-between gap-2 border-b pb-3">
-          <div>
-            <CardTitle>Matrix NPK HoD</CardTitle>
-            <p className="text-xs text-muted-foreground">{periodLabel(data.period)} · {data.year} · 7 aspek SK Pasal 3</p>
-          </div>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <span className="flex size-6 items-center justify-center rounded-full bg-teal-600 text-xs font-bold text-white">1</span>
+            <div>
+              Matrix NPK HoD · 8 HoD × 7 Aspek
+              <p className="text-xs font-normal text-muted-foreground">{periodLabel(data.period)} · {data.year} · SK Pasal 3</p>
+            </div>
+          </CardTitle>
         </CardHeader>
         <CardContent className="px-0">
           <div className="overflow-x-auto">
@@ -78,7 +81,7 @@ export function NpkMatrix({ data }: { data: NpkMatrixResult | null }) {
                   <th className="px-3 py-2 text-center">
                     <button onClick={() => toggle("npk")} className="inline-flex items-center gap-1 font-semibold hover:text-foreground">NPK {sortIcon("npk")}</button>
                   </th>
-                  <th className="px-3 py-2 text-center">Predikat</th>
+                  <th className="px-3 py-2 text-center">Status</th>
                   <th className="px-3 py-2 text-center" title="Aspek dengan sumber data live">Coverage</th>
                 </tr>
               </thead>
@@ -103,9 +106,13 @@ export function NpkMatrix({ data }: { data: NpkMatrixResult | null }) {
                         );
                       })}
                       <td className="px-3 py-2.5 text-center">
-                        <span className={cn("text-base font-bold tabular-nums", nb.text)}>{fmt1(r.npk)}</span>
+                        {r.available_count === 0
+                          ? <span className="text-base font-medium text-muted-foreground/50">–</span>
+                          : <span className={cn("text-base font-bold tabular-nums", nb.text)}>{fmt1(r.npk)}</span>}
                       </td>
-                      <td className="px-3 py-2.5 text-center"><PredikatBadge predikat={r.predikat} /></td>
+                      <td className="px-3 py-2.5 text-center">
+                        {(() => { const z = zoneOf(r); return <span className={cn("inline-block rounded-full px-2 py-0.5 text-xs font-semibold", z.cls)}>{z.label}</span>; })()}
+                      </td>
                       <td className="px-3 py-2.5 text-center text-xs tabular-nums text-muted-foreground">{r.available_count}/7</td>
                     </tr>
                   );
