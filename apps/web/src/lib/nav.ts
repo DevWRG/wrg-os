@@ -23,6 +23,10 @@ import { canViewExecutive } from "@/lib/executive-access";
 export interface NavItem {
   title: string; url: string; icon: LucideIcon; badge?: string; exact?: boolean;
   show?: (me: AccessUser | null) => boolean;
+  // Override key fitur RBAC bila slug route ≠ key `feature` di DB. Contoh: route
+  // "/plan-report" tetap pakai feature.key "dashboard" (hindari migrasi & re-grant
+  // saat rename route). Default: featureKey(url).
+  feature?: string;
 }
 export interface NavGroup { label: string; items: NavItem[] }
 
@@ -38,7 +42,7 @@ export const NAV: NavGroup[] = [
   {
     label: "HR",
     items: [
-      { title: "Plan & Report", url: "/dashboard", icon: LayoutDashboard },
+      { title: "Plan & Report", url: "/plan-report", icon: LayoutDashboard, feature: "dashboard" },
       { title: "Sales TODO", url: "/todos", icon: ListChecks },
       { title: "Visits", url: "/visits", icon: MapPin },
       { title: "Reminders", url: "/reminders", icon: Bell },
@@ -129,7 +133,7 @@ export function featureCatalog(): FeatureCatalogRow[] {
   let sort = 10;
   for (const g of NAV) {
     for (const it of g.items) {
-      rows.push({ key: featureKey(it.url), name: it.title, section: g.label, path: it.url, sort });
+      rows.push({ key: it.feature ?? featureKey(it.url), name: it.title, section: g.label, path: it.url, sort });
       sort += 10;
     }
   }

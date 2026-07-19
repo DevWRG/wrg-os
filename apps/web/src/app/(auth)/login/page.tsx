@@ -27,7 +27,7 @@ function LoginForm() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "login gagal");
-      router.push(params.get("next") || "/dashboard");
+      router.push(params.get("next") || "/overview");
       router.refresh();
     } catch (err) {
       setError(String(err instanceof Error ? err.message : err));
