@@ -19,6 +19,7 @@ import { getWatchBoard } from "./watchpoint.js";
 import { getAging } from "./ar.js";
 import { getPipeline } from "./deal.js";
 import { listCompetitor } from "./competitor.js";
+import { getNpkScores, currentPeriod, type Period } from "./npk.js";
 import { type DataScope } from "./access-scope.js";
 
 export type Light = "green" | "yellow" | "red" | "na";
@@ -261,4 +262,67 @@ export async function execKpiBaseline() {
   ];
 
   return { as_of: perf.as_of, count: kpis.length, note: "Subset KPI computable dari data live; 22 KPI penuh (SK) menyusul.", kpis };
+}
+
+// ── View #6: ROTATION — HoD readiness & promotion (F66 NPK, HR-sensitive) ──
+// NPK = level HoD (bukan AM). Visibility ikut scope getNpkScores:
+//   superuser/admin → semua HoD · HoD → diri · lainnya → kosong (aman HR).
+// Readiness selaras band predikat NPK (npk-calc.predikatOf):
+//   ≥90 Ready to Scale · ≥75 Stable · ≥60 Accelerated Dev · <60 PIP · belum-dinilai (aspek 0).
+export type Readiness = "ready-to-scale" | "stable" | "accelerated-dev" | "pip" | "belum-dinilai";
+
+function readinessOf(npk: number, availableCount: number): Readiness {
+  if (availableCount === 0) return "belum-dinilai";
+  if (npk >= 90) return "ready-to-scale";
+  if (npk >= 75) return "stable";
+  if (npk >= 60) return "accelerated-dev";
+  return "pip";
+}
+
+export async function execRotation(scope?: DataScope) {
+  const { year, period } = currentPeriod();
+  const prev: { year: number; period: Period } =
+    period === "S2" ? { year, period: "S1" } : { year: year - 1, period: "S2" };
+
+  const [cur, prv] = await Promise.all([
+    getNpkScores(scope, year, period),
+    getNpkScores(scope, prev.year, prev.period).catch(() => null),
+  ]);
+
+  // NPK semester sebelumnya (hanya yang punya data) — untuk syarat 2 semester berturut.
+  const prevByKey = new Map<string, number>();
+  for (const r of prv?.rows ?? []) if (r.available_count > 0) prevByKey.set(r.hod_key, r.npk);
+
+  const rows = cur.rows.map((r) => {
+    const npkPrev = prevByKey.has(r.hod_key) ? (prevByKey.get(r.hod_key) as number) : null;
+    return {
+      hod_key: r.hod_key, hod_name: r.hod_name, role: r.role,
+      npk: r.npk, predikat: r.predikat, available_count: r.available_count,
+      readiness: readinessOf(r.npk, r.available_count),
+      npk_prev: npkPrev,
+      // Promotion candidate (SK Pasal 2.2): NPK ≥75 dua semester berturut.
+      promotion_candidate: r.available_count > 0 && r.npk >= 75 && npkPrev != null && npkPrev >= 75,
+    };
+  });
+
+  const scored = rows.filter((r) => r.available_count > 0);
+  const summary = {
+    total: rows.length, scored: scored.length,
+    ready: rows.filter((r) => r.readiness === "ready-to-scale").length,
+    stable: rows.filter((r) => r.readiness === "stable").length,
+    accel: rows.filter((r) => r.readiness === "accelerated-dev").length,
+    pip: rows.filter((r) => r.readiness === "pip").length,
+    belum: rows.filter((r) => r.readiness === "belum-dinilai").length,
+  };
+
+  return {
+    period: { year, period }, prev, computed: cur.computed,
+    // false → scope ini tak berhak lihat NPK (HR). Frontend tampilkan notice.
+    accessible: cur.scope === "all" || rows.length > 0,
+    summary,
+    rows: [...rows].sort((a, b) => b.npk - a.npk),
+    top_performers: scored.filter((r) => r.npk >= 90).sort((a, b) => b.npk - a.npk),
+    underperformers: scored.filter((r) => r.npk < 60).sort((a, b) => a.npk - b.npk),
+    promotion_candidates: rows.filter((r) => r.promotion_candidate).sort((a, b) => b.npk - a.npk),
+  };
 }
