@@ -232,6 +232,19 @@ class ExecSynthesisResponse(BaseModel):
     dry_run: bool = False
 
 
+# (GrowthLevers schema di-export lewat schemas; endpoint di main.py)
+class GrowthLeversRequest(BaseModel):
+    signals: dict = Field(default_factory=dict)
+    period_label: str = "minggu ini"
+    dry_run: bool = False
+
+
+class GrowthLeversResponse(BaseModel):
+    levers: list = Field(default_factory=list)
+    model: str
+    dry_run: bool = False
+
+
 # === detect_leave (deteksi izin/sakit/cuti dari grup HRD via LLM) ===
 
 
