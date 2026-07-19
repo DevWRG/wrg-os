@@ -120,7 +120,7 @@ import {
   getMyArAging,
 } from "./repo/sales-analytics.js";
 import { listViews, saveView, deleteView, listAlerts, createAlert, deleteAlert, updateAlert, listAlertTargets } from "./repo/sales-analytics-config.js";
-import { execCommand, execAmRadar, execOutletMatrix, execDormantIntel, execKpiBaseline } from "./repo/exec-dashboard.js";
+import { execCommand, execAmRadar, execOutletMatrix, execDormantIntel, execKpiBaseline, execRotation, execGrowthLevers } from "./repo/exec-dashboard.js";
 import { evaluateSalesAlerts } from "./repo/sales-analytics-alert-eval.js";
 import { computeNpk, getNpkScores, getNpkDetail, currentPeriod, type Period } from "./repo/npk.js";
 import { listDepartments, listEmployees, getEmployee, getRaciMatrix, getMeasurements, saveMeasurements, createEmployee, updateEmployee, deleteEmployee, replaceEmployeeDetail, getVoiceAggregate, getHodResolution, getOrgReporting, populateHodKey, getHods, type MeasurementInput, type EmployeeWrite, type SpineDetail } from "./repo/employee-spine.js";
@@ -2074,6 +2074,15 @@ app.get("/executive/dormant-intel", async (c) => {
 app.get("/executive/kpi-baseline", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json(await execKpiBaseline());
+});
+app.get("/executive/rotation", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await execRotation(await scopeOf(c)));
+});
+app.get("/executive/growth-levers", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const force = c.req.query("refresh") === "1";
+  return c.json(await execGrowthLevers(await scopeOf(c), force));
 });
 
 // ── F118 Employee Spine (+ F119 bobot BSC) ──

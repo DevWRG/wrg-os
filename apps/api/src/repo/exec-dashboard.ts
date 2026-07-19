@@ -19,6 +19,8 @@ import { getWatchBoard } from "./watchpoint.js";
 import { getAging } from "./ar.js";
 import { getPipeline } from "./deal.js";
 import { listCompetitor } from "./competitor.js";
+import { getNpkScores, currentPeriod, type Period } from "./npk.js";
+import { callAi, aiDryRun } from "../ai.js";
 import { type DataScope } from "./access-scope.js";
 
 export type Light = "green" | "yellow" | "red" | "na";
@@ -261,4 +263,135 @@ export async function execKpiBaseline() {
   ];
 
   return { as_of: perf.as_of, count: kpis.length, note: "Subset KPI computable dari data live; 22 KPI penuh (SK) menyusul.", kpis };
+}
+
+// ── View #6: ROTATION — HoD readiness & promotion (F66 NPK, HR-sensitive) ──
+// NPK = level HoD (bukan AM). Visibility ikut scope getNpkScores:
+//   superuser/admin → semua HoD · HoD → diri · lainnya → kosong (aman HR).
+// Readiness selaras band predikat NPK (npk-calc.predikatOf):
+//   ≥90 Ready to Scale · ≥75 Stable · ≥60 Accelerated Dev · <60 PIP · belum-dinilai (aspek 0).
+export type Readiness = "ready-to-scale" | "stable" | "accelerated-dev" | "pip" | "belum-dinilai";
+
+function readinessOf(npk: number, availableCount: number): Readiness {
+  if (availableCount === 0) return "belum-dinilai";
+  if (npk >= 90) return "ready-to-scale";
+  if (npk >= 75) return "stable";
+  if (npk >= 60) return "accelerated-dev";
+  return "pip";
+}
+
+export async function execRotation(scope?: DataScope) {
+  const { year, period } = currentPeriod();
+  const prev: { year: number; period: Period } =
+    period === "S2" ? { year, period: "S1" } : { year: year - 1, period: "S2" };
+
+  const [cur, prv] = await Promise.all([
+    getNpkScores(scope, year, period),
+    getNpkScores(scope, prev.year, prev.period).catch(() => null),
+  ]);
+
+  // NPK semester sebelumnya (hanya yang punya data) — untuk syarat 2 semester berturut.
+  const prevByKey = new Map<string, number>();
+  for (const r of prv?.rows ?? []) if (r.available_count > 0) prevByKey.set(r.hod_key, r.npk);
+
+  const rows = cur.rows.map((r) => {
+    const npkPrev = prevByKey.has(r.hod_key) ? (prevByKey.get(r.hod_key) as number) : null;
+    return {
+      hod_key: r.hod_key, hod_name: r.hod_name, role: r.role,
+      npk: r.npk, predikat: r.predikat, available_count: r.available_count,
+      readiness: readinessOf(r.npk, r.available_count),
+      npk_prev: npkPrev,
+      // Promotion candidate (SK Pasal 2.2): NPK ≥75 dua semester berturut.
+      promotion_candidate: r.available_count > 0 && r.npk >= 75 && npkPrev != null && npkPrev >= 75,
+    };
+  });
+
+  const scored = rows.filter((r) => r.available_count > 0);
+  const summary = {
+    total: rows.length, scored: scored.length,
+    ready: rows.filter((r) => r.readiness === "ready-to-scale").length,
+    stable: rows.filter((r) => r.readiness === "stable").length,
+    accel: rows.filter((r) => r.readiness === "accelerated-dev").length,
+    pip: rows.filter((r) => r.readiness === "pip").length,
+    belum: rows.filter((r) => r.readiness === "belum-dinilai").length,
+  };
+
+  return {
+    period: { year, period }, prev, computed: cur.computed,
+    // false → scope ini tak berhak lihat NPK (HR). Frontend tampilkan notice.
+    accessible: cur.scope === "all" || rows.length > 0,
+    summary,
+    rows: [...rows].sort((a, b) => b.npk - a.npk),
+    top_performers: scored.filter((r) => r.npk >= 90).sort((a, b) => b.npk - a.npk),
+    underperformers: scored.filter((r) => r.npk < 60).sort((a, b) => a.npk - b.npk),
+    promotion_candidates: rows.filter((r) => r.promotion_candidate).sort((a, b) => b.npk - a.npk),
+  };
+}
+
+// ── View #4: GROWTH LEVERS — sintesis 3-5 lever aksi Direktur (services/ai) ──
+// api meng-enrich sinyal (stuck deals F1, red flags F76, AR>90, dormant) lalu
+// services/ai (/growth-levers) mensintesis lever. Tanpa OPENROUTER_API_KEY →
+// template deterministik. Cache in-process 6 jam (PRD) — hemat token/latensi.
+export interface Lever {
+  id: number; title: string; impact_idr: number; owner: string; sla_days: number; rationale?: string;
+}
+
+const LEVERS_TTL_MS = 6 * 60 * 60 * 1000;
+let leversCache: { at: number; payload: unknown } | null = null;
+
+export async function execGrowthLevers(scope?: DataScope, force = false) {
+  if (!force && leversCache && Date.now() - leversCache.at < LEVERS_TTL_MS) {
+    return { ...(leversCache.payload as object), cached: true };
+  }
+
+  const [board, aging, dormant, pipe] = await Promise.all([
+    getWatchBoard().catch(() => null),
+    getAging().catch(() => null),
+    dormantCustomers(60).catch(() => null),
+    getPipeline(scope).catch(() => null),
+  ]);
+
+  // Stuck deals: deal stale (>14 hari di stage) — nilai terbesar dulu.
+  const stuckDeals = (pipe?.stages ?? [])
+    .flatMap((s) => s.deals)
+    .filter((d) => d.stale)
+    .sort((a, b) => (b.estimate_amount ?? 0) - (a.estimate_amount ?? 0))
+    .slice(0, 5)
+    .map((d) => ({
+      customer: d.customer_name, stage: d.stage, days_in_stage: d.days_in_stage,
+      estimate_amount: d.estimate_amount, am_name: d.am_name ?? d.am_id,
+    }));
+
+  const redFlags: { hod: string; metric: string; pct: number | null }[] = [];
+  for (const h of board?.hods ?? [])
+    for (const m of h.metrics)
+      if (m.status === "RED") redFlags.push({ hod: h.name, metric: m.label, pct: m.pct });
+  redFlags.sort((a, b) => (a.pct ?? 9999) - (b.pct ?? 9999));
+
+  const arOver90 = aging
+    ? aging.invoices.filter((i) => i.days_overdue > 90).reduce((a, i) => a + i.amount, 0)
+    : 0;
+
+  const signals = {
+    stuck_deals: stuckDeals,
+    red_flags: redFlags.slice(0, 5),
+    ar_over_90: arOver90,
+    dormant: { count: dormant?.summary.count ?? 0, value: dormant?.summary.value_at_risk ?? 0 },
+  };
+
+  let levers: Lever[] = [];
+  let model = "unavailable";
+  let dryRun = true;
+  try {
+    const { data } = await callAi("/growth-levers", { signals, period_label: "minggu ini", dry_run: aiDryRun() });
+    levers = Array.isArray(data.levers) ? (data.levers as Lever[]) : [];
+    model = typeof data.model === "string" ? data.model : model;
+    dryRun = data.dry_run !== false;
+  } catch {
+    // services/ai mati → biarkan levers kosong; frontend tampilkan notice.
+  }
+
+  const payload = { levers, model, dry_run: dryRun, signals, cached: false };
+  leversCache = { at: Date.now(), payload };
+  return payload;
 }
