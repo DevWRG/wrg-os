@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { PeriodPicker, defaultPeriod } from "@/components/raport/period-picker";
 
 interface Row {
@@ -54,11 +55,11 @@ export function RaportList() {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <input
+        <Input
           value={q}
           onChange={(e) => setQ(e.target.value)}
           placeholder="Cari nama / cabang / role…"
-          className="bg-background w-64 max-w-full rounded-md border px-3 py-1.5 text-sm"
+          className="bg-card border-border h-8 w-64 max-w-full"
         />
         <PeriodPicker period={period} onChange={setPeriod} />
       </div>

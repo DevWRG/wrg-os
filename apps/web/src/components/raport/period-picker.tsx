@@ -37,7 +37,7 @@ export function PeriodPicker({ period, onChange }: { period: string; onChange: (
   const { year, seg } = parse(period);
   const nowY = wibYear();
   const years = [nowY, nowY - 1, nowY - 2, nowY - 3];
-  const cls = "bg-background rounded-md border px-2 py-1 text-sm";
+  const cls = "border-input bg-card h-8 rounded-md border px-2.5 text-sm outline-none focus-visible:border-primary";
   return (
     <div className="flex items-center gap-2">
       <span className="text-muted-foreground text-sm">Periode</span>
