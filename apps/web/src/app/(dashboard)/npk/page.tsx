@@ -3,6 +3,7 @@ import { sessionUser } from "@/lib/admin-guard";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { EmptyState } from "@/components/ui/empty-state";
 import { NpkMatrix } from "@/components/npk/npk-matrix";
+import { NpkPeriodPicker } from "@/components/npk/npk-period-picker";
 import type { NpkMatrixResult } from "@/components/npk/npk-format";
 
 export const dynamic = "force-dynamic";
@@ -34,9 +35,16 @@ export default async function NpkDirekturPage({
     if (res.ok) data = (await res.json()) as NpkMatrixResult;
   } catch { data = null; }
 
+  const activeYear = data?.year ?? (sp.year ? Number(sp.year) : new Date().getFullYear());
+  const activePeriod = (data?.period ?? (sp.period === "S1" ? "S1" : sp.period === "S2" ? "S2" : new Date().getMonth() < 6 ? "S1" : "S2")) as "S1" | "S2";
+
   return (
     <>
-      <PageHeader title="NPK Direktur" description="Nilai Prestasi Karyawan per HoD — 7 aspek SK Pasal 3, per semester." />
+      <PageHeader
+        title="NPK Direktur"
+        description="Nilai Prestasi Karyawan per HoD — 7 aspek SK Pasal 3, per semester."
+        action={<NpkPeriodPicker year={activeYear} period={activePeriod} />}
+      />
       <NpkMatrix data={data} />
     </>
   );

@@ -3,6 +3,7 @@ import { sessionUser } from "@/lib/admin-guard";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { EmptyState } from "@/components/ui/empty-state";
 import { NpkSelfDetail } from "@/components/npk/npk-self-detail";
+import { NpkPeriodPicker } from "@/components/npk/npk-period-picker";
 import type { NpkDetailResult } from "@/components/npk/npk-format";
 
 export const dynamic = "force-dynamic";
@@ -33,9 +34,16 @@ export default async function NpkSelfPage({
     if (res.ok) data = (await res.json()) as NpkDetailResult;
   } catch { data = null; }
 
+  const activeYear = data?.year ?? (sp.year ? Number(sp.year) : new Date().getFullYear());
+  const activePeriod = (data?.period ?? (sp.period === "S1" ? "S1" : sp.period === "S2" ? "S2" : new Date().getMonth() < 6 ? "S1" : "S2")) as "S1" | "S2";
+
   return (
     <>
-      <PageHeader title="NPK Saya" description="Nilai Prestasi Karyawan Anda — 7 aspek SK Pasal 3, per semester." />
+      <PageHeader
+        title="NPK Saya"
+        description="Nilai Prestasi Karyawan Anda — 7 aspek SK Pasal 3, per semester."
+        action={<NpkPeriodPicker year={activeYear} period={activePeriod} />}
+      />
       <NpkSelfDetail data={data} />
     </>
   );
