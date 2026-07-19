@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import {
   Activity, AlertTriangle, TrendingUp, TrendingDown, Wallet, MoonStar,
   Target, Building2, Sparkles, RefreshCw, Swords, Rocket, ArrowUpCircle, UserCog, Info,
+  Lightbulb, Clock, User,
 } from "lucide-react";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -45,6 +46,12 @@ interface OutletData {
   top_customers: { id: string; name: string; cabang: string | null; total: number; this_month: number; invoices: number; days_since: number | null; share_pct: number | null }[];
   dormant: { id: string; name: string; cabang: string | null; total: number; last_date: string | null; days_since: number | null }[];
 }
+interface Lever {
+  id: number; title: string; impact_idr: number; owner: string; sla_days: number; rationale?: string;
+}
+interface LeversData {
+  levers: Lever[]; model: string; dry_run: boolean; cached?: boolean;
+}
 interface DormantIntelData {
   new_customers: { id: string; name: string; first_date: string; invoices: number; total: number }[];
   reactivated: { id: string; name: string; reactivated_date: string; gap_days: number }[];
@@ -68,11 +75,12 @@ interface RotationData {
   top_performers: RotationRow[]; underperformers: RotationRow[]; promotion_candidates: RotationRow[];
 }
 
-type ViewKey = "command" | "am-radar" | "outlet-matrix" | "dormant-intel" | "rotation" | "kpi-baseline";
+type ViewKey = "command" | "am-radar" | "outlet-matrix" | "growth-levers" | "dormant-intel" | "rotation" | "kpi-baseline";
 const TABS: { key: ViewKey; label: string }[] = [
   { key: "command", label: "Command" },
   { key: "am-radar", label: "AM Radar" },
   { key: "outlet-matrix", label: "Outlet Matrix" },
+  { key: "growth-levers", label: "Growth Levers" },
   { key: "dormant-intel", label: "Dormant Intel" },
   { key: "rotation", label: "Rotation" },
   { key: "kpi-baseline", label: "KPI Baseline" },
@@ -139,7 +147,7 @@ export function ExecutiveDashboard({ initial, initialView }: { initial: CommandD
     if (!force && cache[view]) return;
     setLoading(true); setErr("");
     try {
-      const res = await fetch(`/api/executive/${view}`);
+      const res = await fetch(`/api/executive/${view}${force ? "?refresh=1" : ""}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error ?? `HTTP ${res.status}`);
       setCache((c) => ({ ...c, [view]: data }));
@@ -185,6 +193,7 @@ export function ExecutiveDashboard({ initial, initialView }: { initial: CommandD
           {tab === "command" && <CommandView d={cur as CommandData | undefined} />}
           {tab === "am-radar" && <AmRadarView d={cur as AmRadarData | undefined} />}
           {tab === "outlet-matrix" && <OutletView d={cur as OutletData | undefined} />}
+          {tab === "growth-levers" && <LeversView d={cur as LeversData | undefined} />}
           {tab === "dormant-intel" && <DormantView d={cur as DormantIntelData | undefined} />}
           {tab === "rotation" && <RotationView d={cur as RotationData | undefined} />}
           {tab === "kpi-baseline" && <KpiView d={cur as KpiData | undefined} />}
@@ -401,6 +410,51 @@ function OutletView({ d }: { d: OutletData | undefined }) {
           </Table>
         </CardContent>
       </Card>
+    </div>
+  );
+}
+
+// ── View 4: GROWTH LEVERS (sintesis LLM services/ai) ───────────────
+function LeversView({ d }: { d: LeversData | undefined }) {
+  if (!d) return null;
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge variant="outline"><Lightbulb className="mr-1 size-3.5" /> {d.levers.length} Lever</Badge>
+        {d.dry_run ? <Badge variant="secondary">template (tanpa LLM)</Badge> : <Badge className="bg-emerald-500/15 text-emerald-600 dark:text-emerald-400">LLM: {d.model}</Badge>}
+        {d.cached ? <Badge variant="ghost" className="text-muted-foreground">cached</Badge> : null}
+      </div>
+      {d.levers.length === 0 ? (
+        <Card><CardContent className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
+          <Info className="size-4" /> Belum ada lever — sinyal minim atau layanan AI tak tersedia. Coba Refresh.
+        </CardContent></Card>
+      ) : (
+        <div className="grid gap-3 lg:grid-cols-2">
+          {d.levers.map((lv, i) => (
+            <Card key={lv.id ?? i} className="overflow-hidden">
+              <CardHeader className="pb-2">
+                <CardTitle className="flex items-start gap-2 text-base">
+                  <span className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary">{i + 1}</span>
+                  <span className="leading-snug">{lv.title}</span>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="flex flex-col gap-2">
+                {lv.rationale ? <p className="text-sm text-muted-foreground">{lv.rationale}</p> : null}
+                <div className="flex flex-wrap items-center gap-2 pt-1">
+                  {lv.impact_idr > 0 ? (
+                    <Badge className="bg-emerald-500/15 text-emerald-600 dark:text-emerald-400">
+                      <TrendingUp className="mr-1 size-3.5" /> Impact {rpc(lv.impact_idr)}
+                    </Badge>
+                  ) : null}
+                  <Badge variant="outline"><User className="mr-1 size-3.5" /> {lv.owner || "—"}</Badge>
+                  <Badge variant="outline"><Clock className="mr-1 size-3.5" /> SLA {lv.sla_days} hari</Badge>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
+      <p className="text-xs text-muted-foreground">Sintesis dari stuck deals (F1) · red flags (F76) · AR&gt;90 · dormant. Cache 6 jam — pakai Refresh untuk generate ulang.</p>
     </div>
   );
 }
