@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
@@ -24,6 +25,7 @@ const scoreTone = (s: number | null) =>
   s == null ? "text-muted-foreground" : s >= 95 ? "text-emerald-600" : s >= 80 ? "text-amber-600" : "text-red-600";
 
 export function RaportList() {
+  const router = useRouter();
   const [period, setPeriod] = useState<string>(defaultPeriod());
   const [rows, setRows] = useState<Row[]>([]);
   const [state, setState] = useState<"idle" | "loading" | "error" | "forbidden">("loading");
@@ -97,7 +99,11 @@ export function RaportList() {
               </thead>
               <tbody>
                 {paged.map((r) => (
-                  <tr key={r.am_id} className="hover:bg-muted/50 border-b">
+                  <tr
+                    key={r.am_id}
+                    onClick={() => router.push(`/karyawan/${encodeURIComponent(r.am_id)}`)}
+                    className="hover:bg-muted/50 cursor-pointer border-b"
+                  >
                     <td className="px-4 py-2">
                       <Link href={`/karyawan/${encodeURIComponent(r.am_id)}`} className="font-medium hover:underline">
                         {r.panggilan || r.nama}
