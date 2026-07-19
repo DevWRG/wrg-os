@@ -26,6 +26,13 @@ export interface RaportDetail {
   pdca: { plan: string | null; do: string | null; check: string | null; act: string | null } | null;
   daily: { date: string; total: number; success: number }[];
   workload: { total: number; success: number; pending: number };
+  items: {
+    total: number;
+    categories: { key: string; label: string; count: number }[];
+    status: { key: string; label: string; color: string; count: number }[];
+    failures: { tanggal: string; label: string; status: string }[];
+    blockers: { tanggal: string; label: string; status: string }[];
+  };
   absensi: { active_days: number; expected: number; leave_days: number; leave: { start_date: string; end_date: string; jenis: string; keterangan: string | null }[] };
   coaching: { period: string | null; score: number | null; strengths: string[]; gaps: string[]; recommendations: string[] } | null;
   revenue: { total: number; invoices: number; target_year: number | null; target_month: number | null; pct: number | null } | null;
@@ -89,7 +96,7 @@ export function RaportView({ endpoint }: { endpoint: string }) {
 }
 
 function Body({ data }: { data: RaportDetail }) {
-  const { employee: e, score, plan_report: pr, bsc, okr, raci, pdca, daily, workload, absensi, coaching, revenue, ar } = data;
+  const { employee: e, score, plan_report: pr, bsc, okr, raci, pdca, daily, workload, items, absensi, coaching, revenue, ar } = data;
   const prCount = score.parts.filter((p) => p.score != null && p.score < 80).length;
 
   return (
@@ -97,11 +104,13 @@ function Body({ data }: { data: RaportDetail }) {
       <Hero e={e} score={score} periodLabel={data.period_label} pr={pr} workload={workload} prCount={prCount} />
       <StatRow pr={pr} workload={workload} absensi={absensi} />
       {bsc ? <Scorecard bsc={bsc} /> : null}
+      {items.total > 0 ? <CategoryStatus items={items} /> : null}
       {daily.length ? <DailyChart daily={daily} /> : null}
       {bsc && bsc.kpi.length ? <OkrBlock okr={okr} kpi={bsc.kpi} /> : okr && (okr.objective || okr.key_results.length) ? <OkrTextOnly okr={okr} /> : null}
       {pdca ? <Pdca pdca={pdca} /> : null}
       {e.is_am && revenue ? <RevenueAr revenue={revenue} ar={ar} /> : null}
       {raci.length ? <Raci raci={raci} /> : null}
+      {items.failures.length || items.blockers.length ? <FailBlock items={items} /> : null}
       <Absensi absensi={absensi} />
       {coaching ? <Coaching coaching={coaching} /> : null}
       <p className="text-muted-foreground px-1 text-xs">
@@ -215,6 +224,97 @@ function Scorecard({ bsc }: { bsc: NonNullable<RaportDetail["bsc"]> }) {
         })}
       </div>
     </section>
+  );
+}
+
+function CategoryStatus({ items }: { items: RaportDetail["items"] }) {
+  const maxCat = Math.max(1, ...items.categories.map((c) => c.count));
+  return (
+    <div className="grid gap-4 lg:grid-cols-2">
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base">Sebaran tugas per kategori</CardTitle>
+          <p className="text-muted-foreground text-xs">Jumlah item dalam laporan · total {items.total}</p>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          {items.categories.map((c) => (
+            <div key={c.key} className="flex items-center gap-3">
+              <div className="text-muted-foreground w-36 shrink-0 truncate text-sm">{c.label}</div>
+              <div className="bg-muted h-4 flex-1 overflow-hidden rounded">
+                <div className="h-full rounded" style={{ width: `${(c.count / maxCat) * 100}%`, background: "var(--chart-2)" }} />
+              </div>
+              <div className="w-8 shrink-0 text-right text-sm font-semibold tabular-nums">{c.count}</div>
+            </div>
+          ))}
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base">Rincian status {items.total} item</CardTitle>
+          <p className="text-muted-foreground text-xs">Proporsi hasil pelaporan</p>
+        </CardHeader>
+        <CardContent>
+          <div className="flex h-7 w-full overflow-hidden rounded-md">
+            {items.status.map((s) => (
+              <div key={s.key} className="flex items-center justify-center text-xs font-semibold text-white" style={{ width: `${(s.count / Math.max(1, items.total)) * 100}%`, background: s.color }} title={`${s.label}: ${s.count}`}>
+                {s.count / Math.max(1, items.total) > 0.12 ? s.count : ""}
+              </div>
+            ))}
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm">
+            {items.status.map((s) => (
+              <span key={s.key} className="flex items-center justify-between gap-2">
+                <span className="flex items-center gap-1.5"><span className="size-2.5 rounded-sm" style={{ background: s.color }} /><span className="text-muted-foreground">{s.label}</span></span>
+                <span className="font-semibold tabular-nums">{s.count}</span>
+              </span>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function FailBlock({ items }: { items: RaportDetail["items"] }) {
+  return (
+    <div className="grid gap-4 lg:grid-cols-2">
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="flex items-center gap-2 text-base"><span className="size-2.5 rounded-full bg-red-500" /> Kegagalan nyata ({items.failures.length} item)</CardTitle>
+          <p className="text-muted-foreground text-xs">Perlu tindak lanjut — item internal belum tuntas</p>
+        </CardHeader>
+        <CardContent>
+          {items.failures.length ? (
+            <ul className="divide-y text-sm">
+              {items.failures.map((f, i) => (
+                <li key={i} className="flex items-center justify-between gap-3 py-1.5">
+                  <span className="flex items-center gap-3"><span className="text-muted-foreground w-14 shrink-0 text-xs">{f.tanggal.slice(5)}</span><span>{f.label}</span></span>
+                  <Badge variant="outline" className="shrink-0 border-red-200 text-red-600">{f.status}</Badge>
+                </li>
+              ))}
+            </ul>
+          ) : <p className="text-muted-foreground text-sm">Tidak ada kegagalan internal.</p>}
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="flex items-center gap-2 text-base"><span className="size-2.5 rounded-full bg-blue-500" /> Blokir eksternal ({items.blockers.length} item)</CardTitle>
+          <p className="text-muted-foreground text-xs">Menunggu pihak lain — di luar kendali</p>
+        </CardHeader>
+        <CardContent>
+          {items.blockers.length ? (
+            <ul className="divide-y text-sm">
+              {items.blockers.map((b, i) => (
+                <li key={i} className="flex items-center justify-between gap-3 py-1.5">
+                  <span className="flex items-center gap-3"><span className="text-muted-foreground w-14 shrink-0 text-xs">{b.tanggal.slice(5)}</span><span>{b.label}</span></span>
+                  <Badge variant="outline" className="shrink-0 border-blue-200 text-blue-600">{b.status}</Badge>
+                </li>
+              ))}
+            </ul>
+          ) : <p className="text-muted-foreground text-sm">Tidak ada blokir eksternal.</p>}
+        </CardContent>
+      </Card>
+    </div>
   );
 }
 
