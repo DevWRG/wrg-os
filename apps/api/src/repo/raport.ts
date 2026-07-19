@@ -263,13 +263,15 @@ export interface RaportListRow {
   am_id: string; nama: string; panggilan: string | null; role: string; cabang: string | null; is_am: boolean;
   overall: number | null; rating: string;
   compliance: number | null; bsc: number | null; revenue: number; revenue_pct: number | null;
-  active_days: number; leave_days: number;
+  active_days: number; leave_days: number; has_spine: boolean;
 }
 
 export async function getRaportList(period?: string): Promise<{ period: string; period_label: string; from: string; to: string; rows: RaportListRow[] }> {
   const { key: p, label, from, to, months } = periodBounds(period);
   const sql = db();
   const roster = await sql`SELECT am_id, nama, panggilan, role, cabang FROM master_user WHERE aktif ORDER BY cabang NULLS LAST, nama`;
+  const spineRows = await sql`SELECT DISTINCT am_id FROM employee WHERE am_id IS NOT NULL`;
+  const spineByAm = new Set(spineRows.map((r) => String(r.am_id)));
   const M = await collectMaps(from, to, months);
 
   const rows: RaportListRow[] = roster.map((u) => {
@@ -310,6 +312,7 @@ export async function getRaportList(period?: string): Promise<{ period: string; 
       overall, rating: ratingOf(overall),
       compliance: complianceScore(c), bsc: bscS, revenue, revenue_pct: revScore,
       active_days: o?.active_days ?? 0, leave_days: leave?.days ?? 0,
+      has_spine: spineByAm.has(amId),
     };
   });
 

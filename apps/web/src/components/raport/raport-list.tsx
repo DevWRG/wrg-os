@@ -15,7 +15,7 @@ interface Row {
   am_id: string; nama: string; panggilan: string | null; role: string; cabang: string | null; is_am: boolean;
   overall: number | null; rating: string;
   compliance: number | null; bsc: number | null; revenue: number; revenue_pct: number | null;
-  active_days: number; leave_days: number;
+  active_days: number; leave_days: number; has_spine: boolean;
 }
 interface ListResp { period: string; rows: Row[] }
 
@@ -92,13 +92,14 @@ export function RaportList() {
                   <th className="px-4 py-2 text-right">Compliance</th>
                   <th className="px-4 py-2 text-right">BSC</th>
                   <th className="px-4 py-2 text-right">Revenue</th>
+                  <th className="px-4 py-2 text-center">Profil</th>
                 </tr>
               </thead>
               <tbody>
                 {paged.map((r) => (
                   <tr key={r.am_id} className="hover:bg-muted/50 border-b">
                     <td className="px-4 py-2">
-                      <Link href={`/raport/karyawan/${encodeURIComponent(r.am_id)}`} className="font-medium hover:underline">
+                      <Link href={`/karyawan/${encodeURIComponent(r.am_id)}`} className="font-medium hover:underline">
                         {r.panggilan || r.nama}
                       </Link>
                       <div className="text-muted-foreground text-xs">{r.nama} · {r.role}{r.is_am ? "" : " (non-AM)"}</div>
@@ -109,10 +110,15 @@ export function RaportList() {
                     <td className="px-4 py-2 text-right tabular-nums">{r.compliance != null ? `${r.compliance}%` : "—"}</td>
                     <td className="px-4 py-2 text-right tabular-nums">{r.bsc ?? "—"}</td>
                     <td className="px-4 py-2 text-right tabular-nums">{r.is_am ? rp(r.revenue) : "—"}</td>
+                    <td className="px-4 py-2 text-center">
+                      {r.has_spine
+                        ? <span className="text-emerald-600" title="Profil spine tertaut">✓</span>
+                        : <span className="text-muted-foreground" title="Belum tertaut profil spine">—</span>}
+                    </td>
                   </tr>
                 ))}
                 {!filtered.length ? (
-                  <tr><td colSpan={7} className="text-muted-foreground px-4 py-6 text-center">Tidak ada data.</td></tr>
+                  <tr><td colSpan={8} className="text-muted-foreground px-4 py-6 text-center">Tidak ada data.</td></tr>
                 ) : null}
               </tbody>
             </table>
