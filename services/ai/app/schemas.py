@@ -334,3 +334,24 @@ class PolaProfileResponse(BaseModel):
     profile: str
     model: str = "dry-run"
     dry_run: bool = False
+
+
+# Raport 360 — narasi penilaian kinerja (Fase 3)
+class RaportNarrativeRequest(BaseModel):
+    signals: Dict[str, object] = Field(default_factory=dict, description="Metrik+konteks raport 1 karyawan/periode")
+    period_label: str = ""
+    dry_run: bool = False
+
+
+class RaportNarrativeResponse(BaseModel):
+    verdict: str
+    headline: str
+    pantas_puas: List[str] = Field(default_factory=list)
+    penahan: List[str] = Field(default_factory=list)
+    bsc: Dict[str, str] = Field(default_factory=dict)
+    akar_masalah: str = ""
+    catatan_adil: str = ""
+    ringkasan: str = ""
+    predikat: str = ""
+    model: str = "dry-run"
+    dry_run: bool = False

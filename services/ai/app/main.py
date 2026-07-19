@@ -15,10 +15,12 @@ from .openrouter import (
     collection_models,
     exec_models,
     extract_models,
+    raport_models,
     rekap_models,
     resume_models,
     salesdoc_models,
 )
+from .raport import build_raport_system, build_raport_user, parse_raport, template_raport
 from .rekap import build_messages_block, build_rekap_system
 from .resume import build_gabungan, build_resume_system
 from .salesdoc import build_salesdoc_system, build_salesdoc_user, doc_title, template_doc
@@ -46,6 +48,8 @@ from .schemas import (
     ResumeResponse,
     PolaProfileRequest,
     PolaProfileResponse,
+    RaportNarrativeRequest,
+    RaportNarrativeResponse,
     SalesDocRequest,
     SalesDocResponse,
     SummarizeRequest,
@@ -613,3 +617,24 @@ def pola_profile(req: PolaProfileRequest) -> PolaProfileResponse:
         return PolaProfileResponse(profile=fallback, model="dry-run", dry_run=True)
     text, model, _, _ = chat_or_fallback(system, user, fallback, max_tokens=2000, models=exec_models())
     return PolaProfileResponse(profile=text, model=model, dry_run=model == "dry-run-fallback")
+
+
+@app.post("/raport-narrative", response_model=RaportNarrativeResponse)
+def raport_narrative(req: RaportNarrativeRequest) -> RaportNarrativeResponse:
+    """Narasi penilaian kinerja Raport 360 (Fase 3). Fallback deterministik dari
+    angka bila dry-run / LLM gagal — narasi selalu ada & tak mengarang."""
+    sig = dict(req.signals or {})
+    sig.setdefault("period_label", req.period_label)
+    fallback = template_raport(sig)
+    use_llm = not req.dry_run and bool(os.environ.get("OPENROUTER_API_KEY"))
+    if not use_llm:
+        return RaportNarrativeResponse(**fallback, model="dry-run", dry_run=True)
+    text, model, _, _ = chat_or_fallback(
+        build_raport_system(req.period_label),
+        build_raport_user(sig),
+        json.dumps(fallback, ensure_ascii=False),
+        max_tokens=2000,
+        models=raport_models(),
+    )
+    data = parse_raport(text, fallback)
+    return RaportNarrativeResponse(**data, model=model, dry_run=model == "dry-run-fallback")

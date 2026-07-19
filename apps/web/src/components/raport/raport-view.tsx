@@ -37,6 +37,12 @@ export interface RaportDetail {
   coaching: { period: string | null; score: number | null; strengths: string[]; gaps: string[]; recommendations: string[] } | null;
   revenue: { total: number; invoices: number; target_year: number | null; target_month: number | null; pct: number | null } | null;
   ar: { outstanding: number; invoices: number } | null;
+  narrative: {
+    verdict: string | null; headline: string | null;
+    pantas_puas: string[]; penahan: string[]; bsc: Record<string, string>;
+    akar_masalah: string; catatan_adil: string; ringkasan: string; predikat: string;
+    model: string | null; generated_at: string | null;
+  } | null;
   context_note: string;
 }
 
@@ -96,7 +102,7 @@ export function RaportView({ endpoint }: { endpoint: string }) {
 }
 
 function Body({ data }: { data: RaportDetail }) {
-  const { employee: e, score, plan_report: pr, bsc, okr, raci, pdca, daily, workload, items, absensi, coaching, revenue, ar } = data;
+  const { employee: e, score, plan_report: pr, bsc, okr, raci, pdca, daily, workload, items, absensi, coaching, revenue, ar, narrative } = data;
   const prCount = score.parts.filter((p) => p.score != null && p.score < 80).length;
 
   return (
@@ -110,12 +116,13 @@ function Body({ data }: { data: RaportDetail }) {
       {pdca ? <Pdca pdca={pdca} /> : null}
       {e.is_am && revenue ? <RevenueAr revenue={revenue} ar={ar} /> : null}
       {raci.length ? <Raci raci={raci} /> : null}
-      {items.failures.length || items.blockers.length ? <FailBlock items={items} /> : null}
+      {items.failures.length || items.blockers.length ? <FailBlock items={items} narrative={narrative} /> : null}
       <Absensi absensi={absensi} />
       {coaching ? <Coaching coaching={coaching} /> : null}
-      <p className="text-muted-foreground px-1 text-xs">
-        {data.context_note} · Ringkasan naratif &amp; kesimpulan (AI) menyusul (Fase 3).
-      </p>
+      {narrative ? <Kesimpulan narrative={narrative} nama={e.panggilan || e.nama} /> : (
+        <p className="text-muted-foreground px-1 text-xs">Narasi AI (Kesimpulan) belum tersedia untuk periode ini — dijadwalkan otomatis tiap malam.</p>
+      )}
+      <p className="text-muted-foreground px-1 text-xs">{data.context_note}</p>
     </div>
   );
 }
@@ -275,7 +282,7 @@ function CategoryStatus({ items }: { items: RaportDetail["items"] }) {
   );
 }
 
-function FailBlock({ items }: { items: RaportDetail["items"] }) {
+function FailBlock({ items, narrative }: { items: RaportDetail["items"]; narrative: RaportDetail["narrative"] }) {
   return (
     <div className="grid gap-4 lg:grid-cols-2">
       <Card>
@@ -294,6 +301,11 @@ function FailBlock({ items }: { items: RaportDetail["items"] }) {
               ))}
             </ul>
           ) : <p className="text-muted-foreground text-sm">Tidak ada kegagalan internal.</p>}
+          {narrative?.akar_masalah ? (
+            <p className="mt-3 rounded-md border-l-2 border-red-300 bg-red-50 p-2 text-xs dark:bg-red-950/30">
+              <b>Akar masalah:</b> {narrative.akar_masalah}
+            </p>
+          ) : null}
         </CardContent>
       </Card>
       <Card>
@@ -312,9 +324,52 @@ function FailBlock({ items }: { items: RaportDetail["items"] }) {
               ))}
             </ul>
           ) : <p className="text-muted-foreground text-sm">Tidak ada blokir eksternal.</p>}
+          {narrative?.catatan_adil ? (
+            <p className="mt-3 rounded-md border-l-2 border-blue-300 bg-blue-50 p-2 text-xs dark:bg-blue-950/30">
+              <b>Catatan adil:</b> {narrative.catatan_adil}
+            </p>
+          ) : null}
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+// Kesimpulan naratif (Fase 3, AI) — mengikuti mockup: verdict + 2 kolom + ringkasan.
+function Kesimpulan({ narrative, nama }: { narrative: NonNullable<RaportDetail["narrative"]>; nama: string }) {
+  const okVerdict = narrative.verdict === "ya";
+  const verdictTone = okVerdict ? "bg-emerald-100 text-emerald-700" : narrative.verdict === "tidak" ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700";
+  return (
+    <Card>
+      <CardContent className="p-6">
+        <div className="text-muted-foreground text-xs font-semibold tracking-wide">KESIMPULAN</div>
+        {narrative.headline ? <h2 className="mt-1 text-xl font-bold">{narrative.headline}</h2> : null}
+        {narrative.verdict ? (
+          <span className={`mt-3 inline-flex rounded-full px-3 py-1 text-sm font-semibold ${verdictTone}`}>
+            {okVerdict ? "✓ " : ""}{narrative.verdict === "ya" ? "Puas" : narrative.verdict === "tidak" ? "Belum puas" : "Bersyarat"}
+            {narrative.predikat ? ` — ${narrative.predikat}` : ""}
+          </span>
+        ) : null}
+        <div className="mt-4 grid gap-5 sm:grid-cols-2">
+          <div>
+            <div className="mb-1 text-xs font-semibold tracking-wide text-emerald-600">YANG MEMBUAT PANTAS PUAS</div>
+            {narrative.pantas_puas.length ? (
+              <ul className="list-disc space-y-1 pl-4 text-sm">{narrative.pantas_puas.map((s, i) => <li key={i}>{s}</li>)}</ul>
+            ) : <p className="text-muted-foreground text-sm">—</p>}
+          </div>
+          <div>
+            <div className="mb-1 text-xs font-semibold tracking-wide text-amber-600">YANG PERLU DIPERBAIKI</div>
+            {narrative.penahan.length ? (
+              <ul className="list-disc space-y-1 pl-4 text-sm">{narrative.penahan.map((s, i) => <li key={i}>{s}</li>)}</ul>
+            ) : <p className="text-muted-foreground text-sm">—</p>}
+          </div>
+        </div>
+        {narrative.ringkasan ? <p className="mt-4 border-t pt-4 text-sm leading-relaxed">{narrative.ringkasan}</p> : null}
+        <p className="text-muted-foreground mt-3 text-xs">
+          Penilaian {nama} · dihasilkan AI {narrative.generated_at ? `· ${new Date(narrative.generated_at).toLocaleDateString("id-ID")}` : ""}{narrative.model && narrative.model !== "dry-run" ? ` · ${narrative.model}` : ""}. Ditinjau HoD/admin.
+        </p>
+      </CardContent>
+    </Card>
   );
 }
 

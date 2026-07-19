@@ -320,6 +320,38 @@ export async function getRaportList(period?: string): Promise<{ period: string; 
 }
 
 // ── DETAIL (1 karyawan) ──
+// Narasi AI tersimpan (Fase 3, tabel raport_narrative) — di-generate batch.
+export interface StoredNarrative {
+  verdict: string | null; headline: string | null;
+  pantas_puas: string[]; penahan: string[]; bsc: Record<string, string>;
+  akar_masalah: string; catatan_adil: string; ringkasan: string; predikat: string;
+  model: string | null; generated_at: string | null;
+}
+export async function getStoredNarrative(amId: string, period: string): Promise<StoredNarrative | null> {
+  const sql = db();
+  const [r] = await sql`
+    SELECT verdict, headline, narrative, model, created_at::text FROM raport_narrative
+    WHERE am_id = ${amId} AND period = ${period}
+  `;
+  if (!r) return null;
+  const n = (r.narrative ?? {}) as Record<string, unknown>;
+  const asArr = (v: unknown): string[] => (Array.isArray(v) ? v.map((x) => String(x)) : []);
+  const str = (v: unknown): string => (v == null ? "" : String(v));
+  return {
+    verdict: r.verdict ? String(r.verdict) : null,
+    headline: r.headline ? String(r.headline) : null,
+    pantas_puas: asArr(n.pantas_puas),
+    penahan: asArr(n.penahan),
+    bsc: n.bsc && typeof n.bsc === "object" ? (n.bsc as Record<string, string>) : {},
+    akar_masalah: str(n.akar_masalah),
+    catatan_adil: str(n.catatan_adil),
+    ringkasan: str(n.ringkasan),
+    predikat: str(n.predikat),
+    model: r.model ? String(r.model) : null,
+    generated_at: r.created_at ? String(r.created_at) : null,
+  };
+}
+
 export async function getRaportDetail(amId: string, period?: string): Promise<
   | { found: false }
   | {
@@ -345,11 +377,13 @@ export async function getRaportDetail(amId: string, period?: string): Promise<
       coaching: { period: string | null; score: number | null; strengths: string[]; gaps: string[]; recommendations: string[] } | null;
       revenue: { total: number; invoices: number; target_year: number | null; target_month: number | null; pct: number | null } | null;
       ar: { outstanding: number; invoices: number } | null;
+      narrative: StoredNarrative | null;
       context_note: string;
     }
 > {
   const { key: p, label: periodLabel, from, to, months } = periodBounds(period);
   const sql = db();
+  const narrative = await getStoredNarrative(amId, p);
   const [u] = await sql`SELECT am_id, nama, panggilan, role, cabang FROM master_user WHERE am_id = ${amId}`;
   if (!u) return { found: false };
   const is_am = isAmRole(u.role);
@@ -552,6 +586,7 @@ export async function getRaportDetail(amId: string, period?: string): Promise<
     coaching,
     revenue: revenueBlock,
     ar: arBlock,
+    narrative,
     context_note: "Absensi = proxy (cuti + hari aktif); presensi clock-in belum ada. Pola/rekap/resume bersifat konteks group-level, bukan skor per-orang.",
   };
 }
