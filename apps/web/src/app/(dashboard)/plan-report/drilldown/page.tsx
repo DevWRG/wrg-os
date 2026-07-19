@@ -18,7 +18,7 @@ export default async function DrilldownPage({
   return (
     <>
       <div className="flex items-center gap-3">
-        <Button render={<Link href="/dashboard" />} nativeButton={false} variant="outline" size="icon-sm">
+        <Button render={<Link href="/plan-report" />} nativeButton={false} variant="outline" size="icon-sm">
           <ArrowLeft />
         </Button>
         <p className="text-muted-foreground text-[11px] font-semibold tracking-wider uppercase">
@@ -29,7 +29,7 @@ export default async function DrilldownPage({
       {!am_id ? (
         <p className="text-muted-foreground">
           Parameter <code>am_id</code> wajib. Kembali ke{" "}
-          <Link href="/dashboard" className="text-primary underline">dashboard</Link>.
+          <Link href="/plan-report" className="text-primary underline">Plan &amp; Report</Link>.
         </p>
       ) : (
         <UserInfographic amId={am_id} initialFrom={from} initialTo={to} />

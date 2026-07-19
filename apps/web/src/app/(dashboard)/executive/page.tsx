@@ -16,7 +16,7 @@ export default async function ExecutivePage({
 }) {
   const [me, sp] = await Promise.all([sessionUser(), searchParams]);
   // Gate: hanya Direktur/admin. Sesi null (auth off) dibiarkan (permisif spt can()).
-  if (me && !canViewExecutive(me)) redirect("/dashboard");
+  if (me && !canViewExecutive(me)) redirect("/overview");
   let initial: CommandData | null = null;
   try {
     const res = await gatewayFetch("/executive/command", {

@@ -31,7 +31,7 @@ export function AppSidebar({ me }: { me: SessionUser | null }) {
     .map((g) => ({
       ...g,
       // Item ber-`show` (Pricelist) di-gate title-based; sisanya via izin RBAC can().
-      items: g.items.filter((it) => (it.show ? it.show(me) : can(me, featureKey(it.url), "view"))),
+      items: g.items.filter((it) => (it.show ? it.show(me) : can(me, it.feature ?? featureKey(it.url), "view"))),
     }))
     .filter((g) => g.items.length > 0);
 
@@ -40,7 +40,7 @@ export function AppSidebar({ me }: { me: SessionUser | null }) {
       <SidebarHeader>
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton size="lg" render={<Link href="/dashboard" />} className="overflow-hidden">
+            <SidebarMenuButton size="lg" render={<Link href="/overview" />} className="overflow-hidden">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src="/brand/wahana-lifeline-color.png" alt="Wahana Lifeline" className="h-8 w-auto max-w-none object-contain object-left dark:hidden" />
               {/* eslint-disable-next-line @next/next/no-img-element */}
