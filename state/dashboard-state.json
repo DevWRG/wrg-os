@@ -1,11 +1,11 @@
 {
   "schemaVersion": "1.0.0",
-  "lastUpdate": "2026-07-17T00:00:09Z",
+  "lastUpdate": "2026-07-19T10:20:12Z",
   "generatedBy": "sync-state.sh (Warp cron/manual)",
   "production": {
-    "version": "v1.109.2",
-    "releasedAt": "2026-07-16T19:11:05Z",
-    "totalReleases": 195,
+    "version": "v1.134.0",
+    "releasedAt": "2026-07-19T09:55:13Z",
+    "totalReleases": 228,
     "goLiveDate": "2026-06-15"
   },
   "infrastructure": {
@@ -24,13 +24,14 @@
     "githubRepo": "https://github.com/DevWRG/wrg-os"
   },
   "catalog": {
-    "totalFeatures": 149,
-    "range": "F1-F117",
+    "totalFeatures": 173,
+    "range": "F1-F131",
     "comment": "Catalog detail di-maintain manual via Cowork (Sprint Dashboard FEATURES array)"
   },
   "_meta": {
     "source": "Auto-generated dari pm2 jlist + gh CLI + .env.prod",
-    "syncedAt": "2026-07-17T00:00:09Z",
+    "note": "version/releases/catalog di-refresh manual dari gh (laptop, 2026-07-19); blok infrastructure.services + schedulerJobs MASIH dari sync prod terakhir 2026-07-17 — jalankan sync-state.sh di Mac mini untuk data pm2 live.",
+    "syncedAt": "2026-07-19T10:20:12Z",
     "host": "Mac-mini-Development.local"
   }
 }
