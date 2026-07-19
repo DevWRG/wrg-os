@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   Activity, AlertTriangle, TrendingUp, TrendingDown, Wallet, MoonStar,
-  Target, Building2, Sparkles, RefreshCw, Swords,
+  Target, Building2, Sparkles, RefreshCw, Swords, Rocket, ArrowUpCircle, UserCog, Info,
 } from "lucide-react";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -55,13 +55,26 @@ interface KpiData {
   as_of: string; count: number; note: string;
   kpis: { name: string; formula: string; unit: "IDR" | "%" | "count"; target: number | null; actual: number | null; status: Light; trend: number | null; lower_is_better?: boolean }[];
 }
+type Readiness = "ready-to-scale" | "stable" | "accelerated-dev" | "pip" | "belum-dinilai";
+interface RotationRow {
+  hod_key: string; hod_name: string; role: string; npk: number; predikat: string;
+  available_count: number; readiness: Readiness; npk_prev: number | null; promotion_candidate: boolean;
+}
+interface RotationData {
+  period: { year: number; period: string }; prev: { year: number; period: string };
+  computed: boolean; accessible: boolean;
+  summary: { total: number; scored: number; ready: number; stable: number; accel: number; pip: number; belum: number };
+  rows: RotationRow[];
+  top_performers: RotationRow[]; underperformers: RotationRow[]; promotion_candidates: RotationRow[];
+}
 
-type ViewKey = "command" | "am-radar" | "outlet-matrix" | "dormant-intel" | "kpi-baseline";
+type ViewKey = "command" | "am-radar" | "outlet-matrix" | "dormant-intel" | "rotation" | "kpi-baseline";
 const TABS: { key: ViewKey; label: string }[] = [
   { key: "command", label: "Command" },
   { key: "am-radar", label: "AM Radar" },
   { key: "outlet-matrix", label: "Outlet Matrix" },
   { key: "dormant-intel", label: "Dormant Intel" },
+  { key: "rotation", label: "Rotation" },
   { key: "kpi-baseline", label: "KPI Baseline" },
 ];
 
@@ -173,6 +186,7 @@ export function ExecutiveDashboard({ initial, initialView }: { initial: CommandD
           {tab === "am-radar" && <AmRadarView d={cur as AmRadarData | undefined} />}
           {tab === "outlet-matrix" && <OutletView d={cur as OutletData | undefined} />}
           {tab === "dormant-intel" && <DormantView d={cur as DormantIntelData | undefined} />}
+          {tab === "rotation" && <RotationView d={cur as RotationData | undefined} />}
           {tab === "kpi-baseline" && <KpiView d={cur as KpiData | undefined} />}
         </>
       )}
@@ -436,6 +450,120 @@ function DormantView({ d }: { d: DormantIntelData | undefined }) {
         render={(c) => <div key={c.id}>{row(
           <><p className="truncate text-sm font-medium">{c.vendor}{c.produk ? ` · ${c.produk}` : ""}</p><p className="truncate text-xs text-muted-foreground">{c.customer_name ?? "—"}{c.konteks ? ` — ${c.konteks}` : ""}</p></>,
           <span className="text-xs text-muted-foreground">{c.tanggal}</span>)}</div>} />
+    </div>
+  );
+}
+
+// ── View 6: ROTATION (F66 NPK — HoD readiness & promosi) ───────────
+const READINESS_LABEL: Record<Readiness, string> = {
+  "ready-to-scale": "Ready to Scale", stable: "Stable", "accelerated-dev": "Accelerated Dev",
+  pip: "PIP", "belum-dinilai": "Belum Dinilai",
+};
+const READINESS_CLR: Record<Readiness, string> = {
+  "ready-to-scale": "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
+  stable: "bg-sky-500/15 text-sky-600 dark:text-sky-400",
+  "accelerated-dev": "bg-amber-500/15 text-amber-600 dark:text-amber-400",
+  pip: "bg-red-500/15 text-red-600 dark:text-red-400",
+  "belum-dinilai": "bg-muted text-muted-foreground",
+};
+function RotationView({ d }: { d: RotationData | undefined }) {
+  if (!d) return null;
+  if (!d.accessible) {
+    return (
+      <Card><CardContent className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
+        <Info className="size-4" /> Data NPK bersifat sensitif (HR) — akun ini tidak berwenang melihat skor NPK seluruh HoD.
+      </CardContent></Card>
+    );
+  }
+  const perStr = (p: { year: number; period: string }) => `${p.period} ${p.year}`;
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge variant="outline">{d.summary.total} HoD · {perStr(d.period)}</Badge>
+        <Badge className={READINESS_CLR["ready-to-scale"]}>{d.summary.ready} Ready to Scale</Badge>
+        <Badge className={READINESS_CLR["stable"]}>{d.summary.stable} Stable</Badge>
+        <Badge className={READINESS_CLR["accelerated-dev"]}>{d.summary.accel} Accelerated Dev</Badge>
+        <Badge className={READINESS_CLR["pip"]}>{d.summary.pip} PIP</Badge>
+        {d.summary.belum > 0 ? <Badge variant="secondary">{d.summary.belum} Belum Dinilai</Badge> : null}
+      </div>
+      {!d.computed ? (
+        <Card><CardContent className="flex items-center gap-2 py-3 text-sm text-muted-foreground">
+          <Info className="size-4" /> NPK {perStr(d.period)} belum di-compute — jalankan compute NPK dulu (menu NPK Direktur).
+        </CardContent></Card>
+      ) : null}
+
+      <div className="grid gap-4 lg:grid-cols-3">
+        <Card>
+          <CardHeader className="pb-2"><CardTitle className="flex items-center gap-2 text-base">
+            <ArrowUpCircle className="size-4 text-emerald-500" /> Kandidat Promosi
+            <Badge variant="secondary" className="ml-auto">{d.promotion_candidates.length}</Badge></CardTitle></CardHeader>
+          <CardContent className="flex flex-col gap-1.5">
+            <p className="text-xs text-muted-foreground">NPK ≥75 dua semester berturut (SK Ps. 2.2)</p>
+            {d.promotion_candidates.length === 0 ? <p className="text-sm text-muted-foreground">Belum ada.</p>
+              : d.promotion_candidates.map((r) => (
+                <div key={r.hod_key} className="flex items-center justify-between gap-2 rounded-md border p-2">
+                  <div><p className="text-sm font-medium">{r.hod_name}</p><p className="text-xs text-muted-foreground">{r.role}</p></div>
+                  <span className="text-sm font-semibold text-emerald-600 dark:text-emerald-400">{r.npk} <span className="text-xs text-muted-foreground">(prev {r.npk_prev})</span></span>
+                </div>))}
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2"><CardTitle className="flex items-center gap-2 text-base">
+            <Rocket className="size-4 text-emerald-500" /> Top Performer
+            <Badge variant="secondary" className="ml-auto">{d.top_performers.length}</Badge></CardTitle></CardHeader>
+          <CardContent className="flex flex-col gap-1.5">
+            <p className="text-xs text-muted-foreground">NPK ≥90 (Sangat Baik)</p>
+            {d.top_performers.length === 0 ? <p className="text-sm text-muted-foreground">Belum ada.</p>
+              : d.top_performers.map((r) => (
+                <div key={r.hod_key} className="flex items-center justify-between gap-2 rounded-md border p-2">
+                  <p className="text-sm font-medium">{r.hod_name}</p>
+                  <span className="text-sm font-semibold">{r.npk}</span>
+                </div>))}
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2"><CardTitle className="flex items-center gap-2 text-base">
+            <AlertTriangle className="size-4 text-destructive" /> Underperformer
+            <Badge variant="secondary" className="ml-auto">{d.underperformers.length}</Badge></CardTitle></CardHeader>
+          <CardContent className="flex flex-col gap-1.5">
+            <p className="text-xs text-muted-foreground">NPK &lt;60 — perlu intervensi</p>
+            {d.underperformers.length === 0 ? <p className="text-sm text-muted-foreground">Belum ada.</p>
+              : d.underperformers.map((r) => (
+                <div key={r.hod_key} className="flex items-center justify-between gap-2 rounded-md border p-2">
+                  <p className="text-sm font-medium">{r.hod_name}</p>
+                  <span className="text-sm font-semibold text-destructive">{r.npk}</span>
+                </div>))}
+          </CardContent>
+        </Card>
+      </div>
+
+      <Card>
+        <CardHeader className="pb-2"><CardTitle className="flex items-center gap-2 text-base">
+          <UserCog className="size-4" /> HoD Readiness</CardTitle></CardHeader>
+        <CardContent className="overflow-x-auto p-0">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>HoD</TableHead><TableHead>Role</TableHead>
+                <TableHead className="text-right">NPK</TableHead><TableHead className="text-right">{perStr(d.prev)}</TableHead>
+                <TableHead>Predikat</TableHead><TableHead>Readiness</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {d.rows.map((r) => (
+                <TableRow key={r.hod_key}>
+                  <TableCell className="font-medium">{r.hod_name}{r.promotion_candidate ? <ArrowUpCircle className="ml-1.5 inline size-3.5 text-emerald-500" /> : null}</TableCell>
+                  <TableCell className="text-muted-foreground">{r.role}</TableCell>
+                  <TableCell className="text-right tabular-nums font-medium">{r.available_count > 0 ? r.npk : "—"}</TableCell>
+                  <TableCell className="text-right tabular-nums text-muted-foreground">{r.npk_prev ?? "—"}</TableCell>
+                  <TableCell className="capitalize text-muted-foreground">{r.available_count > 0 ? r.predikat.replace(/_/g, " ") : "—"}</TableCell>
+                  <TableCell><Badge className={READINESS_CLR[r.readiness]}>{READINESS_LABEL[r.readiness]}</Badge></TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
     </div>
   );
 }
