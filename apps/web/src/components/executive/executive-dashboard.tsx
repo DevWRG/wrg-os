@@ -1,10 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
+import { Area, AreaChart, ResponsiveContainer, Tooltip } from "recharts";
 import {
   Activity, AlertTriangle, TrendingUp, TrendingDown, Wallet, MoonStar,
   Target, Building2, Sparkles, RefreshCw, Swords, Rocket, ArrowUpCircle, UserCog, Info,
-  Lightbulb, Clock, User, LayoutDashboard, Radar, Users, ListChecks, type LucideIcon,
+  Lightbulb, Clock, User, LayoutDashboard, Radar, Users, ListChecks, ArrowUpRight, Download,
+  Lock, type LucideIcon,
 } from "lucide-react";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -29,6 +32,7 @@ export interface CommandData {
   red_flags: { hod: string; metric: string; actual: number | null; target: number | null; unit: string; pct: number | null }[];
   red_flags_count: number;
   opportunities: { customer: string | null; value: number | null; am_id: string | null; stage: string }[];
+  trend?: { date: string; revenue: number }[];
 }
 interface AmRow {
   am_id: string | null; nama: string | null; cabang: string | null; region: string;
@@ -149,15 +153,15 @@ function InlineMeter({ pct, status, label, width = "w-[150px]" }: { pct: number 
     </div>
   );
 }
-function StatTile({ label, value, icon: Icon, sub, subTone, children }: {
+function StatTile({ label, value, icon: Icon, sub, subTone, children, href }: {
   label: string; value: string; icon: LucideIcon; sub?: string;
-  subTone?: "up" | "down" | "muted"; children?: React.ReactNode;
+  subTone?: "up" | "down" | "muted"; children?: React.ReactNode; href?: string;
 }) {
-  return (
-    <Card className="gap-0 p-3.5">
+  const body = (
+    <Card className={cn("gap-0 p-3.5", href && "transition-colors hover:border-primary/40 hover:bg-muted/30")}>
       <div className="flex items-center justify-between text-muted-foreground">
         <span className="text-xs font-medium">{label}</span>
-        <Icon className="size-4" />
+        {href ? <ArrowUpRight className="size-4 opacity-60 group-hover/tile:text-primary group-hover/tile:opacity-100" /> : <Icon className="size-4" />}
       </div>
       <div className="mt-1.5 text-[23px] font-bold leading-none tracking-tight tabular-nums">{value}</div>
       {children}
@@ -166,14 +170,118 @@ function StatTile({ label, value, icon: Icon, sub, subTone, children }: {
       ) : null}
     </Card>
   );
+  return href ? <Link href={href} className="group/tile block">{body}</Link> : body;
 }
 function SectionLabel({ children }: { children: React.ReactNode }) {
   return <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{children}</div>;
 }
+// Drill-down ke halaman sumber (AC-8) — dipasang di header kartu.
+function DrillLink({ href, children }: { href: string; children?: React.ReactNode }) {
+  return (
+    <Link href={href} className="ml-auto inline-flex items-center gap-1 text-[11.5px] font-medium text-muted-foreground transition-colors hover:text-primary">
+      {children ?? "Detail"} <ArrowUpRight className="size-3.5" />
+    </Link>
+  );
+}
+// Sparkline tren revenue harian (recharts area, currentColor → theme-aware).
+function Sparkline({ data }: { data: { date: string; revenue: number }[] }) {
+  if (!data?.length) return null;
+  return (
+    <div className="text-primary">
+      <ResponsiveContainer width="100%" height={46}>
+        <AreaChart data={data} margin={{ top: 4, right: 2, bottom: 0, left: 2 }}>
+          <defs>
+            <linearGradient id="execSpark" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="currentColor" stopOpacity={0.22} />
+              <stop offset="100%" stopColor="currentColor" stopOpacity={0} />
+            </linearGradient>
+          </defs>
+          <Tooltip cursor={{ stroke: "currentColor", strokeOpacity: 0.25 }}
+            content={({ active, payload }) => active && payload?.length ? (
+              <div className="rounded-md border bg-popover px-2 py-1 text-[11px] text-popover-foreground shadow">
+                <div className="text-muted-foreground">{String(payload[0].payload.date)}</div>
+                <div className="font-semibold tabular-nums">{rpc(Number(payload[0].value))}</div>
+              </div>
+            ) : null} />
+          <Area type="monotone" dataKey="revenue" stroke="currentColor" strokeWidth={2} fill="url(#execSpark)" dot={false} activeDot={{ r: 3 }} />
+        </AreaChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+// ── Export CSV (BOM UTF-8 + sep=, → Excel lokal mulus, sesuai gotcha dashboard) ──
+function downloadCsv(name: string, headers: string[], rows: (string | number | null)[][]) {
+  const esc = (v: string | number | null) => {
+    const s = v == null ? "" : String(v);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const body = [headers, ...rows].map((r) => r.map(esc).join(",")).join("\n");
+  const blob = new Blob(["﻿" + "sep=,\n" + body], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = `${name}.csv`; a.click();
+  URL.revokeObjectURL(url);
+}
+// Bangun CSV (angka mentah) dari data view aktif. null → tak ada yang di-export.
+function viewCsv(tab: ViewKey, data: unknown): { name: string; headers: string[]; rows: (string | number | null)[][] } | null {
+  if (!data) return null;
+  if (tab === "command") {
+    const d = data as CommandData;
+    return { name: "executive_command", headers: ["Metrik", "Nilai", "Target", "Achievement %"], rows: [
+      ["Revenue MTD", d.revenue_mtd, d.target_mtd, d.achievement_mtd_pct],
+      ["Revenue YTD", d.revenue_ytd, d.target_ytd, d.achievement_ytd_pct],
+      ["Growth MoM %", d.delta_mom_pct, null, null],
+      ["AR > 90 hari", d.ar_over_90, d.ar_total, null],
+      ["Customer Dormant", d.dormant_count, null, null],
+      ["Nilai Dormant at-risk", d.dormant_value, null, null],
+      ["Red Flags", d.red_flags_count, null, null],
+    ] };
+  }
+  if (tab === "am-radar") {
+    const d = data as AmRadarData;
+    return { name: "executive_am-radar", headers: ["Rank", "AM", "Cabang", "Region", "Revenue", "Target", "Achievement %", "Status"],
+      rows: d.rows.map((r) => [r.rank, r.nama, r.cabang, r.region, r.total, r.target, r.achievement_pct, ST[lightToStatus(r.light)].label]) };
+  }
+  if (tab === "outlet-matrix") {
+    const d = data as OutletData;
+    return { name: "executive_outlet-top-customers", headers: ["#", "Customer", "Cabang", "Revenue", "Share %", "Faktur"],
+      rows: d.top_customers.map((c, i) => [i + 1, c.name, c.cabang, c.total, c.share_pct, c.invoices]) };
+  }
+  if (tab === "growth-levers") {
+    const d = data as LeversData;
+    return { name: "executive_growth-levers", headers: ["#", "Lever", "Impact IDR", "Owner", "SLA hari", "Rationale"],
+      rows: d.levers.map((l, i) => [i + 1, l.title, l.impact_idr, l.owner, l.sla_days, l.rationale ?? ""]) };
+  }
+  if (tab === "dormant-intel") {
+    const d = data as DormantIntelData;
+    const rows: (string | number | null)[][] = [];
+    d.new_customers.forEach((c) => rows.push(["Customer Baru", c.name, c.first_date, c.total]));
+    d.reactivated.forEach((c) => rows.push(["Reaktivasi", c.name, c.reactivated_date, `senyap ${c.gap_days} hari`]));
+    d.silent.forEach((c) => rows.push(["Suddenly Silent", c.name, c.last_date, `${c.days_since} hari`]));
+    d.competitor_mentions.forEach((c) => rows.push(["Competitor", `${c.vendor}${c.produk ? " · " + c.produk : ""}`, c.tanggal, c.customer_name]));
+    return rows.length ? { name: "executive_dormant-intel", headers: ["Kategori", "Nama", "Tanggal", "Info"], rows } : null;
+  }
+  if (tab === "rotation") {
+    const d = data as RotationData;
+    if (!d.accessible) return null;
+    return { name: "executive_rotation-npk", headers: ["HoD", "Role", "NPK", "NPK prev", "Predikat", "Readiness", "Kandidat Promosi"],
+      rows: d.rows.map((r) => [r.hod_name, r.role, r.available_count > 0 ? r.npk : null, r.npk_prev, r.available_count > 0 ? r.predikat.replace(/_/g, " ") : null, readinessLabel[r.readiness], r.promotion_candidate ? "ya" : ""]) };
+  }
+  if (tab === "kpi-baseline") {
+    const d = data as KpiData;
+    return { name: "executive_kpi-baseline", headers: ["KPI", "Formula", "Target", "Aktual", "Status", "Trend %"],
+      rows: d.kpis.map((k) => [k.name, k.formula, k.target, k.actual, ST[lightToStatus(k.status)].label, k.trend]) };
+  }
+  return null;
+}
+
+// HoD (AC-5) hanya lihat subset: Command (read-only) + AM Radar tim sendiri.
+const HOD_TABS: ViewKey[] = ["command", "am-radar"];
 
 // ── Komponen utama ─────────────────────────────────────────────────
-export function ExecutiveDashboard({ initial, initialView }: { initial: CommandData | null; initialView?: string }) {
-  const startTab = (TABS.find((t) => t.key === initialView)?.key ?? "command") as ViewKey;
+export function ExecutiveDashboard({ initial, initialView, access = "full" }: { initial: CommandData | null; initialView?: string; access?: "full" | "hod" }) {
+  const tabs = access === "hod" ? TABS.filter((t) => HOD_TABS.includes(t.key)) : TABS;
+  const startTab = (tabs.find((t) => t.key === initialView)?.key ?? tabs[0].key) as ViewKey;
   const [tab, setTab] = useState<ViewKey>(startTab);
   const [cache, setCache] = useState<Record<string, unknown>>(initial ? { command: initial } : {});
   const [loading, setLoading] = useState(false);
@@ -200,14 +308,20 @@ export function ExecutiveDashboard({ initial, initialView }: { initial: CommandD
   }, [tab, load]);
 
   const cur = cache[tab];
-  const activeTab = TABS.find((t) => t.key === tab)!;
+  const activeTab = tabs.find((t) => t.key === tab) ?? tabs[0];
+  const csv = cur ? viewCsv(tab, cur) : null;
 
   return (
     <div className="flex flex-col gap-4">
-      {/* Toolbar: tab bar ber-ikon (sticky, scroll di mobil) + Refresh */}
+      {access === "hod" ? (
+        <div className={cn("flex items-center gap-2 rounded-lg px-3 py-2 text-[12.5px]", ST.info.chip)}>
+          <Lock className="size-4" /> Tampilan HoD — akses terbatas (Command &amp; AM Radar tim Anda, read-only). Menu lengkap untuk Direktur.
+        </div>
+      ) : null}
+      {/* Toolbar: tab bar ber-ikon (sticky, scroll di mobil) + Export + Refresh */}
       <div className="sticky top-0 z-10 -mx-4 flex items-center gap-2 border-b bg-background/85 px-4 py-1 backdrop-blur md:-mx-6 md:px-6">
         <nav className="flex flex-1 gap-0.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-          {TABS.map((t) => {
+          {tabs.map((t) => {
             const active = tab === t.key;
             return (
               <button key={t.key} onClick={() => setTab(t.key)}
@@ -219,8 +333,12 @@ export function ExecutiveDashboard({ initial, initialView }: { initial: CommandD
             );
           })}
         </nav>
+        <Button size="sm" variant="ghost" className="flex-none" disabled={!csv} title="Export CSV"
+          onClick={() => { if (csv) downloadCsv(csv.name, csv.headers, csv.rows); }}>
+          <Download className="size-4" /> <span className="hidden sm:inline">Export</span>
+        </Button>
         <Button size="sm" variant="outline" className="flex-none" onClick={() => void load(tab, true)} disabled={loading}>
-          <RefreshCw className={cn("size-4", loading && "animate-spin")} /> Refresh
+          <RefreshCw className={cn("size-4", loading && "animate-spin")} /> <span className="hidden sm:inline">Refresh</span>
         </Button>
       </div>
 
@@ -283,6 +401,12 @@ function CommandView({ d }: { d: CommandData | undefined }) {
             <div className="mt-1.5 flex justify-between text-[10.5px] tabular-nums text-muted-foreground"><span>0</span><span>75%</span><span>90%</span><span>target</span></div>
           </div>
           <div className="flex flex-col justify-center gap-2.5 border-t bg-muted/30 p-5 md:border-l md:border-t-0">
+            {d.trend && d.trend.length > 1 ? (
+              <div>
+                <div className="text-[10.5px] font-medium uppercase tracking-wide text-muted-foreground">Tren revenue harian · 30 hari</div>
+                <Sparkline data={d.trend} />
+              </div>
+            ) : null}
             <div className="flex items-center justify-between">
               <span className="text-xs text-muted-foreground">Growth MoM</span>
               <span className={cn("inline-flex items-center gap-1 text-sm font-semibold tabular-nums", momTone === "up" && ST.good.text, momTone === "down" && ST.crit.text)}>
@@ -302,14 +426,14 @@ function CommandView({ d }: { d: CommandData | undefined }) {
 
       {/* KPI risiko */}
       <div className="grid gap-3 sm:grid-cols-3">
-        <StatTile label="AR > 90 hari" value={rpc(d.ar_over_90)} icon={Wallet}
+        <StatTile label="AR > 90 hari" value={rpc(d.ar_over_90)} icon={Wallet} href="/ar"
           sub={d.ar_total != null ? `${d.ar_total > 0 ? Math.round((d.ar_over_90 ?? 0) / d.ar_total * 100) : 0}% dari total AR ${rpc(d.ar_total)}` : undefined}
           subTone={d.ar_over_90 && d.ar_over_90 > 0 ? "down" : "muted"}>
           {d.ar_total && d.ar_over_90 != null ? <Meter className="mt-2.5" markers={[]} pct={(d.ar_over_90 / d.ar_total) * 100} status="crit" /> : null}
         </StatTile>
-        <StatTile label="Customer Dormant" value={d.dormant_count != null ? numFmt.format(d.dormant_count) : "—"} icon={MoonStar}
+        <StatTile label="Customer Dormant" value={d.dormant_count != null ? numFmt.format(d.dormant_count) : "—"} icon={MoonStar} href="/customers"
           sub={d.dormant_value != null ? `nilai at-risk ${rpc(d.dormant_value)} · >60 hari` : undefined} />
-        <StatTile label="Red Flags · WatchPoint" value={numFmt.format(d.red_flags_count)} icon={AlertTriangle}
+        <StatTile label="Red Flags · WatchPoint" value={numFmt.format(d.red_flags_count)} icon={AlertTriangle} href="/watchpoint"
           sub="metric HoD status merah" subTone={d.red_flags_count > 0 ? "down" : "up"} />
       </div>
 
@@ -320,6 +444,7 @@ function CommandView({ d }: { d: CommandData | undefined }) {
             <AlertTriangle className={cn("size-4", ST.crit.text)} />
             <CardTitle className="text-base">Top Risk</CardTitle>
             {d.red_flags.length > 0 ? <StatusChip status="crit">{d.red_flags.length} kritis</StatusChip> : null}
+            <DrillLink href="/watchpoint">WatchPoint</DrillLink>
           </CardHeader>
           <CardContent className="flex flex-col gap-2">
             {d.red_flags.length === 0 ? (
@@ -334,6 +459,7 @@ function CommandView({ d }: { d: CommandData | undefined }) {
           <CardHeader className="flex items-center gap-2 space-y-0 pb-3">
             <Rocket className={cn("size-4", ST.good.text)} />
             <CardTitle className="text-base">Opportunities · Deal Negosiasi</CardTitle>
+            <DrillLink href="/pipeline">Pipeline</DrillLink>
           </CardHeader>
           <CardContent className="flex flex-col gap-2">
             {d.opportunities.length === 0 ? (
@@ -382,12 +508,13 @@ function AmRadarView({ d }: { d: AmRadarData | undefined }) {
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <StatusChip status="na">{d.summary.total} AM</StatusChip>
         <StatusChip status="good">{d.summary.green} On Track</StatusChip>
         <StatusChip status="warn">{d.summary.yellow} Perhatian</StatusChip>
         <StatusChip status="crit">{d.summary.red} Kritis</StatusChip>
         {d.summary.na > 0 ? <StatusChip status="na">{d.summary.na} N/A</StatusChip> : null}
+        <DrillLink href="/sales-analytics?view=per-am">Detail per-AM (F127)</DrillLink>
       </div>
       <Card>
         <CardContent className="overflow-x-auto p-0">
@@ -464,7 +591,7 @@ function OutletView({ d }: { d: OutletData | undefined }) {
       </Card>
 
       <Card>
-        <CardHeader className="pb-2"><CardTitle className="text-base">Top 20 Customer by Revenue</CardTitle></CardHeader>
+        <CardHeader className="flex items-center gap-2 space-y-0 pb-2"><CardTitle className="text-base">Top 20 Customer by Revenue</CardTitle><DrillLink href="/customers">Customers</DrillLink></CardHeader>
         <CardContent className="overflow-x-auto p-0">
           <Table>
             <TableHeader><TableRow>
@@ -629,7 +756,7 @@ function RotationView({ d }: { d: RotationData | undefined }) {
       </div>
 
       <Card>
-        <CardHeader className="flex items-center gap-2 space-y-0 pb-2"><UserCog className="size-4" /><CardTitle className="text-base">HoD Readiness</CardTitle></CardHeader>
+        <CardHeader className="flex items-center gap-2 space-y-0 pb-2"><UserCog className="size-4" /><CardTitle className="text-base">HoD Readiness</CardTitle><DrillLink href="/npk">NPK Direktur</DrillLink></CardHeader>
         <CardContent className="overflow-x-auto p-0">
           <Table>
             <TableHeader><TableRow>
