@@ -3,7 +3,7 @@ import { ArrowDown, ArrowRight, ArrowUp, ClipboardList, Info } from "lucide-reac
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { fmt1, periodLabel, type NpkMatrixRow } from "./npk-format";
-import { TOTAL_ASPEK, WIRED_ASPEK, type NpkSummary } from "./npk-status";
+import { TOTAL_ASPEK, WIRED_ASPEK, WIRED_BOBOT, type NpkSummary } from "./npk-status";
 
 function Delta({ v }: { v: number | null }) {
   if (v == null) return <span className="text-xs text-muted-foreground">→ –</span>;
@@ -66,9 +66,14 @@ export function NpkBriefing({
         </div>
         <div className="space-y-3 px-5 py-4">
           <p className="text-sm leading-relaxed text-white/90">
-            <span className="font-semibold text-white">HoD avg NPK = {s.avgNpk == null ? "–" : `${fmt1(s.avgNpk)}/100`}</span>{" "}
-            ({s.measured} dari {s.total} HoD terukur). {s.promote} kandidat promosi ·{" "}
-            <span className="font-semibold">{s.watchPip} perlu perhatian/tindak lanjut</span> · {s.noData} belum ada data.
+            <span className="font-semibold text-white">HoD avg NPK = {s.avgNpk == null ? "–" : `${fmt1(s.avgNpk)}/${s.provisional ? WIRED_BOBOT : 100}`}</span>{" "}
+            ({s.measured} dari {s.total} HoD terukur).{" "}
+            {s.provisional ? (
+              <><span className="font-semibold">{s.provisionalCount} berstatus sementara</span> (predikat & tindak lanjut ditahan sampai 7/7 aspek)</>
+            ) : (
+              <>{s.promote} kandidat promosi · <span className="font-semibold">{s.watchPip} perlu perhatian/tindak lanjut</span></>
+            )}{" "}
+            · {s.noData} belum ada data.
             {s.top && s.bottom && s.measured > 1 && (
               <> Tertinggi <span className="font-semibold">{nameOf(s.top)}</span> ({fmt1(s.top.npk)}), terendah <span className="font-semibold">{nameOf(s.bottom)}</span> ({fmt1(s.bottom.npk)}).</>
             )}
@@ -76,14 +81,14 @@ export function NpkBriefing({
           {s.provisional && (
             <p className="flex items-start gap-1.5 rounded-lg bg-white/10 px-3 py-2 text-xs text-white/85">
               <Info className="mt-0.5 size-3.5 shrink-0" />
-              Skor SEMENTARA — baru <span className="font-semibold">{WIRED_ASPEK}/{TOTAL_ASPEK} aspek</span> (Revenue, AR) yang punya feed data live. Aspek lain (Customer/KSO/GP/CRM/Coaching) menyusul; predikat & status final setelah data lengkap.
+              Skor SEMENTARA — baru <span className="font-semibold">{WIRED_ASPEK}/{TOTAL_ASPEK} aspek</span> (Revenue, AR) yang punya feed data live, jadi plafon skor saat ini <span className="font-semibold">{WIRED_BOBOT} dari 100</span> (Σ bobot aspek yang ada datanya). Angka rendah = data belum lengkap, BUKAN kinerja buruk — karena itu predikat, kandidat promosi & tindak lanjut ditahan sampai 7/7 aspek ter-feed.
             </p>
           )}
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
-            <Tile label="HoD Avg NPK" value={s.avgNpk == null ? "–" : fmt1(s.avgNpk)} delta={s.avgDelta} sub="vs semester lalu" />
+            <Tile label="HoD Avg NPK" value={s.avgNpk == null ? "–" : fmt1(s.avgNpk)} delta={s.avgDelta} sub={s.provisional ? `sementara · plafon ${WIRED_BOBOT}` : "vs semester lalu"} />
             <Tile label="Terukur" value={`${s.measured}/${s.total}`} sub="HoD punya data" />
-            <Tile label="Perhatian/PIP" value={String(s.watchPip)} sub="butuh tindak lanjut" />
-            <Tile label="Kandidat Promosi" value={String(s.promote)} sub="predikat sangat baik" />
+            <Tile label="Perhatian/PIP" value={s.provisional ? "–" : String(s.watchPip)} sub={s.provisional ? "ditahan (data parsial)" : "butuh tindak lanjut"} />
+            <Tile label="Kandidat Promosi" value={s.provisional ? "–" : String(s.promote)} sub={s.provisional ? "ditahan (data parsial)" : "predikat sangat baik"} />
             <Tile label="Coverage Aspek" value={`${s.maxCoverage}/${TOTAL_ASPEK}`} sub="aspek terukur" />
           </div>
         </div>
@@ -91,9 +96,9 @@ export function NpkBriefing({
 
       {/* Stat cards */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-        <StatCard label="HoD Avg NPK" value={s.avgNpk == null ? "–" : fmt1(s.avgNpk)} sub={`${s.measured} HoD terukur · /100`} accent="bg-teal-500" />
-        <StatCard label="Kandidat Promosi" value={String(s.promote)} sub="predikat ≥ sangat baik" accent="bg-emerald-500" />
-        <StatCard label="Perlu Perhatian" value={String(s.watchPip)} sub="watch + tindak lanjut" accent="bg-amber-500" />
+        <StatCard label="HoD Avg NPK" value={s.avgNpk == null ? "–" : fmt1(s.avgNpk)} sub={`${s.measured} HoD terukur · /${s.provisional ? WIRED_BOBOT : 100}`} accent="bg-teal-500" />
+        <StatCard label="Kandidat Promosi" value={s.provisional ? "–" : String(s.promote)} sub={s.provisional ? "ditahan sampai 7/7 aspek" : "predikat ≥ sangat baik"} accent="bg-emerald-500" />
+        <StatCard label="Perlu Perhatian" value={s.provisional ? "–" : String(s.watchPip)} sub={s.provisional ? "ditahan sampai 7/7 aspek" : "watch + tindak lanjut"} accent="bg-amber-500" />
         <StatCard label="Belum Ada Data" value={String(s.noData)} sub="HoD tanpa aspek terukur" accent="bg-muted-foreground/50" />
         <StatCard label="Coverage Aspek" value={`${s.maxCoverage}/${TOTAL_ASPEK}`} sub="Revenue + AR live" accent="bg-sky-500" />
       </div>
