@@ -6,7 +6,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { calcNPK, predikatOf, DEFAULT_BOBOT, type AspectInput } from "./npk-calc.js";
+import { calcNPK, predikatOf, ageCutoff, elapsedFraction, DEFAULT_BOBOT, type AspectInput } from "./npk-calc.js";
 
 const base: AspectInput = {
   revenue_actual: 0, revenue_target: 0,
@@ -78,6 +78,46 @@ test("availability: aspek tak-tersedia → kontribusi 0 & tak dihitung available
   assert.equal(by.coaching.available, false);
   assert.equal(r.available_count, 5);
   assert.equal(r.npk, 90 - 10.5 - 8.5); // 71.0
+});
+
+// ── Pro-rata periode berjalan (regresi: semester berjalan selalu terlihat gagal) ──
+
+test("elapsedFraction: semester berjalan → fraksi hari, semester lewat → 1", () => {
+  const S2 = { from: "2026-07-01", to: "2026-12-31" }; // 184 hari
+  // 26 Jul = hari ke-26 dari 184
+  assert.equal(Math.round(elapsedFraction(S2.from, S2.to, new Date("2026-07-26T12:00:00Z")) * 1000) / 1000, 0.141);
+  assert.equal(elapsedFraction(S2.from, S2.to, new Date("2026-12-31T23:00:00Z")), 1);
+  // semester yang sudah lewat / belum mulai → 1 dan 0 (di-clamp)
+  assert.equal(elapsedFraction("2026-01-01", "2026-06-30", new Date("2026-07-26T00:00:00Z")), 1);
+  assert.equal(elapsedFraction(S2.from, S2.to, new Date("2026-06-01T00:00:00Z")), 0);
+});
+
+test("pro-rata: HoD tepat sesuai pace → raw ~100 (bukan ~10)", () => {
+  const targetSemester = 1000;
+  const elapsed = elapsedFraction("2026-07-01", "2026-12-31", new Date("2026-07-26T00:00:00Z"));
+  const onPaceActual = targetSemester * elapsed; // realisasi persis sesuai pace
+  const r = calcNPK({ ...base, revenue_actual: onPaceActual, revenue_target: targetSemester * elapsed });
+  const rev = r.aspects.find((a) => a.key === "revenue")!;
+  assert.equal(Math.round(rev.raw), 100);
+  assert.equal(rev.contribution, 25);
+  // tanpa pro-rata (target semester penuh) skor kolaps ke ~14 → inilah bug lamanya
+  const old = calcNPK({ ...base, revenue_actual: onPaceActual, revenue_target: targetSemester });
+  assert.ok(old.aspects.find((a) => a.key === "revenue")!.raw < 15);
+});
+
+test("ageCutoff: di-anchor ke hari ini, bukan akhir periode", () => {
+  // semester berjalan: 26 Jul − 45 hari = 11 Jun (BUKAN 16 Nov dari akhir semester)
+  assert.equal(ageCutoff("2026-12-31", new Date("2026-07-26T00:00:00Z"), 45), "2026-06-11");
+  // periode sudah lewat: anchor = akhir periode (perilaku lama tetap)
+  assert.equal(ageCutoff("2026-06-30", new Date("2026-07-26T00:00:00Z"), 45), "2026-05-16");
+});
+
+test("regresi: cutoff akhir-periode bikin skor AR selalu 0", () => {
+  // semua AR ter-flag >45h (kondisi lama) → ar raw 0; dgn cutoff benar sebagian saja
+  const semua = calcNPK({ ...base, ar_over_45d: 100, ar_total: 100 }).aspects.find((a) => a.key === "ar")!;
+  assert.equal(semua.raw, 0);
+  const sebagian = calcNPK({ ...base, ar_over_45d: 20, ar_total: 100 }).aspects.find((a) => a.key === "ar")!;
+  assert.equal(sebagian.raw, 80);
 });
 
 test("AC-3: threshold predikat 90/75/60/50", () => {

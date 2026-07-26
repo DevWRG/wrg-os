@@ -71,6 +71,32 @@ export interface NPKResult {
 
 const cap120 = (v: number): number => Math.min(120, Math.max(0, v));
 
+const DAY_MS = 86400000;
+const utcDay = (d: Date): number => Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+
+// Fraksi periode yang sudah berjalan pada `now` (0..1), granularitas hari.
+// Kenapa perlu: `revenue_target` semester dibandingkan dengan actual SAMPAI HARI INI.
+// Tanpa pro-rata, semester yang baru jalan 3 minggu selalu terlihat gagal (HoD tepat
+// sesuai pace pun cuma dapat raw ~10). Pola sama dipakai targetPacing (repo/sales.ts).
+// Periode yang sudah lewat → 1, jadi skor historis tidak berubah.
+export function elapsedFraction(from: string, to: string, now: Date): number {
+  const start = Date.parse(`${from}T00:00:00Z`);
+  const end = Date.parse(`${to}T00:00:00Z`);
+  if (!(end > start)) return 1;
+  const total = (end - start) / DAY_MS + 1;             // inklusif hari terakhir
+  const done = (utcDay(now) - start) / DAY_MS + 1;      // inklusif hari ini
+  return Math.min(1, Math.max(0, done / total));
+}
+
+// Tanggal cutoff "umur > `days` hari", di-anchor ke HARI INI (dibatasi akhir periode).
+// Kenapa perlu: anchor ke akhir periode bikin cutoff jatuh di MASA DEPAN untuk semester
+// berjalan (S2 → 2026-11-16), sehingga semua invoice terhitung lewat jatuh tempo dan
+// skor AR selalu 0. Untuk periode yang sudah lewat, anchor = akhir periode (tak berubah).
+export function ageCutoff(to: string, now: Date, days = 45): string {
+  const anchor = Math.min(utcDay(now), Date.parse(`${to}T00:00:00Z`));
+  return new Date(anchor - days * DAY_MS).toISOString().slice(0, 10);
+}
+
 export function predikatOf(score: number): NPKPredikat {
   if (score >= 90) return "sangat_baik";
   if (score >= 75) return "baik";

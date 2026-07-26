@@ -12,7 +12,7 @@
 
 import { db } from "../db.js";
 import { HODS } from "../hod-resolver.js";
-import { calcNPK, ASPECT_ORDER, ASPECT_LABEL, DEFAULT_BOBOT, type AspectInput, type AspectKey, type NPKResult } from "../lib/npk-calc.js";
+import { calcNPK, ageCutoff, elapsedFraction, ASPECT_ORDER, ASPECT_LABEL, DEFAULT_BOBOT, type AspectInput, type AspectKey, type NPKResult } from "../lib/npk-calc.js";
 import type { DataScope } from "./access-scope.js";
 
 export type Period = "S1" | "S2";
@@ -27,13 +27,6 @@ export function semesterRange(year: number, period: Period): { from: string; to:
 // Semester berjalan (utk default query). Bulan 1-6 → S1, else S2.
 export function currentPeriod(now = new Date()): { year: number; period: Period } {
   return { year: now.getUTCFullYear(), period: now.getUTCMonth() < 6 ? "S1" : "S2" };
-}
-
-// Kurangi n hari dari tanggal ISO (utk cutoff AR>45).
-function minusDays(iso: string, n: number): string {
-  const d = new Date(`${iso}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() - n);
-  return d.toISOString().slice(0, 10);
 }
 
 // Cabang yang jadi tanggung jawab satu HoD (dari hod_territory). Kosong utk HoD non-cabang.
@@ -55,8 +48,10 @@ async function gatherAspectInput(
   cabang: string[],
   year: number,
   period: Period,
+  now: Date,
 ): Promise<GatherResult> {
   const { from, to } = semesterRange(year, period);
+  const elapsed = elapsedFraction(from, to, now);
   const input: AspectInput = {
     revenue_actual: 0, revenue_target: 0,
     customer_active_count: 0, customer_target: 0,
@@ -96,14 +91,18 @@ async function gatherAspectInput(
   input.revenue_actual = Number(rev?.revenue ?? 0);
   input.customer_active_count = Number(rev?.customers ?? 0);
 
-  // Revenue target: target cabang tahunan (Σ cabang tim) ÷2 utk semester.
+  // Revenue target: target cabang tahunan (Σ cabang tim) ÷2 utk semester, lalu
+  // DI-PRO-RATA ke porsi semester yang sudah berjalan — actual di atas juga baru
+  // terkumpul sampai hari ini. Semester lewat → elapsed=1 (target semester penuh).
   const [tgt] = await sql`
     SELECT COALESCE(sum(target),0)::float8 AS target
     FROM sales_target_cabang WHERE year = ${year} AND cabang = ANY(${cabang}::text[])`;
-  input.revenue_target = Number(tgt?.target ?? 0) / 2;
+  const targetSemester = Number(tgt?.target ?? 0) / 2;
+  input.revenue_target = targetSemester * elapsed;
 
-  // AR: total outstanding (status OPEN) + proxy >45hr pakai umur `tanggal` (tak ada due_date).
-  const cut45 = minusDays(to, 45);
+  // AR: total outstanding (status OPEN) + proxy >45hr pakai umur `tanggal` (tak ada
+  // due_date). Cutoff di-anchor ke hari ini, bukan akhir semester (lihat ageCutoff).
+  const cut45 = ageCutoff(to, now, 45);
   const [ar] = await sql`
     SELECT COALESCE(sum(ai.total),0)::float8 AS ar_total,
            COALESCE(sum(ai.total) FILTER (WHERE ai.tanggal < ${cut45}),0)::float8 AS ar_over45
@@ -129,27 +128,31 @@ async function gatherAspectInput(
     meta: {
       cabang,
       range: { from, to },
+      elapsed_pct: Math.round(elapsed * 1000) / 10,
       revenue_actual: input.revenue_actual,
       revenue_target_year: Number(tgt?.target ?? 0),
-      revenue_target_semester: input.revenue_target,
+      revenue_target_semester: targetSemester,        // target semester PENUH (audit SK)
+      revenue_target_prorata: input.revenue_target,   // yang dipakai men-skor
       customer_active_count: input.customer_active_count,
       customer_target_missing: true,
       ar_total: input.ar_total,
       ar_over_45d: input.ar_over_45d,
       ar_over45_proxy: true, // umur `tanggal`, bukan due_date
+      ar_cutoff: cut45,
       stubbed: stubbedNow,
     },
   };
 }
 
 // Compute batch NPK 8 HoD utk satu semester. Idempoten (upsert 058 + replace 059).
-export async function computeNpk(opts: { year: number; period: Period }): Promise<{ computed: number; year: number; period: Period }> {
+export async function computeNpk(opts: { year: number; period: Period; now?: Date }): Promise<{ computed: number; year: number; period: Period }> {
   const sql = db();
   const { year, period } = opts;
+  const now = opts.now ?? new Date();
   let computed = 0;
   for (const hod of HODS) {
     const cabang = await hodCabangSet(sql, hod.key);
-    const g = await gatherAspectInput(sql, hod.key, cabang, year, period);
+    const g = await gatherAspectInput(sql, hod.key, cabang, year, period, now);
     const res: NPKResult = calcNPK(g.input, DEFAULT_BOBOT, g.avail);
     await sql`
       INSERT INTO npk_score_semester (hod_key, year, period, npk, predikat, computed_from, computed_at)
