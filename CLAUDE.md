@@ -57,7 +57,8 @@ Mirror Accurate Online (read-only puller di `apps/api/src/repo/accurateSync.ts`,
 
 1. `feature/*` → PR → **dev**. Tunggu CI hijau (Lint·Typecheck·Build + services/ai import check), lalu merge.
 2. Promotion PR **dev → main**. User yang merge.
-3. `release.yml` auto-tag semver di main: `feat:` → minor, `fix:` → patch.
+3. `release.yml` auto-tag semver di main: `BREAKING CHANGE`/`<type>!:` → major; `feat:` → minor;
+   **selain itu → patch** — termasuk `docs:`/`chore:`/`style:`, jadi commit apa pun ke main bikin tag baru.
 4. Setelah user konfirm merge: cek CI, konfirm tag, lalu **deploy**.
 
 - Commit message diakhiri: `Co-Authored-By: Claude ...`. PR body diakhiri tag Claude Code.
