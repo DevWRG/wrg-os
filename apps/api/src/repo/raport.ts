@@ -120,6 +120,45 @@ const arScore = (outstanding: number, revenue: number): number | null => {
   return clamp((revenue / base) * 100);
 };
 
+// ── Fase 2: klasifikasi item (heuristik teks, TANPA AI) ──
+const ITEM_CATEGORIES: { key: string; label: string; kw: string[] }[] = [
+  { key: "atk", label: "ATK / Stok", kw: ["atk", "stok", "alat tulis", "stationery", "tinta", "kertas"] },
+  { key: "bank", label: "Perbankan / Materai", kw: ["bank", "mandiri", "bca", "jatim", "materai", "transfer", "setor", "rekening", "giro"] },
+  { key: "it", label: "IT / Servis / Telkom", kw: ["printer", "komputer", "laptop", "servis", "telkom", "jaringan", " lan", "warp", "internet", "wifi", "cctv", " it "] },
+  { key: "dana", label: "Dana Operasional", kw: ["dana", "operasional", "pengajuan", " acc", "reimburse", " kas", "ops "] },
+  { key: "adm", label: "Konsumsi / Umum / Adm", kw: ["konsumsi", "meeting", "ttd", "dokumen", "administrasi", " adm", "surat", "rapat", "ruang", "tamu"] },
+  { key: "kendaraan", label: "Kendaraan", kw: ["kendaraan", "mobil", "motor", "stnk", "bbm", "bensin", " km ", "pajak kendaraan"] },
+];
+function categorize(text: string): { key: string; label: string } {
+  const t = ` ${text.toLowerCase()} `;
+  for (const c of ITEM_CATEGORIES) if (c.kw.some((k) => t.includes(k))) return { key: c.key, label: c.label };
+  return { key: "lain", label: "Lainnya" };
+}
+type ItemKind = "ok" | "fail" | "external" | "unknown";
+function classifyStatus(status: string, result: string): { key: string; kind: ItemKind } {
+  const s = (status || "").toLowerCase();
+  const r = (result || "").toLowerCase();
+  const waiting = /nunggu|menunggu|tunggu|pending|belum ada balas|balasan|pihak lain|telkom|cabang|vendor|supplier/.test(r);
+  if (s === "matched") return { key: "berhasil", kind: "ok" };
+  if (/parsial|sebagian|terjadwal|jadwal|dijadwal/.test(r)) return { key: "parsial", kind: "ok" };
+  if (/\bacc\b|approval|disetujui|di-acc/.test(r)) return { key: "acc", kind: "ok" };
+  if (waiting) return { key: "menunggu", kind: "external" };
+  if (/belum|gagal|batal|tidak jadi|tertunda/.test(r) || s === "unmatched" || s === "ambiguous") return { key: "belum", kind: "fail" };
+  return { key: "lain", kind: "unknown" };
+}
+const shortWait = (result: string): string => {
+  const m = (result || "").toLowerCase().match(/n?unggu\s+([a-z]{2,}(?:\s+[a-z]{2,})?)/);
+  return m ? `nunggu ${m[1].trim()}` : "menunggu";
+};
+const STATUS_ORDER: { key: string; label: string; color: string }[] = [
+  { key: "berhasil", label: "Berhasil", color: "var(--chart-1)" },
+  { key: "belum", label: "Belum jalan", color: "var(--chart-3)" },
+  { key: "menunggu", label: "Menunggu (eksternal)", color: "var(--chart-2)" },
+  { key: "lain", label: "Tanpa status jelas", color: "var(--muted-foreground)" },
+  { key: "parsial", label: "Parsial / terjadwal", color: "var(--chart-4)" },
+  { key: "acc", label: "ACC / proses", color: "var(--chart-5)" },
+];
+
 // ── Batched maps (untuk list, hindari N+1) ──
 interface Maps {
   orang: Map<string, OrangRow>;
@@ -224,13 +263,15 @@ export interface RaportListRow {
   am_id: string; nama: string; panggilan: string | null; role: string; cabang: string | null; is_am: boolean;
   overall: number | null; rating: string;
   compliance: number | null; bsc: number | null; revenue: number; revenue_pct: number | null;
-  active_days: number; leave_days: number;
+  active_days: number; leave_days: number; has_spine: boolean;
 }
 
 export async function getRaportList(period?: string): Promise<{ period: string; period_label: string; from: string; to: string; rows: RaportListRow[] }> {
   const { key: p, label, from, to, months } = periodBounds(period);
   const sql = db();
   const roster = await sql`SELECT am_id, nama, panggilan, role, cabang FROM master_user WHERE aktif ORDER BY cabang NULLS LAST, nama`;
+  const spineRows = await sql`SELECT DISTINCT am_id FROM employee WHERE am_id IS NOT NULL`;
+  const spineByAm = new Set(spineRows.map((r) => String(r.am_id)));
   const M = await collectMaps(from, to, months);
 
   const rows: RaportListRow[] = roster.map((u) => {
@@ -271,6 +312,7 @@ export async function getRaportList(period?: string): Promise<{ period: string; 
       overall, rating: ratingOf(overall),
       compliance: complianceScore(c), bsc: bscS, revenue, revenue_pct: revScore,
       active_days: o?.active_days ?? 0, leave_days: leave?.days ?? 0,
+      has_spine: spineByAm.has(amId),
     };
   });
 
@@ -278,6 +320,38 @@ export async function getRaportList(period?: string): Promise<{ period: string; 
 }
 
 // ── DETAIL (1 karyawan) ──
+// Narasi AI tersimpan (Fase 3, tabel raport_narrative) — di-generate batch.
+export interface StoredNarrative {
+  verdict: string | null; headline: string | null;
+  pantas_puas: string[]; penahan: string[]; bsc: Record<string, string>;
+  akar_masalah: string; catatan_adil: string; ringkasan: string; predikat: string;
+  model: string | null; generated_at: string | null;
+}
+export async function getStoredNarrative(amId: string, period: string): Promise<StoredNarrative | null> {
+  const sql = db();
+  const [r] = await sql`
+    SELECT verdict, headline, narrative, model, created_at::text FROM raport_narrative
+    WHERE am_id = ${amId} AND period = ${period}
+  `;
+  if (!r) return null;
+  const n = (r.narrative ?? {}) as Record<string, unknown>;
+  const asArr = (v: unknown): string[] => (Array.isArray(v) ? v.map((x) => String(x)) : []);
+  const str = (v: unknown): string => (v == null ? "" : String(v));
+  return {
+    verdict: r.verdict ? String(r.verdict) : null,
+    headline: r.headline ? String(r.headline) : null,
+    pantas_puas: asArr(n.pantas_puas),
+    penahan: asArr(n.penahan),
+    bsc: n.bsc && typeof n.bsc === "object" ? (n.bsc as Record<string, string>) : {},
+    akar_masalah: str(n.akar_masalah),
+    catatan_adil: str(n.catatan_adil),
+    ringkasan: str(n.ringkasan),
+    predikat: str(n.predikat),
+    model: r.model ? String(r.model) : null,
+    generated_at: r.created_at ? String(r.created_at) : null,
+  };
+}
+
 export async function getRaportDetail(amId: string, period?: string): Promise<
   | { found: false }
   | {
@@ -286,18 +360,30 @@ export async function getRaportDetail(amId: string, period?: string): Promise<
       employee: { am_id: string; nama: string; panggilan: string | null; role: string; cabang: string | null; is_am: boolean; spine_id: string | null };
       score: { overall: number | null; rating: string; parts: ScorePart[] };
       plan_report: { plan_count: number; report_count: number; completion: number | null; active_days: number; late: number; unmatched: number; expected: number; on_time: number; late_days: number; miss: number; compliance_rate: number | null } | null;
-      bsc: { score: number | null; persp: Record<string, number>; kpi: { id: string; name: string; target: string | null; perspective: string | null; achievement_pct: number | null }[] } | null;
+      bsc: { score: number | null; persp: Record<string, number>; objectives: Record<string, string[]>; kpi: { id: string; name: string; target: string | null; perspective: string | null; achievement_pct: number | null }[] } | null;
       okr: { objective: string | null; key_results: string[] } | null;
       raci: { process: string; role_type: string; note: string | null }[];
+      pdca: { plan: string | null; do: string | null; check: string | null; act: string | null } | null;
+      daily: { date: string; total: number; success: number }[];
+      workload: { total: number; success: number; pending: number };
+      items: {
+        total: number;
+        categories: { key: string; label: string; count: number }[];
+        status: { key: string; label: string; color: string; count: number }[];
+        failures: { tanggal: string; label: string; status: string }[];
+        blockers: { tanggal: string; label: string; status: string }[];
+      };
       absensi: { active_days: number; expected: number; leave_days: number; leave: { start_date: string; end_date: string; jenis: string; keterangan: string | null }[] };
       coaching: { period: string | null; score: number | null; strengths: string[]; gaps: string[]; recommendations: string[] } | null;
       revenue: { total: number; invoices: number; target_year: number | null; target_month: number | null; pct: number | null } | null;
       ar: { outstanding: number; invoices: number } | null;
+      narrative: StoredNarrative | null;
       context_note: string;
     }
 > {
   const { key: p, label: periodLabel, from, to, months } = periodBounds(period);
   const sql = db();
+  const narrative = await getStoredNarrative(amId, p);
   const [u] = await sql`SELECT am_id, nama, panggilan, role, cabang FROM master_user WHERE am_id = ${amId}`;
   if (!u) return { found: false };
   const is_am = isAmRole(u.role);
@@ -343,9 +429,10 @@ export async function getRaportDetail(amId: string, period?: string): Promise<
   const c = comp.rows.find((r) => r.am_id === amId);
 
   // Spine (BSC/KPI/OKR/RACI) bila ter-bridge.
-  let bsc: { score: number | null; persp: Record<string, number>; kpi: { id: string; name: string; target: string | null; perspective: string | null; achievement_pct: number | null }[] } | null = null;
+  let bsc: { score: number | null; persp: Record<string, number>; objectives: Record<string, string[]>; kpi: { id: string; name: string; target: string | null; perspective: string | null; achievement_pct: number | null }[] } | null = null;
   let okr: { objective: string | null; key_results: string[] } | null = null;
   let raci: { process: string; role_type: string; note: string | null }[] = [];
+  let pdca: { plan: string | null; do: string | null; check: string | null; act: string | null } | null = null;
   if (spineId) {
     const [spine, meas] = await Promise.all([
       getEmployee(spineId),
@@ -363,12 +450,76 @@ export async function getRaportDetail(amId: string, period?: string): Promise<
       bsc = {
         score: s?.score ?? null,
         persp: s?.perspScore ?? {},
+        objectives: spine.bsc as Record<string, string[]>,
         kpi: spine.kpi.map((k) => ({ id: k.id, name: k.name, target: k.target, perspective: k.perspective, achievement_pct: inputs[k.id] ?? null })),
       };
       okr = { objective: spine.okr_objective, key_results: spine.okr_kr };
       raci = spine.raci;
+      pdca = spine.pdca;
     }
   }
+
+  // Beban & keberhasilan harian (chart) + total item/berhasil. AM = sales_plan;
+  // non-AM = item TODO (sales_todo.report_data, status 'matched' = berhasil).
+  const dailyRows = is_am
+    ? await sql`
+        SELECT tanggal::text AS d, count(*)::int AS total, count(*) FILTER (WHERE reported)::int AS success
+        FROM sales_plan WHERE am_id = ${amId} AND tanggal BETWEEN ${from} AND ${to}
+        GROUP BY tanggal ORDER BY tanggal
+      `
+    : await sql`
+        SELECT tanggal::text AS d,
+          sum(CASE WHEN jsonb_typeof(report_data)='array' THEN jsonb_array_length(report_data) ELSE 0 END)::int AS total,
+          COALESCE(sum((SELECT count(*) FROM jsonb_array_elements(CASE WHEN jsonb_typeof(report_data)='array' THEN report_data ELSE '[]'::jsonb END) e WHERE e->>'status'='matched')),0)::int AS success
+        FROM sales_todo WHERE am_id = ${amId} AND tanggal BETWEEN ${from} AND ${to} AND reported
+        GROUP BY tanggal ORDER BY tanggal
+      `;
+  const daily = dailyRows.map((r) => ({ date: String(r.d), total: Number(r.total), success: Number(r.success) }));
+  const workload = {
+    total: daily.reduce((a, r) => a + r.total, 0),
+    success: daily.reduce((a, r) => a + r.success, 0),
+    pending: 0,
+  };
+  workload.pending = Math.max(0, workload.total - workload.success);
+
+  // Item-level (Fase 2): kategori + status buckets + kegagalan/blokir. AM = visit
+  // (sales_plan); non-AM = item TODO (sales_todo.report_data).
+  const itemRows = is_am
+    ? await sql`
+        SELECT tanggal::text AS tanggal,
+               COALESCE(NULLIF(customer_name,''), NULLIF(tujuan,''), 'Kunjungan') AS task,
+               CASE WHEN reported THEN 'selesai' ELSE 'belum' END AS result,
+               CASE WHEN reported THEN 'matched' ELSE 'unmatched' END AS status
+        FROM sales_plan WHERE am_id = ${amId} AND tanggal BETWEEN ${from} AND ${to}
+        ORDER BY tanggal DESC`
+    : await sql`
+        SELECT st.tanggal::text AS tanggal, item->>'task' AS task, item->>'result' AS result, item->>'status' AS status
+        FROM sales_todo st
+        CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(st.report_data)='array' THEN st.report_data ELSE '[]'::jsonb END) AS item
+        WHERE st.am_id = ${amId} AND st.tanggal BETWEEN ${from} AND ${to} AND st.reported
+        ORDER BY st.tanggal DESC`;
+  const catCount = new Map<string, { label: string; count: number }>();
+  const statCount = new Map<string, number>();
+  const failures: { tanggal: string; label: string; status: string }[] = [];
+  const blockers: { tanggal: string; label: string; status: string }[] = [];
+  for (const it of itemRows) {
+    const task = String(it.task ?? "").trim() || "(tanpa judul)";
+    const result = String(it.result ?? "");
+    const cat = categorize(`${task} ${result}`);
+    const cc = catCount.get(cat.key) ?? { label: cat.label, count: 0 };
+    cc.count++; catCount.set(cat.key, cc);
+    const b = classifyStatus(String(it.status ?? ""), result);
+    statCount.set(b.key, (statCount.get(b.key) ?? 0) + 1);
+    if (b.kind === "fail" && failures.length < 12) failures.push({ tanggal: String(it.tanggal), label: task, status: "belum jalan" });
+    else if (b.kind === "external" && blockers.length < 12) blockers.push({ tanggal: String(it.tanggal), label: task, status: shortWait(result) });
+  }
+  const items = {
+    total: itemRows.length,
+    categories: [...catCount.entries()].map(([key, v]) => ({ key, label: v.label, count: v.count })).sort((a, b) => b.count - a.count),
+    status: STATUS_ORDER.filter((s) => statCount.get(s.key)).map((s) => ({ key: s.key, label: s.label, color: s.color, count: statCount.get(s.key) as number })),
+    failures,
+    blockers,
+  };
 
   const rev = (revRow as { total: number; invoices: number; target: number | null }[])[0];
   const arr = (arRow as { outstanding: number; invoices: number }[])[0];
@@ -424,6 +575,10 @@ export async function getRaportDetail(amId: string, period?: string): Promise<
     bsc,
     okr,
     raci,
+    pdca,
+    daily,
+    workload,
+    items,
     absensi: {
       active_days: o?.active_days ?? 0, expected: c?.expected ?? 0, leave_days: leave.reduce((a, l) => a + overlapDays(l.start_date, l.end_date, from, to), 0),
       leave: leave.map((l) => ({ start_date: l.start_date, end_date: l.end_date, jenis: l.jenis, keterangan: l.keterangan })),
@@ -431,6 +586,7 @@ export async function getRaportDetail(amId: string, period?: string): Promise<
     coaching,
     revenue: revenueBlock,
     ar: arBlock,
+    narrative,
     context_note: "Absensi = proxy (cuti + hari aktif); presensi clock-in belum ada. Pola/rekap/resume bersifat konteks group-level, bukan skor per-orang.",
   };
 }

@@ -22,6 +22,7 @@ import { syncAccurateInvoices, syncSalesOrders, syncDeliveryOrders, syncCustomer
 import { runPlanCheck, runReportCheck } from "./repo/compliance.js";
 import { runNotifTua } from "./repo/notiftua.js";
 import { runDailySummary } from "./repo/dailysummary.js";
+import { runRaportNarrative } from "./repo/raportnarrative.js";
 import { runWeeklyReport } from "./repo/weeklyreport.js";
 import { runDetectLeaveScan } from "./repo/detectleave.js";
 import { runExtractCompetitor } from "./repo/extractcompetitor.js";
@@ -97,6 +98,9 @@ export function startScheduler(): ScheduleStatus {
   // daily-summary (port wrg-daily.sh daily_summary) — KIRIM ringkasan harian AI
   // ke grup HOD Squad, 22:00 hari kerja. Nyala sendiri via flag.
   const dailySummaryEnabled = (process.env.DAILY_SUMMARY_ENABLED ?? "false").toLowerCase() === "true";
+  // raport-narrative (Fase 3) — generate narasi AI Raport 360 semua karyawan,
+  // 23:00 hari kerja. Display-only (bukan broadcast WA).
+  const raportNarrativeEnabled = (process.env.RAPORT_NARRATIVE_ENABLED ?? "false").toLowerCase() === "true";
   // weekly-report (port cron_weekly_report.sh) — KPI mingguan ke HOD Squad, Senin 07:00.
   const weeklyReportEnabled = (process.env.WEEKLY_REPORT_ENABLED ?? "false").toLowerCase() === "true";
   // detect-leave (port detect_leave.sh) — scan grup HRD tiap 10 menit, deteksi
@@ -192,12 +196,12 @@ export function startScheduler(): ScheduleStatus {
   ];
 
   status = {
-    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled,
+    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled,
     timezone,
     jobs: jobs.map((j) => ({ id: j.id, expr: j.expr, valid: cron.validate(j.expr) })),
   };
 
-  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled) {
+  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled) {
     console.log("[scheduler] semua *_SCHEDULE/_ENABLED flag != true — tidak dijadwalkan");
     return status;
   }
@@ -479,6 +483,30 @@ export function startScheduler(): ScheduleStatus {
       { timezone },
     );
     live.push(`daily-summary=${dsExpr}`);
+  }
+
+  // raport-narrative (Fase 3) — generate narasi AI Raport 360 semua karyawan,
+  // 23:00 hari kerja (setelah data harian settle). Display-only, tak kirim WA.
+  const rnExpr = process.env.RAPORT_NARRATIVE_CRON ?? "0 23 * * 1-5";
+  if ((enabled || raportNarrativeEnabled) && cron.validate(rnExpr)) {
+    cron.schedule(
+      rnExpr,
+      async () => {
+        const startedAt = new Date().toISOString();
+        try {
+          if (!(await isWorkday())) {
+            console.log(`[scheduler] raport-narrative skip (bukan hari kerja)`);
+            return;
+          }
+          const r = await runRaportNarrative({});
+          console.log(`[scheduler] raport-narrative @ ${startedAt} ${JSON.stringify(r).slice(0, 200)}`);
+        } catch (e) {
+          console.error(`[scheduler] raport-narrative gagal @ ${startedAt}:`, e);
+        }
+      },
+      { timezone },
+    );
+    live.push(`raport-narrative=${rnExpr}`);
   }
 
   // weekly-report (port cron_weekly_report.sh) — KPI minggu kerja lalu ke HOD

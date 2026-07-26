@@ -9,7 +9,7 @@ import {
   Sparkles, Send, FileText, ScrollText, GraduationCap, UsersRound, Network,
   Bell, MapPin, ListChecks, Swords, CalendarOff, CalendarDays, CalendarRange,
   Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, Tags, SlidersHorizontal,
-  Target, MapPinned, Contact, UserRound, Award, UserCheck, ClipboardList, Crown, type LucideIcon,
+  Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, type LucideIcon,
 } from "lucide-react";
 
 import { canEditPricelistSetup, canViewPricelist, type AccessUser } from "@/lib/pricelist-access";
@@ -49,7 +49,6 @@ export const NAV: NavGroup[] = [
       { title: "Holidays", url: "/holidays", icon: CalendarOff },
       { title: "Manage Leave", url: "/leave", icon: CalendarDays },
       { title: "Raport Saya", url: "/raport", icon: Award, exact: true, badge: "NEW" },
-      { title: "Raport Karyawan", url: "/raport/karyawan", icon: ClipboardList, badge: "NEW", show: canViewRaportList },
     ],
   },
   {
@@ -76,7 +75,7 @@ export const NAV: NavGroup[] = [
       // NPK (F66) — gate identitas: Direktur = admin/superuser; self-view = HoD (hod_key).
       { title: "NPK Direktur", url: "/npk", icon: Award, badge: "NEW", exact: true, show: (me) => me?.role === "admin" || me?.superuser === true },
       { title: "NPK Saya", url: "/npk/self", icon: UserCheck, badge: "NEW", show: (me) => !!me?.hod_key },
-      { title: "People Analytics", url: "/people", icon: UsersRound, badge: "NEW", exact: true },
+      { title: "Karyawan 360", url: "/karyawan", icon: UsersRound, badge: "NEW", show: canViewRaportList },
       { title: "RACI Matrix", url: "/people/raci", icon: Workflow, badge: "NEW" },
       { title: "Org Chart", url: "/people/org", icon: Building2, badge: "NEW" },
       { title: "Voice of Employee", url: "/people/voice", icon: MessagesSquare, badge: "NEW" },

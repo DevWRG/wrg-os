@@ -39,13 +39,23 @@ const ratioPct = (num: number, den: number): number | null =>
 
 // ── View #1: COMMAND — ringkasan eksekutif "apa yang perlu perhatian hari ini" ──
 export async function execCommand(scope?: DataScope) {
-  const [perf, board, aging, dormant, pipe] = await Promise.all([
+  const [perf, board, aging, dormant, pipe, trendRows] = await Promise.all([
     reportSalesPerformance(),
     getWatchBoard().catch(() => null),
     getAging().catch(() => null),
     dormantCustomers(60).catch(() => null),
     getPipeline(scope).catch(() => null),
+    // Tren revenue harian 30 hari (level direktur/full company) untuk sparkline hero.
+    // generate_series → 30 hari KONTINU (hari tanpa transaksi = 0) biar spacing
+    // waktu rata & dip weekend/libur kelihatan (bukan hanya hari ada transaksi).
+    db()`
+      SELECT (d::date)::text AS date,
+             COALESCE(sum(ai.total - COALESCE(ai.tax_amount,0)), 0)::float8 AS revenue
+      FROM generate_series(CURRENT_DATE - interval '29 days', CURRENT_DATE, interval '1 day') AS d
+      LEFT JOIN accurate_invoice ai ON ai.tanggal = d::date
+      GROUP BY d ORDER BY d`.catch(() => [] as { date: string; revenue: number }[]),
   ]);
+  const trend = (trendRows as { date: string; revenue: number }[]).map((r) => ({ date: String(r.date), revenue: Number(r.revenue) }));
 
   const month = perf.periods.find((p) => p.key === "month");
   const year = perf.periods.find((p) => p.key === "year");
@@ -90,6 +100,7 @@ export async function execCommand(scope?: DataScope) {
     red_flags: redFlags.slice(0, 5),
     red_flags_count: redFlags.length,
     opportunities,
+    trend,
   };
 }
 

@@ -93,6 +93,8 @@ export interface PipelineDeal {
   probability: number | null;
   forecast_category: string | null;
   estimate_amount: number | null;
+  qty_num: number | null;              // QTY / test per-bulan
+  unit_price: number | null;           // harga per test / unit
   weighted: number;                    // estimate_amount × probability(stage)
   pic_hod: string | null;
   cabang: string | null;
@@ -130,6 +132,7 @@ export async function getPipeline(
   const cols = sql`deal_id, customer_name, facility_name, am_id, brand, product, product_category,
     prospect_category, stage, probability, forecast_category,
     COALESCE(estimated_value, estimate_amount) AS estimate_amount,
+    qty_num, unit_price,
     pic_hod, cabang, coop_model, city, province, purchase_year, notes, updated_at,
     GREATEST(0, EXTRACT(DAY FROM (now() - stage_entered_at))::int) AS days_in_stage`;
   // Row-level scope (pakai semantik isRestricted spt F127): scope TAK membatasi
@@ -177,6 +180,8 @@ export async function getPipeline(
       probability: prob,
       forecast_category: r.forecast_category ? String(r.forecast_category) : null,
       estimate_amount: est,
+      qty_num: r.qty_num != null ? Number(r.qty_num) : null,
+      unit_price: r.unit_price != null ? Number(r.unit_price) : null,
       weighted,
       pic_hod: r.pic_hod ? String(r.pic_hod) : null,
       cabang: r.cabang ? String(r.cabang) : null,
@@ -697,7 +702,7 @@ export async function getDealTimeline(dealId: string, scope: DataScope): Promise
 // nyetel stage/loss/am_id/probability langsung; itu lewat jalur khusus).
 const DEAL_EDITABLE = [
   "customer_name", "facility_name", "brand", "product", "product_category",
-  "estimate_amount", "cabang", "coop_model", "city", "province", "purchase_year",
+  "estimate_amount", "qty_num", "unit_price", "cabang", "coop_model", "city", "province", "purchase_year",
   "pic_hod", "notes",
 ] as const;
 
@@ -710,13 +715,22 @@ function pickEditable(input: Record<string, unknown>): Record<string, unknown> {
     if (input[k] === undefined) continue;
     let v: unknown = input[k];
     if (v === "") v = null;
-    if ((k === "estimate_amount" || k === "purchase_year") && v != null) {
+    if ((k === "estimate_amount" || k === "purchase_year" || k === "qty_num" || k === "unit_price") && v != null) {
       const n = Number(v);
       v = Number.isFinite(n) ? n : null;
     }
     out[k] = v;
   }
   return out;
+}
+
+// Estimasi nilai deal = QTY/test per-bulan × harga per unit. Server yang authoritative:
+// bila keduanya terisi (>0/finite) → override estimate_amount; jika tidak, biarkan.
+function applyEstimate(fields: Record<string, unknown>): void {
+  const q = fields.qty_num, p = fields.unit_price;
+  if (typeof q === "number" && Number.isFinite(q) && typeof p === "number" && Number.isFinite(p)) {
+    fields.estimate_amount = q * p;
+  }
 }
 
 export interface DealMutationResult {
@@ -738,6 +752,7 @@ export async function createDeal(scope: DataScope, input: Record<string, unknown
   }
   fields.customer_name = String(name).trim();
   fields.customer_id = custId(String(name));
+  applyEstimate(fields);
   // AM cuma boleh bikin deal atas namanya sendiri; HoD/admin boleh tunjuk am_id.
   fields.am_id = scope.amOnly ? scope.amId : (typeof input.am_id === "string" && input.am_id ? input.am_id : null);
   const meta = STAGE_META["Prospecting"];
@@ -770,6 +785,7 @@ export async function updateDeal(dealId: string, scope: DataScope, input: Record
     throw new DealError(400, "product_category harus IVD atau Medical");
   }
   if (fields.customer_name != null) fields.customer_id = custId(String(fields.customer_name));
+  applyEstimate(fields);
   await sql`UPDATE deal SET ${sql(fields)}, updated_at = now() WHERE deal_id = ${dealId}`;
   return { deal_id: dealId, stage: String(cur[0].stage) };
 }

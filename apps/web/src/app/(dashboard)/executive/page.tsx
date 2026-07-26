@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { gatewayFetch } from "@/lib/gateway";
 import { sessionUser } from "@/lib/admin-guard";
-import { canViewExecutive } from "@/lib/executive-access";
+import { executiveAccess } from "@/lib/executive-access";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { ExecutiveDashboard, type CommandData } from "@/components/executive/executive-dashboard";
 
@@ -15,8 +15,10 @@ export default async function ExecutivePage({
   searchParams: Promise<{ view?: string }>;
 }) {
   const [me, sp] = await Promise.all([sessionUser(), searchParams]);
-  // Gate: hanya Direktur/admin. Sesi null (auth off) dibiarkan (permisif spt can()).
-  if (me && !canViewExecutive(me)) redirect("/overview");
+  // Gate: Direktur/admin/superuser = full; HoD = subset (AC-5). Sesi null (auth off)
+  // dibiarkan → default "full" (permisif spt can()).
+  const access = me ? executiveAccess(me) : "full";
+  if (me && access == null) redirect("/overview");
   let initial: CommandData | null = null;
   try {
     const res = await gatewayFetch("/executive/command", {
@@ -32,7 +34,7 @@ export default async function ExecutivePage({
         title="Executive Command Center"
         description="Single-pane-of-glass Direktur: ringkasan hari ini, radar AM, portfolio outlet, intel dormant, dan baseline KPI. (F76)"
       />
-      <ExecutiveDashboard initial={initial} initialView={sp.view} />
+      <ExecutiveDashboard initial={initial} initialView={sp.view} access={access ?? "full"} />
     </>
   );
 }
