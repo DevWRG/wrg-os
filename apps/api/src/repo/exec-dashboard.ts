@@ -39,13 +39,20 @@ const ratioPct = (num: number, den: number): number | null =>
 
 // ── View #1: COMMAND — ringkasan eksekutif "apa yang perlu perhatian hari ini" ──
 export async function execCommand(scope?: DataScope) {
-  const [perf, board, aging, dormant, pipe] = await Promise.all([
+  const [perf, board, aging, dormant, pipe, trendRows] = await Promise.all([
     reportSalesPerformance(),
     getWatchBoard().catch(() => null),
     getAging().catch(() => null),
     dormantCustomers(60).catch(() => null),
     getPipeline(scope).catch(() => null),
+    // Tren revenue harian 30 hari (level direktur/full company) untuk sparkline hero.
+    db()`
+      SELECT ai.tanggal::text AS date, sum(ai.total - COALESCE(ai.tax_amount,0))::float8 AS revenue
+      FROM accurate_invoice ai
+      WHERE ai.tanggal >= CURRENT_DATE - interval '29 days'
+      GROUP BY ai.tanggal ORDER BY ai.tanggal`.catch(() => [] as { date: string; revenue: number }[]),
   ]);
+  const trend = (trendRows as { date: string; revenue: number }[]).map((r) => ({ date: String(r.date), revenue: Number(r.revenue) }));
 
   const month = perf.periods.find((p) => p.key === "month");
   const year = perf.periods.find((p) => p.key === "year");
@@ -90,6 +97,7 @@ export async function execCommand(scope?: DataScope) {
     red_flags: redFlags.slice(0, 5),
     red_flags_count: redFlags.length,
     opportunities,
+    trend,
   };
 }
 
