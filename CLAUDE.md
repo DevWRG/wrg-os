@@ -30,7 +30,8 @@ docs/       CUTOVER.md.
 - `app_user` — login dashboard (email/password_hash scrypt/role/title/active/wa_number/
   force_change). Terpisah dari `master_user`. JWT HS256 (apps/api/src/auth.ts signJwt/verifyJwt).
   Cookie sesi web: `wrg_session`.
-- `wa_message` — `sender_jid` = group_jid (jebakan). `message_type` varchar(20),
+- `wa_message` — `sender_jid` = group_jid (jebakan). `message_type` **text** (dilebarkan
+  dari varchar(20) di migrasi 038 — MIME openclaw panjang bikin INSERT gagal 22001),
   `body`. Backfill WAJIB set `processed_at` atau disapu `processUnprocessed`.
 - `activity_log` — hasil/next_action kunjungan. `monitor_digest` — kind ∈ rekap|resume|daily|weekly|briefing, `waktu` varchar(8) (jangan overflow).
 
