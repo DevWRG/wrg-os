@@ -7,7 +7,7 @@ import {
   Activity, AlertTriangle, TrendingUp, TrendingDown, Wallet, MoonStar,
   Target, Building2, Sparkles, RefreshCw, Swords, Rocket, ArrowUpCircle, UserCog, Info,
   Lightbulb, Clock, User, LayoutDashboard, Radar, Users, ListChecks, ArrowUpRight, Download,
-  Lock, type LucideIcon,
+  Lock, Loader2, type LucideIcon,
 } from "lucide-react";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -344,6 +344,10 @@ export function ExecutiveDashboard({ initial, initialView, access = "full" }: { 
 
       {err ? (
         <Card><CardContent className="flex items-center gap-2 py-6 text-sm text-destructive"><AlertTriangle className="size-4" /> Gagal memuat: {err}</CardContent></Card>
+      ) : loading && tab === "growth-levers" ? (
+        // Growth Levers = LLM (beberapa detik) → loading eksplisit walau data lama masih ada
+        // (mis. saat Refresh) biar tak terkesan blank/diam.
+        <LeversLoading />
       ) : loading && !cur ? (
         <ViewSkeleton kind={activeTab.skel} />
       ) : (
@@ -377,6 +381,37 @@ function ViewSkeleton({ kind }: { kind: "tiles" | "table" | "cards" }) {
     <div className="flex flex-col gap-3">
       <Skeleton className="h-32 w-full" />
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-28 w-full" />)}</div>
+    </div>
+  );
+}
+
+// Loading khusus Growth Levers (LLM ±beberapa detik) — indikator eksplisit + skeleton kartu.
+function LeversLoading() {
+  return (
+    <div className="flex flex-col gap-3">
+      <div className={cn("flex items-center gap-2 rounded-lg px-3 py-2 text-[13px]", ST.info.chip)}>
+        <Loader2 className="size-4 animate-spin" />
+        <span>AI sedang menyusun rekomendasi growth lever dari sinyal terbaru… (beberapa detik)</span>
+      </div>
+      <div className="grid gap-3 lg:grid-cols-2">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <Card key={i} className="gap-0 p-4">
+            <div className="flex items-start gap-3">
+              <Skeleton className="size-7 rounded-lg" />
+              <div className="flex-1 space-y-2">
+                <Skeleton className="h-4 w-4/5" />
+                <Skeleton className="h-4 w-1/2" />
+              </div>
+            </div>
+            <Skeleton className="mt-3 h-3 w-full" />
+            <Skeleton className="mt-1.5 h-3 w-5/6" />
+            <div className="mt-3 flex gap-2">
+              <Skeleton className="h-5 w-24 rounded-full" />
+              <Skeleton className="h-5 w-28 rounded-full" />
+            </div>
+          </Card>
+        ))}
+      </div>
     </div>
   );
 }
