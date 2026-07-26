@@ -46,11 +46,14 @@ export async function execCommand(scope?: DataScope) {
     dormantCustomers(60).catch(() => null),
     getPipeline(scope).catch(() => null),
     // Tren revenue harian 30 hari (level direktur/full company) untuk sparkline hero.
+    // generate_series → 30 hari KONTINU (hari tanpa transaksi = 0) biar spacing
+    // waktu rata & dip weekend/libur kelihatan (bukan hanya hari ada transaksi).
     db()`
-      SELECT ai.tanggal::text AS date, sum(ai.total - COALESCE(ai.tax_amount,0))::float8 AS revenue
-      FROM accurate_invoice ai
-      WHERE ai.tanggal >= CURRENT_DATE - interval '29 days'
-      GROUP BY ai.tanggal ORDER BY ai.tanggal`.catch(() => [] as { date: string; revenue: number }[]),
+      SELECT (d::date)::text AS date,
+             COALESCE(sum(ai.total - COALESCE(ai.tax_amount,0)), 0)::float8 AS revenue
+      FROM generate_series(CURRENT_DATE - interval '29 days', CURRENT_DATE, interval '1 day') AS d
+      LEFT JOIN accurate_invoice ai ON ai.tanggal = d::date
+      GROUP BY d ORDER BY d`.catch(() => [] as { date: string; revenue: number }[]),
   ]);
   const trend = (trendRows as { date: string; revenue: number }[]).map((r) => ({ date: String(r.date), revenue: Number(r.revenue) }));
 
