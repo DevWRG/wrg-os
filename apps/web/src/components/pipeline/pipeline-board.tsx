@@ -24,6 +24,8 @@ export interface PipelineDeal {
   probability: number | null;
   forecast_category: string | null;
   estimate_amount: number | null;
+  qty_num: number | null;
+  unit_price: number | null;
   weighted: number;
   pic_hod: string | null;
   cabang: string | null;
@@ -475,6 +477,8 @@ export function PipelineBoard({ data, isAdmin = false }: { data: PipelineData; i
         <DealFormModal
           mode={formModal.mode}
           deal={formModal.mode === "edit" ? formModal.deal : undefined}
+          brands={opts.brand}
+          cabangs={opts.cabang}
           onClose={() => setFormModal(null)}
         />
       )}
