@@ -53,7 +53,9 @@ export interface WatchBoard {
 }
 
 // ── Threshold engine ──────────────────────────────────────────────
-function attainment(target: number | null, actual: number | null, dir: "higher" | "lower"): number | null {
+// Diekspor: dipakai ulang oleh watchpoint-weekly.ts supaya papan mingguan
+// memakai gate yang SAMA persis (jangan duplikasi ambang di dua tempat).
+export function attainment(target: number | null, actual: number | null, dir: "higher" | "lower"): number | null {
   if (target === null || actual === null) return null;
   if (dir === "lower") {
     if (target === 0) return actual <= 0 ? 100 : 0;
@@ -64,14 +66,14 @@ function attainment(target: number | null, actual: number | null, dir: "higher" 
   return (actual / target) * 100;
 }
 
-function gate(pct: number | null): WatchStatus {
+export function gate(pct: number | null): WatchStatus {
   if (pct === null) return "NA";
   if (pct >= 100) return "GREEN";
   if (pct >= 50) return "YELLOW";
   return "RED";
 }
 
-function worst(metrics: WatchMetric[]): WatchStatus {
+export function worst(metrics: { status: WatchStatus }[]): WatchStatus {
   if (metrics.some((m) => m.status === "RED")) return "RED";
   if (metrics.some((m) => m.status === "YELLOW")) return "YELLOW";
   if (metrics.some((m) => m.status === "GREEN")) return "GREEN";

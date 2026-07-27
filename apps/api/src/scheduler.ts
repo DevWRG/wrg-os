@@ -32,6 +32,7 @@ import { runRefreshMembers } from "./repo/listmembers.js";
 import { runNotifQuota } from "./repo/notifquota.js";
 import { evaluateSalesAlerts } from "./repo/sales-analytics-alert-eval.js";
 import { computeNpk, currentPeriod } from "./repo/npk.js";
+import { snapshotLastWeek } from "./repo/watchpoint-weekly.js";
 
 // Penjadwal agen in-process (Blueprint v2.3). Default MATI — aktif hanya bila
 // AGENT_SCHEDULE_ENABLED=true. Tiap run tetap menulis ke audit_log via repo
@@ -126,6 +127,10 @@ export function startScheduler(): ScheduleStatus {
   // Display-only (isi npk_score_semester + npk_aspect_score, tanpa WA/LLM). Sebelum
   // ada job ini compute cuma lewat POST /npk/compute manual → angka bisa basi berhari-hari.
   const npkComputeEnabled = (process.env.NPK_COMPUTE_ENABLED ?? "false").toLowerCase() === "true";
+  // watchpoint-snapshot — bekukan metric computed MINGGU LALU tiap Senin dini hari,
+  // sebelum job lain menggeser angka. Tanpa ini papan Weekly tak punya riwayat:
+  // metric computed dihitung live sehingga minggu lewat ikut berubah tiap dibuka.
+  const watchpointSnapshotEnabled = (process.env.WATCHPOINT_SNAPSHOT_ENABLED ?? "false").toLowerCase() === "true";
   const timezone = TZ();
   const jobs: JobDef[] = [
     {
@@ -201,12 +206,12 @@ export function startScheduler(): ScheduleStatus {
   ];
 
   status = {
-    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled,
+    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled || watchpointSnapshotEnabled,
     timezone,
     jobs: jobs.map((j) => ({ id: j.id, expr: j.expr, valid: cron.validate(j.expr) })),
   };
 
-  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled) {
+  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled && !watchpointSnapshotEnabled) {
     console.log("[scheduler] semua *_SCHEDULE/_ENABLED flag != true — tidak dijadwalkan");
     return status;
   }
@@ -532,6 +537,27 @@ export function startScheduler(): ScheduleStatus {
       { timezone },
     );
     live.push(`weekly-report=${wrExpr}`);
+  }
+
+  // watchpoint-snapshot — Senin 06:00, bekukan metric computed minggu lalu ke
+  // watchpoint_weekly. Idempoten (UPSERT) & tidak menimpa input manual HoD,
+  // jadi aman kalau job jalan dua kali atau HoD sudah mengisi duluan.
+  const wpsExpr = process.env.WATCHPOINT_SNAPSHOT_CRON ?? "0 6 * * 1";
+  if ((enabled || watchpointSnapshotEnabled) && cron.validate(wpsExpr)) {
+    cron.schedule(
+      wpsExpr,
+      async () => {
+        const startedAt = new Date().toISOString();
+        try {
+          const r = await snapshotLastWeek();
+          console.log(`[scheduler] watchpoint-snapshot @ ${startedAt} ${JSON.stringify(r)}`);
+        } catch (e) {
+          console.error(`[scheduler] watchpoint-snapshot gagal @ ${startedAt}:`, e);
+        }
+      },
+      { timezone },
+    );
+    live.push(`watchpoint-snapshot=${wpsExpr}`);
   }
 
   // detect-leave (port detect_leave.sh) — scan grup HRD tiap 10 menit.

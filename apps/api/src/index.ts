@@ -60,7 +60,12 @@ import { getProductIntelligence } from "./repo/product.js";
 import { listAnnotations } from "./repo/sentiment.js";
 import { getNetworkInput, computeNetwork } from "./repo/network.js";
 import { listBriefings } from "./repo/executive.js";
-import { getWatchBoard, formatHodWatchWa } from "./repo/watchpoint.js";
+import { getWatchBoard, formatHodWatchWa, type WatchStatus } from "./repo/watchpoint.js";
+import {
+  getWeeklyBoard, listWeeks, snapshotWeek, upsertWeeklyMetric, deleteWeeklyMetric,
+  currentWeek, formatWeeklyHodWa,
+} from "./repo/watchpoint-weekly.js";
+import { buildWeeklyDeck, weeklyDeckFilename } from "./repo/watchpoint-pptx.js";
 import {
   effectivePermissions, listFeatures, listGroups, getGroup, createGroup, updateGroup,
   deleteGroup, setPermissions, setMembers, copyPermissions, syncFeatures,
@@ -2254,6 +2259,136 @@ app.delete("/watchpoint/territory/:id", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const r = await deleteTerritory(c.req.param("id"));
   return c.json(r, r.deleted ? 200 : 404);
+});
+
+// ── WatchPoint Weekly — papan per minggu ISO + snapshot + deck PPTX ──
+// Minggu default = minggu berjalan (WIB). Query ?year=&week= untuk minggu lain.
+function weekParam(c: { req: { query: (k: string) => string | undefined } }): { isoYear: number; isoWeek: number } | null {
+  const cur = currentWeek();
+  const y = c.req.query("year");
+  const w = c.req.query("week");
+  if (y === undefined && w === undefined) return cur;
+  const isoYear = Number(y ?? cur.isoYear);
+  const isoWeek = Number(w ?? cur.isoWeek);
+  if (!Number.isInteger(isoYear) || isoYear < 2000 || isoYear > 2100) return null;
+  if (!Number.isInteger(isoWeek) || isoWeek < 1 || isoWeek > 53) return null;
+  return { isoYear, isoWeek };
+}
+
+app.get("/watchpoint/weekly", async (c) => {
+  const w = weekParam(c);
+  if (!w) return c.json({ error: "year/week tidak valid" }, 400);
+  return c.json(await getWeeklyBoard(w.isoYear, w.isoWeek));
+});
+
+app.get("/watchpoint/weekly/weeks", async (c) => {
+  const back = Number(c.req.query("back") ?? 12);
+  return c.json({ rows: await listWeeks(Number.isInteger(back) && back > 0 && back <= 104 ? back : 12) });
+});
+
+// Bekukan nilai computed minggu tsb ke tabel (idempoten). Metric manual HoD
+// tidak tergilas — lihat snapshotWeek().
+app.post("/watchpoint/weekly/snapshot", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { year?: number; week?: number } = {};
+  try { body = await c.req.json(); } catch { /* body opsional → minggu berjalan */ }
+  const cur = currentWeek();
+  const isoYear = Number(body.year ?? cur.isoYear);
+  const isoWeek = Number(body.week ?? cur.isoWeek);
+  if (!Number.isInteger(isoYear) || !Number.isInteger(isoWeek) || isoWeek < 1 || isoWeek > 53) {
+    return c.json({ error: "year/week tidak valid" }, 400);
+  }
+  return c.json(await snapshotWeek(isoYear, isoWeek));
+});
+
+// Input manual HoD untuk satu metric di satu minggu (uptime, lead time, JV, dst).
+app.put("/watchpoint/weekly/metric", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: {
+    hod_key?: string; metric_key?: string; year?: number; week?: number;
+    target?: number | null; actual?: number | null; status?: string | null; note?: string | null;
+  };
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+
+  const hodKey = (body.hod_key ?? "").trim();
+  const metricKey = (body.metric_key ?? "").trim();
+  if (!hodKey || !metricKey) return c.json({ error: "hod_key + metric_key wajib" }, 400);
+
+  const cur = currentWeek();
+  const isoYear = Number(body.year ?? cur.isoYear);
+  const isoWeek = Number(body.week ?? cur.isoWeek);
+  if (!Number.isInteger(isoYear) || !Number.isInteger(isoWeek) || isoWeek < 1 || isoWeek > 53) {
+    return c.json({ error: "year/week tidak valid" }, 400);
+  }
+
+  const VALID: WatchStatus[] = ["GREEN", "YELLOW", "RED", "NA"];
+  const status = body.status == null || body.status === "" ? null : (body.status as WatchStatus);
+  if (status !== null && !VALID.includes(status)) return c.json({ error: "status harus GREEN|YELLOW|RED|NA" }, 400);
+
+  const num = (v: unknown): number | null => (v === null || v === undefined || v === "" ? null : Number(v));
+  const actual = num(body.actual);
+  const target = num(body.target);
+  if (actual !== null && !Number.isFinite(actual)) return c.json({ error: "actual harus angka" }, 400);
+  if (target !== null && !Number.isFinite(target)) return c.json({ error: "target harus angka" }, 400);
+
+  await upsertWeeklyMetric({
+    hod_key: hodKey, metric_key: metricKey, iso_year: isoYear, iso_week: isoWeek,
+    target, actual, status, note: body.note?.trim() || null,
+  });
+  return c.json({ ok: true });
+});
+
+// Hapus input manual → metric balik ke nilai live/snapshot.
+app.delete("/watchpoint/weekly/metric", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const w = weekParam(c);
+  const hodKey = (c.req.query("hod_key") ?? "").trim();
+  const metricKey = (c.req.query("metric_key") ?? "").trim();
+  if (!w) return c.json({ error: "year/week tidak valid" }, 400);
+  if (!hodKey || !metricKey) return c.json({ error: "hod_key + metric_key wajib" }, 400);
+  const r = await deleteWeeklyMetric(hodKey, w.isoYear, w.isoWeek, metricKey);
+  return c.json(r, r.deleted ? 200 : 404);
+});
+
+// Deck PPTX minggu tsb. ?hod=<key> → deck 1 HoD saja.
+app.get("/watchpoint/weekly/pptx", async (c) => {
+  const w = weekParam(c);
+  if (!w) return c.json({ error: "year/week tidak valid" }, 400);
+  const hodKey = c.req.query("hod")?.trim() || undefined;
+  const board = await getWeeklyBoard(w.isoYear, w.isoWeek);
+  if (hodKey && !board.hods.some((h) => h.key === hodKey)) {
+    return c.json({ error: `HoD '${hodKey}' tidak ditemukan` }, 404);
+  }
+  const buf = await buildWeeklyDeck(board, hodKey);
+  const name = hodKey ? weeklyDeckFilename(board).replace(".pptx", `-${hodKey}.pptx`) : weeklyDeckFilename(board);
+  return c.body(new Uint8Array(buf), 200, {
+    "content-type": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "content-disposition": `attachment; filename="${name}"`,
+    "cache-control": "no-store",
+  });
+});
+
+// Kirim ringkasan WatchPoint mingguan 1 HoD via WA (patuh WA_DRY_RUN).
+app.post("/watchpoint/weekly/:hodKey/send-wa", async (c) => {
+  const hodKey = c.req.param("hodKey");
+  let body: { to?: string; year?: number; week?: number };
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  const to = (body.to ?? "").trim();
+  if (!to) return c.json({ error: "field 'to' (nomor/jid WA tujuan) wajib" }, 400);
+
+  const cur = currentWeek();
+  const isoYear = Number(body.year ?? cur.isoYear);
+  const isoWeek = Number(body.week ?? cur.isoWeek);
+  if (!Number.isInteger(isoYear) || !Number.isInteger(isoWeek) || isoWeek < 1 || isoWeek > 53) {
+    return c.json({ error: "year/week tidak valid" }, 400);
+  }
+
+  const board = await getWeeklyBoard(isoYear, isoWeek);
+  const hod = board.hods.find((h) => h.key === hodKey);
+  if (!hod) return c.json({ error: `HoD '${hodKey}' tidak ditemukan` }, 404);
+  const message = formatWeeklyHodWa(board, hod);
+  const result = await sendViaWaGateway(to, message);
+  return c.json({ ...result, hodKey, week: board.label, preview: message }, result.sent ? 200 : 502);
 });
 
 // ── Pricelist — harga jual per produk (setup HoD/Purchasing → publish → AM) ──
