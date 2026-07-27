@@ -1,5 +1,5 @@
 import { db } from "../db.js";
-import { FULL_SCOPE, scopeAccurateClause, type DataScope } from "./access-scope.js";
+import { FULL_SCOPE, isRestricted, scopeAccountOwnerClause, scopeAccurateClause, type DataScope } from "./access-scope.js";
 import { getAging } from "./ar.js";
 import { listTargets, type TargetPeriod } from "./sales-target.js";
 
@@ -459,7 +459,12 @@ function priorityOf(days: number | null): "AKTIF" | "MONITOR" | "TINGGI" | "KRIT
 }
 const BLN_ID = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"];
 
-export async function customersRevenue() {
+// Scope customer-centric (F122) pakai pemilik EKSPLISIT crm_account.owner_am_id
+// (migrasi 064), bukan salesman invoice — supaya kepemilikan tak berpindah
+// sendiri tiap ada invoice dari AM lain, dan prospek tanpa invoice tetap bisa
+// di-scope. Angka revenue tetap TOTAL customer itu (semua invoice), karena ini
+// pandangan per-customer, bukan komisi per-AM.
+export async function customersRevenue(scope: DataScope = FULL_SCOPE) {
   const sql = db();
   const rows = await sql`
     SELECT ai.customer_id::text AS id,
@@ -477,7 +482,9 @@ export async function customersRevenue() {
     LEFT JOIN accurate_customer ac ON ac.id = ai.customer_id
     LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
     LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
-    WHERE ai.customer_id IS NOT NULL
+    LEFT JOIN crm_account oa ON oa.account_id = ai.customer_id
+    LEFT JOIN master_user omu ON omu.am_id = oa.owner_am_id
+    WHERE ai.customer_id IS NOT NULL ${scopeAccountOwnerClause(sql, scope)}
     GROUP BY ai.customer_id, ac.name
     ORDER BY sum(ai.total - COALESCE(ai.tax_amount,0)) DESC NULLS LAST
   `;
@@ -492,7 +499,10 @@ export async function customersRevenue() {
   const ytdRows = await sql`
     SELECT ai.customer_id::text AS id, to_char(date_trunc('month', ai.tanggal), 'YYYY-MM') AS ym, sum(ai.total - COALESCE(ai.tax_amount,0))::float8 AS total
     FROM accurate_invoice ai
+    LEFT JOIN crm_account oa ON oa.account_id = ai.customer_id
+    LEFT JOIN master_user omu ON omu.am_id = oa.owner_am_id
     WHERE ai.customer_id IS NOT NULL AND ai.tanggal >= date_trunc('year', CURRENT_DATE)
+      ${scopeAccountOwnerClause(sql, scope)}
     GROUP BY 1, 2
   `;
   const ytdMap = new Map<string, Record<string, number>>();
@@ -537,7 +547,7 @@ export async function customersRevenue() {
 
 // Win-back: customer dormant ≥ minDays sejak invoice TERAKHIR, prioritas revenue
 // historis (all-time). AM = salesman invoice terakhir (paling relevan utk follow-up).
-export async function dormantCustomers(minDays = 60) {
+export async function dormantCustomers(minDays = 60, scope: DataScope = FULL_SCOPE) {
   const sql = db();
   const md = Math.min(Math.max(Math.trunc(Number(minDays) || 60), 1), 3650);
   const rows = await sql`
@@ -553,7 +563,9 @@ export async function dormantCustomers(minDays = 60) {
       LEFT JOIN accurate_customer ac ON ac.id = ai.customer_id
       LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
       LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
-      WHERE ai.customer_id IS NOT NULL
+      LEFT JOIN crm_account oa ON oa.account_id = ai.customer_id
+      LEFT JOIN master_user omu ON omu.am_id = oa.owner_am_id
+      WHERE ai.customer_id IS NOT NULL ${scopeAccountOwnerClause(sql, scope)}
       GROUP BY ai.customer_id, ac.name
     ),
     last_am AS (
@@ -594,7 +606,7 @@ function classifyChurn(invoices: number, days: number | null, recent90: number, 
   if (prior90 >= 2 && recent90 < prior90 * 0.5) return "risk";
   return null; // sehat — bukan churn
 }
-export async function churnCustomers(churnDays0 = DORMANT_DAYS) {
+export async function churnCustomers(churnDays0 = DORMANT_DAYS, scope: DataScope = FULL_SCOPE) {
   const sql = db();
   const churnDays = Math.min(Math.max(Math.trunc(Number(churnDays0) || DORMANT_DAYS), 1), 3650);
   const rows = await sql`
@@ -612,7 +624,9 @@ export async function churnCustomers(churnDays0 = DORMANT_DAYS) {
       LEFT JOIN accurate_customer ac ON ac.id = ai.customer_id
       LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
       LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
-      WHERE ai.customer_id IS NOT NULL
+      LEFT JOIN crm_account oa ON oa.account_id = ai.customer_id
+      LEFT JOIN master_user omu ON omu.am_id = oa.owner_am_id
+      WHERE ai.customer_id IS NOT NULL ${scopeAccountOwnerClause(sql, scope)}
       GROUP BY ai.customer_id, ac.name
     ),
     last_am AS (
@@ -712,12 +726,22 @@ export async function targetPacing(year0?: number) {
 }
 
 // Rincian revenue per bulan satu customer (default 12 bulan terakhir) — on-demand.
-export async function customerMonthly(id: string, months = 12): Promise<{
+// Drill-down 1 customer: ikut scope pemilik akun. Di luar scope → name null +
+// monthly kosong (sama seperti customer tanpa data), tak membocorkan angkanya.
+export async function customerMonthly(id: string, months = 12, scope: DataScope = FULL_SCOPE): Promise<{
   name: string | null;
   monthly: { month: string; total: number; count: number }[];
 }> {
   const sql = db();
   const m = Math.min(Math.max(months, 1), 36);
+  if (isRestricted(scope)) {
+    const [own] = await sql`
+      SELECT 1 FROM crm_account oa
+      LEFT JOIN master_user omu ON omu.am_id = oa.owner_am_id
+      WHERE oa.account_id = ${Number(id)} ${scopeAccountOwnerClause(sql, scope)}
+      LIMIT 1`;
+    if (!own) return { name: null, monthly: [] };
+  }
   const [meta] = await sql`
     SELECT COALESCE(NULLIF(ac.name,''), NULLIF(max(ai.raw->'customer'->>'name'),''), 'Customer #' || ${id}) AS name
     FROM accurate_invoice ai LEFT JOIN accurate_customer ac ON ac.id = ai.customer_id
