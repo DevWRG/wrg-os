@@ -39,10 +39,14 @@ export async function listFeatures(): Promise<FeatureRow[]> {
 export interface FeatureInput { key: string; name: string; section: string; path: string; sort: number }
 
 // Upsert katalog fitur dari menu (tombol "Sync Fitur"). Idempoten; fitur yang
-// hilang dari menu TIDAK dihapus (izin historis aman) — hanya upsert + aktifkan.
-export async function syncFeatures(rows: FeatureInput[]): Promise<{ upserted: number }> {
+// hilang dari menu TIDAK dihapus (izin historis aman) — tapi DINONAKTIFKAN
+// (active=false) supaya tak lagi muncul di matriks Akses Grup. Tanpa ini fitur
+// "zombie" (mis. 'sales'/Sales Performance yg sudah dilebur ke Sales Analytics)
+// tetap bisa dicentang admin padahal tak ada item menu yg memakainya → hak
+// akses terasa tidak sinkron dgn sidebar.
+export async function syncFeatures(rows: FeatureInput[]): Promise<{ upserted: number; deactivated: number }> {
   const sql = db();
-  let n = 0;
+  const keys: string[] = [];
   for (const r of rows) {
     if (!r.key) continue;
     await sql`
@@ -50,9 +54,12 @@ export async function syncFeatures(rows: FeatureInput[]): Promise<{ upserted: nu
       VALUES (${r.key}, ${r.name}, ${r.section}, ${r.path}, ${r.sort ?? 0}, true)
       ON CONFLICT (key) DO UPDATE SET
         name = EXCLUDED.name, section = EXCLUDED.section, path = EXCLUDED.path, sort = EXCLUDED.sort, active = true`;
-    n++;
+    keys.push(r.key);
   }
-  return { upserted: n };
+  // Katalog kosong = kemungkinan bug pemanggil → jangan matikan seluruh fitur.
+  if (keys.length === 0) return { upserted: 0, deactivated: 0 };
+  const off = await sql`UPDATE feature SET active = false WHERE active AND key <> ALL(${keys}) RETURNING key`;
+  return { upserted: keys.length, deactivated: off.length };
 }
 
 export async function listGroups(): Promise<GroupRow[]> {
