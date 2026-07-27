@@ -24,7 +24,7 @@ export interface DataScope {
 // Scope "lihat semua" (default aman bila tak ada user / DB mati).
 export const FULL_SCOPE: DataScope = { userId: null, amOnly: false, amId: null, cabang: null, superuser: false, cabangScope: null, hodKey: null };
 
-const isAmRole = (role: unknown): boolean => /^am$/i.test(String(role ?? "").trim());
+export const isAmRole = (role: unknown): boolean => /^am$/i.test(String(role ?? "").trim());
 
 // Resolusi scope dari app_user.id (header x-user-id). Aman terhadap DB mati /
 // user tak ditemukan → FULL_SCOPE (feature-permission tetap menjaga akses menu).
