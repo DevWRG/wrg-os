@@ -62,20 +62,22 @@ async function gatherAspectInput(
     coaching_score: 0,
   };
   // Aspek yang memang belum punya sumber data live → selalu stub (SK butuh sumber ini,
-  // tapi tabel KSO/GP/CRM-coverage/coaching + target customer belum ada di sistem).
+  // tapi tabel KSO/GP/CRM-coverage/coaching belum ada di sistem). Customer di-wire
+  // (butuh customer_target_cabang, di-set bawah spt revenue) → tak lagi selalu stub.
   const avail: Partial<Record<AspectKey, boolean>> = {
-    customer: false, kso: false, gp: false, crm: false, coaching: false,
+    kso: false, gp: false, crm: false, coaching: false,
   };
-  const stubbed: AspectKey[] = ["customer", "kso", "gp", "crm", "coaching"];
+  const stubbed: AspectKey[] = ["kso", "gp", "crm", "coaching"];
 
   if (cabang.length === 0) {
     // HoD non-cabang (IVD/Finance/Medical/Aftersales/Acc/BD) → tak ada scope sales.
     avail.revenue = false;
     avail.ar = false;
+    avail.customer = false;
     return {
       input,
       avail,
-      meta: { cabang: [], reason: "hod_non_cabang", stubbed: [...stubbed, "revenue", "ar"] },
+      meta: { cabang: [], reason: "hod_non_cabang", stubbed: [...stubbed, "revenue", "ar", "customer"] },
     };
   }
 
@@ -100,6 +102,15 @@ async function gatherAspectInput(
   const targetSemester = Number(tgt?.target ?? 0) / 2;
   input.revenue_target = targetSemester * elapsed;
 
+  // Customer target: target jumlah customer aktif tahunan (Σ cabang tim) ÷2 utk
+  // semester, di-pro-rata elapsed — sama pola & alasan dgn revenue (customer_active
+  // di atas juga baru terkumpul sampai hari ini).
+  const [ctgt] = await sql`
+    SELECT COALESCE(sum(target),0)::float8 AS target
+    FROM customer_target_cabang WHERE year = ${year} AND cabang = ANY(${cabang}::text[])`;
+  const customerTargetSemester = Number(ctgt?.target ?? 0) / 2;
+  input.customer_target = customerTargetSemester * elapsed;
+
   // AR: total outstanding (status OPEN) + proxy >45hr pakai umur `tanggal` (tak ada
   // due_date). Cutoff di-anchor ke hari ini, bukan akhir semester (lihat ageCutoff).
   const cut45 = ageCutoff(to, now, 45);
@@ -114,13 +125,15 @@ async function gatherAspectInput(
   input.ar_total = Number(ar?.ar_total ?? 0);
   input.ar_over_45d = Number(ar?.ar_over45 ?? 0);
 
-  // Revenue butuh target utk di-skor; tanpa target → tak bisa dinilai (available:false).
+  // Revenue/customer butuh target utk di-skor; tanpa target → available:false.
   avail.revenue = input.revenue_target > 0;
   avail.ar = input.ar_total > 0;
+  avail.customer = input.customer_target > 0;
 
   const stubbedNow = [...stubbed];
   if (!avail.revenue) stubbedNow.push("revenue");
   if (!avail.ar) stubbedNow.push("ar");
+  if (!avail.customer) stubbedNow.push("customer");
 
   return {
     input,
@@ -134,7 +147,10 @@ async function gatherAspectInput(
       revenue_target_semester: targetSemester,        // target semester PENUH (audit SK)
       revenue_target_prorata: input.revenue_target,   // yang dipakai men-skor
       customer_active_count: input.customer_active_count,
-      customer_target_missing: true,
+      customer_target_year: Number(ctgt?.target ?? 0),
+      customer_target_semester: customerTargetSemester,   // target semester PENUH (audit SK)
+      customer_target_prorata: input.customer_target,      // yang dipakai men-skor
+      customer_target_missing: input.customer_target <= 0,
       ar_total: input.ar_total,
       ar_over_45d: input.ar_over_45d,
       ar_over45_proxy: true, // umur `tanggal`, bukan due_date
