@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { gatewayFetch } from "@/lib/gateway";
+import { sessionUser } from "@/lib/admin-guard";
 import { cn } from "@/lib/utils";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { AddVisitSheet } from "@/components/crm/add-visit-sheet";
@@ -43,9 +44,12 @@ const FILTERS: { key: string; label: string }[] = [
   { key: "out_of_bounds", label: "Di luar Indonesia" },
 ];
 
-async function getJson<T>(path: string): Promise<T | null> {
+// x-user-id → backend menerapkan row-level scope (AM = kunjungan sendiri, HoD =
+// cabang tim, admin = semua). Tanpa sesi (auth mati/dev) header tak dikirim →
+// backend pakai FULL_SCOPE seperti perilaku lama.
+async function getJson<T>(path: string, userId?: string): Promise<T | null> {
   try {
-    const res = await gatewayFetch(`${path}`);
+    const res = await gatewayFetch(`${path}`, userId ? { headers: { "x-user-id": userId } } : undefined);
     if (!res.ok) return null;
     return (await res.json()) as T;
   } catch {
@@ -62,9 +66,10 @@ export default async function VisitsPage({
   const active = status && FILTERS.some((f) => f.key === status) ? status : "";
   const qs = active ? `?status=${encodeURIComponent(active)}` : "";
 
+  const me = await sessionUser();
   const [summary, list] = await Promise.all([
-    getJson<VisitSummary>("/visits/summary"),
-    getJson<VisitResponse>(`/visits${qs}`),
+    getJson<VisitSummary>("/visits/summary", me?.id),
+    getJson<VisitResponse>(`/visits${qs}`, me?.id),
   ]);
   const visits = list?.visits ?? null;
 

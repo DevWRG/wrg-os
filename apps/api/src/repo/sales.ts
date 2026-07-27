@@ -1,4 +1,5 @@
 import { db } from "../db.js";
+import { FULL_SCOPE, scopeAccurateClause, type DataScope } from "./access-scope.js";
 import { getAging } from "./ar.js";
 import { listTargets, type TargetPeriod } from "./sales-target.js";
 
@@ -332,18 +333,25 @@ export interface ArGroup {
   invoices: number;
   outstanding: number;
 }
-export async function reportSalesAr(from?: string, to?: string) {
+// Scope (F122): AM hanya invoice atas namanya, HoD hanya cabang timnya. Semua
+// query di sini WAJIB ikut di-scope — termasuk total, kalau tidak angka kartu
+// jadi org-wide sementara tabelnya per-AM.
+export async function reportSalesAr(from?: string, to?: string, scope: DataScope = FULL_SCOPE) {
   const sql = db();
   const dateClause =
     from && ISO.test(from) && to && ISO.test(to)
       ? sql`AND ai.tanggal BETWEEN ${from} AND ${to}`
       : sql``;
+  const scl = scopeAccurateClause(sql, scope);
 
   const byCustomer = await sql`
     SELECT COALESCE(ac.name, 'Customer #' || ai.customer_id) AS key,
            count(*)::int AS invoices, COALESCE(sum(ai.total), 0)::float8 AS outstanding
-    FROM accurate_invoice ai LEFT JOIN accurate_customer ac ON ac.id = ai.customer_id
-    WHERE ai.status = 'OPEN' ${dateClause}
+    FROM accurate_invoice ai
+    LEFT JOIN accurate_customer ac ON ac.id = ai.customer_id
+    LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
+    LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
+    WHERE ai.status = 'OPEN' ${dateClause} ${scl}
     GROUP BY key ORDER BY outstanding DESC
   `;
   // cabang via salesman → master_user (am_id = master_user_id) → mu.cabang;
@@ -362,7 +370,7 @@ export async function reportSalesAr(from?: string, to?: string) {
     LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
     LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
     LEFT JOIN sm_map sm ON sm.code = ai.salesman_name
-    WHERE ai.status = 'OPEN' ${dateClause}
+    WHERE ai.status = 'OPEN' ${dateClause} ${scl}
     GROUP BY key ORDER BY outstanding DESC
   `;
   // Area East/West: cabang (mu.cabang) dinormalisasi → sales_target_branch.area.
@@ -382,7 +390,7 @@ export async function reportSalesAr(from?: string, to?: string) {
       WHEN 'SOLO & YOGYAKARTA' THEN 'JAWA TENGAH'
       WHEN 'CIREBON' THEN 'JAWA BARAT'
       ELSE UPPER(COALESCE(mu.cabang, '')) END
-    WHERE ai.status = 'OPEN' ${dateClause}
+    WHERE ai.status = 'OPEN' ${dateClause} ${scl}
     GROUP BY 1
   `;
   // Per sales pakai NAMA lengkap (master_user.nama via salesman→am_id), bukan
@@ -402,13 +410,15 @@ export async function reportSalesAr(from?: string, to?: string) {
     LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
     LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
     LEFT JOIN sm_map sm ON sm.code = ai.salesman_name
-    WHERE ai.status = 'OPEN' ${dateClause}
+    WHERE ai.status = 'OPEN' ${dateClause} ${scl}
     GROUP BY key ORDER BY outstanding DESC
   `;
   const [tot] = await sql`
-    SELECT count(*)::int AS invoices, COALESCE(sum(total), 0)::float8 AS outstanding
-    FROM accurate_invoice WHERE status = 'OPEN'
-      ${from && ISO.test(from) && to && ISO.test(to) ? sql`AND tanggal BETWEEN ${from} AND ${to}` : sql``}
+    SELECT count(*)::int AS invoices, COALESCE(sum(ai.total), 0)::float8 AS outstanding
+    FROM accurate_invoice ai
+    LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
+    LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
+    WHERE ai.status = 'OPEN' ${dateClause} ${scl}
   `;
   const map = (rows: Record<string, unknown>[]): ArGroup[] =>
     rows.map((r) => ({ key: String(r.key), invoices: Number(r.invoices), outstanding: Number(r.outstanding) }));

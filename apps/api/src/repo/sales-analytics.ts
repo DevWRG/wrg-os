@@ -15,7 +15,7 @@ import {
   cabangRegionMap,
   type Region,
 } from "./sales.js";
-import { isRestricted, type DataScope } from "./access-scope.js";
+import { isRestricted, scopeAccurateClause, type DataScope } from "./access-scope.js";
 
 const yearOf = (to: string): number => Number(to.slice(0, 4));
 const pct = (num: number, den: number | null | undefined): number | null =>
@@ -25,12 +25,9 @@ const pct = (num: number, den: number | null | undefined): number | null =>
 //   AM  → AND mu.am_id = <amId>
 //   HoD → AND cabang ∈ cabangScope (tim HoD)
 //   lainnya → kosong (lihat semua)
-function scopeClause(sql: ReturnType<typeof db>, scope: DataScope) {
-  if (scope.amOnly && scope.amId) return sql`AND mu.am_id = ${scope.amId}`;
-  if (scope.cabangScope && scope.cabangScope.length)
-    return sql`AND COALESCE(NULLIF(mu.cabang,''), NULLIF(acs.cabang_override,'')) = ANY(${scope.cabangScope}::text[])`;
-  return sql``;
-}
+// Definisinya tinggal satu di access-scope.ts (dipakai juga oleh AR & Visits) —
+// dulu aturan ini dikopi per-repo, gampang lepas sinkron.
+const scopeClause = scopeAccurateClause;
 
 // ── View #1: Executive Overview ───────────────────────────────────
 export async function analyticsOverview(from0?: string, to0?: string, scope?: DataScope) {

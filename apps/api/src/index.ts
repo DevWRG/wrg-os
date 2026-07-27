@@ -790,23 +790,27 @@ app.post("/ar/invoices", async (c) => {
   return c.json(await ingestInvoices(body.invoices, body.asof), 201);
 });
 
+// AR read model — ber-scope row-level (AM = AR atas namanya, HoD = cabang tim).
+// Identitas dari header x-user-id yang diteruskan halaman/BFF web.
 app.get("/ar/aging", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  return c.json(await getAging(c.req.query("bucket") || undefined));
+  const scope = await resolveScope(c.req.header("x-user-id"));
+  return c.json(await getAging(c.req.query("bucket") || undefined, scope));
 });
 
 // F30 — AR aging per customer (breakdown 5 bucket + prioritas tagih). Read-only.
 app.get("/ar/aging/by-customer", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  return c.json(await arAgingByCustomer());
+  return c.json(await arAgingByCustomer(await resolveScope(c.req.header("x-user-id"))));
 });
 
 // Detail satu invoice (header + line item) by nomor invoice. Read-only.
+// Di luar scope → 404, bukan 403: jangan bocorkan bahwa nomornya ada.
 app.get("/ar/invoice/:no", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const no = c.req.param("no");
   if (!no) return c.json({ error: "no invoice wajib" }, 400);
-  const r = await invoiceDetail(no);
+  const r = await invoiceDetail(no, await resolveScope(c.req.header("x-user-id")));
   return c.json(r, r.ok ? 200 : 404);
 });
 
@@ -921,7 +925,8 @@ app.get("/accurate/shipments", async (c) => {
 // AR (piutang) per customer / cabang / sales — dari accurate_invoice OPEN.
 app.get("/ar/sales", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  return c.json(await reportSalesAr(c.req.query("from") || undefined, c.req.query("to") || undefined));
+  const scope = await resolveScope(c.req.header("x-user-id"));
+  return c.json(await reportSalesAr(c.req.query("from") || undefined, c.req.query("to") || undefined, scope));
 });
 
 // ── WRG Monitor: direktori member WA (port wrg-monitor) ──
@@ -1421,22 +1426,25 @@ app.post("/visits", async (c) => {
 });
 
 // Read model visit (filter geo_status: ok|out_of_bounds|no_geo|date_mismatch).
+// Ber-scope row-level: AM = kunjungannya sendiri, HoD = cabang timnya.
 app.get("/visits", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  const visits = await listVisits(c.req.query("status") || undefined);
+  const scope = await resolveScope(c.req.header("x-user-id"));
+  const visits = await listVisits(c.req.query("status") || undefined, scope);
   return c.json({ count: visits.length, visits });
 });
 
 // Brief kepatuhan geotag (per-status + flagged).
 app.get("/visits/summary", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  return c.json(await visitSummary());
+  return c.json(await visitSummary(await resolveScope(c.req.header("x-user-id"))));
 });
 
 // Detail 1 visit (didaftarkan SETELAH /visits/summary biar literal menang).
+// Di luar scope → 404 (sama seperti tak ada), jangan bocorkan keberadaannya.
 app.get("/visits/:id", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  const v = await getVisit(c.req.param("id"));
+  const v = await getVisit(c.req.param("id"), await resolveScope(c.req.header("x-user-id")));
   return v ? c.json(v) : c.json({ error: "visit tak ditemukan" }, 404);
 });
 
