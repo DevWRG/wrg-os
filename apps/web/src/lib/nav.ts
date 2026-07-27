@@ -141,6 +141,36 @@ export function navVisible(me: AccessUser | null, it: NavItem): boolean {
   return canOrLegacy(me, key, it.show ? it.show(me) : false);
 }
 
+// Halaman "rumah" untuk user ini. Default tetap Sales Overview; kalau user tak
+// berizin ke situ → item menu pertama yang boleh dia lihat. Dipakai root "/"
+// (tujuan setelah login & link logo/breadcrumb): tanpa ini user tanpa izin
+// /overview mendarat di halaman "Akses ditolak" tepat setelah login.
+const HOME_DEFAULT = "/overview";
+
+export function homePath(me: AccessUser | null): string {
+  const items = NAV.flatMap((g) => g.items);
+  const fallback = items.find((it) => it.url === HOME_DEFAULT);
+  if (fallback && navVisible(me, fallback)) return HOME_DEFAULT;
+  return items.find((it) => navVisible(me, it))?.url ?? HOME_DEFAULT;
+}
+
+// Item menu yang "memiliki" sebuah pathname — dipakai layout dashboard untuk
+// menegakkan izin di level rute (menu tersembunyi = halaman tertutup, termasuk
+// bila URL-nya diketik langsung). Cocokkan yang PALING panjang: /pricelist/setup
+// harus kena item Pricelist Setup, bukan Pricelist. Rute anak ikut induknya
+// (/visits/123 → Visits). Pathname di luar katalog menu → null (tak di-gate).
+export function findNavItem(pathname: string): NavItem | null {
+  const path = pathname.replace(/\/+$/, "") || "/";
+  let best: NavItem | null = null;
+  for (const g of NAV) {
+    for (const it of g.items) {
+      if (path !== it.url && !path.startsWith(`${it.url}/`)) continue;
+      if (!best || it.url.length > best.url.length) best = it;
+    }
+  }
+  return best;
+}
+
 export interface FeatureCatalogRow { key: string; name: string; section: string; path: string; sort: number }
 
 // Katalog fitur datar utk Sync (dikirim ke /admin/access/features/sync).

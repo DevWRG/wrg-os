@@ -36,7 +36,7 @@ export function AppSidebar({ me }: { me: SessionUser | null }) {
       <SidebarHeader>
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton size="lg" render={<Link href="/overview" />} className="overflow-hidden">
+            <SidebarMenuButton size="lg" render={<Link href="/" />} className="overflow-hidden">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src="/brand/wahana-lifeline-color.png" alt="Wahana Lifeline" className="h-8 w-auto max-w-none object-contain object-left dark:hidden" />
               {/* eslint-disable-next-line @next/next/no-img-element */}

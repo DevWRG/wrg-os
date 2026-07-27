@@ -46,7 +46,7 @@ export function Breadcrumbs() {
 
   return (
     <nav className="flex min-w-0 items-center gap-1.5 text-sm" aria-label="Breadcrumb">
-      <Link href="/overview" className="text-muted-foreground hover:text-foreground shrink-0">
+      <Link href="/" className="text-muted-foreground hover:text-foreground shrink-0">
         WRG CRM
       </Link>
       {segs.map((seg, i) => {
