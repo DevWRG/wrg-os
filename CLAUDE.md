@@ -89,12 +89,13 @@ curl -s -H "x-service-token: $TOK" "http://localhost:4100/<path>"
 ## Scheduler (apps/api/src/scheduler.ts)
 
 Cron in-process, granular env-gate (`*_ENABLED=true` per job; `AGENT_SCHEDULE_ENABLED=false`
-mematikan A1-12). 18 job live. Timezone WIB (wibDate/wibJam). Jadwal di-override via `*_CRON`.
+mematikan A1-12). 19 job live. Timezone WIB (wibDate/wibJam). Jadwal di-override via `*_CRON`.
 Job: reminder-h/h-1, hod-reminder, plan-check, report-check, monitor rekap/resume,
 accurate-sync, notif-tua, daily-summary, weekly-report, detect-leave, extract-competitor,
-weekend-briefing, pola-komunikasi, list-members, notif-quota.
+weekend-briefing, pola-komunikasi, list-members, notif-quota, watchpoint-snapshot.
 
 - `accurate-sync` (weekday 6×) sekarang juga refresh mirror **sales-order + delivery-order** (recent) setelah pull invoice → menu Orders/Shipments auto-update.
+- `watchpoint-snapshot` (Senin 06:00, `WATCHPOINT_SNAPSHOT_ENABLED`) membekukan metric computed minggu lalu ke `watchpoint_weekly` — sumber riwayat tab **WatchPoint → Weekly** & deck PPTX. Tanpa job ini minggu lewat ikut berubah tiap dibuka.
 
 **Target broadcast WA harus ditentukan user, bukan diinferensi agent.** Crontab legacy
 sudah cutover (dash-free file di-install user; sandbox blok edit crontab).
@@ -108,3 +109,4 @@ sudah cutover (dash-free file di-install user; sandbox blok edit crontab).
 - Export dashboard: CSV `sep=,\n` + BOM UTF-8 (`﻿`) → buka mulus di Excel lokal apa pun, tanpa dependency.
 - Admin-gate di layer WEB (admin-guard.ts requireAdmin role==admin), bukan di api.
 - **Inbound foto**: balasan ack pakai cooldown in-memory per-AM (90 dtk, `lastPhotoReplyAt` di inbound.ts) — foto visit sering datang berurutan (bukan barengan) jadi debounce `pending_photos` saja tak cukup; tanpa cooldown bot bales tiap foto (spam).
+- **WatchPoint Weekly**: nomor minggu = **ISO-8601** (Senin–Minggu). Deck HoD lama pakai penomoran sendiri (mis. "W24" = 6–12 Juni 2026) → nomor bisa selisih 1 dari deck lama; yang dipakai sistem adalah rentang tanggalnya. Snapshot `source='db'` wajib ikut di-INSERT (default kolom = `manual`), kalau tidak snapshot berikutnya tertolak oleh `WHERE source='db'` dan angka berhenti diperbarui.
