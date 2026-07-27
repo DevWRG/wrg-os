@@ -379,7 +379,7 @@ app.post("/admin/users/from-roster", async (c) => {
 
 app.patch("/admin/users/:id", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let b: { name?: string; role?: string; title?: string | null; active?: boolean; wa_number?: string | null; hod_key?: string | null } = {};
+  let b: { name?: string; role?: string; title?: string | null; active?: boolean; wa_number?: string | null; am_id?: string | null; hod_key?: string | null } = {};
   try { b = await c.req.json(); } catch { /* opsional */ }
   const u = await updateAppUser(c.req.param("id"), b);
   return u ? c.json({ user: u }) : c.json({ error: "user tak ditemukan" }, 404);
