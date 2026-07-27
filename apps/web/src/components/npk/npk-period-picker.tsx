@@ -36,7 +36,8 @@ export function NpkPeriodPicker({ year, period }: { year: number; period: "S1" |
 
       <Select value={period} onValueChange={(v) => go(year, v as "S1" | "S2")}>
         <SelectTrigger size="sm" className="w-[132px] bg-card border-border" aria-label="Semester">
-          <SelectValue />
+          {/* Base UI SelectValue tampilkan raw value ("S1") tanpa render-fn → map ke label item (idiom watchpoint-weekly). */}
+          <SelectValue>{(v) => (String(v) === "S1" ? "Semester 1" : String(v) === "S2" ? "Semester 2" : String(v))}</SelectValue>
         </SelectTrigger>
         <SelectContent>
           <SelectItem value="S1">Semester 1</SelectItem>
