@@ -14,7 +14,7 @@ import { Card, CardContent } from "@/components/ui/card";
 
 // ── Tipe (mirror apps/api/src/repo/rbac.ts) ──
 interface GroupRow { id: number; key: string; name: string; description: string | null; is_system: boolean; superuser: boolean; member_count: number }
-interface FeatureRow { key: string; name: string; section: string; path: string; sort: number }
+interface FeatureRow { key: string; name: string; section: string; path: string; sort: number; active?: boolean }
 interface PermRow { feature_key: string; active: boolean; can_view: boolean; can_create: boolean; can_edit: boolean; can_delete: boolean }
 interface Member { id: string; email: string; name: string | null }
 interface GroupDetail { id: number; key: string; name: string; description: string | null; is_system: boolean; superuser: boolean; members: Member[]; permissions: PermRow[] }
@@ -69,7 +69,7 @@ function GroupList({ onOpen }: { onOpen: (id: number) => void }) {
       });
       const d = await r.json();
       if (!r.ok) throw new Error(d.error ?? "gagal sync");
-      setSyncMsg(`${d.upserted} fitur tersinkron ✓`);
+      setSyncMsg(`${d.upserted} fitur tersinkron${d.deactivated ? `, ${d.deactivated} dinonaktifkan` : ""} ✓`);
     } catch (e) { setSyncMsg(String((e as Error).message ?? e)); } finally { setSyncing(false); }
   }
 
@@ -154,12 +154,15 @@ function GroupEditor({ id, onBack }: { id: number; onBack: () => void }) {
       jget<{ groups: GroupRow[] }>("/api/admin/access/groups"),
     ])
       .then(([d, f, u, g]) => {
-        setDetail(d.group); setFeatures(f.features); setUsers(u.users); setGroups(g.groups);
+        // Hanya fitur aktif: fitur yg menunya sudah dihapus dinonaktifkan oleh
+        // "Sync Fitur" — mencentangnya tak akan pernah memunculkan menu.
+        const feats = f.features.filter((x) => x.active !== false);
+        setDetail(d.group); setFeatures(feats); setUsers(u.users); setGroups(g.groups);
         setName(d.group.name); setDescription(d.group.description ?? "");
         setMembers(new Set(d.group.members.map((m) => m.id)));
         const byKey = new Map(d.group.permissions.map((p) => [p.feature_key, p]));
         const initial: Record<string, Cell> = {};
-        for (const feat of f.features) {
+        for (const feat of feats) {
           const p = byKey.get(feat.key);
           initial[feat.key] = {
             active: p?.active ?? false, can_create: p?.can_create ?? false,
