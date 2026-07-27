@@ -7,6 +7,7 @@
 // group-level (bukan skor per-orang). Semua dihitung on-the-fly (tanpa migrasi).
 
 import { db } from "../db.js";
+import { joinAmFromSalesman } from "./salesman-am.js";
 import { reportPerOrang, reportCompliance, type OrangRow, type ComplianceRow } from "./plandash.js";
 import { getEmployee } from "./employee-spine.js";
 import { listLeave } from "./leave.js";
@@ -184,17 +185,17 @@ async function collectMaps(from: string, to: string, months: string[]): Promise<
              max(sta.target)::float8 AS target
       FROM accurate_invoice ai
       JOIN accurate_salesman acs ON acs.id = ai.salesman_id
-      JOIN master_user mu ON mu.am_id = acs.master_user_id::text
+      ${joinAmFromSalesman(sql)}
       LEFT JOIN sales_target_am sta ON sta.am_id = mu.am_id AND sta.year = ${year}
-      WHERE ai.tanggal BETWEEN ${from} AND ${to}
+      WHERE ai.tanggal BETWEEN ${from} AND ${to} AND mu.am_id IS NOT NULL
       GROUP BY mu.am_id
     `,
     sql`
       SELECT mu.am_id, COALESCE(sum(ai.total),0)::float8 AS outstanding, count(*)::int AS invoices
       FROM accurate_invoice ai
       JOIN accurate_salesman acs ON acs.id = ai.salesman_id
-      JOIN master_user mu ON mu.am_id = acs.master_user_id::text
-      WHERE ai.status = 'OPEN'
+      ${joinAmFromSalesman(sql)}
+      WHERE ai.status = 'OPEN' AND mu.am_id IS NOT NULL
       GROUP BY mu.am_id
     `,
     sql`
@@ -409,7 +410,7 @@ export async function getRaportDetail(amId: string, period?: string): Promise<
                  max(sta.target)::float8 AS target
           FROM accurate_invoice ai
           JOIN accurate_salesman acs ON acs.id = ai.salesman_id
-          JOIN master_user mu ON mu.am_id = acs.master_user_id::text
+          ${joinAmFromSalesman(sql)}
           LEFT JOIN sales_target_am sta ON sta.am_id = mu.am_id AND sta.year = ${year}
           WHERE mu.am_id = ${amId} AND ai.tanggal BETWEEN ${from} AND ${to}
         `
@@ -419,7 +420,7 @@ export async function getRaportDetail(amId: string, period?: string): Promise<
           SELECT COALESCE(sum(ai.total),0)::float8 AS outstanding, count(*)::int AS invoices
           FROM accurate_invoice ai
           JOIN accurate_salesman acs ON acs.id = ai.salesman_id
-          JOIN master_user mu ON mu.am_id = acs.master_user_id::text
+          ${joinAmFromSalesman(sql)}
           WHERE mu.am_id = ${amId} AND ai.status = 'OPEN'
         `
       : Promise.resolve([] as { outstanding: number; invoices: number }[]),

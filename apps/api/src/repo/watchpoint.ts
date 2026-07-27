@@ -13,6 +13,7 @@
 //   - metric manual: tabel `watchpoint_metric` (diisi HoD). Kosong → status NA.
 
 import { db, isDbEnabled } from "../db.js";
+import { joinAmFromSalesman } from "./salesman-am.js";
 
 export type WatchStatus = "GREEN" | "YELLOW" | "RED" | "NA";
 export type WatchTrend = "improving" | "stable" | "declining";
@@ -86,7 +87,7 @@ async function revenueThisMonth(sql: Sql, cabang: string[]): Promise<number> {
     SELECT COALESCE(sum(ai.total),0)::float8 AS v
     FROM accurate_invoice ai
     LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
-    LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
+    ${joinAmFromSalesman(sql)}
     WHERE ai.tanggal >= date_trunc('month', CURRENT_DATE)
       AND mu.cabang = ANY(${cabang})`;
   return Number(rows[0]?.v ?? 0);
@@ -130,7 +131,7 @@ async function churnRutin(sql: Sql, cabang: string[]): Promise<number> {
       SELECT ai.customer_id
       FROM accurate_invoice ai
       LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
-      LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
+      ${joinAmFromSalesman(sql)}
       WHERE mu.cabang = ANY(${cabang})
       GROUP BY ai.customer_id
       HAVING count(*) >= 3 AND max(ai.tanggal) < CURRENT_DATE - 60

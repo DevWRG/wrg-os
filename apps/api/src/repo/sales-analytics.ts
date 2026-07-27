@@ -7,6 +7,7 @@
 // query ber-scope (klausa `AND mu.am_id = ...`).
 
 import { db } from "../db.js";
+import { AM_VACANT, joinAmFromSalesman } from "./salesman-am.js";
 import {
   salesRange,
   salesOverview,
@@ -43,13 +44,13 @@ export async function analyticsOverview(from0?: string, to0?: string, scope?: Da
              count(DISTINCT ai.customer_id)::int AS customers
       FROM accurate_invoice ai
       LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
-      LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
+      ${joinAmFromSalesman(sql)}
       WHERE ai.tanggal BETWEEN ${from} AND ${to} ${scl}`;
     const trend = await sql`
       SELECT ai.tanggal::text AS date, COALESCE(sum(ai.total - COALESCE(ai.tax_amount,0)),0)::float8 AS revenue, count(*)::int AS orders
       FROM accurate_invoice ai
       LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
-      LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
+      ${joinAmFromSalesman(sql)}
       WHERE ai.tanggal BETWEEN ${from} AND ${to} ${scl}
       GROUP BY ai.tanggal ORDER BY ai.tanggal`;
     // Target hanya untuk AM (target per-AM). HoD lintas-cabang → target null.
@@ -98,13 +99,13 @@ export async function analyticsPerAm(from0?: string, to0?: string, scope?: DataS
   const regionMap = await cabangRegionMap(sql);
   const rows = await sql`
     SELECT mu.am_id AS am_id,
-           COALESCE(NULLIF(max(mu.nama),''), NULLIF(max(ai.salesman_name),''), 'Tanpa sales') AS nama,
+           COALESCE(NULLIF(max(mu.nama),''), ${AM_VACANT}) AS nama,
            NULLIF(max(mu.cabang),'') AS cabang,
            sum(ai.total - COALESCE(ai.tax_amount,0))::float8 AS total, count(*)::int AS count,
            max(sta.target)::float8 AS target
     FROM accurate_invoice ai
     LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
-    LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
+    ${joinAmFromSalesman(sql)}
     LEFT JOIN sales_target_am sta ON sta.am_id = mu.am_id AND sta.year = ${year}
     WHERE ai.tanggal BETWEEN ${from} AND ${to} ${scopeClause(sql, sc)}
     GROUP BY mu.am_id
@@ -154,7 +155,7 @@ export async function analyticsPerAmDrilldown(amId: string, from0?: string, to0?
       SELECT ai.id, (ai.total - COALESCE(ai.tax_amount,0))::float8 AS inv_net
       FROM accurate_invoice ai
       LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
-      LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
+      ${joinAmFromSalesman(sql)}
       WHERE ai.tanggal BETWEEN ${from} AND ${to} AND mu.am_id = ${amId}
     ),
     line AS (
@@ -175,7 +176,7 @@ export async function analyticsPerAmDrilldown(amId: string, from0?: string, to0?
            sum(ai.total - COALESCE(ai.tax_amount,0))::float8 AS total, count(*)::int AS count
     FROM accurate_invoice ai
     LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
-    LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
+    ${joinAmFromSalesman(sql)}
     LEFT JOIN accurate_customer ac ON ac.id = ai.customer_id
     WHERE ai.tanggal BETWEEN ${from} AND ${to} AND mu.am_id = ${amId}
     GROUP BY ai.customer_id, ac.name ORDER BY sum(ai.total - COALESCE(ai.tax_amount,0)) DESC`;
@@ -200,7 +201,7 @@ export async function analyticsPerProduk(from0?: string, to0?: string, scope?: D
       SELECT ai.id, ai.customer_id, (ai.total - COALESCE(ai.tax_amount,0))::float8 AS inv_net
       FROM accurate_invoice ai
       LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
-      LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
+      ${joinAmFromSalesman(sql)}
       WHERE ai.tanggal BETWEEN ${from} AND ${to} ${scopeClause(sql, sc)}
     ),
     line AS (
@@ -253,7 +254,7 @@ export async function analyticsPerPengadaan(from0?: string, to0?: string, scope?
       SELECT ai.id, (ai.total - COALESCE(ai.tax_amount,0))::float8 AS inv_total, ai.raw
       FROM accurate_invoice ai
       LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
-      LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
+      ${joinAmFromSalesman(sql)}
       WHERE ai.tanggal BETWEEN ${from} AND ${to} ${scopeClause(sql, sc)}
     ),
     cat AS (  -- per faktur × kategori dasar; bobot = Σ totalPrice baris (>=0)
@@ -301,7 +302,7 @@ export async function analyticsPerCabang(from0?: string, to0?: string, scope?: D
            max(stc.target)::float8 AS target
     FROM accurate_invoice ai
     LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
-    LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
+    ${joinAmFromSalesman(sql)}
     LEFT JOIN sales_target_cabang stc ON stc.cabang = COALESCE(NULLIF(mu.cabang,''), NULLIF(acs.cabang_override,''), 'Tanpa cabang') AND stc.year = ${year}
     WHERE ai.tanggal BETWEEN ${from} AND ${to} ${scopeClause(sql, sc)}
     GROUP BY 1 ORDER BY sum(ai.total - COALESCE(ai.tax_amount,0)) DESC`;
@@ -345,7 +346,7 @@ export async function analyticsPerCustomer(from0?: string, to0?: string, scope?:
            (CURRENT_DATE - max(ai.tanggal))::int AS days_since
     FROM accurate_invoice ai
     LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
-    LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
+    ${joinAmFromSalesman(sql)}
     LEFT JOIN accurate_customer ac ON ac.id = ai.customer_id
     WHERE ai.tanggal BETWEEN ${from} AND ${to} ${scopeClause(sql, sc)}
     GROUP BY ai.customer_id, ac.name ORDER BY sum(ai.total - COALESCE(ai.tax_amount,0)) DESC`;
@@ -400,11 +401,11 @@ export async function getMyArAging(scope?: DataScope, from0?: string, to0?: stri
            m.invoice_no, m.bucket, m.days_overdue::int AS days_overdue,
            COALESCE(ai.outstanding, m.amount)::float8 AS amount,
            NULLIF(mu.cabang,'') AS cabang,
-           COALESCE(NULLIF(mu.nama,''), NULLIF(ai.salesman_name,'')) AS am
+           COALESCE(NULLIF(mu.nama,''), ${AM_VACANT}) AS am
     FROM ar_aging_mv m
     LEFT JOIN accurate_invoice ai ON ai.number = m.invoice_no AND ai.customer_id::text = m.customer_id
     LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
-    LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
+    ${joinAmFromSalesman(sql)}
     LEFT JOIN accurate_customer ac ON ac.id = ai.customer_id
     WHERE COALESCE(ai.outstanding, m.amount) > 0 ${scl} ${dateClause}`;
 
@@ -476,7 +477,7 @@ export async function analyticsTrending(from0?: string, to0?: string, scope?: Da
     SELECT ai.tanggal::text AS date, COALESCE(sum(ai.total - COALESCE(ai.tax_amount,0)),0)::float8 AS revenue, count(*)::int AS orders
     FROM accurate_invoice ai
     LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
-    LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
+    ${joinAmFromSalesman(sql)}
     WHERE ai.tanggal BETWEEN ${from} AND ${to} ${scopeClause(sql, sc)}
     GROUP BY ai.tanggal ORDER BY ai.tanggal`;
   const series = rows.map((r) => ({ date: String(r.date), revenue: Number(r.revenue), orders: Number(r.orders) }));

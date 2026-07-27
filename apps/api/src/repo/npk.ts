@@ -11,6 +11,7 @@
 // (proxy umur `tanggal`, karena accurate_invoice tak punya due_date).
 
 import { db } from "../db.js";
+import { joinAmFromSalesman } from "./salesman-am.js";
 import { HODS } from "../hod-resolver.js";
 import { calcNPK, ageCutoff, elapsedFraction, ASPECT_ORDER, ASPECT_LABEL, DEFAULT_BOBOT, type AspectInput, type AspectKey, type NPKResult } from "../lib/npk-calc.js";
 import type { DataScope } from "./access-scope.js";
@@ -87,7 +88,7 @@ async function gatherAspectInput(
            count(DISTINCT ai.customer_id)::int AS customers
     FROM accurate_invoice ai
     LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
-    LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
+    ${joinAmFromSalesman(sql)}
     WHERE ai.tanggal BETWEEN ${from} AND ${to}
       AND COALESCE(NULLIF(mu.cabang,''), NULLIF(acs.cabang_override,'')) = ANY(${cabang}::text[])`;
   input.revenue_actual = Number(rev?.revenue ?? 0);
@@ -122,7 +123,7 @@ async function gatherAspectInput(
            COALESCE(sum(ai.total) FILTER (WHERE ai.tanggal < ${cut45}),0)::float8 AS ar_over45
     FROM accurate_invoice ai
     LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
-    LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
+    ${joinAmFromSalesman(sql)}
     WHERE ai.status = 'OPEN'
       AND COALESCE(NULLIF(mu.cabang,''), NULLIF(acs.cabang_override,'')) = ANY(${cabang}::text[])`;
   input.ar_total = Number(ar?.ar_total ?? 0);

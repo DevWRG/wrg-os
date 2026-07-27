@@ -1,4 +1,5 @@
 import { db } from "../db.js";
+import { joinAmFromSalesman } from "./salesman-am.js";
 import { FULL_SCOPE, isRestricted, scopeAccountOwnerClause, type DataScope } from "./access-scope.js";
 
 // F62 Account & Contact 360 (Fase 1). Account = accurate_customer (master faskes)
@@ -30,7 +31,7 @@ export async function listAccounts(scope: DataScope = FULL_SCOPE) {
       FROM accurate_invoice ai
       LEFT JOIN accurate_customer ac ON ac.id = ai.customer_id
       LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
-      LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
+      ${joinAmFromSalesman(sql)}
       WHERE ai.customer_id IS NOT NULL
       GROUP BY ai.customer_id, ac.name
     )
