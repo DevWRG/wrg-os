@@ -73,11 +73,25 @@ const TREND: Record<WatchTrend, { icon: LucideIcon; tone: string; label: string 
 // Milestone (target null) tak punya angka — nilainya state, sama seperti papan HoD.
 const MILESTONE_VALUE: Record<WatchStatus, string> = { GREEN: "Live", YELLOW: "WIP", RED: "Off", NA: "—" };
 
+// Label pilihan status di dialog input (Select.Value butuh render eksplisit).
+const STATUS_PICK_LABEL: Record<string, string> = {
+  AUTO: "Otomatis dari target", GREEN: "Hijau", YELLOW: "Kuning", RED: "Merah", NA: "N/A",
+};
+
 function fmt(v: number | null, unit: string): string {
   if (v === null) return "—";
   if (unit === "Rp") return "Rp " + new Intl.NumberFormat("id-ID", { notation: "compact", maximumFractionDigits: 1 }).format(v);
   if (unit === "%") return `${v % 1 === 0 ? v : v.toFixed(1)}%`;
   return `${new Intl.NumberFormat("id-ID", { maximumFractionDigits: 0 }).format(v)}${unit ? " " + unit : ""}`;
+}
+
+// Pesan error backend → kalimat yang bisa ditindaklanjuti. 401/403 datang dari
+// gate HoD/admin di BFF; tanpa penerjemahan user cuma lihat "unauthenticated".
+function errText(status: number, raw?: string): string {
+  if (status === 401) return "Perlu login dulu untuk mengubah nilai mingguan.";
+  if (status === 403) return "Hanya HoD atau admin yang boleh mengubah nilai mingguan.";
+  if (status === 503) return "Database sedang tidak aktif — perubahan tak bisa disimpan.";
+  return raw?.trim() || `Gagal (HTTP ${status}).`;
 }
 
 const targetText = (m: WeeklyMetric) =>
@@ -166,7 +180,7 @@ export function WatchPointWeeklyView() {
         body: JSON.stringify({ year: board.isoYear, week: board.isoWeek }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "gagal simpan");
+      if (!res.ok) throw new Error(errText(res.status, data.error));
       setToast({ ok: true, text: `${data.saved} metric ${board.label} dibekukan.` });
       await load({ isoYear: board.isoYear, isoWeek: board.isoWeek });
     } catch (e) {
@@ -196,7 +210,14 @@ export function WatchPointWeeklyView() {
             }}
           >
             <SelectTrigger size="sm" className="bg-card border-border w-[268px]" aria-label="Pilih minggu">
-              <SelectValue />
+              {/* Base UI Select.Value menampilkan VALUE mentah kalau tak diberi
+                  render — tanpa ini trigger terbaca "2026-31", bukan labelnya. */}
+              <SelectValue>
+                {(v) => {
+                  const w = weeks.find((x) => `${x.isoYear}-${x.isoWeek}` === v);
+                  return w ? `${w.label} · ${w.periode}` : "Pilih minggu";
+                }}
+              </SelectValue>
             </SelectTrigger>
             <SelectContent>
               {weeks.map((w) => (
@@ -325,7 +346,8 @@ function HodWeeklyCard({ board, hod, onChanged }: { board: WeeklyBoard; hod: Wee
               {hod.metrics.map((m) => {
                 const t = TREND[m.trend];
                 const TrendIcon = t.icon;
-                const SourceIcon = m.source === "db" ? Database : PencilLine;
+                // "live" = metric DB minggu berjalan (belum di-snapshot) → tetap ikon DB.
+                const SourceIcon = m.source === "manual" ? PencilLine : Database;
                 return (
                   <TableRow key={m.key}>
                     <TableCell className="font-medium">
@@ -418,7 +440,7 @@ function EditMetricDialog({
         }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "gagal simpan");
+      if (!res.ok) throw new Error(errText(res.status, data.error));
       onSaved();
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -435,7 +457,7 @@ function EditMetricDialog({
       const res = await fetch(`/api/watchpoint/weekly?${qs}`, { method: "DELETE" });
       if (!res.ok && res.status !== 404) {
         const data = await res.json();
-        throw new Error(data.error ?? "gagal reset");
+        throw new Error(errText(res.status, data.error));
       }
       onSaved();
     } catch (e) {
@@ -472,7 +494,7 @@ function EditMetricDialog({
             <Label htmlFor="wp-status">Status</Label>
             <Select value={status} onValueChange={(v) => setStatus(v as WatchStatus | "AUTO")}>
               <SelectTrigger id="wp-status" size="sm" className="bg-card border-border">
-                <SelectValue />
+                <SelectValue>{(v) => STATUS_PICK_LABEL[String(v)] ?? "Pilih status"}</SelectValue>
               </SelectTrigger>
               <SelectContent>
                 {!isMilestone && <SelectItem value="AUTO">Otomatis dari target</SelectItem>}
