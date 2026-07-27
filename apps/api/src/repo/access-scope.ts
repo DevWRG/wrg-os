@@ -108,3 +108,12 @@ export function scopeAccurateClause(sql: Sql, s: DataScope) {
 export function scopeSalesPlanClause(sql: Sql, s: DataScope) {
   return scopeOnClause(sql, s, sql`sp.am_id`, sql`NULLIF(mu.cabang,'')`);
 }
+
+// Customers/Accounts: kepemilikan dari kolom EKSPLISIT crm_account.owner_am_id
+// (migrasi 064) — bukan diturunkan dari invoice terakhir, supaya faskes yang
+// belum pernah transaksi tetap bisa di-scope. Query WAJIB punya alias `oa`
+// (crm_account) + `omu` (master_user pemilik). Akun tak-bertuan (owner NULL)
+// tidak muncul pada scope terbatas — admin yang menugaskan pemiliknya.
+export function scopeAccountOwnerClause(sql: Sql, s: DataScope) {
+  return scopeOnClause(sql, s, sql`oa.owner_am_id`, sql`NULLIF(omu.cabang,'')`);
+}

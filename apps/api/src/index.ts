@@ -20,7 +20,7 @@ import { enqueueAmbiguous, listHitl, resolveHitl } from "./repo/hitl.js";
 import { insertRekap, insertResume, getDigestHistory, getDigestInsights } from "./repo/digest.js";
 import { getDashboardStats } from "./repo/stats.js";
 import { getCustomers } from "./repo/customer.js";
-import { listAccounts, getAccount, upsertAccountFields, createContact, updateContact, deleteContact } from "./repo/account.js";
+import { listAccounts, getAccount, upsertAccountFields, createContact, updateContact, deleteContact, listOwnerCandidates } from "./repo/account.js";
 import {
   ingestInvoices,
   ingestAccurateWebhook,
@@ -2608,59 +2608,67 @@ app.post("/agents/a1/run", async (c) => {
 app.get("/customers", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const amId = c.req.query("am_id") || undefined;
-  const customers = await getCustomers(amId);
+  const customers = await getCustomers(amId, await scopeOf(c));
   return c.json({ count: customers.length, customers });
 });
 
 // F62 Account & Contact 360 (Fase 1) — account = accurate_customer + ekstensi CRM + kontak.
+// Ber-scope via pemilik eksplisit crm_account.owner_am_id (migrasi 064).
 app.get("/accounts", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  const rows = await listAccounts();
+  const rows = await listAccounts(await scopeOf(c));
   return c.json({ count: rows.length, accounts: rows });
 });
 app.get("/accounts/:id", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  const a = await getAccount(c.req.param("id"));
+  const a = await getAccount(c.req.param("id"), await scopeOf(c));
   return a ? c.json(a) : c.json({ error: "account tak ditemukan" }, 404);
 });
 app.patch("/accounts/:id", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  try { return c.json(await upsertAccountFields(c.req.param("id"), await c.req.json())); }
+  try { return c.json(await upsertAccountFields(c.req.param("id"), await c.req.json(), await scopeOf(c))); }
   catch (e) { return c.json({ error: String((e as Error).message) }, 400); }
 });
 app.post("/accounts/:id/contacts", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  try { return c.json(await createContact(c.req.param("id"), await c.req.json()), 201); }
+  try { return c.json(await createContact(c.req.param("id"), await c.req.json(), await scopeOf(c)), 201); }
   catch (e) { return c.json({ error: String((e as Error).message) }, 400); }
 });
 app.patch("/accounts/:id/contacts/:cid", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  try { return c.json(await updateContact(c.req.param("cid"), await c.req.json())); }
+  try { return c.json(await updateContact(c.req.param("cid"), await c.req.json(), await scopeOf(c))); }
   catch (e) { return c.json({ error: String((e as Error).message) }, 400); }
 });
 app.delete("/accounts/:id/contacts/:cid", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  try { return c.json(await deleteContact(c.req.param("cid"))); }
+  try { return c.json(await deleteContact(c.req.param("cid"), await scopeOf(c))); }
   catch (e) { return c.json({ error: String((e as Error).message) }, 400); }
+});
+
+// Daftar AM utk pemilihan pemilik akun (dropdown "Pemilik"). HoD hanya melihat
+// AM di cabang timnya — sekalian jadi batas pilihan yang ditegakkan di write-guard.
+app.get("/accounts-owners", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json({ owners: await listOwnerCandidates(await scopeOf(c)) });
 });
 
 // Monitoring revenue ter-faktur per customer (total/faktur/transaksi terakhir/dormant).
 app.get("/customers/revenue", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  return c.json(await customersRevenue());
+  return c.json(await customersRevenue(await scopeOf(c)));
 });
 
 // Win-back: customer dormant ≥ ?days (default 60), prioritas revenue historis.
 app.get("/customers/dormant", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  return c.json(await dormantCustomers(Number(c.req.query("days")) || 60));
+  return c.json(await dormantCustomers(Number(c.req.query("days")) || 60, await scopeOf(c)));
 });
 
 // F77 Churn Early Warning — klasifikasi 3-tier per customer (active/risk/watch).
 // ?days=N ambang no-order (default 60). Read-only (Fase 1, tanpa WA/cron).
 app.get("/customers/churn", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  return c.json(await churnCustomers(Number(c.req.query("days")) || 60));
+  return c.json(await churnCustomers(Number(c.req.query("days")) || 60, await scopeOf(c)));
 });
 
 // Rincian revenue per bulan satu customer (on-demand). ?months=N (default 12).
@@ -2669,7 +2677,7 @@ app.get("/customers/:id/monthly", async (c) => {
   const id = c.req.param("id");
   if (!id || Number.isNaN(Number(id))) return c.json({ error: "id invalid" }, 400);
   const months = Math.min(Math.max(Number(c.req.query("months")) || 12, 1), 36);
-  return c.json(await customerMonthly(id, months));
+  return c.json(await customerMonthly(id, months, await scopeOf(c)));
 });
 
 // ── Pipeline read model (dashboard): deal per-stage ──
