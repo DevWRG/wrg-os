@@ -5,13 +5,15 @@ runner, tanpa scope token — cukup 1 script + 1 LaunchAgent di Mac mini (pola s
 dgn pm2 `com.PM2`).
 
 Alur: `scripts/ops/auto-deploy.sh` (dipanggil launchd tiap 120 dtk) → `git fetch
-origin main` → kalau maju dari HEAD lokal → deploy **KODE** via
-`scripts/ops/deploy-prod.sh --yes --skip-migrate` (pull → build → restart
-`wrg-prod-api`/`wrg-prod-web` → smoke test).
+origin main` → kalau maju dari HEAD lokal → deploy **PENUH** via
+`scripts/ops/deploy-prod.sh --yes` (pull → build → **migrasi [`pg_dump` backup]**
+→ restart `wrg-prod-api`/`wrg-prod-web` → smoke test).
 
-> **Migrasi DB = alert-only, BUKAN auto-apply** (prinsip `MIGRATIONS.md`: skema
-> prod hanya diubah manusia + `pg_dump` backup). Kamu apply manual saat siap:
-> `bash scripts/ops/deploy-prod.sh` (atau langsung `migrate.sh --prod --backup`).
+> **Migrasi DB = AUTO-APPLY sejak 2026-07-16** — `deploy-prod.sh --yes` meng-apply
+> migrasi pending (didahului `pg_dump` backup) sebelum restart. WA alert dikirim
+> sebagai **rekaman** ("auto-applying"), bukan penahan. Untuk migrasi destruktif
+> yang tak boleh auto: set `WRG_DEPLOY_BLOCK_ON_PENDING=1` → deploy ditahan, apply
+> manual (`migrate.sh --prod --backup`).
 
 ### 🔔 Gate migrasi (biar tidak "silent break")
 Sebelumnya poller hanya menulis peringatan ke **log file** → deploy migrasi bisa
@@ -24,9 +26,10 @@ lolos diam-diam (kode nge-500 sampai ada yg sadar). Sekarang poller:
    (nomor/JID di `.env.prod`) lewat gateway openclaw (`WA_SEND_URL` + `x-wa-secret`).
    **Edge-trigger:** hanya dikirim saat set pending *berubah* (tak spam tiap siklus).
    Kalau `WRG_DEPLOY_ALERT_TO` kosong → jatuh ke log-only (perilaku lama).
-3. **Opsi blok:** set env `WRG_DEPLOY_BLOCK_ON_PENDING=1` (di plist
-   `EnvironmentVariables`) → poller **menahan deploy KODE** selama ada migrasi
-   pending, sampai di-apply manual. Default `0` = deploy kode tetap jalan (alert-only).
+3. **Auto-apply + escape hatch:** default (`WRG_DEPLOY_BLOCK_ON_PENDING=0`) →
+   migrasi pending **di-apply otomatis** (`pg_dump` backup dulu) lalu deploy lanjut.
+   Set `=1` (di plist `EnvironmentVariables`) → poller **menahan deploy PENUH**
+   selama ada migrasi pending, sampai di-apply manual (untuk migrasi destruktif).
 
 Set tujuan alert (sekali, di `.env.prod` prod):
 ```bash
