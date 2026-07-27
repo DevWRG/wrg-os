@@ -1,6 +1,7 @@
 import { db } from "../db.js";
 import { randomBytes } from "node:crypto";
 import { hashPassword, verifyPassword } from "../auth.js";
+import { isAmRole } from "./access-scope.js";
 
 // app_user — identitas pengguna dashboard. Verifikasi kredensial untuk login.
 
@@ -92,6 +93,7 @@ export async function countUsers(): Promise<number> {
 export interface AppUserRow extends AppUser {
   active: boolean;
   wa_number: string | null;
+  am_id: string | null;
   hod_key: string | null;
   last_login_at: string | null;
   force_change: boolean;
@@ -104,6 +106,7 @@ function toAppUserRow(r: Record<string, unknown>): AppUserRow {
     ...toAppUser(r),
     active: r.active !== false,
     wa_number: r.wa_number ? String(r.wa_number) : null,
+    am_id: r.am_id ? String(r.am_id) : null,
     hod_key: r.hod_key ? String(r.hod_key) : null,
     last_login_at: r.last_login_at ? String(r.last_login_at) : null,
     force_change: r.force_change === true,
@@ -114,7 +117,7 @@ function toAppUserRow(r: Record<string, unknown>): AppUserRow {
 export async function listAppUsers(): Promise<AppUserRow[]> {
   const sql = db();
   const rows = await sql`
-    SELECT id, email, name, role, title, active, wa_number, hod_key,
+    SELECT id, email, name, role, title, active, wa_number, am_id, hod_key,
            last_login_at::text AS last_login_at, force_change, created_at::text AS created_at
     FROM app_user ORDER BY created_at
   `;
@@ -152,7 +155,7 @@ export async function changeOwnPassword(id: string, current: string, next: strin
 
 export async function updateAppUser(
   id: string,
-  patch: { name?: string | null; role?: string; title?: string | null; active?: boolean; wa_number?: string | null; hod_key?: string | null },
+  patch: { name?: string | null; role?: string; title?: string | null; active?: boolean; wa_number?: string | null; am_id?: string | null; hod_key?: string | null },
 ): Promise<AppUserRow | null> {
   const sql = db();
   await sql`
@@ -162,10 +165,11 @@ export async function updateAppUser(
       title = ${patch.title === undefined ? sql`title` : patch.title},
       active = COALESCE(${patch.active ?? null}, active),
       wa_number = ${patch.wa_number === undefined ? sql`wa_number` : patch.wa_number},
+      am_id = ${patch.am_id === undefined ? sql`am_id` : (patch.am_id || null)},
       hod_key = ${patch.hod_key === undefined ? sql`hod_key` : (patch.hod_key || null)}
     WHERE id = ${id}
   `;
-  const [r] = await sql`SELECT id, email, name, role, title, active, wa_number, hod_key, last_login_at::text AS last_login_at, force_change, created_at::text AS created_at FROM app_user WHERE id = ${id}`;
+  const [r] = await sql`SELECT id, email, name, role, title, active, wa_number, am_id, hod_key, last_login_at::text AS last_login_at, force_change, created_at::text AS created_at FROM app_user WHERE id = ${id}`;
   return r ? toAppUserRow(r) : null;
 }
 
@@ -175,7 +179,7 @@ export async function deleteAppUser(id: string): Promise<boolean> {
 }
 
 export async function getAppUserById(id: string): Promise<AppUserRow | null> {
-  const [r] = await db()`SELECT id, email, name, role, title, active, wa_number, hod_key, last_login_at::text AS last_login_at, force_change, created_at::text AS created_at FROM app_user WHERE id = ${id}`;
+  const [r] = await db()`SELECT id, email, name, role, title, active, wa_number, am_id, hod_key, last_login_at::text AS last_login_at, force_change, created_at::text AS created_at FROM app_user WHERE id = ${id}`;
   return r ? toAppUserRow(r) : null;
 }
 
@@ -185,9 +189,13 @@ export async function createUserFromRoster(amId: string, email: string, password
   const [m] = await sql`SELECT nama, panggilan, role AS roster_role, wa_number FROM master_user WHERE am_id = ${amId}`;
   if (!m) return { ok: false, error: "am_id tak ada di roster" };
   const name = m.nama ? String(m.nama) : (m.panggilan ? String(m.panggilan) : email);
+  // Wire am_id HANYA untuk roster sales/AM (predikat sama dgn resolveScope) →
+  // login langsung ter-scope ke datanya sendiri (F122). Roster non-AM
+  // (HOD/GA/Admin/dll) tetap am_id NULL: scoping-nya lewat hod_key / atur manual.
+  const amIdForLogin = isAmRole(m.roster_role) ? amId : null;
   const rows = await sql`
-    INSERT INTO app_user (email, password_hash, name, role, wa_number)
-    VALUES (${email.toLowerCase()}, ${hashPassword(password)}, ${name}, ${role}, ${m.wa_number ?? null})
+    INSERT INTO app_user (email, password_hash, name, role, wa_number, am_id)
+    VALUES (${email.toLowerCase()}, ${hashPassword(password)}, ${name}, ${role}, ${m.wa_number ?? null}, ${amIdForLogin})
     ON CONFLICT (email) DO NOTHING
     RETURNING id, email, name, role, title
   `;
