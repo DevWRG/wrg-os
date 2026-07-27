@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import { db } from "../db.js";
+import { AM_VACANT, joinAmFromSalesman } from "./salesman-am.js";
 import { FULL_SCOPE, scopeAccurateClause, scopeOnClause, type DataScope } from "./access-scope.js";
 
 // D2 AR Aging — feeder (ingest invoice Accurate → ar_aging_mv) + read model.
@@ -171,7 +172,7 @@ export async function getAging(bucket?: string, scope: DataScope = FULL_SCOPE): 
     FROM ar_aging_mv m
     LEFT JOIN accurate_invoice ai ON ai.number = m.invoice_no AND ai.customer_id::text = m.customer_id
     LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
-    LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
+    ${joinAmFromSalesman(sql)}
     WHERE COALESCE(ai.outstanding, m.amount) > 0 ${scopeAccurateClause(sql, scope)}
     ORDER BY m.days_overdue DESC`;
   const bmap = new Map<string, { count: number; total: number }>();
@@ -221,11 +222,11 @@ export async function invoiceDetail(no: string, scope: DataScope = FULL_SCOPE) {
       COALESCE(NULLIF(ac.name,''), NULLIF(ai.raw->'customer'->>'name',''), NULLIF(ai.raw->>'retailWpName',''), 'Customer #'||ai.customer_id::text) AS customer_name,
       ai.tanggal::text AS tanggal, ai.total::float8 AS total, ai.taxable_amount::float8 AS taxable,
       ai.tax_amount::float8 AS tax, ai.paid::float8 AS paid, ai.outstanding::float8 AS outstanding,
-      ai.status, COALESCE(NULLIF(mu.nama,''), NULLIF(ai.salesman_name,'')) AS am, NULLIF(mu.cabang,'') AS cabang
+      ai.status, COALESCE(NULLIF(mu.nama,''), ${AM_VACANT}) AS am, NULLIF(mu.cabang,'') AS cabang
     FROM accurate_invoice ai
     LEFT JOIN accurate_customer ac ON ac.id = ai.customer_id
     LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
-    LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
+    ${joinAmFromSalesman(sql)}
     WHERE ai.number = ${no} ${scopeAccurateClause(sql, scope)}
     LIMIT 1`;
   if (!inv) return { ok: false as const, invoice: null, items: [] };
@@ -288,13 +289,13 @@ export async function arAgingByCustomer(scope: DataScope = FULL_SCOPE) {
     ),
     last_am AS (
       SELECT DISTINCT ON (ai.customer_id::text) ai.customer_id::text AS cid,
-        COALESCE(NULLIF(mu.nama,''), NULLIF(ai.salesman_name,'')) AS am,
+        COALESCE(NULLIF(mu.nama,''), ${AM_VACANT}) AS am,
         NULLIF(mu.cabang,'') AS cabang,
         mu.am_id AS am_id,
         COALESCE(NULLIF(mu.cabang,''), NULLIF(acs.cabang_override,'')) AS cabang_eff
       FROM accurate_invoice ai
       LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
-      LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
+      ${joinAmFromSalesman(sql)}
       WHERE ai.customer_id IS NOT NULL
       ORDER BY ai.customer_id::text, ai.tanggal DESC
     )
