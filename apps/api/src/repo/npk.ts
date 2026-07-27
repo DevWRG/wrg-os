@@ -103,13 +103,16 @@ async function gatherAspectInput(
   input.revenue_target = targetSemester * elapsed;
 
   // Customer target: target jumlah customer aktif tahunan (Σ cabang tim) ÷2 utk
-  // semester, di-pro-rata elapsed — sama pola & alasan dgn revenue (customer_active
-  // di atas juga baru terkumpul sampai hari ini).
+  // semester. TIDAK di-pro-rata elapsed (beda dari revenue): customer aktif itu
+  // STOCK (distinct customer yg transaksi), front-loaded — mayoritas sudah aktif
+  // di bulan-bulan awal, bukan akumulasi linear seperti revenue (FLOW). Prorata
+  // bikin target awal-semester kekecilan → rasio >120% → mentok cap (skor palsu).
+  // Pakai target semester penuh → skor "progress ke goal", naik wajar sepanjang semester.
   const [ctgt] = await sql`
     SELECT COALESCE(sum(target),0)::float8 AS target
     FROM customer_target_cabang WHERE year = ${year} AND cabang = ANY(${cabang}::text[])`;
   const customerTargetSemester = Number(ctgt?.target ?? 0) / 2;
-  input.customer_target = customerTargetSemester * elapsed;
+  input.customer_target = customerTargetSemester;
 
   // AR: total outstanding (status OPEN) + proxy >45hr pakai umur `tanggal` (tak ada
   // due_date). Cutoff di-anchor ke hari ini, bukan akhir semester (lihat ageCutoff).
@@ -148,8 +151,7 @@ async function gatherAspectInput(
       revenue_target_prorata: input.revenue_target,   // yang dipakai men-skor
       customer_active_count: input.customer_active_count,
       customer_target_year: Number(ctgt?.target ?? 0),
-      customer_target_semester: customerTargetSemester,   // target semester PENUH (audit SK)
-      customer_target_prorata: input.customer_target,      // yang dipakai men-skor
+      customer_target_semester: customerTargetSemester,   // target semester penuh = yang dipakai men-skor (TANPA prorata, stock)
       customer_target_missing: input.customer_target <= 0,
       ar_total: input.ar_total,
       ar_over_45d: input.ar_over_45d,
