@@ -92,6 +92,10 @@ async function getByCustomer(userId?: string): Promise<ByCustomer | null> {
 export default async function ArAgingPage() {
   const me = await sessionUser();
   const [data, ar, byCust] = await Promise.all([getAging(me?.id), getSalesAr(me?.id), getByCustomer(me?.id)]);
+  // AM murni → sembunyikan ringkasan "Per area": datanya sudah di-scope backend
+  // ke AR atas namanya sendiri, jadi kartu East/West/Office cuma menampilkan
+  // satu area (dirinya) & bikin salah tafsir sebagai angka area penuh.
+  const amOnly = me?.is_am === true;
 
   return (
     <>
@@ -135,7 +139,7 @@ export default async function ArAgingPage() {
         </>
       )}
 
-      {ar && ar.total_invoices > 0 && (
+      {!amOnly && ar && ar.total_invoices > 0 && (
         <>
           <h2 className="text-muted-foreground pt-2 text-[11px] font-semibold tracking-wider uppercase">Per area</h2>
           <div className="grid gap-4 sm:grid-cols-3">
