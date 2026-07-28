@@ -25,16 +25,6 @@ versi semver berikut dari commit sejak tag terakhir lalu membuat tag + GitHub Re
 
 Pakai **Conventional Commits** (`feat:`, `fix:`, `chore(scope): …`) supaya bump akurat.
 
-## Tim Outsource — Batasan WAJIB
-
-Kontributor outsource **wajib** baca **[`ONBOARDING.md`](./ONBOARDING.md)** sebelum menyentuh kode. Ringkas:
-
-- **`main` haram disentuh.** Kerja hanya lewat `dev` (feature/* → PR base `dev`). Promosi `dev → main` hanya Direktur/owner.
-- **Domain terlarang** (STOP & tanya Direktur kalau tugas menyentuhnya): **Management/managerial** (RBAC/scope, `/admin/*`, dashboard eksekutif), **Infrastruktur** (`infra/`, `.github/workflows/`, `scripts/ops/*`, docker/deploy, `.env*`), **CRM** (`crm_*`, `/accounts` `/customers` `/deals`, mirror `accurate_*`), **HR** (`master_user`, `app_user`, `user_leave`, roster/HRD).
-- **DB dummy lokal WAJIB** tiap fitur (lihat `docs/LOCAL-DEV.md`) — jangan develop ke prod.
-- **Butuh migrasi DB?** File baru additive+idempoten (`docs/MIGRATIONS.md`), test lokal, dan **tulis section "⚠️ BUTUH MIGRASI DB" di PR + kabari Direktur** (Direktur yang apply ke prod + backup).
-- Tegakkan gate: CI hijau, Conventional Commits, F-number di PR (Roadmap Project), jangan bypass `pnpm minimumReleaseAge`, jangan sentuh legacy 8090–8092.
-
 ## Catatan
 - Deploy tetap **manual** — CI tak pernah menyentuh sistem Python produksi (port 8090–8092).
 - Rahasia hanya di `.env` (gitignored); `.env.example` placeholder.
