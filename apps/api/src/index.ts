@@ -75,7 +75,7 @@ import { listTerritory, createTerritory, updateTerritory, deleteTerritory } from
 import { listPricelist, upsertPricelist, publishPricelist, unpublishPricelist, deletePricelist, type PricelistInput } from "./repo/pricelist.js";
 import { listCoachingNotes } from "./repo/coaching.js";
 import { getLatestCoachingNotes, computePeopleAnalytics } from "./repo/people.js";
-import { createVisit, getVisit, listVisits, visitSummary } from "./repo/visit.js";
+import { createVisit, getVisit, listVisits, visitKpi, visitSummary } from "./repo/visit.js";
 import { upsertDailyTodo, listTodos, markTodoReported } from "./repo/todo.js";
 import { upsertUser, listUsers, upsertTerritory, listTerritories, updateUserCabang } from "./repo/master.js";
 import { listTargets, upsertTargets, listCabangTargets, upsertCabangTargets, listAmTargets, upsertAmTargets, listAmCandidates, deleteAmTarget } from "./repo/sales-target.js";
@@ -1445,7 +1445,17 @@ app.get("/visits/summary", async (c) => {
   return c.json(await visitSummary(await resolveScope(c.req.header("x-user-id"))));
 });
 
-// Detail 1 visit (didaftarkan SETELAH /visits/summary biar literal menang).
+// KPI F16 CRM Fase 1: timeliness input ≤48 jam + capaian target kunjungan
+// mingguan per AM. ?week=-1 → minggu lalu (dipakai rekap Senin).
+app.get("/visits/kpi", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const raw = Number(c.req.query("week"));
+  // Clamp: hanya minggu ini & ke belakang, biar tak diminta hitung minggu absurd.
+  const week = Number.isFinite(raw) ? Math.min(0, Math.max(-52, Math.trunc(raw))) : 0;
+  return c.json(await visitKpi(await resolveScope(c.req.header("x-user-id")), week));
+});
+
+// Detail 1 visit (didaftarkan SETELAH /visits/summary & /visits/kpi biar literal menang).
 // Di luar scope → 404 (sama seperti tak ada), jangan bocorkan keberadaannya.
 app.get("/visits/:id", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
