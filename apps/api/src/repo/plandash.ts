@@ -1,5 +1,6 @@
 import { db } from "../db.js";
 import { sendViaWaGateway } from "../wasend.js";
+import { FULL_SCOPE, scopeOnClause, type DataScope } from "./access-scope.js";
 
 // Replikasi metrik dashboard Plan & Report WRG-CRM (port wrg_queries.py).
 // Sumber: sales_plan (AM), sales_todo (+report_data, non-AM), activity_log,
@@ -467,10 +468,23 @@ export async function reportDrilldown(amId: string, from: string, to: string) {
   };
 }
 
+// Klausa scope reminder: kepemilikan = am_reminder.am_id, cabang = master_user
+// pemilik (alias wajib `ar` + `mu`). AM → hanya reminder namanya sendiri,
+// HoD → cabang timnya, admin/dev → semua.
+const scopeReminderClause = (sql: ReturnType<typeof db>, s: DataScope) =>
+  scopeOnClause(sql, s, sql`ar.am_id`, sql`NULLIF(mu.cabang,'')`);
+
+// Katalog AM untuk filter — ikut scope supaya AM hanya melihat dirinya sendiri
+// (dropdown ber-1 opsi) dan HoD hanya AM di cabang timnya.
+const scopeMasterUserClause = (sql: ReturnType<typeof db>, s: DataScope) =>
+  scopeOnClause(sql, s, sql`am_id`, sql`NULLIF(cabang,'')`);
+
 // Sales Calendar: agregat plan/report per (tanggal, AM) untuk rentang grid +
 // libur nasional + katalog AM (untuk filter). Satu query agregat (efisien),
 // pengganti N-fetch per-AM ala legacy.
-export async function reportCalendar(from: string, to: string, amId?: string, cabang?: string) {
+// Ber-scope row-level: AM = kalendernya sendiri, HoD = cabang timnya. Libur
+// nasional tetap tampil penuh (bukan data per-orang).
+export async function reportCalendar(from: string, to: string, amId?: string, cabang?: string, scope: DataScope = FULL_SCOPE) {
   const sql = db();
   const holidays = await sql`
     SELECT tanggal::text, keterangan FROM master_holiday
@@ -478,7 +492,8 @@ export async function reportCalendar(from: string, to: string, amId?: string, ca
   `;
   const ams = await sql`
     SELECT am_id::text AS am_id, COALESCE(panggilan, nama) AS name, cabang
-    FROM master_user WHERE role='AM' AND aktif ORDER BY cabang, name
+    FROM master_user WHERE role='AM' AND aktif ${scopeMasterUserClause(sql, scope)}
+    ORDER BY cabang, name
   `;
   // Catatan reminder AM (am_reminder) yang jatuh pada rentang — pill 📌 ala legacy.
   const reminders = await sql`
@@ -486,6 +501,7 @@ export async function reportCalendar(from: string, to: string, amId?: string, ca
            COALESCE(ar.am_name, mu.panggilan, mu.nama) AS name, mu.cabang, ar.note
     FROM am_reminder ar LEFT JOIN master_user mu ON mu.am_id = ar.am_id
     WHERE ar.reminder_date BETWEEN ${from} AND ${to}
+      ${scopeReminderClause(sql, scope)}
       ${amId ? sql`AND ar.am_id = ${amId}` : sql``}
       ${cabang ? sql`AND mu.cabang = ${cabang}` : sql``}
     ORDER BY ar.reminder_date, name
@@ -493,6 +509,8 @@ export async function reportCalendar(from: string, to: string, amId?: string, ca
   return {
     from,
     to,
+    scoped: scope.amOnly || !!(scope.cabangScope && scope.cabangScope.length),
+    scope_am_id: scope.amOnly ? scope.amId : null,
     holidays: holidays.map((h) => ({ tanggal: String(h.tanggal), keterangan: String(h.keterangan) })),
     ams: ams.map((a) => ({ am_id: String(a.am_id), name: a.name ? String(a.name) : "—", cabang: a.cabang ? String(a.cabang) : null })),
     reminders: reminders.map((r) => ({
@@ -507,13 +525,14 @@ export async function reportCalendar(from: string, to: string, amId?: string, ca
 
 // Detail satu hari: per-AM + daftar plan-nya (customer/tujuan/hasil via activity_log)
 // untuk drilldown harian Sales Calendar. Satu query plan, dikelompokkan per AM.
-export async function reportCalendarDay(date: string, amId?: string, cabang?: string) {
+export async function reportCalendarDay(date: string, amId?: string, cabang?: string, scope: DataScope = FULL_SCOPE) {
   const sql = db();
   const holidays = await sql`SELECT keterangan FROM master_holiday WHERE tanggal = ${date}`;
   const reminders = await sql`
     SELECT ar.am_id::text AS am_id, COALESCE(ar.am_name, mu.panggilan, mu.nama) AS name, mu.cabang, ar.note
     FROM am_reminder ar LEFT JOIN master_user mu ON mu.am_id = ar.am_id
     WHERE ar.reminder_date = ${date}
+      ${scopeReminderClause(sql, scope)}
       ${amId ? sql`AND ar.am_id = ${amId}` : sql``}
       ${cabang ? sql`AND mu.cabang = ${cabang}` : sql``}
     ORDER BY name
