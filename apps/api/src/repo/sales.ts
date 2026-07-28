@@ -1,6 +1,6 @@
 import { db } from "../db.js";
 import { AM_VACANT, joinAmFromSalesman } from "./salesman-am.js";
-import { FULL_SCOPE, isRestricted, scopeAccountOwnerClause, scopeAccurateClause, type DataScope } from "./access-scope.js";
+import { FULL_SCOPE, isRestricted, scopeAccountOwnerClause, scopeAccurateClause, scopeOnClause, type DataScope } from "./access-scope.js";
 import { getAging } from "./ar.js";
 import { listTargets, type TargetPeriod } from "./sales-target.js";
 
@@ -655,8 +655,14 @@ export async function churnCustomers(churnDays0 = DORMANT_DAYS, scope: DataScope
 // Target Pacing — target vs actual (YTD tahun berjalan) per AM & cabang + proyeksi.
 // Pace = actual / (target × fraksi tahun berlalu). status: on-track ≥1 · at-risk ≥0.9 ·
 // behind <0.9. projected = actual / fraksi (ekstrapolasi linear ke akhir tahun).
-export async function targetPacing(year0?: number) {
+//
+// Row-level scope: AM murni → HANYA barisnya sendiri (tab Per Cabang dikosongkan
+// karena agregat cabang = angka rekan satu cabang), HoD → AM & cabang timnya,
+// admin/office → semua. Summary kartu ikut baris yang lolos scope.
+export async function targetPacing(year0?: number, scope: DataScope = FULL_SCOPE) {
   const sql = db();
+  const sc = scope ?? FULL_SCOPE;
+  const amSelf = sc.amOnly && !!sc.amId;
   const now = new Date();
   const year = year0 && year0 > 2000 ? Math.trunc(year0) : now.getFullYear();
   const start = Date.UTC(year, 0, 1), end = Date.UTC(year + 1, 0, 1);
@@ -687,8 +693,10 @@ export async function targetPacing(year0?: number) {
     LEFT JOIN master_user mu ON mu.am_id = t.am_id
     LEFT JOIN act a ON a.am_id = t.am_id
     WHERE t.year = ${year} AND t.target > 0
+      ${scopeOnClause(sql, sc, sql`t.am_id`, sql`NULLIF(mu.cabang,'')`)}
     ORDER BY t.target DESC`;
-  const cbRows = await sql`
+  // AM murni tak boleh lihat agregat cabang (isinya kontribusi rekan sekabang).
+  const cbRows: { cabang: unknown; target: unknown; actual: unknown }[] = amSelf ? [] : await sql`
     WITH act AS (
       SELECT COALESCE(NULLIF(mu.cabang,''), NULLIF(acs.cabang_override,'')) AS cabang, sum(ai.total - COALESCE(ai.tax_amount,0))::float8 AS actual
       FROM accurate_invoice ai
@@ -700,11 +708,13 @@ export async function targetPacing(year0?: number) {
     SELECT t.cabang, t.target::float8 AS target, COALESCE(a.actual,0)::float8 AS actual
     FROM sales_target_cabang t LEFT JOIN act a ON a.cabang = t.cabang
     WHERE t.year = ${year} AND t.target > 0
+      ${scopeOnClause(sql, sc, sql`t.cabang`, sql`t.cabang`)}
     ORDER BY t.target DESC`;
   const am = amRows.map((r) => ({ am_id: String(r.am_id), nama: String(r.nama), cabang: r.cabang ? String(r.cabang) : null, ...enrich(Number(r.target), Number(r.actual)) }));
   const cabang = cbRows.map((r) => ({ cabang: String(r.cabang), ...enrich(Number(r.target), Number(r.actual)) }));
   const sum = (arr: { target: number; actual: number }[]) => ({ target: arr.reduce((a, x) => a + x.target, 0), actual: arr.reduce((a, x) => a + x.actual, 0) });
-  return { year, elapsed_pct: Math.round(f * 1000) / 10, am, cabang, summary: { am: sum(am), cabang: sum(cabang) } };
+  const scopeKind = amSelf ? ("am" as const) : sc.cabangScope && sc.cabangScope.length ? ("cabang" as const) : ("all" as const);
+  return { year, elapsed_pct: Math.round(f * 1000) / 10, scope: scopeKind, am, cabang, summary: { am: sum(am), cabang: sum(cabang) } };
 }
 
 // Rincian revenue per bulan satu customer (default 12 bulan terakhir) — on-demand.

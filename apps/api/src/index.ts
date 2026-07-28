@@ -1973,10 +1973,11 @@ app.get("/sales-analytics/trending", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json(await analyticsTrending(c.req.query("from"), c.req.query("to"), await scopeOf(c)));
 });
-// Pacing sbg tab Sales Analytics (unscoped; berbasis tahun, bukan from/to).
+// Pacing sbg tab Sales Analytics (berbasis tahun, bukan from/to). Ber-scope
+// row-level: AM = target/actual sendiri, HoD = AM & cabang timnya.
 app.get("/sales-analytics/pacing", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  return c.json(await targetPacing(Number(c.req.query("year")) || undefined));
+  return c.json(await targetPacing(Number(c.req.query("year")) || undefined, await scopeOf(c)));
 });
 // Kinerja Saya — AR aging ber-scope (AM=piutang sendiri, HoD=tim, admin=semua).
 app.get("/sales-analytics/my-ar", async (c) => {
