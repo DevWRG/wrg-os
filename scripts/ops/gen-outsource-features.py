@@ -39,6 +39,14 @@ LABEL = {
     "OPS": "🏢 General Affairs / Operasional",
 }
 
+# Visibilitas per auth role — role MINIMUM yang boleh melihat fitur.
+# Hierarki: Management ⊇ HOD ⊇ Karyawan. Default (tak terdaftar) = "Karyawan".
+# approval/oversight → HOD; analitis lintas-divisi/exec → Management.
+VISIBILITY = {
+    "F35": "HOD", "F40": "HOD", "F51": "HOD", "F75": "HOD",
+    "F41": "Management",
+}
+
 
 def fetch_items():
     r = subprocess.run(
@@ -83,13 +91,15 @@ def main():
                "Beberapa item infra/admin dikecualikan.\n")
     out.append(f"Total fitur outsource-safe: **{total}** · di-generate "
                f"{datetime.date.today().isoformat()}\n")
+    out.append("**Role min** = auth role minimum yang boleh melihat fitur "
+               "(hierarki: Management ⊇ HOD ⊇ Karyawan). Tanpa tanda = **Karyawan** (semua role).\n")
     for prefix in sorted(groups):
         out.append(f"\n## {LABEL.get(prefix, prefix)}\n")
-        out.append("| F | Fitur | Status |")
-        out.append("|---|---|---|")
+        out.append("| F | Fitur | Role min | Status |")
+        out.append("|---|---|---|---|")
         for fnum, rest, status in sorted(groups[prefix], key=lambda x: int(x[0][1:])):
             rest = rest.replace("|", "/")
-            out.append(f"| {fnum} | {rest} | {status} |")
+            out.append(f"| {fnum} | {rest} | {VISIBILITY.get(fnum, 'Karyawan')} | {status} |")
     out.append("\n---\n")
     out.append("Fitur di luar daftar ini (CRM, HR, Management, Infrastruktur, Finance, ERP) "
                "**bukan** untuk outsource. Direktur menugaskan F-number spesifik dari daftar ini.")
