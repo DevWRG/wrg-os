@@ -1,7 +1,11 @@
 import { db } from "../db.js";
+import { FULL_SCOPE, scopeOnClause, type DataScope } from "./access-scope.js";
 
 // Read model customers — diturunkan dari deal (schema kanonik tak punya tabel
 // customer terpisah). Agregat per customer_id: jumlah deal, nilai, stage, AM.
+//
+// Scope-nya lewat deal.am_id/deal.cabang (bukan pemilik akun) karena isinya
+// memang deal — konsisten dengan Pipeline yang sumbernya tabel sama.
 
 export interface CustomerRow {
   customer_id: string;
@@ -13,9 +17,9 @@ export interface CustomerRow {
   last_activity: string;
 }
 
-export async function getCustomers(amId?: string): Promise<CustomerRow[]> {
+export async function getCustomers(amId?: string, scope: DataScope = FULL_SCOPE): Promise<CustomerRow[]> {
   const sql = db();
-  const filter = amId ? sql`WHERE am_id = ${amId}` : sql``;
+  const filter = amId ? sql`WHERE am_id = ${amId}` : sql`WHERE true`;
   const rows = await sql`
     SELECT
       customer_id,
@@ -25,7 +29,7 @@ export async function getCustomers(amId?: string): Promise<CustomerRow[]> {
       array_agg(DISTINCT am_id)          AS ams,
       array_agg(DISTINCT stage)          AS stages,
       max(updated_at)                    AS last_activity
-    FROM deal ${filter}
+    FROM deal ${filter} ${scopeOnClause(sql, scope, sql`am_id`, sql`NULLIF(cabang,'')`)}
     GROUP BY customer_id
     ORDER BY last_activity DESC
   `;

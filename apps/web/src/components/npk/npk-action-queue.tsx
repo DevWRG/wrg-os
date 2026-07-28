@@ -12,6 +12,9 @@ interface ActionItem {
   order: number;
 }
 
+// Item aksi HANYA dari zona final (pip/watch/promote). HoD dgn coverage parsial
+// masuk zona "provisional" → tak pernah jadi item, supaya tak ada rekomendasi PIP/
+// promosi yang lahir dari data yang belum lengkap (lihat catatan di npk-status.ts).
 function buildItems(rows: NpkMatrixRow[]): ActionItem[] {
   const items: ActionItem[] = [];
   for (const r of rows) {
@@ -56,7 +59,8 @@ export function NpkActionQueue({ rows }: { rows: NpkMatrixRow[] }) {
       <CardContent className="px-0">
         {items.length === 0 ? (
           <div className="px-5 py-8 text-center text-sm text-muted-foreground">
-            Belum ada aksi — belum ada HoD dengan data cukup untuk memicu coaching/promosi.
+            Belum ada aksi — coaching/promosi baru direkomendasikan setelah ke-7 aspek SK punya data.
+            Selama coverage masih parsial, skor rendah tidak diartikan sebagai kinerja buruk.
           </div>
         ) : (
           <ul>

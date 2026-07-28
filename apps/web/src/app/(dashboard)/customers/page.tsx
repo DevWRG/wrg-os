@@ -1,4 +1,5 @@
 import { gatewayFetch } from "@/lib/gateway";
+import { sessionUser } from "@/lib/admin-guard";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { Card, CardContent } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -9,15 +10,20 @@ import { CustomersTabs } from "@/components/customers/customers-tabs";
 
 export const dynamic = "force-dynamic";
 
-async function get<T>(path: string): Promise<T | null> {
-  try { const r = await gatewayFetch(path); return r.ok ? ((await r.json()) as T) : null; } catch { return null; }
+// x-user-id → row-level scope by pemilik akun (crm_account.owner_am_id).
+async function get<T>(path: string, userId?: string): Promise<T | null> {
+  try {
+    const r = await gatewayFetch(path, userId ? { headers: { "x-user-id": userId } } : undefined);
+    return r.ok ? ((await r.json()) as T) : null;
+  } catch { return null; }
 }
 
 export default async function CustomersPage() {
+  const me = await sessionUser();
   const [rev, churn, dorm] = await Promise.all([
-    get<CustomersRevenue>("/customers/revenue"),
-    get<ChurnData>("/customers/churn?days=60"),
-    get<{ customers: DormantCustomer[] }>("/customers/dormant?days=30"),
+    get<CustomersRevenue>("/customers/revenue", me?.id),
+    get<ChurnData>("/customers/churn?days=60", me?.id),
+    get<{ customers: DormantCustomer[] }>("/customers/dormant?days=30", me?.id),
   ]);
   return (
     <>

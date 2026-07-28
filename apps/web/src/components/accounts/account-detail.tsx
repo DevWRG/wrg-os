@@ -16,9 +16,13 @@ export interface AccountData {
   id: string; name: string; no: string | null;
   tipe: string | null; kelas_rs: string | null; wilayah: string | null; cabang: string | null;
   npwp: string | null; status_bayar: string | null; notes: string | null;
+  owner_am_id: string | null; owner_nama: string | null;
   revenue: number; invoices: number; last_date: string | null; days_since: number | null; outstanding: number;
   contacts: AccountContact[];
 }
+// Kandidat pemilik dari /accounts-owners. Kosong = user ini tak berhak memindah
+// kepemilikan (AM) → field Pemilik ditampilkan read-only.
+export interface OwnerOption { am_id: string; nama: string; cabang: string | null }
 
 const rp = (n: number) => new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(n);
 const TIPE = ["RS Pemerintah", "RS Swasta", "Klinik", "Lab Mandiri", "Bidan", "Distributor"];
@@ -37,19 +41,33 @@ const roleTone = (v: string | null) =>
 
 const selCls = "h-8 rounded-md border border-border bg-card px-2 text-sm";
 
-export function AccountDetail({ account }: { account: AccountData }) {
+export function AccountDetail({ account, owners = [] }: { account: AccountData; owners?: OwnerOption[] }) {
   const router = useRouter();
   const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const canAssign = owners.length > 0;
   const [f, setF] = useState({
     tipe: account.tipe ?? "", kelas_rs: account.kelas_rs ?? "", wilayah: account.wilayah ?? "",
     cabang: account.cabang ?? "", npwp: account.npwp ?? "", status_bayar: account.status_bayar ?? "", notes: account.notes ?? "",
+    owner_am_id: account.owner_am_id ?? "",
   });
   const [editingId, setEditingId] = useState<string | null>(null); // contact id, or "new"
 
   async function saveProfil() {
     setSaving(true);
-    await fetch(`/api/accounts/${account.id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(f) });
+    setErr(null);
+    // owner_am_id hanya dikirim bila user berhak — backend tetap menolak kalau
+    // dipaksa, ini cuma supaya AM tak mengirim field yang pasti ditolak.
+    const body = canAssign ? { ...f, owner_am_id: f.owner_am_id || null } : { ...f, owner_am_id: undefined };
+    const res = await fetch(`/api/accounts/${account.id}`, {
+      method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+    });
     setSaving(false);
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}));
+      setErr(String(d.error ?? `gagal menyimpan (HTTP ${res.status})`));
+      return;
+    }
     router.refresh();
   }
   async function delContact(id: string) {
@@ -82,9 +100,24 @@ export function AccountDetail({ account }: { account: AccountData }) {
             <label className="space-y-1 text-xs"><span className="text-muted-foreground">Wilayah/teritori</span><Input className="h-8" value={f.wilayah} onChange={(e) => setF({ ...f, wilayah: e.target.value })} /></label>
             <label className="space-y-1 text-xs"><span className="text-muted-foreground">Cabang WRG</span><Input className="h-8" value={f.cabang} onChange={(e) => setF({ ...f, cabang: e.target.value })} /></label>
             <label className="space-y-1 text-xs"><span className="text-muted-foreground">NPWP</span><Input className="h-8" value={f.npwp} onChange={(e) => setF({ ...f, npwp: e.target.value })} /></label>
+            {/* Pemilik = penentu siapa yang bisa melihat account ini (row-level
+                scope). AM tak boleh memindah kepemilikan → tampil read-only. */}
+            <label className="space-y-1 text-xs"><span className="text-muted-foreground">Pemilik (AM)</span>
+              {canAssign ? (
+                <select className={`${selCls} w-full`} value={f.owner_am_id} onChange={(e) => setF({ ...f, owner_am_id: e.target.value })}>
+                  <option value="">— belum ada pemilik —</option>
+                  {owners.map((o) => <option key={o.am_id} value={o.am_id}>{o.nama}{o.cabang ? ` · ${o.cabang}` : ""}</option>)}
+                </select>
+              ) : (
+                <div className="flex h-8 items-center text-sm">{account.owner_nama || <span className="text-muted-foreground">Belum ada pemilik</span>}</div>
+              )}
+            </label>
           </div>
           <label className="block space-y-1 text-xs"><span className="text-muted-foreground">Catatan</span><textarea className="w-full rounded-md border border-border bg-card p-2 text-sm" rows={2} value={f.notes} onChange={(e) => setF({ ...f, notes: e.target.value })} /></label>
-          <Button size="sm" onClick={saveProfil} disabled={saving}>{saving ? "Menyimpan…" : "Simpan profil"}</Button>
+          <div className="flex items-center gap-3">
+            <Button size="sm" onClick={saveProfil} disabled={saving}>{saving ? "Menyimpan…" : "Simpan profil"}</Button>
+            {err && <span className="text-destructive text-xs">{err}</span>}
+          </div>
         </CardContent>
       </Card>
 

@@ -1,4 +1,5 @@
 import { gatewayFetch } from "@/lib/gateway";
+import { sessionUser } from "@/lib/admin-guard";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { type ArGroup } from "@/components/tables/ar-breakdown-tabs";
 import { ArAgingTabs } from "@/components/tables/ar-aging-tabs";
@@ -49,9 +50,14 @@ interface SalesAr {
   areas: { east: AreaAr; west: AreaAr; office: AreaAr; unmapped: AreaAr };
 }
 
-async function getAging(): Promise<Aging | null> {
+// x-user-id → backend menerapkan row-level scope (AM = AR atas namanya, HoD =
+// cabang tim, admin = semua). Tanpa sesi (auth mati/dev) header tak dikirim →
+// backend pakai FULL_SCOPE seperti perilaku lama.
+const idHeader = (userId?: string) => (userId ? { headers: { "x-user-id": userId } } : undefined);
+
+async function getAging(userId?: string): Promise<Aging | null> {
   try {
-    const res = await gatewayFetch(`/ar/aging`);
+    const res = await gatewayFetch(`/ar/aging`, idHeader(userId));
     if (!res.ok) return null;
     return (await res.json()) as Aging;
   } catch {
@@ -59,9 +65,9 @@ async function getAging(): Promise<Aging | null> {
   }
 }
 
-async function getSalesAr(): Promise<SalesAr | null> {
+async function getSalesAr(userId?: string): Promise<SalesAr | null> {
   try {
-    const res = await gatewayFetch(`/ar/sales`);
+    const res = await gatewayFetch(`/ar/sales`, idHeader(userId));
     if (!res.ok) return null;
     return (await res.json()) as SalesAr;
   } catch {
@@ -73,9 +79,9 @@ interface ByCustomer {
   summary: { total_customers: number; total_outstanding: number; overdue_outstanding: number; kritis: number };
   customers: ArCustomer[];
 }
-async function getByCustomer(): Promise<ByCustomer | null> {
+async function getByCustomer(userId?: string): Promise<ByCustomer | null> {
   try {
-    const res = await gatewayFetch(`/ar/aging/by-customer`);
+    const res = await gatewayFetch(`/ar/aging/by-customer`, idHeader(userId));
     if (!res.ok) return null;
     return (await res.json()) as ByCustomer;
   } catch {
@@ -84,7 +90,8 @@ async function getByCustomer(): Promise<ByCustomer | null> {
 }
 
 export default async function ArAgingPage() {
-  const [data, ar, byCust] = await Promise.all([getAging(), getSalesAr(), getByCustomer()]);
+  const me = await sessionUser();
+  const [data, ar, byCust] = await Promise.all([getAging(me?.id), getSalesAr(me?.id), getByCustomer(me?.id)]);
 
   return (
     <>

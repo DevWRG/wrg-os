@@ -9,6 +9,7 @@
 // hanya utk metric "windowed" (revenue/customer_count/new_customer_count).
 
 import { db } from "../db.js";
+import { joinAmFromSalesman } from "./salesman-am.js";
 import { sendViaWaGateway } from "../wasend.js";
 
 type Dim = { am_id?: string; cabang?: string };
@@ -57,7 +58,7 @@ async function metricWindow(sql: ReturnType<typeof db>, metric: string, dim: Dim
     const [r] = await sql`
       SELECT COALESCE(sum(ai.total),0)::float8 AS v FROM accurate_invoice ai
       LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
-      LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
+      ${joinAmFromSalesman(sql)}
       WHERE ${inRange} ${am} ${cab}`;
     return Number(r?.v ?? 0);
   }
@@ -65,7 +66,7 @@ async function metricWindow(sql: ReturnType<typeof db>, metric: string, dim: Dim
     const [r] = await sql`
       SELECT count(DISTINCT ai.customer_id)::float8 AS v FROM accurate_invoice ai
       LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
-      LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
+      ${joinAmFromSalesman(sql)}
       WHERE ${inRange} ${am} ${cab}`;
     return Number(r?.v ?? 0);
   }
@@ -75,7 +76,7 @@ async function metricWindow(sql: ReturnType<typeof db>, metric: string, dim: Dim
       SELECT count(*)::float8 AS v FROM (
         SELECT ai.customer_id, min(ai.tanggal) AS first_dt FROM accurate_invoice ai
         LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
-        LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
+        ${joinAmFromSalesman(sql)}
         WHERE ai.customer_id IS NOT NULL ${am} ${cab}
         GROUP BY ai.customer_id
       ) x WHERE x.first_dt > CURRENT_DATE - make_interval(days => ${lo}) AND x.first_dt <= CURRENT_DATE - make_interval(days => ${hi})`;
@@ -94,7 +95,7 @@ async function metricValue(sql: ReturnType<typeof db>, metric: string, dim: Dim,
     const [r] = await sql`
       SELECT COALESCE(sum(ai.total),0)::float8 AS v FROM accurate_invoice ai
       LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
-      LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
+      ${joinAmFromSalesman(sql)}
       WHERE ai.status = 'OPEN' AND ai.tanggal < CURRENT_DATE - 90 ${am} ${cab}`;
     return Number(r?.v ?? 0);
   }
@@ -107,7 +108,7 @@ async function metricValue(sql: ReturnType<typeof db>, metric: string, dim: Dim,
           count(*) FILTER (WHERE ai.tanggal > CURRENT_DATE - make_interval(days => ${2 * win}) AND ai.tanggal <= CURRENT_DATE - make_interval(days => ${win})) AS prev
         FROM accurate_invoice ai
         LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
-        LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
+        ${joinAmFromSalesman(sql)}
         WHERE ai.customer_id IS NOT NULL ${am} ${cab}
         GROUP BY ai.customer_id
       ) x WHERE x.prev > 0 AND x.cur = 0`;

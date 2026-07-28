@@ -12,14 +12,16 @@ import {
   Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, type LucideIcon,
 } from "lucide-react";
 
+import { canOrLegacy, hasPerms } from "@/lib/perms";
 import { canEditPricelistSetup, canViewPricelist, type AccessUser } from "@/lib/pricelist-access";
 import { canViewRaportList } from "@/lib/raport-access";
 import { canViewExecutive } from "@/lib/executive-access";
 
 // exact: sorot aktif hanya saat path persis (untuk route induk yg punya child,
 // mis. /pricelist vs /pricelist/setup).
-// show: gating khusus title-based (mis. Pricelist) — dievaluasi MENGGANTIKAN
-// can() untuk item ini (lihat app-sidebar).
+// show: gate identitas (title/role/hod_key) sebagai FALLBACK — dipakai selama
+// fitur ini belum diatur di matriks Akses Grup. Begitu diatur, matriks yang
+// menang (lihat navVisible di bawah + canOrLegacy di lib/perms).
 export interface NavItem {
   title: string; url: string; icon: LucideIcon; badge?: string; exact?: boolean;
   show?: (me: AccessUser | null) => boolean;
@@ -125,6 +127,49 @@ export const NAV: NavGroup[] = [
 
 // Fitur (RBAC) per item = slug route: /monitor/rekap → "monitor-rekap" (= feature.key).
 export const featureKey = (url: string) => url.replace(/^\//, "").replace(/\//g, "-");
+
+// Apakah item menu tampil untuk user ini. Urutan:
+//   1. Izin RBAC belum tersedia (auth mati / belum login) → pakai `show`, atau tampil.
+//   2. admin/superuser → semua tampil (anti-lockout, lewat can()/canOrLegacy).
+//   3. Fitur sudah punya baris izin di grup user → matriks Akses Grup yang menentukan.
+//   4. Belum diatur → `show` (gate identitas lama); tanpa `show` → tidak tampil.
+// Poin 3 yang bikin centang admin di Akses Grup benar-benar berlaku ke sidebar,
+// termasuk untuk item ber-`show` (Pricelist, Executive, Karyawan 360, NPK).
+export function navVisible(me: AccessUser | null, it: NavItem): boolean {
+  const key = it.feature ?? featureKey(it.url);
+  if (!hasPerms(me)) return it.show ? it.show(me) : true;
+  return canOrLegacy(me, key, it.show ? it.show(me) : false);
+}
+
+// Halaman "rumah" untuk user ini. Default tetap Sales Overview; kalau user tak
+// berizin ke situ → item menu pertama yang boleh dia lihat. Dipakai root "/"
+// (tujuan setelah login & link logo/breadcrumb): tanpa ini user tanpa izin
+// /overview mendarat di halaman "Akses ditolak" tepat setelah login.
+const HOME_DEFAULT = "/overview";
+
+export function homePath(me: AccessUser | null): string {
+  const items = NAV.flatMap((g) => g.items);
+  const fallback = items.find((it) => it.url === HOME_DEFAULT);
+  if (fallback && navVisible(me, fallback)) return HOME_DEFAULT;
+  return items.find((it) => navVisible(me, it))?.url ?? HOME_DEFAULT;
+}
+
+// Item menu yang "memiliki" sebuah pathname — dipakai layout dashboard untuk
+// menegakkan izin di level rute (menu tersembunyi = halaman tertutup, termasuk
+// bila URL-nya diketik langsung). Cocokkan yang PALING panjang: /pricelist/setup
+// harus kena item Pricelist Setup, bukan Pricelist. Rute anak ikut induknya
+// (/visits/123 → Visits). Pathname di luar katalog menu → null (tak di-gate).
+export function findNavItem(pathname: string): NavItem | null {
+  const path = pathname.replace(/\/+$/, "") || "/";
+  let best: NavItem | null = null;
+  for (const g of NAV) {
+    for (const it of g.items) {
+      if (path !== it.url && !path.startsWith(`${it.url}/`)) continue;
+      if (!best || it.url.length > best.url.length) best = it;
+    }
+  }
+  return best;
+}
 
 export interface FeatureCatalogRow { key: string; name: string; section: string; path: string; sort: number }
 

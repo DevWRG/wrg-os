@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { gatewayFetch } from "@/lib/gateway";
+import { sessionUser } from "@/lib/admin-guard";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -31,9 +32,14 @@ const GEO_LABEL: Record<string, string> = {
 const geoTone = (s: string): "default" | "secondary" | "destructive" | "outline" =>
   s === "ok" ? "secondary" : s === "no_geo" ? "outline" : "destructive";
 
-async function getVisit(id: string): Promise<VisitDetail | null> {
+// x-user-id → backend scope; visit milik AM lain balas 404 (bukan "ada tapi
+// ditolak"), jadi halaman ini apa adanya menampilkan "tak ditemukan".
+async function getVisit(id: string, userId?: string): Promise<VisitDetail | null> {
   try {
-    const res = await gatewayFetch(`/visits/${encodeURIComponent(id)}`);
+    const res = await gatewayFetch(
+      `/visits/${encodeURIComponent(id)}`,
+      userId ? { headers: { "x-user-id": userId } } : undefined,
+    );
     if (!res.ok) return null;
     return (await res.json()) as VisitDetail;
   } catch {
@@ -42,8 +48,8 @@ async function getVisit(id: string): Promise<VisitDetail | null> {
 }
 
 export default async function VisitDetailPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
-  const v = await getVisit(id);
+  const [{ id }, me] = await Promise.all([params, sessionUser()]);
+  const v = await getVisit(id, me?.id);
 
   return (
     <>
