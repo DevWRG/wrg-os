@@ -17,10 +17,10 @@
 -- konsumen sudah filter akhir pekan sendiri (weeklyreport pakai dow BETWEEN 1 AND 5,
 -- plandash & hodreminder pakai filter dow), jadi tak ada double-count.
 --
--- CUTI BERSAMA 2026 (8 hari) SENGAJA TIDAK DISEED — untuk swasta itu kebijakan
--- perusahaan, bukan kewajiban. Kalau WRG ikut, tambahkan lewat menu /holidays atau
--- migrasi baru: 16 Feb (Imlek), 18 Mar (Nyepi), 20 Mar + 23 Mar + 24 Mar (Idulfitri),
--- 15 Mei (Kenaikan Yesus), 28 Mei (Iduladha), 24 Des (Natal).
+-- CUTI BERSAMA 2026 (8 hari) ada di migrasi TERPISAH `070_seed_cuti_bersama_2026.sql`
+-- karena untuk swasta itu kebijakan perusahaan, bukan ketetapan negara — jadi bisa
+-- direvert sendiri tanpa mengganggu libur nasional di file ini. WRG ikut SKB
+-- (keputusan 2026-07-28).
 --
 -- Idempoten: ON CONFLICT (tanggal) DO NOTHING — aman di-rerun, dan tidak menimpa
 -- entri yang sudah diinput manual lewat /holidays.
