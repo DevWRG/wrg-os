@@ -28,9 +28,9 @@ ALLOW = {"AFTERSALES", "SHIPPING", "PURCHASING", "OPS"}
 # CROSS, SALES, BUSINESS.
 
 # Item spesifik yang tetap DIKECUALIKAN walau domainnya allow (infra/admin/managerial).
-# F86=Monorepo (infra), F103=User Access, F104=Tunnel, F108=RACI, F111=GAIS builder,
+# F23=RFID/Cartridge Claim (per Direktur: tak perlu), F86=Monorepo (infra), F103=User Access, F104=Tunnel, F108=RACI, F111=GAIS builder,
 # F114/115/117=infra ops, F9=master-data(customer), F11=approval engine.
-EXCLUDE_F = {"F86", "F103", "F104", "F108", "F111", "F114", "F115", "F117", "F9", "F11"}
+EXCLUDE_F = {"F23", "F86", "F103", "F104", "F108", "F111", "F114", "F115", "F117", "F9", "F11"}
 
 LABEL = {
     "PURCHASING": "🛒 Purchasing / Supply Chain",

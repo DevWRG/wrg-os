@@ -5,7 +5,7 @@
 
 > **Filter:** hanya domain yang boleh dikerjakan outsource — `AFTERSALES, OPS, PURCHASING, SHIPPING` (di luar Management/Infrastruktur/CRM/HR). Beberapa item infra/admin dikecualikan.
 
-Total fitur outsource-safe: **28** · di-generate 2026-07-28
+Total fitur outsource-safe: **27** · di-generate 2026-07-28
 
 
 ## 🔧 Aftersales / Teknis
@@ -14,7 +14,6 @@ Total fitur outsource-safe: **28** · di-generate 2026-07-28
 |---|---|---|
 | F8 | Teknisi Readiness Board (install scheduling + capacity + post-install reports) | Todo |
 | F22 | Instalasi Alat Lifecycle | Todo |
-| F23 | RFID/Cartridge Error Claim Tracker | Todo |
 | F24 | Preventive Maintenance & Kalibrasi Schedule | Todo |
 | F25 | Uji Profisiensi Document Registry | Todo |
 | F26 | Service Ticket Triage (LLM-assisted) | Todo |
