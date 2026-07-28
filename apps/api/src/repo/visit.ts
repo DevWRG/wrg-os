@@ -1,9 +1,14 @@
 import { db } from "../db.js";
+import { FULL_SCOPE, scopeSalesPlanClause, type DataScope } from "./access-scope.js";
 
 // D1 — visit report AM dengan geotag + foto (port legacy visit_geo +
 // report_photo + check_photo_geotag). Foto = URL/metadata (bukan binary; tak
 // ada OCR — lat/lon dikirim klien/upstream). Verifikasi: bounds Indonesia +
 // date-mismatch (tanggal foto ≠ tanggal kunjungan yang diklaim).
+//
+// Row-level scope (F122): AM hanya kunjungannya sendiri, HoD hanya cabang
+// timnya, admin semua. Ditegakkan di SQL — bukan di UI. Scope dioper dari
+// endpoint (resolveScope dari header x-user-id); tanpa scope = FULL (dev/auth off).
 
 // Bounding box Indonesia (sama dgn check_photo_geotag.py).
 const ID_LAT_MIN = -11;
@@ -108,28 +113,28 @@ function rowToVisit(r: Record<string, unknown>): VisitRow {
   };
 }
 
-const VISIT_SELECT = `
-  SELECT sp.id::text AS id, sp.am_id, COALESCE(initcap(mu.panggilan), mu.nama) AS nama,
-         sp.customer_name, sp.visit_lat, sp.visit_lon, sp.visit_timestamp::text AS visit_timestamp,
-         sp.tanggal::text AS visit_date, sp.visit_date_mismatch,
-         sp.tujuan, sp.goal,
-         NULLIF(concat_ws(' — ', NULLIF(al.hasil,''), NULLIF(al.next_action,'')), '') AS catatan,
-         COALESCE(al.photo_path, wm.media_path) AS photo_path, sp.created_at::text AS created_at
-  FROM sales_plan sp
-  JOIN master_user mu ON mu.am_id = sp.am_id
-  LEFT JOIN activity_log al ON al.id = sp.activity_id
-  LEFT JOIN wa_message wm ON wm.message_id = al.message_id
-  WHERE sp.visit_lat IS NOT NULL`;
-
-export async function listVisits(status?: string, limit = 1000): Promise<VisitRow[]> {
+export async function listVisits(status?: string, scope: DataScope = FULL_SCOPE, limit = 1000): Promise<VisitRow[]> {
   const sql = db();
-  const rows = await sql.unsafe(`${VISIT_SELECT} ORDER BY sp.created_at DESC LIMIT ${Number(limit) || 1000}`);
-  const all = (rows as Record<string, unknown>[]).map(rowToVisit);
+  const rows = await sql`
+    SELECT sp.id::text AS id, sp.am_id, COALESCE(initcap(mu.panggilan), mu.nama) AS nama,
+           sp.customer_name, sp.visit_lat, sp.visit_lon, sp.visit_timestamp::text AS visit_timestamp,
+           sp.tanggal::text AS visit_date, sp.visit_date_mismatch,
+           sp.tujuan, sp.goal,
+           NULLIF(concat_ws(' — ', NULLIF(al.hasil,''), NULLIF(al.next_action,'')), '') AS catatan,
+           COALESCE(al.photo_path, wm.media_path) AS photo_path, sp.created_at::text AS created_at
+    FROM sales_plan sp
+    JOIN master_user mu ON mu.am_id = sp.am_id
+    LEFT JOIN activity_log al ON al.id = sp.activity_id
+    LEFT JOIN wa_message wm ON wm.message_id = al.message_id
+    WHERE sp.visit_lat IS NOT NULL ${scopeSalesPlanClause(sql, scope)}
+    ORDER BY sp.created_at DESC
+    LIMIT ${Number(limit) || 1000}`;
+  const all = (rows as unknown as Record<string, unknown>[]).map(rowToVisit);
   return status ? all.filter((v) => v.geo_status === status) : all;
 }
 
 // Detail 1 visit (sales_plan by id) — VisitRow + note (dari plan goal/tujuan).
-export async function getVisit(id: string): Promise<(VisitRow & { note: string | null }) | null> {
+export async function getVisit(id: string, scope: DataScope = FULL_SCOPE): Promise<(VisitRow & { note: string | null }) | null> {
   const sql = db();
   const [r] = await sql`
     SELECT sp.id::text AS id, sp.am_id, COALESCE(initcap(mu.panggilan), mu.nama) AS nama,
@@ -141,26 +146,28 @@ export async function getVisit(id: string): Promise<(VisitRow & { note: string |
     JOIN master_user mu ON mu.am_id = sp.am_id
     LEFT JOIN activity_log al ON al.id = sp.activity_id
     LEFT JOIN wa_message wm ON wm.message_id = al.message_id
-    WHERE sp.id::text = ${id} AND sp.visit_lat IS NOT NULL
+    WHERE sp.id::text = ${id} AND sp.visit_lat IS NOT NULL ${scopeSalesPlanClause(sql, scope)}
   `;
   if (!r) return null;
   return { ...rowToVisit(r), note: r.note ? String(r.note) : null };
 }
 
 // Brief kepatuhan geotag (port send_geotag_brief): hitung per-status + flagged.
-export async function visitSummary(): Promise<{
+//
+// Dihitung dari daftar yang SAMA dengan listVisits (sales_plan), bukan tabel
+// `visit` legacy yang sparse — dulu kartu ringkasan & tabel di /visits bisa
+// beda angka karena beda sumber. Bonus: ikut ter-scope otomatis dan status
+// dihitung oleh verifyGeo() yang sama (tak ada duplikasi bbox di SQL).
+const SUMMARY_LIMIT = 10000;
+
+export async function visitSummary(scope: DataScope = FULL_SCOPE): Promise<{
   total: number;
   by_status: Record<string, number>;
   flagged: number;
 }> {
-  const sql = db();
-  const rows = await sql`SELECT geo_status, count(*)::int AS n FROM visit GROUP BY geo_status`;
+  const visits = await listVisits(undefined, scope, SUMMARY_LIMIT);
   const by: Record<string, number> = {};
-  let total = 0;
-  for (const r of rows) {
-    by[String(r.geo_status)] = Number(r.n);
-    total += Number(r.n);
-  }
-  const flagged = total - (by.ok ?? 0);
-  return { total, by_status: by, flagged };
+  for (const v of visits) by[v.geo_status] = (by[v.geo_status] ?? 0) + 1;
+  const total = visits.length;
+  return { total, by_status: by, flagged: total - (by.ok ?? 0) };
 }

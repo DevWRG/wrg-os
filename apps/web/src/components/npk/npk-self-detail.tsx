@@ -10,10 +10,24 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { PredikatBadge } from "./predikat-badge";
 import { fmt1, periodLabel, scoreBand, type NpkDetailResult } from "./npk-format";
+import { TOTAL_ASPEK, WIRED_BOBOT, zoneOf } from "./npk-status";
+
+// Badge status: saat coverage < 7/7 predikat SK DITAHAN (plafon skor < 100 → predikat
+// selalu jatuh ke "Buruk" walau kinerja normal). Lihat catatan di npk-status.ts.
+function StatusBadge({ data, className }: { data: NpkDetailResult; className?: string }) {
+  if (data.available_count >= TOTAL_ASPEK) return <PredikatBadge predikat={data.predikat} className={className} />;
+  const z = zoneOf({ predikat: data.predikat, available_count: data.available_count });
+  return <span className={cn("inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold", z.cls, className)}>{z.label}</span>;
+}
 
 export function NpkSelfDetail({ data }: { data: NpkDetailResult | null }) {
   if (!data) return <Card><CardContent className="py-10 text-center text-muted-foreground">Gagal memuat NPK.</CardContent></Card>;
 
+  const provisional = data.available_count < TOTAL_ASPEK;
+  // Plafon = Σ bobot aspek yang ada datanya (bukan 100) → gauge & label jujur.
+  const ceiling = provisional
+    ? data.aspects.filter((a) => a.available).reduce((a, x) => a + x.weight, 0) || WIRED_BOBOT
+    : 100;
   const band = scoreBand(data.npk);
   const radar = data.aspects.map((a) => ({
     aspect: a.label.split(" ")[0],
@@ -43,17 +57,17 @@ export function NpkSelfDetail({ data }: { data: NpkDetailResult | null }) {
           <CardContent className="flex flex-col items-center gap-2 pt-4">
             <div className="relative h-44 w-44">
               <ResponsiveContainer width="100%" height="100%">
-                <RadialBarChart innerRadius="72%" outerRadius="100%" data={[{ value: Math.min(100, data.npk), fill: band.hex }]} startAngle={90} endAngle={-270}>
-                  <PolarAngleAxis type="number" domain={[0, 100]} angleAxisId={0} tick={false} />
+                <RadialBarChart innerRadius="72%" outerRadius="100%" data={[{ value: Math.min(ceiling, data.npk), fill: band.hex }]} startAngle={90} endAngle={-270}>
+                  <PolarAngleAxis type="number" domain={[0, ceiling]} angleAxisId={0} tick={false} />
                   <RadialBar background dataKey="value" cornerRadius={12} angleAxisId={0} />
                 </RadialBarChart>
               </ResponsiveContainer>
               <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
                 <span className={cn("text-4xl font-bold tabular-nums", band.text)}>{fmt1(data.npk)}</span>
-                <span className="text-xs text-muted-foreground">NPK / 100</span>
+                <span className="text-xs text-muted-foreground">NPK / {ceiling}{provisional && " (sementara)"}</span>
               </div>
             </div>
-            <PredikatBadge predikat={data.predikat} className="h-6 px-3 text-sm" />
+            <StatusBadge data={data} className="h-6 px-3 text-sm" />
             <p className="text-xs text-muted-foreground">Coverage data: <span className="font-medium text-foreground">{data.available_count}/7 aspek</span></p>
           </CardContent>
         </Card>
@@ -115,7 +129,7 @@ export function NpkSelfDetail({ data }: { data: NpkDetailResult | null }) {
                 <tr className="border-t-2 font-semibold">
                   <td className="px-4 py-2.5" colSpan={4}>NPK Total</td>
                   <td className={cn("px-3 py-2.5 text-right text-base tabular-nums", band.text)}>{fmt1(data.npk)}</td>
-                  <td className="px-3 py-2.5 text-center"><PredikatBadge predikat={data.predikat} /></td>
+                  <td className="px-3 py-2.5 text-center"><StatusBadge data={data} /></td>
                 </tr>
               </tfoot>
             </table>
@@ -125,7 +139,7 @@ export function NpkSelfDetail({ data }: { data: NpkDetailResult | null }) {
 
       <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
         <Info className="mt-0.5 size-3.5 shrink-0" />
-        Aspek berstatus <span className="font-medium">Belum ada data</span> tidak menaikkan/menurunkan NPK (kontribusi 0) — skor rendah berarti data belum lengkap, bukan kinerja buruk. Sumber KSO/GP/Coaching & target customer menyusul.
+        Aspek berstatus <span className="font-medium">Belum ada data</span> tidak menaikkan/menurunkan NPK (kontribusi 0) — skor rendah berarti data belum lengkap, bukan kinerja buruk. Karena itu selama coverage &lt; 7/7 skor dibandingkan ke plafon <span className="font-medium">{ceiling}</span> (Σ bobot aspek yang terukur) dan predikat SK ditahan. Sumber KSO/GP/Coaching &amp; target customer menyusul.
       </p>
     </div>
   );

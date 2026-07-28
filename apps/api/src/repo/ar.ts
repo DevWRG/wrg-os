@@ -1,9 +1,14 @@
 import { createHash } from "node:crypto";
 
 import { db } from "../db.js";
+import { AM_VACANT, joinAmFromSalesman } from "./salesman-am.js";
+import { FULL_SCOPE, scopeAccurateClause, scopeOnClause, type DataScope } from "./access-scope.js";
 
 // D2 AR Aging — feeder (ingest invoice Accurate → ar_aging_mv) + read model.
 // Bucket dihitung dari days_overdue relatif `asof` (default hari ini).
+//
+// Row-level scope (F122): AM hanya AR customer yang invoice-nya atas namanya,
+// HoD hanya cabang timnya, admin semua. Ditegakkan di SQL — bukan di UI.
 
 export interface InvoiceInput {
   customer_id: string;
@@ -147,7 +152,7 @@ export interface AgingInvoice {
   is_anomaly: boolean;
 }
 
-export async function getAging(bucket?: string): Promise<{
+export async function getAging(bucket?: string, scope: DataScope = FULL_SCOPE): Promise<{
   total_outstanding: number;
   total_invoices: number;
   buckets: { bucket: string; count: number; total: number }[];
@@ -157,12 +162,18 @@ export async function getAging(bucket?: string): Promise<{
   // Buang invoice yg TERKONFIRMASI lunas di mirror (outstanding=0); amount =
   // outstanding hidup bila cocok (partial-paid ikut sisanya), else fallback
   // ar_aging_mv.amount agar baris tak-cocok tak hilang. due_date/bucket dari ar_aging_mv.
+  //
+  // Scope: kepemilikan invoice = salesman-nya (accurate_salesman → master_user).
+  // Pada scope terbatas, baris yg tak cocok ke mirror (ai NULL → tak ada AM)
+  // otomatis gugur — sengaja, biar tak salah atribusi ke AM.
   const rows = await sql`
     SELECT m.customer_id, m.customer_name, m.invoice_no, m.due_date::text AS due_date,
       COALESCE(ai.outstanding, m.amount)::float8 AS amount, m.days_overdue, m.bucket, m.is_anomaly
     FROM ar_aging_mv m
     LEFT JOIN accurate_invoice ai ON ai.number = m.invoice_no AND ai.customer_id::text = m.customer_id
-    WHERE COALESCE(ai.outstanding, m.amount) > 0
+    LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
+    ${joinAmFromSalesman(sql)}
+    WHERE COALESCE(ai.outstanding, m.amount) > 0 ${scopeAccurateClause(sql, scope)}
     ORDER BY m.days_overdue DESC`;
   const bmap = new Map<string, { count: number; total: number }>();
   let totAmt = 0;
@@ -204,19 +215,19 @@ function arPriorityOf(b31_60: number, b61_90: number, b90plus: number): ArPriori
 }
 // Detail satu invoice (header + line item) dari mirror Accurate, di-lookup by
 // nomor invoice (ar_aging_mv.invoice_no = accurate_invoice.number). Read-only.
-export async function invoiceDetail(no: string) {
+export async function invoiceDetail(no: string, scope: DataScope = FULL_SCOPE) {
   const sql = db();
   const [inv] = await sql`
     SELECT ai.id, ai.number,
       COALESCE(NULLIF(ac.name,''), NULLIF(ai.raw->'customer'->>'name',''), NULLIF(ai.raw->>'retailWpName',''), 'Customer #'||ai.customer_id::text) AS customer_name,
       ai.tanggal::text AS tanggal, ai.total::float8 AS total, ai.taxable_amount::float8 AS taxable,
       ai.tax_amount::float8 AS tax, ai.paid::float8 AS paid, ai.outstanding::float8 AS outstanding,
-      ai.status, COALESCE(NULLIF(mu.nama,''), NULLIF(ai.salesman_name,'')) AS am, NULLIF(mu.cabang,'') AS cabang
+      ai.status, COALESCE(NULLIF(mu.nama,''), ${AM_VACANT}) AS am, NULLIF(mu.cabang,'') AS cabang
     FROM accurate_invoice ai
     LEFT JOIN accurate_customer ac ON ac.id = ai.customer_id
     LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
-    LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
-    WHERE ai.number = ${no}
+    ${joinAmFromSalesman(sql)}
+    WHERE ai.number = ${no} ${scopeAccurateClause(sql, scope)}
     LIMIT 1`;
   if (!inv) return { ok: false as const, invoice: null, items: [] };
   const items = await sql`
@@ -247,7 +258,10 @@ export async function invoiceDetail(no: string) {
   };
 }
 
-export async function arAgingByCustomer() {
+// Scope: kepemilikan customer diambil dari AM invoice TERAKHIR-nya (CTE last_am)
+// — sama dengan kolom AM yang ditampilkan, jadi apa yang dilihat = apa yang
+// difilter. Customer tanpa invoice ter-atribusi tak muncul di scope terbatas.
+export async function arAgingByCustomer(scope: DataScope = FULL_SCOPE) {
   const sql = db();
   const rows = await sql`
     WITH src AS (
@@ -275,16 +289,19 @@ export async function arAgingByCustomer() {
     ),
     last_am AS (
       SELECT DISTINCT ON (ai.customer_id::text) ai.customer_id::text AS cid,
-        COALESCE(NULLIF(mu.nama,''), NULLIF(ai.salesman_name,'')) AS am,
-        NULLIF(mu.cabang,'') AS cabang
+        COALESCE(NULLIF(mu.nama,''), ${AM_VACANT}) AS am,
+        NULLIF(mu.cabang,'') AS cabang,
+        mu.am_id AS am_id,
+        COALESCE(NULLIF(mu.cabang,''), NULLIF(acs.cabang_override,'')) AS cabang_eff
       FROM accurate_invoice ai
       LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
-      LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
+      ${joinAmFromSalesman(sql)}
       WHERE ai.customer_id IS NOT NULL
       ORDER BY ai.customer_id::text, ai.tanggal DESC
     )
     SELECT a.cid, a.name, a.invoices, a.total, a.b_current, a.b_1_30, a.b_31_60, a.b_61_90, a.b_90plus, a.max_overdue, la.am, la.cabang
     FROM agg a LEFT JOIN last_am la ON la.cid = a.cid
+    WHERE true ${scopeOnClause(sql, scope, sql`la.am_id`, sql`la.cabang_eff`)}
     ORDER BY a.b_90plus DESC, a.total DESC`;
   const customers = rows.map((r) => {
     const b31_60 = Number(r.b_31_60), b61_90 = Number(r.b_61_90), b90plus = Number(r.b_90plus);

@@ -13,6 +13,7 @@
 //   - metric manual: tabel `watchpoint_metric` (diisi HoD). Kosong → status NA.
 
 import { db, isDbEnabled } from "../db.js";
+import { joinAmFromSalesman } from "./salesman-am.js";
 
 export type WatchStatus = "GREEN" | "YELLOW" | "RED" | "NA";
 export type WatchTrend = "improving" | "stable" | "declining";
@@ -52,7 +53,9 @@ export interface WatchBoard {
 }
 
 // ── Threshold engine ──────────────────────────────────────────────
-function attainment(target: number | null, actual: number | null, dir: "higher" | "lower"): number | null {
+// Diekspor: dipakai ulang oleh watchpoint-weekly.ts supaya papan mingguan
+// memakai gate yang SAMA persis (jangan duplikasi ambang di dua tempat).
+export function attainment(target: number | null, actual: number | null, dir: "higher" | "lower"): number | null {
   if (target === null || actual === null) return null;
   if (dir === "lower") {
     if (target === 0) return actual <= 0 ? 100 : 0;
@@ -63,14 +66,14 @@ function attainment(target: number | null, actual: number | null, dir: "higher" 
   return (actual / target) * 100;
 }
 
-function gate(pct: number | null): WatchStatus {
+export function gate(pct: number | null): WatchStatus {
   if (pct === null) return "NA";
   if (pct >= 100) return "GREEN";
   if (pct >= 50) return "YELLOW";
   return "RED";
 }
 
-function worst(metrics: WatchMetric[]): WatchStatus {
+export function worst(metrics: { status: WatchStatus }[]): WatchStatus {
   if (metrics.some((m) => m.status === "RED")) return "RED";
   if (metrics.some((m) => m.status === "YELLOW")) return "YELLOW";
   if (metrics.some((m) => m.status === "GREEN")) return "GREEN";
@@ -86,7 +89,7 @@ async function revenueThisMonth(sql: Sql, cabang: string[]): Promise<number> {
     SELECT COALESCE(sum(ai.total),0)::float8 AS v
     FROM accurate_invoice ai
     LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
-    LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
+    ${joinAmFromSalesman(sql)}
     WHERE ai.tanggal >= date_trunc('month', CURRENT_DATE)
       AND mu.cabang = ANY(${cabang})`;
   return Number(rows[0]?.v ?? 0);
@@ -130,7 +133,7 @@ async function churnRutin(sql: Sql, cabang: string[]): Promise<number> {
       SELECT ai.customer_id
       FROM accurate_invoice ai
       LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
-      LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
+      ${joinAmFromSalesman(sql)}
       WHERE mu.cabang = ANY(${cabang})
       GROUP BY ai.customer_id
       HAVING count(*) >= 3 AND max(ai.tanggal) < CURRENT_DATE - 60

@@ -3,8 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-import { NAV, featureKey } from "@/lib/nav";
-import { can } from "@/lib/perms";
+import { NAV, navVisible } from "@/lib/nav";
 import { type SessionUser } from "@/lib/use-session";
 import {
   Sidebar,
@@ -21,18 +20,15 @@ import {
 } from "@/components/ui/sidebar";
 import { SidebarUser } from "@/components/layout/sidebar-user";
 
-// Sesi di-pass sebagai prop SSR (anti-flicker menu saat hydrate). Gate per izin
-// 'view' RBAC: bila izin tak tersedia (auth mati / belum login), can() = true →
-// semua tampil (non-breaking). Grup tanpa item disembunyikan.
+// Sesi di-pass sebagai prop SSR (anti-flicker menu saat hydrate). Gate per item
+// = navVisible(): matriks Akses Grup menentukan begitu fiturnya diatur, `show`
+// (gate identitas) hanya fallback, dan bila izin tak tersedia (auth mati / belum
+// login) semua tampil (non-breaking). Grup tanpa item disembunyikan.
 export function AppSidebar({ me }: { me: SessionUser | null }) {
   const pathname = usePathname();
 
   const nav = NAV
-    .map((g) => ({
-      ...g,
-      // Item ber-`show` (Pricelist) di-gate title-based; sisanya via izin RBAC can().
-      items: g.items.filter((it) => (it.show ? it.show(me) : can(me, it.feature ?? featureKey(it.url), "view"))),
-    }))
+    .map((g) => ({ ...g, items: g.items.filter((it) => navVisible(me, it)) }))
     .filter((g) => g.items.length > 0);
 
   return (
@@ -40,7 +36,7 @@ export function AppSidebar({ me }: { me: SessionUser | null }) {
       <SidebarHeader>
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton size="lg" render={<Link href="/overview" />} className="overflow-hidden">
+            <SidebarMenuButton size="lg" render={<Link href="/" />} className="overflow-hidden">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src="/brand/wahana-lifeline-color.png" alt="Wahana Lifeline" className="h-8 w-auto max-w-none object-contain object-left dark:hidden" />
               {/* eslint-disable-next-line @next/next/no-img-element */}

@@ -31,6 +31,8 @@ import { runPolaKomunikasi } from "./repo/polakomunikasi.js";
 import { runRefreshMembers } from "./repo/listmembers.js";
 import { runNotifQuota } from "./repo/notifquota.js";
 import { evaluateSalesAlerts } from "./repo/sales-analytics-alert-eval.js";
+import { computeNpk, currentPeriod } from "./repo/npk.js";
+import { snapshotLastWeek } from "./repo/watchpoint-weekly.js";
 
 // Penjadwal agen in-process (Blueprint v2.3). Default MATI — aktif hanya bila
 // AGENT_SCHEDULE_ENABLED=true. Tiap run tetap menulis ke audit_log via repo
@@ -121,6 +123,14 @@ export function startScheduler(): ScheduleStatus {
   // notif-quota (port notif_quota.sh) — probe OpenRouter key/limit → alert owner WA. Tiap 6 jam.
   const notifQuotaEnabled = (process.env.NOTIF_QUOTA_ENABLED ?? "false").toLowerCase() === "true";
   const salesAlertEvalEnabled = (process.env.SALES_ALERT_EVAL_ENABLED ?? "false").toLowerCase() === "true";
+  // npk-compute (F66) — recompute NPK 8 HoD utk semester BERJALAN, harian 01:00.
+  // Display-only (isi npk_score_semester + npk_aspect_score, tanpa WA/LLM). Sebelum
+  // ada job ini compute cuma lewat POST /npk/compute manual → angka bisa basi berhari-hari.
+  const npkComputeEnabled = (process.env.NPK_COMPUTE_ENABLED ?? "false").toLowerCase() === "true";
+  // watchpoint-snapshot — bekukan metric computed MINGGU LALU tiap Senin dini hari,
+  // sebelum job lain menggeser angka. Tanpa ini papan Weekly tak punya riwayat:
+  // metric computed dihitung live sehingga minggu lewat ikut berubah tiap dibuka.
+  const watchpointSnapshotEnabled = (process.env.WATCHPOINT_SNAPSHOT_ENABLED ?? "false").toLowerCase() === "true";
   const timezone = TZ();
   const jobs: JobDef[] = [
     {
@@ -196,12 +206,12 @@ export function startScheduler(): ScheduleStatus {
   ];
 
   status = {
-    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled,
+    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled || watchpointSnapshotEnabled,
     timezone,
     jobs: jobs.map((j) => ({ id: j.id, expr: j.expr, valid: cron.validate(j.expr) })),
   };
 
-  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled) {
+  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled && !watchpointSnapshotEnabled) {
     console.log("[scheduler] semua *_SCHEDULE/_ENABLED flag != true — tidak dijadwalkan");
     return status;
   }
@@ -529,6 +539,27 @@ export function startScheduler(): ScheduleStatus {
     live.push(`weekly-report=${wrExpr}`);
   }
 
+  // watchpoint-snapshot — Senin 06:00, bekukan metric computed minggu lalu ke
+  // watchpoint_weekly. Idempoten (UPSERT) & tidak menimpa input manual HoD,
+  // jadi aman kalau job jalan dua kali atau HoD sudah mengisi duluan.
+  const wpsExpr = process.env.WATCHPOINT_SNAPSHOT_CRON ?? "0 6 * * 1";
+  if ((enabled || watchpointSnapshotEnabled) && cron.validate(wpsExpr)) {
+    cron.schedule(
+      wpsExpr,
+      async () => {
+        const startedAt = new Date().toISOString();
+        try {
+          const r = await snapshotLastWeek();
+          console.log(`[scheduler] watchpoint-snapshot @ ${startedAt} ${JSON.stringify(r)}`);
+        } catch (e) {
+          console.error(`[scheduler] watchpoint-snapshot gagal @ ${startedAt}:`, e);
+        }
+      },
+      { timezone },
+    );
+    live.push(`watchpoint-snapshot=${wpsExpr}`);
+  }
+
   // detect-leave (port detect_leave.sh) — scan grup HRD tiap 10 menit.
   const dlExpr = process.env.DETECT_LEAVE_CRON ?? "*/10 * * * *";
   if ((enabled || detectLeaveEnabled) && cron.validate(dlExpr)) {
@@ -643,6 +674,31 @@ export function startScheduler(): ScheduleStatus {
       { timezone },
     );
     live.push(`notif-quota=${nqExpr}`);
+  }
+
+  // npk-compute (F66) — recompute NPK 8 HoD semester berjalan, harian 01:00 WIB.
+  // Display-only (npk_score_semester + npk_aspect_score), tanpa WA/LLM. Periode
+  // diambil dari currentPeriod() supaya ikut berpindah S1→S2 tanpa ubah cron.
+  const npkExpr = process.env.NPK_COMPUTE_CRON ?? "0 1 * * *";
+  if ((enabled || npkComputeEnabled) && cron.validate(npkExpr)) {
+    cron.schedule(
+      npkExpr,
+      async () => {
+        const startedAt = new Date().toISOString();
+        try {
+          // wibNow() dipakai utk penentuan periode DAN sebagai `now` perhitungan
+          // (pro-rata elapsed + cutoff AR) → kalender WIB, bukan UTC yg masih H-1 pk 01:00.
+          const now = wibNow();
+          const { year, period } = currentPeriod(now);
+          const r = await computeNpk({ year, period, now });
+          console.log(`[scheduler] npk-compute ok @ ${startedAt} ${JSON.stringify(r)}`);
+        } catch (e) {
+          console.error(`[scheduler] npk-compute gagal @ ${startedAt}:`, e);
+        }
+      },
+      { timezone },
+    );
+    live.push(`npk-compute=${npkExpr}`);
   }
 
   console.log(`[scheduler] aktif (TZ=${timezone}): ${live.join(", ") || "(tidak ada job valid)"}`);

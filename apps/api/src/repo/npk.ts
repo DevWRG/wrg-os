@@ -11,8 +11,9 @@
 // (proxy umur `tanggal`, karena accurate_invoice tak punya due_date).
 
 import { db } from "../db.js";
+import { joinAmFromSalesman } from "./salesman-am.js";
 import { HODS } from "../hod-resolver.js";
-import { calcNPK, ASPECT_ORDER, ASPECT_LABEL, DEFAULT_BOBOT, type AspectInput, type AspectKey, type NPKResult } from "../lib/npk-calc.js";
+import { calcNPK, ageCutoff, elapsedFraction, ASPECT_ORDER, ASPECT_LABEL, DEFAULT_BOBOT, type AspectInput, type AspectKey, type NPKResult } from "../lib/npk-calc.js";
 import type { DataScope } from "./access-scope.js";
 
 export type Period = "S1" | "S2";
@@ -27,13 +28,6 @@ export function semesterRange(year: number, period: Period): { from: string; to:
 // Semester berjalan (utk default query). Bulan 1-6 → S1, else S2.
 export function currentPeriod(now = new Date()): { year: number; period: Period } {
   return { year: now.getUTCFullYear(), period: now.getUTCMonth() < 6 ? "S1" : "S2" };
-}
-
-// Kurangi n hari dari tanggal ISO (utk cutoff AR>45).
-function minusDays(iso: string, n: number): string {
-  const d = new Date(`${iso}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() - n);
-  return d.toISOString().slice(0, 10);
 }
 
 // Cabang yang jadi tanggung jawab satu HoD (dari hod_territory). Kosong utk HoD non-cabang.
@@ -55,8 +49,10 @@ async function gatherAspectInput(
   cabang: string[],
   year: number,
   period: Period,
+  now: Date,
 ): Promise<GatherResult> {
   const { from, to } = semesterRange(year, period);
+  const elapsed = elapsedFraction(from, to, now);
   const input: AspectInput = {
     revenue_actual: 0, revenue_target: 0,
     customer_active_count: 0, customer_target: 0,
@@ -67,20 +63,22 @@ async function gatherAspectInput(
     coaching_score: 0,
   };
   // Aspek yang memang belum punya sumber data live → selalu stub (SK butuh sumber ini,
-  // tapi tabel KSO/GP/CRM-coverage/coaching + target customer belum ada di sistem).
+  // tapi tabel KSO/GP/CRM-coverage/coaching belum ada di sistem). Customer di-wire
+  // (butuh customer_target_cabang, di-set bawah spt revenue) → tak lagi selalu stub.
   const avail: Partial<Record<AspectKey, boolean>> = {
-    customer: false, kso: false, gp: false, crm: false, coaching: false,
+    kso: false, gp: false, crm: false, coaching: false,
   };
-  const stubbed: AspectKey[] = ["customer", "kso", "gp", "crm", "coaching"];
+  const stubbed: AspectKey[] = ["kso", "gp", "crm", "coaching"];
 
   if (cabang.length === 0) {
     // HoD non-cabang (IVD/Finance/Medical/Aftersales/Acc/BD) → tak ada scope sales.
     avail.revenue = false;
     avail.ar = false;
+    avail.customer = false;
     return {
       input,
       avail,
-      meta: { cabang: [], reason: "hod_non_cabang", stubbed: [...stubbed, "revenue", "ar"] },
+      meta: { cabang: [], reason: "hod_non_cabang", stubbed: [...stubbed, "revenue", "ar", "customer"] },
     };
   }
 
@@ -90,38 +88,56 @@ async function gatherAspectInput(
            count(DISTINCT ai.customer_id)::int AS customers
     FROM accurate_invoice ai
     LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
-    LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
+    ${joinAmFromSalesman(sql)}
     WHERE ai.tanggal BETWEEN ${from} AND ${to}
       AND COALESCE(NULLIF(mu.cabang,''), NULLIF(acs.cabang_override,'')) = ANY(${cabang}::text[])`;
   input.revenue_actual = Number(rev?.revenue ?? 0);
   input.customer_active_count = Number(rev?.customers ?? 0);
 
-  // Revenue target: target cabang tahunan (Σ cabang tim) ÷2 utk semester.
+  // Revenue target: target cabang tahunan (Σ cabang tim) ÷2 utk semester, lalu
+  // DI-PRO-RATA ke porsi semester yang sudah berjalan — actual di atas juga baru
+  // terkumpul sampai hari ini. Semester lewat → elapsed=1 (target semester penuh).
   const [tgt] = await sql`
     SELECT COALESCE(sum(target),0)::float8 AS target
     FROM sales_target_cabang WHERE year = ${year} AND cabang = ANY(${cabang}::text[])`;
-  input.revenue_target = Number(tgt?.target ?? 0) / 2;
+  const targetSemester = Number(tgt?.target ?? 0) / 2;
+  input.revenue_target = targetSemester * elapsed;
 
-  // AR: total outstanding (status OPEN) + proxy >45hr pakai umur `tanggal` (tak ada due_date).
-  const cut45 = minusDays(to, 45);
+  // Customer target: target jumlah customer aktif tahunan (Σ cabang tim) ÷2 utk
+  // semester. TIDAK di-pro-rata elapsed (beda dari revenue): customer aktif itu
+  // STOCK (distinct customer yg transaksi), front-loaded — mayoritas sudah aktif
+  // di bulan-bulan awal, bukan akumulasi linear seperti revenue (FLOW). Prorata
+  // bikin target awal-semester kekecilan → rasio >120% → mentok cap (skor palsu).
+  // Pakai target semester penuh → skor "progress ke goal", naik wajar sepanjang semester.
+  const [ctgt] = await sql`
+    SELECT COALESCE(sum(target),0)::float8 AS target
+    FROM customer_target_cabang WHERE year = ${year} AND cabang = ANY(${cabang}::text[])`;
+  const customerTargetSemester = Number(ctgt?.target ?? 0) / 2;
+  input.customer_target = customerTargetSemester;
+
+  // AR: total outstanding (status OPEN) + proxy >45hr pakai umur `tanggal` (tak ada
+  // due_date). Cutoff di-anchor ke hari ini, bukan akhir semester (lihat ageCutoff).
+  const cut45 = ageCutoff(to, now, 45);
   const [ar] = await sql`
     SELECT COALESCE(sum(ai.total),0)::float8 AS ar_total,
            COALESCE(sum(ai.total) FILTER (WHERE ai.tanggal < ${cut45}),0)::float8 AS ar_over45
     FROM accurate_invoice ai
     LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
-    LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
+    ${joinAmFromSalesman(sql)}
     WHERE ai.status = 'OPEN'
       AND COALESCE(NULLIF(mu.cabang,''), NULLIF(acs.cabang_override,'')) = ANY(${cabang}::text[])`;
   input.ar_total = Number(ar?.ar_total ?? 0);
   input.ar_over_45d = Number(ar?.ar_over45 ?? 0);
 
-  // Revenue butuh target utk di-skor; tanpa target → tak bisa dinilai (available:false).
+  // Revenue/customer butuh target utk di-skor; tanpa target → available:false.
   avail.revenue = input.revenue_target > 0;
   avail.ar = input.ar_total > 0;
+  avail.customer = input.customer_target > 0;
 
   const stubbedNow = [...stubbed];
   if (!avail.revenue) stubbedNow.push("revenue");
   if (!avail.ar) stubbedNow.push("ar");
+  if (!avail.customer) stubbedNow.push("customer");
 
   return {
     input,
@@ -129,27 +145,33 @@ async function gatherAspectInput(
     meta: {
       cabang,
       range: { from, to },
+      elapsed_pct: Math.round(elapsed * 1000) / 10,
       revenue_actual: input.revenue_actual,
       revenue_target_year: Number(tgt?.target ?? 0),
-      revenue_target_semester: input.revenue_target,
+      revenue_target_semester: targetSemester,        // target semester PENUH (audit SK)
+      revenue_target_prorata: input.revenue_target,   // yang dipakai men-skor
       customer_active_count: input.customer_active_count,
-      customer_target_missing: true,
+      customer_target_year: Number(ctgt?.target ?? 0),
+      customer_target_semester: customerTargetSemester,   // target semester penuh = yang dipakai men-skor (TANPA prorata, stock)
+      customer_target_missing: input.customer_target <= 0,
       ar_total: input.ar_total,
       ar_over_45d: input.ar_over_45d,
       ar_over45_proxy: true, // umur `tanggal`, bukan due_date
+      ar_cutoff: cut45,
       stubbed: stubbedNow,
     },
   };
 }
 
 // Compute batch NPK 8 HoD utk satu semester. Idempoten (upsert 058 + replace 059).
-export async function computeNpk(opts: { year: number; period: Period }): Promise<{ computed: number; year: number; period: Period }> {
+export async function computeNpk(opts: { year: number; period: Period; now?: Date }): Promise<{ computed: number; year: number; period: Period }> {
   const sql = db();
   const { year, period } = opts;
+  const now = opts.now ?? new Date();
   let computed = 0;
   for (const hod of HODS) {
     const cabang = await hodCabangSet(sql, hod.key);
-    const g = await gatherAspectInput(sql, hod.key, cabang, year, period);
+    const g = await gatherAspectInput(sql, hod.key, cabang, year, period, now);
     const res: NPKResult = calcNPK(g.input, DEFAULT_BOBOT, g.avail);
     await sql`
       INSERT INTO npk_score_semester (hod_key, year, period, npk, predikat, computed_from, computed_at)

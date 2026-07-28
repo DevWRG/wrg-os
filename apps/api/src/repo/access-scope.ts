@@ -74,3 +74,46 @@ export async function resolveScope(userId: string | null | undefined): Promise<D
 export function isRestricted(s: DataScope): boolean {
   return (s.amOnly && !!s.amId) || !!(s.cabangScope && s.cabangScope.length);
 }
+
+// ── Klausa SQL row-level (satu definisi, dipakai lintas repo) ──
+//
+// Dipakai dengan menempelkan hasilnya ke WHERE query. Dua bentuk karena sumber
+// kepemilikan datanya beda:
+//   scopeAccurateClause  → data Accurate; query WAJIB sudah join
+//                          `accurate_salesman acs` + `master_user mu`.
+//   scopeSalesPlanClause → data internal sales_plan; query WAJIB punya alias
+//                          `sp` (sales_plan) + `mu` (master_user).
+//
+// Catatan penting: pada scope terbatas, baris yang TIDAK bisa diatribusikan ke
+// AM mana pun (mis. invoice tanpa salesman ter-link) otomatis TIDAK ikut —
+// itu disengaja: lebih baik hilang dari daftar AM daripada bocor ke AM yang salah.
+
+type Sql = ReturnType<typeof db>;
+type Frag = ReturnType<Sql>;
+
+// Bentuk dasar: caller menunjuk kolom am_id & cabang-nya sendiri (fragment SQL),
+// jadi aturannya tetap SATU definisi walau nama alias tabelnya beda per query.
+export function scopeOnClause(sql: Sql, s: DataScope, amIdCol: Frag, cabangCol: Frag) {
+  if (s.amOnly && s.amId) return sql`AND ${amIdCol} = ${s.amId}`;
+  if (s.cabangScope && s.cabangScope.length) {
+    return sql`AND ${cabangCol} = ANY(${s.cabangScope}::text[])`;
+  }
+  return sql``;
+}
+
+export function scopeAccurateClause(sql: Sql, s: DataScope) {
+  return scopeOnClause(sql, s, sql`mu.am_id`, sql`COALESCE(NULLIF(mu.cabang,''), NULLIF(acs.cabang_override,''))`);
+}
+
+export function scopeSalesPlanClause(sql: Sql, s: DataScope) {
+  return scopeOnClause(sql, s, sql`sp.am_id`, sql`NULLIF(mu.cabang,'')`);
+}
+
+// Customers/Accounts: kepemilikan dari kolom EKSPLISIT crm_account.owner_am_id
+// (migrasi 064) — bukan diturunkan dari invoice terakhir, supaya faskes yang
+// belum pernah transaksi tetap bisa di-scope. Query WAJIB punya alias `oa`
+// (crm_account) + `omu` (master_user pemilik). Akun tak-bertuan (owner NULL)
+// tidak muncul pada scope terbatas — admin yang menugaskan pemiliknya.
+export function scopeAccountOwnerClause(sql: Sql, s: DataScope) {
+  return scopeOnClause(sql, s, sql`oa.owner_am_id`, sql`NULLIF(omu.cabang,'')`);
+}

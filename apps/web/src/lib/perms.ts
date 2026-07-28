@@ -9,8 +9,8 @@ export interface EffectivePerm {
   active: boolean; view: boolean; create: boolean; edit: boolean; delete: boolean;
 }
 export interface PermBag {
-  role?: string;
-  superuser?: boolean;
+  role?: string | null;
+  superuser?: boolean | null;
   hod_key?: string | null; // key HoD (rocky/yogi/...) → gate menu "NPK Saya"
   groups?: { id: number; key: string; name: string }[];
   permissions?: Record<string, EffectivePerm>;
@@ -29,4 +29,20 @@ export function can(s: PermBag | null | undefined, feature: string, action: Acti
 // Apakah bag izin benar-benar terisi (untuk memutuskan apakah gating menu aktif).
 export function hasPerms(s: PermBag | null | undefined): boolean {
   return !!(s && s.permissions && Object.keys(s.permissions).length > 0);
+}
+
+// Gate hibrida untuk fitur yang punya gate identitas legacy (Pricelist, Karyawan
+// 360, Executive, …). Aturan: BEGITU grup user punya baris izin untuk fitur ini,
+// matriks Akses Grup yang menentukan — dua arah (dicentang = boleh, dilepas =
+// tidak). Selama belum diatur, jatuh ke gate identitas lama supaya tak ada yang
+// mendadak kehilangan akses. admin/superuser selalu lolos (anti-lockout).
+//
+// Tanpa ini, item ber-`show` di nav.ts sepenuhnya mengabaikan RBAC → admin
+// mencentang fitur di Akses Grup tapi menunya tetap tak muncul.
+export function canOrLegacy(
+  s: PermBag | null | undefined, feature: string, legacy: boolean, action: Action = "view",
+): boolean {
+  if (!s || !s.permissions) return legacy; // izin tak tersedia → pakai gate lama
+  if (s.superuser || s.role === "admin") return true;
+  return s.permissions[feature] ? can(s, feature, action) : legacy;
 }

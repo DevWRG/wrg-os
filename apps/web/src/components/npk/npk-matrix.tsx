@@ -9,7 +9,7 @@ import {
   fmt1, periodLabel, scoreBand,
   type AspectKey, type NpkMatrixResult, type NpkMatrixRow,
 } from "./npk-format";
-import { zoneOf } from "./npk-status";
+import { WIRED_BOBOT, zoneOf } from "./npk-status";
 
 const SHORT: Record<AspectKey, string> = {
   revenue: "Revenue", customer: "Customer", ar: "AR", kso: "KSO", gp: "GP", crm: "CRM", coaching: "Coaching",
@@ -125,7 +125,7 @@ export function NpkMatrix({ data }: { data: NpkMatrixResult | null }) {
 
       <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
         <Info className="mt-0.5 size-3.5 shrink-0" />
-        Sel <span className="font-medium">N/A</span> = aspek belum punya sumber data live (KSO/GP/Coaching/target customer) atau HoD non-cabang tanpa scope sales — bukan kinerja buruk. NPK dihitung dari aspek yang tersedia saja (bobot tetap SK). Kolom <span className="font-medium">Coverage</span> menunjukkan berapa dari 7 aspek yang terukur.
+        Sel <span className="font-medium">N/A</span> = aspek belum punya sumber data live (KSO/GP/Coaching/target customer) atau HoD non-cabang tanpa scope sales — bukan kinerja buruk. NPK dihitung dari aspek yang tersedia saja (bobot tetap SK), jadi selama coverage &lt; 7/7 plafon skor cuma <span className="font-medium">{WIRED_BOBOT} dari 100</span> dan status ditahan di <span className="font-medium">Sementara</span> — predikat SK (dan konsekuensinya: PIP / kandidat promosi) baru berlaku setelah 7/7 aspek ter-feed. Kolom <span className="font-medium">Coverage</span> menunjukkan berapa dari 7 aspek yang terukur.
       </p>
     </div>
   );

@@ -20,7 +20,7 @@ import { enqueueAmbiguous, listHitl, resolveHitl } from "./repo/hitl.js";
 import { insertRekap, insertResume, getDigestHistory, getDigestInsights } from "./repo/digest.js";
 import { getDashboardStats } from "./repo/stats.js";
 import { getCustomers } from "./repo/customer.js";
-import { listAccounts, getAccount, upsertAccountFields, createContact, updateContact, deleteContact } from "./repo/account.js";
+import { listAccounts, getAccount, upsertAccountFields, createContact, updateContact, deleteContact, listOwnerCandidates } from "./repo/account.js";
 import {
   ingestInvoices,
   ingestAccurateWebhook,
@@ -60,7 +60,12 @@ import { getProductIntelligence } from "./repo/product.js";
 import { listAnnotations } from "./repo/sentiment.js";
 import { getNetworkInput, computeNetwork } from "./repo/network.js";
 import { listBriefings } from "./repo/executive.js";
-import { getWatchBoard, formatHodWatchWa } from "./repo/watchpoint.js";
+import { getWatchBoard, formatHodWatchWa, type WatchStatus } from "./repo/watchpoint.js";
+import {
+  getWeeklyBoard, listWeeks, snapshotWeek, upsertWeeklyMetric, deleteWeeklyMetric,
+  currentWeek, formatWeeklyHodWa,
+} from "./repo/watchpoint-weekly.js";
+import { buildWeeklyDeck, weeklyDeckFilename } from "./repo/watchpoint-pptx.js";
 import {
   effectivePermissions, listFeatures, listGroups, getGroup, createGroup, updateGroup,
   deleteGroup, setPermissions, setMembers, copyPermissions, syncFeatures,
@@ -790,23 +795,27 @@ app.post("/ar/invoices", async (c) => {
   return c.json(await ingestInvoices(body.invoices, body.asof), 201);
 });
 
+// AR read model — ber-scope row-level (AM = AR atas namanya, HoD = cabang tim).
+// Identitas dari header x-user-id yang diteruskan halaman/BFF web.
 app.get("/ar/aging", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  return c.json(await getAging(c.req.query("bucket") || undefined));
+  const scope = await resolveScope(c.req.header("x-user-id"));
+  return c.json(await getAging(c.req.query("bucket") || undefined, scope));
 });
 
 // F30 — AR aging per customer (breakdown 5 bucket + prioritas tagih). Read-only.
 app.get("/ar/aging/by-customer", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  return c.json(await arAgingByCustomer());
+  return c.json(await arAgingByCustomer(await resolveScope(c.req.header("x-user-id"))));
 });
 
 // Detail satu invoice (header + line item) by nomor invoice. Read-only.
+// Di luar scope → 404, bukan 403: jangan bocorkan bahwa nomornya ada.
 app.get("/ar/invoice/:no", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const no = c.req.param("no");
   if (!no) return c.json({ error: "no invoice wajib" }, 400);
-  const r = await invoiceDetail(no);
+  const r = await invoiceDetail(no, await resolveScope(c.req.header("x-user-id")));
   return c.json(r, r.ok ? 200 : 404);
 });
 
@@ -921,7 +930,8 @@ app.get("/accurate/shipments", async (c) => {
 // AR (piutang) per customer / cabang / sales — dari accurate_invoice OPEN.
 app.get("/ar/sales", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  return c.json(await reportSalesAr(c.req.query("from") || undefined, c.req.query("to") || undefined));
+  const scope = await resolveScope(c.req.header("x-user-id"));
+  return c.json(await reportSalesAr(c.req.query("from") || undefined, c.req.query("to") || undefined, scope));
 });
 
 // ── WRG Monitor: direktori member WA (port wrg-monitor) ──
@@ -1421,22 +1431,25 @@ app.post("/visits", async (c) => {
 });
 
 // Read model visit (filter geo_status: ok|out_of_bounds|no_geo|date_mismatch).
+// Ber-scope row-level: AM = kunjungannya sendiri, HoD = cabang timnya.
 app.get("/visits", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  const visits = await listVisits(c.req.query("status") || undefined);
+  const scope = await resolveScope(c.req.header("x-user-id"));
+  const visits = await listVisits(c.req.query("status") || undefined, scope);
   return c.json({ count: visits.length, visits });
 });
 
 // Brief kepatuhan geotag (per-status + flagged).
 app.get("/visits/summary", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  return c.json(await visitSummary());
+  return c.json(await visitSummary(await resolveScope(c.req.header("x-user-id"))));
 });
 
 // Detail 1 visit (didaftarkan SETELAH /visits/summary biar literal menang).
+// Di luar scope → 404 (sama seperti tak ada), jangan bocorkan keberadaannya.
 app.get("/visits/:id", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  const v = await getVisit(c.req.param("id"));
+  const v = await getVisit(c.req.param("id"), await resolveScope(c.req.header("x-user-id")));
   return v ? c.json(v) : c.json({ error: "visit tak ditemukan" }, 404);
 });
 
@@ -2248,6 +2261,136 @@ app.delete("/watchpoint/territory/:id", async (c) => {
   return c.json(r, r.deleted ? 200 : 404);
 });
 
+// ── WatchPoint Weekly — papan per minggu ISO + snapshot + deck PPTX ──
+// Minggu default = minggu berjalan (WIB). Query ?year=&week= untuk minggu lain.
+function weekParam(c: { req: { query: (k: string) => string | undefined } }): { isoYear: number; isoWeek: number } | null {
+  const cur = currentWeek();
+  const y = c.req.query("year");
+  const w = c.req.query("week");
+  if (y === undefined && w === undefined) return cur;
+  const isoYear = Number(y ?? cur.isoYear);
+  const isoWeek = Number(w ?? cur.isoWeek);
+  if (!Number.isInteger(isoYear) || isoYear < 2000 || isoYear > 2100) return null;
+  if (!Number.isInteger(isoWeek) || isoWeek < 1 || isoWeek > 53) return null;
+  return { isoYear, isoWeek };
+}
+
+app.get("/watchpoint/weekly", async (c) => {
+  const w = weekParam(c);
+  if (!w) return c.json({ error: "year/week tidak valid" }, 400);
+  return c.json(await getWeeklyBoard(w.isoYear, w.isoWeek));
+});
+
+app.get("/watchpoint/weekly/weeks", async (c) => {
+  const back = Number(c.req.query("back") ?? 12);
+  return c.json({ rows: await listWeeks(Number.isInteger(back) && back > 0 && back <= 104 ? back : 12) });
+});
+
+// Bekukan nilai computed minggu tsb ke tabel (idempoten). Metric manual HoD
+// tidak tergilas — lihat snapshotWeek().
+app.post("/watchpoint/weekly/snapshot", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { year?: number; week?: number } = {};
+  try { body = await c.req.json(); } catch { /* body opsional → minggu berjalan */ }
+  const cur = currentWeek();
+  const isoYear = Number(body.year ?? cur.isoYear);
+  const isoWeek = Number(body.week ?? cur.isoWeek);
+  if (!Number.isInteger(isoYear) || !Number.isInteger(isoWeek) || isoWeek < 1 || isoWeek > 53) {
+    return c.json({ error: "year/week tidak valid" }, 400);
+  }
+  return c.json(await snapshotWeek(isoYear, isoWeek));
+});
+
+// Input manual HoD untuk satu metric di satu minggu (uptime, lead time, JV, dst).
+app.put("/watchpoint/weekly/metric", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: {
+    hod_key?: string; metric_key?: string; year?: number; week?: number;
+    target?: number | null; actual?: number | null; status?: string | null; note?: string | null;
+  };
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+
+  const hodKey = (body.hod_key ?? "").trim();
+  const metricKey = (body.metric_key ?? "").trim();
+  if (!hodKey || !metricKey) return c.json({ error: "hod_key + metric_key wajib" }, 400);
+
+  const cur = currentWeek();
+  const isoYear = Number(body.year ?? cur.isoYear);
+  const isoWeek = Number(body.week ?? cur.isoWeek);
+  if (!Number.isInteger(isoYear) || !Number.isInteger(isoWeek) || isoWeek < 1 || isoWeek > 53) {
+    return c.json({ error: "year/week tidak valid" }, 400);
+  }
+
+  const VALID: WatchStatus[] = ["GREEN", "YELLOW", "RED", "NA"];
+  const status = body.status == null || body.status === "" ? null : (body.status as WatchStatus);
+  if (status !== null && !VALID.includes(status)) return c.json({ error: "status harus GREEN|YELLOW|RED|NA" }, 400);
+
+  const num = (v: unknown): number | null => (v === null || v === undefined || v === "" ? null : Number(v));
+  const actual = num(body.actual);
+  const target = num(body.target);
+  if (actual !== null && !Number.isFinite(actual)) return c.json({ error: "actual harus angka" }, 400);
+  if (target !== null && !Number.isFinite(target)) return c.json({ error: "target harus angka" }, 400);
+
+  await upsertWeeklyMetric({
+    hod_key: hodKey, metric_key: metricKey, iso_year: isoYear, iso_week: isoWeek,
+    target, actual, status, note: body.note?.trim() || null,
+  });
+  return c.json({ ok: true });
+});
+
+// Hapus input manual → metric balik ke nilai live/snapshot.
+app.delete("/watchpoint/weekly/metric", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const w = weekParam(c);
+  const hodKey = (c.req.query("hod_key") ?? "").trim();
+  const metricKey = (c.req.query("metric_key") ?? "").trim();
+  if (!w) return c.json({ error: "year/week tidak valid" }, 400);
+  if (!hodKey || !metricKey) return c.json({ error: "hod_key + metric_key wajib" }, 400);
+  const r = await deleteWeeklyMetric(hodKey, w.isoYear, w.isoWeek, metricKey);
+  return c.json(r, r.deleted ? 200 : 404);
+});
+
+// Deck PPTX minggu tsb. ?hod=<key> → deck 1 HoD saja.
+app.get("/watchpoint/weekly/pptx", async (c) => {
+  const w = weekParam(c);
+  if (!w) return c.json({ error: "year/week tidak valid" }, 400);
+  const hodKey = c.req.query("hod")?.trim() || undefined;
+  const board = await getWeeklyBoard(w.isoYear, w.isoWeek);
+  if (hodKey && !board.hods.some((h) => h.key === hodKey)) {
+    return c.json({ error: `HoD '${hodKey}' tidak ditemukan` }, 404);
+  }
+  const buf = await buildWeeklyDeck(board, hodKey);
+  const name = hodKey ? weeklyDeckFilename(board).replace(".pptx", `-${hodKey}.pptx`) : weeklyDeckFilename(board);
+  return c.body(new Uint8Array(buf), 200, {
+    "content-type": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "content-disposition": `attachment; filename="${name}"`,
+    "cache-control": "no-store",
+  });
+});
+
+// Kirim ringkasan WatchPoint mingguan 1 HoD via WA (patuh WA_DRY_RUN).
+app.post("/watchpoint/weekly/:hodKey/send-wa", async (c) => {
+  const hodKey = c.req.param("hodKey");
+  let body: { to?: string; year?: number; week?: number };
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  const to = (body.to ?? "").trim();
+  if (!to) return c.json({ error: "field 'to' (nomor/jid WA tujuan) wajib" }, 400);
+
+  const cur = currentWeek();
+  const isoYear = Number(body.year ?? cur.isoYear);
+  const isoWeek = Number(body.week ?? cur.isoWeek);
+  if (!Number.isInteger(isoYear) || !Number.isInteger(isoWeek) || isoWeek < 1 || isoWeek > 53) {
+    return c.json({ error: "year/week tidak valid" }, 400);
+  }
+
+  const board = await getWeeklyBoard(isoYear, isoWeek);
+  const hod = board.hods.find((h) => h.key === hodKey);
+  if (!hod) return c.json({ error: `HoD '${hodKey}' tidak ditemukan` }, 404);
+  const message = formatWeeklyHodWa(board, hod);
+  const result = await sendViaWaGateway(to, message);
+  return c.json({ ...result, hodKey, week: board.label, preview: message }, result.sent ? 200 : 502);
+});
+
 // ── Pricelist — harga jual per produk (setup HoD/Purchasing → publish → AM) ──
 // Role-guard ada di BFF (apps/web /api/pricelist*); di sini hanya validasi DB.
 app.get("/pricelist", async (c) => {
@@ -2600,59 +2743,67 @@ app.post("/agents/a1/run", async (c) => {
 app.get("/customers", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const amId = c.req.query("am_id") || undefined;
-  const customers = await getCustomers(amId);
+  const customers = await getCustomers(amId, await scopeOf(c));
   return c.json({ count: customers.length, customers });
 });
 
 // F62 Account & Contact 360 (Fase 1) — account = accurate_customer + ekstensi CRM + kontak.
+// Ber-scope via pemilik eksplisit crm_account.owner_am_id (migrasi 064).
 app.get("/accounts", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  const rows = await listAccounts();
+  const rows = await listAccounts(await scopeOf(c));
   return c.json({ count: rows.length, accounts: rows });
 });
 app.get("/accounts/:id", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  const a = await getAccount(c.req.param("id"));
+  const a = await getAccount(c.req.param("id"), await scopeOf(c));
   return a ? c.json(a) : c.json({ error: "account tak ditemukan" }, 404);
 });
 app.patch("/accounts/:id", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  try { return c.json(await upsertAccountFields(c.req.param("id"), await c.req.json())); }
+  try { return c.json(await upsertAccountFields(c.req.param("id"), await c.req.json(), await scopeOf(c))); }
   catch (e) { return c.json({ error: String((e as Error).message) }, 400); }
 });
 app.post("/accounts/:id/contacts", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  try { return c.json(await createContact(c.req.param("id"), await c.req.json()), 201); }
+  try { return c.json(await createContact(c.req.param("id"), await c.req.json(), await scopeOf(c)), 201); }
   catch (e) { return c.json({ error: String((e as Error).message) }, 400); }
 });
 app.patch("/accounts/:id/contacts/:cid", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  try { return c.json(await updateContact(c.req.param("cid"), await c.req.json())); }
+  try { return c.json(await updateContact(c.req.param("cid"), await c.req.json(), await scopeOf(c))); }
   catch (e) { return c.json({ error: String((e as Error).message) }, 400); }
 });
 app.delete("/accounts/:id/contacts/:cid", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  try { return c.json(await deleteContact(c.req.param("cid"))); }
+  try { return c.json(await deleteContact(c.req.param("cid"), await scopeOf(c))); }
   catch (e) { return c.json({ error: String((e as Error).message) }, 400); }
+});
+
+// Daftar AM utk pemilihan pemilik akun (dropdown "Pemilik"). HoD hanya melihat
+// AM di cabang timnya — sekalian jadi batas pilihan yang ditegakkan di write-guard.
+app.get("/accounts-owners", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json({ owners: await listOwnerCandidates(await scopeOf(c)) });
 });
 
 // Monitoring revenue ter-faktur per customer (total/faktur/transaksi terakhir/dormant).
 app.get("/customers/revenue", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  return c.json(await customersRevenue());
+  return c.json(await customersRevenue(await scopeOf(c)));
 });
 
 // Win-back: customer dormant ≥ ?days (default 60), prioritas revenue historis.
 app.get("/customers/dormant", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  return c.json(await dormantCustomers(Number(c.req.query("days")) || 60));
+  return c.json(await dormantCustomers(Number(c.req.query("days")) || 60, await scopeOf(c)));
 });
 
 // F77 Churn Early Warning — klasifikasi 3-tier per customer (active/risk/watch).
 // ?days=N ambang no-order (default 60). Read-only (Fase 1, tanpa WA/cron).
 app.get("/customers/churn", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  return c.json(await churnCustomers(Number(c.req.query("days")) || 60));
+  return c.json(await churnCustomers(Number(c.req.query("days")) || 60, await scopeOf(c)));
 });
 
 // Rincian revenue per bulan satu customer (on-demand). ?months=N (default 12).
@@ -2661,7 +2812,7 @@ app.get("/customers/:id/monthly", async (c) => {
   const id = c.req.param("id");
   if (!id || Number.isNaN(Number(id))) return c.json({ error: "id invalid" }, 400);
   const months = Math.min(Math.max(Number(c.req.query("months")) || 12, 1), 36);
-  return c.json(await customerMonthly(id, months));
+  return c.json(await customerMonthly(id, months, await scopeOf(c)));
 });
 
 // ── Pipeline read model (dashboard): deal per-stage ──

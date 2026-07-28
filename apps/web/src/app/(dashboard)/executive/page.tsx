@@ -18,7 +18,7 @@ export default async function ExecutivePage({
   // Gate: Direktur/admin/superuser = full; HoD = subset (AC-5). Sesi null (auth off)
   // dibiarkan → default "full" (permisif spt can()).
   const access = me ? executiveAccess(me) : "full";
-  if (me && access == null) redirect("/overview");
+  if (me && access == null) redirect("/"); // root → menu pertama yg boleh dilihat
   let initial: CommandData | null = null;
   try {
     const res = await gatewayFetch("/executive/command", {
