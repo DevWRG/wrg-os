@@ -48,10 +48,17 @@ biasa, bug fix di area yang ditugaskan. Kalau ragu apakah suatu tugas masuk doma
 terlarang → **anggap terlarang, tanya dulu.**
 
 ### Di mana daftar fitur & tugasmu?
-Fitur dilacak di board **WRG-OS Roadmap** (item ber-F-number, status otomatis dari PR).
-**Kamu tidak otomatis dapat akses board penuh** — Direktur memberi **F-number spesifik /
-view yang sudah difilter** untuk tugasmu. Kerjakan hanya F-number yang ditugaskan (dan di
-luar domain terlarang di atas). Belum jelas F-number-mu? Tanya Direktur.
+Daftar fitur yang **boleh** dikerjakan outsource ada di **[`docs/OUTSOURCE-FEATURES.md`](./docs/OUTSOURCE-FEATURES.md)**
+— hasil filter otomatis dari blueprint (board WRG-OS Roadmap) ke domain non-terlarang
+(Aftersales, Shipping, Purchasing, General Affairs). Kerjakan **hanya F-number yang
+ditugaskan Direktur** dari daftar itu.
+
+**Kamu tidak otomatis dapat akses board penuh** — Direktur memberi F-number spesifik.
+Fitur di luar `OUTSOURCE-FEATURES.md` (CRM/HR/Management/Infra/Finance/ERP) bukan untukmu.
+Belum jelas F-number-mu? Tanya Direktur.
+
+> Sinkronisasi: file itu di-generate `scripts/ops/gen-outsource-features.py` dari board —
+> tiap blueprint di-update, jalankan ulang script-nya biar daftar tetap sinkron.
 
 ---
 
