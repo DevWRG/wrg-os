@@ -5,7 +5,7 @@
 
 > **Filter:** hanya domain yang boleh dikerjakan outsource — `AFTERSALES, OPS, PURCHASING, SHIPPING` (di luar Management/Infrastruktur/CRM/HR). Beberapa item infra/admin dikecualikan.
 
-Total fitur outsource-safe: **27** · di-generate 2026-07-28
+Total fitur outsource-safe: **26** · di-generate 2026-07-28
 
 
 ## 🔧 Aftersales / Teknis
@@ -51,7 +51,6 @@ Total fitur outsource-safe: **27** · di-generate 2026-07-28
 |---|---|---|
 | F12 | Tracking Pengiriman Digital (BAST/TTF state machine + ETA) | Todo |
 | F42 | SJ → BAST → TTF Closed-Loop Tracker | Todo |
-| F43 | Kurir/Ekspedisi Performance Dashboard | Todo |
 | F44 | Document Print Spec Standardizer | Done |
 | F45 | Pickup Pre-Visit Verification | Todo |
 
