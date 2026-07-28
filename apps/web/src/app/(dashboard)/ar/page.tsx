@@ -185,7 +185,7 @@ export default async function ArAgingPage() {
           <h2 className="text-muted-foreground pt-2 text-[11px] font-semibold tracking-wider uppercase">Rincian piutang (klik baris untuk detail invoice)</h2>
           <Card>
             <CardContent className="pt-6">
-              <ArAgingTabs customers={byCust?.customers ?? []} invoices={data.invoices} byCabang={ar?.by_cabang ?? []} bySales={ar?.by_sales ?? []} />
+              <ArAgingTabs customers={byCust?.customers ?? []} invoices={data.invoices} byCabang={ar?.by_cabang ?? []} bySales={ar?.by_sales ?? []} amOnly={amOnly} />
             </CardContent>
           </Card>
         </>
