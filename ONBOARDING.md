@@ -47,6 +47,12 @@ yang **di luar** 4 domain di atas — mis. perbaikan UI non-sensitif, widget lap
 biasa, bug fix di area yang ditugaskan. Kalau ragu apakah suatu tugas masuk domain
 terlarang → **anggap terlarang, tanya dulu.**
 
+### Di mana daftar fitur & tugasmu?
+Fitur dilacak di board **WRG-OS Roadmap** (item ber-F-number, status otomatis dari PR).
+**Kamu tidak otomatis dapat akses board penuh** — Direktur memberi **F-number spesifik /
+view yang sudah difilter** untuk tugasmu. Kerjakan hanya F-number yang ditugaskan (dan di
+luar domain terlarang di atas). Belum jelas F-number-mu? Tanya Direktur.
+
 ---
 
 ## 3. Gate Direktur yang WAJIB ditegakkan
