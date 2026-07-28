@@ -140,8 +140,17 @@ export async function listVisits(status?: string, scope: DataScope = FULL_SCOPE,
   return status ? all.filter((v) => v.geo_status === status) : all;
 }
 
-// Detail 1 visit (sales_plan by id) — VisitRow + note (dari plan goal/tujuan).
-export async function getVisit(id: string, scope: DataScope = FULL_SCOPE): Promise<(VisitRow & { note: string | null }) | null> {
+// Detail 1 visit (sales_plan by id) — VisitRow + note (dari plan goal/tujuan)
+// + hasil/next_action mentah dari activity_log (report AM), dipisah biar UI bisa
+// menampilkan "Hasil" dan "Next Action" sendiri-sendiri (di list keduanya
+// digabung jadi `catatan`).
+export interface VisitDetailRow extends VisitRow {
+  note: string | null;
+  hasil: string | null;
+  next_action: string | null;
+}
+
+export async function getVisit(id: string, scope: DataScope = FULL_SCOPE): Promise<VisitDetailRow | null> {
   const sql = db();
   const [r] = await sql`
     SELECT sp.id::text AS id, sp.am_id, COALESCE(initcap(mu.panggilan), mu.nama) AS nama,
@@ -149,6 +158,7 @@ export async function getVisit(id: string, scope: DataScope = FULL_SCOPE): Promi
            sp.tanggal::text AS visit_date, sp.visit_date_mismatch,
            sp.tujuan, sp.goal,
            al.activity_type, al.account_id, al.opportunity_id::text AS opportunity_id,
+           NULLIF(al.hasil, '') AS hasil, NULLIF(al.next_action, '') AS next_action,
            COALESCE(al.photo_path, wm.media_path) AS photo_path, sp.created_at::text AS created_at,
            NULLIF(concat_ws(' — ', NULLIF(sp.tujuan,''), NULLIF(sp.goal,'')), '') AS note
     FROM sales_plan sp
@@ -158,7 +168,12 @@ export async function getVisit(id: string, scope: DataScope = FULL_SCOPE): Promi
     WHERE sp.id::text = ${id} AND sp.visit_lat IS NOT NULL ${scopeSalesPlanClause(sql, scope)}
   `;
   if (!r) return null;
-  return { ...rowToVisit(r), note: r.note ? String(r.note) : null };
+  return {
+    ...rowToVisit(r),
+    note: r.note ? String(r.note) : null,
+    hasil: r.hasil ? String(r.hasil) : null,
+    next_action: r.next_action ? String(r.next_action) : null,
+  };
 }
 
 // Brief kepatuhan geotag (port send_geotag_brief): hitung per-status + flagged.
