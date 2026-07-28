@@ -509,8 +509,6 @@ export async function reportCalendar(from: string, to: string, amId?: string, ca
   return {
     from,
     to,
-    scoped: scope.amOnly || !!(scope.cabangScope && scope.cabangScope.length),
-    scope_am_id: scope.amOnly ? scope.amId : null,
     holidays: holidays.map((h) => ({ tanggal: String(h.tanggal), keterangan: String(h.keterangan) })),
     ams: ams.map((a) => ({ am_id: String(a.am_id), name: a.name ? String(a.name) : "—", cabang: a.cabang ? String(a.cabang) : null })),
     reminders: reminders.map((r) => ({
