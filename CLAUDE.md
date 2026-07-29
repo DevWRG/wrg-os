@@ -59,7 +59,7 @@ Katalog harga jual produk **keagenan** WRG hasil handover Direktur (tabel `produ
 migrasi 071). Beda dari `pricelist` (043) yang kalkulator HPP→margin internal: ini price book
 final yang dipakai sales. Repo API `apps/api/src/repo/pricebook.ts` → `/pricebook/{items,summary,outside,periode}`.
 
-- **Data TIDAK di repo** (repo PUBLIC). Isi lewat `scripts/db/import_pricebook.py --file <CSV> [--apply]`;
+- **Data TIDAK di repo** (repo PUBLIC). Isi lewat `scripts/db/import_pricebook.py --file <CSV> --db <target> [--apply]`;
   CSV ada di Drive `16-Sales-PriceList-H2-2026/`. Idempoten by `(periode, row_no)`, dry-run default.
 - `harga_nett` = lantai harga (di bawahnya butuh izin Direksi); `nett_ppn` = PPN 11% **dari nett**,
   bukan dari price list. Keduanya disimpan apa adanya dari sumber — **jangan** dihitung ulang.
