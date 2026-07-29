@@ -9,11 +9,12 @@ import {
   Sparkles, Send, FileText, ScrollText, GraduationCap, UsersRound, Network,
   Bell, MapPin, ListChecks, Swords, CalendarOff, CalendarDays, CalendarRange,
   Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, Tags, SlidersHorizontal,
-  Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, type LucideIcon,
+  Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, BookOpen, type LucideIcon,
 } from "lucide-react";
 
 import { canOrLegacy, hasPerms } from "@/lib/perms";
 import { canEditPricelistSetup, canViewPricelist, type AccessUser } from "@/lib/pricelist-access";
+import { canViewPricebook } from "@/lib/pricebook-access";
 import { canViewRaportList } from "@/lib/raport-access";
 import { canViewExecutive } from "@/lib/executive-access";
 
@@ -67,6 +68,10 @@ export const NAV: NavGroup[] = [
       { title: "AR Aging", url: "/ar", icon: Receipt },
       { title: "Sales Docs", url: "/sales-docs", icon: FileText },
       { title: "Collection Drafts", url: "/collection-drafts", icon: Send },
+      // F142 Price Book — katalog harga produk keagenan (handover Direktur).
+      // Beda dari Pricelist (043): itu kalkulator HPP→margin internal, ini price
+      // book final yang dipakai sales.
+      { title: "Price Book", url: "/pricebook", icon: BookOpen, badge: "NEW", show: canViewPricebook },
       { title: "Pricelist Setup", url: "/pricelist/setup", icon: SlidersHorizontal, show: canEditPricelistSetup },
       { title: "Pricelist", url: "/pricelist", icon: Tags, exact: true, show: canViewPricelist },
     ],

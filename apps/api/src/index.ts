@@ -73,6 +73,10 @@ import {
 } from "./repo/rbac.js";
 import { listTerritory, createTerritory, updateTerritory, deleteTerritory } from "./repo/territory.js";
 import { listPricelist, upsertPricelist, publishPricelist, unpublishPricelist, deletePricelist, type PricelistInput } from "./repo/pricelist.js";
+import {
+  listItems as listPricebookItems, summary as pricebookSummary,
+  outsideKeagenan, periodeList as pricebookPeriode,
+} from "./repo/pricebook.js";
 import { listCoachingNotes } from "./repo/coaching.js";
 import { getLatestCoachingNotes, computePeopleAnalytics } from "./repo/people.js";
 import { createVisit, getVisit, listVisits, visitKpi, visitSummary } from "./repo/visit.js";
@@ -2401,6 +2405,39 @@ app.post("/watchpoint/weekly/:hodKey/send-wa", async (c) => {
   const message = formatWeeklyHodWa(board, hod);
   const result = await sendViaWaGateway(to, message);
   return c.json({ ...result, hodKey, week: board.label, preview: message }, result.sent ? 200 : 502);
+});
+
+// ── Price Book (F142) — katalog harga produk KEAGENAN per periode ───────────
+// Isi tabel dari importer scripts/db/import_pricebook.py (data tidak di repo).
+// Gate akses ada di BFF (apps/web /api/pricebook/*): katalog utk semua user
+// berizin, ringkasan hanya Direktur/admin.
+app.get("/pricebook/items", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const q = c.req.query();
+  const rows = await listPricebookItems({
+    periode: q.periode, lini: q.lini, brand: q.brand, kategori: q.kategori,
+    q: q.q, limit: q.limit ? Number(q.limit) : undefined,
+  });
+  return c.json({ count: rows.length, rows });
+});
+
+app.get("/pricebook/summary", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await pricebookSummary(c.req.query("periode") || undefined));
+});
+
+app.get("/pricebook/outside", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const q = c.req.query();
+  const rows = await outsideKeagenan({
+    periode: q.periode, q: q.q, limit: q.limit ? Number(q.limit) : undefined,
+  });
+  return c.json({ count: rows.length, rows });
+});
+
+app.get("/pricebook/periode", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json({ rows: await pricebookPeriode() });
 });
 
 // ── Pricelist — harga jual per produk (setup HoD/Purchasing → publish → AM) ──

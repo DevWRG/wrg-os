@@ -53,6 +53,24 @@ Mirror Accurate Online (read-only puller di `apps/api/src/repo/accurateSync.ts`,
 - Detail Orders/Shipments/Suppliers/Customers pakai komponen **Dialog** (modal center, `components/ui/dialog.tsx`), bukan Sheet samping.
 - Resolusi nama: `COALESCE(NULLIF(name,''), raw->'customer'->>'name', …)` — kolom mirror bisa empty-string (bukan NULL), `COALESCE` saja tak cukup.
 
+## Price Book keagenan (F142) — `/pricebook`
+
+Katalog harga jual produk **keagenan** WRG hasil handover Direktur (tabel `product_pricelist`,
+migrasi 071). Beda dari `pricelist` (043) yang kalkulator HPP→margin internal: ini price book
+final yang dipakai sales. Repo API `apps/api/src/repo/pricebook.ts` → `/pricebook/{items,summary,outside,periode}`.
+
+- **Data TIDAK di repo** (repo PUBLIC). Isi lewat `scripts/db/import_pricebook.py --file <CSV> [--apply]`;
+  CSV ada di Drive `16-Sales-PriceList-H2-2026/`. Idempoten by `(periode, row_no)`, dry-run default.
+- `harga_nett` = lantai harga (di bawahnya butuh izin Direksi); `nett_ppn` = PPN 11% **dari nett**,
+  bukan dari price list. Keduanya disimpan apa adanya dari sumber — **jangan** dihitung ulang.
+  13 nilai beda Rp 1 karena sumber pakai pembulatan half-even (importer melaporkan, tidak menolak).
+- Pencocokan ke Accurate hanya lewat **kode** (`accurate_item.no = product_pricelist.kode`); item
+  Accurate tanpa pasangan = tab **Di Luar Keagenan**. Jebakan: 141 SKU keagenan sendiri tidak punya
+  kode, jadi daftar "di luar keagenan" pasti kelebihan — jangan ditambal fuzzy-match nama (22 nama
+  di price book dipakai berulang dengan harga beda).
+- Gate: katalog = semua user berizin fitur `pricebook`; tab Ringkasan = Direktur/admin/superuser
+  (`apps/web/src/lib/pricebook-access.ts`). HPP/margin/harga sub-dealer memang tidak ada di data.
+
 ## Workflow Git/Rilis (WAJIB diikuti)
 
 1. `feature/*` → PR → **dev**. Tunggu CI hijau (Lint·Typecheck·Build + services/ai import check), lalu merge.
