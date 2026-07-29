@@ -73,6 +73,7 @@ import {
 } from "./repo/rbac.js";
 import { listTerritory, createTerritory, updateTerritory, deleteTerritory } from "./repo/territory.js";
 import { listPricelist, upsertPricelist, publishPricelist, unpublishPricelist, deletePricelist, type PricelistInput } from "./repo/pricelist.js";
+import { listSupplierEta, createSupplierEta, updateSupplierEta, deleteSupplierEta, type SupplierEtaInput, type SupplierEtaUpdate, type SupplierEtaStatus } from "./repo/supplier-eta.js";
 import { listCoachingNotes } from "./repo/coaching.js";
 import { getLatestCoachingNotes, computePeopleAnalytics } from "./repo/people.js";
 import { createVisit, getVisit, listVisits, visitSummary } from "./repo/visit.js";
@@ -2426,6 +2427,56 @@ app.post("/pricelist/unpublish", async (c) => {
 app.delete("/pricelist/:id", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const r = await deletePricelist(c.req.param("id"));
+  return c.json(r, r.deleted ? 200 : 404);
+});
+
+// ── F39 Supplier ETA Tracker ──
+const SUPPLIER_ETA_STATUSES: SupplierEtaStatus[] = ["pending", "arrived", "cancelled"];
+
+app.get("/supplier-eta", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const status = c.req.query("status");
+  const rows = await listSupplierEta({
+    status: SUPPLIER_ETA_STATUSES.includes(status as SupplierEtaStatus) ? (status as SupplierEtaStatus) : undefined,
+    vendorId: c.req.query("vendor_id") || undefined,
+    overdueOnly: c.req.query("overdue") === "true",
+  });
+  return c.json({ count: rows.length, rows });
+});
+
+app.post("/supplier-eta", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: SupplierEtaInput;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.vendor_name?.trim() || !body.item_desc?.trim() || !body.eta_date) {
+    return c.json({ error: "vendor_name, item_desc, eta_date wajib" }, 400);
+  }
+  const row = await createSupplierEta(body);
+  return c.json(row, 201);
+});
+
+app.patch("/supplier-eta/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: SupplierEtaUpdate;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (body.status && !SUPPLIER_ETA_STATUSES.includes(body.status)) {
+    return c.json({ error: "status tidak valid" }, 400);
+  }
+  const row = await updateSupplierEta(c.req.param("id"), body);
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+});
+
+app.delete("/supplier-eta/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await deleteSupplierEta(c.req.param("id"));
   return c.json(r, r.deleted ? 200 : 404);
 });
 
