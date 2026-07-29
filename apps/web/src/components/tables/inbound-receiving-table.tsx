@@ -111,6 +111,7 @@ export function InboundReceivingTable({ rows }: { rows: InboundReceivingRow[] })
       });
       if (!res.ok) throw new Error();
       reload(sel.id);
+      router.refresh();
     } finally {
       setBusy(false);
     }
@@ -128,6 +129,7 @@ export function InboundReceivingTable({ rows }: { rows: InboundReceivingRow[] })
       if (!res.ok) throw new Error();
       setNewLabel("");
       reload(sel.id);
+      router.refresh();
     } finally {
       setBusy(false);
     }
@@ -141,6 +143,7 @@ export function InboundReceivingTable({ rows }: { rows: InboundReceivingRow[] })
         const res = await fetch(`/api/inbound-receiving/${sel.id}/items/${item.id}`, { method: "DELETE" });
         if (!res.ok) throw new Error();
         reload(sel.id);
+        router.refresh();
       } finally {
         setBusy(false);
       }
