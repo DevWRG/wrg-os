@@ -9,7 +9,7 @@ import {
   Sparkles, Send, FileText, ScrollText, GraduationCap, UsersRound, Network,
   Bell, MapPin, ListChecks, Swords, CalendarOff, CalendarDays, CalendarRange,
   Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, Tags, SlidersHorizontal,
-  Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, Wrench, type LucideIcon,
+  Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, Wrench, CalendarClock, type LucideIcon,
 } from "lucide-react";
 
 import { canOrLegacy, hasPerms } from "@/lib/perms";
@@ -114,6 +114,7 @@ export const NAV: NavGroup[] = [
     label: "Aftersales",
     items: [
       { title: "Instalasi Alat", url: "/installations", icon: Wrench, badge: "NEW" },
+      { title: "PM & Kalibrasi", url: "/maintenance", icon: CalendarClock, badge: "NEW" },
     ],
   },
   {

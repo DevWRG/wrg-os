@@ -102,6 +102,13 @@ import {
   markTrainingDone,
   markBast,
 } from "./repo/installation.js";
+import {
+  createSchedule,
+  listSchedules,
+  getScheduleById,
+  listEligibleUnits,
+  markDone,
+} from "./repo/maintenance.js";
 import { recordCompetitor, listCompetitor, competitorSummary } from "./repo/competitor.js";
 import {
   defaultRange,
@@ -1808,6 +1815,65 @@ app.post("/installations/:id/bast", async (c) => {
   }
   if (!body.bast_number) return c.json({ error: "bast_number wajib" }, 400);
   const r = await markBast(c.req.param("id"), body.bast_number);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+// ── PM & Kalibrasi Schedule (F24, AFTERSALES) — recurring per alat, reminder
+// H-14 dijadwalkan via scheduler.ts (runMaintenanceReminders). ──
+app.get("/maintenance/eligible-units", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const units = await listEligibleUnits();
+  return c.json({ count: units.length, units });
+});
+
+app.post("/maintenance", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: {
+    installation_unit_id?: string;
+    interval_bulan?: number;
+    reference_date?: string;
+    teknisi_name?: string;
+    teknisi_wa_number?: string;
+  };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.installation_unit_id || !body.interval_bulan || body.interval_bulan <= 0) {
+    return c.json({ error: "installation_unit_id + interval_bulan (>0) wajib" }, 400);
+  }
+  const r = await createSchedule({
+    installation_unit_id: body.installation_unit_id,
+    interval_bulan: body.interval_bulan,
+    reference_date: body.reference_date,
+    teknisi_name: body.teknisi_name,
+    teknisi_wa_number: body.teknisi_wa_number,
+  });
+  return c.json(r, "ok" in r && r.ok === false ? 400 : 201);
+});
+
+app.get("/maintenance", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const schedules = await listSchedules(c.req.query("status") || undefined);
+  return c.json({ count: schedules.length, schedules });
+});
+
+app.get("/maintenance/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const s = await getScheduleById(c.req.param("id"));
+  return s ? c.json(s) : c.json({ error: "schedule tidak ditemukan" }, 404);
+});
+
+app.post("/maintenance/:id/done", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { catatan?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    // catatan opsional
+  }
+  const r = await markDone(c.req.param("id"), body.catatan);
   return c.json(r, r.ok ? 200 : 400);
 });
 
