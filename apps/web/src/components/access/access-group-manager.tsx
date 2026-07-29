@@ -69,7 +69,12 @@ function GroupList({ onOpen }: { onOpen: (id: number) => void }) {
       });
       const d = await r.json();
       if (!r.ok) throw new Error(d.error ?? "gagal sync");
-      setSyncMsg(`${d.upserted} fitur tersinkron${d.deactivated ? `, ${d.deactivated} dinonaktifkan` : ""} ✓`);
+      // `seeded` = baris izin yang dilengkapi (fitur baru → default tertutup utk
+      // grup non-superuser). Ditampilkan supaya admin tahu ada yang perlu dicentang.
+      setSyncMsg(
+        `${d.upserted} fitur tersinkron${d.deactivated ? `, ${d.deactivated} dinonaktifkan` : ""}` +
+          `${d.seeded ? `, ${d.seeded} baris izin dilengkapi (default tertutup)` : ""} ✓`,
+      );
     } catch (e) { setSyncMsg(String((e as Error).message ?? e)); } finally { setSyncing(false); }
   }
 
