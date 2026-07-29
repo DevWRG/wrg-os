@@ -3,7 +3,11 @@ import { sessionUser } from "@/lib/admin-guard";
 import { canEditPricelistSetup, canPublishPricelist } from "@/lib/pricelist-access";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { Card, CardContent } from "@/components/ui/card";
-import { SetupPricelistClient } from "@/components/pricelist/setup-pricelist-client";
+import { PricelistSetupTabs } from "@/components/pricelist/setup-tabs";
+import type {
+  PricebookSetupRow,
+  PricebookSetupSummary,
+} from "@/components/pricelist/pricebook-setup-table";
 import type { ProductOption } from "@/components/pricelist/pricelist-form-sheet";
 import type { PricelistRow } from "@/lib/pricelist";
 
@@ -31,11 +35,15 @@ export default async function PricelistSetupPage() {
     );
   }
 
-  const [pl, prod] = await Promise.all([
+  // /pricebook/setup = lapisan kroscek price book (HPP + klasifikasi, migrasi 073).
+  // Gate-nya cuma di halaman ini — endpoint itu berisi HPP, jangan dipanggil dari
+  // halaman yang dilihat AM/sales.
+  const [pl, prod, pb] = await Promise.all([
     getJson<{ rows: PricelistRow[] }>("/pricelist"),
     getJson<{ rows: { id: string | number; no: string | null; name: string | null }[] }>(
       "/accurate/items?limit=10000",
     ),
+    getJson<{ rows: PricebookSetupRow[]; ringkas: PricebookSetupSummary }>("/pricebook/setup"),
   ]);
   const products: ProductOption[] = (prod?.rows ?? []).map((p) => ({
     id: String(p.id),
@@ -47,7 +55,7 @@ export default async function PricelistSetupPage() {
     <>
       <PageHeader
         title="Pricelist Setup"
-        description="Basis Harga Principal (HPP), margin, diskon, insentif & konfirmasi area. Publikasikan agar tampil di menu Pricelist (AM)."
+        description="Harga Principal (HPP), margin, diskon, insentif & konfirmasi area untuk produk Accurate — plus price book keagenan (harga final Direktur + HPP hasil kroscek)."
       />
       {!pl ? (
         <p className="text-muted-foreground">
@@ -58,10 +66,12 @@ export default async function PricelistSetupPage() {
         <div className="min-w-0">
           <Card>
             <CardContent className="pt-6">
-              <SetupPricelistClient
+              <PricelistSetupTabs
                 rows={pl.rows ?? []}
                 products={products}
                 canPublish={canPublishPricelist(me)}
+                pricebookRows={pb?.rows ?? null}
+                pricebookRingkas={pb?.ringkas ?? null}
               />
             </CardContent>
           </Card>
