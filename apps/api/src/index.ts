@@ -1804,12 +1804,13 @@ app.get("/report/detail", async (c) => {
 
 // Sales Calendar: agregat plan/report per (tanggal, AM) + libur + katalog AM
 // untuk filter. from/to = rentang grid kalender (mis. awal–akhir 6 minggu).
+// Ber-scope row-level: AM = kalendernya sendiri, HoD = cabang timnya.
 app.get("/report/calendar", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const { from, to } = parseRange(c.req.query("from"), c.req.query("to"));
   const amId = c.req.query("am_id") || undefined;
   const cabang = c.req.query("cabang") || undefined;
-  return c.json(await reportCalendar(from, to, amId, cabang));
+  return c.json(await reportCalendar(from, to, amId, cabang, await resolveScope(c.req.header("x-user-id"))));
 });
 
 // Drilldown harian Sales Calendar: per-AM + daftar plan (customer/hasil).
@@ -1818,7 +1819,7 @@ app.get("/report/calendar/day", async (c) => {
   const date = c.req.query("date") || defaultRange().today;
   const amId = c.req.query("am_id") || undefined;
   const cabang = c.req.query("cabang") || undefined;
-  return c.json(await reportCalendarDay(date, amId, cabang));
+  return c.json(await reportCalendarDay(date, amId, cabang, await resolveScope(c.req.header("x-user-id"))));
 });
 
 // Push WA nudge ke satu AM (dari panel reminder dashboard). Stub di dev.
@@ -2605,6 +2606,13 @@ app.post("/reminders", async (c) => {
   }
   if (!body.am_id || !body.reminder_date || !body.note) {
     return c.json({ error: "am_id, reminder_date (YYYY-MM-DD), note wajib" }, 400);
+  }
+  // Write-guard row-level: AM murni hanya boleh bikin reminder atas namanya
+  // sendiri (kalau tidak, dia bisa menitipkan reminder ke AM lain padahal
+  // kalendernya sendiri saja yang terlihat).
+  const scope = await resolveScope(c.req.header("x-user-id"));
+  if (scope.amOnly && scope.amId && body.am_id !== scope.amId) {
+    return c.json({ error: "forbidden — hanya boleh membuat reminder untuk diri sendiri" }, 403);
   }
   const id = await createReminder({
     am_id: body.am_id,

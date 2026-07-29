@@ -45,6 +45,13 @@ export function AddReminderSheet({
   const [error, setError] = useState<string | null>(null);
   const [f, setF] = useState(blank(defaultDate));
 
+  // Bila katalog AM hanya berisi satu opsi (mis. AM login → katalog ter-scope ke
+  // dirinya), langsung dipakai tanpa harus dipilih manual. Tak bisa lewat
+  // initial state: `ams` datang belakangan (fetch), setelah useState dievaluasi.
+  const soleAm = ams && ams.length === 1 ? ams[0] : undefined;
+  const amId = f.am_id || soleAm?.am_id || "";
+  const amName = f.am_id ? f.am_name : (soleAm?.name ?? f.am_name);
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
@@ -54,8 +61,8 @@ export function AddReminderSheet({
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          am_id: f.am_id.trim(),
-          am_name: f.am_name.trim() || undefined,
+          am_id: amId.trim(),
+          am_name: amName.trim() || undefined,
           reminder_date: f.reminder_date,
           note: f.note.trim(),
           customer_name: f.customer_name.trim() || undefined,
@@ -92,12 +99,13 @@ export function AddReminderSheet({
                 <select
                   id="r-am"
                   required
-                  value={f.am_id}
+                  disabled={!!soleAm}
+                  value={amId}
                   onChange={(e) => {
                     const sel = ams.find((a) => a.am_id === e.target.value);
                     setF((p) => ({ ...p, am_id: e.target.value, am_name: sel?.name ?? "" }));
                   }}
-                  className="border-input bg-card h-9 rounded-md border px-2.5 text-sm outline-none focus-visible:border-primary"
+                  className="border-input bg-card disabled:bg-muted disabled:text-foreground h-9 rounded-md border px-2.5 text-sm outline-none focus-visible:border-primary"
                 >
                   <option value="" disabled>Pilih AM…</option>
                   {ams.map((a) => (
