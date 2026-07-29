@@ -73,6 +73,11 @@ import {
 } from "./repo/rbac.js";
 import { listTerritory, createTerritory, updateTerritory, deleteTerritory } from "./repo/territory.js";
 import { listPricelist, upsertPricelist, publishPricelist, unpublishPricelist, deletePricelist, type PricelistInput } from "./repo/pricelist.js";
+import {
+  createDanaOps, listDanaOps, getDanaOps, updateDanaOps, deleteDanaOps,
+  addDanaOpsItem, updateDanaOpsItem, deleteDanaOpsItem,
+  type DanaOpsStatus, type DanaOpsInput, type DanaOpsUpdate, type DanaOpsItemInput, type DanaOpsItemUpdate,
+} from "./repo/dana-ops.js";
 import { listCoachingNotes } from "./repo/coaching.js";
 import { getLatestCoachingNotes, computePeopleAnalytics } from "./repo/people.js";
 import { createVisit, getVisit, listVisits, visitSummary } from "./repo/visit.js";
@@ -2426,6 +2431,80 @@ app.post("/pricelist/unpublish", async (c) => {
 app.delete("/pricelist/:id", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const r = await deletePricelist(c.req.param("id"));
+  return c.json(r, r.deleted ? 200 : 404);
+});
+
+// ── F51 Dana Ops / Petty Cash Realization (General Affairs) ──
+const DANA_OPS_STATUSES: DanaOpsStatus[] = ["in_progress", "realized"];
+
+app.get("/dana-ops", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const status = c.req.query("status");
+  if (status && !DANA_OPS_STATUSES.includes(status as DanaOpsStatus)) {
+    return c.json({ error: `status harus salah satu dari ${DANA_OPS_STATUSES.join(", ")}` }, 400);
+  }
+  const rows = await listDanaOps({
+    status: status as DanaOpsStatus | undefined,
+    cabang: c.req.query("cabang") || undefined,
+    limit: c.req.query("limit") ? Number(c.req.query("limit")) : undefined,
+  });
+  return c.json({ count: rows.length, rows });
+});
+
+app.post("/dana-ops", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: DanaOpsInput;
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  if (!body.requested_by || !body.purpose || body.amount_requested == null) {
+    return c.json({ error: "requested_by, purpose, amount_requested wajib" }, 400);
+  }
+  const row = await createDanaOps(body);
+  return c.json(row, 201);
+});
+
+app.get("/dana-ops/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const row = await getDanaOps(c.req.param("id"));
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+});
+
+app.patch("/dana-ops/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: DanaOpsUpdate;
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  if (body.status && !DANA_OPS_STATUSES.includes(body.status)) {
+    return c.json({ error: `status harus salah satu dari ${DANA_OPS_STATUSES.join(", ")}` }, 400);
+  }
+  const row = await updateDanaOps(c.req.param("id"), body);
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+});
+
+app.delete("/dana-ops/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await deleteDanaOps(c.req.param("id"));
+  return c.json(r, r.deleted ? 200 : 404);
+});
+
+app.post("/dana-ops/:id/items", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: DanaOpsItemInput;
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  if (!body.description || body.amount == null) return c.json({ error: "description, amount wajib" }, 400);
+  const row = await addDanaOpsItem(c.req.param("id"), body);
+  return row ? c.json(row, 201) : c.json({ error: "dana_ops tidak ditemukan" }, 404);
+});
+
+app.patch("/dana-ops/:id/items/:itemId", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: DanaOpsItemUpdate;
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  const row = await updateDanaOpsItem(c.req.param("id"), c.req.param("itemId"), body);
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+});
+
+app.delete("/dana-ops/:id/items/:itemId", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await deleteDanaOpsItem(c.req.param("id"), c.req.param("itemId"));
   return c.json(r, r.deleted ? 200 : 404);
 });
 

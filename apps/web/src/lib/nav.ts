@@ -9,13 +9,14 @@ import {
   Sparkles, Send, FileText, ScrollText, GraduationCap, UsersRound, Network,
   Bell, MapPin, ListChecks, Swords, CalendarOff, CalendarDays, CalendarRange,
   Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, Tags, SlidersHorizontal,
-  Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, type LucideIcon,
+  Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, Wallet, type LucideIcon,
 } from "lucide-react";
 
 import { canOrLegacy, hasPerms } from "@/lib/perms";
 import { canEditPricelistSetup, canViewPricelist, type AccessUser } from "@/lib/pricelist-access";
 import { canViewRaportList } from "@/lib/raport-access";
 import { canViewExecutive } from "@/lib/executive-access";
+import { canViewDanaOps } from "@/lib/dana-ops-access";
 
 // exact: sorot aktif hanya saat path persis (untuk route induk yg punya child,
 // mis. /pricelist vs /pricelist/setup).
@@ -106,6 +107,12 @@ export const NAV: NavGroup[] = [
       { title: "Shipments", url: "/shipments", icon: Truck },
       { title: "Suppliers", url: "/suppliers", icon: Factory },
       { title: "HITL Review", url: "/hitl", icon: ClipboardCheck },
+    ],
+  },
+  {
+    label: "General Affairs",
+    items: [
+      { title: "Dana Ops", url: "/dana-ops", icon: Wallet, badge: "NEW", show: canViewDanaOps },
     ],
   },
   {
