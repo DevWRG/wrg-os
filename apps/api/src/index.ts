@@ -73,6 +73,12 @@ import {
 } from "./repo/rbac.js";
 import { listTerritory, createTerritory, updateTerritory, deleteTerritory } from "./repo/territory.js";
 import { listPricelist, upsertPricelist, publishPricelist, unpublishPricelist, deletePricelist, type PricelistInput } from "./repo/pricelist.js";
+import {
+  listInboundReceiving, createInboundReceiving, getInboundReceiving, updateInboundReceiving, deleteInboundReceiving,
+  addInboundReceivingItem, updateInboundReceivingItem, deleteInboundReceivingItem,
+  type InboundReceivingInput, type InboundReceivingUpdate, type InboundReceivingStatus,
+  type InboundReceivingItemUpdate,
+} from "./repo/inbound-receiving.js";
 import { listCoachingNotes } from "./repo/coaching.js";
 import { getLatestCoachingNotes, computePeopleAnalytics } from "./repo/people.js";
 import { createVisit, getVisit, listVisits, visitSummary } from "./repo/visit.js";
@@ -2426,6 +2432,93 @@ app.post("/pricelist/unpublish", async (c) => {
 app.delete("/pricelist/:id", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const r = await deletePricelist(c.req.param("id"));
+  return c.json(r, r.deleted ? 200 : 404);
+});
+
+// ── F36 Inbound Receiving Checklist ──
+const INBOUND_RECEIVING_STATUSES: InboundReceivingStatus[] = ["in_progress", "completed"];
+
+app.get("/inbound-receiving", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const status = c.req.query("status");
+  const rows = await listInboundReceiving({
+    status: INBOUND_RECEIVING_STATUSES.includes(status as InboundReceivingStatus) ? (status as InboundReceivingStatus) : undefined,
+    vendorId: c.req.query("vendor_id") || undefined,
+    cabang: c.req.query("cabang") || undefined,
+  });
+  return c.json({ count: rows.length, rows });
+});
+
+app.post("/inbound-receiving", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: InboundReceivingInput;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.vendor_name?.trim()) {
+    return c.json({ error: "vendor_name wajib" }, 400);
+  }
+  const row = await createInboundReceiving(body);
+  return c.json(row, 201);
+});
+
+app.get("/inbound-receiving/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const row = await getInboundReceiving(c.req.param("id"));
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+});
+
+app.patch("/inbound-receiving/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: InboundReceivingUpdate;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (body.status && !INBOUND_RECEIVING_STATUSES.includes(body.status)) {
+    return c.json({ error: "status tidak valid" }, 400);
+  }
+  const row = await updateInboundReceiving(c.req.param("id"), body);
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+});
+
+app.delete("/inbound-receiving/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await deleteInboundReceiving(c.req.param("id"));
+  return c.json(r, r.deleted ? 200 : 404);
+});
+
+app.post("/inbound-receiving/:id/items", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { label?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.label?.trim()) return c.json({ error: "label wajib" }, 400);
+  const row = await addInboundReceivingItem(c.req.param("id"), body.label.trim());
+  return row ? c.json(row, 201) : c.json({ error: "tidak ditemukan" }, 404);
+});
+
+app.patch("/inbound-receiving/:id/items/:itemId", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: InboundReceivingItemUpdate;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const row = await updateInboundReceivingItem(c.req.param("id"), c.req.param("itemId"), body);
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+});
+
+app.delete("/inbound-receiving/:id/items/:itemId", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await deleteInboundReceivingItem(c.req.param("id"), c.req.param("itemId"));
   return c.json(r, r.deleted ? 200 : 404);
 });
 
