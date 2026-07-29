@@ -485,11 +485,15 @@ def triage_ticket(req: TicketTriageRequest) -> TicketTriageResponse:
         d = json.loads(cleaned)
     except (ValueError, TypeError):
         d = {}
-    severity = str(d.get("severity") or "sedang").lower()
-    if severity not in ("rendah", "sedang", "tinggi", "kritis"):
-        severity = "sedang"
+    raw_severity = str(d.get("severity") or "").lower()
+    severity_uncertain = raw_severity not in ("rendah", "sedang", "tinggi", "kritis")
+    severity = "sedang" if severity_uncertain else raw_severity
     return TicketTriageResponse(
-        severity=severity, area=(d.get("area") or None), model=model, dry_run=model == "dry-run-fallback",
+        severity=severity,
+        area=(d.get("area") or None),
+        model=model,
+        dry_run=model == "dry-run-fallback",
+        severity_uncertain=severity_uncertain,
     )
 
 

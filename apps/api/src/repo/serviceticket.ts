@@ -39,22 +39,58 @@ export async function listTeknisi(aktifOnly = false): Promise<Teknisi[]> {
   return rows.map(mapTeknisi);
 }
 
-// Auto-assign: teknisi aktif, area match (atau area kosong → semua teknisi
-// aktif dipertimbangkan), paling sedikit open ticket (load-balancing sederhana).
-async function assignTeknisi(
-  area: string | null,
-): Promise<{ id: string; nama: string; wa_number: string | null } | null> {
+interface AssignedTeknisi {
+  id: string;
+  nama: string;
+  wa_number: string | null;
+  areaMatched: boolean; // false = area diberikan tapi tak match siapa pun (fallback dipakai)
+}
+
+// Auto-assign: coba match area dulu (case-insensitive — LLM/manual bisa beda
+// kapitalisasi/spasi dari yang tersimpan di roster). Kalau area diisi tapi TAK
+// match teknisi manapun (atau area kosong), FALLBACK ke teknisi aktif mana pun
+// yang paling sedikit beban — jangan pernah dibiarkan unassigned kalau ada
+// teknisi aktif tersedia. `areaMatched=false` menandai fallback ini dipakai,
+// dipakai caller utk set needs_review (area asli mungkin salah/typo, perlu
+// dicek admin) — beda dgn kondisi "area kosong dari awal" yang normal/aman.
+async function assignTeknisi(area: string | null): Promise<AssignedTeknisi | null> {
   const sql = db();
+
+  if (area) {
+    const matched = await sql`
+      SELECT tr.id, tr.nama, tr.wa_number,
+        (SELECT COUNT(*) FROM service_ticket st WHERE st.assigned_teknisi_id = tr.id AND st.status = 'open') AS load
+      FROM teknisi_roster tr
+      WHERE tr.aktif = TRUE AND EXISTS (SELECT 1 FROM unnest(tr.area) a WHERE a ILIKE ${area})
+      ORDER BY load ASC, tr.created_at ASC
+      LIMIT 1
+    `;
+    if (matched.length) {
+      return {
+        id: String(matched[0].id),
+        nama: String(matched[0].nama),
+        wa_number: matched[0].wa_number ? String(matched[0].wa_number) : null,
+        areaMatched: true,
+      };
+    }
+  }
+
+  // Fallback: area kosong, ATAU area diisi tapi tak match siapa pun.
   const rows = await sql`
     SELECT tr.id, tr.nama, tr.wa_number,
       (SELECT COUNT(*) FROM service_ticket st WHERE st.assigned_teknisi_id = tr.id AND st.status = 'open') AS load
     FROM teknisi_roster tr
-    WHERE tr.aktif = TRUE AND (${area}::text IS NULL OR ${area} = ANY(tr.area))
+    WHERE tr.aktif = TRUE
     ORDER BY load ASC, tr.created_at ASC
     LIMIT 1
   `;
   return rows.length
-    ? { id: String(rows[0].id), nama: String(rows[0].nama), wa_number: rows[0].wa_number ? String(rows[0].wa_number) : null }
+    ? {
+        id: String(rows[0].id),
+        nama: String(rows[0].nama),
+        wa_number: rows[0].wa_number ? String(rows[0].wa_number) : null,
+        areaMatched: !area, // area kosong dari awal → bukan mismatch, jangan flag review
+      }
     : null;
 }
 
@@ -139,13 +175,16 @@ export async function createTicket(input: CreateTicketInput): Promise<TicketRow>
   // 1. Klasifikasi via services/ai (severity + area kalau input.area kosong)
   const { status, data } = await callAi("/triage-ticket", { complaint_text: input.complaint_text, dry_run: aiDryRun() });
   const llmFailed = status >= 400;
+  const severityUncertain = !llmFailed && Boolean(data.severity_uncertain);
   const severity = llmFailed ? "sedang" : String(data.severity ?? "sedang");
   const area = input.area || (llmFailed ? null : ((data.area as string | null) ?? null));
   const modelUsed = llmFailed ? "error" : String(data.model ?? "");
 
-  // 2. Auto-assign teknisi
+  // 2. Auto-assign teknisi (selalu dapat teknisi kalau ada yang aktif — lihat
+  // assignTeknisi: fallback ke least-loaded kalau area tak match siapa pun).
   const teknisi = await assignTeknisi(area);
-  const needsReview = llmFailed || modelUsed === "dry-run-fallback" || !teknisi;
+  const needsReview =
+    llmFailed || modelUsed === "dry-run-fallback" || severityUncertain || !teknisi || !teknisi.areaMatched;
   const etaAt = new Date(Date.now() + etaHours(severity) * 3600 * 1000);
 
   const rows = await sql`

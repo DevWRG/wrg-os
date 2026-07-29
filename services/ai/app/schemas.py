@@ -279,6 +279,10 @@ class TicketTriageResponse(BaseModel):
     area: Optional[str] = None
     model: str = "dry-run"
     dry_run: bool = False
+    # True kalau LLM sukses respon TAPI severity-nya di luar 4 enum valid / JSON
+    # gagal parse — severity di-default ke "sedang" tapi caller HARUS anggap ini
+    # tidak pasti (needs_review), bukan hasil klasifikasi asli yang bisa dipercaya.
+    severity_uncertain: bool = False
 
 
 # === extract_competitor (ekstrak sebutan kompetitor dari activity_log.hasil) ===

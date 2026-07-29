@@ -56,12 +56,31 @@ ETA, balas otomatis ke grup.
 - **Identitas pengirim di grup WA tidak reliable** (`sender_jid` = group jid,
   bukan personal). Bedain customer vs teknisi pakai fuzzy `ILIKE` `sender_name`
   ke `teknisi_roster.nama` — best-effort saja.
-- **Area/lokasi** di-extract LLM dari teks komplain (atau override manual di
-  form). Kalau tak ketemu/tak match teknisi manapun, tetap assign teknisi
-  paling sedikit beban, tapi `needs_review=true` biar admin cek manual.
 - **Severity di dev selalu "sedang"** — dry-run fallback krn tak ada
   `OPENROUTER_API_KEY` lokal. Differensiasi asli cuma kelihatan di production
   dgn API key live.
+
+## Auto-assign & needs_review (setelah code review)
+
+`assignTeknisi()` di `apps/api/src/repo/serviceticket.ts`:
+1. Kalau `area` diisi (dari LLM atau manual override) → cari teknisi aktif yang
+   area-nya match **case-insensitive** (`unnest(tr.area) ILIKE area`, bukan `=`
+   exact-match — LLM/manual bisa beda kapitalisasi/spasi dari yang tersimpan
+   di roster).
+2. Kalau tidak ketemu (area kosong DARI AWAL, atau area diisi tapi TAK match
+   siapa pun) → **fallback** ke teknisi aktif paling sedikit beban (least
+   loaded). Alat/tiket **selalu** dapat teknisi selama ada minimal 1 teknisi
+   aktif — tidak pernah dibiarkan unassigned begitu saja.
+3. `needs_review=true` di-set kalau: LLM gagal total, `severity_uncertain`
+   (lihat bawah), tidak ada teknisi aktif sama sekali, ATAU area diisi tapi
+   fallback #2 di atas terpakai (area kemungkinan salah/typo — perlu dicek
+   admin, meski tiket tetap ada yang pegang).
+
+`severity_uncertain` (field baru di response `services/ai` `/triage-ticket`):
+true kalau LLM sukses respon TAPI JSON gagal parse / field `severity`-nya di
+luar 4 enum valid. Severity tetap di-default ke `"sedang"` (aman), tapi flag
+ini membedakan "klasifikasi asli & valid" vs "default krn parsing gagal" —
+supaya kasus terakhir tidak diam-diam lolos tanpa `needs_review`.
 
 ## Verifikasi
 
