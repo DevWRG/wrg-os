@@ -76,6 +76,7 @@ import { listPricelist, upsertPricelist, publishPricelist, unpublishPricelist, d
 import {
   listItems as listPricebookItems, summary as pricebookSummary,
   outsideKeagenan, periodeList as pricebookPeriode,
+  listSetup as listPricebookSetup, setupSummary as pricebookSetupSummary,
 } from "./repo/pricebook.js";
 import {
   taxonomy as klasifikasiTaxonomy, summary as klasifikasiSummary,
@@ -2447,6 +2448,21 @@ app.get("/pricebook/outside", async (c) => {
 app.get("/pricebook/periode", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json({ rows: await pricebookPeriode() });
+});
+
+// Lapisan Pricelist Setup (migrasi 073): HPP, margin turunan & klasifikasi per SKU.
+// INTERNAL — gate-nya di halaman /pricelist/setup (canEditPricelistSetup:
+// HoD Business / Purchasing / admin). JANGAN dipakai halaman AM: /pricebook yang
+// dilihat sales tidak boleh menyentuh endpoint ini.
+app.get("/pricebook/setup", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const q = c.req.query();
+  const periode = q.periode || undefined;
+  const [rows, ringkas] = await Promise.all([
+    listPricebookSetup({ periode, q: q.q, lini: q.lini, limit: q.limit ? Number(q.limit) : undefined }),
+    pricebookSetupSummary(periode),
+  ]);
+  return c.json({ count: rows.length, rows, ringkas });
 });
 
 // ── Klasifikasi produk & kode produk (migrasi 072) ──────────────────────────

@@ -314,3 +314,153 @@ export async function periodeList(): Promise<string[]> {
   `;
   return rows.length ? rows.map((r) => r.periode) : [PERIODE_DEFAULT];
 }
+
+// ── Pricelist Setup (lapisan kroscek, migrasi 073) ──────────────────────────
+// INTERNAL — berisi HPP & margin. Endpoint yang memakai ini WAJIB di-gate ke
+// HoD Business / Purchasing / admin di BFF; jangan pernah dipakai halaman AM.
+// Isi tabel dari scripts/db/import_kroscek_pricelist.py (data tidak di repo).
+//
+// Margin DIHITUNG di sini (1 - hpp/price_list), tidak disimpan: harga price book
+// itu final dari Direktur, jadi margin cuma turunan. Kalau margin disimpan
+// numeric(6,4), hpp/(1-margin) tidak lagi mengembalikan harga aslinya.
+
+export interface PricebookSetupRow {
+  rowNo: number;
+  kode: string | null; // kode di snapshot price book
+  lini: string;
+  brand: string;
+  nama: string; // nama di handover Direktur
+  namaFinal: string | null; // hasil kroscek; beda dari `nama` di 326 baris
+  varian: string | null;
+  kemasan: string | null;
+  satuan: string | null;
+  priceList: number;
+  diskonMaks: number;
+  hargaNett: number;
+  nettPpn: number;
+  hpp: number | null; // null = belum ada HPP di sumber Compilation
+  marginPct: number | null; // fraksi; null kalau hpp null
+  kategori: string | null;
+  productLine: string | null;
+  klas: string | null;
+  subClass: string | null;
+  productKode: string | null; // KK.PP.CC.SSS.NNNN di product_code
+  klasifikasiLengkap: boolean; // 4 level ter-resolve
+}
+
+export interface PricebookSetupSummary {
+  periode: string;
+  total: number;
+  adaHpp: number;
+  tanpaHpp: number;
+  klasifikasiLengkap: number;
+  kepasangKode: number;
+  reviewTerbuka: number; // antrean product_code_review dari sumber kroscek
+  totalHpp: number;
+  totalPriceList: number; // Σ price list, HANYA baris ber-HPP (biar sebanding)
+  marginAgregat: number | null; // 1 - Σhpp/Σprice_list atas baris ber-HPP saja
+}
+
+// Label sumber di product_code_review — harus sama dengan konstanta SUMBER di
+// scripts/db/import_kroscek_pricelist.py.
+const SUMBER_KROSCEK = "Master Kroscek PL H2-2026";
+
+export async function listSetup(
+  opts: { periode?: string; q?: string; lini?: string; limit?: number } = {},
+): Promise<PricebookSetupRow[]> {
+  if (!isDbEnabled()) return [];
+  const sql = db();
+  const periode = opts.periode || PERIODE_DEFAULT;
+  const limit = Math.min(Math.max(opts.limit ?? 5000, 1), 20000);
+  const q = opts.q?.trim() ? `%${opts.q.trim()}%` : null;
+
+  const rows = await sql<Record<string, unknown>[]>`
+    SELECT p.row_no, p.kode, p.lini, p.brand, p.nama, p.price_list, p.diskon_maks,
+           p.harga_nett, p.nett_ppn,
+           s.nama_final, s.varian, s.kemasan, s.satuan, s.hpp, s.product_kode,
+           CASE WHEN s.hpp IS NOT NULL AND p.price_list > 0
+                THEN 1 - s.hpp / p.price_list END AS margin_pct,
+           kat.nama AS kategori_nama, ln.nama AS line_nama,
+           cl.nama AS class_nama, sc.nama AS sub_nama,
+           (s.sub_class_id IS NOT NULL) AS klasifikasi_lengkap
+      FROM product_pricelist p
+      JOIN product_pricelist_setup s ON s.periode = p.periode AND s.row_no = p.row_no
+      LEFT JOIN product_kategori kat ON kat.id = s.kategori_id
+      LEFT JOIN product_line ln ON ln.kategori_id = s.kategori_id AND ln.id = s.line_id
+      LEFT JOIN product_class cl ON cl.kategori_id = s.kategori_id AND cl.id = s.class_id
+      LEFT JOIN product_sub_class sc ON sc.kategori_id = s.kategori_id
+             AND sc.class_id = s.class_id AND sc.id = s.sub_class_id
+     WHERE p.periode = ${periode}
+       AND (${opts.lini ?? null}::text IS NULL OR p.lini = ${opts.lini ?? null})
+       AND (${q}::text IS NULL OR COALESCE(s.nama_final, p.nama) ILIKE ${q}
+            OR p.nama ILIKE ${q} OR p.brand ILIKE ${q} OR p.kode ILIKE ${q}
+            OR s.product_kode ILIKE ${q})
+     ORDER BY p.lini, p.brand, COALESCE(s.nama_final, p.nama)
+     LIMIT ${limit}
+  `;
+  return rows.map((r) => ({
+    rowNo: Number(r.row_no),
+    kode: (r.kode as string) ?? null,
+    lini: r.lini as string,
+    brand: r.brand as string,
+    nama: r.nama as string,
+    namaFinal: (r.nama_final as string) ?? null,
+    varian: (r.varian as string) ?? null,
+    kemasan: (r.kemasan as string) ?? null,
+    satuan: (r.satuan as string) ?? null,
+    priceList: num(r.price_list),
+    diskonMaks: num(r.diskon_maks),
+    hargaNett: num(r.harga_nett),
+    nettPpn: num(r.nett_ppn),
+    hpp: r.hpp === null || r.hpp === undefined ? null : num(r.hpp),
+    marginPct: r.margin_pct === null || r.margin_pct === undefined ? null : num(r.margin_pct),
+    kategori: (r.kategori_nama as string) ?? null,
+    productLine: (r.line_nama as string) ?? null,
+    klas: (r.class_nama as string) ?? null,
+    subClass: (r.sub_nama as string) ?? null,
+    productKode: (r.product_kode as string) ?? null,
+    klasifikasiLengkap: r.klasifikasi_lengkap === true,
+  }));
+}
+
+export async function setupSummary(periode = PERIODE_DEFAULT): Promise<PricebookSetupSummary> {
+  const kosong: PricebookSetupSummary = {
+    periode, total: 0, adaHpp: 0, tanpaHpp: 0, klasifikasiLengkap: 0, kepasangKode: 0,
+    reviewTerbuka: 0, totalHpp: 0, totalPriceList: 0, marginAgregat: null,
+  };
+  if (!isDbEnabled()) return kosong;
+  const sql = db();
+
+  // Σ price list DIBATASI ke baris ber-HPP: kalau ikut baris tanpa HPP, margin
+  // agregatnya jadi terlihat jauh lebih untung daripada kenyataannya.
+  const [r] = await sql<Record<string, unknown>[]>`
+    SELECT COUNT(*) AS total,
+           COUNT(s.hpp) AS ada_hpp,
+           COUNT(*) FILTER (WHERE s.hpp IS NULL) AS tanpa_hpp,
+           COUNT(*) FILTER (WHERE s.sub_class_id IS NOT NULL) AS klas_lengkap,
+           COUNT(s.product_kode) AS kepasang_kode,
+           COALESCE(SUM(s.hpp), 0) AS total_hpp,
+           COALESCE(SUM(p.price_list) FILTER (WHERE s.hpp IS NOT NULL), 0) AS total_pl
+      FROM product_pricelist p
+      JOIN product_pricelist_setup s ON s.periode = p.periode AND s.row_no = p.row_no
+     WHERE p.periode = ${periode}
+  `;
+  const [rev] = await sql<Record<string, unknown>[]>`
+    SELECT COUNT(*) AS n FROM product_code_review
+     WHERE sumber = ${SUMBER_KROSCEK} AND status = 'terbuka'
+  `;
+  const totalHpp = num(r?.total_hpp);
+  const totalPl = num(r?.total_pl);
+  return {
+    periode,
+    total: num(r?.total),
+    adaHpp: num(r?.ada_hpp),
+    tanpaHpp: num(r?.tanpa_hpp),
+    klasifikasiLengkap: num(r?.klas_lengkap),
+    kepasangKode: num(r?.kepasang_kode),
+    reviewTerbuka: num(rev?.n),
+    totalHpp,
+    totalPriceList: totalPl,
+    marginAgregat: totalPl > 0 ? 1 - totalHpp / totalPl : null,
+  };
+}
