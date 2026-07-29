@@ -23,8 +23,9 @@ Angka tetap disimpan APA ADANYA dari sumber — importer cuma melaporkan, tidak
 menghitung ulang. Selisih di luar kasus seri = ditolak (kecuali --izinkan-selisih).
 
 Pakai:
-  python3 import_pricebook.py --file <csv> [--db wrg_os_dev] [--periode H2-2026] [--apply]
+  python3 import_pricebook.py --file <csv> --db <wrg_os_dev|wrg_os_prod> [--periode H2-2026] [--apply]
   default = DRY-RUN (txn + ROLLBACK, cuma laporan; TIDAK menulis).
+  --db wajib disebut — lihat catatan di argumen --db.
 """
 import argparse, csv, os, subprocess, sys, tempfile
 from collections import Counter
@@ -56,7 +57,10 @@ def seri(v: Decimal) -> bool:
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--file", required=True, help="CSV price book (dari folder Drive)")
-ap.add_argument("--db", default="wrg_os_dev")
+# Wajib disebut, TIDAK ada default. Kalau default-nya dev, salah ketik = importer
+# lapor "1031 baris masuk" padahal nulis ke database yang salah, dan halaman prod
+# tetap kosong tanpa satu pun pesan error. Sudah kejadian sekali.
+ap.add_argument("--db", required=True, help="nama database target, mis. wrg_os_dev / wrg_os_prod")
 ap.add_argument("--periode", default="H2-2026")
 ap.add_argument("--apply", action="store_true", help="commit (default dry-run rollback)")
 ap.add_argument("--izinkan-selisih", action="store_true",
@@ -184,3 +188,10 @@ if res.returncode != 0:
     sys.stderr.write(res.stderr)
     sys.exit(1)
 os.unlink(csv_path)
+
+# Diulang di baris terakhir: header bisa ke-scroll hilang, dan "berhasil" ke
+# database yang salah adalah kegagalan yang paling gampang tidak disadari.
+print(f"== {'TERSIMPAN ke' if args.apply else 'DRY-RUN (tidak menulis apa pun) —'} database "
+      f"'{args.db}', periode {args.periode} ==")
+if not args.apply:
+    print("   tambahkan --apply untuk benar-benar menyimpan.")
