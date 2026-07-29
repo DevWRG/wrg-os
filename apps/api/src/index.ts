@@ -92,6 +92,16 @@ import {
   listPendingLeave,
   decidePendingLeave,
 } from "./repo/leave.js";
+import {
+  createInstallation,
+  listInstallations,
+  getInstallationById,
+  markPoControl,
+  markSj,
+  markTeknisiAssign,
+  markTrainingDone,
+  markBast,
+} from "./repo/installation.js";
 import { recordCompetitor, listCompetitor, competitorSummary } from "./repo/competitor.js";
 import {
   defaultRange,
@@ -1693,6 +1703,112 @@ app.post("/leave/detect", async (c) => {
   if (!body.am_id || !body.text) return c.json({ error: "am_id + text wajib" }, 400);
   const r = await detectLeave(body.am_id, body.text, body.date);
   return c.json(r, r.detected ? 201 : 200);
+});
+
+// ── Instalasi Alat Lifecycle (F22, AFTERSALES) — checklist 5 langkah sekuensial:
+// PO control → SJ → Teknisi assign → Training done → BAST. ──
+app.post("/installations", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: {
+    alat_name?: string;
+    serial_number?: string;
+    customer_name?: string;
+    cabang?: string;
+    po_number?: string;
+    created_by?: string;
+  };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.alat_name || !body.customer_name) {
+    return c.json({ error: "alat_name + customer_name wajib" }, 400);
+  }
+  const r = await createInstallation({
+    alat_name: body.alat_name,
+    serial_number: body.serial_number,
+    customer_name: body.customer_name,
+    cabang: body.cabang,
+    po_number: body.po_number,
+    created_by: body.created_by,
+  });
+  return c.json(r, 201);
+});
+
+app.get("/installations", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const units = await listInstallations(c.req.query("status") || undefined, c.req.query("q") || undefined);
+  return c.json({ count: units.length, units });
+});
+
+app.get("/installations/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const u = await getInstallationById(c.req.param("id"));
+  return u ? c.json(u) : c.json({ error: "unit instalasi tidak ditemukan" }, 404);
+});
+
+app.post("/installations/:id/po-control", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { po_number?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    // po_number opsional di langkah ini
+  }
+  const r = await markPoControl(c.req.param("id"), body.po_number);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.post("/installations/:id/sj", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { sj_number?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.sj_number) return c.json({ error: "sj_number wajib" }, 400);
+  const r = await markSj(c.req.param("id"), body.sj_number);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.post("/installations/:id/assign-teknisi", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { teknisi_name?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.teknisi_name) return c.json({ error: "teknisi_name wajib" }, 400);
+  const r = await markTeknisiAssign(c.req.param("id"), body.teknisi_name);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.post("/installations/:id/training", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { training_notes?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    // training_notes opsional
+  }
+  const r = await markTrainingDone(c.req.param("id"), body.training_notes);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.post("/installations/:id/bast", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { bast_number?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.bast_number) return c.json({ error: "bast_number wajib" }, 400);
+  const r = await markBast(c.req.param("id"), body.bast_number);
+  return c.json(r, r.ok ? 200 : 400);
 });
 
 // ── Competitor intelligence (port legacy competitor_intel) ──
