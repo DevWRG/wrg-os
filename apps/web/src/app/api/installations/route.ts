@@ -2,6 +2,19 @@ import { gatewayFetch } from "@/lib/gateway";
 
 export const dynamic = "force-dynamic";
 
+// Gateway → apps/api GET /installations (dipakai client-side, mis. sheet
+// jadwal install F8 utk pilih alat yg belum BAST).
+export async function GET(req: Request) {
+  const qs = new URL(req.url).search;
+  try {
+    const res = await gatewayFetch(`/installations${qs}`);
+    const data = await res.json();
+    return Response.json(data, { status: res.status });
+  } catch {
+    return Response.json({ error: "backend unreachable" }, { status: 502 });
+  }
+}
+
 // Gateway → apps/api POST /installations (buat unit instalasi baru, F22).
 export async function POST(req: Request) {
   let body: unknown;

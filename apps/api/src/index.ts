@@ -109,6 +109,15 @@ import {
   listEligibleUnits,
   markDone,
 } from "./repo/maintenance.js";
+import {
+  listTeknisiCapacity,
+  getReadinessBoard,
+  createInstallSchedule,
+  listInstallSchedule,
+  updateScheduleStatus,
+  createTeknisiReport,
+  listTeknisiReports,
+} from "./repo/readinessboard.js";
 import { recordCompetitor, listCompetitor, competitorSummary } from "./repo/competitor.js";
 import {
   defaultRange,
@@ -1875,6 +1884,88 @@ app.post("/maintenance/:id/done", async (c) => {
   }
   const r = await markDone(c.req.param("id"), body.catatan);
   return c.json(r, r.ok ? 200 : 400);
+});
+
+// ── Teknisi Readiness Board (F8, AFTERSALES) — install scheduling + capacity
+// + post-install reports. teknisi_capacity read-only (data di-seed, lihat
+// readinessboard.ts). Hook WA (#install/#servis/#training/#kalibrasi) di
+// inbound.ts memanggil createTeknisiReport yang sama dgn route manual di bawah. ──
+app.get("/teknisi-capacity", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const teknisi = await listTeknisiCapacity();
+  return c.json({ count: teknisi.length, teknisi });
+});
+
+app.get("/readiness-board", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const board = await getReadinessBoard();
+  return c.json({ count: board.length, board });
+});
+
+app.post("/install-schedule", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { installation_unit_id?: string; teknisi_id?: string; scheduled_date?: string; note?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.installation_unit_id || !body.scheduled_date) {
+    return c.json({ error: "installation_unit_id + scheduled_date wajib" }, 400);
+  }
+  const r = await createInstallSchedule({
+    installation_unit_id: body.installation_unit_id,
+    teknisi_id: body.teknisi_id,
+    scheduled_date: body.scheduled_date,
+    note: body.note,
+  });
+  return c.json(r, "ok" in r && r.ok === false ? 400 : 201);
+});
+
+app.get("/install-schedule", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listInstallSchedule(c.req.query("status") || undefined);
+  return c.json({ count: rows.length, rows });
+});
+
+app.post("/install-schedule/:id/done", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await updateScheduleStatus(c.req.param("id"), "done");
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.post("/install-schedule/:id/cancel", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await updateScheduleStatus(c.req.param("id"), "cancelled");
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.post("/teknisi-reports", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { teknisi_id?: string; report_type?: string; body?: string; installation_unit_id?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.report_type || !body.body?.trim()) return c.json({ error: "report_type + body wajib" }, 400);
+  if (!["install", "servis", "training", "kalibrasi"].includes(body.report_type)) {
+    return c.json({ error: "report_type harus install|servis|training|kalibrasi" }, 400);
+  }
+  const r = await createTeknisiReport({
+    teknisi_id: body.teknisi_id,
+    report_type: body.report_type,
+    body: body.body,
+    source: "manual",
+    installation_unit_id: body.installation_unit_id,
+  });
+  return c.json(r, 201);
+});
+
+app.get("/teknisi-reports", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listTeknisiReports(c.req.query("report_type") || undefined);
+  return c.json({ count: rows.length, rows });
 });
 
 // ── Competitor intelligence (port legacy competitor_intel) ──
