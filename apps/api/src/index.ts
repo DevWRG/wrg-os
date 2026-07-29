@@ -92,6 +92,13 @@ import {
   listPendingLeave,
   decidePendingLeave,
 } from "./repo/leave.js";
+import {
+  listTeknisi,
+  createTicket,
+  listTickets,
+  getTicketById,
+  resolveTicket,
+} from "./repo/serviceticket.js";
 import { recordCompetitor, listCompetitor, competitorSummary } from "./repo/competitor.js";
 import {
   defaultRange,
@@ -1693,6 +1700,57 @@ app.post("/leave/detect", async (c) => {
   if (!body.am_id || !body.text) return c.json({ error: "am_id + text wajib" }, 400);
   const r = await detectLeave(body.am_id, body.text, body.date);
   return c.json(r, r.detected ? 201 : 200);
+});
+
+// ── Service Ticket Triage (F26, AFTERSALES) — LLM classify severity + auto-
+// assign teknisi (by area) + ETA. teknisi_roster read-only (data di-seed via
+// scripts/db/seed-dev-full.sql, tidak ada create/edit di F26 ini). ──
+app.get("/teknisi-roster", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const teknisi = await listTeknisi();
+  return c.json({ count: teknisi.length, teknisi });
+});
+
+app.post("/service-tickets", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { complaint_text?: string; customer_name?: string; area?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.complaint_text?.trim()) return c.json({ error: "complaint_text wajib" }, 400);
+  const ticket = await createTicket({
+    complaint_text: body.complaint_text,
+    customer_name: body.customer_name,
+    area: body.area,
+    source: "manual",
+  });
+  return c.json(ticket, 201);
+});
+
+app.get("/service-tickets", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const tickets = await listTickets(c.req.query("status") || undefined);
+  return c.json({ count: tickets.length, tickets });
+});
+
+app.get("/service-tickets/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const t = await getTicketById(c.req.param("id"));
+  return t ? c.json(t) : c.json({ error: "ticket tidak ditemukan" }, 404);
+});
+
+app.post("/service-tickets/:id/resolve", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { note?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    // note opsional
+  }
+  const r = await resolveTicket(c.req.param("id"), body.note);
+  return c.json(r, r.ok ? 200 : 400);
 });
 
 // ── Competitor intelligence (port legacy competitor_intel) ──

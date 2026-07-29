@@ -266,6 +266,21 @@ class LeaveDetectResponse(BaseModel):
     dry_run: bool = False
 
 
+# === F26 ticket triage (klasifikasi severity komplain customer) ===
+
+
+class TicketTriageRequest(BaseModel):
+    complaint_text: str
+    dry_run: bool = False
+
+
+class TicketTriageResponse(BaseModel):
+    severity: str = "sedang"  # rendah | sedang | tinggi | kritis
+    area: Optional[str] = None
+    model: str = "dry-run"
+    dry_run: bool = False
+
+
 # === extract_competitor (ekstrak sebutan kompetitor dari activity_log.hasil) ===
 
 
