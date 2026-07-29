@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowRight } from "lucide-react";
 
@@ -20,10 +20,19 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 
+const selectCls =
+  "h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50";
+
 interface InstallationUnit {
   id: string;
   alat_name: string;
   status: string;
+}
+
+interface Shipment {
+  number: string;
+  customer_name: string | null;
+  trans_date: string | null;
 }
 
 interface StepDef {
@@ -34,6 +43,7 @@ interface StepDef {
   fieldLabel: string;
   required: boolean;
   placeholder?: string;
+  sourceFromAccurate?: boolean; // No. SJ dipilih dari mirror Accurate (exception disetujui utk F22)
 }
 
 const STEP_BY_STATUS: Record<string, StepDef> = {
@@ -52,6 +62,7 @@ const STEP_BY_STATUS: Record<string, StepDef> = {
     field: "sj_number",
     fieldLabel: "No. SJ *",
     required: true,
+    sourceFromAccurate: true,
   },
   sj: {
     endpoint: "assign-teknisi",
@@ -86,8 +97,18 @@ export function InstallationRowActions({ row }: { row: InstallationUnit }) {
   const [value, setValue] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [shipments, setShipments] = useState<Shipment[]>([]);
 
   const step = STEP_BY_STATUS[row.status];
+
+  useEffect(() => {
+    if (!open || !step?.sourceFromAccurate || shipments.length > 0) return;
+    void fetch("/api/shipments?limit=200", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => setShipments(d?.rows ?? []))
+      .catch(() => {});
+  }, [open, step?.sourceFromAccurate, shipments.length]);
+
   if (!step) return <Badge variant="secondary">Selesai</Badge>;
 
   async function submit(e: React.FormEvent) {
@@ -126,13 +147,30 @@ export function InstallationRowActions({ row }: { row: InstallationUnit }) {
           <DialogBody className="grid gap-3">
             <div className="grid gap-1.5">
               <Label htmlFor={`iu-step-${row.id}`}>{step.fieldLabel}</Label>
-              <Input
-                id={`iu-step-${row.id}`}
-                required={step.required}
-                value={value}
-                onChange={(e) => setValue(e.target.value)}
-                placeholder={step.placeholder}
-              />
+              {step.sourceFromAccurate && shipments.length > 0 ? (
+                <select
+                  id={`iu-step-${row.id}`}
+                  required={step.required}
+                  className={selectCls}
+                  value={value}
+                  onChange={(e) => setValue(e.target.value)}
+                >
+                  <option value="" disabled>pilih SJ dari Accurate…</option>
+                  {shipments.map((s) => (
+                    <option key={s.number} value={s.number}>
+                      {s.number} — {s.customer_name ?? "?"} ({s.trans_date?.slice(0, 10) ?? "-"})
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <Input
+                  id={`iu-step-${row.id}`}
+                  required={step.required}
+                  value={value}
+                  onChange={(e) => setValue(e.target.value)}
+                  placeholder={step.sourceFromAccurate ? "mirror Accurate kosong — ketik manual" : step.placeholder}
+                />
+              )}
             </div>
             {error && <p className="text-destructive text-sm">{error}</p>}
           </DialogBody>
