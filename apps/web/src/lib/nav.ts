@@ -105,8 +105,13 @@ export const NAV: NavGroup[] = [
       { title: "Orders", url: "/orders", icon: ShoppingCart },
       { title: "Shipments", url: "/shipments", icon: Truck },
       { title: "Suppliers", url: "/suppliers", icon: Factory },
-      { title: "Supplier ETA", url: "/supplier-eta", icon: CalendarClock, badge: "NEW" },
       { title: "HITL Review", url: "/hitl", icon: ClipboardCheck },
+    ],
+  },
+  {
+    label: "Purchasing",
+    items: [
+      { title: "Supplier ETA", url: "/supplier-eta", icon: CalendarClock, badge: "NEW" },
     ],
   },
   {
