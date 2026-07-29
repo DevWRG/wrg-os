@@ -15,6 +15,7 @@ import {
 import { canOrLegacy, hasPerms } from "@/lib/perms";
 import { canEditPricelistSetup, canViewPricelist, type AccessUser } from "@/lib/pricelist-access";
 import { canViewPricebook } from "@/lib/pricebook-access";
+import { canViewKlasifikasi } from "@/lib/klasifikasi-access";
 import { canViewRaportList } from "@/lib/raport-access";
 import { canViewExecutive } from "@/lib/executive-access";
 
@@ -106,6 +107,10 @@ export const NAV: NavGroup[] = [
     label: "Operations",
     items: [
       { title: "Products", url: "/products", icon: Package },
+      // Master klasifikasi 4 level + penerbit kode produk KK.PP.CC.SSS.NNNN
+      // (migrasi 072). Beda dari Products: Products itu mirror item Accurate,
+      // menu ini yang MENENTUKAN kode produknya sebelum masuk Accurate.
+      { title: "Klasifikasi Produk", url: "/klasifikasi-produk", icon: Tags, badge: "NEW", show: canViewKlasifikasi },
       { title: "Inventory", url: "/inventory", icon: Boxes },
       { title: "Orders", url: "/orders", icon: ShoppingCart },
       { title: "Shipments", url: "/shipments", icon: Truck },

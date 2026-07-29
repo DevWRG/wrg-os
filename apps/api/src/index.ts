@@ -77,6 +77,15 @@ import {
   listItems as listPricebookItems, summary as pricebookSummary,
   outsideKeagenan, periodeList as pricebookPeriode,
 } from "./repo/pricebook.js";
+import {
+  taxonomy as klasifikasiTaxonomy, summary as klasifikasiSummary,
+  listCodes as listKlasifikasiCodes, nextKode as nextKlasifikasiKode,
+  createCode as createKlasifikasiCode, upsertNode as upsertKlasifikasiNode,
+  deleteNode as deleteKlasifikasiNode, listReview as listKlasifikasiReview,
+  setReviewStatus as setKlasifikasiReviewStatus,
+  type CodeInput as KlasifikasiCodeInput, type NodeInput as KlasifikasiNodeInput,
+  type Level as KlasifikasiLevel,
+} from "./repo/klasifikasi.js";
 import { listCoachingNotes } from "./repo/coaching.js";
 import { getLatestCoachingNotes, computePeopleAnalytics } from "./repo/people.js";
 import { createVisit, getVisit, listVisits, visitKpi, visitSummary } from "./repo/visit.js";
@@ -2438,6 +2447,85 @@ app.get("/pricebook/outside", async (c) => {
 app.get("/pricebook/periode", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json({ rows: await pricebookPeriode() });
+});
+
+// ── Klasifikasi produk & kode produk (migrasi 072) ──────────────────────────
+// Kode KK.PP.CC.SSS.NNNN. Isi awal dari importer
+// scripts/db/import_product_classification.py (data tidak di repo).
+// Gate akses ada di BFF (apps/web /api/klasifikasi/*): lihat utk user berizin,
+// tulis hanya HoD Business/Purchasing/admin.
+app.get("/klasifikasi/taxonomy", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json({ rows: await klasifikasiTaxonomy() });
+});
+
+app.get("/klasifikasi/summary", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await klasifikasiSummary());
+});
+
+app.get("/klasifikasi/codes", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const q = c.req.query();
+  const rows = await listKlasifikasiCodes({
+    kategoriId: q.kategori, lineId: q.line, classId: q.class, subClassId: q.sub_class,
+    sumber: q.sumber, q: q.q, limit: q.limit ? Number(q.limit) : undefined,
+  });
+  return c.json({ count: rows.length, rows });
+});
+
+// Pratinjau kode berikutnya — TIDAK menyimpan apa pun (bukan reservasi nomor).
+app.get("/klasifikasi/next-kode", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const q = c.req.query();
+  if (!q.kategori || !q.line || !q.class || !q.sub_class) {
+    return c.json({ error: "butuh query kategori, line, class, sub_class" }, 400);
+  }
+  const r = await nextKlasifikasiKode(q.kategori, q.line, q.class, q.sub_class);
+  return r.ok ? c.json(r.data) : c.json({ error: r.error }, 400);
+});
+
+app.post("/klasifikasi/codes", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: KlasifikasiCodeInput;
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  const r = await createKlasifikasiCode(body);
+  return r.ok ? c.json({ kode: r.kode }, 201) : c.json({ error: r.error }, 400);
+});
+
+app.post("/klasifikasi/taxonomy", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: KlasifikasiNodeInput;
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  const r = await upsertKlasifikasiNode(body);
+  return r.ok ? c.json({ ok: true }) : c.json({ error: r.error }, 400);
+});
+
+app.delete("/klasifikasi/taxonomy", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const q = c.req.query();
+  const level = q.level as KlasifikasiLevel;
+  if (!level || !q.kategori || !q.id) {
+    return c.json({ error: "butuh query level, kategori, id (+ class untuk sub_class)" }, 400);
+  }
+  const r = await deleteKlasifikasiNode(level, q.kategori, q.id, q.class);
+  return r.ok ? c.json({ ok: true }) : c.json({ error: r.error }, 409);
+});
+
+app.get("/klasifikasi/review", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const q = c.req.query();
+  const rows = await listKlasifikasiReview(q.status || undefined,
+    q.limit ? Number(q.limit) : undefined);
+  return c.json({ count: rows.length, rows });
+});
+
+app.post("/klasifikasi/review/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { status?: string };
+  try { body = await c.req.json(); } catch { body = {}; }
+  const r = await setKlasifikasiReviewStatus(Number(c.req.param("id")), body.status ?? "");
+  return r.ok ? c.json({ ok: true }) : c.json({ error: r.error }, 400);
 });
 
 // ── Pricelist — harga jual per produk (setup HoD/Purchasing → publish → AM) ──
