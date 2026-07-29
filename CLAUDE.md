@@ -34,6 +34,14 @@ docs/       CUTOVER.md.
   dari varchar(20) di migrasi 038 — MIME openclaw panjang bikin INSERT gagal 22001),
   `body`. Backfill WAJIB set `processed_at` atau disapu `processUnprocessed`.
 - `activity_log` — hasil/next_action kunjungan. `monitor_digest` — kind ∈ rekap|resume|daily|weekly|briefing, `waktu` varchar(8) (jangan overflow).
+- **Klasifikasi produk** (migrasi 072, menu `/klasifikasi-produk`): `product_kategori` / `product_line` /
+  `product_class` / `product_sub_class` + `product_code` (kode `KK.PP.CC.SSS.NNNN`) + `product_code_review`.
+  Nomor id **berulang per induk** (product line & class per kategori, sub class per CLASS) → semua kunci
+  komposit, resolusi WAJIB hirarkis. Jebakan: generator di spreadsheet sumber pakai VLOOKUP nama saja
+  (nama Class/Sub Class kembar ambil id kategori lain), sub class 2 digit di satu sheet & 3 digit di sheet
+  lain, dan nomor urut per-sheet — jangan direplikasi. Kode lama disimpan di `kode_legacy`/`kode_2025`;
+  kode yang sudah terbit tidak pernah diubah (menempel di Accurate). Isi lewat
+  `scripts/db/import_product_classification.py` (data tidak di repo).
 
 ## Accurate mirror + menu OPERATIONS & dashboards
 
