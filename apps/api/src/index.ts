@@ -251,6 +251,11 @@ app.get("/auth/me", async (c) => {
   let superuser = false;
   let groups: { id: number; key: string; name: string }[] = [];
   let permissions: Record<string, unknown> = {};
+  // rbac=true → matriks izin BENAR-BENAR terbaca dari DB, jadi `permissions`
+  // kosong artinya "tanpa akses" (bukan "data izin tak tersedia"). Web butuh
+  // pembeda ini: tanpa flag, user tanpa grup ikut kena fail-open hasPerms()
+  // dan malah melihat seluruh menu (lihat apps/web/src/lib/perms.ts).
+  let rbac = false;
   let am_id: string | null = null;
   let hod_key: string | null = null; // utk gate menu Raport & NPK Saya (HoD) di web
   let is_am = false;
@@ -258,7 +263,7 @@ app.get("/auth/me", async (c) => {
   if (isDbEnabled() && payload.sub) {
     try {
       const eff = await effectivePermissions(String(payload.sub));
-      superuser = eff.superuser; groups = eff.groups; permissions = eff.permissions;
+      superuser = eff.superuser; groups = eff.groups; permissions = eff.permissions; rbac = true;
     } catch { /* abaikan — pakai role lama */ }
     try {
       // Identitas karyawan (utk gate menu Raport & NPK Saya + scoping). scope.amOnly = AM
@@ -273,7 +278,7 @@ app.get("/auth/me", async (c) => {
       id: payload.sub, email: payload.email, role: payload.role,
       name: payload.name ?? null, title: payload.title ?? null,
       am_id, hod_key, is_am, is_hod,
-      superuser, groups, permissions,
+      superuser, groups, permissions, rbac,
     },
   });
 });
