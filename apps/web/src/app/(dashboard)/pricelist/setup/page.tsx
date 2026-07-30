@@ -1,11 +1,11 @@
 import { redirect } from "next/navigation";
 
-// Menu Pricelist Setup sudah lebur jadi tab "Setup Harga" di /pricebook (di dalamnya
-// masih ada dua sub-tab: kalkulator produk Accurate 043 + kroscek price book 073).
-// Route ini dipertahankan supaya bookmark lama tidak mati.
+// Menu Pricelist Setup pindah ke /pricebook/setup (nama menu "Setup Harga"; di
+// dalamnya masih ada dua sub-tab: kalkulator produk Accurate 043 + kroscek price
+// book 073). Route ini dipertahankan supaya bookmark lama tidak mati.
 //
-// Gate-nya ada di tujuan: tab Setup Harga cuma dirender untuk HoD Business /
-// Purchasing / admin, dan endpoint ber-HPP tidak dipanggil untuk yang lain.
+// Gate-nya ada di tujuan: /pricebook/setup hanya untuk HoD Business / Purchasing /
+// admin dan meng-redirect yang lain, jadi endpoint ber-HPP tak pernah dipanggil.
 export default function PricelistSetupRedirect() {
-  redirect("/pricebook?tab=setup");
+  redirect("/pricebook/setup");
 }

@@ -11,12 +11,7 @@ import { ExportButton } from "@/components/ui/export-button";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import { AmPricelistTable } from "@/components/pricelist/am-pricelist-table";
-import { PricelistSetupTabs } from "@/components/pricelist/setup-tabs";
-import type {
-  PricebookSetupRow, PricebookSetupSummary,
-} from "@/components/pricelist/pricebook-setup-table";
-import type { ProductOption } from "@/components/pricelist/pricelist-form-sheet";
-import type { AmPricelistRow, PricelistRow } from "@/lib/pricelist";
+import type { AmPricelistRow } from "@/lib/pricelist";
 
 // ── Tipe (cermin apps/api/src/repo/pricebook.ts) ───────────────────────────
 export interface PricebookItem {
@@ -69,55 +64,37 @@ const fmtPctDisc = (d: number) => `${Math.round(d * 100)}%`;
 const C = { ivd: "#0ca6bd", medical: "#10b981", warn: "#f59e0b", danger: "#ef4444", muted: "#94a3b8" };
 const liniColor = (l: string) => (l === "IVD" ? C.ivd : C.medical);
 
-// Satu pintu untuk semua harga jual. Tiga menu lama dilebur jadi tab di sini:
-//   Price Book (071)          → Ringkasan · Katalog · Di Luar Keagenan
-//   Pricelist (043)           → "Harga per Produk" (baris terpublikasi, muka AM)
-//   Pricelist Setup (043+073) → "Setup Harga" (kalkulator HPP + kroscek price book)
+// Menu harga untuk SALES: katalog keagenan + harga produk Accurate terpublikasi +
+// item di luar keagenan. Satu pintu untuk apa yang boleh dikutip ke faskes.
 //
-// Tab hanya ADA kalau datanya dikirim halaman, dan halaman hanya mengambil data
-// yang user memang berhak lihat. Jadi tab "Setup Harga" (berisi HPP/margin) tidak
-// pernah sampai ke browser AM — bukan sekadar disembunyikan tampilan.
+// Dua muka lain sengaja BUKAN tab di sini, karena pembacanya beda:
+//   /pricebook/ringkasan  bacaan portofolio — Direktur + HoD
+//   /pricebook/setup      HPP & margin — HoD Business / Purchasing
+// Menu terpisah juga bikin izinnya punya baris sendiri di matriks Akses Grup;
+// sebuah tab tidak bisa dicentang sendiri.
 const TABS = [
-  { key: "ringkasan", label: "Ringkasan" },
   { key: "katalog", label: "Katalog" },
   { key: "harga", label: "Harga per Produk" },
-  { key: "setup", label: "Setup Harga" },
   { key: "luar", label: "Di Luar Keagenan" },
 ] as const;
 export type PricebookTabKey = (typeof TABS)[number]["key"];
 
 // Muka AM: baris SUDAH dibersihkan di server (tanpa hpp/margin) — lihat toAmRow().
 export interface HargaPanel { rows: AmPricelistRow[] }
-export interface SetupPanel {
-  rows: PricelistRow[];
-  products: ProductOption[];
-  canPublish: boolean;
-  pricebookRows: PricebookSetupRow[] | null;
-  pricebookRingkas: PricebookSetupSummary | null;
-}
 
 export function PricebookView({
-  items, summary, canSummary, harga, setup, initialTab,
+  items, summary, harga, initialTab,
 }: {
   items: PricebookItem[] | null;
+  /** Dipakai hanya untuk statistik cakupan di tab Di Luar Keagenan; null = tak berhak. */
   summary: PricebookSummary | null;
-  canSummary: boolean;
   /** Baris pricelist terpublikasi (043). null/undefined = user tak berhak. */
   harga?: HargaPanel | null;
-  /** Kalkulator HPP + lapisan kroscek (043/073). null/undefined = user tak berhak. */
-  setup?: SetupPanel | null;
   initialTab?: PricebookTabKey;
 }) {
   const tabs = useMemo(
-    () => TABS.filter((t) =>
-      t.key === "harga" ? !!harga
-        : t.key === "setup" ? !!setup
-          : t.key === "ringkasan" ? canSummary && items !== null
-            // Katalog & Di Luar Keagenan ikut hak Price Book; kalau item-nya tak
-            // diambil (AM yang cuma berizin 'pricelist'), tab-nya tidak muncul.
-            : items !== null,
-    ),
-    [canSummary, harga, setup, items],
+    () => TABS.filter((t) => (t.key === "harga" ? !!harga : items !== null)),
+    [harga, items],
   );
   const [tab, setTab] = useState<PricebookTabKey>(
     initialTab && tabs.some((t) => t.key === initialTab) ? initialTab : (tabs[0]?.key ?? "katalog"),
@@ -127,8 +104,8 @@ export function PricebookView({
   if (tabs.length === 0) {
     return <EmptyState title="Data tidak tersedia" description="Pastikan apps/api jalan & DATABASE_URL aktif." />;
   }
-  // Price book kosong TAPI tab harga/setup ada → jangan blokir seluruh halaman.
-  if (items !== null && items.length === 0 && !harga && !setup) {
+  // Price book kosong TAPI tab harga ada → jangan blokir seluruh halaman.
+  if (items !== null && items.length === 0 && !harga) {
     return (
       <EmptyState
         title="Price book belum diimpor"
@@ -151,18 +128,8 @@ export function PricebookView({
         ))}
       </div>
 
-      {aktif === "ringkasan" && canSummary && <RingkasanTab s={summary} />}
       {aktif === "katalog" && <KatalogTab items={items ?? []} />}
       {aktif === "harga" && harga && <HargaTab rows={harga.rows} />}
-      {aktif === "setup" && setup && (
-        <PricelistSetupTabs
-          rows={setup.rows}
-          products={setup.products}
-          canPublish={setup.canPublish}
-          pricebookRows={setup.pricebookRows}
-          pricebookRingkas={setup.pricebookRingkas}
-        />
-      )}
       {aktif === "luar" && <LuarKeagenanTab cakupan={summary?.cakupan ?? null} />}
     </div>
   );
@@ -190,7 +157,7 @@ function HargaTab({ rows }: { rows: AmPricelistRow[] }) {
 
 // ── Tab 1: Ringkasan ───────────────────────────────────────────────────────
 
-function RingkasanTab({ s }: { s: PricebookSummary | null }) {
+export function RingkasanTab({ s }: { s: PricebookSummary | null }) {
   if (!s || s.kosong) {
     return <EmptyState title="Ringkasan belum bisa dihitung" description="Price book periode ini belum berisi data." />;
   }
