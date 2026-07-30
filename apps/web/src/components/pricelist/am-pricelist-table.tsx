@@ -1,10 +1,17 @@
 "use client";
 
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
-import { deriveRow, formatPercent, formatRupiah, num, type PricelistRow } from "@/lib/pricelist";
+import { formatPercent, formatRupiah, type AmPricelistRow } from "@/lib/pricelist";
 
 // View AM (read-only): identitas produk + 4 kolom harga terpublikasi.
-const columns: DataColumn<PricelistRow>[] = [
+//
+// Barisnya `AmPricelistRow`, BUKAN `PricelistRow` utuh — dan itu disengaja. Dulu
+// komponen ini menerima baris mentah lalu memanggil deriveRow() di BROWSER, jadi
+// `hpp` & `margin_pct` ikut terkirim ke klien (terbaca di view-source / tab Network)
+// padahal tak ada kolom yang menampilkannya. HANDOVER §1/§9 melarang HPP & margin
+// keluar ke sales, jadi turunannya sekarang dihitung di server (lib/pricelist.ts →
+// toAmRow) dan yang sampai ke sini hanya angka yang boleh dibaca.
+const columns: DataColumn<AmPricelistRow>[] = [
   {
     id: "no",
     header: "SKU",
@@ -29,36 +36,36 @@ const columns: DataColumn<PricelistRow>[] = [
     header: "Price List",
     align: "right",
     sortable: true,
-    accessor: (r) => deriveRow(r).priceList,
-    cell: (r) => <span className="whitespace-nowrap">{formatRupiah(deriveRow(r).priceList)}</span>,
+    accessor: (r) => r.priceList,
+    cell: (r) => <span className="whitespace-nowrap">{formatRupiah(r.priceList)}</span>,
   },
   {
     id: "diskon",
     header: "Diskon",
     align: "right",
     sortable: true,
-    accessor: (r) => num(r.diskon_pct),
-    cell: (r) => <span className="whitespace-nowrap">{formatPercent(num(r.diskon_pct))}</span>,
+    accessor: (r) => r.diskonPct,
+    cell: (r) => <span className="whitespace-nowrap">{formatPercent(r.diskonPct)}</span>,
   },
   {
     id: "nett",
     header: "Nett Price",
     align: "right",
     sortable: true,
-    accessor: (r) => deriveRow(r).nettPrice,
-    cell: (r) => <span className="whitespace-nowrap">{formatRupiah(deriveRow(r).nettPrice)}</span>,
+    accessor: (r) => r.nettPrice,
+    cell: (r) => <span className="whitespace-nowrap">{formatRupiah(r.nettPrice)}</span>,
   },
   {
     id: "ppn",
     header: "Price + PPN",
     align: "right",
     sortable: true,
-    accessor: (r) => deriveRow(r).pricePpn,
-    cell: (r) => <span className="font-medium whitespace-nowrap">{formatRupiah(deriveRow(r).pricePpn)}</span>,
+    accessor: (r) => r.pricePpn,
+    cell: (r) => <span className="font-medium whitespace-nowrap">{formatRupiah(r.pricePpn)}</span>,
   },
 ];
 
-export function AmPricelistTable({ rows }: { rows: PricelistRow[] }) {
+export function AmPricelistTable({ rows }: { rows: AmPricelistRow[] }) {
   return (
     <DataTable
       columns={columns}
