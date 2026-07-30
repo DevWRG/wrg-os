@@ -73,6 +73,14 @@ import {
 } from "./repo/rbac.js";
 import { listTerritory, createTerritory, updateTerritory, deleteTerritory } from "./repo/territory.js";
 import { listPricelist, upsertPricelist, publishPricelist, unpublishPricelist, deletePricelist, type PricelistInput } from "./repo/pricelist.js";
+import {
+  listAtkCategories, createAtkCategory, updateAtkCategory, deleteAtkCategory,
+  listAtkSuppliers, createAtkSupplier, updateAtkSupplier, deleteAtkSupplier,
+  listAtkItems, createAtkItem, updateAtkItem, deleteAtkItem,
+  type AtkCategoryInput, type AtkCategoryUpdate,
+  type AtkSupplierInput, type AtkSupplierUpdate,
+  type AtkItemInput, type AtkItemUpdate,
+} from "./repo/atk-master.js";
 import { listCoachingNotes } from "./repo/coaching.js";
 import { getLatestCoachingNotes, computePeopleAnalytics } from "./repo/people.js";
 import { createVisit, getVisit, listVisits, visitSummary } from "./repo/visit.js";
@@ -2426,6 +2434,94 @@ app.post("/pricelist/unpublish", async (c) => {
 app.delete("/pricelist/:id", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const r = await deletePricelist(c.req.param("id"));
+  return c.json(r, r.deleted ? 200 : 404);
+});
+
+// ── F134 ATK Master (General Affairs) — Categories + Suppliers + Items ──
+app.get("/atk/categories", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listAtkCategories();
+  return c.json({ count: rows.length, rows });
+});
+
+app.post("/atk/categories", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: AtkCategoryInput;
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  if (!body.name) return c.json({ error: "name wajib" }, 400);
+  const row = await createAtkCategory(body);
+  return c.json(row, 201);
+});
+
+app.patch("/atk/categories/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: AtkCategoryUpdate;
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  const row = await updateAtkCategory(c.req.param("id"), body);
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+});
+
+app.delete("/atk/categories/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await deleteAtkCategory(c.req.param("id"));
+  return c.json(r, r.deleted ? 200 : 404);
+});
+
+app.get("/atk/suppliers", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listAtkSuppliers();
+  return c.json({ count: rows.length, rows });
+});
+
+app.post("/atk/suppliers", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: AtkSupplierInput;
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  if (!body.name) return c.json({ error: "name wajib" }, 400);
+  const row = await createAtkSupplier(body);
+  return c.json(row, 201);
+});
+
+app.patch("/atk/suppliers/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: AtkSupplierUpdate;
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  const row = await updateAtkSupplier(c.req.param("id"), body);
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+});
+
+app.delete("/atk/suppliers/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await deleteAtkSupplier(c.req.param("id"));
+  return c.json(r, r.deleted ? 200 : 404);
+});
+
+app.get("/atk/items", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listAtkItems();
+  return c.json({ count: rows.length, rows });
+});
+
+app.post("/atk/items", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: AtkItemInput;
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  if (!body.name || !body.unit) return c.json({ error: "name, unit wajib" }, 400);
+  const row = await createAtkItem(body);
+  return c.json(row, 201);
+});
+
+app.patch("/atk/items/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: AtkItemUpdate;
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  const row = await updateAtkItem(c.req.param("id"), body);
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+});
+
+app.delete("/atk/items/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await deleteAtkItem(c.req.param("id"));
   return c.json(r, r.deleted ? 200 : 404);
 });
 
