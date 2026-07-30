@@ -30,10 +30,11 @@ interface StepDef {
   buttonLabel: string;
   dialogTitle: string;
   confirmLabel: string;
+  manualOnly?: boolean; // true = tak ada hashtag WA (F42 "terima"), beda dari kirim/bast
 }
 
-// F12 — cuma 2 aksi manual (dikirim/BAST); web dipakai Admin Shipping utk
-// override kalau WA hashtag #KIRIM/#BAST dari kurir gagal/tak terkirim.
+// F12+F42 — kirim & bast dipicu WA hashtag (web = override kalau WA gagal);
+// "terima" (F42) MANUAL-ONLY via web, tak ada hashtag WA utk step ini.
 const STEP_BY_STATUS: Record<string, StepDef> = {
   draft: {
     endpoint: "kirim",
@@ -42,6 +43,13 @@ const STEP_BY_STATUS: Record<string, StepDef> = {
     confirmLabel: "Konfirmasi kirim",
   },
   dikirim: {
+    endpoint: "terima",
+    buttonLabel: "Tandai Terima",
+    dialogTitle: "Tandai barang diterima customer",
+    confirmLabel: "Konfirmasi terima",
+    manualOnly: true,
+  },
+  terima: {
     endpoint: "bast",
     buttonLabel: "Tandai BAST",
     dialogTitle: "Tandai BAST (selesai)",
@@ -94,7 +102,9 @@ export function ShipmentTrackingRowActions({ row }: { row: ShipmentTracking }) {
         <DialogBody>
           {error && <p className="text-destructive text-sm">{error}</p>}
           <p className="text-muted-foreground text-sm">
-            Aksi manual ini override — normalnya status di-update otomatis lewat WA hashtag dari kurir.
+            {step.manualOnly
+              ? "Langkah ini manual-only — tak ada hashtag WA, ditandai Admin Shipping/Kirim-Tagih."
+              : "Aksi manual ini override — normalnya status di-update otomatis lewat WA hashtag dari kurir."}
           </p>
         </DialogBody>
         <DialogFooter>

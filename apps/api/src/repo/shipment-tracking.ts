@@ -1,8 +1,11 @@
 import { db } from "../db.js";
 
-// F12 — Tracking Pengiriman Digital (SHIPPING). State machine SEDERHANA 3
-// langkah: draft → dikirim → bast (TTF sengaja diabaikan, arahan Direktur
-// rapat 2026-07-30 — lihat docs/features/F12-tracking-pengiriman-digital.md).
+// F12+F42 — Tracking Pengiriman (SHIPPING). State machine: draft → dikirim →
+// terima → bast (TTF sengaja diabaikan utk F12 MAUPUN F42, arahan Direktur
+// rapat 2026-07-30 — lihat docs/features/F12-*.md & F42-*.md). "terima"
+// (F42, extend F12) ditandai MANUAL via web — board F42 cuma sebut hashtag
+// #SJ #BAST #TTF, tak ada utk "terima" (default engineer, belum eksplisit
+// dikonfirmasi Direktur).
 //
 // REVISI 2026-07-30 (arahan Direktur, jawab pertanyaan koordinat titik A/B):
 // distance_km TIDAK LAGI diinput manual di awal. #KIRIM + foto ber-geotag
@@ -14,11 +17,11 @@ import { db } from "../db.js";
 // cabang dari mana" — TAK PERLU tabel referensi statis, dinamis dari foto
 // #KIRIM tiap shipment.
 //
-// Dipicu 2 arah: (1) web — Admin Shipping tandai manual (tanpa geo, dipakai
-// kalau WA gagal); (2) WA hashtag #KIRIM/#BAST dari kurir (lihat
-// repo/inbound.ts, match by sj_number + geo dari row.geo_lat/geo_lon kalau
-// foto ber-geotag, TANPA FK — kurir tak punya roster master data, sama
-// filosofi self-contained spt F22 installation_unit).
+// Dipicu 2 arah: (1) web — Admin Shipping/Kirim-Tagih tandai manual (tanpa
+// geo, dipakai kalau WA gagal); (2) WA hashtag #KIRIM/#BAST dari kurir
+// (lihat repo/inbound.ts, match by sj_number + geo dari row.geo_lat/geo_lon
+// kalau foto ber-geotag, TANPA FK — kurir tak punya roster master data,
+// sama filosofi self-contained spt F22 installation_unit).
 
 // Haversine — jarak great-circle (km) antar 2 titik lat/lon. Approksimasi
 // cukup utk analitik "kesesuaian" (bukan jarak jalan sungguhan/routing).
@@ -58,6 +61,8 @@ export interface ShipmentRow {
   kirim_at: string | null;
   kirim_photo_path: string | null;
   kirim_by: string | null;
+  terima_at: string | null;
+  terima_by: string | null;
   bast_at: string | null;
   bast_photo_path: string | null;
   bast_by: string | null;
@@ -89,6 +94,8 @@ function mapRow(r: Record<string, unknown>): ShipmentRow {
     kirim_at: r.kirim_at ? toIsoTs(r.kirim_at) : null,
     kirim_photo_path: r.kirim_photo_path ? String(r.kirim_photo_path) : null,
     kirim_by: r.kirim_by ? String(r.kirim_by) : null,
+    terima_at: r.terima_at ? toIsoTs(r.terima_at) : null,
+    terima_by: r.terima_by ? String(r.terima_by) : null,
     bast_at: r.bast_at ? toIsoTs(r.bast_at) : null,
     bast_photo_path: r.bast_photo_path ? String(r.bast_photo_path) : null,
     bast_by: r.bast_by ? String(r.bast_by) : null,
@@ -172,6 +179,26 @@ export async function markKirim(
   return { ok: true, status: "dikirim" };
 }
 
+// F42 — barang diterima customer, SEBELUM BAST resmi ditandatangani.
+// Manual via web (Admin Shipping/Kirim-Tagih), bukan WA hashtag.
+export async function markTerima(
+  id: string,
+  opts: { by?: string | null } = {},
+): Promise<ShipmentActionResult> {
+  const sql = db();
+  const rows = await sql`SELECT id, status FROM shipment_tracking WHERE id = ${id}`;
+  if (rows.length === 0) return { ok: false, error: "shipment tidak ditemukan" };
+  if (rows[0].status !== "dikirim") return { ok: false, error: "langkah kirim belum selesai — belum bisa tandai terima" };
+  await sql`
+    UPDATE shipment_tracking
+    SET status = 'terima', terima_at = now(),
+        terima_by = COALESCE(${opts.by ?? null}, terima_by),
+        updated_at = now()
+    WHERE id = ${id}
+  `;
+  return { ok: true, status: "terima" };
+}
+
 export async function markBast(
   id: string,
   opts: { photo_path?: string | null; by?: string | null; lat?: number | null; lon?: number | null } = {},
@@ -179,7 +206,7 @@ export async function markBast(
   const sql = db();
   const rows = await sql`SELECT id, status, kirim_at, kirim_lat, kirim_lon FROM shipment_tracking WHERE id = ${id}`;
   if (rows.length === 0) return { ok: false, error: "shipment tidak ditemukan" };
-  if (rows[0].status !== "dikirim") return { ok: false, error: "langkah kirim belum selesai — belum bisa BAST" };
+  if (rows[0].status !== "terima") return { ok: false, error: "langkah terima belum ditandai — belum bisa BAST" };
 
   const kirimLat = rows[0].kirim_lat != null ? Number(rows[0].kirim_lat) : null;
   const kirimLon = rows[0].kirim_lon != null ? Number(rows[0].kirim_lon) : null;

@@ -112,6 +112,7 @@ import {
   listShipments,
   getShipmentById,
   markKirim as markShipmentKirim,
+  markTerima as markShipmentTerima,
   markBast as markShipmentBast,
 } from "./repo/shipment-tracking.js";
 import { recordCompetitor, listCompetitor, competitorSummary } from "./repo/competitor.js";
@@ -1785,6 +1786,19 @@ app.post("/shipment-tracking/:id/kirim", async (c) => {
     // semua field opsional
   }
   const r = await markShipmentKirim(c.req.param("id"), { by: body.by, lat: body.lat, lon: body.lon });
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+// F42 — barang diterima customer (SEBELUM BAST resmi), manual via web.
+app.post("/shipment-tracking/:id/terima", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { by?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    // by opsional
+  }
+  const r = await markShipmentTerima(c.req.param("id"), { by: body.by });
   return c.json(r, r.ok ? 200 : 400);
 });
 
