@@ -157,6 +157,10 @@ export function AddShipmentTrackingSheet() {
                 onChange={(e) => setF((p) => ({ ...p, distance_km: e.target.value }))}
                 placeholder="jarak cabang → customer, dipakai hitung ETA"
               />
+              <p className="text-muted-foreground text-xs">
+                Sementara diisi manual — rencana ke depan dihitung otomatis dari titik cabang→customer (nunggu
+                konfirmasi sumber koordinat).
+              </p>
             </div>
             <div className="grid gap-1.5">
               <Label htmlFor="st-driver">Nama kurir/driver</Label>

@@ -3,9 +3,12 @@ import { db } from "../db.js";
 // F12 — Tracking Pengiriman Digital (SHIPPING). State machine SEDERHANA 3
 // langkah: draft → dikirim → bast (TTF sengaja diabaikan, arahan Direktur
 // rapat 2026-07-30 — lihat docs/features/F12-tracking-pengiriman-digital.md).
-// ETA dihitung dari distance_km (input manual/dianalisa Admin Shipping saat
-// create — bukan integrasi Maps real-time, sesuai arahan rapat) via
-// computeEta(). Dipicu 2 arah: (1) web — Admin Shipping tandai manual;
+// ETA dihitung dari distance_km via computeEta() (bukan integrasi Maps
+// real-time, sesuai arahan rapat). ⚠️ distance_km SEHARUSNYA dihitung
+// otomatis dari koordinat cabang→customer (bukan diketik manual) — BELUM
+// diimplementasikan, nunggu konfirmasi sumber koordinat titik A/B (lihat
+// docs/features/F12-tracking-pengiriman-digital.md poin 3). Input manual di
+// bawah ini PLACEHOLDER sementara. Dipicu 2 arah: (1) web — Admin Shipping tandai manual;
 // (2) WA hashtag #KIRIM/#BAST dari kurir (lihat repo/inbound.ts, match by
 // sj_number, TANPA FK — kurir tak punya roster master data, sama filosofi
 // self-contained spt F22 installation_unit).

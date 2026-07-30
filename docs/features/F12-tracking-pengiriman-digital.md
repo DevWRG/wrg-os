@@ -44,19 +44,35 @@ ETA dari jarak (km), dipicu WA hashtag dari kurir atau manual via web.
 1. **TTF diabaikan** — arahan langsung Direktur di rapat 2026-07-30: "hiraukan
    aja, pakai yang BAST aja." State machine cuma 2 transisi (bukan 3 spt
    rencana awal #BAST #TTF #KIRIM).
-2. **ETA dari jarak (km), BUKAN integrasi Maps real-time** — arahan rapat:
-   jarak cabang→customer "dianalisa" (manual/ballpark, bukan geocoding), lalu
-   estimasi waktu dihitung LANGSUNG dari km itu (bukan input manual per-hari
-   oleh driver). Formula: `computeEta()` — `eta_days = ceil(distance_km /
-   SHIPPING_ETA_KM_PER_DAY)` (default 250 km/hari, env-override-able).
-   **Ini ASUMSI ballpark** (rapat tidak kasih angka speed pasti) — tervalidasi
-   kasar: Surabaya→NTT ±1400km → 6 hari, sejalan dgn keluhan "estimasi
-   seminggu" di deskripsi fitur. Kalau Direktur/Biz Dev kasih angka speed
-   resmi nanti, tinggal ubah `SHIPPING_ETA_KM_PER_DAY` atau formula ini.
-3. **`distance_km` input manual per shipment** (bukan tabel referensi
-   cabang↔wilayah) — konsisten dgn filosofi F24 (`interval_bulan` manual per
-   alat, bukan default global): tiap tujuan beda jarak, Admin Shipping yang
-   isi saat create.
+2. **ETA dihitung dari jarak (km), BUKAN integrasi Maps real-time** — arahan
+   rapat: estimasi waktu dihitung LANGSUNG dari km (bukan input manual
+   per-hari oleh driver). Formula: `computeEta()` — `eta_days =
+   ceil(distance_km / SHIPPING_ETA_KM_PER_DAY)` (default 250 km/hari,
+   env-override-able). **Ini ASUMSI ballpark** (rapat tidak kasih angka speed
+   pasti) — tervalidasi kasar: Surabaya→NTT ±1400km → 6 hari, sejalan dgn
+   keluhan "estimasi seminggu" di deskripsi fitur. Kalau Direktur/Biz Dev
+   kasih angka speed resmi nanti, tinggal ubah `SHIPPING_ETA_KM_PER_DAY`.
+3. **⚠️ `distance_km` SEHARUSNYA otomatis dari koordinat titik A (cabang) →
+   titik B (customer), BUKAN diketik manual per shipment** — koreksi user
+   2026-07-30 stlh transkrip rapat dibaca ulang: "ngambil starting point-nya
+   di mana, terus ke mana, gitu. Dari situ aja" berarti km dihitung dari 2
+   titik koordinat, bukan Admin Shipping mengetik angka km tiap kali bikin
+   tracking. **BELUM diimplementasikan** — user memilih tanya dulu ke
+   Direktur/Biz Dev sebelum coding, krn 2 pertanyaan sumber data ini belum
+   ada jawaban:
+   - Koordinat titik A (cabang/gudang asal) dari mana? Opsi: tabel referensi
+     baru (isi manual sekali per cabang, jumlah sedikit) vs sudah ada di
+     mirror Accurate (`accurate_branch` — perlu dicek apakah sudah simpan
+     lat/lon).
+   - Koordinat titik B (lokasi customer) dari mana? Opsi: reuse
+     `sales_plan.visit_lat/visit_lon` (sudah ada dari fitur Visits, tapi cuma
+     nutup customer yg pernah dikunjungi AM — gap utk customer baru) vs input
+     sekali per customer (map picker) saat tracking pertama dibuat.
+   **Status implementasi saat ini: `distance_km` MASIH input manual per
+   shipment (lihat form `/shipment-tracking`) — INI PLACEHOLDER SEMENTARA**,
+   bukan desain final. State machine kirim→BAST (bagian utama F12) sudah
+   selesai & tidak terpengaruh perubahan ini — cuma cara isi `distance_km`
+   yang perlu direvisi begitu sumber koordinat dikonfirmasi.
 4. **`kirim_by`/`bast_by` = `sender_name` WA apa adanya** (bukan FK ke
    `master_user`) — kurir/driver tidak selalu karyawan terdaftar, sama
    prinsip self-contained dgn `teknisi_name` di F22.
