@@ -175,11 +175,11 @@ export function DealFormModal({ mode, deal, onClose, brands = [], cabangs = [] }
 
         {err && <div className="mt-3 text-sm px-2 py-1 rounded bg-rose-100 text-rose-700">{err}</div>}
 
-        <div className="grid grid-cols-2 gap-3 mt-4">
-          <label className="text-sm col-span-2"><Lbl>Nama Faskes</Lbl>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4">
+          <label className="text-sm col-span-1 sm:col-span-2"><Lbl>Nama Faskes</Lbl>
             <input value={form.facility_name} onChange={(e) => set("facility_name", e.target.value)} className={inputCls} />
           </label>
-          <label className="text-sm col-span-2"><Lbl>Nama Customer</Lbl>
+          <label className="text-sm col-span-1 sm:col-span-2"><Lbl>Nama Customer</Lbl>
             <input value={form.customer_name} onChange={(e) => set("customer_name", e.target.value)} className={inputCls} />
           </label>
 
@@ -241,7 +241,7 @@ export function DealFormModal({ mode, deal, onClose, brands = [], cabangs = [] }
             <input type="number" inputMode="numeric" value={form.purchase_year} onChange={(e) => set("purchase_year", e.target.value)} className={inputCls} />
           </label>
 
-          <label className="text-sm col-span-2"><Lbl>Catatan</Lbl>
+          <label className="text-sm col-span-1 sm:col-span-2"><Lbl>Catatan</Lbl>
             <textarea value={form.notes} onChange={(e) => set("notes", e.target.value)} rows={2} className={inputCls} />
           </label>
         </div>
