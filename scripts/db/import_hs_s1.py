@@ -15,24 +15,26 @@ from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
 # ── mapping ────────────────────────────────────────────────────────────────
+# PROGRES → 7-stage (migrasi 069: 'First Contact' lebur ke Prospecting,
+# 'Offering' ke Quotation, tahap 'Closing' baru — tak ada padanan di sheet lama).
 STATUS_MAP = {
     "lose": "Closing-Lost", "gagal": "Closing-Lost",
     "deal": "Closing-Won", "mou": "Closing-Won",
-    "follow up": "First Contact", "minat/tertarik": "First Contact", "minat": "First Contact",
+    "follow up": "Prospecting", "minat/tertarik": "Prospecting", "minat": "Prospecting",
     "sph": "Quotation",
-    "offering letter": "Offering", "offering": "Offering",
+    "offering letter": "Quotation", "offering": "Quotation",
     "presentation": "Presentation", "presentasi": "Presentation",
     "negotiating": "Negotiation", "negosiasi": "Negotiation", "proses di manajemen": "Negotiation",
     # ditunda ditangani khusus (on_hold)
 }
 # stage → (prospect_category, probability, forecast_category)
+# HARUS sinkron dgn STAGE_META apps/api/src/repo/deal.ts + migrasi 069.
 STAGE_DERIVE = {
     "Prospecting":   ("Cold", 0.10, "D - Omit"),
-    "First Contact": ("Cold", 0.20, "C - Pipeline"),
-    "Presentation":  ("Cold", 0.50, "C - Pipeline"),
-    "Quotation":     ("Cold", 0.40, "C - Pipeline"),
-    "Offering":      ("Warm", 0.60, "B - Best Case"),
-    "Negotiation":   ("Hot",  0.85, "A - Commit"),
+    "Presentation":  ("Cold", 0.30, "C - Pipeline"),
+    "Quotation":     ("Cold", 0.50, "C - Pipeline"),
+    "Negotiation":   ("Warm", 0.70, "B - Best Case"),
+    "Closing":       ("Hot",  0.90, "A - Commit"),
     "Closing-Won":   ("Hot",  1.00, "Won"),
     "Closing-Lost":  ("",     0.00, "Lost"),
 }
