@@ -73,6 +73,31 @@ ETA dari jarak (km), dipicu WA hashtag dari kurir atau manual via web.
    bukan desain final. State machine kirim→BAST (bagian utama F12) sudah
    selesai & tidak terpengaruh perubahan ini — cuma cara isi `distance_km`
    yang perlu direvisi begitu sumber koordinat dikonfirmasi.
+
+   **Update investigasi 2026-07-30 (2 Explore agent, hasil FAKTUAL bukan
+   dugaan):**
+   - **Koordinat cabang**: TIDAK ADA di sistem manapun. `accurate_branch`
+     (mirror Accurate) cuma punya `id/name/suspended/raw JSONB` — tidak ada
+     lat/lon. Tidak ada tabel/config lain yang simpan ini. Kalau Direktur
+     bilang "datanya sudah ada", kemungkinan besar itu ada di LUAR sistem
+     (Excel/catatan Admin Shipping) — perlu tabel referensi baru + import
+     sekali, BUKAN sudah otomatis tersedia.
+   - **Koordinat customer dari WA**: mekanisme geo di `wa_message`
+     (`geo_lat/geo_lon/geo_ts/geo_address`, migrasi `025_wa_message_geo.sql`)
+     **CUMA lewat OCR foto ber-geotag** (`check_photo_geotag.py`, infra sama
+     yg dipakai AM "Geo-Tagging Camera" utk visit). **TIDAK ADA** native
+     WhatsApp "share live location" yang ditangkap sistem (`message_type =
+     "location"` cuma dead-code display di `monitor.ts`, tak pernah
+     benar-benar ke-set oleh ingestion `wa.ts`). Jadi "ambil dari chat WA"
+     = kurir kirim FOTO ber-geotag, bukan share-location native.
+   - **Pertanyaan terbuka BARU (blocking)**: foto ber-geotag itu dikirim
+     kapan — pas `#KIRIM` (baru berangkat, belum tau lokasi GPS customer) atau
+     pas `#BAST` (baru sampai, tapi ETA jadi USELESS krn dihitung setelah
+     kejadian)? Kemungkinan jawaban paling masuk akal: shipment PERTAMA ke
+     suatu customer capture koordinat dari foto BAST lalu SIMPAN PERMANEN per
+     customer, shipment KEDUA dst ke customer sama baru bisa dapat ETA di
+     awal (pakai koordinat tersimpan). **Belum dikonfirmasi Direktur/Diana**
+     — jangan asumsikan salah satu opsi tanpa tanya dulu.
 4. **`kirim_by`/`bast_by` = `sender_name` WA apa adanya** (bukan FK ke
    `master_user`) — kurir/driver tidak selalu karyawan terdaftar, sama
    prinsip self-contained dgn `teknisi_name` di F22.
