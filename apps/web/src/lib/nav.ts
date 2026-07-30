@@ -9,7 +9,7 @@ import {
   Sparkles, Send, FileText, ScrollText, GraduationCap, UsersRound, Network,
   Bell, MapPin, ListChecks, Swords, CalendarOff, CalendarDays, CalendarRange,
   Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, Tags, SlidersHorizontal,
-  Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, PenLine, type LucideIcon,
+  Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, PenLine, ArrowLeftRight, type LucideIcon,
 } from "lucide-react";
 
 import { canOrLegacy, hasPerms } from "@/lib/perms";
@@ -112,6 +112,7 @@ export const NAV: NavGroup[] = [
     label: "General Affairs",
     items: [
       { title: "ATK Master", url: "/atk-master", icon: PenLine, badge: "NEW" },
+      { title: "ATK Stock Movement", url: "/atk-stock", icon: ArrowLeftRight, badge: "NEW" },
     ],
   },
   {
