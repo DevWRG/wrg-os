@@ -58,5 +58,12 @@ export function canOrLegacy(
 ): boolean {
   if (!s || !s.permissions) return legacy; // izin tak tersedia → pakai gate lama
   if (s.superuser || s.role === "admin") return true;
-  return s.permissions[feature] ? can(s, feature, action) : legacy;
+  if (s.permissions[feature]) return can(s, feature, action);
+  // Fitur belum diatur di matriks → gate identitas lama, TAPI hanya untuk user
+  // yang punya grup. User tanpa grup = tanpa akses: gate lama yang longgar
+  // (`!!u` = "semua yang login" di pricebook & klasifikasi-produk) kalau tidak
+  // jadi lubang yang sama dengan fail-open hasPerms() — menu tetap muncul walau
+  // user belum di-assign grup apa pun.
+  if (s.rbac === true && !(s.groups && s.groups.length > 0)) return false;
+  return legacy;
 }
