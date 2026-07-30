@@ -8,13 +8,13 @@ import {
   Factory, Workflow, Receipt, BarChart3, ClipboardCheck, History, Settings,
   Sparkles, Send, FileText, ScrollText, GraduationCap, UsersRound, Network,
   Bell, MapPin, ListChecks, Swords, CalendarOff, CalendarDays, CalendarRange,
-  Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, Tags,
+  Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, Tags, SlidersHorizontal,
   Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, BookOpen, type LucideIcon,
 } from "lucide-react";
 
 import { can, canOrLegacy, hasPerms } from "@/lib/perms";
 import { canEditPricelistSetup, canViewPricelist, type AccessUser } from "@/lib/pricelist-access";
-import { canViewPricebook } from "@/lib/pricebook-access";
+import { canViewPricebook, canViewPricebookSummary } from "@/lib/pricebook-access";
 import { canViewKlasifikasi } from "@/lib/klasifikasi-access";
 import { canViewRaportList } from "@/lib/raport-access";
 import { canViewExecutive } from "@/lib/executive-access";
@@ -78,16 +78,30 @@ export const NAV: NavGroup[] = [
       { title: "AR Aging", url: "/ar", icon: Receipt },
       { title: "Sales Docs", url: "/sales-docs", icon: FileText },
       { title: "Collection Drafts", url: "/collection-drafts", icon: Send },
-      // SATU pintu untuk semua harga jual. Dulu tiga menu (Price Book · Pricelist
-      // Setup · Pricelist) — satu kebutuhan ("harga produk ini berapa") dengan tiga
-      // pintu, padahal rumus turunannya sudah sama (lib/pricelist.ts). Isinya kini
-      // tab ber-gate di /pricebook; route lama tetap ada sebagai redirect.
-      // Tabelnya TIDAK digabung: HPP/margin (043/073) wajib tetap terpisah dari
-      // tabel yang dibaca sales (071) — lihat komentar migrasi 073.
+      // Harga jual dibagi per PEMBACA, bukan per tabel:
+      //   /pricebook            sales & AM — katalog + harga terpublikasi (071/043)
+      //   /pricebook/ringkasan  Direktur + HoD — bacaan portofolio
+      //   /pricebook/setup      HoD Business + Purchasing — HPP & margin (043/073)
+      // Menu terpisah (bukan tab) supaya tiap muka punya baris izinnya sendiri di
+      // matriks Akses Grup — sebuah tab tidak bisa dicentang sendiri.
+      // Tabelnya tetap TIDAK digabung: HPP/margin wajib pisah dari tabel yang
+      // dibaca sales — lihat komentar migrasi 073.
       {
-        title: "Price Book & Pricelist", url: "/pricebook", icon: BookOpen, badge: "NEW",
-        show: (me) => canViewPricebook(me) || canViewPricelist(me) || canEditPricelistSetup(me),
+        title: "Price Book & Pricelist", url: "/pricebook", icon: BookOpen, badge: "NEW", exact: true,
+        show: (me) => canViewPricebook(me) || canViewPricelist(me),
+        // Bekas menu "Pricelist" jadi tab di sini; key-nya harus tetap hidup, kalau
+        // tidak Sync Fitur mematikannya sebagai zombie dan AM kehilangan akses.
         features: [{ key: "pricelist", name: "Pricelist (tab di Price Book)" }],
+      },
+      {
+        title: "Ringkasan Price Book", url: "/pricebook/ringkasan", icon: BarChart3, badge: "NEW",
+        show: canViewPricebookSummary,
+      },
+      {
+        // feature override: pertahankan key lama 'pricelist-setup' walau route-nya
+        // pindah, supaya izin grup yang sudah dicentang tidak perlu di-grant ulang.
+        title: "Setup Harga", url: "/pricebook/setup", icon: SlidersHorizontal,
+        feature: "pricelist-setup", show: canEditPricelistSetup,
       },
     ],
   },
