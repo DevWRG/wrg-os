@@ -16,8 +16,13 @@ import { Input } from "@/components/ui/input";
 import { PilihanBaris } from "@/components/kso/shared";
 import type { KsoKategori, KsoMaster } from "@/lib/kso/types";
 
+import { BgPanel } from "./bg-panel";
+import { CliaPanel } from "./clia-panel";
+import { ElektroPanel } from "./elektro-panel";
 import { HematoPanel } from "./hemato-panel";
+import { HplcPanel } from "./hplc-panel";
 import { KkPanel } from "./kk-panel";
+import { XmPanel } from "./xm-panel";
 
 /** Angka & keterangan yang berlaku lintas kategori. */
 export interface Umum {
@@ -40,14 +45,10 @@ const UMUM_AWAL: Umum = {
   backupOn: false, backupKode: null, backupPrice: 0, backupDisc: 0,
 };
 
-// Urutan tab. Lima kategori sisanya (Crossmatch, CLIA, HPLC, Elektrolit,
-// Blood Gas) menyusul — master datanya sudah ada di DB, tinggal layarnya.
+// Urutan tab — tujuh kategori, sama dengan aplikasi asal.
 const KATEGORI: { key: KsoKategori; label: string }[] = [
   { key: "HEMATO", label: "Hematologi" },
   { key: "CC", label: "Kimia Klinik" },
-];
-
-const SEGERA: { key: KsoKategori; label: string }[] = [
   { key: "XM", label: "Crossmatch" },
   { key: "CLIA", label: "CLIA" },
   { key: "HPLC", label: "HPLC" },
@@ -107,20 +108,15 @@ export function KsoView({ master }: { master: KsoMaster | null }) {
       </Card>
 
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-2">
-          <PilihanBaris
-            label="Kategori"
-            value={kategori}
-            options={KATEGORI}
-            onChange={(k) => {
-              setKategori(k);
-              setHalaman("input");
-            }}
-          />
-          <span className="text-muted-foreground text-xs">
-            Menyusul: {SEGERA.map((s) => s.label).join(" · ")}
-          </span>
-        </div>
+        <PilihanBaris
+          label="Kategori"
+          value={kategori}
+          options={KATEGORI.filter((k) => perKategori(k.key).length > 0)}
+          onChange={(k) => {
+            setKategori(k);
+            setHalaman("input");
+          }}
+        />
         <PilihanBaris
           value={halaman}
           options={[
@@ -151,6 +147,37 @@ export function KsoView({ master }: { master: KsoMaster | null }) {
           halaman={halaman}
           keHasil={() => setHalaman("hasil")}
         />
+      ) : null}
+
+      {kategori === "XM" ? (
+        <XmPanel analyzers={perKategori("XM")} umum={umum} setUmum={setUmum}
+          halaman={halaman} keHasil={() => setHalaman("hasil")} />
+      ) : null}
+
+      {kategori === "CLIA" ? (
+        <CliaPanel
+          analyzers={perKategori("CLIA")}
+          // Parameter CLIA dikirim utuh (SNIBE + WONDFO); panel-nya yang memisah
+          // per grup, karena satu platform bisa dilihat bergantian tanpa reload.
+          parameters={master.parameters.filter((p) => p.grup !== "CC")}
+          panels={master.panels.filter((p) => p.grup !== "CC")}
+          umum={umum} setUmum={setUmum}
+          halaman={halaman} keHasil={() => setHalaman("hasil")} />
+      ) : null}
+
+      {kategori === "HPLC" ? (
+        <HplcPanel analyzers={perKategori("HPLC")} umum={umum} setUmum={setUmum}
+          halaman={halaman} keHasil={() => setHalaman("hasil")} />
+      ) : null}
+
+      {kategori === "ELEKTRO" ? (
+        <ElektroPanel analyzers={perKategori("ELEKTRO")} umum={umum} setUmum={setUmum}
+          halaman={halaman} keHasil={() => setHalaman("hasil")} />
+      ) : null}
+
+      {kategori === "BG" ? (
+        <BgPanel analyzers={perKategori("BG")} umum={umum} setUmum={setUmum}
+          halaman={halaman} keHasil={() => setHalaman("hasil")} />
       ) : null}
     </div>
   );
