@@ -9,7 +9,7 @@ import {
   Sparkles, Send, FileText, ScrollText, GraduationCap, UsersRound, Network,
   Bell, MapPin, ListChecks, Swords, CalendarOff, CalendarDays, CalendarRange,
   Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, Tags, SlidersHorizontal,
-  Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, PenLine, ArrowLeftRight, type LucideIcon,
+  Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, PenLine, PackagePlus, PackageMinus, type LucideIcon,
 } from "lucide-react";
 
 import { canOrLegacy, hasPerms } from "@/lib/perms";
@@ -112,7 +112,14 @@ export const NAV: NavGroup[] = [
     label: "General Affairs",
     items: [
       { title: "ATK Master", url: "/atk-master", icon: PenLine, badge: "NEW" },
-      { title: "ATK Stock Movement", url: "/atk-stock", icon: ArrowLeftRight, badge: "NEW" },
+      // F135 sengaja 2 menu/feature-key terpisah (bukan 1 halaman gabungan):
+      // Stock In = tim GA (pencatatan pembelian/penerimaan), Stock Out = tim
+      // mana pun (self-service pengambilan barang). Belum di-gate identitas
+      // ("show") krn sistem ini belum punya konsep departemen/tim di data
+      // user — Direktur atur siapa boleh apa lewat Akses Grup (feature key
+      // "atk-stock-in" vs "atk-stock-out", auto dari url).
+      { title: "ATK Stock In", url: "/atk-stock-in", icon: PackagePlus, badge: "NEW" },
+      { title: "ATK Stock Out", url: "/atk-stock-out", icon: PackageMinus, badge: "NEW" },
     ],
   },
   {

@@ -29,7 +29,6 @@ function todayIso() {
 
 const blank = () => ({
   item_id: "",
-  movement_type: "in" as "in" | "out",
   qty: "",
   movement_date: todayIso(),
   reference: "",
@@ -38,8 +37,18 @@ const blank = () => ({
   notes: "",
 });
 
-export function AddAtkStockMovementSheet({ items }: { items: AtkStockItemOption[] }) {
+// Tipe mutasi TERKUNCI per halaman (bukan pilihan bebas) — F135 v2: Stock In
+// (tim GA, /atk-stock-in) dan Stock Out (semua tim, /atk-stock-out) sengaja
+// dipisah jadi 2 menu dgn feature-key beda supaya bisa di-gate independen
+// lewat Akses Grup nanti. Sheet ini dipakai di kedua halaman, hanya beda mode.
+const COPY = {
+  in: { trigger: "Catat Stok Masuk", title: "Catat Stok Masuk ATK", desc: "Barang ATK masuk (pembelian/penerimaan) — tim General Affairs.", picLabel: "Diterima oleh", picPlaceholder: "Nama penerima" },
+  out: { trigger: "Ambil Barang", title: "Catat Pengambilan Barang ATK", desc: "Pengambilan/pemakaian barang ATK oleh tim mana pun.", picLabel: "Diminta oleh", picPlaceholder: "Nama pemohon" },
+} as const;
+
+export function AddAtkStockMovementSheet({ mode, items }: { mode: "in" | "out"; items: AtkStockItemOption[] }) {
   const router = useRouter();
+  const copy = COPY[mode];
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -55,7 +64,7 @@ export function AddAtkStockMovementSheet({ items }: { items: AtkStockItemOption[
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           item_id: f.item_id,
-          movement_type: f.movement_type,
+          movement_type: mode,
           qty: Number(f.qty),
           movement_date: f.movement_date || undefined,
           reference: f.reference.trim() || undefined,
@@ -79,27 +88,15 @@ export function AddAtkStockMovementSheet({ items }: { items: AtkStockItemOption[
   return (
     <Sheet open={open} onOpenChange={setOpen}>
       <SheetTrigger render={<Button size="sm" />}>
-        <Plus /> Catat Mutasi
+        <Plus /> {copy.trigger}
       </SheetTrigger>
       <SheetContent side="right" className="w-full sm:max-w-md">
         <SheetHeader>
-          <SheetTitle>Catat Mutasi Stok ATK</SheetTitle>
-          <SheetDescription>Stok masuk (pembelian) atau keluar (pemakaian) barang ATK.</SheetDescription>
+          <SheetTitle>{copy.title}</SheetTitle>
+          <SheetDescription>{copy.desc}</SheetDescription>
         </SheetHeader>
         <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col">
           <div className="flex flex-1 flex-col gap-4 overflow-y-auto px-4">
-            <div className="grid gap-1.5">
-              <Label htmlFor="asm-type">Tipe *</Label>
-              <select
-                id="asm-type"
-                className={selectCls}
-                value={f.movement_type}
-                onChange={(e) => setF((p) => ({ ...p, movement_type: e.target.value as "in" | "out" }))}
-              >
-                <option value="in">Masuk</option>
-                <option value="out">Keluar</option>
-              </select>
-            </div>
             <div className="grid gap-1.5">
               <Label htmlFor="asm-item">Barang *</Label>
               <select id="asm-item" required className={selectCls} value={f.item_id} onChange={(e) => setF((p) => ({ ...p, item_id: e.target.value }))}>
@@ -127,8 +124,8 @@ export function AddAtkStockMovementSheet({ items }: { items: AtkStockItemOption[
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="grid gap-1.5">
-                <Label htmlFor="asm-pic">PIC</Label>
-                <Input id="asm-pic" value={f.pic} onChange={(e) => setF((p) => ({ ...p, pic: e.target.value }))} placeholder="Diterima/diminta oleh" />
+                <Label htmlFor="asm-pic">{copy.picLabel}</Label>
+                <Input id="asm-pic" value={f.pic} onChange={(e) => setF((p) => ({ ...p, pic: e.target.value }))} placeholder={copy.picPlaceholder} />
               </div>
               <div className="grid gap-1.5">
                 <Label htmlFor="asm-cabang">Cabang</Label>

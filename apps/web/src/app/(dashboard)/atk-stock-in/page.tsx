@@ -1,7 +1,7 @@
 import { gatewayFetch } from "@/lib/gateway";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { EmptyState } from "@/components/ui/empty-state";
-import { AtkStockClient } from "@/components/atk/atk-stock-client";
+import { AtkStockInClient } from "@/components/atk/atk-stock-in-client";
 import type { AtkStockMovementRow, AtkStockItemOption } from "@/components/atk/atk-stock-movement-table";
 import type { AtkStockLevelRow } from "@/components/atk/atk-stock-level-table";
 
@@ -23,7 +23,7 @@ async function getJson<T>(path: string): Promise<T | null> {
   }
 }
 
-export default async function AtkStockPage() {
+export default async function AtkStockInPage() {
   const [item, mov, lvl] = await Promise.all([
     getJson<{ rows: AtkItemApiRow[] }>("/atk/items"),
     getJson<{ rows: AtkStockMovementRow[] }>("/atk/stock-movements"),
@@ -36,8 +36,8 @@ export default async function AtkStockPage() {
   return (
     <>
       <PageHeader
-        title="ATK Stock Movement"
-        description="Transaksi stok masuk/keluar barang ATK (F135) & laporan stok saat ini — dihitung dari mutasi, bukan disimpan."
+        title="ATK Stock In"
+        description="Pencatatan stok masuk barang ATK oleh tim General Affairs & audit penuh mutasi (F135) — laporan stok saat ini dihitung dari mutasi, bukan disimpan."
       />
       {!item || !mov || !lvl ? (
         <EmptyState
@@ -45,7 +45,7 @@ export default async function AtkStockPage() {
           description="Pastikan apps/api jalan dengan DATABASE_URL dan migrasi 069_atk_stock_movement.sql sudah diterapkan."
         />
       ) : (
-        <AtkStockClient movements={mov.rows ?? []} levels={lvl.rows ?? []} items={itemOptions} />
+        <AtkStockInClient movements={mov.rows ?? []} levels={lvl.rows ?? []} items={itemOptions} />
       )}
     </>
   );

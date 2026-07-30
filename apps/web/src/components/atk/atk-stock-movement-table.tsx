@@ -191,7 +191,15 @@ function MovementRowActions({ row, items }: { row: AtkStockMovementRow; items: A
   );
 }
 
-export function AtkStockMovementTable({ rows, items }: { rows: AtkStockMovementRow[]; items: AtkStockItemOption[] }) {
+export function AtkStockMovementTable({
+  rows,
+  items,
+  readOnly = false,
+}: {
+  rows: AtkStockMovementRow[];
+  items?: AtkStockItemOption[];
+  readOnly?: boolean;
+}) {
   const columns: DataColumn<AtkStockMovementRow>[] = [
     { id: "date", header: "Tanggal", sortable: true, accessor: (r) => r.movement_date, cell: (r) => r.movement_date },
     { id: "item", header: "Barang", sortable: true, accessor: (r) => r.item_name, cell: (r) => <span className="font-medium">{r.item_name}</span> },
@@ -206,7 +214,7 @@ export function AtkStockMovementTable({ rows, items }: { rows: AtkStockMovementR
     { id: "ref", header: "Referensi", sortable: true, accessor: (r) => r.reference ?? "", cell: (r) => r.reference ?? "—" },
     { id: "pic", header: "PIC", sortable: true, accessor: (r) => r.pic ?? "", cell: (r) => r.pic ?? "—" },
     { id: "cabang", header: "Cabang", sortable: true, accessor: (r) => r.cabang ?? "", cell: (r) => r.cabang ?? "—" },
-    { id: "aksi", header: "Aksi", align: "right", cell: (r) => <MovementRowActions row={r} items={items} /> },
+    ...(readOnly ? [] : [{ id: "aksi", header: "Aksi", align: "right" as const, cell: (r: AtkStockMovementRow) => <MovementRowActions row={r} items={items ?? []} /> }]),
   ];
   return <DataTable columns={columns} data={rows} getKey={(r) => r.id} searchPlaceholder="Cari mutasi…" pageSize={25} />;
 }

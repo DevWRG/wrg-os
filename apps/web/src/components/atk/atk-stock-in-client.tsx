@@ -7,7 +7,11 @@ import { AddAtkStockMovementSheet } from "@/components/atk/add-atk-stock-movemen
 import { AtkStockMovementTable, type AtkStockMovementRow, type AtkStockItemOption } from "@/components/atk/atk-stock-movement-table";
 import { AtkStockLevelTable, type AtkStockLevelRow } from "@/components/atk/atk-stock-level-table";
 
-export function AtkStockClient({
+// Halaman GA (tim General Affairs) — audit penuh semua mutasi (in & out, incl.
+// yg dicatat tim lain lewat /atk-stock-out), tapi form tambah dikunci ke Stock
+// In saja (mode="in"). Edit/hapus tetap tersedia (GA yg membetulkan salah catat
+// dari tim mana pun). Lihat AddAtkStockMovementSheet utk alasan pemisahan.
+export function AtkStockInClient({
   movements,
   levels,
   items,
@@ -27,10 +31,10 @@ export function AtkStockClient({
         <Card>
           <CardContent className="flex flex-col gap-4 pt-6">
             <div className="flex justify-end">
-              <AddAtkStockMovementSheet items={items} />
+              <AddAtkStockMovementSheet mode="in" items={items} />
             </div>
             {movements.length === 0 ? (
-              <EmptyState title="Belum ada mutasi stok" description="Tambah lewat tombol Catat Mutasi di atas." />
+              <EmptyState title="Belum ada mutasi stok" description="Tambah lewat tombol Catat Stok Masuk di atas." />
             ) : (
               <AtkStockMovementTable rows={movements} items={items} />
             )}
