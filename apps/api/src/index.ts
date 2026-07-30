@@ -73,9 +73,24 @@ import {
 } from "./repo/rbac.js";
 import { listTerritory, createTerritory, updateTerritory, deleteTerritory } from "./repo/territory.js";
 import { listPricelist, upsertPricelist, publishPricelist, unpublishPricelist, deletePricelist, type PricelistInput } from "./repo/pricelist.js";
+import {
+  listItems as listPricebookItems, summary as pricebookSummary,
+  outsideKeagenan, periodeList as pricebookPeriode,
+  listSetup as listPricebookSetup, setupSummary as pricebookSetupSummary,
+} from "./repo/pricebook.js";
+import {
+  taxonomy as klasifikasiTaxonomy, summary as klasifikasiSummary,
+  listCodes as listKlasifikasiCodes, nextKode as nextKlasifikasiKode,
+  createCode as createKlasifikasiCode, upsertNode as upsertKlasifikasiNode,
+  deleteNode as deleteKlasifikasiNode, listReview as listKlasifikasiReview,
+  setReviewStatus as setKlasifikasiReviewStatus,
+  type CodeInput as KlasifikasiCodeInput, type NodeInput as KlasifikasiNodeInput,
+  type Level as KlasifikasiLevel,
+} from "./repo/klasifikasi.js";
+import { master as ksoMaster } from "./repo/kso.js";
 import { listCoachingNotes } from "./repo/coaching.js";
 import { getLatestCoachingNotes, computePeopleAnalytics } from "./repo/people.js";
-import { createVisit, getVisit, listVisits, visitSummary } from "./repo/visit.js";
+import { createVisit, getVisit, listVisits, visitKpi, visitSummary } from "./repo/visit.js";
 import { upsertDailyTodo, listTodos, markTodoReported } from "./repo/todo.js";
 import { upsertUser, listUsers, upsertTerritory, listTerritories, updateUserCabang } from "./repo/master.js";
 import { listTargets, upsertTargets, listCabangTargets, upsertCabangTargets, listAmTargets, upsertAmTargets, listAmCandidates, deleteAmTarget } from "./repo/sales-target.js";
@@ -1450,7 +1465,17 @@ app.get("/visits/summary", async (c) => {
   return c.json(await visitSummary(await resolveScope(c.req.header("x-user-id"))));
 });
 
-// Detail 1 visit (didaftarkan SETELAH /visits/summary biar literal menang).
+// KPI F16 CRM Fase 1: timeliness input ≤48 jam + capaian target kunjungan
+// mingguan per AM. ?week=-1 → minggu lalu (dipakai rekap Senin).
+app.get("/visits/kpi", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const raw = Number(c.req.query("week"));
+  // Clamp: hanya minggu ini & ke belakang, biar tak diminta hitung minggu absurd.
+  const week = Number.isFinite(raw) ? Math.min(0, Math.max(-52, Math.trunc(raw))) : 0;
+  return c.json(await visitKpi(await resolveScope(c.req.header("x-user-id")), week));
+});
+
+// Detail 1 visit (didaftarkan SETELAH /visits/summary & /visits/kpi biar literal menang).
 // Di luar scope → 404 (sama seperti tak ada), jangan bocorkan keberadaannya.
 app.get("/visits/:id", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
@@ -1799,12 +1824,13 @@ app.get("/report/detail", async (c) => {
 
 // Sales Calendar: agregat plan/report per (tanggal, AM) + libur + katalog AM
 // untuk filter. from/to = rentang grid kalender (mis. awal–akhir 6 minggu).
+// Ber-scope row-level: AM = kalendernya sendiri, HoD = cabang timnya.
 app.get("/report/calendar", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const { from, to } = parseRange(c.req.query("from"), c.req.query("to"));
   const amId = c.req.query("am_id") || undefined;
   const cabang = c.req.query("cabang") || undefined;
-  return c.json(await reportCalendar(from, to, amId, cabang));
+  return c.json(await reportCalendar(from, to, amId, cabang, await resolveScope(c.req.header("x-user-id"))));
 });
 
 // Drilldown harian Sales Calendar: per-AM + daftar plan (customer/hasil).
@@ -1813,7 +1839,7 @@ app.get("/report/calendar/day", async (c) => {
   const date = c.req.query("date") || defaultRange().today;
   const amId = c.req.query("am_id") || undefined;
   const cabang = c.req.query("cabang") || undefined;
-  return c.json(await reportCalendarDay(date, amId, cabang));
+  return c.json(await reportCalendarDay(date, amId, cabang, await resolveScope(c.req.header("x-user-id"))));
 });
 
 // Push WA nudge ke satu AM (dari panel reminder dashboard). Stub di dev.
@@ -1968,10 +1994,11 @@ app.get("/sales-analytics/trending", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json(await analyticsTrending(c.req.query("from"), c.req.query("to"), await scopeOf(c)));
 });
-// Pacing sbg tab Sales Analytics (unscoped; berbasis tahun, bukan from/to).
+// Pacing sbg tab Sales Analytics (berbasis tahun, bukan from/to). Ber-scope
+// row-level: AM = target/actual sendiri, HoD = AM & cabang timnya.
 app.get("/sales-analytics/pacing", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  return c.json(await targetPacing(Number(c.req.query("year")) || undefined));
+  return c.json(await targetPacing(Number(c.req.query("year")) || undefined, await scopeOf(c)));
 });
 // Kinerja Saya — AR aging ber-scope (AM=piutang sendiri, HoD=tim, admin=semua).
 app.get("/sales-analytics/my-ar", async (c) => {
@@ -2396,6 +2423,144 @@ app.post("/watchpoint/weekly/:hodKey/send-wa", async (c) => {
   return c.json({ ...result, hodKey, week: board.label, preview: message }, result.sent ? 200 : 502);
 });
 
+// ── Price Book (F142) — katalog harga produk KEAGENAN per periode ───────────
+// Isi tabel dari importer scripts/db/import_pricebook.py (data tidak di repo).
+// Gate akses ada di BFF (apps/web /api/pricebook/*): katalog utk semua user
+// berizin, ringkasan hanya Direktur/admin.
+app.get("/pricebook/items", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const q = c.req.query();
+  const rows = await listPricebookItems({
+    periode: q.periode, lini: q.lini, brand: q.brand, kategori: q.kategori,
+    q: q.q, limit: q.limit ? Number(q.limit) : undefined,
+  });
+  return c.json({ count: rows.length, rows });
+});
+
+app.get("/pricebook/summary", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await pricebookSummary(c.req.query("periode") || undefined));
+});
+
+app.get("/pricebook/outside", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const q = c.req.query();
+  const rows = await outsideKeagenan({
+    periode: q.periode, q: q.q, limit: q.limit ? Number(q.limit) : undefined,
+  });
+  return c.json({ count: rows.length, rows });
+});
+
+app.get("/pricebook/periode", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json({ rows: await pricebookPeriode() });
+});
+
+// Lapisan Pricelist Setup (migrasi 073): HPP, margin turunan & klasifikasi per SKU.
+// INTERNAL — gate-nya di halaman /pricelist/setup (canEditPricelistSetup:
+// HoD Business / Purchasing / admin). JANGAN dipakai halaman AM: /pricebook yang
+// dilihat sales tidak boleh menyentuh endpoint ini.
+app.get("/pricebook/setup", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const q = c.req.query();
+  const periode = q.periode || undefined;
+  const [rows, ringkas] = await Promise.all([
+    listPricebookSetup({ periode, q: q.q, lini: q.lini, limit: q.limit ? Number(q.limit) : undefined }),
+    pricebookSetupSummary(periode),
+  ]);
+  return c.json({ count: rows.length, rows, ringkas });
+});
+
+// ── Simulator KSO (migrasi 074) — master alat, reagen & parameter ───────────
+// Isi tabel dari importer scripts/db/import_kso_master.py (data tidak di repo).
+// Read-only: perhitungan running cost jalan di browser (apps/web/src/lib/kso/
+// formula.ts) karena user mengubah harga & jumlah test terus-menerus saat
+// menyusun penawaran — bolak-balik ke server tiap ketikan tidak masuk akal.
+// Gate akses ada di BFF (apps/web /api/kso/*).
+app.get("/kso/master", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await ksoMaster());
+});
+
+// ── Klasifikasi produk & kode produk (migrasi 072) ──────────────────────────
+// Kode KK.PP.CC.SSS.NNNN. Isi awal dari importer
+// scripts/db/import_product_classification.py (data tidak di repo).
+// Gate akses ada di BFF (apps/web /api/klasifikasi/*): lihat utk user berizin,
+// tulis hanya HoD Business/Purchasing/admin.
+app.get("/klasifikasi/taxonomy", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json({ rows: await klasifikasiTaxonomy() });
+});
+
+app.get("/klasifikasi/summary", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await klasifikasiSummary());
+});
+
+app.get("/klasifikasi/codes", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const q = c.req.query();
+  const rows = await listKlasifikasiCodes({
+    kategoriId: q.kategori, lineId: q.line, classId: q.class, subClassId: q.sub_class,
+    sumber: q.sumber, q: q.q, limit: q.limit ? Number(q.limit) : undefined,
+  });
+  return c.json({ count: rows.length, rows });
+});
+
+// Pratinjau kode berikutnya — TIDAK menyimpan apa pun (bukan reservasi nomor).
+app.get("/klasifikasi/next-kode", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const q = c.req.query();
+  if (!q.kategori || !q.line || !q.class || !q.sub_class) {
+    return c.json({ error: "butuh query kategori, line, class, sub_class" }, 400);
+  }
+  const r = await nextKlasifikasiKode(q.kategori, q.line, q.class, q.sub_class);
+  return r.ok ? c.json(r.data) : c.json({ error: r.error }, 400);
+});
+
+app.post("/klasifikasi/codes", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: KlasifikasiCodeInput;
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  const r = await createKlasifikasiCode(body);
+  return r.ok ? c.json({ kode: r.kode }, 201) : c.json({ error: r.error }, 400);
+});
+
+app.post("/klasifikasi/taxonomy", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: KlasifikasiNodeInput;
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  const r = await upsertKlasifikasiNode(body);
+  return r.ok ? c.json({ ok: true }) : c.json({ error: r.error }, 400);
+});
+
+app.delete("/klasifikasi/taxonomy", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const q = c.req.query();
+  const level = q.level as KlasifikasiLevel;
+  if (!level || !q.kategori || !q.id) {
+    return c.json({ error: "butuh query level, kategori, id (+ class untuk sub_class)" }, 400);
+  }
+  const r = await deleteKlasifikasiNode(level, q.kategori, q.id, q.class);
+  return r.ok ? c.json({ ok: true }) : c.json({ error: r.error }, 409);
+});
+
+app.get("/klasifikasi/review", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const q = c.req.query();
+  const rows = await listKlasifikasiReview(q.status || undefined,
+    q.limit ? Number(q.limit) : undefined);
+  return c.json({ count: rows.length, rows });
+});
+
+app.post("/klasifikasi/review/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { status?: string };
+  try { body = await c.req.json(); } catch { body = {}; }
+  const r = await setKlasifikasiReviewStatus(Number(c.req.param("id")), body.status ?? "");
+  return r.ok ? c.json({ ok: true }) : c.json({ error: r.error }, 400);
+});
+
 // ── Pricelist — harga jual per produk (setup HoD/Purchasing → publish → AM) ──
 // Role-guard ada di BFF (apps/web /api/pricelist*); di sini hanya validasi DB.
 app.get("/pricelist", async (c) => {
@@ -2599,6 +2764,13 @@ app.post("/reminders", async (c) => {
   }
   if (!body.am_id || !body.reminder_date || !body.note) {
     return c.json({ error: "am_id, reminder_date (YYYY-MM-DD), note wajib" }, 400);
+  }
+  // Write-guard row-level: AM murni hanya boleh bikin reminder atas namanya
+  // sendiri (kalau tidak, dia bisa menitipkan reminder ke AM lain padahal
+  // kalendernya sendiri saja yang terlihat).
+  const scope = await resolveScope(c.req.header("x-user-id"));
+  if (scope.amOnly && scope.amId && body.am_id !== scope.amId) {
+    return c.json({ error: "forbidden — hanya boleh membuat reminder untuk diri sendiri" }, 403);
   }
   const id = await createReminder({
     am_id: body.am_id,

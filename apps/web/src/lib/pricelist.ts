@@ -88,6 +88,36 @@ export function derivePricing(
   };
 }
 
+// ── Baris untuk muka AM/sales ──────────────────────────────────────────────
+// HANYA angka yang boleh dilihat sales. Sengaja TANPA hpp / margin_pct / alokasi
+// insentif: kalau `PricelistRow` utuh diteruskan ke komponen klien, HPP & margin
+// ikut ter-serialisasi ke HTML + payload RSC dan bisa dibaca siapa pun yang membuka
+// "view source" atau tab Network — walau tak ada satu kolom pun yang menampilkannya.
+// Itu persis yang dilarang HANDOVER §1/§9. Karena tabel AM butuh Price List / Nett /
+// Nett+PPN yang turunan dari HPP, turunannya DIHITUNG DI SERVER lewat toAmRow().
+export interface AmPricelistRow {
+  id: string;
+  product_no: string | null;
+  product_name: string | null;
+  priceList: number;
+  diskonPct: number;
+  nettPrice: number;
+  pricePpn: number;
+}
+
+export function toAmRow(row: PricelistRow): AmPricelistRow {
+  const d = deriveRow(row);
+  return {
+    id: row.id,
+    product_no: row.product_no,
+    product_name: row.product_name,
+    priceList: d.priceList,
+    diskonPct: num(row.diskon_pct),
+    nettPrice: d.nettPrice,
+    pricePpn: d.pricePpn,
+  };
+}
+
 export function deriveRow(row: PricelistRow): PricelistDerived {
   return derivePricing(
     num(row.hpp),
