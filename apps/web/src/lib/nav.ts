@@ -10,7 +10,7 @@ import {
   Bell, MapPin, ListChecks, Swords, CalendarOff, CalendarDays, CalendarRange,
   Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, Tags, SlidersHorizontal,
   Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, BookOpen, Calculator,
-  type LucideIcon,
+  Car, type LucideIcon,
 } from "lucide-react";
 
 import { can, canOrLegacy, hasPerms } from "@/lib/perms";
@@ -151,6 +151,7 @@ export const NAV: NavGroup[] = [
       { title: "Orders", url: "/orders", icon: ShoppingCart },
       { title: "Shipments", url: "/shipments", icon: Truck },
       { title: "Suppliers", url: "/suppliers", icon: Factory },
+      { title: "Kendaraan Operasional", url: "/vehicles", icon: Car, badge: "NEW" },
       { title: "HITL Review", url: "/hitl", icon: ClipboardCheck },
     ],
   },

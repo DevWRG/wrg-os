@@ -16,6 +16,7 @@ import {
   runPeopleAnalytics,
 } from "./repo/agents.js";
 import { runReminders } from "./repo/reminder.js";
+import { runVehicleAlerts } from "./repo/vehicle.js";
 import { runHodDaily, runMissStreakEscalation } from "./repo/hodreminder.js";
 import { runVisitWeeklyRecap } from "./repo/visitweekly.js";
 import { generateRekap, generateResume } from "./repo/monitor.js";
@@ -273,6 +274,31 @@ export function startScheduler(): ScheduleStatus {
       { timezone },
     );
     live.push(`${j.label}=${j.expr}`);
+  }
+
+  // Kendaraan Operasional Log (F50, OPS) — alert service-due (km-based) +
+  // STNK H-30. Nyala SENDIRI (default off), tidak ikut AGENT_SCHEDULE_ENABLED.
+  const vehicleAlertEnabled = (process.env.VEHICLE_ALERT_ENABLED ?? "false").toLowerCase() === "true";
+  const vehicleAlertExpr = process.env.VEHICLE_ALERT_CRON ?? "0 8 * * *";
+  if (vehicleAlertEnabled) {
+    if (!cron.validate(vehicleAlertExpr)) {
+      console.error(`[scheduler] vehicle-alert cron-expr tidak valid: "${vehicleAlertExpr}" — dilewati`);
+    } else {
+      cron.schedule(
+        vehicleAlertExpr,
+        async () => {
+          const startedAt = new Date().toISOString();
+          try {
+            const r = await runVehicleAlerts();
+            console.log(`[scheduler] vehicle-alert ok @ ${startedAt} ${JSON.stringify(r)}`);
+          } catch (e) {
+            console.error(`[scheduler] vehicle-alert gagal @ ${startedAt}:`, e);
+          }
+        },
+        { timezone },
+      );
+      live.push(`vehicle-alert=${vehicleAlertExpr}`);
+    }
   }
 
   // HOD daily reminder — rekap kepatuhan plan/report (08:30, setelah AM plan pagi).
