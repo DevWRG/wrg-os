@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { ArrowRightLeft } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { DealFormModal, type DealFormInit } from "./deal-form-modal";
@@ -75,7 +76,7 @@ const STAGE_DESC: Record<string, string> = {
   Negotiation: "Sedang diskusi harga, term, atau kondisi kontrak",
   Closing: "Menunggu tanda tangan / PO — semua isu sudah resolved",
   "Closing-Won": "Deal selesai, PO atau kontrak sudah ada",
-  "Closing-Lost": "Gagal — catat alasannya (harga / kompetitor / no budget / internal RS / dll)",
+  "Closing-Lost": "Gagal — catat alasannya (spesifikasi / harga / populasi / komitmen)",
 };
 const STAGE_COLOR: Record<string, string> = {
   Prospecting: "border-t-slate-400", Presentation: "border-t-sky-400",
@@ -86,11 +87,10 @@ const STAGE_COLOR: Record<string, string> = {
 const PCAT_COLOR: Record<string, string> = { Cold: "bg-sky-100 text-sky-700", Warm: "bg-amber-100 text-amber-700", Hot: "bg-rose-100 text-rose-700" };
 // enum deal_loss_reason (migrasi 057) — wajib saat drag ke Closing-Lost.
 const LOSS_REASONS: { val: string; label: string }[] = [
+  { val: "spesifikasi", label: "Spesifikasi" },
   { val: "harga", label: "Harga" },
-  { val: "kompetitor", label: "Kompetitor" },
-  { val: "no-budget", label: "Tidak ada budget" },
-  { val: "kalah-tender", label: "Kalah tender" },
-  { val: "internal-RS", label: "Internal RS/faskes" },
+  { val: "populasi", label: "Populasi" },
+  { val: "komitmen", label: "Komitmen" },
 ];
 
 const jt = (n: number | null) => {
@@ -149,6 +149,8 @@ export function PipelineBoard({ data, isAdmin = false }: { data: PipelineData; i
   const [lossModal, setLossModal] = useState<{ deal: PipelineDeal; reason: string; note: string } | null>(null);
   // Modal keterangan WAJIB untuk setiap pemindahan stage non-Lost: {deal, toStage, note}.
   const [moveModal, setMoveModal] = useState<{ deal: PipelineDeal; toStage: string; note: string } | null>(null);
+  // Picker tujuan stage (tombol Move di kartu — alternatif drag, ramah mobile).
+  const [movePicker, setMovePicker] = useState<PipelineDeal | null>(null);
   // Simpan bareng dealId → loading & stale-guard bisa DITURUNKAN (derived), jadi
   // effect gak perlu setState sync (react-hooks/set-state-in-effect). Semua setState
   // setelah await + guard alive.
@@ -218,20 +220,20 @@ export function PipelineBoard({ data, isAdmin = false }: { data: PipelineData; i
     }
   }
 
-  // Drop kartu ke kolom stage. Closing-Lost → buka modal loss_reason dulu.
+  // Mulai pemindahan (dipakai drag & tombol Move). Closing-Lost → modal alasan;
+  // selain itu → modal keterangan wajib. Keduanya tercatat di Riwayat (spt_state_log).
+  function startMove(deal: PipelineDeal | undefined, toStage: string) {
+    if (!deal || deal.stage === toStage) return;
+    if (toStage === "Closing-Lost") { setLossModal({ deal, reason: "", note: "" }); return; }
+    setMoveModal({ deal, toStage, note: "" });
+  }
+  // Drop kartu ke kolom stage.
   function onDropStage(toStage: string) {
     const id = dragId;
     setDragId(null);
     setOverStage(null);
     if (!id) return;
-    const deal = allDeals.find((d) => d.deal_id === id);
-    if (!deal || deal.stage === toStage) return;
-    if (toStage === "Closing-Lost") {
-      setLossModal({ deal, reason: "", note: "" });
-      return;
-    }
-    // Setiap pemindahan wajib disertai keterangan → tercatat di Riwayat (spt_state_log).
-    setMoveModal({ deal, toStage, note: "" });
+    startMove(allDeals.find((d) => d.deal_id === id), toStage);
   }
 
   const opts = useMemo(() => ({
@@ -299,7 +301,7 @@ export function PipelineBoard({ data, isAdmin = false }: { data: PipelineData; i
 
       {/* Hint + status */}
       <div className="flex items-center gap-3 text-xs">
-        <span className="text-muted-foreground">💡 Seret kartu untuk pindah stage — tiap perpindahan minta <b>keterangan</b>. Drop ke <b>Lost</b> minta alasan.</span>
+        <span className="text-muted-foreground">💡 Seret kartu <b>atau</b> pakai tombol ⇄ di kartu untuk pindah stage — tiap perpindahan minta <b>keterangan</b>. Ke <b>Lost</b> minta alasan.</span>
         {busy && <span className="text-muted-foreground animate-pulse">menyimpan…</span>}
         {msg && (
           <span className={`px-2 py-0.5 rounded ${msg.kind === "ok" ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"}`}>
@@ -331,27 +333,55 @@ export function PipelineBoard({ data, isAdmin = false }: { data: PipelineData; i
               <div className="p-2 space-y-2 max-h-[65vh] overflow-y-auto">
                 {deals.length === 0 && <div className="text-xs text-muted-foreground italic py-2">{isTarget ? "drop di sini" : "—"}</div>}
                 {deals.map((d) => (
-                  <button key={d.deal_id} onClick={() => setSel(d)}
-                    draggable={!busy}
-                    onDragStart={(e) => { setDragId(d.deal_id); e.dataTransfer.effectAllowed = "move"; }}
-                    onDragEnd={() => { setDragId(null); setOverStage(null); }}
-                    className={`w-full text-left rounded-md border bg-background p-2 hover:border-primary transition-colors cursor-grab active:cursor-grabbing ${dragId === d.deal_id ? "opacity-40" : ""}`}>
-                    <div className="flex items-start justify-between gap-1">
-                      <div className="text-sm font-medium leading-tight line-clamp-2">{d.facility_name || d.customer_name}</div>
-                      {d.stale && <span title="Mangkrak >2 minggu" className="text-rose-500 text-xs shrink-0">●</span>}
-                    </div>
-                    <div className="text-xs text-muted-foreground mt-1 line-clamp-1">{[d.brand, d.product].filter(Boolean).join(" · ") || "—"}</div>
-                    <div className="flex items-center justify-between mt-1.5">
-                      <span className="text-xs tabular-nums">{jt(d.estimate_amount)}</span>
-                      {d.prospect_category && <span className={`text-[10px] px-1.5 py-0.5 rounded ${PCAT_COLOR[d.prospect_category] ?? "bg-muted"}`}>{d.prospect_category}</span>}
-                    </div>
-                  </button>
+                  <div key={d.deal_id} className="relative">
+                    <button onClick={() => setSel(d)}
+                      draggable={!busy}
+                      onDragStart={(e) => { setDragId(d.deal_id); e.dataTransfer.effectAllowed = "move"; }}
+                      onDragEnd={() => { setDragId(null); setOverStage(null); }}
+                      className={`w-full text-left rounded-md border bg-background p-2 pr-9 hover:border-primary transition-colors cursor-grab active:cursor-grabbing ${dragId === d.deal_id ? "opacity-40" : ""}`}>
+                      <div className="flex items-start justify-between gap-1">
+                        <div className="text-sm font-medium leading-tight line-clamp-2">{d.facility_name || d.customer_name}</div>
+                        {d.stale && <span title="Mangkrak >2 minggu" className="text-rose-500 text-xs shrink-0">●</span>}
+                      </div>
+                      <div className="text-xs text-muted-foreground mt-1 line-clamp-1">{[d.brand, d.product].filter(Boolean).join(" · ") || "—"}</div>
+                      <div className="flex items-center justify-between mt-1.5">
+                        <span className="text-xs tabular-nums">{jt(d.estimate_amount)}</span>
+                        {d.prospect_category && <span className={`text-[10px] px-1.5 py-0.5 rounded ${PCAT_COLOR[d.prospect_category] ?? "bg-muted"}`}>{d.prospect_category}</span>}
+                      </div>
+                    </button>
+                    <button type="button" onClick={() => setMovePicker(d)} title="Pindahkan stage" aria-label="Pindahkan stage"
+                      className="absolute top-1.5 right-1.5 rounded-md border bg-card p-1 text-muted-foreground shadow-sm hover:text-primary hover:border-primary">
+                      <ArrowRightLeft className="size-3.5" />
+                    </button>
+                  </div>
                 ))}
               </div>
             </div>
           );
         })}
       </div>
+
+      {/* Picker tujuan stage (tombol ⇄ di kartu — alternatif drag, ramah mobile) */}
+      {movePicker && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setMovePicker(null)}>
+          <Card className="max-w-xs w-full max-h-[85vh] overflow-y-auto p-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start justify-between gap-2">
+              <h2 className="text-base font-semibold leading-tight">Pindahkan kartu</h2>
+              <button onClick={() => setMovePicker(null)} className="text-muted-foreground hover:text-foreground text-xl leading-none">×</button>
+            </div>
+            <div className="text-xs text-muted-foreground mt-0.5 line-clamp-1">{movePicker.facility_name || movePicker.customer_name}</div>
+            <div className="text-xs text-muted-foreground mt-2">Dari <b>{stageLabel(movePicker.stage)}</b> → pilih tujuan:</div>
+            <div className="mt-2 grid gap-1.5">
+              {STAGES.filter((s) => s !== movePicker.stage).map((s) => (
+                <button key={s} onClick={() => { const d = movePicker; setMovePicker(null); startMove(d, s); }}
+                  className={`rounded-md border border-t-4 bg-background p-2 text-sm text-left hover:border-primary hover:bg-primary/5 ${STAGE_COLOR[s] ?? "border-t-slate-300"}`}>
+                  {stageLabel(s)}
+                </button>
+              ))}
+            </div>
+          </Card>
+        </div>
+      )}
 
       {/* Deal detail modal (read-only) */}
       {sel && (

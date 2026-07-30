@@ -39,8 +39,10 @@ const STAGE_META: Record<string, { prospect: string; prob: number; forecast: str
   "Closing-Lost":  { prospect: "",     prob: 0.0,  forecast: "Lost" },
 };
 
-// enum deal_loss_reason (migrasi 057) — wajib saat transisi ke Closing-Lost.
-export const DEAL_LOSS_REASONS = ["harga", "kompetitor", "no-budget", "kalah-tender", "internal-RS"];
+// enum deal_loss_reason (migrasi 057 + 075) — wajib saat transisi ke Closing-Lost.
+// Opsi baru per Direktur (075). Nilai lama tetap valid di enum utk data historis,
+// tapi tak lagi ditawarkan/diterima untuk transisi baru.
+export const DEAL_LOSS_REASONS = ["spesifikasi", "harga", "populasi", "komitmen"];
 
 // Error dgn status HTTP eksplisit → endpoint map ke response code yg tepat.
 export class DealError extends Error {
