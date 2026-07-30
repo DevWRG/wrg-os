@@ -16,8 +16,11 @@
 
 1.407 mention "kirim" di grup WA, 47.7% pesan shipping pakai foto WhatsApp,
 customer sering tanya estimasi waktu sampai ("Bu Luri NTT: Lion Parcel
-estimasi seminggu kah??"). Multi-region. F12 bikin status kirim per SJ +
-ETA dari jarak (km), dipicu WA hashtag dari kurir atau manual via web.
+estimasi seminggu kah??"). Multi-region. F12 bikin status kirim per SJ,
+dipicu WA hashtag dari kurir atau manual via web, + analitik jarak/durasi
+otomatis dari foto ber-geotag. **ETA upfront ke customer SENGAJA
+dikosongkan dulu** (arahan Direktur 2026-07-30) — lihat "Keputusan desain"
+poin 5.
 
 ## Cara kerja
 
@@ -83,6 +86,13 @@ ETA dari jarak (km), dipicu WA hashtag dari kurir atau manual via web.
 4. **F45 (Pickup Pre-Visit Verification) belum dikerjakan** — Direktur ACC
    F12+F42+F93 duluan, F45 menyusul kalau ada waktu senggang (lihat memory
    roadmap jobdesk).
+5. **✅ ETA upfront ke customer SENGAJA dikosongkan dulu** — arahan Direktur
+   eksplisit (2026-07-30): "kosongin ETA-nya dulu saja." Ini keputusan
+   final, bukan gap yang perlu ditutup — meski deskripsi awal fitur sebut
+   keluhan customer nanya estimasi SEBELUM kirim, sistem saat ini memang
+   TIDAK menjawab itu (cuma kasih jarak/durasi AKTUAL setelah BAST). Kalau
+   nanti dibutuhkan lagi (mis. estimasi dari data historis per customer),
+   itu jadi fitur baru terpisah, bukan revisi F12 ini.
 
 ## Verifikasi (2026-07-30, lokal)
 
@@ -94,7 +104,6 @@ ETA dari jarak (km), dipicu WA hashtag dari kurir atau manual via web.
   titik kirim Surabaya) → `bast_lat`/`bast_lon` tersimpan, `distance_km`
   auto-computed **79.9 km** (haversine, cocok jarak lurus Surabaya↔Malang),
   `eta_days` = durasi aktual kirim→bast.
-- `POST /shipment-tracking/:id/bast` → `bast`.
 - WA hashtag: insert `wa_message` body `#KIRIM SJ-TEST-002` →
   `POST /wa/inbound/process` → `kind:"kirim"`, `shipment_id` ter-match,
   `kirim_by` terisi nama pengirim WA, balasan stub terkirim. Lanjut `#BAST`
