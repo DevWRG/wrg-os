@@ -58,7 +58,7 @@ export interface PipelineData {
   };
 }
 
-// 7 tahap kanonik (migrasi 069). Nilai DB 'Closing-Won'/'Closing-Lost' tetap —
+// 7 tahap kanonik (migrasi 076). Nilai DB 'Closing-Won'/'Closing-Lost' tetap —
 // di board ditampilkan sebagai "Won"/"Lost" lewat STAGE_LABEL.
 const STAGES = [
   "Prospecting", "Presentation", "Quotation",

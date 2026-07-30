@@ -15,7 +15,7 @@ from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
 # ── mapping ────────────────────────────────────────────────────────────────
-# PROGRES → 7-stage (migrasi 069: 'First Contact' lebur ke Prospecting,
+# PROGRES → 7-stage (migrasi 076: 'First Contact' lebur ke Prospecting,
 # 'Offering' ke Quotation, tahap 'Closing' baru — tak ada padanan di sheet lama).
 STATUS_MAP = {
     "lose": "Closing-Lost", "gagal": "Closing-Lost",
@@ -28,7 +28,7 @@ STATUS_MAP = {
     # ditunda ditangani khusus (on_hold)
 }
 # stage → (prospect_category, probability, forecast_category)
-# HARUS sinkron dgn STAGE_META apps/api/src/repo/deal.ts + migrasi 069.
+# HARUS sinkron dgn STAGE_META apps/api/src/repo/deal.ts + migrasi 076.
 STAGE_DERIVE = {
     "Prospecting":   ("Cold", 0.10, "D - Omit"),
     "Presentation":  ("Cold", 0.30, "C - Pipeline"),

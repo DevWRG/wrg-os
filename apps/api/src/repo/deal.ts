@@ -12,7 +12,7 @@ import { type DataScope, isRestricted } from "./access-scope.js";
 
 const AUTO = 0.7;
 const AMBIGUOUS = 0.4;
-// F1-SPT: 7-stage kanonik (migrasi 069 — 'First Contact' dilebur ke Prospecting,
+// F1-SPT: 7-stage kanonik (migrasi 076 — 'First Contact' dilebur ke Prospecting,
 // 'Offering' ke Quotation, + tahap 'Closing'). Nilai DB 'Closing-Won'/'Closing-Lost'
 // dipertahankan (dipakai literal di query report); UI menampilkannya "Won"/"Lost".
 const CLOSED = ["Closing-Won", "Closing-Lost"];
@@ -27,7 +27,7 @@ export const DEAL_STAGES = [
 ];
 
 // F1-SPT: derive kategori/probabilitas/forecast dari stage (selaras STAGE_DERIVE
-// importer scripts/db/import_hs_s1.py + migrasi 069 — SATU sumber kebenaran, jaga
+// importer scripts/db/import_hs_s1.py + migrasi 076 — SATU sumber kebenaran, jaga
 // tetap sinkron). Kategori prospek: Cold s/d Quotation, Warm Negotiation, Hot Closing+.
 const STAGE_META: Record<string, { prospect: string; prob: number; forecast: string }> = {
   "Prospecting":   { prospect: "Cold", prob: 0.1,  forecast: "D - Omit" },

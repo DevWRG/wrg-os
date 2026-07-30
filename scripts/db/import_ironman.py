@@ -25,7 +25,7 @@ from openpyxl import load_workbook
 
 SHEET = "2026"
 
-# PROGRES → 7-stage (identik dengan import_hs_s1.py; migrasi 069).
+# PROGRES → 7-stage (identik dengan import_hs_s1.py; migrasi 076).
 STATUS_MAP = {
     "lose": "Closing-Lost", "gagal": "Closing-Lost",
     "deal": "Closing-Won", "mou": "Closing-Won",

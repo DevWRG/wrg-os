@@ -1,4 +1,4 @@
--- 069 — F1-SPT: konsolidasi pipeline 8 → 7 tahap (definisi SPT baru dari direksi).
+-- 076 — F1-SPT: konsolidasi pipeline 8 → 7 tahap (definisi SPT baru dari direksi).
 --   First Contact → Prospecting  (sudah kunjungan pertama, ada interest / mau diajak bicara)
 --   Offering      → Quotation    (proposal/quotation tertulis — offering letter ikut di sini)
 --   + tahap BARU 'Closing'       (menunggu tanda tangan / PO, semua isu resolved)
