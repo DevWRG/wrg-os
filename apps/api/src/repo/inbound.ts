@@ -6,7 +6,7 @@ import { handleSalesAnalyticsQuery } from "./inbound-sales-analytics.js";
 import { resolveSender } from "./master.js";
 import { upsertDailyTodo, computeIsLate } from "./todo.js";
 import { createReminder } from "./reminder.js";
-import { findBySjNumber, markKirim, markBast } from "./shipment-tracking.js";
+import { findBySjNumber, markKirim, markBast, markBukti } from "./shipment-tracking.js";
 
 // Role yang pakai alur AM per-customer (sales_plan/activity_log + foto), bukan todo.
 const AM_ROLES = new Set(["AM", "Teknisi"]);
@@ -21,14 +21,16 @@ const isAmRole = (role?: string | null) => AM_ROLES.has((role ?? "").trim());
 // → patuh WA_DRY_RUN. Idempoten: wa_message.processed_at. Pengirim tak dikenal →
 // SILENT (tak balas) supaya tak spam non-AM/pesan bot di grup campuran.
 
-export type InboundKind = "plan" | "report" | "leads" | "update" | "sales" | "kirim" | "bast" | "none";
+export type InboundKind = "plan" | "report" | "leads" | "update" | "sales" | "kirim" | "bast" | "bukti" | "none";
 
 const LEADS_UPDATE_LINE = /^\s*#\s*(leads|update)\b/i;
 const SALES_LINE = /^\s*#\s*sales\b/i;
-// F12 — hashtag SHIPPING dari kurir: "#KIRIM SJ-2026-001" / "#BAST SJ-2026-001"
-// (caption foto atau teks biasa). TTF sengaja tak ada hashtag (diabaikan per
-// arahan Direktur rapat 2026-07-30 — lihat docs/features/F12-*.md).
-const SHIPPING_LINE = /^\s*#\s*(kirim|bast)\b\s*(.*)$/i;
+// F12/F93 — hashtag SHIPPING dari kurir: "#KIRIM SJ-2026-001" / "#BAST
+// SJ-2026-001" / "#BUKTI SJ-2026-001" (caption foto atau teks biasa). TTF
+// sengaja tak ada hashtag (diabaikan per arahan Direktur rapat 2026-07-30
+// — lihat docs/features/F12-*.md). #BUKTI (F93) — foto bukti terima + scan
+// tanda tangan, SETELAH bast (lihat docs/features/F93-*.md).
+const SHIPPING_LINE = /^\s*#\s*(kirim|bast|bukti)\b\s*(.*)$/i;
 
 export function detectKind(body: string | null): InboundKind {
   const daily = detectDaily(body); // line-anchored #plan/#report (sudah strip invisible)
@@ -39,7 +41,7 @@ export function detectKind(body: string | null): InboundKind {
       if (m) return m[1].toLowerCase() as "leads" | "update";
       if (SALES_LINE.test(line)) return "sales";
       const s = line.match(SHIPPING_LINE);
-      if (s) return s[1].toLowerCase() as "kirim" | "bast";
+      if (s) return s[1].toLowerCase() as "kirim" | "bast" | "bukti";
     }
   }
   return "none";
@@ -465,9 +467,10 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
     return finish({ kind: "sales", via: ams.via, reply });
   }
 
-  // F12 — #KIRIM/#BAST (SHIPPING): match by sj_number, TANPA gate sender —
-  // kurir tak punya roster master data (self-contained, sama filosofi F22).
-  if (kind === "kirim" || kind === "bast") {
+  // F12/F93 — #KIRIM/#BAST/#BUKTI (SHIPPING/OPS): match by sj_number, TANPA
+  // gate sender — kurir tak punya roster master data (self-contained, sama
+  // filosofi F22).
+  if (kind === "kirim" || kind === "bast" || kind === "bukti") {
     const sj = extractSjNumber(row.body);
     if (!sj) {
       const reply = await sendViaWaGateway(
@@ -486,13 +489,18 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
     // Camera" AM) → row.geo_lat/geo_lon terisi. #KIRIM capture titik AWAL,
     // #BAST capture titik CUSTOMER — dipakai hitung distance_km/eta_days
     // OTOMATIS di markBast() begitu keduanya ada (arahan Direktur 2026-07-30).
+    // #BUKTI (F93, SETELAH bast) — foto bukti terima + scan tanda tangan,
+    // TANPA geo (bukan titik baru, cuma audit trail tambahan).
     const geo = { lat: row.geo_lat ?? null, lon: row.geo_lon ?? null };
     const action =
       kind === "kirim"
         ? await markKirim(shipment.id, { photo_path: photoPath, by: row.sender_name, ...geo })
-        : await markBast(shipment.id, { photo_path: photoPath, by: row.sender_name, ...geo });
+        : kind === "bast"
+          ? await markBast(shipment.id, { photo_path: photoPath, by: row.sender_name, ...geo })
+          : await markBukti(shipment.id, { photo_path: photoPath, by: row.sender_name });
+    const labelDone = kind === "kirim" ? "DIKIRIM" : kind === "bast" ? "BAST/SELESAI" : "BUKTI TERSIMPAN";
     const replyMsg = action.ok
-      ? `✅ SJ ${shipment.sj_number} (${shipment.customer_name}) ditandai *${kind === "kirim" ? "DIKIRIM" : "BAST/SELESAI"}*.`
+      ? `✅ SJ ${shipment.sj_number} (${shipment.customer_name}) ditandai *${labelDone}*.`
       : `⚠️ Gagal update SJ ${shipment.sj_number}: ${action.error}`;
     const reply = await sendViaWaGateway(target, replyMsg);
     return finish({ shipment_id: shipment.id, sj, ok: action.ok, error: action.error, reply });
@@ -613,7 +621,7 @@ export async function processUnprocessed(
            media_path, geo_lat, geo_lon, geo_ts, geo_address
     FROM wa_message
     WHERE processed_at IS NULL
-      AND (body ~* '#\\s*(plan|report|leads|update|sales|kirim|bast)'
+      AND (body ~* '#\\s*(plan|report|leads|update|sales|kirim|bast|bukti)'
            OR (message_type ~* '^image' AND media_path IS NOT NULL))
     ORDER BY received_at ASC LIMIT ${limit}
   `;

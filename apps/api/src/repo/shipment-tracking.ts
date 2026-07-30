@@ -66,6 +66,10 @@ export interface ShipmentRow {
   bast_at: string | null;
   bast_photo_path: string | null;
   bast_by: string | null;
+  bukti_photo_path: string | null;
+  signature_photo_path: string | null;
+  bukti_at: string | null;
+  bukti_by: string | null;
   created_by: string | null;
   created_at: string;
   updated_at: string;
@@ -99,6 +103,10 @@ function mapRow(r: Record<string, unknown>): ShipmentRow {
     bast_at: r.bast_at ? toIsoTs(r.bast_at) : null,
     bast_photo_path: r.bast_photo_path ? String(r.bast_photo_path) : null,
     bast_by: r.bast_by ? String(r.bast_by) : null,
+    bukti_photo_path: r.bukti_photo_path ? String(r.bukti_photo_path) : null,
+    signature_photo_path: r.signature_photo_path ? String(r.signature_photo_path) : null,
+    bukti_at: r.bukti_at ? toIsoTs(r.bukti_at) : null,
+    bukti_by: r.bukti_by ? String(r.bukti_by) : null,
     created_by: r.created_by ? String(r.created_by) : null,
     created_at: toIsoTs(r.created_at),
     updated_at: toIsoTs(r.updated_at),
@@ -232,6 +240,37 @@ export async function markBast(
         bast_lon = COALESCE(${bastLon}, bast_lon),
         distance_km = COALESCE(${distanceKm}, distance_km),
         eta_days = COALESCE(${etaDays}, eta_days),
+        updated_at = now()
+    WHERE id = ${id}
+  `;
+  return { ok: true, status: "bast" };
+}
+
+// F93 — foto bukti terima + scan tanda tangan customer, SETELAH BAST
+// (audit trail tambahan, TIDAK mengubah status). Slot pertama yg masih
+// kosong yang keisi (foto → bukti_photo_path, foto ke-2 → signature_photo_path)
+// — kurir kirim 1 foto gabungan pun tetap valid (signature slot boleh kosong).
+export async function markBukti(
+  id: string,
+  opts: { photo_path?: string | null; by?: string | null } = {},
+): Promise<ShipmentActionResult> {
+  const sql = db();
+  const rows = await sql`
+    SELECT id, status, bukti_photo_path, signature_photo_path FROM shipment_tracking WHERE id = ${id}
+  `;
+  if (rows.length === 0) return { ok: false, error: "shipment tidak ditemukan" };
+  if (rows[0].status !== "bast") return { ok: false, error: "BAST belum selesai — belum bisa upload bukti" };
+
+  const photoPath = opts.photo_path ?? null;
+  const slot = !rows[0].bukti_photo_path ? "bukti_photo_path" : !rows[0].signature_photo_path ? "signature_photo_path" : null;
+  if (photoPath && !slot) return { ok: false, error: "slot bukti & signature sudah terisi keduanya" };
+
+  await sql`
+    UPDATE shipment_tracking
+    SET bukti_photo_path = CASE WHEN ${slot} = 'bukti_photo_path' THEN ${photoPath} ELSE bukti_photo_path END,
+        signature_photo_path = CASE WHEN ${slot} = 'signature_photo_path' THEN ${photoPath} ELSE signature_photo_path END,
+        bukti_at = now(),
+        bukti_by = COALESCE(${opts.by ?? null}, bukti_by),
         updated_at = now()
     WHERE id = ${id}
   `;

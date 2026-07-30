@@ -114,6 +114,7 @@ import {
   markKirim as markShipmentKirim,
   markTerima as markShipmentTerima,
   markBast as markShipmentBast,
+  markBukti as markShipmentBukti,
 } from "./repo/shipment-tracking.js";
 import { recordCompetitor, listCompetitor, competitorSummary } from "./repo/competitor.js";
 import {
@@ -1811,6 +1812,20 @@ app.post("/shipment-tracking/:id/bast", async (c) => {
     // semua field opsional
   }
   const r = await markShipmentBast(c.req.param("id"), { by: body.by, lat: body.lat, lon: body.lon });
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+// F93 — foto bukti terima + scan tanda tangan (audit trail tambahan
+// SETELAH BAST), tanpa foto = cuma re-confirm bukti_by (mis. override web).
+app.post("/shipment-tracking/:id/bukti", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { by?: string; photo_path?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    // semua field opsional
+  }
+  const r = await markShipmentBukti(c.req.param("id"), { by: body.by, photo_path: body.photo_path });
   return c.json(r, r.ok ? 200 : 400);
 });
 
