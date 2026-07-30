@@ -31,7 +31,6 @@ const blank = () => ({
   sj_number: "",
   customer_name: "",
   cabang: "",
-  distance_km: "",
   driver_name: "",
   driver_wa_number: "",
 });
@@ -69,7 +68,6 @@ export function AddShipmentTrackingSheet() {
           sj_number: f.sj_number.trim(),
           customer_name: f.customer_name.trim(),
           cabang: f.cabang.trim() || undefined,
-          distance_km: f.distance_km ? Number(f.distance_km) : undefined,
           driver_name: f.driver_name.trim() || undefined,
           driver_wa_number: f.driver_wa_number.trim() || undefined,
         }),
@@ -95,7 +93,8 @@ export function AddShipmentTrackingSheet() {
         <SheetHeader>
           <SheetTitle>Tambah tracking pengiriman</SheetTitle>
           <SheetDescription>
-            Pilih No. SJ dari mirror Accurate, isi jarak (km) — ETA dihitung otomatis dari jarak.
+            Pilih No. SJ dari mirror Accurate. Jarak &amp; durasi tempuh dihitung otomatis dari foto ber-geotag
+            kurir saat #KIRIM &amp; #BAST — tak perlu diisi manual di sini.
           </SheetDescription>
         </SheetHeader>
         <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col">
@@ -145,22 +144,6 @@ export function AddShipmentTrackingSheet() {
                 onChange={(e) => setF((p) => ({ ...p, cabang: e.target.value }))}
                 placeholder="mis. Surabaya"
               />
-            </div>
-            <div className="grid gap-1.5">
-              <Label htmlFor="st-km">Jarak (km)</Label>
-              <Input
-                id="st-km"
-                type="number"
-                min="0"
-                step="1"
-                value={f.distance_km}
-                onChange={(e) => setF((p) => ({ ...p, distance_km: e.target.value }))}
-                placeholder="jarak cabang → customer, dipakai hitung ETA"
-              />
-              <p className="text-muted-foreground text-xs">
-                Sementara diisi manual — rencana ke depan dihitung otomatis dari titik cabang→customer (nunggu
-                konfirmasi sumber koordinat).
-              </p>
             </div>
             <div className="grid gap-1.5">
               <Label htmlFor="st-driver">Nama kurir/driver</Label>

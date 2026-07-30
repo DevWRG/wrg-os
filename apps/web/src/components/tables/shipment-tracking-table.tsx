@@ -13,7 +13,6 @@ export interface ShipmentTracking {
   cabang: string | null;
   distance_km: number | null;
   eta_days: number | null;
-  eta_date: string | null;
   status: string;
   created_at: string;
 }
@@ -64,18 +63,18 @@ export function ShipmentTrackingTable({ shipments }: { shipments: ShipmentTracki
       cell: (s) => <div>{s.customer_name}</div>,
     },
     {
-      id: "eta",
-      header: "ETA",
+      id: "analitik",
+      header: "Jarak & Durasi (aktual)",
       cell: (s) =>
-        s.eta_date ? (
+        s.distance_km != null ? (
           <div>
-            <div>{s.eta_date}</div>
-            <div className="text-muted-foreground text-xs">
-              {s.distance_km ?? "?"} km · {s.eta_days ?? "?"} hari
-            </div>
+            <div>{s.distance_km} km</div>
+            <div className="text-muted-foreground text-xs">{s.eta_days ?? "?"} hari kirim→BAST</div>
           </div>
         ) : (
-          <span className="text-muted-foreground text-xs">jarak belum diisi</span>
+          <span className="text-muted-foreground text-xs">
+            {s.status === "bast" ? "foto tanpa geotag" : "dihitung setelah BAST"}
+          </span>
         ),
     },
     {

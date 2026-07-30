@@ -3,37 +3,39 @@ import { db } from "../db.js";
 // F12 — Tracking Pengiriman Digital (SHIPPING). State machine SEDERHANA 3
 // langkah: draft → dikirim → bast (TTF sengaja diabaikan, arahan Direktur
 // rapat 2026-07-30 — lihat docs/features/F12-tracking-pengiriman-digital.md).
-// ETA dihitung dari distance_km via computeEta() (bukan integrasi Maps
-// real-time, sesuai arahan rapat). ⚠️ distance_km SEHARUSNYA dihitung
-// otomatis dari koordinat cabang→customer (bukan diketik manual) — BELUM
-// diimplementasikan, nunggu konfirmasi sumber koordinat titik A/B (lihat
-// docs/features/F12-tracking-pengiriman-digital.md poin 3). Input manual di
-// bawah ini PLACEHOLDER sementara. Dipicu 2 arah: (1) web — Admin Shipping tandai manual;
-// (2) WA hashtag #KIRIM/#BAST dari kurir (lihat repo/inbound.ts, match by
-// sj_number, TANPA FK — kurir tak punya roster master data, sama filosofi
-// self-contained spt F22 installation_unit).
+//
+// REVISI 2026-07-30 (arahan Direktur, jawab pertanyaan koordinat titik A/B):
+// distance_km TIDAK LAGI diinput manual di awal. #KIRIM + foto ber-geotag
+// capture titik AWAL (kirim_lat/lon); #BAST + foto ber-geotag capture titik
+// CUSTOMER (bast_lat/lon). Begitu KEDUANYA ada, distance_km (haversine) +
+// eta_days (durasi AKTUAL kirim_at→bast_at) dihitung OTOMATIS di markBast() —
+// dipakai analitik "kesesuaian" jarak vs waktu tempuh, BUKAN estimasi
+// customer sebelum kirim (beda dari desain awal). Ini juga menjawab "titik A
+// cabang dari mana" — TAK PERLU tabel referensi statis, dinamis dari foto
+// #KIRIM tiap shipment.
+//
+// Dipicu 2 arah: (1) web — Admin Shipping tandai manual (tanpa geo, dipakai
+// kalau WA gagal); (2) WA hashtag #KIRIM/#BAST dari kurir (lihat
+// repo/inbound.ts, match by sj_number + geo dari row.geo_lat/geo_lon kalau
+// foto ber-geotag, TANPA FK — kurir tak punya roster master data, sama
+// filosofi self-contained spt F22 installation_unit).
 
-const DEFAULT_KM_PER_DAY = 250; // asumsi kecepatan tempuh rata2 logistik antar-cabang, lihat docs/features.
-
-export function computeEta(
-  distanceKm: number | null | undefined,
-  fromDate: Date = new Date(),
-): { eta_days: number | null; eta_date: string | null } {
-  if (distanceKm == null || !Number.isFinite(distanceKm) || distanceKm <= 0) {
-    return { eta_days: null, eta_date: null };
-  }
-  const kmPerDay = Number(process.env.SHIPPING_ETA_KM_PER_DAY) || DEFAULT_KM_PER_DAY;
-  const days = Math.max(1, Math.ceil(distanceKm / kmPerDay));
-  const eta = new Date(fromDate);
-  eta.setDate(eta.getDate() + days);
-  return { eta_days: days, eta_date: eta.toISOString().slice(0, 10) };
+// Haversine — jarak great-circle (km) antar 2 titik lat/lon. Approksimasi
+// cukup utk analitik "kesesuaian" (bukan jarak jalan sungguhan/routing).
+function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6371;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLon = ((lon2 - lon1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
 export interface ShipmentInput {
   sj_number: string;
   customer_name: string;
-  cabang?: string | null;
-  distance_km?: number | null;
+  cabang?: string | null; // label informasional, TAK dipakai hitung jarak lagi
   driver_name?: string | null;
   driver_wa_number?: string | null;
   created_by?: string | null;
@@ -44,9 +46,12 @@ export interface ShipmentRow {
   sj_number: string;
   customer_name: string;
   cabang: string | null;
-  distance_km: number | null;
-  eta_days: number | null;
-  eta_date: string | null;
+  distance_km: number | null; // dihitung otomatis setelah BAST (haversine kirim→bast)
+  eta_days: number | null; // durasi AKTUAL kirim_at→bast_at (hari), bukan estimasi lagi
+  kirim_lat: number | null;
+  kirim_lon: number | null;
+  bast_lat: number | null;
+  bast_lon: number | null;
   driver_name: string | null;
   driver_wa_number: string | null;
   status: string;
@@ -61,10 +66,9 @@ export interface ShipmentRow {
   updated_at: string;
 }
 
-// postgres.js parse kolom date/timestamptz jadi objek Date — String(dateObj)
+// postgres.js parse kolom timestamptz jadi objek Date — String(dateObj)
 // hasilnya verbose ("Wed Aug 05 2026 …"), bukan ISO. new Date(x).toISOString()
 // aman dipanggil baik x sudah Date maupun masih string dari driver.
-const toIsoDate = (x: unknown): string => new Date(x as string | Date).toISOString().slice(0, 10);
 const toIsoTs = (x: unknown): string => new Date(x as string | Date).toISOString();
 
 function mapRow(r: Record<string, unknown>): ShipmentRow {
@@ -75,7 +79,10 @@ function mapRow(r: Record<string, unknown>): ShipmentRow {
     cabang: r.cabang ? String(r.cabang) : null,
     distance_km: r.distance_km != null ? Number(r.distance_km) : null,
     eta_days: r.eta_days != null ? Number(r.eta_days) : null,
-    eta_date: r.eta_date ? toIsoDate(r.eta_date) : null,
+    kirim_lat: r.kirim_lat != null ? Number(r.kirim_lat) : null,
+    kirim_lon: r.kirim_lon != null ? Number(r.kirim_lon) : null,
+    bast_lat: r.bast_lat != null ? Number(r.bast_lat) : null,
+    bast_lon: r.bast_lon != null ? Number(r.bast_lon) : null,
     driver_name: r.driver_name ? String(r.driver_name) : null,
     driver_wa_number: r.driver_wa_number ? String(r.driver_wa_number) : null,
     status: String(r.status),
@@ -93,13 +100,12 @@ function mapRow(r: Record<string, unknown>): ShipmentRow {
 
 export async function createShipment(input: ShipmentInput): Promise<ShipmentRow> {
   const sql = db();
-  const { eta_days, eta_date } = computeEta(input.distance_km ?? null);
   const rows = await sql`
     INSERT INTO shipment_tracking
-      (sj_number, customer_name, cabang, distance_km, eta_days, eta_date, driver_name, driver_wa_number, created_by)
+      (sj_number, customer_name, cabang, driver_name, driver_wa_number, created_by)
     VALUES (
-      ${input.sj_number}, ${input.customer_name}, ${input.cabang ?? null}, ${input.distance_km ?? null},
-      ${eta_days}, ${eta_date}, ${input.driver_name ?? null}, ${input.driver_wa_number ?? null}, ${input.created_by ?? null}
+      ${input.sj_number}, ${input.customer_name}, ${input.cabang ?? null},
+      ${input.driver_name ?? null}, ${input.driver_wa_number ?? null}, ${input.created_by ?? null}
     )
     RETURNING *
   `;
@@ -147,7 +153,7 @@ export interface ShipmentActionResult {
 
 export async function markKirim(
   id: string,
-  opts: { photo_path?: string | null; by?: string | null } = {},
+  opts: { photo_path?: string | null; by?: string | null; lat?: number | null; lon?: number | null } = {},
 ): Promise<ShipmentActionResult> {
   const sql = db();
   const rows = await sql`SELECT id, status FROM shipment_tracking WHERE id = ${id}`;
@@ -158,6 +164,8 @@ export async function markKirim(
     SET status = 'dikirim', kirim_at = now(),
         kirim_photo_path = COALESCE(${opts.photo_path ?? null}, kirim_photo_path),
         kirim_by = COALESCE(${opts.by ?? null}, kirim_by),
+        kirim_lat = COALESCE(${opts.lat ?? null}, kirim_lat),
+        kirim_lon = COALESCE(${opts.lon ?? null}, kirim_lon),
         updated_at = now()
     WHERE id = ${id}
   `;
@@ -166,17 +174,37 @@ export async function markKirim(
 
 export async function markBast(
   id: string,
-  opts: { photo_path?: string | null; by?: string | null } = {},
+  opts: { photo_path?: string | null; by?: string | null; lat?: number | null; lon?: number | null } = {},
 ): Promise<ShipmentActionResult> {
   const sql = db();
-  const rows = await sql`SELECT id, status FROM shipment_tracking WHERE id = ${id}`;
+  const rows = await sql`SELECT id, status, kirim_at, kirim_lat, kirim_lon FROM shipment_tracking WHERE id = ${id}`;
   if (rows.length === 0) return { ok: false, error: "shipment tidak ditemukan" };
   if (rows[0].status !== "dikirim") return { ok: false, error: "langkah kirim belum selesai — belum bisa BAST" };
+
+  const kirimLat = rows[0].kirim_lat != null ? Number(rows[0].kirim_lat) : null;
+  const kirimLon = rows[0].kirim_lon != null ? Number(rows[0].kirim_lon) : null;
+  const bastLat = opts.lat ?? null;
+  const bastLon = opts.lon ?? null;
+
+  // Begitu titik AWAL (#KIRIM) & CUSTOMER (#BAST) sama-sama ada → hitung
+  // jarak (haversine) + durasi aktual (hari) utk analitik "kesesuaian".
+  let distanceKm: number | null = null;
+  let etaDays: number | null = null;
+  if (kirimLat != null && kirimLon != null && bastLat != null && bastLon != null) {
+    distanceKm = Math.round(haversineKm(kirimLat, kirimLon, bastLat, bastLon) * 10) / 10;
+    const kirimAt = new Date(rows[0].kirim_at as string | Date);
+    etaDays = Math.max(0, Math.round((Date.now() - kirimAt.getTime()) / 86_400_000));
+  }
+
   await sql`
     UPDATE shipment_tracking
     SET status = 'bast', bast_at = now(),
         bast_photo_path = COALESCE(${opts.photo_path ?? null}, bast_photo_path),
         bast_by = COALESCE(${opts.by ?? null}, bast_by),
+        bast_lat = COALESCE(${bastLat}, bast_lat),
+        bast_lon = COALESCE(${bastLon}, bast_lon),
+        distance_km = COALESCE(${distanceKm}, distance_km),
+        eta_days = COALESCE(${etaDays}, eta_days),
         updated_at = now()
     WHERE id = ${id}
   `;

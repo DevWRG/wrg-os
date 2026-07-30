@@ -482,10 +482,15 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
       return finish({ error: "sj-not-found", sj, reply });
     }
     const photoPath = String(row.message_type ?? "").toLowerCase().startsWith("image") ? (row.media_path ?? null) : null;
+    // Foto ber-geotag (OCR check_photo_geotag.py, sama infra "Geo-Tagging
+    // Camera" AM) → row.geo_lat/geo_lon terisi. #KIRIM capture titik AWAL,
+    // #BAST capture titik CUSTOMER — dipakai hitung distance_km/eta_days
+    // OTOMATIS di markBast() begitu keduanya ada (arahan Direktur 2026-07-30).
+    const geo = { lat: row.geo_lat ?? null, lon: row.geo_lon ?? null };
     const action =
       kind === "kirim"
-        ? await markKirim(shipment.id, { photo_path: photoPath, by: row.sender_name })
-        : await markBast(shipment.id, { photo_path: photoPath, by: row.sender_name });
+        ? await markKirim(shipment.id, { photo_path: photoPath, by: row.sender_name, ...geo })
+        : await markBast(shipment.id, { photo_path: photoPath, by: row.sender_name, ...geo });
     const replyMsg = action.ok
       ? `✅ SJ ${shipment.sj_number} (${shipment.customer_name}) ditandai *${kind === "kirim" ? "DIKIRIM" : "BAST/SELESAI"}*.`
       : `⚠️ Gagal update SJ ${shipment.sj_number}: ${action.error}`;

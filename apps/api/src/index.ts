@@ -1741,7 +1741,6 @@ app.post("/shipment-tracking", async (c) => {
     sj_number?: string;
     customer_name?: string;
     cabang?: string;
-    distance_km?: number;
     driver_name?: string;
     driver_wa_number?: string;
     created_by?: string;
@@ -1758,7 +1757,6 @@ app.post("/shipment-tracking", async (c) => {
     sj_number: body.sj_number,
     customer_name: body.customer_name,
     cabang: body.cabang,
-    distance_km: body.distance_km != null ? Number(body.distance_km) : null,
     driver_name: body.driver_name,
     driver_wa_number: body.driver_wa_number,
     created_by: body.created_by,
@@ -1780,25 +1778,25 @@ app.get("/shipment-tracking/:id", async (c) => {
 
 app.post("/shipment-tracking/:id/kirim", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let body: { by?: string } = {};
+  let body: { by?: string; lat?: number; lon?: number } = {};
   try {
     body = await c.req.json();
   } catch {
-    // by opsional
+    // semua field opsional
   }
-  const r = await markShipmentKirim(c.req.param("id"), { by: body.by });
+  const r = await markShipmentKirim(c.req.param("id"), { by: body.by, lat: body.lat, lon: body.lon });
   return c.json(r, r.ok ? 200 : 400);
 });
 
 app.post("/shipment-tracking/:id/bast", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let body: { by?: string } = {};
+  let body: { by?: string; lat?: number; lon?: number } = {};
   try {
     body = await c.req.json();
   } catch {
-    // by opsional
+    // semua field opsional
   }
-  const r = await markShipmentBast(c.req.param("id"), { by: body.by });
+  const r = await markShipmentBast(c.req.param("id"), { by: body.by, lat: body.lat, lon: body.lon });
   return c.json(r, r.ok ? 200 : 400);
 });
 
