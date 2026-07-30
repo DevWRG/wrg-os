@@ -87,6 +87,7 @@ import {
   type CodeInput as KlasifikasiCodeInput, type NodeInput as KlasifikasiNodeInput,
   type Level as KlasifikasiLevel,
 } from "./repo/klasifikasi.js";
+import { master as ksoMaster } from "./repo/kso.js";
 import { listCoachingNotes } from "./repo/coaching.js";
 import { getLatestCoachingNotes, computePeopleAnalytics } from "./repo/people.js";
 import { createVisit, getVisit, listVisits, visitKpi, visitSummary } from "./repo/visit.js";
@@ -2463,6 +2464,17 @@ app.get("/pricebook/setup", async (c) => {
     pricebookSetupSummary(periode),
   ]);
   return c.json({ count: rows.length, rows, ringkas });
+});
+
+// ── Simulator KSO (migrasi 074) — master alat, reagen & parameter ───────────
+// Isi tabel dari importer scripts/db/import_kso_master.py (data tidak di repo).
+// Read-only: perhitungan running cost jalan di browser (apps/web/src/lib/kso/
+// formula.ts) karena user mengubah harga & jumlah test terus-menerus saat
+// menyusun penawaran — bolak-balik ke server tiap ketikan tidak masuk akal.
+// Gate akses ada di BFF (apps/web /api/kso/*).
+app.get("/kso/master", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await ksoMaster());
 });
 
 // ── Klasifikasi produk & kode produk (migrasi 072) ──────────────────────────
