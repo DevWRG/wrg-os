@@ -103,7 +103,7 @@ interface TimelineEntry {
 function Sel({ label, val, set, options }: { label: string; val: string; set: (v: string) => void; options: string[] }) {
   return (
     <select value={val} onChange={(e) => set(e.target.value)}
-      className="h-9 rounded-md border border-input bg-muted px-3 text-sm shadow-sm cursor-pointer hover:bg-muted/80 focus:outline-none focus:ring-2 focus:ring-ring/40 focus:border-ring">
+      className="h-9 rounded-md border border-input bg-muted px-3 text-sm shadow-sm cursor-pointer basis-[calc(50%-0.25rem)] min-w-0 sm:basis-auto hover:bg-muted/80 focus:outline-none focus:ring-2 focus:ring-ring/40 focus:border-ring">
       <option value="">{label}: semua</option>
       {options.map((o) => <option key={o} value={o}>{o}</option>)}
     </select>
@@ -256,7 +256,7 @@ export function PipelineBoard({ data, isAdmin = false }: { data: PipelineData; i
       {/* Filter toolbar */}
       <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-border bg-card p-3 shadow-[var(--shadow-card)]">
         <input placeholder="Cari faskes/produk…" value={f.q} onChange={(e) => setF({ ...f, q: e.target.value })}
-          className="h-9 rounded-md border border-input bg-muted px-3 text-sm min-w-[200px] shadow-sm focus:outline-none focus:ring-2 focus:ring-ring/40 focus:border-ring" />
+          className="h-9 rounded-md border border-input bg-muted px-3 text-sm w-full sm:w-auto sm:min-w-[200px] shadow-sm focus:outline-none focus:ring-2 focus:ring-ring/40 focus:border-ring" />
         <Sel label="Kategori" val={f.pcat} set={(v) => setF({ ...f, pcat: v })} options={opts.pcat} />
         <Sel label="Cabang" val={f.cabang} set={(v) => setF({ ...f, cabang: v })} options={opts.cabang} />
         <Sel label="HOD" val={f.hod} set={(v) => setF({ ...f, hod: v })} options={opts.hod} />
@@ -342,7 +342,7 @@ export function PipelineBoard({ data, isAdmin = false }: { data: PipelineData; i
               {sel.forecast_category && <Badge variant="outline">{sel.forecast_category}</Badge>}
               {sel.stale && <Badge variant="destructive">Mangkrak {sel.days_in_stage}h</Badge>}
             </div>
-            <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 mt-4 text-sm">
+            <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1.5 mt-4 text-sm">
               {([
                 ["Brand", sel.brand], ["Produk", sel.product], ["Kerja Sama", coopLabel(sel.coop_model)],
                 ["Perkiraan Nilai", jt(sel.estimate_amount)], ["Nilai × Peluang", jt(sel.weighted)],
