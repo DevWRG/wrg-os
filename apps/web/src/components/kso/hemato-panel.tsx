@@ -13,8 +13,10 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { AngkaField, AngkaMini, HeroBiaya, PilihanBaris, Stat, fmtNum, fmtRp } from "@/components/kso/shared";
+import { exportHemato } from "@/lib/kso/export-excel";
 import type { ExzMode } from "@/lib/kso/formula";
 import { hitungCapex, hitungHemato, nettOf, type KontrolInput } from "@/lib/kso/model";
+import { printHemato } from "@/lib/kso/print-pdf";
 import type { HargaInput, KsoAnalyzer } from "@/lib/kso/types";
 
 import type { Umum } from "./kso-view";
@@ -134,6 +136,39 @@ export function HematoPanel({
   const modeLabel = isExz8000 ? MODE_EXZ.find((m) => m.key === exzMode)?.label : null;
   const judulAlat = `${analyzer.label}${analyzer.meta.diff ? ` · ${analyzer.meta.diff}` : ""}${modeLabel ? ` · ${modeLabel}` : ""}`;
 
+  // Berkas cetak memakai angka yang sama persis dengan yang tampil di layar —
+  // tidak ada perhitungan ulang di sisi export.
+  const berkas = {
+    ringkas: {
+      analyzerName: judulAlat,
+      backupLabel: umum.backupOn && backupAnalyzer ? backupAnalyzer.label : "",
+      totCap: capex.total,
+      capex: {
+        alat: capex.nettAlat,
+        backup: capex.nettBackup,
+        ups: umum.ups,
+        lis: umum.lis,
+      },
+      kso: s.kso,
+      testsPerMonth: s.tests,
+      totTest: capex.totalTest,
+      workDays: umum.workDays,
+      markup: s.markup,
+    },
+    info: {
+      salesName: umum.salesName,
+      faskesName: umum.faskesName,
+      kotaKab: umum.kotaKab,
+      kompetitor: umum.kompetitor,
+    },
+    qcFree: kontrolNow.free,
+    capPerTest: capex.perTest,
+    reagenPerTest: hasil.reagenPerTest,
+    overheadKontrol: hasil.overheadKontrol,
+    sellPerTest: hasil.sellPerTest,
+    rows: hasil.rows,
+  };
+
   if (halaman === "hasil") {
     return (
       <div className="space-y-4">
@@ -174,6 +209,16 @@ export function HematoPanel({
               running cost Excel pabrikan supaya hasilnya sama dengan angka KSO CPRR di atas. Itu bukan
               harga penawaran ke faskes.
             </p>
+            {hasil.reagen ? (
+              <div className="flex flex-wrap gap-2 pt-2">
+                <Button variant="outline" size="sm" onClick={() => void exportHemato(berkas)}>
+                  Cetak Excel
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => printHemato(berkas)}>
+                  Cetak PDF
+                </Button>
+              </div>
+            ) : null}
           </CardHeader>
           <CardContent>
             <div className="overflow-x-auto">

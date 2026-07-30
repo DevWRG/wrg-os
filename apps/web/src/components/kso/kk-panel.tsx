@@ -19,9 +19,11 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { AngkaField, AngkaMini, HeroBiaya, PilihanBaris, Stat, fmtNum, fmtRp } from "@/components/kso/shared";
+import { exportKk } from "@/lib/kso/export-excel";
 import {
   PANEL_CONSUMABLE, PANEL_CONTROL, hitungCapex, hitungKk, paramKkAwal, type ParamKk,
 } from "@/lib/kso/model";
+import { printKk } from "@/lib/kso/print-pdf";
 import type { KsoAnalyzer, KsoParameter } from "@/lib/kso/types";
 
 import { PresetTest } from "./hemato-panel";
@@ -102,6 +104,36 @@ export function KkPanel({
 
   const adaAngka = capex.perTest > 0 || hasil.consumablePerTest > 0;
 
+  const backupAnalyzer = analyzers.find((a) => a.kode === umum.backupKode) ?? null;
+  const berkas = {
+    ringkas: {
+      analyzerName: analyzer.label,
+      backupLabel: umum.backupOn && backupAnalyzer ? backupAnalyzer.label : "",
+      totCap: capex.total,
+      capex: { alat: capex.nettAlat, backup: capex.nettBackup, ups: umum.ups, lis: umum.lis },
+      kso: s.kso,
+      testsPerMonth: s.tests,
+      totTest: capex.totalTest,
+      workDays: umum.workDays,
+      markup: s.markup,
+    },
+    info: {
+      salesName: umum.salesName,
+      faskesName: umum.faskesName,
+      kotaKab: umum.kotaKab,
+      kompetitor: umum.kompetitor,
+    },
+    capPerTest: capex.perTest,
+    consumablePerTest: hasil.consumablePerTest,
+    overheadTotal: hasil.overheadTotal,
+    adaOverhead: hasil.adaOverhead,
+    qcPerTest: hasil.qcPerTest,
+    calPerTest: hasil.calPerTest,
+    avgSellPerTest: hasil.avgSellPerTest,
+    rows: hasil.rows,
+    consumable: hasil.consumable,
+  };
+
   if (halaman === "hasil") {
     return (
       <div className="space-y-4">
@@ -140,6 +172,16 @@ export function KkPanel({
               Sell/test = (beban alat + consumable + QC + reagen parameter) ÷ (1 − markup), dibulatkan ke
               atas kelipatan Rp 100 · Sell/kit = sell/test × test per kit.
             </p>
+            {adaAngka ? (
+              <div className="flex flex-wrap gap-2 pt-2">
+                <Button variant="outline" size="sm" onClick={() => void exportKk(berkas)}>
+                  Cetak Excel
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => printKk(berkas)}>
+                  Cetak PDF
+                </Button>
+              </div>
+            ) : null}
           </CardHeader>
           <CardContent>
             <div className="overflow-x-auto">
