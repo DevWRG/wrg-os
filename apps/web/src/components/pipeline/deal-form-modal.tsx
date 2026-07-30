@@ -22,6 +22,7 @@ export interface DealFormInit {
   cabang?: string | null;
   city?: string | null;
   province?: string | null;
+  purchase_month?: number | null;
   purchase_year?: number | null;
   pic_hod?: string | null;
   notes?: string | null;
@@ -30,6 +31,7 @@ export interface DealFormInit {
 const str = (v: unknown) => (v == null ? "" : String(v));
 const rp = (n: number) =>
   new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(n || 0);
+const MONTH_ID = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
 const uniqSorted = (arr: (string | null | undefined)[]) =>
   [...new Set(arr.filter((x): x is string => !!x && x.trim() !== ""))].sort((a, b) => a.localeCompare(b));
 
@@ -102,6 +104,7 @@ export function DealFormModal({ mode, deal, onClose, brands = [], cabangs = [] }
     cabang: str(deal?.cabang),
     city: str(deal?.city),
     province: str(deal?.province),
+    purchase_month: deal?.purchase_month != null ? String(deal.purchase_month) : "",
     purchase_year: deal?.purchase_year != null ? String(deal.purchase_year) : "",
     pic_hod: str(deal?.pic_hod),
     notes: str(deal?.notes),
@@ -237,6 +240,12 @@ export function DealFormModal({ mode, deal, onClose, brands = [], cabangs = [] }
             </div>
             <span className="text-[11px] text-muted-foreground">QTY × Harga (otomatis)</span>
           </div>
+          <label className="text-sm"><Lbl>Estimasi Bulan Beli</Lbl>
+            <select value={form.purchase_month} onChange={(e) => set("purchase_month", e.target.value)} className={inputCls}>
+              <option value="">—</option>
+              {MONTH_ID.map((m, i) => <option key={m} value={String(i + 1)}>{m}</option>)}
+            </select>
+          </label>
           <label className="text-sm"><Lbl>Tahun Beli</Lbl>
             <input type="number" inputMode="numeric" value={form.purchase_year} onChange={(e) => set("purchase_year", e.target.value)} className={inputCls} />
           </label>
