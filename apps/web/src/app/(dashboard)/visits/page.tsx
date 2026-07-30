@@ -2,9 +2,17 @@ import Link from "next/link";
 
 import { gatewayFetch } from "@/lib/gateway";
 import { sessionUser } from "@/lib/admin-guard";
+import { can } from "@/lib/perms";
 import { cn } from "@/lib/utils";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { AddVisitSheet } from "@/components/crm/add-visit-sheet";
+import {
+  TimelinessCard,
+  VisitTargetTable,
+  WeeklyTargetCard,
+  type TimelinessKpi,
+  type VisitTargetKpi,
+} from "@/components/crm/visit-target-panel";
 import { VisitsTable } from "@/components/tables/visits-table";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
@@ -24,6 +32,8 @@ interface VisitItem {
   tujuan: string | null;
   goal: string | null;
   catatan: string | null;
+  activity_type: string | null;
+  account_id: number | null;
   created_at: string;
 }
 interface VisitResponse {
@@ -34,6 +44,10 @@ interface VisitSummary {
   total: number;
   by_status: Record<string, number>;
   flagged: number;
+}
+interface VisitKpi {
+  timeliness: TimelinessKpi;
+  targets: VisitTargetKpi;
 }
 
 const FILTERS: { key: string; label: string }[] = [
@@ -67,9 +81,14 @@ export default async function VisitsPage({
   const qs = active ? `?status=${encodeURIComponent(active)}` : "";
 
   const me = await sessionUser();
-  const [summary, list] = await Promise.all([
+  // Sembunyikan tombol "Tambah kunjungan" bila user tak punya izin create pada
+  // fitur `visits`. can() default true bila izin tak tersedia (auth mati/belum
+  // login) & untuk admin/superuser — non-breaking, sama pola gating web lain.
+  const canAddVisit = can(me, "visits", "create");
+  const [summary, list, kpi] = await Promise.all([
     getJson<VisitSummary>("/visits/summary", me?.id),
     getJson<VisitResponse>(`/visits${qs}`, me?.id),
+    getJson<VisitKpi>("/visits/kpi", me?.id),
   ]);
   const visits = list?.visits ?? null;
 
@@ -83,7 +102,7 @@ export default async function VisitsPage({
       <PageHeader
         title="Visits"
         description="Kunjungan AM dengan geotag + foto (port visit). Geo divalidasi terhadap bbox Indonesia."
-        action={<AddVisitSheet />}
+        action={canAddVisit ? <AddVisitSheet /> : undefined}
       />
 
       {!summary ? (
@@ -96,7 +115,7 @@ export default async function VisitsPage({
         </p>
       ) : (
         <>
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
             <Card>
               <CardHeader className="pb-2">
                 <CardTitle className="text-muted-foreground text-sm font-medium">Total kunjungan</CardTitle>
@@ -132,7 +151,11 @@ export default async function VisitsPage({
                 <p className="text-muted-foreground text-xs">tanggal tak cocok / luar bbox</p>
               </CardContent>
             </Card>
+            {kpi ? <TimelinessCard kpi={kpi.timeliness} /> : null}
+            {kpi ? <WeeklyTargetCard kpi={kpi.targets} /> : null}
           </div>
+
+          {kpi ? <VisitTargetTable kpi={kpi.targets} /> : null}
 
           <div className="flex flex-wrap gap-2">
             {FILTERS.map((f) => {

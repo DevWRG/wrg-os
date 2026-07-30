@@ -13,6 +13,7 @@ export interface PacingAm extends PacingBase { am_id: string; nama: string; caba
 export interface PacingCabang extends PacingBase { cabang: string }
 export interface PacingData {
   year: number; elapsed_pct: number;
+  scope?: "am" | "cabang" | "all"; // row-level scope dari api; "am" = data sendiri saja
   am: PacingAm[]; cabang: PacingCabang[];
   summary: { am: { target: number; actual: number }; cabang: { target: number; actual: number } };
 }
@@ -28,7 +29,10 @@ const statusLabel = (s: string) => (s === "on-track" ? "Sesuai Target" : s === "
 
 // Target Pacing — target vs actual YTD + proyeksi akhir tahun, per AM & cabang.
 export function TargetPacingView({ data }: { data: PacingData }) {
-  const [tab, setTab] = useState<"am" | "cabang">("am");
+  const [tab0, setTab] = useState<"am" | "cabang">("am");
+  // AM murni: hanya tab Per AM (agregat cabang = angka rekan sekabang).
+  const amOnly = data.scope === "am";
+  const tab = amOnly ? "am" : tab0;
   const rows = tab === "am" ? data.am : data.cabang;
   const sum = tab === "am" ? data.summary.am : data.summary.cabang;
   const ach = sum.target > 0 ? Math.round((sum.actual / sum.target) * 1000) / 10 : 0;
@@ -54,11 +58,13 @@ export function TargetPacingView({ data }: { data: PacingData }) {
         <Card><CardContent className="py-4"><div className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">Actual YTD</div><div className="mt-1 text-2xl font-bold text-emerald-600" title={rpFull.format(sum.actual)}>{rpC(sum.actual)}</div><div className="text-muted-foreground text-xs">{ach}% dari target</div></CardContent></Card>
       </div>
 
-      <div className="flex gap-1 rounded-lg border p-1 w-fit">
-        {([["am", "Per AM"], ["cabang", "Per Cabang"]] as const).map(([k, lbl]) => (
-          <button key={k} onClick={() => setTab(k)} className={`rounded-md px-3 py-1.5 text-sm font-medium ${tab === k ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`}>{lbl}</button>
-        ))}
-      </div>
+      {!amOnly && (
+        <div className="flex gap-1 rounded-lg border p-1 w-fit">
+          {([["am", "Per AM"], ["cabang", "Per Cabang"]] as const).map(([k, lbl]) => (
+            <button key={k} onClick={() => setTab(k)} className={`rounded-md px-3 py-1.5 text-sm font-medium ${tab === k ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`}>{lbl}</button>
+          ))}
+        </div>
+      )}
 
       <Card>
         <CardContent>
