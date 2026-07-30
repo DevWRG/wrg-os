@@ -204,3 +204,64 @@ export function HeroBiaya({
     </div>
   );
 }
+
+// ── Kartu CAPEX ─────────────────────────────────────────────────────────────
+
+/**
+ * CAPEX untuk kategori tanpa analyzer backup (Crossmatch, CLIA, HPLC,
+ * Elektrolit, Blood Gas) — sama seperti aplikasi asal, opsi backup memang cuma
+ * ada di Hematologi & Kimia Klinik.
+ */
+export function KartuCapex({
+  price, disc, onPrice, onDisc, ups, lis, onUps, onLis, nettAlat, total, labelAlat = "Harga alat",
+}: {
+  price: number;
+  disc: number;
+  onPrice: (v: number) => void;
+  onDisc: (v: number) => void;
+  ups: number;
+  lis: number;
+  onUps: (v: number) => void;
+  onLis: (v: number) => void;
+  nettAlat: number;
+  total: number;
+  labelAlat?: string;
+}) {
+  return (
+    <div className="space-y-3">
+      <AngkaField label={labelAlat} value={price} onChange={onPrice} prefix="Rp" />
+      <AngkaField label="Diskon" value={disc} onChange={onDisc} suffix="%" />
+      <Stat label="Nett alat" value={fmtRp(nettAlat)} />
+      <AngkaField label="UPS" value={ups} onChange={onUps} prefix="Rp" />
+      <AngkaField label="LIS" value={lis} onChange={onLis} prefix="Rp" />
+      <Stat label="Total CAPEX" value={fmtRp(total)} kuat />
+    </div>
+  );
+}
+
+/** Sepasang input harga + diskon, bentuk yang berulang di semua kategori. */
+export function HargaDiskon({
+  label, price, disc, onPrice, onDisc, nett,
+}: {
+  label: string;
+  price: number;
+  disc: number;
+  onPrice: (v: number) => void;
+  onDisc: (v: number) => void;
+  nett?: number;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <div className="text-xs font-semibold">{label}</div>
+      <div className="grid grid-cols-[1fr_5rem] gap-2">
+        <AngkaField label="Harga / kemasan" value={price} onChange={onPrice} prefix="Rp" />
+        <AngkaField label="Diskon" value={disc} onChange={onDisc} suffix="%" />
+      </div>
+      {nett !== undefined ? (
+        <div className="text-muted-foreground text-right text-[11px]">
+          Nett: <span className="text-foreground font-semibold">{fmtRp(nett)}</span>
+        </div>
+      ) : null}
+    </div>
+  );
+}

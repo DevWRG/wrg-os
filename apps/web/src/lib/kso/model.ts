@@ -7,10 +7,10 @@
 // Semua fungsi murni — tidak ada state, tidak ada fetch.
 
 import {
-  ccDetergent, hematoCost, nettOf, perUnitOf, sellOf,
+  ccDetergent, crossmatchCost, elektroCost, hematoCost, hplcCost, nettOf, perUnitOf, sellOf,
   type ExzMode, type PerUnit,
 } from "./formula";
-import type { HargaInput, HasilReagen, KsoAnalyzer, KsoParameter } from "./types";
+import type { HargaInput, HasilReagen, KsoAnalyzer, KsoParameter, KsoReagent } from "./types";
 
 export { nettOf, sellOf };
 
@@ -361,5 +361,353 @@ export function hitungKk(
     avgSellPerTest,
     rows,
     jumlahParameter,
+  };
+}
+
+// ── Crossmatch ──────────────────────────────────────────────────────────────
+
+export interface BarisReagenXm {
+  kode: string;
+  nama: string;
+  pack: string | null;
+  nettKit: number;
+  /** Kontribusi biaya per test — crossmatch tidak punya komponen harian. */
+  kontribusiTest: number;
+  /** Harga jual per kemasan = nett ÷ (1 − markup). */
+  sellKit: number;
+}
+
+export interface HasilXm {
+  reagenPerTest: number;
+  rows: BarisReagenXm[];
+  baseCost: number;
+  sellPerTest: number;
+  ada: boolean;
+}
+
+/**
+ * Crossmatch (LIBO / RedCell). Tanpa backup analyzer dan tanpa overhead QC:
+ * kartu & LISS habis per pemeriksaan, dan kontrolnya bukan barang terpisah.
+ */
+export function hitungXm(
+  analyzer: KsoAnalyzer,
+  harga: Record<string, HargaInput>,
+  capex: Capex,
+  testsPerMonth: number,
+  workDays: number,
+  markup: number,
+  method: { cols: number; liss_ml: number } | undefined,
+): HasilXm {
+  const perUnit = perUnitOf(analyzer, harga);
+  const res = crossmatchCost(analyzer.kode, testsPerMonth, workDays, perUnit, method);
+  const reagenPerTest = res?.total ?? 0;
+  const baseCost = capex.perTest + reagenPerTest;
+  const sellPerTest = sellOf(baseCost, markup);
+
+  return {
+    reagenPerTest,
+    baseCost,
+    sellPerTest,
+    ada: !!res,
+    rows: analyzer.reagents.map((r) => {
+      const nettKit = nettOf(harga[r.kode]);
+      return {
+        kode: r.kode,
+        nama: r.nama,
+        pack: r.pack,
+        nettKit,
+        kontribusiTest: res?.pr[r.kode] ?? 0,
+        sellKit: sellOf(nettKit, markup),
+      };
+    }),
+  };
+}
+
+// ── CLIA (Snibe Maglumi / Wondfo) ───────────────────────────────────────────
+
+/** Consumable CLIA: harga per kemasan + hasil per kemasan (test), keduanya bisa diubah user. */
+export interface ConsInput extends HargaInput {
+  yieldTest: number;
+}
+
+export interface BarisParamClia {
+  no: number;
+  nama: string;
+  panel: string;
+  kit: number;
+  /** true = parameter infeksius (Wondfo) → pakai intensive wash, bukan wash biasa. */
+  infeksius: boolean;
+  hppPerTest: number;
+  consPerTest: number;
+  sellTest: number;
+  sellKit: number;
+}
+
+export interface HasilClia {
+  /** Consumable per test untuk parameter biasa. */
+  consBase: number;
+  /** Consumable per test untuk parameter infeksius (base + intensive wash). */
+  consInfeksius: number;
+  avgReagenPerTest: number;
+  avgConsPerTest: number;
+  avgBaseCost: number;
+  /** Rata-rata harga jual per test, kelipatan Rp 100. */
+  avgSellPerTest: number;
+  rows: BarisParamClia[];
+}
+
+/**
+ * CLIA. Bedanya dengan Kimia Klinik: consumable-nya dihitung per TEST langsung
+ * (starter kit, wash, cuvette, light check — semuanya "N test per kemasan"),
+ * bukan lewat rumus batch. Yang bikin rumit cuma Wondfo: parameter infeksius
+ * memakai intensive wash buffer, jadi consumable-nya beda dari parameter lain
+ * di alat yang sama.
+ *
+ * @param consFree vendor menanggung seluruh consumable → beban consumable 0
+ */
+export function hitungClia(
+  analyzer: KsoAnalyzer,
+  parameters: KsoParameter[],
+  hargaParam: Record<number, HargaInput>,
+  cons: Record<string, ConsInput>,
+  consFree: boolean,
+  capex: Capex,
+  markup: number,
+): HasilClia {
+  const perTest = (r: KsoReagent): number => {
+    const c = cons[r.kode] ?? { price: r.hargaDp ?? 0, disc: 0, yieldTest: r.yieldTest ?? 0 };
+    return c.yieldTest > 0 ? nettOf(c) / c.yieldTest : 0;
+  };
+  const isInf = (r: { flags: Record<string, unknown> }): boolean => r.flags?.inf === true;
+
+  const consBase = consFree
+    ? 0
+    : analyzer.reagents.filter((r) => !isInf(r)).reduce((s, r) => s + perTest(r), 0);
+  const iwash = analyzer.reagents.find(isInf);
+  const consInfeksius = consBase + (consFree || !iwash ? 0 : perTest(iwash));
+
+  const rows = parameters.map((p) => {
+    const nettKit = nettOf(hargaParam[p.no] ?? { price: p.hargaDp ?? 0, disc: 0 });
+    const kit = p.testsPerKit ?? 0;
+    const hppPerTest = kit > 0 ? nettKit / kit : 0;
+    const infeksius = isInf(p);
+    const consPerTest = infeksius ? consInfeksius : consBase;
+    const sellTest = sellOf(capex.perTest + consPerTest + hppPerTest, markup);
+    return {
+      no: p.no,
+      nama: p.nama,
+      panel: p.panel ?? "",
+      kit,
+      infeksius,
+      hppPerTest,
+      consPerTest,
+      sellTest,
+      sellKit: sellTest * kit,
+    };
+  });
+
+  const n = rows.length;
+  const avgReagenPerTest = n > 0 ? rows.reduce((s, r) => s + r.hppPerTest, 0) / n : 0;
+  const avgConsPerTest = n > 0 ? rows.reduce((s, r) => s + r.consPerTest, 0) / n : 0;
+  const avgBaseCost = capex.perTest + avgConsPerTest + avgReagenPerTest;
+
+  return {
+    consBase,
+    consInfeksius,
+    avgReagenPerTest,
+    avgConsPerTest,
+    avgBaseCost,
+    avgSellPerTest: n > 0 ? Math.ceil(sellOf(avgBaseCost, markup) / 100) * 100 : 0,
+    rows,
+  };
+}
+
+// ── HPLC (HbA1c AH600pro) ───────────────────────────────────────────────────
+
+export interface KontrolHplc {
+  free: boolean;
+  cal: HargaInput;
+  ctrl: HargaInput;
+}
+
+export interface HasilHplc {
+  reagen: HasilReagen | null;
+  rows: BarisReagenHemato[];
+  reagenPerTest: number;
+  overheadKontrol: number;
+  baseCost: number;
+  sellPerTest: number;
+}
+
+/**
+ * HPLC HbA1c. Overhead kontrol/kalibrasi rumusnya khas alat ini dan disalin apa
+ * adanya dari sumber: kalibrasi 0,5 kali per 5 hari kerja, dan kontrol 0,0392
+ * kali per hari kerja (≈ 1 kontrol per 25 hari), lalu dibagi test sebulan.
+ */
+export function hitungHplc(
+  analyzer: KsoAnalyzer,
+  harga: Record<string, HargaInput>,
+  capex: Capex,
+  testsPerMonth: number,
+  workDays: number,
+  markup: number,
+  kontrol: KontrolHplc,
+): HasilHplc {
+  const perUnit = perUnitOf(analyzer, harga);
+  const reagen = hplcCost(testsPerMonth, workDays, perUnit);
+  const reagenPerTest = reagen?.total ?? 0;
+
+  const oh =
+    kontrol.free && testsPerMonth > 0 && workDays > 0
+      ? (nettOf(kontrol.cal) * (workDays / 5) * 0.5 + nettOf(kontrol.ctrl) * workDays * 0.0392) /
+        testsPerMonth
+      : 0;
+
+  const baseCost = capex.perTest + reagenPerTest + oh;
+  const sellPerTest = sellOf(baseCost, markup);
+
+  return {
+    reagen,
+    reagenPerTest,
+    overheadKontrol: oh,
+    baseCost,
+    sellPerTest,
+    rows: analyzer.reagents.map((r) => {
+      const nettKit = nettOf(harga[r.kode]);
+      const pr = reagen?.pr[r.kode];
+      return {
+        kode: r.kode,
+        nama: r.nama,
+        pack: r.pack,
+        nettKit,
+        kontribusiTest: pr ? pr.c + pr.f : 0,
+        hargaExcel: reagenPerTest > 0 && sellPerTest > 0 ? (nettKit * sellPerTest) / reagenPerTest : 0,
+      };
+    }),
+  };
+}
+
+// ── Elektrolit (DN-X6) ──────────────────────────────────────────────────────
+
+export interface HasilElektro {
+  /** Berapa hari satu paket reagen bertahan. */
+  runDays: number;
+  /** Test yang keluar dari satu paket. */
+  testPerPaket: number;
+  reagenPerTest: number;
+  overheadQc: number;
+  baseCost: number;
+  sellPerTest: number;
+  /** Harga jual satu paket reagen = sell/test × test per paket. */
+  sellPaket: number;
+  ada: boolean;
+}
+
+/**
+ * Elektrolit. QC-nya tiga larutan yang dibeli per botol dan dipakai sekali
+ * sebulan, jadi overhead-nya = total ketiganya ÷ test sebulan (bukan per run
+ * seperti hematologi).
+ */
+export function hitungElektro(
+  calAVol: number,
+  hargaReagen: HargaInput,
+  qc: HargaInput[],
+  qcFree: boolean,
+  capex: Capex,
+  testsPerMonth: number,
+  workDays: number,
+  markup: number,
+): HasilElektro {
+  const nettReagen = nettOf(hargaReagen);
+  const res = elektroCost(testsPerMonth, workDays, calAVol, nettReagen);
+  const reagenPerTest = res?.cpt ?? 0;
+  const overheadQc =
+    qcFree && testsPerMonth > 0 ? qc.reduce((s, h) => s + nettOf(h), 0) / testsPerMonth : 0;
+  const baseCost = capex.perTest + reagenPerTest + overheadQc;
+  const sellPerTest = sellOf(baseCost, markup);
+  const testPerPaket = res?.totalTests ?? 0;
+
+  return {
+    runDays: res?.runDays ?? 0,
+    testPerPaket,
+    reagenPerTest,
+    overheadQc,
+    baseCost,
+    sellPerTest,
+    sellPaket: testPerPaket > 0 && sellPerTest > 0 ? sellPerTest * testPerPaket : 0,
+    ada: !!res,
+  };
+}
+
+// ── Blood Gas (PT1000) ──────────────────────────────────────────────────────
+
+/**
+ * KSO   = faskes membeli cartridge sendiri; HPP = nett ÷ kapasitas kit, sisa
+ *         test yang tidak terpakai (residu) ditanggung faskes.
+ * CPRR  = WRG yang menanggung; HPP dibagi test yang REALISTIS terpakai selama
+ *         masa pakai cartridge, jadi residunya masuk ke harga.
+ */
+export type ModeBg = "kso" | "cprr";
+
+export interface HasilBg {
+  /** Test yang realistis terpakai selama masa pakai cartridge (default 21 hari). */
+  realPerMasaPakai: number;
+  /** Kapasitas kit cartridge yang dipilih (test). */
+  kapasitasKit: number;
+  /** Test efektif = min(realistis, kapasitas kit). */
+  testEfektif: number;
+  /** Test yang terbuang karena cartridge kedaluwarsa sebelum habis. */
+  residu: number;
+  nettCartridge: number;
+  /** HPP per test kalau seluruh kit terpakai. */
+  hppPenuh: number;
+  /** Tambahan HPP akibat residu (0 di mode KSO). */
+  hppResidu: number;
+  hppPerTest: number;
+  overheadQc: number;
+  baseCost: number;
+  sellPerTest: number;
+}
+
+export function hitungBg(
+  mode: ModeBg,
+  stabilityHari: number,
+  cartridge: { yieldTest: number | null },
+  hargaCartridge: HargaInput,
+  qc: HargaInput,
+  qcFree: boolean,
+  nQc: number,
+  capex: Capex,
+  testsPerMonth: number,
+  markup: number,
+): HasilBg {
+  // Basis 30 hari kalender — masa pakai cartridge berjalan terus, tidak
+  // berhenti di hari libur.
+  const realPerMasaPakai = (testsPerMonth / 30) * stabilityHari;
+  const kapasitasKit = cartridge.yieldTest ?? 0;
+  const testEfektif = Math.min(realPerMasaPakai, kapasitasKit);
+  const residu = Math.max(0, kapasitasKit - realPerMasaPakai);
+
+  const nettCartridge = nettOf(hargaCartridge);
+  const hppPenuh = kapasitasKit > 0 ? nettCartridge / kapasitasKit : 0;
+  const hppCprr = testEfektif > 0 ? nettCartridge / testEfektif : 0;
+  const hppPerTest = mode === "kso" ? hppPenuh : hppCprr;
+
+  // QC dihitung dari test efektif, dan hanya dibebankan di mode CPRR.
+  const overheadQc = qcFree && testEfektif > 0 ? (nettOf(qc) * nQc) / testEfektif : 0;
+  const baseCost = capex.perTest + hppPerTest + (mode === "cprr" ? overheadQc : 0);
+
+  return {
+    realPerMasaPakai,
+    kapasitasKit,
+    testEfektif,
+    residu,
+    nettCartridge,
+    hppPenuh,
+    hppResidu: hppPerTest - hppPenuh,
+    hppPerTest,
+    overheadQc,
+    baseCost,
+    sellPerTest: sellOf(baseCost, markup),
   };
 }

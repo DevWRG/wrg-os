@@ -9,7 +9,9 @@
 // Logonya diambil dari /brand/wahana-lifeline-white.png milik apps/web (aplikasi
 // asal menyematkan base64-nya di kode).
 
-import type { BarisExcelHemato, BarisExcelKk, InfoKunjungan, RincianCapex } from "./export-excel";
+import type {
+  BarisExcelHemato, BarisExcelKk, DokumenKso, InfoKunjungan, RingkasKso,
+} from "./export-excel";
 
 const F = (v: number | null | undefined): string =>
   v === null || v === undefined || !Number.isFinite(v) ? "—" : Math.round(v).toLocaleString("id-ID");
@@ -117,18 +119,6 @@ const grid = (pairs: [string, string][]): string =>
   `<div class="kso-grid">${pairs
     .map(([k, v]) => `<div class="kso-cell"><span class="k">${esc(k)}</span><span class="v">${esc(v)}</span></div>`)
     .join("")}</div>`;
-
-interface RingkasKso {
-  analyzerName: string;
-  backupLabel: string;
-  totCap: number;
-  capex: RincianCapex;
-  kso: number;
-  testsPerMonth: number;
-  totTest: number;
-  workDays: number;
-  markup: number;
-}
 
 function pasanganRingkas(r: RingkasKso, satuan: string): [string, string][] {
   return [
@@ -277,6 +267,48 @@ export function printKk(arg: {
       info,
       isi,
       `Wahana Lifeline · KSO CPRR Kimia Klinik · ${r.analyzerName}`,
+    ),
+  );
+}
+
+// ── Dokumen generik (Crossmatch, CLIA, HPLC, Elektrolit, Blood Gas) ─────────
+// Pasangan cetak dari exportDokumen — deskriptor yang sama, keluaran A4.
+
+export function printDokumen(doc: DokumenKso) {
+  const biaya = doc.biaya
+    .map(
+      (b) =>
+        `<div class="cprr-row${b.sorot ? " hi" : ""}"><span class="cl">${esc(b.label)}</span><span class="cv">${Rp(b.value)}</span></div>`,
+    )
+    .join("");
+
+  const tabel = `<table><thead><tr>${doc.tabel.header
+    .map((h, i) => `<th${i > 0 ? ' class="r"' : ""}>${esc(h)}</th>`)
+    .join("")}</tr></thead><tbody>${doc.tabel.rows
+    .map(
+      (r) =>
+        `<tr>${r
+          .map((c, i) => `<td${i > 0 ? ' class="r"' : ""}>${esc(String(c))}</td>`)
+          .join("")}</tr>`,
+    )
+    .join("")}</tbody></table>`;
+
+  const isi = [
+    sec("navy", "Ringkasan KSO", grid([
+      ...pasanganRingkas(doc.ringkas, doc.satuanTest ?? "Test"),
+      ...(doc.catatan ?? []).map((c) => [c.label, c.value] as [string, string]),
+    ])),
+    sec("green", "CPRR — cost per test", `<div class="cprr-tbl">${biaya}</div>`),
+    sec("amber", doc.tabel.judul, tabel),
+  ].join("");
+
+  buka(
+    kerangka(
+      doc.judul,
+      "Cost Per Result Report · Kerja Sama Operasional",
+      doc.info,
+      isi,
+      `Wahana Lifeline · ${doc.judul} · ${doc.ringkas.analyzerName}`,
     ),
   );
 }

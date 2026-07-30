@@ -48,7 +48,7 @@ export interface RincianCapex {
   lis: number;
 }
 
-interface RingkasKso {
+export interface RingkasKso {
   analyzerName: string;
   backupLabel: string;
   totCap: number;
@@ -284,5 +284,60 @@ export async function exportKk(arg: {
     [6, 32, 14, 14, 10, 18, 18],
     aoa.findIndex((row) => String(row[0]).startsWith("CPRR rata-rata")),
     `KSO_CPRR_KimiaKlinik_${namaFileAman(r.analyzerName)}_${d.replace(/\//g, "-")}.xlsx`,
+  );
+}
+
+// ── Dokumen generik (Crossmatch, CLIA, HPLC, Elektrolit, Blood Gas) ─────────
+//
+// Lima kategori ini bentuk lembarnya sama: ringkasan KSO → susunan biaya per
+// test → satu tabel rincian. Aplikasi asal menulis lima fungsi export yang isinya
+// hampir identik; di sini satu fungsi dengan deskriptor. Susunan bagiannya sama
+// dengan lembar lama, tapi tidak dijamin identik baris-per-baris seperti
+// Hematologi & Kimia Klinik yang memang disalin literal.
+
+export interface DokumenKso {
+  /** Judul di baris pertama, mis. "KSO CPRR — CROSSMATCH". */
+  judul: string;
+  /** Nama sheet Excel + potongan nama berkas. */
+  sheet: string;
+  ringkas: RingkasKso;
+  info: InfoKunjungan;
+  /** Satuan yang dipakai per bulan: "Test" / "Sampel". */
+  satuanTest?: string;
+  /** Susunan biaya per test. Baris terakhir yang `sorot` akan di-highlight. */
+  biaya: { label: string; value: number; sorot?: boolean }[];
+  tabel: { judul: string; header: string[]; rows: (string | number)[][] };
+  /** Baris keterangan tambahan (mis. residu cartridge, masa pakai reagen). */
+  catatan?: { label: string; value: string }[];
+}
+
+export async function exportDokumen(doc: DokumenKso) {
+  const d = tanggalHariIni();
+  const K = Math.max(4, doc.tabel.header.length);
+  const pad = (b: (string | number)[]): Baris => [...b, ...Array(Math.max(0, K - b.length)).fill("")];
+
+  const aoa: Baris[] = [
+    pad([doc.judul]),
+    [...Array(K).fill("")].map((v, i) => (i === 0 ? "Wahana Lifeline" : i === K - 1 ? `Tanggal: ${d}` : v)),
+    ...barisRingkas(doc.ringkas, doc.info, K, doc.satuanTest ?? "Test"),
+    ...(doc.catatan ?? []).map((c) => pad([c.label, c.value])),
+    pad([]),
+    pad(["CPRR — COST PER TEST"]),
+    ...doc.biaya.map((b) => pad([b.label, Rp(b.value)])),
+    pad([]),
+    pad([doc.tabel.judul.toUpperCase()]),
+    pad(doc.tabel.header),
+    ...doc.tabel.rows.map((r) => pad(r)),
+    pad([]),
+    pad(["Informasi kompetitor", doc.info.kompetitor || "—"]),
+  ];
+
+  const sorot = doc.biaya.find((b) => b.sorot);
+  await tulis(
+    doc.sheet,
+    aoa,
+    [34, 26, 18, 18, 16, 16, 16].slice(0, K),
+    sorot ? aoa.findIndex((row) => row[0] === sorot.label) : -1,
+    `KSO_CPRR_${namaFileAman(doc.sheet)}_${namaFileAman(doc.ringkas.analyzerName)}_${d.replace(/\//g, "-")}.xlsx`,
   );
 }
