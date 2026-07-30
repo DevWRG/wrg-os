@@ -2,6 +2,7 @@ import Link from "next/link";
 
 import { gatewayFetch } from "@/lib/gateway";
 import { sessionUser } from "@/lib/admin-guard";
+import { can } from "@/lib/perms";
 import { cn } from "@/lib/utils";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { AddVisitSheet } from "@/components/crm/add-visit-sheet";
@@ -80,6 +81,10 @@ export default async function VisitsPage({
   const qs = active ? `?status=${encodeURIComponent(active)}` : "";
 
   const me = await sessionUser();
+  // Sembunyikan tombol "Tambah kunjungan" bila user tak punya izin create pada
+  // fitur `visits`. can() default true bila izin tak tersedia (auth mati/belum
+  // login) & untuk admin/superuser — non-breaking, sama pola gating web lain.
+  const canAddVisit = can(me, "visits", "create");
   const [summary, list, kpi] = await Promise.all([
     getJson<VisitSummary>("/visits/summary", me?.id),
     getJson<VisitResponse>(`/visits${qs}`, me?.id),
@@ -97,7 +102,7 @@ export default async function VisitsPage({
       <PageHeader
         title="Visits"
         description="Kunjungan AM dengan geotag + foto (port visit). Geo divalidasi terhadap bbox Indonesia."
-        action={<AddVisitSheet />}
+        action={canAddVisit ? <AddVisitSheet /> : undefined}
       />
 
       {!summary ? (
