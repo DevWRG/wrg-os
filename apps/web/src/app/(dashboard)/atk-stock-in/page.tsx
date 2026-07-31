@@ -37,7 +37,7 @@ export default async function AtkStockInPage() {
     <>
       <PageHeader
         title="ATK Stock In"
-        description="Pencatatan stok masuk barang ATK oleh tim General Affairs & audit penuh mutasi (F135) — laporan stok saat ini dihitung dari mutasi, bukan disimpan."
+        description="Pencatatan stok masuk barang ATK oleh tim General Affairs & audit penuh mutasi (F49) — laporan stok saat ini dihitung dari mutasi, bukan disimpan."
       />
       {!item || !mov || !lvl ? (
         <EmptyState

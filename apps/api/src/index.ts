@@ -2530,7 +2530,7 @@ app.delete("/atk/items/:id", async (c) => {
   return c.json(r, r.deleted ? 200 : 404);
 });
 
-// ── F135 ATK Stock Movement (General Affairs) — Stock In/Out Transactional ──
+// ── F49 ATK Stock Movement (General Affairs) — Stock In/Out Transactional ──
 const ATK_MOVEMENT_TYPES: AtkMovementType[] = ["in", "out"];
 
 app.get("/atk/stock-movements", async (c) => {

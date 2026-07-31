@@ -37,7 +37,7 @@ export default async function AtkStockOutPage() {
     <>
       <PageHeader
         title="ATK Stock Out"
-        description="Ambil/pakai barang ATK — bisa dicatat tim mana pun (F135), bukan cuma General Affairs. Cek ketersediaan dulu di tab Cek Stok."
+        description="Ambil/pakai barang ATK — bisa dicatat tim mana pun (F49), bukan cuma General Affairs. Cek ketersediaan dulu di tab Cek Stok."
       />
       {!item || !mov || !lvl ? (
         <EmptyState

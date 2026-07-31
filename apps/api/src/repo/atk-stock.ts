@@ -1,6 +1,6 @@
 import { db } from "../db.js";
 
-// F135 ATK Stock Movement (General Affairs) — ledger transaksi stok
+// F49 ATK Stock Movement (General Affairs) — ledger transaksi stok
 // masuk/keluar barang ATK (lihat 069_atk_stock_movement.sql), konsumen
 // katalog F134 (atk-master.ts). date/timestamptz eksplisit ::text di
 // SELECT/RETURNING — pola sama dgn atk-master.ts/supplier-eta.ts

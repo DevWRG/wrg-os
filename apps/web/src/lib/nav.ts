@@ -112,7 +112,7 @@ export const NAV: NavGroup[] = [
     label: "General Affairs",
     items: [
       { title: "ATK Master", url: "/atk-master", icon: PenLine, badge: "NEW" },
-      // F135 sengaja 2 menu/feature-key terpisah (bukan 1 halaman gabungan):
+      // F49 sengaja 2 menu/feature-key terpisah (bukan 1 halaman gabungan):
       // Stock In = tim GA (pencatatan pembelian/penerimaan), Stock Out = tim
       // mana pun (self-service pengambilan barang). Belum di-gate identitas
       // ("show") krn sistem ini belum punya konsep departemen/tim di data
