@@ -6,6 +6,7 @@ import { ArrowRightLeft } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { DealFormModal, type DealFormInit } from "./deal-form-modal";
+import { PipelineExportButton } from "./pipeline-export-button";
 
 // F1-SPT kanban interaktif (tahap B): board 8-stage + filter + ringkasan weighted +
 // deal detail + DRAG pindah stage (PATCH /api/deals/:id/stage, write-guard di backend).
@@ -293,10 +294,14 @@ export function PipelineBoard({ data, isAdmin = false }: { data: PipelineData; i
           <button onClick={() => setF({ pcat: "", cabang: "", hod: "", am: "", brand: "", coop: "", year: "", q: "" })}
             className="text-sm text-muted-foreground hover:text-foreground underline">reset</button>
         )}
-        <button onClick={() => setFormModal({ mode: "create" })}
-          className="ml-auto inline-flex h-9 items-center rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground shadow-sm hover:opacity-90">
-          + Deal Baru
-        </button>
+        <div className="ml-auto flex items-center gap-2">
+          {/* Export mengikuti filter aktif — yang tampil = yang terunduh. */}
+          <PipelineExportButton deals={filtered} stages={STAGES} />
+          <button onClick={() => setFormModal({ mode: "create" })}
+            className="inline-flex h-9 items-center rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground shadow-sm hover:opacity-90">
+            + Deal Baru
+          </button>
+        </div>
       </div>
 
       {/* Hint + status */}
