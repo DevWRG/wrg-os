@@ -244,9 +244,12 @@ with open(args.file, encoding="utf-8-sig", newline="") as f:
                          kid or "", pid or "", cid or "", sid or "",
                          product_kode, kode_src, g(K_NO)])
         if masalah:
+            # kategori_nama diisi nama kategori MASTER ('NON IVD'), bukan kolom
+            # Lini ('Alkes'): antrean review dipakai dialog "Selesaikan" yang
+            # mencari kategori lewat nama, dan 'Alkes' tidak ada di master.
             review.append(dict(baris=g(K_NO) or str(i), nama=g(K_NAMA), brand=clean(raw.get("Brand")),
                                kemasan=g(K_KEM_C) or g(K_KEM_D), satuan=g(K_SATUAN),
-                               kode_legacy=kode_src, kat=lini, line=g(K_LINE),
+                               kode_legacy=kode_src, kat=LINI_KATEGORI.get(lini, lini), line=g(K_LINE),
                                klas=g(K_CLASS), sub=g(K_SUB), masalah=masalah))
 
 # ── 3. laporan + gerbang ───────────────────────────────────────────────────
