@@ -145,6 +145,12 @@ function PricelistFormBody({
   const [hpp, setHpp] = useState(initial ? String(num(initial.hpp)) : "0");
   const [margin, setMargin] = useState(initial ? toPctStr(num(initial.margin_pct)) : "0");
   const [diskon, setDiskon] = useState(initial ? toPctStr(num(initial.diskon_pct)) : "0");
+  // Price List dari sumber (migrasi 076). Ikut di-state supaya edit manual TIDAK
+  // menghapus angka hasil impor — kosongkan sendiri kalau mau kembali dihitung
+  // dari margin.
+  const [priceList, setPriceList] = useState(
+    initial?.price_list == null ? "" : String(Math.round(num(initial.price_list))),
+  );
   const [wrg, setWrg] = useState(initial ? toPctStr(num(initial.pct_wrg)) : "0");
   const [promosi, setPromosi] = useState(initial ? toPctStr(num(initial.pct_promosi)) : "0");
   const [hodSales, setHodSales] = useState(initial ? toPctStr(num(initial.pct_hod_sales)) : "0");
@@ -155,7 +161,10 @@ function PricelistFormBody({
 
   const pct = (s: string) => num(s) / 100;
   // Total Point & Min/Max Incentive Pts DITURUNKAN (bukan input) — dari Nett WRG.
-  const d = derivePricing(num(hpp), pct(margin), pct(diskon), pct(wrg), pct(promosi), pct(hodSales));
+  const d = derivePricing(
+    num(hpp), pct(margin), pct(diskon), pct(wrg), pct(promosi), pct(hodSales),
+    priceList.trim() === "" ? null : num(priceList),
+  );
 
   async function run(fn: () => Promise<Response>) {
     setBusy(true);
@@ -183,6 +192,7 @@ function PricelistFormBody({
           hpp: num(hpp),
           margin_pct: pct(margin),
           diskon_pct: pct(diskon),
+          price_list: priceList.trim() === "" ? null : num(priceList),
           pct_wrg: pct(wrg),
           pct_promosi: pct(promosi),
           pct_hod_sales: pct(hodSales),
@@ -275,6 +285,14 @@ function PricelistFormBody({
                 <div className="grid gap-1.5">
                   <Label htmlFor="pl-diskon">Diskon</Label>
                   <PercentInput id="pl-diskon" value={diskon} onChange={setDiskon} />
+                </div>
+                <div className="grid gap-1.5 sm:col-span-3">
+                  <Label htmlFor="pl-pricelist">Price List dari sumber (opsional)</Label>
+                  <GroupedInput id="pl-pricelist" value={priceList} onChange={setPriceList} prefix="Rp" />
+                  <p className="text-muted-foreground text-xs">
+                    Kosongkan agar dihitung dari margin ({formatRupiah(num(hpp) && pct(margin) < 1 ? num(hpp) / (1 - pct(margin)) : num(hpp))}).
+                    Diisi kalau sumber sudah membulatkan harganya.
+                  </p>
                 </div>
               </div>
             </Section>
