@@ -34,6 +34,7 @@ import { runNotifQuota } from "./repo/notifquota.js";
 import { evaluateSalesAlerts } from "./repo/sales-analytics-alert-eval.js";
 import { computeNpk, currentPeriod } from "./repo/npk.js";
 import { snapshotLastWeek } from "./repo/watchpoint-weekly.js";
+import { runEdWatch } from "./repo/stock-batch.js";
 
 // Penjadwal agen in-process (Blueprint v2.3). Default MATI — aktif hanya bila
 // AGENT_SCHEDULE_ENABLED=true. Tiap run tetap menulis ke audit_log via repo
@@ -88,6 +89,9 @@ export function startScheduler(): ScheduleStatus {
   // Eskalasi kepatuhan (F57): AM miss plan/report N hari-kerja berturut → rekap ke
   // grup HoD. Flag SENDIRI (default off) supaya tak surprise-kirim WA saat deploy.
   const missEscalationEnabled = (process.env.MISS_ESCALATION_ENABLED ?? "false").toLowerCase() === "true";
+  // ED Watch (F38): pindai batch ber-ED, kirim peringatan saat melintasi ambang
+  // 90/60/30 hari. Flag SENDIRI (default off) — mengirim WA.
+  const edWatchEnabled = (process.env.ED_WATCH_ENABLED ?? "false").toLowerCase() === "true";
   // Rekap kunjungan mingguan (F16): volume kunjungan minggu lalu vs target per AM.
   // Flag SENDIRI (default off) — sama alasannya: jangan kirim WA tanpa diminta.
   const visitWeeklyEnabled = (process.env.VISIT_WEEKLY_ENABLED ?? "false").toLowerCase() === "true";
@@ -210,12 +214,12 @@ export function startScheduler(): ScheduleStatus {
   ];
 
   status = {
-    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled || watchpointSnapshotEnabled,
+    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled || watchpointSnapshotEnabled || edWatchEnabled,
     timezone,
     jobs: jobs.map((j) => ({ id: j.id, expr: j.expr, valid: cron.validate(j.expr) })),
   };
 
-  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled && !watchpointSnapshotEnabled) {
+  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled && !watchpointSnapshotEnabled && !edWatchEnabled) {
     console.log("[scheduler] semua *_SCHEDULE/_ENABLED flag != true — tidak dijadwalkan");
     return status;
   }
@@ -292,6 +296,39 @@ export function startScheduler(): ScheduleStatus {
       { timezone },
     );
     live.push(`reminder-hod=${hodExpr}`);
+  }
+
+  // F38 ed-watch — pindai batch ber-ED, peringatkan saat melintasi ambang
+  // 90/60/30 hari. Pagi 07:30 supaya sudah masuk sebelum tim gudang mulai
+  // menyiapkan kiriman.
+  //
+  // SENGAJA TIDAK dibungkus isWorkday(): ED tidak berhenti jalan di hari libur,
+  // dan barang yang melintasi ambang 30 hari tepat di awal libur panjang justru
+  // yang paling perlu diketahui lebih dulu. Pola sama previsit-check (F45).
+  //
+  // Tanggal pembanding dihitung WIB di dalam runEdWatch (bukan `current_date`
+  // SQL yang mengikuti timezone container = UTC), jadi jadwal ini boleh digeser
+  // ke jam berapa pun tanpa menggeser perhitungan sisa-hari.
+  const edWatchExpr = process.env.ED_WATCH_CRON ?? "30 7 * * *";
+  if (edWatchEnabled) {
+    if (!cron.validate(edWatchExpr)) {
+      console.error(`[scheduler] ed-watch cron-expr tidak valid: "${edWatchExpr}" — dilewati`);
+    } else {
+      cron.schedule(
+        edWatchExpr,
+        async () => {
+          const startedAt = new Date().toISOString();
+          try {
+            const r = await runEdWatch();
+            console.log(`[scheduler] ed-watch ok @ ${startedAt} ${JSON.stringify(r).slice(0, 200)}`);
+          } catch (e) {
+            console.error(`[scheduler] ed-watch gagal @ ${startedAt}:`, e);
+          }
+        },
+        { timezone },
+      );
+      live.push(`ed-watch=${edWatchExpr}`);
+    }
   }
 
   // Compliance reminder per-grup (port plan_check/report_check) — ikut gating

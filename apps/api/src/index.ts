@@ -164,6 +164,7 @@ import {
   listDeliveryOrders,
 } from "./repo/accurateMirror.js";
 import { listWarehouses, listStockBranch, stockBranchSummary } from "./repo/stock-branch.js";
+import { listStockBatch, stockBatchSummary, runEdWatch } from "./repo/stock-batch.js";
 import { recordDelivery, recordEmail, recordAlert, listLogs } from "./repo/logs.js";
 import { renderSalesDocHtml, renderBriefingHtml } from "./repo/exportdoc.js";
 import { runHodDaily } from "./repo/hodreminder.js";
@@ -2683,6 +2684,65 @@ app.get("/stock/branch", async (c) => {
 app.get("/stock/branch/summary", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json(await stockBranchSummary());
+});
+
+// ── F38 ED Watch & Near-Expiry — stok per batch + tanggal kedaluwarsa ────────
+// Read-only; data masuk lewat scripts/db/import_stock_batch.py.
+app.get("/stock/batch", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const wh = c.req.query("warehouse");
+  if (wh) {
+    const known = await listWarehouses();
+    if (!known.some((w) => w.kode === wh)) {
+      return c.json({ error: `warehouse tak dikenal: ${wh}`, valid: known.map((w) => w.kode) }, 400);
+    }
+  }
+  const tierRaw = c.req.query("tier");
+  if (tierRaw && !["30", "60", "90"].includes(tierRaw)) {
+    return c.json({ error: "tier harus 30|60|90" }, 400);
+  }
+  const out = await listStockBatch({
+    q: c.req.query("q") ?? undefined,
+    warehouse: wh ?? undefined,
+    tier: tierRaw ? (Number(tierRaw) as 30 | 60 | 90) : undefined,
+    hanyaLewat: c.req.query("lewat") === "1",
+    tanpaEd: c.req.query("tanpa_ed") === "1",
+    limit: c.req.query("limit") ? Number(c.req.query("limit")) : undefined,
+    offset: c.req.query("offset") ? Number(c.req.query("offset")) : undefined,
+  });
+  return c.json({ count: out.rows.length, total_rows: out.total_rows, rows: out.rows });
+});
+
+app.get("/stock/batch/summary", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await stockBatchSummary());
+});
+
+// Trigger manual cron ed-watch (test & recovery kalau scheduler mati).
+// `tanggal` opsional — default hari ini WIB; dipakai menguji ambang tanpa
+// menunggu tanggal sungguhan bergerak.
+app.post("/stock/batch/ed-watch/run", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: Record<string, unknown> = {};
+  try { body = await c.req.json(); } catch { /* body opsional */ }
+  // Validasi inline, sengaja tanpa helper bernama: branch F45 mendeklarasikan
+  // `isIsoDate` di file ini juga, jadi helper bernama sama akan bentrok saat
+  // kedua branch merge. Regex saja tidak cukup — "2026-13-45" lolos pola tapi
+  // mati di cast ::date, jadi dicek round-trip.
+  if (body.tanggal != null) {
+    const t = String(body.tanggal);
+    const d = new Date(`${t}T00:00:00Z`);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(t) || Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== t) {
+      return c.json({ error: "tanggal harus tanggal valid (YYYY-MM-DD)" }, 400);
+    }
+  }
+  return c.json(await runEdWatch({
+    to: body.to == null ? undefined : String(body.to),
+    tanggal: body.tanggal == null ? undefined : String(body.tanggal),
+    // Dengan `tanggal` override, penandaan HARUS diminta eksplisit — lihat
+    // catatan di runEdWatch: alat uji tak boleh mematikan alert produksi.
+    tandai: body.tandai === true,
+  }));
 });
 
 // ── Log operasional: delivery / email / alert (port legacy *_log) ──
