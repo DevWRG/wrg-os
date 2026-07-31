@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { AlertTriangle, CircleAlert, Info } from "lucide-react";
 
@@ -10,8 +10,6 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { ExportButton } from "@/components/ui/export-button";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
-import { AmPricelistTable } from "@/components/pricelist/am-pricelist-table";
-import type { AmPricelistRow } from "@/lib/pricelist";
 
 // ── Tipe (cermin apps/api/src/repo/pricebook.ts) ───────────────────────────
 export interface PricebookItem {
@@ -43,10 +41,6 @@ export interface PricebookSummary {
   };
   cakupan: { accurateTotal: number; cocok: number; diLuarKeagenan: number; tanpaKode: number } | null;
 }
-interface OutsideItem {
-  id: number; no: string | null; name: string | null; category: string | null;
-  unit: string | null; unitPrice: number | null; quantity: number | null; available: number | null;
-}
 
 // ── Format ─────────────────────────────────────────────────────────────────
 const rp = new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 });
@@ -72,23 +66,42 @@ const liniColor = (l: string) => (l === "IVD" ? C.ivd : C.medical);
 //   /pricebook/setup      HPP & margin — HoD Business / Purchasing
 // Menu terpisah juga bikin izinnya punya baris sendiri di matriks Akses Grup;
 // sebuah tab tidak bisa dicentang sendiri.
+// Tab "Di Luar Keagenan" DILEPAS 1 Agt 2026 (keputusan user): menu ini
+// difokuskan ke produk keagenan saja. Statistik cakupan Accurate-vs-keagenan
+// masih hidup di menu Ringkasan Price Book, jadi tak ada angka yang hilang.
 const TABS = [
   { key: "katalog", label: "Katalog" },
   { key: "harga", label: "Harga per Produk" },
-  { key: "luar", label: "Di Luar Keagenan" },
 ] as const;
 export type PricebookTabKey = (typeof TABS)[number]["key"];
 
-// Muka AM: baris SUDAH dibersihkan di server (tanpa hpp/margin) — lihat toAmRow().
-export interface HargaPanel { rows: AmPricelistRow[] }
+// Muka AM: harga keagenan yang SUDAH dipublikasikan HoD Business dari Setup
+// Harga. Bentuknya dibatasi di query API (/pricebook/published) — kolom hpp &
+// margin tidak pernah di-SELECT, jadi tak ada jalan bocor ke browser.
+export interface PublishedRow {
+  rowNo: number;
+  kode: string | null;
+  productKode: string | null;
+  lini: string;
+  brand: string;
+  nama: string;
+  varian: string | null;
+  kemasan: string | null;
+  satuan: string | null;
+  kategori: string | null;
+  priceList: number;
+  diskonMaks: number;
+  hargaNett: number;
+  nettPpn: number;
+  publishedAt: string | null;
+}
+export interface HargaPanel { rows: PublishedRow[] }
 
 export function PricebookView({
-  items, summary, harga, initialTab,
+  items, harga, initialTab,
 }: {
   items: PricebookItem[] | null;
-  /** Dipakai hanya untuk statistik cakupan di tab Di Luar Keagenan; null = tak berhak. */
-  summary: PricebookSummary | null;
-  /** Baris pricelist terpublikasi (043). null/undefined = user tak berhak. */
+  /** Harga keagenan terpublikasi. null/undefined = user tak berhak. */
   harga?: HargaPanel | null;
   initialTab?: PricebookTabKey;
 }) {
@@ -130,26 +143,80 @@ export function PricebookView({
 
       {aktif === "katalog" && <KatalogTab items={items ?? []} />}
       {aktif === "harga" && harga && <HargaTab rows={harga.rows} />}
-      {aktif === "luar" && <LuarKeagenanTab cakupan={summary?.cakupan ?? null} />}
     </div>
   );
 }
 
 // ── Tab: Harga per Produk (bekas menu Pricelist, tabel 043) ────────────────
 
-function HargaTab({ rows }: { rows: AmPricelistRow[] }) {
+function HargaTab({ rows }: { rows: PublishedRow[] }) {
   if (rows.length === 0) {
     return (
       <EmptyState
         title="Belum ada harga terpublikasi"
-        description="HoD Business belum mempublikasikan harga produk Accurate dari tab Setup Harga."
+        description="HoD Business belum mempublikasikan harga keagenan dari menu Setup Harga. Semua SKU tetap bisa dilihat di tab Katalog; tab ini khusus harga yang sudah disetujui untuk dikutip."
       />
     );
   }
+  const kolom: DataColumn<PublishedRow>[] = [
+    { id: "kode", header: "Kode", sortable: true,
+      accessor: (r) => r.productKode ?? r.kode ?? "",
+      cell: (r) => <span className="font-mono text-xs whitespace-nowrap">{r.productKode ?? r.kode ?? "—"}</span> },
+    { id: "nama", header: "Nama Produk", sortable: true, accessor: (r) => r.nama,
+      cell: (r) => (
+        <div className="max-w-[24rem]">
+          <span className="block truncate" title={r.nama}>{r.nama}</span>
+          <span className="text-muted-foreground block truncate text-xs">
+            {r.brand}{r.varian ? ` · ${r.varian}` : ""}{r.kemasan ? ` · ${r.kemasan}` : ""}
+          </span>
+        </div>
+      ), className: "max-w-[24rem]" },
+    { id: "lini", header: "Lini", sortable: true, accessor: (r) => r.lini,
+      cell: (r) => <Badge variant="outline">{r.lini}</Badge> },
+    { id: "pl", header: "Price List", align: "right", sortable: true, accessor: (r) => r.priceList,
+      cell: (r) => <span className="whitespace-nowrap">{fmtRp(r.priceList)}</span> },
+    { id: "diskon", header: "Diskon Maks", align: "right", sortable: true, accessor: (r) => r.diskonMaks,
+      cell: (r) => <span className="whitespace-nowrap">{fmtPctDisc(r.diskonMaks)}</span> },
+    { id: "nett", header: "Nett (lantai)", align: "right", sortable: true, accessor: (r) => r.hargaNett,
+      cell: (r) => <span className="whitespace-nowrap">{fmtRp(r.hargaNett)}</span> },
+    { id: "ppn", header: "Nett + PPN", align: "right", sortable: true, accessor: (r) => r.nettPpn,
+      cell: (r) => <span className="font-medium whitespace-nowrap">{fmtRp(r.nettPpn)}</span> },
+  ];
   return (
     <Card>
-      <CardContent className="pt-6">
-        <AmPricelistTable rows={rows} />
+      <CardContent className="space-y-3 pt-6">
+        <p className="rounded-md bg-sky-50 p-2 text-xs text-sky-900">
+          <b>Nett (lantai)</b> adalah harga terendah yang boleh dikutip tanpa izin Direksi.
+          PPN 11% dihitung dari Nett, bukan dari Price List.
+        </p>
+        <DataTable
+          columns={kolom}
+          data={rows}
+          getKey={(r) => String(r.rowNo)}
+          searchPlaceholder="Cari nama / brand / kode…"
+          pageSize={25}
+          initialSort={{ id: "nama", dir: "asc" }}
+          empty="Tidak ada harga yang cocok."
+          toolbar={
+            <ExportButton
+              filename="harga-keagenan-terpublikasi"
+              data={rows}
+              columns={[
+                { header: "Kode", value: (r) => r.productKode ?? r.kode ?? "" },
+                { header: "Lini", value: (r) => r.lini },
+                { header: "Brand", value: (r) => r.brand },
+                { header: "Nama", value: (r) => r.nama },
+                { header: "Varian", value: (r) => r.varian ?? "" },
+                { header: "Kemasan", value: (r) => r.kemasan ?? "" },
+                { header: "Satuan", value: (r) => r.satuan ?? "" },
+                { header: "Price List", value: (r) => r.priceList },
+                { header: "Diskon Maks", value: (r) => r.diskonMaks },
+                { header: "Nett", value: (r) => r.hargaNett },
+                { header: "Nett + PPN", value: (r) => r.nettPpn },
+              ]}
+            />
+          }
+        />
       </CardContent>
     </Card>
   );
@@ -462,105 +529,6 @@ function KatalogTab({ items }: { items: PricebookItem[] }) {
             searchPlaceholder="Cari produk, brand, atau kode…"
             empty="Tidak ada SKU yang cocok."
           />
-        </CardContent>
-      </Card>
-    </div>
-  );
-}
-
-// ── Tab 3: Di luar keagenan ────────────────────────────────────────────────
-
-function LuarKeagenanTab({ cakupan }: { cakupan: PricebookSummary["cakupan"] }) {
-  const [rows, setRows] = useState<OutsideItem[] | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    try {
-      const res = await fetch("/api/pricebook/outside?limit=20000");
-      if (!res.ok) throw new Error(String(res.status));
-      setRows(((await res.json()).rows ?? []) as OutsideItem[]);
-    } catch {
-      setErr("Gagal memuat daftar item di luar keagenan.");
-    }
-  }, []);
-
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- load() men-setState saat fetch selesai; disengaja.
-    void load();
-  }, [load]);
-
-  const columns: DataColumn<OutsideItem>[] = [
-    { id: "no", header: "Kode", sortable: true, accessor: (r) => r.no ?? "" },
-    { id: "name", header: "Nama item", sortable: true, accessor: (r) => r.name ?? "" },
-    { id: "category", header: "Kategori Accurate", sortable: true, accessor: (r) => r.category ?? "" },
-    { id: "unit", header: "Satuan", accessor: (r) => r.unit ?? "" },
-    {
-      id: "unitPrice", header: "Harga rata-rata", align: "right", sortable: true,
-      accessor: (r) => r.unitPrice ?? 0, cell: (r) => fmtRp(r.unitPrice),
-    },
-    { id: "quantity", header: "Stok", align: "right", sortable: true, accessor: (r) => r.quantity ?? 0, cell: (r) => (r.quantity == null ? "—" : fmtNum(r.quantity)) },
-  ];
-
-  return (
-    <div className="space-y-4">
-      <Card className="border-amber-300/60">
-        <CardContent className="flex gap-2 py-3 text-xs">
-          <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-600" />
-          <div className="space-y-1">
-            <p>
-              Item di bawah ada di Accurate tapi <b>tidak ada di price book keagenan</b> periode ini. Pencocokan lewat
-              kode item (satu-satunya identitas yang dijamin sama antara dua sumber).
-            </p>
-            <p className="text-muted-foreground">
-              Perlu diingat: {cakupan ? fmtNum(cakupan.tanpaKode) : "sebagian"} SKU keagenan sendiri belum punya kode
-              Accurate, jadi sebagian isi daftar ini bisa jadi sebenarnya produk keagenan yang kodenya belum terisi.
-              Itu pekerjaan pembersihan master, sengaja tidak ditebak-tebak lewat kecocokan nama.
-            </p>
-          </div>
-        </CardContent>
-      </Card>
-
-      {cakupan && (
-        <div className="grid gap-3 sm:grid-cols-3">
-          <Kpi label="Item Accurate" value={fmtNum(cakupan.accurateTotal)} sub="seluruh mirror katalog" />
-          <Kpi label="Cocok keagenan" value={fmtNum(cakupan.cocok)} sub="punya pasangan di price book" />
-          <Kpi label="Di luar keagenan" value={fmtNum(cakupan.diLuarKeagenan)} sub="tanpa pasangan" tone="warn" />
-        </div>
-      )}
-
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between">
-          <CardTitle className="text-base">Item Accurate di luar keagenan</CardTitle>
-          {rows && rows.length > 0 && (
-            <ExportButton
-              filename="accurate-di-luar-keagenan"
-              data={rows}
-              columns={[
-                { header: "Kode", value: (r: OutsideItem) => r.no },
-                { header: "Nama", value: (r: OutsideItem) => r.name },
-                { header: "Kategori", value: (r: OutsideItem) => r.category },
-                { header: "Satuan", value: (r: OutsideItem) => r.unit },
-                { header: "Harga rata-rata", value: (r: OutsideItem) => r.unitPrice },
-                { header: "Stok", value: (r: OutsideItem) => r.quantity },
-              ]}
-            />
-          )}
-        </CardHeader>
-        <CardContent>
-          {err ? (
-            <EmptyState title="Gagal memuat" description={err} />
-          ) : rows === null ? (
-            <div className="text-muted-foreground text-sm">Memuat…</div>
-          ) : (
-            <DataTable
-              columns={columns}
-              data={rows}
-              getKey={(r) => String(r.id)}
-              pageSize={25}
-              searchPlaceholder="Cari item Accurate…"
-              empty="Semua item Accurate ada di price book keagenan."
-            />
-          )}
         </CardContent>
       </Card>
     </div>

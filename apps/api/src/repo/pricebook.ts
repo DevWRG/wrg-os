@@ -334,12 +334,20 @@ export interface PricebookSetupRow {
   varian: string | null;
   kemasan: string | null;
   satuan: string | null;
+  // Harga EFEKTIF (override HoD kalau ada, kalau tidak angka handover).
   priceList: number;
   diskonMaks: number;
   hargaNett: number;
   nettPpn: number;
+  // Angka handover Direktur apa adanya — supaya override selalu bisa dibandingkan
+  // dengan aslinya, dan kelihatan mana yang sudah disetel manusia.
+  priceListAsli: number;
+  diskonMaksAsli: number;
+  adaOverride: boolean;
   hpp: number | null; // null = belum ada HPP di sumber Compilation
-  marginPct: number | null; // fraksi; null kalau hpp null
+  marginPct: number | null; // fraksi; null kalau hpp null (dihitung dari harga efektif)
+  status: string; // draft | published
+  publishedAt: string | null;
   kategori: string | null;
   productLine: string | null;
   klas: string | null;
@@ -355,6 +363,9 @@ export interface PricebookSetupSummary {
   tanpaHpp: number;
   klasifikasiLengkap: number;
   kepasangKode: number;
+  draft: number;
+  published: number;
+  adaOverride: number; // baris yang harganya sudah disetel HoD (beda dari handover)
   reviewTerbuka: number; // antrean product_code_review dari sumber kroscek
   totalHpp: number;
   totalPriceList: number; // Σ price list, HANYA baris ber-HPP (biar sebanding)
@@ -364,6 +375,33 @@ export interface PricebookSetupSummary {
 // Label sumber di product_code_review — harus sama dengan konstanta SUMBER di
 // scripts/db/import_kroscek_pricelist.py.
 const SUMBER_KROSCEK = "Master Kroscek PL H2-2026";
+
+export const PPN_PRICEBOOK = 0.11; // PPN atas NETT (bukan price list) — HANDOVER §3.
+const rnd = (v: number) => Math.round(v); // half-up, sama dengan ROUND() spreadsheet
+
+/** Harga efektif satu baris setup.
+ *
+ *  Tanpa override → angka handover dipakai APA ADANYA. HANDOVER §9 melarang
+ *  menghitung ulang dengan pembulatan sendiri: 13 baris beda Rp 1 karena
+ *  generator sumber half-even sedangkan ROUND() half-up.
+ *  Dengan override → angkanya bukan lagi angka handover, jadi rumus resmi
+ *  berlaku: nett = ROUND(price × (1-diskon)), ppn = ROUND(nett × 1,11).
+ */
+export function hargaEfektif(r: {
+  price_list: unknown; diskon_maks: unknown; harga_nett: unknown; nett_ppn: unknown;
+  price_list_override: unknown; diskon_override: unknown;
+}): { priceList: number; diskon: number; nett: number; ppn: number; adaOverride: boolean } {
+  const plAsli = num(r.price_list);
+  const dAsli = num(r.diskon_maks);
+  const adaOverride = r.price_list_override !== null || r.diskon_override !== null;
+  const priceList = r.price_list_override === null ? plAsli : num(r.price_list_override);
+  const diskon = r.diskon_override === null ? dAsli : num(r.diskon_override);
+  if (!adaOverride) {
+    return { priceList, diskon, nett: num(r.harga_nett), ppn: num(r.nett_ppn), adaOverride };
+  }
+  const nett = rnd(priceList * (1 - diskon));
+  return { priceList, diskon, nett, ppn: rnd(nett * (1 + PPN_PRICEBOOK)), adaOverride };
+}
 
 export async function listSetup(
   opts: { periode?: string; q?: string; lini?: string; limit?: number } = {},
@@ -378,8 +416,7 @@ export async function listSetup(
     SELECT p.row_no, p.kode, p.lini, p.brand, p.nama, p.price_list, p.diskon_maks,
            p.harga_nett, p.nett_ppn,
            s.nama_final, s.varian, s.kemasan, s.satuan, s.hpp, s.product_kode,
-           CASE WHEN s.hpp IS NOT NULL AND p.price_list > 0
-                THEN 1 - s.hpp / p.price_list END AS margin_pct,
+           s.price_list_override, s.diskon_override, s.status, s.published_at::text,
            kat.nama AS kategori_nama, ln.nama AS line_nama,
            cl.nama AS class_nama, sc.nama AS sub_nama,
            (s.sub_class_id IS NOT NULL) AS klasifikasi_lengkap
@@ -398,7 +435,9 @@ export async function listSetup(
      ORDER BY p.lini, p.brand, COALESCE(s.nama_final, p.nama)
      LIMIT ${limit}
   `;
-  return rows.map((r) => ({
+  return rows.map((r) => {
+    const e = hargaEfektif(r as Parameters<typeof hargaEfektif>[0]);
+    return {
     rowNo: Number(r.row_no),
     kode: (r.kode as string) ?? null,
     lini: r.lini as string,
@@ -408,24 +447,36 @@ export async function listSetup(
     varian: (r.varian as string) ?? null,
     kemasan: (r.kemasan as string) ?? null,
     satuan: (r.satuan as string) ?? null,
-    priceList: num(r.price_list),
-    diskonMaks: num(r.diskon_maks),
-    hargaNett: num(r.harga_nett),
-    nettPpn: num(r.nett_ppn),
+    priceList: e.priceList,
+    diskonMaks: e.diskon,
+    hargaNett: e.nett,
+    nettPpn: e.ppn,
+    priceListAsli: num(r.price_list),
+    diskonMaksAsli: num(r.diskon_maks),
+    adaOverride: e.adaOverride,
     hpp: r.hpp === null || r.hpp === undefined ? null : num(r.hpp),
-    marginPct: r.margin_pct === null || r.margin_pct === undefined ? null : num(r.margin_pct),
+    // Margin dihitung dari harga EFEKTIF: begitu HoD menyetel Price List baru,
+    // margin harus ikut bergerak, bukan tetap mengacu angka handover.
+    marginPct:
+      r.hpp === null || r.hpp === undefined || e.priceList <= 0
+        ? null
+        : 1 - num(r.hpp) / e.priceList,
+    status: String(r.status ?? "draft"),
+    publishedAt: (r.published_at as string) ?? null,
     kategori: (r.kategori_nama as string) ?? null,
     productLine: (r.line_nama as string) ?? null,
     klas: (r.class_nama as string) ?? null,
     subClass: (r.sub_nama as string) ?? null,
     productKode: (r.product_kode as string) ?? null,
     klasifikasiLengkap: r.klasifikasi_lengkap === true,
-  }));
+    };
+  });
 }
 
 export async function setupSummary(periode = PERIODE_DEFAULT): Promise<PricebookSetupSummary> {
   const kosong: PricebookSetupSummary = {
     periode, total: 0, adaHpp: 0, tanpaHpp: 0, klasifikasiLengkap: 0, kepasangKode: 0,
+    draft: 0, published: 0, adaOverride: 0,
     reviewTerbuka: 0, totalHpp: 0, totalPriceList: 0, marginAgregat: null,
   };
   if (!isDbEnabled()) return kosong;
@@ -439,8 +490,13 @@ export async function setupSummary(periode = PERIODE_DEFAULT): Promise<Pricebook
            COUNT(*) FILTER (WHERE s.hpp IS NULL) AS tanpa_hpp,
            COUNT(*) FILTER (WHERE s.sub_class_id IS NOT NULL) AS klas_lengkap,
            COUNT(s.product_kode) AS kepasang_kode,
+           COUNT(*) FILTER (WHERE s.status = 'draft') AS draft,
+           COUNT(*) FILTER (WHERE s.status = 'published') AS published,
+           COUNT(*) FILTER (WHERE s.price_list_override IS NOT NULL
+                               OR s.diskon_override IS NOT NULL) AS ada_override,
            COALESCE(SUM(s.hpp), 0) AS total_hpp,
-           COALESCE(SUM(p.price_list) FILTER (WHERE s.hpp IS NOT NULL), 0) AS total_pl
+           COALESCE(SUM(COALESCE(s.price_list_override, p.price_list))
+                    FILTER (WHERE s.hpp IS NOT NULL), 0) AS total_pl
       FROM product_pricelist p
       JOIN product_pricelist_setup s ON s.periode = p.periode AND s.row_no = p.row_no
      WHERE p.periode = ${periode}
@@ -458,9 +514,155 @@ export async function setupSummary(periode = PERIODE_DEFAULT): Promise<Pricebook
     tanpaHpp: num(r?.tanpa_hpp),
     klasifikasiLengkap: num(r?.klas_lengkap),
     kepasangKode: num(r?.kepasang_kode),
+    draft: num(r?.draft),
+    published: num(r?.published),
+    adaOverride: num(r?.ada_override),
     reviewTerbuka: num(rev?.n),
     totalHpp,
     totalPriceList: totalPl,
     marginAgregat: totalPl > 0 ? 1 - totalHpp / totalPl : null,
   };
+}
+
+// ── Tulis: setelan harga & gerbang publish (Setup Harga, migrasi 077) ───────
+// Snapshot handover (`product_pricelist`) TIDAK pernah ditulis dari sini —
+// perubahan hidup sebagai override di lapisan setup. Lihat migrasi 077.
+
+export interface SetupPatch {
+  periode?: string;
+  rowNo: number;
+  hpp?: number | null;
+  priceListOverride?: number | null;
+  diskonOverride?: number | null;
+  catatan?: string | null;
+  updatedBy?: string | null;
+}
+
+export async function updateSetupRow(
+  patch: SetupPatch,
+): Promise<{ ok: true; row: PricebookSetupRow } | { ok: false; error: string }> {
+  if (!isDbEnabled()) return { ok: false, error: "DATABASE_URL off" };
+  const periode = patch.periode || PERIODE_DEFAULT;
+  if (!Number.isInteger(patch.rowNo)) return { ok: false, error: "rowNo wajib angka" };
+  if (patch.hpp != null && patch.hpp <= 0) return { ok: false, error: "HPP harus lebih dari 0" };
+  if (patch.priceListOverride != null && patch.priceListOverride <= 0) {
+    return { ok: false, error: "Price List harus lebih dari 0" };
+  }
+  if (patch.diskonOverride != null && (patch.diskonOverride < 0 || patch.diskonOverride >= 1)) {
+    return { ok: false, error: "Diskon harus antara 0% dan 100% (tidak termasuk 100%)" };
+  }
+  const sql = db();
+  const rows = await sql<{ row_no: number }[]>`
+    UPDATE product_pricelist_setup SET
+      hpp = ${patch.hpp ?? null},
+      price_list_override = ${patch.priceListOverride ?? null},
+      diskon_override = ${patch.diskonOverride ?? null},
+      catatan = ${patch.catatan ?? null},
+      updated_by = ${patch.updatedBy ?? null},
+      updated_at = now()
+    WHERE periode = ${periode} AND row_no = ${patch.rowNo}
+    RETURNING row_no`;
+  if (!rows.length) return { ok: false, error: "baris tidak ditemukan di periode itu" };
+  const [row] = await listSetup({ periode, limit: 20000 }).then((all) =>
+    all.filter((x) => x.rowNo === patch.rowNo),
+  );
+  return row ? { ok: true, row } : { ok: false, error: "baris tersimpan tapi gagal dibaca ulang" };
+}
+
+/** rowNos kosong/undefined → SEMUA draft periode itu. */
+export async function publishSetup(
+  rowNos: number[] | undefined, by: string | null, periode = PERIODE_DEFAULT,
+): Promise<{ published: number }> {
+  if (!isDbEnabled()) return { published: 0 };
+  const sql = db();
+  const pilih = rowNos && rowNos.length ? rowNos : null;
+  const rows = await sql`
+    UPDATE product_pricelist_setup
+       SET status = 'published', published_at = now(), published_by = ${by}, updated_at = now()
+     WHERE periode = ${periode} AND status = 'draft'
+       AND (${pilih}::int[] IS NULL OR row_no = ANY(${pilih}::int[]))
+    RETURNING row_no`;
+  return { published: rows.length };
+}
+
+export async function unpublishSetup(
+  rowNos: number[] | undefined, periode = PERIODE_DEFAULT,
+): Promise<{ unpublished: number }> {
+  if (!isDbEnabled()) return { unpublished: 0 };
+  const sql = db();
+  const pilih = rowNos && rowNos.length ? rowNos : null;
+  const rows = await sql`
+    UPDATE product_pricelist_setup
+       SET status = 'draft', published_at = NULL, published_by = NULL, updated_at = now()
+     WHERE periode = ${periode} AND status = 'published'
+       AND (${pilih}::int[] IS NULL OR row_no = ANY(${pilih}::int[]))
+    RETURNING row_no`;
+  return { unpublished: rows.length };
+}
+
+// ── Harga terpublikasi untuk AM (tab "Harga per Produk") ────────────────────
+// TANPA HPP dan TANPA margin — ini dibuka Account Manager. Bentuknya sengaja
+// dibatasi di sini, bukan disaring di UI: kalau kolomnya tidak pernah di-SELECT,
+// tidak ada cara ia bocor ke browser.
+
+export interface PricebookPublishedRow {
+  rowNo: number;
+  kode: string | null;
+  productKode: string | null;
+  lini: string;
+  brand: string;
+  nama: string;
+  varian: string | null;
+  kemasan: string | null;
+  satuan: string | null;
+  kategori: string | null;
+  priceList: number;
+  diskonMaks: number;
+  hargaNett: number;
+  nettPpn: number;
+  publishedAt: string | null;
+}
+
+export async function listPublishedKeagenan(
+  opts: { periode?: string; q?: string; lini?: string; limit?: number } = {},
+): Promise<PricebookPublishedRow[]> {
+  if (!isDbEnabled()) return [];
+  const sql = db();
+  const periode = opts.periode || PERIODE_DEFAULT;
+  const limit = Math.min(Math.max(opts.limit ?? 5000, 1), 20000);
+  const q = opts.q?.trim() ? `%${opts.q.trim()}%` : null;
+
+  const rows = await sql<Record<string, unknown>[]>`
+    SELECT p.row_no, p.kode, p.lini, p.brand, p.nama, p.kategori,
+           p.price_list, p.diskon_maks, p.harga_nett, p.nett_ppn,
+           s.nama_final, s.varian, s.kemasan, s.satuan, s.product_kode,
+           s.price_list_override, s.diskon_override, s.published_at::text
+      FROM product_pricelist p
+      JOIN product_pricelist_setup s ON s.periode = p.periode AND s.row_no = p.row_no
+     WHERE p.periode = ${periode} AND s.status = 'published'
+       AND (${opts.lini ?? null}::text IS NULL OR p.lini = ${opts.lini ?? null})
+       AND (${q}::text IS NULL OR COALESCE(s.nama_final, p.nama) ILIKE ${q}
+            OR p.brand ILIKE ${q} OR p.kode ILIKE ${q} OR s.product_kode ILIKE ${q})
+     ORDER BY p.lini, p.brand, COALESCE(s.nama_final, p.nama)
+     LIMIT ${limit}`;
+  return rows.map((r) => {
+    const e = hargaEfektif(r as Parameters<typeof hargaEfektif>[0]);
+    return {
+      rowNo: Number(r.row_no),
+      kode: (r.kode as string) ?? null,
+      productKode: (r.product_kode as string) ?? null,
+      lini: r.lini as string,
+      brand: r.brand as string,
+      nama: ((r.nama_final as string) || (r.nama as string)) ?? "",
+      varian: (r.varian as string) ?? null,
+      kemasan: (r.kemasan as string) ?? null,
+      satuan: (r.satuan as string) ?? null,
+      kategori: (r.kategori as string) ?? null,
+      priceList: e.priceList,
+      diskonMaks: e.diskon,
+      hargaNett: e.nett,
+      nettPpn: e.ppn,
+      publishedAt: (r.published_at as string) ?? null,
+    };
+  });
 }
