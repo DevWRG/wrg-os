@@ -2608,7 +2608,7 @@ app.post("/klasifikasi/review/:id/selesaikan", async (c) => {
     subClassId: (b.subClassId as string) ?? null,
     subClassNama: (b.subClassNama as string) ?? null,
     akuiNamaSama: b.akuiNamaSama === true,
-    by: (b.by as string) ?? null,
+    by: ((b.by ?? b.createdBy) as string) ?? null,
   });
   return res.ok ? c.json(res) : c.json({ error: res.error }, 400);
 });
