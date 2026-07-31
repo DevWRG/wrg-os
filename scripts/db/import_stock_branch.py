@@ -204,6 +204,18 @@ with io.open(args.file, encoding="utf-8-sig", newline="") as fh:
 if not rows_out:
     sys.exit("tidak ada baris stok terbaca — semua sel kosong?")
 
+# Sel kosong = "tidak ada data" (lihat docstring), TIDAK ditulis maupun dihapus.
+# Tapi kombinasi dengan --hapus-tak-disebut berbahaya: kolom gudang yang cuma
+# berisi sel kosong (mis. tim gudang belum opname cabang itu bulan ini) akan
+# membuat DELETE menyapu SEMUA baris gudang tersebut di DB, padahal maksud
+# operator cuma "belum ada angka baru", bukan "stoknya nol/kosong".
+if args.hapus_tak_disebut and kosong:
+    sys.exit(f"--hapus-tak-disebut dipakai bersama {kosong} sel qty KOSONG. "
+             "Sel kosong tak akan ditulis, tapi --hapus-tak-disebut akan menghapus "
+             "kombinasi (sku,gudang) itu dari DB seolah CSV bilang 'sudah dihitung, "
+             "hasilnya nol' — padahal maksudnya 'belum diisi'. Isi sel itu dengan 0 "
+             "bila memang stoknya nol, atau jalankan tanpa --hapus-tak-disebut.")
+
 # SKU yang memuat newline/backslash DITOLAK sebelum apa pun dibangun.
 #
 # Ini bukan kerapian — ini lubang eksekusi SQL. Data dikirim lewat
@@ -284,6 +296,22 @@ SELECT 'sku_ditolak=' || count(DISTINCT s.sku) FROM stg s
 -- "TERSIMPAN" dan exit 0 seolah berhasil.
 SELECT 'baris_cocok=' || count(*) FROM stg s
   JOIN accurate_item ai ON ai.no = s.sku;
+
+-- ABORT DI DALAM TRANSAKSI kalau tak ada satu pun SKU yang cocok.
+--
+-- Dulu cek ini dilakukan di Python SETELAH psql selesai — jadi terlalu terlambat:
+-- body-nya sudah COMMIT. Dengan `--hapus-tak-disebut`, CSV yang kolom `sku`-nya
+-- salah format seluruhnya membuat NOT EXISTS bernilai true untuk SEMUA baris →
+-- seluruh gudang yang dilaporkan CSV itu TERHAPUS dan ter-COMMIT, lalu skrip
+-- mencetak "tak ada yang ditulis".
+DO $$
+DECLARE n int;
+BEGIN
+  SELECT count(*) INTO n FROM stg s JOIN accurate_item ai ON ai.no = s.sku;
+  IF n = 0 THEN
+    RAISE EXCEPTION 'tidak ada satu pun SKU di CSV yang cocok dengan accurate_item — dibatalkan (tak ada yang ditulis maupun dihapus)';
+  END IF;
+END $$;
 
 INSERT INTO item_stock_branch (item_id, warehouse_kode, quantity, source, updated_at)
 SELECT ai.id, s.warehouse_kode, s.quantity, '{args.source}', now()
