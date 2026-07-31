@@ -1,4 +1,4 @@
--- 069 — F135 ATK Stock Movement (General Affairs): Stock In/Out Transactional.
+-- 069 — F49 ATK Stock Movement (General Affairs): Stock In/Out Transactional.
 --
 -- Ledger transaksi masuk/keluar barang ATK, mengonsumsi katalog F134
 -- (atk_item, termasuk min_stock yang sebelumnya belum dipakai kolomnya).
@@ -35,4 +35,4 @@ CREATE TABLE IF NOT EXISTS atk_stock_movement (
 CREATE INDEX IF NOT EXISTS atk_stock_movement_item_id_idx ON atk_stock_movement (item_id);
 CREATE INDEX IF NOT EXISTS atk_stock_movement_movement_date_idx ON atk_stock_movement (movement_date);
 
-COMMENT ON TABLE atk_stock_movement IS 'F135 ATK Stock Movement — transaksi stok masuk/keluar barang ATK (General Affairs), item_id RESTRICT jaga audit trail.';
+COMMENT ON TABLE atk_stock_movement IS 'F49 ATK Stock Movement — transaksi stok masuk/keluar barang ATK (General Affairs), item_id RESTRICT jaga audit trail.';

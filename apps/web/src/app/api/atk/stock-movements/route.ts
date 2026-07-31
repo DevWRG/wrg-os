@@ -2,7 +2,7 @@ import { gatewayFetch, relay } from "@/lib/gateway";
 
 export const dynamic = "force-dynamic";
 
-// F135 ATK Stock Movement — gateway → apps/api /atk/stock-movements. Role min Karyawan.
+// F49 ATK Stock Movement — gateway → apps/api /atk/stock-movements. Role min Karyawan.
 export async function GET() {
   const res = await gatewayFetch("/atk/stock-movements");
   return relay(res);

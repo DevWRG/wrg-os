@@ -37,7 +37,7 @@ const blank = () => ({
   notes: "",
 });
 
-// Tipe mutasi TERKUNCI per halaman (bukan pilihan bebas) — F135 v2: Stock In
+// Tipe mutasi TERKUNCI per halaman (bukan pilihan bebas) — F49 v2: Stock In
 // (tim GA, /atk-stock-in) dan Stock Out (semua tim, /atk-stock-out) sengaja
 // dipisah jadi 2 menu dgn feature-key beda supaya bisa di-gate independen
 // lewat Akses Grup nanti. Sheet ini dipakai di kedua halaman, hanya beda mode.
