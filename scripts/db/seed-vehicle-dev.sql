@@ -1,7 +1,7 @@
 -- Seed DEV-ONLY untuk F50 (Kendaraan Operasional Log) — 7 mobil dummy buat
 -- testing lokal. JANGAN dipakai di produksi — data 7 mobil ASLI (plat nomor,
 -- sopir, dsb) perlu diinput manual oleh Direktur/Fafa via SQL serupa sebelum
--- fitur ini dipakai sungguhan (lihat 068_vehicle_operational_log.sql).
+-- fitur ini dipakai sungguhan (lihat 080_vehicle_operational_log.sql).
 -- Idempoten (ON CONFLICT DO NOTHING berdasar plate_number UNIQUE).
 
 INSERT INTO vehicle (plate_number, model, sopir_name, current_km, stnk_expiry, service_interval_km, last_service_km, last_service_date)

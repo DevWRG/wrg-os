@@ -1,4 +1,4 @@
--- 068 — Kendaraan Operasional Log (F50, OPS): per-vehicle log (km, BBM,
+-- 080 — Kendaraan Operasional Log (F50, OPS): per-vehicle log (km, BBM,
 -- service, STNK expiry, sopir) + auto-alert service due (km-based) &
 -- STNK expiry (H-30, lihat apps/api/src/repo/vehicle.ts).
 --

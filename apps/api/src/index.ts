@@ -1733,7 +1733,7 @@ app.post("/leave/detect", async (c) => {
 });
 
 // ── Kendaraan Operasional Log (F50, OPS) — master `vehicle` diseed manual
-// (tanpa endpoint create, lihat 068_vehicle_operational_log.sql), entri
+// (tanpa endpoint create, lihat 080_vehicle_operational_log.sql), entri
 // transaksional lewat /vehicles/:id/logs. Alert service/STNK via cron. ──
 app.get("/vehicles", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
