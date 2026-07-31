@@ -8,7 +8,7 @@ import { AtkStockOpnameTable, type AtkStockOpnameRow } from "@/components/atk/at
 import { AtkStockLevelTable, type AtkStockLevelRow } from "@/components/atk/atk-stock-level-table";
 import type { AtkStockItemOption } from "@/components/atk/atk-stock-movement-table";
 
-// F136 — hitung fisik ATK vs stok sistem (F135). Penyesuaian selisih dibuat
+// F136 — hitung fisik ATK vs stok sistem (F49). Penyesuaian selisih dibuat
 // lewat form Stock In/Out yang sama (lihat AtkStockOpnameTable), bukan form
 // baru; halaman ini cuma submenu tambahan di grup General Affairs.
 export function AtkStockOpnameClient({

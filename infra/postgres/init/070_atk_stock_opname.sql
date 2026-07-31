@@ -1,6 +1,6 @@
 -- 070 — F136 ATK Stock Opname (General Affairs): Physical Count + Variance Adjustment.
 --
--- Mencatat hasil hitung fisik barang ATK dibanding stok sistem (F135,
+-- Mencatat hasil hitung fisik barang ATK dibanding stok sistem (F49,
 -- SUM in - SUM out dari atk_stock_movement). system_qty adalah SNAPSHOT saat
 -- opname dibuat (diisi API dari query stock-levels), bukan dihitung ulang tiap
 -- baca — kalau tidak, opname lama akan ikut berubah tiap ada mutasi baru
@@ -8,7 +8,7 @@
 -- watchpoint_weekly membekukan metric mingguan). variance TETAP dihitung di
 -- query/JS (counted_qty - system_qty), bukan kolom tersimpan, krn kedua input
 -- (system_qty, counted_qty) sudah beku — pola computed yang sama dgn "telat"
--- F39 / "variance" F51 / "current_stock" F135.
+-- F39 / "variance" F51 / "current_stock" F49.
 --
 -- item_id sengaja TANPA ON DELETE SET NULL/CASCADE (default RESTRICT) — sama
 -- alasannya dgn atk_stock_movement.item_id (069): riwayat opname adalah audit
