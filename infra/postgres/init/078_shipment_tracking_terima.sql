@@ -1,4 +1,4 @@
--- 070 — SJ→BAST Closed-Loop Tracker (F42, SHIPPING): extend F12
+-- 078 — SJ→BAST Closed-Loop Tracker (F42, SHIPPING): extend F12
 -- `shipment_tracking` dengan 1 state baru "terima" di antara dikirim & bast.
 --
 -- State machine JADI: draft → dikirim → terima → bast (4 langkah).
@@ -21,4 +21,4 @@ ALTER TABLE shipment_tracking ADD COLUMN IF NOT EXISTS terima_at timestamptz;
 ALTER TABLE shipment_tracking ADD COLUMN IF NOT EXISTS terima_by text; -- sender_name WA / user web, audit bukan FK
 
 COMMENT ON TABLE shipment_tracking IS
-  'F12+F42 — Tracking Pengiriman (SHIPPING): status kirim per SJ, state machine draft→dikirim→terima→bast, dipicu WA hashtag #KIRIM/#BAST (terima manual via web). distance_km/eta_days dihitung otomatis dari foto ber-geotag #KIRIM/#BAST (lihat 069_shipment_tracking_geo.sql).';
+  'F12+F42 — Tracking Pengiriman (SHIPPING): status kirim per SJ, state machine draft→dikirim→terima→bast, dipicu WA hashtag #KIRIM/#BAST (terima manual via web). distance_km/eta_days dihitung otomatis dari foto ber-geotag #KIRIM/#BAST (lihat 077_shipment_tracking_geo.sql).';

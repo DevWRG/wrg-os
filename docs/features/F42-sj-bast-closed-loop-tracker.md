@@ -29,9 +29,9 @@ PR F42 bersih (pola sama dgn F22→F24).
 
 ## Cara kerja
 
-- **Migrasi**: `infra/postgres/init/070_shipment_tracking_terima.sql` (nomor
-  070, bukan 069 — 069 sudah dipakai migrasi geo-capture F12 di lineage yang
-  sama, lihat commit rebase) —
+- **Migrasi**: `infra/postgres/init/078_shipment_tracking_terima.sql` (nomor
+  078 = tertinggi+1 setelah F12 mengambil 076/077 di lineage yang sama; slot
+  068–075 sudah dipakai `dev`, lihat commit renumber) —
   ALTER TABLE `shipment_tracking`, tambah kolom `terima_at`/`terima_by` +
   perluas CHECK constraint status jadi `('draft','dikirim','terima','bast')`.
 - **State machine JADI**: `draft → dikirim → terima → bast` (4 langkah,
