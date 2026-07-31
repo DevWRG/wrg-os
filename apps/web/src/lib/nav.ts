@@ -10,6 +10,7 @@ import {
   Bell, MapPin, ListChecks, Swords, CalendarOff, CalendarDays, CalendarRange,
   Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, Tags, SlidersHorizontal,
   Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, BookOpen, Calculator,
+  FileCheck2,
   type LucideIcon,
 } from "lucide-react";
 
@@ -152,6 +153,15 @@ export const NAV: NavGroup[] = [
       { title: "Shipments", url: "/shipments", icon: Truck },
       { title: "Suppliers", url: "/suppliers", icon: Factory },
       { title: "HITL Review", url: "/hitl", icon: ClipboardCheck },
+    ],
+  },
+  {
+    label: "Aftersales",
+    items: [
+      // F25 Uji Profisiensi Document Registry — sertifikat per RS, tracking
+      // ED (annual renewal). Role min Karyawan, tanpa `show` (semua role login
+      // boleh), pola sama dgn F39/F134.
+      { title: "Uji Profisiensi", url: "/proficiency-tests", icon: FileCheck2, badge: "NEW" },
     ],
   },
   {
