@@ -74,8 +74,11 @@ def angka(v: str):
 
     Dua pemisah sekaligus → yang paling KANAN desimal (export id-ID: titik
     ribuan, koma desimal). Satu jenis saja → RIBUAN kalau tiap kelompok setelah
-    yang pertama tepat 3 digit ('1.076' = seribu tujuh puluh enam), selain itu
-    desimal ('0.05', '28,7').
+    yang pertama tepat 3 digit DAN kelompok pertama tidak berawalan nol
+    ('1.076' = seribu tujuh puluh enam), selain itu desimal ('0.05', '0.287',
+    '28,7'). Syarat "tidak berawalan nol" itu bukan hiasan: tanpa itu '0.287'
+    (margin 28,7% pada export xlsx) terbaca 287 lalu barisnya dilewati diam-diam
+    sebagai "margin aneh" — 35 baris hilang tanpa satu pun pesan.
 
     Ambiguitas yang diakui: '1.000' dibaca 1000, bukan 1,0 — sumbernya export
     id-ID dan harga satu koma nol rupiah tidak ada di sheet ini.
@@ -95,10 +98,16 @@ def angka(v: str):
     elif "," in s or "." in s:
         sep = "," if "," in s else "."
         bagian = s.split(sep)
-        if bagian[0] != "" and all(len(b) == 3 for b in bagian[1:]):
-            s = "".join(bagian)                        # pemisah ribuan: 1.076 → 1076
+        # Ribuan hanya kalau tiap kelompok setelah yang pertama tepat 3 digit DAN
+        # kelompok pertama tidak berawalan nol. Tanpa syarat kedua, '0.287'
+        # (margin 28,7% di export xlsx) terbaca 287 — ketahuan waktu dua CSV
+        # berisi sheet yang SAMA ternyata beda 35 baris.
+        ribuan = (bagian[0] != "" and not bagian[0].startswith("0")
+                  and all(len(b) == 3 for b in bagian[1:]))
+        if ribuan:
+            s = "".join(bagian)                        # 1.076 → 1076
         else:
-            s = bagian[0] + "." + "".join(bagian[1:])  # pemisah desimal: 0.05 · 28,7
+            s = bagian[0] + "." + "".join(bagian[1:])  # 0.05 · 0.287 · 28,7
     try:
         d = Decimal(s)
     except InvalidOperation:
