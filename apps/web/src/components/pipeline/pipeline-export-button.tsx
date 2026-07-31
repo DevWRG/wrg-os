@@ -34,6 +34,7 @@ const COLS_DEAL = [
   { width: 14 }, // Cabang
   { width: 16 }, // Kota
   { width: 16 }, // Provinsi
+  { width: 16 }, // Estimasi Beli
   { width: 10 }, // Tahun Beli
   { width: 12 }, // Hari di Tahap
   { width: 10 }, // Mangkrak
@@ -48,6 +49,19 @@ const str = (v: string | null | undefined) => (v ? { type: String, value: v } : 
 
 // Coop model → bahasa awam, samakan dengan tampilan board.
 const coopLabel = (c: string | null) => (c == null ? null : /sale/i.test(c) ? "Beli Putus" : c);
+
+// Nilai DB 'Closing-Won'/'Closing-Lost' ditampilkan "Won"/"Lost" di board —
+// export ikut label yang dilihat user.
+const STAGE_LABEL: Record<string, string> = { "Closing-Won": "Won", "Closing-Lost": "Lost" };
+const stageLabel = (s: string) => STAGE_LABEL[s] ?? s;
+
+// Estimasi beli "September 2026" — sama seperti buyEta di board (bulan/tahun bisa
+// masing-masing kosong).
+const MONTH_ID = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
+const buyEta = (m: number | null, y: number | null) =>
+  [m != null && m >= 1 && m <= 12 ? MONTH_ID[m - 1] : null, y != null ? String(y) : null]
+    .filter(Boolean)
+    .join(" ") || null;
 
 export function PipelineExportButton({
   deals,
@@ -69,11 +83,11 @@ export function PipelineExportButton({
         HEAD("Qty", true), HEAD("Harga Satuan", true), HEAD("Perkiraan Nilai", true),
         HEAD("Peluang %", true), HEAD("Nilai x Peluang", true),
         HEAD("AM"), HEAD("HOD"), HEAD("Cabang"), HEAD("Kota"), HEAD("Provinsi"),
-        HEAD("Tahun Beli", true), HEAD("Hari di Tahap", true), HEAD("Mangkrak"),
+        HEAD("Estimasi Beli"), HEAD("Tahun Beli", true), HEAD("Hari di Tahap", true), HEAD("Mangkrak"),
         HEAD("Catatan"), HEAD("Update Terakhir"),
       ];
       const body = deals.map((d) => [
-        str(d.stage),
+        str(stageLabel(d.stage)),
         str(d.facility_name),
         str(d.customer_name),
         str(d.brand),
@@ -92,6 +106,7 @@ export function PipelineExportButton({
         str(d.cabang),
         str(d.city),
         str(d.province),
+        str(buyEta(d.purchase_month, d.purchase_year)),
         d.purchase_year != null ? { type: Number, value: d.purchase_year } : null,
         d.days_in_stage != null ? { type: Number, value: d.days_in_stage } : null,
         { type: String, value: d.stale ? "Ya" : "Tidak" },
@@ -119,7 +134,7 @@ export function PipelineExportButton({
         })
         .filter((r) => r.count > 0);
       const stageRows = perStage.map((r) => [
-        { type: String, value: r.stage },
+        { type: String, value: stageLabel(r.stage) },
         { type: Number, value: r.count },
         { type: Number, value: r.total, format: "#,##0" },
         { type: Number, value: Math.round(r.weighted), format: "#,##0" },
