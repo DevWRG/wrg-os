@@ -23,7 +23,10 @@ import type { AtkItemOption } from "@/components/atk/atk-item-table";
 const selectCls =
   "h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50";
 
-const blank = () => ({ name: "", unit: "", category_id: "", default_supplier_id: "", min_stock: "", notes: "" });
+const blank = () => ({
+  name: "", unit: "", category_id: "", default_supplier_id: "", min_stock: "", notes: "",
+  transaction_category: "barang" as "barang" | "materai",
+});
 
 export function AddAtkItemSheet({ categories, suppliers }: { categories: AtkItemOption[]; suppliers: AtkItemOption[] }) {
   const router = useRouter();
@@ -47,6 +50,7 @@ export function AddAtkItemSheet({ categories, suppliers }: { categories: AtkItem
           default_supplier_id: f.default_supplier_id || undefined,
           min_stock: f.min_stock.trim() ? Number(f.min_stock) : undefined,
           notes: f.notes.trim() || undefined,
+          transaction_category: f.transaction_category,
         }),
       });
       const data = await res.json();
@@ -69,7 +73,7 @@ export function AddAtkItemSheet({ categories, suppliers }: { categories: AtkItem
       <SheetContent side="right" className="w-full sm:max-w-md">
         <SheetHeader>
           <SheetTitle>Tambah Barang ATK</SheetTitle>
-          <SheetDescription>Katalog barang ATK (F134) — prasyarat register stok masuk/keluar.</SheetDescription>
+          <SheetDescription>Katalog barang ATK (F134) — prasyarat register stok masuk/keluar (F49), termasuk Materai (F54) sbg kategori transaksi.</SheetDescription>
         </SheetHeader>
         <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col">
           <div className="flex flex-1 flex-col gap-4 overflow-y-auto px-4">
@@ -86,6 +90,18 @@ export function AddAtkItemSheet({ categories, suppliers }: { categories: AtkItem
                 <Label htmlFor="ai-minstock">Min. Stok</Label>
                 <Input id="ai-minstock" type="number" min="0" step="any" value={f.min_stock} onChange={(e) => setF((p) => ({ ...p, min_stock: e.target.value }))} />
               </div>
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="ai-txcat">Kategori Transaksi *</Label>
+              <select
+                id="ai-txcat"
+                className={selectCls}
+                value={f.transaction_category}
+                onChange={(e) => setF((p) => ({ ...p, transaction_category: e.target.value as "barang" | "materai" }))}
+              >
+                <option value="barang">Barang</option>
+                <option value="materai">Materai</option>
+              </select>
             </div>
             <div className="grid gap-1.5">
               <Label htmlFor="ai-cat">Kategori</Label>

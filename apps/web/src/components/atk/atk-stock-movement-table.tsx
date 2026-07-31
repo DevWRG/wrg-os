@@ -22,6 +22,8 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 
+export type AtkTransactionCategory = "barang" | "materai";
+
 export interface AtkStockItemOption {
   id: string;
   name: string;
@@ -34,6 +36,7 @@ export interface AtkStockMovementRow {
   item_id: string;
   item_name: string;
   item_unit: string;
+  item_transaction_category: AtkTransactionCategory;
   movement_type: "in" | "out";
   qty: number;
   movement_date: string;
@@ -203,6 +206,18 @@ export function AtkStockMovementTable({
   const columns: DataColumn<AtkStockMovementRow>[] = [
     { id: "date", header: "Tanggal", sortable: true, accessor: (r) => r.movement_date, cell: (r) => r.movement_date },
     { id: "item", header: "Barang", sortable: true, accessor: (r) => r.item_name, cell: (r) => <span className="font-medium">{r.item_name}</span> },
+    {
+      id: "txcat",
+      header: "Kategori Transaksi",
+      sortable: true,
+      accessor: (r) => r.item_transaction_category,
+      cell: (r) =>
+        r.item_transaction_category === "materai" ? (
+          <Badge className="bg-info-soft text-info">Materai</Badge>
+        ) : (
+          <Badge variant="secondary">Barang</Badge>
+        ),
+    },
     {
       id: "type",
       header: "Tipe",

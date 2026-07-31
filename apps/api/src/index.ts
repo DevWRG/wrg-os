@@ -79,7 +79,7 @@ import {
   listAtkItems, createAtkItem, updateAtkItem, deleteAtkItem,
   type AtkCategoryInput, type AtkCategoryUpdate,
   type AtkSupplierInput, type AtkSupplierUpdate,
-  type AtkItemInput, type AtkItemUpdate,
+  type AtkItemInput, type AtkItemUpdate, type AtkTransactionCategory,
 } from "./repo/atk-master.js";
 import {
   listAtkStockMovements, createAtkStockMovement, updateAtkStockMovement, deleteAtkStockMovement,
@@ -2511,11 +2511,16 @@ app.get("/atk/items", async (c) => {
   return c.json({ count: rows.length, rows });
 });
 
+const ATK_TRANSACTION_CATEGORIES: AtkTransactionCategory[] = ["barang", "materai"];
+
 app.post("/atk/items", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   let body: AtkItemInput;
   try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
   if (!body.name || !body.unit) return c.json({ error: "name, unit wajib" }, 400);
+  if (body.transaction_category && !ATK_TRANSACTION_CATEGORIES.includes(body.transaction_category)) {
+    return c.json({ error: "transaction_category harus 'barang' atau 'materai'" }, 400);
+  }
   const row = await createAtkItem(body);
   return c.json(row, 201);
 });
@@ -2524,6 +2529,9 @@ app.patch("/atk/items/:id", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   let body: AtkItemUpdate;
   try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  if (body.transaction_category && !ATK_TRANSACTION_CATEGORIES.includes(body.transaction_category)) {
+    return c.json({ error: "transaction_category harus 'barang' atau 'materai'" }, 400);
+  }
   const row = await updateAtkItem(c.req.param("id"), body);
   return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
 });

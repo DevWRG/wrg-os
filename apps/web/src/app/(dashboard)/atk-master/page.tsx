@@ -28,12 +28,12 @@ export default async function AtkMasterPage() {
     <>
       <PageHeader
         title="ATK Master"
-        description="Master data ATK (F134): kategori, pemasok & katalog barang — prasyarat register stok masuk/keluar (F49)."
+        description="Master data ATK (F134): kategori, pemasok & katalog barang — prasyarat register stok masuk/keluar (F49), termasuk Materai (F54) sbg kategori transaksi."
       />
       {!cat || !sup || !item ? (
         <EmptyState
           title="Data tidak tersedia"
-          description="Pastikan apps/api jalan dengan DATABASE_URL dan migrasi 068_atk_master.sql sudah diterapkan."
+          description="Pastikan apps/api jalan dengan DATABASE_URL dan migrasi 068_atk_master.sql + 071_atk_transaction_category.sql sudah diterapkan."
         />
       ) : (
         <AtkMasterClient categories={cat.rows ?? []} suppliers={sup.rows ?? []} items={item.rows ?? []} />

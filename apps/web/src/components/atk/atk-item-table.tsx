@@ -27,6 +27,8 @@ export interface AtkItemOption {
   name: string;
 }
 
+export type AtkTransactionCategory = "barang" | "materai";
+
 export interface AtkItemRow {
   id: string;
   name: string;
@@ -38,7 +40,13 @@ export interface AtkItemRow {
   min_stock: number | null;
   notes: string | null;
   is_active: boolean;
+  transaction_category: AtkTransactionCategory;
 }
+
+export const TRANSACTION_CATEGORY_LABEL: Record<AtkTransactionCategory, string> = {
+  barang: "Barang",
+  materai: "Materai",
+};
 
 const selectCls =
   "h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50";
@@ -63,6 +71,7 @@ function ItemRowActions({
     default_supplier_id: row.default_supplier_id ?? "",
     min_stock: row.min_stock != null ? String(row.min_stock) : "",
     notes: row.notes ?? "",
+    transaction_category: row.transaction_category,
   });
   const { confirm, dialog } = useConfirm();
 
@@ -90,6 +99,7 @@ function ItemRowActions({
         default_supplier_id: f.default_supplier_id || null,
         min_stock: f.min_stock.trim() ? Number(f.min_stock) : null,
         notes: f.notes.trim() || null,
+        transaction_category: f.transaction_category,
       });
       setOpen(false);
       router.refresh();
@@ -155,6 +165,18 @@ function ItemRowActions({
                 </div>
               </div>
               <div className="grid gap-1.5">
+                <Label htmlFor={`ai-e-txcat-${row.id}`}>Kategori Transaksi *</Label>
+                <select
+                  id={`ai-e-txcat-${row.id}`}
+                  className={selectCls}
+                  value={f.transaction_category}
+                  onChange={(e) => setF((p) => ({ ...p, transaction_category: e.target.value as AtkTransactionCategory }))}
+                >
+                  <option value="barang">Barang</option>
+                  <option value="materai">Materai</option>
+                </select>
+              </div>
+              <div className="grid gap-1.5">
                 <Label htmlFor={`ai-e-cat-${row.id}`}>Kategori</Label>
                 <select id={`ai-e-cat-${row.id}`} className={selectCls} value={f.category_id} onChange={(e) => setF((p) => ({ ...p, category_id: e.target.value }))}>
                   <option value="">— Tanpa kategori —</option>
@@ -203,6 +225,18 @@ export function AtkItemTable({
 }) {
   const columns: DataColumn<AtkItemRow>[] = [
     { id: "name", header: "Nama", sortable: true, accessor: (r) => r.name, cell: (r) => <span className="font-medium">{r.name}</span> },
+    {
+      id: "txcat",
+      header: "Kategori Transaksi",
+      sortable: true,
+      accessor: (r) => r.transaction_category,
+      cell: (r) =>
+        r.transaction_category === "materai" ? (
+          <Badge className="bg-info-soft text-info">Materai</Badge>
+        ) : (
+          <Badge variant="secondary">Barang</Badge>
+        ),
+    },
     { id: "unit", header: "Satuan", sortable: true, accessor: (r) => r.unit, cell: (r) => r.unit },
     { id: "cat", header: "Kategori", sortable: true, accessor: (r) => r.category_name ?? "", cell: (r) => r.category_name ?? "—" },
     { id: "sup", header: "Pemasok Default", sortable: true, accessor: (r) => r.default_supplier_name ?? "", cell: (r) => r.default_supplier_name ?? "—" },

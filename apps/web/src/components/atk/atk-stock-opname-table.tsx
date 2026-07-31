@@ -11,11 +11,14 @@ import { useConfirm } from "@/components/ui/use-confirm";
 import { AddAtkStockMovementSheet } from "@/components/atk/add-atk-stock-movement-sheet";
 import type { AtkStockItemOption } from "@/components/atk/atk-stock-movement-table";
 
+export type AtkTransactionCategory = "barang" | "materai";
+
 export interface AtkStockOpnameRow {
   id: string;
   item_id: string;
   item_name: string;
   item_unit: string;
+  item_transaction_category: AtkTransactionCategory;
   opname_date: string;
   system_qty: number;
   counted_qty: number;
@@ -94,6 +97,18 @@ export function AtkStockOpnameTable({ rows, items }: { rows: AtkStockOpnameRow[]
   const columns: DataColumn<AtkStockOpnameRow>[] = [
     { id: "date", header: "Tanggal", sortable: true, accessor: (r) => r.opname_date, cell: (r) => r.opname_date },
     { id: "item", header: "Barang", sortable: true, accessor: (r) => r.item_name, cell: (r) => <span className="font-medium">{r.item_name}</span> },
+    {
+      id: "txcat",
+      header: "Kategori Transaksi",
+      sortable: true,
+      accessor: (r) => r.item_transaction_category,
+      cell: (r) =>
+        r.item_transaction_category === "materai" ? (
+          <Badge className="bg-info-soft text-info">Materai</Badge>
+        ) : (
+          <Badge variant="secondary">Barang</Badge>
+        ),
+    },
     { id: "system", header: "Stok Sistem", align: "right", sortable: true, accessor: (r) => r.system_qty, cell: (r) => `${r.system_qty} ${r.item_unit}` },
     { id: "counted", header: "Stok Fisik", align: "right", sortable: true, accessor: (r) => r.counted_qty, cell: (r) => `${r.counted_qty} ${r.item_unit}` },
     {

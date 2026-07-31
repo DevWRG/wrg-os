@@ -2,9 +2,14 @@ import { db } from "../db.js";
 
 // F134 ATK Master (General Affairs) — 3 tabel master data standalone:
 // kategori, pemasok, katalog barang ATK (lihat 068_atk_master.sql). Prasyarat
-// F49 (ATK Stock In/Out Digital Register, belum dikerjakan). date/timestamptz
-// eksplisit ::text di SELECT/RETURNING — pola sama dgn supplier-eta.ts/
-// dana-ops.ts (postgres.js balikin objek Date tanpa cast).
+// F49 (ATK Stock In/Out Digital Register). date/timestamptz eksplisit ::text
+// di SELECT/RETURNING — pola sama dgn supplier-eta.ts/dana-ops.ts (postgres.js
+// balikin objek Date tanpa cast).
+//
+// atk_item.transaction_category ('barang'|'materai', 071_atk_transaction_category.sql)
+// — F49/F54 merge: Materai (F54) bukan modul terpisah, cuma kategori transaksi
+// tingkat-atas di atas katalog item yang sama. Lihat 071 utk alasan taruh di
+// item, bukan di atk_category.
 
 export interface AtkCategoryRow {
   id: string;
@@ -173,6 +178,8 @@ export async function deleteAtkSupplier(id: string): Promise<{ deleted: number }
   return { deleted: rows.length };
 }
 
+export type AtkTransactionCategory = "barang" | "materai";
+
 export interface AtkItemRow {
   id: string;
   name: string;
@@ -184,6 +191,7 @@ export interface AtkItemRow {
   min_stock: number | null;
   notes: string | null;
   is_active: boolean;
+  transaction_category: AtkTransactionCategory;
   created_at: string;
   updated_at: string;
 }
@@ -200,6 +208,7 @@ function mapItem(r: Record<string, unknown>): AtkItemRow {
     min_stock: r.min_stock != null ? Number(r.min_stock) : null,
     notes: r.notes != null ? String(r.notes) : null,
     is_active: Boolean(r.is_active),
+    transaction_category: r.transaction_category as AtkTransactionCategory,
     created_at: String(r.created_at),
     updated_at: String(r.updated_at),
   };
@@ -209,7 +218,8 @@ function itemCols(sql: ReturnType<typeof db>) {
   return sql`
     i.id, i.name, i.unit, i.category_id, c.name AS category_name,
     i.default_supplier_id, s.name AS default_supplier_name,
-    i.min_stock, i.notes, i.is_active, i.created_at::text, i.updated_at::text
+    i.min_stock, i.notes, i.is_active, i.transaction_category,
+    i.created_at::text, i.updated_at::text
   `;
 }
 
@@ -220,6 +230,7 @@ export interface AtkItemInput {
   default_supplier_id?: string | null;
   min_stock?: number | null;
   notes?: string | null;
+  transaction_category?: AtkTransactionCategory;
 }
 
 export async function listAtkItems(): Promise<AtkItemRow[]> {
@@ -237,9 +248,9 @@ export async function listAtkItems(): Promise<AtkItemRow[]> {
 export async function createAtkItem(t: AtkItemInput): Promise<AtkItemRow> {
   const sql = db();
   const rows = await sql`
-    INSERT INTO atk_item (name, unit, category_id, default_supplier_id, min_stock, notes)
+    INSERT INTO atk_item (name, unit, category_id, default_supplier_id, min_stock, notes, transaction_category)
     VALUES (${t.name}, ${t.unit}, ${t.category_id ?? null}, ${t.default_supplier_id ?? null},
-            ${t.min_stock ?? null}, ${t.notes ?? null})
+            ${t.min_stock ?? null}, ${t.notes ?? null}, ${t.transaction_category ?? "barang"})
     RETURNING id
   `;
   const created = await getAtkItem(String(rows[0].id));
@@ -267,20 +278,22 @@ export interface AtkItemUpdate {
   min_stock?: number | null;
   notes?: string | null;
   is_active?: boolean;
+  transaction_category?: AtkTransactionCategory;
 }
 
 export async function updateAtkItem(id: string, f: AtkItemUpdate): Promise<AtkItemRow | null> {
   const sql = db();
   const rows = await sql`
     UPDATE atk_item SET
-      name                = COALESCE(${f.name ?? null}, name),
-      unit                = COALESCE(${f.unit ?? null}, unit),
-      category_id         = ${f.category_id !== undefined ? f.category_id : sql`category_id`},
-      default_supplier_id = ${f.default_supplier_id !== undefined ? f.default_supplier_id : sql`default_supplier_id`},
-      min_stock           = ${f.min_stock !== undefined ? f.min_stock : sql`min_stock`},
-      notes               = ${f.notes !== undefined ? f.notes : sql`notes`},
-      is_active           = COALESCE(${f.is_active ?? null}, is_active),
-      updated_at          = now()
+      name                 = COALESCE(${f.name ?? null}, name),
+      unit                 = COALESCE(${f.unit ?? null}, unit),
+      category_id          = ${f.category_id !== undefined ? f.category_id : sql`category_id`},
+      default_supplier_id  = ${f.default_supplier_id !== undefined ? f.default_supplier_id : sql`default_supplier_id`},
+      min_stock            = ${f.min_stock !== undefined ? f.min_stock : sql`min_stock`},
+      notes                = ${f.notes !== undefined ? f.notes : sql`notes`},
+      is_active            = COALESCE(${f.is_active ?? null}, is_active),
+      transaction_category = COALESCE(${f.transaction_category ?? null}, transaction_category),
+      updated_at           = now()
     WHERE id = ${id}
     RETURNING id
   `;
