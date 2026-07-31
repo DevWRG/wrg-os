@@ -230,7 +230,10 @@ export async function runVehicleAlerts(): Promise<{ service_alerts: number; stnk
         `Sopir: ${v.sopir_name ?? "-"}`,
       ].join("\n");
       const gw = await sendViaWaGateway(target, msg);
-      if (gw.sent) {
+      // gw.sent juga true di mode stub & dry-run (lihat wasend.ts) — tanpa gerbang
+      // ini penanda anti-spam ter-set walau tak ada WA yang benar-benar terkirim,
+      // dan alert-nya mati permanen begitu WA_DRY_RUN (default true) dimatikan.
+      if (gw.sent && !gw.stub && !gw.dryRun) {
         await sql`UPDATE vehicle SET service_alert_sent_at = now() WHERE id = ${v.id}`;
         serviceAlerts += 1;
       }
@@ -244,7 +247,7 @@ export async function runVehicleAlerts(): Promise<{ service_alerts: number; stnk
         `Sopir: ${v.sopir_name ?? "-"}`,
       ].join("\n");
       const gw = await sendViaWaGateway(target, msg);
-      if (gw.sent) {
+      if (gw.sent && !gw.stub && !gw.dryRun) {
         await sql`UPDATE vehicle SET stnk_alert_sent_at = now() WHERE id = ${v.id}`;
         stnkAlerts += 1;
       }
