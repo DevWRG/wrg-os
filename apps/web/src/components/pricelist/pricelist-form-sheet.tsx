@@ -166,6 +166,16 @@ function PricelistFormBody({
     priceList.trim() === "" ? null : num(priceList),
   );
 
+  // Alokasi insentif belum diisi (ketiga pct = 0) ⇒ angka turunannya BUKAN "nol",
+  // melainkan "belum ada". Nett WRG = margin PENUH, jadi Total Point terbaca
+  // sebagai poin MAKSIMUM yang mungkin — angka yang tampak sudah jadi padahal
+  // basisnya belum ditetapkan. Tampilkan "—" supaya tak terbaca sebagai data
+  // final. Kolom pct-nya `NOT NULL DEFAULT 0` (migrasi 043) sehingga "belum
+  // diisi" dan "sengaja 0%" memang tak terpisahkan di DB — lihat catatan di PR.
+  const alokasiKosong = pct(wrg) === 0 && pct(promosi) === 0 && pct(hodSales) === 0;
+  const rp = (n: number, kosong: boolean) => (kosong ? "—" : formatRupiah(n));
+  const pts = (n: number) => (alokasiKosong ? "—" : fmtPts(n));
+
   async function run(fn: () => Promise<Response>) {
     setBusy(true);
     setError(null);
@@ -301,15 +311,15 @@ function PricelistFormBody({
               <div className="grid gap-3 sm:grid-cols-3">
                 <div className="grid gap-1.5">
                   <Label>Total Point</Label>
-                  <ReadonlyField value={fmtPts(d.totalPoint)} />
+                  <ReadonlyField value={pts(d.totalPoint)} />
                 </div>
                 <div className="grid gap-1.5">
                   <Label>Min Incentive Pts</Label>
-                  <ReadonlyField value={fmtPts(d.minIncentivePts)} />
+                  <ReadonlyField value={pts(d.minIncentivePts)} />
                 </div>
                 <div className="grid gap-1.5">
                   <Label>Max Incentive Pts</Label>
-                  <ReadonlyField value={fmtPts(d.maxIncentivePts)} />
+                  <ReadonlyField value={pts(d.maxIncentivePts)} />
                 </div>
                 <div className="grid gap-1.5">
                   <Label htmlFor="pl-minred">Min Redemption</Label>
@@ -351,21 +361,21 @@ function PricelistFormBody({
                 <div className="grid gap-1.5">
                   <div className="flex items-baseline justify-between gap-2">
                     <Label htmlFor="pl-wrg">WRG</Label>
-                    <span className="text-muted-foreground text-xs tabular-nums">{formatRupiah(d.valueWrg)}</span>
+                    <span className="text-muted-foreground text-xs tabular-nums">{rp(d.valueWrg, pct(wrg) === 0)}</span>
                   </div>
                   <PercentInput id="pl-wrg" value={wrg} onChange={setWrg} />
                 </div>
                 <div className="grid gap-1.5">
                   <div className="flex items-baseline justify-between gap-2">
                     <Label htmlFor="pl-promosi">Promosi</Label>
-                    <span className="text-muted-foreground text-xs tabular-nums">{formatRupiah(d.valuePromosi)}</span>
+                    <span className="text-muted-foreground text-xs tabular-nums">{rp(d.valuePromosi, pct(promosi) === 0)}</span>
                   </div>
                   <PercentInput id="pl-promosi" value={promosi} onChange={setPromosi} />
                 </div>
                 <div className="grid gap-1.5">
                   <div className="flex items-baseline justify-between gap-2">
                     <Label htmlFor="pl-hod">HOD Sales</Label>
-                    <span className="text-muted-foreground text-xs tabular-nums">{formatRupiah(d.valueHodSales)}</span>
+                    <span className="text-muted-foreground text-xs tabular-nums">{rp(d.valueHodSales, pct(hodSales) === 0)}</span>
                   </div>
                   <PercentInput id="pl-hod" value={hodSales} onChange={setHodSales} />
                 </div>
