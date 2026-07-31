@@ -1,4 +1,4 @@
--- 069 — Tracking Pengiriman: capture geo dari foto ber-geotag WA (F12,
+-- 077 — Tracking Pengiriman: capture geo dari foto ber-geotag WA (F12,
 -- REVISI arahan Direktur 2026-07-30): jarak (km) TIDAK LAGI diinput manual
 -- di awal. Sebagai gantinya:
 --   #KIRIM + foto ber-geotag → capture titik AWAL (kirim_lat/kirim_lon).

@@ -1,4 +1,4 @@
--- 068 — Tracking Pengiriman Digital (F12, SHIPPING): status kirim per SJ (dari
+-- 076 — Tracking Pengiriman Digital (F12, SHIPPING): status kirim per SJ (dari
 -- gudang/cabang pengirim ke customer) + ETA berbasis jarak (km, dihitung manual
 -- oleh Admin Shipping, BUKAN integrasi Maps real-time — lihat
 -- docs/features/F12-tracking-pengiriman-digital.md). State machine SEDERHANA
