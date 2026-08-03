@@ -150,11 +150,18 @@ export const NAV: NavGroup[] = [
       { title: "Inventory", url: "/inventory", icon: Boxes },
       { title: "Orders", url: "/orders", icon: ShoppingCart },
       { title: "Shipments", url: "/shipments", icon: Truck },
+      { title: "Suppliers", url: "/suppliers", icon: Factory },
+      { title: "HITL Review", url: "/hitl", icon: ClipboardCheck },
+    ],
+  },
+  {
+    // Domain SHIPPING per board Roadmap — dipisah dari "Operations" (keranjang
+    // mirror Accurate) atas arahan Direktur, supaya sidebar cermin domain fitur.
+    label: "Shipping",
+    items: [
       // F45 — rencana trip kurir + cek H-1 (libur & PIC). Beda dari Shipments
       // (mirror delivery-order Accurate, sudah terjadi): ini jadwal KE DEPAN.
       { title: "Jadwal Kirim-Tagih", url: "/pickup-plan", icon: CalendarCheck, badge: "NEW" },
-      { title: "Suppliers", url: "/suppliers", icon: Factory },
-      { title: "HITL Review", url: "/hitl", icon: ClipboardCheck },
     ],
   },
   {
