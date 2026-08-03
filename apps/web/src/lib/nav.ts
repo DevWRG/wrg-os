@@ -147,6 +147,17 @@ export const NAV: NavGroup[] = [
       // (migrasi 072). Beda dari Products: Products itu mirror item Accurate,
       // menu ini yang MENENTUKAN kode produknya sebelum masuk Accurate.
       { title: "Klasifikasi Produk", url: "/klasifikasi-produk", icon: Tags, badge: "NEW", show: canViewKlasifikasi },
+      { title: "Orders", url: "/orders", icon: ShoppingCart },
+      { title: "Shipments", url: "/shipments", icon: Truck },
+      { title: "Suppliers", url: "/suppliers", icon: Factory },
+      { title: "HITL Review", url: "/hitl", icon: ClipboardCheck },
+    ],
+  },
+  {
+    // Domain PURCHASING per board Roadmap — dipisah dari "Operations" (keranjang
+    // mirror Accurate) atas arahan Direktur, supaya sidebar cermin domain fitur.
+    label: "Purchasing",
+    items: [
       // Judul menyebut "Stok Gudang" karena F37 menambah tab kedua (stok per
       // gudang cabang) di route yang SAMA — tanpa itu isinya tak terbaca dari
       // sidebar dan orang mengira menu ini cuma stok agregat.
@@ -159,16 +170,7 @@ export const NAV: NavGroup[] = [
       // jadi setelah "Sync Fitur" dijalankan label di matriks Akses Grup ikut
       // berubah jadi "Inventory & Stok Gudang" — konsisten dgn sidebar. Yang
       // menentukan izin tetap `key`, dan itu tidak berubah.
-      //
-      // Section tetap Operations, sejajar Products/Klasifikasi Produk/Suppliers
-      // yang domainnya juga Purchasing — section di app ini keranjang data
-      // operasional, bukan cermin field "Domain" di board. Menunggu konfirmasi
-      // Direktur apakah perlu grup Purchasing sendiri.
       { title: "Inventory & Stok Gudang", url: "/inventory", icon: Boxes },
-      { title: "Orders", url: "/orders", icon: ShoppingCart },
-      { title: "Shipments", url: "/shipments", icon: Truck },
-      { title: "Suppliers", url: "/suppliers", icon: Factory },
-      { title: "HITL Review", url: "/hitl", icon: ClipboardCheck },
     ],
   },
   {
