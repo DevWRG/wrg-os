@@ -10,7 +10,7 @@ import {
   Bell, MapPin, ListChecks, Swords, CalendarOff, CalendarDays, CalendarRange,
   Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, Tags, SlidersHorizontal,
   Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, BookOpen, Calculator,
-  FileCheck2,
+  FileCheck2, ArrowLeftRight,
   type LucideIcon,
 } from "lucide-react";
 
@@ -21,6 +21,7 @@ import { canViewKlasifikasi } from "@/lib/klasifikasi-access";
 import { canViewRaportList } from "@/lib/raport-access";
 import { canViewExecutive } from "@/lib/executive-access";
 import { canViewKso } from "@/lib/kso-access";
+import { canViewInventoryRelocation } from "@/lib/inventory-relocation-access";
 
 // exact: sorot aktif hanya saat path persis (untuk route induk yg punya child,
 // mis. /pricelist vs /pricelist/setup).
@@ -162,6 +163,17 @@ export const NAV: NavGroup[] = [
       // ED (annual renewal). Role min Karyawan, tanpa `show` (semua role login
       // boleh), pola sama dgn F39/F134.
       { title: "Uji Profisiensi", url: "/proficiency-tests", icon: FileCheck2, badge: "NEW" },
+    ],
+  },
+  {
+    label: "Purchasing",
+    items: [
+      // F40 Inventory Relocation Request — log permintaan pemindahan barang
+      // antar cabang. Role min HOD (beda dari F25/F39/F134 yg Karyawan) —
+      // `show` di sini cuma fallback identitas (gate nyata di BFF lewat
+      // requireHodOrAdmin(), lihat app/api/inventory-relocations/**), pola
+      // sama dgn F51 Dana Ops/Karyawan 360.
+      { title: "Relokasi Inventaris", url: "/inventory-relocations", icon: ArrowLeftRight, badge: "NEW", show: canViewInventoryRelocation },
     ],
   },
   {

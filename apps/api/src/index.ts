@@ -194,6 +194,16 @@ import {
   type ProficiencyTestInput,
   type ProficiencyTestUpdate,
 } from "./repo/proficiency-test.js";
+import {
+  listInventoryRelocations,
+  getInventoryRelocation,
+  createInventoryRelocation,
+  updateInventoryRelocation,
+  deleteInventoryRelocation,
+  type InventoryRelocationInput,
+  type InventoryRelocationUpdate,
+  type InventoryRelocationStatus,
+} from "./repo/inventory-relocation.js";
 
 const app = new Hono();
 
@@ -3212,6 +3222,77 @@ app.get("/aftersales/proficiency-tests/:id/file", async (c) => {
       "content-disposition": `attachment; filename="${encodeURIComponent(file.file_name)}"`,
     },
   });
+});
+
+// F40 Inventory Relocation Request (Purchasing/Supply Chain, role min HOD).
+// Validasi qty/cabang/status di layer route (400) — sama pola dgn validasi
+// movement_type/qty ATK F49, bukan cuma andalkan CHECK constraint DB.
+const INVENTORY_RELOCATION_STATUSES: InventoryRelocationStatus[] = ["pending", "completed", "cancelled"];
+
+function validateInventoryRelocationFields(b: {
+  item_desc?: string;
+  qty?: number;
+  cabang_asal?: string;
+  cabang_tujuan?: string;
+  status?: string;
+}): string | null {
+  if (b.qty !== undefined && !(Number(b.qty) > 0)) return "qty harus lebih dari 0";
+  if (b.cabang_asal !== undefined && b.cabang_tujuan !== undefined && b.cabang_asal.trim() === b.cabang_tujuan.trim() && b.cabang_asal.trim() !== "") {
+    return "cabang asal dan tujuan tidak boleh sama";
+  }
+  if (b.status !== undefined && !INVENTORY_RELOCATION_STATUSES.includes(b.status as InventoryRelocationStatus)) {
+    return "status harus salah satu dari: pending, completed, cancelled";
+  }
+  return null;
+}
+
+app.get("/inventory-relocations", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listInventoryRelocations();
+  return c.json({ count: rows.length, rows });
+});
+
+app.post("/inventory-relocations", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: InventoryRelocationInput;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.item_desc?.trim() || !body.cabang_asal?.trim() || !body.cabang_tujuan?.trim() || !(Number(body.qty) > 0)) {
+    return c.json({ error: "item_desc, qty (>0), cabang_asal, cabang_tujuan wajib" }, 400);
+  }
+  const fieldErr = validateInventoryRelocationFields(body);
+  if (fieldErr) return c.json({ error: fieldErr }, 400);
+  const row = await createInventoryRelocation(body);
+  return c.json(row, 201);
+});
+
+app.get("/inventory-relocations/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const row = await getInventoryRelocation(c.req.param("id"));
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+});
+
+app.patch("/inventory-relocations/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: InventoryRelocationUpdate;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const fieldErr = validateInventoryRelocationFields(body);
+  if (fieldErr) return c.json({ error: fieldErr }, 400);
+  const row = await updateInventoryRelocation(c.req.param("id"), body);
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+});
+
+app.delete("/inventory-relocations/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await deleteInventoryRelocation(c.req.param("id"));
+  return c.json(r, r.deleted ? 200 : 404);
 });
 
 const port = Number(process.env.PORT ?? 4000);
