@@ -150,9 +150,16 @@ export const NAV: NavGroup[] = [
       { title: "Inventory", url: "/inventory", icon: Boxes },
       { title: "Orders", url: "/orders", icon: ShoppingCart },
       { title: "Shipments", url: "/shipments", icon: Truck },
-      { title: "Tracking Pengiriman", url: "/shipment-tracking", icon: Route, badge: "NEW" },
       { title: "Suppliers", url: "/suppliers", icon: Factory },
       { title: "HITL Review", url: "/hitl", icon: ClipboardCheck },
+    ],
+  },
+  {
+    // Domain SHIPPING per board Roadmap — dipisah dari "Operations" (keranjang
+    // mirror Accurate) atas arahan Direktur, supaya sidebar cermin domain fitur.
+    label: "Shipping",
+    items: [
+      { title: "Tracking Pengiriman", url: "/shipment-tracking", icon: Route, badge: "NEW" },
     ],
   },
   {
