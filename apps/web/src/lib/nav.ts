@@ -20,6 +20,7 @@ import { canViewKlasifikasi } from "@/lib/klasifikasi-access";
 import { canViewRaportList } from "@/lib/raport-access";
 import { canViewExecutive } from "@/lib/executive-access";
 import { canViewKso } from "@/lib/kso-access";
+import { canViewGaReporting } from "@/lib/ga-reporting-access";
 
 // exact: sorot aktif hanya saat path persis (untuk route induk yg punya child,
 // mis. /pricelist vs /pricelist/setup).
@@ -152,6 +153,16 @@ export const NAV: NavGroup[] = [
       { title: "Shipments", url: "/shipments", icon: Truck },
       { title: "Suppliers", url: "/suppliers", icon: Factory },
       { title: "HITL Review", url: "/hitl", icon: ClipboardCheck },
+    ],
+  },
+  {
+    label: "General Affairs",
+    items: [
+      // F141 — konsolidasi laporan 6 modul GA (F49 ATK+F54 Materai, F50
+      // Kendaraan, F51 Dana Ops, F52 IT Asset, F53 Stiker Aset). Role min HOD
+      // (disamakan dgn gate paling ketat di antara modul sumber, F51 Dana Ops)
+      // krn agregasi menaikkan sensitivitas data yg sebagian sumbernya terbuka.
+      { title: "GA Reporting & Analytics", url: "/ga-reporting", icon: BarChart3, badge: "NEW", show: canViewGaReporting },
     ],
   },
   {

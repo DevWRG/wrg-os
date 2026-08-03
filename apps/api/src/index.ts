@@ -130,6 +130,7 @@ import {
   reportCalendarDay,
 } from "./repo/plandash.js";
 import { salesRange, reportRevenue, reportSalesAr, salesOverview, customersRevenue, customerMonthly, dormantCustomers, churnCustomers, targetPacing, reportSalesPerformance } from "./repo/sales.js";
+import { gaReportingRange, gaReportingSummary } from "./repo/ga-reporting.js";
 import { resolveScope } from "./repo/access-scope.js";
 import { getRaportList, getRaportDetail } from "./repo/raport.js";
 import { generateRaportNarrative, runRaportNarrative } from "./repo/raportnarrative.js";
@@ -1953,6 +1954,16 @@ app.get("/dashboard/overview", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const { from, to } = salesRange(c.req.query("from"), c.req.query("to"));
   return c.json(await salesOverview(from, to));
+});
+
+// F141 — GA Reporting & Analytics Dashboard (konsolidasi F49 ATK+F54 Materai,
+// F50 Kendaraan, F51 Dana Ops, F52 IT Asset, F53 Stiker Aset). Gate role
+// HOD/admin ada di layer web BFF (requireHodOrAdmin), bukan di sini — konsisten
+// pola admin-gate-di-web project ini.
+app.get("/ga-reporting/summary", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const { from, to } = gaReportingRange(c.req.query("from"), c.req.query("to"));
+  return c.json(await gaReportingSummary(from, to));
 });
 
 // ── F127 Sales Analytics (multi-dimensi; row-level scope via x-user-id) ──
