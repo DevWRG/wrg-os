@@ -10,6 +10,7 @@ import {
   Bell, MapPin, ListChecks, Swords, CalendarOff, CalendarDays, CalendarRange,
   Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, Tags, SlidersHorizontal,
   Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, BookOpen, Calculator,
+  Handshake,
   type LucideIcon,
 } from "lucide-react";
 
@@ -20,6 +21,7 @@ import { canViewKlasifikasi } from "@/lib/klasifikasi-access";
 import { canViewRaportList } from "@/lib/raport-access";
 import { canViewExecutive } from "@/lib/executive-access";
 import { canViewKso } from "@/lib/kso-access";
+import { canViewVendorManagement } from "@/lib/vendor-management-access";
 
 // exact: sorot aktif hanya saat path persis (untuk route induk yg punya child,
 // mis. /pricelist vs /pricelist/setup).
@@ -152,6 +154,16 @@ export const NAV: NavGroup[] = [
       { title: "Shipments", url: "/shipments", icon: Truck },
       { title: "Suppliers", url: "/suppliers", icon: Factory },
       { title: "HITL Review", url: "/hitl", icon: ClipboardCheck },
+    ],
+  },
+  {
+    label: "General Affairs",
+    items: [
+      // F140 Vendor Management + Contract Expiry Alerts — master vendor/partner
+      // lokal + riwayat kontrak, status masa berlaku computed di query (tanpa
+      // WA/cron — dikonfirmasi user). Role min HOD (data komersial vendor),
+      // `show` di sini fallback identitas, gate nyata di BFF requireHodOrAdmin().
+      { title: "Vendor Management", url: "/vendor-management", icon: Handshake, badge: "NEW", show: canViewVendorManagement },
     ],
   },
   {
