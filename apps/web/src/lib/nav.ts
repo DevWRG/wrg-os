@@ -10,6 +10,7 @@ import {
   Bell, MapPin, ListChecks, Swords, CalendarOff, CalendarDays, CalendarRange,
   Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, Tags, SlidersHorizontal,
   Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, BookOpen, Calculator,
+  QrCode,
   type LucideIcon,
 } from "lucide-react";
 
@@ -152,6 +153,8 @@ export const NAV: NavGroup[] = [
       { title: "Shipments", url: "/shipments", icon: Truck },
       { title: "Suppliers", url: "/suppliers", icon: Factory },
       { title: "HITL Review", url: "/hitl", icon: ClipboardCheck },
+      // F53 — domain OPS tetap di Operations (sama keputusan spt F50/F52).
+      { title: "Stiker Aset", url: "/asset-tag", icon: QrCode, badge: "NEW" },
     ],
   },
   {
