@@ -77,6 +77,9 @@ import {
   listItems as listPricebookItems, summary as pricebookSummary,
   outsideKeagenan, periodeList as pricebookPeriode,
   listSetup as listPricebookSetup, setupSummary as pricebookSetupSummary,
+  updateSetupRow as updatePricebookSetupRow, publishSetup as publishPricebookSetup,
+  unpublishSetup as unpublishPricebookSetup, listPublishedKeagenan,
+  type SetupPatch as PricebookSetupPatch,
 } from "./repo/pricebook.js";
 import {
   taxonomy as klasifikasiTaxonomy, summary as klasifikasiSummary,
@@ -84,6 +87,7 @@ import {
   createCode as createKlasifikasiCode, upsertNode as upsertKlasifikasiNode,
   deleteNode as deleteKlasifikasiNode, listReview as listKlasifikasiReview,
   setReviewStatus as setKlasifikasiReviewStatus,
+  selesaikanReview as selesaikanKlasifikasiReview, subClassPilihan as klasifikasiSubClassPilihan,
   type CodeInput as KlasifikasiCodeInput, type NodeInput as KlasifikasiNodeInput,
   type Level as KlasifikasiLevel,
 } from "./repo/klasifikasi.js";
@@ -2482,6 +2486,41 @@ app.get("/kso/master", async (c) => {
   return c.json(await ksoMaster());
 });
 
+// Setelan harga keagenan (migrasi 077). Gate di halaman /pricebook/setup
+// (HoD Business / Purchasing / admin) — endpoint ini memuat HPP.
+app.patch("/pricebook/setup", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: PricebookSetupPatch;
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  const res = await updatePricebookSetupRow(body);
+  return res.ok ? c.json(res.row) : c.json({ error: res.error }, 400);
+});
+
+app.post("/pricebook/setup/publish", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const b = await c.req.json().catch(() => ({}) as Record<string, unknown>);
+  const rows = Array.isArray(b.rowNos) ? (b.rowNos as unknown[]).map(Number).filter(Number.isInteger) : undefined;
+  return c.json(await publishPricebookSetup(rows, (b.by as string) ?? null, (b.periode as string) || undefined));
+});
+
+app.post("/pricebook/setup/unpublish", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const b = await c.req.json().catch(() => ({}) as Record<string, unknown>);
+  const rows = Array.isArray(b.rowNos) ? (b.rowNos as unknown[]).map(Number).filter(Number.isInteger) : undefined;
+  return c.json(await unpublishPricebookSetup(rows, (b.periode as string) || undefined));
+});
+
+// Harga keagenan TERPUBLIKASI — ini yang dibuka Account Manager. Tanpa HPP &
+// margin: kolomnya tidak di-SELECT sama sekali, jadi tak ada jalan bocor.
+app.get("/pricebook/published", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const q = c.req.query();
+  const rows = await listPublishedKeagenan({
+    periode: q.periode, q: q.q, lini: q.lini, limit: q.limit ? Number(q.limit) : undefined,
+  });
+  return c.json({ count: rows.length, rows });
+});
+
 // ── Klasifikasi produk & kode produk (migrasi 072) ──────────────────────────
 // Kode KK.PP.CC.SSS.NNNN. Isi awal dari importer
 // scripts/db/import_product_classification.py (data tidak di repo).
@@ -2551,6 +2590,27 @@ app.get("/klasifikasi/review", async (c) => {
   const rows = await listKlasifikasiReview(q.status || undefined,
     q.limit ? Number(q.limit) : undefined);
   return c.json({ count: rows.length, rows });
+});
+
+// Pilihan sub class di bawah induk baris antrean — bahan dialog "Selesaikan".
+app.get("/klasifikasi/review/:id/sub-class", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const res = await klasifikasiSubClassPilihan(Number(c.req.param("id")));
+  return res.ok ? c.json(res) : c.json({ error: res.error }, 400);
+});
+
+// Selesaikan baris antrean: daftarkan/pilih sub class → terbitkan kode → tandai
+// beres, dalam satu transaksi. Menggantikan tombol lama yang cuma mengubah status.
+app.post("/klasifikasi/review/:id/selesaikan", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const b = await c.req.json().catch(() => ({}) as Record<string, unknown>);
+  const res = await selesaikanKlasifikasiReview(Number(c.req.param("id")), {
+    subClassId: (b.subClassId as string) ?? null,
+    subClassNama: (b.subClassNama as string) ?? null,
+    akuiNamaSama: b.akuiNamaSama === true,
+    by: ((b.by ?? b.createdBy) as string) ?? null,
+  });
+  return res.ok ? c.json(res) : c.json({ error: res.error }, 400);
 });
 
 app.post("/klasifikasi/review/:id", async (c) => {
