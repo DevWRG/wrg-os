@@ -18,6 +18,11 @@ const DEFAULT_STNK_ALERT_DAYS = 30;
 const toIsoDate = (x: unknown): string => new Date(x as string | Date).toISOString().slice(0, 10);
 const toIsoTs = (x: unknown): string => new Date(x as string | Date).toISOString();
 
+// Awal bulan berjalan di WIB, dihitung di JS bukan SQL current_date/date_trunc
+// (container Postgres Etc/UTC — dekat pergantian bulan bisa selisih 1 hari,
+// pelajaran F45/F38: selalu hitung tanggal pembanding di JS).
+const wibMonthStart = (): string => `${new Date(Date.now() + 7 * 3600 * 1000).toISOString().slice(0, 7)}-01`;
+
 export interface VehicleRow {
   id: string;
   plate_number: string;
@@ -32,6 +37,8 @@ export interface VehicleRow {
   service_due: boolean;
   stnk_due: boolean;
   stnk_days_left: number | null;
+  bbm_liter_bulan_ini: number;
+  bbm_cost_bulan_ini: number;
   created_at: string;
   updated_at: string;
 }
@@ -65,6 +72,8 @@ function mapRow(r: Record<string, unknown>): VehicleRow {
     service_due: serviceDue,
     stnk_due: stnkDue,
     stnk_days_left: stnkDaysLeft,
+    bbm_liter_bulan_ini: r.bbm_liter_bulan_ini != null ? Number(r.bbm_liter_bulan_ini) : 0,
+    bbm_cost_bulan_ini: r.bbm_cost_bulan_ini != null ? Number(r.bbm_cost_bulan_ini) : 0,
     created_at: toIsoTs(r.created_at),
     updated_at: toIsoTs(r.updated_at),
   };
@@ -72,10 +81,20 @@ function mapRow(r: Record<string, unknown>): VehicleRow {
 
 export async function listVehicles(activeOnly = true): Promise<VehicleRow[]> {
   const sql = db();
+  const monthStart = wibMonthStart();
   const rows = await sql`
-    SELECT * FROM vehicle
-    WHERE ${activeOnly ? sql`active = true` : sql`true`}
-    ORDER BY plate_number ASC
+    SELECT v.*,
+      COALESCE(b.liter, 0) AS bbm_liter_bulan_ini,
+      COALESCE(b.cost, 0) AS bbm_cost_bulan_ini
+    FROM vehicle v
+    LEFT JOIN (
+      SELECT vehicle_id, SUM(bbm_liter) AS liter, SUM(bbm_cost) AS cost
+      FROM vehicle_log
+      WHERE log_type = 'bbm' AND log_date >= ${monthStart}::date
+      GROUP BY vehicle_id
+    ) b ON b.vehicle_id = v.id
+    WHERE ${activeOnly ? sql`v.active = true` : sql`true`}
+    ORDER BY v.plate_number ASC
   `;
   return rows.map(mapRow);
 }

@@ -18,7 +18,11 @@ export interface Vehicle {
   service_due: boolean;
   stnk_due: boolean;
   stnk_days_left: number | null;
+  bbm_liter_bulan_ini: number;
+  bbm_cost_bulan_ini: number;
 }
+
+const fmtRupiah = (n: number) => `Rp ${new Intl.NumberFormat("id-ID").format(n)}`;
 
 export function VehiclesTable({ vehicles }: { vehicles: Vehicle[] }) {
   const columns: DataColumn<Vehicle>[] = [
@@ -50,6 +54,19 @@ export function VehiclesTable({ vehicles }: { vehicles: Vehicle[] }) {
           </div>
         </div>
       ),
+    },
+    {
+      id: "bbm",
+      header: "BBM Bulan Ini",
+      cell: (v) =>
+        v.bbm_liter_bulan_ini === 0 ? (
+          <span className="text-muted-foreground text-xs">belum ada</span>
+        ) : (
+          <div>
+            <div>{v.bbm_liter_bulan_ini.toLocaleString("id-ID")} L</div>
+            <div className="text-muted-foreground text-xs">{fmtRupiah(v.bbm_cost_bulan_ini)}</div>
+          </div>
+        ),
     },
     {
       id: "service",
