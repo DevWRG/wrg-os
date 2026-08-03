@@ -123,7 +123,7 @@ COMMENT ON TABLE warehouse IS
 COMMENT ON TABLE item_stock_branch IS
   'F37 — stok per item per gudang. Dikorelasikan dgn accurate_item.quantity (total perusahaan) di menu /inventory tab "Per Gudang": selisih total vs jumlah cabang menandakan data gudang belum lengkap/basi. Kolom source menandai asal angka (import/manual/accurate).';
 
--- ── Seed 11 gudang cabang ───────────────────────────────────────────────────
+-- ── Seed 12 gudang cabang ───────────────────────────────────────────────────
 -- Sumber: arahan Direktur 2026-07-31 (bukan deskripsi board). Board menyebut
 -- "Pusat/Kemangi/Surabaya/Madiun/Jember" — itu daftar LAMA/tidak lengkap dan
 -- SUDAH DIGANTI oleh daftar di bawah:
@@ -135,6 +135,13 @@ COMMENT ON TABLE item_stock_branch IS
 -- gudang". Jadi TIDAK ada "Surabaya 2", dan namanya cukup "Gudang Surabaya".
 -- (Seed HR menyebut station "SBY 2" beberapa kali — itu station kirim-tagih,
 -- bukan gudang.)
+--
+-- Koreksi lanjutan: "jogja&solo" sempat disebut sbg SATU gudang (`JOGJASOLO`)
+-- di draft awal migrasi ini, sebelum branch F37 pernah di-merge/dipakai di mana
+-- pun — Direktur lalu minta dipisah jadi 2 gudang berbeda. Krn kode itu tak
+-- pernah benar-benar dirilis (tak ada data stok yg mereferensikannya), koreksi
+-- ini langsung mengganti baris INSERT-nya, bukan deaktivasi kode terpisah spt
+-- PUSAT/KEMANGI/SBY1 di bawah (yang memang sempat "hidup" lebih dulu).
 --
 -- `kode` dipakai sebagai header kolom CSV importer dan header kolom di UI, jadi
 -- dibuat pendek & stabil. Mengganti kode berarti file CSV tim gudang ikut harus
@@ -148,16 +155,18 @@ INSERT INTO warehouse (kode, nama, cabang, urutan, jenis, catatan) VALUES
   ('MADIUN',    'Gudang Madiun',        'Madiun',      60, 'cabang', NULL),
   ('MADURA',    'Gudang Madura',        'Madura',      70, 'cabang', NULL),
   ('JAKARTA',   'Gudang Jakarta',       'Jakarta',     80, 'cabang', NULL),
-  ('JOGJASOLO', 'Gudang Jogja & Solo',  'Jogja/Solo',  90, 'cabang', 'Satu gudang melayani dua wilayah (Jogja & Solo)'),
+  ('JOGJA',     'Gudang Jogja',         'Jogja',       90, 'cabang', NULL),
+  ('SOLO',      'Gudang Solo',          'Solo',        91, 'cabang', NULL),
   ('NTB',       'Gudang NTB',           'NTB',        100, 'cabang', NULL),
   ('NTT',       'Gudang NTT',           'NTT',        110, 'cabang', NULL)
 ON CONFLICT (kode) DO UPDATE SET
   nama = EXCLUDED.nama, cabang = EXCLUDED.cabang, urutan = EXCLUDED.urutan;
 
--- Kode dari draft SEBELUM arahan Direktur. DINONAKTIFKAN, bukan di-DELETE:
--- kalau ada instalasi yang sudah sempat mengisi stok memakai kode itu, DELETE
--- akan menghapus datanya lewat ON DELETE CASCADE. aktif=false sudah cukup —
--- importer hanya menerima gudang aktif dan UI menandainya "(nonaktif)".
+-- Kode dari draft SEBELUM arahan Direktur, DAN kode yang sudah dikoreksi lagi
+-- setelahnya. DINONAKTIFKAN, bukan di-DELETE: kalau ada instalasi yang sudah
+-- sempat mengisi stok memakai kode itu, DELETE akan menghapus datanya lewat
+-- ON DELETE CASCADE. aktif=false sudah cukup — importer hanya menerima gudang
+-- aktif dan UI menandainya "(nonaktif)".
 --   PUSAT/KEMANGI → dari deskripsi board yang usang
 --   SBY1          → dari draft yang salah membaca "surabaya 1" sbg nomor urut
 UPDATE warehouse SET aktif = false,
@@ -165,7 +174,9 @@ UPDATE warehouse SET aktif = false,
  WHERE kode IN ('PUSAT', 'KEMANGI', 'SBY1');
 
 -- ── Menu RBAC ───────────────────────────────────────────────────────────────
--- TIDAK menambah entri feature baru: F37 hidup sebagai TAB di menu `/inventory`
--- yang sudah punya key 'inventory' (044_rbac.sql:83). Menambah key baru berarti
--- tab bisa "dicentang sendiri" padahal tab bukan route — pola yang sudah
--- dihindari di Price Book (lihat komentar `features:` di apps/web/src/lib/nav.ts).
+-- Awalnya F37 hidup sebagai TAB di menu `/inventory` (key 'inventory' bersama).
+-- Setelah arahan Direktur soal domain grouping (sidebar dikelompokkan per
+-- domain, bukan campur di "Operations"), F37 pindah jadi route sendiri
+-- `/stok-gudang` (section Purchasing) dgn key RBAC sendiri (`stok-gudang`,
+-- auto dari URL) — lihat apps/web/src/lib/nav.ts. Perlu digrant terpisah dari
+-- key 'inventory' di Akses Grup.

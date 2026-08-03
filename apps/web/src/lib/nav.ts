@@ -147,6 +147,7 @@ export const NAV: NavGroup[] = [
       // (migrasi 072). Beda dari Products: Products itu mirror item Accurate,
       // menu ini yang MENENTUKAN kode produknya sebelum masuk Accurate.
       { title: "Klasifikasi Produk", url: "/klasifikasi-produk", icon: Tags, badge: "NEW", show: canViewKlasifikasi },
+      { title: "Inventory", url: "/inventory", icon: Boxes },
       { title: "Orders", url: "/orders", icon: ShoppingCart },
       { title: "Shipments", url: "/shipments", icon: Truck },
       { title: "Suppliers", url: "/suppliers", icon: Factory },
@@ -158,19 +159,10 @@ export const NAV: NavGroup[] = [
     // mirror Accurate) atas arahan Direktur, supaya sidebar cermin domain fitur.
     label: "Purchasing",
     items: [
-      // Judul menyebut "Stok Gudang" karena F37 menambah tab kedua (stok per
-      // gudang cabang) di route yang SAMA — tanpa itu isinya tak terbaca dari
-      // sidebar dan orang mengira menu ini cuma stok agregat.
-      //
-      // `feature` TIDAK di-override: key-nya tetap `inventory` (turunan slug
-      // route), jadi izin grup yang sudah dicentang tidak perlu di-grant ulang
-      // dan "Sync Fitur" tidak menganggapnya fitur baru.
-      //
-      // Konsekuensi yang disengaja: featureCatalog() memakai `name: it.title`,
-      // jadi setelah "Sync Fitur" dijalankan label di matriks Akses Grup ikut
-      // berubah jadi "Inventory & Stok Gudang" — konsisten dgn sidebar. Yang
-      // menentukan izin tetap `key`, dan itu tidak berubah.
-      { title: "Inventory & Stok Gudang", url: "/inventory", icon: Boxes },
+      // F37 — route berdiri sendiri, dipisah dari /inventory (yang dulu 1
+      // halaman 2 tab). Key RBAC-nya sendiri (`stok-gudang`, auto dari URL),
+      // jadi bisa digrant terpisah dari izin Inventory di Akses Grup.
+      { title: "Stok Gudang", url: "/stok-gudang", icon: Boxes, badge: "NEW" },
     ],
   },
   {

@@ -2,9 +2,14 @@
 
 Stok per **gudang cabang WRG** + korelasinya ke angka stok total dari Accurate.
 
-**11 gudang cabang** (arahan Direktur 2026-07-31, menggantikan daftar 5 di
+**12 gudang cabang** (arahan Direktur 2026-07-31, menggantikan daftar 5 di
 board): Surabaya, Lamongan, Tuban, Jember, Kediri, Madiun, Madura, Jakarta,
-Jogja & Solo, NTB, NTT.
+Jogja, Solo, NTB, NTT.
+
+> Jogja & Solo sempat disebut sebagai **satu** gudang (`JOGJASOLO`) di draft
+> awal — Direktur minta dipisah jadi dua gudang berbeda (`JOGJA` / `SOLO`)
+> sebelum fitur ini pernah dirilis, jadi tidak ada kode lama yang perlu
+> dipertahankan.
 
 > Direktur menyebutnya "surabaya 1" — angka 1 itu **jumlah**, bukan nomor urut
 > ("konteks surabaya 1 itu maksudnya di surabaya ada 1 gudang"). Jadi tidak ada
