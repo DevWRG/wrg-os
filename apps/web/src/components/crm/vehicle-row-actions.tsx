@@ -166,24 +166,24 @@ function HistoryDialog({ vehicle }: { vehicle: Vehicle }) {
           ) : logs.length === 0 ? (
             <p className="text-muted-foreground text-sm">Belum ada entri log.</p>
           ) : (
-            <div className="max-h-96 overflow-y-auto">
+            <div className="max-h-96 overflow-x-auto overflow-y-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="text-muted-foreground text-left text-xs">
-                    <th className="pb-2">Tanggal</th>
-                    <th className="pb-2">Jenis</th>
-                    <th className="pb-2">KM</th>
-                    <th className="pb-2">BBM</th>
-                    <th className="pb-2">Catatan</th>
+                    <th className="py-2 pr-4 whitespace-nowrap">Tanggal</th>
+                    <th className="py-2 pr-4 whitespace-nowrap">Jenis</th>
+                    <th className="py-2 pr-4 whitespace-nowrap">KM</th>
+                    <th className="py-2 pr-4 whitespace-nowrap">BBM</th>
+                    <th className="py-2">Catatan</th>
                   </tr>
                 </thead>
                 <tbody>
                   {logs.map((l) => (
                     <tr key={l.id} className="border-t">
-                      <td className="py-1.5">{l.log_date}</td>
-                      <td className="py-1.5">{LOG_TYPE_LABEL[l.log_type] ?? l.log_type}</td>
-                      <td className="py-1.5">{l.km ?? "-"}</td>
-                      <td className="py-1.5">{l.bbm_liter ? `${l.bbm_liter} L` : "-"}</td>
+                      <td className="py-1.5 pr-4 whitespace-nowrap">{l.log_date}</td>
+                      <td className="py-1.5 pr-4 whitespace-nowrap">{LOG_TYPE_LABEL[l.log_type] ?? l.log_type}</td>
+                      <td className="py-1.5 pr-4 whitespace-nowrap">{l.km ?? "-"}</td>
+                      <td className="py-1.5 pr-4 whitespace-nowrap">{l.bbm_liter ? `${l.bbm_liter} L` : "-"}</td>
                       <td className="py-1.5">{l.note ?? "-"}</td>
                     </tr>
                   ))}
