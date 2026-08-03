@@ -10,6 +10,7 @@ import {
   Bell, MapPin, ListChecks, Swords, CalendarOff, CalendarDays, CalendarRange,
   Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, Tags, SlidersHorizontal,
   Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, BookOpen, Calculator,
+  Hourglass,
   type LucideIcon,
 } from "lucide-react";
 
@@ -163,6 +164,9 @@ export const NAV: NavGroup[] = [
       // halaman 2 tab). Key RBAC-nya sendiri (`stok-gudang`, auto dari URL),
       // jadi bisa digrant terpisah dari izin Inventory di Akses Grup.
       { title: "Stok Gudang", url: "/stok-gudang", icon: Boxes, badge: "NEW" },
+      // F38 — sama perlakuan spt Stok Gudang: dulu tab ketiga di /inventory,
+      // sekarang route sendiri dgn key RBAC sendiri (`ed-watch`).
+      { title: "ED & Kedaluwarsa", url: "/ed-watch", icon: Hourglass, badge: "NEW" },
     ],
   },
   {
