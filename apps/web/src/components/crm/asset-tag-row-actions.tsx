@@ -228,22 +228,22 @@ function HistoryDialog({ asset }: { asset: Asset }) {
           ) : logs.length === 0 ? (
             <p className="text-muted-foreground text-sm">Belum ada riwayat audit.</p>
           ) : (
-            <div className="max-h-96 overflow-y-auto">
+            <div className="max-h-96 overflow-x-auto overflow-y-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="text-muted-foreground text-left text-xs">
-                    <th className="pb-2">Tanggal</th>
-                    <th className="pb-2">Oleh</th>
-                    <th className="pb-2">Hasil</th>
-                    <th className="pb-2">Catatan</th>
+                    <th className="py-2 pr-4 whitespace-nowrap">Tanggal</th>
+                    <th className="py-2 pr-4 whitespace-nowrap">Oleh</th>
+                    <th className="py-2 pr-4 whitespace-nowrap">Hasil</th>
+                    <th className="py-2">Catatan</th>
                   </tr>
                 </thead>
                 <tbody>
                   {logs.map((l) => (
                     <tr key={l.id} className="border-t">
-                      <td className="py-1.5">{new Date(l.audited_at).toLocaleString("id-ID", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}</td>
-                      <td className="py-1.5">{l.audited_by}</td>
-                      <td className="py-1.5">{l.found ? "Ditemukan" : "Tidak ditemukan"}</td>
+                      <td className="py-1.5 pr-4 whitespace-nowrap">{new Date(l.audited_at).toLocaleString("id-ID", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}</td>
+                      <td className="py-1.5 pr-4 whitespace-nowrap">{l.audited_by}</td>
+                      <td className="py-1.5 pr-4 whitespace-nowrap">{l.found ? "Ditemukan" : "Tidak ditemukan"}</td>
                       <td className="py-1.5">{l.note ?? "-"}</td>
                     </tr>
                   ))}
