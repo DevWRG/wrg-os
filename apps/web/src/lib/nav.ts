@@ -105,8 +105,15 @@ export const NAV: NavGroup[] = [
       { title: "Orders", url: "/orders", icon: ShoppingCart },
       { title: "Shipments", url: "/shipments", icon: Truck },
       { title: "Suppliers", url: "/suppliers", icon: Factory },
-      { title: "Service Tickets", url: "/service-tickets", icon: Ticket, badge: "NEW" },
       { title: "HITL Review", url: "/hitl", icon: ClipboardCheck },
+    ],
+  },
+  {
+    // Domain AFTERSALES per board Roadmap — dipisah dari "Operations" (keranjang
+    // mirror Accurate) atas arahan Direktur, supaya sidebar cermin domain fitur.
+    label: "Aftersales",
+    items: [
+      { title: "Service Tickets", url: "/service-tickets", icon: Ticket, badge: "NEW" },
     ],
   },
   {
