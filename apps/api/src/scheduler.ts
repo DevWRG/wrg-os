@@ -34,6 +34,7 @@ import { runNotifQuota } from "./repo/notifquota.js";
 import { evaluateSalesAlerts } from "./repo/sales-analytics-alert-eval.js";
 import { computeNpk, currentPeriod } from "./repo/npk.js";
 import { snapshotLastWeek } from "./repo/watchpoint-weekly.js";
+import { runItTicketSlaAlerts } from "./repo/it-ticket.js";
 
 // Penjadwal agen in-process (Blueprint v2.3). Default MATI — aktif hanya bila
 // AGENT_SCHEDULE_ENABLED=true. Tiap run tetap menulis ke audit_log via repo
@@ -126,6 +127,9 @@ export function startScheduler(): ScheduleStatus {
   const listMembersEnabled = (process.env.LIST_MEMBERS_ENABLED ?? "false").toLowerCase() === "true";
   // notif-quota (port notif_quota.sh) — probe OpenRouter key/limit → alert owner WA. Tiap 6 jam.
   const notifQuotaEnabled = (process.env.NOTIF_QUOTA_ENABLED ?? "false").toLowerCase() === "true";
+  // it-ticket-sla (F52) — alert tiket IT yg lewat SLA & belum resolved. Default
+  // tiap 30 menit (SLA kritis cuma 2 jam, cek jarang bikin telat ketahuan).
+  const itTicketSlaEnabled = (process.env.IT_TICKET_SLA_ENABLED ?? "false").toLowerCase() === "true";
   const salesAlertEvalEnabled = (process.env.SALES_ALERT_EVAL_ENABLED ?? "false").toLowerCase() === "true";
   // npk-compute (F66) — recompute NPK 8 HoD utk semester BERJALAN, harian 01:00.
   // Display-only (isi npk_score_semester + npk_aspect_score, tanpa WA/LLM). Sebelum
@@ -700,6 +704,25 @@ export function startScheduler(): ScheduleStatus {
       { timezone },
     );
     live.push(`notif-quota=${nqExpr}`);
+  }
+
+  // it-ticket-sla (F52) — alert tiket IT lewat SLA & belum resolved.
+  const itSlaExpr = process.env.IT_TICKET_SLA_CRON ?? "*/30 * * * *";
+  if ((enabled || itTicketSlaEnabled) && cron.validate(itSlaExpr)) {
+    cron.schedule(
+      itSlaExpr,
+      async () => {
+        const startedAt = new Date().toISOString();
+        try {
+          const r = await runItTicketSlaAlerts();
+          if (r.alerts > 0) console.log(`[scheduler] it-ticket-sla @ ${startedAt} ${JSON.stringify(r)}`);
+        } catch (e) {
+          console.error(`[scheduler] it-ticket-sla gagal @ ${startedAt}:`, e);
+        }
+      },
+      { timezone },
+    );
+    live.push(`it-ticket-sla=${itSlaExpr}`);
   }
 
   // npk-compute (F66) — recompute NPK 8 HoD semester berjalan, harian 01:00 WIB.

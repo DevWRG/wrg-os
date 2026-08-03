@@ -10,7 +10,7 @@ import {
   Bell, MapPin, ListChecks, Swords, CalendarOff, CalendarDays, CalendarRange,
   Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, Tags, SlidersHorizontal,
   Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, BookOpen, Calculator,
-  Archive,
+  Archive, Laptop, Ticket,
   type LucideIcon,
 } from "lucide-react";
 
@@ -163,6 +163,10 @@ export const NAV: NavGroup[] = [
       { title: "Shipments", url: "/shipments", icon: Truck },
       { title: "Suppliers", url: "/suppliers", icon: Factory },
       { title: "HITL Review", url: "/hitl", icon: ClipboardCheck },
+      // F52 — master aset IT + tiket masalah. Domain OPS tetap di Operations
+      // (bukan section terpisah, sesuai keputusan sebelumnya).
+      { title: "Aset IT", url: "/it-assets", icon: Laptop, badge: "NEW" },
+      { title: "Tiket IT", url: "/it-tickets", icon: Ticket, badge: "NEW" },
     ],
   },
   {

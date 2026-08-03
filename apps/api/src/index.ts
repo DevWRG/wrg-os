@@ -189,6 +189,7 @@ import { startScheduler, getScheduleStatus } from "./scheduler.js";
 import { signJwt, verifyJwt } from "./auth.js";
 import { verifyCredentials, createUser, countUsers, listAppUsers, setUserPassword, updateAppUser, deleteAppUser, getAppUserById, createUserFromRoster, generatePassword, changeOwnPassword } from "./repo/users.js";
 import { listCategories, createCategory, updateCategory, listAssets as listGaAssets, getAsset as getGaAsset, createAsset as createGaAsset, updateAsset as updateGaAsset, setAssetFile } from "./repo/ga-asset.js";
+import { listTickets, createTicket, updateTicketStatus } from "./repo/it-ticket.js";
 
 const app = new Hono();
 
@@ -3344,6 +3345,51 @@ app.patch("/ga-assets/:id", async (c) => {
   const enumError = validateGaAssetEnums(body);
   if (enumError) return c.json({ error: enumError }, 400);
   const r = await updateGaAsset(c.req.param("id"), body);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+// ── F52 IT Asset & Issue Tracker (menyerap F132 — asset_id sekarang FK ga_assets) ──
+app.get("/it-tickets", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const status = c.req.query("status");
+  const rows = await listTickets(status && status !== "semua" ? status : undefined);
+  return c.json({ count: rows.length, tickets: rows });
+});
+
+app.post("/it-tickets", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { asset_id?: string; masalah?: string; reported_by?: string; assigned_to?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.asset_id || !body.masalah) return c.json({ error: "asset_id & masalah wajib diisi" }, 400);
+  const r = await createTicket({
+    asset_id: body.asset_id,
+    masalah: body.masalah,
+    reported_by: body.reported_by,
+    assigned_to: body.assigned_to,
+  });
+  return c.json(r, "error" in r ? 400 : 201);
+});
+
+app.patch("/it-tickets/:id/status", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { status?: string; assigned_to?: string; resolved_note?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (body.status !== "open" && body.status !== "in_progress" && body.status !== "resolved") {
+    return c.json({ error: "status harus open|in_progress|resolved" }, 400);
+  }
+  const r = await updateTicketStatus(c.req.param("id"), {
+    status: body.status,
+    assigned_to: body.assigned_to,
+    resolved_note: body.resolved_note,
+  });
   return c.json(r, r.ok ? 200 : 400);
 });
 
