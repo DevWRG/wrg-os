@@ -139,7 +139,7 @@ function mapScheduleRow(r: Record<string, unknown>): GaMaintenanceRow {
     maint_type: String(r.maint_type),
     due_date: dueDate,
     status,
-    overdue: !!dueDate && dueDate < wibToday() && status !== "completed" && status !== "cancelled",
+    overdue: !!dueDate && dueDate < wibToday() && status !== "done" && status !== "cancelled",
     cost_budget: Number(r.cost_budget ?? 0),
     cost_actual: Number(r.cost_actual ?? 0),
     vendor_id: r.vendor_id ? String(r.vendor_id) : null,
@@ -250,7 +250,7 @@ export async function startSchedule(id: string): Promise<ActionResult> {
   const sql = db();
   const rows = await sql`SELECT status FROM ga_maintenance_schedules WHERE id = ${id}`;
   if (rows.length === 0) return { ok: false, error: "jadwal tidak ditemukan" };
-  if (rows[0].status !== "requested") return { ok: false, error: `tidak bisa mulai dari status "${rows[0].status}"` };
+  if (rows[0].status !== "pending") return { ok: false, error: `tidak bisa mulai dari status "${rows[0].status}"` };
   await sql`UPDATE ga_maintenance_schedules SET status = 'in_progress', started_at = now(), updated_at = now() WHERE id = ${id}`;
   return { ok: true };
 }
@@ -259,7 +259,7 @@ export async function cancelSchedule(id: string, notes?: string | null): Promise
   const sql = db();
   const rows = await sql`SELECT status FROM ga_maintenance_schedules WHERE id = ${id}`;
   if (rows.length === 0) return { ok: false, error: "jadwal tidak ditemukan" };
-  if (rows[0].status === "completed" || rows[0].status === "cancelled") return { ok: false, error: `sudah "${rows[0].status}"` };
+  if (rows[0].status === "done" || rows[0].status === "cancelled") return { ok: false, error: `sudah "${rows[0].status}"` };
   await sql`UPDATE ga_maintenance_schedules SET status = 'cancelled', notes = COALESCE(${notes ?? null}, notes), updated_at = now() WHERE id = ${id}`;
   return { ok: true };
 }
@@ -283,19 +283,19 @@ export interface CompleteInput {
 }
 
 // Selesaikan jadwal. Kalau cost_actual > ambang Finance DAN belum
-// approved_by → status jatuh ke 'pending_finance' (BUKAN 'completed'),
+// approved_by → status jatuh ke 'pending_finance' (BUKAN 'done'),
 // menunggu approveSchedule(). Recurrence baru CUMA dibuat begitu status
-// benar-benar 'completed' (langsung atau lewat approval).
+// benar-benar 'done' (langsung atau lewat approval).
 export async function completeSchedule(id: string, input: CompleteInput): Promise<GaMaintenanceRow | ActionResult> {
   const sql = db();
   const rows = await sql`SELECT * FROM ga_maintenance_schedules WHERE id = ${id}`;
   if (rows.length === 0) return { ok: false, error: "jadwal tidak ditemukan" };
   const row = rows[0];
-  if (row.status === "completed" || row.status === "cancelled") return { ok: false, error: `sudah "${row.status}"` };
+  if (row.status === "done" || row.status === "cancelled") return { ok: false, error: `sudah "${row.status}"` };
 
   const costActual = input.cost_actual ?? Number(row.cost_actual ?? 0);
   const needsFinance = costActual > FINANCE_THRESHOLD && !row.approved_by;
-  const newStatus = needsFinance ? "pending_finance" : "completed";
+  const newStatus = needsFinance ? "pending_finance" : "done";
 
   await sql`
     UPDATE ga_maintenance_schedules SET
@@ -303,7 +303,7 @@ export async function completeSchedule(id: string, input: CompleteInput): Promis
       status = ${newStatus}, completed_at = now(), updated_at = now()
     WHERE id = ${id}
   `;
-  if (newStatus === "completed") {
+  if (newStatus === "done") {
     await spawnRecurrence({
       id: String(row.id), asset_id: String(row.asset_id), maint_type: String(row.maint_type),
       due_date: toIsoDate(row.due_date), cost_budget: Number(row.cost_budget), vendor_id: row.vendor_id ? String(row.vendor_id) : null,
@@ -328,7 +328,7 @@ export async function approveSchedule(id: string, input: ApproveInput): Promise<
   const row = rows[0];
   if (row.status !== "pending_finance") return { ok: false, error: `hanya bisa approve dari status "pending_finance", saat ini "${row.status}"` };
 
-  await sql`UPDATE ga_maintenance_schedules SET status = 'completed', approved_by = ${input.approved_by}, approved_at = now(), updated_at = now() WHERE id = ${id}`;
+  await sql`UPDATE ga_maintenance_schedules SET status = 'done', approved_by = ${input.approved_by}, approved_at = now(), updated_at = now() WHERE id = ${id}`;
   await spawnRecurrence({
     id: String(row.id), asset_id: String(row.asset_id), maint_type: String(row.maint_type),
     due_date: toIsoDate(row.due_date), cost_budget: Number(row.cost_budget), vendor_id: row.vendor_id ? String(row.vendor_id) : null,
@@ -348,7 +348,7 @@ export async function runMaintenanceAlerts(): Promise<{ alerts: number }> {
   const rows = await sql`
     SELECT m.due_date::text AS due_date, m.maint_type, a.asset_code, a.nama AS asset_nama
     FROM ga_maintenance_schedules m JOIN ga_assets a ON a.id = m.asset_id
-    WHERE m.status IN ('requested','in_progress')
+    WHERE m.status IN ('pending','in_progress')
       AND m.due_date IS NOT NULL
       AND m.due_date <= (CURRENT_DATE + ${days}::int)
     ORDER BY m.due_date ASC
@@ -378,7 +378,7 @@ export async function runGaMaintenanceBscFeed(): Promise<{ upserted: boolean; ac
   const [stats] = await sql`
     SELECT
       count(*) AS total,
-      count(*) FILTER (WHERE status = 'completed' AND completed_at::date <= due_date) AS on_time
+      count(*) FILTER (WHERE status = 'done' AND completed_at::date <= due_date) AS on_time
     FROM ga_maintenance_schedules
     WHERE due_date >= date_trunc('month', (${period} || '-01')::date)
       AND due_date < date_trunc('month', (${period} || '-01')::date) + interval '1 month'

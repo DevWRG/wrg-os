@@ -25,12 +25,12 @@ export interface GaMaintenance {
 }
 
 const STATUS_LABEL: Record<string, string> = {
-  requested: "Diminta", in_progress: "Dikerjakan", pending_finance: "Nunggu Finance", completed: "Selesai", cancelled: "Batal",
+  pending: "Pending", in_progress: "Dikerjakan", pending_finance: "Nunggu Finance", done: "Done", cancelled: "Batal",
 };
 const STATUS_VARIANT: Record<string, "outline" | "secondary" | "destructive"> = {
-  requested: "outline", in_progress: "secondary", pending_finance: "destructive", completed: "outline", cancelled: "secondary",
+  pending: "outline", in_progress: "secondary", pending_finance: "destructive", done: "outline", cancelled: "secondary",
 };
-const MAINT_TYPE_LABEL: Record<string, string> = { preventive: "Preventive", corrective: "Corrective" };
+const MAINT_TYPE_LABEL: Record<string, string> = { preventive: "Preventive", repair: "Repair" };
 const rupiah = (n: number) => `Rp ${n.toLocaleString("id-ID")}`;
 const fmtDate = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString("id-ID", { day: "2-digit", month: "short", year: "numeric" });
 

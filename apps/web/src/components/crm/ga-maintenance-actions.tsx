@@ -229,7 +229,7 @@ function ApproveButton({ id, users }: { id: string; users: AppUserOption[] }) {
 }
 
 export function GaMaintenanceActions({ schedule, canApproveFinance, users }: { schedule: Schedule; canApproveFinance: boolean; users: AppUserOption[] }) {
-  if (schedule.status === "requested") {
+  if (schedule.status === "pending") {
     return (
       <div className="flex items-center justify-end gap-1.5">
         <StartButton id={schedule.id} />

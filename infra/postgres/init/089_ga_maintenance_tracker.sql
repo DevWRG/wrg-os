@@ -6,13 +6,18 @@
 -- & vendor cuma VARCHAR bebas. F132 sekarang kasih registry aset nyata yang
 -- source-nya dulu tidak punya, jadi asset_id/vendor_id FK sungguhan di sini.
 --
--- Status (requested/in_progress/completed/cancelled) PERSIS diadopsi dari
--- source. "overdue" DIHITUNG saat baca (due_date < today AND status NOT IN
--- ('completed','cancelled')) — TIDAK disimpan sbg status tersendiri
--- (pelajaran F38: tier dihitung on-read, bukan due_date statis).
+-- Vocab type/status disamakan PERSIS ke kata brief F137 (pending/in_progress/
+-- done/overdue, preventive/repair) atas permintaan user — BEDA dari draf
+-- awal yang pakai istilah source gais (requested/completed, corrective).
+-- "overdue" TETAP DIHITUNG saat baca (due_date < today AND status NOT IN
+-- ('done','cancelled')), TIDAK disimpan sbg status tersendiri — pelajaran
+-- F38 (tier statis bikin alert berhenti tepat pas paling mendesak) tetap
+-- berlaku walau labelnya sekarang cocok kata brief.
 --
--- Approval Finance (TAMBAHAN, tak ada di source): status 'pending_finance'
--- + approved_by/approved_at — transisi ke 'completed' ditolak (app-layer,
+-- 'cancelled' & 'pending_finance' TIDAK ada di 4 status brief — tambahan
+-- perlu (batal itu kebutuhan operasional nyata, pending_finance = gate
+-- approval TAMBAHAN, tak ada di source): status 'pending_finance' +
+-- approved_by/approved_at — transisi ke 'done' ditolak (app-layer,
 -- repo/ga-maintenance.ts) kalau cost_actual > Rp5jt DAN approved_by NULL.
 
 CREATE TABLE IF NOT EXISTS ga_vendor (
@@ -34,13 +39,13 @@ CREATE TABLE IF NOT EXISTS ga_maintenance_schedules (
   id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   asset_id        uuid NOT NULL REFERENCES ga_assets(id) ON DELETE CASCADE,
 
-  maint_type      text NOT NULL DEFAULT 'preventive' CHECK (maint_type IN ('preventive','corrective')),
+  maint_type      text NOT NULL DEFAULT 'preventive' CHECK (maint_type IN ('preventive','repair')),
   due_date        date,
 
-  -- Alur: requested -> in_progress -> completed. pending_finance = tambahan
-  -- (gate cost>Rp5jt, lihat header). cancelled bisa dari requested/in_progress.
-  status          text NOT NULL DEFAULT 'requested'
-                  CHECK (status IN ('requested','in_progress','pending_finance','completed','cancelled')),
+  -- Alur: pending -> in_progress -> done. pending_finance = tambahan
+  -- (gate cost>Rp5jt, lihat header). cancelled bisa dari pending/in_progress.
+  status          text NOT NULL DEFAULT 'pending'
+                  CHECK (status IN ('pending','in_progress','pending_finance','done','cancelled')),
 
   cost_budget     numeric(15,2) NOT NULL DEFAULT 0,
   cost_actual     numeric(15,2) NOT NULL DEFAULT 0,
@@ -68,7 +73,7 @@ CREATE INDEX IF NOT EXISTS ga_maint_recur_parent_idx  ON ga_maintenance_schedule
 COMMENT ON TABLE ga_vendor IS
   'F137 — master vendor GA (servis AC/genset/dst), TERPISAH dari accurate_vendor (mirror Accurate, vendor barang/purchasing).';
 COMMENT ON TABLE ga_maintenance_schedules IS
-  'F137 — jadwal maintenance aset (preventive/corrective) + recurrence. asset_id/vendor_id FK sungguhan (upgrade dari source gais yg free-text). Approval Finance utk cost>Rp5jt via approved_by, dicek app-layer bukan constraint DB.';
+  'F137 — jadwal maintenance aset (preventive/repair) + recurrence. asset_id/vendor_id FK sungguhan (upgrade dari source gais yg free-text). Approval Finance utk cost>Rp5jt via approved_by, dicek app-layer bukan constraint DB.';
 
 -- Feature key utk gate "Approve Finance" (apps/web/src/lib/ga-maintenance-access.ts)
 -- lewat matriks Akses Grup — didaftarkan manual di sini krn BUKAN nav item

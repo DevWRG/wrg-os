@@ -12,9 +12,11 @@
 
 ## Ringkasan
 
-Jadwal maintenance aset (preventive/reactive) + recurrence + approval
+Jadwal maintenance aset (preventive/repair) + recurrence + approval
 Finance utk biaya besar. Upgrade sengaja dari source `gais` — lihat
-"Keputusan desain" di bawah, bukan replikasi 1:1.
+"Keputusan desain" di bawah, bukan replikasi 1:1. Vocab `type`/`status`
+disamakan PERSIS ke kata brief F137 (atas permintaan user, setelah
+cross-check) — beda dari draf awal yang pakai istilah source `gais`.
 
 ## Cara kerja
 
@@ -23,19 +25,32 @@ Finance utk biaya besar. Upgrade sengaja dari source `gais` — lihat
   beda total).
 - **`ga_maintenance_schedules`**: `asset_id`/`vendor_id` FK sungguhan
   (source `gais` cuma free-text) — F132 sekarang kasih registry aset nyata
-  yang source-nya dulu tak punya. Status
-  `requested→in_progress→completed/cancelled` persis diadopsi source.
-  "Overdue" **dihitung saat baca** (`due_date < today AND status NOT IN
-  (completed,cancelled)`), TIDAK disimpan sbg status sendiri — pelajaran
-  F38 (tier statis bikin alert berhenti tepat pas paling mendesak).
+  yang source-nya dulu tak punya. `maint_type` = `preventive`/`repair`.
+  `status` = `pending → in_progress → done`, plus `cancelled` (bisa dari
+  `pending`/`in_progress` — kebutuhan operasional nyata, TIDAK ada di 4
+  status brief tapi diperlukan) dan `pending_finance` (lihat approval di
+  bawah). **"Overdue" DIHITUNG saat baca** (`due_date < today AND status
+  NOT IN (done,cancelled)`), **TIDAK disimpan sbg status ke-5** — sengaja
+  beda dari brief yg menyebutnya salah satu dari 4 status tersimpan;
+  pelajaran F38 (tier statis bikin alert berhenti tepat pas paling
+  mendesak) tetap berlaku walau labelnya sekarang cocok kata brief. Field
+  API `overdue: boolean` + badge UI tetap ada, cuma bukan kolom DB
+  tersendiri.
 - **Recurrence**: `recur_months` (0/1/3/6/12) + `recur_parent_id`.
-  Kemunculan baru auto-dibuat begitu status BENAR-BENAR `completed`
-  (langsung atau lewat approval Finance) — bukan saat cost dicatat doang.
+  Kemunculan baru auto-dibuat begitu status BENAR-BENAR `done` (langsung
+  atau lewat approval Finance) — bukan saat cost dicatat doang.
+- **Jadwal rutin otomatis per kategori**: brief kasih contoh eksplisit
+  "kendaraan 6 bulan, AC 3 bulan" — `ga_asset_categories.default_recur_months`
+  (migrasi 091, ALTER dari branch ini, pola sama F42 nge-ALTER tabel F12).
+  Admin isi sendiri per kategori (TIDAK diseed, F132 sengaja mulai kosong).
+  `createSchedule()` fallback ke default kategori kalau `recur_months` tak
+  diisi (server-side, berlaku juga utk API langsung) — form web jugaauto-isi
+  field-nya begitu aset dipilih (tetap bisa diubah manual).
 - **Approval Finance** (TAMBAHAN, tak ada di source `gais` sama sekali):
   `cost_actual > Rp5jt` tanpa `approved_by` → status jatuh ke
   **`pending_finance`** (bukan ditolak keras) begitu ditandai selesai,
-  menunggu Finance approve. Approve valid HANYA dari `pending_finance`.
-  Guard SIAPA boleh approve ada di layer WEB
+  menunggu Finance approve. Approve valid HANYA dari `pending_finance`,
+  hasil akhirnya `done`. Guard SIAPA boleh approve ada di layer WEB
   (`lib/ga-maintenance-access.ts`, `canApproveGaFinance` — title
   mengandung "finance" ATAU matriks Akses Grup via feature key baru
   `ga-finance-approval`, didaftarkan manual di migrasi 089 krn bukan nav
@@ -51,23 +66,12 @@ Finance utk biaya besar. Upgrade sengaja dari source `gais` — lihat
   baru Dito ("Aset utilization/maintenance cost", seed migrasi 090,
   perspective `fin`) — **PRESEDEN PERTAMA auto-feed** ke tabel itu
   (sebelumnya semua diisi manual lewat UI raport). Formula
-  `achievement_pct` = % maintenance `completed` on-time bulan berjalan —
+  `achievement_pct` = % maintenance `done` on-time bulan berjalan —
   **ASUMSI teknis** (brief cuma sebut nama KPI, bukan rumus), gampang
   diganti tanpa ubah skema kalau Direktur mau basis lain.
 - **UI**: 2 tab baru (Maintenance, Vendor GA) digabung ke menu `/ga-aset`
   yang sudah ada — TIDAK bikin halaman/menu baru, konsisten arahan
   Direktur soal F52 (harus 1 menu, bukan cuma 1 tabel).
-
-## Jadwal rutin otomatis per kategori (ditambahkan setelah cross-check user)
-
-Brief F137 kasih contoh eksplisit "kendaraan 6 bulan, AC 3 bulan" yang
-sebelumnya belum ada — `recur_months` cuma manual per-jadwal tanpa default
-apa pun. Ditambahkan: `ga_asset_categories.default_recur_months` (migrasi
-091, ALTER dari branch ini — pola sama F42 nge-ALTER tabel F12). Admin isi
-sendiri per kategori (TIDAK diseed, F132 sengaja mulai kosong).
-`createSchedule()` fallback ke default kategori kalau `recur_months` tak
-diisi (server-side, berlaku juga utk API langsung) — form web juga
-auto-isi field-nya begitu aset dipilih (tetap bisa diubah manual).
 
 ## Keputusan desain
 
@@ -78,21 +82,32 @@ auto-isi field-nya begitu aset dipilih (tetap bisa diubah manual).
 - Endpoint `GET /app-users` diduplikasi dari F133 (sibling branch, sama2
   di atas F132, BUKAN turunan satu sama lain) — perlu dedup manual pas
   salah satu merge duluan ke `dev`.
+- `completed_at`/`started_at` (nama KOLOM database) TETAP tidak diubah
+  walau status value-nya sekarang `done` bukan `completed` — kolom
+  timestamp itu makna internalnya jelas dari nama tabel+konteks, rename
+  kolom cuma nambah risiko tanpa manfaat pengguna.
 
 ## ⚠️ BUTUH MIGRASI DB
 
 - `infra/postgres/init/089_ga_maintenance_tracker.sql` — `ga_vendor` +
   `ga_maintenance_schedules` (tabel baru) + insert 1 baris `feature`
-  (`ga-finance-approval`).
+  (`ga-finance-approval`). Vocab `status`/`maint_type` di file ini SUDAH
+  final (persis kata brief) — branch belum pernah di-push, jadi diedit
+  langsung di tempat, bukan migrasi ALTER susulan.
 - `infra/postgres/init/090_seed_ga_maintenance_kpi.sql` — insert 1 baris
   `kpi` (employee_id='dito', idempoten via NOT EXISTS).
+- `infra/postgres/init/091_ga_asset_category_default_recur.sql` — ALTER
+  `ga_asset_categories` (F132) tambah kolom `default_recur_months`.
 
 ## Pengujian
 
-End-to-end via API langsung DAN lewat BFF web: create → start → complete
-(cost kecil → langsung `completed` + recurrence baru muncul dgn due_date
-+N bulan) → create lain, complete cost besar → jatuh `pending_finance` →
-approve (fallback body, tanpa sesi) → `completed` + `approved_by` terisi →
-cancel (guard tak bisa cancel yg sudah completed/cancelled) → BSC feed
-manual (`achievement_pct=100`, 2 schedule on-time bulan itu). Halaman
-`/ga-aset` 4 tab render normal. Typecheck + lint bersih di semua commit.
+End-to-end via API langsung DAN lewat BFF web: create (`status=pending`,
+`maint_type=repair`) → start (`in_progress`) → complete (cost kecil →
+langsung `done` + recurrence baru muncul dgn due_date +N bulan) → create
+lain, complete cost besar → jatuh `pending_finance` → approve (fallback
+body, tanpa sesi) → `done` + `approved_by` terisi → cancel (guard tak bisa
+cancel yg sudah `done`/`cancelled`) → BSC feed manual (`achievement_pct=100`,
+schedule on-time bulan itu) → jadwal rutin per kategori (kategori
+`default_recur_months=6` → aset baru → create TANPA `recur_months` →
+tersimpan `recur_months=6` otomatis). Halaman `/ga-aset` 4 tab render
+normal. Typecheck + lint bersih di semua commit.

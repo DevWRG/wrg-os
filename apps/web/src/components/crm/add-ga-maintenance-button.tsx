@@ -77,7 +77,7 @@ export function AddGaMaintenanceButton({ assets, vendors, categories }: { assets
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle>Jadwalkan maintenance</DialogTitle>
-          <DialogDescription>Preventive (rutin) atau corrective (perbaikan).</DialogDescription>
+          <DialogDescription>Preventive (rutin) atau repair (perbaikan).</DialogDescription>
         </DialogHeader>
         <form onSubmit={submit}>
           <DialogBody className="grid gap-3">
@@ -97,10 +97,10 @@ export function AddGaMaintenanceButton({ assets, vendors, categories }: { assets
               <div className="grid gap-1.5">
                 <Label>Tipe</Label>
                 <Select value={maintType} onValueChange={(v) => setMaintType(v ?? "preventive")}>
-                  <SelectTrigger><SelectValue>{(v: string) => (v === "preventive" ? "Preventive" : "Corrective")}</SelectValue></SelectTrigger>
+                  <SelectTrigger><SelectValue>{(v: string) => (v === "preventive" ? "Preventive" : "Repair")}</SelectValue></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="preventive">Preventive</SelectItem>
-                    <SelectItem value="corrective">Corrective</SelectItem>
+                    <SelectItem value="repair">Repair</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
