@@ -10,6 +10,7 @@ import {
   Bell, MapPin, ListChecks, Swords, CalendarOff, CalendarDays, CalendarRange,
   Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, Tags, SlidersHorizontal,
   Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, BookOpen, Calculator,
+  ClipboardList,
   type LucideIcon,
 } from "lucide-react";
 
@@ -152,6 +153,14 @@ export const NAV: NavGroup[] = [
       { title: "Shipments", url: "/shipments", icon: Truck },
       { title: "Suppliers", url: "/suppliers", icon: Factory },
       { title: "HITL Review", url: "/hitl", icon: ClipboardCheck },
+    ],
+  },
+  {
+    label: "Purchasing",
+    items: [
+      // F13 PO Tracker + Sistem Barang Masuk — satu PO ke vendor + riwayat
+      // penerimaan barang per item (migrasi 078), bukan Accurate mirror.
+      { title: "PO Tracker", url: "/purchase-orders", icon: ClipboardList, badge: "NEW" },
     ],
   },
   {
