@@ -189,6 +189,11 @@ import { startScheduler, getScheduleStatus } from "./scheduler.js";
 import { signJwt, verifyJwt } from "./auth.js";
 import { verifyCredentials, createUser, countUsers, listAppUsers, setUserPassword, updateAppUser, deleteAppUser, getAppUserById, createUserFromRoster, generatePassword, changeOwnPassword } from "./repo/users.js";
 import { listCategories, createCategory, updateCategory, listAssets as listGaAssets, getAsset as getGaAsset, createAsset as createGaAsset, updateAsset as updateGaAsset, setAssetFile } from "./repo/ga-asset.js";
+import {
+  listVendors, createVendor, updateVendor,
+  listSchedules, getSchedule, createSchedule, updateSchedule,
+  startSchedule, completeSchedule, approveSchedule, cancelSchedule,
+} from "./repo/ga-maintenance.js";
 
 const app = new Hono();
 
@@ -3344,6 +3349,123 @@ app.patch("/ga-assets/:id", async (c) => {
   const enumError = validateGaAssetEnums(body);
   if (enumError) return c.json({ error: enumError }, 400);
   const r = await updateGaAsset(c.req.param("id"), body);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+// ── F137 GA Maintenance & Recurrence Tracker ────────────────────────────
+app.get("/ga-vendors", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listVendors(c.req.query("all") !== "true");
+  return c.json({ count: rows.length, vendors: rows });
+});
+
+app.post("/ga-vendors", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { nama?: string; category?: string; contact_person?: string; phone?: string; contract_end?: string; notes?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.nama) return c.json({ error: "nama wajib diisi" }, 400);
+  const r = await createVendor({ nama: body.nama, category: body.category, contact_person: body.contact_person, phone: body.phone, contract_end: body.contract_end, notes: body.notes });
+  return c.json(r, "error" in r ? 400 : 201);
+});
+
+app.patch("/ga-vendors/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: Record<string, unknown>;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const r = await updateVendor(c.req.param("id"), body);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.get("/ga-maintenance", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listSchedules({
+    assetId: c.req.query("asset_id") || undefined,
+    status: c.req.query("status") || undefined,
+    vendorId: c.req.query("vendor_id") || undefined,
+  });
+  return c.json({ count: rows.length, schedules: rows });
+});
+
+app.get("/ga-maintenance/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const row = await getSchedule(c.req.param("id"));
+  if (!row) return c.json({ error: "jadwal tidak ditemukan" }, 404);
+  return c.json(row);
+});
+
+app.post("/ga-maintenance", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { asset_id?: string; maint_type?: string; due_date?: string; cost_budget?: number; vendor_id?: string; recur_months?: number; notes?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.asset_id) return c.json({ error: "asset_id wajib diisi" }, 400);
+  const r = await createSchedule(body as Parameters<typeof createSchedule>[0]);
+  return c.json(r, "error" in r ? 400 : 201);
+});
+
+app.patch("/ga-maintenance/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: Record<string, unknown>;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const r = await updateSchedule(c.req.param("id"), body);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.post("/ga-maintenance/:id/start", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await startSchedule(c.req.param("id"));
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.post("/ga-maintenance/:id/complete", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { cost_actual?: number; notes?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const r = await completeSchedule(c.req.param("id"), body);
+  return c.json(r, "error" in r ? 400 : 200);
+});
+
+app.post("/ga-maintenance/:id/approve", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { approved_by?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.approved_by) return c.json({ error: "approved_by wajib diisi" }, 400);
+  const r = await approveSchedule(c.req.param("id"), { approved_by: body.approved_by });
+  return c.json(r, "error" in r ? 400 : 200);
+});
+
+app.post("/ga-maintenance/:id/cancel", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { notes?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const r = await cancelSchedule(c.req.param("id"), body.notes);
   return c.json(r, r.ok ? 200 : 400);
 });
 

@@ -34,6 +34,7 @@ import { runNotifQuota } from "./repo/notifquota.js";
 import { evaluateSalesAlerts } from "./repo/sales-analytics-alert-eval.js";
 import { computeNpk, currentPeriod } from "./repo/npk.js";
 import { snapshotLastWeek } from "./repo/watchpoint-weekly.js";
+import { runMaintenanceAlerts, runGaMaintenanceBscFeed } from "./repo/ga-maintenance.js";
 
 // Penjadwal agen in-process (Blueprint v2.3). Default MATI — aktif hanya bila
 // AGENT_SCHEDULE_ENABLED=true. Tiap run tetap menulis ke audit_log via repo
@@ -135,6 +136,11 @@ export function startScheduler(): ScheduleStatus {
   // sebelum job lain menggeser angka. Tanpa ini papan Weekly tak punya riwayat:
   // metric computed dihitung live sehingga minggu lewat ikut berubah tiap dibuka.
   const watchpointSnapshotEnabled = (process.env.WATCHPOINT_SNAPSHOT_ENABLED ?? "false").toLowerCase() === "true";
+  // ga-maintenance-alert (F137) — reminder due-date jadwal maintenance aset GA.
+  const gaMaintenanceAlertEnabled = (process.env.GA_MAINTENANCE_ALERT_ENABLED ?? "false").toLowerCase() === "true";
+  // ga-maintenance-bsc-feed (F137) — auto-isi kpi_measurement Dito bulanan
+  // (preseden pertama auto-feed, sebelumnya semua manual lewat UI).
+  const gaMaintenanceBscEnabled = (process.env.GA_MAINTENANCE_BSC_ENABLED ?? "false").toLowerCase() === "true";
   const timezone = TZ();
   const jobs: JobDef[] = [
     {
@@ -210,12 +216,12 @@ export function startScheduler(): ScheduleStatus {
   ];
 
   status = {
-    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled || watchpointSnapshotEnabled,
+    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled || watchpointSnapshotEnabled || gaMaintenanceAlertEnabled || gaMaintenanceBscEnabled,
     timezone,
     jobs: jobs.map((j) => ({ id: j.id, expr: j.expr, valid: cron.validate(j.expr) })),
   };
 
-  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled && !watchpointSnapshotEnabled) {
+  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled && !watchpointSnapshotEnabled && !gaMaintenanceAlertEnabled && !gaMaintenanceBscEnabled) {
     console.log("[scheduler] semua *_SCHEDULE/_ENABLED flag != true — tidak dijadwalkan");
     return status;
   }
@@ -725,6 +731,47 @@ export function startScheduler(): ScheduleStatus {
       { timezone },
     );
     live.push(`npk-compute=${npkExpr}`);
+  }
+
+  // ga-maintenance-alert (F137) — reminder due-date jadwal maintenance aset
+  // GA. Default harian 07:00. Naggy by design (pola F24, tanpa penanda
+  // anti-spam persisten) — target kosong = skip (anti broadcast).
+  const gaMaintAlertExpr = process.env.GA_MAINTENANCE_ALERT_CRON ?? "0 7 * * *";
+  if ((enabled || gaMaintenanceAlertEnabled) && cron.validate(gaMaintAlertExpr)) {
+    cron.schedule(
+      gaMaintAlertExpr,
+      async () => {
+        const startedAt = new Date().toISOString();
+        try {
+          const r = await runMaintenanceAlerts();
+          if (r.alerts > 0) console.log(`[scheduler] ga-maintenance-alert @ ${startedAt} ${JSON.stringify(r)}`);
+        } catch (e) {
+          console.error(`[scheduler] ga-maintenance-alert gagal @ ${startedAt}:`, e);
+        }
+      },
+      { timezone },
+    );
+    live.push(`ga-maintenance-alert=${gaMaintAlertExpr}`);
+  }
+
+  // ga-maintenance-bsc-feed (F137) — auto-isi kpi_measurement Dito, bulanan
+  // (tgl 1, 02:00 — setelah tengah malam WIB, data bulan lalu sudah final).
+  const gaMaintBscExpr = process.env.GA_MAINTENANCE_BSC_CRON ?? "0 2 1 * *";
+  if ((enabled || gaMaintenanceBscEnabled) && cron.validate(gaMaintBscExpr)) {
+    cron.schedule(
+      gaMaintBscExpr,
+      async () => {
+        const startedAt = new Date().toISOString();
+        try {
+          const r = await runGaMaintenanceBscFeed();
+          console.log(`[scheduler] ga-maintenance-bsc-feed @ ${startedAt} ${JSON.stringify(r)}`);
+        } catch (e) {
+          console.error(`[scheduler] ga-maintenance-bsc-feed gagal @ ${startedAt}:`, e);
+        }
+      },
+      { timezone },
+    );
+    live.push(`ga-maintenance-bsc-feed=${gaMaintBscExpr}`);
   }
 
   console.log(`[scheduler] aktif (TZ=${timezone}): ${live.join(", ") || "(tidak ada job valid)"}`);
