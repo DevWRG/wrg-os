@@ -69,7 +69,9 @@ export function AddGaAssetButton({ categories }: { categories: { id: string; nam
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle>Tambah aset GA</DialogTitle>
-          <DialogDescription>Kode aset (AST-YYYY-NNNN) di-generate otomatis.</DialogDescription>
+          <DialogDescription>
+            Kode aset (AST-YYYY-NNNN) di-generate otomatis. Foto & dokumen diisi SETELAH aset disimpan, lewat tombol Edit di tabel.
+          </DialogDescription>
         </DialogHeader>
         <form onSubmit={submit}>
           <DialogBody className="grid gap-3">
