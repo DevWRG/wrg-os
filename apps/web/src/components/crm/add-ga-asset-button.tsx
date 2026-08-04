@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { CONDITION_LABEL } from "@/components/tables/ga-assets-table";
 import {
   Dialog, DialogBody, DialogClose, DialogContent, DialogDescription,
   DialogFooter, DialogHeader, DialogTitle, DialogTrigger,
@@ -79,7 +80,10 @@ export function AddGaAssetButton({ categories }: { categories: { id: string; nam
             <div className="grid gap-1.5">
               <Label>Kategori</Label>
               <Select value={f.category_id} onValueChange={(v) => setF((p) => ({ ...p, category_id: v ?? "" }))}>
-                <SelectTrigger><SelectValue placeholder="Pilih kategori" /></SelectTrigger>
+                <SelectTrigger>
+                  {/* Base UI SelectValue render raw value (UUID) tanpa render-fn — map ke nama kategori. */}
+                  <SelectValue placeholder="Pilih kategori">{(v: string) => categories.find((c) => c.id === v)?.nama ?? v}</SelectValue>
+                </SelectTrigger>
                 <SelectContent>
                   {categories.map((c) => <SelectItem key={c.id} value={c.id}>{c.nama}</SelectItem>)}
                 </SelectContent>
@@ -116,7 +120,7 @@ export function AddGaAssetButton({ categories }: { categories: { id: string; nam
             <div className="grid gap-1.5">
               <Label>Kondisi</Label>
               <Select value={f.condition} onValueChange={(v) => setF((p) => ({ ...p, condition: v ?? "baik" }))}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectTrigger><SelectValue>{(v: string) => CONDITION_LABEL[v] ?? v}</SelectValue></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="baik">Baik</SelectItem>
                   <SelectItem value="rusak">Rusak</SelectItem>

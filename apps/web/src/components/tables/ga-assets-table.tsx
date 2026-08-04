@@ -31,11 +31,11 @@ export interface GaAsset {
   active: boolean;
 }
 
-const CONDITION_LABEL: Record<string, string> = { baik: "Baik", rusak: "Rusak", kurang_layak_pakai: "Kurang layak" };
+export const CONDITION_LABEL: Record<string, string> = { baik: "Baik", rusak: "Rusak", kurang_layak_pakai: "Kurang layak" };
 const STATUS_VARIANT: Record<string, "outline" | "secondary" | "destructive"> = {
   active: "outline", in_maintenance: "secondary", damaged: "destructive", lost: "destructive", disposed: "secondary",
 };
-const STATUS_LABEL: Record<string, string> = {
+export const STATUS_LABEL: Record<string, string> = {
   active: "Aktif", in_maintenance: "Maintenance", damaged: "Rusak", lost: "Hilang", disposed: "Disposed",
 };
 
