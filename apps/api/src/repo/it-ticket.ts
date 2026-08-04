@@ -1,9 +1,10 @@
 import { db } from "../db.js";
 import { sendViaWaGateway } from "../wasend.js";
 
-// F52 — IT Asset & Issue Tracker (OPS). `it_asset` = master aset IT (CRUD via
-// web — beda dari F50 vehicle yang seed-only, krn jumlah aset IT lebih
-// dinamis). `it_ticket` = tiket masalah per aset, SLA dihitung saat create.
+// F52 — IT Asset & Issue Tracker (OPS). Tiket masalah per aset, SLA dihitung
+// saat create. Master aset (`ga_assets`, F132, migrasi 086) DISERAP — bukan
+// tabel sendiri lagi, lihat komentar migrasi 087. CRUD aset via /ga-assets
+// (repo/ga-asset.ts), file ini cuma tiket.
 //
 // SLA "24/5" (arahan user, insiden nyata: PC Fakturis 11+ jam offline):
 // dihitung hari kerja (Senin-Jumat, skip master_holiday) sbg 24 jam PENUH
@@ -56,92 +57,9 @@ export async function businessHoursFromNow(startMs: number, jam: number): Promis
   return new Date(cur);
 }
 
-export interface ItAssetRow {
-  id: string;
-  asset_code: string;
-  nama: string;
-  lokasi: string | null;
-  pic_default: string | null;
-  is_critical: boolean;
-  active: boolean;
-  created_at: string;
-  updated_at: string;
-}
-
-function mapAssetRow(r: Record<string, unknown>): ItAssetRow {
-  return {
-    id: String(r.id),
-    asset_code: String(r.asset_code),
-    nama: String(r.nama),
-    lokasi: r.lokasi ? String(r.lokasi) : null,
-    pic_default: r.pic_default ? String(r.pic_default) : null,
-    is_critical: Boolean(r.is_critical),
-    active: Boolean(r.active),
-    created_at: toIsoTs(r.created_at),
-    updated_at: toIsoTs(r.updated_at),
-  };
-}
-
-export async function listAssets(activeOnly = true): Promise<ItAssetRow[]> {
-  const sql = db();
-  const rows = await sql`
-    SELECT * FROM it_asset WHERE ${activeOnly ? sql`active = true` : sql`true`}
-    ORDER BY asset_code ASC
-  `;
-  return rows.map(mapAssetRow);
-}
-
-export interface ItAssetInput {
-  asset_code: string;
-  nama: string;
-  lokasi?: string | null;
-  pic_default?: string | null;
-  is_critical?: boolean;
-}
-
 export interface ActionResult {
   ok: boolean;
   error?: string;
-}
-
-export async function createAsset(input: ItAssetInput): Promise<ItAssetRow | ActionResult> {
-  const sql = db();
-  const code = input.asset_code.trim();
-  const nama = input.nama.trim();
-  if (!code || !nama) return { ok: false, error: "asset_code & nama wajib diisi" };
-  const existing = await sql`SELECT 1 FROM it_asset WHERE asset_code = ${code} LIMIT 1`;
-  if (existing.length > 0) return { ok: false, error: `asset_code "${code}" sudah dipakai` };
-  const rows = await sql`
-    INSERT INTO it_asset (asset_code, nama, lokasi, pic_default, is_critical)
-    VALUES (${code}, ${nama}, ${input.lokasi ?? null}, ${input.pic_default ?? null}, ${input.is_critical ?? false})
-    RETURNING *
-  `;
-  return mapAssetRow(rows[0]);
-}
-
-export interface ItAssetUpdateInput {
-  nama?: string | null;
-  lokasi?: string | null;
-  pic_default?: string | null;
-  is_critical?: boolean | null;
-  active?: boolean | null;
-}
-
-export async function updateAsset(id: string, input: ItAssetUpdateInput): Promise<ActionResult> {
-  const sql = db();
-  const rows = await sql`SELECT id FROM it_asset WHERE id = ${id}`;
-  if (rows.length === 0) return { ok: false, error: "aset tidak ditemukan" };
-  await sql`
-    UPDATE it_asset SET
-      nama = COALESCE(${input.nama ?? null}, nama),
-      lokasi = COALESCE(${input.lokasi ?? null}, lokasi),
-      pic_default = COALESCE(${input.pic_default ?? null}, pic_default),
-      is_critical = COALESCE(${input.is_critical ?? null}, is_critical),
-      active = COALESCE(${input.active ?? null}, active),
-      updated_at = now()
-    WHERE id = ${id}
-  `;
-  return { ok: true };
 }
 
 export interface ItTicketRow {
@@ -188,7 +106,7 @@ export async function listTickets(statusFilter?: string): Promise<ItTicketRow[]>
   const sql = db();
   const rows = await sql`
     SELECT t.*, a.asset_code, a.nama AS asset_nama, a.is_critical
-    FROM it_ticket t JOIN it_asset a ON a.id = t.asset_id
+    FROM it_ticket t JOIN ga_assets a ON a.id = t.asset_id
     WHERE ${statusFilter ? sql`t.status = ${statusFilter}` : sql`true`}
     ORDER BY t.created_at DESC
   `;
@@ -206,7 +124,7 @@ export async function createTicket(input: ItTicketInput): Promise<ItTicketRow | 
   const sql = db();
   const masalah = input.masalah.trim();
   if (!masalah) return { ok: false, error: "masalah wajib diisi" };
-  const asset = await sql`SELECT id, is_critical FROM it_asset WHERE id = ${input.asset_id} AND active = true`;
+  const asset = await sql`SELECT id, is_critical FROM ga_assets WHERE id = ${input.asset_id} AND active = true`;
   if (asset.length === 0) return { ok: false, error: "aset tidak ditemukan / nonaktif" };
 
   const jam = asset[0].is_critical ? KRITIS_JAM : NORMAL_JAM;
@@ -219,7 +137,7 @@ export async function createTicket(input: ItTicketInput): Promise<ItTicketRow | 
   `;
   const [full] = await sql`
     SELECT t.*, a.asset_code, a.nama AS asset_nama, a.is_critical
-    FROM it_ticket t JOIN it_asset a ON a.id = t.asset_id
+    FROM it_ticket t JOIN ga_assets a ON a.id = t.asset_id
     WHERE t.id = ${rows[0].id}
   `;
   return mapTicketRow(full);
@@ -255,7 +173,7 @@ export async function runItTicketSlaAlerts(): Promise<{ alerts: number }> {
 
   const rows = await sql`
     SELECT t.*, a.asset_code, a.nama AS asset_nama, a.is_critical
-    FROM it_ticket t JOIN it_asset a ON a.id = t.asset_id
+    FROM it_ticket t JOIN ga_assets a ON a.id = t.asset_id
     WHERE t.status <> 'resolved' AND t.sla_due_at < now() AND t.sla_alert_sent_at IS NULL
   `;
 

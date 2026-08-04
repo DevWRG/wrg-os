@@ -148,6 +148,9 @@ export const NAV: NavGroup[] = [
     label: "GA",
     items: [
       { title: "Aset GA", url: "/ga-aset", icon: Archive, badge: "NEW" },
+      // F52 — tiket masalah per aset (FK ga_assets). Diserap ke domain GA
+      // krn master asetnya sekarang di sini, bukan tabel it_asset sendiri.
+      { title: "Tiket IT", url: "/it-asset", icon: Laptop, badge: "NEW" },
     ],
   },
   {
@@ -163,9 +166,6 @@ export const NAV: NavGroup[] = [
       { title: "Shipments", url: "/shipments", icon: Truck },
       { title: "Suppliers", url: "/suppliers", icon: Factory },
       { title: "HITL Review", url: "/hitl", icon: ClipboardCheck },
-      // F52 — master aset IT + tiket masalah. Domain OPS tetap di Operations
-      // (bukan section terpisah, sesuai keputusan sebelumnya).
-      { title: "IT Asset & Issue Tracker", url: "/it-asset", icon: Laptop, badge: "NEW" },
     ],
   },
   {

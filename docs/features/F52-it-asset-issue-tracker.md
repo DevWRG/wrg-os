@@ -16,15 +16,26 @@
 Ticket system per aset IT (PC ID, masalah, PIC, SLA <2 jam untuk aset kritis).
 Motivasi nyata: PC Fakturis pernah offline 11+ jam tanpa sistem pelacakan.
 
+## ⚠️ Update — diserap ke F132 GA Aset Master (2026-08-04)
+
+Arahan Direktur: F132 (GA Aset Master) jadi single source of truth SEMUA
+aset kantor, F52 diserap ke situ. Tabel `it_asset` yang dirancang di bawah
+**TIDAK PERNAH dibuat** — `it_ticket.asset_id` FK langsung ke `ga_assets`
+(F132, migrasi 086), `is_critical` dibaca dari `ga_assets.is_critical`. CRUD
+master aset (termasuk aset IT) pindah ke halaman `/ga-aset`; halaman
+`/it-asset` sekarang cuma tiket (tanpa tab Aset). Detail lengkap:
+`docs/features/F132-ga-aset-master.md`. Sisa dokumen di bawah ini historis
+(desain awal sebelum diserap) — bagian tabel `it_asset`/`/it-assets` sudah
+tidak berlaku, bagian `it_ticket`/SLA/cron tetap berlaku persis.
+
 ## Cara kerja
 
-- **Tabel `it_asset`** — master aset IT (PC/laptop). **BEDA dari pola F50**
-  (vehicle = seed SQL): aset IT jumlahnya lebih dinamis (PC baru dibeli,
-  laptop rusak diganti), jadi **CRUD sederhana di web** (halaman `/it-assets`),
-  bukan seed-only.
-- **`is_critical`** — flag PERMANEN per-aset (bukan per-tiket). PC Fakturis
-  ditandai kritis sekali di data aset; semua tiket dari aset itu otomatis
-  dapat SLA 2 jam tanpa perlu diingat-ingat tiap lapor.
+- **Master aset** — sekarang `ga_assets` (F132), BUKAN `it_asset` sendiri
+  lagi (lihat update di atas). CRUD via halaman `/ga-aset`.
+- **`is_critical`** — flag PERMANEN per-aset (bukan per-tiket), kolom
+  `ga_assets.is_critical`. PC Fakturis ditandai kritis sekali di data aset;
+  semua tiket dari aset itu otomatis dapat SLA 2 jam tanpa perlu
+  diingat-ingat tiap lapor.
 - **Tabel `it_ticket`** — transaksional, status `open` → `in_progress` →
   `resolved`. `sla_due_at` dihitung SEKALI saat create (bukan recompute
   live), dari `businessHoursFromNow()`.
