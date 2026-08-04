@@ -9,7 +9,7 @@
 | Sprint | B1 |
 | Status | DRAFT-SB1 |
 | Owner | Dito, Husni, Sari (fakturis) |
-| Branch | `feat/f52-it-asset-issue-tracker` (dari `dev`, standalone) |
+| Branch | `feat/f52-it-asset-issue-tracker` (DI ATAS `feat/f132-ga-aset-master` — diserap, lihat update di bawah) |
 
 ## Ringkasan
 
