@@ -1,5 +1,7 @@
 "use client";
 
+import { Camera, FileText } from "lucide-react";
+
 import { Badge } from "@/components/ui/badge";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
 import { GaAssetRowActions } from "@/components/crm/ga-asset-row-actions";
@@ -77,6 +79,27 @@ export function GaAssetsTable({ assets, categories }: { assets: GaAsset[]; categ
       id: "kritis",
       header: "Kritis",
       cell: (a) => (a.is_critical ? <Badge variant="destructive">Kritis</Badge> : <span className="text-muted-foreground text-xs">-</span>),
+    },
+    {
+      id: "berkas",
+      header: "Berkas",
+      cell: (a) =>
+        !a.foto_path && !a.dokumen_path ? (
+          <span className="text-muted-foreground text-xs">-</span>
+        ) : (
+          <div className="flex items-center gap-2">
+            {a.foto_path && (
+              <a href={`/api/media?p=${encodeURIComponent(a.foto_path)}`} target="_blank" rel="noreferrer" title="Lihat foto" className="text-muted-foreground hover:text-foreground">
+                <Camera className="size-4" />
+              </a>
+            )}
+            {a.dokumen_path && (
+              <a href={`/api/media?p=${encodeURIComponent(a.dokumen_path)}`} target="_blank" rel="noreferrer" title="Lihat dokumen" className="text-muted-foreground hover:text-foreground">
+                <FileText className="size-4" />
+              </a>
+            )}
+          </div>
+        ),
     },
     { id: "aksi", header: "Aksi", align: "right", cell: (a) => <GaAssetRowActions asset={a} categories={categories} /> },
   ];
