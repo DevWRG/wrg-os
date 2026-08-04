@@ -189,6 +189,7 @@ import { startScheduler, getScheduleStatus } from "./scheduler.js";
 import { signJwt, verifyJwt } from "./auth.js";
 import { verifyCredentials, createUser, countUsers, listAppUsers, setUserPassword, updateAppUser, deleteAppUser, getAppUserById, createUserFromRoster, generatePassword, changeOwnPassword } from "./repo/users.js";
 import { listCategories, createCategory, updateCategory, listAssets as listGaAssets, getAsset as getGaAsset, createAsset as createGaAsset, updateAsset as updateGaAsset, setAssetFile } from "./repo/ga-asset.js";
+import { assignAsset, returnAsset, transferAsset, getAssetHistory } from "./repo/ga-asset-assignment.js";
 
 const app = new Hono();
 
@@ -3345,6 +3346,49 @@ app.patch("/ga-assets/:id", async (c) => {
   if (enumError) return c.json({ error: enumError }, 400);
   const r = await updateGaAsset(c.req.param("id"), body);
   return c.json(r, r.ok ? 200 : 400);
+});
+
+// ── F133 GA Asset Assignment + Transfer + History ───────────────────────
+app.post("/ga-assets/:id/assign", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { user_id?: string; pic_name?: string; department?: string; assigned_date?: string; notes?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const r = await assignAsset(c.req.param("id"), body);
+  return c.json(r, "error" in r ? 400 : 200);
+});
+
+app.post("/ga-assets/:id/return", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { assignment_id?: string; user_id?: string; returned_date?: string; notes?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const r = await returnAsset(c.req.param("id"), body);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.post("/ga-assets/:id/transfer", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { to_user_id?: string; to_pic_name?: string; to_location?: string; reason?: string; created_by?: string; transfer_date?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const r = await transferAsset(c.req.param("id"), body);
+  return c.json(r, "error" in r ? 400 : 200);
+});
+
+app.get("/ga-assets/:id/history", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await getAssetHistory(c.req.param("id"));
+  return c.json({ count: rows.length, history: rows });
 });
 
 const port = Number(process.env.PORT ?? 4000);

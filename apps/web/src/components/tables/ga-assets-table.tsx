@@ -5,6 +5,8 @@ import { Camera, FileText } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
 import { GaAssetRowActions } from "@/components/crm/ga-asset-row-actions";
+import { AssignAssetButton, ReturnAssetButton, TransferAssetButton, type AppUserOption } from "@/components/crm/ga-asset-pic-actions";
+import { GaAssetHistoryButton } from "@/components/crm/ga-asset-history-button";
 
 export interface GaAsset {
   id: string;
@@ -43,7 +45,7 @@ export const STATUS_LABEL: Record<string, string> = {
 
 const rupiah = (n: number) => `Rp ${n.toLocaleString("id-ID")}`;
 
-export function GaAssetsTable({ assets, categories }: { assets: GaAsset[]; categories: { id: string; nama: string }[] }) {
+export function GaAssetsTable({ assets, categories, users }: { assets: GaAsset[]; categories: { id: string; nama: string }[]; users: AppUserOption[] }) {
   const columns: DataColumn<GaAsset>[] = [
     {
       id: "kode",
@@ -100,6 +102,27 @@ export function GaAssetsTable({ assets, categories }: { assets: GaAsset[]; categ
             )}
           </div>
         ),
+    },
+    {
+      id: "pic-aksi",
+      header: "PIC",
+      align: "right",
+      cell: (a) => {
+        const hasPic = !!(a.current_pic_user_id || a.pic_name);
+        return (
+          <div className="flex items-center justify-end gap-1.5">
+            {hasPic ? (
+              <>
+                <ReturnAssetButton assetId={a.id} />
+                <TransferAssetButton assetId={a.id} users={users} />
+              </>
+            ) : (
+              <AssignAssetButton assetId={a.id} users={users} />
+            )}
+            <GaAssetHistoryButton assetId={a.id} assetCode={a.asset_code} />
+          </div>
+        );
+      },
     },
     { id: "aksi", header: "Aksi", align: "right", cell: (a) => <GaAssetRowActions asset={a} categories={categories} /> },
   ];

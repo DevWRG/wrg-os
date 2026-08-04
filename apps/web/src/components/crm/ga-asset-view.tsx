@@ -8,10 +8,11 @@ import { GaAssetsTable, type GaAsset } from "@/components/tables/ga-assets-table
 import { GaAssetCategoriesTable, type GaAssetCategory } from "@/components/tables/ga-asset-categories-table";
 import { AddGaAssetButton } from "@/components/crm/add-ga-asset-button";
 import { AddGaAssetCategoryButton } from "@/components/crm/add-ga-asset-category-button";
+import type { AppUserOption } from "@/components/crm/ga-asset-pic-actions";
 
 // F132 — satu halaman, dua tab (Aset + Kategori), sama pola F52 (2 sub-view
 // domain & fitur yang SAMA, bukan pelanggaran prinsip domain-grouping).
-export function GaAssetView({ assets, categories }: { assets: GaAsset[]; categories: GaAssetCategory[] }) {
+export function GaAssetView({ assets, categories, users }: { assets: GaAsset[]; categories: GaAssetCategory[]; users: AppUserOption[] }) {
   const [tab, setTab] = useState<"aset" | "kategori">("aset");
   const activeCategories = categories.filter((c) => c.active);
 
@@ -52,7 +53,7 @@ export function GaAssetView({ assets, categories }: { assets: GaAsset[]; categor
                   description={activeCategories.length === 0 ? 'Belum ada kategori aktif — tambah dulu di tab "Kategori".' : 'Klik "Tambah Aset" untuk mulai.'}
                 />
               ) : (
-                <GaAssetsTable assets={assets} categories={activeCategories} />
+                <GaAssetsTable assets={assets} categories={activeCategories} users={users} />
               )}
             </CardContent>
           </Card>
