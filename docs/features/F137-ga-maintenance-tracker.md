@@ -58,6 +58,17 @@ Finance utk biaya besar. Upgrade sengaja dari source `gais` — lihat
   yang sudah ada — TIDAK bikin halaman/menu baru, konsisten arahan
   Direktur soal F52 (harus 1 menu, bukan cuma 1 tabel).
 
+## Jadwal rutin otomatis per kategori (ditambahkan setelah cross-check user)
+
+Brief F137 kasih contoh eksplisit "kendaraan 6 bulan, AC 3 bulan" yang
+sebelumnya belum ada — `recur_months` cuma manual per-jadwal tanpa default
+apa pun. Ditambahkan: `ga_asset_categories.default_recur_months` (migrasi
+091, ALTER dari branch ini — pola sama F42 nge-ALTER tabel F12). Admin isi
+sendiri per kategori (TIDAK diseed, F132 sengaja mulai kosong).
+`createSchedule()` fallback ke default kategori kalau `recur_months` tak
+diisi (server-side, berlaku juga utk API langsung) — form web juga
+auto-isi field-nya begitu aset dipilih (tetap bisa diubah manual).
+
 ## Keputusan desain
 
 - Approval gate HANYA di F137 (cost_actual), TIDAK di F132 (purchase
