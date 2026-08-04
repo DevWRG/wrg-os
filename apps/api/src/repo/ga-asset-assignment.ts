@@ -19,6 +19,24 @@ export interface ActionResult {
 
 const wibToday = (): string => new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
 
+// Log ke audit_log (governance D6, migrasi 002) sbg Layer 5 = Human (lihat
+// komentar kolom `layer` di schema) — beda dari insertAuditEvent/EventEnvelope
+// (repo/audit.ts) yang khusus pipeline ingestion ADR-024 Layer 2 (Input).
+// agent_id sengaja NULL (bukan run AI-agent, FK ke agent_registry kalau
+// diisi wajib ada baris terdaftar). Best-effort — gagal audit TIDAK boleh
+// gagalkan aksi assign/return/transfer itu sendiri.
+async function logAudit(eventType: string, payload: Record<string, unknown>, humanActor?: string | null): Promise<void> {
+  try {
+    const sql = db();
+    await sql`
+      INSERT INTO audit_log (use_case_id, layer, event_type, r_tier, payload, human_actor)
+      VALUES ('F133', 5, ${eventType}, 'R1', ${sql.json(payload as Parameters<typeof sql.json>[0])}, ${humanActor ?? null})
+    `;
+  } catch {
+    // best-effort, jangan sampai gagal audit menggagalkan aksi utamanya
+  }
+}
+
 // Notif WA one-shot (bukan cron berulang, jadi tak perlu penanda anti-spam
 // spt F37/F45/F50 — cukup best-effort, gagal kirim tak boleh gagalkan
 // assign/transfer-nya sendiri, lihat caller `.catch(() => {})`).
@@ -78,9 +96,12 @@ export async function assignAsset(assetId: string, input: AssignInput): Promise<
     `;
     await sql`UPDATE ga_assets SET current_pic_user_id = ${userId}, pic_name_override = NULL, department = COALESCE(${input.department ?? null}, department), updated_at = now() WHERE id = ${assetId}`;
     await notifyPic(userId, String(asset.asset_code), String(asset.nama), "assign").catch(() => {});
+    await logAudit("ga_asset.assign", { asset_id: assetId, asset_code: asset.asset_code, user_id: userId, department: input.department ?? null });
   } else {
-    // Free-text tanpa match user terdaftar — TANPA baris histori (lihat header).
+    // Free-text tanpa match user terdaftar — TANPA baris histori (lihat header),
+    // tapi TETAP di-log ke audit_log (governance-nya lebih luas dari histori F133 sendiri).
     await sql`UPDATE ga_assets SET current_pic_user_id = NULL, pic_name_override = ${picNameTrim}, updated_at = now() WHERE id = ${assetId}`;
+    await logAudit("ga_asset.assign_freetext", { asset_id: assetId, asset_code: asset.asset_code, pic_name: picNameTrim });
   }
   return (await getAsset(assetId))!;
 }
@@ -109,6 +130,7 @@ export async function returnAsset(assetId: string, input: ReturnInput): Promise<
     const [asset] = await sql`SELECT pic_name_override FROM ga_assets WHERE id = ${assetId}`;
     if (asset?.pic_name_override) {
       await sql`UPDATE ga_assets SET current_pic_user_id = NULL, pic_name_override = NULL, updated_at = now() WHERE id = ${assetId}`;
+      await logAudit("ga_asset.return_freetext", { asset_id: assetId });
       return { ok: true };
     }
     return { ok: false, error: "tidak ada assignment aktif yang cocok" };
@@ -128,6 +150,7 @@ export async function returnAsset(assetId: string, input: ReturnInput): Promise<
   } else {
     await sql`UPDATE ga_assets SET current_pic_user_id = NULL, pic_name_override = NULL, updated_at = now() WHERE id = ${assetId}`;
   }
+  await logAudit("ga_asset.return", { asset_id: assetId, assignment_id: active[0].id, returned_date: returnedDate });
   return { ok: true };
 }
 
@@ -169,6 +192,17 @@ export async function transferAsset(assetId: string, input: TransferInput): Prom
     WHERE id = ${assetId}
   `;
   await notifyPic(toUserId, String(asset.asset_code), String(asset.nama), "transfer").catch(() => {});
+
+  let humanActor: string | null = null;
+  if (input.created_by) {
+    const [u] = await sql`SELECT name FROM app_user WHERE id = ${input.created_by}`;
+    humanActor = u?.name ? String(u.name) : null;
+  }
+  await logAudit("ga_asset.transfer", {
+    asset_id: assetId, asset_code: asset.asset_code,
+    from_user_id: asset.current_pic_user_id, to_user_id: toUserId, reason: input.reason ?? null,
+  }, humanActor);
+
   return (await getAsset(assetId))!;
 }
 
