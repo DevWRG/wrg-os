@@ -330,3 +330,19 @@ export async function resolveUserByName(name: string): Promise<string | null> {
   const rows = await sql`SELECT id FROM app_user WHERE lower(name) = lower(${name}) LIMIT 1`;
   return rows.length ? String(rows[0].id) : null;
 }
+
+// Upload foto/dokumen aset — dipanggil dari POST /ga-assets/:id/upload
+// setelah file ditulis ke disk (lihat GA_UPLOAD_ROOT di index.ts). Simpan
+// PATH ABSOLUT (bukan URL) — sama pola `visit.photo_url` (raw media path,
+// web resolve via /api/media?p=).
+export async function setAssetFile(id: string, kind: "foto" | "dokumen", absPath: string): Promise<ActionResult> {
+  const sql = db();
+  const rows = await sql`SELECT id FROM ga_assets WHERE id = ${id}`;
+  if (rows.length === 0) return { ok: false, error: "aset tidak ditemukan" };
+  if (kind === "foto") {
+    await sql`UPDATE ga_assets SET foto_path = ${absPath}, updated_at = now() WHERE id = ${id}`;
+  } else {
+    await sql`UPDATE ga_assets SET dokumen_path = ${absPath}, updated_at = now() WHERE id = ${id}`;
+  }
+  return { ok: true };
+}

@@ -1,5 +1,5 @@
-import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { resolve, relative, isAbsolute } from "node:path";
 import { homedir } from "node:os";
 
 import { serve } from "@hono/node-server";
@@ -188,7 +188,7 @@ import { aiBaseUrl, callAi } from "./ai.js";
 import { startScheduler, getScheduleStatus } from "./scheduler.js";
 import { signJwt, verifyJwt } from "./auth.js";
 import { verifyCredentials, createUser, countUsers, listAppUsers, setUserPassword, updateAppUser, deleteAppUser, getAppUserById, createUserFromRoster, generatePassword, changeOwnPassword } from "./repo/users.js";
-import { listCategories, createCategory, updateCategory, listAssets as listGaAssets, getAsset as getGaAsset, createAsset as createGaAsset, updateAsset as updateGaAsset } from "./repo/ga-asset.js";
+import { listCategories, createCategory, updateCategory, listAssets as listGaAssets, getAsset as getGaAsset, createAsset as createGaAsset, updateAsset as updateGaAsset, setAssetFile } from "./repo/ga-asset.js";
 
 const app = new Hono();
 
@@ -1488,19 +1488,31 @@ app.get("/visits/:id", async (c) => {
   return v ? c.json(v) : c.json({ error: "visit tak ditemukan" }, 404);
 });
 
-// Serve file media (foto kunjungan) dari capture openclaw — HANYA di bawah
-// MEDIA_ROOT (default ~/.openclaw/media), path-validated anti traversal.
+// Serve file media (foto kunjungan dari capture openclaw, ATAU upload aset
+// GA F132) — HANYA di bawah salah satu ROOT yang di-allow-list, path-validated
+// anti traversal. Dua root beda sumber & makna: MEDIA_ROOT = media MASUK
+// (WA inbound, read-only dari sisi kita), GA_UPLOAD_ROOT = file yang ADMIN
+// upload manual lewat form web (F132 foto/dokumen aset).
 const MEDIA_ROOT = resolve(process.env.MEDIA_ROOT ?? `${homedir()}/.openclaw/media`);
+const GA_UPLOAD_ROOT = resolve(process.env.GA_UPLOAD_DIR ?? `${homedir()}/.wrg-os/uploads/ga-assets`);
+const MEDIA_ROOTS = [MEDIA_ROOT, GA_UPLOAD_ROOT];
 const MIME: Record<string, string> = {
   jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", webp: "image/webp",
   gif: "image/gif", pdf: "application/pdf",
 };
+// `abs.startsWith(root + "/")` gagal di Windows (path pakai backslash) —
+// path.relative aman lintas-platform: "di luar root" kalau hasilnya absolut
+// atau mulai dengan "..".
+function isInsideRoot(abs: string, root: string): boolean {
+  const rel = relative(root, abs);
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+}
 app.get("/media", async (c) => {
   const p = c.req.query("p");
   if (!p) return c.json({ error: "param p wajib" }, 400);
   const abs = resolve(p);
-  if (abs !== MEDIA_ROOT && !abs.startsWith(MEDIA_ROOT + "/")) {
-    return c.json({ error: "path di luar MEDIA_ROOT" }, 403);
+  if (!MEDIA_ROOTS.some((root) => isInsideRoot(abs, root))) {
+    return c.json({ error: "path di luar root media yang di-allow-list" }, 403);
   }
   try {
     const buf = await readFile(abs);
@@ -1512,6 +1524,39 @@ app.get("/media", async (c) => {
   } catch {
     return c.json({ error: "file tak ditemukan" }, 404);
   }
+});
+
+// Upload foto/dokumen aset GA (F132) — multipart/form-data, field `kind`
+// (foto|dokumen) + `file`. Disimpan di GA_UPLOAD_ROOT (BUKAN MEDIA_ROOT —
+// itu utk media WA inbound, beda sumber & siklus hidup), nama file
+// di-generate (uuid asset + timestamp) supaya tak collide/predictable.
+const GA_UPLOAD_MIME_EXT: Record<string, string> = {
+  "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "application/pdf": "pdf",
+};
+app.post("/ga-assets/:id/upload", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const id = c.req.param("id");
+  let body: Record<string, unknown>;
+  try {
+    body = await c.req.parseBody();
+  } catch {
+    return c.json({ error: "invalid multipart body" }, 400);
+  }
+  const kind = body.kind;
+  if (kind !== "foto" && kind !== "dokumen") return c.json({ error: "kind harus foto|dokumen" }, 400);
+  const file = body.file;
+  if (!(file instanceof File)) return c.json({ error: "file wajib diisi" }, 400);
+  const ext = GA_UPLOAD_MIME_EXT[file.type];
+  if (!ext) return c.json({ error: `tipe file "${file.type}" tak didukung (jpg/png/webp/pdf)` }, 400);
+  if (file.size > 10 * 1024 * 1024) return c.json({ error: "file maksimal 10MB" }, 400);
+
+  await mkdir(GA_UPLOAD_ROOT, { recursive: true });
+  const filename = `${id}-${kind}-${Date.now()}.${ext}`;
+  const abs = resolve(GA_UPLOAD_ROOT, filename);
+  await writeFile(abs, Buffer.from(await file.arrayBuffer()));
+
+  const r = await setAssetFile(id, kind, abs);
+  return c.json(r, r.ok ? 200 : 400);
 });
 
 // ── Daily TODO/plan per AM (port legacy sales_todo) ──

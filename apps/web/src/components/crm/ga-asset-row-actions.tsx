@@ -31,6 +31,55 @@ interface Asset {
   status: string;
   is_critical: boolean;
   active: boolean;
+  foto_path: string | null;
+  dokumen_path: string | null;
+}
+
+const FILE_ACCEPT: Record<"foto" | "dokumen", string> = { foto: "image/jpeg,image/png,image/webp", dokumen: "image/jpeg,image/png,image/webp,application/pdf" };
+
+function AssetFileUpload({ assetId, kind, currentPath, onDone }: { assetId: string; kind: "foto" | "dokumen"; currentPath: string | null; onDone: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // biar bisa pilih file sama lagi kalau mau re-upload
+    if (!file) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const fd = new FormData();
+      fd.set("kind", kind);
+      fd.set("file", file);
+      const res = await fetch(`/api/ga-assets/${assetId}/upload`, { method: "POST", body: fd });
+      const data = await res.json();
+      if (!res.ok || data.ok === false) throw new Error(data.error ?? "gagal upload");
+      onDone();
+    } catch (err) {
+      setError(String(err instanceof Error ? err.message : err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="grid gap-1">
+      <div className="flex items-center gap-2">
+        {currentPath ? (
+          <a href={`/api/media?p=${encodeURIComponent(currentPath)}`} target="_blank" rel="noreferrer" className="text-primary text-sm underline">
+            Lihat {kind} saat ini
+          </a>
+        ) : (
+          <span className="text-muted-foreground text-xs">belum ada {kind}</span>
+        )}
+        <label className="text-xs">
+          <input type="file" accept={FILE_ACCEPT[kind]} onChange={handleChange} disabled={busy} className="hidden" />
+          <span className="cursor-pointer rounded-md border px-2 py-1 hover:bg-muted">{busy ? "Mengunggah…" : currentPath ? "Ganti" : "Unggah"}</span>
+        </label>
+      </div>
+      {error && <p className="text-destructive text-xs">{error}</p>}
+    </div>
+  );
 }
 
 // Override PIC manual di sini TIDAK menghasilkan histori assignment (beda dari
@@ -156,6 +205,16 @@ export function GaAssetRowActions({ asset, categories }: { asset: Asset; categor
             <div className="grid gap-1.5">
               <Label htmlFor="gae-pic">PIC (override cepat, tanpa histori)</Label>
               <Input id="gae-pic" value={f.pic_name_override} onChange={(e) => setF((p) => ({ ...p, pic_name_override: e.target.value }))} placeholder="kosongkan utk hapus" />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="grid gap-1.5">
+                <Label>Foto</Label>
+                <AssetFileUpload assetId={asset.id} kind="foto" currentPath={asset.foto_path} onDone={() => router.refresh()} />
+              </div>
+              <div className="grid gap-1.5">
+                <Label>Dokumen</Label>
+                <AssetFileUpload assetId={asset.id} kind="dokumen" currentPath={asset.dokumen_path} onDone={() => router.refresh()} />
+              </div>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="grid gap-1.5">
