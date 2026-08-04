@@ -14,12 +14,16 @@ import {
   DialogFooter, DialogHeader, DialogTitle, DialogTrigger,
 } from "@/components/ui/dialog";
 
-interface AssetOption { id: string; asset_code: string; nama: string }
+interface AssetOption { id: string; asset_code: string; nama: string; category_id: string }
 interface VendorOption { id: string; nama: string }
+interface CategoryOption { id: string; default_recur_months: number | null }
 
 const NONE = "__none__";
 
-export function AddGaMaintenanceButton({ assets, vendors }: { assets: AssetOption[]; vendors: VendorOption[] }) {
+// Auto-fill "Berulang (bulan)" dari default kategori aset begitu aset
+// dipilih (mis. "Kendaraan Bermotor"=6, "AC"=3 — contoh dari brief F137,
+// admin set sendiri per kategori) — tetap bisa diubah manual sesudahnya.
+export function AddGaMaintenanceButton({ assets, vendors, categories }: { assets: AssetOption[]; vendors: VendorOption[]; categories: CategoryOption[] }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -31,6 +35,13 @@ export function AddGaMaintenanceButton({ assets, vendors }: { assets: AssetOptio
   const [vendorId, setVendorId] = useState("");
   const [recurMonths, setRecurMonths] = useState("0");
   const [notes, setNotes] = useState("");
+
+  function selectAsset(id: string) {
+    setAssetId(id);
+    const asset = assets.find((a) => a.id === id);
+    const cat = asset ? categories.find((c) => c.id === asset.category_id) : undefined;
+    if (cat?.default_recur_months != null) setRecurMonths(String(cat.default_recur_months));
+  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -72,7 +83,7 @@ export function AddGaMaintenanceButton({ assets, vendors }: { assets: AssetOptio
           <DialogBody className="grid gap-3">
             <div className="grid gap-1.5">
               <Label>Aset</Label>
-              <Select value={assetId || NONE} onValueChange={(v) => setAssetId(v === NONE ? "" : (v ?? ""))}>
+              <Select value={assetId || NONE} onValueChange={(v) => selectAsset(v === NONE ? "" : (v ?? ""))}>
                 <SelectTrigger>
                   <SelectValue placeholder="Pilih aset">{(v: string) => (v === NONE ? "Pilih aset" : (() => { const a = assets.find((x) => x.id === v); return a ? `${a.asset_code} — ${a.nama}` : v; })())}</SelectValue>
                 </SelectTrigger>
@@ -106,6 +117,7 @@ export function AddGaMaintenanceButton({ assets, vendors }: { assets: AssetOptio
               <div className="grid gap-1.5">
                 <Label htmlFor="gm-recur">Berulang (bulan)</Label>
                 <Input id="gm-recur" type="number" min={0} max={60} value={recurMonths} onChange={(e) => setRecurMonths(e.target.value)} placeholder="0 = sekali" />
+                <p className="text-muted-foreground text-xs">Auto-isi dari default kategori aset, bisa diubah.</p>
               </div>
             </div>
             <div className="grid gap-1.5">

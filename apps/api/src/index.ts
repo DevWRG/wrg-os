@@ -3256,7 +3256,7 @@ app.get("/ga-asset-categories", async (c) => {
 
 app.post("/ga-asset-categories", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let body: { code?: string; nama?: string; depreciation_years?: number; icon?: string; is_shared?: boolean };
+  let body: { code?: string; nama?: string; depreciation_years?: number; icon?: string; is_shared?: boolean; default_recur_months?: number };
   try {
     body = await c.req.json();
   } catch {
@@ -3269,13 +3269,14 @@ app.post("/ga-asset-categories", async (c) => {
     depreciation_years: body.depreciation_years,
     icon: body.icon,
     is_shared: body.is_shared,
+    default_recur_months: body.default_recur_months,
   });
   return c.json(r, "error" in r ? 400 : 201);
 });
 
 app.patch("/ga-asset-categories/:id", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let body: { nama?: string; depreciation_years?: number; icon?: string; is_shared?: boolean; active?: boolean };
+  let body: { nama?: string; depreciation_years?: number; icon?: string; is_shared?: boolean; default_recur_months?: number; active?: boolean };
   try {
     body = await c.req.json();
   } catch {

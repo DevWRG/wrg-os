@@ -18,7 +18,7 @@ export function AddGaAssetCategoryButton() {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [f, setF] = useState({ code: "", nama: "", depreciation_years: "", icon: "", is_shared: false });
+  const [f, setF] = useState({ code: "", nama: "", depreciation_years: "", icon: "", is_shared: false, default_recur_months: "" });
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -34,11 +34,12 @@ export function AddGaAssetCategoryButton() {
           depreciation_years: f.depreciation_years ? Number(f.depreciation_years) : undefined,
           icon: f.icon.trim() || undefined,
           is_shared: f.is_shared,
+          default_recur_months: f.default_recur_months ? Number(f.default_recur_months) : undefined,
         }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "gagal menyimpan");
-      setF({ code: "", nama: "", depreciation_years: "", icon: "", is_shared: false });
+      setF({ code: "", nama: "", depreciation_years: "", icon: "", is_shared: false, default_recur_months: "" });
       setOpen(false);
       router.refresh();
     } catch (err) {
@@ -75,6 +76,10 @@ export function AddGaAssetCategoryButton() {
             <div className="grid gap-1.5">
               <Label htmlFor="gac-icon">Ikon (emoji)</Label>
               <Input id="gac-icon" value={f.icon} onChange={(e) => setF((p) => ({ ...p, icon: e.target.value }))} placeholder="opsional, mis. 💻" />
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="gac-recur">Interval Maintenance Default (bulan)</Label>
+              <Input id="gac-recur" type="number" min={0} max={60} value={f.default_recur_months} onChange={(e) => setF((p) => ({ ...p, default_recur_months: e.target.value }))} placeholder="mis. 6 utk kendaraan, 3 utk AC — opsional" />
             </div>
             <div className="flex items-center gap-2">
               <Switch checked={f.is_shared} onCheckedChange={(v: boolean) => setF((p) => ({ ...p, is_shared: v }))} />

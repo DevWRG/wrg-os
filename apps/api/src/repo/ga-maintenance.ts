@@ -200,11 +200,22 @@ export interface GaMaintenanceInput {
 
 export async function createSchedule(input: GaMaintenanceInput): Promise<GaMaintenanceRow | ActionResult> {
   const sql = db();
-  const asset = await sql`SELECT 1 FROM ga_assets WHERE id = ${input.asset_id}`;
-  if (asset.length === 0) return { ok: false, error: "aset tidak ditemukan" };
+  const rows0 = await sql`SELECT category_id FROM ga_assets WHERE id = ${input.asset_id}`;
+  if (rows0.length === 0) return { ok: false, error: "aset tidak ditemukan" };
+
+  // recur_months tak diisi → sodorkan default kategori aset ("Kendaraan
+  // Bermotor"=6bln, "AC"=3bln, dst — contoh dari brief F137, admin isi
+  // sendiri per kategori, TIDAK diseed). Beda dari `?? 0` polos: `input.recur_months`
+  // NULL/undefined = "belum diputuskan user", bukan berarti "sekali saja".
+  let recurMonths: number = input.recur_months ?? 0;
+  if (input.recur_months == null) {
+    const [cat] = await sql`SELECT default_recur_months FROM ga_asset_categories WHERE id = ${rows0[0].category_id}`;
+    recurMonths = Number(cat?.default_recur_months ?? 0);
+  }
+
   const rows = await sql`
     INSERT INTO ga_maintenance_schedules (asset_id, maint_type, due_date, cost_budget, vendor_id, recur_months, notes)
-    VALUES (${input.asset_id}, ${input.maint_type ?? "preventive"}, ${input.due_date ?? null}, ${input.cost_budget ?? 0}, ${input.vendor_id ?? null}, ${input.recur_months ?? 0}, ${input.notes ?? null})
+    VALUES (${input.asset_id}, ${input.maint_type ?? "preventive"}, ${input.due_date ?? null}, ${input.cost_budget ?? 0}, ${input.vendor_id ?? null}, ${recurMonths}, ${input.notes ?? null})
     RETURNING id
   `;
   return (await getSchedule(String(rows[0].id)))!;

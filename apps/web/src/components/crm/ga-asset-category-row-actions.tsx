@@ -20,6 +20,7 @@ interface Category {
   depreciation_years: number | null;
   icon: string | null;
   is_shared: boolean;
+  default_recur_months: number | null;
   active: boolean;
 }
 
@@ -33,6 +34,7 @@ export function GaAssetCategoryRowActions({ category }: { category: Category }) 
     depreciation_years: category.depreciation_years?.toString() ?? "",
     icon: category.icon ?? "",
     is_shared: category.is_shared,
+    default_recur_months: category.default_recur_months?.toString() ?? "",
     active: category.active,
   });
 
@@ -49,6 +51,7 @@ export function GaAssetCategoryRowActions({ category }: { category: Category }) 
           depreciation_years: f.depreciation_years ? Number(f.depreciation_years) : undefined,
           icon: f.icon.trim() || undefined,
           is_shared: f.is_shared,
+          default_recur_months: f.default_recur_months ? Number(f.default_recur_months) : undefined,
           active: f.active,
         }),
       });
@@ -86,6 +89,10 @@ export function GaAssetCategoryRowActions({ category }: { category: Category }) 
             <div className="grid gap-1.5">
               <Label htmlFor="gace-icon">Ikon (emoji)</Label>
               <Input id="gace-icon" value={f.icon} onChange={(e) => setF((p) => ({ ...p, icon: e.target.value }))} />
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="gace-recur">Interval Maintenance Default (bulan)</Label>
+              <Input id="gace-recur" type="number" min={0} max={60} value={f.default_recur_months} onChange={(e) => setF((p) => ({ ...p, default_recur_months: e.target.value }))} placeholder="mis. 6 utk kendaraan, 3 utk AC" />
             </div>
             <div className="flex items-center gap-2">
               <Switch checked={f.is_shared} onCheckedChange={(v: boolean) => setF((p) => ({ ...p, is_shared: v }))} />

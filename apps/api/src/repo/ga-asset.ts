@@ -29,6 +29,10 @@ export interface GaAssetCategoryRow {
   depreciation_years: number | null;
   icon: string | null;
   is_shared: boolean;
+  // F137 — default recur_months disodorkan (auto-fill) saat bikin jadwal
+  // maintenance utk aset di kategori ini (mis. "Kendaraan Bermotor"=6,
+  // "AC"=3 — contoh dari brief F137, TIDAK diseed, admin isi sendiri).
+  default_recur_months: number | null;
   active: boolean;
 }
 
@@ -40,6 +44,7 @@ function mapCategoryRow(r: Record<string, unknown>): GaAssetCategoryRow {
     depreciation_years: r.depreciation_years == null ? null : Number(r.depreciation_years),
     icon: r.icon ? String(r.icon) : null,
     is_shared: Boolean(r.is_shared),
+    default_recur_months: r.default_recur_months == null ? null : Number(r.default_recur_months),
     active: Boolean(r.active),
   };
 }
@@ -59,6 +64,7 @@ export interface GaAssetCategoryInput {
   depreciation_years?: number | null;
   icon?: string | null;
   is_shared?: boolean;
+  default_recur_months?: number | null;
 }
 
 export async function createCategory(input: GaAssetCategoryInput): Promise<GaAssetCategoryRow | ActionResult> {
@@ -69,8 +75,8 @@ export async function createCategory(input: GaAssetCategoryInput): Promise<GaAss
   const existing = await sql`SELECT 1 FROM ga_asset_categories WHERE code = ${code} LIMIT 1`;
   if (existing.length > 0) return { ok: false, error: `code "${code}" sudah dipakai` };
   const rows = await sql`
-    INSERT INTO ga_asset_categories (code, nama, depreciation_years, icon, is_shared)
-    VALUES (${code}, ${nama}, ${input.depreciation_years ?? null}, ${input.icon ?? null}, ${input.is_shared ?? false})
+    INSERT INTO ga_asset_categories (code, nama, depreciation_years, icon, is_shared, default_recur_months)
+    VALUES (${code}, ${nama}, ${input.depreciation_years ?? null}, ${input.icon ?? null}, ${input.is_shared ?? false}, ${input.default_recur_months ?? null})
     RETURNING *
   `;
   return mapCategoryRow(rows[0]);
@@ -81,6 +87,7 @@ export interface GaAssetCategoryUpdateInput {
   depreciation_years?: number | null;
   icon?: string | null;
   is_shared?: boolean | null;
+  default_recur_months?: number | null;
   active?: boolean | null;
 }
 
@@ -93,6 +100,7 @@ export async function updateCategory(id: string, input: GaAssetCategoryUpdateInp
       nama = COALESCE(${input.nama ?? null}, nama),
       depreciation_years = COALESCE(${input.depreciation_years ?? null}, depreciation_years),
       icon = COALESCE(${input.icon ?? null}, icon),
+      default_recur_months = COALESCE(${input.default_recur_months ?? null}, default_recur_months),
       is_shared = COALESCE(${input.is_shared ?? null}, is_shared),
       active = COALESCE(${input.active ?? null}, active),
       updated_at = now()

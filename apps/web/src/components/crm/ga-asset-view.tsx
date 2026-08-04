@@ -26,7 +26,7 @@ export function GaAssetView({
   const [tab, setTab] = useState<"aset" | "kategori" | "maintenance" | "vendor">("aset");
   const activeCategories = categories.filter((c) => c.active);
   const activeVendors = vendors.filter((v) => v.status === "active");
-  const assetOptions = assets.filter((a) => a.active).map((a) => ({ id: a.id, asset_code: a.asset_code, nama: a.nama }));
+  const assetOptions = assets.filter((a) => a.active).map((a) => ({ id: a.id, asset_code: a.asset_code, nama: a.nama, category_id: a.category_id }));
 
   const TABS = [
     ["aset", "Aset"],
@@ -56,7 +56,7 @@ export function GaAssetView({
         </div>
         {tab === "aset" && <AddGaAssetButton categories={activeCategories} />}
         {tab === "kategori" && <AddGaAssetCategoryButton />}
-        {tab === "maintenance" && <AddGaMaintenanceButton assets={assetOptions} vendors={activeVendors} />}
+        {tab === "maintenance" && <AddGaMaintenanceButton assets={assetOptions} vendors={activeVendors} categories={categories.map((c) => ({ id: c.id, default_recur_months: c.default_recur_months }))} />}
         {tab === "vendor" && <AddGaVendorButton />}
       </div>
 
