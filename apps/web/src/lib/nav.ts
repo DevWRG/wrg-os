@@ -10,6 +10,7 @@ import {
   Bell, MapPin, ListChecks, Swords, CalendarOff, CalendarDays, CalendarRange,
   Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, Tags, SlidersHorizontal,
   Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, BookOpen, Calculator,
+  Archive,
   type LucideIcon,
 } from "lucide-react";
 
@@ -137,6 +138,16 @@ export const NAV: NavGroup[] = [
       { title: "Resume", url: "/monitor/resume", icon: ScrollText },
       { title: "Pola Komunikasi", url: "/monitor/pola", icon: Network },
       { title: "Members", url: "/monitor/members", icon: Users },
+    ],
+  },
+  {
+    // Domain GA (General Affairs) per arahan Direktur soal domain grouping
+    // sidebar (sama pola Aftersales/Shipping/Purchasing). F132 Aset Master —
+    // single source of truth aset kantor, fondasi F133 (assignment/transfer)
+    // & F137 (maintenance) yang menyusul di atas branch ini.
+    label: "GA",
+    items: [
+      { title: "Aset GA", url: "/ga-aset", icon: Archive, badge: "NEW" },
     ],
   },
   {

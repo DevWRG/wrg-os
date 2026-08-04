@@ -188,6 +188,7 @@ import { aiBaseUrl, callAi } from "./ai.js";
 import { startScheduler, getScheduleStatus } from "./scheduler.js";
 import { signJwt, verifyJwt } from "./auth.js";
 import { verifyCredentials, createUser, countUsers, listAppUsers, setUserPassword, updateAppUser, deleteAppUser, getAppUserById, createUserFromRoster, generatePassword, changeOwnPassword } from "./repo/users.js";
+import { listCategories, createCategory, updateCategory, listAssets as listGaAssets, getAsset as getGaAsset, createAsset as createGaAsset, updateAsset as updateGaAsset } from "./repo/ga-asset.js";
 
 const app = new Hono();
 
@@ -3180,6 +3181,92 @@ app.post("/hitl/resolve", async (c) => {
     chosen_deal_id: body.chosen_deal_id,
     approver_id: body.approver_id,
   });
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+// ── F132 GA Aset Master ──────────────────────────────────────────────────
+app.get("/ga-asset-categories", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listCategories(c.req.query("all") !== "true");
+  return c.json({ count: rows.length, categories: rows });
+});
+
+app.post("/ga-asset-categories", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { code?: string; nama?: string; depreciation_years?: number; icon?: string; is_shared?: boolean };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.code || !body.nama) return c.json({ error: "code & nama wajib diisi" }, 400);
+  const r = await createCategory({
+    code: body.code,
+    nama: body.nama,
+    depreciation_years: body.depreciation_years,
+    icon: body.icon,
+    is_shared: body.is_shared,
+  });
+  return c.json(r, "error" in r ? 400 : 201);
+});
+
+app.patch("/ga-asset-categories/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { nama?: string; depreciation_years?: number; icon?: string; is_shared?: boolean; active?: boolean };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const r = await updateCategory(c.req.param("id"), body);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.get("/ga-assets", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listGaAssets({
+    activeOnly: c.req.query("all") !== "true",
+    categoryId: c.req.query("category_id") || undefined,
+    status: c.req.query("status") || undefined,
+    unassigned: c.req.query("unassigned") === "true",
+  });
+  return c.json({ count: rows.length, assets: rows });
+});
+
+app.get("/ga-assets/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const row = await getGaAsset(c.req.param("id"));
+  if (!row) return c.json({ error: "aset tidak ditemukan" }, 404);
+  return c.json(row);
+});
+
+app.post("/ga-assets", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: {
+    asset_code?: string; nama?: string; category_id?: string; brand?: string; model?: string; serial_number?: string;
+    purchase_date?: string; purchase_price?: number; current_value?: number; warranty_expiry?: string; location?: string;
+    department?: string; condition?: string; status?: string; foto_path?: string; dokumen_path?: string; notes?: string;
+    is_critical?: boolean;
+  };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.nama || !body.category_id) return c.json({ error: "nama & category_id wajib diisi" }, 400);
+  const r = await createGaAsset(body as Parameters<typeof createGaAsset>[0]);
+  return c.json(r, "error" in r ? 400 : 201);
+});
+
+app.patch("/ga-assets/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: Record<string, unknown>;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const r = await updateGaAsset(c.req.param("id"), body);
   return c.json(r, r.ok ? 200 : 400);
 });
 
