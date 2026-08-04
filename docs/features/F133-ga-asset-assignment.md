@@ -48,6 +48,15 @@ histori) — fitur ini "aksi resmi" yang selalu tercatat di
 - **Picker PIC**: endpoint baru `GET /app-users` (id+name+active saja),
   SENGAJA bukan admin-only (beda dari `/admin/users` yang di-gate
   `requireAdmin`) — staf GA non-admin tetap bisa pilih PIC saat assign.
+- **Audit log**: tiap assign/return/transfer (termasuk assign nama-bebas
+  yang tak dapat baris histori F133 sendiri) di-log ke `audit_log`
+  (governance D6, migrasi 002) sbg **Layer 5 = Human** — kolom itu
+  disediakan skema justru utk aksi manusia non-AI, jadi dipakai persis
+  sesuai peruntukannya. `agent_id` NULL (bukan run AI-agent), `use_case_id
+  ='F133'`, `r_tier='R1'`. Best-effort (gagal audit tak gagalkan aksi
+  utamanya). ⚠️ `audit_log` **append-only** (RULE DB no-update/no-delete)
+  — baris uji coba di sana permanen, tak bisa dihapus manual, cuma
+  hilang kalau DB direset total.
 
 ## Keputusan desain
 
@@ -67,5 +76,7 @@ histori) — fitur ini "aksi resmi" yang selalu tercatat di
 Assign → guard duplikat ditolak (non-shared) / diizinkan (shared) → assign
 free-text tak nambah histori → transfer (histori+lokasi+cache update) →
 return (cache reset, assignment aktif lain kepilih kalau shared) → history
-gabungan urut benar. Halaman `/ga-aset` kolom "PIC" render tombol kontekstual
-(Assign vs Return+Transfer) + Riwayat. Typecheck + lint bersih.
+gabungan urut benar. `audit_log` terisi 1 baris per aksi (termasuk
+free-text) dgn `layer=5`/payload benar. Halaman `/ga-aset` kolom "PIC"
+render tombol kontekstual (Assign vs Return+Transfer) + Riwayat. Typecheck
++ lint bersih.
