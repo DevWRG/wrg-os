@@ -10,7 +10,7 @@ import {
   Bell, MapPin, ListChecks, Swords, CalendarOff, CalendarDays, CalendarRange,
   Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, Tags, SlidersHorizontal,
   Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, BookOpen, Calculator,
-  Archive, Laptop,
+  Archive,
   type LucideIcon,
 } from "lucide-react";
 
@@ -147,10 +147,13 @@ export const NAV: NavGroup[] = [
     // & F137 (maintenance) yang menyusul di atas branch ini.
     label: "GA",
     items: [
-      { title: "Aset GA", url: "/ga-aset", icon: Archive, badge: "NEW" },
-      // F52 — tiket masalah per aset (FK ga_assets). Diserap ke domain GA
-      // krn master asetnya sekarang di sini, bukan tabel it_asset sendiri.
-      { title: "Tiket IT", url: "/it-asset", icon: Laptop, badge: "NEW" },
+      // 1 menu, 3 tab (Aset/Kategori/Tiket IT) — arahan Direktur eksplisit
+      // F52 gabung ke F132 juga di level MENU, bukan cuma tabel. Tab Tiket
+      // IT dilayani /ga-assets & /it-tickets sekaligus (lihat `features`).
+      {
+        title: "Aset GA", url: "/ga-aset", icon: Archive, badge: "NEW",
+        features: [{ key: "it-asset", name: "Tiket IT (tab di Aset GA)" }],
+      },
     ],
   },
   {
