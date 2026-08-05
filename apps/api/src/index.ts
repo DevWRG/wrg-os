@@ -111,6 +111,9 @@ import {
 } from "./repo/maintenance.js";
 import {
   listTeknisiCapacity,
+  createTeknisiCapacity,
+  updateTeknisiCapacity,
+  deactivateTeknisiCapacity,
   getReadinessBoard,
   createInstallSchedule,
   listInstallSchedule,
@@ -1887,13 +1890,47 @@ app.post("/maintenance/:id/done", async (c) => {
 });
 
 // ── Teknisi Readiness Board (F8, AFTERSALES) — install scheduling + capacity
-// + post-install reports. teknisi_capacity read-only (data di-seed, lihat
-// readinessboard.ts). Hook WA (#install/#servis/#training/#kalibrasi) di
+// + post-install reports. Hook WA (#install/#servis/#training/#kalibrasi) di
 // inbound.ts memanggil createTeknisiReport yang sama dgn route manual di bawah. ──
 app.get("/teknisi-capacity", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const teknisi = await listTeknisiCapacity();
   return c.json({ count: teknisi.length, teknisi });
+});
+
+app.post("/teknisi-capacity", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { nama?: string; wa_number?: string; max_concurrent_jobs?: number };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.nama?.trim()) return c.json({ error: "nama wajib" }, 400);
+  const r = await createTeknisiCapacity({
+    nama: body.nama.trim(),
+    wa_number: body.wa_number ?? null,
+    max_concurrent_jobs: body.max_concurrent_jobs,
+  });
+  return c.json(r, "ok" in r && r.ok === false ? 400 : 201);
+});
+
+app.patch("/teknisi-capacity/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { nama?: string; wa_number?: string | null; max_concurrent_jobs?: number };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const r = await updateTeknisiCapacity(c.req.param("id"), body);
+  return c.json(r, "ok" in r && r.ok === false ? 400 : 200);
+});
+
+app.patch("/teknisi-capacity/:id/deactivate", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await deactivateTeknisiCapacity(c.req.param("id"));
+  return c.json(r, r.ok ? 200 : 400);
 });
 
 app.get("/readiness-board", async (c) => {

@@ -3,6 +3,7 @@ import { PageHeader } from "@/components/dashboard/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { CapacityCards, type TeknisiReadiness } from "@/components/tables/capacity-cards";
+import { AddTeknisiButton } from "@/components/crm/add-teknisi-button";
 import { AddScheduleSheet } from "@/components/crm/add-schedule-sheet";
 import { InstallScheduleTable, type InstallSchedule } from "@/components/tables/install-schedule-table";
 import { AddReportSheet } from "@/components/crm/add-report-sheet";
@@ -38,14 +39,15 @@ export default async function ReadinessBoardPage() {
       />
 
       <Card>
-        <CardHeader className="pb-2">
+        <CardHeader className="flex items-center justify-between pb-2">
           <CardTitle className="text-base">Kapasitas Teknisi</CardTitle>
+          <AddTeknisiButton />
         </CardHeader>
         <CardContent>
           {!board ? (
             <EmptyState title="Data tidak tersedia" description="Pastikan apps/api jalan." />
           ) : board.length === 0 ? (
-            <EmptyState title="Belum ada teknisi" description="Seed teknisi_capacity via scripts/db/seed-dev-full.sql." />
+            <EmptyState title="Belum ada teknisi" description="Tambah lewat tombol di atas." />
           ) : (
             <CapacityCards board={board} />
           )}

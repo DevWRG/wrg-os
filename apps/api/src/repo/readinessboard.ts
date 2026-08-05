@@ -31,6 +31,62 @@ export async function listTeknisiCapacity(): Promise<Teknisi[]> {
   return rows.map(mapTeknisi);
 }
 
+// CRUD roster (ditambah belakangan — awalnya read-only/seed-only). Roster
+// asli (galih/martin/nopa/haidar/halim/enggar, tabel employee BSC) TETAP
+// tidak diisi otomatis di sini — Admin input manual lewat form ini, seed
+// dummy Fajar/Gilang/Hesti dibiarkan apa adanya utk dev/demo.
+export interface CreateTeknisiInput {
+  nama: string;
+  wa_number?: string | null;
+  max_concurrent_jobs?: number;
+}
+
+export async function createTeknisiCapacity(
+  input: CreateTeknisiInput,
+): Promise<Teknisi | { ok: false; error: string }> {
+  const sql = db();
+  const existing = await sql`SELECT id FROM teknisi_capacity WHERE nama = ${input.nama}`;
+  if (existing.length) return { ok: false, error: "nama sudah ada di roster" };
+  const rows = await sql`
+    INSERT INTO teknisi_capacity (nama, wa_number, max_concurrent_jobs)
+    VALUES (${input.nama}, ${input.wa_number ?? null}, ${input.max_concurrent_jobs ?? 3})
+    RETURNING *
+  `;
+  return mapTeknisi(rows[0]);
+}
+
+export interface UpdateTeknisiInput {
+  nama?: string;
+  wa_number?: string | null;
+  max_concurrent_jobs?: number;
+}
+
+export async function updateTeknisiCapacity(
+  id: string,
+  input: UpdateTeknisiInput,
+): Promise<Teknisi | { ok: false; error: string }> {
+  const sql = db();
+  const current = await sql`SELECT * FROM teknisi_capacity WHERE id = ${id}`;
+  if (!current.length) return { ok: false, error: "teknisi tidak ditemukan" };
+  const nama = input.nama ?? String(current[0].nama);
+  const waNumber = input.wa_number !== undefined ? input.wa_number : (current[0].wa_number as string | null);
+  const maxJobs = input.max_concurrent_jobs ?? Number(current[0].max_concurrent_jobs);
+  const rows = await sql`
+    UPDATE teknisi_capacity SET nama = ${nama}, wa_number = ${waNumber}, max_concurrent_jobs = ${maxJobs}, updated_at = now()
+    WHERE id = ${id}
+    RETURNING *
+  `;
+  return mapTeknisi(rows[0]);
+}
+
+// Deactivate, bukan DELETE — konsisten pola project (jaga histori install_schedule/teknisi_report yg FK ke sini).
+export async function deactivateTeknisiCapacity(id: string): Promise<{ ok: boolean; error?: string }> {
+  const sql = db();
+  const rows = await sql`UPDATE teknisi_capacity SET aktif = false, updated_at = now() WHERE id = ${id} RETURNING id`;
+  if (!rows.length) return { ok: false, error: "teknisi tidak ditemukan" };
+  return { ok: true };
+}
+
 // Fuzzy match sender_name (pushname WA) ke roster F8 — best-effort, sama
 // limitasi F26 (identitas grup WA tak reliable). Dipakai inbound hook.
 export async function matchTeknisiByName(senderName: string | null): Promise<Teknisi | null> {
