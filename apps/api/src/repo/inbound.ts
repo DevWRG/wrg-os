@@ -6,6 +6,7 @@ import { handleSalesAnalyticsQuery } from "./inbound-sales-analytics.js";
 import { resolveSender } from "./master.js";
 import { upsertDailyTodo, computeIsLate } from "./todo.js";
 import { createReminder } from "./reminder.js";
+import { createTicket as createGaTicket, listCategories as listGaTicketCategories } from "./ga-helpdesk.js";
 
 // Role yang pakai alur AM per-customer (sales_plan/activity_log + foto), bukan todo.
 const AM_ROLES = new Set(["AM", "Teknisi"]);
@@ -20,10 +21,13 @@ const isAmRole = (role?: string | null) => AM_ROLES.has((role ?? "").trim());
 // → patuh WA_DRY_RUN. Idempoten: wa_message.processed_at. Pengirim tak dikenal →
 // SILENT (tak balas) supaya tak spam non-AM/pesan bot di grup campuran.
 
-export type InboundKind = "plan" | "report" | "leads" | "update" | "sales" | "none";
+export type InboundKind = "plan" | "report" | "leads" | "update" | "sales" | "helpdesk" | "none";
 
 const LEADS_UPDATE_LINE = /^\s*#\s*(leads|update)\b/i;
 const SALES_LINE = /^\s*#\s*sales\b/i;
+// F139 — HANYA #HELPDESK diaktifkan (brief sebut #TICKET juga, sengaja
+// didiamkan dulu, bukan dihapus dari brief — lihat docs/features/F139-*.md).
+const HELPDESK_LINE = /^\s*#\s*helpdesk\b/i;
 
 export function detectKind(body: string | null): InboundKind {
   const daily = detectDaily(body); // line-anchored #plan/#report (sudah strip invisible)
@@ -33,6 +37,7 @@ export function detectKind(body: string | null): InboundKind {
       const m = line.match(LEADS_UPDATE_LINE);
       if (m) return m[1].toLowerCase() as "leads" | "update";
       if (SALES_LINE.test(line)) return "sales";
+      if (HELPDESK_LINE.test(line)) return "helpdesk";
     }
   }
   return "none";
@@ -433,6 +438,37 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
     return finish({ note: "not-implemented", via: amx.via, reply });
   }
 
+  // #HELPDESK — buat ga_tickets langsung (F139). Reporter TIDAK di-resolve ke
+  // app_user (tak ada roster/fuzzy-match yg reliable utk sender WA umum di
+  // luar AM/Teknisi) — pakai reporter_name_override = pushname WA apa adanya,
+  // pola hybrid PIC yang justru dirancang utk kasus begini. ASUMSI rancangan,
+  // gampang direvisi kalau ada spek resolusi identitas yg lebih pasti nanti.
+  if (kind === "helpdesk") {
+    const text = stripInvisible(row.body ?? "").replace(HELPDESK_LINE, "").trim();
+    if (!text) {
+      const reply = await sendViaWaGateway(target, "⚠️ #HELPDESK terdeteksi tapi teks kosong. Format: #HELPDESK <deskripsi kendala>");
+      return finish({ error: "empty-body", reply });
+    }
+    const categories = await listGaTicketCategories(true);
+    const fallbackCategory = categories.find((c) => c.code === "UMUM") ?? categories[0];
+    if (!fallbackCategory) {
+      const reply = await sendViaWaGateway(target, "⚠️ #HELPDESK gagal — belum ada kategori tiket aktif.");
+      return finish({ error: "no-category", reply });
+    }
+    const r = await createGaTicket({
+      title: text.slice(0, 60),
+      description: text,
+      category_id: fallbackCategory.id,
+      reporter_name_override: row.sender_name?.trim() || "WA (tak dikenal)",
+    });
+    if (!("ticket_no" in r)) {
+      const reply = await sendViaWaGateway(target, `⚠️ #HELPDESK gagal dicatat: ${r.error}`);
+      return finish({ error: r.error, reply });
+    }
+    const reply = await sendViaWaGateway(target, `✅ Tiket ${r.ticket_no} dibuat (${fallbackCategory.nama}), status: open.`);
+    return finish({ ticket_id: r.id, ticket_no: r.ticket_no, reply });
+  }
+
   // #SALES — query analitik on-demand. Resolve pengirim (by phone/pushname),
   // scope AM→self via role, jawab teks ringkas.
   if (kind === "sales") {
@@ -563,7 +599,7 @@ export async function processUnprocessed(
            media_path, geo_lat, geo_lon, geo_ts, geo_address
     FROM wa_message
     WHERE processed_at IS NULL
-      AND (body ~* '#\\s*(plan|report|leads|update|sales)'
+      AND (body ~* '#\\s*(plan|report|leads|update|sales|helpdesk)'
            OR (message_type ~* '^image' AND media_path IS NOT NULL))
     ORDER BY received_at ASC LIMIT ${limit}
   `;

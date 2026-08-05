@@ -9,7 +9,7 @@ import {
   Sparkles, Send, FileText, ScrollText, GraduationCap, UsersRound, Network,
   Bell, MapPin, ListChecks, Swords, CalendarOff, CalendarDays, CalendarRange,
   Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, Tags, SlidersHorizontal,
-  Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, BookOpen, Calculator,
+  Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, BookOpen, Calculator, Ticket,
   type LucideIcon,
 } from "lucide-react";
 
@@ -152,6 +152,16 @@ export const NAV: NavGroup[] = [
       { title: "Shipments", url: "/shipments", icon: Truck },
       { title: "Suppliers", url: "/suppliers", icon: Factory },
       { title: "HITL Review", url: "/hitl", icon: ClipboardCheck },
+    ],
+  },
+  {
+    // Domain GA (General Affairs) per arahan Direktur soal domain grouping
+    // sidebar (sama pola Aftersales/Shipping/Purchasing). F139 standalone dari
+    // dev (bukan lineage F132/F133/F137 GA Aset — beda fokus: ticketing
+    // kendala operasional, bukan aset).
+    label: "GA",
+    items: [
+      { title: "Helpdesk GA", url: "/ga-helpdesk", icon: Ticket, badge: "NEW" },
     ],
   },
   {
