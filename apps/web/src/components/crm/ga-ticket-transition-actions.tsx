@@ -8,31 +8,34 @@ import { useConfirm } from "@/components/ui/use-confirm";
 
 // Cermin TRANSITIONS di apps/api/src/repo/ga-helpdesk.ts — jaga sinkron kalau
 // state machine berubah.
-const NEXT_STEPS: Record<string, { to: string; label: string; destructive?: boolean }[]> = {
-  open: [
-    { to: "in_progress", label: "Mulai Tangani" },
-    { to: "cancelled", label: "Batalkan", destructive: true },
-  ],
-  in_progress: [
-    { to: "waiting", label: "Tunda (Menunggu)" },
-    { to: "completed", label: "Selesai" },
-    { to: "cancelled", label: "Batalkan", destructive: true },
-  ],
-  waiting: [
-    { to: "in_progress", label: "Lanjutkan" },
-    { to: "cancelled", label: "Batalkan", destructive: true },
-  ],
-  completed: [{ to: "closed", label: "Tutup Tiket" }],
+const TRANSITIONS: Record<string, string[]> = {
+  open: ["in_progress", "cancelled"],
+  in_progress: ["waiting", "completed", "cancelled"],
+  waiting: ["in_progress", "cancelled"],
+  completed: ["closed"],
   closed: [],
   cancelled: [],
 };
 
+// Pipeline utama (tanpa cancelled — itu aksi terpisah, destructive).
+const PIPELINE: { status: string; label: string }[] = [
+  { status: "open", label: "Open" },
+  { status: "in_progress", label: "In Progress" },
+  { status: "waiting", label: "Waiting" },
+  { status: "completed", label: "Completed" },
+  { status: "closed", label: "Closed" },
+];
+
+// Stepper status — SEMUA status pipeline selalu tampil sbg button (bukan
+// cuma "next step" saja): status SEKARANG aktif (filled+disabled), status yg
+// valid ditransisikan LANGSUNG dari sini bisa diklik, sisanya disabled abu-abu.
+// "Batalkan" dipisah sbg aksi destructive sendiri (bukan bagian pipeline linear).
 export function GaTicketTransitionActions({ ticketId, status }: { ticketId: string; status: string }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const { confirm, dialog } = useConfirm();
-  const steps = NEXT_STEPS[status] ?? [];
-  if (steps.length === 0) return null;
+  const validNext = TRANSITIONS[status] ?? [];
+  const canCancel = validNext.includes("cancelled");
 
   async function act(to: string) {
     setBusy(true);
@@ -51,31 +54,50 @@ export function GaTicketTransitionActions({ ticketId, status }: { ticketId: stri
     }
   }
 
+  // Tiket cancelled — di luar pipeline linear, cuma tampilkan badge-statis via Button disabled.
+  if (status === "cancelled") {
+    return (
+      <div className="flex justify-end gap-1">
+        <Button size="sm" variant="destructive" disabled>Cancelled</Button>
+      </div>
+    );
+  }
+
   return (
-    <div className="flex justify-end gap-1">
+    <div className="flex flex-wrap justify-end gap-1">
       {dialog}
-      {steps.map((s) =>
-        s.destructive ? (
+      {PIPELINE.map((s) => {
+        const isCurrent = s.status === status;
+        const isClickable = !isCurrent && validNext.includes(s.status);
+        return (
           <Button
-            key={s.to}
+            key={s.status}
             size="sm"
-            variant="ghost"
-            disabled={busy}
-            className="text-danger hover:text-danger"
-            onClick={() =>
-              confirm(
-                { title: `${s.label}?`, description: "Tiket akan ditutup sbg cancelled.", destructive: true, confirmLabel: s.label },
-                () => act(s.to),
-              )
-            }
+            variant={isCurrent ? "default" : isClickable ? "outline" : "ghost"}
+            disabled={busy || (!isCurrent && !isClickable)}
+            aria-current={isCurrent ? "step" : undefined}
+            onClick={isClickable ? () => act(s.status) : undefined}
+            className={!isCurrent && !isClickable ? "opacity-40" : undefined}
           >
             {s.label}
           </Button>
-        ) : (
-          <Button key={s.to} size="sm" variant="outline" disabled={busy} onClick={() => act(s.to)}>
-            {s.label}
-          </Button>
-        ),
+        );
+      })}
+      {canCancel && (
+        <Button
+          size="sm"
+          variant="ghost"
+          disabled={busy}
+          className="text-danger hover:text-danger"
+          onClick={() =>
+            confirm(
+              { title: "Batalkan tiket?", description: "Tiket akan ditutup sbg cancelled.", destructive: true, confirmLabel: "Batalkan" },
+              () => act("cancelled"),
+            )
+          }
+        >
+          Batalkan
+        </Button>
       )}
     </div>
   );
