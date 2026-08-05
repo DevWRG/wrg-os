@@ -20,6 +20,9 @@ import {
 } from "@/components/ui/sheet";
 
 const today = () => new Date().toISOString().slice(0, 10);
+// F35 — pola native <select> yang sama dgn add-leave-sheet.tsx.
+const selectCls =
+  "h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50";
 const blank = () => ({
   po_number: "",
   vendor_id: "",
@@ -28,6 +31,7 @@ const blank = () => ({
   eta_date: "",
   cabang: "",
   pic: "",
+  lini: "" as "" | "IVD" | "Medical",
   notes: "",
   item_desc: "",
   qty_ordered: "",
@@ -66,6 +70,10 @@ export function AddPurchaseOrderSheet() {
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
+    if (!f.lini) {
+      setError("Lini bisnis wajib dipilih");
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -80,6 +88,7 @@ export function AddPurchaseOrderSheet() {
           eta_date: f.eta_date || undefined,
           cabang: f.cabang.trim() || undefined,
           pic: f.pic.trim() || undefined,
+          lini: f.lini,
           notes: f.notes.trim() || undefined,
           items: [{ item_desc: f.item_desc.trim(), qty_ordered: Number(f.qty_ordered), unit: f.unit.trim() || undefined }],
         }),
@@ -138,6 +147,21 @@ export function AddPurchaseOrderSheet() {
             <div className="grid gap-1.5">
               <Label htmlFor="po-pic">PIC</Label>
               <Input id="po-pic" value={f.pic} onChange={(e) => setF((p) => ({ ...p, pic: e.target.value }))} placeholder="Yang mengurus PO ini" />
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="po-lini">Lini Bisnis *</Label>
+              <select
+                id="po-lini"
+                required
+                className={selectCls}
+                value={f.lini}
+                onChange={(e) => setF((p) => ({ ...p, lini: e.target.value as "" | "IVD" | "Medical" }))}
+              >
+                <option value="" disabled>Pilih lini…</option>
+                <option value="IVD">IVD</option>
+                <option value="Medical">Medical</option>
+              </select>
+              <p className="text-muted-foreground text-xs">Menentukan HOD Business yang approve PO ini (F35).</p>
             </div>
 
             <div className="border-t pt-3">
