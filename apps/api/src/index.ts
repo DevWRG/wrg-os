@@ -370,6 +370,19 @@ app.get("/admin/users", async (c) => {
   return c.json({ users: await listAppUsers() });
 });
 
+// Picker ringan (id+name+active saja, BUKAN admin-only) — dipakai F133
+// (Assign/Transfer aset) & F137 (approve Finance fallback dev tanpa sesi)
+// supaya staf non-admin bisa pilih user dari akun app_user tanpa perlu izin
+// admin penuh spt /admin/users.
+app.get("/app-users", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const activeOnly = c.req.query("all") !== "true";
+  const users = (await listAppUsers())
+    .filter((u) => !activeOnly || u.active)
+    .map((u) => ({ id: u.id, name: u.name, active: u.active }));
+  return c.json({ count: users.length, users });
+});
+
 // Pesan WA berisi kredensial akses (dipakai create + reset password).
 function accessWaMsg(email: string, pw: string): string {
   const url = (process.env.WEB_PUBLIC_URL || "").replace(/\/$/, "");
