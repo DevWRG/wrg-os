@@ -65,13 +65,24 @@ export function GaHelpdeskView({
 
       {tab === "tiket" ? (
         <div role="tabpanel" id="panel-tiket" aria-labelledby="tab-tiket" className="space-y-3">
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-1.5">
             {STATUS_FILTERS.map(([k, lbl]) => (
-              <Button key={k} size="sm" variant={statusFilter === k ? "secondary" : "ghost"} onClick={() => setStatusFilter(k)}>
+              <Button
+                key={k}
+                size="sm"
+                variant={statusFilter === k ? "default" : "outline"}
+                aria-pressed={statusFilter === k}
+                onClick={() => setStatusFilter(k)}
+              >
                 {lbl}
               </Button>
             ))}
-            <Button size="sm" variant={overdueOnly ? "destructive" : "ghost"} onClick={() => setOverdueOnly((v) => !v)}>
+            <Button
+              size="sm"
+              variant={overdueOnly ? "destructive" : "outline"}
+              aria-pressed={overdueOnly}
+              onClick={() => setOverdueOnly((v) => !v)}
+            >
               Overdue saja
             </Button>
           </div>
