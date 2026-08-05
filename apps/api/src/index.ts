@@ -101,6 +101,10 @@ import {
   type PurchaseOrderItemUpdate, type PurchaseOrderReceiptInput, type PurchaseOrderReceiptUpdate,
   type ApproverRole,
 } from "./repo/purchase-order.js";
+import {
+  listPurchaseForecast, createPurchaseForecast, updatePurchaseForecast, deletePurchaseForecast,
+  PurchaseForecastError, type PurchaseForecastInput, type PurchaseForecastUpdate,
+} from "./repo/purchase-forecast.js";
 import { listCoachingNotes } from "./repo/coaching.js";
 import { getLatestCoachingNotes, computePeopleAnalytics } from "./repo/people.js";
 import { createVisit, getVisit, listVisits, visitKpi, visitSummary } from "./repo/visit.js";
@@ -3375,6 +3379,54 @@ app.patch("/purchase-orders/:id/items/:itemId/receipts/:receiptId", async (c) =>
 app.delete("/purchase-orders/:id/items/:itemId/receipts/:receiptId", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const r = await deletePurchaseOrderReceipt(c.req.param("itemId"), c.req.param("receiptId"));
+  return c.json(r, r.deleted ? 200 : 404);
+});
+
+// ── F41 Forecast vs Actual PO Gap Report (Purchasing) ──
+app.get("/purchase-forecast", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const year = c.req.query("year") ? Number(c.req.query("year")) : undefined;
+  const rows = await listPurchaseForecast({ year });
+  return c.json({ count: rows.length, rows });
+});
+
+app.post("/purchase-forecast", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: PurchaseForecastInput;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  try {
+    const row = await createPurchaseForecast(body);
+    return c.json(row, 201);
+  } catch (e) {
+    if (e instanceof PurchaseForecastError) return c.json({ error: e.message }, e.status as 400 | 409);
+    throw e;
+  }
+});
+
+app.patch("/purchase-forecast/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: PurchaseForecastUpdate;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  try {
+    const row = await updatePurchaseForecast(c.req.param("id"), body);
+    return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+  } catch (e) {
+    if (e instanceof PurchaseForecastError) return c.json({ error: e.message }, e.status as 400 | 409);
+    throw e;
+  }
+});
+
+app.delete("/purchase-forecast/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await deletePurchaseForecast(c.req.param("id"));
   return c.json(r, r.deleted ? 200 : 404);
 });
 

@@ -10,7 +10,7 @@ import {
   Bell, MapPin, ListChecks, Swords, CalendarOff, CalendarDays, CalendarRange,
   Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, Tags, SlidersHorizontal,
   Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, BookOpen, Calculator,
-  ClipboardList,
+  ClipboardList, TrendingUpDown,
   type LucideIcon,
 } from "lucide-react";
 
@@ -21,6 +21,7 @@ import { canViewKlasifikasi } from "@/lib/klasifikasi-access";
 import { canViewRaportList } from "@/lib/raport-access";
 import { canViewExecutive } from "@/lib/executive-access";
 import { canViewKso } from "@/lib/kso-access";
+import { canViewPurchaseForecast } from "@/lib/purchase-forecast-access";
 
 // exact: sorot aktif hanya saat path persis (untuk route induk yg punya child,
 // mis. /pricelist vs /pricelist/setup).
@@ -161,6 +162,10 @@ export const NAV: NavGroup[] = [
       // F13 PO Tracker + Sistem Barang Masuk — satu PO ke vendor + riwayat
       // penerimaan barang per item (migrasi 078), bukan Accurate mirror.
       { title: "PO Tracker", url: "/purchase-orders", icon: ClipboardList, badge: "NEW" },
+      // F41 Forecast vs Actual PO Gap Report — role min Management di board
+      // (MAGANG-FEATURES.md), gate Direktur/HoD/admin (bukan executive-access.ts,
+      // ini laporan Purchasing biasa — lihat purchase-forecast-access.ts).
+      { title: "Forecast vs Actual PO", url: "/purchase-forecast", icon: TrendingUpDown, badge: "NEW", show: canViewPurchaseForecast },
     ],
   },
   {
