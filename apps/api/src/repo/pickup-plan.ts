@@ -392,7 +392,10 @@ export async function runPreVisitCheck(opts: { to?: string; tanggal?: string } =
     }
     const gateway = await sendViaWaGateway(waTarget, message);
     batches.push({ to: waTarget, count: grup.length, message, gateway });
-    if (!gateway.sent) continue; // gagal kirim → jangan tandai, cron besok retry
+    // gateway.sent juga true di mode stub & dry-run (lihat wasend.ts) — tanpa
+    // gerbang ini, plan ditandai ter-notifikasi walau WA tak pernah benar-benar
+    // dikirim. gagal kirim (atau stub/dry-run) → jangan tandai, cron besok retry.
+    if (!gateway.sent || gateway.stub || gateway.dryRun) continue;
 
     const grupIds = grup.map((p) => p.id);
     await sql`
