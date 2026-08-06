@@ -13,7 +13,7 @@
     {
       "id": "wrg-os-toolkit",
       "displayName": "WRG-OS Toolkit",
-      "version": "0.1.1",
+      "version": "0.2.0",
       "status": "ACTIVE",
       "installedFrom": "internal (WRG OS/14-Plugins/wrg-os-toolkit/)",
       "createdDate": "2026-08-06",
@@ -23,7 +23,7 @@
         "repo": "https://github.com/affaan-m/ECC",
         "version": "v2.1.0",
         "attribution": "Affaan Mustafa",
-        "cherryPickFrom": "281 skills — kept 16 stack-fit"
+        "cherryPickFrom": "281 skills — kept 22 stack-fit (16 di v0.1.0 + 6 Tier A di v0.2.0)"
       },
       "installTarget": {
         "claudeCode": "$HOME/.claude/skills/wrg-os-toolkit",
@@ -34,12 +34,13 @@
       "driveLocation": "$HOME/Library/CloudStorage/GoogleDrive-development@wahanalifeline.co.id/My Drive/Cowork Workspace/Projects/WRG OS/14-Plugins/wrg-os-toolkit",
       "repoLocation": "plugins/wrg-os-toolkit (DevWRG/wrg-os) — sumber install buat Warp/Mac mini: install-warp.sh --src=$HOME/wrg-os/plugins/wrg-os-toolkit",
       "marketplaceManifest": "WRG OS/14-Plugins/.claude-plugin/marketplace.json (name: wrg-os-local)",
-      "packagedFile": "WRG OS/14-Plugins/wrg-os-toolkit-v0.1.1.plugin",
-      "skillCount": 16,
+      "packagedFile": "WRG OS/14-Plugins/wrg-os-toolkit-v0.2.0.plugin",
+      "skillCount": 22,
       "skillCategories": {
-        "framework": ["postgres-patterns", "nextjs-turbopack", "react-patterns"],
-        "api": ["api-design", "api-connector-builder"],
-        "qa": ["tdd-workflow", "verification-loop", "browser-qa"],
+        "framework": ["postgres-patterns", "nextjs-turbopack", "react-patterns", "fastapi-patterns"],
+        "data": ["database-migrations", "data-throughput-accelerator", "regex-vs-llm-structured-text"],
+        "api": ["api-design", "api-connector-builder", "error-handling"],
+        "qa": ["tdd-workflow", "verification-loop", "browser-qa", "python-testing"],
         "delivery": ["delivery-gate"],
         "security": ["security-review"],
         "agent": ["agent-architecture-audit", "prompt-optimizer", "cost-aware-llm-pipeline"],

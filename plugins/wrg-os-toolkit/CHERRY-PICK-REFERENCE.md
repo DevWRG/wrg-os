@@ -1,150 +1,150 @@
 # Cherry-Pick Reference — ECC v2.1.0 → wrg-os-toolkit
 
-Referensi buat nambah skill dari ECC ke depan. Full listing 281 skill dikategorikan. Yang udah masuk toolkit ditandai ✅.
+Referensi buat nambah skill dari ECC. **Survei ulang 2026-08-06**: 281 skill di-clone fresh dan
+frontmatter `description`-nya dibaca satu per satu (bukan tebak dari nama folder), lalu disaring
+pakai rubrik di bagian bawah.
 
-**Source repo:** https://github.com/affaan-m/ECC (MIT · Affaan Mustafa)
-**Last surveyed:** 2026-08-06 (v2.1.0)
+**Source repo:** https://github.com/affaan-m/ECC (MIT · Affaan Mustafa) · **Toolkit:** v0.2.0 · 22 skill
 
 ---
 
-## 🎯 Skills yang UDAH masuk (v0.1.0)
+## ✅ Sudah masuk (22)
+
+### v0.1.0 — 16 skill awal
 
 | Kategori | Skill | Alasan |
 |---|---|---|
-| Framework | ✅ nextjs-turbopack | Next.js 16 App Router monorepo |
-| Framework | ✅ react-patterns | Server/Client boundaries |
-| Framework | ✅ postgres-patterns | wrg_os_prod optimization |
-| API | ✅ api-design | REST design buat Hono |
-| API | ✅ api-connector-builder | Accurate/gais/CRM integrations |
-| QA | ✅ tdd-workflow | Magang double-QA gate |
-| QA | ✅ verification-loop | Post-build verify |
-| QA | ✅ browser-qa | Visual regression |
-| Delivery | ✅ delivery-gate | Merge quality hook |
-| Security | ✅ security-review | Pre-merge audit |
-| Agent | ✅ agent-architecture-audit | F118-F129 CLUSTER audit |
-| Agent | ✅ prompt-optimizer | WA handler tuning |
-| Agent | ✅ cost-aware-llm-pipeline | Digest Engine cost |
-| Research | ✅ deep-research | Regulatory + competitive |
-| Docs | ✅ code-tour | Magang onboarding |
-| Docs | ✅ documentation-lookup | Framework docs via Context7 |
+| Framework | nextjs-turbopack | Next.js 16 App Router monorepo |
+| Framework | react-patterns | Server/Client boundaries |
+| Framework | postgres-patterns | `wrg_os_prod` optimization |
+| API | api-design | REST design buat Hono |
+| API | api-connector-builder | Accurate/gais/CRM integrations |
+| QA | tdd-workflow | Magang double-QA gate |
+| QA | verification-loop | Post-build verify |
+| QA | browser-qa | Visual regression |
+| Delivery | delivery-gate | Merge quality hook (bawa `hooks/quality-gate.py`) |
+| Security | security-review | Pre-merge audit (bawa 1 md pendamping) |
+| Agent | agent-architecture-audit | Audit cluster F118–F129 |
+| Agent | prompt-optimizer | WA handler tuning |
+| Agent | cost-aware-llm-pipeline | Digest Engine cost |
+| Research | deep-research | Regulatory + competitive |
+| Docs | code-tour | Onboarding magang |
+| Docs | documentation-lookup | Framework docs via Context7 |
+
+### v0.2.0 — 6 tambahan (Tier A)
+
+| Skill | Alasan konkret |
+|---|---|
+| **database-migrations** | Menyebut PostgreSQL + **Drizzle** eksplisit. `infra/postgres/init/0xx_*.sql` di-apply manual ke dev+prod; migrasi pernah bikin prod down 4×. Celah paling mahal yang belum tertutup. |
+| **regex-vs-llm-structured-text** | "Mulai regex, tambah LLM cuma buat edge case low-confidence." Persis kelas bug kita: parser WA (#SALES/#POIN), importer HS-S-1 & IRONMAN, parser desimal pricelist (`0.287` kebaca `287`). |
+| **data-throughput-accelerator** | Ingestion/backfill/ETL/**table synchronization** cepat tanpa korbankan korektness → mirror Accurate (invoice/SO/DO recent-only), backfill `wa_message`, export CSV. |
+| **error-handling** | Typed error, retry, circuit breaker di **TypeScript dan Python** — Hono + FastAPI. Relevan buat `chat_or_fallback` yang menelan error OpenRouter diam-diam. |
+| **fastapi-patterns** | `services/ai` (8100) sudah bukan skrip kecil: struktur project, Pydantic v2, DI, async handler, transaksi. |
+| **python-testing** | pytest/fixtures/parametrize/coverage. CI `services/ai` sekarang **cuma import check** — nol disiplin tes di sisi Python. |
 
 ---
 
-## 🟡 Kandidat NEXT (kalau kebutuhan muncul)
+## ⚠️ JANGAN disalin — skill ECC-internal
 
-### Framework — kalau lo touch stack ini
-- `fastapi-patterns` — kalau AI service (port 8100) berkembang
-- `python-patterns` — buat orchestrator agent A1-A12
-- `drizzle-patterns` — **belum ada di ECC**, cari alternative
-- `docker-patterns` — kalau move dari native pm2 ke containers
-- `vite-patterns` — kalau ada micro-frontend
-- `mysql-patterns` — kalau ada legacy MySQL integration
-- `prisma-patterns` — alternative to Drizzle
-- `redis-patterns` — kalau Bull/BullMQ jobs
-- `kubernetes-patterns` — kalau scaling ke k8s
-- `mcp-server-patterns` — kalau bikin custom MCP server buat WRG-OS
+Kelihatan relevan dari namanya, tapi isinya melayani instalasi ECC sendiri. Kalau ikut masuk cuma
+jadi beban token dan menyesatkan (skill-nya nyuruh baca file/log yang tak ada di mesin kita):
 
-### QA lanjutan
-- `e2e-testing` — Playwright/Cypress framework agnostic
-- `springboot-tdd` / `laravel-tdd` — cross-ref TDD pattern (skip, stack beda)
+| Skill | Kenyataannya |
+|---|---|
+| `cost-tracking` | Baca "ECC cost-tracker metrics log" — log milik ECC, bukan biaya LLM produk kita |
+| `finance-billing-ops` | "billing workflow **for ECC**", bukan AR/invoice Accurate |
+| `security-scan` | Scan direktori `.claude/` pakai AgentShield — audit konfigurasi agent, bukan audit kode WRG-OS |
+| `agent-sort`, `configure-ecc`, `ecc-guide`, `ecc-recipes`, `ecc-tools-cost-audit` | Meta-instalasi ECC |
+| `token-budget-advisor` | Mengatur panjang jawaban chat, bukan biaya pipeline |
 
-### Security lanjutan — kalau AKL/regulatory serius
-- `hipaa-compliance` — patient data patterns (kalau ekspansi ke RS)
-- `healthcare-phi-compliance` — same
-- `security-scan` — automated vulnerability scanning
-- `security-bounty-hunter` — pen-test mindset
-- `automation-audit-ops` — audit trail patterns
-
-### Agent lanjutan — kalau A1-A12 orchestrator built
-- `agent-eval` — evaluation harness
-- `agent-harness-construction` — how to build the harness
-- `agent-introspection-debugging` — debug tools
-- `agent-self-evaluation` — meta-eval
-- `autonomous-loops` — self-improving loops
-- `autonomous-agent-harness` — full agent runtime
-- `eval-harness` — general eval framework
-
-### Ops lanjutan
-- `github-ops` — GHActions patterns (relevan buat on-release workflow)
-- `deployment-patterns` — deploy strategy
-- `docker-patterns` — containerization when needed
-
-### Research lanjutan
-- `article-writing` — blog/content buat brand
-- `scientific-thinking-literature-review` — literature review discipline
-- `scientific-db-pubmed-database` — kalau riset medical device landscape
-
-### Domain-specific — mungkin useful
-- `healthcare-cdss-patterns` — clinical decision support (RS integration)
-- `healthcare-emr-patterns` — EMR patterns (RS integration)
-- `customs-trade-compliance` — kalau impor alkes serius (KPPBC/DJBC)
-
-### Delivery/DX lanjutan
-- `frontend-slides` — presentation web
-- `remotion-video-creation` — buat video product demo
-- `manim-video` — math/technical animation
-- `brand-voice` — content standardization
+> Catatan koreksi: daftar lama menyebut `drizzle-patterns` "belum ada di ECC" — **benar**, dan
+> penggantinya bukan skill lain melainkan `database-migrations` (sudah masuk v0.2.0).
 
 ---
 
-## 🚫 Skills yang SKIP (irrelevant WRG-OS)
+## 🟡 Tier B — tunggu pemicunya
 
-- Semua `homelab-*` (network setup) — bukan stack kita
-- `swift-*`, `kotlin-*`, `dart-flutter-*`, `angular-*`, `nuxt4-*`, `vue-*` — stack beda
-- `django-*`, `laravel-*`, `rust-*`, `golang-*`, `springboot-*`, `perl-*`, `quarkus-*` — stack beda
-- `dotnet-*`, `nestjs-*` — bukan kita pakai
-- `agent-payment-x402`, `defi-amm-security`, `llm-trading-agent-security` — crypto/trading domain
-- `blender-*`, `motion-*`, `remotion-*` (unless brand video need) — 3D/animation
-- `energy-procurement`, `customs-trade-compliance` (kecuali AKL kompleks) — off-topic
-- `prediction-market-*` — off-topic
-- `ito-*` (trading) — off-topic
-- `scientific-db-uspto-*` — patent search, off-topic
+| Skill | Pemicu yang bikin layak masuk |
+|---|---|
+| `architecture-decision-records` | Kalau mau ADR di-capture otomatis dari sesi. Sekarang ADR-001→034 ditulis manual di Drive `04-Decision-Log` |
+| `contract-first` | Kalau schema BFF web↔api mulai drift antar-consumer |
+| `ai-regression-testing` | Kalau output LLM (Digest Engine, rekap/resume) butuh regression harness |
+| `react-performance` | Kalau dashboard mulai berat (adaptasi React Best Practices Vercel, 70+ rule) |
+| `design-system` | Kalau garap UI serius — nyambung standing rule "template & UI/UX profesional" |
+| `e2e-testing` | Playwright Page Object Model, kalau E2E dashboard jalan |
+| `github-ops` | Kalau otomasi rilis/issue triage diperdalam |
+| `deployment-patterns`, `production-audit` | Kalau deploy pm2 native mau diformalkan / audit pra-rilis |
+| `mcp-server-patterns` | Kalau bikin MCP server khusus WRG-OS |
+| `python-patterns` | Kalau orchestrator A1–A12 benar-benar dibangun di Python |
+| `redis-patterns`, `docker-patterns`, `kubernetes-patterns` | Kalau stack pindah dari pm2 native / butuh queue |
+| `healthcare-emr-patterns`, `healthcare-cdss-patterns`, `hipaa-compliance` | Kalau ekspansi ke integrasi RS/EMR |
+| `agent-eval`, `eval-harness`, `agent-harness-construction`, `agent-introspection-debugging` | Kalau agent A1–A12 butuh evaluasi formal |
+
+**Risiko false-positive yang perlu diingat:** `accessibility` (WCAG/ARIA) gampang ter-trigger di
+kerjaan RBAC kita yang penuh kata "akses" padahal konteksnya beda. Kalau dipasang, pasang barengan
+`design-system` saat memang lagi garap UI.
 
 ---
 
-## Full alphabetical list of 281 skills (survey 2026-08-06)
+## 📘 Tier C — domain, BACA saja, jangan dipasang
 
-Lo bisa cek langsung:
+Isinya codified domain expertise, bukan pola koding. Berguna sebagai bahan desain fitur OPS yang
+lagi dibangun (F13 PO Tracker, F38 ED Watch, F40 Relocation, F12 Delivery), **tapi** konteksnya
+retail multi-lokasi & freight Amerika — belum tentu pas distributor alkes Indonesia. Baca sekali
+saat desain, jangan jadikan skill aktif:
+
+`inventory-demand-planning` (safety stock, replenishment) · `logistics-exception-management`
+(freight exception, dispute carrier) · `returns-reverse-logistics` · `carrier-relationship-management`
+· `production-scheduling` · `quality-nonconformance`
+
+---
+
+## 🚫 Skip permanen
+
+- Stack lain: `swift-*`, `kotlin-*`, `dart-flutter-*`, `angular-*`, `nuxt4-*`, `vue-*`, `django-*`,
+  `laravel-*`, `rust-*`, `golang-*`, `springboot-*`, `quarkus-*`, `perl-*`, `dotnet-*`, `nestjs-*`,
+  `cpp-*`, `java-*`, `jpa-*`, `csharp-*`, `fsharp-*`, `tinystruct-*`, `react-native-*`, `compose-multiplatform-*`
+- ORM/DB yang tak kita pakai: `prisma-patterns`, `mysql-patterns`, `clickhouse-io`
+- Homelab/jaringan: `homelab-*`, `cisco-ios-patterns`, `netmiko-ssh-automation`, `network-*`
+- Crypto/trading: `agent-payment-x402`, `defi-amm-security`, `llm-trading-agent-security`,
+  `evm-token-decimals`, `nodejs-keccak256`, `ito-*`, `prediction-market-*`
+- Media/3D: `blender-*`, `motion-*`, `remotion-video-creation`, `manim-video`, `video-editing`, `fal-ai-media`
+- Off-topic: `energy-procurement`, `customs-trade-compliance`, `scientific-db-uspto-database`,
+  `visa-doc-translate`, `investor-*`, `seo`, `social-*`
+
+---
+
+## Cara survei ulang sendiri
+
 ```bash
 git clone --depth=1 https://github.com/affaan-m/ECC.git /tmp/ECC
-ls /tmp/ECC/skills/ | sort > /tmp/ecc-skills-list.txt
-wc -l /tmp/ecc-skills-list.txt
+
+# Nama + description semua skill (JANGAN nilai dari nama folder saja —
+# beberapa skill "generik" ternyata ECC-internal)
+cd /tmp/ECC/skills && for d in */; do
+  printf "%-36s %s\n" "${d%/}" "$(sed -n 's/^description: //p' "$d/SKILL.md" | head -1 | cut -c1-140)"
+done | sort
 ```
 
-Filter per keyword:
-```bash
-# All patterns
-ls /tmp/ECC/skills/ | grep 'patterns$'
-
-# All testing
-ls /tmp/ECC/skills/ | grep -iE '(test|tdd|qa|verification)'
-
-# All security
-ls /tmp/ECC/skills/ | grep -iE '(security|compliance|audit)'
-```
-
-## Nambah skill baru ke toolkit ini
+## Nambah skill ke toolkit
 
 ```bash
-# 1. Clone ECC fresh
-cd /tmp && rm -rf ECC && git clone --depth=1 https://github.com/affaan-m/ECC.git
-
-# 2. Copy skill target
 TOOLKIT="$HOME/Library/CloudStorage/GoogleDrive-development@wahanalifeline.co.id/My Drive/Cowork Workspace/Projects/WRG OS/14-Plugins/wrg-os-toolkit"
-cp -r /tmp/ECC/skills/<SKILL_NAME> "$TOOLKIT/skills/"
-
-# 3. Update plugin.json version (0.1.0 → 0.1.1)
-# 4. Update README.md tabel
-# 5. Update CHERRY-PICK-REFERENCE.md — pindahkan dari 🟡 ke ✅
-
-# 6. If installed via symlink, no reinstall needed
+cp -R /tmp/ECC/skills/<SKILL_NAME> "$TOOLKIT/skills/"
+grep -q "origin: ECC" "$TOOLKIT/skills/<SKILL_NAME>/SKILL.md" || echo "TAMBAHKAN metadata.origin: ECC"
+find "$TOOLKIT/skills/<SKILL_NAME>" -type f ! -name '*.md'   # cek ada script/hook yang ikut?
 ```
 
-## Cara evaluasi apakah skill layak masuk
+Lalu wajib: bump `version` di `.claude-plugin/plugin.json` **dan** `../.claude-plugin/marketplace.json`
+· update tabel + Riwayat di `README.md` · update file INI · update `08-State-Sync/warp-tooling.json`
+(`version`, `skillCount`, `packagedFile`) · repack `.plugin` (INSTALL.md Opsi C).
+Install symlink tak perlu diulang; verifikasi lewat `claude plugin details wrg-os-toolkit`.
 
-Ajukan 3 pertanyaan ke diri sendiri:
-1. **Stack fit?** — apakah pakai library/framework yang WRG-OS pakai (Next.js 16 · Hono · FastAPI · Drizzle · PG · Better-Auth · Playwright)?
-2. **Frequency?** — apakah bakal trigger min. 1x/minggu? Kalau enggak, skip.
-3. **False-positive risk?** — apakah keyword description bakal trigger di konteks WRG-OS yang gak related? (Contoh: `swift-development` bakal false-trigger di "SPH" karena keyword "swift")
+## Rubrik: layak masuk atau tidak
 
-Kalau salah satu jawaban NO → skip. Kalau semua YA → add.
+1. **Stack fit?** — pakai framework/DB yang kita pakai (Next.js 16 · Hono · FastAPI · Drizzle · PostgreSQL · Better-Auth · Playwright)?
+2. **Frekuensi?** — bakal ke-trigger minimal 1×/minggu? Kalau tidak, biarkan di Tier B.
+3. **Risiko false-positive?** — keyword description-nya bakal nyala di konteks WRG-OS yang tak nyambung?
+4. **Generik atau ECC-internal?** — baca `description` sampai habis. Kalau menyebut file/log/tooling milik ECC, skip.
+
+Salah satu jawaban NO → jangan masukkan.

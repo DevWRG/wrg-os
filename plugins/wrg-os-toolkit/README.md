@@ -1,8 +1,8 @@
 # wrg-os-toolkit
 
-Plugin custom Cowork/Claude Code buat build velocity WRG-OS. Isinya 16 skill hasil cherry-pick dari **[affaan-m/ECC v2.1.0](https://github.com/affaan-m/ECC)** (MIT license) — 281 skill total di sana, gue ambil yang paling relevan sama stack + workflow kita.
+Plugin custom Cowork/Claude Code buat build velocity WRG-OS. Isinya 22 skill hasil cherry-pick dari **[affaan-m/ECC v2.1.0](https://github.com/affaan-m/ECC)** (MIT license) — 281 skill total di sana, gue ambil yang paling relevan sama stack + workflow kita.
 
-**Owner:** Husni Mubarrak · **Version:** 0.1.1 · **Created:** 2026-08-06
+**Owner:** Husni Mubarrak · **Version:** 0.2.0 · **Created:** 2026-08-06
 
 ---
 
@@ -31,7 +31,18 @@ ECC punya 281 skill. Kalau semua di-load, skill listing bakal cluttered dan trig
 | 15 | **code-tour** | `.tour` files buat onboarding magang ke `wrg-os` monorepo |
 | 16 | **documentation-lookup** | Context7 MCP — dokumentasi framework up-to-date (Drizzle, Better-Auth, Hono, Next.js 16) |
 
-Total ~180 KB. Semua pure markdown (kecuali `delivery-gate` dan `security-review` yang bawa 1 helper script).
+Tambahan v0.2.0 (survei ulang 281 skill, 2026-08-06):
+
+| # | Skill | Kegunaan buat WRG-OS |
+|---|---|---|
+| 17 | **database-migrations** | Schema/data migration, rollback, zero-downtime — nyebut PostgreSQL + Drizzle eksplisit. Buat `infra/postgres/init/0xx_*.sql` yang di-apply manual ke dev+prod |
+| 18 | **regex-vs-llm-structured-text** | Kapan pakai regex vs LLM buat parsing — parser WA inbound (#SALES/#POIN), importer HS-S-1 & IRONMAN, parser angka pricelist |
+| 19 | **data-throughput-accelerator** | Ingestion/backfill/ETL/table-sync cepat tanpa korbankan korektness — mirror Accurate (invoice/SO/DO), backfill wa_message, export |
+| 20 | **error-handling** | Typed error, retry, circuit breaker di TypeScript **dan** Python — Hono + FastAPI, termasuk fallback OpenRouter |
+| 21 | **fastapi-patterns** | `services/ai` (8100): struktur project, Pydantic v2, DI, async handler, transaksi |
+| 22 | **python-testing** | pytest/fixtures/coverage — CI `services/ai` sekarang cuma import check |
+
+Total ~250 KB. Semua pure markdown (kecuali `delivery-gate` dan `security-review` yang bawa 1 helper script).
 
 ## Install
 
@@ -72,6 +83,11 @@ Semua skill retain YAML frontmatter `metadata.origin: ECC` untuk audit trail. Li
 
 ## Riwayat
 
+- **v0.2.0** (2026-08-06) — +6 skill Tier A hasil survei ulang 281 skill ECC:
+  `database-migrations`, `regex-vs-llm-structured-text`, `data-throughput-accelerator`,
+  `error-handling`, `fastapi-patterns`, `python-testing`. Semua pure markdown, nol script
+  baru. Rasional + tier B/C + daftar skill ECC-internal yang JANGAN disalin ada di
+  [`CHERRY-PICK-REFERENCE.md`](./CHERRY-PICK-REFERENCE.md).
 - **v0.1.1** (2026-08-06) — perbaikan installer: metode install lama (symlink ke
   `~/.claude/plugins/`) tidak pernah mendaftarkan plugin. Diganti `~/.claude/skills/`
   (auto-load) + opsi local marketplace. `push-to-github.sh` diperbaiki juga: path repo

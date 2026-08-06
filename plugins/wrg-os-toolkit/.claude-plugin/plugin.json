@@ -1,6 +1,6 @@
 {
   "name": "wrg-os-toolkit",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Skill bundle for WRG-OS build velocity — Next.js/Postgres patterns, TDD/verification loops, security review, agent audits, and research helpers. Cherry-picked from affaan-m/ECC (MIT) + curated for the WRG-OS monorepo context.",
   "author": {
     "name": "Husni Mubarrak",
