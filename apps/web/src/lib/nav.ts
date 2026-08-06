@@ -9,13 +9,17 @@ import {
   Sparkles, Send, FileText, ScrollText, GraduationCap, UsersRound, Network,
   Bell, MapPin, ListChecks, Swords, CalendarOff, CalendarDays, CalendarRange,
   Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, Tags, SlidersHorizontal,
-  Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, Wrench, CalendarClock, HardHat, type LucideIcon,
+  Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, Wrench, CalendarClock, HardHat, BookOpen, Calculator,
+  type LucideIcon,
 } from "lucide-react";
 
-import { canOrLegacy, hasPerms } from "@/lib/perms";
+import { can, canOrLegacy, hasPerms } from "@/lib/perms";
 import { canEditPricelistSetup, canViewPricelist, type AccessUser } from "@/lib/pricelist-access";
+import { canViewPricebook, canViewPricebookSummary } from "@/lib/pricebook-access";
+import { canViewKlasifikasi } from "@/lib/klasifikasi-access";
 import { canViewRaportList } from "@/lib/raport-access";
 import { canViewExecutive } from "@/lib/executive-access";
+import { canViewKso } from "@/lib/kso-access";
 
 // exact: sorot aktif hanya saat path persis (untuk route induk yg punya child,
 // mis. /pricelist vs /pricelist/setup).
@@ -29,6 +33,15 @@ export interface NavItem {
   // "/plan-report" tetap pakai feature.key "dashboard" (hindari migrasi & re-grant
   // saat rename route). Default: featureKey(url).
   feature?: string;
+  // Fitur RBAC LAIN yang dilayani menu ini — dipakai saat beberapa menu dilebur
+  // jadi tab di satu route (mis. Pricelist + Pricelist Setup masuk Price Book).
+  // Dua efeknya, dua-duanya wajib:
+  //   1. navVisible: menu tampil kalau SALAH SATU fitur diizinkan. Tanpa ini, AM
+  //      yang cuma diizinkan 'pricelist' ikut terbentur gate 'pricebook'.
+  //   2. featureCatalog: key-nya tetap disemai ke katalog. Tanpa ini "Sync Fitur"
+  //      menonaktifkan fitur yang menunya sudah lebur (dianggap zombie) → izin
+  //      grup hilang tanpa satu pun pesan.
+  features?: { key: string; name: string }[];
 }
 export interface NavGroup { label: string; items: NavItem[] }
 
@@ -67,8 +80,37 @@ export const NAV: NavGroup[] = [
       { title: "AR Aging", url: "/ar", icon: Receipt },
       { title: "Sales Docs", url: "/sales-docs", icon: FileText },
       { title: "Collection Drafts", url: "/collection-drafts", icon: Send },
-      { title: "Pricelist Setup", url: "/pricelist/setup", icon: SlidersHorizontal, show: canEditPricelistSetup },
-      { title: "Pricelist", url: "/pricelist", icon: Tags, exact: true, show: canViewPricelist },
+      // Simulator KSO — running cost alat lab per test, hasil penggabungan
+      // aplikasi terpisah `runningcost-zybio` jadi satu menu di sini. Beda dari
+      // Price Book: itu harga JUAL barang, ini biaya operasional alat yang
+      // dipakai sales menyusun skema KSO/CPRR di depan faskes. Master datanya
+      // migrasi 074, rumusnya apps/web/src/lib/kso/formula.ts.
+      { title: "Simulator KSO", url: "/kso-simulator", icon: Calculator, badge: "NEW", show: canViewKso },
+      // Harga jual dibagi per PEMBACA, bukan per tabel:
+      //   /pricebook            sales & AM — katalog + harga terpublikasi (071/043)
+      //   /pricebook/ringkasan  Direktur + HoD — bacaan portofolio
+      //   /pricebook/setup      HoD Business + Purchasing — HPP & margin (043/073)
+      // Menu terpisah (bukan tab) supaya tiap muka punya baris izinnya sendiri di
+      // matriks Akses Grup — sebuah tab tidak bisa dicentang sendiri.
+      // Tabelnya tetap TIDAK digabung: HPP/margin wajib pisah dari tabel yang
+      // dibaca sales — lihat komentar migrasi 073.
+      {
+        title: "Price Book & Pricelist", url: "/pricebook", icon: BookOpen, badge: "NEW", exact: true,
+        show: (me) => canViewPricebook(me) || canViewPricelist(me),
+        // Bekas menu "Pricelist" jadi tab di sini; key-nya harus tetap hidup, kalau
+        // tidak Sync Fitur mematikannya sebagai zombie dan AM kehilangan akses.
+        features: [{ key: "pricelist", name: "Pricelist (tab di Price Book)" }],
+      },
+      {
+        title: "Ringkasan Price Book", url: "/pricebook/ringkasan", icon: BarChart3, badge: "NEW",
+        show: canViewPricebookSummary,
+      },
+      {
+        // feature override: pertahankan key lama 'pricelist-setup' walau route-nya
+        // pindah, supaya izin grup yang sudah dicentang tidak perlu di-grant ulang.
+        title: "Setup Harga", url: "/pricebook/setup", icon: SlidersHorizontal,
+        feature: "pricelist-setup", show: canEditPricelistSetup,
+      },
     ],
   },
   {
@@ -101,6 +143,10 @@ export const NAV: NavGroup[] = [
     label: "Operations",
     items: [
       { title: "Products", url: "/products", icon: Package },
+      // Master klasifikasi 4 level + penerbit kode produk KK.PP.CC.SSS.NNNN
+      // (migrasi 072). Beda dari Products: Products itu mirror item Accurate,
+      // menu ini yang MENENTUKAN kode produknya sebelum masuk Accurate.
+      { title: "Klasifikasi Produk", url: "/klasifikasi-produk", icon: Tags, badge: "NEW", show: canViewKlasifikasi },
       { title: "Inventory", url: "/inventory", icon: Boxes },
       { title: "Orders", url: "/orders", icon: ShoppingCart },
       { title: "Shipments", url: "/shipments", icon: Truck },
@@ -145,10 +191,14 @@ export const featureKey = (url: string) => url.replace(/^\//, "").replace(/\//g,
 //   4. Belum diatur → `show` (gate identitas lama); tanpa `show` → tidak tampil.
 // Poin 3 yang bikin centang admin di Akses Grup benar-benar berlaku ke sidebar,
 // termasuk untuk item ber-`show` (Pricelist, Executive, Karyawan 360, NPK).
+//   5. Menu hasil peleburan (`features`) tampil kalau SALAH SATU fitur yang
+//      dilayaninya diizinkan — kalau tidak, orang yang cuma diizinkan fitur lama
+//      (mis. AM dengan 'pricelist') terbentur gate fitur induknya.
 export function navVisible(me: AccessUser | null, it: NavItem): boolean {
   const key = it.feature ?? featureKey(it.url);
   if (!hasPerms(me)) return it.show ? it.show(me) : true;
-  return canOrLegacy(me, key, it.show ? it.show(me) : false);
+  if (canOrLegacy(me, key, it.show ? it.show(me) : false)) return true;
+  return (it.features ?? []).some((f) => can(me, f.key));
 }
 
 // Halaman "rumah" untuk user ini. Default tetap Sales Overview; kalau user tak
@@ -191,6 +241,12 @@ export function featureCatalog(): FeatureCatalogRow[] {
     for (const it of g.items) {
       rows.push({ key: it.feature ?? featureKey(it.url), name: it.title, section: g.label, path: it.url, sort });
       sort += 10;
+      // Fitur yang menunya sudah lebur jadi tab tetap ikut disemai — kalau tidak,
+      // Sync Fitur menganggapnya zombie dan mematikannya (izin grup hilang senyap).
+      for (const f of it.features ?? []) {
+        rows.push({ key: f.key, name: f.name, section: g.label, path: it.url, sort });
+        sort += 10;
+      }
     }
   }
   return rows;

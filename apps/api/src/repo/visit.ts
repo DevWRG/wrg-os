@@ -1,5 +1,5 @@
 import { db } from "../db.js";
-import { FULL_SCOPE, scopeSalesPlanClause, type DataScope } from "./access-scope.js";
+import { FULL_SCOPE, scopeOnClause, scopeSalesPlanClause, type DataScope } from "./access-scope.js";
 
 // D1 — visit report AM dengan geotag + foto (port legacy visit_geo +
 // report_photo + check_photo_geotag). Foto = URL/metadata (bukan binary; tak
@@ -82,6 +82,9 @@ export interface VisitRow {
   tujuan: string | null;
   goal: string | null;
   catatan: string | null;
+  activity_type: string | null;
+  account_id: number | null;
+  opportunity_id: string | null;
   created_at: string;
 }
 
@@ -109,6 +112,9 @@ function rowToVisit(r: Record<string, unknown>): VisitRow {
     tujuan: r.tujuan ? String(r.tujuan) : null,
     goal: r.goal ? String(r.goal) : null,
     catatan: r.catatan ? String(r.catatan) : null,
+    activity_type: r.activity_type ? String(r.activity_type) : null,
+    account_id: r.account_id === null || r.account_id === undefined ? null : Number(r.account_id),
+    opportunity_id: r.opportunity_id ? String(r.opportunity_id) : null,
     created_at: String(r.created_at),
   };
 }
@@ -121,6 +127,7 @@ export async function listVisits(status?: string, scope: DataScope = FULL_SCOPE,
            sp.tanggal::text AS visit_date, sp.visit_date_mismatch,
            sp.tujuan, sp.goal,
            NULLIF(concat_ws(' — ', NULLIF(al.hasil,''), NULLIF(al.next_action,'')), '') AS catatan,
+           al.activity_type, al.account_id, al.opportunity_id::text AS opportunity_id,
            COALESCE(al.photo_path, wm.media_path) AS photo_path, sp.created_at::text AS created_at
     FROM sales_plan sp
     JOIN master_user mu ON mu.am_id = sp.am_id
@@ -133,13 +140,25 @@ export async function listVisits(status?: string, scope: DataScope = FULL_SCOPE,
   return status ? all.filter((v) => v.geo_status === status) : all;
 }
 
-// Detail 1 visit (sales_plan by id) — VisitRow + note (dari plan goal/tujuan).
-export async function getVisit(id: string, scope: DataScope = FULL_SCOPE): Promise<(VisitRow & { note: string | null }) | null> {
+// Detail 1 visit (sales_plan by id) — VisitRow + note (dari plan goal/tujuan)
+// + hasil/next_action mentah dari activity_log (report AM), dipisah biar UI bisa
+// menampilkan "Hasil" dan "Next Action" sendiri-sendiri (di list keduanya
+// digabung jadi `catatan`).
+export interface VisitDetailRow extends VisitRow {
+  note: string | null;
+  hasil: string | null;
+  next_action: string | null;
+}
+
+export async function getVisit(id: string, scope: DataScope = FULL_SCOPE): Promise<VisitDetailRow | null> {
   const sql = db();
   const [r] = await sql`
     SELECT sp.id::text AS id, sp.am_id, COALESCE(initcap(mu.panggilan), mu.nama) AS nama,
            sp.customer_name, sp.visit_lat, sp.visit_lon, sp.visit_timestamp::text AS visit_timestamp,
            sp.tanggal::text AS visit_date, sp.visit_date_mismatch,
+           sp.tujuan, sp.goal,
+           al.activity_type, al.account_id, al.opportunity_id::text AS opportunity_id,
+           NULLIF(al.hasil, '') AS hasil, NULLIF(al.next_action, '') AS next_action,
            COALESCE(al.photo_path, wm.media_path) AS photo_path, sp.created_at::text AS created_at,
            NULLIF(concat_ws(' — ', NULLIF(sp.tujuan,''), NULLIF(sp.goal,'')), '') AS note
     FROM sales_plan sp
@@ -149,7 +168,12 @@ export async function getVisit(id: string, scope: DataScope = FULL_SCOPE): Promi
     WHERE sp.id::text = ${id} AND sp.visit_lat IS NOT NULL ${scopeSalesPlanClause(sql, scope)}
   `;
   if (!r) return null;
-  return { ...rowToVisit(r), note: r.note ? String(r.note) : null };
+  return {
+    ...rowToVisit(r),
+    note: r.note ? String(r.note) : null,
+    hasil: r.hasil ? String(r.hasil) : null,
+    next_action: r.next_action ? String(r.next_action) : null,
+  };
 }
 
 // Brief kepatuhan geotag (port send_geotag_brief): hitung per-status + flagged.
@@ -170,4 +194,169 @@ export async function visitSummary(scope: DataScope = FULL_SCOPE): Promise<{
   for (const v of visits) by[v.geo_status] = (by[v.geo_status] ?? 0) + 1;
   const total = visits.length;
   return { total, by_status: by, flagged: total - (by.ok ?? 0) };
+}
+
+// ── F16 CRM Fase 1: KPI timeliness + target kunjungan mingguan ──
+//
+// Dua KPI yang diminta PRD F3+F16 dan dipakai hulu-hilir:
+//   • Timeliness  — % aktivitas yang di-input ≤48 jam dari tanggal aktivitas
+//                   (target ≥80%). Feed NPK aspek CRM/Presales (F66).
+//   • Target visit— 20 kunjungan/minggu per AM, 6 di antaranya prospek baru.
+//                   Feed Effort_Factor insentif (F67).
+//
+// Timeliness dihitung dari activity_log (bukan sales_plan): yang diukur adalah
+// kedisiplinan MELAPOR, dan `created_at` di activity_log adalah stempel saat
+// laporan masuk. sales_plan.created_at ikut berubah saat plan di-resubmit,
+// jadi tak bisa dipakai sebagai patokan.
+
+export const TIMELINESS_TARGET_PCT = 80;
+const TIMELINESS_WINDOW_DAYS = 30;
+const TIMELINESS_LIMIT_HOURS = 48;
+// Prospek dianggap "baru" bila AM ybs tak mengunjunginya dalam N hari terakhir.
+const NEW_PROSPECT_LOOKBACK_DAYS = 90;
+
+export interface TimelinessKpi {
+  window_days: number;
+  total: number;
+  on_time: number;
+  pct: number | null; // null bila belum ada aktivitas di window
+  target_pct: number;
+}
+
+export interface AmVisitProgress {
+  am_id: string;
+  nama: string | null;
+  cabang: string | null;
+  visits: number;
+  new_prospects: number;
+  target: number;
+  new_target: number;
+  pct: number;
+}
+
+export interface VisitTargetKpi {
+  iso_year: number;
+  iso_week: number;
+  week_start: string;
+  target_default: number;
+  new_target_default: number;
+  per_am: AmVisitProgress[];
+  on_track: number; // jumlah AM yang sudah ≥ target
+}
+
+// Batas 48 jam diukur dari AKHIR hari aktivitas (WIB), bukan tengah malam awal:
+// laporan yang masuk malam hari di tanggal yang sama jelas tak boleh dihitung
+// telat, dan AM masih punya sisa hari berikutnya untuk menyusul.
+export async function visitTimeliness(scope: DataScope = FULL_SCOPE): Promise<TimelinessKpi> {
+  const sql = db();
+  const [r] = await sql`
+    SELECT count(*)::int AS total,
+           count(*) FILTER (
+             WHERE al.created_at <=
+               ((al.tanggal + 1)::timestamp AT TIME ZONE 'Asia/Jakarta') + make_interval(hours => ${TIMELINESS_LIMIT_HOURS})
+           )::int AS on_time
+    FROM activity_log al
+    JOIN master_user mu ON mu.am_id = al.am_id
+    WHERE al.tanggal >= (CURRENT_DATE - make_interval(days => ${TIMELINESS_WINDOW_DAYS}))
+      ${scopeOnClause(sql, scope, sql`al.am_id`, sql`NULLIF(mu.cabang,'')`)}
+  `;
+  const total = Number(r?.total ?? 0);
+  const onTime = Number(r?.on_time ?? 0);
+  return {
+    window_days: TIMELINESS_WINDOW_DAYS,
+    total,
+    on_time: onTime,
+    pct: total > 0 ? Math.round((onTime / total) * 1000) / 10 : null,
+    target_pct: TIMELINESS_TARGET_PCT,
+  };
+}
+
+// Capaian kunjungan minggu ISO berjalan (atau minggu yang diminta) per AM.
+// `weekOffset` 0 = minggu ini, -1 = minggu lalu (dipakai rekap Senin).
+export async function visitTargets(scope: DataScope = FULL_SCOPE, weekOffset = 0): Promise<VisitTargetKpi> {
+  const sql = db();
+  const rows = await sql`
+    WITH wk AS (
+      SELECT date_trunc('week', CURRENT_DATE)::date + make_interval(weeks => ${weekOffset}) AS start
+    ),
+    span AS (SELECT start::date AS d0, (start + interval '6 days')::date AS d1 FROM wk),
+    -- Default global: agregat supaya baris '*' yang hilang tetap menghasilkan
+    -- satu baris (COALESCE ke angka PRD) — tanpa ini seluruh CTE jadi kosong
+    -- dan tabel progress ikut kosong tanpa pesan error.
+    def AS (
+      SELECT COALESCE(max(per_week), 20) AS per_week, COALESCE(max(new_per_week), 6) AS new_per_week
+      FROM visit_target WHERE am_id = '*'
+    ),
+    tgt AS (
+      SELECT mu.am_id,
+             COALESCE(t.per_week, def.per_week) AS per_week,
+             COALESCE(t.new_per_week, def.new_per_week) AS new_per_week
+      FROM master_user mu
+      CROSS JOIN def
+      LEFT JOIN visit_target t ON t.am_id = mu.am_id
+      WHERE mu.aktif AND upper(COALESCE(mu.role,'')) = 'AM'
+    ),
+    vis AS (
+      SELECT sp.am_id, sp.customer_name, sp.tanggal
+      FROM sales_plan sp, span
+      WHERE sp.visit_lat IS NOT NULL AND sp.tanggal BETWEEN span.d0 AND span.d1
+    )
+    SELECT mu.am_id,
+           COALESCE(initcap(mu.panggilan), mu.nama) AS nama,
+           NULLIF(mu.cabang,'') AS cabang,
+           tgt.per_week::int  AS target,
+           tgt.new_per_week::int AS new_target,
+           (SELECT count(*)::int FROM vis WHERE vis.am_id = mu.am_id) AS visits,
+           (SELECT count(DISTINCT v.customer_name)::int
+              FROM vis v, span
+             WHERE v.am_id = mu.am_id AND v.customer_name IS NOT NULL
+               AND NOT EXISTS (
+                 SELECT 1 FROM sales_plan p
+                  WHERE p.am_id = mu.am_id
+                    AND p.customer_name = v.customer_name
+                    AND p.tanggal < span.d0
+                    AND p.tanggal >= span.d0 - make_interval(days => ${NEW_PROSPECT_LOOKBACK_DAYS})
+               )) AS new_prospects
+    FROM master_user mu
+    JOIN tgt ON tgt.am_id = mu.am_id
+    WHERE mu.aktif AND upper(COALESCE(mu.role,'')) = 'AM'
+      ${scopeOnClause(sql, scope, sql`mu.am_id`, sql`NULLIF(mu.cabang,'')`)}
+    ORDER BY visits DESC, nama
+  `;
+  const [meta] = await sql`
+    SELECT (date_trunc('week', CURRENT_DATE)::date + make_interval(weeks => ${weekOffset}))::date::text AS week_start,
+           extract(isoyear FROM (date_trunc('week', CURRENT_DATE)::date + make_interval(weeks => ${weekOffset})))::int AS iso_year,
+           extract(week    FROM (date_trunc('week', CURRENT_DATE)::date + make_interval(weeks => ${weekOffset})))::int AS iso_week
+  `;
+  const [def] = await sql`SELECT per_week, new_per_week FROM visit_target WHERE am_id = '*'`;
+
+  const perAm: AmVisitProgress[] = (rows as unknown as Record<string, unknown>[]).map((r) => {
+    const visits = Number(r.visits ?? 0);
+    const target = Number(r.target ?? 0);
+    return {
+      am_id: String(r.am_id),
+      nama: r.nama ? String(r.nama) : null,
+      cabang: r.cabang ? String(r.cabang) : null,
+      visits,
+      new_prospects: Number(r.new_prospects ?? 0),
+      target,
+      new_target: Number(r.new_target ?? 0),
+      pct: target > 0 ? Math.round((visits / target) * 100) : 0,
+    };
+  });
+  return {
+    iso_year: Number(meta?.iso_year ?? 0),
+    iso_week: Number(meta?.iso_week ?? 0),
+    week_start: String(meta?.week_start ?? ""),
+    target_default: Number(def?.per_week ?? 20),
+    new_target_default: Number(def?.new_per_week ?? 6),
+    per_am: perAm,
+    on_track: perAm.filter((a) => a.target > 0 && a.visits >= a.target).length,
+  };
+}
+
+// Bundel KPI untuk halaman /visits (satu round-trip).
+export async function visitKpi(scope: DataScope = FULL_SCOPE, weekOffset = 0) {
+  const [timeliness, targets] = await Promise.all([visitTimeliness(scope), visitTargets(scope, weekOffset)]);
+  return { timeliness, targets };
 }

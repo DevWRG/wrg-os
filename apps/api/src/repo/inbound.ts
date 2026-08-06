@@ -215,16 +215,55 @@ async function insertSalesPlan(
   return { count: customers.length, late };
 }
 
+// Ambang fuzzy resolusi Account: lebih ketat dari match plan (0.3) karena hasilnya
+// nempel permanen ke Account 360 (F62) & feed NPK/insentif, sementara salah-match
+// plan cuma mempengaruhi status reported hari itu.
+const ACCOUNT_MATCH = 0.45;
+
+// customer_name bebas-teks → account_id (mirror Accurate) + opportunity_id (deal
+// terbuka milik AM tsb). Best-effort: gagal resolve = NULL, bukan error — #REPORT
+// tak boleh ditolak cuma karena nama faskes belum ada di mirror.
+async function resolveActivityLinks(
+  amId: string,
+  customer: string,
+): Promise<{ accountId: number | null; opportunityId: string | null }> {
+  const sql = db();
+  const [acc] = await sql`
+    SELECT id, similarity(COALESCE(NULLIF(name,''), raw->>'name', ''), ${customer}) AS score
+    FROM accurate_customer
+    WHERE similarity(COALESCE(NULLIF(name,''), raw->>'name', ''), ${customer}) >= ${ACCOUNT_MATCH}
+    ORDER BY score DESC, id LIMIT 1
+  `;
+  const accountId = acc ? Number(acc.id) : null;
+
+  // Deal terbuka (belum Closing-*) milik AM ini: match by account_id, fallback
+  // fuzzy facility_name. Terbaru duluan — aktivitas biasanya untuk deal berjalan.
+  const [deal] = await sql`
+    SELECT deal_id FROM deal
+    WHERE am_id = ${amId}
+      AND stage NOT IN ('Closing-Won', 'Closing-Lost')
+      AND (
+        (${accountId}::bigint IS NOT NULL AND account_id = ${accountId})
+        OR similarity(COALESCE(NULLIF(facility_name,''), customer_name, ''), ${customer}) >= ${ACCOUNT_MATCH}
+      )
+    ORDER BY stage_entered_at DESC NULLS LAST, updated_at DESC
+    LIMIT 1
+  `;
+  return { accountId, opportunityId: deal ? String(deal.deal_id) : null };
+}
+
 // #REPORT AM → activity_log (per customer) + fuzzy-match ke sales_plan hari itu
 // (pg_trgm > 0.3) → set plan_id + tandai plan reported. is_unmatched bila tak match.
+// Sekalian resolve Account/Opportunity + simpan tipe aktivitas (F16 CRM Fase 1).
 async function insertAmActivities(
   amId: string,
   tanggal: string,
-  items: { customer: string; hasil: string; next_action: string }[],
+  items: { customer: string; hasil: string; next_action: string; activity_type?: string | null }[],
   messageId: string | null,
-): Promise<{ matched: number; unmatched: number; unmatchedNames: string[] }> {
+): Promise<{ matched: number; unmatched: number; unmatchedNames: string[]; linked: number }> {
   const sql = db();
   let matched = 0;
+  let linked = 0;
   const unmatchedNames: string[] = [];
   for (const it of items) {
     const cands = await sql`
@@ -235,12 +274,19 @@ async function insertAmActivities(
     `;
     const planId = cands[0] ? Number(cands[0].id) : null;
     const score = cands[0] ? Number(cands[0].score) : null;
+    const links = await resolveActivityLinks(amId, it.customer).catch(() => ({ accountId: null, opportunityId: null }));
+    if (links.accountId !== null) linked += 1;
+    // Default 'Fisik' bila AM tak menyebut tipe: #REPORT AM = laporan kunjungan
+    // harian (bukan kanal lain) — mempertahankan makna baris lama.
+    const actType = it.activity_type ?? "Fisik";
     const rows = await sql`
       INSERT INTO activity_log
-        (am_id, plan_id, tanggal, customer_name, hasil, next_action, source, is_unmatched, match_score, message_id)
+        (am_id, plan_id, tanggal, customer_name, hasil, next_action, source, is_unmatched, match_score, message_id,
+         activity_type, account_id, opportunity_id)
       VALUES
         (${amId}, ${planId}, ${tanggal}, ${it.customer}, ${it.hasil || null}, ${it.next_action || null},
-         'wa-inbound', ${planId === null}, ${score}, ${messageId})
+         'wa-inbound', ${planId === null}, ${score}, ${messageId},
+         ${actType}, ${links.accountId}, ${links.opportunityId})
       RETURNING id
     `;
     if (planId !== null) {
@@ -250,7 +296,7 @@ async function insertAmActivities(
       unmatchedNames.push(it.customer);
     }
   }
-  return { matched, unmatched: unmatchedNames.length, unmatchedNames };
+  return { matched, unmatched: unmatchedNames.length, unmatchedNames, linked };
 }
 
 // ── Foto-followup (Fase 3) ──
@@ -495,7 +541,10 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
   if (amFlow) {
     const ar = parseAmReport(row.body ?? "");
     if (ar.items.length === 0) {
-      const reply = await sendViaWaGateway(target, `⚠️ Report AM tak terbaca, ${am.nama}. Format: 1. Customer / hasil: … / next: …`);
+      const reply = await sendViaWaGateway(
+        target,
+        `⚠️ Report AM tak terbaca, ${am.nama}.\nFormat: \`Customer — hasil — next step\` (boleh tambah \`— tipe\`: Fisik/Telepon/WA/Demo/Presentasi/Follow-up)\natau: 1. Customer / hasil: … / next: …`,
+      );
       return finish({ error: "am-report-empty", via: am.via, reply });
     }
     const tgl = ar.tanggal ?? wibDate();
@@ -525,7 +574,7 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
     let body = buildAmReportReply(am.nama, tgl, ar.items.length, res, Number(tot.plan_total), Number(tot.reported), pendingNames);
     if (reminders > 0) body += `\n\n📌 ${reminders} reminder dijadwalkan.`;
     const reply = await sendViaWaGateway(target, body);
-    return finish({ am_id: am.am_id, via: am.via, mode: "am", tanggal: tgl, matched: res.matched, unmatched: res.unmatched, reminders, reply });
+    return finish({ am_id: am.am_id, via: am.via, mode: "am", tanggal: tgl, matched: res.matched, unmatched: res.unmatched, linked: res.linked, reminders, reply });
   }
   // report todo — cocokkan vs plan + balasan kaya (match/baru)
   const rep = await markReported(am.am_id, am.nama, tanggal, parsed.items, row.body ?? "");

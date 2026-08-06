@@ -53,13 +53,14 @@ export async function getDealsNeedingDoc(limit = 5): Promise<DealForDoc[]> {
     SELECT d.deal_id, d.customer_id, d.customer_name, d.am_id, d.stage,
            d.estimated_value, d.product_ids, d.notes
     FROM deal d
-    WHERE d.stage IN ('Quotation', 'Offering', 'Presentation', 'Closing-Won')
+    -- Stage 'Offering' dilebur ke 'Quotation' (migrasi 069) → doc_type
+    -- 'offering_letter' tak lagi punya pemicu otomatis (tetap valid utk draft manual).
+    WHERE d.stage IN ('Quotation', 'Presentation', 'Closing-Won')
       AND NOT EXISTS (
         SELECT 1 FROM sales_doc sd
         WHERE sd.deal_id = d.deal_id
           AND sd.doc_type = CASE d.stage
             WHEN 'Quotation' THEN 'sph'
-            WHEN 'Offering' THEN 'offering_letter'
             WHEN 'Presentation' THEN 'presentation'
             WHEN 'Closing-Won' THEN 'mou'
           END

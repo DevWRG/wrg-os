@@ -2,6 +2,7 @@ import Link from "next/link";
 import { ChevronLeft, Pin, Star } from "lucide-react";
 
 import { gatewayFetch } from "@/lib/gateway";
+import { sessionUser } from "@/lib/admin-guard";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 
@@ -23,9 +24,11 @@ function prettyDate(date: string): string {
 
 export default async function CalendarDayPage({ params }: { params: Promise<{ date: string }> }) {
   const { date } = await params;
+  // x-user-id → backend scope row-level: AM hanya melihat reminder-nya sendiri.
+  const me = await sessionUser();
   let data: DayData | null = null;
   try {
-    const res = await gatewayFetch(`/report/calendar/day?date=${date}`);
+    const res = await gatewayFetch(`/report/calendar/day?date=${date}`, me ? { headers: { "x-user-id": me.id } } : undefined);
     if (res.ok) data = await res.json();
   } catch {
     data = null;

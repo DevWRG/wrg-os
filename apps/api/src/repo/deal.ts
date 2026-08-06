@@ -12,34 +12,37 @@ import { type DataScope, isRestricted } from "./access-scope.js";
 
 const AUTO = 0.7;
 const AMBIGUOUS = 0.4;
-// F1-SPT: 8-stage kanonik (selaras enum deal_stage migrasi 057). Ganti stage lama.
+// F1-SPT: 7-stage kanonik (migrasi 069 — 'First Contact' dilebur ke Prospecting,
+// 'Offering' ke Quotation, + tahap 'Closing'). Nilai DB 'Closing-Won'/'Closing-Lost'
+// dipertahankan (dipakai literal di query report); UI menampilkannya "Won"/"Lost".
 const CLOSED = ["Closing-Won", "Closing-Lost"];
 export const DEAL_STAGES = [
   "Prospecting",
-  "First Contact",
   "Presentation",
   "Quotation",
-  "Offering",
   "Negotiation",
+  "Closing",
   "Closing-Won",
   "Closing-Lost",
 ];
 
 // F1-SPT: derive kategori/probabilitas/forecast dari stage (selaras STAGE_DERIVE
-// importer scripts/db/import_hs_s1.py — SATU sumber kebenaran, jaga tetap sinkron).
+// importer scripts/db/import_hs_s1.py + migrasi 069 — SATU sumber kebenaran, jaga
+// tetap sinkron). Kategori prospek: Cold s/d Quotation, Warm Negotiation, Hot Closing+.
 const STAGE_META: Record<string, { prospect: string; prob: number; forecast: string }> = {
   "Prospecting":   { prospect: "Cold", prob: 0.1,  forecast: "D - Omit" },
-  "First Contact": { prospect: "Cold", prob: 0.2,  forecast: "C - Pipeline" },
-  "Presentation":  { prospect: "Cold", prob: 0.5,  forecast: "C - Pipeline" },
-  "Quotation":     { prospect: "Cold", prob: 0.4,  forecast: "C - Pipeline" },
-  "Offering":      { prospect: "Warm", prob: 0.6,  forecast: "B - Best Case" },
-  "Negotiation":   { prospect: "Hot",  prob: 0.85, forecast: "A - Commit" },
+  "Presentation":  { prospect: "Cold", prob: 0.3,  forecast: "C - Pipeline" },
+  "Quotation":     { prospect: "Cold", prob: 0.5,  forecast: "C - Pipeline" },
+  "Negotiation":   { prospect: "Warm", prob: 0.7,  forecast: "B - Best Case" },
+  "Closing":       { prospect: "Hot",  prob: 0.9,  forecast: "A - Commit" },
   "Closing-Won":   { prospect: "Hot",  prob: 1.0,  forecast: "Won" },
   "Closing-Lost":  { prospect: "",     prob: 0.0,  forecast: "Lost" },
 };
 
-// enum deal_loss_reason (migrasi 057) — wajib saat transisi ke Closing-Lost.
-export const DEAL_LOSS_REASONS = ["harga", "kompetitor", "no-budget", "kalah-tender", "internal-RS"];
+// enum deal_loss_reason (migrasi 057 + 075) — wajib saat transisi ke Closing-Lost.
+// Opsi baru per Direktur (075). Nilai lama tetap valid di enum utk data historis,
+// tapi tak lagi ditawarkan/diterima untuk transisi baru.
+export const DEAL_LOSS_REASONS = ["spesifikasi", "harga", "populasi", "komitmen"];
 
 // Error dgn status HTTP eksplisit → endpoint map ke response code yg tepat.
 export class DealError extends Error {
@@ -101,6 +104,7 @@ export interface PipelineDeal {
   coop_model: string | null;
   city: string | null;
   province: string | null;
+  purchase_month: number | null;       // estimasi bulan beli (1–12)
   purchase_year: number | null;
   days_in_stage: number | null;
   stale: boolean;                      // >14 hari di stage non-terminal
@@ -133,7 +137,7 @@ export async function getPipeline(
     prospect_category, stage, probability, forecast_category,
     COALESCE(estimated_value, estimate_amount) AS estimate_amount,
     qty_num, unit_price,
-    pic_hod, cabang, coop_model, city, province, purchase_year, notes, updated_at,
+    pic_hod, cabang, coop_model, city, province, purchase_month, purchase_year, notes, updated_at,
     GREATEST(0, EXTRACT(DAY FROM (now() - stage_entered_at))::int) AS days_in_stage`;
   // Row-level scope (pakai semantik isRestricted spt F127): scope TAK membatasi
   // (FULL_SCOPE / superuser/admin / HoD-tanpa-territory / tanpa x-user-id) → lihat
@@ -188,6 +192,7 @@ export async function getPipeline(
       coop_model: r.coop_model ? String(r.coop_model) : null,
       city: r.city ? String(r.city) : null,
       province: r.province ? String(r.province) : null,
+      purchase_month: r.purchase_month != null ? Number(r.purchase_month) : null,
       purchase_year: r.purchase_year != null ? Number(r.purchase_year) : null,
       days_in_stage: dis,
       stale,
@@ -702,9 +707,13 @@ export async function getDealTimeline(dealId: string, scope: DataScope): Promise
 // nyetel stage/loss/am_id/probability langsung; itu lewat jalur khusus).
 const DEAL_EDITABLE = [
   "customer_name", "facility_name", "brand", "product", "product_category",
-  "estimate_amount", "qty_num", "unit_price", "cabang", "coop_model", "city", "province", "purchase_year",
+  "estimate_amount", "qty_num", "unit_price", "cabang", "coop_model", "city", "province",
+  "purchase_month", "purchase_year",
   "pic_hod", "notes",
 ] as const;
+
+// Field numerik pada whitelist — dicast ke Number ("" sudah jadi null lebih dulu).
+const DEAL_NUMERIC = new Set(["estimate_amount", "purchase_month", "purchase_year", "qty_num", "unit_price"]);
 
 const PRODUCT_CATEGORIES = ["IVD", "Medical"];
 
@@ -715,9 +724,11 @@ function pickEditable(input: Record<string, unknown>): Record<string, unknown> {
     if (input[k] === undefined) continue;
     let v: unknown = input[k];
     if (v === "") v = null;
-    if ((k === "estimate_amount" || k === "purchase_year" || k === "qty_num" || k === "unit_price") && v != null) {
+    if (DEAL_NUMERIC.has(k) && v != null) {
       const n = Number(v);
       v = Number.isFinite(n) ? n : null;
+      // Estimasi bulan beli hanya masuk akal 1–12 (smallint) — di luar itu → null.
+      if (k === "purchase_month" && typeof v === "number" && (v < 1 || v > 12)) v = null;
     }
     out[k] = v;
   }
