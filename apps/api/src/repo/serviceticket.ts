@@ -2,6 +2,11 @@ import { db } from "../db.js";
 import { callAi, aiDryRun } from "../ai.js";
 import { sendViaWaGateway } from "../wasend.js";
 
+// postgres.js parse kolom timestamptz jadi objek Date — String(dateObj) hasilnya
+// verbose ("Wed Aug 05 2026 …"), bukan ISO. new Date(x).toISOString() aman
+// dipanggil baik x sudah Date maupun masih string dari driver.
+const toIsoTs = (x: unknown): string => new Date(x as string | Date).toISOString();
+
 // F26 — Service Ticket Triage (AFTERSALES). LLM classify komplain customer
 // (severity + area) → auto-assign teknisi (area match, least-loaded) → ETA.
 // Self-contained: teknisi_roster/service_ticket TIDAK FK ke installation_unit
@@ -150,16 +155,16 @@ function mapTicket(r: Record<string, unknown>): TicketRow {
     complaint_text: String(r.complaint_text),
     area: r.area ? String(r.area) : null,
     severity: String(r.severity),
-    eta_at: r.eta_at ? String(r.eta_at) : null,
+    eta_at: r.eta_at ? toIsoTs(r.eta_at) : null,
     assigned_teknisi_id: r.assigned_teknisi_id ? String(r.assigned_teknisi_id) : null,
     assigned_teknisi_name: r.assigned_teknisi_name ? String(r.assigned_teknisi_name) : null,
     needs_review: Boolean(r.needs_review),
     model_used: r.model_used ? String(r.model_used) : null,
     status: String(r.status),
-    resolved_at: r.resolved_at ? String(r.resolved_at) : null,
+    resolved_at: r.resolved_at ? toIsoTs(r.resolved_at) : null,
     resolved_note: r.resolved_note ? String(r.resolved_note) : null,
-    created_at: String(r.created_at),
-    updated_at: String(r.updated_at),
+    created_at: toIsoTs(r.created_at),
+    updated_at: toIsoTs(r.updated_at),
   };
 }
 
