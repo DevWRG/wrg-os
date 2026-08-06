@@ -148,6 +148,7 @@ import { listViews, saveView, deleteView, listAlerts, createAlert, deleteAlert, 
 import { execCommand, execAmRadar, execOutletMatrix, execDormantIntel, execKpiBaseline, execRotation, execGrowthLevers } from "./repo/exec-dashboard.js";
 import { evaluateSalesAlerts } from "./repo/sales-analytics-alert-eval.js";
 import { computeNpk, getNpkScores, getNpkDetail, currentPeriod, type Period } from "./repo/npk.js";
+import { computeNpkAm, getNpkAmScores, getNpkAmDetail } from "./repo/npk-am.js";
 import { listDepartments, listEmployees, getEmployee, getRaciMatrix, getMeasurements, saveMeasurements, createEmployee, updateEmployee, deleteEmployee, replaceEmployeeDetail, getVoiceAggregate, getHodResolution, getOrgReporting, populateHodKey, getHods, type MeasurementInput, type EmployeeWrite, type SpineDetail } from "./repo/employee-spine.js";
 import { upsertMembers, listMembers, upsertDigests, listDigest, digestStats, upsertPola, listPola, generateRekap, generateResume, type MonitorMemberInput, type DigestInput, type PolaInput } from "./repo/monitor.js";
 import { runNotifTua } from "./repo/notiftua.js";
@@ -1931,13 +1932,18 @@ app.get("/sales/targets/am", async (c) => {
 });
 app.put("/sales/targets/am", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let b: { year?: number; entries?: { am_id?: string; target?: number }[] } = {};
+  let b: { year?: number; entries?: { am_id?: string; target?: number; target_customer?: number }[] } = {};
   try { b = await c.req.json(); } catch { /* opsional */ }
   const year = Number(b.year);
   if (!Number.isInteger(year) || year < 2000 || year > 2100) return c.json({ error: "year tidak valid" }, 400);
   const entries = (b.entries ?? [])
     .filter((e) => String(e.am_id ?? "").trim() !== "" && Number.isFinite(Number(e.target)))
-    .map((e) => ({ am_id: String(e.am_id), target: Math.max(0, Number(e.target)) }));
+    .map((e) => ({
+      am_id: String(e.am_id),
+      target: Math.max(0, Number(e.target)),
+      // Tak dikirim → undefined (biarkan nilai lama), bukan 0 (menghapus target).
+      target_customer: Number.isFinite(Number(e.target_customer)) ? Math.max(0, Number(e.target_customer)) : undefined,
+    }));
   return c.json(await upsertAmTargets(year, entries));
 });
 app.delete("/sales/targets/am", async (c) => {
@@ -2050,6 +2056,35 @@ app.get("/npk/scores/:userId", async (c) => {
   const { year, period } = npkParams(c);
   try {
     return c.json(await getNpkDetail(await scopeOf(c), c.req.param("userId"), year, period));
+  } catch (e) {
+    const status = (e as { status?: number }).status ?? 500;
+    return c.json({ error: (e as Error).message }, status as 403 | 404 | 500);
+  }
+});
+
+// ── F66 NPK level AM/Sales (078) — formula SK yang sama, subjek = master_user.am_id.
+// Role gate ada di lapisan data (repo/npk-am.ts visibleAms): admin & HoD → semua AM;
+// staff AM → hanya dirinya; selain itu kosong. Rute /npk/am/* sengaja TIDAK bentrok
+// dengan /npk/scores/:userId (prefix beda), jadi urutan registrasi tak jadi soal.
+app.post("/npk/am/compute", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const svc = process.env.API_SERVICE_TOKEN;
+  if (svc && c.req.header("x-service-token") !== svc) return c.json({ error: "forbidden" }, 403);
+  const { year, period } = npkParams(c);
+  return c.json(await computeNpkAm({ year, period }));
+});
+
+app.get("/npk/am/scores", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const { year, period } = npkParams(c);
+  return c.json(await getNpkAmScores(await scopeOf(c), year, period));
+});
+
+app.get("/npk/am/scores/:ref", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const { year, period } = npkParams(c);
+  try {
+    return c.json(await getNpkAmDetail(await scopeOf(c), c.req.param("ref"), year, period));
   } catch (e) {
     const status = (e as { status?: number }).status ?? 500;
     return c.json({ error: (e as Error).message }, status as 403 | 404 | 500);
