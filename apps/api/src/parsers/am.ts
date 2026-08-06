@@ -33,6 +33,36 @@ function findDate(text: string): string | null {
 
 const HASH = /^\s*#\s*(plan|report)\b/i;
 const stripNum = (s: string) => s.replace(/^\s*\d+\s*[.)]\s*[^A-Za-z(]*/, "").trim();
+
+// Pemisah segmen: pipe (format lama) ATAU em/en dash (format terstruktur CRM
+// Fase 1: `[CUSTOMER] — [HASIL] — [NEXT STEP]`). Hyphen biasa `-` SENGAJA tak
+// diterima — terlalu sering muncul di dalam nama faskes ("RS Al-Islam") dan di
+// teks hasil, jadi akan memotong kalimat di tempat yang salah.
+const SEP = /\s*[|—–]\s*/;
+export const hasSegments = (line: string): boolean => /[|—–]/.test(line);
+export const splitSegments = (line: string): string[] => line.split(SEP).map((p) => p.trim());
+
+// Tipe aktivitas kanonik (migrasi 068 activity_log.activity_type CHECK).
+export const ACTIVITY_TYPES = ["Fisik", "Telepon", "WA", "Demo", "Presentasi", "Follow-up"] as const;
+export type ActivityType = (typeof ACTIVITY_TYPES)[number];
+
+const TYPE_ALIAS: Record<string, ActivityType> = {
+  fisik: "Fisik", kunjungan: "Fisik", visit: "Fisik", onsite: "Fisik", langsung: "Fisik",
+  telepon: "Telepon", telp: "Telepon", tlp: "Telepon", call: "Telepon", phone: "Telepon",
+  wa: "WA", whatsapp: "WA", chat: "WA",
+  demo: "Demo", trial: "Demo", uji: "Demo",
+  presentasi: "Presentasi", presentation: "Presentasi", present: "Presentasi", paparan: "Presentasi",
+  "follow-up": "Follow-up", followup: "Follow-up", "follow up": "Follow-up", fu: "Follow-up",
+};
+
+// Normalisasi teks bebas → tipe kanonik. null bila tak dikenali (biar caller
+// yang menentukan default; jangan tebak "Fisik" di sini — salah-tebak bikin
+// KPI kunjungan fisik menggelembung).
+export function normalizeActivityType(input: string | null | undefined): ActivityType | null {
+  const k = (input ?? "").trim().toLowerCase();
+  if (!k) return null;
+  return TYPE_ALIAS[k] ?? null;
+}
 // header line + cari tgl (scope: baris header + 2 baris berikut, sebelum item)
 function headerDate(lines: string[], hIdx: number): string | null {
   const rest = lines[hIdx].replace(HASH, "");
@@ -57,11 +87,11 @@ export function parseAmPlan(body: string): AmPlanResult {
   const tanggal = headerDate(lines, hIdx);
   const customers: PlanCustomer[] = [];
 
-  const pipeLines = lines.filter((l, i) => i !== hIdx && l.includes("|") && !/^\s*\d+\s*\|?\s*$/.test(l));
+  const pipeLines = lines.filter((l, i) => i !== hIdx && hasSegments(l) && !/^\s*\d+\s*[|—–]?\s*$/.test(l));
   if (pipeLines.length > 0) {
     for (const l of pipeLines) {
       if (HASH.test(l) || /^\s*tgl|tanggal/i.test(l)) continue;
-      const parts = l.split("|").map((p) => p.trim());
+      const parts = splitSegments(l);
       const customer = stripNum(parts[0]);
       if (!customer) continue;
       customers.push({ customer, tujuan: normalizeTujuan(parts[1] ?? ""), goal: parts[2] ?? "" });
@@ -84,11 +114,11 @@ export function parseAmPlan(body: string): AmPlanResult {
   return { tanggal, customers };
 }
 
-export interface ReportItem { customer: string; hasil: string; next_action: string }
+export interface ReportItem { customer: string; hasil: string; next_action: string; activity_type: ActivityType | null }
 export interface ReportNote { customer: string | null; reminder_date: string | null; keterangan: string }
 export interface AmReportResult { tanggal: string | null; items: ReportItem[]; notes: ReportNote[] }
 
-const FIELD = /^\s*(hasil(?:nya)?|next|tindak\s*lanjut)\s*:?\s*(.*)$/i;
+const FIELD = /^\s*(hasil(?:nya)?|next|tindak\s*lanjut|tipe|jenis)\s*:?\s*(.*)$/i;
 const NOTE = /^\s*note\s*:?\s*(.+)$/i;
 // bersihkan tanggal dari teks → sisanya keterangan
 function dateMatchText(s: string): string | null {
@@ -129,28 +159,38 @@ export function parseAmReport(body: string): AmReportResult {
     const numbered = /^\s*\d+\s*[.)]/.test(raw);
 
     if (fm && cur && !numbered) {
-      // hasil:/next: untuk customer berjalan
-      const key = fm[1].toLowerCase().startsWith("next") || fm[1].toLowerCase().startsWith("tindak") ? "next" : "hasil";
-      if (key === "next") cur.next_action = (cur.next_action ? cur.next_action + " " : "") + fm[2].trim();
-      else cur.hasil = (cur.hasil ? cur.hasil + " " : "") + fm[2].trim();
+      // hasil:/next:/tipe: untuk customer berjalan
+      const label = fm[1].toLowerCase();
+      if (label.startsWith("tipe") || label.startsWith("jenis")) {
+        cur.activity_type = normalizeActivityType(fm[2]) ?? cur.activity_type;
+      } else if (label.startsWith("next") || label.startsWith("tindak")) {
+        cur.next_action = (cur.next_action ? cur.next_action + " " : "") + fm[2].trim();
+      } else {
+        cur.hasil = (cur.hasil ? cur.hasil + " " : "") + fm[2].trim();
+      }
       continue;
     }
 
     // baris customer baru (numbered, atau non-field saat butuh customer baru)
     if (numbered || !cur || (cur.hasil && !fm)) {
       const line = stripNum(raw);
-      // inline pipe: "Customer | hasil… | next…"
-      if (line.includes("|")) {
-        const parts = line.split("|").map((p) => p.trim());
+      // inline bersegmen: "Customer | hasil… | next…" atau "Customer — hasil — next [— tipe]"
+      if (hasSegments(line)) {
+        const parts = splitSegments(line);
         push();
-        cur = { customer: parts[0], hasil: parts[1] ?? "", next_action: parts[2] ?? "" };
+        cur = {
+          customer: parts[0],
+          hasil: parts[1] ?? "",
+          next_action: parts[2] ?? "",
+          activity_type: normalizeActivityType(parts[3]),
+        };
         // bersihkan label "hasil:"/"next:" bila ada di parts
         cur.hasil = cur.hasil.replace(FIELD, "$2").trim();
         cur.next_action = cur.next_action.replace(FIELD, "$2").trim();
         continue;
       }
       push();
-      cur = { customer: line, hasil: "", next_action: "" };
+      cur = { customer: line, hasil: "", next_action: "", activity_type: null };
       continue;
     }
 
