@@ -271,5 +271,5 @@ export async function getAssetHistory(assetId: string): Promise<HistoryEntry[]> 
     });
   }
   entries.sort((x, y) => (x.sortKey < y.sortKey ? 1 : x.sortKey > y.sortKey ? -1 : 0));
-  return entries.map(({ sortKey, ...rest }) => rest);
+  return entries.map((e) => ({ kind: e.kind, date: e.date, user_name: e.user_name, detail: e.detail }));
 }
