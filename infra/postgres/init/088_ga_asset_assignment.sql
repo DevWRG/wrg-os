@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS ga_asset_assignments (
   department    text,
   assigned_date date NOT NULL DEFAULT CURRENT_DATE,
   returned_date date,
+  returned_at   timestamptz,
   notes         text,
   created_at    timestamptz NOT NULL DEFAULT now()
 );
@@ -54,5 +55,7 @@ CREATE INDEX IF NOT EXISTS ga_asset_transfers_date_idx  ON ga_asset_transfers (t
 
 COMMENT ON TABLE ga_asset_assignments IS
   'F133 — histori assign/return aset. HANYA tercatat kalau PIC user terdaftar (user_id NOT NULL) — assign via nama bebas yg tak match tercermin di ga_assets.pic_name_override saja, tanpa baris di sini.';
+COMMENT ON COLUMN ga_asset_assignments.returned_at IS
+  'Timestamp asli kapan return terjadi (beda dari returned_date yg cuma tanggal) — dibutuhkan getAssetHistory() utk urutkan assign/return/transfer BENAR-BENAR kronologis kalau >1 event jatuh di hari kalender yang sama.';
 COMMENT ON TABLE ga_asset_transfers IS
   'F133 — histori transfer PIC/lokasi. to_user_id WAJIB user terdaftar (beda dari assign yg punya fallback free-text) — simplifikasi sengaja drpd source gais yg izinkan free-text di transfer juga.';

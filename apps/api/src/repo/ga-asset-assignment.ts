@@ -138,7 +138,10 @@ export async function returnAsset(assetId: string, input: ReturnInput): Promise<
   if (active.length > 1) return { ok: false, error: "lebih dari 1 assignment aktif (kategori shared) — sebutkan assignment_id atau user_id" };
 
   const returnedDate = input.returned_date ?? wibToday();
-  await sql`UPDATE ga_asset_assignments SET returned_date = ${returnedDate}, notes = COALESCE(${input.notes ?? null}, notes) WHERE id = ${active[0].id}`;
+  // returned_at (timestamptz, beda dari returned_date yg cuma tanggal) —
+  // dipakai getAssetHistory() utk urutkan kronologis SUNGGUHAN kalau ada
+  // event lain (assign/transfer) di hari kalender yang sama.
+  await sql`UPDATE ga_asset_assignments SET returned_date = ${returnedDate}, returned_at = now(), notes = COALESCE(${input.notes ?? null}, notes) WHERE id = ${active[0].id}`;
 
   // Recompute cache ga_assets: kalau masih ada assignment aktif lain (kategori shared), pakai yg paling baru; kalau tak ada, kosongkan.
   const remaining = await sql`
@@ -215,18 +218,23 @@ export interface HistoryEntry {
   detail: string | null;
 }
 
+// sortKey internal-only (timestamp asli event, BUKAN cuma tanggal kalender)
+// — dibuang sebelum return, cuma dipakai buat urutkan.
+type HistoryEntryInternal = HistoryEntry & { sortKey: string };
+
 export async function getAssetHistory(assetId: string): Promise<HistoryEntry[]> {
   const sql = db();
   const assigns = await sql`
     SELECT a.assigned_date::text AS assigned_date, a.returned_date::text AS returned_date,
-           u.name AS user_name, a.department, a.created_at
+           a.returned_at::text AS returned_at,
+           u.name AS user_name, a.department, a.created_at::text AS created_at
     FROM ga_asset_assignments a JOIN app_user u ON u.id = a.user_id
     WHERE a.asset_id = ${assetId}
     ORDER BY a.created_at DESC
   `;
   const transfers = await sql`
     SELECT t.transfer_date::text AS transfer_date, t.reason, t.from_location, t.to_location,
-           u.name AS to_user_name, fu.name AS from_user_name, t.created_at
+           u.name AS to_user_name, fu.name AS from_user_name, t.created_at::text AS created_at
     FROM ga_asset_transfers t
     JOIN app_user u ON u.id = t.to_user_id
     LEFT JOIN app_user fu ON fu.id = t.from_user_id
@@ -234,17 +242,34 @@ export async function getAssetHistory(assetId: string): Promise<HistoryEntry[]> 
     ORDER BY t.created_at DESC
   `;
 
-  const entries: HistoryEntry[] = [];
+  // Urutkan pakai timestamp ASLI (created_at/returned_at), bukan cuma tanggal
+  // kalender — tanpa ini, assign+return+transfer yg jatuh di hari yang sama
+  // (lumrah kalau staf GA proses beberapa mutasi aset sekaligus) ke-scramble:
+  // stable sort cuma pertahankan urutan concat (semua assign/return dulu,
+  // baru transfer), BUKAN urutan waktu sungguhan.
+  const entries: HistoryEntryInternal[] = [];
   for (const a of assigns) {
-    entries.push({ kind: "assign", date: String(a.assigned_date), user_name: a.user_name ? String(a.user_name) : null, detail: a.department ? String(a.department) : null });
+    entries.push({
+      kind: "assign", date: String(a.assigned_date), sortKey: String(a.created_at),
+      user_name: a.user_name ? String(a.user_name) : null, detail: a.department ? String(a.department) : null,
+    });
     if (a.returned_date) {
-      entries.push({ kind: "return", date: String(a.returned_date), user_name: a.user_name ? String(a.user_name) : null, detail: null });
+      entries.push({
+        kind: "return", date: String(a.returned_date),
+        // returned_at bisa NULL utk baris lama (sebelum kolom ini ada) —
+        // fallback ke created_at (assign-nya) drpd kosong.
+        sortKey: a.returned_at ? String(a.returned_at) : String(a.created_at),
+        user_name: a.user_name ? String(a.user_name) : null, detail: null,
+      });
     }
   }
   for (const t of transfers) {
     const detail = [t.from_user_name ? `dari ${t.from_user_name}` : null, t.reason ? String(t.reason) : null].filter(Boolean).join(" — ") || null;
-    entries.push({ kind: "transfer", date: String(t.transfer_date), user_name: t.to_user_name ? String(t.to_user_name) : null, detail });
+    entries.push({
+      kind: "transfer", date: String(t.transfer_date), sortKey: String(t.created_at),
+      user_name: t.to_user_name ? String(t.to_user_name) : null, detail,
+    });
   }
-  entries.sort((x, y) => (x.date < y.date ? 1 : x.date > y.date ? -1 : 0));
-  return entries;
+  entries.sort((x, y) => (x.sortKey < y.sortKey ? 1 : x.sortKey > y.sortKey ? -1 : 0));
+  return entries.map(({ sortKey, ...rest }) => rest);
 }
