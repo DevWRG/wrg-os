@@ -3298,6 +3298,21 @@ app.get("/ga-assets/:id", async (c) => {
   return c.json(row);
 });
 
+// Validasi enum di route SEBELUM hit DB — tanpa ini, nilai di luar CHECK
+// constraint (086_ga_asset_master.sql) bocor jadi HTTP 500 + nama constraint
+// Postgres mentah (app.onError gak reformat). Sama pola temuan F53.
+const GA_ASSET_CONDITIONS = ["baik", "rusak", "kurang_layak_pakai"];
+const GA_ASSET_STATUSES = ["active", "in_maintenance", "damaged", "lost", "disposed"];
+function validateGaAssetEnums(body: { condition?: unknown; status?: unknown }): string | null {
+  if (body.condition != null && !GA_ASSET_CONDITIONS.includes(body.condition as string)) {
+    return `condition harus salah satu dari: ${GA_ASSET_CONDITIONS.join(", ")}`;
+  }
+  if (body.status != null && !GA_ASSET_STATUSES.includes(body.status as string)) {
+    return `status harus salah satu dari: ${GA_ASSET_STATUSES.join(", ")}`;
+  }
+  return null;
+}
+
 app.post("/ga-assets", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   let body: {
@@ -3312,6 +3327,8 @@ app.post("/ga-assets", async (c) => {
     return c.json({ error: "invalid JSON body" }, 400);
   }
   if (!body.nama || !body.category_id) return c.json({ error: "nama & category_id wajib diisi" }, 400);
+  const enumError = validateGaAssetEnums(body);
+  if (enumError) return c.json({ error: enumError }, 400);
   const r = await createGaAsset(body as Parameters<typeof createGaAsset>[0]);
   return c.json(r, "error" in r ? 400 : 201);
 });
@@ -3324,6 +3341,8 @@ app.patch("/ga-assets/:id", async (c) => {
   } catch {
     return c.json({ error: "invalid JSON body" }, 400);
   }
+  const enumError = validateGaAssetEnums(body);
+  if (enumError) return c.json({ error: enumError }, 400);
   const r = await updateGaAsset(c.req.param("id"), body);
   return c.json(r, r.ok ? 200 : 400);
 });
