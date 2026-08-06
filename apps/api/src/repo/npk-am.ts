@@ -16,20 +16,27 @@
 import { db } from "../db.js";
 import { joinAmFromSalesman } from "./salesman-am.js";
 import {
-  calcNPK, ageCutoff, elapsedFraction, ASPECT_ORDER, ASPECT_LABEL, DEFAULT_BOBOT,
+  ageCutoff, elapsedFraction, ASPECT_ORDER, ASPECT_LABEL, DEFAULT_BOBOT,
   type AspectInput, type AspectKey, type NPKResult,
 } from "../lib/npk-calc.js";
+import { calcNpkSk } from "../lib/npk-sk.js";
+import {
+  isGolongan, targetCustomerSemester, targetNewCustomerSemester, type Golongan,
+} from "../lib/npk-golongan.js";
 import { semesterRange, type Period } from "./npk.js";
 import type { DataScope } from "./access-scope.js";
 import { isAmRole } from "./access-scope.js";
 
-export interface AmSubject { am_id: string; nama: string; panggilan: string | null; cabang: string | null }
+export interface AmSubject {
+  am_id: string; nama: string; panggilan: string | null; cabang: string | null;
+  golongan: Golongan | null; // SK Pasal 2.1 — penentu target customer & new-customer
+}
 
 // Roster AM yang di-skor: master_user aktif ber-role AM. Sumber yang sama dipakai
 // scope (access-scope.isAmRole) supaya "siapa yang di-skor" = "siapa yang di-scope".
 export async function listAmSubjects(sql: ReturnType<typeof db>): Promise<AmSubject[]> {
-  const rows = await sql<{ am_id: string; nama: string | null; panggilan: string | null; cabang: string | null; role: string | null }[]>`
-    SELECT am_id, nama, panggilan, NULLIF(cabang,'') AS cabang, role
+  const rows = await sql<{ am_id: string; nama: string | null; panggilan: string | null; cabang: string | null; role: string | null; golongan: string | null }[]>`
+    SELECT am_id, nama, panggilan, NULLIF(cabang,'') AS cabang, role, golongan
     FROM master_user WHERE aktif IS NOT FALSE AND am_id IS NOT NULL
     ORDER BY nama NULLS LAST, am_id`;
   return rows
@@ -39,6 +46,7 @@ export async function listAmSubjects(sql: ReturnType<typeof db>): Promise<AmSubj
       nama: r.nama || String(r.am_id),
       panggilan: r.panggilan ? String(r.panggilan) : null,
       cabang: r.cabang ? String(r.cabang) : null,
+      golongan: isGolongan(r.golongan) ? r.golongan : null,
     }));
 }
 
@@ -90,8 +98,15 @@ async function gatherAmInput(
   // Revenue DI-PRO-RATA ke porsi semester yang sudah berjalan (FLOW — actual juga
   // baru terkumpul sampai hari ini). Pola identik jalur HoD.
   input.revenue_target = revTargetSemester * elapsed;
+
+  // Target customer: SK Pasal 3.1 baris 2 bilang "target per level golongan", jadi
+  // GOLONGAN yang kanonik (Pasal 2.1: AM-0 10 · AM-1 20 · AM-2 28 · AM-3 35 · AM-4 45).
+  // `sales_target_am.target_customer` tetap dihormati sebagai OVERRIDE manual bila
+  // diisi >0 — dipakai untuk AM yang targetnya memang disepakati beda dari levelnya.
   // Customer TIDAK di-pro-rata (STOCK, front-loaded) — lihat catatan panjang di repo/npk.ts.
-  const custTargetSemester = Number(tgt?.target_customer ?? 0) / 2;
+  const custOverride = Number(tgt?.target_customer ?? 0);
+  const custDariGolongan = targetCustomerSemester(am.golongan);
+  const custTargetSemester = custOverride > 0 ? custOverride : (custDariGolongan ?? 0);
   input.customer_target = custTargetSemester;
 
   // ── AR: outstanding OPEN milik AM ini + proxy >45 hari dari umur `tanggal` ──
@@ -133,10 +148,15 @@ async function gatherAmInput(
     WHERE sp.am_id = ${am.am_id} AND sp.tanggal BETWEEN ${from} AND ${to}`;
   const planTotal = Number(plan?.total ?? 0);
   const custPlanned = Number(plan?.cust_planned ?? 0);
+  const custNew = Number(plan?.cust_new ?? 0);
   const ratio10 = (num: number, den: number): number => (den > 0 ? Math.min(10, (num / den) * 10) : 0);
   input.call_coverage_pct = ratio10(Number(plan?.reported ?? 0), planTotal);
   input.area_coverage_pct = ratio10(Number(plan?.cust_visited ?? 0), custPlanned);
-  input.new_cust_rate_pct = ratio10(Number(plan?.cust_new ?? 0), custPlanned);
+  // New Customer Rate: penyebutnya TARGET per golongan (SK Tabel 6: Jr=1, Sr=2,
+  // Region=3 per bulan → ×6 utk semester), bukan jumlah faskes yang kebetulan
+  // direncanakan. Tanpa golongan, jatuh balik ke penyebut lama (proxy).
+  const targetNew = targetNewCustomerSemester(am.golongan);
+  input.new_cust_rate_pct = targetNew ? ratio10(custNew, targetNew) : ratio10(custNew, custPlanned);
   input.timeliness_pct = planTotal > 0 ? (Number(plan?.on_time ?? 0) / planTotal) * 100 : 0;
 
   // Aspek butuh denominator untuk bisa di-skor; tanpa itu → available:false.
@@ -155,6 +175,8 @@ async function gatherAmInput(
       am_id: am.am_id,
       nama: am.nama,
       cabang: am.cabang,
+      golongan: am.golongan,
+      scoring: "sk_tabel_3_2",   // penanda metode: tabel berjenjang SK, bukan linier
       range: { from, to },
       elapsed_pct: Math.round(elapsed * 1000) / 10,
       revenue_actual: input.revenue_actual,
@@ -162,9 +184,12 @@ async function gatherAmInput(
       revenue_target_semester: revTargetSemester,       // target semester PENUH (audit SK)
       revenue_target_prorata: input.revenue_target,     // yang dipakai men-skor
       customer_active_count: input.customer_active_count,
-      customer_target_year: Number(tgt?.target_customer ?? 0),
       customer_target_semester: custTargetSemester,     // dipakai men-skor apa adanya (stock)
+      customer_target_sumber: custOverride > 0 ? "override_sales_target_am" : (custDariGolongan ? "golongan_sk_2_1" : "tidak_ada"),
+      customer_target_golongan: custDariGolongan,
+      customer_target_override: custOverride > 0 ? custOverride : null,
       customer_target_missing: input.customer_target <= 0,
+      crm_new_customer_target: targetNew,
       ar_total: input.ar_total,
       ar_over_45d: input.ar_over_45d,
       ar_over45_proxy: true,                            // umur `tanggal`, bukan due_date
@@ -191,7 +216,10 @@ export async function computeNpkAm(opts: { year: number; period: Period; now?: D
   let computed = 0;
   for (const am of subjects) {
     const g = await gatherAmInput(sql, am, year, period, now);
-    const res: NPKResult = calcNPK(g.input, DEFAULT_BOBOT, g.avail);
+    // Tabel berjenjang SK Pasal 3.2 — BUKAN calcNPK() linier yang dipakai jalur HoD.
+    // Konsekuensi yang disengaja: selama jalur HoD belum ikut pindah, angka NPK AM
+    // dan NPK HoD memakai metode berbeda dan tidak sebanding. Lihat lib/npk-sk.ts.
+    const res: NPKResult = calcNpkSk(g.input, g.avail);
     await sql`
       INSERT INTO npk_am_score_semester (am_id, year, period, npk, predikat, computed_from, computed_at)
       VALUES (${am.am_id}, ${year}, ${period}, ${res.npk}, ${res.predikat}, ${sql.json(g.meta as Parameters<typeof sql.json>[0])}, now())

@@ -81,7 +81,7 @@ export default async function NpkAmPage({
         title={`Matrix NPK AM · ${data?.rows.length ?? 0} AM × 7 Aspek`}
         subjectLabel="AM"
         computeHint="POST /npk/am/compute"
-        naNote="Untuk AM: KSO/GP/Coaching belum punya sumber data; Revenue & Customer juga N/A selama target AM-nya belum diisi di Sales → Target."
+        naNote="Untuk AM: KSO/GP/Coaching belum punya sumber data; Revenue N/A selama target AM belum diisi di Sales → Target, dan Customer N/A selama golongan AM belum di-set di AM → Cabang. Skor per aspek memakai tabel berjenjang SK Pasal 3.2 (poin maks tiap aspek = bobotnya), berbeda dari NPK HoD yang masih memakai rasio linier — jangan bandingkan angkanya lintas menu."
       />
     </div>
   );

@@ -96,7 +96,8 @@ import { listCoachingNotes } from "./repo/coaching.js";
 import { getLatestCoachingNotes, computePeopleAnalytics } from "./repo/people.js";
 import { createVisit, getVisit, listVisits, visitKpi, visitSummary } from "./repo/visit.js";
 import { upsertDailyTodo, listTodos, markTodoReported } from "./repo/todo.js";
-import { upsertUser, listUsers, upsertTerritory, listTerritories, updateUserCabang } from "./repo/master.js";
+import { upsertUser, listUsers, upsertTerritory, listTerritories, updateUserCabang, updateUserGolongan } from "./repo/master.js";
+import { GOLONGAN, GOLONGAN_LABEL, TARGET_CUSTOMER, isGolongan, targetCustomerSemester } from "./lib/npk-golongan.js";
 import { listTargets, upsertTargets, listCabangTargets, upsertCabangTargets, listAmTargets, upsertAmTargets, listAmCandidates, deleteAmTarget } from "./repo/sales-target.js";
 import {
   upsertHoliday,
@@ -427,17 +428,38 @@ app.get("/admin/am-cabang", async (c) => {
   const [users, territory] = await Promise.all([listUsers({ role: "AM" }), listTerritory()]);
   const cabangOptions = [...new Set(territory.map((t) => t.cabang))].sort((a, b) => a.localeCompare(b));
   return c.json({
-    rows: users.map((u) => ({ am_id: u.am_id, nama: u.nama, panggilan: u.panggilan, cabang: u.cabang, aktif: u.aktif })),
+    rows: users.map((u) => ({
+      am_id: u.am_id, nama: u.nama, panggilan: u.panggilan, cabang: u.cabang, aktif: u.aktif,
+      golongan: u.golongan,
+      // Target customer turunan golongan (SK Pasal 2.1) — ditampilkan sbg petunjuk
+      // di UI supaya jelas angka mana yang dipakai aspek NPK Customer.
+      target_customer: targetCustomerSemester(u.golongan),
+    })),
     cabang_options: cabangOptions,
+    golongan_options: GOLONGAN.map((g) => ({ key: g, label: GOLONGAN_LABEL[g], target_customer: TARGET_CUSTOMER[g] })),
   });
 });
+// PUT menerima `cabang` dan/atau `golongan` — field yang TIDAK dikirim tidak
+// disentuh (undefined ≠ null; null berarti "kosongkan").
 app.put("/admin/am-cabang", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let b: { am_id?: string; cabang?: string | null } = {};
+  let b: { am_id?: string; cabang?: string | null; golongan?: string | null } = {};
   try { b = await c.req.json(); } catch { /* opsional */ }
   if (!b.am_id) return c.json({ error: "am_id wajib" }, 400);
-  const r = await updateUserCabang(String(b.am_id), b.cabang ?? null);
-  return r.updated ? c.json(r) : c.json({ error: "AM tak ditemukan" }, 404);
+  const amId = String(b.am_id);
+  let updated = false;
+  if (b.cabang !== undefined) {
+    updated = (await updateUserCabang(amId, b.cabang ?? null)).updated || updated;
+  }
+  if (b.golongan !== undefined) {
+    const g = b.golongan === null || b.golongan === "" ? null : String(b.golongan);
+    if (g !== null && !isGolongan(g)) return c.json({ error: "golongan tidak valid" }, 400);
+    updated = (await updateUserGolongan(amId, g)).updated || updated;
+  }
+  if (b.cabang === undefined && b.golongan === undefined) {
+    return c.json({ error: "tak ada field yang diubah" }, 400);
+  }
+  return updated ? c.json({ updated }) : c.json({ error: "AM tak ditemukan" }, 404);
 });
 
 // Set/reset password. body {password?|generate, force?, send_wa?}. Return password (sekali) + status WA.
