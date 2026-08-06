@@ -17,6 +17,7 @@ import {
   SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
+  useSidebar,
 } from "@/components/ui/sidebar";
 import { SidebarUser } from "@/components/layout/sidebar-user";
 
@@ -26,6 +27,8 @@ import { SidebarUser } from "@/components/layout/sidebar-user";
 // login) semua tampil (non-breaking). Grup tanpa item disembunyikan.
 export function AppSidebar({ me }: { me: SessionUser | null }) {
   const pathname = usePathname();
+  // Mobile: tutup drawer tiap navigasi (klik menu / logo). No-op di desktop.
+  const { setOpenMobile } = useSidebar();
 
   const nav = NAV
     .map((g) => ({ ...g, items: g.items.filter((it) => navVisible(me, it)) }))
@@ -36,7 +39,7 @@ export function AppSidebar({ me }: { me: SessionUser | null }) {
       <SidebarHeader>
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton size="lg" render={<Link href="/" />} className="overflow-hidden">
+            <SidebarMenuButton size="lg" onClick={() => setOpenMobile(false)} render={<Link href="/" />} className="overflow-hidden">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src="/brand/wahana-lifeline-color.png" alt="Wahana Lifeline" className="h-8 w-auto max-w-none object-contain object-left dark:hidden" />
               {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -58,6 +61,7 @@ export function AppSidebar({ me }: { me: SessionUser | null }) {
                       isActive={item.exact ? pathname === item.url : pathname === item.url || pathname.startsWith(`${item.url}/`)}
                       tooltip={item.title}
                       className="rounded-md focus-visible:ring-0 data-active:bg-primary/10 data-active:font-medium data-active:text-primary data-active:shadow-[inset_3px_0_0_var(--primary)]"
+                      onClick={() => setOpenMobile(false)}
                       render={<Link href={item.url} />}
                     >
                       <item.icon />
