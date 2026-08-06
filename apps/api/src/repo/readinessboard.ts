@@ -1,5 +1,11 @@
 import { db } from "../db.js";
 
+// postgres.js parse kolom date/timestamptz jadi objek Date — String(dateObj)
+// hasilnya verbose ("Wed Aug 05 2026 …"), bukan ISO. new Date(x).toISOString()
+// aman dipanggil baik x sudah Date maupun masih string dari driver.
+const toIsoTs = (x: unknown): string => new Date(x as string | Date).toISOString();
+const toIsoDate = (x: unknown): string => toIsoTs(x).slice(0, 10);
+
 // F8 — Teknisi Readiness Board (AFTERSALES). Install scheduling + capacity +
 // post-install reports. teknisi_capacity SELF-CONTAINED (nama dummy, seed via
 // scripts/db/seed-dev-full.sql — TIDAK ada create/edit di F8 ini, sama
@@ -147,11 +153,11 @@ function mapSchedule(r: Record<string, unknown>): InstallScheduleRow {
     customer_name: String(r.customer_name),
     teknisi_id: r.teknisi_id ? String(r.teknisi_id) : null,
     teknisi_nama: r.teknisi_nama ? String(r.teknisi_nama) : null,
-    scheduled_date: String(r.scheduled_date),
+    scheduled_date: toIsoDate(r.scheduled_date),
     status: String(r.status),
     note: r.note ? String(r.note) : null,
-    created_at: String(r.created_at),
-    updated_at: String(r.updated_at),
+    created_at: toIsoTs(r.created_at),
+    updated_at: toIsoTs(r.updated_at),
   };
 }
 
@@ -244,7 +250,7 @@ function mapReport(r: Record<string, unknown>): TeknisiReportRow {
     group_jid: r.group_jid ? String(r.group_jid) : null,
     wa_message_id: r.wa_message_id ? String(r.wa_message_id) : null,
     installation_unit_id: r.installation_unit_id ? String(r.installation_unit_id) : null,
-    created_at: String(r.created_at),
+    created_at: toIsoTs(r.created_at),
   };
 }
 
