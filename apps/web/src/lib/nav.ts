@@ -10,6 +10,7 @@ import {
   Bell, MapPin, ListChecks, Swords, CalendarOff, CalendarDays, CalendarRange,
   Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, Tags, SlidersHorizontal,
   Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, BookOpen, Calculator,
+  Wallet,
   type LucideIcon,
 } from "lucide-react";
 
@@ -152,6 +153,16 @@ export const NAV: NavGroup[] = [
       { title: "Shipments", url: "/shipments", icon: Truck },
       { title: "Suppliers", url: "/suppliers", icon: Factory },
       { title: "HITL Review", url: "/hitl", icon: ClipboardCheck },
+    ],
+  },
+  {
+    // Domain GA (General Affairs) per arahan Direktur soal domain grouping
+    // sidebar (sama pola Aftersales/Shipping/Purchasing). F138 standalone dari
+    // dev, tidak terhubung dana_ops (F51). Role min Karyawan — semua login
+    // boleh mengajukan; approve/reject sendiri digate di BFF (fund-request-access.ts).
+    label: "GA",
+    items: [
+      { title: "Pengajuan Dana Operasional", url: "/fund-requests", icon: Wallet, badge: "NEW" },
     ],
   },
   {
