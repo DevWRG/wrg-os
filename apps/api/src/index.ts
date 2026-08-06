@@ -3200,6 +3200,9 @@ app.post("/asset-tags", async (c) => {
     return c.json({ error: "invalid JSON body" }, 400);
   }
   if (!body.kode || !body.nama) return c.json({ error: "kode & nama wajib diisi" }, 400);
+  if (body.jenis_kepemilikan != null && !["aset", "inventaris"].includes(body.jenis_kepemilikan)) {
+    return c.json({ error: "jenis_kepemilikan harus 'aset' atau 'inventaris'" }, 400);
+  }
   const r = await createAssetTag({
     kode: body.kode,
     nama: body.nama,
@@ -3218,6 +3221,9 @@ app.patch("/asset-tags/:id", async (c) => {
     body = await c.req.json();
   } catch {
     return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (body.jenis_kepemilikan != null && !["aset", "inventaris"].includes(body.jenis_kepemilikan)) {
+    return c.json({ error: "jenis_kepemilikan harus 'aset' atau 'inventaris'" }, 400);
   }
   const r = await updateAssetTag(c.req.param("id"), body);
   return c.json(r, r.ok ? 200 : 400);
