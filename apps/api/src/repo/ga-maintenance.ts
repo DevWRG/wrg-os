@@ -362,7 +362,11 @@ export async function runMaintenanceAlerts(): Promise<{ alerts: number }> {
   });
   const msg = ["🔧 *Maintenance GA — due dalam " + days + " hari*", ...lines].join("\n");
   const gw = await sendViaWaGateway(target, msg);
-  return { alerts: gw.sent ? rows.length : 0 };
+  // gw.sent juga true di mode stub & dry-run (lihat wasend.ts) — tanpa
+  // gerbang ini return value ngaku "N alert terkirim" walau WA-nya gak
+  // pernah beneran keluar (cron ini gak punya penanda persisten spt F24/
+  // F45/F50, tapi return value-nya tetap dipakai log scheduler.ts).
+  return { alerts: gw.sent && !gw.stub && !gw.dryRun ? rows.length : 0 };
 }
 
 // ── Cron: auto-feed BSC KPI Dito (preseden pertama auto-feed

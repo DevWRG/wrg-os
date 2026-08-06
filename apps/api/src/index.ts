@@ -3381,9 +3381,27 @@ app.patch("/ga-vendors/:id", async (c) => {
   } catch {
     return c.json({ error: "invalid JSON body" }, 400);
   }
+  if (body.status != null && !["active", "inactive"].includes(body.status as string)) {
+    return c.json({ error: "status harus 'active' atau 'inactive'" }, 400);
+  }
   const r = await updateVendor(c.req.param("id"), body);
   return c.json(r, r.ok ? 200 : 400);
 });
+
+// Validasi enum/range di route SEBELUM hit DB — tanpa ini nilai di luar CHECK
+// constraint (089_ga_maintenance_tracker.sql) bocor jadi HTTP 500 + nama
+// constraint Postgres mentah (app.onError gak reformat). Sama pola temuan
+// F132/F53.
+function validateGaMaintenance(body: { maint_type?: unknown; recur_months?: unknown }): string | null {
+  if (body.maint_type != null && !["preventive", "repair"].includes(body.maint_type as string)) {
+    return "maint_type harus 'preventive' atau 'repair'";
+  }
+  if (body.recur_months != null) {
+    const n = Number(body.recur_months);
+    if (!Number.isInteger(n) || n < 0 || n > 60) return "recur_months harus bilangan bulat 0-60";
+  }
+  return null;
+}
 
 app.get("/ga-maintenance", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
@@ -3411,6 +3429,8 @@ app.post("/ga-maintenance", async (c) => {
     return c.json({ error: "invalid JSON body" }, 400);
   }
   if (!body.asset_id) return c.json({ error: "asset_id wajib diisi" }, 400);
+  const enumError1 = validateGaMaintenance(body);
+  if (enumError1) return c.json({ error: enumError1 }, 400);
   const r = await createSchedule(body as Parameters<typeof createSchedule>[0]);
   return c.json(r, "error" in r ? 400 : 201);
 });
@@ -3423,6 +3443,8 @@ app.patch("/ga-maintenance/:id", async (c) => {
   } catch {
     return c.json({ error: "invalid JSON body" }, 400);
   }
+  const enumError2 = validateGaMaintenance(body);
+  if (enumError2) return c.json({ error: enumError2 }, 400);
   const r = await updateSchedule(c.req.param("id"), body);
   return c.json(r, r.ok ? 200 : 400);
 });
