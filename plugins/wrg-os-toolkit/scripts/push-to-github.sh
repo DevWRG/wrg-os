@@ -47,6 +47,12 @@ for f in "$PLUGIN_SRC/.claude-plugin/plugin.json" "$TOOLING_SRC"; do
   [ -e "$f" ] || { echo "ERR: sumber tak ada: $f" >&2; exit 1; }
 done
 
+# Versi dibaca dari manifest — JANGAN hardcode (v0.2.0 sempat kirim PR bertajuk v0.1.0
+# padahal plugin.json sudah 0.1.1).
+VERSION="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['version'])" \
+           "$PLUGIN_SRC/.claude-plugin/plugin.json")"
+echo "→ Versi plugin: v$VERSION"
+
 cd "$REPO"
 
 # --- 2. Pengaman working tree ---
@@ -131,7 +137,7 @@ if [ "$APPLY" -eq 0 ]; then
 fi
 
 # --- 5. Commit + push + PR ---
-git commit -m "feat(tooling): index wrg-os-toolkit v0.1.0 Claude plugin
+git commit -m "feat(tooling): index wrg-os-toolkit v$VERSION Claude plugin
 
 - Add state/warp-tooling.json (manifest kanonik buat Warp automation)
 - Mirror plugins/wrg-os-toolkit/ (16 skill cherry-pick dari ECC v2.1.0 MIT)
@@ -154,8 +160,8 @@ if command -v gh >/dev/null 2>&1; then
   gh pr create \
     --base dev \
     --head "$BRANCH" \
-    --title "feat(tooling): index wrg-os-toolkit v0.1.0 Claude plugin" \
-    --body "Indeks plugin \`wrg-os-toolkit\` (16 skill cherry-pick dari ECC v2.1.0, MIT) ke \`state/\` + \`plugins/\`.
+    --title "feat(tooling): index wrg-os-toolkit v$VERSION Claude plugin" \
+    --body "Indeks plugin \`wrg-os-toolkit\` **v$VERSION** (16 skill cherry-pick dari ECC v2.1.0, MIT) ke \`state/\` + \`plugins/\`.
 
 ## Isi
 - \`state/warp-tooling.json\` — manifest Warp (\`wrg-sync\` narik file ini)
