@@ -17,6 +17,7 @@ import {
 } from "./repo/agents.js";
 import { runReminders } from "./repo/reminder.js";
 import { runHodDaily, runMissStreakEscalation } from "./repo/hodreminder.js";
+import { runVisitWeeklyRecap } from "./repo/visitweekly.js";
 import { generateRekap, generateResume } from "./repo/monitor.js";
 import { syncAccurateInvoices, syncSalesOrders, syncDeliveryOrders, syncCustomers } from "./repo/accurateSync.js";
 import { runPlanCheck, runReportCheck } from "./repo/compliance.js";
@@ -87,6 +88,9 @@ export function startScheduler(): ScheduleStatus {
   // Eskalasi kepatuhan (F57): AM miss plan/report N hari-kerja berturut → rekap ke
   // grup HoD. Flag SENDIRI (default off) supaya tak surprise-kirim WA saat deploy.
   const missEscalationEnabled = (process.env.MISS_ESCALATION_ENABLED ?? "false").toLowerCase() === "true";
+  // Rekap kunjungan mingguan (F16): volume kunjungan minggu lalu vs target per AM.
+  // Flag SENDIRI (default off) — sama alasannya: jangan kirim WA tanpa diminta.
+  const visitWeeklyEnabled = (process.env.VISIT_WEEKLY_ENABLED ?? "false").toLowerCase() === "true";
   // accurate-sync (puller invoice, read-only ke API Accurate, tanpa kirim WA)
   // bisa nyala SENDIRI tanpa ikut menyalakan A1-12 / monitor.
   const accurateEnabled = (process.env.ACCURATE_SCHEDULE_ENABLED ?? "false").toLowerCase() === "true";
@@ -353,6 +357,28 @@ export function startScheduler(): ScheduleStatus {
       { timezone },
     );
     live.push(`miss-escalation=${missExpr}`);
+  }
+
+  // Rekap kunjungan mingguan (F16 CRM Fase 1): Senin pagi, capaian MINGGU LALU
+  // vs target 20 kunjungan + 6 prospek baru per AM → grup HoD, sebagai bahan push
+  // sebelum batas weekly submit Senin 12:00. Target grup = VISIT_WEEKLY_WA_TARGET
+  // / HOD_WA_TARGET / REMINDER_WA_TARGET.
+  const visitWeeklyExpr = process.env.VISIT_WEEKLY_CRON ?? "0 8 * * 1";
+  if (visitWeeklyEnabled && cron.validate(visitWeeklyExpr)) {
+    cron.schedule(
+      visitWeeklyExpr,
+      async () => {
+        const startedAt = new Date().toISOString();
+        try {
+          const r = await runVisitWeeklyRecap();
+          console.log(`[scheduler] visit-weekly @ ${startedAt} ${JSON.stringify({ week: r.iso_week, team: r.team, on_track: r.on_track }).slice(0, 200)}`);
+        } catch (e) {
+          console.error(`[scheduler] visit-weekly gagal @ ${startedAt}:`, e);
+        }
+      },
+      { timezone },
+    );
+    live.push(`visit-weekly=${visitWeeklyExpr}`);
   }
 
   // Monitor (port wrg-monitor) — rekap & resume GENERATE-ONLY (tidak kirim WA;

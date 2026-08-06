@@ -19,9 +19,11 @@ melacak yang sudah jalan di tabel `schema_migrations` → cuma apply yang baru.
    - **Contract**: setelah stabil, migrasi terpisah utk drop yg lama.
    → app tidak pernah ketemu kolom hilang/incompatible di tengah deploy.
 4. **Test di lokal dulu**, jangan langsung prod. Lihat §Alur.
-5. **Ke prod = sengaja + backup.** Auto-deploy **alert-only** untuk migrasi
-   (tidak auto-apply). Saat ada file migrasi baru di-merge → owner dapat alert WA
-   → jalankan runner dengan `--backup`.
+5. **Ke prod = otomatis + backup.** Sejak **2026-07-16**, auto-deploy
+   (`scripts/ops/auto-deploy.sh`) **AUTO-APPLY** migrasi pending saat pull dari `main`:
+   `pg_dump` backup dulu ke `~/DevWRG/ops/db-backups/`, baru apply. Tidak perlu apply
+   manual. Escape hatch: set `WRG_DEPLOY_BLOCK_ON_PENDING=1` biar deploy berhenti kalau
+   ada migrasi pending (buat apply manual/terkontrol).
 
 ## Alur kerja
 
@@ -37,12 +39,12 @@ pnpm dev                              # verifikasi app jalan dgn schema baru
 # 3) commit → PR → dev → (promote) main
 git add infra/postgres/init/039_*.sql && git commit -m "feat(db): 039 ..."
 
-# 4) MERGE ke main → auto-deploy ALERT "ada migrasi, apply manual" (TIDAK auto-apply)
+# 4) MERGE ke main → auto-deploy AUTO-APPLY migrasi (pg_dump backup dulu) — sejak 2026-07-16
 
-# 5) PROD (server) — apply sengaja, dgn backup
+# 5) PROD (server) — biasanya OTOMATIS oleh auto-deploy: pull → pg_dump → apply → restart.
+#    Manual cuma kalau perlu (mis. WRG_DEPLOY_BLOCK_ON_PENDING=1 aktif / apply di luar deploy):
 bash scripts/db/migrate.sh --prod --backup
 #    (pg_dump dulu ke ~/DevWRG/ops/db-backups/, lalu apply yg pending)
-#    restart app kalau perlu (biasanya auto-deploy sudah handle rebuild kode)
 ```
 
 ## Runner `scripts/db/migrate.sh`
