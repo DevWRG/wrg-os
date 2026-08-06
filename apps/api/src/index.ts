@@ -3206,6 +3206,17 @@ app.get("/ga-ticket-categories", async (c) => {
   return c.json({ count: categories.length, categories });
 });
 
+// Validasi enum/range di route SEBELUM hit DB — tanpa ini nilai di luar CHECK
+// constraint (092_ga_helpdesk_ticket_system.sql) bocor jadi HTTP 500 + nama
+// constraint Postgres mentah (app.onError gak reformat). Sama pola temuan
+// F132/F53/F137.
+const GA_TICKET_PRIORITIES = ["low", "medium", "high", "critical"];
+function validateGaTicketSlaHours(hours: unknown): string | null {
+  if (hours == null) return null;
+  const n = Number(hours);
+  return Number.isFinite(n) && n > 0 ? null : "sla_hours harus angka > 0";
+}
+
 app.post("/ga-ticket-categories", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   let body: { code?: string; nama?: string; icon?: string; default_sla_hours?: number; default_priority?: string };
@@ -3215,6 +3226,11 @@ app.post("/ga-ticket-categories", async (c) => {
     return c.json({ error: "invalid JSON body" }, 400);
   }
   if (!body.code?.trim() || !body.nama?.trim()) return c.json({ error: "code & nama wajib" }, 400);
+  if (body.default_priority != null && !GA_TICKET_PRIORITIES.includes(body.default_priority)) {
+    return c.json({ error: `default_priority harus salah satu dari: ${GA_TICKET_PRIORITIES.join(", ")}` }, 400);
+  }
+  const slaError = validateGaTicketSlaHours(body.default_sla_hours);
+  if (slaError) return c.json({ error: slaError }, 400);
   const r = await createGaTicketCategory({
     code: body.code, nama: body.nama, icon: body.icon ?? null,
     default_sla_hours: body.default_sla_hours, default_priority: body.default_priority,
@@ -3230,6 +3246,11 @@ app.patch("/ga-ticket-categories/:id", async (c) => {
   } catch {
     return c.json({ error: "invalid JSON body" }, 400);
   }
+  if (body.default_priority != null && !GA_TICKET_PRIORITIES.includes(body.default_priority)) {
+    return c.json({ error: `default_priority harus salah satu dari: ${GA_TICKET_PRIORITIES.join(", ")}` }, 400);
+  }
+  const slaError = validateGaTicketSlaHours(body.default_sla_hours);
+  if (slaError) return c.json({ error: slaError }, 400);
   const r = await updateGaTicketCategory(c.req.param("id"), body);
   return c.json(r, "ok" in r && r.ok === false ? 400 : 200);
 });
@@ -3267,6 +3288,11 @@ app.post("/ga-tickets", async (c) => {
     return c.json({ error: "invalid JSON body" }, 400);
   }
   if (!body.title?.trim() || !body.category_id) return c.json({ error: "title & category_id wajib" }, 400);
+  if (body.priority != null && !GA_TICKET_PRIORITIES.includes(body.priority)) {
+    return c.json({ error: `priority harus salah satu dari: ${GA_TICKET_PRIORITIES.join(", ")}` }, 400);
+  }
+  const slaError2 = validateGaTicketSlaHours(body.sla_hours_override);
+  if (slaError2) return c.json({ error: slaError2 }, 400);
   const r = await createGaTicket({
     title: body.title, description: body.description ?? null, category_id: body.category_id,
     priority: body.priority ?? null, reporter_user_id: body.reporter_user_id ?? null,
