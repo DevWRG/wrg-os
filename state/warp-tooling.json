@@ -1,0 +1,84 @@
+{
+  "schemaVersion": "1.0.0",
+  "lastUpdate": "2026-08-06T15:33:56Z",
+  "purpose": "Warp automation manifest — pointer file dedicated buat Warp shell nge-track Claude Code plugins, MCP servers, dan skill bundles yang dipakai WRG-OS team. Di-pull via wrg-sync bareng dashboard-state.json.",
+  "canonicalSource": "https://github.com/DevWRG/wrg-os/blob/main/state/warp-tooling.json",
+  "readBy": [
+    "Warp shell startup (~/.warp/hooks/wrg-tooling.sh)",
+    "plugins/wrg-os-toolkit/scripts/install-warp.sh",
+    "Cowork bootstrap (via Drive mirror)",
+    "Sprint Dashboard Live Status widget (future)"
+  ],
+  "claudeCodePlugins": [
+    {
+      "id": "wrg-os-toolkit",
+      "displayName": "WRG-OS Toolkit",
+      "version": "0.1.1",
+      "status": "ACTIVE",
+      "installedFrom": "internal (WRG OS/14-Plugins/wrg-os-toolkit/)",
+      "createdDate": "2026-08-06",
+      "owner": "Husni Mubarrak",
+      "license": "MIT",
+      "upstream": {
+        "repo": "https://github.com/affaan-m/ECC",
+        "version": "v2.1.0",
+        "attribution": "Affaan Mustafa",
+        "cherryPickFrom": "281 skills — kept 16 stack-fit"
+      },
+      "installTarget": {
+        "claudeCode": "$HOME/.claude/skills/wrg-os-toolkit",
+        "installMethod": "symlink (atau --copy) ke $HOME/.claude/skills/ — lokasi auto-load, ke-load sebagai wrg-os-toolkit@skills-dir",
+        "alternative": "local marketplace: claude plugin marketplace add <14-Plugins> && claude plugin install wrg-os-toolkit@wrg-os-local",
+        "deprecated": "$HOME/.claude/plugins/wrg-os-toolkit dan $HOME/Library/Application Support/Claude/plugins/ — TIDAK dibaca Claude Code (registry lewat known_marketplaces.json + installed_plugins.json). Dipakai installer v0.1.0, tak pernah mengaktifkan skill."
+      },
+      "driveLocation": "$HOME/Library/CloudStorage/GoogleDrive-development@wahanalifeline.co.id/My Drive/Cowork Workspace/Projects/WRG OS/14-Plugins/wrg-os-toolkit",
+      "repoLocation": "plugins/wrg-os-toolkit (DevWRG/wrg-os) — sumber install buat Warp/Mac mini: install-warp.sh --src=$HOME/wrg-os/plugins/wrg-os-toolkit",
+      "marketplaceManifest": "WRG OS/14-Plugins/.claude-plugin/marketplace.json (name: wrg-os-local)",
+      "packagedFile": "WRG OS/14-Plugins/wrg-os-toolkit-v0.1.1.plugin",
+      "skillCount": 16,
+      "skillCategories": {
+        "framework": ["postgres-patterns", "nextjs-turbopack", "react-patterns"],
+        "api": ["api-design", "api-connector-builder"],
+        "qa": ["tdd-workflow", "verification-loop", "browser-qa"],
+        "delivery": ["delivery-gate"],
+        "security": ["security-review"],
+        "agent": ["agent-architecture-audit", "prompt-optimizer", "cost-aware-llm-pipeline"],
+        "research": ["deep-research"],
+        "docs": ["code-tour", "documentation-lookup"]
+      },
+      "warpIntegration": {
+        "installScript": "plugins/wrg-os-toolkit/scripts/install-warp.sh install",
+        "uninstallScript": "plugins/wrg-os-toolkit/scripts/install-warp.sh uninstall",
+        "verifyCommand": "claude plugin list | grep wrg-os-toolkit   # expect wrg-os-toolkit@skills-dir",
+        "reloadTrigger": "sesi Claude Code CLI berikutnya (tak perlu restart daemon)"
+      },
+      "cherryPickReference": "WRG OS/14-Plugins/wrg-os-toolkit/CHERRY-PICK-REFERENCE.md",
+      "docs": {
+        "README": "WRG OS/14-Plugins/wrg-os-toolkit/README.md",
+        "INSTALL": "WRG OS/14-Plugins/wrg-os-toolkit/INSTALL.md",
+        "CHERRY_PICK_REF": "WRG OS/14-Plugins/wrg-os-toolkit/CHERRY-PICK-REFERENCE.md"
+      }
+    }
+  ],
+  "mcpServers": {
+    "bright-data": {"status": "REGISTERED", "purpose": "scrape/search/proxy"},
+    "bigdata-com": {"status": "REGISTERED-AUTH-PENDING", "purpose": "market/company data"},
+    "cowork": {"status": "ACTIVE", "purpose": "file operations + present_files"},
+    "workspace": {"status": "ACTIVE", "purpose": "bash + web_fetch"},
+    "scheduled-tasks": {"status": "ACTIVE", "purpose": "cron-style task automation"}
+  },
+  "skillBundles": {
+    "installed": ["wrg-os-toolkit v0.1.1"],
+    "considered": {
+      "sourceRepo": "https://github.com/affaan-m/ECC",
+      "candidateNext": ["fastapi-patterns (if AI service grows)", "python-patterns (A1-A12 orchestrator)", "github-ops (release workflow)", "e2e-testing (Playwright fresh)"]
+    }
+  },
+  "_meta": {
+    "generatedBy": "Cowork agent (Husni collaboration 2026-08-06)",
+    "syncCommand": "wrg-sync (pulls this + dashboard-state.json from GitHub state/)",
+    "updateProtocol": "Cowork edit → Drive mirror → Husni review → push via 14-Plugins/wrg-os-toolkit/scripts/push-to-github.sh --apply (PR ke dev) → merge dev→main → Warp git-pull",
+    "auditTrail": "git log state/warp-tooling.json",
+    "dashboardStateNote": "Section tooling.* di dashboard-state.json TIDAK boleh diisi manual — file itu di-regenerate scripts/ops/sync-state.sh tiap 07:00 WIB dari heredoc. Rencana: sync-state.sh merge tooling dari file INI pakai jq (patch belum di-apply per 2026-08-06)."
+  }
+}

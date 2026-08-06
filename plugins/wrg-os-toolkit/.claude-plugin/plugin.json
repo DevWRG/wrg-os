@@ -1,0 +1,27 @@
+{
+  "name": "wrg-os-toolkit",
+  "version": "0.1.1",
+  "description": "Skill bundle for WRG-OS build velocity — Next.js/Postgres patterns, TDD/verification loops, security review, agent audits, and research helpers. Cherry-picked from affaan-m/ECC (MIT) + curated for the WRG-OS monorepo context.",
+  "author": {
+    "name": "Husni Mubarrak",
+    "url": "https://github.com/DevWRG"
+  },
+  "repository": "https://github.com/DevWRG/wrg-os",
+  "license": "MIT",
+  "keywords": [
+    "wrg-os",
+    "claude-code",
+    "cowork",
+    "skills",
+    "nextjs",
+    "postgres",
+    "tdd",
+    "security",
+    "agent-audit",
+    "deep-research"
+  ],
+  "mcpServers": {},
+  "skills": [
+    "./skills/"
+  ]
+}
