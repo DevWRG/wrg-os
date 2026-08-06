@@ -262,8 +262,13 @@ export async function markBukti(
   if (rows[0].status !== "bast") return { ok: false, error: "BAST belum selesai — belum bisa upload bukti" };
 
   const photoPath = opts.photo_path ?? null;
+  // Tanpa foto (pesan teks tanpa lampiran, atau media_path gagal terisi krn
+  // download/OCR gagal di bridge) → tolak eksplisit. Tanpa gerbang ini,
+  // slot kosong TIDAK PERNAH terisi tapi bukti_at/bukti_by tetap ke-stamp —
+  // shipment kelihatan "sudah ada bukti" padahal kedua slot foto tetap kosong.
+  if (!photoPath) return { ok: false, error: "belum ada foto — kirim foto bukti/tanda tangan dulu" };
   const slot = !rows[0].bukti_photo_path ? "bukti_photo_path" : !rows[0].signature_photo_path ? "signature_photo_path" : null;
-  if (photoPath && !slot) return { ok: false, error: "slot bukti & signature sudah terisi keduanya" };
+  if (!slot) return { ok: false, error: "slot bukti & signature sudah terisi keduanya" };
 
   await sql`
     UPDATE shipment_tracking
