@@ -1,15 +1,13 @@
 "use client";
 
-import { useMemo, useState } from "react";
 import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { AlertTriangle, CircleAlert, Info } from "lucide-react";
+import { AlertTriangle } from "lucide-react";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ExportButton } from "@/components/ui/export-button";
 import { Badge } from "@/components/ui/badge";
-import { Label } from "@/components/ui/label";
 
 // ── Tipe (cermin apps/api/src/repo/pricebook.ts) ───────────────────────────
 export interface PricebookItem {
@@ -69,11 +67,16 @@ const liniColor = (l: string) => (l === "IVD" ? C.ivd : C.medical);
 // Tab "Di Luar Keagenan" DILEPAS 1 Agt 2026 (keputusan user): menu ini
 // difokuskan ke produk keagenan saja. Statistik cakupan Accurate-vs-keagenan
 // masih hidup di menu Ringkasan Price Book, jadi tak ada angka yang hilang.
-const TABS = [
-  { key: "katalog", label: "Katalog" },
-  { key: "harga", label: "Harga per Produk" },
-] as const;
-export type PricebookTabKey = (typeof TABS)[number]["key"];
+// Tab "Katalog" (snapshot mentah `product_pricelist` 071) DILEPAS 10 Agt 2026
+// (keputusan user): sejak sumber harga pindah ke file Compilation FINAL, katalog
+// dan harga terpublikasi berisi SKU yang sama — dua tab untuk satu daftar cuma
+// bikin sales ragu mana yang sah dikutip. Yang sah = yang sudah dipublikasikan
+// HoD Business, itulah yang tersisa di sini.
+//
+// Tabel 071 sendiri TIDAK dipensiunkan: dia tetap basis harga yang di-FK oleh
+// `product_pricelist_setup` (073) dan sumber hitung menu Ringkasan Price Book.
+// Yang hilang cuma mukanya.
+export type PricebookTabKey = "harga";
 
 // Muka AM: harga keagenan yang SUDAH dipublikasikan HoD Business dari Setup
 // Harga. Bentuknya dibatasi di query API (/pricebook/published) — kolom hpp &
@@ -98,53 +101,20 @@ export interface PublishedRow {
 export interface HargaPanel { rows: PublishedRow[] }
 
 export function PricebookView({
-  items, harga, initialTab,
+  harga,
 }: {
-  items: PricebookItem[] | null;
   /** Harga keagenan terpublikasi. null/undefined = user tak berhak. */
   harga?: HargaPanel | null;
-  initialTab?: PricebookTabKey;
 }) {
-  const tabs = useMemo(
-    () => TABS.filter((t) => (t.key === "harga" ? !!harga : items !== null)),
-    [harga, items],
-  );
-  const [tab, setTab] = useState<PricebookTabKey>(
-    initialTab && tabs.some((t) => t.key === initialTab) ? initialTab : (tabs[0]?.key ?? "katalog"),
-  );
-  const aktif = tabs.some((t) => t.key === tab) ? tab : (tabs[0]?.key ?? "katalog");
-
-  if (tabs.length === 0) {
-    return <EmptyState title="Data tidak tersedia" description="Pastikan apps/api jalan & DATABASE_URL aktif." />;
-  }
-  // Price book kosong TAPI tab harga ada → jangan blokir seluruh halaman.
-  if (items !== null && items.length === 0 && !harga) {
+  if (!harga) {
     return (
       <EmptyState
-        title="Price book belum diimpor"
-        description="Tabel product_pricelist masih kosong. Jalankan scripts/db/import_pricebook.py --file <CSV dari folder Drive 16-Sales-PriceList-H2-2026> --apply."
+        title="Harga belum tersedia"
+        description="Kamu belum berizin melihat harga terpublikasi, atau apps/api tidak aktif."
       />
     );
   }
-
-  return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap gap-1 rounded-lg border p-1">
-        {tabs.map((t) => (
-          <button
-            key={t.key}
-            onClick={() => setTab(t.key)}
-            className={`rounded-md px-3 py-1.5 text-sm font-medium ${aktif === t.key ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
-
-      {aktif === "katalog" && <KatalogTab items={items ?? []} />}
-      {aktif === "harga" && harga && <HargaTab rows={harga.rows} />}
-    </div>
-  );
+  return <HargaTab rows={harga.rows} />;
 }
 
 // ── Tab: Harga per Produk (bekas menu Pricelist, tabel 043) ────────────────
@@ -391,146 +361,6 @@ function RisikoItem({ judul, isi, tone }: { judul: string; isi: string; tone: "o
     <div className={`rounded-lg border p-3 ${cls}`}>
       <div className="text-sm font-semibold">{judul}</div>
       <p className="text-muted-foreground mt-1 text-xs leading-relaxed">{isi}</p>
-    </div>
-  );
-}
-
-// ── Tab 2: Katalog ─────────────────────────────────────────────────────────
-
-function KatalogTab({ items }: { items: PricebookItem[] }) {
-  const [lini, setLini] = useState<string>("");
-  const [brand, setBrand] = useState<string>("");
-  const [hanyaRisiko, setHanyaRisiko] = useState(false);
-
-  const liniOpts = useMemo(() => [...new Set(items.map((i) => i.lini))].sort(), [items]);
-  const brandOpts = useMemo(() => [...new Set(items.map((i) => i.brand))].sort(), [items]);
-
-  const rows = useMemo(
-    () => items.filter((i) =>
-      (!lini || i.lini === lini) && (!brand || i.brand === brand) && (!hanyaRisiko || i.jumlahHarga > 1)),
-    [items, lini, brand, hanyaRisiko],
-  );
-
-  const columns: DataColumn<PricebookItem>[] = [
-    {
-      id: "nama", header: "Produk", sortable: true,
-      accessor: (r) => `${r.nama} ${r.varian ?? ""} ${r.kode ?? ""}`,
-      cell: (r) => (
-        <div className="min-w-[220px]">
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className="font-medium">{r.nama}</span>
-            {r.varian && <Badge variant="secondary" className="text-[10px]">{r.varian}</Badge>}
-            {r.jumlahHarga > 1 && (
-              <span
-                title="Nama produk ini dipakai beberapa SKU dengan harga berbeda — konfirmasi varian ke admin sebelum keluarkan penawaran."
-                className="inline-flex items-center gap-1 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-900 dark:bg-amber-900/40 dark:text-amber-200"
-              >
-                <CircleAlert className="size-3" /> {r.jumlahHarga} harga
-              </span>
-            )}
-          </div>
-          <div className="text-muted-foreground mt-0.5 text-xs">
-            {r.brand} · {r.kode ?? <span className="text-amber-600">tanpa kode Accurate</span>}
-            {r.kemasan ? ` · ${r.kemasan}` : ""}
-          </div>
-        </div>
-      ),
-    },
-    {
-      id: "kategori", header: "Kategori", sortable: true, accessor: (r) => r.kategori ?? "",
-      cell: (r) => (
-        <span className="inline-flex items-center gap-1 text-sm">
-          {r.kategori ?? "—"}
-          {!r.kategoriVerified && (
-            <span title="Kategori hasil pemetaan kata kunci, belum cocok master WRG. Harga tetap valid." className="size-1.5 rounded-full bg-amber-500" />
-          )}
-        </span>
-      ),
-    },
-    { id: "lini", header: "Lini", sortable: true, accessor: (r) => r.lini },
-    { id: "priceList", header: "Price List", align: "right", sortable: true, accessor: (r) => r.priceList, cell: (r) => fmtRp(r.priceList) },
-    { id: "diskon", header: "Diskon Maks", align: "right", sortable: true, accessor: (r) => r.diskonMaks, cell: (r) => fmtPctDisc(r.diskonMaks) },
-    {
-      id: "nett", header: "Nett Terendah", align: "right", sortable: true, accessor: (r) => r.hargaNett,
-      cell: (r) => <span className="font-semibold">{fmtRp(r.hargaNett)}</span>,
-    },
-    { id: "ppn", header: "Nett + PPN 11%", align: "right", sortable: true, accessor: (r) => r.nettPpn, cell: (r) => fmtRp(r.nettPpn) },
-  ];
-
-  return (
-    <div className="space-y-4">
-      <Card className="border-sky-300/60">
-        <CardContent className="flex gap-2 py-3 text-xs">
-          <Info className="mt-0.5 size-4 shrink-0 text-sky-600" />
-          <div className="space-y-1">
-            <p>
-              <b>Cara pakai.</b> <b>Price List</b> adalah angka pembuka yang ditawarkan ke faskes. <b>Nett Terendah</b>{" "}
-              adalah <b>lantai</b>, bukan target — menutup di bawah angka itu butuh izin Direksi.
-            </p>
-            <p className="text-muted-foreground">
-              PPN 11% dihitung dari harga nett, bukan dari price list. Syaratnya: diskon <b>wajib dicantumkan di faktur
-              pajak</b> — kalau hanya kesepakatan lisan atau cuma muncul di invoice komersial, DPP tidak berkurang secara
-              sah dan WRG menanggung selisihnya.
-            </p>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader className="flex flex-row flex-wrap items-end justify-between gap-3">
-          <div className="flex flex-wrap items-end gap-3">
-            <div className="grid gap-1">
-              <Label className="text-xs">Lini</Label>
-              <select value={lini} onChange={(e) => setLini(e.target.value)} className="border-input bg-background h-9 rounded-md border px-2 text-sm">
-                <option value="">Semua</option>
-                {liniOpts.map((l) => <option key={l} value={l}>{l}</option>)}
-              </select>
-            </div>
-            <div className="grid gap-1">
-              <Label className="text-xs">Brand</Label>
-              <select value={brand} onChange={(e) => setBrand(e.target.value)} className="border-input bg-background h-9 rounded-md border px-2 text-sm">
-                <option value="">Semua ({brandOpts.length})</option>
-                {brandOpts.map((b) => <option key={b} value={b}>{b}</option>)}
-              </select>
-            </div>
-            <label className="flex h-9 items-center gap-2 text-sm">
-              <input type="checkbox" checked={hanyaRisiko} onChange={(e) => setHanyaRisiko(e.target.checked)} className="size-4" />
-              Hanya SKU bernama ganda
-            </label>
-            <span className="text-muted-foreground pb-2 text-xs">{fmtNum(rows.length)} dari {fmtNum(items.length)} SKU</span>
-          </div>
-          <ExportButton
-            filename="price-book-keagenan"
-            data={rows}
-            columns={[
-              { header: "Kode", value: (r: PricebookItem) => r.kode },
-              { header: "Lini", value: (r: PricebookItem) => r.lini },
-              { header: "Brand", value: (r: PricebookItem) => r.brand },
-              { header: "Nama", value: (r: PricebookItem) => r.nama },
-              { header: "Varian", value: (r: PricebookItem) => r.varian },
-              { header: "Kemasan", value: (r: PricebookItem) => r.kemasan },
-              { header: "Kategori", value: (r: PricebookItem) => r.kategori },
-              { header: "Kategori terverifikasi", value: (r: PricebookItem) => (r.kategoriVerified ? "YA" : "BELUM") },
-              { header: "Price List", value: (r: PricebookItem) => r.priceList },
-              { header: "Diskon Maks", value: (r: PricebookItem) => r.diskonMaks },
-              { header: "Harga Nett Terendah", value: (r: PricebookItem) => r.hargaNett },
-              { header: "Nett + PPN 11%", value: (r: PricebookItem) => r.nettPpn },
-              { header: "Jumlah harga utk nama ini", value: (r: PricebookItem) => r.jumlahHarga },
-              { header: "Catatan", value: (r: PricebookItem) => r.catatan },
-            ]}
-          />
-        </CardHeader>
-        <CardContent>
-          <DataTable
-            columns={columns}
-            data={rows}
-            getKey={(r) => String(r.id)}
-            pageSize={25}
-            searchPlaceholder="Cari produk, brand, atau kode…"
-            empty="Tidak ada SKU yang cocok."
-          />
-        </CardContent>
-      </Card>
     </div>
   );
 }

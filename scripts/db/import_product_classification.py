@@ -55,6 +55,10 @@ ap.add_argument("--produk", action="append", default=[], metavar="LABEL=FILE",
 # yang paling gampang tidak disadari (sudah kejadian di importer price book).
 ap.add_argument("--db", required=True, help="nama database target, mis. wrg_os_dev / wrg_os_prod")
 ap.add_argument("--apply", action="store_true", help="commit (default dry-run rollback)")
+ap.add_argument("--daftarkan-master", action="store_true",
+                help="daftarkan Class/Sub Class yang belum ada ke master (nomor melanjutkan "
+                     "yang terbesar di induknya) alih-alih menahan produknya. Pakai hanya "
+                     "kalau sumbernya otoritatif — id yang terbit permanen.")
 ap.add_argument("--review-gabung-nama", action="store_true",
                 help="ikut catat baris yang digabung karena nama sama ke product_code_review")
 args = ap.parse_args()
@@ -129,6 +133,35 @@ LINE_BY_NAMA = {(low(v), k[0]): k[1] for k, v in line.items()}
 CLASS_BY_NAMA = {(low(v), k[0]): k[1] for k, v in klas.items()}
 SUB_BY_NAMA = {(low(v), k[0], k[1]): k[2] for k, v in sub.items()}
 
+# ── auto-daftar node master yang belum ada (--daftarkan-master) ────────────
+# Dipakai saat sumbernya memang otoritatif (mis. file Compilation FINAL) dan
+# menahan produk tanpa kode lebih merugikan daripada menambah node master.
+# Nomornya MELANJUTKAN nomor terbesar di induknya, tidak pernah mengisi lubang:
+# id yang pernah terbit ikut ke kode produk dan menempel permanen di Accurate,
+# jadi mendaur-ulang nomor bekas berarti dua produk berbeda bisa berbagi kode.
+# Semua yang dibuat dicatat & dilaporkan supaya HoD Business bisa memeriksa.
+node_baru = []
+
+
+def daftar_baru(level, kid, cid, nama):
+    nama = clean(nama)
+    if level == "class":
+        urut = max((int(k[1]) for k in klas if k[0] == kid), default=0) + 1
+        if urut > 99:
+            return None
+        nid = f"{urut:02d}"
+        klas[(kid, nid)] = nama
+        CLASS_BY_NAMA[(low(nama), kid)] = nid
+    else:
+        urut = max((int(k[2]) for k in sub if k[0] == kid and k[1] == cid), default=0) + 1
+        if urut > 999:
+            return None
+        nid = f"{urut:03d}"
+        sub[(kid, cid, nid)] = nama
+        SUB_BY_NAMA[(low(nama), kid, cid)] = nid
+    node_baru.append((level, kid, cid, nid, nama))
+    return nid
+
 # ── 2. keadaan DB sekarang (kode yang sudah terbit) ────────────────────────
 def psql_baca(sql):
     res = subprocess.run(["psql", args.db, "-tAF", "\t", "-v", "ON_ERROR_STOP=1", "-c", sql],
@@ -199,10 +232,14 @@ for spec in args.produk:
             d["masalah"] = f"Product Line '{d['line_nama']}' tidak terdaftar di kategori {kid} ({kat[kid]})"
             review.append(d); lap["blocked_line"] += 1; continue
         cid = CLASS_BY_NAMA.get((low(d["class_nama"]), kid))
+        if not cid and args.daftarkan_master and d["class_nama"]:
+            cid = daftar_baru("class", kid, None, d["class_nama"])
         if not cid:
             d["masalah"] = f"Class '{d['class_nama']}' tidak terdaftar di kategori {kid} ({kat[kid]})"
             review.append(d); lap["blocked_class"] += 1; continue
         sid = SUB_BY_NAMA.get((low(d["sub_nama"]), kid, cid))
+        if not sid and args.daftarkan_master and d["sub_nama"]:
+            sid = daftar_baru("sub_class", kid, cid, d["sub_nama"])
         if not sid:
             d["masalah"] = (f"Sub Class '{d['sub_nama']}' tidak terdaftar di Class {cid} "
                             f"({klas[(kid, cid)]}) kategori {kid} ({kat[kid]})")
@@ -271,6 +308,13 @@ if gabung_nama:
     print("       Satu nama bisa dipakai beberapa produk berbeda — perlu diperiksa manusia.")
     for d, ident in gabung_nama[:5]:
         print(f"       {d['sumber']} baris {d['baris']}: {d['nama'][:60]} → {d['kode']}")
+if node_baru:
+    print(f"  NODE MASTER BARU  : {len(node_baru)}  (--daftarkan-master; id permanen, mohon direview HoD Business)")
+    for lvl, kid, cid, nid, nama in node_baru[:15]:
+        induk = f"kategori {kid}" if lvl == "class" else f"kategori {kid} class {cid}"
+        print(f"       {lvl:9} {nid} · {nama[:40]:42} ({induk})")
+    if len(node_baru) > 15:
+        print(f"       … {len(node_baru) - 15} lagi")
 print(f"  DITAHAN (review)  : {len(review)}  "
       f"(kategori {lap['blocked_kategori']} · line {lap['blocked_line']} · "
       f"class {lap['blocked_class']} · sub class {lap['blocked_sub_class']})")
