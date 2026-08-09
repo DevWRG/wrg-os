@@ -131,7 +131,7 @@ function RegionTargets({ year }: { year: number }) {
 }
 
 interface CabangRow { cabang: string; region: string; target: number }
-interface AmRow { am_id: string; nama: string; cabang: string | null; region: string; target: number }
+interface AmRow { am_id: string; nama: string; cabang: string | null; region: string; target: number; target_customer: number }
 
 // ── Section 2: Target per Cabang (tahunan) ──
 function CabangTargets({ year }: { year: number }) {
@@ -217,6 +217,8 @@ function AmTargets({ year }: { year: number }) {
   const [rows, setRows] = useState<AmRow[]>([]);
   const [candidates, setCandidates] = useState<AmCandidate[]>([]);
   const [vals, setVals] = useState<Record<string, string>>({});
+  // Target jumlah customer aktif per AM (078) — dipakai aspek NPK "Customer".
+  const [custVals, setCustVals] = useState<Record<string, string>>({});
   const [addSel, setAddSel] = useState("");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -232,6 +234,7 @@ function AmTargets({ year }: { year: number }) {
       setRows(data.rows ?? []);
       setCandidates(data.candidates ?? []);
       setVals(Object.fromEntries((data.rows ?? []).map((r) => [r.am_id, r.target ? String(r.target) : ""])));
+      setCustVals(Object.fromEntries((data.rows ?? []).map((r) => [r.am_id, r.target_customer ? String(r.target_customer) : ""])));
     } catch { setError("Gagal memuat target AM."); } finally { setLoading(false); }
   }, []);
   // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -261,7 +264,11 @@ function AmTargets({ year }: { year: number }) {
   async function save() {
     setSaving(true); setError(null); setSaved(false);
     try {
-      const entries = rows.map((r) => ({ am_id: r.am_id, target: Number(vals[r.am_id] || 0) }));
+      const entries = rows.map((r) => ({
+        am_id: r.am_id,
+        target: Number(vals[r.am_id] || 0),
+        target_customer: Number(custVals[r.am_id] || 0),
+      }));
       const res = await fetch("/api/sales/targets/am", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ year, entries }) });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "gagal menyimpan");
@@ -269,6 +276,7 @@ function AmTargets({ year }: { year: number }) {
     } catch (err) { setError(String(err instanceof Error ? err.message : err)); } finally { setSaving(false); }
   }
   const total = rows.reduce((a, r) => a + Number(vals[r.am_id] || 0), 0);
+  const totalCust = rows.reduce((a, r) => a + Number(custVals[r.am_id] || 0), 0);
 
   return (
     <Card>
@@ -299,13 +307,14 @@ function AmTargets({ year }: { year: number }) {
           </div>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[36rem] text-sm">
+          <table className="w-full min-w-[44rem] text-sm">
             <thead>
               <tr className="text-muted-foreground text-left text-xs">
                 <th className="py-2 pr-4 font-medium">AM</th>
                 <th className="px-2 py-2 font-medium">Cabang</th>
                 <th className="px-2 py-2 font-medium">Region</th>
                 <th className="px-2 py-2 font-medium">Target {year} (Rp)</th>
+                <th className="px-2 py-2 font-medium">Target Customer <span className="font-normal">(override NPK)</span></th>
                 <th className="px-2 py-2" />
               </tr>
             </thead>
@@ -318,6 +327,15 @@ function AmTargets({ year }: { year: number }) {
                   <td className="px-2 py-2">
                     <CurrencyInput value={vals[r.am_id] ?? ""} onChange={(raw) => { setVals((p) => ({ ...p, [r.am_id]: raw })); setSaved(false); }} placeholder="0" className="bg-card h-8 w-full" />
                   </td>
+                  <td className="px-2 py-2">
+                    {/* Jumlah faskes aktif setahun (bukan Rupiah) → Input angka biasa. */}
+                    <Input
+                      type="number" min={0} inputMode="numeric"
+                      value={custVals[r.am_id] ?? ""}
+                      onChange={(e) => { const v = e.target.value; setCustVals((p) => ({ ...p, [r.am_id]: v })); setSaved(false); }}
+                      placeholder="0" aria-label={`Target customer ${r.nama}`} className="bg-card h-8 w-24"
+                    />
+                  </td>
                   <td className="px-2 py-2 text-right">
                     <Button size="icon-sm" variant="ghost" className="text-danger" aria-label={`Hapus ${r.nama}`} disabled={busy} onClick={() => removeAm(r.am_id)}>
                       <Trash2 />
@@ -326,17 +344,20 @@ function AmTargets({ year }: { year: number }) {
                 </tr>
               ))}
               {rows.length === 0 && !loading && (
-                <tr className="border-t"><td colSpan={5} className="text-muted-foreground py-3 text-xs">Belum ada AM di daftar. Tambah lewat <strong>+ Tambah AM</strong> di kanan atas.</td></tr>
+                <tr className="border-t"><td colSpan={6} className="text-muted-foreground py-3 text-xs">Belum ada AM di daftar. Tambah lewat <strong>+ Tambah AM</strong> di kanan atas.</td></tr>
               )}
               {rows.length > 0 && (
-                <tr className="border-t"><td className="text-muted-foreground py-2 pr-4 text-xs">Total</td><td /><td /><td className="text-muted-foreground px-2 py-2 text-right text-xs tabular-nums">Σ {rp(total)}</td><td /></tr>
+                <tr className="border-t"><td className="text-muted-foreground py-2 pr-4 text-xs">Total</td><td /><td /><td className="text-muted-foreground px-2 py-2 text-right text-xs tabular-nums">Σ {rp(total)}</td><td className="text-muted-foreground px-2 py-2 text-xs tabular-nums">Σ {rp(totalCust)}</td><td /></tr>
               )}
             </tbody>
           </table>
         </div>
         {error && <p className="text-danger text-sm">{error}</p>}
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <span className="text-muted-foreground text-xs">Kelola AM/cabang di <Link href="/users" className="text-primary hover:underline">Users</Link>, <Link href="/am-cabang" className="text-primary hover:underline">AM → Cabang</Link> &amp; <Link href="/watchpoint/territory" className="text-primary hover:underline">Territory</Link>.</span>
+          <span className="text-muted-foreground text-xs">
+            <strong>Target Customer</strong> = <em>override</em> jumlah faskes aktif untuk aspek Customer di <Link href="/npk/am" className="text-primary hover:underline">NPK AM</Link>. Kosongkan saja bila mengikuti SK: targetnya otomatis turun dari golongan AM (Pasal 2.1) yang di-set di <Link href="/am-cabang" className="text-primary hover:underline">AM → Cabang</Link>. Isi di sini hanya untuk AM yang targetnya memang disepakati beda dari levelnya.
+            Kelola AM/cabang di <Link href="/users" className="text-primary hover:underline">Users</Link>, <Link href="/am-cabang" className="text-primary hover:underline">AM → Cabang</Link> &amp; <Link href="/watchpoint/territory" className="text-primary hover:underline">Territory</Link>.
+          </span>
           <SaveButton saving={saving} saved={saved} disabled={loading || rows.length === 0} onClick={save} label="Simpan target AM" />
         </div>
       </CardContent>

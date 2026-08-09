@@ -33,6 +33,7 @@ import { runRefreshMembers } from "./repo/listmembers.js";
 import { runNotifQuota } from "./repo/notifquota.js";
 import { evaluateSalesAlerts } from "./repo/sales-analytics-alert-eval.js";
 import { computeNpk, currentPeriod } from "./repo/npk.js";
+import { computeNpkAm } from "./repo/npk-am.js";
 import { snapshotLastWeek } from "./repo/watchpoint-weekly.js";
 
 // Penjadwal agen in-process (Blueprint v2.3). Default MATI — aktif hanya bila
@@ -702,9 +703,10 @@ export function startScheduler(): ScheduleStatus {
     live.push(`notif-quota=${nqExpr}`);
   }
 
-  // npk-compute (F66) — recompute NPK 8 HoD semester berjalan, harian 01:00 WIB.
-  // Display-only (npk_score_semester + npk_aspect_score), tanpa WA/LLM. Periode
-  // diambil dari currentPeriod() supaya ikut berpindah S1→S2 tanpa ubah cron.
+  // npk-compute (F66) — recompute NPK semester berjalan, harian 01:00 WIB: 8 HoD
+  // (npk_score_semester/…_aspect_score) DAN semua AM (npk_am_*, migrasi 078) dalam
+  // satu job — dua-duanya display-only, tanpa WA/LLM, sumber datanya beririsan.
+  // Periode dari currentPeriod() supaya ikut berpindah S1→S2 tanpa ubah cron.
   const npkExpr = process.env.NPK_COMPUTE_CRON ?? "0 1 * * *";
   if ((enabled || npkComputeEnabled) && cron.validate(npkExpr)) {
     cron.schedule(
@@ -717,7 +719,16 @@ export function startScheduler(): ScheduleStatus {
           const now = wibNow();
           const { year, period } = currentPeriod(now);
           const r = await computeNpk({ year, period, now });
-          console.log(`[scheduler] npk-compute ok @ ${startedAt} ${JSON.stringify(r)}`);
+          // AM dihitung terpisah supaya kegagalan salah satu jalur tidak menelan
+          // hasil jalur satunya (log-nya juga jadi jelas jalur mana yang bermasalah).
+          let am: { computed: number } | { error: string };
+          try {
+            am = await computeNpkAm({ year, period, now });
+          } catch (e) {
+            am = { error: (e as Error).message };
+            console.error(`[scheduler] npk-compute(am) gagal @ ${startedAt}:`, e);
+          }
+          console.log(`[scheduler] npk-compute ok @ ${startedAt} hod=${JSON.stringify(r)} am=${JSON.stringify(am)}`);
         } catch (e) {
           console.error(`[scheduler] npk-compute gagal @ ${startedAt}:`, e);
         }

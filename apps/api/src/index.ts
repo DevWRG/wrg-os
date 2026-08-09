@@ -96,7 +96,8 @@ import { listCoachingNotes } from "./repo/coaching.js";
 import { getLatestCoachingNotes, computePeopleAnalytics } from "./repo/people.js";
 import { createVisit, getVisit, listVisits, visitKpi, visitSummary } from "./repo/visit.js";
 import { upsertDailyTodo, listTodos, markTodoReported } from "./repo/todo.js";
-import { upsertUser, listUsers, upsertTerritory, listTerritories, updateUserCabang } from "./repo/master.js";
+import { upsertUser, listUsers, upsertTerritory, listTerritories, updateUserCabang, updateUserGolongan } from "./repo/master.js";
+import { GOLONGAN, GOLONGAN_LABEL, TARGET_CUSTOMER, isGolongan, targetCustomerSemester } from "./lib/npk-golongan.js";
 import { listTargets, upsertTargets, listCabangTargets, upsertCabangTargets, listAmTargets, upsertAmTargets, listAmCandidates, deleteAmTarget } from "./repo/sales-target.js";
 import {
   upsertHoliday,
@@ -148,6 +149,7 @@ import { listViews, saveView, deleteView, listAlerts, createAlert, deleteAlert, 
 import { execCommand, execAmRadar, execOutletMatrix, execDormantIntel, execKpiBaseline, execRotation, execGrowthLevers } from "./repo/exec-dashboard.js";
 import { evaluateSalesAlerts } from "./repo/sales-analytics-alert-eval.js";
 import { computeNpk, getNpkScores, getNpkDetail, currentPeriod, type Period } from "./repo/npk.js";
+import { computeNpkAm, getNpkAmScores, getNpkAmDetail } from "./repo/npk-am.js";
 import { listDepartments, listEmployees, getEmployee, getRaciMatrix, getMeasurements, saveMeasurements, createEmployee, updateEmployee, deleteEmployee, replaceEmployeeDetail, getVoiceAggregate, getHodResolution, getOrgReporting, populateHodKey, getHods, type MeasurementInput, type EmployeeWrite, type SpineDetail } from "./repo/employee-spine.js";
 import { upsertMembers, listMembers, upsertDigests, listDigest, digestStats, upsertPola, listPola, generateRekap, generateResume, type MonitorMemberInput, type DigestInput, type PolaInput } from "./repo/monitor.js";
 import { runNotifTua } from "./repo/notiftua.js";
@@ -426,17 +428,38 @@ app.get("/admin/am-cabang", async (c) => {
   const [users, territory] = await Promise.all([listUsers({ role: "AM" }), listTerritory()]);
   const cabangOptions = [...new Set(territory.map((t) => t.cabang))].sort((a, b) => a.localeCompare(b));
   return c.json({
-    rows: users.map((u) => ({ am_id: u.am_id, nama: u.nama, panggilan: u.panggilan, cabang: u.cabang, aktif: u.aktif })),
+    rows: users.map((u) => ({
+      am_id: u.am_id, nama: u.nama, panggilan: u.panggilan, cabang: u.cabang, aktif: u.aktif,
+      golongan: u.golongan,
+      // Target customer turunan golongan (SK Pasal 2.1) — ditampilkan sbg petunjuk
+      // di UI supaya jelas angka mana yang dipakai aspek NPK Customer.
+      target_customer: targetCustomerSemester(u.golongan),
+    })),
     cabang_options: cabangOptions,
+    golongan_options: GOLONGAN.map((g) => ({ key: g, label: GOLONGAN_LABEL[g], target_customer: TARGET_CUSTOMER[g] })),
   });
 });
+// PUT menerima `cabang` dan/atau `golongan` — field yang TIDAK dikirim tidak
+// disentuh (undefined ≠ null; null berarti "kosongkan").
 app.put("/admin/am-cabang", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let b: { am_id?: string; cabang?: string | null } = {};
+  let b: { am_id?: string; cabang?: string | null; golongan?: string | null } = {};
   try { b = await c.req.json(); } catch { /* opsional */ }
   if (!b.am_id) return c.json({ error: "am_id wajib" }, 400);
-  const r = await updateUserCabang(String(b.am_id), b.cabang ?? null);
-  return r.updated ? c.json(r) : c.json({ error: "AM tak ditemukan" }, 404);
+  const amId = String(b.am_id);
+  let updated = false;
+  if (b.cabang !== undefined) {
+    updated = (await updateUserCabang(amId, b.cabang ?? null)).updated || updated;
+  }
+  if (b.golongan !== undefined) {
+    const g = b.golongan === null || b.golongan === "" ? null : String(b.golongan);
+    if (g !== null && !isGolongan(g)) return c.json({ error: "golongan tidak valid" }, 400);
+    updated = (await updateUserGolongan(amId, g)).updated || updated;
+  }
+  if (b.cabang === undefined && b.golongan === undefined) {
+    return c.json({ error: "tak ada field yang diubah" }, 400);
+  }
+  return updated ? c.json({ updated }) : c.json({ error: "AM tak ditemukan" }, 404);
 });
 
 // Set/reset password. body {password?|generate, force?, send_wa?}. Return password (sekali) + status WA.
@@ -1931,13 +1954,18 @@ app.get("/sales/targets/am", async (c) => {
 });
 app.put("/sales/targets/am", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let b: { year?: number; entries?: { am_id?: string; target?: number }[] } = {};
+  let b: { year?: number; entries?: { am_id?: string; target?: number; target_customer?: number }[] } = {};
   try { b = await c.req.json(); } catch { /* opsional */ }
   const year = Number(b.year);
   if (!Number.isInteger(year) || year < 2000 || year > 2100) return c.json({ error: "year tidak valid" }, 400);
   const entries = (b.entries ?? [])
     .filter((e) => String(e.am_id ?? "").trim() !== "" && Number.isFinite(Number(e.target)))
-    .map((e) => ({ am_id: String(e.am_id), target: Math.max(0, Number(e.target)) }));
+    .map((e) => ({
+      am_id: String(e.am_id),
+      target: Math.max(0, Number(e.target)),
+      // Tak dikirim → undefined (biarkan nilai lama), bukan 0 (menghapus target).
+      target_customer: Number.isFinite(Number(e.target_customer)) ? Math.max(0, Number(e.target_customer)) : undefined,
+    }));
   return c.json(await upsertAmTargets(year, entries));
 });
 app.delete("/sales/targets/am", async (c) => {
@@ -2050,6 +2078,35 @@ app.get("/npk/scores/:userId", async (c) => {
   const { year, period } = npkParams(c);
   try {
     return c.json(await getNpkDetail(await scopeOf(c), c.req.param("userId"), year, period));
+  } catch (e) {
+    const status = (e as { status?: number }).status ?? 500;
+    return c.json({ error: (e as Error).message }, status as 403 | 404 | 500);
+  }
+});
+
+// ── F66 NPK level AM/Sales (078) — formula SK yang sama, subjek = master_user.am_id.
+// Role gate ada di lapisan data (repo/npk-am.ts visibleAms): admin & HoD → semua AM;
+// staff AM → hanya dirinya; selain itu kosong. Rute /npk/am/* sengaja TIDAK bentrok
+// dengan /npk/scores/:userId (prefix beda), jadi urutan registrasi tak jadi soal.
+app.post("/npk/am/compute", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const svc = process.env.API_SERVICE_TOKEN;
+  if (svc && c.req.header("x-service-token") !== svc) return c.json({ error: "forbidden" }, 403);
+  const { year, period } = npkParams(c);
+  return c.json(await computeNpkAm({ year, period }));
+});
+
+app.get("/npk/am/scores", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const { year, period } = npkParams(c);
+  return c.json(await getNpkAmScores(await scopeOf(c), year, period));
+});
+
+app.get("/npk/am/scores/:ref", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const { year, period } = npkParams(c);
+  try {
+    return c.json(await getNpkAmDetail(await scopeOf(c), c.req.param("ref"), year, period));
   } catch (e) {
     const status = (e as { status?: number }).status ?? 500;
     return c.json({ error: (e as Error).message }, status as 403 | 404 | 500);
