@@ -65,15 +65,6 @@ if [ "$NO_PULL" = 0 ] && [ "${_REEXEC:-0}" = 0 ]; then
 fi
 [ "$NO_PULL" = 1 ] && warn "git pull dilewati (--no-pull) — tag mungkin tak sinkron."
 
-# ── 0b) SEMENTARA: pulihkan akses remote (lihat header revive-remote-access.sh).
-# Ditaruh DI SINI (bukan di akhir) supaya akses remote pulih walau build/migrasi
-# gagal di tengah. Tak pernah menggagalkan deploy. HAPUS setelah akses normal.
-if [ "$DRY" = 0 ] && [ -f scripts/ops/revive-remote-access.sh ]; then
-  say "Pulihkan akses remote (sementara)"
-  bash scripts/ops/revive-remote-access.sh >/dev/null 2>&1 || true
-  ok "hook akses remote dijalankan (detail: ~/DevWRG/ops/revive-remote-access.log)"
-fi
-
 # ── resolve versi footer (deterministik; tahan thd race tag CI) ────
 # release.yml cut tag ~beberapa detik SETELAH push ke main. Kalau HEAD belum
 # bertag (CI belum selesai), tunggu sebentar; baru fallback ke describe penuh.
