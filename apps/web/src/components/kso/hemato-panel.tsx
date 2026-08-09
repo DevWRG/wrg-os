@@ -434,7 +434,7 @@ export function HematoPanel({
               />
               <div className="grid grid-cols-[1fr_5rem] gap-2">
                 <AngkaField
-                  label={isExz8000 ? "Harga control (XN/XR)" : "Harga kontrol"}
+                  label={isExz8000 ? "Harga Check-XN control" : "Harga kontrol"}
                   value={kontrolNow.ctrl.price}
                   onChange={(v) => updKontrol({ ctrl: { ...kontrolNow.ctrl, price: v } })}
                   prefix="Rp"
@@ -446,6 +446,26 @@ export function HematoPanel({
                   suffix="%"
                 />
               </div>
+              {isExz8000 ? (
+                <div className="grid grid-cols-[1fr_5rem] gap-2">
+                  <AngkaField
+                    label="Harga Check-XR control"
+                    value={kontrolNow.ctrlXr?.price ?? 0}
+                    onChange={(v) =>
+                      updKontrol({ ctrlXr: { price: v, disc: kontrolNow.ctrlXr?.disc ?? 0 } })
+                    }
+                    prefix="Rp"
+                  />
+                  <AngkaField
+                    label="Diskon"
+                    value={kontrolNow.ctrlXr?.disc ?? 0}
+                    onChange={(v) =>
+                      updKontrol({ ctrlXr: { price: kontrolNow.ctrlXr?.price ?? 0, disc: v } })
+                    }
+                    suffix="%"
+                  />
+                </div>
+              ) : null}
               <div className="grid grid-cols-[1fr_5rem] gap-2">
                 <AngkaField
                   label="Harga kalibrator"

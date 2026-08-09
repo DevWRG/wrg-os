@@ -17,10 +17,17 @@ export const GOLONGAN_LABEL: Record<Golongan, string> = {
   "AM-4": "AM Region",
 };
 
-// Pasal 2.1 — Target Customer Aktif per golongan. Jadi PENYEBUT aspek NPK
-// "Customer Count Growth" (Pasal 3.1 baris 2: "Target per level golongan").
-// OSP tidak punya target customer sendiri (bertugas membantu AM, Pasal 1.2).
-export const TARGET_CUSTOMER: Record<Golongan, number | null> = {
+// Pasal 2.1 — Customer Aktif MINIMUM per golongan.
+//
+// ⚠️ BUKAN penyebut aspek NPK "Customer". Sempat dipakai begitu (v1.165.0) dan itu
+// KELIRU: Pasal 2.1 sendiri menegaskan angka ini "syarat MINIMUM untuk eligible naik
+// golongan, bukan target program". Roster ACE Bagian 6 memberi target program per AM
+// yang jauh lebih tinggi — Arif 71 · Luri 50 · Firman 40 vs minimum AM-2 yang cuma 28.
+// Memakai minimum sebagai penyebut membuat AM senior dinilai 71÷28 = 253% → mentok
+// nilai penuh, dan aspek Customer kehilangan daya bedanya.
+// Penyebut yang benar: target program per AM di `sales_target_am.target_customer`.
+// Konstanta ini disimpan untuk kelayakan naik golongan (Pasal 2.2), bukan penskoran.
+export const TARGET_CUSTOMER_MINIMUM: Record<Golongan, number | null> = {
   "OSP": null, "AM-0": 10, "AM-1": 20, "AM-2": 28, "AM-3": 35, "AM-4": 45,
 };
 
@@ -39,11 +46,19 @@ export const TARGET_NEW_CUSTOMER_BULANAN: Record<Golongan, number> = {
   "OSP": 1, "AM-0": 1, "AM-1": 1, "AM-2": 2, "AM-3": 2, "AM-4": 3,
 };
 
-// Target customer untuk satu semester. Aspek Customer dinilai atas jumlah customer
-// AKTIF (stock), bukan akumulasi — target level dipakai apa adanya, tidak dibagi 2
-// dan tidak di-pro-rata (alasan sama dengan jalur HoD, lihat repo/npk.ts).
-export const targetCustomerSemester = (g: Golongan | null): number | null =>
-  g ? TARGET_CUSTOMER[g] : null;
+// Golongan Roster ACE ("AM Senior", tanpa I/II) → kode SK. Roster Bagian 1 hanya
+// mengenal 5 level, SK Pasal 2.1 memecah Senior jadi AM-2/AM-3 → 7 orang berlabel
+// "AM Senior" tak bisa dipetakan pasti (klarifikasi ADR-040 A3). Sampai dijawab,
+// dipakai AM-2 (yang LEBIH RENDAH) — mengecilkan lebih aman daripada membesarkan,
+// dan untuk NPK tak berpengaruh sama sekali: target New Customer Sr=2 identik di
+// AM-2 maupun AM-3, sedangkan target Customer datang dari target program per AM.
+export const GOLONGAN_DARI_ROSTER: Record<string, Golongan> = {
+  "OSP": "OSP",
+  "AM JR I": "AM-0",
+  "AM JR II": "AM-1",
+  "AM SENIOR": "AM-2",     // ambigu AM-2/AM-3 — lihat catatan di atas
+  "AM REGION": "AM-4",
+};
 
 // Target new customer sepanjang semester = target bulanan × 6.
 export const targetNewCustomerSemester = (g: Golongan | null): number | null =>
