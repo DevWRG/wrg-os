@@ -66,6 +66,7 @@ interface RawTrx {
   hpp_total: number | null;
   item_count: number;
   item_ber_hpp: number;
+  item_hpp_ambigu: number;
   lunas_at: string | null;
   aging_days: number | null;
 }
@@ -74,17 +75,38 @@ interface RawTrx {
  * Ambil invoice LUNAS milik AM pada satu periode, sekalian turunkan HPP-nya.
  *
  * Revenue = netto tanpa PPN (total − tax_amount), konsisten dengan basis revenue
- * Sales Analytics. Kalau dipakai gross, GP% jadi ikut turun palsu karena HPP dibanding
+ * Sales Analytics. Kalau dipakai gross, GP% ikut turun palsu karena HPP dibanding
  * angka ber-PPN.
  *
- * HPP per baris: accurate_invoice_item.item_id → product_code.accurate_item_id →
- * product_pricelist_setup.hpp. `item_ber_hpp` menghitung berapa baris yang benar-benar
- * ketemu HPP-nya — dipakai memutuskan apakah GP boleh dipercaya (lihat gpActualPct).
+ * ⚠️ HPP TIDAK boleh di-join langsung ke product_pricelist_setup. Satu product_kode
+ * bisa punya BEBERAPA baris price book pada periode yang sama, dan HPP-nya benar-benar
+ * berbeda — di data H2-2026 ada kode yang memetakan ke HPP Rp 665.600 s/d Rp 11.875.000
+ * (varian/ukuran berbeda berbagi satu kode). Join langsung akan menggandakan baris,
+ * menjumlahkan HPP berkali-kali, DAN menggandakan item_count dengan faktor yang sama —
+ * sehingga pemeriksaan "HPP lengkap" tetap lolos dan GP yang salah ikut tersimpan.
+ *
+ * Karena itu HPP diringkas dulu per item di CTE `hpp_item`, dan hanya dipakai kalau
+ * pemetaannya TIDAK AMBIGU (tepat satu nilai HPP berbeda). Kode yang ambigu
+ * diperlakukan seperti tak punya HPP → GP null → MR 0, dan dihitung terpisah di
+ * laporan supaya kelihatan dan bisa dibereskan di price book, bukan ditebak di sini.
  */
 async function ambilTransaksi(amIds: string[], periode: string, periodeHpp: string): Promise<RawTrx[]> {
   const sql = db();
   return sql<RawTrx[]>`
-    WITH inv AS (
+    WITH hpp_item AS (
+      -- Satu baris per item Accurate. n_hpp > 1 = kode dipakai beberapa varian dengan
+      -- HPP berbeda → ambigu, jangan dipakai. Sekaligus meruntuhkan kemungkinan satu
+      -- accurate_item_id dipetakan beberapa product_code.
+      SELECT pc.accurate_item_id AS item_id,
+             min(pps.hpp) AS hpp,
+             count(DISTINCT pps.hpp) AS n_hpp
+      FROM product_code pc
+      JOIN product_pricelist_setup pps
+        ON pps.product_kode = pc.kode AND pps.periode = ${periodeHpp}
+      WHERE pc.accurate_item_id IS NOT NULL AND pps.hpp IS NOT NULL
+      GROUP BY pc.accurate_item_id
+    ),
+    inv AS (
       SELECT ai.id, ai.number AS invoice_no, ai.customer_id::text AS customer_id,
              ai.tanggal, ai.lunas_at,
              (COALESCE(ai.total,0) - COALESCE(ai.tax_amount,0))::float8 AS revenue,
@@ -103,15 +125,14 @@ async function ambilTransaksi(amIds: string[], periode: string, periodeHpp: stri
            inv.revenue, inv.lunas_at::text AS lunas_at,
            CASE WHEN inv.lunas_at IS NOT NULL THEN (inv.lunas_at - inv.tanggal) END AS aging_days,
            count(it.id)::int AS item_count,
-           count(pps.hpp)::int AS item_ber_hpp,
-           CASE WHEN count(pps.hpp) > 0
-                THEN sum(COALESCE(pps.hpp,0) * COALESCE(it.qty,0))::float8
+           count(hi.hpp) FILTER (WHERE hi.n_hpp = 1)::int AS item_ber_hpp,
+           count(hi.hpp) FILTER (WHERE hi.n_hpp > 1)::int AS item_hpp_ambigu,
+           CASE WHEN count(hi.hpp) FILTER (WHERE hi.n_hpp = 1) > 0
+                THEN sum(hi.hpp * COALESCE(it.qty,0)) FILTER (WHERE hi.n_hpp = 1)::float8
            END AS hpp_total
     FROM inv
     LEFT JOIN accurate_invoice_item it ON it.invoice_id = inv.id
-    LEFT JOIN product_code pc ON pc.accurate_item_id = it.item_id
-    LEFT JOIN product_pricelist_setup pps
-           ON pps.product_kode = pc.kode AND pps.periode = ${periodeHpp}
+    LEFT JOIN hpp_item hi ON hi.item_id = it.item_id
     GROUP BY inv.invoice_no, inv.am_id, inv.customer_id, inv.tanggal, inv.revenue, inv.lunas_at
     ORDER BY inv.tanggal, inv.invoice_no`;
 }
@@ -190,6 +211,7 @@ export interface ComputeReport {
   am_dihitung: number;
   transaksi: number;
   tanpa_hpp: number;          // GP tak bisa diturunkan → MR 0
+  hpp_ambigu: number;         // invoice yang memuat kode ber-HPP ganda → benahi price book
   tanpa_aging: number;        // umur pelunasan tak diketahui → CF netral 1,00
   total_am: number;
   total_ho: number;
@@ -221,6 +243,7 @@ export async function computePeriode(opts: ComputeOptions): Promise<ComputeRepor
   const cfgByAm = new Map(cfg.map((c) => [c.am_id, c]));
 
   let tanpaHpp = 0;
+  let hppAmbigu = 0;
   let tanpaAging = 0;
   const hasil: {
     r: RawTrx;
@@ -242,6 +265,7 @@ export async function computePeriode(opts: ComputeOptions): Promise<ComputeRepor
       ? ((r.revenue - (r.hpp_total as number)) / r.revenue) * 100
       : null;
     if (gpActualPct == null) tanpaHpp++;
+    if (r.item_hpp_ambigu > 0) hppAmbigu++;
     if (r.aging_days == null) tanpaAging++;
 
     const ncr = ncrMap.get(r.invoice_no) ?? "existing";
@@ -319,6 +343,7 @@ export async function computePeriode(opts: ComputeOptions): Promise<ComputeRepor
     am_dihitung: perAm.size,
     transaksi: hasil.length,
     tanpa_hpp: tanpaHpp,
+    hpp_ambigu: hppAmbigu,
     tanpa_aging: tanpaAging,
     total_am: totalAm,
     total_ho: totalHo,
