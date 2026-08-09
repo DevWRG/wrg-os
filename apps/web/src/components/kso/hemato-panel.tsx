@@ -309,7 +309,22 @@ export function HematoPanel({
         label="Pilih analyzer"
         value={analyzer.kode}
         options={analyzers.map((a) => ({ key: a.kode, label: a.label, sub: a.meta.diff }))}
-        onChange={setKode}
+        onChange={(k) => {
+          setKode(k);
+          // Backup ikut pindah ke analyzer yang sama — perilaku aplikasi asal:
+          // backup default = unit kedua dari model yang sedang ditawarkan.
+          // Tanpa ini, backup tertinggal di model lama dan Total CAPEX salah.
+          if (umum.backupOn) {
+            const b = analyzers.find((a) => a.kode === k);
+            if (b) {
+              setUmum({
+                backupKode: k,
+                backupPrice: b.defaultCapexPl ?? b.defaultCapex,
+                backupDisc: b.defaultDisc,
+              });
+            }
+          }
+        }}
       />
 
       <PresetTest presets={analyzer.presets} value={s.tests} onChange={(v) => upd({ tests: v })} />
