@@ -242,6 +242,16 @@ export async function computePeriode(opts: ComputeOptions): Promise<ComputeRepor
     WHERE am_id = ANY(${opts.amIds}::text[])`;
   const cfgByAm = new Map(cfg.map((c) => [c.am_id, c]));
 
+  // Tipe lead yang SUDAH ditandai HOD pada periode ini. Wajib dibaca sebelum menghitung:
+  // kolom lead_type memang tidak ikut ditimpa saat ON CONFLICT, tapi kalau compute selalu
+  // memakai 'A', insentif_am/insentif_ho akan ditulis ulang seolah 100% milik AM sementara
+  // kolomnya tetap berbunyi 'B'. Barisnya jadi saling bertentangan: AM dibayar penuh,
+  // HO Pool kosong, dan tak ada yang kelihatan salah sampai ada yang menjumlahkan.
+  const leadRows = await sql<{ invoice_no: string; lead_type: LeadType }[]>`
+    SELECT invoice_no, lead_type FROM insentif_transaksi
+    WHERE periode = ${opts.periode} AND am_id = ANY(${opts.amIds}::text[]) AND lead_type <> 'A'`;
+  const leadMap = new Map(leadRows.map((r) => [r.invoice_no, r.lead_type]));
+
   let tanpaHpp = 0;
   let hppAmbigu = 0;
   let tanpaAging = 0;
@@ -275,7 +285,7 @@ export async function computePeriode(opts: ComputeOptions): Promise<ComputeRepor
       gpActualPct,
       agingDays: r.aging_days ?? 30, // 30 = tingkat netral CF 1,00 (lihat doc di atas)
       ncrType: ncr,
-      leadType: "A" as LeadType,     // default; HOD menandai B/C saat review (PRD §C.2.8)
+      leadType: leadMap.get(r.invoice_no) ?? ("A" as LeadType), // default A; HOD menandai B/C saat review
       effort: eff.effort,
       presales: eff.presales,
     });
@@ -301,7 +311,7 @@ export async function computePeriode(opts: ComputeOptions): Promise<ComputeRepor
         VALUES
           (${h.r.am_id}, ${opts.periode}, ${h.r.invoice_no}, ${h.r.customer_id}, ${h.r.tanggal},
            ${h.r.revenue}, ${h.gpActualPct},
-           ${h.r.aging_days}, ${h.ncr}, 'A',
+           ${h.r.aging_days}, ${h.ncr}, ${leadMap.get(h.r.invoice_no) ?? "A"},
            ${h.out.piPoints}, ${h.out.hargaPoin}, ${h.out.mrPct}, ${h.out.ncrPct}, ${h.out.cf},
            ${h.out.pengali}, ${h.out.insentifRaw}, ${h.out.insentifAm}, ${h.out.insentifHo},
            ${sql.json({ effort: eff.effort, presales: eff.presales, tier_ut: c.tier_ut,
@@ -364,6 +374,7 @@ export interface BarisBulanan {
   periode: string;
   tier_ut: string;
   total_insentif_am: number;
+  total_insentif_ho: number;
   dibayar: number;
   retention_pool: number;
   cap_bulanan: number;
@@ -382,6 +393,7 @@ async function bacaBulanan(amIds: VisibleAms, periode: string): Promise<BarisBul
     SELECT ib.am_id, COALESCE(mu.nama, ib.am_id) AS nama, mu.panggilan,
            ib.periode, ib.tier_ut,
            ib.total_insentif_am::float8 AS total_insentif_am,
+           ib.total_insentif_ho::float8 AS total_insentif_ho,
            ib.dibayar::float8 AS dibayar,
            ib.retention_pool::float8 AS retention_pool,
            ib.cap_bulanan::float8 AS cap_bulanan,
@@ -442,7 +454,9 @@ export async function getInsentifList(scope: DataScope | undefined, periode: str
     baris: rows,
     // Total WAJIB ikut ter-scope — bukan total nasional (§E.2.6).
     total_am: rows.reduce((s, r) => s + r.total_insentif_am, 0),
-    total_ho: 0,
+    // HO Pool: 70-85% insentif dari lead B/C mengalir ke sini. Dulu di-hardcode 0
+    // sehingga pool-nya tak pernah kelihatan di menu tim walau isinya tidak nol.
+    total_ho: rows.reduce((s, r) => s + r.total_insentif_ho, 0),
   };
 }
 
