@@ -3,8 +3,8 @@
 // persist (078), dan baca scope-aware.
 //
 // Beda dengan repo/npk.ts (jalur HoD): subjek skor = `master_user.am_id`, bukan
-// hod_key, dan agregasinya per-AM (mu.am_id) bukan per-cabang. Bobot, cap 120,
-// dan predikat identik — supaya NPK AM dan NPK HoD bisa dibandingkan apple-to-apple.
+// hod_key, dan agregasinya per-AM (mu.am_id) bukan per-cabang. Bobot, metode skor
+// (tabel SK Pasal 3.2), dan predikat identik — NPK AM & NPK HoD apple-to-apple.
 //
 // KEJUJURAN DATA. Aspek yang di-wire batch pertama:
 //   - revenue  : accurate_invoice netto per AM ÷ sales_target_am (÷2 semester, pro-rata elapsed)
@@ -57,7 +57,9 @@ export interface GatherAmResult {
 }
 
 // Kumpulkan input 7 aspek untuk satu AM pada satu semester.
-async function gatherAmInput(
+// Diekspor supaya scripts/ops/npk-compare-metode.mjs memakai sumber input yang SAMA
+// dengan compute (bukan query salinan) saat membandingkan metode skor.
+export async function gatherAmInput(
   sql: ReturnType<typeof db>,
   am: AmSubject,
   year: number,
@@ -216,9 +218,8 @@ export async function computeNpkAm(opts: { year: number; period: Period; now?: D
   let computed = 0;
   for (const am of subjects) {
     const g = await gatherAmInput(sql, am, year, period, now);
-    // Tabel berjenjang SK Pasal 3.2 — BUKAN calcNPK() linier yang dipakai jalur HoD.
-    // Konsekuensi yang disengaja: selama jalur HoD belum ikut pindah, angka NPK AM
-    // dan NPK HoD memakai metode berbeda dan tidak sebanding. Lihat lib/npk-sk.ts.
+    // Tabel berjenjang SK Pasal 3.2 (lib/npk-sk.ts). Sejak v1.166.0 jalur HoD
+    // (repo/npk.ts) memakai fungsi yang sama → angka kedua menu sebanding.
     const res: NPKResult = calcNpkSk(g.input, g.avail);
     await sql`
       INSERT INTO npk_am_score_semester (am_id, year, period, npk, predikat, computed_from, computed_at)
