@@ -10,6 +10,7 @@ import {
   Bell, MapPin, ListChecks, Swords, CalendarOff, CalendarDays, CalendarRange,
   Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, Tags, SlidersHorizontal,
   Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, BookOpen, Calculator,
+  Wallet,
   type LucideIcon,
 } from "lucide-react";
 
@@ -76,6 +77,12 @@ export const NAV: NavGroup[] = [
       { title: "Competitor Intel", url: "/competitor", icon: Swords },
       { title: "Pipeline", url: "/pipeline", icon: Workflow },
       { title: "Kinerja Saya", url: "/me", icon: UserRound, badge: "NEW" },
+      // F67 Insentif. Menu terpisah dari /insentif/tim (belum dibangun) karena
+      // PERTANYAANNYA beda: ini "berapa insentif saya", itu batch payroll —
+      // bukan sekadar barisnya lebih sedikit. Self-only untuk SEMUA peran,
+      // termasuk Direktur, jadi tak perlu gate identitas di sini; yang menjaga
+      // barisnya adalah scope server (PRD §E).
+      { title: "Insentif Saya", url: "/insentif", icon: Wallet, badge: "NEW", exact: true },
       { title: "Customers", url: "/customers", icon: Building2 },
       { title: "Accounts", url: "/accounts", icon: Contact, badge: "NEW" },
       { title: "AR Aging", url: "/ar", icon: Receipt },
