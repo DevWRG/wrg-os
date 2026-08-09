@@ -96,6 +96,13 @@ for (const r of ROSTER) {
     continue;
   }
   const m = kandidat[0];
+  // Nama cocok belum tentu orangnya AM. Roster Bagian 6 pernah memuat orang yang di
+  // master_user ber-role Operasional; menulis golongan & target AM ke non-AM diam-diam
+  // adalah kesalahan data HR, jadi tolak dan laporkan sebabnya apa adanya.
+  if ((m.role ?? "").toUpperCase() !== "AM") {
+    bermasalah.push({ ...r, sebab: `role di master_user = "${m.role ?? "—"}", bukan AM` });
+    continue;
+  }
   const [t] = await sql`
     SELECT target::float8 AS target, COALESCE(target_customer,0)::float8 AS target_customer
     FROM sales_target_am WHERE year = ${year} AND am_id = ${m.am_id}`;
@@ -119,7 +126,7 @@ for (const p of rencana) {
 if (bermasalah.length) {
   console.log(`\n⚠ ${bermasalah.length} baris TIDAK diproses — perlu keputusan manusia:`);
   for (const b of bermasalah) console.log(`  ${pad(b.nama, 10)} ${pad(b.area, 14)} ${b.sebab}`);
-  console.log("  (Ari/Bali & Ibnu/Jakarta memang ditandai 'konfirmasi HOD' di Roster-nya sendiri.)");
+  console.log("  (Ari/Bali ditandai 'konfirmasi HOD' di Roster; ia tetap diproses karena role-nya AM.)");
 }
 
 if (!apply) {
