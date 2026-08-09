@@ -4,8 +4,12 @@ import { cn } from "@/lib/utils";
 import { fmt1, periodLabel, PREDIKAT_LABEL, type NpkDetailResult } from "./npk-format";
 import { ASPEK_NAMA, TOTAL_ASPEK, zoneOf } from "./npk-status";
 
+// `null` = TIDAK ADA pembanding (periode sebelumnya belum di-compute, atau periode
+// ini belum punya aspek terukur) — bukan "tidak berubah". Dulu dirender "→ –" yang
+// gampang kebaca sebagai delta nol; NPK AM baru punya baris S2 saja, jadi kasus ini
+// normal dan harus dinyatakan apa adanya.
 function deltaNode(v: number | null) {
-  if (v == null) return <span className="text-xs text-white/60">→ –</span>;
+  if (v == null) return <span className="text-[11px] leading-tight text-white/60">belum ada pembanding</span>;
   const up = v > 0, flat = v === 0;
   const Icon = flat ? ArrowRight : up ? ArrowUp : ArrowDown;
   return (

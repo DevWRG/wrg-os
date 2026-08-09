@@ -5,8 +5,9 @@ import { cn } from "@/lib/utils";
 import { fmt1, periodLabel, type NpkMatrixRow } from "./npk-format";
 import { ASPEK_NAMA, TOTAL_ASPEK, type NpkSummary } from "./npk-status";
 
+// `null` = belum ada periode pembanding (lihat catatan di npk-self-briefing.tsx).
 function Delta({ v }: { v: number | null }) {
-  if (v == null) return <span className="text-xs text-muted-foreground">→ –</span>;
+  if (v == null) return <span className="text-[11px] leading-tight text-muted-foreground">belum ada pembanding</span>;
   const up = v > 0, flat = v === 0;
   const Icon = flat ? ArrowRight : up ? ArrowUp : ArrowDown;
   return (
