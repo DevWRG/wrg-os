@@ -18,7 +18,7 @@ const TABS: { key: TabKey; label: string }[] = [
   { key: "weekly", label: "Weekly (PPT)" },
 ];
 
-export function WatchPointTabs({ initial }: { initial: WatchBoard | null }) {
+export function WatchPointTabs({ initial, canEdit = false }: { initial: WatchBoard | null; canEdit?: boolean }) {
   const [tab, setTab] = useState<TabKey>("ringkasan");
 
   return (
@@ -39,7 +39,7 @@ export function WatchPointTabs({ initial }: { initial: WatchBoard | null }) {
         ))}
       </div>
 
-      {tab === "ringkasan" ? <WatchPointBoardView initial={initial} /> : <WatchPointWeeklyView />}
+      {tab === "ringkasan" ? <WatchPointBoardView initial={initial} canEdit={canEdit} /> : <WatchPointWeeklyView />}
     </div>
   );
 }
