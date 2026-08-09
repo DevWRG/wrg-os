@@ -153,6 +153,10 @@ import { execCommand, execAmRadar, execOutletMatrix, execDormantIntel, execKpiBa
 import { evaluateSalesAlerts } from "./repo/sales-analytics-alert-eval.js";
 import { computeNpk, getNpkScores, getNpkDetail, currentPeriod, type Period } from "./repo/npk.js";
 import { computeNpkAm, getNpkAmScores, getNpkAmDetail } from "./repo/npk-am.js";
+import {
+  getInsentifSelf, getInsentifList, getInsentifDetail,
+  computePeriode as computeInsentifPeriode,
+} from "./repo/insentif.js";
 import { listDepartments, listEmployees, getEmployee, getRaciMatrix, getMeasurements, saveMeasurements, createEmployee, updateEmployee, deleteEmployee, replaceEmployeeDetail, getVoiceAggregate, getHodResolution, getOrgReporting, populateHodKey, getHods, type MeasurementInput, type EmployeeWrite, type SpineDetail } from "./repo/employee-spine.js";
 import { upsertMembers, listMembers, upsertDigests, listDigest, digestStats, upsertPola, listPola, generateRekap, generateResume, type MonitorMemberInput, type DigestInput, type PolaInput } from "./repo/monitor.js";
 import { runNotifTua } from "./repo/notiftua.js";
@@ -2114,6 +2118,78 @@ app.get("/npk/am/scores/:ref", async (c) => {
   } catch (e) {
     const status = (e as { status?: number }).status ?? 500;
     return c.json({ error: (e as Error).message }, status as 403 | 404 | 500);
+  }
+});
+
+// ── F67 Insentif (093/094) — model console_v2, unit hitung PER TRANSAKSI ──
+//
+// Aturan akses hidup di lapisan data (repo/insentif.ts resolveVisibleAms), SATU definisi:
+// admin/superuser → semua; HoD → AM di cabang timnya; staff AM → dirinya saja; tanpa
+// identitas → TERTUTUP. Fail-closed, beda dari menu analitik lain: ini angka penghasilan
+// orang, jadi panggilan ber-service-token TANPA x-user-id pun tidak dapat baris siapa pun.
+const insentifPeriode = (c: { req: { query: (k: string) => string | undefined } }): string => {
+  const p = (c.req.query("periode") ?? "").trim();
+  if (/^\d{4}-\d{2}$/.test(p)) return p;
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+};
+
+const insentifErr = (e: unknown) => ({
+  status: ((e as { status?: number }).status ?? 500) as 403 | 404 | 500,
+  body: { error: (e as Error).message },
+});
+
+app.get("/insentif/self", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    return c.json(await getInsentifSelf(await scopeOf(c), insentifPeriode(c)));
+  } catch (e) {
+    const { status, body } = insentifErr(e);
+    return c.json(body, status);
+  }
+});
+
+app.get("/insentif/list", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    return c.json(await getInsentifList(await scopeOf(c), insentifPeriode(c)));
+  } catch (e) {
+    const { status, body } = insentifErr(e);
+    return c.json(body, status);
+  }
+});
+
+// Hitung ulang satu periode. Operasi ops: butuh service token DAN superuser.
+// apply=false (default) = pratinjau, tak menulis apa pun.
+app.post("/insentif/compute", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const svc = process.env.API_SERVICE_TOKEN;
+  if (svc && c.req.header("x-service-token") !== svc) return c.json({ error: "forbidden" }, 403);
+  const scope = await scopeOf(c);
+  if (!scope.superuser) return c.json({ error: "forbidden" }, 403);
+  const body = (await c.req.json().catch(() => ({}))) as {
+    periode_hpp?: string;
+    am_ids?: unknown;
+    effort?: Record<string, { effort: number; presales: number }>;
+    apply?: boolean;
+  };
+  return c.json(await computeInsentifPeriode({
+    periode: insentifPeriode(c),
+    periodeHpp: String(body.periode_hpp ?? "H2-2026"),
+    amIds: Array.isArray(body.am_ids) ? body.am_ids.map(String) : [],
+    effortPerAm: new Map(Object.entries(body.effort ?? {})),
+    apply: body.apply === true,
+  }));
+});
+
+// :amId ditaruh PALING BAWAH supaya tidak menelan /insentif/self & /insentif/list.
+app.get("/insentif/:amId", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    return c.json(await getInsentifDetail(await scopeOf(c), c.req.param("amId"), insentifPeriode(c)));
+  } catch (e) {
+    const { status, body } = insentifErr(e);
+    return c.json(body, status);
   }
 });
 

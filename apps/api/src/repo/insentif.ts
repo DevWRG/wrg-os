@@ -350,3 +350,118 @@ export async function computePeriode(opts: ComputeOptions): Promise<ComputeRepor
     ditulis: !!opts.apply,
   };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BACA
+//
+// Semua fungsi di bawah menerima DataScope dan menyaringnya sendiri. Tidak ada
+// endpoint yang boleh membaca insentif tanpa lewat sini (PRD §E.2.1).
+
+export interface BarisBulanan {
+  am_id: string;
+  nama: string;
+  panggilan: string | null;
+  periode: string;
+  tier_ut: string;
+  total_insentif_am: number;
+  dibayar: number;
+  retention_pool: number;
+  cap_bulanan: number;
+  status: string;
+  transaksi: number;
+}
+
+/** Rekap bulanan untuk sekumpulan AM yang boleh dilihat. Total ikut ter-scope (§E.2.6). */
+async function bacaBulanan(amIds: VisibleAms, periode: string): Promise<BarisBulanan[]> {
+  const sql = db();
+  const semua = amIds === "all";
+  const daftar = semua ? [] : amIds;
+  if (!semua && daftar.length === 0) return [];
+
+  return sql<BarisBulanan[]>`
+    SELECT ib.am_id, COALESCE(mu.nama, ib.am_id) AS nama, mu.panggilan,
+           ib.periode, ib.tier_ut,
+           ib.total_insentif_am::float8 AS total_insentif_am,
+           ib.dibayar::float8 AS dibayar,
+           ib.retention_pool::float8 AS retention_pool,
+           ib.cap_bulanan::float8 AS cap_bulanan,
+           ib.status,
+           (SELECT count(*)::int FROM insentif_transaksi it
+             WHERE it.am_id = ib.am_id AND it.periode = ib.periode) AS transaksi
+    FROM insentif_bulanan ib
+    LEFT JOIN master_user mu ON mu.am_id = ib.am_id
+    WHERE ib.periode = ${periode}
+      ${semua ? sql`` : sql`AND ib.am_id = ANY(${daftar}::text[])`}
+    ORDER BY ib.total_insentif_am DESC`;
+}
+
+/** Rincian transaksi satu AM pada satu periode. */
+async function bacaTransaksi(amId: string, periode: string) {
+  const sql = db();
+  return sql`
+    SELECT invoice_no, tanggal::text AS tanggal, customer_id,
+           revenue::float8 AS revenue, gp_actual_pct::float8 AS gp_actual_pct,
+           aging_days, ncr_type, lead_type,
+           mr_pct::float8 AS mr_pct, ncr_pct::float8 AS ncr_pct, cf::float8 AS cf,
+           pengali::float8 AS pengali,
+           insentif_am::float8 AS insentif_am, insentif_ho::float8 AS insentif_ho,
+           computed_from
+    FROM insentif_transaksi
+    WHERE am_id = ${amId} AND periode = ${periode}
+    ORDER BY tanggal, invoice_no`;
+}
+
+/** Menu "Insentif Saya" — identitas HANYA dari sesi, tak pernah dari parameter (§E.2.4). */
+export async function getInsentifSelf(scope: DataScope | undefined, periode: string) {
+  if (!scope?.userId) throw Object.assign(new Error("forbidden"), { status: 403 });
+  if (!scope.amId) {
+    return { linked: false, message: "Akun belum tertaut ke karyawan (am_id)." };
+  }
+  const [ringkas] = await bacaBulanan([scope.amId], periode);
+  return {
+    linked: true,
+    periode,
+    scope: "self" as const,
+    ringkas: ringkas ?? null,
+    transaksi: await bacaTransaksi(scope.amId, periode),
+  };
+}
+
+/** Menu tim — AM murni DITOLAK (bukan sekadar daftar kosong), supaya jelas ini bukan haknya. */
+export async function getInsentifList(scope: DataScope | undefined, periode: string) {
+  const vis = await resolveVisibleAms(scope);
+  if (Array.isArray(vis) && vis.length === 0) {
+    throw Object.assign(new Error("forbidden"), { status: 403 });
+  }
+  if (scope?.amOnly) throw Object.assign(new Error("forbidden"), { status: 403 });
+
+  const rows = await bacaBulanan(vis, periode);
+  return {
+    periode,
+    scope: vis === "all" ? ("all" as const) : ("team" as const),
+    baris: rows,
+    // Total WAJIB ikut ter-scope — bukan total nasional (§E.2.6).
+    total_am: rows.reduce((s, r) => s + r.total_insentif_am, 0),
+    total_ho: 0,
+  };
+}
+
+/**
+ * Rincian satu AM. Di luar scope → 404, BUKAN 403.
+ * 403 mengonfirmasi bahwa orang itu punya catatan insentif; untuk payroll itu sendiri
+ * sudah kebocoran. (Beda dari /raport/:amId yang memakai 403 — disengaja, jangan
+ * diseragamkan balik.)
+ */
+export async function getInsentifDetail(
+  scope: DataScope | undefined,
+  amId: string,
+  periode: string,
+) {
+  const vis = await resolveVisibleAms(scope);
+  const boleh = vis === "all" || vis.includes(amId);
+  if (!boleh) throw Object.assign(new Error("not found"), { status: 404 });
+
+  const [ringkas] = await bacaBulanan([amId], periode);
+  if (!ringkas) throw Object.assign(new Error("not found"), { status: 404 });
+  return { periode, ringkas, transaksi: await bacaTransaksi(amId, periode) };
+}
