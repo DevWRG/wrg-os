@@ -113,6 +113,33 @@ cat > "$STATE_DIR/dashboard-state.json" <<JSON
 }
 JSON
 
+# === MERGE tooling.* dari warp-tooling.json (idempotent) ===
+# dashboard-state.json ditulis ULANG dari heredoc di atas tiap run, dan script ini
+# diawali `git reset --hard origin/dev` — jadi apa pun yang ditambah manual ke file
+# ini pasti hilang tiap 07:00 WIB. Sumber kebenaran tooling = state/warp-tooling.json
+# (di-maintain via Cowork/Drive, di-push lewat 14-Plugins/wrg-os-toolkit/scripts/
+# push-to-github.sh). Di-merge balik ke sini biar widget Live Status cukup baca 1 file.
+# No-op kalau warp-tooling.json belum ada.
+if [ -f "$STATE_DIR/warp-tooling.json" ]; then
+  TMP_DS="$(mktemp)"
+  if jq --slurpfile t "$STATE_DIR/warp-tooling.json" '
+        . + {tooling: {
+              sourceFile: "state/warp-tooling.json",
+              lastUpdate: ($t[0].lastUpdate // null),
+              claudePlugins: ($t[0].claudeCodePlugins // []),
+              mcpServers: ($t[0].mcpServers // {})
+            }}' "$STATE_DIR/dashboard-state.json" > "$TMP_DS" 2>/dev/null; then
+    mv "$TMP_DS" "$STATE_DIR/dashboard-state.json"
+    TOOLING_N=$(jq '.tooling.claudePlugins | length' "$STATE_DIR/dashboard-state.json")
+    log "✓ tooling.* di-merge dari warp-tooling.json ($TOOLING_N plugin)"
+  else
+    rm -f "$TMP_DS"
+    log "⚠ merge tooling GAGAL (warp-tooling.json invalid?) — dashboard-state.json dibiarkan apa adanya"
+  fi
+else
+  log "· warp-tooling.json belum ada — skip merge tooling"
+fi
+
 log "✓ dashboard-state.json: version=$LATEST_VERSION, releases=$TOTAL_RELEASES, services=$SERVICES_LIVE LIVE, scheduler=$SCHEDULER_JOBS"
 
 # === GENERATE release-log.json (20 latest) ===
