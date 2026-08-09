@@ -117,6 +117,20 @@ async function upsertInvoiceDetail(d: Detail): Promise<boolean> {
       tanggal = EXCLUDED.tanggal, taxable_amount = EXCLUDED.taxable_amount, tax_amount = EXCLUDED.tax_amount,
       total = EXCLUDED.total, paid = EXCLUDED.paid, outstanding = EXCLUDED.outstanding, status = EXCLUDED.status,
       salesman_id = EXCLUDED.salesman_id, salesman_name = EXCLUDED.salesman_name, raw = EXCLUDED.raw,
+      -- lunas_at (migrasi 094, dipakai Collection Factor F67): stempel HANYA saat sync
+      -- benar-benar MENGAMATI perpindahan OPEN → PAID. Urutan CASE-nya menentukan:
+      --   1. balik jadi OPEN (retur/koreksi) → NULL lagi, jangan tinggalkan stempel basi
+      --   2. sudah pernah distempel → pertahankan, jangan digeser tiap kali sync jalan
+      --   3. baris lama OPEN & sekarang PAID → inilah transisinya, stempel hari ini
+      --   4. sisanya = sudah PAID sejak pertama kali terlihat → NULL, umur tak diketahui.
+      --      SENGAJA tidak distempel: kalau distempel, seluruh invoice lama akan terlihat
+      --      berumur (hari ini − tanggal terbit) dan kena CF 0,50 massal.
+      lunas_at = CASE
+        WHEN EXCLUDED.status <> 'PAID' THEN NULL
+        WHEN accurate_invoice.lunas_at IS NOT NULL THEN accurate_invoice.lunas_at
+        WHEN accurate_invoice.status = 'OPEN' THEN CURRENT_DATE
+        ELSE NULL
+      END,
       last_synced_at = now()
   `;
 
