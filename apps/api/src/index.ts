@@ -60,7 +60,10 @@ import { getProductIntelligence } from "./repo/product.js";
 import { listAnnotations } from "./repo/sentiment.js";
 import { getNetworkInput, computeNetwork } from "./repo/network.js";
 import { listBriefings } from "./repo/executive.js";
-import { getWatchBoard, formatHodWatchWa, type WatchStatus } from "./repo/watchpoint.js";
+import {
+  getWatchBoard, formatHodWatchWa, findMetricDef, upsertWatchMetric, deleteWatchMetric,
+  type WatchStatus,
+} from "./repo/watchpoint.js";
 import {
   getWeeklyBoard, listWeeks, snapshotWeek, upsertWeeklyMetric, deleteWeeklyMetric,
   currentWeek, formatWeeklyHodWa,
@@ -2315,6 +2318,59 @@ app.post("/watchpoint/:hodKey/send-wa", async (c) => {
   const message = formatHodWatchWa(hod, board.asOf);
   const result = await sendViaWaGateway(to, message);
   return c.json({ ...result, hodKey, preview: message }, result.sent ? 200 : 502);
+});
+
+// Ubah target / nilai manual satu metric papan "sekarang" (migrasi 080).
+// Gate direktur/admin dikerjakan layer WEB (admin-guard.ts) — di sini hanya
+// validasi bentuk data + pastikan (hod, metric) memang ada di katalog.
+app.put("/watchpoint/metric", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: {
+    hod_key?: string; metric_key?: string; actual?: number | null; status?: string | null;
+    note?: string | null; target_mode?: string; target_override?: number | null; updated_by?: string | null;
+  };
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+
+  const hodKey = (body.hod_key ?? "").trim();
+  const metricKey = (body.metric_key ?? "").trim();
+  if (!hodKey || !metricKey) return c.json({ error: "hod_key + metric_key wajib" }, 400);
+  if (!findMetricDef(hodKey, metricKey)) {
+    return c.json({ error: `metric '${metricKey}' tidak ada pada HoD '${hodKey}'` }, 404);
+  }
+
+  const MODES = ["default", "value", "milestone"] as const;
+  const targetMode = (body.target_mode ?? "default") as (typeof MODES)[number];
+  if (!MODES.includes(targetMode)) return c.json({ error: "target_mode harus default|value|milestone" }, 400);
+
+  const VALID: WatchStatus[] = ["GREEN", "YELLOW", "RED", "NA"];
+  const status = body.status == null || body.status === "" ? null : (body.status as WatchStatus);
+  if (status !== null && !VALID.includes(status)) return c.json({ error: "status harus GREEN|YELLOW|RED|NA" }, 400);
+
+  const asNum = (v: unknown): number | null => (v === null || v === undefined || v === "" ? null : Number(v));
+  const actual = asNum(body.actual);
+  const targetOverride = asNum(body.target_override);
+  if (actual !== null && !Number.isFinite(actual)) return c.json({ error: "actual harus angka" }, 400);
+  if (targetOverride !== null && !Number.isFinite(targetOverride)) return c.json({ error: "target_override harus angka" }, 400);
+  if (targetMode === "value" && targetOverride === null) {
+    return c.json({ error: "target_override wajib diisi saat target_mode='value'" }, 400);
+  }
+
+  await upsertWatchMetric({
+    hodKey, metricKey, actual, status, note: body.note?.trim() || null,
+    targetMode, targetOverride: targetMode === "value" ? targetOverride : null,
+    updatedBy: body.updated_by?.trim() || null,
+  });
+  return c.json({ ok: true });
+});
+
+// Hapus baris → target balik ke default kode, nilai manual balik N/A.
+app.delete("/watchpoint/metric", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const hodKey = (c.req.query("hod_key") ?? "").trim();
+  const metricKey = (c.req.query("metric_key") ?? "").trim();
+  if (!hodKey || !metricKey) return c.json({ error: "hod_key + metric_key wajib" }, 400);
+  const r = await deleteWatchMetric(hodKey, metricKey);
+  return c.json(r, r.deleted ? 200 : 404);
 });
 
 // ── F76 WatchPoint — CRUD mapping HoD→cabang (hod_territory) ──

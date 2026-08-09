@@ -11,9 +11,14 @@
 //   - computed live dari DB: Accurate mirror + sales_plan + ar_aging_mv
 //   - mapping HoD→cabang: tabel `hod_territory` (import dari AREA PER HOD.xlsx)
 //   - metric manual: tabel `watchpoint_metric` (diisi HoD). Kosong → status NA.
+//   - target: default = brief Direktur Juni 2026, boleh ditimpa per metric lewat
+//     watchpoint_metric.target_mode/target_override (migrasi 080) supaya revisi
+//     kesepakatan Direktur–HoD tidak perlu deploy.
 
 import { db, isDbEnabled } from "../db.js";
 import { joinAmFromSalesman } from "./salesman-am.js";
+import { arOver90Outstanding } from "./ar.js";
+import { currentWeek, weekRange, periodeLabel } from "./watchpoint-week.js";
 
 export type WatchStatus = "GREEN" | "YELLOW" | "RED" | "NA";
 export type WatchTrend = "improving" | "stable" | "declining";
@@ -30,6 +35,10 @@ export interface WatchMetric {
   status: WatchStatus;
   trend: WatchTrend;
   note?: string;
+  /** Asal target: 'default' = angka brief Direktur di kode, sisanya override DB. */
+  targetMode: "default" | "value" | "milestone";
+  /** Target bawaan kode — dipakai UI untuk menawarkan "kembalikan ke default". */
+  defaultTarget: number | null;
 }
 
 export interface HodWatch {
@@ -83,10 +92,12 @@ export function worst(metrics: { status: WatchStatus }[]): WatchStatus {
 // ── DB derivations (Accurate mirror + AR + plan). cabang dari hod_territory. ──
 type Sql = ReturnType<typeof db>;
 
+// Revenue NETTO (tanpa PPN) — sebasis dengan Sales Analytics; kalau di sini
+// pakai ai.total bruto, dua menu menampilkan angka berbeda untuk periode sama.
 async function revenueThisMonth(sql: Sql, cabang: string[]): Promise<number> {
   if (!cabang.length) return 0;
   const rows = await sql<{ v: number }[]>`
-    SELECT COALESCE(sum(ai.total),0)::float8 AS v
+    SELECT COALESCE(sum(ai.total - COALESCE(ai.tax_amount, 0)),0)::float8 AS v
     FROM accurate_invoice ai
     LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
     ${joinAmFromSalesman(sql)}
@@ -95,13 +106,17 @@ async function revenueThisMonth(sql: Sql, cabang: string[]): Promise<number> {
   return Number(rows[0]?.v ?? 0);
 }
 
+// Penyebut metric "per AM" = roster AM aktif di cabang HoD (master_user), BUKAN
+// jumlah record accurate_salesman: satu AM bisa punya beberapa kode salesman
+// (kode lama/dobel) sehingga penyebutnya menggelembung dan produktivitas jadi
+// terlihat rendah. Definisi roster sama dengan npk-am.ts / visit.ts.
 async function amCount(sql: Sql, cabang: string[]): Promise<number> {
   if (!cabang.length) return 0;
   const rows = await sql<{ n: number }[]>`
-    SELECT count(DISTINCT acs.id)::int AS n
-    FROM accurate_salesman acs
-    LEFT JOIN master_user mu ON mu.am_id = acs.master_user_id::text
-    WHERE mu.cabang = ANY(${cabang})`;
+    SELECT count(*)::int AS n
+    FROM master_user mu
+    WHERE mu.aktif AND upper(COALESCE(mu.role, '')) = 'AM'
+      AND mu.cabang = ANY(${cabang})`;
   return Number(rows[0]?.n ?? 0);
 }
 
@@ -111,11 +126,10 @@ async function productivity(sql: Sql, cabang: string[]): Promise<number> {
   return n ? r / n : 0;
 }
 
-async function arOver90(sql: Sql): Promise<number> {
-  const rows = await sql<{ v: number }[]>`
-    SELECT COALESCE(sum(amount),0)::float8 AS v FROM ar_aging_mv WHERE bucket = '>90'`;
-  return Number(rows[0]?.v ?? 0);
-}
+// AR >90 hari diambil dari repo/ar.ts (arOver90Outstanding) supaya identik
+// dengan menu AR. Query lama di sini salah dua kali: filter bucket '>90'
+// (nilai sebenarnya '90+', jadi tak pernah kena → 0 → hijau permanen) dan
+// sum(amount) mentah (nilai faktur asli, bukan sisa tagihan).
 
 async function noOrderOver(sql: Sql, days: number): Promise<number> {
   const rows = await sql<{ n: number }[]>`
@@ -141,6 +155,9 @@ async function churnRutin(sql: Sql, cabang: string[]): Promise<number> {
   return Number(rows[0]?.n ?? 0);
 }
 
+// Kunjungan TEREALISASI = sales_plan.reported (definisi yang dipakai seluruh
+// repo: dailysummary/digest/compliance/npk-am). Menghitung semua baris plan
+// akan menghitung rencana yang tak pernah dilaporkan sebagai kunjungan.
 async function visitsThisMonth(sql: Sql, cabang: string[]): Promise<number> {
   if (!cabang.length) return 0;
   const rows = await sql<{ n: number }[]>`
@@ -148,8 +165,19 @@ async function visitsThisMonth(sql: Sql, cabang: string[]): Promise<number> {
     FROM sales_plan sp
     JOIN master_user mu ON mu.am_id = sp.am_id
     WHERE mu.cabang = ANY(${cabang})
+      AND sp.reported
       AND sp.tanggal >= date_trunc('month', CURRENT_DATE)`;
   return Number(rows[0]?.n ?? 0);
+}
+
+// Target "48 kunjungan/bln" itu beban SATU AM (±2–3 kunjungan/hari kerja),
+// sebaris dengan "Produktivitas ≥ Rp 500jt/AM" di brief Direktur — jadi yang
+// dibandingkan adalah rata-rata per AM, bukan total se-wilayah HoD (yang untuk
+// 6 cabang pasti lewat target tanpa arti).
+async function visitsPerAm(sql: Sql, cabang: string[]): Promise<number> {
+  const v = await visitsThisMonth(sql, cabang);
+  const n = await amCount(sql, cabang);
+  return n ? v / n : 0;
 }
 
 // ── Definisi metric per HoD (tanpa nilai/konfig cabang hardcoded) ──
@@ -177,7 +205,7 @@ const JT = 1_000_000;
 const SALES_METRICS = (): MetricDef[] => [
   { key: "revenue", label: "Revenue/bln", target: 2.5 * BIO, unit: "Rp", direction: "higher", trend: "stable", compute: (s, c) => revenueThisMonth(s, c) },
   { key: "prod", label: "Produktivitas/AM", target: 500 * JT, unit: "Rp", direction: "higher", trend: "stable", compute: (s, c) => productivity(s, c) },
-  { key: "visits", label: "Kunjungan/bln", target: 48, unit: "kunjungan", direction: "higher", trend: "stable", compute: (s, c) => visitsThisMonth(s, c) },
+  { key: "visits", label: "Kunjungan/AM/bln", target: 48, unit: "kunjungan", direction: "higher", trend: "stable", compute: (s, c) => visitsPerAm(s, c) },
   { key: "newacct", label: "Akun baru/bln", target: 2, unit: "akun", direction: "higher", trend: "stable" },
   { key: "churn", label: "Churn RUTIN", target: 0, unit: "customer", direction: "lower", trend: "stable", compute: (s, c) => churnRutin(s, c) },
 ];
@@ -213,7 +241,7 @@ const HOD_DEFS: HodDef[] = [
   },
   {
     key: "ika", name: "Ika", role: "Finance & SC", metrics: [
-      { key: "ar90", label: "AR overdue >90 hari", target: 500 * JT, unit: "Rp", direction: "lower", trend: "stable", compute: (s) => arOver90(s) },
+      { key: "ar90", label: "AR overdue >90 hari", target: 500 * JT, unit: "Rp", direction: "lower", trend: "stable", compute: () => arOver90Outstanding() },
       { key: "fillrate", label: "Fill rate", target: 95, unit: "%", direction: "higher", trend: "stable" },
       { key: "refi", label: "Milestone refinancing", target: 1, unit: "milestone", direction: "higher", trend: "stable" },
       { key: "runway", label: "Cash runway mingguan", target: null, unit: "", direction: "higher", trend: "stable" },
@@ -244,20 +272,50 @@ const LEGEND: Record<WatchStatus, string> = {
 };
 
 const PENDING: string[] = [
-  "Metric manual (JV, CLIA, uptime, refinancing, dll) diisi via tabel watchpoint_metric — kosong → N/A",
+  "Metric manual (JV, CLIA, uptime, refinancing, dll) diisi lewat tombol ubah di kartu HoD — kosong → N/A",
   "Mapping HoD→cabang dari tabel hod_territory (import AREA PER HOD.xlsx) — kosong → metric cabang = 0",
   "3 leverage AI-suggest per HoD (F85) menyusul",
 ];
 
 // ── Loader manual & territory dari DB ─────────────────────────────
-interface ManualRow { actual: number | null; status_override: string | null; note: string | null }
+type TargetMode = "default" | "value" | "milestone";
+
+interface ManualRow {
+  actual: number | null;
+  status_override: string | null;
+  note: string | null;
+  target_override: number | null;
+  target_mode: TargetMode;
+}
+
+const num = (v: unknown): number | null => (v === null || v === undefined ? null : Number(v));
 
 async function loadManual(sql: Sql): Promise<Map<string, ManualRow>> {
-  const rows = await sql<{ hod_key: string; metric_key: string; actual: number | null; status_override: string | null; note: string | null }[]>`
-    SELECT hod_key, metric_key, actual, status_override, note FROM watchpoint_metric`;
+  const rows = await sql<{
+    hod_key: string; metric_key: string; actual: number | null; status_override: string | null;
+    note: string | null; target_override: number | null; target_mode: string | null;
+  }[]>`
+    SELECT hod_key, metric_key, actual, status_override, note, target_override, target_mode
+    FROM watchpoint_metric`;
   const m = new Map<string, ManualRow>();
-  for (const r of rows) m.set(`${r.hod_key}:${r.metric_key}`, { actual: r.actual === null ? null : Number(r.actual), status_override: r.status_override, note: r.note });
+  for (const r of rows) {
+    const mode = r.target_mode === "value" || r.target_mode === "milestone" ? r.target_mode : "default";
+    m.set(`${r.hod_key}:${r.metric_key}`, {
+      actual: num(r.actual),
+      status_override: r.status_override,
+      note: r.note,
+      target_override: num(r.target_override),
+      target_mode: mode,
+    });
+  }
   return m;
+}
+
+/** Target efektif: override dari DB kalau ada, selain itu angka default di kode. */
+function effectiveTarget(def: number | null, row: ManualRow | undefined): number | null {
+  if (!row || row.target_mode === "default") return def;
+  if (row.target_mode === "milestone") return null;
+  return row.target_override ?? def;
 }
 
 async function loadTerritory(sql: Sql): Promise<Map<string, string[]>> {
@@ -280,10 +338,19 @@ async function buildMetric(
   manual: Map<string, ManualRow>,
   cabang: string[],
 ): Promise<WatchMetric> {
+  const row = manual.get(`${hodKey}:${d.key}`);
+  const target = effectiveTarget(d.target, row);
+
   let actual: number | null;
   let source: "db" | "manual";
-  let note: string | undefined;
   let override: WatchStatus | undefined;
+
+  // Catatan & status manual berlaku untuk metric apa pun — termasuk yang
+  // angkanya computed (mis. "AR >90 turun karena 2 faskes bayar minggu ini").
+  const note = row?.note ?? undefined;
+  if (row?.status_override && VALID_STATUS.has(row.status_override as WatchStatus)) {
+    override = row.status_override as WatchStatus;
+  }
 
   if (d.compute && sql) {
     source = "db";
@@ -295,19 +362,15 @@ async function buildMetric(
     }
   } else {
     source = "manual";
-    const row = manual.get(`${hodKey}:${d.key}`);
     actual = row?.actual ?? null;
-    note = row?.note ?? undefined;
-    if (row?.status_override && VALID_STATUS.has(row.status_override as WatchStatus)) {
-      override = row.status_override as WatchStatus;
-    }
   }
 
-  const pct = attainment(d.target, actual, d.direction);
-  const status = d.target === null ? override ?? "NA" : gate(pct);
+  const pct = attainment(target, actual, d.direction);
+  const status = target === null ? override ?? "NA" : gate(pct);
   return {
-    key: d.key, label: d.label, target: d.target, actual, unit: d.unit,
+    key: d.key, label: d.label, target, actual, unit: d.unit,
     direction: d.direction, source, pct, status, trend: d.trend, note,
+    targetMode: row?.target_mode ?? "default", defaultTarget: d.target,
   };
 }
 
@@ -322,13 +385,78 @@ export async function getWatchBoard(): Promise<WatchBoard> {
     const metrics = await Promise.all(h.metrics.map((m) => buildMetric(sql, h.key, m, manual, cabang)));
     hods.push({ key: h.key, name: h.name, role: h.role, status: worst(metrics), metrics });
   }
+  const cur = currentWeek();
+  const { from, to } = weekRange(cur.isoYear, cur.isoWeek);
   return {
     source: "computed",
-    generatedFor: "Sprint B1! / W25 (2026-06-22 — 2026-06-28)",
+    // Minggu ISO berjalan (WIB) — jangan dipatok teks: papan ini dibaca tiap
+    // Senin, label yang tertinggal di sprint lama bikin angka terbaca basi.
+    generatedFor: `W${cur.isoWeek} · ${periodeLabel(from, to)}`,
     asOf: new Date().toISOString(),
     hods,
     meta: { gate: "🟢 ≥ target · 🟡 50–99% · 🔴 < 50%", legend: LEGEND, pending: PENDING },
   };
+}
+
+// ── Tulis: target & nilai manual per metric (migrasi 080) ─────────
+
+export interface WatchMetricPatch {
+  hodKey: string;
+  metricKey: string;
+  /** Hanya dipakai metric manual; metric computed mengabaikannya. */
+  actual: number | null;
+  /** Status manual untuk metric milestone (target null). null = auto dari gate. */
+  status: WatchStatus | null;
+  note: string | null;
+  targetMode: TargetMode;
+  /** Wajib angka saat targetMode 'value'. */
+  targetOverride: number | null;
+  updatedBy: string | null;
+}
+
+/** Definisi metric (hod, key) dari katalog — null kalau pasangan itu tak dikenal. */
+export function findMetricDef(hodKey: string, metricKey: string): { hod: HodDef; metric: MetricDef } | null {
+  const hod = HOD_DEFS.find((h) => h.key === hodKey);
+  if (!hod) return null;
+  const metric = hod.metrics.find((m) => m.key === metricKey);
+  return metric ? { hod, metric } : null;
+}
+
+/** Katalog metric per HoD (tanpa nilai) — dipakai validasi & referensi klien. */
+export function listMetricDefs(): { hodKey: string; metricKey: string; label: string; defaultTarget: number | null; unit: string; computed: boolean }[] {
+  return HOD_DEFS.flatMap((h) =>
+    h.metrics.map((m) => ({
+      hodKey: h.key, metricKey: m.key, label: m.label,
+      defaultTarget: m.target, unit: m.unit, computed: Boolean(m.compute),
+    })),
+  );
+}
+
+export async function upsertWatchMetric(p: WatchMetricPatch): Promise<void> {
+  const sql = db();
+  await sql`
+    INSERT INTO watchpoint_metric
+      (hod_key, metric_key, actual, status_override, note, target_override, target_mode, updated_by, updated_at)
+    VALUES (${p.hodKey}, ${p.metricKey}, ${p.actual}, ${p.status}, ${p.note},
+            ${p.targetOverride}, ${p.targetMode}, ${p.updatedBy}, now())
+    ON CONFLICT (hod_key, metric_key) DO UPDATE SET
+      actual          = EXCLUDED.actual,
+      status_override = EXCLUDED.status_override,
+      note            = EXCLUDED.note,
+      target_override = EXCLUDED.target_override,
+      target_mode     = EXCLUDED.target_mode,
+      updated_by      = EXCLUDED.updated_by,
+      updated_at      = now()`;
+}
+
+/** Hapus baris → metric balik ke default kode (target) & N/A (nilai manual). */
+export async function deleteWatchMetric(hodKey: string, metricKey: string): Promise<{ deleted: boolean }> {
+  const sql = db();
+  const rows = await sql`
+    DELETE FROM watchpoint_metric
+    WHERE hod_key = ${hodKey} AND metric_key = ${metricKey}
+    RETURNING hod_key`;
+  return { deleted: rows.length > 0 };
 }
 
 // ── Formatter pesan WA per-HoD (dipakai endpoint kirim WA) ────────

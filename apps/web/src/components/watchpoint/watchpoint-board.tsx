@@ -1,7 +1,10 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { TrendingUp, TrendingDown, Minus, AlertTriangle, Database, PencilLine, Send, type LucideIcon } from "lucide-react";
+import { useRouter } from "next/navigation";
+import {
+  TrendingUp, TrendingDown, Minus, AlertTriangle, Database, PencilLine, RotateCcw, Send, type LucideIcon,
+} from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -9,12 +12,17 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select";
+import {
   Dialog, DialogBody, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger,
 } from "@/components/ui/dialog";
 
 // Tipe di-mirror dari apps/api/src/repo/watchpoint.ts.
 type WatchStatus = "GREEN" | "YELLOW" | "RED" | "NA";
 type WatchTrend = "improving" | "stable" | "declining";
+
+type TargetMode = "default" | "value" | "milestone";
 
 interface WatchMetric {
   key: string;
@@ -28,6 +36,8 @@ interface WatchMetric {
   status: WatchStatus;
   trend: WatchTrend;
   note?: string;
+  targetMode: TargetMode;
+  defaultTarget: number | null;
 }
 interface HodWatch {
   key: string;
@@ -86,7 +96,7 @@ function fmt(v: number | null, unit: string): string {
   return `${new Intl.NumberFormat("id-ID", { maximumFractionDigits: 0 }).format(v)}${unit ? " " + unit : ""}`;
 }
 
-function MetricRow({ m }: { m: WatchMetric }) {
+function MetricRow({ m, onEdit }: { m: WatchMetric; onEdit?: () => void }) {
   const t = TREND[m.trend];
   const TrendIcon = t.icon;
   const SourceIcon = m.source === "db" ? Database : PencilLine;
@@ -96,6 +106,14 @@ function MetricRow({ m }: { m: WatchMetric }) {
         <span className={cn("size-2 shrink-0 rounded-full", STATUS_DOT[m.status])} />
         <span className="truncate text-xs" title={m.note}>{m.label}</span>
         <SourceIcon className="text-muted-foreground/50 size-3 shrink-0" aria-label={m.source} />
+        {m.targetMode !== "default" && (
+          <span
+            className="text-muted-foreground border-border shrink-0 rounded border px-1 text-[10px] leading-4"
+            title={`Target diubah dari default (${m.defaultTarget === null ? "milestone" : fmt(m.defaultTarget, m.unit)})`}
+          >
+            ubah
+          </span>
+        )}
       </div>
       <div className="flex items-center gap-2 text-xs tabular-nums">
         {m.target === null ? (
@@ -113,12 +131,18 @@ function MetricRow({ m }: { m: WatchMetric }) {
           </>
         )}
         <TrendIcon className={cn("size-3.5 shrink-0", t.tone)} />
+        {onEdit && (
+          <Button variant="ghost" size="icon-xs" onClick={onEdit} aria-label={`Ubah ${m.label}`}>
+            <PencilLine />
+          </Button>
+        )}
       </div>
     </div>
   );
 }
 
-function HodCard({ hod }: { hod: HodWatch }) {
+function HodCard({ hod, canEdit }: { hod: HodWatch; canEdit: boolean }) {
+  const [edit, setEdit] = useState<WatchMetric | null>(null);
   return (
     <Card>
       <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
@@ -132,13 +156,196 @@ function HodCard({ hod }: { hod: HodWatch }) {
       </CardHeader>
       <CardContent className="divide-border/60 divide-y pt-0">
         {hod.metrics.map((m) => (
-          <MetricRow key={m.key} m={m} />
+          <MetricRow key={m.key} m={m} onEdit={canEdit ? () => setEdit(m) : undefined} />
         ))}
         <div className="flex justify-end pt-2">
           <SendWaButton hod={hod} />
         </div>
       </CardContent>
+      {edit && <EditMetricDialog hod={hod} metric={edit} onClose={() => setEdit(null)} />}
     </Card>
+  );
+}
+
+// ── Dialog ubah target & nilai manual satu metric ─────────────────
+// Target = kesepakatan Direktur–HoD, jadi disimpan sebagai OVERRIDE di DB
+// (watchpoint_metric, migrasi 080); angka brief Juni 2026 di kode tetap jadi
+// default dan bisa dipulihkan lewat "Kembalikan ke default".
+const MODE_LABEL: Record<string, string> = {
+  default: "Pakai default", value: "Angka sendiri", milestone: "Tanpa angka (milestone)",
+};
+const STATUS_PICK_LABEL: Record<string, string> = {
+  AUTO: "Otomatis dari target", GREEN: "Hijau / Live", YELLOW: "Kuning / WIP", RED: "Merah / Off", NA: "N/A",
+};
+
+function errText(status: number, raw?: string): string {
+  if (status === 401) return "Perlu login dulu untuk mengubah metric.";
+  if (status === 403) return "Hanya Direktur atau admin yang boleh mengubah target/nilai metric.";
+  if (status === 503) return "Database sedang tidak aktif — perubahan tak bisa disimpan.";
+  return raw?.trim() || `Gagal (HTTP ${status}).`;
+}
+
+function EditMetricDialog({ hod, metric, onClose }: { hod: HodWatch; metric: WatchMetric; onClose: () => void }) {
+  const router = useRouter();
+  const [mode, setMode] = useState<TargetMode>(metric.targetMode);
+  const [target, setTarget] = useState(
+    metric.targetMode === "value" && metric.target !== null ? String(metric.target) : "",
+  );
+  const [actual, setActual] = useState(metric.actual === null ? "" : String(metric.actual));
+  const [status, setStatus] = useState<WatchStatus | "AUTO">(metric.target === null ? metric.status : "AUTO");
+  const [note, setNote] = useState(metric.note ?? "");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  // Milestone = target efektif tak berangka → status diisi manual, aktual tak relevan.
+  const isMilestone = mode === "milestone" || (mode === "default" && metric.defaultTarget === null);
+  const isComputed = metric.source === "db";
+
+  function done() {
+    router.refresh();
+    onClose();
+  }
+
+  async function save() {
+    setBusy(true);
+    setErr(null);
+    try {
+      const res = await fetch("/api/watchpoint/metric", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          hod_key: hod.key,
+          metric_key: metric.key,
+          target_mode: mode,
+          target_override: mode === "value" ? Number(target) : null,
+          actual: isMilestone || isComputed || actual.trim() === "" ? null : Number(actual),
+          status: status === "AUTO" ? null : status,
+          note: note.trim() || null,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(errText(res.status, data.error));
+      done();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function reset() {
+    setBusy(true);
+    setErr(null);
+    try {
+      const qs = `hod_key=${encodeURIComponent(hod.key)}&metric_key=${encodeURIComponent(metric.key)}`;
+      const res = await fetch(`/api/watchpoint/metric?${qs}`, { method: "DELETE" });
+      if (!res.ok && res.status !== 404) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(errText(res.status, data.error));
+      }
+      done();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const targetInvalid = mode === "value" && (target.trim() === "" || !Number.isFinite(Number(target)));
+
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>{metric.label} — {hod.name}</DialogTitle>
+          <DialogDescription>
+            Target berlaku untuk papan ini seterusnya (bukan per minggu). Default:{" "}
+            {metric.defaultTarget === null ? "milestone tanpa angka" : fmt(metric.defaultTarget, metric.unit)}.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogBody className="grid gap-3">
+          <div className="grid gap-1.5">
+            <Label htmlFor="wpb-mode">Target</Label>
+            <Select value={mode} onValueChange={(v) => setMode(v as TargetMode)}>
+              <SelectTrigger id="wpb-mode" size="sm" className="bg-card border-border">
+                <SelectValue>{(v) => MODE_LABEL[String(v)] ?? "Pilih"}</SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="default">Pakai default</SelectItem>
+                <SelectItem value="value">Angka sendiri</SelectItem>
+                <SelectItem value="milestone">Tanpa angka (milestone)</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          {mode === "value" && (
+            <div className="grid gap-1.5">
+              <Label htmlFor="wpb-target">
+                Nilai target {metric.unit ? `(${metric.unit})` : ""} — arah {metric.direction === "higher" ? "makin besar makin baik" : "makin kecil makin baik"}
+              </Label>
+              <Input
+                id="wpb-target"
+                inputMode="decimal"
+                value={target}
+                onChange={(e) => setTarget(e.target.value)}
+                placeholder={metric.defaultTarget === null ? "mis. 95" : String(metric.defaultTarget)}
+              />
+              <p className="text-muted-foreground text-xs">Tulis angka penuh, tanpa titik ribuan (Rp 2,5 M = 2500000000).</p>
+            </div>
+          )}
+
+          {!isMilestone && (
+            isComputed ? (
+              <p className="text-muted-foreground text-xs">
+                Aktual metric ini dihitung otomatis dari database, jadi tak bisa diisi manual di sini.
+              </p>
+            ) : (
+              <div className="grid gap-1.5">
+                <Label htmlFor="wpb-actual">Aktual {metric.unit ? `(${metric.unit})` : ""}</Label>
+                <Input
+                  id="wpb-actual"
+                  inputMode="decimal"
+                  value={actual}
+                  onChange={(e) => setActual(e.target.value)}
+                  placeholder="kosong = N/A"
+                />
+              </div>
+            )
+          )}
+
+          <div className="grid gap-1.5">
+            <Label htmlFor="wpb-status">Status</Label>
+            <Select value={status} onValueChange={(v) => setStatus(v as WatchStatus | "AUTO")}>
+              <SelectTrigger id="wpb-status" size="sm" className="bg-card border-border">
+                <SelectValue>{(v) => STATUS_PICK_LABEL[String(v)] ?? "Pilih status"}</SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                {!isMilestone && <SelectItem value="AUTO">Otomatis dari target</SelectItem>}
+                <SelectItem value="GREEN">Hijau / Live</SelectItem>
+                <SelectItem value="YELLOW">Kuning / WIP</SelectItem>
+                <SelectItem value="RED">Merah / Off</SelectItem>
+                <SelectItem value="NA">N/A</SelectItem>
+              </SelectContent>
+            </Select>
+            {!isMilestone && (
+              <p className="text-muted-foreground text-xs">Status manual hanya dipakai untuk metric tanpa angka target.</p>
+            )}
+          </div>
+
+          <div className="grid gap-1.5">
+            <Label htmlFor="wpb-note">Keterangan</Label>
+            <Input id="wpb-note" value={note} onChange={(e) => setNote(e.target.value)} placeholder="konteks 1 kalimat" />
+          </div>
+
+          {err && <p className="text-destructive text-sm">{err}</p>}
+        </DialogBody>
+        <DialogFooter>
+          <Button onClick={save} disabled={busy || targetInvalid}>{busy ? "Menyimpan…" : "Simpan"}</Button>
+          <Button variant="outline" onClick={reset} disabled={busy}><RotateCcw /> Kembalikan ke default</Button>
+          <DialogClose render={<Button type="button" variant="ghost" />}>Tutup</DialogClose>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -232,7 +439,7 @@ function SendWaButton({ hod }: { hod: HodWatch }) {
   );
 }
 
-export function WatchPointBoardView({ initial }: { initial: WatchBoard | null }) {
+export function WatchPointBoardView({ initial, canEdit = false }: { initial: WatchBoard | null; canEdit?: boolean }) {
   const [filter, setFilter] = useState<WatchStatus | "ALL">("ALL");
 
   const counts = useMemo(() => {
@@ -290,7 +497,7 @@ export function WatchPointBoardView({ initial }: { initial: WatchBoard | null })
       {visible.length ? (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {visible.map((h) => (
-            <HodCard key={h.key} hod={h} />
+            <HodCard key={h.key} hod={h} canEdit={canEdit} />
           ))}
         </div>
       ) : (
