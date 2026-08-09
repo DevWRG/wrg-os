@@ -20,9 +20,7 @@ import {
   type AspectInput, type AspectKey, type NPKResult,
 } from "../lib/npk-calc.js";
 import { calcNpkSk } from "../lib/npk-sk.js";
-import {
-  isGolongan, targetCustomerSemester, targetNewCustomerSemester, type Golongan,
-} from "../lib/npk-golongan.js";
+import { isGolongan, targetNewCustomerSemester, type Golongan } from "../lib/npk-golongan.js";
 import { semesterRange, type Period } from "./npk.js";
 import type { DataScope } from "./access-scope.js";
 import { isAmRole } from "./access-scope.js";
@@ -101,14 +99,14 @@ export async function gatherAmInput(
   // baru terkumpul sampai hari ini). Pola identik jalur HoD.
   input.revenue_target = revTargetSemester * elapsed;
 
-  // Target customer: SK Pasal 3.1 baris 2 bilang "target per level golongan", jadi
-  // GOLONGAN yang kanonik (Pasal 2.1: AM-0 10 · AM-1 20 · AM-2 28 · AM-3 35 · AM-4 45).
-  // `sales_target_am.target_customer` tetap dihormati sebagai OVERRIDE manual bila
-  // diisi >0 — dipakai untuk AM yang targetnya memang disepakati beda dari levelnya.
+  // Target customer = TARGET PROGRAM per AM (Roster ACE Bagian 6 → sales_target_am.
+  // target_customer). BUKAN minimum per golongan: SK Pasal 2.1 menyebut angka level
+  // itu "syarat minimum naik golongan, bukan target program", dan memakainya sebagai
+  // penyebut membuat AM senior mentok nilai penuh (Arif 71 customer ÷ minimum 28 =
+  // 253%). Tanpa target program → aspek Customer N/A, bukan dinilai dengan angka
+  // pengganti yang menggelembungkan skor.
   // Customer TIDAK di-pro-rata (STOCK, front-loaded) — lihat catatan panjang di repo/npk.ts.
-  const custOverride = Number(tgt?.target_customer ?? 0);
-  const custDariGolongan = targetCustomerSemester(am.golongan);
-  const custTargetSemester = custOverride > 0 ? custOverride : (custDariGolongan ?? 0);
+  const custTargetSemester = Number(tgt?.target_customer ?? 0);
   input.customer_target = custTargetSemester;
 
   // ── AR: outstanding OPEN milik AM ini + proxy >45 hari dari umur `tanggal` ──
@@ -187,9 +185,7 @@ export async function gatherAmInput(
       revenue_target_prorata: input.revenue_target,     // yang dipakai men-skor
       customer_active_count: input.customer_active_count,
       customer_target_semester: custTargetSemester,     // dipakai men-skor apa adanya (stock)
-      customer_target_sumber: custOverride > 0 ? "override_sales_target_am" : (custDariGolongan ? "golongan_sk_2_1" : "tidak_ada"),
-      customer_target_golongan: custDariGolongan,
-      customer_target_override: custOverride > 0 ? custOverride : null,
+      customer_target_sumber: custTargetSemester > 0 ? "target_program_am" : "tidak_ada",
       customer_target_missing: input.customer_target <= 0,
       crm_new_customer_target: targetNew,
       ar_total: input.ar_total,

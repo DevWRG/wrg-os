@@ -27,7 +27,7 @@ export default async function AmCabangPage() {
     <>
       <PageHeader
         title="AM → Cabang"
-        description="Petakan tiap AM ke cabang & golongan. Cabang menentukan region kartu Sales Performance (via WatchPoint Territory). Golongan = jenjang karir SK Pasal 2.1 — jadi target customer & new-customer di NPK AM."
+        description="Petakan tiap AM ke cabang & golongan. Cabang menentukan region kartu Sales Performance (via WatchPoint Territory). Golongan = jenjang karir SK Pasal 2.1 — menentukan target New Customer di NPK AM dan syarat naik golongan. Target customer & revenue per AM diisi di menu Sales → Target."
         action={
           <Button render={<Link href="/watchpoint/territory" />} variant="outline" size="sm">
             <MapPin /> Territory (cabang→region)

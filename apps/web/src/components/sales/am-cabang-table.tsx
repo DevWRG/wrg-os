@@ -17,9 +17,9 @@ export interface AmRow {
   cabang: string | null;
   aktif: boolean;
   golongan: string | null;
-  target_customer: number | null; // turunan golongan (SK Pasal 2.1), read-only
+  customer_minimum: number | null; // minimum naik golongan (SK Pasal 2.1), read-only
 }
-export interface GolonganOption { key: string; label: string; target_customer: number | null }
+export interface GolonganOption { key: string; label: string; customer_minimum: number | null }
 type Status = "idle" | "saving" | "saved" | "error";
 
 export function AmCabangTable({
@@ -34,8 +34,8 @@ export function AmCabangTable({
     Object.fromEntries(rows.map((r) => [r.am_id, r.golongan ?? ""])),
   );
   const [status, setStatus] = useState<Record<string, Status>>({});
-  const targetOf = (g: string): number | null =>
-    golonganOptions.find((o) => o.key === g)?.target_customer ?? null;
+  const minimumOf = (g: string): number | null =>
+    golonganOptions.find((o) => o.key === g)?.customer_minimum ?? null;
 
   // Kirim HANYA field yang diubah — field yang tak dikirim tidak disentuh backend.
   async function save(am_id: string, patch: { cabang?: string | null; golongan?: string | null }) {
@@ -63,7 +63,7 @@ export function AmCabangTable({
             <th className="py-2 pr-4 font-medium">AM</th>
             <th className="px-2 py-2 font-medium">Cabang</th>
             <th className="px-2 py-2 font-medium">Golongan <span className="font-normal">(SK Pasal 2.1)</span></th>
-            <th className="px-2 py-2 font-medium">Target Customer</th>
+            <th className="px-2 py-2 font-medium">Min. Customer <span className="font-normal">(syarat naik)</span></th>
             <th className="px-2 py-2 font-medium">Status</th>
           </tr>
         </thead>
@@ -105,8 +105,8 @@ export function AmCabangTable({
                 </td>
                 <td className="text-muted-foreground px-2 py-2 text-xs tabular-nums">
                   {(() => {
-                    const t = targetOf(golongan[r.am_id] ?? "");
-                    return t == null ? "—" : `${t} faskes`;
+                    const m = minimumOf(golongan[r.am_id] ?? "");
+                    return m == null ? "—" : `${m} faskes`;
                   })()}
                 </td>
                 <td className="px-2 py-2">
