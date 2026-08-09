@@ -97,7 +97,7 @@ import { getLatestCoachingNotes, computePeopleAnalytics } from "./repo/people.js
 import { createVisit, getVisit, listVisits, visitKpi, visitSummary } from "./repo/visit.js";
 import { upsertDailyTodo, listTodos, markTodoReported } from "./repo/todo.js";
 import { upsertUser, listUsers, upsertTerritory, listTerritories, updateUserCabang, updateUserGolongan } from "./repo/master.js";
-import { GOLONGAN, GOLONGAN_LABEL, TARGET_CUSTOMER, isGolongan, targetCustomerSemester } from "./lib/npk-golongan.js";
+import { GOLONGAN, GOLONGAN_LABEL, TARGET_CUSTOMER_MINIMUM, isGolongan } from "./lib/npk-golongan.js";
 import { listTargets, upsertTargets, listCabangTargets, upsertCabangTargets, listAmTargets, upsertAmTargets, listAmCandidates, deleteAmTarget } from "./repo/sales-target.js";
 import {
   upsertHoliday,
@@ -431,12 +431,13 @@ app.get("/admin/am-cabang", async (c) => {
     rows: users.map((u) => ({
       am_id: u.am_id, nama: u.nama, panggilan: u.panggilan, cabang: u.cabang, aktif: u.aktif,
       golongan: u.golongan,
-      // Target customer turunan golongan (SK Pasal 2.1) — ditampilkan sbg petunjuk
-      // di UI supaya jelas angka mana yang dipakai aspek NPK Customer.
-      target_customer: targetCustomerSemester(u.golongan),
+      // Customer MINIMUM per golongan (SK Pasal 2.1) — konteks kelayakan naik
+      // golongan. BUKAN penyebut aspek NPK Customer: itu memakai target program
+      // per AM di menu Sales → Target (lihat catatan di lib/npk-golongan.ts).
+      customer_minimum: TARGET_CUSTOMER_MINIMUM[u.golongan ?? "OSP"] ?? null,
     })),
     cabang_options: cabangOptions,
-    golongan_options: GOLONGAN.map((g) => ({ key: g, label: GOLONGAN_LABEL[g], target_customer: TARGET_CUSTOMER[g] })),
+    golongan_options: GOLONGAN.map((g) => ({ key: g, label: GOLONGAN_LABEL[g], customer_minimum: TARGET_CUSTOMER_MINIMUM[g] })),
   });
 });
 // PUT menerima `cabang` dan/atau `golongan` — field yang TIDAK dikirim tidak

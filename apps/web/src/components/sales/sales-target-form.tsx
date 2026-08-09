@@ -314,7 +314,7 @@ function AmTargets({ year }: { year: number }) {
                 <th className="px-2 py-2 font-medium">Cabang</th>
                 <th className="px-2 py-2 font-medium">Region</th>
                 <th className="px-2 py-2 font-medium">Target {year} (Rp)</th>
-                <th className="px-2 py-2 font-medium">Target Customer <span className="font-normal">(override NPK)</span></th>
+                <th className="px-2 py-2 font-medium">Target Customer <span className="font-normal">(NPK)</span></th>
                 <th className="px-2 py-2" />
               </tr>
             </thead>
@@ -355,7 +355,7 @@ function AmTargets({ year }: { year: number }) {
         {error && <p className="text-danger text-sm">{error}</p>}
         <div className="flex flex-wrap items-center justify-between gap-2">
           <span className="text-muted-foreground text-xs">
-            <strong>Target Customer</strong> = <em>override</em> jumlah faskes aktif untuk aspek Customer di <Link href="/npk/am" className="text-primary hover:underline">NPK AM</Link>. Kosongkan saja bila mengikuti SK: targetnya otomatis turun dari golongan AM (Pasal 2.1) yang di-set di <Link href="/am-cabang" className="text-primary hover:underline">AM → Cabang</Link>. Isi di sini hanya untuk AM yang targetnya memang disepakati beda dari levelnya.
+            <strong>Target Customer</strong> = target program jumlah faskes aktif per AM (Roster ACE Bagian 6) — inilah penyebut aspek Customer di <Link href="/npk/am" className="text-primary hover:underline">NPK AM</Link>. Kosong/0 → aspek itu <strong>N/A</strong>, bukan dinilai 0. Sengaja BUKAN minimum per golongan: SK Pasal 2.1 menyebut angka level itu syarat naik golongan, bukan target kinerja.
             Kelola AM/cabang di <Link href="/users" className="text-primary hover:underline">Users</Link>, <Link href="/am-cabang" className="text-primary hover:underline">AM → Cabang</Link> &amp; <Link href="/watchpoint/territory" className="text-primary hover:underline">Territory</Link>.
           </span>
           <SaveButton saving={saving} saved={saved} disabled={loading || rows.length === 0} onClick={save} label="Simpan target AM" />
