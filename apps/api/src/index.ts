@@ -2159,7 +2159,13 @@ app.get("/insentif/list", async (c) => {
   }
 });
 
-// Hitung ulang satu periode. Operasi ops: butuh service token DAN superuser.
+// Hitung ulang satu periode. Operasi ops.
+//
+// Pagar yang SELALU berlaku: superuser (dari sesi via x-user-id). Pagar service-token
+// hanya aktif bila API_SERVICE_TOKEN di-set — mengikuti pola rumah (lihat baris 342 dan
+// endpoint ops lain), supaya dev tanpa token tetap bisa dipakai. Jadi di lingkungan
+// tanpa token, yang menjaga endpoint ini adalah superuser SAJA; jangan membaca komentar
+// ini sebagai "wajib dua-duanya".
 // apply=false (default) = pratinjau, tak menulis apa pun.
 app.post("/insentif/compute", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);

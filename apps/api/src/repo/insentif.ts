@@ -24,27 +24,69 @@ import { isAmRole } from "./access-scope.js";
 //     pemanggil mana pun yang punya token. Insentif WAJIB fail-closed.
 export type VisibleAms = string[] | "all";
 
+/** Tingkat akses insentif. Diturunkan SEKALI di resolveAkses(), dipakai apa adanya. */
+export type AksesLevel = "none" | "self" | "team" | "all";
+
+export interface AksesInsentif {
+  level: AksesLevel;
+  /** Baris yang boleh dibaca. "all" = tanpa batas. */
+  ams: VisibleAms;
+  /** am_id pemanggil, untuk view "Insentif Saya". null = akun belum tertaut. */
+  selfAmId: string | null;
+  /** Identitas sesi. null = tanpa x-user-id → tertutup. */
+  userId: string | null;
+}
+
 /**
- * Daftar am_id yang boleh dilihat pemanggil. SATU-SATUNYA definisi akses insentif —
- * jangan bikin cabang izin kedua di endpoint atau di UI.
+ * SATU-SATUNYA penentu akses insentif. Endpoint TIDAK BOLEH menyimpulkan izin sendiri
+ * dari DataScope — cukup baca `level`, `ams`, `selfAmId` dari sini. Sebelumnya
+ * getInsentifSelf() membaca `scope.amId` langsung, dan itu jadi cabang izin kedua yang
+ * membuat `/insentif/self` dan `/insentif/:amId` tidak sepakat untuk orang yang sama.
  *
  * Async karena cabang HoD perlu di-resolve ke daftar AM lewat master_user.cabang,
  * memakai scope.cabangScope yang sudah diisi resolveScope dari hod_territory — dengan
  * begitu definisi "cabang" tetap satu, tidak diduplikasi di sini.
  */
-export async function resolveVisibleAms(scope: DataScope | undefined): Promise<VisibleAms> {
-  if (!scope || !scope.userId) return [];
-  if (scope.superuser) return "all";
-  if (scope.amOnly && scope.amId) return [scope.amId];
+export async function resolveAkses(scope: DataScope | undefined): Promise<AksesInsentif> {
+  const userId = scope?.userId ? String(scope.userId) : null;
+  const selfAmId = scope?.amId ? String(scope.amId) : null;
+  const tertutup: AksesInsentif = { level: "none", ams: [], selfAmId, userId };
+
+  if (!scope || !userId) return { ...tertutup, selfAmId: null };
+  if (scope.superuser) return { level: "all", ams: "all", selfAmId, userId };
+  if (scope.amOnly && selfAmId) return { level: "self", ams: [selfAmId], selfAmId, userId };
 
   if (scope.cabangScope?.length) {
     const sql = db();
     const rows = await sql<{ am_id: string; role: string | null }[]>`
       SELECT am_id, role FROM master_user
       WHERE aktif IS NOT FALSE AND NULLIF(cabang,'') = ANY(${scope.cabangScope}::text[])`;
-    return rows.filter((r) => isAmRole(r.role)).map((r) => String(r.am_id));
+    // ⚠️ Saringan isAmRole di sini berarti HoD TIDAK melihat OSP di cabangnya. Aman
+    // (fail-closed) tapi belum lengkap begitu 15 OSP SK Pasal 9.4 masuk — perluas
+    // predikatnya setelah audit roster prod (PRD §E.2.3), JANGAN dengan mengubah
+    // isAmRole global (dipakai 45+ query lain).
+    return {
+      level: "team",
+      ams: rows.filter((r) => isAmRole(r.role)).map((r) => String(r.am_id)),
+      selfAmId,
+      userId,
+    };
   }
-  return [];
+
+  // Tertaut ke karyawan tapi master_user.role BUKAN 'AM' (mis. OSP) → DIRINYA SAJA.
+  // Ini **sengaja beda** dari visibleAms() di npk-am.ts yang mengembalikan [] untuk
+  // kasus ini. Bukan pelebaran akses: `/insentif/self` sudah memberi data ini sebelum
+  // resolver disatukan; yang berubah hanya `/insentif/:amId` untuk am_id DIRI SENDIRI
+  // yang tadinya 404 padahal `/self` 200. Orang lain tetap 404, dan `/insentif/list`
+  // tetap 403 karena level-nya "self", bukan "team".
+  if (selfAmId) return { level: "self", ams: [selfAmId], selfAmId, userId };
+
+  return tertutup;
+}
+
+/** Pembungkus tipis untuk pemanggil/tes yang hanya butuh daftar barisnya. */
+export async function resolveVisibleAms(scope: DataScope | undefined): Promise<VisibleAms> {
+  return (await resolveAkses(scope)).ams;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -425,32 +467,38 @@ async function bacaTransaksi(amId: string, periode: string) {
 
 /** Menu "Insentif Saya" — identitas HANYA dari sesi, tak pernah dari parameter (§E.2.4). */
 export async function getInsentifSelf(scope: DataScope | undefined, periode: string) {
-  if (!scope?.userId) throw Object.assign(new Error("forbidden"), { status: 403 });
-  if (!scope.amId) {
+  const akses = await resolveAkses(scope);
+  // Tanpa identitas → tertutup. Tertaut? belum → pesan ramah, BUKAN 403 dan bukan 500
+  // (§E.3); admin tanpa am_id pun sampai di sini.
+  if (!akses.userId) throw Object.assign(new Error("forbidden"), { status: 403 });
+  if (!akses.selfAmId) {
     return { linked: false, message: "Akun belum tertaut ke karyawan (am_id)." };
   }
-  const [ringkas] = await bacaBulanan([scope.amId], periode);
+  const [ringkas] = await bacaBulanan([akses.selfAmId], periode);
   return {
     linked: true,
     periode,
     scope: "self" as const,
     ringkas: ringkas ?? null,
-    transaksi: await bacaTransaksi(scope.amId, periode),
+    transaksi: await bacaTransaksi(akses.selfAmId, periode),
   };
 }
 
 /** Menu tim — AM murni DITOLAK (bukan sekadar daftar kosong), supaya jelas ini bukan haknya. */
 export async function getInsentifList(scope: DataScope | undefined, periode: string) {
-  const vis = await resolveVisibleAms(scope);
-  if (Array.isArray(vis) && vis.length === 0) {
+  const akses = await resolveAkses(scope);
+  // Hanya level tim/semua yang berhak. Satu pagar, bukan tiga: level "self" (AM murni
+  // maupun OSP) dan "none" sama-sama 403 — daftar kosong TIDAK dipakai sebagai penanda
+  // izin, supaya HoD yang cabangnya memang belum punya AM dapat halaman kosong (0 baris,
+  // total 0) alih-alih "akses ditolak" yang menyesatkan.
+  if (akses.level !== "team" && akses.level !== "all") {
     throw Object.assign(new Error("forbidden"), { status: 403 });
   }
-  if (scope?.amOnly) throw Object.assign(new Error("forbidden"), { status: 403 });
 
-  const rows = await bacaBulanan(vis, periode);
+  const rows = await bacaBulanan(akses.ams, periode);
   return {
     periode,
-    scope: vis === "all" ? ("all" as const) : ("team" as const),
+    scope: akses.level === "all" ? ("all" as const) : ("team" as const),
     baris: rows,
     // Total WAJIB ikut ter-scope — bukan total nasional (§E.2.6).
     total_am: rows.reduce((s, r) => s + r.total_insentif_am, 0),
@@ -471,8 +519,8 @@ export async function getInsentifDetail(
   amId: string,
   periode: string,
 ) {
-  const vis = await resolveVisibleAms(scope);
-  const boleh = vis === "all" || vis.includes(amId);
+  const akses = await resolveAkses(scope);
+  const boleh = akses.ams === "all" || akses.ams.includes(amId);
   if (!boleh) throw Object.assign(new Error("not found"), { status: 404 });
 
   const [ringkas] = await bacaBulanan([amId], periode);
