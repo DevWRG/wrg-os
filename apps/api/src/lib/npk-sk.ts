@@ -5,10 +5,11 @@
 // KENAPA FILE TERPISAH dari npk-calc.ts. npk-calc memberi skor LINIER
 // ((aktual/target)×100, di-cap 120, ×bobot/100) — itu tafsiran PRD/ACE, bukan SK.
 // Selisihnya nyata: Revenue 120% → linier 30 poin padahal maks SK 25; rasio AR>45
-// sebesar 30% → linier 7 poin padahal SK Tabel 3 cuma 1. Modul ini dipakai jalur
-// AM (F143); jalur HoD masih memakai npk-calc sampai ada keputusan migrasi, jadi
-// KEDUA metode hidup berdampingan untuk sementara — NPK AM dan NPK HoD TIDAK
-// sebanding sampai jalur HoD ikut pindah. Jangan bandingkan angkanya lintas menu.
+// sebesar 30% → linier 7 poin padahal SK Tabel 3 cuma 1.
+//
+// SEJAK v1.166.0 modul ini dipakai KEDUA jalur — AM (repo/npk-am.ts) dan HoD
+// (repo/npk.ts) — jadi angka NPK AM & HoD sebanding lagi. calcNPK() linier tinggal
+// jadi pembanding audit (scripts/ops/npk-compare-metode.mjs), tanpa pemanggil produksi.
 //
 // Perbedaan penting vs linier:
 //   - Poin maksimum tiap aspek = BOBOTNYA (Revenue maks 25, AR maks 10, dst).
