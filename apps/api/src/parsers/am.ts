@@ -5,28 +5,26 @@
 // #REPORT AM: blok per-customer — `N. Customer` + `hasil: ...` / `next: ...`
 //   (multi-baris), atau inline `Customer | hasil… | next…`.
 import { normalizeTujuan } from "./tujuan.js";
+import { buildIso } from "./tanggal.js";
 
 const MONTHS: Record<string, number> = {
   jan: 1, feb: 2, mar: 3, apr: 4, mei: 5, may: 5, jun: 6, jul: 7,
   agu: 8, agt: 8, ags: 8, aug: 8, sep: 9, okt: 10, oct: 10, nov: 11, des: 12, dec: 12,
 };
-const pad = (n: number) => String(n).padStart(2, "0");
-const yyyy = (y: number) => (y < 100 ? 2000 + y : y);
-
-function findDate(text: string): string | null {
+// Tahun divalidasi di buildIso (parsers/tanggal.ts) — bareng dailyplan.ts.
+function findDate(text: string, nowMs?: number): string | null {
   const m1 = text.match(/(\d{1,2})\s+([A-Za-z]{3,9})\.?\s*(\d{2,4})?/);
   if (m1) {
     const mon = MONTHS[m1[2].slice(0, 3).toLowerCase()];
     if (mon) {
-      const d = Number(m1[1]);
-      const y = m1[3] ? yyyy(Number(m1[3])) : new Date(Date.now() + 7 * 3600 * 1000).getUTCFullYear();
-      if (d >= 1 && d <= 31) return `${y}-${pad(mon)}-${pad(d)}`;
+      const iso = buildIso(Number(m1[1]), mon, m1[3], nowMs);
+      if (iso) return iso;
     }
   }
   const m2 = text.match(/(\d{1,2})[/-]\s?(\d{1,2})[/-]\s?(\d{2,4})/);
   if (m2) {
-    const d = Number(m2[1]), mon = Number(m2[2]), y = yyyy(Number(m2[3]));
-    if (d >= 1 && d <= 31 && mon >= 1 && mon <= 12) return `${y}-${pad(mon)}-${pad(d)}`;
+    const iso = buildIso(Number(m2[1]), Number(m2[2]), m2[3], nowMs);
+    if (iso) return iso;
   }
   return null;
 }
@@ -64,13 +62,13 @@ export function normalizeActivityType(input: string | null | undefined): Activit
   return TYPE_ALIAS[k] ?? null;
 }
 // header line + cari tgl (scope: baris header + 2 baris berikut, sebelum item)
-function headerDate(lines: string[], hIdx: number): string | null {
+function headerDate(lines: string[], hIdx: number, nowMs?: number): string | null {
   const rest = lines[hIdx].replace(HASH, "");
-  const dh = findDate(rest);
+  const dh = findDate(rest, nowMs);
   if (dh) return dh;
   for (let j = hIdx + 1; j <= Math.min(hIdx + 3, lines.length - 1); j++) {
     if (/^\s*tgl|tanggal/i.test(lines[j]) || !/[a-z]/i.test(lines[j].replace(/\d|[/-]/g, ""))) {
-      const d = findDate(lines[j]);
+      const d = findDate(lines[j], nowMs);
       if (d) return d;
     }
   }
@@ -80,11 +78,11 @@ function headerDate(lines: string[], hIdx: number): string | null {
 export interface PlanCustomer { customer: string; tujuan: string; goal: string }
 export interface AmPlanResult { tanggal: string | null; customers: PlanCustomer[] }
 
-export function parseAmPlan(body: string): AmPlanResult {
+export function parseAmPlan(body: string, nowMs?: number): AmPlanResult {
   const lines = body.split(/\r?\n/);
   let hIdx = lines.findIndex((l) => HASH.test(l));
   if (hIdx < 0) hIdx = 0;
-  const tanggal = headerDate(lines, hIdx);
+  const tanggal = headerDate(lines, hIdx, nowMs);
   const customers: PlanCustomer[] = [];
 
   const pipeLines = lines.filter((l, i) => i !== hIdx && hasSegments(l) && !/^\s*\d+\s*[|—–]?\s*$/.test(l));
@@ -128,11 +126,11 @@ function dateMatchText(s: string): string | null {
   return m2 ? m2[0] : null;
 }
 
-export function parseAmReport(body: string): AmReportResult {
+export function parseAmReport(body: string, nowMs?: number): AmReportResult {
   const lines = body.split(/\r?\n/);
   let hIdx = lines.findIndex((l) => HASH.test(l));
   if (hIdx < 0) hIdx = 0;
-  const tanggal = headerDate(lines, hIdx);
+  const tanggal = headerDate(lines, hIdx, nowMs);
   const items: ReportItem[] = [];
   const notes: ReportNote[] = [];
   let cur: ReportItem | null = null;
@@ -149,7 +147,7 @@ export function parseAmReport(body: string): AmReportResult {
     if (nm) {
       const content = nm[1].trim();
       const dm = dateMatchText(content);
-      const reminder_date = dm ? findDate(dm) : null;
+      const reminder_date = dm ? findDate(dm, nowMs) : null;
       const keterangan = (dm ? content.replace(dm, " ") : content).replace(/\s+/g, " ").trim();
       notes.push({ customer: cur?.customer ?? null, reminder_date, keterangan });
       continue;
