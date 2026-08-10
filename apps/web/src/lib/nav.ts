@@ -10,7 +10,7 @@ import {
   Bell, MapPin, ListChecks, Swords, CalendarOff, CalendarDays, CalendarRange,
   Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, Tags, SlidersHorizontal,
   Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, BookOpen, Calculator,
-  Wallet, Coins,
+  Wallet, Coins, ScanText,
   type LucideIcon,
 } from "lucide-react";
 
@@ -174,6 +174,14 @@ export const NAV: NavGroup[] = [
       { title: "Shipments", url: "/shipments", icon: Truck },
       { title: "Suppliers", url: "/suppliers", icon: Factory },
       { title: "HITL Review", url: "/hitl", icon: ClipboardCheck },
+    ],
+  },
+  {
+    // DOC #KLAIM (FR-DOC-01) — domain board literally "DOC", tak cocok masuk
+    // grup existing manapun, grup sendiri (pola sama F139 bikin grup "GA").
+    label: "DOC",
+    items: [
+      { title: "Klaim OCR", url: "/doc-klaim", icon: ScanText, badge: "NEW" },
     ],
   },
   {
