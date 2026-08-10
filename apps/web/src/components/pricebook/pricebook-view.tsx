@@ -1,5 +1,7 @@
 "use client";
 
+import { useMemo, useState } from "react";
+
 import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { AlertTriangle } from "lucide-react";
 
@@ -7,6 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ExportButton } from "@/components/ui/export-button";
+import { FilterSelect, opsiDari } from "@/components/ui/filter-select";
 import { Badge } from "@/components/ui/badge";
 
 // ── Tipe (cermin apps/api/src/repo/pricebook.ts) ───────────────────────────
@@ -120,11 +123,35 @@ export function PricebookView({
 // ── Tab: Harga per Produk (bekas menu Pricelist, tabel 043) ────────────────
 
 function HargaTab({ rows }: { rows: PublishedRow[] }) {
+  const [lini, setLini] = useState("");
+  const [brand, setBrand] = useState("");
+  const [kategori, setKategori] = useState("");
+
+  // Opsi diambil dari data yang ADA di layar, bukan daftar tetap: kalau HoD
+  // Business belum mem-publish satu lini/brand, filternya tidak perlu muncul.
+  const opsiLini = useMemo(() => opsiDari(rows, (r) => r.lini), [rows]);
+  const opsiBrand = useMemo(
+    () => opsiDari(rows.filter((r) => !lini || r.lini === lini), (r) => r.brand),
+    [rows, lini],
+  );
+  const opsiKategori = useMemo(
+    () => opsiDari(rows.filter((r) => !lini || r.lini === lini), (r) => r.kategori),
+    [rows, lini],
+  );
+  const tampil = useMemo(
+    () => rows.filter((r) =>
+      (!lini || r.lini === lini)
+      && (!brand || r.brand === brand)
+      && (!kategori || (r.kategori ?? "") === kategori)),
+    [rows, lini, brand, kategori],
+  );
+  const adaFilter = !!(lini || brand || kategori);
+
   if (rows.length === 0) {
     return (
       <EmptyState
         title="Belum ada harga terpublikasi"
-        description="HoD Business belum mempublikasikan harga keagenan dari menu Setup Harga. Semua SKU tetap bisa dilihat di tab Katalog; tab ini khusus harga yang sudah disetujui untuk dikutip."
+        description="HoD Business belum mempublikasikan harga keagenan dari menu Setup Harga. Halaman ini khusus harga yang sudah disetujui untuk dikutip ke faskes."
       />
     );
   }
@@ -161,16 +188,34 @@ function HargaTab({ rows }: { rows: PublishedRow[] }) {
         </p>
         <DataTable
           columns={kolom}
-          data={rows}
+          data={tampil}
           getKey={(r) => String(r.rowNo)}
           searchPlaceholder="Cari nama / brand / kode…"
           pageSize={25}
           initialSort={{ id: "nama", dir: "asc" }}
           empty="Tidak ada harga yang cocok."
           toolbar={
-            <ExportButton
+            <div className="flex flex-wrap items-center gap-2">
+              <FilterSelect label="Lini" value={lini} onChange={(v) => { setLini(v); setBrand(""); setKategori(""); }} options={opsiLini} />
+              <FilterSelect label="Brand" value={brand} onChange={setBrand} options={opsiBrand} />
+              <FilterSelect label="Kategori" value={kategori} onChange={setKategori} options={opsiKategori} />
+              {adaFilter && (
+                <>
+                  <span className="text-xs text-muted-foreground">
+                    {fmtNum(tampil.length)} dari {fmtNum(rows.length)}
+                  </span>
+                  <button
+                    onClick={() => { setLini(""); setBrand(""); setKategori(""); }}
+                    className="rounded-md border px-2 py-1 text-xs hover:bg-muted"
+                  >
+                    Reset
+                  </button>
+                </>
+              )}
+              {/* Export mengikuti filter — kalau tidak, isi file beda dari yang dilihat. */}
+              <ExportButton
               filename="harga-keagenan-terpublikasi"
-              data={rows}
+              data={tampil}
               columns={[
                 { header: "Kode", value: (r) => r.productKode ?? r.kode ?? "" },
                 { header: "Lini", value: (r) => r.lini },
@@ -184,7 +229,8 @@ function HargaTab({ rows }: { rows: PublishedRow[] }) {
                 { header: "Nett", value: (r) => r.hargaNett },
                 { header: "Nett + PPN", value: (r) => r.nettPpn },
               ]}
-            />
+              />
+            </div>
           }
         />
       </CardContent>
