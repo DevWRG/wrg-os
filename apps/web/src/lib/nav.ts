@@ -9,7 +9,7 @@ import {
   Sparkles, Send, FileText, ScrollText, GraduationCap, UsersRound, Network,
   Bell, MapPin, ListChecks, Swords, CalendarOff, CalendarDays, CalendarRange,
   Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, Tags, SlidersHorizontal,
-  Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, BookOpen, Calculator,
+  Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, BookOpen, Calculator, FileCheck2,
   type LucideIcon,
 } from "lucide-react";
 
@@ -80,6 +80,9 @@ export const NAV: NavGroup[] = [
       { title: "Accounts", url: "/accounts", icon: Contact, badge: "NEW" },
       { title: "AR Aging", url: "/ar", icon: Receipt },
       { title: "Sales Docs", url: "/sales-docs", icon: FileText },
+      // F20 — status klik per tender LPSE/E-Catalog (pesan masuk -> barang
+      // dikirim -> selesai) + reminder kalau macet. Tak ada hashtag WA.
+      { title: "LPSE / E-Catalog", url: "/lpse-tender", icon: FileCheck2, badge: "NEW" },
       { title: "Collection Drafts", url: "/collection-drafts", icon: Send },
       // Simulator KSO — running cost alat lab per test, hasil penggabungan
       // aplikasi terpisah `runningcost-zybio` jadi satu menu di sini. Beda dari

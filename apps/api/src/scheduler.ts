@@ -35,6 +35,7 @@ import { evaluateSalesAlerts } from "./repo/sales-analytics-alert-eval.js";
 import { computeNpk, currentPeriod } from "./repo/npk.js";
 import { computeNpkAm } from "./repo/npk-am.js";
 import { snapshotLastWeek } from "./repo/watchpoint-weekly.js";
+import { runLpseTenderReminder } from "./repo/lpse-tender.js";
 
 // Penjadwal agen in-process (Blueprint v2.3). Default MATI — aktif hanya bila
 // AGENT_SCHEDULE_ENABLED=true. Tiap run tetap menulis ke audit_log via repo
@@ -136,6 +137,9 @@ export function startScheduler(): ScheduleStatus {
   // sebelum job lain menggeser angka. Tanpa ini papan Weekly tak punya riwayat:
   // metric computed dihitung live sehingga minggu lewat ikut berubah tiap dibuka.
   const watchpointSnapshotEnabled = (process.env.WATCHPOINT_SNAPSHOT_ENABLED ?? "false").toLowerCase() === "true";
+  // lpse-tender-reminder (F20) — WA ke PIC kalau tender LPSE/E-Catalog macet
+  // >N hari di status berjalan (belum selesai). Flag SENDIRI (default off).
+  const lpseTenderReminderEnabled = (process.env.LPSE_TENDER_REMINDER_ENABLED ?? "false").toLowerCase() === "true";
   const timezone = TZ();
   const jobs: JobDef[] = [
     {
@@ -211,12 +215,12 @@ export function startScheduler(): ScheduleStatus {
   ];
 
   status = {
-    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled || watchpointSnapshotEnabled,
+    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled || watchpointSnapshotEnabled || lpseTenderReminderEnabled,
     timezone,
     jobs: jobs.map((j) => ({ id: j.id, expr: j.expr, valid: cron.validate(j.expr) })),
   };
 
-  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled && !watchpointSnapshotEnabled) {
+  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled && !watchpointSnapshotEnabled && !lpseTenderReminderEnabled) {
     console.log("[scheduler] semua *_SCHEDULE/_ENABLED flag != true — tidak dijadwalkan");
     return status;
   }
@@ -736,6 +740,26 @@ export function startScheduler(): ScheduleStatus {
       { timezone },
     );
     live.push(`npk-compute=${npkExpr}`);
+  }
+
+  // lpse-tender-reminder (F20) — harian 08:00 WIB, cek tender macet >N hari
+  // (LPSE_TENDER_REMINDER_DAYS, default 3) di status berjalan.
+  const lpseTenderReminderExpr = process.env.LPSE_TENDER_REMINDER_CRON ?? "0 8 * * *";
+  if (lpseTenderReminderEnabled && cron.validate(lpseTenderReminderExpr)) {
+    cron.schedule(
+      lpseTenderReminderExpr,
+      async () => {
+        const startedAt = new Date().toISOString();
+        try {
+          const r = await runLpseTenderReminder();
+          console.log(`[scheduler] lpse-tender-reminder ok @ ${startedAt} ${JSON.stringify(r)}`);
+        } catch (e) {
+          console.error(`[scheduler] lpse-tender-reminder gagal @ ${startedAt}:`, e);
+        }
+      },
+      { timezone },
+    );
+    live.push(`lpse-tender-reminder=${lpseTenderReminderExpr}`);
   }
 
   console.log(`[scheduler] aktif (TZ=${timezone}): ${live.join(", ") || "(tidak ada job valid)"}`);
