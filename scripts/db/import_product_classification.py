@@ -182,6 +182,25 @@ if not ada_tabel:
     sys.exit(f"tabel product_code belum ada di '{args.db}' — jalankan migrasi 072 dulu "
              f"(infra/postgres/init/072_product_classification.sql)")
 
+# Master di DB DILEBUR ke master dari CSV sebelum apa pun dinomori. Tanpa ini,
+# --daftarkan-master menghitung "nomor berikutnya" hanya dari isi CSV, padahal DB
+# bisa punya node yang tidak ada di CSV (ditambahkan lewat tab Master Klasifikasi
+# atau oleh impor sheet lain). Nomor yang sama lalu jatuh ke NAMA yang berbeda,
+# dan upsert di bawah (ON CONFLICT DO UPDATE nama) diam-diam mengganti nama node
+# lama — sementara kode produk yang sudah terbit tetap menunjuk id itu.
+for r in psql_baca("SELECT id, nama FROM product_kategori"):
+    kat.setdefault(r[0], r[1])
+for r in psql_baca("SELECT kategori_id, id, nama FROM product_line"):
+    line.setdefault((r[0], r[1]), r[2])
+for r in psql_baca("SELECT kategori_id, id, nama FROM product_class"):
+    klas.setdefault((r[0], r[1]), r[2])
+for r in psql_baca("SELECT kategori_id, class_id, id, nama FROM product_sub_class"):
+    sub.setdefault((r[0], r[1], r[2]), r[3])
+KAT_BY_NAMA = {low(v): k for k, v in kat.items()}
+LINE_BY_NAMA = {(low(v), k[0]): k[1] for k, v in line.items()}
+CLASS_BY_NAMA = {(low(v), k[0]): k[1] for k, v in klas.items()}
+SUB_BY_NAMA = {(low(v), k[0], k[1]): k[2] for k, v in sub.items()}
+
 kode_lama = {r[0]: r[1] for r in psql_baca("SELECT identitas, kode FROM product_code")}
 seq_max = Counter()
 for r in psql_baca("SELECT kategori_id, line_id, class_id, sub_class_id, MAX(seq)::text "
