@@ -13,7 +13,7 @@ import {
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ExportButton } from "@/components/ui/export-button";
-import { FilterSelect, opsiDari } from "@/components/ui/filter-select";
+import { FilterCombo, FilterSelect, opsiDari } from "@/components/ui/filter-select";
 
 // ── Tipe (cermin apps/api/src/repo/klasifikasi.ts) ─────────────────────────
 export type Level = "kategori" | "line" | "class" | "sub_class";
@@ -500,13 +500,16 @@ function KodeTab({ codes }: { codes: ProductCode[] }) {
             <div className="flex flex-wrap items-center gap-2">
               <FilterSelect label="Kategori" value={kategori} options={opsiKategori}
                 onChange={(v) => { setKategori(v); setLine(""); setKlas(""); setSub(""); setBrand(""); }} />
-              <FilterSelect label="Product Line" value={line} options={opsiLine}
+              {/* Daftar panjang (57 product line · 87 class · 862 sub class · ±90 brand)
+                  → dropdown ber-kotak-cari. Kategori & Sumber tetap <select> asli
+                  karena isinya cuma beberapa. */}
+              <FilterCombo label="Product Line" value={line} options={opsiLine}
                 onChange={setLine} disabled={opsiLine.length === 0} />
-              <FilterSelect label="Class" value={klas} options={opsiKlas}
+              <FilterCombo label="Class" value={klas} options={opsiKlas}
                 onChange={(v) => { setKlas(v); setSub(""); }} disabled={opsiKlas.length === 0} />
-              <FilterSelect label="Sub Class" value={sub} options={opsiSub}
+              <FilterCombo label="Sub Class" value={sub} options={opsiSub}
                 onChange={setSub} disabled={opsiSub.length === 0} />
-              <FilterSelect label="Brand" value={brand} options={opsiBrand} onChange={setBrand} />
+              <FilterCombo label="Brand" value={brand} options={opsiBrand} onChange={setBrand} />
               <FilterSelect label="Sumber" value={sumber} options={opsiSumber} onChange={setSumber} />
               <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
                 <input type="checkbox" checked={hanyaBeda}
