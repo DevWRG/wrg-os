@@ -10,7 +10,7 @@ import {
   Bell, MapPin, ListChecks, Swords, CalendarOff, CalendarDays, CalendarRange,
   Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, Tags, SlidersHorizontal,
   Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, BookOpen, Calculator,
-  Wallet,
+  Wallet, Coins,
   type LucideIcon,
 } from "lucide-react";
 
@@ -22,6 +22,7 @@ import { canViewRaportList } from "@/lib/raport-access";
 import { canViewExecutive } from "@/lib/executive-access";
 import { canViewKso } from "@/lib/kso-access";
 import { canViewNpkAm, canViewNpkAmSelf } from "@/lib/npk-access";
+import { canViewInsentifTim } from "@/lib/insentif-access";
 
 // exact: sorot aktif hanya saat path persis (untuk route induk yg punya child,
 // mis. /pricelist vs /pricelist/setup).
@@ -77,12 +78,22 @@ export const NAV: NavGroup[] = [
       { title: "Competitor Intel", url: "/competitor", icon: Swords },
       { title: "Pipeline", url: "/pipeline", icon: Workflow },
       { title: "Kinerja Saya", url: "/me", icon: UserRound, badge: "NEW" },
-      // F67 Insentif. Menu terpisah dari /insentif/tim (belum dibangun) karena
-      // PERTANYAANNYA beda: ini "berapa insentif saya", itu batch payroll —
-      // bukan sekadar barisnya lebih sedikit. Self-only untuk SEMUA peran,
-      // termasuk Direktur, jadi tak perlu gate identitas di sini; yang menjaga
-      // barisnya adalah scope server (PRD §E).
+      // F67 Insentif. Menu terpisah dari /insentif/tim karena PERTANYAANNYA beda:
+      // ini "berapa insentif saya", itu batch payroll — bukan sekadar barisnya
+      // lebih sedikit. Self-only untuk SEMUA peran, termasuk Direktur, jadi tak
+      // perlu gate identitas di sini; yang menjaga barisnya adalah scope server
+      // (PRD §E).
       { title: "Insentif Saya", url: "/insentif", icon: Wallet, badge: "NEW", exact: true },
+      // Menu tim: SATU route untuk HoD + Finance + Direktur, dibedakan scope SERVER
+      // (resolveAkses), bukan route terpisah — rancangan /insentif/hod +
+      // /insentif/finance dibatalkan karena dua route = dua jalur query, dan yang
+      // versi "semua" itu yang berbahaya. AM murni tak boleh melihat menu ini sama
+      // sekali (§E.2.8: yang dibandingkan di sini angka penghasilan orang).
+      //
+      // Beda dari "Insentif Saya" di atas: item ini PUNYA `show`, supaya sebelum
+      // grup dicentang di Akses Grup fallback-nya masih masuk akal (HoD/Direktur)
+      // dan bukan tertutup untuk semua orang.
+      { title: "Insentif Tim", url: "/insentif/tim", icon: Coins, badge: "NEW", show: canViewInsentifTim },
       { title: "Customers", url: "/customers", icon: Building2 },
       { title: "Accounts", url: "/accounts", icon: Contact, badge: "NEW" },
       { title: "AR Aging", url: "/ar", icon: Receipt },
