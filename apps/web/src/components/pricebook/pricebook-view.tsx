@@ -9,7 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ExportButton } from "@/components/ui/export-button";
-import { FilterSelect, opsiDari } from "@/components/ui/filter-select";
+import { FilterCombo, FilterSelect, opsiDari } from "@/components/ui/filter-select";
 import { Badge } from "@/components/ui/badge";
 
 // ── Tipe (cermin apps/api/src/repo/pricebook.ts) ───────────────────────────
@@ -89,6 +89,7 @@ export interface PublishedRow {
   kode: string | null;
   productKode: string | null;
   lini: string;
+  productLine: string | null;
   brand: string;
   nama: string;
   varian: string | null;
@@ -124,28 +125,36 @@ export function PricebookView({
 
 function HargaTab({ rows }: { rows: PublishedRow[] }) {
   const [lini, setLini] = useState("");
+  const [productLine, setProductLine] = useState("");
   const [brand, setBrand] = useState("");
   const [kategori, setKategori] = useState("");
 
   // Opsi diambil dari data yang ADA di layar, bukan daftar tetap: kalau HoD
   // Business belum mem-publish satu lini/brand, filternya tidak perlu muncul.
   const opsiLini = useMemo(() => opsiDari(rows, (r) => r.lini), [rows]);
-  const opsiBrand = useMemo(
-    () => opsiDari(rows.filter((r) => !lini || r.lini === lini), (r) => r.brand),
+  // Opsi filter menyempit mengikuti pilihan di sebelah kirinya (lini → product
+  // line → brand/kategori), jadi tidak ada pilihan yang pasti menghasilkan nol baris.
+  const dalamLini = useMemo(
+    () => rows.filter((r) => !lini || r.lini === lini),
     [rows, lini],
   );
-  const opsiKategori = useMemo(
-    () => opsiDari(rows.filter((r) => !lini || r.lini === lini), (r) => r.kategori),
-    [rows, lini],
+  const opsiLine = useMemo(() => opsiDari(dalamLini, (r) => r.productLine), [dalamLini]);
+  const dalamLine = useMemo(
+    () => dalamLini.filter((r) => !productLine || (r.productLine ?? "") === productLine),
+    [dalamLini, productLine],
   );
+  const opsiBrand = useMemo(() => opsiDari(dalamLine, (r) => r.brand), [dalamLine]);
+  const opsiKategori = useMemo(() => opsiDari(dalamLine, (r) => r.kategori), [dalamLine]);
   const tampil = useMemo(
     () => rows.filter((r) =>
       (!lini || r.lini === lini)
+      && (!productLine || (r.productLine ?? "") === productLine)
       && (!brand || r.brand === brand)
       && (!kategori || (r.kategori ?? "") === kategori)),
-    [rows, lini, brand, kategori],
+    [rows, lini, productLine, brand, kategori],
   );
-  const adaFilter = !!(lini || brand || kategori);
+  const adaFilter = !!(lini || productLine || brand || kategori);
+  const reset = () => { setLini(""); setProductLine(""); setBrand(""); setKategori(""); };
 
   if (rows.length === 0) {
     return (
@@ -169,7 +178,16 @@ function HargaTab({ rows }: { rows: PublishedRow[] }) {
         </div>
       ), className: "max-w-[24rem]" },
     { id: "lini", header: "Lini", sortable: true, accessor: (r) => r.lini,
-      cell: (r) => <Badge variant="outline">{r.lini}</Badge> },
+      cell: (r) => (
+        <div>
+          <Badge variant="outline">{r.lini}</Badge>
+          {r.productLine && (
+            <span className="text-muted-foreground mt-0.5 block truncate text-xs" title={r.productLine}>
+              {r.productLine}
+            </span>
+          )}
+        </div>
+      ) },
     { id: "pl", header: "Price List", align: "right", sortable: true, accessor: (r) => r.priceList,
       cell: (r) => <span className="whitespace-nowrap">{fmtRp(r.priceList)}</span> },
     { id: "diskon", header: "Diskon Maks", align: "right", sortable: true, accessor: (r) => r.diskonMaks,
@@ -196,18 +214,19 @@ function HargaTab({ rows }: { rows: PublishedRow[] }) {
           empty="Tidak ada harga yang cocok."
           toolbar={
             <div className="flex flex-wrap items-center gap-2">
-              <FilterSelect label="Lini" value={lini} onChange={(v) => { setLini(v); setBrand(""); setKategori(""); }} options={opsiLini} />
-              <FilterSelect label="Brand" value={brand} onChange={setBrand} options={opsiBrand} />
-              <FilterSelect label="Kategori" value={kategori} onChange={setKategori} options={opsiKategori} />
+              <FilterSelect label="Lini" value={lini} options={opsiLini}
+                onChange={(v) => { setLini(v); setProductLine(""); setBrand(""); setKategori(""); }} />
+              {/* Daftar panjang → dropdown ber-kotak-cari (57 product line, ±90 brand). */}
+              <FilterCombo label="Product Line" value={productLine} options={opsiLine}
+                onChange={(v) => { setProductLine(v); setBrand(""); setKategori(""); }} />
+              <FilterCombo label="Brand" value={brand} onChange={setBrand} options={opsiBrand} />
+              <FilterCombo label="Kategori" value={kategori} onChange={setKategori} options={opsiKategori} />
               {adaFilter && (
                 <>
                   <span className="text-xs text-muted-foreground">
                     {fmtNum(tampil.length)} dari {fmtNum(rows.length)}
                   </span>
-                  <button
-                    onClick={() => { setLini(""); setBrand(""); setKategori(""); }}
-                    className="rounded-md border px-2 py-1 text-xs hover:bg-muted"
-                  >
+                  <button onClick={reset} className="rounded-md border px-2 py-1 text-xs hover:bg-muted">
                     Reset
                   </button>
                 </>
@@ -219,6 +238,7 @@ function HargaTab({ rows }: { rows: PublishedRow[] }) {
               columns={[
                 { header: "Kode", value: (r) => r.productKode ?? r.kode ?? "" },
                 { header: "Lini", value: (r) => r.lini },
+                { header: "Product Line", value: (r) => r.productLine ?? "" },
                 { header: "Brand", value: (r) => r.brand },
                 { header: "Nama", value: (r) => r.nama },
                 { header: "Varian", value: (r) => r.varian ?? "" },
