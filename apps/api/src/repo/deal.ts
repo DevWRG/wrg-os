@@ -2,6 +2,7 @@ import { db } from "../db.js";
 import type { PlanCustomer } from "../parsers/plan.js";
 import type { ReportItem } from "../parsers/report.js";
 import { type DataScope, isRestricted } from "./access-scope.js";
+import { enqueueDuplicateCustomerName, type DupNameCandidate } from "./hitl.js";
 
 // Jembatan parser CRM (legacy #PLAN/#REPORT) ke schema kanonik D1 (deal/spt_state_log).
 // MAPPING:
@@ -80,6 +81,62 @@ function custId(name: string): string {
       .replace(/^-|-$/g, "")
       .slice(0, 50) || "unknown"
   );
+}
+
+// F9 Duplicate Customer Name Alert. 0.72 SENGAJA lebih tinggi dari AUTO (0.7)
+// #REPORT di atas, bukan lebih rendah — preseden F142 Price Book: nama identik
+// tak selalu berarti entitas sama (2 cabang bisa share nama), jadi ambang
+// rendah cuma bikin alert palsu yang ngerusak kepercayaan ke dashboard HITL.
+const DUP_THRESHOLD = 0.72;
+
+// Best-effort, dipanggil setelah deal ke-INSERT — GAK PERNAH melempar (ini
+// alert, bukan gate; blocking create deal krn tebakan heuristik akan
+// mengganggu rep yang legit). 2 sinyal independen:
+//  A) vs customer_name deal LAIN (semua AM/cabang — inti masalahnya justru
+//     2 AM beda yang mengetik nama customer sama dengan ejaan beda).
+//  B) vs accurate_customer.name (customer yang sudah dikenal Accurate) — deal
+//     baru account_id-nya SELALU NULL, jadi ini nangkep "rep ngetik nama baru
+//     padahal customer-nya udah ada, seharusnya di-link bukan bikin nama baru".
+async function flagDuplicateCustomerName(dealId: string, customerName: string, amId: string | null, cabang: string | null): Promise<void> {
+  const sql = db();
+  const norm = custId(customerName);
+
+  const peers = await sql`
+    SELECT deal_id, customer_name, am_id, cabang, similarity(customer_name, ${customerName}) AS score
+    FROM deal
+    WHERE deal_id != ${dealId} AND similarity(customer_name, ${customerName}) >= ${DUP_THRESHOLD}
+    ORDER BY score DESC LIMIT 5
+  `;
+  const known = await sql`
+    SELECT id, name, similarity(name, ${customerName}) AS score
+    FROM accurate_customer
+    WHERE name IS NOT NULL AND similarity(name, ${customerName}) >= ${DUP_THRESHOLD}
+    ORDER BY score DESC LIMIT 5
+  `;
+
+  const candidates: DupNameCandidate[] = [
+    ...peers.map((r) => ({
+      kind: "deal" as const,
+      ref_id: String(r.deal_id),
+      customer_name: String(r.customer_name),
+      am_id: r.am_id == null ? null : String(r.am_id),
+      cabang: r.cabang == null ? null : String(r.cabang),
+      score: Number(r.score),
+      exact: custId(String(r.customer_name)) === norm,
+    })),
+    ...known.map((r) => ({
+      kind: "accurate_customer" as const,
+      ref_id: String(r.id),
+      customer_name: String(r.name),
+      am_id: null,
+      cabang: null,
+      score: Number(r.score),
+      exact: custId(String(r.name)) === norm,
+    })),
+  ];
+  if (candidates.length === 0) return;
+
+  await enqueueDuplicateCustomerName({ dealId, customerName, amId, cabang, candidates });
 }
 
 export interface PipelineDeal {
@@ -777,6 +834,16 @@ export async function createDeal(scope: DataScope, input: Record<string, unknown
     INSERT INTO spt_state_log (deal_id, from_stage, to_stage, changed_by, reason)
     VALUES (${dealId}, NULL, 'Prospecting', ${scope.userId ?? scope.amId}, 'deal dibuat')
   `;
+  try {
+    await flagDuplicateCustomerName(
+      dealId,
+      String(fields.customer_name),
+      fields.am_id == null ? null : String(fields.am_id),
+      fields.cabang == null ? null : String(fields.cabang),
+    );
+  } catch (e) {
+    console.error("F9 dup-check gagal (non-fatal):", e);
+  }
   return { deal_id: dealId, stage: String(rows[0].stage) };
 }
 
