@@ -34,15 +34,16 @@ const rp = (n: number): string =>
 // Jumlah lebar kolom HARUS == LEBAR. Kalau melebihi, kolom terakhir terpotong di
 // tepi kanan — dan yang terpotong justru Nett+PPN, angka yang dipakai faskes.
 // Dijaga oleh pemeriksaan di bawah, bukan cuma oleh kehati-hatian.
+// Diskon, Nett, dan Nett+PPN sengaja TIDAK dicetak (keputusan user 13 Agt 2026).
+// Dokumen ini beredar ke luar; diskon maksimal & harga lantai adalah batas
+// negosiasi internal, bukan angka yang perlu dibaca faskes. Ketiganya tetap ada
+// di layar untuk AM (tab Harga per Produk) dan di Export Excel.
 const KOLOM: Kolom[] = [
-  { judul: "Kode", lebar: 96, nilai: (r) => r.productKode ?? r.kode ?? "-" },
-  { judul: "Nama Produk", lebar: 232, nilai: (r) => r.nama },
-  { judul: "Brand", lebar: 84, nilai: (r) => r.brand },
-  { judul: "Kemasan", lebar: 64, nilai: (r) => r.kemasan ?? "-" },
-  { judul: "Price List", lebar: 84, align: "right", nilai: (r) => rp(r.priceList) },
-  { judul: "Diskon", lebar: 44, align: "right", nilai: (r) => `${Math.round(r.diskonMaks * 100)}%` },
-  { judul: "Nett", lebar: 84, align: "right", nilai: (r) => rp(r.hargaNett) },
-  { judul: "Nett + PPN", lebar: 90, align: "right", nilai: (r) => rp(r.nettPpn) },
+  { judul: "Kode", lebar: 110, nilai: (r) => r.productKode ?? r.kode ?? "-" },
+  { judul: "Nama Produk", lebar: 356, nilai: (r) => r.nama },
+  { judul: "Brand", lebar: 130, nilai: (r) => r.brand },
+  { judul: "Kemasan", lebar: 82, nilai: (r) => r.kemasan ?? "-" },
+  { judul: "Price List", lebar: 100, align: "right", nilai: (r) => rp(r.priceList) },
 ];
 
 const TOTAL_LEBAR = KOLOM.reduce((n, k) => n + k.lebar, 0);
@@ -128,8 +129,10 @@ export async function pricelistPdf(opts: PdfOpts = {}): Promise<Buffer> {
 
   function footer() {
     const y = 595 - MARGIN - 18;
+    // Catatan kaki mengikuti isi dokumen: sejak kolom Nett/PPN dilepas, penjelasan
+    // soal lantai harga & PPN dari Nett tidak lagi relevan di sini.
     doc.fillColor(C.redup).font("Helvetica").fontSize(7)
-      .text("Nett adalah harga TERENDAH yang boleh dikutip tanpa izin Direksi. PPN 11% dihitung dari Nett, bukan dari Price List.",
+      .text("Price List belum termasuk PPN. Harga dapat berubah sewaktu-waktu.",
         MARGIN, y, { width: LEBAR - 60, lineBreak: false })
       .text(`Hal. ${halaman}`, MARGIN + LEBAR - 56, y, { width: 56, align: "right", lineBreak: false });
   }
