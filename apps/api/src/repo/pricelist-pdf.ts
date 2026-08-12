@@ -11,6 +11,9 @@
 // kebocoran tidak bisa terjadi lewat jalur ini walau nanti ada yang menambah
 // kolom di dokumen.
 
+import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
 import PDFDocumentKlass from "pdfkit";
 
 import { listPublishedKeagenan, PERIODE_DEFAULT, type PricebookPublishedRow } from "./pricebook.js";
@@ -18,6 +21,16 @@ import { listPublishedKeagenan, PERIODE_DEFAULT, type PricebookPublishedRow } fr
 // Halaman MENDATAR: 7 kolom harga tidak muat rapi di potret, dan tabel harga yang
 // kolomnya berdesakan adalah cara paling mudah salah kutip angka.
 const MARGIN = 32;
+// Kop surat WRG + Wahana LifeLine, dicetak di SETIAP halaman (dokumen ini keluar
+// ke faskes, tiap lembarnya harus berdiri sendiri sebagai dokumen resmi).
+//
+// Aset dibaca dari pohon sumber, bukan dari dist/: `tsc` tidak menyalin file
+// non-TS, jadi path relatif ke dist/repo/ akan kosong setelah build.
+// dist/repo/pricelist-pdf.js → ../../assets = apps/api/assets ✓
+const KOP = fileURLToPath(new URL("../../assets/kop-surat.png", import.meta.url));
+const KOP_RASIO = 102 / 1073; // tinggi/lebar aset (sudah dipotong 7px kanan:
+// tangkapan layar sumbernya membawa garis bingkai gelap di tepi kanan)
+
 const LEBAR = 842 - MARGIN * 2; // A4 landscape
 const C = { teks: "#0f172a", redup: "#64748b", garis: "#e2e8f0", kepala: "#0f766e", zebra: "#f8fafc" };
 
@@ -77,16 +90,27 @@ export async function pricelistPdf(opts: PdfOpts = {}): Promise<Buffer> {
     timeZone: "Asia/Jakarta", dateStyle: "long", timeStyle: "short",
   });
 
+  // Kalau aset kop hilang (mis. deploy yang tidak menyertakan folder assets),
+  // dokumen tetap terbit tanpa kop — daftar harga yang gagal dicetak lebih
+  // merugikan daripada daftar harga tanpa logo.
+  const adaKop = existsSync(KOP);
+  const TINGGI_KOP = adaKop ? LEBAR * KOP_RASIO : 0;
+
   let halaman = 0;
   const kepalaHalaman = () => {
     halaman += 1;
+    let y = MARGIN;
+    if (adaKop) {
+      doc.image(KOP, MARGIN, y, { width: LEBAR });
+      y += TINGGI_KOP + 8;
+    }
     doc.fillColor(C.kepala).font("Helvetica-Bold").fontSize(14)
-      .text("Daftar Harga Keagenan WRG", MARGIN, MARGIN);
+      .text("Daftar Harga Keagenan WRG", MARGIN, y);
     doc.fillColor(C.redup).font("Helvetica").fontSize(8)
       .text(`Periode ${periode} · ${rows.length} produk · dicetak ${cetak}`
             + (opts.oleh ? ` oleh ${opts.oleh}` : ""),
-        MARGIN, MARGIN + 18);
-    barisKepala(MARGIN + 36);
+        MARGIN, y + 18);
+    barisKepala(y + 36);
   };
 
   const barisKepala = (y: number) => {
