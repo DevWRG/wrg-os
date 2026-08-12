@@ -84,6 +84,7 @@ import {
   unpublishSetup as unpublishPricebookSetup, listPublishedKeagenan,
   type SetupPatch as PricebookSetupPatch,
 } from "./repo/pricebook.js";
+import { pricelistPdf } from "./repo/pricelist-pdf.js";
 import {
   taxonomy as klasifikasiTaxonomy, summary as klasifikasiSummary,
   listCodes as listKlasifikasiCodes, nextKode as nextKlasifikasiKode,
@@ -2708,6 +2709,24 @@ app.post("/pricebook/setup/unpublish", async (c) => {
 
 // Harga keagenan TERPUBLIKASI — ini yang dibuka Account Manager. Tanpa HPP &
 // margin: kolomnya tidak di-SELECT sama sekali, jadi tak ada jalan bocor.
+// Export PDF daftar harga terpublikasi. POST (bukan GET) karena daftar row_no
+// yang dicentang user bisa ratusan — terlalu panjang untuk query string.
+app.post("/pricebook/published/pdf", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const b = await c.req.json().catch(() => ({}) as Record<string, unknown>);
+  const rowNos = Array.isArray(b.rowNos)
+    ? (b.rowNos as unknown[]).map(Number).filter(Number.isInteger) : undefined;
+  const pdf = await pricelistPdf({
+    periode: (b.periode as string) || undefined,
+    rowNos,
+    oleh: (b.oleh as string) ?? null,
+  });
+  return c.body(new Uint8Array(pdf), 200, {
+    "content-type": "application/pdf",
+    "content-disposition": `attachment; filename="daftar-harga-keagenan.pdf"`,
+  });
+});
+
 app.get("/pricebook/published", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const q = c.req.query();

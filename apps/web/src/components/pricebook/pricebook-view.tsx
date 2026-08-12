@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 
 import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, FileDown } from "lucide-react";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
@@ -11,6 +11,10 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { ExportButton } from "@/components/ui/export-button";
 import { FilterCombo, FilterSelect, opsiDari } from "@/components/ui/filter-select";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
 
 // ── Tipe (cermin apps/api/src/repo/pricebook.ts) ───────────────────────────
 export interface PricebookItem {
@@ -119,6 +123,158 @@ export function PricebookView({
     );
   }
   return <HargaTab rows={harga.rows} />;
+}
+
+// ── Export PDF: pilih dulu produknya, baru cetak ────────────────────────────
+// Kenapa pakai checklist, bukan langsung cetak semua yang tampil: dokumen ini
+// dibawa ke faskes, dan penawaran biasanya cuma berisi beberapa SKU yang relevan.
+// Mencetak 1.000 baris lalu meminta orang mencoret manual jauh lebih buruk.
+//
+// Isi checklist = baris yang SEDANG tampil setelah filter, semuanya tercentang
+// di awal. Jadi "filter dulu, lalu buang beberapa" tetap satu alur pendek.
+function ExportPdfDialog({ rows }: { rows: PublishedRow[] }) {
+  const [buka, setBuka] = useState(false);
+  const [pilih, setPilih] = useState<Set<number>>(new Set());
+  const [cari, setCari] = useState("");
+  const [sibuk, setSibuk] = useState(false);
+  const [galat, setGalat] = useState<string | null>(null);
+
+  function mulai() {
+    setPilih(new Set(rows.map((r) => r.rowNo)));
+    setCari("");
+    setGalat(null);
+    setBuka(true);
+  }
+
+  const tampil = useMemo(() => {
+    const q = cari.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter((r) =>
+      r.nama.toLowerCase().includes(q)
+      || r.brand.toLowerCase().includes(q)
+      || (r.productKode ?? r.kode ?? "").toLowerCase().includes(q));
+  }, [rows, cari]);
+
+  const toggle = (rowNo: number) => setPilih((s) => {
+    const n = new Set(s);
+    if (n.has(rowNo)) n.delete(rowNo); else n.add(rowNo);
+    return n;
+  });
+  // "Pilih semua" bekerja pada yang SEDANG tampil di kotak cari dialog, bukan
+  // seluruh daftar — kalau tidak, mencari lalu menekan "pilih semua" diam-diam
+  // ikut mencentang yang tak terlihat.
+  const semuaTampil = () => setPilih((s) => new Set([...s, ...tampil.map((r) => r.rowNo)]));
+  const kosongkanTampil = () => setPilih((s) => {
+    const n = new Set(s);
+    for (const r of tampil) n.delete(r.rowNo);
+    return n;
+  });
+
+  async function ekspor() {
+    setSibuk(true);
+    setGalat(null);
+    try {
+      const res = await fetch("/api/pricebook/published/pdf", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ rowNos: [...pilih] }),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d?.error ?? `gagal (${res.status})`);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `daftar-harga-keagenan-${new Date().toISOString().slice(0, 10)}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      setBuka(false);
+    } catch (e) {
+      setGalat((e as Error).message);
+    } finally {
+      setSibuk(false);
+    }
+  }
+
+  return (
+    <>
+      <Button variant="outline" size="sm" onClick={mulai}>
+        <FileDown className="mr-1.5 h-3.5 w-3.5" /> Export PDF
+      </Button>
+
+      <Dialog open={buka} onOpenChange={setBuka}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Pilih produk untuk di-export</DialogTitle>
+            <DialogDescription>
+              {fmtNum(rows.length)} produk sedang tampil setelah filter. Hilangkan centang
+              produk yang tidak perlu masuk dokumen.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogBody className="space-y-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                value={cari}
+                onChange={(e) => setCari(e.target.value)}
+                placeholder="Cari nama / brand / kode…"
+                className="flex-1 rounded-md border border-input bg-background px-2 py-1 text-sm"
+              />
+              <button onClick={semuaTampil} className="rounded-md border px-2 py-1 text-xs hover:bg-muted">
+                Pilih semua{cari ? " (hasil cari)" : ""}
+              </button>
+              <button onClick={kosongkanTampil} className="rounded-md border px-2 py-1 text-xs hover:bg-muted">
+                Kosongkan{cari ? " (hasil cari)" : ""}
+              </button>
+            </div>
+
+            <div className="max-h-80 overflow-y-auto rounded-md border">
+              {tampil.length === 0 && (
+                <p className="p-3 text-sm text-muted-foreground">Tidak ada produk yang cocok.</p>
+              )}
+              {tampil.map((r) => (
+                <label
+                  key={r.rowNo}
+                  className="flex cursor-pointer items-start gap-2 border-b px-2 py-1.5 last:border-0 hover:bg-muted/50"
+                >
+                  <input
+                    type="checkbox"
+                    className="mt-0.5"
+                    checked={pilih.has(r.rowNo)}
+                    onChange={() => toggle(r.rowNo)}
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm">{r.nama}</span>
+                    <span className="block truncate text-xs text-muted-foreground">
+                      <span className="font-mono">{r.productKode ?? r.kode ?? "—"}</span>
+                      {" · "}{r.brand}
+                      {r.kemasan ? ` · ${r.kemasan}` : ""}
+                      {" · "}{fmtRp(r.hargaNett)}
+                    </span>
+                  </span>
+                </label>
+              ))}
+            </div>
+            {galat && <p className="rounded-md bg-red-50 p-2 text-sm text-red-700">{galat}</p>}
+          </DialogBody>
+          <DialogFooter className="items-center justify-between gap-2 sm:justify-between">
+            <span className="text-xs text-muted-foreground">
+              {fmtNum(pilih.size)} dari {fmtNum(rows.length)} produk dipilih
+            </span>
+            <span className="flex gap-2">
+              <Button variant="ghost" size="sm" onClick={() => setBuka(false)}>Batal</Button>
+              <Button size="sm" onClick={ekspor} disabled={sibuk || pilih.size === 0}>
+                {sibuk ? "Menyiapkan…" : `Export PDF (${fmtNum(pilih.size)})`}
+              </Button>
+            </span>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
 }
 
 // ── Tab: Harga per Produk (bekas menu Pricelist, tabel 043) ────────────────
@@ -231,6 +387,7 @@ function HargaTab({ rows }: { rows: PublishedRow[] }) {
                   </button>
                 </>
               )}
+              <ExportPdfDialog rows={tampil} />
               {/* Export mengikuti filter — kalau tidak, isi file beda dari yang dilihat. */}
               <ExportButton
               filename="harga-keagenan-terpublikasi"
