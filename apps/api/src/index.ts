@@ -966,7 +966,8 @@ app.post("/accurate/sync/shipments", async (c) => {
 });
 
 // Backfill baris item SO/DO ke mirror (dasar fill rate F76). Berbatas per
-// pemanggilan — `pending` di balikan = sisa dokumen, panggil ulang sampai 0.
+// pemanggilan — `pending` di balikan = sisa dokumen sebenarnya di dalam jendela
+// `days` (count penuh, tidak dibatasi `limit`), panggil ulang sampai 0.
 // ?kind=so|do (default keduanya), ?limit= dokumen/panggilan, ?days= jendela tanggal.
 app.post("/accurate/sync/doc-items", async (c) => {
   // Validasi bentuk permintaan DULU: parameter salah harus 400 apa pun status
