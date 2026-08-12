@@ -6,7 +6,7 @@ import { db } from "../db.js";
 import { ingestAccurateWebhook, normalizeAccurateDate, type AccurateInvoice } from "./ar.js";
 import {
   upsertVendors, upsertItems, upsertSalesOrders, upsertDeliveryOrders, upsertCustomers,
-  replaceSalesOrderItems, replaceDeliveryOrderItems, pendingItemDocs,
+  replaceSalesOrderItems, replaceDeliveryOrderItems, pendingItemDocs, countPendingItemDocs,
 } from "./accurateMirror.js";
 
 // Puller Accurate Online (pengganti legacy sync_accurate.sh). Tarik sales-invoice
@@ -431,7 +431,7 @@ async function syncDocItems(
     docs += 1;
     await sleep(150);
   }
-  const pending = (await pendingItemDocs(entity, sinceDays, limit + 1)).length;
+  const pending = await countPendingItemDocs(entity, sinceDays);
   return { ok: true, docs, lines, pending };
 }
 

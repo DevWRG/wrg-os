@@ -168,6 +168,28 @@ export async function pendingItemDocs(
   return rows.map((r) => Number(r.id));
 }
 
+/**
+ * Jumlah dokumen yang baris itemnya belum ditarik — count sebenarnya, tanpa
+ * LIMIT. Dipakai untuk `pending` di balikan /accurate/sync/doc-items supaya
+ * pemanggil tahu sisa backlog yang asli; memakai pendingItemDocs(...).length
+ * membuat angkanya mentok di nilai LIMIT dan terbaca seolah tak pernah maju.
+ */
+export async function countPendingItemDocs(
+  entity: "so" | "do",
+  sinceDays: number,
+): Promise<number> {
+  const sql = db();
+  const rows =
+    entity === "so"
+      ? await sql<{ n: number }[]>`
+          SELECT count(*)::int AS n FROM accurate_sales_order
+          WHERE items_synced_at IS NULL AND trans_date >= CURRENT_DATE - ${sinceDays}::int`
+      : await sql<{ n: number }[]>`
+          SELECT count(*)::int AS n FROM accurate_delivery_order
+          WHERE items_synced_at IS NULL AND trans_date >= CURRENT_DATE - ${sinceDays}::int`;
+  return Number(rows[0]?.n ?? 0);
+}
+
 export async function listSalesOrders(limit = 500) {
   const sql = db();
   const rows = await sql`
