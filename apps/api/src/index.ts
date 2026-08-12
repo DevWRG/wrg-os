@@ -13,7 +13,7 @@ import { matchCustomer, type PlanCandidate } from "./parsers/fuzzy.js";
 import { isDbEnabled, pingDb } from "./db.js";
 import { waPreflight, sendViaWaGateway, type WaSendResult } from "./wasend.js";
 import { processUnprocessed, isInboundEnabled } from "./repo/inbound.js";
-import { syncAccurateInvoices, syncVendors, syncItems, syncSalesOrders, syncDeliveryOrders, syncCustomers, getDeliveryOrderItems, getSalesOrderItems, getVendorDetail, accurateConfigured } from "./repo/accurateSync.js";
+import { syncAccurateInvoices, syncVendors, syncItems, syncSalesOrders, syncDeliveryOrders, syncCustomers, syncSalesOrderItems, syncDeliveryOrderItems, getDeliveryOrderItems, getSalesOrderItems, getVendorDetail, accurateConfigured } from "./repo/accurateSync.js";
 import { insertAuditEvent } from "./repo/audit.js";
 import { upsertDealsFromPlan, logReportToDeals, getPipeline, getPipelineReport, getPipelineLeaderboard, transitionStage, DealError, listPendingLosses, decideLoss, getDealTimeline, createDeal, updateDeal, deleteDeal } from "./repo/deal.js";
 import { enqueueAmbiguous, listHitl, resolveHitl } from "./repo/hitl.js";
@@ -963,6 +963,25 @@ app.post("/accurate/sync/shipments", async (c) => {
   const pages = Math.min(Math.max(Number(c.req.query("pages")) || 5, 1), 120);
   const r = await syncDeliveryOrders({ maxPages: pages });
   return c.json(r, r.ok ? 200 : 502);
+});
+
+// Backfill baris item SO/DO ke mirror (dasar fill rate F76). Berbatas per
+// pemanggilan — `pending` di balikan = sisa dokumen, panggil ulang sampai 0.
+// ?kind=so|do (default keduanya), ?limit= dokumen/panggilan, ?days= jendela tanggal.
+app.post("/accurate/sync/doc-items", async (c) => {
+  // Validasi bentuk permintaan DULU: parameter salah harus 400 apa pun status
+  // kredensial, kalau tidak pemanggil dapat 503 yang menyesatkan.
+  const kind = (c.req.query("kind") ?? "").trim().toLowerCase();
+  if (kind && kind !== "so" && kind !== "do") return c.json({ error: "kind harus so|do" }, 400);
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  if (!accurateConfigured()) return c.json({ error: "kredensial Accurate tak tersedia" }, 503);
+  const limit = Math.min(Math.max(Number(c.req.query("limit")) || 150, 1), 1000);
+  const sinceDays = Math.min(Math.max(Number(c.req.query("days")) || 120, 1), 1095);
+  const out: Record<string, unknown> = {};
+  if (kind !== "do") out.salesOrders = await syncSalesOrderItems({ limit, sinceDays });
+  if (kind !== "so") out.deliveryOrders = await syncDeliveryOrderItems({ limit, sinceDays });
+  const ok = Object.values(out).every((v) => (v as { ok: boolean }).ok);
+  return c.json(out, ok ? 200 : 502);
 });
 
 // Baris produk satu surat jalan (on-demand dari Accurate detail.do).

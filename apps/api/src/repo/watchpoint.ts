@@ -170,6 +170,30 @@ async function newAccountsThisMonth(sql: Sql, cabang: string[]): Promise<number>
   return Number(rows[0]?.n ?? 0);
 }
 
+// Fill rate (Ika) dari mirror baris item SO/DO (migrasi 081): qty terkirim ÷ qty
+// dipesan pada bulan berjalan, se-perusahaan (bukan per cabang — mirror SO/DO
+// tak menyimpan cabang, dan Finance & SC memang lingkupnya nasional).
+//
+// BATAS YANG HARUS DIINGAT: ini fill rate AGREGAT per periode, bukan per baris
+// order. Order yang masuk akhir bulan dan dikirim bulan depan akan menekan angka
+// bulan ini, dan pengiriman atas order bulan lalu mengangkatnya (bisa >100%).
+// Menghitung per-baris butuh penautan DO→SO yang payload-nya belum terverifikasi.
+//
+// Balikan null saat belum ada qty order sama sekali → N/A, bukan 0%.
+async function fillRateThisMonth(sql: Sql): Promise<number | null> {
+  const rows = await sql<{ ordered: number | null; delivered: number | null }[]>`
+    SELECT
+      (SELECT sum(i.qty) FROM accurate_sales_order_item i
+         JOIN accurate_sales_order o ON o.id = i.order_id
+        WHERE o.trans_date >= date_trunc('month', CURRENT_DATE))::float8 AS ordered,
+      (SELECT sum(i.qty) FROM accurate_delivery_order_item i
+         JOIN accurate_delivery_order o ON o.id = i.delivery_id
+        WHERE o.trans_date >= date_trunc('month', CURRENT_DATE))::float8 AS delivered`;
+  const ordered = Number(rows[0]?.ordered ?? 0);
+  if (!(ordered > 0)) return null;
+  return (Number(rows[0]?.delivered ?? 0) / ordered) * 100;
+}
+
 async function churnRutin(sql: Sql, cabang: string[]): Promise<number> {
   if (!cabang.length) return 0;
   const rows = await sql<{ n: number }[]>`
@@ -218,8 +242,11 @@ interface MetricDef {
   unit: string;
   direction: "higher" | "lower";
   trend: WatchTrend;
-  // compute ada = source 'db' (terima cabang HoD dari hod_territory)
-  compute?: (sql: Sql, cabang: string[]) => Promise<number>;
+  // compute ada = source 'db' (terima cabang HoD dari hod_territory).
+  // Balikan null = "datanya memang belum ada" → metric jadi N/A, BUKAN 0.
+  // Penting untuk metric rasio: 0 akan terbaca sebagai merah, padahal artinya
+  // tak ada penyebut (mis. belum ada order bulan ini).
+  compute?: (sql: Sql, cabang: string[]) => Promise<number | null>;
 }
 
 interface HodDef {
@@ -272,7 +299,7 @@ const HOD_DEFS: HodDef[] = [
   {
     key: "ika", name: "Ika", role: "Finance & SC", metrics: [
       { key: "ar90", label: "AR overdue >90 hari", target: 500 * JT, unit: "Rp", direction: "lower", trend: "stable", compute: () => arOver90Outstanding() },
-      { key: "fillrate", label: "Fill rate", target: 95, unit: "%", direction: "higher", trend: "stable" },
+      { key: "fillrate", label: "Fill rate", target: 95, unit: "%", direction: "higher", trend: "stable", compute: (s) => fillRateThisMonth(s) },
       { key: "refi", label: "Milestone refinancing", target: 1, unit: "milestone", direction: "higher", trend: "stable" },
       { key: "runway", label: "Cash runway mingguan", target: null, unit: "", direction: "higher", trend: "stable" },
     ],
