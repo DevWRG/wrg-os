@@ -202,7 +202,9 @@ function ExportPdfDialog({ rows }: { rows: PublishedRow[] }) {
 
   return (
     <>
-      <Button variant="outline" size="sm" onClick={mulai}>
+      {/* soft, bukan outline: harus terbaca sebagai tombol di antara filter yang
+          putih, tapi tidak bersaing dengan Export Excel yang solid di sebelahnya. */}
+      <Button variant="soft" size="sm" onClick={mulai}>
         <FileDown className="mr-1.5 h-3.5 w-3.5" /> Export PDF
       </Button>
 

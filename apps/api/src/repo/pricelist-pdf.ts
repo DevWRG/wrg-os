@@ -18,9 +18,12 @@ import PDFDocumentKlass from "pdfkit";
 
 import { listPublishedKeagenan, PERIODE_DEFAULT, type PricebookPublishedRow } from "./pricebook.js";
 
-// Halaman MENDATAR: 7 kolom harga tidak muat rapi di potret, dan tabel harga yang
-// kolomnya berdesakan adalah cara paling mudah salah kutip angka.
+// Halaman POTRET (keputusan user 13 Agt 2026). Waktu dokumen masih memuat 8 kolom
+// (termasuk Diskon/Nett/Nett+PPN) potret memang sesak; setelah tinggal 5 kolom,
+// potret muat dengan lega DAN memuat lebih banyak baris per halaman.
 const MARGIN = 32;
+const HAL_L = 595; // A4 potret
+const HAL_T = 842;
 // Kop surat WRG + Wahana LifeLine, dicetak di SETIAP halaman (dokumen ini keluar
 // ke faskes, tiap lembarnya harus berdiri sendiri sebagai dokumen resmi).
 //
@@ -38,7 +41,7 @@ const KOP_RASIO = 148 / 2204; // tinggi/lebar aset
 // dokumen 44 halaman: 76 ms → 13 ms, dan PDF-nya justru mengecil 44 KB → 38 KB.
 // Kalau nanti aset ini diganti, ratakan dulu alpha-nya ke putih.
 
-const LEBAR = 842 - MARGIN * 2; // A4 landscape
+const LEBAR = HAL_L - MARGIN * 2;
 const C = { teks: "#0f172a", redup: "#64748b", garis: "#e2e8f0", kepala: "#0f766e", zebra: "#f8fafc" };
 
 interface Kolom {
@@ -59,11 +62,11 @@ const rp = (n: number): string =>
 // negosiasi internal, bukan angka yang perlu dibaca faskes. Ketiganya tetap ada
 // di layar untuk AM (tab Harga per Produk) dan di Export Excel.
 const KOLOM: Kolom[] = [
-  { judul: "Kode", lebar: 110, nilai: (r) => r.productKode ?? r.kode ?? "-" },
-  { judul: "Nama Produk", lebar: 356, nilai: (r) => r.nama },
-  { judul: "Brand", lebar: 130, nilai: (r) => r.brand },
-  { judul: "Kemasan", lebar: 82, nilai: (r) => r.kemasan ?? "-" },
-  { judul: "Price List", lebar: 100, align: "right", nilai: (r) => rp(r.priceList) },
+  { judul: "Kode", lebar: 84, nilai: (r) => r.productKode ?? r.kode ?? "-" },
+  { judul: "Nama Produk", lebar: 236, nilai: (r) => r.nama },
+  { judul: "Brand", lebar: 84, nilai: (r) => r.brand },
+  { judul: "Kemasan", lebar: 52, nilai: (r) => r.kemasan ?? "-" },
+  { judul: "Price List", lebar: 75, align: "right", nilai: (r) => rp(r.priceList) },
 ];
 
 const TOTAL_LEBAR = KOLOM.reduce((n, k) => n + k.lebar, 0);
@@ -85,8 +88,8 @@ export async function pricelistPdf(opts: PdfOpts = {}): Promise<Buffer> {
   const pilih = opts.rowNos?.length ? new Set(opts.rowNos) : null;
   const rows = pilih ? semua.filter((r) => pilih.has(r.rowNo)) : semua;
 
-  const doc = new PDFDocumentKlass({ size: "A4", layout: "landscape", margin: MARGIN,
-    info: { Title: `Daftar Harga Keagenan WRG ${periode}`, Author: "WRG-OS" } });
+  const doc = new PDFDocumentKlass({ size: "A4", layout: "portrait", margin: MARGIN,
+    info: { Title: `Daftar Harga ${periode}`, Author: "WRG-OS" } });
   const chunks: Buffer[] = [];
   doc.on("data", (c: Buffer) => chunks.push(c));
   const selesai = new Promise<Buffer>((res) => doc.on("end", () => res(Buffer.concat(chunks))));
@@ -109,10 +112,12 @@ export async function pricelistPdf(opts: PdfOpts = {}): Promise<Buffer> {
     let y = MARGIN;
     if (adaKop) {
       doc.image(KOP, MARGIN, y, { width: LEBAR });
-      y += TINGGI_KOP + 8;
+      // Jarak lega kop → judul: kop adalah identitas surat, judul adalah isi.
+      // Terlalu mepet membuat keduanya terbaca sebagai satu blok.
+      y += TINGGI_KOP + 24;
     }
     doc.fillColor(C.kepala).font("Helvetica-Bold").fontSize(14)
-      .text("Daftar Harga Keagenan WRG", MARGIN, y);
+      .text("Daftar Harga", MARGIN, y);
     doc.fillColor(C.redup).font("Helvetica").fontSize(8)
       .text(`Periode ${periode} · ${rows.length} produk · dicetak ${cetak}`
             + (opts.oleh ? ` oleh ${opts.oleh}` : ""),
@@ -135,7 +140,7 @@ export async function pricelistPdf(opts: PdfOpts = {}): Promise<Buffer> {
   kepalaHalaman();
 
   const TINGGI = 15;
-  const BATAS = 595 - MARGIN - 26; // sisakan ruang footer
+  const BATAS = HAL_T - MARGIN - 26; // sisakan ruang footer
   rows.forEach((r, i) => {
     if (doc.y + TINGGI > BATAS) {
       footer();
@@ -159,7 +164,7 @@ export async function pricelistPdf(opts: PdfOpts = {}): Promise<Buffer> {
   });
 
   function footer() {
-    const y = 595 - MARGIN - 18;
+    const y = HAL_T - MARGIN - 18;
     // Catatan kaki mengikuti isi dokumen: sejak kolom Nett/PPN dilepas, penjelasan
     // soal lantai harga & PPN dari Nett tidak lagi relevan di sini.
     doc.fillColor(C.redup).font("Helvetica").fontSize(7)
