@@ -140,6 +140,36 @@ async function noOrderOver(sql: Sql, days: number): Promise<number> {
   return Number(rows[0]?.n ?? 0);
 }
 
+// "Akuisisi 2 akun baru/bln" (brief Direktur). Akun baru = customer yang faktur
+// PERTAMA-nya (sepanjang mirror) jatuh di bulan berjalan — bukan sekadar customer
+// yang bertransaksi bulan ini. Atribusi cabang diambil dari AM pada faktur
+// pertama itu, jadi akun tetap dihitung untuk wilayah yang membukanya walau
+// nanti pindah pemilik.
+//
+// Catatan batas: "pertama" hanya sejauh mirror `accurate_invoice`; customer yang
+// faktur perdananya mendahului awal mirror bisa salah terhitung sebagai baru.
+async function newAccountsThisMonth(sql: Sql, cabang: string[]): Promise<number> {
+  if (!cabang.length) return 0;
+  const rows = await sql<{ n: number }[]>`
+    SELECT count(*)::int AS n FROM (
+      SELECT DISTINCT ON (ai.customer_id) ai.customer_id, mu.cabang
+      FROM (
+        SELECT customer_id, min(tanggal) AS first_date
+        FROM accurate_invoice
+        WHERE customer_id IS NOT NULL
+        GROUP BY customer_id
+      ) f
+      JOIN accurate_invoice ai
+        ON ai.customer_id = f.customer_id AND ai.tanggal = f.first_date
+      LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
+      ${joinAmFromSalesman(sql)}
+      WHERE f.first_date >= date_trunc('month', CURRENT_DATE)
+      ORDER BY ai.customer_id, ai.id
+    ) q
+    WHERE q.cabang = ANY(${cabang})`;
+  return Number(rows[0]?.n ?? 0);
+}
+
 async function churnRutin(sql: Sql, cabang: string[]): Promise<number> {
   if (!cabang.length) return 0;
   const rows = await sql<{ n: number }[]>`
@@ -206,7 +236,7 @@ const SALES_METRICS = (): MetricDef[] => [
   { key: "revenue", label: "Revenue/bln", target: 2.5 * BIO, unit: "Rp", direction: "higher", trend: "stable", compute: (s, c) => revenueThisMonth(s, c) },
   { key: "prod", label: "Produktivitas/AM", target: 500 * JT, unit: "Rp", direction: "higher", trend: "stable", compute: (s, c) => productivity(s, c) },
   { key: "visits", label: "Kunjungan/AM/bln", target: 48, unit: "kunjungan", direction: "higher", trend: "stable", compute: (s, c) => visitsPerAm(s, c) },
-  { key: "newacct", label: "Akun baru/bln", target: 2, unit: "akun", direction: "higher", trend: "stable" },
+  { key: "newacct", label: "Akun baru/bln", target: 2, unit: "akun", direction: "higher", trend: "stable", compute: (s, c) => newAccountsThisMonth(s, c) },
   { key: "churn", label: "Churn RUTIN", target: 0, unit: "customer", direction: "lower", trend: "stable", compute: (s, c) => churnRutin(s, c) },
 ];
 
