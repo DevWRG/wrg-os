@@ -90,13 +90,30 @@ export async function upsertSalesOrders(
   let n = 0;
   for (const r of rows) {
     if (r.id === undefined || r.id === null) continue;
-    await sql`
-      INSERT INTO accurate_sales_order (id, number, trans_date, customer_name, status, total_amount, raw, last_synced_at)
-      VALUES (${r.id}, ${r.number ?? null}, ${r.trans_date ?? null}, ${r.customer_name ?? null}, ${r.status ?? null}, ${r.total_amount ?? null}, ${sql.json(j(r.raw ?? {}))}, now())
-      ON CONFLICT (id) DO UPDATE SET number=EXCLUDED.number, trans_date=EXCLUDED.trans_date,
-        customer_name=EXCLUDED.customer_name, status=EXCLUDED.status, total_amount=EXCLUDED.total_amount,
-        raw=EXCLUDED.raw, last_synced_at=now()
-    `;
+    if (r.number) {
+      // Baris lain yang menempati id ini pasti sisa dokumen lama: id Accurate unik
+      // per dokumen, jadi nomor berbeda di id yang sama = baris yatim. Dibuang dulu
+      // supaya INSERT di bawah tak tabrakan primary key (item ikut via ON DELETE CASCADE).
+      await sql`DELETE FROM accurate_sales_order WHERE id = ${r.id} AND number IS DISTINCT FROM ${r.number}`;
+      await sql`
+        INSERT INTO accurate_sales_order (id, number, trans_date, customer_name, status, total_amount, raw, last_synced_at)
+        VALUES (${r.id}, ${r.number}, ${r.trans_date ?? null}, ${r.customer_name ?? null}, ${r.status ?? null}, ${r.total_amount ?? null}, ${sql.json(j(r.raw ?? {}))}, now())
+        ON CONFLICT (number) WHERE number IS NOT NULL DO UPDATE SET
+          id=EXCLUDED.id, trans_date=EXCLUDED.trans_date,
+          customer_name=EXCLUDED.customer_name, status=EXCLUDED.status, total_amount=EXCLUDED.total_amount,
+          raw=EXCLUDED.raw, last_synced_at=now(),
+          items_synced_at=CASE WHEN accurate_sales_order.id <> EXCLUDED.id THEN NULL
+                               ELSE accurate_sales_order.items_synced_at END
+      `;
+    } else {
+      await sql`
+        INSERT INTO accurate_sales_order (id, number, trans_date, customer_name, status, total_amount, raw, last_synced_at)
+        VALUES (${r.id}, ${null}, ${r.trans_date ?? null}, ${r.customer_name ?? null}, ${r.status ?? null}, ${r.total_amount ?? null}, ${sql.json(j(r.raw ?? {}))}, now())
+        ON CONFLICT (id) DO UPDATE SET number=EXCLUDED.number, trans_date=EXCLUDED.trans_date,
+          customer_name=EXCLUDED.customer_name, status=EXCLUDED.status, total_amount=EXCLUDED.total_amount,
+          raw=EXCLUDED.raw, last_synced_at=now()
+      `;
+    }
     n += 1;
   }
   return n;
@@ -206,13 +223,27 @@ export async function upsertDeliveryOrders(
   let n = 0;
   for (const r of rows) {
     if (r.id === undefined || r.id === null) continue;
-    await sql`
-      INSERT INTO accurate_delivery_order (id, number, trans_date, customer_name, ship_to, status, raw, last_synced_at)
-      VALUES (${r.id}, ${r.number ?? null}, ${r.trans_date ?? null}, ${r.customer_name ?? null}, ${r.ship_to ?? null}, ${r.status ?? null}, ${sql.json(j(r.raw ?? {}))}, now())
-      ON CONFLICT (id) DO UPDATE SET number=EXCLUDED.number, trans_date=EXCLUDED.trans_date,
-        customer_name=EXCLUDED.customer_name, ship_to=EXCLUDED.ship_to, status=EXCLUDED.status,
-        raw=EXCLUDED.raw, last_synced_at=now()
-    `;
+    if (r.number) {
+      await sql`DELETE FROM accurate_delivery_order WHERE id = ${r.id} AND number IS DISTINCT FROM ${r.number}`;
+      await sql`
+        INSERT INTO accurate_delivery_order (id, number, trans_date, customer_name, ship_to, status, raw, last_synced_at)
+        VALUES (${r.id}, ${r.number}, ${r.trans_date ?? null}, ${r.customer_name ?? null}, ${r.ship_to ?? null}, ${r.status ?? null}, ${sql.json(j(r.raw ?? {}))}, now())
+        ON CONFLICT (number) WHERE number IS NOT NULL DO UPDATE SET
+          id=EXCLUDED.id, trans_date=EXCLUDED.trans_date,
+          customer_name=EXCLUDED.customer_name, ship_to=EXCLUDED.ship_to, status=EXCLUDED.status,
+          raw=EXCLUDED.raw, last_synced_at=now(),
+          items_synced_at=CASE WHEN accurate_delivery_order.id <> EXCLUDED.id THEN NULL
+                               ELSE accurate_delivery_order.items_synced_at END
+      `;
+    } else {
+      await sql`
+        INSERT INTO accurate_delivery_order (id, number, trans_date, customer_name, ship_to, status, raw, last_synced_at)
+        VALUES (${r.id}, ${null}, ${r.trans_date ?? null}, ${r.customer_name ?? null}, ${r.ship_to ?? null}, ${r.status ?? null}, ${sql.json(j(r.raw ?? {}))}, now())
+        ON CONFLICT (id) DO UPDATE SET number=EXCLUDED.number, trans_date=EXCLUDED.trans_date,
+          customer_name=EXCLUDED.customer_name, ship_to=EXCLUDED.ship_to, status=EXCLUDED.status,
+          raw=EXCLUDED.raw, last_synced_at=now()
+      `;
+    }
     n += 1;
   }
   return n;
