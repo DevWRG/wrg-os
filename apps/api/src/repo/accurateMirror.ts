@@ -102,6 +102,72 @@ export async function upsertSalesOrders(
   return n;
 }
 
+// Baris item SO/DO (migrasi 081). Delete+reinsert per dokumen supaya baris yang
+// dihapus di Accurate ikut hilang, lalu stamp items_synced_at agar dokumen tak
+// ditarik ulang tiap siklus sync.
+export interface MirrorLine {
+  line_no: number;
+  item_no?: string | null;
+  item_name?: string | null;
+  qty?: number | null;
+  unit?: string | null;
+  raw?: unknown;
+}
+
+export async function replaceSalesOrderItems(orderId: number, lines: MirrorLine[]): Promise<number> {
+  const sql = db();
+  await sql`DELETE FROM accurate_sales_order_item WHERE order_id = ${orderId}`;
+  for (const l of lines) {
+    await sql`
+      INSERT INTO accurate_sales_order_item (order_id, line_no, item_no, item_name, qty, unit, raw)
+      VALUES (${orderId}, ${l.line_no}, ${l.item_no ?? null}, ${l.item_name ?? null}, ${l.qty ?? null},
+              ${l.unit ?? null}, ${sql.json(j(l.raw ?? {}))})
+      ON CONFLICT (order_id, line_no) DO UPDATE SET
+        item_no=EXCLUDED.item_no, item_name=EXCLUDED.item_name, qty=EXCLUDED.qty,
+        unit=EXCLUDED.unit, raw=EXCLUDED.raw
+    `;
+  }
+  await sql`UPDATE accurate_sales_order SET items_synced_at = now() WHERE id = ${orderId}`;
+  return lines.length;
+}
+
+export async function replaceDeliveryOrderItems(deliveryId: number, lines: MirrorLine[]): Promise<number> {
+  const sql = db();
+  await sql`DELETE FROM accurate_delivery_order_item WHERE delivery_id = ${deliveryId}`;
+  for (const l of lines) {
+    await sql`
+      INSERT INTO accurate_delivery_order_item (delivery_id, line_no, item_no, item_name, qty, unit, raw)
+      VALUES (${deliveryId}, ${l.line_no}, ${l.item_no ?? null}, ${l.item_name ?? null}, ${l.qty ?? null},
+              ${l.unit ?? null}, ${sql.json(j(l.raw ?? {}))})
+      ON CONFLICT (delivery_id, line_no) DO UPDATE SET
+        item_no=EXCLUDED.item_no, item_name=EXCLUDED.item_name, qty=EXCLUDED.qty,
+        unit=EXCLUDED.unit, raw=EXCLUDED.raw
+    `;
+  }
+  await sql`UPDATE accurate_delivery_order SET items_synced_at = now() WHERE id = ${deliveryId}`;
+  return lines.length;
+}
+
+/** Dokumen (terbaru dulu) sejak `sinceDays` yang baris itemnya belum pernah ditarik. */
+export async function pendingItemDocs(
+  entity: "so" | "do",
+  sinceDays: number,
+  limit: number,
+): Promise<number[]> {
+  const sql = db();
+  const rows =
+    entity === "so"
+      ? await sql<{ id: string }[]>`
+          SELECT id FROM accurate_sales_order
+          WHERE items_synced_at IS NULL AND trans_date >= CURRENT_DATE - ${sinceDays}::int
+          ORDER BY trans_date DESC NULLS LAST LIMIT ${limit}`
+      : await sql<{ id: string }[]>`
+          SELECT id FROM accurate_delivery_order
+          WHERE items_synced_at IS NULL AND trans_date >= CURRENT_DATE - ${sinceDays}::int
+          ORDER BY trans_date DESC NULLS LAST LIMIT ${limit}`;
+  return rows.map((r) => Number(r.id));
+}
+
 export async function listSalesOrders(limit = 500) {
   const sql = db();
   const rows = await sql`
