@@ -28,8 +28,15 @@ const MARGIN = 32;
 // non-TS, jadi path relatif ke dist/repo/ akan kosong setelah build.
 // dist/repo/pricelist-pdf.js → ../../assets = apps/api/assets ✓
 const KOP = fileURLToPath(new URL("../../assets/kop-surat.png", import.meta.url));
-const KOP_RASIO = 102 / 1073; // tinggi/lebar aset (sudah dipotong 7px kanan:
-// tangkapan layar sumbernya membawa garis bingkai gelap di tepi kanan)
+const KOP_RASIO = 148 / 2204; // tinggi/lebar aset
+// Aset diambil dari `template kop.docx` (word/media/image2.png) — 2204x148,
+// ~204 DPI saat digambar selebar area cetak.
+//
+// Alpha-nya SUDAH diratakan ke putih, dan itu disengaja: untuk PNG ber-alpha
+// pdfkit harus memisah kanal jadi SMask terpisah (dekompres + kompres ulang tiap
+// generate), sedangkan PNG tanpa alpha datanya disalin apa adanya. Terukur pada
+// dokumen 44 halaman: 76 ms → 13 ms, dan PDF-nya justru mengecil 44 KB → 38 KB.
+// Kalau nanti aset ini diganti, ratakan dulu alpha-nya ke putih.
 
 const LEBAR = 842 - MARGIN * 2; // A4 landscape
 const C = { teks: "#0f172a", redup: "#64748b", garis: "#e2e8f0", kepala: "#0f766e", zebra: "#f8fafc" };
