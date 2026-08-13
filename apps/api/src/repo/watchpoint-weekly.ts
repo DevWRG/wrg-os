@@ -158,6 +158,18 @@ function trendOf(actual: number | null, prev: number | null, dir: "higher" | "lo
 const PRORATA_KEYS = new Set(["revenue", "prod", "visits"]);
 
 /**
+ * Metric yang tak boleh dinilai sebelum minggunya TUTUP, karena mensyaratkan jeda
+ * antara sebab dan akibat: pesanan butuh waktu untuk dikirim. Untuk minggu berjalan
+ * nilainya dibuat N/A, bukan angka rendah yang terbaca sebagai kegagalan.
+ *
+ * revenue/visits/newacct TIDAK masuk sini — capaian separuh minggu memang capaian
+ * separuh minggu, wajar dibaca sebagai "baru sekian". Bedanya, fillrate bukan
+ * capaian parsial melainkan RASIO yang penyebutnya ikut tumbuh tiap hari, jadi
+ * angka tengah-minggu bukan "belum lengkap" tapi menyesatkan.
+ */
+const BUTUH_JEDA = new Set(["fillrate"]);
+
+/**
  * Target bulanan → target minggu itu. Penyebutnya jumlah hari pada bulan yang
  * MEMILIKI minggu tersebut menurut ISO 8601, yaitu bulan hari Kamis-nya — supaya
  * minggu yang membelah dua bulan tetap punya satu penyebut yang deterministik,
@@ -209,6 +221,17 @@ export async function getWeeklyBoard(isoYear: number, isoWeek: number): Promise<
         source = saved.source;
         note = saved.note ?? undefined;
         override = saved.status;
+      } else if (isCurrent && BUTUH_JEDA.has(m.key)) {
+        // Metric yang mensyaratkan JEDA antara sebab dan akibat tak bisa dinilai
+        // sebelum minggunya tutup. fillrate = qty terkirim ÷ qty dipesan pada
+        // periode itu: pesanan yang masuk 1–2 hari lalu wajar belum dikirim, jadi
+        // di tengah minggu angkanya selalu rendah dan turun makin dalam tiap Senin.
+        // Terukur: minggu tutup 96–98% (GREEN), minggu berjalan 25,7% (RED) —
+        // merah yang murni artefak kalender dan membuat kartu Ika RED tanpa sebab.
+        // N/A + catatan jauh lebih berguna daripada alarm palsu tiap awal minggu.
+        actual = null;
+        source = "live";
+        note = "Belum bisa dinilai — minggu masih berjalan. Pesanan yang baru masuk wajar belum terkirim, jadi angkanya baru final setelah minggu tutup.";
       } else if (isCurrent) {
         actual = m.actual;
         // "live" hanya untuk metric yang benar-benar dihitung dari DB. Metric
