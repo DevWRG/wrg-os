@@ -135,6 +135,7 @@ import {
   reportCalendarDay,
 } from "./repo/plandash.js";
 import { salesRange, reportRevenue, reportSalesAr, salesOverview, customersRevenue, customerMonthly, dormantCustomers, churnCustomers, targetPacing, reportSalesPerformance } from "./repo/sales.js";
+import { streamRange, reportRevenueByStream } from "./repo/revenue-stream.js";
 import { resolveScope } from "./repo/access-scope.js";
 import { getRaportList, getRaportDetail } from "./repo/raport.js";
 import { generateRaportNarrative, runRaportNarrative } from "./repo/raportnarrative.js";
@@ -1927,6 +1928,16 @@ app.get("/sales/revenue", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const { from, to } = salesRange(c.req.query("from"), c.req.query("to"));
   return c.json(await reportRevenue(from, to));
+});
+
+// Revenue-by-stream (WatchPoint kartu Fafa): revenue per lini produk.
+// ?periode=YYYY-MM (menang atas from/to), atau ?from=&to=. Default bulan berjalan.
+// Balikan `ringkasan` memuat cakupan klasifikasi & selisih terhadap netto invoice —
+// tampilkan keduanya di UI, jangan cuma daftar lininya.
+app.get("/reports/revenue-by-stream", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const { from, to } = streamRange(c.req.query("periode"), c.req.query("from"), c.req.query("to"));
+  return c.json(await reportRevenueByStream(from, to));
 });
 
 // Kartu Sales Performance: target vs realisasi per periode (YTD/kuartal/bulan) +
