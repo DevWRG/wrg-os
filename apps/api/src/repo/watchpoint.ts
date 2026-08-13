@@ -170,25 +170,43 @@ async function newAccountsThisMonth(sql: Sql, cabang: string[]): Promise<number>
   return Number(rows[0]?.n ?? 0);
 }
 
-// Fill rate (Ika) dari mirror baris item SO/DO (migrasi 081): qty terkirim ÷ qty
-// dipesan pada bulan berjalan, se-perusahaan (bukan per cabang — mirror SO/DO
-// tak menyimpan cabang, dan Finance & SC memang lingkupnya nasional).
+// Fill rate (Ika) — BASIS SO (migrasi 096): dari pesanan yang MASUK bulan ini,
+// berapa persen qty-nya sudah terkirim. Se-perusahaan (bukan per cabang — mirror
+// SO/DO tak menyimpan cabang, dan Finance & SC memang lingkupnya nasional).
 //
-// BATAS YANG HARUS DIINGAT: ini fill rate AGREGAT per periode, bukan per baris
-// order. Order yang masuk akhir bulan dan dikirim bulan depan akan menekan angka
-// bulan ini, dan pengiriman atas order bulan lalu mengangkatnya (bisa >100%).
-// Menghitung per-baris butuh penautan DO→SO yang payload-nya belum terverifikasi.
+// Penautannya per BARIS, bukan per dokumen: accurate_delivery_order_item
+// .sales_order_detail_id → accurate_sales_order_item.line_id. Satu SO bisa berisi
+// banyak item dengan tingkat pemenuhan berbeda, jadi per dokumen akan menyamarkan
+// item yang kurang. Pengiriman dihitung tanpa memandang tanggal DO-nya — kiriman
+// September atas pesanan Agustus tetap masuk ke Agustus, karena periodenya
+// ditentukan tanggal PESANAN.
+//
+// Diganti dari definisi lama (agregat qty SO vs qty DO dalam bulan yang sama)
+// yang terdistorsi pesanan lintas bulan dan tak bisa ditelusuri ke SO mana pun.
+//
+// KONSEKUENSI YANG HARUS DIINGAT: angka bulan berjalan BELUM FINAL — pesanan yang
+// baru masuk beberapa hari lalu wajar belum terkirim penuh, jadi nilainya menanjak
+// sepanjang bulan. Bandingkan antar bulan penuh, bukan bulan berjalan vs bulan lalu.
+//
+// Over-delivery tidak dipotong di level baris: kalau kiriman melebihi pesanan,
+// kelebihannya ikut terhitung dan hasilnya bisa >100%. Itu sinyal yang memang perlu
+// terlihat, bukan disembunyikan dengan LEAST(). Baris DO tanpa tautan SO (98,9%
+// terkait; sisanya merujuk SO lebih tua dari jendela mirror) tidak ikut sama sekali.
 //
 // Balikan null saat belum ada qty order sama sekali → N/A, bukan 0%.
 async function fillRateThisMonth(sql: Sql): Promise<number | null> {
   const rows = await sql<{ ordered: number | null; delivered: number | null }[]>`
+    WITH so_line AS (
+      SELECT i.line_id, i.qty
+        FROM accurate_sales_order_item i
+        JOIN accurate_sales_order o ON o.id = i.order_id
+       WHERE o.trans_date >= date_trunc('month', CURRENT_DATE)
+         AND i.line_id IS NOT NULL
+    )
     SELECT
-      (SELECT sum(i.qty) FROM accurate_sales_order_item i
-         JOIN accurate_sales_order o ON o.id = i.order_id
-        WHERE o.trans_date >= date_trunc('month', CURRENT_DATE))::float8 AS ordered,
-      (SELECT sum(i.qty) FROM accurate_delivery_order_item i
-         JOIN accurate_delivery_order o ON o.id = i.delivery_id
-        WHERE o.trans_date >= date_trunc('month', CURRENT_DATE))::float8 AS delivered`;
+      (SELECT sum(qty) FROM so_line)::float8 AS ordered,
+      (SELECT sum(d.qty) FROM accurate_delivery_order_item d
+         JOIN so_line s ON s.line_id = d.sales_order_detail_id)::float8 AS delivered`;
   const ordered = Number(rows[0]?.ordered ?? 0);
   if (!(ordered > 0)) return null;
   return (Number(rows[0]?.delivered ?? 0) / ordered) * 100;

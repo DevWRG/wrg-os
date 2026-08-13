@@ -131,17 +131,25 @@ export interface MirrorLine {
   raw?: unknown;
 }
 
+// Ambil id numerik dari payload detail Accurate (migrasi 096). Nol/kosong/non-angka
+// diperlakukan sebagai "tidak ada tautan" — id Accurate selalu positif.
+const rawId = (raw: unknown, key: string): number | null => {
+  const v = (raw as Record<string, unknown> | null | undefined)?.[key];
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? n : null;
+};
+
 export async function replaceSalesOrderItems(orderId: number, lines: MirrorLine[]): Promise<number> {
   const sql = db();
   await sql`DELETE FROM accurate_sales_order_item WHERE order_id = ${orderId}`;
   for (const l of lines) {
     await sql`
-      INSERT INTO accurate_sales_order_item (order_id, line_no, item_no, item_name, qty, unit, raw)
+      INSERT INTO accurate_sales_order_item (order_id, line_no, item_no, item_name, qty, unit, raw, line_id)
       VALUES (${orderId}, ${l.line_no}, ${l.item_no ?? null}, ${l.item_name ?? null}, ${l.qty ?? null},
-              ${l.unit ?? null}, ${sql.json(j(l.raw ?? {}))})
+              ${l.unit ?? null}, ${sql.json(j(l.raw ?? {}))}, ${rawId(l.raw, "id")})
       ON CONFLICT (order_id, line_no) DO UPDATE SET
         item_no=EXCLUDED.item_no, item_name=EXCLUDED.item_name, qty=EXCLUDED.qty,
-        unit=EXCLUDED.unit, raw=EXCLUDED.raw
+        unit=EXCLUDED.unit, raw=EXCLUDED.raw, line_id=EXCLUDED.line_id
     `;
   }
   await sql`UPDATE accurate_sales_order SET items_synced_at = now() WHERE id = ${orderId}`;
@@ -153,12 +161,15 @@ export async function replaceDeliveryOrderItems(deliveryId: number, lines: Mirro
   await sql`DELETE FROM accurate_delivery_order_item WHERE delivery_id = ${deliveryId}`;
   for (const l of lines) {
     await sql`
-      INSERT INTO accurate_delivery_order_item (delivery_id, line_no, item_no, item_name, qty, unit, raw)
+      INSERT INTO accurate_delivery_order_item (delivery_id, line_no, item_no, item_name, qty, unit, raw,
+                                                sales_order_id, sales_order_detail_id)
       VALUES (${deliveryId}, ${l.line_no}, ${l.item_no ?? null}, ${l.item_name ?? null}, ${l.qty ?? null},
-              ${l.unit ?? null}, ${sql.json(j(l.raw ?? {}))})
+              ${l.unit ?? null}, ${sql.json(j(l.raw ?? {}))},
+              ${rawId(l.raw, "salesOrderId")}, ${rawId(l.raw, "salesOrderDetailId")})
       ON CONFLICT (delivery_id, line_no) DO UPDATE SET
         item_no=EXCLUDED.item_no, item_name=EXCLUDED.item_name, qty=EXCLUDED.qty,
-        unit=EXCLUDED.unit, raw=EXCLUDED.raw
+        unit=EXCLUDED.unit, raw=EXCLUDED.raw,
+        sales_order_id=EXCLUDED.sales_order_id, sales_order_detail_id=EXCLUDED.sales_order_detail_id
     `;
   }
   await sql`UPDATE accurate_delivery_order SET items_synced_at = now() WHERE id = ${deliveryId}`;
