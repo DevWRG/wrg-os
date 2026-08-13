@@ -212,6 +212,64 @@ async function fillRateThisMonth(sql: Sql): Promise<number | null> {
   return (Number(rows[0]?.delivered ?? 0) / ordered) * 100;
 }
 
+// ── Metric Mufid (Business IVD): FIA & cross-sell reguler→CLIA ──────────────
+//
+// KENAPA COCOK-NAMA, BUKAN KLASIFIKASI PRODUK. Cara yang "benar" adalah lewat
+// product_code → product_line (lini Imunology = CLIA, POCT Imunology = FIA).
+// Itu TIDAK bisa dipakai per 2026-08-13: seluruh keluarga LIAISON XL (DiaSorin)
+// — Rp 532 jt YTD, penyumbang CLIA terbesar — sama sekali tak ada di pricebook,
+// begitu pula MAGLUMI T3/TSH/T4. Lini Imunology cuma memuat 8 produk
+// SNIBE/TOSOH/ORGENTEC. Diukur lewat klasifikasi, CLIA hanya tampak 1 pelanggan
+// padahal nyatanya Rp 563,9 jt / 15 pelanggan menggantung tanpa klasifikasi.
+//
+// Angka kecil yang percaya diri lebih berbahaya daripada NA: ia membuat bisnis
+// Mufid terlihat sepi. Jadi metric ini membaca nama item Accurate langsung —
+// mencakup semua yang benar-benar terjual, tak bergantung kelengkapan pricebook.
+//
+// PINDAHKAN KE KLASIFIKASI begitu produk-produk itu didaftarkan; pola nama rapuh
+// terhadap penulisan baru (mis. merek CLIA baru yang namanya tak memuat 'CLIA').
+const RE_FIA = "FIA METER|FLUORESCEN|IMMUNOASSAY";
+const RE_CLIA = "CLIA|MAGLUMI|LIAISON";
+
+// PERIODE = YTD, bukan bulan berjalan seperti revenue/visits. Alasannya bukan
+// selera: sepanjang 2026 baru 11 pelanggan FIA, jadi target 20 mustahil dibaca
+// sebagai target BULANAN — ia jelas capaian kumulatif. Mirror accurate_invoice
+// mulai 2026-01-05, jadi YTD = seluruh data yang ada (bukan potongan sebagian).
+async function fiaCustomersYtd(sql: Sql): Promise<number> {
+  const rows = await sql<{ n: number }[]>`
+    SELECT count(DISTINCT inv.customer_id)::int AS n
+      FROM accurate_invoice_item ii
+      JOIN accurate_invoice inv ON inv.id = ii.invoice_id
+      JOIN accurate_item ai ON ai.id::text = ii.item_id::text
+     WHERE inv.tanggal >= date_trunc('year', CURRENT_DATE)
+       AND ai.name ~* ${RE_FIA}`;
+  return Number(rows[0]?.n ?? 0);
+}
+
+// Cross-sell = pelanggan yang SUDAH beli non-CLIA lebih dulu, lalu faktur CLIA
+// PERTAMA-nya jatuh tahun ini. Urutan itu yang membedakan cross-sell dari
+// pelanggan CLIA baru: tanpa syarat "reguler duluan", akun yang langsung masuk
+// lewat CLIA ikut terhitung dan targetnya jadi tak bermakna.
+async function xsellRegulerKeClia(sql: Sql): Promise<number> {
+  const rows = await sql<{ n: number }[]>`
+    WITH baris AS (
+      SELECT inv.customer_id, inv.tanggal, (ai.name ~* ${RE_CLIA}) AS is_clia
+        FROM accurate_invoice_item ii
+        JOIN accurate_invoice inv ON inv.id = ii.invoice_id
+        JOIN accurate_item ai ON ai.id::text = ii.item_id::text
+       WHERE inv.customer_id IS NOT NULL
+    ),
+    clia_pertama AS (
+      SELECT customer_id, min(tanggal) AS mulai FROM baris WHERE is_clia GROUP BY 1
+    )
+    SELECT count(*)::int AS n
+      FROM clia_pertama p
+     WHERE p.mulai >= date_trunc('year', CURRENT_DATE)
+       AND EXISTS (SELECT 1 FROM baris b
+                    WHERE b.customer_id = p.customer_id AND NOT b.is_clia AND b.tanggal < p.mulai)`;
+  return Number(rows[0]?.n ?? 0);
+}
+
 async function churnRutin(sql: Sql, cabang: string[]): Promise<number> {
   if (!cabang.length) return 0;
   const rows = await sql<{ n: number }[]>`
@@ -291,9 +349,9 @@ const HOD_DEFS: HodDef[] = [
   {
     key: "mufid", name: "Mufid", role: "Business IVD", metrics: [
       { key: "clia", label: "Site CLIA ≥800 tes/bln", target: 3, unit: "site", direction: "higher", trend: "stable" },
-      { key: "fia", label: "FIA customer", target: 20, unit: "customer", direction: "higher", trend: "stable" },
+      { key: "fia", label: "FIA customer", target: 20, unit: "customer", direction: "higher", trend: "stable", compute: (s) => fiaCustomersYtd(s) },
       { key: "jv", label: "JV principal baru", target: 1, unit: "JV", direction: "higher", trend: "stable" },
-      { key: "xsell", label: "Cross-sell reguler→CLIA", target: 2, unit: "deal", direction: "higher", trend: "stable" },
+      { key: "xsell", label: "Cross-sell reguler→CLIA", target: 2, unit: "deal", direction: "higher", trend: "stable", compute: (s) => xsellRegulerKeClia(s) },
       { key: "moq", label: "MOQ Snibe diputus", target: null, unit: "", direction: "higher", trend: "stable" },
     ],
   },
