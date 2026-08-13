@@ -1,11 +1,14 @@
 import { db } from "../db.js";
 import { detectDaily, parseDaily, stripInvisible } from "../parsers/dailyplan.js";
 import { parseAmPlan, parseAmReport } from "../parsers/am.js";
+import { parseSphMessage } from "../parsers/sph.js";
 import { sendViaWaGateway, type WaSendResult } from "../wasend.js";
 import { handleSalesAnalyticsQuery } from "./inbound-sales-analytics.js";
 import { resolveSender } from "./master.js";
 import { upsertDailyTodo, computeIsLate } from "./todo.js";
 import { createReminder } from "./reminder.js";
+import { createSphDraft, findPricelistByKode } from "./sph.js";
+import { listItems as listPricebookItems } from "./pricebook.js";
 
 // Role yang pakai alur AM per-customer (sales_plan/activity_log + foto), bukan todo.
 const AM_ROLES = new Set(["AM", "Teknisi"]);
@@ -20,10 +23,16 @@ const isAmRole = (role?: string | null) => AM_ROLES.has((role ?? "").trim());
 // → patuh WA_DRY_RUN. Idempoten: wa_message.processed_at. Pengirim tak dikenal →
 // SILENT (tak balas) supaya tak spam non-AM/pesan bot di grup campuran.
 
-export type InboundKind = "plan" | "report" | "leads" | "update" | "sales" | "none";
+export type InboundKind = "plan" | "report" | "leads" | "update" | "sales" | "sph" | "pricing" | "none";
 
 const LEADS_UPDATE_LINE = /^\s*#\s*(leads|update)\b/i;
 const SALES_LINE = /^\s*#\s*sales\b/i;
+// F15 — QW1/F19 sengaja tak dipakai lintasan ini (Direktur minta diskusi
+// onsite dulu utk format #FORECAST, lihat memory sesi 2026-08-12). #SPH/
+// #PRICING beda: format lebih sempit (1 item per pesan / query bebas), jadi
+// dibangun langsung tanpa nunggu itu.
+const SPH_LINE = /^\s*#\s*sph\b/i;
+const PRICING_LINE = /^\s*#\s*pricing\b/i;
 
 export function detectKind(body: string | null): InboundKind {
   const daily = detectDaily(body); // line-anchored #plan/#report (sudah strip invisible)
@@ -33,6 +42,8 @@ export function detectKind(body: string | null): InboundKind {
       const m = line.match(LEADS_UPDATE_LINE);
       if (m) return m[1].toLowerCase() as "leads" | "update";
       if (SALES_LINE.test(line)) return "sales";
+      if (SPH_LINE.test(line)) return "sph";
+      if (PRICING_LINE.test(line)) return "pricing";
     }
   }
   return "none";
@@ -448,6 +459,71 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
     return finish({ kind: "sales", via: ams.via, reply });
   }
 
+  // #PRICING <query> — lookup harga on-demand dari F142 Price Book (F15).
+  // Read-only, sama filosofi #SALES: query bebas, jawab teks ringkas.
+  if (kind === "pricing") {
+    const amp = await resolveSender({ senderJid: row.sender_jid, groupJid: row.group_jid, pushname: row.sender_name });
+    if (!amp) return finish({ skipped: "unknown-sender", sender_name: row.sender_name });
+    const line = stripInvisible(row.body ?? "").split(/\r?\n/).find((l) => PRICING_LINE.test(l)) ?? "";
+    const q = line.replace(PRICING_LINE, "").trim();
+    if (!q) {
+      const reply = await sendViaWaGateway(target, `⚠️ #PRICING butuh kata kunci, mis. "#PRICING reagen kontrol", ${amp.nama}.`);
+      return finish({ error: "pricing-empty-query", via: amp.via, reply });
+    }
+    const items = await listPricebookItems({ q, limit: 5 });
+    const text =
+      items.length === 0
+        ? `Tidak ada produk cocok "${q}" di Price Book, ${amp.nama}.`
+        : `Hasil "${q}" (${items.length}${items.length === 5 ? "+, perjelas kata kunci" : ""}), ${amp.nama}:\n` +
+          items
+            .map(
+              (it) =>
+                `• ${it.nama}${it.varian ? ` (${it.varian})` : ""} [${it.kode ?? "tanpa kode"}] — List Rp${it.priceList.toLocaleString("id-ID")}, maks diskon ${(it.diskonMaks * 100).toFixed(0)}%, floor Rp${it.hargaNett.toLocaleString("id-ID")}${it.jumlahHarga > 1 ? " ⚠️ nama ini ada varian lain, sebut kode kalau mau #SPH" : ""}`,
+            )
+            .join("\n");
+    const reply = await sendViaWaGateway(target, text);
+    return finish({ kind: "pricing", count: items.length, via: amp.via, reply });
+  }
+
+  // #SPH <customer> | <kode> | <qty> | <diskon%> — shortcut 1-item (F15).
+  // Multi-item / cari-by-nama pakai form web /sph/new. Reuse createSphDraft
+  // supaya enforcement diskon_maks & variant-confirm-gate SAMA PERSIS dgn
+  // jalur web, tak ada logika bisnis yg diduplikasi.
+  if (kind === "sph") {
+    const ams = await resolveSender({ senderJid: row.sender_jid, groupJid: row.group_jid, pushname: row.sender_name });
+    if (!ams) return finish({ skipped: "unknown-sender", sender_name: row.sender_name });
+    const line = stripInvisible(row.body ?? "").split(/\r?\n/).find((l) => SPH_LINE.test(l)) ?? "";
+    const parsed = parseSphMessage(line);
+    if (!parsed) return finish({ error: "sph-empty" }, "sph");
+    if ("error" in parsed) {
+      const reply = await sendViaWaGateway(target, `⚠️ #SPH gagal diproses, ${ams.nama}: ${parsed.error}`);
+      return finish({ error: parsed.error, via: ams.via, reply });
+    }
+    const match = await findPricelistByKode(parsed.kode);
+    if (!match) {
+      const reply = await sendViaWaGateway(
+        target,
+        `⚠️ Kode "${parsed.kode}" tak ketemu di Price Book, ${ams.nama}. Cek #PRICING dulu atau pakai form web /sph/new.`,
+      );
+      return finish({ error: "kode-not-found", kode: parsed.kode, via: ams.via, reply });
+    }
+    const r = await createSphDraft({
+      customer_name: parsed.customerName,
+      am_id: ams.am_id,
+      items: [{ pricelist_item_id: match.id, qty: parsed.qty, diskon_requested: parsed.diskonRequested }],
+      created_by: ams.nama ?? ams.via,
+    });
+    if (!r.ok) {
+      const reply = await sendViaWaGateway(target, `⚠️ #SPH ditolak, ${ams.nama}: ${r.error}`);
+      return finish({ ok: false, error: r.error, via: ams.via, reply });
+    }
+    const reply = await sendViaWaGateway(
+      target,
+      `✅ Draft SPH tersimpan, ${ams.nama}.\n${parsed.customerName} — ${match.nama} × ${parsed.qty}\nLanjut review HOD Business di app (Sales Docs).`,
+    );
+    return finish({ ok: true, id: r.id, via: ams.via, reply });
+  }
+
   // #PLAN/#REPORT — parse DULU (body-name dibutuhkan untuk resolusi Tier-A).
   const parsed = parseDaily(row.body ?? "");
   const am = await resolveSender({
@@ -563,7 +639,7 @@ export async function processUnprocessed(
            media_path, geo_lat, geo_lon, geo_ts, geo_address
     FROM wa_message
     WHERE processed_at IS NULL
-      AND (body ~* '#\\s*(plan|report|leads|update|sales)'
+      AND (body ~* '#\\s*(plan|report|leads|update|sales|sph|pricing)'
            OR (message_type ~* '^image' AND media_path IS NOT NULL))
     ORDER BY received_at ASC LIMIT ${limit}
   `;

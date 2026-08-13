@@ -174,6 +174,13 @@ class SalesDocRequest(BaseModel):
     notes: Optional[str] = None
     doc_type: str = "sph"  # sph, offering_letter, presentation, mou
     dry_run: bool = False
+    # F15 (apps/api/src/repo/sph.ts) — True kalau pemanggil SUDAH punya tabel
+    # harga final (per-SKU, tervalidasi) dan akan menempelnya sendiri setelah
+    # teks ini. LLM/template TIDAK BOLEH ikut menggambar tabel/subtotal/PPN
+    # sendiri kalau ini True — dua tabel (satu placeholder, satu benar) di 1
+    # dokumen membingungkan customer. False (default) = jalur lama A6 batch,
+    # tak ada tabel final tersedia, LLM/template tetap boleh gambar placeholder.
+    has_final_pricing: bool = False
 
 
 class SalesDocResponse(BaseModel):
