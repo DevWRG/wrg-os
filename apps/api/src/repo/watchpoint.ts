@@ -92,16 +92,44 @@ export function worst(metrics: { status: WatchStatus }[]): WatchStatus {
 // ── DB derivations (Accurate mirror + AR + plan). cabang dari hod_territory. ──
 type Sql = ReturnType<typeof db>;
 
+/**
+ * Jendela periode untuk metric yang sifatnya "capaian sepanjang periode"
+ * (revenue, produktivitas, kunjungan, akun baru, fill rate).
+ *
+ * KENAPA ADA. Sebelumnya metric-metric itu memaku `date_trunc('month')` sendiri,
+ * sementara papan Weekly membekukan hasilnya sebagai angka MINGGUAN. Snapshot W31
+ * (diambil Senin 3 Agustus 06:00) karena itu mencatat revenue Rocky = 0 — bukan
+ * karena minggu itu sepi (nyatanya Rp 277 jt dari 64 faktur), melainkan karena
+ * month-to-date Agustus saat itu baru mencakup 1–2 Agustus yang kebetulan akhir
+ * pekan tanpa faktur. W32 tampak benar hanya karena kebetulan kalender yang sama;
+ * bulan yang tidak diawali akhir pekan akan salah tanpa ada yang menyadari.
+ *
+ * Metric KUMULATIF (fia/xsell = YTD) dan TITIK-WAKTU (ar90, noorder, churn)
+ * sengaja mengabaikan jendela ini — periodenya bukan urusan papan.
+ */
+export interface PeriodWindow {
+  from: string; // YYYY-MM-DD inklusif
+  to: string;   // YYYY-MM-DD inklusif
+}
+
+/** Jendela default papan harian: awal bulan → hari ini (WIB, bukan UTC). */
+export function monthToDateWindow(): PeriodWindow {
+  const now = new Date(Date.now() + 7 * 3600 * 1000);
+  const y = now.getUTCFullYear();
+  const m = String(now.getUTCMonth() + 1).padStart(2, "0");
+  return { from: `${y}-${m}-01`, to: now.toISOString().slice(0, 10) };
+}
+
 // Revenue NETTO (tanpa PPN) — sebasis dengan Sales Analytics; kalau di sini
 // pakai ai.total bruto, dua menu menampilkan angka berbeda untuk periode sama.
-async function revenueThisMonth(sql: Sql, cabang: string[]): Promise<number> {
+async function revenueInWindow(sql: Sql, cabang: string[], win: PeriodWindow): Promise<number> {
   if (!cabang.length) return 0;
   const rows = await sql<{ v: number }[]>`
     SELECT COALESCE(sum(ai.total - COALESCE(ai.tax_amount, 0)),0)::float8 AS v
     FROM accurate_invoice ai
     LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
     ${joinAmFromSalesman(sql)}
-    WHERE ai.tanggal >= date_trunc('month', CURRENT_DATE)
+    WHERE ai.tanggal >= ${win.from}::date AND ai.tanggal <= ${win.to}::date
       AND mu.cabang = ANY(${cabang})`;
   return Number(rows[0]?.v ?? 0);
 }
@@ -120,8 +148,8 @@ async function amCount(sql: Sql, cabang: string[]): Promise<number> {
   return Number(rows[0]?.n ?? 0);
 }
 
-async function productivity(sql: Sql, cabang: string[]): Promise<number> {
-  const r = await revenueThisMonth(sql, cabang);
+async function productivity(sql: Sql, cabang: string[], win: PeriodWindow): Promise<number> {
+  const r = await revenueInWindow(sql, cabang, win);
   const n = await amCount(sql, cabang);
   return n ? r / n : 0;
 }
@@ -148,7 +176,7 @@ async function noOrderOver(sql: Sql, days: number): Promise<number> {
 //
 // Catatan batas: "pertama" hanya sejauh mirror `accurate_invoice`; customer yang
 // faktur perdananya mendahului awal mirror bisa salah terhitung sebagai baru.
-async function newAccountsThisMonth(sql: Sql, cabang: string[]): Promise<number> {
+async function newAccountsInWindow(sql: Sql, cabang: string[], win: PeriodWindow): Promise<number> {
   if (!cabang.length) return 0;
   const rows = await sql<{ n: number }[]>`
     SELECT count(*)::int AS n FROM (
@@ -163,7 +191,7 @@ async function newAccountsThisMonth(sql: Sql, cabang: string[]): Promise<number>
         ON ai.customer_id = f.customer_id AND ai.tanggal = f.first_date
       LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
       ${joinAmFromSalesman(sql)}
-      WHERE f.first_date >= date_trunc('month', CURRENT_DATE)
+      WHERE f.first_date >= ${win.from}::date AND f.first_date <= ${win.to}::date
       ORDER BY ai.customer_id, ai.id
     ) q
     WHERE q.cabang = ANY(${cabang})`;
@@ -194,13 +222,13 @@ async function newAccountsThisMonth(sql: Sql, cabang: string[]): Promise<number>
 // terkait; sisanya merujuk SO lebih tua dari jendela mirror) tidak ikut sama sekali.
 //
 // Balikan null saat belum ada qty order sama sekali → N/A, bukan 0%.
-async function fillRateThisMonth(sql: Sql): Promise<number | null> {
+async function fillRateInWindow(sql: Sql, win: PeriodWindow): Promise<number | null> {
   const rows = await sql<{ ordered: number | null; delivered: number | null }[]>`
     WITH so_line AS (
       SELECT i.line_id, i.qty
         FROM accurate_sales_order_item i
         JOIN accurate_sales_order o ON o.id = i.order_id
-       WHERE o.trans_date >= date_trunc('month', CURRENT_DATE)
+       WHERE o.trans_date >= ${win.from}::date AND o.trans_date <= ${win.to}::date
          AND i.line_id IS NOT NULL
     )
     SELECT
@@ -288,7 +316,7 @@ async function churnRutin(sql: Sql, cabang: string[]): Promise<number> {
 // Kunjungan TEREALISASI = sales_plan.reported (definisi yang dipakai seluruh
 // repo: dailysummary/digest/compliance/npk-am). Menghitung semua baris plan
 // akan menghitung rencana yang tak pernah dilaporkan sebagai kunjungan.
-async function visitsThisMonth(sql: Sql, cabang: string[]): Promise<number> {
+async function visitsInWindow(sql: Sql, cabang: string[], win: PeriodWindow): Promise<number> {
   if (!cabang.length) return 0;
   const rows = await sql<{ n: number }[]>`
     SELECT count(*)::int AS n
@@ -296,7 +324,7 @@ async function visitsThisMonth(sql: Sql, cabang: string[]): Promise<number> {
     JOIN master_user mu ON mu.am_id = sp.am_id
     WHERE mu.cabang = ANY(${cabang})
       AND sp.reported
-      AND sp.tanggal >= date_trunc('month', CURRENT_DATE)`;
+      AND sp.tanggal >= ${win.from}::date AND sp.tanggal <= ${win.to}::date`;
   return Number(rows[0]?.n ?? 0);
 }
 
@@ -304,8 +332,8 @@ async function visitsThisMonth(sql: Sql, cabang: string[]): Promise<number> {
 // sebaris dengan "Produktivitas ≥ Rp 500jt/AM" di brief Direktur — jadi yang
 // dibandingkan adalah rata-rata per AM, bukan total se-wilayah HoD (yang untuk
 // 6 cabang pasti lewat target tanpa arti).
-async function visitsPerAm(sql: Sql, cabang: string[]): Promise<number> {
-  const v = await visitsThisMonth(sql, cabang);
+async function visitsPerAm(sql: Sql, cabang: string[], win: PeriodWindow): Promise<number> {
+  const v = await visitsInWindow(sql, cabang, win);
   const n = await amCount(sql, cabang);
   return n ? v / n : 0;
 }
@@ -322,7 +350,9 @@ interface MetricDef {
   // Balikan null = "datanya memang belum ada" → metric jadi N/A, BUKAN 0.
   // Penting untuk metric rasio: 0 akan terbaca sebagai merah, padahal artinya
   // tak ada penyebut (mis. belum ada order bulan ini).
-  compute?: (sql: Sql, cabang: string[]) => Promise<number | null>;
+  // `win` = jendela periode papan (bulan berjalan untuk papan harian, rentang
+  // minggu ISO untuk papan Weekly). Metric kumulatif/titik-waktu mengabaikannya.
+  compute?: (sql: Sql, cabang: string[], win: PeriodWindow) => Promise<number | null>;
 }
 
 interface HodDef {
@@ -336,10 +366,10 @@ const BIO = 1_000_000_000;
 const JT = 1_000_000;
 
 const SALES_METRICS = (): MetricDef[] => [
-  { key: "revenue", label: "Revenue/bln", target: 2.5 * BIO, unit: "Rp", direction: "higher", trend: "stable", compute: (s, c) => revenueThisMonth(s, c) },
-  { key: "prod", label: "Produktivitas/AM", target: 500 * JT, unit: "Rp", direction: "higher", trend: "stable", compute: (s, c) => productivity(s, c) },
-  { key: "visits", label: "Kunjungan/AM/bln", target: 48, unit: "kunjungan", direction: "higher", trend: "stable", compute: (s, c) => visitsPerAm(s, c) },
-  { key: "newacct", label: "Akun baru/bln", target: 2, unit: "akun", direction: "higher", trend: "stable", compute: (s, c) => newAccountsThisMonth(s, c) },
+  { key: "revenue", label: "Revenue/bln", target: 2.5 * BIO, unit: "Rp", direction: "higher", trend: "stable", compute: (s, c, w) => revenueInWindow(s, c, w) },
+  { key: "prod", label: "Produktivitas/AM", target: 500 * JT, unit: "Rp", direction: "higher", trend: "stable", compute: (s, c, w) => productivity(s, c, w) },
+  { key: "visits", label: "Kunjungan/AM/bln", target: 48, unit: "kunjungan", direction: "higher", trend: "stable", compute: (s, c, w) => visitsPerAm(s, c, w) },
+  { key: "newacct", label: "Akun baru/bln", target: 2, unit: "akun", direction: "higher", trend: "stable", compute: (s, c, w) => newAccountsInWindow(s, c, w) },
   { key: "churn", label: "Churn RUTIN", target: 0, unit: "customer", direction: "lower", trend: "stable", compute: (s, c) => churnRutin(s, c) },
 ];
 
@@ -375,7 +405,7 @@ const HOD_DEFS: HodDef[] = [
   {
     key: "ika", name: "Ika", role: "Finance & SC", metrics: [
       { key: "ar90", label: "AR overdue >90 hari", target: 500 * JT, unit: "Rp", direction: "lower", trend: "stable", compute: () => arOver90Outstanding() },
-      { key: "fillrate", label: "Fill rate", target: 95, unit: "%", direction: "higher", trend: "stable", compute: (s) => fillRateThisMonth(s) },
+      { key: "fillrate", label: "Fill rate", target: 95, unit: "%", direction: "higher", trend: "stable", compute: (s, _c, w) => fillRateInWindow(s, w) },
       { key: "refi", label: "Milestone refinancing", target: 1, unit: "milestone", direction: "higher", trend: "stable" },
       { key: "runway", label: "Cash runway mingguan", target: null, unit: "", direction: "higher", trend: "stable" },
     ],
@@ -470,6 +500,7 @@ async function buildMetric(
   d: MetricDef,
   manual: Map<string, ManualRow>,
   cabang: string[],
+  win: PeriodWindow,
 ): Promise<WatchMetric> {
   const row = manual.get(`${hodKey}:${d.key}`);
   const target = effectiveTarget(d.target, row);
@@ -488,7 +519,7 @@ async function buildMetric(
   if (d.compute && sql) {
     source = "db";
     try {
-      actual = await d.compute(sql, cabang);
+      actual = await d.compute(sql, cabang, win);
     } catch {
       actual = null;
       source = "manual";
@@ -507,15 +538,24 @@ async function buildMetric(
   };
 }
 
-/** Papan WatchPoint per HoD — computed dari DB, cabang dari hod_territory, manual dari watchpoint_metric. */
-export async function getWatchBoard(): Promise<WatchBoard> {
+/**
+ * Papan WatchPoint per HoD — computed dari DB, cabang dari hod_territory, manual
+ * dari watchpoint_metric.
+ *
+ * `win` menentukan periode metric capaian (revenue/prod/visits/newacct/fillrate).
+ * Default = bulan berjalan, yaitu perilaku papan harian. Papan Weekly memanggilnya
+ * dengan rentang minggu ISO supaya angka mingguan benar-benar mingguan — tanpa itu
+ * snapshot mingguan membekukan angka month-to-date dan minggu pertama tiap bulan
+ * tercatat nyaris nol.
+ */
+export async function getWatchBoard(win: PeriodWindow = monthToDateWindow()): Promise<WatchBoard> {
   const sql = isDbEnabled() ? db() : null;
   const manual = sql ? await loadManual(sql) : new Map<string, ManualRow>();
   const territory = sql ? await loadTerritory(sql) : new Map<string, string[]>();
   const hods: HodWatch[] = [];
   for (const h of HOD_DEFS) {
     const cabang = territory.get(h.key) ?? [];
-    const metrics = await Promise.all(h.metrics.map((m) => buildMetric(sql, h.key, m, manual, cabang)));
+    const metrics = await Promise.all(h.metrics.map((m) => buildMetric(sql, h.key, m, manual, cabang, win)));
     hods.push({ key: h.key, name: h.name, role: h.role, status: worst(metrics), metrics });
   }
   const cur = currentWeek();

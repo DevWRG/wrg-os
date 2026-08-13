@@ -149,8 +149,10 @@ export async function getWeeklyBoard(isoYear: number, isoWeek: number): Promise<
   const { from, to } = weekRange(isoYear, isoWeek);
 
   const prevRef = previousWeek(isoYear, isoWeek);
+  // Jendela = rentang minggu ISO yang diminta, BUKAN default bulan berjalan —
+  // papan ini menyajikan angkanya sebagai capaian minggu tersebut.
   const [live, store, prevStore] = await Promise.all([
-    getWatchBoard(),
+    getWatchBoard({ from, to }),
     loadWeek(isoYear, isoWeek),
     loadWeek(prevRef.isoYear, prevRef.isoWeek),
   ]);
@@ -254,7 +256,11 @@ export async function snapshotWeek(
 ): Promise<{ isoYear: number; isoWeek: number; saved: number }> {
   if (!isDbEnabled()) throw new Error("DATABASE_URL off");
   const sql = db();
-  const live = await getWatchBoard();
+  // Bekukan capaian MINGGU tsb. Sebelumnya memakai default (bulan berjalan),
+  // sehingga snapshot yang dijalankan Senin pagi merekam month-to-date yang baru
+  // berumur beberapa hari — W31 tercatat revenue 0 padahal nyatanya Rp 277 jt.
+  const snapWin = weekRange(isoYear, isoWeek);
+  const live = await getWatchBoard({ from: snapWin.from, to: snapWin.to });
 
   const rows: {
     hod_key: string; iso_year: number; iso_week: number; metric_key: string;
