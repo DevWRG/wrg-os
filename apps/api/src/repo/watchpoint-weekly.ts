@@ -246,14 +246,60 @@ export async function listWeeks(back = 12): Promise<WeekRef[]> {
 }
 
 /**
+ * Metric mana yang boleh dibekukan saat MENGISI MUNDUR minggu lampau, dan dari
+ * sumber apa ketersediaan datanya dinilai.
+ *
+ * 'invoice' | 'plan' | 'so' → metric CAPAIAN periode: bisa direkonstruksi kapan
+ * saja selama sumbernya menjangkau minggu itu.
+ *
+ * 'titik-waktu' → TIDAK bisa direkonstruksi. ar90/noorder/churn menggambarkan
+ * kondisi pada saat diukur (ar_aging_mv cuma menyimpan kondisi terkini, tak ada
+ * riwayat harian); fia/xsell kumulatif YTD, bukan capaian minggu. Membekukannya
+ * mundur berarti mencap nilai HARI INI ke kotak minggu lampau — garis datar yang
+ * dikarang seluruhnya, dan karena snapshot bersifat permanen, kebohongan itu
+ * tak akan pernah ketahuan lagi.
+ */
+const RECON_SOURCE: Record<string, "invoice" | "plan" | "so" | "titik-waktu"> = {
+  revenue: "invoice",
+  prod: "invoice",
+  newacct: "invoice",
+  visits: "plan",
+  fillrate: "so",
+  ar90: "titik-waktu",
+  noorder: "titik-waktu",
+  churn: "titik-waktu",
+  fia: "titik-waktu",
+  xsell: "titik-waktu",
+};
+
+/** Tanggal terlama yang dijangkau tiap sumber — dibaca dari DB, bukan dipatok. */
+async function dataHorizon(sql: ReturnType<typeof db>): Promise<Record<string, string | null>> {
+  const [r] = await sql<{ invoice: string | null; plan: string | null; so: string | null }[]>`
+    SELECT (SELECT min(tanggal)::text FROM accurate_invoice) AS invoice,
+           (SELECT min(tanggal)::text FROM sales_plan WHERE reported) AS plan,
+           (SELECT min(trans_date)::text FROM accurate_sales_order) AS so`;
+  return { invoice: r?.invoice ?? null, plan: r?.plan ?? null, so: r?.so ?? null };
+}
+
+/**
  * Bekukan nilai computed minggu (year, week) ke tabel.
  * Hanya metric bersumber DB yang di-snapshot — metric manual milik HoD, jangan
  * ditimpa nilai kosong. Idempoten (UPSERT), aman dijalankan ulang.
+ *
+ * mode 'live' (default) — perilaku lama, dipakai job Senin untuk membekukan minggu
+ *   yang baru saja tutup. Metric titik-waktu ikut dibekukan, dan itu SAH karena
+ *   diukur berdekatan dengan akhir minggunya.
+ *
+ * mode 'reconstruct' — untuk mengisi mundur minggu lampau. Hanya metric capaian
+ *   periode yang dibekukan, itu pun cuma bila sumbernya menjangkau minggu tsb.
+ *   Sisanya sengaja dibiarkan N/A: "belum ada data" jauh lebih berguna daripada
+ *   angka karangan yang terlihat resmi.
  */
 export async function snapshotWeek(
   isoYear: number,
   isoWeek: number,
-): Promise<{ isoYear: number; isoWeek: number; saved: number }> {
+  mode: "live" | "reconstruct" = "live",
+): Promise<{ isoYear: number; isoWeek: number; saved: number; dilewati?: string[] }> {
   if (!isDbEnabled()) throw new Error("DATABASE_URL off");
   const sql = db();
   // Bekukan capaian MINGGU tsb. Sebelumnya memakai default (bulan berjalan),
@@ -268,9 +314,26 @@ export async function snapshotWeek(
     source: "db";
   }[] = [];
 
+  const horizon = mode === "reconstruct" ? await dataHorizon(sql) : null;
+  const dilewati = new Set<string>();
+
   for (const h of live.hods) {
     for (const m of h.metrics) {
       if (m.source !== "db") continue; // metric manual → biarkan input HoD yang isi
+      if (horizon) {
+        const src = RECON_SOURCE[m.key];
+        if (src === undefined || src === "titik-waktu") {
+          dilewati.add(`${m.key} (tak bisa direkonstruksi)`);
+          continue;
+        }
+        const sejak = horizon[src];
+        // Sumber tak menjangkau awal minggu → hasilnya akan 0/parsial dan terbaca
+        // sebagai capaian buruk, padahal artinya datanya memang belum ada.
+        if (!sejak || sejak > snapWin.from) {
+          dilewati.add(`${m.key} (data ${src} baru sejak ${sejak ?? "—"})`);
+          continue;
+        }
+      }
       rows.push({
         hod_key: h.key, iso_year: isoYear, iso_week: isoWeek, metric_key: m.key,
         target: m.target, actual: m.actual, status: m.status, note: m.note ?? null,
@@ -278,7 +341,7 @@ export async function snapshotWeek(
       });
     }
   }
-  if (!rows.length) return { isoYear, isoWeek, saved: 0 };
+  if (!rows.length) return { isoYear, isoWeek, saved: 0, dilewati: [...dilewati] };
 
   // source='db' WAJIB ikut di-INSERT (default kolom = 'manual'). Kalau tidak,
   // baris snapshot ikut terhitung manual → snapshot berikutnya tertolak oleh
@@ -295,7 +358,7 @@ export async function snapshotWeek(
           updated_at = now()
     WHERE watchpoint_weekly.source = 'db'`;
 
-  return { isoYear, isoWeek, saved: rows.length };
+  return { isoYear, isoWeek, saved: rows.length, dilewati: [...dilewati] };
 }
 
 /** Snapshot minggu LALU — dipanggil scheduler Senin pagi saat minggu baru tutup. */

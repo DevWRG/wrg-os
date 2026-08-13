@@ -2554,7 +2554,7 @@ app.get("/watchpoint/weekly/weeks", async (c) => {
 // tidak tergilas — lihat snapshotWeek().
 app.post("/watchpoint/weekly/snapshot", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let body: { year?: number; week?: number } = {};
+  let body: { year?: number; week?: number; mode?: string } = {};
   try { body = await c.req.json(); } catch { /* body opsional → minggu berjalan */ }
   const cur = currentWeek();
   const isoYear = Number(body.year ?? cur.isoYear);
@@ -2562,7 +2562,13 @@ app.post("/watchpoint/weekly/snapshot", async (c) => {
   if (!Number.isInteger(isoYear) || !Number.isInteger(isoWeek) || isoWeek < 1 || isoWeek > 53) {
     return c.json({ error: "year/week tidak valid" }, 400);
   }
-  return c.json(await snapshotWeek(isoYear, isoWeek));
+  // mode 'reconstruct' = isi mundur minggu lampau. Hanya metric capaian periode
+  // yang sumbernya menjangkau minggu itu yang dibekukan; ar90/noorder/churn/
+  // fia/xsell dilewati karena tak bisa direkonstruksi (lihat snapshotWeek).
+  if (body.mode !== undefined && body.mode !== "live" && body.mode !== "reconstruct") {
+    return c.json({ error: "mode harus live|reconstruct" }, 400);
+  }
+  return c.json(await snapshotWeek(isoYear, isoWeek, body.mode === "reconstruct" ? "reconstruct" : "live"));
 });
 
 // Input manual HoD untuk satu metric di satu minggu (uptime, lead time, JV, dst).
