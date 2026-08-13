@@ -135,6 +135,34 @@ function trendOf(actual: number | null, prev: number | null, dir: "higher" | "lo
 // ── Papan mingguan ────────────────────────────────────────────────
 
 /**
+ * Metric yang targetnya BULANAN dan sifatnya akumulasi, jadi harus diprorata saat
+ * dinilai per minggu. Sejak #861 aktualnya sudah week-scoped; tanpa prorata,
+ * capaian 7 hari diadu dengan target 30 hari dan papan Weekly tak akan pernah bisa
+ * GREEN secara konstruksi.
+ *
+ * Yang TIDAK diprorata dan alasannya:
+ *   fillrate  — rasio (%), bukan volume; 95% tetap 95% seminggu maupun sebulan.
+ *   ar90      — ambang KONDISI (Rp 500 jt AR nyangkut), bukan akumulasi periode.
+ *   noorder, churn — ambang hitungan titik-waktu, targetnya 0.
+ *   fia, xsell — target kumulatif YTD, periodenya memang bukan minggu.
+ */
+const PRORATA_KEYS = new Set(["revenue", "prod", "visits", "newacct"]);
+
+/**
+ * Target bulanan → target minggu itu. Penyebutnya jumlah hari pada bulan yang
+ * MEMILIKI minggu tersebut menurut ISO 8601, yaitu bulan hari Kamis-nya — supaya
+ * minggu yang membelah dua bulan tetap punya satu penyebut yang deterministik,
+ * bukan bergantung apakah Senin atau Minggunya yang dipakai.
+ */
+function targetMingguan(metricKey: string, bulanan: number | null, seninISO: string): number | null {
+  if (bulanan === null || !PRORATA_KEYS.has(metricKey)) return bulanan;
+  const kamis = new Date(`${seninISO}T00:00:00Z`);
+  kamis.setUTCDate(kamis.getUTCDate() + 3);
+  const hariSebulan = new Date(Date.UTC(kamis.getUTCFullYear(), kamis.getUTCMonth() + 1, 0)).getUTCDate();
+  return (bulanan * 7) / hariSebulan;
+}
+
+/**
  * Papan WatchPoint untuk satu minggu ISO.
  *
  * Prioritas nilai per metric:
@@ -183,10 +211,22 @@ export async function getWeeklyBoard(isoYear: number, isoWeek: number): Promise<
         source = "manual";
       }
 
-      const target = saved?.target ?? m.target;
+      // Target yang DIISI HoD dipakai apa adanya — itu sudah niat mereka untuk
+      // minggu tsb. Sisanya (definisi kode / snapshot 'db') diprorata ke minggu.
+      const targetMentah = saved?.target ?? m.target;
+      const target = saved?.source === "manual"
+        ? targetMentah
+        : targetMingguan(m.key, targetMentah, from);
       const pct = attainment(target, actual, m.direction);
+      // Status snapshot 'db' DIHITUNG ULANG terhadap target mingguan: aktualnya
+      // tetap beku, hanya gerbangnya yang kini sesuai periode. Kalau status lama
+      // dipakai, prorata tak akan pernah mengubah warna apa pun — statusnya
+      // dihitung saat target masih bulanan. Status manual HoD tetap menang.
+      const statusManual = saved?.source === "manual" ? saved.status : null;
       // Metric milestone (target null) tak punya angka → status murni dari override.
-      const status: WatchStatus = target === null ? (override ?? "NA") : (override ?? gate(pct));
+      const status: WatchStatus = target === null
+        ? (statusManual ?? override ?? "NA")
+        : (statusManual ?? gate(pct));
       const prevActual = prevRow?.actual ?? null;
 
       return {
