@@ -10,7 +10,7 @@ import {
   Bell, MapPin, ListChecks, Swords, CalendarOff, CalendarDays, CalendarRange,
   Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, Tags, SlidersHorizontal,
   Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, BookOpen, Calculator,
-  Wallet, Coins,
+  Wallet, Coins, Radio,
   type LucideIcon,
 } from "lucide-react";
 
@@ -159,6 +159,15 @@ export const NAV: NavGroup[] = [
       { title: "Resume", url: "/monitor/resume", icon: ScrollText },
       { title: "Pola Komunikasi", url: "/monitor/pola", icon: Network },
       { title: "Members", url: "/monitor/members", icon: Users },
+    ],
+  },
+  {
+    label: "Aftersales",
+    items: [
+      // F23 — klaim internal saat alat + cartridge menunjukkan error pembacaan
+      // RFID. Role min Karyawan (kerja teknisi lapangan sehari-hari, bukan data
+      // finansial sensitif), tanpa `show` gate (default tampil ke semua login).
+      { title: "RFID/Cartridge Error Claim", url: "/rfid-cartridge-claims", icon: Radio, badge: "NEW" },
     ],
   },
   {
