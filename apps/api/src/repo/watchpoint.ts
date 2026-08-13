@@ -274,6 +274,46 @@ async function fiaCustomersYtd(sql: Sql): Promise<number> {
   return Number(rows[0]?.n ?? 0);
 }
 
+/**
+ * Site CLIA ≥800 tes/bln — jumlah pelanggan yang laju pemakaian tesnya mencapai
+ * target. Jumlah tes tidak disimpan di mana pun, tapi TERTULIS DI NAMA ITEM
+ * Accurate: "LIAISON XL MUREX HCV AB (100T)", "MAGLUMI TSH (100T)". Angka dalam
+ * "(NNNT)" itu tes per kit, dikali qty terjual = estimasi tes.
+ *
+ * LAJU 90 HARI ÷ 3, BUKAN BULAN KALENDER. Pembelian kit reagen bersifat bongkahan:
+ * satu kit 200T dipakai berminggu-minggu, jadi bulan tanpa pembelian akan terbaca
+ * 0 tes padahal alatnya jalan terus. Rata-rata rolling meredam itu. Sekaligus
+ * membuat metric ini kebal jendela papan — di papan Weekly hitungan per-minggu
+ * akan hampir selalu nol palsu, jebakan yang sama seperti fillrate (#865).
+ *
+ * BATAS YANG HARUS DIINGAT: ini estimasi dari PENJUALAN reagen, bukan pembacaan
+ * alat. Kit yang dibeli belum tentu terpakai habis di periode itu, dan item yang
+ * namanya tak memuat "(NNNT)" tidak ikut terhitung (per 2026-08-13: 7 dari 10
+ * baris CLIA punya penanda itu).
+ */
+async function siteCliaAktif(sql: Sql): Promise<number> {
+  const rows = await sql<{ n: number }[]>`
+    WITH tes AS (
+      SELECT inv.customer_id,
+             NULLIF(regexp_replace(ai.name, '.*\\((\\d+)T\\).*', '\\1'), ai.name)::int AS tes_per_kit,
+             ii.qty
+        FROM accurate_invoice_item ii
+        JOIN accurate_invoice inv ON inv.id = ii.invoice_id
+        JOIN accurate_item ai ON ai.id::text = ii.item_id::text
+       WHERE inv.tanggal >= CURRENT_DATE - 90
+         AND inv.customer_id IS NOT NULL
+         AND ai.name ~* ${RE_CLIA}
+    )
+    SELECT count(*)::int AS n FROM (
+      SELECT customer_id
+        FROM tes
+       WHERE tes_per_kit IS NOT NULL
+       GROUP BY customer_id
+      HAVING sum(qty * tes_per_kit) / 3.0 >= 800
+    ) q`;
+  return Number(rows[0]?.n ?? 0);
+}
+
 // Cross-sell = pelanggan yang SUDAH beli non-CLIA lebih dulu, lalu faktur CLIA
 // PERTAMA-nya jatuh tahun ini. Urutan itu yang membedakan cross-sell dari
 // pelanggan CLIA baru: tanpa syarat "reguler duluan", akun yang langsung masuk
@@ -378,7 +418,7 @@ const HOD_DEFS: HodDef[] = [
   { key: "yogi", name: "Yogi", role: "Sales West", metrics: SALES_METRICS() },
   {
     key: "mufid", name: "Mufid", role: "Business IVD", metrics: [
-      { key: "clia", label: "Site CLIA ≥800 tes/bln", target: 3, unit: "site", direction: "higher", trend: "stable" },
+      { key: "clia", label: "Site CLIA ≥800 tes/bln", target: 3, unit: "site", direction: "higher", trend: "stable", compute: (s) => siteCliaAktif(s) },
       { key: "fia", label: "FIA customer", target: 20, unit: "customer", direction: "higher", trend: "stable", compute: (s) => fiaCustomersYtd(s) },
       { key: "jv", label: "JV principal baru", target: 1, unit: "JV", direction: "higher", trend: "stable" },
       { key: "xsell", label: "Cross-sell reguler→CLIA", target: 2, unit: "deal", direction: "higher", trend: "stable", compute: (s) => xsellRegulerKeClia(s) },
