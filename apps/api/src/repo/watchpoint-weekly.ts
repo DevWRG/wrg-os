@@ -140,13 +140,22 @@ function trendOf(actual: number | null, prev: number | null, dir: "higher" | "lo
  * capaian 7 hari diadu dengan target 30 hari dan papan Weekly tak akan pernah bisa
  * GREEN secara konstruksi.
  *
+ * SYARATNYA BUKAN CUMA "akumulasi bulanan", TAPI JUGA BERVOLUME BESAR — pecahan
+ * hasil prorata harus tetap punya makna. `newacct` (2 akun/bulan) gagal di syarat
+ * kedua: 2 × 7/31 = 0,45 akun/minggu. Targetnya tampil "0", satu akun baru saja
+ * langsung 221% GREEN, dan YELLOW mustahil tercapai — gerbangnya berubah jadi
+ * biner "ada akun baru atau tidak", bukan ukuran capaian. Jadi newacct dinilai
+ * dengan target bulanan apa adanya — dan justru di situ gerbangnya jadi bermakna
+ * tiga tingkat: 0 akun RED, 1 akun YELLOW (50%), 2+ GREEN.
+ *
  * Yang TIDAK diprorata dan alasannya:
+ *   newacct   — hitungan kecil (2/bln); pecahannya tak bermakna (lihat di atas).
  *   fillrate  — rasio (%), bukan volume; 95% tetap 95% seminggu maupun sebulan.
  *   ar90      — ambang KONDISI (Rp 500 jt AR nyangkut), bukan akumulasi periode.
  *   noorder, churn — ambang hitungan titik-waktu, targetnya 0.
  *   fia, xsell — target kumulatif YTD, periodenya memang bukan minggu.
  */
-const PRORATA_KEYS = new Set(["revenue", "prod", "visits", "newacct"]);
+const PRORATA_KEYS = new Set(["revenue", "prod", "visits"]);
 
 /**
  * Target bulanan → target minggu itu. Penyebutnya jumlah hari pada bulan yang
