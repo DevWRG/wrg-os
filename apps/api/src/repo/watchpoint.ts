@@ -268,7 +268,7 @@ async function fiaCustomersYtd(sql: Sql): Promise<number> {
     SELECT count(DISTINCT inv.customer_id)::int AS n
       FROM accurate_invoice_item ii
       JOIN accurate_invoice inv ON inv.id = ii.invoice_id
-      JOIN accurate_item ai ON ai.id::text = ii.item_id::text
+      JOIN accurate_item ai ON ai.id = ii.item_id
      WHERE inv.tanggal >= date_trunc('year', CURRENT_DATE)
        AND ai.name ~* ${RE_FIA}`;
   return Number(rows[0]?.n ?? 0);
@@ -299,7 +299,7 @@ async function siteCliaAktif(sql: Sql): Promise<number> {
              ii.qty
         FROM accurate_invoice_item ii
         JOIN accurate_invoice inv ON inv.id = ii.invoice_id
-        JOIN accurate_item ai ON ai.id::text = ii.item_id::text
+        JOIN accurate_item ai ON ai.id = ii.item_id
        WHERE inv.tanggal >= CURRENT_DATE - 90
          AND inv.customer_id IS NOT NULL
          AND ai.name ~* ${RE_CLIA}
@@ -324,7 +324,7 @@ async function xsellRegulerKeClia(sql: Sql): Promise<number> {
       SELECT inv.customer_id, inv.tanggal, (ai.name ~* ${RE_CLIA}) AS is_clia
         FROM accurate_invoice_item ii
         JOIN accurate_invoice inv ON inv.id = ii.invoice_id
-        JOIN accurate_item ai ON ai.id::text = ii.item_id::text
+        JOIN accurate_item ai ON ai.id = ii.item_id
        WHERE inv.customer_id IS NOT NULL
     ),
     clia_pertama AS (

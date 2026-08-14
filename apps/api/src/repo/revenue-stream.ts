@@ -68,7 +68,7 @@ export async function reportRevenueByStream(from: string, to: string) {
            count(DISTINCT inv.customer_id)::int AS customers
       FROM accurate_invoice_item ii
       JOIN accurate_invoice inv ON inv.id = ii.invoice_id
-      LEFT JOIN product_code pc ON pc.accurate_item_id::text = ii.item_id::text
+      LEFT JOIN product_code pc ON pc.accurate_item_id = ii.item_id
       LEFT JOIN product_line pl ON pl.kategori_id = pc.kategori_id AND pl.id = pc.line_id
       LEFT JOIN product_kategori pk ON pk.id = pc.kategori_id
      WHERE inv.tanggal >= ${from}::date AND inv.tanggal <= ${to}::date
