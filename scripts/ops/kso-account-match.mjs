@@ -74,10 +74,31 @@ const kata = (s) =>
 const STOPWORD = new Set([
   "KAB", "KABUPATEN", "KOTA", "RS", "RSU", "RSUD", "RSIA", "RSK", "RSB",
   "KLINIK", "LAB", "LABORATORIUM", "PT", "CV", "UPT", "PUSKESMAS",
+  "UMUM", "DAERAH", // 'RS UMUM DAERAH' vs 'RSUD'
+]);
+
+// DAFTAR INI SENGAJA PENDEK. Percobaan memperluasnya ke PKM/RSI/RSUP/BALAI/PENGOBATAN
+// diuji dan DITOLAK: hasilnya net nol (105 -> 105) tapi dua kecocokan "baru"-nya salah,
+// karena justru kata jenis faskes itulah pembedanya —
+//   'PKM Gondang Legi Malang' jadi cocok ke 'GONDANG LEGI, RSI KAB. MALANG'
+//   padahal yang benar 'GONDANGLEGI, PKM KAB. MALANG' (dua entitas berbeda),
+//   dan 'Klinik Aulia Jombang' (ambigu AULIA vs AULIA II) jadi terpasang otomatis.
+// Sekaligus 5 kecocokan benar hilang karena tokennya tinggal < 2. Jangan diperluas
+// tanpa mengukur ulang kedua arahnya.
+
+// Singkatan yang harus dibentangkan supaya sebanding. Hanya yang benar-benar setara.
+const EKSPANSI = new Map([
+  ["DINKES", ["DINAS", "KESEHATAN"]],
 ]);
 
 // Himpunan token bermakna — urutan kata diabaikan, jenis faskes diabaikan.
-const himpunan = (s) => new Set(kata(s).filter((w) => !STOPWORD.has(w)));
+const himpunan = (s) => {
+  const out = new Set();
+  for (const w of kata(s)) {
+    for (const x of EKSPANSI.get(w) ?? [w]) if (!STOPWORD.has(x)) out.add(x);
+  }
+  return out;
+};
 
 const kunciHimpunan = (h) => [...h].sort().join("|");
 
