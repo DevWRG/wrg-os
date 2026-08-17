@@ -16,9 +16,28 @@
 -- RUTIN = pembelian reagen rutin. Basis revenue BELI_REAGEN naik 21,02 M -> 26,06 M
 -- (+24,0%); PER_TEST tidak berubah. Rp/tes aset BELI_REAGEN ikut naik ~24%.
 --
--- ECAT & PL SENGAJA MASIH DI LUAR (0,85 M + 0,57 M = 5% revenue): belum ada keputusan
--- user soal keduanya. Jangan tambahkan tanpa itu — memasukkan kategori ke skema yang
--- salah tidak memunculkan error, cuma menggeser Rp/tes diam-diam.
+-- BUKTI TERKUATNYA BUKAN NILAI RUPIAH, TAPI SEBARAN CUSTOMER-nya:
+--     KSO 254 customer · RUTIN 269 · REGULAR 238 · ECAT 51 · PL 43 · Tanpa kategori 80
+-- RUTIN menyentuh customer TERBANYAK dari semua kategori — lebih luas dari KSO maupun
+-- REGULAR — dengan nilai per faktur paling kecil (Rp 5,4 jt; KSO Rp 9,0 jt). Sedikit,
+-- sering, tersebar ke banyak faskes: itu profil pembelian reagen berulang, bukan
+-- transaksi proyek. Kalau RUTIN sekadar "REGULAR yang dinamai lain", sebarannya tidak
+-- akan lebih luas dari REGULAR.
+--
+-- ECAT & PL SENGAJA DI LUAR — KEPUTUSAN, BUKAN SEKADAR BELUM DIPUTUSKAN (2026-08-18):
+-- keduanya kanal BERHARGA TETAP, bukan pembelian reagen berulang; sebarannya sempit
+-- (51 dan 43 customer, gabungan 5,09%). Preseden di tempat lain sejalan:
+-- insentif-calc.ts:37 memaksa margin rate 0 untuk ECAT/Price List justru KARENA harga
+-- fixed. Memasukkannya ke basis produktivitas alat akan mencampur pendapatan yang tidak
+-- digerakkan oleh pemakaian alat. Kalau kelak mau diubah, ubah dengan ANGKA di tangan
+-- seperti keputusan RUTIN ini — memasukkan kategori ke skema yang salah tidak
+-- memunculkan error, cuma menggeser Rp/tes diam-diam.
+--
+-- 'Tanpa kategori' TIDAK masuk skema mana pun, dan ada yang janggal di sana: 1.042
+-- faktur — jumlah TERBANYAK KEDUA setelah KSO — tapi nilainya cuma Rp 558 jt, rata-rata
+-- Rp 536rb per faktur. Dugaan: faktur kecil/jasa yang `raw`-nya memang tak memuat
+-- charField1, bukan reagen yang kehilangan kategori. BELUM ditelusuri satu per satu.
+-- Kalau ternyata sebagian besar reagen, basis BELI_REAGEN kurang ~2% lagi.
 --
 -- KENAPA ALOKASI PROPORSIONAL, BUKAN "faktur ini kategori X": karena faktur campur itu
 -- nyata. Kalau faktur campur dihitung utuh ke tiap kategori yang disentuhnya, total per
