@@ -149,6 +149,8 @@ export const NAV: NavGroup[] = [
       { title: "Executive Briefings", url: "/briefings", icon: ScrollText },
       { title: "Coaching Notes", url: "/coaching", icon: GraduationCap },
       { title: "Reports", url: "/reports", icon: BarChart3 },
+      // Revenue per lini produk — dasar metric `revstream` (kartu Fafa, WatchPoint).
+      { title: "Revenue per Lini", url: "/revenue-stream", icon: Coins, badge: "NEW" },
       { title: "Digest History", url: "/digests", icon: History },
     ],
   },

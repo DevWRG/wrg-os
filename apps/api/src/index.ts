@@ -13,7 +13,7 @@ import { matchCustomer, type PlanCandidate } from "./parsers/fuzzy.js";
 import { isDbEnabled, pingDb } from "./db.js";
 import { waPreflight, sendViaWaGateway, type WaSendResult } from "./wasend.js";
 import { processUnprocessed, isInboundEnabled } from "./repo/inbound.js";
-import { syncAccurateInvoices, syncVendors, syncItems, syncSalesOrders, syncDeliveryOrders, syncCustomers, getDeliveryOrderItems, getSalesOrderItems, getVendorDetail, accurateConfigured } from "./repo/accurateSync.js";
+import { syncAccurateInvoices, syncVendors, syncItems, syncSalesOrders, syncDeliveryOrders, syncCustomers, syncSalesOrderItems, syncDeliveryOrderItems, getDeliveryOrderItems, getSalesOrderItems, getVendorDetail, accurateConfigured } from "./repo/accurateSync.js";
 import { insertAuditEvent } from "./repo/audit.js";
 import { upsertDealsFromPlan, logReportToDeals, getPipeline, getPipelineReport, getPipelineLeaderboard, transitionStage, DealError, listPendingLosses, decideLoss, getDealTimeline, createDeal, updateDeal, deleteDeal } from "./repo/deal.js";
 import { enqueueAmbiguous, listHitl, resolveHitl } from "./repo/hitl.js";
@@ -84,6 +84,7 @@ import {
   unpublishSetup as unpublishPricebookSetup, listPublishedKeagenan,
   type SetupPatch as PricebookSetupPatch,
 } from "./repo/pricebook.js";
+import { pricelistPdf } from "./repo/pricelist-pdf.js";
 import {
   taxonomy as klasifikasiTaxonomy, summary as klasifikasiSummary,
   listCodes as listKlasifikasiCodes, nextKode as nextKlasifikasiKode,
@@ -134,6 +135,7 @@ import {
   reportCalendarDay,
 } from "./repo/plandash.js";
 import { salesRange, reportRevenue, reportSalesAr, salesOverview, customersRevenue, customerMonthly, dormantCustomers, churnCustomers, targetPacing, reportSalesPerformance } from "./repo/sales.js";
+import { streamRange, reportRevenueByStream } from "./repo/revenue-stream.js";
 import { resolveScope } from "./repo/access-scope.js";
 import { getRaportList, getRaportDetail } from "./repo/raport.js";
 import { generateRaportNarrative, runRaportNarrative } from "./repo/raportnarrative.js";
@@ -962,6 +964,26 @@ app.post("/accurate/sync/shipments", async (c) => {
   const pages = Math.min(Math.max(Number(c.req.query("pages")) || 5, 1), 120);
   const r = await syncDeliveryOrders({ maxPages: pages });
   return c.json(r, r.ok ? 200 : 502);
+});
+
+// Backfill baris item SO/DO ke mirror (dasar fill rate F76). Berbatas per
+// pemanggilan — `pending` di balikan = sisa dokumen sebenarnya di dalam jendela
+// `days` (count penuh, tidak dibatasi `limit`), panggil ulang sampai 0.
+// ?kind=so|do (default keduanya), ?limit= dokumen/panggilan, ?days= jendela tanggal.
+app.post("/accurate/sync/doc-items", async (c) => {
+  // Validasi bentuk permintaan DULU: parameter salah harus 400 apa pun status
+  // kredensial, kalau tidak pemanggil dapat 503 yang menyesatkan.
+  const kind = (c.req.query("kind") ?? "").trim().toLowerCase();
+  if (kind && kind !== "so" && kind !== "do") return c.json({ error: "kind harus so|do" }, 400);
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  if (!accurateConfigured()) return c.json({ error: "kredensial Accurate tak tersedia" }, 503);
+  const limit = Math.min(Math.max(Number(c.req.query("limit")) || 150, 1), 1000);
+  const sinceDays = Math.min(Math.max(Number(c.req.query("days")) || 120, 1), 1095);
+  const out: Record<string, unknown> = {};
+  if (kind !== "do") out.salesOrders = await syncSalesOrderItems({ limit, sinceDays });
+  if (kind !== "so") out.deliveryOrders = await syncDeliveryOrderItems({ limit, sinceDays });
+  const ok = Object.values(out).every((v) => (v as { ok: boolean }).ok);
+  return c.json(out, ok ? 200 : 502);
 });
 
 // Baris produk satu surat jalan (on-demand dari Accurate detail.do).
@@ -1908,6 +1930,16 @@ app.get("/sales/revenue", async (c) => {
   return c.json(await reportRevenue(from, to));
 });
 
+// Revenue-by-stream (WatchPoint kartu Fafa): revenue per lini produk.
+// ?periode=YYYY-MM (menang atas from/to), atau ?from=&to=. Default bulan berjalan.
+// Balikan `ringkasan` memuat cakupan klasifikasi & selisih terhadap netto invoice —
+// tampilkan keduanya di UI, jangan cuma daftar lininya.
+app.get("/reports/revenue-by-stream", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const { from, to } = streamRange(c.req.query("periode"), c.req.query("from"), c.req.query("to"));
+  return c.json(await reportRevenueByStream(from, to));
+});
+
 // Kartu Sales Performance: target vs realisasi per periode (YTD/kuartal/bulan) +
 // breakdown region. Periodik relatif "hari ini" (asOf opsional, YYYY-MM-DD).
 app.get("/sales/performance", async (c) => {
@@ -2522,7 +2554,7 @@ app.get("/watchpoint/weekly/weeks", async (c) => {
 // tidak tergilas — lihat snapshotWeek().
 app.post("/watchpoint/weekly/snapshot", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let body: { year?: number; week?: number } = {};
+  let body: { year?: number; week?: number; mode?: string } = {};
   try { body = await c.req.json(); } catch { /* body opsional → minggu berjalan */ }
   const cur = currentWeek();
   const isoYear = Number(body.year ?? cur.isoYear);
@@ -2530,7 +2562,13 @@ app.post("/watchpoint/weekly/snapshot", async (c) => {
   if (!Number.isInteger(isoYear) || !Number.isInteger(isoWeek) || isoWeek < 1 || isoWeek > 53) {
     return c.json({ error: "year/week tidak valid" }, 400);
   }
-  return c.json(await snapshotWeek(isoYear, isoWeek));
+  // mode 'reconstruct' = isi mundur minggu lampau. Hanya metric capaian periode
+  // yang sumbernya menjangkau minggu itu yang dibekukan; ar90/noorder/churn/
+  // fia/xsell dilewati karena tak bisa direkonstruksi (lihat snapshotWeek).
+  if (body.mode !== undefined && body.mode !== "live" && body.mode !== "reconstruct") {
+    return c.json({ error: "mode harus live|reconstruct" }, 400);
+  }
+  return c.json(await snapshotWeek(isoYear, isoWeek, body.mode === "reconstruct" ? "reconstruct" : "live"));
 });
 
 // Input manual HoD untuk satu metric di satu minggu (uptime, lead time, JV, dst).
@@ -2708,6 +2746,24 @@ app.post("/pricebook/setup/unpublish", async (c) => {
 
 // Harga keagenan TERPUBLIKASI — ini yang dibuka Account Manager. Tanpa HPP &
 // margin: kolomnya tidak di-SELECT sama sekali, jadi tak ada jalan bocor.
+// Export PDF daftar harga terpublikasi. POST (bukan GET) karena daftar row_no
+// yang dicentang user bisa ratusan — terlalu panjang untuk query string.
+app.post("/pricebook/published/pdf", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const b = await c.req.json().catch(() => ({}) as Record<string, unknown>);
+  const rowNos = Array.isArray(b.rowNos)
+    ? (b.rowNos as unknown[]).map(Number).filter(Number.isInteger) : undefined;
+  const pdf = await pricelistPdf({
+    periode: (b.periode as string) || undefined,
+    rowNos,
+    oleh: (b.oleh as string) ?? null,
+  });
+  return c.body(new Uint8Array(pdf), 200, {
+    "content-type": "application/pdf",
+    "content-disposition": `attachment; filename="daftar-harga-keagenan.pdf"`,
+  });
+});
+
 app.get("/pricebook/published", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const q = c.req.query();

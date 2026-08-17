@@ -19,7 +19,10 @@ import { runReminders } from "./repo/reminder.js";
 import { runHodDaily, runMissStreakEscalation } from "./repo/hodreminder.js";
 import { runVisitWeeklyRecap } from "./repo/visitweekly.js";
 import { generateRekap, generateResume } from "./repo/monitor.js";
-import { syncAccurateInvoices, syncSalesOrders, syncDeliveryOrders, syncCustomers } from "./repo/accurateSync.js";
+import {
+  syncAccurateInvoices, syncSalesOrders, syncDeliveryOrders, syncCustomers,
+  syncSalesOrderItems, syncDeliveryOrderItems,
+} from "./repo/accurateSync.js";
 import { runPlanCheck, runReportCheck } from "./repo/compliance.js";
 import { runNotifTua } from "./repo/notiftua.js";
 import { runDailySummary } from "./repo/dailysummary.js";
@@ -429,7 +432,8 @@ export function startScheduler(): ScheduleStatus {
           }
           const r = await syncAccurateInvoices({});
           console.log(`[scheduler] accurate-sync @ ${startedAt} ${JSON.stringify(r).slice(0, 200)}`);
-          // Mirror sales-order/delivery-order TERBARU (recent-only) utk menu Orders/Shipments.
+          // Mirror sales-order/delivery-order utk menu Orders/Shipments. Paginasi
+          // berhenti berdasarkan tanggal (sinceDays), bukan jumlah halaman.
           try {
             const so = await syncSalesOrders({});
             const so2 = await syncDeliveryOrders({});
@@ -437,6 +441,16 @@ export function startScheduler(): ScheduleStatus {
             console.log(`[scheduler] accurate-sync orders=${JSON.stringify(so)} shipments=${JSON.stringify(so2)} customers=${JSON.stringify(cu)}`);
           } catch (e2) {
             console.error(`[scheduler] accurate-sync orders/shipments gagal @ ${startedAt}:`, e2);
+          }
+          // Baris item SO/DO (dasar fill rate). Satu detail.do per dokumen, jadi
+          // berbatas per siklus — backfill awal habis bertahap, bukan sekali jalan.
+          // Dipisah dari blok di atas supaya kegagalannya tak menjatuhkan mirror header.
+          try {
+            const si = await syncSalesOrderItems({});
+            const di = await syncDeliveryOrderItems({});
+            console.log(`[scheduler] accurate-sync so-items=${JSON.stringify(si)} do-items=${JSON.stringify(di)}`);
+          } catch (e3) {
+            console.error(`[scheduler] accurate-sync item SO/DO gagal @ ${startedAt}:`, e3);
           }
         } catch (e) {
           console.error(`[scheduler] accurate-sync gagal @ ${startedAt}:`, e);
