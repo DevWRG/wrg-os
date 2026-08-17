@@ -294,6 +294,38 @@ def build(path):
             a["catatan"].append(
                 "SN terdaftar di sheet Tes DAN Reagent 2026 — skema ganda, butuh keputusan.")
 
+    # Skema tidak bisa ditentukan: STATUS kosong di Populasi DAN SN tak pernah muncul di
+    # sheet Tes/Reagent mana pun. Sebelumnya kasus ini lolos tanpa catatan apa pun — hanya
+    # cabang "UNKNOWN lalu ketemu di sheet" (di atas) yang ditandai, sementara yang tetap
+    # UNKNOWN diam saja.
+    #
+    # KENAPA ITU BERBAHAYA: `kso_asset_produktivitas_v` mem-JOIN `kategori_skema`, yang cuma
+    # mengenal PER_TEST & BELI_REAGEN. Baris UNKNOWN karena itu HILANG dari view — bukan
+    # tampil dengan angka kosong, tapi lenyap. Pada impor prod pertama (2026-08-18) itu 22
+    # aset, 10 di antaranya mesin Hemodialisa di RSUD Soegiri, dan tidak ada satu pun sinyal
+    # di output yang menunjukkan mereka hilang: `catatan_sync`-nya NULL, jadi tidak ikut
+    # terhitung di `aset_dengan_catatan` maupun tercetak di pratinjau importer.
+    #
+    # Catatan ini TIDAK menebak skemanya. Menyimpulkan dari alat lain milik faskes yang sama
+    # justru bertentangan dengan desainnya sendiri: kolom `revenue_tumpang_tindih` ada persis
+    # karena satu faskes bisa memegang dua skema sekaligus. Perbaikannya di sheet — isi
+    # STATUS-nya — dan tugas skrip ini cuma memastikan kasusnya tidak lewat tanpa terlihat.
+    skema_tak_tentu = 0
+    for a in assets.values():
+        if a["skema"] == "UNKNOWN":
+            skema_tak_tentu += 1
+            a["catatan"].append(
+                "Skema tidak dapat ditentukan: STATUS kosong di Populasi dan SN tidak "
+                "terdaftar di sheet Tes maupun Reagent. Aset ini TIDAK akan muncul di "
+                "kso_asset_produktivitas_v sampai STATUS-nya diisi.")
+    if skema_tak_tentu:
+        report["peringatan"].append(
+            f"{skema_tak_tentu} aset tidak punya skema (STATUS kosong di {SHEET_POPULASI} dan "
+            "tidak terdaftar di sheet Tes/Reagent). Aset-aset itu akan TERSIMPAN di kso_asset "
+            "tapi TIDAK muncul di kso_asset_produktivitas_v. Perbaikannya di sheet: isi "
+            "kolom STATUS. Jangan menebak dari alat lain milik faskes yang sama — satu faskes "
+            "bisa memegang dua skema sekaligus.")
+
     # Sebagian "alat baru" sebetulnya alat lama yang SN-nya ditulis beda di sheet 2026
     # (mis. 5360 vs 05360-B, atau SN diketik ulang salah). Ditandai, TIDAK digabung otomatis:
     # menggabungkan dua SN berbeda tanpa konfirmasi bisa menghapus satu unit fisik dari
@@ -416,6 +448,8 @@ def build(path):
         "aset_di_luar_populasi": sum(1 for a in assets.values() if not a["in_populasi"]),
         "aset_tanpa_sn": sum(1 for a in assets.values() if a["sn_key"].startswith("NOSN:")),
         "aset_dengan_catatan": sum(1 for a in assets.values() if a["catatan_sync"]),
+        # Hilang dari kso_asset_produktivitas_v sampai STATUS-nya diisi di sheet.
+        "aset_skema_tak_tentu": skema_tak_tentu,
         "dugaan_duplikat_sn": dugaan_duplikat,
         "per_skema": dict(per_skema),
         "baris_tes_bulanan": len(tests),
