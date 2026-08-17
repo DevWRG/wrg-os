@@ -256,6 +256,12 @@ async function fillRateInWindow(sql: Sql, win: PeriodWindow): Promise<number | n
 //
 // PINDAHKAN KE KLASIFIKASI begitu produk-produk itu didaftarkan; pola nama rapuh
 // terhadap penulisan baru (mis. merek CLIA baru yang namanya tak memuat 'CLIA').
+// Token `IMMUNOASSAY` di RE_FIA TIDAK spesifik FIA: CLIA sendiri adalah
+// Chemi-Luminescent ImmunoAssay, jadi token itu ikut mengenai produk CLIA
+// ("MAGLUMI CLIA IMMUNOASSAY ANALYZER" cocok keduanya). Token itu tetap
+// dipertahankan karena sebagian item FIA memang hanya bertanda itu — yang
+// membuatnya aman adalah SALING-EKSKLUSI di fiaCustomersYtd: apa pun yang
+// cocok RE_CLIA bukan FIA. Tanpa itu satu pelanggan CLIA ikut menaikkan `fia`.
 const RE_FIA = "FIA METER|FLUORESCEN|IMMUNOASSAY";
 const RE_CLIA = "CLIA|MAGLUMI|LIAISON";
 
@@ -270,7 +276,8 @@ async function fiaCustomersYtd(sql: Sql): Promise<number> {
       JOIN accurate_invoice inv ON inv.id = ii.invoice_id
       JOIN accurate_item ai ON ai.id = ii.item_id
      WHERE inv.tanggal >= date_trunc('year', CURRENT_DATE)
-       AND ai.name ~* ${RE_FIA}`;
+       AND ai.name ~* ${RE_FIA}
+       AND ai.name !~* ${RE_CLIA}`;
   return Number(rows[0]?.n ?? 0);
 }
 
