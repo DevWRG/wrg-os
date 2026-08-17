@@ -4,19 +4,43 @@
 // Prasyarat: migrasi 097 + 098 sudah diterapkan dan kso_asset sudah terisi.
 //
 // KENAPA PENCOCOKAN INI TIDAK BOLEH OTOMATIS SEPENUHNYA:
-// Nama di sheet bukan nama Accurate. Sheet menulis "<nama Accurate> <KOTA>" digabung —
-// "AULIA II, BALAI PENGOBATAN KAB. JOMBANG" — dan kolom Kota-nya berisi "KAB. JOMBANG"
-// yang sama. Salah pasang satu faskes berarti revenue satu rumah sakit nyasar ke rumah
-// sakit lain, dan kesalahan itu tidak akan kelihatan di angka total mana pun. Karena itu:
-//   • exact / tanpa_kota  -> dipasang otomatis (deterministik, tidak ada tebakan)
+// Nama di sheet bukan nama Accurate. Salah pasang satu faskes berarti revenue satu rumah
+// sakit nyasar ke rumah sakit lain, dan kesalahan itu tidak akan kelihatan di angka total
+// mana pun. Karena itu:
+//   • exact / token_set   -> dipasang otomatis (deterministik, tidak ada tebakan)
 //   • fuzzy               -> HANYA USULAN. account_id dibiarkan NULL sampai manusia
 //                            mengonfirmasi, kecuali dijalankan dengan --terima-fuzzy.
 // Baris yang `dikonfirmasi = true` tidak pernah ditimpa skrip ini.
 //
+// REVISI 2026-08-18 — diukur ke data nyata (235 nama sheet x 2.932 customer Accurate).
+// Versi pertama hanya memasang 62 (26,4%). Tiga sebab, semuanya bisa diperbaiki:
+//
+// 1. Cabang `tanpa_kota` TIDAK PERNAH KENA — 0 dari 250. Asumsinya sheet menempelkan kota
+//    ke belakang nama Accurate, jadi ekor kota dipotong lalu dicocokkan. Kenyataannya nama
+//    Accurate SENDIRI yang memuat kota (2.896 dari 2.932 mengandung KOTA/KAB.); yang beda
+//    urutan katanya, bukan ada-tidaknya kota:
+//        sheet    'RS Widodo Ngawi'
+//        Accurate 'WIDODO, RS KAB. NGAWI'
+//    Memotong kota dari sisi sheet justru MENJAMIN meleset. Cabang itu diganti `token_set`.
+//
+// 2. Prefiks '[merged]' (penanda merge dari Accurate, ikut tersalin ke sheet) menghalangi
+//    6 kecocokan yang sebenarnya identik persis. Sekarang dibuang saat normalisasi.
+//
+// 3. 15 dari 250 "customer" bukan customer, melainkan baris pemisah seksi di sheet
+//    ('Station', 'SURABAYA 2', 'MADURA', 'JAKARTA', 'NTB'). Sekarang dilewati dan
+//    dilaporkan terpisah, bukan dihitung sebagai gagal cocok.
+//
+// 4. Ringkasan dry-run dulu menghitung NAMA, padahal `kso_customer_map` berkunci slug —
+//    jadi pratinjau menjanjikan 111 sementara --apply memasang 105. Semua penghitung
+//    sekarang per customer_key, supaya pratinjau = hasil.
+//
+// Hasil setelah perbaikan, diukur end-to-end: 105 dari 227 customer_key (46,3%) terpasang
+// deterministik, naik dari 62 (27,3%) — tanpa satu pun tebakan fuzzy diterima otomatis.
+//
 // PAKAI:
 //   pnpm --filter @wrg/api build
 //   node scripts/ops/kso-account-match.mjs                        # pratinjau
-//   node scripts/ops/kso-account-match.mjs --apply                # pasang exact + tanpa_kota
+//   node scripts/ops/kso-account-match.mjs --apply                # pasang exact + token_set
 //   node scripts/ops/kso-account-match.mjs --apply --terima-fuzzy 0.92
 //        ^ pasang juga usulan fuzzy dengan skor >= 0.92 DAN unggul jelas dari runner-up.
 //          Tetap ditandai dikonfirmasi=false supaya bisa disisir.
@@ -37,9 +61,37 @@ if (AMBANG_FUZZY !== null && !(AMBANG_FUZZY > 0 && AMBANG_FUZZY <= 1)) {
   process.exit(1);
 }
 
-const slug = (s) => String(s ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+// Penanda merge Accurate yang ikut tersalin ke sheet. Dibuang SEBELUM normalisasi apa pun,
+// supaya '[merged] WIDODO, RS KAB. NGAWI' bisa exact ke 'WIDODO, RS KAB. NGAWI'.
+const tanpaPenanda = (s) => String(s ?? "").replace(/^\s*\[merged\]\s*/i, "");
+
+const slug = (s) => tanpaPenanda(s).toUpperCase().replace(/[^A-Z0-9]/g, "");
 const kata = (s) =>
-  String(s ?? "").toUpperCase().split(/[^A-Z0-9]+/).filter((w) => w.length > 1);
+  tanpaPenanda(s).toUpperCase().split(/[^A-Z0-9]+/).filter((w) => w.length > 1);
+
+// Kata jenis-faskes & administratif. Dibuang saat membentuk himpunan token supaya
+// 'RS Widodo Ngawi' dan 'WIDODO, RS KAB. NGAWI' menghasilkan himpunan yang sama.
+const STOPWORD = new Set([
+  "KAB", "KABUPATEN", "KOTA", "RS", "RSU", "RSUD", "RSIA", "RSK", "RSB",
+  "KLINIK", "LAB", "LABORATORIUM", "PT", "CV", "UPT", "PUSKESMAS",
+]);
+
+// Himpunan token bermakna — urutan kata diabaikan, jenis faskes diabaikan.
+const himpunan = (s) => new Set(kata(s).filter((w) => !STOPWORD.has(w)));
+
+const kunciHimpunan = (h) => [...h].sort().join("|");
+
+// Baris pemisah seksi di sheet: nama stasiun/area yang ikut terbaca sebagai "customer".
+// Bukan faskes, jadi tidak boleh dihitung sebagai gagal cocok.
+const STASIUN = new Set([
+  "SURABAYA", "KEDIRI", "MALANG", "MADURA", "MADIUN", "JEMBER", "PRAMED",
+  "JAKARTA", "NTB", "BALI", "SEMARANG", "SOLO", "YOGYA", "YOGYAKARTA",
+  "BANDUNG", "STATION", "JATIM", "JATENG",
+]);
+const barisSeksi = (s) => {
+  const u = slug(s).replace(/[0-9]+$/, "");
+  return u.length < 4 || STASIUN.has(u);
+};
 
 // Dice pada bigram karakter: tahan terhadap singkatan & urutan kata yang bertukar,
 // yang dua-duanya lumrah di nama faskes ("RSIA KIRANA" vs "KIRANA, RSIA").
@@ -92,10 +144,21 @@ try {
   }
   const acc = pelanggan.map((c) => ({
     id: Number(c.id), name: String(c.name),
-    slug: slug(c.name), kata: kata(c.name),
+    slug: slug(c.name), kata: kata(c.name), set: himpunan(c.name),
   }));
   const byslug = new Map();
   for (const c of acc) if (!byslug.has(c.slug)) byslug.set(c.slug, c);
+
+  // Indeks himpunan-token. Nilainya ARRAY, bukan satu customer: kalau dua customer
+  // Accurate menghasilkan himpunan yang sama, itu ambigu dan TIDAK boleh dipasang
+  // otomatis — justru kasus paling berbahaya (dua faskes semarga di kota yang sama).
+  const byset = new Map();
+  for (const c of acc) {
+    if (c.set.size < 2) continue; // pagar: 'MALANG' jangan sampai cocok ke 'RSUD KOTA MALANG'
+    const k = kunciHimpunan(c.set);
+    if (!byset.has(k)) byset.set(k, []);
+    byset.get(k).push(c);
+  }
 
   // Satu baris per nama customer unik di kso_asset (bukan per aset).
   const sumber = await sql`
@@ -111,35 +174,31 @@ try {
       .map((r) => r.customer_key));
 
   const hasil = [];
+  const seksi = [];
   for (const s of sumber) {
     const raw = String(s.customer_raw);
     const key = slug(raw);
     if (terkunci.has(key)) continue; // sudah ditinjau manusia — jangan diusik
-
-    // Varian tanpa ekor kota: sheet menempelkan kota ke belakang nama Accurate.
-    const kotaSlug = slug(s.kota);
-    const tanpaKota = kotaSlug && key.endsWith(kotaSlug)
-      ? key.slice(0, key.length - kotaSlug.length)
-      : null;
+    if (barisSeksi(raw)) { seksi.push(raw); continue; } // pemisah seksi sheet, bukan faskes
 
     let baris;
     if (byslug.has(key)) {
       const c = byslug.get(key);
       baris = { key, raw, jumlah_alat: s.jumlah_alat, account_id: c.id, metode: "exact",
                 skor: 1, kandidat: [{ id: c.id, name: c.name, skor: 1 }] };
-    } else if (tanpaKota && byslug.has(tanpaKota)) {
-      const c = byslug.get(tanpaKota);
-      baris = { key, raw, jumlah_alat: s.jumlah_alat, account_id: c.id, metode: "tanpa_kota",
+    } else if (
+      himpunan(raw).size >= 2 && (byset.get(kunciHimpunan(himpunan(raw))) ?? []).length === 1
+    ) {
+      // Himpunan token bermakna sama persis, dan hanya SATU customer Accurate yang
+      // menghasilkannya. Deterministik: tidak ada skor, tidak ada tebakan — cuma urutan
+      // kata & kata jenis faskes yang diabaikan.
+      const c = byset.get(kunciHimpunan(himpunan(raw)))[0];
+      baris = { key, raw, jumlah_alat: s.jumlah_alat, account_id: c.id, metode: "token_set",
                 skor: 1, kandidat: [{ id: c.id, name: c.name, skor: 1 }] };
     } else {
-      // Dinilai terhadap dua bentuk (dengan & tanpa kota), diambil yang terbaik.
       const kt = kata(raw);
-      const ktTanpa = tanpaKota ? kata(tanpaKota) : kt;
       const nilai = acc.map((c) => ({
-        id: c.id, name: c.name,
-        skor: Math.max(
-          skor(key, kt, c.slug, c.kata),
-          tanpaKota ? skor(tanpaKota, ktTanpa, c.slug, c.kata) : 0),
+        id: c.id, name: c.name, skor: skor(key, kt, c.slug, c.kata),
       })).sort((a, b) => b.skor - a.skor).slice(0, 3);
 
       const top = nilai[0];
@@ -159,20 +218,38 @@ try {
   }
 
   const per = (m) => hasil.filter((h) => h.metode === m);
-  const terpasang = hasil.filter((h) => h.account_id !== null);
+  const terpasang = new Set(hasil.filter((h) => h.account_id !== null).map((h) => h.key));
+
+  // Dihitung per customer_key (slug), BUKAN per nama. `kso_customer_map` berkunci slug,
+  // jadi nama yang cuma beda spasi ganda / tanda baca / prefiks '[merged]' runtuh jadi satu
+  // baris saat ditulis. Menghitung nama membuat pratinjau menjanjikan lebih banyak daripada
+  // yang benar-benar terpasang (111 vs 105 pada data nyata) — pratinjau yang tidak sama
+  // dengan hasil lebih berbahaya daripada tidak ada pratinjau.
+  const kunciUnik = (m) => new Set(hasil.filter((h) => h.metode === m).map((h) => h.key)).size;
+  const kunciDeterministik = new Set(
+    hasil.filter((h) => h.metode === "exact" || h.metode === "token_set").map((h) => h.key));
+  const deterministik = kunciDeterministik.size;
+  const kunciSemua = new Set(hasil.map((h) => h.key)).size;
 
   console.log("=== Hasil pencocokan ===");
   console.log(`  nama customer unik di kso_asset : ${sumber.length}`);
+  console.log(`  baris pemisah seksi (dilewati)  : ${seksi.length}`);
+  console.log(`  nama customer dinilai           : ${hasil.length}` +
+    (kunciSemua !== hasil.length
+      ? `  (-> ${kunciSemua} customer_key; ${hasil.length - kunciSemua} nama kembar runtuh)`
+      : ""));
   console.log(`  sudah dikonfirmasi (dilewati)   : ${terkunci.size}`);
   console.log(`  customer Accurate tersedia      : ${acc.length}`);
-  console.log(`  exact                           : ${per("exact").length}`);
-  console.log(`  tanpa_kota                      : ${per("tanpa_kota").length}`);
+  console.log(`  exact                           : ${kunciUnik("exact")}`);
+  console.log(`  token_set                       : ${kunciUnik("token_set")}`);
+  console.log(`  -> deterministik (dipasang)     : ${deterministik}` +
+    (kunciSemua ? ` (${(100 * deterministik / kunciSemua).toFixed(1)}%)` : ""));
   console.log(`  fuzzy (usulan)                  : ${per("fuzzy").length}` +
     (AMBANG_FUZZY !== null
       ? `  -> dipasang: ${per("fuzzy").filter((h) => h.account_id).length} (ambang ${AMBANG_FUZZY})`
       : "  -> tidak dipasang (pakai --terima-fuzzy <skor>)"));
   console.log(`  tidak ada padanan               : ${per("tidak_ada").length}`);
-  console.log(`  TOTAL akan punya account_id     : ${terpasang.length}`);
+  console.log(`  TOTAL akan punya account_id     : ${terpasang.size}`);
 
   const contoh = per("fuzzy").sort((a, b) => b.skor - a.skor).slice(0, 15);
   if (contoh.length) {
@@ -186,6 +263,11 @@ try {
   if (nihil.length) {
     console.log("\n=== Tanpa padanan (10 pertama) ===");
     for (const h of nihil) console.log(`  ${h.raw.slice(0, 60)}  (${h.jumlah_alat} alat)`);
+  }
+  if (seksi.length) {
+    console.log("\n=== Dilewati: pemisah seksi sheet, bukan faskes ===");
+    console.log(`  ${seksi.join(", ")}`);
+    console.log("  Kalau ada nama faskes betulan di daftar ini, perbaiki STASIUN di skrip.");
   }
 
   if (!APPLY) {
@@ -222,7 +304,7 @@ try {
       RETURNING 1)
     SELECT count(*)::int AS count FROM upd`;
 
-  console.log(`\nSELESAI. peta=${hasil.length} baris, kso_asset.account_id diperbarui=${disebar}`);
+  console.log(`\nSELESAI. peta=${kunciSemua} baris, kso_asset.account_id diperbarui=${disebar}`);
   console.log("Tinjau usulan fuzzy, lalu tandai dikonfirmasi=true supaya tidak ikut tertimpa:");
   console.log("  UPDATE kso_customer_map SET account_id=<id>, metode='manual', dikonfirmasi=true WHERE customer_key='...';");
 } finally {
