@@ -1,12 +1,43 @@
 -- 098 — Jembatan aset KSO (097) ke transaksi Accurate: peta customer + view revenue.
 --
--- ATURAN ATRIBUSI (ditetapkan user, 2026-08-17):
+-- ATURAN ATRIBUSI (ditetapkan user 2026-08-17, direvisi 2026-08-18):
 --   • Aset skema PER_TEST ("KSO Tes", alat investasi WRG)  -> kategori penjualan 'KSO'
---   • Aset skema BELI_REAGEN ("KSO Reagen")                -> kategori 'REGULAR' ATAU 'KSO'
+--   • Aset skema BELI_REAGEN ("KSO Reagen")                -> 'REGULAR', 'KSO', atau 'RUTIN'
 --
 -- "Kategori penjualan" = kategori PENGADAAN, custom field Accurate di level BARIS:
 -- detailItem[].charField1 (REGULAR / KSO / RUTIN / PL / ECAT). Level baris, bukan level
 -- faktur — jadi satu faktur bisa memuat baris REGULAR dan baris KSO sekaligus.
+--
+-- KENAPA 'RUTIN' IKUT BELI_REAGEN (revisi 2026-08-18): aturan versi pertama hanya
+-- mengenal REGULAR + KSO, disusun sebelum ada yang melihat sebaran charField1 yang
+-- sebenarnya. Setelah diukur ke prod (3.752 faktur / 11.308 baris):
+--     KSO 18,90 M (67,4%) · RUTIN 5,04 M (18,0%) · REGULAR 2,12 M (7,6%)
+--     ECAT 0,85 M (3,0%)  · PL 0,57 M (2,0%)     · Tanpa kategori 0,56 M (2,0%)
+-- RUTIN = pembelian reagen rutin. Basis revenue BELI_REAGEN naik 21,02 M -> 26,06 M
+-- (+24,0%); PER_TEST tidak berubah. Rp/tes aset BELI_REAGEN ikut naik ~24%.
+--
+-- BUKTI TERKUATNYA BUKAN NILAI RUPIAH, TAPI SEBARAN CUSTOMER-nya:
+--     KSO 254 customer · RUTIN 269 · REGULAR 238 · ECAT 51 · PL 43 · Tanpa kategori 80
+-- RUTIN menyentuh customer TERBANYAK dari semua kategori — lebih luas dari KSO maupun
+-- REGULAR — dengan nilai per faktur paling kecil (Rp 5,4 jt; KSO Rp 9,0 jt). Sedikit,
+-- sering, tersebar ke banyak faskes: itu profil pembelian reagen berulang, bukan
+-- transaksi proyek. Kalau RUTIN sekadar "REGULAR yang dinamai lain", sebarannya tidak
+-- akan lebih luas dari REGULAR.
+--
+-- ECAT & PL SENGAJA DI LUAR — KEPUTUSAN, BUKAN SEKADAR BELUM DIPUTUSKAN (2026-08-18):
+-- keduanya kanal BERHARGA TETAP, bukan pembelian reagen berulang; sebarannya sempit
+-- (51 dan 43 customer, gabungan 5,09%). Preseden di tempat lain sejalan:
+-- insentif-calc.ts:37 memaksa margin rate 0 untuk ECAT/Price List justru KARENA harga
+-- fixed. Memasukkannya ke basis produktivitas alat akan mencampur pendapatan yang tidak
+-- digerakkan oleh pemakaian alat. Kalau kelak mau diubah, ubah dengan ANGKA di tangan
+-- seperti keputusan RUTIN ini — memasukkan kategori ke skema yang salah tidak
+-- memunculkan error, cuma menggeser Rp/tes diam-diam.
+--
+-- 'Tanpa kategori' TIDAK masuk skema mana pun, dan ada yang janggal di sana: 1.042
+-- faktur — jumlah TERBANYAK KEDUA setelah KSO — tapi nilainya cuma Rp 558 jt, rata-rata
+-- Rp 536rb per faktur. Dugaan: faktur kecil/jasa yang `raw`-nya memang tak memuat
+-- charField1, bukan reagen yang kehilangan kategori. BELUM ditelusuri satu per satu.
+-- Kalau ternyata sebagian besar reagen, basis BELI_REAGEN kurang ~2% lagi.
 --
 -- KENAPA ALOKASI PROPORSIONAL, BUKAN "faktur ini kategori X": karena faktur campur itu
 -- nyata. Kalau faktur campur dihitung utuh ke tiap kategori yang disentuhnya, total per
@@ -101,7 +132,7 @@ COMMENT ON VIEW kso_customer_revenue_v IS
 --    `alat_seskema_di_customer` memberi tahu berapa alat yang berbagi angka itu;
 --    kalau nilainya 1, revenue-nya memang milik alat itu sendiri.
 -- 2. Untuk customer yang punya alat PER_TEST DAN BELI_REAGEN sekaligus, revenue
---    kategori 'KSO' masuk ke kedua-duanya (aturan user: BELI_REAGEN = REGULAR ATAU KSO).
+--    kategori 'KSO' masuk ke kedua-duanya (aturan user: BELI_REAGEN = REGULAR/KSO/RUTIN).
 --    Itu artinya menjumlahkan kolom ini lintas skema akan MENGHITUNG GANDA porsi KSO.
 --    Flag `revenue_tumpang_tindih` menandai baris yang terkena, supaya penjumlahan
 --    naif ketahuan alih-alih diam-diam salah.
@@ -118,7 +149,7 @@ CREATE VIEW kso_asset_produktivitas_v AS
 WITH kategori_skema AS (
   SELECT 'PER_TEST'::text AS skema, ARRAY['KSO']::text[] AS kategori
   UNION ALL
-  SELECT 'BELI_REAGEN', ARRAY['REGULAR','KSO']
+  SELECT 'BELI_REAGEN', ARRAY['REGULAR','KSO','RUTIN']
 ),
 aset AS (
   SELECT a.*, ks.kategori AS kategori_berlaku
