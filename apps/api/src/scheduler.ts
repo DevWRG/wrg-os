@@ -28,6 +28,7 @@ import { runNotifTua } from "./repo/notiftua.js";
 import { runDailySummary } from "./repo/dailysummary.js";
 import { runRaportNarrative } from "./repo/raportnarrative.js";
 import { runWeeklyReport } from "./repo/weeklyreport.js";
+import { mirrorFreshness } from "./repo/mirror-health.js";
 import { runDetectLeaveScan } from "./repo/detectleave.js";
 import { runExtractCompetitor } from "./repo/extractcompetitor.js";
 import { runWeekendBriefing } from "./repo/weekendbriefing.js";
@@ -459,6 +460,42 @@ export function startScheduler(): ScheduleStatus {
       { timezone },
     );
     live.push(`accurate-sync=${accExpr}`);
+  }
+
+  // mirror-freshness — pengawas kesegaran mirror Accurate. Bukan penarik data;
+  // hanya berteriak kalau mirror mendekati batas jendela tarik 7 hari.
+  //
+  // NYALA BAWAAN, tanpa flag. Ini satu-satunya job yang tak menyentuh dunia luar:
+  // tak memanggil API Accurate, tak mengirim WA — cuma membaca max(last_synced_at)
+  // lalu menulis log. Kalau ia ikut mati bersama flag lain, pengawasnya padam
+  // bersama yang diawasi, dan itu justru pola yang bikin outage senyap.
+  //
+  // TIDAK memeriksa hari libur — beda dari accurate-sync yang memang skip libur.
+  // Jendela 7 hari itu kalender dan tak berhenti saat libur, jadi libur panjang
+  // justru saat alarm ini paling dibutuhkan.
+  const freshExpr = process.env.MIRROR_FRESHNESS_CRON ?? "5 9 * * *";
+  if (cron.validate(freshExpr)) {
+    cron.schedule(
+      freshExpr,
+      async () => {
+        try {
+          const h = await mirrorFreshness();
+          if (h.ok) {
+            console.log(`[scheduler] mirror-freshness OK — ${h.catatan}`);
+            return;
+          }
+          const rinci = h.sumber
+            .filter((s) => s.stale)
+            .map((s) => `${s.sumber}=${s.umurHari ?? "belum pernah"}h`)
+            .join(" ");
+          console.error(`[scheduler] ⚠ MIRROR BASI (ambang ${h.ambangHari}h): ${rinci} — ${h.catatan}`);
+        } catch (e) {
+          console.error("[scheduler] mirror-freshness gagal:", e);
+        }
+      },
+      { timezone },
+    );
+    live.push(`mirror-freshness=${freshExpr}`);
   }
 
   // F127 sales-alert-eval — evaluasi threshold alert & kirim WA saat transisi
