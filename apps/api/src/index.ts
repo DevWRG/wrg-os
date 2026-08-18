@@ -97,6 +97,7 @@ import {
   type Level as KlasifikasiLevel,
 } from "./repo/klasifikasi.js";
 import { master as ksoMaster } from "./repo/kso.js";
+import { produktivitas as ksoProduktivitas } from "./repo/kso-produktivitas.js";
 import { listCoachingNotes } from "./repo/coaching.js";
 import { getLatestCoachingNotes, computePeopleAnalytics } from "./repo/people.js";
 import { createVisit, getVisit, listVisits, visitKpi, visitSummary } from "./repo/visit.js";
@@ -2727,6 +2728,20 @@ app.get("/pricebook/setup", async (c) => {
 app.get("/kso/master", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json(await ksoMaster());
+});
+
+// Produktivitas aset KSO (view kso_asset_produktivitas_v, migrasi 097-105).
+// Menu /kso-produktivitas. Gate akses di BFF (apps/web /api/kso/*) memakai
+// canViewKso — sama dengan Simulator.
+//
+// CATATAN AKSES: gate itu terikat flag fitur 'kso-simulator'. Simulator hanya
+// memuat harga alat & reagen; halaman ini memuat REVENUE PER FASKES, yang lebih
+// sensitif. Dipakai bersama atas keputusan user 2026-08-18. Kalau kelak perlu
+// dipisah, buat flag sendiri dan ganti gate-nya di BFF — endpoint ini tidak
+// perlu berubah.
+app.get("/kso/produktivitas", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await ksoProduktivitas());
 });
 
 // Setelan harga keagenan (migrasi 077). Gate di halaman /pricebook/setup
