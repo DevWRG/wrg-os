@@ -29,7 +29,7 @@ const SALES_LINE = /^\s*#\s*sales\b/i;
 export function detectKind(body: string | null): InboundKind {
   const daily = detectDaily(body); // line-anchored #plan/#report (sudah strip invisible)
   if (daily) return daily;
-  if (detectCek(body)) return "cek"; // #CEK <customer> (QW3) — cek SO/SJ pre-delivery
+  if (detectCek(body)) return "cek"; // #CEK CUSTOMER <nama> (QW3) — cek SO/SJ/TTF pre-delivery
   if (body) {
     for (const line of stripInvisible(body).split(/\r?\n/)) {
       const m = line.match(LEADS_UPDATE_LINE);
@@ -450,7 +450,7 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
     return finish({ kind: "sales", via: ams.via, reply });
   }
 
-  // #CEK <customer> (QW3) — cek pre-delivery SO/SJ on-demand. Resolve pengirim
+  // #CEK CUSTOMER <nama> (QW3) — cek pre-delivery SO/SJ/TTF on-demand. Resolve pengirim
   // (by phone/pushname) sama seperti #SALES, tanpa gate role tambahan.
   if (kind === "cek") {
     const amc = await resolveSender({ senderJid: row.sender_jid, groupJid: row.group_jid, pushname: row.sender_name });
