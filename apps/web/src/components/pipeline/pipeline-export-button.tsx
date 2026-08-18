@@ -48,7 +48,8 @@ const num = (v: number | null | undefined) =>
 const str = (v: string | null | undefined) => (v ? { type: String, value: v } : null);
 
 // Coop model → bahasa awam, samakan dengan tampilan board.
-const coopLabel = (c: string | null) => (c == null ? null : /sale/i.test(c) ? "Beli Putus" : c);
+// Jaring pengaman; nilai tersimpan sudah KSO/BELI sejak migrasi 110.
+const coopLabel = (c: string | null) => (c == null ? null : /sale/i.test(c) ? "BELI" : c);
 
 // Nilai DB 'Closing-Won'/'Closing-Lost' ditampilkan "Won"/"Lost" di board —
 // export ikut label yang dilihat user.

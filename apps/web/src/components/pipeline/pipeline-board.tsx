@@ -107,7 +107,9 @@ const jt = (n: number | null) => {
 };
 const uniq = (arr: (string | null)[]) => [...new Set(arr.filter((x): x is string => !!x))].sort();
 // Coop model → bahasa awam: KSO tetap KSO; SALE/Sale → "Beli Putus".
-const coopLabel = (c: string | null) => (c == null ? c : /sale/i.test(c) ? "Beli Putus" : c);
+// Jaring pengaman: sejak migrasi 110 nilai tersimpan cuma KSO/BELI, tapi baris
+// lama yg belum ter-normalisasi (mis. dari backup) tetap tampil seragam.
+const coopLabel = (c: string | null) => (c == null ? c : /sale/i.test(c) ? "BELI" : c);
 const MONTH_ID = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
 // Estimasi bulan beli: "September 2026" / "September" (tahun kosong) / "2026" (bulan kosong).
 const buyEta = (m: number | null, y: number | null) => {
@@ -572,6 +574,7 @@ export function PipelineBoard({ data, isAdmin = false }: { data: PipelineData; i
           deal={formModal.mode === "edit" ? formModal.deal : undefined}
           brands={opts.brand}
           cabangs={opts.cabang}
+          hods={opts.hod}
           onClose={() => setFormModal(null)}
         />
       )}
