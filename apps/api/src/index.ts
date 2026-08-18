@@ -14,6 +14,7 @@ import { isDbEnabled, pingDb } from "./db.js";
 import { waPreflight, sendViaWaGateway, type WaSendResult } from "./wasend.js";
 import { processUnprocessed, isInboundEnabled } from "./repo/inbound.js";
 import { syncAccurateInvoices, syncVendors, syncItems, syncSalesOrders, syncDeliveryOrders, syncCustomers, syncSalesOrderItems, syncDeliveryOrderItems, getDeliveryOrderItems, getSalesOrderItems, getVendorDetail, accurateConfigured } from "./repo/accurateSync.js";
+import { mirrorFreshness } from "./repo/mirror-health.js";
 import { insertAuditEvent } from "./repo/audit.js";
 import { upsertDealsFromPlan, logReportToDeals, getPipeline, getPipelineReport, getPipelineLeaderboard, transitionStage, DealError, listPendingLosses, decideLoss, getDealTimeline, createDeal, updateDeal, deleteDeal } from "./repo/deal.js";
 import { enqueueAmbiguous, listHitl, resolveHitl } from "./repo/hitl.js";
@@ -231,6 +232,14 @@ app.use("*", async (c, next) => {
 app.get("/health", async (c) => {
   const db = isDbEnabled() ? (await pingDb()) ? "ok" : "down" : "disabled";
   return c.json({ status: "ok", service: "wrg-api", db });
+});
+
+// Kesegaran mirror Accurate. Sengaja BALIKAN 503 saat basi supaya bisa dipantau
+// uptime-checker biasa tanpa parsing JSON — kegagalan sync itu senyap, tak ada
+// yang error, angkanya cuma diam-diam kurang.
+app.get("/health/mirror", async (c) => {
+  const h = await mirrorFreshness();
+  return c.json(h, h.ok ? 200 : 503);
 });
 
 // Status wiring gateway WA — TIDAK kirim pesan. ?probe=1 → cek konektivitas gateway.
