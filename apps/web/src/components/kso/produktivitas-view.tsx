@@ -24,6 +24,43 @@ export interface KsoProduktivitas {
   ringkasan: { aset: number; faskes: number; layakDiperingkat: number; medianRpPerTes: Record<string, number | null> };
 }
 
+// Satu baris = satu FASKES x SKEMA, bukan satu aset.
+//
+// KENAPA: view-nya per aset, sementara Rp/tes, revenue, dan seluruh penanda ada di level
+// CUSTOMER — nilainya identik untuk semua alat seskema di faskes yang sama. Ditampilkan
+// apa adanya, tabel ini jadi peringkat yang menyesatkan: pada data prod 2026-08-18,
+// 201 baris PER_TEST hanya mewakili 68 faskes (3,0 baris/faskes), dan
+// MUSLIMAT RS PONOROGO menempati 18 baris BERTURUT-TURUT dengan angka sama persis —
+// mendorong faskes lain keluar halaman dan membuat "201 baris" terbaca seperti 201 faskes.
+//
+// Nama alatnya tidak hilang: dikumpulkan jadi daftar di baris yang sama.
+interface FaskesRow {
+  key: string;
+  faskes: string;
+  kota: string | null;
+  alatList: string[];
+  r: KsoProduktivitasRow;   // nilai level-customer; sama untuk semua alat di grup ini
+}
+
+function kelompokkan(rows: KsoProduktivitasRow[]): FaskesRow[] {
+  const map = new Map<string, FaskesRow>();
+  for (const r of rows) {
+    // account_id null (mis. skema UNKNOWN belum terpetakan) → jatuh ke nama sheet,
+    // supaya baris tanpa account tidak semuanya menggumpal jadi satu grup.
+    const key = `${r.skema}::${r.accountId ?? `raw:${r.customerRaw}`}`;
+    const g = map.get(key);
+    if (g) { if (r.namaAlat) g.alatList.push(r.namaAlat); continue; }
+    map.set(key, {
+      key,
+      faskes: r.faskes ?? r.customerRaw,
+      kota: r.kota,
+      alatList: r.namaAlat ? [r.namaAlat] : [],
+      r,
+    });
+  }
+  return [...map.values()];
+}
+
 const rp = (n: number | null) => (n === null ? "—" : "Rp " + Math.round(n).toLocaleString("id-ID"));
 const num = (n: number | null) => (n === null ? "—" : Math.round(n).toLocaleString("id-ID"));
 
@@ -35,60 +72,61 @@ export function KsoProduktivitasView({ data }: { data: KsoProduktivitas }) {
   const [hanyaLayak, setHanyaLayak] = useState(true);
 
   const rows = useMemo(
-    () => data.rows.filter((r) => r.skema === skema && (!hanyaLayak || r.basisTesMemadai)),
+    () => kelompokkan(data.rows.filter((r) => r.skema === skema && (!hanyaLayak || r.basisTesMemadai))),
     [data.rows, skema, hanyaLayak],
   );
   const median = data.ringkasan.medianRpPerTes[skema] ?? null;
 
-  const cols: DataColumn<KsoProduktivitasRow>[] = [
+  const cols: DataColumn<FaskesRow>[] = [
     { id: "faskes", header: "Faskes", sortable: true,
-      accessor: (r) => r.faskes ?? r.customerRaw,
-      cell: (r) => (
+      accessor: (g) => g.faskes,
+      cell: (g) => (
         <div className="min-w-0">
-          <div className="truncate font-medium">{r.faskes ?? r.customerRaw}</div>
-          <div className="text-muted-foreground truncate text-xs">
-            {[r.namaAlat, r.kota].filter(Boolean).join(" · ")}
+          <div className="truncate font-medium">{g.faskes}</div>
+          <div className="text-muted-foreground truncate text-xs" title={g.alatList.join(", ")}>
+            {[g.alatList.slice(0, 3).join(", ") + (g.alatList.length > 3 ? ` +${g.alatList.length - 3}` : ""),
+              g.kota].filter(Boolean).join(" · ")}
           </div>
         </div>
       ) },
     { id: "tes", header: "Tes (customer)", align: "right", sortable: true,
-      accessor: (r) => r.totalTesCustomerSeskema ?? 0,
-      cell: (r) => num(r.totalTesCustomerSeskema) },
-    { id: "alat", header: "Alat berbagi", align: "center", sortable: true,
-      accessor: (r) => r.alatSeskemaDiCustomer ?? 0,
-      cell: (r) => r.alatSeskemaDiCustomer ?? "—" },
+      accessor: (g) => g.r.totalTesCustomerSeskema ?? 0,
+      cell: (g) => num(g.r.totalTesCustomerSeskema) },
+    { id: "alat", header: "Alat", align: "center", sortable: true,
+      accessor: (g) => g.r.alatSeskemaDiCustomer ?? g.alatList.length,
+      cell: (g) => g.r.alatSeskemaDiCustomer ?? g.alatList.length },
     { id: "revenue", header: "Revenue netto", align: "right", sortable: true,
-      accessor: (r) => r.revenueNettoCustomer ?? 0,
-      cell: (r) => rp(r.revenueNettoCustomer) },
+      accessor: (g) => g.r.revenueNettoCustomer ?? 0,
+      cell: (g) => rp(g.r.revenueNettoCustomer) },
     { id: "rpt", header: "Rp / tes", align: "right", sortable: true,
-      accessor: (r) => r.rupiahPerTesCustomer ?? 0,
-      cell: (r) => (
+      accessor: (g) => g.r.rupiahPerTesCustomer ?? 0,
+      cell: (g) => (
         <div>
-          <div className={cn("font-medium", !r.basisTesMemadai && "text-muted-foreground")}>
-            {rp(r.rupiahPerTesCustomer)}
+          <div className={cn("font-medium", !g.r.basisTesMemadai && "text-muted-foreground")}>
+            {rp(g.r.rupiahPerTesCustomer)}
           </div>
-          {median && r.rupiahPerTesCustomer ? (
+          {median && g.r.rupiahPerTesCustomer ? (
             <div className="text-muted-foreground text-xs">
-              {(r.rupiahPerTesCustomer / median).toFixed(2)}× median
+              {(g.r.rupiahPerTesCustomer / median).toFixed(2)}× median
             </div>
           ) : null}
         </div>
       ) },
     { id: "tanda", header: "Penanda",
-      cell: (r) => (
+      cell: (g) => (
         <div className="flex flex-wrap gap-1">
-          {!r.basisTesMemadai ? <Tag warna="merah" judul="Penyebut < 100 tes/thn — jangan dipakai memeringkat">penyebut tipis</Tag> : null}
-          {r.tagihPolaDatar ? <Tag warna="kuning" judul="Qty Accurate datar tiap bulan = minimum kontrak, bukan hitungan tes">minimum kontrak</Tag> : null}
-          {r.revenueTumpangTindih ? <Tag warna="biru" judul={`Faskes berskema ganda; porsi KSO ${r.porsiKso ?? "—"}`}>skema ganda</Tag> : null}
-          {r.statusPenagihan === "tanpa_faktur" ? <Tag warna="merah" judul="Tidak ada faktur atas nama faskes ini">tanpa faktur</Tag> : null}
+          {!g.r.basisTesMemadai ? <Tag warna="merah" judul="Penyebut < 100 tes/thn — jangan dipakai memeringkat">penyebut tipis</Tag> : null}
+          {g.r.tagihPolaDatar ? <Tag warna="kuning" judul="Qty Accurate datar tiap bulan = minimum kontrak, bukan hitungan tes">minimum kontrak</Tag> : null}
+          {g.r.revenueTumpangTindih ? <Tag warna="biru" judul={`Faskes berskema ganda; porsi KSO ${g.r.porsiKso ?? "—"}`}>skema ganda</Tag> : null}
+          {g.r.statusPenagihan === "tanpa_faktur" ? <Tag warna="merah" judul="Tidak ada faktur atas nama faskes ini">tanpa faktur</Tag> : null}
         </div>
       ) },
     { id: "rasio", header: "Tagih / lapor", align: "right", sortable: true,
-      accessor: (r) => r.rasioTagihLapor ?? -1,
-      cell: (r) => (r.rasioTagihLapor === null
+      accessor: (g) => g.r.rasioTagihLapor ?? -1,
+      cell: (g) => (g.r.rasioTagihLapor === null
         ? <span className="text-muted-foreground text-xs">n/a</span>
-        : <span className={cn(Math.abs(r.rasioTagihLapor - 1) > 0.25 && "text-amber-600 font-medium")}>
-            {r.rasioTagihLapor.toFixed(2)}
+        : <span className={cn(Math.abs(g.r.rasioTagihLapor - 1) > 0.25 && "text-amber-600 font-medium")}>
+            {g.r.rasioTagihLapor.toFixed(2)}
           </span>) },
   ];
 
@@ -107,9 +145,14 @@ export function KsoProduktivitasView({ data }: { data: KsoProduktivitas }) {
               onChange={(e) => setSkema(e.target.value)}
               className="border-input bg-background text-foreground rounded-md border px-2 py-1 text-xs"
             >
+              {/* Hanya DUA pilihan. Aset berskema UNKNOWN tidak pernah muncul di sini:
+                  kso_asset_produktivitas_v mem-JOIN kategori_skema yang cuma mengenal
+                  PER_TEST & BELI_REAGEN, jadi 22 aset tanpa skema (STATUS kosong atau tak
+                  dikenali di Populasi KSO) tersaring di lapisan view. Opsi "Tanpa skema"
+                  akan selamanya kosong — menyajikannya membuat orang mengira datanya hilang,
+                  padahal masalahnya di sheet. Jumlahnya disebut di catatan bawah tabel. */}
               <option value="PER_TEST">PER_TEST (KSO Tes)</option>
               <option value="BELI_REAGEN">BELI_REAGEN (KSO Reagen)</option>
-              <option value="UNKNOWN">Tanpa skema</option>
             </select>
           </label>
           <label className="flex cursor-pointer items-center gap-2 text-sm">
@@ -117,7 +160,7 @@ export function KsoProduktivitasView({ data }: { data: KsoProduktivitas }) {
             Hanya yang layak diperingkat
           </label>
           <div className="text-muted-foreground ml-auto text-sm">
-            {rows.length} baris{median ? <> · median <span className="font-medium">{rp(median)}</span>/tes</> : null}
+            {rows.length} faskes{median ? <> · median <span className="font-medium">{rp(median)}</span>/tes</> : null}
           </div>
         </CardContent>
       </Card>
@@ -147,14 +190,20 @@ export function KsoProduktivitasView({ data }: { data: KsoProduktivitas }) {
         </Card>
       ) : null}
 
+      <p className="text-muted-foreground text-xs">
+        Aset yang skemanya belum ditentukan tidak muncul di halaman ini — kolom STATUS-nya
+        kosong atau tidak dikenali di sheet <em>Populasi KSO</em>, sehingga tersaring di
+        lapisan view. Perbaikannya di sheet, bukan di sini.
+      </p>
+
       <DataTable
         columns={cols}
         data={rows}
-        getKey={(r) => String(r.assetId)}
+        getKey={(g) => g.key}
         searchPlaceholder="Cari faskes, alat, kota…"
         pageSize={25}
         initialSort={{ id: "rpt", dir: "desc" }}
-        empty="Tidak ada aset pada filter ini."
+        empty="Tidak ada faskes pada filter ini."
       />
     </div>
   );
