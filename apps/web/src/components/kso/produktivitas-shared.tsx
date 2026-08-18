@@ -144,40 +144,59 @@ export function deretBulan(dari: string, sampai: string): string[] {
 // Pola diuji berurutan; yang pertama cocok menang. Nama yang tidak cocok pola mana pun
 // jatuh ke kata pertamanya (lihat brandAlat) — jadi alat baru tetap muncul sebagai brand
 // yang masuk akal tanpa harus mengubah berkas ini lebih dulu.
+//
+// EJAANNYA MENGIKUTI `brand_alias` (migrasi 108/109), bukan selera berkas ini. Tanpa itu
+// brand yang sama tampil berbeda di dua menu — /pipeline menulis 'ZYBIO', halaman ini
+// menulis 'Zybio' — dan siapa pun yang kelak menyandingkan deal dengan aset KSO lewat
+// brand akan mendapat join yang gagal diam-diam, tanpa satu pun error.
+//
+// 17 ejaan diselaraskan ke daftar rename otoritatif di 109 (mis. 'Nihon Kohden' → 'NIHON'
+// karena daftar resmi user menulis 'NIHON' saja) ditambah tiga yang komentar 109 sebut
+// dibiarkan memakai ejaan data ('Wiener lab', 'Vesmatic', 'Klyte').
+//
+// INI JEMBATAN, BUKAN PENYELESAIAN — masih dua sumber kebenaran. Kalau daftar resmi
+// berubah lagi, berkas ini TIDAK ikut dan tidak ada yang menandainya. Perbaikan
+// sesungguhnya: resolusi lewat `brand_alias` di server. Sampai itu ada, periksa berkala:
+//     SELECT DISTINCT canonical FROM brand_alias ORDER BY 1;
+//
+// Brand di bawah yang TIDAK muncul di daftar rename 109 (Erba, Fresenius, Metrolab,
+// Ediagnosis, Pictus, Liaison, SHM, Biolis, TMS, Mindray, Succeeder, BSI, NanoEntek,
+// BioSet, Eti Max, DNM, Sclavo, Dus) dibiarkan apa adanya — sebagian memang khas alat
+// KSO dan tidak pernah muncul sebagai brand deal.
 const BRAND: Array<[RegExp, string]> = [
-  [/^MEK-/i, "Nihon Kohden"],          // seri Celltac; satu-satunya yang WAJIB dipetakan
-  [/^ZYBIO/i, "Zybio"],
-  [/^WONDFO/i, "Wondfo"],
-  [/^CLOVER/i, "Clover"],
-  [/^WIENERLAB/i, "Wiener Lab"],
+  [/^MEK-/i, "NIHON"],          // seri Celltac; satu-satunya yang WAJIB dipetakan
+  [/^ZYBIO/i, "ZYBIO"],
+  [/^WONDFO/i, "WONDFO"],
+  [/^CLOVER/i, "CLOVER"],
+  [/^WIENERLAB/i, "Wiener lab"],
   [/^METROLAB/i, "Metrolab"],
   [/^ERBA/i, "Erba"],
-  [/^VESMATIC/i, "VesMatic"],
-  [/^DORA/i, "Dora"],
+  [/^VESMATIC/i, "Vesmatic"],
+  [/^DORA/i, "DORA"],
   [/^FRESENIUS/i, "Fresenius"],
-  [/^WEGO/i, "Wego"],
-  [/^T-?COAG/i, "T-Coag"],
-  [/^BIOCROSS/i, "Biocross"],
+  [/^WEGO/i, "WEGO"],
+  [/^T-?COAG/i, "TCOAG"],
+  [/^BIOCROSS/i, "BIOCROSS"],
   [/^(EDIAGNOSIS|ED-LYTE)/i, "Ediagnosis"],
-  [/^K[\s-]?LYTE/i, "K-Lyte"],
-  [/^I[\s-]?SMART/i, "i-Smart"],
+  [/^K[\s-]?LYTE/i, "Klyte"],
+  [/^I[\s-]?SMART/i, "I-SMART"],
   [/^LIAISON/i, "Liaison"],
   [/^PICTUS/i, "Pictus"],
   [/^BIOLIS/i, "Biolis"],
   [/^MINDRAY/i, "Mindray"],
-  [/^SNIBE/i, "Snibe"],
-  [/^TOSOH/i, "Tosoh"],
+  [/^SNIBE/i, "SNIBE"],
+  [/^TOSOH/i, "TOSOH"],
   [/^TMS/i, "TMS"],
   [/^SHM/i, "SHM"],
   [/^ETI\s?MAX/i, "Eti Max"],
-  [/^KONSUNG/i, "Konsung"],
+  [/^KONSUNG/i, "KONSUNG"],
   [/^NANOENTEK/i, "NanoEntek"],
   [/^SUCCEEDER/i, "Succeeder"],
   [/^SCLAVO/i, "Sclavo"],
   [/^BIOSET/i, "BioSet"],
-  [/^VIVACHEK/i, "VivaChek"],
+  [/^VIVACHEK/i, "VIVACHEK"],
   [/^(URIN\s+)?DUS\s/i, "Dus (urinalisis)"],
-  [/^GLUCOSE\s+XPER/i, "Xper"],
+  [/^GLUCOSE\s+XPER/i, "XPER"],
   [/^DNM-/i, "DNM"],
   [/^BIOCHEMICAL\s+SYSTEM/i, "BSI"],
 ];
