@@ -10,7 +10,7 @@ import {
   Bell, MapPin, ListChecks, Swords, CalendarOff, CalendarDays, CalendarRange,
   Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, Tags, SlidersHorizontal,
   Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, BookOpen, Calculator,
-  Hourglass, Wallet, Coins, Stamp,
+  Hourglass, Wallet, Coins, Stamp, TrendingUp,
   type LucideIcon,
 } from "lucide-react";
 
@@ -194,6 +194,11 @@ export const NAV: NavGroup[] = [
       // F38 — sama perlakuan spt Stok Gudang: dulu tab ketiga di /inventory,
       // sekarang route sendiri dgn key RBAC sendiri (`ed-watch`).
       { title: "ED & Kedaluwarsa", url: "/ed-watch", icon: Hourglass, badge: "NEW" },
+      // F19 — scan buffer (di sini) + ED (F38) → usulan forecast, Supply
+      // Chain review/edit, ajukan ke approval berjenjang F11. Ditaruh
+      // Purchasing (bukan CRM spt label blueprint) krn pemakainya
+      // Supply Chain + datanya dari Stok Gudang/ED Watch section ini.
+      { title: "Forecast Submission", url: "/forecast-submission", icon: TrendingUp, badge: "NEW" },
     ],
   },
   {

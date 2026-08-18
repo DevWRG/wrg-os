@@ -192,6 +192,15 @@ import {
   notifyCurrentStep,
   getAttachmentFile,
 } from "./repo/approval.js";
+import {
+  generateSuggestions,
+  listSuggestions,
+  updateSuggestion,
+  dismissSuggestion,
+  submitSuggestion,
+  listBufferConfig,
+  upsertBufferConfig,
+} from "./repo/forecast.js";
 import { runHodDaily } from "./repo/hodreminder.js";
 import {
   createReminder,
@@ -1454,6 +1463,81 @@ app.get("/approval-requests/:id/attachments/:attachmentId", async (c) => {
     "content-disposition": `inline; filename="${file.filename.replace(/"/g, "")}"`,
     "cache-control": "private, max-age=86400",
   });
+});
+
+// F19 Forecast Submission Engine — scan gudang (F37 stok + F38 ED) → usulan.
+// Manual trigger (tombol "Generate Usulan"), bukan cron di versi ini.
+app.post("/forecast/generate", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await generateSuggestions());
+});
+
+app.get("/forecast/suggestions", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listSuggestions(c.req.query("status") || undefined);
+  return c.json({ count: rows.length, suggestions: rows });
+});
+
+app.patch("/forecast/suggestions/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { finalQty?: number | null; notes?: string | null } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const r = await updateSuggestion(c.req.param("id"), body);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.post("/forecast/suggestions/:id/dismiss", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { reviewedBy?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    /* opsional */
+  }
+  const r = await dismissSuggestion(c.req.param("id"), body.reviewedBy);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.post("/forecast/suggestions/:id/submit", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { submittedBy?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.submittedBy) return c.json({ error: "submittedBy wajib" }, 400);
+  const r = await submitSuggestion(c.req.param("id"), body.submittedBy);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.get("/forecast/buffer-config", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json({ rows: await listBufferConfig() });
+});
+
+app.post("/forecast/buffer-config", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { itemId?: number; warehouseKode?: string; bufferQty?: number; updatedBy?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.itemId || !body.warehouseKode || body.bufferQty == null) {
+    return c.json({ error: "itemId, warehouseKode, bufferQty wajib" }, 400);
+  }
+  const r = await upsertBufferConfig({
+    itemId: body.itemId,
+    warehouseKode: body.warehouseKode,
+    bufferQty: body.bufferQty,
+    updatedBy: body.updatedBy ?? null,
+  });
+  return c.json(r, r.ok ? 200 : 400);
 });
 
 // A7 Product Intelligence — agregasi intelijen produk dari pipeline (D1).
