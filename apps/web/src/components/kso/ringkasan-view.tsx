@@ -4,7 +4,7 @@
 // Tabelnya ada di halaman induk; filter & pengelompokan dipakai bersama lewat
 // produktivitas-shared.tsx supaya dua muka ini tidak pernah menyaring dengan cara berbeda.
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Info } from "lucide-react";
 import {
   Bar, BarChart, CartesianGrid, Line, LineChart, ReferenceLine, XAxis, YAxis, LabelList,
@@ -13,8 +13,8 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart";
 import {
-  FilterBarKso, Kosong, PENANDA, Statistik, labelBulan, rpSingkat, useFilterKso,
-  type KsoProduktivitas,
+  FilterBarKso, Kosong, PENANDA, Pilih, Statistik, awalTahunIni, bulanIni, deretBulan,
+  labelBulan, rpSingkat, useFilterKso, type KsoProduktivitas,
 } from "./produktivitas-shared";
 
 export function KsoRingkasanView({ data }: { data: KsoProduktivitas }) {
@@ -34,24 +34,51 @@ export function KsoRingkasanView({ data }: { data: KsoProduktivitas }) {
 
   // ── Tren bulanan ────────────────────────────────────────────────
   // Tren datang dari kso_tren_bulanan_v (migrasi 106) yang cakupannya SELURUH faskes
-  // pada skema ini — ia TIDAK ikut filter kota/alat/penanda, karena view-nya sudah
+  // pada skema ini — ia TIDAK ikut filter kota/brand/alat/penanda, karena view-nya sudah
   // teragregasi per bulan dan tidak menyimpan asal-usul per faskes. Itu disebut
   // eksplisit di kartunya; kalau tidak, orang akan mengira grafiknya rusak saat
   // memfilter satu kota dan garisnya tidak bergerak.
-  const tren = useMemo(
-    () => data.tren.filter((t) => t.skema === skema)
-      .map((t) => ({
-        periode: t.periode,
-        label: labelBulan(t.periode),
-        tes: t.jumlahTes,
-        revenue: t.revenueNetto,
-        faskes: t.faskesLapor,
-      })),
-    [data.tren, skema],
+  //
+  // DEFAULT = Januari tahun berjalan s/d bulan ini (permintaan user 2026-08-18).
+  // Bukan "semua data": sheet memuat 2025 sementara mirror faktur Accurate baru mulai
+  // 2026, jadi rentang penuh selalu membuka dengan separuh grafik revenue kosong —
+  // pemandangan yang terbaca sebagai kerusakan, bukan sebagai batas data.
+  const semuaPeriode = useMemo(
+    () => [...new Set(data.tren.map((t) => t.periode))].sort(),
+    [data.tren],
   );
+  const [dari, setDari] = useState(awalTahunIni);
+  const [sampai, setSampai] = useState(bulanIni);
+
+  // Pilihan bulan digabung dari periode yang ADA di data DAN deret default, supaya
+  // "bulan ini" tetap bisa dipilih walau belum ada satu pun baris untuknya.
+  const opsiBulan = useMemo(
+    () => [...new Set([...semuaPeriode, ...deretBulan(awalTahunIni(), bulanIni())])].sort(),
+    [semuaPeriode],
+  );
+
+  const tren = useMemo(() => {
+    const per = new Map(data.tren.filter((t) => t.skema === skema).map((t) => [t.periode, t]));
+    // Dirangka dari DERET LENGKAP, bukan dari baris yang ada: bulan tanpa data harus
+    // menempati tempatnya di sumbu-x sebagai putusnya garis, bukan lenyap sehingga dua
+    // bulan yang berjauhan terlihat bersebelahan.
+    return deretBulan(dari, sampai).map((p) => {
+      const t = per.get(p);
+      return {
+        periode: p, label: labelBulan(p),
+        tes: t?.jumlahTes ?? null,
+        revenue: t?.revenueNetto ?? null,
+        faskes: t?.faskesLapor ?? null,
+      };
+    });
+  }, [data.tren, skema, dari, sampai]);
 
   const adaTes = tren.some((t) => t.tes !== null);
   const adaRevenue = tren.some((t) => t.revenue !== null);
+
+  const preset = (d: string, s2: string) => () => { setDari(d); setSampai(s2); };
+  const rentangPenuh = semuaPeriode.length
+    ? { d: semuaPeriode[0], s: semuaPeriode[semuaPeriode.length - 1] } : null;
 
   // ── 10 faskes revenue terbesar (magnitude → batang) ─────────────
   const top10 = useMemo(
@@ -115,6 +142,39 @@ export function KsoRingkasanView({ data }: { data: KsoProduktivitas }) {
         <Statistik label="Perlu diperiksa" nilai={total.tertanda.toLocaleString("id-ID")}
           catatan="faskes berpenanda" tekan={total.tertanda > 0} />
       </div>
+
+      {/* ── Rentang tren ─────────────────────────────────────────────────────
+          Kontrolnya diletakkan DI SINI, bukan di FilterBarKso, karena hanya dua
+          grafik tren yang mematuhinya. Menaruhnya bersama Kota/Brand/Alat akan
+          menyiratkan seluruh halaman ikut berubah — padahal kartu angka, 10 besar,
+          dan histogram memakai agregat seluruh periode. */}
+      <Card>
+        <CardContent className="flex flex-wrap items-end gap-3 py-4">
+          <Pilih label="Tren dari" value={dari} onChange={setDari}>
+            {opsiBulan.map((p) => <option key={p} value={p}>{labelBulan(p)}</option>)}
+          </Pilih>
+          <Pilih label="sampai" value={sampai} onChange={setSampai}>
+            {opsiBulan.map((p) => <option key={p} value={p}>{labelBulan(p)}</option>)}
+          </Pilih>
+          <div className="flex flex-wrap gap-1.5 pb-1">
+            <Preset aktif={dari === awalTahunIni() && sampai === bulanIni()}
+              onClick={preset(awalTahunIni(), bulanIni())}>Tahun berjalan</Preset>
+            {rentangPenuh ? (
+              <Preset aktif={dari === rentangPenuh.d && sampai === rentangPenuh.s}
+                onClick={preset(rentangPenuh.d, rentangPenuh.s)}>Semua data</Preset>
+            ) : null}
+          </div>
+          {dari > sampai ? (
+            <span className="pb-1 text-xs text-amber-600">
+              Bulan awal melewati bulan akhir — grafik dikosongkan.
+            </span>
+          ) : (
+            <span className="text-muted-foreground pb-1 text-xs">
+              {tren.length} bulan
+            </span>
+          )}
+        </CardContent>
+      </Card>
 
       {/* ── Tren bulanan: DUA grafik terpisah, bukan satu dengan dua sumbu ──────
           Jumlah tes dan rupiah beda skala beberapa ordo; menumpuknya pada satu bidang
@@ -181,10 +241,11 @@ export function KsoRingkasanView({ data }: { data: KsoProduktivitas }) {
         <CardContent className="flex items-start gap-2 py-3 text-xs">
           <Info className="mt-0.5 size-4 shrink-0 text-amber-600" />
           <p>
-            Dua grafik tren di atas mengikuti <strong>Skema</strong> saja — filter kota, alat,
-            dan penanda <strong>tidak</strong> mempengaruhinya, karena sumbernya sudah
-            teragregasi per bulan di tingkat basis data. Kartu angka dan dua grafik di bawah
-            ikut seluruh filter.
+            Dua grafik tren di atas mengikuti <strong>Skema</strong> dan <strong>rentang bulan</strong>
+            saja — filter kota, brand, alat, dan penanda <strong>tidak</strong> mempengaruhinya,
+            karena sumbernya sudah teragregasi per bulan di tingkat basis data. Sebaliknya,
+            kartu angka dan dua grafik di bawah ikut seluruh filter tapi <strong>tidak</strong>
+            ikut rentang bulan — angkanya selalu agregat seluruh periode.
           </p>
         </CardContent>
       </Card>
@@ -252,5 +313,21 @@ export function KsoRingkasanView({ data }: { data: KsoProduktivitas }) {
         </Card>
       </div>
     </div>
+  );
+}
+
+function Preset({ children, aktif, onClick }: {
+  children: React.ReactNode; aktif: boolean; onClick: () => void;
+}) {
+  return (
+    <button type="button" onClick={onClick}
+      className={
+        "rounded-md border px-2 py-1 text-xs transition-colors " +
+        (aktif
+          ? "border-primary/40 bg-primary/10 text-primary font-medium"
+          : "border-input bg-card text-muted-foreground hover:text-foreground")
+      }>
+      {children}
+    </button>
   );
 }
