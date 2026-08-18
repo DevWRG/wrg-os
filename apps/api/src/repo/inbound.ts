@@ -1,11 +1,13 @@
 import { db } from "../db.js";
 import { detectDaily, parseDaily, stripInvisible } from "../parsers/dailyplan.js";
 import { parseAmPlan, parseAmReport } from "../parsers/am.js";
+import { parseApprovalMessage } from "../parsers/approval.js";
 import { sendViaWaGateway, type WaSendResult } from "../wasend.js";
 import { handleSalesAnalyticsQuery } from "./inbound-sales-analytics.js";
 import { resolveSender } from "./master.js";
 import { upsertDailyTodo, computeIsLate } from "./todo.js";
 import { createReminder } from "./reminder.js";
+import { resolveApprover, decideCurrentStep } from "./approval.js";
 
 // Role yang pakai alur AM per-customer (sales_plan/activity_log + foto), bukan todo.
 const AM_ROLES = new Set(["AM", "Teknisi"]);
@@ -20,10 +22,14 @@ const isAmRole = (role?: string | null) => AM_ROLES.has((role ?? "").trim());
 // → patuh WA_DRY_RUN. Idempoten: wa_message.processed_at. Pengirim tak dikenal →
 // SILENT (tak balas) supaya tak spam non-AM/pesan bot di grup campuran.
 
-export type InboundKind = "plan" | "report" | "leads" | "update" | "sales" | "none";
+export type InboundKind = "plan" | "report" | "leads" | "update" | "sales" | "approve" | "reject" | "none";
 
 const LEADS_UPDATE_LINE = /^\s*#\s*(leads|update)\b/i;
 const SALES_LINE = /^\s*#\s*sales\b/i;
+// F11 — bisa muncul di pesan PRIVAT (DM), bukan cuma grup. Pipeline
+// ingest+dispatch ini sudah generik-jalur (wa.ts: chatJid = group_jid utk
+// grup, sender utk direct) jadi TIDAK butuh kode baru khusus DM.
+const APPROVE_REJECT_LINE = /^\s*#\s*(approve|reject)\b/i;
 
 export function detectKind(body: string | null): InboundKind {
   const daily = detectDaily(body); // line-anchored #plan/#report (sudah strip invisible)
@@ -33,6 +39,8 @@ export function detectKind(body: string | null): InboundKind {
       const m = line.match(LEADS_UPDATE_LINE);
       if (m) return m[1].toLowerCase() as "leads" | "update";
       if (SALES_LINE.test(line)) return "sales";
+      const ar = line.match(APPROVE_REJECT_LINE);
+      if (ar) return ar[1].toLowerCase() as "approve" | "reject";
     }
   }
   return "none";
@@ -448,6 +456,34 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
     return finish({ kind: "sales", via: ams.via, reply });
   }
 
+  // #APPROVE/#REJECT <kode> [alasan] (F11). Approver = akun app_user
+  // (HoD/Direktur), BUKAN master_user/AM — resolveApprover() beda sumber
+  // dari resolveSender() di atas. Pengirim tak dikenal → SILENT (sama pola).
+  if (kind === "approve" || kind === "reject") {
+    const approver = await resolveApprover(row.sender_jid);
+    if (!approver) return finish({ skipped: "unknown-approver", sender_name: row.sender_name });
+    const line = stripInvisible(row.body ?? "").split(/\r?\n/).find((l) => new RegExp(`^\\s*#\\s*${kind}\\b`, "i").test(l)) ?? "";
+    const parsed = parseApprovalMessage(line, kind);
+    if (!parsed) return finish({ error: `${kind}-empty` }, kind);
+    if ("error" in parsed) {
+      const reply = await sendViaWaGateway(target, `⚠️ #${kind.toUpperCase()} gagal diproses, ${approver.name}: ${parsed.error}`);
+      return finish({ error: parsed.error, reply });
+    }
+    const r = await decideCurrentStep(parsed.kode, kind, approver, parsed.note);
+    if (!r.ok) {
+      const reply = await sendViaWaGateway(target, `⚠️ ${parsed.kode} gagal diproses, ${approver.name}: ${r.error}`);
+      return finish({ ok: false, error: r.error, reply });
+    }
+    const text =
+      kind === "reject"
+        ? `❌ ${parsed.kode} ditolak, tercatat. Terima kasih, ${approver.name}.`
+        : r.status === "approved"
+          ? `✅ ${parsed.kode} disetujui (tahap terakhir) — request selesai. Terima kasih, ${approver.name}.`
+          : `✅ ${parsed.kode} disetujui, lanjut ke tahap berikutnya. Terima kasih, ${approver.name}.`;
+    const reply = await sendViaWaGateway(target, text);
+    return finish({ ok: true, status: r.status, reply });
+  }
+
   // #PLAN/#REPORT — parse DULU (body-name dibutuhkan untuk resolusi Tier-A).
   const parsed = parseDaily(row.body ?? "");
   const am = await resolveSender({
@@ -563,7 +599,7 @@ export async function processUnprocessed(
            media_path, geo_lat, geo_lon, geo_ts, geo_address
     FROM wa_message
     WHERE processed_at IS NULL
-      AND (body ~* '#\\s*(plan|report|leads|update|sales)'
+      AND (body ~* '#\\s*(plan|report|leads|update|sales|approve|reject)'
            OR (message_type ~* '^image' AND media_path IS NOT NULL))
     ORDER BY received_at ASC LIMIT ${limit}
   `;

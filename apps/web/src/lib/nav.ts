@@ -10,7 +10,7 @@ import {
   Bell, MapPin, ListChecks, Swords, CalendarOff, CalendarDays, CalendarRange,
   Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, Tags, SlidersHorizontal,
   Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, BookOpen, Calculator,
-  Wallet, Coins,
+  Wallet, Coins, Stamp,
   type LucideIcon,
 } from "lucide-react";
 
@@ -176,6 +176,10 @@ export const NAV: NavGroup[] = [
       { title: "Shipments", url: "/shipments", icon: Truck },
       { title: "Suppliers", url: "/suppliers", icon: Factory },
       { title: "HITL Review", url: "/hitl", icon: ClipboardCheck },
+      // F11 — base/generic approval engine (chain HoD Sales→Bisnis→After
+      // Sales→Supply Chain→Direktur), bukan spesifik 1 proses OPS — badge NEW
+      // krn baru & kontak per-tahap masih perlu diisi manual (lihat /config).
+      { title: "Approval Requests", url: "/approval-requests", icon: Stamp, badge: "NEW" },
     ],
   },
   {
