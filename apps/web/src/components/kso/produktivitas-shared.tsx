@@ -292,9 +292,18 @@ export function useFilterKso(data: KsoProduktivitas): FilterKso {
   };
 }
 
-export function FilterBarKso({ f, kanan }: { f: FilterKso; kanan?: React.ReactNode }) {
+export function FilterBarKso({ f, kanan, atas }: {
+  f: FilterKso; kanan?: React.ReactNode; atas?: React.ReactNode;
+}) {
   return (
-    <Card>
+    <Card className="gap-0 py-0">
+      {/* `atas` = slot untuk tab strip. Dijadikan SATU kartu dengan filter, bukan kartu
+          sendiri: halaman ini sudah bertumpuk (judul → 3 kartu cakupan → tab → filter →
+          isi), dan satu kartu lagi cuma menambah bingkai tanpa menambah makna. Tab dan
+          filter juga memang dibaca berbarengan — "muka mana, irisan apa". */}
+      {atas ? (
+        <div className="border-border border-b px-4 py-2.5">{atas}</div>
+      ) : null}
       <CardContent className="flex flex-wrap items-end gap-3 py-4">
         {/* Select eksplisit, BUKAN FilterSelect: komponen itu selalu menyisipkan opsi
             kosong "Semua", sedangkan "semua skema" tidak bermakna di sini — median

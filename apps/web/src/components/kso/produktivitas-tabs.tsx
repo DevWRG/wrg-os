@@ -49,21 +49,23 @@ export function KsoProduktivitasTabs({ data }: { data: KsoProduktivitas }) {
 
   return (
     <Tabs value={tab} onValueChange={(v) => pindah(String(v))}>
-      <TabsList>
-        <TabsTrigger value={TAB_TABEL} className="gap-1.5">
-          <Table2 className="size-4" /> Tabel per faskes
-        </TabsTrigger>
-        <TabsTrigger value={TAB_RINGKASAN} className="gap-1.5">
-          <BarChart3 className="size-4" /> Ringkasan
-        </TabsTrigger>
-      </TabsList>
-
-      {/* Filter di LUAR panel tab: satu baris kendali yang berlaku bagi dua-duanya.
-          Menaruhnya di dalam tiap panel membuatnya terlihat seperti dua filter berbeda
-          padahal keadaannya satu. */}
-      <div className="mt-4">
-        <FilterBarKso f={f} />
-      </div>
+      {/* Tab strip DAN filter dalam satu kartu (permintaan user 2026-08-18): tab-nya
+          tidak lagi mengambang di latar halaman. Filter sengaja di LUAR panel tab —
+          satu baris kendali yang berlaku bagi dua-duanya; menaruhnya di dalam tiap
+          panel membuatnya terlihat seperti dua filter berbeda padahal keadaannya satu. */}
+      <FilterBarKso
+        f={f}
+        atas={
+          <TabsList>
+            <TabsTrigger value={TAB_TABEL} className="gap-1.5">
+              <Table2 className="size-4" /> Tabel per faskes
+            </TabsTrigger>
+            <TabsTrigger value={TAB_RINGKASAN} className="gap-1.5">
+              <BarChart3 className="size-4" /> Ringkasan
+            </TabsTrigger>
+          </TabsList>
+        }
+      />
 
       <TabsContent value={TAB_TABEL} className="mt-4">
         <KsoProduktivitasTabel f={f} />
