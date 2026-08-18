@@ -32,6 +32,11 @@ const LABELS: Record<string, string> = {
   shipments: "Shipments",
   suppliers: "Suppliers",
   hitl: "HITL Review",
+  "approval-requests": "Approval Requests",
+  // Segmen generik "config" dipakai /approval-requests/config (F11) — kalau
+  // nanti ada fitur lain jalan "/xxx/config" jangan lupa ini map GLOBAL
+  // (per-segmen, bukan per-parent), bisa ikut ke-relabel.
+  config: "Setup Kontak Approval",
   users: "Users",
   settings: "Settings",
   showcase: "UI Showcase",

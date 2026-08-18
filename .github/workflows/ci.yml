@@ -28,6 +28,12 @@ jobs:
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm build
+      # Rumus Simulator KSO menghitung harga penawaran KSO yang dikirim ke faskes.
+      # Salah angka = penawaran salah, dan layarnya tetap tampil wajar — tidak ada
+      # yang gagal sendiri (PR #803: control XR memakai harga XN, lolos semua cek).
+      # Bandingkan dengan angka acuan dari aplikasi rujukan.
+      - name: Paritas Simulator KSO
+        run: node scripts/ops/kso-parity.mjs
 
   ai-check:
     name: services/ai import check

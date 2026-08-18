@@ -19,12 +19,16 @@ import { runReminders } from "./repo/reminder.js";
 import { runHodDaily, runMissStreakEscalation } from "./repo/hodreminder.js";
 import { runVisitWeeklyRecap } from "./repo/visitweekly.js";
 import { generateRekap, generateResume } from "./repo/monitor.js";
-import { syncAccurateInvoices, syncSalesOrders, syncDeliveryOrders, syncCustomers } from "./repo/accurateSync.js";
+import {
+  syncAccurateInvoices, syncSalesOrders, syncDeliveryOrders, syncCustomers,
+  syncSalesOrderItems, syncDeliveryOrderItems,
+} from "./repo/accurateSync.js";
 import { runPlanCheck, runReportCheck } from "./repo/compliance.js";
 import { runNotifTua } from "./repo/notiftua.js";
 import { runDailySummary } from "./repo/dailysummary.js";
 import { runRaportNarrative } from "./repo/raportnarrative.js";
 import { runWeeklyReport } from "./repo/weeklyreport.js";
+import { mirrorFreshness } from "./repo/mirror-health.js";
 import { runDetectLeaveScan } from "./repo/detectleave.js";
 import { runExtractCompetitor } from "./repo/extractcompetitor.js";
 import { runWeekendBriefing } from "./repo/weekendbriefing.js";
@@ -33,6 +37,7 @@ import { runRefreshMembers } from "./repo/listmembers.js";
 import { runNotifQuota } from "./repo/notifquota.js";
 import { evaluateSalesAlerts } from "./repo/sales-analytics-alert-eval.js";
 import { computeNpk, currentPeriod } from "./repo/npk.js";
+import { computeNpkAm } from "./repo/npk-am.js";
 import { snapshotLastWeek } from "./repo/watchpoint-weekly.js";
 import { runEdWatch } from "./repo/stock-batch.js";
 
@@ -465,7 +470,8 @@ export function startScheduler(): ScheduleStatus {
           }
           const r = await syncAccurateInvoices({});
           console.log(`[scheduler] accurate-sync @ ${startedAt} ${JSON.stringify(r).slice(0, 200)}`);
-          // Mirror sales-order/delivery-order TERBARU (recent-only) utk menu Orders/Shipments.
+          // Mirror sales-order/delivery-order utk menu Orders/Shipments. Paginasi
+          // berhenti berdasarkan tanggal (sinceDays), bukan jumlah halaman.
           try {
             const so = await syncSalesOrders({});
             const so2 = await syncDeliveryOrders({});
@@ -474,6 +480,16 @@ export function startScheduler(): ScheduleStatus {
           } catch (e2) {
             console.error(`[scheduler] accurate-sync orders/shipments gagal @ ${startedAt}:`, e2);
           }
+          // Baris item SO/DO (dasar fill rate). Satu detail.do per dokumen, jadi
+          // berbatas per siklus — backfill awal habis bertahap, bukan sekali jalan.
+          // Dipisah dari blok di atas supaya kegagalannya tak menjatuhkan mirror header.
+          try {
+            const si = await syncSalesOrderItems({});
+            const di = await syncDeliveryOrderItems({});
+            console.log(`[scheduler] accurate-sync so-items=${JSON.stringify(si)} do-items=${JSON.stringify(di)}`);
+          } catch (e3) {
+            console.error(`[scheduler] accurate-sync item SO/DO gagal @ ${startedAt}:`, e3);
+          }
         } catch (e) {
           console.error(`[scheduler] accurate-sync gagal @ ${startedAt}:`, e);
         }
@@ -481,6 +497,42 @@ export function startScheduler(): ScheduleStatus {
       { timezone },
     );
     live.push(`accurate-sync=${accExpr}`);
+  }
+
+  // mirror-freshness — pengawas kesegaran mirror Accurate. Bukan penarik data;
+  // hanya berteriak kalau mirror mendekati batas jendela tarik 7 hari.
+  //
+  // NYALA BAWAAN, tanpa flag. Ini satu-satunya job yang tak menyentuh dunia luar:
+  // tak memanggil API Accurate, tak mengirim WA — cuma membaca max(last_synced_at)
+  // lalu menulis log. Kalau ia ikut mati bersama flag lain, pengawasnya padam
+  // bersama yang diawasi, dan itu justru pola yang bikin outage senyap.
+  //
+  // TIDAK memeriksa hari libur — beda dari accurate-sync yang memang skip libur.
+  // Jendela 7 hari itu kalender dan tak berhenti saat libur, jadi libur panjang
+  // justru saat alarm ini paling dibutuhkan.
+  const freshExpr = process.env.MIRROR_FRESHNESS_CRON ?? "5 9 * * *";
+  if (cron.validate(freshExpr)) {
+    cron.schedule(
+      freshExpr,
+      async () => {
+        try {
+          const h = await mirrorFreshness();
+          if (h.ok) {
+            console.log(`[scheduler] mirror-freshness OK — ${h.catatan}`);
+            return;
+          }
+          const rinci = h.sumber
+            .filter((s) => s.stale)
+            .map((s) => `${s.sumber}=${s.umurHari ?? "belum pernah"}h`)
+            .join(" ");
+          console.error(`[scheduler] ⚠ MIRROR BASI (ambang ${h.ambangHari}h): ${rinci} — ${h.catatan}`);
+        } catch (e) {
+          console.error("[scheduler] mirror-freshness gagal:", e);
+        }
+      },
+      { timezone },
+    );
+    live.push(`mirror-freshness=${freshExpr}`);
   }
 
   // F127 sales-alert-eval — evaluasi threshold alert & kirim WA saat transisi
@@ -739,9 +791,10 @@ export function startScheduler(): ScheduleStatus {
     live.push(`notif-quota=${nqExpr}`);
   }
 
-  // npk-compute (F66) — recompute NPK 8 HoD semester berjalan, harian 01:00 WIB.
-  // Display-only (npk_score_semester + npk_aspect_score), tanpa WA/LLM. Periode
-  // diambil dari currentPeriod() supaya ikut berpindah S1→S2 tanpa ubah cron.
+  // npk-compute (F66) — recompute NPK semester berjalan, harian 01:00 WIB: 8 HoD
+  // (npk_score_semester/…_aspect_score) DAN semua AM (npk_am_*, migrasi 078) dalam
+  // satu job — dua-duanya display-only, tanpa WA/LLM, sumber datanya beririsan.
+  // Periode dari currentPeriod() supaya ikut berpindah S1→S2 tanpa ubah cron.
   const npkExpr = process.env.NPK_COMPUTE_CRON ?? "0 1 * * *";
   if ((enabled || npkComputeEnabled) && cron.validate(npkExpr)) {
     cron.schedule(
@@ -754,7 +807,16 @@ export function startScheduler(): ScheduleStatus {
           const now = wibNow();
           const { year, period } = currentPeriod(now);
           const r = await computeNpk({ year, period, now });
-          console.log(`[scheduler] npk-compute ok @ ${startedAt} ${JSON.stringify(r)}`);
+          // AM dihitung terpisah supaya kegagalan salah satu jalur tidak menelan
+          // hasil jalur satunya (log-nya juga jadi jelas jalur mana yang bermasalah).
+          let am: { computed: number } | { error: string };
+          try {
+            am = await computeNpkAm({ year, period, now });
+          } catch (e) {
+            am = { error: (e as Error).message };
+            console.error(`[scheduler] npk-compute(am) gagal @ ${startedAt}:`, e);
+          }
+          console.log(`[scheduler] npk-compute ok @ ${startedAt} hod=${JSON.stringify(r)} am=${JSON.stringify(am)}`);
         } catch (e) {
           console.error(`[scheduler] npk-compute gagal @ ${startedAt}:`, e);
         }

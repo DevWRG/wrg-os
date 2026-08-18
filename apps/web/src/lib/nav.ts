@@ -10,7 +10,7 @@ import {
   Bell, MapPin, ListChecks, Swords, CalendarOff, CalendarDays, CalendarRange,
   Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, Tags, SlidersHorizontal,
   Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, BookOpen, Calculator,
-  Hourglass,
+  Hourglass, Wallet, Coins, Stamp,
   type LucideIcon,
 } from "lucide-react";
 
@@ -21,6 +21,8 @@ import { canViewKlasifikasi } from "@/lib/klasifikasi-access";
 import { canViewRaportList } from "@/lib/raport-access";
 import { canViewExecutive } from "@/lib/executive-access";
 import { canViewKso } from "@/lib/kso-access";
+import { canViewNpkAm, canViewNpkAmSelf } from "@/lib/npk-access";
+import { canViewInsentifTim } from "@/lib/insentif-access";
 
 // exact: sorot aktif hanya saat path persis (untuk route induk yg punya child,
 // mis. /pricelist vs /pricelist/setup).
@@ -76,6 +78,22 @@ export const NAV: NavGroup[] = [
       { title: "Competitor Intel", url: "/competitor", icon: Swords },
       { title: "Pipeline", url: "/pipeline", icon: Workflow },
       { title: "Kinerja Saya", url: "/me", icon: UserRound, badge: "NEW" },
+      // F67 Insentif. Menu terpisah dari /insentif/tim karena PERTANYAANNYA beda:
+      // ini "berapa insentif saya", itu batch payroll — bukan sekadar barisnya
+      // lebih sedikit. Self-only untuk SEMUA peran, termasuk Direktur, jadi tak
+      // perlu gate identitas di sini; yang menjaga barisnya adalah scope server
+      // (PRD §E).
+      { title: "Insentif Saya", url: "/insentif", icon: Wallet, badge: "NEW", exact: true },
+      // Menu tim: SATU route untuk HoD + Finance + Direktur, dibedakan scope SERVER
+      // (resolveAkses), bukan route terpisah — rancangan /insentif/hod +
+      // /insentif/finance dibatalkan karena dua route = dua jalur query, dan yang
+      // versi "semua" itu yang berbahaya. AM murni tak boleh melihat menu ini sama
+      // sekali (§E.2.8: yang dibandingkan di sini angka penghasilan orang).
+      //
+      // Beda dari "Insentif Saya" di atas: item ini PUNYA `show`, supaya sebelum
+      // grup dicentang di Akses Grup fallback-nya masih masuk akal (HoD/Direktur)
+      // dan bukan tertutup untuk semua orang.
+      { title: "Insentif Tim", url: "/insentif/tim", icon: Coins, badge: "NEW", show: canViewInsentifTim },
       { title: "Customers", url: "/customers", icon: Building2 },
       { title: "Accounts", url: "/accounts", icon: Contact, badge: "NEW" },
       { title: "AR Aging", url: "/ar", icon: Receipt },
@@ -120,6 +138,9 @@ export const NAV: NavGroup[] = [
       // NPK (F66) — gate identitas: Direktur = admin/superuser; self-view = HoD (hod_key).
       { title: "NPK Direktur", url: "/npk", icon: Award, badge: "NEW", exact: true, show: (me) => me?.role === "admin" || me?.superuser === true },
       { title: "NPK Saya", url: "/npk/self", icon: UserCheck, badge: "NEW", show: (me) => !!me?.hod_key },
+      // NPK level AM (078): matrix semua AM untuk Direktur+HoD, self-view untuk staff AM.
+      { title: "NPK AM", url: "/npk/am", icon: Award, badge: "NEW", exact: true, show: canViewNpkAm },
+      { title: "NPK Saya (AM)", url: "/npk/am-self", icon: UserCheck, badge: "NEW", show: canViewNpkAmSelf },
       { title: "Karyawan 360", url: "/karyawan", icon: UsersRound, badge: "NEW", show: canViewRaportList },
       { title: "RACI Matrix", url: "/people/raci", icon: Workflow, badge: "NEW" },
       { title: "Org Chart", url: "/people/org", icon: Building2, badge: "NEW" },
@@ -128,6 +149,8 @@ export const NAV: NavGroup[] = [
       { title: "Executive Briefings", url: "/briefings", icon: ScrollText },
       { title: "Coaching Notes", url: "/coaching", icon: GraduationCap },
       { title: "Reports", url: "/reports", icon: BarChart3 },
+      // Revenue per lini produk — dasar metric `revstream` (kartu Fafa, WatchPoint).
+      { title: "Revenue per Lini", url: "/revenue-stream", icon: Coins, badge: "NEW" },
       { title: "Digest History", url: "/digests", icon: History },
     ],
   },
@@ -153,6 +176,10 @@ export const NAV: NavGroup[] = [
       { title: "Shipments", url: "/shipments", icon: Truck },
       { title: "Suppliers", url: "/suppliers", icon: Factory },
       { title: "HITL Review", url: "/hitl", icon: ClipboardCheck },
+      // F11 — base/generic approval engine (chain HoD Sales→Bisnis→After
+      // Sales→Supply Chain→Direktur), bukan spesifik 1 proses OPS — badge NEW
+      // krn baru & kontak per-tahap masih perlu diisi manual (lihat /config).
+      { title: "Approval Requests", url: "/approval-requests", icon: Stamp, badge: "NEW" },
     ],
   },
   {

@@ -42,11 +42,13 @@ interface SetClia {
   tests: number;
 }
 
-const setAwal = (a: KsoAnalyzer): SetClia => ({
-  price: a.defaultCapex,
+const setAwal = (): SetClia => ({
+  // Semua mulai 0 seperti aplikasi asal — skema CLIA disusun dari nol tiap
+  // penawaran, tidak ada angka master yang layak jadi titik berangkat.
+  price: 0,
   disc: 0,
-  kso: a.defaultKsoBulan,
-  markup: a.defaultMarkup,
+  kso: 0,
+  markup: 0,
   tests: 0,
 });
 
@@ -76,7 +78,7 @@ export function CliaPanel({
   const grup = analyzer?.kode ?? "";
 
   const [set, setSet] = useState<Record<string, SetClia>>(() =>
-    Object.fromEntries(analyzers.map((a) => [a.kode, setAwal(a)])),
+    Object.fromEntries(analyzers.map((a) => [a.kode, setAwal()])),
   );
   const [cons, setCons] = useState<Record<string, Record<string, ConsInput>>>(() =>
     Object.fromEntries(analyzers.map((a) => [a.kode, consAwal(a)])),
@@ -92,7 +94,13 @@ export function CliaPanel({
   const [filterPanel, setFilterPanel] = useState("");
   const [cari, setCari] = useState("");
 
-  const s = set[grup] ?? setAwal(analyzer);
+  const s = set[grup] ?? setAwal();
+  // UPS & LIS milik kategori ini sendiri — di aplikasi asal tiap kategori
+  // punya sepasang sendiri (cuma Hematologi & Kimia Klinik yang berbagi),
+  // karena satu kunjungan bisa menawarkan beberapa alat dengan pendukung
+  // yang berbeda.
+  const [ups, setUps] = useState(0);
+  const [lis, setLis] = useState(0);
   const upd = (patch: Partial<SetClia>) => setSet((p) => ({ ...p, [grup]: { ...p[grup], ...patch } }));
 
   const panelGrup = useMemo(
@@ -115,10 +123,10 @@ export function CliaPanel({
     () =>
       hitungCapex({
         harga: { price: s.price, disc: s.disc },
-        ups: umum.ups, lis: umum.lis, backup: null,
+        ups, lis, backup: null,
         ksoBulan: s.kso, testsPerMonth: s.tests, workDays: umum.workDays,
       }),
-    [s, umum],
+    [s, ups, lis, umum.workDays],
   );
   const hasil = useMemo(
     () =>
@@ -144,7 +152,7 @@ export function CliaPanel({
       analyzerName: analyzer.brand ?? analyzer.label,
       backupLabel: "",
       totCap: capex.total,
-      capex: { alat: capex.nettAlat, backup: 0, ups: umum.ups, lis: umum.lis },
+      capex: { alat: capex.nettAlat, backup: 0, ups, lis },
       kso: s.kso, testsPerMonth: s.tests, totTest: capex.totalTest,
       workDays: umum.workDays, markup: s.markup,
     },
@@ -282,8 +290,8 @@ export function CliaPanel({
             <KartuCapex
               price={s.price} disc={s.disc}
               onPrice={(v) => upd({ price: v })} onDisc={(v) => upd({ disc: v })}
-              ups={umum.ups} lis={umum.lis}
-              onUps={(v) => setUmum({ ups: v })} onLis={(v) => setUmum({ lis: v })}
+              ups={ups} lis={lis}
+              onUps={setUps} onLis={setLis}
               nettAlat={capex.nettAlat} total={capex.total}
             />
           </CardContent>
