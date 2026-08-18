@@ -86,6 +86,7 @@ export interface PipelineDeal {
   deal_id: string;
   customer_name: string;
   facility_name: string | null;
+  instansi_type: string | null;        // jenis faskes: RS / Klinik / Puskesmas / Dinkes / Lab
   am_id: string | null;
   am_name: string | null;              // panggilan AM (resolve dari master_user)
   brand: string | null;
@@ -133,7 +134,7 @@ export async function getPipeline(
   scope?: DataScope,
 ): Promise<{ stages: PipelineStage[]; summary: PipelineSummary; total_deals: number; total_value: number }> {
   const sql = db();
-  const cols = sql`deal_id, customer_name, facility_name, am_id, brand, product, product_category,
+  const cols = sql`deal_id, customer_name, facility_name, instansi_type, am_id, brand, product, product_category,
     prospect_category, stage, probability, forecast_category,
     COALESCE(estimated_value, estimate_amount) AS estimate_amount,
     qty_num, unit_price,
@@ -174,6 +175,7 @@ export async function getPipeline(
       deal_id: String(r.deal_id),
       customer_name: String(r.customer_name ?? ""),
       facility_name: r.facility_name ? String(r.facility_name) : null,
+      instansi_type: r.instansi_type ? String(r.instansi_type) : null,
       am_id: r.am_id ? String(r.am_id) : null,
       am_name: r.am_id ? (amMap.get(String(r.am_id)) ?? null) : null,
       brand: r.brand ? String(r.brand) : null,

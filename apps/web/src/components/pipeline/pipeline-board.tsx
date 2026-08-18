@@ -16,6 +16,7 @@ export interface PipelineDeal {
   deal_id: string;
   customer_name: string;
   facility_name: string | null;
+  instansi_type: string | null;
   am_id: string | null;
   am_name: string | null;
   brand: string | null;
