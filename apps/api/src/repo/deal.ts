@@ -501,9 +501,14 @@ export async function transitionStage(
       updated_at = now()
     WHERE deal_id = ${dealId}
   `;
+  // Reason = keterangan user saja. Awalan "stage A→B" TIDAK ditulis lagi: kolom
+  // from_stage/to_stage sudah menyimpannya dan UI Riwayat sudah menampilkannya di
+  // baris judul, jadi awalan itu cuma mengulang isi baris di atasnya.
+  // (Baris lama yg terlanjur ber-awalan dibersihkan saat render — lihat
+  //  pipeline-board.tsx stripStagePrefix.)
   const reason = toLost
-    ? `stage ${fromStage}→${toStage} | loss: ${lossReason}${opts?.note ? ` | ${opts.note}` : ""}`
-    : `stage ${fromStage}→${toStage}${opts?.note ? ` | ${opts.note}` : ""}`;
+    ? `loss: ${lossReason}${opts?.note ? ` | ${opts.note}` : ""}`
+    : (opts?.note ?? null);
   const logged = await sql`
     INSERT INTO spt_state_log (deal_id, from_stage, to_stage, changed_by, reason)
     VALUES (${dealId}, ${fromStage}, ${toStage}, ${scope.userId ?? scope.amId}, ${reason})
@@ -687,7 +692,8 @@ export interface TimelineEntry {
   id: string;
   from_stage: string | null;
   to_stage: string;
-  changed_by: string | null;
+  changed_by: string | null;      // nilai mentah: app_user.id (UUID) ATAU am_id
+  changed_by_name: string | null; // nama manusia hasil resolusi; null bila tak terpetakan
   reason: string | null;
   occurred_at: string;
 }
@@ -703,17 +709,33 @@ export async function getDealTimeline(dealId: string, scope: DataScope): Promise
   if (cur.length === 0) throw new DealError(404, "deal tidak ditemukan");
   const deal = { am_id: cur[0].am_id ? String(cur[0].am_id) : null, cabang: cur[0].cabang ? String(cur[0].cabang) : null };
   if (!canRead(scope, deal)) throw new DealError(403, "tidak berwenang melihat deal ini");
+  // changed_by menyimpan DUA jenis nilai: app_user.id (UUID, aksi dari dashboard)
+  // atau am_id (aksi dari jalur WA). Dua-duanya di-resolve ke nama supaya user
+  // tak disodori UUID mentah. Bandingkan `au.id::text = s.changed_by` — mencast
+  // sisi text ke uuid akan meledak pada baris ber-am_id ("16" bukan UUID).
+  // Volumenya seuprit (satu deal), jadi cast di join tak jadi soal di sini.
   const rows = await sql`
-    SELECT id, from_stage, to_stage, changed_by, reason, occurred_at
-    FROM spt_state_log
-    WHERE deal_id = ${dealId}
-    ORDER BY occurred_at DESC, id DESC
+    SELECT s.id, s.from_stage, s.to_stage, s.changed_by, s.reason, s.occurred_at,
+      COALESCE(
+        NULLIF(au.name, ''),
+        NULLIF(aumu.nama, ''),
+        NULLIF(mu.nama, ''),
+        NULLIF(mu.panggilan, ''),
+        NULLIF(split_part(COALESCE(au.email, ''), '@', 1), '')
+      ) AS changed_by_name
+    FROM spt_state_log s
+    LEFT JOIN app_user au    ON au.id::text = s.changed_by
+    LEFT JOIN master_user aumu ON aumu.am_id = au.am_id
+    LEFT JOIN master_user mu ON mu.am_id = s.changed_by
+    WHERE s.deal_id = ${dealId}
+    ORDER BY s.occurred_at DESC, s.id DESC
   `;
   return rows.map((r) => ({
     id: String(r.id),
     from_stage: r.from_stage ? String(r.from_stage) : null,
     to_stage: String(r.to_stage),
     changed_by: r.changed_by ? String(r.changed_by) : null,
+    changed_by_name: r.changed_by_name ? String(r.changed_by_name) : null,
     reason: r.reason ? String(r.reason) : null,
     occurred_at: String(r.occurred_at),
   }));
