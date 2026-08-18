@@ -12,17 +12,11 @@
 -- tanpa satu pun error muncul — persis kelas kesalahan yang tidak terlihat di total mana
 -- pun. Jadi peta itu dijadikan tabel `kso_kategori_skema`.
 --
--- YANG BELUM DIKERJAKAN, DAN HARUS DIKETAHUI PEMBACA BERIKUTNYA:
--- `kso_asset_produktivitas_v` MASIH memuat daftarnya secara hardcode di CTE
--- `kategori_skema`. Migrasi ini sengaja TIDAK membuat ulang view live itu — perubahan
--- kosmetik pada view yang sedang dipakai menu produksi tidak sepadan dengan risikonya.
--- Begitu view itu perlu dibuat ulang untuk alasan lain, GANTI CTE-nya jadi baca tabel ini
--- dan hapus paragraf ini. Sementara itu, deteksi penyimpangannya dengan:
---
---   SELECT skema, array_agg(kategori ORDER BY kategori) FROM kso_kategori_skema GROUP BY 1;
---   -- bandingkan dengan CTE kategori_skema di infra/postgres/init/105_*.sql
---
--- Kalau dua-duanya tidak sama, tren dan tabel sedang berbohong satu sama lain.
+-- SUDAH DITUNTASKAN DI 107: saat migrasi ini ditulis, `kso_asset_produktivitas_v` masih
+-- memuat daftarnya secara hardcode di CTE `kategori_skema`, dan paragraf ini berisi cara
+-- mendeteksi penyimpangan antara keduanya. Migrasi 107 mengganti CTE itu jadi membaca
+-- tabel ini, jadi tidak ada lagi dua daftar yang bisa berbeda — dan tidak ada lagi yang
+-- perlu dibandingkan berkala.
 
 CREATE TABLE IF NOT EXISTS kso_kategori_skema (
   skema    text NOT NULL CHECK (skema IN ('PER_TEST','BELI_REAGEN')),
