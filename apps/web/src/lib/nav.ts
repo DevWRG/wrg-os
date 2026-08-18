@@ -8,7 +8,7 @@ import {
   Factory, Workflow, Receipt, BarChart3, ClipboardCheck, History, Settings,
   Sparkles, Send, FileText, ScrollText, GraduationCap, UsersRound, Network,
   Bell, MapPin, ListChecks, Swords, CalendarOff, CalendarDays, CalendarRange,
-  Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, Tags, SlidersHorizontal,
+  Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, Tags, SlidersHorizontal, Microscope,
   Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, BookOpen, Calculator,
   Wallet, Coins,
   type LucideIcon,
@@ -105,6 +105,15 @@ export const NAV: NavGroup[] = [
       // dipakai sales menyusun skema KSO/CPRR di depan faskes. Master datanya
       // migrasi 074, rumusnya apps/web/src/lib/kso/formula.ts.
       { title: "Simulator KSO", url: "/kso-simulator", icon: Calculator, badge: "NEW", show: canViewKso },
+      // Produktivitas KSO — sisi lain dari Simulator: bukan menghitung skema di
+      // depan faskes, tapi membaca hasilnya. Realisasi tes (spreadsheet master
+      // aset) disandingkan dengan revenue Accurate untuk menghasilkan Rp/tes per
+      // faskes. Data & aturan atribusinya di view kso_asset_produktivitas_v
+      // (migrasi 097-105), bukan di TypeScript.
+      //
+      // Gate sama dengan Simulator atas keputusan user 2026-08-18 — perlu diingat
+      // halaman ini memuat REVENUE PER FASKES, bukan sekadar harga alat.
+      { title: "Produktivitas KSO", url: "/kso-produktivitas", icon: Microscope, badge: "NEW", show: canViewKso },
       // Harga jual dibagi per PEMBACA, bukan per tabel:
       //   /pricebook            sales & AM — katalog + harga terpublikasi (071/043)
       //   /pricebook/ringkasan  Direktur + HoD — bacaan portofolio
