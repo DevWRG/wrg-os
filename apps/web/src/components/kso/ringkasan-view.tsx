@@ -1,8 +1,9 @@
 "use client";
 
-// Sub-menu /kso-produktivitas/ringkasan — kartu angka + grafik.
-// Tabelnya ada di halaman induk; filter & pengelompokan dipakai bersama lewat
-// produktivitas-shared.tsx supaya dua muka ini tidak pernah menyaring dengan cara berbeda.
+// Panel RINGKASAN — kartu angka + grafik. Dirender sebagai tab oleh
+// produktivitas-tabs.tsx, yang memegang keadaan filter dan merender FilterBarKso;
+// panel ini hanya MENERIMA `f`. `data` tetap dibutuhkan karena tren bulanan
+// (data.tren) berada di luar cakupan filter per-faskes.
 
 import { useMemo, useState } from "react";
 import { Info } from "lucide-react";
@@ -13,12 +14,11 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart";
 import {
-  FilterBarKso, Kosong, PENANDA, Pilih, Statistik, awalTahunIni, bulanIni, deretBulan,
-  labelBulan, rpSingkat, useFilterKso, type KsoProduktivitas,
+  Kosong, PENANDA, Pilih, Statistik, awalTahunIni, bulanIni, deretBulan,
+  labelBulan, rpSingkat, type FilterKso, type KsoProduktivitas,
 } from "./produktivitas-shared";
 
-export function KsoRingkasanView({ data }: { data: KsoProduktivitas }) {
-  const f = useFilterKso(data);
+export function KsoRingkasanPanel({ f, data }: { f: FilterKso; data: KsoProduktivitas }) {
   const { rows, median, skema } = f;
 
   const total = useMemo(() => {
@@ -130,8 +130,6 @@ export function KsoRingkasanView({ data }: { data: KsoProduktivitas }) {
 
   return (
     <div className="space-y-4">
-      <FilterBarKso f={f} />
-
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Statistik label="Faskes" nilai={rows.length.toLocaleString("id-ID")}
           catatan={`${total.alat.toLocaleString("id-ID")} alat`} />

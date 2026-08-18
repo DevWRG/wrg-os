@@ -3,10 +3,9 @@ import { sessionUser } from "@/lib/admin-guard";
 import { canViewKso } from "@/lib/kso-access";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { EmptyState } from "@/components/ui/empty-state";
-import {
-  KsoProduktivitasView,
-  type KsoProduktivitas,
-} from "@/components/kso/produktivitas-view";
+import { Card, CardContent } from "@/components/ui/card";
+import { KsoProduktivitasTabs } from "@/components/kso/produktivitas-tabs";
+import type { KsoProduktivitas } from "@/components/kso/produktivitas-shared";
 
 export const dynamic = "force-dynamic";
 
@@ -52,16 +51,40 @@ export default async function KsoProduktivitasPage() {
     );
   }
 
-  // Kartu angka & grafik pindah ke sub-menu Ringkasan KSO (2026-08-18) — halaman ini
-  // fokus menelusuri satu faskes, dan menumpuk keduanya mendorong tabel jauh ke bawah
-  // lipatan.
+  const { ringkasan } = data;
   return (
     <>
       <PageHeader
         title="Produktivitas KSO"
         description="Realisasi tes vs revenue Accurate per faskes. Rp/tes dihitung di level customer."
       />
-      <KsoProduktivitasView data={data} />
+      {/* Tiga angka ini TIDAK ikut filter — sengaja: ia menggambarkan cakupan data
+          secara keseluruhan (berapa aset berhasil dipetakan ke Accurate), bukan irisan
+          yang sedang dilihat. Karena itu ia berada di LUAR tab: nilainya sama di
+          dua-duanya, dan menaruhnya di dalam salah satu tab membuatnya terlihat milik
+          tab itu saja. */}
+      <div className="grid gap-3 sm:grid-cols-3">
+        <Stat label="Aset terpetakan" value={ringkasan.aset.toLocaleString("id-ID")} />
+        <Stat label="Faskes" value={ringkasan.faskes.toLocaleString("id-ID")} />
+        <Stat
+          label="Layak diperingkat"
+          value={`${ringkasan.layakDiperingkat.toLocaleString("id-ID")} / ${ringkasan.aset.toLocaleString("id-ID")}`}
+          hint="penyebut ≥ 100 tes/thn & Rp/tes ada"
+        />
+      </div>
+      <KsoProduktivitasTabs data={data} />
     </>
+  );
+}
+
+function Stat({ label, value, hint }: { label: string; value: string; hint?: string }) {
+  return (
+    <Card>
+      <CardContent className="py-4">
+        <div className="text-muted-foreground text-xs">{label}</div>
+        <div className="text-2xl font-semibold tracking-tight">{value}</div>
+        {hint ? <div className="text-muted-foreground text-xs">{hint}</div> : null}
+      </CardContent>
+    </Card>
   );
 }
