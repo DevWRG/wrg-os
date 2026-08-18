@@ -178,8 +178,12 @@ export function PipelineExportButton({
     }
   }
 
+  // variant `soft` (ber-fill), BUKAN `outline`: di toolbar ini tombolnya berdiri
+  // di antara kotak cari & 7 dropdown filter yang semuanya putih — dengan outline
+  // ia jadi kotak putih kesekian dan tak terbaca sebagai tombol. Tetap tidak solid
+  // supaya tidak bersaing dengan aksi utama "+ Deal Baru" di sebelahnya.
   return (
-    <Button variant="outline" size="sm" onClick={onExport} disabled={busy || deals.length === 0}>
+    <Button variant="soft" size="sm" onClick={onExport} disabled={busy || deals.length === 0}>
       {busy ? <Loader2 className="animate-spin" /> : <FileSpreadsheet />}
       Export Excel
     </Button>

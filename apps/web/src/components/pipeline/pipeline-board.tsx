@@ -69,6 +69,10 @@ const STAGE_LABEL: Record<string, string> = {
   "Closing-Won": "Won", "Closing-Lost": "Lost",
 };
 const stageLabel = (s: string) => STAGE_LABEL[s] ?? s;
+// Tahap final: deal sudah diputus (Won/Lost). Detailnya jadi catatan riwayat —
+// tombol Edit & Hapus disembunyikan supaya angka yang sudah dilaporkan tidak
+// diubah belakangan. Pembetulan Lost tetap lewat jalur Persetujuan Lost.
+const CLOSED_STAGES = new Set(["Closing-Won", "Closing-Lost"]);
 // Definisi tahap (SPT) — dipajang di header kolom biar AM seragam menilai.
 const STAGE_DESC: Record<string, string> = {
   Prospecting: "Sudah kunjungan pertama, ada interest atau setidaknya mau diajak bicara",
@@ -120,9 +124,25 @@ interface TimelineEntry {
   from_stage: string | null;
   to_stage: string;
   changed_by: string | null;
+  changed_by_name: string | null;
   reason: string | null;
   occurred_at: string;
 }
+
+// Baris Riwayat lama menyimpan reason ber-awalan "stage A→B | keterangan" —
+// pengulangan baris judul di atasnya. Awalan itu tak ditulis lagi sejak
+// moveStage dirapikan; yang terlanjur ada dibuang saat render. Nama stage bisa
+// mengandung spasi ("First Contact"), jadi pola dibatasi sampai pemisah "|".
+const stripStagePrefix = (s: string) => s.replace(/^stage\s+[^|]*→[^|]*?(?:\s*\|\s*|$)/, "").trim();
+
+// UUID mentah tak berarti apa-apa buat user. Kalau nama tak berhasil di-resolve
+// dan nilainya cuma UUID, baris "oleh …" disembunyikan sekalian.
+const isUuid = (s: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
+const actorLabel = (t: TimelineEntry): string | null => {
+  if (t.changed_by_name) return t.changed_by_name;
+  if (!t.changed_by) return null;
+  return isUuid(t.changed_by) ? null : t.changed_by;
+};
 
 function Sel({ label, val, set, options }: { label: string; val: string; set: (v: string) => void; options: string[] }) {
   return (
@@ -429,6 +449,8 @@ export function PipelineBoard({ data, isAdmin = false }: { data: PipelineData; i
                 <ol className="space-y-2">
                   {tl.map((t) => {
                     const moved = t.from_stage && t.from_stage !== t.to_stage;
+                    const note = t.reason ? stripStagePrefix(t.reason) : "";
+                    const actor = actorLabel(t);
                     return (
                       <li key={t.id} className="text-sm flex gap-2">
                         <span className="text-muted-foreground shrink-0 mt-0.5">•</span>
@@ -441,8 +463,8 @@ export function PipelineBoard({ data, isAdmin = false }: { data: PipelineData; i
                             )}
                             <span className="text-xs text-muted-foreground">{fmtDateTime(t.occurred_at)}</span>
                           </div>
-                          {t.reason && <div className="text-xs text-muted-foreground mt-0.5 break-words">{t.reason}</div>}
-                          {t.changed_by && <div className="text-[11px] text-muted-foreground/70 mt-0.5">oleh {t.changed_by}</div>}
+                          {note && <div className="text-xs text-muted-foreground mt-0.5 break-words">{note}</div>}
+                          {actor && <div className="text-[11px] text-muted-foreground/70 mt-0.5">oleh {actor}</div>}
                         </div>
                       </li>
                     );
@@ -452,16 +474,24 @@ export function PipelineBoard({ data, isAdmin = false }: { data: PipelineData; i
             </div>
             <div className="mt-4 flex items-center gap-2 border-t pt-3">
               <span className="text-xs text-muted-foreground">Seret kartu di board untuk pindah stage (isi keterangan tiap perpindahan).</span>
-              <button onClick={() => { const d = sel; setSel(null); setFormModal({ mode: "edit", deal: d as DealFormInit }); }}
-                className="ml-auto text-sm px-3 py-1 rounded-md border hover:bg-muted">Edit</button>
-              {isAdmin && (
-                <button onClick={() => setConfirmDel(sel)}
-                  className="text-sm px-3 py-1 rounded-md border border-rose-300 text-rose-700 hover:bg-rose-50">
-                  Hapus
-                </button>
-              )}
-              <button onClick={() => setSel(null)}
-                className="text-sm px-3 py-1 rounded-md bg-primary text-primary-foreground font-medium hover:opacity-90">Tutup</button>
+              {/* ml-auto pindah ke pembungkus: di stage final Edit/Hapus hilang,
+                  kalau ml-auto menempel di Edit maka Tutup ikut lompat ke kiri. */}
+              <div className="ml-auto flex items-center gap-2">
+                {!CLOSED_STAGES.has(sel.stage) && (
+                  <>
+                    <button onClick={() => { const d = sel; setSel(null); setFormModal({ mode: "edit", deal: d as DealFormInit }); }}
+                      className="text-sm px-3 py-1 rounded-md border hover:bg-muted">Edit</button>
+                    {isAdmin && (
+                      <button onClick={() => setConfirmDel(sel)}
+                        className="text-sm px-3 py-1 rounded-md border border-rose-300 text-rose-700 hover:bg-rose-50">
+                        Hapus
+                      </button>
+                    )}
+                  </>
+                )}
+                <button onClick={() => setSel(null)}
+                  className="text-sm px-3 py-1 rounded-md bg-primary text-primary-foreground font-medium hover:opacity-90">Tutup</button>
+              </div>
             </div>
           </Card>
         </div>
