@@ -85,6 +85,16 @@ export function KsoRingkasanView({ data }: { data: KsoProduktivitas }) {
     return band.map((b) => ({ band: b.id, jumlah: nilai.filter(b.uji).length }));
   }, [rows, median]);
 
+  // Faskes yang LOLOS pagar penyebut tapi tidak punya Rp/tes tidak bisa masuk histogram —
+  // tak ada nilai untuk dibandingkan ke median. Akibatnya jumlah batang selalu lebih kecil
+  // dari kartu "Faskes" di atasnya (71 vs 68 dan 82 vs 77 pada data 2026-08-18), dan orang
+  // yang menjumlahkan batangnya menemukan selisih tanpa penjelasan. Dihitung, bukan ditulis
+  // tetap, supaya ikut bergerak saat pemetaan bertambah dan hilang sendiri kalau nol.
+  //
+  // Sengaja `!rupiahPerTesCustomer` (menangkap 0 juga), agar sepadan dengan filter `v > 0`
+  // milik histogram di atas.
+  const tanpaRpTes = rows.filter((g) => !g.r.rupiahPerTesCustomer).length;
+
   const cfg = {
     tes: { label: "Jumlah tes", color: "var(--chart-2)" },
     revenue: { label: "Revenue netto", color: "var(--chart-1)" },
@@ -230,6 +240,14 @@ export function KsoRingkasanView({ data }: { data: KsoProduktivitas }) {
               Patokannya <strong>median</strong>, bukan rata-rata — sebaran Rp/tes sangat miring,
               dan rata-rata akan tertarik segelintir faskes yang puluhan kali lipat.
             </p>
+            {tanpaRpTes > 0 ? (
+              <p className="text-muted-foreground mt-1 text-xs">
+                {tanpaRpTes} faskes tidak masuk histogram karena belum punya Rp/tes — revenue
+                Accurate-nya nol atau belum terpetakan, jadi tak ada nilai untuk dibandingkan ke
+                median. Jumlah batang ({rows.length - tanpaRpTes}) karena itu lebih kecil dari
+                kartu <em>Faskes</em> ({rows.length}).
+              </p>
+            ) : null}
           </CardContent>
         </Card>
       </div>
