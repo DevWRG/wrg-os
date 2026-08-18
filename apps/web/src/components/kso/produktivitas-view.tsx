@@ -1,23 +1,19 @@
 "use client";
 
-// Muka TABEL /kso-produktivitas — menelusuri satu faskes.
-// Kartu angka & grafiknya pindah ke sub-menu /kso-produktivitas/ringkasan
-// (ringkasan-view.tsx) atas permintaan user 2026-08-18; filter dan pengelompokan
-// dipakai bersama lewat produktivitas-shared.tsx.
+// Panel TABEL — menelusuri satu faskes. Dirender sebagai tab oleh
+// produktivitas-tabs.tsx, yang juga memegang keadaan filter dan merender FilterBarKso;
+// panel ini hanya MENERIMA `f` supaya dua tab tidak pernah menyaring berbeda.
 
 import { AlertTriangle, Info } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { Card, CardContent } from "@/components/ui/card";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
-import {
-  FaskesRow, FilterBarKso, Tag, num, rp, useFilterKso, type KsoProduktivitas,
-} from "./produktivitas-shared";
+import { FaskesRow, FilterKso, Tag, num, rp } from "./produktivitas-shared";
 
 export type { KsoProduktivitas, KsoProduktivitasRow } from "./produktivitas-shared";
 
-export function KsoProduktivitasView({ data }: { data: KsoProduktivitas }) {
-  const f = useFilterKso(data);
+export function KsoProduktivitasTabel({ f }: { f: FilterKso }) {
   const { rows, median } = f;
 
   const cols: DataColumn<FaskesRow>[] = [
@@ -75,8 +71,6 @@ export function KsoProduktivitasView({ data }: { data: KsoProduktivitas }) {
 
   return (
     <div className="space-y-4">
-      <FilterBarKso f={f} />
-
       <Card>
         <CardContent className="flex items-start gap-2 py-3 text-xs">
           <Info className="text-muted-foreground mt-0.5 size-4 shrink-0" />
@@ -84,8 +78,8 @@ export function KsoProduktivitasView({ data }: { data: KsoProduktivitas }) {
             <strong>Rp/tes dihitung di level customer</strong>, bukan per alat — revenue milik faskes,
             dan kolom “Alat” menunjukkan berapa alat seskema yang membagi angka itu.
             Kedua skema <strong>tidak sebanding</strong> satu sama lain (median berbeda beberapa kali lipat),
-            jadi peringkatnya terpisah. Kartu angka dan grafiknya ada di sub-menu{" "}
-            <strong>Ringkasan KSO</strong>.
+            jadi peringkatnya terpisah. Kartu angka dan grafiknya ada di tab{" "}
+            <strong>Ringkasan</strong>, dengan filter yang sama seperti di sini.
           </p>
         </CardContent>
       </Card>
