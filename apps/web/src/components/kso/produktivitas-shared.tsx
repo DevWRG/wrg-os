@@ -96,6 +96,104 @@ export const labelBulan = (periode: string) => {
 
 export const SEMUA = "__semua__";
 
+// ── Rentang bulan ──────────────────────────────────────────────────────────────────
+// Semua periode berbentuk 'YYYY-MM-01' dan dibandingkan sebagai STRING. Perbandingan
+// leksikografis pada format itu identik dengan urutan waktu, dan menghindari Date sama
+// sekali — satu-satunya cara memastikan tidak ada pergeseran zona waktu.
+const dua = (n: number) => String(n).padStart(2, "0");
+
+// Bulan berjalan menurut jam lokal pemakai (getMonth, BUKAN UTC): di WIB tanggal 1
+// pukul 00:30, versi UTC masih menunjuk bulan sebelumnya.
+export function bulanIni(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${dua(d.getMonth() + 1)}-01`;
+}
+export function awalTahunIni(): string {
+  return `${new Date().getFullYear()}-01-01`;
+}
+
+// Deret bulan lengkap dari..sampai (inklusif). Dipakai untuk merangka sumbu-x grafik
+// tren: tanpa ini bulan yang TIDAK ADA barisnya hilang dari sumbu, sehingga grafik
+// terlihat rapat & bersambung padahal ada bulan yang tidak dilaporkan. Dengan deret
+// lengkap + connectNulls={false}, bulan kosong tampil sebagai putusnya garis.
+export function deretBulan(dari: string, sampai: string): string[] {
+  if (dari > sampai) return [];
+  const out: string[] = [];
+  let [y, m] = [Number(dari.slice(0, 4)), Number(dari.slice(5, 7))];
+  const batas = sampai.slice(0, 7);
+  for (let i = 0; i < 240; i++) {          // pagar 20 tahun; rentang KSO jauh lebih pendek
+    const p = `${y}-${dua(m)}`;
+    out.push(`${p}-01`);
+    if (p >= batas) break;
+    if (++m > 12) { m = 1; y++; }
+  }
+  return out;
+}
+
+// ── Brand alat ─────────────────────────────────────────────────────────────────────
+// Diturunkan dari `nama_alat`; TIDAK ada kolom brand di kso_asset maupun di sheet.
+//
+// KENAPA PETA EKSPLISIT, BUKAN "ambil kata pertama": pada 63 nama alat yang ada, kata
+// pertama benar untuk sebagian besar (Zybio, Wondfo, Clover, Erba) tapi memecah yang
+// justru paling banyak. Seri MEK — MEK-6318/6410/6510/7222/7300/8222, 31 unit — akan
+// jadi ENAM "brand" berbeda padahal satu keluarga Celltac Nihon Kohden. Begitu pula
+// 'I Smart 30' vs 'ISMART 300' (dua ejaan, satu alat) dan 'ED-Lyte5' vs
+// 'Ediagnosis ED-Lyte5'. Filter yang memecah satu brand jadi beberapa baris tidak
+// sekadar berantakan — ia membuat orang menyimpulkan brand itu kecil.
+//
+// Pola diuji berurutan; yang pertama cocok menang. Nama yang tidak cocok pola mana pun
+// jatuh ke kata pertamanya (lihat brandAlat) — jadi alat baru tetap muncul sebagai brand
+// yang masuk akal tanpa harus mengubah berkas ini lebih dulu.
+const BRAND: Array<[RegExp, string]> = [
+  [/^MEK-/i, "Nihon Kohden"],          // seri Celltac; satu-satunya yang WAJIB dipetakan
+  [/^ZYBIO/i, "Zybio"],
+  [/^WONDFO/i, "Wondfo"],
+  [/^CLOVER/i, "Clover"],
+  [/^WIENERLAB/i, "Wiener Lab"],
+  [/^METROLAB/i, "Metrolab"],
+  [/^ERBA/i, "Erba"],
+  [/^VESMATIC/i, "VesMatic"],
+  [/^DORA/i, "Dora"],
+  [/^FRESENIUS/i, "Fresenius"],
+  [/^WEGO/i, "Wego"],
+  [/^T-?COAG/i, "T-Coag"],
+  [/^BIOCROSS/i, "Biocross"],
+  [/^(EDIAGNOSIS|ED-LYTE)/i, "Ediagnosis"],
+  [/^K[\s-]?LYTE/i, "K-Lyte"],
+  [/^I[\s-]?SMART/i, "i-Smart"],
+  [/^LIAISON/i, "Liaison"],
+  [/^PICTUS/i, "Pictus"],
+  [/^BIOLIS/i, "Biolis"],
+  [/^MINDRAY/i, "Mindray"],
+  [/^SNIBE/i, "Snibe"],
+  [/^TOSOH/i, "Tosoh"],
+  [/^TMS/i, "TMS"],
+  [/^SHM/i, "SHM"],
+  [/^ETI\s?MAX/i, "Eti Max"],
+  [/^KONSUNG/i, "Konsung"],
+  [/^NANOENTEK/i, "NanoEntek"],
+  [/^SUCCEEDER/i, "Succeeder"],
+  [/^SCLAVO/i, "Sclavo"],
+  [/^BIOSET/i, "BioSet"],
+  [/^VIVACHEK/i, "VivaChek"],
+  [/^(URIN\s+)?DUS\s/i, "Dus (urinalisis)"],
+  [/^GLUCOSE\s+XPER/i, "Xper"],
+  [/^DNM-/i, "DNM"],
+  [/^BIOCHEMICAL\s+SYSTEM/i, "BSI"],
+];
+
+export function brandAlat(namaAlat: string | null | undefined): string {
+  const s = String(namaAlat ?? "").trim();
+  if (!s) return "(tanpa nama alat)";
+  for (const [pola, nama] of BRAND) if (pola.test(s)) return nama;
+  // Cadangan: kata pertama APA ADANYA. Sengaja tidak "(lainnya)" — satu keranjang
+  // serba-ada menyembunyikan brand baru alih-alih menampakkannya. Dan sengaja tidak
+  // dinormalkan huruf besar/kecilnya: 'GCU' akan jadi 'Gcu' dan 'Hubby-Quant' jadi
+  // 'Hubby-quant', dua-duanya salah tulis. Pada 63 nama alat yang ada sekarang hanya
+  // dua yang sampai ke sini, dan keduanya sudah benar apa adanya.
+  return s.split(/\s+/)[0];
+}
+
 // Penanda yang bisa dipakai menyaring. Diturunkan dari baris, bukan disimpan sebagai
 // kolom, supaya definisinya cuma hidup di satu tempat (dipakai chip DAN filter).
 export const PENANDA = [
@@ -110,10 +208,11 @@ export interface FilterKso {
   skema: string; setSkema: (v: string) => void;
   hanyaLayak: boolean; setHanyaLayak: (v: boolean) => void;
   kota: string; setKota: (v: string) => void;
+  brand: string; setBrand: (v: string) => void;
   alat: string; setAlat: (v: string) => void;
   penanda: string; setPenanda: (v: string) => void;
   dasar: FaskesRow[]; rows: FaskesRow[];
-  opsiKota: string[]; opsiAlat: string[];
+  opsiKota: string[]; opsiBrand: string[]; opsiAlat: string[];
   median: number | null; adaFilter: boolean; reset: () => void;
 }
 
@@ -124,6 +223,7 @@ export function useFilterKso(data: KsoProduktivitas): FilterKso {
   // yang justru ditutup migrasi 100.
   const [hanyaLayak, setHanyaLayak] = useState(true);
   const [kota, setKota] = useState(SEMUA);
+  const [brand, setBrand] = useState(SEMUA);
   const [alat, setAlat] = useState(SEMUA);
   const [penanda, setPenanda] = useState(SEMUA);
 
@@ -139,25 +239,37 @@ export function useFilterKso(data: KsoProduktivitas): FilterKso {
     () => [...new Set(dasar.map((g) => g.kota).filter((k): k is string => !!k))].sort((a, b) => a.localeCompare(b, "id")),
     [dasar],
   );
-  const opsiAlat = useMemo(
-    () => [...new Set(dasar.flatMap((g) => g.alatList))].sort((a, b) => a.localeCompare(b, "id")),
+  const opsiBrand = useMemo(
+    () => [...new Set(dasar.flatMap((g) => g.alatList.map(brandAlat)))].sort((a, b) => a.localeCompare(b, "id")),
     [dasar],
+  );
+  // Daftar Alat MENYEMPIT mengikuti Brand yang dipilih — satu-satunya opsi yang boleh
+  // begitu, karena Brand adalah induk Alat: menyodorkan 'Zybio Z3' saat brand Wondfo
+  // terpilih menghasilkan pilihan yang pasti mengosongkan tabel. Kota & Brand sendiri
+  // tetap diturunkan dari `dasar` supaya filternya tidak pernah mengunci diri.
+  const opsiAlat = useMemo(
+    () => [...new Set(dasar.flatMap((g) => g.alatList)
+      .filter((a) => brand === SEMUA || brandAlat(a) === brand))]
+      .sort((a, b) => a.localeCompare(b, "id")),
+    [dasar, brand],
   );
 
   const rows = useMemo(() => {
     const p = PENANDA.find((x) => x.id === penanda);
     return dasar.filter((g) =>
       (kota === SEMUA || g.kota === kota) &&
+      (brand === SEMUA || g.alatList.some((a) => brandAlat(a) === brand)) &&
       (alat === SEMUA || g.alatList.includes(alat)) &&
       (!p || p.uji(g.r)));
-  }, [dasar, kota, alat, penanda]);
+  }, [dasar, kota, brand, alat, penanda]);
 
   return {
-    skema, setSkema, hanyaLayak, setHanyaLayak, kota, setKota, alat, setAlat, penanda, setPenanda,
-    dasar, rows, opsiKota, opsiAlat,
+    skema, setSkema, hanyaLayak, setHanyaLayak, kota, setKota, brand, setBrand,
+    alat, setAlat, penanda, setPenanda,
+    dasar, rows, opsiKota, opsiBrand, opsiAlat,
     median: data.ringkasan.medianRpPerTes[skema] ?? null,
-    adaFilter: kota !== SEMUA || alat !== SEMUA || penanda !== SEMUA,
-    reset: () => { setKota(SEMUA); setAlat(SEMUA); setPenanda(SEMUA); },
+    adaFilter: kota !== SEMUA || brand !== SEMUA || alat !== SEMUA || penanda !== SEMUA,
+    reset: () => { setKota(SEMUA); setBrand(SEMUA); setAlat(SEMUA); setPenanda(SEMUA); },
   };
 }
 
@@ -182,6 +294,11 @@ export function FilterBarKso({ f, kanan }: { f: FilterKso; kanan?: React.ReactNo
         <Pilih label="Kota" value={f.kota} onChange={f.setKota}>
           <option value={SEMUA}>Semua kota ({f.opsiKota.length})</option>
           {f.opsiKota.map((k) => <option key={k} value={k}>{k}</option>)}
+        </Pilih>
+
+        <Pilih label="Brand" value={f.brand} onChange={(v) => { f.setBrand(v); f.setAlat(SEMUA); }}>
+          <option value={SEMUA}>Semua brand ({f.opsiBrand.length})</option>
+          {f.opsiBrand.map((b) => <option key={b} value={b}>{b}</option>)}
         </Pilih>
 
         <Pilih label="Alat" value={f.alat} onChange={f.setAlat}>
