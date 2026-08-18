@@ -521,14 +521,24 @@ export async function transitionStage(
   };
 }
 
-// Approve-guard: HANYA HoD (cabang deal ∈ cabangScope) atau admin/superuser boleh
-// memutus loss. AM (amOnly) TIDAK boleh — pemisahan tugas (bukan penilai loss deal
-// sendiri). Beda dari canWrite (yg izinkan AM utk deal-nya).
+// Approve-guard: HoD (cabang deal ∈ cabangScope), admin/superuser, atau user
+// ber-scope penuh (HoD tanpa hod_territory, direktur/office) boleh memutus loss.
+// AM (amOnly) TIDAK boleh — pemisahan tugas (bukan penilai loss deal sendiri).
+// Beda dari canWrite (yg izinkan AM utk deal-nya).
+//
+// WAJIB cermin listPendingLosses: apa pun yg tampil di antrean seseorang harus
+// bisa ia putuskan. Dulu tidak — scope tanpa cabang (HoD tanpa territory) melihat
+// SEMUA pending tapi tiap tombolnya balas 403.
 function canApprove(scope: DataScope, deal: { cabang: string | null }): boolean {
   if (scope.superuser) return true;
   if (scope.amOnly) return false;
-  if (scope.cabangScope && deal.cabang && scope.cabangScope.includes(deal.cabang)) return true;
-  return false;
+  // Mutasi wajib punya identitas (dicatat sbg changed_by). Panggilan tanpa
+  // x-user-id boleh membaca antrean, tapi tidak boleh memutus.
+  if (!scope.userId) return false;
+  if (scope.cabangScope && scope.cabangScope.length > 0) {
+    return !!deal.cabang && scope.cabangScope.includes(deal.cabang);
+  }
+  return true; // tanpa batas cabang — persis yg dilihat di antrean
 }
 
 export interface LossPending {
@@ -628,13 +638,17 @@ export async function decideLoss(
   }
   const by = scope.userId ?? scope.amId;
 
+  // Transaksi: UPDATE + log harus jadi satu. Tanpa itu, insert log yg gagal
+  // meninggalkan deal terlanjur ter-approve sementara API balas 500.
   if (decision === "approved") {
-    await sql`UPDATE deal SET loss_status = 'approved', updated_at = now() WHERE deal_id = ${dealId}`;
-    const logged = await sql`
-      INSERT INTO spt_state_log (deal_id, from_stage, to_stage, changed_by, reason)
-      VALUES (${dealId}, 'Closing-Lost', 'Closing-Lost', ${by}, ${`loss approved${note ? ` | ${note}` : ""}`})
-      RETURNING id
-    `;
+    const logged = await sql.begin(async (tx) => {
+      await tx`UPDATE deal SET loss_status = 'approved', updated_at = now() WHERE deal_id = ${dealId}`;
+      return await tx`
+        INSERT INTO spt_state_log (deal_id, from_stage, to_stage, changed_by, reason)
+        VALUES (${dealId}, 'Closing-Lost', 'Closing-Lost', ${by}, ${`loss approved${note ? ` | ${note}` : ""}`})
+        RETURNING id
+      `;
+    });
     return { deal_id: dealId, decision, stage: "Closing-Lost", loss_status: "approved", state_log_id: String(logged[0].id) };
   }
 
@@ -647,23 +661,25 @@ export async function decideLoss(
   const rev = prev.length > 0 && prev[0].from_stage ? String(prev[0].from_stage) : "";
   const revertStage = rev && DEAL_STAGES.includes(rev) && !CLOSED.includes(rev) ? rev : "Negotiation";
   const meta = STAGE_META[revertStage];
-  await sql`
-    UPDATE deal SET
-      stage = ${revertStage},
-      prospect_category = ${meta.prospect || null},
-      probability = ${meta.prob},
-      forecast_category = ${meta.forecast},
-      loss_reason = NULL,
-      loss_status = NULL,
-      stage_entered_at = now(),
-      updated_at = now()
-    WHERE deal_id = ${dealId}
-  `;
-  const logged = await sql`
-    INSERT INTO spt_state_log (deal_id, from_stage, to_stage, changed_by, reason)
-    VALUES (${dealId}, 'Closing-Lost', ${revertStage}, ${by}, ${`loss rejected → balik ${revertStage}${note ? ` | ${note}` : ""}`})
-    RETURNING id
-  `;
+  const logged = await sql.begin(async (tx) => {
+    await tx`
+      UPDATE deal SET
+        stage = ${revertStage},
+        prospect_category = ${meta.prospect || null},
+        probability = ${meta.prob},
+        forecast_category = ${meta.forecast},
+        loss_reason = NULL,
+        loss_status = NULL,
+        stage_entered_at = now(),
+        updated_at = now()
+      WHERE deal_id = ${dealId}
+    `;
+    return await tx`
+      INSERT INTO spt_state_log (deal_id, from_stage, to_stage, changed_by, reason)
+      VALUES (${dealId}, 'Closing-Lost', ${revertStage}, ${by}, ${`loss rejected → balik ${revertStage}${note ? ` | ${note}` : ""}`})
+      RETURNING id
+    `;
+  });
   return { deal_id: dealId, decision, stage: revertStage, loss_status: null, state_log_id: String(logged[0].id) };
 }
 
