@@ -1,4 +1,4 @@
--- 107: seragamkan kolom `deal.brand`.
+-- 108: seragamkan kolom `deal.brand`.
 --
 -- Masalah: brand diisi bebas (form Combo free-text + importer menelan apa adanya)
 -- sehingga 765 deal menghasilkan 205 nilai brand berbeda — dropdown filter Brand
