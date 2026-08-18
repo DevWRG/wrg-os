@@ -126,7 +126,23 @@ export const NAV: NavGroup[] = [
       // per faskes, Simulator tidak), hapus override ini DAN ganti gate di
       // apps/web/src/lib/kso-access.ts serta BFF — tiga tempat harus ikut, kalau
       // tidak menu dan halaman kembali menilai dengan kunci berbeda.
+      //
+      // `exact: true` karena kini punya child /kso-produktivitas/ringkasan — tanpa itu
+      // menu induk ikut tersorot saat berada di sub-menunya dan dua baris menyala
+      // bersamaan (pola yang sama dipakai /pricebook).
       { title: "Produktivitas KSO", url: "/kso-produktivitas", icon: Microscope, badge: "NEW",
+        exact: true, feature: "kso-simulator", show: canViewKso },
+      // Sub-menu Ringkasan: kartu angka + grafik (tren bulanan, 10 besar, sebaran).
+      // DIPISAH dari tabel atas permintaan user 2026-08-18, dan alasan teknisnya
+      // sejalan: dua muka ini dibaca dengan cara berbeda — ringkasan untuk melihat
+      // arah, tabel untuk menelusuri satu faskes — dan menumpuk keduanya mendorong
+      // tabel jauh ke bawah lipatan.
+      //
+      // feature: "kso-simulator" — sama seperti induknya, alasannya persis sama
+      // (lihat blok di atas). Tanpa override, Sync Fitur menyemai kunci
+      // "kso-produktivitas-ringkasan" berstatus deny dan sub-menu ini lenyap dari
+      // sidebar meski induknya diizinkan.
+      { title: "Ringkasan KSO", url: "/kso-produktivitas/ringkasan", icon: BarChart3, badge: "NEW",
         feature: "kso-simulator", show: canViewKso },
       // Harga jual dibagi per PEMBACA, bukan per tabel:
       //   /pricebook            sales & AM — katalog + harga terpublikasi (071/043)
