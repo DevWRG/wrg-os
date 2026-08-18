@@ -1,4 +1,4 @@
-import { gatewayFetch } from "@/lib/gateway";
+import { gatewayFetch, relay } from "@/lib/gateway";
 import { sessionUser } from "@/lib/admin-guard";
 
 export const dynamic = "force-dynamic";
@@ -16,8 +16,10 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
       headers: { "x-user-id": me.id, "content-type": "application/json" },
       body,
     });
-    const data = await res.json();
-    return Response.json(data, { status: res.status });
+    // relay() → status & body backend diteruskan apa adanya. `res.json()` polos
+    // bakal throw kalau backend balas non-JSON (mis. 404 teks Hono) dan menyamar
+    // jadi "backend unreachable" 502 — menyesatkan saat menelusuri kegagalan.
+    return await relay(res);
   } catch {
     return Response.json({ error: "backend unreachable" }, { status: 502 });
   }
