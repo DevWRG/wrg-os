@@ -314,17 +314,42 @@ def build(path):
     for a in assets.values():
         if a["skema"] == "UNKNOWN":
             skema_tak_tentu += 1
-            a["catatan"].append(
-                "Skema tidak dapat ditentukan: STATUS kosong di Populasi dan SN tidak "
-                "terdaftar di sheet Tes maupun Reagent. Aset ini TIDAK akan muncul di "
-                "kso_asset_produktivitas_v sampai STATUS-nya diisi.")
+            # DUA SEBAB, DUA TINDAKAN BERBEDA. Versi pertama catatan ini selalu berbunyi
+            # "STATUS kosong" — keliru untuk baris yang STATUS-nya justru TERISI tapi nilainya
+            # bukan skema. Pada data prod 2026-08-18 ada dua: 'BACKUP' (K Lyte 5, RSUD Ketapang)
+            # dan 'NOT READY' (Fresenius, RSUD Soegiri). Keduanya status OPERASIONAL alat yang
+            # tertulis di kolom jenis kerja sama. Menyuruh admin "mengisi STATUS" untuk baris
+            # yang sudah ada isinya membuat catatan ini diabaikan, bukan ditindaklanjuti.
+            #
+            # Bedanya bukan kosmetik: yang kosong perlu DIISI, yang tak dikenali perlu
+            # DIBETULKAN (nilainya salah kolom) — dan nilai seperti 'BACKUP' juga memberi tahu
+            # kenapa alatnya nol realisasi tes.
+            #
+            # Salah ketik yang MEMANG bentuk skema ditangani di status_map (mis. 'PERTES'),
+            # bukan di sini. Kalau muncul varian baru yang jelas-jelas berarti PER TEST atau
+            # BELI REAGEN, tambahkan ke status_map; jangan menebaknya di catatan.
+            st = (a.get("status_sheet") or "").strip()
+            if st:
+                a["catatan"].append(
+                    f"Skema tidak dapat ditentukan: STATUS di Populasi berisi {st!r}, yang bukan "
+                    "jenis kerja sama (dikenali: 'PER TEST', 'PERTES', 'BELI REAGEN'), dan SN "
+                    "tidak terdaftar di sheet Tes maupun Reagent. Betulkan nilai STATUS-nya — "
+                    "status operasional alat tempatnya di kolom Keterangan. Aset ini TIDAK akan "
+                    "muncul di kso_asset_produktivitas_v sampai itu dibereskan.")
+            else:
+                a["catatan"].append(
+                    "Skema tidak dapat ditentukan: STATUS kosong di Populasi dan SN tidak "
+                    "terdaftar di sheet Tes maupun Reagent. Aset ini TIDAK akan muncul di "
+                    "kso_asset_produktivitas_v sampai STATUS-nya diisi.")
     if skema_tak_tentu:
         report["peringatan"].append(
-            f"{skema_tak_tentu} aset tidak punya skema (STATUS kosong di {SHEET_POPULASI} dan "
-            "tidak terdaftar di sheet Tes/Reagent). Aset-aset itu akan TERSIMPAN di kso_asset "
-            "tapi TIDAK muncul di kso_asset_produktivitas_v. Perbaikannya di sheet: isi "
-            "kolom STATUS. Jangan menebak dari alat lain milik faskes yang sama — satu faskes "
-            "bisa memegang dua skema sekaligus.")
+            f"{skema_tak_tentu} aset tidak punya skema (STATUS kosong ATAU tidak dikenali di "
+            f"{SHEET_POPULASI}, dan tidak terdaftar di sheet Tes/Reagent). Aset-aset itu akan TERSIMPAN di kso_asset "
+            "tapi TIDAK muncul di kso_asset_produktivitas_v. Perbaikannya di sheet: isi kolom "
+            "STATUS yang kosong, dan BETULKAN yang nilainya bukan jenis kerja sama (status "
+            "operasional alat seperti BACKUP/NOT READY tempatnya di kolom Keterangan). "
+            "Jangan menebak dari alat lain milik faskes yang sama — satu faskes bisa "
+            "memegang dua skema sekaligus.")
 
     # Sebagian "alat baru" sebetulnya alat lama yang SN-nya ditulis beda di sheet 2026
     # (mis. 5360 vs 05360-B, atau SN diketik ulang salah). Ditandai, TIDAK digabung otomatis:
