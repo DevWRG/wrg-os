@@ -97,7 +97,7 @@ import {
   type Level as KlasifikasiLevel,
 } from "./repo/klasifikasi.js";
 import { master as ksoMaster } from "./repo/kso.js";
-import { produktivitas as ksoProduktivitas } from "./repo/kso-produktivitas.js";
+import { produktivitas as ksoProduktivitas, faskesDetail as ksoFaskesDetail } from "./repo/kso-produktivitas.js";
 import { listCoachingNotes } from "./repo/coaching.js";
 import { getLatestCoachingNotes, computePeopleAnalytics } from "./repo/people.js";
 import { createVisit, getVisit, listVisits, visitKpi, visitSummary } from "./repo/visit.js";
@@ -2742,6 +2742,22 @@ app.get("/kso/master", async (c) => {
 app.get("/kso/produktivitas", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json(await ksoProduktivitas());
+});
+
+// Detail satu faskes untuk dialog "Lihat detail". Gate-nya sama dengan endpoint di
+// atas (canViewKso di BFF) — rute ini melewati catch-all /api/kso/* yang sama, jadi
+// tidak ada jalur akses baru yang perlu dibuka.
+app.get("/kso/produktivitas/faskes/:accountId", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const accountId = Number(c.req.param("accountId"));
+  if (!Number.isFinite(accountId)) return c.json({ error: "accountId invalid" }, 400);
+  // Skema WAJIB dan dibatasi dua nilai: satu faskes bisa memegang dua skema dengan
+  // angka yang berbeda jauh, jadi detail tanpa skema akan mencampur keduanya.
+  const skema = c.req.query("skema") ?? "";
+  if (skema !== "PER_TEST" && skema !== "BELI_REAGEN") {
+    return c.json({ error: "skema wajib PER_TEST | BELI_REAGEN" }, 400);
+  }
+  return c.json(await ksoFaskesDetail(accountId, skema));
 });
 
 // Setelan harga keagenan (migrasi 077). Gate di halaman /pricebook/setup
