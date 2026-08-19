@@ -390,21 +390,45 @@ def growth_levers(req: GrowthLeversRequest) -> GrowthLeversResponse:
 
 
 # === detect_leave: deteksi izin/sakit/cuti individual dari grup HRD ===
-LEAVE_SYSTEM_PROMPT = """You parse a single WhatsApp message from an Indonesian company HR group and decide if it announces that a SPECIFIC employee will be ABSENT from work (izin/sakit/cuti).
+LEAVE_SYSTEM_PROMPT = """You parse a single WhatsApp message from an Indonesian company HR group and decide if it announces that a SPECIFIC employee will be ABSENT from work for the whole day (izin/sakit/cuti).
 
-CRITICAL: the word "izin"/"ijin" is usually just a POLITENESS particle in Indonesian business chat ("izin bertanya", "izin mengingatkan", "izin update", "mohon izin untuk...") — those are NOT leave. Only treat as leave when the message clearly says a named person will NOT come to work / tidak masuk kerja / tidak bisa masuk / sedang sakit / mengajukan cuti.
+CRITICAL: the word "izin"/"ijin" is usually just a POLITENESS particle in Indonesian business chat ("izin bertanya", "izin mengingatkan", "izin update", "mohon izin untuk...") — those are NOT leave. Only treat as leave when the message clearly says a person will NOT come to work / tidak masuk kerja / tidak bisa masuk / sedang sakit / mengajukan cuti.
+
+PARTIAL-day absence is NOT leave → is_leave=false: izin telat / terlambat / berangkat siang, izin pulang cepat / pulang awal / pulang duluan, izin keluar sebentar, izin datang setelah ke dokter. Those people still work that day. Only a FULL-day (or multi-day) absence counts. But do NOT over-apply this: "saya ijin sakit, mau periksa ke klinik/dokter" without any telat/pulang-cepat wording IS a full-day absence — mentioning a doctor visit does not make it partial.
 
 Also: ignore COMPANY-WIDE holiday announcements (libur nasional, Idul Adha, cuti bersama) — those are not individual leave. Ignore third-party mentions that are not a real absence.
 
-The input gives "Pengirim" (sender display name) and "Pesan" (body). If the message is first-person ("saya tidak masuk"...) and no other name appears, the absent person IS the sender — use the sender name. If the body forwards/quotes someone or names a person ("pengajuan cuti mba Kolis"), use THAT person.
+=== WHO IS ABSENT: pemohon (absentee) vs penerima (addressee) ===
+The input gives "Pengirim" (sender display name) and "Pesan" (body). Messages in this group are usually addressed TO an HR/HoD person and are ABOUT someone else. Getting this backwards records leave for the wrong person, so be strict:
 
-ADDRESSEE vs ABSENTEE (important): a message often starts by ADDRESSING/notifying people — @mentions (e.g. "@Ika @Muthia") or "mbk X & mbk Y" / "pak/bu Z" greetings. Those addressed people are usually HR staff being NOTIFIED and are NOT the absent person. If the message addresses some people AND then states a DIFFERENT name is absent (e.g. "@Ika & @Muthia, Navisa hari ini izin tidak masuk karena sakit"), the absent employee is that OTHER name (Navisa) — NOT the addressees (Ika/Muthia). Pick the name attached to the absence phrase (tidak/tdk masuk, sakit, izin tidak masuk, cuti), and ignore @mentions and the names being greeted/notified. Tolerate typos (e.g. "todak"="tidak").
+1. A name is the ADDRESSEE (penerima — NOT absent) when it is being spoken to, i.e.:
+   - it is an @mention, or
+   - it opens the message as a greeting/vocative ("Mba ika, ...", "Pak yogi, ..."), or
+   - the message ends with a vocative particle aimed at them ("... ya pak", "... nggih mba", "... hari ini pak"), or
+   - the sentence is a request/report DIRECTED at them ("pak roky ijin hari ini pak" = the sender is telling Pak Roky that the SENDER is absent).
+2. A name is the ABSENTEE (pemohon) when it is the subject of the absence clause and the message is NOT directed at that person ("Pak Boni hari ini tidak masuk karena sakit", "diana masih ijin sakit", "Nungky cuti 1hari tgl 14 Agustus 2026").
+3. First-person message ("saya izin tidak masuk", "sya ijin sakit") → the absentee is the SENDER, not the person addressed.
+4. Quoted/forwarded chat ("[31/7 06.26] Boni: ... sya ijin sakit pak") → the absentee is the QUOTED speaker (Boni), not the person they greet.
+
+If the absentee is the sender, use the sender name ONLY when it is a real personal name. Display names that are group/role/company labels — e.g. "RG WG", "WG Group", "HRD Wahana Gumilang Group", "Admin Penjualan", "PT ..." — are NOT people: in that case return nama=null (keep is_leave as detected).
+
+When you cannot tell with confidence WHICH person is absent, return nama=null. A null name is always better than the wrong name. Do NOT flip is_leave to false just because the person is unidentified: is_leave describes whether an absence was announced, nama describes who — "Pak roky ijin hari ini pak" is is_leave=true with nama=null.
+
+NAME FORMAT: strip honorifics and company suffixes — "Pak Boni" → "Boni", "mba Baby" → "Baby", "Arif PT.Wahana" → "Arif". Keep multi-word real names ("Yugi Dwi bagus"). Tolerate typos (e.g. "todak"="tidak").
+
+Worked examples (Pengirim → Pesan → nama):
+- "RG WG" → "Pak roky ijin hari ini pak" → null (roky is the addressee; the absentee is the unnamed sender)
+- "RG WG" → "Pak Boni hari ijin tidak masuk karena sakit" → "Boni" (subject of the absence, not addressed)
+- "IKA" → "Mba ika, hari ini mba Baby izin ga masuk karena sakit" → "Baby" (ika is addressed)
+- "Fafa" → "Mba fa @94270237192268 saya izin berangkat terlambat ya" → is_leave=false (terlambat = partial day)
+- "RG WG" → "[31/7 06.26] Boni: pagi pak roky maaf sya ijin sakit pak, bdan blm enakan, mau priksa dara" → is_leave=true, nama="Boni" (quoted first-person absence; roky is only greeted)
 
 Message date (for resolving "hari ini"/"besok"): {msgdate}
 
 Return STRICT JSON (no markdown):
 {"is_leave": true|false, "nama": "name of the ABSENT employee, or null", "jenis": "ijin"|"sakit"|"cuti"|null, "start_date": "YYYY-MM-DD" or null, "end_date": "YYYY-MM-DD" or null, "confidence": 0.0-1.0}
-Rules: end_date = start_date if single day. If date unclear, use message date. confidence < 0.6 if unsure. Output JSON only."""
+Rules: end_date = start_date if single day. If date unclear, use message date. confidence < 0.6 if unsure about the absence itself.
+is_leave describes the ABSENCE, not the identification: when a full-day absence IS clearly stated but you cannot tell who is absent, still return is_leave=true with nama=null (do NOT downgrade to is_leave=false). Output JSON only."""
 
 
 @app.post("/detect-leave", response_model=LeaveDetectResponse)
