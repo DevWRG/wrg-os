@@ -31,6 +31,12 @@
 // revenue RS Blitar ke RS Gresik saat pencocokan customer. Yang meleset dilaporkan
 // dengan kandidat terdekatnya untuk diputuskan manusia.
 //
+// OVERRIDE MENANG ATAS SEMUANYA (tabel kso_pemilik_alat_override, migrasi 114).
+// Tanpa itu, koreksi manual hilang senyap tiap kali skrip ini dijalankan ulang: aturan
+// "selebihnya = WRG" menyapu balik setiap SN yang di file tertulis salah. Sudah kejadian
+// 2026-08-19 — tiga SN salah ketik dikoreksi jadi PRINCIPAL, dan koreksinya akan lenyap
+// pada eksekusi berikutnya. Sekarang override diterapkan PALING AKHIR.
+//
 // ARAH KESALAHANNYA TIDAK SIMETRIS, dan itu perlu diketahui sebelum --apply:
 // karena aturannya "selebihnya = WRG", setiap alat penyedia yang GAGAL dicocokkan
 // akan tercatat sebagai modal WRG. Melewatkan satu berarti melebih-lebihkan investasi
@@ -71,6 +77,17 @@ const mirip = (a, b) => {
 };
 
 try {
+  const [{ ada: adaOverride }] = await sql`
+    SELECT count(*)::int AS ada FROM information_schema.tables
+    WHERE table_schema = 'public' AND table_name = 'kso_pemilik_alat_override'`;
+  if (!adaOverride) {
+    console.error("Tabel kso_pemilik_alat_override belum ada. Terapkan migrasi 114 dulu.\n" +
+      "Tanpa tabel itu, koreksi manual pemilik_alat akan tersapu balik oleh skrip ini.");
+    process.exit(1);
+  }
+  const override = await sql`
+    SELECT sn_key, pemilik_alat, alasan FROM kso_pemilik_alat_override`;
+
   const aset = await sql`
     SELECT id, sn_key, sn_raw, customer_raw, nama_alat, paket, pemilik_alat
     FROM kso_asset`;
@@ -105,6 +122,17 @@ try {
   console.log(`  pemilik_alat = PRINCIPAL : ${principal.size}`);
   console.log(`  pemilik_alat = WRG       : ${wrg.length}`);
   console.log(`  total aset               : ${aset.length}`);
+
+  if (override.length) {
+    const bySnAll = new Map(aset.map((a) => [String(a.sn_key), a]));
+    console.log(`\n=== Override manual (menang atas aturan file): ${override.length} ===`);
+    for (const o of override) {
+      const a = bySnAll.get(String(o.sn_key));
+      const nama = a ? `${String(a.customer_raw).slice(0, 34)} · ${a.nama_alat ?? ""}` : "(SN belum ada di kso_asset)";
+      console.log(`  ${String(o.sn_key).padEnd(20)} -> ${String(o.pemilik_alat).padEnd(10)} ${nama}`);
+      console.log(`      alasan: ${o.alasan}`);
+    }
+  }
 
   const sudahDiisi = aset.filter((a) => a.pemilik_alat !== null).length;
   if (sudahDiisi) {
@@ -146,10 +174,22 @@ try {
   await sql`UPDATE kso_asset SET pemilik_alat = 'WRG', updated_at = now()
             WHERE NOT (id = ANY(${ids}))`;
 
+  // PALING AKHIR, supaya menang atas dua UPDATE di atas. Di-JOIN lewat sn_key, bukan
+  // daftar id dari JS: SN yang belum ada di kso_asset cukup tidak kena apa-apa,
+  // tanpa perlu penanganan khusus.
+  const [{ count: nOverride }] = await sql`
+    WITH upd AS (
+      UPDATE kso_asset a SET pemilik_alat = o.pemilik_alat, updated_at = now()
+      FROM kso_pemilik_alat_override o
+      WHERE o.sn_key = a.sn_key AND a.pemilik_alat IS DISTINCT FROM o.pemilik_alat
+      RETURNING 1)
+    SELECT count(*)::int AS count FROM upd`;
+
   const cek = await sql`
     SELECT COALESCE(pemilik_alat, '(kosong)') AS pemilik, count(*)::int AS n
     FROM kso_asset GROUP BY 1 ORDER BY 2 DESC`;
-  console.log("\nSELESAI. Sebaran pemilik_alat sekarang:");
+  console.log(`\nSELESAI. Override diterapkan: ${nOverride} baris berubah.`);
+  console.log("Sebaran pemilik_alat sekarang:");
   for (const r of cek) console.log(`  ${String(r.pemilik).padEnd(12)} ${r.n}`);
   console.log(
     "\nIngat: aturan 'selebihnya = WRG' membuat setiap alat penyedia yang belum tercocokkan\n" +
