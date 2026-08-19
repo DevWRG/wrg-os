@@ -156,11 +156,12 @@ function progressBar(filled: number, total: number): string {
 }
 
 // Balasan #REPORT AM — selaras format legacy "Kapten" (EOD + progress + foto pending).
-function buildAmReportReply(
+// Diekspor untuk diuji tanpa DB (repo/inbound-reply.test.ts).
+export function buildAmReportReply(
   nama: string,
   tanggal: string,
   n: number,
-  res: { matched: number; unmatched: number },
+  res: { matched: number; unmatched: number; unmatchedNames?: string[] },
   planTotal: number,
   reported: number,
   pendingPhoto: string[],
@@ -169,6 +170,14 @@ function buildAmReportReply(
   if (planTotal > 0) s += `\n📊 ${reported}/${planTotal} customer selesai  ${progressBar(reported, planTotal)}`;
   s += `\n🎯 Match plan: ${res.matched}✓`;
   if (res.unmatched > 0) s += ` ${res.unmatched}⚠️`;
+  // Nama customer yang tak match SELALU disebut. Tanpa ini AM cuma melihat
+  // "1⚠️" dan tak punya cara tahu customer mana yang gagal dicocokkan —
+  // datanya sudah ada di unmatchedNames, dulu hanya tidak dicetak.
+  const namesTakMatch = res.unmatchedNames ?? [];
+  if (namesTakMatch.length > 0) {
+    s += `\n\n⚠️ *Di luar #PLAN hari ini (${namesTakMatch.length} customer):*\n${namesTakMatch.join(", ")}`;
+    s += "\n\nKalau memang dikunjungi, kirim ulang #PLAN lengkap (semua customer hari ini) lalu #REPORT lagi — biar terhitung selesai.";
+  }
   if (pendingPhoto.length > 0) {
     s += `\n\n⚠️ *Foto visit belum ada (${pendingPhoto.length} customer):*\n${pendingPhoto.join(", ")}`;
     s += "\n\nKirim foto Geo-Tagging Camera per customer dgn caption `Nama Customer` — fuzzy match auto-pair ke pending.";
