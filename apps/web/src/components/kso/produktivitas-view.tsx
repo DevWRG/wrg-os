@@ -4,17 +4,20 @@
 // produktivitas-tabs.tsx, yang juga memegang keadaan filter dan merender FilterBarKso;
 // panel ini hanya MENERIMA `f` supaya dua tab tidak pernah menyaring berbeda.
 
-import { AlertTriangle, Info } from "lucide-react";
+import { useState } from "react";
+import { AlertTriangle, ChevronRight, Info } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { Card, CardContent } from "@/components/ui/card";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
 import { FaskesRow, FilterKso, Tag, num, rp } from "./produktivitas-shared";
+import { FaskesDetailDialog } from "./faskes-detail-dialog";
 
 export type { KsoProduktivitas, KsoProduktivitasRow } from "./produktivitas-shared";
 
 export function KsoProduktivitasTabel({ f }: { f: FilterKso }) {
   const { rows, median } = f;
+  const [detail, setDetail] = useState<FaskesRow | null>(null);
 
   const cols: DataColumn<FaskesRow>[] = [
     { id: "faskes", header: "Faskes", sortable: true,
@@ -67,6 +70,19 @@ export function KsoProduktivitasTabel({ f }: { f: FilterKso }) {
         : <span className={cn(Math.abs(g.r.rasioTagihLapor - 1) > 0.25 && "text-amber-600 font-medium")}>
             {g.r.rasioTagihLapor.toFixed(2)}
           </span>) },
+    // Kolom aksi EKSPLISIT walaupun seluruh barisnya sudah bisa diklik: baris yang
+    // dapat diklik tidak punya penanda visual apa pun, jadi tanpa tombol ini
+    // kemampuannya hanya diketahui orang yang kebetulan mencoba.
+    { id: "aksi", header: "", align: "right", className: "w-px",
+      cell: (g) => (
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); setDetail(g); }}
+          className="text-muted-foreground hover:text-foreground inline-flex items-center gap-0.5 rounded px-1.5 py-1 text-xs whitespace-nowrap"
+        >
+          Lihat detail <ChevronRight className="size-3.5" />
+        </button>
+      ) },
   ];
 
   return (
@@ -109,6 +125,7 @@ export function KsoProduktivitasTabel({ f }: { f: FilterKso }) {
             pageSize={25}
             initialSort={{ id: "rpt", dir: "desc" }}
             empty="Tidak ada faskes pada filter ini."
+            onRowClick={setDetail}
           />
         </CardContent>
       </Card>
@@ -118,6 +135,8 @@ export function KsoProduktivitasTabel({ f }: { f: FilterKso }) {
         kosong atau tidak dikenali di sheet <em>Populasi KSO</em>, sehingga tersaring di
         lapisan view. Perbaikannya di sheet, bukan di sini.
       </p>
+
+      <FaskesDetailDialog g={detail} median={median} onClose={() => setDetail(null)} />
     </div>
   );
 }

@@ -17,6 +17,7 @@ import { useCallback } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { BarChart3, Table2 } from "lucide-react";
 
+import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { FilterBarKso, useFilterKso, type KsoProduktivitas } from "./produktivitas-shared";
 import { KsoProduktivitasTabel } from "./produktivitas-view";
@@ -49,13 +50,12 @@ export function KsoProduktivitasTabs({ data }: { data: KsoProduktivitas }) {
 
   return (
     <Tabs value={tab} onValueChange={(v) => pindah(String(v))}>
-      {/* Tab strip DAN filter dalam satu kartu (permintaan user 2026-08-18): tab-nya
-          tidak lagi mengambang di latar halaman. Filter sengaja di LUAR panel tab —
-          satu baris kendali yang berlaku bagi dua-duanya; menaruhnya di dalam tiap
-          panel membuatnya terlihat seperti dua filter berbeda padahal keadaannya satu. */}
-      <FilterBarKso
-        f={f}
-        atas={
+      {/* Tab strip di kartunya SENDIRI, terpisah dari filter (permintaan user
+          2026-08-19). Sempat digabung jadi satu kartu; dipisah lagi karena keduanya
+          menjawab pertanyaan berbeda — tab memilih MUKA, filter memilih IRISAN — dan
+          menempelkannya membuat tab terbaca seperti bagian dari baris filter. */}
+      <Card className="py-0">
+        <CardContent className="px-3 py-2.5">
           <TabsList>
             <TabsTrigger value={TAB_TABEL} className="gap-1.5">
               <Table2 className="size-4" /> Tabel per faskes
@@ -64,8 +64,15 @@ export function KsoProduktivitasTabs({ data }: { data: KsoProduktivitas }) {
               <BarChart3 className="size-4" /> Ringkasan
             </TabsTrigger>
           </TabsList>
-        }
-      />
+        </CardContent>
+      </Card>
+
+      {/* Filter sengaja di LUAR panel tab: satu baris kendali yang berlaku bagi
+          dua-duanya. Menaruhnya di dalam tiap panel membuatnya terlihat seperti dua
+          filter berbeda padahal keadaannya satu. */}
+      <div className="mt-3">
+        <FilterBarKso f={f} />
+      </div>
 
       <TabsContent value={TAB_TABEL} className="mt-4">
         <KsoProduktivitasTabel f={f} />
