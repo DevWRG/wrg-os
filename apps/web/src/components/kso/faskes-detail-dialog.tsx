@@ -162,9 +162,15 @@ export function FaskesDetailDialog({ g, median, onClose }: {
                           interval="preserveStartEnd" minTickGap={14} />
                         <YAxis tickLine={false} axisLine={false} width={40} tick={{ fontSize: 10 }}
                           tickFormatter={(v) => rpSingkat(Number(v))} />
+                        {/* Dibandingkan CASE-INSENSITIVE ke awalan "target": recharts
+                            mengirim `name` seri — yaitu "Target"/"Realisasi" berhuruf
+                            besar — bukan dataKey-nya. Membandingkan ke "target" persis
+                            membuat KEDUA baris tooltip berlabel "realisasi", dan itu
+                            bukan sekadar salah tulis: pembaca melihat dua angka
+                            realisasi berbeda di bulan yang sama. */}
                         <ChartTooltip content={<ChartTooltipContent
                           formatter={(v, n) => [Number(v).toLocaleString("id-ID") + " tes",
-                            n === "target" ? " target" : " realisasi"]} />} />
+                            String(n).toLowerCase().startsWith("target") ? " target" : " realisasi"]} />} />
                         {/* Legenda WAJIB begitu ada dua seri — identitas tidak boleh
                             bergantung pada warna saja. */}
                         {a.targetJumlahTes ? <Legend verticalAlign="top" height={22}
