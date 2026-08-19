@@ -19,7 +19,8 @@ import { cn } from "@/lib/utils";
 import { Dialog, DialogBody, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart";
 import {
-  PENANDA, Tag, deretBulan, labelBulan, num, rp, rpSingkat, type FaskesRow,
+  PENANDA, Tag, awalTahunIni, bulanIni, deretBulan, labelBulan, num, rp, rpSingkat,
+  type FaskesRow,
 } from "./produktivitas-shared";
 
 interface Detail {
@@ -74,9 +75,25 @@ export function FaskesDetailDialog({ g, median, onClose }: {
   // Sumbu-x dirangka dari deret bulan LENGKAP antara titik pertama & terakhir, sama
   // seperti grafik Ringkasan: tanpa itu bulan tanpa data lenyap dari sumbu sehingga dua
   // bulan berjauhan terlihat bersebelahan.
-  const titik = detail?.tren ?? [];
-  const seri = titik.length
-    ? deretBulan(titik[0].periode, titik[titik.length - 1].periode).map((p) => {
+  // JENDELA = TAHUN BERJALAN (permintaan user 2026-08-19), bukan seluruh rentang data.
+  // Alasannya kelihatan di layar: sheet memuat 2025 sementara mirror faktur Accurate baru
+  // mulai 2026, jadi rentang penuh selalu membuka dengan separuh grafik revenue kosong —
+  // terbaca sebagai kerusakan, bukan sebagai batas data. Memakai tahun BERJALAN, bukan
+  // '2026' yang dipatok, supaya tidak jadi salah sendiri tahun depan.
+  const dari = awalTahunIni();
+  const sampai = bulanIni();
+  const dalamJendela = (p: string) => p >= dari && p <= sampai;
+
+  const titik = (detail?.tren ?? []).filter((t) => dalamJendela(t.periode));
+  // Data yang ADA tapi di luar jendela — dipakai membedakan "belum pernah ada laporan"
+  // dari "ada laporan, tapi bukan tahun ini". Tanpa ini alat yang berhenti dipakai akhir
+  // 2025 tampil sama persis dengan alat yang tidak punya riwayat sama sekali.
+  const luarJendela = (detail?.tren ?? []).filter((t) => !dalamJendela(t.periode));
+  const adaTesLama = luarJendela.some((t) => t.jumlahTes !== null);
+  const adaRevLama = luarJendela.some((t) => t.revenueNetto !== null);
+
+  const seri = deretBulan(dari, sampai).length
+    ? deretBulan(dari, sampai).map((p) => {
         const t = titik.find((x) => x.periode === p);
         return { label: labelBulan(p), tes: t?.jumlahTes ?? null, revenue: t?.revenueNetto ?? null };
       })
@@ -137,16 +154,16 @@ export function FaskesDetailDialog({ g, median, onClose }: {
                   alat di bawah (tes terbanyak dulu) supaya dua bagian ini sejalan. */}
               <div className="grid gap-4 lg:grid-cols-2">
                 {detail.alat.map((a) => {
-                  const per = new Map(
-                    detail.trenAlat.filter((t) => t.assetId === a.assetId).map((t) => [t.periode, t.jumlahTes]));
-                  const p = [...per.keys()].sort();
-                  const seriAlat = p.length
-                    ? deretBulan(p[0], p[p.length - 1]).map((x) => ({
-                        label: labelBulan(x),
-                        tes: per.get(x) ?? null,
-                        target: a.targetJumlahTes,
-                      }))
-                    : [];
+                  const semua = detail.trenAlat.filter((t) => t.assetId === a.assetId);
+                  const per = new Map(semua.filter((t) => dalamJendela(t.periode))
+                    .map((t) => [t.periode, t.jumlahTes]));
+                  const seriAlat = deretBulan(dari, sampai).map((x) => ({
+                    label: labelBulan(x),
+                    tes: per.get(x) ?? null,
+                    target: a.targetJumlahTes,
+                  }));
+                  const punyaRiwayatLama = semua.some(
+                    (t) => !dalamJendela(t.periode) && t.jumlahTes !== null);
                   return (
                     <Grafik
                       key={a.assetId}
@@ -154,7 +171,9 @@ export function FaskesDetailDialog({ g, median, onClose }: {
                       sub={[a.typeAlat, a.targetJumlahTes ? `target ${a.targetJumlahTes.toLocaleString("id-ID")}/bln` : "tanpa target"]
                         .filter(Boolean).join(" · ")}
                       ada={seriAlat.some((x) => x.tes !== null)}
-                      kosong="Belum ada laporan tes untuk alat ini."
+                      kosong={punyaRiwayatLama
+                        ? `Tidak ada laporan di ${dari.slice(0, 4)} — riwayatnya ada di tahun sebelumnya.`
+                        : "Belum ada laporan tes untuk alat ini."}
                     >
                       <LineChart data={seriAlat} margin={{ left: 4, right: 12, top: 8, bottom: 4 }}>
                         <CartesianGrid vertical={false} strokeDasharray="3 3" />
@@ -196,7 +215,9 @@ export function FaskesDetailDialog({ g, median, onClose }: {
                   tidak, pembaca akan menganggap bagian ini belum selesai dikerjakan. */}
               <Grafik judul="Riwayat revenue netto (seluruh faskes)"
                 sub="tidak dapat dipecah per alat"
-                ada={adaRev} kosong="Belum ada faktur.">
+                ada={adaRev} kosong={adaRevLama
+                  ? `Tidak ada faktur di ${dari.slice(0, 4)} — ada di tahun sebelumnya.`
+                  : "Belum ada faktur."}>
                 <LineChart data={seri} margin={{ left: 4, right: 12, top: 8, bottom: 4 }}>
                   <CartesianGrid vertical={false} strokeDasharray="3 3" />
                   <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fontSize: 10 }}
@@ -211,8 +232,9 @@ export function FaskesDetailDialog({ g, median, onClose }: {
               </Grafik>
 
               <p className="text-muted-foreground text-xs">
+                Grafik dibatasi <strong>tahun {dari.slice(0, 4)}</strong>
+                {adaTesLama || adaRevLama ? " (faskes ini punya riwayat sebelum itu)" : null}.
                 Garis yang putus = bulan itu <strong>tidak ada laporan</strong>, bukan nol tes.
-                Revenue kosong sebelum 2026 karena mirror faktur Accurate memang mulai 2026.
                 <strong> Revenue tidak dipecah per alat</strong> karena faktur Accurate terbit
                 atas nama faskes — tidak ada kolom yang menautkan rupiah ke unit tertentu, dan
                 membaginya hanya akan menghasilkan angka yang terlihat presisi padahal karangan.
