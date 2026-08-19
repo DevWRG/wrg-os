@@ -169,10 +169,17 @@ export interface KsoFaskesDetail {
     rataTesBulanan: number | null; capaianTarget: number | null;
   }[];
   tren: { periode: string; jumlahTes: number | null; alatLapor: number | null; revenueNetto: number | null }[];
+  // Riwayat tes PER ALAT. Ada karena kso_asset_test_monthly memang per aset.
+  //
+  // TIDAK ADA padanannya untuk revenue, dan itu bukan kelalaian: faktur Accurate terbit
+  // atas nama FASKES, tak satu pun kolom menautkan rupiah ke unit tertentu. Memecahnya
+  // (rata atau proporsional-tes) menghasilkan angka yang terlihat presisi padahal
+  // karangan — alasan yang sama dengan rupiah_per_tes_customer di migrasi 098/100.
+  trenAlat: { assetId: number; periode: string; jumlahTes: number | null }[];
 }
 
 export async function faskesDetail(accountId: number, skema: string): Promise<KsoFaskesDetail> {
-  if (!isDbEnabled()) return { alat: [], tren: [] };
+  if (!isDbEnabled()) return { alat: [], tren: [], trenAlat: [] };
   const sql = db();
 
   // Daftar alat dari view produktivitas, BUKAN langsung dari kso_asset: view itu yang
@@ -198,6 +205,16 @@ export async function faskesDetail(accountId: number, skema: string): Promise<Ks
     WHERE account_id = ${accountId} AND skema = ${skema}
     ORDER BY periode`;
 
+  // Dibatasi ke aset milik faskes+skema ini lewat JOIN, bukan lewat daftar id dari
+  // query sebelumnya: satu sumber cakupan, dan tidak ada peluang dua query melihat
+  // himpunan aset yang berbeda.
+  const trenAlat = await sql`
+    SELECT m.asset_id, to_char(m.periode, 'YYYY-MM-DD') AS periode, m.jumlah_tes
+    FROM kso_asset_test_monthly m
+    JOIN kso_asset a ON a.id = m.asset_id
+    WHERE a.account_id = ${accountId} AND a.skema = ${skema}
+    ORDER BY m.asset_id, m.periode`;
+
   return {
     alat: alat.map((a) => ({
       assetId: Number(a.asset_id),
@@ -215,6 +232,11 @@ export async function faskesDetail(accountId: number, skema: string): Promise<Ks
       jumlahTes: num(t.jumlah_tes),
       alatLapor: num(t.alat_lapor),
       revenueNetto: num(t.revenue_netto),
+    })),
+    trenAlat: trenAlat.map((t) => ({
+      assetId: Number(t.asset_id),
+      periode: String(t.periode),
+      jumlahTes: num(t.jumlah_tes),
     })),
   };
 }

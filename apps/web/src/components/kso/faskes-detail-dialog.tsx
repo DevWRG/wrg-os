@@ -13,7 +13,7 @@
 
 import { useEffect, useState } from "react";
 import { AlertTriangle } from "lucide-react";
-import { CartesianGrid, Line, LineChart, XAxis, YAxis } from "recharts";
+import { CartesianGrid, Legend, Line, LineChart, XAxis, YAxis } from "recharts";
 
 import { cn } from "@/lib/utils";
 import { Dialog, DialogBody, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -30,10 +30,15 @@ interface Detail {
     rataTesBulanan: number | null; capaianTarget: number | null;
   }[];
   tren: { periode: string; jumlahTes: number | null; alatLapor: number | null; revenueNetto: number | null }[];
+  trenAlat: { assetId: number; periode: string; jumlahTes: number | null }[];
 }
 
 const cfg = {
-  tes: { label: "Jumlah tes", color: "var(--chart-2)" },
+  tes: { label: "Realisasi", color: "var(--chart-2)" },
+  // Target digambar dengan warna NETRAL dan garis putus-putus, bukan warna seri kedua:
+  // ia patokan, bukan pengukuran yang setara. Bentuknya (putus-putus, datar) yang
+  // membedakan, sehingga tetap terbaca oleh mata yang sulit membedakan warna.
+  target: { label: "Target", color: "var(--muted-foreground)" },
   revenue: { label: "Revenue netto", color: "var(--chart-1)" },
 } satisfies ChartConfig;
 
@@ -76,7 +81,8 @@ export function FaskesDetailDialog({ g, median, onClose }: {
         return { label: labelBulan(p), tes: t?.jumlahTes ?? null, revenue: t?.revenueNetto ?? null };
       })
     : [];
-  const adaTes = seri.some((s) => s.tes !== null);
+  // `seri` kini hanya melayani grafik REVENUE (level faskes). Grafik tes dipecah per
+  // alat dan masing-masing merangka deret bulannya sendiri dari trenAlat.
   const adaRev = seri.some((s) => s.revenue !== null);
 
   return (
@@ -126,39 +132,84 @@ export function FaskesDetailDialog({ g, median, onClose }: {
             <div className="text-muted-foreground py-8 text-center text-xs">Memuat riwayat…</div>
           ) : (
             <>
+              {/* SATU GRAFIK TES PER ALAT (permintaan user 2026-08-19) — datanya
+                  memang per aset di kso_asset_test_monthly. Diurutkan mengikuti daftar
+                  alat di bawah (tes terbanyak dulu) supaya dua bagian ini sejalan. */}
               <div className="grid gap-4 lg:grid-cols-2">
-                <Grafik judul="Riwayat jumlah tes" ada={adaTes} kosong="Belum ada laporan tes.">
-                  <LineChart data={seri} margin={{ left: 4, right: 12, top: 8, bottom: 4 }}>
-                    <CartesianGrid vertical={false} strokeDasharray="3 3" />
-                    <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fontSize: 10 }}
-                      interval="preserveStartEnd" minTickGap={14} />
-                    <YAxis tickLine={false} axisLine={false} width={40} tick={{ fontSize: 10 }}
-                      tickFormatter={(v) => rpSingkat(Number(v))} />
-                    <ChartTooltip content={<ChartTooltipContent
-                      formatter={(v) => [Number(v).toLocaleString("id-ID") + " tes", ""]} />} />
-                    <Line type="monotone" dataKey="tes" stroke="var(--color-tes)" strokeWidth={2}
-                      dot={{ r: 2.5 }} activeDot={{ r: 5 }} connectNulls={false} />
-                  </LineChart>
-                </Grafik>
-
-                <Grafik judul="Riwayat revenue netto" ada={adaRev} kosong="Belum ada faktur.">
-                  <LineChart data={seri} margin={{ left: 4, right: 12, top: 8, bottom: 4 }}>
-                    <CartesianGrid vertical={false} strokeDasharray="3 3" />
-                    <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fontSize: 10 }}
-                      interval="preserveStartEnd" minTickGap={14} />
-                    <YAxis tickLine={false} axisLine={false} width={48} tick={{ fontSize: 10 }}
-                      tickFormatter={(v) => rpSingkat(Number(v))} />
-                    <ChartTooltip content={<ChartTooltipContent
-                      formatter={(v) => ["Rp " + Number(v).toLocaleString("id-ID"), ""]} />} />
-                    <Line type="monotone" dataKey="revenue" stroke="var(--color-revenue)" strokeWidth={2}
-                      dot={{ r: 2.5 }} activeDot={{ r: 5 }} connectNulls={false} />
-                  </LineChart>
-                </Grafik>
+                {detail.alat.map((a) => {
+                  const per = new Map(
+                    detail.trenAlat.filter((t) => t.assetId === a.assetId).map((t) => [t.periode, t.jumlahTes]));
+                  const p = [...per.keys()].sort();
+                  const seriAlat = p.length
+                    ? deretBulan(p[0], p[p.length - 1]).map((x) => ({
+                        label: labelBulan(x),
+                        tes: per.get(x) ?? null,
+                        target: a.targetJumlahTes,
+                      }))
+                    : [];
+                  return (
+                    <Grafik
+                      key={a.assetId}
+                      judul={a.namaAlat ?? a.snKey}
+                      sub={[a.typeAlat, a.targetJumlahTes ? `target ${a.targetJumlahTes.toLocaleString("id-ID")}/bln` : "tanpa target"]
+                        .filter(Boolean).join(" · ")}
+                      ada={seriAlat.some((x) => x.tes !== null)}
+                      kosong="Belum ada laporan tes untuk alat ini."
+                    >
+                      <LineChart data={seriAlat} margin={{ left: 4, right: 12, top: 8, bottom: 4 }}>
+                        <CartesianGrid vertical={false} strokeDasharray="3 3" />
+                        <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fontSize: 10 }}
+                          interval="preserveStartEnd" minTickGap={14} />
+                        <YAxis tickLine={false} axisLine={false} width={40} tick={{ fontSize: 10 }}
+                          tickFormatter={(v) => rpSingkat(Number(v))} />
+                        <ChartTooltip content={<ChartTooltipContent
+                          formatter={(v, n) => [Number(v).toLocaleString("id-ID") + " tes",
+                            n === "target" ? " target" : " realisasi"]} />} />
+                        {/* Legenda WAJIB begitu ada dua seri — identitas tidak boleh
+                            bergantung pada warna saja. */}
+                        {a.targetJumlahTes ? <Legend verticalAlign="top" height={22}
+                          formatter={(v) => <span className="text-muted-foreground text-[11px]">{v}</span>} /> : null}
+                        <Line type="monotone" dataKey="tes" name="Realisasi" stroke="var(--color-tes)"
+                          strokeWidth={2} dot={{ r: 2.5 }} activeDot={{ r: 5 }} connectNulls={false} />
+                        {/* Target hanya digambar kalau alat ini PUNYA target. Menggambar
+                            garis nol untuk alat tanpa target akan terbaca sebagai
+                            "targetnya nol", bukan "tidak ada target". */}
+                        {a.targetJumlahTes ? (
+                          <Line type="monotone" dataKey="target" name="Target" stroke="var(--color-target)"
+                            strokeWidth={2} strokeDasharray="5 4" dot={false} activeDot={false} />
+                        ) : null}
+                      </LineChart>
+                    </Grafik>
+                  );
+                })}
               </div>
+
+              {/* Revenue TETAP satu grafik level faskes, TIDAK dipecah per alat. Faktur
+                  Accurate terbit atas nama faskes; tak satu pun kolom menautkan rupiah ke
+                  unit tertentu. Alasannya ditulis di layar, bukan cuma di kode — kalau
+                  tidak, pembaca akan menganggap bagian ini belum selesai dikerjakan. */}
+              <Grafik judul="Riwayat revenue netto (seluruh faskes)"
+                sub="tidak dapat dipecah per alat"
+                ada={adaRev} kosong="Belum ada faktur.">
+                <LineChart data={seri} margin={{ left: 4, right: 12, top: 8, bottom: 4 }}>
+                  <CartesianGrid vertical={false} strokeDasharray="3 3" />
+                  <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fontSize: 10 }}
+                    interval="preserveStartEnd" minTickGap={14} />
+                  <YAxis tickLine={false} axisLine={false} width={48} tick={{ fontSize: 10 }}
+                    tickFormatter={(v) => rpSingkat(Number(v))} />
+                  <ChartTooltip content={<ChartTooltipContent
+                    formatter={(v) => ["Rp " + Number(v).toLocaleString("id-ID"), ""]} />} />
+                  <Line type="monotone" dataKey="revenue" stroke="var(--color-revenue)" strokeWidth={2}
+                    dot={{ r: 2.5 }} activeDot={{ r: 5 }} connectNulls={false} />
+                </LineChart>
+              </Grafik>
 
               <p className="text-muted-foreground text-xs">
                 Garis yang putus = bulan itu <strong>tidak ada laporan</strong>, bukan nol tes.
                 Revenue kosong sebelum 2026 karena mirror faktur Accurate memang mulai 2026.
+                <strong> Revenue tidak dipecah per alat</strong> karena faktur Accurate terbit
+                atas nama faskes — tidak ada kolom yang menautkan rupiah ke unit tertentu, dan
+                membaginya hanya akan menghasilkan angka yang terlihat presisi padahal karangan.
               </p>
 
               <div>
@@ -218,12 +269,14 @@ function Angka({ label, nilai, sub, redup }: {
   );
 }
 
-function Grafik({ judul, ada, kosong, children }: {
-  judul: string; ada: boolean; kosong: string; children: React.ComponentProps<typeof ChartContainer>["children"];
+function Grafik({ judul, sub, ada, kosong, children }: {
+  judul: string; sub?: string; ada: boolean; kosong: string;
+  children: React.ComponentProps<typeof ChartContainer>["children"];
 }) {
   return (
     <div>
-      <div className="mb-1 text-xs font-medium">{judul}</div>
+      <div className="text-xs font-medium">{judul}</div>
+      {sub ? <div className="text-muted-foreground mb-1 text-[11px]">{sub}</div> : <div className="mb-1" />}
       {ada ? (
         <ChartContainer config={cfg} className="aspect-auto h-[190px] w-full">{children}</ChartContainer>
       ) : (
