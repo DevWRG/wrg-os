@@ -155,3 +155,66 @@ export async function produktivitas(): Promise<KsoProduktivitas> {
     },
   };
 }
+
+// ── Detail satu faskes (dialog "Lihat detail" di /kso-produktivitas) ────────────────
+//
+// Endpoint TERPISAH, tidak digabung ke payload utama: riwayat bulanan seluruh faskes
+// berarti ±189 faskes x 20 bulan x 2 skema di setiap muat halaman, padahal yang dibuka
+// pengguna paling banyak beberapa. Diambil saat dialognya dibuka.
+export interface KsoFaskesDetail {
+  alat: {
+    assetId: number; snKey: string; snRaw: string | null;
+    typeAlat: string | null; namaAlat: string | null;
+    targetJumlahTes: number | null; totalTes: number | null;
+    rataTesBulanan: number | null; capaianTarget: number | null;
+  }[];
+  tren: { periode: string; jumlahTes: number | null; alatLapor: number | null; revenueNetto: number | null }[];
+}
+
+export async function faskesDetail(accountId: number, skema: string): Promise<KsoFaskesDetail> {
+  if (!isDbEnabled()) return { alat: [], tren: [] };
+  const sql = db();
+
+  // Daftar alat dari view produktivitas, BUKAN langsung dari kso_asset: view itu yang
+  // memegang aturan cakupan (hanya aset ber-account_id & berskema dikenal), jadi isi
+  // dialog tidak akan pernah memuat aset yang tidak terhitung di barisnya.
+  const alat = await sql`
+    SELECT asset_id, sn_key, type_alat, nama_alat,
+           target_jumlah_tes, total_tes, rata_tes_bulanan, capaian_target
+    FROM kso_asset_produktivitas_v
+    WHERE account_id = ${accountId} AND skema = ${skema}
+    ORDER BY total_tes DESC NULLS LAST, nama_alat`;
+
+  // sn_raw tidak ada di view; diambil terpisah supaya view tidak perlu diubah hanya
+  // demi satu kolom tampilan.
+  const snRaw = await sql`
+    SELECT id, sn_raw FROM kso_asset
+    WHERE account_id = ${accountId} AND skema = ${skema}`;
+  const rawById = new Map(snRaw.map((r) => [Number(r.id), r.sn_raw ? String(r.sn_raw) : null]));
+
+  const tren = await sql`
+    SELECT to_char(periode, 'YYYY-MM-DD') AS periode, jumlah_tes, alat_lapor, revenue_netto
+    FROM kso_faskes_tren_v
+    WHERE account_id = ${accountId} AND skema = ${skema}
+    ORDER BY periode`;
+
+  return {
+    alat: alat.map((a) => ({
+      assetId: Number(a.asset_id),
+      snKey: String(a.sn_key),
+      snRaw: rawById.get(Number(a.asset_id)) ?? null,
+      typeAlat: a.type_alat ? String(a.type_alat) : null,
+      namaAlat: a.nama_alat ? String(a.nama_alat) : null,
+      targetJumlahTes: num(a.target_jumlah_tes),
+      totalTes: num(a.total_tes),
+      rataTesBulanan: num(a.rata_tes_bulanan),
+      capaianTarget: num(a.capaian_target),
+    })),
+    tren: tren.map((t) => ({
+      periode: String(t.periode),
+      jumlahTes: num(t.jumlah_tes),
+      alatLapor: num(t.alat_lapor),
+      revenueNetto: num(t.revenue_netto),
+    })),
+  };
+}
