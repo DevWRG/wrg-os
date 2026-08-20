@@ -1,4 +1,24 @@
-fastapi>=0.141.1
-uvicorn[standard]>=0.52.3
+# PLAFON PYTHON 3.9 — jangan naikkan floor tanpa menaikkan interpreter dulu.
+#
+# Runtime produksi (pm2 native, .venv dari /usr/bin/python3) = Python 3.9.6.
+# Rilis berikutnya dari dua paket di bawah menuntut Python >=3.10:
+#   uvicorn 0.52.3  requires_python >=3.10
+#   fastapi 0.141.1 requires_python >=3.10
+# Jadi menaikkan floor ke sana TIDAK meng-upgrade produksi — `pip install -r`
+# akan GAGAL di venv 3.9. Versi di bawah ini adalah yang TERBARU yang masih
+# mendukung 3.9 (diperiksa via requires_python di PyPI, 2026-08-20), dan itu
+# persis yang sudah terpasang di produksi.
+#
+# Batas atas (<0.129 / <0.40) ada supaya CI memasang versi yang SAMA dengan
+# produksi. Tanpa itu, CI (Python lebih baru) memasang rilis >=3.10 dan lolos,
+# sementara produksi tak pernah bisa memasangnya — persis bagaimana #952
+# (uvicorn>=0.52.3) lewat tanpa tertahan.
+#
+# Jalan keluarnya BUKAN melonggarkan pin ini, tapi memasang Python >=3.10 di
+# mesin produksi lalu membangun ulang .venv. Python 3.9 sudah end-of-life
+# (Okt 2025), jadi ini utang yang perlu dijadwalkan, bukan diabaikan.
+# Aturan abaikan dependabot untuk kedua paket ini ada di .github/dependabot.yml.
+fastapi>=0.128.8,<0.129
+uvicorn[standard]>=0.39.0,<0.40
 pydantic>=2.13.4
 httpx>=0.28.1
