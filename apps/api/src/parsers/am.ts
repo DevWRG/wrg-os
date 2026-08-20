@@ -75,6 +75,32 @@ function headerDate(lines: string[], hIdx: number, nowMs?: number): string | nul
   return null;
 }
 
+/**
+ * Buang prefiks "Cust :" dari nama faskes SEBELUM dicocokkan ke plan.
+ *
+ * AM sering menulis `Cust : RS PHC` di #REPORT — 834 dari 2.775 baris
+ * activity_log membawanya. Prefiks itu ikut dihitung sebagai trigram oleh
+ * pg_trgm, jadi ia menggerus skor kecocokan terhadap nama plan yang bersih
+ * (`sales_plan` NOL baris berprefiks). Akibatnya kunjungan yang benar
+ * terlihat seperti tidak cocok.
+ *
+ * Dibatasi HANYA pada `cust`/`customer`, tidak digeneralisasi ke pola
+ * `kata:` apa pun — prefiks lain yang muncul di data justru BERMAKNA
+ * (`PT` nama perusahaan, `dr` nama dokter) dan membuangnya akan merusak nama.
+ *
+ * Tanda kurung di ekor SENGAJA dibiarkan: isinya diperiksa dan ternyata
+ * catatan bermakna ("Laborat Sentral", "Semarang", "cost per test"), bukan
+ * derau — membuangnya berisiko menghapus pembeda antar faskes.
+ *
+ * Diukur pada 2.745 baris berskor: 758 skor naik (rata-rata +0,169 di band
+ * bawah), 88 dari 176 baris band-bawah melewati 0,7, dan NOL baris jatuh ke
+ * bawah ambang yang berlaku. Tidak pernah mengembalikan string kosong.
+ */
+export function bersihkanNamaCustomer(nama: string): string {
+  const bersih = nama.replace(/^\s*cust(?:omer)?\s*[:.]\s*/i, "").trim();
+  return bersih || nama.trim();
+}
+
 export interface PlanCustomer { customer: string; tujuan: string; goal: string }
 export interface AmPlanResult { tanggal: string | null; customers: PlanCustomer[] }
 
