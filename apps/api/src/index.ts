@@ -1503,13 +1503,24 @@ app.post("/visits", async (c) => {
     return c.json({ error: "invalid JSON body" }, 400);
   }
   if (!body.am_id) return c.json({ error: "am_id wajib" }, 400);
+  // lat/lon wajib. Tanpa koordinat, sales_plan.visit_lat NULL dan kunjungannya
+  // tak akan pernah muncul di GET /visits (filter `visit_lat IS NOT NULL`) —
+  // tersimpan tapi hilang. Ditolak di sini, bukan disimpan diam-diam. Di luar
+  // bbox Indonesia tetap diterima (geo_status='out_of_bounds'); yang ditolak
+  // hanya koordinat yang tidak ada atau bukan angka.
+  if (!Number.isFinite(body.lat) || !Number.isFinite(body.lon)) {
+    return c.json(
+      { error: "lat & lon wajib berupa angka — kunjungan tanpa koordinat tidak akan tampil di GET /visits" },
+      400,
+    );
+  }
   const r = await createVisit({
     am_id: body.am_id,
     deal_id: body.deal_id,
     customer_name: body.customer_name,
     photo_url: body.photo_url,
-    lat: body.lat,
-    lon: body.lon,
+    lat: body.lat as number,
+    lon: body.lon as number,
     visit_timestamp: body.visit_timestamp,
     visit_date: body.visit_date,
     note: body.note,

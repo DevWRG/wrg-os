@@ -49,8 +49,19 @@ export interface VisitInput {
   deal_id?: string;
   customer_name?: string;
   photo_url?: string;
-  lat?: number | null;
-  lon?: number | null;
+  /**
+   * lat/lon WAJIB — bukan opsional. listVisits()/getVisit() memfilter
+   * `visit_lat IS NOT NULL`, jadi kunjungan tanpa koordinat tersimpan tapi
+   * tidak akan pernah terlihat di menu Visits. Dulu opsional, dan itu satu-
+   * satunya cara menghasilkan baris yang "tersimpan tapi hilang". Tipe ini
+   * dibuat ketat supaya pemanggil baru ditolak compiler, bukan baru ketahuan
+   * saat datanya sudah tak terlihat di produksi.
+   *
+   * Di luar bbox Indonesia tetap DITERIMA (geo_status='out_of_bounds') —
+   * menu Visits berguna justru untuk memperlihatkan koordinat yang salah.
+   */
+  lat: number;
+  lon: number;
   visit_timestamp?: string;
   visit_date?: string;
   note?: string;
@@ -92,10 +103,12 @@ export async function createVisit(v: VisitInput): Promise<{
   const customer = v.customer_name ?? null;
   // photo_geotag disimpan dalam bentuk yang sama dengan jalur OCR WA supaya
   // metrik "foto tanpa geo" membaca kedua jalur dengan aturan yang sama.
-  const geotag =
-    v.lat !== null && v.lat !== undefined && v.lon !== null && v.lon !== undefined
-      ? { ts: v.visit_timestamp ?? null, lat: String(v.lat), lon: String(v.lon), address: null }
-      : null;
+  const geotag = {
+    ts: v.visit_timestamp ?? null,
+    lat: String(v.lat),
+    lon: String(v.lon),
+    address: null,
+  };
 
   return await sql.begin(async (tx) => {
     // 1. Cari plan hari itu yang cocok. Kalau ada, kunjungan ini MEMENUHI plan
@@ -133,12 +146,12 @@ export async function createVisit(v: VisitInput): Promise<{
       VALUES
         (${v.am_id}, ${planId}, ${tanggal}, ${customer}, ${v.note ?? null}, 'manual-visit',
          ${!matched}, ${score}, ${v.photo_url ?? null},
-         ${geotag ? tx.json(geotag) : null}, 'Fisik', ${v.deal_id ?? null})
+         ${tx.json(geotag)}, 'Fisik', ${v.deal_id ?? null})
       RETURNING id`;
 
     await tx`
       UPDATE sales_plan SET
-        visit_lat = ${v.lat ?? null}, visit_lon = ${v.lon ?? null},
+        visit_lat = ${v.lat}, visit_lon = ${v.lon},
         visit_timestamp = ${v.visit_timestamp ?? null},
         visit_date_mismatch = ${geo === "date_mismatch"},
         reported = true, reported_at = now(), activity_id = ${Number(akt.id)}
