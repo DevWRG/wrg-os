@@ -325,7 +325,18 @@ export interface AmVisitProgress {
   am_id: string;
   nama: string | null;
   cabang: string | null;
+  /**
+   * Kunjungan yang DILAPORKAN (sales_plan.reported) — dasar target & persen.
+   *
+   * Dulu ini menghitung plan ber-GEOTAG (`visit_lat IS NOT NULL`) tapi diberi
+   * label "kunjungan". Karena hanya ~8-16% foto masuk membawa overlay geotag,
+   * AM yang rajin melapor tampil 0/20: minggu 34/2026 Sidqi melaporkan 11
+   * kunjungan (36 baris activity_log, pelapor terbanyak) dan dirender 0% —
+   * bukan error, hanya nol yang mulus. Arif 8→0, Firman 5→0, Vicky 2→0.
+   */
   visits: number;
+  /** Bagian dari `visits` yang punya koordinat. Indikator KUALITAS, bukan target. */
+  visits_geotag: number;
   new_prospects: number;
   target: number;
   new_target: number;
@@ -394,10 +405,14 @@ export async function visitTargets(scope: DataScope = FULL_SCOPE, weekOffset = 0
       LEFT JOIN visit_target t ON t.am_id = mu.am_id
       WHERE mu.aktif AND upper(COALESCE(mu.role,'')) = 'AM'
     ),
+    -- Dasar hitungan = kunjungan yang DILAPORKAN, bukan yang ber-geotag.
+    -- Geotag dibawa sebagai kolom terpisah supaya kepatuhan foto terlihat
+    -- tanpa menenggelamkan capaian lapor jadi nol.
     vis AS (
-      SELECT sp.am_id, sp.customer_name, sp.tanggal
+      SELECT sp.am_id, sp.customer_name, sp.tanggal,
+             (sp.visit_lat IS NOT NULL) AS ber_geotag
       FROM sales_plan sp, span
-      WHERE sp.visit_lat IS NOT NULL AND sp.tanggal BETWEEN span.d0 AND span.d1
+      WHERE sp.reported AND sp.tanggal BETWEEN span.d0 AND span.d1
     )
     SELECT mu.am_id,
            COALESCE(initcap(mu.panggilan), mu.nama) AS nama,
@@ -405,6 +420,7 @@ export async function visitTargets(scope: DataScope = FULL_SCOPE, weekOffset = 0
            tgt.per_week::int  AS target,
            tgt.new_per_week::int AS new_target,
            (SELECT count(*)::int FROM vis WHERE vis.am_id = mu.am_id) AS visits,
+           (SELECT count(*)::int FROM vis WHERE vis.am_id = mu.am_id AND vis.ber_geotag) AS visits_geotag,
            (SELECT count(DISTINCT v.customer_name)::int
               FROM vis v, span
              WHERE v.am_id = mu.am_id AND v.customer_name IS NOT NULL
@@ -436,6 +452,7 @@ export async function visitTargets(scope: DataScope = FULL_SCOPE, weekOffset = 0
       nama: r.nama ? String(r.nama) : null,
       cabang: r.cabang ? String(r.cabang) : null,
       visits,
+      visits_geotag: Number(r.visits_geotag ?? 0),
       new_prospects: Number(r.new_prospects ?? 0),
       target,
       new_target: Number(r.new_target ?? 0),
