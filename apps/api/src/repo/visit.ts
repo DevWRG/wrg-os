@@ -36,6 +36,14 @@ export function verifyGeo(opts: {
   return "ok";
 }
 
+/**
+ * Ambang fuzzy pencocokan customer ke plan hari itu. Sama dengan
+ * insertAmActivities() di inbound.ts — input manual dan #REPORT WA harus
+ * memperlakukan nama faskes yang sama dengan cara yang sama, kalau tidak satu
+ * kunjungan bisa dianggap "sesuai plan" lewat WA tapi "di luar plan" lewat form.
+ */
+const PLAN_MATCH = 0.3;
+
 export interface VisitInput {
   am_id: string;
   deal_id?: string;
@@ -48,7 +56,27 @@ export interface VisitInput {
   note?: string;
 }
 
-export async function createVisit(v: VisitInput): Promise<{ id: string; geo_status: GeoStatus }> {
+/**
+ * Simpan visit input manual ke `sales_plan` + `activity_log` — BUKAN ke tabel
+ * `visit`.
+ *
+ * Kenapa: tabel `visit` tidak pernah dibaca siapa pun. listVisits()/getVisit()
+ * di bawah membaca `sales_plan` (di-JOIN ke `activity_log`), jadi apa pun yang
+ * masuk ke tabel `visit` tidak akan muncul di menu Visits, tidak terhitung di
+ * KPI, dan `id` yang dikembalikan POST /visits tak bisa dipakai GET /visits/:id.
+ * Tabel itu terisi 628 baris (2–11 Juni 2026) lalu berhenti; isinya sudah
+ * tercermin di sales_plan/activity_log lewat jalur legacy, jadi ditinggal
+ * sebagai arsip — tidak dihapus, tidak ditulisi lagi.
+ *
+ * `id` yang dikembalikan sekarang adalah id `sales_plan`, sehingga langsung
+ * bisa dipakai GET /visits/:id.
+ */
+export async function createVisit(v: VisitInput): Promise<{
+  id: string;
+  geo_status: GeoStatus;
+  activity_id: string;
+  matched_plan: boolean;
+}> {
   const sql = db();
   const geo = verifyGeo({
     lat: v.lat,
@@ -56,16 +84,73 @@ export async function createVisit(v: VisitInput): Promise<{ id: string; geo_stat
     visit_timestamp: v.visit_timestamp,
     visit_date: v.visit_date,
   });
-  const rows = await sql`
-    INSERT INTO visit
-      (deal_id, am_id, customer_name, photo_url, visit_lat, visit_lon, visit_timestamp, visit_date, geo_status, note)
-    VALUES
-      (${v.deal_id ?? null}, ${v.am_id}, ${v.customer_name ?? null}, ${v.photo_url ?? null},
-       ${v.lat ?? null}, ${v.lon ?? null}, ${v.visit_timestamp ?? null}, ${v.visit_date ?? null},
-       ${geo}, ${v.note ?? null})
-    RETURNING id
-  `;
-  return { id: rows[0].id as string, geo_status: geo };
+  // Tanggal kunjungan: eksplisit → dari timestamp foto → hari ini (WIB).
+  const tanggal =
+    v.visit_date?.slice(0, 10) ??
+    v.visit_timestamp?.slice(0, 10) ??
+    new Date(Date.now() + 7 * 3600 * 1000).toISOString().slice(0, 10);
+  const customer = v.customer_name ?? null;
+  // photo_geotag disimpan dalam bentuk yang sama dengan jalur OCR WA supaya
+  // metrik "foto tanpa geo" membaca kedua jalur dengan aturan yang sama.
+  const geotag =
+    v.lat !== null && v.lat !== undefined && v.lon !== null && v.lon !== undefined
+      ? { ts: v.visit_timestamp ?? null, lat: String(v.lat), lon: String(v.lon), address: null }
+      : null;
+
+  return await sql.begin(async (tx) => {
+    // 1. Cari plan hari itu yang cocok. Kalau ada, kunjungan ini MEMENUHI plan
+    //    tersebut — jangan buat baris plan kedua untuk faskes yang sama.
+    const cocok = customer
+      ? await tx`
+          SELECT id, similarity(customer_name, ${customer}) AS score
+          FROM sales_plan
+          WHERE am_id = ${v.am_id} AND tanggal = ${tanggal}
+            AND similarity(customer_name, ${customer}) > ${PLAN_MATCH}
+          ORDER BY score DESC LIMIT 1`
+      : [];
+    let planId: number | null = cocok[0] ? Number(cocok[0].id) : null;
+    const score = cocok[0] ? Number(cocok[0].score) : null;
+    const matched = planId !== null;
+
+    // 2. Tak ada plan yang cocok → kunjungan di luar plan. Tetap dibuat baris
+    //    plan-nya, karena listVisits() membaca dari sales_plan; tanpa ini
+    //    kunjungannya tak akan pernah terlihat. seq lanjut dari maksimum.
+    if (planId === null) {
+      const [{ maxseq }] = await tx`
+        SELECT COALESCE(max(seq), 0) AS maxseq FROM sales_plan
+        WHERE am_id = ${v.am_id} AND tanggal = ${tanggal}`;
+      const [baru] = await tx`
+        INSERT INTO sales_plan (am_id, tanggal, customer_name, seq, submitted_at)
+        VALUES (${v.am_id}, ${tanggal}, ${customer}, ${Number(maxseq) + 1}, now())
+        RETURNING id`;
+      planId = Number(baru.id);
+    }
+
+    const [akt] = await tx`
+      INSERT INTO activity_log
+        (am_id, plan_id, tanggal, customer_name, hasil, source, is_unmatched, match_score,
+         photo_path, photo_geotag, activity_type, opportunity_id)
+      VALUES
+        (${v.am_id}, ${planId}, ${tanggal}, ${customer}, ${v.note ?? null}, 'manual-visit',
+         ${!matched}, ${score}, ${v.photo_url ?? null},
+         ${geotag ? tx.json(geotag) : null}, 'Fisik', ${v.deal_id ?? null})
+      RETURNING id`;
+
+    await tx`
+      UPDATE sales_plan SET
+        visit_lat = ${v.lat ?? null}, visit_lon = ${v.lon ?? null},
+        visit_timestamp = ${v.visit_timestamp ?? null},
+        visit_date_mismatch = ${geo === "date_mismatch"},
+        reported = true, reported_at = now(), activity_id = ${Number(akt.id)}
+      WHERE id = ${planId}`;
+
+    return {
+      id: String(planId),
+      geo_status: geo,
+      activity_id: String(akt.id),
+      matched_plan: matched,
+    };
+  });
 }
 
 export interface VisitRow {
