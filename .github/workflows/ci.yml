@@ -42,7 +42,12 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
-          python-version: "3.12"
+          # SAMA dengan runtime produksi (pm2 native, .venv Python 3.9.6).
+          # Sebelumnya 3.12: CI memasang rilis yang menuntut >=3.10 dan lolos,
+          # padahal produksi tak pernah bisa memasangnya. Itu yang meloloskan
+          # #952 (uvicorn>=0.52.3). Kalau interpreter produksi naik, angka di
+          # sini yang naik lebih dulu.
+          python-version: "3.9"
       - run: pip install -r services/ai/requirements.txt
       - name: Import FastAPI app
         working-directory: services/ai
