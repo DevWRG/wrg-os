@@ -210,7 +210,14 @@ async function tempelFotoLaporan(row: WaRow, tanggal: string): Promise<Record<st
   if (!String(row.message_type ?? "").toLowerCase().startsWith("image") || !row.media_path) return null;
   const sql = db();
   const hasGeo = row.geo_lat != null && row.geo_lon != null;
-  const geo = hasGeo ? { lat: row.geo_lat, lon: row.geo_lon, ts: row.geo_ts ?? null, address: row.geo_address ?? null } : null;
+  // Jam overlay tetap dipakai walau koordinatnya gagal terbaca OCR — aplikasi
+  // kamera Luri/Iqbal sering kehilangan digit koordinat tapi jamnya utuh. Tanpa
+  // ini visit_timestamp mereka selalu null dan date_mismatch tak pernah jalan.
+  const g = parseGeoTs(row.geo_ts);
+  const adaGeo = hasGeo || g.dt != null;
+  const geo = adaGeo
+    ? { lat: row.geo_lat ?? null, lon: row.geo_lon ?? null, ts: row.geo_ts ?? null, address: row.geo_address ?? null }
+    : null;
   const rows = await sql<{ id: string; plan_id: string | null }[]>`
     UPDATE activity_log SET photo_path = ${row.media_path},
       photo_geotag = ${geo ? sql.json(geo as unknown as Parameters<typeof sql.json>[0]) : null}
@@ -218,18 +225,20 @@ async function tempelFotoLaporan(row: WaRow, tanggal: string): Promise<Record<st
     RETURNING id, plan_id`;
   if (rows.length === 0) return { foto: "tak-ada-baris" };
   let plan = 0;
-  if (hasGeo) {
-    const g = parseGeoTs(row.geo_ts);
+  if (adaGeo) {
     for (const r of rows) {
       if (!r.plan_id) continue;
       await sql`
-        UPDATE sales_plan SET visit_lat = ${row.geo_lat ?? null}, visit_lon = ${row.geo_lon ?? null},
-          visit_timestamp = ${g.dt}, visit_date_mismatch = ${g.iso ? g.iso !== tanggal : false}
-        WHERE id = ${Number(r.plan_id)}`;
+        UPDATE sales_plan
+           SET visit_lat = COALESCE(${row.geo_lat ?? null}::numeric, visit_lat),
+               visit_lon = COALESCE(${row.geo_lon ?? null}::numeric, visit_lon),
+               visit_timestamp = COALESCE(${g.dt}::timestamptz, visit_timestamp),
+               visit_date_mismatch = COALESCE(${g.iso ? g.iso !== tanggal : null}::boolean, visit_date_mismatch)
+         WHERE id = ${Number(r.plan_id)}`;
       plan += 1;
     }
   }
-  return { foto_terpasang: rows.length, geo: hasGeo, plan_geo_diperbarui: plan };
+  return { foto_terpasang: rows.length, geo: hasGeo, jam: g.dt != null, plan_geo_diperbarui: plan };
 }
 
 // ── Alur AM per-customer ──
@@ -406,20 +415,26 @@ async function photoFollowup(row: WaRow, am: { am_id: string; nama: string }): P
     return { note: "already-saved", reply };
   }
   const hasGeo = row.geo_lat != null && row.geo_lon != null;
-  const geo = hasGeo ? { lat: row.geo_lat, lon: row.geo_lon, ts: row.geo_ts ?? null, address: row.geo_address ?? null } : null;
+  const g = parseGeoTs(row.geo_ts); // jam dipakai walau koordinat gagal — lihat tempelFotoLaporan
+  const adaGeo = hasGeo || g.dt != null;
+  const geo = adaGeo
+    ? { lat: row.geo_lat ?? null, lon: row.geo_lon ?? null, ts: row.geo_ts ?? null, address: row.geo_address ?? null }
+    : null;
   await sql`
     UPDATE activity_log SET photo_path = ${row.media_path ?? null},
       photo_geotag = ${geo ? sql.json(geo as unknown as Parameters<typeof sql.json>[0]) : null}
     WHERE id = ${top.id}
   `;
   let mismatch = false;
-  if (top.plan_id && hasGeo) {
-    const g = parseGeoTs(row.geo_ts);
+  if (top.plan_id && adaGeo) {
     mismatch = g.iso ? g.iso !== String(top.tanggal) : false;
     await sql`
-      UPDATE sales_plan SET visit_lat = ${row.geo_lat ?? null}, visit_lon = ${row.geo_lon ?? null},
-        visit_timestamp = ${g.dt}, visit_date_mismatch = ${mismatch}
-      WHERE id = ${top.plan_id}
+      UPDATE sales_plan
+         SET visit_lat = COALESCE(${row.geo_lat ?? null}::numeric, visit_lat),
+             visit_lon = COALESCE(${row.geo_lon ?? null}::numeric, visit_lon),
+             visit_timestamp = COALESCE(${g.dt}::timestamptz, visit_timestamp),
+             visit_date_mismatch = COALESCE(${g.iso ? g.iso !== String(top.tanggal) : null}::boolean, visit_date_mismatch)
+       WHERE id = ${top.plan_id}
     `;
   }
   // Debounce: kalau masih ada foto lain dari AM/grup yg sama BELUM diproses,
