@@ -1,6 +1,6 @@
 import { db } from "../db.js";
 import { detectDaily, parseDaily, stripInvisible } from "../parsers/dailyplan.js";
-import { parseAmPlan, parseAmReport } from "../parsers/am.js";
+import { parseAmPlan, parseAmReport, bersihkanNamaCustomer } from "../parsers/am.js";
 import { sendViaWaGateway, type WaSendResult } from "../wasend.js";
 import { handleSalesAnalyticsQuery } from "./inbound-sales-analytics.js";
 import { resolveSender } from "./master.js";
@@ -263,15 +263,18 @@ async function insertAmActivities(
   let linked = 0;
   const unmatchedNames: string[] = [];
   for (const it of items) {
+    // Cocokkan pakai nama yang sudah dibuang prefiks "Cust :"; yang DISIMPAN
+    // tetap apa adanya dari AM (jejak mentah tetap di wa_message.body).
+    const namaBersih = bersihkanNamaCustomer(it.customer);
     const cands = await sql`
-      SELECT id, similarity(customer_name, ${it.customer}) AS score
+      SELECT id, similarity(customer_name, ${namaBersih}) AS score
       FROM sales_plan WHERE am_id = ${amId} AND tanggal = ${tanggal}
-        AND similarity(customer_name, ${it.customer}) > 0.3
+        AND similarity(customer_name, ${namaBersih}) > 0.3
       ORDER BY score DESC LIMIT 1
     `;
     const planId = cands[0] ? Number(cands[0].id) : null;
     const score = cands[0] ? Number(cands[0].score) : null;
-    const links = await resolveActivityLinks(amId, it.customer).catch(() => ({ accountId: null, opportunityId: null }));
+    const links = await resolveActivityLinks(amId, namaBersih).catch(() => ({ accountId: null, opportunityId: null }));
     if (links.accountId !== null) linked += 1;
     // Default 'Fisik' bila AM tak menyebut tipe: #REPORT AM = laporan kunjungan
     // harian (bukan kanal lain) — mempertahankan makna baris lama.
