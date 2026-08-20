@@ -28,6 +28,10 @@ jobs:
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm build
+      # Test unit apps/api (97 test: parser #PLAN/#REPORT, tanggal, insentif, NPK).
+      # Sebelumnya tak pernah jalan di CI — apps/api tak punya script `test`, jadi
+      # `turbo run test` melewatinya tanpa suara dan pipeline tetap hijau.
+      - run: pnpm test
       # Rumus Simulator KSO menghitung harga penawaran KSO yang dikirim ke faskes.
       # Salah angka = penawaran salah, dan layarnya tetap tampil wajar — tidak ada
       # yang gagal sendiri (PR #803: control XR memakai harga XN, lolos semua cek).
