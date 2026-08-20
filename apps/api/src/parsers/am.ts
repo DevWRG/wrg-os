@@ -6,6 +6,9 @@
 //   (multi-baris), atau inline `Customer | hasil… | next…`.
 import { normalizeTujuan } from "./tujuan.js";
 import { buildIso } from "./tanggal.js";
+// dailyplan.ts sudah membuang mark tak terlihat sejak lama; am.ts TIDAK, dan itu
+// menghasilkan baris sampah di activity_log (lihat catatan di bawah).
+import { stripInvisible } from "./dailyplan.js";
 
 const MONTHS: Record<string, number> = {
   jan: 1, feb: 2, mar: 3, apr: 4, mei: 5, may: 5, jun: 6, jul: 7,
@@ -105,7 +108,7 @@ export interface PlanCustomer { customer: string; tujuan: string; goal: string }
 export interface AmPlanResult { tanggal: string | null; customers: PlanCustomer[] }
 
 export function parseAmPlan(body: string, nowMs?: number): AmPlanResult {
-  const lines = body.split(/\r?\n/);
+  const lines = stripInvisible(body).split(/\r?\n/);
   let hIdx = lines.findIndex((l) => HASH.test(l));
   if (hIdx < 0) hIdx = 0;
   const tanggal = headerDate(lines, hIdx, nowMs);
@@ -142,8 +145,17 @@ export interface ReportItem { customer: string; hasil: string; next_action: stri
 export interface ReportNote { customer: string | null; reminder_date: string | null; keterangan: string }
 export interface AmReportResult { tanggal: string | null; items: ReportItem[]; notes: ReportNote[] }
 
-const FIELD = /^\s*(hasil(?:nya)?|next|tindak\s*lanjut|tipe|jenis)\s*:?\s*(.*)$/i;
-const NOTE = /^\s*note\s*:?\s*(.+)$/i;
+// Tanda baca pembuka ditoleransi: AM nyata menulis ".      next: kawal pengadaan",
+// dan tanpa toleransi ini baris tersebut lolos jadi "customer" bernama titik.
+const FIELD = /^\s*[.\-•*]*\s*(hasil(?:nya)?|next|tindak\s*lanjut|tipe|jenis)\s*:?\s*(.*)$/i;
+const NOTE = /^\s*[.\-•*]*\s*note\s*:?\s*(.+)$/i;
+
+/**
+ * Panjang minimum nama faskes yang masuk akal. Di bawah ini hampir pasti derau
+ * (sisa tanda baca, satu huruf). Nama faskes terpendek yang nyata di data
+ * berukuran jauh di atas ini.
+ */
+const MIN_NAMA_CUSTOMER = 3;
 // bersihkan tanggal dari teks → sisanya keterangan
 function dateMatchText(s: string): string | null {
   const m1 = s.match(/\d{1,2}\s+[A-Za-z]{3,9}\.?(?:\s+\d{2,4})?/);
@@ -153,14 +165,30 @@ function dateMatchText(s: string): string | null {
 }
 
 export function parseAmReport(body: string, nowMs?: number): AmReportResult {
-  const lines = body.split(/\r?\n/);
+  // WhatsApp menyisipkan U+200E (LRM) dsb di awal baris pada konten campur
+  // RTL/LTR. Tanpa dibuang, anchor `^\s*#` GAGAL — `\s` tak match karakter itu —
+  // sehingga baris header "#Report Irul 18/8/2026" lolos dan tersimpan sebagai
+  // customer. `.trim()` juga tak membuangnya, jadi baris yang tampak kosong
+  // menjadi customer bernama karakter tak terlihat. Terhitung di produksi:
+  // 27 baris header + 35 baris kosong + 184 baris memuat mark tak terlihat.
+  // dailyplan.ts sudah melakukan ini sejak lama; am.ts terlewat.
+  const lines = stripInvisible(body).split(/\r?\n/);
   let hIdx = lines.findIndex((l) => HASH.test(l));
   if (hIdx < 0) hIdx = 0;
   const tanggal = headerDate(lines, hIdx, nowMs);
   const items: ReportItem[] = [];
   const notes: ReportNote[] = [];
   let cur: ReportItem | null = null;
-  const push = () => { if (cur && cur.customer) items.push(cur); };
+  // Kandidat nama faskes yang jelas bukan nama: kosong, sisa tanda baca, atau
+  // baris hashtag yang lolos saringan di atas.
+  const namaMasukAkal = (s: string): boolean => {
+    const v = s.trim();
+    if (v.length < MIN_NAMA_CUSTOMER) return false;
+    if (HASH.test(v)) return false;
+    if (/^[\s.\-•*_,:;|]+$/.test(v)) return false;
+    return true;
+  };
+  const push = () => { if (cur && namaMasukAkal(cur.customer)) items.push(cur); };
 
   for (let i = hIdx + 1; i < lines.length; i++) {
     const raw = lines[i];
@@ -181,6 +209,11 @@ export function parseAmReport(body: string, nowMs?: number): AmReportResult {
 
     const fm = t.match(FIELD);
     const numbered = /^\s*\d+\s*[.)]/.test(raw);
+
+    // Baris hasil:/next:/tipe: TANPA customer berjalan tidak punya tempat
+    // menempel — dulu ia jatuh ke cabang "customer baru" dan tersimpan sebagai
+    // faskes bernama "next: kawal pengadaan". Dibuang, bukan ditebak.
+    if (fm && !cur && !numbered) continue;
 
     if (fm && cur && !numbered) {
       // hasil:/next:/tipe: untuk customer berjalan
@@ -213,6 +246,10 @@ export function parseAmReport(body: string, nowMs?: number): AmReportResult {
         cur.next_action = cur.next_action.replace(FIELD, "$2").trim();
         continue;
       }
+      // Kandidat yang jelas bukan nama faskes DILEWATI, bukan sekadar dibuang
+      // saat push(): kalau ia tetap dibuat, baris faskes berikutnya akan
+      // tersedot jadi `hasil`-nya dan kunjungan nyata itu hilang.
+      if (!namaMasukAkal(line)) continue;
       push();
       cur = { customer: line, hasil: "", next_action: "", activity_type: null };
       continue;
@@ -222,5 +259,5 @@ export function parseAmReport(body: string, nowMs?: number): AmReportResult {
     if (cur && !fm) cur.hasil = (cur.hasil ? cur.hasil + " " : "") + t;
   }
   push();
-  return { tanggal, items: items.filter((it) => it.customer), notes };
+  return { tanggal, items: items.filter((it) => namaMasukAkal(it.customer)), notes };
 }
