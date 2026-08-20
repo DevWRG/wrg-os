@@ -187,6 +187,51 @@ export function buildAmReportReply(
   return s;
 }
 
+/**
+ * Tempelkan foto pesan `#REPORT` ke baris aktivitas yang LAHIR dari pesan itu.
+ *
+ * processInboundMessage() hanya menjalankan photoFollowup() saat
+ * `kind === "none"` — yaitu foto TANPA caption berhashtag. Padahal banyak AM
+ * melapor dengan foto ber-caption `#Report / Cust : X / Hasil : …`; pesan itu
+ * dirutekan ke jalur laporan, dan fotonya sendiri TIDAK PERNAH terpasang.
+ *
+ * Akibatnya di produksi: dari 1.250 baris activity_log yang berasal dari foto
+ * ber-caption #Report, 1.235 (98,8%) `photo_path`-nya NULL dan 1.242
+ * `photo_geotag`-nya NULL — padahal OCR sudah mengekstrak koordinatnya ke
+ * `wa_message.geo_lat`. Sidqi 589/589 (100%), Vicky 174/174, Firman 124/124.
+ * Dua akibat yang terlihat: kolom Geotag di kartu kunjungan nol untuk AM yang
+ * fotonya justru lengkap, dan bot menagih "Foto visit belum ada" untuk foto
+ * yang baru saja dikirim AM.
+ *
+ * Dipasang SEBELUM daftar `pending` foto dihitung, supaya balasan tidak lagi
+ * menagih foto yang sudah menempel.
+ */
+async function tempelFotoLaporan(row: WaRow, tanggal: string): Promise<Record<string, unknown> | null> {
+  if (!String(row.message_type ?? "").toLowerCase().startsWith("image") || !row.media_path) return null;
+  const sql = db();
+  const hasGeo = row.geo_lat != null && row.geo_lon != null;
+  const geo = hasGeo ? { lat: row.geo_lat, lon: row.geo_lon, ts: row.geo_ts ?? null, address: row.geo_address ?? null } : null;
+  const rows = await sql<{ id: string; plan_id: string | null }[]>`
+    UPDATE activity_log SET photo_path = ${row.media_path},
+      photo_geotag = ${geo ? sql.json(geo as unknown as Parameters<typeof sql.json>[0]) : null}
+    WHERE message_id = ${row.message_id} AND photo_path IS NULL
+    RETURNING id, plan_id`;
+  if (rows.length === 0) return { foto: "tak-ada-baris" };
+  let plan = 0;
+  if (hasGeo) {
+    const g = parseGeoTs(row.geo_ts);
+    for (const r of rows) {
+      if (!r.plan_id) continue;
+      await sql`
+        UPDATE sales_plan SET visit_lat = ${row.geo_lat ?? null}, visit_lon = ${row.geo_lon ?? null},
+          visit_timestamp = ${g.dt}, visit_date_mismatch = ${g.iso ? g.iso !== tanggal : false}
+        WHERE id = ${Number(r.plan_id)}`;
+      plan += 1;
+    }
+  }
+  return { foto_terpasang: rows.length, geo: hasGeo, plan_geo_diperbarui: plan };
+}
+
 // ── Alur AM per-customer ──
 // #PLAN AM → sales_plan (per customer). Re-submit: hapus plan belum-direport
 // hari itu lalu insert ulang (preserve yg sudah reported). seq lanjut dari max.
@@ -529,6 +574,9 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
     }
     const tgl = ar.tanggal ?? wibDate();
     const res = await insertAmActivities(am.am_id, tgl, ar.items, row.message_id);
+    // Foto yang datang BERSAMA laporan ini dipasang sekarang — sebelum daftar
+    // `pend` dihitung, supaya balasan tak menagih foto yang sudah ada.
+    const foto = await tempelFotoLaporan(row, tgl);
     const [tot] = await sql`
       SELECT count(*)::int AS plan_total, count(*) FILTER (WHERE reported)::int AS reported
       FROM sales_plan WHERE am_id = ${am.am_id} AND tanggal = ${tgl}
@@ -554,7 +602,7 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
     let body = buildAmReportReply(am.nama, tgl, ar.items.length, res, Number(tot.plan_total), Number(tot.reported), pendingNames);
     if (reminders > 0) body += `\n\n📌 ${reminders} reminder dijadwalkan.`;
     const reply = await sendViaWaGateway(target, body);
-    return finish({ am_id: am.am_id, via: am.via, mode: "am", tanggal: tgl, matched: res.matched, unmatched: res.unmatched, linked: res.linked, reminders, reply });
+    return finish({ am_id: am.am_id, via: am.via, mode: "am", tanggal: tgl, matched: res.matched, unmatched: res.unmatched, linked: res.linked, reminders, reply, ...(foto ?? {}) });
   }
   // report todo — cocokkan vs plan + balasan kaya (match/baru)
   const rep = await markReported(am.am_id, am.nama, tanggal, parsed.items, row.body ?? "");
