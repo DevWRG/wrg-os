@@ -13,12 +13,31 @@
 // Tahun 2 digit TIDAK boleh ditolak — 201 pesan nyata memakainya ("07/8/26").
 
 /**
- * Batas kewajaran tanggal plan/report relatif hari ini, dalam hari.
- * Dipilih 180: seluruh kesalahan yang teramati minimal 365 hari (2025→2026,
- * 2027→2026, tahun 202 = ribuan tahun), jadi 180 menangkap semuanya sambil tetap
- * memberi ruang lebar untuk entri backdate yang sah.
+ * Batas kewajaran ke MASA LAMPAU, dalam hari. Dipilih 180: seluruh kesalahan
+ * tahun yang teramati minimal 365 hari (2025→2026, 2027→2026, tahun 202 =
+ * ribuan tahun), jadi 180 menangkap semuanya sambil tetap memberi ruang lebar
+ * untuk entri backdate yang sah (teramati sampai -31 hari).
  */
 export const PLAUSIBLE_DAYS = 180;
+
+/**
+ * Batas kewajaran ke MASA DEPAN, dalam hari — jauh lebih ketat daripada sisi
+ * lampau, dan itu disengaja.
+ *
+ * Jaring lama simetris ±180 hari. Akibatnya tanggal masa depan yang "dekat"
+ * lolos: `#REPORT` bertanggal sebulan ke depan diterima apa adanya, barisnya
+ * duduk di masa depan, dan TIDAK AKAN PERNAH cocok ke plan mana pun — kelas
+ * kegagalan yang sama dengan bug tahun, hanya jaraknya lebih kecil sehingga
+ * tak tertangkap. (Kejadian nyata: 6 baris activity_log am 18 bertanggal
+ * 2027-07-27 dari pesan 2026-07-27, dibersihkan manual 2026-08-20.)
+ *
+ * Angka 7 diambil dari data produksi, bukan tebakan: dari 3.652 baris
+ * `sales_plan` bertanggal-submit, NOL bertanggal masa depan; `sales_todo` hanya
+ * 5 baris di +1 hari (plan besok). Semua kesalahan yang teramati >= 30 hari.
+ * Jadi 7 memberi ruang seminggu untuk perencanaan maju sambil tetap menangkap
+ * setiap kesalahan yang pernah terjadi.
+ */
+export const MAX_FUTURE_DAYS = 7;
 
 const DAY_MS = 86_400_000;
 const WIB_MS = 7 * 3600 * 1000;
@@ -38,12 +57,17 @@ export function expandYear(raw: string): number | null {
   return null;
 }
 
-/** true kalau ISO date masih dalam PLAUSIBLE_DAYS dari hari ini (WIB). */
+/**
+ * true kalau ISO date wajar relatif hari ini (WIB): sampai PLAUSIBLE_DAYS ke
+ * belakang, tapi hanya MAX_FUTURE_DAYS ke depan. Asimetris — lihat alasannya
+ * di MAX_FUTURE_DAYS.
+ */
 export function plausibleIso(iso: string, nowMs: number = Date.now()): boolean {
   const t = Date.parse(`${iso}T00:00:00Z`);
   if (Number.isNaN(t)) return false;
   const today = Math.floor((nowMs + WIB_MS) / DAY_MS) * DAY_MS;
-  return Math.abs(t - today) <= PLAUSIBLE_DAYS * DAY_MS;
+  const selisihHari = (t - today) / DAY_MS;
+  return selisihHari <= MAX_FUTURE_DAYS && selisihHari >= -PLAUSIBLE_DAYS;
 }
 
 const pad = (n: number): string => String(n).padStart(2, "0");
