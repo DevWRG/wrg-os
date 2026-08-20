@@ -370,15 +370,31 @@ async function photoFollowup(row: WaRow, am: { am_id: string; nama: string }): P
   let caption = (row.body ?? "").trim();
   if (caption === "<media:image>") caption = "";
   if (!caption) return { skipped: "no-caption" };
-  const cands = await sql`
+  // Dulu LIMIT 1: hanya baris ber-skor tertinggi dalam jendela 7 hari yang
+  // dilihat, TANPA peduli baris itu sudah berfoto. Kalau ternyata sudah, foto
+  // baru dibuang sebagai "already-saved" — padahal baris HARI INI untuk faskes
+  // yang sama masih kosong. AM yang mengunjungi faskes yang sama berulang
+  // paling dirugikan: 209 foto ditolak, 134 di antaranya punya slot kosong di
+  // hari yang sama (Angga 41 · Yugo 39 · Iqbal 34 · Luri 28 · Irul 26).
+  // Sekarang beberapa kandidat diambil, dan slot KOSONG diutamakan.
+  const cands = await sql<{ id: string; customer_name: string; plan_id: string | null; tanggal: string; photo_path: string | null; score: string }[]>`
     SELECT id, customer_name, plan_id, tanggal::text AS tanggal, photo_path,
            similarity(customer_name, ${caption}) AS score
     FROM activity_log
     WHERE am_id = ${am.am_id} AND tanggal >= (CURRENT_DATE - 7)
       AND similarity(customer_name, ${caption}) >= ${PHOTO_SILENT}
-    ORDER BY score DESC LIMIT 1
+    ORDER BY score DESC LIMIT 8
   `;
-  const top = cands[0];
+  // Slot kosong yang layak: lulus ambang match, belum berfoto. Di antara itu,
+  // yang tanggalnya SAMA dengan hari foto dikirim diutamakan — foto yang baru
+  // dikirim hampir selalu milik kunjungan hari itu; baru kemudian skor.
+  const hariFoto = String(row.received_at ?? "").slice(0, 10);
+  const kosong = cands
+    .filter((c) => !c.photo_path && Number(c.score) >= PHOTO_MATCH)
+    .sort((a, b) =>
+      (b.tanggal === hariFoto ? 1 : 0) - (a.tanggal === hariFoto ? 1 : 0) ||
+      Number(b.score) - Number(a.score));
+  const top = kosong[0] ?? cands[0];
   if (!top) return { skipped: "no-match-silent", caption };
   const score = Number(top.score);
   if (score < PHOTO_MATCH) {
