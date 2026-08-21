@@ -81,6 +81,15 @@ export interface KlasifikasiSummary {
   prefixHampirPenuh: { prefix: string; terpakai: number }[];
 }
 
+// Antrean review menyimpan teks klasifikasi APA ADANYA dari sumber, dan importer
+// kroscek menulis kolom **Lini** ('IVD' / 'Alkes') ke `kategori_nama` — bukan nama
+// kategori master ('IVD' / 'NON IVD'). 116 dari 233 baris antrean di dev kena.
+// Importer sudah diperbaiki untuk impor berikutnya, tapi baris yang sudah ada di
+// prod tetap ber-'Alkes', jadi aliasnya harus dikenali di sini juga.
+const ALIAS_KATEGORI: Record<string, string> = { alkes: "NON IVD", medical: "NON IVD", ivd: "IVD" };
+const namaKategoriKanonik = (v: string): string =>
+  ALIAS_KATEGORI[v.trim().toLowerCase()] ?? v;
+
 const KODE_RE = /^\d{2}\.\d{2}\.\d{2}\.\d{3}\.\d{4}$/;
 const ID2 = /^\d{2}$/;
 const ID3 = /^\d{3}$/;
@@ -473,4 +482,241 @@ export async function summary(): Promise<KlasifikasiSummary> {
     reviewTerbuka: num(tax.review_terbuka),
     prefixHampirPenuh: penuh.map((r) => ({ prefix: String(r.prefix), terpakai: num(r.terpakai) })),
   };
+}
+
+// ── Selesaikan satu baris antrean "Perlu Keputusan" ─────────────────────────
+// Sebelumnya tombol di UI cuma mengubah status jadi 'beres': barisnya hilang dari
+// antrean padahal tak ada kode terbit dan master tetap kurang — jalan buntu yang
+// menyesatkan (dikeluhkan user 1 Agt 2026: "kagak tau larinya data ke mana").
+//
+// Sekarang satu aksi menyelesaikan betulan, dalam SATU transaksi:
+//   a. sub class BARU  → daftarkan ke master di bawah (kategori, class) baris itu,
+//      id = 3 digit berikutnya yang belum terpakai di class itu; atau
+//   b. sub class ADA   → pakai id yang dipilih (produk dipindahkan ke sana),
+// lalu terbitkan kode KK.PP.CC.SSS.NNNN dan tandai barisnya 'beres'.
+//
+// Transaksi itu wajib: tanpa itu, kegagalan di langkah kode meninggalkan sub
+// class karangan di master — dan master inilah yang jadi sumber kode permanen.
+
+export interface SelesaikanInput {
+  /** id sub class yang sudah ada (3 digit). Kosongkan untuk mendaftarkan baru. */
+  subClassId?: string | null;
+  /** nama sub class baru; default = nama di baris antrean. */
+  subClassNama?: string | null;
+  /** Akui bahwa kode yang sudah ada (dipasangkan atas dasar NAMA) memang produk
+   *  yang sama. Wajib untuk baris tanpa kode 2025 — satu nama bisa dipakai
+   *  beberapa produk berbeda. */
+  akuiNamaSama?: boolean;
+  by?: string | null;
+}
+
+export async function selesaikanReview(
+  id: number,
+  input: SelesaikanInput,
+): Promise<
+  | { ok: true; kode: string; subClassId: string; didaftarkan: boolean; sudahAda?: boolean;
+      /** berapa baris price book yang ikut dapat pautan kode ini */
+      pricebookDipautkan: number }
+  | { ok: false; error: string }
+> {
+  if (!isDbEnabled()) return { ok: false, error: "db disabled" };
+  const sql = db();
+  try {
+    return await sql.begin(async (tx) => {
+      const [r] = await tx<Record<string, unknown>[]>`
+        SELECT * FROM product_code_review WHERE id = ${id} FOR UPDATE`;
+      if (!r) return { ok: false as const, error: "baris antrean tidak ditemukan" };
+      if (r.status !== "terbuka") {
+        return { ok: false as const, error: `baris ini sudah berstatus '${String(r.status)}'` };
+      }
+
+      // Kategori → line → class WAJIB sudah ada di master. Kalau salah satunya
+      // belum, yang kurang bukan sub class-nya — itu keputusan yang lebih besar
+      // dan tidak boleh diselesaikan lewat dialog ini.
+      // Produk yang SUDAH punya kode: barisnya cuma basi (kodenya terbit lewat
+      // sheet lain / impor sebelumnya). Menolak dengan galat cuma bikin antrean
+      // macet selamanya, jadi barisnya ditutup dan kode yang ada dilaporkan.
+      const identitasAwal = r.kode_2025
+        ? `K:${String(r.kode_2025).toUpperCase()}`
+        : `N:${String(r.nama ?? "").toUpperCase()}`;
+      const [sudah] = await tx<{ kode: string }[]>`
+        SELECT kode FROM product_code WHERE identitas = ${identitasAwal}`;
+      if (sudah) {
+        // Bentuk 'N:' dipasangkan atas dasar nama saja — rawan (satu nama bisa
+        // dipakai beberapa produk). Butuh pengakuan manusia dulu.
+        if (identitasAwal.startsWith("N:") && !input.akuiNamaSama) {
+          return { ok: false as const,
+                   error: `Sudah ada kode ${sudah.kode} untuk produk BERNAMA SAMA, tapi baris ini tak punya kode 2025 — `
+                        + `belum tentu produk yang sama. Periksa di tab Kode Produk; kalau memang sama, ulangi dengan centang konfirmasi.` };
+        }
+        const kodeFinal = sudah.kode;
+
+      // Tutup lingkarannya: `product_code_review.kode_legacy` itu kode 5-bagian
+      // dari sheet, dan kolom itulah yang disimpan di
+      // `product_pricelist_setup.kode_sumber`. Tanpa langkah ini, kode baru terbit
+      // tapi KPI "Dapat kode produk" di Setup Harga tetap 0 sampai importer
+      // dijalankan lagi — dan user tak punya cara menebaknya.
+      let pricebookDipautkan = 0;
+      const legacy = String(r.kode_legacy ?? "").trim();
+      if (legacy) {
+        const dipautkan = await tx`
+          UPDATE product_pricelist_setup SET product_kode = ${kodeFinal}, updated_at = now()
+           WHERE product_kode IS NULL AND kode_sumber = ${legacy}
+          RETURNING row_no`;
+        pricebookDipautkan = dipautkan.length;
+      }
+        await tx`UPDATE product_code_review SET status = 'beres' WHERE id = ${id}`;
+        return { ok: true as const, kode: kodeFinal, subClassId: String(kodeFinal).split(".")[3],
+                 didaftarkan: false, sudahAda: true, pricebookDipautkan };
+      }
+
+      const katSumber = String(r.kategori_nama ?? "");
+      const [kat] = await tx<{ id: string }[]>`
+        SELECT id FROM product_kategori
+         WHERE lower(nama) IN (lower(${katSumber}), lower(${namaKategoriKanonik(katSumber)}))
+         ORDER BY (lower(nama) = lower(${katSumber})) DESC LIMIT 1`;
+      if (!kat) return { ok: false as const, error: `Kategori '${katSumber}' belum ada di master` };
+      // Baris tanpa teks Product Line / Class di sumber tidak bisa diselesaikan di
+      // sini — yang kurang bukan sub class-nya, tapi seluruh klasifikasinya. Itu
+      // pekerjaan tab "Terbitkan Kode" yang memang meminta keempat level.
+      if (!String(r.line_nama ?? "").trim() || !String(r.class_nama ?? "").trim()) {
+        return { ok: false as const,
+                 error: "Baris ini tak punya Product Line/Class di sumber, jadi tak ada induk yang bisa dipakai. "
+                      + "Terbitkan kodenya lewat tab Terbitkan Kode (pilih sendiri keempat level)." };
+      }
+      const [line] = await tx<{ id: string }[]>`
+        SELECT id FROM product_line
+         WHERE kategori_id = ${kat.id} AND lower(nama) = lower(${String(r.line_nama ?? "")})`;
+      if (!line) {
+        return { ok: false as const,
+                 error: `Product Line '${String(r.line_nama ?? "")}' belum terdaftar di kategori ${kat.id} — lengkapi dulu di tab Master Klasifikasi` };
+      }
+      const [cls] = await tx<{ id: string }[]>`
+        SELECT id FROM product_class
+         WHERE kategori_id = ${kat.id} AND lower(nama) = lower(${String(r.class_nama ?? "")})`;
+      if (!cls) {
+        return { ok: false as const,
+                 error: `Class '${String(r.class_nama ?? "")}' belum terdaftar di kategori ${kat.id} — lengkapi dulu di tab Master Klasifikasi` };
+      }
+
+      let subId = (input.subClassId ?? "").trim();
+      let didaftarkan = false;
+      if (subId) {
+        if (!ID3.test(subId)) return { ok: false as const, error: "id sub class harus 3 digit angka" };
+        const [ada] = await tx<{ id: string }[]>`
+          SELECT id FROM product_sub_class
+           WHERE kategori_id = ${kat.id} AND class_id = ${cls.id} AND id = ${subId}`;
+        if (!ada) {
+          return { ok: false as const,
+                   error: `sub class ${subId} tidak ada di Class ${cls.id} kategori ${kat.id}` };
+        }
+      } else {
+        const nama = (input.subClassNama ?? String(r.sub_class_nama ?? "")).trim();
+        if (!nama) return { ok: false as const, error: "nama sub class wajib diisi" };
+        // Nama yang sama di class yang sama = pakai yang sudah ada, jangan bikin
+        // id kedua untuk hal yang sama.
+        const [sama] = await tx<{ id: string }[]>`
+          SELECT id FROM product_sub_class
+           WHERE kategori_id = ${kat.id} AND class_id = ${cls.id} AND lower(nama) = lower(${nama})`;
+        if (sama) {
+          subId = sama.id;
+        } else {
+          const [maks] = await tx<{ n: number }[]>`
+            SELECT COALESCE(MAX(id::int), 0) AS n FROM product_sub_class
+             WHERE kategori_id = ${kat.id} AND class_id = ${cls.id}`;
+          const next = num(maks?.n) + 1;
+          if (next > 999) return { ok: false as const, error: "id sub class di class ini sudah habis (999)" };
+          subId = String(next).padStart(3, "0");
+          await tx`INSERT INTO product_sub_class (kategori_id, class_id, id, nama)
+                   VALUES (${kat.id}, ${cls.id}, ${subId}, ${nama})`;
+          didaftarkan = true;
+        }
+      }
+
+      // Nomor urut dihitung di dalam INSERT … SELECT max(seq)+1 supaya dua
+      // permintaan berbarengan tak bisa menerbitkan kode kembar.
+      const identitas = r.kode_2025
+        ? `K:${String(r.kode_2025).toUpperCase()}`
+        : `N:${String(r.nama ?? "").toUpperCase()}`;
+      const [kodeRow] = await tx<{ kode: string }[]>`
+        INSERT INTO product_code (
+          kode, kategori_id, line_id, class_id, sub_class_id, seq, identitas, nama,
+          nama_principal, kemasan, satuan, brand, penyedia, kode_2025, kode_legacy,
+          sumber, created_by)
+        SELECT ${kat.id} || '.' || ${line.id} || '.' || ${cls.id} || '.' || ${subId} || '.' ||
+               lpad((COALESCE(MAX(c.seq), 0) + 1)::text, 4, '0'),
+               ${kat.id}, ${line.id}, ${cls.id}, ${subId}, COALESCE(MAX(c.seq), 0) + 1,
+               ${identitas}, ${String(r.nama ?? "")},
+               ${(r.nama_principal as string) ?? null}, ${(r.kemasan as string) ?? null},
+               ${(r.satuan as string) ?? null}, ${(r.brand as string) ?? null},
+               ${(r.penyedia as string) ?? null}, ${(r.kode_2025 as string) ?? null},
+               ${(r.kode_legacy as string) ?? null},
+               ${`review:${String(r.sumber ?? "")}`}, ${input.by ?? null}
+          FROM product_code c
+         WHERE c.kategori_id = ${kat.id} AND c.line_id = ${line.id}
+           AND c.class_id = ${cls.id} AND c.sub_class_id = ${subId}
+        RETURNING kode`;
+      if (!kodeRow) return { ok: false as const, error: "gagal menerbitkan kode" };
+
+      const kodeFinal = kodeRow.kode;
+
+      // Tutup lingkarannya: `product_code_review.kode_legacy` itu kode 5-bagian
+      // dari sheet, dan kolom itulah yang disimpan di
+      // `product_pricelist_setup.kode_sumber`. Tanpa langkah ini, kode baru terbit
+      // tapi KPI "Dapat kode produk" di Setup Harga tetap 0 sampai importer
+      // dijalankan lagi — dan user tak punya cara menebaknya.
+      let pricebookDipautkan = 0;
+      const legacy = String(r.kode_legacy ?? "").trim();
+      if (legacy) {
+        const dipautkan = await tx`
+          UPDATE product_pricelist_setup SET product_kode = ${kodeFinal}, updated_at = now()
+           WHERE product_kode IS NULL AND kode_sumber = ${legacy}
+          RETURNING row_no`;
+        pricebookDipautkan = dipautkan.length;
+      }
+      await tx`UPDATE product_code_review SET status = 'beres' WHERE id = ${id}`;
+      // Pautkan ke mirror Accurate kalau kode berjalannya cocok — sama aturannya
+      // dengan importer: lewat kode saja, tidak fuzzy nama.
+      await tx`UPDATE product_code p SET accurate_item_id = ai.id, updated_at = now()
+                 FROM accurate_item ai
+                WHERE p.kode = ${kodeFinal} AND p.kode_2025 IS NOT NULL AND ai.no = p.kode_2025`;
+      return { ok: true as const, kode: kodeFinal, subClassId: subId, didaftarkan, sudahAda: false,
+               pricebookDipautkan };
+    });
+  } catch (e) {
+    const msg = (e as Error).message;
+    // identitas UNIQUE = produk ini sudah punya kode. Itu bukan kegagalan teknis,
+    // jadi pesannya dibuat bisa dimengerti HoD.
+    if (/product_code_identitas_key|duplicate key/.test(msg)) {
+      return { ok: false, error: "produk ini sudah punya kode (identitas sama) — cek tab Kode Produk" };
+    }
+    return { ok: false, error: msg };
+  }
+}
+
+/** Sub class yang sudah terdaftar di bawah (kategori, class) sebuah baris antrean —
+ *  bahan pilihan "pakai yang sudah ada" di dialog. */
+export async function subClassPilihan(
+  reviewId: number,
+): Promise<{ ok: true; kategoriId: string; classId: string; rows: { id: string; nama: string }[] }
+  | { ok: false; error: string }> {
+  if (!isDbEnabled()) return { ok: false, error: "db disabled" };
+  const sql = db();
+  const [r] = await sql<Record<string, unknown>[]>`
+    SELECT kategori_nama, class_nama FROM product_code_review WHERE id = ${reviewId}`;
+  if (!r) return { ok: false, error: "baris antrean tidak ditemukan" };
+  const katSumber = String(r.kategori_nama ?? "");
+  const [kat] = await sql<{ id: string }[]>`
+    SELECT id FROM product_kategori
+     WHERE lower(nama) IN (lower(${katSumber}), lower(${namaKategoriKanonik(katSumber)}))
+     ORDER BY (lower(nama) = lower(${katSumber})) DESC LIMIT 1`;
+  if (!kat) return { ok: false, error: "kategori baris ini belum ada di master" };
+  const [cls] = await sql<{ id: string }[]>`
+    SELECT id FROM product_class
+     WHERE kategori_id = ${kat.id} AND lower(nama) = lower(${String(r.class_nama ?? "")})`;
+  if (!cls) return { ok: false, error: "class baris ini belum terdaftar di kategorinya" };
+  const rows = await sql<{ id: string; nama: string }[]>`
+    SELECT id, nama FROM product_sub_class
+     WHERE kategori_id = ${kat.id} AND class_id = ${cls.id} ORDER BY id`;
+  return { ok: true, kategoriId: kat.id, classId: cls.id, rows };
 }

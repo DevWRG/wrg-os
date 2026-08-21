@@ -44,7 +44,7 @@ Legend: ✅ siap · ⚙️ siap, perlu config (WA target/gateway) · 🔨 perlu 
 | Cron lama | Jadwal | Padanan wrg-os | Status |
 |---|---|---|---|
 | `wrg-daily plan_check` | 08:15 | reminder kepatuhan plan | ⚙️ (target WA) |
-| `wrg-daily report_check` | 20:30 | reminder kepatuhan report | ⚙️ (target WA) |
+| `wrg-daily report_check` | 21:30 | reminder kepatuhan report | ⚙️ (target WA) |
 | `wrg-daily daily_summary` | 22:00 W | `/daily-summary` (generate) + kirim grup HOD | ⚙️ generate ✅ / kirim 🔨 |
 | `cron_am_reminder h` | 07:03 | scheduler `reminder-h` → `runReminders('h')` | ⚙️ (WA stub) |
 | `cron_am_reminder h-1` | 17:03 | scheduler `reminder-h-1` | ⚙️ (WA stub) |

@@ -5,12 +5,9 @@ import { sessionUser } from "@/lib/admin-guard";
 import { canEditPricelistSetup, canPublishPricelist } from "@/lib/pricelist-access";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { Card, CardContent } from "@/components/ui/card";
-import { PricelistSetupTabs } from "@/components/pricelist/setup-tabs";
-import type {
-  PricebookSetupRow, PricebookSetupSummary,
+import {
+  PricebookSetupTable, type PricebookSetupRow, type PricebookSetupSummary,
 } from "@/components/pricelist/pricebook-setup-table";
-import type { ProductOption } from "@/components/pricelist/pricelist-form-sheet";
-import type { PricelistRow } from "@/lib/pricelist";
 
 export const dynamic = "force-dynamic";
 
@@ -18,9 +15,14 @@ export const dynamic = "force-dynamic";
 // gate-nya paling ketat: HoD Business / Purchasing (+ admin). HANDOVER §1/§9
 // melarang HPP, margin, dan harga sub-dealer keluar ke sales.
 //
-// Isinya dua sub-tab (lihat components/pricelist/setup-tabs.tsx):
-//   • Produk Accurate  — kalkulator HPP→margin→diskon→insentif (tabel 043), + publish
-//   • Price Book keagenan — lapisan kroscek HPP di atas snapshot Direktur (073)
+// Sejak 1 Agt 2026 halaman ini FOKUS PRODUK KEAGENAN (keputusan user): sub-tab
+// "Produk Accurate" (kalkulator tabel 043) dilepas. Tabel 043, endpoint /pricelist,
+// dan importer-nya tetap ada — yang dilepas cuma mukanya, jadi kalau nanti
+// dibutuhkan lagi tinggal dipasang kembali tanpa migrasi.
+//
+// Di sini HoD Business menyetel HPP · Price List · Diskon Maks per SKU keagenan
+// lalu mem-publish-nya; yang published muncul di tab "Harga per Produk" pada menu
+// Price Book yang dibuka AM.
 //
 // Route ini memakai feature key 'pricelist-setup' (lihat NavItem.feature di
 // lib/nav.ts) supaya izin grup yang sudah ada dari menu "Pricelist Setup" lama
@@ -44,37 +46,29 @@ export default async function PricebookSetupPage() {
     }
   }
 
-  const [pl, prod, pb] = await Promise.all([
-    getJson<{ rows: PricelistRow[] }>("/pricelist"),
-    getJson<{ rows: { id: string | number; no: string | null; name: string | null }[] }>(
-      "/accurate/items?limit=10000"),
-    getJson<{ rows: PricebookSetupRow[]; ringkas: PricebookSetupSummary }>("/pricebook/setup"),
-  ]);
-  const products: ProductOption[] = (prod?.rows ?? []).map((p) => ({
-    id: String(p.id), no: p.no, name: p.name,
-  }));
+  const pb = await getJson<{ rows: PricebookSetupRow[]; ringkas: PricebookSetupSummary }>(
+    "/pricebook/setup?limit=20000",
+  );
 
   return (
     <>
       <PageHeader
         title="Setup Harga"
-        description="Harga Principal (HPP), margin, diskon, alokasi insentif & konfirmasi area untuk produk Accurate — plus price book keagenan (harga final Direktur + HPP hasil kroscek). Angka di halaman ini internal: jangan dibagikan ke sales."
+        description="Setel Harga Principal (HPP), Price List & Diskon Maks per SKU keagenan, lalu publikasikan agar tampil ke AM. Angka di halaman ini internal: jangan dibagikan ke sales."
       />
-      {!pl ? (
+      {!pb ? (
         <p className="text-muted-foreground">
           Data tidak tersedia. Pastikan <code>apps/api</code> jalan dengan <code>DATABASE_URL</code> dan migrasi{" "}
-          <code>043_pricelist.sql</code> sudah diterapkan.
+          <code>073_pricebook_setup.sql</code> + <code>077_pricebook_setup_publish.sql</code> sudah diterapkan.
         </p>
       ) : (
         <div className="min-w-0">
           <Card>
             <CardContent className="pt-6">
-              <PricelistSetupTabs
-                rows={pl.rows ?? []}
-                products={products}
+              <PricebookSetupTable
+                rows={pb.rows ?? null}
+                ringkas={pb.ringkas ?? null}
                 canPublish={canPublishPricelist(me)}
-                pricebookRows={pb?.rows ?? null}
-                pricebookRingkas={pb?.ringkas ?? null}
               />
             </CardContent>
           </Card>
