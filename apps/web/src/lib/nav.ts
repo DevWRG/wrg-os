@@ -22,6 +22,7 @@ import {
   FileCheck2,
   Car,
   ArrowLeftRight,
+  Archive,
   type LucideIcon,
 } from "lucide-react";
 
@@ -301,6 +302,22 @@ export const NAV: NavGroup[] = [
       // FORM YANG SAMA dgn Stock In/Out (AddAtkStockMovementSheet), bukan form
       // baru — menu ini cuma beda submenu/konteks.
       { title: "ATK Stock Opname", url: "/atk-stock-opname", icon: ListChecks, badge: "NEW" },
+    ],
+  },
+  {
+    // Domain GA (General Affairs) per arahan Direktur soal domain grouping
+    // sidebar (sama pola Aftersales/Shipping/Purchasing). F132 Aset Master —
+    // single source of truth aset kantor, fondasi F133 (assignment/transfer)
+    // & F137 (maintenance) yang menyusul di atas branch ini.
+    label: "GA",
+    items: [
+      // 1 menu, 3 tab (Aset/Kategori/Tiket IT) — arahan Direktur eksplisit
+      // F52 gabung ke F132 juga di level MENU, bukan cuma tabel. Tab Tiket
+      // IT dilayani /ga-assets & /it-tickets sekaligus (lihat `features`).
+      {
+        title: "Aset GA", url: "/ga-aset", icon: Archive, badge: "NEW",
+        features: [{ key: "it-asset", name: "Tiket IT (tab di Aset GA)" }],
+      },
     ],
   },
   {

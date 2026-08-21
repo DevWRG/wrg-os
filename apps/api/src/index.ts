@@ -1,5 +1,5 @@
-import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { resolve, relative, isAbsolute } from "node:path";
 import { homedir } from "node:os";
 
 import { serve } from "@hono/node-server";
@@ -375,6 +375,21 @@ import {
   type InventoryRelocationUpdate,
   type InventoryRelocationStatus,
 } from "./repo/inventory-relocation.js";
+import {
+  listCategories,
+  createCategory,
+  updateCategory,
+  listAssets as listGaAssets,
+  getAsset as getGaAsset,
+  createAsset as createGaAsset,
+  updateAsset as updateGaAsset,
+  setAssetFile,
+} from "./repo/ga-asset.js";
+import {
+  listTickets as itTicketListTickets,
+  createTicket as itTicketCreateTicket,
+  updateTicketStatus,
+} from "./repo/it-ticket.js";
 const app = new Hono();
 
 // Selalu balas JSON saat error / route tak ada — supaya BFF & client tak pernah
@@ -561,6 +576,19 @@ app.post("/auth/change-password", async (c) => {
 app.get("/admin/users", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json({ users: await listAppUsers() });
+});
+
+// Picker ringan (id+name+active saja, BUKAN admin-only) — dipakai F133
+// (Assign/Transfer aset) & F137 (approve Finance fallback dev tanpa sesi)
+// supaya staf non-admin bisa pilih user dari akun app_user tanpa perlu izin
+// admin penuh spt /admin/users.
+app.get("/app-users", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const activeOnly = c.req.query("all") !== "true";
+  const users = (await listAppUsers())
+    .filter((u) => !activeOnly || u.active)
+    .map((u) => ({ id: u.id, name: u.name, active: u.active }));
+  return c.json({ count: users.length, users });
 });
 
 // Pesan WA berisi kredensial akses (dipakai create + reset password).
@@ -1741,8 +1769,11 @@ app.get("/visits/:id", async (c) => {
   return v ? c.json(v) : c.json({ error: "visit tak ditemukan" }, 404);
 });
 
-// Serve file media (foto kunjungan) dari capture openclaw — HANYA di bawah
-// MEDIA_ROOT (default ~/.openclaw/media), path-validated anti traversal.
+// Serve file media (foto kunjungan dari capture openclaw, ATAU upload aset
+// GA F132) — HANYA di bawah salah satu ROOT yang di-allow-list, path-validated
+// anti traversal. Dua root beda sumber & makna: MEDIA_ROOT = media MASUK
+// (WA inbound, read-only dari sisi kita), GA_UPLOAD_ROOT = file yang ADMIN
+// upload manual lewat form web (F132 foto/dokumen aset).
 const MEDIA_ROOT = resolve(process.env.MEDIA_ROOT ?? `${homedir()}/.openclaw/media`);
 const MIME: Record<string, string> = {
   jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", webp: "image/webp",
@@ -1752,8 +1783,8 @@ app.get("/media", async (c) => {
   const p = c.req.query("p");
   if (!p) return c.json({ error: "param p wajib" }, 400);
   const abs = resolve(p);
-  if (abs !== MEDIA_ROOT && !abs.startsWith(MEDIA_ROOT + "/")) {
-    return c.json({ error: "path di luar MEDIA_ROOT" }, 403);
+  if (!MEDIA_ROOTS.some((root) => isInsideRoot(abs, root))) {
+    return c.json({ error: "path di luar root media yang di-allow-list" }, 403);
   }
   try {
     const buf = await readFile(abs);
@@ -1765,6 +1796,39 @@ app.get("/media", async (c) => {
   } catch {
     return c.json({ error: "file tak ditemukan" }, 404);
   }
+});
+
+// Upload foto/dokumen aset GA (F132) — multipart/form-data, field `kind`
+// (foto|dokumen) + `file`. Disimpan di GA_UPLOAD_ROOT (BUKAN MEDIA_ROOT —
+// itu utk media WA inbound, beda sumber & siklus hidup), nama file
+// di-generate (uuid asset + timestamp) supaya tak collide/predictable.
+const GA_UPLOAD_MIME_EXT: Record<string, string> = {
+  "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "application/pdf": "pdf",
+};
+app.post("/ga-assets/:id/upload", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const id = c.req.param("id");
+  let body: Record<string, unknown>;
+  try {
+    body = await c.req.parseBody();
+  } catch {
+    return c.json({ error: "invalid multipart body" }, 400);
+  }
+  const kind = body.kind;
+  if (kind !== "foto" && kind !== "dokumen") return c.json({ error: "kind harus foto|dokumen" }, 400);
+  const file = body.file;
+  if (!(file instanceof File)) return c.json({ error: "file wajib diisi" }, 400);
+  const ext = GA_UPLOAD_MIME_EXT[file.type];
+  if (!ext) return c.json({ error: `tipe file "${file.type}" tak didukung (jpg/png/webp/pdf)` }, 400);
+  if (file.size > 10 * 1024 * 1024) return c.json({ error: "file maksimal 10MB" }, 400);
+
+  await mkdir(GA_UPLOAD_ROOT, { recursive: true });
+  const filename = `${id}-${kind}-${Date.now()}.${ext}`;
+  const abs = resolve(GA_UPLOAD_ROOT, filename);
+  await writeFile(abs, Buffer.from(await file.arrayBuffer()));
+
+  const r = await setAssetFile(id, kind, abs);
+  return c.json(r, r.ok ? 200 : 400);
 });
 
 // ── Daily TODO/plan per AM (port legacy sales_todo) ──
@@ -5169,6 +5233,165 @@ app.delete("/inventory-relocations/:id", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const r = await deleteInventoryRelocation(c.req.param("id"));
   return c.json(r, r.deleted ? 200 : 404);
+});
+
+const GA_UPLOAD_ROOT = resolve(process.env.GA_UPLOAD_DIR ?? `${homedir()}/.wrg-os/uploads/ga-assets`);
+const MEDIA_ROOTS = [MEDIA_ROOT, GA_UPLOAD_ROOT];
+// `abs.startsWith(root + "/")` gagal di Windows (path pakai backslash) —
+// path.relative aman lintas-platform: "di luar root" kalau hasilnya absolut
+// atau mulai dengan "..".
+function isInsideRoot(abs: string, root: string): boolean {
+  const rel = relative(root, abs);
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+}
+// ── F132 GA Aset Master ──────────────────────────────────────────────────
+app.get("/ga-asset-categories", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listCategories(c.req.query("all") !== "true");
+  return c.json({ count: rows.length, categories: rows });
+});
+
+app.post("/ga-asset-categories", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { code?: string; nama?: string; depreciation_years?: number; icon?: string; is_shared?: boolean };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.code || !body.nama) return c.json({ error: "code & nama wajib diisi" }, 400);
+  const r = await createCategory({
+    code: body.code,
+    nama: body.nama,
+    depreciation_years: body.depreciation_years,
+    icon: body.icon,
+    is_shared: body.is_shared,
+  });
+  return c.json(r, "error" in r ? 400 : 201);
+});
+
+app.patch("/ga-asset-categories/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { nama?: string; depreciation_years?: number; icon?: string; is_shared?: boolean; active?: boolean };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const r = await updateCategory(c.req.param("id"), body);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.get("/ga-assets", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listGaAssets({
+    activeOnly: c.req.query("all") !== "true",
+    categoryId: c.req.query("category_id") || undefined,
+    status: c.req.query("status") || undefined,
+    unassigned: c.req.query("unassigned") === "true",
+  });
+  return c.json({ count: rows.length, assets: rows });
+});
+
+app.get("/ga-assets/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const row = await getGaAsset(c.req.param("id"));
+  if (!row) return c.json({ error: "aset tidak ditemukan" }, 404);
+  return c.json(row);
+});
+
+// Validasi enum di route SEBELUM hit DB — tanpa ini, nilai di luar CHECK
+// constraint (086_ga_asset_master.sql) bocor jadi HTTP 500 + nama constraint
+// Postgres mentah (app.onError gak reformat). Sama pola temuan F53.
+const GA_ASSET_CONDITIONS = ["baik", "rusak", "kurang_layak_pakai"];
+const GA_ASSET_STATUSES = ["active", "in_maintenance", "damaged", "lost", "disposed"];
+function validateGaAssetEnums(body: { condition?: unknown; status?: unknown }): string | null {
+  if (body.condition != null && !GA_ASSET_CONDITIONS.includes(body.condition as string)) {
+    return `condition harus salah satu dari: ${GA_ASSET_CONDITIONS.join(", ")}`;
+  }
+  if (body.status != null && !GA_ASSET_STATUSES.includes(body.status as string)) {
+    return `status harus salah satu dari: ${GA_ASSET_STATUSES.join(", ")}`;
+  }
+  return null;
+}
+
+app.post("/ga-assets", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: {
+    asset_code?: string; nama?: string; category_id?: string; brand?: string; model?: string; serial_number?: string;
+    purchase_date?: string; purchase_price?: number; current_value?: number; warranty_expiry?: string; location?: string;
+    department?: string; condition?: string; status?: string; foto_path?: string; dokumen_path?: string; notes?: string;
+    is_critical?: boolean;
+  };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.nama || !body.category_id) return c.json({ error: "nama & category_id wajib diisi" }, 400);
+  const enumError = validateGaAssetEnums(body);
+  if (enumError) return c.json({ error: enumError }, 400);
+  const r = await createGaAsset(body as Parameters<typeof createGaAsset>[0]);
+  return c.json(r, "error" in r ? 400 : 201);
+});
+
+app.patch("/ga-assets/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: Record<string, unknown>;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const enumError = validateGaAssetEnums(body);
+  if (enumError) return c.json({ error: enumError }, 400);
+  const r = await updateGaAsset(c.req.param("id"), body);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+// ── F52 IT Asset & Issue Tracker (menyerap F132 — asset_id sekarang FK ga_assets) ──
+app.get("/it-tickets", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const status = c.req.query("status");
+  const rows = await itTicketListTickets(status && status !== "semua" ? status : undefined);
+  return c.json({ count: rows.length, tickets: rows });
+});
+
+app.post("/it-tickets", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { asset_id?: string; masalah?: string; reported_by?: string; assigned_to?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.asset_id || !body.masalah) return c.json({ error: "asset_id & masalah wajib diisi" }, 400);
+  const r = await itTicketCreateTicket({
+    asset_id: body.asset_id,
+    masalah: body.masalah,
+    reported_by: body.reported_by,
+    assigned_to: body.assigned_to,
+  });
+  return c.json(r, "error" in r ? 400 : 201);
+});
+
+app.patch("/it-tickets/:id/status", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { status?: string; assigned_to?: string; resolved_note?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (body.status !== "open" && body.status !== "in_progress" && body.status !== "resolved") {
+    return c.json({ error: "status harus open|in_progress|resolved" }, 400);
+  }
+  const r = await updateTicketStatus(c.req.param("id"), {
+    status: body.status,
+    assigned_to: body.assigned_to,
+    resolved_note: body.resolved_note,
+  });
+  return c.json(r, r.ok ? 200 : 400);
 });
 
 const port = Number(process.env.PORT ?? 4000);
