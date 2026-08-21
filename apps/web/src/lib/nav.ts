@@ -12,6 +12,7 @@ import {
   Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, BookOpen, Calculator,
   Wallet, Coins, Route, Radio, Printer, ScanText,
   Wrench,
+  CalendarClock,
   type LucideIcon,
 } from "lucide-react";
 
@@ -240,6 +241,7 @@ export const NAV: NavGroup[] = [
       // halaman 2 tab). Key RBAC-nya sendiri (`stok-gudang`, auto dari URL),
       // jadi bisa digrant terpisah dari izin Inventory di Akses Grup.
       { title: "Stok Gudang", url: "/stok-gudang", icon: Boxes, badge: "NEW" },
+      { title: "Supplier ETA", url: "/supplier-eta", icon: CalendarClock, badge: "NEW" },
     ],
   },
   {
