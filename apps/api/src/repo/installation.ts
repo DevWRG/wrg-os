@@ -7,7 +7,7 @@ const toIsoTs = (x: unknown): string => new Date(x as string | Date).toISOString
 
 // F22 — Instalasi Alat Lifecycle (AFTERSALES). Checklist 5 langkah SEKUENSIAL
 // per alat: po_control → sj → teknisi_assign → training → bast. Tabel
-// installation_unit SENGAJA self-contained (lihat 068_installation_lifecycle.sql)
+// installation_unit SENGAJA self-contained (lihat 123_installation_lifecycle.sql)
 // — teknisi_name/customer_name/po_number/sj_number/bast_number semua TEXT bebas,
 // tanpa FK ke domain lain (CRM/HR off-limits utk fitur ini).
 

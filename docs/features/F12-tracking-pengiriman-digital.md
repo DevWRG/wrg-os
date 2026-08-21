@@ -24,8 +24,8 @@ poin 5.
 
 ## Cara kerja
 
-- **Tabel**: `shipment_tracking` (`infra/postgres/init/076_shipment_tracking.sql`
-  + `077_shipment_tracking_geo.sql`) — self-contained, `sj_number` TEXT bebas
+- **Tabel**: `shipment_tracking` (`infra/postgres/init/128_shipment_tracking.sql`
+  + `129_shipment_tracking_geo.sql`) — self-contained, `sj_number` TEXT bebas
   (link "logical" ke `accurate_delivery_order` via nomor, bukan FK — pola
   sama dgn F22 `installation_unit.sj_number`). Kolom geo:
   `kirim_lat/kirim_lon/bast_lat/bast_lon`.

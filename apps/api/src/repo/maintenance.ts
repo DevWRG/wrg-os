@@ -5,7 +5,7 @@ import { sendViaWaGateway } from "../wasend.js";
 // RECURRING per alat (FK ke installation_unit dari F22): reminder H-14 sebelum
 // due_date, teknisi tandai selesai → reference_date/due_date di-ADVANCE ke
 // siklus berikutnya (bukan bikin baris baru). teknisi_wa_number SENGAJA teks
-// bebas — lihat 069_maintenance_schedule.sql, sama alasan dgn installation_unit.
+// bebas — lihat 126_maintenance_schedule.sql, sama alasan dgn installation_unit.
 
 // postgres.js parse kolom date/timestamptz jadi objek Date — String(dateObj)
 // hasilnya verbose ("Wed Aug 05 2026 …"), bukan ISO. new Date(x).toISOString()

@@ -21,4 +21,4 @@ ALTER TABLE shipment_tracking ADD COLUMN IF NOT EXISTS terima_at timestamptz;
 ALTER TABLE shipment_tracking ADD COLUMN IF NOT EXISTS terima_by text; -- sender_name WA / user web, audit bukan FK
 
 COMMENT ON TABLE shipment_tracking IS
-  'F12+F42 — Tracking Pengiriman (SHIPPING): status kirim per SJ, state machine draft→dikirim→terima→bast, dipicu WA hashtag #KIRIM/#BAST (terima manual via web). distance_km/eta_days dihitung otomatis dari foto ber-geotag #KIRIM/#BAST (lihat 077_shipment_tracking_geo.sql).';
+  'F12+F42 — Tracking Pengiriman (SHIPPING): status kirim per SJ, state machine draft→dikirim→terima→bast, dipicu WA hashtag #KIRIM/#BAST (terima manual via web). distance_km/eta_days dihitung otomatis dari foto ber-geotag #KIRIM/#BAST (lihat 129_shipment_tracking_geo.sql).';

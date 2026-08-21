@@ -29,7 +29,7 @@ PR F42 bersih (pola sama dgn F22→F24).
 
 ## Cara kerja
 
-- **Migrasi**: `infra/postgres/init/078_shipment_tracking_terima.sql` (nomor
+- **Migrasi**: `infra/postgres/init/130_shipment_tracking_terima.sql` (nomor
   078 = tertinggi+1 setelah F12 mengambil 076/077 di lineage yang sama; slot
   068–075 sudah dipakai `dev`, lihat commit renumber) —
   ALTER TABLE `shipment_tracking`, tambah kolom `terima_at`/`terima_by` +

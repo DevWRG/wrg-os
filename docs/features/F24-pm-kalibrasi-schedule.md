@@ -26,7 +26,7 @@ bersih (cuma perubahan F24 sendiri, tidak kebawa gabung sama F22).
 
 ## Cara kerja
 
-- **Tabel**: `maintenance_schedule` (`infra/postgres/init/069_maintenance_schedule.sql`)
+- **Tabel**: `maintenance_schedule` (`infra/postgres/init/126_maintenance_schedule.sql`)
   — FK `installation_unit_id` ke tabel F22, `UNIQUE` (1 schedule per alat).
 - **API**: `apps/api/src/repo/maintenance.ts` — `createSchedule`, `markDone`
   (advance ke siklus berikutnya), `runMaintenanceReminders` (dipanggil cron).

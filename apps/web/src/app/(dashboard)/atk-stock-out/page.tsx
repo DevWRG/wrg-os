@@ -42,7 +42,7 @@ export default async function AtkStockOutPage() {
       {!item || !mov || !lvl ? (
         <EmptyState
           title="Data tidak tersedia"
-          description="Pastikan apps/api jalan dengan DATABASE_URL dan migrasi 069_atk_stock_movement.sql sudah diterapkan."
+          description="Pastikan apps/api jalan dengan DATABASE_URL dan migrasi 125_atk_stock_movement.sql sudah diterapkan."
         />
       ) : (
         <AtkStockOutClient

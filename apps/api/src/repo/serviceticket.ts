@@ -10,7 +10,7 @@ const toIsoTs = (x: unknown): string => new Date(x as string | Date).toISOString
 // F26 — Service Ticket Triage (AFTERSALES). LLM classify komplain customer
 // (severity + area) → auto-assign teknisi (area match, least-loaded) → ETA.
 // Self-contained: teknisi_roster/service_ticket TIDAK FK ke installation_unit
-// (F22) atau domain lain — lihat 070_service_ticket_triage.sql.
+// (F22) atau domain lain — lihat 127_service_ticket_triage.sql.
 //
 // teknisi_roster READ-ONLY dari sisi app — data di-seed via
 // scripts/db/seed-dev-full.sql (tidak ada create/edit di F26 ini, per
