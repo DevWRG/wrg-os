@@ -330,6 +330,14 @@ import {
   markTerima as markShipmentTerima,
 } from "./repo/shipment-tracking.js";
 
+import {
+  listAtkStockOpnames,
+  createAtkStockOpname,
+  updateAtkStockOpname,
+  deleteAtkStockOpname,
+  type AtkStockOpnameInput,
+  type AtkStockOpnameUpdate,
+} from "./repo/atk-stock-opname.js";
 const app = new Hono();
 
 // Selalu balas JSON saat error / route tak ada — supaya BFF & client tak pernah
@@ -4685,6 +4693,39 @@ app.post("/shipment-tracking/:id/terima", async (c) => {
   }
   const r = await markShipmentTerima(c.req.param("id"), { by: body.by });
   return c.json(r, r.ok ? 200 : 400);
+});
+
+// ── F134 ATK Master (General Affairs) — Categories + Suppliers + Items ──
+app.get("/atk/stock-opname", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listAtkStockOpnames();
+  return c.json({ count: rows.length, rows });
+});
+
+app.post("/atk/stock-opname", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: AtkStockOpnameInput;
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  if (!body.item_id || body.counted_qty == null) {
+    return c.json({ error: "item_id, counted_qty wajib" }, 400);
+  }
+  if (Number(body.counted_qty) < 0) return c.json({ error: "counted_qty tidak boleh negatif" }, 400);
+  const row = await createAtkStockOpname(body);
+  return c.json(row, 201);
+});
+
+app.patch("/atk/stock-opname/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: AtkStockOpnameUpdate;
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  const row = await updateAtkStockOpname(c.req.param("id"), body);
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+});
+
+app.delete("/atk/stock-opname/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await deleteAtkStockOpname(c.req.param("id"));
+  return c.json(r, r.deleted ? 200 : 404);
 });
 
 const port = Number(process.env.PORT ?? 4000);
