@@ -414,6 +414,26 @@ import {
   transferAsset,
   getAssetHistory,
 } from "./repo/ga-asset-assignment.js";
+import {
+  listPurchaseOrders,
+  createPurchaseOrder,
+  getPurchaseOrder,
+  updatePurchaseOrder,
+  deletePurchaseOrder,
+  addPurchaseOrderItem,
+  updatePurchaseOrderItem,
+  deletePurchaseOrderItem,
+  addPurchaseOrderReceipt,
+  listPurchaseOrderReceipts,
+  updatePurchaseOrderReceipt,
+  deletePurchaseOrderReceipt,
+  type PurchaseOrderInput,
+  type PurchaseOrderUpdate,
+  type PurchaseOrderItemInput,
+  type PurchaseOrderItemUpdate,
+  type PurchaseOrderReceiptInput,
+  type PurchaseOrderReceiptUpdate,
+} from "./repo/purchase-order.js";
 const app = new Hono();
 
 // Selalu balas JSON saat error / route tak ada — supaya BFF & client tak pernah
@@ -5572,6 +5592,137 @@ app.get("/ga-assets/:id/history", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const rows = await getAssetHistory(c.req.param("id"));
   return c.json({ count: rows.length, history: rows });
+});
+
+// ── F13 PO Tracker + Sistem Barang Masuk (Purchasing) ──
+app.get("/purchase-orders", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listPurchaseOrders({
+    vendorId: c.req.query("vendor_id") || undefined,
+    cabang: c.req.query("cabang") || undefined,
+    limit: c.req.query("limit") ? Number(c.req.query("limit")) : undefined,
+  });
+  return c.json({ count: rows.length, rows });
+});
+
+app.post("/purchase-orders", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: PurchaseOrderInput;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.po_number?.trim()) return c.json({ error: "po_number wajib" }, 400);
+  if (!body.vendor_name?.trim()) return c.json({ error: "vendor_name wajib" }, 400);
+  if (!Array.isArray(body.items) || body.items.length === 0) {
+    return c.json({ error: "items wajib minimal 1 barang" }, 400);
+  }
+  for (const it of body.items) {
+    if (!it.item_desc?.trim()) return c.json({ error: "item_desc wajib di setiap barang" }, 400);
+    if (!(Number(it.qty_ordered) > 0)) return c.json({ error: "qty_ordered harus > 0 di setiap barang" }, 400);
+  }
+  const row = await createPurchaseOrder(body);
+  return c.json(row, 201);
+});
+
+app.get("/purchase-orders/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const row = await getPurchaseOrder(c.req.param("id"));
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+});
+
+app.patch("/purchase-orders/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: PurchaseOrderUpdate;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const row = await updatePurchaseOrder(c.req.param("id"), body);
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+});
+
+app.delete("/purchase-orders/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await deletePurchaseOrder(c.req.param("id"));
+  return c.json(r, r.deleted ? 200 : 404);
+});
+
+app.post("/purchase-orders/:id/items", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: PurchaseOrderItemInput;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.item_desc?.trim()) return c.json({ error: "item_desc wajib" }, 400);
+  if (!(Number(body.qty_ordered) > 0)) return c.json({ error: "qty_ordered harus > 0" }, 400);
+  const row = await addPurchaseOrderItem(c.req.param("id"), body);
+  return row ? c.json(row, 201) : c.json({ error: "PO tidak ditemukan" }, 404);
+});
+
+app.patch("/purchase-orders/:id/items/:itemId", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: PurchaseOrderItemUpdate;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (body.qty_ordered !== undefined && !(Number(body.qty_ordered) > 0)) {
+    return c.json({ error: "qty_ordered harus > 0" }, 400);
+  }
+  const row = await updatePurchaseOrderItem(c.req.param("id"), c.req.param("itemId"), body);
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+});
+
+app.delete("/purchase-orders/:id/items/:itemId", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await deletePurchaseOrderItem(c.req.param("id"), c.req.param("itemId"));
+  return c.json(r, r.deleted ? 200 : 404);
+});
+
+app.get("/purchase-orders/:id/items/:itemId/receipts", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listPurchaseOrderReceipts(c.req.param("itemId"));
+  return c.json({ count: rows.length, rows });
+});
+
+app.post("/purchase-orders/:id/items/:itemId/receipts", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: PurchaseOrderReceiptInput;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!(Number(body.qty_received) > 0)) return c.json({ error: "qty_received harus > 0" }, 400);
+  const row = await addPurchaseOrderReceipt(c.req.param("id"), c.req.param("itemId"), body);
+  return row ? c.json(row, 201) : c.json({ error: "barang PO tidak ditemukan" }, 404);
+});
+
+app.patch("/purchase-orders/:id/items/:itemId/receipts/:receiptId", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: PurchaseOrderReceiptUpdate;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (body.qty_received !== undefined && !(Number(body.qty_received) > 0)) {
+    return c.json({ error: "qty_received harus > 0" }, 400);
+  }
+  const row = await updatePurchaseOrderReceipt(c.req.param("itemId"), c.req.param("receiptId"), body);
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+});
+
+app.delete("/purchase-orders/:id/items/:itemId/receipts/:receiptId", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await deletePurchaseOrderReceipt(c.req.param("itemId"), c.req.param("receiptId"));
+  return c.json(r, r.deleted ? 200 : 404);
 });
 
 const port = Number(process.env.PORT ?? 4000);

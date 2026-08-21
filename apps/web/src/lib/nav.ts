@@ -24,6 +24,7 @@ import {
   ArrowLeftRight,
   Archive,
   Handshake,
+  ClipboardList,
   type LucideIcon,
 } from "lucide-react";
 
@@ -278,6 +279,9 @@ export const NAV: NavGroup[] = [
       // requireHodOrAdmin(), lihat app/api/inventory-relocations/**), pola
       // sama dgn F51 Dana Ops/Karyawan 360.
       { title: "Relokasi Inventaris", url: "/inventory-relocations", icon: ArrowLeftRight, badge: "NEW", show: canViewInventoryRelocation },
+      // F13 PO Tracker + Sistem Barang Masuk — satu PO ke vendor + riwayat
+      // penerimaan barang per item (migrasi 078), bukan Accurate mirror.
+      { title: "PO Tracker", url: "/purchase-orders", icon: ClipboardList, badge: "NEW" },
     ],
   },
   {
