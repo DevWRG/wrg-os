@@ -322,7 +322,13 @@ export function startScheduler(): ScheduleStatus {
     );
     live.push(`plan-check=${planCheckExpr}`);
   }
-  const reportCheckExpr = process.env.REPORT_CHECK_CRON ?? "30 20 * * *";
+  // 21:30, bukan 20:30. Distribusi laporan pertama per AM per hari (grup ALLIANCE,
+  // 30 hari): puncaknya 20:00 (35), 21:00 (26), 22:00 (39), 23:00 (38) — 48% baru
+  // datang setelah jam 21:00. Jam 20:30 memotong tepat di tengah puncak, jadi
+  // separuh teguran menyasar orang yang memang akan melapor 2-3 jam kemudian.
+  // Catatan: 21:30 hanya menggeser sedikit (puncak 22:00 & 23:00 tetap di depan);
+  // kalau masih terlalu dini, naikkan ke "5 22 * * *" — cukup satu baris.
+  const reportCheckExpr = process.env.REPORT_CHECK_CRON ?? "30 21 * * *";
   if (cron.validate(reportCheckExpr)) {
     cron.schedule(
       reportCheckExpr,

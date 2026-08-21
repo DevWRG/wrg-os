@@ -101,7 +101,7 @@ import { master as ksoMaster } from "./repo/kso.js";
 import { produktivitas as ksoProduktivitas, faskesDetail as ksoFaskesDetail } from "./repo/kso-produktivitas.js";
 import { listCoachingNotes } from "./repo/coaching.js";
 import { getLatestCoachingNotes, computePeopleAnalytics } from "./repo/people.js";
-import { createVisit, getVisit, listVisits, visitKpi, visitSummary } from "./repo/visit.js";
+import { AmTidakDikenalError, createVisit, getVisit, listVisits, visitKpi, visitSummary } from "./repo/visit.js";
 import { upsertDailyTodo, listTodos, markTodoReported } from "./repo/todo.js";
 import { upsertUser, listUsers, upsertTerritory, listTerritories, updateUserCabang, updateUserGolongan } from "./repo/master.js";
 import { GOLONGAN, GOLONGAN_LABEL, TARGET_CUSTOMER_MINIMUM, isGolongan } from "./lib/npk-golongan.js";
@@ -129,13 +129,6 @@ import {
   markTrainingDone,
   markBast,
 } from "./repo/installation.js";
-import {
-  listTeknisi,
-  createTicket,
-  listTickets,
-  getTicketById,
-  resolveTicket,
-} from "./repo/serviceticket.js";
 import { recordCompetitor, listCompetitor, competitorSummary } from "./repo/competitor.js";
 import {
   defaultRange,
@@ -252,6 +245,13 @@ import {
   type Orientation,
 } from "./repo/print-spec.js";
 
+import {
+  listTeknisi,
+  createTicket,
+  listTickets,
+  getTicketById,
+  resolveTicket,
+} from "./repo/serviceticket.js";
 const app = new Hono();
 
 // Selalu balas JSON saat error / route tak ada — supaya BFF & client tak pernah
@@ -1564,18 +1564,25 @@ app.post("/visits", async (c) => {
       400,
     );
   }
-  const r = await createVisit({
-    am_id: body.am_id,
-    deal_id: body.deal_id,
-    customer_name: body.customer_name,
-    photo_url: body.photo_url,
-    lat: body.lat as number,
-    lon: body.lon as number,
-    visit_timestamp: body.visit_timestamp,
-    visit_date: body.visit_date,
-    note: body.note,
-  });
-  return c.json(r, 201);
+  try {
+    const r = await createVisit({
+      am_id: body.am_id,
+      deal_id: body.deal_id,
+      customer_name: body.customer_name,
+      photo_url: body.photo_url,
+      lat: body.lat as number,
+      lon: body.lon as number,
+      visit_timestamp: body.visit_timestamp,
+      visit_date: body.visit_date,
+      note: body.note,
+    });
+    return c.json(r, 201);
+  } catch (e) {
+    // am_id di luar roster = kesalahan pemanggil, bukan kegagalan server: 400
+    // dengan pesan yang bisa ditampilkan form. Error lain tetap naik jadi 500.
+    if (e instanceof AmTidakDikenalError) return c.json({ error: e.message }, 400);
+    throw e;
+  }
 });
 
 // Read model visit (filter geo_status: ok|out_of_bounds|no_geo|date_mismatch).
@@ -1956,57 +1963,6 @@ app.post("/installations/:id/bast", async (c) => {
   }
   if (!body.bast_number) return c.json({ error: "bast_number wajib" }, 400);
   const r = await markBast(c.req.param("id"), body.bast_number);
-  return c.json(r, r.ok ? 200 : 400);
-});
-
-// ── Service Ticket Triage (F26, AFTERSALES) — LLM classify severity + auto-
-// assign teknisi (by area) + ETA. teknisi_roster read-only (data di-seed via
-// scripts/db/seed-dev-full.sql, tidak ada create/edit di F26 ini). ──
-app.get("/teknisi-roster", async (c) => {
-  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  const teknisi = await listTeknisi();
-  return c.json({ count: teknisi.length, teknisi });
-});
-
-app.post("/service-tickets", async (c) => {
-  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let body: { complaint_text?: string; customer_name?: string; area?: string };
-  try {
-    body = await c.req.json();
-  } catch {
-    return c.json({ error: "invalid JSON body" }, 400);
-  }
-  if (!body.complaint_text?.trim()) return c.json({ error: "complaint_text wajib" }, 400);
-  const ticket = await createTicket({
-    complaint_text: body.complaint_text,
-    customer_name: body.customer_name,
-    area: body.area,
-    source: "manual",
-  });
-  return c.json(ticket, 201);
-});
-
-app.get("/service-tickets", async (c) => {
-  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  const tickets = await listTickets(c.req.query("status") || undefined);
-  return c.json({ count: tickets.length, tickets });
-});
-
-app.get("/service-tickets/:id", async (c) => {
-  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  const t = await getTicketById(c.req.param("id"));
-  return t ? c.json(t) : c.json({ error: "ticket tidak ditemukan" }, 404);
-});
-
-app.post("/service-tickets/:id/resolve", async (c) => {
-  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let body: { note?: string } = {};
-  try {
-    body = await c.req.json();
-  } catch {
-    // note opsional
-  }
-  const r = await resolveTicket(c.req.param("id"), body.note);
   return c.json(r, r.ok ? 200 : 400);
 });
 
@@ -4162,6 +4118,59 @@ app.delete("/print-specs/:id", async (c) => {
   const result = await deletePrintSpec(c.req.param("id"));
   return c.json(result, result.deleted ? 200 : 404);
 });
+
+// ── Instalasi Alat Lifecycle (F22, AFTERSALES) — checklist 5 langkah sekuensial:
+// PO control → SJ → Teknisi assign → Training done → BAST. ──
+app.get("/teknisi-roster", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const teknisi = await listTeknisi();
+  return c.json({ count: teknisi.length, teknisi });
+});
+
+app.post("/service-tickets", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { complaint_text?: string; customer_name?: string; area?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.complaint_text?.trim()) return c.json({ error: "complaint_text wajib" }, 400);
+  const ticket = await createTicket({
+    complaint_text: body.complaint_text,
+    customer_name: body.customer_name,
+    area: body.area,
+    source: "manual",
+  });
+  return c.json(ticket, 201);
+});
+
+app.get("/service-tickets", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const tickets = await listTickets(c.req.query("status") || undefined);
+  return c.json({ count: tickets.length, tickets });
+});
+
+app.get("/service-tickets/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const t = await getTicketById(c.req.param("id"));
+  return t ? c.json(t) : c.json({ error: "ticket tidak ditemukan" }, 404);
+});
+
+app.post("/service-tickets/:id/resolve", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { note?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    // note opsional
+  }
+  const r = await resolveTicket(c.req.param("id"), body.note);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+// ── F39 Supplier ETA Tracker ──
+const SUPPLIER_ETA_STATUSES: SupplierEtaStatus[] = ["pending", "arrived", "cancelled"];
 
 const port = Number(process.env.PORT ?? 4000);
 serve({ fetch: app.fetch, port }, (info) => {
