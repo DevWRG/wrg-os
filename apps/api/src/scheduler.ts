@@ -16,15 +16,20 @@ import {
   runPeopleAnalytics,
 } from "./repo/agents.js";
 import { runReminders } from "./repo/reminder.js";
+import { runMaintenanceReminders } from "./repo/maintenance.js";
 import { runHodDaily, runMissStreakEscalation } from "./repo/hodreminder.js";
 import { runVisitWeeklyRecap } from "./repo/visitweekly.js";
 import { generateRekap, generateResume } from "./repo/monitor.js";
-import { syncAccurateInvoices, syncSalesOrders, syncDeliveryOrders, syncCustomers } from "./repo/accurateSync.js";
+import {
+  syncAccurateInvoices, syncSalesOrders, syncDeliveryOrders, syncCustomers,
+  syncSalesOrderItems, syncDeliveryOrderItems,
+} from "./repo/accurateSync.js";
 import { runPlanCheck, runReportCheck } from "./repo/compliance.js";
 import { runNotifTua } from "./repo/notiftua.js";
 import { runDailySummary } from "./repo/dailysummary.js";
 import { runRaportNarrative } from "./repo/raportnarrative.js";
 import { runWeeklyReport } from "./repo/weeklyreport.js";
+import { mirrorFreshness } from "./repo/mirror-health.js";
 import { runDetectLeaveScan } from "./repo/detectleave.js";
 import { runExtractCompetitor } from "./repo/extractcompetitor.js";
 import { runWeekendBriefing } from "./repo/weekendbriefing.js";
@@ -33,7 +38,12 @@ import { runRefreshMembers } from "./repo/listmembers.js";
 import { runNotifQuota } from "./repo/notifquota.js";
 import { evaluateSalesAlerts } from "./repo/sales-analytics-alert-eval.js";
 import { computeNpk, currentPeriod } from "./repo/npk.js";
+import { computeNpkAm } from "./repo/npk-am.js";
 import { snapshotLastWeek } from "./repo/watchpoint-weekly.js";
+import { runPreVisitCheck } from "./repo/pickup-plan.js";
+import { runEdWatch } from "./repo/stock-batch.js";
+import { runVehicleAlerts } from "./repo/vehicle.js";
+import { runItTicketSlaAlerts } from "./repo/it-ticket.js";
 
 // Penjadwal agen in-process (Blueprint v2.3). Default MATI — aktif hanya bila
 // AGENT_SCHEDULE_ENABLED=true. Tiap run tetap menulis ke audit_log via repo
@@ -88,9 +98,15 @@ export function startScheduler(): ScheduleStatus {
   // Eskalasi kepatuhan (F57): AM miss plan/report N hari-kerja berturut → rekap ke
   // grup HoD. Flag SENDIRI (default off) supaya tak surprise-kirim WA saat deploy.
   const missEscalationEnabled = (process.env.MISS_ESCALATION_ENABLED ?? "false").toLowerCase() === "true";
+  // ED Watch (F38): pindai batch ber-ED, kirim peringatan saat melintasi ambang
+  // 90/60/30 hari. Flag SENDIRI (default off) — mengirim WA.
+  const edWatchEnabled = (process.env.ED_WATCH_ENABLED ?? "false").toLowerCase() === "true";
   // Rekap kunjungan mingguan (F16): volume kunjungan minggu lalu vs target per AM.
   // Flag SENDIRI (default off) — sama alasannya: jangan kirim WA tanpa diminta.
   const visitWeeklyEnabled = (process.env.VISIT_WEEKLY_ENABLED ?? "false").toLowerCase() === "true";
+  // Cek pra-trip Kirim-Tagih H-1 (F45): verifikasi hari libur + PIC untuk trip
+  // besok, kirim ke nomor kurir masing-masing. Flag SENDIRI (default off).
+  const preVisitEnabled = (process.env.PREVISIT_CHECK_ENABLED ?? "false").toLowerCase() === "true";
   // accurate-sync (puller invoice, read-only ke API Accurate, tanpa kirim WA)
   // bisa nyala SENDIRI tanpa ikut menyalakan A1-12 / monitor.
   const accurateEnabled = (process.env.ACCURATE_SCHEDULE_ENABLED ?? "false").toLowerCase() === "true";
@@ -126,6 +142,9 @@ export function startScheduler(): ScheduleStatus {
   const listMembersEnabled = (process.env.LIST_MEMBERS_ENABLED ?? "false").toLowerCase() === "true";
   // notif-quota (port notif_quota.sh) — probe OpenRouter key/limit → alert owner WA. Tiap 6 jam.
   const notifQuotaEnabled = (process.env.NOTIF_QUOTA_ENABLED ?? "false").toLowerCase() === "true";
+  // it-ticket-sla (F52) — alert tiket IT yg lewat SLA & belum resolved. Default
+  // tiap 30 menit (SLA kritis cuma 2 jam, cek jarang bikin telat ketahuan).
+  const itTicketSlaEnabled = (process.env.IT_TICKET_SLA_ENABLED ?? "false").toLowerCase() === "true";
   const salesAlertEvalEnabled = (process.env.SALES_ALERT_EVAL_ENABLED ?? "false").toLowerCase() === "true";
   // npk-compute (F66) — recompute NPK 8 HoD utk semester BERJALAN, harian 01:00.
   // Display-only (isi npk_score_semester + npk_aspect_score, tanpa WA/LLM). Sebelum
@@ -210,12 +229,12 @@ export function startScheduler(): ScheduleStatus {
   ];
 
   status = {
-    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled || watchpointSnapshotEnabled,
+    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled || watchpointSnapshotEnabled || preVisitEnabled || edWatchEnabled,
     timezone,
     jobs: jobs.map((j) => ({ id: j.id, expr: j.expr, valid: cron.validate(j.expr) })),
   };
 
-  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled && !watchpointSnapshotEnabled) {
+  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled && !watchpointSnapshotEnabled && !preVisitEnabled && !edWatchEnabled) {
     console.log("[scheduler] semua *_SCHEDULE/_ENABLED flag != true — tidak dijadwalkan");
     return status;
   }
@@ -275,6 +294,86 @@ export function startScheduler(): ScheduleStatus {
     live.push(`${j.label}=${j.expr}`);
   }
 
+  // PM & Kalibrasi Alat (F24, AFTERSALES) — reminder H-14 ke teknisi per alat.
+  // Nyala SENDIRI (default off), tidak ikut AGENT_SCHEDULE_ENABLED.
+  const pmKalibrasiEnabled = (process.env.PM_KALIBRASI_REMINDER_ENABLED ?? "false").toLowerCase() === "true";
+  const pmKalibrasiExpr = process.env.PM_KALIBRASI_REMINDER_CRON ?? "0 8 * * *";
+  if (pmKalibrasiEnabled) {
+    if (!cron.validate(pmKalibrasiExpr)) {
+      console.error(`[scheduler] pm-kalibrasi-reminder cron-expr tidak valid: "${pmKalibrasiExpr}" — dilewati`);
+    } else {
+      cron.schedule(
+        pmKalibrasiExpr,
+        async () => {
+          const startedAt = new Date().toISOString();
+          try {
+            const r = await runMaintenanceReminders();
+            console.log(`[scheduler] pm-kalibrasi-reminder ok @ ${startedAt} ${JSON.stringify(r).slice(0, 200)}`);
+          } catch (e) {
+            console.error(`[scheduler] pm-kalibrasi-reminder gagal @ ${startedAt}:`, e);
+          }
+        },
+        { timezone },
+      );
+      live.push(`pm-kalibrasi-reminder=${pmKalibrasiExpr}`);
+    }
+  }
+
+  // F45 previsit-check — verifikasi trip Kirim-Tagih BESOK (hari libur + PIC),
+  // 16:00 sore = ~24 jam sebelum. Predikat tanggalnya `current_date + 1`, pola
+  // sama reminder-h-1 di atas.
+  //
+  // SENGAJA TIDAK dibungkus isWorkday(): justru gunanya memperingatkan bahwa
+  // BESOK libur. Kalau di-gate hari kerja, peringatan "besok cuti bersama" tak
+  // akan pernah terkirim di hari terakhir sebelum libur panjang — persis kasus
+  // yang paling bikin rebound trip. reminder-h/h-1 juga tidak di-gate.
+  const preVisitExpr = process.env.PREVISIT_CHECK_CRON ?? "0 16 * * *";
+  if (preVisitEnabled) {
+    if (!cron.validate(preVisitExpr)) {
+      console.error(`[scheduler] previsit-check cron-expr tidak valid: "${preVisitExpr}" — dilewati`);
+    } else {
+      cron.schedule(
+        preVisitExpr,
+        async () => {
+          const startedAt = new Date().toISOString();
+          try {
+            const r = await runPreVisitCheck();
+            console.log(`[scheduler] previsit-check ok @ ${startedAt} ${JSON.stringify(r).slice(0, 200)}`);
+          } catch (e) {
+            console.error(`[scheduler] previsit-check gagal @ ${startedAt}:`, e);
+          }
+        },
+        { timezone },
+      );
+      live.push(`previsit-check=${preVisitExpr}`);
+    }
+  }
+
+  // Kendaraan Operasional Log (F50, OPS) — alert service-due (km-based) +
+  // STNK H-30. Nyala SENDIRI (default off), tidak ikut AGENT_SCHEDULE_ENABLED.
+  const vehicleAlertEnabled = (process.env.VEHICLE_ALERT_ENABLED ?? "false").toLowerCase() === "true";
+  const vehicleAlertExpr = process.env.VEHICLE_ALERT_CRON ?? "0 8 * * *";
+  if (vehicleAlertEnabled) {
+    if (!cron.validate(vehicleAlertExpr)) {
+      console.error(`[scheduler] vehicle-alert cron-expr tidak valid: "${vehicleAlertExpr}" — dilewati`);
+    } else {
+      cron.schedule(
+        vehicleAlertExpr,
+        async () => {
+          const startedAt = new Date().toISOString();
+          try {
+            const r = await runVehicleAlerts();
+            console.log(`[scheduler] vehicle-alert ok @ ${startedAt} ${JSON.stringify(r)}`);
+          } catch (e) {
+            console.error(`[scheduler] vehicle-alert gagal @ ${startedAt}:`, e);
+          }
+        },
+        { timezone },
+      );
+      live.push(`vehicle-alert=${vehicleAlertExpr}`);
+    }
+  }
+
   // HOD daily reminder — rekap kepatuhan plan/report (08:30, setelah AM plan pagi).
   const hodExpr = process.env.HOD_REMINDER_CRON ?? "30 8 * * *";
   if (cron.validate(hodExpr)) {
@@ -292,6 +391,39 @@ export function startScheduler(): ScheduleStatus {
       { timezone },
     );
     live.push(`reminder-hod=${hodExpr}`);
+  }
+
+  // F38 ed-watch — pindai batch ber-ED, peringatkan saat melintasi ambang
+  // 90/60/30 hari. Pagi 07:30 supaya sudah masuk sebelum tim gudang mulai
+  // menyiapkan kiriman.
+  //
+  // SENGAJA TIDAK dibungkus isWorkday(): ED tidak berhenti jalan di hari libur,
+  // dan barang yang melintasi ambang 30 hari tepat di awal libur panjang justru
+  // yang paling perlu diketahui lebih dulu. Pola sama previsit-check (F45).
+  //
+  // Tanggal pembanding dihitung WIB di dalam runEdWatch (bukan `current_date`
+  // SQL yang mengikuti timezone container = UTC), jadi jadwal ini boleh digeser
+  // ke jam berapa pun tanpa menggeser perhitungan sisa-hari.
+  const edWatchExpr = process.env.ED_WATCH_CRON ?? "30 7 * * *";
+  if (edWatchEnabled) {
+    if (!cron.validate(edWatchExpr)) {
+      console.error(`[scheduler] ed-watch cron-expr tidak valid: "${edWatchExpr}" — dilewati`);
+    } else {
+      cron.schedule(
+        edWatchExpr,
+        async () => {
+          const startedAt = new Date().toISOString();
+          try {
+            const r = await runEdWatch();
+            console.log(`[scheduler] ed-watch ok @ ${startedAt} ${JSON.stringify(r).slice(0, 200)}`);
+          } catch (e) {
+            console.error(`[scheduler] ed-watch gagal @ ${startedAt}:`, e);
+          }
+        },
+        { timezone },
+      );
+      live.push(`ed-watch=${edWatchExpr}`);
+    }
   }
 
   // Compliance reminder per-grup (port plan_check/report_check) — ikut gating
@@ -317,7 +449,13 @@ export function startScheduler(): ScheduleStatus {
     );
     live.push(`plan-check=${planCheckExpr}`);
   }
-  const reportCheckExpr = process.env.REPORT_CHECK_CRON ?? "30 20 * * *";
+  // 21:30, bukan 20:30. Distribusi laporan pertama per AM per hari (grup ALLIANCE,
+  // 30 hari): puncaknya 20:00 (35), 21:00 (26), 22:00 (39), 23:00 (38) — 48% baru
+  // datang setelah jam 21:00. Jam 20:30 memotong tepat di tengah puncak, jadi
+  // separuh teguran menyasar orang yang memang akan melapor 2-3 jam kemudian.
+  // Catatan: 21:30 hanya menggeser sedikit (puncak 22:00 & 23:00 tetap di depan);
+  // kalau masih terlalu dini, naikkan ke "5 22 * * *" — cukup satu baris.
+  const reportCheckExpr = process.env.REPORT_CHECK_CRON ?? "30 21 * * *";
   if (cron.validate(reportCheckExpr)) {
     cron.schedule(
       reportCheckExpr,
@@ -428,7 +566,8 @@ export function startScheduler(): ScheduleStatus {
           }
           const r = await syncAccurateInvoices({});
           console.log(`[scheduler] accurate-sync @ ${startedAt} ${JSON.stringify(r).slice(0, 200)}`);
-          // Mirror sales-order/delivery-order TERBARU (recent-only) utk menu Orders/Shipments.
+          // Mirror sales-order/delivery-order utk menu Orders/Shipments. Paginasi
+          // berhenti berdasarkan tanggal (sinceDays), bukan jumlah halaman.
           try {
             const so = await syncSalesOrders({});
             const so2 = await syncDeliveryOrders({});
@@ -437,6 +576,16 @@ export function startScheduler(): ScheduleStatus {
           } catch (e2) {
             console.error(`[scheduler] accurate-sync orders/shipments gagal @ ${startedAt}:`, e2);
           }
+          // Baris item SO/DO (dasar fill rate). Satu detail.do per dokumen, jadi
+          // berbatas per siklus — backfill awal habis bertahap, bukan sekali jalan.
+          // Dipisah dari blok di atas supaya kegagalannya tak menjatuhkan mirror header.
+          try {
+            const si = await syncSalesOrderItems({});
+            const di = await syncDeliveryOrderItems({});
+            console.log(`[scheduler] accurate-sync so-items=${JSON.stringify(si)} do-items=${JSON.stringify(di)}`);
+          } catch (e3) {
+            console.error(`[scheduler] accurate-sync item SO/DO gagal @ ${startedAt}:`, e3);
+          }
         } catch (e) {
           console.error(`[scheduler] accurate-sync gagal @ ${startedAt}:`, e);
         }
@@ -444,6 +593,42 @@ export function startScheduler(): ScheduleStatus {
       { timezone },
     );
     live.push(`accurate-sync=${accExpr}`);
+  }
+
+  // mirror-freshness — pengawas kesegaran mirror Accurate. Bukan penarik data;
+  // hanya berteriak kalau mirror mendekati batas jendela tarik 7 hari.
+  //
+  // NYALA BAWAAN, tanpa flag. Ini satu-satunya job yang tak menyentuh dunia luar:
+  // tak memanggil API Accurate, tak mengirim WA — cuma membaca max(last_synced_at)
+  // lalu menulis log. Kalau ia ikut mati bersama flag lain, pengawasnya padam
+  // bersama yang diawasi, dan itu justru pola yang bikin outage senyap.
+  //
+  // TIDAK memeriksa hari libur — beda dari accurate-sync yang memang skip libur.
+  // Jendela 7 hari itu kalender dan tak berhenti saat libur, jadi libur panjang
+  // justru saat alarm ini paling dibutuhkan.
+  const freshExpr = process.env.MIRROR_FRESHNESS_CRON ?? "5 9 * * *";
+  if (cron.validate(freshExpr)) {
+    cron.schedule(
+      freshExpr,
+      async () => {
+        try {
+          const h = await mirrorFreshness();
+          if (h.ok) {
+            console.log(`[scheduler] mirror-freshness OK — ${h.catatan}`);
+            return;
+          }
+          const rinci = h.sumber
+            .filter((s) => s.stale)
+            .map((s) => `${s.sumber}=${s.umurHari ?? "belum pernah"}h`)
+            .join(" ");
+          console.error(`[scheduler] ⚠ MIRROR BASI (ambang ${h.ambangHari}h): ${rinci} — ${h.catatan}`);
+        } catch (e) {
+          console.error("[scheduler] mirror-freshness gagal:", e);
+        }
+      },
+      { timezone },
+    );
+    live.push(`mirror-freshness=${freshExpr}`);
   }
 
   // F127 sales-alert-eval — evaluasi threshold alert & kirim WA saat transisi
@@ -702,9 +887,29 @@ export function startScheduler(): ScheduleStatus {
     live.push(`notif-quota=${nqExpr}`);
   }
 
-  // npk-compute (F66) — recompute NPK 8 HoD semester berjalan, harian 01:00 WIB.
-  // Display-only (npk_score_semester + npk_aspect_score), tanpa WA/LLM. Periode
-  // diambil dari currentPeriod() supaya ikut berpindah S1→S2 tanpa ubah cron.
+  // it-ticket-sla (F52) — alert tiket IT lewat SLA & belum resolved.
+  const itSlaExpr = process.env.IT_TICKET_SLA_CRON ?? "*/30 * * * *";
+  if ((enabled || itTicketSlaEnabled) && cron.validate(itSlaExpr)) {
+    cron.schedule(
+      itSlaExpr,
+      async () => {
+        const startedAt = new Date().toISOString();
+        try {
+          const r = await runItTicketSlaAlerts();
+          if (r.alerts > 0) console.log(`[scheduler] it-ticket-sla @ ${startedAt} ${JSON.stringify(r)}`);
+        } catch (e) {
+          console.error(`[scheduler] it-ticket-sla gagal @ ${startedAt}:`, e);
+        }
+      },
+      { timezone },
+    );
+    live.push(`it-ticket-sla=${itSlaExpr}`);
+  }
+
+  // npk-compute (F66) — recompute NPK semester berjalan, harian 01:00 WIB: 8 HoD
+  // (npk_score_semester/…_aspect_score) DAN semua AM (npk_am_*, migrasi 078) dalam
+  // satu job — dua-duanya display-only, tanpa WA/LLM, sumber datanya beririsan.
+  // Periode dari currentPeriod() supaya ikut berpindah S1→S2 tanpa ubah cron.
   const npkExpr = process.env.NPK_COMPUTE_CRON ?? "0 1 * * *";
   if ((enabled || npkComputeEnabled) && cron.validate(npkExpr)) {
     cron.schedule(
@@ -717,7 +922,16 @@ export function startScheduler(): ScheduleStatus {
           const now = wibNow();
           const { year, period } = currentPeriod(now);
           const r = await computeNpk({ year, period, now });
-          console.log(`[scheduler] npk-compute ok @ ${startedAt} ${JSON.stringify(r)}`);
+          // AM dihitung terpisah supaya kegagalan salah satu jalur tidak menelan
+          // hasil jalur satunya (log-nya juga jadi jelas jalur mana yang bermasalah).
+          let am: { computed: number } | { error: string };
+          try {
+            am = await computeNpkAm({ year, period, now });
+          } catch (e) {
+            am = { error: (e as Error).message };
+            console.error(`[scheduler] npk-compute(am) gagal @ ${startedAt}:`, e);
+          }
+          console.log(`[scheduler] npk-compute ok @ ${startedAt} hod=${JSON.stringify(r)} am=${JSON.stringify(am)}`);
         } catch (e) {
           console.error(`[scheduler] npk-compute gagal @ ${startedAt}:`, e);
         }
