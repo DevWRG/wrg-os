@@ -3,17 +3,19 @@ import { MapPin } from "lucide-react";
 
 import { gatewayFetch } from "@/lib/gateway";
 import { PageHeader } from "@/components/dashboard/page-header";
-import { AmCabangTable, type AmRow } from "@/components/sales/am-cabang-table";
+import { AmCabangTable, type AmRow, type GolonganOption } from "@/components/sales/am-cabang-table";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 
 export const dynamic = "force-dynamic";
 
-async function getData(): Promise<{ rows: AmRow[]; cabang_options: string[] } | null> {
+interface AmCabangData { rows: AmRow[]; cabang_options: string[]; golongan_options: GolonganOption[] }
+
+async function getData(): Promise<AmCabangData | null> {
   try {
     const res = await gatewayFetch(`/admin/am-cabang`);
     if (!res.ok) return null;
-    return (await res.json()) as { rows: AmRow[]; cabang_options: string[] };
+    return (await res.json()) as AmCabangData;
   } catch {
     return null;
   }
@@ -25,7 +27,7 @@ export default async function AmCabangPage() {
     <>
       <PageHeader
         title="AM → Cabang"
-        description="Petakan tiap AM ke cabang. Region (East/West) kartu Sales Performance diturunkan dari cabang ini via WatchPoint Territory (cabang→HoD)."
+        description="Petakan tiap AM ke cabang & golongan. Cabang menentukan region kartu Sales Performance (via WatchPoint Territory). Golongan = jenjang karir SK Pasal 2.1 — menentukan target New Customer di NPK AM dan syarat naik golongan. Target customer & revenue per AM diisi di menu Sales → Target."
         action={
           <Button render={<Link href="/watchpoint/territory" />} variant="outline" size="sm">
             <MapPin /> Territory (cabang→region)
@@ -41,7 +43,7 @@ export default async function AmCabangPage() {
       ) : (
         <Card>
           <CardContent className="pt-6">
-            <AmCabangTable rows={data.rows} cabangOptions={data.cabang_options} />
+            <AmCabangTable rows={data.rows} cabangOptions={data.cabang_options} golonganOptions={data.golongan_options ?? []} />
           </CardContent>
         </Card>
       )}

@@ -1,4 +1,5 @@
 import { db } from "../db.js";
+import { isGolongan, type Golongan } from "../lib/npk-golongan.js";
 
 // D1 — master data CRM (port legacy master_user + master_territory). Roster AM
 // di-key am_id (dipakai lintas deal/reminder/todo); territory map AM→HOD→cabang.
@@ -55,12 +56,13 @@ export interface MasterUserRow {
   area: string | null;
   aktif: boolean;
   wajib_plan_report: boolean;
+  golongan: Golongan | null; // jenjang karir AM (SK Pasal 2.1); null = belum di-assessment
 }
 
 export async function listUsers(opts: { role?: string; aktif?: boolean } = {}): Promise<MasterUserRow[]> {
   const sql = db();
   const rows = await sql`
-    SELECT am_id, nama, panggilan, wa_number, role, posisi, cabang, area, aktif, wajib_plan_report
+    SELECT am_id, nama, panggilan, wa_number, role, posisi, cabang, area, aktif, wajib_plan_report, golongan
     FROM master_user
     WHERE ${opts.role ? sql`role = ${opts.role}` : sql`true`}
       AND ${opts.aktif === undefined ? sql`true` : sql`aktif = ${opts.aktif}`}
@@ -77,7 +79,18 @@ export async function listUsers(opts: { role?: string; aktif?: boolean } = {}): 
     area: r.area ? String(r.area) : null,
     aktif: Boolean(r.aktif),
     wajib_plan_report: Boolean(r.wajib_plan_report),
+    golongan: isGolongan(r.golongan) ? r.golongan : null,
   }));
+}
+
+// Set golongan satu AM (menu Admin → AM→Cabang). Golongan = jenjang karir SK
+// Pasal 2.1; jadi sumber target customer & new-customer aspek NPK. null = kosongkan.
+export async function updateUserGolongan(am_id: string, golongan: Golongan | null): Promise<{ updated: boolean }> {
+  const sql = db();
+  const rows = await sql`
+    UPDATE master_user SET golongan = ${golongan}
+    WHERE am_id = ${am_id} RETURNING am_id`;
+  return { updated: rows.length > 0 };
 }
 
 // Normalisasi nomor WA ke format 62xxxx (buang +, spasi, -, 0 awal → 62).
