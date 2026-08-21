@@ -3,6 +3,7 @@ import { detectDaily, parseDaily, stripInvisible } from "../parsers/dailyplan.js
 import { parseAmPlan, parseAmReport, bersihkanNamaCustomer } from "../parsers/am.js";
 import { sendViaWaGateway, type WaSendResult } from "../wasend.js";
 import { handleSalesAnalyticsQuery } from "./inbound-sales-analytics.js";
+import { detectCek, handleCekQuery } from "./inbound-cek.js";
 import { resolveSender } from "./master.js";
 import { upsertDailyTodo, computeIsLate } from "./todo.js";
 import { createReminder } from "./reminder.js";
@@ -37,6 +38,8 @@ export function detectKind(body: string | null): InboundKind {
       const m = line.match(LEADS_UPDATE_LINE);
       if (m) return m[1].toLowerCase() as "leads" | "update";
       if (SALES_LINE.test(line)) return "sales";
+      // #CEK menangkap KEDUA varian (nomor dokumen F4 & CUSTOMER QW3) —
+      // pemisahannya di handler, bukan di detektor.
       if (CEK_LINE.test(line)) return "cek";
       if (KLAIM_LINE.test(line)) return "klaim";
     }
@@ -542,20 +545,38 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
     return finish({ kind: "sales", via: ams.via, reply });
   }
 
-  // #CEK — cross-ref SO/SJ/Faktur (F4 SXR). Sender WAJIB dikenal: balasan
-  // berisi data komersial (customer, total, status bayar) yang gak boleh
+  // #CEK — SATU command, dua varian (F4 SXR + QW3). Pengirim WAJIB dikenal:
+  // balasan berisi data komersial (customer, nominal, status) yang gak boleh
   // keluar ke pengirim tak dikenal.
+  //   · `#CEK CUSTOMER <nama>`  → QW3: ringkasan pre-delivery SO/SJ/TTF per
+  //                               customer (fuzzy nama, inbound-cek.ts).
+  //   · `#CEK <nomor dokumen>`  → F4 : cross-ref SO↔SJ↔Faktur by nomor (cek.ts).
+  // Varian CUSTOMER dicek DULU — kalau tidak, "CUSTOMER RSUD X" ikut kebaca
+  // sebagai nomor dokumen dan selalu balas "tidak ditemukan".
   if (kind === "cek") {
     const ck = await resolveSender({ senderJid: row.sender_jid, groupJid: row.group_jid, pushname: row.sender_name });
     if (!ck) return finish({ skipped: "unknown-sender", sender_name: row.sender_name });
+    if (detectCek(row.body ?? "")) {
+      let text: string;
+      try {
+        text = await handleCekQuery(row.body ?? "");
+      } catch (e) {
+        text = `⚠️ Query #CEK gagal diproses: ${(e as Error).message}`;
+      }
+      const reply = await sendViaWaGateway(target, text);
+      return finish({ kind: "cek", cek_mode: "customer", via: ck.via, reply });
+    }
     const query = (row.body ?? "").replace(CEK_LINE, "").trim();
     if (!query) {
-      const reply = await sendViaWaGateway(target, `⚠️ Isi nomor SO/SJ/Faktur setelah #CEK, ${ck.nama}. Contoh: #CEK SO-00123`);
+      const reply = await sendViaWaGateway(
+        target,
+        `⚠️ Isi nomor dokumen atau nama customer setelah #CEK, ${ck.nama}. Contoh: #CEK SO-00123 — atau #CEK CUSTOMER RSUD Kota`,
+      );
       return finish({ error: "empty-query", via: ck.via, reply });
     }
     const text = await buildCekReply(query);
     const reply = await sendViaWaGateway(target, text);
-    return finish({ kind: "cek", via: ck.via, reply });
+    return finish({ kind: "cek", cek_mode: "dokumen", via: ck.via, reply });
   }
 
   // #KLAIM — DOC #KLAIM Fase A. Sender BEBAS teks (tak butuh roster, pola

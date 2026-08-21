@@ -10,7 +10,7 @@ import { resolveScope, type DataScope } from "./access-scope.js";
 
 const isAm = (r?: string | null): boolean => (r ?? "").trim().toUpperCase() === "AM";
 
-function fmtRp(n: number): string {
+export function fmtRp(n: number): string {
   const v = n || 0;
   if (Math.abs(v) >= 1e9) return `Rp ${(v / 1e9).toFixed(2)} M`;
   if (Math.abs(v) >= 1e6) return `Rp ${(v / 1e6).toFixed(0)} jt`;
