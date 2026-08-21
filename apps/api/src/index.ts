@@ -463,6 +463,15 @@ import {
   createTeknisiReport,
   listTeknisiReports,
 } from "./repo/readinessboard.js";
+import {
+  listPurchaseForecast,
+  createPurchaseForecast,
+  updatePurchaseForecast,
+  deletePurchaseForecast,
+  PurchaseForecastError,
+  type PurchaseForecastInput,
+  type PurchaseForecastUpdate,
+} from "./repo/purchase-forecast.js";
 const app = new Hono();
 
 // Selalu balas JSON saat error / route tak ada — supaya BFF & client tak pernah
@@ -6063,6 +6072,54 @@ app.get("/teknisi-reports", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const rows = await listTeknisiReports(c.req.query("report_type") || undefined);
   return c.json({ count: rows.length, rows });
+});
+
+// ── F13 PO Tracker + Sistem Barang Masuk (Purchasing) ──
+app.get("/purchase-forecast", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const year = c.req.query("year") ? Number(c.req.query("year")) : undefined;
+  const rows = await listPurchaseForecast({ year });
+  return c.json({ count: rows.length, rows });
+});
+
+app.post("/purchase-forecast", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: PurchaseForecastInput;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  try {
+    const row = await createPurchaseForecast(body);
+    return c.json(row, 201);
+  } catch (e) {
+    if (e instanceof PurchaseForecastError) return c.json({ error: e.message }, e.status as 400 | 409);
+    throw e;
+  }
+});
+
+app.patch("/purchase-forecast/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: PurchaseForecastUpdate;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  try {
+    const row = await updatePurchaseForecast(c.req.param("id"), body);
+    return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+  } catch (e) {
+    if (e instanceof PurchaseForecastError) return c.json({ error: e.message }, e.status as 400 | 409);
+    throw e;
+  }
+});
+
+app.delete("/purchase-forecast/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await deletePurchaseForecast(c.req.param("id"));
+  return c.json(r, r.deleted ? 200 : 404);
 });
 
 const port = Number(process.env.PORT ?? 4000);
