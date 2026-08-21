@@ -1,5 +1,7 @@
 // F66 NPK Engine — lapisan data: kumpulkan input mentah per HoD (agregasi tim via
-// cabang), hitung (npk-calc.ts), persist (058/059), dan baca scope-aware.
+// cabang), hitung (npk-sk.ts = tabel berjenjang SK Pasal 3.2), persist (058/059),
+// dan baca scope-aware. Sejak v1.166.0 metodenya SAMA dengan jalur AM (repo/npk-am.ts)
+// — sebelumnya jalur ini memakai calcNPK() linier + cap 120%, tafsiran PRD/ACE.
 //
 // Reuse pola JOIN sales-analytics.ts: accurate_invoice → accurate_salesman →
 // master_user (am_id) → cabang. Row-level scope via access-scope.ts.
@@ -13,7 +15,8 @@
 import { db } from "../db.js";
 import { joinAmFromSalesman } from "./salesman-am.js";
 import { HODS } from "../hod-resolver.js";
-import { calcNPK, ageCutoff, elapsedFraction, ASPECT_ORDER, ASPECT_LABEL, DEFAULT_BOBOT, type AspectInput, type AspectKey, type NPKResult } from "../lib/npk-calc.js";
+import { ageCutoff, elapsedFraction, ASPECT_ORDER, ASPECT_LABEL, DEFAULT_BOBOT, type AspectInput, type AspectKey, type NPKResult } from "../lib/npk-calc.js";
+import { calcNpkSk } from "../lib/npk-sk.js";
 import type { DataScope } from "./access-scope.js";
 
 export type Period = "S1" | "S2";
@@ -31,9 +34,13 @@ export function currentPeriod(now = new Date()): { year: number; period: Period 
 }
 
 // Cabang yang jadi tanggung jawab satu HoD (dari hod_territory). Kosong utk HoD non-cabang.
-async function hodCabangSet(sql: ReturnType<typeof db>, hodKey: string): Promise<string[]> {
+// Diekspor supaya scripts/ops/npk-compare-metode.mjs memakai sumber input yang SAMA.
+export async function hodCabangSet(sql: ReturnType<typeof db>, hodKey: string): Promise<string[]> {
   const rows = await sql<{ cabang: string }[]>`SELECT cabang FROM hod_territory WHERE hod_key = ${hodKey}`;
-  return rows.map((r) => String(r.cabang)).filter(Boolean);
+  // Huruf besar, sejalan dengan resolveScope(): sisi master_user di query
+  // pembanding di-upper juga, supaya duplikat kapitalisasi di master_user
+  // (Kediri/KEDIRI dsb) tidak memotong cabang dari tanggung jawab HoD.
+  return rows.map((r) => String(r.cabang).trim().toUpperCase()).filter(Boolean);
 }
 
 export interface GatherResult {
@@ -43,7 +50,7 @@ export interface GatherResult {
 }
 
 // Kumpulkan input 7 aspek utk satu HoD. Aspek tanpa sumber live → avail:false.
-async function gatherAspectInput(
+export async function gatherAspectInput(
   sql: ReturnType<typeof db>,
   hodKey: string,
   cabang: string[],
@@ -78,7 +85,7 @@ async function gatherAspectInput(
     return {
       input,
       avail,
-      meta: { cabang: [], reason: "hod_non_cabang", stubbed: [...stubbed, "revenue", "ar", "customer"] },
+      meta: { cabang: [], reason: "hod_non_cabang", scoring: "sk_tabel_3_2", stubbed: [...stubbed, "revenue", "ar", "customer"] },
     };
   }
 
@@ -90,7 +97,7 @@ async function gatherAspectInput(
     LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
     ${joinAmFromSalesman(sql)}
     WHERE ai.tanggal BETWEEN ${from} AND ${to}
-      AND COALESCE(NULLIF(mu.cabang,''), NULLIF(acs.cabang_override,'')) = ANY(${cabang}::text[])`;
+      AND upper(btrim(COALESCE(NULLIF(mu.cabang,''), NULLIF(acs.cabang_override,'')))) = ANY(${cabang}::text[])`;
   input.revenue_actual = Number(rev?.revenue ?? 0);
   input.customer_active_count = Number(rev?.customers ?? 0);
 
@@ -125,7 +132,7 @@ async function gatherAspectInput(
     LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
     ${joinAmFromSalesman(sql)}
     WHERE ai.status = 'OPEN'
-      AND COALESCE(NULLIF(mu.cabang,''), NULLIF(acs.cabang_override,'')) = ANY(${cabang}::text[])`;
+      AND upper(btrim(COALESCE(NULLIF(mu.cabang,''), NULLIF(acs.cabang_override,'')))) = ANY(${cabang}::text[])`;
   input.ar_total = Number(ar?.ar_total ?? 0);
   input.ar_over_45d = Number(ar?.ar_over45 ?? 0);
 
@@ -158,6 +165,7 @@ async function gatherAspectInput(
       ar_over_45d: input.ar_over_45d,
       ar_over45_proxy: true, // umur `tanggal`, bukan due_date
       ar_cutoff: cut45,
+      scoring: "sk_tabel_3_2",   // penanda metode; baris tanpa field ini = era linier
       stubbed: stubbedNow,
     },
   };
@@ -172,7 +180,13 @@ export async function computeNpk(opts: { year: number; period: Period; now?: Dat
   for (const hod of HODS) {
     const cabang = await hodCabangSet(sql, hod.key);
     const g = await gatherAspectInput(sql, hod.key, cabang, year, period, now);
-    const res: NPKResult = calcNPK(g.input, DEFAULT_BOBOT, g.avail);
+    // Tabel berjenjang SK Pasal 3.2 (sejak v1.166.0). Sebelumnya calcNPK() linier
+    // + cap 120% — tafsiran PRD/ACE, bukan SK. Sekarang SATU metode untuk jalur HoD
+    // dan AM, jadi angkanya kembali sebanding.
+    // ⚠️ Baris semester LAMA di npk_score_semester masih berisi angka metode linier
+    // sampai di-compute ulang: POST /npk/compute?year=YYYY&period=S1|S2 per periode.
+    // Tanpa itu, delta "vs semester lalu" di halaman Direktur membandingkan dua metode.
+    const res: NPKResult = calcNpkSk(g.input, g.avail);
     await sql`
       INSERT INTO npk_score_semester (hod_key, year, period, npk, predikat, computed_from, computed_at)
       VALUES (${hod.key}, ${year}, ${period}, ${res.npk}, ${res.predikat}, ${sql.json(g.meta as Parameters<typeof sql.json>[0])}, now())

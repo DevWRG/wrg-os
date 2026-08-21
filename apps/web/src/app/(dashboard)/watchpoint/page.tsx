@@ -2,6 +2,7 @@ import Link from "next/link";
 import { MapPin } from "lucide-react";
 
 import { gatewayFetch } from "@/lib/gateway";
+import { sessionUser } from "@/lib/admin-guard";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { Button } from "@/components/ui/button";
 import type { WatchBoard } from "@/components/watchpoint/watchpoint-board";
@@ -20,7 +21,12 @@ async function getInitial(): Promise<WatchBoard | null> {
 }
 
 export default async function WatchPointPage() {
-  const data = await getInitial();
+  const [data, me] = await Promise.all([getInitial(), sessionUser()]);
+  // Tombol ubah target/nilai hanya untuk direktur/admin — cocok dengan gate
+  // requireDirekturOrAdmin di /api/watchpoint/metric. Ini murni kosmetik:
+  // penegakannya tetap di route, bukan di sini.
+  const role = (me?.role ?? "").trim().toLowerCase();
+  const canEdit = role === "admin" || role === "direktur" || me?.superuser === true;
   return (
     <div className="space-y-6">
       <PageHeader
@@ -32,7 +38,7 @@ export default async function WatchPointPage() {
           </Button>
         }
       />
-      <WatchPointTabs initial={data} />
+      <WatchPointTabs initial={data} canEdit={canEdit} />
     </div>
   );
 }

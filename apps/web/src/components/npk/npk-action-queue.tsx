@@ -12,7 +12,7 @@ interface ActionItem {
   order: number;
 }
 
-// Item aksi HANYA dari zona final (pip/watch/promote). HoD dgn coverage parsial
+// Item aksi HANYA dari zona final (pip/watch/promote). Subjek dgn coverage parsial
 // masuk zona "provisional" → tak pernah jadi item, supaya tak ada rekomendasi PIP/
 // promosi yang lahir dari data yang belum lengkap (lihat catatan di npk-status.ts).
 function buildItems(rows: NpkMatrixRow[]): ActionItem[] {
@@ -21,21 +21,21 @@ function buildItems(rows: NpkMatrixRow[]): ActionItem[] {
     const z = zoneOf(r);
     if (z.key === "pip") {
       items.push({
-        key: r.hod_key, name: r.hod_name, role: r.role, npk: r.npk, zoneLabel: "Tindak Lanjut",
+        key: r.subject_key, name: r.subject_name, role: r.role, npk: r.npk, zoneLabel: "Tindak Lanjut",
         border: z.border, icon: AlertTriangle, order: 0,
         desc: `${r.role}. NPK sementara ${fmt1(r.npk)} di bawah ambang — coaching intensif & rencana perbaikan.`,
         owner: "Direktur + HoD atasan", action: "1-on-1 review · rencana perbaikan",
       });
     } else if (z.key === "watch") {
       items.push({
-        key: r.hod_key, name: r.hod_name, role: r.role, npk: r.npk, zoneLabel: "Perlu Perhatian",
+        key: r.subject_key, name: r.subject_name, role: r.role, npk: r.npk, zoneLabel: "Perlu Perhatian",
         border: z.border, icon: AlertTriangle, order: 1,
         desc: `${r.role}. NPK ${fmt1(r.npk)} mendekati ambang — perhatian & coaching berkala.`,
         owner: "HoD atasan", action: "Coaching berkala",
       });
     } else if (z.key === "promote") {
       items.push({
-        key: r.hod_key, name: r.hod_name, role: r.role, npk: r.npk, zoneLabel: "Kandidat Promosi",
+        key: r.subject_key, name: r.subject_name, role: r.role, npk: r.npk, zoneLabel: "Kandidat Promosi",
         border: z.border, icon: TrendingUp, order: 2,
         desc: `${r.role}. Predikat sangat baik (NPK ${fmt1(r.npk)}) — review kandidat promosi/jenjang karir (SK Pasal 2.2).`,
         owner: "Direktur", action: "Review promosi",

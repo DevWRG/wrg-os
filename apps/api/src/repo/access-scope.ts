@@ -60,7 +60,15 @@ export async function resolveScope(userId: string | null | undefined): Promise<D
   // HoD dgn hod_key + territory ter-map → scope ke cabang timnya.
   if (hodKey) {
     const rows = await sql<{ cabang: string }[]>`SELECT cabang FROM hod_territory WHERE hod_key = ${hodKey}`;
-    const cabangScope = rows.map((r) => String(r.cabang)).filter(Boolean);
+    // DINORMALKAN huruf besar di SATU tempat. master_user.cabang memuat
+    // duplikat kapitalisasi (Kediri/KEDIRI, Jakarta/JAKARTA, Madiun, Madura,
+    // Malang, Jember, Pusat) sementara hod_territory seluruhnya huruf besar,
+    // dan pembandingnya `= ANY(...)` persis. Akibat nyata di produksi: 12 orang
+    // (Operasional/Admin) TIDAK terlihat oleh HoD-nya — rocky kehilangan 9,
+    // yogi 3 — dan HoD DITOLAK menugaskan akun ke anggota timnya sendiri
+    // ("AM tujuan di luar cabang tim Anda"). Tak ada error yang muncul; datanya
+    // cuma lebih sedikit, jadi tak ada yang curiga.
+    const cabangScope = rows.map((r) => String(r.cabang).trim().toUpperCase()).filter(Boolean);
     if (cabangScope.length) {
       return { userId: id, amOnly: false, amId, cabang: null, superuser: false, hodKey, cabangScope };
     }
@@ -96,7 +104,11 @@ type Frag = ReturnType<Sql>;
 export function scopeOnClause(sql: Sql, s: DataScope, amIdCol: Frag, cabangCol: Frag) {
   if (s.amOnly && s.amId) return sql`AND ${amIdCol} = ${s.amId}`;
   if (s.cabangScope && s.cabangScope.length) {
-    return sql`AND ${cabangCol} = ANY(${s.cabangScope}::text[])`;
+    // Dua sisi dinormalkan: array sudah huruf besar dari resolveScope, kolomnya
+    // di-upper di sini. Bukan sekadar merapikan — ini gerbang akses data, jadi
+    // ia tidak boleh bergantung pada kebersihan kapitalisasi di master_user.
+    const scope = s.cabangScope.map((c) => c.trim().toUpperCase());
+    return sql`AND upper(btrim(${cabangCol})) = ANY(${scope}::text[])`;
   }
   return sql``;
 }
