@@ -110,14 +110,18 @@ export interface AmTargetRow {
   cabang: string | null;
   region: ScopeRegion;
   target: number;
+  // Target jumlah customer aktif setahun (078). Dipakai aspek NPK "Customer Count
+  // Growth" per AM; 0 = belum diisi → aspek itu N/A, bukan skor 0.
+  target_customer: number;
 }
 
 // Daftar terkurasi: hanya AM yang sudah punya row sales_target_am (ditambah via
 // picker). nama/cabang di-join dari master_user; region turunan dari cabang.
 export async function listAmTargets(year: number): Promise<AmTargetRow[]> {
   const sql = db();
-  const rows = await sql<{ am_id: string; nama: string | null; cabang: string | null; target: number }[]>`
-    SELECT sta.am_id, mu.nama, NULLIF(mu.cabang, '') AS cabang, sta.target::float8 AS target
+  const rows = await sql<{ am_id: string; nama: string | null; cabang: string | null; target: number; target_customer: number }[]>`
+    SELECT sta.am_id, mu.nama, NULLIF(mu.cabang, '') AS cabang, sta.target::float8 AS target,
+           COALESCE(sta.target_customer,0)::float8 AS target_customer
     FROM sales_target_am sta
     LEFT JOIN master_user mu ON mu.am_id = sta.am_id
     WHERE sta.year = ${year}
@@ -129,6 +133,7 @@ export async function listAmTargets(year: number): Promise<AmTargetRow[]> {
     cabang: r.cabang,
     region: (r.cabang && regionMap[r.cabang]) || "OFFICE",
     target: Number(r.target ?? 0),
+    target_customer: Number(r.target_customer ?? 0),
   }));
 }
 
@@ -165,17 +170,23 @@ export async function deleteAmTarget(year: number, am_id: string): Promise<{ del
   return { deleted: rows.length };
 }
 
+// `target_customer` opsional: baris lama (form yang belum dikirim ulang) tidak
+// boleh menimpa nilai yang sudah ada dengan 0 → COALESCE ke nilai tersimpan.
 export async function upsertAmTargets(
   year: number,
-  entries: { am_id: string; target: number }[],
+  entries: { am_id: string; target: number; target_customer?: number | null }[],
 ): Promise<{ saved: number }> {
   const sql = db();
   let saved = 0;
   for (const e of entries) {
+    const tc = e.target_customer == null ? null : Number(e.target_customer);
     await sql`
-      INSERT INTO sales_target_am (year, am_id, target, updated_at)
-      VALUES (${year}, ${e.am_id}, ${e.target}, now())
-      ON CONFLICT (year, am_id) DO UPDATE SET target = EXCLUDED.target, updated_at = now()
+      INSERT INTO sales_target_am (year, am_id, target, target_customer, updated_at)
+      VALUES (${year}, ${e.am_id}, ${e.target}, ${tc ?? 0}, now())
+      ON CONFLICT (year, am_id) DO UPDATE
+        SET target = EXCLUDED.target,
+            target_customer = COALESCE(${tc}, sales_target_am.target_customer),
+            updated_at = now()
     `;
     saved++;
   }
