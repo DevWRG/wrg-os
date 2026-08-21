@@ -3,8 +3,11 @@ import { resolve } from "node:path";
 import { homedir } from "node:os";
 
 import { serve } from "@hono/node-server";
-import { Hono } from "hono";
-import type { Context } from "hono";
+import {
+  Hono,
+  Context,
+} from "hono";
+
 import type { EventEnvelope } from "@wrg/types";
 import { isEventEnvelope } from "./envelope.js";
 import { parsePlan } from "./parsers/plan.js";
