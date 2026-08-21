@@ -332,3 +332,18 @@ export async function arAgingByCustomer(scope: DataScope = FULL_SCOPE) {
     customers,
   };
 }
+
+// Outstanding bucket '90+' — dipakai metric WatchPoint "AR overdue >90 hari"
+// (Ika). Sengaja memakai definisi yang SAMA dengan arAgingByCustomer di atas,
+// bukan sum(ar_aging_mv.amount) mentah: kolom amount itu nilai faktur ASLI,
+// jadi menjumlahkannya ikut menghitung faktur yang sudah lunas dan melaporkan
+// AR bruto (pernah ~2× nilai sisa tagihan sebenarnya).
+export async function arOver90Outstanding(): Promise<number> {
+  const sql = db();
+  const rows = await sql<{ v: number }[]>`
+    SELECT COALESCE(sum(COALESCE(ai.outstanding, m.amount)),0)::float8 AS v
+    FROM ar_aging_mv m
+    LEFT JOIN accurate_invoice ai ON ai.number = m.invoice_no AND ai.customer_id::text = m.customer_id
+    WHERE m.bucket = '90+' AND COALESCE(ai.outstanding, m.amount) > 0`;
+  return Number(rows[0]?.v ?? 0);
+}

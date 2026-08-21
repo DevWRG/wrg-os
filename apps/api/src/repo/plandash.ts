@@ -1,5 +1,6 @@
 import { db } from "../db.js";
 import { sendViaWaGateway } from "../wasend.js";
+import { FULL_SCOPE, scopeOnClause, type DataScope } from "./access-scope.js";
 
 // Replikasi metrik dashboard Plan & Report WRG-CRM (port wrg_queries.py).
 // Sumber: sales_plan (AM), sales_todo (+report_data, non-AM), activity_log,
@@ -144,8 +145,18 @@ export async function reportPerOrang(from: string, to: string): Promise<OrangRow
     LEFT JOIN LATERAL (
       SELECT COALESCE(sum(total_items),0) AS todo_items,
              count(*) FILTER (WHERE is_late_plan) AS todo_late,
-             COALESCE(sum((SELECT count(*) FROM jsonb_array_elements(CASE WHEN jsonb_typeof(report_data)='array' THEN report_data ELSE '[]'::jsonb END) e WHERE e->>'status'='matched')),0) AS todo_matched,
-             COALESCE(sum((SELECT count(*) FROM jsonb_array_elements(CASE WHEN jsonb_typeof(report_data)='array' THEN report_data ELSE '[]'::jsonb END) e WHERE e->>'status' IN ('ambiguous','unmatched'))),0) AS todo_unmatched
+             -- report_data punya DUA bentuk. Yang ditulis markReported() sekarang:
+             -- {task, score, matched:boolean}. Yang lama (legacy): {task, result,
+             -- status, idx, match_score, ...}. Filter di sini dulu HANYA mengenali
+             -- kolom status, jadi seluruh item bentuk baru tak terhitung — dan karena
+             -- non-AM memakai todo_matched sebagai report_count, kepatuhan mereka
+             -- dirender 0% tanpa error. Terukur: 'status' 2.785 item vs 'matched'
+             -- 11.888 item; cabang PUSAT 0% padahal 95%.
+             -- Bentuk lama TETAP dihitung supaya angka historis tidak jatuh.
+             COALESCE(sum((SELECT count(*) FROM jsonb_array_elements(CASE WHEN jsonb_typeof(report_data)='array' THEN report_data ELSE '[]'::jsonb END) e
+                            WHERE (e->>'matched')::boolean IS TRUE OR e->>'status'='matched')),0) AS todo_matched,
+             COALESCE(sum((SELECT count(*) FROM jsonb_array_elements(CASE WHEN jsonb_typeof(report_data)='array' THEN report_data ELSE '[]'::jsonb END) e
+                            WHERE (e->>'matched')::boolean IS FALSE OR e->>'status' IN ('ambiguous','unmatched'))),0) AS todo_unmatched
       FROM sales_todo WHERE am_id = mu.am_id AND tanggal BETWEEN ${from} AND ${to}
     ) st ON true
     LEFT JOIN LATERAL (
@@ -286,8 +297,18 @@ function groupBy(rows: OrangRow[], keyFn: (r: OrangRow) => string): GroupRow[] {
 export async function reportPerDivisi(from: string, to: string) {
   return groupBy(await reportPerOrang(from, to), (r) => r.role);
 }
+/**
+ * Kunci grup dinormalkan huruf besar: `master_user.cabang` memuat pasangan
+ * duplikat kapitalisasi (Kediri/KEDIRI, Jakarta/JAKARTA, Madiun/MADIUN,
+ * Madura/MADURA, Malang/MALANG, Jember/JEMBER, Pusat/pusat), dan tanpa ini
+ * satu cabang muncul sebagai DUA baris dengan angka terbelah — "Kediri 43 plan"
+ * dan "KEDIRI 20 plan" di kartu yang sama.
+ *
+ * Ini menormalkan TAMPILAN saja. Akar masalahnya ada di data master, dan kolom
+ * itu juga dipakai row-level scope HoD (scopeOnClause) — dirapikan terpisah.
+ */
 export async function reportPerCabang(from: string, to: string) {
-  return groupBy(await reportPerOrang(from, to), (r) => r.cabang ?? "—");
+  return groupBy(await reportPerOrang(from, to), (r) => (r.cabang ?? "—").trim().toUpperCase() || "—");
 }
 
 // Per-HOD: hanya AM, dikelompokkan via master_territory.am_panggilan→hod_panggilan.
@@ -467,10 +488,23 @@ export async function reportDrilldown(amId: string, from: string, to: string) {
   };
 }
 
+// Klausa scope reminder: kepemilikan = am_reminder.am_id, cabang = master_user
+// pemilik (alias wajib `ar` + `mu`). AM → hanya reminder namanya sendiri,
+// HoD → cabang timnya, admin/dev → semua.
+const scopeReminderClause = (sql: ReturnType<typeof db>, s: DataScope) =>
+  scopeOnClause(sql, s, sql`ar.am_id`, sql`NULLIF(mu.cabang,'')`);
+
+// Katalog AM untuk filter — ikut scope supaya AM hanya melihat dirinya sendiri
+// (dropdown ber-1 opsi) dan HoD hanya AM di cabang timnya.
+const scopeMasterUserClause = (sql: ReturnType<typeof db>, s: DataScope) =>
+  scopeOnClause(sql, s, sql`am_id`, sql`NULLIF(cabang,'')`);
+
 // Sales Calendar: agregat plan/report per (tanggal, AM) untuk rentang grid +
 // libur nasional + katalog AM (untuk filter). Satu query agregat (efisien),
 // pengganti N-fetch per-AM ala legacy.
-export async function reportCalendar(from: string, to: string, amId?: string, cabang?: string) {
+// Ber-scope row-level: AM = kalendernya sendiri, HoD = cabang timnya. Libur
+// nasional tetap tampil penuh (bukan data per-orang).
+export async function reportCalendar(from: string, to: string, amId?: string, cabang?: string, scope: DataScope = FULL_SCOPE) {
   const sql = db();
   const holidays = await sql`
     SELECT tanggal::text, keterangan FROM master_holiday
@@ -478,7 +512,8 @@ export async function reportCalendar(from: string, to: string, amId?: string, ca
   `;
   const ams = await sql`
     SELECT am_id::text AS am_id, COALESCE(panggilan, nama) AS name, cabang
-    FROM master_user WHERE role='AM' AND aktif ORDER BY cabang, name
+    FROM master_user WHERE role='AM' AND aktif ${scopeMasterUserClause(sql, scope)}
+    ORDER BY cabang, name
   `;
   // Catatan reminder AM (am_reminder) yang jatuh pada rentang — pill 📌 ala legacy.
   const reminders = await sql`
@@ -486,6 +521,7 @@ export async function reportCalendar(from: string, to: string, amId?: string, ca
            COALESCE(ar.am_name, mu.panggilan, mu.nama) AS name, mu.cabang, ar.note
     FROM am_reminder ar LEFT JOIN master_user mu ON mu.am_id = ar.am_id
     WHERE ar.reminder_date BETWEEN ${from} AND ${to}
+      ${scopeReminderClause(sql, scope)}
       ${amId ? sql`AND ar.am_id = ${amId}` : sql``}
       ${cabang ? sql`AND mu.cabang = ${cabang}` : sql``}
     ORDER BY ar.reminder_date, name
@@ -507,13 +543,14 @@ export async function reportCalendar(from: string, to: string, amId?: string, ca
 
 // Detail satu hari: per-AM + daftar plan-nya (customer/tujuan/hasil via activity_log)
 // untuk drilldown harian Sales Calendar. Satu query plan, dikelompokkan per AM.
-export async function reportCalendarDay(date: string, amId?: string, cabang?: string) {
+export async function reportCalendarDay(date: string, amId?: string, cabang?: string, scope: DataScope = FULL_SCOPE) {
   const sql = db();
   const holidays = await sql`SELECT keterangan FROM master_holiday WHERE tanggal = ${date}`;
   const reminders = await sql`
     SELECT ar.am_id::text AS am_id, COALESCE(ar.am_name, mu.panggilan, mu.nama) AS name, mu.cabang, ar.note
     FROM am_reminder ar LEFT JOIN master_user mu ON mu.am_id = ar.am_id
     WHERE ar.reminder_date = ${date}
+      ${scopeReminderClause(sql, scope)}
       ${amId ? sql`AND ar.am_id = ${amId}` : sql``}
       ${cabang ? sql`AND mu.cabang = ${cabang}` : sql``}
     ORDER BY name
