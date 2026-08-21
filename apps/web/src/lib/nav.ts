@@ -11,6 +11,7 @@ import {
   Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, Tags, SlidersHorizontal, Microscope,
   Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, BookOpen, Calculator,
   Wallet, Coins, Route, Radio, Printer, ScanText,
+  Wrench,
   type LucideIcon,
 } from "lucide-react";
 
@@ -201,6 +202,7 @@ export const NAV: NavGroup[] = [
       // RFID. Role min Karyawan (kerja teknisi lapangan sehari-hari, bukan data
       // finansial sensitif), tanpa `show` gate (default tampil ke semua login).
       { title: "RFID/Cartridge Error Claim", url: "/rfid-cartridge-claims", icon: Radio, badge: "NEW" },
+      { title: "Instalasi Alat", url: "/installations", icon: Wrench, badge: "NEW" },
     ],
   },
   {
