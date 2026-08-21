@@ -180,6 +180,7 @@ import {
   listSalesOrders,
   listDeliveryOrders,
 } from "./repo/accurateMirror.js";
+import { listWarehouses, listStockBranch, stockBranchSummary } from "./repo/stock-branch.js";
 import { recordDelivery, recordEmail, recordAlert, listLogs } from "./repo/logs.js";
 import { renderSalesDocHtml, renderBriefingHtml } from "./repo/exportdoc.js";
 import { runHodDaily } from "./repo/hodreminder.js";
@@ -3007,6 +3008,44 @@ app.get("/accurate/:entity", async (c) => {
   const limit = Math.min(Math.max(Number(c.req.query("limit")) || 100, 1), 10000);
   const rows = await listMirror(entity, limit);
   return c.json({ entity, count: rows.length, rows });
+});
+
+// ── F37 Cross-Branch Stock Visibility — stok per gudang + korelasi ke total ──
+// Fungsi KEDUA di menu /inventory (fungsi pertama = cek stok agregat, lihat
+// GET /accurate/items di atas). Read-only: data masuk lewat importer
+// scripts/db/import_stock_branch.py, bukan lewat endpoint ini.
+app.get("/stock/warehouses", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listWarehouses({ aktifSaja: c.req.query("aktif") === "1" });
+  return c.json({ count: rows.length, warehouses: rows });
+});
+
+app.get("/stock/branch", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const wh = c.req.query("warehouse");
+  if (wh) {
+    // Validasi terhadap master supaya typo tidak balik "0 baris" yang
+    // menyesatkan (kelihatan seperti "gudang ini kosong").
+    const known = await listWarehouses();
+    if (!known.some((w) => w.kode === wh)) {
+      return c.json({ error: `warehouse tak dikenal: ${wh}`, valid: known.map((w) => w.kode) }, 400);
+    }
+  }
+  const out = await listStockBranch({
+    q: c.req.query("q") ?? undefined,
+    warehouse: wh ?? undefined,
+    hanyaSelisih: c.req.query("selisih") === "1",
+    hanyaNegatif: c.req.query("negatif") === "1",
+    tanpaData: c.req.query("tanpa_data") === "1",
+    limit: c.req.query("limit") ? Number(c.req.query("limit")) : undefined,
+    offset: c.req.query("offset") ? Number(c.req.query("offset")) : undefined,
+  });
+  return c.json({ count: out.rows.length, total_rows: out.total_rows, rows: out.rows });
+});
+
+app.get("/stock/branch/summary", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await stockBranchSummary());
 });
 
 // ── Log operasional: delivery / email / alert (port legacy *_log) ──
