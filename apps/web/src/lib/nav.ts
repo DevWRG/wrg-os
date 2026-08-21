@@ -13,6 +13,7 @@ import {
   Wallet, Coins, Route, Radio, Printer, ScanText,
   Wrench,
   CalendarClock,
+  Ticket,
   type LucideIcon,
 } from "lucide-react";
 
@@ -204,6 +205,7 @@ export const NAV: NavGroup[] = [
       // finansial sensitif), tanpa `show` gate (default tampil ke semua login).
       { title: "RFID/Cartridge Error Claim", url: "/rfid-cartridge-claims", icon: Radio, badge: "NEW" },
       { title: "Instalasi Alat", url: "/installations", icon: Wrench, badge: "NEW" },
+      { title: "Service Tickets", url: "/service-tickets", icon: Ticket, badge: "NEW" },
     ],
   },
   {

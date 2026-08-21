@@ -9,6 +9,7 @@ import { upsertDailyTodo, computeIsLate } from "./todo.js";
 import { createReminder } from "./reminder.js";
 import { buildCekReply } from "./cek.js";
 import { ingestKlaim, type DocKlaimRow } from "./doc-klaim.js";
+import { createTicket, isKnownTeknisiSender } from "./serviceticket.js";
 
 // Role yang pakai alur AM per-customer (sales_plan/activity_log + foto), bukan todo.
 const AM_ROLES = new Set(["AM", "Teknisi"]);
@@ -56,9 +57,15 @@ const wibDate = (): string => new Date(Date.now() + 7 * 3600 * 1000).toISOString
 function allowedGroups(): string[] {
   return (process.env.WA_INBOUND_GROUPS ?? "").split(",").map((s) => s.trim()).filter(Boolean);
 }
+// F26 — grup komplain customer (Service Ticket Triage), gated env terpisah dari
+// WA_INBOUND_GROUPS krn bukan grup AM. Kosong-by-default (grup belum ada) →
+// jid === "" tak pernah cocok jid asli, no-op aman.
+function complaintGroupJid(): string {
+  return process.env.F26_COMPLAINT_GROUP_JID?.trim() || "";
+}
 function groupAllowed(jid: string): boolean {
   const g = allowedGroups();
-  return g.length === 0 || g.includes(jid);
+  return g.length === 0 || g.includes(jid) || jid === complaintGroupJid();
 }
 
 export interface WaRow {
@@ -503,6 +510,26 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
     return { id: row.id, kind: k, ...result };
   };
 
+  // F26 — grup komplain customer (Service Ticket Triage): dicek SEBELUM
+  // detectKind hashtag-based krn komplain biasa tanpa hashtag. Gated
+  // F26_COMPLAINT_GROUP_JID kosong-by-default (no-op selama grup belum ada).
+  const cg = complaintGroupJid();
+  if (cg && row.group_jid === cg) {
+    if (await isKnownTeknisiSender(row.sender_name)) return finish({ skipped: "teknisi-chatter" }, "complaint");
+    if (!row.body?.trim()) return finish({ skipped: "empty-body" }, "complaint");
+    const ticket = await createTicket({
+      source: "wa",
+      complaint_text: row.body,
+      customer_name: row.sender_name,
+      group_jid: row.group_jid,
+      wa_message_id: row.message_id,
+    });
+    return finish(
+      { ticket_id: ticket.id, severity: ticket.severity, assigned: ticket.assigned_teknisi_name },
+      "complaint",
+    );
+  }
+
   if (kind === "none") {
     // Foto tanpa hashtag (caption = customer) → foto-followup ke activity_log.
     if (String(row.message_type ?? "").toLowerCase().startsWith("image") && row.media_path) {
@@ -735,7 +762,8 @@ export async function processUnprocessed(
     FROM wa_message
     WHERE processed_at IS NULL
       AND (body ~* '#\\s*(plan|report|leads|update|sales|cek|klaim)'
-           OR (message_type ~* '^image' AND media_path IS NOT NULL))
+           OR (message_type ~* '^image' AND media_path IS NOT NULL)
+           OR (${complaintGroupJid()} <> '' AND group_jid = ${complaintGroupJid()}))
     ORDER BY received_at ASC LIMIT ${limit}
   `;
   const results: Record<string, unknown>[] = [];

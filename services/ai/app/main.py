@@ -19,6 +19,7 @@ from .openrouter import (
     rekap_models,
     resume_models,
     salesdoc_models,
+    ticket_triage_models,
 )
 from .raport import build_raport_system, build_raport_user, parse_raport, template_raport
 from .rekap import build_messages_block, build_rekap_system
@@ -55,6 +56,8 @@ from .schemas import (
     SalesDocRequest,
     SalesDocResponse,
     SummarizeRequest,
+    TicketTriageRequest,
+    TicketTriageResponse,
     WeekendBriefingRequest,
     WeekendBriefingResponse,
 )
@@ -504,6 +507,53 @@ def detect_leave(req: LeaveDetectRequest) -> LeaveDetectResponse:
         confidence=float(d.get("confidence") or 0.0),
         model=model,
         dry_run=model == "dry-run-fallback",
+    )
+
+
+# === F26: ticket triage (klasifikasi severity + ekstrak area dari komplain) ===
+TICKET_TRIAGE_SYSTEM_PROMPT = """Kamu mesin triage komplain customer utk distributor alat kesehatan B2B (Wahana Lifeline). Baca SATU pesan komplain WhatsApp dari customer soal alat/produk yang sudah terinstal.
+
+Klasifikasikan severity:
+- "kritis": alat TOTAL tidak berfungsi & berdampak langsung ke operasional/pasien (darurat).
+- "tinggi": alat rusak signifikan, mengganggu operasional, tapi bukan darurat.
+- "sedang": gangguan minor, alat masih bisa dipakai sebagian.
+- "rendah": pertanyaan/permintaan info, bukan laporan kerusakan.
+
+Kalau pesan menyebut nama kota/cabang/lokasi, ekstrak ke field "area" (mis. "Surabaya", "Bandung"). Kalau tidak disebut, area = null.
+
+Return STRICT JSON (no markdown): {"severity": "rendah|sedang|tinggi|kritis", "area": "<nama lokasi>" or null}"""
+
+
+@app.post("/triage-ticket", response_model=TicketTriageResponse)
+def triage_ticket(req: TicketTriageRequest) -> TicketTriageResponse:
+    """F26 — klasifikasi severity + ekstrak area dari 1 pesan komplain via LLM.
+
+    dry_run / tanpa OPENROUTER_API_KEY → severity="sedang" (fallback aman, BUKAN error).
+    """
+    if req.dry_run or not os.environ.get("OPENROUTER_API_KEY"):
+        return TicketTriageResponse(severity="sedang", area=None, model="dry-run", dry_run=True)
+    text, model, _, _ = chat_or_fallback(
+        TICKET_TRIAGE_SYSTEM_PROMPT, req.complaint_text, "", max_tokens=300, models=ticket_triage_models(),
+    )
+    cleaned = (text or "").strip()
+    if cleaned.startswith("```"):
+        cleaned = "\n".join(ln for ln in cleaned.splitlines() if not ln.strip().startswith("```"))
+    cleaned = cleaned.strip()
+    if cleaned.lower().startswith("json"):
+        cleaned = cleaned[4:].strip()
+    try:
+        d = json.loads(cleaned)
+    except (ValueError, TypeError):
+        d = {}
+    raw_severity = str(d.get("severity") or "").lower()
+    severity_uncertain = raw_severity not in ("rendah", "sedang", "tinggi", "kritis")
+    severity = "sedang" if severity_uncertain else raw_severity
+    return TicketTriageResponse(
+        severity=severity,
+        area=(d.get("area") or None),
+        model=model,
+        dry_run=model == "dry-run-fallback",
+        severity_uncertain=severity_uncertain,
     )
 
 
