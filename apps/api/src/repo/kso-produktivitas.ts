@@ -234,9 +234,53 @@ export async function faskesDetail(
 
   // Kategori yang berlaku bagi skema ini dibaca dari kso_kategori_skema — sumber tunggal
   // aturan atribusi (107). Jangan disalin ke TS.
+  // PORSI KSO DITERAPKAN DI SINI, dan itu wajib — bukan penyempurnaan.
+  //
+  // Kartu "Revenue netto" pada dialog yang sama membaca
+  // kso_asset_produktivitas_v.revenue_netto_customer, yang (a) hanya menghitung kategori
+  // yang berlaku bagi skema, DAN (b) membagi porsi kategori 'KSO' untuk faskes berskema
+  // ganda (migrasi 102). kso_faskes_reagen_v tidak melakukan keduanya — cakupannya
+  // seluruh faktur, seluruh kategori, tanpa porsi.
+  //
+  // Tanpa penyesuaian ini, dua angka di SATU dialog akan bertentangan: pada data prod
+  // 2026-08-22 Σ reagen = Rp 29,27 M sementara Σ revenue faskes KSO = Rp 20,73 M (~29%
+  // lebih rendah), dan tidak ada yang gagal untuk menandainya. Baris kategori 'KSO'
+  // karena itu dikalikan porsi_kso yang sama, dan subtotal dalam-skema menjadi sepadan
+  // dengan kartu di atasnya.
+  //
+  // PORSI DIHITUNG ULANG DARI JUMLAH TES, bukan dibaca dari kolom porsi_kso.
+  // Kolom itu di-`round(...,4)` (migrasi 105 baris 163) sementara view menghitung
+  // revenue-nya dengan porsi presisi penuh. Memakai yang dibulatkan meninggalkan selisih
+  // pembulatan — terukur Rp 4.968 dari Rp 134 juta di uji dev, kecil tapi cukup untuk
+  // membuat dua angka di satu dialog tidak sama dan memancing pertanyaan tanpa jawaban.
+  //
+  // Ini BUKAN menyalin rumus alokasi: porsi diturunkan dari `total_tes_customer_seskema`
+  // yang view yang sama sudah mengekspos, dengan definisi yang sama seperti migrasi 102
+  // (porsi = tes skema ini / tes seluruh skema di customer itu).
+  //
+  // Cadangan berlapis: kalau total tes nol di semua skema, penyebutnya nol dan porsi
+  // presisi jadi NULL — turun ke kolom porsi_kso yang dibulatkan (yang punya cadangan
+  // per jumlah alat), lalu ke 1 bila faskes tak punya aset pada skema ini sama sekali.
   const reagen = await sql`
+    WITH porsi AS (
+      SELECT sum(CASE WHEN skema = ${skema} THEN tes END)
+               / NULLIF(sum(tes), 0)                       AS presisi,
+             max(CASE WHEN skema = ${skema} THEN porsi END) AS dibulatkan
+      FROM (
+        SELECT skema,
+               max(total_tes_customer_seskema)::numeric AS tes,
+               max(porsi_kso)                           AS porsi
+        FROM kso_asset_produktivitas_v
+        WHERE account_id = ${accountId}
+        GROUP BY skema
+      ) x
+    )
     SELECT r.item_id, r.item_no, r.item_nama, r.jenis_alat, r.kategori, r.unit,
-           sum(r.qty) AS qty, sum(r.nilai_netto) AS nilai_netto,
+           sum(r.qty) AS qty,
+           sum(CASE WHEN r.kategori = 'KSO'
+                    THEN r.nilai_netto
+                         * COALESCE((SELECT COALESCE(presisi, dibulatkan) FROM porsi), 1)
+                    ELSE r.nilai_netto END) AS nilai_netto,
            sum(r.jumlah_faktur)::int AS jumlah_faktur,
            (r.kategori IN (SELECT kategori FROM kso_kategori_skema WHERE skema = ${skema}))
              AS dalam_skema
