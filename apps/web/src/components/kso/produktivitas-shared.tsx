@@ -85,6 +85,38 @@ export const rpSingkat = (n: number) => {
   return n.toLocaleString("id-ID");
 };
 
+// ── Skala sumbu rupiah ─────────────────────────────────────────────────────────────
+// SATU satuan untuk seluruh sumbu, dipilih dari nilai terbesarnya — bukan per-nilai
+// seperti rpSingkat. Dua sebab, dua-duanya terlihat di layar sebelum ini diperbaiki:
+//
+//   1. LABEL DUPLIKAT. rpSingkat membulatkan ke satuan terdekat tanpa desimal, jadi
+//      1.950.000 dan 1.650.000 SAMA-SAMA jadi "2 jt". Sumbu yang menampilkan "2 jt"
+//      dua kali pada tinggi berbeda membuat seluruh grafik terbaca rusak.
+//   2. SATUAN CAMPUR. "2 jt" lalu "975 rb" di sumbu yang sama memaksa pembaca
+//      mengkonversi di kepala untuk membandingkan dua tick bersebelahan.
+//
+// Desimal ditentukan dari rentangnya: makin sempit rentang, makin banyak desimal yang
+// dibutuhkan agar tick tidak runtuh jadi label yang sama.
+export function skalaRp(maks: number) {
+  const a = Math.abs(maks);
+  const [bagi, satuan] =
+    a >= 1e9 ? [1e9, "miliar Rp"] :
+    a >= 1e6 ? [1e6, "juta Rp"] :
+    a >= 1e3 ? [1e3, "ribu Rp"] : [1, "Rp"];
+  const rasio = a / bagi;
+  const desimal = rasio < 3 ? 2 : rasio < 10 ? 1 : 0;
+  return {
+    satuan,
+    format: (v: number) =>
+      (v / bagi).toLocaleString("id-ID", { minimumFractionDigits: 0, maximumFractionDigits: desimal }),
+  };
+}
+
+// Sumbu HITUNGAN (jumlah tes) — pemisah ribuan, tanpa satuan singkat. rpSingkat pernah
+// dipakai di sini dan itu salah: 14.225 tes jadi "14 rb", presisi yang justru dibutuhkan
+// saat membandingkan realisasi dengan target hilang.
+export const angkaSumbu = (v: number) => Math.round(v).toLocaleString("id-ID");
+
 const BULAN = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"];
 // 'YYYY-MM-DD' dipotong manual, TIDAK lewat new Date(): konstruktor Date menafsirkan
 // string itu sebagai UTC lalu ditampilkan di zona lokal, sehingga 2026-01-01 bisa
