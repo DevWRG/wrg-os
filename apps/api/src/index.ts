@@ -311,6 +311,7 @@ import {
   type AtkSupplierUpdate,
   type AtkItemInput,
   type AtkItemUpdate,
+  type AtkTransactionCategory,
 } from "./repo/atk-master.js";
 import {
   listAtkStockMovements,
@@ -346,9 +347,7 @@ import {
   stockBatchSummary,
   runEdWatch,
 } from "./repo/stock-batch.js";
-import {
-  type AtkTransactionCategory,
-} from "./repo/atk-master.js";
+
 const app = new Hono();
 
 // Selalu balas JSON saat error / route tak ada — supaya BFF & client tak pernah
