@@ -19,6 +19,7 @@ from .openrouter import (
     rekap_models,
     resume_models,
     salesdoc_models,
+    ticket_triage_models,
 )
 from .raport import build_raport_system, build_raport_user, parse_raport, template_raport
 from .rekap import build_messages_block, build_rekap_system
@@ -40,6 +41,8 @@ from .schemas import (
     GrowthLeversResponse,
     ExtractRequest,
     ExtractResponse,
+    KlaimOcrRequest,
+    KlaimOcrResponse,
     LeaveDetectRequest,
     LeaveDetectResponse,
     RekapRequest,
@@ -53,10 +56,14 @@ from .schemas import (
     SalesDocRequest,
     SalesDocResponse,
     SummarizeRequest,
+    TicketTriageRequest,
+    TicketTriageResponse,
     WeekendBriefingRequest,
     WeekendBriefingResponse,
 )
 from .executive import NAMA_PERUSAHAAN
+from .klaim import build_klaim_system, build_klaim_user, parse_klaim
+from .openrouter import chat_vision, klaim_models
 
 # System prompt stabil (cache-friendly) — port dari legacy/crm wrg-daily SKILL.md.
 DAILY_SYSTEM_PROMPT = """Kamu adalah WRG CRM Daily Summary Generator.
@@ -306,6 +313,38 @@ def sales_doc(req: SalesDocRequest) -> SalesDocResponse:
     )
 
 
+@app.post("/ocr-klaim", response_model=KlaimOcrResponse)
+def ocr_klaim(req: KlaimOcrRequest) -> KlaimOcrResponse:
+    """DOC #KLAIM Fase A: ekstrak isi foto dokumen (invoice/faktur/struk) via
+    Gemini Vision (OpenRouter). dry_run / tanpa OPENROUTER_API_KEY → SEMUA field
+    null (TIDAK ada template fabrikasi — beda dari /sales-doc, gambar sungguhan
+    tak bisa dikira-kira isinya)."""
+    use_llm = not req.dry_run and bool(os.environ.get("OPENROUTER_API_KEY"))
+    if not use_llm:
+        return KlaimOcrResponse(model="dry-run", dry_run=True)
+    try:
+        text, model_used, _, _ = chat_vision(
+            build_klaim_system(),
+            build_klaim_user(req.caption),
+            req.image_base64,
+            req.mime_type,
+            max_tokens=1500,
+            models=klaim_models(),
+        )
+        fields = parse_klaim(text)
+    except Exception:  # noqa: BLE001 — degradasi ke dry-run, endpoint tetap 200
+        return KlaimOcrResponse(model="dry-run-fallback", dry_run=True)
+    return KlaimOcrResponse(
+        raw_text=fields["raw_text"],
+        nomor_dokumen=fields["nomor_dokumen"],
+        tanggal_dokumen=fields["tanggal_dokumen"],
+        nominal=fields["nominal"],
+        pihak=fields["pihak"],
+        model=model_used,
+        dry_run=False,
+    )
+
+
 @app.post("/extract", response_model=ExtractResponse)
 def extract(req: ExtractRequest) -> ExtractResponse:
     """A8 Sentiment & Entity Extraction: anotasi sentiment + entity per pesan.
@@ -390,21 +429,45 @@ def growth_levers(req: GrowthLeversRequest) -> GrowthLeversResponse:
 
 
 # === detect_leave: deteksi izin/sakit/cuti individual dari grup HRD ===
-LEAVE_SYSTEM_PROMPT = """You parse a single WhatsApp message from an Indonesian company HR group and decide if it announces that a SPECIFIC employee will be ABSENT from work (izin/sakit/cuti).
+LEAVE_SYSTEM_PROMPT = """You parse a single WhatsApp message from an Indonesian company HR group and decide if it announces that a SPECIFIC employee will be ABSENT from work for the whole day (izin/sakit/cuti).
 
-CRITICAL: the word "izin"/"ijin" is usually just a POLITENESS particle in Indonesian business chat ("izin bertanya", "izin mengingatkan", "izin update", "mohon izin untuk...") — those are NOT leave. Only treat as leave when the message clearly says a named person will NOT come to work / tidak masuk kerja / tidak bisa masuk / sedang sakit / mengajukan cuti.
+CRITICAL: the word "izin"/"ijin" is usually just a POLITENESS particle in Indonesian business chat ("izin bertanya", "izin mengingatkan", "izin update", "mohon izin untuk...") — those are NOT leave. Only treat as leave when the message clearly says a person will NOT come to work / tidak masuk kerja / tidak bisa masuk / sedang sakit / mengajukan cuti.
+
+PARTIAL-day absence is NOT leave → is_leave=false: izin telat / terlambat / berangkat siang, izin pulang cepat / pulang awal / pulang duluan, izin keluar sebentar, izin datang setelah ke dokter. Those people still work that day. Only a FULL-day (or multi-day) absence counts. But do NOT over-apply this: "saya ijin sakit, mau periksa ke klinik/dokter" without any telat/pulang-cepat wording IS a full-day absence — mentioning a doctor visit does not make it partial.
 
 Also: ignore COMPANY-WIDE holiday announcements (libur nasional, Idul Adha, cuti bersama) — those are not individual leave. Ignore third-party mentions that are not a real absence.
 
-The input gives "Pengirim" (sender display name) and "Pesan" (body). If the message is first-person ("saya tidak masuk"...) and no other name appears, the absent person IS the sender — use the sender name. If the body forwards/quotes someone or names a person ("pengajuan cuti mba Kolis"), use THAT person.
+=== WHO IS ABSENT: pemohon (absentee) vs penerima (addressee) ===
+The input gives "Pengirim" (sender display name) and "Pesan" (body). Messages in this group are usually addressed TO an HR/HoD person and are ABOUT someone else. Getting this backwards records leave for the wrong person, so be strict:
 
-ADDRESSEE vs ABSENTEE (important): a message often starts by ADDRESSING/notifying people — @mentions (e.g. "@Ika @Muthia") or "mbk X & mbk Y" / "pak/bu Z" greetings. Those addressed people are usually HR staff being NOTIFIED and are NOT the absent person. If the message addresses some people AND then states a DIFFERENT name is absent (e.g. "@Ika & @Muthia, Navisa hari ini izin tidak masuk karena sakit"), the absent employee is that OTHER name (Navisa) — NOT the addressees (Ika/Muthia). Pick the name attached to the absence phrase (tidak/tdk masuk, sakit, izin tidak masuk, cuti), and ignore @mentions and the names being greeted/notified. Tolerate typos (e.g. "todak"="tidak").
+1. A name is the ADDRESSEE (penerima — NOT absent) when it is being spoken to, i.e.:
+   - it is an @mention, or
+   - it opens the message as a greeting/vocative ("Mba ika, ...", "Pak yogi, ..."), or
+   - the message ends with a vocative particle aimed at them ("... ya pak", "... nggih mba", "... hari ini pak"), or
+   - the sentence is a request/report DIRECTED at them ("pak roky ijin hari ini pak" = the sender is telling Pak Roky that the SENDER is absent).
+2. A name is the ABSENTEE (pemohon) when it is the subject of the absence clause and the message is NOT directed at that person ("Pak Boni hari ini tidak masuk karena sakit", "diana masih ijin sakit", "Nungky cuti 1hari tgl 14 Agustus 2026").
+3. First-person message ("saya izin tidak masuk", "sya ijin sakit") → the absentee is the SENDER, not the person addressed.
+4. Quoted/forwarded chat ("[31/7 06.26] Boni: ... sya ijin sakit pak") → the absentee is the QUOTED speaker (Boni), not the person they greet.
+
+If the absentee is the sender, use the sender name ONLY when it is a real personal name. Display names that are group/role/company labels — e.g. "RG WG", "WG Group", "HRD Wahana Gumilang Group", "Admin Penjualan", "PT ..." — are NOT people: in that case return nama=null (keep is_leave as detected).
+
+When you cannot tell with confidence WHICH person is absent, return nama=null. A null name is always better than the wrong name. Do NOT flip is_leave to false just because the person is unidentified: is_leave describes whether an absence was announced, nama describes who — "Pak roky ijin hari ini pak" is is_leave=true with nama=null.
+
+NAME FORMAT: strip honorifics and company suffixes — "Pak Boni" → "Boni", "mba Baby" → "Baby", "Arif PT.Wahana" → "Arif". Keep multi-word real names ("Yugi Dwi bagus"). Tolerate typos (e.g. "todak"="tidak").
+
+Worked examples (Pengirim → Pesan → nama):
+- "RG WG" → "Pak roky ijin hari ini pak" → null (roky is the addressee; the absentee is the unnamed sender)
+- "RG WG" → "Pak Boni hari ijin tidak masuk karena sakit" → "Boni" (subject of the absence, not addressed)
+- "IKA" → "Mba ika, hari ini mba Baby izin ga masuk karena sakit" → "Baby" (ika is addressed)
+- "Fafa" → "Mba fa @94270237192268 saya izin berangkat terlambat ya" → is_leave=false (terlambat = partial day)
+- "RG WG" → "[31/7 06.26] Boni: pagi pak roky maaf sya ijin sakit pak, bdan blm enakan, mau priksa dara" → is_leave=true, nama="Boni" (quoted first-person absence; roky is only greeted)
 
 Message date (for resolving "hari ini"/"besok"): {msgdate}
 
 Return STRICT JSON (no markdown):
 {"is_leave": true|false, "nama": "name of the ABSENT employee, or null", "jenis": "ijin"|"sakit"|"cuti"|null, "start_date": "YYYY-MM-DD" or null, "end_date": "YYYY-MM-DD" or null, "confidence": 0.0-1.0}
-Rules: end_date = start_date if single day. If date unclear, use message date. confidence < 0.6 if unsure. Output JSON only."""
+Rules: end_date = start_date if single day. If date unclear, use message date. confidence < 0.6 if unsure about the absence itself.
+is_leave describes the ABSENCE, not the identification: when a full-day absence IS clearly stated but you cannot tell who is absent, still return is_leave=true with nama=null (do NOT downgrade to is_leave=false). Output JSON only."""
 
 
 @app.post("/detect-leave", response_model=LeaveDetectResponse)
@@ -444,6 +507,53 @@ def detect_leave(req: LeaveDetectRequest) -> LeaveDetectResponse:
         confidence=float(d.get("confidence") or 0.0),
         model=model,
         dry_run=model == "dry-run-fallback",
+    )
+
+
+# === F26: ticket triage (klasifikasi severity + ekstrak area dari komplain) ===
+TICKET_TRIAGE_SYSTEM_PROMPT = """Kamu mesin triage komplain customer utk distributor alat kesehatan B2B (Wahana Lifeline). Baca SATU pesan komplain WhatsApp dari customer soal alat/produk yang sudah terinstal.
+
+Klasifikasikan severity:
+- "kritis": alat TOTAL tidak berfungsi & berdampak langsung ke operasional/pasien (darurat).
+- "tinggi": alat rusak signifikan, mengganggu operasional, tapi bukan darurat.
+- "sedang": gangguan minor, alat masih bisa dipakai sebagian.
+- "rendah": pertanyaan/permintaan info, bukan laporan kerusakan.
+
+Kalau pesan menyebut nama kota/cabang/lokasi, ekstrak ke field "area" (mis. "Surabaya", "Bandung"). Kalau tidak disebut, area = null.
+
+Return STRICT JSON (no markdown): {"severity": "rendah|sedang|tinggi|kritis", "area": "<nama lokasi>" or null}"""
+
+
+@app.post("/triage-ticket", response_model=TicketTriageResponse)
+def triage_ticket(req: TicketTriageRequest) -> TicketTriageResponse:
+    """F26 — klasifikasi severity + ekstrak area dari 1 pesan komplain via LLM.
+
+    dry_run / tanpa OPENROUTER_API_KEY → severity="sedang" (fallback aman, BUKAN error).
+    """
+    if req.dry_run or not os.environ.get("OPENROUTER_API_KEY"):
+        return TicketTriageResponse(severity="sedang", area=None, model="dry-run", dry_run=True)
+    text, model, _, _ = chat_or_fallback(
+        TICKET_TRIAGE_SYSTEM_PROMPT, req.complaint_text, "", max_tokens=300, models=ticket_triage_models(),
+    )
+    cleaned = (text or "").strip()
+    if cleaned.startswith("```"):
+        cleaned = "\n".join(ln for ln in cleaned.splitlines() if not ln.strip().startswith("```"))
+    cleaned = cleaned.strip()
+    if cleaned.lower().startswith("json"):
+        cleaned = cleaned[4:].strip()
+    try:
+        d = json.loads(cleaned)
+    except (ValueError, TypeError):
+        d = {}
+    raw_severity = str(d.get("severity") or "").lower()
+    severity_uncertain = raw_severity not in ("rendah", "sedang", "tinggi", "kritis")
+    severity = "sedang" if severity_uncertain else raw_severity
+    return TicketTriageResponse(
+        severity=severity,
+        area=(d.get("area") or None),
+        model=model,
+        dry_run=model == "dry-run-fallback",
+        severity_uncertain=severity_uncertain,
     )
 
 
