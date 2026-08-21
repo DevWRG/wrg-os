@@ -44,7 +44,34 @@ export function verifyGeo(opts: {
  */
 const PLAN_MATCH = 0.3;
 
+/**
+ * `am_id` yang tidak ada di `master_user`.
+ *
+ * Kenapa fatal: listVisits()/getVisit() INNER JOIN ke `master_user`, jadi
+ * kunjungan dengan am_id asing tersimpan di sales_plan + activity_log —
+ * lengkap dengan `reported = true` — tapi tidak akan pernah muncul di menu
+ * Visits, tidak terhitung di kartu capaian, dan `id` yang dikembalikan POST
+ * /visits membalas 404 di GET /visits/:id. Sisa dari kelas bug yang sama
+ * dengan tabel `visit`: tersimpan tapi hilang, cuma sekarang mengotori tabel
+ * KANONIK. Placeholder form dulu literal "AM-001" padahal am_id nyata = user_id
+ * legacy, jadi ini bukan kasus hipotetis.
+ *
+ * Dilempar dari createVisit(), bukan diperiksa di route, supaya tak ada
+ * pemanggil baru yang bisa melewatkannya.
+ */
+export class AmTidakDikenalError extends Error {
+  constructor(public readonly amId: string) {
+    super(`am_id "${amId}" tidak ada di master_user — kunjungan tak akan tampil di menu Visits`);
+    this.name = "AmTidakDikenalError";
+  }
+}
+
 export interface VisitInput {
+  /**
+   * WAJIB ada di `master_user` — divalidasi runtime oleh createVisit() yang
+   * melempar AmTidakDikenalError. Tak bisa dijamin compiler karena rosternya
+   * data, bukan tipe.
+   */
   am_id: string;
   deal_id?: string;
   customer_name?: string;
@@ -89,6 +116,9 @@ export async function createVisit(v: VisitInput): Promise<{
   matched_plan: boolean;
 }> {
   const sql = db();
+  // Dicek SEBELUM transaksi: am_id asing tak boleh sampai menulis satu baris pun.
+  const [amDikenal] = await sql`SELECT 1 FROM master_user WHERE am_id = ${v.am_id}`;
+  if (!amDikenal) throw new AmTidakDikenalError(v.am_id);
   const geo = verifyGeo({
     lat: v.lat,
     lon: v.lon,
