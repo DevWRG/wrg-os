@@ -355,3 +355,23 @@ class RaportNarrativeResponse(BaseModel):
     predikat: str = ""
     model: str = "dry-run"
     dry_run: bool = False
+
+
+# === DOC #KLAIM — Invoice Claim OCR (Fase A, Gemini Vision) ===
+
+
+class KlaimOcrRequest(BaseModel):
+    image_base64: str
+    mime_type: str = "image/jpeg"
+    caption: Optional[str] = None
+    dry_run: bool = False
+
+
+class KlaimOcrResponse(BaseModel):
+    raw_text: str = ""
+    nomor_dokumen: Optional[str] = None
+    tanggal_dokumen: Optional[str] = None
+    nominal: Optional[str] = None
+    pihak: Optional[str] = None
+    model: str = "dry-run"
+    dry_run: bool = False

@@ -12,6 +12,7 @@ export interface AmVisitProgress {
   nama: string | null;
   cabang: string | null;
   visits: number;
+  visits_geotag: number;
   new_prospects: number;
   target: number;
   new_target: number;
@@ -107,17 +108,20 @@ export function VisitTargetTable({ kpi }: { kpi: VisitTargetKpi }) {
         </CardTitle>
         <p className="text-muted-foreground text-xs">
           Target {kpi.target_default} kunjungan/minggu, {kpi.new_target_default} di antaranya prospek baru
-          (belum dikunjungi 90 hari terakhir).
+          (belum dikunjungi 90 hari terakhir). Capaian dihitung dari kunjungan yang{" "}
+          <span className="font-medium">dilaporkan</span>; kolom{" "}
+          <span className="font-medium">Geotag</span> menunjukkan berapa di antaranya berkoordinat.
         </p>
       </CardHeader>
       <CardContent>
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[560px] text-sm">
+          <table className="w-full min-w-[640px] text-sm">
             <thead>
               <tr className="text-muted-foreground border-b text-left text-xs">
                 <th className="pb-2 font-medium">AM</th>
                 <th className="pb-2 font-medium">Cabang</th>
                 <th className="pb-2 text-right font-medium">Kunjungan</th>
+                <th className="pb-2 text-right font-medium">Geotag</th>
                 <th className="pb-2 pl-3 font-medium">Progress</th>
                 <th className="pb-2 text-right font-medium">Prospek baru</th>
               </tr>
@@ -134,7 +138,17 @@ export function VisitTargetTable({ kpi }: { kpi: VisitTargetKpi }) {
                       {a.visits}
                       <span className="text-muted-foreground">/{a.target}</span>
                     </td>
-                    <td className="w-[38%] py-2 pl-3">
+                    <td className="py-2 text-right tabular-nums">
+                      {a.visits > 0 ? (
+                        <span className={a.visits_geotag === 0 ? "text-amber-600 dark:text-amber-400" : undefined}>
+                          {a.visits_geotag}
+                          <span className="text-muted-foreground">/{a.visits}</span>
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </td>
+                    <td className="w-[34%] py-2 pl-3">
                       <div className="flex items-center gap-2">
                         <div className="bg-muted h-1.5 flex-1 overflow-hidden rounded-full">
                           <div className={cn("h-full rounded-full", t.bar)} style={{ width: `${Math.min(100, a.pct)}%` }} />
