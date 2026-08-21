@@ -487,6 +487,17 @@ import {
   getTicketTimeline as getGaTicketTimeline,
   runGaHelpdeskOverdueAlert,
 } from "./repo/ga-helpdesk.js";
+import {
+  createFundRequest,
+  listFundRequests,
+  getFundRequest,
+  deleteFundRequest,
+  decideFundRequestApproval,
+  listActiveHods,
+  FundRequestError,
+  type ApproverRole as FundRequestApproverRole,
+  type FundRequestStatus,
+} from "./repo/fund-request.js";
 const app = new Hono();
 
 // Selalu balas JSON saat error / route tak ada — supaya BFF & client tak pernah
@@ -6307,6 +6318,105 @@ app.post("/ga-tickets/overdue-alert/run", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const r = await runGaHelpdeskOverdueAlert();
   return c.json(r);
+});
+
+// ── F138 Operational Fund Request + Multi-Step Approval Workflow ──
+// requester_name/requester_email & decided_by dipercaya dari BFF (identitas &
+// gating di layer WEB, pola sama created_by di POST /purchase-orders — lihat
+// CLAUDE.md gotcha "Admin-gate di layer WEB, bukan di api"). Sequencing
+// HOD->Direktur & idempotensi ditegakkan di repo (business-rule, bukan
+// identity check).
+app.get("/fund-requests/hod-options", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await listActiveHods());
+});
+
+app.get("/fund-requests", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const status = c.req.query("status") as FundRequestStatus | undefined;
+  const cabang = c.req.query("cabang") ?? undefined;
+  const requesterEmail = c.req.query("requester_email") ?? undefined;
+  return c.json(await listFundRequests({ status, cabang, requesterEmail }));
+});
+
+app.post("/fund-requests", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: {
+    requester_name?: string; requester_email?: string; purpose?: string; amount_requested?: number;
+    cabang?: string | null; request_date?: string; hod_approver_key?: string; notes?: string | null;
+  };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.requester_name || !body.requester_email || !body.purpose || !body.hod_approver_key) {
+    return c.json({ error: "requester_name, requester_email, purpose, hod_approver_key wajib" }, 400);
+  }
+  if (!(Number(body.amount_requested) > 0)) return c.json({ error: "amount_requested harus > 0" }, 400);
+  try {
+    const created = await createFundRequest({
+      requester_name: body.requester_name,
+      requester_email: body.requester_email,
+      purpose: body.purpose,
+      amount_requested: Number(body.amount_requested),
+      cabang: body.cabang ?? null,
+      request_date: body.request_date,
+      hod_approver_key: body.hod_approver_key,
+      notes: body.notes ?? null,
+    });
+    return c.json(created, 201);
+  } catch (e) {
+    if (e instanceof FundRequestError) return c.json({ error: e.message }, e.status as 400 | 404 | 409);
+    throw e;
+  }
+});
+
+app.get("/fund-requests/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const row = await getFundRequest(c.req.param("id"));
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+});
+
+app.delete("/fund-requests/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const result = await deleteFundRequest(c.req.param("id"));
+    return c.json(result, result.deleted ? 200 : 404);
+  } catch (e) {
+    if (e instanceof FundRequestError) return c.json({ error: e.message }, e.status as 409);
+    throw e;
+  }
+});
+
+app.patch("/fund-requests/:id/approvals/:role", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const role = c.req.param("role");
+  if (role !== "hod" && role !== "direktur") {
+    return c.json({ error: "role tidak valid (hod/direktur)" }, 400);
+  }
+  let body: { decision?: string; decided_by?: string | null; note?: string | null };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (body.decision !== "approve" && body.decision !== "reject") {
+    return c.json({ error: "decision wajib (approve/reject)" }, 400);
+  }
+  try {
+    const result = await decideFundRequestApproval(
+      c.req.param("id"),
+      role as FundRequestApproverRole,
+      body.decision,
+      body.decided_by ?? null,
+      body.note ?? null,
+    );
+    return c.json(result);
+  } catch (e) {
+    if (e instanceof FundRequestError) return c.json({ error: e.message }, e.status as 400 | 404 | 409);
+    throw e;
+  }
 });
 
 const port = Number(process.env.PORT ?? 4000);

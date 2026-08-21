@@ -344,6 +344,7 @@ export const NAV: NavGroup[] = [
         features: [{ key: "it-asset", name: "Tiket IT (tab di Aset GA)" }],
       },
       { title: "Helpdesk GA", url: "/ga-helpdesk", icon: Ticket, badge: "NEW" },
+      { title: "Pengajuan Dana Operasional", url: "/fund-requests", icon: Wallet, badge: "NEW" },
     ],
   },
   {
