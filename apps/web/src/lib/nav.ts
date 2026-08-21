@@ -15,6 +15,7 @@ import {
   CalendarClock,
   Ticket,
   PackageCheck,
+  PenLine,
   type LucideIcon,
 } from "lucide-react";
 
@@ -262,6 +263,7 @@ export const NAV: NavGroup[] = [
     label: "General Affairs",
     items: [
       { title: "Dana Ops", url: "/dana-ops", icon: Wallet, badge: "NEW", show: canViewDanaOps },
+      { title: "ATK Master", url: "/atk-master", icon: PenLine, badge: "NEW" },
     ],
   },
   {
