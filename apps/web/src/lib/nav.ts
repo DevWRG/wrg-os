@@ -27,6 +27,7 @@ import {
   ClipboardList,
   HardHat,
   TrendingUpDown,
+  QrCode,
   type LucideIcon,
 } from "lucide-react";
 
@@ -249,6 +250,8 @@ export const NAV: NavGroup[] = [
       { title: "Suppliers", url: "/suppliers", icon: Factory },
       { title: "HITL Review", url: "/hitl", icon: ClipboardCheck },
       { title: "Kendaraan Operasional", url: "/vehicles", icon: Car, badge: "NEW" },
+      // F53 — domain OPS tetap di Operations (sama keputusan spt F50/F52).
+      { title: "Stiker Aset", url: "/asset-tag", icon: QrCode, badge: "NEW" },
     ],
   },
   {

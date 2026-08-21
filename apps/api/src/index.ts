@@ -507,6 +507,13 @@ import {
   type ApproverRole as FundRequestApproverRole,
   type FundRequestStatus,
 } from "./repo/fund-request.js";
+import {
+  listAssetTags,
+  createAssetTag,
+  updateAssetTag,
+  listAuditLog,
+  recordAudit,
+} from "./repo/asset-tag.js";
 const app = new Hono();
 
 // Selalu balas JSON saat error / route tak ada — supaya BFF & client tak pernah
@@ -6517,6 +6524,72 @@ app.patch("/fund-requests/:id/approvals/:role", async (c) => {
     if (e instanceof FundRequestError) return c.json({ error: e.message }, e.status as 400 | 404 | 409);
     throw e;
   }
+});
+
+// ── F53 Stiker Aset & Asset Tagging Audit ───────────────────────────────────
+app.get("/asset-tags", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listAssetTags(c.req.query("all") !== "true");
+  return c.json({ count: rows.length, assets: rows });
+});
+
+app.post("/asset-tags", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { kode?: string; nama?: string; jenis_kepemilikan?: "aset" | "inventaris"; kategori?: string; lokasi_cabang?: string; letak?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.kode || !body.nama) return c.json({ error: "kode & nama wajib diisi" }, 400);
+  if (body.jenis_kepemilikan != null && !["aset", "inventaris"].includes(body.jenis_kepemilikan)) {
+    return c.json({ error: "jenis_kepemilikan harus 'aset' atau 'inventaris'" }, 400);
+  }
+  const r = await createAssetTag({
+    kode: body.kode,
+    nama: body.nama,
+    jenis_kepemilikan: body.jenis_kepemilikan,
+    kategori: body.kategori,
+    lokasi_cabang: body.lokasi_cabang,
+    letak: body.letak,
+  });
+  return c.json(r, "error" in r ? 400 : 201);
+});
+
+app.patch("/asset-tags/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { nama?: string; jenis_kepemilikan?: "aset" | "inventaris"; kategori?: string; lokasi_cabang?: string; letak?: string; active?: boolean };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (body.jenis_kepemilikan != null && !["aset", "inventaris"].includes(body.jenis_kepemilikan)) {
+    return c.json({ error: "jenis_kepemilikan harus 'aset' atau 'inventaris'" }, 400);
+  }
+  const r = await updateAssetTag(c.req.param("id"), body);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.get("/asset-tags/:id/audit", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listAuditLog(c.req.param("id"));
+  return c.json({ count: rows.length, logs: rows });
+});
+
+app.post("/asset-tags/:id/audit", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { audited_by?: string; found?: boolean; note?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.audited_by || typeof body.found !== "boolean") {
+    return c.json({ error: "audited_by & found (boolean) wajib diisi" }, 400);
+  }
+  const r = await recordAudit(c.req.param("id"), { audited_by: body.audited_by, found: body.found, note: body.note });
+  return c.json(r, "error" in r ? 400 : 201);
 });
 
 const port = Number(process.env.PORT ?? 4000);
