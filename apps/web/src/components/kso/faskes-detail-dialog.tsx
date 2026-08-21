@@ -19,8 +19,8 @@ import { cn } from "@/lib/utils";
 import { Dialog, DialogBody, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart";
 import {
-  PENANDA, Tag, awalTahunIni, bulanIni, deretBulan, labelBulan, num, rp, rpSingkat,
-  type FaskesRow,
+  PENANDA, Tag, angkaSumbu, awalTahunIni, bulanIni, deretBulan, labelBulan, num, rp,
+  skalaRp, type FaskesRow,
 } from "./produktivitas-shared";
 
 interface Detail {
@@ -32,6 +32,12 @@ interface Detail {
   }[];
   tren: { periode: string; jumlahTes: number | null; alatLapor: number | null; revenueNetto: number | null }[];
   trenAlat: { assetId: number; periode: string; jumlahTes: number | null }[];
+  reagen: {
+    itemId: number | null; itemNo: string | null; itemNama: string | null;
+    jenisAlat: string | null; kategori: string; unit: string;
+    qty: number | null; nilaiNetto: number | null; jumlahFaktur: number | null;
+    dalamSkema: boolean;
+  }[];
 }
 
 const cfg = {
@@ -59,7 +65,11 @@ export function FaskesDetailDialog({ g, median, onClose }: {
     // Ditangani saat render, bukan lewat state.
     if (!kunci || !g || g.r.accountId === null) return;
     let batal = false;
-    fetch(`/api/kso/produktivitas/faskes/${g.r.accountId}?skema=${encodeURIComponent(g.r.skema)}`)
+    // Jendela dikirim EKSPLISIT, jendela yang sama dengan grafik di bawah. Kalau server
+    // menghitung "tahun berjalan" sendiri, daftar reagen bisa memakai periode berbeda
+    // dari grafiknya tanpa ada yang menandai.
+    fetch(`/api/kso/produktivitas/faskes/${g.r.accountId}?skema=${encodeURIComponent(g.r.skema)}`
+      + `&dari=${awalTahunIni()}&sampai=${bulanIni()}`)
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
       .then((d: Detail) => { if (!batal) setHasil({ kunci, detail: d }); })
       .catch(() => { if (!batal) setHasil({ kunci, detail: null }); });
@@ -101,6 +111,14 @@ export function FaskesDetailDialog({ g, median, onClose }: {
   // `seri` kini hanya melayani grafik REVENUE (level faskes). Grafik tes dipecah per
   // alat dan masing-masing merangka deret bulannya sendiri dari trenAlat.
   const adaRev = seri.some((s) => s.revenue !== null);
+  // Skala dihitung dari nilai terbesar di jendela ini, bukan tetap — lihat skalaRp().
+  const skalaRev = skalaRp(Math.max(0, ...seri.map((x) => x.revenue ?? 0)));
+
+  // Total & hitungan di luar skema dipakai di dua tempat (judul + catatan), jadi dihitung
+  // sekali. Total mencakup baris di luar skema — itu memang "reagen yang keluar",
+  // pertanyaan yang berbeda dari "revenue skema ini".
+  const totalReagen = (detail?.reagen ?? []).reduce((a, r) => a + (r.nilaiNetto ?? 0), 0);
+  const reagenLuar = (detail?.reagen ?? []).filter((r) => !r.dalamSkema).length;
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
@@ -180,7 +198,7 @@ export function FaskesDetailDialog({ g, median, onClose }: {
                         <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fontSize: 10 }}
                           interval="preserveStartEnd" minTickGap={14} />
                         <YAxis tickLine={false} axisLine={false} width={40} tick={{ fontSize: 10 }}
-                          tickFormatter={(v) => rpSingkat(Number(v))} />
+                          tickFormatter={(v) => angkaSumbu(Number(v))} />
                         {/* Dibandingkan CASE-INSENSITIVE ke awalan "target": recharts
                             mengirim `name` seri — yaitu "Target"/"Realisasi" berhuruf
                             besar — bukan dataKey-nya. Membandingkan ke "target" persis
@@ -214,7 +232,7 @@ export function FaskesDetailDialog({ g, median, onClose }: {
                   unit tertentu. Alasannya ditulis di layar, bukan cuma di kode — kalau
                   tidak, pembaca akan menganggap bagian ini belum selesai dikerjakan. */}
               <Grafik judul="Riwayat revenue netto (seluruh faskes)"
-                sub="tidak dapat dipecah per alat"
+                sub={`tidak dapat dipecah per alat · ${skalaRev.satuan}`}
                 ada={adaRev} kosong={adaRevLama
                   ? `Tidak ada faktur di ${dari.slice(0, 4)} — ada di tahun sebelumnya.`
                   : "Belum ada faktur."}>
@@ -222,8 +240,8 @@ export function FaskesDetailDialog({ g, median, onClose }: {
                   <CartesianGrid vertical={false} strokeDasharray="3 3" />
                   <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fontSize: 10 }}
                     interval="preserveStartEnd" minTickGap={14} />
-                  <YAxis tickLine={false} axisLine={false} width={48} tick={{ fontSize: 10 }}
-                    tickFormatter={(v) => rpSingkat(Number(v))} />
+                  <YAxis tickLine={false} axisLine={false} width={44} tick={{ fontSize: 10 }}
+                    tickFormatter={(v) => skalaRev.format(Number(v))} />
                   <ChartTooltip content={<ChartTooltipContent
                     formatter={(v) => ["Rp " + Number(v).toLocaleString("id-ID"), ""]} />} />
                   <Line type="monotone" dataKey="revenue" stroke="var(--color-revenue)" strokeWidth={2}
@@ -241,6 +259,73 @@ export function FaskesDetailDialog({ g, median, onClose }: {
               </p>
 
               <div>
+              {/* ── Reagen keluar ────────────────────────────────────────────────
+                  "Rupiah masuk untuk reagen apa saja". Nilainya HASIL ALOKASI netto
+                  faktur menurut porsi nilai baris (view kso_faskes_reagen_v, migrasi
+                  120) — mekanisme sama dengan kartu Revenue di atas, jadi kedua angka
+                  itu sepadan. Bukan penjumlahan nilai baris apa adanya. */}
+              <div>
+                <div className="mb-1.5 flex flex-wrap items-baseline gap-x-2">
+                  <span className="text-xs font-medium">Reagen keluar ({detail.reagen.length})</span>
+                  <span className="text-muted-foreground text-[11px]">
+                    {dari.slice(0, 4)} · total {rp(totalReagen)}
+                  </span>
+                </div>
+                {detail.reagen.length === 0 ? (
+                  <p className="text-muted-foreground text-xs">
+                    Belum ada baris faktur di {dari.slice(0, 4)} untuk faskes ini.
+                  </p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead className="text-muted-foreground">
+                        <tr className="border-border border-b text-left">
+                          <th className="py-1.5 pr-2 font-medium">Item</th>
+                          <th className="py-1.5 pr-2 font-medium">Kategori</th>
+                          <th className="py-1.5 pr-2 text-right font-medium">Qty</th>
+                          <th className="py-1.5 pr-2 font-medium">Satuan</th>
+                          <th className="py-1.5 text-right font-medium">Nilai netto</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {detail.reagen.map((r, i) => (
+                          <tr key={`${r.itemId}-${r.kategori}-${r.unit}-${i}`}
+                              className="border-border/60 border-b last:border-0">
+                            <td className="py-1.5 pr-2">
+                              <div className="font-medium">{r.itemNama ?? r.itemNo ?? "(tanpa nama)"}</div>
+                              <div className="text-muted-foreground">
+                                {/* jenisAlat NULL = item belum terpetakan, BUKAN "bukan
+                                    reagen alat" — dibedakan supaya tak disalahbaca. */}
+                                {[r.itemNo, r.jenisAlat ?? "jenis alat belum terpetakan"]
+                                  .filter(Boolean).join(" · ")}
+                              </div>
+                            </td>
+                            <td className="py-1.5 pr-2">
+                              {r.dalamSkema
+                                ? <span className="text-muted-foreground">{r.kategori}</span>
+                                : <Tag warna="kuning" judul={`Kategori ${r.kategori} tidak dihitung sebagai revenue skema ini`}>{r.kategori}</Tag>}
+                            </td>
+                            <td className="py-1.5 pr-2 text-right tabular-nums">{num(r.qty)}</td>
+                            <td className="text-muted-foreground py-1.5 pr-2">{r.unit}</td>
+                            <td className="py-1.5 text-right tabular-nums">{rp(r.nilaiNetto)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+                <p className="text-muted-foreground mt-1 text-xs">
+                  Nilai = netto faktur <strong>teralokasi</strong> menurut porsi nilai baris,
+                  sama seperti kartu Revenue di atas — bukan penjumlahan nilai baris apa adanya.
+                  {reagenLuar > 0 ? (
+                    <> {reagenLuar} baris berkategori <strong>di luar skema ini</strong> ikut
+                    ditampilkan (ditandai kuning) dan <strong>tidak</strong> masuk angka Revenue.</>
+                  ) : null}
+                  {" "}Satu item bisa muncul dua kali bila ditagih dalam satuan berbeda —
+                  qty lintas satuan tidak dijumlahkan.
+                </p>
+              </div>
+
                 <div className="mb-1.5 text-xs font-medium">Alat ({detail.alat.length})</div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-xs">
