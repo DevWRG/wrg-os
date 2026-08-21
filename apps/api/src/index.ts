@@ -202,6 +202,15 @@ import { aiBaseUrl, callAi } from "./ai.js";
 import { startScheduler, getScheduleStatus } from "./scheduler.js";
 import { signJwt, verifyJwt } from "./auth.js";
 import { verifyCredentials, createUser, countUsers, listAppUsers, setUserPassword, updateAppUser, deleteAppUser, getAppUserById, createUserFromRoster, generatePassword, changeOwnPassword } from "./repo/users.js";
+import {
+  createRfidCartridgeClaim,
+  listRfidCartridgeClaims,
+  getRfidCartridgeClaim,
+  getRfidCartridgeClaimFile,
+  updateRfidCartridgeClaim,
+  deleteRfidCartridgeClaim,
+  type ClaimStatus as RfidCartridgeClaimStatus,
+} from "./repo/rfid-cartridge-claim.js";
 
 const app = new Hono();
 
@@ -3523,6 +3532,171 @@ app.post("/hitl/resolve", async (c) => {
     approver_id: body.approver_id,
   });
   return c.json(r, r.ok ? 200 : 400);
+});
+
+// ── F23: RFID/Cartridge Error Claim Tracker (Aftersales) ──
+const RFID_CLAIM_STATUSES: RfidCartridgeClaimStatus[] = ["pending", "resolved", "rejected"];
+// Asumsi (belum ada arahan eksplisit Direktur) — sama dgn threshold dokumentasi
+// registry lain di codebase ini: mime allowlist pdf/jpg/jpeg/png, cap 8MB.
+const RFID_CLAIM_FILE_MIME_ALLOWLIST = ["application/pdf", "image/jpeg", "image/png"];
+const RFID_CLAIM_FILE_MAX_BYTES = 8 * 1024 * 1024;
+
+function decodeRfidClaimFile(input: { file_name?: string; file_mime?: string; file_base64?: string }):
+  | { error: string }
+  | { file_name: string; file_mime: string; file_size: number; file_data: Buffer }
+  | null {
+  if (!input.file_base64) return null;
+  if (!input.file_name || !input.file_mime) return { error: "file_name + file_mime wajib bila file_base64 dikirim" };
+  if (!RFID_CLAIM_FILE_MIME_ALLOWLIST.includes(input.file_mime)) {
+    return { error: "file_mime harus application/pdf, image/jpeg, atau image/png" };
+  }
+  let buf: Buffer;
+  try {
+    buf = Buffer.from(input.file_base64, "base64");
+  } catch {
+    return { error: "file_base64 tidak valid" };
+  }
+  if (buf.length === 0) return { error: "file kosong" };
+  if (buf.length > RFID_CLAIM_FILE_MAX_BYTES) return { error: "file maksimal 8MB" };
+  return { file_name: input.file_name, file_mime: input.file_mime, file_size: buf.length, file_data: buf };
+}
+
+app.post("/aftersales/rfid-cartridge-claims", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: {
+    device_name?: string;
+    cartridge_name?: string;
+    lot_number?: string;
+    serial_number?: string;
+    customer_name?: string;
+    error_description?: string;
+    reported_date?: string;
+    reported_by?: string;
+    cabang?: string;
+    notes?: string;
+    file_name?: string;
+    file_mime?: string;
+    file_base64?: string;
+  };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (
+    !body.device_name ||
+    !body.cartridge_name ||
+    !body.customer_name ||
+    !body.error_description ||
+    !body.reported_by
+  ) {
+    return c.json(
+      { error: "device_name, cartridge_name, customer_name, error_description, reported_by wajib" },
+      400,
+    );
+  }
+  const file = decodeRfidClaimFile(body);
+  if (file && "error" in file) return c.json({ error: file.error }, 400);
+  const r = await createRfidCartridgeClaim({
+    device_name: body.device_name,
+    cartridge_name: body.cartridge_name,
+    lot_number: body.lot_number,
+    serial_number: body.serial_number,
+    customer_name: body.customer_name,
+    error_description: body.error_description,
+    reported_date: body.reported_date,
+    reported_by: body.reported_by,
+    cabang: body.cabang,
+    notes: body.notes,
+    ...(file
+      ? { file_name: file.file_name, file_mime: file.file_mime, file_size: file.file_size, file_data: file.file_data }
+      : {}),
+  });
+  return c.json(r, 201);
+});
+
+app.get("/aftersales/rfid-cartridge-claims", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const status = c.req.query("status");
+  if (status && !RFID_CLAIM_STATUSES.includes(status as RfidCartridgeClaimStatus)) {
+    return c.json({ error: "status harus pending|resolved|rejected" }, 400);
+  }
+  const claims = await listRfidCartridgeClaims(status as RfidCartridgeClaimStatus | undefined);
+  return c.json({ count: claims.length, claims });
+});
+
+app.get("/aftersales/rfid-cartridge-claims/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const claim = await getRfidCartridgeClaim(c.req.param("id"));
+  return claim ? c.json(claim) : c.json({ error: "not found" }, 404);
+});
+
+// Passthrough mentah (BUKAN JSON) — dipanggil langsung, bukan lewat relay() BFF.
+app.get("/aftersales/rfid-cartridge-claims/:id/file", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const file = await getRfidCartridgeClaimFile(c.req.param("id"));
+  if (!file) return c.json({ error: "not found" }, 404);
+  return new Response(file.file_data, {
+    headers: {
+      "content-type": file.file_mime,
+      "content-disposition": `attachment; filename="${encodeURIComponent(file.file_name)}"`,
+    },
+  });
+});
+
+app.patch("/aftersales/rfid-cartridge-claims/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: {
+    device_name?: string;
+    cartridge_name?: string;
+    lot_number?: string | null;
+    serial_number?: string | null;
+    customer_name?: string;
+    error_description?: string;
+    reported_date?: string;
+    reported_by?: string;
+    cabang?: string | null;
+    status?: string;
+    resolution_notes?: string | null;
+    notes?: string | null;
+    file_name?: string;
+    file_mime?: string;
+    file_base64?: string;
+  };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (body.status && !RFID_CLAIM_STATUSES.includes(body.status as RfidCartridgeClaimStatus)) {
+    return c.json({ error: "status harus pending|resolved|rejected" }, 400);
+  }
+  const file = decodeRfidClaimFile(body);
+  if (file && "error" in file) return c.json({ error: file.error }, 400);
+  const r = await updateRfidCartridgeClaim(c.req.param("id"), {
+    device_name: body.device_name,
+    cartridge_name: body.cartridge_name,
+    lot_number: body.lot_number,
+    serial_number: body.serial_number,
+    customer_name: body.customer_name,
+    error_description: body.error_description,
+    reported_date: body.reported_date,
+    reported_by: body.reported_by,
+    cabang: body.cabang,
+    status: body.status as RfidCartridgeClaimStatus | undefined,
+    resolution_notes: body.resolution_notes,
+    notes: body.notes,
+    ...(file
+      ? { file_name: file.file_name, file_mime: file.file_mime, file_size: file.file_size, file_data: file.file_data }
+      : {}),
+  });
+  return c.json(r, r.updated ? 200 : 404);
+});
+
+app.delete("/aftersales/rfid-cartridge-claims/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await deleteRfidCartridgeClaim(c.req.param("id"));
+  return c.json(r, r.deleted ? 200 : 404);
 });
 
 const port = Number(process.env.PORT ?? 4000);
