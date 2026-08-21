@@ -348,6 +348,16 @@ import {
   runEdWatch,
 } from "./repo/stock-batch.js";
 
+import {
+  listProficiencyTests,
+  getProficiencyTest,
+  getProficiencyTestFile,
+  createProficiencyTest,
+  updateProficiencyTest,
+  deleteProficiencyTest,
+  type ProficiencyTestInput,
+  type ProficiencyTestUpdate,
+} from "./repo/proficiency-test.js";
 const app = new Hono();
 
 // Selalu balas JSON saat error / route tak ada — supaya BFF & client tak pernah
@@ -4928,6 +4938,87 @@ app.post("/stock/batch/ed-watch/run", async (c) => {
 
 // ── F134 ATK Master (General Affairs) — Categories + Suppliers + Items ──
 const ATK_TRANSACTION_CATEGORIES: AtkTransactionCategory[] = ["barang", "materai"];
+
+// ── F25 Uji Profisiensi Document Registry (Aftersales/Teknis) ──
+// Cap ukuran & mime sertifikat ditegakkan di sini (bukan di DB) — belum ada
+// arahan eksplisit Direktur soal batas ini, diasumsikan 8MB (wajar utk scan
+// PDF/foto sertifikat) + pdf/jpg/jpeg/png saja. Gampang diubah kalau ternyata
+// perlu lebih besar/format lain.
+const PROFICIENCY_TEST_FILE_MAX_BYTES = 8 * 1024 * 1024;
+const PROFICIENCY_TEST_ALLOWED_MIME = ["application/pdf", "image/jpeg", "image/jpg", "image/png"];
+
+function validateProficiencyTestFile(mime?: string | null, base64?: string | null): string | null {
+  if (!base64) return null;
+  if (!mime || !PROFICIENCY_TEST_ALLOWED_MIME.includes(mime)) {
+    return "file harus PDF/JPG/PNG";
+  }
+  // base64 ~ 4/3 ukuran biner asli — cek kasar sebelum decode penuh.
+  if (base64.length * 0.75 > PROFICIENCY_TEST_FILE_MAX_BYTES) {
+    return "ukuran file maksimal 8MB";
+  }
+  return null;
+}
+
+app.get("/aftersales/proficiency-tests", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listProficiencyTests();
+  return c.json({ count: rows.length, rows });
+});
+
+app.post("/aftersales/proficiency-tests", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: ProficiencyTestInput;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.rs_name?.trim() || !body.test_name?.trim() || !body.expired_date) {
+    return c.json({ error: "rs_name, test_name, expired_date wajib" }, 400);
+  }
+  const fileErr = validateProficiencyTestFile(body.file_mime, body.file_base64);
+  if (fileErr) return c.json({ error: fileErr }, 400);
+  const row = await createProficiencyTest(body);
+  return c.json(row, 201);
+});
+
+app.get("/aftersales/proficiency-tests/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const row = await getProficiencyTest(c.req.param("id"));
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+});
+
+app.patch("/aftersales/proficiency-tests/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: ProficiencyTestUpdate;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const fileErr = validateProficiencyTestFile(body.file_mime, body.file_base64);
+  if (fileErr) return c.json({ error: fileErr }, 400);
+  const row = await updateProficiencyTest(c.req.param("id"), body);
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+});
+
+app.delete("/aftersales/proficiency-tests/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await deleteProficiencyTest(c.req.param("id"));
+  return c.json(r, r.deleted ? 200 : 404);
+});
+
+app.get("/aftersales/proficiency-tests/:id/file", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const file = await getProficiencyTestFile(c.req.param("id"));
+  if (!file) return c.json({ error: "file tidak ditemukan" }, 404);
+  return new Response(new Uint8Array(file.file_data), {
+    headers: {
+      "content-type": file.file_mime,
+      "content-disposition": `attachment; filename="${encodeURIComponent(file.file_name)}"`,
+    },
+  });
+});
 
 const port = Number(process.env.PORT ?? 4000);
 serve({ fetch: app.fetch, port }, (info) => {

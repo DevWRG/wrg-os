@@ -19,6 +19,7 @@ import {
   PackagePlus, PackageMinus,
   CalendarCheck,
   Hourglass,
+  FileCheck2,
   type LucideIcon,
 } from "lucide-react";
 
@@ -213,6 +214,10 @@ export const NAV: NavGroup[] = [
       { title: "Instalasi Alat", url: "/installations", icon: Wrench, badge: "NEW" },
       { title: "Service Tickets", url: "/service-tickets", icon: Ticket, badge: "NEW" },
       { title: "PM & Kalibrasi", url: "/maintenance", icon: CalendarClock, badge: "NEW" },
+      // F25 Uji Profisiensi Document Registry — sertifikat per RS, tracking
+      // ED (annual renewal). Role min Karyawan, tanpa `show` (semua role login
+      // boleh), pola sama dgn F39/F134.
+      { title: "Uji Profisiensi", url: "/proficiency-tests", icon: FileCheck2, badge: "NEW" },
     ],
   },
   {
