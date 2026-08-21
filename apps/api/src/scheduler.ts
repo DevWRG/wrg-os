@@ -40,6 +40,7 @@ import { evaluateSalesAlerts } from "./repo/sales-analytics-alert-eval.js";
 import { computeNpk, currentPeriod } from "./repo/npk.js";
 import { computeNpkAm } from "./repo/npk-am.js";
 import { snapshotLastWeek } from "./repo/watchpoint-weekly.js";
+import { runPreVisitCheck } from "./repo/pickup-plan.js";
 
 // Penjadwal agen in-process (Blueprint v2.3). Default MATI — aktif hanya bila
 // AGENT_SCHEDULE_ENABLED=true. Tiap run tetap menulis ke audit_log via repo
@@ -97,6 +98,9 @@ export function startScheduler(): ScheduleStatus {
   // Rekap kunjungan mingguan (F16): volume kunjungan minggu lalu vs target per AM.
   // Flag SENDIRI (default off) — sama alasannya: jangan kirim WA tanpa diminta.
   const visitWeeklyEnabled = (process.env.VISIT_WEEKLY_ENABLED ?? "false").toLowerCase() === "true";
+  // Cek pra-trip Kirim-Tagih H-1 (F45): verifikasi hari libur + PIC untuk trip
+  // besok, kirim ke nomor kurir masing-masing. Flag SENDIRI (default off).
+  const preVisitEnabled = (process.env.PREVISIT_CHECK_ENABLED ?? "false").toLowerCase() === "true";
   // accurate-sync (puller invoice, read-only ke API Accurate, tanpa kirim WA)
   // bisa nyala SENDIRI tanpa ikut menyalakan A1-12 / monitor.
   const accurateEnabled = (process.env.ACCURATE_SCHEDULE_ENABLED ?? "false").toLowerCase() === "true";
@@ -216,12 +220,12 @@ export function startScheduler(): ScheduleStatus {
   ];
 
   status = {
-    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled || watchpointSnapshotEnabled,
+    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled || watchpointSnapshotEnabled || preVisitEnabled,
     timezone,
     jobs: jobs.map((j) => ({ id: j.id, expr: j.expr, valid: cron.validate(j.expr) })),
   };
 
-  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled && !watchpointSnapshotEnabled) {
+  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled && !watchpointSnapshotEnabled && !preVisitEnabled) {
     console.log("[scheduler] semua *_SCHEDULE/_ENABLED flag != true — tidak dijadwalkan");
     return status;
   }
@@ -303,6 +307,36 @@ export function startScheduler(): ScheduleStatus {
         { timezone },
       );
       live.push(`pm-kalibrasi-reminder=${pmKalibrasiExpr}`);
+    }
+  }
+
+  // F45 previsit-check — verifikasi trip Kirim-Tagih BESOK (hari libur + PIC),
+  // 16:00 sore = ~24 jam sebelum. Predikat tanggalnya `current_date + 1`, pola
+  // sama reminder-h-1 di atas.
+  //
+  // SENGAJA TIDAK dibungkus isWorkday(): justru gunanya memperingatkan bahwa
+  // BESOK libur. Kalau di-gate hari kerja, peringatan "besok cuti bersama" tak
+  // akan pernah terkirim di hari terakhir sebelum libur panjang — persis kasus
+  // yang paling bikin rebound trip. reminder-h/h-1 juga tidak di-gate.
+  const preVisitExpr = process.env.PREVISIT_CHECK_CRON ?? "0 16 * * *";
+  if (preVisitEnabled) {
+    if (!cron.validate(preVisitExpr)) {
+      console.error(`[scheduler] previsit-check cron-expr tidak valid: "${preVisitExpr}" — dilewati`);
+    } else {
+      cron.schedule(
+        preVisitExpr,
+        async () => {
+          const startedAt = new Date().toISOString();
+          try {
+            const r = await runPreVisitCheck();
+            console.log(`[scheduler] previsit-check ok @ ${startedAt} ${JSON.stringify(r).slice(0, 200)}`);
+          } catch (e) {
+            console.error(`[scheduler] previsit-check gagal @ ${startedAt}:`, e);
+          }
+        },
+        { timezone },
+      );
+      live.push(`previsit-check=${preVisitExpr}`);
     }
   }
 
