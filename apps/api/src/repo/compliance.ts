@@ -80,7 +80,7 @@ export async function runReportCheck(isWorkday: boolean): Promise<{ partial: num
       if (custs.length > 0) {
         body = `⚠️ *Pengingat #REPORT, ${String(r.nama)}*\nMasih ada ${unrep} customer belum direport:\n${custs.map((c) => `  • ${c}`).join("\n")}\nKirim #REPORT sebelum selesai hari ini ya.`;
       } else {
-        body = `⚠️ *Pengingat #REPORT, ${String(r.nama)}*\nPlan kamu hari ini belum di-report.\nKirim #REPORT sebelum 20:30 ya.`;
+        body = `⚠️ *Pengingat #REPORT, ${String(r.nama)}*\nPlan kamu hari ini belum di-report.\nKirim #REPORT sebelum selesai hari ini ya.`;
       }
       const g = await sendViaWaGateway(grp, body);
       if (g.sent) partial += 1;

@@ -9,13 +9,21 @@
 // ada tombol edit harga: angka harga milik price book, diubah lewat import ulang.
 
 import { useMemo, useState } from "react";
-import { AlertTriangle } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { AlertTriangle, RotateCcw, Send } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import {
+  Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ExportButton } from "@/components/ui/export-button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 
 // Cermin apps/api/src/repo/pricebook.ts → PricebookSetupRow / PricebookSetupSummary.
 export interface PricebookSetupRow {
@@ -32,8 +40,13 @@ export interface PricebookSetupRow {
   diskonMaks: number;
   hargaNett: number;
   nettPpn: number;
+  priceListAsli: number;
+  diskonMaksAsli: number;
+  adaOverride: boolean;
   hpp: number | null;
   marginPct: number | null;
+  status: string;
+  publishedAt: string | null;
   kategori: string | null;
   productLine: string | null;
   klas: string | null;
@@ -49,6 +62,9 @@ export interface PricebookSetupSummary {
   tanpaHpp: number;
   klasifikasiLengkap: number;
   kepasangKode: number;
+  draft: number;
+  published: number;
+  adaOverride: number;
   reviewTerbuka: number;
   totalHpp: number;
   totalPriceList: number;
@@ -71,10 +87,13 @@ const namaOf = (r: PricebookSetupRow) => r.namaFinal ?? r.nama;
 const klasOf = (r: PricebookSetupRow) =>
   [r.productLine, r.klas, r.subClass].filter(Boolean).join(" › ");
 
-type Filter = "semua" | "tanpa-hpp" | "klas-belum" | "tanpa-kode";
+type Filter = "semua" | "tanpa-hpp" | "klas-belum" | "tanpa-kode" | "draft" | "published" | "disetel";
 
 const FILTERS: { key: Filter; label: string }[] = [
   { key: "semua", label: "Semua" },
+  { key: "draft", label: "Draft" },
+  { key: "published", label: "Published" },
+  { key: "disetel", label: "Harga disetel manual" },
   { key: "tanpa-hpp", label: "Belum ada HPP" },
   { key: "klas-belum", label: "Klasifikasi belum lengkap" },
   { key: "tanpa-kode", label: "Belum dapat kode produk" },
@@ -83,11 +102,34 @@ const FILTERS: { key: Filter; label: string }[] = [
 export function PricebookSetupTable({
   rows,
   ringkas,
+  canPublish,
 }: {
   rows: PricebookSetupRow[] | null;
   ringkas: PricebookSetupSummary | null;
+  canPublish: boolean;
 }) {
+  const router = useRouter();
   const [filter, setFilter] = useState<Filter>("semua");
+  const [edit, setEdit] = useState<PricebookSetupRow | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [konfirmPublishAll, setKonfirmPublishAll] = useState(false);
+
+  async function publishSemua() {
+    setBusy(true);
+    try {
+      const res = await fetch("/api/pricebook/setup/publish", {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({}),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        alert(d.error ?? "Gagal publish");
+        return;
+      }
+      router.refresh();
+    } finally {
+      setBusy(false);
+    }
+  }
 
   const data = useMemo(() => {
     if (!rows) return [];
@@ -98,6 +140,12 @@ export function PricebookSetupTable({
         return rows.filter((r) => !r.klasifikasiLengkap);
       case "tanpa-kode":
         return rows.filter((r) => !r.productKode);
+      case "draft":
+        return rows.filter((r) => r.status !== "published");
+      case "published":
+        return rows.filter((r) => r.status === "published");
+      case "disetel":
+        return rows.filter((r) => r.adaOverride);
       default:
         return rows;
     }
@@ -226,6 +274,24 @@ export function PricebookSetupTable({
       accessor: (r) => r.nettPpn,
       cell: (r) => <span className="font-medium whitespace-nowrap">{fmtRp(r.nettPpn)}</span>,
     },
+    {
+      id: "status",
+      header: "Status",
+      sortable: true,
+      accessor: (r) => `${r.status} ${r.adaOverride ? "1" : "0"}`,
+      cell: (r) => (
+        <span className="flex flex-col items-start gap-0.5 whitespace-nowrap">
+          <Badge variant={r.status === "published" ? "secondary" : "outline"}>
+            {r.status === "published" ? "Published" : "Draft"}
+          </Badge>
+          {r.adaOverride && (
+            <span className="text-[10px] text-amber-600" title={`Harga handover: ${fmtRp(r.priceListAsli)} · diskon ${Math.round(r.diskonMaksAsli * 100)}%`}>
+              disetel manual
+            </span>
+          )}
+        </span>
+      ),
+    },
   ];
 
   return (
@@ -278,8 +344,15 @@ export function PricebookSetupTable({
         pageSize={25}
         initialSort={{ id: "pl", dir: "desc" }}
         empty="Tidak ada SKU yang cocok dengan filter."
+        onRowClick={(r) => setEdit(r)}
         toolbar={
           <>
+            {canPublish && (
+              <Button size="sm" variant="outline" disabled={busy || (ringkas?.draft ?? 0) === 0}
+                      onClick={() => setKonfirmPublishAll(true)}>
+                <Send /> Publish Semua Draft{ringkas?.draft ? ` (${fmtNum(ringkas.draft)})` : ""}
+              </Button>
+            )}
             <div className="flex flex-wrap gap-1 rounded-md border p-1">
               {FILTERS.map((f) => (
                 <button
@@ -321,9 +394,186 @@ export function PricebookSetupTable({
         }
       />
       <p className="text-muted-foreground mt-2 text-xs">
-        Harga di tab ini milik snapshot price book (handover Direktur) — diubah lewat import ulang,
-        bukan diedit per baris. Margin = 1 − HPP / Price List, dihitung, tidak disimpan.
+        Klik baris untuk menyetel HPP · Price List · Diskon Maks, lalu Publish agar tampil ke AM di
+        tab Harga per Produk. Angka handover Direktur tidak pernah ditimpa — setelan disimpan sebagai
+        override di atasnya, dan bisa dikembalikan kapan saja. Margin = 1 − HPP / Price List, dihitung.
       </p>
+
+      <SetupHargaDialog
+        row={edit}
+        canPublish={canPublish}
+        onOpenChange={(v) => !v && setEdit(null)}
+        onSaved={() => { setEdit(null); router.refresh(); }}
+      />
+
+      <ConfirmDialog
+        open={konfirmPublishAll}
+        onOpenChange={setKonfirmPublishAll}
+        title="Publish semua draft?"
+        description={`${fmtNum(ringkas?.draft ?? 0)} baris harga akan langsung tampil ke Account Manager di tab Harga per Produk.`}
+        confirmLabel="Publish Semua"
+        onConfirm={() => void publishSemua()}
+      />
+    </div>
+  );
+}
+
+// ── Dialog setel harga satu SKU ────────────────────────────────────────────
+// Yang dikirim ke server hanya SELISIH dari angka handover: kalau kolomnya
+// dikembalikan ke angka asli, override-nya di-NULL-kan, bukan disimpan ulang
+// dengan nilai yang sama. Jadi "sudah disetel manual" selalu berarti benar-benar
+// beda dari yang diserahkan Direktur.
+function SetupHargaDialog({
+  row, canPublish, onOpenChange, onSaved,
+}: {
+  row: PricebookSetupRow | null;
+  canPublish: boolean;
+  onOpenChange: (v: boolean) => void;
+  onSaved: () => void;
+}) {
+  return (
+    <Dialog open={!!row} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-2xl">
+        {row ? <SetupHargaBody row={row} canPublish={canPublish} onSaved={onSaved} /> : null}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+const digit = (v: string) => v.replace(/[^\d]/g, "");
+
+function SetupHargaBody({
+  row, canPublish, onSaved,
+}: {
+  row: PricebookSetupRow;
+  canPublish: boolean;
+  onSaved: () => void;
+}) {
+  const [hpp, setHpp] = useState(row.hpp == null ? "" : String(Math.round(row.hpp)));
+  const [pl, setPl] = useState(String(Math.round(row.priceList)));
+  const [diskon, setDiskon] = useState(String(+(row.diskonMaks * 100).toFixed(2)));
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const nPl = Number(digit(pl) || 0);
+  const nHpp = digit(hpp) === "" ? null : Number(digit(hpp));
+  const nDiskon = Number(diskon.replace(",", ".")) / 100;
+  const plBeda = nPl !== Math.round(row.priceListAsli);
+  const diskonBeda = Math.abs(nDiskon - row.diskonMaksAsli) > 1e-9;
+  const adaOverride = plBeda || diskonBeda;
+  // Cermin rumus server (repo/pricebook.ts hargaEfektif): tanpa override angka
+  // handover dipakai apa adanya, dengan override baru dihitung ulang.
+  const nett = adaOverride ? Math.round(nPl * (1 - nDiskon)) : row.hargaNett;
+  const ppn = adaOverride ? Math.round(nett * 1.11) : row.nettPpn;
+  const margin = nHpp && nPl > 0 ? 1 - nHpp / nPl : null;
+
+  async function kirim(url: string, body: unknown) {
+    setBusy(true); setErr(null);
+    try {
+      const res = await fetch(url, {
+        method: url.endsWith("/setup") ? "PATCH" : "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(d.error ?? "operasi gagal");
+      onSaved();
+    } catch (e) {
+      setErr(String(e instanceof Error ? e.message : e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const simpan = () =>
+    void kirim("/api/pricebook/setup", {
+      rowNo: row.rowNo,
+      hpp: nHpp,
+      priceListOverride: plBeda ? nPl : null,
+      diskonOverride: diskonBeda ? +nDiskon.toFixed(4) : null,
+    });
+
+  return (
+    <>
+      <DialogHeader>
+        <DialogTitle className="flex items-center gap-2">
+          Setel Harga
+          <Badge variant={row.status === "published" ? "secondary" : "outline"}>
+            {row.status === "published" ? "Published" : "Draft"}
+          </Badge>
+        </DialogTitle>
+        <DialogDescription>
+          {row.namaFinal ?? row.nama} · {row.brand} · {row.lini}
+          {row.productKode ? ` · ${row.productKode}` : ""}
+        </DialogDescription>
+      </DialogHeader>
+
+      <DialogBody className="space-y-4">
+        <div className="grid gap-3 sm:grid-cols-3">
+          <div className="grid gap-1.5">
+            <Label htmlFor="s-hpp">Harga Principal (HPP)</Label>
+            <Input id="s-hpp" inputMode="numeric" value={hpp === "" ? "" : Number(digit(hpp)).toLocaleString("id-ID")}
+                   onChange={(e) => setHpp(digit(e.target.value))} placeholder="belum ada" />
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor="s-pl">Price List</Label>
+            <Input id="s-pl" inputMode="numeric" value={Number(digit(pl) || 0).toLocaleString("id-ID")}
+                   onChange={(e) => setPl(digit(e.target.value))} />
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor="s-diskon">Diskon Maks (%)</Label>
+            <Input id="s-diskon" inputMode="decimal" value={diskon}
+                   onChange={(e) => setDiskon(e.target.value)} />
+          </div>
+        </div>
+
+        <div className="bg-muted/40 grid gap-2 rounded-lg border p-3 text-sm sm:grid-cols-2">
+          <Baris label="Margin" nilai={margin == null ? "—" : fmtPct(margin)} />
+          <Baris label="Nett (lantai)" nilai={fmtRp(nett)} />
+          <Baris label="Nett + PPN 11%" nilai={fmtRp(ppn)} tebal />
+          <Baris label="Angka handover" nilai={`${fmtRp(row.priceListAsli)} · ${Math.round(row.diskonMaksAsli * 100)}%`} />
+        </div>
+
+        {adaOverride && (
+          <div className="flex items-start justify-between gap-2 rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900">
+            <span>
+              Harga ini akan disimpan sebagai <b>setelan manual</b> di atas angka handover Direktur.
+              Nett &amp; PPN dihitung ulang dengan rumus resmi (Nett dari Price List, PPN dari Nett).
+            </span>
+            <Button size="sm" variant="ghost" className="shrink-0"
+                    onClick={() => { setPl(String(Math.round(row.priceListAsli))); setDiskon(String(+(row.diskonMaksAsli * 100).toFixed(2))); }}>
+              <RotateCcw /> Kembalikan
+            </Button>
+          </div>
+        )}
+
+        {err && <p className="text-sm text-red-600">{err}</p>}
+      </DialogBody>
+
+      <DialogFooter className="gap-2">
+        {canPublish && row.status === "published" && (
+          <Button variant="ghost" disabled={busy}
+                  onClick={() => void kirim("/api/pricebook/setup/unpublish", { rowNos: [row.rowNo] })}>
+            Tarik dari AM
+          </Button>
+        )}
+        {canPublish && row.status !== "published" && (
+          <Button variant="outline" disabled={busy}
+                  onClick={() => void kirim("/api/pricebook/setup/publish", { rowNos: [row.rowNo] })}>
+            <Send /> Publish baris ini
+          </Button>
+        )}
+        <Button onClick={simpan} disabled={busy}>Simpan</Button>
+      </DialogFooter>
+    </>
+  );
+}
+
+function Baris({ label, nilai, tebal }: { label: string; nilai: string; tebal?: boolean }) {
+  return (
+    <div className="flex items-baseline justify-between gap-2">
+      <span className="text-muted-foreground text-xs">{label}</span>
+      <span className={`tabular-nums ${tebal ? "font-semibold" : ""}`}>{nilai}</span>
     </div>
   );
 }
