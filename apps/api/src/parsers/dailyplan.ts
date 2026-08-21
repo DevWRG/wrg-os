@@ -9,6 +9,7 @@
 //
 // → #PLAN  = TODO harian (items[]) → sales_todo
 // → #REPORT= item + hasil → tandai sales_todo reported + report_data
+import { buildIso } from "./tanggal.js";
 
 export interface DailyParse {
   kind: "plan" | "report";
@@ -23,33 +24,24 @@ const MONTHS: Record<string, number> = {
   agu: 8, agt: 8, ags: 8, aug: 8, sep: 9, okt: 10, oct: 10, nov: 11, des: 12, dec: 12,
 };
 
-function pad(n: number): string {
-  return String(n).padStart(2, "0");
-}
-function yyyy(y: number): number {
-  return y < 100 ? 2000 + y : y;
-}
-
 // Cari tanggal di sebuah teks. Dukungan: DD/MM/YYYY, DD-MM-YYYY, DD-MM-YY,
 // DD <bulan> YYYY (ID/EN). Return {iso, matched} atau null.
-function findDate(text: string): { iso: string; matched: string } | null {
+// Tahun divalidasi di buildIso (parsers/tanggal.ts) — bareng am.ts.
+function findDate(text: string, nowMs?: number): { iso: string; matched: string } | null {
   // DD <month-word> [YYYY]
   const m1 = text.match(/(\d{1,2})\s+([A-Za-z]{3,9})\.?\s*(\d{2,4})?/);
   if (m1) {
     const mon = MONTHS[m1[2].slice(0, 3).toLowerCase()];
     if (mon) {
-      const d = Number(m1[1]);
-      const y = m1[3] ? yyyy(Number(m1[3])) : new Date(Date.now() + 7 * 3600 * 1000).getUTCFullYear();
-      if (d >= 1 && d <= 31) return { iso: `${y}-${pad(mon)}-${pad(d)}`, matched: m1[0] };
+      const iso = buildIso(Number(m1[1]), mon, m1[3], nowMs);
+      if (iso) return { iso, matched: m1[0] };
     }
   }
   // DD[/-]MM[/-]YY(YY)
   const m2 = text.match(/(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})/);
   if (m2) {
-    const d = Number(m2[1]);
-    const mon = Number(m2[2]);
-    const y = yyyy(Number(m2[3]));
-    if (d >= 1 && d <= 31 && mon >= 1 && mon <= 12) return { iso: `${y}-${pad(mon)}-${pad(d)}`, matched: m2[0] };
+    const iso = buildIso(Number(m2[1]), Number(m2[2]), m2[3], nowMs);
+    if (iso) return { iso, matched: m2[0] };
   }
   return null;
 }
@@ -85,7 +77,7 @@ export function detectDaily(body: string | null): "plan" | "report" | null {
   return null;
 }
 
-export function parseDaily(body: string): DailyParse | null {
+export function parseDaily(body: string, nowMs?: number): DailyParse | null {
   const lines = stripInvisible(body).split(/\r?\n/);
   // index baris hashtag
   let hIdx = -1;
@@ -105,13 +97,13 @@ export function parseDaily(body: string): DailyParse | null {
   // tanggal: dari header dulu, kalau tidak ada cek 1-2 baris berikutnya
   let tanggal: string | null = null;
   let nameSrc = headerRest;
-  const dh = findDate(headerRest);
+  const dh = findDate(headerRest, nowMs);
   if (dh) {
     tanggal = dh.iso;
     nameSrc = headerRest.replace(dh.matched, " "); // buang tanggal dari sumber nama
   } else {
     for (let j = hIdx + 1; j <= Math.min(hIdx + 2, lines.length - 1); j++) {
-      const dn = findDate(lines[j]);
+      const dn = findDate(lines[j], nowMs);
       if (dn && !ITEM_LINE.test(lines[j])) {
         tanggal = dn.iso;
         break;
@@ -148,7 +140,7 @@ export function parseDaily(body: string): DailyParse | null {
     for (let i = hIdx + 1; i < lines.length; i++) {
       const t = lines[i].trim();
       if (!t) continue;
-      const dd = findDate(t);
+      const dd = findDate(t, nowMs);
       if (dd && t.replace(dd.matched, "").replace(/\b(tgl|tanggal)\b\.?:?/gi, "").trim().length <= 3) continue; // baris tanggal-saja
       items.push(t);
     }

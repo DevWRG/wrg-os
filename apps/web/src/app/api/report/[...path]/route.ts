@@ -1,14 +1,19 @@
 import { gatewayFetch } from "@/lib/gateway";
+import { sessionUser } from "@/lib/admin-guard";
 
 export const dynamic = "force-dynamic";
 
 // Gateway catch-all → apps/api GET /report/* (summary, per-orang, per-hod,
 // daily-trend, drilldown, reminders-pending, range-default). Query diteruskan.
+// x-user-id ikut diteruskan supaya endpoint yang ber-scope row-level
+// (/report/calendar & /report/calendar/day: AM = kalendernya sendiri, HoD =
+// cabang timnya) bisa membatasi data. Endpoint lain mengabaikan header ini.
 export async function GET(req: Request, ctx: { params: Promise<{ path: string[] }> }) {
   const { path } = await ctx.params;
   const search = new URL(req.url).search;
+  const me = await sessionUser();
   try {
-    const res = await gatewayFetch(`/report/${path.join("/")}${search}`);
+    const res = await gatewayFetch(`/report/${path.join("/")}${search}`, me ? { headers: { "x-user-id": me.id } } : undefined);
     const data = await res.json();
     return Response.json(data, { status: res.status });
   } catch {
