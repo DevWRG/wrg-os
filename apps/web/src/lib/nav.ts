@@ -351,6 +351,17 @@ export const NAV: NavGroup[] = [
     ],
   },
   {
+    // Domain PURCHASING per board Roadmap — dipisah dari "Operations" (keranjang
+    // mirror Accurate) atas arahan Direktur, supaya sidebar cermin domain fitur.
+    label: "Purchasing",
+    items: [
+      // F37 — route berdiri sendiri, dipisah dari /inventory (yang dulu 1
+      // halaman 2 tab). Key RBAC-nya sendiri (`stok-gudang`, auto dari URL),
+      // jadi bisa digrant terpisah dari izin Inventory di Akses Grup.
+      { title: "Stok Gudang", url: "/stok-gudang", icon: Boxes, badge: "NEW" },
+    ],
+  },
+  {
     label: "Admin",
     items: [
       { title: "Sales Targets", url: "/sales/targets", icon: Target },

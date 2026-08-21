@@ -18,6 +18,7 @@ import {
 } from "./shipment-tracking.js";
 import { matchTeknisiByName, createTeknisiReport } from "./readinessboard.js";
 import { createTicket as createGaTicket, listCategories as listGaTicketCategories } from "./ga-helpdesk.js";
+import { listStockBranch } from "./stock-branch.js";
 
 
 // Role yang pakai alur AM per-customer (sales_plan/activity_log + foto), bukan todo.
@@ -39,7 +40,7 @@ const isAmRole = (role?: string | null) => AM_ROLES.has((role ?? "").trim());
 // Identitas pengirim di-match ke teknisi_capacity (F8, self-contained) via
 // matchTeknisiByName, BUKAN resolveSender/master_user.
 
-export type InboundKind = "plan" | "report" | "leads" | "update" | "sales" | "cek" | "klaim" | "kirim" | "bast" | "bukti" | "install" | "servis" | "training" | "kalibrasi" | "helpdesk" | "none";
+export type InboundKind = "plan" | "report" | "leads" | "update" | "sales" | "cek" | "klaim" | "kirim" | "bast" | "bukti" | "install" | "servis" | "training" | "kalibrasi" | "helpdesk" | "stok" | "none";
 
 const LEADS_UPDATE_LINE = /^\s*#\s*(leads|update)\b/i;
 const SALES_LINE = /^\s*#\s*sales\b/i;
@@ -55,6 +56,7 @@ const READINESS_LINE = /^\s*#\s*(install|servis|training|kalibrasi)\b/i;
 // F139 — HANYA #HELPDESK diaktifkan (brief sebut #TICKET juga, sengaja
 // didiamkan dulu, bukan dihapus dari brief — lihat docs/features/F139-*.md).
 const HELPDESK_LINE = /^\s*#\s*helpdesk\b/i;
+const STOK_LINE = /^\s*#\s*stok\b/i;
 
 export function detectKind(body: string | null): InboundKind {
   const daily = detectDaily(body); // line-anchored #plan/#report (sudah strip invisible)
@@ -73,6 +75,7 @@ export function detectKind(body: string | null): InboundKind {
       const r = line.match(READINESS_LINE);
       if (r) return r[1].toLowerCase() as "install" | "servis" | "training" | "kalibrasi";
       if (HELPDESK_LINE.test(line)) return "helpdesk";
+      if (STOK_LINE.test(line)) return "stok";
     }
   }
   return "none";
@@ -535,6 +538,55 @@ async function photoFollowup(row: WaRow, am: { am_id: string; nama: string }): P
   return { matched: top.customer_name, score, geo: hasGeo, remaining: remain.length, no_geo: Number(no_geo), reply };
 }
 
+// ── #STOK (F2 Stock Quick-Check) ──
+// Total (accurate_item.quantity, via listStockBranch) = live, disegarkan
+// cron accurate-stock-sync tiap 5 menit (scheduler.ts). Stok per-cabang
+// (item_stock_branch, F37) TIDAK ada puller otomatis — murni hasil import
+// CSV manual, jadi tanggal "data per ..." ditampilkan apa adanya (JUJUR
+// soal freshness, bukan diklaim real-time yang tak benar).
+async function buildStokReply(amId: string, query: string): Promise<string> {
+  const sql = db();
+  const [am] = await sql`SELECT cabang FROM master_user WHERE am_id = ${amId}`;
+  const cabang = am?.cabang ? String(am.cabang) : null;
+
+  let warehouseKode: string | null = null;
+  let warehouseLabel: string | null = null;
+  if (cabang) {
+    const [wh] = await sql`SELECT kode, cabang FROM warehouse WHERE jenis = 'cabang' AND cabang ILIKE ${cabang} LIMIT 1`;
+    if (wh) {
+      warehouseKode = String(wh.kode);
+      warehouseLabel = String(wh.cabang);
+    }
+  }
+
+  const { rows } = await listStockBranch({ q: query, limit: 5 });
+  if (rows.length === 0) return `📦 Barang "${query}" tidak ditemukan.`;
+  if (rows.length > 1) {
+    return `🔍 Ada ${rows.length} barang cocok "${query}", sebutkan lebih spesifik:\n${rows.map((r) => `• ${r.name} (${r.no})`).join("\n")}`;
+  }
+
+  const r = rows[0];
+  const unit = r.unit ? ` ${r.unit}` : "";
+  const lines = [
+    `📦 *${r.name}* (${r.no})`,
+    r.total != null ? `Total (semua cabang): ${r.total}${unit} — live, update otomatis tiap 5 menit` : "Total: belum sinkron dari Accurate",
+  ];
+  if (!warehouseKode) {
+    lines.push("⚠️ Cabang kamu belum terpetakan ke gudang manapun.");
+  } else {
+    const qty = r.per_gudang[warehouseKode];
+    if (qty == null) {
+      lines.push(`Cabang ${warehouseLabel}: belum ada data stok cabang ini.`);
+    } else {
+      const tgl = r.terakhir_update
+        ? new Date(r.terakhir_update).toLocaleDateString("id-ID", { day: "2-digit", month: "short", year: "numeric" })
+        : null;
+      lines.push(`Cabang ${warehouseLabel}: ${qty}${unit}${tgl ? ` (data per ${tgl})` : ""}`);
+    }
+  }
+  return lines.join("\n");
+}
+
 // Proses SATU pesan; selalu tandai processed_at (idempoten). Pengirim tak dikenal
 // / non-submission → SILENT.
 export async function processInboundMessage(row: WaRow): Promise<Record<string, unknown>> {
@@ -772,6 +824,21 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
     return finish({ shipment_id: shipment.id, sj, ok: action.ok, error: action.error, reply });
   }
 
+  // #STOK — cek stok cepat (F2 SQC). Sender WAJIB dikenal (perlu cabang AM
+  // buat cari gudang-nya) — beda dari #KLAIM yang sengaja terbuka.
+  if (kind === "stok") {
+    const st = await resolveSender({ senderJid: row.sender_jid, groupJid: row.group_jid, pushname: row.sender_name });
+    if (!st) return finish({ skipped: "unknown-sender", sender_name: row.sender_name });
+    const query = (row.body ?? "").replace(STOK_LINE, "").trim();
+    if (!query) {
+      const reply = await sendViaWaGateway(target, `⚠️ Isi nama/kode barang setelah #STOK, ${st.nama}. Contoh: #STOK Rapid Test Antigen`);
+      return finish({ error: "empty-query", via: st.via, reply });
+    }
+    const text = await buildStokReply(st.am_id, query);
+    const reply = await sendViaWaGateway(target, text);
+    return finish({ kind: "stok", via: st.via, reply });
+  }
+
   // #PLAN/#REPORT — parse DULU (body-name dibutuhkan untuk resolusi Tier-A).
   const parsed = parseDaily(row.body ?? "");
   const am = await resolveSender({
@@ -890,7 +957,7 @@ export async function processUnprocessed(
            media_path, geo_lat, geo_lon, geo_ts, geo_address
     FROM wa_message
     WHERE processed_at IS NULL
-      AND (body ~* '#\\s*(plan|report|leads|update|sales|cek|klaim|kirim|bast|install|servis|training|kalibrasi|helpdesk)'
+      AND (body ~* '#\\s*(plan|report|leads|update|sales|cek|klaim|kirim|bast|install|servis|training|kalibrasi|helpdesk|stok)'
            OR (message_type ~* '^image' AND media_path IS NOT NULL)
            OR (${complaintGroupJid()} <> '' AND group_jid = ${complaintGroupJid()}))
     ORDER BY received_at ASC LIMIT ${limit}
