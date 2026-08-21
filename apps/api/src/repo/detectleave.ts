@@ -8,6 +8,8 @@ import { sendViaWaGateway } from "../wasend.js";
 //   A. keyword gate → services/ai /detect-leave (LLM) → resolve user wajib (fuzzy)
 //      → dedup overlap user_leave/pending → INSERT leave_pending + post approval ke grup.
 //   B. balasan "ya L<id>"/"tidak L<id>" dari ADMIN → user_leave (approve) atau batal.
+//      B'. balasan approval yang salah ketik / id tak dikenal → balas format benar
+//          + daftar pending (dulu senyap, approver menyangka approval-nya masuk).
 // Idempotent via leave_scan_seen. Skema wrg-os: am_id (bukan user_id).
 
 // Bisa multi-grup HRD (comma-separated). Default: Pengumuman HR WGI.
@@ -25,6 +27,15 @@ const approverNames = (): string[] =>
 
 const KEYWORD = /izin|ijin|sakit|cuti|tidak masuk|tdk masuk|ndak masuk|tidak bisa masuk|tidak dapat masuk|pengajuan/i;
 const APPROVAL = /^\s*(ya|iya|ok|setuju|tidak|tdk|gak|batal|no)\s*#?L?(\d+)/i;
+// Balasan approval yang RUSAK formatnya tapi jelas niatnya ("ya LT2", "ya L 52",
+// "ok #l7x"). APPROVAL di atas tidak match, lalu pesan itu jatuh ke gate keyword
+// dan berakhir 'no-keyword' TANPA balasan apa pun — approver tak pernah tahu
+// approval-nya tidak masuk. Kasus 20 Agu 2026: "ya LT2" senyap, cuti 3 hari
+// nyaris kena expire 24 jam. Sekarang dibalas dengan daftar pending.
+// Sengaja sempit: harus diawali kata keputusan DAN memuat angka DAN pesannya
+// pendek — supaya "ya" / "ok mba" / "ya mba 2 orang sudah" tidak ikut kena.
+const NEAR_APPROVAL = /^\s*(ya|iya|ok|setuju|tidak|tdk|gak|batal|no)\b[\s#]*[a-z]*\s*\d+/i;
+const NEAR_APPROVAL_MAXLEN = 12;
 // Buang format WhatsApp (*bold* _italic_ ~strike~ `mono`) sebelum match — balasan
 // approval sering ke-bold ("*ya L3*") yg bikin anchor ^ gagal.
 const stripWaFmt = (s: string) => s.replace(/[*_~`]/g, "").trim();
@@ -60,19 +71,67 @@ async function resolveWajib(raw: string): Promise<{ am_id: string; nama: string 
   return row ? { am_id: String(row.am_id), nama: String(row.nama) } : null;
 }
 
-async function handleApproval(decision: string, pid: number, senderWa: string, senderName: string, grp: string): Promise<string> {
-  const sql = db();
+// null bila pengirim bukan approver; selain itu label untuk decided_by.
+function approverLabel(senderWa: string, senderName: string): string | null {
   const approvers = approverList();
   const names = approverNames();
   const okPhone = approvers.length > 0 && approvers.includes(normalizeWa(senderWa));
   const okName = names.length > 0 && names.includes(String(senderName ?? "").trim().toLowerCase());
-  if (!okPhone && !okName) {
+  if (!okPhone && !okName) return null;
+  return okName ? `name:${senderName}` : normalizeWa(senderWa);
+}
+
+// Kolom DATE dikembalikan driver sebagai objek Date (tengah malam UTC), jadi
+// String()-nya jadi "Fri Aug 21 2026 07:00:00 GMT+0700 (Western Indonesia Time)"
+// dan `sd === ed` selalu false (banding referensi). Akibatnya balasan "Tercatat"
+// selama ini mengirim tanggal berformat verbose dan izin sehari selalu ditulis
+// sebagai rentang. Normalkan dulu ke YYYY-MM-DD.
+const tgl = (v: unknown): string => (v instanceof Date ? v.toISOString().slice(0, 10) : String(v));
+const rentang = (sd: unknown, ed: unknown): string =>
+  tgl(sd) === tgl(ed) ? tgl(sd) : `${tgl(sd)} s/d ${tgl(ed)}`;
+
+// Daftar pengajuan yang masih menunggu, untuk ditempel di balasan error.
+async function pendingList(): Promise<string> {
+  const rows = await db()`
+    SELECT id, nama, jenis, start_date, end_date FROM leave_pending
+    WHERE status = 'pending' ORDER BY id
+  `;
+  if (rows.length === 0) return "_Tidak ada pengajuan yang menunggu saat ini._";
+  return rows
+    .map((p) => `• *L${p.id}* — ${p.nama} (${p.jenis}) ${rentang(p.start_date, p.end_date)}`)
+    .join("\n");
+}
+
+// Balasan approver yang niatnya jelas tapi formatnya salah / id-nya tak dikenal.
+// Hanya approver yang dibalas — anggota grup lain yang kebetulan mengetik pola
+// serupa tidak perlu diganggu.
+async function handleNearApproval(body: string, senderWa: string, senderName: string, grp: string): Promise<string> {
+  if (!approverLabel(senderWa, senderName)) return "near-approval-not-admin";
+  await sendViaWaGateway(
+    grp,
+    `⚠️ Balasan *${body}* tidak dikenali — formatnya harus *ya L<id>* atau *tidak L<id>* (contoh: *ya L52*).\n\nYang masih menunggu:\n${await pendingList()}`,
+  );
+  return "near-approval-replied";
+}
+
+async function handleApproval(decision: string, pid: number, senderWa: string, senderName: string, grp: string): Promise<string> {
+  const sql = db();
+  const decidedBy = approverLabel(senderWa, senderName);
+  if (!decidedBy) {
     return "approval-ignored-not-admin";
   }
-  const decidedBy = okName ? `name:${senderName}` : normalizeWa(senderWa);
   const [p] = await sql`SELECT * FROM leave_pending WHERE id = ${pid} AND status = 'pending'`;
-  if (!p) return "approval-not-found";
-  const rt = p.start_date === p.end_date ? String(p.start_date) : `${p.start_date} s/d ${p.end_date}`;
+  if (!p) {
+    // Id salah, atau sudah diputus/expired. Dulu senyap → approver menyangka
+    // approval-nya masuk. Sekarang dikabari beserta daftar yang masih menunggu.
+    const [prev] = await sql`SELECT status FROM leave_pending WHERE id = ${pid}`;
+    const sebab = prev
+      ? `L${pid} sudah berstatus *${prev.status}*, tidak bisa diputus lagi`
+      : `L${pid} tidak ada`;
+    await sendViaWaGateway(grp, `⚠️ ${sebab}.\n\nYang masih menunggu:\n${await pendingList()}`);
+    return "approval-not-found";
+  }
+  const rt = rentang(p.start_date, p.end_date);
   if (/^(ya|iya|ok|setuju)$/i.test(decision)) {
     // Idempoten: hanya insert bila tak ada overlap user_leave.
     await sql`
@@ -131,6 +190,17 @@ export async function runDetectLeaveScan(opts: { dryRun?: boolean } = {}): Promi
       else if (out === "rejected") res.rejected += 1;
       else skip(out);
       await markSeen(mid, `reply-${out}`);
+      await sleep(300);
+      continue;
+    }
+
+    // ── PHASE B': balasan approval yang salah ketik ──
+    const stripped = stripWaFmt(body);
+    if (stripped.length <= NEAR_APPROVAL_MAXLEN && NEAR_APPROVAL.test(stripped)) {
+      if (opts.dryRun) { skip("near-approval-dryrun"); continue; }
+      const out = await handleNearApproval(stripped, senderWa, String(m.sender_name ?? ""), grp);
+      skip(out);
+      await markSeen(mid, out);
       await sleep(300);
       continue;
     }
