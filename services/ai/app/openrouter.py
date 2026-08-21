@@ -56,6 +56,13 @@ def extract_models() -> List[str]:
     return [primary, fallback]
 
 
+def ticket_triage_models() -> List[str]:
+    """Model OpenRouter untuk F26 ticket triage (token tier LOW → Haiku)."""
+    primary = os.environ.get("TICKET_TRIAGE_MODEL_PRIMARY", "anthropic/claude-haiku-4.5")
+    fallback = os.environ.get("TICKET_TRIAGE_MODEL_FALLBACK", "deepseek/deepseek-r1")
+    return [primary, fallback]
+
+
 def exec_models() -> List[str]:
     """Model OpenRouter untuk A10 executive synthesis (token tier HIGH → Sonnet)."""
     primary = os.environ.get("EXEC_MODEL_PRIMARY", "anthropic/claude-sonnet-4.6")
@@ -67,6 +74,15 @@ def raport_models() -> List[str]:
     """Model OpenRouter untuk narasi Raport 360 (token tier HIGH → Sonnet)."""
     primary = os.environ.get("RAPORT_MODEL_PRIMARY", "anthropic/claude-sonnet-4.6")
     fallback = os.environ.get("RAPORT_MODEL_FALLBACK", "anthropic/claude-haiku-4.5")
+    return [primary, fallback]
+
+
+def klaim_models() -> List[str]:
+    """Model OpenRouter (vision) untuk DOC #KLAIM OCR. Default Gemini (blueprint
+    minta "Gemini Vision" eksplisit), fallback varian Gemini lain — bukan
+    Claude/DeepSeek spt fitur teks lain, krn keduanya butuh dukungan image input."""
+    primary = os.environ.get("KLAIM_MODEL_PRIMARY", "google/gemini-2.0-flash-001")
+    fallback = os.environ.get("KLAIM_MODEL_FALLBACK", "google/gemini-flash-1.5")
     return [primary, fallback]
 
 
@@ -136,3 +152,64 @@ def chat(
                 last_err = e
                 continue
     raise RuntimeError(f"semua model OpenRouter gagal: {last_err}")
+
+
+def chat_vision(
+    system: str,
+    user: str,
+    image_b64: str,
+    mime_type: str,
+    max_tokens: int = 1500,
+    models: Optional[List[str]] = None,
+) -> Tuple[str, str, Optional[int], Optional[int]]:
+    """Sama seperti chat(), tapi `content` user berupa multi-part (teks + gambar
+    data-URI base64) — format OpenRouter/OpenAI vision, dipakai model yg
+    mendukung image input (Gemini, dst). TIDAK mengubah chat() krn dipakai
+    banyak fitur teks-only lain.
+
+    Raises RuntimeError kalau OPENROUTER_API_KEY tidak ada atau semua model gagal.
+    """
+    key = os.environ.get("OPENROUTER_API_KEY")
+    if not key:
+        raise RuntimeError("OPENROUTER_API_KEY tidak di-set")
+
+    headers = {"Authorization": f"Bearer {key}", "content-type": "application/json"}
+    last_err: Optional[Exception] = None
+    with httpx.Client(timeout=60) as client:
+        for model in models or klaim_models():
+            try:
+                resp = client.post(
+                    OPENROUTER_URL,
+                    headers=headers,
+                    json={
+                        "model": model,
+                        "messages": [
+                            {"role": "system", "content": system},
+                            {
+                                "role": "user",
+                                "content": [
+                                    {"type": "text", "text": user},
+                                    {
+                                        "type": "image_url",
+                                        "image_url": {"url": f"data:{mime_type};base64,{image_b64}"},
+                                    },
+                                ],
+                            },
+                        ],
+                        "max_tokens": max_tokens,
+                    },
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                text = data["choices"][0]["message"]["content"]
+                usage = data.get("usage") or {}
+                return (
+                    text,
+                    model,
+                    usage.get("prompt_tokens"),
+                    usage.get("completion_tokens"),
+                )
+            except Exception as e:  # noqa: BLE001 — coba model berikutnya
+                last_err = e
+                continue
+    raise RuntimeError(f"semua model OpenRouter (vision) gagal: {last_err}")

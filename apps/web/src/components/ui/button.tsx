@@ -11,6 +11,12 @@ const buttonVariants = cva(
         default: "bg-primary text-primary-foreground shadow-sm hover:bg-primary-dark",
         outline:
           "border-border bg-card hover:bg-muted hover:text-foreground aria-expanded:bg-muted aria-expanded:text-foreground dark:border-input dark:bg-input/30 dark:hover:bg-input/50",
+        // Aksi ber-BOBOT SEDANG: jelas terbaca sebagai tombol (punya fill warna),
+        // tapi tidak bersaing dengan aksi utama yang solid. Dipakai saat dua aksi
+        // berdampingan — mis. Export PDF (soft) di sebelah Export Excel (default).
+        // Memakai token `accent` karena terdefinisi di tema terang MAUPUN gelap;
+        // `primary-soft` hanya ada di tema terang.
+        soft: "bg-accent text-accent-foreground hover:bg-accent/70",
         secondary:
           "bg-secondary text-secondary-foreground hover:bg-secondary/80 aria-expanded:bg-secondary aria-expanded:text-secondary-foreground",
         ghost:

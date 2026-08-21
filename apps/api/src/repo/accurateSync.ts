@@ -4,7 +4,10 @@ import { homedir } from "node:os";
 
 import { db } from "../db.js";
 import { ingestAccurateWebhook, normalizeAccurateDate, type AccurateInvoice } from "./ar.js";
-import { upsertVendors, upsertItems, upsertSalesOrders, upsertDeliveryOrders, upsertCustomers } from "./accurateMirror.js";
+import {
+  upsertVendors, upsertItems, upsertSalesOrders, upsertDeliveryOrders, upsertCustomers,
+  replaceSalesOrderItems, replaceDeliveryOrderItems, pendingItemDocs, countPendingItemDocs,
+} from "./accurateMirror.js";
 
 // Puller Accurate Online (pengganti legacy sync_accurate.sh). Tarik sales-invoice
 // header+items dari zeus.accurate.id → mirror penuh accurate_* + refresh ar_aging.
@@ -117,6 +120,20 @@ async function upsertInvoiceDetail(d: Detail): Promise<boolean> {
       tanggal = EXCLUDED.tanggal, taxable_amount = EXCLUDED.taxable_amount, tax_amount = EXCLUDED.tax_amount,
       total = EXCLUDED.total, paid = EXCLUDED.paid, outstanding = EXCLUDED.outstanding, status = EXCLUDED.status,
       salesman_id = EXCLUDED.salesman_id, salesman_name = EXCLUDED.salesman_name, raw = EXCLUDED.raw,
+      -- lunas_at (migrasi 094, dipakai Collection Factor F67): stempel HANYA saat sync
+      -- benar-benar MENGAMATI perpindahan OPEN → PAID. Urutan CASE-nya menentukan:
+      --   1. balik jadi OPEN (retur/koreksi) → NULL lagi, jangan tinggalkan stempel basi
+      --   2. sudah pernah distempel → pertahankan, jangan digeser tiap kali sync jalan
+      --   3. baris lama OPEN & sekarang PAID → inilah transisinya, stempel hari ini
+      --   4. sisanya = sudah PAID sejak pertama kali terlihat → NULL, umur tak diketahui.
+      --      SENGAJA tidak distempel: kalau distempel, seluruh invoice lama akan terlihat
+      --      berumur (hari ini − tanggal terbit) dan kena CF 0,50 massal.
+      lunas_at = CASE
+        WHEN EXCLUDED.status <> 'PAID' THEN NULL
+        WHEN accurate_invoice.lunas_at IS NOT NULL THEN accurate_invoice.lunas_at
+        WHEN accurate_invoice.status = 'OPEN' THEN CURRENT_DATE
+        ELSE NULL
+      END,
       last_synced_at = now()
   `;
 
@@ -274,13 +291,29 @@ export async function syncItems(): Promise<{ ok: boolean; synced: number; error?
 // Tarik sales-order TERBARU (sales-order/list.do, sort transDate desc) → mirror
 // accurate_sales_order utk menu Orders. Volume total ~11.8rb, jadi cuma recent
 // (default 5 hal = 500 order). customer di-nested (customer.name).
-export async function syncSalesOrders(opts: { maxPages?: number } = {}): Promise<{ ok: boolean; synced: number; error?: string }> {
+// Halaman dianggap sudah melewati cutoff bila SELURUH barisnya lebih tua dari
+// `sinceDays`. Sengaja "seluruhnya", bukan "baris terakhir": tanggal kosong /
+// tak terparse jangan sampai menghentikan paginasi lebih awal.
+function allOlderThan(rows: { trans_date?: string | null }[], sinceDays: number): boolean {
+  const cutoff = new Date(Date.now() - sinceDays * 86_400_000).toISOString().slice(0, 10);
+  const dated = rows.map((r) => r.trans_date).filter((d): d is string => typeof d === "string" && d !== "");
+  return dated.length > 0 && dated.every((d) => d < cutoff);
+}
+
+export async function syncSalesOrders(opts: { maxPages?: number; sinceDays?: number } = {}): Promise<{ ok: boolean; synced: number; error?: string }> {
   const creds = loadCreds();
   if (!creds) return { ok: false, synced: 0, error: "kredensial Accurate tak tersedia" };
-  const maxPages = opts.maxPages ?? 5;
+  // Batas halaman tetap ada sebagai pagar, tapi yang menentukan berhenti adalah
+  // TANGGAL: list di-sort transDate desc, jadi begitu satu halaman seluruhnya
+  // lebih tua dari cutoff, sisanya pasti lebih tua juga. Tanpa ini "5 halaman"
+  // bisa memotong bulan berjalan saat volume order naik — dan fill rate yang
+  // dihitung dari mirror terpotong akan salah tanpa jejak.
+  const maxPages = opts.maxPages ?? 40;
+  const sinceDays = opts.sinceDays ?? 120;
   let page = 1;
   let synced = 0;
-  for (; page <= maxPages; page++) {
+  let cutoffReached = false;
+  for (; page <= maxPages && !cutoffReached; page++) {
     const list = await accGet(
       creds,
       "/accurate/api/sales-order/list.do",
@@ -288,24 +321,24 @@ export async function syncSalesOrders(opts: { maxPages?: number } = {}): Promise
     );
     const rows = Array.isArray(list.d) ? (list.d as Array<Record<string, unknown>>) : [];
     if (rows.length === 0) break;
-    await upsertSalesOrders(
-      rows.map((v) => {
-        const td = v.transDate != null ? String(v.transDate) : "";
-        const [dd, mm, yy] = td.split("/");
-        const iso = dd && mm && yy ? `${yy}-${mm}-${dd}` : null;
-        const cust = v.customer && typeof v.customer === "object" ? (v.customer as { name?: unknown }).name : null;
-        return {
-          id: Number(v.id),
-          number: v.number != null ? String(v.number) : undefined,
-          trans_date: iso,
-          customer_name: cust != null ? String(cust) : undefined,
-          status: v.statusName != null ? String(v.statusName) : undefined,
-          total_amount: v.totalAmount != null ? Number(v.totalAmount) : undefined,
-          raw: v,
-        };
-      }),
-    );
+    const mapped = rows.map((v) => {
+      const td = v.transDate != null ? String(v.transDate) : "";
+      const [dd, mm, yy] = td.split("/");
+      const iso = dd && mm && yy ? `${yy}-${mm}-${dd}` : null;
+      const cust = v.customer && typeof v.customer === "object" ? (v.customer as { name?: unknown }).name : null;
+      return {
+        id: Number(v.id),
+        number: v.number != null ? String(v.number) : undefined,
+        trans_date: iso,
+        customer_name: cust != null ? String(cust) : undefined,
+        status: v.statusName != null ? String(v.statusName) : undefined,
+        total_amount: v.totalAmount != null ? Number(v.totalAmount) : undefined,
+        raw: v,
+      };
+    });
+    await upsertSalesOrders(mapped);
     synced += rows.length;
+    cutoffReached = allOlderThan(mapped, sinceDays);
     if (rows.length < 100) break;
     await sleep(150);
   }
@@ -314,13 +347,15 @@ export async function syncSalesOrders(opts: { maxPages?: number } = {}): Promise
 
 // Tarik delivery-order TERBARU (delivery-order/list.do, sort transDate desc) →
 // mirror accurate_delivery_order utk menu Shipments. Volume ~11.9rb → recent saja.
-export async function syncDeliveryOrders(opts: { maxPages?: number } = {}): Promise<{ ok: boolean; synced: number; error?: string }> {
+export async function syncDeliveryOrders(opts: { maxPages?: number; sinceDays?: number } = {}): Promise<{ ok: boolean; synced: number; error?: string }> {
   const creds = loadCreds();
   if (!creds) return { ok: false, synced: 0, error: "kredensial Accurate tak tersedia" };
-  const maxPages = opts.maxPages ?? 5;
+  const maxPages = opts.maxPages ?? 40;
+  const sinceDays = opts.sinceDays ?? 120;
   let page = 1;
   let synced = 0;
-  for (; page <= maxPages; page++) {
+  let cutoffReached = false;
+  for (; page <= maxPages && !cutoffReached; page++) {
     const list = await accGet(
       creds,
       "/accurate/api/delivery-order/list.do",
@@ -328,29 +363,80 @@ export async function syncDeliveryOrders(opts: { maxPages?: number } = {}): Prom
     );
     const rows = Array.isArray(list.d) ? (list.d as Array<Record<string, unknown>>) : [];
     if (rows.length === 0) break;
-    await upsertDeliveryOrders(
-      rows.map((v) => {
-        const td = v.transDate != null ? String(v.transDate) : "";
-        const [dd, mm, yy] = td.split("/");
-        const iso = dd && mm && yy ? `${yy}-${mm}-${dd}` : null;
-        const cust = v.customer && typeof v.customer === "object" ? (v.customer as { name?: unknown }).name : null;
-        return {
-          id: Number(v.id),
-          number: v.number != null ? String(v.number) : undefined,
-          trans_date: iso,
-          customer_name: cust != null ? String(cust) : undefined,
-          ship_to: v.toAddress != null ? String(v.toAddress) : undefined,
-          status: v.statusName != null ? String(v.statusName) : undefined,
-          raw: v,
-        };
-      }),
-    );
+    const mapped = rows.map((v) => {
+      const td = v.transDate != null ? String(v.transDate) : "";
+      const [dd, mm, yy] = td.split("/");
+      const iso = dd && mm && yy ? `${yy}-${mm}-${dd}` : null;
+      const cust = v.customer && typeof v.customer === "object" ? (v.customer as { name?: unknown }).name : null;
+      return {
+        id: Number(v.id),
+        number: v.number != null ? String(v.number) : undefined,
+        trans_date: iso,
+        customer_name: cust != null ? String(cust) : undefined,
+        ship_to: v.toAddress != null ? String(v.toAddress) : undefined,
+        status: v.statusName != null ? String(v.statusName) : undefined,
+        raw: v,
+      };
+    });
+    await upsertDeliveryOrders(mapped);
     synced += rows.length;
+    cutoffReached = allOlderThan(mapped, sinceDays);
     if (rows.length < 100) break;
     await sleep(150);
   }
   return { ok: true, synced };
 }
+
+// ── Tarik baris item SO/DO ke mirror (migrasi 081) ────────────────
+//
+// Satu panggilan detail.do PER dokumen, jadi sengaja inkremental + berbatas:
+// hanya dokumen dalam `sinceDays` yang `items_synced_at`-nya masih NULL, maksimum
+// `limit` per pemanggilan. Steady-state cuma dokumen baru (puluhan/hari);
+// backfill awal habis bertahap tiap siklus tanpa memblokir job lain.
+//
+// Jalur field yang dibaca sama persis dengan getSalesOrderItems/
+// getDeliveryOrderItems yang sudah dipakai dialog Orders/Shipments — jangan
+// menambah field baru di sini tanpa memverifikasi payload aslinya.
+async function syncDocItems(
+  entity: "so" | "do",
+  opts: { sinceDays?: number; limit?: number } = {},
+): Promise<{ ok: boolean; docs: number; lines: number; pending: number; error?: string }> {
+  const creds = loadCreds();
+  if (!creds) return { ok: false, docs: 0, lines: 0, pending: 0, error: "kredensial Accurate tak tersedia" };
+  const sinceDays = opts.sinceDays ?? 120;
+  const limit = opts.limit ?? 150;
+  const ids = await pendingItemDocs(entity, sinceDays, limit);
+  const path = entity === "so" ? "/accurate/api/sales-order/detail.do" : "/accurate/api/delivery-order/detail.do";
+
+  let docs = 0;
+  let lines = 0;
+  for (const id of ids) {
+    const det = await accGet(creds, path, `id=${id}`);
+    if (det?.s !== true) {
+      // Dokumen bermasalah tak boleh menghentikan sisanya; biarkan
+      // items_synced_at tetap NULL supaya dicoba lagi siklus berikutnya.
+      await sleep(150);
+      continue;
+    }
+    const d = det.d as Detail;
+    const rows = ((d?.detailItem ?? []) as Detail[]).map((it, i) => ({
+      line_no: it.lineNo != null ? Number(it.lineNo) : i + 1,
+      item_no: it.item?.no ?? null,
+      item_name: it.item?.name ?? it.detailName ?? null,
+      qty: it.quantity != null ? Number(it.quantity) : null,
+      unit: it.itemUnit?.name ?? it.itemUnitName ?? null,
+      raw: it,
+    }));
+    lines += entity === "so" ? await replaceSalesOrderItems(id, rows) : await replaceDeliveryOrderItems(id, rows);
+    docs += 1;
+    await sleep(150);
+  }
+  const pending = await countPendingItemDocs(entity, sinceDays);
+  return { ok: true, docs, lines, pending };
+}
+
+export const syncSalesOrderItems = (opts: { sinceDays?: number; limit?: number } = {}) => syncDocItems("so", opts);
+export const syncDeliveryOrderItems = (opts: { sinceDays?: number; limit?: number } = {}) => syncDocItems("do", opts);
 
 // Ambil baris produk (detailItem) satu delivery-order via detail.do — dipakai
 // on-demand saat user buka detail Shipments (bukan disimpan tiap sync).
