@@ -33,11 +33,10 @@ const pct1 = (n: number) => `${Math.round(n * 1000) / 10}%`;
 // Palet per tahap (urut funnel, dingin→hangat). Sama di light & dark (fill chart).
 const STAGE_COLOR: Record<string, string> = {
   "Prospecting": "#94a3b8",
-  "First Contact": "#60a5fa",
   "Presentation": "#38bdf8",
   "Quotation": "#22d3ee",
-  "Offering": "#818cf8",
   "Negotiation": "#f59e0b",
+  "Closing": "#fb923c",
   "Closing-Won": "#10b981",
   "Closing-Lost": "#ef4444",
 };
@@ -46,11 +45,10 @@ const stageColor = (s: string) => STAGE_COLOR[s] ?? "#2563a8";
 // Label tahap → Bahasa Indonesia ringkas.
 const STAGE_LABEL: Record<string, string> = {
   "Prospecting": "Prospek",
-  "First Contact": "Kontak Awal",
   "Presentation": "Presentasi",
   "Quotation": "Penawaran Harga",
-  "Offering": "Offering Letter",
   "Negotiation": "Negosiasi",
+  "Closing": "Closing",
   "Closing-Won": "Menang",
   "Closing-Lost": "Kalah",
 };

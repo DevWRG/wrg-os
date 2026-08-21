@@ -4,7 +4,14 @@ import { gatewayFetch } from "@/lib/gateway";
 import { sessionUser } from "@/lib/admin-guard";
 import { cn } from "@/lib/utils";
 import { PageHeader } from "@/components/dashboard/page-header";
-import { AddVisitSheet } from "@/components/crm/add-visit-sheet";
+import { AddVisitSheet, type AmOption } from "@/components/crm/add-visit-sheet";
+import {
+  TimelinessCard,
+  VisitTargetTable,
+  WeeklyTargetCard,
+  type TimelinessKpi,
+  type VisitTargetKpi,
+} from "@/components/crm/visit-target-panel";
 import { VisitsTable } from "@/components/tables/visits-table";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
@@ -24,16 +31,26 @@ interface VisitItem {
   tujuan: string | null;
   goal: string | null;
   catatan: string | null;
+  activity_type: string | null;
+  account_id: number | null;
   created_at: string;
 }
 interface VisitResponse {
   count: number;
   visits: VisitItem[];
 }
+interface RosterResponse {
+  count: number;
+  users: { am_id: string; nama: string | null; panggilan: string | null; cabang: string | null }[];
+}
 interface VisitSummary {
   total: number;
   by_status: Record<string, number>;
   flagged: number;
+}
+interface VisitKpi {
+  timeliness: TimelinessKpi;
+  targets: VisitTargetKpi;
 }
 
 const FILTERS: { key: string; label: string }[] = [
@@ -67,11 +84,23 @@ export default async function VisitsPage({
   const qs = active ? `?status=${encodeURIComponent(active)}` : "";
 
   const me = await sessionUser();
-  const [summary, list] = await Promise.all([
+  // Sembunyikan tombol "Tambah kunjungan" HANYA dari karyawan sales/AM (is_am dari
+  // /auth/me = scope.amOnly). Peran lain (admin/HoD/direktur/dll) tetap lihat.
+  // Tanpa sesi (auth mati/dev) is_am undefined → tombol tetap tampil (non-breaking).
+  const canAddVisit = !me?.is_am;
+  const [summary, list, kpi, roster] = await Promise.all([
     getJson<VisitSummary>("/visits/summary", me?.id),
     getJson<VisitResponse>(`/visits${qs}`, me?.id),
+    getJson<VisitKpi>("/visits/kpi", me?.id),
+    // Roster AM untuk dropdown form — am_id nyata = user_id legacy, jangan
+    // diketik manual. Hanya diambil kalau tombolnya memang tampil.
+    canAddVisit ? getJson<RosterResponse>("/master/users?role=AM&aktif=true", me?.id) : null,
   ]);
   const visits = list?.visits ?? null;
+  const amOptions: AmOption[] = (roster?.users ?? []).map((u) => ({
+    am_id: u.am_id,
+    label: [u.panggilan || u.nama || u.am_id, u.cabang].filter(Boolean).join(" · "),
+  }));
 
   const total = summary?.total ?? 0;
   const ok = summary?.by_status?.ok ?? 0;
@@ -83,7 +112,7 @@ export default async function VisitsPage({
       <PageHeader
         title="Visits"
         description="Kunjungan AM dengan geotag + foto (port visit). Geo divalidasi terhadap bbox Indonesia."
-        action={<AddVisitSheet />}
+        action={canAddVisit ? <AddVisitSheet amOptions={amOptions} /> : undefined}
       />
 
       {!summary ? (
@@ -96,7 +125,7 @@ export default async function VisitsPage({
         </p>
       ) : (
         <>
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
             <Card>
               <CardHeader className="pb-2">
                 <CardTitle className="text-muted-foreground text-sm font-medium">Total kunjungan</CardTitle>
@@ -132,7 +161,11 @@ export default async function VisitsPage({
                 <p className="text-muted-foreground text-xs">tanggal tak cocok / luar bbox</p>
               </CardContent>
             </Card>
+            {kpi ? <TimelinessCard kpi={kpi.timeliness} /> : null}
+            {kpi ? <WeeklyTargetCard kpi={kpi.targets} /> : null}
           </div>
+
+          {kpi ? <VisitTargetTable kpi={kpi.targets} /> : null}
 
           <div className="flex flex-wrap gap-2">
             {FILTERS.map((f) => {

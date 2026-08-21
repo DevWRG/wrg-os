@@ -14,6 +14,7 @@ export interface PricelistRow {
   hpp: string;
   margin_pct: string;
   diskon_pct: string;
+  price_list: string | null;
   pct_wrg: string;
   pct_promosi: string;
   pct_hod_sales: string;
@@ -36,7 +37,9 @@ export const MIN_INCENTIVE_RATE = 0.05; // Min Incentive Pts = Total Point * 5%
 export const MAX_INCENTIVE_RATE = 0.08; // Max Incentive Pts = Total Point * 8%
 
 export interface PricelistDerived {
-  priceList: number; // Harga Principal(HPP) / (1 - margin)
+  // priceList = angka dari sumber kalau ada (sudah dibulatkan manual, migrasi 076),
+  // kalau tidak ada baru dihitung HPP / (1 - margin).
+  priceList: number;
   valueDiskon: number; // priceList * diskon
   nettPrice: number; // priceList - valueDiskon
   pricePpn: number; // priceList * (1 + PPN)
@@ -63,8 +66,16 @@ export function derivePricing(
   pctWrg = 0,
   pctPromosi = 0,
   pctHodSales = 0,
+  // Price List dari sumber. Menang atas hitungan margin — sumber membulatkan ke
+  // angka jual (40.500.000, bukan 40.497.896) dan itu yang dipakai jualan.
+  priceListSumber?: number | null,
 ): PricelistDerived {
-  const priceList = marginPct >= 1 ? hpp : hpp / (1 - marginPct);
+  const priceList =
+    priceListSumber && priceListSumber > 0
+      ? priceListSumber
+      : marginPct >= 1
+        ? hpp
+        : hpp / (1 - marginPct);
   const valueDiskon = priceList * diskonPct;
   const margin = priceList - hpp; // margin kotor Rupiah = basis alokasi insentif
   const valueWrg = margin * pctWrg;
@@ -88,6 +99,36 @@ export function derivePricing(
   };
 }
 
+// ── Baris untuk muka AM/sales ──────────────────────────────────────────────
+// HANYA angka yang boleh dilihat sales. Sengaja TANPA hpp / margin_pct / alokasi
+// insentif: kalau `PricelistRow` utuh diteruskan ke komponen klien, HPP & margin
+// ikut ter-serialisasi ke HTML + payload RSC dan bisa dibaca siapa pun yang membuka
+// "view source" atau tab Network — walau tak ada satu kolom pun yang menampilkannya.
+// Itu persis yang dilarang HANDOVER §1/§9. Karena tabel AM butuh Price List / Nett /
+// Nett+PPN yang turunan dari HPP, turunannya DIHITUNG DI SERVER lewat toAmRow().
+export interface AmPricelistRow {
+  id: string;
+  product_no: string | null;
+  product_name: string | null;
+  priceList: number;
+  diskonPct: number;
+  nettPrice: number;
+  pricePpn: number;
+}
+
+export function toAmRow(row: PricelistRow): AmPricelistRow {
+  const d = deriveRow(row);
+  return {
+    id: row.id,
+    product_no: row.product_no,
+    product_name: row.product_name,
+    priceList: d.priceList,
+    diskonPct: num(row.diskon_pct),
+    nettPrice: d.nettPrice,
+    pricePpn: d.pricePpn,
+  };
+}
+
 export function deriveRow(row: PricelistRow): PricelistDerived {
   return derivePricing(
     num(row.hpp),
@@ -96,6 +137,7 @@ export function deriveRow(row: PricelistRow): PricelistDerived {
     num(row.pct_wrg),
     num(row.pct_promosi),
     num(row.pct_hod_sales),
+    row.price_list == null ? null : num(row.price_list),
   );
 }
 
