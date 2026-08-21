@@ -4,6 +4,7 @@ import { GaAssetView } from "@/components/crm/ga-asset-view";
 import type { GaAsset } from "@/components/tables/ga-assets-table";
 import type { GaAssetCategory } from "@/components/tables/ga-asset-categories-table";
 import type { ItTicket } from "@/components/tables/it-tickets-table";
+import type { AppUserOption } from "@/components/crm/ga-asset-pic-actions";
 
 export const dynamic = "force-dynamic";
 
@@ -29,6 +30,18 @@ async function getCategories(): Promise<GaAssetCategory[]> {
   }
 }
 
+// Picker PIC (F133 assign/transfer) — akun app_user aktif.
+async function getAppUsers(): Promise<AppUserOption[]> {
+  try {
+    const res = await gatewayFetch("/app-users");
+    if (!res.ok) return [];
+    const data = (await res.json()) as { users: AppUserOption[] };
+    return data.users ?? [];
+  } catch {
+    return [];
+  }
+}
+
 // Tab "Tiket IT" (F52) — diserap ke sini per arahan Direktur (1 menu, bukan
 // route sendiri), sama pola F52 sendiri sebelumnya (Aset+Tiket 1 halaman).
 async function getTickets(): Promise<ItTicket[] | null> {
@@ -43,14 +56,14 @@ async function getTickets(): Promise<ItTicket[] | null> {
 }
 
 export default async function GaAsetPage() {
-  const [assets, categories, tickets] = await Promise.all([getAssets(), getCategories(), getTickets()]);
+  const [assets, categories, tickets, users] = await Promise.all([getAssets(), getCategories(), getTickets(), getAppUsers()]);
   return (
     <>
       <PageHeader
         title="Aset GA"
         description="Katalog inventaris kantor (laptop, HP, kendaraan, mebel, software) + tiket masalah aset IT — single source of truth aset, dasar assignment & maintenance."
       />
-      <GaAssetView assets={assets} categories={categories} tickets={tickets} />
+      <GaAssetView assets={assets} categories={categories} tickets={tickets} users={users} />
     </>
   );
 }

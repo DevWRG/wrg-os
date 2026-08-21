@@ -10,14 +10,21 @@ import { ItTicketsTable, type ItTicket } from "@/components/tables/it-tickets-ta
 import { AddGaAssetButton } from "@/components/crm/add-ga-asset-button";
 import { AddGaAssetCategoryButton } from "@/components/crm/add-ga-asset-category-button";
 import { AddItTicketButton } from "@/components/crm/add-it-ticket-button";
+import type { AppUserOption } from "@/components/crm/ga-asset-pic-actions";
 
 // F132 — satu halaman, TIGA tab (Aset, Kategori, Tiket IT). F52 (tiket per
 // aset IT) diserap ke sini bukan cuma di level tabel (asset_id FK ga_assets),
 // tapi juga di level MENU — arahan Direktur eksplisit "1 menu, jangan
 // terpisah" (koreksi dari percobaan awal yang bikin /it-asset route sendiri).
 export function GaAssetView({
-  assets, categories, tickets,
-}: { assets: GaAsset[]; categories: GaAssetCategory[]; tickets: ItTicket[] | null }) {
+  assets, categories, tickets, users,
+}: {
+  assets: GaAsset[];
+  categories: GaAssetCategory[];
+  tickets: ItTicket[] | null;
+  // F133 — daftar pilihan PIC utk aksi assignment di baris aset.
+  users: AppUserOption[];
+}) {
   const [tab, setTab] = useState<"aset" | "kategori" | "tiket">("aset");
   const activeCategories = categories.filter((c) => c.active);
   const activeAssets = assets.filter((a) => a.active);
@@ -62,7 +69,7 @@ export function GaAssetView({
                   description={activeCategories.length === 0 ? 'Belum ada kategori aktif — tambah dulu di tab "Kategori".' : 'Klik "Tambah Aset" untuk mulai.'}
                 />
               ) : (
-                <GaAssetsTable assets={assets} categories={activeCategories} />
+                <GaAssetsTable assets={assets} categories={activeCategories} users={users} />
               )}
             </CardContent>
           </Card>
