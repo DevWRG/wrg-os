@@ -189,6 +189,14 @@ import { runPolaKomunikasi } from "./repo/polakomunikasi.js";
 import { runRefreshMembers } from "./repo/listmembers.js";
 import { runNotifQuota } from "./repo/notifquota.js";
 import {
+  listTenders as listLpseTenders,
+  getTender as getLpseTender,
+  createTender as createLpseTender,
+  advanceStatus as advanceLpseTenderStatus,
+  getTenderTimeline as getLpseTenderTimeline,
+  runLpseTenderReminder,
+} from "./repo/lpse-tender.js";
+import {
   upsertCustomers,
   upsertBranches,
   upsertItems,
@@ -2845,6 +2853,42 @@ app.get("/employee-spine/employees/:id/measurements", async (c) => {
   const period = (c.req.query("period") ?? "").trim();
   if (!period) return c.json({ error: "param 'period' wajib (mis. 2026-07)" }, 400);
   return c.json({ period, measurements: await getMeasurements(c.req.param("id"), period) });
+});
+
+// ── F20 E-Catalog/LPSE Compliance Tracker — status klik manual, tak ada hashtag WA ──
+app.get("/lpse-tender", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const status = c.req.query("status") ?? undefined;
+  return c.json({ tenders: await listLpseTenders({ status }) });
+});
+app.get("/lpse-tender/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const t = await getLpseTender(c.req.param("id"));
+  if (!t) return c.json({ error: "tender tidak ditemukan" }, 404);
+  return c.json({ tender: t, timeline: await getLpseTenderTimeline(t.id) });
+});
+app.post("/lpse-tender", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const body = await c.req.json().catch(() => ({}));
+  const result = await createLpseTender({ ...body, created_by_user_id: c.req.header("x-user-id") ?? null });
+  if ("ok" in result && !result.ok) return c.json({ error: result.error }, 400);
+  return c.json({ tender: result }, 201);
+});
+app.post("/lpse-tender/:id/advance", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const body = await c.req.json().catch(() => ({}));
+  const toStatus = String(body.toStatus ?? "");
+  if (!toStatus) return c.json({ error: "toStatus wajib" }, 400);
+  const result = await advanceLpseTenderStatus(c.req.param("id"), toStatus, {
+    changed_by_user_id: c.req.header("x-user-id") ?? null,
+    note: body.note ?? null,
+  });
+  if (!result.ok) return c.json({ error: result.error }, 400);
+  return c.json(result);
+});
+app.post("/lpse-tender/reminder/run", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await runLpseTenderReminder());
 });
 app.post("/employee-spine/employees/:id/measurements", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);

@@ -182,6 +182,9 @@ export const NAV: NavGroup[] = [
         title: "Setup Harga", url: "/pricebook/setup", icon: SlidersHorizontal,
         feature: "pricelist-setup", show: canEditPricelistSetup,
       },
+      // F20 — status klik per tender LPSE/E-Catalog (pesan masuk -> barang
+      // dikirim -> selesai) + reminder kalau macet. Tak ada hashtag WA.
+      { title: "LPSE / E-Catalog", url: "/lpse-tender", icon: FileCheck2, badge: "NEW" },
     ],
   },
   {
