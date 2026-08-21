@@ -176,10 +176,27 @@ export interface KsoFaskesDetail {
   // (rata atau proporsional-tes) menghasilkan angka yang terlihat presisi padahal
   // karangan — alasan yang sama dengan rupiah_per_tes_customer di migrasi 098/100.
   trenAlat: { assetId: number; periode: string; jumlahTes: number | null }[];
+  // Reagen/barang yang difakturkan ke faskes ini pada jendela yang diminta.
+  // `dalamSkema` = kategori pengadaannya termasuk yang dihitung sebagai revenue skema
+  // ini (kso_kategori_skema). Yang FALSE tetap dikembalikan, bukan disaring: item
+  // REGULAR yang muncul di faskes PER_TEST justru temuan, bukan derau — dan kalau
+  // disembunyikan, tidak ada yang akan pernah menanyakannya.
+  reagen: {
+    itemId: number | null; itemNo: string | null; itemNama: string | null;
+    jenisAlat: string | null; kategori: string; unit: string;
+    qty: number | null; nilaiNetto: number | null; jumlahFaktur: number | null;
+    dalamSkema: boolean;
+  }[];
 }
 
-export async function faskesDetail(accountId: number, skema: string): Promise<KsoFaskesDetail> {
-  if (!isDbEnabled()) return { alat: [], tren: [], trenAlat: [] };
+// `dari`/`sampai` = jendela bulan ('YYYY-MM-DD', tanggal 1). WAJIB dikirim pemanggil,
+// bukan dihitung di sini: dialog memakai jendela yang sama untuk grafiknya, dan kalau
+// server menghitung sendiri "tahun berjalan" keduanya bisa berbeda saat pergantian tahun
+// atau beda timezone — daftar reagen lalu tidak sepadan dengan grafik di atasnya.
+export async function faskesDetail(
+  accountId: number, skema: string, dari: string, sampai: string,
+): Promise<KsoFaskesDetail> {
+  if (!isDbEnabled()) return { alat: [], tren: [], trenAlat: [], reagen: [] };
   const sql = db();
 
   // Daftar alat dari view produktivitas, BUKAN langsung dari kso_asset: view itu yang
@@ -215,6 +232,19 @@ export async function faskesDetail(accountId: number, skema: string): Promise<Ks
     WHERE a.account_id = ${accountId} AND a.skema = ${skema}
     ORDER BY m.asset_id, m.periode`;
 
+  // Kategori yang berlaku bagi skema ini dibaca dari kso_kategori_skema — sumber tunggal
+  // aturan atribusi (107). Jangan disalin ke TS.
+  const reagen = await sql`
+    SELECT r.item_id, r.item_no, r.item_nama, r.jenis_alat, r.kategori, r.unit,
+           sum(r.qty) AS qty, sum(r.nilai_netto) AS nilai_netto,
+           sum(r.jumlah_faktur)::int AS jumlah_faktur,
+           (r.kategori IN (SELECT kategori FROM kso_kategori_skema WHERE skema = ${skema}))
+             AS dalam_skema
+    FROM kso_faskes_reagen_v r
+    WHERE r.account_id = ${accountId} AND r.periode BETWEEN ${dari} AND ${sampai}
+    GROUP BY r.item_id, r.item_no, r.item_nama, r.jenis_alat, r.kategori, r.unit
+    ORDER BY sum(r.nilai_netto) DESC NULLS LAST`;
+
   return {
     alat: alat.map((a) => ({
       assetId: Number(a.asset_id),
@@ -237,6 +267,18 @@ export async function faskesDetail(accountId: number, skema: string): Promise<Ks
       assetId: Number(t.asset_id),
       periode: String(t.periode),
       jumlahTes: num(t.jumlah_tes),
+    })),
+    reagen: reagen.map((r) => ({
+      itemId: num(r.item_id),
+      itemNo: r.item_no ? String(r.item_no) : null,
+      itemNama: r.item_nama ? String(r.item_nama) : null,
+      jenisAlat: r.jenis_alat ? String(r.jenis_alat) : null,
+      kategori: String(r.kategori),
+      unit: String(r.unit),
+      qty: num(r.qty),
+      nilaiNetto: num(r.nilai_netto),
+      jumlahFaktur: num(r.jumlah_faktur),
+      dalamSkema: Boolean(r.dalam_skema),
     })),
   };
 }

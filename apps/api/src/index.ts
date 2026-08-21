@@ -2775,7 +2775,16 @@ app.get("/kso/produktivitas/faskes/:accountId", async (c) => {
   if (skema !== "PER_TEST" && skema !== "BELI_REAGEN") {
     return c.json({ error: "skema wajib PER_TEST | BELI_REAGEN" }, 400);
   }
-  return c.json(await ksoFaskesDetail(accountId, skema));
+  // Jendela bulan untuk daftar reagen. Divalidasi bentuknya, bukan cuma diteruskan:
+  // string bebas di klausa BETWEEN membuat Postgres menolak dengan galat tipe yang
+  // muncul sebagai 500, bukan 400 — pemanggil tidak akan tahu apa yang salah.
+  const dari = c.req.query("dari") ?? "";
+  const sampai = c.req.query("sampai") ?? "";
+  const tglOk = (t: string) => /^\d{4}-\d{2}-\d{2}$/.test(t);
+  if (!tglOk(dari) || !tglOk(sampai) || dari > sampai) {
+    return c.json({ error: "dari/sampai wajib YYYY-MM-DD dan dari <= sampai" }, 400);
+  }
+  return c.json(await ksoFaskesDetail(accountId, skema, dari, sampai));
 });
 
 // Setelan harga keagenan (migrasi 077). Gate di halaman /pricebook/setup
