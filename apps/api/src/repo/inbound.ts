@@ -6,6 +6,7 @@ import { handleSalesAnalyticsQuery } from "./inbound-sales-analytics.js";
 import { resolveSender } from "./master.js";
 import { upsertDailyTodo, computeIsLate } from "./todo.js";
 import { createReminder } from "./reminder.js";
+import { buildCekReply } from "./cek.js";
 
 // Role yang pakai alur AM per-customer (sales_plan/activity_log + foto), bukan todo.
 const AM_ROLES = new Set(["AM", "Teknisi"]);
@@ -20,10 +21,11 @@ const isAmRole = (role?: string | null) => AM_ROLES.has((role ?? "").trim());
 // → patuh WA_DRY_RUN. Idempoten: wa_message.processed_at. Pengirim tak dikenal →
 // SILENT (tak balas) supaya tak spam non-AM/pesan bot di grup campuran.
 
-export type InboundKind = "plan" | "report" | "leads" | "update" | "sales" | "none";
+export type InboundKind = "plan" | "report" | "leads" | "update" | "sales" | "cek" | "none";
 
 const LEADS_UPDATE_LINE = /^\s*#\s*(leads|update)\b/i;
 const SALES_LINE = /^\s*#\s*sales\b/i;
+const CEK_LINE = /^\s*#\s*cek\b/i;
 
 export function detectKind(body: string | null): InboundKind {
   const daily = detectDaily(body); // line-anchored #plan/#report (sudah strip invisible)
@@ -33,6 +35,7 @@ export function detectKind(body: string | null): InboundKind {
       const m = line.match(LEADS_UPDATE_LINE);
       if (m) return m[1].toLowerCase() as "leads" | "update";
       if (SALES_LINE.test(line)) return "sales";
+      if (CEK_LINE.test(line)) return "cek";
     }
   }
   return "none";
@@ -536,6 +539,22 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
     return finish({ kind: "sales", via: ams.via, reply });
   }
 
+  // #CEK — cross-ref SO/SJ/Faktur (F4 SXR). Sender WAJIB dikenal: balasan
+  // berisi data komersial (customer, total, status bayar) yang gak boleh
+  // keluar ke pengirim tak dikenal.
+  if (kind === "cek") {
+    const ck = await resolveSender({ senderJid: row.sender_jid, groupJid: row.group_jid, pushname: row.sender_name });
+    if (!ck) return finish({ skipped: "unknown-sender", sender_name: row.sender_name });
+    const query = (row.body ?? "").replace(CEK_LINE, "").trim();
+    if (!query) {
+      const reply = await sendViaWaGateway(target, `⚠️ Isi nomor SO/SJ/Faktur setelah #CEK, ${ck.nama}. Contoh: #CEK SO-00123`);
+      return finish({ error: "empty-query", via: ck.via, reply });
+    }
+    const text = await buildCekReply(query);
+    const reply = await sendViaWaGateway(target, text);
+    return finish({ kind: "cek", via: ck.via, reply });
+  }
+
   // #PLAN/#REPORT — parse DULU (body-name dibutuhkan untuk resolusi Tier-A).
   const parsed = parseDaily(row.body ?? "");
   const am = await resolveSender({
@@ -654,7 +673,7 @@ export async function processUnprocessed(
            media_path, geo_lat, geo_lon, geo_ts, geo_address
     FROM wa_message
     WHERE processed_at IS NULL
-      AND (body ~* '#\\s*(plan|report|leads|update|sales)'
+      AND (body ~* '#\\s*(plan|report|leads|update|sales|cek)'
            OR (message_type ~* '^image' AND media_path IS NOT NULL))
     ORDER BY received_at ASC LIMIT ${limit}
   `;
