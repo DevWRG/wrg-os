@@ -358,6 +358,13 @@ import {
   type ProficiencyTestInput,
   type ProficiencyTestUpdate,
 } from "./repo/proficiency-test.js";
+import {
+  listVehicles,
+  getVehicleById,
+  updateVehicle,
+  listVehicleLogs,
+  createVehicleLog,
+} from "./repo/vehicle.js";
 const app = new Hono();
 
 // Selalu balas JSON saat error / route tak ada — supaya BFF & client tak pernah
@@ -5018,6 +5025,67 @@ app.get("/aftersales/proficiency-tests/:id/file", async (c) => {
       "content-disposition": `attachment; filename="${encodeURIComponent(file.file_name)}"`,
     },
   });
+});
+
+// ── Kendaraan Operasional Log (F50, OPS) — master `vehicle` diseed manual
+// (tanpa endpoint create, lihat 080_vehicle_operational_log.sql), entri
+// transaksional lewat /vehicles/:id/logs. Alert service/STNK via cron. ──
+app.get("/vehicles", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listVehicles(c.req.query("all") !== "true");
+  return c.json({ count: rows.length, vehicles: rows });
+});
+
+app.get("/vehicles/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await getVehicleById(c.req.param("id"));
+  return r ? c.json(r) : c.json({ error: "kendaraan tidak ditemukan" }, 404);
+});
+
+app.patch("/vehicles/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: {
+    sopir_name?: string;
+    stnk_expiry?: string;
+    service_interval_km?: number;
+    active?: boolean;
+  };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const r = await updateVehicle(c.req.param("id"), body);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.get("/vehicles/:id/logs", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listVehicleLogs(c.req.param("id"));
+  return c.json({ count: rows.length, logs: rows });
+});
+
+app.post("/vehicles/:id/logs", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: {
+    log_type?: "km" | "bbm" | "service";
+    log_date?: string;
+    km?: number;
+    bbm_liter?: number;
+    bbm_cost?: number;
+    note?: string;
+    created_by?: string;
+  };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.log_type || !["km", "bbm", "service"].includes(body.log_type)) {
+    return c.json({ error: "log_type wajib salah satu dari: km, bbm, service" }, 400);
+  }
+  const r = await createVehicleLog(c.req.param("id"), body as never);
+  return c.json(r, "id" in r ? 201 : 400);
 });
 
 const port = Number(process.env.PORT ?? 4000);

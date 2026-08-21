@@ -42,6 +42,7 @@ import { computeNpkAm } from "./repo/npk-am.js";
 import { snapshotLastWeek } from "./repo/watchpoint-weekly.js";
 import { runPreVisitCheck } from "./repo/pickup-plan.js";
 import { runEdWatch } from "./repo/stock-batch.js";
+import { runVehicleAlerts } from "./repo/vehicle.js";
 
 // Penjadwal agen in-process (Blueprint v2.3). Default MATI — aktif hanya bila
 // AGENT_SCHEDULE_ENABLED=true. Tiap run tetap menulis ke audit_log via repo
@@ -341,6 +342,31 @@ export function startScheduler(): ScheduleStatus {
         { timezone },
       );
       live.push(`previsit-check=${preVisitExpr}`);
+    }
+  }
+
+  // Kendaraan Operasional Log (F50, OPS) — alert service-due (km-based) +
+  // STNK H-30. Nyala SENDIRI (default off), tidak ikut AGENT_SCHEDULE_ENABLED.
+  const vehicleAlertEnabled = (process.env.VEHICLE_ALERT_ENABLED ?? "false").toLowerCase() === "true";
+  const vehicleAlertExpr = process.env.VEHICLE_ALERT_CRON ?? "0 8 * * *";
+  if (vehicleAlertEnabled) {
+    if (!cron.validate(vehicleAlertExpr)) {
+      console.error(`[scheduler] vehicle-alert cron-expr tidak valid: "${vehicleAlertExpr}" — dilewati`);
+    } else {
+      cron.schedule(
+        vehicleAlertExpr,
+        async () => {
+          const startedAt = new Date().toISOString();
+          try {
+            const r = await runVehicleAlerts();
+            console.log(`[scheduler] vehicle-alert ok @ ${startedAt} ${JSON.stringify(r)}`);
+          } catch (e) {
+            console.error(`[scheduler] vehicle-alert gagal @ ${startedAt}:`, e);
+          }
+        },
+        { timezone },
+      );
+      live.push(`vehicle-alert=${vehicleAlertExpr}`);
     }
   }
 

@@ -20,6 +20,7 @@ import {
   CalendarCheck,
   Hourglass,
   FileCheck2,
+  Car,
   type LucideIcon,
 } from "lucide-react";
 
@@ -233,6 +234,7 @@ export const NAV: NavGroup[] = [
       { title: "Shipments", url: "/shipments", icon: Truck },
       { title: "Suppliers", url: "/suppliers", icon: Factory },
       { title: "HITL Review", url: "/hitl", icon: ClipboardCheck },
+      { title: "Kendaraan Operasional", url: "/vehicles", icon: Car, badge: "NEW" },
     ],
   },
   {
