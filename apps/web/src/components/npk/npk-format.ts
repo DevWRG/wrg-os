@@ -1,12 +1,18 @@
 // F66 NPK — tipe respons API + helper format bersama (warna band, label predikat).
+//
+// Subjek skor SENGAJA generik (`subject_key`/`subject_name`, bukan hod_*): komponen
+// yang sama merender dua jalur — NPK HoD (/npk, subjek = hod_key) dan NPK AM
+// (/npk/am, subjek = master_user.am_id). Halaman masing-masing memetakan respons
+// API-nya ke bentuk ini (lihat toMatrix() di tiap page.tsx); API tetap memakai
+// nama field yang jujur ke domainnya.
 
 export type AspectKey = "revenue" | "customer" | "ar" | "kso" | "gp" | "crm" | "coaching";
 export type Predikat = "sangat_baik" | "baik" | "cukup" | "kurang" | "buruk";
 
 export interface NpkMatrixRow {
-  hod_key: string;
-  hod_name: string;
-  role: string;
+  subject_key: string;
+  subject_name: string;
+  role: string;        // HoD: jabatan · AM: cabang (baris kedua di kolom nama)
   user_id: string | null;
   npk: number;
   predikat: Predikat;
@@ -34,8 +40,8 @@ export interface NpkAspectDetail {
   available: boolean;
 }
 export interface NpkDetailResult {
-  hod_key: string;
-  hod_name: string;
+  subject_key: string;
+  subject_name: string;
   role: string;
   year: number;
   period: "S1" | "S2";

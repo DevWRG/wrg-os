@@ -194,6 +194,40 @@ def main():
                 except ValueError:
                     pass
 
+        # Format bulan-bernama, mis. "20-Agu-2026, 11:37" (Luri) dan
+        # "Agu 20, 2026 ... 09:55" (Iqbal). Aplikasi kamera mereka mencetak
+        # bulan sebagai SINGKATAN INDONESIA dengan tanda hubung/koma, sementara
+        # dua pola di atas hanya mengenali angka bergaris-miring. Akibatnya
+        # geo_ts mereka SELALU kosong: visit_timestamp null dan deteksi
+        # date_mismatch tak pernah jalan, walau koordinatnya berhasil terbaca.
+        # Keluarannya dinormalkan ke DD/MM/YYYY HH:MM — bentuk yang sudah
+        # dibaca parseGeoTs() di sisi API, jadi tak ada perubahan di sana.
+        if not result["timestamp"]:
+            BULAN = {"jan":1,"feb":2,"mar":3,"apr":4,"mei":5,"may":5,"jun":6,"jul":7,
+                     "agu":8,"ags":8,"agt":8,"aug":8,"sep":9,"okt":10,"oct":10,
+                     "nov":11,"des":12,"dec":12}
+            NAMA = r"[A-Za-z]{3,4}"
+            pola = [
+                # 20-Agu-2026, 11:37  /  20 Agu 2026 11:37
+                (r"(\d{1,2})[-\s.]("+NAMA+r")[-\s.](\d{4})[^0-9]{0,6}(\d{1,2})[:.](\d{2})", "dmy"),
+                # Agu 20, 2026 ... 09:55
+                (r"("+NAMA+r")\s+(\d{1,2}),?\s+(\d{4})[^0-9]{0,6}(\d{1,2})[:.](\d{2})", "mdy"),
+            ]
+            for rx, urut in pola:
+                mt = re.search(rx, text, re.I)
+                if not mt:
+                    continue
+                if urut == "dmy":
+                    d, nm, y, hh, mm = mt.group(1), mt.group(2), mt.group(3), int(mt.group(4)), mt.group(5)
+                else:
+                    nm, d, y, hh, mm = mt.group(1), mt.group(2), mt.group(3), int(mt.group(4)), mt.group(5)
+                mo = BULAN.get(nm[:3].lower())
+                if not mo or not (1 <= int(d) <= 31) or hh > 23 or int(mm) > 59:
+                    continue
+                result["timestamp"] = f"{int(d):02d}/{mo:02d}/{y} {hh:02d}:{mm}"
+                result["timestamp_iso"] = f"{y}-{mo:02d}-{int(d):02d} {hh:02d}:{mm}:00"
+                break
+
         # Address: line starting with "Jl." or "Kec." or containing "Indonesia"
         addr_lines = [l.strip() for l in text.split("\n")
                       if l.strip() and re.search(r'\b(Jl\.|Kec\.|Indonesia|Jawa|Sumatera|Bali|Kalimantan|Sulawesi|Papua)', l)]

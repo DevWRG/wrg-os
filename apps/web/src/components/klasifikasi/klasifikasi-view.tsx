@@ -7,9 +7,13 @@ import { AlertTriangle, CircleAlert, Info, Plus, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ExportButton } from "@/components/ui/export-button";
+import { FilterCombo, FilterSelect, opsiDari } from "@/components/ui/filter-select";
 
 // ── Tipe (cermin apps/api/src/repo/klasifikasi.ts) ─────────────────────────
 export type Level = "kategori" | "line" | "class" | "sub_class";
@@ -405,10 +409,47 @@ function GeneratorTab({ taxonomy, canEdit }: { taxonomy: TaxonomyNode[]; canEdit
 // ── Daftar kode ────────────────────────────────────────────────────────────
 function KodeTab({ codes }: { codes: ProductCode[] }) {
   const [hanyaBeda, setHanyaBeda] = useState(false);
-  const rows = useMemo(
-    () => (hanyaBeda ? codes.filter((c) => c.legacyBeda) : codes),
-    [codes, hanyaBeda],
+  const [kategori, setKategori] = useState("");
+  const [line, setLine] = useState("");
+  const [klas, setKlas] = useState("");
+  const [sub, setSub] = useState("");
+  const [brand, setBrand] = useState("");
+  const [sumber, setSumber] = useState("");
+
+  // Filter klasifikasi BERTINGKAT: pilihan Product Line hanya yang ada di kategori
+  // terpilih, Class hanya yang ada di kategori itu, Sub Class hanya yang ada di
+  // Class itu. Sama alasannya dengan dropdown di tab Terbitkan Kode — id level
+  // bawah hanya bermakna bersama induknya, jadi daftar rata malah menyesatkan.
+  const opsiKategori = useMemo(() => opsiDari(codes, (c) => c.kategoriNama), [codes]);
+  const dalamKategori = useMemo(
+    () => codes.filter((c) => !kategori || c.kategoriNama === kategori),
+    [codes, kategori],
   );
+  const opsiLine = useMemo(() => opsiDari(dalamKategori, (c) => c.lineNama), [dalamKategori]);
+  const opsiKlas = useMemo(() => opsiDari(dalamKategori, (c) => c.classNama), [dalamKategori]);
+  const opsiSub = useMemo(
+    () => opsiDari(dalamKategori.filter((c) => !klas || c.classNama === klas), (c) => c.subClassNama),
+    [dalamKategori, klas],
+  );
+  const opsiBrand = useMemo(() => opsiDari(dalamKategori, (c) => c.brand), [dalamKategori]);
+  const opsiSumber = useMemo(() => opsiDari(codes, (c) => c.sumber), [codes]);
+
+  const rows = useMemo(
+    () => codes.filter((c) =>
+      (!hanyaBeda || c.legacyBeda)
+      && (!kategori || c.kategoriNama === kategori)
+      && (!line || c.lineNama === line)
+      && (!klas || c.classNama === klas)
+      && (!sub || c.subClassNama === sub)
+      && (!brand || (c.brand ?? "") === brand)
+      && (!sumber || c.sumber === sumber)),
+    [codes, hanyaBeda, kategori, line, klas, sub, brand, sumber],
+  );
+  const adaFilter = !!(hanyaBeda || kategori || line || klas || sub || brand || sumber);
+  const reset = () => {
+    setHanyaBeda(false); setKategori(""); setLine(""); setKlas(""); setSub("");
+    setBrand(""); setSumber("");
+  };
 
   const cols: DataColumn<ProductCode>[] = [
     { id: "kode", header: "Kode", accessor: (r) => r.kode, sortable: true,
@@ -441,6 +482,11 @@ function KodeTab({ codes }: { codes: ProductCode[] }) {
       <CardHeader>
         <CardTitle className="text-base">
           Kode produk · {fmt(rows.length)} baris
+          {adaFilter && (
+            <span className="ml-1 text-xs font-normal text-muted-foreground">
+              (tersaring dari {fmt(codes.length)})
+            </span>
+          )}
         </CardTitle>
       </CardHeader>
       <CardContent>
@@ -451,12 +497,31 @@ function KodeTab({ codes }: { codes: ProductCode[] }) {
           pageSize={25}
           searchPlaceholder="Cari kode, nama, kode 2025, brand…"
           toolbar={
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <FilterSelect label="Kategori" value={kategori} options={opsiKategori}
+                onChange={(v) => { setKategori(v); setLine(""); setKlas(""); setSub(""); setBrand(""); }} />
+              {/* Daftar panjang (57 product line · 87 class · 862 sub class · ±90 brand)
+                  → dropdown ber-kotak-cari. Kategori & Sumber tetap <select> asli
+                  karena isinya cuma beberapa. */}
+              <FilterCombo label="Product Line" value={line} options={opsiLine}
+                onChange={setLine} disabled={opsiLine.length === 0} />
+              <FilterCombo label="Class" value={klas} options={opsiKlas}
+                onChange={(v) => { setKlas(v); setSub(""); }} disabled={opsiKlas.length === 0} />
+              <FilterCombo label="Sub Class" value={sub} options={opsiSub}
+                onChange={setSub} disabled={opsiSub.length === 0} />
+              <FilterCombo label="Brand" value={brand} options={opsiBrand} onChange={setBrand} />
+              <FilterSelect label="Sumber" value={sumber} options={opsiSumber} onChange={setSumber} />
               <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
                 <input type="checkbox" checked={hanyaBeda}
                        onChange={(e) => setHanyaBeda(e.target.checked)} />
                 hanya yang beda dari spreadsheet
               </label>
+              {adaFilter && (
+                <button onClick={reset} className="rounded-md border px-2 py-1 text-xs hover:bg-muted">
+                  Reset
+                </button>
+              )}
+              {/* Export mengikuti filter — kalau tidak, isi file beda dari yang dilihat. */}
               <ExportButton
                 filename="kode-produk"
                 data={rows}
@@ -649,6 +714,7 @@ function NodePanel({
 function ReviewTab({ rows, canEdit }: { rows: ReviewRow[]; canEdit: boolean }) {
   const router = useRouter();
   const [busy, setBusy] = useState<number | null>(null);
+  const [selesai, setSelesai] = useState<ReviewRow | null>(null);
 
   async function setStatus(id: number, status: string) {
     setBusy(id);
@@ -681,7 +747,7 @@ function ReviewTab({ rows, canEdit }: { rows: ReviewRow[]; canEdit: boolean }) {
       cell: (r: ReviewRow) => (
         <span className="flex justify-end gap-1">
           <Button size="sm" variant="outline" disabled={busy === r.id}
-                  onClick={() => setStatus(r.id, "beres")}>Beres</Button>
+                  onClick={() => setSelesai(r)}>Selesaikan</Button>
           <Button size="sm" variant="ghost" disabled={busy === r.id}
                   onClick={() => setStatus(r.id, "diabaikan")}>Abaikan</Button>
         </span>
@@ -691,6 +757,11 @@ function ReviewTab({ rows, canEdit }: { rows: ReviewRow[]; canEdit: boolean }) {
 
   return (
     <Card>
+      <SelesaikanDialog
+        row={selesai}
+        onOpenChange={(v) => !v && setSelesai(null)}
+        onSelesai={() => { setSelesai(null); router.refresh(); }}
+      />
       <CardHeader>
         <CardTitle className="text-base">Perlu keputusan HoD Business · {fmt(rows.length)}</CardTitle>
       </CardHeader>
@@ -733,5 +804,198 @@ function ReviewTab({ rows, canEdit }: { rows: ReviewRow[]; canEdit: boolean }) {
         />
       </CardContent>
     </Card>
+  );
+}
+
+// ── Dialog "Selesaikan" satu baris antrean ─────────────────────────────────
+// Sebelum 1 Agt 2026 tombolnya cuma menandai status 'beres': baris hilang dari
+// antrean padahal kode tak pernah terbit dan master tetap kurang. User benar
+// waktu bilang "kagak tau larinya data bakal ke mana" — memang tak ke mana-mana.
+//
+// Sekarang satu aksi menyelesaikan betulan lewat POST
+// /klasifikasi/review/:id/selesaikan (satu transaksi di server): daftarkan sub
+// class baru di bawah induk baris itu ATAU pakai yang sudah ada → terbitkan kode
+// → tandai beres → pautkan ke baris price book. Semua hasilnya dilaporkan di sini
+// supaya jelas apa yang terjadi.
+function SelesaikanDialog({
+  row, onOpenChange, onSelesai,
+}: {
+  row: ReviewRow | null;
+  onOpenChange: (v: boolean) => void;
+  onSelesai: () => void;
+}) {
+  return (
+    <Dialog open={!!row} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-xl">
+        {row ? <SelesaikanBody row={row} onSelesai={onSelesai} /> : null}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+interface HasilSelesai {
+  kode: string; subClassId: string; didaftarkan: boolean; sudahAda?: boolean;
+  pricebookDipautkan: number;
+}
+
+function SelesaikanBody({ row, onSelesai }: { row: ReviewRow; onSelesai: () => void }) {
+  const [mode, setMode] = useState<"baru" | "ada">("baru");
+  const [nama, setNama] = useState(row.subClassNama ?? "");
+  const [pilihan, setPilihan] = useState<{ id: string; nama: string }[]>([]);
+  const [subId, setSubId] = useState("");
+  const [induk, setInduk] = useState<{ kategoriId: string; classId: string } | null>(null);
+  const [memuat, setMemuat] = useState(false);
+  const [akui, setAkui] = useState(false);
+  const [perluAkui, setPerluAkui] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [hasil, setHasil] = useState<HasilSelesai | null>(null);
+
+  // Pilihan sub class dimuat saat mode "pakai yang sudah ada" dipilih, bukan lewat
+  // useEffect saat dialog dibuka: daftarnya cuma perlu di mode itu, dan memuat
+  // dari event handler menghindari setState di dalam efek (cascading render).
+  async function pilihMode(m: "baru" | "ada") {
+    setMode(m);
+    if (m !== "ada" || pilihan.length > 0 || memuat) return;
+    setMemuat(true);
+    try {
+      const res = await fetch(`/api/klasifikasi/review/${row.id}/sub-class`);
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) { setErr(d.error ?? "gagal memuat pilihan sub class"); return; }
+      setPilihan(d.rows ?? []);
+      setInduk({ kategoriId: d.kategoriId, classId: d.classId });
+    } catch {
+      setErr("gagal memuat pilihan sub class");
+    } finally {
+      setMemuat(false);
+    }
+  }
+
+  async function kirim() {
+    setBusy(true); setErr(null);
+    try {
+      const res = await fetch(`/api/klasifikasi/review/${row.id}/selesaikan`, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          subClassId: mode === "ada" ? subId : null,
+          subClassNama: mode === "baru" ? nama.trim() : null,
+          akuiNamaSama: akui,
+        }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setErr(d.error ?? "gagal menyelesaikan");
+        if (String(d.error ?? "").includes("centang konfirmasi")) setPerluAkui(true);
+        return;
+      }
+      setHasil(d as HasilSelesai);
+    } catch (e) {
+      setErr(String(e instanceof Error ? e.message : e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (hasil) {
+    return (
+      <>
+        <DialogHeader>
+          <DialogTitle>Selesai</DialogTitle>
+          <DialogDescription>{row.nama}</DialogDescription>
+        </DialogHeader>
+        <DialogBody className="space-y-2 text-sm">
+          <p>
+            Kode produk: <b className="font-mono">{hasil.kode}</b>
+            {hasil.sudahAda ? " (sudah ada sebelumnya — baris antrean ditutup)" : " (baru diterbitkan)"}
+          </p>
+          {hasil.didaftarkan && (
+            <p className="text-muted-foreground text-xs">
+              Sub class <b>{nama.trim()}</b> didaftarkan ke master dengan id <b>{hasil.subClassId}</b>.
+            </p>
+          )}
+          <p className="text-muted-foreground text-xs">
+            {hasil.pricebookDipautkan > 0
+              ? `${hasil.pricebookDipautkan} baris price book ikut dapat pautan kode ini (KPI "Dapat kode produk" di Setup Harga naik).`
+              : "Tidak ada baris price book yang cocok untuk dipautkan (kode 5-bagian di sheet tidak ketemu)."}
+          </p>
+        </DialogBody>
+        <DialogFooter>
+          <Button onClick={onSelesai}>Tutup</Button>
+        </DialogFooter>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <DialogHeader>
+        <DialogTitle>Selesaikan &amp; terbitkan kode</DialogTitle>
+        <DialogDescription>
+          {row.nama}
+          {row.kode2025 ? ` · ${row.kode2025}` : " · tanpa kode 2025"}
+        </DialogDescription>
+      </DialogHeader>
+
+      <DialogBody className="space-y-4">
+        <div className="bg-muted/40 rounded-md border p-2 text-xs">
+          <div>
+            Induk: <b>{row.kategoriNama}</b> › <b>{row.lineNama}</b> › <b>{row.classNama}</b>
+            {induk ? ` (${induk.kategoriId}.${induk.classId})` : ""}
+          </div>
+          <div className="text-muted-foreground mt-1">{row.masalah}</div>
+        </div>
+
+        <div className="space-y-2">
+          <label className="flex items-start gap-2 text-sm">
+            <input type="radio" className="mt-1" checked={mode === "baru"} onChange={() => void pilihMode("baru")} />
+            <span className="flex-1">
+              <b>Daftarkan sub class baru</b> ke master
+              <input className={INPUT} value={nama} onChange={(e) => setNama(e.target.value)}
+                     placeholder="nama sub class" disabled={mode !== "baru"} />
+              <span className="text-muted-foreground text-xs">
+                Id 3 digit berikutnya di class ini dipakai otomatis.
+              </span>
+            </span>
+          </label>
+          <label className="flex items-start gap-2 text-sm">
+            <input type="radio" className="mt-1" checked={mode === "ada"} onChange={() => void pilihMode("ada")} />
+            <span className="flex-1">
+              <b>Pakai sub class yang sudah ada</b>{" "}
+              {memuat ? "(memuat…)" : pilihan.length ? `(${pilihan.length} terdaftar)` : ""}
+              <select className={INPUT} value={subId} onChange={(e) => setSubId(e.target.value)}
+                      disabled={mode !== "ada"}>
+                <option value="">— pilih —</option>
+                {pilihan.map((o) => (
+                  <option key={o.id} value={o.id}>{o.id} · {o.nama}</option>
+                ))}
+              </select>
+            </span>
+          </label>
+        </div>
+
+        {perluAkui && (
+          <label className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900">
+            <input type="checkbox" className="mt-0.5" checked={akui} onChange={(e) => setAkui(e.target.checked)} />
+            <span>
+              Saya sudah memeriksa di tab Kode Produk: produk bernama sama itu memang produk yang
+              sama dengan baris ini. (Baris ini tak punya kode 2025, jadi pencocokannya cuma lewat nama.)
+            </span>
+          </label>
+        )}
+
+        {err && <p className="text-sm text-red-600">{err}</p>}
+        <p className="text-muted-foreground text-xs">
+          Kode produk menempel permanen di Accurate — kalau induknya masih salah, batalkan dan
+          betulkan dulu di tab Master Klasifikasi.
+        </p>
+      </DialogBody>
+
+      <DialogFooter>
+        <Button onClick={() => void kirim()}
+                disabled={busy || (mode === "baru" ? !nama.trim() : !subId) || (perluAkui && !akui)}>
+          Terbitkan kode
+        </Button>
+      </DialogFooter>
+    </>
   );
 }

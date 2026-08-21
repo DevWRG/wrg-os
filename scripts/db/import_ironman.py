@@ -6,7 +6,7 @@ Baca sheet '2026' (data riil ~171 baris; sisanya baris kosong). Idempoten
 jadi aman digabung satu pipeline & aman diulang.
 
 Mapping (mengikuti import_hs_s1.py):
-- PROGRES → 8-stage (STATUS_MAP; 'proses di manajemen'→Negotiation; 'ditunda'→on_hold).
+- PROGRES → 7-stage (STATUS_MAP; 'proses di manajemen'→Negotiation; 'ditunda'→on_hold).
 - prospect_category / probability / forecast_category DIDERIVE dari stage
   (STATUS CUSTOMER sheet cuma dijadikan cross-check → laporan cat_shift).
 - SALES → am_id (master_user.panggilan); VACANT → am_id kosong.
