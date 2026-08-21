@@ -1,7 +1,7 @@
 import { db } from "../db.js";
 
 // F23 — RFID/Cartridge Error Claim Tracker (Aftersales). Flat table, tracking
-// internal saja. Lihat infra/postgres/init/095_rfid_cartridge_claim.sql.
+// internal saja. Lihat infra/postgres/init/116_rfid_cartridge_claim.sql.
 
 export type ClaimStatus = "pending" | "resolved" | "rejected";
 
