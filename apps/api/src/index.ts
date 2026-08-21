@@ -13,7 +13,8 @@ import { matchCustomer, type PlanCandidate } from "./parsers/fuzzy.js";
 import { isDbEnabled, pingDb } from "./db.js";
 import { waPreflight, sendViaWaGateway, type WaSendResult } from "./wasend.js";
 import { processUnprocessed, isInboundEnabled } from "./repo/inbound.js";
-import { syncAccurateInvoices, syncVendors, syncItems, syncSalesOrders, syncDeliveryOrders, syncCustomers, getDeliveryOrderItems, getSalesOrderItems, getVendorDetail, accurateConfigured } from "./repo/accurateSync.js";
+import { syncAccurateInvoices, syncVendors, syncItems, syncSalesOrders, syncDeliveryOrders, syncCustomers, syncSalesOrderItems, syncDeliveryOrderItems, getDeliveryOrderItems, getSalesOrderItems, getVendorDetail, accurateConfigured } from "./repo/accurateSync.js";
+import { mirrorFreshness } from "./repo/mirror-health.js";
 import { insertAuditEvent } from "./repo/audit.js";
 import { upsertDealsFromPlan, logReportToDeals, getPipeline, getPipelineReport, getPipelineLeaderboard, transitionStage, DealError, listPendingLosses, decideLoss, getDealTimeline, createDeal, updateDeal, deleteDeal } from "./repo/deal.js";
 import { enqueueAmbiguous, listHitl, resolveHitl } from "./repo/hitl.js";
@@ -84,6 +85,7 @@ import {
   unpublishSetup as unpublishPricebookSetup, listPublishedKeagenan,
   type SetupPatch as PricebookSetupPatch,
 } from "./repo/pricebook.js";
+import { pricelistPdf } from "./repo/pricelist-pdf.js";
 import {
   taxonomy as klasifikasiTaxonomy, summary as klasifikasiSummary,
   listCodes as listKlasifikasiCodes, nextKode as nextKlasifikasiKode,
@@ -95,6 +97,7 @@ import {
   type Level as KlasifikasiLevel,
 } from "./repo/klasifikasi.js";
 import { master as ksoMaster } from "./repo/kso.js";
+import { produktivitas as ksoProduktivitas, faskesDetail as ksoFaskesDetail } from "./repo/kso-produktivitas.js";
 import { listCoachingNotes } from "./repo/coaching.js";
 import { getLatestCoachingNotes, computePeopleAnalytics } from "./repo/people.js";
 import { createVisit, getVisit, listVisits, visitKpi, visitSummary } from "./repo/visit.js";
@@ -134,6 +137,7 @@ import {
   reportCalendarDay,
 } from "./repo/plandash.js";
 import { salesRange, reportRevenue, reportSalesAr, salesOverview, customersRevenue, customerMonthly, dormantCustomers, churnCustomers, targetPacing, reportSalesPerformance } from "./repo/sales.js";
+import { streamRange, reportRevenueByStream } from "./repo/revenue-stream.js";
 import { resolveScope } from "./repo/access-scope.js";
 import { getRaportList, getRaportDetail } from "./repo/raport.js";
 import { generateRaportNarrative, runRaportNarrative } from "./repo/raportnarrative.js";
@@ -229,6 +233,14 @@ app.use("*", async (c, next) => {
 app.get("/health", async (c) => {
   const db = isDbEnabled() ? (await pingDb()) ? "ok" : "down" : "disabled";
   return c.json({ status: "ok", service: "wrg-api", db });
+});
+
+// Kesegaran mirror Accurate. Sengaja BALIKAN 503 saat basi supaya bisa dipantau
+// uptime-checker biasa tanpa parsing JSON — kegagalan sync itu senyap, tak ada
+// yang error, angkanya cuma diam-diam kurang.
+app.get("/health/mirror", async (c) => {
+  const h = await mirrorFreshness();
+  return c.json(h, h.ok ? 200 : 503);
 });
 
 // Status wiring gateway WA — TIDAK kirim pesan. ?probe=1 → cek konektivitas gateway.
@@ -964,6 +976,26 @@ app.post("/accurate/sync/shipments", async (c) => {
   return c.json(r, r.ok ? 200 : 502);
 });
 
+// Backfill baris item SO/DO ke mirror (dasar fill rate F76). Berbatas per
+// pemanggilan — `pending` di balikan = sisa dokumen sebenarnya di dalam jendela
+// `days` (count penuh, tidak dibatasi `limit`), panggil ulang sampai 0.
+// ?kind=so|do (default keduanya), ?limit= dokumen/panggilan, ?days= jendela tanggal.
+app.post("/accurate/sync/doc-items", async (c) => {
+  // Validasi bentuk permintaan DULU: parameter salah harus 400 apa pun status
+  // kredensial, kalau tidak pemanggil dapat 503 yang menyesatkan.
+  const kind = (c.req.query("kind") ?? "").trim().toLowerCase();
+  if (kind && kind !== "so" && kind !== "do") return c.json({ error: "kind harus so|do" }, 400);
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  if (!accurateConfigured()) return c.json({ error: "kredensial Accurate tak tersedia" }, 503);
+  const limit = Math.min(Math.max(Number(c.req.query("limit")) || 150, 1), 1000);
+  const sinceDays = Math.min(Math.max(Number(c.req.query("days")) || 120, 1), 1095);
+  const out: Record<string, unknown> = {};
+  if (kind !== "do") out.salesOrders = await syncSalesOrderItems({ limit, sinceDays });
+  if (kind !== "so") out.deliveryOrders = await syncDeliveryOrderItems({ limit, sinceDays });
+  const ok = Object.values(out).every((v) => (v as { ok: boolean }).ok);
+  return c.json(out, ok ? 200 : 502);
+});
+
 // Baris produk satu surat jalan (on-demand dari Accurate detail.do).
 app.get("/accurate/shipments/:id/items", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
@@ -1471,13 +1503,24 @@ app.post("/visits", async (c) => {
     return c.json({ error: "invalid JSON body" }, 400);
   }
   if (!body.am_id) return c.json({ error: "am_id wajib" }, 400);
+  // lat/lon wajib. Tanpa koordinat, sales_plan.visit_lat NULL dan kunjungannya
+  // tak akan pernah muncul di GET /visits (filter `visit_lat IS NOT NULL`) —
+  // tersimpan tapi hilang. Ditolak di sini, bukan disimpan diam-diam. Di luar
+  // bbox Indonesia tetap diterima (geo_status='out_of_bounds'); yang ditolak
+  // hanya koordinat yang tidak ada atau bukan angka.
+  if (!Number.isFinite(body.lat) || !Number.isFinite(body.lon)) {
+    return c.json(
+      { error: "lat & lon wajib berupa angka — kunjungan tanpa koordinat tidak akan tampil di GET /visits" },
+      400,
+    );
+  }
   const r = await createVisit({
     am_id: body.am_id,
     deal_id: body.deal_id,
     customer_name: body.customer_name,
     photo_url: body.photo_url,
-    lat: body.lat,
-    lon: body.lon,
+    lat: body.lat as number,
+    lon: body.lon as number,
     visit_timestamp: body.visit_timestamp,
     visit_date: body.visit_date,
     note: body.note,
@@ -1906,6 +1949,16 @@ app.get("/sales/revenue", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const { from, to } = salesRange(c.req.query("from"), c.req.query("to"));
   return c.json(await reportRevenue(from, to));
+});
+
+// Revenue-by-stream (WatchPoint kartu Fafa): revenue per lini produk.
+// ?periode=YYYY-MM (menang atas from/to), atau ?from=&to=. Default bulan berjalan.
+// Balikan `ringkasan` memuat cakupan klasifikasi & selisih terhadap netto invoice —
+// tampilkan keduanya di UI, jangan cuma daftar lininya.
+app.get("/reports/revenue-by-stream", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const { from, to } = streamRange(c.req.query("periode"), c.req.query("from"), c.req.query("to"));
+  return c.json(await reportRevenueByStream(from, to));
 });
 
 // Kartu Sales Performance: target vs realisasi per periode (YTD/kuartal/bulan) +
@@ -2522,7 +2575,7 @@ app.get("/watchpoint/weekly/weeks", async (c) => {
 // tidak tergilas — lihat snapshotWeek().
 app.post("/watchpoint/weekly/snapshot", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let body: { year?: number; week?: number } = {};
+  let body: { year?: number; week?: number; mode?: string } = {};
   try { body = await c.req.json(); } catch { /* body opsional → minggu berjalan */ }
   const cur = currentWeek();
   const isoYear = Number(body.year ?? cur.isoYear);
@@ -2530,7 +2583,13 @@ app.post("/watchpoint/weekly/snapshot", async (c) => {
   if (!Number.isInteger(isoYear) || !Number.isInteger(isoWeek) || isoWeek < 1 || isoWeek > 53) {
     return c.json({ error: "year/week tidak valid" }, 400);
   }
-  return c.json(await snapshotWeek(isoYear, isoWeek));
+  // mode 'reconstruct' = isi mundur minggu lampau. Hanya metric capaian periode
+  // yang sumbernya menjangkau minggu itu yang dibekukan; ar90/noorder/churn/
+  // fia/xsell dilewati karena tak bisa direkonstruksi (lihat snapshotWeek).
+  if (body.mode !== undefined && body.mode !== "live" && body.mode !== "reconstruct") {
+    return c.json({ error: "mode harus live|reconstruct" }, 400);
+  }
+  return c.json(await snapshotWeek(isoYear, isoWeek, body.mode === "reconstruct" ? "reconstruct" : "live"));
 });
 
 // Input manual HoD untuk satu metric di satu minggu (uptime, lead time, JV, dst).
@@ -2682,6 +2741,36 @@ app.get("/kso/master", async (c) => {
   return c.json(await ksoMaster());
 });
 
+// Produktivitas aset KSO (view kso_asset_produktivitas_v, migrasi 097-105).
+// Menu /kso-produktivitas. Gate akses di BFF (apps/web /api/kso/*) memakai
+// canViewKso — sama dengan Simulator.
+//
+// CATATAN AKSES: gate itu terikat flag fitur 'kso-simulator'. Simulator hanya
+// memuat harga alat & reagen; halaman ini memuat REVENUE PER FASKES, yang lebih
+// sensitif. Dipakai bersama atas keputusan user 2026-08-18. Kalau kelak perlu
+// dipisah, buat flag sendiri dan ganti gate-nya di BFF — endpoint ini tidak
+// perlu berubah.
+app.get("/kso/produktivitas", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await ksoProduktivitas());
+});
+
+// Detail satu faskes untuk dialog "Lihat detail". Gate-nya sama dengan endpoint di
+// atas (canViewKso di BFF) — rute ini melewati catch-all /api/kso/* yang sama, jadi
+// tidak ada jalur akses baru yang perlu dibuka.
+app.get("/kso/produktivitas/faskes/:accountId", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const accountId = Number(c.req.param("accountId"));
+  if (!Number.isFinite(accountId)) return c.json({ error: "accountId invalid" }, 400);
+  // Skema WAJIB dan dibatasi dua nilai: satu faskes bisa memegang dua skema dengan
+  // angka yang berbeda jauh, jadi detail tanpa skema akan mencampur keduanya.
+  const skema = c.req.query("skema") ?? "";
+  if (skema !== "PER_TEST" && skema !== "BELI_REAGEN") {
+    return c.json({ error: "skema wajib PER_TEST | BELI_REAGEN" }, 400);
+  }
+  return c.json(await ksoFaskesDetail(accountId, skema));
+});
+
 // Setelan harga keagenan (migrasi 077). Gate di halaman /pricebook/setup
 // (HoD Business / Purchasing / admin) — endpoint ini memuat HPP.
 app.patch("/pricebook/setup", async (c) => {
@@ -2708,6 +2797,24 @@ app.post("/pricebook/setup/unpublish", async (c) => {
 
 // Harga keagenan TERPUBLIKASI — ini yang dibuka Account Manager. Tanpa HPP &
 // margin: kolomnya tidak di-SELECT sama sekali, jadi tak ada jalan bocor.
+// Export PDF daftar harga terpublikasi. POST (bukan GET) karena daftar row_no
+// yang dicentang user bisa ratusan — terlalu panjang untuk query string.
+app.post("/pricebook/published/pdf", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const b = await c.req.json().catch(() => ({}) as Record<string, unknown>);
+  const rowNos = Array.isArray(b.rowNos)
+    ? (b.rowNos as unknown[]).map(Number).filter(Number.isInteger) : undefined;
+  const pdf = await pricelistPdf({
+    periode: (b.periode as string) || undefined,
+    rowNos,
+    oleh: (b.oleh as string) ?? null,
+  });
+  return c.body(new Uint8Array(pdf), 200, {
+    "content-type": "application/pdf",
+    "content-disposition": `attachment; filename="daftar-harga-keagenan.pdf"`,
+  });
+});
+
 app.get("/pricebook/published", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const q = c.req.query();

@@ -8,7 +8,7 @@ import {
   Factory, Workflow, Receipt, BarChart3, ClipboardCheck, History, Settings,
   Sparkles, Send, FileText, ScrollText, GraduationCap, UsersRound, Network,
   Bell, MapPin, ListChecks, Swords, CalendarOff, CalendarDays, CalendarRange,
-  Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, Tags, SlidersHorizontal,
+  Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, Tags, SlidersHorizontal, Microscope,
   Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, BookOpen, Calculator,
   Wallet, Coins,
   type LucideIcon,
@@ -105,6 +105,37 @@ export const NAV: NavGroup[] = [
       // dipakai sales menyusun skema KSO/CPRR di depan faskes. Master datanya
       // migrasi 074, rumusnya apps/web/src/lib/kso/formula.ts.
       { title: "Simulator KSO", url: "/kso-simulator", icon: Calculator, badge: "NEW", show: canViewKso },
+      // Produktivitas KSO — sisi lain dari Simulator: bukan menghitung skema di
+      // depan faskes, tapi membaca hasilnya. Realisasi tes (spreadsheet master
+      // aset) disandingkan dengan revenue Accurate untuk menghasilkan Rp/tes per
+      // faskes. Data & aturan atribusinya di view kso_asset_produktivitas_v
+      // (migrasi 097-105), bukan di TypeScript.
+      //
+      // Gate sama dengan Simulator atas keputusan user 2026-08-18 — perlu diingat
+      // halaman ini memuat REVENUE PER FASKES, bukan sekadar harga alat.
+      //
+      // feature: "kso-simulator" — SENGAJA menumpang kunci izin Simulator, bukan
+      // memakai slug rutenya sendiri. Tanpa override ini navVisible memakai
+      // featureKey(url) = "kso-produktivitas"; begitu Sync Fitur menyemai baris
+      // izin untuk kunci itu (deny bagi semua grup), menu hilang dari sidebar dan
+      // layout dashboard menutup rutenya — padahal halaman & BFF meng-gate dengan
+      // canViewKso yang terikat 'kso-simulator'. Hasilnya satu fitur butuh DUA
+      // centang, dan yang kedua tidak pernah diminta.
+      //
+      // Kalau kelak akses ini dipisah dari Simulator (halaman ini memuat revenue
+      // per faskes, Simulator tidak), hapus override ini DAN ganti gate di
+      // apps/web/src/lib/kso-access.ts serta BFF — tiga tempat harus ikut, kalau
+      // tidak menu dan halaman kembali menilai dengan kunci berbeda.
+      //
+      // SATU menu, dua TAB (Tabel per faskes | Ringkasan) — keputusan user 2026-08-18.
+      // Ringkasan sempat berdiri sebagai menu sendiri (#911/#913) lalu digabung.
+      // Aman dijadikan tab justru karena keduanya memakai kunci izin yang SAMA:
+      // keberatan biasa terhadap tab — "tidak bisa dicentang sendiri di matriks Akses
+      // Grup", seperti pada /pricebook — tidak berlaku di sini, tidak ada izin yang
+      // hilang karena tidak pernah ada dua izin. Rute lamanya dipertahankan sebagai
+      // redirect ke ?tab=ringkasan (lihat berkas page.tsx-nya).
+      { title: "Produktivitas KSO", url: "/kso-produktivitas", icon: Microscope, badge: "NEW",
+        feature: "kso-simulator", show: canViewKso },
       // Harga jual dibagi per PEMBACA, bukan per tabel:
       //   /pricebook            sales & AM — katalog + harga terpublikasi (071/043)
       //   /pricebook/ringkasan  Direktur + HoD — bacaan portofolio
@@ -149,6 +180,8 @@ export const NAV: NavGroup[] = [
       { title: "Executive Briefings", url: "/briefings", icon: ScrollText },
       { title: "Coaching Notes", url: "/coaching", icon: GraduationCap },
       { title: "Reports", url: "/reports", icon: BarChart3 },
+      // Revenue per lini produk — dasar metric `revstream` (kartu Fafa, WatchPoint).
+      { title: "Revenue per Lini", url: "/revenue-stream", icon: Coins, badge: "NEW" },
       { title: "Digest History", url: "/digests", icon: History },
     ],
   },
@@ -248,15 +281,24 @@ export interface FeatureCatalogRow { key: string; name: string; section: string;
 // Katalog fitur datar utk Sync (dikirim ke /admin/access/features/sync).
 export function featureCatalog(): FeatureCatalogRow[] {
   const rows: FeatureCatalogRow[] = [];
+  // Satu kunci cukup SEKALI. Dua item menu boleh menumpang kunci izin yang sama
+  // lewat override `feature` (mis. Produktivitas KSO menumpang 'kso-simulator'),
+  // dan tanpa dedup ini keduanya terkirim ke /admin/access/features/sync. Di sana
+  // upsert-nya berurutan dengan DO UPDATE SET name/path, jadi item yang BELAKANGAN
+  // menimpa nama & path milik yang duluan — baris "Simulator KSO" di matriks Akses
+  // Grup berganti nama jadi "Produktivitas KSO" tanpa ada yang meminta.
+  // Kemunculan PERTAMA yang dipertahankan: itu item pemilik kunci aslinya.
+  const seen = new Set<string>();
+  const push = (r: FeatureCatalogRow) => { if (!seen.has(r.key)) { seen.add(r.key); rows.push(r); } };
   let sort = 10;
   for (const g of NAV) {
     for (const it of g.items) {
-      rows.push({ key: it.feature ?? featureKey(it.url), name: it.title, section: g.label, path: it.url, sort });
+      push({ key: it.feature ?? featureKey(it.url), name: it.title, section: g.label, path: it.url, sort });
       sort += 10;
       // Fitur yang menunya sudah lebur jadi tab tetap ikut disemai — kalau tidak,
       // Sync Fitur menganggapnya zombie dan mematikannya (izin grup hilang senyap).
       for (const f of it.features ?? []) {
-        rows.push({ key: f.key, name: f.name, section: g.label, path: it.url, sort });
+        push({ key: f.key, name: f.name, section: g.label, path: it.url, sort });
         sort += 10;
       }
     }

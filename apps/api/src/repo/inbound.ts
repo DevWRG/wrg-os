@@ -1,6 +1,6 @@
 import { db } from "../db.js";
 import { detectDaily, parseDaily, stripInvisible } from "../parsers/dailyplan.js";
-import { parseAmPlan, parseAmReport } from "../parsers/am.js";
+import { parseAmPlan, parseAmReport, bersihkanNamaCustomer } from "../parsers/am.js";
 import { sendViaWaGateway, type WaSendResult } from "../wasend.js";
 import { handleSalesAnalyticsQuery } from "./inbound-sales-analytics.js";
 import { resolveSender } from "./master.js";
@@ -159,11 +159,12 @@ function progressBar(filled: number, total: number): string {
 }
 
 // Balasan #REPORT AM — selaras format legacy "Kapten" (EOD + progress + foto pending).
-function buildAmReportReply(
+// Diekspor untuk diuji tanpa DB (repo/inbound-reply.test.ts).
+export function buildAmReportReply(
   nama: string,
   tanggal: string,
   n: number,
-  res: { matched: number; unmatched: number },
+  res: { matched: number; unmatched: number; unmatchedNames?: string[] },
   planTotal: number,
   reported: number,
   pendingPhoto: string[],
@@ -172,6 +173,14 @@ function buildAmReportReply(
   if (planTotal > 0) s += `\n📊 ${reported}/${planTotal} customer selesai  ${progressBar(reported, planTotal)}`;
   s += `\n🎯 Match plan: ${res.matched}✓`;
   if (res.unmatched > 0) s += ` ${res.unmatched}⚠️`;
+  // Nama customer yang tak match SELALU disebut. Tanpa ini AM cuma melihat
+  // "1⚠️" dan tak punya cara tahu customer mana yang gagal dicocokkan —
+  // datanya sudah ada di unmatchedNames, dulu hanya tidak dicetak.
+  const namesTakMatch = res.unmatchedNames ?? [];
+  if (namesTakMatch.length > 0) {
+    s += `\n\n⚠️ *Di luar #PLAN hari ini (${namesTakMatch.length} customer):*\n${namesTakMatch.join(", ")}`;
+    s += "\n\nKalau memang dikunjungi, kirim ulang #PLAN lengkap (semua customer hari ini) lalu #REPORT lagi — biar terhitung selesai.";
+  }
   if (pendingPhoto.length > 0) {
     s += `\n\n⚠️ *Foto visit belum ada (${pendingPhoto.length} customer):*\n${pendingPhoto.join(", ")}`;
     s += "\n\nKirim foto Geo-Tagging Camera per customer dgn caption `Nama Customer` — fuzzy match auto-pair ke pending.";
@@ -179,6 +188,60 @@ function buildAmReportReply(
     s += `\n✅ Semua foto visit lengkap.`;
   }
   return s;
+}
+
+/**
+ * Tempelkan foto pesan `#REPORT` ke baris aktivitas yang LAHIR dari pesan itu.
+ *
+ * processInboundMessage() hanya menjalankan photoFollowup() saat
+ * `kind === "none"` — yaitu foto TANPA caption berhashtag. Padahal banyak AM
+ * melapor dengan foto ber-caption `#Report / Cust : X / Hasil : …`; pesan itu
+ * dirutekan ke jalur laporan, dan fotonya sendiri TIDAK PERNAH terpasang.
+ *
+ * Akibatnya di produksi: dari 1.250 baris activity_log yang berasal dari foto
+ * ber-caption #Report, 1.235 (98,8%) `photo_path`-nya NULL dan 1.242
+ * `photo_geotag`-nya NULL — padahal OCR sudah mengekstrak koordinatnya ke
+ * `wa_message.geo_lat`. Sidqi 589/589 (100%), Vicky 174/174, Firman 124/124.
+ * Dua akibat yang terlihat: kolom Geotag di kartu kunjungan nol untuk AM yang
+ * fotonya justru lengkap, dan bot menagih "Foto visit belum ada" untuk foto
+ * yang baru saja dikirim AM.
+ *
+ * Dipasang SEBELUM daftar `pending` foto dihitung, supaya balasan tidak lagi
+ * menagih foto yang sudah menempel.
+ */
+async function tempelFotoLaporan(row: WaRow, tanggal: string): Promise<Record<string, unknown> | null> {
+  if (!String(row.message_type ?? "").toLowerCase().startsWith("image") || !row.media_path) return null;
+  const sql = db();
+  const hasGeo = row.geo_lat != null && row.geo_lon != null;
+  // Jam overlay tetap dipakai walau koordinatnya gagal terbaca OCR — aplikasi
+  // kamera Luri/Iqbal sering kehilangan digit koordinat tapi jamnya utuh. Tanpa
+  // ini visit_timestamp mereka selalu null dan date_mismatch tak pernah jalan.
+  const g = parseGeoTs(row.geo_ts);
+  const adaGeo = hasGeo || g.dt != null;
+  const geo = adaGeo
+    ? { lat: row.geo_lat ?? null, lon: row.geo_lon ?? null, ts: row.geo_ts ?? null, address: row.geo_address ?? null }
+    : null;
+  const rows = await sql<{ id: string; plan_id: string | null }[]>`
+    UPDATE activity_log SET photo_path = ${row.media_path},
+      photo_geotag = ${geo ? sql.json(geo as unknown as Parameters<typeof sql.json>[0]) : null}
+    WHERE message_id = ${row.message_id} AND photo_path IS NULL
+    RETURNING id, plan_id`;
+  if (rows.length === 0) return { foto: "tak-ada-baris" };
+  let plan = 0;
+  if (adaGeo) {
+    for (const r of rows) {
+      if (!r.plan_id) continue;
+      await sql`
+        UPDATE sales_plan
+           SET visit_lat = COALESCE(${row.geo_lat ?? null}::numeric, visit_lat),
+               visit_lon = COALESCE(${row.geo_lon ?? null}::numeric, visit_lon),
+               visit_timestamp = COALESCE(${g.dt}::timestamptz, visit_timestamp),
+               visit_date_mismatch = COALESCE(${g.iso ? g.iso !== tanggal : null}::boolean, visit_date_mismatch)
+         WHERE id = ${Number(r.plan_id)}`;
+      plan += 1;
+    }
+  }
+  return { foto_terpasang: rows.length, geo: hasGeo, jam: g.dt != null, plan_geo_diperbarui: plan };
 }
 
 // ── Alur AM per-customer ──
@@ -257,15 +320,18 @@ async function insertAmActivities(
   let linked = 0;
   const unmatchedNames: string[] = [];
   for (const it of items) {
+    // Cocokkan pakai nama yang sudah dibuang prefiks "Cust :"; yang DISIMPAN
+    // tetap apa adanya dari AM (jejak mentah tetap di wa_message.body).
+    const namaBersih = bersihkanNamaCustomer(it.customer);
     const cands = await sql`
-      SELECT id, similarity(customer_name, ${it.customer}) AS score
+      SELECT id, similarity(customer_name, ${namaBersih}) AS score
       FROM sales_plan WHERE am_id = ${amId} AND tanggal = ${tanggal}
-        AND similarity(customer_name, ${it.customer}) > 0.3
+        AND similarity(customer_name, ${namaBersih}) > 0.3
       ORDER BY score DESC LIMIT 1
     `;
     const planId = cands[0] ? Number(cands[0].id) : null;
     const score = cands[0] ? Number(cands[0].score) : null;
-    const links = await resolveActivityLinks(amId, it.customer).catch(() => ({ accountId: null, opportunityId: null }));
+    const links = await resolveActivityLinks(amId, namaBersih).catch(() => ({ accountId: null, opportunityId: null }));
     if (links.accountId !== null) linked += 1;
     // Default 'Fisik' bila AM tak menyebut tipe: #REPORT AM = laporan kunjungan
     // harian (bukan kanal lain) — mempertahankan makna baris lama.
@@ -316,15 +382,31 @@ async function photoFollowup(row: WaRow, am: { am_id: string; nama: string }): P
   let caption = (row.body ?? "").trim();
   if (caption === "<media:image>") caption = "";
   if (!caption) return { skipped: "no-caption" };
-  const cands = await sql`
+  // Dulu LIMIT 1: hanya baris ber-skor tertinggi dalam jendela 7 hari yang
+  // dilihat, TANPA peduli baris itu sudah berfoto. Kalau ternyata sudah, foto
+  // baru dibuang sebagai "already-saved" — padahal baris HARI INI untuk faskes
+  // yang sama masih kosong. AM yang mengunjungi faskes yang sama berulang
+  // paling dirugikan: 209 foto ditolak, 134 di antaranya punya slot kosong di
+  // hari yang sama (Angga 41 · Yugo 39 · Iqbal 34 · Luri 28 · Irul 26).
+  // Sekarang beberapa kandidat diambil, dan slot KOSONG diutamakan.
+  const cands = await sql<{ id: string; customer_name: string; plan_id: string | null; tanggal: string; photo_path: string | null; score: string }[]>`
     SELECT id, customer_name, plan_id, tanggal::text AS tanggal, photo_path,
            similarity(customer_name, ${caption}) AS score
     FROM activity_log
     WHERE am_id = ${am.am_id} AND tanggal >= (CURRENT_DATE - 7)
       AND similarity(customer_name, ${caption}) >= ${PHOTO_SILENT}
-    ORDER BY score DESC LIMIT 1
+    ORDER BY score DESC LIMIT 8
   `;
-  const top = cands[0];
+  // Slot kosong yang layak: lulus ambang match, belum berfoto. Di antara itu,
+  // yang tanggalnya SAMA dengan hari foto dikirim diutamakan — foto yang baru
+  // dikirim hampir selalu milik kunjungan hari itu; baru kemudian skor.
+  const hariFoto = String(row.received_at ?? "").slice(0, 10);
+  const kosong = cands
+    .filter((c) => !c.photo_path && Number(c.score) >= PHOTO_MATCH)
+    .sort((a, b) =>
+      (b.tanggal === hariFoto ? 1 : 0) - (a.tanggal === hariFoto ? 1 : 0) ||
+      Number(b.score) - Number(a.score));
+  const top = kosong[0] ?? cands[0];
   if (!top) return { skipped: "no-match-silent", caption };
   const score = Number(top.score);
   if (score < PHOTO_MATCH) {
@@ -336,20 +418,26 @@ async function photoFollowup(row: WaRow, am: { am_id: string; nama: string }): P
     return { note: "already-saved", reply };
   }
   const hasGeo = row.geo_lat != null && row.geo_lon != null;
-  const geo = hasGeo ? { lat: row.geo_lat, lon: row.geo_lon, ts: row.geo_ts ?? null, address: row.geo_address ?? null } : null;
+  const g = parseGeoTs(row.geo_ts); // jam dipakai walau koordinat gagal — lihat tempelFotoLaporan
+  const adaGeo = hasGeo || g.dt != null;
+  const geo = adaGeo
+    ? { lat: row.geo_lat ?? null, lon: row.geo_lon ?? null, ts: row.geo_ts ?? null, address: row.geo_address ?? null }
+    : null;
   await sql`
     UPDATE activity_log SET photo_path = ${row.media_path ?? null},
       photo_geotag = ${geo ? sql.json(geo as unknown as Parameters<typeof sql.json>[0]) : null}
     WHERE id = ${top.id}
   `;
   let mismatch = false;
-  if (top.plan_id && hasGeo) {
-    const g = parseGeoTs(row.geo_ts);
+  if (top.plan_id && adaGeo) {
     mismatch = g.iso ? g.iso !== String(top.tanggal) : false;
     await sql`
-      UPDATE sales_plan SET visit_lat = ${row.geo_lat ?? null}, visit_lon = ${row.geo_lon ?? null},
-        visit_timestamp = ${g.dt}, visit_date_mismatch = ${mismatch}
-      WHERE id = ${top.plan_id}
+      UPDATE sales_plan
+         SET visit_lat = COALESCE(${row.geo_lat ?? null}::numeric, visit_lat),
+             visit_lon = COALESCE(${row.geo_lon ?? null}::numeric, visit_lon),
+             visit_timestamp = COALESCE(${g.dt}::timestamptz, visit_timestamp),
+             visit_date_mismatch = COALESCE(${g.iso ? g.iso !== String(top.tanggal) : null}::boolean, visit_date_mismatch)
+       WHERE id = ${top.plan_id}
     `;
   }
   // Debounce: kalau masih ada foto lain dari AM/grup yg sama BELUM diproses,
@@ -536,6 +624,9 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
     }
     const tgl = ar.tanggal ?? wibDate();
     const res = await insertAmActivities(am.am_id, tgl, ar.items, row.message_id);
+    // Foto yang datang BERSAMA laporan ini dipasang sekarang — sebelum daftar
+    // `pend` dihitung, supaya balasan tak menagih foto yang sudah ada.
+    const foto = await tempelFotoLaporan(row, tgl);
     const [tot] = await sql`
       SELECT count(*)::int AS plan_total, count(*) FILTER (WHERE reported)::int AS reported
       FROM sales_plan WHERE am_id = ${am.am_id} AND tanggal = ${tgl}
@@ -561,7 +652,7 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
     let body = buildAmReportReply(am.nama, tgl, ar.items.length, res, Number(tot.plan_total), Number(tot.reported), pendingNames);
     if (reminders > 0) body += `\n\n📌 ${reminders} reminder dijadwalkan.`;
     const reply = await sendViaWaGateway(target, body);
-    return finish({ am_id: am.am_id, via: am.via, mode: "am", tanggal: tgl, matched: res.matched, unmatched: res.unmatched, linked: res.linked, reminders, reply });
+    return finish({ am_id: am.am_id, via: am.via, mode: "am", tanggal: tgl, matched: res.matched, unmatched: res.unmatched, linked: res.linked, reminders, reply, ...(foto ?? {}) });
   }
   // report todo — cocokkan vs plan + balasan kaya (match/baru)
   const rep = await markReported(am.am_id, am.nama, tanggal, parsed.items, row.body ?? "");

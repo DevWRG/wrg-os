@@ -56,3 +56,13 @@ updates:
     groups:
       python-deps:
         update-types: ["minor", "patch"]
+    # uvicorn & fastapi DIABAIKAN sepenuhnya, bukan sekadar major-nya: rilis
+    # berikutnya keduanya menuntut Python >=3.10 sedangkan runtime produksi
+    # masih 3.9.6, jadi PR-nya tak akan pernah bisa dirilis. #952 (uvicorn
+    # >=0.52.3) sempat lolos & masuk main karena CI dulu memakai 3.12 —
+    # requirement-nya naik tapi venv produksi tetap di 0.39.0.
+    # Buka kembali aturan ini SETELAH interpreter produksi naik ke >=3.10.
+    # Lihat catatan lengkap di services/ai/requirements.txt.
+    ignore:
+      - dependency-name: "uvicorn"
+      - dependency-name: "fastapi"
