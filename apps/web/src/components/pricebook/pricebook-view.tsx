@@ -1,15 +1,20 @@
 "use client";
 
 import { useMemo, useState } from "react";
+
 import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { AlertTriangle, CircleAlert, Info } from "lucide-react";
+import { AlertTriangle, FileDown } from "lucide-react";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ExportButton } from "@/components/ui/export-button";
+import { FilterCombo, FilterSelect, opsiDari } from "@/components/ui/filter-select";
 import { Badge } from "@/components/ui/badge";
-import { Label } from "@/components/ui/label";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
 
 // ── Tipe (cermin apps/api/src/repo/pricebook.ts) ───────────────────────────
 export interface PricebookItem {
@@ -69,11 +74,16 @@ const liniColor = (l: string) => (l === "IVD" ? C.ivd : C.medical);
 // Tab "Di Luar Keagenan" DILEPAS 1 Agt 2026 (keputusan user): menu ini
 // difokuskan ke produk keagenan saja. Statistik cakupan Accurate-vs-keagenan
 // masih hidup di menu Ringkasan Price Book, jadi tak ada angka yang hilang.
-const TABS = [
-  { key: "katalog", label: "Katalog" },
-  { key: "harga", label: "Harga per Produk" },
-] as const;
-export type PricebookTabKey = (typeof TABS)[number]["key"];
+// Tab "Katalog" (snapshot mentah `product_pricelist` 071) DILEPAS 10 Agt 2026
+// (keputusan user): sejak sumber harga pindah ke file Compilation FINAL, katalog
+// dan harga terpublikasi berisi SKU yang sama — dua tab untuk satu daftar cuma
+// bikin sales ragu mana yang sah dikutip. Yang sah = yang sudah dipublikasikan
+// HoD Business, itulah yang tersisa di sini.
+//
+// Tabel 071 sendiri TIDAK dipensiunkan: dia tetap basis harga yang di-FK oleh
+// `product_pricelist_setup` (073) dan sumber hitung menu Ringkasan Price Book.
+// Yang hilang cuma mukanya.
+export type PricebookTabKey = "harga";
 
 // Muka AM: harga keagenan yang SUDAH dipublikasikan HoD Business dari Setup
 // Harga. Bentuknya dibatasi di query API (/pricebook/published) — kolom hpp &
@@ -83,6 +93,7 @@ export interface PublishedRow {
   kode: string | null;
   productKode: string | null;
   lini: string;
+  productLine: string | null;
   brand: string;
   nama: string;
   varian: string | null;
@@ -98,63 +109,216 @@ export interface PublishedRow {
 export interface HargaPanel { rows: PublishedRow[] }
 
 export function PricebookView({
-  items, harga, initialTab,
+  harga,
 }: {
-  items: PricebookItem[] | null;
   /** Harga keagenan terpublikasi. null/undefined = user tak berhak. */
   harga?: HargaPanel | null;
-  initialTab?: PricebookTabKey;
 }) {
-  const tabs = useMemo(
-    () => TABS.filter((t) => (t.key === "harga" ? !!harga : items !== null)),
-    [harga, items],
-  );
-  const [tab, setTab] = useState<PricebookTabKey>(
-    initialTab && tabs.some((t) => t.key === initialTab) ? initialTab : (tabs[0]?.key ?? "katalog"),
-  );
-  const aktif = tabs.some((t) => t.key === tab) ? tab : (tabs[0]?.key ?? "katalog");
-
-  if (tabs.length === 0) {
-    return <EmptyState title="Data tidak tersedia" description="Pastikan apps/api jalan & DATABASE_URL aktif." />;
-  }
-  // Price book kosong TAPI tab harga ada → jangan blokir seluruh halaman.
-  if (items !== null && items.length === 0 && !harga) {
+  if (!harga) {
     return (
       <EmptyState
-        title="Price book belum diimpor"
-        description="Tabel product_pricelist masih kosong. Jalankan scripts/db/import_pricebook.py --file <CSV dari folder Drive 16-Sales-PriceList-H2-2026> --apply."
+        title="Harga belum tersedia"
+        description="Kamu belum berizin melihat harga terpublikasi, atau apps/api tidak aktif."
       />
     );
   }
+  return <HargaTab rows={harga.rows} />;
+}
+
+// ── Export PDF: pilih dulu produknya, baru cetak ────────────────────────────
+// Kenapa pakai checklist, bukan langsung cetak semua yang tampil: dokumen ini
+// dibawa ke faskes, dan penawaran biasanya cuma berisi beberapa SKU yang relevan.
+// Mencetak 1.000 baris lalu meminta orang mencoret manual jauh lebih buruk.
+//
+// Isi checklist = baris yang SEDANG tampil setelah filter, semuanya tercentang
+// di awal. Jadi "filter dulu, lalu buang beberapa" tetap satu alur pendek.
+function ExportPdfDialog({ rows }: { rows: PublishedRow[] }) {
+  const [buka, setBuka] = useState(false);
+  const [pilih, setPilih] = useState<Set<number>>(new Set());
+  const [cari, setCari] = useState("");
+  const [sibuk, setSibuk] = useState(false);
+  const [galat, setGalat] = useState<string | null>(null);
+
+  function mulai() {
+    setPilih(new Set(rows.map((r) => r.rowNo)));
+    setCari("");
+    setGalat(null);
+    setBuka(true);
+  }
+
+  const tampil = useMemo(() => {
+    const q = cari.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter((r) =>
+      r.nama.toLowerCase().includes(q)
+      || r.brand.toLowerCase().includes(q)
+      || (r.productKode ?? r.kode ?? "").toLowerCase().includes(q));
+  }, [rows, cari]);
+
+  const toggle = (rowNo: number) => setPilih((s) => {
+    const n = new Set(s);
+    if (n.has(rowNo)) n.delete(rowNo); else n.add(rowNo);
+    return n;
+  });
+  // "Pilih semua" bekerja pada yang SEDANG tampil di kotak cari dialog, bukan
+  // seluruh daftar — kalau tidak, mencari lalu menekan "pilih semua" diam-diam
+  // ikut mencentang yang tak terlihat.
+  const semuaTampil = () => setPilih((s) => new Set([...s, ...tampil.map((r) => r.rowNo)]));
+  const kosongkanTampil = () => setPilih((s) => {
+    const n = new Set(s);
+    for (const r of tampil) n.delete(r.rowNo);
+    return n;
+  });
+
+  async function ekspor() {
+    setSibuk(true);
+    setGalat(null);
+    try {
+      const res = await fetch("/api/pricebook/published/pdf", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ rowNos: [...pilih] }),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d?.error ?? `gagal (${res.status})`);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `daftar-harga-keagenan-${new Date().toISOString().slice(0, 10)}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      setBuka(false);
+    } catch (e) {
+      setGalat((e as Error).message);
+    } finally {
+      setSibuk(false);
+    }
+  }
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap gap-1 rounded-lg border p-1">
-        {tabs.map((t) => (
-          <button
-            key={t.key}
-            onClick={() => setTab(t.key)}
-            className={`rounded-md px-3 py-1.5 text-sm font-medium ${aktif === t.key ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
+    <>
+      {/* soft, bukan outline: harus terbaca sebagai tombol di antara filter yang
+          putih, tapi tidak bersaing dengan Export Excel yang solid di sebelahnya. */}
+      <Button variant="soft" size="sm" onClick={mulai}>
+        <FileDown className="mr-1.5 h-3.5 w-3.5" /> Export PDF
+      </Button>
 
-      {aktif === "katalog" && <KatalogTab items={items ?? []} />}
-      {aktif === "harga" && harga && <HargaTab rows={harga.rows} />}
-    </div>
+      <Dialog open={buka} onOpenChange={setBuka}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Pilih produk untuk di-export</DialogTitle>
+            <DialogDescription>
+              {fmtNum(rows.length)} produk sedang tampil setelah filter. Hilangkan centang
+              produk yang tidak perlu masuk dokumen.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogBody className="space-y-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                value={cari}
+                onChange={(e) => setCari(e.target.value)}
+                placeholder="Cari nama / brand / kode…"
+                className="flex-1 rounded-md border border-input bg-background px-2 py-1 text-sm"
+              />
+              <button onClick={semuaTampil} className="rounded-md border px-2 py-1 text-xs hover:bg-muted">
+                Pilih semua{cari ? " (hasil cari)" : ""}
+              </button>
+              <button onClick={kosongkanTampil} className="rounded-md border px-2 py-1 text-xs hover:bg-muted">
+                Kosongkan{cari ? " (hasil cari)" : ""}
+              </button>
+            </div>
+
+            <div className="max-h-80 overflow-y-auto rounded-md border">
+              {tampil.length === 0 && (
+                <p className="p-3 text-sm text-muted-foreground">Tidak ada produk yang cocok.</p>
+              )}
+              {tampil.map((r) => (
+                <label
+                  key={r.rowNo}
+                  className="flex cursor-pointer items-start gap-2 border-b px-2 py-1.5 last:border-0 hover:bg-muted/50"
+                >
+                  <input
+                    type="checkbox"
+                    className="mt-0.5"
+                    checked={pilih.has(r.rowNo)}
+                    onChange={() => toggle(r.rowNo)}
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm">{r.nama}</span>
+                    <span className="block truncate text-xs text-muted-foreground">
+                      <span className="font-mono">{r.productKode ?? r.kode ?? "—"}</span>
+                      {" · "}{r.brand}
+                      {r.kemasan ? ` · ${r.kemasan}` : ""}
+                      {" · "}{fmtRp(r.hargaNett)}
+                    </span>
+                  </span>
+                </label>
+              ))}
+            </div>
+            {galat && <p className="rounded-md bg-red-50 p-2 text-sm text-red-700">{galat}</p>}
+          </DialogBody>
+          <DialogFooter className="items-center justify-between gap-2 sm:justify-between">
+            <span className="text-xs text-muted-foreground">
+              {fmtNum(pilih.size)} dari {fmtNum(rows.length)} produk dipilih
+            </span>
+            <span className="flex gap-2">
+              <Button variant="ghost" size="sm" onClick={() => setBuka(false)}>Batal</Button>
+              <Button size="sm" onClick={ekspor} disabled={sibuk || pilih.size === 0}>
+                {sibuk ? "Menyiapkan…" : `Export PDF (${fmtNum(pilih.size)})`}
+              </Button>
+            </span>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 
 // ── Tab: Harga per Produk (bekas menu Pricelist, tabel 043) ────────────────
 
 function HargaTab({ rows }: { rows: PublishedRow[] }) {
+  const [lini, setLini] = useState("");
+  const [productLine, setProductLine] = useState("");
+  const [brand, setBrand] = useState("");
+  const [kategori, setKategori] = useState("");
+
+  // Opsi diambil dari data yang ADA di layar, bukan daftar tetap: kalau HoD
+  // Business belum mem-publish satu lini/brand, filternya tidak perlu muncul.
+  const opsiLini = useMemo(() => opsiDari(rows, (r) => r.lini), [rows]);
+  // Opsi filter menyempit mengikuti pilihan di sebelah kirinya (lini → product
+  // line → brand/kategori), jadi tidak ada pilihan yang pasti menghasilkan nol baris.
+  const dalamLini = useMemo(
+    () => rows.filter((r) => !lini || r.lini === lini),
+    [rows, lini],
+  );
+  const opsiLine = useMemo(() => opsiDari(dalamLini, (r) => r.productLine), [dalamLini]);
+  const dalamLine = useMemo(
+    () => dalamLini.filter((r) => !productLine || (r.productLine ?? "") === productLine),
+    [dalamLini, productLine],
+  );
+  const opsiBrand = useMemo(() => opsiDari(dalamLine, (r) => r.brand), [dalamLine]);
+  const opsiKategori = useMemo(() => opsiDari(dalamLine, (r) => r.kategori), [dalamLine]);
+  const tampil = useMemo(
+    () => rows.filter((r) =>
+      (!lini || r.lini === lini)
+      && (!productLine || (r.productLine ?? "") === productLine)
+      && (!brand || r.brand === brand)
+      && (!kategori || (r.kategori ?? "") === kategori)),
+    [rows, lini, productLine, brand, kategori],
+  );
+  const adaFilter = !!(lini || productLine || brand || kategori);
+  const reset = () => { setLini(""); setProductLine(""); setBrand(""); setKategori(""); };
+
   if (rows.length === 0) {
     return (
       <EmptyState
         title="Belum ada harga terpublikasi"
-        description="HoD Business belum mempublikasikan harga keagenan dari menu Setup Harga. Semua SKU tetap bisa dilihat di tab Katalog; tab ini khusus harga yang sudah disetujui untuk dikutip."
+        description="HoD Business belum mempublikasikan harga keagenan dari menu Setup Harga. Halaman ini khusus harga yang sudah disetujui untuk dikutip ke faskes."
       />
     );
   }
@@ -172,7 +336,16 @@ function HargaTab({ rows }: { rows: PublishedRow[] }) {
         </div>
       ), className: "max-w-[24rem]" },
     { id: "lini", header: "Lini", sortable: true, accessor: (r) => r.lini,
-      cell: (r) => <Badge variant="outline">{r.lini}</Badge> },
+      cell: (r) => (
+        <div>
+          <Badge variant="outline">{r.lini}</Badge>
+          {r.productLine && (
+            <span className="text-muted-foreground mt-0.5 block truncate text-xs" title={r.productLine}>
+              {r.productLine}
+            </span>
+          )}
+        </div>
+      ) },
     { id: "pl", header: "Price List", align: "right", sortable: true, accessor: (r) => r.priceList,
       cell: (r) => <span className="whitespace-nowrap">{fmtRp(r.priceList)}</span> },
     { id: "diskon", header: "Diskon Maks", align: "right", sortable: true, accessor: (r) => r.diskonMaks,
@@ -191,19 +364,40 @@ function HargaTab({ rows }: { rows: PublishedRow[] }) {
         </p>
         <DataTable
           columns={kolom}
-          data={rows}
+          data={tampil}
           getKey={(r) => String(r.rowNo)}
           searchPlaceholder="Cari nama / brand / kode…"
           pageSize={25}
           initialSort={{ id: "nama", dir: "asc" }}
           empty="Tidak ada harga yang cocok."
           toolbar={
-            <ExportButton
+            <div className="flex flex-wrap items-center gap-2">
+              <FilterSelect label="Lini" value={lini} options={opsiLini}
+                onChange={(v) => { setLini(v); setProductLine(""); setBrand(""); setKategori(""); }} />
+              {/* Daftar panjang → dropdown ber-kotak-cari (57 product line, ±90 brand). */}
+              <FilterCombo label="Product Line" value={productLine} options={opsiLine}
+                onChange={(v) => { setProductLine(v); setBrand(""); setKategori(""); }} />
+              <FilterCombo label="Brand" value={brand} onChange={setBrand} options={opsiBrand} />
+              <FilterCombo label="Kategori" value={kategori} onChange={setKategori} options={opsiKategori} />
+              {adaFilter && (
+                <>
+                  <span className="text-xs text-muted-foreground">
+                    {fmtNum(tampil.length)} dari {fmtNum(rows.length)}
+                  </span>
+                  <button onClick={reset} className="rounded-md border px-2 py-1 text-xs hover:bg-muted">
+                    Reset
+                  </button>
+                </>
+              )}
+              <ExportPdfDialog rows={tampil} />
+              {/* Export mengikuti filter — kalau tidak, isi file beda dari yang dilihat. */}
+              <ExportButton
               filename="harga-keagenan-terpublikasi"
-              data={rows}
+              data={tampil}
               columns={[
                 { header: "Kode", value: (r) => r.productKode ?? r.kode ?? "" },
                 { header: "Lini", value: (r) => r.lini },
+                { header: "Product Line", value: (r) => r.productLine ?? "" },
                 { header: "Brand", value: (r) => r.brand },
                 { header: "Nama", value: (r) => r.nama },
                 { header: "Varian", value: (r) => r.varian ?? "" },
@@ -214,7 +408,8 @@ function HargaTab({ rows }: { rows: PublishedRow[] }) {
                 { header: "Nett", value: (r) => r.hargaNett },
                 { header: "Nett + PPN", value: (r) => r.nettPpn },
               ]}
-            />
+              />
+            </div>
           }
         />
       </CardContent>
@@ -391,146 +586,6 @@ function RisikoItem({ judul, isi, tone }: { judul: string; isi: string; tone: "o
     <div className={`rounded-lg border p-3 ${cls}`}>
       <div className="text-sm font-semibold">{judul}</div>
       <p className="text-muted-foreground mt-1 text-xs leading-relaxed">{isi}</p>
-    </div>
-  );
-}
-
-// ── Tab 2: Katalog ─────────────────────────────────────────────────────────
-
-function KatalogTab({ items }: { items: PricebookItem[] }) {
-  const [lini, setLini] = useState<string>("");
-  const [brand, setBrand] = useState<string>("");
-  const [hanyaRisiko, setHanyaRisiko] = useState(false);
-
-  const liniOpts = useMemo(() => [...new Set(items.map((i) => i.lini))].sort(), [items]);
-  const brandOpts = useMemo(() => [...new Set(items.map((i) => i.brand))].sort(), [items]);
-
-  const rows = useMemo(
-    () => items.filter((i) =>
-      (!lini || i.lini === lini) && (!brand || i.brand === brand) && (!hanyaRisiko || i.jumlahHarga > 1)),
-    [items, lini, brand, hanyaRisiko],
-  );
-
-  const columns: DataColumn<PricebookItem>[] = [
-    {
-      id: "nama", header: "Produk", sortable: true,
-      accessor: (r) => `${r.nama} ${r.varian ?? ""} ${r.kode ?? ""}`,
-      cell: (r) => (
-        <div className="min-w-[220px]">
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className="font-medium">{r.nama}</span>
-            {r.varian && <Badge variant="secondary" className="text-[10px]">{r.varian}</Badge>}
-            {r.jumlahHarga > 1 && (
-              <span
-                title="Nama produk ini dipakai beberapa SKU dengan harga berbeda — konfirmasi varian ke admin sebelum keluarkan penawaran."
-                className="inline-flex items-center gap-1 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-900 dark:bg-amber-900/40 dark:text-amber-200"
-              >
-                <CircleAlert className="size-3" /> {r.jumlahHarga} harga
-              </span>
-            )}
-          </div>
-          <div className="text-muted-foreground mt-0.5 text-xs">
-            {r.brand} · {r.kode ?? <span className="text-amber-600">tanpa kode Accurate</span>}
-            {r.kemasan ? ` · ${r.kemasan}` : ""}
-          </div>
-        </div>
-      ),
-    },
-    {
-      id: "kategori", header: "Kategori", sortable: true, accessor: (r) => r.kategori ?? "",
-      cell: (r) => (
-        <span className="inline-flex items-center gap-1 text-sm">
-          {r.kategori ?? "—"}
-          {!r.kategoriVerified && (
-            <span title="Kategori hasil pemetaan kata kunci, belum cocok master WRG. Harga tetap valid." className="size-1.5 rounded-full bg-amber-500" />
-          )}
-        </span>
-      ),
-    },
-    { id: "lini", header: "Lini", sortable: true, accessor: (r) => r.lini },
-    { id: "priceList", header: "Price List", align: "right", sortable: true, accessor: (r) => r.priceList, cell: (r) => fmtRp(r.priceList) },
-    { id: "diskon", header: "Diskon Maks", align: "right", sortable: true, accessor: (r) => r.diskonMaks, cell: (r) => fmtPctDisc(r.diskonMaks) },
-    {
-      id: "nett", header: "Nett Terendah", align: "right", sortable: true, accessor: (r) => r.hargaNett,
-      cell: (r) => <span className="font-semibold">{fmtRp(r.hargaNett)}</span>,
-    },
-    { id: "ppn", header: "Nett + PPN 11%", align: "right", sortable: true, accessor: (r) => r.nettPpn, cell: (r) => fmtRp(r.nettPpn) },
-  ];
-
-  return (
-    <div className="space-y-4">
-      <Card className="border-sky-300/60">
-        <CardContent className="flex gap-2 py-3 text-xs">
-          <Info className="mt-0.5 size-4 shrink-0 text-sky-600" />
-          <div className="space-y-1">
-            <p>
-              <b>Cara pakai.</b> <b>Price List</b> adalah angka pembuka yang ditawarkan ke faskes. <b>Nett Terendah</b>{" "}
-              adalah <b>lantai</b>, bukan target — menutup di bawah angka itu butuh izin Direksi.
-            </p>
-            <p className="text-muted-foreground">
-              PPN 11% dihitung dari harga nett, bukan dari price list. Syaratnya: diskon <b>wajib dicantumkan di faktur
-              pajak</b> — kalau hanya kesepakatan lisan atau cuma muncul di invoice komersial, DPP tidak berkurang secara
-              sah dan WRG menanggung selisihnya.
-            </p>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader className="flex flex-row flex-wrap items-end justify-between gap-3">
-          <div className="flex flex-wrap items-end gap-3">
-            <div className="grid gap-1">
-              <Label className="text-xs">Lini</Label>
-              <select value={lini} onChange={(e) => setLini(e.target.value)} className="border-input bg-background h-9 rounded-md border px-2 text-sm">
-                <option value="">Semua</option>
-                {liniOpts.map((l) => <option key={l} value={l}>{l}</option>)}
-              </select>
-            </div>
-            <div className="grid gap-1">
-              <Label className="text-xs">Brand</Label>
-              <select value={brand} onChange={(e) => setBrand(e.target.value)} className="border-input bg-background h-9 rounded-md border px-2 text-sm">
-                <option value="">Semua ({brandOpts.length})</option>
-                {brandOpts.map((b) => <option key={b} value={b}>{b}</option>)}
-              </select>
-            </div>
-            <label className="flex h-9 items-center gap-2 text-sm">
-              <input type="checkbox" checked={hanyaRisiko} onChange={(e) => setHanyaRisiko(e.target.checked)} className="size-4" />
-              Hanya SKU bernama ganda
-            </label>
-            <span className="text-muted-foreground pb-2 text-xs">{fmtNum(rows.length)} dari {fmtNum(items.length)} SKU</span>
-          </div>
-          <ExportButton
-            filename="price-book-keagenan"
-            data={rows}
-            columns={[
-              { header: "Kode", value: (r: PricebookItem) => r.kode },
-              { header: "Lini", value: (r: PricebookItem) => r.lini },
-              { header: "Brand", value: (r: PricebookItem) => r.brand },
-              { header: "Nama", value: (r: PricebookItem) => r.nama },
-              { header: "Varian", value: (r: PricebookItem) => r.varian },
-              { header: "Kemasan", value: (r: PricebookItem) => r.kemasan },
-              { header: "Kategori", value: (r: PricebookItem) => r.kategori },
-              { header: "Kategori terverifikasi", value: (r: PricebookItem) => (r.kategoriVerified ? "YA" : "BELUM") },
-              { header: "Price List", value: (r: PricebookItem) => r.priceList },
-              { header: "Diskon Maks", value: (r: PricebookItem) => r.diskonMaks },
-              { header: "Harga Nett Terendah", value: (r: PricebookItem) => r.hargaNett },
-              { header: "Nett + PPN 11%", value: (r: PricebookItem) => r.nettPpn },
-              { header: "Jumlah harga utk nama ini", value: (r: PricebookItem) => r.jumlahHarga },
-              { header: "Catatan", value: (r: PricebookItem) => r.catatan },
-            ]}
-          />
-        </CardHeader>
-        <CardContent>
-          <DataTable
-            columns={columns}
-            data={rows}
-            getKey={(r) => String(r.id)}
-            pageSize={25}
-            searchPlaceholder="Cari produk, brand, atau kode…"
-            empty="Tidak ada SKU yang cocok."
-          />
-        </CardContent>
-      </Card>
     </div>
   );
 }
