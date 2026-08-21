@@ -1,10 +1,15 @@
 import { db } from "../db.js";
+import type { AtkTransactionCategory } from "./atk-master.js";
 
 // F49 ATK Stock Movement (General Affairs) — ledger transaksi stok
 // masuk/keluar barang ATK (lihat 069_atk_stock_movement.sql), konsumen
 // katalog F134 (atk-master.ts). date/timestamptz eksplisit ::text di
 // SELECT/RETURNING — pola sama dgn atk-master.ts/supplier-eta.ts
 // (postgres.js balikin objek Date tanpa cast).
+//
+// item_transaction_category (F49/F54 merge) ikut lewat JOIN ke atk_item —
+// bukan kolom sendiri di sini, krn kategori transaksi (Barang/Materai) adalah
+// sifat barangnya, bukan sifat kejadian mutasinya (lihat 071_atk_transaction_category.sql).
 
 export type AtkMovementType = "in" | "out";
 
@@ -13,6 +18,7 @@ export interface AtkStockMovementRow {
   item_id: string;
   item_name: string;
   item_unit: string;
+  item_transaction_category: AtkTransactionCategory;
   movement_type: AtkMovementType;
   qty: number;
   movement_date: string;
@@ -30,6 +36,7 @@ function mapMovement(r: Record<string, unknown>): AtkStockMovementRow {
     item_id: String(r.item_id),
     item_name: String(r.item_name),
     item_unit: String(r.item_unit),
+    item_transaction_category: r.item_transaction_category as AtkTransactionCategory,
     movement_type: r.movement_type as AtkMovementType,
     qty: Number(r.qty),
     movement_date: String(r.movement_date),
@@ -45,6 +52,7 @@ function mapMovement(r: Record<string, unknown>): AtkStockMovementRow {
 function movementCols(sql: ReturnType<typeof db>) {
   return sql`
     m.id, m.item_id, i.name AS item_name, i.unit AS item_unit,
+    i.transaction_category AS item_transaction_category,
     m.movement_type, m.qty, m.movement_date::text, m.reference, m.pic, m.cabang, m.notes,
     m.created_at::text, m.updated_at::text
   `;
@@ -137,6 +145,7 @@ export interface AtkStockLevelRow {
   item_name: string;
   unit: string;
   category_name: string | null;
+  transaction_category: AtkTransactionCategory;
   min_stock: number | null;
   is_active: boolean;
   stock_in: number;
@@ -150,13 +159,13 @@ export async function listAtkStockLevels(): Promise<AtkStockLevelRow[]> {
   const rows = await sql`
     SELECT
       i.id AS item_id, i.name AS item_name, i.unit, c.name AS category_name,
-      i.min_stock, i.is_active,
+      i.transaction_category, i.min_stock, i.is_active,
       COALESCE(SUM(CASE WHEN m.movement_type = 'in' THEN m.qty ELSE 0 END), 0) AS stock_in,
       COALESCE(SUM(CASE WHEN m.movement_type = 'out' THEN m.qty ELSE 0 END), 0) AS stock_out
     FROM atk_item i
     LEFT JOIN atk_category c ON c.id = i.category_id
     LEFT JOIN atk_stock_movement m ON m.item_id = i.id
-    GROUP BY i.id, i.name, i.unit, c.name, i.min_stock, i.is_active
+    GROUP BY i.id, i.name, i.unit, c.name, i.transaction_category, i.min_stock, i.is_active
     ORDER BY i.name
   `;
   return rows.map((r) => {
@@ -169,6 +178,7 @@ export async function listAtkStockLevels(): Promise<AtkStockLevelRow[]> {
       item_name: String(r.item_name),
       unit: String(r.unit),
       category_name: r.category_name != null ? String(r.category_name) : null,
+      transaction_category: r.transaction_category as AtkTransactionCategory,
       min_stock: minStock,
       is_active: Boolean(r.is_active),
       stock_in: stockIn,

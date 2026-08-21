@@ -1,4 +1,5 @@
 import { db } from "../db.js";
+import type { AtkTransactionCategory } from "./atk-master.js";
 
 // F136 ATK Stock Opname (General Affairs) — hitung fisik vs stok sistem
 // (lihat 070_atk_stock_opname.sql). system_qty snapshot dihitung di sini
@@ -7,12 +8,16 @@ import { db } from "../db.js";
 // dari system_qty/counted_qty yg sudah beku — bukan kolom tersimpan. date/
 // timestamptz eksplisit ::text di SELECT/RETURNING — pola sama dgn
 // atk-stock.ts/atk-master.ts (postgres.js balikin objek Date tanpa cast).
+//
+// item_transaction_category (F49/F54 merge) ikut lewat JOIN ke atk_item,
+// sama pola dgn atk-stock.ts.
 
 export interface AtkStockOpnameRow {
   id: string;
   item_id: string;
   item_name: string;
   item_unit: string;
+  item_transaction_category: AtkTransactionCategory;
   opname_date: string;
   system_qty: number;
   counted_qty: number;
@@ -33,6 +38,7 @@ function mapOpname(r: Record<string, unknown>): AtkStockOpnameRow {
     item_id: String(r.item_id),
     item_name: String(r.item_name),
     item_unit: String(r.item_unit),
+    item_transaction_category: r.item_transaction_category as AtkTransactionCategory,
     opname_date: String(r.opname_date),
     system_qty: systemQty,
     counted_qty: countedQty,
@@ -49,6 +55,7 @@ function mapOpname(r: Record<string, unknown>): AtkStockOpnameRow {
 function opnameCols(sql: ReturnType<typeof db>) {
   return sql`
     o.id, o.item_id, i.name AS item_name, i.unit AS item_unit,
+    i.transaction_category AS item_transaction_category,
     o.opname_date::text, o.system_qty, o.counted_qty, o.counted_by, o.cabang, o.notes,
     o.adjustment_movement_id, o.created_at::text, o.updated_at::text
   `;

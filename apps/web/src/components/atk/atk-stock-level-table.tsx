@@ -3,11 +3,14 @@
 import { Badge } from "@/components/ui/badge";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
 
+export type AtkTransactionCategory = "barang" | "materai";
+
 export interface AtkStockLevelRow {
   item_id: string;
   item_name: string;
   unit: string;
   category_name: string | null;
+  transaction_category: AtkTransactionCategory;
   min_stock: number | null;
   is_active: boolean;
   stock_in: number;
@@ -19,6 +22,18 @@ export interface AtkStockLevelRow {
 export function AtkStockLevelTable({ rows }: { rows: AtkStockLevelRow[] }) {
   const columns: DataColumn<AtkStockLevelRow>[] = [
     { id: "name", header: "Nama", sortable: true, accessor: (r) => r.item_name, cell: (r) => <span className="font-medium">{r.item_name}</span> },
+    {
+      id: "txcat",
+      header: "Kategori Transaksi",
+      sortable: true,
+      accessor: (r) => r.transaction_category,
+      cell: (r) =>
+        r.transaction_category === "materai" ? (
+          <Badge className="bg-info-soft text-info">Materai</Badge>
+        ) : (
+          <Badge variant="secondary">Barang</Badge>
+        ),
+    },
     { id: "cat", header: "Kategori", sortable: true, accessor: (r) => r.category_name ?? "", cell: (r) => r.category_name ?? "—" },
     { id: "unit", header: "Satuan", sortable: true, accessor: (r) => r.unit, cell: (r) => r.unit },
     { id: "in", header: "Stok Masuk", align: "right", sortable: true, accessor: (r) => r.stock_in, cell: (r) => r.stock_in },

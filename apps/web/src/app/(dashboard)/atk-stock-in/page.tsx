@@ -37,12 +37,12 @@ export default async function AtkStockInPage() {
     <>
       <PageHeader
         title="ATK Stock In"
-        description="Pencatatan stok masuk barang ATK oleh tim General Affairs & audit penuh mutasi (F49) — laporan stok saat ini dihitung dari mutasi, bukan disimpan."
+        description="Pencatatan stok masuk barang ATK & Materai oleh tim General Affairs & audit penuh mutasi (F49, termasuk kategori transaksi Materai F54) — laporan stok saat ini dihitung dari mutasi, bukan disimpan."
       />
       {!item || !mov || !lvl ? (
         <EmptyState
           title="Data tidak tersedia"
-          description="Pastikan apps/api jalan dengan DATABASE_URL dan migrasi 069_atk_stock_movement.sql sudah diterapkan."
+          description="Pastikan apps/api jalan dengan DATABASE_URL dan migrasi 069_atk_stock_movement.sql + 071_atk_transaction_category.sql sudah diterapkan."
         />
       ) : (
         <AtkStockInClient movements={mov.rows ?? []} levels={lvl.rows ?? []} items={itemOptions} />

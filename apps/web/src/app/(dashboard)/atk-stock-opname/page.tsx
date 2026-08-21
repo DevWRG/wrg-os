@@ -38,12 +38,12 @@ export default async function AtkStockOpnamePage() {
     <>
       <PageHeader
         title="ATK Stock Opname"
-        description="Hitung fisik barang ATK dibanding stok sistem (F136) — selisih disesuaikan lewat form Stock In/Out yang sama, hanya beda submenu."
+        description="Hitung fisik barang ATK & Materai dibanding stok sistem (F136) — selisih disesuaikan lewat form Stock In/Out yang sama, hanya beda submenu."
       />
       {!item || !opname || !lvl ? (
         <EmptyState
           title="Data tidak tersedia"
-          description="Pastikan apps/api jalan dengan DATABASE_URL dan migrasi 070_atk_stock_opname.sql sudah diterapkan."
+          description="Pastikan apps/api jalan dengan DATABASE_URL dan migrasi 070_atk_stock_opname.sql + 071_atk_transaction_category.sql sudah diterapkan."
         />
       ) : (
         <AtkStockOpnameClient opnames={opname.rows ?? []} levels={lvl.rows ?? []} items={itemOptions} />
