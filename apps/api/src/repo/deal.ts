@@ -2,6 +2,7 @@ import { db } from "../db.js";
 import type { PlanCustomer } from "../parsers/plan.js";
 import type { ReportItem } from "../parsers/report.js";
 import { type DataScope, isRestricted } from "./access-scope.js";
+import { enqueueDuplicateCustomerName, type DupNameCandidate } from "./hitl.js";
 
 // Jembatan parser CRM (legacy #PLAN/#REPORT) ke schema kanonik D1 (deal/spt_state_log).
 // MAPPING:
@@ -82,10 +83,67 @@ function custId(name: string): string {
   );
 }
 
+// F9 Duplicate Customer Name Alert. 0.72 SENGAJA lebih tinggi dari AUTO (0.7)
+// #REPORT di atas, bukan lebih rendah — preseden F142 Price Book: nama identik
+// tak selalu berarti entitas sama (2 cabang bisa share nama), jadi ambang
+// rendah cuma bikin alert palsu yang ngerusak kepercayaan ke dashboard HITL.
+const DUP_THRESHOLD = 0.72;
+
+// Best-effort, dipanggil setelah deal ke-INSERT — GAK PERNAH melempar (ini
+// alert, bukan gate; blocking create deal krn tebakan heuristik akan
+// mengganggu rep yang legit). 2 sinyal independen:
+//  A) vs customer_name deal LAIN (semua AM/cabang — inti masalahnya justru
+//     2 AM beda yang mengetik nama customer sama dengan ejaan beda).
+//  B) vs accurate_customer.name (customer yang sudah dikenal Accurate) — deal
+//     baru account_id-nya SELALU NULL, jadi ini nangkep "rep ngetik nama baru
+//     padahal customer-nya udah ada, seharusnya di-link bukan bikin nama baru".
+async function flagDuplicateCustomerName(dealId: string, customerName: string, amId: string | null, cabang: string | null): Promise<void> {
+  const sql = db();
+  const norm = custId(customerName);
+
+  const peers = await sql`
+    SELECT deal_id, customer_name, am_id, cabang, similarity(customer_name, ${customerName}) AS score
+    FROM deal
+    WHERE deal_id != ${dealId} AND similarity(customer_name, ${customerName}) >= ${DUP_THRESHOLD}
+    ORDER BY score DESC LIMIT 5
+  `;
+  const known = await sql`
+    SELECT id, name, similarity(name, ${customerName}) AS score
+    FROM accurate_customer
+    WHERE name IS NOT NULL AND similarity(name, ${customerName}) >= ${DUP_THRESHOLD}
+    ORDER BY score DESC LIMIT 5
+  `;
+
+  const candidates: DupNameCandidate[] = [
+    ...peers.map((r) => ({
+      kind: "deal" as const,
+      ref_id: String(r.deal_id),
+      customer_name: String(r.customer_name),
+      am_id: r.am_id == null ? null : String(r.am_id),
+      cabang: r.cabang == null ? null : String(r.cabang),
+      score: Number(r.score),
+      exact: custId(String(r.customer_name)) === norm,
+    })),
+    ...known.map((r) => ({
+      kind: "accurate_customer" as const,
+      ref_id: String(r.id),
+      customer_name: String(r.name),
+      am_id: null,
+      cabang: null,
+      score: Number(r.score),
+      exact: custId(String(r.name)) === norm,
+    })),
+  ];
+  if (candidates.length === 0) return;
+
+  await enqueueDuplicateCustomerName({ dealId, customerName, amId, cabang, candidates });
+}
+
 export interface PipelineDeal {
   deal_id: string;
   customer_name: string;
   facility_name: string | null;
+  instansi_type: string | null;        // jenis faskes: RS / Klinik / Puskesmas / Dinkes / Lab
   am_id: string | null;
   am_name: string | null;              // panggilan AM (resolve dari master_user)
   brand: string | null;
@@ -133,7 +191,7 @@ export async function getPipeline(
   scope?: DataScope,
 ): Promise<{ stages: PipelineStage[]; summary: PipelineSummary; total_deals: number; total_value: number }> {
   const sql = db();
-  const cols = sql`deal_id, customer_name, facility_name, am_id, brand, product, product_category,
+  const cols = sql`deal_id, customer_name, facility_name, instansi_type, am_id, brand, product, product_category,
     prospect_category, stage, probability, forecast_category,
     COALESCE(estimated_value, estimate_amount) AS estimate_amount,
     qty_num, unit_price,
@@ -174,6 +232,7 @@ export async function getPipeline(
       deal_id: String(r.deal_id),
       customer_name: String(r.customer_name ?? ""),
       facility_name: r.facility_name ? String(r.facility_name) : null,
+      instansi_type: r.instansi_type ? String(r.instansi_type) : null,
       am_id: r.am_id ? String(r.am_id) : null,
       am_name: r.am_id ? (amMap.get(String(r.am_id)) ?? null) : null,
       brand: r.brand ? String(r.brand) : null,
@@ -501,9 +560,14 @@ export async function transitionStage(
       updated_at = now()
     WHERE deal_id = ${dealId}
   `;
+  // Reason = keterangan user saja. Awalan "stage A→B" TIDAK ditulis lagi: kolom
+  // from_stage/to_stage sudah menyimpannya dan UI Riwayat sudah menampilkannya di
+  // baris judul, jadi awalan itu cuma mengulang isi baris di atasnya.
+  // (Baris lama yg terlanjur ber-awalan dibersihkan saat render — lihat
+  //  pipeline-board.tsx stripStagePrefix.)
   const reason = toLost
-    ? `stage ${fromStage}→${toStage} | loss: ${lossReason}${opts?.note ? ` | ${opts.note}` : ""}`
-    : `stage ${fromStage}→${toStage}${opts?.note ? ` | ${opts.note}` : ""}`;
+    ? `loss: ${lossReason}${opts?.note ? ` | ${opts.note}` : ""}`
+    : (opts?.note ?? null);
   const logged = await sql`
     INSERT INTO spt_state_log (deal_id, from_stage, to_stage, changed_by, reason)
     VALUES (${dealId}, ${fromStage}, ${toStage}, ${scope.userId ?? scope.amId}, ${reason})
@@ -521,14 +585,24 @@ export async function transitionStage(
   };
 }
 
-// Approve-guard: HANYA HoD (cabang deal ∈ cabangScope) atau admin/superuser boleh
-// memutus loss. AM (amOnly) TIDAK boleh — pemisahan tugas (bukan penilai loss deal
-// sendiri). Beda dari canWrite (yg izinkan AM utk deal-nya).
+// Approve-guard: HoD (cabang deal ∈ cabangScope), admin/superuser, atau user
+// ber-scope penuh (HoD tanpa hod_territory, direktur/office) boleh memutus loss.
+// AM (amOnly) TIDAK boleh — pemisahan tugas (bukan penilai loss deal sendiri).
+// Beda dari canWrite (yg izinkan AM utk deal-nya).
+//
+// WAJIB cermin listPendingLosses: apa pun yg tampil di antrean seseorang harus
+// bisa ia putuskan. Dulu tidak — scope tanpa cabang (HoD tanpa territory) melihat
+// SEMUA pending tapi tiap tombolnya balas 403.
 function canApprove(scope: DataScope, deal: { cabang: string | null }): boolean {
   if (scope.superuser) return true;
   if (scope.amOnly) return false;
-  if (scope.cabangScope && deal.cabang && scope.cabangScope.includes(deal.cabang)) return true;
-  return false;
+  // Mutasi wajib punya identitas (dicatat sbg changed_by). Panggilan tanpa
+  // x-user-id boleh membaca antrean, tapi tidak boleh memutus.
+  if (!scope.userId) return false;
+  if (scope.cabangScope && scope.cabangScope.length > 0) {
+    return !!deal.cabang && scope.cabangScope.includes(deal.cabang);
+  }
+  return true; // tanpa batas cabang — persis yg dilihat di antrean
 }
 
 export interface LossPending {
@@ -628,13 +702,17 @@ export async function decideLoss(
   }
   const by = scope.userId ?? scope.amId;
 
+  // Transaksi: UPDATE + log harus jadi satu. Tanpa itu, insert log yg gagal
+  // meninggalkan deal terlanjur ter-approve sementara API balas 500.
   if (decision === "approved") {
-    await sql`UPDATE deal SET loss_status = 'approved', updated_at = now() WHERE deal_id = ${dealId}`;
-    const logged = await sql`
-      INSERT INTO spt_state_log (deal_id, from_stage, to_stage, changed_by, reason)
-      VALUES (${dealId}, 'Closing-Lost', 'Closing-Lost', ${by}, ${`loss approved${note ? ` | ${note}` : ""}`})
-      RETURNING id
-    `;
+    const logged = await sql.begin(async (tx) => {
+      await tx`UPDATE deal SET loss_status = 'approved', updated_at = now() WHERE deal_id = ${dealId}`;
+      return await tx`
+        INSERT INTO spt_state_log (deal_id, from_stage, to_stage, changed_by, reason)
+        VALUES (${dealId}, 'Closing-Lost', 'Closing-Lost', ${by}, ${`loss approved${note ? ` | ${note}` : ""}`})
+        RETURNING id
+      `;
+    });
     return { deal_id: dealId, decision, stage: "Closing-Lost", loss_status: "approved", state_log_id: String(logged[0].id) };
   }
 
@@ -647,23 +725,25 @@ export async function decideLoss(
   const rev = prev.length > 0 && prev[0].from_stage ? String(prev[0].from_stage) : "";
   const revertStage = rev && DEAL_STAGES.includes(rev) && !CLOSED.includes(rev) ? rev : "Negotiation";
   const meta = STAGE_META[revertStage];
-  await sql`
-    UPDATE deal SET
-      stage = ${revertStage},
-      prospect_category = ${meta.prospect || null},
-      probability = ${meta.prob},
-      forecast_category = ${meta.forecast},
-      loss_reason = NULL,
-      loss_status = NULL,
-      stage_entered_at = now(),
-      updated_at = now()
-    WHERE deal_id = ${dealId}
-  `;
-  const logged = await sql`
-    INSERT INTO spt_state_log (deal_id, from_stage, to_stage, changed_by, reason)
-    VALUES (${dealId}, 'Closing-Lost', ${revertStage}, ${by}, ${`loss rejected → balik ${revertStage}${note ? ` | ${note}` : ""}`})
-    RETURNING id
-  `;
+  const logged = await sql.begin(async (tx) => {
+    await tx`
+      UPDATE deal SET
+        stage = ${revertStage},
+        prospect_category = ${meta.prospect || null},
+        probability = ${meta.prob},
+        forecast_category = ${meta.forecast},
+        loss_reason = NULL,
+        loss_status = NULL,
+        stage_entered_at = now(),
+        updated_at = now()
+      WHERE deal_id = ${dealId}
+    `;
+    return await tx`
+      INSERT INTO spt_state_log (deal_id, from_stage, to_stage, changed_by, reason)
+      VALUES (${dealId}, 'Closing-Lost', ${revertStage}, ${by}, ${`loss rejected → balik ${revertStage}${note ? ` | ${note}` : ""}`})
+      RETURNING id
+    `;
+  });
   return { deal_id: dealId, decision, stage: revertStage, loss_status: null, state_log_id: String(logged[0].id) };
 }
 
@@ -671,7 +751,8 @@ export interface TimelineEntry {
   id: string;
   from_stage: string | null;
   to_stage: string;
-  changed_by: string | null;
+  changed_by: string | null;      // nilai mentah: app_user.id (UUID) ATAU am_id
+  changed_by_name: string | null; // nama manusia hasil resolusi; null bila tak terpetakan
   reason: string | null;
   occurred_at: string;
 }
@@ -687,17 +768,33 @@ export async function getDealTimeline(dealId: string, scope: DataScope): Promise
   if (cur.length === 0) throw new DealError(404, "deal tidak ditemukan");
   const deal = { am_id: cur[0].am_id ? String(cur[0].am_id) : null, cabang: cur[0].cabang ? String(cur[0].cabang) : null };
   if (!canRead(scope, deal)) throw new DealError(403, "tidak berwenang melihat deal ini");
+  // changed_by menyimpan DUA jenis nilai: app_user.id (UUID, aksi dari dashboard)
+  // atau am_id (aksi dari jalur WA). Dua-duanya di-resolve ke nama supaya user
+  // tak disodori UUID mentah. Bandingkan `au.id::text = s.changed_by` — mencast
+  // sisi text ke uuid akan meledak pada baris ber-am_id ("16" bukan UUID).
+  // Volumenya seuprit (satu deal), jadi cast di join tak jadi soal di sini.
   const rows = await sql`
-    SELECT id, from_stage, to_stage, changed_by, reason, occurred_at
-    FROM spt_state_log
-    WHERE deal_id = ${dealId}
-    ORDER BY occurred_at DESC, id DESC
+    SELECT s.id, s.from_stage, s.to_stage, s.changed_by, s.reason, s.occurred_at,
+      COALESCE(
+        NULLIF(au.name, ''),
+        NULLIF(aumu.nama, ''),
+        NULLIF(mu.nama, ''),
+        NULLIF(mu.panggilan, ''),
+        NULLIF(split_part(COALESCE(au.email, ''), '@', 1), '')
+      ) AS changed_by_name
+    FROM spt_state_log s
+    LEFT JOIN app_user au    ON au.id::text = s.changed_by
+    LEFT JOIN master_user aumu ON aumu.am_id = au.am_id
+    LEFT JOIN master_user mu ON mu.am_id = s.changed_by
+    WHERE s.deal_id = ${dealId}
+    ORDER BY s.occurred_at DESC, s.id DESC
   `;
   return rows.map((r) => ({
     id: String(r.id),
     from_stage: r.from_stage ? String(r.from_stage) : null,
     to_stage: String(r.to_stage),
     changed_by: r.changed_by ? String(r.changed_by) : null,
+    changed_by_name: r.changed_by_name ? String(r.changed_by_name) : null,
     reason: r.reason ? String(r.reason) : null,
     occurred_at: String(r.occurred_at),
   }));
@@ -777,6 +874,16 @@ export async function createDeal(scope: DataScope, input: Record<string, unknown
     INSERT INTO spt_state_log (deal_id, from_stage, to_stage, changed_by, reason)
     VALUES (${dealId}, NULL, 'Prospecting', ${scope.userId ?? scope.amId}, 'deal dibuat')
   `;
+  try {
+    await flagDuplicateCustomerName(
+      dealId,
+      String(fields.customer_name),
+      fields.am_id == null ? null : String(fields.am_id),
+      fields.cabang == null ? null : String(fields.cabang),
+    );
+  } catch (e) {
+    console.error("F9 dup-check gagal (non-fatal):", e);
+  }
   return { deal_id: dealId, stage: String(rows[0].stage) };
 }
 

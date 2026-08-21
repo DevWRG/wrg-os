@@ -18,6 +18,11 @@ function csvCell(v: string | number | null | undefined): string {
 
 // Export client-side ke CSV yang dibuka mulus di Excel (BOM UTF-8 + directive
 // sep=, agar Excel lokal apa pun pakai koma sbg pemisah kolom).
+//
+// Tombolnya SOLID (variant default), bukan outline. Di toolbar tabel, tombol ini
+// berdiri di antara kotak cari & dropdown filter yang semuanya putih — dengan
+// outline ia tampak sebagai kotak putih keempat dan orang tidak sadar itu bisa
+// diklik. Aturan umumnya: kontrol masukan putih, AKSI berwarna.
 export function ExportButton<T>({
   filename,
   columns,
@@ -60,7 +65,7 @@ export function ExportButton<T>({
     URL.revokeObjectURL(url);
   }
   return (
-    <Button size="sm" variant="outline" onClick={exportCsv} disabled={busy || (!fetchData && (data?.length ?? 0) === 0)}>
+    <Button size="sm" variant="default" onClick={exportCsv} disabled={busy || (!fetchData && (data?.length ?? 0) === 0)}>
       <Download className="size-4" /> {busy ? "Menyiapkan…" : label}
     </Button>
   );
