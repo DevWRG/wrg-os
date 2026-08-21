@@ -34,6 +34,14 @@ docs/       CUTOVER.md.
   dari varchar(20) di migrasi 038 — MIME openclaw panjang bikin INSERT gagal 22001),
   `body`. Backfill WAJIB set `processed_at` atau disapu `processUnprocessed`.
 - `activity_log` — hasil/next_action kunjungan. `monitor_digest` — kind ∈ rekap|resume|daily|weekly|briefing, `waktu` varchar(8) (jangan overflow).
+- **Klasifikasi produk** (migrasi 072, menu `/klasifikasi-produk`): `product_kategori` / `product_line` /
+  `product_class` / `product_sub_class` + `product_code` (kode `KK.PP.CC.SSS.NNNN`) + `product_code_review`.
+  Nomor id **berulang per induk** (product line & class per kategori, sub class per CLASS) → semua kunci
+  komposit, resolusi WAJIB hirarkis. Jebakan: generator di spreadsheet sumber pakai VLOOKUP nama saja
+  (nama Class/Sub Class kembar ambil id kategori lain), sub class 2 digit di satu sheet & 3 digit di sheet
+  lain, dan nomor urut per-sheet — jangan direplikasi. Kode lama disimpan di `kode_legacy`/`kode_2025`;
+  kode yang sudah terbit tidak pernah diubah (menempel di Accurate). Isi lewat
+  `scripts/db/import_product_classification.py` (data tidak di repo).
 
 ## Accurate mirror + menu OPERATIONS & dashboards
 
@@ -52,6 +60,24 @@ Mirror Accurate Online (read-only puller di `apps/api/src/repo/accurateSync.ts`,
 - Orders & Shipments **recent-only by design** (volume ~11.8rb/11.9rb) → di-mirror via `syncSalesOrders`/`syncDeliveryOrders`, ikut job `accurate-sync` (auto-refresh).
 - Detail Orders/Shipments/Suppliers/Customers pakai komponen **Dialog** (modal center, `components/ui/dialog.tsx`), bukan Sheet samping.
 - Resolusi nama: `COALESCE(NULLIF(name,''), raw->'customer'->>'name', …)` — kolom mirror bisa empty-string (bukan NULL), `COALESCE` saja tak cukup.
+
+## Price Book keagenan (F142) — `/pricebook`
+
+Katalog harga jual produk **keagenan** WRG hasil handover Direktur (tabel `product_pricelist`,
+migrasi 071). Beda dari `pricelist` (043) yang kalkulator HPP→margin internal: ini price book
+final yang dipakai sales. Repo API `apps/api/src/repo/pricebook.ts` → `/pricebook/{items,summary,outside,periode}`.
+
+- **Data TIDAK di repo** (repo PUBLIC). Isi lewat `scripts/db/import_pricebook.py --file <CSV> --db <target> [--apply]`;
+  CSV ada di Drive `16-Sales-PriceList-H2-2026/`. Idempoten by `(periode, row_no)`, dry-run default.
+- `harga_nett` = lantai harga (di bawahnya butuh izin Direksi); `nett_ppn` = PPN 11% **dari nett**,
+  bukan dari price list. Keduanya disimpan apa adanya dari sumber — **jangan** dihitung ulang.
+  13 nilai beda Rp 1 karena sumber pakai pembulatan half-even (importer melaporkan, tidak menolak).
+- Pencocokan ke Accurate hanya lewat **kode** (`accurate_item.no = product_pricelist.kode`); item
+  Accurate tanpa pasangan = tab **Di Luar Keagenan**. Jebakan: 141 SKU keagenan sendiri tidak punya
+  kode, jadi daftar "di luar keagenan" pasti kelebihan — jangan ditambal fuzzy-match nama (22 nama
+  di price book dipakai berulang dengan harga beda).
+- Gate: katalog = semua user berizin fitur `pricebook`; tab Ringkasan = Direktur/admin/superuser
+  (`apps/web/src/lib/pricebook-access.ts`). HPP/margin/harga sub-dealer memang tidak ada di data.
 
 ## Workflow Git/Rilis (WAJIB diikuti)
 
@@ -109,4 +135,5 @@ sudah cutover (dash-free file di-install user; sandbox blok edit crontab).
 - Export dashboard: CSV `sep=,\n` + BOM UTF-8 (`﻿`) → buka mulus di Excel lokal apa pun, tanpa dependency.
 - Admin-gate di layer WEB (admin-guard.ts requireAdmin role==admin), bukan di api.
 - **Inbound foto**: balasan ack pakai cooldown in-memory per-AM (90 dtk, `lastPhotoReplyAt` di inbound.ts) — foto visit sering datang berurutan (bukan barengan) jadi debounce `pending_photos` saja tak cukup; tanpa cooldown bot bales tiap foto (spam).
+- **`deal.brand` dinormalisasi TRIGGER** (`deal_brand_norm_trg`, migrasi 108): nilai tersimpan bisa **beda dari yang diketik** — `'ZYBIO'`/`'zybio'`/`'Zibio'` semuanya jadi `'Zybio'` lewat kamus `brand_alias` + `norm_brand()`. Merek yang belum terdaftar dibiarkan (cuma di-trim) supaya merek baru tak pernah hilang. Menambah/ubah pemetaan = INSERT ke `brand_alias`, bukan edit kode. Kalau ada tes yang menyangka brand tersimpan apa adanya, ini sebabnya.
 - **WatchPoint Weekly**: nomor minggu = **ISO-8601** (Senin–Minggu). Deck HoD lama pakai penomoran sendiri (mis. "W24" = 6–12 Juni 2026) → nomor bisa selisih 1 dari deck lama; yang dipakai sistem adalah rentang tanggalnya. Snapshot `source='db'` wajib ikut di-INSERT (default kolom = `manual`), kalau tidak snapshot berikutnya tertolak oleh `WHERE source='db'` dan angka berhenti diperbarui.

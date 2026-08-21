@@ -22,6 +22,7 @@ export interface DealFormInit {
   cabang?: string | null;
   city?: string | null;
   province?: string | null;
+  purchase_month?: number | null;
   purchase_year?: number | null;
   pic_hod?: string | null;
   notes?: string | null;
@@ -30,6 +31,7 @@ export interface DealFormInit {
 const str = (v: unknown) => (v == null ? "" : String(v));
 const rp = (n: number) =>
   new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(n || 0);
+const MONTH_ID = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
 const uniqSorted = (arr: (string | null | undefined)[]) =>
   [...new Set(arr.filter((x): x is string => !!x && x.trim() !== ""))].sort((a, b) => a.localeCompare(b));
 
@@ -82,12 +84,13 @@ function Combo({ value, onChange, options, placeholder }: {
   );
 }
 
-export function DealFormModal({ mode, deal, onClose, brands = [], cabangs = [] }: {
+export function DealFormModal({ mode, deal, onClose, brands = [], cabangs = [], hods = [] }: {
   mode: "create" | "edit";
   deal?: DealFormInit;
   onClose: () => void;
   brands?: string[];
   cabangs?: string[];
+  hods?: string[];
 }) {
   const router = useRouter();
   const [form, setForm] = useState<Record<string, string>>(() => ({
@@ -102,6 +105,7 @@ export function DealFormModal({ mode, deal, onClose, brands = [], cabangs = [] }
     cabang: str(deal?.cabang),
     city: str(deal?.city),
     province: str(deal?.province),
+    purchase_month: deal?.purchase_month != null ? String(deal.purchase_month) : "",
     purchase_year: deal?.purchase_year != null ? String(deal.purchase_year) : "",
     pic_hod: str(deal?.pic_hod),
     notes: str(deal?.notes),
@@ -175,11 +179,11 @@ export function DealFormModal({ mode, deal, onClose, brands = [], cabangs = [] }
 
         {err && <div className="mt-3 text-sm px-2 py-1 rounded bg-rose-100 text-rose-700">{err}</div>}
 
-        <div className="grid grid-cols-2 gap-3 mt-4">
-          <label className="text-sm col-span-2"><Lbl>Nama Faskes</Lbl>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4">
+          <label className="text-sm col-span-1 sm:col-span-2"><Lbl>Nama Faskes</Lbl>
             <input value={form.facility_name} onChange={(e) => set("facility_name", e.target.value)} className={inputCls} />
           </label>
-          <label className="text-sm col-span-2"><Lbl>Nama Customer</Lbl>
+          <label className="text-sm col-span-1 sm:col-span-2"><Lbl>Nama Customer</Lbl>
             <input value={form.customer_name} onChange={(e) => set("customer_name", e.target.value)} className={inputCls} />
           </label>
 
@@ -193,8 +197,10 @@ export function DealFormModal({ mode, deal, onClose, brands = [], cabangs = [] }
           <label className="text-sm"><Lbl>Model Kerjasama</Lbl>
             <select value={form.coop_model} onChange={(e) => set("coop_model", e.target.value)} className={inputCls}>
               <option value="">—</option>
+              {/* Dulu pilihannya 'Sale' sementara importer memakai 'SALE'/'BELI' —
+                  satu konsep, 4 ejaan di filter. Dua saja sekarang (migrasi 110). */}
               <option value="KSO">KSO</option>
-              <option value="Sale">Sale</option>
+              <option value="BELI">BELI</option>
             </select>
           </label>
           <label className="text-sm"><Lbl>Cabang</Lbl>
@@ -213,7 +219,11 @@ export function DealFormModal({ mode, deal, onClose, brands = [], cabangs = [] }
           </label>
 
           <label className="text-sm"><Lbl>PIC HOD</Lbl>
-            <input value={form.pic_hod} onChange={(e) => set("pic_hod", e.target.value)} className={inputCls} />
+            {/* Dulu input teks bebas → 13 ejaan untuk 2 orang (termasuk 'Pak yofi'
+                & kembaran karena spasi di ujung). Combo bersaran: yang biasa tetap
+                sekali klik, HoD baru masih bisa diketik. Ejaannya dirapikan
+                trigger di DB (migrasi 110). */}
+            <Combo value={form.pic_hod} onChange={(v) => set("pic_hod", v)} options={hods} placeholder="pilih / ketik HOD…" />
           </label>
           <label className="text-sm"><Lbl>Kategori</Lbl>
             <select value={form.product_category} onChange={(e) => set("product_category", e.target.value)} className={inputCls}>
@@ -237,11 +247,17 @@ export function DealFormModal({ mode, deal, onClose, brands = [], cabangs = [] }
             </div>
             <span className="text-[11px] text-muted-foreground">QTY × Harga (otomatis)</span>
           </div>
+          <label className="text-sm"><Lbl>Estimasi Bulan Beli</Lbl>
+            <select value={form.purchase_month} onChange={(e) => set("purchase_month", e.target.value)} className={inputCls}>
+              <option value="">—</option>
+              {MONTH_ID.map((m, i) => <option key={m} value={String(i + 1)}>{m}</option>)}
+            </select>
+          </label>
           <label className="text-sm"><Lbl>Tahun Beli</Lbl>
             <input type="number" inputMode="numeric" value={form.purchase_year} onChange={(e) => set("purchase_year", e.target.value)} className={inputCls} />
           </label>
 
-          <label className="text-sm col-span-2"><Lbl>Catatan</Lbl>
+          <label className="text-sm col-span-1 sm:col-span-2"><Lbl>Catatan</Lbl>
             <textarea value={form.notes} onChange={(e) => set("notes", e.target.value)} rows={2} className={inputCls} />
           </label>
         </div>

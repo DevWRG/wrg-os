@@ -9,6 +9,11 @@ export interface SessionUser extends PermBag {
   email?: string;
   role?: string;
   title?: string | null;
+  // Identitas karyawan (dari /auth/me) — dipakai untuk scope UI: is_am = AM
+  // murni (hanya data sendiri), is_hod = HoD (cabang timnya).
+  am_id?: string | null;
+  is_am?: boolean | null;
+  is_hod?: boolean | null;
 }
 
 /** Ambil user sesi dari /api/auth/me (apps/api membungkus { user: {...} }). */

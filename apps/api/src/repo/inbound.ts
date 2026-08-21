@@ -1,11 +1,14 @@
 import { db } from "../db.js";
 import { detectDaily, parseDaily, stripInvisible } from "../parsers/dailyplan.js";
-import { parseAmPlan, parseAmReport } from "../parsers/am.js";
+import { parseAmPlan, parseAmReport, bersihkanNamaCustomer } from "../parsers/am.js";
 import { sendViaWaGateway, type WaSendResult } from "../wasend.js";
 import { handleSalesAnalyticsQuery } from "./inbound-sales-analytics.js";
+import { detectCek, handleCekQuery } from "./inbound-cek.js";
 import { resolveSender } from "./master.js";
 import { upsertDailyTodo, computeIsLate } from "./todo.js";
 import { createReminder } from "./reminder.js";
+import { buildCekReply } from "./cek.js";
+import { ingestKlaim, type DocKlaimRow } from "./doc-klaim.js";
 
 // Role yang pakai alur AM per-customer (sales_plan/activity_log + foto), bukan todo.
 const AM_ROLES = new Set(["AM", "Teknisi"]);
@@ -20,10 +23,12 @@ const isAmRole = (role?: string | null) => AM_ROLES.has((role ?? "").trim());
 // → patuh WA_DRY_RUN. Idempoten: wa_message.processed_at. Pengirim tak dikenal →
 // SILENT (tak balas) supaya tak spam non-AM/pesan bot di grup campuran.
 
-export type InboundKind = "plan" | "report" | "leads" | "update" | "sales" | "none";
+export type InboundKind = "plan" | "report" | "leads" | "update" | "sales" | "cek" | "klaim" | "none";
 
 const LEADS_UPDATE_LINE = /^\s*#\s*(leads|update)\b/i;
 const SALES_LINE = /^\s*#\s*sales\b/i;
+const CEK_LINE = /^\s*#\s*cek\b/i;
+const KLAIM_LINE = /^\s*#\s*klaim\b/i;
 
 export function detectKind(body: string | null): InboundKind {
   const daily = detectDaily(body); // line-anchored #plan/#report (sudah strip invisible)
@@ -33,6 +38,10 @@ export function detectKind(body: string | null): InboundKind {
       const m = line.match(LEADS_UPDATE_LINE);
       if (m) return m[1].toLowerCase() as "leads" | "update";
       if (SALES_LINE.test(line)) return "sales";
+      // #CEK menangkap KEDUA varian (nomor dokumen F4 & CUSTOMER QW3) —
+      // pemisahannya di handler, bukan di detektor.
+      if (CEK_LINE.test(line)) return "cek";
+      if (KLAIM_LINE.test(line)) return "klaim";
     }
   }
   return "none";
@@ -156,11 +165,12 @@ function progressBar(filled: number, total: number): string {
 }
 
 // Balasan #REPORT AM — selaras format legacy "Kapten" (EOD + progress + foto pending).
-function buildAmReportReply(
+// Diekspor untuk diuji tanpa DB (repo/inbound-reply.test.ts).
+export function buildAmReportReply(
   nama: string,
   tanggal: string,
   n: number,
-  res: { matched: number; unmatched: number },
+  res: { matched: number; unmatched: number; unmatchedNames?: string[] },
   planTotal: number,
   reported: number,
   pendingPhoto: string[],
@@ -169,6 +179,14 @@ function buildAmReportReply(
   if (planTotal > 0) s += `\n📊 ${reported}/${planTotal} customer selesai  ${progressBar(reported, planTotal)}`;
   s += `\n🎯 Match plan: ${res.matched}✓`;
   if (res.unmatched > 0) s += ` ${res.unmatched}⚠️`;
+  // Nama customer yang tak match SELALU disebut. Tanpa ini AM cuma melihat
+  // "1⚠️" dan tak punya cara tahu customer mana yang gagal dicocokkan —
+  // datanya sudah ada di unmatchedNames, dulu hanya tidak dicetak.
+  const namesTakMatch = res.unmatchedNames ?? [];
+  if (namesTakMatch.length > 0) {
+    s += `\n\n⚠️ *Di luar #PLAN hari ini (${namesTakMatch.length} customer):*\n${namesTakMatch.join(", ")}`;
+    s += "\n\nKalau memang dikunjungi, kirim ulang #PLAN lengkap (semua customer hari ini) lalu #REPORT lagi — biar terhitung selesai.";
+  }
   if (pendingPhoto.length > 0) {
     s += `\n\n⚠️ *Foto visit belum ada (${pendingPhoto.length} customer):*\n${pendingPhoto.join(", ")}`;
     s += "\n\nKirim foto Geo-Tagging Camera per customer dgn caption `Nama Customer` — fuzzy match auto-pair ke pending.";
@@ -176,6 +194,60 @@ function buildAmReportReply(
     s += `\n✅ Semua foto visit lengkap.`;
   }
   return s;
+}
+
+/**
+ * Tempelkan foto pesan `#REPORT` ke baris aktivitas yang LAHIR dari pesan itu.
+ *
+ * processInboundMessage() hanya menjalankan photoFollowup() saat
+ * `kind === "none"` — yaitu foto TANPA caption berhashtag. Padahal banyak AM
+ * melapor dengan foto ber-caption `#Report / Cust : X / Hasil : …`; pesan itu
+ * dirutekan ke jalur laporan, dan fotonya sendiri TIDAK PERNAH terpasang.
+ *
+ * Akibatnya di produksi: dari 1.250 baris activity_log yang berasal dari foto
+ * ber-caption #Report, 1.235 (98,8%) `photo_path`-nya NULL dan 1.242
+ * `photo_geotag`-nya NULL — padahal OCR sudah mengekstrak koordinatnya ke
+ * `wa_message.geo_lat`. Sidqi 589/589 (100%), Vicky 174/174, Firman 124/124.
+ * Dua akibat yang terlihat: kolom Geotag di kartu kunjungan nol untuk AM yang
+ * fotonya justru lengkap, dan bot menagih "Foto visit belum ada" untuk foto
+ * yang baru saja dikirim AM.
+ *
+ * Dipasang SEBELUM daftar `pending` foto dihitung, supaya balasan tidak lagi
+ * menagih foto yang sudah menempel.
+ */
+async function tempelFotoLaporan(row: WaRow, tanggal: string): Promise<Record<string, unknown> | null> {
+  if (!String(row.message_type ?? "").toLowerCase().startsWith("image") || !row.media_path) return null;
+  const sql = db();
+  const hasGeo = row.geo_lat != null && row.geo_lon != null;
+  // Jam overlay tetap dipakai walau koordinatnya gagal terbaca OCR — aplikasi
+  // kamera Luri/Iqbal sering kehilangan digit koordinat tapi jamnya utuh. Tanpa
+  // ini visit_timestamp mereka selalu null dan date_mismatch tak pernah jalan.
+  const g = parseGeoTs(row.geo_ts);
+  const adaGeo = hasGeo || g.dt != null;
+  const geo = adaGeo
+    ? { lat: row.geo_lat ?? null, lon: row.geo_lon ?? null, ts: row.geo_ts ?? null, address: row.geo_address ?? null }
+    : null;
+  const rows = await sql<{ id: string; plan_id: string | null }[]>`
+    UPDATE activity_log SET photo_path = ${row.media_path},
+      photo_geotag = ${geo ? sql.json(geo as unknown as Parameters<typeof sql.json>[0]) : null}
+    WHERE message_id = ${row.message_id} AND photo_path IS NULL
+    RETURNING id, plan_id`;
+  if (rows.length === 0) return { foto: "tak-ada-baris" };
+  let plan = 0;
+  if (adaGeo) {
+    for (const r of rows) {
+      if (!r.plan_id) continue;
+      await sql`
+        UPDATE sales_plan
+           SET visit_lat = COALESCE(${row.geo_lat ?? null}::numeric, visit_lat),
+               visit_lon = COALESCE(${row.geo_lon ?? null}::numeric, visit_lon),
+               visit_timestamp = COALESCE(${g.dt}::timestamptz, visit_timestamp),
+               visit_date_mismatch = COALESCE(${g.iso ? g.iso !== tanggal : null}::boolean, visit_date_mismatch)
+         WHERE id = ${Number(r.plan_id)}`;
+      plan += 1;
+    }
+  }
+  return { foto_terpasang: rows.length, geo: hasGeo, jam: g.dt != null, plan_geo_diperbarui: plan };
 }
 
 // ── Alur AM per-customer ──
@@ -203,32 +275,81 @@ async function insertSalesPlan(
   return { count: customers.length, late };
 }
 
+// Ambang fuzzy resolusi Account: lebih ketat dari match plan (0.3) karena hasilnya
+// nempel permanen ke Account 360 (F62) & feed NPK/insentif, sementara salah-match
+// plan cuma mempengaruhi status reported hari itu.
+const ACCOUNT_MATCH = 0.45;
+
+// customer_name bebas-teks → account_id (mirror Accurate) + opportunity_id (deal
+// terbuka milik AM tsb). Best-effort: gagal resolve = NULL, bukan error — #REPORT
+// tak boleh ditolak cuma karena nama faskes belum ada di mirror.
+async function resolveActivityLinks(
+  amId: string,
+  customer: string,
+): Promise<{ accountId: number | null; opportunityId: string | null }> {
+  const sql = db();
+  const [acc] = await sql`
+    SELECT id, similarity(COALESCE(NULLIF(name,''), raw->>'name', ''), ${customer}) AS score
+    FROM accurate_customer
+    WHERE similarity(COALESCE(NULLIF(name,''), raw->>'name', ''), ${customer}) >= ${ACCOUNT_MATCH}
+    ORDER BY score DESC, id LIMIT 1
+  `;
+  const accountId = acc ? Number(acc.id) : null;
+
+  // Deal terbuka (belum Closing-*) milik AM ini: match by account_id, fallback
+  // fuzzy facility_name. Terbaru duluan — aktivitas biasanya untuk deal berjalan.
+  const [deal] = await sql`
+    SELECT deal_id FROM deal
+    WHERE am_id = ${amId}
+      AND stage NOT IN ('Closing-Won', 'Closing-Lost')
+      AND (
+        (${accountId}::bigint IS NOT NULL AND account_id = ${accountId})
+        OR similarity(COALESCE(NULLIF(facility_name,''), customer_name, ''), ${customer}) >= ${ACCOUNT_MATCH}
+      )
+    ORDER BY stage_entered_at DESC NULLS LAST, updated_at DESC
+    LIMIT 1
+  `;
+  return { accountId, opportunityId: deal ? String(deal.deal_id) : null };
+}
+
 // #REPORT AM → activity_log (per customer) + fuzzy-match ke sales_plan hari itu
 // (pg_trgm > 0.3) → set plan_id + tandai plan reported. is_unmatched bila tak match.
+// Sekalian resolve Account/Opportunity + simpan tipe aktivitas (F16 CRM Fase 1).
 async function insertAmActivities(
   amId: string,
   tanggal: string,
-  items: { customer: string; hasil: string; next_action: string }[],
+  items: { customer: string; hasil: string; next_action: string; activity_type?: string | null }[],
   messageId: string | null,
-): Promise<{ matched: number; unmatched: number; unmatchedNames: string[] }> {
+): Promise<{ matched: number; unmatched: number; unmatchedNames: string[]; linked: number }> {
   const sql = db();
   let matched = 0;
+  let linked = 0;
   const unmatchedNames: string[] = [];
   for (const it of items) {
+    // Cocokkan pakai nama yang sudah dibuang prefiks "Cust :"; yang DISIMPAN
+    // tetap apa adanya dari AM (jejak mentah tetap di wa_message.body).
+    const namaBersih = bersihkanNamaCustomer(it.customer);
     const cands = await sql`
-      SELECT id, similarity(customer_name, ${it.customer}) AS score
+      SELECT id, similarity(customer_name, ${namaBersih}) AS score
       FROM sales_plan WHERE am_id = ${amId} AND tanggal = ${tanggal}
-        AND similarity(customer_name, ${it.customer}) > 0.3
+        AND similarity(customer_name, ${namaBersih}) > 0.3
       ORDER BY score DESC LIMIT 1
     `;
     const planId = cands[0] ? Number(cands[0].id) : null;
     const score = cands[0] ? Number(cands[0].score) : null;
+    const links = await resolveActivityLinks(amId, namaBersih).catch(() => ({ accountId: null, opportunityId: null }));
+    if (links.accountId !== null) linked += 1;
+    // Default 'Fisik' bila AM tak menyebut tipe: #REPORT AM = laporan kunjungan
+    // harian (bukan kanal lain) — mempertahankan makna baris lama.
+    const actType = it.activity_type ?? "Fisik";
     const rows = await sql`
       INSERT INTO activity_log
-        (am_id, plan_id, tanggal, customer_name, hasil, next_action, source, is_unmatched, match_score, message_id)
+        (am_id, plan_id, tanggal, customer_name, hasil, next_action, source, is_unmatched, match_score, message_id,
+         activity_type, account_id, opportunity_id)
       VALUES
         (${amId}, ${planId}, ${tanggal}, ${it.customer}, ${it.hasil || null}, ${it.next_action || null},
-         'wa-inbound', ${planId === null}, ${score}, ${messageId})
+         'wa-inbound', ${planId === null}, ${score}, ${messageId},
+         ${actType}, ${links.accountId}, ${links.opportunityId})
       RETURNING id
     `;
     if (planId !== null) {
@@ -238,7 +359,7 @@ async function insertAmActivities(
       unmatchedNames.push(it.customer);
     }
   }
-  return { matched, unmatched: unmatchedNames.length, unmatchedNames };
+  return { matched, unmatched: unmatchedNames.length, unmatchedNames, linked };
 }
 
 // ── Foto-followup (Fase 3) ──
@@ -267,15 +388,31 @@ async function photoFollowup(row: WaRow, am: { am_id: string; nama: string }): P
   let caption = (row.body ?? "").trim();
   if (caption === "<media:image>") caption = "";
   if (!caption) return { skipped: "no-caption" };
-  const cands = await sql`
+  // Dulu LIMIT 1: hanya baris ber-skor tertinggi dalam jendela 7 hari yang
+  // dilihat, TANPA peduli baris itu sudah berfoto. Kalau ternyata sudah, foto
+  // baru dibuang sebagai "already-saved" — padahal baris HARI INI untuk faskes
+  // yang sama masih kosong. AM yang mengunjungi faskes yang sama berulang
+  // paling dirugikan: 209 foto ditolak, 134 di antaranya punya slot kosong di
+  // hari yang sama (Angga 41 · Yugo 39 · Iqbal 34 · Luri 28 · Irul 26).
+  // Sekarang beberapa kandidat diambil, dan slot KOSONG diutamakan.
+  const cands = await sql<{ id: string; customer_name: string; plan_id: string | null; tanggal: string; photo_path: string | null; score: string }[]>`
     SELECT id, customer_name, plan_id, tanggal::text AS tanggal, photo_path,
            similarity(customer_name, ${caption}) AS score
     FROM activity_log
     WHERE am_id = ${am.am_id} AND tanggal >= (CURRENT_DATE - 7)
       AND similarity(customer_name, ${caption}) >= ${PHOTO_SILENT}
-    ORDER BY score DESC LIMIT 1
+    ORDER BY score DESC LIMIT 8
   `;
-  const top = cands[0];
+  // Slot kosong yang layak: lulus ambang match, belum berfoto. Di antara itu,
+  // yang tanggalnya SAMA dengan hari foto dikirim diutamakan — foto yang baru
+  // dikirim hampir selalu milik kunjungan hari itu; baru kemudian skor.
+  const hariFoto = String(row.received_at ?? "").slice(0, 10);
+  const kosong = cands
+    .filter((c) => !c.photo_path && Number(c.score) >= PHOTO_MATCH)
+    .sort((a, b) =>
+      (b.tanggal === hariFoto ? 1 : 0) - (a.tanggal === hariFoto ? 1 : 0) ||
+      Number(b.score) - Number(a.score));
+  const top = kosong[0] ?? cands[0];
   if (!top) return { skipped: "no-match-silent", caption };
   const score = Number(top.score);
   if (score < PHOTO_MATCH) {
@@ -287,20 +424,26 @@ async function photoFollowup(row: WaRow, am: { am_id: string; nama: string }): P
     return { note: "already-saved", reply };
   }
   const hasGeo = row.geo_lat != null && row.geo_lon != null;
-  const geo = hasGeo ? { lat: row.geo_lat, lon: row.geo_lon, ts: row.geo_ts ?? null, address: row.geo_address ?? null } : null;
+  const g = parseGeoTs(row.geo_ts); // jam dipakai walau koordinat gagal — lihat tempelFotoLaporan
+  const adaGeo = hasGeo || g.dt != null;
+  const geo = adaGeo
+    ? { lat: row.geo_lat ?? null, lon: row.geo_lon ?? null, ts: row.geo_ts ?? null, address: row.geo_address ?? null }
+    : null;
   await sql`
     UPDATE activity_log SET photo_path = ${row.media_path ?? null},
       photo_geotag = ${geo ? sql.json(geo as unknown as Parameters<typeof sql.json>[0]) : null}
     WHERE id = ${top.id}
   `;
   let mismatch = false;
-  if (top.plan_id && hasGeo) {
-    const g = parseGeoTs(row.geo_ts);
+  if (top.plan_id && adaGeo) {
     mismatch = g.iso ? g.iso !== String(top.tanggal) : false;
     await sql`
-      UPDATE sales_plan SET visit_lat = ${row.geo_lat ?? null}, visit_lon = ${row.geo_lon ?? null},
-        visit_timestamp = ${g.dt}, visit_date_mismatch = ${mismatch}
-      WHERE id = ${top.plan_id}
+      UPDATE sales_plan
+         SET visit_lat = COALESCE(${row.geo_lat ?? null}::numeric, visit_lat),
+             visit_lon = COALESCE(${row.geo_lon ?? null}::numeric, visit_lon),
+             visit_timestamp = COALESCE(${g.dt}::timestamptz, visit_timestamp),
+             visit_date_mismatch = COALESCE(${g.iso ? g.iso !== String(top.tanggal) : null}::boolean, visit_date_mismatch)
+       WHERE id = ${top.plan_id}
     `;
   }
   // Debounce: kalau masih ada foto lain dari AM/grup yg sama BELUM diproses,
@@ -402,6 +545,77 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
     return finish({ kind: "sales", via: ams.via, reply });
   }
 
+  // #CEK — SATU command, dua varian (F4 SXR + QW3). Pengirim WAJIB dikenal:
+  // balasan berisi data komersial (customer, nominal, status) yang gak boleh
+  // keluar ke pengirim tak dikenal.
+  //   · `#CEK CUSTOMER <nama>`  → QW3: ringkasan pre-delivery SO/SJ/TTF per
+  //                               customer (fuzzy nama, inbound-cek.ts).
+  //   · `#CEK <nomor dokumen>`  → F4 : cross-ref SO↔SJ↔Faktur by nomor (cek.ts).
+  // Varian CUSTOMER dicek DULU — kalau tidak, "CUSTOMER RSUD X" ikut kebaca
+  // sebagai nomor dokumen dan selalu balas "tidak ditemukan".
+  if (kind === "cek") {
+    const ck = await resolveSender({ senderJid: row.sender_jid, groupJid: row.group_jid, pushname: row.sender_name });
+    if (!ck) return finish({ skipped: "unknown-sender", sender_name: row.sender_name });
+    if (detectCek(row.body ?? "")) {
+      let text: string;
+      try {
+        text = await handleCekQuery(row.body ?? "");
+      } catch (e) {
+        text = `⚠️ Query #CEK gagal diproses: ${(e as Error).message}`;
+      }
+      const reply = await sendViaWaGateway(target, text);
+      return finish({ kind: "cek", cek_mode: "customer", via: ck.via, reply });
+    }
+    const query = (row.body ?? "").replace(CEK_LINE, "").trim();
+    if (!query) {
+      const reply = await sendViaWaGateway(
+        target,
+        `⚠️ Isi nomor dokumen atau nama customer setelah #CEK, ${ck.nama}. Contoh: #CEK SO-00123 — atau #CEK CUSTOMER RSUD Kota`,
+      );
+      return finish({ error: "empty-query", via: ck.via, reply });
+    }
+    const text = await buildCekReply(query);
+    const reply = await sendViaWaGateway(target, text);
+    return finish({ kind: "cek", cek_mode: "dokumen", via: ck.via, reply });
+  }
+
+  // #KLAIM — DOC #KLAIM Fase A. Sender BEBAS teks (tak butuh roster, pola
+  // sama kurir F12/F93) — klaim bisa datang dari siapa pun, bukan cuma AM.
+  // Wajib foto; #KLAIM tanpa foto dibalas error jelas (bukan silent-skip).
+  if (kind === "klaim") {
+    if (!(String(row.message_type ?? "").toLowerCase().startsWith("image") && row.media_path)) {
+      const reply = await sendViaWaGateway(target, "⚠️ #KLAIM wajib disertai foto dokumen (invoice/faktur/struk).");
+      return finish({ error: "no-photo", reply });
+    }
+    const caption = (row.body ?? "").replace(KLAIM_LINE, "").trim() || null;
+    const result = await ingestKlaim({
+      wa_message_id: row.id,
+      sender_jid: row.sender_jid,
+      sender_name: row.sender_name,
+      media_path: row.media_path,
+      caption,
+    });
+    if ("ok" in result && result.ok === false) {
+      const reply = await sendViaWaGateway(target, `⚠️ Gagal proses #KLAIM: ${result.error}`);
+      return finish({ error: result.error, reply });
+    }
+    const k = result as DocKlaimRow;
+    const msg = k.ocr_dry_run
+      ? `📥 Foto #KLAIM tersimpan. OCR belum aktif (mode dry-run) — akan ditindaklanjuti manual.`
+      : [
+          "✅ #KLAIM diterima, foto tersimpan.",
+          k.nomor_dokumen ? `No. Dokumen: ${k.nomor_dokumen}` : null,
+          k.tanggal_dokumen ? `Tanggal: ${k.tanggal_dokumen}` : null,
+          k.nominal ? `Nominal: ${k.nominal}` : null,
+          k.pihak ? `Pihak: ${k.pihak}` : null,
+          "Akan ditindaklanjuti tim terkait.",
+        ]
+          .filter(Boolean)
+          .join("\n");
+    const reply = await sendViaWaGateway(target, msg);
+    return finish({ klaim_id: k.id, ocr_dry_run: k.ocr_dry_run, reply });
+  }
+
   // #PLAN/#REPORT — parse DULU (body-name dibutuhkan untuk resolusi Tier-A).
   const parsed = parseDaily(row.body ?? "");
   const am = await resolveSender({
@@ -463,11 +677,17 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
   if (amFlow) {
     const ar = parseAmReport(row.body ?? "");
     if (ar.items.length === 0) {
-      const reply = await sendViaWaGateway(target, `⚠️ Report AM tak terbaca, ${am.nama}. Format: 1. Customer / hasil: … / next: …`);
+      const reply = await sendViaWaGateway(
+        target,
+        `⚠️ Report AM tak terbaca, ${am.nama}.\nFormat: \`Customer — hasil — next step\` (boleh tambah \`— tipe\`: Fisik/Telepon/WA/Demo/Presentasi/Follow-up)\natau: 1. Customer / hasil: … / next: …`,
+      );
       return finish({ error: "am-report-empty", via: am.via, reply });
     }
     const tgl = ar.tanggal ?? wibDate();
     const res = await insertAmActivities(am.am_id, tgl, ar.items, row.message_id);
+    // Foto yang datang BERSAMA laporan ini dipasang sekarang — sebelum daftar
+    // `pend` dihitung, supaya balasan tak menagih foto yang sudah ada.
+    const foto = await tempelFotoLaporan(row, tgl);
     const [tot] = await sql`
       SELECT count(*)::int AS plan_total, count(*) FILTER (WHERE reported)::int AS reported
       FROM sales_plan WHERE am_id = ${am.am_id} AND tanggal = ${tgl}
@@ -493,7 +713,7 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
     let body = buildAmReportReply(am.nama, tgl, ar.items.length, res, Number(tot.plan_total), Number(tot.reported), pendingNames);
     if (reminders > 0) body += `\n\n📌 ${reminders} reminder dijadwalkan.`;
     const reply = await sendViaWaGateway(target, body);
-    return finish({ am_id: am.am_id, via: am.via, mode: "am", tanggal: tgl, matched: res.matched, unmatched: res.unmatched, reminders, reply });
+    return finish({ am_id: am.am_id, via: am.via, mode: "am", tanggal: tgl, matched: res.matched, unmatched: res.unmatched, linked: res.linked, reminders, reply, ...(foto ?? {}) });
   }
   // report todo — cocokkan vs plan + balasan kaya (match/baru)
   const rep = await markReported(am.am_id, am.nama, tanggal, parsed.items, row.body ?? "");
@@ -514,7 +734,7 @@ export async function processUnprocessed(
            media_path, geo_lat, geo_lon, geo_ts, geo_address
     FROM wa_message
     WHERE processed_at IS NULL
-      AND (body ~* '#\\s*(plan|report|leads|update|sales)'
+      AND (body ~* '#\\s*(plan|report|leads|update|sales|cek|klaim)'
            OR (message_type ~* '^image' AND media_path IS NOT NULL))
     ORDER BY received_at ASC LIMIT ${limit}
   `;
