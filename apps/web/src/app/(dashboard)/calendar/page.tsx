@@ -2,11 +2,12 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronLeft, ChevronRight, Pin, Star } from "lucide-react";
+import { ChevronLeft, ChevronRight, Pin, Star, User } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { AddReminderSheet } from "@/components/crm/add-reminder-sheet";
+import { useSession } from "@/lib/use-session";
 
 interface Reminder {
   d: string;
@@ -38,6 +39,10 @@ type View = "month" | "week";
 
 export default function CalendarPage() {
   const router = useRouter();
+  const me = useSession();
+  // AM murni → kalender hanya miliknya sendiri (data sudah dibatasi backend via
+  // x-user-id; filter AM/cabang disembunyikan karena cuma 1 opsi = dirinya).
+  const amOnly = me?.is_am === true;
   const [view, setView] = useState<View>("month");
   const [cursor, setCursor] = useState(() => new Date());
   const [amFilter, setAmFilter] = useState("");
@@ -78,6 +83,13 @@ export default function CalendarPage() {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- load() men-setState (loading) saat fetch; disengaja.
     void load();
   }, [load]);
+
+  // Identitas AM pemilik kalender (dipakai label saat scope AM). Katalog `ams`
+  // dari backend sudah ter-scope → untuk AM murni isinya hanya dirinya.
+  const selfAm = useMemo(
+    () => (data?.ams ?? []).find((a) => a.am_id === me?.am_id) ?? (amOnly ? data?.ams?.[0] : undefined),
+    [data?.ams, me?.am_id, amOnly],
+  );
 
   // Katalog cabang (dari ams), independen dari filter aktif
   const cabangs = useMemo(
@@ -123,29 +135,43 @@ export default function CalendarPage() {
           <h1 className="text-2xl font-semibold tracking-tight">
             Sales <span className="text-primary">Calendar</span>
           </h1>
-          <p className="text-muted-foreground text-sm">Libur nasional + catatan reminder Account Manager. Klik tanggal untuk detail hari itu.</p>
+          <p className="text-muted-foreground text-sm">
+            {amOnly
+              ? "Libur nasional + catatan reminder Anda. Klik tanggal untuk detail hari itu."
+              : "Libur nasional + catatan reminder Account Manager. Klik tanggal untuk detail hari itu."}
+          </p>
         </div>
         <div className="flex flex-wrap items-center gap-2 sm:flex-nowrap">
-          <select
-            value={amFilter}
-            onChange={(e) => setAmFilter(e.target.value)}
-            className="border-input bg-card h-9 rounded-md border px-2.5 text-sm outline-none focus-visible:border-primary"
-          >
-            <option value="">Semua AM</option>
-            {(data?.ams ?? []).map((a) => (
-              <option key={a.am_id} value={a.am_id}>{a.name}{a.cabang ? ` (${a.cabang})` : ""}</option>
-            ))}
-          </select>
-          <select
-            value={cabFilter}
-            onChange={(e) => setCabFilter(e.target.value)}
-            className="border-input bg-card h-9 rounded-md border px-2.5 text-sm outline-none focus-visible:border-primary"
-          >
-            <option value="">Semua cabang</option>
-            {cabangs.map((c) => (
-              <option key={c} value={c}>{c}</option>
-            ))}
-          </select>
+          {amOnly ? (
+            <span className="border-input bg-card text-muted-foreground inline-flex h-9 items-center gap-1.5 rounded-md border px-2.5 text-sm">
+              <User className="size-3.5" />
+              <span className="text-foreground font-medium">{selfAm?.name ?? me?.name ?? "Kalender saya"}</span>
+              {selfAm?.cabang ? <span>· {selfAm.cabang}</span> : null}
+            </span>
+          ) : (
+            <>
+              <select
+                value={amFilter}
+                onChange={(e) => setAmFilter(e.target.value)}
+                className="border-input bg-card h-9 rounded-md border px-2.5 text-sm outline-none focus-visible:border-primary"
+              >
+                <option value="">Semua AM</option>
+                {(data?.ams ?? []).map((a) => (
+                  <option key={a.am_id} value={a.am_id}>{a.name}{a.cabang ? ` (${a.cabang})` : ""}</option>
+                ))}
+              </select>
+              <select
+                value={cabFilter}
+                onChange={(e) => setCabFilter(e.target.value)}
+                className="border-input bg-card h-9 rounded-md border px-2.5 text-sm outline-none focus-visible:border-primary"
+              >
+                <option value="">Semua cabang</option>
+                {cabangs.map((c) => (
+                  <option key={c} value={c}>{c}</option>
+                ))}
+              </select>
+            </>
+          )}
           <AddReminderSheet ams={data?.ams ?? []} onCreated={load} />
         </div>
       </div>
@@ -228,7 +254,7 @@ export default function CalendarPage() {
                     className="bg-danger-soft text-danger flex items-center gap-1 truncate rounded px-1.5 py-0.5 text-[10px] font-medium"
                     title={`📌 ${r.name}${r.cabang ? ` (${r.cabang})` : ""}: ${r.note}`}
                   >
-                    <Pin className="size-2.5 shrink-0" /> <span className="truncate">{r.name}: {r.note}</span>
+                    <Pin className="size-2.5 shrink-0" /> <span className="truncate">{amOnly ? r.note : `${r.name}: ${r.note}`}</span>
                   </span>
                 ))}
                 {dayReminders.length > 2 && (
