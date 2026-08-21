@@ -76,3 +76,43 @@ test("regresi daily #plan: tahun 2 digit wajar tetap lolos", () => {
   const r = parseDaily("#plan joni\n7/8/26\n\n1.siapkan kiriman\n2.croscek bs", NOW);
   assert.equal(r?.tanggal, "2026-08-07");
 });
+
+// ── Jaring masa depan (asimetris) ────────────────────────────────────────────
+// Jaring lama simetris ±180 hari, jadi tanggal masa depan yang "dekat" lolos dan
+// barisnya duduk di masa depan tanpa pernah cocok ke plan. Kejadian nyata: 6
+// baris activity_log am 18 bertanggal 2027-07-27 dari pesan 2026-07-27.
+// Batas +7 diambil dari data produksi: sales_plan NOL baris masa depan,
+// sales_todo hanya 5 baris di +1.
+
+test("plausibleIso: asimetris — 180 hari ke belakang, hanya 7 ke depan", () => {
+  assert.equal(plausibleIso("2026-08-03", NOW), true); // -7
+  assert.equal(plausibleIso("2026-03-01", NOW), true); // ~-162, backdate sah
+  assert.equal(plausibleIso("2026-02-11", NOW), true); // -180 batas lampau
+  assert.equal(plausibleIso("2026-02-10", NOW), false); // -181 → ditolak
+  assert.equal(plausibleIso("2026-08-11", NOW), true); // +1, plan besok
+  assert.equal(plausibleIso("2026-08-17", NOW), true); // +7 batas depan
+  assert.equal(plausibleIso("2026-08-18", NOW), false); // +8 → ditolak
+  assert.equal(plausibleIso("2026-09-10", NOW), false); // +31 → ditolak
+  assert.equal(plausibleIso("2025-08-10", NOW), false); // -365 → tetap ditolak
+});
+
+test("plan besok (+1) tetap diterima — 5 baris sales_todo nyata memakainya", () => {
+  const r = parseDaily("#plan joni\n11/8/26\n\n1.kirim sampel", NOW);
+  assert.equal(r?.tanggal, "2026-08-11");
+});
+
+test("#REPORT bertanggal sebulan ke depan tidak lagi disimpan di masa depan", () => {
+  // 10/9/26 dari pesan 10 Agu = +31 hari. Tahun sudah benar, jadi retry
+  // tahun-berjalan menghasilkan tanggal yang sama → null → caller pakai hari ini.
+  assert.equal(buildIso(10, 9, "26", NOW), null);
+});
+
+test("regresi Yugo: 27/7/27 dari pesan 27 Jul 2026 → 2026, bukan 2027", () => {
+  // Pesan asli AC8AD824… masuk 2026-07-27 20:35 WIB, sebelum validasi tahun ada.
+  const saatItu = Date.parse("2026-07-27T13:35:00Z");
+  assert.equal(buildIso(27, 7, "27", saatItu), "2026-07-27");
+});
+
+test("batas +7 tidak menggeser tanggal hari ini", () => {
+  assert.equal(buildIso(10, 8, "26", NOW), "2026-08-10");
+});
