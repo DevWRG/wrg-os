@@ -37,7 +37,10 @@ export function currentPeriod(now = new Date()): { year: number; period: Period 
 // Diekspor supaya scripts/ops/npk-compare-metode.mjs memakai sumber input yang SAMA.
 export async function hodCabangSet(sql: ReturnType<typeof db>, hodKey: string): Promise<string[]> {
   const rows = await sql<{ cabang: string }[]>`SELECT cabang FROM hod_territory WHERE hod_key = ${hodKey}`;
-  return rows.map((r) => String(r.cabang)).filter(Boolean);
+  // Huruf besar, sejalan dengan resolveScope(): sisi master_user di query
+  // pembanding di-upper juga, supaya duplikat kapitalisasi di master_user
+  // (Kediri/KEDIRI dsb) tidak memotong cabang dari tanggung jawab HoD.
+  return rows.map((r) => String(r.cabang).trim().toUpperCase()).filter(Boolean);
 }
 
 export interface GatherResult {
@@ -94,7 +97,7 @@ export async function gatherAspectInput(
     LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
     ${joinAmFromSalesman(sql)}
     WHERE ai.tanggal BETWEEN ${from} AND ${to}
-      AND COALESCE(NULLIF(mu.cabang,''), NULLIF(acs.cabang_override,'')) = ANY(${cabang}::text[])`;
+      AND upper(btrim(COALESCE(NULLIF(mu.cabang,''), NULLIF(acs.cabang_override,'')))) = ANY(${cabang}::text[])`;
   input.revenue_actual = Number(rev?.revenue ?? 0);
   input.customer_active_count = Number(rev?.customers ?? 0);
 
@@ -129,7 +132,7 @@ export async function gatherAspectInput(
     LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
     ${joinAmFromSalesman(sql)}
     WHERE ai.status = 'OPEN'
-      AND COALESCE(NULLIF(mu.cabang,''), NULLIF(acs.cabang_override,'')) = ANY(${cabang}::text[])`;
+      AND upper(btrim(COALESCE(NULLIF(mu.cabang,''), NULLIF(acs.cabang_override,'')))) = ANY(${cabang}::text[])`;
   input.ar_total = Number(ar?.ar_total ?? 0);
   input.ar_over_45d = Number(ar?.ar_over45 ?? 0);
 

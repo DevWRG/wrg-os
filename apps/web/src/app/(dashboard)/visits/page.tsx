@@ -4,7 +4,7 @@ import { gatewayFetch } from "@/lib/gateway";
 import { sessionUser } from "@/lib/admin-guard";
 import { cn } from "@/lib/utils";
 import { PageHeader } from "@/components/dashboard/page-header";
-import { AddVisitSheet } from "@/components/crm/add-visit-sheet";
+import { AddVisitSheet, type AmOption } from "@/components/crm/add-visit-sheet";
 import {
   TimelinessCard,
   VisitTargetTable,
@@ -38,6 +38,10 @@ interface VisitItem {
 interface VisitResponse {
   count: number;
   visits: VisitItem[];
+}
+interface RosterResponse {
+  count: number;
+  users: { am_id: string; nama: string | null; panggilan: string | null; cabang: string | null }[];
 }
 interface VisitSummary {
   total: number;
@@ -84,12 +88,19 @@ export default async function VisitsPage({
   // /auth/me = scope.amOnly). Peran lain (admin/HoD/direktur/dll) tetap lihat.
   // Tanpa sesi (auth mati/dev) is_am undefined → tombol tetap tampil (non-breaking).
   const canAddVisit = !me?.is_am;
-  const [summary, list, kpi] = await Promise.all([
+  const [summary, list, kpi, roster] = await Promise.all([
     getJson<VisitSummary>("/visits/summary", me?.id),
     getJson<VisitResponse>(`/visits${qs}`, me?.id),
     getJson<VisitKpi>("/visits/kpi", me?.id),
+    // Roster AM untuk dropdown form — am_id nyata = user_id legacy, jangan
+    // diketik manual. Hanya diambil kalau tombolnya memang tampil.
+    canAddVisit ? getJson<RosterResponse>("/master/users?role=AM&aktif=true", me?.id) : null,
   ]);
   const visits = list?.visits ?? null;
+  const amOptions: AmOption[] = (roster?.users ?? []).map((u) => ({
+    am_id: u.am_id,
+    label: [u.panggilan || u.nama || u.am_id, u.cabang].filter(Boolean).join(" · "),
+  }));
 
   const total = summary?.total ?? 0;
   const ok = summary?.by_status?.ok ?? 0;
@@ -101,7 +112,7 @@ export default async function VisitsPage({
       <PageHeader
         title="Visits"
         description="Kunjungan AM dengan geotag + foto (port visit). Geo divalidasi terhadap bbox Indonesia."
-        action={canAddVisit ? <AddVisitSheet /> : undefined}
+        action={canAddVisit ? <AddVisitSheet amOptions={amOptions} /> : undefined}
       />
 
       {!summary ? (

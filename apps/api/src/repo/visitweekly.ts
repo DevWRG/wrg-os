@@ -48,9 +48,21 @@ export async function runVisitWeeklyRecap(to?: string): Promise<{
     `Tercapai: ${k.on_track}/${team} AM`,
     "",
   ];
+  // Angka capaian = kunjungan yang DILAPORKAN. `geo` dibawa terpisah sebagai
+  // indikator kepatuhan foto — sebelumnya capaian dihitung dari geotag, jadi AM
+  // yang rajin melapor tanpa geotag tampil 0% dan itu tidak bisa dibedakan dari
+  // AM yang benar-benar tidak melapor.
   for (const a of sorted) {
     const newFlag = a.new_prospects >= a.new_target ? "✅" : `⚠️ ${a.new_prospects}/${a.new_target}`;
-    lines.push(`${bar(a.pct)} ${String(a.pct).padStart(3)}%  ${label(a)} — ${a.visits}/${a.target} · prospek baru ${newFlag}`);
+    lines.push(
+      `${bar(a.pct)} ${String(a.pct).padStart(3)}%  ${label(a)} — ${a.visits}/${a.target}` +
+        ` · geo ${a.visits_geotag}/${a.visits} · prospek baru ${newFlag}`,
+    );
+  }
+  const totVisit = sorted.reduce((s, a) => s + a.visits, 0);
+  const totGeo = sorted.reduce((s, a) => s + a.visits_geotag, 0);
+  if (totVisit > 0) {
+    lines.push("", `📷 Foto geotag: ${totGeo}/${totVisit} kunjungan (${Math.round((totGeo / totVisit) * 100)}%)`);
   }
   if (below.length > 0) lines.push("", `⚠️ *Di bawah target (${below.length}):* ${below.join(", ")}`);
   lines.push("", "_Weekly submit paling lambat Senin 12:00._");

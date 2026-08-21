@@ -69,28 +69,37 @@ const pad = (s, n) => String(s ?? "").padEnd(n);
 // Pencocokan "mengandung" bebas SENGAJA TIDAK dipakai: uji di dev membuktikan "Ari"
 // ikut menyambar "Sari Demo" dan "Dewi Lestari". Kandidat ganda tidak pernah dipilih
 // otomatis — menebak identitas orang untuk data HR tak boleh dilakukan diam-diam.
+// Karyawan NONAKTIF ikut diambil (tanpa filter `aktif`), lalu disaring di pemanggil.
+// Dulu disaring di query, dan akibatnya AM nonaktif dilaporkan "tak ada di
+// master_user" — perilakunya benar (tidak ditulis) tapi sebabnya menyesatkan: orang
+// jadi mencari data yang sebenarnya ADA. Contoh nyata: Dodi Alvian (role AM, NTT).
 async function cocokkan(nama) {
   const persis = await sql`
-    SELECT am_id, nama, panggilan, role, cabang, golongan
+    SELECT am_id, nama, panggilan, role, cabang, golongan, aktif
     FROM master_user
-    WHERE aktif IS NOT FALSE
-      AND (lower(panggilan) = lower(${nama}) OR lower(nama) = lower(${nama}))`;
+    WHERE lower(panggilan) = lower(${nama}) OR lower(nama) = lower(${nama})`;
   if (persis.length) return persis;
   return await sql`
-    SELECT am_id, nama, panggilan, role, cabang, golongan
+    SELECT am_id, nama, panggilan, role, cabang, golongan, aktif
     FROM master_user
-    WHERE aktif IS NOT FALSE
-      AND nama ~* ${"(^|\\s)" + nama + "($|\\s)"}`;
+    WHERE nama ~* ${"(^|\\s)" + nama + "($|\\s)"}`;
 }
 
 const rencana = [];
 const bermasalah = [];
 
 for (const r of ROSTER) {
-  const kandidat = await cocokkan(r.nama);
+  const semua = await cocokkan(r.nama);
   const golongan = GOLONGAN_DARI_ROSTER[r.level.toUpperCase()];
   if (!golongan) { bermasalah.push({ ...r, sebab: `level "${r.level}" tak dikenal` }); continue; }
-  if (kandidat.length === 0) { bermasalah.push({ ...r, sebab: "tak ada di master_user" }); continue; }
+  if (semua.length === 0) { bermasalah.push({ ...r, sebab: "tak ada di master_user" }); continue; }
+  // Yang aktif diutamakan: kalau ada yang aktif, yang nonaktif diabaikan begitu saja
+  // (jangan sampai homonim nonaktif bikin baris yang tadinya lolos jadi "ambigu").
+  const kandidat = semua.filter((k) => k.aktif !== false);
+  if (kandidat.length === 0) {
+    bermasalah.push({ ...r, sebab: `ADA di master_user tapi nonaktif (aktif=false): ${semua.map((k) => `${k.nama} (${k.am_id}, role ${k.role ?? "—"})`).join(", ")}` });
+    continue;
+  }
   if (kandidat.length > 1) {
     bermasalah.push({ ...r, sebab: `ambigu — ${kandidat.length} kandidat: ${kandidat.map((k) => `${k.nama} (${k.am_id})`).join(", ")}` });
     continue;
