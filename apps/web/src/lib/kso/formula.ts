@@ -69,8 +69,14 @@ const jumlah = (pr: Record<string, KontribusiReagen>): HasilReagen => {
 
 // ── Hematologi ──────────────────────────────────────────────────────────────
 
-/** Mode test EXZ8000. RET = channel retikulosit ikut dijalankan. */
-export type ExzMode = "cbc_diff_ret" | "cbc_diff_xn" | "cbc_diff_ret_xr";
+/**
+ * Mode test EXZ8000. RET = channel retikulosit ikut dijalankan.
+ *
+ * `cbc_diff` tidak ada di `testModes` master (master cuma memuat tiga mode yang
+ * dipakai untuk kontrol/kalibrasi), tapi layar hasil sumber menawarkannya
+ * sebagai pilihan keempat: CBC+DIFF tanpa RET dan tanpa cek control.
+ */
+export type ExzMode = "cbc_diff" | "cbc_diff_ret" | "cbc_diff_xn" | "cbc_diff_ret_xr";
 
 /**
  * Biaya reagen hematologi per test.

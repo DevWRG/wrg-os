@@ -35,6 +35,20 @@ export async function requireAdmin(): Promise<{ ok: true } | { ok: false; res: R
   return { ok: true };
 }
 
+// Guard untuk aksi tingkat Direktur: role 'direktur'/'admin' atau superuser.
+// Dipakai mis. ubah target WatchPoint — target itu kesepakatan Direktur–HoD,
+// jadi sengaja TIDAK dibuka untuk HoD yang bersangkutan (beda dgn input angka
+// aktual mingguan yang memakai requireHodOrAdmin).
+export async function requireDirekturOrAdmin(): Promise<{ ok: true; me: SessionUserSrv } | { ok: false; res: Response }> {
+  const u = await sessionUser();
+  if (!u) return { ok: false, res: Response.json({ error: "unauthenticated" }, { status: 401 }) };
+  const role = (u.role ?? "").trim().toLowerCase();
+  if (role !== "admin" && role !== "direktur" && u.superuser !== true) {
+    return { ok: false, res: Response.json({ error: "forbidden (direktur/admin only)" }, { status: 403 }) };
+  }
+  return { ok: true, me: u };
+}
+
 // Guard untuk fitur HoD (mis. List Raport Karyawan): admin/superuser ATAU HoD
 // (app_user.hod_key ter-set → is_hod dari /auth/me). Balikan {ok} / Response siap-return.
 export async function requireHodOrAdmin(): Promise<{ ok: true; me: SessionUserSrv } | { ok: false; res: Response }> {

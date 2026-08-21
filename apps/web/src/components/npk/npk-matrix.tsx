@@ -9,22 +9,31 @@ import {
   fmt1, periodLabel, scoreBand,
   type AspectKey, type NpkMatrixResult, type NpkMatrixRow,
 } from "./npk-format";
-import { WIRED_BOBOT, zoneOf } from "./npk-status";
-
-const SHORT: Record<AspectKey, string> = {
-  revenue: "Revenue", customer: "Customer", ar: "AR", kso: "KSO", gp: "GP", crm: "CRM", coaching: "Coaching",
-};
+import { ASPEK_NAMA as SHORT, bobotOf, wiredAspects, zoneOf } from "./npk-status";
 
 type SortKey = "name" | "npk" | AspectKey;
 
-export function NpkMatrix({ data }: { data: NpkMatrixResult | null }) {
+// Matrix subjek × 7 aspek. Dipakai dua halaman:
+//   /npk     → subjek HoD (kolom nama "HoD")
+//   /npk/am  → subjek AM  (kolom nama "AM")
+// `computeHint` = perintah recompute yang ditampilkan bila periode belum di-compute;
+// `naNote` = kalimat tambahan yang menjelaskan kenapa sel N/A muncul di jalur itu.
+export function NpkMatrix({
+  data, title, subjectLabel, computeHint = "POST /npk/compute", naNote,
+}: {
+  data: NpkMatrixResult | null;
+  title: string;
+  subjectLabel: string;
+  computeHint?: string;
+  naNote?: string;
+}) {
   const [sortKey, setSortKey] = useState<SortKey>("npk");
   const [dir, setDir] = useState<"asc" | "desc">("desc");
 
   const rows = useMemo(() => {
     if (!data) return [];
     const val = (r: NpkMatrixRow): number | string =>
-      sortKey === "name" ? r.hod_name.toLowerCase()
+      sortKey === "name" ? r.subject_name.toLowerCase()
         : sortKey === "npk" ? r.npk
           : (r.aspects[sortKey]?.capped ?? -1);
     return [...data.rows].sort((a, b) => {
@@ -33,6 +42,10 @@ export function NpkMatrix({ data }: { data: NpkMatrixResult | null }) {
       return dir === "asc" ? c : -c;
     });
   }, [data, sortKey, dir]);
+
+  // Plafon skor = Σ bobot aspek yang benar-benar ter-feed di jalur ini (HoD 2 aspek,
+  // AM 4 aspek). Diturunkan dari data, bukan dipatok, supaya kedua halaman jujur.
+  const ceiling = useMemo(() => bobotOf(wiredAspects(data?.rows ?? [])), [data]);
 
   if (!data) return <Card><CardContent className="py-10 text-center text-muted-foreground">Gagal memuat data NPK.</CardContent></Card>;
 
@@ -50,7 +63,7 @@ export function NpkMatrix({ data }: { data: NpkMatrixResult | null }) {
         <Card className="border-amber-500/30 bg-amber-500/5">
           <CardContent className="flex items-start gap-2 py-3 text-sm text-amber-700 dark:text-amber-400">
             <Info className="mt-0.5 size-4 shrink-0" />
-            <span>Belum ada hasil compute untuk {periodLabel(data.period)} {data.year}. Jalankan <code className="rounded bg-muted px-1">POST /npk/compute</code> lebih dulu.</span>
+            <span>Belum ada hasil compute untuk {periodLabel(data.period)} {data.year}. Jalankan <code className="rounded bg-muted px-1">{computeHint}</code> lebih dulu.</span>
           </CardContent>
         </Card>
       )}
@@ -60,7 +73,7 @@ export function NpkMatrix({ data }: { data: NpkMatrixResult | null }) {
           <CardTitle className="flex items-center gap-2 text-base">
             <span className="flex size-6 items-center justify-center rounded-full bg-teal-600 text-xs font-bold text-white">1</span>
             <div>
-              Matrix NPK HoD · 8 HoD × 7 Aspek
+              {title}
               <p className="text-xs font-normal text-muted-foreground">{periodLabel(data.period)} · {data.year} · SK Pasal 3</p>
             </div>
           </CardTitle>
@@ -71,7 +84,7 @@ export function NpkMatrix({ data }: { data: NpkMatrixResult | null }) {
               <thead>
                 <tr className="border-b text-left text-xs text-muted-foreground">
                   <th className="px-4 py-2">
-                    <button onClick={() => toggle("name")} className="inline-flex items-center gap-1 font-medium hover:text-foreground">HoD {sortIcon("name")}</button>
+                    <button onClick={() => toggle("name")} className="inline-flex items-center gap-1 font-medium hover:text-foreground">{subjectLabel} {sortIcon("name")}</button>
                   </th>
                   {data.aspect_order.map((k) => (
                     <th key={k} className="px-2 py-2 text-center" title={data.aspect_label[k]}>
@@ -89,9 +102,9 @@ export function NpkMatrix({ data }: { data: NpkMatrixResult | null }) {
                 {rows.map((r) => {
                   const nb = scoreBand(r.npk);
                   return (
-                    <tr key={r.hod_key} className="border-b last:border-0 hover:bg-muted/40">
+                    <tr key={r.subject_key} className="border-b last:border-0 hover:bg-muted/40">
                       <td className="px-4 py-2.5">
-                        <div className="font-medium">{r.hod_name}</div>
+                        <div className="font-medium">{r.subject_name}</div>
                         <div className="text-xs text-muted-foreground">{r.role}</div>
                       </td>
                       {data.aspect_order.map((k) => {
@@ -125,7 +138,7 @@ export function NpkMatrix({ data }: { data: NpkMatrixResult | null }) {
 
       <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
         <Info className="mt-0.5 size-3.5 shrink-0" />
-        Sel <span className="font-medium">N/A</span> = aspek belum punya sumber data live (KSO/GP/Coaching/target customer) atau HoD non-cabang tanpa scope sales — bukan kinerja buruk. NPK dihitung dari aspek yang tersedia saja (bobot tetap SK), jadi selama coverage &lt; 7/7 plafon skor cuma <span className="font-medium">{WIRED_BOBOT} dari 100</span> dan status ditahan di <span className="font-medium">Sementara</span> — predikat SK (dan konsekuensinya: PIP / kandidat promosi) baru berlaku setelah 7/7 aspek ter-feed. Kolom <span className="font-medium">Coverage</span> menunjukkan berapa dari 7 aspek yang terukur.
+        Sel <span className="font-medium">N/A</span> = aspek belum punya sumber data live — bukan kinerja buruk.{naNote ? ` ${naNote}` : ""} NPK dihitung dari aspek yang tersedia saja (bobot tetap SK), jadi selama coverage &lt; 7/7 plafon skor cuma <span className="font-medium">{ceiling} dari 100</span> dan status ditahan di <span className="font-medium">Sementara</span> — predikat SK (dan konsekuensinya: PIP / kandidat promosi) baru berlaku setelah 7/7 aspek ter-feed. Kolom <span className="font-medium">Coverage</span> menunjukkan berapa dari 7 aspek yang terukur.
       </p>
     </div>
   );
