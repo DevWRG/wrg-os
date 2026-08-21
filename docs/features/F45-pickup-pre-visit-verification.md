@@ -10,7 +10,7 @@ customer) supaya kurir tidak berangkat sia-sia ("rebound trip").
   Driver Gudang Pusat). "Anas" tidak ada di roster 63 karyawan.
 - **Menu**: `/pickup-plan` — "Jadwal Kirim-Tagih" (section Operations, RBAC key
   `pickup-plan`)
-- **Migrasi**: `infra/postgres/init/081_pickup_plan.sql`
+- **Migrasi**: `infra/postgres/init/133_pickup_plan.sql`
 
 ## 1. Masalah yang diselesaikan
 
