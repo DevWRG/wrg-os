@@ -135,6 +135,55 @@ function trendOf(actual: number | null, prev: number | null, dir: "higher" | "lo
 // ── Papan mingguan ────────────────────────────────────────────────
 
 /**
+ * Metric yang targetnya BULANAN dan sifatnya akumulasi, jadi harus diprorata saat
+ * dinilai per minggu. Sejak #861 aktualnya sudah week-scoped; tanpa prorata,
+ * capaian 7 hari diadu dengan target 30 hari dan papan Weekly tak akan pernah bisa
+ * GREEN secara konstruksi.
+ *
+ * SYARATNYA BUKAN CUMA "akumulasi bulanan", TAPI JUGA BERVOLUME BESAR — pecahan
+ * hasil prorata harus tetap punya makna. `newacct` (2 akun/bulan) gagal di syarat
+ * kedua: 2 × 7/31 = 0,45 akun/minggu. Targetnya tampil "0", satu akun baru saja
+ * langsung 221% GREEN, dan YELLOW mustahil tercapai — gerbangnya berubah jadi
+ * biner "ada akun baru atau tidak", bukan ukuran capaian. Jadi newacct dinilai
+ * dengan target bulanan apa adanya — dan justru di situ gerbangnya jadi bermakna
+ * tiga tingkat: 0 akun RED, 1 akun YELLOW (50%), 2+ GREEN.
+ *
+ * Yang TIDAK diprorata dan alasannya:
+ *   newacct   — hitungan kecil (2/bln); pecahannya tak bermakna (lihat di atas).
+ *   fillrate  — rasio (%), bukan volume; 95% tetap 95% seminggu maupun sebulan.
+ *   ar90      — ambang KONDISI (Rp 500 jt AR nyangkut), bukan akumulasi periode.
+ *   noorder, churn — ambang hitungan titik-waktu, targetnya 0.
+ *   fia, xsell — target kumulatif YTD, periodenya memang bukan minggu.
+ */
+const PRORATA_KEYS = new Set(["revenue", "prod", "visits"]);
+
+/**
+ * Metric yang tak boleh dinilai sebelum minggunya TUTUP, karena mensyaratkan jeda
+ * antara sebab dan akibat: pesanan butuh waktu untuk dikirim. Untuk minggu berjalan
+ * nilainya dibuat N/A, bukan angka rendah yang terbaca sebagai kegagalan.
+ *
+ * revenue/visits/newacct TIDAK masuk sini — capaian separuh minggu memang capaian
+ * separuh minggu, wajar dibaca sebagai "baru sekian". Bedanya, fillrate bukan
+ * capaian parsial melainkan RASIO yang penyebutnya ikut tumbuh tiap hari, jadi
+ * angka tengah-minggu bukan "belum lengkap" tapi menyesatkan.
+ */
+const BUTUH_JEDA = new Set(["fillrate"]);
+
+/**
+ * Target bulanan → target minggu itu. Penyebutnya jumlah hari pada bulan yang
+ * MEMILIKI minggu tersebut menurut ISO 8601, yaitu bulan hari Kamis-nya — supaya
+ * minggu yang membelah dua bulan tetap punya satu penyebut yang deterministik,
+ * bukan bergantung apakah Senin atau Minggunya yang dipakai.
+ */
+function targetMingguan(metricKey: string, bulanan: number | null, seninISO: string): number | null {
+  if (bulanan === null || !PRORATA_KEYS.has(metricKey)) return bulanan;
+  const kamis = new Date(`${seninISO}T00:00:00Z`);
+  kamis.setUTCDate(kamis.getUTCDate() + 3);
+  const hariSebulan = new Date(Date.UTC(kamis.getUTCFullYear(), kamis.getUTCMonth() + 1, 0)).getUTCDate();
+  return (bulanan * 7) / hariSebulan;
+}
+
+/**
  * Papan WatchPoint untuk satu minggu ISO.
  *
  * Prioritas nilai per metric:
@@ -149,8 +198,10 @@ export async function getWeeklyBoard(isoYear: number, isoWeek: number): Promise<
   const { from, to } = weekRange(isoYear, isoWeek);
 
   const prevRef = previousWeek(isoYear, isoWeek);
+  // Jendela = rentang minggu ISO yang diminta, BUKAN default bulan berjalan —
+  // papan ini menyajikan angkanya sebagai capaian minggu tersebut.
   const [live, store, prevStore] = await Promise.all([
-    getWatchBoard(),
+    getWatchBoard({ from, to }),
     loadWeek(isoYear, isoWeek),
     loadWeek(prevRef.isoYear, prevRef.isoWeek),
   ]);
@@ -170,6 +221,17 @@ export async function getWeeklyBoard(isoYear: number, isoWeek: number): Promise<
         source = saved.source;
         note = saved.note ?? undefined;
         override = saved.status;
+      } else if (isCurrent && BUTUH_JEDA.has(m.key)) {
+        // Metric yang mensyaratkan JEDA antara sebab dan akibat tak bisa dinilai
+        // sebelum minggunya tutup. fillrate = qty terkirim ÷ qty dipesan pada
+        // periode itu: pesanan yang masuk 1–2 hari lalu wajar belum dikirim, jadi
+        // di tengah minggu angkanya selalu rendah dan turun makin dalam tiap Senin.
+        // Terukur: minggu tutup 96–98% (GREEN), minggu berjalan 25,7% (RED) —
+        // merah yang murni artefak kalender dan membuat kartu Ika RED tanpa sebab.
+        // N/A + catatan jauh lebih berguna daripada alarm palsu tiap awal minggu.
+        actual = null;
+        source = "live";
+        note = "Belum bisa dinilai — minggu masih berjalan. Pesanan yang baru masuk wajar belum terkirim, jadi angkanya baru final setelah minggu tutup.";
       } else if (isCurrent) {
         actual = m.actual;
         // "live" hanya untuk metric yang benar-benar dihitung dari DB. Metric
@@ -181,10 +243,22 @@ export async function getWeeklyBoard(isoYear: number, isoWeek: number): Promise<
         source = "manual";
       }
 
-      const target = saved?.target ?? m.target;
+      // Target yang DIISI HoD dipakai apa adanya — itu sudah niat mereka untuk
+      // minggu tsb. Sisanya (definisi kode / snapshot 'db') diprorata ke minggu.
+      const targetMentah = saved?.target ?? m.target;
+      const target = saved?.source === "manual"
+        ? targetMentah
+        : targetMingguan(m.key, targetMentah, from);
       const pct = attainment(target, actual, m.direction);
+      // Status snapshot 'db' DIHITUNG ULANG terhadap target mingguan: aktualnya
+      // tetap beku, hanya gerbangnya yang kini sesuai periode. Kalau status lama
+      // dipakai, prorata tak akan pernah mengubah warna apa pun — statusnya
+      // dihitung saat target masih bulanan. Status manual HoD tetap menang.
+      const statusManual = saved?.source === "manual" ? saved.status : null;
       // Metric milestone (target null) tak punya angka → status murni dari override.
-      const status: WatchStatus = target === null ? (override ?? "NA") : (override ?? gate(pct));
+      const status: WatchStatus = target === null
+        ? (statusManual ?? override ?? "NA")
+        : (statusManual ?? gate(pct));
       const prevActual = prevRow?.actual ?? null;
 
       return {
@@ -244,17 +318,67 @@ export async function listWeeks(back = 12): Promise<WeekRef[]> {
 }
 
 /**
+ * Metric mana yang boleh dibekukan saat MENGISI MUNDUR minggu lampau, dan dari
+ * sumber apa ketersediaan datanya dinilai.
+ *
+ * 'invoice' | 'plan' | 'so' → metric CAPAIAN periode: bisa direkonstruksi kapan
+ * saja selama sumbernya menjangkau minggu itu.
+ *
+ * 'titik-waktu' → TIDAK bisa direkonstruksi. ar90/noorder/churn menggambarkan
+ * kondisi pada saat diukur (ar_aging_mv cuma menyimpan kondisi terkini, tak ada
+ * riwayat harian); fia/xsell kumulatif YTD, bukan capaian minggu. Membekukannya
+ * mundur berarti mencap nilai HARI INI ke kotak minggu lampau — garis datar yang
+ * dikarang seluruhnya, dan karena snapshot bersifat permanen, kebohongan itu
+ * tak akan pernah ketahuan lagi.
+ */
+const RECON_SOURCE: Record<string, "invoice" | "plan" | "so" | "titik-waktu"> = {
+  revenue: "invoice",
+  prod: "invoice",
+  newacct: "invoice",
+  visits: "plan",
+  fillrate: "so",
+  ar90: "titik-waktu",
+  noorder: "titik-waktu",
+  churn: "titik-waktu",
+  fia: "titik-waktu",
+  xsell: "titik-waktu",
+};
+
+/** Tanggal terlama yang dijangkau tiap sumber — dibaca dari DB, bukan dipatok. */
+async function dataHorizon(sql: ReturnType<typeof db>): Promise<Record<string, string | null>> {
+  const [r] = await sql<{ invoice: string | null; plan: string | null; so: string | null }[]>`
+    SELECT (SELECT min(tanggal)::text FROM accurate_invoice) AS invoice,
+           (SELECT min(tanggal)::text FROM sales_plan WHERE reported) AS plan,
+           (SELECT min(trans_date)::text FROM accurate_sales_order) AS so`;
+  return { invoice: r?.invoice ?? null, plan: r?.plan ?? null, so: r?.so ?? null };
+}
+
+/**
  * Bekukan nilai computed minggu (year, week) ke tabel.
  * Hanya metric bersumber DB yang di-snapshot — metric manual milik HoD, jangan
  * ditimpa nilai kosong. Idempoten (UPSERT), aman dijalankan ulang.
+ *
+ * mode 'live' (default) — perilaku lama, dipakai job Senin untuk membekukan minggu
+ *   yang baru saja tutup. Metric titik-waktu ikut dibekukan, dan itu SAH karena
+ *   diukur berdekatan dengan akhir minggunya.
+ *
+ * mode 'reconstruct' — untuk mengisi mundur minggu lampau. Hanya metric capaian
+ *   periode yang dibekukan, itu pun cuma bila sumbernya menjangkau minggu tsb.
+ *   Sisanya sengaja dibiarkan N/A: "belum ada data" jauh lebih berguna daripada
+ *   angka karangan yang terlihat resmi.
  */
 export async function snapshotWeek(
   isoYear: number,
   isoWeek: number,
-): Promise<{ isoYear: number; isoWeek: number; saved: number }> {
+  mode: "live" | "reconstruct" = "live",
+): Promise<{ isoYear: number; isoWeek: number; saved: number; dilewati?: string[] }> {
   if (!isDbEnabled()) throw new Error("DATABASE_URL off");
   const sql = db();
-  const live = await getWatchBoard();
+  // Bekukan capaian MINGGU tsb. Sebelumnya memakai default (bulan berjalan),
+  // sehingga snapshot yang dijalankan Senin pagi merekam month-to-date yang baru
+  // berumur beberapa hari — W31 tercatat revenue 0 padahal nyatanya Rp 277 jt.
+  const snapWin = weekRange(isoYear, isoWeek);
+  const live = await getWatchBoard({ from: snapWin.from, to: snapWin.to });
 
   const rows: {
     hod_key: string; iso_year: number; iso_week: number; metric_key: string;
@@ -262,9 +386,26 @@ export async function snapshotWeek(
     source: "db";
   }[] = [];
 
+  const horizon = mode === "reconstruct" ? await dataHorizon(sql) : null;
+  const dilewati = new Set<string>();
+
   for (const h of live.hods) {
     for (const m of h.metrics) {
       if (m.source !== "db") continue; // metric manual → biarkan input HoD yang isi
+      if (horizon) {
+        const src = RECON_SOURCE[m.key];
+        if (src === undefined || src === "titik-waktu") {
+          dilewati.add(`${m.key} (tak bisa direkonstruksi)`);
+          continue;
+        }
+        const sejak = horizon[src];
+        // Sumber tak menjangkau awal minggu → hasilnya akan 0/parsial dan terbaca
+        // sebagai capaian buruk, padahal artinya datanya memang belum ada.
+        if (!sejak || sejak > snapWin.from) {
+          dilewati.add(`${m.key} (data ${src} baru sejak ${sejak ?? "—"})`);
+          continue;
+        }
+      }
       rows.push({
         hod_key: h.key, iso_year: isoYear, iso_week: isoWeek, metric_key: m.key,
         target: m.target, actual: m.actual, status: m.status, note: m.note ?? null,
@@ -272,7 +413,7 @@ export async function snapshotWeek(
       });
     }
   }
-  if (!rows.length) return { isoYear, isoWeek, saved: 0 };
+  if (!rows.length) return { isoYear, isoWeek, saved: 0, dilewati: [...dilewati] };
 
   // source='db' WAJIB ikut di-INSERT (default kolom = 'manual'). Kalau tidak,
   // baris snapshot ikut terhitung manual → snapshot berikutnya tertolak oleh
@@ -289,7 +430,7 @@ export async function snapshotWeek(
           updated_at = now()
     WHERE watchpoint_weekly.source = 'db'`;
 
-  return { isoYear, isoWeek, saved: rows.length };
+  return { isoYear, isoWeek, saved: rows.length, dilewati: [...dilewati] };
 }
 
 /** Snapshot minggu LALU — dipanggil scheduler Senin pagi saat minggu baru tutup. */

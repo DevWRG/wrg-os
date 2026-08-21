@@ -92,16 +92,44 @@ export function worst(metrics: { status: WatchStatus }[]): WatchStatus {
 // ── DB derivations (Accurate mirror + AR + plan). cabang dari hod_territory. ──
 type Sql = ReturnType<typeof db>;
 
+/**
+ * Jendela periode untuk metric yang sifatnya "capaian sepanjang periode"
+ * (revenue, produktivitas, kunjungan, akun baru, fill rate).
+ *
+ * KENAPA ADA. Sebelumnya metric-metric itu memaku `date_trunc('month')` sendiri,
+ * sementara papan Weekly membekukan hasilnya sebagai angka MINGGUAN. Snapshot W31
+ * (diambil Senin 3 Agustus 06:00) karena itu mencatat revenue Rocky = 0 — bukan
+ * karena minggu itu sepi (nyatanya Rp 277 jt dari 64 faktur), melainkan karena
+ * month-to-date Agustus saat itu baru mencakup 1–2 Agustus yang kebetulan akhir
+ * pekan tanpa faktur. W32 tampak benar hanya karena kebetulan kalender yang sama;
+ * bulan yang tidak diawali akhir pekan akan salah tanpa ada yang menyadari.
+ *
+ * Metric KUMULATIF (fia/xsell = YTD) dan TITIK-WAKTU (ar90, noorder, churn)
+ * sengaja mengabaikan jendela ini — periodenya bukan urusan papan.
+ */
+export interface PeriodWindow {
+  from: string; // YYYY-MM-DD inklusif
+  to: string;   // YYYY-MM-DD inklusif
+}
+
+/** Jendela default papan harian: awal bulan → hari ini (WIB, bukan UTC). */
+export function monthToDateWindow(): PeriodWindow {
+  const now = new Date(Date.now() + 7 * 3600 * 1000);
+  const y = now.getUTCFullYear();
+  const m = String(now.getUTCMonth() + 1).padStart(2, "0");
+  return { from: `${y}-${m}-01`, to: now.toISOString().slice(0, 10) };
+}
+
 // Revenue NETTO (tanpa PPN) — sebasis dengan Sales Analytics; kalau di sini
 // pakai ai.total bruto, dua menu menampilkan angka berbeda untuk periode sama.
-async function revenueThisMonth(sql: Sql, cabang: string[]): Promise<number> {
+async function revenueInWindow(sql: Sql, cabang: string[], win: PeriodWindow): Promise<number> {
   if (!cabang.length) return 0;
   const rows = await sql<{ v: number }[]>`
     SELECT COALESCE(sum(ai.total - COALESCE(ai.tax_amount, 0)),0)::float8 AS v
     FROM accurate_invoice ai
     LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
     ${joinAmFromSalesman(sql)}
-    WHERE ai.tanggal >= date_trunc('month', CURRENT_DATE)
+    WHERE ai.tanggal >= ${win.from}::date AND ai.tanggal <= ${win.to}::date
       AND mu.cabang = ANY(${cabang})`;
   return Number(rows[0]?.v ?? 0);
 }
@@ -120,8 +148,8 @@ async function amCount(sql: Sql, cabang: string[]): Promise<number> {
   return Number(rows[0]?.n ?? 0);
 }
 
-async function productivity(sql: Sql, cabang: string[]): Promise<number> {
-  const r = await revenueThisMonth(sql, cabang);
+async function productivity(sql: Sql, cabang: string[], win: PeriodWindow): Promise<number> {
+  const r = await revenueInWindow(sql, cabang, win);
   const n = await amCount(sql, cabang);
   return n ? r / n : 0;
 }
@@ -137,6 +165,183 @@ async function noOrderOver(sql: Sql, days: number): Promise<number> {
       SELECT customer_id FROM accurate_invoice
       GROUP BY customer_id HAVING max(tanggal) < CURRENT_DATE - ${days}::int
     ) q`;
+  return Number(rows[0]?.n ?? 0);
+}
+
+// "Akuisisi 2 akun baru/bln" (brief Direktur). Akun baru = customer yang faktur
+// PERTAMA-nya (sepanjang mirror) jatuh di bulan berjalan — bukan sekadar customer
+// yang bertransaksi bulan ini. Atribusi cabang diambil dari AM pada faktur
+// pertama itu, jadi akun tetap dihitung untuk wilayah yang membukanya walau
+// nanti pindah pemilik.
+//
+// Catatan batas: "pertama" hanya sejauh mirror `accurate_invoice`; customer yang
+// faktur perdananya mendahului awal mirror bisa salah terhitung sebagai baru.
+async function newAccountsInWindow(sql: Sql, cabang: string[], win: PeriodWindow): Promise<number> {
+  if (!cabang.length) return 0;
+  const rows = await sql<{ n: number }[]>`
+    SELECT count(*)::int AS n FROM (
+      SELECT DISTINCT ON (ai.customer_id) ai.customer_id, mu.cabang
+      FROM (
+        SELECT customer_id, min(tanggal) AS first_date
+        FROM accurate_invoice
+        WHERE customer_id IS NOT NULL
+        GROUP BY customer_id
+      ) f
+      JOIN accurate_invoice ai
+        ON ai.customer_id = f.customer_id AND ai.tanggal = f.first_date
+      LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
+      ${joinAmFromSalesman(sql)}
+      WHERE f.first_date >= ${win.from}::date AND f.first_date <= ${win.to}::date
+      ORDER BY ai.customer_id, ai.id
+    ) q
+    WHERE q.cabang = ANY(${cabang})`;
+  return Number(rows[0]?.n ?? 0);
+}
+
+// Fill rate (Ika) — BASIS SO (migrasi 096): dari pesanan yang MASUK bulan ini,
+// berapa persen qty-nya sudah terkirim. Se-perusahaan (bukan per cabang — mirror
+// SO/DO tak menyimpan cabang, dan Finance & SC memang lingkupnya nasional).
+//
+// Penautannya per BARIS, bukan per dokumen: accurate_delivery_order_item
+// .sales_order_detail_id → accurate_sales_order_item.line_id. Satu SO bisa berisi
+// banyak item dengan tingkat pemenuhan berbeda, jadi per dokumen akan menyamarkan
+// item yang kurang. Pengiriman dihitung tanpa memandang tanggal DO-nya — kiriman
+// September atas pesanan Agustus tetap masuk ke Agustus, karena periodenya
+// ditentukan tanggal PESANAN.
+//
+// Diganti dari definisi lama (agregat qty SO vs qty DO dalam bulan yang sama)
+// yang terdistorsi pesanan lintas bulan dan tak bisa ditelusuri ke SO mana pun.
+//
+// KONSEKUENSI YANG HARUS DIINGAT: angka bulan berjalan BELUM FINAL — pesanan yang
+// baru masuk beberapa hari lalu wajar belum terkirim penuh, jadi nilainya menanjak
+// sepanjang bulan. Bandingkan antar bulan penuh, bukan bulan berjalan vs bulan lalu.
+//
+// Over-delivery tidak dipotong di level baris: kalau kiriman melebihi pesanan,
+// kelebihannya ikut terhitung dan hasilnya bisa >100%. Itu sinyal yang memang perlu
+// terlihat, bukan disembunyikan dengan LEAST(). Baris DO tanpa tautan SO (98,9%
+// terkait; sisanya merujuk SO lebih tua dari jendela mirror) tidak ikut sama sekali.
+//
+// Balikan null saat belum ada qty order sama sekali → N/A, bukan 0%.
+async function fillRateInWindow(sql: Sql, win: PeriodWindow): Promise<number | null> {
+  const rows = await sql<{ ordered: number | null; delivered: number | null }[]>`
+    WITH so_line AS (
+      SELECT i.line_id, i.qty
+        FROM accurate_sales_order_item i
+        JOIN accurate_sales_order o ON o.id = i.order_id
+       WHERE o.trans_date >= ${win.from}::date AND o.trans_date <= ${win.to}::date
+         AND i.line_id IS NOT NULL
+    )
+    SELECT
+      (SELECT sum(qty) FROM so_line)::float8 AS ordered,
+      (SELECT sum(d.qty) FROM accurate_delivery_order_item d
+         JOIN so_line s ON s.line_id = d.sales_order_detail_id)::float8 AS delivered`;
+  const ordered = Number(rows[0]?.ordered ?? 0);
+  if (!(ordered > 0)) return null;
+  return (Number(rows[0]?.delivered ?? 0) / ordered) * 100;
+}
+
+// ── Metric Mufid (Business IVD): FIA & cross-sell reguler→CLIA ──────────────
+//
+// KENAPA COCOK-NAMA, BUKAN KLASIFIKASI PRODUK. Cara yang "benar" adalah lewat
+// product_code → product_line (lini Imunology = CLIA, POCT Imunology = FIA).
+// Itu TIDAK bisa dipakai per 2026-08-13: seluruh keluarga LIAISON XL (DiaSorin)
+// — Rp 532 jt YTD, penyumbang CLIA terbesar — sama sekali tak ada di pricebook,
+// begitu pula MAGLUMI T3/TSH/T4. Lini Imunology cuma memuat 8 produk
+// SNIBE/TOSOH/ORGENTEC. Diukur lewat klasifikasi, CLIA hanya tampak 1 pelanggan
+// padahal nyatanya Rp 563,9 jt / 15 pelanggan menggantung tanpa klasifikasi.
+//
+// Angka kecil yang percaya diri lebih berbahaya daripada NA: ia membuat bisnis
+// Mufid terlihat sepi. Jadi metric ini membaca nama item Accurate langsung —
+// mencakup semua yang benar-benar terjual, tak bergantung kelengkapan pricebook.
+//
+// PINDAHKAN KE KLASIFIKASI begitu produk-produk itu didaftarkan; pola nama rapuh
+// terhadap penulisan baru (mis. merek CLIA baru yang namanya tak memuat 'CLIA').
+// Token `IMMUNOASSAY` di RE_FIA TIDAK spesifik FIA: CLIA sendiri adalah
+// Chemi-Luminescent ImmunoAssay, jadi token itu ikut mengenai produk CLIA
+// ("MAGLUMI CLIA IMMUNOASSAY ANALYZER" cocok keduanya). Token itu tetap
+// dipertahankan karena sebagian item FIA memang hanya bertanda itu — yang
+// membuatnya aman adalah SALING-EKSKLUSI di fiaCustomersYtd: apa pun yang
+// cocok RE_CLIA bukan FIA. Tanpa itu satu pelanggan CLIA ikut menaikkan `fia`.
+const RE_FIA = "FIA METER|FLUORESCEN|IMMUNOASSAY";
+const RE_CLIA = "CLIA|MAGLUMI|LIAISON";
+
+// PERIODE = YTD, bukan bulan berjalan seperti revenue/visits. Alasannya bukan
+// selera: sepanjang 2026 baru 11 pelanggan FIA, jadi target 20 mustahil dibaca
+// sebagai target BULANAN — ia jelas capaian kumulatif. Mirror accurate_invoice
+// mulai 2026-01-05, jadi YTD = seluruh data yang ada (bukan potongan sebagian).
+async function fiaCustomersYtd(sql: Sql): Promise<number> {
+  const rows = await sql<{ n: number }[]>`
+    SELECT count(DISTINCT inv.customer_id)::int AS n
+      FROM accurate_invoice_item ii
+      JOIN accurate_invoice inv ON inv.id = ii.invoice_id
+      JOIN accurate_item ai ON ai.id = ii.item_id
+     WHERE inv.tanggal >= date_trunc('year', CURRENT_DATE)
+       AND ai.name ~* ${RE_FIA}
+       AND ai.name !~* ${RE_CLIA}`;
+  return Number(rows[0]?.n ?? 0);
+}
+
+/**
+ * Site CLIA ≥800 tes/bln — jumlah pelanggan yang laju pemakaian tesnya mencapai
+ * target. Jumlah tes tidak disimpan di mana pun, tapi TERTULIS DI NAMA ITEM
+ * Accurate: "LIAISON XL MUREX HCV AB (100T)", "MAGLUMI TSH (100T)". Angka dalam
+ * "(NNNT)" itu tes per kit, dikali qty terjual = estimasi tes.
+ *
+ * LAJU 90 HARI ÷ 3, BUKAN BULAN KALENDER. Pembelian kit reagen bersifat bongkahan:
+ * satu kit 200T dipakai berminggu-minggu, jadi bulan tanpa pembelian akan terbaca
+ * 0 tes padahal alatnya jalan terus. Rata-rata rolling meredam itu. Sekaligus
+ * membuat metric ini kebal jendela papan — di papan Weekly hitungan per-minggu
+ * akan hampir selalu nol palsu, jebakan yang sama seperti fillrate (#865).
+ *
+ * BATAS YANG HARUS DIINGAT: ini estimasi dari PENJUALAN reagen, bukan pembacaan
+ * alat. Kit yang dibeli belum tentu terpakai habis di periode itu, dan item yang
+ * namanya tak memuat "(NNNT)" tidak ikut terhitung (per 2026-08-13: 7 dari 10
+ * baris CLIA punya penanda itu).
+ */
+async function siteCliaAktif(sql: Sql): Promise<number> {
+  const rows = await sql<{ n: number }[]>`
+    WITH tes AS (
+      SELECT inv.customer_id,
+             NULLIF(regexp_replace(ai.name, '.*\\((\\d+)T\\).*', '\\1'), ai.name)::int AS tes_per_kit,
+             ii.qty
+        FROM accurate_invoice_item ii
+        JOIN accurate_invoice inv ON inv.id = ii.invoice_id
+        JOIN accurate_item ai ON ai.id = ii.item_id
+       WHERE inv.tanggal >= CURRENT_DATE - 90
+         AND inv.customer_id IS NOT NULL
+         AND ai.name ~* ${RE_CLIA}
+    )
+    SELECT count(*)::int AS n FROM (
+      SELECT customer_id
+        FROM tes
+       WHERE tes_per_kit IS NOT NULL
+       GROUP BY customer_id
+      HAVING sum(qty * tes_per_kit) / 3.0 >= 800
+    ) q`;
+  return Number(rows[0]?.n ?? 0);
+}
+
+// Cross-sell = pelanggan yang SUDAH beli non-CLIA lebih dulu, lalu faktur CLIA
+// PERTAMA-nya jatuh tahun ini. Urutan itu yang membedakan cross-sell dari
+// pelanggan CLIA baru: tanpa syarat "reguler duluan", akun yang langsung masuk
+// lewat CLIA ikut terhitung dan targetnya jadi tak bermakna.
+async function xsellRegulerKeClia(sql: Sql): Promise<number> {
+  const rows = await sql<{ n: number }[]>`
+    WITH baris AS (
+      SELECT inv.customer_id, inv.tanggal, (ai.name ~* ${RE_CLIA}) AS is_clia
+        FROM accurate_invoice_item ii
+        JOIN accurate_invoice inv ON inv.id = ii.invoice_id
+        JOIN accurate_item ai ON ai.id = ii.item_id
+       WHERE inv.customer_id IS NOT NULL
+    ),
+    clia_pertama AS (
+      SELECT customer_id, min(tanggal) AS mulai FROM baris WHERE is_clia GROUP BY 1
+    )
+    SELECT count(*)::int AS n
+      FROM clia_pertama p
+     WHERE p.mulai >= date_trunc('year', CURRENT_DATE)
+       AND EXISTS (SELECT 1 FROM baris b
+                    WHERE b.customer_id = p.customer_id AND NOT b.is_clia AND b.tanggal < p.mulai)`;
   return Number(rows[0]?.n ?? 0);
 }
 
@@ -158,7 +363,7 @@ async function churnRutin(sql: Sql, cabang: string[]): Promise<number> {
 // Kunjungan TEREALISASI = sales_plan.reported (definisi yang dipakai seluruh
 // repo: dailysummary/digest/compliance/npk-am). Menghitung semua baris plan
 // akan menghitung rencana yang tak pernah dilaporkan sebagai kunjungan.
-async function visitsThisMonth(sql: Sql, cabang: string[]): Promise<number> {
+async function visitsInWindow(sql: Sql, cabang: string[], win: PeriodWindow): Promise<number> {
   if (!cabang.length) return 0;
   const rows = await sql<{ n: number }[]>`
     SELECT count(*)::int AS n
@@ -166,7 +371,7 @@ async function visitsThisMonth(sql: Sql, cabang: string[]): Promise<number> {
     JOIN master_user mu ON mu.am_id = sp.am_id
     WHERE mu.cabang = ANY(${cabang})
       AND sp.reported
-      AND sp.tanggal >= date_trunc('month', CURRENT_DATE)`;
+      AND sp.tanggal >= ${win.from}::date AND sp.tanggal <= ${win.to}::date`;
   return Number(rows[0]?.n ?? 0);
 }
 
@@ -174,8 +379,8 @@ async function visitsThisMonth(sql: Sql, cabang: string[]): Promise<number> {
 // sebaris dengan "Produktivitas ≥ Rp 500jt/AM" di brief Direktur — jadi yang
 // dibandingkan adalah rata-rata per AM, bukan total se-wilayah HoD (yang untuk
 // 6 cabang pasti lewat target tanpa arti).
-async function visitsPerAm(sql: Sql, cabang: string[]): Promise<number> {
-  const v = await visitsThisMonth(sql, cabang);
+async function visitsPerAm(sql: Sql, cabang: string[], win: PeriodWindow): Promise<number> {
+  const v = await visitsInWindow(sql, cabang, win);
   const n = await amCount(sql, cabang);
   return n ? v / n : 0;
 }
@@ -188,8 +393,13 @@ interface MetricDef {
   unit: string;
   direction: "higher" | "lower";
   trend: WatchTrend;
-  // compute ada = source 'db' (terima cabang HoD dari hod_territory)
-  compute?: (sql: Sql, cabang: string[]) => Promise<number>;
+  // compute ada = source 'db' (terima cabang HoD dari hod_territory).
+  // Balikan null = "datanya memang belum ada" → metric jadi N/A, BUKAN 0.
+  // Penting untuk metric rasio: 0 akan terbaca sebagai merah, padahal artinya
+  // tak ada penyebut (mis. belum ada order bulan ini).
+  // `win` = jendela periode papan (bulan berjalan untuk papan harian, rentang
+  // minggu ISO untuk papan Weekly). Metric kumulatif/titik-waktu mengabaikannya.
+  compute?: (sql: Sql, cabang: string[], win: PeriodWindow) => Promise<number | null>;
 }
 
 interface HodDef {
@@ -203,10 +413,10 @@ const BIO = 1_000_000_000;
 const JT = 1_000_000;
 
 const SALES_METRICS = (): MetricDef[] => [
-  { key: "revenue", label: "Revenue/bln", target: 2.5 * BIO, unit: "Rp", direction: "higher", trend: "stable", compute: (s, c) => revenueThisMonth(s, c) },
-  { key: "prod", label: "Produktivitas/AM", target: 500 * JT, unit: "Rp", direction: "higher", trend: "stable", compute: (s, c) => productivity(s, c) },
-  { key: "visits", label: "Kunjungan/AM/bln", target: 48, unit: "kunjungan", direction: "higher", trend: "stable", compute: (s, c) => visitsPerAm(s, c) },
-  { key: "newacct", label: "Akun baru/bln", target: 2, unit: "akun", direction: "higher", trend: "stable" },
+  { key: "revenue", label: "Revenue/bln", target: 2.5 * BIO, unit: "Rp", direction: "higher", trend: "stable", compute: (s, c, w) => revenueInWindow(s, c, w) },
+  { key: "prod", label: "Produktivitas/AM", target: 500 * JT, unit: "Rp", direction: "higher", trend: "stable", compute: (s, c, w) => productivity(s, c, w) },
+  { key: "visits", label: "Kunjungan/AM/bln", target: 48, unit: "kunjungan", direction: "higher", trend: "stable", compute: (s, c, w) => visitsPerAm(s, c, w) },
+  { key: "newacct", label: "Akun baru/bln", target: 2, unit: "akun", direction: "higher", trend: "stable", compute: (s, c, w) => newAccountsInWindow(s, c, w) },
   { key: "churn", label: "Churn RUTIN", target: 0, unit: "customer", direction: "lower", trend: "stable", compute: (s, c) => churnRutin(s, c) },
 ];
 
@@ -215,10 +425,10 @@ const HOD_DEFS: HodDef[] = [
   { key: "yogi", name: "Yogi", role: "Sales West", metrics: SALES_METRICS() },
   {
     key: "mufid", name: "Mufid", role: "Business IVD", metrics: [
-      { key: "clia", label: "Site CLIA ≥800 tes/bln", target: 3, unit: "site", direction: "higher", trend: "stable" },
-      { key: "fia", label: "FIA customer", target: 20, unit: "customer", direction: "higher", trend: "stable" },
+      { key: "clia", label: "Site CLIA ≥800 tes/bln", target: 3, unit: "site", direction: "higher", trend: "stable", compute: (s) => siteCliaAktif(s) },
+      { key: "fia", label: "FIA customer", target: 20, unit: "customer", direction: "higher", trend: "stable", compute: (s) => fiaCustomersYtd(s) },
       { key: "jv", label: "JV principal baru", target: 1, unit: "JV", direction: "higher", trend: "stable" },
-      { key: "xsell", label: "Cross-sell reguler→CLIA", target: 2, unit: "deal", direction: "higher", trend: "stable" },
+      { key: "xsell", label: "Cross-sell reguler→CLIA", target: 2, unit: "deal", direction: "higher", trend: "stable", compute: (s) => xsellRegulerKeClia(s) },
       { key: "moq", label: "MOQ Snibe diputus", target: null, unit: "", direction: "higher", trend: "stable" },
     ],
   },
@@ -242,7 +452,7 @@ const HOD_DEFS: HodDef[] = [
   {
     key: "ika", name: "Ika", role: "Finance & SC", metrics: [
       { key: "ar90", label: "AR overdue >90 hari", target: 500 * JT, unit: "Rp", direction: "lower", trend: "stable", compute: () => arOver90Outstanding() },
-      { key: "fillrate", label: "Fill rate", target: 95, unit: "%", direction: "higher", trend: "stable" },
+      { key: "fillrate", label: "Fill rate", target: 95, unit: "%", direction: "higher", trend: "stable", compute: (s, _c, w) => fillRateInWindow(s, w) },
       { key: "refi", label: "Milestone refinancing", target: 1, unit: "milestone", direction: "higher", trend: "stable" },
       { key: "runway", label: "Cash runway mingguan", target: null, unit: "", direction: "higher", trend: "stable" },
     ],
@@ -337,6 +547,7 @@ async function buildMetric(
   d: MetricDef,
   manual: Map<string, ManualRow>,
   cabang: string[],
+  win: PeriodWindow,
 ): Promise<WatchMetric> {
   const row = manual.get(`${hodKey}:${d.key}`);
   const target = effectiveTarget(d.target, row);
@@ -355,7 +566,7 @@ async function buildMetric(
   if (d.compute && sql) {
     source = "db";
     try {
-      actual = await d.compute(sql, cabang);
+      actual = await d.compute(sql, cabang, win);
     } catch {
       actual = null;
       source = "manual";
@@ -374,15 +585,24 @@ async function buildMetric(
   };
 }
 
-/** Papan WatchPoint per HoD — computed dari DB, cabang dari hod_territory, manual dari watchpoint_metric. */
-export async function getWatchBoard(): Promise<WatchBoard> {
+/**
+ * Papan WatchPoint per HoD — computed dari DB, cabang dari hod_territory, manual
+ * dari watchpoint_metric.
+ *
+ * `win` menentukan periode metric capaian (revenue/prod/visits/newacct/fillrate).
+ * Default = bulan berjalan, yaitu perilaku papan harian. Papan Weekly memanggilnya
+ * dengan rentang minggu ISO supaya angka mingguan benar-benar mingguan — tanpa itu
+ * snapshot mingguan membekukan angka month-to-date dan minggu pertama tiap bulan
+ * tercatat nyaris nol.
+ */
+export async function getWatchBoard(win: PeriodWindow = monthToDateWindow()): Promise<WatchBoard> {
   const sql = isDbEnabled() ? db() : null;
   const manual = sql ? await loadManual(sql) : new Map<string, ManualRow>();
   const territory = sql ? await loadTerritory(sql) : new Map<string, string[]>();
   const hods: HodWatch[] = [];
   for (const h of HOD_DEFS) {
     const cabang = territory.get(h.key) ?? [];
-    const metrics = await Promise.all(h.metrics.map((m) => buildMetric(sql, h.key, m, manual, cabang)));
+    const metrics = await Promise.all(h.metrics.map((m) => buildMetric(sql, h.key, m, manual, cabang, win)));
     hods.push({ key: h.key, name: h.name, role: h.role, status: worst(metrics), metrics });
   }
   const cur = currentWeek();
