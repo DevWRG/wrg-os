@@ -1,9 +1,14 @@
 // F66 NPK — turunan status/zona + ringkasan eksekutif dari data SK (0-100). Layout
 // meniru mockup s3_npk_dashboard (executive briefing, action queue, status) TAPI angka
-// & aspek tetap SK Pasal 3. Kejujuran: HoD tanpa data (coverage 0) → "Belum ada data"
+// & aspek tetap SK Pasal 3. Kejujuran: subjek tanpa data (coverage 0) → "Belum ada data"
 // (bukan di-cap PIP); skor dianggap SEMENTARA selama belum semua 7 aspek ter-feed.
+//
+// Dipakai dua jalur: NPK HoD (aspek ter-feed: Revenue+AR) dan NPK AM (Revenue+
+// Customer+AR+CRM). Karena itu plafon skor & daftar aspek ter-feed DITURUNKAN dari
+// data yang masuk, bukan konstanta — dulu WIRED_ASPEK/WIRED_BOBOT dipatok 2/35 (angka
+// jalur HoD) dan akan salah tampil di halaman AM.
 
-import type { NpkMatrixRow, Predikat } from "./npk-format";
+import type { AspectKey, NpkMatrixRow, Predikat } from "./npk-format";
 
 export type ZoneKey = "promote" | "meet" | "watch" | "pip" | "no_data" | "provisional";
 
@@ -44,11 +49,30 @@ export function zoneOf(row: Pick<NpkMatrixRow, "predikat" | "available_count">):
 }
 
 export const TOTAL_ASPEK = 7;
-// Aspek yang sudah punya feed data live hari ini (revenue+AR). Sisanya menyusul.
-export const WIRED_ASPEK = 2;
-// Σ bobot SK dari aspek yang ter-feed (revenue 25 + AR 10) = plafon skor realistis
-// selama coverage belum 7/7. Dipakai utk menjelaskan angka rendah di UI.
-export const WIRED_BOBOT = 35;
+
+// Bobot SK Pasal 3.1 (Σ = 100) — cermin DEFAULT_BOBOT di apps/api/src/lib/npk-calc.ts.
+// Di sini hanya untuk menghitung plafon skor yang ditampilkan, bukan untuk men-skor.
+export const BOBOT: Record<AspectKey, number> = {
+  revenue: 25, customer: 15, ar: 10, kso: 15, gp: 15, crm: 10, coaching: 10,
+};
+
+export const ASPEK_NAMA: Record<AspectKey, string> = {
+  revenue: "Revenue", customer: "Customer", ar: "AR", kso: "KSO", gp: "GP", crm: "CRM", coaching: "Coaching",
+};
+
+// Aspek yang benar-benar punya feed data, diambil dari baris dengan coverage TERBAIK
+// (baris lain bisa lebih sedikit karena target/AR-nya kosong, bukan karena aspeknya
+// belum di-wire). Kosong → belum ada satu pun aspek terukur.
+export function wiredAspects(rows: Pick<NpkMatrixRow, "aspects" | "available_count">[]): AspectKey[] {
+  const best = rows.reduce<Pick<NpkMatrixRow, "aspects" | "available_count"> | null>(
+    (m, r) => (m == null || r.available_count > m.available_count ? r : m), null);
+  if (!best) return [];
+  return (Object.keys(BOBOT) as AspectKey[]).filter((k) => best.aspects[k]?.available);
+}
+
+// Plafon skor realistis = Σ bobot aspek yang ter-feed. Menampilkan "/100" saat
+// coverage parsial membuat skor terlihat jauh lebih buruk dari kenyataannya.
+export const bobotOf = (keys: AspectKey[]): number => keys.reduce((a, k) => a + BOBOT[k], 0);
 
 export interface NpkSummary {
   measured: number;        // jumlah HoD dgn coverage ≥ 1
@@ -58,11 +82,13 @@ export interface NpkSummary {
   promote: number;
   watchPip: number;        // watch + pip
   noData: number;
-  provisionalCount: number; // HoD terukur tapi coverage < 7/7 → predikat ditahan
+  provisionalCount: number; // subjek terukur tapi coverage < 7/7 → predikat ditahan
   maxCoverage: number;     // coverage tertinggi (utk banner "baru X/7")
   top: NpkMatrixRow | null;
   bottom: NpkMatrixRow | null;
   provisional: boolean;    // true bila belum semua aspek ter-feed
+  wired: AspectKey[];      // aspek yang punya feed data (dari baris coverage terbaik)
+  ceiling: number;         // plafon skor: Σ bobot `wired`, atau 100 bila coverage penuh
 }
 
 const avg = (xs: number[]): number | null => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null);
@@ -86,6 +112,8 @@ export function computeSummary(rows: NpkMatrixRow[], prevRows?: NpkMatrixRow[] |
   }
   const sortedMeasured = [...measured].sort((a, b) => b.npk - a.npk);
   const maxCoverage = rows.reduce((m, r) => Math.max(m, r.available_count), 0);
+  const wired = wiredAspects(rows);
+  const provisional = maxCoverage < TOTAL_ASPEK;
   return {
     measured: measured.length,
     total: rows.length,
@@ -98,6 +126,8 @@ export function computeSummary(rows: NpkMatrixRow[], prevRows?: NpkMatrixRow[] |
     maxCoverage,
     top: sortedMeasured[0] ?? null,
     bottom: sortedMeasured[sortedMeasured.length - 1] ?? null,
-    provisional: maxCoverage < TOTAL_ASPEK,
+    provisional,
+    wired,
+    ceiling: provisional ? bobotOf(wired) : 100,
   };
 }
