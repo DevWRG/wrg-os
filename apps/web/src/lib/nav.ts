@@ -14,6 +14,7 @@ import {
   Wrench,
   CalendarClock,
   Ticket,
+  PackageCheck,
   type LucideIcon,
 } from "lucide-react";
 
@@ -244,6 +245,7 @@ export const NAV: NavGroup[] = [
       // jadi bisa digrant terpisah dari izin Inventory di Akses Grup.
       { title: "Stok Gudang", url: "/stok-gudang", icon: Boxes, badge: "NEW" },
       { title: "Supplier ETA", url: "/supplier-eta", icon: CalendarClock, badge: "NEW" },
+      { title: "Inbound Receiving", url: "/inbound-receiving", icon: PackageCheck, badge: "NEW" },
     ],
   },
   {
