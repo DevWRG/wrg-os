@@ -10,7 +10,7 @@ import {
   Bell, MapPin, ListChecks, Swords, CalendarOff, CalendarDays, CalendarRange,
   Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, Tags, SlidersHorizontal, Microscope,
   Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, BookOpen, Calculator,
-  Wallet, Coins, Route, Radio,
+  Wallet, Coins, Route, Radio, Printer,
   type LucideIcon,
 } from "lucide-react";
 
@@ -219,12 +219,14 @@ export const NAV: NavGroup[] = [
     ],
   },
   {
-    // Domain Shipping (F43) — standalone, tidak tergantung shipment_tracking/
+    // Domain Shipping (F43/F44) — standalone, tidak tergantung shipment_tracking/
     // pickup_plan (branch F12/F42/F45/F93 belum merge ke dev). Role min
-    // Karyawan: semua tim boleh mencatat & lihat performa pengiriman.
+    // Karyawan: semua tim boleh mencatat & lihat performa pengiriman /
+    // mendefinisikan standar cetak dokumen.
     label: "Shipping",
     items: [
       { title: "Kurir/Ekspedisi Performance", url: "/courier-performance", icon: Route, badge: "NEW" },
+      { title: "Spesifikasi Cetak Dokumen", url: "/print-spec", icon: Printer, badge: "NEW" },
     ],
   },
   {
