@@ -20,16 +20,20 @@ export interface ShipmentTracking {
 const STATUS_LABEL: Record<string, string> = {
   draft: "Draft",
   dikirim: "Dikirim",
+  terima: "Terima",
   bast: "BAST (Selesai)",
 };
+
+const STATUS_ORDER = ["draft", "dikirim", "terima", "bast"];
 
 const statusTone = (s: string): "default" | "secondary" | "destructive" | "outline" =>
   s === "bast" ? "secondary" : s === "draft" ? "outline" : "default";
 
 function ProgressDots({ s }: { s: ShipmentTracking }) {
-  const steps = [s.status !== "draft", s.status === "bast"];
+  const idx = STATUS_ORDER.indexOf(s.status);
+  const steps = [idx >= 1, idx >= 2, idx >= 3];
   return (
-    <div className="flex items-center gap-1" title="Dikirim → BAST">
+    <div className="flex items-center gap-1" title="Dikirim → Terima → BAST">
       {steps.map((done, i) =>
         done ? (
           <CheckCircle2 key={i} className="text-success size-4" />

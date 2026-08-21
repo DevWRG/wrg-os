@@ -327,7 +327,9 @@ import {
   getShipmentById,
   markKirim as markShipmentKirim,
   markBast as markShipmentBast,
+  markTerima as markShipmentTerima,
 } from "./repo/shipment-tracking.js";
+
 const app = new Hono();
 
 // Selalu balas JSON saat error / route tak ada — supaya BFF & client tak pernah
@@ -4667,6 +4669,21 @@ app.post("/shipment-tracking/:id/bast", async (c) => {
     // semua field opsional
   }
   const r = await markShipmentBast(c.req.param("id"), { by: body.by, lat: body.lat, lon: body.lon });
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+// ── Tracking Pengiriman Digital (F12, SHIPPING) — state machine sederhana
+// draft → dikirim → bast (TTF diabaikan, arahan Direktur). Dipicu manual via
+// web ATAU WA hashtag #KIRIM/#BAST (match by sj_number, lihat repo/inbound.ts). ──
+app.post("/shipment-tracking/:id/terima", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { by?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    // by opsional
+  }
+  const r = await markShipmentTerima(c.req.param("id"), { by: body.by });
   return c.json(r, r.ok ? 200 : 400);
 });
 
