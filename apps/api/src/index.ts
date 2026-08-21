@@ -433,6 +433,9 @@ import {
   type PurchaseOrderItemUpdate,
   type PurchaseOrderReceiptInput,
   type PurchaseOrderReceiptUpdate,
+  decidePurchaseOrderApproval,
+  PurchaseOrderError,
+  type ApproverRole,
 } from "./repo/purchase-order.js";
 import {
   listVendors as gaMaintenanceListVendors,
@@ -447,6 +450,7 @@ import {
   approveSchedule,
   cancelSchedule,
 } from "./repo/ga-maintenance.js";
+
 const app = new Hono();
 
 // Selalu balas JSON saat error / route tak ada — supaya BFF & client tak pernah
@@ -5636,8 +5640,13 @@ app.post("/purchase-orders", async (c) => {
     if (!it.item_desc?.trim()) return c.json({ error: "item_desc wajib di setiap barang" }, 400);
     if (!(Number(it.qty_ordered) > 0)) return c.json({ error: "qty_ordered harus > 0 di setiap barang" }, 400);
   }
-  const row = await createPurchaseOrder(body);
-  return c.json(row, 201);
+  try {
+    const row = await createPurchaseOrder(body);
+    return c.json(row, 201);
+  } catch (e) {
+    if (e instanceof PurchaseOrderError) return c.json({ error: e.message }, e.status as 400 | 404 | 409);
+    throw e;
+  }
 });
 
 app.get("/purchase-orders/:id", async (c) => {
@@ -5660,8 +5669,13 @@ app.patch("/purchase-orders/:id", async (c) => {
 
 app.delete("/purchase-orders/:id", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  const r = await deletePurchaseOrder(c.req.param("id"));
-  return c.json(r, r.deleted ? 200 : 404);
+  try {
+    const r = await deletePurchaseOrder(c.req.param("id"));
+    return c.json(r, r.deleted ? 200 : 404);
+  } catch (e) {
+    if (e instanceof PurchaseOrderError) return c.json({ error: e.message }, e.status as 409);
+    throw e;
+  }
 });
 
 app.post("/purchase-orders/:id/items", async (c) => {
@@ -5695,8 +5709,13 @@ app.patch("/purchase-orders/:id/items/:itemId", async (c) => {
 
 app.delete("/purchase-orders/:id/items/:itemId", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  const r = await deletePurchaseOrderItem(c.req.param("id"), c.req.param("itemId"));
-  return c.json(r, r.deleted ? 200 : 404);
+  try {
+    const r = await deletePurchaseOrderItem(c.req.param("id"), c.req.param("itemId"));
+    return c.json(r, r.deleted ? 200 : 404);
+  } catch (e) {
+    if (e instanceof PurchaseOrderError) return c.json({ error: e.message }, e.status as 409);
+    throw e;
+  }
 });
 
 app.get("/purchase-orders/:id/items/:itemId/receipts", async (c) => {
@@ -5714,9 +5733,20 @@ app.post("/purchase-orders/:id/items/:itemId/receipts", async (c) => {
     return c.json({ error: "invalid JSON body" }, 400);
   }
   if (!(Number(body.qty_received) > 0)) return c.json({ error: "qty_received harus > 0" }, 400);
-  const row = await addPurchaseOrderReceipt(c.req.param("id"), c.req.param("itemId"), body);
-  return row ? c.json(row, 201) : c.json({ error: "barang PO tidak ditemukan" }, 404);
+  try {
+    const row = await addPurchaseOrderReceipt(c.req.param("id"), c.req.param("itemId"), body);
+    return row ? c.json(row, 201) : c.json({ error: "barang PO tidak ditemukan" }, 404);
+  } catch (e) {
+    if (e instanceof PurchaseOrderError) return c.json({ error: e.message }, e.status as 409);
+    throw e;
+  }
 });
+
+// F35 — putuskan approve/reject 1 baris approval (hod_business/hod_finance/
+// direktur). decided_by dipercaya dari BFF (identitas & gating di layer WEB,
+// pola sama created_by di POST /purchase-orders — lihat CLAUDE.md gotcha
+// "Admin-gate di layer WEB, bukan di api"). Sequencing Tier 1→Tier 2 &
+// idempotensi ditegakkan di repo (business-rule, bukan identity check).
 
 app.patch("/purchase-orders/:id/items/:itemId/receipts/:receiptId", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
@@ -5875,6 +5905,37 @@ app.post("/ga-maintenance/:id/cancel", async (c) => {
   }
   const r = await cancelSchedule(c.req.param("id"), body.notes);
   return c.json(r, r.ok ? 200 : 400);
+});
+
+// ── F13 PO Tracker + Sistem Barang Masuk (Purchasing) ──
+app.patch("/purchase-orders/:id/approvals/:role", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const role = c.req.param("role");
+  if (role !== "hod_business" && role !== "hod_finance" && role !== "direktur") {
+    return c.json({ error: "role tidak valid (hod_business/hod_finance/direktur)" }, 400);
+  }
+  let body: { decision?: string; decided_by?: string | null; note?: string | null };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (body.decision !== "approve" && body.decision !== "reject") {
+    return c.json({ error: "decision wajib (approve/reject)" }, 400);
+  }
+  try {
+    const result = await decidePurchaseOrderApproval(
+      c.req.param("id"),
+      role as ApproverRole,
+      body.decision,
+      body.decided_by ?? null,
+      body.note ?? null,
+    );
+    return c.json(result);
+  } catch (e) {
+    if (e instanceof PurchaseOrderError) return c.json({ error: e.message }, e.status as 400 | 404 | 409);
+    throw e;
+  }
 });
 
 const port = Number(process.env.PORT ?? 4000);

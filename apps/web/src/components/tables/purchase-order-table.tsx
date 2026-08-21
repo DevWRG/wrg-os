@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { useConfirm } from "@/components/ui/use-confirm";
 import {
   Dialog,
@@ -18,8 +19,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { type ApproverRole } from "@/lib/po-approval-access";
 
 export type PurchaseOrderStatus = "ordered" | "partial_received" | "received" | "cancelled";
+// F35 — legacy_exempt: PO dibuat sebelum F35 (lini NULL), tidak kena gate approval.
+export type ApprovalStatus = "legacy_exempt" | "pending_tier1" | "pending_direktur" | "approved" | "rejected";
 
 export interface PurchaseOrderRow {
   id: string;
@@ -35,7 +39,20 @@ export interface PurchaseOrderRow {
   status: PurchaseOrderStatus;
   item_count: number;
   received_item_count: number;
+  lini: "IVD" | "Medical" | null;
+  approval_status: ApprovalStatus;
 }
+
+interface ApprovalRow {
+  approver_role: ApproverRole;
+  status: "pending" | "approved" | "rejected";
+  decided_by: string | null;
+  decided_at: string | null;
+  note: string | null;
+}
+
+const ROLE_LABEL: Record<ApproverRole, string> = { hod_business: "HOD Business", hod_finance: "HOD Finance", direktur: "Direktur" };
+const ROLE_ORDER: ApproverRole[] = ["hod_business", "hod_finance", "direktur"];
 
 interface ItemRow {
   id: string;
@@ -57,6 +74,8 @@ interface ReceiptRow {
 
 interface Detail extends PurchaseOrderRow {
   items: ItemRow[];
+  approvals: ApprovalRow[];
+  my_roles: ApproverRole[];
 }
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -75,6 +94,22 @@ function StatusBadge({ row }: { row: Pick<PurchaseOrderRow, "status" | "eta_date
   if (row.status === "partial_received") return <Badge className="bg-warning/10 text-warning">Sebagian Diterima</Badge>;
   if (isTelat(row)) return <Badge variant="destructive">Telat</Badge>;
   return <Badge variant="outline">Dipesan</Badge>;
+}
+
+// F35 — legacy_exempt (PO pra-F35) sengaja tanpa badge, konsisten "tidak
+// tampil section approval sama sekali" utk PO lama.
+function ApprovalStatusBadge({ status }: { status: ApprovalStatus }) {
+  if (status === "approved") return <Badge className="bg-success/10 text-success">Approval Selesai</Badge>;
+  if (status === "rejected") return <Badge variant="destructive">Approval Ditolak</Badge>;
+  if (status === "pending_direktur") return <Badge className="bg-warning/10 text-warning">Menunggu Direktur</Badge>;
+  if (status === "pending_tier1") return <Badge className="bg-warning/10 text-warning">Menunggu Tier 1</Badge>;
+  return null;
+}
+
+function ApprovalDecisionBadge({ status }: { status: ApprovalRow["status"] }) {
+  if (status === "approved") return <Badge className="bg-success/10 text-success">Approved</Badge>;
+  if (status === "rejected") return <Badge variant="destructive">Ditolak</Badge>;
+  return <Badge variant="outline">Menunggu</Badge>;
 }
 
 function itemProgressLabel(it: ItemRow) {
@@ -114,6 +149,10 @@ export function PurchaseOrderTable({ rows }: { rows: PurchaseOrderRow[] }) {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [receipts, setReceipts] = useState<Record<string, ReceiptRow[]>>({});
   const [newReceipt, setNewReceipt] = useState({ qty_received: "", received_date: today(), received_by: "", condition_notes: "" });
+  const [rejecting, setRejecting] = useState<ApproverRole | null>(null);
+  const [rejectNote, setRejectNote] = useState("");
+  const [approvalError, setApprovalError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const { confirm, dialog } = useConfirm();
 
   function openDetail(r: PurchaseOrderRow) {
@@ -123,7 +162,19 @@ export function PurchaseOrderTable({ rows }: { rows: PurchaseOrderRow[] }) {
     setNewItem({ item_desc: "", qty_ordered: "", unit: "" });
     setExpanded(null);
     setReceipts({});
+    setRejecting(null);
+    setRejectNote("");
+    setApprovalError(null);
+    setActionError(null);
     reload(r.id);
+  }
+
+  // API selalu balas { error } saat gagal (400/404/409) — pesan ini yang
+  // ditampilkan, bukan cuma "Uncaught Error" senyap di console (mis. 409 PO
+  // sudah ada barang masuk, dari FK RESTRICT purchase_order_receipt).
+  async function errorMessage(res: Response): Promise<string> {
+    const data = await res.json().catch(() => null);
+    return (data && typeof data.error === "string" && data.error) || `Gagal (HTTP ${res.status})`;
   }
 
   function reload(id: string) {
@@ -146,6 +197,29 @@ export function PurchaseOrderTable({ rows }: { rows: PurchaseOrderRow[] }) {
     setExpanded(next);
     setNewReceipt({ qty_received: "", received_date: today(), received_by: "", condition_notes: "" });
     if (next && !receipts[itemId]) loadReceipts(itemId);
+  }
+
+  async function decideApproval(role: ApproverRole, decision: "approve" | "reject", note?: string) {
+    if (!sel) return;
+    setBusy(true);
+    setApprovalError(null);
+    try {
+      const res = await fetch(`/api/purchase-orders/${sel.id}/approvals`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ role, decision, note: note || undefined }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error ?? "gagal memproses approval");
+      setRejecting(null);
+      setRejectNote("");
+      reload(sel.id);
+      router.refresh();
+    } catch (err) {
+      setApprovalError(String(err instanceof Error ? err.message : err));
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function addItem() {
@@ -174,12 +248,15 @@ export function PurchaseOrderTable({ rows }: { rows: PurchaseOrderRow[] }) {
     if (!sel) return;
     confirm({ title: "Hapus barang?", description: `"${item.item_desc}" akan dihapus dari PO.`, destructive: true, confirmLabel: "Hapus" }, async () => {
       setBusy(true);
+      setActionError(null);
       try {
         const res = await fetch(`/api/purchase-orders/${sel.id}/items/${item.id}`, { method: "DELETE" });
-        if (!res.ok) throw new Error();
+        if (!res.ok) throw new Error(await errorMessage(res));
         if (expanded === item.id) setExpanded(null);
         reload(sel.id);
         router.refresh();
+      } catch (err) {
+        setActionError(String(err instanceof Error ? err.message : err));
       } finally {
         setBusy(false);
       }
@@ -216,12 +293,15 @@ export function PurchaseOrderTable({ rows }: { rows: PurchaseOrderRow[] }) {
       { title: "Hapus catatan barang masuk?", description: `Penerimaan ${receipt.qty_received} pada ${tgl(receipt.received_date)} akan dihapus.`, destructive: true, confirmLabel: "Hapus" },
       async () => {
         setBusy(true);
+        setActionError(null);
         try {
           const res = await fetch(`/api/purchase-orders/${sel.id}/items/${itemId}/receipts/${receipt.id}`, { method: "DELETE" });
-          if (!res.ok) throw new Error();
+          if (!res.ok) throw new Error(await errorMessage(res));
           loadReceipts(itemId);
           reload(sel.id);
           router.refresh();
+        } catch (err) {
+          setActionError(String(err instanceof Error ? err.message : err));
         } finally {
           setBusy(false);
         }
@@ -252,11 +332,14 @@ export function PurchaseOrderTable({ rows }: { rows: PurchaseOrderRow[] }) {
       { title: "Hapus PO?", description: `PO "${sel.po_number}" akan dihapus. Tidak bisa dihapus jika sudah ada barang masuk tercatat.`, destructive: true, confirmLabel: "Hapus" },
       async () => {
         setBusy(true);
+        setActionError(null);
         try {
           const res = await fetch(`/api/purchase-orders/${sel.id}`, { method: "DELETE" });
-          if (!res.ok) throw new Error();
+          if (!res.ok) throw new Error(await errorMessage(res));
           setSel(null);
           router.refresh();
+        } catch (err) {
+          setActionError(String(err instanceof Error ? err.message : err));
         } finally {
           setBusy(false);
         }
@@ -279,6 +362,7 @@ export function PurchaseOrderTable({ rows }: { rows: PurchaseOrderRow[] }) {
                 <div className="flex items-center gap-2 text-sm">
                   <span className="text-muted-foreground">{sel.vendor_name} · {tgl(sel.order_date)}</span>
                   <StatusBadge row={detail ?? sel} />
+                  <ApprovalStatusBadge status={(detail ?? sel).approval_status} />
                 </div>
               </DialogHeader>
               <DialogBody className="space-y-4 text-sm">
@@ -304,6 +388,60 @@ export function PurchaseOrderTable({ rows }: { rows: PurchaseOrderRow[] }) {
                         <div>{detail.pic ?? "—"}</div>
                       </div>
                     </div>
+
+                    {detail.lini && (
+                      <div>
+                        <div className="text-muted-foreground mb-2 text-xs font-medium tracking-wide uppercase">Approval ({detail.lini})</div>
+                        <ul className="divide-border divide-y rounded-lg border">
+                          {ROLE_ORDER.map((role) => {
+                            const row = detail.approvals.find((a) => a.approver_role === role);
+                            const canAct = detail.my_roles.includes(role) && row?.status === "pending" && detail.approval_status !== "rejected";
+                            return (
+                              <li key={role} className="px-3 py-2">
+                                <div className="flex items-center gap-2">
+                                  <div className="min-w-0 flex-1">
+                                    <div>{ROLE_LABEL[role]}</div>
+                                    {row?.decided_by && (
+                                      <div className="text-muted-foreground text-xs">
+                                        {row.status === "approved" ? "Disetujui" : "Ditolak"} oleh {row.decided_by}
+                                        {row.decided_at ? ` · ${tgl(row.decided_at)}` : ""}
+                                        {row.note ? ` — ${row.note}` : ""}
+                                      </div>
+                                    )}
+                                  </div>
+                                  <ApprovalDecisionBadge status={row?.status ?? "pending"} />
+                                  {canAct && rejecting !== role && (
+                                    <>
+                                      <Button type="button" size="sm" disabled={busy} onClick={() => decideApproval(role, "approve")}>Approve</Button>
+                                      <Button type="button" size="sm" variant="outline" disabled={busy} className="text-danger hover:text-danger" onClick={() => setRejecting(role)}>Reject</Button>
+                                    </>
+                                  )}
+                                </div>
+                                {canAct && rejecting === role && (
+                                  <div className="mt-2 space-y-2">
+                                    <Textarea
+                                      value={rejectNote}
+                                      onChange={(e) => setRejectNote(e.target.value)}
+                                      placeholder="Alasan reject (opsional)"
+                                      className="text-sm"
+                                    />
+                                    <div className="flex gap-2">
+                                      <Button type="button" size="sm" variant="destructive" disabled={busy} onClick={() => decideApproval(role, "reject", rejectNote)}>
+                                        Konfirmasi Reject
+                                      </Button>
+                                      <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => { setRejecting(null); setRejectNote(""); }}>
+                                        Batal
+                                      </Button>
+                                    </div>
+                                  </div>
+                                )}
+                              </li>
+                            );
+                          })}
+                        </ul>
+                        {approvalError && <p className="text-destructive mt-2 text-xs">{approvalError}</p>}
+                      </div>
+                    )}
 
                     <div>
                       <div className="text-muted-foreground mb-2 text-xs font-medium tracking-wide uppercase">Barang Dipesan</div>
@@ -341,19 +479,25 @@ export function PurchaseOrderTable({ rows }: { rows: PurchaseOrderRow[] }) {
                                   ))}
                                   {!(receipts[it.id] ?? []).length && <li className="text-muted-foreground px-2 py-1.5 text-xs">Belum ada barang masuk.</li>}
                                 </ul>
-                                <div className="grid grid-cols-[80px_1fr_1fr_auto] gap-2">
-                                  <Input type="number" min="0" step="any" value={newReceipt.qty_received} onChange={(e) => setNewReceipt((p) => ({ ...p, qty_received: e.target.value }))} placeholder="Qty" />
-                                  <Input type="date" value={newReceipt.received_date} onChange={(e) => setNewReceipt((p) => ({ ...p, received_date: e.target.value }))} />
-                                  <Input value={newReceipt.received_by} onChange={(e) => setNewReceipt((p) => ({ ...p, received_by: e.target.value }))} placeholder="Diterima oleh" />
-                                  <Button type="button" variant="outline" size="icon" disabled={busy || !newReceipt.qty_received} onClick={() => addReceipt(it.id)} aria-label="Catat barang masuk">
-                                    <Plus />
-                                  </Button>
-                                </div>
-                                <Input
-                                  value={newReceipt.condition_notes}
-                                  onChange={(e) => setNewReceipt((p) => ({ ...p, condition_notes: e.target.value }))}
-                                  placeholder="Kondisi barang / catatan (opsional)"
-                                />
+                                {detail.approval_status === "approved" || detail.approval_status === "legacy_exempt" ? (
+                                  <>
+                                    <div className="grid grid-cols-[80px_1fr_1fr_auto] gap-2">
+                                      <Input type="number" min="0" step="any" value={newReceipt.qty_received} onChange={(e) => setNewReceipt((p) => ({ ...p, qty_received: e.target.value }))} placeholder="Qty" />
+                                      <Input type="date" value={newReceipt.received_date} onChange={(e) => setNewReceipt((p) => ({ ...p, received_date: e.target.value }))} />
+                                      <Input value={newReceipt.received_by} onChange={(e) => setNewReceipt((p) => ({ ...p, received_by: e.target.value }))} placeholder="Diterima oleh" />
+                                      <Button type="button" variant="outline" size="icon" disabled={busy || !newReceipt.qty_received} onClick={() => addReceipt(it.id)} aria-label="Catat barang masuk">
+                                        <Plus />
+                                      </Button>
+                                    </div>
+                                    <Input
+                                      value={newReceipt.condition_notes}
+                                      onChange={(e) => setNewReceipt((p) => ({ ...p, condition_notes: e.target.value }))}
+                                      placeholder="Kondisi barang / catatan (opsional)"
+                                    />
+                                  </>
+                                ) : (
+                                  <p className="text-muted-foreground text-xs">Menunggu approval penuh sebelum bisa mencatat barang masuk (F35).</p>
+                                )}
                               </div>
                             )}
                           </li>
@@ -378,6 +522,7 @@ export function PurchaseOrderTable({ rows }: { rows: PurchaseOrderRow[] }) {
                   </>
                 )}
               </DialogBody>
+              {actionError && <p className="text-destructive px-4 pb-2 text-xs">{actionError}</p>}
               <DialogFooter className="justify-between">
                 <Button type="button" variant="ghost" disabled={busy} onClick={deletePurchaseOrder} className="text-danger hover:text-danger">
                   <Trash2 /> Hapus
