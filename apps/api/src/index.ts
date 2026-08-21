@@ -321,6 +321,13 @@ import {
   type AtkStockMovementUpdate,
   type AtkMovementType,
 } from "./repo/atk-stock.js";
+import {
+  createShipment,
+  listShipments,
+  getShipmentById,
+  markKirim as markShipmentKirim,
+  markBast as markShipmentBast,
+} from "./repo/shipment-tracking.js";
 const app = new Hono();
 
 // Selalu balas JSON saat error / route tak ada — supaya BFF & client tak pernah
@@ -4593,6 +4600,74 @@ app.get("/atk/stock-levels", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const rows = await listAtkStockLevels();
   return c.json({ count: rows.length, rows });
+});
+
+// ── Tracking Pengiriman Digital (F12, SHIPPING) — state machine sederhana
+// draft → dikirim → bast (TTF diabaikan, arahan Direktur). Dipicu manual via
+// web ATAU WA hashtag #KIRIM/#BAST (match by sj_number, lihat repo/inbound.ts). ──
+app.post("/shipment-tracking", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: {
+    sj_number?: string;
+    customer_name?: string;
+    cabang?: string;
+    driver_name?: string;
+    driver_wa_number?: string;
+    created_by?: string;
+  };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.sj_number || !body.customer_name) {
+    return c.json({ error: "sj_number + customer_name wajib" }, 400);
+  }
+  const r = await createShipment({
+    sj_number: body.sj_number,
+    customer_name: body.customer_name,
+    cabang: body.cabang,
+    driver_name: body.driver_name,
+    driver_wa_number: body.driver_wa_number,
+    created_by: body.created_by,
+  });
+  return c.json(r, 201);
+});
+
+app.get("/shipment-tracking", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listShipments(c.req.query("status") || undefined, c.req.query("q") || undefined);
+  return c.json({ count: rows.length, shipments: rows });
+});
+
+app.get("/shipment-tracking/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await getShipmentById(c.req.param("id"));
+  return r ? c.json(r) : c.json({ error: "shipment tidak ditemukan" }, 404);
+});
+
+app.post("/shipment-tracking/:id/kirim", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { by?: string; lat?: number; lon?: number } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    // semua field opsional
+  }
+  const r = await markShipmentKirim(c.req.param("id"), { by: body.by, lat: body.lat, lon: body.lon });
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.post("/shipment-tracking/:id/bast", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { by?: string; lat?: number; lon?: number } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    // semua field opsional
+  }
+  const r = await markShipmentBast(c.req.param("id"), { by: body.by, lat: body.lat, lon: body.lon });
+  return c.json(r, r.ok ? 200 : 400);
 });
 
 const port = Number(process.env.PORT ?? 4000);

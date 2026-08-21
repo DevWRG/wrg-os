@@ -10,6 +10,7 @@ import { createReminder } from "./reminder.js";
 import { buildCekReply } from "./cek.js";
 import { ingestKlaim, type DocKlaimRow } from "./doc-klaim.js";
 import { createTicket, isKnownTeknisiSender } from "./serviceticket.js";
+import { findBySjNumber, markKirim, markBast } from "./shipment-tracking.js";
 
 // Role yang pakai alur AM per-customer (sales_plan/activity_log + foto), bukan todo.
 const AM_ROLES = new Set(["AM", "Teknisi"]);
@@ -24,12 +25,16 @@ const isAmRole = (role?: string | null) => AM_ROLES.has((role ?? "").trim());
 // → patuh WA_DRY_RUN. Idempoten: wa_message.processed_at. Pengirim tak dikenal →
 // SILENT (tak balas) supaya tak spam non-AM/pesan bot di grup campuran.
 
-export type InboundKind = "plan" | "report" | "leads" | "update" | "sales" | "cek" | "klaim" | "none";
+export type InboundKind = "plan" | "report" | "leads" | "update" | "sales" | "cek" | "klaim" | "kirim" | "bast" | "none";
 
 const LEADS_UPDATE_LINE = /^\s*#\s*(leads|update)\b/i;
 const SALES_LINE = /^\s*#\s*sales\b/i;
 const CEK_LINE = /^\s*#\s*cek\b/i;
 const KLAIM_LINE = /^\s*#\s*klaim\b/i;
+// F12 — hashtag SHIPPING dari kurir: "#KIRIM SJ-2026-001" / "#BAST SJ-2026-001"
+// (caption foto atau teks biasa). TTF sengaja tak ada hashtag (diabaikan per
+// arahan Direktur rapat 2026-07-30 — lihat docs/features/F12-*.md).
+const SHIPPING_LINE = /^\s*#\s*(kirim|bast)\b\s*(.*)$/i;
 
 export function detectKind(body: string | null): InboundKind {
   const daily = detectDaily(body); // line-anchored #plan/#report (sudah strip invisible)
@@ -43,9 +48,21 @@ export function detectKind(body: string | null): InboundKind {
       // pemisahannya di handler, bukan di detektor.
       if (CEK_LINE.test(line)) return "cek";
       if (KLAIM_LINE.test(line)) return "klaim";
+      const s = line.match(SHIPPING_LINE);
+      if (s) return s[1].toLowerCase() as "kirim" | "bast";
     }
   }
   return "none";
+}
+
+// Ambil No. SJ dari baris hashtag #KIRIM/#BAST — token pertama setelah hashtag.
+function extractSjNumber(body: string | null): string | null {
+  if (!body) return null;
+  for (const line of stripInvisible(body).split(/\r?\n/)) {
+    const m = line.match(SHIPPING_LINE);
+    if (m && m[2].trim()) return m[2].trim().split(/\s+/)[0];
+  }
+  return null;
 }
 
 export function isInboundEnabled(): boolean {
@@ -643,6 +660,39 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
     return finish({ klaim_id: k.id, ocr_dry_run: k.ocr_dry_run, reply });
   }
 
+  // F12 — #KIRIM/#BAST (SHIPPING): match by sj_number, TANPA gate sender —
+  // kurir tak punya roster master data (self-contained, sama filosofi F22).
+  if (kind === "kirim" || kind === "bast") {
+    const sj = extractSjNumber(row.body);
+    if (!sj) {
+      const reply = await sendViaWaGateway(
+        target,
+        `⚠️ Format #${kind.toUpperCase()} tak lengkap — sertakan No. SJ, mis. "#${kind.toUpperCase()} SJ-2026-001".`,
+      );
+      return finish({ error: "missing-sj-number", reply });
+    }
+    const shipment = await findBySjNumber(sj);
+    if (!shipment) {
+      const reply = await sendViaWaGateway(target, `⚠️ SJ "${sj}" tidak ditemukan di tracking pengiriman.`);
+      return finish({ error: "sj-not-found", sj, reply });
+    }
+    const photoPath = String(row.message_type ?? "").toLowerCase().startsWith("image") ? (row.media_path ?? null) : null;
+    // Foto ber-geotag (OCR check_photo_geotag.py, sama infra "Geo-Tagging
+    // Camera" AM) → row.geo_lat/geo_lon terisi. #KIRIM capture titik AWAL,
+    // #BAST capture titik CUSTOMER — dipakai hitung distance_km/eta_days
+    // OTOMATIS di markBast() begitu keduanya ada (arahan Direktur 2026-07-30).
+    const geo = { lat: row.geo_lat ?? null, lon: row.geo_lon ?? null };
+    const action =
+      kind === "kirim"
+        ? await markKirim(shipment.id, { photo_path: photoPath, by: row.sender_name, ...geo })
+        : await markBast(shipment.id, { photo_path: photoPath, by: row.sender_name, ...geo });
+    const replyMsg = action.ok
+      ? `✅ SJ ${shipment.sj_number} (${shipment.customer_name}) ditandai *${kind === "kirim" ? "DIKIRIM" : "BAST/SELESAI"}*.`
+      : `⚠️ Gagal update SJ ${shipment.sj_number}: ${action.error}`;
+    const reply = await sendViaWaGateway(target, replyMsg);
+    return finish({ shipment_id: shipment.id, sj, ok: action.ok, error: action.error, reply });
+  }
+
   // #PLAN/#REPORT — parse DULU (body-name dibutuhkan untuk resolusi Tier-A).
   const parsed = parseDaily(row.body ?? "");
   const am = await resolveSender({
@@ -761,7 +811,7 @@ export async function processUnprocessed(
            media_path, geo_lat, geo_lon, geo_ts, geo_address
     FROM wa_message
     WHERE processed_at IS NULL
-      AND (body ~* '#\\s*(plan|report|leads|update|sales|cek|klaim)'
+      AND (body ~* '#\\s*(plan|report|leads|update|sales|cek|klaim|kirim|bast)'
            OR (message_type ~* '^image' AND media_path IS NOT NULL)
            OR (${complaintGroupJid()} <> '' AND group_jid = ${complaintGroupJid()}))
     ORDER BY received_at ASC LIMIT ${limit}

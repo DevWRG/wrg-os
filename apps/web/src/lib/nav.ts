@@ -237,6 +237,7 @@ export const NAV: NavGroup[] = [
     items: [
       { title: "Kurir/Ekspedisi Performance", url: "/courier-performance", icon: Route, badge: "NEW" },
       { title: "Spesifikasi Cetak Dokumen", url: "/print-spec", icon: Printer, badge: "NEW" },
+      { title: "Tracking Pengiriman", url: "/shipment-tracking", icon: Route, badge: "NEW" },
     ],
   },
   {
