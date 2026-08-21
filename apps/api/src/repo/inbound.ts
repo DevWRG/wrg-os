@@ -7,6 +7,7 @@ import { resolveSender } from "./master.js";
 import { upsertDailyTodo, computeIsLate } from "./todo.js";
 import { createReminder } from "./reminder.js";
 import { buildCekReply } from "./cek.js";
+import { ingestKlaim, type DocKlaimRow } from "./doc-klaim.js";
 
 // Role yang pakai alur AM per-customer (sales_plan/activity_log + foto), bukan todo.
 const AM_ROLES = new Set(["AM", "Teknisi"]);
@@ -21,11 +22,12 @@ const isAmRole = (role?: string | null) => AM_ROLES.has((role ?? "").trim());
 // → patuh WA_DRY_RUN. Idempoten: wa_message.processed_at. Pengirim tak dikenal →
 // SILENT (tak balas) supaya tak spam non-AM/pesan bot di grup campuran.
 
-export type InboundKind = "plan" | "report" | "leads" | "update" | "sales" | "cek" | "none";
+export type InboundKind = "plan" | "report" | "leads" | "update" | "sales" | "cek" | "klaim" | "none";
 
 const LEADS_UPDATE_LINE = /^\s*#\s*(leads|update)\b/i;
 const SALES_LINE = /^\s*#\s*sales\b/i;
 const CEK_LINE = /^\s*#\s*cek\b/i;
+const KLAIM_LINE = /^\s*#\s*klaim\b/i;
 
 export function detectKind(body: string | null): InboundKind {
   const daily = detectDaily(body); // line-anchored #plan/#report (sudah strip invisible)
@@ -36,6 +38,7 @@ export function detectKind(body: string | null): InboundKind {
       if (m) return m[1].toLowerCase() as "leads" | "update";
       if (SALES_LINE.test(line)) return "sales";
       if (CEK_LINE.test(line)) return "cek";
+      if (KLAIM_LINE.test(line)) return "klaim";
     }
   }
   return "none";
@@ -555,6 +558,43 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
     return finish({ kind: "cek", via: ck.via, reply });
   }
 
+  // #KLAIM — DOC #KLAIM Fase A. Sender BEBAS teks (tak butuh roster, pola
+  // sama kurir F12/F93) — klaim bisa datang dari siapa pun, bukan cuma AM.
+  // Wajib foto; #KLAIM tanpa foto dibalas error jelas (bukan silent-skip).
+  if (kind === "klaim") {
+    if (!(String(row.message_type ?? "").toLowerCase().startsWith("image") && row.media_path)) {
+      const reply = await sendViaWaGateway(target, "⚠️ #KLAIM wajib disertai foto dokumen (invoice/faktur/struk).");
+      return finish({ error: "no-photo", reply });
+    }
+    const caption = (row.body ?? "").replace(KLAIM_LINE, "").trim() || null;
+    const result = await ingestKlaim({
+      wa_message_id: row.id,
+      sender_jid: row.sender_jid,
+      sender_name: row.sender_name,
+      media_path: row.media_path,
+      caption,
+    });
+    if ("ok" in result && result.ok === false) {
+      const reply = await sendViaWaGateway(target, `⚠️ Gagal proses #KLAIM: ${result.error}`);
+      return finish({ error: result.error, reply });
+    }
+    const k = result as DocKlaimRow;
+    const msg = k.ocr_dry_run
+      ? `📥 Foto #KLAIM tersimpan. OCR belum aktif (mode dry-run) — akan ditindaklanjuti manual.`
+      : [
+          "✅ #KLAIM diterima, foto tersimpan.",
+          k.nomor_dokumen ? `No. Dokumen: ${k.nomor_dokumen}` : null,
+          k.tanggal_dokumen ? `Tanggal: ${k.tanggal_dokumen}` : null,
+          k.nominal ? `Nominal: ${k.nominal}` : null,
+          k.pihak ? `Pihak: ${k.pihak}` : null,
+          "Akan ditindaklanjuti tim terkait.",
+        ]
+          .filter(Boolean)
+          .join("\n");
+    const reply = await sendViaWaGateway(target, msg);
+    return finish({ klaim_id: k.id, ocr_dry_run: k.ocr_dry_run, reply });
+  }
+
   // #PLAN/#REPORT — parse DULU (body-name dibutuhkan untuk resolusi Tier-A).
   const parsed = parseDaily(row.body ?? "");
   const am = await resolveSender({
@@ -673,7 +713,7 @@ export async function processUnprocessed(
            media_path, geo_lat, geo_lon, geo_ts, geo_address
     FROM wa_message
     WHERE processed_at IS NULL
-      AND (body ~* '#\\s*(plan|report|leads|update|sales|cek)'
+      AND (body ~* '#\\s*(plan|report|leads|update|sales|cek|klaim)'
            OR (message_type ~* '^image' AND media_path IS NOT NULL))
     ORDER BY received_at ASC LIMIT ${limit}
   `;

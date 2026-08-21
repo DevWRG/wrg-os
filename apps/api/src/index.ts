@@ -162,6 +162,7 @@ import {
   computePeriode as computeInsentifPeriode,
 } from "./repo/insentif.js";
 import { listDepartments, listEmployees, getEmployee, getRaciMatrix, getMeasurements, saveMeasurements, createEmployee, updateEmployee, deleteEmployee, replaceEmployeeDetail, getVoiceAggregate, getHodResolution, getOrgReporting, populateHodKey, getHods, type MeasurementInput, type EmployeeWrite, type SpineDetail } from "./repo/employee-spine.js";
+import { listKlaim, getKlaim, updateKategori, decideKlaim, markDibayar, createKlaimManual, deleteKlaim } from "./repo/doc-klaim.js";
 import { upsertMembers, listMembers, upsertDigests, listDigest, digestStats, upsertPola, listPola, generateRekap, generateResume, type MonitorMemberInput, type DigestInput, type PolaInput } from "./repo/monitor.js";
 import { runNotifTua } from "./repo/notiftua.js";
 import { runDailySummary } from "./repo/dailysummary.js";
@@ -2428,6 +2429,60 @@ app.post("/employee-spine/employees/:id/measurements", async (c) => {
   if (!Array.isArray(body.items)) return c.json({ error: "field 'items' wajib array" }, 400);
   return c.json(await saveMeasurements(c.req.param("id"), period, body.items));
 });
+
+// ── DOC #KLAIM Invoice Claim OCR (Fase A) — ingestion via WA, review manual ──
+app.get("/doc-klaim", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const status = c.req.query("status") ?? undefined;
+  return c.json({ klaim: await listKlaim(status) });
+});
+// Input manual via web (buat coba tanpa kirim WA sungguhan) — TANPA OCR.
+app.post("/doc-klaim", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const body = await c.req.json().catch(() => ({}));
+  const result = await createKlaimManual(body);
+  if ("ok" in result && !result.ok) return c.json({ error: result.error }, 400);
+  return c.json({ klaim: result }, 201);
+});
+app.delete("/doc-klaim/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const result = await deleteKlaim(c.req.param("id"));
+  if (!result.ok) return c.json({ error: result.error }, 400);
+  return c.json(result);
+});
+app.get("/doc-klaim/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const k = await getKlaim(c.req.param("id"));
+  return k ? c.json({ klaim: k }) : c.json({ error: "klaim tidak ditemukan" }, 404);
+});
+app.patch("/doc-klaim/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const body = await c.req.json().catch(() => ({}));
+  const result = await updateKategori(c.req.param("id"), body.kategori ?? null);
+  if ("ok" in result && !result.ok) return c.json({ error: result.error }, 400);
+  return c.json({ klaim: result });
+});
+app.post("/doc-klaim/:id/decide", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const body = await c.req.json().catch(() => ({}));
+  const decision = body.decision;
+  if (decision !== "disetujui" && decision !== "ditolak") return c.json({ error: "decision harus disetujui/ditolak" }, 400);
+  const result = await decideKlaim(c.req.param("id"), {
+    decision,
+    nominal_disetujui: body.nominal_disetujui ?? null,
+    catatan: body.catatan ?? null,
+    decided_by_user_id: c.req.header("x-user-id") ?? null,
+  });
+  if (!result.ok) return c.json({ error: result.error }, 400);
+  return c.json(result);
+});
+app.post("/doc-klaim/:id/bayar", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const result = await markDibayar(c.req.param("id"));
+  if (!result.ok) return c.json({ error: result.error }, 400);
+  return c.json(result);
+});
+
 // F118b CRUD core karyawan (gating admin di BFF web).
 app.post("/employee-spine/employees", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);

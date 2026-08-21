@@ -10,7 +10,7 @@ import {
   Bell, MapPin, ListChecks, Swords, CalendarOff, CalendarDays, CalendarRange,
   Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, Tags, SlidersHorizontal, Microscope,
   Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, BookOpen, Calculator,
-  Wallet, Coins, Route, Radio, Printer,
+  Wallet, Coins, Route, Radio, Printer, ScanText,
   type LucideIcon,
 } from "lucide-react";
 
@@ -238,6 +238,14 @@ export const NAV: NavGroup[] = [
       // halaman 2 tab). Key RBAC-nya sendiri (`stok-gudang`, auto dari URL),
       // jadi bisa digrant terpisah dari izin Inventory di Akses Grup.
       { title: "Stok Gudang", url: "/stok-gudang", icon: Boxes, badge: "NEW" },
+    ],
+  },
+  {
+    // DOC #KLAIM (FR-DOC-01) — domain board literally "DOC", tak cocok masuk
+    // grup existing manapun, grup sendiri (pola sama F139 bikin grup "GA").
+    label: "DOC",
+    items: [
+      { title: "Klaim OCR", url: "/doc-klaim", icon: ScanText, badge: "NEW" },
     ],
   },
   {

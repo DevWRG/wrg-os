@@ -40,6 +40,8 @@ from .schemas import (
     GrowthLeversResponse,
     ExtractRequest,
     ExtractResponse,
+    KlaimOcrRequest,
+    KlaimOcrResponse,
     LeaveDetectRequest,
     LeaveDetectResponse,
     RekapRequest,
@@ -57,6 +59,8 @@ from .schemas import (
     WeekendBriefingResponse,
 )
 from .executive import NAMA_PERUSAHAAN
+from .klaim import build_klaim_system, build_klaim_user, parse_klaim
+from .openrouter import chat_vision, klaim_models
 
 # System prompt stabil (cache-friendly) — port dari legacy/crm wrg-daily SKILL.md.
 DAILY_SYSTEM_PROMPT = """Kamu adalah WRG CRM Daily Summary Generator.
@@ -303,6 +307,38 @@ def sales_doc(req: SalesDocRequest) -> SalesDocResponse:
         draft_text=text,
         model=model_used,
         dry_run=not use_llm or model_used == "dry-run-fallback",
+    )
+
+
+@app.post("/ocr-klaim", response_model=KlaimOcrResponse)
+def ocr_klaim(req: KlaimOcrRequest) -> KlaimOcrResponse:
+    """DOC #KLAIM Fase A: ekstrak isi foto dokumen (invoice/faktur/struk) via
+    Gemini Vision (OpenRouter). dry_run / tanpa OPENROUTER_API_KEY → SEMUA field
+    null (TIDAK ada template fabrikasi — beda dari /sales-doc, gambar sungguhan
+    tak bisa dikira-kira isinya)."""
+    use_llm = not req.dry_run and bool(os.environ.get("OPENROUTER_API_KEY"))
+    if not use_llm:
+        return KlaimOcrResponse(model="dry-run", dry_run=True)
+    try:
+        text, model_used, _, _ = chat_vision(
+            build_klaim_system(),
+            build_klaim_user(req.caption),
+            req.image_base64,
+            req.mime_type,
+            max_tokens=1500,
+            models=klaim_models(),
+        )
+        fields = parse_klaim(text)
+    except Exception:  # noqa: BLE001 — degradasi ke dry-run, endpoint tetap 200
+        return KlaimOcrResponse(model="dry-run-fallback", dry_run=True)
+    return KlaimOcrResponse(
+        raw_text=fields["raw_text"],
+        nomor_dokumen=fields["nomor_dokumen"],
+        tanggal_dokumen=fields["tanggal_dokumen"],
+        nominal=fields["nominal"],
+        pihak=fields["pihak"],
+        model=model_used,
+        dry_run=False,
     )
 
 
