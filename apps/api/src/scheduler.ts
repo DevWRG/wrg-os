@@ -16,6 +16,7 @@ import {
   runPeopleAnalytics,
 } from "./repo/agents.js";
 import { runReminders } from "./repo/reminder.js";
+import { runMaintenanceReminders } from "./repo/maintenance.js";
 import { runHodDaily, runMissStreakEscalation } from "./repo/hodreminder.js";
 import { runVisitWeeklyRecap } from "./repo/visitweekly.js";
 import { generateRekap, generateResume } from "./repo/monitor.js";
@@ -278,6 +279,31 @@ export function startScheduler(): ScheduleStatus {
       { timezone },
     );
     live.push(`${j.label}=${j.expr}`);
+  }
+
+  // PM & Kalibrasi Alat (F24, AFTERSALES) — reminder H-14 ke teknisi per alat.
+  // Nyala SENDIRI (default off), tidak ikut AGENT_SCHEDULE_ENABLED.
+  const pmKalibrasiEnabled = (process.env.PM_KALIBRASI_REMINDER_ENABLED ?? "false").toLowerCase() === "true";
+  const pmKalibrasiExpr = process.env.PM_KALIBRASI_REMINDER_CRON ?? "0 8 * * *";
+  if (pmKalibrasiEnabled) {
+    if (!cron.validate(pmKalibrasiExpr)) {
+      console.error(`[scheduler] pm-kalibrasi-reminder cron-expr tidak valid: "${pmKalibrasiExpr}" — dilewati`);
+    } else {
+      cron.schedule(
+        pmKalibrasiExpr,
+        async () => {
+          const startedAt = new Date().toISOString();
+          try {
+            const r = await runMaintenanceReminders();
+            console.log(`[scheduler] pm-kalibrasi-reminder ok @ ${startedAt} ${JSON.stringify(r).slice(0, 200)}`);
+          } catch (e) {
+            console.error(`[scheduler] pm-kalibrasi-reminder gagal @ ${startedAt}:`, e);
+          }
+        },
+        { timezone },
+      );
+      live.push(`pm-kalibrasi-reminder=${pmKalibrasiExpr}`);
+    }
   }
 
   // HOD daily reminder — rekap kepatuhan plan/report (08:30, setelah AM plan pagi).

@@ -208,6 +208,7 @@ export const NAV: NavGroup[] = [
       { title: "RFID/Cartridge Error Claim", url: "/rfid-cartridge-claims", icon: Radio, badge: "NEW" },
       { title: "Instalasi Alat", url: "/installations", icon: Wrench, badge: "NEW" },
       { title: "Service Tickets", url: "/service-tickets", icon: Ticket, badge: "NEW" },
+      { title: "PM & Kalibrasi", url: "/maintenance", icon: CalendarClock, badge: "NEW" },
     ],
   },
   {

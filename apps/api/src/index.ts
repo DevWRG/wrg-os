@@ -284,6 +284,13 @@ import {
   type DanaOpsItemInput,
   type DanaOpsItemUpdate,
 } from "./repo/dana-ops.js";
+import {
+  createSchedule,
+  listSchedules,
+  getScheduleById,
+  listEligibleUnits,
+  markDone,
+} from "./repo/maintenance.js";
 const app = new Hono();
 
 // Selalu balas JSON saat error / route tak ada — supaya BFF & client tak pernah
@@ -4361,6 +4368,65 @@ app.delete("/dana-ops/:id/items/:itemId", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const r = await deleteDanaOpsItem(c.req.param("id"), c.req.param("itemId"));
   return c.json(r, r.deleted ? 200 : 404);
+});
+
+// ── Instalasi Alat Lifecycle (F22, AFTERSALES) — checklist 5 langkah sekuensial:
+// PO control → SJ → Teknisi assign → Training done → BAST. ──
+app.get("/maintenance/eligible-units", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const units = await listEligibleUnits();
+  return c.json({ count: units.length, units });
+});
+
+app.post("/maintenance", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: {
+    installation_unit_id?: string;
+    interval_bulan?: number;
+    reference_date?: string;
+    teknisi_name?: string;
+    teknisi_wa_number?: string;
+  };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.installation_unit_id || !body.interval_bulan || body.interval_bulan <= 0) {
+    return c.json({ error: "installation_unit_id + interval_bulan (>0) wajib" }, 400);
+  }
+  const r = await createSchedule({
+    installation_unit_id: body.installation_unit_id,
+    interval_bulan: body.interval_bulan,
+    reference_date: body.reference_date,
+    teknisi_name: body.teknisi_name,
+    teknisi_wa_number: body.teknisi_wa_number,
+  });
+  return c.json(r, "ok" in r && r.ok === false ? 400 : 201);
+});
+
+app.get("/maintenance", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const schedules = await listSchedules(c.req.query("status") || undefined);
+  return c.json({ count: schedules.length, schedules });
+});
+
+app.get("/maintenance/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const s = await getScheduleById(c.req.param("id"));
+  return s ? c.json(s) : c.json({ error: "schedule tidak ditemukan" }, 404);
+});
+
+app.post("/maintenance/:id/done", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { catatan?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    // catatan opsional
+  }
+  const r = await markDone(c.req.param("id"), body.catatan);
+  return c.json(r, r.ok ? 200 : 400);
 });
 
 const port = Number(process.env.PORT ?? 4000);
