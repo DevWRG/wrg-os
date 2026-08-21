@@ -61,6 +61,7 @@ import {
   sendSalesDoc,
   cancelSalesDoc,
 } from "./repo/salesdoc.js";
+import { createSphDraft, getSphDetail, hodReviewSph, confirmSphVariant } from "./repo/sph.js";
 import { getProductIntelligence } from "./repo/product.js";
 import { listAnnotations } from "./repo/sentiment.js";
 import { getNetworkInput, computeNetwork } from "./repo/network.js";
@@ -1688,6 +1689,61 @@ app.post("/sales/docs/:id/cancel", async (c) => {
     /* body opsional */
   }
   const r = await cancelSalesDoc(c.req.param("id"), body.approver_id);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+// F15 SPH Generator — form intake AM: pilih item katalog product_pricelist
+// PERSIS (bukan ketik nama), qty, diskon minta. Body:
+// { deal_id?, customer_id, customer_name, am_id?, periode?, items: [{pricelist_item_id, qty, diskon_requested}], created_by? }.
+app.post("/sph", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: Parameters<typeof createSphDraft>[0] | undefined;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body?.customer_name) {
+    return c.json({ error: "customer_name wajib" }, 400);
+  }
+  const r = await createSphDraft(body);
+  return c.json(r, r.ok ? 201 : 400);
+});
+
+app.get("/sph/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const detail = await getSphDetail(c.req.param("id"));
+  if (!detail) return c.json({ error: "dokumen tidak ditemukan" }, 404);
+  return c.json(detail);
+});
+
+// Tahap 1/2 approval SPH (HOD Business). draft → hod_review. Tahap 2 pakai
+// endpoint sama dgn doc_type lain: POST /sales/docs/:id/approve.
+app.post("/sph/:id/review", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { reviewer_id?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    /* body opsional */
+  }
+  const r = await hodReviewSph(c.req.param("id"), body.reviewer_id);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+// HANDOVER §6 — Admin Penawaran konfirmasi 1 baris item nama-varian-kembar.
+// Body: { line_item_id, confirmed_by? }. Wajib dilakukan tiap baris
+// unconfirmed sebelum POST /sales/docs/:id/approve bisa lolos utk SPH.
+app.post("/sph/:id/confirm-variant", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { line_item_id?: number; confirmed_by?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.line_item_id) return c.json({ error: "line_item_id wajib" }, 400);
+  const r = await confirmSphVariant(c.req.param("id"), body.line_item_id, body.confirmed_by);
   return c.json(r, r.ok ? 200 : 400);
 });
 

@@ -296,7 +296,7 @@ def sales_doc(req: SalesDocRequest) -> SalesDocResponse:
     tmpl = template_doc(req)
     if use_llm:
         text, model_used, _, _ = chat_or_fallback(
-            build_salesdoc_system(req.doc_type),
+            build_salesdoc_system(req.doc_type, req.has_final_pricing),
             build_salesdoc_user(req),
             tmpl,
             max_tokens=3000,
