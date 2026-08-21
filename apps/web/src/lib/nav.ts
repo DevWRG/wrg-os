@@ -18,6 +18,7 @@ import {
   PenLine,
   PackagePlus, PackageMinus,
   CalendarCheck,
+  Hourglass,
   type LucideIcon,
 } from "lucide-react";
 
@@ -255,6 +256,9 @@ export const NAV: NavGroup[] = [
       { title: "Stok Gudang", url: "/stok-gudang", icon: Boxes, badge: "NEW" },
       { title: "Supplier ETA", url: "/supplier-eta", icon: CalendarClock, badge: "NEW" },
       { title: "Inbound Receiving", url: "/inbound-receiving", icon: PackageCheck, badge: "NEW" },
+      // F38 — sama perlakuan spt Stok Gudang: dulu tab ketiga di /inventory,
+      // sekarang route sendiri dgn key RBAC sendiri (`ed-watch`).
+      { title: "ED & Kedaluwarsa", url: "/ed-watch", icon: Hourglass, badge: "NEW" },
     ],
   },
   {
