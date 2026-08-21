@@ -117,8 +117,14 @@ export function FaskesDetailDialog({ g, median, onClose }: {
   // Total & hitungan di luar skema dipakai di dua tempat (judul + catatan), jadi dihitung
   // sekali. Total mencakup baris di luar skema — itu memang "reagen yang keluar",
   // pertanyaan yang berbeda dari "revenue skema ini".
-  const totalReagen = (detail?.reagen ?? []).reduce((a, r) => a + (r.nilaiNetto ?? 0), 0);
-  const reagenLuar = (detail?.reagen ?? []).filter((r) => !r.dalamSkema).length;
+  // DUA subtotal, bukan satu. Yang "dalam skema" sepadan dengan kartu Revenue di atas
+  // (kategori difilter + porsi KSO diterapkan di server); yang "di luar skema" TIDAK
+  // masuk angka itu. Menampilkan satu total gabungan membuat pembaca membandingkannya
+  // dengan kartu Revenue dan menemukan selisih tanpa sebab yang terlihat.
+  const rgn = detail?.reagen ?? [];
+  const totalDalam = rgn.filter((r) => r.dalamSkema).reduce((a, r) => a + (r.nilaiNetto ?? 0), 0);
+  const totalLuar = rgn.filter((r) => !r.dalamSkema).reduce((a, r) => a + (r.nilaiNetto ?? 0), 0);
+  const reagenLuar = rgn.filter((r) => !r.dalamSkema).length;
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
@@ -268,7 +274,8 @@ export function FaskesDetailDialog({ g, median, onClose }: {
                 <div className="mb-1.5 flex flex-wrap items-baseline gap-x-2">
                   <span className="text-xs font-medium">Reagen keluar ({detail.reagen.length})</span>
                   <span className="text-muted-foreground text-[11px]">
-                    {dari.slice(0, 4)} · total {rp(totalReagen)}
+                    {dari.slice(0, 4)} · dalam skema {rp(totalDalam)}
+                    {totalLuar > 0 ? <> · di luar skema {rp(totalLuar)}</> : null}
                   </span>
                 </div>
                 {detail.reagen.length === 0 ? (
@@ -316,10 +323,13 @@ export function FaskesDetailDialog({ g, median, onClose }: {
                 )}
                 <p className="text-muted-foreground mt-1 text-xs">
                   Nilai = netto faktur <strong>teralokasi</strong> menurut porsi nilai baris,
-                  sama seperti kartu Revenue di atas — bukan penjumlahan nilai baris apa adanya.
+                  bukan penjumlahan nilai baris apa adanya. Subtotal{" "}
+                  <strong>dalam skema</strong> memakai kategori dan porsi KSO yang sama dengan
+                  kartu <strong>Revenue netto</strong> di atas, jadi dua angka itu sepadan.
                   {reagenLuar > 0 ? (
                     <> {reagenLuar} baris berkategori <strong>di luar skema ini</strong> ikut
-                    ditampilkan (ditandai kuning) dan <strong>tidak</strong> masuk angka Revenue.</>
+                    ditampilkan (ditandai kuning) dan <strong>tidak</strong> masuk angka Revenue —
+                    ia sengaja tidak dijumlahkan ke dalamnya.</>
                   ) : null}
                   {" "}Satu item bisa muncul dua kali bila ditagih dalam satuan berbeda —
                   qty lintas satuan tidak dijumlahkan.
