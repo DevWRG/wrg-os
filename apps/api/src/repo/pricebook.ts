@@ -610,6 +610,9 @@ export interface PricebookPublishedRow {
   kode: string | null;
   productKode: string | null;
   lini: string;
+  // Nama Product Line dari master klasifikasi (072), bukan teks bebas — dipakai
+  // filter di menu Price Book. NULL kalau baris setup belum punya klasifikasi.
+  productLine: string | null;
   brand: string;
   nama: string;
   varian: string | null;
@@ -636,9 +639,14 @@ export async function listPublishedKeagenan(
     SELECT p.row_no, p.kode, p.lini, p.brand, p.nama, p.kategori,
            p.price_list, p.diskon_maks, p.harga_nett, p.nett_ppn,
            s.nama_final, s.varian, s.kemasan, s.satuan, s.product_kode,
-           s.price_list_override, s.diskon_override, s.published_at::text
+           s.price_list_override, s.diskon_override, s.published_at::text,
+           pl.nama AS product_line
       FROM product_pricelist p
       JOIN product_pricelist_setup s ON s.periode = p.periode AND s.row_no = p.row_no
+      -- LEFT JOIN: baris setup yang klasifikasinya belum lengkap tetap tampil,
+      -- cuma tanpa Product Line. Kalau INNER, harga bisa hilang dari muka AM
+      -- hanya karena master klasifikasinya belum diisi.
+      LEFT JOIN product_line pl ON pl.kategori_id = s.kategori_id AND pl.id = s.line_id
      WHERE p.periode = ${periode} AND s.status = 'published'
        AND (${opts.lini ?? null}::text IS NULL OR p.lini = ${opts.lini ?? null})
        AND (${q}::text IS NULL OR COALESCE(s.nama_final, p.nama) ILIKE ${q}
@@ -652,6 +660,7 @@ export async function listPublishedKeagenan(
       kode: (r.kode as string) ?? null,
       productKode: (r.product_kode as string) ?? null,
       lini: r.lini as string,
+      productLine: (r.product_line as string) ?? null,
       brand: r.brand as string,
       nama: ((r.nama_final as string) || (r.nama as string)) ?? "",
       varian: (r.varian as string) ?? null,
