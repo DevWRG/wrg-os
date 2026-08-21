@@ -4170,8 +4170,6 @@ app.post("/service-tickets/:id/resolve", async (c) => {
 });
 
 // ── F39 Supplier ETA Tracker ──
-const SUPPLIER_ETA_STATUSES: SupplierEtaStatus[] = ["pending", "arrived", "cancelled"];
-
 const port = Number(process.env.PORT ?? 4000);
 serve({ fetch: app.fetch, port }, (info) => {
   console.log(`wrg-api listening on http://localhost:${info.port}`);
