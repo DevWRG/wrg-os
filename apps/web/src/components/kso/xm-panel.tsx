@@ -37,12 +37,17 @@ interface SetXm {
 const HARGA_KOSONG: Record<string, HargaInput> = {};
 
 const setAwal = (a: KsoAnalyzer): SetXm => ({
-  price: a.defaultCapexPl ?? a.defaultCapex,
+  // Mulai dari 0, bukan harga master: crossmatch selalu dinegosiasikan per
+  // penawaran, jadi angka master di sini justru menyesatkan (dan bikin
+  // CAPEX/test terisi padahal user belum memasukkan apa pun).
+  price: 0,
   disc: 0,
   kso: 0,
   markup: 0,
   tests: 0,
-  metode: a.meta.methods?.[0]?.id ?? "",
+  // Default = metode paling lengkap (kolom terbanyak): LIBO → Mayor+Minor+AC,
+  // RedCell → Crossmatch (bukan DCT). Itu yang dipakai di lapangan.
+  metode: [...(a.meta.methods ?? [])].sort((x, y) => y.cols - x.cols)[0]?.id ?? "",
 });
 
 const hargaAwal = (a: KsoAnalyzer): Record<string, HargaInput> =>
@@ -69,6 +74,12 @@ export function XmPanel({
 
   const s = set[analyzer?.kode ?? ""] ?? setAwal(analyzer);
   const hargaNow = harga[analyzer?.kode ?? ""] ?? HARGA_KOSONG;
+  // UPS & LIS milik kategori ini sendiri — di aplikasi asal tiap kategori
+  // punya sepasang sendiri (cuma Hematologi & Kimia Klinik yang berbagi),
+  // karena satu kunjungan bisa menawarkan beberapa alat dengan pendukung
+  // yang berbeda.
+  const [ups, setUps] = useState(0);
+  const [lis, setLis] = useState(0);
   const upd = (patch: Partial<SetXm>) =>
     setSet((p) => ({ ...p, [analyzer.kode]: { ...p[analyzer.kode], ...patch } }));
   const updHarga = (k: string, patch: Partial<HargaInput>) =>
@@ -83,10 +94,10 @@ export function XmPanel({
     () =>
       hitungCapex({
         harga: { price: s.price, disc: s.disc },
-        ups: umum.ups, lis: umum.lis, backup: null,
+        ups, lis, backup: null,
         ksoBulan: s.kso, testsPerMonth: s.tests, workDays: umum.workDays,
       }),
-    [s, umum],
+    [s, ups, lis, umum.workDays],
   );
   const hasil = useMemo(
     () =>
@@ -108,7 +119,7 @@ export function XmPanel({
       analyzerName: judulAlat,
       backupLabel: "",
       totCap: capex.total,
-      capex: { alat: capex.nettAlat, backup: 0, ups: umum.ups, lis: umum.lis },
+      capex: { alat: capex.nettAlat, backup: 0, ups, lis },
       kso: s.kso, testsPerMonth: s.tests, totTest: capex.totalTest,
       workDays: umum.workDays, markup: s.markup,
     },
@@ -244,8 +255,8 @@ export function XmPanel({
             <KartuCapex
               price={s.price} disc={s.disc}
               onPrice={(v) => upd({ price: v })} onDisc={(v) => upd({ disc: v })}
-              ups={umum.ups} lis={umum.lis}
-              onUps={(v) => setUmum({ ups: v })} onLis={(v) => setUmum({ lis: v })}
+              ups={ups} lis={lis}
+              onUps={setUps} onLis={setLis}
               nettAlat={capex.nettAlat} total={capex.total}
             />
           </CardContent>

@@ -1,17 +1,54 @@
 {
   "schemaVersion": "1.0.0",
-  "lastUpdate": "2026-08-03T00:00:09Z",
+  "lastUpdate": "2026-08-21T00:00:09Z",
   "generatedBy": "sync-state.sh (Warp cron/manual)",
   "production": {
-    "version": "v1.164.0",
-    "releasedAt": "2026-07-31T18:36:13Z",
-    "totalReleases": 290,
+    "version": "v1.192.2",
+    "releasedAt": "2026-08-20T14:42:45Z",
+    "totalReleases": 376,
     "goLiveDate": "2026-06-15"
   },
   "infrastructure": {
     "stack": "Next.js 16 + Hono + FastAPI (3-tier)",
     "deployment": "Native pm2 Mac (BUKAN Docker)",
-    "services": [{"name":"wrg-prod-ai","port":"8100","status":"LIVE","uptime_sec":1235981},{"name":"wrg-prod-api","port":"4100","status":"LIVE","uptime_sec":192360},{"name":"wrg-prod-web","port":"3100","status":"LIVE","uptime_sec":192360},{"name":"wrg-prod-wabridge","port":null,"status":"LIVE","uptime_sec":3838423},{"name":"wrg-prod-cftunnel","port":null,"status":"LIVE","uptime_sec":3754675},{"name":"wrg-prod-deployhook","port":null,"status":"LIVE","uptime_sec":3754165}],
+    "services": [
+      {
+        "name": "wrg-prod-ai",
+        "port": "8100",
+        "status": "LIVE",
+        "uptime_sec": 157886
+      },
+      {
+        "name": "wrg-prod-api",
+        "port": "4100",
+        "status": "LIVE",
+        "uptime_sec": 33209
+      },
+      {
+        "name": "wrg-prod-web",
+        "port": "3100",
+        "status": "LIVE",
+        "uptime_sec": 33209
+      },
+      {
+        "name": "wrg-prod-wabridge",
+        "port": null,
+        "status": "LIVE",
+        "uptime_sec": 34140
+      },
+      {
+        "name": "wrg-prod-cftunnel",
+        "port": null,
+        "status": "LIVE",
+        "uptime_sec": 5309875
+      },
+      {
+        "name": "wrg-prod-deployhook",
+        "port": null,
+        "status": "LIVE",
+        "uptime_sec": 5309365
+      }
+    ],
     "servicesLive": 6,
     "schedulerJobs": 17,
     "cutoverMarkers": 22,
@@ -30,7 +67,116 @@
   },
   "_meta": {
     "source": "Auto-generated dari pm2 jlist + gh CLI + .env.prod",
-    "syncedAt": "2026-08-03T00:00:09Z",
+    "syncedAt": "2026-08-21T00:00:09Z",
     "host": "Mac-mini-Development.local"
+  },
+  "tooling": {
+    "sourceFile": "state/warp-tooling.json",
+    "lastUpdate": "2026-08-06T15:33:56Z",
+    "claudePlugins": [
+      {
+        "id": "wrg-os-toolkit",
+        "displayName": "WRG-OS Toolkit",
+        "version": "0.2.0",
+        "status": "ACTIVE",
+        "installedFrom": "internal (WRG OS/14-Plugins/wrg-os-toolkit/)",
+        "createdDate": "2026-08-06",
+        "owner": "Husni Mubarrak",
+        "license": "MIT",
+        "upstream": {
+          "repo": "https://github.com/affaan-m/ECC",
+          "version": "v2.1.0",
+          "attribution": "Affaan Mustafa",
+          "cherryPickFrom": "281 skills — kept 22 stack-fit (16 di v0.1.0 + 6 Tier A di v0.2.0)"
+        },
+        "installTarget": {
+          "claudeCode": "$HOME/.claude/skills/wrg-os-toolkit",
+          "installMethod": "symlink (atau --copy) ke $HOME/.claude/skills/ — lokasi auto-load, ke-load sebagai wrg-os-toolkit@skills-dir",
+          "alternative": "local marketplace: claude plugin marketplace add <14-Plugins> && claude plugin install wrg-os-toolkit@wrg-os-local",
+          "deprecated": "$HOME/.claude/plugins/wrg-os-toolkit dan $HOME/Library/Application Support/Claude/plugins/ — TIDAK dibaca Claude Code (registry lewat known_marketplaces.json + installed_plugins.json). Dipakai installer v0.1.0, tak pernah mengaktifkan skill."
+        },
+        "driveLocation": "$HOME/Library/CloudStorage/GoogleDrive-development@wahanalifeline.co.id/My Drive/Cowork Workspace/Projects/WRG OS/14-Plugins/wrg-os-toolkit",
+        "repoLocation": "plugins/wrg-os-toolkit (DevWRG/wrg-os) — sumber install buat Warp/Mac mini: install-warp.sh --src=$HOME/wrg-os/plugins/wrg-os-toolkit",
+        "marketplaceManifest": "WRG OS/14-Plugins/.claude-plugin/marketplace.json (name: wrg-os-local)",
+        "packagedFile": "WRG OS/14-Plugins/wrg-os-toolkit-v0.2.0.plugin",
+        "skillCount": 22,
+        "skillCategories": {
+          "framework": [
+            "postgres-patterns",
+            "nextjs-turbopack",
+            "react-patterns",
+            "fastapi-patterns"
+          ],
+          "data": [
+            "database-migrations",
+            "data-throughput-accelerator",
+            "regex-vs-llm-structured-text"
+          ],
+          "api": [
+            "api-design",
+            "api-connector-builder",
+            "error-handling"
+          ],
+          "qa": [
+            "tdd-workflow",
+            "verification-loop",
+            "browser-qa",
+            "python-testing"
+          ],
+          "delivery": [
+            "delivery-gate"
+          ],
+          "security": [
+            "security-review"
+          ],
+          "agent": [
+            "agent-architecture-audit",
+            "prompt-optimizer",
+            "cost-aware-llm-pipeline"
+          ],
+          "research": [
+            "deep-research"
+          ],
+          "docs": [
+            "code-tour",
+            "documentation-lookup"
+          ]
+        },
+        "warpIntegration": {
+          "installScript": "plugins/wrg-os-toolkit/scripts/install-warp.sh install",
+          "uninstallScript": "plugins/wrg-os-toolkit/scripts/install-warp.sh uninstall",
+          "verifyCommand": "claude plugin list | grep wrg-os-toolkit   # expect wrg-os-toolkit@skills-dir",
+          "reloadTrigger": "sesi Claude Code CLI berikutnya (tak perlu restart daemon)"
+        },
+        "cherryPickReference": "WRG OS/14-Plugins/wrg-os-toolkit/CHERRY-PICK-REFERENCE.md",
+        "docs": {
+          "README": "WRG OS/14-Plugins/wrg-os-toolkit/README.md",
+          "INSTALL": "WRG OS/14-Plugins/wrg-os-toolkit/INSTALL.md",
+          "CHERRY_PICK_REF": "WRG OS/14-Plugins/wrg-os-toolkit/CHERRY-PICK-REFERENCE.md"
+        }
+      }
+    ],
+    "mcpServers": {
+      "bright-data": {
+        "status": "REGISTERED",
+        "purpose": "scrape/search/proxy"
+      },
+      "bigdata-com": {
+        "status": "REGISTERED-AUTH-PENDING",
+        "purpose": "market/company data"
+      },
+      "cowork": {
+        "status": "ACTIVE",
+        "purpose": "file operations + present_files"
+      },
+      "workspace": {
+        "status": "ACTIVE",
+        "purpose": "bash + web_fetch"
+      },
+      "scheduled-tasks": {
+        "status": "ACTIVE",
+        "purpose": "cron-style task automation"
+      }
+    }
   }
 }
