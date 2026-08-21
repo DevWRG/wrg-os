@@ -9,10 +9,18 @@ import type { NpkDetailResult } from "@/components/npk/npk-format";
 
 export const dynamic = "force-dynamic";
 
+// Respons /npk/scores/:id memakai hod_key/hod_name → dipetakan ke bentuk subjek
+// generik yang dipakai komponen bersama (lihat catatan di npk-format.ts).
+interface ApiHodDetail extends Omit<NpkDetailResult, "subject_key" | "subject_name"> {
+  hod_key: string; hod_name: string;
+}
+
 async function fetchDetail(userId: string, year: number, period: "S1" | "S2"): Promise<NpkDetailResult | null> {
   try {
     const res = await gatewayFetch(`/npk/scores/${userId}?year=${year}&period=${period}`, { headers: { "x-user-id": userId } });
-    return res.ok ? ((await res.json()) as NpkDetailResult) : null;
+    if (!res.ok) return null;
+    const d = (await res.json()) as ApiHodDetail;
+    return { ...d, subject_key: d.hod_key, subject_name: d.hod_name };
   } catch { return null; }
 }
 

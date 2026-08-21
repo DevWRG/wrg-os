@@ -1,13 +1,14 @@
 import { gatewayFetch } from "@/lib/gateway";
-import { sessionUser } from "@/lib/admin-guard";
-import { canApproveGaFinance } from "@/lib/ga-maintenance-access";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { GaAssetView } from "@/components/crm/ga-asset-view";
 import type { GaAsset } from "@/components/tables/ga-assets-table";
 import type { GaAssetCategory } from "@/components/tables/ga-asset-categories-table";
+import type { ItTicket } from "@/components/tables/it-tickets-table";
+import { sessionUser } from "@/lib/admin-guard";
+import { canApproveGaFinance } from "@/lib/ga-maintenance-access";
 import type { GaMaintenance } from "@/components/tables/ga-maintenance-table";
 import type { GaVendor } from "@/components/tables/ga-vendor-table";
-import type { AppUserOption } from "@/components/crm/ga-maintenance-actions";
+import type { AppUserOption } from "@/components/crm/ga-asset-pic-actions";
 
 export const dynamic = "force-dynamic";
 
@@ -30,6 +31,31 @@ async function getCategories(): Promise<GaAssetCategory[]> {
     return data.categories ?? [];
   } catch {
     return [];
+  }
+}
+
+// Picker PIC (F133 assign/transfer) — akun app_user aktif.
+async function getAppUsers(): Promise<AppUserOption[]> {
+  try {
+    const res = await gatewayFetch("/app-users");
+    if (!res.ok) return [];
+    const data = (await res.json()) as { users: AppUserOption[] };
+    return data.users ?? [];
+  } catch {
+    return [];
+  }
+}
+
+// Tab "Tiket IT" (F52) — diserap ke sini per arahan Direktur (1 menu, bukan
+// route sendiri), sama pola F52 sendiri sebelumnya (Aset+Tiket 1 halaman).
+async function getTickets(): Promise<ItTicket[] | null> {
+  try {
+    const res = await gatewayFetch("/it-tickets");
+    if (!res.ok) return null;
+    const data = (await res.json()) as { tickets: ItTicket[] };
+    return data.tickets ?? [];
+  } catch {
+    return null;
   }
 }
 
@@ -56,30 +82,19 @@ async function getVendors(): Promise<GaVendor[]> {
   }
 }
 
-async function getAppUsers(): Promise<AppUserOption[]> {
-  try {
-    const res = await gatewayFetch("/app-users");
-    if (!res.ok) return [];
-    const data = (await res.json()) as { users: AppUserOption[] };
-    return data.users ?? [];
-  } catch {
-    return [];
-  }
-}
-
 export default async function GaAsetPage() {
-  const [assets, categories, schedules, vendors, users, me] = await Promise.all([
-    getAssets(), getCategories(), getSchedules(), getVendors(), getAppUsers(), sessionUser(),
+  const [assets, categories, tickets, users, schedules, vendors, me] = await Promise.all([
+    getAssets(), getCategories(), getTickets(), getAppUsers(), getSchedules(), getVendors(), sessionUser(),
   ]);
   return (
     <>
       <PageHeader
         title="Aset GA"
-        description="Katalog inventaris kantor + jadwal maintenance & vendor — single source of truth aset, dasar assignment & maintenance."
+        description="Katalog inventaris kantor (laptop, HP, kendaraan, mebel, software) + tiket masalah aset IT, jadwal maintenance & vendor GA — single source of truth aset."
       />
       <GaAssetView
-        assets={assets} categories={categories} schedules={schedules} vendors={vendors}
-        canApproveFinance={canApproveGaFinance(me)} users={users}
+        assets={assets} categories={categories} tickets={tickets} users={users}
+        schedules={schedules} vendors={vendors} canApproveFinance={canApproveGaFinance(me)}
       />
     </>
   );

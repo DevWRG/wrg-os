@@ -6,31 +6,44 @@ import { Card, CardContent } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { GaAssetsTable, type GaAsset } from "@/components/tables/ga-assets-table";
 import { GaAssetCategoriesTable, type GaAssetCategory } from "@/components/tables/ga-asset-categories-table";
+import { ItTicketsTable, type ItTicket } from "@/components/tables/it-tickets-table";
 import { GaMaintenanceTable, type GaMaintenance } from "@/components/tables/ga-maintenance-table";
 import { GaVendorTable, type GaVendor } from "@/components/tables/ga-vendor-table";
 import { AddGaAssetButton } from "@/components/crm/add-ga-asset-button";
 import { AddGaAssetCategoryButton } from "@/components/crm/add-ga-asset-category-button";
+import { AddItTicketButton } from "@/components/crm/add-it-ticket-button";
 import { AddGaMaintenanceButton } from "@/components/crm/add-ga-maintenance-button";
 import { AddGaVendorButton } from "@/components/crm/add-ga-vendor-button";
-import type { AppUserOption } from "@/components/crm/ga-maintenance-actions";
+import type { AppUserOption } from "@/components/crm/ga-asset-pic-actions";
 
-// F132 root + F137 (Maintenance/Vendor) — 4 tab dalam 1 menu, konsisten sama
-// arahan Direktur (F52 wajib gabung 1 menu, bukan cuma tabel). F133
-// (assignment) TIDAK nambah tab di sini — itu aksi inline di tabel Aset.
+// Satu menu, LIMA tab: Aset + Kategori (F132), Tiket IT (F52), Maintenance &
+// Vendor GA (F137) — arahan Direktur eksplisit "1 menu, jangan terpisah".
+// F133 (assignment PIC) tidak menambah tab: itu aksi inline di tabel Aset,
+// karena itu `users` dipakai dua tab sekaligus (picker PIC & approver).
+// `AppUserOption` di ga-maintenance-actions bentuknya identik dengan yang di
+// ga-asset-pic-actions ({ id, name }), jadi satu prop cukup untuk keduanya.
 export function GaAssetView({
-  assets, categories, schedules, vendors, canApproveFinance, users,
+  assets, categories, tickets, users, schedules, vendors, canApproveFinance,
 }: {
-  assets: GaAsset[]; categories: GaAssetCategory[]; schedules: GaMaintenance[]; vendors: GaVendor[];
-  canApproveFinance: boolean; users: AppUserOption[];
+  assets: GaAsset[];
+  categories: GaAssetCategory[];
+  tickets: ItTicket[] | null;
+  users: AppUserOption[];
+  schedules: GaMaintenance[];
+  vendors: GaVendor[];
+  canApproveFinance: boolean;
 }) {
-  const [tab, setTab] = useState<"aset" | "kategori" | "maintenance" | "vendor">("aset");
+  const [tab, setTab] = useState<"aset" | "kategori" | "tiket" | "maintenance" | "vendor">("aset");
   const activeCategories = categories.filter((c) => c.active);
+  const activeAssets = assets.filter((a) => a.active);
   const activeVendors = vendors.filter((v) => v.status === "active");
-  const assetOptions = assets.filter((a) => a.active).map((a) => ({ id: a.id, asset_code: a.asset_code, nama: a.nama, category_id: a.category_id }));
-
+  const assetOptions = activeAssets.map((a) => ({
+    id: a.id, asset_code: a.asset_code, nama: a.nama, category_id: a.category_id,
+  }));
   const TABS = [
     ["aset", "Aset"],
     ["kategori", "Kategori"],
+    ["tiket", "Tiket IT"],
     ["maintenance", "Maintenance"],
     ["vendor", "Vendor GA"],
   ] as const;
@@ -56,7 +69,14 @@ export function GaAssetView({
         </div>
         {tab === "aset" && <AddGaAssetButton categories={activeCategories} />}
         {tab === "kategori" && <AddGaAssetCategoryButton />}
-        {tab === "maintenance" && <AddGaMaintenanceButton assets={assetOptions} vendors={activeVendors} categories={categories.map((c) => ({ id: c.id, default_recur_months: c.default_recur_months }))} />}
+        {tab === "tiket" && <AddItTicketButton assets={activeAssets} />}
+        {tab === "maintenance" && (
+          <AddGaMaintenanceButton
+            assets={assetOptions}
+            vendors={activeVendors}
+            categories={categories.map((c) => ({ id: c.id, default_recur_months: c.default_recur_months }))}
+          />
+        )}
         {tab === "vendor" && <AddGaVendorButton />}
       </div>
 
@@ -70,7 +90,7 @@ export function GaAssetView({
                   description={activeCategories.length === 0 ? 'Belum ada kategori aktif — tambah dulu di tab "Kategori".' : 'Klik "Tambah Aset" untuk mulai.'}
                 />
               ) : (
-                <GaAssetsTable assets={assets} categories={activeCategories} />
+                <GaAssetsTable assets={assets} categories={activeCategories} users={users} />
               )}
             </CardContent>
           </Card>
@@ -85,6 +105,25 @@ export function GaAssetView({
                 <EmptyState title="Belum ada kategori" description='Klik "Tambah Kategori" untuk mulai.' />
               ) : (
                 <GaAssetCategoriesTable categories={categories} />
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {tab === "tiket" && (
+        <div role="tabpanel" id="panel-tiket" aria-labelledby="tab-tiket">
+          <Card>
+            <CardContent className="pt-6">
+              {!tickets ? (
+                <EmptyState title="Data tidak tersedia" description="Pastikan apps/api jalan & DATABASE_URL terisi." />
+              ) : tickets.length === 0 ? (
+                <EmptyState
+                  title="Belum ada tiket"
+                  description={activeAssets.length === 0 ? 'Belum ada aset aktif — tambah dulu di tab "Aset".' : 'Klik "Buat Tiket" untuk mulai.'}
+                />
+              ) : (
+                <ItTicketsTable tickets={tickets} />
               )}
             </CardContent>
           </Card>

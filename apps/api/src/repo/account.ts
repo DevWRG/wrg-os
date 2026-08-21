@@ -119,7 +119,7 @@ export async function listOwnerCandidates(scope: DataScope = FULL_SCOPE) {
     SELECT mu.am_id, mu.nama, NULLIF(mu.cabang,'') AS cabang
     FROM master_user mu
     WHERE mu.aktif AND upper(mu.role) = 'AM'
-      ${scope.cabangScope?.length ? sql`AND NULLIF(mu.cabang,'') = ANY(${scope.cabangScope}::text[])` : sql``}
+      ${scope.cabangScope?.length ? sql`AND upper(btrim(NULLIF(mu.cabang,''))) = ANY(${scope.cabangScope.map((c) => c.trim().toUpperCase())}::text[])` : sql``}
     ORDER BY mu.nama`;
   return rows.map((r) => ({
     am_id: String(r.am_id), nama: String(r.nama), cabang: r.cabang ? String(r.cabang) : null,
@@ -145,7 +145,11 @@ export async function upsertAccountFields(id: string, f: AccountFields, scope: D
     if (wants) {
       const [m] = await sql`SELECT am_id, cabang FROM master_user WHERE am_id = ${wants}`;
       if (!m) throw new Error("AM pemilik tak ditemukan");
-      if (scope.cabangScope?.length && !scope.cabangScope.includes(String(m.cabang ?? ""))) {
+      // Case-insensitive: tanpa ini HoD DITOLAK menugaskan akun ke anggota
+      // timnya sendiri hanya karena master_user.cabang berbeda kapitalisasi
+      // dari hod_territory (mis. 'Kediri' vs 'KEDIRI').
+      const cabangOrang = String(m.cabang ?? "").trim().toUpperCase();
+      if (scope.cabangScope?.length && !scope.cabangScope.some((c) => c.trim().toUpperCase() === cabangOrang)) {
         throw new Error("AM tujuan di luar cabang tim Anda");
       }
     }
