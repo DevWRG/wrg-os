@@ -16,6 +16,7 @@ import {
   markBast,
   markBukti,
 } from "./shipment-tracking.js";
+import { matchTeknisiByName, createTeknisiReport } from "./readinessboard.js";
 
 
 // Role yang pakai alur AM per-customer (sales_plan/activity_log + foto), bukan todo.
@@ -30,8 +31,14 @@ const isAmRole = (role?: string | null) => AM_ROLES.has((role ?? "").trim());
 // GATED: hanya jalan bila WA_INBOUND_PROCESS=true. Balasan via sendViaWaGateway
 // → patuh WA_DRY_RUN. Idempoten: wa_message.processed_at. Pengirim tak dikenal →
 // SILENT (tak balas) supaya tak spam non-AM/pesan bot di grup campuran.
+//
+// F8 — #install/#servis/#training/#kalibrasi: laporan lapangan Teknisi, di
+// grup YANG SAMA dgn #plan/#report Teknisi (bukan grup baru) — makanya TIDAK
+// ada env-gate baru, cukup nebeng groupAllowed()/WA_INBOUND_GROUPS existing.
+// Identitas pengirim di-match ke teknisi_capacity (F8, self-contained) via
+// matchTeknisiByName, BUKAN resolveSender/master_user.
 
-export type InboundKind = "plan" | "report" | "leads" | "update" | "sales" | "cek" | "klaim" | "kirim" | "bast" | "bukti" | "none";
+export type InboundKind = "plan" | "report" | "leads" | "update" | "sales" | "cek" | "klaim" | "kirim" | "bast" | "bukti" | "install" | "servis" | "training" | "kalibrasi" | "none";
 
 const LEADS_UPDATE_LINE = /^\s*#\s*(leads|update)\b/i;
 const SALES_LINE = /^\s*#\s*sales\b/i;
@@ -43,6 +50,7 @@ const KLAIM_LINE = /^\s*#\s*klaim\b/i;
 // lihat docs/features/F12-*.md). #BUKTI (F93) — foto bukti terima + scan
 // tanda tangan, SETELAH bast (lihat docs/features/F93-*.md).
 const SHIPPING_LINE = /^\s*#\s*(kirim|bast|bukti)\b\s*(.*)$/i;
+const READINESS_LINE = /^\s*#\s*(install|servis|training|kalibrasi)\b/i;
 
 export function detectKind(body: string | null): InboundKind {
   const daily = detectDaily(body); // line-anchored #plan/#report (sudah strip invisible)
@@ -58,6 +66,8 @@ export function detectKind(body: string | null): InboundKind {
       if (KLAIM_LINE.test(line)) return "klaim";
       const s = line.match(SHIPPING_LINE);
       if (s) return s[1].toLowerCase() as "kirim" | "bast" | "bukti";
+      const r = line.match(READINESS_LINE);
+      if (r) return r[1].toLowerCase() as "install" | "servis" | "training" | "kalibrasi";
     }
   }
   return "none";
@@ -555,6 +565,26 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
     );
   }
 
+  // F8 — laporan lapangan Teknisi (#install/#servis/#training/#kalibrasi).
+  // Grup SAMA dgn #plan/#report Teknisi (bukan grup baru) — cukup nebeng
+  // groupAllowed()/WA_INBOUND_GROUPS existing. Identitas via matchTeknisiByName
+  // (teknisi_capacity F8, self-contained), BUKAN resolveSender/master_user.
+  if (kind === "install" || kind === "servis" || kind === "training" || kind === "kalibrasi") {
+    const teknisi = await matchTeknisiByName(row.sender_name);
+    if (!teknisi) return finish({ skipped: "unknown-sender", sender_name: row.sender_name });
+    if (!row.body?.trim()) return finish({ skipped: "empty-body" });
+    const report = await createTeknisiReport({
+      teknisi_id: teknisi.id,
+      report_type: kind,
+      body: row.body,
+      source: "wa",
+      group_jid: row.group_jid,
+      wa_message_id: row.message_id,
+    });
+    const reply = await sendViaWaGateway(row.group_jid, `✅ Laporan #${kind.toUpperCase()} tercatat — ${teknisi.nama}.`);
+    return finish({ report_id: report.id, teknisi: teknisi.nama, reply });
+  }
+
   if (kind === "none") {
     // Foto tanpa hashtag (caption = customer) → foto-followup ke activity_log.
     if (String(row.message_type ?? "").toLowerCase().startsWith("image") && row.media_path) {
@@ -824,7 +854,7 @@ export async function processUnprocessed(
            media_path, geo_lat, geo_lon, geo_ts, geo_address
     FROM wa_message
     WHERE processed_at IS NULL
-      AND (body ~* '#\\s*(plan|report|leads|update|sales|cek|klaim|kirim|bast)'
+      AND (body ~* '#\\s*(plan|report|leads|update|sales|cek|klaim|kirim|bast|install|servis|training|kalibrasi)'
            OR (message_type ~* '^image' AND media_path IS NOT NULL)
            OR (${complaintGroupJid()} <> '' AND group_jid = ${complaintGroupJid()}))
     ORDER BY received_at ASC LIMIT ${limit}

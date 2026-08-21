@@ -451,6 +451,18 @@ import {
   cancelSchedule,
 } from "./repo/ga-maintenance.js";
 
+import {
+  listTeknisiCapacity,
+  createTeknisiCapacity,
+  updateTeknisiCapacity,
+  deactivateTeknisiCapacity,
+  getReadinessBoard,
+  createInstallSchedule,
+  listInstallSchedule,
+  updateScheduleStatus,
+  createTeknisiReport,
+  listTeknisiReports,
+} from "./repo/readinessboard.js";
 const app = new Hono();
 
 // Selalu balas JSON saat error / route tak ada — supaya BFF & client tak pernah
@@ -5936,6 +5948,121 @@ app.patch("/purchase-orders/:id/approvals/:role", async (c) => {
     if (e instanceof PurchaseOrderError) return c.json({ error: e.message }, e.status as 400 | 404 | 409);
     throw e;
   }
+});
+
+// ── Instalasi Alat Lifecycle (F22, AFTERSALES) — checklist 5 langkah sekuensial:
+// PO control → SJ → Teknisi assign → Training done → BAST. ──
+app.get("/teknisi-capacity", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const teknisi = await listTeknisiCapacity();
+  return c.json({ count: teknisi.length, teknisi });
+});
+
+app.post("/teknisi-capacity", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { nama?: string; wa_number?: string; max_concurrent_jobs?: number };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.nama?.trim()) return c.json({ error: "nama wajib" }, 400);
+  const r = await createTeknisiCapacity({
+    nama: body.nama.trim(),
+    wa_number: body.wa_number ?? null,
+    max_concurrent_jobs: body.max_concurrent_jobs,
+  });
+  return c.json(r, "ok" in r && r.ok === false ? 400 : 201);
+});
+
+app.patch("/teknisi-capacity/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { nama?: string; wa_number?: string | null; max_concurrent_jobs?: number };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const r = await updateTeknisiCapacity(c.req.param("id"), body);
+  return c.json(r, "ok" in r && r.ok === false ? 400 : 200);
+});
+
+app.patch("/teknisi-capacity/:id/deactivate", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await deactivateTeknisiCapacity(c.req.param("id"));
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.get("/readiness-board", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const board = await getReadinessBoard();
+  return c.json({ count: board.length, board });
+});
+
+app.post("/install-schedule", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { installation_unit_id?: string; teknisi_id?: string; scheduled_date?: string; note?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.installation_unit_id || !body.scheduled_date) {
+    return c.json({ error: "installation_unit_id + scheduled_date wajib" }, 400);
+  }
+  const r = await createInstallSchedule({
+    installation_unit_id: body.installation_unit_id,
+    teknisi_id: body.teknisi_id,
+    scheduled_date: body.scheduled_date,
+    note: body.note,
+  });
+  return c.json(r, "ok" in r && r.ok === false ? 400 : 201);
+});
+
+app.get("/install-schedule", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listInstallSchedule(c.req.query("status") || undefined);
+  return c.json({ count: rows.length, rows });
+});
+
+app.post("/install-schedule/:id/done", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await updateScheduleStatus(c.req.param("id"), "done");
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.post("/install-schedule/:id/cancel", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await updateScheduleStatus(c.req.param("id"), "cancelled");
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.post("/teknisi-reports", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { teknisi_id?: string; report_type?: string; body?: string; installation_unit_id?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.report_type || !body.body?.trim()) return c.json({ error: "report_type + body wajib" }, 400);
+  if (!["install", "servis", "training", "kalibrasi"].includes(body.report_type)) {
+    return c.json({ error: "report_type harus install|servis|training|kalibrasi" }, 400);
+  }
+  const r = await createTeknisiReport({
+    teknisi_id: body.teknisi_id,
+    report_type: body.report_type,
+    body: body.body,
+    source: "manual",
+    installation_unit_id: body.installation_unit_id,
+  });
+  return c.json(r, 201);
+});
+
+app.get("/teknisi-reports", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listTeknisiReports(c.req.query("report_type") || undefined);
+  return c.json({ count: rows.length, rows });
 });
 
 const port = Number(process.env.PORT ?? 4000);

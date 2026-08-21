@@ -804,6 +804,15 @@ INSERT INTO teknisi_roster (nama, wa_number, area) VALUES
   ('Teknisi Eka',   '628110000005', ARRAY['Jakarta'])
 ON CONFLICT (nama) DO NOTHING;
 
+-- F8 — Seed teknisi_capacity (DUMMY utk dev/demo, beda dari roster F26 di
+-- atas — tabel & lineage branch berbeda). Nama asli (Enggar/Galih/Martin/
+-- Halim/Nopa) SENGAJA tidak dipakai, lihat docs/features/F8-*.md.
+INSERT INTO teknisi_capacity (nama, wa_number, max_concurrent_jobs) VALUES
+  ('Teknisi Fajar',  '628110000006', 3),
+  ('Teknisi Gilang', '628110000007', 2),
+  ('Teknisi Hesti',  '628110000008', 4)
+ON CONFLICT (nama) DO NOTHING;
+
 COMMIT;
 
 \echo 'seed-dev-full.sql selesai.'

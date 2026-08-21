@@ -25,6 +25,7 @@ import {
   Archive,
   Handshake,
   ClipboardList,
+  HardHat,
   type LucideIcon,
 } from "lucide-react";
 
@@ -226,6 +227,7 @@ export const NAV: NavGroup[] = [
       // ED (annual renewal). Role min Karyawan, tanpa `show` (semua role login
       // boleh), pola sama dgn F39/F134.
       { title: "Uji Profisiensi", url: "/proficiency-tests", icon: FileCheck2, badge: "NEW" },
+      { title: "Readiness Board", url: "/readiness-board", icon: HardHat, badge: "NEW" },
     ],
   },
   {
