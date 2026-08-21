@@ -311,6 +311,16 @@ import {
   type AtkItemInput,
   type AtkItemUpdate,
 } from "./repo/atk-master.js";
+import {
+  listAtkStockMovements,
+  createAtkStockMovement,
+  updateAtkStockMovement,
+  deleteAtkStockMovement,
+  listAtkStockLevels,
+  type AtkStockMovementInput,
+  type AtkStockMovementUpdate,
+  type AtkMovementType,
+} from "./repo/atk-stock.js";
 const app = new Hono();
 
 // Selalu balas JSON saat error / route tak ada — supaya BFF & client tak pernah
@@ -4535,6 +4545,54 @@ app.delete("/atk/items/:id", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const r = await deleteAtkItem(c.req.param("id"));
   return c.json(r, r.deleted ? 200 : 404);
+});
+
+// ── F134 ATK Master (General Affairs) — Categories + Suppliers + Items ──
+const ATK_MOVEMENT_TYPES: AtkMovementType[] = ["in", "out"];
+
+app.get("/atk/stock-movements", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listAtkStockMovements();
+  return c.json({ count: rows.length, rows });
+});
+
+app.post("/atk/stock-movements", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: AtkStockMovementInput;
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  if (!body.item_id || !body.movement_type || body.qty == null) {
+    return c.json({ error: "item_id, movement_type, qty wajib" }, 400);
+  }
+  if (!ATK_MOVEMENT_TYPES.includes(body.movement_type)) {
+    return c.json({ error: "movement_type harus 'in' atau 'out'" }, 400);
+  }
+  if (Number(body.qty) <= 0) return c.json({ error: "qty harus > 0" }, 400);
+  const row = await createAtkStockMovement(body);
+  return c.json(row, 201);
+});
+
+app.patch("/atk/stock-movements/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: AtkStockMovementUpdate;
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  if (body.movement_type && !ATK_MOVEMENT_TYPES.includes(body.movement_type)) {
+    return c.json({ error: "movement_type harus 'in' atau 'out'" }, 400);
+  }
+  if (body.qty != null && Number(body.qty) <= 0) return c.json({ error: "qty harus > 0" }, 400);
+  const row = await updateAtkStockMovement(c.req.param("id"), body);
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+});
+
+app.delete("/atk/stock-movements/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await deleteAtkStockMovement(c.req.param("id"));
+  return c.json(r, r.deleted ? 200 : 404);
+});
+
+app.get("/atk/stock-levels", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listAtkStockLevels();
+  return c.json({ count: rows.length, rows });
 });
 
 const port = Number(process.env.PORT ?? 4000);

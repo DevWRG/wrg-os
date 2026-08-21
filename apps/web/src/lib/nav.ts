@@ -16,6 +16,7 @@ import {
   Ticket,
   PackageCheck,
   PenLine,
+  PackagePlus, PackageMinus,
   type LucideIcon,
 } from "lucide-react";
 
@@ -264,6 +265,14 @@ export const NAV: NavGroup[] = [
     items: [
       { title: "Dana Ops", url: "/dana-ops", icon: Wallet, badge: "NEW", show: canViewDanaOps },
       { title: "ATK Master", url: "/atk-master", icon: PenLine, badge: "NEW" },
+      // F49 sengaja 2 menu/feature-key terpisah (bukan 1 halaman gabungan):
+      // Stock In = tim GA (pencatatan pembelian/penerimaan), Stock Out = tim
+      // mana pun (self-service pengambilan barang). Belum di-gate identitas
+      // ("show") krn sistem ini belum punya konsep departemen/tim di data
+      // user — Direktur atur siapa boleh apa lewat Akses Grup (feature key
+      // "atk-stock-in" vs "atk-stock-out", auto dari url).
+      { title: "ATK Stock In", url: "/atk-stock-in", icon: PackagePlus, badge: "NEW" },
+      { title: "ATK Stock Out", url: "/atk-stock-out", icon: PackageMinus, badge: "NEW" },
     ],
   },
   {
