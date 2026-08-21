@@ -27,6 +27,7 @@ import { canViewExecutive } from "@/lib/executive-access";
 import { canViewKso } from "@/lib/kso-access";
 import { canViewNpkAm, canViewNpkAmSelf } from "@/lib/npk-access";
 import { canViewInsentifTim } from "@/lib/insentif-access";
+import { canViewDanaOps } from "@/lib/dana-ops-access";
 
 // exact: sorot aktif hanya saat path persis (untuk route induk yg punya child,
 // mis. /pricelist vs /pricelist/setup).
@@ -254,6 +255,12 @@ export const NAV: NavGroup[] = [
     label: "DOC",
     items: [
       { title: "Klaim OCR", url: "/doc-klaim", icon: ScanText, badge: "NEW" },
+    ],
+  },
+  {
+    label: "General Affairs",
+    items: [
+      { title: "Dana Ops", url: "/dana-ops", icon: Wallet, badge: "NEW", show: canViewDanaOps },
     ],
   },
   {
