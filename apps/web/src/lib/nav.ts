@@ -274,6 +274,10 @@ export const NAV: NavGroup[] = [
       // "atk-stock-in" vs "atk-stock-out", auto dari url).
       { title: "ATK Stock In", url: "/atk-stock-in", icon: PackagePlus, badge: "NEW" },
       { title: "ATK Stock Out", url: "/atk-stock-out", icon: PackageMinus, badge: "NEW" },
+      // F136: hitung fisik vs stok sistem. Penyesuaian selisih dibuat lewat
+      // FORM YANG SAMA dgn Stock In/Out (AddAtkStockMovementSheet), bukan form
+      // baru — menu ini cuma beda submenu/konteks.
+      { title: "ATK Stock Opname", url: "/atk-stock-opname", icon: ListChecks, badge: "NEW" },
     ],
   },
   {

@@ -46,13 +46,28 @@ const COPY = {
   out: { trigger: "Ambil Barang", title: "Catat Pengambilan Barang ATK", desc: "Pengambilan/pemakaian barang ATK oleh tim mana pun.", picLabel: "Diminta oleh", picPlaceholder: "Nama pemohon" },
 } as const;
 
-export function AddAtkStockMovementSheet({ mode, items }: { mode: "in" | "out"; items: AtkStockItemOption[] }) {
+export function AddAtkStockMovementSheet({
+  mode,
+  items,
+  trigger,
+  initial,
+  onSaved,
+}: {
+  mode: "in" | "out";
+  items: AtkStockItemOption[];
+  // Dipakai F136 Stock Opname utk pakai FORM YANG SAMA ini sbg aksi
+  // penyesuaian selisih — bukan bikin form baru, cuma beda tombol pemicu +
+  // prefill dari hasil hitung fisik (lihat add-atk-stock-opname-sheet.tsx).
+  trigger?: React.ReactNode;
+  initial?: Partial<{ item_id: string; qty: string; reference: string; notes: string }>;
+  onSaved?: (movementId: string) => void;
+}) {
   const router = useRouter();
   const copy = COPY[mode];
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [f, setF] = useState(blank());
+  const [f, setF] = useState(() => ({ ...blank(), ...initial }));
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -75,8 +90,9 @@ export function AddAtkStockMovementSheet({ mode, items }: { mode: "in" | "out"; 
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "gagal menyimpan");
-      setF(blank());
+      setF({ ...blank(), ...initial });
       setOpen(false);
+      onSaved?.(String(data.id));
       router.refresh();
     } catch (err) {
       setError(String(err instanceof Error ? err.message : err));
@@ -88,7 +104,11 @@ export function AddAtkStockMovementSheet({ mode, items }: { mode: "in" | "out"; 
   return (
     <Sheet open={open} onOpenChange={setOpen}>
       <SheetTrigger render={<Button size="sm" />}>
-        <Plus /> {copy.trigger}
+        {trigger ?? (
+          <>
+            <Plus /> {copy.trigger}
+          </>
+        )}
       </SheetTrigger>
       <SheetContent side="right" className="w-full sm:max-w-md">
         <SheetHeader>
