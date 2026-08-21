@@ -23,6 +23,7 @@ import {
   Car,
   ArrowLeftRight,
   Archive,
+  Handshake,
   type LucideIcon,
 } from "lucide-react";
 
@@ -37,6 +38,7 @@ import { canViewNpkAm, canViewNpkAmSelf } from "@/lib/npk-access";
 import { canViewInsentifTim } from "@/lib/insentif-access";
 import { canViewDanaOps } from "@/lib/dana-ops-access";
 import { canViewInventoryRelocation } from "@/lib/inventory-relocation-access";
+import { canViewVendorManagement } from "@/lib/vendor-management-access";
 
 // exact: sorot aktif hanya saat path persis (untuk route induk yg punya child,
 // mis. /pricelist vs /pricelist/setup).
@@ -302,6 +304,11 @@ export const NAV: NavGroup[] = [
       // FORM YANG SAMA dgn Stock In/Out (AddAtkStockMovementSheet), bukan form
       // baru — menu ini cuma beda submenu/konteks.
       { title: "ATK Stock Opname", url: "/atk-stock-opname", icon: ListChecks, badge: "NEW" },
+      // F140 Vendor Management + Contract Expiry Alerts — master vendor/partner
+      // lokal + riwayat kontrak, status masa berlaku computed di query (tanpa
+      // WA/cron — dikonfirmasi user). Role min HOD (data komersial vendor),
+      // `show` di sini fallback identitas, gate nyata di BFF requireHodOrAdmin().
+      { title: "Vendor Management", url: "/vendor-management", icon: Handshake, badge: "NEW", show: canViewVendorManagement },
     ],
   },
   {

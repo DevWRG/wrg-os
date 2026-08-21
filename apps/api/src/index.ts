@@ -390,6 +390,20 @@ import {
   createTicket as itTicketCreateTicket,
   updateTicketStatus,
 } from "./repo/it-ticket.js";
+import {
+  listVendors,
+  getVendor,
+  createVendor,
+  updateVendor,
+  deleteVendor,
+  createVendorContract,
+  updateVendorContract,
+  deleteVendorContract,
+  type VendorPartnerInput,
+  type VendorPartnerUpdate,
+  type VendorContractInput,
+  type VendorContractUpdate,
+} from "./repo/vendor.js";
 const app = new Hono();
 
 // Selalu balas JSON saat error / route tak ada — supaya BFF & client tak pernah
@@ -5392,6 +5406,110 @@ app.patch("/it-tickets/:id/status", async (c) => {
     resolved_note: body.resolved_note,
   });
   return c.json(r, r.ok ? 200 : 400);
+});
+
+// ── F140 Vendor Management + Contract Expiry Alerts (Purchasing/GA, role min HOD) ──
+// Route "/vendor-management" (BUKAN "/vendors") sengaja dipilih beda dari
+// "/accurate/vendors" (mirror read-only, dipakai menu Suppliers & autocomplete
+// F39) supaya tak tabrakan nama saat branch sibling F39 merge ke dev.
+function validateVendorFields(b: Partial<VendorPartnerInput & VendorPartnerUpdate>): string | null {
+  if (b.email !== undefined && b.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(b.email)) {
+    return "email tidak valid";
+  }
+  return null;
+}
+
+function validateContractFields(b: Partial<VendorContractInput & VendorContractUpdate>): string | null {
+  if (b.start_date && b.end_date && b.end_date < b.start_date) {
+    return "end_date tidak boleh sebelum start_date";
+  }
+  if (b.value !== undefined && b.value !== null && !(Number(b.value) >= 0)) {
+    return "value tidak boleh negatif";
+  }
+  return null;
+}
+
+app.get("/vendor-management", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listVendors();
+  return c.json({ count: rows.length, rows });
+});
+
+app.post("/vendor-management", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: VendorPartnerInput;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.name?.trim()) return c.json({ error: "name wajib" }, 400);
+  const fieldErr = validateVendorFields(body);
+  if (fieldErr) return c.json({ error: fieldErr }, 400);
+  const row = await createVendor(body);
+  return c.json(row, 201);
+});
+
+app.get("/vendor-management/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const row = await getVendor(c.req.param("id"));
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+});
+
+app.patch("/vendor-management/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: VendorPartnerUpdate;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const fieldErr = validateVendorFields(body);
+  if (fieldErr) return c.json({ error: fieldErr }, 400);
+  const row = await updateVendor(c.req.param("id"), body);
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+});
+
+app.delete("/vendor-management/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await deleteVendor(c.req.param("id"));
+  return c.json(r, r.deleted ? 200 : 404);
+});
+
+app.post("/vendor-management/:id/contracts", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const vendorId = c.req.param("id");
+  if (!(await getVendor(vendorId))) return c.json({ error: "vendor tidak ditemukan" }, 404);
+  let body: VendorContractInput;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const fieldErr = validateContractFields(body);
+  if (fieldErr) return c.json({ error: fieldErr }, 400);
+  const row = await createVendorContract(vendorId, body);
+  return c.json(row, 201);
+});
+
+app.patch("/vendor-management/:id/contracts/:contractId", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: VendorContractUpdate;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const fieldErr = validateContractFields(body);
+  if (fieldErr) return c.json({ error: fieldErr }, 400);
+  const row = await updateVendorContract(c.req.param("id"), c.req.param("contractId"), body);
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+});
+
+app.delete("/vendor-management/:id/contracts/:contractId", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await deleteVendorContract(c.req.param("id"), c.req.param("contractId"));
+  return c.json(r, r.deleted ? 200 : 404);
 });
 
 const port = Number(process.env.PORT ?? 4000);
