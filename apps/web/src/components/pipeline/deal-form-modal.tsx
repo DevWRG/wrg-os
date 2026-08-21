@@ -84,12 +84,13 @@ function Combo({ value, onChange, options, placeholder }: {
   );
 }
 
-export function DealFormModal({ mode, deal, onClose, brands = [], cabangs = [] }: {
+export function DealFormModal({ mode, deal, onClose, brands = [], cabangs = [], hods = [] }: {
   mode: "create" | "edit";
   deal?: DealFormInit;
   onClose: () => void;
   brands?: string[];
   cabangs?: string[];
+  hods?: string[];
 }) {
   const router = useRouter();
   const [form, setForm] = useState<Record<string, string>>(() => ({
@@ -196,8 +197,10 @@ export function DealFormModal({ mode, deal, onClose, brands = [], cabangs = [] }
           <label className="text-sm"><Lbl>Model Kerjasama</Lbl>
             <select value={form.coop_model} onChange={(e) => set("coop_model", e.target.value)} className={inputCls}>
               <option value="">—</option>
+              {/* Dulu pilihannya 'Sale' sementara importer memakai 'SALE'/'BELI' —
+                  satu konsep, 4 ejaan di filter. Dua saja sekarang (migrasi 110). */}
               <option value="KSO">KSO</option>
-              <option value="Sale">Sale</option>
+              <option value="BELI">BELI</option>
             </select>
           </label>
           <label className="text-sm"><Lbl>Cabang</Lbl>
@@ -216,7 +219,11 @@ export function DealFormModal({ mode, deal, onClose, brands = [], cabangs = [] }
           </label>
 
           <label className="text-sm"><Lbl>PIC HOD</Lbl>
-            <input value={form.pic_hod} onChange={(e) => set("pic_hod", e.target.value)} className={inputCls} />
+            {/* Dulu input teks bebas → 13 ejaan untuk 2 orang (termasuk 'Pak yofi'
+                & kembaran karena spasi di ujung). Combo bersaran: yang biasa tetap
+                sekali klik, HoD baru masih bisa diketik. Ejaannya dirapikan
+                trigger di DB (migrasi 110). */}
+            <Combo value={form.pic_hod} onChange={(v) => set("pic_hod", v)} options={hods} placeholder="pilih / ketik HOD…" />
           </label>
           <label className="text-sm"><Lbl>Kategori</Lbl>
             <select value={form.product_category} onChange={(e) => set("product_category", e.target.value)} className={inputCls}>

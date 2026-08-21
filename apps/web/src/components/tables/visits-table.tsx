@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
+import { photoHref } from "@/lib/media";
 import { Badge } from "@/components/ui/badge";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
 import { DateRangeToolbar } from "@/components/ui/date-range-toolbar";
@@ -91,7 +92,7 @@ const columns: DataColumn<VisitItem>[] = [
     cell: (v) =>
       v.photo_url ? (
         <a
-          href={`/api/media?p=${encodeURIComponent(v.photo_url)}`}
+          href={photoHref(v.photo_url)}
           target="_blank"
           rel="noreferrer"
           onClick={(e) => e.stopPropagation()}
