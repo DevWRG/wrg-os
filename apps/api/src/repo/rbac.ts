@@ -44,7 +44,7 @@ export interface FeatureInput { key: string; name: string; section: string; path
 // "zombie" (mis. 'sales'/Sales Performance yg sudah dilebur ke Sales Analytics)
 // tetap bisa dicentang admin padahal tak ada item menu yg memakainya → hak
 // akses terasa tidak sinkron dgn sidebar.
-export async function syncFeatures(rows: FeatureInput[]): Promise<{ upserted: number; deactivated: number }> {
+export async function syncFeatures(rows: FeatureInput[]): Promise<{ upserted: number; deactivated: number; seeded: number }> {
   const sql = db();
   const keys: string[] = [];
   for (const r of rows) {
@@ -57,9 +57,34 @@ export async function syncFeatures(rows: FeatureInput[]): Promise<{ upserted: nu
     keys.push(r.key);
   }
   // Katalog kosong = kemungkinan bug pemanggil → jangan matikan seluruh fitur.
-  if (keys.length === 0) return { upserted: 0, deactivated: 0 };
+  if (keys.length === 0) return { upserted: 0, deactivated: 0, seeded: 0 };
   const off = await sql`UPDATE feature SET active = false WHERE active AND key <> ALL(${keys}) RETURNING key`;
-  return { upserted: keys.length, deactivated: off.length };
+  return { upserted: keys.length, deactivated: off.length, seeded: await seedMissingPermissions() };
+}
+
+// Lengkapi matriks izin: setiap grup yang SUDAH diatur harus punya baris untuk
+// SEMUA fitur aktif. Alasannya bukan kosmetik — fitur tanpa baris izin dianggap
+// "belum diatur" oleh canOrLegacy() di web, dan jatuh ke gate identitas lama
+// yang sering permisif (Price Book/Klasifikasi = semua yang login, Pricelist =
+// title AM). Jadi tiap fitur baru yang di-Sync otomatis nongol di sidebar orang
+// yang tak pernah diberi izin. Baris deny eksplisit menutup celah itu dan
+// membuat matriks satu-satunya penentu.
+//
+// Aturan:
+//   - ON CONFLICT DO NOTHING → centang admin yang sudah ada TIDAK pernah ditimpa.
+//   - Grup superuser diisi full-grant (mereka bypass, tapi matriksnya jadi jujur).
+//   - Grup yang BELUM punya baris izin sama sekali dilewati: menyemai satu baris
+//     deny ke grup kosong akan membuat hasPerms() true → seluruh sidebar-nya
+//     mendadak kosong. Grup begitu tetap pakai gate lama sampai admin mengaturnya.
+async function seedMissingPermissions(): Promise<number> {
+  const rows = await db()`
+    INSERT INTO access_permission (group_id, feature_key, active, can_view, can_create, can_edit, can_delete)
+    SELECT g.id, f.key, g.superuser, g.superuser, g.superuser, g.superuser, g.superuser
+    FROM access_group g CROSS JOIN feature f
+    WHERE f.active AND EXISTS (SELECT 1 FROM access_permission ap WHERE ap.group_id = g.id)
+    ON CONFLICT (group_id, feature_key) DO NOTHING
+    RETURNING feature_key`;
+  return rows.length;
 }
 
 export async function listGroups(): Promise<GroupRow[]> {

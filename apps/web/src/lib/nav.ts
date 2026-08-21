@@ -8,14 +8,25 @@ import {
   Factory, Workflow, Receipt, BarChart3, ClipboardCheck, History, Settings,
   Sparkles, Send, FileText, ScrollText, GraduationCap, UsersRound, Network,
   Bell, MapPin, ListChecks, Swords, CalendarOff, CalendarDays, CalendarRange,
-  Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, Tags, SlidersHorizontal,
-  Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, PackageCheck, type LucideIcon,
+  Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, Tags, SlidersHorizontal, Microscope,
+  Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, BookOpen, Calculator,
+  Wallet, Coins, Route, Radio, Printer, ScanText,
+  Wrench,
+  CalendarClock,
+  Ticket,
+  PackageCheck,
+  type LucideIcon,
 } from "lucide-react";
 
-import { canOrLegacy, hasPerms } from "@/lib/perms";
+import { can, canOrLegacy, hasPerms } from "@/lib/perms";
 import { canEditPricelistSetup, canViewPricelist, type AccessUser } from "@/lib/pricelist-access";
+import { canViewPricebook, canViewPricebookSummary } from "@/lib/pricebook-access";
+import { canViewKlasifikasi } from "@/lib/klasifikasi-access";
 import { canViewRaportList } from "@/lib/raport-access";
 import { canViewExecutive } from "@/lib/executive-access";
+import { canViewKso } from "@/lib/kso-access";
+import { canViewNpkAm, canViewNpkAmSelf } from "@/lib/npk-access";
+import { canViewInsentifTim } from "@/lib/insentif-access";
 
 // exact: sorot aktif hanya saat path persis (untuk route induk yg punya child,
 // mis. /pricelist vs /pricelist/setup).
@@ -29,6 +40,15 @@ export interface NavItem {
   // "/plan-report" tetap pakai feature.key "dashboard" (hindari migrasi & re-grant
   // saat rename route). Default: featureKey(url).
   feature?: string;
+  // Fitur RBAC LAIN yang dilayani menu ini — dipakai saat beberapa menu dilebur
+  // jadi tab di satu route (mis. Pricelist + Pricelist Setup masuk Price Book).
+  // Dua efeknya, dua-duanya wajib:
+  //   1. navVisible: menu tampil kalau SALAH SATU fitur diizinkan. Tanpa ini, AM
+  //      yang cuma diizinkan 'pricelist' ikut terbentur gate 'pricebook'.
+  //   2. featureCatalog: key-nya tetap disemai ke katalog. Tanpa ini "Sync Fitur"
+  //      menonaktifkan fitur yang menunya sudah lebur (dianggap zombie) → izin
+  //      grup hilang tanpa satu pun pesan.
+  features?: { key: string; name: string }[];
 }
 export interface NavGroup { label: string; items: NavItem[] }
 
@@ -62,13 +82,89 @@ export const NAV: NavGroup[] = [
       { title: "Competitor Intel", url: "/competitor", icon: Swords },
       { title: "Pipeline", url: "/pipeline", icon: Workflow },
       { title: "Kinerja Saya", url: "/me", icon: UserRound, badge: "NEW" },
+      // F67 Insentif. Menu terpisah dari /insentif/tim karena PERTANYAANNYA beda:
+      // ini "berapa insentif saya", itu batch payroll — bukan sekadar barisnya
+      // lebih sedikit. Self-only untuk SEMUA peran, termasuk Direktur, jadi tak
+      // perlu gate identitas di sini; yang menjaga barisnya adalah scope server
+      // (PRD §E).
+      { title: "Insentif Saya", url: "/insentif", icon: Wallet, badge: "NEW", exact: true },
+      // Menu tim: SATU route untuk HoD + Finance + Direktur, dibedakan scope SERVER
+      // (resolveAkses), bukan route terpisah — rancangan /insentif/hod +
+      // /insentif/finance dibatalkan karena dua route = dua jalur query, dan yang
+      // versi "semua" itu yang berbahaya. AM murni tak boleh melihat menu ini sama
+      // sekali (§E.2.8: yang dibandingkan di sini angka penghasilan orang).
+      //
+      // Beda dari "Insentif Saya" di atas: item ini PUNYA `show`, supaya sebelum
+      // grup dicentang di Akses Grup fallback-nya masih masuk akal (HoD/Direktur)
+      // dan bukan tertutup untuk semua orang.
+      { title: "Insentif Tim", url: "/insentif/tim", icon: Coins, badge: "NEW", show: canViewInsentifTim },
       { title: "Customers", url: "/customers", icon: Building2 },
       { title: "Accounts", url: "/accounts", icon: Contact, badge: "NEW" },
       { title: "AR Aging", url: "/ar", icon: Receipt },
       { title: "Sales Docs", url: "/sales-docs", icon: FileText },
       { title: "Collection Drafts", url: "/collection-drafts", icon: Send },
-      { title: "Pricelist Setup", url: "/pricelist/setup", icon: SlidersHorizontal, show: canEditPricelistSetup },
-      { title: "Pricelist", url: "/pricelist", icon: Tags, exact: true, show: canViewPricelist },
+      // Simulator KSO — running cost alat lab per test, hasil penggabungan
+      // aplikasi terpisah `runningcost-zybio` jadi satu menu di sini. Beda dari
+      // Price Book: itu harga JUAL barang, ini biaya operasional alat yang
+      // dipakai sales menyusun skema KSO/CPRR di depan faskes. Master datanya
+      // migrasi 074, rumusnya apps/web/src/lib/kso/formula.ts.
+      { title: "Simulator KSO", url: "/kso-simulator", icon: Calculator, badge: "NEW", show: canViewKso },
+      // Produktivitas KSO — sisi lain dari Simulator: bukan menghitung skema di
+      // depan faskes, tapi membaca hasilnya. Realisasi tes (spreadsheet master
+      // aset) disandingkan dengan revenue Accurate untuk menghasilkan Rp/tes per
+      // faskes. Data & aturan atribusinya di view kso_asset_produktivitas_v
+      // (migrasi 097-105), bukan di TypeScript.
+      //
+      // Gate sama dengan Simulator atas keputusan user 2026-08-18 — perlu diingat
+      // halaman ini memuat REVENUE PER FASKES, bukan sekadar harga alat.
+      //
+      // feature: "kso-simulator" — SENGAJA menumpang kunci izin Simulator, bukan
+      // memakai slug rutenya sendiri. Tanpa override ini navVisible memakai
+      // featureKey(url) = "kso-produktivitas"; begitu Sync Fitur menyemai baris
+      // izin untuk kunci itu (deny bagi semua grup), menu hilang dari sidebar dan
+      // layout dashboard menutup rutenya — padahal halaman & BFF meng-gate dengan
+      // canViewKso yang terikat 'kso-simulator'. Hasilnya satu fitur butuh DUA
+      // centang, dan yang kedua tidak pernah diminta.
+      //
+      // Kalau kelak akses ini dipisah dari Simulator (halaman ini memuat revenue
+      // per faskes, Simulator tidak), hapus override ini DAN ganti gate di
+      // apps/web/src/lib/kso-access.ts serta BFF — tiga tempat harus ikut, kalau
+      // tidak menu dan halaman kembali menilai dengan kunci berbeda.
+      //
+      // SATU menu, dua TAB (Tabel per faskes | Ringkasan) — keputusan user 2026-08-18.
+      // Ringkasan sempat berdiri sebagai menu sendiri (#911/#913) lalu digabung.
+      // Aman dijadikan tab justru karena keduanya memakai kunci izin yang SAMA:
+      // keberatan biasa terhadap tab — "tidak bisa dicentang sendiri di matriks Akses
+      // Grup", seperti pada /pricebook — tidak berlaku di sini, tidak ada izin yang
+      // hilang karena tidak pernah ada dua izin. Rute lamanya dipertahankan sebagai
+      // redirect ke ?tab=ringkasan (lihat berkas page.tsx-nya).
+      { title: "Produktivitas KSO", url: "/kso-produktivitas", icon: Microscope, badge: "NEW",
+        feature: "kso-simulator", show: canViewKso },
+      // Harga jual dibagi per PEMBACA, bukan per tabel:
+      //   /pricebook            sales & AM — katalog + harga terpublikasi (071/043)
+      //   /pricebook/ringkasan  Direktur + HoD — bacaan portofolio
+      //   /pricebook/setup      HoD Business + Purchasing — HPP & margin (043/073)
+      // Menu terpisah (bukan tab) supaya tiap muka punya baris izinnya sendiri di
+      // matriks Akses Grup — sebuah tab tidak bisa dicentang sendiri.
+      // Tabelnya tetap TIDAK digabung: HPP/margin wajib pisah dari tabel yang
+      // dibaca sales — lihat komentar migrasi 073.
+      {
+        title: "Price Book & Pricelist", url: "/pricebook", icon: BookOpen, badge: "NEW", exact: true,
+        show: (me) => canViewPricebook(me) || canViewPricelist(me),
+        // Bekas menu "Pricelist" jadi tab di sini; key-nya harus tetap hidup, kalau
+        // tidak Sync Fitur mematikannya sebagai zombie dan AM kehilangan akses.
+        features: [{ key: "pricelist", name: "Pricelist (tab di Price Book)" }],
+      },
+      {
+        title: "Ringkasan Price Book", url: "/pricebook/ringkasan", icon: BarChart3, badge: "NEW",
+        show: canViewPricebookSummary,
+      },
+      {
+        // feature override: pertahankan key lama 'pricelist-setup' walau route-nya
+        // pindah, supaya izin grup yang sudah dicentang tidak perlu di-grant ulang.
+        title: "Setup Harga", url: "/pricebook/setup", icon: SlidersHorizontal,
+        feature: "pricelist-setup", show: canEditPricelistSetup,
+      },
     ],
   },
   {
@@ -77,6 +173,9 @@ export const NAV: NavGroup[] = [
       // NPK (F66) — gate identitas: Direktur = admin/superuser; self-view = HoD (hod_key).
       { title: "NPK Direktur", url: "/npk", icon: Award, badge: "NEW", exact: true, show: (me) => me?.role === "admin" || me?.superuser === true },
       { title: "NPK Saya", url: "/npk/self", icon: UserCheck, badge: "NEW", show: (me) => !!me?.hod_key },
+      // NPK level AM (078): matrix semua AM untuk Direktur+HoD, self-view untuk staff AM.
+      { title: "NPK AM", url: "/npk/am", icon: Award, badge: "NEW", exact: true, show: canViewNpkAm },
+      { title: "NPK Saya (AM)", url: "/npk/am-self", icon: UserCheck, badge: "NEW", show: canViewNpkAmSelf },
       { title: "Karyawan 360", url: "/karyawan", icon: UsersRound, badge: "NEW", show: canViewRaportList },
       { title: "RACI Matrix", url: "/people/raci", icon: Workflow, badge: "NEW" },
       { title: "Org Chart", url: "/people/org", icon: Building2, badge: "NEW" },
@@ -85,6 +184,8 @@ export const NAV: NavGroup[] = [
       { title: "Executive Briefings", url: "/briefings", icon: ScrollText },
       { title: "Coaching Notes", url: "/coaching", icon: GraduationCap },
       { title: "Reports", url: "/reports", icon: BarChart3 },
+      // Revenue per lini produk — dasar metric `revstream` (kartu Fafa, WatchPoint).
+      { title: "Revenue per Lini", url: "/revenue-stream", icon: Coins, badge: "NEW" },
       { title: "Digest History", url: "/digests", icon: History },
     ],
   },
@@ -98,9 +199,24 @@ export const NAV: NavGroup[] = [
     ],
   },
   {
+    label: "Aftersales",
+    items: [
+      // F23 — klaim internal saat alat + cartridge menunjukkan error pembacaan
+      // RFID. Role min Karyawan (kerja teknisi lapangan sehari-hari, bukan data
+      // finansial sensitif), tanpa `show` gate (default tampil ke semua login).
+      { title: "RFID/Cartridge Error Claim", url: "/rfid-cartridge-claims", icon: Radio, badge: "NEW" },
+      { title: "Instalasi Alat", url: "/installations", icon: Wrench, badge: "NEW" },
+      { title: "Service Tickets", url: "/service-tickets", icon: Ticket, badge: "NEW" },
+    ],
+  },
+  {
     label: "Operations",
     items: [
       { title: "Products", url: "/products", icon: Package },
+      // Master klasifikasi 4 level + penerbit kode produk KK.PP.CC.SSS.NNNN
+      // (migrasi 072). Beda dari Products: Products itu mirror item Accurate,
+      // menu ini yang MENENTUKAN kode produknya sebelum masuk Accurate.
+      { title: "Klasifikasi Produk", url: "/klasifikasi-produk", icon: Tags, badge: "NEW", show: canViewKlasifikasi },
       { title: "Inventory", url: "/inventory", icon: Boxes },
       { title: "Orders", url: "/orders", icon: ShoppingCart },
       { title: "Shipments", url: "/shipments", icon: Truck },
@@ -109,9 +225,35 @@ export const NAV: NavGroup[] = [
     ],
   },
   {
+    // Domain Shipping (F43/F44) — standalone, tidak tergantung shipment_tracking/
+    // pickup_plan (branch F12/F42/F45/F93 belum merge ke dev). Role min
+    // Karyawan: semua tim boleh mencatat & lihat performa pengiriman /
+    // mendefinisikan standar cetak dokumen.
+    label: "Shipping",
+    items: [
+      { title: "Kurir/Ekspedisi Performance", url: "/courier-performance", icon: Route, badge: "NEW" },
+      { title: "Spesifikasi Cetak Dokumen", url: "/print-spec", icon: Printer, badge: "NEW" },
+    ],
+  },
+  {
+    // Domain PURCHASING per board Roadmap — dipisah dari "Operations" (keranjang
+    // mirror Accurate) atas arahan Direktur, supaya sidebar cermin domain fitur.
     label: "Purchasing",
     items: [
+      // F37 — route berdiri sendiri, dipisah dari /inventory (yang dulu 1
+      // halaman 2 tab). Key RBAC-nya sendiri (`stok-gudang`, auto dari URL),
+      // jadi bisa digrant terpisah dari izin Inventory di Akses Grup.
+      { title: "Stok Gudang", url: "/stok-gudang", icon: Boxes, badge: "NEW" },
+      { title: "Supplier ETA", url: "/supplier-eta", icon: CalendarClock, badge: "NEW" },
       { title: "Inbound Receiving", url: "/inbound-receiving", icon: PackageCheck, badge: "NEW" },
+    ],
+  },
+  {
+    // DOC #KLAIM (FR-DOC-01) — domain board literally "DOC", tak cocok masuk
+    // grup existing manapun, grup sendiri (pola sama F139 bikin grup "GA").
+    label: "DOC",
+    items: [
+      { title: "Klaim OCR", url: "/doc-klaim", icon: ScanText, badge: "NEW" },
     ],
   },
   {
@@ -141,10 +283,14 @@ export const featureKey = (url: string) => url.replace(/^\//, "").replace(/\//g,
 //   4. Belum diatur → `show` (gate identitas lama); tanpa `show` → tidak tampil.
 // Poin 3 yang bikin centang admin di Akses Grup benar-benar berlaku ke sidebar,
 // termasuk untuk item ber-`show` (Pricelist, Executive, Karyawan 360, NPK).
+//   5. Menu hasil peleburan (`features`) tampil kalau SALAH SATU fitur yang
+//      dilayaninya diizinkan — kalau tidak, orang yang cuma diizinkan fitur lama
+//      (mis. AM dengan 'pricelist') terbentur gate fitur induknya.
 export function navVisible(me: AccessUser | null, it: NavItem): boolean {
   const key = it.feature ?? featureKey(it.url);
   if (!hasPerms(me)) return it.show ? it.show(me) : true;
-  return canOrLegacy(me, key, it.show ? it.show(me) : false);
+  if (canOrLegacy(me, key, it.show ? it.show(me) : false)) return true;
+  return (it.features ?? []).some((f) => can(me, f.key));
 }
 
 // Halaman "rumah" untuk user ini. Default tetap Sales Overview; kalau user tak
@@ -182,11 +328,26 @@ export interface FeatureCatalogRow { key: string; name: string; section: string;
 // Katalog fitur datar utk Sync (dikirim ke /admin/access/features/sync).
 export function featureCatalog(): FeatureCatalogRow[] {
   const rows: FeatureCatalogRow[] = [];
+  // Satu kunci cukup SEKALI. Dua item menu boleh menumpang kunci izin yang sama
+  // lewat override `feature` (mis. Produktivitas KSO menumpang 'kso-simulator'),
+  // dan tanpa dedup ini keduanya terkirim ke /admin/access/features/sync. Di sana
+  // upsert-nya berurutan dengan DO UPDATE SET name/path, jadi item yang BELAKANGAN
+  // menimpa nama & path milik yang duluan — baris "Simulator KSO" di matriks Akses
+  // Grup berganti nama jadi "Produktivitas KSO" tanpa ada yang meminta.
+  // Kemunculan PERTAMA yang dipertahankan: itu item pemilik kunci aslinya.
+  const seen = new Set<string>();
+  const push = (r: FeatureCatalogRow) => { if (!seen.has(r.key)) { seen.add(r.key); rows.push(r); } };
   let sort = 10;
   for (const g of NAV) {
     for (const it of g.items) {
-      rows.push({ key: it.feature ?? featureKey(it.url), name: it.title, section: g.label, path: it.url, sort });
+      push({ key: it.feature ?? featureKey(it.url), name: it.title, section: g.label, path: it.url, sort });
       sort += 10;
+      // Fitur yang menunya sudah lebur jadi tab tetap ikut disemai — kalau tidak,
+      // Sync Fitur menganggapnya zombie dan mematikannya (izin grup hilang senyap).
+      for (const f of it.features ?? []) {
+        push({ key: f.key, name: f.name, section: g.label, path: it.url, sort });
+        sort += 10;
+      }
     }
   }
   return rows;
