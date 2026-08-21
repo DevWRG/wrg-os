@@ -43,7 +43,7 @@ export default async function AtkStockOpnamePage() {
       {!item || !opname || !lvl ? (
         <EmptyState
           title="Data tidak tersedia"
-          description="Pastikan apps/api jalan dengan DATABASE_URL dan migrasi 070_atk_stock_opname.sql sudah diterapkan."
+          description="Pastikan apps/api jalan dengan DATABASE_URL dan migrasi 131_atk_stock_opname.sql sudah diterapkan."
         />
       ) : (
         <AtkStockOpnameClient opnames={opname.rows ?? []} levels={lvl.rows ?? []} items={itemOptions} />

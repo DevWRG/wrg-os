@@ -1,7 +1,7 @@
 import { db } from "../db.js";
 
 // F136 ATK Stock Opname (General Affairs) — hitung fisik vs stok sistem
-// (lihat 070_atk_stock_opname.sql). system_qty snapshot dihitung di sini
+// (lihat 131_atk_stock_opname.sql). system_qty snapshot dihitung di sini
 // (SUM in - SUM out per item, sama query dgn listAtkStockLevels di
 // atk-stock.ts) saat opname dibuat, lalu dibekukan. variance dihitung di JS
 // dari system_qty/counted_qty yg sudah beku — bukan kolom tersimpan. date/
