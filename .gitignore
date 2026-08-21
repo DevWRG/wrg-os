@@ -35,6 +35,11 @@ next-env.d.ts
 *.pyc
 *.pyo
 
+# Claude Code — izin per-device & state runtime. Sengaja BUKAN `.claude/`
+# seluruhnya: settings.json bersama / skills / agents boleh ikut ter-commit.
+.claude/settings.local.json
+.claude/worktrees/
+
 # Misc
 .DS_Store
 *.log
