@@ -138,14 +138,23 @@ export function FaskesDetailDialog({ g, median, onClose }: {
         </DialogHeader>
 
         <DialogBody className="space-y-4">
+          {/* CAKUPAN KARTU vs GRAFIK BERBEDA, dan itu wajib tertulis.
+              Kartu memakai angka level view = SELURUH periode (sumber yang sama dengan
+              peringkat di tabel, dan penyebut Rp/tes-nya). Grafik di bawah dibatasi tahun
+              berjalan atas permintaan user. Tanpa label ini pembaca menjumlahkan titik
+              grafik, membandingkannya dengan kartu, dan menemukan selisih tanpa sebab yang
+              terlihat — pada AMIN MEDICAL: kartu 671 tes vs grafik ~390 (2026 saja). */}
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <Angka label="Tes (customer)" nilai={num(r.totalTesCustomerSeskema)} />
-            <Angka label="Revenue netto" nilai={rp(r.revenueNettoCustomer)} />
+            <Angka label="Tes (customer)" nilai={num(r.totalTesCustomerSeskema)}
+              sub="seluruh periode" />
+            <Angka label="Revenue netto" nilai={rp(r.revenueNettoCustomer)}
+              sub="seluruh periode" />
             <Angka
               label="Rp / tes"
               nilai={rp(r.rupiahPerTesCustomer)}
-              sub={median && r.rupiahPerTesCustomer
-                ? `${(r.rupiahPerTesCustomer / median).toFixed(2)}× median` : undefined}
+              sub={[median && r.rupiahPerTesCustomer
+                      ? `${(r.rupiahPerTesCustomer / median).toFixed(2)}× median` : null,
+                    "seluruh periode"].filter(Boolean).join(" · ")}
               redup={!r.basisTesMemadai}
             />
             <Angka label="Alat berbagi angka" nilai={String(r.alatSeskemaDiCustomer ?? g.alatList.length)} />
@@ -256,7 +265,9 @@ export function FaskesDetailDialog({ g, median, onClose }: {
               </Grafik>
 
               <p className="text-muted-foreground text-xs">
-                Grafik dibatasi <strong>tahun {dari.slice(0, 4)}</strong>
+                Grafik dibatasi <strong>tahun {dari.slice(0, 4)}</strong>, sementara empat
+                kartu di atas memakai <strong>seluruh periode</strong> — jadi menjumlahkan
+                titik grafik tidak akan sama dengan kartu, dan itu bukan galat
                 {adaTesLama || adaRevLama ? " (faskes ini punya riwayat sebelum itu)" : null}.
                 Garis yang putus = bulan itu <strong>tidak ada laporan</strong>, bukan nol tes.
                 <strong> Revenue tidak dipecah per alat</strong> karena faktur Accurate terbit
