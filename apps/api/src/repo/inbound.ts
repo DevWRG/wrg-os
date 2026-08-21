@@ -14,6 +14,7 @@ import {
   findBySjNumber,
   markKirim,
   markBast,
+  markBukti,
 } from "./shipment-tracking.js";
 
 
@@ -30,16 +31,18 @@ const isAmRole = (role?: string | null) => AM_ROLES.has((role ?? "").trim());
 // → patuh WA_DRY_RUN. Idempoten: wa_message.processed_at. Pengirim tak dikenal →
 // SILENT (tak balas) supaya tak spam non-AM/pesan bot di grup campuran.
 
-export type InboundKind = "plan" | "report" | "leads" | "update" | "sales" | "cek" | "klaim" | "kirim" | "bast" | "none";
+export type InboundKind = "plan" | "report" | "leads" | "update" | "sales" | "cek" | "klaim" | "kirim" | "bast" | "bukti" | "none";
 
 const LEADS_UPDATE_LINE = /^\s*#\s*(leads|update)\b/i;
 const SALES_LINE = /^\s*#\s*sales\b/i;
 const CEK_LINE = /^\s*#\s*cek\b/i;
 const KLAIM_LINE = /^\s*#\s*klaim\b/i;
-// F12 — hashtag SHIPPING dari kurir: "#KIRIM SJ-2026-001" / "#BAST SJ-2026-001"
-// (caption foto atau teks biasa). TTF sengaja tak ada hashtag (diabaikan per
-// arahan Direktur rapat 2026-07-30 — lihat docs/features/F12-*.md).
-const SHIPPING_LINE = /^\s*#\s*(kirim|bast)\b\s*(.*)$/i;
+// F12/F93 — hashtag SHIPPING dari kurir: "#KIRIM SJ-2026-001" / "#BAST
+// SJ-2026-001" / "#BUKTI SJ-2026-001" (caption foto atau teks biasa). TTF
+// sengaja tak ada hashtag (diabaikan per arahan Direktur rapat 2026-07-30 —
+// lihat docs/features/F12-*.md). #BUKTI (F93) — foto bukti terima + scan
+// tanda tangan, SETELAH bast (lihat docs/features/F93-*.md).
+const SHIPPING_LINE = /^\s*#\s*(kirim|bast|bukti)\b\s*(.*)$/i;
 
 export function detectKind(body: string | null): InboundKind {
   const daily = detectDaily(body); // line-anchored #plan/#report (sudah strip invisible)
@@ -54,7 +57,7 @@ export function detectKind(body: string | null): InboundKind {
       if (CEK_LINE.test(line)) return "cek";
       if (KLAIM_LINE.test(line)) return "klaim";
       const s = line.match(SHIPPING_LINE);
-      if (s) return s[1].toLowerCase() as "kirim" | "bast";
+      if (s) return s[1].toLowerCase() as "kirim" | "bast" | "bukti";
     }
   }
   return "none";
@@ -667,7 +670,7 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
 
   // F12 — #KIRIM/#BAST (SHIPPING): match by sj_number, TANPA gate sender —
   // kurir tak punya roster master data (self-contained, sama filosofi F22).
-  if (kind === "kirim" || kind === "bast") {
+  if (kind === "kirim" || kind === "bast" || kind === "bukti") {
     const sj = extractSjNumber(row.body);
     if (!sj) {
       const reply = await sendViaWaGateway(
@@ -686,13 +689,18 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
     // Camera" AM) → row.geo_lat/geo_lon terisi. #KIRIM capture titik AWAL,
     // #BAST capture titik CUSTOMER — dipakai hitung distance_km/eta_days
     // OTOMATIS di markBast() begitu keduanya ada (arahan Direktur 2026-07-30).
+    // #BUKTI (F93, SETELAH bast) — foto bukti terima + scan tanda tangan,
+    // TANPA geo (bukan titik baru, cuma audit trail tambahan).
     const geo = { lat: row.geo_lat ?? null, lon: row.geo_lon ?? null };
     const action =
       kind === "kirim"
         ? await markKirim(shipment.id, { photo_path: photoPath, by: row.sender_name, ...geo })
-        : await markBast(shipment.id, { photo_path: photoPath, by: row.sender_name, ...geo });
+        : kind === "bast"
+          ? await markBast(shipment.id, { photo_path: photoPath, by: row.sender_name, ...geo })
+          : await markBukti(shipment.id, { photo_path: photoPath, by: row.sender_name });
+    const labelDone = kind === "kirim" ? "DIKIRIM" : kind === "bast" ? "BAST/SELESAI" : "BUKTI TERSIMPAN";
     const replyMsg = action.ok
-      ? `✅ SJ ${shipment.sj_number} (${shipment.customer_name}) ditandai *${kind === "kirim" ? "DIKIRIM" : "BAST/SELESAI"}*.`
+      ? `✅ SJ ${shipment.sj_number} (${shipment.customer_name}) ditandai *${labelDone}*.`
       : `⚠️ Gagal update SJ ${shipment.sj_number}: ${action.error}`;
     const reply = await sendViaWaGateway(target, replyMsg);
     return finish({ shipment_id: shipment.id, sj, ok: action.ok, error: action.error, reply });

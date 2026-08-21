@@ -328,6 +328,7 @@ import {
   markKirim as markShipmentKirim,
   markBast as markShipmentBast,
   markTerima as markShipmentTerima,
+  markBukti as markShipmentBukti,
 } from "./repo/shipment-tracking.js";
 
 import {
@@ -338,6 +339,7 @@ import {
   type AtkStockOpnameInput,
   type AtkStockOpnameUpdate,
 } from "./repo/atk-stock-opname.js";
+
 const app = new Hono();
 
 // Selalu balas JSON saat error / route tak ada — supaya BFF & client tak pernah
@@ -4726,6 +4728,21 @@ app.delete("/atk/stock-opname/:id", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const r = await deleteAtkStockOpname(c.req.param("id"));
   return c.json(r, r.deleted ? 200 : 404);
+});
+
+// ── Tracking Pengiriman Digital (F12, SHIPPING) — state machine sederhana
+// draft → dikirim → bast (TTF diabaikan, arahan Direktur). Dipicu manual via
+// web ATAU WA hashtag #KIRIM/#BAST (match by sj_number, lihat repo/inbound.ts). ──
+app.post("/shipment-tracking/:id/bukti", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { by?: string; photo_path?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    // semua field opsional
+  }
+  const r = await markShipmentBukti(c.req.param("id"), { by: body.by, photo_path: body.photo_path });
+  return c.json(r, r.ok ? 200 : 400);
 });
 
 const port = Number(process.env.PORT ?? 4000);
