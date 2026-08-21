@@ -100,7 +100,7 @@ import { master as ksoMaster } from "./repo/kso.js";
 import { produktivitas as ksoProduktivitas, faskesDetail as ksoFaskesDetail } from "./repo/kso-produktivitas.js";
 import { listCoachingNotes } from "./repo/coaching.js";
 import { getLatestCoachingNotes, computePeopleAnalytics } from "./repo/people.js";
-import { createVisit, getVisit, listVisits, visitKpi, visitSummary } from "./repo/visit.js";
+import { AmTidakDikenalError, createVisit, getVisit, listVisits, visitKpi, visitSummary } from "./repo/visit.js";
 import { upsertDailyTodo, listTodos, markTodoReported } from "./repo/todo.js";
 import { upsertUser, listUsers, upsertTerritory, listTerritories, updateUserCabang, updateUserGolongan } from "./repo/master.js";
 import { GOLONGAN, GOLONGAN_LABEL, TARGET_CUSTOMER_MINIMUM, isGolongan } from "./lib/npk-golongan.js";
@@ -1546,18 +1546,25 @@ app.post("/visits", async (c) => {
       400,
     );
   }
-  const r = await createVisit({
-    am_id: body.am_id,
-    deal_id: body.deal_id,
-    customer_name: body.customer_name,
-    photo_url: body.photo_url,
-    lat: body.lat as number,
-    lon: body.lon as number,
-    visit_timestamp: body.visit_timestamp,
-    visit_date: body.visit_date,
-    note: body.note,
-  });
-  return c.json(r, 201);
+  try {
+    const r = await createVisit({
+      am_id: body.am_id,
+      deal_id: body.deal_id,
+      customer_name: body.customer_name,
+      photo_url: body.photo_url,
+      lat: body.lat as number,
+      lon: body.lon as number,
+      visit_timestamp: body.visit_timestamp,
+      visit_date: body.visit_date,
+      note: body.note,
+    });
+    return c.json(r, 201);
+  } catch (e) {
+    // am_id di luar roster = kesalahan pemanggil, bukan kegagalan server: 400
+    // dengan pesan yang bisa ditampilkan form. Error lain tetap naik jadi 500.
+    if (e instanceof AmTidakDikenalError) return c.json({ error: e.message }, 400);
+    throw e;
+  }
 });
 
 // Read model visit (filter geo_status: ok|out_of_bounds|no_geo|date_mismatch).
