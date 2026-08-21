@@ -3,8 +3,11 @@ import { resolve } from "node:path";
 import { homedir } from "node:os";
 
 import { serve } from "@hono/node-server";
-import { Hono } from "hono";
-import type { Context } from "hono";
+import {
+  Hono,
+  Context,
+} from "hono";
+
 import type { EventEnvelope } from "@wrg/types";
 import { isEventEnvelope } from "./envelope.js";
 import { parsePlan } from "./parsers/plan.js";
@@ -13,7 +16,8 @@ import { matchCustomer, type PlanCandidate } from "./parsers/fuzzy.js";
 import { isDbEnabled, pingDb } from "./db.js";
 import { waPreflight, sendViaWaGateway, type WaSendResult } from "./wasend.js";
 import { processUnprocessed, isInboundEnabled } from "./repo/inbound.js";
-import { syncAccurateInvoices, syncVendors, syncItems, syncSalesOrders, syncDeliveryOrders, syncCustomers, getDeliveryOrderItems, getSalesOrderItems, getVendorDetail, accurateConfigured } from "./repo/accurateSync.js";
+import { syncAccurateInvoices, syncVendors, syncItems, syncSalesOrders, syncDeliveryOrders, syncCustomers, syncSalesOrderItems, syncDeliveryOrderItems, getDeliveryOrderItems, getSalesOrderItems, getVendorDetail, accurateConfigured } from "./repo/accurateSync.js";
+import { mirrorFreshness } from "./repo/mirror-health.js";
 import { insertAuditEvent } from "./repo/audit.js";
 import { upsertDealsFromPlan, logReportToDeals, getPipeline, getPipelineReport, getPipelineLeaderboard, transitionStage, DealError, listPendingLosses, decideLoss, getDealTimeline, createDeal, updateDeal, deleteDeal } from "./repo/deal.js";
 import { enqueueAmbiguous, listHitl, resolveHitl } from "./repo/hitl.js";
@@ -60,7 +64,10 @@ import { getProductIntelligence } from "./repo/product.js";
 import { listAnnotations } from "./repo/sentiment.js";
 import { getNetworkInput, computeNetwork } from "./repo/network.js";
 import { listBriefings } from "./repo/executive.js";
-import { getWatchBoard, formatHodWatchWa, type WatchStatus } from "./repo/watchpoint.js";
+import {
+  getWatchBoard, formatHodWatchWa, findMetricDef, upsertWatchMetric, deleteWatchMetric,
+  type WatchStatus,
+} from "./repo/watchpoint.js";
 import {
   getWeeklyBoard, listWeeks, snapshotWeek, upsertWeeklyMetric, deleteWeeklyMetric,
   currentWeek, formatWeeklyHodWa,
@@ -73,16 +80,34 @@ import {
 } from "./repo/rbac.js";
 import { listTerritory, createTerritory, updateTerritory, deleteTerritory } from "./repo/territory.js";
 import { listPricelist, upsertPricelist, publishPricelist, unpublishPricelist, deletePricelist, type PricelistInput } from "./repo/pricelist.js";
+import { listSupplierEta, createSupplierEta, updateSupplierEta, deleteSupplierEta, type SupplierEtaInput, type SupplierEtaUpdate, type SupplierEtaStatus } from "./repo/supplier-eta.js";
 import {
-  createDanaOps, listDanaOps, getDanaOps, updateDanaOps, deleteDanaOps,
-  addDanaOpsItem, updateDanaOpsItem, deleteDanaOpsItem,
-  type DanaOpsStatus, type DanaOpsInput, type DanaOpsUpdate, type DanaOpsItemInput, type DanaOpsItemUpdate,
-} from "./repo/dana-ops.js";
+  listItems as listPricebookItems, summary as pricebookSummary,
+  outsideKeagenan, periodeList as pricebookPeriode,
+  listSetup as listPricebookSetup, setupSummary as pricebookSetupSummary,
+  updateSetupRow as updatePricebookSetupRow, publishSetup as publishPricebookSetup,
+  unpublishSetup as unpublishPricebookSetup, listPublishedKeagenan,
+  type SetupPatch as PricebookSetupPatch,
+} from "./repo/pricebook.js";
+import { pricelistPdf } from "./repo/pricelist-pdf.js";
+import {
+  taxonomy as klasifikasiTaxonomy, summary as klasifikasiSummary,
+  listCodes as listKlasifikasiCodes, nextKode as nextKlasifikasiKode,
+  createCode as createKlasifikasiCode, upsertNode as upsertKlasifikasiNode,
+  deleteNode as deleteKlasifikasiNode, listReview as listKlasifikasiReview,
+  setReviewStatus as setKlasifikasiReviewStatus,
+  selesaikanReview as selesaikanKlasifikasiReview, subClassPilihan as klasifikasiSubClassPilihan,
+  type CodeInput as KlasifikasiCodeInput, type NodeInput as KlasifikasiNodeInput,
+  type Level as KlasifikasiLevel,
+} from "./repo/klasifikasi.js";
+import { master as ksoMaster } from "./repo/kso.js";
+import { produktivitas as ksoProduktivitas, faskesDetail as ksoFaskesDetail } from "./repo/kso-produktivitas.js";
 import { listCoachingNotes } from "./repo/coaching.js";
 import { getLatestCoachingNotes, computePeopleAnalytics } from "./repo/people.js";
-import { createVisit, getVisit, listVisits, visitSummary } from "./repo/visit.js";
+import { AmTidakDikenalError, createVisit, getVisit, listVisits, visitKpi, visitSummary } from "./repo/visit.js";
 import { upsertDailyTodo, listTodos, markTodoReported } from "./repo/todo.js";
-import { upsertUser, listUsers, upsertTerritory, listTerritories, updateUserCabang } from "./repo/master.js";
+import { upsertUser, listUsers, upsertTerritory, listTerritories, updateUserCabang, updateUserGolongan } from "./repo/master.js";
+import { GOLONGAN, GOLONGAN_LABEL, TARGET_CUSTOMER_MINIMUM, isGolongan } from "./lib/npk-golongan.js";
 import { listTargets, upsertTargets, listCabangTargets, upsertCabangTargets, listAmTargets, upsertAmTargets, listAmCandidates, deleteAmTarget } from "./repo/sales-target.js";
 import {
   upsertHoliday,
@@ -97,6 +122,16 @@ import {
   listPendingLeave,
   decidePendingLeave,
 } from "./repo/leave.js";
+import {
+  createInstallation,
+  listInstallations,
+  getInstallationById,
+  markPoControl,
+  markSj,
+  markTeknisiAssign,
+  markTrainingDone,
+  markBast,
+} from "./repo/installation.js";
 import { recordCompetitor, listCompetitor, competitorSummary } from "./repo/competitor.js";
 import {
   defaultRange,
@@ -116,6 +151,7 @@ import {
   reportCalendarDay,
 } from "./repo/plandash.js";
 import { salesRange, reportRevenue, reportSalesAr, salesOverview, customersRevenue, customerMonthly, dormantCustomers, churnCustomers, targetPacing, reportSalesPerformance } from "./repo/sales.js";
+import { streamRange, reportRevenueByStream } from "./repo/revenue-stream.js";
 import { resolveScope } from "./repo/access-scope.js";
 import { getRaportList, getRaportDetail } from "./repo/raport.js";
 import { generateRaportNarrative, runRaportNarrative } from "./repo/raportnarrative.js";
@@ -134,7 +170,13 @@ import { listViews, saveView, deleteView, listAlerts, createAlert, deleteAlert, 
 import { execCommand, execAmRadar, execOutletMatrix, execDormantIntel, execKpiBaseline, execRotation, execGrowthLevers } from "./repo/exec-dashboard.js";
 import { evaluateSalesAlerts } from "./repo/sales-analytics-alert-eval.js";
 import { computeNpk, getNpkScores, getNpkDetail, currentPeriod, type Period } from "./repo/npk.js";
+import { computeNpkAm, getNpkAmScores, getNpkAmDetail } from "./repo/npk-am.js";
+import {
+  getInsentifSelf, getInsentifList, getInsentifDetail,
+  computePeriode as computeInsentifPeriode,
+} from "./repo/insentif.js";
 import { listDepartments, listEmployees, getEmployee, getRaciMatrix, getMeasurements, saveMeasurements, createEmployee, updateEmployee, deleteEmployee, replaceEmployeeDetail, getVoiceAggregate, getHodResolution, getOrgReporting, populateHodKey, getHods, type MeasurementInput, type EmployeeWrite, type SpineDetail } from "./repo/employee-spine.js";
+import { listKlaim, getKlaim, updateKategori, decideKlaim, markDibayar, createKlaimManual, deleteKlaim } from "./repo/doc-klaim.js";
 import { upsertMembers, listMembers, upsertDigests, listDigest, digestStats, upsertPola, listPola, generateRekap, generateResume, type MonitorMemberInput, type DigestInput, type PolaInput } from "./repo/monitor.js";
 import { runNotifTua } from "./repo/notiftua.js";
 import { runDailySummary } from "./repo/dailysummary.js";
@@ -153,6 +195,7 @@ import {
   listSalesOrders,
   listDeliveryOrders,
 } from "./repo/accurateMirror.js";
+import { listWarehouses, listStockBranch, stockBranchSummary } from "./repo/stock-branch.js";
 import { recordDelivery, recordEmail, recordAlert, listLogs } from "./repo/logs.js";
 import { renderSalesDocHtml, renderBriefingHtml } from "./repo/exportdoc.js";
 import { runHodDaily } from "./repo/hodreminder.js";
@@ -174,7 +217,73 @@ import { aiBaseUrl, callAi } from "./ai.js";
 import { startScheduler, getScheduleStatus } from "./scheduler.js";
 import { signJwt, verifyJwt } from "./auth.js";
 import { verifyCredentials, createUser, countUsers, listAppUsers, setUserPassword, updateAppUser, deleteAppUser, getAppUserById, createUserFromRoster, generatePassword, changeOwnPassword } from "./repo/users.js";
+import {
+  createRfidCartridgeClaim,
+  listRfidCartridgeClaims,
+  getRfidCartridgeClaim,
+  getRfidCartridgeClaimFile,
+  updateRfidCartridgeClaim,
+  deleteRfidCartridgeClaim,
+  type ClaimStatus as RfidCartridgeClaimStatus,
+} from "./repo/rfid-cartridge-claim.js";
+import {
+  createCourierDelivery,
+  listCourierDeliveries,
+  getCourierDelivery,
+  updateCourierDelivery,
+  deleteCourierDelivery,
+  getCourierPerformanceSummary,
+  isValidCourierDeliveryStatus,
+  CourierDeliveryError,
+  type CourierDeliveryStatus,
+} from "./repo/courier-delivery.js";
+import {
+  createPrintSpec,
+  listPrintSpecs,
+  getPrintSpec,
+  updatePrintSpec,
+  deletePrintSpec,
+  PrintSpecError,
+  type PaperSize,
+  type Orientation,
+} from "./repo/print-spec.js";
 
+import {
+  listTeknisi,
+  createTicket,
+  listTickets,
+  getTicketById,
+  resolveTicket,
+} from "./repo/serviceticket.js";
+import {
+  listInboundReceiving,
+  createInboundReceiving,
+  getInboundReceiving,
+  updateInboundReceiving,
+  deleteInboundReceiving,
+  addInboundReceivingItem,
+  updateInboundReceivingItem,
+  deleteInboundReceivingItem,
+  type InboundReceivingInput,
+  type InboundReceivingUpdate,
+  type InboundReceivingStatus,
+  type InboundReceivingItemUpdate,
+} from "./repo/inbound-receiving.js";
+import {
+  createDanaOps,
+  listDanaOps,
+  getDanaOps,
+  updateDanaOps,
+  deleteDanaOps,
+  addDanaOpsItem,
+  updateDanaOpsItem,
+  deleteDanaOpsItem,
+  type DanaOpsStatus,
+  type DanaOpsInput,
+  type DanaOpsUpdate,
+  type DanaOpsItemInput,
+  type DanaOpsItemUpdate,
+} from "./repo/dana-ops.js";
 const app = new Hono();
 
 // Selalu balas JSON saat error / route tak ada — supaya BFF & client tak pernah
@@ -206,6 +315,14 @@ app.use("*", async (c, next) => {
 app.get("/health", async (c) => {
   const db = isDbEnabled() ? (await pingDb()) ? "ok" : "down" : "disabled";
   return c.json({ status: "ok", service: "wrg-api", db });
+});
+
+// Kesegaran mirror Accurate. Sengaja BALIKAN 503 saat basi supaya bisa dipantau
+// uptime-checker biasa tanpa parsing JSON — kegagalan sync itu senyap, tak ada
+// yang error, angkanya cuma diam-diam kurang.
+app.get("/health/mirror", async (c) => {
+  const h = await mirrorFreshness();
+  return c.json(h, h.ok ? 200 : 503);
 });
 
 // Status wiring gateway WA — TIDAK kirim pesan. ?probe=1 → cek konektivitas gateway.
@@ -241,6 +358,11 @@ app.get("/auth/me", async (c) => {
   let superuser = false;
   let groups: { id: number; key: string; name: string }[] = [];
   let permissions: Record<string, unknown> = {};
+  // rbac=true → matriks izin BENAR-BENAR terbaca dari DB, jadi `permissions`
+  // kosong artinya "tanpa akses" (bukan "data izin tak tersedia"). Web butuh
+  // pembeda ini: tanpa flag, user tanpa grup ikut kena fail-open hasPerms()
+  // dan malah melihat seluruh menu (lihat apps/web/src/lib/perms.ts).
+  let rbac = false;
   let am_id: string | null = null;
   let hod_key: string | null = null; // utk gate menu Raport & NPK Saya (HoD) di web
   let is_am = false;
@@ -248,7 +370,7 @@ app.get("/auth/me", async (c) => {
   if (isDbEnabled() && payload.sub) {
     try {
       const eff = await effectivePermissions(String(payload.sub));
-      superuser = eff.superuser; groups = eff.groups; permissions = eff.permissions;
+      superuser = eff.superuser; groups = eff.groups; permissions = eff.permissions; rbac = true;
     } catch { /* abaikan — pakai role lama */ }
     try {
       // Identitas karyawan (utk gate menu Raport & NPK Saya + scoping). scope.amOnly = AM
@@ -263,7 +385,7 @@ app.get("/auth/me", async (c) => {
       id: payload.sub, email: payload.email, role: payload.role,
       name: payload.name ?? null, title: payload.title ?? null,
       am_id, hod_key, is_am, is_hod,
-      superuser, groups, permissions,
+      superuser, groups, permissions, rbac,
     },
   });
 });
@@ -407,17 +529,39 @@ app.get("/admin/am-cabang", async (c) => {
   const [users, territory] = await Promise.all([listUsers({ role: "AM" }), listTerritory()]);
   const cabangOptions = [...new Set(territory.map((t) => t.cabang))].sort((a, b) => a.localeCompare(b));
   return c.json({
-    rows: users.map((u) => ({ am_id: u.am_id, nama: u.nama, panggilan: u.panggilan, cabang: u.cabang, aktif: u.aktif })),
+    rows: users.map((u) => ({
+      am_id: u.am_id, nama: u.nama, panggilan: u.panggilan, cabang: u.cabang, aktif: u.aktif,
+      golongan: u.golongan,
+      // Customer MINIMUM per golongan (SK Pasal 2.1) — konteks kelayakan naik
+      // golongan. BUKAN penyebut aspek NPK Customer: itu memakai target program
+      // per AM di menu Sales → Target (lihat catatan di lib/npk-golongan.ts).
+      customer_minimum: TARGET_CUSTOMER_MINIMUM[u.golongan ?? "OSP"] ?? null,
+    })),
     cabang_options: cabangOptions,
+    golongan_options: GOLONGAN.map((g) => ({ key: g, label: GOLONGAN_LABEL[g], customer_minimum: TARGET_CUSTOMER_MINIMUM[g] })),
   });
 });
+// PUT menerima `cabang` dan/atau `golongan` — field yang TIDAK dikirim tidak
+// disentuh (undefined ≠ null; null berarti "kosongkan").
 app.put("/admin/am-cabang", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let b: { am_id?: string; cabang?: string | null } = {};
+  let b: { am_id?: string; cabang?: string | null; golongan?: string | null } = {};
   try { b = await c.req.json(); } catch { /* opsional */ }
   if (!b.am_id) return c.json({ error: "am_id wajib" }, 400);
-  const r = await updateUserCabang(String(b.am_id), b.cabang ?? null);
-  return r.updated ? c.json(r) : c.json({ error: "AM tak ditemukan" }, 404);
+  const amId = String(b.am_id);
+  let updated = false;
+  if (b.cabang !== undefined) {
+    updated = (await updateUserCabang(amId, b.cabang ?? null)).updated || updated;
+  }
+  if (b.golongan !== undefined) {
+    const g = b.golongan === null || b.golongan === "" ? null : String(b.golongan);
+    if (g !== null && !isGolongan(g)) return c.json({ error: "golongan tidak valid" }, 400);
+    updated = (await updateUserGolongan(amId, g)).updated || updated;
+  }
+  if (b.cabang === undefined && b.golongan === undefined) {
+    return c.json({ error: "tak ada field yang diubah" }, 400);
+  }
+  return updated ? c.json({ updated }) : c.json({ error: "AM tak ditemukan" }, 404);
 });
 
 // Set/reset password. body {password?|generate, force?, send_wa?}. Return password (sekali) + status WA.
@@ -912,6 +1056,26 @@ app.post("/accurate/sync/shipments", async (c) => {
   const pages = Math.min(Math.max(Number(c.req.query("pages")) || 5, 1), 120);
   const r = await syncDeliveryOrders({ maxPages: pages });
   return c.json(r, r.ok ? 200 : 502);
+});
+
+// Backfill baris item SO/DO ke mirror (dasar fill rate F76). Berbatas per
+// pemanggilan — `pending` di balikan = sisa dokumen sebenarnya di dalam jendela
+// `days` (count penuh, tidak dibatasi `limit`), panggil ulang sampai 0.
+// ?kind=so|do (default keduanya), ?limit= dokumen/panggilan, ?days= jendela tanggal.
+app.post("/accurate/sync/doc-items", async (c) => {
+  // Validasi bentuk permintaan DULU: parameter salah harus 400 apa pun status
+  // kredensial, kalau tidak pemanggil dapat 503 yang menyesatkan.
+  const kind = (c.req.query("kind") ?? "").trim().toLowerCase();
+  if (kind && kind !== "so" && kind !== "do") return c.json({ error: "kind harus so|do" }, 400);
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  if (!accurateConfigured()) return c.json({ error: "kredensial Accurate tak tersedia" }, 503);
+  const limit = Math.min(Math.max(Number(c.req.query("limit")) || 150, 1), 1000);
+  const sinceDays = Math.min(Math.max(Number(c.req.query("days")) || 120, 1), 1095);
+  const out: Record<string, unknown> = {};
+  if (kind !== "do") out.salesOrders = await syncSalesOrderItems({ limit, sinceDays });
+  if (kind !== "so") out.deliveryOrders = await syncDeliveryOrderItems({ limit, sinceDays });
+  const ok = Object.values(out).every((v) => (v as { ok: boolean }).ok);
+  return c.json(out, ok ? 200 : 502);
 });
 
 // Baris produk satu surat jalan (on-demand dari Accurate detail.do).
@@ -1421,18 +1585,36 @@ app.post("/visits", async (c) => {
     return c.json({ error: "invalid JSON body" }, 400);
   }
   if (!body.am_id) return c.json({ error: "am_id wajib" }, 400);
-  const r = await createVisit({
-    am_id: body.am_id,
-    deal_id: body.deal_id,
-    customer_name: body.customer_name,
-    photo_url: body.photo_url,
-    lat: body.lat,
-    lon: body.lon,
-    visit_timestamp: body.visit_timestamp,
-    visit_date: body.visit_date,
-    note: body.note,
-  });
-  return c.json(r, 201);
+  // lat/lon wajib. Tanpa koordinat, sales_plan.visit_lat NULL dan kunjungannya
+  // tak akan pernah muncul di GET /visits (filter `visit_lat IS NOT NULL`) —
+  // tersimpan tapi hilang. Ditolak di sini, bukan disimpan diam-diam. Di luar
+  // bbox Indonesia tetap diterima (geo_status='out_of_bounds'); yang ditolak
+  // hanya koordinat yang tidak ada atau bukan angka.
+  if (!Number.isFinite(body.lat) || !Number.isFinite(body.lon)) {
+    return c.json(
+      { error: "lat & lon wajib berupa angka — kunjungan tanpa koordinat tidak akan tampil di GET /visits" },
+      400,
+    );
+  }
+  try {
+    const r = await createVisit({
+      am_id: body.am_id,
+      deal_id: body.deal_id,
+      customer_name: body.customer_name,
+      photo_url: body.photo_url,
+      lat: body.lat as number,
+      lon: body.lon as number,
+      visit_timestamp: body.visit_timestamp,
+      visit_date: body.visit_date,
+      note: body.note,
+    });
+    return c.json(r, 201);
+  } catch (e) {
+    // am_id di luar roster = kesalahan pemanggil, bukan kegagalan server: 400
+    // dengan pesan yang bisa ditampilkan form. Error lain tetap naik jadi 500.
+    if (e instanceof AmTidakDikenalError) return c.json({ error: e.message }, 400);
+    throw e;
+  }
 });
 
 // Read model visit (filter geo_status: ok|out_of_bounds|no_geo|date_mismatch).
@@ -1450,7 +1632,17 @@ app.get("/visits/summary", async (c) => {
   return c.json(await visitSummary(await resolveScope(c.req.header("x-user-id"))));
 });
 
-// Detail 1 visit (didaftarkan SETELAH /visits/summary biar literal menang).
+// KPI F16 CRM Fase 1: timeliness input ≤48 jam + capaian target kunjungan
+// mingguan per AM. ?week=-1 → minggu lalu (dipakai rekap Senin).
+app.get("/visits/kpi", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const raw = Number(c.req.query("week"));
+  // Clamp: hanya minggu ini & ke belakang, biar tak diminta hitung minggu absurd.
+  const week = Number.isFinite(raw) ? Math.min(0, Math.max(-52, Math.trunc(raw))) : 0;
+  return c.json(await visitKpi(await resolveScope(c.req.header("x-user-id")), week));
+});
+
+// Detail 1 visit (didaftarkan SETELAH /visits/summary & /visits/kpi biar literal menang).
 // Di luar scope → 404 (sama seperti tak ada), jangan bocorkan keberadaannya.
 app.get("/visits/:id", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
@@ -1700,6 +1892,112 @@ app.post("/leave/detect", async (c) => {
   return c.json(r, r.detected ? 201 : 200);
 });
 
+// ── Instalasi Alat Lifecycle (F22, AFTERSALES) — checklist 5 langkah sekuensial:
+// PO control → SJ → Teknisi assign → Training done → BAST. ──
+app.post("/installations", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: {
+    alat_name?: string;
+    serial_number?: string;
+    customer_name?: string;
+    cabang?: string;
+    po_number?: string;
+    created_by?: string;
+  };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.alat_name || !body.customer_name) {
+    return c.json({ error: "alat_name + customer_name wajib" }, 400);
+  }
+  const r = await createInstallation({
+    alat_name: body.alat_name,
+    serial_number: body.serial_number,
+    customer_name: body.customer_name,
+    cabang: body.cabang,
+    po_number: body.po_number,
+    created_by: body.created_by,
+  });
+  return c.json(r, 201);
+});
+
+app.get("/installations", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const units = await listInstallations(c.req.query("status") || undefined, c.req.query("q") || undefined);
+  return c.json({ count: units.length, units });
+});
+
+app.get("/installations/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const u = await getInstallationById(c.req.param("id"));
+  return u ? c.json(u) : c.json({ error: "unit instalasi tidak ditemukan" }, 404);
+});
+
+app.post("/installations/:id/po-control", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { po_number?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    // po_number opsional di langkah ini
+  }
+  const r = await markPoControl(c.req.param("id"), body.po_number);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.post("/installations/:id/sj", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { sj_number?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.sj_number) return c.json({ error: "sj_number wajib" }, 400);
+  const r = await markSj(c.req.param("id"), body.sj_number);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.post("/installations/:id/assign-teknisi", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { teknisi_name?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.teknisi_name) return c.json({ error: "teknisi_name wajib" }, 400);
+  const r = await markTeknisiAssign(c.req.param("id"), body.teknisi_name);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.post("/installations/:id/training", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { training_notes?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    // training_notes opsional
+  }
+  const r = await markTrainingDone(c.req.param("id"), body.training_notes);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.post("/installations/:id/bast", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { bast_number?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.bast_number) return c.json({ error: "bast_number wajib" }, 400);
+  const r = await markBast(c.req.param("id"), body.bast_number);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
 // ── Competitor intelligence (port legacy competitor_intel) ──
 app.post("/competitor", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
@@ -1799,12 +2097,13 @@ app.get("/report/detail", async (c) => {
 
 // Sales Calendar: agregat plan/report per (tanggal, AM) + libur + katalog AM
 // untuk filter. from/to = rentang grid kalender (mis. awal–akhir 6 minggu).
+// Ber-scope row-level: AM = kalendernya sendiri, HoD = cabang timnya.
 app.get("/report/calendar", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const { from, to } = parseRange(c.req.query("from"), c.req.query("to"));
   const amId = c.req.query("am_id") || undefined;
   const cabang = c.req.query("cabang") || undefined;
-  return c.json(await reportCalendar(from, to, amId, cabang));
+  return c.json(await reportCalendar(from, to, amId, cabang, await resolveScope(c.req.header("x-user-id"))));
 });
 
 // Drilldown harian Sales Calendar: per-AM + daftar plan (customer/hasil).
@@ -1813,7 +2112,7 @@ app.get("/report/calendar/day", async (c) => {
   const date = c.req.query("date") || defaultRange().today;
   const amId = c.req.query("am_id") || undefined;
   const cabang = c.req.query("cabang") || undefined;
-  return c.json(await reportCalendarDay(date, amId, cabang));
+  return c.json(await reportCalendarDay(date, amId, cabang, await resolveScope(c.req.header("x-user-id"))));
 });
 
 // Push WA nudge ke satu AM (dari panel reminder dashboard). Stub di dev.
@@ -1845,6 +2144,16 @@ app.get("/sales/revenue", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const { from, to } = salesRange(c.req.query("from"), c.req.query("to"));
   return c.json(await reportRevenue(from, to));
+});
+
+// Revenue-by-stream (WatchPoint kartu Fafa): revenue per lini produk.
+// ?periode=YYYY-MM (menang atas from/to), atau ?from=&to=. Default bulan berjalan.
+// Balikan `ringkasan` memuat cakupan klasifikasi & selisih terhadap netto invoice —
+// tampilkan keduanya di UI, jangan cuma daftar lininya.
+app.get("/reports/revenue-by-stream", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const { from, to } = streamRange(c.req.query("periode"), c.req.query("from"), c.req.query("to"));
+  return c.json(await reportRevenueByStream(from, to));
 });
 
 // Kartu Sales Performance: target vs realisasi per periode (YTD/kuartal/bulan) +
@@ -1901,13 +2210,18 @@ app.get("/sales/targets/am", async (c) => {
 });
 app.put("/sales/targets/am", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let b: { year?: number; entries?: { am_id?: string; target?: number }[] } = {};
+  let b: { year?: number; entries?: { am_id?: string; target?: number; target_customer?: number }[] } = {};
   try { b = await c.req.json(); } catch { /* opsional */ }
   const year = Number(b.year);
   if (!Number.isInteger(year) || year < 2000 || year > 2100) return c.json({ error: "year tidak valid" }, 400);
   const entries = (b.entries ?? [])
     .filter((e) => String(e.am_id ?? "").trim() !== "" && Number.isFinite(Number(e.target)))
-    .map((e) => ({ am_id: String(e.am_id), target: Math.max(0, Number(e.target)) }));
+    .map((e) => ({
+      am_id: String(e.am_id),
+      target: Math.max(0, Number(e.target)),
+      // Tak dikirim → undefined (biarkan nilai lama), bukan 0 (menghapus target).
+      target_customer: Number.isFinite(Number(e.target_customer)) ? Math.max(0, Number(e.target_customer)) : undefined,
+    }));
   return c.json(await upsertAmTargets(year, entries));
 });
 app.delete("/sales/targets/am", async (c) => {
@@ -1968,10 +2282,11 @@ app.get("/sales-analytics/trending", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json(await analyticsTrending(c.req.query("from"), c.req.query("to"), await scopeOf(c)));
 });
-// Pacing sbg tab Sales Analytics (unscoped; berbasis tahun, bukan from/to).
+// Pacing sbg tab Sales Analytics (berbasis tahun, bukan from/to). Ber-scope
+// row-level: AM = target/actual sendiri, HoD = AM & cabang timnya.
 app.get("/sales-analytics/pacing", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  return c.json(await targetPacing(Number(c.req.query("year")) || undefined));
+  return c.json(await targetPacing(Number(c.req.query("year")) || undefined, await scopeOf(c)));
 });
 // Kinerja Saya — AR aging ber-scope (AM=piutang sendiri, HoD=tim, admin=semua).
 app.get("/sales-analytics/my-ar", async (c) => {
@@ -2022,6 +2337,113 @@ app.get("/npk/scores/:userId", async (c) => {
   } catch (e) {
     const status = (e as { status?: number }).status ?? 500;
     return c.json({ error: (e as Error).message }, status as 403 | 404 | 500);
+  }
+});
+
+// ── F66 NPK level AM/Sales (078) — formula SK yang sama, subjek = master_user.am_id.
+// Role gate ada di lapisan data (repo/npk-am.ts visibleAms): admin & HoD → semua AM;
+// staff AM → hanya dirinya; selain itu kosong. Rute /npk/am/* sengaja TIDAK bentrok
+// dengan /npk/scores/:userId (prefix beda), jadi urutan registrasi tak jadi soal.
+app.post("/npk/am/compute", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const svc = process.env.API_SERVICE_TOKEN;
+  if (svc && c.req.header("x-service-token") !== svc) return c.json({ error: "forbidden" }, 403);
+  const { year, period } = npkParams(c);
+  return c.json(await computeNpkAm({ year, period }));
+});
+
+app.get("/npk/am/scores", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const { year, period } = npkParams(c);
+  return c.json(await getNpkAmScores(await scopeOf(c), year, period));
+});
+
+app.get("/npk/am/scores/:ref", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const { year, period } = npkParams(c);
+  try {
+    return c.json(await getNpkAmDetail(await scopeOf(c), c.req.param("ref"), year, period));
+  } catch (e) {
+    const status = (e as { status?: number }).status ?? 500;
+    return c.json({ error: (e as Error).message }, status as 403 | 404 | 500);
+  }
+});
+
+// ── F67 Insentif (093/094) — model console_v2, unit hitung PER TRANSAKSI ──
+//
+// Aturan akses hidup di lapisan data (repo/insentif.ts resolveVisibleAms), SATU definisi:
+// admin/superuser → semua; HoD → AM di cabang timnya; staff AM → dirinya saja; tanpa
+// identitas → TERTUTUP. Fail-closed, beda dari menu analitik lain: ini angka penghasilan
+// orang, jadi panggilan ber-service-token TANPA x-user-id pun tidak dapat baris siapa pun.
+const insentifPeriode = (c: { req: { query: (k: string) => string | undefined } }): string => {
+  const p = (c.req.query("periode") ?? "").trim();
+  if (/^\d{4}-\d{2}$/.test(p)) return p;
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+};
+
+const insentifErr = (e: unknown) => ({
+  status: ((e as { status?: number }).status ?? 500) as 403 | 404 | 500,
+  body: { error: (e as Error).message },
+});
+
+app.get("/insentif/self", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    return c.json(await getInsentifSelf(await scopeOf(c), insentifPeriode(c)));
+  } catch (e) {
+    const { status, body } = insentifErr(e);
+    return c.json(body, status);
+  }
+});
+
+app.get("/insentif/list", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    return c.json(await getInsentifList(await scopeOf(c), insentifPeriode(c)));
+  } catch (e) {
+    const { status, body } = insentifErr(e);
+    return c.json(body, status);
+  }
+});
+
+// Hitung ulang satu periode. Operasi ops.
+//
+// Pagar yang SELALU berlaku: superuser (dari sesi via x-user-id). Pagar service-token
+// hanya aktif bila API_SERVICE_TOKEN di-set — mengikuti pola rumah (lihat baris 342 dan
+// endpoint ops lain), supaya dev tanpa token tetap bisa dipakai. Jadi di lingkungan
+// tanpa token, yang menjaga endpoint ini adalah superuser SAJA; jangan membaca komentar
+// ini sebagai "wajib dua-duanya".
+// apply=false (default) = pratinjau, tak menulis apa pun.
+app.post("/insentif/compute", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const svc = process.env.API_SERVICE_TOKEN;
+  if (svc && c.req.header("x-service-token") !== svc) return c.json({ error: "forbidden" }, 403);
+  const scope = await scopeOf(c);
+  if (!scope.superuser) return c.json({ error: "forbidden" }, 403);
+  const body = (await c.req.json().catch(() => ({}))) as {
+    periode_hpp?: string;
+    am_ids?: unknown;
+    effort?: Record<string, { effort: number; presales: number }>;
+    apply?: boolean;
+  };
+  return c.json(await computeInsentifPeriode({
+    periode: insentifPeriode(c),
+    periodeHpp: String(body.periode_hpp ?? "H2-2026"),
+    amIds: Array.isArray(body.am_ids) ? body.am_ids.map(String) : [],
+    effortPerAm: new Map(Object.entries(body.effort ?? {})),
+    apply: body.apply === true,
+  }));
+});
+
+// :amId ditaruh PALING BAWAH supaya tidak menelan /insentif/self & /insentif/list.
+app.get("/insentif/:amId", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    return c.json(await getInsentifDetail(await scopeOf(c), c.req.param("amId"), insentifPeriode(c)));
+  } catch (e) {
+    const { status, body } = insentifErr(e);
+    return c.json(body, status);
   }
 });
 
@@ -2170,6 +2592,60 @@ app.post("/employee-spine/employees/:id/measurements", async (c) => {
   if (!Array.isArray(body.items)) return c.json({ error: "field 'items' wajib array" }, 400);
   return c.json(await saveMeasurements(c.req.param("id"), period, body.items));
 });
+
+// ── DOC #KLAIM Invoice Claim OCR (Fase A) — ingestion via WA, review manual ──
+app.get("/doc-klaim", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const status = c.req.query("status") ?? undefined;
+  return c.json({ klaim: await listKlaim(status) });
+});
+// Input manual via web (buat coba tanpa kirim WA sungguhan) — TANPA OCR.
+app.post("/doc-klaim", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const body = await c.req.json().catch(() => ({}));
+  const result = await createKlaimManual(body);
+  if ("ok" in result && !result.ok) return c.json({ error: result.error }, 400);
+  return c.json({ klaim: result }, 201);
+});
+app.delete("/doc-klaim/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const result = await deleteKlaim(c.req.param("id"));
+  if (!result.ok) return c.json({ error: result.error }, 400);
+  return c.json(result);
+});
+app.get("/doc-klaim/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const k = await getKlaim(c.req.param("id"));
+  return k ? c.json({ klaim: k }) : c.json({ error: "klaim tidak ditemukan" }, 404);
+});
+app.patch("/doc-klaim/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const body = await c.req.json().catch(() => ({}));
+  const result = await updateKategori(c.req.param("id"), body.kategori ?? null);
+  if ("ok" in result && !result.ok) return c.json({ error: result.error }, 400);
+  return c.json({ klaim: result });
+});
+app.post("/doc-klaim/:id/decide", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const body = await c.req.json().catch(() => ({}));
+  const decision = body.decision;
+  if (decision !== "disetujui" && decision !== "ditolak") return c.json({ error: "decision harus disetujui/ditolak" }, 400);
+  const result = await decideKlaim(c.req.param("id"), {
+    decision,
+    nominal_disetujui: body.nominal_disetujui ?? null,
+    catatan: body.catatan ?? null,
+    decided_by_user_id: c.req.header("x-user-id") ?? null,
+  });
+  if (!result.ok) return c.json({ error: result.error }, 400);
+  return c.json(result);
+});
+app.post("/doc-klaim/:id/bayar", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const result = await markDibayar(c.req.param("id"));
+  if (!result.ok) return c.json({ error: result.error }, 400);
+  return c.json(result);
+});
+
 // F118b CRUD core karyawan (gating admin di BFF web).
 app.post("/employee-spine/employees", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
@@ -2226,6 +2702,59 @@ app.post("/watchpoint/:hodKey/send-wa", async (c) => {
   const message = formatHodWatchWa(hod, board.asOf);
   const result = await sendViaWaGateway(to, message);
   return c.json({ ...result, hodKey, preview: message }, result.sent ? 200 : 502);
+});
+
+// Ubah target / nilai manual satu metric papan "sekarang" (migrasi 080).
+// Gate direktur/admin dikerjakan layer WEB (admin-guard.ts) — di sini hanya
+// validasi bentuk data + pastikan (hod, metric) memang ada di katalog.
+app.put("/watchpoint/metric", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: {
+    hod_key?: string; metric_key?: string; actual?: number | null; status?: string | null;
+    note?: string | null; target_mode?: string; target_override?: number | null; updated_by?: string | null;
+  };
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+
+  const hodKey = (body.hod_key ?? "").trim();
+  const metricKey = (body.metric_key ?? "").trim();
+  if (!hodKey || !metricKey) return c.json({ error: "hod_key + metric_key wajib" }, 400);
+  if (!findMetricDef(hodKey, metricKey)) {
+    return c.json({ error: `metric '${metricKey}' tidak ada pada HoD '${hodKey}'` }, 404);
+  }
+
+  const MODES = ["default", "value", "milestone"] as const;
+  const targetMode = (body.target_mode ?? "default") as (typeof MODES)[number];
+  if (!MODES.includes(targetMode)) return c.json({ error: "target_mode harus default|value|milestone" }, 400);
+
+  const VALID: WatchStatus[] = ["GREEN", "YELLOW", "RED", "NA"];
+  const status = body.status == null || body.status === "" ? null : (body.status as WatchStatus);
+  if (status !== null && !VALID.includes(status)) return c.json({ error: "status harus GREEN|YELLOW|RED|NA" }, 400);
+
+  const asNum = (v: unknown): number | null => (v === null || v === undefined || v === "" ? null : Number(v));
+  const actual = asNum(body.actual);
+  const targetOverride = asNum(body.target_override);
+  if (actual !== null && !Number.isFinite(actual)) return c.json({ error: "actual harus angka" }, 400);
+  if (targetOverride !== null && !Number.isFinite(targetOverride)) return c.json({ error: "target_override harus angka" }, 400);
+  if (targetMode === "value" && targetOverride === null) {
+    return c.json({ error: "target_override wajib diisi saat target_mode='value'" }, 400);
+  }
+
+  await upsertWatchMetric({
+    hodKey, metricKey, actual, status, note: body.note?.trim() || null,
+    targetMode, targetOverride: targetMode === "value" ? targetOverride : null,
+    updatedBy: body.updated_by?.trim() || null,
+  });
+  return c.json({ ok: true });
+});
+
+// Hapus baris → target balik ke default kode, nilai manual balik N/A.
+app.delete("/watchpoint/metric", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const hodKey = (c.req.query("hod_key") ?? "").trim();
+  const metricKey = (c.req.query("metric_key") ?? "").trim();
+  if (!hodKey || !metricKey) return c.json({ error: "hod_key + metric_key wajib" }, 400);
+  const r = await deleteWatchMetric(hodKey, metricKey);
+  return c.json(r, r.deleted ? 200 : 404);
 });
 
 // ── F76 WatchPoint — CRUD mapping HoD→cabang (hod_territory) ──
@@ -2295,7 +2824,7 @@ app.get("/watchpoint/weekly/weeks", async (c) => {
 // tidak tergilas — lihat snapshotWeek().
 app.post("/watchpoint/weekly/snapshot", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let body: { year?: number; week?: number } = {};
+  let body: { year?: number; week?: number; mode?: string } = {};
   try { body = await c.req.json(); } catch { /* body opsional → minggu berjalan */ }
   const cur = currentWeek();
   const isoYear = Number(body.year ?? cur.isoYear);
@@ -2303,7 +2832,13 @@ app.post("/watchpoint/weekly/snapshot", async (c) => {
   if (!Number.isInteger(isoYear) || !Number.isInteger(isoWeek) || isoWeek < 1 || isoWeek > 53) {
     return c.json({ error: "year/week tidak valid" }, 400);
   }
-  return c.json(await snapshotWeek(isoYear, isoWeek));
+  // mode 'reconstruct' = isi mundur minggu lampau. Hanya metric capaian periode
+  // yang sumbernya menjangkau minggu itu yang dibekukan; ar90/noorder/churn/
+  // fia/xsell dilewati karena tak bisa direkonstruksi (lihat snapshotWeek).
+  if (body.mode !== undefined && body.mode !== "live" && body.mode !== "reconstruct") {
+    return c.json({ error: "mode harus live|reconstruct" }, 400);
+  }
+  return c.json(await snapshotWeek(isoYear, isoWeek, body.mode === "reconstruct" ? "reconstruct" : "live"));
 });
 
 // Input manual HoD untuk satu metric di satu minggu (uptime, lead time, JV, dst).
@@ -2396,6 +2931,248 @@ app.post("/watchpoint/weekly/:hodKey/send-wa", async (c) => {
   return c.json({ ...result, hodKey, week: board.label, preview: message }, result.sent ? 200 : 502);
 });
 
+// ── Price Book (F142) — katalog harga produk KEAGENAN per periode ───────────
+// Isi tabel dari importer scripts/db/import_pricebook.py (data tidak di repo).
+// Gate akses ada di BFF (apps/web /api/pricebook/*): katalog utk semua user
+// berizin, ringkasan hanya Direktur/admin.
+app.get("/pricebook/items", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const q = c.req.query();
+  const rows = await listPricebookItems({
+    periode: q.periode, lini: q.lini, brand: q.brand, kategori: q.kategori,
+    q: q.q, limit: q.limit ? Number(q.limit) : undefined,
+  });
+  return c.json({ count: rows.length, rows });
+});
+
+app.get("/pricebook/summary", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await pricebookSummary(c.req.query("periode") || undefined));
+});
+
+app.get("/pricebook/outside", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const q = c.req.query();
+  const rows = await outsideKeagenan({
+    periode: q.periode, q: q.q, limit: q.limit ? Number(q.limit) : undefined,
+  });
+  return c.json({ count: rows.length, rows });
+});
+
+app.get("/pricebook/periode", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json({ rows: await pricebookPeriode() });
+});
+
+// Lapisan Pricelist Setup (migrasi 073): HPP, margin turunan & klasifikasi per SKU.
+// INTERNAL — gate-nya di halaman /pricelist/setup (canEditPricelistSetup:
+// HoD Business / Purchasing / admin). JANGAN dipakai halaman AM: /pricebook yang
+// dilihat sales tidak boleh menyentuh endpoint ini.
+app.get("/pricebook/setup", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const q = c.req.query();
+  const periode = q.periode || undefined;
+  const [rows, ringkas] = await Promise.all([
+    listPricebookSetup({ periode, q: q.q, lini: q.lini, limit: q.limit ? Number(q.limit) : undefined }),
+    pricebookSetupSummary(periode),
+  ]);
+  return c.json({ count: rows.length, rows, ringkas });
+});
+
+// ── Simulator KSO (migrasi 074) — master alat, reagen & parameter ───────────
+// Isi tabel dari importer scripts/db/import_kso_master.py (data tidak di repo).
+// Read-only: perhitungan running cost jalan di browser (apps/web/src/lib/kso/
+// formula.ts) karena user mengubah harga & jumlah test terus-menerus saat
+// menyusun penawaran — bolak-balik ke server tiap ketikan tidak masuk akal.
+// Gate akses ada di BFF (apps/web /api/kso/*).
+app.get("/kso/master", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await ksoMaster());
+});
+
+// Produktivitas aset KSO (view kso_asset_produktivitas_v, migrasi 097-105).
+// Menu /kso-produktivitas. Gate akses di BFF (apps/web /api/kso/*) memakai
+// canViewKso — sama dengan Simulator.
+//
+// CATATAN AKSES: gate itu terikat flag fitur 'kso-simulator'. Simulator hanya
+// memuat harga alat & reagen; halaman ini memuat REVENUE PER FASKES, yang lebih
+// sensitif. Dipakai bersama atas keputusan user 2026-08-18. Kalau kelak perlu
+// dipisah, buat flag sendiri dan ganti gate-nya di BFF — endpoint ini tidak
+// perlu berubah.
+app.get("/kso/produktivitas", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await ksoProduktivitas());
+});
+
+// Detail satu faskes untuk dialog "Lihat detail". Gate-nya sama dengan endpoint di
+// atas (canViewKso di BFF) — rute ini melewati catch-all /api/kso/* yang sama, jadi
+// tidak ada jalur akses baru yang perlu dibuka.
+app.get("/kso/produktivitas/faskes/:accountId", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const accountId = Number(c.req.param("accountId"));
+  if (!Number.isFinite(accountId)) return c.json({ error: "accountId invalid" }, 400);
+  // Skema WAJIB dan dibatasi dua nilai: satu faskes bisa memegang dua skema dengan
+  // angka yang berbeda jauh, jadi detail tanpa skema akan mencampur keduanya.
+  const skema = c.req.query("skema") ?? "";
+  if (skema !== "PER_TEST" && skema !== "BELI_REAGEN") {
+    return c.json({ error: "skema wajib PER_TEST | BELI_REAGEN" }, 400);
+  }
+  return c.json(await ksoFaskesDetail(accountId, skema));
+});
+
+// Setelan harga keagenan (migrasi 077). Gate di halaman /pricebook/setup
+// (HoD Business / Purchasing / admin) — endpoint ini memuat HPP.
+app.patch("/pricebook/setup", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: PricebookSetupPatch;
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  const res = await updatePricebookSetupRow(body);
+  return res.ok ? c.json(res.row) : c.json({ error: res.error }, 400);
+});
+
+app.post("/pricebook/setup/publish", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const b = await c.req.json().catch(() => ({}) as Record<string, unknown>);
+  const rows = Array.isArray(b.rowNos) ? (b.rowNos as unknown[]).map(Number).filter(Number.isInteger) : undefined;
+  return c.json(await publishPricebookSetup(rows, (b.by as string) ?? null, (b.periode as string) || undefined));
+});
+
+app.post("/pricebook/setup/unpublish", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const b = await c.req.json().catch(() => ({}) as Record<string, unknown>);
+  const rows = Array.isArray(b.rowNos) ? (b.rowNos as unknown[]).map(Number).filter(Number.isInteger) : undefined;
+  return c.json(await unpublishPricebookSetup(rows, (b.periode as string) || undefined));
+});
+
+// Harga keagenan TERPUBLIKASI — ini yang dibuka Account Manager. Tanpa HPP &
+// margin: kolomnya tidak di-SELECT sama sekali, jadi tak ada jalan bocor.
+// Export PDF daftar harga terpublikasi. POST (bukan GET) karena daftar row_no
+// yang dicentang user bisa ratusan — terlalu panjang untuk query string.
+app.post("/pricebook/published/pdf", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const b = await c.req.json().catch(() => ({}) as Record<string, unknown>);
+  const rowNos = Array.isArray(b.rowNos)
+    ? (b.rowNos as unknown[]).map(Number).filter(Number.isInteger) : undefined;
+  const pdf = await pricelistPdf({
+    periode: (b.periode as string) || undefined,
+    rowNos,
+    oleh: (b.oleh as string) ?? null,
+  });
+  return c.body(new Uint8Array(pdf), 200, {
+    "content-type": "application/pdf",
+    "content-disposition": `attachment; filename="daftar-harga-keagenan.pdf"`,
+  });
+});
+
+app.get("/pricebook/published", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const q = c.req.query();
+  const rows = await listPublishedKeagenan({
+    periode: q.periode, q: q.q, lini: q.lini, limit: q.limit ? Number(q.limit) : undefined,
+  });
+  return c.json({ count: rows.length, rows });
+});
+
+// ── Klasifikasi produk & kode produk (migrasi 072) ──────────────────────────
+// Kode KK.PP.CC.SSS.NNNN. Isi awal dari importer
+// scripts/db/import_product_classification.py (data tidak di repo).
+// Gate akses ada di BFF (apps/web /api/klasifikasi/*): lihat utk user berizin,
+// tulis hanya HoD Business/Purchasing/admin.
+app.get("/klasifikasi/taxonomy", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json({ rows: await klasifikasiTaxonomy() });
+});
+
+app.get("/klasifikasi/summary", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await klasifikasiSummary());
+});
+
+app.get("/klasifikasi/codes", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const q = c.req.query();
+  const rows = await listKlasifikasiCodes({
+    kategoriId: q.kategori, lineId: q.line, classId: q.class, subClassId: q.sub_class,
+    sumber: q.sumber, q: q.q, limit: q.limit ? Number(q.limit) : undefined,
+  });
+  return c.json({ count: rows.length, rows });
+});
+
+// Pratinjau kode berikutnya — TIDAK menyimpan apa pun (bukan reservasi nomor).
+app.get("/klasifikasi/next-kode", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const q = c.req.query();
+  if (!q.kategori || !q.line || !q.class || !q.sub_class) {
+    return c.json({ error: "butuh query kategori, line, class, sub_class" }, 400);
+  }
+  const r = await nextKlasifikasiKode(q.kategori, q.line, q.class, q.sub_class);
+  return r.ok ? c.json(r.data) : c.json({ error: r.error }, 400);
+});
+
+app.post("/klasifikasi/codes", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: KlasifikasiCodeInput;
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  const r = await createKlasifikasiCode(body);
+  return r.ok ? c.json({ kode: r.kode }, 201) : c.json({ error: r.error }, 400);
+});
+
+app.post("/klasifikasi/taxonomy", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: KlasifikasiNodeInput;
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  const r = await upsertKlasifikasiNode(body);
+  return r.ok ? c.json({ ok: true }) : c.json({ error: r.error }, 400);
+});
+
+app.delete("/klasifikasi/taxonomy", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const q = c.req.query();
+  const level = q.level as KlasifikasiLevel;
+  if (!level || !q.kategori || !q.id) {
+    return c.json({ error: "butuh query level, kategori, id (+ class untuk sub_class)" }, 400);
+  }
+  const r = await deleteKlasifikasiNode(level, q.kategori, q.id, q.class);
+  return r.ok ? c.json({ ok: true }) : c.json({ error: r.error }, 409);
+});
+
+app.get("/klasifikasi/review", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const q = c.req.query();
+  const rows = await listKlasifikasiReview(q.status || undefined,
+    q.limit ? Number(q.limit) : undefined);
+  return c.json({ count: rows.length, rows });
+});
+
+// Pilihan sub class di bawah induk baris antrean — bahan dialog "Selesaikan".
+app.get("/klasifikasi/review/:id/sub-class", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const res = await klasifikasiSubClassPilihan(Number(c.req.param("id")));
+  return res.ok ? c.json(res) : c.json({ error: res.error }, 400);
+});
+
+// Selesaikan baris antrean: daftarkan/pilih sub class → terbitkan kode → tandai
+// beres, dalam satu transaksi. Menggantikan tombol lama yang cuma mengubah status.
+app.post("/klasifikasi/review/:id/selesaikan", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const b = await c.req.json().catch(() => ({}) as Record<string, unknown>);
+  const res = await selesaikanKlasifikasiReview(Number(c.req.param("id")), {
+    subClassId: (b.subClassId as string) ?? null,
+    subClassNama: (b.subClassNama as string) ?? null,
+    akuiNamaSama: b.akuiNamaSama === true,
+    by: ((b.by ?? b.createdBy) as string) ?? null,
+  });
+  return res.ok ? c.json(res) : c.json({ error: res.error }, 400);
+});
+
+app.post("/klasifikasi/review/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { status?: string };
+  try { body = await c.req.json(); } catch { body = {}; }
+  const r = await setKlasifikasiReviewStatus(Number(c.req.param("id")), body.status ?? "");
+  return r.ok ? c.json({ ok: true }) : c.json({ error: r.error }, 400);
+});
+
 // ── Pricelist — harga jual per produk (setup HoD/Purchasing → publish → AM) ──
 // Role-guard ada di BFF (apps/web /api/pricelist*); di sini hanya validasi DB.
 app.get("/pricelist", async (c) => {
@@ -2434,77 +3211,53 @@ app.delete("/pricelist/:id", async (c) => {
   return c.json(r, r.deleted ? 200 : 404);
 });
 
-// ── F51 Dana Ops / Petty Cash Realization (General Affairs) ──
-const DANA_OPS_STATUSES: DanaOpsStatus[] = ["in_progress", "realized"];
+// ── F39 Supplier ETA Tracker ──
+const SUPPLIER_ETA_STATUSES: SupplierEtaStatus[] = ["pending", "arrived", "cancelled"];
 
-app.get("/dana-ops", async (c) => {
+app.get("/supplier-eta", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const status = c.req.query("status");
-  if (status && !DANA_OPS_STATUSES.includes(status as DanaOpsStatus)) {
-    return c.json({ error: `status harus salah satu dari ${DANA_OPS_STATUSES.join(", ")}` }, 400);
-  }
-  const rows = await listDanaOps({
-    status: status as DanaOpsStatus | undefined,
-    cabang: c.req.query("cabang") || undefined,
-    limit: c.req.query("limit") ? Number(c.req.query("limit")) : undefined,
+  const rows = await listSupplierEta({
+    status: SUPPLIER_ETA_STATUSES.includes(status as SupplierEtaStatus) ? (status as SupplierEtaStatus) : undefined,
+    vendorId: c.req.query("vendor_id") || undefined,
+    overdueOnly: c.req.query("overdue") === "true",
   });
   return c.json({ count: rows.length, rows });
 });
 
-app.post("/dana-ops", async (c) => {
+app.post("/supplier-eta", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let body: DanaOpsInput;
-  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
-  if (!body.requested_by || !body.purpose || body.amount_requested == null) {
-    return c.json({ error: "requested_by, purpose, amount_requested wajib" }, 400);
+  let body: SupplierEtaInput;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
   }
-  const row = await createDanaOps(body);
+  if (!body.vendor_name?.trim() || !body.item_desc?.trim() || !body.eta_date) {
+    return c.json({ error: "vendor_name, item_desc, eta_date wajib" }, 400);
+  }
+  const row = await createSupplierEta(body);
   return c.json(row, 201);
 });
 
-app.get("/dana-ops/:id", async (c) => {
+app.patch("/supplier-eta/:id", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  const row = await getDanaOps(c.req.param("id"));
-  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
-});
-
-app.patch("/dana-ops/:id", async (c) => {
-  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let body: DanaOpsUpdate;
-  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
-  if (body.status && !DANA_OPS_STATUSES.includes(body.status)) {
-    return c.json({ error: `status harus salah satu dari ${DANA_OPS_STATUSES.join(", ")}` }, 400);
+  let body: SupplierEtaUpdate;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
   }
-  const row = await updateDanaOps(c.req.param("id"), body);
+  if (body.status && !SUPPLIER_ETA_STATUSES.includes(body.status)) {
+    return c.json({ error: "status tidak valid" }, 400);
+  }
+  const row = await updateSupplierEta(c.req.param("id"), body);
   return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
 });
 
-app.delete("/dana-ops/:id", async (c) => {
+app.delete("/supplier-eta/:id", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  const r = await deleteDanaOps(c.req.param("id"));
-  return c.json(r, r.deleted ? 200 : 404);
-});
-
-app.post("/dana-ops/:id/items", async (c) => {
-  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let body: DanaOpsItemInput;
-  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
-  if (!body.description || body.amount == null) return c.json({ error: "description, amount wajib" }, 400);
-  const row = await addDanaOpsItem(c.req.param("id"), body);
-  return row ? c.json(row, 201) : c.json({ error: "dana_ops tidak ditemukan" }, 404);
-});
-
-app.patch("/dana-ops/:id/items/:itemId", async (c) => {
-  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let body: DanaOpsItemUpdate;
-  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
-  const row = await updateDanaOpsItem(c.req.param("id"), c.req.param("itemId"), body);
-  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
-});
-
-app.delete("/dana-ops/:id/items/:itemId", async (c) => {
-  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  const r = await deleteDanaOpsItem(c.req.param("id"), c.req.param("itemId"));
+  const r = await deleteSupplierEta(c.req.param("id"));
   return c.json(r, r.deleted ? 200 : 404);
 });
 
@@ -2553,6 +3306,44 @@ app.get("/accurate/:entity", async (c) => {
   const limit = Math.min(Math.max(Number(c.req.query("limit")) || 100, 1), 10000);
   const rows = await listMirror(entity, limit);
   return c.json({ entity, count: rows.length, rows });
+});
+
+// ── F37 Cross-Branch Stock Visibility — stok per gudang + korelasi ke total ──
+// Fungsi KEDUA di menu /inventory (fungsi pertama = cek stok agregat, lihat
+// GET /accurate/items di atas). Read-only: data masuk lewat importer
+// scripts/db/import_stock_branch.py, bukan lewat endpoint ini.
+app.get("/stock/warehouses", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listWarehouses({ aktifSaja: c.req.query("aktif") === "1" });
+  return c.json({ count: rows.length, warehouses: rows });
+});
+
+app.get("/stock/branch", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const wh = c.req.query("warehouse");
+  if (wh) {
+    // Validasi terhadap master supaya typo tidak balik "0 baris" yang
+    // menyesatkan (kelihatan seperti "gudang ini kosong").
+    const known = await listWarehouses();
+    if (!known.some((w) => w.kode === wh)) {
+      return c.json({ error: `warehouse tak dikenal: ${wh}`, valid: known.map((w) => w.kode) }, 400);
+    }
+  }
+  const out = await listStockBranch({
+    q: c.req.query("q") ?? undefined,
+    warehouse: wh ?? undefined,
+    hanyaSelisih: c.req.query("selisih") === "1",
+    hanyaNegatif: c.req.query("negatif") === "1",
+    tanpaData: c.req.query("tanpa_data") === "1",
+    limit: c.req.query("limit") ? Number(c.req.query("limit")) : undefined,
+    offset: c.req.query("offset") ? Number(c.req.query("offset")) : undefined,
+  });
+  return c.json({ count: out.rows.length, total_rows: out.total_rows, rows: out.rows });
+});
+
+app.get("/stock/branch/summary", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await stockBranchSummary());
 });
 
 // ── Log operasional: delivery / email / alert (port legacy *_log) ──
@@ -2673,6 +3464,13 @@ app.post("/reminders", async (c) => {
   }
   if (!body.am_id || !body.reminder_date || !body.note) {
     return c.json({ error: "am_id, reminder_date (YYYY-MM-DD), note wajib" }, 400);
+  }
+  // Write-guard row-level: AM murni hanya boleh bikin reminder atas namanya
+  // sendiri (kalau tidak, dia bisa menitipkan reminder ke AM lain padahal
+  // kalendernya sendiri saja yang terlihat).
+  const scope = await resolveScope(c.req.header("x-user-id"));
+  if (scope.amOnly && scope.amId && body.am_id !== scope.amId) {
+    return c.json({ error: "forbidden — hanya boleh membuat reminder untuk diri sendiri" }, 403);
   }
   const id = await createReminder({
     am_id: body.am_id,
@@ -3023,6 +3821,546 @@ app.post("/hitl/resolve", async (c) => {
     approver_id: body.approver_id,
   });
   return c.json(r, r.ok ? 200 : 400);
+});
+
+// ── F23: RFID/Cartridge Error Claim Tracker (Aftersales) ──
+const RFID_CLAIM_STATUSES: RfidCartridgeClaimStatus[] = ["pending", "resolved", "rejected"];
+// Asumsi (belum ada arahan eksplisit Direktur) — sama dgn threshold dokumentasi
+// registry lain di codebase ini: mime allowlist pdf/jpg/jpeg/png, cap 8MB.
+const RFID_CLAIM_FILE_MIME_ALLOWLIST = ["application/pdf", "image/jpeg", "image/png"];
+const RFID_CLAIM_FILE_MAX_BYTES = 8 * 1024 * 1024;
+
+function decodeRfidClaimFile(input: { file_name?: string; file_mime?: string; file_base64?: string }):
+  | { error: string }
+  | { file_name: string; file_mime: string; file_size: number; file_data: Buffer }
+  | null {
+  if (!input.file_base64) return null;
+  if (!input.file_name || !input.file_mime) return { error: "file_name + file_mime wajib bila file_base64 dikirim" };
+  if (!RFID_CLAIM_FILE_MIME_ALLOWLIST.includes(input.file_mime)) {
+    return { error: "file_mime harus application/pdf, image/jpeg, atau image/png" };
+  }
+  let buf: Buffer;
+  try {
+    buf = Buffer.from(input.file_base64, "base64");
+  } catch {
+    return { error: "file_base64 tidak valid" };
+  }
+  if (buf.length === 0) return { error: "file kosong" };
+  if (buf.length > RFID_CLAIM_FILE_MAX_BYTES) return { error: "file maksimal 8MB" };
+  return { file_name: input.file_name, file_mime: input.file_mime, file_size: buf.length, file_data: buf };
+}
+
+app.post("/aftersales/rfid-cartridge-claims", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: {
+    device_name?: string;
+    cartridge_name?: string;
+    lot_number?: string;
+    serial_number?: string;
+    customer_name?: string;
+    error_description?: string;
+    reported_date?: string;
+    reported_by?: string;
+    cabang?: string;
+    notes?: string;
+    file_name?: string;
+    file_mime?: string;
+    file_base64?: string;
+  };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (
+    !body.device_name ||
+    !body.cartridge_name ||
+    !body.customer_name ||
+    !body.error_description ||
+    !body.reported_by
+  ) {
+    return c.json(
+      { error: "device_name, cartridge_name, customer_name, error_description, reported_by wajib" },
+      400,
+    );
+  }
+  const file = decodeRfidClaimFile(body);
+  if (file && "error" in file) return c.json({ error: file.error }, 400);
+  const r = await createRfidCartridgeClaim({
+    device_name: body.device_name,
+    cartridge_name: body.cartridge_name,
+    lot_number: body.lot_number,
+    serial_number: body.serial_number,
+    customer_name: body.customer_name,
+    error_description: body.error_description,
+    reported_date: body.reported_date,
+    reported_by: body.reported_by,
+    cabang: body.cabang,
+    notes: body.notes,
+    ...(file
+      ? { file_name: file.file_name, file_mime: file.file_mime, file_size: file.file_size, file_data: file.file_data }
+      : {}),
+  });
+  return c.json(r, 201);
+});
+
+app.get("/aftersales/rfid-cartridge-claims", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const status = c.req.query("status");
+  if (status && !RFID_CLAIM_STATUSES.includes(status as RfidCartridgeClaimStatus)) {
+    return c.json({ error: "status harus pending|resolved|rejected" }, 400);
+  }
+  const claims = await listRfidCartridgeClaims(status as RfidCartridgeClaimStatus | undefined);
+  return c.json({ count: claims.length, claims });
+});
+
+app.get("/aftersales/rfid-cartridge-claims/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const claim = await getRfidCartridgeClaim(c.req.param("id"));
+  return claim ? c.json(claim) : c.json({ error: "not found" }, 404);
+});
+
+// Passthrough mentah (BUKAN JSON) — dipanggil langsung, bukan lewat relay() BFF.
+app.get("/aftersales/rfid-cartridge-claims/:id/file", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const file = await getRfidCartridgeClaimFile(c.req.param("id"));
+  if (!file) return c.json({ error: "not found" }, 404);
+  return new Response(file.file_data, {
+    headers: {
+      "content-type": file.file_mime,
+      "content-disposition": `attachment; filename="${encodeURIComponent(file.file_name)}"`,
+    },
+  });
+});
+
+app.patch("/aftersales/rfid-cartridge-claims/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: {
+    device_name?: string;
+    cartridge_name?: string;
+    lot_number?: string | null;
+    serial_number?: string | null;
+    customer_name?: string;
+    error_description?: string;
+    reported_date?: string;
+    reported_by?: string;
+    cabang?: string | null;
+    status?: string;
+    resolution_notes?: string | null;
+    notes?: string | null;
+    file_name?: string;
+    file_mime?: string;
+    file_base64?: string;
+  };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (body.status && !RFID_CLAIM_STATUSES.includes(body.status as RfidCartridgeClaimStatus)) {
+    return c.json({ error: "status harus pending|resolved|rejected" }, 400);
+  }
+  const file = decodeRfidClaimFile(body);
+  if (file && "error" in file) return c.json({ error: file.error }, 400);
+  const r = await updateRfidCartridgeClaim(c.req.param("id"), {
+    device_name: body.device_name,
+    cartridge_name: body.cartridge_name,
+    lot_number: body.lot_number,
+    serial_number: body.serial_number,
+    customer_name: body.customer_name,
+    error_description: body.error_description,
+    reported_date: body.reported_date,
+    reported_by: body.reported_by,
+    cabang: body.cabang,
+    status: body.status as RfidCartridgeClaimStatus | undefined,
+    resolution_notes: body.resolution_notes,
+    notes: body.notes,
+    ...(file
+      ? { file_name: file.file_name, file_mime: file.file_mime, file_size: file.file_size, file_data: file.file_data }
+      : {}),
+  });
+  return c.json(r, r.updated ? 200 : 404);
+});
+
+app.delete("/aftersales/rfid-cartridge-claims/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await deleteRfidCartridgeClaim(c.req.param("id"));
+  return c.json(r, r.deleted ? 200 : 404);
+});
+
+// ── F43 Kurir/Ekspedisi Performance Dashboard (Shipping) ──
+// created_by dipercaya dari BFF (identitas/gating di layer WEB, pola sama
+// created_by di modul lain — lihat CLAUDE.md gotcha "Admin-gate di layer WEB").
+// /courier-deliveries/summary didaftarkan SEBELUM /:id (pola sama
+// /fund-requests/hod-options) supaya "summary" tak pernah kena-match sbg id.
+app.get("/courier-deliveries/summary", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const from = c.req.query("from") ?? undefined;
+  const to = c.req.query("to") ?? undefined;
+  return c.json(await getCourierPerformanceSummary({ from, to }));
+});
+
+app.get("/courier-deliveries", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const statusQ = c.req.query("status");
+  const status = isValidCourierDeliveryStatus(statusQ) ? statusQ : undefined;
+  return c.json(
+    await listCourierDeliveries({
+      status,
+      kurirName: c.req.query("kurir_name") ?? undefined,
+      cabang: c.req.query("cabang") ?? undefined,
+      from: c.req.query("from") ?? undefined,
+      to: c.req.query("to") ?? undefined,
+    }),
+  );
+});
+
+app.post("/courier-deliveries", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: {
+    kurir_name?: string; kurir_wa_number?: string | null; sj_number?: string | null;
+    customer_name?: string | null; cabang?: string | null; tanggal_kirim?: string;
+    target_tiba_date?: string | null; distance_km?: number | null; notes?: string | null;
+    created_by?: string | null;
+  };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.kurir_name?.trim()) return c.json({ error: "kurir_name wajib diisi" }, 400);
+  try {
+    const created = await createCourierDelivery({
+      kurir_name: body.kurir_name,
+      kurir_wa_number: body.kurir_wa_number ?? null,
+      sj_number: body.sj_number ?? null,
+      customer_name: body.customer_name ?? null,
+      cabang: body.cabang ?? null,
+      tanggal_kirim: body.tanggal_kirim,
+      target_tiba_date: body.target_tiba_date ?? null,
+      distance_km: body.distance_km != null ? Number(body.distance_km) : null,
+      notes: body.notes ?? null,
+      created_by: body.created_by ?? null,
+    });
+    return c.json(created, 201);
+  } catch (e) {
+    if (e instanceof CourierDeliveryError) return c.json({ error: e.message }, e.status as 400);
+    throw e;
+  }
+});
+
+app.get("/courier-deliveries/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const row = await getCourierDelivery(c.req.param("id"));
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+});
+
+app.patch("/courier-deliveries/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: {
+    kurir_name?: string; kurir_wa_number?: string | null; sj_number?: string | null;
+    customer_name?: string | null; cabang?: string | null; tanggal_kirim?: string;
+    target_tiba_date?: string | null; tanggal_tiba?: string | null; distance_km?: number | null;
+    status?: CourierDeliveryStatus; notes?: string | null;
+  };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  try {
+    const updated = await updateCourierDelivery(c.req.param("id"), body);
+    return c.json(updated);
+  } catch (e) {
+    if (e instanceof CourierDeliveryError) return c.json({ error: e.message }, e.status as 400 | 404);
+    throw e;
+  }
+});
+
+app.delete("/courier-deliveries/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const result = await deleteCourierDelivery(c.req.param("id"));
+  return c.json(result, result.deleted ? 200 : 404);
+});
+
+// ── F44 Document Print Spec Standardizer (Shipping) ──
+// created_by dipercaya dari BFF, pola sama created_by F43 di atas.
+app.get("/print-specs", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const activeQ = c.req.query("is_active");
+  const isActive = activeQ === "true" ? true : activeQ === "false" ? false : undefined;
+  return c.json(await listPrintSpecs({ isActive }));
+});
+
+app.post("/print-specs", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: {
+    document_type?: string; paper_size?: PaperSize; orientation?: Orientation;
+    margin_top_mm?: number; margin_right_mm?: number; margin_bottom_mm?: number; margin_left_mm?: number;
+    font_family?: string; font_size_pt?: number; has_letterhead?: boolean;
+    header_spec?: string | null; footer_spec?: string | null; notes?: string | null;
+    created_by?: string | null;
+  };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.document_type?.trim()) return c.json({ error: "document_type wajib diisi" }, 400);
+  try {
+    const created = await createPrintSpec({ ...body, document_type: body.document_type });
+    return c.json(created, 201);
+  } catch (e) {
+    if (e instanceof PrintSpecError) return c.json({ error: e.message }, e.status as 400 | 409);
+    throw e;
+  }
+});
+
+app.get("/print-specs/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const row = await getPrintSpec(c.req.param("id"));
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+});
+
+app.patch("/print-specs/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: {
+    document_type?: string; paper_size?: PaperSize; orientation?: Orientation;
+    margin_top_mm?: number; margin_right_mm?: number; margin_bottom_mm?: number; margin_left_mm?: number;
+    font_family?: string; font_size_pt?: number; has_letterhead?: boolean;
+    header_spec?: string | null; footer_spec?: string | null; notes?: string | null;
+    is_active?: boolean;
+  };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  try {
+    const updated = await updatePrintSpec(c.req.param("id"), body);
+    return c.json(updated);
+  } catch (e) {
+    if (e instanceof PrintSpecError) return c.json({ error: e.message }, e.status as 400 | 404 | 409);
+    throw e;
+  }
+});
+
+app.delete("/print-specs/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const result = await deletePrintSpec(c.req.param("id"));
+  return c.json(result, result.deleted ? 200 : 404);
+});
+
+// ── Instalasi Alat Lifecycle (F22, AFTERSALES) — checklist 5 langkah sekuensial:
+// PO control → SJ → Teknisi assign → Training done → BAST. ──
+app.get("/teknisi-roster", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const teknisi = await listTeknisi();
+  return c.json({ count: teknisi.length, teknisi });
+});
+
+app.post("/service-tickets", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { complaint_text?: string; customer_name?: string; area?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.complaint_text?.trim()) return c.json({ error: "complaint_text wajib" }, 400);
+  const ticket = await createTicket({
+    complaint_text: body.complaint_text,
+    customer_name: body.customer_name,
+    area: body.area,
+    source: "manual",
+  });
+  return c.json(ticket, 201);
+});
+
+app.get("/service-tickets", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const tickets = await listTickets(c.req.query("status") || undefined);
+  return c.json({ count: tickets.length, tickets });
+});
+
+app.get("/service-tickets/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const t = await getTicketById(c.req.param("id"));
+  return t ? c.json(t) : c.json({ error: "ticket tidak ditemukan" }, 404);
+});
+
+app.post("/service-tickets/:id/resolve", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { note?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    // note opsional
+  }
+  const r = await resolveTicket(c.req.param("id"), body.note);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+// ── F39 Supplier ETA Tracker ──
+// ── F36 Inbound Receiving Checklist ──
+const INBOUND_RECEIVING_STATUSES: InboundReceivingStatus[] = ["in_progress", "completed"];
+
+app.get("/inbound-receiving", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const status = c.req.query("status");
+  const rows = await listInboundReceiving({
+    status: INBOUND_RECEIVING_STATUSES.includes(status as InboundReceivingStatus) ? (status as InboundReceivingStatus) : undefined,
+    vendorId: c.req.query("vendor_id") || undefined,
+    cabang: c.req.query("cabang") || undefined,
+  });
+  return c.json({ count: rows.length, rows });
+});
+
+app.post("/inbound-receiving", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: InboundReceivingInput;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.vendor_name?.trim()) {
+    return c.json({ error: "vendor_name wajib" }, 400);
+  }
+  const row = await createInboundReceiving(body);
+  return c.json(row, 201);
+});
+
+app.get("/inbound-receiving/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const row = await getInboundReceiving(c.req.param("id"));
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+});
+
+app.patch("/inbound-receiving/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: InboundReceivingUpdate;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (body.status && !INBOUND_RECEIVING_STATUSES.includes(body.status)) {
+    return c.json({ error: "status tidak valid" }, 400);
+  }
+  const row = await updateInboundReceiving(c.req.param("id"), body);
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+});
+
+app.delete("/inbound-receiving/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await deleteInboundReceiving(c.req.param("id"));
+  return c.json(r, r.deleted ? 200 : 404);
+});
+
+app.post("/inbound-receiving/:id/items", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { label?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.label?.trim()) return c.json({ error: "label wajib" }, 400);
+  const row = await addInboundReceivingItem(c.req.param("id"), body.label.trim());
+  return row ? c.json(row, 201) : c.json({ error: "tidak ditemukan" }, 404);
+});
+
+app.patch("/inbound-receiving/:id/items/:itemId", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: InboundReceivingItemUpdate;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const row = await updateInboundReceivingItem(c.req.param("id"), c.req.param("itemId"), body);
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+});
+
+app.delete("/inbound-receiving/:id/items/:itemId", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await deleteInboundReceivingItem(c.req.param("id"), c.req.param("itemId"));
+  return c.json(r, r.deleted ? 200 : 404);
+});
+
+// ── F51 Dana Ops / Petty Cash Realization (General Affairs) ──
+const DANA_OPS_STATUSES: DanaOpsStatus[] = ["in_progress", "realized"];
+
+app.get("/dana-ops", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const status = c.req.query("status");
+  if (status && !DANA_OPS_STATUSES.includes(status as DanaOpsStatus)) {
+    return c.json({ error: `status harus salah satu dari ${DANA_OPS_STATUSES.join(", ")}` }, 400);
+  }
+  const rows = await listDanaOps({
+    status: status as DanaOpsStatus | undefined,
+    cabang: c.req.query("cabang") || undefined,
+    limit: c.req.query("limit") ? Number(c.req.query("limit")) : undefined,
+  });
+  return c.json({ count: rows.length, rows });
+});
+
+app.post("/dana-ops", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: DanaOpsInput;
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  if (!body.requested_by || !body.purpose || body.amount_requested == null) {
+    return c.json({ error: "requested_by, purpose, amount_requested wajib" }, 400);
+  }
+  const row = await createDanaOps(body);
+  return c.json(row, 201);
+});
+
+app.get("/dana-ops/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const row = await getDanaOps(c.req.param("id"));
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+});
+
+app.patch("/dana-ops/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: DanaOpsUpdate;
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  if (body.status && !DANA_OPS_STATUSES.includes(body.status)) {
+    return c.json({ error: `status harus salah satu dari ${DANA_OPS_STATUSES.join(", ")}` }, 400);
+  }
+  const row = await updateDanaOps(c.req.param("id"), body);
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+});
+
+app.delete("/dana-ops/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await deleteDanaOps(c.req.param("id"));
+  return c.json(r, r.deleted ? 200 : 404);
+});
+
+app.post("/dana-ops/:id/items", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: DanaOpsItemInput;
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  if (!body.description || body.amount == null) return c.json({ error: "description, amount wajib" }, 400);
+  const row = await addDanaOpsItem(c.req.param("id"), body);
+  return row ? c.json(row, 201) : c.json({ error: "dana_ops tidak ditemukan" }, 404);
+});
+
+app.patch("/dana-ops/:id/items/:itemId", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: DanaOpsItemUpdate;
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  const row = await updateDanaOpsItem(c.req.param("id"), c.req.param("itemId"), body);
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+});
+
+app.delete("/dana-ops/:id/items/:itemId", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await deleteDanaOpsItem(c.req.param("id"), c.req.param("itemId"));
+  return c.json(r, r.deleted ? 200 : 404);
 });
 
 const port = Number(process.env.PORT ?? 4000);

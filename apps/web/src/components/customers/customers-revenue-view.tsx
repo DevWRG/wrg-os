@@ -46,7 +46,10 @@ interface Monthly {
 }
 
 const rp = (n: number) => new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(n);
-const jt = (n: number) => (n <= 0 ? "—" : "Rp" + new Intl.NumberFormat("id-ID", { notation: "compact", maximumFractionDigits: 1 }).format(n).replace(/\s/g, "").toLowerCase());
+// 2 desimal (bukan 1 spt tabel lain): omzet per-customer sering di orde ratusan
+// ribu–jutaan, dan 1 desimal bikin Rp1.664.000 tampil "Rp1,7jt" → kelihatan beda
+// dari nilai penuh di panel detail. Nilai penuh tetap pakai rp().
+const jt = (n: number) => (n <= 0 ? "—" : "Rp" + new Intl.NumberFormat("id-ID", { notation: "compact", maximumFractionDigits: 2 }).format(n).replace(/\s/g, "").toLowerCase());
 const tgl = (v: string | null) => {
   if (!v) return "—";
   const [y, m, d] = v.split("-");
