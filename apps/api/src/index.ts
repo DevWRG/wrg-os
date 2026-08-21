@@ -328,6 +328,7 @@ import {
   markKirim as markShipmentKirim,
   markBast as markShipmentBast,
   markTerima as markShipmentTerima,
+  markBukti as markShipmentBukti,
 } from "./repo/shipment-tracking.js";
 
 import {
@@ -338,9 +339,7 @@ import {
   type AtkStockOpnameInput,
   type AtkStockOpnameUpdate,
 } from "./repo/atk-stock-opname.js";
-import {
-  markBukti as markShipmentBukti,
-} from "./repo/shipment-tracking.js";
+
 const app = new Hono();
 
 // Selalu balas JSON saat error / route tak ada — supaya BFF & client tak pernah
