@@ -10,7 +10,7 @@ import {
   Bell, MapPin, ListChecks, Swords, CalendarOff, CalendarDays, CalendarRange,
   Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, Tags, SlidersHorizontal, Microscope,
   Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, BookOpen, Calculator,
-  Wallet, Coins, Radio,
+  Wallet, Coins, Route, Radio,
   type LucideIcon,
 } from "lucide-react";
 
@@ -216,6 +216,15 @@ export const NAV: NavGroup[] = [
       { title: "Shipments", url: "/shipments", icon: Truck },
       { title: "Suppliers", url: "/suppliers", icon: Factory },
       { title: "HITL Review", url: "/hitl", icon: ClipboardCheck },
+    ],
+  },
+  {
+    // Domain Shipping (F43) — standalone, tidak tergantung shipment_tracking/
+    // pickup_plan (branch F12/F42/F45/F93 belum merge ke dev). Role min
+    // Karyawan: semua tim boleh mencatat & lihat performa pengiriman.
+    label: "Shipping",
+    items: [
+      { title: "Kurir/Ekspedisi Performance", url: "/courier-performance", icon: Route, badge: "NEW" },
     ],
   },
   {

@@ -211,6 +211,17 @@ import {
   deleteRfidCartridgeClaim,
   type ClaimStatus as RfidCartridgeClaimStatus,
 } from "./repo/rfid-cartridge-claim.js";
+import {
+  createCourierDelivery,
+  listCourierDeliveries,
+  getCourierDelivery,
+  updateCourierDelivery,
+  deleteCourierDelivery,
+  getCourierPerformanceSummary,
+  isValidCourierDeliveryStatus,
+  CourierDeliveryError,
+  type CourierDeliveryStatus,
+} from "./repo/courier-delivery.js";
 
 const app = new Hono();
 
@@ -3697,6 +3708,101 @@ app.delete("/aftersales/rfid-cartridge-claims/:id", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const r = await deleteRfidCartridgeClaim(c.req.param("id"));
   return c.json(r, r.deleted ? 200 : 404);
+});
+
+// ── F43 Kurir/Ekspedisi Performance Dashboard (Shipping) ──
+// created_by dipercaya dari BFF (identitas/gating di layer WEB, pola sama
+// created_by di modul lain — lihat CLAUDE.md gotcha "Admin-gate di layer WEB").
+// /courier-deliveries/summary didaftarkan SEBELUM /:id (pola sama
+// /fund-requests/hod-options) supaya "summary" tak pernah kena-match sbg id.
+app.get("/courier-deliveries/summary", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const from = c.req.query("from") ?? undefined;
+  const to = c.req.query("to") ?? undefined;
+  return c.json(await getCourierPerformanceSummary({ from, to }));
+});
+
+app.get("/courier-deliveries", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const statusQ = c.req.query("status");
+  const status = isValidCourierDeliveryStatus(statusQ) ? statusQ : undefined;
+  return c.json(
+    await listCourierDeliveries({
+      status,
+      kurirName: c.req.query("kurir_name") ?? undefined,
+      cabang: c.req.query("cabang") ?? undefined,
+      from: c.req.query("from") ?? undefined,
+      to: c.req.query("to") ?? undefined,
+    }),
+  );
+});
+
+app.post("/courier-deliveries", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: {
+    kurir_name?: string; kurir_wa_number?: string | null; sj_number?: string | null;
+    customer_name?: string | null; cabang?: string | null; tanggal_kirim?: string;
+    target_tiba_date?: string | null; distance_km?: number | null; notes?: string | null;
+    created_by?: string | null;
+  };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.kurir_name?.trim()) return c.json({ error: "kurir_name wajib diisi" }, 400);
+  try {
+    const created = await createCourierDelivery({
+      kurir_name: body.kurir_name,
+      kurir_wa_number: body.kurir_wa_number ?? null,
+      sj_number: body.sj_number ?? null,
+      customer_name: body.customer_name ?? null,
+      cabang: body.cabang ?? null,
+      tanggal_kirim: body.tanggal_kirim,
+      target_tiba_date: body.target_tiba_date ?? null,
+      distance_km: body.distance_km != null ? Number(body.distance_km) : null,
+      notes: body.notes ?? null,
+      created_by: body.created_by ?? null,
+    });
+    return c.json(created, 201);
+  } catch (e) {
+    if (e instanceof CourierDeliveryError) return c.json({ error: e.message }, e.status as 400);
+    throw e;
+  }
+});
+
+app.get("/courier-deliveries/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const row = await getCourierDelivery(c.req.param("id"));
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+});
+
+app.patch("/courier-deliveries/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: {
+    kurir_name?: string; kurir_wa_number?: string | null; sj_number?: string | null;
+    customer_name?: string | null; cabang?: string | null; tanggal_kirim?: string;
+    target_tiba_date?: string | null; tanggal_tiba?: string | null; distance_km?: number | null;
+    status?: CourierDeliveryStatus; notes?: string | null;
+  };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  try {
+    const updated = await updateCourierDelivery(c.req.param("id"), body);
+    return c.json(updated);
+  } catch (e) {
+    if (e instanceof CourierDeliveryError) return c.json({ error: e.message }, e.status as 400 | 404);
+    throw e;
+  }
+});
+
+app.delete("/courier-deliveries/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const result = await deleteCourierDelivery(c.req.param("id"));
+  return c.json(result, result.deleted ? 200 : 404);
 });
 
 const port = Number(process.env.PORT ?? 4000);
