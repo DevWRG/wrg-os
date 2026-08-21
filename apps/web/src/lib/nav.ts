@@ -29,6 +29,7 @@ import {
   TrendingUpDown,
   QrCode,
   Stamp,
+  TrendingUp,
   type LucideIcon,
 } from "lucide-react";
 
@@ -301,6 +302,11 @@ export const NAV: NavGroup[] = [
       // (MAGANG-FEATURES.md), gate Direktur/HoD/admin (bukan executive-access.ts,
       // ini laporan Purchasing biasa — lihat purchase-forecast-access.ts).
       { title: "Forecast vs Actual PO", url: "/purchase-forecast", icon: TrendingUpDown, badge: "NEW", show: canViewPurchaseForecast },
+      // F19 — scan buffer (di sini) + ED (F38) → usulan forecast, Supply
+      // Chain review/edit, ajukan ke approval berjenjang F11. Ditaruh
+      // Purchasing (bukan CRM spt label blueprint) krn pemakainya
+      // Supply Chain + datanya dari Stok Gudang/ED Watch section ini.
+      { title: "Forecast Submission", url: "/forecast-submission", icon: TrendingUp, badge: "NEW" },
     ],
   },
   {

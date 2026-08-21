@@ -523,6 +523,15 @@ import {
   notifyCurrentStep,
   getAttachmentFile,
 } from "./repo/approval.js";
+import {
+  generateSuggestions,
+  listSuggestions,
+  updateSuggestion,
+  dismissSuggestion,
+  submitSuggestion,
+  listBufferConfig,
+  upsertBufferConfig,
+} from "./repo/forecast.js";
 const app = new Hono();
 
 // Selalu balas JSON saat error / route tak ada — supaya BFF & client tak pernah
@@ -1708,61 +1717,6 @@ app.post("/sales/docs/:id/cancel", async (c) => {
   return c.json(r, r.ok ? 200 : 400);
 });
 
-// F15 SPH Generator — form intake AM: pilih item katalog product_pricelist
-// PERSIS (bukan ketik nama), qty, diskon minta. Body:
-// { deal_id?, customer_id, customer_name, am_id?, periode?, items: [{pricelist_item_id, qty, diskon_requested}], created_by? }.
-app.post("/sph", async (c) => {
-  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let body: Parameters<typeof createSphDraft>[0] | undefined;
-  try {
-    body = await c.req.json();
-  } catch {
-    return c.json({ error: "invalid JSON body" }, 400);
-  }
-  if (!body?.customer_name) {
-    return c.json({ error: "customer_name wajib" }, 400);
-  }
-  const r = await createSphDraft(body);
-  return c.json(r, r.ok ? 201 : 400);
-});
-
-app.get("/sph/:id", async (c) => {
-  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  const detail = await getSphDetail(c.req.param("id"));
-  if (!detail) return c.json({ error: "dokumen tidak ditemukan" }, 404);
-  return c.json(detail);
-});
-
-// Tahap 1/2 approval SPH (HOD Business). draft → hod_review. Tahap 2 pakai
-// endpoint sama dgn doc_type lain: POST /sales/docs/:id/approve.
-app.post("/sph/:id/review", async (c) => {
-  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let body: { reviewer_id?: string } = {};
-  try {
-    body = await c.req.json();
-  } catch {
-    /* body opsional */
-  }
-  const r = await hodReviewSph(c.req.param("id"), body.reviewer_id);
-  return c.json(r, r.ok ? 200 : 400);
-});
-
-// HANDOVER §6 — Admin Penawaran konfirmasi 1 baris item nama-varian-kembar.
-// Body: { line_item_id, confirmed_by? }. Wajib dilakukan tiap baris
-// unconfirmed sebelum POST /sales/docs/:id/approve bisa lolos utk SPH.
-app.post("/sph/:id/confirm-variant", async (c) => {
-  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let body: { line_item_id?: number; confirmed_by?: string } = {};
-  try {
-    body = await c.req.json();
-  } catch {
-    return c.json({ error: "invalid JSON body" }, 400);
-  }
-  if (!body.line_item_id) return c.json({ error: "line_item_id wajib" }, 400);
-  const r = await confirmSphVariant(c.req.param("id"), body.line_item_id, body.confirmed_by);
-  return c.json(r, r.ok ? 200 : 400);
-});
-
 // F11 Approval Engine — base/generic (migrasi 106). Body:
 // { title, description?, nominal?, requestedBy, requestedByWa? }.
 app.post("/approval-requests", async (c) => {
@@ -1835,6 +1789,142 @@ app.get("/approval-requests/:id/attachments/:attachmentId", async (c) => {
   });
 });
 
+// F19 Forecast Submission Engine — scan gudang (F37 stok + F38 ED) → usulan.
+// Manual trigger (tombol "Generate Usulan"), bukan cron di versi ini.
+app.post("/forecast/generate", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await generateSuggestions());
+});
+
+app.get("/forecast/suggestions", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listSuggestions(c.req.query("status") || undefined);
+  return c.json({ count: rows.length, suggestions: rows });
+});
+
+app.patch("/forecast/suggestions/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { finalQty?: number | null; notes?: string | null } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const r = await updateSuggestion(c.req.param("id"), body);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.post("/forecast/suggestions/:id/dismiss", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { reviewedBy?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    /* opsional */
+  }
+  const r = await dismissSuggestion(c.req.param("id"), body.reviewedBy);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.post("/forecast/suggestions/:id/submit", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { submittedBy?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.submittedBy) return c.json({ error: "submittedBy wajib" }, 400);
+  const r = await submitSuggestion(c.req.param("id"), body.submittedBy);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.get("/forecast/buffer-config", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json({ rows: await listBufferConfig() });
+});
+
+app.post("/forecast/buffer-config", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { itemId?: number; warehouseKode?: string; bufferQty?: number; updatedBy?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.itemId || !body.warehouseKode || body.bufferQty == null) {
+    return c.json({ error: "itemId, warehouseKode, bufferQty wajib" }, 400);
+  }
+  const r = await upsertBufferConfig({
+    itemId: body.itemId,
+    warehouseKode: body.warehouseKode,
+    bufferQty: body.bufferQty,
+    updatedBy: body.updatedBy ?? null,
+  });
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+// F15 SPH Generator — form intake AM: pilih item katalog product_pricelist
+// PERSIS (bukan ketik nama), qty, diskon minta. Body:
+// { deal_id?, customer_id, customer_name, am_id?, periode?, items: [{pricelist_item_id, qty, diskon_requested}], created_by? }.
+app.post("/sph", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: Parameters<typeof createSphDraft>[0] | undefined;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body?.customer_name) {
+    return c.json({ error: "customer_name wajib" }, 400);
+  }
+  const r = await createSphDraft(body);
+  return c.json(r, r.ok ? 201 : 400);
+});
+
+app.get("/sph/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const detail = await getSphDetail(c.req.param("id"));
+  if (!detail) return c.json({ error: "dokumen tidak ditemukan" }, 404);
+  return c.json(detail);
+});
+
+// Tahap 1/2 approval SPH (HOD Business). draft → hod_review. Tahap 2 pakai
+// endpoint sama dgn doc_type lain: POST /sales/docs/:id/approve.
+app.post("/sph/:id/review", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { reviewer_id?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    /* body opsional */
+  }
+  const r = await hodReviewSph(c.req.param("id"), body.reviewer_id);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+// HANDOVER §6 — Admin Penawaran konfirmasi 1 baris item nama-varian-kembar.
+// Body: { line_item_id, confirmed_by? }. Wajib dilakukan tiap baris
+// unconfirmed sebelum POST /sales/docs/:id/approve bisa lolos utk SPH.
+app.post("/sph/:id/confirm-variant", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { line_item_id?: number; confirmed_by?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.line_item_id) return c.json({ error: "line_item_id wajib" }, 400);
+  const r = await confirmSphVariant(c.req.param("id"), body.line_item_id, body.confirmed_by);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+// F11 Approval Engine — base/generic (migrasi 106). Body:
+// { title, description?, nominal?, requestedBy, requestedByWa? }.
+// Retry manual kirim notifikasi tahap current — dipakai kalau step pertama
+// gagal krn kontak belum dikonfigurasi, lalu config-nya baru diisi belakangan.
+// Serve lampiran PDF/PNG approval (F11). Path-safe (getAttachmentFile join
+// di dalam APPROVAL_UPLOAD_ROOT), request_id+attachment_id harus cocok.
 // A7 Product Intelligence — agregasi intelijen produk dari pipeline (D1).
 app.post("/agents/a7/run", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
@@ -6672,6 +6762,11 @@ app.post("/asset-tags/:id/audit", async (c) => {
   const r = await recordAudit(c.req.param("id"), { audited_by: body.audited_by, found: body.found, note: body.note });
   return c.json(r, "error" in r ? 400 : 201);
 });
+
+// ── F37 Cross-Branch Stock Visibility — stok per gudang + korelasi ke total ──
+// Fungsi KEDUA di menu /inventory (fungsi pertama = cek stok agregat, lihat
+// GET /accurate/items di atas). Read-only: data masuk lewat importer
+// scripts/db/import_stock_branch.py, bukan lewat endpoint ini.
 
 const port = Number(process.env.PORT ?? 4000);
 serve({ fetch: app.fetch, port }, (info) => {
