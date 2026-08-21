@@ -73,6 +73,12 @@ export interface KontrolInput {
   /** Berapa kali kalibrasi per bulan (EXZ8000: per 25 hari). */
   nCal: number;
   ctrl: HargaInput;
+  /**
+   * EXZ8000: control Check-XR harganya beda dari Check-XN (di master ±2× lipat),
+   * dan mode `cbc_diff_ret_xr` memakai yang XR. Analyzer lain tidak punya ini →
+   * kosongkan, `ctrl` yang dipakai.
+   */
+  ctrlXr?: HargaInput;
   cal: HargaInput;
 }
 
@@ -93,7 +99,6 @@ export function overheadKontrol(
   exzMode: ExzMode,
 ): number {
   if (!hasil || D <= 0 || !kontrol.free) return 0;
-  const nettCtrl = nettOf(kontrol.ctrl);
   const nettCal = nettOf(kontrol.cal);
 
   if (kodeAnalyzer === "EXZ8000") {
@@ -101,12 +106,17 @@ export function overheadKontrol(
     if (exzMode !== "cbc_diff_xn" && exzMode !== "cbc_diff_ret_xr") return 0;
     const tests25 = D * 25;
     if (tests25 <= 0) return 0;
+    // Mode XR memakai control XR yang harganya berbeda.
+    const nettCtrl = nettOf(
+      exzMode === "cbc_diff_ret_xr" ? (kontrol.ctrlXr ?? kontrol.ctrl) : kontrol.ctrl,
+    );
     const qcReagen = kontrol.nQc * 25 * hasil.cyc;
     const calReagen = kontrol.nCal * hasil.cyc;
     return (nettCtrl + qcReagen + nettCal + calReagen) / tests25;
   }
 
   if (testsPerMonth <= 0) return 0;
+  const nettCtrl = nettOf(kontrol.ctrl);
   const qcReagen = kontrol.nQc * workDays * hasil.cyc;
   const calReagen = kontrol.nCal * hasil.cyc;
   return (nettCtrl + qcReagen + nettCal + calReagen) / testsPerMonth;

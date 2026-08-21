@@ -7,6 +7,12 @@ import { sendViaWaGateway } from "../wasend.js";
 // siklus berikutnya (bukan bikin baris baru). teknisi_wa_number SENGAJA teks
 // bebas — lihat 069_maintenance_schedule.sql, sama alasan dgn installation_unit.
 
+// postgres.js parse kolom date/timestamptz jadi objek Date — String(dateObj)
+// hasilnya verbose ("Wed Aug 05 2026 …"), bukan ISO. new Date(x).toISOString()
+// aman dipanggil baik x sudah Date maupun masih string dari driver.
+const toIsoTs = (x: unknown): string => new Date(x as string | Date).toISOString();
+const toIsoDate = (x: unknown): string => toIsoTs(x).slice(0, 10);
+
 export interface EligibleUnit {
   id: string;
   alat_name: string;
@@ -32,7 +38,7 @@ export async function listEligibleUnits(): Promise<EligibleUnit[]> {
     serial_number: r.serial_number ? String(r.serial_number) : null,
     customer_name: String(r.customer_name),
     cabang: r.cabang ? String(r.cabang) : null,
-    bast_at: r.bast_at ? String(r.bast_at) : null,
+    bast_at: r.bast_at ? toIsoTs(r.bast_at) : null,
   }));
 }
 
@@ -74,17 +80,17 @@ function mapRow(r: Record<string, unknown>): MaintenanceRow {
     customer_name: String(r.customer_name),
     cabang: r.cabang ? String(r.cabang) : null,
     interval_bulan: Number(r.interval_bulan),
-    reference_date: String(r.reference_date),
-    due_date: String(r.due_date),
+    reference_date: toIsoDate(r.reference_date),
+    due_date: toIsoDate(r.due_date),
     teknisi_name: r.teknisi_name ? String(r.teknisi_name) : null,
     teknisi_wa_number: r.teknisi_wa_number ? String(r.teknisi_wa_number) : null,
     status: String(r.status),
-    notified_at: r.notified_at ? String(r.notified_at) : null,
-    last_completed_at: r.last_completed_at ? String(r.last_completed_at) : null,
+    notified_at: r.notified_at ? toIsoTs(r.notified_at) : null,
+    last_completed_at: r.last_completed_at ? toIsoTs(r.last_completed_at) : null,
     last_note: r.last_note ? String(r.last_note) : null,
     completed_count: Number(r.completed_count),
-    created_at: String(r.created_at),
-    updated_at: String(r.updated_at),
+    created_at: toIsoTs(r.created_at),
+    updated_at: toIsoTs(r.updated_at),
   };
 }
 
@@ -201,11 +207,13 @@ export async function runMaintenanceReminders(): Promise<{ count: number; notifi
       `Teknisi: ${row.teknisi_name ?? "-"}`,
     ].join("\n");
     const gw = await sendViaWaGateway(target, msg);
-    if (gw.sent) {
+    // gw.sent juga true di mode stub & dry-run (lihat wasend.ts) — tanpa gerbang
+    // ini reminder ditandai terkirim walau WA tak pernah benar-benar dikirim.
+    if (gw.sent && !gw.stub && !gw.dryRun) {
       await markNotified(row.id);
       notified.push(row.id);
     }
-    // gagal kirim → dilewati, tetap 'scheduled', dicoba lagi run cron besok (retry-safe)
+    // gagal kirim (atau stub/dry-run) → dilewati, tetap 'scheduled', dicoba lagi run cron besok (retry-safe)
   }
   return { count: due.length, notified_ids: notified };
 }

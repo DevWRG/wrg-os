@@ -1,5 +1,10 @@
 import { db } from "../db.js";
 
+// postgres.js parse kolom timestamptz jadi objek Date — String(dateObj) hasilnya
+// verbose ("Wed Aug 05 2026 …"), bukan ISO. new Date(x).toISOString() aman
+// dipanggil baik x sudah Date maupun masih string dari driver.
+const toIsoTs = (x: unknown): string => new Date(x as string | Date).toISOString();
+
 // F22 — Instalasi Alat Lifecycle (AFTERSALES). Checklist 5 langkah SEKUENSIAL
 // per alat: po_control → sj → teknisi_assign → training → bast. Tabel
 // installation_unit SENGAJA self-contained (lihat 068_installation_lifecycle.sql)
@@ -51,23 +56,23 @@ function mapRow(r: Record<string, unknown>): InstallationRow {
     cabang: r.cabang ? String(r.cabang) : null,
     po_number: r.po_number ? String(r.po_number) : null,
     po_control_done: Boolean(r.po_control_done),
-    po_control_at: r.po_control_at ? String(r.po_control_at) : null,
+    po_control_at: r.po_control_at ? toIsoTs(r.po_control_at) : null,
     sj_number: r.sj_number ? String(r.sj_number) : null,
     sj_done: Boolean(r.sj_done),
-    sj_at: r.sj_at ? String(r.sj_at) : null,
+    sj_at: r.sj_at ? toIsoTs(r.sj_at) : null,
     teknisi_name: r.teknisi_name ? String(r.teknisi_name) : null,
     teknisi_assign_done: Boolean(r.teknisi_assign_done),
-    teknisi_assign_at: r.teknisi_assign_at ? String(r.teknisi_assign_at) : null,
+    teknisi_assign_at: r.teknisi_assign_at ? toIsoTs(r.teknisi_assign_at) : null,
     training_notes: r.training_notes ? String(r.training_notes) : null,
     training_done: Boolean(r.training_done),
-    training_at: r.training_at ? String(r.training_at) : null,
+    training_at: r.training_at ? toIsoTs(r.training_at) : null,
     bast_number: r.bast_number ? String(r.bast_number) : null,
     bast_done: Boolean(r.bast_done),
-    bast_at: r.bast_at ? String(r.bast_at) : null,
+    bast_at: r.bast_at ? toIsoTs(r.bast_at) : null,
     status: String(r.status),
     created_by: r.created_by ? String(r.created_by) : null,
-    created_at: String(r.created_at),
-    updated_at: String(r.updated_at),
+    created_at: toIsoTs(r.created_at),
+    updated_at: toIsoTs(r.updated_at),
   };
 }
 

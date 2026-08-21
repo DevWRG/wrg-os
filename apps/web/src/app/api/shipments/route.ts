@@ -3,9 +3,10 @@ import { gatewayFetch } from "@/lib/gateway";
 export const dynamic = "force-dynamic";
 
 // Gateway → apps/api GET /accurate/shipments (mirror surat jalan Accurate).
-// Dipakai F22 (Instalasi Alat) utk sumber pilihan No. SJ di langkah SJ —
-// exception domain CRM/Accurate DISETUJUI khusus utk kebutuhan ini (lihat
-// apps/web/src/components/crm/installation-row-actions.tsx).
+// Dipakai sebagai sumber pilihan No. SJ oleh F22 (Instalasi Alat, langkah SJ)
+// dan F12 (Tracking Pengiriman Digital, saat buat tracking baru) — dua PR
+// membuat file ini terpisah dengan isi identik. Exception domain CRM/Accurate
+// DISETUJUI khusus utk kebutuhan ini.
 export async function GET(req: Request) {
   const limit = new URL(req.url).searchParams.get("limit") || "200";
   try {

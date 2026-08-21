@@ -1,12 +1,23 @@
 import { db } from "../db.js";
 import { detectDaily, parseDaily, stripInvisible } from "../parsers/dailyplan.js";
-import { parseAmPlan, parseAmReport } from "../parsers/am.js";
+import { parseAmPlan, parseAmReport, bersihkanNamaCustomer } from "../parsers/am.js";
 import { sendViaWaGateway, type WaSendResult } from "../wasend.js";
 import { handleSalesAnalyticsQuery } from "./inbound-sales-analytics.js";
+import { detectCek, handleCekQuery } from "./inbound-cek.js";
 import { resolveSender } from "./master.js";
 import { upsertDailyTodo, computeIsLate } from "./todo.js";
 import { createReminder } from "./reminder.js";
+import { buildCekReply } from "./cek.js";
+import { ingestKlaim, type DocKlaimRow } from "./doc-klaim.js";
+import { createTicket, isKnownTeknisiSender } from "./serviceticket.js";
+import {
+  findBySjNumber,
+  markKirim,
+  markBast,
+  markBukti,
+} from "./shipment-tracking.js";
 import { matchTeknisiByName, createTeknisiReport } from "./readinessboard.js";
+
 
 // Role yang pakai alur AM per-customer (sales_plan/activity_log + foto), bukan todo.
 const AM_ROLES = new Set(["AM", "Teknisi"]);
@@ -27,12 +38,18 @@ const isAmRole = (role?: string | null) => AM_ROLES.has((role ?? "").trim());
 // Identitas pengirim di-match ke teknisi_capacity (F8, self-contained) via
 // matchTeknisiByName, BUKAN resolveSender/master_user.
 
-export type InboundKind =
-  | "plan" | "report" | "leads" | "update" | "sales"
-  | "install" | "servis" | "training" | "kalibrasi" | "none";
+export type InboundKind = "plan" | "report" | "leads" | "update" | "sales" | "cek" | "klaim" | "kirim" | "bast" | "bukti" | "install" | "servis" | "training" | "kalibrasi" | "none";
 
 const LEADS_UPDATE_LINE = /^\s*#\s*(leads|update)\b/i;
 const SALES_LINE = /^\s*#\s*sales\b/i;
+const CEK_LINE = /^\s*#\s*cek\b/i;
+const KLAIM_LINE = /^\s*#\s*klaim\b/i;
+// F12/F93 — hashtag SHIPPING dari kurir: "#KIRIM SJ-2026-001" / "#BAST
+// SJ-2026-001" / "#BUKTI SJ-2026-001" (caption foto atau teks biasa). TTF
+// sengaja tak ada hashtag (diabaikan per arahan Direktur rapat 2026-07-30 —
+// lihat docs/features/F12-*.md). #BUKTI (F93) — foto bukti terima + scan
+// tanda tangan, SETELAH bast (lihat docs/features/F93-*.md).
+const SHIPPING_LINE = /^\s*#\s*(kirim|bast|bukti)\b\s*(.*)$/i;
 const READINESS_LINE = /^\s*#\s*(install|servis|training|kalibrasi)\b/i;
 
 export function detectKind(body: string | null): InboundKind {
@@ -43,11 +60,27 @@ export function detectKind(body: string | null): InboundKind {
       const m = line.match(LEADS_UPDATE_LINE);
       if (m) return m[1].toLowerCase() as "leads" | "update";
       if (SALES_LINE.test(line)) return "sales";
+      // #CEK menangkap KEDUA varian (nomor dokumen F4 & CUSTOMER QW3) —
+      // pemisahannya di handler, bukan di detektor.
+      if (CEK_LINE.test(line)) return "cek";
+      if (KLAIM_LINE.test(line)) return "klaim";
+      const s = line.match(SHIPPING_LINE);
+      if (s) return s[1].toLowerCase() as "kirim" | "bast" | "bukti";
       const r = line.match(READINESS_LINE);
       if (r) return r[1].toLowerCase() as "install" | "servis" | "training" | "kalibrasi";
     }
   }
   return "none";
+}
+
+// Ambil No. SJ dari baris hashtag #KIRIM/#BAST — token pertama setelah hashtag.
+function extractSjNumber(body: string | null): string | null {
+  if (!body) return null;
+  for (const line of stripInvisible(body).split(/\r?\n/)) {
+    const m = line.match(SHIPPING_LINE);
+    if (m && m[2].trim()) return m[2].trim().split(/\s+/)[0];
+  }
+  return null;
 }
 
 export function isInboundEnabled(): boolean {
@@ -59,9 +92,15 @@ const wibDate = (): string => new Date(Date.now() + 7 * 3600 * 1000).toISOString
 function allowedGroups(): string[] {
   return (process.env.WA_INBOUND_GROUPS ?? "").split(",").map((s) => s.trim()).filter(Boolean);
 }
+// F26 — grup komplain customer (Service Ticket Triage), gated env terpisah dari
+// WA_INBOUND_GROUPS krn bukan grup AM. Kosong-by-default (grup belum ada) →
+// jid === "" tak pernah cocok jid asli, no-op aman.
+function complaintGroupJid(): string {
+  return process.env.F26_COMPLAINT_GROUP_JID?.trim() || "";
+}
 function groupAllowed(jid: string): boolean {
   const g = allowedGroups();
-  return g.length === 0 || g.includes(jid);
+  return g.length === 0 || g.includes(jid) || jid === complaintGroupJid();
 }
 
 export interface WaRow {
@@ -168,11 +207,12 @@ function progressBar(filled: number, total: number): string {
 }
 
 // Balasan #REPORT AM — selaras format legacy "Kapten" (EOD + progress + foto pending).
-function buildAmReportReply(
+// Diekspor untuk diuji tanpa DB (repo/inbound-reply.test.ts).
+export function buildAmReportReply(
   nama: string,
   tanggal: string,
   n: number,
-  res: { matched: number; unmatched: number },
+  res: { matched: number; unmatched: number; unmatchedNames?: string[] },
   planTotal: number,
   reported: number,
   pendingPhoto: string[],
@@ -181,6 +221,14 @@ function buildAmReportReply(
   if (planTotal > 0) s += `\n📊 ${reported}/${planTotal} customer selesai  ${progressBar(reported, planTotal)}`;
   s += `\n🎯 Match plan: ${res.matched}✓`;
   if (res.unmatched > 0) s += ` ${res.unmatched}⚠️`;
+  // Nama customer yang tak match SELALU disebut. Tanpa ini AM cuma melihat
+  // "1⚠️" dan tak punya cara tahu customer mana yang gagal dicocokkan —
+  // datanya sudah ada di unmatchedNames, dulu hanya tidak dicetak.
+  const namesTakMatch = res.unmatchedNames ?? [];
+  if (namesTakMatch.length > 0) {
+    s += `\n\n⚠️ *Di luar #PLAN hari ini (${namesTakMatch.length} customer):*\n${namesTakMatch.join(", ")}`;
+    s += "\n\nKalau memang dikunjungi, kirim ulang #PLAN lengkap (semua customer hari ini) lalu #REPORT lagi — biar terhitung selesai.";
+  }
   if (pendingPhoto.length > 0) {
     s += `\n\n⚠️ *Foto visit belum ada (${pendingPhoto.length} customer):*\n${pendingPhoto.join(", ")}`;
     s += "\n\nKirim foto Geo-Tagging Camera per customer dgn caption `Nama Customer` — fuzzy match auto-pair ke pending.";
@@ -188,6 +236,60 @@ function buildAmReportReply(
     s += `\n✅ Semua foto visit lengkap.`;
   }
   return s;
+}
+
+/**
+ * Tempelkan foto pesan `#REPORT` ke baris aktivitas yang LAHIR dari pesan itu.
+ *
+ * processInboundMessage() hanya menjalankan photoFollowup() saat
+ * `kind === "none"` — yaitu foto TANPA caption berhashtag. Padahal banyak AM
+ * melapor dengan foto ber-caption `#Report / Cust : X / Hasil : …`; pesan itu
+ * dirutekan ke jalur laporan, dan fotonya sendiri TIDAK PERNAH terpasang.
+ *
+ * Akibatnya di produksi: dari 1.250 baris activity_log yang berasal dari foto
+ * ber-caption #Report, 1.235 (98,8%) `photo_path`-nya NULL dan 1.242
+ * `photo_geotag`-nya NULL — padahal OCR sudah mengekstrak koordinatnya ke
+ * `wa_message.geo_lat`. Sidqi 589/589 (100%), Vicky 174/174, Firman 124/124.
+ * Dua akibat yang terlihat: kolom Geotag di kartu kunjungan nol untuk AM yang
+ * fotonya justru lengkap, dan bot menagih "Foto visit belum ada" untuk foto
+ * yang baru saja dikirim AM.
+ *
+ * Dipasang SEBELUM daftar `pending` foto dihitung, supaya balasan tidak lagi
+ * menagih foto yang sudah menempel.
+ */
+async function tempelFotoLaporan(row: WaRow, tanggal: string): Promise<Record<string, unknown> | null> {
+  if (!String(row.message_type ?? "").toLowerCase().startsWith("image") || !row.media_path) return null;
+  const sql = db();
+  const hasGeo = row.geo_lat != null && row.geo_lon != null;
+  // Jam overlay tetap dipakai walau koordinatnya gagal terbaca OCR — aplikasi
+  // kamera Luri/Iqbal sering kehilangan digit koordinat tapi jamnya utuh. Tanpa
+  // ini visit_timestamp mereka selalu null dan date_mismatch tak pernah jalan.
+  const g = parseGeoTs(row.geo_ts);
+  const adaGeo = hasGeo || g.dt != null;
+  const geo = adaGeo
+    ? { lat: row.geo_lat ?? null, lon: row.geo_lon ?? null, ts: row.geo_ts ?? null, address: row.geo_address ?? null }
+    : null;
+  const rows = await sql<{ id: string; plan_id: string | null }[]>`
+    UPDATE activity_log SET photo_path = ${row.media_path},
+      photo_geotag = ${geo ? sql.json(geo as unknown as Parameters<typeof sql.json>[0]) : null}
+    WHERE message_id = ${row.message_id} AND photo_path IS NULL
+    RETURNING id, plan_id`;
+  if (rows.length === 0) return { foto: "tak-ada-baris" };
+  let plan = 0;
+  if (adaGeo) {
+    for (const r of rows) {
+      if (!r.plan_id) continue;
+      await sql`
+        UPDATE sales_plan
+           SET visit_lat = COALESCE(${row.geo_lat ?? null}::numeric, visit_lat),
+               visit_lon = COALESCE(${row.geo_lon ?? null}::numeric, visit_lon),
+               visit_timestamp = COALESCE(${g.dt}::timestamptz, visit_timestamp),
+               visit_date_mismatch = COALESCE(${g.iso ? g.iso !== tanggal : null}::boolean, visit_date_mismatch)
+         WHERE id = ${Number(r.plan_id)}`;
+      plan += 1;
+    }
+  }
+  return { foto_terpasang: rows.length, geo: hasGeo, jam: g.dt != null, plan_geo_diperbarui: plan };
 }
 
 // ── Alur AM per-customer ──
@@ -266,15 +368,18 @@ async function insertAmActivities(
   let linked = 0;
   const unmatchedNames: string[] = [];
   for (const it of items) {
+    // Cocokkan pakai nama yang sudah dibuang prefiks "Cust :"; yang DISIMPAN
+    // tetap apa adanya dari AM (jejak mentah tetap di wa_message.body).
+    const namaBersih = bersihkanNamaCustomer(it.customer);
     const cands = await sql`
-      SELECT id, similarity(customer_name, ${it.customer}) AS score
+      SELECT id, similarity(customer_name, ${namaBersih}) AS score
       FROM sales_plan WHERE am_id = ${amId} AND tanggal = ${tanggal}
-        AND similarity(customer_name, ${it.customer}) > 0.3
+        AND similarity(customer_name, ${namaBersih}) > 0.3
       ORDER BY score DESC LIMIT 1
     `;
     const planId = cands[0] ? Number(cands[0].id) : null;
     const score = cands[0] ? Number(cands[0].score) : null;
-    const links = await resolveActivityLinks(amId, it.customer).catch(() => ({ accountId: null, opportunityId: null }));
+    const links = await resolveActivityLinks(amId, namaBersih).catch(() => ({ accountId: null, opportunityId: null }));
     if (links.accountId !== null) linked += 1;
     // Default 'Fisik' bila AM tak menyebut tipe: #REPORT AM = laporan kunjungan
     // harian (bukan kanal lain) — mempertahankan makna baris lama.
@@ -325,15 +430,31 @@ async function photoFollowup(row: WaRow, am: { am_id: string; nama: string }): P
   let caption = (row.body ?? "").trim();
   if (caption === "<media:image>") caption = "";
   if (!caption) return { skipped: "no-caption" };
-  const cands = await sql`
+  // Dulu LIMIT 1: hanya baris ber-skor tertinggi dalam jendela 7 hari yang
+  // dilihat, TANPA peduli baris itu sudah berfoto. Kalau ternyata sudah, foto
+  // baru dibuang sebagai "already-saved" — padahal baris HARI INI untuk faskes
+  // yang sama masih kosong. AM yang mengunjungi faskes yang sama berulang
+  // paling dirugikan: 209 foto ditolak, 134 di antaranya punya slot kosong di
+  // hari yang sama (Angga 41 · Yugo 39 · Iqbal 34 · Luri 28 · Irul 26).
+  // Sekarang beberapa kandidat diambil, dan slot KOSONG diutamakan.
+  const cands = await sql<{ id: string; customer_name: string; plan_id: string | null; tanggal: string; photo_path: string | null; score: string }[]>`
     SELECT id, customer_name, plan_id, tanggal::text AS tanggal, photo_path,
            similarity(customer_name, ${caption}) AS score
     FROM activity_log
     WHERE am_id = ${am.am_id} AND tanggal >= (CURRENT_DATE - 7)
       AND similarity(customer_name, ${caption}) >= ${PHOTO_SILENT}
-    ORDER BY score DESC LIMIT 1
+    ORDER BY score DESC LIMIT 8
   `;
-  const top = cands[0];
+  // Slot kosong yang layak: lulus ambang match, belum berfoto. Di antara itu,
+  // yang tanggalnya SAMA dengan hari foto dikirim diutamakan — foto yang baru
+  // dikirim hampir selalu milik kunjungan hari itu; baru kemudian skor.
+  const hariFoto = String(row.received_at ?? "").slice(0, 10);
+  const kosong = cands
+    .filter((c) => !c.photo_path && Number(c.score) >= PHOTO_MATCH)
+    .sort((a, b) =>
+      (b.tanggal === hariFoto ? 1 : 0) - (a.tanggal === hariFoto ? 1 : 0) ||
+      Number(b.score) - Number(a.score));
+  const top = kosong[0] ?? cands[0];
   if (!top) return { skipped: "no-match-silent", caption };
   const score = Number(top.score);
   if (score < PHOTO_MATCH) {
@@ -345,20 +466,26 @@ async function photoFollowup(row: WaRow, am: { am_id: string; nama: string }): P
     return { note: "already-saved", reply };
   }
   const hasGeo = row.geo_lat != null && row.geo_lon != null;
-  const geo = hasGeo ? { lat: row.geo_lat, lon: row.geo_lon, ts: row.geo_ts ?? null, address: row.geo_address ?? null } : null;
+  const g = parseGeoTs(row.geo_ts); // jam dipakai walau koordinat gagal — lihat tempelFotoLaporan
+  const adaGeo = hasGeo || g.dt != null;
+  const geo = adaGeo
+    ? { lat: row.geo_lat ?? null, lon: row.geo_lon ?? null, ts: row.geo_ts ?? null, address: row.geo_address ?? null }
+    : null;
   await sql`
     UPDATE activity_log SET photo_path = ${row.media_path ?? null},
       photo_geotag = ${geo ? sql.json(geo as unknown as Parameters<typeof sql.json>[0]) : null}
     WHERE id = ${top.id}
   `;
   let mismatch = false;
-  if (top.plan_id && hasGeo) {
-    const g = parseGeoTs(row.geo_ts);
+  if (top.plan_id && adaGeo) {
     mismatch = g.iso ? g.iso !== String(top.tanggal) : false;
     await sql`
-      UPDATE sales_plan SET visit_lat = ${row.geo_lat ?? null}, visit_lon = ${row.geo_lon ?? null},
-        visit_timestamp = ${g.dt}, visit_date_mismatch = ${mismatch}
-      WHERE id = ${top.plan_id}
+      UPDATE sales_plan
+         SET visit_lat = COALESCE(${row.geo_lat ?? null}::numeric, visit_lat),
+             visit_lon = COALESCE(${row.geo_lon ?? null}::numeric, visit_lon),
+             visit_timestamp = COALESCE(${g.dt}::timestamptz, visit_timestamp),
+             visit_date_mismatch = COALESCE(${g.iso ? g.iso !== String(top.tanggal) : null}::boolean, visit_date_mismatch)
+       WHERE id = ${top.plan_id}
     `;
   }
   // Debounce: kalau masih ada foto lain dari AM/grup yg sama BELUM diproses,
@@ -417,6 +544,26 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
     `;
     return { id: row.id, kind: k, ...result };
   };
+
+  // F26 — grup komplain customer (Service Ticket Triage): dicek SEBELUM
+  // detectKind hashtag-based krn komplain biasa tanpa hashtag. Gated
+  // F26_COMPLAINT_GROUP_JID kosong-by-default (no-op selama grup belum ada).
+  const cg = complaintGroupJid();
+  if (cg && row.group_jid === cg) {
+    if (await isKnownTeknisiSender(row.sender_name)) return finish({ skipped: "teknisi-chatter" }, "complaint");
+    if (!row.body?.trim()) return finish({ skipped: "empty-body" }, "complaint");
+    const ticket = await createTicket({
+      source: "wa",
+      complaint_text: row.body,
+      customer_name: row.sender_name,
+      group_jid: row.group_jid,
+      wa_message_id: row.message_id,
+    });
+    return finish(
+      { ticket_id: ticket.id, severity: ticket.severity, assigned: ticket.assigned_teknisi_name },
+      "complaint",
+    );
+  }
 
   // F8 — laporan lapangan Teknisi (#install/#servis/#training/#kalibrasi).
   // Grup SAMA dgn #plan/#report Teknisi (bukan grup baru) — cukup nebeng
@@ -478,6 +625,115 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
     }
     const reply = await sendViaWaGateway(target, text);
     return finish({ kind: "sales", via: ams.via, reply });
+  }
+
+  // #CEK — SATU command, dua varian (F4 SXR + QW3). Pengirim WAJIB dikenal:
+  // balasan berisi data komersial (customer, nominal, status) yang gak boleh
+  // keluar ke pengirim tak dikenal.
+  //   · `#CEK CUSTOMER <nama>`  → QW3: ringkasan pre-delivery SO/SJ/TTF per
+  //                               customer (fuzzy nama, inbound-cek.ts).
+  //   · `#CEK <nomor dokumen>`  → F4 : cross-ref SO↔SJ↔Faktur by nomor (cek.ts).
+  // Varian CUSTOMER dicek DULU — kalau tidak, "CUSTOMER RSUD X" ikut kebaca
+  // sebagai nomor dokumen dan selalu balas "tidak ditemukan".
+  if (kind === "cek") {
+    const ck = await resolveSender({ senderJid: row.sender_jid, groupJid: row.group_jid, pushname: row.sender_name });
+    if (!ck) return finish({ skipped: "unknown-sender", sender_name: row.sender_name });
+    if (detectCek(row.body ?? "")) {
+      let text: string;
+      try {
+        text = await handleCekQuery(row.body ?? "");
+      } catch (e) {
+        text = `⚠️ Query #CEK gagal diproses: ${(e as Error).message}`;
+      }
+      const reply = await sendViaWaGateway(target, text);
+      return finish({ kind: "cek", cek_mode: "customer", via: ck.via, reply });
+    }
+    const query = (row.body ?? "").replace(CEK_LINE, "").trim();
+    if (!query) {
+      const reply = await sendViaWaGateway(
+        target,
+        `⚠️ Isi nomor dokumen atau nama customer setelah #CEK, ${ck.nama}. Contoh: #CEK SO-00123 — atau #CEK CUSTOMER RSUD Kota`,
+      );
+      return finish({ error: "empty-query", via: ck.via, reply });
+    }
+    const text = await buildCekReply(query);
+    const reply = await sendViaWaGateway(target, text);
+    return finish({ kind: "cek", cek_mode: "dokumen", via: ck.via, reply });
+  }
+
+  // #KLAIM — DOC #KLAIM Fase A. Sender BEBAS teks (tak butuh roster, pola
+  // sama kurir F12/F93) — klaim bisa datang dari siapa pun, bukan cuma AM.
+  // Wajib foto; #KLAIM tanpa foto dibalas error jelas (bukan silent-skip).
+  if (kind === "klaim") {
+    if (!(String(row.message_type ?? "").toLowerCase().startsWith("image") && row.media_path)) {
+      const reply = await sendViaWaGateway(target, "⚠️ #KLAIM wajib disertai foto dokumen (invoice/faktur/struk).");
+      return finish({ error: "no-photo", reply });
+    }
+    const caption = (row.body ?? "").replace(KLAIM_LINE, "").trim() || null;
+    const result = await ingestKlaim({
+      wa_message_id: row.id,
+      sender_jid: row.sender_jid,
+      sender_name: row.sender_name,
+      media_path: row.media_path,
+      caption,
+    });
+    if ("ok" in result && result.ok === false) {
+      const reply = await sendViaWaGateway(target, `⚠️ Gagal proses #KLAIM: ${result.error}`);
+      return finish({ error: result.error, reply });
+    }
+    const k = result as DocKlaimRow;
+    const msg = k.ocr_dry_run
+      ? `📥 Foto #KLAIM tersimpan. OCR belum aktif (mode dry-run) — akan ditindaklanjuti manual.`
+      : [
+          "✅ #KLAIM diterima, foto tersimpan.",
+          k.nomor_dokumen ? `No. Dokumen: ${k.nomor_dokumen}` : null,
+          k.tanggal_dokumen ? `Tanggal: ${k.tanggal_dokumen}` : null,
+          k.nominal ? `Nominal: ${k.nominal}` : null,
+          k.pihak ? `Pihak: ${k.pihak}` : null,
+          "Akan ditindaklanjuti tim terkait.",
+        ]
+          .filter(Boolean)
+          .join("\n");
+    const reply = await sendViaWaGateway(target, msg);
+    return finish({ klaim_id: k.id, ocr_dry_run: k.ocr_dry_run, reply });
+  }
+
+  // F12 — #KIRIM/#BAST (SHIPPING): match by sj_number, TANPA gate sender —
+  // kurir tak punya roster master data (self-contained, sama filosofi F22).
+  if (kind === "kirim" || kind === "bast" || kind === "bukti") {
+    const sj = extractSjNumber(row.body);
+    if (!sj) {
+      const reply = await sendViaWaGateway(
+        target,
+        `⚠️ Format #${kind.toUpperCase()} tak lengkap — sertakan No. SJ, mis. "#${kind.toUpperCase()} SJ-2026-001".`,
+      );
+      return finish({ error: "missing-sj-number", reply });
+    }
+    const shipment = await findBySjNumber(sj);
+    if (!shipment) {
+      const reply = await sendViaWaGateway(target, `⚠️ SJ "${sj}" tidak ditemukan di tracking pengiriman.`);
+      return finish({ error: "sj-not-found", sj, reply });
+    }
+    const photoPath = String(row.message_type ?? "").toLowerCase().startsWith("image") ? (row.media_path ?? null) : null;
+    // Foto ber-geotag (OCR check_photo_geotag.py, sama infra "Geo-Tagging
+    // Camera" AM) → row.geo_lat/geo_lon terisi. #KIRIM capture titik AWAL,
+    // #BAST capture titik CUSTOMER — dipakai hitung distance_km/eta_days
+    // OTOMATIS di markBast() begitu keduanya ada (arahan Direktur 2026-07-30).
+    // #BUKTI (F93, SETELAH bast) — foto bukti terima + scan tanda tangan,
+    // TANPA geo (bukan titik baru, cuma audit trail tambahan).
+    const geo = { lat: row.geo_lat ?? null, lon: row.geo_lon ?? null };
+    const action =
+      kind === "kirim"
+        ? await markKirim(shipment.id, { photo_path: photoPath, by: row.sender_name, ...geo })
+        : kind === "bast"
+          ? await markBast(shipment.id, { photo_path: photoPath, by: row.sender_name, ...geo })
+          : await markBukti(shipment.id, { photo_path: photoPath, by: row.sender_name });
+    const labelDone = kind === "kirim" ? "DIKIRIM" : kind === "bast" ? "BAST/SELESAI" : "BUKTI TERSIMPAN";
+    const replyMsg = action.ok
+      ? `✅ SJ ${shipment.sj_number} (${shipment.customer_name}) ditandai *${labelDone}*.`
+      : `⚠️ Gagal update SJ ${shipment.sj_number}: ${action.error}`;
+    const reply = await sendViaWaGateway(target, replyMsg);
+    return finish({ shipment_id: shipment.id, sj, ok: action.ok, error: action.error, reply });
   }
 
   // #PLAN/#REPORT — parse DULU (body-name dibutuhkan untuk resolusi Tier-A).
@@ -549,6 +805,9 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
     }
     const tgl = ar.tanggal ?? wibDate();
     const res = await insertAmActivities(am.am_id, tgl, ar.items, row.message_id);
+    // Foto yang datang BERSAMA laporan ini dipasang sekarang — sebelum daftar
+    // `pend` dihitung, supaya balasan tak menagih foto yang sudah ada.
+    const foto = await tempelFotoLaporan(row, tgl);
     const [tot] = await sql`
       SELECT count(*)::int AS plan_total, count(*) FILTER (WHERE reported)::int AS reported
       FROM sales_plan WHERE am_id = ${am.am_id} AND tanggal = ${tgl}
@@ -574,7 +833,7 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
     let body = buildAmReportReply(am.nama, tgl, ar.items.length, res, Number(tot.plan_total), Number(tot.reported), pendingNames);
     if (reminders > 0) body += `\n\n📌 ${reminders} reminder dijadwalkan.`;
     const reply = await sendViaWaGateway(target, body);
-    return finish({ am_id: am.am_id, via: am.via, mode: "am", tanggal: tgl, matched: res.matched, unmatched: res.unmatched, linked: res.linked, reminders, reply });
+    return finish({ am_id: am.am_id, via: am.via, mode: "am", tanggal: tgl, matched: res.matched, unmatched: res.unmatched, linked: res.linked, reminders, reply, ...(foto ?? {}) });
   }
   // report todo — cocokkan vs plan + balasan kaya (match/baru)
   const rep = await markReported(am.am_id, am.nama, tanggal, parsed.items, row.body ?? "");
@@ -595,8 +854,9 @@ export async function processUnprocessed(
            media_path, geo_lat, geo_lon, geo_ts, geo_address
     FROM wa_message
     WHERE processed_at IS NULL
-      AND (body ~* '#\\s*(plan|report|leads|update|sales|install|servis|training|kalibrasi)'
-           OR (message_type ~* '^image' AND media_path IS NOT NULL))
+      AND (body ~* '#\\s*(plan|report|leads|update|sales|cek|klaim|kirim|bast|install|servis|training|kalibrasi)'
+           OR (message_type ~* '^image' AND media_path IS NOT NULL)
+           OR (${complaintGroupJid()} <> '' AND group_jid = ${complaintGroupJid()}))
     ORDER BY received_at ASC LIMIT ${limit}
   `;
   const results: Record<string, unknown>[] = [];
