@@ -21,6 +21,7 @@ import {
   Hourglass,
   FileCheck2,
   Car,
+  ArrowLeftRight,
   type LucideIcon,
 } from "lucide-react";
 
@@ -34,6 +35,7 @@ import { canViewKso } from "@/lib/kso-access";
 import { canViewNpkAm, canViewNpkAmSelf } from "@/lib/npk-access";
 import { canViewInsentifTim } from "@/lib/insentif-access";
 import { canViewDanaOps } from "@/lib/dana-ops-access";
+import { canViewInventoryRelocation } from "@/lib/inventory-relocation-access";
 
 // exact: sorot aktif hanya saat path persis (untuk route induk yg punya child,
 // mis. /pricelist vs /pricelist/setup).
@@ -266,6 +268,12 @@ export const NAV: NavGroup[] = [
       // F38 — sama perlakuan spt Stok Gudang: dulu tab ketiga di /inventory,
       // sekarang route sendiri dgn key RBAC sendiri (`ed-watch`).
       { title: "ED & Kedaluwarsa", url: "/ed-watch", icon: Hourglass, badge: "NEW" },
+      // F40 Inventory Relocation Request — log permintaan pemindahan barang
+      // antar cabang. Role min HOD (beda dari F25/F39/F134 yg Karyawan) —
+      // `show` di sini cuma fallback identitas (gate nyata di BFF lewat
+      // requireHodOrAdmin(), lihat app/api/inventory-relocations/**), pola
+      // sama dgn F51 Dana Ops/Karyawan 360.
+      { title: "Relokasi Inventaris", url: "/inventory-relocations", icon: ArrowLeftRight, badge: "NEW", show: canViewInventoryRelocation },
     ],
   },
   {
