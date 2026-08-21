@@ -40,6 +40,8 @@ import { evaluateSalesAlerts } from "./repo/sales-analytics-alert-eval.js";
 import { computeNpk, currentPeriod } from "./repo/npk.js";
 import { computeNpkAm } from "./repo/npk-am.js";
 import { snapshotLastWeek } from "./repo/watchpoint-weekly.js";
+import { runPreVisitCheck } from "./repo/pickup-plan.js";
+import { runEdWatch } from "./repo/stock-batch.js";
 
 // Penjadwal agen in-process (Blueprint v2.3). Default MATI — aktif hanya bila
 // AGENT_SCHEDULE_ENABLED=true. Tiap run tetap menulis ke audit_log via repo
@@ -94,9 +96,15 @@ export function startScheduler(): ScheduleStatus {
   // Eskalasi kepatuhan (F57): AM miss plan/report N hari-kerja berturut → rekap ke
   // grup HoD. Flag SENDIRI (default off) supaya tak surprise-kirim WA saat deploy.
   const missEscalationEnabled = (process.env.MISS_ESCALATION_ENABLED ?? "false").toLowerCase() === "true";
+  // ED Watch (F38): pindai batch ber-ED, kirim peringatan saat melintasi ambang
+  // 90/60/30 hari. Flag SENDIRI (default off) — mengirim WA.
+  const edWatchEnabled = (process.env.ED_WATCH_ENABLED ?? "false").toLowerCase() === "true";
   // Rekap kunjungan mingguan (F16): volume kunjungan minggu lalu vs target per AM.
   // Flag SENDIRI (default off) — sama alasannya: jangan kirim WA tanpa diminta.
   const visitWeeklyEnabled = (process.env.VISIT_WEEKLY_ENABLED ?? "false").toLowerCase() === "true";
+  // Cek pra-trip Kirim-Tagih H-1 (F45): verifikasi hari libur + PIC untuk trip
+  // besok, kirim ke nomor kurir masing-masing. Flag SENDIRI (default off).
+  const preVisitEnabled = (process.env.PREVISIT_CHECK_ENABLED ?? "false").toLowerCase() === "true";
   // accurate-sync (puller invoice, read-only ke API Accurate, tanpa kirim WA)
   // bisa nyala SENDIRI tanpa ikut menyalakan A1-12 / monitor.
   const accurateEnabled = (process.env.ACCURATE_SCHEDULE_ENABLED ?? "false").toLowerCase() === "true";
@@ -216,12 +224,12 @@ export function startScheduler(): ScheduleStatus {
   ];
 
   status = {
-    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled || watchpointSnapshotEnabled,
+    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled || watchpointSnapshotEnabled || preVisitEnabled || edWatchEnabled,
     timezone,
     jobs: jobs.map((j) => ({ id: j.id, expr: j.expr, valid: cron.validate(j.expr) })),
   };
 
-  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled && !watchpointSnapshotEnabled) {
+  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled && !watchpointSnapshotEnabled && !preVisitEnabled && !edWatchEnabled) {
     console.log("[scheduler] semua *_SCHEDULE/_ENABLED flag != true — tidak dijadwalkan");
     return status;
   }
@@ -306,6 +314,36 @@ export function startScheduler(): ScheduleStatus {
     }
   }
 
+  // F45 previsit-check — verifikasi trip Kirim-Tagih BESOK (hari libur + PIC),
+  // 16:00 sore = ~24 jam sebelum. Predikat tanggalnya `current_date + 1`, pola
+  // sama reminder-h-1 di atas.
+  //
+  // SENGAJA TIDAK dibungkus isWorkday(): justru gunanya memperingatkan bahwa
+  // BESOK libur. Kalau di-gate hari kerja, peringatan "besok cuti bersama" tak
+  // akan pernah terkirim di hari terakhir sebelum libur panjang — persis kasus
+  // yang paling bikin rebound trip. reminder-h/h-1 juga tidak di-gate.
+  const preVisitExpr = process.env.PREVISIT_CHECK_CRON ?? "0 16 * * *";
+  if (preVisitEnabled) {
+    if (!cron.validate(preVisitExpr)) {
+      console.error(`[scheduler] previsit-check cron-expr tidak valid: "${preVisitExpr}" — dilewati`);
+    } else {
+      cron.schedule(
+        preVisitExpr,
+        async () => {
+          const startedAt = new Date().toISOString();
+          try {
+            const r = await runPreVisitCheck();
+            console.log(`[scheduler] previsit-check ok @ ${startedAt} ${JSON.stringify(r).slice(0, 200)}`);
+          } catch (e) {
+            console.error(`[scheduler] previsit-check gagal @ ${startedAt}:`, e);
+          }
+        },
+        { timezone },
+      );
+      live.push(`previsit-check=${preVisitExpr}`);
+    }
+  }
+
   // HOD daily reminder — rekap kepatuhan plan/report (08:30, setelah AM plan pagi).
   const hodExpr = process.env.HOD_REMINDER_CRON ?? "30 8 * * *";
   if (cron.validate(hodExpr)) {
@@ -323,6 +361,39 @@ export function startScheduler(): ScheduleStatus {
       { timezone },
     );
     live.push(`reminder-hod=${hodExpr}`);
+  }
+
+  // F38 ed-watch — pindai batch ber-ED, peringatkan saat melintasi ambang
+  // 90/60/30 hari. Pagi 07:30 supaya sudah masuk sebelum tim gudang mulai
+  // menyiapkan kiriman.
+  //
+  // SENGAJA TIDAK dibungkus isWorkday(): ED tidak berhenti jalan di hari libur,
+  // dan barang yang melintasi ambang 30 hari tepat di awal libur panjang justru
+  // yang paling perlu diketahui lebih dulu. Pola sama previsit-check (F45).
+  //
+  // Tanggal pembanding dihitung WIB di dalam runEdWatch (bukan `current_date`
+  // SQL yang mengikuti timezone container = UTC), jadi jadwal ini boleh digeser
+  // ke jam berapa pun tanpa menggeser perhitungan sisa-hari.
+  const edWatchExpr = process.env.ED_WATCH_CRON ?? "30 7 * * *";
+  if (edWatchEnabled) {
+    if (!cron.validate(edWatchExpr)) {
+      console.error(`[scheduler] ed-watch cron-expr tidak valid: "${edWatchExpr}" — dilewati`);
+    } else {
+      cron.schedule(
+        edWatchExpr,
+        async () => {
+          const startedAt = new Date().toISOString();
+          try {
+            const r = await runEdWatch();
+            console.log(`[scheduler] ed-watch ok @ ${startedAt} ${JSON.stringify(r).slice(0, 200)}`);
+          } catch (e) {
+            console.error(`[scheduler] ed-watch gagal @ ${startedAt}:`, e);
+          }
+        },
+        { timezone },
+      );
+      live.push(`ed-watch=${edWatchExpr}`);
+    }
   }
 
   // Compliance reminder per-grup (port plan_check/report_check) — ikut gating

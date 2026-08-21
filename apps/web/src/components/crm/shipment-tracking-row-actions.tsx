@@ -23,6 +23,8 @@ interface ShipmentTracking {
   sj_number: string;
   customer_name: string;
   status: string;
+  bukti_photo_path?: string | null;
+  signature_photo_path?: string | null;
 }
 
 interface StepDef {
@@ -31,6 +33,7 @@ interface StepDef {
   dialogTitle: string;
   confirmLabel: string;
   manualOnly?: boolean; // true = tak ada hashtag WA (F42 "terima"), beda dari kirim/bast
+  hint?: string; // override teks hint dialog, dipakai F93 "bukti"
 }
 
 // F12+F42 — kirim & bast dipicu WA hashtag (web = override kalau WA gagal);
@@ -57,13 +60,26 @@ const STEP_BY_STATUS: Record<string, StepDef> = {
   },
 };
 
+// F93 — audit trail TAMBAHAN setelah BAST (bukan state baru, status tetap
+// 'bast'), makanya dicek terpisah dari STEP_BY_STATUS (yang modelnya 1
+// step per status berjalan, bukan aksi "nempel" di status terminal).
+const buktiStep: StepDef = {
+  endpoint: "bukti",
+  buttonLabel: "Tandai Bukti",
+  dialogTitle: "Tandai bukti terima / tanda tangan",
+  confirmLabel: "Konfirmasi bukti",
+  manualOnly: true,
+  hint: "Normalnya foto bukti + scan tanda tangan masuk otomatis via WA hashtag #BUKTI dari kurir. Tombol ini cuma override kalau WA gagal (tanpa upload foto di sini).",
+};
+
 export function ShipmentTrackingRowActions({ row }: { row: ShipmentTracking }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const step = STEP_BY_STATUS[row.status];
+  const buktiLengkap = !!row.bukti_photo_path && !!row.signature_photo_path;
+  const step = row.status === "bast" ? (buktiLengkap ? null : buktiStep) : STEP_BY_STATUS[row.status];
   if (!step) return <Badge variant="secondary">Selesai</Badge>;
 
   async function submit() {
@@ -102,9 +118,10 @@ export function ShipmentTrackingRowActions({ row }: { row: ShipmentTracking }) {
         <DialogBody>
           {error && <p className="text-destructive text-sm">{error}</p>}
           <p className="text-muted-foreground text-sm">
-            {step.manualOnly
-              ? "Langkah ini manual-only — tak ada hashtag WA, ditandai Admin Shipping/Kirim-Tagih."
-              : "Aksi manual ini override — normalnya status di-update otomatis lewat WA hashtag dari kurir."}
+            {step.hint ??
+              (step.manualOnly
+                ? "Langkah ini manual-only — tak ada hashtag WA, ditandai Admin Shipping/Kirim-Tagih."
+                : "Aksi manual ini override — normalnya status di-update otomatis lewat WA hashtag dari kurir.")}
           </p>
         </DialogBody>
         <DialogFooter>

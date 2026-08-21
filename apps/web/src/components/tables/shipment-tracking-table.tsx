@@ -14,6 +14,8 @@ export interface ShipmentTracking {
   distance_km: number | null;
   eta_days: number | null;
   status: string;
+  bukti_photo_path: string | null;
+  signature_photo_path: string | null;
   created_at: string;
 }
 
@@ -87,6 +89,19 @@ export function ShipmentTrackingTable({ shipments }: { shipments: ShipmentTracki
       sortable: true,
       accessor: (s) => s.status,
       cell: (s) => <Badge variant={statusTone(s.status)}>{STATUS_LABEL[s.status] ?? s.status}</Badge>,
+    },
+    {
+      id: "bukti",
+      header: "Bukti (F93)",
+      cell: (s) =>
+        s.status !== "bast" ? (
+          <span className="text-muted-foreground text-xs">—</span>
+        ) : (
+          <div className="flex items-center gap-1 text-xs">
+            <span title="Foto bukti terima">{s.bukti_photo_path ? "📷✅" : "📷—"}</span>
+            <span title="Scan tanda tangan">{s.signature_photo_path ? "✍️✅" : "✍️—"}</span>
+          </div>
+        ),
     },
     { id: "progress", header: "Progress", cell: (s) => <ProgressDots s={s} /> },
     { id: "aksi", header: "Aksi", align: "right", cell: (s) => <ShipmentTrackingRowActions row={s} /> },

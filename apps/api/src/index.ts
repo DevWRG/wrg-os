@@ -25,6 +25,7 @@ import { insertRekap, insertResume, getDigestHistory, getDigestInsights } from "
 import { getDashboardStats } from "./repo/stats.js";
 import { getCustomers } from "./repo/customer.js";
 import { listAccounts, getAccount, upsertAccountFields, createContact, updateContact, deleteContact, listOwnerCandidates } from "./repo/account.js";
+import { listPickupPlans, createPickupPlan, updatePickupPlan, deletePickupPlan, previewPreVisit, runPreVisitCheck } from "./repo/pickup-plan.js";
 import {
   ingestInvoices,
   ingestAccurateWebhook,
@@ -328,6 +329,7 @@ import {
   markKirim as markShipmentKirim,
   markBast as markShipmentBast,
   markTerima as markShipmentTerima,
+  markBukti as markShipmentBukti,
 } from "./repo/shipment-tracking.js";
 
 import {
@@ -338,6 +340,12 @@ import {
   type AtkStockOpnameInput,
   type AtkStockOpnameUpdate,
 } from "./repo/atk-stock-opname.js";
+
+import {
+  listStockBatch,
+  stockBatchSummary,
+  runEdWatch,
+} from "./repo/stock-batch.js";
 const app = new Hono();
 
 // Selalu balas JSON saat error / route tak ada — supaya BFF & client tak pernah
@@ -3718,6 +3726,112 @@ app.get("/accounts-owners", async (c) => {
   return c.json({ owners: await listOwnerCandidates(await scopeOf(c)) });
 });
 
+// ── F45 Pickup Pre-Visit Verification — jadwal trip Kirim-Tagih ──────────────
+// Tanggal ISO yang benar-benar ada. Regex saja tidak cukup: "2026-13-45" lolos
+// pola \d{4}-\d{2}-\d{2} tapi mati di cast ::date → 500. Cek round-trip.
+const isIsoDate = (s: string): boolean => {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const d = new Date(`${s}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
+};
+app.get("/pickup-plan", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  // from/to di-cast ::date di SQL → validasi bentuknya dulu, kalau tidak
+  // "?from=xx" jadi 500 (22P02) alih-alih 400.
+  const from = c.req.query("from");
+  const to = c.req.query("to");
+  for (const [k, v] of [["from", from], ["to", to]] as const) {
+    if (v && !isIsoDate(v)) return c.json({ error: `${k} harus YYYY-MM-DD` }, 400);
+  }
+  const status = c.req.query("status");
+  if (status && !["rencana", "selesai", "batal"].includes(status)) {
+    return c.json({ error: "status harus rencana|selesai|batal" }, 400);
+  }
+  const rows = await listPickupPlans({
+    status: status ?? undefined,
+    from: from ?? undefined,
+    to: to ?? undefined,
+    limit: c.req.query("limit") ? Number(c.req.query("limit")) : undefined,
+  });
+  return c.json({ count: rows.length, plans: rows });
+});
+
+app.post("/pickup-plan", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: Record<string, unknown>;
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  const tanggal = typeof body.tanggal === "string" ? body.tanggal.trim() : "";
+  const customer = typeof body.customer_name === "string" ? body.customer_name.trim() : "";
+  if (!isIsoDate(tanggal)) return c.json({ error: "tanggal wajib & harus tanggal valid (YYYY-MM-DD)" }, 400);
+  if (!customer) return c.json({ error: "customer_name wajib" }, 400);
+  const tujuan = body.tujuan == null ? "kirim" : String(body.tujuan);
+  if (!["kirim", "tagih", "kirim+tagih"].includes(tujuan)) {
+    return c.json({ error: "tujuan harus kirim|tagih|kirim+tagih" }, 400);
+  }
+  try {
+    const row = await createPickupPlan({
+      tanggal,
+      customer_name: customer,
+      account_id: body.account_id == null ? null : Number(body.account_id),
+      cabang: body.cabang == null ? null : String(body.cabang),
+      tujuan: tujuan as "kirim" | "tagih" | "kirim+tagih",
+      sj_number: body.sj_number == null ? null : String(body.sj_number),
+      kurir_name: body.kurir_name == null ? null : String(body.kurir_name),
+      kurir_wa_number: body.kurir_wa_number == null ? null : String(body.kurir_wa_number),
+      catatan: body.catatan == null ? null : String(body.catatan),
+      created_by: body.created_by == null ? null : String(body.created_by),
+    });
+    return c.json(row, 201);
+  } catch (e) { return c.json({ error: String((e as Error).message) }, 400); }
+});
+
+app.patch("/pickup-plan/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: Record<string, unknown>;
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  if (body.status != null && !["rencana", "selesai", "batal"].includes(String(body.status))) {
+    return c.json({ error: "status harus rencana|selesai|batal" }, 400);
+  }
+  if (body.tanggal != null && !isIsoDate(String(body.tanggal))) {
+    return c.json({ error: "tanggal harus tanggal valid (YYYY-MM-DD)" }, 400);
+  }
+  const row = await updatePickupPlan(c.req.param("id"), {
+    status: body.status == null ? undefined : (String(body.status) as "rencana" | "selesai" | "batal"),
+    tanggal: body.tanggal == null ? undefined : String(body.tanggal),
+    catatan: body.catatan == null ? undefined : String(body.catatan),
+    kurir_wa_number: body.kurir_wa_number == null ? undefined : String(body.kurir_wa_number),
+  });
+  return row ? c.json(row) : c.json({ error: "plan tak ditemukan" }, 404);
+});
+
+app.delete("/pickup-plan/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const ok = await deletePickupPlan(c.req.param("id"));
+  return ok ? c.json({ ok: true }) : c.json({ error: "plan tak ditemukan" }, 404);
+});
+
+// Pratinjau verifikasi (tanpa kirim WA, tanpa menandai) — tombol "cek sekarang".
+app.get("/pickup-plan/:id/previsit", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const t = await previewPreVisit(c.req.param("id"));
+  return t ? c.json(t) : c.json({ error: "plan tak ditemukan" }, 404);
+});
+
+// Trigger manual cron H-1 (dipakai test & recovery kalau scheduler mati).
+// `tanggal` opsional — default besok (WIB); dipakai kalau cron terlewat semalam.
+app.post("/pickup-plan/previsit/run", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: Record<string, unknown> = {};
+  try { body = await c.req.json(); } catch { /* body opsional */ }
+  if (body.tanggal != null && !isIsoDate(String(body.tanggal))) {
+    return c.json({ error: "tanggal harus tanggal valid (YYYY-MM-DD)" }, 400);
+  }
+  return c.json(await runPreVisitCheck({
+    to: body.to == null ? undefined : String(body.to),
+    tanggal: body.tanggal == null ? undefined : String(body.tanggal),
+  }));
+});
+
 // Monitoring revenue ter-faktur per customer (total/faktur/transaksi terakhir/dormant).
 app.get("/customers/revenue", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
@@ -4726,6 +4840,82 @@ app.delete("/atk/stock-opname/:id", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const r = await deleteAtkStockOpname(c.req.param("id"));
   return c.json(r, r.deleted ? 200 : 404);
+});
+
+// ── Tracking Pengiriman Digital (F12, SHIPPING) — state machine sederhana
+// draft → dikirim → bast (TTF diabaikan, arahan Direktur). Dipicu manual via
+// web ATAU WA hashtag #KIRIM/#BAST (match by sj_number, lihat repo/inbound.ts). ──
+app.post("/shipment-tracking/:id/bukti", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { by?: string; photo_path?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    // semua field opsional
+  }
+  const r = await markShipmentBukti(c.req.param("id"), { by: body.by, photo_path: body.photo_path });
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+// ── F37 Cross-Branch Stock Visibility — stok per gudang + korelasi ke total ──
+// Fungsi KEDUA di menu /inventory (fungsi pertama = cek stok agregat, lihat
+// GET /accurate/items di atas). Read-only: data masuk lewat importer
+// scripts/db/import_stock_branch.py, bukan lewat endpoint ini.
+app.get("/stock/batch", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const wh = c.req.query("warehouse");
+  if (wh) {
+    const known = await listWarehouses();
+    if (!known.some((w) => w.kode === wh)) {
+      return c.json({ error: `warehouse tak dikenal: ${wh}`, valid: known.map((w) => w.kode) }, 400);
+    }
+  }
+  const tierRaw = c.req.query("tier");
+  if (tierRaw && !["30", "60", "90"].includes(tierRaw)) {
+    return c.json({ error: "tier harus 30|60|90" }, 400);
+  }
+  const out = await listStockBatch({
+    q: c.req.query("q") ?? undefined,
+    warehouse: wh ?? undefined,
+    tier: tierRaw ? (Number(tierRaw) as 30 | 60 | 90) : undefined,
+    hanyaLewat: c.req.query("lewat") === "1",
+    tanpaEd: c.req.query("tanpa_ed") === "1",
+    limit: c.req.query("limit") ? Number(c.req.query("limit")) : undefined,
+    offset: c.req.query("offset") ? Number(c.req.query("offset")) : undefined,
+  });
+  return c.json({ count: out.rows.length, total_rows: out.total_rows, rows: out.rows });
+});
+
+app.get("/stock/batch/summary", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await stockBatchSummary());
+});
+
+// Trigger manual cron ed-watch (test & recovery kalau scheduler mati).
+// `tanggal` opsional — default hari ini WIB; dipakai menguji ambang tanpa
+// menunggu tanggal sungguhan bergerak.
+app.post("/stock/batch/ed-watch/run", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: Record<string, unknown> = {};
+  try { body = await c.req.json(); } catch { /* body opsional */ }
+  // Validasi inline, sengaja tanpa helper bernama: branch F45 mendeklarasikan
+  // `isIsoDate` di file ini juga, jadi helper bernama sama akan bentrok saat
+  // kedua branch merge. Regex saja tidak cukup — "2026-13-45" lolos pola tapi
+  // mati di cast ::date, jadi dicek round-trip.
+  if (body.tanggal != null) {
+    const t = String(body.tanggal);
+    const d = new Date(`${t}T00:00:00Z`);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(t) || Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== t) {
+      return c.json({ error: "tanggal harus tanggal valid (YYYY-MM-DD)" }, 400);
+    }
+  }
+  return c.json(await runEdWatch({
+    to: body.to == null ? undefined : String(body.to),
+    tanggal: body.tanggal == null ? undefined : String(body.tanggal),
+    // Dengan `tanggal` override, penandaan HARUS diminta eksplisit — lihat
+    // catatan di runEdWatch: alat uji tak boleh mematikan alert produksi.
+    tandai: body.tandai === true,
+  }));
 });
 
 const port = Number(process.env.PORT ?? 4000);
