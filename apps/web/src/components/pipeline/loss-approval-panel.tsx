@@ -44,6 +44,10 @@ export function LossApprovalPanel() {
   const [busy, setBusy] = useState<string | null>(null); // deal_id yg lagi diproses
   const [rejecting, setRejecting] = useState<{ id: string; note: string } | null>(null);
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+  // Error dirender DI KARTU-nya, bukan di kepala panel: antrean bisa puluhan kartu,
+  // banner di atas jatuh di luar viewport saat user meng-klik kartu bawah → kelihatan
+  // seperti tombolnya tak bereaksi sama sekali.
+  const [errById, setErrById] = useState<Record<string, string>>({});
 
   // Fetch antrean sekali saat mount. setState hanya setelah await (async boundary)
   // + guard `alive` → aman dari react-hooks/set-state-in-effect.
@@ -64,6 +68,7 @@ export function LossApprovalPanel() {
   async function decide(dealId: string, decision: "approved" | "rejected", note?: string) {
     setBusy(dealId);
     setMsg(null);
+    setErrById((prev) => { const next = { ...prev }; delete next[dealId]; return next; });
     try {
       const res = await fetch(`/api/deals/${encodeURIComponent(dealId)}/loss-approval`, {
         method: "PATCH",
@@ -71,7 +76,11 @@ export function LossApprovalPanel() {
         body: JSON.stringify({ decision, ...(note ? { note } : {}) }),
       });
       const body = await res.json().catch(() => ({}));
-      if (!res.ok) { setMsg({ kind: "err", text: body?.error || `gagal (${res.status})` }); return; }
+      if (!res.ok) {
+        // Status code selalu diikutkan — "gagal" tanpa angka menyulitkan penelusuran.
+        setErrById((prev) => ({ ...prev, [dealId]: `${body?.error || "gagal"} (${res.status})` }));
+        return;
+      }
       setItems((prev) => (prev ?? []).filter((x) => x.deal_id !== dealId));
       setRejecting(null);
       setMsg({
@@ -80,7 +89,7 @@ export function LossApprovalPanel() {
       });
       router.refresh(); // board ikut ter-update (reject memindah deal balik)
     } catch {
-      setMsg({ kind: "err", text: "koneksi gagal" });
+      setErrById((prev) => ({ ...prev, [dealId]: "koneksi gagal" }));
     } finally {
       setBusy(null);
     }
@@ -128,6 +137,12 @@ export function LossApprovalPanel() {
                 <span className="text-muted-foreground">· tolak → balik ke <b>{d.revert_stage}</b></span>
               </div>
 
+              {errById[d.deal_id] && (
+                <div className="mt-2 text-xs px-2 py-1 rounded bg-rose-100 text-rose-700">
+                  {errById[d.deal_id]}
+                </div>
+              )}
+
               {rejecting?.id === d.deal_id ? (
                 <div className="mt-3 space-y-2">
                   <textarea placeholder="Alasan menolak (opsional)…" value={rejecting.note}
@@ -153,7 +168,9 @@ export function LossApprovalPanel() {
                   <button disabled={busy === d.deal_id}
                     onClick={() => decide(d.deal_id, "approved")}
                     className="text-sm px-3 py-1 rounded-md bg-rose-600 text-white hover:bg-rose-700 disabled:opacity-50">
-                    Setujui Lost
+                    {/* Label berubah saat request jalan — kalau backend menggantung,
+                        user lihat "Memproses…", bukan tombol yg diam saja. */}
+                    {busy === d.deal_id ? "Memproses…" : "Setujui Lost"}
                   </button>
                 </div>
               )}

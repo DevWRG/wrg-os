@@ -145,8 +145,18 @@ export async function reportPerOrang(from: string, to: string): Promise<OrangRow
     LEFT JOIN LATERAL (
       SELECT COALESCE(sum(total_items),0) AS todo_items,
              count(*) FILTER (WHERE is_late_plan) AS todo_late,
-             COALESCE(sum((SELECT count(*) FROM jsonb_array_elements(CASE WHEN jsonb_typeof(report_data)='array' THEN report_data ELSE '[]'::jsonb END) e WHERE e->>'status'='matched')),0) AS todo_matched,
-             COALESCE(sum((SELECT count(*) FROM jsonb_array_elements(CASE WHEN jsonb_typeof(report_data)='array' THEN report_data ELSE '[]'::jsonb END) e WHERE e->>'status' IN ('ambiguous','unmatched'))),0) AS todo_unmatched
+             -- report_data punya DUA bentuk. Yang ditulis markReported() sekarang:
+             -- {task, score, matched:boolean}. Yang lama (legacy): {task, result,
+             -- status, idx, match_score, ...}. Filter di sini dulu HANYA mengenali
+             -- kolom status, jadi seluruh item bentuk baru tak terhitung — dan karena
+             -- non-AM memakai todo_matched sebagai report_count, kepatuhan mereka
+             -- dirender 0% tanpa error. Terukur: 'status' 2.785 item vs 'matched'
+             -- 11.888 item; cabang PUSAT 0% padahal 95%.
+             -- Bentuk lama TETAP dihitung supaya angka historis tidak jatuh.
+             COALESCE(sum((SELECT count(*) FROM jsonb_array_elements(CASE WHEN jsonb_typeof(report_data)='array' THEN report_data ELSE '[]'::jsonb END) e
+                            WHERE (e->>'matched')::boolean IS TRUE OR e->>'status'='matched')),0) AS todo_matched,
+             COALESCE(sum((SELECT count(*) FROM jsonb_array_elements(CASE WHEN jsonb_typeof(report_data)='array' THEN report_data ELSE '[]'::jsonb END) e
+                            WHERE (e->>'matched')::boolean IS FALSE OR e->>'status' IN ('ambiguous','unmatched'))),0) AS todo_unmatched
       FROM sales_todo WHERE am_id = mu.am_id AND tanggal BETWEEN ${from} AND ${to}
     ) st ON true
     LEFT JOIN LATERAL (
@@ -287,8 +297,18 @@ function groupBy(rows: OrangRow[], keyFn: (r: OrangRow) => string): GroupRow[] {
 export async function reportPerDivisi(from: string, to: string) {
   return groupBy(await reportPerOrang(from, to), (r) => r.role);
 }
+/**
+ * Kunci grup dinormalkan huruf besar: `master_user.cabang` memuat pasangan
+ * duplikat kapitalisasi (Kediri/KEDIRI, Jakarta/JAKARTA, Madiun/MADIUN,
+ * Madura/MADURA, Malang/MALANG, Jember/JEMBER, Pusat/pusat), dan tanpa ini
+ * satu cabang muncul sebagai DUA baris dengan angka terbelah — "Kediri 43 plan"
+ * dan "KEDIRI 20 plan" di kartu yang sama.
+ *
+ * Ini menormalkan TAMPILAN saja. Akar masalahnya ada di data master, dan kolom
+ * itu juga dipakai row-level scope HoD (scopeOnClause) — dirapikan terpisah.
+ */
 export async function reportPerCabang(from: string, to: string) {
-  return groupBy(await reportPerOrang(from, to), (r) => r.cabang ?? "—");
+  return groupBy(await reportPerOrang(from, to), (r) => (r.cabang ?? "—").trim().toUpperCase() || "—");
 }
 
 // Per-HOD: hanya AM, dikelompokkan via master_territory.am_panggilan→hod_panggilan.

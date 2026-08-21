@@ -1,12 +1,22 @@
-// F66 NPK Engine — fungsi murni perhitungan NPK (Nilai Prestasi Karyawan).
-// Kanonik: SK/WRG/Sales/001/V/2026 Pasal 3.1 (7 aspek berbobot) + Pasal 3.5 (contoh).
-// TANPA akses DB — input mentah dikumpulkan repo/npk.ts, fungsi ini hanya menghitung
-// (mudah di-unit-test; reproduksi contoh SK = AC-1). Tiap aspek di-cap 0..120 lalu
-// ×bobot/100. NPK = Σ kontribusi aspek (0-100 bila semua aspek 100 & bobot Σ=100).
+// F66 NPK — tipe, konstanta, dan helper bersama perhitungan NPK (TANPA akses DB).
+//
+// ⚠️ PENSKORAN KANONIK ADA DI `npk-sk.ts` (tabel berjenjang SK Pasal 3.2), BUKAN di
+// sini. `calcNPK()` di file ini = metode LINIER lama (rasio × bobot, di-cap 120%)
+// yang dipakai sampai v1.165.x; itu tafsiran PRD/ACE, bukan bunyi SK — cap 120%
+// bahkan tidak ada di SK dan bikin skor bisa melewati poin maks aspek. Sejak
+// v1.166.0 jalur HoD MAUPUN AM memakai npk-sk.ts.
+//
+// calcNPK() SENGAJA dipertahankan (tanpa pemanggil produksi) sebagai pembanding
+// audit: scripts/ops/npk-compare-metode.mjs memakainya untuk memperlihatkan
+// pergeseran skor lama→baru sebelum recompute prod. Boleh dihapus setelah semua
+// baris npk_score_semester & npk_am_score_semester di-compute ulang dengan SK.
+//
+// Yang MASIH dipakai luas dari file ini: AspectInput/AspectKey/AspectResult,
+// ASPECT_ORDER, ASPECT_LABEL, DEFAULT_BOBOT (bobot SK Pasal 3.1 — sudah benar; yang
+// keliru justru PRD v2 §D.1), predikatOf(), elapsedFraction(), ageCutoff().
 //
 // Kejujuran data: `avail` menandai aspek yang BELUM punya sumber data live (KSO/GP/
-// coaching/target dst). Aspek tak-tersedia → kontribusi DIPAKSA 0 (tak menggelembungkan
-// NPK). Bila semua aspek tersedia (kasus uji SK), hasil = formula PRD §4 persis.
+// coaching/target dst). Aspek tak-tersedia → kontribusi DIPAKSA 0 (tak menggelembungkan NPK).
 
 export type AspectKey = "revenue" | "customer" | "ar" | "kso" | "gp" | "crm" | "coaching";
 
@@ -127,8 +137,9 @@ function rawScores(input: AspectInput): Record<AspectKey, number> {
   return { revenue, customer, ar, kso, gp, crm, coaching };
 }
 
-// Hitung NPK. `avail` menandai aspek yang punya sumber data live (default: semua true —
-// dipakai unit test SK). Aspek !available → kontribusi 0 (NPK tak menggelembung).
+// METODE LINIER LAMA — PENSIUN sejak v1.166.0, jangan dipakai men-skor.
+// Dipertahankan hanya sebagai pembanding audit (lihat catatan kepala file).
+// Untuk penskoran, pakai calcNpkSk() di npk-sk.ts.
 export function calcNPK(
   input: AspectInput,
   bobot: NPKBobot = DEFAULT_BOBOT,

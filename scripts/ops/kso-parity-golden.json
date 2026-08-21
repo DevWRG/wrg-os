@@ -1,0 +1,2198 @@
+{
+ "meta": {
+  "sumber": "github.com/info-WL707/runningcost-zybio @ f37e4a4 — lib/data.js + transkrip logika Dashboard.jsx",
+  "dibuat": "2026-08-10",
+  "catatan": "Harga SINTETIS (bukan harga master) — repo publik. Yang nyata: kode reagen, volume kemasan, dan hasil rumus."
+ },
+ "analyzers": {
+  "HEMATO/Z3": {
+   "kategori": "HEMATO",
+   "kode": "Z3",
+   "label": "Z3",
+   "meta": {
+    "diff": "3-Diff"
+   },
+   "reagents": [
+    {
+     "kode": "lyse",
+     "jenis": "reagent",
+     "nama": "ZYBIO LYSE Z3 500ML",
+     "pack": "500 mL/btl",
+     "vol": 500,
+     "yieldTest": null
+    },
+    {
+     "kode": "dil",
+     "jenis": "reagent",
+     "nama": "ZYBIO DILUENT Z3 20L",
+     "pack": "20.000 mL/jeriken",
+     "vol": 20000,
+     "yieldTest": null
+    },
+    {
+     "kode": "probe",
+     "jenis": "reagent",
+     "nama": "ZYBIO PROBE CLEANSER 50ML",
+     "pack": "50 mL/btl",
+     "vol": 50,
+     "yieldTest": null
+    }
+   ]
+  },
+  "HEMATO/Z52": {
+   "kategori": "HEMATO",
+   "kode": "Z52",
+   "label": "Z52",
+   "meta": {
+    "diff": "5-Diff"
+   },
+   "reagents": [
+    {
+     "kode": "dn",
+     "jenis": "reagent",
+     "nama": "ZYBIO Z5 DN DILUENT 20L",
+     "pack": "20.000 mL/jeriken",
+     "vol": 20000,
+     "yieldTest": null
+    },
+    {
+     "kode": "ld",
+     "jenis": "reagent",
+     "nama": "ZYBIO Z5 LD LYSE 500ML",
+     "pack": "500 mL/btl",
+     "vol": 500,
+     "yieldTest": null
+    },
+    {
+     "kode": "lb",
+     "jenis": "reagent",
+     "nama": "ZYBIO Z5 LB LYSE 200ML",
+     "pack": "200 mL/btl",
+     "vol": 200,
+     "yieldTest": null
+    },
+    {
+     "kode": "probe",
+     "jenis": "reagent",
+     "nama": "ZYBIO PROBE CLEANSER 50ML",
+     "pack": "50 mL/btl",
+     "vol": 50,
+     "yieldTest": null
+    }
+   ]
+  },
+  "HEMATO/Z50": {
+   "kategori": "HEMATO",
+   "kode": "Z50",
+   "label": "Z50",
+   "meta": {
+    "diff": "5-Diff"
+   },
+   "reagents": [
+    {
+     "kode": "dn",
+     "jenis": "reagent",
+     "nama": "ZYBIO Z5 DN DILUENT 20L",
+     "pack": "20.000 mL/jeriken",
+     "vol": 20000,
+     "yieldTest": null
+    },
+    {
+     "kode": "ld",
+     "jenis": "reagent",
+     "nama": "ZYBIO Z5 LD LYSE 500ML",
+     "pack": "500 mL/btl",
+     "vol": 500,
+     "yieldTest": null
+    },
+    {
+     "kode": "lb",
+     "jenis": "reagent",
+     "nama": "ZYBIO Z5 LB LYSE 200ML",
+     "pack": "200 mL/btl",
+     "vol": 200,
+     "yieldTest": null
+    },
+    {
+     "kode": "probe",
+     "jenis": "reagent",
+     "nama": "ZYBIO PROBE CLEANSER 50ML",
+     "pack": "50 mL/btl",
+     "vol": 50,
+     "yieldTest": null
+    }
+   ]
+  },
+  "HEMATO/EXZ6000": {
+   "kategori": "HEMATO",
+   "kode": "EXZ6000",
+   "label": "EXZ6000",
+   "meta": {
+    "diff": "5-Diff"
+   },
+   "reagents": [
+    {
+     "kode": "dn",
+     "jenis": "reagent",
+     "nama": "ZYBIO Z5 DN DILUENT 20L",
+     "pack": "20.000 mL/jeriken",
+     "vol": 20000,
+     "yieldTest": null
+    },
+    {
+     "kode": "ldi",
+     "jenis": "reagent",
+     "nama": "ZYBIO H56 LD-I LYSE 1L",
+     "pack": "1.000 mL/btl",
+     "vol": 1000,
+     "yieldTest": null
+    },
+    {
+     "kode": "ldii",
+     "jenis": "reagent",
+     "nama": "ZYBIO H56 LD-II LYSE 500ML",
+     "pack": "500 mL/btl",
+     "vol": 500,
+     "yieldTest": null
+    },
+    {
+     "kode": "lb",
+     "jenis": "reagent",
+     "nama": "ZYBIO Z5 LB LYSE 500ML",
+     "pack": "500 mL/btl",
+     "vol": 500,
+     "yieldTest": null
+    },
+    {
+     "kode": "probe",
+     "jenis": "reagent",
+     "nama": "ZYBIO PROBE CLEANSER 50ML",
+     "pack": "50 mL/btl",
+     "vol": 50,
+     "yieldTest": null
+    }
+   ]
+  },
+  "HEMATO/EXZ8000": {
+   "kategori": "HEMATO",
+   "kode": "EXZ8000",
+   "label": "EXZ8000",
+   "meta": {
+    "diff": "6-Diff"
+   },
+   "reagents": [
+    {
+     "kode": "dn",
+     "jenis": "reagent",
+     "nama": "H58 DN DILUENT 20L",
+     "pack": "20.000 mL/jeriken",
+     "vol": 20000,
+     "yieldTest": null
+    },
+    {
+     "kode": "ld",
+     "jenis": "reagent",
+     "nama": "H58 LD LYSE 4L",
+     "pack": "4.000 mL/btl",
+     "vol": 4000,
+     "yieldTest": null
+    },
+    {
+     "kode": "ln",
+     "jenis": "reagent",
+     "nama": "H58 LN LYSE 4L",
+     "pack": "4.000 mL/btl",
+     "vol": 4000,
+     "yieldTest": null
+    },
+    {
+     "kode": "fd",
+     "jenis": "reagent",
+     "nama": "H58 FD DYE 48ML",
+     "pack": "48 mL/btl",
+     "vol": 48,
+     "yieldTest": null
+    },
+    {
+     "kode": "fn",
+     "jenis": "reagent",
+     "nama": "H58 FN DYE 48ML",
+     "pack": "48 mL/btl",
+     "vol": 48,
+     "yieldTest": null
+    },
+    {
+     "kode": "ls",
+     "jenis": "reagent",
+     "nama": "H58 LS LYSE 1L",
+     "pack": "1.000 mL/btl",
+     "vol": 1000,
+     "yieldTest": null
+    },
+    {
+     "kode": "dr",
+     "jenis": "reagent",
+     "nama": "H58 DR DILUENT 1L",
+     "pack": "1.000 mL/btl",
+     "vol": 1000,
+     "yieldTest": null
+    },
+    {
+     "kode": "fr",
+     "jenis": "reagent",
+     "nama": "H58 FR DYE 12ML",
+     "pack": "12 mL/btl",
+     "vol": 12,
+     "yieldTest": null
+    },
+    {
+     "kode": "probe",
+     "jenis": "reagent",
+     "nama": "PROBE CLEANSER 50ML×2",
+     "pack": "100 mL/pack",
+     "vol": 100,
+     "yieldTest": null
+    }
+   ]
+  },
+  "XM/LIBO": {
+   "kategori": "XM",
+   "kode": "LIBO",
+   "label": "LIBO",
+   "meta": {
+    "methods": [
+     {
+      "id": "m1",
+      "label": "Mayor (1 well)",
+      "cols": 1,
+      "liss_ml": 0.67
+     },
+     {
+      "id": "m2",
+      "label": "Mayor + Minor (2 well)",
+      "cols": 2,
+      "liss_ml": 1.33
+     },
+     {
+      "id": "m3",
+      "label": "Mayor + Minor + AC",
+      "cols": 3,
+      "liss_ml": 2
+     }
+    ]
+   },
+   "reagents": [
+    {
+     "kode": "card",
+     "jenis": "reagent",
+     "nama": "Coombs Card AHG (Anti-IgG+C3d)",
+     "pack": "360 well/kit",
+     "vol": 360,
+     "yieldTest": null
+    },
+    {
+     "kode": "liss",
+     "jenis": "reagent",
+     "nama": "LISS (Low Ionic Salt Solution)",
+     "pack": "250 mL/btl",
+     "vol": 250,
+     "yieldTest": null
+    }
+   ]
+  },
+  "XM/REDCEL": {
+   "kategori": "XM",
+   "kode": "REDCEL",
+   "label": "REDCEL",
+   "meta": {
+    "methods": [
+     {
+      "id": "xm",
+      "label": "Crossmatch (My+Mn+AC)",
+      "cols": 3,
+      "liss_ml": 1
+     },
+     {
+      "id": "dct",
+      "label": "DCT (Direct Coombs)",
+      "cols": 1,
+      "liss_ml": 0.5
+     }
+    ]
+   },
+   "reagents": [
+    {
+     "kode": "ahg",
+     "jenis": "reagent",
+     "nama": "RC AHG (Anti-Human Globulin)",
+     "pack": "384 kolom/kit",
+     "vol": 384,
+     "yieldTest": null
+    },
+    {
+     "kode": "liss",
+     "jenis": "reagent",
+     "nama": "RC Liss Diluent",
+     "pack": "500 mL/btl",
+     "vol": 500,
+     "yieldTest": null
+    }
+   ]
+  },
+  "HPLC/AH600PRO": {
+   "kategori": "HPLC",
+   "kode": "AH600PRO",
+   "label": "AH600PRO",
+   "meta": {
+    "calPl": 2700000,
+    "ctrlPl": 1500000
+   },
+   "reagents": [
+    {
+     "kode": "el1",
+     "jenis": "reagent",
+     "nama": "AH-600 Elution Buffer His No.1 (STD)",
+     "pack": "800 mL/btl",
+     "vol": 800,
+     "yieldTest": null
+    },
+    {
+     "kode": "el2",
+     "jenis": "reagent",
+     "nama": "AH-600 Elution Buffer His No.2 (STD)",
+     "pack": "800 mL/btl",
+     "vol": 800,
+     "yieldTest": null
+    },
+    {
+     "kode": "el3",
+     "jenis": "reagent",
+     "nama": "AH-600 Elution Buffer His No.3 (STD)",
+     "pack": "800 mL/btl",
+     "vol": 800,
+     "yieldTest": null
+    },
+    {
+     "kode": "hws",
+     "jenis": "reagent",
+     "nama": "HSi Hemolysis & Wash Solution",
+     "pack": "2000 mL/btl",
+     "vol": 2000,
+     "yieldTest": null
+    },
+    {
+     "kode": "col",
+     "jenis": "reagent",
+     "nama": "TSKgel AH-600 His Column (STD)",
+     "pack": "4000 test/unit",
+     "vol": null,
+     "yieldTest": 4000
+    },
+    {
+     "kode": "flt",
+     "jenis": "reagent",
+     "nama": "Filter Element AH-600",
+     "pack": "600 test/unit",
+     "vol": null,
+     "yieldTest": 600
+    }
+   ]
+  }
+ },
+ "kasus": [
+  {
+   "id": "formula-hemato Z3 800@24",
+   "fn": "hematoCost",
+   "analyzer": "HEMATO/Z3",
+   "harga": {
+    "lyse": {
+     "price": 1137000,
+     "disc": 3
+    },
+    "dil": {
+     "price": 1274000,
+     "disc": 6
+    },
+    "probe": {
+     "price": 1411000,
+     "disc": 9
+    }
+   },
+   "tests": 800,
+   "workDays": 24,
+   "mode": null,
+   "harap": {
+    "total": 3098.28489,
+    "cyc": 2021.6153399999998,
+    "fix": 1076.6695499999998,
+    "pr": {
+     "lyse": {
+      "c": 758.78832,
+      "f": 59.1590196
+     },
+     "dil": {
+      "c": 1262.82702,
+      "f": 247.1045304
+     },
+     "probe": {
+      "c": 0,
+      "f": 770.406
+     }
+    }
+   }
+  },
+  {
+   "id": "formula-hemato Z3 2000@20",
+   "fn": "hematoCost",
+   "analyzer": "HEMATO/Z3",
+   "harga": {
+    "lyse": {
+     "price": 1137000,
+     "disc": 3
+    },
+    "dil": {
+     "price": 1274000,
+     "disc": 6
+    },
+    "probe": {
+     "price": 1411000,
+     "disc": 9
+    }
+   },
+   "tests": 2000,
+   "workDays": 20,
+   "mode": null,
+   "harap": {
+    "total": 2380.50519,
+    "cyc": 2021.6153399999998,
+    "fix": 358.88985,
+    "pr": {
+     "lyse": {
+      "c": 758.78832,
+      "f": 19.719673200000003
+     },
+     "dil": {
+      "c": 1262.82702,
+      "f": 82.3681768
+     },
+     "probe": {
+      "c": 0,
+      "f": 256.802
+     }
+    }
+   }
+  },
+  {
+   "id": "formula-hemato Z52 800@24",
+   "fn": "hematoCost",
+   "analyzer": "HEMATO/Z52",
+   "harga": {
+    "dn": {
+     "price": 1548000,
+     "disc": 12
+    },
+    "ld": {
+     "price": 1685000,
+     "disc": 0
+    },
+    "lb": {
+     "price": 1822000,
+     "disc": 3
+    },
+    "probe": {
+     "price": 1959000,
+     "disc": 6
+    }
+   },
+   "tests": 800,
+   "workDays": 24,
+   "mode": null,
+   "harap": {
+    "total": 9458.98781156,
+    "cyc": 8733.459836,
+    "fix": 725.52797556,
+    "pr": {
+     "dn": {
+      "c": 2877.9363359999998,
+      "f": 422.25217055999997
+     },
+     "ld": {
+      "c": 4044,
+      "f": 222.42000000000002
+     },
+     "lb": {
+      "c": 1811.5235,
+      "f": 80.855805
+     },
+     "probe": {
+      "c": 0,
+      "f": 0
+     }
+    }
+   }
+  },
+  {
+   "id": "formula-hemato Z52 2000@20",
+   "fn": "hematoCost",
+   "analyzer": "HEMATO/Z52",
+   "harga": {
+    "dn": {
+     "price": 1548000,
+     "disc": 12
+    },
+    "ld": {
+     "price": 1685000,
+     "disc": 0
+    },
+    "lb": {
+     "price": 1822000,
+     "disc": 3
+    },
+    "probe": {
+     "price": 1959000,
+     "disc": 6
+    }
+   },
+   "tests": 2000,
+   "workDays": 20,
+   "mode": null,
+   "harap": {
+    "total": 8975.30249452,
+    "cyc": 8733.459836,
+    "fix": 241.84265852000001,
+    "pr": {
+     "dn": {
+      "c": 2877.9363359999998,
+      "f": 140.75072351999998
+     },
+     "ld": {
+      "c": 4044,
+      "f": 74.14000000000001
+     },
+     "lb": {
+      "c": 1811.5235,
+      "f": 26.951935000000002
+     },
+     "probe": {
+      "c": 0,
+      "f": 0
+     }
+    }
+   }
+  },
+  {
+   "id": "formula-hemato Z50 800@24",
+   "fn": "hematoCost",
+   "analyzer": "HEMATO/Z50",
+   "harga": {
+    "dn": {
+     "price": 2096000,
+     "disc": 9
+    },
+    "ld": {
+     "price": 2233000,
+     "disc": 12
+    },
+    "lb": {
+     "price": 2370000,
+     "disc": 0
+    },
+    "probe": {
+     "price": 2507000,
+     "disc": 3
+    }
+   },
+   "tests": 800,
+   "workDays": 24,
+   "mode": null,
+   "harap": {
+    "total": 12133.965355839999,
+    "cyc": 11174.930104,
+    "fix": 959.0352518399999,
+    "pr": {
+     "dn": {
+      "c": 4029.584104,
+      "f": 591.2224718399999
+     },
+     "ld": {
+      "c": 4716.096,
+      "f": 259.38528
+     },
+     "lb": {
+      "c": 2429.25,
+      "f": 108.4275
+     },
+     "probe": {
+      "c": 0,
+      "f": 0
+     }
+    }
+   }
+  },
+  {
+   "id": "formula-hemato Z50 2000@20",
+   "fn": "hematoCost",
+   "analyzer": "HEMATO/Z50",
+   "harga": {
+    "dn": {
+     "price": 2096000,
+     "disc": 9
+    },
+    "ld": {
+     "price": 2233000,
+     "disc": 12
+    },
+    "lb": {
+     "price": 2370000,
+     "disc": 0
+    },
+    "probe": {
+     "price": 2507000,
+     "disc": 3
+    }
+   },
+   "tests": 2000,
+   "workDays": 20,
+   "mode": null,
+   "harap": {
+    "total": 11494.608521279999,
+    "cyc": 11174.930104,
+    "fix": 319.67841728,
+    "pr": {
+     "dn": {
+      "c": 4029.584104,
+      "f": 197.07415728
+     },
+     "ld": {
+      "c": 4716.096,
+      "f": 86.46176000000001
+     },
+     "lb": {
+      "c": 2429.25,
+      "f": 36.1425
+     },
+     "probe": {
+      "c": 0,
+      "f": 0
+     }
+    }
+   }
+  },
+  {
+   "id": "formula-hemato EXZ6000 800@24",
+   "fn": "hematoCost",
+   "analyzer": "HEMATO/EXZ6000",
+   "harga": {
+    "dn": {
+     "price": 2644000,
+     "disc": 6
+    },
+    "ldi": {
+     "price": 2781000,
+     "disc": 9
+    },
+    "ldii": {
+     "price": 2918000,
+     "disc": 12
+    },
+    "lb": {
+     "price": 3055000,
+     "disc": 0
+    },
+    "probe": {
+     "price": 3192000,
+     "disc": 3
+    }
+   },
+   "tests": 800,
+   "workDays": 24,
+   "mode": null,
+   "harap": {
+    "total": 19723.8629704836,
+    "cyc": 13324.209552,
+    "fix": 6399.653418483599,
+    "pr": {
+     "dn": {
+      "c": 6190.286152,
+      "f": 1269.6738304836
+     },
+     "ldi": {
+      "c": 2378.8674,
+      "f": 391.753908
+     },
+     "ldii": {
+      "c": 2311.056,
+      "f": 454.50767999999994
+     },
+     "lb": {
+      "c": 2444,
+      "f": 568.2299999999999
+     },
+     "probe": {
+      "c": 0,
+      "f": 3715.488
+     }
+    }
+   }
+  },
+  {
+   "id": "formula-hemato EXZ6000 2000@20",
+   "fn": "hematoCost",
+   "analyzer": "HEMATO/EXZ6000",
+   "harga": {
+    "dn": {
+     "price": 2644000,
+     "disc": 6
+    },
+    "ldi": {
+     "price": 2781000,
+     "disc": 9
+    },
+    "ldii": {
+     "price": 2918000,
+     "disc": 12
+    },
+    "lb": {
+     "price": 3055000,
+     "disc": 0
+    },
+    "probe": {
+     "price": 3192000,
+     "disc": 3
+    }
+   },
+   "tests": 2000,
+   "workDays": 20,
+   "mode": null,
+   "harap": {
+    "total": 15457.4273581612,
+    "cyc": 13324.209552,
+    "fix": 2133.2178061612,
+    "pr": {
+     "dn": {
+      "c": 6190.286152,
+      "f": 423.2246101612
+     },
+     "ldi": {
+      "c": 2378.8674,
+      "f": 130.58463600000002
+     },
+     "ldii": {
+      "c": 2311.056,
+      "f": 151.50256
+     },
+     "lb": {
+      "c": 2444,
+      "f": 189.41
+     },
+     "probe": {
+      "c": 0,
+      "f": 1238.496
+     }
+    }
+   }
+  },
+  {
+   "id": "formula-hemato EXZ8000/cbc_diff 800@24",
+   "fn": "hematoCost",
+   "analyzer": "HEMATO/EXZ8000",
+   "harga": {
+    "dn": {
+     "price": 3329000,
+     "disc": 6
+    },
+    "ld": {
+     "price": 3466000,
+     "disc": 9
+    },
+    "ln": {
+     "price": 3603000,
+     "disc": 12
+    },
+    "fd": {
+     "price": 3740000,
+     "disc": 0
+    },
+    "fn": {
+     "price": 3877000,
+     "disc": 3
+    },
+    "ls": {
+     "price": 4014000,
+     "disc": 6
+    },
+    "dr": {
+     "price": 4151000,
+     "disc": 9
+    },
+    "fr": {
+     "price": 4288000,
+     "disc": 12
+    },
+    "probe": {
+     "price": 4425000,
+     "disc": 0
+    }
+   },
+   "tests": 800,
+   "workDays": 24,
+   "mode": "cbc_diff",
+   "harap": {
+    "total": 20619.9803182,
+    "cyc": 14002.3869,
+    "fix": 6617.593418199999,
+    "pr": {
+     "dn": {
+      "c": 6571.446,
+      "f": 1417.55478
+     },
+     "ld": {
+      "c": 1230.0834,
+      "f": 84.213402
+     },
+     "ln": {
+      "c": 1188.99,
+      "f": 83.2293
+     },
+     "fd": {
+      "c": 1558.3333333333335,
+      "f": 280.50000000000006
+     },
+     "fn": {
+      "c": 1566.9541666666667,
+      "f": 235.04312499999997
+     },
+     "ls": {
+      "c": 1886.58,
+      "f": 282.98699999999997
+     },
+     "dr": {
+      "c": 0,
+      "f": 0
+     },
+     "fr": {
+      "c": 0,
+      "f": 251.56581119999996
+     },
+     "probe": {
+      "c": 0,
+      "f": 3982.4999999999995
+     }
+    }
+   }
+  },
+  {
+   "id": "formula-hemato EXZ8000/cbc_diff_ret 800@24",
+   "fn": "hematoCost",
+   "analyzer": "HEMATO/EXZ8000",
+   "harga": {
+    "dn": {
+     "price": 3329000,
+     "disc": 6
+    },
+    "ld": {
+     "price": 3466000,
+     "disc": 9
+    },
+    "ln": {
+     "price": 3603000,
+     "disc": 12
+    },
+    "fd": {
+     "price": 3740000,
+     "disc": 0
+    },
+    "fn": {
+     "price": 3877000,
+     "disc": 3
+    },
+    "ls": {
+     "price": 4014000,
+     "disc": 6
+    },
+    "dr": {
+     "price": 4151000,
+     "disc": 9
+    },
+    "fr": {
+     "price": 4288000,
+     "disc": 12
+    },
+    "probe": {
+     "price": 4425000,
+     "disc": 0
+    }
+   },
+   "tests": 800,
+   "workDays": 24,
+   "mode": "cbc_diff_ret",
+   "harap": {
+    "total": 35169.07137286666,
+    "cyc": 28374.695166666665,
+    "fix": 6794.376206199999,
+    "pr": {
+     "dn": {
+      "c": 8761.928,
+      "f": 1417.55478
+     },
+     "ld": {
+      "c": 1230.0834,
+      "f": 84.213402
+     },
+     "ln": {
+      "c": 1188.99,
+      "f": 83.2293
+     },
+     "fd": {
+      "c": 1558.3333333333335,
+      "f": 280.50000000000006
+     },
+     "fn": {
+      "c": 1566.9541666666667,
+      "f": 235.04312499999997
+     },
+     "ls": {
+      "c": 1886.58,
+      "f": 282.98699999999997
+     },
+     "dr": {
+      "c": 5892.7596,
+      "f": 176.782788
+     },
+     "fr": {
+      "c": 6289.066666666667,
+      "f": 251.56581119999996
+     },
+     "probe": {
+      "c": 0,
+      "f": 3982.4999999999995
+     }
+    }
+   }
+  },
+  {
+   "id": "formula-hemato EXZ8000/cbc_diff_xn 800@24",
+   "fn": "hematoCost",
+   "analyzer": "HEMATO/EXZ8000",
+   "harga": {
+    "dn": {
+     "price": 3329000,
+     "disc": 6
+    },
+    "ld": {
+     "price": 3466000,
+     "disc": 9
+    },
+    "ln": {
+     "price": 3603000,
+     "disc": 12
+    },
+    "fd": {
+     "price": 3740000,
+     "disc": 0
+    },
+    "fn": {
+     "price": 3877000,
+     "disc": 3
+    },
+    "ls": {
+     "price": 4014000,
+     "disc": 6
+    },
+    "dr": {
+     "price": 4151000,
+     "disc": 9
+    },
+    "fr": {
+     "price": 4288000,
+     "disc": 12
+    },
+    "probe": {
+     "price": 4425000,
+     "disc": 0
+    }
+   },
+   "tests": 800,
+   "workDays": 24,
+   "mode": "cbc_diff_xn",
+   "harap": {
+    "total": 20619.9803182,
+    "cyc": 14002.3869,
+    "fix": 6617.593418199999,
+    "pr": {
+     "dn": {
+      "c": 6571.446,
+      "f": 1417.55478
+     },
+     "ld": {
+      "c": 1230.0834,
+      "f": 84.213402
+     },
+     "ln": {
+      "c": 1188.99,
+      "f": 83.2293
+     },
+     "fd": {
+      "c": 1558.3333333333335,
+      "f": 280.50000000000006
+     },
+     "fn": {
+      "c": 1566.9541666666667,
+      "f": 235.04312499999997
+     },
+     "ls": {
+      "c": 1886.58,
+      "f": 282.98699999999997
+     },
+     "dr": {
+      "c": 0,
+      "f": 0
+     },
+     "fr": {
+      "c": 0,
+      "f": 251.56581119999996
+     },
+     "probe": {
+      "c": 0,
+      "f": 3982.4999999999995
+     }
+    }
+   }
+  },
+  {
+   "id": "formula-hemato EXZ8000/cbc_diff_ret_xr 800@24",
+   "fn": "hematoCost",
+   "analyzer": "HEMATO/EXZ8000",
+   "harga": {
+    "dn": {
+     "price": 3329000,
+     "disc": 6
+    },
+    "ld": {
+     "price": 3466000,
+     "disc": 9
+    },
+    "ln": {
+     "price": 3603000,
+     "disc": 12
+    },
+    "fd": {
+     "price": 3740000,
+     "disc": 0
+    },
+    "fn": {
+     "price": 3877000,
+     "disc": 3
+    },
+    "ls": {
+     "price": 4014000,
+     "disc": 6
+    },
+    "dr": {
+     "price": 4151000,
+     "disc": 9
+    },
+    "fr": {
+     "price": 4288000,
+     "disc": 12
+    },
+    "probe": {
+     "price": 4425000,
+     "disc": 0
+    }
+   },
+   "tests": 800,
+   "workDays": 24,
+   "mode": "cbc_diff_ret_xr",
+   "harap": {
+    "total": 35169.07137286666,
+    "cyc": 28374.695166666665,
+    "fix": 6794.376206199999,
+    "pr": {
+     "dn": {
+      "c": 8761.928,
+      "f": 1417.55478
+     },
+     "ld": {
+      "c": 1230.0834,
+      "f": 84.213402
+     },
+     "ln": {
+      "c": 1188.99,
+      "f": 83.2293
+     },
+     "fd": {
+      "c": 1558.3333333333335,
+      "f": 280.50000000000006
+     },
+     "fn": {
+      "c": 1566.9541666666667,
+      "f": 235.04312499999997
+     },
+     "ls": {
+      "c": 1886.58,
+      "f": 282.98699999999997
+     },
+     "dr": {
+      "c": 5892.7596,
+      "f": 176.782788
+     },
+     "fr": {
+      "c": 6289.066666666667,
+      "f": 251.56581119999996
+     },
+     "probe": {
+      "c": 0,
+      "f": 3982.4999999999995
+     }
+    }
+   }
+  },
+  {
+   "id": "formula-hemato EXZ8000/cbc_diff 2000@20",
+   "fn": "hematoCost",
+   "analyzer": "HEMATO/EXZ8000",
+   "harga": {
+    "dn": {
+     "price": 3329000,
+     "disc": 6
+    },
+    "ld": {
+     "price": 3466000,
+     "disc": 9
+    },
+    "ln": {
+     "price": 3603000,
+     "disc": 12
+    },
+    "fd": {
+     "price": 3740000,
+     "disc": 0
+    },
+    "fn": {
+     "price": 3877000,
+     "disc": 3
+    },
+    "ls": {
+     "price": 4014000,
+     "disc": 6
+    },
+    "dr": {
+     "price": 4151000,
+     "disc": 9
+    },
+    "fr": {
+     "price": 4288000,
+     "disc": 12
+    },
+    "probe": {
+     "price": 4425000,
+     "disc": 0
+    }
+   },
+   "tests": 2000,
+   "workDays": 20,
+   "mode": "cbc_diff",
+   "harap": {
+    "total": 16208.251372733332,
+    "cyc": 14002.3869,
+    "fix": 2205.864472733333,
+    "pr": {
+     "dn": {
+      "c": 6571.446,
+      "f": 472.51826
+     },
+     "ld": {
+      "c": 1230.0834,
+      "f": 28.071134
+     },
+     "ln": {
+      "c": 1188.99,
+      "f": 27.7431
+     },
+     "fd": {
+      "c": 1558.3333333333335,
+      "f": 93.50000000000001
+     },
+     "fn": {
+      "c": 1566.9541666666667,
+      "f": 78.34770833333333
+     },
+     "ls": {
+      "c": 1886.58,
+      "f": 94.329
+     },
+     "dr": {
+      "c": 0,
+      "f": 0
+     },
+     "fr": {
+      "c": 0,
+      "f": 83.8552704
+     },
+     "probe": {
+      "c": 0,
+      "f": 1327.5
+     }
+    }
+   }
+  },
+  {
+   "id": "formula-hemato EXZ8000/cbc_diff_ret 2000@20",
+   "fn": "hematoCost",
+   "analyzer": "HEMATO/EXZ8000",
+   "harga": {
+    "dn": {
+     "price": 3329000,
+     "disc": 6
+    },
+    "ld": {
+     "price": 3466000,
+     "disc": 9
+    },
+    "ln": {
+     "price": 3603000,
+     "disc": 12
+    },
+    "fd": {
+     "price": 3740000,
+     "disc": 0
+    },
+    "fn": {
+     "price": 3877000,
+     "disc": 3
+    },
+    "ls": {
+     "price": 4014000,
+     "disc": 6
+    },
+    "dr": {
+     "price": 4151000,
+     "disc": 9
+    },
+    "fr": {
+     "price": 4288000,
+     "disc": 12
+    },
+    "probe": {
+     "price": 4425000,
+     "disc": 0
+    }
+   },
+   "tests": 2000,
+   "workDays": 20,
+   "mode": "cbc_diff_ret",
+   "harap": {
+    "total": 30639.487235399996,
+    "cyc": 28374.695166666665,
+    "fix": 2264.792068733333,
+    "pr": {
+     "dn": {
+      "c": 8761.928,
+      "f": 472.51826
+     },
+     "ld": {
+      "c": 1230.0834,
+      "f": 28.071134
+     },
+     "ln": {
+      "c": 1188.99,
+      "f": 27.7431
+     },
+     "fd": {
+      "c": 1558.3333333333335,
+      "f": 93.50000000000001
+     },
+     "fn": {
+      "c": 1566.9541666666667,
+      "f": 78.34770833333333
+     },
+     "ls": {
+      "c": 1886.58,
+      "f": 94.329
+     },
+     "dr": {
+      "c": 5892.7596,
+      "f": 58.927596
+     },
+     "fr": {
+      "c": 6289.066666666667,
+      "f": 83.8552704
+     },
+     "probe": {
+      "c": 0,
+      "f": 1327.5
+     }
+    }
+   }
+  },
+  {
+   "id": "formula-hemato EXZ8000/cbc_diff_xn 2000@20",
+   "fn": "hematoCost",
+   "analyzer": "HEMATO/EXZ8000",
+   "harga": {
+    "dn": {
+     "price": 3329000,
+     "disc": 6
+    },
+    "ld": {
+     "price": 3466000,
+     "disc": 9
+    },
+    "ln": {
+     "price": 3603000,
+     "disc": 12
+    },
+    "fd": {
+     "price": 3740000,
+     "disc": 0
+    },
+    "fn": {
+     "price": 3877000,
+     "disc": 3
+    },
+    "ls": {
+     "price": 4014000,
+     "disc": 6
+    },
+    "dr": {
+     "price": 4151000,
+     "disc": 9
+    },
+    "fr": {
+     "price": 4288000,
+     "disc": 12
+    },
+    "probe": {
+     "price": 4425000,
+     "disc": 0
+    }
+   },
+   "tests": 2000,
+   "workDays": 20,
+   "mode": "cbc_diff_xn",
+   "harap": {
+    "total": 16208.251372733332,
+    "cyc": 14002.3869,
+    "fix": 2205.864472733333,
+    "pr": {
+     "dn": {
+      "c": 6571.446,
+      "f": 472.51826
+     },
+     "ld": {
+      "c": 1230.0834,
+      "f": 28.071134
+     },
+     "ln": {
+      "c": 1188.99,
+      "f": 27.7431
+     },
+     "fd": {
+      "c": 1558.3333333333335,
+      "f": 93.50000000000001
+     },
+     "fn": {
+      "c": 1566.9541666666667,
+      "f": 78.34770833333333
+     },
+     "ls": {
+      "c": 1886.58,
+      "f": 94.329
+     },
+     "dr": {
+      "c": 0,
+      "f": 0
+     },
+     "fr": {
+      "c": 0,
+      "f": 83.8552704
+     },
+     "probe": {
+      "c": 0,
+      "f": 1327.5
+     }
+    }
+   }
+  },
+  {
+   "id": "formula-hemato EXZ8000/cbc_diff_ret_xr 2000@20",
+   "fn": "hematoCost",
+   "analyzer": "HEMATO/EXZ8000",
+   "harga": {
+    "dn": {
+     "price": 3329000,
+     "disc": 6
+    },
+    "ld": {
+     "price": 3466000,
+     "disc": 9
+    },
+    "ln": {
+     "price": 3603000,
+     "disc": 12
+    },
+    "fd": {
+     "price": 3740000,
+     "disc": 0
+    },
+    "fn": {
+     "price": 3877000,
+     "disc": 3
+    },
+    "ls": {
+     "price": 4014000,
+     "disc": 6
+    },
+    "dr": {
+     "price": 4151000,
+     "disc": 9
+    },
+    "fr": {
+     "price": 4288000,
+     "disc": 12
+    },
+    "probe": {
+     "price": 4425000,
+     "disc": 0
+    }
+   },
+   "tests": 2000,
+   "workDays": 20,
+   "mode": "cbc_diff_ret_xr",
+   "harap": {
+    "total": 30639.487235399996,
+    "cyc": 28374.695166666665,
+    "fix": 2264.792068733333,
+    "pr": {
+     "dn": {
+      "c": 8761.928,
+      "f": 472.51826
+     },
+     "ld": {
+      "c": 1230.0834,
+      "f": 28.071134
+     },
+     "ln": {
+      "c": 1188.99,
+      "f": 27.7431
+     },
+     "fd": {
+      "c": 1558.3333333333335,
+      "f": 93.50000000000001
+     },
+     "fn": {
+      "c": 1566.9541666666667,
+      "f": 78.34770833333333
+     },
+     "ls": {
+      "c": 1886.58,
+      "f": 94.329
+     },
+     "dr": {
+      "c": 5892.7596,
+      "f": 58.927596
+     },
+     "fr": {
+      "c": 6289.066666666667,
+      "f": 83.8552704
+     },
+     "probe": {
+      "c": 0,
+      "f": 1327.5
+     }
+    }
+   }
+  },
+  {
+   "id": "formula-cc EXC200 b0 1500@25",
+   "fn": "ccDetergent",
+   "kodeAnalyzer": "EXC200",
+   "tests": 1500,
+   "workDays": 25,
+   "batch": 0,
+   "concPerMl": 450,
+   "probePerMl": 15000,
+   "harap": {
+    "total": 6750.72,
+    "conc": 1305.7200000000003,
+    "probe": 5445
+   }
+  },
+  {
+   "id": "formula-cc EXC200 b7 1500@25",
+   "fn": "ccDetergent",
+   "kodeAnalyzer": "EXC200",
+   "tests": 1500,
+   "workDays": 25,
+   "batch": 7,
+   "concPerMl": 450,
+   "probePerMl": 15000,
+   "harap": {
+    "total": 9106.56,
+    "conc": 1771.56,
+    "probe": 7335
+   }
+  },
+  {
+   "id": "formula-cc EXC400 b0 1500@25",
+   "fn": "ccDetergent",
+   "kodeAnalyzer": "EXC400",
+   "tests": 1500,
+   "workDays": 25,
+   "batch": 0,
+   "concPerMl": 450,
+   "probePerMl": 15000,
+   "harap": {
+    "total": 8911.8,
+    "conc": 1243.8,
+    "probe": 7667.999999999999
+   }
+  },
+  {
+   "id": "formula-cc EXC400 b7 1500@25",
+   "fn": "ccDetergent",
+   "kodeAnalyzer": "EXC400",
+   "tests": 1500,
+   "workDays": 25,
+   "batch": 7,
+   "concPerMl": 450,
+   "probePerMl": 15000,
+   "harap": {
+    "total": 11925,
+    "conc": 1700.9999999999998,
+    "probe": 10224
+   }
+  },
+  {
+   "id": "formula-xm LIBO/m1",
+   "fn": "crossmatchCost",
+   "analyzer": "XM/LIBO",
+   "harga": {
+    "card": {
+     "price": 4562000,
+     "disc": 3
+    },
+    "liss": {
+     "price": 4699000,
+     "disc": 6
+    }
+   },
+   "tests": 300,
+   "workDays": 24,
+   "metode": {
+    "cols": 1,
+    "liss_ml": 0.67
+   },
+   "harap": {
+    "total": 24129.776355555558,
+    "pr": {
+     "card": 12292.055555555555,
+     "liss": 11837.720800000001
+    }
+   }
+  },
+  {
+   "id": "formula-xm LIBO/m2",
+   "fn": "crossmatchCost",
+   "analyzer": "XM/LIBO",
+   "harga": {
+    "card": {
+     "price": 4562000,
+     "disc": 3
+    },
+    "liss": {
+     "price": 4699000,
+     "disc": 6
+    }
+   },
+   "tests": 300,
+   "workDays": 24,
+   "metode": {
+    "cols": 2,
+    "liss_ml": 1.33
+   },
+   "harap": {
+    "total": 48082.87031111111,
+    "pr": {
+     "card": 24584.11111111111,
+     "liss": 23498.759200000004
+    }
+   }
+  },
+  {
+   "id": "formula-xm LIBO/m3",
+   "fn": "crossmatchCost",
+   "analyzer": "XM/LIBO",
+   "harga": {
+    "card": {
+     "price": 4562000,
+     "disc": 3
+    },
+    "liss": {
+     "price": 4699000,
+     "disc": 6
+    }
+   },
+   "tests": 300,
+   "workDays": 24,
+   "metode": {
+    "cols": 3,
+    "liss_ml": 2
+   },
+   "harap": {
+    "total": 72212.64666666667,
+    "pr": {
+     "card": 36876.166666666664,
+     "liss": 35336.48
+    }
+   }
+  },
+  {
+   "id": "default-metode-xm LIBO",
+   "fn": "defaultMetode",
+   "analyzer": "XM/LIBO",
+   "harap": {
+    "id": "m3"
+   }
+  },
+  {
+   "id": "formula-xm REDCEL/xm",
+   "fn": "crossmatchCost",
+   "analyzer": "XM/REDCEL",
+   "harga": {
+    "ahg": {
+     "price": 4836000,
+     "disc": 9
+    },
+    "liss": {
+     "price": 4973000,
+     "disc": 12
+    }
+   },
+   "tests": 300,
+   "workDays": 24,
+   "metode": {
+    "cols": 3,
+    "liss_ml": 1
+   },
+   "harap": {
+    "total": 43133.417499999996,
+    "pr": {
+     "ahg": 34380.9375,
+     "liss": 8752.48
+    }
+   }
+  },
+  {
+   "id": "formula-xm REDCEL/dct",
+   "fn": "crossmatchCost",
+   "analyzer": "XM/REDCEL",
+   "harga": {
+    "ahg": {
+     "price": 4836000,
+     "disc": 9
+    },
+    "liss": {
+     "price": 4973000,
+     "disc": 12
+    }
+   },
+   "tests": 300,
+   "workDays": 24,
+   "metode": {
+    "cols": 1,
+    "liss_ml": 0.5
+   },
+   "harap": {
+    "total": 15836.5525,
+    "pr": {
+     "ahg": 11460.3125,
+     "liss": 4376.24
+    }
+   }
+  },
+  {
+   "id": "default-metode-xm REDCEL",
+   "fn": "defaultMetode",
+   "analyzer": "XM/REDCEL",
+   "harap": {
+    "id": "xm"
+   }
+  },
+  {
+   "id": "formula-hplc 400@24",
+   "fn": "hplcCost",
+   "analyzer": "HPLC/AH600PRO",
+   "harga": {
+    "el1": {
+     "price": 5110000,
+     "disc": 0
+    },
+    "el2": {
+     "price": 5247000,
+     "disc": 3
+    },
+    "el3": {
+     "price": 5384000,
+     "disc": 6
+    },
+    "hws": {
+     "price": 5521000,
+     "disc": 9
+    },
+    "col": {
+     "price": 5658000,
+     "disc": 12
+    },
+    "flt": {
+     "price": 5795000,
+     "disc": 0
+    }
+   },
+   "tests": 400,
+   "workDays": 24,
+   "harap": {
+    "total": 44781.157153362576,
+    "cyc": 22538.259558187136,
+    "fix": 11339.804261842106,
+    "pr": {
+     "el1": {
+      "c": 4841.0526315789475,
+      "f": 2783.6052631578946
+     },
+     "el2": {
+      "c": 4219.002236842105,
+      "f": 2169.772578947368
+     },
+     "el3": {
+      "c": 998.8736842105263,
+      "f": 1977.7698947368422
+     },
+     "hws": {
+      "c": 12479.331005555558,
+      "f": 4408.656524999999
+     },
+     "col": {
+      "c": 1244.76,
+      "f": 0
+     },
+     "flt": {
+      "c": 9658.333333333334,
+      "f": 0
+     }
+    }
+   }
+  },
+  {
+   "id": "formula-hplc 1000@25",
+   "fn": "hplcCost",
+   "analyzer": "HPLC/AH600PRO",
+   "harga": {
+    "el1": {
+     "price": 5110000,
+     "disc": 0
+    },
+    "el2": {
+     "price": 5247000,
+     "disc": 3
+    },
+    "el3": {
+     "price": 5384000,
+     "disc": 6
+    },
+    "hws": {
+     "price": 5521000,
+     "disc": 9
+    },
+    "col": {
+     "price": 5658000,
+     "disc": 12
+    },
+    "flt": {
+     "price": 5795000,
+     "disc": 0
+    }
+   },
+   "tests": 1000,
+   "workDays": 25,
+   "harap": {
+    "total": 38166.271333954675,
+    "cyc": 22538.259558187136,
+    "fix": 4724.918442434211,
+    "pr": {
+     "el1": {
+      "c": 4841.0526315789475,
+      "f": 1159.8355263157896
+     },
+     "el2": {
+      "c": 4219.002236842105,
+      "f": 904.0719078947368
+     },
+     "el3": {
+      "c": 998.8736842105263,
+      "f": 824.0707894736843
+     },
+     "hws": {
+      "c": 12479.331005555558,
+      "f": 1836.94021875
+     },
+     "col": {
+      "c": 1244.76,
+      "f": 0
+     },
+     "flt": {
+      "c": 9658.333333333334,
+      "f": 0
+     }
+    }
+   }
+  },
+  {
+   "id": "formula-elektro cartridge",
+   "fn": "elektroCost",
+   "tests": 600,
+   "workDays": 24,
+   "calAVol": 650,
+   "hargaPaket": 5000000,
+   "harap": {
+    "cpt": 12615.384615384617,
+    "runDays": 15.853658536585366,
+    "totalTests": 396.3414634146341
+   }
+  },
+  {
+   "id": "formula-elektro bottle",
+   "fn": "elektroCost",
+   "tests": 600,
+   "workDays": 24,
+   "calAVol": 1350,
+   "hargaPaket": 5000000,
+   "harap": {
+    "cpt": 6074.074074074074,
+    "runDays": 32.926829268292686,
+    "totalTests": 823.1707317073171
+   }
+  },
+  {
+   "id": "model-hemato EXZ8000/cbc_diff",
+   "fn": "hitungHemato",
+   "analyzer": "HEMATO/EXZ8000",
+   "harga": {
+    "dn": {
+     "price": 5932000,
+     "disc": 3
+    },
+    "ld": {
+     "price": 6069000,
+     "disc": 6
+    },
+    "ln": {
+     "price": 6206000,
+     "disc": 9
+    },
+    "fd": {
+     "price": 6343000,
+     "disc": 12
+    },
+    "fn": {
+     "price": 6480000,
+     "disc": 0
+    },
+    "ls": {
+     "price": 6617000,
+     "disc": 3
+    },
+    "dr": {
+     "price": 6754000,
+     "disc": 6
+    },
+    "fr": {
+     "price": 6891000,
+     "disc": 9
+    },
+    "probe": {
+     "price": 7028000,
+     "disc": 12
+    }
+   },
+   "set": {
+    "price": 700000000,
+    "disc": 12,
+    "kso": 60,
+    "tests": 1200,
+    "markup": 22
+   },
+   "umum": {
+    "ups": 7500000,
+    "lis": 4000000,
+    "workDays": 24
+   },
+   "kontrol": {
+    "free": true,
+    "nQc": 2,
+    "nCal": 1,
+    "ctrl": {
+     "price": 5000000,
+     "disc": 0
+    },
+    "ctrlXr": {
+     "price": 12000000,
+     "disc": 5
+    },
+    "cal": {
+     "price": 1500000,
+     "disc": 10
+    }
+   },
+   "mode": "cbc_diff",
+   "harap": {
+    "capexPerTest": 8715.277777777777,
+    "reagenPerTest": 31458.792355116664,
+    "overheadKontrol": 0,
+    "baseCost": 40174.07013289444,
+    "sellPerTest": 51505.218119095436
+   }
+  },
+  {
+   "id": "model-hemato EXZ8000/cbc_diff_ret",
+   "fn": "hitungHemato",
+   "analyzer": "HEMATO/EXZ8000",
+   "harga": {
+    "dn": {
+     "price": 5932000,
+     "disc": 3
+    },
+    "ld": {
+     "price": 6069000,
+     "disc": 6
+    },
+    "ln": {
+     "price": 6206000,
+     "disc": 9
+    },
+    "fd": {
+     "price": 6343000,
+     "disc": 12
+    },
+    "fn": {
+     "price": 6480000,
+     "disc": 0
+    },
+    "ls": {
+     "price": 6617000,
+     "disc": 3
+    },
+    "dr": {
+     "price": 6754000,
+     "disc": 6
+    },
+    "fr": {
+     "price": 6891000,
+     "disc": 9
+    },
+    "probe": {
+     "price": 7028000,
+     "disc": 12
+    }
+   },
+   "set": {
+    "price": 700000000,
+    "disc": 12,
+    "kso": 60,
+    "tests": 1200,
+    "markup": 22
+   },
+   "umum": {
+    "ups": 7500000,
+    "lis": 4000000,
+    "workDays": 24
+   },
+   "kontrol": {
+    "free": true,
+    "nQc": 2,
+    "nCal": 1,
+    "ctrl": {
+     "price": 5000000,
+     "disc": 0
+    },
+    "ctrlXr": {
+     "price": 12000000,
+     "disc": 5
+    },
+    "cal": {
+     "price": 1500000,
+     "disc": 10
+    }
+   },
+   "mode": "cbc_diff_ret",
+   "harap": {
+    "capexPerTest": 8715.277777777777,
+    "reagenPerTest": 56040.117267116664,
+    "overheadKontrol": 0,
+    "baseCost": 64755.39504489444,
+    "sellPerTest": 83019.73723704414
+   }
+  },
+  {
+   "id": "model-hemato EXZ8000/cbc_diff_xn",
+   "fn": "hitungHemato",
+   "analyzer": "HEMATO/EXZ8000",
+   "harga": {
+    "dn": {
+     "price": 5932000,
+     "disc": 3
+    },
+    "ld": {
+     "price": 6069000,
+     "disc": 6
+    },
+    "ln": {
+     "price": 6206000,
+     "disc": 9
+    },
+    "fd": {
+     "price": 6343000,
+     "disc": 12
+    },
+    "fn": {
+     "price": 6480000,
+     "disc": 0
+    },
+    "ls": {
+     "price": 6617000,
+     "disc": 3
+    },
+    "dr": {
+     "price": 6754000,
+     "disc": 6
+    },
+    "fr": {
+     "price": 6891000,
+     "disc": 9
+    },
+    "probe": {
+     "price": 7028000,
+     "disc": 12
+    }
+   },
+   "set": {
+    "price": 700000000,
+    "disc": 12,
+    "kso": 60,
+    "tests": 1200,
+    "markup": 22
+   },
+   "umum": {
+    "ups": 7500000,
+    "lis": 4000000,
+    "workDays": 24
+   },
+   "kontrol": {
+    "free": true,
+    "nQc": 2,
+    "nCal": 1,
+    "ctrl": {
+     "price": 5000000,
+     "disc": 0
+    },
+    "ctrlXr": {
+     "price": 12000000,
+     "disc": 5
+    },
+    "cal": {
+     "price": 1500000,
+     "disc": 10
+    }
+   },
+   "mode": "cbc_diff_xn",
+   "harap": {
+    "capexPerTest": 8715.277777777777,
+    "reagenPerTest": 31458.792355116664,
+    "overheadKontrol": 6086.17649352,
+    "baseCost": 46260.24662641444,
+    "sellPerTest": 59308.008495403126
+   }
+  },
+  {
+   "id": "model-hemato EXZ8000/cbc_diff_ret_xr",
+   "fn": "hitungHemato",
+   "analyzer": "HEMATO/EXZ8000",
+   "harga": {
+    "dn": {
+     "price": 5932000,
+     "disc": 3
+    },
+    "ld": {
+     "price": 6069000,
+     "disc": 6
+    },
+    "ln": {
+     "price": 6206000,
+     "disc": 9
+    },
+    "fd": {
+     "price": 6343000,
+     "disc": 12
+    },
+    "fn": {
+     "price": 6480000,
+     "disc": 0
+    },
+    "ls": {
+     "price": 6617000,
+     "disc": 3
+    },
+    "dr": {
+     "price": 6754000,
+     "disc": 6
+    },
+    "fr": {
+     "price": 6891000,
+     "disc": 9
+    },
+    "probe": {
+     "price": 7028000,
+     "disc": 12
+    }
+   },
+   "set": {
+    "price": 700000000,
+    "disc": 12,
+    "kso": 60,
+    "tests": 1200,
+    "markup": 22
+   },
+   "umum": {
+    "ups": 7500000,
+    "lis": 4000000,
+    "workDays": 24
+   },
+   "kontrol": {
+    "free": true,
+    "nQc": 2,
+    "nCal": 1,
+    "ctrl": {
+     "price": 5000000,
+     "disc": 0
+    },
+    "ctrlXr": {
+     "price": 12000000,
+     "disc": 5
+    },
+    "cal": {
+     "price": 1500000,
+     "disc": 10
+    }
+   },
+   "mode": "cbc_diff_ret_xr",
+   "harap": {
+    "capexPerTest": 8715.277777777777,
+    "reagenPerTest": 56040.117267116664,
+    "overheadKontrol": 12201.0128324,
+    "baseCost": 76956.40787729443,
+    "sellPerTest": 98662.0613811467
+   }
+  }
+ ]
+}
