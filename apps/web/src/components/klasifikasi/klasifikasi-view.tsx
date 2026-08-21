@@ -13,6 +13,7 @@ import {
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ExportButton } from "@/components/ui/export-button";
+import { FilterCombo, FilterSelect, opsiDari } from "@/components/ui/filter-select";
 
 // ── Tipe (cermin apps/api/src/repo/klasifikasi.ts) ─────────────────────────
 export type Level = "kategori" | "line" | "class" | "sub_class";
@@ -408,10 +409,47 @@ function GeneratorTab({ taxonomy, canEdit }: { taxonomy: TaxonomyNode[]; canEdit
 // ── Daftar kode ────────────────────────────────────────────────────────────
 function KodeTab({ codes }: { codes: ProductCode[] }) {
   const [hanyaBeda, setHanyaBeda] = useState(false);
-  const rows = useMemo(
-    () => (hanyaBeda ? codes.filter((c) => c.legacyBeda) : codes),
-    [codes, hanyaBeda],
+  const [kategori, setKategori] = useState("");
+  const [line, setLine] = useState("");
+  const [klas, setKlas] = useState("");
+  const [sub, setSub] = useState("");
+  const [brand, setBrand] = useState("");
+  const [sumber, setSumber] = useState("");
+
+  // Filter klasifikasi BERTINGKAT: pilihan Product Line hanya yang ada di kategori
+  // terpilih, Class hanya yang ada di kategori itu, Sub Class hanya yang ada di
+  // Class itu. Sama alasannya dengan dropdown di tab Terbitkan Kode — id level
+  // bawah hanya bermakna bersama induknya, jadi daftar rata malah menyesatkan.
+  const opsiKategori = useMemo(() => opsiDari(codes, (c) => c.kategoriNama), [codes]);
+  const dalamKategori = useMemo(
+    () => codes.filter((c) => !kategori || c.kategoriNama === kategori),
+    [codes, kategori],
   );
+  const opsiLine = useMemo(() => opsiDari(dalamKategori, (c) => c.lineNama), [dalamKategori]);
+  const opsiKlas = useMemo(() => opsiDari(dalamKategori, (c) => c.classNama), [dalamKategori]);
+  const opsiSub = useMemo(
+    () => opsiDari(dalamKategori.filter((c) => !klas || c.classNama === klas), (c) => c.subClassNama),
+    [dalamKategori, klas],
+  );
+  const opsiBrand = useMemo(() => opsiDari(dalamKategori, (c) => c.brand), [dalamKategori]);
+  const opsiSumber = useMemo(() => opsiDari(codes, (c) => c.sumber), [codes]);
+
+  const rows = useMemo(
+    () => codes.filter((c) =>
+      (!hanyaBeda || c.legacyBeda)
+      && (!kategori || c.kategoriNama === kategori)
+      && (!line || c.lineNama === line)
+      && (!klas || c.classNama === klas)
+      && (!sub || c.subClassNama === sub)
+      && (!brand || (c.brand ?? "") === brand)
+      && (!sumber || c.sumber === sumber)),
+    [codes, hanyaBeda, kategori, line, klas, sub, brand, sumber],
+  );
+  const adaFilter = !!(hanyaBeda || kategori || line || klas || sub || brand || sumber);
+  const reset = () => {
+    setHanyaBeda(false); setKategori(""); setLine(""); setKlas(""); setSub("");
+    setBrand(""); setSumber("");
+  };
 
   const cols: DataColumn<ProductCode>[] = [
     { id: "kode", header: "Kode", accessor: (r) => r.kode, sortable: true,
@@ -444,6 +482,11 @@ function KodeTab({ codes }: { codes: ProductCode[] }) {
       <CardHeader>
         <CardTitle className="text-base">
           Kode produk · {fmt(rows.length)} baris
+          {adaFilter && (
+            <span className="ml-1 text-xs font-normal text-muted-foreground">
+              (tersaring dari {fmt(codes.length)})
+            </span>
+          )}
         </CardTitle>
       </CardHeader>
       <CardContent>
@@ -454,12 +497,31 @@ function KodeTab({ codes }: { codes: ProductCode[] }) {
           pageSize={25}
           searchPlaceholder="Cari kode, nama, kode 2025, brand…"
           toolbar={
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <FilterSelect label="Kategori" value={kategori} options={opsiKategori}
+                onChange={(v) => { setKategori(v); setLine(""); setKlas(""); setSub(""); setBrand(""); }} />
+              {/* Daftar panjang (57 product line · 87 class · 862 sub class · ±90 brand)
+                  → dropdown ber-kotak-cari. Kategori & Sumber tetap <select> asli
+                  karena isinya cuma beberapa. */}
+              <FilterCombo label="Product Line" value={line} options={opsiLine}
+                onChange={setLine} disabled={opsiLine.length === 0} />
+              <FilterCombo label="Class" value={klas} options={opsiKlas}
+                onChange={(v) => { setKlas(v); setSub(""); }} disabled={opsiKlas.length === 0} />
+              <FilterCombo label="Sub Class" value={sub} options={opsiSub}
+                onChange={setSub} disabled={opsiSub.length === 0} />
+              <FilterCombo label="Brand" value={brand} options={opsiBrand} onChange={setBrand} />
+              <FilterSelect label="Sumber" value={sumber} options={opsiSumber} onChange={setSumber} />
               <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
                 <input type="checkbox" checked={hanyaBeda}
                        onChange={(e) => setHanyaBeda(e.target.checked)} />
                 hanya yang beda dari spreadsheet
               </label>
+              {adaFilter && (
+                <button onClick={reset} className="rounded-md border px-2 py-1 text-xs hover:bg-muted">
+                  Reset
+                </button>
+              )}
+              {/* Export mengikuti filter — kalau tidak, isi file beda dari yang dilihat. */}
               <ExportButton
                 filename="kode-produk"
                 data={rows}

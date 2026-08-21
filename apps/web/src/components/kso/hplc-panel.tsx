@@ -52,6 +52,12 @@ export function HplcPanel({
     ctrl: { price: analyzer?.meta.ctrlPl ?? 0, disc: 0 },
   }));
 
+  // UPS & LIS milik kategori ini sendiri — di aplikasi asal tiap kategori
+  // punya sepasang sendiri (cuma Hematologi & Kimia Klinik yang berbagi),
+  // karena satu kunjungan bisa menawarkan beberapa alat dengan pendukung
+  // yang berbeda.
+  const [ups, setUps] = useState(0);
+  const [lis, setLis] = useState(0);
   const upd = (patch: Partial<typeof s>) => setS((p) => ({ ...p, ...patch }));
   const updHarga = (k: string, patch: Partial<HargaInput>) =>
     setHarga((p) => ({ ...p, [k]: { ...p[k], ...patch } }));
@@ -60,10 +66,10 @@ export function HplcPanel({
     () =>
       hitungCapex({
         harga: { price: s.price, disc: s.disc },
-        ups: umum.ups, lis: umum.lis, backup: null,
+        ups, lis, backup: null,
         ksoBulan: s.kso, testsPerMonth: s.tests, workDays: umum.workDays,
       }),
-    [s, umum],
+    [s, ups, lis, umum.workDays],
   );
   const hasil = useMemo(
     () => (analyzer ? hitungHplc(analyzer, harga, capex, s.tests, umum.workDays, s.markup, kontrol) : null),
@@ -81,7 +87,7 @@ export function HplcPanel({
       analyzerName: analyzer.brand ?? analyzer.label,
       backupLabel: "",
       totCap: capex.total,
-      capex: { alat: capex.nettAlat, backup: 0, ups: umum.ups, lis: umum.lis },
+      capex: { alat: capex.nettAlat, backup: 0, ups, lis },
       kso: s.kso, testsPerMonth: s.tests, totTest: capex.totalTest,
       workDays: umum.workDays, markup: s.markup,
     },
@@ -220,8 +226,8 @@ export function HplcPanel({
             <KartuCapex
               price={s.price} disc={s.disc}
               onPrice={(v) => upd({ price: v })} onDisc={(v) => upd({ disc: v })}
-              ups={umum.ups} lis={umum.lis}
-              onUps={(v) => setUmum({ ups: v })} onLis={(v) => setUmum({ lis: v })}
+              ups={ups} lis={lis}
+              onUps={setUps} onLis={setLis}
               nettAlat={capex.nettAlat} total={capex.total}
             />
           </CardContent>
