@@ -28,6 +28,7 @@ import {
   HardHat,
   TrendingUpDown,
   QrCode,
+  Stamp,
   type LucideIcon,
 } from "lucide-react";
 
@@ -252,6 +253,10 @@ export const NAV: NavGroup[] = [
       { title: "Kendaraan Operasional", url: "/vehicles", icon: Car, badge: "NEW" },
       // F53 — domain OPS tetap di Operations (sama keputusan spt F50/F52).
       { title: "Stiker Aset", url: "/asset-tag", icon: QrCode, badge: "NEW" },
+      // F11 — base/generic approval engine (chain HoD Sales→Bisnis→After
+      // Sales→Supply Chain→Direktur), bukan spesifik 1 proses OPS — badge NEW
+      // krn baru & kontak per-tahap masih perlu diisi manual (lihat /config).
+      { title: "Approval Requests", url: "/approval-requests", icon: Stamp, badge: "NEW" },
     ],
   },
   {

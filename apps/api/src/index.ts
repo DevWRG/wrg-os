@@ -514,6 +514,15 @@ import {
   listAuditLog,
   recordAudit,
 } from "./repo/asset-tag.js";
+import {
+  createApprovalRequest,
+  listApprovalRequests,
+  getApprovalRequest,
+  listChainConfig,
+  updateChainConfig,
+  notifyCurrentStep,
+  getAttachmentFile,
+} from "./repo/approval.js";
 const app = new Hono();
 
 // Selalu balas JSON saat error / route tak ada — supaya BFF & client tak pernah
@@ -1752,6 +1761,78 @@ app.post("/sph/:id/confirm-variant", async (c) => {
   if (!body.line_item_id) return c.json({ error: "line_item_id wajib" }, 400);
   const r = await confirmSphVariant(c.req.param("id"), body.line_item_id, body.confirmed_by);
   return c.json(r, r.ok ? 200 : 400);
+});
+
+// F11 Approval Engine — base/generic (migrasi 106). Body:
+// { title, description?, nominal?, requestedBy, requestedByWa? }.
+app.post("/approval-requests", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: Parameters<typeof createApprovalRequest>[0] | undefined;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body?.title || !body?.requestedBy) {
+    return c.json({ error: "title & requestedBy wajib" }, 400);
+  }
+  const r = await createApprovalRequest(body);
+  return c.json(r, r.ok ? 201 : 400);
+});
+
+app.get("/approval-requests", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listApprovalRequests(c.req.query("status") || undefined);
+  return c.json({ count: rows.length, requests: rows });
+});
+
+app.get("/approval-requests/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await getApprovalRequest(c.req.param("id"));
+  if (!r) return c.json({ error: "request tidak ditemukan" }, 404);
+  return c.json(r);
+});
+
+// Retry manual kirim notifikasi tahap current — dipakai kalau step pertama
+// gagal krn kontak belum dikonfigurasi, lalu config-nya baru diisi belakangan.
+app.post("/approval-requests/:id/notify", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await notifyCurrentStep(c.req.param("id"));
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.get("/approval-requests/config/chain", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json({ rows: await listChainConfig() });
+});
+
+app.patch("/approval-requests/config/chain/:urutan", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { hodKey?: string | null; waNumberOverride?: string | null } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const urutan = Number(c.req.param("urutan"));
+  if (!urutan) return c.json({ error: "urutan tidak valid" }, 400);
+  const r = await updateChainConfig(urutan, body);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+// Serve lampiran PDF/PNG approval (F11). Path-safe (getAttachmentFile join
+// di dalam APPROVAL_UPLOAD_ROOT), request_id+attachment_id harus cocok.
+app.get("/approval-requests/:id/attachments/:attachmentId", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const attachmentId = Number(c.req.param("attachmentId"));
+  if (!attachmentId) return c.json({ error: "attachmentId tidak valid" }, 400);
+  const file = await getAttachmentFile(c.req.param("id"), attachmentId);
+  if (!file) return c.json({ error: "lampiran tidak ditemukan" }, 404);
+  return c.body(new Uint8Array(file.buf), 200, {
+    "content-type": file.mimeType,
+    "content-disposition": `inline; filename="${file.filename.replace(/"/g, "")}"`,
+    "cache-control": "private, max-age=86400",
+  });
 });
 
 // A7 Product Intelligence — agregasi intelijen produk dari pipeline (D1).
