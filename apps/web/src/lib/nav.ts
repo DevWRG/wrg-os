@@ -39,6 +39,7 @@ import { canViewInsentifTim } from "@/lib/insentif-access";
 import { canViewDanaOps } from "@/lib/dana-ops-access";
 import { canViewInventoryRelocation } from "@/lib/inventory-relocation-access";
 import { canViewVendorManagement } from "@/lib/vendor-management-access";
+import { canViewGaReporting } from "@/lib/ga-reporting-access";
 
 // exact: sorot aktif hanya saat path persis (untuk route induk yg punya child,
 // mis. /pricelist vs /pricelist/setup).
@@ -309,6 +310,11 @@ export const NAV: NavGroup[] = [
       // WA/cron — dikonfirmasi user). Role min HOD (data komersial vendor),
       // `show` di sini fallback identitas, gate nyata di BFF requireHodOrAdmin().
       { title: "Vendor Management", url: "/vendor-management", icon: Handshake, badge: "NEW", show: canViewVendorManagement },
+      // F141 — konsolidasi laporan 6 modul GA (F49 ATK+F54 Materai, F50
+      // Kendaraan, F51 Dana Ops, F52 IT Asset, F53 Stiker Aset). Role min HOD
+      // (disamakan dgn gate paling ketat di antara modul sumber, F51 Dana Ops)
+      // krn agregasi menaikkan sensitivitas data yg sebagian sumbernya terbuka.
+      { title: "GA Reporting & Analytics", url: "/ga-reporting", icon: BarChart3, badge: "NEW", show: canViewGaReporting },
     ],
   },
   {

@@ -404,6 +404,10 @@ import {
   type VendorContractInput,
   type VendorContractUpdate,
 } from "./repo/vendor.js";
+import {
+  gaReportingRange,
+  gaReportingSummary,
+} from "./repo/ga-reporting.js";
 const app = new Hono();
 
 // Selalu balas JSON saat error / route tak ada — supaya BFF & client tak pernah
@@ -5510,6 +5514,16 @@ app.delete("/vendor-management/:id/contracts/:contractId", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const r = await deleteVendorContract(c.req.param("id"), c.req.param("contractId"));
   return c.json(r, r.deleted ? 200 : 404);
+});
+
+// F141 — GA Reporting & Analytics Dashboard (konsolidasi F49 ATK+F54 Materai,
+// F50 Kendaraan, F51 Dana Ops, F52 IT Asset, F53 Stiker Aset). Gate role
+// HOD/admin ada di layer web BFF (requireHodOrAdmin), bukan di sini — konsisten
+// pola admin-gate-di-web project ini.
+app.get("/ga-reporting/summary", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const { from, to } = gaReportingRange(c.req.query("from"), c.req.query("to"));
+  return c.json(await gaReportingSummary(from, to));
 });
 
 const port = Number(process.env.PORT ?? 4000);
