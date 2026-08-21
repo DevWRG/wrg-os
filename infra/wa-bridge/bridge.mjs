@@ -43,6 +43,12 @@ const OCR_SCRIPT = process.env.OCR_SCRIPT || new URL("./check_photo_geotag.py", 
 const log = (...a) => console.log(new Date().toISOString(), ...a);
 
 // OCR geotag dari foto (check_photo_geotag.py). Return {lat,lon,ts,address} | null.
+// Timestamp diterima walau koordinat gagal terbaca: sebagian aplikasi kamera
+// (Luri, Iqbal) mencetak overlay yang bikin OCR kehilangan digit koordinat tapi
+// jamnya tetap utuh. Dulu `has_geotag` false membuang hasil utuh-utuh, jadi
+// geo_ts ikut hilang dan deteksi visit_date_mismatch tak pernah jalan untuk
+// mereka. lat/lon null aman di hilir — wa.ts menormalkan non-number jadi null
+// dan kolomnya nullable, jadi yang bertambah hanya visit_timestamp.
 function ocrGeo(mediaPath) {
   return new Promise((resolve) => {
     if (!OCR_ENABLED || !mediaPath) return resolve(null);
@@ -50,8 +56,14 @@ function ocrGeo(mediaPath) {
       if (err) return resolve(null);
       try {
         const d = JSON.parse(stdout);
-        if (d && d.has_geotag) resolve({ lat: d.lat, lon: d.lon, ts: d.timestamp ?? null, address: d.address ?? null });
-        else resolve(null);
+        if (d && (d.has_geotag || d.timestamp)) {
+          resolve({
+            lat: typeof d.lat === "number" ? d.lat : null,
+            lon: typeof d.lon === "number" ? d.lon : null,
+            ts: d.timestamp ?? null,
+            address: d.address ?? null,
+          });
+        } else resolve(null);
       } catch {
         resolve(null);
       }
@@ -210,7 +222,8 @@ async function pollFile(path) {
         rec.geo_lon = geo.lon;
         rec.geo_ts = geo.ts;
         rec.geo_address = geo.address;
-        log(`[ocr] geotag → ${geo.lat},${geo.lon} ${geo.ts || ""}`);
+        const koord = geo.lat === null || geo.lon === null ? "tanpa-koordinat" : `${geo.lat},${geo.lon}`;
+        log(`[ocr] geotag → ${koord} ${geo.ts || ""}`);
       }
     }
     try {

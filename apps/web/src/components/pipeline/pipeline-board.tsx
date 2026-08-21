@@ -6,6 +6,7 @@ import { ArrowRightLeft } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { DealFormModal, type DealFormInit } from "./deal-form-modal";
+import { PipelineExportButton } from "./pipeline-export-button";
 
 // F1-SPT kanban interaktif (tahap B): board 8-stage + filter + ringkasan weighted +
 // deal detail + DRAG pindah stage (PATCH /api/deals/:id/stage, write-guard di backend).
@@ -15,6 +16,7 @@ export interface PipelineDeal {
   deal_id: string;
   customer_name: string;
   facility_name: string | null;
+  instansi_type: string | null;
   am_id: string | null;
   am_name: string | null;
   brand: string | null;
@@ -68,6 +70,10 @@ const STAGE_LABEL: Record<string, string> = {
   "Closing-Won": "Won", "Closing-Lost": "Lost",
 };
 const stageLabel = (s: string) => STAGE_LABEL[s] ?? s;
+// Tahap final: deal sudah diputus (Won/Lost). Detailnya jadi catatan riwayat —
+// tombol Edit & Hapus disembunyikan supaya angka yang sudah dilaporkan tidak
+// diubah belakangan. Pembetulan Lost tetap lewat jalur Persetujuan Lost.
+const CLOSED_STAGES = new Set(["Closing-Won", "Closing-Lost"]);
 // Definisi tahap (SPT) — dipajang di header kolom biar AM seragam menilai.
 const STAGE_DESC: Record<string, string> = {
   Prospecting: "Sudah kunjungan pertama, ada interest atau setidaknya mau diajak bicara",
@@ -101,7 +107,9 @@ const jt = (n: number | null) => {
 };
 const uniq = (arr: (string | null)[]) => [...new Set(arr.filter((x): x is string => !!x))].sort();
 // Coop model → bahasa awam: KSO tetap KSO; SALE/Sale → "Beli Putus".
-const coopLabel = (c: string | null) => (c == null ? c : /sale/i.test(c) ? "Beli Putus" : c);
+// Jaring pengaman: sejak migrasi 110 nilai tersimpan cuma KSO/BELI, tapi baris
+// lama yg belum ter-normalisasi (mis. dari backup) tetap tampil seragam.
+const coopLabel = (c: string | null) => (c == null ? c : /sale/i.test(c) ? "BELI" : c);
 const MONTH_ID = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
 // Estimasi bulan beli: "September 2026" / "September" (tahun kosong) / "2026" (bulan kosong).
 const buyEta = (m: number | null, y: number | null) => {
@@ -119,9 +127,25 @@ interface TimelineEntry {
   from_stage: string | null;
   to_stage: string;
   changed_by: string | null;
+  changed_by_name: string | null;
   reason: string | null;
   occurred_at: string;
 }
+
+// Baris Riwayat lama menyimpan reason ber-awalan "stage A→B | keterangan" —
+// pengulangan baris judul di atasnya. Awalan itu tak ditulis lagi sejak
+// moveStage dirapikan; yang terlanjur ada dibuang saat render. Nama stage bisa
+// mengandung spasi ("First Contact"), jadi pola dibatasi sampai pemisah "|".
+const stripStagePrefix = (s: string) => s.replace(/^stage\s+[^|]*→[^|]*?(?:\s*\|\s*|$)/, "").trim();
+
+// UUID mentah tak berarti apa-apa buat user. Kalau nama tak berhasil di-resolve
+// dan nilainya cuma UUID, baris "oleh …" disembunyikan sekalian.
+const isUuid = (s: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
+const actorLabel = (t: TimelineEntry): string | null => {
+  if (t.changed_by_name) return t.changed_by_name;
+  if (!t.changed_by) return null;
+  return isUuid(t.changed_by) ? null : t.changed_by;
+};
 
 function Sel({ label, val, set, options }: { label: string; val: string; set: (v: string) => void; options: string[] }) {
   return (
@@ -293,10 +317,14 @@ export function PipelineBoard({ data, isAdmin = false }: { data: PipelineData; i
           <button onClick={() => setF({ pcat: "", cabang: "", hod: "", am: "", brand: "", coop: "", year: "", q: "" })}
             className="text-sm text-muted-foreground hover:text-foreground underline">reset</button>
         )}
-        <button onClick={() => setFormModal({ mode: "create" })}
-          className="ml-auto inline-flex h-9 items-center rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground shadow-sm hover:opacity-90">
-          + Deal Baru
-        </button>
+        <div className="ml-auto flex items-center gap-2">
+          {/* Export mengikuti filter aktif — yang tampil = yang terunduh. */}
+          <PipelineExportButton deals={filtered} stages={STAGES} />
+          <button onClick={() => setFormModal({ mode: "create" })}
+            className="inline-flex h-9 items-center rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground shadow-sm hover:opacity-90">
+            + Deal Baru
+          </button>
+        </div>
       </div>
 
       {/* Hint + status */}
@@ -424,6 +452,8 @@ export function PipelineBoard({ data, isAdmin = false }: { data: PipelineData; i
                 <ol className="space-y-2">
                   {tl.map((t) => {
                     const moved = t.from_stage && t.from_stage !== t.to_stage;
+                    const note = t.reason ? stripStagePrefix(t.reason) : "";
+                    const actor = actorLabel(t);
                     return (
                       <li key={t.id} className="text-sm flex gap-2">
                         <span className="text-muted-foreground shrink-0 mt-0.5">•</span>
@@ -436,8 +466,8 @@ export function PipelineBoard({ data, isAdmin = false }: { data: PipelineData; i
                             )}
                             <span className="text-xs text-muted-foreground">{fmtDateTime(t.occurred_at)}</span>
                           </div>
-                          {t.reason && <div className="text-xs text-muted-foreground mt-0.5 break-words">{t.reason}</div>}
-                          {t.changed_by && <div className="text-[11px] text-muted-foreground/70 mt-0.5">oleh {t.changed_by}</div>}
+                          {note && <div className="text-xs text-muted-foreground mt-0.5 break-words">{note}</div>}
+                          {actor && <div className="text-[11px] text-muted-foreground/70 mt-0.5">oleh {actor}</div>}
                         </div>
                       </li>
                     );
@@ -447,16 +477,24 @@ export function PipelineBoard({ data, isAdmin = false }: { data: PipelineData; i
             </div>
             <div className="mt-4 flex items-center gap-2 border-t pt-3">
               <span className="text-xs text-muted-foreground">Seret kartu di board untuk pindah stage (isi keterangan tiap perpindahan).</span>
-              <button onClick={() => { const d = sel; setSel(null); setFormModal({ mode: "edit", deal: d as DealFormInit }); }}
-                className="ml-auto text-sm px-3 py-1 rounded-md border hover:bg-muted">Edit</button>
-              {isAdmin && (
-                <button onClick={() => setConfirmDel(sel)}
-                  className="text-sm px-3 py-1 rounded-md border border-rose-300 text-rose-700 hover:bg-rose-50">
-                  Hapus
-                </button>
-              )}
-              <button onClick={() => setSel(null)}
-                className="text-sm px-3 py-1 rounded-md bg-primary text-primary-foreground font-medium hover:opacity-90">Tutup</button>
+              {/* ml-auto pindah ke pembungkus: di stage final Edit/Hapus hilang,
+                  kalau ml-auto menempel di Edit maka Tutup ikut lompat ke kiri. */}
+              <div className="ml-auto flex items-center gap-2">
+                {!CLOSED_STAGES.has(sel.stage) && (
+                  <>
+                    <button onClick={() => { const d = sel; setSel(null); setFormModal({ mode: "edit", deal: d as DealFormInit }); }}
+                      className="text-sm px-3 py-1 rounded-md border hover:bg-muted">Edit</button>
+                    {isAdmin && (
+                      <button onClick={() => setConfirmDel(sel)}
+                        className="text-sm px-3 py-1 rounded-md border border-rose-300 text-rose-700 hover:bg-rose-50">
+                        Hapus
+                      </button>
+                    )}
+                  </>
+                )}
+                <button onClick={() => setSel(null)}
+                  className="text-sm px-3 py-1 rounded-md bg-primary text-primary-foreground font-medium hover:opacity-90">Tutup</button>
+              </div>
             </div>
           </Card>
         </div>
@@ -536,6 +574,7 @@ export function PipelineBoard({ data, isAdmin = false }: { data: PipelineData; i
           deal={formModal.mode === "edit" ? formModal.deal : undefined}
           brands={opts.brand}
           cabangs={opts.cabang}
+          hods={opts.hod}
           onClose={() => setFormModal(null)}
         />
       )}
