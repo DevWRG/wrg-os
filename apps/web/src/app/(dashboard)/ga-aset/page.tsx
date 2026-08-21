@@ -4,6 +4,10 @@ import { GaAssetView } from "@/components/crm/ga-asset-view";
 import type { GaAsset } from "@/components/tables/ga-assets-table";
 import type { GaAssetCategory } from "@/components/tables/ga-asset-categories-table";
 import type { ItTicket } from "@/components/tables/it-tickets-table";
+import { sessionUser } from "@/lib/admin-guard";
+import { canApproveGaFinance } from "@/lib/ga-maintenance-access";
+import type { GaMaintenance } from "@/components/tables/ga-maintenance-table";
+import type { GaVendor } from "@/components/tables/ga-vendor-table";
 import type { AppUserOption } from "@/components/crm/ga-asset-pic-actions";
 
 export const dynamic = "force-dynamic";
@@ -55,15 +59,43 @@ async function getTickets(): Promise<ItTicket[] | null> {
   }
 }
 
+// F137 — jadwal maintenance + vendor GA, tab tambahan di halaman yang sama.
+async function getSchedules(): Promise<GaMaintenance[]> {
+  try {
+    const res = await gatewayFetch("/ga-maintenance");
+    if (!res.ok) return [];
+    const data = (await res.json()) as { schedules: GaMaintenance[] };
+    return data.schedules ?? [];
+  } catch {
+    return [];
+  }
+}
+
+async function getVendors(): Promise<GaVendor[]> {
+  try {
+    const res = await gatewayFetch("/ga-vendors?all=true");
+    if (!res.ok) return [];
+    const data = (await res.json()) as { vendors: GaVendor[] };
+    return data.vendors ?? [];
+  } catch {
+    return [];
+  }
+}
+
 export default async function GaAsetPage() {
-  const [assets, categories, tickets, users] = await Promise.all([getAssets(), getCategories(), getTickets(), getAppUsers()]);
+  const [assets, categories, tickets, users, schedules, vendors, me] = await Promise.all([
+    getAssets(), getCategories(), getTickets(), getAppUsers(), getSchedules(), getVendors(), sessionUser(),
+  ]);
   return (
     <>
       <PageHeader
         title="Aset GA"
-        description="Katalog inventaris kantor (laptop, HP, kendaraan, mebel, software) + tiket masalah aset IT — single source of truth aset, dasar assignment & maintenance."
+        description="Katalog inventaris kantor (laptop, HP, kendaraan, mebel, software) + tiket masalah aset IT, jadwal maintenance & vendor GA — single source of truth aset."
       />
-      <GaAssetView assets={assets} categories={categories} tickets={tickets} users={users} />
+      <GaAssetView
+        assets={assets} categories={categories} tickets={tickets} users={users}
+        schedules={schedules} vendors={vendors} canApproveFinance={canApproveGaFinance(me)}
+      />
     </>
   );
 }

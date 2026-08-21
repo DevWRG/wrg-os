@@ -434,6 +434,19 @@ import {
   type PurchaseOrderReceiptInput,
   type PurchaseOrderReceiptUpdate,
 } from "./repo/purchase-order.js";
+import {
+  listVendors as gaMaintenanceListVendors,
+  createVendor as gaMaintenanceCreateVendor,
+  updateVendor as gaMaintenanceUpdateVendor,
+  listSchedules as gaMaintenanceListSchedules,
+  getSchedule,
+  createSchedule as gaMaintenanceCreateSchedule,
+  updateSchedule,
+  startSchedule,
+  completeSchedule,
+  approveSchedule,
+  cancelSchedule,
+} from "./repo/ga-maintenance.js";
 const app = new Hono();
 
 // Selalu balas JSON saat error / route tak ada — supaya BFF & client tak pernah
@@ -5297,7 +5310,7 @@ app.get("/ga-asset-categories", async (c) => {
 
 app.post("/ga-asset-categories", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let body: { code?: string; nama?: string; depreciation_years?: number; icon?: string; is_shared?: boolean };
+  let body: { code?: string; nama?: string; depreciation_years?: number; icon?: string; is_shared?: boolean; default_recur_months?: number };
   try {
     body = await c.req.json();
   } catch {
@@ -5310,13 +5323,14 @@ app.post("/ga-asset-categories", async (c) => {
     depreciation_years: body.depreciation_years,
     icon: body.icon,
     is_shared: body.is_shared,
+    default_recur_months: body.default_recur_months,
   });
   return c.json(r, "error" in r ? 400 : 201);
 });
 
 app.patch("/ga-asset-categories/:id", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let body: { nama?: string; depreciation_years?: number; icon?: string; is_shared?: boolean; active?: boolean };
+  let body: { nama?: string; depreciation_years?: number; icon?: string; is_shared?: boolean; default_recur_months?: number; active?: boolean };
   try {
     body = await c.req.json();
   } catch {
@@ -5723,6 +5737,144 @@ app.delete("/purchase-orders/:id/items/:itemId/receipts/:receiptId", async (c) =
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const r = await deletePurchaseOrderReceipt(c.req.param("itemId"), c.req.param("receiptId"));
   return c.json(r, r.deleted ? 200 : 404);
+});
+
+app.get("/ga-vendors", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await gaMaintenanceListVendors(c.req.query("all") !== "true");
+  return c.json({ count: rows.length, vendors: rows });
+});
+
+app.post("/ga-vendors", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { nama?: string; category?: string; contact_person?: string; phone?: string; contract_end?: string; notes?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.nama) return c.json({ error: "nama wajib diisi" }, 400);
+  const r = await gaMaintenanceCreateVendor({ nama: body.nama, category: body.category, contact_person: body.contact_person, phone: body.phone, contract_end: body.contract_end, notes: body.notes });
+  return c.json(r, "error" in r ? 400 : 201);
+});
+
+app.patch("/ga-vendors/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: Record<string, unknown>;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (body.status != null && !["active", "inactive"].includes(body.status as string)) {
+    return c.json({ error: "status harus 'active' atau 'inactive'" }, 400);
+  }
+  const r = await gaMaintenanceUpdateVendor(c.req.param("id"), body);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+// Validasi enum/range di route SEBELUM hit DB — tanpa ini nilai di luar CHECK
+// constraint (089_ga_maintenance_tracker.sql) bocor jadi HTTP 500 + nama
+// constraint Postgres mentah (app.onError gak reformat). Sama pola temuan
+// F132/F53.
+function validateGaMaintenance(body: { maint_type?: unknown; recur_months?: unknown }): string | null {
+  if (body.maint_type != null && !["preventive", "repair"].includes(body.maint_type as string)) {
+    return "maint_type harus 'preventive' atau 'repair'";
+  }
+  if (body.recur_months != null) {
+    const n = Number(body.recur_months);
+    if (!Number.isInteger(n) || n < 0 || n > 60) return "recur_months harus bilangan bulat 0-60";
+  }
+  return null;
+}
+
+app.get("/ga-maintenance", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await gaMaintenanceListSchedules({
+    assetId: c.req.query("asset_id") || undefined,
+    status: c.req.query("status") || undefined,
+    vendorId: c.req.query("vendor_id") || undefined,
+  });
+  return c.json({ count: rows.length, schedules: rows });
+});
+
+app.get("/ga-maintenance/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const row = await getSchedule(c.req.param("id"));
+  if (!row) return c.json({ error: "jadwal tidak ditemukan" }, 404);
+  return c.json(row);
+});
+
+app.post("/ga-maintenance", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { asset_id?: string; maint_type?: string; due_date?: string; cost_budget?: number; vendor_id?: string; recur_months?: number; notes?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.asset_id) return c.json({ error: "asset_id wajib diisi" }, 400);
+  const enumError1 = validateGaMaintenance(body);
+  if (enumError1) return c.json({ error: enumError1 }, 400);
+  const r = await gaMaintenanceCreateSchedule(body as Parameters<typeof gaMaintenanceCreateSchedule>[0]);
+  return c.json(r, "error" in r ? 400 : 201);
+});
+
+app.patch("/ga-maintenance/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: Record<string, unknown>;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const enumError2 = validateGaMaintenance(body);
+  if (enumError2) return c.json({ error: enumError2 }, 400);
+  const r = await updateSchedule(c.req.param("id"), body);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.post("/ga-maintenance/:id/start", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await startSchedule(c.req.param("id"));
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.post("/ga-maintenance/:id/complete", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { cost_actual?: number; notes?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const r = await completeSchedule(c.req.param("id"), body);
+  return c.json(r, "error" in r ? 400 : 200);
+});
+
+app.post("/ga-maintenance/:id/approve", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { approved_by?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.approved_by) return c.json({ error: "approved_by wajib diisi" }, 400);
+  const r = await approveSchedule(c.req.param("id"), { approved_by: body.approved_by });
+  return c.json(r, "error" in r ? 400 : 200);
+});
+
+app.post("/ga-maintenance/:id/cancel", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { notes?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const r = await cancelSchedule(c.req.param("id"), body.notes);
+  return c.json(r, r.ok ? 200 : 400);
 });
 
 const port = Number(process.env.PORT ?? 4000);

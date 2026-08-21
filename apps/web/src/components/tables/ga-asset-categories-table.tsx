@@ -11,6 +11,7 @@ export interface GaAssetCategory {
   depreciation_years: number | null;
   icon: string | null;
   is_shared: boolean;
+  default_recur_months: number | null;
   active: boolean;
 }
 
@@ -37,6 +38,11 @@ export function GaAssetCategoriesTable({ categories }: { categories: GaAssetCate
       id: "shared",
       header: "Shared",
       cell: (c) => (c.is_shared ? <Badge variant="outline">Boleh multi-PIC</Badge> : <span className="text-muted-foreground text-xs">1 PIC aktif</span>),
+    },
+    {
+      id: "recur",
+      header: "Interval Maintenance",
+      cell: (c) => (c.default_recur_months ? `${c.default_recur_months} bln` : <span className="text-muted-foreground text-xs">-</span>),
     },
     {
       id: "aktif",
