@@ -15,6 +15,8 @@ export interface PricelistRow {
   hpp: string;
   margin_pct: string;
   diskon_pct: string;
+  // Price List apa adanya dari sumber (sudah dibulatkan). NULL = hitung dari margin.
+  price_list: string | null;
   // insentif
   pct_wrg: string;
   pct_promosi: string;
@@ -40,6 +42,7 @@ export interface PricelistInput {
   hpp?: number;
   margin_pct?: number;
   diskon_pct?: number;
+  price_list?: number | null;
   pct_wrg?: number;
   pct_promosi?: number;
   pct_hod_sales?: number;
@@ -57,7 +60,7 @@ const COLS = (sql: ReturnType<typeof db>) => sql`
   p.id::text, p.product_id::text,
   i.no AS product_no, i.name AS product_name, i.category AS product_category,
   i.unit_price::text AS product_avg_price,
-  p.hpp::text, p.margin_pct::text, p.diskon_pct::text,
+  p.hpp::text, p.margin_pct::text, p.diskon_pct::text, p.price_list::text,
   p.pct_wrg::text, p.pct_promosi::text, p.pct_hod_sales::text,
   p.total_point, p.min_incentive_pts, p.max_incentive_pts, p.min_redemption, p.cutoff_days,
   p.west_area_confirmation, p.east_area_confirmation,
@@ -87,12 +90,13 @@ export async function upsertPricelist(input: PricelistInput): Promise<PricelistR
   const sql = db();
   const rows = await sql<{ product_id: string }[]>`
     INSERT INTO pricelist (
-      product_id, hpp, margin_pct, diskon_pct,
+      product_id, hpp, margin_pct, diskon_pct, price_list,
       pct_wrg, pct_promosi, pct_hod_sales,
       total_point, min_incentive_pts, max_incentive_pts, min_redemption, cutoff_days,
       west_area_confirmation, east_area_confirmation, created_by
     ) VALUES (
       ${input.product_id}, ${input.hpp ?? 0}, ${input.margin_pct ?? 0}, ${input.diskon_pct ?? 0},
+      ${input.price_list ?? null},
       ${input.pct_wrg ?? 0}, ${input.pct_promosi ?? 0}, ${input.pct_hod_sales ?? 0},
       ${input.total_point ?? 0}, ${input.min_incentive_pts ?? 0}, ${input.max_incentive_pts ?? 0},
       ${input.min_redemption ?? 0}, ${input.cutoff_days ?? 0},
@@ -101,6 +105,7 @@ export async function upsertPricelist(input: PricelistInput): Promise<PricelistR
     )
     ON CONFLICT (product_id) DO UPDATE SET
       hpp = EXCLUDED.hpp, margin_pct = EXCLUDED.margin_pct, diskon_pct = EXCLUDED.diskon_pct,
+      price_list = EXCLUDED.price_list,
       pct_wrg = EXCLUDED.pct_wrg, pct_promosi = EXCLUDED.pct_promosi, pct_hod_sales = EXCLUDED.pct_hod_sales,
       total_point = EXCLUDED.total_point, min_incentive_pts = EXCLUDED.min_incentive_pts,
       max_incentive_pts = EXCLUDED.max_incentive_pts, min_redemption = EXCLUDED.min_redemption,
