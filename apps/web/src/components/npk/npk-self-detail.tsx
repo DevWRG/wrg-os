@@ -10,7 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { PredikatBadge } from "./predikat-badge";
 import { fmt1, periodLabel, scoreBand, type NpkDetailResult } from "./npk-format";
-import { TOTAL_ASPEK, WIRED_BOBOT, zoneOf } from "./npk-status";
+import { TOTAL_ASPEK, zoneOf } from "./npk-status";
 
 // Badge status: saat coverage < 7/7 predikat SK DITAHAN (plafon skor < 100 → predikat
 // selalu jatuh ke "Buruk" walau kinerja normal). Lihat catatan di npk-status.ts.
@@ -26,7 +26,7 @@ export function NpkSelfDetail({ data }: { data: NpkDetailResult | null }) {
   const provisional = data.available_count < TOTAL_ASPEK;
   // Plafon = Σ bobot aspek yang ada datanya (bukan 100) → gauge & label jujur.
   const ceiling = provisional
-    ? data.aspects.filter((a) => a.available).reduce((a, x) => a + x.weight, 0) || WIRED_BOBOT
+    ? data.aspects.filter((a) => a.available).reduce((a, x) => a + x.weight, 0)
     : 100;
   const band = scoreBand(data.npk);
   const radar = data.aspects.map((a) => ({
@@ -51,7 +51,7 @@ export function NpkSelfDetail({ data }: { data: NpkDetailResult | null }) {
         {/* Gauge NPK */}
         <Card>
           <CardHeader className="border-b pb-3">
-            <CardTitle>{data.hod_name}</CardTitle>
+            <CardTitle>{data.subject_name}</CardTitle>
             <p className="text-xs text-muted-foreground">{data.role} · {periodLabel(data.period)} {data.year}</p>
           </CardHeader>
           <CardContent className="flex flex-col items-center gap-2 pt-4">

@@ -3,6 +3,7 @@ import { ArrowLeft } from "lucide-react";
 
 import { gatewayFetch } from "@/lib/gateway";
 import { sessionUser } from "@/lib/admin-guard";
+import { photoHref } from "@/lib/media";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -129,7 +130,7 @@ export default async function VisitDetailPage({ params }: { params: Promise<{ id
             <CardContent>
               {v.photo_url ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={`/api/media?p=${encodeURIComponent(v.photo_url)}`} alt="foto kunjungan" className="max-h-[480px] w-full rounded-md object-contain" />
+                <img src={photoHref(v.photo_url)} alt="foto kunjungan" className="max-h-[480px] w-full rounded-md object-contain" />
               ) : (
                 <p className="text-muted-foreground text-sm">Tidak ada foto.</p>
               )}
