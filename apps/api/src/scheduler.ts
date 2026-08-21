@@ -45,6 +45,7 @@ import { runEdWatch } from "./repo/stock-batch.js";
 import { runVehicleAlerts } from "./repo/vehicle.js";
 import { runItTicketSlaAlerts } from "./repo/it-ticket.js";
 import { runMaintenanceAlerts, runGaMaintenanceBscFeed } from "./repo/ga-maintenance.js";
+import { runGaHelpdeskOverdueAlert, runGaHelpdeskBscFeed } from "./repo/ga-helpdesk.js";
 
 // Penjadwal agen in-process (Blueprint v2.3). Default MATI — aktif hanya bila
 // AGENT_SCHEDULE_ENABLED=true. Tiap run tetap menulis ke audit_log via repo
@@ -160,6 +161,13 @@ export function startScheduler(): ScheduleStatus {
   // ga-maintenance-bsc-feed (F137) — auto-isi kpi_measurement Dito bulanan
   // (preseden pertama auto-feed, sebelumnya semua manual lewat UI).
   const gaMaintenanceBscEnabled = (process.env.GA_MAINTENANCE_BSC_ENABLED ?? "false").toLowerCase() === "true";
+  // ga-helpdesk-overdue (F139) — alert SLA tiket helpdesk terlewati ke
+  // assignee + Husni (fixed, RACI: 1 HoD utk seluruh proses). Flag SENDIRI
+  // (default off) — mengirim WA.
+  const gaHelpdeskOverdueEnabled = (process.env.GA_HELPDESK_OVERDUE_ENABLED ?? "false").toLowerCase() === "true";
+  // ga-helpdesk-bsc-feed (F139) — auto-isi kpi_measurement Dito ('SLA
+  // compliance %'), bulanan. Display-only, tanpa WA.
+  const gaHelpdeskBscEnabled = (process.env.GA_HELPDESK_BSC_ENABLED ?? "false").toLowerCase() === "true";
   const timezone = TZ();
   const jobs: JobDef[] = [
     {
@@ -235,12 +243,12 @@ export function startScheduler(): ScheduleStatus {
   ];
 
   status = {
-    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled || watchpointSnapshotEnabled || preVisitEnabled || edWatchEnabled || gaMaintenanceAlertEnabled || gaMaintenanceBscEnabled,
+    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled || watchpointSnapshotEnabled || preVisitEnabled || edWatchEnabled || gaMaintenanceAlertEnabled || gaMaintenanceBscEnabled || gaHelpdeskOverdueEnabled || gaHelpdeskBscEnabled,
     timezone,
     jobs: jobs.map((j) => ({ id: j.id, expr: j.expr, valid: cron.validate(j.expr) })),
   };
 
-  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled && !watchpointSnapshotEnabled && !preVisitEnabled && !edWatchEnabled && !gaMaintenanceAlertEnabled && !gaMaintenanceBscEnabled) {
+  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled && !watchpointSnapshotEnabled && !preVisitEnabled && !edWatchEnabled && !gaMaintenanceAlertEnabled && !gaMaintenanceBscEnabled && !gaHelpdeskOverdueEnabled && !gaHelpdeskBscEnabled) {
     console.log("[scheduler] semua *_SCHEDULE/_ENABLED flag != true — tidak dijadwalkan");
     return status;
   }
@@ -523,6 +531,48 @@ export function startScheduler(): ScheduleStatus {
       { timezone },
     );
     live.push(`visit-weekly=${visitWeeklyExpr}`);
+  }
+
+  // ga-helpdesk-overdue (F139) — alert SLA tiket helpdesk terlewati, pagi
+  // 07:15. Naggy by design (pola F24/F52, tanpa penanda anti-spam persisten
+  // di luar sla_alert_sent_at) — anti-broadcast internal (target kosong = skip).
+  const gaHelpdeskOverdueExpr = process.env.GA_HELPDESK_OVERDUE_CRON ?? "15 7 * * *";
+  if (gaHelpdeskOverdueEnabled && cron.validate(gaHelpdeskOverdueExpr)) {
+    cron.schedule(
+      gaHelpdeskOverdueExpr,
+      async () => {
+        const startedAt = new Date().toISOString();
+        try {
+          const r = await runGaHelpdeskOverdueAlert();
+          console.log(`[scheduler] ga-helpdesk-overdue @ ${startedAt} ${JSON.stringify(r)}`);
+        } catch (e) {
+          console.error(`[scheduler] ga-helpdesk-overdue gagal @ ${startedAt}:`, e);
+        }
+      },
+      { timezone },
+    );
+    live.push(`ga-helpdesk-overdue=${gaHelpdeskOverdueExpr}`);
+  }
+
+  // ga-helpdesk-bsc-feed (F139) — auto-isi kpi_measurement Dito ('SLA
+  // compliance %'), bulanan (tgl 1, 02:15 — setelah tengah malam WIB, data
+  // bulan lalu sudah final). Display-only, tanpa WA.
+  const gaHelpdeskBscExpr = process.env.GA_HELPDESK_BSC_CRON ?? "15 2 1 * *";
+  if (gaHelpdeskBscEnabled && cron.validate(gaHelpdeskBscExpr)) {
+    cron.schedule(
+      gaHelpdeskBscExpr,
+      async () => {
+        const startedAt = new Date().toISOString();
+        try {
+          const r = await runGaHelpdeskBscFeed();
+          console.log(`[scheduler] ga-helpdesk-bsc-feed @ ${startedAt} ${JSON.stringify(r)}`);
+        } catch (e) {
+          console.error(`[scheduler] ga-helpdesk-bsc-feed gagal @ ${startedAt}:`, e);
+        }
+      },
+      { timezone },
+    );
+    live.push(`ga-helpdesk-bsc-feed=${gaHelpdeskBscExpr}`);
   }
 
   // Monitor (port wrg-monitor) — rekap & resume GENERATE-ONLY (tidak kirim WA;

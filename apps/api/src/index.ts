@@ -472,6 +472,21 @@ import {
   type PurchaseForecastInput,
   type PurchaseForecastUpdate,
 } from "./repo/purchase-forecast.js";
+import {
+  listCategories as listGaTicketCategories,
+  createCategory as createGaTicketCategory,
+  updateCategory as updateGaTicketCategory,
+  deactivateCategory as deactivateGaTicketCategory,
+  listTickets as listGaTickets,
+  getTicket as getGaTicket,
+  createTicket as createGaTicket,
+  assignTicket as assignGaTicket,
+  transitionTicket as transitionGaTicket,
+  rateTicket as rateGaTicket,
+  addComment as addGaTicketComment,
+  getTicketTimeline as getGaTicketTimeline,
+  runGaHelpdeskOverdueAlert,
+} from "./repo/ga-helpdesk.js";
 const app = new Hono();
 
 // Selalu balas JSON saat error / route tak ada — supaya BFF & client tak pernah
@@ -6120,6 +6135,178 @@ app.delete("/purchase-forecast/:id", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const r = await deletePurchaseForecast(c.req.param("id"));
   return c.json(r, r.deleted ? 200 : 404);
+});
+
+// ── F139 GA Helpdesk Ticket System (Ticketing Kendala Operasional) ──────
+app.get("/ga-ticket-categories", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const activeOnly = c.req.query("active") === "true";
+  const categories = await listGaTicketCategories(activeOnly);
+  return c.json({ count: categories.length, categories });
+});
+
+// Validasi enum/range di route SEBELUM hit DB — tanpa ini nilai di luar CHECK
+// constraint (092_ga_helpdesk_ticket_system.sql) bocor jadi HTTP 500 + nama
+// constraint Postgres mentah (app.onError gak reformat). Sama pola temuan
+// F132/F53/F137.
+const GA_TICKET_PRIORITIES = ["low", "medium", "high", "critical"];
+function validateGaTicketSlaHours(hours: unknown): string | null {
+  if (hours == null) return null;
+  const n = Number(hours);
+  return Number.isFinite(n) && n > 0 ? null : "sla_hours harus angka > 0";
+}
+
+app.post("/ga-ticket-categories", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { code?: string; nama?: string; icon?: string; default_sla_hours?: number; default_priority?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.code?.trim() || !body.nama?.trim()) return c.json({ error: "code & nama wajib" }, 400);
+  if (body.default_priority != null && !GA_TICKET_PRIORITIES.includes(body.default_priority)) {
+    return c.json({ error: `default_priority harus salah satu dari: ${GA_TICKET_PRIORITIES.join(", ")}` }, 400);
+  }
+  const slaError = validateGaTicketSlaHours(body.default_sla_hours);
+  if (slaError) return c.json({ error: slaError }, 400);
+  const r = await createGaTicketCategory({
+    code: body.code, nama: body.nama, icon: body.icon ?? null,
+    default_sla_hours: body.default_sla_hours, default_priority: body.default_priority,
+  });
+  return c.json(r, "ok" in r && r.ok === false ? 400 : 201);
+});
+
+app.patch("/ga-ticket-categories/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { nama?: string; icon?: string | null; default_sla_hours?: number; default_priority?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (body.default_priority != null && !GA_TICKET_PRIORITIES.includes(body.default_priority)) {
+    return c.json({ error: `default_priority harus salah satu dari: ${GA_TICKET_PRIORITIES.join(", ")}` }, 400);
+  }
+  const slaError = validateGaTicketSlaHours(body.default_sla_hours);
+  if (slaError) return c.json({ error: slaError }, 400);
+  const r = await updateGaTicketCategory(c.req.param("id"), body);
+  return c.json(r, "ok" in r && r.ok === false ? 400 : 200);
+});
+
+app.patch("/ga-ticket-categories/:id/deactivate", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await deactivateGaTicketCategory(c.req.param("id"));
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.get("/ga-tickets", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const status = c.req.query("status") || undefined;
+  const overdue = c.req.query("overdue") === "1";
+  const tickets = await listGaTickets({ status, overdue });
+  return c.json({ count: tickets.length, tickets });
+});
+
+app.get("/ga-tickets/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const t = await getGaTicket(c.req.param("id"));
+  if (!t) return c.json({ error: "tiket tidak ditemukan" }, 404);
+  return c.json(t);
+});
+
+app.post("/ga-tickets", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: {
+    title?: string; description?: string; category_id?: string; priority?: string;
+    reporter_user_id?: string; reporter_name_override?: string; location?: string; sla_hours_override?: number;
+  };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.title?.trim() || !body.category_id) return c.json({ error: "title & category_id wajib" }, 400);
+  if (body.priority != null && !GA_TICKET_PRIORITIES.includes(body.priority)) {
+    return c.json({ error: `priority harus salah satu dari: ${GA_TICKET_PRIORITIES.join(", ")}` }, 400);
+  }
+  const slaError2 = validateGaTicketSlaHours(body.sla_hours_override);
+  if (slaError2) return c.json({ error: slaError2 }, 400);
+  const r = await createGaTicket({
+    title: body.title, description: body.description ?? null, category_id: body.category_id,
+    priority: body.priority ?? null, reporter_user_id: body.reporter_user_id ?? null,
+    reporter_name_override: body.reporter_name_override ?? null, location: body.location ?? null,
+    sla_hours_override: body.sla_hours_override ?? null,
+  });
+  return c.json(r, "ok" in r && r.ok === false ? 400 : 201);
+});
+
+app.patch("/ga-tickets/:id/assign", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { assignee_user_id?: string; assignee_name_override?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const r = await assignGaTicket(c.req.param("id"), body);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.post("/ga-tickets/:id/transition", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { to?: string; changed_by_user_id?: string; note?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.to) return c.json({ error: "to (status tujuan) wajib" }, 400);
+  const r = await transitionGaTicket(c.req.param("id"), body.to, {
+    changed_by_user_id: body.changed_by_user_id ?? null, note: body.note ?? null,
+  });
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.post("/ga-tickets/:id/rate", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { rating?: number; comment?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (typeof body.rating !== "number") return c.json({ error: "rating (1-5) wajib" }, 400);
+  const r = await rateGaTicket(c.req.param("id"), body.rating, body.comment ?? null);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.get("/ga-tickets/:id/timeline", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const timeline = await getGaTicketTimeline(c.req.param("id"));
+  return c.json({ count: timeline.length, timeline });
+});
+
+app.post("/ga-tickets/:id/comments", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { comment?: string; is_internal?: boolean; created_by_user_id?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.comment?.trim()) return c.json({ error: "comment wajib" }, 400);
+  const r = await addGaTicketComment(c.req.param("id"), {
+    comment: body.comment, is_internal: body.is_internal ?? false, created_by_user_id: body.created_by_user_id ?? null,
+  });
+  return c.json(r, "ok" in r && r.ok === false ? 400 : 201);
+});
+
+// Trigger manual (testing tanpa nunggu cron) — pola sama F45 previsit/run.
+app.post("/ga-tickets/overdue-alert/run", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await runGaHelpdeskOverdueAlert();
+  return c.json(r);
 });
 
 const port = Number(process.env.PORT ?? 4000);
