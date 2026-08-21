@@ -248,38 +248,31 @@ export async function faskesDetail(
   // karena itu dikalikan porsi_kso yang sama, dan subtotal dalam-skema menjadi sepadan
   // dengan kartu di atasnya.
   //
-  // PORSI DIHITUNG ULANG DARI JUMLAH TES, bukan dibaca dari kolom porsi_kso.
-  // Kolom itu di-`round(...,4)` (migrasi 105 baris 163) sementara view menghitung
-  // revenue-nya dengan porsi presisi penuh. Memakai yang dibulatkan meninggalkan selisih
-  // pembulatan — terukur Rp 4.968 dari Rp 134 juta di uji dev, kecil tapi cukup untuk
-  // membuat dua angka di satu dialog tidak sama dan memancing pertanyaan tanpa jawaban.
+  // PORSI DIBACA DARI VIEW, TIDAK DIHITUNG DI SINI.
   //
-  // Ini BUKAN menyalin rumus alokasi: porsi diturunkan dari `total_tes_customer_seskema`
-  // yang view yang sama sudah mengekspos, dengan definisi yang sama seperti migrasi 102
-  // (porsi = tes skema ini / tes seluruh skema di customer itu).
+  // #998 menghitungnya dari `total_tes_customer_seskema` untuk menghindari pembulatan
+  // 4 desimal pada kolom `porsi_kso`. Itu keliru, dan migrasi 121 membuktikannya dalam
+  // sehari: 121 mengubah aturan porsi untuk faskes yang SALAH SATU sisinya nol tes
+  // (pakai porsi berbasis reagen, bukan tes), sementara perhitungan di sini tidak ikut.
+  // Untuk NGUDI WALUYO WLINGI porsinya akan TERBALIK PENUH — sisi yang memakai seluruh
+  // Rp 675 jt reagen hemodialisa dapat 0 — persis kesalahan yang 121 perbaiki.
   //
-  // Cadangan berlapis: kalau total tes nol di semua skema, penyebutnya nol dan porsi
-  // presisi jadi NULL — turun ke kolom porsi_kso yang dibulatkan (yang punya cadangan
-  // per jumlah alat), lalu ke 1 bila faskes tak punya aset pada skema ini sama sekali.
+  // Alasan menghitung sendiri sudah hilang: migrasi 122 mengekspos porsi_kso dengan 12
+  // desimal, jadi selisih pembulatannya di bawah satu rupiah pada nilai miliaran.
+  // Aturan porsi tinggal SATU tempat, di SQL — pola yang sama dengan 107.
   const reagen = await sql`
     WITH porsi AS (
-      SELECT sum(CASE WHEN skema = ${skema} THEN tes END)
-               / NULLIF(sum(tes), 0)                       AS presisi,
-             max(CASE WHEN skema = ${skema} THEN porsi END) AS dibulatkan
-      FROM (
-        SELECT skema,
-               max(total_tes_customer_seskema)::numeric AS tes,
-               max(porsi_kso)                           AS porsi
-        FROM kso_asset_produktivitas_v
-        WHERE account_id = ${accountId}
-        GROUP BY skema
-      ) x
+      -- COALESCE(...,1) di pemakaiannya: faskes yang tak punya aset pada skema ini tidak
+      -- punya baris di sini, dan porsi 1 = "tidak dibagi" — sama seperti skema tunggal.
+      SELECT max(porsi_kso) AS porsi
+      FROM kso_asset_produktivitas_v
+      WHERE account_id = ${accountId} AND skema = ${skema}
     )
     SELECT r.item_id, r.item_no, r.item_nama, r.jenis_alat, r.kategori, r.unit,
            sum(r.qty) AS qty,
            sum(CASE WHEN r.kategori = 'KSO'
                     THEN r.nilai_netto
-                         * COALESCE((SELECT COALESCE(presisi, dibulatkan) FROM porsi), 1)
+                         * COALESCE((SELECT porsi FROM porsi), 1)
                     ELSE r.nilai_netto END) AS nilai_netto,
            sum(r.jumlah_faktur)::int AS jumlah_faktur,
            (r.kategori IN (SELECT kategori FROM kso_kategori_skema WHERE skema = ${skema}))
