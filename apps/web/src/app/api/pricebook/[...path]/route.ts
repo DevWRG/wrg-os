@@ -1,7 +1,7 @@
 import { gatewayFetch, relay } from "@/lib/gateway";
 import { sessionUser } from "@/lib/admin-guard";
 import { canViewPricebook, canViewPricebookSummary } from "@/lib/pricebook-access";
-import { canEditPricelistSetup, canPublishPricelist } from "@/lib/pricelist-access";
+import { canEditPricelistSetup, canPublishPricelist, canViewPricelist } from "@/lib/pricelist-access";
 
 export const dynamic = "force-dynamic";
 
@@ -63,11 +63,40 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ path: string[
   }
 }
 
-// Publish / unpublish harga keagenan ke AM. Butuh hak publish, bukan cuma edit.
+// POST dipakai dua hal dengan hak yang BERBEDA:
+//   published/pdf            → siapa pun yang boleh melihat daftar harga (AM).
+//                              Isinya persis yang sudah tampil di layarnya.
+//   setup/publish|unpublish  → butuh hak publish, bukan cuma edit.
 export async function POST(req: Request, ctx: { params: Promise<{ path: string[] }> }) {
   const me = await sessionUser();
   if (!me) return Response.json({ error: "unauthenticated" }, { status: 401 });
   const sub = ((await ctx.params).path ?? []).join("/");
+
+  if (sub === "published/pdf") {
+    if (!canViewPricelist(me)) return Response.json({ error: "forbidden" }, { status: 403 });
+    const body = await req.json().catch(() => ({}) as Record<string, unknown>);
+    try {
+      const res = await gatewayFetch("/pricebook/published/pdf", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        // Nama pencetak diisi server dari sesi — footer dokumen tidak boleh bisa
+        // diisi sembarang nama dari browser.
+        body: JSON.stringify({ ...body, oleh: me.name || me.email }),
+      });
+      if (!res.ok) return relay(res);
+      // Diteruskan sebagai biner apa adanya; relay() akan mencoba JSON.parse dan
+      // merusak file.
+      return new Response(res.body, {
+        headers: {
+          "content-type": "application/pdf",
+          "content-disposition": 'attachment; filename="daftar-harga-keagenan.pdf"',
+        },
+      });
+    } catch {
+      return Response.json({ error: "backend unreachable" }, { status: 502 });
+    }
+  }
+
   if (sub !== "setup/publish" && sub !== "setup/unpublish") {
     return Response.json({ error: "route tak ada" }, { status: 404 });
   }
