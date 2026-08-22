@@ -117,10 +117,15 @@ export function FaskesDetailDialog({ g, median, onClose }: {
   // Total & hitungan di luar skema dipakai di dua tempat (judul + catatan), jadi dihitung
   // sekali. Total mencakup baris di luar skema — itu memang "reagen yang keluar",
   // pertanyaan yang berbeda dari "revenue skema ini".
-  // DUA subtotal, bukan satu. Yang "dalam skema" sepadan dengan kartu Revenue di atas
-  // (kategori difilter + porsi KSO diterapkan di server); yang "di luar skema" TIDAK
-  // masuk angka itu. Menampilkan satu total gabungan membuat pembaca membandingkannya
-  // dengan kartu Revenue dan menemukan selisih tanpa sebab yang terlihat.
+  // DUA subtotal, bukan satu. Yang "dalam skema" sepadan dengan kartu Revenue di atas;
+  // yang "di luar skema" TIDAK masuk angka itu. Menampilkan satu total gabungan membuat
+  // pembaca membandingkannya dengan kartu Revenue dan menemukan selisih tanpa sebab yang
+  // terlihat.
+  //
+  // "Dalam skema" ditentukan di server dan sejak migrasi 124/125 BUKAN lagi semata soal
+  // kategori pengadaan: baris penagihan per-tes berkategori 'Tanpa kategori' juga masuk,
+  // karena diakui sebagai revenue. Jangan menyimpulkannya dari `kategori` di sini —
+  // aturannya tinggal di kso_penagihan_tes_v, dibaca oleh kartu, grafik, DAN subtotal ini.
   const rgn = detail?.reagen ?? [];
   const totalDalam = rgn.filter((r) => r.dalamSkema).reduce((a, r) => a + (r.nilaiNetto ?? 0), 0);
   const totalLuar = rgn.filter((r) => !r.dalamSkema).reduce((a, r) => a + (r.nilaiNetto ?? 0), 0);
