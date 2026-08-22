@@ -59,9 +59,19 @@
 --   -- yang rusak, bukan datanya yang berubah.
 --
 --   -- 3. Warisan 124 di prod: sebelum migrasi ini, faskes berskema ganda menerima
---   --    penagihan tesnya dua kali. Selisih total revenue PER_TEST + BELI_REAGEN
---   --    sebelum vs sesudah apply = besarnya penggandaan yang sedang tayang. Diukur
---   --    saat apply, karena setelahnya tidak bisa lagi dilihat dari dalam DB.
+--   --    penagihan tesnya dua kali. SUDAH DIUKUR di prod 2026-08-22 dan hasilnya
+--   --    Rp 0,000000000 EKSAK — 3 pasangan yang punya item PEMERIKSAAN semuanya baris
+--   --    pencatat kuantitas berharga nol (qty 4.594 / 697 / 7.799 tes). Jadi apply
+--   --    migrasi ini TIDAK menggeser rupiah mana pun; koreksinya nol.
+--
+--   -- 4. PEMANTAUAN BERKALA, dan ini yang akan berubah kelak: baris penagihan tes pada
+--   --    pasangan yang MENYEBERANG dua skema dan sudah BERHARGA. Selama nol, keputusan
+--   --    atribusi ke PER_TEST belum menyentuh rupiah. Begitu > 0, ia mulai menentukan
+--   --    angka — dan sisi BELI_REAGEN tidak dapat bagian tanpa itu terlihat di mana pun:
+--   SELECT count(*) AS baris, round(sum(nilai_netto)) AS rupiah
+--   FROM kso_penagihan_tes_v WHERE lintas_skema AND nilai_netto > 0;
+--   -- 0 = keputusan atribusi masih netral terhadap angka. > 0 = layak ditinjau ulang,
+--   -- karena saat itu ada pilihan lain (bagi porsi antar skema) yang berbeda hasilnya.
 
 -- Sumber tunggal aturan "baris faktur ini adalah penagihan per-tes yang diakui".
 -- Granular sampai (periode, item_id) supaya bisa dipakai tren DAN subtotal per item;
@@ -87,7 +97,20 @@ WITH kepemilikan AS (
   -- membuat lebih dari satu baris per pasangan tidak mungkin ada, jadi join di bawah
   -- tidak bisa menggandakan seberapa pun datanya berubah kelak.
   SELECT account_id, jenis,
-         CASE WHEN bool_or(skema = 'PER_TEST') THEN 'PER_TEST' ELSE 'BELI_REAGEN' END AS skema
+         CASE WHEN bool_or(skema = 'PER_TEST') THEN 'PER_TEST' ELSE 'BELI_REAGEN' END AS skema,
+         -- Penanda: pasangan ini MENYEBERANG dua skema, jadi atribusinya hasil keputusan
+         -- di atas — bukan satu-satunya kemungkinan. Diukur saat migrasi ini dibuat:
+         -- 6 pasangan menyeberang, 3 di antaranya punya item PEMERIKSAAN, dan ketiganya
+         -- berharga Rp 0,000000000 EKSAK (baris pencatat kuantitas: qty 4.594 / 697 /
+         -- 7.799 tes, rupiah nol). Jadi keputusan atribusi ini belum menyentuh rupiah
+         -- mana pun.
+         --
+         -- KENAPA DITANDAI KALAU NOL: yang menahannya cuma keadaan data, bukan aturan.
+         -- Begitu satu faktur PEMERIKSAAN BERHARGA terbit untuk salah satu pasangan itu,
+         -- nilainya masuk PER_TEST tanpa ada apa pun yang menyebutkan bahwa sisi
+         -- BELI_REAGEN baru saja tidak dapat bagian. Kolom ini membuat kejadian itu bisa
+         -- ditemukan, bukan cuma terjadi.
+         (count(DISTINCT skema) > 1) AS lintas_skema
   FROM (
     -- DISTINCT dulu: satu faskes bisa punya BEBERAPA alat berjenis sama, dan join
     -- per-aset menggandakan nilainya sebanyak jumlah alat — terukur Rp 6,84 jt menjadi
@@ -98,7 +121,7 @@ WITH kepemilikan AS (
   ) x
   GROUP BY account_id, jenis
 )
-SELECT r.account_id, a.skema, r.periode, r.item_id, r.nilai_netto
+SELECT r.account_id, a.skema, r.periode, r.item_id, r.nilai_netto, a.lintas_skema
 FROM kso_faskes_reagen_v r
 JOIN kso_item_jenis_v m ON m.item_id = r.item_id
 -- Jenis alat yang tertulis di nama item harus BENAR-BENAR dimiliki faskes itu. Tanpa
@@ -107,7 +130,9 @@ JOIN kepemilikan a ON a.account_id = r.account_id AND a.jenis = m.jenis
 WHERE r.item_id IN (SELECT item_id FROM kso_item_pemeriksaan_v);
 
 COMMENT ON VIEW kso_penagihan_tes_v IS
-  'Baris faktur yang diakui sebagai penagihan per-tes KSO (keputusan HoD 2026-08-22, migrasi 124). SUMBER TUNGGAL aturannya: dibaca oleh kso_asset_produktivitas_v (kartu), kso_faskes_tren_v (grafik), dan subtotal dalam-skema di repo TS. Granular per (account, skema, periode, item).';
+  'Baris faktur yang diakui sebagai penagihan per-tes KSO (keputusan HoD 2026-08-22, migrasi 124). SUMBER TUNGGAL aturannya: dibaca oleh kso_asset_produktivitas_v (kartu), kso_faskes_tren_v (grafik), dan subtotal dalam-skema di repo TS. Satu baris per (account, jenis) — penggandaan lintas skema tidak mungkin, bukan sekadar tidak terjadi.';
+COMMENT ON COLUMN kso_penagihan_tes_v.lintas_skema IS
+  'TRUE = faskes punya jenis alat ini di KEDUA skema, jadi baris ini diatribusikan ke PER_TEST berdasarkan keputusan user 2026-08-22, bukan karena hanya ada satu kemungkinan. Pantau: baris lintas_skema DENGAN nilai_netto > 0 = keputusan itu mulai menentukan rupiah dan layak ditinjau (saat migrasi ini dibuat, seluruhnya Rp 0 eksak).';
 
 DROP VIEW IF EXISTS kso_asset_produktivitas_v;
 CREATE VIEW kso_asset_produktivitas_v AS
