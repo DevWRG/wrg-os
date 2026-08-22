@@ -263,6 +263,8 @@ export interface FilterKso {
   alat: string; setAlat: (v: string) => void;
   penanda: string; setPenanda: (v: string) => void;
   dasar: FaskesRow[]; rows: FaskesRow[];
+  // Basis hitungan penanda (tanpa ambang layak) + berapa faskes yang ambang itu sembunyikan.
+  dasarSkema: FaskesRow[]; disembunyikan: number;
   opsiKota: string[]; opsiBrand: string[]; opsiAlat: string[];
   median: number | null; adaFilter: boolean; reset: () => void;
 }
@@ -284,6 +286,26 @@ export function useFilterKso(data: KsoProduktivitas): FilterKso {
   const dasar = useMemo(
     () => kelompokkan(data.rows.filter((r) => r.skema === skema && (!hanyaLayak || r.basisTesMemadai))),
     [data.rows, skema, hanyaLayak],
+  );
+
+  // Seluruh faskes skema ini TANPA ambang layak. Dipakai untuk dua hal yang tidak boleh
+  // dihitung dari `dasar`:
+  //
+  //  1. Hitungan di dropdown Penanda. Dulu diturunkan dari `dasar`, dan karena `dasar`
+  //     sudah membuang penyebut tipis saat `hanyaLayak` menyala (bawaan), opsinya selalu
+  //     berbunyi "Penyebut tipis (0)" — filter yang paling perlu justru tampak tidak ada
+  //     isinya, dan memilihnya mengosongkan tabel.
+  //  2. Jumlah yang disembunyikan ambang. Pada skema BELI_REAGEN hampir seluruh isinya
+  //     tersaring (pelaporan tes praktis tidak dijalankan di skema itu — 4 dari 329 aset
+  //     melapor di 2026), jadi daftar pendek di sana berarti "tidak dilaporkan", BUKAN
+  //     "KSO reagennya sedikit". Tanpa angkanya disebut, pembaca menyimpulkan yang kedua.
+  const dasarSkema = useMemo(
+    () => kelompokkan(data.rows.filter((r) => r.skema === skema)),
+    [data.rows, skema],
+  );
+  const disembunyikan = useMemo(
+    () => dasarSkema.filter((g) => !g.r.basisTesMemadai).length,
+    [dasarSkema],
   );
 
   const opsiKota = useMemo(
@@ -316,8 +338,17 @@ export function useFilterKso(data: KsoProduktivitas): FilterKso {
 
   return {
     skema, setSkema, hanyaLayak, setHanyaLayak, kota, setKota, brand, setBrand,
-    alat, setAlat, penanda, setPenanda,
-    dasar, rows, opsiKota, opsiBrand, opsiAlat,
+    alat, setAlat, penanda,
+    // Memilih "Penyebut tipis" sambil "hanya yang layak" masih menyala adalah permintaan
+    // yang saling membatalkan — hasilnya selalu kosong. Ambangnya dimatikan otomatis
+    // supaya pilihan itu berarti, alih-alih menyodorkan tabel kosong yang harus ditebak
+    // sendiri sebabnya. Arah sebaliknya tidak diutak-utik: menyalakan ambang lagi memang
+    // wajar berarti "sudah, sembunyikan lagi".
+    setPenanda: (v: string) => {
+      setPenanda(v);
+      if (v === "penyebut_tipis") setHanyaLayak(false);
+    },
+    dasar, rows, dasarSkema, disembunyikan, opsiKota, opsiBrand, opsiAlat,
     median: data.ringkasan.medianRpPerTes[skema] ?? null,
     adaFilter: kota !== SEMUA || brand !== SEMUA || alat !== SEMUA || penanda !== SEMUA,
     reset: () => { setKota(SEMUA); setBrand(SEMUA); setAlat(SEMUA); setPenanda(SEMUA); },
@@ -360,13 +391,23 @@ export function FilterBarKso({ f, kanan }: { f: FilterKso; kanan?: React.ReactNo
         <Pilih label="Penanda" value={f.penanda} onChange={f.setPenanda}>
           <option value={SEMUA}>Semua</option>
           {PENANDA.map((p) => (
-            <option key={p.id} value={p.id}>{p.label} ({f.dasar.filter((g) => p.uji(g.r)).length})</option>
+            // Dihitung dari `dasarSkema`, BUKAN `dasar` — lihat komentarnya di useFilterKso.
+            <option key={p.id} value={p.id}>{p.label} ({f.dasarSkema.filter((g) => p.uji(g.r)).length})</option>
           ))}
         </Pilih>
 
         <label className="flex cursor-pointer items-center gap-2 pb-1 text-sm">
           <input type="checkbox" checked={f.hanyaLayak} onChange={(e) => f.setHanyaLayak(e.target.checked)} />
           Hanya yang layak diperingkat
+          {/* Jumlahnya disebut hanya saat ambangnya sedang menyembunyikan sesuatu. Daftar
+              pendek tanpa keterangan terbaca sebagai "memang segini isinya" — padahal di
+              BELI_REAGEN artinya tesnya tidak dilaporkan. */}
+          {f.hanyaLayak && f.disembunyikan > 0 ? (
+            <span className="text-muted-foreground text-xs"
+                  title="Penyebut < 100 tes/thn. Buka penanda 'Penyebut tipis' untuk melihatnya.">
+              ({f.disembunyikan} disembunyikan)
+            </span>
+          ) : null}
         </label>
 
         {f.adaFilter ? (
