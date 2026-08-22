@@ -10,7 +10,7 @@ import { AlertTriangle, ChevronRight, Info } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Card, CardContent } from "@/components/ui/card";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
-import { FaskesRow, FilterKso, Tag, num, rp } from "./produktivitas-shared";
+import { FaskesRow, FilterKso, Tag, num, rp, rupiahPerAlat, skemaPakaiRpTes } from "./produktivitas-shared";
 import { FaskesDetailDialog } from "./faskes-detail-dialog";
 
 export type { KsoProduktivitas, KsoProduktivitasRow } from "./produktivitas-shared";
@@ -40,20 +40,33 @@ export function KsoProduktivitasTabel({ f }: { f: FilterKso }) {
     { id: "revenue", header: "Revenue netto", align: "right", sortable: true,
       accessor: (g) => g.r.revenueNettoCustomer ?? 0,
       cell: (g) => rp(g.r.revenueNettoCustomer) },
-    { id: "rpt", header: "Rp / tes", align: "right", sortable: true,
-      accessor: (g) => g.r.rupiahPerTesCustomer ?? 0,
-      cell: (g) => (
-        <div>
-          <div className={cn("font-medium", !g.r.basisTesMemadai && "text-muted-foreground")}>
-            {rp(g.r.rupiahPerTesCustomer)}
-          </div>
-          {median && g.r.rupiahPerTesCustomer ? (
-            <div className="text-muted-foreground text-xs">
-              {(g.r.rupiahPerTesCustomer / median).toFixed(2)}× median
+    // Rp/tes HANYA untuk PER_TEST. Di BELI_REAGEN penyebutnya cuma 4 dari 329 aset, jadi
+    // kolomnya diganti — bukan diisi angka yang tak berdasar. Nama kolomnya pun berbeda:
+    // "Rp / alat" tidak boleh terbaca sebagai varian Rp/tes, karena yang diukur besar
+    // BELANJA per alat, bukan produktivitas. Nama kolom bertahan lebih lama dari maknanya.
+    ...(skemaPakaiRpTes(f.skema)
+      ? [{ id: "rpt", header: "Rp / tes", align: "right" as const, sortable: true,
+          accessor: (g: FaskesRow) => g.r.rupiahPerTesCustomer ?? 0,
+          cell: (g: FaskesRow) => (
+            <div>
+              <div className={cn("font-medium", !g.r.basisTesMemadai && "text-muted-foreground")}>
+                {rp(g.r.rupiahPerTesCustomer)}
+              </div>
+              {median && g.r.rupiahPerTesCustomer ? (
+                <div className="text-muted-foreground text-xs">
+                  {(g.r.rupiahPerTesCustomer / median).toFixed(2)}× median
+                </div>
+              ) : null}
             </div>
-          ) : null}
-        </div>
-      ) },
+          ) }]
+      : [{ id: "rpa", header: "Rp / alat", align: "right" as const, sortable: true,
+          accessor: (g: FaskesRow) => rupiahPerAlat(g.r) ?? 0,
+          cell: (g: FaskesRow) => (
+            <div>
+              <div className="font-medium">{rp(rupiahPerAlat(g.r))}</div>
+              <div className="text-muted-foreground text-xs">belanja/alat</div>
+            </div>
+          ) }]),
     { id: "tanda", header: "Penanda",
       cell: (g) => (
         <div className="flex flex-wrap gap-1">
@@ -91,11 +104,28 @@ export function KsoProduktivitasTabel({ f }: { f: FilterKso }) {
         <CardContent className="flex items-start gap-2 py-3 text-xs">
           <Info className="text-muted-foreground mt-0.5 size-4 shrink-0" />
           <p className="text-muted-foreground">
-            <strong>Rp/tes dihitung di level customer</strong>, bukan per alat — revenue milik faskes,
-            dan kolom “Alat” menunjukkan berapa alat seskema yang membagi angka itu.
-            Kedua skema <strong>tidak sebanding</strong> satu sama lain (median berbeda beberapa kali lipat),
-            jadi peringkatnya terpisah. Kartu angka dan grafiknya ada di tab{" "}
-            <strong>Ringkasan</strong>, dengan filter yang sama seperti di sini.
+            {skemaPakaiRpTes(f.skema) ? (
+              <>
+                <strong>Rp/tes dihitung di level customer</strong>, bukan per alat — revenue milik faskes,
+                dan kolom “Alat” menunjukkan berapa alat seskema yang membagi angka itu.
+              </>
+            ) : (
+              <>
+                {/* Batas metriknya dinyatakan di tempat angkanya dibaca, bukan cuma di komentar
+                    kode: yang memeringkat kolom ini perlu tahu ia bukan ukuran produktivitas. */}
+                <strong>Skema ini tidak punya Rp/tes.</strong> Hanya 4 dari 329 alat melaporkan jumlah
+                tes — di skema beli-reagen yang ditagih reagennya, bukan tesnya — jadi penyebut per-tes
+                praktis tidak ada, dan menurunkannya dari reagen sudah diuji &amp; gagal (pembelian
+                mengikuti siklus stok, bukan siklus tes). Yang tampil{" "}
+                <strong>Rp/alat = besar belanja per alat</strong>, <em>bukan produktivitas</em>: ia tidak
+                bisa menjawab apakah sebuah alat dipakai. Sebarannya juga ±3× lebih lebar dari Rp/tes,
+                jadi perbedaan antar faskes lebih banyak mencerminkan <strong>ukuran</strong> faskes
+                daripada efisiensinya.
+              </>
+            )}{" "}
+            Kedua skema <strong>tidak sebanding</strong> satu sama lain, jadi peringkatnya terpisah.
+            Kartu angka dan grafiknya ada di tab <strong>Ringkasan</strong>, dengan filter yang sama
+            seperti di sini.
           </p>
         </CardContent>
       </Card>
