@@ -275,7 +275,23 @@ export async function faskesDetail(
                          * COALESCE((SELECT porsi FROM porsi), 1)
                     ELSE r.nilai_netto END) AS nilai_netto,
            sum(r.jumlah_faktur)::int AS jumlah_faktur,
-           (r.kategori IN (SELECT kategori FROM kso_kategori_skema WHERE skema = ${skema}))
+           -- Dua jalan masuk "dalam skema", dan yang kedua wajib sejak migrasi 124:
+           -- baris penagihan per-tes berkategori 'Tanpa kategori', yang BUKAN anggota
+           -- kso_kategori_skema, tapi sejak keputusan HoD 2026-08-22 diakui sebagai
+           -- revenue. Tanpa cabang ini subtotal "dalam skema" di tabel ini lebih kecil
+           -- dari kartu Revenue netto di dialog yang SAMA — persis yang dilaporkan dari
+           -- layar: tabel memuat Rp 16,58 jt penagihan tes, grafik & subtotal tidak.
+           --
+           -- Keanggotaannya DIBACA dari kso_penagihan_tes_v (migrasi 125), tidak
+           -- diputuskan di TS. View itu juga yang dipakai kso_asset_produktivitas_v dan
+           -- kso_faskes_tren_v, jadi ketiga angka di dialog ini membaca himpunan yang sama.
+           --
+           -- account_id dipakai sebagai parameter, bukan r.account_id: query ini sudah
+           -- difilter ke satu faskes di WHERE, dan r.account_id tidak ada di GROUP BY.
+           (r.kategori IN (SELECT kategori FROM kso_kategori_skema WHERE skema = ${skema})
+            OR EXISTS (SELECT 1 FROM kso_penagihan_tes_v pt
+                       WHERE pt.account_id = ${accountId} AND pt.skema = ${skema}
+                         AND pt.item_id = r.item_id))
              AS dalam_skema
     FROM kso_faskes_reagen_v r
     WHERE r.account_id = ${accountId} AND r.periode BETWEEN ${dari} AND ${sampai}
