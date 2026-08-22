@@ -48,31 +48,62 @@
 --     SELECT DISTINCT account_id, revenue_netto_customer FROM kso_asset_produktivitas_v
 --     WHERE skema='PER_TEST') x;
 --
---   -- 2. PENGGANDAAN LINTAS SKEMA — satu faskes yang punya jenis alat SAMA di kedua
---   --    skema akan menerima penagihan tesnya DUA KALI (sekali per skema). Warisan 124,
---   --    bukan hal baru di sini, tapi belum pernah diukur:
+--   -- 2. PENGGANDAAN LINTAS SKEMA sudah DITUTUP di view ini lewat CTE `kepemilikan`
+--   --    (satu baris per account+jenis). Yang diverifikasi bukan lagi "apakah ada faskes
+--   --    berskema ganda" — ADA, 6 pasangan terukur — melainkan bahwa view ini tetap
+--   --    memberi satu baris saja per pasangan:
 --   SELECT count(*) FROM (
---     SELECT account_id, kso_jenis_kanonik(type_alat) AS jenis
---     FROM kso_asset WHERE account_id IS NOT NULL AND skema IN ('PER_TEST','BELI_REAGEN')
---     GROUP BY 1,2 HAVING count(DISTINCT skema) > 1) x;
---   -- harus 0. Kalau > 0, nilainya terhitung dobel dan perlu aturan pemecah.
+--     SELECT account_id, periode, item_id FROM kso_penagihan_tes_v
+--     GROUP BY 1,2,3 HAVING count(DISTINCT skema) > 1) x;
+--   -- harus 0. Ini invarian view, bukan sifat data — kalau pecah, CTE `kepemilikan`
+--   -- yang rusak, bukan datanya yang berubah.
+--
+--   -- 3. Warisan 124 di prod: sebelum migrasi ini, faskes berskema ganda menerima
+--   --    penagihan tesnya dua kali. Selisih total revenue PER_TEST + BELI_REAGEN
+--   --    sebelum vs sesudah apply = besarnya penggandaan yang sedang tayang. Diukur
+--   --    saat apply, karena setelahnya tidak bisa lagi dilihat dari dalam DB.
 
 -- Sumber tunggal aturan "baris faktur ini adalah penagihan per-tes yang diakui".
 -- Granular sampai (periode, item_id) supaya bisa dipakai tren DAN subtotal per item;
 -- pemakai yang butuh agregat menjumlahkannya sendiri.
 CREATE OR REPLACE VIEW kso_penagihan_tes_v AS
+WITH kepemilikan AS (
+  -- SATU baris per (account, jenis) — bukan per skema. Ini yang menutup penggandaan
+  -- lintas skema, dan alasannya diukur: 6 pasangan faskes x jenis alat ada di KEDUA
+  -- skema (5 faskes, 14 aset). Dengan satu baris per skema, penagihan tes untuk jenis
+  -- itu terhitung DUA KALI — sekali di PER_TEST, sekali di BELI_REAGEN — dan tidak ada
+  -- apa pun yang gagal untuk menandainya.
+  --
+  -- ATURAN PEMECAHNYA, keputusan user 2026-08-22: seluruhnya ke PER_TEST bila faskes
+  -- punya alat jenis itu di sana. Penagihan PER TES adalah mekanisme skema PER_TEST —
+  -- di BELI_REAGEN yang ditagih reagennya, bukan tesnya. Bukti pendukungnya sudah ada
+  -- di 124: pada faskes berskema TUNGGAL, penagihan tes PER_TEST Rp 217 jt sementara
+  -- BELI_REAGEN Rp 0 (nol baris berharga).
+  --
+  -- Faskes yang punya jenis itu HANYA di BELI_REAGEN tetap menerimanya — CASE ini
+  -- memilih, bukan membuang.
+  --
+  -- DIJAGA SECARA STRUKTURAL, bukan dengan syarat tambahan: GROUP BY (account, jenis)
+  -- membuat lebih dari satu baris per pasangan tidak mungkin ada, jadi join di bawah
+  -- tidak bisa menggandakan seberapa pun datanya berubah kelak.
+  SELECT account_id, jenis,
+         CASE WHEN bool_or(skema = 'PER_TEST') THEN 'PER_TEST' ELSE 'BELI_REAGEN' END AS skema
+  FROM (
+    -- DISTINCT dulu: satu faskes bisa punya BEBERAPA alat berjenis sama, dan join
+    -- per-aset menggandakan nilainya sebanyak jumlah alat — terukur Rp 6,84 jt menjadi
+    -- Rp 20,52 jt saat 124 diuji (3 alat Hematology 5Diff).
+    SELECT DISTINCT account_id, kso_jenis_kanonik(type_alat) AS jenis, skema
+    FROM kso_asset
+    WHERE account_id IS NOT NULL AND skema IN ('PER_TEST','BELI_REAGEN')
+  ) x
+  GROUP BY account_id, jenis
+)
 SELECT r.account_id, a.skema, r.periode, r.item_id, r.nilai_netto
 FROM kso_faskes_reagen_v r
 JOIN kso_item_jenis_v m ON m.item_id = r.item_id
--- Jenis alat yang tertulis di nama item harus BENAR-BENAR dimiliki faskes itu pada skema
--- tersebut. Tanpa syarat ini, tagihan tes untuk alat yang bukan miliknya ikut terhitung.
--- DISTINCT (account, jenis, skema), BUKAN join langsung ke kso_asset: satu faskes bisa
--- punya BEBERAPA alat berjenis sama, dan join per-aset menggandakan nilainya sebanyak
--- jumlah alat — terukur Rp 6,84 jt menjadi Rp 20,52 jt saat 124 diuji.
-JOIN (SELECT DISTINCT account_id, kso_jenis_kanonik(type_alat) AS jenis, skema
-      FROM kso_asset
-      WHERE account_id IS NOT NULL AND skema IN ('PER_TEST','BELI_REAGEN')) a
-  ON a.account_id = r.account_id AND a.jenis = m.jenis
+-- Jenis alat yang tertulis di nama item harus BENAR-BENAR dimiliki faskes itu. Tanpa
+-- syarat ini, tagihan tes untuk alat yang bukan miliknya ikut terhitung.
+JOIN kepemilikan a ON a.account_id = r.account_id AND a.jenis = m.jenis
 WHERE r.item_id IN (SELECT item_id FROM kso_item_pemeriksaan_v);
 
 COMMENT ON VIEW kso_penagihan_tes_v IS
