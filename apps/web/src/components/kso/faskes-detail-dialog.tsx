@@ -37,6 +37,7 @@ interface Detail {
     jenisAlat: string | null; kategori: string; unit: string;
     qty: number | null; nilaiNetto: number | null; jumlahFaktur: number | null;
     dalamSkema: boolean;
+    penagihanTes: boolean;
   }[];
 }
 
@@ -453,9 +454,18 @@ export function FaskesDetailDialog({ g, median, onClose }: {
                               </div>
                             </td>
                             <td className="py-1.5 pr-2">
+                              {/* ALASAN yang benar, bukan sekadar "kategorinya tidak berlaku".
+                                  Untuk item PEMERIKSAAN sebabnya BUKAN kategori: seluruhnya
+                                  'Tanpa kategori' dan sebagiannya justru DIAKUI. Pada
+                                  SEKAR LANGIT, '5DIFF Z52' dihitung sementara '3DIFF Z3'
+                                  tidak — karena hanya Z52 yang asetnya ada. Tooltip lama
+                                  menuduh kategorinya, jadi pembaca mencari sebab yang salah
+                                  (dan bertanya kenapa Z3 tak punya grafik). */}
                               {r.dalamSkema
                                 ? <span className="text-muted-foreground">{r.kategori}</span>
-                                : <Tag warna="kuning" judul={`Kategori ${r.kategori} tidak dihitung sebagai revenue skema ini`}>{r.kategori}</Tag>}
+                                : r.penagihanTes
+                                  ? <Tag warna="kuning" judul={`Penagihan tes untuk jenis alat${r.jenisAlat ? ` ${r.jenisAlat}` : ""} yang TIDAK dimiliki faskes ini pada skema ${g.r.skema} — karena itu tidak dihitung sebagai revenue skema ini, dan alatnya tidak punya grafik di atas`}>alat tak dimiliki</Tag>
+                                  : <Tag warna="kuning" judul={`Kategori ${r.kategori} tidak dihitung sebagai revenue skema ini`}>{r.kategori}</Tag>}
                             </td>
                             <td className="py-1.5 pr-2 text-right tabular-nums">{num(r.qty)}</td>
                             <td className="text-muted-foreground py-1.5 pr-2">{r.unit}</td>
