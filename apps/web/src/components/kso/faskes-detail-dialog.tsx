@@ -127,6 +127,20 @@ export function FaskesDetailDialog({ g, median, onClose }: {
   // karena diakui sebagai revenue. Jangan menyimpulkannya dari `kategori` di sini —
   // aturannya tinggal di kso_penagihan_tes_v, dibaca oleh kartu, grafik, DAN subtotal ini.
   const rgn = detail?.reagen ?? [];
+
+  // Rentang tahun NYATA yang diwakili kartu, diturunkan dari datanya sendiri. "seluruh
+  // periode" saja terbukti tidak cukup: ia tidak menyebut tahun mana, jadi pembaca
+  // menyangka kartu dan grafik memuat rentang yang sama lalu menemukan selisih tanpa
+  // sebab yang terlihat. Menyebut "2025–2026" membuat perbandingannya berhenti tampak
+  // seperti ketidaksinkronan data.
+  const tahunAda = [...new Set([
+    ...(detail?.trenAlat ?? []).filter((t) => t.jumlahTes !== null).map((t) => t.periode.slice(0, 4)),
+    ...(detail?.tren ?? []).filter((t) => t.jumlahTes !== null || t.revenueNetto !== null)
+      .map((t) => t.periode.slice(0, 4)),
+  ])].sort();
+  const subSeluruh = tahunAda.length === 0 ? "seluruh periode"
+    : tahunAda.length === 1 ? `seluruh periode · ${tahunAda[0]}`
+    : `seluruh periode · ${tahunAda[0]}–${tahunAda[tahunAda.length - 1]}`;
   const totalDalam = rgn.filter((r) => r.dalamSkema).reduce((a, r) => a + (r.nilaiNetto ?? 0), 0);
   const totalLuar = rgn.filter((r) => !r.dalamSkema).reduce((a, r) => a + (r.nilaiNetto ?? 0), 0);
   const reagenLuar = rgn.filter((r) => !r.dalamSkema).length;
@@ -151,9 +165,9 @@ export function FaskesDetailDialog({ g, median, onClose }: {
               terlihat — pada AMIN MEDICAL: kartu 671 tes vs grafik ~390 (2026 saja). */}
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             <Angka label="Tes (customer)" nilai={num(r.totalTesCustomerSeskema)}
-              sub="seluruh periode" />
+              sub={subSeluruh} />
             <Angka label="Revenue netto" nilai={rp(r.revenueNettoCustomer)}
-              sub="seluruh periode" />
+              sub={subSeluruh} />
             {/* Kartu ini WAJIB mengikuti kolom di tabel. Kalau tabel menyatakan skema ini
                 tidak punya Rp/tes sementara dialognya tetap menampilkannya, itu dua angka
                 yang bertentangan di satu alur baca — jenis cacat yang persis kita bereskan
@@ -165,7 +179,7 @@ export function FaskesDetailDialog({ g, median, onClose }: {
                 nilai={rp(r.rupiahPerTesCustomer)}
                 sub={[median && r.rupiahPerTesCustomer
                         ? `${(r.rupiahPerTesCustomer / median).toFixed(2)}× median` : null,
-                      "seluruh periode"].filter(Boolean).join(" · ")}
+                      subSeluruh].filter(Boolean).join(" · ")}
                 redup={!r.basisTesMemadai}
               />
             ) : (
@@ -215,11 +229,25 @@ export function FaskesDetailDialog({ g, median, onClose }: {
                   }));
                   const punyaRiwayatLama = semua.some(
                     (t) => !dalamJendela(t.periode) && t.jumlahTes !== null);
+                  // Σ titik grafik, DIHITUNG di sini alih-alih dibiarkan dijumlah pembaca.
+                  // Label "seluruh periode" di kartu ternyata tidak cukup: pada AMIN MEDICAL
+                  // pembaca membuka kalkulator, menjumlahkan 7 titik jadi 387, membandingkan
+                  // dengan kartu 671, dan menyimpulkan datanya tidak sinkron. Padahal
+                  // selisihnya tes 2025 — grafik dibatasi tahun berjalan atas permintaan
+                  // user. Yang salah bukan angkanya, tapi bahwa dua cakupan berbeda
+                  // ditampilkan berdampingan tanpa satu pun menyebut RENTANGNYA.
+                  const tesJendela = seriAlat.reduce((s, x) => s + (x.tes ?? 0), 0);
+                  const adaSelisih = a.totalTes !== null && a.totalTes !== tesJendela;
                   return (
                     <Grafik
                       key={a.assetId}
                       judul={a.namaAlat ?? a.snKey}
-                      sub={[a.typeAlat, a.targetJumlahTes ? `target ${a.targetJumlahTes.toLocaleString("id-ID")}/bln` : "tanpa target"]
+                      sub={[a.typeAlat,
+                            a.targetJumlahTes ? `target ${a.targetJumlahTes.toLocaleString("id-ID")}/bln` : "tanpa target",
+                            // Rentang + Σ-nya: menjawab "kenapa beda dari kartu" di tempat
+                            // pertanyaannya muncul, bukan di catatan jauh di bawah.
+                            `${dari.slice(0, 4)}: ${tesJendela.toLocaleString("id-ID")} tes`,
+                            adaSelisih ? `seluruh periode ${a.totalTes!.toLocaleString("id-ID")}` : null]
                         .filter(Boolean).join(" · ")}
                       ada={seriAlat.some((x) => x.tes !== null)}
                       kosong={punyaRiwayatLama
@@ -265,7 +293,12 @@ export function FaskesDetailDialog({ g, median, onClose }: {
                   unit tertentu. Alasannya ditulis di layar, bukan cuma di kode — kalau
                   tidak, pembaca akan menganggap bagian ini belum selesai dikerjakan. */}
               <Grafik judul="Riwayat revenue netto (seluruh faskes)"
-                sub={`tidak dapat dipecah per alat · ${skalaRev.satuan}`}
+                // Rentang + Σ, alasan sama dengan grafik tes per alat: kartu Revenue netto
+                // memuat seluruh periode sementara grafik ini tahun berjalan, dan tanpa
+                // keduanya disebut, selisihnya terbaca sebagai data yang tidak sinkron.
+                sub={[`tidak dapat dipecah per alat`, skalaRev.satuan,
+                      `${dari.slice(0, 4)}: ${rp(seri.reduce((s, x) => s + (x.revenue ?? 0), 0))}`]
+                  .join(" · ")}
                 ada={adaRev} kosong={adaRevLama
                   ? `Tidak ada faktur di ${dari.slice(0, 4)} — ada di tahun sebelumnya.`
                   : "Belum ada faktur."}>
