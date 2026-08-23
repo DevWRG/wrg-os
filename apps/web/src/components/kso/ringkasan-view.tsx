@@ -15,7 +15,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart";
 import {
   Kosong, PENANDA, Pilih, Statistik, awalTahunIni, bulanIni, deretBulan,
-  labelBulan, rpSingkat, type FilterKso, type KsoProduktivitas,
+  labelBulan, rpSingkat, skemaPakaiRpTes, type FilterKso, type KsoProduktivitas,
 } from "./produktivitas-shared";
 
 export function KsoRingkasanPanel({ f, data }: { f: FilterKso; data: KsoProduktivitas }) {
@@ -294,12 +294,22 @@ export function KsoRingkasanPanel({ f, data }: { f: FilterKso; data: KsoProdukti
                   </Bar>
                 </BarChart>
               </ChartContainer>
-            ) : <Kosong pesan="Median belum tersedia untuk skema ini." />}
-            <p className="text-muted-foreground mt-1 text-xs">
-              Patokannya <strong>median</strong>, bukan rata-rata — sebaran Rp/tes sangat miring,
-              dan rata-rata akan tertarik segelintir faskes yang puluhan kali lipat.
-            </p>
-            {tanpaRpTes > 0 ? (
+            ) : (
+              /* Untuk BELI_REAGEN histogram ini TIDAK bisa dipercaya, dan sebabnya harus
+                 disebut alih-alih dibiarkan sebagai "median belum tersedia": median-nya
+                 lahir dari 4 faskes yang melapor tes dari 329 alat. Sebaran terhadap
+                 patokan yang mewakili 1% populasi lebih menyesatkan daripada kosong. */
+              <Kosong pesan={skemaPakaiRpTes(skema)
+                ? "Median belum tersedia untuk skema ini."
+                : "Tidak berlaku: skema beli-reagen tak punya Rp/tes (4 dari 329 alat melapor tes), jadi tak ada median yang mewakili."} />
+            )}
+            {skemaPakaiRpTes(skema) ? (
+              <p className="text-muted-foreground mt-1 text-xs">
+                Patokannya <strong>median</strong>, bukan rata-rata — sebaran Rp/tes sangat miring,
+                dan rata-rata akan tertarik segelintir faskes yang puluhan kali lipat.
+              </p>
+            ) : null}
+            {skemaPakaiRpTes(skema) && tanpaRpTes > 0 ? (
               <p className="text-muted-foreground mt-1 text-xs">
                 {tanpaRpTes} faskes tidak masuk histogram karena belum punya Rp/tes — revenue
                 Accurate-nya nol atau belum terpetakan, jadi tak ada nilai untuk dibandingkan ke
