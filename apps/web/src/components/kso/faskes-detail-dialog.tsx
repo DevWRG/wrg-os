@@ -19,7 +19,7 @@ import { cn } from "@/lib/utils";
 import { Dialog, DialogBody, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart";
 import {
-  PENANDA, Tag, angkaSumbu, awalTahunIni, bulanIni, deretBulan, labelBulan, num, rp,
+  PENANDA, Pilih, Tag, angkaSumbu, awalTahunIni, bulanIni, deretBulan, labelBulan, num, rp,
   rupiahPerAlat, skalaRp, skemaPakaiRpTes, type FaskesRow,
 } from "./produktivitas-shared";
 
@@ -59,6 +59,39 @@ export function FaskesDetailDialog({ g, median, onClose }: {
   const kunci = g ? `${g.r.accountId}:${g.r.skema}` : null;
   const [hasil, setHasil] = useState<{ kunci: string; detail: Detail | null } | null>(null);
 
+  // ── RENTANG PERIODE, kini diatur pemakai (permintaan user 2026-08-24) ─────────────
+  // Sebelumnya dipatok tahun berjalan, dan itu memunculkan dua masalah yang dilaporkan
+  // dari layar: (1) kartu memuat seluruh periode sementara grafik hanya tahun berjalan,
+  // sehingga SEKAR LANGIT menampilkan kartu 1.425 tes di atas grafik yang totalnya 67 —
+  // 1.424 dari 1.425 tesnya ada di 2025; (2) tabel "Reagen keluar" SUDAH difilter jendela
+  // ini di server, jadi subtotalnya pun tak sebanding dengan kartu revenue di atasnya.
+  //
+  // Sekarang SATU rentang mengatur ketiganya: kartu, grafik, dan tabel reagen. Yang
+  // membuatnya bisa sebanding bukan angkanya berubah, tapi ketiganya berhenti memakai
+  // cakupan yang berbeda-beda.
+  //
+  // Default tetap TAHUN BERJALAN — keputusan user 2026-08-19 tidak dibatalkan, hanya
+  // berhenti menjadi satu-satunya pilihan. Alasan aslinya masih berlaku: sheet memuat
+  // 2025 sementara mirror faktur Accurate baru mulai 2026, jadi membuka pada rentang
+  // penuh selalu menampilkan separuh grafik revenue kosong — terbaca sebagai kerusakan,
+  // bukan sebagai batas data. Memakai tahun BERJALAN, bukan '2026' yang dipatok, supaya
+  // tidak jadi salah sendiri tahun depan.
+  // Rentang di-RESET ke bawaan setiap kali faskes berganti — tanpa itu, rentang sempit
+  // yang dipilih untuk satu faskes terbawa ke faskes berikutnya yang mungkin tidak punya
+  // data di sana sama sekali, dan dialog terbuka kosong tanpa sebab yang terlihat.
+  //
+  // Reset-nya lewat KUNCI yang disimpan bersama nilainya, BUKAN lewat setState di dalam
+  // effect — cara itu memicu render berantai dan ditolak lint (`set-state-in-effect`),
+  // pola yang sudah dipakai `hasil` di bawah untuk alasan yang sama. Begitu kuncinya tidak
+  // cocok, nilainya jatuh ke bawaan dengan sendirinya: nol effect, nol render tambahan.
+  const [rentang, setRentang] = useState<{ kunci: string | null; dari: string; sampai: string }>(
+    { kunci: null, dari: "", sampai: "" });
+  const rentangCocok = rentang.kunci === kunci;
+  const dari = rentangCocok ? rentang.dari : awalTahunIni();
+  const sampai = rentangCocok ? rentang.sampai : bulanIni();
+  const setDari = (v: string) => setRentang({ kunci, dari: v, sampai });
+  const setSampai = (v: string) => setRentang({ kunci, dari, sampai: v });
+
   useEffect(() => {
     // accountId null = faskes belum terpetakan ke Accurate; riwayat revenue-nya tidak
     // mungkin ada, jadi tidak usah memanggil backend sekadar untuk mendapat kosong.
@@ -69,12 +102,16 @@ export function FaskesDetailDialog({ g, median, onClose }: {
     // menghitung "tahun berjalan" sendiri, daftar reagen bisa memakai periode berbeda
     // dari grafiknya tanpa ada yang menandai.
     fetch(`/api/kso/produktivitas/faskes/${g.r.accountId}?skema=${encodeURIComponent(g.r.skema)}`
-      + `&dari=${awalTahunIni()}&sampai=${bulanIni()}`)
+      + `&dari=${dari}&sampai=${sampai}`)
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
       .then((d: Detail) => { if (!batal) setHasil({ kunci, detail: d }); })
       .catch(() => { if (!batal) setHasil({ kunci, detail: null }); });
     return () => { batal = true; };
-  }, [kunci, g]);
+    // `dari`/`sampai` ikut dependency: HANYA reagen yang difilter di server (tren &
+    // trenAlat dikirim seluruh periode dan disaring di klien), jadi tanpa fetch ulang
+    // tabel reagen akan tertinggal di rentang lama sementara grafiknya sudah pindah —
+    // dua cakupan berbeda lagi, persis yang perubahan ini ada untuk menghentikan.
+  }, [kunci, g, dari, sampai]);
 
   if (!g) return null;
   const r = g.r;
@@ -84,14 +121,7 @@ export function FaskesDetailDialog({ g, median, onClose }: {
 
   // Sumbu-x dirangka dari deret bulan LENGKAP antara titik pertama & terakhir, sama
   // seperti grafik Ringkasan: tanpa itu bulan tanpa data lenyap dari sumbu sehingga dua
-  // bulan berjauhan terlihat bersebelahan.
-  // JENDELA = TAHUN BERJALAN (permintaan user 2026-08-19), bukan seluruh rentang data.
-  // Alasannya kelihatan di layar: sheet memuat 2025 sementara mirror faktur Accurate baru
-  // mulai 2026, jadi rentang penuh selalu membuka dengan separuh grafik revenue kosong —
-  // terbaca sebagai kerusakan, bukan sebagai batas data. Memakai tahun BERJALAN, bukan
-  // '2026' yang dipatok, supaya tidak jadi salah sendiri tahun depan.
-  const dari = awalTahunIni();
-  const sampai = bulanIni();
+  // bulan berjauhan terlihat bersebelahan. Rentangnya dipegang sebagai state di atas.
   const dalamJendela = (p: string) => p >= dari && p <= sampai;
 
   const titik = (detail?.tren ?? []).filter((t) => dalamJendela(t.periode));
@@ -101,6 +131,41 @@ export function FaskesDetailDialog({ g, median, onClose }: {
   const luarJendela = (detail?.tren ?? []).filter((t) => !dalamJendela(t.periode));
   const adaTesLama = luarJendela.some((t) => t.jumlahTes !== null);
   const adaRevLama = luarJendela.some((t) => t.revenueNetto !== null);
+
+  // ── ANGKA KARTU MENGIKUTI RENTANG ────────────────────────────────────────────────
+  // Dijumlahkan dari `titik` (tren per bulan yang sudah disaring jendela), BUKAN dibaca
+  // dari kolom view yang selalu seluruh periode. Ini yang membuat kartu, grafik, dan
+  // tabel reagen akhirnya memakai cakupan yang sama.
+  //
+  // NILAI SELURUH PERIODE TETAP DITAMPILKAN sebagai pembanding saat rentangnya dipersempit
+  // — bukan basa-basi: kolom "Rp / tes" di TABEL utama memakai seluruh periode (itu dasar
+  // peringkat & median-nya). Kalau dialog cuma menampilkan angka jendela, pembaca akan
+  // membandingkannya dengan tabel dan menemukan selisih tanpa sebab yang terlihat —
+  // bentuk cacat yang sama yang baru saja dibereskan, cuma berpindah tempat.
+  const tesJdl = titik.reduce((s, t) => s + (t.jumlahTes ?? 0), 0);
+  const revJdl = titik.reduce((s, t) => s + (t.revenueNetto ?? 0), 0);
+  const adaTesJdl = titik.some((t) => t.jumlahTes !== null);
+  const adaRevJdl = titik.some((t) => t.revenueNetto !== null);
+  const rpTesJdl = tesJdl > 0 && adaRevJdl ? revJdl / tesJdl : null;
+
+  // Rentang penuh = tidak ada data di luar jendela. Diturunkan dari datanya, bukan dari
+  // membandingkan tanggal: kalau memang seluruh data ada di dalam jendela, kartu tidak
+  // perlu menyodorkan pembanding yang nilainya sama.
+  const jendelaPenuh = luarJendela.length === 0;
+  const labelJendela = `${labelBulan(dari)}–${labelBulan(sampai)}`;
+
+  // Opsi bulan digabung dari periode yang ADA di data DAN deret bawaan — pola yang sama
+  // dengan filter tren di tab Ringkasan. Kalau hanya dari data, bulan bawaan yang belum
+  // berdata tidak bisa dipilih; kalau hanya deret bawaan, riwayat 2025 tak terjangkau.
+  const periodeData = [...(detail?.tren ?? []).map((t) => t.periode),
+                       ...(detail?.trenAlat ?? []).map((t) => t.periode)];
+  const opsiBulan = [...new Set([...periodeData, ...deretBulan(awalTahunIni(), bulanIni())])].sort();
+  // Rentang PENUH menurut data — dipakai preset "semua". Menyebut tahunnya, bukan kata
+  // "semua": itu pelajaran yang sama dengan `seluruh periode` yang gagal menyampaikan
+  // apa pun karena tidak memuat angka.
+  const rentangPenuh = opsiBulan.length
+    ? { d: opsiBulan[0], s: opsiBulan[opsiBulan.length - 1] }
+    : { d: dari, s: sampai };
 
   const seri = deretBulan(dari, sampai).length
     ? deretBulan(dari, sampai).map((p) => {
@@ -157,17 +222,26 @@ export function FaskesDetailDialog({ g, median, onClose }: {
         </DialogHeader>
 
         <DialogBody className="space-y-4">
-          {/* CAKUPAN KARTU vs GRAFIK BERBEDA, dan itu wajib tertulis.
-              Kartu memakai angka level view = SELURUH periode (sumber yang sama dengan
-              peringkat di tabel, dan penyebut Rp/tes-nya). Grafik di bawah dibatasi tahun
-              berjalan atas permintaan user. Tanpa label ini pembaca menjumlahkan titik
-              grafik, membandingkannya dengan kartu, dan menemukan selisih tanpa sebab yang
-              terlihat — pada AMIN MEDICAL: kartu 671 tes vs grafik ~390 (2026 saja). */}
+          <FilterPeriode
+            dari={dari} sampai={sampai} setDari={setDari} setSampai={setSampai}
+            opsi={opsiBulan} penuh={rentangPenuh}
+          />
+
+          {/* SATU CAKUPAN untuk kartu, grafik, dan tabel reagen — itu inti perubahan
+              2026-08-24. Sebelumnya kartu selalu seluruh periode sementara grafik & tabel
+              reagen dibatasi tahun berjalan, dan selisihnya terbaca sebagai data tidak
+              sinkron: SEKAR LANGIT menampilkan kartu 1.425 tes di atas grafik bertotal 67
+              (1.424 dari 1.425 tesnya ada di 2025).
+              Nilai seluruh periode tetap disebut di `sub` saat rentang dipersempit, karena
+              kolom Rp/tes di TABEL utama memakai seluruh periode — tanpa pembanding itu,
+              selisih yang sama cuma berpindah tempat. */}
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <Angka label="Tes (customer)" nilai={num(r.totalTesCustomerSeskema)}
-              sub={subSeluruh} />
-            <Angka label="Revenue netto" nilai={rp(r.revenueNettoCustomer)}
-              sub={subSeluruh} />
+            <Angka label="Tes (customer)" nilai={adaTesJdl ? num(tesJdl) : "—"}
+              sub={jendelaPenuh ? subSeluruh
+                : `${labelJendela} · seluruh periode ${num(r.totalTesCustomerSeskema)}`} />
+            <Angka label="Revenue netto" nilai={adaRevJdl ? rp(revJdl) : "—"}
+              sub={jendelaPenuh ? subSeluruh
+                : `${labelJendela} · seluruh periode ${rp(r.revenueNettoCustomer)}`} />
             {/* Kartu ini WAJIB mengikuti kolom di tabel. Kalau tabel menyatakan skema ini
                 tidak punya Rp/tes sementara dialognya tetap menampilkannya, itu dua angka
                 yang bertentangan di satu alur baca — jenis cacat yang persis kita bereskan
@@ -176,17 +250,26 @@ export function FaskesDetailDialog({ g, median, onClose }: {
             {skemaPakaiRpTes(r.skema) ? (
               <Angka
                 label="Rp / tes"
-                nilai={rp(r.rupiahPerTesCustomer)}
-                sub={[median && r.rupiahPerTesCustomer
-                        ? `${(r.rupiahPerTesCustomer / median).toFixed(2)}× median` : null,
-                      subSeluruh].filter(Boolean).join(" · ")}
+                nilai={rp(jendelaPenuh ? r.rupiahPerTesCustomer : rpTesJdl)}
+                // "× median" HANYA saat rentang penuh: median dari server dihitung atas
+                // basis seluruh periode, jadi membandingkan angka jendela terhadapnya
+                // adalah rasio antar dua cakupan berbeda — terlihat presisi, tapi salah.
+                sub={jendelaPenuh
+                  ? [median && r.rupiahPerTesCustomer
+                       ? `${(r.rupiahPerTesCustomer / median).toFixed(2)}× median` : null,
+                     subSeluruh].filter(Boolean).join(" · ")
+                  : `${labelJendela} · seluruh periode ${rp(r.rupiahPerTesCustomer)}`}
                 redup={!r.basisTesMemadai}
               />
             ) : (
               <Angka
                 label="Rp / alat"
-                nilai={rp(rupiahPerAlat(r))}
-                sub="belanja per alat · bukan produktivitas"
+                nilai={rp(jendelaPenuh ? rupiahPerAlat(r)
+                  : (r.alatSeskemaDiCustomer && r.alatSeskemaDiCustomer > 0 && adaRevJdl
+                      ? revJdl / r.alatSeskemaDiCustomer : null))}
+                sub={jendelaPenuh
+                  ? "belanja per alat · bukan produktivitas"
+                  : `belanja per alat · ${labelJendela}`}
               />
             )}
             <Angka label="Alat berbagi angka" nilai={String(r.alatSeskemaDiCustomer ?? g.alatList.length)} />
@@ -439,6 +522,44 @@ export function FaskesDetailDialog({ g, median, onClose }: {
         </DialogBody>
       </DialogContent>
     </Dialog>
+  );
+}
+
+// Kontrol rentang untuk SELURUH isi dialog — kartu, grafik, dan tabel reagen sekaligus.
+// Ditaruh paling atas, sebelum kartu, supaya urutan bacanya "rentang ini → angka ini"
+// dan bukan sebaliknya.
+function FilterPeriode({ dari, sampai, setDari, setSampai, opsi, penuh }: {
+  dari: string; sampai: string;
+  setDari: (v: string) => void; setSampai: (v: string) => void;
+  opsi: string[]; penuh: { d: string; s: string };
+}) {
+  const adaRentangLebih = penuh.d < dari || penuh.s > sampai;
+  return (
+    <div className="flex flex-wrap items-end gap-2.5 rounded-lg border border-border p-2.5">
+      <Pilih label="Periode dari" value={dari} onChange={setDari}>
+        {opsi.map((p) => <option key={p} value={p}>{labelBulan(p)}</option>)}
+      </Pilih>
+      <Pilih label="sampai" value={sampai} onChange={setSampai}>
+        {opsi.map((p) => <option key={p} value={p}>{labelBulan(p)}</option>)}
+      </Pilih>
+      {/* Preset menyebut TAHUNNYA, bukan kata "semua": label tanpa angka persis yang
+          membuat `seluruh periode` gagal menyampaikan bahwa 62% tes tidak digambar. */}
+      {adaRentangLebih ? (
+        <button type="button"
+          onClick={() => { setDari(penuh.d); setSampai(penuh.s); }}
+          className="text-muted-foreground hover:text-foreground pb-1 text-xs underline underline-offset-2">
+          {penuh.d.slice(0, 4) === penuh.s.slice(0, 4)
+            ? `Seluruh data (${penuh.d.slice(0, 4)})`
+            : `Seluruh data (${penuh.d.slice(0, 4)}–${penuh.s.slice(0, 4)})`}
+        </button>
+      ) : null}
+      {dari > sampai ? (
+        <span className="pb-1 text-xs text-amber-600">Rentang terbalik — pilih “sampai” setelah “dari”.</span>
+      ) : null}
+      <div className="text-muted-foreground ml-auto pb-1 text-[11px]">
+        Kartu, grafik &amp; tabel reagen mengikuti rentang ini.
+      </div>
+    </div>
   );
 }
 
