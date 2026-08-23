@@ -153,6 +153,19 @@ export function FaskesDetailDialog({ g, median, onClose }: {
   // membandingkan tanggal: kalau memang seluruh data ada di dalam jendela, kartu tidak
   // perlu menyodorkan pembanding yang nilainya sama.
   const jendelaPenuh = luarJendela.length === 0;
+
+  // ── TES DILAPORKAN vs TES DITAGIHKAN: dua sumber, satuan sama ────────────────────
+  // Dilaporkan dari layar: kartu menunjukkan 616 tes sementara baris
+  // 'PEMERIKSAAN POCT IMMUNOLOGY WONDFO FIA METER' di tabel berqty 703 TEST — terbaca
+  // sebagai satu angka yang tidak konsisten. Bukan: keduanya sah dan datang dari sumber
+  // BERBEDA yang kebetulan bersatuan sama —
+  //   dilaporkan  = sheet KSO, diisi teknisi      (kso_asset_test_monthly)
+  //   ditagihkan  = qty baris PEMERIKSAAN di faktur Accurate
+  // Selisihnya justru salah satu hal yang paling perlu dilihat orang: ia bisa berarti
+  // laporan teknisi kurang, atau tagihan lebih. Sistem sudah mengukurnya sebagai
+  // rasio_tagih_lapor (103-105) dan menandainya di atas ambang 25%, tapi angka mentahnya
+  // tidak pernah disandingkan — jadi pembaca menemukan selisihnya sendiri dan
+  // menyimpulkan datanya rusak.
   const labelJendela = `${labelBulan(dari)}–${labelBulan(sampai)}`;
 
   // Opsi bulan digabung dari periode yang ADA di data DAN deret bawaan — pola yang sama
@@ -211,6 +224,22 @@ export function FaskesDetailDialog({ g, median, onClose }: {
   const totalLuar = rgn.filter((r) => !r.dalamSkema).reduce((a, r) => a + (r.nilaiNetto ?? 0), 0);
   const reagenLuar = rgn.filter((r) => !r.dalamSkema).length;
 
+  // PERBANDINGAN DIBACA DARI VIEW, TIDAK DIHITUNG DI SINI. Versi pertama saya menjumlahkan
+  // qty baris penagihan pada rentang terpilih lalu menguranginya dengan tes dilaporkan —
+  // dan itu SALAH BASIS: `tes_ditagihkan_accurate` di view sengaja dibatasi ke bulan yang
+  // PUNYA laporan sheet (CTE `periode_sheet`), sementara jumlah rentang memuat juga bulan
+  // yang tidak ada laporannya. Bulan seperti itu akan terhitung sebagai "ditagihkan lebih"
+  // padahal artinya "belum dilaporkan" — melebih-lebihkan selisih ke arah yang menuduh
+  // penagihan. Aturannya sudah ada di SQL sejak 103-105; menghitung ulang di sini berarti
+  // definisi kedua yang menyimpang, pola yang sudah tiga kali dihukum di sesi ini.
+  //
+  // Konsekuensi yang disengaja: angka ini TIDAK mengikuti rentang di atas. Karena itu
+  // basisnya ditulis eksplisit di layar, bukan dibiarkan tampak seperti angka rentang.
+  const tagihView = r.tesDitagihkanAccurate;
+  const laporView = r.tesSheetPeriodeBanding;
+  const selisihTagih = tagihView !== null && laporView !== null && laporView > 0
+    ? tagihView - laporView : null;
+
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="sm:max-w-3xl">
@@ -237,7 +266,11 @@ export function FaskesDetailDialog({ g, median, onClose }: {
               kolom Rp/tes di TABEL utama memakai seluruh periode — tanpa pembanding itu,
               selisih yang sama cuma berpindah tempat. */}
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <Angka label="Tes (customer)" nilai={adaTesJdl ? num(tesJdl) : "—"}
+            {/* Label menyebut SUMBERNYA ("dilaporkan"), bukan cuma "Tes (customer)":
+                di tabel bawah ada angka tes lain dari sumber berbeda (qty penagihan =
+                ditagihkan), dan tanpa penyebutan itu keduanya terbaca sebagai satu
+                besaran yang tidak konsisten. */}
+            <Angka label="Tes dilaporkan" nilai={adaTesJdl ? num(tesJdl) : "—"}
               sub={jendelaPenuh ? subSeluruh
                 : `${labelJendela} · seluruh periode ${num(r.totalTesCustomerSeskema)}`} />
             <Angka label="Revenue netto" nilai={adaRevJdl ? rp(revJdl) : "—"}
@@ -275,6 +308,42 @@ export function FaskesDetailDialog({ g, median, onClose }: {
             )}
             <Angka label="Alat berbagi angka" nilai={String(r.alatSeskemaDiCustomer ?? g.alatList.length)} />
           </div>
+
+          {/* Kedua angka DISANDINGKAN, bukan dibiarkan ditemukan sendiri di dua tempat.
+              Ditampilkan hanya bila keduanya ada — dan hanya bila selisihnya di atas 5%,
+              karena selisih kecil itu lumrah (beda tanggal potong laporan vs faktur) dan
+              menandainya tiap kali akan membuat penanda ini diabaikan justru saat besar. */}
+          {/* PAGAR: `rasio_tagih_lapor` NULL = view menyatakan tidak ada bulan bercatatan
+              tes di Accurate (bulan_tertagih = 0), BUKAN "ditagihkan nol". Tanpa syarat ini
+              faskes seperti itu tampil "-100% — dilaporkan lebih banyak daripada yang
+              ditagihkan", tuduhan terhadap penagihan yang sebenarnya cuma ketiadaan data.
+              Terlihat di dev: lapor 13.466 / 36.983 dengan tagih 0 dan rasio NULL.
+              Pagarnya diambil dari view, bukan disimpulkan sendiri dari angka nol. */}
+          {r.rasioTagihLapor !== null && selisihTagih !== null && laporView !== null
+            && Math.abs(selisihTagih) / laporView > 0.05 ? (
+            <div className="border-border flex flex-wrap items-baseline gap-x-2 gap-y-1 rounded-lg border p-2.5 text-xs">
+              <span className="text-muted-foreground">Lapor vs tagih:</span>
+              <span className="font-medium tabular-nums">{num(tagihView)} ditagihkan</span>
+              <span className="text-muted-foreground">vs</span>
+              <span className="font-medium tabular-nums">{num(laporView)} dilaporkan</span>
+              <span className={cn("font-medium tabular-nums",
+                                  Math.abs(selisihTagih) / laporView > 0.25 && "text-amber-600")}>
+                {selisihTagih > 0 ? "+" : ""}{num(selisihTagih)}
+                {" "}({(selisihTagih / laporView * 100).toFixed(0)}%)
+              </span>
+              <span className="text-muted-foreground">
+                — {selisihTagih > 0
+                    ? "ditagihkan lebih banyak daripada yang dilaporkan teknisi"
+                    : "dilaporkan lebih banyak daripada yang ditagihkan"}
+              </span>
+              {/* Basis DITULIS, karena angka ini satu-satunya di dialog yang tidak
+                  mengikuti rentang di atas — dan tanpa keterangan itu, ia akan jadi
+                  laporan "tidak sinkron" yang berikutnya. */}
+              <span className="text-muted-foreground ml-auto text-[11px]">
+                basis: bulan yang ada laporannya (bukan rentang di atas)
+              </span>
+            </div>
+          ) : null}
 
           {PENANDA.some((p) => p.uji(r)) ? (
             <div className="flex flex-wrap gap-1.5">
@@ -441,9 +510,18 @@ export function FaskesDetailDialog({ g, median, onClose }: {
                         </tr>
                       </thead>
                       <tbody>
+                        {/* Baris di luar skema DIREDUPKAN seluruhnya, bukan cuma ditandai di
+                            kolom Kategori. Sebabnya dilaporkan dari layar: kolom ini bernama
+                            "Nilai netto" dan grafik di atas "revenue netto" — nama yang sama
+                            untuk cakupan berbeda — jadi pembaca menjumlahkan seluruh kolom
+                            (Rp 22.416.785) dan membandingkannya dengan grafik (Rp 18.112.524,
+                            yang hanya dalam-skema). Badge kecil di satu kolom tidak cukup
+                            menahan penjumlahan itu; baris yang redup terbaca "tidak dihitung"
+                            tanpa perlu dibaca. */}
                         {detail.reagen.map((r, i) => (
                           <tr key={`${r.itemId}-${r.kategori}-${r.unit}-${i}`}
-                              className="border-border/60 border-b last:border-0">
+                              className={cn("border-border/60 border-b last:border-0",
+                                            !r.dalamSkema && "text-muted-foreground")}>
                             <td className="py-1.5 pr-2">
                               <div className="font-medium">{r.itemNama ?? r.itemNo ?? "(tanpa nama)"}</div>
                               <div className="text-muted-foreground">
@@ -473,18 +551,51 @@ export function FaskesDetailDialog({ g, median, onClose }: {
                           </tr>
                         ))}
                       </tbody>
+                      {/* Subtotal SEJAJAR kolom "Nilai netto". Angka yang sama sudah ada di
+                          judul bagian ini, tapi di sana ia tidak berdiri di bawah kolomnya —
+                          dan yang dijumlahkan pembaca adalah KOLOM. Menaruh jangkarnya di
+                          ujung kolom membuat hasil penjumlahan langsung ketemu pembandingnya,
+                          alih-alih ketemu angka lain di judul yang cakupannya berbeda. */}
+                      <tfoot className="border-border border-t">
+                        <tr>
+                          <td className="py-1.5 pr-2 font-medium" colSpan={4}>
+                            Dalam skema <span className="text-muted-foreground">(= angka kartu &amp; grafik)</span>
+                          </td>
+                          <td className="py-1.5 text-right font-semibold tabular-nums">{rp(totalDalam)}</td>
+                        </tr>
+                        {totalLuar > 0 ? (
+                          <tr className="text-muted-foreground">
+                            <td className="py-1.5 pr-2" colSpan={4}>
+                              Di luar skema <span className="text-[11px]">({reagenLuar} baris, tidak dihitung)</span>
+                            </td>
+                            <td className="py-1.5 text-right tabular-nums">{rp(totalLuar)}</td>
+                          </tr>
+                        ) : null}
+                        {totalLuar > 0 ? (
+                          <tr className="text-muted-foreground border-border/60 border-t">
+                            <td className="py-1.5 pr-2 text-[11px]" colSpan={4}>
+                              Jumlah seluruh baris di tabel ini — <strong>bukan</strong> revenue skema
+                            </td>
+                            <td className="py-1.5 text-right text-[11px] tabular-nums">{rp(totalDalam + totalLuar)}</td>
+                          </tr>
+                        ) : null}
+                      </tfoot>
                     </table>
                   </div>
                 )}
                 <p className="text-muted-foreground mt-1 text-xs">
                   Nilai = netto faktur <strong>teralokasi</strong> menurut porsi nilai baris,
                   bukan penjumlahan nilai baris apa adanya. Subtotal{" "}
-                  <strong>dalam skema</strong> memakai kategori dan porsi KSO yang sama dengan
+                  <strong>dalam skema</strong> memakai aturan dan porsi KSO yang sama dengan
                   kartu <strong>Revenue netto</strong> di atas, jadi dua angka itu sepadan.
                   {reagenLuar > 0 ? (
-                    <> {reagenLuar} baris berkategori <strong>di luar skema ini</strong> ikut
-                    ditampilkan (ditandai kuning) dan <strong>tidak</strong> masuk angka Revenue —
-                    ia sengaja tidak dijumlahkan ke dalamnya.</>
+                    /* "berkategori" DIHAPUS dari kalimat ini: sejak 124/125 sebuah baris bisa
+                       di luar skema BUKAN karena kategorinya — penagihan tes untuk jenis alat
+                       yang tak dimiliki juga masuk sini, dan kategorinya sama dengan yang
+                       diakui. Menyebut "berkategori" mengulangi kesalahan tooltip lama. */
+                    <> {reagenLuar} baris <strong>di luar skema ini</strong> ikut ditampilkan
+                    (diredupkan, dan alasannya ada di kolom Kategori) lalu dijumlahkan
+                    terpisah di bawah — <strong>tidak</strong> masuk angka Revenue.</>
                   ) : null}
                   {" "}Satu item bisa muncul dua kali bila ditagih dalam satuan berbeda —
                   qty lintas satuan tidak dijumlahkan.
