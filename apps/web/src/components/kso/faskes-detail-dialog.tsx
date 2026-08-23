@@ -153,6 +153,19 @@ export function FaskesDetailDialog({ g, median, onClose }: {
   // membandingkan tanggal: kalau memang seluruh data ada di dalam jendela, kartu tidak
   // perlu menyodorkan pembanding yang nilainya sama.
   const jendelaPenuh = luarJendela.length === 0;
+
+  // ── TES DILAPORKAN vs TES DITAGIHKAN: dua sumber, satuan sama ────────────────────
+  // Dilaporkan dari layar: kartu menunjukkan 616 tes sementara baris
+  // 'PEMERIKSAAN POCT IMMUNOLOGY WONDFO FIA METER' di tabel berqty 703 TEST — terbaca
+  // sebagai satu angka yang tidak konsisten. Bukan: keduanya sah dan datang dari sumber
+  // BERBEDA yang kebetulan bersatuan sama —
+  //   dilaporkan  = sheet KSO, diisi teknisi      (kso_asset_test_monthly)
+  //   ditagihkan  = qty baris PEMERIKSAAN di faktur Accurate
+  // Selisihnya justru salah satu hal yang paling perlu dilihat orang: ia bisa berarti
+  // laporan teknisi kurang, atau tagihan lebih. Sistem sudah mengukurnya sebagai
+  // rasio_tagih_lapor (103-105) dan menandainya di atas ambang 25%, tapi angka mentahnya
+  // tidak pernah disandingkan — jadi pembaca menemukan selisihnya sendiri dan
+  // menyimpulkan datanya rusak.
   const labelJendela = `${labelBulan(dari)}–${labelBulan(sampai)}`;
 
   // Opsi bulan digabung dari periode yang ADA di data DAN deret bawaan — pola yang sama
@@ -211,6 +224,22 @@ export function FaskesDetailDialog({ g, median, onClose }: {
   const totalLuar = rgn.filter((r) => !r.dalamSkema).reduce((a, r) => a + (r.nilaiNetto ?? 0), 0);
   const reagenLuar = rgn.filter((r) => !r.dalamSkema).length;
 
+  // PERBANDINGAN DIBACA DARI VIEW, TIDAK DIHITUNG DI SINI. Versi pertama saya menjumlahkan
+  // qty baris penagihan pada rentang terpilih lalu menguranginya dengan tes dilaporkan —
+  // dan itu SALAH BASIS: `tes_ditagihkan_accurate` di view sengaja dibatasi ke bulan yang
+  // PUNYA laporan sheet (CTE `periode_sheet`), sementara jumlah rentang memuat juga bulan
+  // yang tidak ada laporannya. Bulan seperti itu akan terhitung sebagai "ditagihkan lebih"
+  // padahal artinya "belum dilaporkan" — melebih-lebihkan selisih ke arah yang menuduh
+  // penagihan. Aturannya sudah ada di SQL sejak 103-105; menghitung ulang di sini berarti
+  // definisi kedua yang menyimpang, pola yang sudah tiga kali dihukum di sesi ini.
+  //
+  // Konsekuensi yang disengaja: angka ini TIDAK mengikuti rentang di atas. Karena itu
+  // basisnya ditulis eksplisit di layar, bukan dibiarkan tampak seperti angka rentang.
+  const tagihView = r.tesDitagihkanAccurate;
+  const laporView = r.tesSheetPeriodeBanding;
+  const selisihTagih = tagihView !== null && laporView !== null && laporView > 0
+    ? tagihView - laporView : null;
+
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="sm:max-w-3xl">
@@ -237,7 +266,11 @@ export function FaskesDetailDialog({ g, median, onClose }: {
               kolom Rp/tes di TABEL utama memakai seluruh periode — tanpa pembanding itu,
               selisih yang sama cuma berpindah tempat. */}
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <Angka label="Tes (customer)" nilai={adaTesJdl ? num(tesJdl) : "—"}
+            {/* Label menyebut SUMBERNYA ("dilaporkan"), bukan cuma "Tes (customer)":
+                di tabel bawah ada angka tes lain dari sumber berbeda (qty penagihan =
+                ditagihkan), dan tanpa penyebutan itu keduanya terbaca sebagai satu
+                besaran yang tidak konsisten. */}
+            <Angka label="Tes dilaporkan" nilai={adaTesJdl ? num(tesJdl) : "—"}
               sub={jendelaPenuh ? subSeluruh
                 : `${labelJendela} · seluruh periode ${num(r.totalTesCustomerSeskema)}`} />
             <Angka label="Revenue netto" nilai={adaRevJdl ? rp(revJdl) : "—"}
@@ -275,6 +308,42 @@ export function FaskesDetailDialog({ g, median, onClose }: {
             )}
             <Angka label="Alat berbagi angka" nilai={String(r.alatSeskemaDiCustomer ?? g.alatList.length)} />
           </div>
+
+          {/* Kedua angka DISANDINGKAN, bukan dibiarkan ditemukan sendiri di dua tempat.
+              Ditampilkan hanya bila keduanya ada — dan hanya bila selisihnya di atas 5%,
+              karena selisih kecil itu lumrah (beda tanggal potong laporan vs faktur) dan
+              menandainya tiap kali akan membuat penanda ini diabaikan justru saat besar. */}
+          {/* PAGAR: `rasio_tagih_lapor` NULL = view menyatakan tidak ada bulan bercatatan
+              tes di Accurate (bulan_tertagih = 0), BUKAN "ditagihkan nol". Tanpa syarat ini
+              faskes seperti itu tampil "-100% — dilaporkan lebih banyak daripada yang
+              ditagihkan", tuduhan terhadap penagihan yang sebenarnya cuma ketiadaan data.
+              Terlihat di dev: lapor 13.466 / 36.983 dengan tagih 0 dan rasio NULL.
+              Pagarnya diambil dari view, bukan disimpulkan sendiri dari angka nol. */}
+          {r.rasioTagihLapor !== null && selisihTagih !== null && laporView !== null
+            && Math.abs(selisihTagih) / laporView > 0.05 ? (
+            <div className="border-border flex flex-wrap items-baseline gap-x-2 gap-y-1 rounded-lg border p-2.5 text-xs">
+              <span className="text-muted-foreground">Lapor vs tagih:</span>
+              <span className="font-medium tabular-nums">{num(tagihView)} ditagihkan</span>
+              <span className="text-muted-foreground">vs</span>
+              <span className="font-medium tabular-nums">{num(laporView)} dilaporkan</span>
+              <span className={cn("font-medium tabular-nums",
+                                  Math.abs(selisihTagih) / laporView > 0.25 && "text-amber-600")}>
+                {selisihTagih > 0 ? "+" : ""}{num(selisihTagih)}
+                {" "}({(selisihTagih / laporView * 100).toFixed(0)}%)
+              </span>
+              <span className="text-muted-foreground">
+                — {selisihTagih > 0
+                    ? "ditagihkan lebih banyak daripada yang dilaporkan teknisi"
+                    : "dilaporkan lebih banyak daripada yang ditagihkan"}
+              </span>
+              {/* Basis DITULIS, karena angka ini satu-satunya di dialog yang tidak
+                  mengikuti rentang di atas — dan tanpa keterangan itu, ia akan jadi
+                  laporan "tidak sinkron" yang berikutnya. */}
+              <span className="text-muted-foreground ml-auto text-[11px]">
+                basis: bulan yang ada laporannya (bukan rentang di atas)
+              </span>
+            </div>
+          ) : null}
 
           {PENANDA.some((p) => p.uji(r)) ? (
             <div className="flex flex-wrap gap-1.5">
