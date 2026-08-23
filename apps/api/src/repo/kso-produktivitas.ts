@@ -186,6 +186,7 @@ export interface KsoFaskesDetail {
     jenisAlat: string | null; kategori: string; unit: string;
     qty: number | null; nilaiNetto: number | null; jumlahFaktur: number | null;
     dalamSkema: boolean;
+    penagihanTes: boolean;
   }[];
 }
 
@@ -292,7 +293,17 @@ export async function faskesDetail(
             OR EXISTS (SELECT 1 FROM kso_penagihan_tes_v pt
                        WHERE pt.account_id = ${accountId} AND pt.skema = ${skema}
                          AND pt.item_id = r.item_id))
-             AS dalam_skema
+             AS dalam_skema,
+           -- Baris ini PENAGIHAN TES atau bukan. Dikirim supaya UI bisa menyebut ALASAN
+           -- yang benar saat baris tidak masuk skema: untuk item PEMERIKSAAN sebabnya
+           -- bukan kategorinya (semuanya 'Tanpa kategori', dan sebagiannya justru DIAKUI)
+           -- melainkan jenis alat di namanya tidak dimiliki faskes ini pada skema ini.
+           -- Tanpa flag ini UI menuduh kategorinya — dan itu keliru sampai menyesatkan:
+           -- pada SEKAR LANGIT, 'PEMERIKSAAN 5DIFF Z52' dan 'PEMERIKSAAN 3DIFF Z3' sama-sama
+           -- 'Tanpa kategori' tapi hanya yang pertama dihitung, karena hanya Z52 yang
+           -- asetnya ada. Membaca tooltipnya, orang akan menyimpulkan kategorinya yang
+           -- menentukan, lalu mencari sebab yang salah.
+           (r.item_id IN (SELECT item_id FROM kso_item_pemeriksaan_v)) AS penagihan_tes
     FROM kso_faskes_reagen_v r
     WHERE r.account_id = ${accountId} AND r.periode BETWEEN ${dari} AND ${sampai}
     GROUP BY r.item_id, r.item_no, r.item_nama, r.jenis_alat, r.kategori, r.unit
@@ -332,6 +343,7 @@ export async function faskesDetail(
       nilaiNetto: num(r.nilai_netto),
       jumlahFaktur: num(r.jumlah_faktur),
       dalamSkema: Boolean(r.dalam_skema),
+      penagihanTes: Boolean(r.penagihan_tes),
     })),
   };
 }
