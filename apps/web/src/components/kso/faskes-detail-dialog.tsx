@@ -20,7 +20,7 @@ import { Dialog, DialogBody, DialogContent, DialogHeader, DialogTitle } from "@/
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart";
 import {
   PENANDA, Tag, angkaSumbu, awalTahunIni, bulanIni, deretBulan, labelBulan, num, rp,
-  skalaRp, type FaskesRow,
+  rupiahPerAlat, skalaRp, skemaPakaiRpTes, type FaskesRow,
 } from "./produktivitas-shared";
 
 interface Detail {
@@ -154,14 +154,27 @@ export function FaskesDetailDialog({ g, median, onClose }: {
               sub="seluruh periode" />
             <Angka label="Revenue netto" nilai={rp(r.revenueNettoCustomer)}
               sub="seluruh periode" />
-            <Angka
-              label="Rp / tes"
-              nilai={rp(r.rupiahPerTesCustomer)}
-              sub={[median && r.rupiahPerTesCustomer
-                      ? `${(r.rupiahPerTesCustomer / median).toFixed(2)}× median` : null,
-                    "seluruh periode"].filter(Boolean).join(" · ")}
-              redup={!r.basisTesMemadai}
-            />
+            {/* Kartu ini WAJIB mengikuti kolom di tabel. Kalau tabel menyatakan skema ini
+                tidak punya Rp/tes sementara dialognya tetap menampilkannya, itu dua angka
+                yang bertentangan di satu alur baca — jenis cacat yang persis kita bereskan
+                di 125/126. Keputusan "skema mana pakai Rp/tes" karena itu dibaca dari
+                satu tempat (`skemaPakaiRpTes`), bukan diulang di sini. */}
+            {skemaPakaiRpTes(r.skema) ? (
+              <Angka
+                label="Rp / tes"
+                nilai={rp(r.rupiahPerTesCustomer)}
+                sub={[median && r.rupiahPerTesCustomer
+                        ? `${(r.rupiahPerTesCustomer / median).toFixed(2)}× median` : null,
+                      "seluruh periode"].filter(Boolean).join(" · ")}
+                redup={!r.basisTesMemadai}
+              />
+            ) : (
+              <Angka
+                label="Rp / alat"
+                nilai={rp(rupiahPerAlat(r))}
+                sub="belanja per alat · bukan produktivitas"
+              />
+            )}
             <Angka label="Alat berbagi angka" nilai={String(r.alatSeskemaDiCustomer ?? g.alatList.length)} />
           </div>
 
