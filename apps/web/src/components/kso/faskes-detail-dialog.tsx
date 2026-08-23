@@ -18,6 +18,7 @@ import { CartesianGrid, Legend, Line, LineChart, XAxis, YAxis } from "recharts";
 import { cn } from "@/lib/utils";
 import { Dialog, DialogBody, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart";
+import { ExportButton, type ExportColumn } from "@/components/ui/export-button";
 import {
   PENANDA, Pilih, Tag, angkaSumbu, awalTahunIni, bulanIni, deretBulan, labelBulan, num, rp,
   rupiahPerAlat, skalaRp, skemaPakaiRpTes, type FaskesRow,
@@ -49,6 +50,43 @@ const cfg = {
   target: { label: "Target", color: "var(--muted-foreground)" },
   revenue: { label: "Revenue netto", color: "var(--chart-1)" },
 } satisfies ChartConfig;
+
+// ── EXPORT DETAIL SATU FASKES ─────────────────────────────────────────────────────
+// Format PANJANG (satu baris per fakta) dengan kolom `Bagian` sebagai pembeda, bukan
+// empat berkas terpisah atau satu tabel lebar. Alasannya: yang mengunduh detail faskes
+// biasanya mem-pivot-nya di Excel, dan pivot butuh bentuk panjang. Empat berkas berarti
+// empat unduhan yang harus disatukan sendiri; satu tabel lebar berarti kolom `periode`
+// bertabrakan dengan kolom `item`.
+//
+// Isinya EMPAT blok — daftar alat, tes bulanan per alat, revenue bulanan, dan reagen —
+// jadi berkasnya memuat hal yang tidak terlihat di layar sekaligus: SN mentah, capaian
+// target per alat, dan nilai per item reagen berikut status dalam/luar skema.
+//
+// Angka MENTAH tanpa format Rp/ribuan: kalau diformat, Excel membacanya sebagai teks dan
+// kolomnya tidak bisa dijumlahkan.
+interface BarisExport {
+  bagian: string; faskes: string; skema: string; rentang: string;
+  nama: string; kode: string; jenisAlat: string; periode: string;
+  kategori: string; satuan: string;
+  qty: number | null; tes: number | null; revenue: number | null; keterangan: string;
+}
+
+const KOLOM_EXPORT_DETAIL: ExportColumn<BarisExport>[] = [
+  { header: "Bagian", value: (b) => b.bagian },
+  { header: "Faskes", value: (b) => b.faskes },
+  { header: "Skema", value: (b) => b.skema },
+  { header: "Rentang", value: (b) => b.rentang },
+  { header: "Nama (alat/item)", value: (b) => b.nama },
+  { header: "Kode/SN", value: (b) => b.kode },
+  { header: "Jenis alat", value: (b) => b.jenisAlat },
+  { header: "Periode", value: (b) => b.periode },
+  { header: "Kategori", value: (b) => b.kategori },
+  { header: "Satuan", value: (b) => b.satuan },
+  { header: "Qty", value: (b) => b.qty },
+  { header: "Tes", value: (b) => b.tes },
+  { header: "Nilai netto", value: (b) => b.revenue },
+  { header: "Keterangan", value: (b) => b.keterangan },
+];
 
 export function FaskesDetailDialog({ g, median, onClose }: {
   g: FaskesRow | null; median: number | null; onClose: () => void;
@@ -224,6 +262,50 @@ export function FaskesDetailDialog({ g, median, onClose }: {
   const totalLuar = rgn.filter((r) => !r.dalamSkema).reduce((a, r) => a + (r.nilaiNetto ?? 0), 0);
   const reagenLuar = rgn.filter((r) => !r.dalamSkema).length;
 
+  // Baris export dirakit dari data yang SUDAH dimuat dialog — tidak ada permintaan
+  // tambahan ke server saat tombol diklik. Rentangnya ikut yang aktif, sama seperti
+  // kartu/grafik/tabel, jadi isi berkas cocok dengan yang sedang dilihat.
+  const barisExport: BarisExport[] = (() => {
+    if (!detail) return [];
+    const dasar = { faskes: g.faskes, skema: r.skema, rentang: `${dari}..${sampai}` };
+    const kosong = { nama: "", kode: "", jenisAlat: "", periode: "", kategori: "", satuan: "",
+                     qty: null, tes: null, revenue: null, keterangan: "" };
+    const out: BarisExport[] = [];
+
+    for (const a of detail.alat) {
+      out.push({ ...dasar, ...kosong, bagian: "Alat",
+        nama: a.namaAlat ?? a.snKey, kode: a.snRaw ?? a.snKey, jenisAlat: a.typeAlat ?? "",
+        tes: a.totalTes, qty: a.targetJumlahTes,
+        keterangan: [a.rataTesBulanan !== null ? `rata ${a.rataTesBulanan}/bln` : null,
+                     a.capaianTarget !== null ? `capaian ${a.capaianTarget}` : null]
+          .filter(Boolean).join(" · ") });
+    }
+    for (const t of detail.trenAlat) {
+      if (!dalamJendela(t.periode)) continue;
+      const a = detail.alat.find((x) => x.assetId === t.assetId);
+      out.push({ ...dasar, ...kosong, bagian: "Tes bulanan",
+        nama: a?.namaAlat ?? String(t.assetId), kode: a?.snRaw ?? a?.snKey ?? "",
+        jenisAlat: a?.typeAlat ?? "", periode: t.periode, tes: t.jumlahTes });
+    }
+    for (const t of titik) {
+      out.push({ ...dasar, ...kosong, bagian: "Revenue bulanan",
+        periode: t.periode, tes: t.jumlahTes, revenue: t.revenueNetto,
+        keterangan: t.jumlahTes === null ? "tidak ada laporan tes bulan ini" : "" });
+    }
+    for (const x of rgn) {
+      out.push({ ...dasar, ...kosong, bagian: "Reagen",
+        nama: x.itemNama ?? "", kode: x.itemNo ?? "", jenisAlat: x.jenisAlat ?? "",
+        kategori: x.kategori, satuan: x.unit, qty: x.qty, revenue: x.nilaiNetto,
+        // Status dalam/luar skema DIIKUTKAN: tanpa itu, orang menjumlahkan kolom
+        // "Nilai netto" di Excel dan mendapat angka yang tak cocok dengan revenue —
+        // cacat yang sama yang baru dibereskan di layar, cuma berpindah ke berkas.
+        keterangan: x.dalamSkema ? "dalam skema"
+          : x.penagihanTes ? "di luar skema — alat tak dimiliki" : "di luar skema — kategori" });
+    }
+    return out;
+  })();
+
+
   // PERBANDINGAN DIBACA DARI VIEW, TIDAK DIHITUNG DI SINI. Versi pertama saya menjumlahkan
   // qty baris penagihan pada rentang terpilih lalu menguranginya dengan tes dilaporkan —
   // dan itu SALAH BASIS: `tes_ditagihkan_accurate` di view sengaja dibatasi ke bulan yang
@@ -245,10 +327,17 @@ export function FaskesDetailDialog({ g, median, onClose }: {
       <DialogContent className="sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle className="break-words">{g.faskes}</DialogTitle>
-          <p className="text-muted-foreground text-xs">
-            {[g.kota, r.skema === "PER_TEST" ? "PER_TEST (KSO Tes)" : "BELI_REAGEN (KSO Reagen)"]
-              .filter(Boolean).join(" · ")}
-          </p>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-muted-foreground text-xs">
+              {[g.kota, r.skema === "PER_TEST" ? "PER_TEST (KSO Tes)" : "BELI_REAGEN (KSO Reagen)"]
+                .filter(Boolean).join(" · ")}
+            </p>
+            <ExportButton
+              filename={`kso-detail-${(g.faskes || "faskes").slice(0, 40).replace(/[^\w-]+/g, "-").toLowerCase()}`}
+              columns={KOLOM_EXPORT_DETAIL}
+              data={barisExport}
+            />
+          </div>
         </DialogHeader>
 
         <DialogBody className="space-y-4">
