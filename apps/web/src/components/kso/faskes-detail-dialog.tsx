@@ -441,9 +441,18 @@ export function FaskesDetailDialog({ g, median, onClose }: {
                         </tr>
                       </thead>
                       <tbody>
+                        {/* Baris di luar skema DIREDUPKAN seluruhnya, bukan cuma ditandai di
+                            kolom Kategori. Sebabnya dilaporkan dari layar: kolom ini bernama
+                            "Nilai netto" dan grafik di atas "revenue netto" — nama yang sama
+                            untuk cakupan berbeda — jadi pembaca menjumlahkan seluruh kolom
+                            (Rp 22.416.785) dan membandingkannya dengan grafik (Rp 18.112.524,
+                            yang hanya dalam-skema). Badge kecil di satu kolom tidak cukup
+                            menahan penjumlahan itu; baris yang redup terbaca "tidak dihitung"
+                            tanpa perlu dibaca. */}
                         {detail.reagen.map((r, i) => (
                           <tr key={`${r.itemId}-${r.kategori}-${r.unit}-${i}`}
-                              className="border-border/60 border-b last:border-0">
+                              className={cn("border-border/60 border-b last:border-0",
+                                            !r.dalamSkema && "text-muted-foreground")}>
                             <td className="py-1.5 pr-2">
                               <div className="font-medium">{r.itemNama ?? r.itemNo ?? "(tanpa nama)"}</div>
                               <div className="text-muted-foreground">
@@ -473,18 +482,51 @@ export function FaskesDetailDialog({ g, median, onClose }: {
                           </tr>
                         ))}
                       </tbody>
+                      {/* Subtotal SEJAJAR kolom "Nilai netto". Angka yang sama sudah ada di
+                          judul bagian ini, tapi di sana ia tidak berdiri di bawah kolomnya —
+                          dan yang dijumlahkan pembaca adalah KOLOM. Menaruh jangkarnya di
+                          ujung kolom membuat hasil penjumlahan langsung ketemu pembandingnya,
+                          alih-alih ketemu angka lain di judul yang cakupannya berbeda. */}
+                      <tfoot className="border-border border-t">
+                        <tr>
+                          <td className="py-1.5 pr-2 font-medium" colSpan={4}>
+                            Dalam skema <span className="text-muted-foreground">(= angka kartu &amp; grafik)</span>
+                          </td>
+                          <td className="py-1.5 text-right font-semibold tabular-nums">{rp(totalDalam)}</td>
+                        </tr>
+                        {totalLuar > 0 ? (
+                          <tr className="text-muted-foreground">
+                            <td className="py-1.5 pr-2" colSpan={4}>
+                              Di luar skema <span className="text-[11px]">({reagenLuar} baris, tidak dihitung)</span>
+                            </td>
+                            <td className="py-1.5 text-right tabular-nums">{rp(totalLuar)}</td>
+                          </tr>
+                        ) : null}
+                        {totalLuar > 0 ? (
+                          <tr className="text-muted-foreground border-border/60 border-t">
+                            <td className="py-1.5 pr-2 text-[11px]" colSpan={4}>
+                              Jumlah seluruh baris di tabel ini — <strong>bukan</strong> revenue skema
+                            </td>
+                            <td className="py-1.5 text-right text-[11px] tabular-nums">{rp(totalDalam + totalLuar)}</td>
+                          </tr>
+                        ) : null}
+                      </tfoot>
                     </table>
                   </div>
                 )}
                 <p className="text-muted-foreground mt-1 text-xs">
                   Nilai = netto faktur <strong>teralokasi</strong> menurut porsi nilai baris,
                   bukan penjumlahan nilai baris apa adanya. Subtotal{" "}
-                  <strong>dalam skema</strong> memakai kategori dan porsi KSO yang sama dengan
+                  <strong>dalam skema</strong> memakai aturan dan porsi KSO yang sama dengan
                   kartu <strong>Revenue netto</strong> di atas, jadi dua angka itu sepadan.
                   {reagenLuar > 0 ? (
-                    <> {reagenLuar} baris berkategori <strong>di luar skema ini</strong> ikut
-                    ditampilkan (ditandai kuning) dan <strong>tidak</strong> masuk angka Revenue —
-                    ia sengaja tidak dijumlahkan ke dalamnya.</>
+                    /* "berkategori" DIHAPUS dari kalimat ini: sejak 124/125 sebuah baris bisa
+                       di luar skema BUKAN karena kategorinya — penagihan tes untuk jenis alat
+                       yang tak dimiliki juga masuk sini, dan kategorinya sama dengan yang
+                       diakui. Menyebut "berkategori" mengulangi kesalahan tooltip lama. */
+                    <> {reagenLuar} baris <strong>di luar skema ini</strong> ikut ditampilkan
+                    (diredupkan, dan alasannya ada di kolom Kategori) lalu dijumlahkan
+                    terpisah di bawah — <strong>tidak</strong> masuk angka Revenue.</>
                   ) : null}
                   {" "}Satu item bisa muncul dua kali bila ditagih dalam satuan berbeda —
                   qty lintas satuan tidak dijumlahkan.
