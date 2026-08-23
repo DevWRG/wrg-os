@@ -21,6 +21,18 @@ import {
 export function KsoRingkasanPanel({ f, data }: { f: FilterKso; data: KsoProduktivitas }) {
   const { rows, median, skema } = f;
 
+  // Rentang tahun yang benar-benar diwakili kartu, diturunkan dari data trennya sendiri
+  // (bukan ditulis tetap) supaya tetap benar saat data tahun berikutnya masuk. Dipakai
+  // sebagai catatan kartu — lihat komentar di dekat <Statistik> di bawah.
+  const labelSeluruh = useMemo(() => {
+    const th = [...new Set(data.tren
+      .filter((t) => t.skema === skema && (t.jumlahTes !== null || t.revenueNetto !== null))
+      .map((t) => t.periode.slice(0, 4)))].sort();
+    if (th.length === 0) return "seluruh periode";
+    if (th.length === 1) return `seluruh periode · ${th[0]}`;
+    return `seluruh periode · ${th[0]}–${th[th.length - 1]}`;
+  }, [data.tren, skema]);
+
   const total = useMemo(() => {
     let revenue = 0, tes = 0, alat = 0, tertanda = 0;
     for (const g of rows) {
@@ -133,10 +145,16 @@ export function KsoRingkasanPanel({ f, data }: { f: FilterKso; data: KsoProdukti
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Statistik label="Faskes" nilai={rows.length.toLocaleString("id-ID")}
           catatan={`${total.alat.toLocaleString("id-ID")} alat`} />
+        {/* CAKUPAN KARTU ≠ CAKUPAN GRAFIK, dan di sini lebih mudah terpicu daripada di
+            dialog detail: kedua kartu ini dihitung dari `rows` (SELURUH periode), sementara
+            grafik tren di bawahnya punya kontrol "Tren dari/sampai" yang bisa digeser
+            pemakai. Geser rentangnya — grafik berubah, kartu tidak. Tanpa cakupannya
+            disebut, itu terbaca sebagai data yang tidak sinkron; persis yang terjadi di
+            dialog detail (kartu 671 tes vs grafik 387 untuk 2026 saja). */}
         <Statistik label="Revenue netto" nilai={"Rp " + rpSingkat(total.revenue)}
-          catatan="tanpa PPN, skema ini saja" />
+          catatan={`tanpa PPN · ${labelSeluruh}`} />
         <Statistik label="Total tes" nilai={total.tes.toLocaleString("id-ID")}
-          catatan="realisasi di alat" />
+          catatan={`realisasi di alat · ${labelSeluruh}`} />
         <Statistik label="Perlu diperiksa" nilai={total.tertanda.toLocaleString("id-ID")}
           catatan="faskes berpenanda" tekan={total.tertanda > 0} />
       </div>
