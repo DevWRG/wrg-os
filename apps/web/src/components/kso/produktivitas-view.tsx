@@ -9,15 +9,59 @@ import { AlertTriangle, ChevronRight, Info } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { Card, CardContent } from "@/components/ui/card";
+import { ExportButton, type ExportColumn } from "@/components/ui/export-button";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
 import { FaskesRow, FilterKso, Tag, num, rp, rupiahPerAlat, skemaPakaiRpTes } from "./produktivitas-shared";
 import { FaskesDetailDialog } from "./faskes-detail-dialog";
 
 export type { KsoProduktivitas, KsoProduktivitasRow } from "./produktivitas-shared";
 
+// ── KOLOM EXPORT: SELURUH isi baris, bukan tujuh yang tampil ──────────────────────
+// Tabel di layar sengaja ringkas supaya bisa dibaca sekilas; berkas export tidak punya
+// batasan itu, dan yang mengunduhnya biasanya justru mau memeriksa hal yang tidak
+// ditampilkan (porsi, rasio tagih/lapor, status penagihan, target per alat).
+//
+// Angka dikirim MENTAH — tanpa "Rp", tanpa pemisah ribuan, titik sebagai desimal. Kalau
+// diformat gaya Indonesia ("Rp 1.234.567"), Excel membacanya sebagai TEKS dan seluruh
+// kolom tidak bisa dijumlahkan; itu justru hal pertama yang dilakukan orang setelah
+// mengunduh. Pemformatan urusan pembaca, bukan berkasnya.
+//
+// Boolean ditulis "ya"/"" alih-alih true/false: kolom yang isinya "false" beruntun
+// terbaca seperti data, sementara sel kosong langsung terbaca sebagai "tidak".
+function kolomExportKso(): ExportColumn<FaskesRow>[] {
+  const yaTidak = (v: boolean) => (v ? "ya" : "");
+  return [
+    { header: "Faskes", value: (g) => g.faskes },
+    { header: "Kota", value: (g) => g.kota },
+    { header: "Skema", value: (g) => g.r.skema },
+    { header: "Account ID (Accurate)", value: (g) => g.r.accountId },
+    { header: "Nama di sheet", value: (g) => g.r.customerRaw },
+    { header: "Jumlah alat seskema", value: (g) => g.r.alatSeskemaDiCustomer ?? g.alatList.length },
+    { header: "Daftar alat", value: (g) => g.alatList.join(" | ") },
+    { header: "Tes dilaporkan (seluruh periode)", value: (g) => g.r.totalTesCustomerSeskema },
+    { header: "Revenue netto", value: (g) => g.r.revenueNettoCustomer },
+    { header: "Rp per tes", value: (g) => g.r.rupiahPerTesCustomer },
+    { header: "Rp per alat", value: (g) => rupiahPerAlat(g.r) },
+    { header: "Penyebut memadai (>=100 tes)", value: (g) => yaTidak(g.r.basisTesMemadai) },
+    { header: "Porsi KSO", value: (g) => g.r.porsiKso },
+    { header: "Skema ganda", value: (g) => yaTidak(g.r.revenueTumpangTindih) },
+    { header: "Tes dilaporkan (periode banding)", value: (g) => g.r.tesSheetPeriodeBanding },
+    { header: "Tes ditagihkan (Accurate)", value: (g) => g.r.tesDitagihkanAccurate },
+    { header: "Rasio tagih/lapor", value: (g) => g.r.rasioTagihLapor },
+    { header: "Bulan tertagih", value: (g) => g.r.bulanTertagihAccurate },
+    { header: "Pola tagih datar (minimum kontrak)", value: (g) => yaTidak(g.r.tagihPolaDatar) },
+    { header: "Status penagihan", value: (g) => g.r.statusPenagihan },
+    { header: "Target tes/bln (per alat)", value: (g) => g.r.targetJumlahTes },
+    { header: "Tes alat ini", value: (g) => g.r.totalTes },
+    { header: "Rata tes/bln (alat ini)", value: (g) => g.r.rataTesBulanan },
+    { header: "Capaian target (alat ini)", value: (g) => g.r.capaianTarget },
+  ];
+}
+
 export function KsoProduktivitasTabel({ f }: { f: FilterKso }) {
   const { rows, median } = f;
   const [detail, setDetail] = useState<FaskesRow | null>(null);
+  const kolomExport = kolomExportKso();
 
   const cols: DataColumn<FaskesRow>[] = [
     { id: "faskes", header: "Faskes", sortable: true,
@@ -146,14 +190,30 @@ export function KsoProduktivitasTabel({ f }: { f: FilterKso }) {
       {/* Tabel dibungkus Card supaya duduk di permukaan putih, tidak langsung di
           latar halaman — sama seperti panel lain di dashboard. */}
       <Card>
-        <CardContent>
+        <CardContent className="space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="text-muted-foreground text-xs">
+              {rows.length} faskes pada filter ini
+            </div>
+            {/* Export memuat SELURUH kolom baris, bukan tujuh yang tampil — lihat
+                kolomExport. Data yang diekspor mengikuti filter & skema yang aktif,
+                supaya isi berkas cocok dengan yang sedang dilihat di layar. */}
+            <ExportButton
+              filename={`kso-produktivitas-${f.skema.toLowerCase()}`}
+              columns={kolomExport}
+              data={rows}
+            />
+          </div>
           <DataTable
             columns={cols}
             data={rows}
             getKey={(g) => g.key}
             searchPlaceholder="Cari faskes, alat, kota…"
             pageSize={25}
-            initialSort={{ id: "rpt", dir: "desc" }}
+            // Kolom Rp/tes hanya ADA di PER_TEST; di BELI_REAGEN namanya `rpa`. Menunjuk
+            // "rpt" di kedua skema membuat urutan awal tab BELI_REAGEN menunjuk kolom yang
+            // tidak ada — cacat yang masuk bersama #1014 dan tidak memunculkan error apa pun.
+            initialSort={{ id: skemaPakaiRpTes(f.skema) ? "rpt" : "rpa", dir: "desc" }}
             empty="Tidak ada faskes pada filter ini."
             onRowClick={setDetail}
           />
