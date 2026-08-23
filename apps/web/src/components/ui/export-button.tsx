@@ -10,9 +10,33 @@ export interface ExportColumn<T> {
   value: (row: T) => string | number | null | undefined;
 }
 
+// ── ANGKA DESIMAL WAJIB PAKAI KOMA ────────────────────────────────────────────────
+// String(1.067) menghasilkan "1.067", dan Excel dengan locale Indonesia membaca titik
+// itu sebagai PEMISAH RIBUAN — jadi 1,067 terbaca 1067. Pada nilai berdesimal panjang
+// akibatnya ekstrem: revenue 29167568.055227 tampil sebagai 29.167.568.055.227, membesar
+// sejuta kali. Terlihat di export /kso-produktivitas 2026-08-24, dan `marginPct` di
+// pricebook-setup-table punya cacat yang sama.
+//
+// KENAPA DI SINI, BUKAN DI TIAP PEMANGGIL: pemanggil mengirim `number` dan wajar
+// menganggap komponen export tahu cara menuliskannya. Menyerahkan pemformatan ke tiap
+// pemanggil berarti cacat yang sama menunggu di setiap kolom desimal baru — dan cacat
+// ini TIDAK memunculkan error: berkasnya terbuka normal, angkanya saja yang salah.
+//
+// PEMISAH KOLOM TETAP KOMA (`sep=,`, keputusan di CLAUDE.md: "buka mulus di Excel lokal
+// apa pun"). Tidak bentrok, karena csvCell mengutip sel yang memuat koma — dan sel
+// berkutip berisi "1,067" tetap dikenali sebagai angka oleh Excel locale Indonesia.
+//
+// useGrouping: false — pemisah ribuan di dalam CSV justru sumber ambiguitas baru.
+// maximumFractionDigits 6: cukup untuk rasio & porsi, tanpa memuntahkan ekor float.
+function angkaCsv(v: number): string {
+  if (!Number.isFinite(v)) return "";
+  if (Number.isInteger(v)) return String(v);          // integer aman di semua locale
+  return v.toLocaleString("id-ID", { useGrouping: false, maximumFractionDigits: 6 });
+}
+
 function csvCell(v: string | number | null | undefined): string {
   if (v === null || v === undefined) return "";
-  const s = String(v);
+  const s = typeof v === "number" ? angkaCsv(v) : String(v);
   return /[",\n;]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
