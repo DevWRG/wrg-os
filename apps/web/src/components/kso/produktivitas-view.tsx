@@ -30,6 +30,13 @@ export type { KsoProduktivitas, KsoProduktivitasRow } from "./produktivitas-shar
 // terbaca seperti data, sementara sel kosong langsung terbaca sebagai "tidak".
 function kolomExportKso(): ExportColumn<FaskesRow>[] {
   const yaTidak = (v: boolean) => (v ? "ya" : "");
+  // RUPIAH & HITUNGAN TES dibulatkan ke integer. Bukan kosmetik: revenue di sini hasil
+  // ALOKASI proporsional, jadi ekornya panjang (…,055227) dan tidak bermakna — rupiah
+  // tidak punya pecahan. Integer juga satu-satunya bentuk yang aman di semua locale
+  // Excel; desimal bergantung pemisah, dan itulah yang merusak export pertama.
+  // Rasio, porsi, capaian, dan rata/bln TIDAK dibulatkan — di sana desimalnya justru
+  // isinya (ExportButton menuliskannya dengan koma).
+  const bulat = (v: number | null) => (v === null ? null : Math.round(v));
   return [
     { header: "Faskes", value: (g) => g.faskes },
     { header: "Kota", value: (g) => g.kota },
@@ -38,21 +45,21 @@ function kolomExportKso(): ExportColumn<FaskesRow>[] {
     { header: "Nama di sheet", value: (g) => g.r.customerRaw },
     { header: "Jumlah alat seskema", value: (g) => g.r.alatSeskemaDiCustomer ?? g.alatList.length },
     { header: "Daftar alat", value: (g) => g.alatList.join(" | ") },
-    { header: "Tes dilaporkan (seluruh periode)", value: (g) => g.r.totalTesCustomerSeskema },
-    { header: "Revenue netto", value: (g) => g.r.revenueNettoCustomer },
-    { header: "Rp per tes", value: (g) => g.r.rupiahPerTesCustomer },
-    { header: "Rp per alat", value: (g) => rupiahPerAlat(g.r) },
+    { header: "Tes dilaporkan (seluruh periode)", value: (g) => bulat(g.r.totalTesCustomerSeskema) },
+    { header: "Revenue netto", value: (g) => bulat(g.r.revenueNettoCustomer) },
+    { header: "Rp per tes", value: (g) => bulat(g.r.rupiahPerTesCustomer) },
+    { header: "Rp per alat", value: (g) => bulat(rupiahPerAlat(g.r)) },
     { header: "Penyebut memadai (>=100 tes)", value: (g) => yaTidak(g.r.basisTesMemadai) },
     { header: "Porsi KSO", value: (g) => g.r.porsiKso },
     { header: "Skema ganda", value: (g) => yaTidak(g.r.revenueTumpangTindih) },
-    { header: "Tes dilaporkan (periode banding)", value: (g) => g.r.tesSheetPeriodeBanding },
-    { header: "Tes ditagihkan (Accurate)", value: (g) => g.r.tesDitagihkanAccurate },
+    { header: "Tes dilaporkan (periode banding)", value: (g) => bulat(g.r.tesSheetPeriodeBanding) },
+    { header: "Tes ditagihkan (Accurate)", value: (g) => bulat(g.r.tesDitagihkanAccurate) },
     { header: "Rasio tagih/lapor", value: (g) => g.r.rasioTagihLapor },
     { header: "Bulan tertagih", value: (g) => g.r.bulanTertagihAccurate },
     { header: "Pola tagih datar (minimum kontrak)", value: (g) => yaTidak(g.r.tagihPolaDatar) },
     { header: "Status penagihan", value: (g) => g.r.statusPenagihan },
     { header: "Target tes/bln (per alat)", value: (g) => g.r.targetJumlahTes },
-    { header: "Tes alat ini", value: (g) => g.r.totalTes },
+    { header: "Tes alat ini", value: (g) => bulat(g.r.totalTes) },
     { header: "Rata tes/bln (alat ini)", value: (g) => g.r.rataTesBulanan },
     { header: "Capaian target (alat ini)", value: (g) => g.r.capaianTarget },
   ];
