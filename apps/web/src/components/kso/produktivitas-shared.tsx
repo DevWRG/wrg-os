@@ -73,6 +73,46 @@ export function kelompokkan(rows: KsoProduktivitasRow[]): FaskesRow[] {
   return [...map.values()];
 }
 
+// ── Rp per ALAT: metrik untuk BELI_REAGEN, BUKAN pengganti Rp/tes ─────────────────
+// Rp/tes tidak berlaku untuk skema BELI_REAGEN: hanya 4 dari 329 aset melaporkan tes
+// (di skema itu yang ditagih reagennya, bukan tesnya), jadi penyebutnya praktis tak ada.
+//
+// Penyebut per-tes juga TIDAK BISA diturunkan dari reagen — dua jalan sudah diuji habis:
+//   * nama item -> tes-per-kemasan: cuma 32% NILAI yang terurai. Sisanya reagen cair
+//     bervolume (lyse 500 mL, diluent 20 L) yang tak punya angka tes di namanya dan tak
+//     akan pernah punya — tes per liter bergantung mesin & volume aspirasi per siklus.
+//   * faktor empiris dari faskes PER_TEST yang melapor: bahannya ADA (70% nilai), tapi
+//     metodenya GAGAL UJI KALIBRASI. Diuji pada item yang jumlah tesnya tercetak di
+//     namanya, ia melebihkan sampai 53x dan mengecilkan sampai 0,37x; 1 dari 7 yang kena.
+//     Metode yang tak bisa memulihkan angka yang DIKETAHUI tak boleh dipakai untuk angka
+//     yang tidak diketahui. (Biasnya: pembilang = total tes faskes dibagi qty SATU item,
+//     jadi faskes yang beli 10 item berbeda otomatis memberi faktor 10x lebih besar.)
+// Sebabnya struktural: pembelian reagen mengikuti siklus STOK, bukan siklus tes — satu
+// botol lyse bertahan lama di klinik kecil dan cepat habis di RS besar. Struktur kontrak
+// BELI_REAGEN ternyata mencerminkan sifat datanya, bukan kebetulan administratif.
+//
+// APA YANG DIUKURNYA: besar belanja per alat. **BUKAN produktivitas** — ia tak bisa
+// menjawab "alat ini dipakai atau tidak"; itu hanya terjawab oleh laporan tes. Sebarannya
+// juga 3x lebih lebar dari Rp/tes (IQR 12,8x vs 3,7x), jadi daya bedanya antar faskes
+// lebih lemah dan sebagian besar sebaran berasal dari UKURAN faskes, bukan efisiensi.
+//
+// KENAPA PEMBAGIAN INI BOLEH DI TS, padahal #998 dihukum karena menghitung di TS: yang
+// dilarang adalah menurunkan ATURAN (porsi, atribusi kategori) — di sana ada keputusan
+// bisnis yang bisa berubah lalu menyimpang dari SQL. Di sini tidak ada keputusan: aturan
+// "alat mana yang dihitung" tetap tinggal di SQL (`alat_seskema_di_customer`), dan baris
+// ini cuma membaginya. Kalau kelak definisinya berubah (mis. hanya alat aktif), yang
+// berubah kolom SQL-nya — bukan baris ini.
+export function rupiahPerAlat(r: KsoProduktivitasRow): number | null {
+  if (r.revenueNettoCustomer === null) return null;
+  const alat = r.alatSeskemaDiCustomer;
+  if (alat === null || alat <= 0) return null;
+  return r.revenueNettoCustomer / alat;
+}
+
+// Rp/tes hanya bermakna di PER_TEST. Dipakai untuk memilih kolom mana yang tampil,
+// supaya keputusan itu hidup di SATU tempat alih-alih diulang di tabel & dialog.
+export const skemaPakaiRpTes = (skema: string) => skema === "PER_TEST";
+
 export const rp = (n: number | null) => (n === null ? "—" : "Rp " + Math.round(n).toLocaleString("id-ID"));
 export const num = (n: number | null) => (n === null ? "—" : Math.round(n).toLocaleString("id-ID"));
 
