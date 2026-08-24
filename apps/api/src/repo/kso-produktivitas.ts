@@ -261,53 +261,31 @@ export async function faskesDetail(
   // Alasan menghitung sendiri sudah hilang: migrasi 122 mengekspos porsi_kso dengan 12
   // desimal, jadi selisih pembulatannya di bawah satu rupiah pada nilai miliaran.
   // Aturan porsi tinggal SATU tempat, di SQL — pola yang sama dengan 107.
+  // DIBACA dari kso_faskes_reagen_skema_v (migrasi 155). Sebelumnya seluruh aturan
+  // ditulis di sini: blok `porsi`, ekspresi `dalam_skema`, dan flag `penagihan_tes` —
+  // ~40 baris SQL berisi keputusan bisnis di lapisan repo. Begitu export xlsx butuh
+  // aturan yang SAMA untuk semua faskes, menyalinnya berarti dua definisi yang akan
+  // menyimpang; pola itu sudah kena tiga kali di rangkaian ini (107, #998, 125/126) dan
+  // tiap kali gejalanya sama: tidak ada error, cuma dua angka berbeda.
+  //
+  // `nilai_netto_skema` — BUKAN `nilai_netto` — karena kolom itu yang sudah dikali porsi
+  // KSO. Memakai yang mentah membuat subtotal faskes berskema ganda dua kali lipat
+  // kartu di atasnya (terukur: Rp 50 jt vs Rp 25 jt pada porsi 0,5).
+  //
+  // bool_or: kedua flag konstan di dalam satu (item, kategori, unit) — ia agregat
+  // formalitas supaya kolomnya tidak perlu ikut GROUP BY.
   const reagen = await sql`
-    WITH porsi AS (
-      -- COALESCE(...,1) di pemakaiannya: faskes yang tak punya aset pada skema ini tidak
-      -- punya baris di sini, dan porsi 1 = "tidak dibagi" — sama seperti skema tunggal.
-      SELECT max(porsi_kso) AS porsi
-      FROM kso_asset_produktivitas_v
-      WHERE account_id = ${accountId} AND skema = ${skema}
-    )
-    SELECT r.item_id, r.item_no, r.item_nama, r.jenis_alat, r.kategori, r.unit,
-           sum(r.qty) AS qty,
-           sum(CASE WHEN r.kategori = 'KSO'
-                    THEN r.nilai_netto
-                         * COALESCE((SELECT porsi FROM porsi), 1)
-                    ELSE r.nilai_netto END) AS nilai_netto,
-           sum(r.jumlah_faktur)::int AS jumlah_faktur,
-           -- Dua jalan masuk "dalam skema", dan yang kedua wajib sejak migrasi 124:
-           -- baris penagihan per-tes berkategori 'Tanpa kategori', yang BUKAN anggota
-           -- kso_kategori_skema, tapi sejak keputusan HoD 2026-08-22 diakui sebagai
-           -- revenue. Tanpa cabang ini subtotal "dalam skema" di tabel ini lebih kecil
-           -- dari kartu Revenue netto di dialog yang SAMA — persis yang dilaporkan dari
-           -- layar: tabel memuat Rp 16,58 jt penagihan tes, grafik & subtotal tidak.
-           --
-           -- Keanggotaannya DIBACA dari kso_penagihan_tes_v (migrasi 125), tidak
-           -- diputuskan di TS. View itu juga yang dipakai kso_asset_produktivitas_v dan
-           -- kso_faskes_tren_v, jadi ketiga angka di dialog ini membaca himpunan yang sama.
-           --
-           -- account_id dipakai sebagai parameter, bukan r.account_id: query ini sudah
-           -- difilter ke satu faskes di WHERE, dan r.account_id tidak ada di GROUP BY.
-           (r.kategori IN (SELECT kategori FROM kso_kategori_skema WHERE skema = ${skema})
-            OR EXISTS (SELECT 1 FROM kso_penagihan_tes_v pt
-                       WHERE pt.account_id = ${accountId} AND pt.skema = ${skema}
-                         AND pt.item_id = r.item_id))
-             AS dalam_skema,
-           -- Baris ini PENAGIHAN TES atau bukan. Dikirim supaya UI bisa menyebut ALASAN
-           -- yang benar saat baris tidak masuk skema: untuk item PEMERIKSAAN sebabnya
-           -- bukan kategorinya (semuanya 'Tanpa kategori', dan sebagiannya justru DIAKUI)
-           -- melainkan jenis alat di namanya tidak dimiliki faskes ini pada skema ini.
-           -- Tanpa flag ini UI menuduh kategorinya — dan itu keliru sampai menyesatkan:
-           -- pada SEKAR LANGIT, 'PEMERIKSAAN 5DIFF Z52' dan 'PEMERIKSAAN 3DIFF Z3' sama-sama
-           -- 'Tanpa kategori' tapi hanya yang pertama dihitung, karena hanya Z52 yang
-           -- asetnya ada. Membaca tooltipnya, orang akan menyimpulkan kategorinya yang
-           -- menentukan, lalu mencari sebab yang salah.
-           (r.item_id IN (SELECT item_id FROM kso_item_pemeriksaan_v)) AS penagihan_tes
-    FROM kso_faskes_reagen_v r
-    WHERE r.account_id = ${accountId} AND r.periode BETWEEN ${dari} AND ${sampai}
-    GROUP BY r.item_id, r.item_no, r.item_nama, r.jenis_alat, r.kategori, r.unit
-    ORDER BY sum(r.nilai_netto) DESC NULLS LAST`;
+    SELECT item_id, item_no, item_nama, jenis_alat, kategori, unit,
+           sum(qty)                        AS qty,
+           sum(nilai_netto_skema)          AS nilai_netto,
+           sum(jumlah_faktur)::int         AS jumlah_faktur,
+           bool_or(dalam_skema)            AS dalam_skema,
+           bool_or(penagihan_tes)          AS penagihan_tes
+    FROM kso_faskes_reagen_skema_v
+    WHERE account_id = ${accountId} AND skema = ${skema}
+      AND periode BETWEEN ${dari} AND ${sampai}
+    GROUP BY item_id, item_no, item_nama, jenis_alat, kategori, unit
+    ORDER BY sum(nilai_netto_skema) DESC NULLS LAST`;
 
   return {
     alat: alat.map((a) => ({
