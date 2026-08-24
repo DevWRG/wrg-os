@@ -124,5 +124,33 @@ default di dev, jadi tak ada yang perlu di-set. `sender_name` harus cocok dengan
 
 ---
 
+## Trial `#CEK CUSTOMER` (QW3) lokal
+
+Sama seperti trial di atas (tanpa gateway WA sungguhan), plus data dummy customer &
+cara lihat teks balasan asli (mode stub `sendViaWaGateway` tidak menyimpan isi pesan).
+
+```bash
+# 1) Set WA_INBOUND_PROCESS=true di .env, lalu (re)start `pnpm dev`
+
+# 2) Seed data dummy customer (sekali, idempoten)
+psql "$DATABASE_URL" -f scripts/db/seed-cek-dev.sql
+
+# 3) Kirim command #CEK — cek diproses (kind: "cek", cek_mode: "customer")
+bash scripts/dev/test-cek-wa.sh "CUSTOMER PT Testing"
+
+# 4) Lihat teks balasan aslinya (bukan cuma metadata {to,sent,stub})
+pnpm --filter @wrg/api exec tsx scripts/cek-reply.ts "CUSTOMER PT Testing"
+```
+
+Nama customer dummy yang tersedia (`scripts/db/seed-cek-dev.sql`): `PT Testing`,
+`RS Mitra Keluarga` (SO+SJ lengkap), `PT Hanya SO` / `PT Hanya SJ` (satu sisi kosong),
+`CV Sample Satu` / `CV Sample Dua` (nama sengaja mirip — demonstrasi *known limitation*
+fuzzy-match independen SO/SJ, lihat `TECHNICAL.md`).
+
+Selesai tes → kembalikan `WA_INBOUND_PROCESS=false` di `.env` (default aman). Data
+seed boleh dibiarkan (dummy, id ≥ 900010, tak bentrok data asli).
+
+---
+
 Lihat juga: `docs/runbook-gateway-recovery.md`, `scripts/migrate/README.md`
 (migrasi data legacy — hanya relevan di server, butuh akses `wrg_crm_prod`).
