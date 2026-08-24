@@ -33,7 +33,7 @@ export default async function AtkMasterPage() {
       {!cat || !sup || !item ? (
         <EmptyState
           title="Data tidak tersedia"
-          description="Pastikan apps/api jalan dengan DATABASE_URL dan migrasi 068_atk_master.sql + 071_atk_transaction_category.sql sudah diterapkan."
+          description="Pastikan apps/api jalan dengan DATABASE_URL dan migrasi 127_atk_master.sql + 137_atk_transaction_category.sql sudah diterapkan."
         />
       ) : (
         <AtkMasterClient categories={cat.rows ?? []} suppliers={sup.rows ?? []} items={item.rows ?? []} />

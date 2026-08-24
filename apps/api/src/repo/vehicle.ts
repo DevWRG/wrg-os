@@ -2,7 +2,7 @@ import { db } from "../db.js";
 import { sendViaWaGateway } from "../wasend.js";
 
 // F50 — Kendaraan Operasional Log (OPS). `vehicle` = master kecil (7 mobil,
-// diseed manual — lihat 080_vehicle_operational_log.sql, SENGAJA tanpa
+// diseed manual — lihat 149_vehicle_operational_log.sql, SENGAJA tanpa
 // halaman "tambah kendaraan"). `vehicle_log` = entri transaksional
 // (km/BBM/service), tiap entri bisa update status vehicle induk.
 //

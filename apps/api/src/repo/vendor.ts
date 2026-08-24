@@ -3,7 +3,7 @@ import { db } from "../db.js";
 // F140 Vendor Management + Contract Expiry Alerts (Purchasing/GA, role min HOD).
 // Header (vendor_partner) + child (vendor_contract) terpisah — beda dari pola
 // flat F39 Supplier ETA — supaya histori renewal kontrak lama tetap tersimpan
-// (kontrak baru = baris baru, bukan overwrite). Lihat 078_vendor_management.sql
+// (kontrak baru = baris baru, bukan overwrite). Lihat 145_vendor_management.sql
 // utk rasional lengkap (accurate_vendor_id opsional, ON DELETE CASCADE, dst).
 //
 // Alert kedaluwarsa kontrak = STATUS COMPUTED di query (CASE di contractCols()),

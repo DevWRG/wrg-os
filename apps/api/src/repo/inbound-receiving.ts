@@ -2,7 +2,7 @@ import { db } from "../db.js";
 
 // F36 — Inbound Receiving Checklist. Header (inbound_receiving) = satu
 // kejadian penerimaan barang; item checklist (inbound_receiving_item) = poin
-// verifikasi yang dicentang satu per satu (lihat 068_inbound_receiving.sql).
+// verifikasi yang dicentang satu per satu (lihat 129_inbound_receiving.sql).
 
 export type InboundReceivingStatus = "in_progress" | "completed";
 

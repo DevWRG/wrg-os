@@ -2,14 +2,14 @@ import { db } from "../db.js";
 import type { AtkTransactionCategory } from "./atk-master.js";
 
 // F49 ATK Stock Movement (General Affairs) — ledger transaksi stok
-// masuk/keluar barang ATK (lihat 069_atk_stock_movement.sql), konsumen
+// masuk/keluar barang ATK (lihat 132_atk_stock_movement.sql), konsumen
 // katalog F134 (atk-master.ts). date/timestamptz eksplisit ::text di
 // SELECT/RETURNING — pola sama dgn atk-master.ts/supplier-eta.ts
 // (postgres.js balikin objek Date tanpa cast).
 //
 // item_transaction_category (F49/F54 merge) ikut lewat JOIN ke atk_item —
 // bukan kolom sendiri di sini, krn kategori transaksi (Barang/Materai) adalah
-// sifat barangnya, bukan sifat kejadian mutasinya (lihat 071_atk_transaction_category.sql).
+// sifat barangnya, bukan sifat kejadian mutasinya (lihat 137_atk_transaction_category.sql).
 
 export type AtkMovementType = "in" | "out";
 

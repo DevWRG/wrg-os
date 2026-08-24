@@ -1,12 +1,12 @@
 import { db } from "../db.js";
 
 // F134 ATK Master (General Affairs) — 3 tabel master data standalone:
-// kategori, pemasok, katalog barang ATK (lihat 068_atk_master.sql). Prasyarat
+// kategori, pemasok, katalog barang ATK (lihat 127_atk_master.sql). Prasyarat
 // F49 (ATK Stock In/Out Digital Register). date/timestamptz eksplisit ::text
 // di SELECT/RETURNING — pola sama dgn supplier-eta.ts/dana-ops.ts (postgres.js
 // balikin objek Date tanpa cast).
 //
-// atk_item.transaction_category ('barang'|'materai', 071_atk_transaction_category.sql)
+// atk_item.transaction_category ('barang'|'materai', 137_atk_transaction_category.sql)
 // — F49/F54 merge: Materai (F54) bukan modul terpisah, cuma kategori transaksi
 // tingkat-atas di atas katalog item yang sama. Lihat 071 utk alasan taruh di
 // item, bukan di atk_category.

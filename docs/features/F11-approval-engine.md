@@ -59,7 +59,7 @@ kontak — begitu Direktur kasih kontak, tinggal isi lewat halaman
   path-safe (baca `file_path` dari DB, di-join di dalam
   `APPROVAL_UPLOAD_ROOT`, tak ada input mentah dari user yang jadi path).
 
-## Skema DB (migrasi 106_approval_engine.sql)
+## Skema DB (migrasi 153_approval_engine.sql)
 
 - `approval_chain_config` — 5 baris GLOBAL (1 chain untuk semua request
   sekarang), `hod_key` NULL = belum dikonfigurasi (state sah, bukan error).

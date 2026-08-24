@@ -23,66 +23,31 @@
 // dan itu menyembunyikan duplikat nyata: dua file di 069 masih pending, tapi
 // seluruh nomor 069 ikut dikecualikan.
 //
-// BASELINE ini utang, bukan restu. Membereskannya = rename file yang BELUM
-// applied ke nomor bebas di ekor, lalu hapus dari daftar di bawah. JANGAN
-// rename file yang SUDAH applied: ledger schema_migrations memakai nama file,
-// jadi file applied yang di-rename tampak pending lalu DIEKSEKUSI ULANG.
-// Periksa dulu:
+// ── Utang dilunasi sebagian: 45 file → 4 ─────────────────────────────────────
+// 28 file batch OPS/GA/Purchasing yang belum pernah applied di mana pun sudah
+// dinomori ulang ke 127–154 (ekor), sehingga tabrakan tinggal 2 nomor / 4 file.
+// Sisanya TIDAK bisa dibereskan: keempatnya sudah applied di prod, dan ledger
+// schema_migrations memakai NAMA FILE — file applied yang di-rename akan tampak
+// pending lalu DIEKSEKUSI ULANG. Jadi 043 dan 069 permanen begini.
+//
+// Kalau nanti perlu membereskan sisa baseline, periksa dulu:
 //   psql -d wrg_os_prod -c "SELECT filename FROM schema_migrations WHERE filename LIKE '0XX%'"
 // Dan jaga ketergantungan saat memilih nomor baru — beberapa migrasi merujuk
 // tabel yang dibuat migrasi lain, dan urutannya sekarang benar hanya karena
-// kebetulan nomornya berurutan.
+// kebetulan nomornya berurutan. Cara membuktikannya (dipakai saat penomoran
+// ulang di atas): jalankan SELURUH direktori urut nama file ke database kosong,
+// lalu bandingkan `pg_dump --schema-only` sebelum vs sesudah — harus identik.
 import { readdirSync } from "node:fs";
 
 const DIR = "infra/postgres/init";
 const POLA = /^(\d{3})_[a-z0-9_]+\.sql$/;
 
 const BASELINE = new Set([
+  // Utang permanen: keempatnya SUDAH applied di prod, jadi tak bisa di-rename.
   "043_pricelist.sql",
   "043_watchpoint_husni_milestones.sql",
-  "068_activity_link_visit_target.sql",
-  "068_atk_master.sql",
-  "068_dana_ops.sql",
-  "068_inbound_receiving.sql",
-  "068_installation_lifecycle.sql",
-  "068_supplier_eta.sql",
-  "069_atk_stock_movement.sql",
-  "069_maintenance_schedule.sql",
   "069_pipeline_stage_7.sql",
   "069_seed_master_holiday_2026.sql",
-  "070_atk_stock_opname.sql",
-  "070_seed_cuti_bersama_2026.sql",
-  "070_service_ticket_triage.sql",
-  "070_teknisi_readiness_board.sql",
-  "071_atk_transaction_category.sql",
-  "071_product_pricelist.sql",
-  "076_pricelist_price_list.sql",
-  "076_shipment_tracking.sql",
-  "077_pricebook_setup_publish.sql",
-  "077_proficiency_test_document.sql",
-  "077_shipment_tracking_geo.sql",
-  "078_fund_request.sql",
-  "078_inventory_relocation_request.sql",
-  "078_npk_am.sql",
-  "078_purchase_order.sql",
-  "078_shipment_tracking_terima.sql",
-  "078_vendor_management.sql",
-  "079_master_user_golongan.sql",
-  "079_purchase_order_approval.sql",
-  "079_shipment_tracking_bukti.sql",
-  "080_purchase_forecast.sql",
-  "080_vehicle_operational_log.sql",
-  "080_watchpoint_metric_target.sql",
-  "081_accurate_so_do_items.sql",
-  "081_pickup_plan.sql",
-  "095_accurate_so_do_number_key.sql",
-  "095_lpse_tender_tracker.sql",
-  "098_kso_revenue.sql",
-  "098_sph_generator.sql",
-  "106_approval_engine.sql",
-  "106_kso_tren_bulanan.sql",
-  "107_forecast_submission.sql",
-  "107_kso_aturan_atribusi_tunggal.sql",
 ]);
 
 const files = readdirSync(DIR).filter((f) => f.endsWith(".sql")).sort();

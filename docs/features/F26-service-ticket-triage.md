@@ -23,7 +23,7 @@ ETA, balas otomatis ke grup.
 
 ## Cara kerja
 
-- **Tabel** (`infra/postgres/init/070_service_ticket_triage.sql`):
+- **Tabel** (`infra/postgres/init/135_service_ticket_triage.sql`):
   - `teknisi_roster` — roster teknisi + area cover. **Di-seed via
     `scripts/db/seed-dev-full.sql`** (5 teknisi dummy), TIDAK ada halaman
     kelola/CRUD (keputusan: "untuk magang sekarang disuruh seed" — data

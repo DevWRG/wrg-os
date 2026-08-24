@@ -3,7 +3,7 @@ import { db } from "../db.js";
 // F51 — Dana Ops / Petty Cash Realization. Header (dana_ops) = satu pengajuan
 // dana operasional (uang muka); item realisasi (dana_ops_item) = bukti
 // pengeluaran yang direkonsiliasi terhadap dana yang diajukan (lihat
-// 068_dana_ops.sql). Total realisasi & selisih dihitung di query/JS, bukan
+// 128_dana_ops.sql). Total realisasi & selisih dihitung di query/JS, bukan
 // kolom tersimpan — tidak ada seed default (beda dari F36; nota masuk bertahap).
 
 export type DanaOpsStatus = "in_progress" | "realized";
