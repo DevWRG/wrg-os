@@ -5,15 +5,16 @@
 // panel ini hanya MENERIMA `f` supaya dua tab tidak pernah menyaring berbeda.
 
 import { useState } from "react";
-import { AlertTriangle, ChevronRight, Info } from "lucide-react";
+import { AlertTriangle, ChevronRight, Download, Info } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import { buttonVariants } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { ExportButton, type ExportColumn } from "@/components/ui/export-button";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
 import {
-  FaskesRow, FilterKso, Tag, num, rp, rupiahPerAlat, skemaPakaiRpTes,
-  type KsoProduktivitasRow,
+  FaskesRow, FilterKso, Tag, awalTahunIni, bulanIni, num, rp, rupiahPerAlat,
+  skemaPakaiRpTes, type KsoProduktivitasRow,
 } from "./produktivitas-shared";
 import { FaskesDetailDialog } from "./faskes-detail-dialog";
 
@@ -215,14 +216,35 @@ export function KsoProduktivitasTabel({ f }: { f: FilterKso }) {
               {rows.length} faskes · {f.mentah.length} alat pada filter ini
               <span className="ml-1">— export berisi satu baris per alat</span>
             </div>
-            {/* Export memuat SELURUH kolom baris, bukan tujuh yang tampil — lihat
-                kolomExport. Data yang diekspor mengikuti filter & skema yang aktif,
-                supaya isi berkas cocok dengan yang sedang dilihat di layar. */}
-            <ExportButton
-              filename={`kso-produktivitas-${f.skema.toLowerCase()}-per-alat`}
-              columns={kolomExport}
-              data={f.mentah}
-            />
+            <div className="flex flex-wrap items-center gap-2">
+              {/* DUA tombol, dan bedanya bukan cuma format:
+                  · CSV dibuat di KLIEN dari baris yang sedang tampil — jadi ia mengikuti
+                    filter kota/brand/alat/penanda yang aktif. Isinya cocok dengan layar.
+                  · XLSX dibuat di SERVER, multi-sheet, dan memuat REAGEN seluruh faskes
+                    (permintaan user 2026-08-24). Reagen tidak ada di payload halaman —
+                    dialog memuatnya satu faskes per permintaan — jadi tidak mungkin
+                    dirakit di klien tanpa 68 panggilan. Konsekuensinya: XLSX mengikuti
+                    SKEMA + rentang, bukan filter kota/brand. Itu ditulis di tombolnya
+                    supaya tidak jadi laporan "isi berkas beda dengan layar". */}
+              <ExportButton
+                filename={`kso-produktivitas-${f.skema.toLowerCase()}-per-alat`}
+                columns={kolomExport}
+                data={f.mentah}
+                label="Export CSV (sesuai filter)"
+              />
+              {/* <a> bergaya tombol lewat buttonVariants, BUKAN <Button asChild>:
+                  Button di repo ini Base UI (ButtonPrimitive) dan tidak punya prop
+                  asChild — ditolak typecheck. Unduhan harus tetap <a href> supaya
+                  browser menangani nama berkas dari content-disposition. */}
+              <a
+                href={`/api/kso/produktivitas/export-xlsx?skema=${encodeURIComponent(f.skema)}`
+                  + `&dari=${awalTahunIni()}&sampai=${bulanIni()}`}
+                className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
+                title={`Workbook 4 sheet: produktivitas per alat, reagen keluar, tes & revenue bulanan, keterangan. Reagen & bulanan dibatasi ${awalTahunIni().slice(0, 7)}–${bulanIni().slice(0, 7)}; seluruh faskes pada skema ${f.skema} (tidak mengikuti filter kota/brand).`}
+              >
+                <Download className="size-4" /> Export Excel (.xlsx, semua faskes)
+              </a>
+            </div>
           </div>
           <DataTable
             columns={cols}
