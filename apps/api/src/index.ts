@@ -75,6 +75,7 @@ import {
   currentWeek, formatWeeklyHodWa,
 } from "./repo/watchpoint-weekly.js";
 import { buildWeeklyDeck, weeklyDeckFilename } from "./repo/watchpoint-pptx.js";
+import { buildKsoWorkbook, ksoWorkbookFilename } from "./repo/kso-export-xlsx.js";
 import {
   effectivePermissions, listFeatures, listGroups, getGroup, createGroup, updateGroup,
   deleteGroup, setPermissions, setMembers, copyPermissions, syncFeatures,
@@ -3543,6 +3544,34 @@ app.get("/kso/master", async (c) => {
 app.get("/kso/produktivitas", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json(await ksoProduktivitas());
+});
+
+// Export .xlsx multi-sheet (Produktivitas per alat · Reagen keluar · Tes & revenue
+// bulanan · Keterangan). Rute ini SENGAJA di bawah /kso/produktivitas/ supaya ikut
+// catch-all /api/kso/* yang sudah di-gate canViewKso di BFF — tidak ada jalur akses baru.
+//
+// Validasi parameter sama ketatnya dengan endpoint detail: string bebas di BETWEEN
+// membuat Postgres menolak dengan galat tipe yang muncul sebagai 500, bukan 400, dan
+// pemanggil tidak akan tahu apa yang salah.
+app.get("/kso/produktivitas/export.xlsx", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const skema = c.req.query("skema") ?? "";
+  if (skema !== "PER_TEST" && skema !== "BELI_REAGEN") {
+    return c.json({ error: "skema wajib PER_TEST | BELI_REAGEN" }, 400);
+  }
+  const dari = c.req.query("dari") ?? "";
+  const sampai = c.req.query("sampai") ?? "";
+  const tglOk = (t: string) => /^\d{4}-\d{2}-\d{2}$/.test(t);
+  if (!tglOk(dari) || !tglOk(sampai) || dari > sampai) {
+    return c.json({ error: "dari/sampai wajib YYYY-MM-DD dan dari <= sampai" }, 400);
+  }
+  const opts = { skema, dari, sampai };
+  const buf = await buildKsoWorkbook(opts);
+  return c.body(new Uint8Array(buf), 200, {
+    "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "content-disposition": `attachment; filename="${ksoWorkbookFilename(opts)}"`,
+    "cache-control": "no-store",
+  });
 });
 
 // Detail satu faskes untuk dialog "Lihat detail". Gate-nya sama dengan endpoint di
