@@ -2,7 +2,14 @@ name: Roadmap Project Sync
 
 # Sinkronkan status item board "WRG-OS Roadmap" (project #2) dari event PR.
 # - PR dibuka/reopened/ready  -> item ber-F-number cocok jadi "In Progress"
-# - PR merged                 -> jadi "Done" (closed tanpa merge = diabaikan)
+# - PR merged ke `dev`        -> "Checking" (sudah dibangun, BELUM di prod)
+# - PR merged ke `main`       -> "Done" (sudah dipromosikan & rilis)
+# - PR merged ke base lain / closed tanpa merge -> diabaikan
+# Status akhir mengikuti BASE BRANCH, bukan sekadar "merged". Sebelumnya semua merge
+# jadi Done, jadi 43 fitur yang cuma nangkring di `dev` tampil seolah sudah live.
+# Konsekuensi yang disengaja: item Done bisa turun ke Checking kalau ada PR lanjutan
+# masuk `dev` — itu memang berarti ada bagian menggantung yang belum dipromosikan;
+# merge promosi ke `main` akan mengembalikannya ke Done.
 # F-number diambil dari nama branch + judul PR (mis. feat/f127-... / feat(F127): ...).
 # Jika F-number belum ada di board, item draft baru DIBUAT otomatis lalu di-set status.
 # Butuh secret PROJECTS_TOKEN (PAT dgn izin project) karena GITHUB_TOKEN default
@@ -28,13 +35,25 @@ jobs:
           script: |
             const projectId     = 'PVT_kwHOEMRLCs4BbQ3-';
             const statusFieldId = 'PVTSSF_lAHOEMRLCs4BbQ3-zhWCl6w';
-            const OPT = { 'In Progress': '47fc9ee4', 'Done': '98236657' };
+            const OPT = {
+              'In Progress': '47fc9ee4',
+              'Checking':    '4d5bc88f',
+              'Done':        '98236657',
+            };
+            // Base branch -> status saat PR MERGED. Base di luar peta ini diabaikan.
+            const MERGE_TARGET = { dev: 'Checking', main: 'Done' };
 
             const pr = context.payload.pull_request;
             let target;
             if (context.payload.action === 'closed') {
-              if (pr.merged) target = 'Done';
-              else { core.info('PR closed tanpa merge — skip'); return; }
+              if (!pr.merged) { core.info('PR closed tanpa merge — skip'); return; }
+              const base = pr.base.ref;
+              target = MERGE_TARGET[base];
+              if (!target) {
+                core.info(`PR merged ke base "${base}" (bukan dev/main) — skip`);
+                return;
+              }
+              core.info(`PR merged ke "${base}" → ${target}`);
             } else {
               target = 'In Progress';
             }
