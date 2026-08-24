@@ -57,12 +57,20 @@ export interface FaskesRow {
   r: KsoProduktivitasRow;   // nilai level-customer; sama untuk semua alat di grup ini
 }
 
+// Kunci grup faskes×skema. DIEKSTRAK jadi fungsi karena dipakai DUA tempat: pengelompokan
+// untuk tampilan, dan penyaringan baris ASET untuk export. Kalau disalin, export bisa
+// menyaring dengan kunci yang berbeda dari yang dikelompokkan — dan selisihnya tidak akan
+// memunculkan error, cuma berkas yang isinya tidak cocok dengan layar.
+//
+// account_id null (mis. skema UNKNOWN belum terpetakan) → jatuh ke nama sheet, supaya
+// baris tanpa account tidak semuanya menggumpal jadi satu grup.
+export const kunciGrup = (r: KsoProduktivitasRow) =>
+  `${r.skema}::${r.accountId ?? `raw:${r.customerRaw}`}`;
+
 export function kelompokkan(rows: KsoProduktivitasRow[]): FaskesRow[] {
   const map = new Map<string, FaskesRow>();
   for (const r of rows) {
-    // account_id null (mis. skema UNKNOWN belum terpetakan) → jatuh ke nama sheet,
-    // supaya baris tanpa account tidak semuanya menggumpal jadi satu grup.
-    const key = `${r.skema}::${r.accountId ?? `raw:${r.customerRaw}`}`;
+    const key = kunciGrup(r);
     const g = map.get(key);
     if (g) { if (r.namaAlat) g.alatList.push(r.namaAlat); continue; }
     map.set(key, {
@@ -303,6 +311,10 @@ export interface FilterKso {
   alat: string; setAlat: (v: string) => void;
   penanda: string; setPenanda: (v: string) => void;
   dasar: FaskesRow[]; rows: FaskesRow[];
+  // Baris ASET (bukan faskes) yang lolos filter — untuk export per-aset. Lihat komentar
+  // di useFilterKso: tabel dikelompokkan per faskes, tapi export butuh level aset supaya
+  // kolom per-alat (target, tes alat, capaian) punya pemilik yang jelas.
+  mentah: KsoProduktivitasRow[];
   // Basis hitungan penanda (tanpa ambang layak) + berapa faskes yang ambang itu sembunyikan.
   dasarSkema: FaskesRow[]; disembunyikan: number;
   opsiKota: string[]; opsiBrand: string[]; opsiAlat: string[];
@@ -376,6 +388,17 @@ export function useFilterKso(data: KsoProduktivitas): FilterKso {
       (!p || p.uji(g.r)));
   }, [dasar, kota, brand, alat, penanda]);
 
+  // Baris ASET yang lolos filter, diturunkan dari kunci grup yang LOLOS — bukan dengan
+  // mengulang seluruh syarat filter di level aset. Mengulangnya berarti dua definisi
+  // "lolos filter" yang bisa menyimpang; memakai kunci membuat keduanya tidak mungkin
+  // berbeda. Dipakai export supaya kolom per-alat punya pemilik yang jelas: pada tabel,
+  // 4 kolom itu ikut baris perwakilan grup, sehingga SEKAR LANGIT (2 alat) mengekspor
+  // "tes alat ini 1" tanpa menyebut alat mana — mencampur level faskes dengan level aset.
+  const mentah = useMemo(() => {
+    const lolos = new Set(rows.map((g) => g.key));
+    return data.rows.filter((r) => lolos.has(kunciGrup(r)));
+  }, [data.rows, rows]);
+
   return {
     skema, setSkema, hanyaLayak, setHanyaLayak, kota, setKota, brand, setBrand,
     alat, setAlat, penanda,
@@ -388,7 +411,7 @@ export function useFilterKso(data: KsoProduktivitas): FilterKso {
       setPenanda(v);
       if (v === "penyebut_tipis") setHanyaLayak(false);
     },
-    dasar, rows, dasarSkema, disembunyikan, opsiKota, opsiBrand, opsiAlat,
+    dasar, rows, dasarSkema, disembunyikan, mentah, opsiKota, opsiBrand, opsiAlat,
     median: data.ringkasan.medianRpPerTes[skema] ?? null,
     adaFilter: kota !== SEMUA || brand !== SEMUA || alat !== SEMUA || penanda !== SEMUA,
     reset: () => { setKota(SEMUA); setBrand(SEMUA); setAlat(SEMUA); setPenanda(SEMUA); },
