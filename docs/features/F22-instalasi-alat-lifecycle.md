@@ -24,7 +24,7 @@ BAST = lifecycle selesai (alat resmi terinstal & diserah-terimakan).
 
 ## Cara kerja
 
-- **Tabel**: `installation_unit` (`infra/postgres/init/068_installation_lifecycle.sql`).
+- **Tabel**: `installation_unit` (`infra/postgres/init/130_installation_lifecycle.sql`).
   Self-contained — `teknisi_name`/`customer_name`/`po_number`/`bast_number` semua
   kolom teks bebas, tanpa FK ke domain lain, kecuali kolom `sj_number` (lihat
   bagian "Integrasi Accurate" di bawah).

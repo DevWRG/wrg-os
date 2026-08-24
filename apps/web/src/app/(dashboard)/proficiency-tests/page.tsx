@@ -28,7 +28,7 @@ export default async function ProficiencyTestsPage() {
       {!data ? (
         <EmptyState
           title="Data tidak tersedia"
-          description="Pastikan apps/api jalan dengan DATABASE_URL dan migrasi 077_proficiency_test_document.sql sudah diterapkan."
+          description="Pastikan apps/api jalan dengan DATABASE_URL dan migrasi 139_proficiency_test_document.sql sudah diterapkan."
         />
       ) : (
         <ProficiencyTestTable rows={data.rows ?? []} />

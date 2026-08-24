@@ -2,7 +2,7 @@ import { db } from "../db.js";
 import { sendViaWaGateway } from "../wasend.js";
 
 // F20 — E-Catalog/LPSE Compliance Tracker. Standalone dari dev, tak sentuh
-// Accurate/CRM-core/HR (lihat 095_lpse_tender_tracker.sql). Status 3-step
+// Accurate/CRM-core/HR (lihat 151_lpse_tender_tracker.sql). Status 3-step
 // manual via web (blueprint: Hashtag "-", tak ada ingestion WA sama sekali).
 
 const toIsoTs = (x: unknown): string => new Date(x as string | Date).toISOString();

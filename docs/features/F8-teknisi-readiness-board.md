@@ -24,7 +24,7 @@ Board ini **terhubung** ke `installation_unit` (F22, penjadwalan install tertaut
 
 ## Cara kerja
 
-- **Tabel** (`infra/postgres/init/070_teknisi_readiness_board.sql`):
+- **Tabel** (`infra/postgres/init/136_teknisi_readiness_board.sql`):
   - `teknisi_capacity` — roster + kapasitas kerja (`max_concurrent_jobs`). **Self-contained**, TIDAK reuse `teknisi_roster` F26 (beda lineage branch). Dev/demo tetap pakai 3 teknisi dummy dari seed (`scripts/db/seed-dev-full.sql`: Fajar/Gilang/Hesti) — tapi sekarang **ada CRUD** (`POST /teknisi-capacity`, `PATCH /teknisi-capacity/:id`, `PATCH /teknisi-capacity/:id/deactivate`, tombol "Tambah Teknisi" + edit/nonaktifkan di halaman) supaya Admin bisa isi roster asli (6 orang aftersales — galih/martin/nopa/haidar/halim/enggar, ada di tabel `employee`/BSC, TERPISAH dari tabel ini) tanpa sentuh DB manual. Deactivate bukan DELETE (jaga histori `install_schedule`/`teknisi_report` yang FK ke sini).
   - `install_schedule` — jadwal install, **FK wajib** ke `installation_unit` (F22).
   - `teknisi_report` — laporan lapangan (4 jenis sesuai hashtag), `wa_message_id UNIQUE` (idempotensi).
@@ -40,7 +40,7 @@ Board ini **terhubung** ke `installation_unit` (F22, penjadwalan install tertaut
 
 ## Migrasi numbering — catatan penting
 
-Migrasi ini `070` **relatif ke lineage F22→F24→F8**. Branch F26 (lineage terpisah dari `dev`) **juga** pakai nomor `070` (`070_service_ticket_triage.sql`) di lineage-nya sendiri — ini BUKAN git-conflict (branch independen), tapi siapa pun yang merge branch KEDUA ke `dev` (setelah salah satu dari F8-chain atau F26 duluan merge) **wajib renumber filenya sendiri jadi `071`**.
+Migrasi ini `070` **relatif ke lineage F22→F24→F8**. Branch F26 (lineage terpisah dari `dev`) **juga** pakai nomor `070` (`135_service_ticket_triage.sql`) di lineage-nya sendiri — ini BUKAN git-conflict (branch independen), tapi siapa pun yang merge branch KEDUA ke `dev` (setelah salah satu dari F8-chain atau F26 duluan merge) **wajib renumber filenya sendiri jadi `071`**.
 
 ## Verifikasi
 

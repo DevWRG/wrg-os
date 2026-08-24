@@ -24,7 +24,7 @@ ke branch ini — F19 butuh reuse `createApprovalRequest()` + tabel
 langsung, bukan dari F37/F38). Konsekuensi: **3 PR harus di-merge sesuai
 urutan dependency** (F37 → F38 → gabungan F11+F19, ATAU F11 duluan lalu
 F19 di-rebase bersih di atas dev-yang-sudah-punya-F37+F38+F11). Migrasi
-`107_forecast_submission.sql` mengasumsikan tabel dari migrasi 082 (F37),
+`154_forecast_submission.sql` mengasumsikan tabel dari migrasi 082 (F37),
 083 (F38), dan 106 (F11) sudah ada.
 
 ## 3 sinyal pemicu usulan (dari brief meeting)
@@ -60,7 +60,7 @@ stage asli sistem (`deal.ts`) tak punya nama itu — dipetakan ke stage
 `Closing`/`Closing-Won` yang SUDAH didefinisikan `prospect:"Hot"` di kode
 (`STAGE_META`). Dikonfirmasi user, bukan tebakan sepihak.
 
-## Skema DB (migrasi 107_forecast_submission.sql)
+## Skema DB (migrasi 154_forecast_submission.sql)
 
 - `item_stock_buffer` (item_id, warehouse_kode, buffer_qty) — PK komposit,
   TIDAK di-pre-seed (beda dari `approval_chain_config` F11 yg cuma 5 baris

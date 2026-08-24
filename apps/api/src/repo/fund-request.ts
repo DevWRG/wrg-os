@@ -2,7 +2,7 @@ import { db } from "../db.js";
 
 // F138 Operational Fund Request + Multi-Step Approval Workflow (General
 // Affairs). Modul standalone — TIDAK terhubung ke dana_ops (F51) dengan cara
-// apa pun (lihat 078_fund_request.sql). Semua Karyawan boleh mengajukan;
+// apa pun (lihat 141_fund_request.sql). Semua Karyawan boleh mengajukan;
 // approval 2 tahap FIXED: HOD (dipilih manual oleh pengaju saat submit) lalu
 // Direktur (final). approval_status DIHITUNG dari baris fund_request_approval
 // (pola computed sama dgn purchase_order_approval F35), bukan kolom

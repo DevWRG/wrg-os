@@ -1,7 +1,7 @@
 import { db } from "../db.js";
 
 // F39 — Supplier ETA Tracker. "Telat" dihitung, bukan disimpan: overdue =
-// status masih 'pending' tapi eta_date sudah lewat hari ini (lihat 068_supplier_eta.sql).
+// status masih 'pending' tapi eta_date sudah lewat hari ini (lihat 131_supplier_eta.sql).
 
 export type SupplierEtaStatus = "pending" | "arrived" | "cancelled";
 

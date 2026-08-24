@@ -38,7 +38,7 @@ instruksi teknis literal.
 
 ## Cara kerja
 
-- **Migrasi**: `infra/postgres/init/079_shipment_tracking_bukti.sql` — 4
+- **Migrasi**: `infra/postgres/init/147_shipment_tracking_bukti.sql` — 4
   kolom baru di `shipment_tracking`: `bukti_photo_path`,
   `signature_photo_path`, `bukti_at`, `bukti_by`.
 - **API**: `apps/api/src/repo/shipment-tracking.ts` — `markBukti()`, guard

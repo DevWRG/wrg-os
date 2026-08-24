@@ -1,6 +1,6 @@
 -- 070 (lineage F22→F24→F8) — Teknisi Readiness Board (F8, AFTERSALES).
 -- CATATAN NUMBERING: branch F26 (lineage terpisah dari `dev`) JUGA pakai 070
--- utk migrasinya sendiri (070_service_ticket_triage.sql) — bukan conflict
+-- utk migrasinya sendiri (135_service_ticket_triage.sql) — bukan conflict
 -- (branch independen), tapi WAJIB direnumber oleh siapa pun yg merge
 -- BELAKANGAN ke `dev` (jadi 071) supaya urutan tetap sekuensial.
 --

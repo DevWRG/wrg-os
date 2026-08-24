@@ -18,7 +18,7 @@ due. 7 mobil per data Fafa (belum diinput — lihat "Data produksi" di bawah).
 
 ## Cara kerja
 
-- **Tabel `vehicle`** (`infra/postgres/init/080_vehicle_operational_log.sql`)
+- **Tabel `vehicle`** (`infra/postgres/init/149_vehicle_operational_log.sql`)
   — master KECIL (7 mobil), **SENGAJA tanpa halaman "tambah kendaraan"**
   (konvensi magang: master data kecil/statis = seed SQL, bukan CRUD — lihat
   memory `wrg-os-magang-seed-over-ui`). `sopir_name` TEXT bebas, bukan FK ke

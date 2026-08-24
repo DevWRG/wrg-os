@@ -1,6 +1,6 @@
 -- 068 — F36 Inbound Receiving Checklist: checklist verifikasi saat barang
 -- datang dari supplier (Purchasing), independen dari F13 (PO Tracker penuh)
--- yang belum ada — pendekatan sama seperti F39 (lihat 068_supplier_eta.sql di
+-- yang belum ada — pendekatan sama seperti F39 (lihat 131_supplier_eta.sql di
 -- branch F39, belum merge ke dev saat file ini dibuat).
 --
 -- Header (inbound_receiving) = satu kejadian penerimaan barang (per PO/SJ).

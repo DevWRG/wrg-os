@@ -43,7 +43,7 @@ export default async function InventoryRelocationsPage() {
       {!data ? (
         <EmptyState
           title="Data tidak tersedia"
-          description="Pastikan apps/api jalan dengan DATABASE_URL dan migrasi 078_inventory_relocation_request.sql sudah diterapkan."
+          description="Pastikan apps/api jalan dengan DATABASE_URL dan migrasi 142_inventory_relocation_request.sql sudah diterapkan."
         />
       ) : (
         <InventoryRelocationTable rows={data.rows ?? []} />

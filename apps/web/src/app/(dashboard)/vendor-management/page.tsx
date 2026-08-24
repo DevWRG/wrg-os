@@ -43,7 +43,7 @@ export default async function VendorManagementPage() {
       {!data ? (
         <EmptyState
           title="Data tidak tersedia"
-          description="Pastikan apps/api jalan dengan DATABASE_URL dan migrasi 078_vendor_management.sql sudah diterapkan."
+          description="Pastikan apps/api jalan dengan DATABASE_URL dan migrasi 145_vendor_management.sql sudah diterapkan."
         />
       ) : (
         <VendorTable rows={data.rows ?? []} />

@@ -3,12 +3,12 @@ import { db } from "../db.js";
 // F13 PO Tracker + Sistem Barang Masuk (Purchasing). Header (purchase_order)
 // = satu PO ke vendor; item (purchase_order_item) = barang yang dipesan;
 // receipt (purchase_order_receipt) = log tiap kejadian barang datang per item
-// (lihat 078_purchase_order.sql). qty_received & status dihitung di
+// (lihat 143_purchase_order.sql). qty_received & status dihitung di
 // query/JS, bukan kolom tersimpan — pola computed sama dgn "telat" F39/
 // "stok" F49/"variance" F51. date/timestamptz eksplisit ::text di
 // SELECT/RETURNING (gotcha postgres.js yang sama di semua repo lain).
 //
-// F35 PO Approval Workflow (079_purchase_order_approval.sql) menambah gate
+// F35 PO Approval Workflow (146_purchase_order_approval.sql) menambah gate
 // berjenjang di atas: Tier 1 (paralel) HOD Business (IVD/Medical sesuai
 // `lini`) + HOD Finance, lalu Tier 2 Direktur. approval_status DIHITUNG dari
 // baris purchase_order_approval (pola computed yang sama), bukan kolom
@@ -393,7 +393,7 @@ export async function updatePurchaseOrder(id: string, f: PurchaseOrderUpdate): P
   return mapRow(row);
 }
 
-// FK purchase_order_receipt.po_item_id sengaja RESTRICT (078_purchase_order.sql:
+// FK purchase_order_receipt.po_item_id sengaja RESTRICT (143_purchase_order.sql:
 // "PO/item yang sudah menerima barang tidak bisa dihapus, hanya bisa
 // dibatalkan") — tapi belum ada yg menangkap error-nya sejak F13, jadi bocor
 // jadi 500 mentah. Ditemukan & diperbaiki di sesi F35 (ketemu pas testing).
