@@ -43,22 +43,62 @@ export async function buildKsoWorkbook(opts: KsoExportOpts): Promise<Buffer> {
   const sql = db();
   const { skema, dari, sampai } = opts;
 
-  // ── Sheet 1: satu baris per ASET ────────────────────────────────────────────────
-  // Per aset, bukan per faskes — alasannya sama dengan export CSV (#1031): kolom
-  // per-alat (target, tes alat, capaian) butuh pemilik yang jelas, dan tanpa itu nilai
-  // alat perwakilan grup terekspor tanpa menyebut alat mana.
+  // ── Sheet 1: satu baris per ASET, DIBATASI RENTANG ─────────────────────────────
+  // Keputusan user 2026-08-24: "semua sheet dibikin satu cakupan aja". Versi pertama
+  // memakai kolom agregat `kso_asset_produktivitas_v` apa adanya — itu SELURUH periode,
+  // sementara sheet 2-3 mengikuti rentang, sehingga Σ revenue bulanan tidak pernah cocok
+  // dengan kolom Revenue netto faskes. Cakupan berbeda berdampingan sudah lima kali jadi
+  // laporan "data tidak sinkron" di rangkaian ini; di dalam berkas yang beredar lepas
+  // dari layarnya, itu lebih sulit lagi dijelaskan.
+  //
+  // Jadi tes, revenue, Rp/tes, rata/bln, dan capaian DIHITUNG ULANG dalam rentang.
+  //
+  // EMPAT KOLOM TETAP SELURUH PERIODE, dan headernya menyebutnya — bukan kelalaian:
+  //   porsi_kso            aturannya (102/121/122) ditetapkan atas seluruh data; porsi
+  //                        "versi Maret-Mei" bukan besaran yang punya arti
+  //   basis_tes_memadai    ambangnya 100 tes per TAHUN
+  //   rasio tagih/lapor    basisnya `periode_sheet` sendiri (103-105), bukan rentang ini
+  //   status_penagihan     turunan dari basis yang sama
+  // Memaksanya mengikuti rentang berarti mengarang definisi baru yang kebetulan bernama
+  // sama — persis cara sebuah angka jadi salah tanpa terlihat salah.
   const alat = await sql`
+    WITH tes_aset AS (   -- tes per ASET dalam rentang
+      SELECT m.asset_id,
+             sum(m.jumlah_tes)                                  AS tes,
+             count(*) FILTER (WHERE m.jumlah_tes IS NOT NULL)    AS bulan_lapor
+      FROM kso_asset_test_monthly m
+      WHERE m.periode BETWEEN ${dari} AND ${sampai}
+      GROUP BY m.asset_id
+    ),
+    faskes_rentang AS (  -- tes & revenue per FASKES dalam rentang, dari view tren (126)
+      SELECT account_id, sum(jumlah_tes) AS tes, sum(revenue_netto) AS revenue
+      FROM kso_faskes_tren_v
+      WHERE skema = ${skema} AND periode BETWEEN ${dari} AND ${sampai}
+      GROUP BY account_id
+    )
     SELECT v.asset_id, v.sn_key, a.sn_raw, v.customer_raw, v.account_id,
            c.name AS faskes, v.kota, v.type_alat, v.nama_alat, v.skema,
-           v.target_jumlah_tes, v.total_tes, v.rata_tes_bulanan, v.capaian_target,
-           v.alat_seskema_di_customer, v.total_tes_customer_seskema,
-           v.revenue_netto_customer, v.rupiah_per_tes_customer, v.basis_tes_memadai,
-           v.porsi_kso, v.revenue_tumpang_tindih,
+           v.target_jumlah_tes,
+           ta.tes                                               AS tes_alat_rentang,
+           CASE WHEN ta.bulan_lapor > 0
+                THEN ta.tes::numeric / ta.bulan_lapor END       AS rata_tes_rentang,
+           CASE WHEN v.target_jumlah_tes > 0 AND ta.bulan_lapor > 0
+                THEN round((ta.tes::numeric / ta.bulan_lapor) / v.target_jumlah_tes, 3)
+                END                                             AS capaian_rentang,
+           v.alat_seskema_di_customer,
+           fr.tes                                               AS tes_faskes_rentang,
+           fr.revenue                                           AS revenue_rentang,
+           CASE WHEN fr.tes > 0 AND fr.revenue IS NOT NULL
+                THEN round(fr.revenue / fr.tes, 2) END          AS rp_per_tes_rentang,
+           -- kolom di bawah ini SELURUH periode (lihat komentar di atas)
+           v.basis_tes_memadai, v.porsi_kso, v.revenue_tumpang_tindih,
            v.tes_sheet_periode_banding, v.tes_ditagihkan_accurate, v.rasio_tagih_lapor,
            v.bulan_tertagih_accurate, v.tagih_pola_datar, v.status_penagihan
     FROM kso_asset_produktivitas_v v
     LEFT JOIN accurate_customer c ON c.id = v.account_id
     LEFT JOIN kso_asset a ON a.id = v.asset_id
+    LEFT JOIN tes_aset ta ON ta.asset_id = v.asset_id
+    LEFT JOIN faskes_rentang fr ON fr.account_id = v.account_id
     WHERE v.skema = ${skema}
     ORDER BY c.name NULLS LAST, v.customer_raw, v.nama_alat`;
 
@@ -113,18 +153,23 @@ export async function buildKsoWorkbook(opts: KsoExportOpts): Promise<Buffer> {
     { h: "Rata tes/bln alat ini", w: 18, fmt: FMT_1D }, { h: "Capaian target alat ini", w: 18, fmt: FMT_3D },
     { h: "Alat seskema di faskes", w: 18, fmt: FMT_INT }, { h: "Tes faskes", w: 14, fmt: FMT_INT },
     { h: "Revenue netto faskes", w: 20, fmt: FMT_RP }, { h: "Rp per tes (faskes)", w: 18, fmt: FMT_RP },
-    { h: "Penyebut memadai", w: 16 }, { h: "Porsi KSO", w: 12, fmt: FMT_3D }, { h: "Skema ganda", w: 12 },
-    { h: "Tes dilaporkan (banding)", w: 20, fmt: FMT_INT }, { h: "Tes ditagihkan", w: 16, fmt: FMT_INT },
-    { h: "Rasio tagih/lapor", w: 16, fmt: FMT_3D }, { h: "Bulan tertagih", w: 14, fmt: FMT_INT },
-    { h: "Pola tagih datar", w: 16 }, { h: "Status penagihan", w: 24 },
+    // Empat kolom terakhir sengaja BERLABEL "seluruh periode": definisinya bukan
+    // per-rentang, dan memaksanya ikut rentang = mengarang besaran baru bernama sama.
+    { h: "Penyebut memadai (seluruh periode)", w: 24 }, { h: "Porsi KSO (seluruh periode)", w: 20, fmt: FMT_3D },
+    { h: "Skema ganda", w: 12 },
+    { h: "Tes dilaporkan (periode banding)", w: 24, fmt: FMT_INT },
+    { h: "Tes ditagihkan (periode banding)", w: 24, fmt: FMT_INT },
+    { h: "Rasio tagih/lapor (periode banding)", w: 26, fmt: FMT_3D },
+    { h: "Bulan tertagih", w: 14, fmt: FMT_INT },
+    { h: "Pola tagih datar", w: 16 }, { h: "Status penagihan (seluruh periode)", w: 28 },
   ]);
   for (const r of alat) {
     s1.addRow([
       r.faskes ?? r.customer_raw, r.kota, r.skema, num(r.account_id), r.customer_raw,
       r.sn_key, r.sn_raw, r.nama_alat, r.type_alat,
-      bulat(r.target_jumlah_tes), bulat(r.total_tes), satuDesimal(r.rata_tes_bulanan), num(r.capaian_target),
-      num(r.alat_seskema_di_customer), bulat(r.total_tes_customer_seskema),
-      bulat(r.revenue_netto_customer), bulat(r.rupiah_per_tes_customer),
+      bulat(r.target_jumlah_tes), bulat(r.tes_alat_rentang), satuDesimal(r.rata_tes_rentang), num(r.capaian_rentang),
+      num(r.alat_seskema_di_customer), bulat(r.tes_faskes_rentang),
+      bulat(r.revenue_rentang), bulat(r.rp_per_tes_rentang),
       yaTidak(r.basis_tes_memadai), num(r.porsi_kso), yaTidak(r.revenue_tumpang_tindih),
       bulat(r.tes_sheet_periode_banding), bulat(r.tes_ditagihkan_accurate), num(r.rasio_tagih_lapor),
       num(r.bulan_tertagih_accurate), yaTidak(r.tagih_pola_datar), r.status_penagihan,
@@ -179,8 +224,9 @@ export async function buildKsoWorkbook(opts: KsoExportOpts): Promise<Buffer> {
   const ket: Array<[string, string]> = [
     ["Skema", skema],
     ["Rentang periode", `${dari.slice(0, 7)} s/d ${sampai.slice(0, 7)}`],
-    ["CAKUPAN BERBEDA ANTAR SHEET", `Sheet 'Reagen keluar' dan 'Tes & revenue bulanan' mengikuti rentang di atas. Sheet 'Produktivitas per alat' memakai SELURUH periode — kolomnya berasal dari agregat yang juga jadi dasar peringkat & median di layar. Jadi Sigma revenue bulanan tidak akan sama dengan kolom 'Revenue netto faskes' kecuali rentangnya memuat seluruh data.`],
-    ["Sheet Produktivitas per alat", "Satu baris per ALAT, SELURUH periode. Kolom 'Tes alat ini/Target/Rata/Capaian' milik alat itu; kolom 'Tes faskes/Revenue/Rp per tes' milik FASKES dan berulang di tiap alat milik faskes yang sama."],
+    ["CAKUPAN", `SEMUA sheet dibatasi rentang di atas (keputusan user 2026-08-24). Sigma 'Revenue netto' di sheet Tes & revenue bulanan = kolom 'Revenue netto faskes' di sheet Produktivitas per alat = Sigma 'Nilai netto' baris ber-'ya' di sheet Reagen keluar.`],
+    ["KECUALI 4 kolom berlabel", `Kolom yang headernya menyebut '(seluruh periode)' atau '(periode banding)' TIDAK mengikuti rentang, karena definisinya bukan per-rentang: Porsi KSO ditetapkan atas seluruh data; Penyebut memadai ambangnya 100 tes per TAHUN; Rasio tagih/lapor & Tes ditagihkan memakai basis 'periode banding' sendiri. Memaksanya ikut rentang berarti besaran baru yang kebetulan bernama sama.`],
+    ["Sheet Produktivitas per alat", "Satu baris per ALAT. Kolom 'Tes alat ini/Target/Rata/Capaian' milik alat itu; kolom 'Tes faskes/Revenue/Rp per tes' milik FASKES dan berulang di tiap alat milik faskes yang sama."],
     ["Sheet Reagen keluar", "Satu baris per faskes x bulan x item x kategori x satuan, dibatasi rentang di atas. Nilai sudah dikali porsi KSO untuk faskes berskema ganda."],
     ["Kolom 'Masuk revenue skema'", "Hanya baris ber-'ya' yang dijumlahkan menjadi Revenue netto. Menjumlahkan seluruh kolom Nilai netto TIDAK akan cocok dengan Revenue."],
     ["Alasan 'alat tak dimiliki'", "Penagihan per-tes untuk jenis alat yang tidak ada di master aset faskes ini pada skema ini — karena itu tidak diakui sebagai revenue skema."],
