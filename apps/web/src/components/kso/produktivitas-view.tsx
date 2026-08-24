@@ -11,57 +11,69 @@ import { cn } from "@/lib/utils";
 import { Card, CardContent } from "@/components/ui/card";
 import { ExportButton, type ExportColumn } from "@/components/ui/export-button";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
-import { FaskesRow, FilterKso, Tag, num, rp, rupiahPerAlat, skemaPakaiRpTes } from "./produktivitas-shared";
+import {
+  FaskesRow, FilterKso, Tag, num, rp, rupiahPerAlat, skemaPakaiRpTes,
+  type KsoProduktivitasRow,
+} from "./produktivitas-shared";
 import { FaskesDetailDialog } from "./faskes-detail-dialog";
 
 export type { KsoProduktivitas, KsoProduktivitasRow } from "./produktivitas-shared";
 
-// ── KOLOM EXPORT: SELURUH isi baris, bukan tujuh yang tampil ──────────────────────
-// Tabel di layar sengaja ringkas supaya bisa dibaca sekilas; berkas export tidak punya
-// batasan itu, dan yang mengunduhnya biasanya justru mau memeriksa hal yang tidak
-// ditampilkan (porsi, rasio tagih/lapor, status penagihan, target per alat).
+// ── KOLOM EXPORT: satu baris per ASET, bukan per faskes ───────────────────────────
+// Tabel di layar dikelompokkan per faskes×skema (revenue & Rp/tes memang milik customer,
+// dan 18 baris identik untuk RS MUSLIMAT membuat "201 baris" terbaca seperti 201 faskes).
+// Export TIDAK boleh mengikuti pengelompokan itu, dan sebabnya terlihat dari berkasnya:
+// kolom per-alat (target, tes alat ini, rata/bln, capaian) ikut baris PERWAKILAN grup,
+// jadi SEKAR LANGIT (2 alat) mengekspor "tes alat ini 1 · rata 0,5" di sebelah "tes
+// dilaporkan 1.425", dan NUSANTARA MOJOKERTO (18 alat) mengekspor "tes alat ini 554"
+// tanpa menyebut alat mana. Itu mencampur level faskes dengan level aset dalam satu baris.
 //
-// Angka dikirim MENTAH — tanpa "Rp", tanpa pemisah ribuan, titik sebagai desimal. Kalau
-// diformat gaya Indonesia ("Rp 1.234.567"), Excel membacanya sebagai TEKS dan seluruh
-// kolom tidak bisa dijumlahkan; itu justru hal pertama yang dilakukan orang setelah
-// mengunduh. Pemformatan urusan pembaca, bukan berkasnya.
+// Dengan satu baris per aset, kolom per-alat punya PEMILIK (SN + nama alat), dan kolom
+// level-customer berulang di tiap aset milik faskes yang sama — wajar untuk bentuk panjang,
+// dan justru yang dibutuhkan kalau berkasnya mau di-pivot.
 //
-// Boolean ditulis "ya"/"" alih-alih true/false: kolom yang isinya "false" beruntun
-// terbaca seperti data, sementara sel kosong langsung terbaca sebagai "tidak".
-function kolomExportKso(): ExportColumn<FaskesRow>[] {
+// Angka dikirim sebagai NUMBER; ExportButton yang menuliskannya (desimal dengan koma,
+// integer apa adanya). Pemformatan di sini pernah dicoba dan salah: titik desimal dibaca
+// Excel Indonesia sebagai pemisah ribuan sehingga Rp 29 jt tampil 29 triliun (#1028).
+//
+// Rupiah & hitungan tes DIBULATKAN: revenue di sini hasil alokasi proporsional, ekornya
+// tidak bermakna, dan integer satu-satunya bentuk yang aman di semua locale. Rata tes/bln
+// dibulatkan 1 desimal — "79,388889 tes per bulan" bukan presisi, cuma sisa pembagian.
+// Rasio, porsi, dan capaian dibiarkan apa adanya (view sudah membulatkannya ke 3 desimal).
+function kolomExportKso(): ExportColumn<KsoProduktivitasRow>[] {
   const yaTidak = (v: boolean) => (v ? "ya" : "");
-  // RUPIAH & HITUNGAN TES dibulatkan ke integer. Bukan kosmetik: revenue di sini hasil
-  // ALOKASI proporsional, jadi ekornya panjang (…,055227) dan tidak bermakna — rupiah
-  // tidak punya pecahan. Integer juga satu-satunya bentuk yang aman di semua locale
-  // Excel; desimal bergantung pemisah, dan itulah yang merusak export pertama.
-  // Rasio, porsi, capaian, dan rata/bln TIDAK dibulatkan — di sana desimalnya justru
-  // isinya (ExportButton menuliskannya dengan koma).
   const bulat = (v: number | null) => (v === null ? null : Math.round(v));
+  const satuDesimal = (v: number | null) => (v === null ? null : Math.round(v * 10) / 10);
   return [
-    { header: "Faskes", value: (g) => g.faskes },
-    { header: "Kota", value: (g) => g.kota },
-    { header: "Skema", value: (g) => g.r.skema },
-    { header: "Account ID (Accurate)", value: (g) => g.r.accountId },
-    { header: "Nama di sheet", value: (g) => g.r.customerRaw },
-    { header: "Jumlah alat seskema", value: (g) => g.r.alatSeskemaDiCustomer ?? g.alatList.length },
-    { header: "Daftar alat", value: (g) => g.alatList.join(" | ") },
-    { header: "Tes dilaporkan (seluruh periode)", value: (g) => bulat(g.r.totalTesCustomerSeskema) },
-    { header: "Revenue netto", value: (g) => bulat(g.r.revenueNettoCustomer) },
-    { header: "Rp per tes", value: (g) => bulat(g.r.rupiahPerTesCustomer) },
-    { header: "Rp per alat", value: (g) => bulat(rupiahPerAlat(g.r)) },
-    { header: "Penyebut memadai (>=100 tes)", value: (g) => yaTidak(g.r.basisTesMemadai) },
-    { header: "Porsi KSO", value: (g) => g.r.porsiKso },
-    { header: "Skema ganda", value: (g) => yaTidak(g.r.revenueTumpangTindih) },
-    { header: "Tes dilaporkan (periode banding)", value: (g) => bulat(g.r.tesSheetPeriodeBanding) },
-    { header: "Tes ditagihkan (Accurate)", value: (g) => bulat(g.r.tesDitagihkanAccurate) },
-    { header: "Rasio tagih/lapor", value: (g) => g.r.rasioTagihLapor },
-    { header: "Bulan tertagih", value: (g) => g.r.bulanTertagihAccurate },
-    { header: "Pola tagih datar (minimum kontrak)", value: (g) => yaTidak(g.r.tagihPolaDatar) },
-    { header: "Status penagihan", value: (g) => g.r.statusPenagihan },
-    { header: "Target tes/bln (per alat)", value: (g) => g.r.targetJumlahTes },
-    { header: "Tes alat ini", value: (g) => bulat(g.r.totalTes) },
-    { header: "Rata tes/bln (alat ini)", value: (g) => g.r.rataTesBulanan },
-    { header: "Capaian target (alat ini)", value: (g) => g.r.capaianTarget },
+    // ── identitas aset ──
+    { header: "Faskes", value: (r) => r.faskes ?? r.customerRaw },
+    { header: "Kota", value: (r) => r.kota },
+    { header: "Skema", value: (r) => r.skema },
+    { header: "Account ID (Accurate)", value: (r) => r.accountId },
+    { header: "Nama di sheet", value: (r) => r.customerRaw },
+    { header: "SN", value: (r) => r.snKey },
+    { header: "Nama alat", value: (r) => r.namaAlat },
+    { header: "Jenis alat", value: (r) => r.typeAlat },
+    // ── per ASET ini ──
+    { header: "Target tes/bln", value: (r) => bulat(r.targetJumlahTes) },
+    { header: "Tes alat ini (seluruh periode)", value: (r) => bulat(r.totalTes) },
+    { header: "Rata tes/bln alat ini", value: (r) => satuDesimal(r.rataTesBulanan) },
+    { header: "Capaian target alat ini", value: (r) => r.capaianTarget },
+    // ── level FASKES x SKEMA (berulang per aset milik faskes yang sama) ──
+    { header: "Alat seskema di faskes", value: (r) => r.alatSeskemaDiCustomer },
+    { header: "Tes faskes (seluruh periode)", value: (r) => bulat(r.totalTesCustomerSeskema) },
+    { header: "Revenue netto faskes", value: (r) => bulat(r.revenueNettoCustomer) },
+    { header: "Rp per tes (faskes)", value: (r) => bulat(r.rupiahPerTesCustomer) },
+    { header: "Penyebut memadai (>=100 tes)", value: (r) => yaTidak(r.basisTesMemadai) },
+    { header: "Porsi KSO", value: (r) => r.porsiKso },
+    { header: "Skema ganda", value: (r) => yaTidak(r.revenueTumpangTindih) },
+    // ── pembanding penagihan ──
+    { header: "Tes dilaporkan (periode banding)", value: (r) => bulat(r.tesSheetPeriodeBanding) },
+    { header: "Tes ditagihkan (Accurate)", value: (r) => bulat(r.tesDitagihkanAccurate) },
+    { header: "Rasio tagih/lapor", value: (r) => r.rasioTagihLapor },
+    { header: "Bulan tertagih", value: (r) => r.bulanTertagihAccurate },
+    { header: "Pola tagih datar (minimum kontrak)", value: (r) => yaTidak(r.tagihPolaDatar) },
+    { header: "Status penagihan", value: (r) => r.statusPenagihan },
   ];
 }
 
@@ -200,15 +212,16 @@ export function KsoProduktivitasTabel({ f }: { f: FilterKso }) {
         <CardContent className="space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="text-muted-foreground text-xs">
-              {rows.length} faskes pada filter ini
+              {rows.length} faskes · {f.mentah.length} alat pada filter ini
+              <span className="ml-1">— export berisi satu baris per alat</span>
             </div>
             {/* Export memuat SELURUH kolom baris, bukan tujuh yang tampil — lihat
                 kolomExport. Data yang diekspor mengikuti filter & skema yang aktif,
                 supaya isi berkas cocok dengan yang sedang dilihat di layar. */}
             <ExportButton
-              filename={`kso-produktivitas-${f.skema.toLowerCase()}`}
+              filename={`kso-produktivitas-${f.skema.toLowerCase()}-per-alat`}
               columns={kolomExport}
-              data={rows}
+              data={f.mentah}
             />
           </div>
           <DataTable
