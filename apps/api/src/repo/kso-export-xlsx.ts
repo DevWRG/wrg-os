@@ -187,7 +187,12 @@ export async function buildKsoWorkbook(opts: KsoExportOpts): Promise<Buffer> {
     { h: "Kategori", w: 16 }, { h: "Satuan", w: 10 },
     { h: "Qty", w: 12, fmt: FMT_1D }, { h: "Nilai netto", w: 18, fmt: FMT_RP },
     { h: "Jumlah faktur", w: 14, fmt: FMT_INT },
-    { h: "Masuk revenue skema", w: 20 }, { h: "Alasan di luar skema", w: 30 },
+    // "Alasan pengecualian", BUKAN "Alasan di luar skema": header lama memuat kata
+    // "skema" yang juga ada di "Masuk revenue skema", dan pencarian header (skrip
+    // pemeriksa, atau orang yang memfilter kolom) mengambil yang salah. Sudah kejadian
+    // saat berkas prod diverifikasi 2026-08-24. Nama kolom yang saling memuat kata
+    // pembeda adalah jebakan yang tidak memunculkan error.
+    { h: "Masuk revenue skema", w: 20 }, { h: "Alasan pengecualian", w: 32 },
   ]);
   for (const r of reagen) {
     s2.addRow([
@@ -234,6 +239,7 @@ export async function buildKsoWorkbook(opts: KsoExportOpts): Promise<Buffer> {
     ["Rp per tes", "Hanya bermakna pada skema PER_TEST. Di BELI_REAGEN hanya 4 dari 329 alat melaporkan tes, jadi penyebutnya praktis tidak ada."],
     ["Penyebut memadai", "Kosong = total tes seskema di bawah 100/tahun. Jangan dipakai memeringkat: Rp/tes meledak saat penyebutnya nyaris nol."],
     ["Revenue netto", "Netto tanpa PPN, dialokasikan proporsional per baris faktur. Nilainya dibulatkan ke rupiah."],
+    ["Selisih beberapa rupiah antar sheet", "WAJAR, dan bukan tanda data rusak. Rupiah dibulatkan PER SEL supaya kolomnya bisa dijumlahkan di Excel tanpa sen. Sheet Reagen punya jauh lebih banyak baris daripada sheet Bulanan, jadi akumulasi pembulatannya berbeda. Terukur di prod 2026-08-24: Sigma Reagen 'ya' Rp 11.121.560.267 vs Sigma Revenue bulanan Rp 11.121.560.234 — selisih Rp 33 dari Rp 11,1 miliar (0,0000003%), sementara di database selisihnya NOL eksak. Kalau selisihnya jauh lebih besar dari itu, barulah ada yang perlu diperiksa."],
   ];
   for (const [a, b] of ket) s4.addRow([a, b]);
   s4.getColumn(2).alignment = { wrapText: true, vertical: "top" };
