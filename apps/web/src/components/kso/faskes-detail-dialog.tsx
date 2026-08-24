@@ -289,13 +289,17 @@ export function FaskesDetailDialog({ g, median, onClose }: {
     }
     for (const t of titik) {
       out.push({ ...dasar, ...kosong, bagian: "Revenue bulanan",
-        periode: t.periode, tes: t.jumlahTes, revenue: t.revenueNetto,
+        // Dibulatkan: rupiah tak punya pecahan, dan ekor desimal di sini sisa alokasi
+        // proporsional. Integer juga satu-satunya bentuk yang aman di semua locale Excel.
+        periode: t.periode, tes: t.jumlahTes,
+        revenue: t.revenueNetto === null ? null : Math.round(t.revenueNetto),
         keterangan: t.jumlahTes === null ? "tidak ada laporan tes bulan ini" : "" });
     }
     for (const x of rgn) {
       out.push({ ...dasar, ...kosong, bagian: "Reagen",
         nama: x.itemNama ?? "", kode: x.itemNo ?? "", jenisAlat: x.jenisAlat ?? "",
-        kategori: x.kategori, satuan: x.unit, qty: x.qty, revenue: x.nilaiNetto,
+        kategori: x.kategori, satuan: x.unit, qty: x.qty,
+        revenue: x.nilaiNetto === null ? null : Math.round(x.nilaiNetto),
         // Status dalam/luar skema DIIKUTKAN: tanpa itu, orang menjumlahkan kolom
         // "Nilai netto" di Excel dan mendapat angka yang tak cocok dengan revenue —
         // cacat yang sama yang baru dibereskan di layar, cuma berpindah ke berkas.
