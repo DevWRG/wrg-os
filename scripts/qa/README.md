@@ -115,6 +115,19 @@ rm -f apps/api/tsconfig.tsbuildinfo && pnpm --filter @wrg/api build
 `DATABASE_URL` default `postgres:///wrg_os_dev`. Exit code 1 kalau ada skenario
 tak cocok, jadi bisa dipakai sebagai gerbang manual.
 
+## Brief untuk tim magang
+
+`BRIEF-UJI-MAGANG.md` — hand-out siap kirim: aturan data (kenapa dump prod tidak
+dipakai), setup dari nol, generator volume sintetis, cara menjalankan aplikasi,
+dan daftar apa yang harus diuji di **jalur tulis** (satu-satunya celah yang tak
+tertutup harness mana pun di folder ini).
+
+`seed-volume-sintetis.sql` — ~46.000 baris BUATAN di tabel mirror Accurate supaya
+menu berat (Stock Gudang, ED Watch, Sales Overview, Customers, Orders, Shipments,
+Price Book) terasa realistis tanpa menyalin sebaris pun data produksi.
+Deterministik (tanpa `random()`), idempoten, semua id di ruang 900.000.000+ dan
+nama diawali `SINTETIS`.
+
 ## BACA vs TULIS — baca ini sebelum jalan di luar dev
 
 Tiap skenario ditandai, dan tandanya muncul di keluaran:
