@@ -15,8 +15,9 @@
 // TIDAK pernah mengirim WA: WA_SEND_URL dikosongkan (mode STUB).
 //
 // Pakai:
-//   node scripts/qa/sim-hashtag.mjs                → semua skenario
-//   node scripts/qa/sim-hashtag.mjs stok sph       → hanya yang namanya memuat kata itu
+//   node scripts/qa/sim-hashtag.mjs                → semua skenario (butuh fixture)
+//   node scripts/qa/sim-hashtag.mjs --baca-saja    → HANYA skenario tanpa efek tulis
+//   node scripts/qa/sim-hashtag.mjs stok sph       → filter nama skenario
 //   DATABASE_URL=postgres:///wrg_os_dev node scripts/qa/sim-hashtag.mjs
 //
 // Prasyarat:
@@ -26,6 +27,31 @@
 //
 // Keluar dengan kode 1 kalau ada skenario yang tak cocok → bisa dipakai di
 // pipeline manual. TIDAK dipasang di CI: butuh Postgres ber-skema penuh.
+//
+// ── BACA vs TULIS: kenapa ditandai ───────────────────────────────────────
+// Tiap skenario ditandai `tulis: true` kalau jalur suksesnya MENGUBAH data
+// domain. Ini bukan sekadar label — sebagian command punya efek yang nyata:
+//
+//   #APPROVE / #REJECT  → benar-benar MEMUTUSKAN approval request
+//   #KIRIM #BAST #BUKTI → memajukan status SJ di shipment_tracking
+//   #HELPDESK           → membuat tiket GA bernomor urut
+//   #SPH                → menyimpan draft SPH atas nama AM
+//   #KLAIM              → menyimpan baris doc_klaim
+//   #install dkk        → menyimpan teknisi_report
+//
+// Terhadap data FIXTURE (dev) itu tak berbahaya: semua sasarannya milik
+// fixture sendiri (QA-AM-1, SJ-QA-00x, APR-900x). Terhadap data NYATA,
+// menjalankannya bukan verifikasi melainkan transaksi — approval orang
+// betulan ikut diputus. Karena itu `--baca-saja` ada, dan skenario tulis
+// DITOLAK kalau fixture-nya tak ada (lihat pemeriksaan di bawah).
+//
+// PERINGATAN yang tetap berlaku di mode --baca-saja: harness SELALU menyisipkan
+// baris `wa_message` (processInboundMessage butuh baris nyata untuk diproses).
+// Baris-baris itu ber-`input_hash` prefiks 'qa-sim-' supaya bisa dikenali &
+// dibuang:
+//   DELETE FROM wa_message WHERE input_hash LIKE 'qa-sim-%';
+// Di DB nyata, baris sintetis itu ikut terbaca oleh rekap/digest WA kalau tak
+// dibersihkan. Jadi "baca-saja" = tak mengubah data DOMAIN, bukan nol tulis.
 
 import { createServer } from "node:http";
 import { mkdtempSync, writeFileSync } from "node:fs";
@@ -107,17 +133,58 @@ const foto = (n) => {
 };
 const FOTO = { klaim: foto("klaim"), kirim: foto("kirim"), bast: foto("bast"), bukti: foto("bukti") };
 
-// ── pengirim fixture (harus cocok seed-hashtag-fixtures.sql) ──────────────
-const GRUP = "6280000000000-1234567890@g.us";
-const AM = { jid: "628111000001@s.whatsapp.net", nama: "Dewi Fixture" };
-const HOD = { jid: "628111000002@s.whatsapp.net", nama: "Rina Fixture" };
-const TEKNISI = { jid: "628111000003@s.whatsapp.net", nama: "Joko Fixture" };
+// ── pengirim (default fixture, harus cocok seed-hashtag-fixtures.sql) ─────
+// Bisa di-override lewat env. Gunanya untuk menguji command BACA terhadap data
+// NYATA (mis. di DB prod, mode --baca-saja): nomor fixture tak ada di roster
+// nyata, jadi gerbang resolveSender menolaknya dan semua command baca cuma
+// membalas hening — hasilnya terbaca seperti kerusakan, padahal cuma identitas
+// pengirimnya yang tak dikenal. Isi QA_AM_WA dengan nomor AM yang BENAR ada di
+// master_user, lalu QA_AM_NAMA dengan namanya (dipakai mencocokkan teks balasan
+// yang menyebut nama).
+//
+//   QA_AM_WA=6281234567890 QA_AM_NAMA="Nama Asli" \
+//     node scripts/qa/sim-hashtag.mjs --baca-saja
+const AM = {
+  jid: `${process.env.QA_AM_WA ?? "628111000001"}@s.whatsapp.net`,
+  nama: process.env.QA_AM_NAMA ?? "Dewi Fixture",
+};
+const HOD = {
+  jid: `${process.env.QA_HOD_WA ?? "628111000002"}@s.whatsapp.net`,
+  nama: process.env.QA_HOD_NAMA ?? "Rina Fixture",
+};
+const TEKNISI = {
+  jid: `${process.env.QA_TEKNISI_WA ?? "628111000003"}@s.whatsapp.net`,
+  nama: process.env.QA_TEKNISI_NAMA ?? "Joko Fixture",
+};
+// Sengaja TIDAK bisa di-override: harus tetap tak dikenal roster mana pun,
+// itu inti dari 5 uji penembusan gerbang.
 const ASING = { jid: "628999999999@s.whatsapp.net", nama: "Orang Asing" };
+const GRUP = process.env.QA_GRUP_JID ?? "6280000000000-1234567890@g.us";
 
-// ── prasyarat & data turunan ──────────────────────────────────────────────
-const [amAda] = await sql`SELECT 1 FROM master_user WHERE am_id = 'QA-AM-1'`;
-if (!amAda) {
-  console.error("Fixture belum ada. Jalankan dulu:\n  psql -d wrg_os_dev -f scripts/qa/seed-hashtag-fixtures.sql");
+// ── mode & gerbang keamanan ───────────────────────────────────────────────
+const argv = process.argv.slice(2);
+const BACA_SAJA = argv.includes("--baca-saja");
+const filter = argv.filter((a) => !a.startsWith("--")).map((s) => s.toLowerCase());
+
+// Fixture ADA = aman menjalankan skenario tulis, karena semua sasaran tulis
+// (QA-AM-1, SJ-QA-00x, APR-900x, hod@qa.invalid) adalah milik fixture. Fixture
+// TIDAK ada = DB ini bukan DB fixture → jangan sentuh apa pun yang menulis.
+const [fixtureAda] = await sql`SELECT 1 FROM master_user WHERE am_id = 'QA-AM-1'`;
+
+if (!fixtureAda && !BACA_SAJA) {
+  console.error(
+    [
+      "Fixture tidak ditemukan (master_user 'QA-AM-1' tak ada) — skenario TULIS ditolak.",
+      "",
+      "Skenario tulis punya efek domain nyata: #APPROVE benar-benar memutuskan",
+      "approval request, #KIRIM/#BAST memajukan status SJ, #HELPDESK membuat tiket.",
+      "Di DB fixture itu aman (sasarannya milik fixture); di DB nyata itu transaksi.",
+      "",
+      "Pilih salah satu:",
+      "  psql -d wrg_os_dev -f scripts/qa/seed-hashtag-fixtures.sql   # semai fixture, lalu ulangi",
+      "  node scripts/qa/sim-hashtag.mjs --baca-saja                  # uji terhadap data apa adanya",
+    ].join("\n"),
+  );
   process.exit(1);
 }
 // Item yang punya stok cabang (dipilih seed) — dipakai buat #STOK cocok-tunggal.
@@ -181,7 +248,10 @@ async function resetState() {
     UPDATE approval_step SET status='pending', decided_by=NULL, decided_at=NULL, decision_note=NULL
     WHERE request_id IN (SELECT id FROM approval_request WHERE kode IN ('APR-9001','APR-9002','APR-9003'))`;
 }
-await resetState();
+// resetState memulangkan baris FIXTURE ke tahap awal. Dilewati kalau fixture
+// tak ada — di DB nyata tak ada yang boleh dipulangkan.
+if (fixtureAda) await resetState();
+else await sql`DELETE FROM wa_message WHERE input_hash LIKE 'qa-sim-%'`;
 
 let seq = 0;
 async function kirimPesan({ body, from, type = "text", media = null, geo = null }) {
@@ -202,17 +272,21 @@ async function kirimPesan({ body, from, type = "text", media = null, geo = null 
 // ── skenario ──────────────────────────────────────────────────────────────
 // `harap` = pola yang WAJIB muncul di balasan. `null` = bot HARUS diam
 // (gerbang pengirim / hashtag tanpa tujuan).
+// Nama pengirim bisa di-override lewat env, jadi pola harapan disusun runtime.
+// Di-escape supaya nama ber-titik/tanda kurung tak jadi metakarakter regex.
+const esc = (t) => String(t).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
 const skenario = [
   // F2 #STOK — gerbang: resolveSender (master_user)
   { nama: "stok · satu barang cocok", body: `#STOK ${itemStok?.no ?? "-"}`, from: AM, harap: /📦 \*.+\*/ },
   { nama: "stok · barang tak ada", body: "#STOK barangtidakada", from: AM, harap: /tidak ditemukan/ },
-  { nama: "stok · argumen kosong", body: "#STOK", from: AM, harap: /⚠️ Isi nama\/kode barang setelah #STOK, Dewi Fixture/ },
+  { nama: "stok · argumen kosong", body: "#STOK", from: AM, harap: new RegExp(`⚠️ Isi nama/kode barang setelah #STOK, ${esc(AM.nama)}`) },
   { nama: "stok · pengirim tak dikenal (gerbang)", body: "#STOK FX80", from: ASING, harap: null },
 
   // F4/QW3 #CEK — gerbang: resolveSender. Isinya data komersial.
   { nama: "cek · varian nomor dokumen", body: "#CEK SO-00123", from: AM, harap: /.+/ },
   { nama: "cek · varian customer", body: "#CEK CUSTOMER RSUD Kota", from: AM, harap: /.+/ },
-  { nama: "cek · argumen kosong", body: "#CEK", from: AM, harap: /⚠️ Isi nomor dokumen atau nama customer setelah #CEK, Dewi Fixture/ },
+  { nama: "cek · argumen kosong", body: "#CEK", from: AM, harap: new RegExp(`⚠️ Isi nomor dokumen atau nama customer setelah #CEK, ${esc(AM.nama)}`) },
   { nama: "cek · pengirim tak dikenal (gerbang)", body: "#CEK SO-00123", from: ASING, harap: null },
 
   // F15 #PRICING
@@ -221,8 +295,8 @@ const skenario = [
   { nama: "pricing · pengirim tak dikenal (gerbang)", body: "#PRICING reagen", from: ASING, harap: null },
 
   // F15 #SPH — 4 bagian dipisah "|", diskon wajib bertanda %
-  { nama: "sph · format benar", body: `#SPH RS Fixture Sehat | ${plOk?.kode ?? "-"} | 10 | 5%`, from: AM, harap: /✅ Draft SPH tersimpan, Dewi Fixture/ },
-  { nama: "sph · kode tak ada di price book", body: "#SPH RS Fixture Sehat | KODE-NGAWUR | 10 | 5%", from: AM, harap: /⚠️ Kode "KODE-NGAWUR" tak ketemu di Price Book, Dewi Fixture/ },
+  { tulis: true, nama: "sph · format benar", body: `#SPH RS Fixture Sehat | ${plOk?.kode ?? "-"} | 10 | 5%`, from: AM, harap: new RegExp(`✅ Draft SPH tersimpan, ${esc(AM.nama)}`) },
+  { nama: "sph · kode tak ada di price book", body: "#SPH RS Fixture Sehat | KODE-NGAWUR | 10 | 5%", from: AM, harap: new RegExp(`⚠️ Kode "KODE-NGAWUR" tak ketemu di Price Book, ${esc(AM.nama)}`) },
   // Plafon diskon per-SKU ditegakkan di createSphDraft — jalur WA pakai fungsi
   // yang SAMA dgn form web, jadi aturannya tak bisa ditembus lewat WA.
   { nama: "sph · diskon di atas plafon SKU", body: `#SPH RS Fixture Sehat | ${plNol?.kode ?? "-"} | 10 | 5%`, from: AM, harap: /melebihi diskon maks SKU ini/ },
@@ -230,25 +304,25 @@ const skenario = [
   { nama: "sph · bagian kurang dari 4", body: "#SPH RS Fixture Sehat | KODE | 10", from: AM, harap: /4 bagian dipisah/ },
 
   // DOC-KLAIM #KLAIM — sengaja TANPA gerbang pengirim, tapi wajib foto
-  { nama: "klaim · foto + OCR aktif", body: "#KLAIM invoice customer X", from: ASING, type: "image", media: FOTO.klaim, harap: /✅ #KLAIM diterima, foto tersimpan\./ },
-  { nama: "klaim · foto + OCR dry-run", body: "#KLAIM dryrun invoice customer X", from: ASING, type: "image", media: FOTO.klaim, harap: /📥 Foto #KLAIM tersimpan\. OCR belum aktif \(mode dry-run\)/ },
+  { tulis: true, nama: "klaim · foto + OCR aktif", body: "#KLAIM invoice customer X", from: ASING, type: "image", media: FOTO.klaim, harap: /✅ #KLAIM diterima, foto tersimpan\./ },
+  { tulis: true, nama: "klaim · foto + OCR dry-run", body: "#KLAIM dryrun invoice customer X", from: ASING, type: "image", media: FOTO.klaim, harap: /📥 Foto #KLAIM tersimpan\. OCR belum aktif \(mode dry-run\)/ },
   { nama: "klaim · tanpa foto", body: "#KLAIM invoice customer X", from: ASING, harap: /⚠️ #KLAIM wajib disertai foto dokumen/ },
   // services/ai mati HARUS dibalas sopan, bukan melempar & merobohkan batch.
   { nama: "klaim · services/ai mati", body: "#KLAIM invoice customer X", from: ASING, type: "image", media: FOTO.klaim, matikanAi: true, harap: /⚠️ Gagal proses #KLAIM: services\/ai .* status 503/ },
 
   // F8 readiness board — gerbang: matchTeknisiByName (pushname → teknisi_capacity)
-  { nama: "install · teknisi dikenal", body: "#install Alat X terpasang", from: TEKNISI, harap: /✅ Laporan #INSTALL tercatat — Joko Fixture\./ },
-  { nama: "servis · teknisi dikenal", body: "#servis Ganti part", from: TEKNISI, harap: /✅ Laporan #SERVIS tercatat — Joko Fixture\./ },
-  { nama: "training · teknisi dikenal", body: "#training Training operator", from: TEKNISI, harap: /✅ Laporan #TRAINING tercatat — Joko Fixture\./ },
-  { nama: "kalibrasi · teknisi dikenal", body: "#kalibrasi Kalibrasi alat X selesai", from: TEKNISI, harap: /✅ Laporan #KALIBRASI tercatat — Joko Fixture\./ },
+  { tulis: true, nama: "install · teknisi dikenal", body: "#install Alat X terpasang", from: TEKNISI, harap: new RegExp(`✅ Laporan #INSTALL tercatat — ${esc(TEKNISI.nama)}\\.`) },
+  { tulis: true, nama: "servis · teknisi dikenal", body: "#servis Ganti part", from: TEKNISI, harap: new RegExp(`✅ Laporan #SERVIS tercatat — ${esc(TEKNISI.nama)}\\.`) },
+  { tulis: true, nama: "training · teknisi dikenal", body: "#training Training operator", from: TEKNISI, harap: new RegExp(`✅ Laporan #TRAINING tercatat — ${esc(TEKNISI.nama)}\\.`) },
+  { tulis: true, nama: "kalibrasi · teknisi dikenal", body: "#kalibrasi Kalibrasi alat X selesai", from: TEKNISI, harap: new RegExp(`✅ Laporan #KALIBRASI tercatat — ${esc(TEKNISI.nama)}\\.`) },
   { nama: "kalibrasi · bukan teknisi (gerbang)", body: "#kalibrasi Alat X", from: ASING, harap: null },
   // Hashtag polos tanpa deskripsi TIDAK boleh tersimpan sbg laporan sah.
-  { nama: "install · teks kosong", body: "#install", from: TEKNISI, harap: /⚠️ #INSTALL terdeteksi tapi teks kosong, Joko Fixture/ },
+  { nama: "install · teks kosong", body: "#install", from: TEKNISI, harap: new RegExp(`⚠️ #INSTALL terdeteksi tapi teks kosong, ${esc(TEKNISI.nama)}`) },
 
   // F12/F42/F93 shipping — sengaja TANPA gerbang (kurir tak punya roster)
-  { nama: "kirim · SJ ada", body: "#KIRIM SJ-QA-001", from: ASING, type: "image", media: FOTO.kirim, geo: { lat: -7.82, lon: 112.01 }, harap: /✅ SJ SJ-QA-001 \(RSUD Fixture Kediri\) ditandai \*DIKIRIM\*\./ },
-  { nama: "bast · SJ sudah terima", body: "#BAST SJ-QA-002", from: ASING, type: "image", media: FOTO.bast, geo: { lat: -7.81, lon: 112.02 }, harap: /✅ SJ SJ-QA-002 \(Klinik Fixture Kediri\) ditandai \*BAST\/SELESAI\*\./ },
-  { nama: "bukti · SJ sudah bast", body: "#BUKTI SJ-QA-003", from: ASING, type: "image", media: FOTO.bukti, harap: /✅ SJ SJ-QA-003 \(Lab Fixture Kediri\) ditandai \*BUKTI TERSIMPAN\*\./ },
+  { tulis: true, nama: "kirim · SJ ada", body: "#KIRIM SJ-QA-001", from: ASING, type: "image", media: FOTO.kirim, geo: { lat: -7.82, lon: 112.01 }, harap: /✅ SJ SJ-QA-001 \(RSUD Fixture Kediri\) ditandai \*DIKIRIM\*\./ },
+  { tulis: true, nama: "bast · SJ sudah terima", body: "#BAST SJ-QA-002", from: ASING, type: "image", media: FOTO.bast, geo: { lat: -7.81, lon: 112.02 }, harap: /✅ SJ SJ-QA-002 \(Klinik Fixture Kediri\) ditandai \*BAST\/SELESAI\*\./ },
+  { tulis: true, nama: "bukti · SJ sudah bast", body: "#BUKTI SJ-QA-003", from: ASING, type: "image", media: FOTO.bukti, harap: /✅ SJ SJ-QA-003 \(Lab Fixture Kediri\) ditandai \*BUKTI TERSIMPAN\*\./ },
   // Galat state machine harus jadi instruksi yang bisa dikerjakan kurir —
   // langkah `terima` web-only, jadi balasannya wajib menyebut siapa dimintai.
   { nama: "bast · SJ baru dikirim, belum terima", body: "#BAST SJ-QA-001", from: ASING, harap: /⚠️ SJ SJ-QA-001 belum ditandai TERIMA, jadi belum bisa BAST\. Minta admin tandai penerimaan dulu di menu Shipping/ },
@@ -258,19 +332,20 @@ const skenario = [
   { nama: "kirim · SJ tak ketemu", body: "#KIRIM SJ-9999-999", from: ASING, harap: /⚠️ SJ "SJ-9999-999" tidak ditemukan di tracking pengiriman\./ },
 
   // F139 #HELPDESK — sengaja TANPA gerbang
-  { nama: "helpdesk · ada deskripsi", body: "#HELPDESK AC ruang meeting mati total", from: ASING, harap: /✅ Tiket TKT-\d{4}-\d+ dibuat \(.+\), status: open\./ },
+  { tulis: true, nama: "helpdesk · ada deskripsi", body: "#HELPDESK AC ruang meeting mati total", from: ASING, harap: /✅ Tiket TKT-\d{4}-\d+ dibuat \(.+\), status: open\./ },
   { nama: "helpdesk · teks kosong", body: "#HELPDESK", from: ASING, harap: /⚠️ #HELPDESK terdeteksi tapi teks kosong/ },
 
   // F11 approval — gerbang: resolveApprover (app_user, BUKAN master_user)
-  { nama: "approve · tahap terakhir", body: "#APPROVE APR-9001 oke lanjutkan", from: HOD, harap: /✅ APR-9001 disetujui \(tahap terakhir\) — request selesai\. Terima kasih, Rina Fixture\./ },
-  { nama: "approve · lanjut tahap berikutnya", body: "#APPROVE APR-9002", from: HOD, harap: /✅ APR-9002 disetujui, lanjut ke tahap berikutnya\. Terima kasih, Rina Fixture\./ },
-  { nama: "reject · ditolak", body: "#REJECT APR-9003 nominal terlalu besar", from: HOD, harap: /❌ APR-9003 ditolak, tercatat\. Terima kasih, Rina Fixture\./ },
+  { tulis: true, nama: "approve · tahap terakhir", body: "#APPROVE APR-9001 oke lanjutkan", from: HOD, harap: new RegExp(`✅ APR-9001 disetujui \\(tahap terakhir\\) — request selesai\\. Terima kasih, ${esc(HOD.nama)}\\.`) },
+  { tulis: true, nama: "approve · lanjut tahap berikutnya", body: "#APPROVE APR-9002", from: HOD, harap: new RegExp(`✅ APR-9002 disetujui, lanjut ke tahap berikutnya\\. Terima kasih, ${esc(HOD.nama)}\\.`) },
+  { tulis: true, nama: "reject · ditolak", body: "#REJECT APR-9003 nominal terlalu besar", from: HOD, harap: new RegExp(`❌ APR-9003 ditolak, tercatat\\. Terima kasih, ${esc(HOD.nama)}\\.`) },
   { nama: "approve · kode salah format", body: "#APPROVE 9001", from: HOD, harap: /tidak valid, format: APR-0001/ },
   { nama: "approve · bukan approver (gerbang)", body: "#APPROVE APR-9001", from: ASING, harap: null },
 ];
 
-const filter = process.argv.slice(2).map((s) => s.toLowerCase());
-const dipakai = filter.length ? skenario.filter((s) => filter.some((f) => s.nama.toLowerCase().includes(f))) : skenario;
+const cocokNama = (s) => !filter.length || filter.some((f) => s.nama.toLowerCase().includes(f));
+const dipakai = skenario.filter((s) => cocokNama(s) && !(BACA_SAJA && s.tulis));
+const dilewati = skenario.filter((s) => cocokNama(s) && BACA_SAJA && s.tulis);
 
 const hasil = [];
 for (const s of dipakai) {
@@ -288,25 +363,31 @@ for (const s of dipakai) {
   }
   const teks = balasan.join("\n~~~\n");
   const status = err ? "ERROR" : s.harap === null ? (balasan.length === 0 ? "COCOK" : "BEDA") : s.harap.test(teks) ? "COCOK" : "BEDA";
-  hasil.push({ nama: s.nama, kirim: s.body, status, teks, err, out, harap: s.harap });
+  hasil.push({ nama: s.nama, kirim: s.body, status, teks, err, out, harap: s.harap, tulis: !!s.tulis });
 }
 
 // ── uji khusus: #BUKTI teks-saja HARUS terjaring processUnprocessed ───────
 // Regresi nyata pernah terjadi di sini: `bukti` hilang dari regex penyaring
 // sehingga #BUKTI tanpa foto tak pernah terpilih. Paritas daftar hashtag-nya
 // dijaga tes murni (inbound-kind-filter.test.ts); ini uji jalur DB-nya.
+//
+// Ditandai TULIS: menyasar SJ-QA-003 dan memajukan statusnya, jadi dilewati di
+// mode --baca-saja. Paritas hashtag-nya sendiri tetap terjaga tes murni yang
+// jalan di CI, jadi melewatinya di sini tak meninggalkan lubang.
 await sql`UPDATE wa_message SET processed_at = now(), processed_kind = 'qa-cleanup'
           WHERE input_hash LIKE 'qa-sim-%' AND processed_at IS NULL`;
-const hb = `qa-sim-bukti-teks-${Date.now()}`;
-await sql`
-  INSERT INTO wa_message (group_jid, sender_jid, sender_name, message_type, body, input_hash, message_id)
-  VALUES (${GRUP}, ${ASING.jid}, ${ASING.nama}, 'text', '#BUKTI SJ-QA-003', ${hb}, ${hb})`;
-captured = [];
-let buktiTerjaring = false;
+let buktiTerjaring = null; // null = tak diuji (mode baca-saja)
 let batchErr = null;
 try {
-  const batch = await processUnprocessed(50);
-  buktiTerjaring = batch.results.some((r) => String(r.kind) === "bukti");
+  if (!BACA_SAJA) {
+    const hb = `qa-sim-bukti-teks-${Date.now()}`;
+    await sql`
+      INSERT INTO wa_message (group_jid, sender_jid, sender_name, message_type, body, input_hash, message_id)
+      VALUES (${GRUP}, ${ASING.jid}, ${ASING.nama}, 'text', '#BUKTI SJ-QA-003', ${hb}, ${hb})`;
+    captured = [];
+    const batch = await processUnprocessed(50);
+    buktiTerjaring = batch.results.some((r) => String(r.kind) === "bukti");
+  }
 } catch (e) {
   batchErr = e.message;
 }
@@ -315,11 +396,15 @@ restoreLog();
 aiStub.close();
 
 // ── laporan ───────────────────────────────────────────────────────────────
-const lebar = Math.max(...hasil.map((h) => h.nama.length));
-console.log("\n=============== SIMULASI COMMAND HASHTAG WA ===============\n");
+const lebar = Math.max(...hasil.map((h) => h.nama.length), 1);
+console.log("\n=============== SIMULASI COMMAND HASHTAG WA ===============");
+console.log(
+  `Mode: ${BACA_SAJA ? "BACA-SAJA (skenario tulis dilewati)" : "PENUH (baca + tulis)"}` +
+    `  ·  Data: ${fixtureAda ? "FIXTURE (QA-*)" : "APA ADANYA (fixture tak ada)"}\n`,
+);
 for (const h of hasil) {
   const tanda = h.status === "COCOK" ? "✓" : h.status === "BEDA" ? "✗" : "!";
-  console.log(`${tanda} [${h.status}] ${h.nama.padEnd(lebar)}  ← ${h.kirim}`);
+  console.log(`${tanda} [${h.status}] ${h.tulis ? "TULIS" : "BACA "} ${h.nama.padEnd(lebar)}  ← ${h.kirim}`);
   if (h.err) console.log(`      ERROR: ${h.err}`);
   else if (h.teks) console.log(h.teks.split("\n").map((l) => "      │ " + l).join("\n"));
   else console.log(`      │ (diam — kind=${h.out?.kind}, ${JSON.stringify(h.out?.skipped ?? h.out?.error ?? "")})`);
@@ -327,12 +412,31 @@ for (const h of hasil) {
   console.log("");
 }
 
+// Cakupan yang TIDAK diuji harus kelihatan. Mode baca-saja yang melaporkan
+// "semua hijau" tanpa menyebut apa yang dilewati terbaca seperti verifikasi
+// penuh — padahal justru command paling berisiko yang tak ikut diuji.
+if (dilewati.length) {
+  console.log(`── ${dilewati.length} skenario TULIS dilewati (--baca-saja) ──`);
+  for (const s of dilewati) console.log(`  · ${s.nama}`);
+  console.log("");
+}
+
 const n = (st) => hasil.filter((h) => h.status === st).length;
+const nTulis = hasil.filter((h) => h.tulis).length;
 console.log("===========================================================");
-console.log(`total=${hasil.length}  cocok=${n("COCOK")}  beda=${n("BEDA")}  error=${n("ERROR")}`);
-console.log(`#BUKTI teks-saja terjaring processUnprocessed: ${buktiTerjaring ? "YA" : "TIDAK ← REGRESI"}`);
+console.log(
+  `total=${hasil.length} (baca=${hasil.length - nTulis} tulis=${nTulis})  ` +
+    `cocok=${n("COCOK")}  beda=${n("BEDA")}  error=${n("ERROR")}  dilewati=${dilewati.length}`,
+);
+console.log(
+  `#BUKTI teks-saja terjaring processUnprocessed: ${
+    buktiTerjaring === null ? "tak diuji (mode baca-saja)" : buktiTerjaring ? "YA" : "TIDAK ← REGRESI"
+  }`,
+);
 if (batchErr) console.log(`processUnprocessed melempar: ${batchErr}`);
 console.log(`detectKind("#BUKTI SJ-1") = ${detectKind("#BUKTI SJ-1")}`);
+console.log(`\nBersihkan baris sintetis: DELETE FROM wa_message WHERE input_hash LIKE 'qa-sim-%';`);
 
 await sql.end();
-process.exit(n("BEDA") + n("ERROR") === 0 && buktiTerjaring && !batchErr ? 0 : 1);
+// buktiTerjaring === null (tak diuji) tak dihitung gagal.
+process.exit(n("BEDA") + n("ERROR") === 0 && buktiTerjaring !== false && !batchErr ? 0 : 1);

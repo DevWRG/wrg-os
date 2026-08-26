@@ -43,6 +43,70 @@ node scripts/qa/sim-hashtag.mjs stok sph         # filter nama skenario
 `DATABASE_URL` default `postgres:///wrg_os_dev`. Exit code 1 kalau ada skenario
 tak cocok, jadi bisa dipakai sebagai gerbang manual.
 
+## BACA vs TULIS — baca ini sebelum jalan di luar dev
+
+Tiap skenario ditandai, dan tandanya muncul di keluaran:
+
+```
+✓ [COCOK] BACA  stok · argumen kosong        ← #STOK
+✓ [COCOK] TULIS approve · tahap terakhir     ← #APPROVE APR-9001 oke lanjutkan
+```
+
+**27 BACA** — tak mengubah data domain. **14 TULIS** — jalur suksesnya punya
+efek nyata:
+
+| Command | Efek kalau sukses |
+|---|---|
+| `#APPROVE` `#REJECT` | **benar-benar memutuskan** approval request |
+| `#KIRIM` `#BAST` `#BUKTI` | memajukan status SJ di `shipment_tracking` |
+| `#HELPDESK` | membuat tiket GA bernomor urut |
+| `#SPH` | menyimpan draft SPH atas nama AM |
+| `#KLAIM` | menyimpan baris `doc_klaim` |
+| `#install` `#servis` `#training` `#kalibrasi` | menyimpan `teknisi_report` |
+
+Terhadap fixture (dev) itu aman — semua sasarannya milik fixture sendiri
+(`QA-AM-1`, `SJ-QA-00x`, `APR-900x`). Terhadap **data nyata, menjalankannya
+bukan verifikasi melainkan transaksi**: approval orang betulan ikut diputus dan
+nomor tiket betulan ikut terpakai.
+
+Karena itu ada dua pengaman:
+
+- **`--baca-saja`** hanya menjalankan 27 skenario BACA, dan **mencetak daftar 14
+  yang dilewati** — supaya "semua hijau" tak terbaca sebagai verifikasi penuh.
+- **Skenario TULIS ditolak kalau fixture tak ada.** Fixture absen = DB ini bukan
+  DB fixture, jadi harness berhenti dengan instruksi, bukan menulis ke data
+  orang. Exit code 1.
+
+### Kalau mau pakai data real (mis. sesudah promote ke main)
+
+Command BACA justru lebih bermakna diuji terhadap katalog & roster nyata. Satu
+hal yang harus di-override: nomor WA fixture tak ada di roster nyata, jadi
+gerbang `resolveSender` menolaknya dan semua command baca cuma membalas hening —
+itu terbaca seperti kerusakan padahal cuma identitas pengirimnya tak dikenal.
+
+```bash
+QA_AM_WA=6281234567890 QA_AM_NAMA="Nama AM Asli" \
+  node scripts/qa/sim-hashtag.mjs --baca-saja
+```
+
+Env yang tersedia: `QA_AM_WA`/`QA_AM_NAMA`, `QA_HOD_WA`/`QA_HOD_NAMA`,
+`QA_TEKNISI_WA`/`QA_TEKNISI_NAMA`, `QA_GRUP_JID`, `QA_AI_STUB_PORT`. Nama
+dipakai mencocokkan balasan yang menyebut nama, jadi harus persis seperti di
+`master_user`/`app_user`. Pengirim `ASING` **sengaja tak bisa di-override** — ia
+harus tetap tak dikenal roster mana pun, itu inti 5 uji penembusan gerbang.
+
+### "Baca-saja" bukan berarti nol tulis
+
+Harness **selalu** menyisipkan baris `wa_message` — `processInboundMessage`
+butuh baris nyata untuk diproses. Baris itu ber-`input_hash` prefiks `qa-sim-`.
+Di DB nyata, baris sintetis itu ikut terbaca rekap/digest WA kalau dibiarkan:
+
+```sql
+DELETE FROM wa_message WHERE input_hash LIKE 'qa-sim-%';
+```
+
+Perintah itu juga dicetak di akhir tiap run.
+
 **Bisa dijalankan berulang.** `resetState()` mengembalikan SJ dan approval
 request ke tahap awal tiap kali mulai. Tanpa itu, run ke-2 gagal palsu (SJ sudah
 terkirim, APR sudah disetujui) dan terbaca seperti regresi.
