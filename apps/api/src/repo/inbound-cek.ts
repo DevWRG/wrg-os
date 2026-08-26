@@ -7,11 +7,11 @@
 // data/menu input → baris placeholder statis (keputusan scope QW3), bukan
 // hasil query. Kurir/no. resi/tanggal TERIMA SENGAJA belum ditampilkan —
 // tidak ada sumbernya di Accurate maupun tabel lain yg terhubung ke SO/SJ
-// (lihat TECHNICAL.md).
+// (lihat docs/features/F4-cek-faktur-so-sj-cross-ref.md).
 //
 // Sub-command lain dari spec asli (`#CEK SO <nomor>`, `#CEK SJ <nomor>`,
-// `#CEK FAKTUR <nomor>`) BELUM diimplementasi — di luar scope yang diminta
-// (hanya varian CUSTOMER).
+// `#CEK FAKTUR <nomor>`) diimplementasi TERPISAH di cek.ts (varian "F4 SXR",
+// nomor dokumen bukan nama customer) — lihat routing di inbound.ts.
 
 import { db } from "../db.js";
 import { stripInvisible } from "../parsers/dailyplan.js";

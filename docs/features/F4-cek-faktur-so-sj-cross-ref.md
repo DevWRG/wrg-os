@@ -95,6 +95,30 @@ identitas pengirim WA (`master_user`). Default: unscoped (siapa pun resolved
 employee bisa cek dokumen customer manapun) sampai ada arahan lain. Begitu
 juga tanpa filter role tambahan (parity dengan `#STOK`).
 
+## 6. Known limitation di QW3 (`#CEK CUSTOMER`) — fuzzy-match SO/SJ independen
+
+Beda modul (`apps/api/src/repo/inbound-cek.ts`, bukan `cek.ts` di atas), tapi
+dirujuk dari sini karena limitation-nya sejenis dengan §3: `handleCekQuery()`
+mencari SO dan SJ **independen**, masing-masing `ORDER BY score DESC LIMIT 1`
+via pg_trgm `similarity()` (threshold `CEK_MATCH = 0.3`,
+`inbound-cek.ts:24`, query di `:43-56`). Beda dari F4 yang exact-match by
+nomor + window tanggal (§3), QW3 murni fuzzy by nama tanpa korelasi tanggal.
+
+Konsekuensinya: dua customer BEDA dengan nama yang mirip (`similarity() >
+0.3` satu sama lain) bisa saling "mencuri" hasil. Contoh nyata (seed
+`scripts/db/seed-cek-dev.sql` kasus #5): `#CEK CUSTOMER CV Sample Dua` balas
+header **"CV Sample Satu"** — SO milik "CV Sample Satu" menang skor
+similarity walau customer yang dicari adalah "CV Sample Dua" yang cuma
+punya SJ. `similarity('CV Sample Dua', 'CV Sample Satu') = 0.588`, jauh di
+atas threshold.
+
+Bukan bug — ini batas struktural dari desain fuzzy-independen, bukan
+kesalahan implementasi. Kalau nanti perlu diperketat: opsi paling dekat
+dengan pola F4 di atas adalah resolve `accurate_customer` dulu (exact/ID
+match) baru JOIN ke SO/SJ per `customer_id`, bukan fuzzy-match SO & SJ
+masing-masing secara terpisah — tapi ini perubahan scope QW3, belum
+diputuskan (lihat PR #868).
+
 ## Cara kerja
 
 - Hashtag: `#CEK <nomor>` — deteksi via `CEK_LINE` regex di `detectKind()`
