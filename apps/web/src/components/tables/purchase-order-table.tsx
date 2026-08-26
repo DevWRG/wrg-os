@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useCallback, useEffect, useState, useTransition } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { ChevronDown, ChevronRight, Loader2, Plus, Trash2 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -139,8 +139,37 @@ const columns: DataColumn<PurchaseOrderRow>[] = [
   { id: "status", header: "Status", cell: (r) => <StatusBadge row={r} /> },
 ];
 
-export function PurchaseOrderTable({ rows }: { rows: PurchaseOrderRow[] }) {
+export interface PurchaseOrderQuery {
+  q: string;
+  status: string;
+  sort: string;
+  dir: "asc" | "desc";
+  page: number;
+  size: number;
+}
+
+const STATUS_FILTERS: { key: string; label: string }[] = [
+  { key: "", label: "Semua" },
+  { key: "ordered", label: "Dipesan" },
+  { key: "partial_received", label: "Sebagian" },
+  { key: "received", label: "Diterima" },
+  { key: "cancelled", label: "Batal" },
+];
+
+export function PurchaseOrderTable({
+  rows,
+  totalRows,
+  query,
+}: {
+  rows: PurchaseOrderRow[];
+  /** jumlah PO yang COCOK FILTER di backend, bukan panjang `rows`. */
+  totalRows: number;
+  query: PurchaseOrderQuery;
+}) {
   const router = useRouter();
+  const pathname = usePathname();
+  const params = useSearchParams();
+  const [pending, startTransition] = useTransition();
   const [sel, setSel] = useState<PurchaseOrderRow | null>(null);
   const [detail, setDetail] = useState<Detail | null>(null);
   const [detailErr, setDetailErr] = useState(false);
@@ -153,6 +182,39 @@ export function PurchaseOrderTable({ rows }: { rows: PurchaseOrderRow[] }) {
   const [rejectNote, setRejectNote] = useState("");
   const [approvalError, setApprovalError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+
+  // Semua state tabel hidup di URL: bisa di-share, tahan refresh, dan yang
+  // terpenting selalu ikut dikirim ke backend. Tabelnya per-halaman, jadi
+  // search/sort/filter TIDAK boleh lagi cuma mengaduk baris yang ter-load.
+  const push = useCallback(
+    (patch: Record<string, string | number | null>) => {
+      const next = new URLSearchParams(params.toString());
+      for (const [k, v] of Object.entries(patch)) {
+        if (v === null || v === "") next.delete(k);
+        else next.set(k, String(v));
+      }
+      startTransition(() => {
+        router.replace(`${pathname}${next.toString() ? `?${next.toString()}` : ""}`, { scroll: false });
+      });
+    },
+    [params, pathname, router],
+  );
+
+  // Ketikan pencarian di-debounce ke URL; tanpa itu tiap huruf satu query.
+  const qUrl = query.q;
+  const [qInput, setQInput] = useState(qUrl);
+  const [qTerakhir, setQTerakhir] = useState(qUrl);
+  // URL berubah dari luar (Back, klik filter status) → samakan kotaknya.
+  // Disesuaikan saat render, bukan lewat useEffect (react-hooks/set-state-in-effect).
+  if (qUrl !== qTerakhir) {
+    setQTerakhir(qUrl);
+    setQInput(qUrl);
+  }
+  useEffect(() => {
+    if (qInput === qUrl) return;
+    const t = setTimeout(() => push({ q: qInput || null, page: null }), 350);
+    return () => clearTimeout(t);
+  }, [qInput, qUrl, push]);
   const { confirm, dialog } = useConfirm();
 
   function openDetail(r: PurchaseOrderRow) {
@@ -350,7 +412,46 @@ export function PurchaseOrderTable({ rows }: { rows: PurchaseOrderRow[] }) {
   return (
     <>
       {dialog}
-      <DataTable columns={columns} data={rows} getKey={(r) => r.id} searchPlaceholder="Cari no. PO / vendor / cabang…" pageSize={25} onRowClick={openDetail} />
+
+      {/* Filter status memakai hitungan dari endpoint agregat lewat URL — bukan
+          menyaring baris yang kebetulan ter-load, karena tabelnya per-halaman. */}
+      <div className="mb-3 flex flex-wrap gap-2">
+        {STATUS_FILTERS.map((f) => (
+          <button
+            key={f.key || "all"}
+            type="button"
+            onClick={() => push({ status: f.key || null, page: null })}
+            className={
+              "rounded-lg border px-3 py-1 text-sm transition-colors " +
+              (query.status === f.key
+                ? "border-primary bg-primary-soft text-primary font-medium"
+                : "border-border bg-card text-foreground hover:border-primary/40 hover:bg-muted")
+            }
+          >
+            {f.label}
+          </button>
+        ))}
+      </div>
+
+      <DataTable
+        columns={columns}
+        data={rows}
+        getKey={(r) => r.id}
+        searchPlaceholder="Cari no. PO / vendor / cabang…"
+        onRowClick={openDetail}
+        server={{
+          totalRows,
+          page: query.page,
+          pageSize: query.size,
+          sort: { id: query.sort, dir: query.dir },
+          q: qInput,
+          pending,
+          onPageChange: (p) => push({ page: p === 0 ? null : p }),
+          onPageSizeChange: (n) => push({ size: n, page: null }),
+          onSortChange: (s) => push({ sort: s?.id ?? null, dir: s?.dir ?? null, page: null }),
+          onSearchChange: setQInput,
+        }}
+      />
 
       <Dialog open={!!sel} onOpenChange={(o) => !o && setSel(null)}>
         <DialogContent>

@@ -184,12 +184,41 @@ export interface PurchaseOrderRow {
   approval_status: ApprovalStatus;
 }
 
-function computeStatus(cancelled_at: string | null, item_count: number, received_item_count: number, any_received: boolean): PurchaseOrderStatus {
-  if (cancelled_at) return "cancelled";
-  if (item_count === 0) return "ordered";
-  if (received_item_count === item_count) return "received";
-  if (any_received) return "partial_received";
-  return "ordered";
+/**
+ * Rumus `status` PO — SATU sumber untuk seluruh jalur baca (list, detail,
+ * hitung kartu KPI).
+ *
+ * Dulu dihitung di JS (`computeStatus`), jadi status hanya ada SETELAH baris
+ * ditarik. Akibatnya kartu "PO berjalan / telat / diterima" di halaman
+ * /purchase-orders dihitung dengan `rows.filter()` atas array `?limit=1000` —
+ * begitu PO lewat 1000, kartunya diam-diam melapor terlalu rendah padahal
+ * terbaca sebagai angka otoritatif. Menyalin rumusnya ke SQL sambil
+ * mempertahankan versi JS akan membuat satu aturan punya dua sumber; jadi
+ * versi JS-nya dibuang, bukan diduplikasi.
+ *
+ * Query WAJIB sudah punya alias `po` (purchase_order) + `agg`
+ * (PO_ITEM_AGG_JOIN). Urutan cabang harus sama persis dengan versi lama:
+ * cancelled menang atas segalanya, PO tanpa item = 'ordered'.
+ */
+function poStatusExpr(sql: ReturnType<typeof db>) {
+  return sql`CASE
+    WHEN po.cancelled_at IS NOT NULL THEN 'cancelled'
+    WHEN COALESCE(agg.item_count, 0) = 0 THEN 'ordered'
+    WHEN COALESCE(agg.received_item_count, 0) = COALESCE(agg.item_count, 0) THEN 'received'
+    WHEN COALESCE(agg.any_received, false) THEN 'partial_received'
+    ELSE 'ordered' END`;
+}
+
+/**
+ * "Hari ini" menurut WIB, bukan UTC.
+ *
+ * Halaman lama memakai `new Date().toISOString().slice(0,10)` untuk menghitung
+ * PO telat — itu tanggal UTC, jadi antara 00:00–07:00 WIB ia masih memakai
+ * tanggal kemarin dan PO yang jatuh tempo hari itu belum dihitung telat.
+ * Tujuh jam tiap hari kartu "Telat" melapor terlalu rendah.
+ */
+function wibTodayExpr(sql: ReturnType<typeof db>) {
+  return sql`(now() AT TIME ZONE 'Asia/Jakarta')::date`;
 }
 
 function mapRow(r: Record<string, unknown>): PurchaseOrderRow {
@@ -215,7 +244,9 @@ function mapRow(r: Record<string, unknown>): PurchaseOrderRow {
     item_count,
     received_item_count,
     any_received,
-    status: computeStatus(cancelled_at, item_count, received_item_count, any_received),
+    // Dari SQL (poStatusExpr) — query WAJIB memilihnya. Kalau dihitung ulang
+    // di sini, filter/hitung di SQL dan tampilan bisa berbeda diam-diam.
+    status: String(r.status) as PurchaseOrderStatus,
     lini,
     approval_status: deriveApprovalStatus(lini, Boolean(r.approval_any_rejected), Boolean(r.approval_tier1_approved), Boolean(r.approval_direktur_approved)),
   };
@@ -232,6 +263,7 @@ function poCols(sql: ReturnType<typeof db>) {
     COALESCE(agg.item_count, 0) AS item_count,
     COALESCE(agg.received_item_count, 0) AS received_item_count,
     COALESCE(agg.any_received, false) AS any_received,
+    ${poStatusExpr(sql)} AS status,
     COALESCE(appr.any_rejected, false) AS approval_any_rejected,
     COALESCE(appr.tier1_approved, false) AS approval_tier1_approved,
     COALESCE(appr.direktur_approved, false) AS approval_direktur_approved
@@ -328,20 +360,137 @@ export async function createPurchaseOrder(t: PurchaseOrderInput): Promise<Purcha
   return detail;
 }
 
-export async function listPurchaseOrders(opts?: { vendorId?: string; cabang?: string; limit?: number }): Promise<PurchaseOrderRow[]> {
-  const sql = db();
-  const limit = opts?.limit ?? 1000;
-  const rows = await sql`
-    SELECT ${poCols(sql)}
+// Nilainya sengaja SAMA dengan id kolom di purchase-order-table.tsx supaya
+// ?sort= bisa dikirim apa adanya tanpa lapisan pemetaan yang bisa melenceng.
+export const PO_SORTS = ["order_date", "po_number", "vendor_name", "cabang", "eta_date", "status"] as const;
+export type PurchaseOrderSort = (typeof PO_SORTS)[number];
+export const isPurchaseOrderSort = (v: unknown): v is PurchaseOrderSort =>
+  PO_SORTS.includes(String(v) as PurchaseOrderSort);
+
+export interface PurchaseOrderListOpts {
+  vendorId?: string;
+  cabang?: string;
+  /** Cari di nomor PO / nama vendor / cabang / PIC. */
+  q?: string;
+  /** Filter status turunan (ordered|partial_received|received|cancelled). */
+  status?: string;
+  sort?: PurchaseOrderSort;
+  dir?: "asc" | "desc";
+  limit?: number;
+  offset?: number;
+}
+
+export interface PurchaseOrderListResult {
+  rows: PurchaseOrderRow[];
+  /** Jumlah SEMUA PO yang cocok filter — bukan yang dikirim di `rows`. */
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export const PO_PAGE_DEFAULT = 25;
+export const PO_PAGE_MAX = 5000;
+
+// Sumber baris + SELURUH filter, dipakai bersama query data dan query hitung.
+function poFrom(sql: ReturnType<typeof db>, o: PurchaseOrderListOpts) {
+  const q = (o.q ?? "").trim();
+  const like = `%${q}%`;
+  return sql`
     FROM purchase_order po
     ${PO_ITEM_AGG_JOIN(sql)}
     ${PO_APPROVAL_AGG_JOIN(sql)}
-    WHERE ${opts?.vendorId ? sql`po.vendor_id = ${opts.vendorId}` : sql`true`}
-      AND ${opts?.cabang ? sql`po.cabang = ${opts.cabang}` : sql`true`}
-    ORDER BY po.order_date DESC, po.created_at DESC
-    LIMIT ${limit}
-  `;
-  return rows.map(mapRow);
+    WHERE ${o.vendorId ? sql`po.vendor_id = ${o.vendorId}` : sql`true`}
+      AND ${o.cabang ? sql`po.cabang = ${o.cabang}` : sql`true`}
+      ${o.status ? sql`AND ${poStatusExpr(sql)} = ${o.status}` : sql``}
+      ${
+        q
+          ? sql`AND (po.po_number ILIKE ${like} OR po.vendor_name ILIKE ${like}
+                  OR po.cabang ILIKE ${like} OR po.pic ILIKE ${like})`
+          : sql``
+      }`;
+}
+
+export async function listPurchaseOrders(
+  opts: PurchaseOrderListOpts = {},
+): Promise<PurchaseOrderListResult> {
+  const sql = db();
+  const limit = Math.min(Math.max(Math.trunc(Number(opts.limit) || PO_PAGE_DEFAULT), 1), PO_PAGE_MAX);
+  const offset = Math.max(Math.trunc(Number(opts.offset) || 0), 0);
+  const from = poFrom(sql, opts);
+  const asc = opts.dir === "asc";
+  // Kolom urut di-whitelist lewat tipe PurchaseOrderSort — nama kolom tak
+  // pernah datang mentah dari query string.
+  const key = opts.sort ?? "order_date";
+  const col =
+    key === "po_number" ? sql`po.po_number`
+    : key === "vendor_name" ? sql`po.vendor_name`
+    : key === "cabang" ? sql`po.cabang`
+    : key === "eta_date" ? sql`po.eta_date`
+    : key === "status" ? poStatusExpr(sql)
+    : sql`po.order_date`;
+
+  const [rows, [count]] = await Promise.all([
+    sql`
+      SELECT ${poCols(sql)}
+      ${from}
+      ORDER BY ${col} ${asc ? sql`ASC NULLS LAST` : sql`DESC NULLS LAST`},
+               po.created_at DESC, po.id DESC
+      LIMIT ${limit} OFFSET ${offset}`,
+    sql`SELECT count(*)::int AS total ${from}`,
+  ]);
+
+  return {
+    rows: (rows as unknown as Record<string, unknown>[]).map(mapRow),
+    total: Number(count?.total ?? 0),
+    limit,
+    offset,
+  };
+}
+
+export interface PurchaseOrderSummary {
+  total: number;
+  by_status: Record<string, number>;
+  /** PO belum tuntas yang ETA-nya sudah lewat (hari ini WIB). */
+  telat: number;
+}
+
+/**
+ * Hitungan untuk kartu KPI, diagregasi di SQL.
+ *
+ * Dulu halaman /purchase-orders menghitungnya dengan `rows.filter()` atas
+ * array `?limit=1000` yang sama dengan tabelnya — kartu dan tabel minum dari
+ * ember yang sama, jadi begitu PO lewat 1000 kartunya ikut salah. Lebih halus
+ * lagi: `ORDER BY order_date DESC` menyimpan yang terbaru, sedangkan PO lama
+ * umumnya sudah 'received' — jadi kartu "Diterima" yang rusak lebih dulu,
+ * sementara "Berjalan"/"Telat" masih terlihat wajar. Angka yang salah tapi
+ * masuk akal justru yang paling lama tak ketahuan.
+ *
+ * Sengaja TANPA filter daftar: kartu menggambarkan seluruh PO, bukan halaman
+ * atau filter yang sedang aktif (pola sama dengan /visits/summary).
+ */
+export async function purchaseOrderSummary(): Promise<PurchaseOrderSummary> {
+  const sql = db();
+  const rows = await sql`
+    SELECT ${poStatusExpr(sql)} AS status,
+           count(*)::int AS n,
+           count(*) FILTER (
+             WHERE po.eta_date IS NOT NULL AND po.eta_date < ${wibTodayExpr(sql)}
+           )::int AS n_telat
+    FROM purchase_order po
+    ${PO_ITEM_AGG_JOIN(sql)}
+    GROUP BY 1`;
+  const by: Record<string, number> = {};
+  let total = 0;
+  let telat = 0;
+  for (const r of rows as unknown as { status: string; n: number; n_telat: number }[]) {
+    const st = String(r.status);
+    by[st] = Number(r.n);
+    total += Number(r.n);
+    // "Telat" hanya berlaku untuk PO yang belum tuntas — PO yang sudah
+    // diterima atau dibatalkan tak bisa telat lagi.
+    if (st === "ordered" || st === "partial_received") telat += Number(r.n_telat);
+  }
+  return { total, by_status: by, telat };
 }
 
 export async function getPurchaseOrder(id: string): Promise<PurchaseOrderDetail | null> {
