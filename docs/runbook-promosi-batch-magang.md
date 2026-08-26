@@ -3,6 +3,12 @@
 Dikerjakan **di Mac mini**. Fase 0 & 2 sudah selesai di laptop; dokumen ini
 memuat Fase 1 (geladi) dan Fase 3 (eksekusi).
 
+> **Status: Fase 1 SELESAI di Mac mini, 26 Agu 2026 — lolos.** 43 pending → 43
+> apply bersih dalam 1,4 detik · smoke `GAGAL: 0` · sim-hashtag `error: 0`. Prod
+> tak tersentuh (`schema_migrations` tetap 113, repo prod tetap `main`). Angka
+> acuan di tiap langkah di bawah sudah diganti dengan hasil terukur, bukan
+> perkiraan. **Fase 3 menunggu persetujuan eksplisit Pak Husni.**
+
 > ## ⛔ GERBANG WAJIB
 >
 > **JANGAN merge `dev` → `main` sebelum Pak Husni menyatakan lolos uji.**
@@ -29,23 +35,54 @@ sudah diukur, dan sebagian besar kekhawatiran awal ternyata tidak berlaku:
 
 **Yang benar-benar belum teruji**, dan jadi alasan Fase 1 ada:
 
-1. **6 berkas repo baru membaca mirror Accurate yang besar** — `cek.ts`,
-   `inbound-cek.ts`, `forecast.ts`, `stock-batch.ts`, `stock-branch.ts`,
-   `sph.ts`. Di `wrg_os_dev` cuma ada 12 `accurate_item` dan 40 SO/DO; prod
-   ~5.800 dan ~11.800/11.900 — **100–300× lipat**. Query yang wajar di dev bisa
-   lambat atau salah di prod.
+1. ~~**6 berkas repo baru membaca mirror Accurate yang besar**~~ — **SUDAH
+   DIUJI, LOLOS** (Fase 1, 26 Agu 2026). `cek.ts` + `inbound-cek.ts` ternyata
+   **bukan route HTTP** (`detectCek`/`handleCekQuery` = handler hashtag WA), jadi
+   porsinya langkah 6, bukan smoke. Empat sisanya kena volume prod penuh
+   (`accurate_item` 5.825 · `accurate_invoice_item` 11.875 · SO 3.385 · DO
+   3.329 · `product_pricelist` 1.042):
+
+   ```
+   /stock/warehouses  200  3,9 ms   /stock/branch         200  32 ms (5.825 baris)
+   /stock/batch       200  4,4 ms   /stock/branch/summary 200  12 ms
+   /purchase-forecast 200  3,4 ms   /forecast/suggestions 200  3,2 ms
+   ```
+
+   Smoke total **7,9 detik untuk 234 route** — tak ada satu pun endpoint
+   200-tapi-lambat. Kekhawatiran "100–300× lipat bikin lambat" tidak terbukti.
+   Catatan: `GET /sph` balas 404 dan itu **benar** — route itu POST-only.
 2. **Jalur tulis (POST/PATCH/DELETE) nol cakupan.** Di situ error FK/constraint
    muncul begitu orang memasukkan data. Tidak tertutup runbook ini — serahkan ke
    tim magang lewat UI setelah fitur dibuka (Fase 4).
-3. **42 endpoint detail** belum pernah dieksekusi karena tabelnya kosong.
+3. **Endpoint detail** belum pernah dieksekusi karena tabelnya kosong. Terukur
+   di salinan prod: **43** yang tak teruji, dan semuanya **memang** tabel kosong
+   hari-1 (lihat gerbang langkah 5 — angka 42 di bawah bukan pembanding yang
+   sah).
 
-Hasil uji di dev sebagai pembanding (`scripts/qa/smoke-api-read.mjs`):
+Hasil uji di dev (`scripts/qa/smoke-api-read.mjs`):
 
 ```
 route tanpa param : 181  → 2xx=169  non-2xx-sesuai-harapan=12
 route :id         :  53  → 2xx=8    tak-teruji=42
 GAGAL             : 0
 ```
+
+> ### ⚠️ Angka dev di atas BUKAN pembanding yang sah
+>
+> Dua alasan, keduanya terukur saat Fase 1:
+>
+> 1. **Premisnya terbalik.** `wrg_os_dev` punya baris fixture di tabel-tabel
+>    43 fitur baru itu (disemai tim magang), sementara prod hari-1 **kosong** di
+>    situ. Jadi justru dev yang bisa menguji lebih banyak endpoint detail — bukan
+>    prod. Berharap `tak-teruji` *turun* di salinan prod itu salah sejak
+>    premisnya, bukan cuma sulit diukur.
+> 2. **Tak bisa direproduksi di Mac mini.** `wrg_os_dev` di sana kosong/basi —
+>    `schema_migrations`-nya tidak ada sama sekali, dan smoke ke DB itu balas 500
+>    beruntun (`crm_account`, `feature`, `access_group` tak ada). Angka 42 datang
+>    dari lingkungan lain.
+>
+> Pembanding yang benar untuk Fase 1 adalah **salinan data prod**, dan angkanya
+> ada di gerbang langkah 5.
 
 ---
 
@@ -115,6 +152,10 @@ DATABASE_URL=postgres:///wrg_os_geladi bash scripts/db/migrate.sh --dry-run
 **Harapan: 43 berkas pending** (`082`–`092`, `115`–`119`, `127`–`154`). Kalau
 jumlahnya beda jauh, **stop** — berarti asumsi runbook ini sudah basi.
 
+> **Terverifikasi 26 Agu 2026: tepat 43.** Catatan kecil supaya tak bikin panik —
+> `084` **tidak** muncul di daftar pending, dan itu wajar: rentang `082`–`092`
+> berisi 10 berkas, bukan 11. Total tetap 10 + 5 + 28 = 43.
+
 ### 4. Apply, dan catat durasinya
 
 ```bash
@@ -123,6 +164,11 @@ time DATABASE_URL=postgres:///wrg_os_geladi bash scripts/db/migrate.sh
 
 Durasi ini = perkiraan lama jendela saat Fase 3 langkah 3. Kalau ada yang GAGAL,
 salin pesannya utuh — itu temuan Fase 1 yang paling berharga.
+
+> **Terukur 26 Agu 2026: 43/43 apply bersih dalam 1,4 detik.** Jendela Fase 3
+> jauh lebih sempit dari dugaan. Verifikasi sesudahnya: `schema_migrations`
+> 113 → 156 (delta tepat 43), dan `--dry-run` ulang balas "tidak ada migrasi
+> pending".
 
 ### 5. Smoke permukaan baca terhadap data prod — **langkah terpenting**
 
@@ -141,11 +187,56 @@ tulis, scheduler mati, WA dry-run.
 
 - `GAGAL: 0` → lolos.
 - 5xx apa pun → **temuan**, catat route + body-nya.
-- Bandingkan `2xx` dan `tak-teruji` dengan baseline dev di atas. Jumlah
-  `tak-teruji` **harus turun** dibanding 42 (tabel prod berisi data), dan tiap
-  endpoint detail yang tadinya tak teruji sekarang benar-benar diuji.
-- Perhatikan juga durasinya. Endpoint yang menggantung puluhan detik itu temuan,
+- Perhatikan durasinya. Endpoint yang menggantung puluhan detik itu temuan,
   walau statusnya 200.
+- **Untuk `tak-teruji`, yang dinilai BUKAN angkanya turun** — tapi apakah tiap
+  entri yang tersisa benar-benar tabel kosong. Sejak #1051, harness memisahkan
+  label `"kosong"` dari `"tak ada kunci id"`; kalau yang kedua muncul, itu
+  titik-buta harness dan **wajib** ditelusuri, bukan diterima.
+
+**Angka acuan di salinan data prod (terukur 26 Agu 2026, sesudah #1051):**
+
+```
+route tanpa param : 181  → 2xx=170  non-2xx-sesuai-harapan=12
+route :id         :  53  → 2xx=9    tak-teruji=43
+GAGAL             : 0
+```
+
+43 sisanya semuanya tabel kosong hari-1; label `"tak ada kunci id"` tak menyala
+sama sekali.
+
+> ### Kalau `tak-teruji` = 46, berarti #1051 belum masuk
+>
+> Sebelum #1051, `ambilId` punya dua kekeliruan menumpuk: mengambil array
+> **pertama** di objek (di `/customers/revenue` itu `months`, di `/npk/scores`
+> itu `aspect_order` — array string, bukan baris data) dan hanya menerima field
+> bernama `id` **persis** (payload nyata pakai `customer_id`, `am_id`, dst).
+>
+> Akibatnya 4 route list yang **berisi data prod** dilabeli `(list kosong)` —
+> `/customers` (260 baris), `/sales-analytics/per-am` (14), `/npk/scores` +
+> `/npk/am/scores`. Label itu menyamarkan titik-buta harness sebagai tabel
+> kosong. Tiga endpoint detail yang sebenarnya sehat karena itu tak pernah
+> dipukul; dibuktikan manual di volume prod:
+>
+> ```
+> /customers/12150/monthly              200   17 ms
+> /sales-analytics/per-am/15/drilldown  200   33 ms
+> /accurate/vendors/10650/detail        200  121 ms
+> ```
+>
+> Jangan pakai angka `tak-teruji` sebagai gerbang rilis sebelum #1051 ada di
+> `dev`.
+
+**Non-2xx yang BENAR dan jangan dikira cacat** (terlihat saat memukul endpoint
+detail secara manual):
+
+- `/npk/scores/<am_id>` → **404** `"HoD tidak ditemukan"` — salah ruang id, AM
+  bukan HoD.
+- `/npk/am/scores/<am_id>` → **403** `"Anda hanya boleh membuka NPK sendiri"` —
+  gerbang otorisasi bekerja; service-token bukan AM itu.
+- `/customers/<slug>/monthly` → **400** `"id invalid"` — `/customers` keluar slug
+  (`rsup-mandalika`) sementara handler ini minta id numerik Accurate. Sumber id
+  yang benar: `/customers/revenue`. Dua ruang id berbeda, bukan bug.
 
 ### 6. Smoke command hashtag WA terhadap data prod
 
@@ -161,7 +252,60 @@ QA_AM_WA="$AM_WA" QA_AM_NAMA="$AM_NAMA" \
 ```
 
 Tanpa override, nomor fixture tidak ada di roster prod → semua command baca
-membalas hening, dan itu terbaca seperti kerusakan. Selesai, bersihkan:
+membalas hening, dan itu terbaca seperti kerusakan.
+
+AM yang dipakai saat Fase 1: **Ari Kurnia Yuda** (`am_id` 11, pilot AM-scope).
+Ambil pasangan nomor+nama yang sah langsung dari roster:
+
+```bash
+psql -d wrg_os_geladi -Atc \
+  "SELECT am_id, nama, wa_number FROM master_user
+    WHERE role ILIKE '%AM%' AND COALESCE(wa_number,'') <> '' ORDER BY am_id LIMIT 5;"
+```
+
+> ### ⛔ JANGAN jalankan `seed-dev.sql` yang disarankan skrip ini
+>
+> Kalau prasyarat data belum lengkap, `sim-hashtag.mjs` mencetak saran:
+> `psql -f scripts/db/seed-dev.sql` (+ `seed-dev-full.sql`). **Jangan diikuti di
+> DB geladi.** `seed-dev.sql` menimpa `master_user` dengan roster **demo** —
+> begitu dijalankan, salinan prod-mu tak lagi setia dan seluruh sisa Fase 1
+> kehilangan maknanya.
+>
+> Yang benar: sisipkan **hanya** yang kurang. Saat Fase 1, satu-satunya
+> penghalang adalah `item_stock_branch` gudang KEDIRI kosong (`product_pricelist`
+> prod sudah memenuhi syarat #SPH — 1.042 baris). Cukup 5 baris dari item asli:
+>
+> ```bash
+> psql -d wrg_os_geladi -c "
+> INSERT INTO item_stock_branch (item_id, warehouse_kode, quantity, source, updated_at, catatan)
+> SELECT ai.id::bigint, 'KEDIRI', 25, 'manual', now(), 'baris uji Fase 1 — bukan data gudang'
+>   FROM accurate_item ai WHERE COALESCE(ai.no,'') <> '' ORDER BY ai.no LIMIT 5
+>   ON CONFLICT (item_id, warehouse_kode) DO NOTHING;"
+> ```
+>
+> `source` wajib salah satu dari `manual|import|accurate` — ada CHECK constraint
+> yang menolak nilai lain (skemanya menjaga diri; jangan dilawan).
+>
+> Sesudah ini DB geladi **bukan salinan prod murni lagi**. Catat itu di laporan.
+
+**Angka acuan (terukur 26 Agu 2026):**
+
+```
+total=28 baca  cocok=23  beda=5  error=0  (14 skenario tulis dilewati)
+```
+
+`error=0` itu yang dinilai — nol exception. Kelima `beda` semuanya **kekurangan
+fixture, bukan cacat kode**, dan wajar hari-1:
+
+| Skenario `beda` | Sebabnya |
+|---|---|
+| `install · teks kosong` | persona fixture `Joko Fixture` tak ada di roster prod → gerbang pengirim menyala **sebelum** validasi format |
+| `approve · kode salah format` | idem — approver fixture tak dikenal, jadi hening `"unknown-approver"` alih-alih pesan format |
+| `bast · SJ baru dikirim` | `shipment_tracking` kosong hari-1 → SJ-QA-001 tak ada |
+| `bukti · SJ belum BAST` | idem |
+| `kirim · SJ sudah pernah dikirim` | idem — SJ-QA-002 tak ada |
+
+Selesai, bersihkan:
 
 ```bash
 psql -d wrg_os_geladi -c "DELETE FROM wa_message WHERE input_hash LIKE 'qa-sim-%';"
@@ -371,6 +515,25 @@ ditemani pemilik prosesnya. Jangan buka 33 sekaligus.
 Prioritaskan fitur yang **jalur tulisnya** perlu divalidasi orang yang tahu alur
 bisnisnya — itu satu-satunya celah yang tidak tertutup runbook ini.
 
+### Dependensi data, bukan kode: Stock Gudang & ED Watch butuh CSV tim gudang
+
+`item_stock_branch` dan stok batch **hanya** diisi importer CSV manual
+(`scripts/db/import_stock_branch.py`, `import_stock_batch.py`). Sudah dilacak
+saat Fase 1: **tak ada satu pun scheduler/cron yang memanggilnya** — dan itu
+memang desainnya (data stok milik tim gudang, hidupnya di Excel; pola sama
+Price Book / Klasifikasi Produk / KSO master).
+
+Konsekuensinya, sesudah Fase 3 menu Stock Gudang & ED Watch akan tampil
+`cakupan 0%` sampai ada yang menjalankan importer. Terukur di salinan prod:
+`item_mirror` 5.825 · `item_ada_data` **0** · `cakupan_persen` **0**, dan 12
+gudang semuanya `item_count: 0`.
+
+**Ini bukan bug** — UI-nya sudah jujur: saat kosong ia menampilkan petunjuk
+importer, dan membedakan "belum diisi" dari "stok habis" (sel CSV kosong ≠ `0`).
+Tapi berarti Fase 4 untuk dua menu ini **diblokir sampai CSV opname tim gudang
+tersedia**, bukan sampai izin grup dibuka. Jadwalkan permintaan CSV-nya lebih
+awal.
+
 ---
 
 ## Catatan
@@ -380,6 +543,15 @@ bisnisnya — itu satu-satunya celah yang tidak tertutup runbook ini.
   hanya riwayat parent-nya yang diratakan. Konsekuensinya: `git merge origin/main`
   ke `dev` berikutnya akan bentrok lagi di `ci.yml` dan `pnpm-lock.yaml`. Jangan
   dibaca sebagai regresi.
-- **Yang belum diverifikasi dari laptop**, harap dicek di tempat: nama DB prod
-  (diasumsikan `wrg_os_prod`), path log auto-deploy, dan isi `.env.prod`.
+- ~~**Yang belum diverifikasi dari laptop**~~ — sebagian sudah dicek di tempat
+  saat Fase 1 (26 Agu 2026): nama DB prod **terkonfirmasi `wrg_os_prod`** (dari
+  `DATABASE_URL` di `.env.prod`), dan repo prod memang di `~/DevWRG/wrg-os`.
+  Masih perlu dicek saat Fase 3: path log auto-deploy.
+- **`wrg_os_dev` di Mac mini kosong/basi** — tak punya `schema_migrations`, smoke
+  ke DB itu balas 500 beruntun. Jangan pakai sebagai pembanding apa pun dari
+  mesin itu; pakai salinan prod (`wrg_os_geladi`).
+- **Sisa Fase 1 yang ditahan untuk Fase 3**: worktree `~/wrg-os-geladi` dan DB
+  `wrg_os_geladi` (156 migrasi, plus 5 baris uji KEDIRI). Bersih-bersihnya
+  (`dropdb wrg_os_geladi`, `git worktree remove ~/wrg-os-geladi`) baru setelah
+  Fase 3 selesai.
 - Referensi: `docs/MIGRATIONS.md`, `docs/AUTO-DEPLOY.md`, `scripts/qa/README.md`.
