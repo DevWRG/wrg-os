@@ -101,7 +101,7 @@ import { master as ksoMaster } from "./repo/kso.js";
 import { produktivitas as ksoProduktivitas, faskesDetail as ksoFaskesDetail } from "./repo/kso-produktivitas.js";
 import { listCoachingNotes } from "./repo/coaching.js";
 import { getLatestCoachingNotes, computePeopleAnalytics } from "./repo/people.js";
-import { AmTidakDikenalError, createVisit, getVisit, listVisits, visitKpi, visitSummary } from "./repo/visit.js";
+import { AmTidakDikenalError, createVisit, getVisit, isVisitSort, listVisits, visitKpi, visitSummary } from "./repo/visit.js";
 import { upsertDailyTodo, listTodos, markTodoReported } from "./repo/todo.js";
 import { upsertUser, listUsers, upsertTerritory, listTerritories, updateUserCabang, updateUserGolongan } from "./repo/master.js";
 import { GOLONGAN, GOLONGAN_LABEL, TARGET_CUSTOMER_MINIMUM, isGolongan } from "./lib/npk-golongan.js";
@@ -1538,11 +1538,33 @@ app.post("/visits", async (c) => {
 
 // Read model visit (filter geo_status: ok|out_of_bounds|no_geo|date_mismatch).
 // Ber-scope row-level: AM = kunjungannya sendiri, HoD = cabang timnya.
+//
+// Paginasi + filter + urut dikerjakan di SQL (?limit&offset&status&q&from&to&
+// sort&dir). Dulu endpoint ini selalu mengirim 1000 baris terbaru dan filter
+// status dijalankan di memori setelahnya, sehingga tabel /visits kehilangan
+// baris yang lebih lama tanpa memberi tanda apa pun — kartu "Total kunjungan"
+// bilang 1961 sementara tabelnya berhenti di 1000. `total_rows` sengaja
+// dipisah dari `count` supaya UI bisa membedakan "yang dikirim" dari "yang
+// cocok filter"; bentuk response mengikuti /stock/branch & /stock/batch.
 app.get("/visits", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const scope = await resolveScope(c.req.header("x-user-id"));
-  const visits = await listVisits(c.req.query("status") || undefined, scope);
-  return c.json({ count: visits.length, visits });
+  const q = c.req.query();
+  const { rows, total, limit, offset } = await listVisits(
+    {
+      status: q.status || undefined,
+      q: q.q || undefined,
+      from: q.from || undefined,
+      to: q.to || undefined,
+      // Nama kolom urut divalidasi di sini — tak pernah masuk SQL mentah.
+      sort: isVisitSort(q.sort) ? q.sort : undefined,
+      dir: q.dir === "asc" ? "asc" : "desc",
+      limit: q.limit ? Number(q.limit) : undefined,
+      offset: q.offset ? Number(q.offset) : undefined,
+    },
+    scope,
+  );
+  return c.json({ count: rows.length, total_rows: total, limit, offset, visits: rows });
 });
 
 // Brief kepatuhan geotag (per-status + flagged).

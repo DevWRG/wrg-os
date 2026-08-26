@@ -29,6 +29,34 @@ export interface DataColumn<T> {
 
 const PAGE_SIZES = [10, 25, 50, 100];
 
+/**
+ * Mode server-driven: search, sort, dan paginasi dikerjakan backend, komponen
+ * ini cuma merender `data` apa adanya sebagai SATU halaman.
+ *
+ * Ada karena mode bawaan (client-side atas seluruh array) diam-diam berbohong
+ * begitu backend membatasi jumlah baris: tabel /visits menerima 1000 baris
+ * teratas lalu menulis "1000 baris" di footer, padahal datanya 1961 — dan
+ * search/filter-nya hanya menyaring 1000 itu. Tanda bahwa tabel butuh mode ini:
+ * pemanggilnya mengirim `limit` ke backend dan hasilnya bisa terpotong.
+ *
+ * Opsional; tanpa prop `server` perilaku lama tak berubah sama sekali.
+ */
+export interface DataTableServer {
+  /** Jumlah baris yang cocok filter di backend — bukan yang ada di `data`. */
+  totalRows: number;
+  /** Halaman aktif, berbasis 0. */
+  page: number;
+  pageSize: number;
+  sort: { id: string; dir: "asc" | "desc" } | null;
+  q: string;
+  onPageChange: (page: number) => void;
+  onPageSizeChange: (size: number) => void;
+  onSortChange: (sort: { id: string; dir: "asc" | "desc" } | null) => void;
+  onSearchChange: (q: string) => void;
+  /** true saat halaman berikutnya sedang diambil — tabel diredupkan. */
+  pending?: boolean;
+}
+
 export function DataTable<T>({
   columns,
   data,
@@ -39,6 +67,7 @@ export function DataTable<T>({
   toolbar,
   onRowClick,
   initialSort,
+  server,
 }: {
   columns: DataColumn<T>[];
   data: T[];
@@ -52,24 +81,33 @@ export function DataTable<T>({
   onRowClick?: (row: T) => void;
   /** sort awal saat tabel pertama dirender (mis. {id:"total",dir:"desc"} = top Revenue). */
   initialSort?: { id: string; dir: "asc" | "desc" };
+  /** aktifkan mode server-driven (lihat DataTableServer). */
+  server?: DataTableServer;
 }) {
-  const [q, setQ] = useState("");
-  const [sort, setSort] = useState<{ id: string; dir: "asc" | "desc" } | null>(initialSort ?? null);
+  const [qLocal, setQLocal] = useState("");
+  const [sortLocal, setSortLocal] = useState<{ id: string; dir: "asc" | "desc" } | null>(initialSort ?? null);
   const [page, setPage] = useState(0);
-  const [size, setSize] = useState(pageSize);
+  const [sizeLocal, setSizeLocal] = useState(pageSize);
+
+  // Di mode server, state-nya milik pemanggil (biasanya URL); di mode lama
+  // milik komponen ini. Selebihnya render-nya identik.
+  const q = server ? server.q : qLocal;
+  const sort = server ? server.sort : sortLocal;
+  const size = server ? server.pageSize : sizeLocal;
 
   const searchable = columns.filter((c) => c.accessor);
 
   const filtered = useMemo(() => {
+    if (server) return data;
     const term = q.trim().toLowerCase();
     if (!term) return data;
     return data.filter((row) =>
       searchable.some((c) => String(c.accessor!(row) ?? "").toLowerCase().includes(term)),
     );
-  }, [q, data, searchable]);
+  }, [q, data, searchable, server]);
 
   const sorted = useMemo(() => {
-    if (!sort) return filtered;
+    if (server || !sort) return filtered;
     const col = columns.find((c) => c.id === sort.id);
     if (!col?.accessor) return filtered;
     const acc = col.accessor;
@@ -82,15 +120,32 @@ export function DataTable<T>({
       return String(av).localeCompare(String(bv), "id");
     });
     return sort.dir === "desc" ? arr.reverse() : arr;
-  }, [filtered, sort, columns]);
+  }, [filtered, sort, columns, server]);
 
-  const pageCount = Math.max(1, Math.ceil(sorted.length / size));
-  const cur = Math.min(page, pageCount - 1);
-  const rows = sorted.slice(cur * size, cur * size + size);
+  const totalRows = server ? server.totalRows : sorted.length;
+  const pageCount = Math.max(1, Math.ceil(totalRows / size));
+  const cur = server ? Math.min(server.page, pageCount - 1) : Math.min(page, pageCount - 1);
+  const rows = server ? data : sorted.slice(cur * size, cur * size + size);
+
+  const gotoPage = (p: number) => (server ? server.onPageChange(p) : setPage(p));
+  const setSize = (n: number) => {
+    if (server) server.onPageSizeChange(n);
+    else setSizeLocal(n);
+  };
+  const setQ = (v: string) => {
+    if (server) server.onSearchChange(v);
+    else setQLocal(v);
+  };
 
   function toggleSort(id: string) {
-    setPage(0);
-    setSort((s) => (s?.id === id ? (s.dir === "asc" ? { id, dir: "desc" } : null) : { id, dir: "asc" }));
+    // Siklus tetap sama: asc → desc → tanpa sort.
+    const next: { id: string; dir: "asc" | "desc" } | null =
+      sort?.id === id ? (sort.dir === "asc" ? { id, dir: "desc" } : null) : { id, dir: "asc" };
+    if (server) server.onSortChange(next);
+    else {
+      setPage(0);
+      setSortLocal(next);
+    }
   }
 
   return (
@@ -102,7 +157,7 @@ export function DataTable<T>({
             value={q}
             onChange={(e) => {
               setQ(e.target.value);
-              setPage(0);
+              if (!server) setPage(0);
             }}
             placeholder={searchPlaceholder}
             className="h-8 pl-8 bg-card border-border"
@@ -142,7 +197,7 @@ export function DataTable<T>({
             })}
           </TableRow>
         </TableHeader>
-        <TableBody>
+        <TableBody className={cn(server?.pending && "opacity-50 transition-opacity")}>
           {rows.length === 0 ? (
             <TableRow>
               <TableCell colSpan={columns.length} className="p-0">
@@ -172,8 +227,11 @@ export function DataTable<T>({
       </Table>
 
       <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
-        <span className="text-muted-foreground text-xs">{sorted.length} baris</span>
-        {sorted.length > PAGE_SIZES[0] && (
+        {/* Di mode server ini jumlah baris yang COCOK FILTER, bukan yang sedang
+            dirender — footer lama menulis panjang array dan itulah yang bikin
+            tabel tampak cuma punya 1000 baris padahal datanya 1961. */}
+        <span className="text-muted-foreground text-xs">{totalRows} baris</span>
+        {totalRows > PAGE_SIZES[0] && (
           <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-2">
             <span className="text-muted-foreground text-xs">Baris/hal:</span>
@@ -181,7 +239,7 @@ export function DataTable<T>({
               value={size}
               onChange={(e) => {
                 setSize(Number(e.target.value));
-                setPage(0);
+                if (!server) setPage(0);
               }}
               className="h-7 rounded-md border border-input bg-transparent px-1.5 text-sm outline-none"
             >
@@ -196,7 +254,7 @@ export function DataTable<T>({
             </span>
             <button
               type="button"
-              onClick={() => setPage((p) => Math.max(0, p - 1))}
+              onClick={() => gotoPage(Math.max(0, cur - 1))}
               disabled={cur === 0}
               className="rounded-md border px-2 py-1 text-xs disabled:opacity-40 hover:bg-muted"
             >
@@ -204,7 +262,7 @@ export function DataTable<T>({
             </button>
             <button
               type="button"
-              onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
+              onClick={() => gotoPage(Math.min(pageCount - 1, cur + 1))}
               disabled={cur >= pageCount - 1}
               className="rounded-md border px-2 py-1 text-xs disabled:opacity-40 hover:bg-muted"
             >

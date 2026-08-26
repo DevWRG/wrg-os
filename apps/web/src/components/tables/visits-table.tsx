@@ -1,8 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useState, useTransition } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { photoHref } from "@/lib/media";
 import { Badge } from "@/components/ui/badge";
@@ -42,6 +42,9 @@ const tgl = (iso: string | null) => {
   return Number.isNaN(d.getTime()) ? "—" : d.toLocaleDateString("id-ID", { day: "2-digit", month: "short", year: "numeric" });
 };
 
+// id kolom yang bisa di-sort HARUS sama dengan VISIT_SORTS di apps/api
+// (repo/visit.ts) — nilainya dikirim apa adanya sebagai ?sort=. Kolom yang tak
+// ada di sana (koord, foto) sengaja tanpa `sortable`.
 const columns: DataColumn<VisitItem>[] = [
   { id: "am", header: "AM", sortable: true, accessor: (v) => v.nama ?? v.am_id, cell: (v) => <span className="font-medium">{v.nama ?? v.am_id}</span> },
   {
@@ -107,49 +110,144 @@ const columns: DataColumn<VisitItem>[] = [
   { id: "geo", header: "Geo", sortable: true, accessor: (v) => v.geo_status, cell: (v) => <Badge variant={geoTone(v.geo_status)}>{GEO_LABEL[v.geo_status] ?? v.geo_status}</Badge> },
 ];
 
-export function VisitsTable({ visits }: { visits: VisitItem[] }) {
+const EXPORT_COLUMNS = [
+  { header: "Periode", value: (v: VisitItem) => v.visit_date ?? v.visit_timestamp },
+  { header: "AM", value: (v: VisitItem) => v.nama ?? v.am_id },
+  { header: "Customer", value: (v: VisitItem) => v.customer_name },
+  { header: "Tipe", value: (v: VisitItem) => v.activity_type ?? "" },
+  { header: "Tanggal", value: (v: VisitItem) => v.visit_date ?? v.visit_timestamp },
+  { header: "Tujuan", value: (v: VisitItem) => v.tujuan ?? "" },
+  { header: "Goal", value: (v: VisitItem) => v.goal ?? "" },
+  { header: "Catatan", value: (v: VisitItem) => v.catatan ?? "" },
+  { header: "Lat", value: (v: VisitItem) => v.visit_lat },
+  { header: "Lon", value: (v: VisitItem) => v.visit_lon },
+  { header: "Geo", value: (v: VisitItem) => GEO_LABEL[v.geo_status] ?? v.geo_status },
+  { header: "Maps", value: (v: VisitItem) => (v.visit_lat !== null && v.visit_lon !== null ? `https://maps.google.com/?q=${v.visit_lat},${v.visit_lon}` : "") },
+  { header: "Foto", value: (v: VisitItem) => v.photo_url ?? "" },
+];
+
+/** Plafon export — sama dengan VISIT_PAGE_MAX di apps/api (repo/visit.ts). */
+const EXPORT_LIMIT = 5000;
+
+export interface VisitsQuery {
+  q: string;
+  from: string;
+  to: string;
+  sort: string;
+  dir: "asc" | "desc";
+  page: number;
+  size: number;
+}
+
+export function VisitsTable({
+  visits,
+  totalRows,
+  query,
+}: {
+  visits: VisitItem[];
+  /** jumlah kunjungan yang COCOK FILTER di backend, bukan panjang `visits`. */
+  totalRows: number;
+  query: VisitsQuery;
+}) {
   const router = useRouter();
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
-  const filtered = useMemo(() => {
-    if (!from && !to) return visits;
-    return visits.filter((v) => {
-      const d = (v.visit_date ?? v.visit_timestamp ?? "").slice(0, 10);
-      return d ? (!from || d >= from) && (!to || d <= to) : false;
-    });
-  }, [visits, from, to]);
-  return (
-    <DataTable
-      columns={columns}
-      data={filtered}
-      getKey={(v) => v.id}
-      searchPlaceholder="Cari AM / customer…"
-      pageSize={25}
-      onRowClick={(v) => router.push(`/visits/${v.id}`)}
-      toolbar={
-        <>
-          <ExportButton
-            filename="visits-detail"
-            data={filtered}
-            columns={[
-              { header: "Periode", value: (v) => v.visit_date ?? v.visit_timestamp },
-              { header: "AM", value: (v) => v.nama ?? v.am_id },
-              { header: "Customer", value: (v) => v.customer_name },
-              { header: "Tipe", value: (v) => v.activity_type ?? "" },
-              { header: "Tanggal", value: (v) => v.visit_date ?? v.visit_timestamp },
-              { header: "Tujuan", value: (v) => v.tujuan ?? "" },
-              { header: "Goal", value: (v) => v.goal ?? "" },
-              { header: "Catatan", value: (v) => v.catatan ?? "" },
-              { header: "Lat", value: (v) => v.visit_lat },
-              { header: "Lon", value: (v) => v.visit_lon },
-              { header: "Geo", value: (v) => GEO_LABEL[v.geo_status] ?? v.geo_status },
-              { header: "Maps", value: (v) => (v.visit_lat !== null && v.visit_lon !== null ? `https://maps.google.com/?q=${v.visit_lat},${v.visit_lon}` : "") },
-              { header: "Foto", value: (v) => v.photo_url ?? "" },
-            ]}
-          />
-          <DateRangeToolbar from={from} to={to} onFrom={setFrom} onTo={setTo} idPrefix="vs" />
-        </>
+  const pathname = usePathname();
+  const params = useSearchParams();
+  const [pending, startTransition] = useTransition();
+
+  // Semua state tabel hidup di URL: bisa di-share, tahan refresh, dan yang
+  // terpenting selalu ikut dikirim ke backend — search/sort/paginasi tak boleh
+  // lagi cuma mengaduk baris yang kebetulan sudah ter-load.
+  const push = useCallback(
+    (patch: Record<string, string | number | null>) => {
+      const next = new URLSearchParams(params.toString());
+      for (const [k, v] of Object.entries(patch)) {
+        if (v === null || v === "") next.delete(k);
+        else next.set(k, String(v));
       }
-    />
+      startTransition(() => {
+        router.replace(`${pathname}${next.toString() ? `?${next.toString()}` : ""}`, { scroll: false });
+      });
+    },
+    [params, pathname, router],
+  );
+
+  // Kotak pencarian diketik lokal lalu di-debounce ke URL; tanpa debounce tiap
+  // huruf memicu satu query ke backend.
+  const qUrl = query.q;
+  const [qInput, setQInput] = useState(qUrl);
+  const [qTerakhir, setQTerakhir] = useState(qUrl);
+  // URL berubah dari luar (tombol Back, klik tab filter) → samakan kotaknya.
+  // Disesuaikan saat render, bukan lewat useEffect: efek yang memanggil
+  // setState memicu render berantai dan ditolak react-hooks/set-state-in-effect.
+  if (qUrl !== qTerakhir) {
+    setQTerakhir(qUrl);
+    setQInput(qUrl);
+  }
+  useEffect(() => {
+    if (qInput === qUrl) return;
+    const t = setTimeout(() => push({ q: qInput || null, page: null }), 350);
+    return () => clearTimeout(t);
+  }, [qInput, qUrl, push]);
+
+  // Export mengambil SELURUH baris yang cocok filter dari backend — bukan
+  // halaman yang sedang tampil. Filternya identik dengan yang dipakai tabel,
+  // jadi isi file selalu sama dengan yang dilihat user, cuma tanpa paginasi.
+  const fetchAll = useCallback(async (): Promise<VisitItem[]> => {
+    const qs = new URLSearchParams();
+    const status = params.get("status");
+    if (status) qs.set("status", status);
+    if (query.q) qs.set("q", query.q);
+    if (query.from) qs.set("from", query.from);
+    if (query.to) qs.set("to", query.to);
+    qs.set("sort", query.sort);
+    qs.set("dir", query.dir);
+    qs.set("limit", String(EXPORT_LIMIT));
+    const res = await fetch(`/api/visits?${qs.toString()}`);
+    if (!res.ok) throw new Error("gagal mengambil data export");
+    const data = (await res.json()) as { visits?: VisitItem[] };
+    return data.visits ?? [];
+  }, [params, query.q, query.from, query.to, query.sort, query.dir]);
+
+  return (
+    <div className="space-y-2">
+      <DataTable
+        columns={columns}
+        data={visits}
+        getKey={(v) => v.id}
+        searchPlaceholder="Cari AM / customer…"
+        onRowClick={(v) => router.push(`/visits/${v.id}`)}
+        server={{
+          totalRows,
+          page: query.page,
+          pageSize: query.size,
+          sort: { id: query.sort, dir: query.dir },
+          q: qInput,
+          pending,
+          onPageChange: (p) => push({ page: p === 0 ? null : p }),
+          onPageSizeChange: (n) => push({ size: n, page: null }),
+          onSortChange: (s) =>
+            push({ sort: s?.id ?? null, dir: s?.dir ?? null, page: null }),
+          onSearchChange: setQInput,
+        }}
+        toolbar={
+          <>
+            <ExportButton filename="visits-detail" fetchData={fetchAll} columns={EXPORT_COLUMNS} />
+            <DateRangeToolbar
+              from={query.from}
+              to={query.to}
+              onFrom={(v) => push({ from: v || null, page: null })}
+              onTo={(v) => push({ to: v || null, page: null })}
+              idPrefix="vs"
+            />
+          </>
+        }
+      />
+      {totalRows > EXPORT_LIMIT && (
+        <p className="text-muted-foreground text-xs">
+          Export dibatasi {EXPORT_LIMIT.toLocaleString("id-ID")} baris teratas dari {totalRows.toLocaleString("id-ID")} —
+          persempit rentang tanggal untuk mengekspor sisanya.
+        </p>
+      )}
+    </div>
   );
 }

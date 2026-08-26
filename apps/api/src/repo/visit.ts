@@ -1,6 +1,8 @@
 import { db } from "../db.js";
 import { FULL_SCOPE, scopeOnClause, scopeSalesPlanClause, type DataScope } from "./access-scope.js";
 
+type Sql = ReturnType<typeof db>;
+
 // D1 — visit report AM dengan geotag + foto (port legacy visit_geo +
 // report_photo + check_photo_geotag). Foto = URL/metadata (bukan binary; tak
 // ada OCR — lat/lon dikirim klien/upstream). Verifikasi: bounds Indonesia +
@@ -219,13 +221,12 @@ export interface VisitRow {
 // SUMBER: sales_plan (kunjungan AM ber-geotag dari inbound) — bukan tabel `visit`
 // legacy yang sparse. visit_lat/lon dari report inbound; foto dari
 // activity_log.photo_path / wa_message.media_path (via activity_id→message_id).
-// geo_status dihitung on-the-fly (bbox Indonesia + flag visit_date_mismatch).
+// geo_status datang dari SQL (geoStatusExpr) — query WAJIB memilihnya; kalau
+// dihitung ulang di sini, filter/hitung di SQL dan tampilan bisa berbeda diam-diam.
 function rowToVisit(r: Record<string, unknown>): VisitRow {
   const lat = r.visit_lat === null || r.visit_lat === undefined ? null : Number(r.visit_lat);
   const lon = r.visit_lon === null || r.visit_lon === undefined ? null : Number(r.visit_lon);
-  const geo_status = r.visit_date_mismatch
-    ? "date_mismatch"
-    : verifyGeo({ lat, lon });
+  const geo_status = String(r.geo_status);
   return {
     id: String(r.id),
     am_id: String(r.am_id),
@@ -247,25 +248,129 @@ function rowToVisit(r: Record<string, unknown>): VisitRow {
   };
 }
 
-export async function listVisits(status?: string, scope: DataScope = FULL_SCOPE, limit = 1000): Promise<VisitRow[]> {
-  const sql = db();
-  const rows = await sql`
-    SELECT sp.id::text AS id, sp.am_id, COALESCE(initcap(mu.panggilan), mu.nama) AS nama,
-           sp.customer_name, sp.visit_lat, sp.visit_lon, sp.visit_timestamp::text AS visit_timestamp,
-           sp.tanggal::text AS visit_date, sp.visit_date_mismatch,
-           sp.tujuan, sp.goal,
-           NULLIF(concat_ws(' — ', NULLIF(al.hasil,''), NULLIF(al.next_action,'')), '') AS catatan,
-           al.activity_type, al.account_id, al.opportunity_id::text AS opportunity_id,
-           COALESCE(al.photo_path, wm.media_path) AS photo_path, sp.created_at::text AS created_at
+// ── Jalur BACA: geo_status dihitung di SQL ──
+//
+// Dulu geo_status hanya ada di JS (rowToVisit) dan filter status dijalankan
+// dengan .filter() SETELAH baris ditarik. Akibatnya filter cuma menyaring satu
+// halaman: kartu "Geo valid" bilang 1883 sementara tab Valid menampilkan
+// potongan dari 1000 baris teratas saja. Rumusnya sekarang tinggal SATU untuk
+// seluruh jalur baca — dipakai listVisits (filter + urut) dan visitSummary
+// (hitung) — supaya angka tabel dan angka kartu mustahil berbeda lagi.
+//
+// Bbox tetap dibaca dari konstanta TS yang sama dengan verifyGeo(), jadi batas
+// wilayahnya tidak terduplikasi; yang ada di sini hanya urutan cabangnya, dan
+// urutan itu mesti sama dengan rowToVisit: date_mismatch menang atas bbox.
+function geoStatusExpr(sql: Sql) {
+  return sql`CASE
+    WHEN sp.visit_date_mismatch THEN 'date_mismatch'
+    WHEN sp.visit_lat IS NULL OR sp.visit_lon IS NULL THEN 'no_geo'
+    WHEN sp.visit_lat < ${ID_LAT_MIN} OR sp.visit_lat > ${ID_LAT_MAX}
+      OR sp.visit_lon < ${ID_LON_MIN} OR sp.visit_lon > ${ID_LON_MAX} THEN 'out_of_bounds'
+    ELSE 'ok' END`;
+}
+
+export const VISIT_SORTS = ["tanggal", "am", "customer", "tipe", "geo", "dibuat"] as const;
+export type VisitSort = (typeof VISIT_SORTS)[number];
+export const isVisitSort = (v: unknown): v is VisitSort =>
+  VISIT_SORTS.includes(String(v) as VisitSort);
+
+export interface VisitListOpts {
+  status?: string;
+  /** Cari di nama AM / am_id / nama customer. */
+  q?: string;
+  /** Rentang tanggal kunjungan (YYYY-MM-DD, inklusif). */
+  from?: string;
+  to?: string;
+  sort?: VisitSort;
+  dir?: "asc" | "desc";
+  limit?: number;
+  offset?: number;
+}
+
+export interface VisitListResult {
+  rows: VisitRow[];
+  /** Jumlah SEMUA baris yang cocok filter — bukan yang dikirim di `rows`. */
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export const VISIT_PAGE_DEFAULT = 25;
+export const VISIT_PAGE_MAX = 5000;
+
+// Sumber baris + SELURUH filter, dipakai bersama oleh query data dan query
+// hitung. Satu fragment: mustahil salah satunya menyaring lebih longgar.
+function visitFrom(sql: Sql, scope: DataScope, o: VisitListOpts) {
+  const q = (o.q ?? "").trim();
+  const like = `%${q}%`;
+  return sql`
     FROM sales_plan sp
     JOIN master_user mu ON mu.am_id = sp.am_id
     LEFT JOIN activity_log al ON al.id = sp.activity_id
-    LEFT JOIN wa_message wm ON wm.message_id = al.message_id
-    WHERE sp.visit_lat IS NOT NULL ${scopeSalesPlanClause(sql, scope)}
-    ORDER BY sp.created_at DESC
-    LIMIT ${Number(limit) || 1000}`;
-  const all = (rows as unknown as Record<string, unknown>[]).map(rowToVisit);
-  return status ? all.filter((v) => v.geo_status === status) : all;
+    WHERE sp.visit_lat IS NOT NULL
+      ${scopeSalesPlanClause(sql, scope)}
+      ${o.status ? sql`AND ${geoStatusExpr(sql)} = ${o.status}` : sql``}
+      ${o.from ? sql`AND sp.tanggal >= ${o.from}::date` : sql``}
+      ${o.to ? sql`AND sp.tanggal <= ${o.to}::date` : sql``}
+      ${
+        q
+          ? sql`AND (COALESCE(initcap(mu.panggilan), mu.nama) ILIKE ${like}
+                  OR sp.customer_name ILIKE ${like}
+                  OR sp.am_id ILIKE ${like})`
+          : sql``
+      }`;
+}
+
+export async function listVisits(
+  opts: VisitListOpts = {},
+  scope: DataScope = FULL_SCOPE,
+): Promise<VisitListResult> {
+  const sql = db();
+  const limit = Math.min(Math.max(Math.trunc(Number(opts.limit) || VISIT_PAGE_DEFAULT), 1), VISIT_PAGE_MAX);
+  const offset = Math.max(Math.trunc(Number(opts.offset) || 0), 0);
+  const from = visitFrom(sql, scope, opts);
+  const asc = opts.dir === "asc";
+  // Kolom urut di-whitelist lewat tipe VisitSort — nama kolom tak pernah
+  // datang mentah dari query string.
+  const key = opts.sort ?? "tanggal";
+  const col =
+    key === "am" ? sql`COALESCE(initcap(mu.panggilan), mu.nama)`
+    : key === "customer" ? sql`sp.customer_name`
+    : key === "tipe" ? sql`al.activity_type`
+    : key === "geo" ? geoStatusExpr(sql)
+    : key === "dibuat" ? sql`sp.created_at`
+    : sql`sp.tanggal`;
+
+  const [rows, [count]] = await Promise.all([
+    sql`
+      SELECT sp.id::text AS id, sp.am_id, COALESCE(initcap(mu.panggilan), mu.nama) AS nama,
+             sp.customer_name, sp.visit_lat, sp.visit_lon, sp.visit_timestamp::text AS visit_timestamp,
+             sp.tanggal::text AS visit_date, ${geoStatusExpr(sql)} AS geo_status,
+             sp.tujuan, sp.goal,
+             NULLIF(concat_ws(' — ', NULLIF(al.hasil,''), NULLIF(al.next_action,'')), '') AS catatan,
+             al.activity_type, al.account_id, al.opportunity_id::text AS opportunity_id,
+             COALESCE(al.photo_path, (
+               -- Subquery skalar ber-LIMIT 1, bukan LEFT JOIN ke wa_message:
+               -- message_id di sana TIDAK unik, dan join biasa menggandakan
+               -- barisnya. Satu kunjungan bisa muncul dua kali dan total di
+               -- bawah tak akan pernah cocok dengan jumlah baris yang dikirim.
+               SELECT wm.media_path FROM wa_message wm
+               WHERE wm.message_id = al.message_id AND wm.media_path IS NOT NULL
+               ORDER BY wm.received_at DESC LIMIT 1
+             )) AS photo_path,
+             sp.created_at::text AS created_at
+      ${from}
+      ORDER BY ${col} ${asc ? sql`ASC NULLS LAST` : sql`DESC NULLS LAST`}, sp.id DESC
+      LIMIT ${limit} OFFSET ${offset}`,
+    sql`SELECT count(*)::int AS total ${from}`,
+  ]);
+
+  return {
+    rows: (rows as unknown as Record<string, unknown>[]).map(rowToVisit),
+    total: Number(count?.total ?? 0),
+    limit,
+    offset,
+  };
 }
 
 // Detail 1 visit (sales_plan by id) — VisitRow + note (dari plan goal/tujuan)
@@ -283,16 +388,19 @@ export async function getVisit(id: string, scope: DataScope = FULL_SCOPE): Promi
   const [r] = await sql`
     SELECT sp.id::text AS id, sp.am_id, COALESCE(initcap(mu.panggilan), mu.nama) AS nama,
            sp.customer_name, sp.visit_lat, sp.visit_lon, sp.visit_timestamp::text AS visit_timestamp,
-           sp.tanggal::text AS visit_date, sp.visit_date_mismatch,
+           sp.tanggal::text AS visit_date, ${geoStatusExpr(sql)} AS geo_status,
            sp.tujuan, sp.goal,
            al.activity_type, al.account_id, al.opportunity_id::text AS opportunity_id,
            NULLIF(al.hasil, '') AS hasil, NULLIF(al.next_action, '') AS next_action,
-           COALESCE(al.photo_path, wm.media_path) AS photo_path, sp.created_at::text AS created_at,
+           COALESCE(al.photo_path, (
+             SELECT wm.media_path FROM wa_message wm
+             WHERE wm.message_id = al.message_id AND wm.media_path IS NOT NULL
+             ORDER BY wm.received_at DESC LIMIT 1
+           )) AS photo_path, sp.created_at::text AS created_at,
            NULLIF(concat_ws(' — ', NULLIF(sp.tujuan,''), NULLIF(sp.goal,'')), '') AS note
     FROM sales_plan sp
     JOIN master_user mu ON mu.am_id = sp.am_id
     LEFT JOIN activity_log al ON al.id = sp.activity_id
-    LEFT JOIN wa_message wm ON wm.message_id = al.message_id
     WHERE sp.id::text = ${id} AND sp.visit_lat IS NOT NULL ${scopeSalesPlanClause(sql, scope)}
   `;
   if (!r) return null;
@@ -306,21 +414,32 @@ export async function getVisit(id: string, scope: DataScope = FULL_SCOPE): Promi
 
 // Brief kepatuhan geotag (port send_geotag_brief): hitung per-status + flagged.
 //
-// Dihitung dari daftar yang SAMA dengan listVisits (sales_plan), bukan tabel
-// `visit` legacy yang sparse — dulu kartu ringkasan & tabel di /visits bisa
-// beda angka karena beda sumber. Bonus: ikut ter-scope otomatis dan status
-// dihitung oleh verifyGeo() yang sama (tak ada duplikasi bbox di SQL).
-const SUMMARY_LIMIT = 10000;
-
+// Dihitung dari sumber yang SAMA dengan listVisits (sales_plan + geoStatusExpr),
+// bukan tabel `visit` legacy yang sparse — dulu kartu ringkasan & tabel di
+// /visits bisa beda angka karena beda sumber.
+//
+// Diagregasi di SQL, bukan dengan menarik baris lalu menghitungnya di memori.
+// Versi lama menarik 10.000 baris dan menghitung di JS, jadi begitu data
+// melewati 10.000 kartu ini akan diam-diam melapor terlalu rendah — persis
+// kelas bug yang sedang diperbaiki, cuma ambangnya lebih tinggi.
 export async function visitSummary(scope: DataScope = FULL_SCOPE): Promise<{
   total: number;
   by_status: Record<string, number>;
   flagged: number;
 }> {
-  const visits = await listVisits(undefined, scope, SUMMARY_LIMIT);
+  const sql = db();
+  const rows = await sql`
+    SELECT ${geoStatusExpr(sql)} AS geo_status, count(*)::int AS n
+    FROM sales_plan sp
+    JOIN master_user mu ON mu.am_id = sp.am_id
+    WHERE sp.visit_lat IS NOT NULL ${scopeSalesPlanClause(sql, scope)}
+    GROUP BY 1`;
   const by: Record<string, number> = {};
-  for (const v of visits) by[v.geo_status] = (by[v.geo_status] ?? 0) + 1;
-  const total = visits.length;
+  let total = 0;
+  for (const r of rows as unknown as { geo_status: string; n: number }[]) {
+    by[String(r.geo_status)] = Number(r.n);
+    total += Number(r.n);
+  }
   return { total, by_status: by, flagged: total - (by.ok ?? 0) };
 }
 
