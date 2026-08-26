@@ -56,7 +56,8 @@ export async function runVisitWeeklyRecap(to?: string): Promise<{
     const newFlag = a.new_prospects >= a.new_target ? "✅" : `⚠️ ${a.new_prospects}/${a.new_target}`;
     lines.push(
       `${bar(a.pct)} ${String(a.pct).padStart(3)}%  ${label(a)} — ${a.visits}/${a.target}` +
-        ` · geo ${a.visits_geotag}/${a.visits} · prospek baru ${newFlag}`,
+        ` · geo ${a.visits_geotag}/${a.visits} · prospek baru ${newFlag}` +
+        (a.visits_unbound > 0 ? ` · tak terikat ${a.visits_unbound}` : ""),
     );
   }
   const totVisit = sorted.reduce((s, a) => s + a.visits, 0);
@@ -65,6 +66,18 @@ export async function runVisitWeeklyRecap(to?: string): Promise<{
     lines.push("", `📷 Foto geotag: ${totGeo}/${totVisit} kunjungan (${Math.round((totGeo / totVisit) * 100)}%)`);
   }
   if (below.length > 0) lines.push("", `⚠️ *Di bawah target (${below.length}):* ${below.join(", ")}`);
+  // Sebagian yang tampil di bawah target sebenarnya SUDAH melapor — laporannya
+  // tercatat di activity_log tapi tak terikat rencana (tanggal laporan beda dari
+  // tanggal rencana). Tanpa baris ini, rekap menyebut nama mereka seolah tak
+  // bekerja. Siapa yang ditandai TIDAK diubah — itu keputusan kebijakan.
+  const takTerikat = sorted.filter((a) => a.visits_unbound > 0);
+  if (takTerikat.length > 0) {
+    lines.push(
+      "",
+      `ℹ️ *Ada laporan tak terikat rencana:* ${takTerikat.map((a) => `${label(a)} (${a.visits_unbound})`).join(", ")}`,
+      "_Kerjanya tercatat, tanggal laporan ≠ tanggal rencana — belum terhitung sebagai capaian._",
+    );
+  }
   lines.push("", "_Weekly submit paling lambat Senin 12:00._");
   const message = lines.join("\n");
 
