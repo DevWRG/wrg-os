@@ -36,7 +36,12 @@ interface VisitItem {
   created_at: string;
 }
 interface VisitResponse {
+  /** baris yang dikirim di halaman ini. */
   count: number;
+  /** baris yang COCOK FILTER di backend — inilah angka yang dipakai footer tabel. */
+  total_rows: number;
+  limit: number;
+  offset: number;
   visits: VisitItem[];
 }
 interface RosterResponse {
@@ -74,14 +79,50 @@ async function getJson<T>(path: string, userId?: string): Promise<T | null> {
   }
 }
 
+// Kolom urut yang diterima backend (VISIT_SORTS di apps/api repo/visit.ts).
+// Divalidasi di sini juga supaya ?sort= karangan tidak diteruskan bulat-bulat.
+const SORTS = ["tanggal", "am", "customer", "tipe", "geo", "dibuat"];
+const PAGE_SIZES = [10, 25, 50, 100];
+const DEFAULT_SIZE = 25;
+
 export default async function VisitsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ status?: string }>;
+  searchParams: Promise<{
+    status?: string;
+    q?: string;
+    from?: string;
+    to?: string;
+    sort?: string;
+    dir?: string;
+    page?: string;
+    size?: string;
+  }>;
 }) {
-  const { status } = await searchParams;
+  const sp = await searchParams;
+  const status = sp.status;
   const active = status && FILTERS.some((f) => f.key === status) ? status : "";
-  const qs = active ? `?status=${encodeURIComponent(active)}` : "";
+
+  // Satu halaman saja yang diambil — tabel tak lagi menerima 1000 baris lalu
+  // menyaringnya sendiri. Konsekuensinya search/sort/rentang tanggal HARUS ikut
+  // ke backend, karena tak ada lagi baris cadangan di klien untuk disaring.
+  const q = (sp.q ?? "").trim();
+  const from = /^\d{4}-\d{2}-\d{2}$/.test(sp.from ?? "") ? sp.from! : "";
+  const to = /^\d{4}-\d{2}-\d{2}$/.test(sp.to ?? "") ? sp.to! : "";
+  const sort = SORTS.includes(sp.sort ?? "") ? sp.sort! : "tanggal";
+  const dir: "asc" | "desc" = sp.dir === "asc" ? "asc" : "desc";
+  const size = PAGE_SIZES.includes(Number(sp.size)) ? Number(sp.size) : DEFAULT_SIZE;
+  const page = Math.max(0, Math.trunc(Number(sp.page)) || 0);
+
+  const listQs = new URLSearchParams();
+  if (active) listQs.set("status", active);
+  if (q) listQs.set("q", q);
+  if (from) listQs.set("from", from);
+  if (to) listQs.set("to", to);
+  listQs.set("sort", sort);
+  listQs.set("dir", dir);
+  listQs.set("limit", String(size));
+  listQs.set("offset", String(page * size));
 
   const me = await sessionUser();
   // Sembunyikan tombol "Tambah kunjungan" HANYA dari karyawan sales/AM (is_am dari
@@ -90,13 +131,31 @@ export default async function VisitsPage({
   const canAddVisit = !me?.is_am;
   const [summary, list, kpi, roster] = await Promise.all([
     getJson<VisitSummary>("/visits/summary", me?.id),
-    getJson<VisitResponse>(`/visits${qs}`, me?.id),
+    getJson<VisitResponse>(`/visits?${listQs.toString()}`, me?.id),
     getJson<VisitKpi>("/visits/kpi", me?.id),
     // Roster AM untuk dropdown form — am_id nyata = user_id legacy, jangan
     // diketik manual. Hanya diambil kalau tombolnya memang tampil.
     canAddVisit ? getJson<RosterResponse>("/master/users?role=AM&aktif=true", me?.id) : null,
   ]);
-  const visits = list?.visits ?? null;
+  // Yang menentukan "ada hasil / tidak" adalah total_rows (seluruh yang cocok
+  // filter), bukan panjang halaman: halaman terakhir yang kebetulan kosong
+  // bukan berarti filternya nihil.
+  const matched = list?.total_rows ?? 0;
+
+  // ?page= di luar jangkauan (URL diketik tangan / di-bookmark saat hasilnya
+  // masih banyak) → ambil halaman terakhir yang valid. Tanpa ini tabelnya
+  // kosong tapi footernya tetap menulis "120 baris": tampilan yang persis
+  // sejenis dengan bug yang sedang diperbaiki. Permintaan kedua ini hanya
+  // terjadi pada kasus di luar jangkauan, bukan pada pemakaian normal.
+  const lastPage = matched > 0 ? Math.ceil(matched / size) - 1 : 0;
+  let pageAktif = page;
+  let list2 = list;
+  if (list && matched > 0 && list.visits.length === 0 && page > lastPage) {
+    pageAktif = lastPage;
+    listQs.set("offset", String(lastPage * size));
+    list2 = (await getJson<VisitResponse>(`/visits?${listQs.toString()}`, me?.id)) ?? list;
+  }
+  const visits = list2?.visits ?? null;
   const amOptions: AmOption[] = (roster?.users ?? []).map((u) => ({
     am_id: u.am_id,
     label: [u.panggilan || u.nama || u.am_id, u.cabang].filter(Boolean).join(" · "),
@@ -170,10 +229,21 @@ export default async function VisitsPage({
           <div className="flex flex-wrap gap-2">
             {FILTERS.map((f) => {
               const count = f.key === "" ? total : (summary.by_status?.[f.key] ?? 0);
+              // Pindah tab mempertahankan pencarian/rentang/urutan dan hanya
+              // me-reset halaman — pindah ke "Valid" lalu mendarat di halaman 12
+              // yang kosong itu terasa seperti data hilang.
+              const tabQs = new URLSearchParams();
+              if (f.key) tabQs.set("status", f.key);
+              if (q) tabQs.set("q", q);
+              if (from) tabQs.set("from", from);
+              if (to) tabQs.set("to", to);
+              if (sort !== "tanggal") tabQs.set("sort", sort);
+              if (dir !== "desc") tabQs.set("dir", dir);
+              if (size !== DEFAULT_SIZE) tabQs.set("size", String(size));
               return (
                 <Link
                   key={f.key || "all"}
-                  href={f.key ? `/visits?status=${f.key}` : "/visits"}
+                  href={tabQs.toString() ? `/visits?${tabQs.toString()}` : "/visits"}
                   className={cn(
                     "inline-flex items-center gap-1.5 rounded-lg border px-3 py-1 text-sm transition-colors",
                     active === f.key
@@ -192,10 +262,14 @@ export default async function VisitsPage({
             <CardContent className="pt-6">
               {!visits ? (
                 <p className="text-muted-foreground">Gagal memuat daftar kunjungan.</p>
-              ) : visits.length === 0 ? (
+              ) : matched === 0 ? (
                 <p className="text-muted-foreground">Tidak ada kunjungan untuk filter ini.</p>
               ) : (
-                <VisitsTable visits={visits} />
+                <VisitsTable
+                  visits={visits}
+                  totalRows={matched}
+                  query={{ q, from, to, sort, dir, page: pageAktif, size }}
+                />
               )}
             </CardContent>
           </Card>
