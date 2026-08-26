@@ -13,6 +13,7 @@ export interface AmVisitProgress {
   cabang: string | null;
   visits: number;
   visits_geotag: number;
+  visits_unbound: number;
   new_prospects: number;
   target: number;
   new_target: number;
@@ -110,7 +111,10 @@ export function VisitTargetTable({ kpi }: { kpi: VisitTargetKpi }) {
           Target {kpi.target_default} kunjungan/minggu, {kpi.new_target_default} di antaranya prospek baru
           (belum dikunjungi 90 hari terakhir). Capaian dihitung dari kunjungan yang{" "}
           <span className="font-medium">dilaporkan</span>; kolom{" "}
-          <span className="font-medium">Geotag</span> menunjukkan berapa di antaranya berkoordinat.
+          <span className="font-medium">Geotag</span> menunjukkan berapa di antaranya berkoordinat.{" "}
+          <span className="font-medium">Tak terikat</span> = laporan yang masuk tapi tak tersambung ke
+          rencana (paling sering karena tanggal laporan beda dari tanggal rencana) — kerjanya tercatat,
+          hanya belum terhitung sebagai capaian.
         </p>
       </CardHeader>
       <CardContent>
@@ -122,6 +126,7 @@ export function VisitTargetTable({ kpi }: { kpi: VisitTargetKpi }) {
                 <th className="pb-2 font-medium">Cabang</th>
                 <th className="pb-2 text-right font-medium">Kunjungan</th>
                 <th className="pb-2 text-right font-medium">Geotag</th>
+                <th className="pb-2 text-right font-medium">Tak terikat</th>
                 <th className="pb-2 pl-3 font-medium">Progress</th>
                 <th className="pb-2 text-right font-medium">Prospek baru</th>
               </tr>
@@ -148,12 +153,36 @@ export function VisitTargetTable({ kpi }: { kpi: VisitTargetKpi }) {
                         <span className="text-muted-foreground">—</span>
                       )}
                     </td>
+                    <td className="py-2 text-right tabular-nums">
+                      {a.visits_unbound > 0 ? (
+                        <span
+                          className="text-amber-600 dark:text-amber-400"
+                          title="Laporan tercatat di activity_log tapi tak terikat rencana — biasanya tanggal laporan beda dari tanggal rencana. Kerjanya ada, capaiannya belum terhitung."
+                        >
+                          {a.visits_unbound}
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </td>
                     <td className="w-[34%] py-2 pl-3">
                       <div className="flex items-center gap-2">
                         <div className="bg-muted h-1.5 flex-1 overflow-hidden rounded-full">
                           <div className={cn("h-full rounded-full", t.bar)} style={{ width: `${Math.min(100, a.pct)}%` }} />
                         </div>
-                        <span className={cn("w-10 text-right text-xs tabular-nums", t.text)}>{a.pct}%</span>
+                        {/* 0% dengan laporan tak terikat BUKAN "tak lapor" — jangan
+                            dirender sebagai nol yang mulus (lihat catatan
+                            visits_unbound di repo/visit.ts). */}
+                        {a.visits === 0 && a.visits_unbound > 0 ? (
+                          <span
+                            className="w-10 text-right text-xs tabular-nums text-amber-600 dark:text-amber-400"
+                            title={`${a.visits_unbound} laporan masuk tapi tak terikat rencana — bukan berarti tidak melapor.`}
+                          >
+                            0%*
+                          </span>
+                        ) : (
+                          <span className={cn("w-10 text-right text-xs tabular-nums", t.text)}>{a.pct}%</span>
+                        )}
                       </div>
                     </td>
                     <td className={cn("py-2 text-right tabular-nums", newOk ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground")}>

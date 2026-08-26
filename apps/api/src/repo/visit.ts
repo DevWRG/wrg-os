@@ -484,6 +484,22 @@ export interface AmVisitProgress {
    * bukan error, hanya nol yang mulus. Arif 8→0, Firman 5→0, Vicky 2→0.
    */
   visits: number;
+  /**
+   * Laporan yang TERCATAT di `activity_log` minggu itu tapi TAK terikat rencana
+   * (`is_unmatched`). Bukan bagian dari `visits` — sengaja dipisah.
+   *
+   * Kenapa perlu: pengikatan laporan ke rencana memakai tanggal PERSIS
+   * (`prosesReport`: `WHERE am_id = … AND tanggal = …`). AM yang mengirim
+   * laporan lewat tengah malam menanggalinya dengan hari baru, sementara
+   * rencananya di hari sebelumnya — jadi `matched: 0` dan `sales_plan.reported`
+   * tak pernah ter-set. Kerjanya tetap masuk `activity_log`, hanya tak terhitung.
+   *
+   * Terukur di prod: minggu 34/2026 ada 54 dari 263 baris `activity_log` (21%,
+   * 7 AM) yang tak terikat. Irul melaporkan 13 kunjungan berisi catatan
+   * terperinci dan dirender 0/20 — terbaca sama dengan tidak bekerja. Kolom ini
+   * membuat "ada laporan, tak terikat rencana" berbeda dari "tak lapor".
+   */
+  visits_unbound: number;
   /** Bagian dari `visits` yang punya koordinat. Indikator KUALITAS, bukan target. */
   visits_geotag: number;
   new_prospects: number;
@@ -562,6 +578,15 @@ export async function visitTargets(scope: DataScope = FULL_SCOPE, weekOffset = 0
              (sp.visit_lat IS NOT NULL) AS ber_geotag
       FROM sales_plan sp, span
       WHERE sp.reported AND sp.tanggal BETWEEN span.d0 AND span.d1
+    ),
+    -- Laporan yang tercatat tapi tak terikat rencana. TIDAK digabung ke vis:
+    -- target & persen tetap diukur dari rencana yang dilaporkan, supaya angka
+    -- capaian tak berubah artinya. Ini kolom pengungkap, bukan penambah nilai.
+    unb AS (
+      SELECT al.am_id, count(*)::int AS n
+      FROM activity_log al, span
+      WHERE al.tanggal BETWEEN span.d0 AND span.d1 AND al.is_unmatched
+      GROUP BY al.am_id
     )
     SELECT mu.am_id,
            COALESCE(initcap(mu.panggilan), mu.nama) AS nama,
@@ -570,6 +595,7 @@ export async function visitTargets(scope: DataScope = FULL_SCOPE, weekOffset = 0
            tgt.new_per_week::int AS new_target,
            (SELECT count(*)::int FROM vis WHERE vis.am_id = mu.am_id) AS visits,
            (SELECT count(*)::int FROM vis WHERE vis.am_id = mu.am_id AND vis.ber_geotag) AS visits_geotag,
+           COALESCE((SELECT unb.n FROM unb WHERE unb.am_id = mu.am_id), 0) AS visits_unbound,
            (SELECT count(DISTINCT v.customer_name)::int
               FROM vis v, span
              WHERE v.am_id = mu.am_id AND v.customer_name IS NOT NULL
@@ -602,6 +628,7 @@ export async function visitTargets(scope: DataScope = FULL_SCOPE, weekOffset = 0
       cabang: r.cabang ? String(r.cabang) : null,
       visits,
       visits_geotag: Number(r.visits_geotag ?? 0),
+      visits_unbound: Number(r.visits_unbound ?? 0),
       new_prospects: Number(r.new_prospects ?? 0),
       target,
       new_target: Number(r.new_target ?? 0),
