@@ -218,14 +218,145 @@ export async function countPendingItemDocs(
   return Number(rows[0]?.n ?? 0);
 }
 
-export async function listSalesOrders(limit = 500) {
-  const sql = db();
-  const rows = await sql`
-    SELECT id, number, trans_date::text AS trans_date, customer_name, status, total_amount
-    FROM accurate_sales_order ORDER BY trans_date DESC NULLS LAST, id DESC LIMIT ${limit}
-  `;
-  return rows.map((r) => ({ ...r }));
+// ── Daftar + ringkasan SO/DO ────────────────────────────────────────────────
+//
+// Menu Orders & Shipments dulu menarik 500 baris lalu MENGHITUNG ringkasannya
+// di klien (SummaryChart): total dokumen, jumlah bulan ini, customer unik,
+// nilai rupiah, dan grafik 12 bulan — semuanya dari 500 baris itu.
+//
+// Mirror-nya jauh lebih besar dari 500: syncSalesOrders/syncDeliveryOrders
+// menarik sampai maxPages(40) × pageSize(100) = 4.000 baris per sinkron dengan
+// jendela sinceDays 120, dan operasinya upsert yang tak pernah memangkas — jadi
+// isinya menumpuk. Gejala paling menyesatkan ada di grafik 12 bulan: bulan lama
+// tampil rendah/kosong bukan karena bisnisnya turun, tapi karena barisnya tak
+// pernah diambil. Ringkasan sekarang diagregasi di SQL atas SELURUH mirror.
+
+export const MIRROR_PAGE_DEFAULT = 25;
+export const MIRROR_PAGE_MAX = 5000;
+
+// Nilainya sengaja SAMA dengan id kolom di orders-table/shipments-table supaya
+// ?sort= dikirim apa adanya tanpa lapisan pemetaan. "total" hanya ada di SO.
+export const MIRROR_SORTS = ["trans_date", "number", "customer", "status", "total"] as const;
+export type MirrorSort = (typeof MIRROR_SORTS)[number];
+export const isMirrorSort = (v: unknown): v is MirrorSort =>
+  MIRROR_SORTS.includes(String(v) as MirrorSort);
+
+export interface MirrorListOpts {
+  q?: string;
+  /** Rentang trans_date (YYYY-MM-DD, inklusif). */
+  from?: string;
+  to?: string;
+  sort?: MirrorSort;
+  dir?: "asc" | "desc";
+  limit?: number;
+  offset?: number;
 }
+
+// Kolom urut di-whitelist lewat tipe MirrorSort — nama kolom tak pernah datang
+// mentah dari query string. `punyaNilai` false → 'total' jatuh ke trans_date
+// (delivery order memang tak punya kolom nilai).
+function mirrorOrder(sql: ReturnType<typeof db>, o: MirrorListOpts, punyaNilai: boolean) {
+  const key = o.sort ?? "trans_date";
+  const col =
+    key === "number" ? sql`number`
+    : key === "customer" ? sql`customer_name`
+    : key === "status" ? sql`status`
+    : key === "total" && punyaNilai ? sql`COALESCE(total_amount, 0)`
+    : sql`trans_date`;
+  // `id DESC` sebagai pemutus seri: tanpa itu baris bisa lompat/dobel antar
+  // halaman ketika nilai kolom urutnya kembar.
+  return o.dir === "asc"
+    ? sql`ORDER BY ${col} ASC NULLS LAST, id DESC`
+    : sql`ORDER BY ${col} DESC NULLS LAST, id DESC`;
+}
+
+// Rentang tanggal ikut ke SQL, bukan disaring di klien: tabelnya per-halaman,
+// jadi filter di klien hanya akan menyaring baris halaman yang sedang tampil.
+function mirrorRange(sql: ReturnType<typeof db>, o: MirrorListOpts) {
+  return sql`
+    ${o.from ? sql`AND trans_date >= ${o.from}::date` : sql``}
+    ${o.to ? sql`AND trans_date <= ${o.to}::date` : sql``}`;
+}
+
+function mirrorPage(o: MirrorListOpts) {
+  return {
+    limit: Math.min(Math.max(Math.trunc(Number(o.limit) || MIRROR_PAGE_DEFAULT), 1), MIRROR_PAGE_MAX),
+    offset: Math.max(Math.trunc(Number(o.offset) || 0), 0),
+  };
+}
+
+export async function listSalesOrders(opts: MirrorListOpts = {}) {
+  const sql = db();
+  const { limit, offset } = mirrorPage(opts);
+  const q = (opts.q ?? "").trim();
+  const like = `%${q}%`;
+  // WHERE true supaya klausa opsional bisa ditempel seragam dengan AND.
+  const where = sql`WHERE true
+    ${q ? sql`AND (number ILIKE ${like} OR customer_name ILIKE ${like} OR status ILIKE ${like})` : sql``}
+    ${mirrorRange(sql, opts)}`;
+  const [rows, [count]] = await Promise.all([
+    sql`
+      SELECT id, number, trans_date::text AS trans_date, customer_name, status, total_amount
+      FROM accurate_sales_order ${where}
+      ${mirrorOrder(sql, opts, true)}
+      LIMIT ${limit} OFFSET ${offset}`,
+    sql`SELECT count(*)::int AS total FROM accurate_sales_order ${where}`,
+  ]);
+  return { rows: rows.map((r) => ({ ...r })), total: Number(count?.total ?? 0), limit, offset };
+}
+
+export interface MirrorSummary {
+  total: number;
+  this_month_count: number;
+  unique_customers: number;
+  total_amount: number;
+  by_month: { month: string; count: number; amount: number }[];
+}
+
+// Ringkasan satu tabel mirror. Delivery order tak punya nilai rupiah → 0.
+// Bulan dihitung di SQL pakai WIB: SummaryChart dulu memakai
+// `new Date().toISOString().slice(0,7)` (UTC), jadi tiap awal bulan selama 7
+// jam pertama WIB angka "Bulan ini" masih menunjuk bulan sebelumnya.
+async function mirrorSummary(
+  table: "accurate_sales_order" | "accurate_delivery_order",
+): Promise<MirrorSummary> {
+  const sql = db();
+  const punyaNilai = table === "accurate_sales_order";
+  const t = punyaNilai ? sql`accurate_sales_order` : sql`accurate_delivery_order`;
+  const amount = punyaNilai ? sql`COALESCE(total_amount, 0)::numeric` : sql`0::numeric`;
+  const [[agg], bulan] = await Promise.all([
+    sql`
+      SELECT count(*)::int AS total,
+             count(*) FILTER (
+               WHERE to_char(trans_date, 'YYYY-MM')
+                   = to_char((now() AT TIME ZONE 'Asia/Jakarta')::date, 'YYYY-MM')
+             )::int AS this_month_count,
+             count(DISTINCT customer_name) FILTER (WHERE NULLIF(customer_name, '') IS NOT NULL)::int AS unique_customers,
+             COALESCE(SUM(${amount}), 0)::float8 AS total_amount
+      FROM ${t}`,
+    sql`
+      SELECT to_char(trans_date, 'YYYY-MM') AS ym,
+             count(*)::int AS n,
+             COALESCE(SUM(${amount}), 0)::float8 AS amt
+      FROM ${t}
+      WHERE trans_date IS NOT NULL
+      GROUP BY 1 ORDER BY 1 DESC LIMIT 12`,
+  ]);
+  const by_month = (bulan as unknown as { ym: string; n: number; amt: number }[])
+    .map((r) => ({ month: String(r.ym), count: Number(r.n), amount: Number(r.amt) }))
+    .reverse(); // SQL ambil 12 TERBARU (DESC) — dibalik jadi kronologis utk grafik.
+  const a = agg as unknown as Record<string, unknown> | undefined;
+  return {
+    total: Number(a?.total ?? 0),
+    this_month_count: Number(a?.this_month_count ?? 0),
+    unique_customers: Number(a?.unique_customers ?? 0),
+    total_amount: Number(a?.total_amount ?? 0),
+    by_month,
+  };
+}
+
+export const salesOrderSummary = () => mirrorSummary("accurate_sales_order");
+export const deliveryOrderSummary = () => mirrorSummary("accurate_delivery_order");
 
 export async function upsertDeliveryOrders(
   rows: { id: number; number?: string; trans_date?: string | null; customer_name?: string; ship_to?: string; status?: string; raw?: unknown }[],
@@ -260,13 +391,28 @@ export async function upsertDeliveryOrders(
   return n;
 }
 
-export async function listDeliveryOrders(limit = 500) {
+export async function listDeliveryOrders(opts: MirrorListOpts = {}) {
   const sql = db();
-  const rows = await sql`
-    SELECT id, number, trans_date::text AS trans_date, customer_name, ship_to, status
-    FROM accurate_delivery_order ORDER BY trans_date DESC NULLS LAST, id DESC LIMIT ${limit}
-  `;
-  return rows.map((r) => ({ ...r }));
+  const { limit, offset } = mirrorPage(opts);
+  const q = (opts.q ?? "").trim();
+  const like = `%${q}%`;
+  const where = sql`WHERE true
+    ${
+      q
+        ? sql`AND (number ILIKE ${like} OR customer_name ILIKE ${like}
+                OR ship_to ILIKE ${like} OR status ILIKE ${like})`
+        : sql``
+    }
+    ${mirrorRange(sql, opts)}`;
+  const [rows, [count]] = await Promise.all([
+    sql`
+      SELECT id, number, trans_date::text AS trans_date, customer_name, ship_to, status
+      FROM accurate_delivery_order ${where}
+      ${mirrorOrder(sql, opts, false)}
+      LIMIT ${limit} OFFSET ${offset}`,
+    sql`SELECT count(*)::int AS total FROM accurate_delivery_order ${where}`,
+  ]);
+  return { rows: rows.map((r) => ({ ...r })), total: Number(count?.total ?? 0), limit, offset };
 }
 
 export async function listMirror(entity: "customers" | "items" | "branches" | "vendors", limit = 100) {

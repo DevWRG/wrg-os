@@ -1,12 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useState, useTransition } from "react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { ChevronDown, ChevronRight, Loader2, Plus, Trash2 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
+import { useTableUrl } from "@/lib/use-table-url";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -167,9 +168,7 @@ export function PurchaseOrderTable({
   query: PurchaseOrderQuery;
 }) {
   const router = useRouter();
-  const pathname = usePathname();
-  const params = useSearchParams();
-  const [pending, startTransition] = useTransition();
+  const { push, qInput, setQInput, pending } = useTableUrl(query.q);
   const [sel, setSel] = useState<PurchaseOrderRow | null>(null);
   const [detail, setDetail] = useState<Detail | null>(null);
   const [detailErr, setDetailErr] = useState(false);
@@ -182,39 +181,6 @@ export function PurchaseOrderTable({
   const [rejectNote, setRejectNote] = useState("");
   const [approvalError, setApprovalError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
-
-  // Semua state tabel hidup di URL: bisa di-share, tahan refresh, dan yang
-  // terpenting selalu ikut dikirim ke backend. Tabelnya per-halaman, jadi
-  // search/sort/filter TIDAK boleh lagi cuma mengaduk baris yang ter-load.
-  const push = useCallback(
-    (patch: Record<string, string | number | null>) => {
-      const next = new URLSearchParams(params.toString());
-      for (const [k, v] of Object.entries(patch)) {
-        if (v === null || v === "") next.delete(k);
-        else next.set(k, String(v));
-      }
-      startTransition(() => {
-        router.replace(`${pathname}${next.toString() ? `?${next.toString()}` : ""}`, { scroll: false });
-      });
-    },
-    [params, pathname, router],
-  );
-
-  // Ketikan pencarian di-debounce ke URL; tanpa itu tiap huruf satu query.
-  const qUrl = query.q;
-  const [qInput, setQInput] = useState(qUrl);
-  const [qTerakhir, setQTerakhir] = useState(qUrl);
-  // URL berubah dari luar (Back, klik filter status) → samakan kotaknya.
-  // Disesuaikan saat render, bukan lewat useEffect (react-hooks/set-state-in-effect).
-  if (qUrl !== qTerakhir) {
-    setQTerakhir(qUrl);
-    setQInput(qUrl);
-  }
-  useEffect(() => {
-    if (qInput === qUrl) return;
-    const t = setTimeout(() => push({ q: qInput || null, page: null }), 350);
-    return () => clearTimeout(t);
-  }, [qInput, qUrl, push]);
   const { confirm, dialog } = useConfirm();
 
   function openDetail(r: PurchaseOrderRow) {

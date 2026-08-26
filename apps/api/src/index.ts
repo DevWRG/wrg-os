@@ -205,6 +205,9 @@ import {
   listMirror,
   listSalesOrders,
   listDeliveryOrders,
+  salesOrderSummary,
+  deliveryOrderSummary,
+  isMirrorSort,
 } from "./repo/accurateMirror.js";
 import { listWarehouses, listStockBranch, stockBranchSummary } from "./repo/stock-branch.js";
 import { recordDelivery, recordEmail, recordAlert, listLogs } from "./repo/logs.js";
@@ -1306,11 +1309,27 @@ app.get("/accurate/sales-orders/:id/items", async (c) => {
 });
 
 // List sales-order (recent-first) utk menu Orders.
+// Ringkasan agregat SO (total, bulan ini, customer unik, nilai, per-bulan).
+// Didaftarkan SEBELUM rute daftar biar literal menang, dan dihitung di SQL atas
+// SELURUH mirror — bukan dari baris yang kebetulan ter-fetch halaman.
+app.get("/accurate/sales-orders/summary", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await salesOrderSummary());
+});
+
 app.get("/accurate/sales-orders", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  const limit = Math.min(Math.max(Number(c.req.query("limit")) || 500, 1), 10000);
-  const rows = await listSalesOrders(limit);
-  return c.json({ entity: "sales-orders", count: rows.length, rows });
+  const q = c.req.query();
+  const { rows, total, limit, offset } = await listSalesOrders({
+    q: q.q || undefined,
+    from: q.from || undefined,
+    to: q.to || undefined,
+    sort: isMirrorSort(q.sort) ? q.sort : undefined,
+    dir: q.dir === "asc" ? "asc" : "desc",
+    limit: q.limit ? Number(q.limit) : undefined,
+    offset: q.offset ? Number(q.offset) : undefined,
+  });
+  return c.json({ entity: "sales-orders", count: rows.length, total_rows: total, limit, offset, rows });
 });
 
 // Sinkron delivery-order terbaru Accurate → accurate_delivery_order (menu Shipments). ?pages=N (default 5).
@@ -1353,11 +1372,25 @@ app.get("/accurate/shipments/:id/items", async (c) => {
 });
 
 // List delivery-order (recent-first) utk menu Shipments.
+// Ringkasan agregat DO — lihat catatan di /accurate/sales-orders/summary.
+app.get("/accurate/shipments/summary", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await deliveryOrderSummary());
+});
+
 app.get("/accurate/shipments", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  const limit = Math.min(Math.max(Number(c.req.query("limit")) || 500, 1), 10000);
-  const rows = await listDeliveryOrders(limit);
-  return c.json({ entity: "shipments", count: rows.length, rows });
+  const q = c.req.query();
+  const { rows, total, limit, offset } = await listDeliveryOrders({
+    q: q.q || undefined,
+    from: q.from || undefined,
+    to: q.to || undefined,
+    sort: isMirrorSort(q.sort) ? q.sort : undefined,
+    dir: q.dir === "asc" ? "asc" : "desc",
+    limit: q.limit ? Number(q.limit) : undefined,
+    offset: q.offset ? Number(q.offset) : undefined,
+  });
+  return c.json({ entity: "shipments", count: rows.length, total_rows: total, limit, offset, rows });
 });
 
 // AR (piutang) per customer / cabang / sales — dari accurate_invoice OPEN.
