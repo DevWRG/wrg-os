@@ -23,13 +23,18 @@ membawa `{to, sent, stub}` dan pesan keluar tak disimpan ke DB. Satu-satunya
 sumbernya adalah stdout `wasend.ts` mode STUB/DRY-RUN. Harness membajak
 `console.log` dan memungut blok `--- pesan --- … --- selesai ---`.
 
-## Jalankan
+## Jalankan (DB dev yang sudah ada)
 
 ```bash
 # 1. skema mutakhir
 bash scripts/db/migrate.sh                       # --dry-run dulu utk lihat yg pending
 
-# 2. fixture (idempoten, aman diulang)
+# 2. data — URUTAN WAJIB. seed-dev-full BERGANTUNG pada seed-dev:
+#    crm_account punya FK owner_am_id -> master_user, dan master_user demo1-3
+#    berasal dari seed-dev.sql. Dibalik/dilewati => "violates foreign key
+#    constraint crm_account_owner_fk ... Key (owner_am_id)=(demo1)".
+psql -d wrg_os_dev -f scripts/db/seed-dev.sql
+psql -d wrg_os_dev -f scripts/db/seed-dev-full.sql
 psql -d wrg_os_dev -f scripts/qa/seed-hashtag-fixtures.sql
 
 # 3. harness memuat apps/api/dist, jadi build dulu
@@ -38,6 +43,73 @@ pnpm --filter @wrg/api build
 # 4. jalan
 node scripts/qa/sim-hashtag.mjs                  # semua
 node scripts/qa/sim-hashtag.mjs stok sph         # filter nama skenario
+```
+
+## Setup dari NOL (anak magang / mesin baru)
+
+Diuji betulan di DB kosong: hasil akhir **42/42**. Tiga hal yang bikin tersandung
+kalau langkah di atas dituruti mentah-mentah:
+
+**1. `migrate.sh` tidak bisa bootstrap DB kosong.** `001_extensions.sql` memuat
+`CREATE DATABASE langfuse`, dan `migrate.sh` menjalankan tiap berkas dalam satu
+transaksi (`psql -1`) — `CREATE DATABASE` haram di dalam transaksi, jadi migrasi
+mati di berkas pertama:
+
+```
+psql:001_extensions.sql:8: ERROR: CREATE DATABASE cannot run inside a transaction block
+```
+
+Jalur resmi untuk mesin baru adalah **Docker** (`docs/LOCAL-DEV.md` /
+`scripts/db/local-reset.sh`) — Postgres meng-apply `init/*.sql` lewat
+`docker-entrypoint-initdb.d`, di luar transaksi, jadi 001 lolos.
+
+Kalau pakai Postgres native, pasang extension-nya manual lalu tandai 001 sudah
+apply, baru lanjut:
+
+```bash
+createdb wrg_os_dev
+psql -d wrg_os_dev -c 'CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+                       CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+                       CREATE EXTENSION IF NOT EXISTS "pg_trgm";
+                       CREATE EXTENSION IF NOT EXISTS "vector";'
+psql -d wrg_os_dev -c "CREATE TABLE IF NOT EXISTS schema_migrations (
+                         filename TEXT PRIMARY KEY,
+                         applied_at TIMESTAMPTZ NOT NULL DEFAULT now());
+                       INSERT INTO schema_migrations(filename)
+                         VALUES ('001_extensions.sql') ON CONFLICT DO NOTHING;"
+DATABASE_URL=postgres:///wrg_os_dev bash scripts/db/migrate.sh
+```
+
+`vector` = pgvector, extension pihak ketiga (`brew install pgvector`); tanpa itu
+migrasi yang memakainya gagal. `CREATE DATABASE langfuse` yang dilewati tak
+dipakai harness ini.
+
+Kabar baiknya: di DB **benar-benar baru**, **155 migrasi apply bersih tanpa satu
+pun error** — termasuk rantai view KSO `098`–`126` yang justru gagal di DB dev
+lama (lihat "Batasan" di bawah).
+
+**2. `seed-dev-full.sql` WAJIB, dan tetap tak cukup.** Ia mengisi
+`accurate_item`, `teknisi_capacity`, dll — tapi **tidak** `product_pricelist`,
+karena data price book nyata tak boleh masuk repo publik (F142). Tanpa fixture
+price book, `#SPH` gagal 2 skenario. `seed-hashtag-fixtures.sql` menambal itu
+dengan 3 SKU **rekaan** (nama diawali `QA `, angka bulat asal — bukan harga
+sungguhan), jadi harness tak lagi bergantung pada katalog nyata.
+
+Harness memeriksa prasyarat ini di awal dan berhenti dengan pesan jelas — supaya
+gagal DATA tak menyamar jadi gagal KODE:
+
+```
+Prasyarat DATA belum lengkap — bukan kegagalan kode:
+  · product_pricelist: SKU ber-diskon_maks ≥ 5% — dibutuhkan #SPH
+```
+
+**3. `tsconfig.tsbuildinfo` basi bikin build "sukses" tanpa meng-emit.** Kalau
+`apps/api/dist` pernah dihapus manual, `tsc` bisa melihat buildinfo lama,
+menyimpulkan semuanya mutakhir, lalu **keluar rc=0 tanpa menulis apa pun** —
+lalu harness bilang `Cannot find module .../dist/db.js` padahal build "berhasil".
+
+```bash
+rm -f apps/api/tsconfig.tsbuildinfo && pnpm --filter @wrg/api build
 ```
 
 `DATABASE_URL` default `postgres:///wrg_os_dev`. Exit code 1 kalau ada skenario
@@ -127,7 +199,9 @@ dipisah ke tes murni yang ikut CI:
 
 Semua identitas berdiri sendiri supaya tak menyentuh baris nyata: `master_user`
 `QA-AM-1`, `app_user` `hod@qa.invalid`, teknisi `Joko Fixture`, SJ `SJ-QA-00x`,
-approval `APR-900x`. Nomor WA `62811100000x` — bukan nomor yang bisa dihubungi.
+approval `APR-900x`, price book `QA-PL-00x` (`row_no` 900001+ agar tak bentrok
+`UNIQUE (periode, row_no)` dengan hasil import nyata). Nomor WA `62811100000x` —
+bukan nomor yang bisa dihubungi.
 
 Empat gerbang pengirim yang diuji, masing-masing sumbernya **beda**:
 
@@ -154,3 +228,18 @@ Rantai lapangan yang benar **bukan** `#KIRIM → #BAST`:
 Langkah `terima` itu web-only (F42, Admin Shipping/Kirim-Tagih) dan tak punya
 hashtag, jadi `resetState()` menyetelnya langsung. Lihat catatan KEDALUWARSA di
 `docs/features/F12-tracking-pengiriman-digital.md`.
+
+## Batasan
+
+- **Rantai view KSO `098`–`126` bisa gagal di DB dev yang sudah lama dipakai.**
+  View dari migrasi lebih baru kadang sudah ada di luar `schema_migrations`,
+  sehingga `DROP VIEW` di `098`/`107` gagal karena masih ada dependent. Aman
+  dilewati — tak menyentuh jalur hashtag. Di DB **baru** ini tak terjadi (155/155
+  apply bersih), jadi gejalanya menandai drift DB lama, bukan cacat migrasi.
+- **`schema_migrations` di dev itu batas bawah, bukan kebenaran.** Objek bisa ada
+  tanpa pernah tercatat (itu yang memicu konflik di atas). Kalau ragu, periksa
+  objeknya langsung (`to_regclass`, `information_schema.columns`), jangan percaya
+  ledger-nya saja.
+- **Harness ini tidak menguji pengiriman WA.** `WA_SEND_URL` selalu dikosongkan;
+  yang diverifikasi adalah teks balasan yang DISUSUN wrg-os, bukan bahwa pesannya
+  benar-benar sampai ke WhatsApp. Jalur kirim nyata ada di `infra/wa-bridge/`.
