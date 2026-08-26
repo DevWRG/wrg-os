@@ -38,6 +38,31 @@ SELECT ai.id, 'KEDIRI', 40, 'manual'
 FROM accurate_item ai ORDER BY ai.no LIMIT 1
 ON CONFLICT (item_id, warehouse_kode) DO UPDATE SET quantity = 40, source = 'manual';
 
+-- ── #PRICING / #SPH: butuh product_pricelist ──
+-- Data price book NYATA tak boleh masuk repo (repo publik, lihat F142), dan
+-- seed-dev-full.sql pun tak mengisi tabel ini. Tanpa fixture di bawah, dua
+-- skenario #SPH gagal di DB baru dan #PRICING lolos SEMU ("tidak ada produk
+-- cocok" tetap dianggap balasan sah). Jadi produk di bawah SENGAJA rekaan —
+-- nama diawali "QA " supaya tak pernah tertukar dengan katalog betulan, dan
+-- angkanya bulat asal-asalan, bukan harga sungguhan.
+--
+-- row_no 900001+ menghindari bentrok UNIQUE (periode, row_no) dengan hasil
+-- import nyata. `lini` wajib 'IVD' atau 'Medical' (CHECK constraint).
+--
+-- Tiga baris, masing-masing ada gunanya:
+--   QA-PL-001  diskon_maks 10%  → #SPH diskon 5% HARUS lolos
+--   QA-PL-002  diskon_maks 20%  → hasil kedua #PRICING (buktikan >1 baris)
+--   QA-PL-900  diskon_maks 0%   → #SPH diskon 5% HARUS ditolak plafon
+INSERT INTO product_pricelist
+  (periode, row_no, kode, lini, brand, nama, varian, kemasan, price_list, diskon_maks, harga_nett, nett_ppn)
+VALUES
+  ('H2-2026', 900001, 'QA-PL-001', 'IVD', 'QA Brand', 'QA Reagen Kontrol Fixture', 'Pack', 'Box', 1000000, 0.10, 900000, 999000),
+  ('H2-2026', 900002, 'QA-PL-002', 'IVD', 'QA Brand', 'QA Reagen Strip Fixture', NULL, 'Box', 500000, 0.20, 400000, 444000),
+  ('H2-2026', 900900, 'QA-PL-900', 'Medical', 'QA Brand', 'QA Alat Tanpa Diskon Fixture', NULL, 'Unit', 2000000, 0.00, 2000000, 2220000)
+ON CONFLICT (periode, row_no) DO UPDATE SET
+  kode = EXCLUDED.kode, nama = EXCLUDED.nama, price_list = EXCLUDED.price_list,
+  diskon_maks = EXCLUDED.diskon_maks, harga_nett = EXCLUDED.harga_nett, nett_ppn = EXCLUDED.nett_ppn;
+
 -- ── #KIRIM / #BAST / #BUKTI: tiga SJ pada tahap berbeda ──
 -- Status awal di-set ulang oleh harness tiap kali jalan (lihat resetState),
 -- jadi di sini cukup memastikan barisnya ADA.

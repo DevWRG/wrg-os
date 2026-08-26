@@ -20,9 +20,13 @@
 //   node scripts/qa/sim-hashtag.mjs stok sph       → filter nama skenario
 //   DATABASE_URL=postgres:///wrg_os_dev node scripts/qa/sim-hashtag.mjs
 //
-// Prasyarat:
+// Prasyarat (urutan seed-nya WAJIB — seed-dev-full punya FK ke master_user
+// yang diisi seed-dev; setup dari NOL lihat scripts/qa/README.md, migrate.sh
+// TIDAK bisa bootstrap DB kosong):
 //   1. bash scripts/db/migrate.sh                  (skema mutakhir)
-//   2. psql -d wrg_os_dev -f scripts/qa/seed-hashtag-fixtures.sql
+//   2. psql -d <db> -f scripts/db/seed-dev.sql
+//      psql -d <db> -f scripts/db/seed-dev-full.sql
+//      psql -d <db> -f scripts/qa/seed-hashtag-fixtures.sql
 //   3. pnpm --filter @wrg/api build                (harness memuat dist/)
 //
 // Keluar dengan kode 1 kalau ada skenario yang tak cocok → bisa dipakai di
@@ -205,6 +209,32 @@ const [plNol] = await sql`
   WHERE periode = 'H2-2026' AND kode IS NOT NULL AND kode <> '' AND diskon_maks = 0
   ORDER BY kode LIMIT 1`;
 
+// Gagal DATA jangan menyamar jadi gagal KODE. Tanpa pemeriksaan ini, katalog
+// yang kosong muncul sebagai `#SPH RS Fixture Sehat | - | 10 | 5%` lalu dibalas
+// 'Kode "-" tak ketemu' — terbaca seperti bug #SPH, padahal seed-nya yang
+// belum jalan. Kasus nyata: seed-dev-full.sql TIDAK mengisi product_pricelist
+// (data price book nyata tak boleh masuk repo publik), jadi DB baru selalu
+// kena ini sampai scripts/qa/seed-hashtag-fixtures.sql dijalankan.
+const kurang = [
+  !itemStok && "accurate_item + item_stock_branch (gudang KEDIRI) — dibutuhkan #STOK",
+  !plOk && "product_pricelist: SKU ber-diskon_maks ≥ 5% — dibutuhkan #SPH",
+  !plNol && "product_pricelist: SKU ber-diskon_maks = 0% — dibutuhkan uji plafon #SPH",
+].filter(Boolean);
+if (kurang.length) {
+  console.error(
+    [
+      "Prasyarat DATA belum lengkap — bukan kegagalan kode:",
+      ...kurang.map((k) => `  · ${k}`),
+      "",
+      "Jalankan seed-nya:",
+      "  psql -d wrg_os_dev -f scripts/db/seed-dev.sql             # master_user demo (prasyarat berikutnya)",
+      "  psql -d wrg_os_dev -f scripts/db/seed-dev-full.sql        # katalog accurate_item dkk",
+      "  psql -d wrg_os_dev -f scripts/qa/seed-hashtag-fixtures.sql",
+    ].join("\n"),
+  );
+  process.exit(1);
+}
+
 // ── penangkap balasan ─────────────────────────────────────────────────────
 const realLog = console.log;
 let captured = [];
@@ -290,7 +320,12 @@ const skenario = [
   { nama: "cek · pengirim tak dikenal (gerbang)", body: "#CEK SO-00123", from: ASING, harap: null },
 
   // F15 #PRICING
-  { nama: "pricing · ada kata kunci", body: "#PRICING reagen", from: AM, harap: /.+/ },
+  // Ekspektasi harus menuntut BARIS HASIL, bukan sekadar "ada balasan".
+  // Dengan /.+/ , balasan "Tidak ada produk cocok" ikut dianggap lulus — itu
+  // yang terjadi di DB baru tanpa fixture price book: #PRICING lolos semu
+  // sementara #SPH gagal, padahal penyebabnya sama.
+  { nama: "pricing · ada kata kunci", body: "#PRICING reagen", from: AM, harap: /• .+ — List Rp[\d.]+, maks diskon \d+%, floor Rp[\d.]+/ },
+  { nama: "pricing · tak ada yang cocok", body: "#PRICING produkyangtidakada", from: AM, harap: /Tidak ada produk cocok "produkyangtidakada" di Price Book/ },
   { nama: "pricing · argumen kosong", body: "#PRICING", from: AM, harap: /⚠️ #PRICING butuh kata kunci/ },
   { nama: "pricing · pengirim tak dikenal (gerbang)", body: "#PRICING reagen", from: ASING, harap: null },
 
