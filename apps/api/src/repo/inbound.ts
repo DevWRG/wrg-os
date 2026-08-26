@@ -45,7 +45,40 @@ const isAmRole = (role?: string | null) => AM_ROLES.has((role ?? "").trim());
 // Identitas pengirim di-match ke teknisi_capacity (F8, self-contained) via
 // matchTeknisiByName, BUKAN resolveSender/master_user.
 
-export type InboundKind = "plan" | "report" | "leads" | "update" | "sales" | "cek" | "klaim" | "kirim" | "bast" | "bukti" | "install" | "servis" | "training" | "kalibrasi" | "helpdesk" | "stok" | "sph" | "pricing" | "approve" | "reject" | "none";
+// SUMBER TUNGGAL daftar hashtag inbound. Dipakai dua kali: (a) menurunkan tipe
+// InboundKind, (b) menyusun regex penyaring di processUnprocessed. Dulu keduanya
+// ditulis terpisah dan langsung menyimpang — `bukti` ada di tipe & detectKind
+// tapi hilang dari regex, jadi `#BUKTI` teks-saja tak pernah terjaring sama
+// sekali. Satu daftar + tes paritas (inbound-kind-filter.test.ts) menutup kelas
+// bug itu: menambah hashtag baru di sini otomatis mengikutkannya ke penyaring.
+export const INBOUND_HASHTAGS = [
+  "plan",
+  "report",
+  "leads",
+  "update",
+  "sales",
+  "cek",
+  "klaim",
+  "kirim",
+  "bast",
+  "bukti",
+  "install",
+  "servis",
+  "training",
+  "kalibrasi",
+  "helpdesk",
+  "stok",
+  "sph",
+  "pricing",
+  "approve",
+  "reject",
+] as const;
+
+export type InboundKind = (typeof INBOUND_HASHTAGS)[number] | "none";
+
+// Regex (dialek Postgres, dipakai dgn operator ~*) penjaring baris wa_message
+// yang layak diproses. Diekspor supaya bisa diuji tanpa DB.
+export const inboundHashtagPattern = (): string => `#\\s*(${INBOUND_HASHTAGS.join("|")})`;
 
 const LEADS_UPDATE_LINE = /^\s*#\s*(leads|update)\b/i;
 const SALES_LINE = /^\s*#\s*sales\b/i;
@@ -1118,7 +1151,7 @@ export async function processUnprocessed(
            media_path, geo_lat, geo_lon, geo_ts, geo_address
     FROM wa_message
     WHERE processed_at IS NULL
-      AND (body ~* '#\\s*(plan|report|leads|update|sales|cek|klaim|kirim|bast|bukti|install|servis|training|kalibrasi|helpdesk|stok|sph|pricing|approve|reject)'
+      AND (body ~* ${inboundHashtagPattern()}
            OR (message_type ~* '^image' AND media_path IS NOT NULL)
            OR (${complaintGroupJid()} <> '' AND group_jid = ${complaintGroupJid()}))
     ORDER BY received_at ASC LIMIT ${limit}
