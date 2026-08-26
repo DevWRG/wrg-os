@@ -151,6 +151,134 @@ Untuk **tiap** menu yang kalian pegang:
 
 ---
 
+## Yang diuji juga: COMMAND HASHTAG WA
+
+15 command hashtag (`#STOK` `#CEK` `#PRICING` `#SPH` `#KLAIM` `#install`
+`#servis` `#training` `#kalibrasi` `#KIRIM` `#BAST` `#BUKTI` `#HELPDESK`
+`#APPROVE` `#REJECT`) **tidak lewat UI sama sekali**. Jadi membuka menu tak akan
+pernah menyentuhnya — butuh cara sendiri.
+
+### Tak ada WhatsApp yang terkirim dari laptop kalian
+
+Tiga lapis pengaman, dan semuanya sudah ada di `.env` yang kalian buat:
+
+| Pengaman | Efek |
+|---|---|
+| `WA_SEND_URL` **tidak di-set** | tak ada gateway sama sekali → mode STUB, balasan cuma dicetak ke terminal |
+| `WA_DRY_RUN=true` | walau gateway ter-set, tetap tak kirim live |
+| `WA_INBOUND_PROCESS=false` | pemrosesan inbound mati total (default) |
+
+> **JANGAN pernah mengisi `WA_SEND_URL`.** Itu satu-satunya cara laptop kalian
+> bisa benar-benar mengirim WhatsApp. Uji dari branch `dev` hanya boleh menyentuh
+> grup WA **"Research"** — grup live itu produksi, bukan tempat uji. Dan itu
+> dijalankan dari server, bukan dari laptop.
+
+### Langkah 1 — jalankan harness dulu (acuan)
+
+```bash
+node scripts/qa/sim-hashtag.mjs
+# harapan: total=42  cocok=42  beda=0  error=0
+```
+
+42 skenario: 15 command + varian argumen kosong, format salah, kode tak ketemu,
+plafon diskon, galat state machine, dan 5 uji penembusan gerbang pengirim.
+**Kalau ini belum hijau, jangan lanjut** — berarti setup-nya yang belum benar,
+bukan fiturnya.
+
+Filter kalau cuma mau sebagian: `node scripts/qa/sim-hashtag.mjs stok sph`
+
+### Langkah 2 — uji format bebas (di sinilah bug baru ketemu)
+
+Harness cuma menguji 42 skenario yang sudah dipikirkan. Yang belum: format yang
+orang sungguhan tulis di WA. Untuk itu suntik pesan sendiri.
+
+Nyalakan pemrosesan inbound — aman, karena dua pengaman lain tetap jalan:
+
+```bash
+# di .env, ubah satu baris ini saja:
+WA_INBOUND_PROCESS=true
+```
+
+Lalu suntik pesan dan proses:
+
+```bash
+psql -d wrg_os_dev -c "INSERT INTO wa_message
+  (group_jid, sender_jid, sender_name, message_type, body, input_hash, message_id)
+  VALUES ('grup-uji@g.us','628111000001@s.whatsapp.net','Dewi Fixture','text',
+          '#STOK SIN.00042','uji-1','uji-1')"
+
+curl -s -X POST -H "x-service-token: dev-token-lokal" \
+  -H 'content-type: application/json' -d '{"limit":10}' \
+  http://localhost:4000/wa/inbound/process
+```
+
+`input_hash` harus **unik** tiap suntikan (itu kunci anti-duplikat) — pakai
+`uji-2`, `uji-3`, dst.
+
+Nomor `628111000001` = AM fixture `Dewi Fixture`, satu-satunya yang lolos gerbang
+pengirim. Nomor lain akan didiamkan (itu benar, lihat di bawah).
+
+**Balasannya ada di dua tempat:**
+
+Terminal `pnpm dev`, di antara penanda:
+
+```
+--- pesan ---
+📦 *ITEM SINTETIS 0042 CONSUMABLE* (SIN.00042)
+Total (semua cabang): 294 PACK — live, update otomatis tiap 5 menit
+Cabang Kediri: 228 PACK (data per 14 Agu 2026)
+--- selesai ---
+```
+
+Atau di database, tanpa perlu mengubek log:
+
+```bash
+psql -d wrg_os_dev -c "SELECT processed_kind, processed_result
+  FROM wa_message WHERE input_hash = 'uji-1'"
+```
+
+### Yang perlu dicoba
+
+Balasan command hashtag itu **teks yang dibaca orang di WA** — jadi salah format
+atau salah sebut nama sama seriusnya dengan salah hitung.
+
+1. **Argumen kosong** — `#STOK` tanpa apa-apa, `#SPH` tanpa apa-apa. Harus dibalas
+   petunjuk format, bukan diam dan bukan error mentah.
+2. **Format berantakan tapi niatnya jelas** — huruf besar-kecil campur
+   (`#sToK`), spasi setelah tanda pagar (`# STOK`), hashtag di baris kedua
+   (pengantar dulu, `#BUKTI SJ-1` di bawahnya), spasi berlebih.
+3. **`#SPH` dengan pemisah salah** — kurang/lebih dari 4 bagian, diskon tanpa
+   tanda `%`, diskon di atas plafon SKU, qty nol atau negatif.
+4. **Nomor/kode yang tak ada** — `#STOK KODENGAWUR`, `#KIRIM SJ-TIDAK-ADA`,
+   `#APPROVE APR-9999`. Harus dibalas jelas, bukan diam.
+5. **Melangkahi urutan** — `#BUKTI` sebelum `#BAST`, `#KIRIM` dua kali untuk SJ
+   yang sama, `#APPROVE` untuk yang sudah disetujui.
+6. **Nama di balasan** — kalau balasannya menyebut nama pengirim, pastikan
+   namanya benar dan bukan `undefined`/kosong.
+
+### Bukan bug (hashtag)
+
+- **Pengirim tak dikenal → bot DIAM total.** Itu gerbang anti-spam yang
+  disengaja, bukan kerusakan. Hasilnya `skipped: "unknown-sender"` dan
+  `replied: 0`. Empat gerbang berbeda, sumber identitasnya beda-beda —
+  tabelnya ada di `scripts/qa/README.md`.
+- **`#BAST` ditolak dengan "belum ditandai TERIMA".** Benar. Langkah *terima* itu
+  web-only (menu Shipping) dan **tak punya hashtag**, jadi rantai lapangannya:
+  `#KIRIM` → *(admin tandai terima di web)* → `#BAST` → `#BUKTI`.
+- **`#KLAIM` tanpa foto ditolak.** Wajib ada lampiran.
+- **`#KLAIM` berfoto → "services/ai tak terjangkau ... status 503".** OCR-nya
+  memanggil `services/ai` yang tak jalan di laptop kalian. Yang penting: ia
+  **dibalas sopan**, tidak membuat proses mati. Kalau sampai bikin batch
+  berhenti atau tak ada balasan sama sekali → **itu bug, laporkan.**
+- **`#TICKET` `#FORECAST` `#TTF` `#SJ` tidak berbuat apa-apa.** Sengaja tak
+  pernah diaktifkan.
+
+Selesai menguji, **kembalikan `WA_INBOUND_PROCESS=false`** dan bersihkan:
+
+```bash
+psql -d wrg_os_dev -c "DELETE FROM wa_message WHERE input_hash LIKE 'uji-%'"
+```
+
 ## Cara melaporkan
 
 Satu isu satu laporan, dan sertakan:
