@@ -353,6 +353,64 @@ async function insertAmActivities(
   return { matched, unmatched: unmatchedNames.length, unmatchedNames, linked };
 }
 
+// ── Laporan yang masuk lewat tengah malam ──
+//
+// insertAmActivities mengikat ke rencana dengan `tanggal = ${tanggal}` PERSIS.
+// AM yang mengirim #REPORT lewat tengah malam jadi tak pernah terikat: kalau ia
+// tak menulis tanggal, `wibDate()` memberi hari yang BARU (jam 00:19 WIB sudah
+// hari berikutnya), dan kalau ia menulis tanggal pun sering ditulis hari baru —
+// sementara rencananya ada di hari sebelumnya. Hasilnya nol yang cocok, semua
+// baris masuk `is_unmatched`, dan `sales_plan.reported` tak pernah ter-set.
+//
+// Akibatnya bukan kosmetik: kunjungan yang benar-benar dikerjakan (lengkap
+// dengan catatan hasil) tidak terhitung di capaian, sehingga KPI menampilkan 0
+// untuk orang yang justru melapor. Diukur di produksi: laporan yang masuk
+// 00:00–05:59 punya tingkat "tak cocok" jauh di atas laporan jam kerja.
+//
+// Pergeseran ini SENGAJA dipagari ketat — tiga syarat harus terpenuhi bersama:
+//   1. tanggal target benar-benar TAK PUNYA rencana (bukan sekadar tak cocok
+//      namanya) — kalau AM memang punya rencana hari itu, tanggalnya dihormati;
+//   2. pesan diterima sebelum AM_REPORT_H1_CUTOFF_HOUR WIB (default 06:00);
+//   3. H-1 punya minimal satu rencana yang BELUM dilaporkan.
+//
+// Dan hasilnya TIDAK senyap: balasan WA menyebut pergeserannya, supaya AM bisa
+// mengoreksi kalau tebakannya salah. Pergeseran tanggal yang diam-diam adalah
+// kelas bug yang sama dengan yang sedang diperbaiki.
+//
+// Kill switch: AM_REPORT_BIND_H1=false.
+const H1_CUTOFF_HOUR = (() => {
+  const n = Number(process.env.AM_REPORT_H1_CUTOFF_HOUR);
+  return Number.isFinite(n) && n >= 0 && n <= 23 ? Math.trunc(n) : 6;
+})();
+const bindH1Enabled = (): boolean =>
+  (process.env.AM_REPORT_BIND_H1 ?? "true").toLowerCase() !== "false";
+
+async function tanggalIkatLaporan(
+  amId: string,
+  tglAwal: string,
+  receivedAt: string | null | undefined,
+): Promise<{ tanggal: string; digeser: boolean; dari: string }> {
+  const tetap = { tanggal: tglAwal, digeser: false, dari: tglAwal };
+  if (!bindH1Enabled() || !receivedAt) return tetap;
+  const sql = db();
+  // Jam dihitung di SQL dengan AT TIME ZONE, bukan dengan memotong string:
+  // received_at::text membawa offset server yang belum tentu WIB, dan salah
+  // zona di sini justru akan menggeser tanggal untuk laporan jam kerja.
+  const [q] = await sql<{ jam: number; n_target: number; n_h1_belum: number }[]>`
+    SELECT extract(hour FROM (${receivedAt}::timestamptz AT TIME ZONE 'Asia/Jakarta'))::int AS jam,
+           (SELECT count(*)::int FROM sales_plan
+             WHERE am_id = ${amId} AND tanggal = ${tglAwal}::date) AS n_target,
+           (SELECT count(*)::int FROM sales_plan
+             WHERE am_id = ${amId} AND tanggal = ${tglAwal}::date - 1 AND NOT reported) AS n_h1_belum
+  `;
+  if (!q) return tetap;
+  if (Number(q.n_target) > 0) return tetap;
+  if (Number(q.jam) >= H1_CUTOFF_HOUR) return tetap;
+  if (Number(q.n_h1_belum) < 1) return tetap;
+  const [{ h1 }] = await sql<{ h1: string }[]>`SELECT (${tglAwal}::date - 1)::text AS h1`;
+  return { tanggal: String(h1), digeser: true, dari: tglAwal };
+}
+
 // ── Foto-followup (Fase 3) ──
 const PHOTO_MATCH = 0.3, PHOTO_DUP = 0.5, PHOTO_SILENT = 0.2;
 
@@ -603,7 +661,8 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
       );
       return finish({ error: "am-report-empty", via: am.via, reply });
     }
-    const tgl = ar.tanggal ?? wibDate();
+    const ikat = await tanggalIkatLaporan(am.am_id, ar.tanggal ?? wibDate(), row.received_at);
+    const tgl = ikat.tanggal;
     const res = await insertAmActivities(am.am_id, tgl, ar.items, row.message_id);
     // Foto yang datang BERSAMA laporan ini dipasang sekarang — sebelum daftar
     // `pend` dihitung, supaya balasan tak menagih foto yang sudah ada.
@@ -631,9 +690,15 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
       reminders += 1;
     }
     let body = buildAmReportReply(am.nama, tgl, ar.items.length, res, Number(tot.plan_total), Number(tot.reported), pendingNames);
+    // Pergeseran tanggal HARUS terlihat oleh AM — kalau tebakannya salah, dia
+    // satu-satunya yang bisa mengoreksi. Menggeser diam-diam = mengulang kelas
+    // bug yang perbaikan ini justru tutup.
+    if (ikat.digeser) {
+      body += `\n\n🕛 Laporan masuk lewat tengah malam dan tak ada rencana ${ikat.dari}, jadi dicocokkan ke rencana ${tgl}. Kalau keliru, kirim ulang dengan menulis tanggalnya.`;
+    }
     if (reminders > 0) body += `\n\n📌 ${reminders} reminder dijadwalkan.`;
     const reply = await sendViaWaGateway(target, body);
-    return finish({ am_id: am.am_id, via: am.via, mode: "am", tanggal: tgl, matched: res.matched, unmatched: res.unmatched, linked: res.linked, reminders, reply, ...(foto ?? {}) });
+    return finish({ am_id: am.am_id, via: am.via, mode: "am", tanggal: tgl, tanggal_asal: ikat.dari, digeser_h1: ikat.digeser, matched: res.matched, unmatched: res.unmatched, linked: res.linked, reminders, reply, ...(foto ?? {}) });
   }
   // report todo — cocokkan vs plan + balasan kaya (match/baru)
   const rep = await markReported(am.am_id, am.nama, tanggal, parsed.items, row.body ?? "");
