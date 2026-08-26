@@ -100,6 +100,29 @@ export function detectKind(body: string | null): InboundKind {
   return "none";
 }
 
+// Terjemahkan galat guard state machine shipment jadi instruksi yang bisa
+// dikerjakan KURIR di lapangan. Pesan asli dari shipment-tracking.ts menyebut
+// nama state internal ("langkah terima belum ditandai") — cukup buat balasan
+// API/web, tapi kurir yang menerimanya di WA tak punya petunjuk harus apa, dan
+// gampang menyimpulkan botnya rusak.
+//
+// Penting: langkah `terima` itu WEB-ONLY (F42 #714, Admin Shipping/Kirim-Tagih)
+// dan TIDAK punya hashtag — jadi kurir memang tak bisa menyelesaikannya
+// sendiri, dan balasannya harus bilang siapa yang harus dimintai.
+function pesanGagalShipping(sjNumber: string, error?: string): string {
+  const e = error ?? "";
+  if (e.includes("langkah terima belum ditandai")) {
+    return `SJ ${sjNumber} belum ditandai TERIMA, jadi belum bisa BAST. Minta admin tandai penerimaan dulu di menu Shipping, lalu kirim #BAST lagi.`;
+  }
+  if (e.includes("BAST belum selesai")) {
+    return `SJ ${sjNumber} belum BAST, jadi bukti terima belum bisa diunggah. Selesaikan #BAST dulu, lalu kirim #BUKTI lagi.`;
+  }
+  if (e.includes("langkah kirim sudah dilakukan")) {
+    return `SJ ${sjNumber} sudah pernah ditandai KIRIM — tak perlu #KIRIM lagi. Kalau mau lanjut, pakai #BAST (setelah admin tandai terima).`;
+  }
+  return `Gagal update SJ ${sjNumber}: ${e}`;
+}
+
 // Ambil No. SJ dari baris hashtag #KIRIM/#BAST — token pertama setelah hashtag.
 function extractSjNumber(body: string | null): string | null {
   if (!body) return null;
@@ -648,11 +671,31 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
   if (kind === "install" || kind === "servis" || kind === "training" || kind === "kalibrasi") {
     const teknisi = await matchTeknisiByName(row.sender_name);
     if (!teknisi) return finish({ skipped: "unknown-sender", sender_name: row.sender_name });
-    if (!row.body?.trim()) return finish({ skipped: "empty-body" });
+    // Isi laporan = body SETELAH hashtag-nya dibuang. Cek `!row.body?.trim()`
+    // saja tak pernah kena: body "#install" itu non-kosong, jadi laporan tanpa
+    // deskripsi apa pun tersimpan dan dibalas "✅ tercatat" — teknisi merasa
+    // sudah lapor padahal barisnya kosong. Pola strip-dulu-baru-cek ini sama
+    // dengan #HELPDESK. Pengirim sudah lolos gerbang roster, jadi dibalas
+    // (bukan silent-skip) supaya dia tahu formatnya.
+    const isiLaporan = stripInvisible(row.body ?? "")
+      .split(/\r?\n/)
+      .map((l) => l.replace(READINESS_LINE, "").trim())
+      .join(" ")
+      .trim();
+    if (!isiLaporan) {
+      const reply = await sendViaWaGateway(
+        row.group_jid,
+        `⚠️ #${kind.toUpperCase()} terdeteksi tapi teks kosong, ${teknisi.nama}. Format: #${kind} <apa yang dikerjakan>`,
+      );
+      return finish({ error: "empty-body", reply });
+    }
     const report = await createTeknisiReport({
       teknisi_id: teknisi.id,
       report_type: kind,
-      body: row.body,
+      // Simpan pesan ASLI (utuh, termasuk hashtag) sbg konteks laporan;
+      // isiLaporan cuma dipakai buat validasi di atas. Non-null di titik ini
+      // krn isiLaporan yang non-kosong menyiratkan body ada.
+      body: row.body ?? isiLaporan,
       source: "wa",
       group_jid: row.group_jid,
       wa_message_id: row.message_id,
@@ -838,7 +881,7 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
     const labelDone = kind === "kirim" ? "DIKIRIM" : kind === "bast" ? "BAST/SELESAI" : "BUKTI TERSIMPAN";
     const replyMsg = action.ok
       ? `✅ SJ ${shipment.sj_number} (${shipment.customer_name}) ditandai *${labelDone}*.`
-      : `⚠️ Gagal update SJ ${shipment.sj_number}: ${action.error}`;
+      : `⚠️ ${pesanGagalShipping(shipment.sj_number, action.error)}`;
     const reply = await sendViaWaGateway(target, replyMsg);
     return finish({ shipment_id: shipment.id, sj, ok: action.ok, error: action.error, reply });
   }
@@ -1057,6 +1100,12 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
 }
 
 // Proses batch pesan wa_message yang belum diproses & mengandung hashtag.
+//
+// `bukti` WAJIB ada di daftar hashtag penyaring di bawah. Sempat tertinggal
+// (kirim|bast ada, bukti tidak) sehingga `#BUKTI SJ-x` berupa TEKS tak pernah
+// terpilih sama sekali — padahal detectKind mengenalinya dan markBukti punya
+// penanganan khusus untuk kasus tanpa foto. Yang lolos hanya #BUKTI berfoto,
+// via klausa OR media di bawahnya.
 export async function processUnprocessed(
   limit = 50,
 ): Promise<{ enabled: boolean; processed: number; replied: number; results: Record<string, unknown>[] }> {
@@ -1069,7 +1118,7 @@ export async function processUnprocessed(
            media_path, geo_lat, geo_lon, geo_ts, geo_address
     FROM wa_message
     WHERE processed_at IS NULL
-      AND (body ~* '#\\s*(plan|report|leads|update|sales|cek|klaim|kirim|bast|install|servis|training|kalibrasi|helpdesk|stok|sph|pricing|approve|reject)'
+      AND (body ~* '#\\s*(plan|report|leads|update|sales|cek|klaim|kirim|bast|bukti|install|servis|training|kalibrasi|helpdesk|stok|sph|pricing|approve|reject)'
            OR (message_type ~* '^image' AND media_path IS NOT NULL)
            OR (${complaintGroupJid()} <> '' AND group_jid = ${complaintGroupJid()}))
     ORDER BY received_at ASC LIMIT ${limit}
@@ -1092,7 +1141,26 @@ export async function processUnprocessed(
       await sql`UPDATE wa_message SET processed_kind = 'group-skip' WHERE id = ${r.id}`;
       continue;
     }
-    const out = await processInboundMessage(r as unknown as WaRow);
+    // Satu baris yang melempar TIDAK boleh membatalkan sisa batch. Barisnya
+    // sudah di-klaim (processed_at ter-set di atas) jadi tak akan diulang;
+    // tanpa penjaga ini pesan-pesan sesudahnya ikut tertunda padahal tak
+    // bersalah, dan kegagalannya tak meninggalkan jejak apa pun di DB.
+    // processed_kind = 'error' membuatnya bisa dicari:
+    //   SELECT * FROM wa_message WHERE processed_kind = 'error';
+    let out: Record<string, unknown>;
+    try {
+      out = await processInboundMessage(r as unknown as WaRow);
+    } catch (e) {
+      const pesan = (e as Error).message;
+      console.error(`[inbound] baris ${r.id} gagal diproses:`, pesan);
+      await sql`
+        UPDATE wa_message SET processed_kind = 'error',
+          processed_result = ${sql.json({ error: pesan })}
+        WHERE id = ${r.id}
+      `;
+      results.push({ id: String(r.id), kind: "error", error: pesan });
+      continue;
+    }
     results.push(out);
     processed += 1;
     const reply = out.reply as WaSendResult | undefined;
