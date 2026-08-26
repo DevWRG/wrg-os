@@ -107,6 +107,21 @@ curl -X POST http://localhost:4000/webhooks/wa -H 'content-type: application/jso
        "sender_name":"Budi","body":"#Report Budi\n1. kunjungan RS A - selesai","message_id":"demo-1"}'
 ```
 
+Response curl-nya cuma status pemrosesan, **bukan** isi balasan. Teks balasan
+utuh dicetak ke **log server** (terminal `pnpm dev`), diapit `--- pesan ---`:
+
+```
+[wa] STUB (WA_SEND_URL kosong) — tidak kirim live → 120363000000000001@g.us
+--- pesan ---
+✅ Report Budi tercatat ...
+--- selesai ---
+```
+
+Berlaku selama `WA_SEND_URL` kosong (stub) atau `WA_DRY_RUN != false` — dua-duanya
+default di dev, jadi tak ada yang perlu di-set. `sender_name` harus cocok dengan
+`master_user` (jalankan `scripts/db/seed-dev.sql` dulu — di situ ada AM demo
+"Budi"), kalau tidak inbound balas `skipped: unknown-sender`.
+
 ---
 
 Lihat juga: `docs/runbook-gateway-recovery.md`, `scripts/migrate/README.md`
