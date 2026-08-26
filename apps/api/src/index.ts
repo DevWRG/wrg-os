@@ -426,6 +426,8 @@ import {
 } from "./repo/ga-asset-assignment.js";
 import {
   listPurchaseOrders,
+  isPurchaseOrderSort,
+  purchaseOrderSummary,
   createPurchaseOrder,
   getPurchaseOrder,
   updatePurchaseOrder,
@@ -5998,14 +6000,31 @@ app.get("/ga-assets/:id/history", async (c) => {
 });
 
 // ── F13 PO Tracker + Sistem Barang Masuk (Purchasing) ──
+// Paginasi + filter + urut di SQL (?limit&offset&status&q&sort&dir&vendor_id&
+// cabang). `total_rows` dipisah dari `count` supaya UI bisa membedakan "yang
+// dikirim" dari "yang cocok filter"; bentuk mengikuti /stock/branch & /visits.
 app.get("/purchase-orders", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  const rows = await listPurchaseOrders({
-    vendorId: c.req.query("vendor_id") || undefined,
-    cabang: c.req.query("cabang") || undefined,
-    limit: c.req.query("limit") ? Number(c.req.query("limit")) : undefined,
+  const q = c.req.query();
+  const { rows, total, limit, offset } = await listPurchaseOrders({
+    vendorId: q.vendor_id || undefined,
+    cabang: q.cabang || undefined,
+    q: q.q || undefined,
+    status: q.status || undefined,
+    // Nama kolom urut divalidasi di sini — tak pernah masuk SQL mentah.
+    sort: isPurchaseOrderSort(q.sort) ? q.sort : undefined,
+    dir: q.dir === "asc" ? "asc" : "desc",
+    limit: q.limit ? Number(q.limit) : undefined,
+    offset: q.offset ? Number(q.offset) : undefined,
   });
-  return c.json({ count: rows.length, rows });
+  return c.json({ count: rows.length, total_rows: total, limit, offset, rows });
+});
+
+// Hitungan kartu KPI (per-status + telat), diagregasi di SQL atas SELURUH PO.
+// Didaftarkan SEBELUM /purchase-orders/:id biar rute literal menang.
+app.get("/purchase-orders/summary", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await purchaseOrderSummary());
 });
 
 app.post("/purchase-orders", async (c) => {
