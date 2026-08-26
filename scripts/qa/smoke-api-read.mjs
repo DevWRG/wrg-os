@@ -148,24 +148,71 @@ for (const p of tanpaParam) {
   }
 }
 
+// Route detail yang pasangan list-nya TIDAK bisa ditebak dari prefix, atau yang
+// ruang id-nya beda dari list ber-prefix sama. Tanpa ini, heuristik di bawah
+// mengambil id yang salah-ruang dan detail-nya balas 400 — kegagalan palsu yang
+// terbaca seperti regresi.
+//   · /customers memakai slug (`rsup-mandalika`); /customers/:id/monthly minta
+//     id numerik Accurate. Sumber yang benar: /customers/revenue.
+//   · /accurate/vendors dilayani route ber-param /accurate/:entity, jadi tak
+//     pernah muncul di daftar route tanpa-param.
+const LIST_DETAIL = {
+  "/customers/:id/monthly": "/customers/revenue",
+  "/accurate/vendors/:id/detail": "/accurate/vendors",
+};
+
 // Endpoint detail: ambil id dari route list padanannya (prefix terpanjang yang
 // ada di tanpaParam), lalu pukul. Tanpa data, detail-nya TAK diuji — itu
 // dilaporkan, bukan dianggap lulus.
+// Ambil id dari payload list. Dua hal yang dulu bikin harness ini bohong:
+//   1. `Object.values(d).find(Array.isArray)` mengambil array PERTAMA. Di
+//      /customers/revenue itu `months` (["Jun","Jul","Agu"]) dan di /npk/scores
+//      itu `aspect_order` — array string, bukan baris data. Sekarang: pilih
+//      array yang elemennya OBJEK.
+//   2. `rows[0]?.id` hanya menerima field bernama `id` persis, padahal payload
+//      nyata pakai `customer_id`, `am_id`, dst. Sekarang: `id` dulu, lalu kunci
+//      yang cocok nama param route-nya, baru `*_id` mana pun (deterministik —
+//      diurutkan, bukan "yang kebetulan pertama di objek").
+// Akibat bug lama, endpoint detail yang datanya ADA dilaporkan "(list kosong)".
+// Label itu menyamarkan titik-buta harness sebagai tabel kosong, dan bikin
+// hitungan `tak-teruji` tak layak dipakai sebagai gerbang rilis.
+// List yang balas baris TAPI tak punya kunci id yang bisa dipakai. Dibedakan
+// dari "kosong" supaya titik-buta harness tak lagi menyamar jadi tabel kosong.
+const adaBarisTanpaId = new Set();
 const idCache = new Map();
-const ambilId = async (list) => {
-  if (idCache.has(list)) return idCache.get(list);
+const ambilId = async (list, param) => {
+  const kunciCache = `${list}::${param}`;
+  if (idCache.has(kunciCache)) return idCache.get(kunciCache);
   const { status, body } = await get(list);
   let id = null;
   if (status >= 200 && status < 300) {
     try {
       const d = JSON.parse(body);
-      const rows = Array.isArray(d) ? d : Object.values(d).find((v) => Array.isArray(v)) ?? [];
-      id = rows[0]?.id ?? null;
+      const kandidat = Array.isArray(d) ? [d] : Object.values(d).filter(Array.isArray);
+      const rows =
+        kandidat.find((a) => a.length > 0 && typeof a[0] === "object" && a[0] !== null) ?? [];
+      const r0 = rows[0];
+      if (r0) {
+        // amId → am_id, userId → user_id: cocokkan nama param ke gaya kolom.
+        const snake = param.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`);
+        // Urut preferensi, dan lewati kunci yang nilainya null — kalau `id` ada
+        // tapi kosong, `*_id` masih boleh dipakai.
+        const urutan = [
+          "id",
+          snake,
+          ...Object.keys(r0)
+            .filter((k) => k.endsWith("_id"))
+            .sort(),
+        ];
+        const kunci = urutan.find((k) => k in r0 && r0[k] != null);
+        if (kunci) id = String(r0[kunci]);
+        else adaBarisTanpaId.add(list);
+      }
     } catch {
       /* bukan JSON → lewat */
     }
   }
-  idCache.set(list, id);
+  idCache.set(kunciCache, id);
   return id;
 };
 
@@ -174,14 +221,17 @@ const detailTakTeruji = [];
 for (const p of denganParam) {
   // /a/b/:id/c → cari route list terpanjang yang jadi prefix-nya
   const seg = p.split("/:")[0];
-  const list = tanpaParam.filter((l) => seg === l).sort((a, b) => b.length - a.length)[0];
+  const list =
+    LIST_DETAIL[p] ?? tanpaParam.filter((l) => seg === l).sort((a, b) => b.length - a.length)[0];
   if (!list) {
     detailTakTeruji.push(`${p} (tak ada route list padanan)`);
     continue;
   }
-  const id = await ambilId(list);
+  const param = p.split("/:")[1].split("/")[0];
+  const id = await ambilId(list, param);
   if (!id) {
-    detailTakTeruji.push(`${p} (${list} kosong)`);
+    const sebab = adaBarisTanpaId.has(list) ? "tak ada kunci id" : "kosong";
+    detailTakTeruji.push(`${p} (${list} ${sebab})`);
     continue;
   }
   const jalur = p.replace(/:[a-zA-Z]+/, id);
