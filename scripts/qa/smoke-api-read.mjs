@@ -64,6 +64,11 @@ const HARAPAN_NON_2XX_DETAIL = {
   // dev (tanpa kredensial) 503 itu jawaban yang benar. Di prod ini 2xx.
   "/accurate/sales-orders/:id/items": 503,
   "/accurate/shipments/:id/items": 503,
+  // Detail vendor juga ditarik on-demand dari API Accurate. Di mesin yang PUNYA
+  // kredensial (Mac mini) ini 2xx dan lolos lewat cabang 2xx; di dev/laptop
+  // magang tanpa kredensial ia 503. Didaftar supaya tak jadi merah palsu di
+  // lingkungan uji — bukan supaya 503-nya diabaikan kalau muncul di prod.
+  "/accurate/vendors/:id/detail": 503,
   // Butuh query param wajib — validasi yang bekerja.
   "/employee-spine/employees/:id/measurements": 400,
 };
