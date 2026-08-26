@@ -109,6 +109,18 @@ poin 5.
   `kirim_by` terisi nama pengirim WA, balasan stub terkirim. Lanjut `#BAST`
   SJ sama → `status:"bast"`. SJ tak dikenal (`#KIRIM SJ-TIDAK-ADA`) →
   `error:"sj-not-found"`, balasan error terkirim (bukan silent).
+
+  > **KEDALUWARSA sejak F42 (#714).** Langkah `#KIRIM` → `#BAST` **langsung**
+  > sudah TIDAK berlaku. F42 menyisipkan state `terima` di antaranya dan
+  > `markBast` kini menolak apa pun yang statusnya bukan `terima`. `terima`
+  > ditandai lewat **web** (Admin Shipping / Kirim-Tagih), **tanpa hashtag** —
+  > jadi rantai lapangan yang benar sekarang:
+  >
+  > `#KIRIM` → *(admin tandai terima di web)* → `#BAST` → `#BUKTI`
+  >
+  > Uji terima di atas ditulis sebelum F42 dan tak pernah dijalankan ulang
+  > sesudahnya; itu sebabnya regresinya lolos ke dokumen turunan (lihat
+  > "Kamus Hashtag" tim magang, yang mewarisi urutan lama ini).
 - Data uji dihapus setelah verifikasi (`SJ-TEST-001`, `SJ-TEST-002`).
 
 ## Terkait
