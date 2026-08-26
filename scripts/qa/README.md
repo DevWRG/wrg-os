@@ -183,6 +183,66 @@ Perintah itu juga dicetak di akhir tiap run.
 request ke tahap awal tiap kali mulai. Tanpa itu, run ke-2 gagal palsu (SJ sudah
 terkirim, APR sudah disetujui) dan terbaca seperti regresi.
 
+## Smoke permukaan baca API — `smoke-api-read.mjs`
+
+Alat kedua, beda sasaran. `sim-hashtag.mjs` menguji **balasan** command WA;
+yang ini menguji **seluruh permukaan baca HTTP** apps/api terhadap DB nyata.
+
+```bash
+pnpm --filter @wrg/api build
+node scripts/qa/smoke-api-read.mjs
+DATABASE_URL=postgres:///wrg_os_dev node scripts/qa/smoke-api-read.mjs
+```
+
+Skrip mem-boot `apps/api/dist/index.js` sendiri (port `SMOKE_PORT`, default
+4199), memukul tiap route, lalu mematikannya. **Hanya GET — tak ada tulis**, dan
+scheduler dimatikan (`AGENT_SCHEDULE_ENABLED=false`) + WA dry-run, jadi tak ada
+cron atau kirim WA yang ikut jalan. Aman untuk DB berisi data.
+
+Daftar route **diekstrak dari `apps/api/src/index.ts`**, bukan dihardcode —
+fitur baru otomatis ikut teruji tanpa menyentuh skrip ini.
+
+Yang dicari: handler yang meledak karena SQL-nya menyebut kolom/tabel yang tak
+ada, join salah, atau enum tak cocok. Kelas kegagalan itu lolos dari
+lint/typecheck/CI, dan cuma muncul kalau query-nya benar-benar dieksekusi.
+
+### Non-2xx yang benar didaftar eksplisit
+
+`HARAPAN_NON_2XX` (dan `HARAPAN_NON_2XX_DETAIL` untuk route `:id`) memetakan
+route → status yang diharapkan, dengan alasannya sebagai komentar. Sengaja
+per-route, bukan "abaikan semua 4xx": begitu ada route **baru** yang balas
+non-2xx, ia tak ada di daftar → langsung jadi temuan, bukan tenggelam.
+
+Yang terdaftar sekarang: 6 route butuh query param wajib (400), 3 butuh
+identitas user bukan service-token (401), 2 ditolak scope (403), `/health/mirror`
+melaporkan mirror basi (503 — itu jawaban benar di dev), dan 3 route detail
+(item SO/SJ ditarik on-demand dari API Accurate → 503 tanpa kredensial; satu
+butuh param `period`).
+
+### Baseline di `wrg_os_dev`
+
+```
+route tanpa param : 181  → 2xx=169  non-2xx-sesuai-harapan=12
+route :id         :  53  → 2xx=8    tak-teruji=42
+GAGAL             : 0
+```
+
+**42 endpoint detail tak teruji** karena tabelnya kosong — dicetak satu-satu di
+akhir laporan, bukan disembunyikan. Untuk 33 menu batch magang, tabel kosong itu
+kondisi wajar hari-1 di prod juga, jadi hijau di sini memang bermakna. Tapi
+join di endpoint detail itu tetap belum pernah dieksekusi.
+
+Yang **tidak** tercakup alat ini, dan perlu diuji terpisah:
+
+- **Jalur tulis (POST/PATCH/DELETE)** — di situ error FK/constraint muncul
+  begitu orang memasukkan data. Paling cocok diuji lewat UI oleh yang tahu alur
+  bisnisnya.
+- **Volume data prod.** 6 berkas repo baru membaca mirror Accurate yang besar
+  (`cek.ts`, `inbound-cek.ts`, `forecast.ts`, `stock-batch.ts`,
+  `stock-branch.ts`, `sph.ts`). `wrg_os_dev` punya 12 `accurate_item` dan 40
+  SO/DO; prod ~5.800 dan ~11.800/11.900. Jalankan ulang skrip ini di salinan
+  dump prod untuk menutup celah itu.
+
 ## Tidak dipasang di CI
 
 Butuh Postgres ber-skema penuh + katalog `accurate_item`/`product_pricelist`,
