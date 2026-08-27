@@ -64,7 +64,18 @@ const FROM = arg("from");
 const TO = arg("to");
 const AM = arg("am");
 const CUTOFF = Number(arg("cutoff", "6"));
-const AMBANG = 0.3; // sama dengan insertAmActivities
+// Default 0,3 = sama dengan insertAmActivities. Bisa dinaikkan lewat --ambang.
+//
+// KENAPA boleh beda dari live: di jalur live, laporan dan rencana berasal dari
+// konteks hari yang SAMA, jadi 0,3 cukup aman. Backfill menjangkau lintas hari
+// dan menulis ke riwayat yang sudah jadi — salah pasang berarti seseorang
+// dikreditkan kunjungan yang tak dia lakukan, dan tak ada orang yang akan
+// mengoreksinya. Terlihat di prod: pada 0,3 muncul "RS Assakinah Medika" →
+// "RS Kamar Medika" (0,38) dan "Puskesmas Trenggalek" → "Dinkes Kab Trenggalek"
+// (0,39) — dua faskes yang jelas berbeda. Untuk backfill, jalankan dengan
+// --ambang=0.55 dan tinjau sisanya manual.
+const AMBANG = Number(arg("ambang", "0.3"));
+if (!(AMBANG > 0 && AMBANG < 1)) { console.error("--ambang harus di antara 0 dan 1"); process.exit(2); }
 
 if (!process.env.DATABASE_URL) {
   console.error("DATABASE_URL wajib di-set. Contoh:\n  DATABASE_URL=postgres:///wrg_os_prod node scripts/ops/backfill-report-h1.mjs --from=… --to=…");
@@ -102,12 +113,13 @@ const kandidat = await sql`
      ${AM ? sql`AND a.am_id = ${AM}` : sql``}
    ORDER BY a.am_id, a.tanggal, a.id`;
 
-console.log(`Rentang ${FROM} … ${TO}${AM ? ` · AM ${AM}` : ""} · cutoff ${String(CUTOFF).padStart(2, "0")}:00 WIB · ${APPLY ? "APPLY (MENULIS)" : "pratinjau (tak menulis)"}`);
+console.log(`Rentang ${FROM} … ${TO}${AM ? ` · AM ${AM}` : ""} · ambang ${AMBANG} · cutoff ${String(CUTOFF).padStart(2, "0")}:00 WIB · ${APPLY ? "APPLY (MENULIS)" : "pratinjau (tak menulis)"}`);
 console.log(`Kandidat tak-terikat: ${kandidat.length}\n`);
 
 const dilewati = { punya_rencana: 0, jam_kerja: 0, h1_kosong: 0, tanpa_pesan: 0, tak_cocok: 0, rencana_terpakai: 0 };
 const rencanaTerpakai = new Set();
 const rencana = [];
+const pasangan = [];
 
 for (const a of kandidat) {
   if (a.jam_wib === null) { dilewati.tanpa_pesan++; continue; }
@@ -122,16 +134,43 @@ for (const a of kandidat) {
      WHERE am_id = ${a.am_id} AND tanggal = ${a.h1}::date AND NOT reported
        AND similarity(customer_name, ${nama}) > ${AMBANG}
      ORDER BY score DESC`;
-  const pilih = cands.find((c) => !rencanaTerpakai.has(Number(c.id)));
-  if (!pilih) { cands.length ? dilewati.rencana_terpakai++ : dilewati.tak_cocok++; continue; }
-  rencanaTerpakai.add(Number(pilih.id));
-  rencana.push({
-    aktivitas: Number(a.id), am: String(a.am_id),
-    dari: String(a.tanggal), ke: String(a.h1), jam: Number(a.jam_wib),
-    laporan: String(a.customer_name), plan: String(pilih.customer_name),
-    planId: Number(pilih.id), skor: Number(pilih.score), source: String(a.source ?? ""),
-  });
+  if (!cands.length) { dilewati.tak_cocok++; continue; }
+  for (const c of cands) {
+    pasangan.push({
+      aktivitas: Number(a.id), am: String(a.am_id),
+      dari: String(a.tanggal), ke: String(a.h1), jam: Number(a.jam_wib),
+      laporan: String(a.customer_name), plan: String(c.customer_name),
+      planId: Number(c.id), skor: Number(c.score), source: String(a.source ?? ""),
+    });
+  }
 }
+
+// Penugasan GLOBAL menurut skor, bukan urut id aktivitas.
+//
+// KENAPA: dulu tiap aktivitas mengambil kandidat terbaik yang MASIH bebas —
+// artinya kalau kandidat terbaiknya sudah diklaim, ia turun ke kandidat
+// BERIKUTNYA. Satu laporan yang sebenarnya tak punya rencana karena itu bisa
+// menyerobot rencana milik laporan lain, dan korbannya ikut terdorong ke
+// rencana yang salah. Terlihat di prod 22 Agu 2026 (AM 12): "Puskesmas
+// Baruharjo" tak punya rencana, menyerobot "Puskesmas Pogalan" (0,37), lalu
+// Pogalan asli terdorong ke "Puskesmas Trenggalek" (0,41) dan Trenggalek asli
+// ke "PMI Trenggalek" (0,50) — tiga pasangan yang seharusnya 1,00 jadi salah
+// semua gara-gara satu laporan tanpa rencana.
+//
+// Sekarang: semua pasangan calon diurutkan menurut skor menurun, lalu diambil
+// kalau aktivitas DAN rencananya sama-sama masih bebas. Pasangan sempurna
+// selalu menang lebih dulu, dan yang tak kebagian DILEWATI — tidak diturunkan
+// ke rencana lain. Tie-break memakai id supaya hasilnya deterministik.
+pasangan.sort((x, y) => y.skor - x.skor || x.aktivitas - y.aktivitas || x.planId - y.planId);
+const aktivitasTerpakai = new Set();
+for (const p of pasangan) {
+  if (aktivitasTerpakai.has(p.aktivitas) || rencanaTerpakai.has(p.planId)) continue;
+  aktivitasTerpakai.add(p.aktivitas);
+  rencanaTerpakai.add(p.planId);
+  rencana.push(p);
+}
+dilewati.rencana_terpakai = new Set(pasangan.map((p) => p.aktivitas)).size - rencana.length;
+rencana.sort((x, y) => x.am.localeCompare(y.am) || x.dari.localeCompare(y.dari) || x.aktivitas - y.aktivitas);
 
 if (rencana.length === 0) {
   console.log("Tak ada yang bisa diikat ulang.");
