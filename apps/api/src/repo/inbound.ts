@@ -1075,12 +1075,21 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
       const reply = await sendViaWaGateway(target, `⚠️ ${parsed.kode} gagal diproses, ${approver.name}: ${r.error}`);
       return finish({ ok: false, error: r.error, reply });
     }
+    // r.nextNotify?.ok === false → tahap berikutnya gagal dinotif (kontak
+    // belum dikonfigurasi dkk). TANPA baris ini, approver dibalas "berhasil
+    // lanjut" padahal tak ada siapa pun yang tahu giliran approve
+    // berikutnya — persis gap yang dilaporkan issue #1071 bagian 2, cuma
+    // lewat jalur WA (bukan cuma web).
+    const nextNotifyWarning =
+      r.status === "pending" && r.nextNotify?.ok === false
+        ? `\n⚠️ TAPI notifikasi tahap berikutnya gagal: ${r.nextNotify.error} — perlu di-retry manual via web (/approval-requests).`
+        : "";
     const text =
       kind === "reject"
         ? `❌ ${parsed.kode} ditolak, tercatat. Terima kasih, ${approver.name}.`
         : r.status === "approved"
           ? `✅ ${parsed.kode} disetujui (tahap terakhir) — request selesai. Terima kasih, ${approver.name}.`
-          : `✅ ${parsed.kode} disetujui, lanjut ke tahap berikutnya. Terima kasih, ${approver.name}.`;
+          : `✅ ${parsed.kode} disetujui, lanjut ke tahap berikutnya. Terima kasih, ${approver.name}.${nextNotifyWarning}`;
     const reply = await sendViaWaGateway(target, text);
     return finish({ ok: true, status: r.status, reply });
   }
