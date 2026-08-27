@@ -61,7 +61,7 @@ import { createServer } from "node:http";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
@@ -75,10 +75,13 @@ delete process.env.COMPLIANCE_AM_GROUP;
 delete process.env.REMINDER_WA_TARGET;
 
 const DIST = join(ROOT, "apps/api/dist");
+// pathToFileURL: import() butuh URL berskema (file://), path absolut Windows
+// (C:\...) bukan URL valid buat default ESM loader — POSIX kebetulan lolos.
+const DIST_URL = pathToFileURL(DIST + "/").href;
 let db, processInboundMessage, processUnprocessed, detectKind;
 try {
-  ({ db } = await import(`${DIST}/db.js`));
-  ({ processInboundMessage, processUnprocessed, detectKind } = await import(`${DIST}/repo/inbound.js`));
+  ({ db } = await import(`${DIST_URL}db.js`));
+  ({ processInboundMessage, processUnprocessed, detectKind } = await import(`${DIST_URL}repo/inbound.js`));
 } catch (e) {
   console.error(`Gagal memuat ${DIST} — jalankan dulu: pnpm --filter @wrg/api build\n${e.message}`);
   process.exit(1);
