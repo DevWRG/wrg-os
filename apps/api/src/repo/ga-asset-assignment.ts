@@ -91,8 +91,8 @@ export async function assignAsset(assetId: string, input: AssignInput): Promise<
 
   if (userId) {
     await sql`
-      INSERT INTO ga_asset_assignments (asset_id, user_id, department, assigned_date, notes)
-      VALUES (${assetId}, ${userId}, ${input.department ?? null}, ${input.assigned_date ?? wibToday()}, ${input.notes ?? null})
+      INSERT INTO ga_asset_assignments (asset_id, user_id, department, assigned_date, notes, is_shared_snapshot)
+      VALUES (${assetId}, ${userId}, ${input.department ?? null}, ${input.assigned_date ?? wibToday()}, ${input.notes ?? null}, ${Boolean(asset.is_shared)})
     `;
     await sql`UPDATE ga_assets SET current_pic_user_id = ${userId}, pic_name_override = NULL, department = COALESCE(${input.department ?? null}, department), updated_at = now() WHERE id = ${assetId}`;
     await notifyPic(userId, String(asset.asset_code), String(asset.nama), "assign").catch(() => {});
