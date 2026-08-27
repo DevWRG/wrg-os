@@ -95,11 +95,20 @@ export interface CreateTenderInput {
 
 export async function createTender(input: CreateTenderInput): Promise<LpseTenderRow | ActionResult> {
   const sql = db();
-  const judul = input.judul.trim();
-  const instansi = input.instansi.trim();
+  // (input.judul ?? "") — dulu `input.judul.trim()` langsung, crash 500
+  // "Cannot read properties of undefined (reading 'trim')" kalau field-nya
+  // OMITTED (undefined), bukan cuma string kosong. Ditemukan sesi QA jalur
+  // tulis 2026-08-27.
+  const judul = (input.judul ?? "").trim();
+  const instansi = (input.instansi ?? "").trim();
   if (!judul || !instansi) return { ok: false, error: "judul & instansi wajib" };
   const platform = input.platform ?? "lpse";
   if (!["lpse", "e_catalog"].includes(platform)) return { ok: false, error: "platform harus lpse atau e_catalog" };
+
+  if (input.dept) {
+    const [dept] = await sql`SELECT 1 FROM department WHERE key = ${input.dept}`;
+    if (!dept) return { ok: false, error: "dept tidak ditemukan" };
+  }
 
   if (input.pic_employee_id) {
     const [pic] = await sql`SELECT 1 FROM employee WHERE id = ${input.pic_employee_id}`;
