@@ -1,0 +1,83 @@
+name: PR punya kartu
+
+# Menolak PR yang badan-nya tak menautkan kartu apa pun.
+#
+# Kenapa ada: fitur berkali-kali mendarat lewat nomor PR yang berbeda dari
+# kartunya, kartunya lalu menganggur terbuka. Sweep 27 Agu 2026 menemukan 3
+# kartu basi karena ini — #771 (F132 mendarat lewat #763), #840 (dibangun
+# dengan desain lain), #617 (kartu kosong sejak Juli). Tak satu pun basi
+# karena orangnya lalai; semuanya karena tak ada yang menautkan.
+#
+# Diterima salah satu (case-insensitive):
+#   Closes/Fixes/Resolves #123  → GitHub menutup issue-nya saat merge
+#   Refs #123                   → terkait, tapi belum menuntaskan
+#   No-Card: <alasan>           → jalan keluar sah, WAJIB pakai alasan
+#
+# `No-Card:` sengaja ada. Syarat tanpa jalan keluar akan dijawab dengan
+# `Closes #1` asal lolos — itu lebih buruk daripada tak ada cek sama sekali,
+# karena tautan palsu terlihat seperti tautan benar. Alasannya wajib diisi
+# supaya keputusannya terbaca di review, bukan disembunyikan.
+#
+# Komentar HTML DIBUANG sebelum dicocokkan — kalau tidak, contoh di dalam
+# `<!-- -->` milik pull_request_template.md akan meloloskan PR yang
+# template-nya belum diisi sama sekali.
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, ready_for_review, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  card:
+    name: PR punya kartu
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v9
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+
+            // Dependabot tak pernah punya kartu.
+            if (context.actor === 'dependabot[bot]') {
+              core.info('PR dependabot — skip');
+              return;
+            }
+
+            // PR promosi dev -> main mengumpulkan banyak PR yang kartunya
+            // masing-masing sudah ditautkan di PR aslinya. Menuntut tautan di
+            // sini berarti menuntut daftar puluhan issue yang tak akan dibaca.
+            if (pr.head.ref === 'dev' && pr.base.ref === 'main') {
+              core.info('PR promosi dev -> main — skip');
+              return;
+            }
+
+            const body = (pr.body || '').replace(/<!--[\s\S]*?-->/g, '');
+
+            const closes  = body.match(/\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)\b/i);
+            const refs    = body.match(/\brefs?\s+#(\d+)\b/i);
+            const noCard  = body.match(/^[ \t]*no-card:[ \t]*(\S.*)$/im);
+
+            if (closes) {
+              core.info(`Menutup #${closes[1]} saat merge.`);
+              return;
+            }
+            if (refs) {
+              core.info(`Terkait #${refs[1]} (tidak menutup).`);
+              return;
+            }
+            if (noCard) {
+              core.info(`Tanpa kartu — alasan: ${noCard[1].trim()}`);
+              return;
+            }
+
+            core.setFailed(
+              'Badan PR tidak menautkan kartu apa pun.\n\n' +
+              'Tambahkan SATU baris berikut ke badan PR (bukan ke judul, bukan ke\n' +
+              'komentar HTML), lalu simpan — cek ini jalan ulang otomatis:\n\n' +
+              '  Closes #123        menutup issue itu saat PR merge\n' +
+              '  Refs #123          terkait, tapi belum menuntaskannya\n' +
+              '  No-Card: <alasan>  memang tak ada kartunya (hotfix/chore/CI)\n\n' +
+              'Alasan pada No-Card wajib diisi — "No-Card:" kosong tetap ditolak.',
+            );
