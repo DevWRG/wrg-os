@@ -76,6 +76,7 @@ export default function ApprovalRequestsPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [submitNotifyWarning, setSubmitNotifyWarning] = useState<string | null>(null);
 
   function onPickFiles(picked: FileList | null) {
     if (!picked) return;
@@ -140,6 +141,7 @@ export default function ApprovalRequestsPage() {
 
   async function submit() {
     setSubmitError(null);
+    setSubmitNotifyWarning(null);
     if (!title.trim() || !requestedBy.trim()) {
       setSubmitError("title & requestedBy wajib diisi");
       return;
@@ -163,6 +165,15 @@ export default function ApprovalRequestsPage() {
       });
       const data = await res.json();
       if (!res.ok || data.ok === false) throw new Error(data.error ?? "gagal membuat permintaan");
+      // Permintaan SUKSES dibuat, tapi notifikasi tahap pertama bisa gagal
+      // (kontak belum dikonfigurasi) — data.notify.ok===false itu bukan
+      // alasan buat throw (request-nya tetap valid), tapi user WAJIB tahu
+      // sekarang juga, bukan cuma nebak dari banner list setelah reload.
+      if (data.notify && data.notify.ok === false) {
+        setSubmitNotifyWarning(
+          `Permintaan ${data.kode} berhasil dibuat, TAPI notifikasi tahap pertama gagal: ${data.notify.error}`,
+        );
+      }
       setTitle("");
       setDescription("");
       setNominal("");
@@ -266,6 +277,9 @@ export default function ApprovalRequestsPage() {
             </div>
           </div>
           {submitError && <p className="text-destructive text-sm">{submitError}</p>}
+          {submitNotifyWarning && (
+            <p className="text-amber-700 text-sm dark:text-amber-400">⚠️ {submitNotifyWarning}</p>
+          )}
           <Button onClick={() => void submit()} disabled={submitting}>
             {submitting ? "Mengirim…" : "Ajukan Approval"}
           </Button>

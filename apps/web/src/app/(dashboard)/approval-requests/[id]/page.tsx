@@ -2,9 +2,10 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 interface ApprovalStep {
@@ -57,28 +58,48 @@ export default function ApprovalRequestDetailPage() {
   const [req, setReq] = useState<ApprovalRequest | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [busyNotify, setBusyNotify] = useState(false);
 
+  const load = useCallback(async () => {
+    setError(null);
+    try {
+      const res = await fetch(`/api/approval-requests/${params.id}`, { cache: "no-store" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "gagal memuat data");
+      setReq(data);
+    } catch (e) {
+      setError(String(e));
+    }
+  }, [params.id]);
+
+  // Inline IIFE (bukan `void load()` langsung di body efek) — set-state
+  // sinkron di load() kena lint react-hooks set-state-in-effect, pola sama
+  // dgn list page (approval-requests/page.tsx).
   useEffect(() => {
     let active = true;
     (async () => {
       setLoading(true);
-      setError(null);
-      try {
-        const res = await fetch(`/api/approval-requests/${params.id}`, { cache: "no-store" });
-        const data = await res.json();
-        if (!active) return;
-        if (!res.ok) throw new Error(data.error ?? "gagal memuat data");
-        setReq(data);
-      } catch (e) {
-        if (active) setError(String(e));
-      } finally {
-        if (active) setLoading(false);
-      }
+      await load();
+      if (active) setLoading(false);
     })();
     return () => {
       active = false;
     };
-  }, [params.id]);
+  }, [load]);
+
+  async function retryNotify() {
+    setBusyNotify(true);
+    try {
+      const res = await fetch(`/api/approval-requests/${params.id}/notify`, { method: "POST" });
+      const data = await res.json();
+      if (!res.ok || data.ok === false) throw new Error(data.error ?? "gagal kirim notifikasi");
+      await load();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusyNotify(false);
+    }
+  }
 
   return (
     <div className="space-y-6 p-6">
@@ -93,6 +114,26 @@ export default function ApprovalRequestDetailPage() {
         <p className="text-muted-foreground">Permintaan tidak ditemukan.</p>
       ) : (
         <>
+          {(() => {
+            const currentStep = req.steps.find((s) => s.urutan === req.currentUrutan);
+            const stuckUnnotified = req.status === "pending" && currentStep && !currentStep.notifiedAt;
+            if (!stuckUnnotified) return null;
+            return (
+              <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm dark:border-amber-800 dark:bg-amber-950">
+                <p className="mb-2 text-amber-700 dark:text-amber-400">
+                  ⚠️ Tahap &quot;{currentStep.label}&quot; belum ternotifikasi — kemungkinan kontaknya belum
+                  dikonfigurasi. Cek{" "}
+                  <Link href="/approval-requests/config" className="text-primary underline">
+                    Setup Kontak
+                  </Link>{" "}
+                  lalu retry di bawah.
+                </p>
+                <Button size="sm" variant="outline" disabled={busyNotify} onClick={() => void retryNotify()}>
+                  Kirim Ulang Notifikasi
+                </Button>
+              </div>
+            );
+          })()}
           <Card>
             <CardHeader className="flex flex-row items-start justify-between space-y-0">
               <div>
