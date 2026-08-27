@@ -7,6 +7,23 @@
 --   2. default privileges SEQUENCES untuk objek baru
 --   3. pagar tingkat sesi: default_transaction_read_only + idle timeout
 --
+-- BERKAS INI SENGAJA MANDIRI — mengulang grant TABLES milik 039, bukan
+-- mengandalkannya. Alasannya konkret, bukan kehati-hatian umum:
+--
+--   DB latihan/rollback dibangun dengan
+--     pg_restore --no-owner --no-privileges
+--   (runbook-promosi-batch-magang.md baris 131 untuk geladi, baris 491 untuk
+--   rollback prod). Flag `--no-privileges` MEMBUANG semua GRANT, tetapi tabel
+--   `schema_migrations` ikut ter-restore dan tetap mencatat 039 sebagai sudah
+--   di-apply. Akibatnya migrate.sh MELEWATI 039 di DB itu selamanya, sementara
+--   hak bacanya nol — ledger dan kenyataan berbeda tanpa error apa pun.
+--
+--   Terpantau 27 Agu 2026 di wrg_os_geladi: 156 baris ledger, 039 tercatat
+--   applied 21 Jun 2026, tetapi wrg_readonly bisa membaca 0 dari 178 tabel.
+--
+--   Karena itu jangan "merapikan" berkas ini dengan membuang bagian 3 sebagai
+--   duplikat 039. Duplikasinya disengaja dan itulah yang menutup jalur restore.
+--
 -- URUTAN LAPISAN — penting, jangan dibalik saat membaca:
 --   Pengunci sesungguhnya adalah GRANT. `default_transaction_read_only` HANYA
 --   pagar kecelakaan: parameter itu USERSET, jadi sesi bisa mematikannya sendiri
@@ -31,17 +48,25 @@ ALTER ROLE wrg_readonly NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPA
 ALTER ROLE wrg_readonly SET default_transaction_read_only = on;
 ALTER ROLE wrg_readonly SET idle_in_transaction_session_timeout = '60s';
 
--- 3) Sequences: 039 hanya mengurus TABLES. Tanpa ini, query yang menyentuh
+-- 3) Grant TABLES — pengulangan 039 yang disengaja (lihat catatan di kepala
+--    berkas). Inilah yang memulihkan hak baca di DB hasil pg_restore
+--    --no-privileges, yang ledger-nya sudah telanjur menandai 039 selesai.
+GRANT USAGE  ON SCHEMA public TO wrg_readonly;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO wrg_readonly;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+  GRANT SELECT ON TABLES TO wrg_readonly;
+
+-- 4) Sequences: 039 hanya mengurus TABLES. Tanpa ini, query yang menyentuh
 --    sequence (mis. currval/last_value untuk cek gap id) kena permission denied.
 --    SELECT saja — USAGE sengaja TIDAK diberikan karena itu mengizinkan nextval().
 GRANT SELECT ON ALL SEQUENCES IN SCHEMA public TO wrg_readonly;
 
--- 4) Default privileges untuk sequence BARU. Terikat ke role yang menjalankan
+-- 5) Default privileges untuk sequence BARU. Terikat ke role yang menjalankan
 --    berkas ini (owner/migrator) — sama seperti pola di 039.
 ALTER DEFAULT PRIVILEGES IN SCHEMA public
   GRANT SELECT ON SEQUENCES TO wrg_readonly;
 
--- 5) Tegaskan wrg_readonly tak bisa membuat objek di schema.
+-- 6) Tegaskan wrg_readonly tak bisa membuat objek di schema.
 REVOKE CREATE ON SCHEMA public FROM wrg_readonly;
 
 -- Catatan cakupan:
