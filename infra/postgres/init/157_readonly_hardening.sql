@@ -1,4 +1,4 @@
--- 156: hardening role wrg_readonly (lanjutan 039_least_priv_roles.sql).
+-- 157: hardening role wrg_readonly (lanjutan 039_least_priv_roles.sql).
 --
 -- 039 sudah memberi wrg_readonly SELECT pada TABLES + default privileges untuk
 -- tabel baru. Berkas ini menutup tiga sisa yang selama ini di-apply manual di
