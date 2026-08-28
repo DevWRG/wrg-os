@@ -378,6 +378,7 @@ import {
   updateVehicle,
   listVehicleLogs,
   createVehicleLog,
+  runVehicleAlerts,
 } from "./repo/vehicle.js";
 import {
   listInventoryRelocations,
@@ -5671,6 +5672,16 @@ app.post("/vehicles/:id/logs", async (c) => {
   }
   const r = await createVehicleLog(c.req.param("id"), body as never);
   return c.json(r, "id" in r ? 201 : 400);
+});
+
+// Trigger manual alert service-due (km) + STNK H-30 — selain cron terjadwal
+// (VEHICLE_ALERT_ENABLED, default off). Berguna buat testing tanpa nunggu
+// jadwal cron 08:00 — pola sama /pickup-plan/previsit/run, /lpse-tender/
+// reminder/run. Tetap patuh VEHICLE_ALERT_WA_TARGET (kosong = no-op) & WA_DRY_RUN.
+app.post("/vehicles/alerts/run", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await runVehicleAlerts();
+  return c.json(r);
 });
 
 // ── F25 Uji Profisiensi Document Registry (Aftersales/Teknis) ──
