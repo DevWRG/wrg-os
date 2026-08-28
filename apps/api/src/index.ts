@@ -409,6 +409,7 @@ import {
   createVendor,
   updateVendor,
   deleteVendor,
+  getVendorContract,
   createVendorContract,
   updateVendorContract,
   deleteVendorContract,
@@ -5968,7 +5969,18 @@ app.patch("/vendor-management/:id/contracts/:contractId", async (c) => {
   } catch {
     return c.json({ error: "invalid JSON body" }, 400);
   }
-  const fieldErr = validateContractFields(body);
+  // validateContractFields cuma lihat field yg dikirim — PATCH parsial (mis.
+  // cuma start_date) lolos validasi start<end walau hasil merge dgn baris
+  // lama jadi end<start (BUG-03). Validasi thd nilai HASIL merge, bukan body
+  // mentah; field lain (mis. value) sengaja tetap dari body apa adanya, tak
+  // ikut di-merge — di luar scope BUG-03.
+  const existing = await getVendorContract(c.req.param("id"), c.req.param("contractId"));
+  if (!existing) return c.json({ error: "tidak ditemukan" }, 404);
+  const fieldErr = validateContractFields({
+    ...body,
+    start_date: body.start_date ?? existing.start_date,
+    end_date: body.end_date !== undefined ? body.end_date : existing.end_date,
+  });
   if (fieldErr) return c.json({ error: fieldErr }, 400);
   const row = await updateVendorContract(c.req.param("id"), c.req.param("contractId"), body);
   return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
