@@ -13,6 +13,50 @@ import type { AtkTransactionCategory } from "./atk-master.js";
 
 export type AtkMovementType = "in" | "out";
 
+export class AtkStockMovementError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+    this.name = "AtkStockMovementError";
+  }
+}
+
+// Saldo stok item = SUM(in) - SUM(out) atas seluruh mutasi (definisi sama
+// dgn listAtkStockLevels di bawah). excludeMovementId dipakai saat UPDATE
+// supaya kontribusi lama baris itu sendiri tak ikut terhitung dobel.
+async function stockBalance(itemId: string, excludeMovementId: string | null): Promise<number> {
+  const sql = db();
+  const rows = excludeMovementId
+    ? await sql`
+        SELECT COALESCE(SUM(CASE WHEN movement_type = 'in' THEN qty ELSE -qty END), 0) AS balance
+        FROM atk_stock_movement WHERE item_id = ${itemId} AND id != ${excludeMovementId}
+      `
+    : await sql`
+        SELECT COALESCE(SUM(CASE WHEN movement_type = 'in' THEN qty ELSE -qty END), 0) AS balance
+        FROM atk_stock_movement WHERE item_id = ${itemId}
+      `;
+  return Number(rows[0].balance);
+}
+
+// Guard "stok tak boleh minus" — dipanggil SEBELUM insert/update supaya
+// gagalnya jelas (409), bukan tersimpan diam-diam jadi current_stock negatif
+// (lihat listAtkStockLevels). Berlaku utk kedua arah: create/update 'out' yg
+// melebihi saldo, MAUPUN update yg mengurangi qty sebuah 'in' lama sampai
+// baris lain (out) yang sudah memakainya jadi tak tertutupi lagi.
+async function assertNonNegativeResultingStock(
+  itemId: string,
+  excludeMovementId: string | null,
+  resultingType: AtkMovementType,
+  resultingQty: number,
+): Promise<void> {
+  const baseline = await stockBalance(itemId, excludeMovementId);
+  const resulting = baseline + (resultingType === "in" ? resultingQty : -resultingQty);
+  if (resulting < 0) {
+    throw new AtkStockMovementError(409, `Saldo stok jadi negatif (saldo sebelum: ${baseline}, sesudah: ${resulting})`);
+  }
+}
+
 export interface AtkStockMovementRow {
   id: string;
   item_id: string;
@@ -81,6 +125,7 @@ export async function listAtkStockMovements(): Promise<AtkStockMovementRow[]> {
 }
 
 export async function createAtkStockMovement(t: AtkStockMovementInput): Promise<AtkStockMovementRow> {
+  await assertNonNegativeResultingStock(t.item_id, null, t.movement_type, Number(t.qty));
   const sql = db();
   const rows = await sql`
     INSERT INTO atk_stock_movement (item_id, movement_type, qty, movement_date, reference, pic, cabang, notes)
@@ -116,6 +161,12 @@ export interface AtkStockMovementUpdate {
 }
 
 export async function updateAtkStockMovement(id: string, f: AtkStockMovementUpdate): Promise<AtkStockMovementRow | null> {
+  const existing = await getAtkStockMovement(id);
+  if (!existing) return null;
+  const resultingItemId = f.item_id ?? existing.item_id;
+  const resultingType = f.movement_type ?? existing.movement_type;
+  const resultingQty = f.qty ?? existing.qty;
+  await assertNonNegativeResultingStock(resultingItemId, id, resultingType, Number(resultingQty));
   const sql = db();
   const rows = await sql`
     UPDATE atk_stock_movement SET
