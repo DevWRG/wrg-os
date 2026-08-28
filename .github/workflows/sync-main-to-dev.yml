@@ -1,0 +1,84 @@
+name: Sync main → dev
+
+# Repo ini me-merge PR dengan squash, termasuk PR promotion dev → main. Efeknya
+# tiap merge ke main menambah SATU commit yang tak ada di dev, dan main berhenti
+# jadi leluhur dev. Kalau dibiarkan menumpuk, promotion berikutnya muncul
+# CONFLICTING padahal isinya tidak benar-benar berbeda — konflik-ancestry palsu.
+# Sudah kambuh empat kali (Jul 2026 s/d 28 Agu 2026); yang terakhir 73 commit
+# main-only dan 5 konflik, padahal pohon hasil merge identik dengan dev.
+#
+# Workflow ini menutupnya di sumber: setiap push ke main, merge balik ke dev
+# dengan merge commit asli (--no-ff) supaya garis keturunan pulih seketika.
+#
+# CATATAN PENTING
+# - Merge di sini WAJIB --no-ff. Squash meruntuhkan kedua induknya dan justru
+#   menciptakan masalah yang mau diperbaiki.
+# - Push memakai GITHUB_TOKEN, yang sengaja TIDAK memicu workflow lain. Jadi CI
+#   tidak jalan ulang di dev sesudah sinkron — aman untuk kasus normal (pohon
+#   dev tak berubah karena isinya sudah ada di dev), tapi kalau suatu saat main
+#   membawa konten yang benar-benar baru, konten itu masuk dev tanpa lewat CI.
+# - Kalau merge konflik, workflow SENGAJA gagal dan tidak mendorong apa pun.
+#   Konflik berarti dev dan main benar-benar berbeda dan butuh keputusan manusia.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# Dua push ke main berdekatan tidak boleh saling mendahului saat push ke dev.
+concurrency:
+  group: sync-main-to-dev
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: dev
+          fetch-depth: 0
+
+      - name: Setel identitas git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Merge main ke dev
+        run: |
+          set -euo pipefail
+          git fetch origin main
+
+          if git merge-base --is-ancestor origin/main HEAD; then
+            echo "main sudah jadi leluhur dev — tak ada yang perlu disinkronkan."
+            exit 0
+          fi
+
+          n=$(git rev-list --count HEAD..origin/main)
+          echo "Commit main yang belum ada di dev: $n"
+          git log --oneline HEAD..origin/main
+
+          if ! git merge origin/main --no-ff \
+                 -m "chore(git): sinkron main → dev (otomatis)" \
+                 -m "Memulihkan garis keturunan sesudah $n commit mendarat di main lewat squash. Dijalankan oleh .github/workflows/sync-main-to-dev.yml."; then
+            git merge --abort || true
+            echo "::error::Merge main → dev konflik. dev dan main benar-benar berbeda — perlu diselesaikan manual, workflow tidak mendorong apa pun."
+            exit 1
+          fi
+
+          git push origin HEAD:dev
+          echo "Sinkron selesai."
+
+      - name: Verifikasi
+        run: |
+          set -euo pipefail
+          git fetch origin main dev
+          if git merge-base --is-ancestor origin/main origin/dev; then
+            echo "main kini leluhur dev — promotion berikutnya bersih."
+          else
+            echo "::error::main MASIH belum jadi leluhur dev sesudah sinkron."
+            exit 1
+          fi
