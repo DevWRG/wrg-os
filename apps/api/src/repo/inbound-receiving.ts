@@ -6,6 +6,15 @@ import { db } from "../db.js";
 
 export type InboundReceivingStatus = "in_progress" | "completed";
 
+export class InboundReceivingError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+    this.name = "InboundReceivingError";
+  }
+}
+
 // Checklist default di-seed dari sini (bukan kolom config di DB) — sengaja
 // hardcode, lebih simpel drpd bikin tabel master checklist utk 4 poin standar.
 const DEFAULT_CHECKLIST_LABELS = [
@@ -182,6 +191,15 @@ export interface InboundReceivingUpdate {
 
 export async function updateInboundReceiving(id: string, f: InboundReceivingUpdate): Promise<InboundReceivingRow | null> {
   const sql = db();
+  if (f.status === "completed") {
+    const [agg] = await sql`
+      SELECT COUNT(*) FILTER (WHERE is_checked) AS checked_count, COUNT(*) AS item_count
+      FROM inbound_receiving_item WHERE receiving_id = ${id}
+    `;
+    if (Number(agg.checked_count) < Number(agg.item_count)) {
+      throw new InboundReceivingError(400, "Checklist belum lengkap, tidak bisa ditandai selesai");
+    }
+  }
   const completedAt = f.status === "completed" ? new Date().toISOString() : f.status === "in_progress" ? null : undefined;
   const rows = await sql`
     UPDATE inbound_receiving SET
@@ -239,6 +257,12 @@ export async function updateInboundReceivingItem(
   f: InboundReceivingItemUpdate,
 ): Promise<InboundReceivingItemRow | null> {
   const sql = db();
+  if (f.is_checked !== undefined) {
+    const [header] = await sql`SELECT status FROM inbound_receiving WHERE id = ${receivingId}`;
+    if (header?.status === "completed") {
+      throw new InboundReceivingError(400, "Receiving sudah completed — kembalikan status ke in_progress dulu sebelum ubah checklist");
+    }
+  }
   const rows = await sql`
     UPDATE inbound_receiving_item SET
       label      = COALESCE(${f.label ?? null}, label),

@@ -278,6 +278,7 @@ import {
   addInboundReceivingItem,
   updateInboundReceivingItem,
   deleteInboundReceivingItem,
+  InboundReceivingError,
   type InboundReceivingInput,
   type InboundReceivingUpdate,
   type InboundReceivingStatus,
@@ -4990,8 +4991,13 @@ app.patch("/inbound-receiving/:id", async (c) => {
   if (body.status && !INBOUND_RECEIVING_STATUSES.includes(body.status)) {
     return c.json({ error: "status tidak valid" }, 400);
   }
-  const row = await updateInboundReceiving(c.req.param("id"), body);
-  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+  try {
+    const row = await updateInboundReceiving(c.req.param("id"), body);
+    return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+  } catch (e) {
+    if (e instanceof InboundReceivingError) return c.json({ error: e.message }, e.status as 400);
+    throw e;
+  }
 });
 
 app.delete("/inbound-receiving/:id", async (c) => {
@@ -5021,8 +5027,13 @@ app.patch("/inbound-receiving/:id/items/:itemId", async (c) => {
   } catch {
     return c.json({ error: "invalid JSON body" }, 400);
   }
-  const row = await updateInboundReceivingItem(c.req.param("id"), c.req.param("itemId"), body);
-  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+  try {
+    const row = await updateInboundReceivingItem(c.req.param("id"), c.req.param("itemId"), body);
+    return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+  } catch (e) {
+    if (e instanceof InboundReceivingError) return c.json({ error: e.message }, e.status as 400);
+    throw e;
+  }
 });
 
 app.delete("/inbound-receiving/:id/items/:itemId", async (c) => {
