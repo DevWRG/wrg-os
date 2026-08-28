@@ -544,6 +544,14 @@ const app = new Hono();
 // dapat body kosong/HTML (penyebab "Unexpected end of JSON input" di klien).
 app.onError((err, c) => {
   console.error("[api] unhandled:", err);
+  // postgres.js melempar RangeError JS-native ini saat men-serialize parameter
+  // bertipe date/timestamp dari string yang tak bisa di-parse (new Date(x)
+  // lalu .toISOString() pada Invalid Date) — terjadi SEBELUM query sampai ke
+  // Postgres, jadi bukan PostgresError (tak ada kode SQLSTATE). Ini kesalahan
+  // input pengguna, bukan kegagalan server.
+  if (err instanceof RangeError && err.message === "Invalid time value") {
+    return c.json({ error: "Format tanggal tidak valid" }, 400);
+  }
   const msg = err instanceof Error ? err.message : "internal error";
   return c.json({ error: msg }, 500);
 });
