@@ -9,7 +9,12 @@ export const dynamic = "force-dynamic";
 
 async function getVehicles(): Promise<Vehicle[] | null> {
   try {
-    const res = await gatewayFetch("/vehicles");
+    // all=true — tampilkan yang nonaktif juga (ditandai badge status di
+    // tabel), bukan cuma yang aktif. Tanpa ini, plat yang dinonaktifkan
+    // hilang total dari layar tapi masih "kepakai" di constraint unique
+    // plate_number — user gak bisa nemuin & aktifkan-lagi (cuma bisa lihat
+    // pesan error "sudah terdaftar" tanpa tahu di mana kendaraannya).
+    const res = await gatewayFetch("/vehicles?all=true");
     if (!res.ok) return null;
     const data = (await res.json()) as { vehicles: Vehicle[] };
     return data.vehicles ?? [];

@@ -39,6 +39,11 @@ export function VehiclesTable({ vehicles }: { vehicles: Vehicle[] }) {
       ),
     },
     {
+      id: "status",
+      header: "Status",
+      cell: (v) => (v.active ? <Badge variant="outline">Aktif</Badge> : <Badge variant="secondary">Nonaktif</Badge>),
+    },
+    {
       id: "sopir",
       header: "Sopir",
       cell: (v) => v.sopir_name ?? <span className="text-muted-foreground text-xs">belum diisi</span>,

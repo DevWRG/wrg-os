@@ -118,10 +118,7 @@ const isIsoDate = (s: string): boolean => /^\d{4}-\d{2}-\d{2}$/.test(s) && !Numb
 
 // Tambah kendaraan baru — permintaan langsung user (2026-08-28), MENGGANTI
 // konvensi awal F50 ("master kecil = seed SQL, sengaja tanpa halaman tambah",
-// lihat komentar header file ini & 149_vehicle_operational_log.sql). Validasi
-// input di sini SENGAJA lebih ketat drpd updateVehicle() (yg masih longgar
-// soal interval/tanggal, temuan QA jalur tulis 2026-08-27 blm ditambal) —
-// jangan replikasi celah yg sama ke jalur baru ini.
+// lihat komentar header file ini & 149_vehicle_operational_log.sql).
 export async function createVehicle(input: VehicleCreateInput): Promise<VehicleRow | VehicleActionResult> {
   const sql = db();
   const plate = input.plate_number?.trim();
@@ -135,8 +132,17 @@ export async function createVehicle(input: VehicleCreateInput): Promise<VehicleR
   if (input.stnk_expiry && !isIsoDate(input.stnk_expiry)) {
     return { ok: false, error: `stnk_expiry "${input.stnk_expiry}" bukan tanggal valid (format YYYY-MM-DD)` };
   }
-  const existing = await sql`SELECT id FROM vehicle WHERE plate_number = ${plate}`;
-  if (existing.length > 0) return { ok: false, error: `plat nomor "${plate}" sudah terdaftar` };
+  // plate_number unique di skema TERLEPAS dari status active/nonaktif —
+  // kendaraan yang dinonaktifkan hilang dari tabel default (activeOnly)
+  // tapi platnya masih "kepakai". Tanpa hint ini, user cuma lihat "sudah
+  // terdaftar" tanpa tahu kendaraannya ke mana (ditemukan user 2026-08-28).
+  const existing = await sql`SELECT id, active FROM vehicle WHERE plate_number = ${plate}`;
+  if (existing.length > 0) {
+    const hint = existing[0].active
+      ? ""
+      : " — kendaraan ini NONAKTIF (tersembunyi dari tabel default), aktifkan lagi lewat tombol Edit drpd bikin baru";
+    return { ok: false, error: `plat nomor "${plate}" sudah terdaftar${hint}` };
+  }
   const rows = await sql`
     INSERT INTO vehicle (plate_number, model, sopir_name, current_km, stnk_expiry, service_interval_km)
     VALUES (
