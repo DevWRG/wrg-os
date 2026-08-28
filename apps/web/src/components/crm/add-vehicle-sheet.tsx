@@ -80,24 +80,24 @@ export function AddVehicleSheet() {
               <Input id="v-plate" required value={f.plate_number} onChange={(e) => setF((p) => ({ ...p, plate_number: e.target.value }))} placeholder="mis. L 1234 AB" />
             </div>
             <div className="grid gap-1.5">
-              <Label htmlFor="v-model">Model</Label>
-              <Input id="v-model" value={f.model} onChange={(e) => setF((p) => ({ ...p, model: e.target.value }))} placeholder="mis. Toyota Avanza" />
+              <Label htmlFor="v-model">Model *</Label>
+              <Input id="v-model" required value={f.model} onChange={(e) => setF((p) => ({ ...p, model: e.target.value }))} placeholder="mis. Toyota Avanza" />
             </div>
             <div className="grid gap-1.5">
-              <Label htmlFor="v-sopir">Sopir</Label>
-              <Input id="v-sopir" value={f.sopir_name} onChange={(e) => setF((p) => ({ ...p, sopir_name: e.target.value }))} />
+              <Label htmlFor="v-sopir">Sopir *</Label>
+              <Input id="v-sopir" required value={f.sopir_name} onChange={(e) => setF((p) => ({ ...p, sopir_name: e.target.value }))} />
             </div>
             <div className="grid gap-1.5">
-              <Label htmlFor="v-km">KM saat ini</Label>
-              <Input id="v-km" type="number" min="0" value={f.current_km} onChange={(e) => setF((p) => ({ ...p, current_km: e.target.value }))} />
+              <Label htmlFor="v-km">KM saat ini *</Label>
+              <Input id="v-km" type="number" min="0" required value={f.current_km} onChange={(e) => setF((p) => ({ ...p, current_km: e.target.value }))} />
             </div>
             <div className="grid gap-1.5">
-              <Label htmlFor="v-stnk">Tanggal jatuh tempo STNK</Label>
-              <Input id="v-stnk" type="date" value={f.stnk_expiry} onChange={(e) => setF((p) => ({ ...p, stnk_expiry: e.target.value }))} />
+              <Label htmlFor="v-stnk">Tanggal jatuh tempo STNK *</Label>
+              <Input id="v-stnk" type="date" required value={f.stnk_expiry} onChange={(e) => setF((p) => ({ ...p, stnk_expiry: e.target.value }))} />
             </div>
             <div className="grid gap-1.5">
-              <Label htmlFor="v-interval">Interval service (km)</Label>
-              <Input id="v-interval" type="number" min="1" value={f.service_interval_km} onChange={(e) => setF((p) => ({ ...p, service_interval_km: e.target.value }))} placeholder="default 5000" />
+              <Label htmlFor="v-interval">Interval service (km) *</Label>
+              <Input id="v-interval" type="number" min="1" required value={f.service_interval_km} onChange={(e) => setF((p) => ({ ...p, service_interval_km: e.target.value }))} />
             </div>
             {error && <p className="text-destructive text-sm">{error}</p>}
           </div>

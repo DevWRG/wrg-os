@@ -122,16 +122,20 @@ const isIsoDate = (s: string): boolean => /^\d{4}-\d{2}-\d{2}$/.test(s) && !Numb
 export async function createVehicle(input: VehicleCreateInput): Promise<VehicleRow | VehicleActionResult> {
   const sql = db();
   const plate = input.plate_number?.trim();
+  // Wajib semua field — permintaan langsung user 2026-08-28 (konsisten dgn
+  // Edit kendaraan & Tambah Log yang juga sudah diwajibkan, cuma field
+  // "catatan" di Tambah Log yang tetap opsional).
   if (!plate) return { ok: false, error: "plate_number wajib" };
-  if (input.service_interval_km != null && input.service_interval_km <= 0) {
-    return { ok: false, error: "service_interval_km harus > 0" };
-  }
-  if (input.current_km != null && input.current_km < 0) {
-    return { ok: false, error: "current_km tak boleh negatif" };
-  }
-  if (input.stnk_expiry && !isIsoDate(input.stnk_expiry)) {
+  if (!input.model?.trim()) return { ok: false, error: "model wajib diisi" };
+  if (!input.sopir_name?.trim()) return { ok: false, error: "sopir_name wajib diisi" };
+  if (input.current_km == null) return { ok: false, error: "current_km wajib diisi" };
+  if (input.current_km < 0) return { ok: false, error: "current_km tak boleh negatif" };
+  if (!input.stnk_expiry) return { ok: false, error: "stnk_expiry wajib diisi" };
+  if (!isIsoDate(input.stnk_expiry)) {
     return { ok: false, error: `stnk_expiry "${input.stnk_expiry}" bukan tanggal valid (format YYYY-MM-DD)` };
   }
+  if (input.service_interval_km == null) return { ok: false, error: "service_interval_km wajib diisi" };
+  if (input.service_interval_km <= 0) return { ok: false, error: "service_interval_km harus > 0" };
   // plate_number unique di skema TERLEPAS dari status active/nonaktif —
   // kendaraan yang dinonaktifkan hilang dari tabel default (activeOnly)
   // tapi platnya masih "kepakai". Tanpa hint ini, user cuma lihat "sudah
