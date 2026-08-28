@@ -167,6 +167,19 @@ export async function updateVehicle(id: string, input: VehicleUpdateInput): Prom
   const sql = db();
   const rows = await sql`SELECT id FROM vehicle WHERE id = ${id}`;
   if (rows.length === 0) return { ok: false, error: "kendaraan tidak ditemukan" };
+  // Wajib semua field (kecuali "active", yang bukan konsep isi/kosong) —
+  // permintaan langsung user 2026-08-28. Sekalian tutup 2 bug lama yang
+  // ditemukan sesi QA jalur tulis 2026-08-27 & belum sempat ditambal di
+  // jalur ini: tanggal rusak → crash "Invalid time value", interval ≤0
+  // lolos tersimpan.
+  if (!input.sopir_name?.trim()) return { ok: false, error: "sopir_name wajib diisi" };
+  if (!input.stnk_expiry) return { ok: false, error: "stnk_expiry wajib diisi" };
+  if (!isIsoDate(input.stnk_expiry)) {
+    return { ok: false, error: `stnk_expiry "${input.stnk_expiry}" bukan tanggal valid (format YYYY-MM-DD)` };
+  }
+  if (input.service_interval_km == null || input.service_interval_km <= 0) {
+    return { ok: false, error: "service_interval_km wajib diisi dan harus > 0" };
+  }
   await sql`
     UPDATE vehicle SET
       sopir_name = COALESCE(${input.sopir_name ?? null}, sopir_name),
@@ -237,6 +250,18 @@ export async function createVehicleLog(
   const sql = db();
   const veh = await sql`SELECT id, current_km FROM vehicle WHERE id = ${vehicleId}`;
   if (veh.length === 0) return { ok: false, error: "kendaraan tidak ditemukan" };
+
+  // Wajib semua field relevan per jenis log — cuma "note" yang opsional
+  // (permintaan langsung user 2026-08-28). km relevan utk SEMUA jenis
+  // (odometer saat itu, termasuk saat isi BBM/service), bbm_liter/bbm_cost
+  // cuma wajib khusus jenis "bbm".
+  if (input.km == null) return { ok: false, error: "km wajib diisi" };
+  if (input.km < 0) return { ok: false, error: "km tak boleh negatif" };
+  if (input.log_type === "bbm") {
+    if (input.bbm_liter == null) return { ok: false, error: "liter BBM wajib diisi utk log jenis BBM" };
+    if (input.bbm_cost == null) return { ok: false, error: "biaya BBM wajib diisi utk log jenis BBM" };
+    if (input.bbm_liter < 0 || input.bbm_cost < 0) return { ok: false, error: "liter/biaya BBM tak boleh negatif" };
+  }
 
   const rows = await sql`
     INSERT INTO vehicle_log (vehicle_id, log_type, log_date, km, bbm_liter, bbm_cost, note, created_by)

@@ -108,23 +108,23 @@ function AddLogDialog({ vehicle }: { vehicle: Vehicle }) {
               </select>
             </div>
             <div className="grid gap-1.5">
-              <Label htmlFor="vl-km">KM {f.log_type === "service" ? "saat service" : "sekarang"}</Label>
-              <Input id="vl-km" type="number" min="0" value={f.km} onChange={(e) => setF((p) => ({ ...p, km: e.target.value }))} />
+              <Label htmlFor="vl-km">KM {f.log_type === "service" ? "saat service" : "sekarang"} *</Label>
+              <Input id="vl-km" type="number" min="0" required value={f.km} onChange={(e) => setF((p) => ({ ...p, km: e.target.value }))} />
             </div>
             {f.log_type === "bbm" && (
               <>
                 <div className="grid gap-1.5">
-                  <Label htmlFor="vl-liter">Liter</Label>
-                  <Input id="vl-liter" type="number" min="0" step="0.1" value={f.bbm_liter} onChange={(e) => setF((p) => ({ ...p, bbm_liter: e.target.value }))} />
+                  <Label htmlFor="vl-liter">Liter *</Label>
+                  <Input id="vl-liter" type="number" min="0" step="0.1" required value={f.bbm_liter} onChange={(e) => setF((p) => ({ ...p, bbm_liter: e.target.value }))} />
                 </div>
                 <div className="grid gap-1.5">
-                  <Label htmlFor="vl-cost">Biaya (Rp)</Label>
-                  <Input id="vl-cost" type="number" min="0" value={f.bbm_cost} onChange={(e) => setF((p) => ({ ...p, bbm_cost: e.target.value }))} />
+                  <Label htmlFor="vl-cost">Biaya (Rp) *</Label>
+                  <Input id="vl-cost" type="number" min="0" required value={f.bbm_cost} onChange={(e) => setF((p) => ({ ...p, bbm_cost: e.target.value }))} />
                 </div>
               </>
             )}
             <div className="grid gap-1.5">
-              <Label htmlFor="vl-note">Catatan</Label>
+              <Label htmlFor="vl-note">Catatan (opsional)</Label>
               <Textarea id="vl-note" value={f.note} onChange={(e) => setF((p) => ({ ...p, note: e.target.value }))} placeholder="opsional" />
             </div>
             {error && <p className="text-destructive text-sm">{error}</p>}
@@ -251,16 +251,16 @@ function EditDialog({ vehicle }: { vehicle: Vehicle }) {
         <form onSubmit={submit}>
           <DialogBody className="grid gap-3">
             <div className="grid gap-1.5">
-              <Label htmlFor="ve-sopir">Sopir</Label>
-              <Input id="ve-sopir" value={f.sopir_name} onChange={(e) => setF((p) => ({ ...p, sopir_name: e.target.value }))} />
+              <Label htmlFor="ve-sopir">Sopir *</Label>
+              <Input id="ve-sopir" required value={f.sopir_name} onChange={(e) => setF((p) => ({ ...p, sopir_name: e.target.value }))} />
             </div>
             <div className="grid gap-1.5">
-              <Label htmlFor="ve-stnk">STNK jatuh tempo</Label>
-              <Input id="ve-stnk" type="date" value={f.stnk_expiry} onChange={(e) => setF((p) => ({ ...p, stnk_expiry: e.target.value }))} />
+              <Label htmlFor="ve-stnk">STNK jatuh tempo *</Label>
+              <Input id="ve-stnk" type="date" required value={f.stnk_expiry} onChange={(e) => setF((p) => ({ ...p, stnk_expiry: e.target.value }))} />
             </div>
             <div className="grid gap-1.5">
-              <Label htmlFor="ve-interval">Interval service (km)</Label>
-              <Input id="ve-interval" type="number" min="0" value={f.service_interval_km} onChange={(e) => setF((p) => ({ ...p, service_interval_km: e.target.value }))} />
+              <Label htmlFor="ve-interval">Interval service (km) *</Label>
+              <Input id="ve-interval" type="number" min="1" required value={f.service_interval_km} onChange={(e) => setF((p) => ({ ...p, service_interval_km: e.target.value }))} />
             </div>
             <div className="flex items-center gap-2">
               <Switch checked={f.active} onCheckedChange={(v: boolean) => setF((p) => ({ ...p, active: v }))} />
