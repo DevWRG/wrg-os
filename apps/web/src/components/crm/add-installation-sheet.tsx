@@ -91,8 +91,8 @@ export function AddInstallationSheet() {
               />
             </div>
             <div className="grid gap-1.5">
-              <Label htmlFor="iu-serial">Serial number</Label>
-              <Input id="iu-serial" value={f.serial_number} onChange={(e) => setF((p) => ({ ...p, serial_number: e.target.value }))} />
+              <Label htmlFor="iu-serial">Serial number *</Label>
+              <Input id="iu-serial" required value={f.serial_number} onChange={(e) => setF((p) => ({ ...p, serial_number: e.target.value }))} />
             </div>
             <div className="grid gap-1.5">
               <Label htmlFor="iu-customer">Customer * <span className="text-muted-foreground text-xs">(dari mirror Accurate)</span></Label>
