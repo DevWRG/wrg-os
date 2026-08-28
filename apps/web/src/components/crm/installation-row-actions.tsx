@@ -44,6 +44,7 @@ interface StepDef {
   required: boolean;
   placeholder?: string;
   sourceFromAccurate?: boolean; // No. SJ dipilih dari mirror Accurate (exception disetujui utk F22)
+  sourceFromRoster?: boolean;   // Teknisi dipilih dari roster teknisi_capacity (F8), bukan diketik
 }
 
 const STEP_BY_STATUS: Record<string, StepDef> = {
@@ -68,9 +69,12 @@ const STEP_BY_STATUS: Record<string, StepDef> = {
     endpoint: "assign-teknisi",
     buttonLabel: "Assign Teknisi",
     dialogTitle: "Assign teknisi",
-    field: "teknisi_name",
-    fieldLabel: "Nama teknisi *",
+    // Nilai yang dikirim kini teknisi_id (uuid roster), bukan nama. Nama
+    // di-snapshot server-side di markTeknisiAssign.
+    field: "teknisi_id",
+    fieldLabel: "Teknisi *",
     required: true,
+    sourceFromRoster: true,
   },
   teknisi_assign: {
     endpoint: "training",
@@ -98,6 +102,7 @@ export function InstallationRowActions({ row }: { row: InstallationUnit }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [shipments, setShipments] = useState<Shipment[]>([]);
+  const [teknisi, setTeknisi] = useState<{ id: string; nama: string }[]>([]);
 
   const step = STEP_BY_STATUS[row.status];
 
@@ -108,6 +113,23 @@ export function InstallationRowActions({ row }: { row: InstallationUnit }) {
       .then((d) => setShipments(d?.rows ?? []))
       .catch(() => {});
   }, [open, step?.sourceFromAccurate, shipments.length]);
+
+  // Roster teknisi utk langkah assign. Hanya yang AKTIF ditawarkan — menugaskan
+  // teknisi nonaktif tersimpan wajar tapi orangnya sudah tak di roster, jadi
+  // server pun menolaknya; menyaring di sini supaya tak sampai ke situ.
+  useEffect(() => {
+    if (!open || !step?.sourceFromRoster || teknisi.length > 0) return;
+    void fetch("/api/teknisi-capacity", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) =>
+        setTeknisi(
+          (d?.teknisi ?? [])
+            .filter((t: { aktif?: boolean }) => t.aktif !== false)
+            .map((t: { id: string; nama: string }) => ({ id: String(t.id), nama: String(t.nama) })),
+        ),
+      )
+      .catch(() => {});
+  }, [open, step?.sourceFromRoster, teknisi.length]);
 
   if (!step) return <Badge variant="secondary">Selesai</Badge>;
 
@@ -147,7 +169,22 @@ export function InstallationRowActions({ row }: { row: InstallationUnit }) {
           <DialogBody className="grid gap-3">
             <div className="grid gap-1.5">
               <Label htmlFor={`iu-step-${row.id}`}>{step.fieldLabel}</Label>
-              {step.sourceFromAccurate && shipments.length > 0 ? (
+              {step.sourceFromRoster ? (
+                <select
+                  id={`iu-step-${row.id}`}
+                  required={step.required}
+                  className={selectCls}
+                  value={value}
+                  onChange={(e) => setValue(e.target.value)}
+                >
+                  <option value="" disabled>
+                    {teknisi.length === 0 ? "roster teknisi kosong — isi dulu di menu Readiness Board" : "pilih teknisi…"}
+                  </option>
+                  {teknisi.map((t) => (
+                    <option key={t.id} value={t.id}>{t.nama}</option>
+                  ))}
+                </select>
+              ) : step.sourceFromAccurate && shipments.length > 0 ? (
                 <select
                   id={`iu-step-${row.id}`}
                   required={step.required}

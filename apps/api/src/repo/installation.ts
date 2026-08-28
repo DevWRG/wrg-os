@@ -6,15 +6,29 @@ import { db } from "../db.js";
 const toIsoTs = (x: unknown): string => new Date(x as string | Date).toISOString();
 
 // F22 — Instalasi Alat Lifecycle (AFTERSALES). Checklist 5 langkah SEKUENSIAL
-// per alat: po_control → sj → teknisi_assign → training → bast. Tabel
-// installation_unit SENGAJA self-contained (lihat 130_installation_lifecycle.sql)
-// — teknisi_name/customer_name/po_number/sj_number/bast_number semua TEXT bebas,
-// tanpa FK ke domain lain (CRM/HR off-limits utk fitur ini).
+// per alat: po_control → sj → teknisi_assign → training → bast.
+//
+// SEJARAH PENTING: tabel installation_unit awalnya SENGAJA self-contained (lihat
+// 130_installation_lifecycle.sql — "CRM/HR off-limits utk fitur ini"), semua
+// identitas TEXT bebas. Keputusan itu DIUBAH Direktur 2026-08-28 setelah uji
+// jalur tulis memperlihatkan akibatnya: nama bisa diketik bebas → typo, duplikat
+// beda ejaan, tak bisa di-join. Sekarang alat & customer WAJIB dipilih dari
+// mirror Accurate, teknisi dari roster teknisi_capacity (F8).
+//
+// Pola: HYBRID FK + snapshot (migrasi 158). Kolom TEXT tetap ada dan tetap jadi
+// yang DITAMPILKAN — nilainya di-snapshot dari nama pilihan saat itu, jadi tampilan
+// historis tak berubah walau baris Accurate berubah/terhapus. Kolom FK yang jadi
+// sumber kebenaran untuk join.
+//
+// Kewajiban "pilih dari dropdown" ditegakkan DI SINI, bukan oleh constraint DB
+// (kolomnya nullable — baris lama NULL, dan expand-contract butuh migrasi bisa
+// naik lebih dulu dari kode). Jadi validasi di bawah adalah satu-satunya
+// penjaganya: jangan dilonggarkan tanpa mengganti penjaga lain.
 
 export interface InstallationInput {
-  alat_name: string;
+  product_id: number;
+  account_id: number;
   serial_number?: string | null;
-  customer_name: string;
   cabang?: string | null;
   po_number?: string | null;
   created_by?: string | null;
@@ -22,6 +36,9 @@ export interface InstallationInput {
 
 export interface InstallationRow {
   id: string;
+  product_id: number | null;
+  account_id: number | null;
+  teknisi_id: string | null;
   alat_name: string;
   serial_number: string | null;
   customer_name: string;
@@ -50,6 +67,9 @@ export interface InstallationRow {
 function mapRow(r: Record<string, unknown>): InstallationRow {
   return {
     id: String(r.id),
+    product_id: r.product_id == null ? null : Number(r.product_id),
+    account_id: r.account_id == null ? null : Number(r.account_id),
+    teknisi_id: r.teknisi_id ? String(r.teknisi_id) : null,
     alat_name: String(r.alat_name),
     serial_number: r.serial_number ? String(r.serial_number) : null,
     customer_name: String(r.customer_name),
@@ -76,15 +96,47 @@ function mapRow(r: Record<string, unknown>): InstallationRow {
   };
 }
 
-export async function createInstallation(input: InstallationInput): Promise<InstallationRow> {
+export type CreateInstallationResult = { ok: true; row: InstallationRow } | { ok: false; error: string };
+
+// Validasi id → snapshot nama → insert. Nama TIDAK diterima dari klien: kalau
+// klien boleh mengirim nama sendiri, seluruh gunanya memilih dari katalog hilang
+// (nama bisa dikarang lagi walau id-nya benar). Nama SELALU dibaca dari mirror.
+export async function createInstallation(input: InstallationInput): Promise<CreateInstallationResult> {
   const sql = db();
+
+  if (!Number.isInteger(input.product_id) || !Number.isInteger(input.account_id)) {
+    return { ok: false, error: "alat & customer wajib dipilih dari katalog (product_id/account_id harus angka)" };
+  }
+
+  const [item] = await sql`SELECT id, no, name FROM accurate_item WHERE id = ${input.product_id}`;
+  if (!item) {
+    return {
+      ok: false,
+      error: `Alat id ${input.product_id} tak ada di katalog Accurate. Kalau ini barang baru, sinkronkan katalog dulu (menu Products → Sync).`,
+    };
+  }
+  const [cust] = await sql`SELECT id, no, name FROM accurate_customer WHERE id = ${input.account_id}`;
+  if (!cust) {
+    return {
+      ok: false,
+      error: `Customer id ${input.account_id} tak ada di mirror Accurate. Kalau ini customer baru, sinkronkan dulu (menu Customers → Sync).`,
+    };
+  }
+
+  // Nama mirror bisa berupa empty-string, bukan NULL — COALESCE saja tak cukup
+  // (jebakan yang sudah tercatat di CLAUDE.md untuk resolusi nama Accurate).
+  const alatName = String(item.name ?? "").trim() || String(item.no ?? "") || `Item #${input.product_id}`;
+  const custName = String(cust.name ?? "").trim() || String(cust.no ?? "") || `Customer #${input.account_id}`;
+
   const rows = await sql`
-    INSERT INTO installation_unit (alat_name, serial_number, customer_name, cabang, po_number, created_by)
-    VALUES (${input.alat_name}, ${input.serial_number ?? null}, ${input.customer_name},
-            ${input.cabang ?? null}, ${input.po_number ?? null}, ${input.created_by ?? null})
+    INSERT INTO installation_unit
+      (product_id, account_id, alat_name, serial_number, customer_name, cabang, po_number, created_by)
+    VALUES
+      (${input.product_id}, ${input.account_id}, ${alatName}, ${input.serial_number ?? null},
+       ${custName}, ${input.cabang ?? null}, ${input.po_number ?? null}, ${input.created_by ?? null})
     RETURNING *
   `;
-  return mapRow(rows[0]);
+  return { ok: true, row: mapRow(rows[0]) };
 }
 
 export async function listInstallations(
@@ -154,7 +206,13 @@ export async function markSj(id: string, sj_number: string): Promise<Installatio
   return { ok: true, status: "sj" };
 }
 
-export async function markTeknisiAssign(id: string, teknisi_name: string): Promise<InstallationActionResult> {
+// Teknisi dipilih dari roster teknisi_capacity (F8), BUKAN diketik bebas —
+// konfirmasi eksplisit Direktur 2026-08-28. Catatan: teknisi bukan data Accurate;
+// preseden FK ke tabel yang sama sudah ada di install_schedule.
+//
+// `aktif = true` diwajibkan: menugaskan teknisi nonaktif itu diam-diam salah —
+// barisnya tersimpan wajar, tapi orangnya sudah tak di roster.
+export async function markTeknisiAssign(id: string, teknisi_id: string): Promise<InstallationActionResult> {
   const sql = db();
   const rows = await sql`SELECT id, sj_done, teknisi_assign_done FROM installation_unit WHERE id = ${id}`;
   if (rows.length === 0) return { ok: false, error: "unit instalasi tidak ditemukan" };
@@ -162,9 +220,24 @@ export async function markTeknisiAssign(id: string, teknisi_name: string): Promi
     return { ok: false, error: "SJ belum selesai — selesaikan langkah sebelumnya dulu" };
   }
   if (rows[0].teknisi_assign_done) return { ok: false, error: "langkah assign teknisi sudah selesai" };
+
+  if (!teknisi_id?.trim()) {
+    return { ok: false, error: "teknisi wajib dipilih dari roster (teknisi_id kosong)" };
+  }
+  // Kolomnya uuid — id ngawur bikin Postgres melempar 22P02, bukan "tak ketemu"
+  // yang rapi. Disaring dulu supaya pesannya bisa dibaca orang.
+  if (!/^[0-9a-f-]{36}$/i.test(teknisi_id.trim())) {
+    return { ok: false, error: "teknisi_id bukan uuid yang sah — pilih dari daftar, jangan diketik" };
+  }
+  const [tek] = await sql`
+    SELECT id, nama, aktif FROM teknisi_capacity WHERE id = ${teknisi_id.trim()}`;
+  if (!tek) return { ok: false, error: "teknisi tak ada di roster" };
+  if (!tek.aktif) return { ok: false, error: `teknisi "${String(tek.nama)}" sudah nonaktif — pilih yang aktif` };
+
   await sql`
     UPDATE installation_unit
-    SET teknisi_name = ${teknisi_name}, teknisi_assign_done = TRUE, teknisi_assign_at = now(),
+    SET teknisi_id = ${teknisi_id.trim()}, teknisi_name = ${String(tek.nama)},
+        teknisi_assign_done = TRUE, teknisi_assign_at = now(),
         status = 'teknisi_assign', updated_at = now()
     WHERE id = ${id}
   `;

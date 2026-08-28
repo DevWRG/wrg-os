@@ -2459,10 +2459,13 @@ app.post("/leave/detect", async (c) => {
 // PO control → SJ → Teknisi assign → Training done → BAST. ──
 app.post("/installations", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  // Alat & customer kini dipilih dari katalog: yang diterima product_id +
+  // account_id, BUKAN nama. Nama di-snapshot server-side dari mirror (lihat
+  // createInstallation) supaya klien tak bisa mengarang nama utk id yang benar.
   let body: {
-    alat_name?: string;
+    product_id?: number;
+    account_id?: number;
     serial_number?: string;
-    customer_name?: string;
     cabang?: string;
     po_number?: string;
     created_by?: string;
@@ -2472,18 +2475,19 @@ app.post("/installations", async (c) => {
   } catch {
     return c.json({ error: "invalid JSON body" }, 400);
   }
-  if (!body.alat_name || !body.customer_name) {
-    return c.json({ error: "alat_name + customer_name wajib" }, 400);
+  if (body.product_id == null || body.account_id == null) {
+    return c.json({ error: "product_id + account_id wajib — alat & customer dipilih dari katalog" }, 400);
   }
   const r = await createInstallation({
-    alat_name: body.alat_name,
+    product_id: Number(body.product_id),
+    account_id: Number(body.account_id),
     serial_number: body.serial_number,
-    customer_name: body.customer_name,
     cabang: body.cabang,
     po_number: body.po_number,
     created_by: body.created_by,
   });
-  return c.json(r, 201);
+  if (!r.ok) return c.json({ error: r.error }, 400);
+  return c.json(r.row, 201);
 });
 
 app.get("/installations", async (c) => {
@@ -2525,14 +2529,16 @@ app.post("/installations/:id/sj", async (c) => {
 
 app.post("/installations/:id/assign-teknisi", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let body: { teknisi_name?: string };
+  // Teknisi dipilih dari roster: yang diterima teknisi_id (uuid
+  // teknisi_capacity), bukan nama. Nama di-snapshot di markTeknisiAssign.
+  let body: { teknisi_id?: string };
   try {
     body = await c.req.json();
   } catch {
     return c.json({ error: "invalid JSON body" }, 400);
   }
-  if (!body.teknisi_name) return c.json({ error: "teknisi_name wajib" }, 400);
-  const r = await markTeknisiAssign(c.req.param("id"), body.teknisi_name);
+  if (!body.teknisi_id) return c.json({ error: "teknisi_id wajib — teknisi dipilih dari roster" }, 400);
+  const r = await markTeknisiAssign(c.req.param("id"), body.teknisi_id);
   return c.json(r, r.ok ? 200 : 400);
 });
 
@@ -3940,7 +3946,9 @@ app.get("/accurate/:entity", async (c) => {
     return c.json({ error: "entity harus customers|items|branches|vendors" }, 400);
   }
   const limit = Math.min(Math.max(Number(c.req.query("limit")) || 100, 1), 10000);
-  const rows = await listMirror(entity, limit);
+  // ?q= → cari by no/nama DI DB (sumber dropdown pilih-dari-katalog F22).
+  // Tanpa q, perilaku lama dipertahankan: potongan terbaru by last_synced_at.
+  const rows = await listMirror(entity, limit, c.req.query("q") || undefined);
   return c.json({ entity, count: rows.length, rows });
 });
 
