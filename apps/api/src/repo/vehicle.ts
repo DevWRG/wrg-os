@@ -105,6 +105,49 @@ export async function getVehicleById(id: string): Promise<VehicleRow | null> {
   return rows.length ? mapRow(rows[0]) : null;
 }
 
+export interface VehicleCreateInput {
+  plate_number: string;
+  model?: string | null;
+  sopir_name?: string | null;
+  current_km?: number | null;
+  stnk_expiry?: string | null;
+  service_interval_km?: number | null;
+}
+
+const isIsoDate = (s: string): boolean => /^\d{4}-\d{2}-\d{2}$/.test(s) && !Number.isNaN(new Date(s).getTime());
+
+// Tambah kendaraan baru — permintaan langsung user (2026-08-28), MENGGANTI
+// konvensi awal F50 ("master kecil = seed SQL, sengaja tanpa halaman tambah",
+// lihat komentar header file ini & 149_vehicle_operational_log.sql). Validasi
+// input di sini SENGAJA lebih ketat drpd updateVehicle() (yg masih longgar
+// soal interval/tanggal, temuan QA jalur tulis 2026-08-27 blm ditambal) —
+// jangan replikasi celah yg sama ke jalur baru ini.
+export async function createVehicle(input: VehicleCreateInput): Promise<VehicleRow | VehicleActionResult> {
+  const sql = db();
+  const plate = input.plate_number?.trim();
+  if (!plate) return { ok: false, error: "plate_number wajib" };
+  if (input.service_interval_km != null && input.service_interval_km <= 0) {
+    return { ok: false, error: "service_interval_km harus > 0" };
+  }
+  if (input.current_km != null && input.current_km < 0) {
+    return { ok: false, error: "current_km tak boleh negatif" };
+  }
+  if (input.stnk_expiry && !isIsoDate(input.stnk_expiry)) {
+    return { ok: false, error: `stnk_expiry "${input.stnk_expiry}" bukan tanggal valid (format YYYY-MM-DD)` };
+  }
+  const existing = await sql`SELECT id FROM vehicle WHERE plate_number = ${plate}`;
+  if (existing.length > 0) return { ok: false, error: `plat nomor "${plate}" sudah terdaftar` };
+  const rows = await sql`
+    INSERT INTO vehicle (plate_number, model, sopir_name, current_km, stnk_expiry, service_interval_km)
+    VALUES (
+      ${plate}, ${input.model?.trim() || null}, ${input.sopir_name?.trim() || null},
+      ${input.current_km ?? null}, ${input.stnk_expiry ?? null}, ${input.service_interval_km ?? 5000}
+    )
+    RETURNING *
+  `;
+  return mapRow(rows[0]);
+}
+
 export interface VehicleUpdateInput {
   sopir_name?: string | null;
   stnk_expiry?: string | null;

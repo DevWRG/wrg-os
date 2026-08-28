@@ -2,6 +2,7 @@ import { gatewayFetch } from "@/lib/gateway";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { Card, CardContent } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
+import { AddVehicleSheet } from "@/components/crm/add-vehicle-sheet";
 import { VehiclesTable, type Vehicle } from "@/components/tables/vehicles-table";
 
 export const dynamic = "force-dynamic";
@@ -24,6 +25,7 @@ export default async function VehiclesPage() {
       <PageHeader
         title="Kendaraan Operasional"
         description="Log per kendaraan (km, BBM, service, STNK, sopir) + alert otomatis kalau service atau STNK jatuh tempo."
+        action={<AddVehicleSheet />}
       />
       <Card>
         <CardContent className="pt-6">
@@ -32,7 +34,7 @@ export default async function VehiclesPage() {
           ) : vehicles.length === 0 ? (
             <EmptyState
               title="Belum ada kendaraan terdaftar"
-              description="Master kendaraan diisi lewat seed SQL (bukan halaman tambah) — lihat scripts/db/seed-vehicle-dev.sql utk dev, atau minta admin input data 7 mobil produksi."
+              description="Tambah lewat tombol di atas."
             />
           ) : (
             <VehiclesTable vehicles={vehicles} />
