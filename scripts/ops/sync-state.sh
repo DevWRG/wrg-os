@@ -101,9 +101,11 @@ cat > "$STATE_DIR/dashboard-state.json" <<JSON
     "githubRepo": "https://github.com/DevWRG/wrg-os"
   },
   "catalog": {
-    "totalFeatures": 149,
-    "range": "F1-F117",
-    "comment": "Catalog detail di-maintain manual via Cowork (Sprint Dashboard FEATURES array)"
+    "totalFeatures": 185,
+    "range": "F1-F147",
+    "built": 55,
+    "builtDev": 43,
+    "comment": "Angka disalin manual dari array FEATURES di WRG-OS-Sprint-Dashboard.html (SoT katalog, di Drive). Terakhir dicocokkan 2026-08-29: 185 entri, 53 BUILT + 2 PROD-LIVE-WRGCRM = 55 di main, 43 BUILT-DEV menunggu promosi. Perbarui di SINI kalau blueprint berubah — file state ditulis ulang tiap run, jadi edit manual di dashboard-state.json pasti hilang."
   },
   "_meta": {
     "source": "Auto-generated dari pm2 jlist + gh CLI + .env.prod",
