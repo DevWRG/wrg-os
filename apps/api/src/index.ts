@@ -3,6 +3,7 @@ import { resolve, relative, isAbsolute } from "node:path";
 import { homedir } from "node:os";
 
 import { serve } from "@hono/node-server";
+import postgres from "postgres";
 import {
   Hono,
   Context,
@@ -556,6 +557,24 @@ app.onError((err, c) => {
   // input pengguna, bukan kegagalan server.
   if (err instanceof RangeError && err.message === "Invalid time value") {
     return c.json({ error: "Format tanggal tidak valid" }, 400);
+  }
+  // Constraint DB (unique/FK/check/numeric overflow) yg lolos dari validasi
+  // app-layer sebelumnya bocor sbg PostgresError mentah (kode SQLSTATE, nama
+  // constraint, dump baris) — bukan tanggung jawab repo satu-satu (banyak
+  // repo tak translate ini sama sekali), jadi ditangkap generik di sini.
+  // 23514 (check) sengaja TIDAK pakai `detail` — isinya "Failing row
+  // contains (...)" alias dump seluruh kolom, bukan pesan yg bisa dibaca.
+  if (err instanceof postgres.PostgresError) {
+    switch (err.code) {
+      case "23505": // unique_violation
+        return c.json({ error: `Data duplikat: ${err.detail ?? "nilai ini sudah dipakai"}` }, 409);
+      case "23503": // foreign_key_violation
+        return c.json({ error: `Referensi tidak valid: ${err.detail ?? "data terkait tidak ditemukan"}` }, 400);
+      case "23514": // check_violation
+        return c.json({ error: `Nilai tidak valid, melanggar aturan data (${err.constraint_name ?? "check constraint"})` }, 400);
+      case "22003": // numeric_value_out_of_range
+        return c.json({ error: `Angka di luar batas kolom: ${err.detail ?? "nilai terlalu besar"}` }, 400);
+    }
   }
   const msg = err instanceof Error ? err.message : "internal error";
   return c.json({ error: msg }, 500);
