@@ -1,11 +1,11 @@
 {
   "schemaVersion": "1.0.0",
-  "lastUpdate": "2026-08-28T00:00:13Z",
+  "lastUpdate": "2026-08-29T00:00:12Z",
   "generatedBy": "sync-state.sh (Warp cron/manual)",
   "production": {
-    "version": "v1.198.5",
-    "releasedAt": "2026-08-27T01:23:39Z",
-    "totalReleases": 401,
+    "version": "v1.199.1",
+    "releasedAt": "2026-08-28T04:01:05Z",
+    "totalReleases": 403,
     "goLiveDate": "2026-06-15"
   },
   "infrastructure": {
@@ -16,37 +16,37 @@
         "name": "wrg-prod-ai",
         "port": "8100",
         "status": "LIVE",
-        "uptime_sec": 762690
+        "uptime_sec": 849089
       },
       {
         "name": "wrg-prod-api",
         "port": "4100",
         "status": "LIVE",
-        "uptime_sec": 81381
+        "uptime_sec": 71881
       },
       {
         "name": "wrg-prod-web",
         "port": "3100",
         "status": "LIVE",
-        "uptime_sec": 81381
+        "uptime_sec": 71881
       },
       {
         "name": "wrg-prod-wabridge",
         "port": null,
         "status": "LIVE",
-        "uptime_sec": 638944
+        "uptime_sec": 725343
       },
       {
         "name": "wrg-prod-cftunnel",
         "port": null,
         "status": "LIVE",
-        "uptime_sec": 5914679
+        "uptime_sec": 6001078
       },
       {
         "name": "wrg-prod-deployhook",
         "port": null,
         "status": "LIVE",
-        "uptime_sec": 5914169
+        "uptime_sec": 6000568
       }
     ],
     "servicesLive": 6,
@@ -67,7 +67,7 @@
   },
   "_meta": {
     "source": "Auto-generated dari pm2 jlist + gh CLI + .env.prod",
-    "syncedAt": "2026-08-28T00:00:13Z",
+    "syncedAt": "2026-08-29T00:00:12Z",
     "host": "Mac-mini-Development.local"
   },
   "tooling": {
