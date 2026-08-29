@@ -332,6 +332,7 @@ import {
   updateAtkStockMovement,
   deleteAtkStockMovement,
   listAtkStockLevels,
+  AtkStockMovementError,
   type AtkStockMovementInput,
   type AtkStockMovementUpdate,
   type AtkMovementType,
@@ -5285,8 +5286,13 @@ app.post("/atk/stock-movements", async (c) => {
     return c.json({ error: "movement_type harus 'in' atau 'out'" }, 400);
   }
   if (Number(body.qty) <= 0) return c.json({ error: "qty harus > 0" }, 400);
-  const row = await createAtkStockMovement(body);
-  return c.json(row, 201);
+  try {
+    const row = await createAtkStockMovement(body);
+    return c.json(row, 201);
+  } catch (e) {
+    if (e instanceof AtkStockMovementError) return c.json({ error: e.message }, e.status as 409);
+    throw e;
+  }
 });
 
 app.patch("/atk/stock-movements/:id", async (c) => {
@@ -5297,8 +5303,13 @@ app.patch("/atk/stock-movements/:id", async (c) => {
     return c.json({ error: "movement_type harus 'in' atau 'out'" }, 400);
   }
   if (body.qty != null && Number(body.qty) <= 0) return c.json({ error: "qty harus > 0" }, 400);
-  const row = await updateAtkStockMovement(c.req.param("id"), body);
-  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+  try {
+    const row = await updateAtkStockMovement(c.req.param("id"), body);
+    return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+  } catch (e) {
+    if (e instanceof AtkStockMovementError) return c.json({ error: e.message }, e.status as 409);
+    throw e;
+  }
 });
 
 app.delete("/atk/stock-movements/:id", async (c) => {
