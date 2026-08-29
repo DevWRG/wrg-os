@@ -632,7 +632,7 @@ export async function addPurchaseOrderReceipt(
   t: PurchaseOrderReceiptInput,
 ): Promise<PurchaseOrderReceiptRow | null> {
   const sql = db();
-  const item = await sql`SELECT id FROM purchase_order_item WHERE id = ${itemId} AND purchase_order_id = ${purchaseOrderId}`;
+  const item = await sql`SELECT id, qty_ordered FROM purchase_order_item WHERE id = ${itemId} AND purchase_order_id = ${purchaseOrderId}`;
   if (!item.length) return null;
   // F35 — barang masuk diblokir sampai PO fully approved (legacy_exempt/lini
   // NULL = PO pra-F35, tidak kena gate ini).
@@ -643,6 +643,17 @@ export async function addPurchaseOrderReceipt(
     if (computeApprovalStatus(lini, approvals) !== "approved") {
       throw new PurchaseOrderError(409, "PO belum fully approved — barang masuk belum bisa dicatat");
     }
+  }
+  // BUG-07 — total qty_received (seluruh baris receipt) tak boleh melebihi
+  // qty_ordered milik item; sebelumnya tak pernah dicek sama sekali.
+  const qtyOrdered = Number(item[0].qty_ordered);
+  const [agg] = await sql`SELECT COALESCE(SUM(qty_received), 0) AS total FROM purchase_order_receipt WHERE po_item_id = ${itemId}`;
+  const alreadyReceived = Number(agg.total);
+  if (alreadyReceived + Number(t.qty_received) > qtyOrdered) {
+    throw new PurchaseOrderError(
+      409,
+      `Over-receiving: sudah diterima ${alreadyReceived}, ditambah ${t.qty_received} akan melebihi qty_ordered (${qtyOrdered})`,
+    );
   }
   const rows = await sql`
     INSERT INTO purchase_order_receipt (po_item_id, qty_received, received_date, received_by, condition_notes)
@@ -720,6 +731,23 @@ export async function updatePurchaseOrderReceipt(
   f: PurchaseOrderReceiptUpdate,
 ): Promise<PurchaseOrderReceiptRow | null> {
   const sql = db();
+  if (f.qty_received !== undefined) {
+    const [item] = await sql`
+      SELECT i.qty_ordered
+      FROM purchase_order_item i JOIN purchase_order_receipt r ON r.po_item_id = i.id
+      WHERE r.id = ${receiptId} AND i.id = ${itemId}
+    `;
+    if (!item) return null;
+    const [agg] = await sql`SELECT COALESCE(SUM(qty_received), 0) AS total FROM purchase_order_receipt WHERE po_item_id = ${itemId} AND id != ${receiptId}`;
+    const qtyOrdered = Number(item.qty_ordered);
+    const othersReceived = Number(agg.total);
+    if (othersReceived + Number(f.qty_received) > qtyOrdered) {
+      throw new PurchaseOrderError(
+        409,
+        `Over-receiving: baris penerimaan lain sudah ${othersReceived}, ditambah ${f.qty_received} akan melebihi qty_ordered (${qtyOrdered})`,
+      );
+    }
+  }
   const rows = await sql`
     UPDATE purchase_order_receipt SET
       qty_received    = COALESCE(${f.qty_received ?? null}, qty_received),

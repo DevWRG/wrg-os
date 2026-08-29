@@ -6258,8 +6258,13 @@ app.patch("/purchase-orders/:id/items/:itemId/receipts/:receiptId", async (c) =>
   if (body.qty_received !== undefined && !(Number(body.qty_received) > 0)) {
     return c.json({ error: "qty_received harus > 0" }, 400);
   }
-  const row = await updatePurchaseOrderReceipt(c.req.param("itemId"), c.req.param("receiptId"), body);
-  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+  try {
+    const row = await updatePurchaseOrderReceipt(c.req.param("itemId"), c.req.param("receiptId"), body);
+    return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+  } catch (e) {
+    if (e instanceof PurchaseOrderError) return c.json({ error: e.message }, e.status as 409);
+    throw e;
+  }
 });
 
 app.delete("/purchase-orders/:id/items/:itemId/receipts/:receiptId", async (c) => {
