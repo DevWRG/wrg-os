@@ -84,18 +84,66 @@ else
 fi
 
 # ── 3. Baru simpan ────────────────────────────────────────────────────────
-echo "→ menyimpan ke secret repo $REPO…"
-printf '%s' "$TOKEN" | gh secret set PROJECTS_TOKEN --repo "$REPO" && echo "  ✓ secret PROJECTS_TOKEN diperbarui"
+# WAJIB ${VAR} berkurung, bukan $VAR, kalau bersebelahan dengan karakter
+# non-ASCII seperti "…": bash 3.2 (yang dikirim macOS) memakan byte UTF-8-nya
+# sebagai bagian nama variabel, jadi $REPO… menjadi variabel "REPO<e2><80><a6>"
+# yang tak pernah di-set — lalu `set -u` mematikan skrip. Bikin rotasi gagal
+# 2x (29 Agu 2026): validasi lolos, mati persis sebelum menyimpan.
+FAIL=0
 
-echo "→ memperbarui $LOCAL_FILE…"
-printf '%s' "$TOKEN" > "$LOCAL_FILE" && chmod 600 "$LOCAL_FILE" && echo "  ✓ token lokal diperbarui (chmod 600)"
+echo "→ menyimpan ke secret repo ${REPO}…"
+if printf '%s' "$TOKEN" | gh secret set PROJECTS_TOKEN --repo "$REPO"; then
+  echo "  ✓ perintah gh secret set berhasil"
+else
+  echo "  ✗ gh secret set GAGAL — cek 'gh auth status' (butuh admin di repo)"; FAIL=1
+fi
+
+echo "→ memperbarui ${LOCAL_FILE}…"
+if printf '%s' "$TOKEN" > "$LOCAL_FILE" && chmod 600 "$LOCAL_FILE"; then
+  echo "  ✓ token lokal ditulis (chmod 600)"
+else
+  echo "  ✗ gagal menulis ${LOCAL_FILE}"; FAIL=1
+fi
+
+# ── 4. Verifikasi mandiri ─────────────────────────────────────────────────
+# Tanpa ini skrip bisa "kelihatan sukses" padahal nol tersimpan — persis yang
+# terjadi 29 Agu 2026 (mati di baris echo, user melapor sudah terpasang,
+# ternyata updated_at secret masih 6 minggu lalu). Jadi jangan percaya
+# ketiadaan error; buktikan timestamp-nya bergerak.
+echo "→ memverifikasi apa yang BENAR-BENAR tersimpan…"
+UPD=$(gh api "repos/$REPO/actions/secrets/PROJECTS_TOKEN" -q .updated_at 2>/dev/null)
+if [ -n "${UPD:-}" ]; then
+  echo "  secret PROJECTS_TOKEN updated_at = $UPD"
+  # updated_at hari ini (UTC) = baru saja diperbarui
+  if [ "${UPD%%T*}" = "$(date -u '+%Y-%m-%d')" ]; then
+    echo "  ✓ secret benar-benar diperbarui hari ini"
+  else
+    echo "  ✗ secret TIDAK berubah — anggap rotasi GAGAL"; FAIL=1
+  fi
+else
+  echo "  ⚠ tak bisa membaca updated_at (scope gh CLI?) — verifikasi manual:"
+  echo "      gh api repos/$REPO/actions/secrets/PROJECTS_TOKEN -q .updated_at"
+fi
+
+if GH_TOKEN="$(cat "$LOCAL_FILE" 2>/dev/null)" gh api graphql \
+     -f query="{ node(id:\"$PROJECT_ID\") { ... on ProjectV2 { number } } }" 2>/dev/null | grep -q '"number"'; then
+  echo "  ✓ token dari ${LOCAL_FILE} bisa membaca papan"
+else
+  echo "  ✗ token di ${LOCAL_FILE} tak bisa membaca papan — anggap rotasi GAGAL"; FAIL=1
+fi
 
 echo
-echo "Selesai. Langkah berikutnya:"
+if [ "$FAIL" -ne 0 ]; then
+  echo "✗ ROTASI GAGAL — jangan lanjut. Perbaiki dulu yang bertanda ✗ di atas."
+  exit 1
+fi
+
+echo "✓ Rotasi selesai & terverifikasi. Langkah berikutnya:"
 echo "  1. Jalankan ulang run sync yang gagal:"
 echo "       gh run list --workflow=roadmap-project-sync.yml --status failure --limit 1"
 echo "       gh run rerun <run-id>"
 echo "  2. Sisir papan — transisi selama token mati TIDAK PERNAH tercatat."
-echo "     Cari PR ber-F-number yang merged dalam rentang token mati:"
+echo "     Survei papan TAK butuh token ini; gh CLI ber-scope project sudah cukup."
+echo "     Silangkan status kartu dengan:"
 echo "       gh pr list --state merged --limit 400 --json number,mergedAt,baseRefName,title,headRefName"
 echo "     Aturannya: base dev → Checking, base main → Done."
