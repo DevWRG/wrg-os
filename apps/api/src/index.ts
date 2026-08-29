@@ -376,9 +376,11 @@ import {
 import {
   listVehicles,
   getVehicleById,
+  createVehicle,
   updateVehicle,
   listVehicleLogs,
   createVehicleLog,
+  runVehicleAlerts,
 } from "./repo/vehicle.js";
 import {
   listInventoryRelocations,
@@ -5658,6 +5660,35 @@ app.get("/vehicles", async (c) => {
   return c.json({ count: rows.length, vehicles: rows });
 });
 
+app.post("/vehicles", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: {
+    plate_number?: string;
+    model?: string;
+    sopir_name?: string;
+    current_km?: number;
+    stnk_expiry?: string;
+    service_interval_km?: number;
+  };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.plate_number?.trim()) {
+    return c.json({ error: "plate_number wajib" }, 400);
+  }
+  const r = await createVehicle({
+    plate_number: body.plate_number,
+    model: body.model,
+    sopir_name: body.sopir_name,
+    current_km: body.current_km,
+    stnk_expiry: body.stnk_expiry,
+    service_interval_km: body.service_interval_km,
+  });
+  return "id" in r ? c.json(r, 201) : c.json(r, 400);
+});
+
 app.get("/vehicles/:id", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const r = await getVehicleById(c.req.param("id"));
@@ -5708,6 +5739,16 @@ app.post("/vehicles/:id/logs", async (c) => {
   }
   const r = await createVehicleLog(c.req.param("id"), body as never);
   return c.json(r, "id" in r ? 201 : 400);
+});
+
+// Trigger manual alert service-due (km) + STNK H-30 — selain cron terjadwal
+// (VEHICLE_ALERT_ENABLED, default off). Berguna buat testing tanpa nunggu
+// jadwal cron 08:00 — pola sama /pickup-plan/previsit/run, /lpse-tender/
+// reminder/run. Tetap patuh VEHICLE_ALERT_WA_TARGET (kosong = no-op) & WA_DRY_RUN.
+app.post("/vehicles/alerts/run", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await runVehicleAlerts();
+  return c.json(r);
 });
 
 // ── F25 Uji Profisiensi Document Registry (Aftersales/Teknis) ──

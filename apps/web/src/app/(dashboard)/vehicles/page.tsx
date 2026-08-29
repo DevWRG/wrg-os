@@ -2,13 +2,19 @@ import { gatewayFetch } from "@/lib/gateway";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { Card, CardContent } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
+import { AddVehicleSheet } from "@/components/crm/add-vehicle-sheet";
 import { VehiclesTable, type Vehicle } from "@/components/tables/vehicles-table";
 
 export const dynamic = "force-dynamic";
 
 async function getVehicles(): Promise<Vehicle[] | null> {
   try {
-    const res = await gatewayFetch("/vehicles");
+    // all=true — tampilkan yang nonaktif juga (ditandai badge status di
+    // tabel), bukan cuma yang aktif. Tanpa ini, plat yang dinonaktifkan
+    // hilang total dari layar tapi masih "kepakai" di constraint unique
+    // plate_number — user gak bisa nemuin & aktifkan-lagi (cuma bisa lihat
+    // pesan error "sudah terdaftar" tanpa tahu di mana kendaraannya).
+    const res = await gatewayFetch("/vehicles?all=true");
     if (!res.ok) return null;
     const data = (await res.json()) as { vehicles: Vehicle[] };
     return data.vehicles ?? [];
@@ -24,6 +30,7 @@ export default async function VehiclesPage() {
       <PageHeader
         title="Kendaraan Operasional"
         description="Log per kendaraan (km, BBM, service, STNK, sopir) + alert otomatis kalau service atau STNK jatuh tempo."
+        action={<AddVehicleSheet />}
       />
       <Card>
         <CardContent className="pt-6">
@@ -32,7 +39,7 @@ export default async function VehiclesPage() {
           ) : vehicles.length === 0 ? (
             <EmptyState
               title="Belum ada kendaraan terdaftar"
-              description="Master kendaraan diisi lewat seed SQL (bukan halaman tambah) — lihat scripts/db/seed-vehicle-dev.sql utk dev, atau minta admin input data 7 mobil produksi."
+              description="Tambah lewat tombol di atas."
             />
           ) : (
             <VehiclesTable vehicles={vehicles} />

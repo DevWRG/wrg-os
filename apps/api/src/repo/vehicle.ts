@@ -105,6 +105,59 @@ export async function getVehicleById(id: string): Promise<VehicleRow | null> {
   return rows.length ? mapRow(rows[0]) : null;
 }
 
+export interface VehicleCreateInput {
+  plate_number: string;
+  model?: string | null;
+  sopir_name?: string | null;
+  current_km?: number | null;
+  stnk_expiry?: string | null;
+  service_interval_km?: number | null;
+}
+
+const isIsoDate = (s: string): boolean => /^\d{4}-\d{2}-\d{2}$/.test(s) && !Number.isNaN(new Date(s).getTime());
+
+// Tambah kendaraan baru — permintaan langsung user (2026-08-28), MENGGANTI
+// konvensi awal F50 ("master kecil = seed SQL, sengaja tanpa halaman tambah",
+// lihat komentar header file ini & 149_vehicle_operational_log.sql).
+export async function createVehicle(input: VehicleCreateInput): Promise<VehicleRow | VehicleActionResult> {
+  const sql = db();
+  const plate = input.plate_number?.trim();
+  // Wajib semua field — permintaan langsung user 2026-08-28 (konsisten dgn
+  // Edit kendaraan & Tambah Log yang juga sudah diwajibkan, cuma field
+  // "catatan" di Tambah Log yang tetap opsional).
+  if (!plate) return { ok: false, error: "plate_number wajib" };
+  if (!input.model?.trim()) return { ok: false, error: "model wajib diisi" };
+  if (!input.sopir_name?.trim()) return { ok: false, error: "sopir_name wajib diisi" };
+  if (input.current_km == null) return { ok: false, error: "current_km wajib diisi" };
+  if (input.current_km < 0) return { ok: false, error: "current_km tak boleh negatif" };
+  if (!input.stnk_expiry) return { ok: false, error: "stnk_expiry wajib diisi" };
+  if (!isIsoDate(input.stnk_expiry)) {
+    return { ok: false, error: `stnk_expiry "${input.stnk_expiry}" bukan tanggal valid (format YYYY-MM-DD)` };
+  }
+  if (input.service_interval_km == null) return { ok: false, error: "service_interval_km wajib diisi" };
+  if (input.service_interval_km <= 0) return { ok: false, error: "service_interval_km harus > 0" };
+  // plate_number unique di skema TERLEPAS dari status active/nonaktif —
+  // kendaraan yang dinonaktifkan hilang dari tabel default (activeOnly)
+  // tapi platnya masih "kepakai". Tanpa hint ini, user cuma lihat "sudah
+  // terdaftar" tanpa tahu kendaraannya ke mana (ditemukan user 2026-08-28).
+  const existing = await sql`SELECT id, active FROM vehicle WHERE plate_number = ${plate}`;
+  if (existing.length > 0) {
+    const hint = existing[0].active
+      ? ""
+      : " — kendaraan ini NONAKTIF (tersembunyi dari tabel default), aktifkan lagi lewat tombol Edit drpd bikin baru";
+    return { ok: false, error: `plat nomor "${plate}" sudah terdaftar${hint}` };
+  }
+  const rows = await sql`
+    INSERT INTO vehicle (plate_number, model, sopir_name, current_km, stnk_expiry, service_interval_km)
+    VALUES (
+      ${plate}, ${input.model?.trim() || null}, ${input.sopir_name?.trim() || null},
+      ${input.current_km ?? null}, ${input.stnk_expiry ?? null}, ${input.service_interval_km ?? 5000}
+    )
+    RETURNING *
+  `;
+  return mapRow(rows[0]);
+}
+
 export interface VehicleUpdateInput {
   sopir_name?: string | null;
   stnk_expiry?: string | null;
@@ -124,6 +177,19 @@ export async function updateVehicle(id: string, input: VehicleUpdateInput): Prom
   const sql = db();
   const rows = await sql`SELECT id FROM vehicle WHERE id = ${id}`;
   if (rows.length === 0) return { ok: false, error: "kendaraan tidak ditemukan" };
+  // Wajib semua field (kecuali "active", yang bukan konsep isi/kosong) —
+  // permintaan langsung user 2026-08-28. Sekalian tutup 2 bug lama yang
+  // ditemukan sesi QA jalur tulis 2026-08-27 & belum sempat ditambal di
+  // jalur ini: tanggal rusak → crash "Invalid time value", interval ≤0
+  // lolos tersimpan.
+  if (!input.sopir_name?.trim()) return { ok: false, error: "sopir_name wajib diisi" };
+  if (!input.stnk_expiry) return { ok: false, error: "stnk_expiry wajib diisi" };
+  if (!isIsoDate(input.stnk_expiry)) {
+    return { ok: false, error: `stnk_expiry "${input.stnk_expiry}" bukan tanggal valid (format YYYY-MM-DD)` };
+  }
+  if (input.service_interval_km == null || input.service_interval_km <= 0) {
+    return { ok: false, error: "service_interval_km wajib diisi dan harus > 0" };
+  }
   await sql`
     UPDATE vehicle SET
       sopir_name = COALESCE(${input.sopir_name ?? null}, sopir_name),
@@ -194,6 +260,18 @@ export async function createVehicleLog(
   const sql = db();
   const veh = await sql`SELECT id, current_km FROM vehicle WHERE id = ${vehicleId}`;
   if (veh.length === 0) return { ok: false, error: "kendaraan tidak ditemukan" };
+
+  // Wajib semua field relevan per jenis log — cuma "note" yang opsional
+  // (permintaan langsung user 2026-08-28). km relevan utk SEMUA jenis
+  // (odometer saat itu, termasuk saat isi BBM/service), bbm_liter/bbm_cost
+  // cuma wajib khusus jenis "bbm".
+  if (input.km == null) return { ok: false, error: "km wajib diisi" };
+  if (input.km < 0) return { ok: false, error: "km tak boleh negatif" };
+  if (input.log_type === "bbm") {
+    if (input.bbm_liter == null) return { ok: false, error: "liter BBM wajib diisi utk log jenis BBM" };
+    if (input.bbm_cost == null) return { ok: false, error: "biaya BBM wajib diisi utk log jenis BBM" };
+    if (input.bbm_liter < 0 || input.bbm_cost < 0) return { ok: false, error: "liter/biaya BBM tak boleh negatif" };
+  }
 
   const rows = await sql`
     INSERT INTO vehicle_log (vehicle_id, log_type, log_date, km, bbm_liter, bbm_cost, note, created_by)
