@@ -9,6 +9,29 @@ memuat Fase 1 (geladi) dan Fase 3 (eksekusi).
 > acuan di tiap langkah di bawah sudah diganti dengan hasil terukur, bukan
 > perkiraan. **Fase 3 menunggu persetujuan eksplisit Pak Husni.**
 
+> ## 🔁 Fase 1 PERLU DIULANG (per 29 Agu 2026)
+>
+> Bukan karena ada yang rusak — karena **yang diuji sudah bergerak**. Sejak
+> geladi 26 Agu, `dev` menerima **43 commit** lagi (mayoritas perbaikan bug hasil
+> sesi QA jalur tulis magang), sehingga:
+>
+> - migrasi pending **43 → 46** (`156`, `158`, `159` menyusul)
+> - bukti **smoke & sim-hashtag 26 Agu jadi basi** untuk kode — 43 commit itu
+>   menyentuh kode aplikasi, dan smoke Fase 1 menguji kode per 26 Agu
+>
+> Yang sudah diverifikasi ulang di laptop 29 Agu (rinciannya di Fase 1 langkah 3):
+> geladi rantai 46 migrasi di atas skema `main` **lolos bersih & idempoten**,
+> pindai risiko bersih, satu-satunya tabel lama yang disentuh cuma `sales_doc`
+> (dua kolom nullable). Jadi **sisi database sudah rendah risiko dan terbukti**.
+>
+> Yang **belum** bisa diverifikasi dari laptop: jumlah pending otoritatif dari
+> `schema_migrations` prod, dan smoke permukaan baca terhadap salinan data prod.
+> Dua-duanya butuh Mac mini. Mac mini tidak terlihat di `tailscale status` dari
+> laptop, jadi ini tak bisa dititipkan — harus dijalankan di sana.
+>
+> **Ulangi Fase 1 langkah 2–7.** Langkah 4 (apply) & 5 (smoke) yang paling
+> penting; langkah 3 sudah punya angka pembanding baru (46).
+
 > ## ⛔ GERBANG WAJIB
 >
 > **JANGAN merge `dev` → `main` sebelum Pak Husni menyatakan lolos uji.**
@@ -224,6 +247,67 @@ jumlahnya beda jauh, **stop** — berarti asumsi runbook ini sudah basi.
 > **Terverifikasi 26 Agu 2026: tepat 43.** Catatan kecil supaya tak bikin panik —
 > `084` **tidak** muncul di daftar pending, dan itu wajar: rentang `082`–`092`
 > berisi 10 berkas, bukan 11. Total tetap 10 + 5 + 28 = 43.
+
+#### Hitung ulang 29 Agu 2026 — 46, dan kali ini diuji bukan cuma dihitung
+
+Angka 46 sudah **diverifikasi dengan geladi rantai penuh di laptop**, bukan
+sekadar hasil `comm` antar-branch:
+
+| Yang diukur | Hasil |
+|---|---|
+| Migrasi dev-only (git) | **46** |
+| Geladi: skema setara `main` | 114 ter-apply, rc=0 |
+| Geladi: 46 di atasnya | **46/46 bersih, rc=0**, total 160 |
+| Jalankan runner ulang | "tidak ada migrasi pending" → idempoten |
+| Tabel baru yang dibuat | 61 |
+
+Cara mengulang geladi ini tanpa data prod (aman dijalankan di laptop mana pun):
+`001_extensions.sql` **harus dilewati** — ia memuat `CREATE DATABASE langfuse`
+yang tak bisa jalan di dalam transaksi, dan memang berkas bootstrap, bukan
+bagian rantai. Buat extension-nya manual, tandai `001` sebagai applied, lalu
+jalankan runner dari worktree `main` dan disusul worktree `dev`.
+
+**Tiga migrasi ini BELUM ikut geladi Fase 1 (26 Agu) dan belum pernah jalan di
+`wrg_os_dev` — satu-satunya yang benar-benar perawan:**
+
+| Migrasi | Masuk `dev` | Isi | Penilaian |
+|---|---|---|---|
+| `156_ga_asset_assignment_shared_fix` | 27 Agu | `ADD COLUMN is_shared_snapshot boolean NOT NULL DEFAULT false` + `DROP INDEX` lalu buat ulang unique index berpredikat | Aman — `ga_asset_assignments` lahir di batch ini (`088`), jadi di prod tabelnya kosong |
+| `158_purchase_order_po_number_unique` | 29 Agu | `CREATE UNIQUE INDEX ON purchase_order (po_number)` | Aman — `purchase_order` lahir di `143` (dalam batch). Unique index pada tabel berisi data BISA gagal, tapi di prod tabelnya belum ada |
+| `159_installation_link_existing` | 29 Agu | 3 FK nullable ke `installation_unit` + 3 partial index | Aman — additive, semua nullable; `installation_unit` (`130`) & `teknisi_capacity` (`136`) juga lahir di batch ini |
+
+#### Pindai risiko atas ke-46 (29 Agu 2026)
+
+| Pemeriksaan | Hasil |
+|---|---|
+| `ADD COLUMN … NOT NULL` tanpa `DEFAULT` (langgar aturan 2) | **0** |
+| `BEGIN`/`COMMIT` milik berkas sendiri | **0** |
+| `CREATE TABLE` tanpa `IF NOT EXISTS` | **0** (satu cocokan ternyata di dalam komentar) |
+| `GRANT` yang perlu ditambah manual | **0** — `ALTER DEFAULT PRIVILEGES` di `039` + `157` sudah otomatis meliputi tabel baru |
+| Pernyataan destruktif | 1 `DROP COLUMN` + 3 `DROP CONSTRAINT` + 1 `DROP INDEX` |
+| **Tabel LAMA (sudah berisi data prod) yang disentuh** | **hanya `sales_doc`** |
+
+Kelima pernyataan destruktif itu **semuanya menyasar tabel yang lahir di batch
+ini**, jadi di prod mereka bekerja pada tabel kosong:
+
+- `140` membuang `eta_date` dari `shipment_tracking` — kolomnya baru dibuat di
+  `138`, di dalam batch yang sama, dan **nol referensi di kode `main`**. Prod tak
+  pernah melihat kolom itu ada.
+- `082` (`warehouse`), `083` (`item_stock_batch`), `144` (`shipment_tracking`),
+  `156` (`ga_asset_assignments`) — semua tabelnya lahir di batch.
+
+Satu-satunya sentuhan ke tabel lama adalah `152_sph_generator` ke `sales_doc`
+(dibuat `003`, ada data di prod), dan isinya cuma dua kolom **nullable**:
+`hod_reviewed_by text` dan `hod_reviewed_at timestamptz`. Patuh expand-contract.
+
+> **Jebakan metodologi — jangan ulangi.** Pindaian pertama gue melaporkan "tak
+> ada" untuk kelima pemeriksaan, dan itu **palsu**: daftar 46 nama berkas
+> dilewatkan sebagai satu argumen (zsh tidak memecah `$VAR` tak berkurung), jadi
+> ugrep membacanya sebagai satu nama berkas — "File name too long" — dan nol
+> berkas terpindai. Selalu pasang **kontrol positif** (mis. hitung berkas yang
+> memuat `CREATE TABLE`; harus 36, bukan 0) sebelum memercayai hasil "bersih".
+> Pola awal gue juga tak mencakup `DROP INDEX`/`DROP CONSTRAINT` — ketahuan cuma
+> karena `156` dibaca manual.
 
 ### 4. Apply, dan catat durasinya
 
