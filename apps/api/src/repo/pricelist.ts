@@ -97,6 +97,16 @@ export async function upsertPricelist(input: PricelistInput): Promise<PricelistR
   // tak dikirim (undefined → null) mempertahankan nilai lama, bukan ketimpa
   // default. VALUES tetap default 0/false utk baris BENAR-BENAR baru (belum
   // ada row lama buat di-COALESCE-kan).
+  //
+  // price_list DIKECUALIKAN dari pola COALESCE di atas (issue #1074, tindak
+  // lanjut fix di atas): `??` tak bisa bedakan "field tak dikirim" dari
+  // "sengaja dikirim null" — utk kolom LAIN itu gak masalah (NOT NULL,
+  // NULL tak pernah valid), tapi price_list justru NULL BERMAKNA ("gak ada
+  // angka override, hitung dari margin" — lihat 076_pricelist_price_list.sql).
+  // COALESCE bikin `{price_list: null}` gak pernah benar2 ngosongin kolom
+  // (ketiban nilai lama lagi). Fix: cek eksplisit apakah field-nya ADA di
+  // payload (bukan cuma nilainya), CASE WHEN bukan COALESCE.
+  const priceListSent = Object.prototype.hasOwnProperty.call(input, "price_list");
   const rows = await sql<{ product_id: string }[]>`
     INSERT INTO pricelist (
       product_id, hpp, margin_pct, diskon_pct, price_list,
@@ -116,7 +126,7 @@ export async function upsertPricelist(input: PricelistInput): Promise<PricelistR
       hpp = COALESCE(${input.hpp ?? null}, pricelist.hpp),
       margin_pct = COALESCE(${input.margin_pct ?? null}, pricelist.margin_pct),
       diskon_pct = COALESCE(${input.diskon_pct ?? null}, pricelist.diskon_pct),
-      price_list = COALESCE(${input.price_list ?? null}, pricelist.price_list),
+      price_list = CASE WHEN ${priceListSent} THEN ${input.price_list ?? null} ELSE pricelist.price_list END,
       pct_wrg = COALESCE(${input.pct_wrg ?? null}, pricelist.pct_wrg),
       pct_promosi = COALESCE(${input.pct_promosi ?? null}, pricelist.pct_promosi),
       pct_hod_sales = COALESCE(${input.pct_hod_sales ?? null}, pricelist.pct_hod_sales),
