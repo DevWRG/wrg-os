@@ -13,7 +13,9 @@ name: Roadmap Project Sync
 # F-number diambil dari nama branch + judul PR (mis. feat/f127-... / feat(F127): ...).
 # Jika F-number belum ada di board, item draft baru DIBUAT otomatis lalu di-set status.
 # Butuh secret PROJECTS_TOKEN (PAT dgn izin project) karena GITHUB_TOKEN default
-# tidak bisa menulis Projects v2.
+# tidak bisa menulis Projects v2. Keabsahan token diuji di AWAL job, sebelum
+# early-return F-number — kalau tidak, token mati lolos sebagai `success` di
+# setiap PR yang kebetulan tak ber-F-number (lihat komentar di dalam script).
 
 on:
   pull_request:
@@ -42,6 +44,43 @@ jobs:
             };
             // Base branch -> status saat PR MERGED. Base di luar peta ini diabaikan.
             const MERGE_TARGET = { dev: 'Checking', main: 'Done' };
+
+            // ── Uji kredensial DULUAN, sebelum early-return apa pun ──────────
+            // Tanpa ini kematian token TERSAMAR: jalur "tak ada F-number" keluar
+            // lebih awal tanpa pernah menyentuh API, jadi run selesai `success`.
+            // PROJECTS_TOKEN dibuat 15 Jul; dengan expiry 30 hari ia mati sekitar
+            // 14 Agu 2026 dan baru ketahuan 27 Agu, saat kebetulan ada PR
+            // ber-F-number (#1072). Sepanjang rentang itu papan berhenti
+            // ter-update sementara tiap PR tetap hijau. Cek ini menukar diam
+            // yang lama dengan gagal yang cepat: satu query murah di SETIAP PR.
+            //
+            // Yang dibaca adalah project-nya sendiri, bukan `viewer { login }`.
+            // `viewer` cuma membuktikan token sah — token tanpa scope `project`
+            // LOLOS di situ lalu gagal belakangan, persis kelas kegagalan yang
+            // mau dihapus. Membaca ProjectV2 membuktikan sah DAN cukup scope.
+            try {
+              const probe = await github.graphql(
+                `query($id:ID!){ node(id:$id){ ... on ProjectV2 { number title } } }`,
+                { id: projectId },
+              );
+              if (!probe?.node?.number) throw new Error('project tak terbaca (node kosong)');
+              core.info(`Token OK — papan #${probe.node.number} "${probe.node.title}" terbaca.`);
+            } catch (e) {
+              core.setFailed(
+                `PROJECTS_TOKEN tidak bisa membaca papan Projects: ${e.message}\n\n` +
+                'Status papan BERHENTI ter-update sampai ini dibereskan.\n\n' +
+                'Rotasi — classic PAT, papan ini user-owned\n' +
+                '(github.com/users/DevWRG/projects/2):\n' +
+                '  1. https://github.com/settings/tokens/new — scope `project`,\n' +
+                '     Expiration "No expiration". Expiry pendek adalah penyebab\n' +
+                '     kejadian ini, bukan sekadar preferensi.\n' +
+                '  2. gh secret set PROJECTS_TOKEN --repo DevWRG/wrg-os < <file-token>\n' +
+                '  3. Perbarui juga ~/.wrg-gh-token — automation lain memakainya\n' +
+                '  4. Sisir papan: transisi selama token mati tak pernah tercatat\n\n' +
+                'Konteks: issue #1075.',
+              );
+              return;
+            }
 
             const pr = context.payload.pull_request;
             let target;
