@@ -86,6 +86,51 @@ GAGAL             : 0
 
 ---
 
+## Kerjaan owner TIDAK bisa dipromosikan terpisah dari batch ini
+
+Aturannya (29 Agu 2026): hanya kerjaan `DevWRG` sendiri — ditandai label GitHub
+**`owner`** — yang boleh lanjut ke `main`; kerjaan magang berhenti di `dev`.
+
+**Tapi aturan itu tak bisa ditegakkan dengan memilih PR**, karena dua hal:
+
+**1. Promosi memindahkan SELURUH isi `dev`, bukan per-PR.** Per 29 Agu sudah ada
+11 PR magang ter-merge ke `dev`. Promotion PR apa pun sekarang akan menyeret
+semuanya ikut — label `owner` tak menahan apa pun.
+
+**2. Sebagian kerjaan owner DIBANGUN DI ATAS batch magang.** Diperiksa langsung:
+migrasi `159_installation_link_existing.sql` (F22, #1096, label `owner`)
+mereferensi `teknisi_capacity` dan mengubah `installation_unit` —
+
+| Tabel | Asal | Ada di `main`? |
+|---|---|---|
+| `accurate_item` | migrasi awal | ✅ ada |
+| `accurate_customer` | migrasi awal | ✅ ada |
+| `teknisi_capacity` | `136` (batch magang) | ❌ **tidak ada** |
+| `installation_unit` | `130` (batch magang) | ❌ **tidak ada** |
+
+Jadi cherry-pick F22 ke `main` akan menghasilkan migrasi yang `ALTER TABLE` pada
+tabel yang tak ada → migrasi gagal → **deploy prod mati**, karena auto-deploy
+meng-apply migrasi otomatis. Ini bukan preferensi arsitektur, ini dependensi
+keras.
+
+**Konsekuensinya:** F22 hanya bisa naik BERSAMA batch magang, atau menunggu.
+Yang bisa dipromosikan sendiri hanyalah kerjaan owner tanpa migrasi dan tanpa
+sentuhan ke tabel batch magang — mis. #1076 yang cuma mengubah
+`.github/workflows/`. Bahkan untuk itu, perlu disadari merge ke `main` memicu
+auto-deploy penuh (pull → build → restart pm2), jadi mem-bounce prod untuk
+perubahan yang tak punya efek runtime di server sama sekali.
+
+Sebelum menyusun promotion PR, periksa dulu tiap migrasi kerjaan owner:
+
+```bash
+grep -oE "REFERENCES [a-z_]+|ALTER TABLE [a-z_]+" infra/postgres/init/<berkas>.sql | sort -u
+# lalu untuk tiap tabel:
+git grep -q "CREATE TABLE.*\b<tabel>\b" origin/main -- infra/postgres/init/ \
+  && echo "ada di main" || echo "TIDAK ada di main — tak bisa dipromosikan sendiri"
+```
+
+---
+
 ## ⚠️ Tiga hal yang JANGAN dilakukan
 
 **1. JANGAN `git checkout dev` di repo prod.** Repo prod di Mac mini harus tetap
@@ -149,7 +194,31 @@ cd ~/wrg-os-geladi
 DATABASE_URL=postgres:///wrg_os_geladi bash scripts/db/migrate.sh --dry-run
 ```
 
-**Harapan: 43 berkas pending** (`082`–`092`, `115`–`119`, `127`–`154`). Kalau
+> ## ⚠️ ANGKA 43 SUDAH BASI — hitung ulang, jangan percaya angka beku
+>
+> **Per 29 Agu 2026 pending-nya 46, bukan 43.** `dev` terus menerima migrasi baru
+> setelah runbook ini ditulis: `156_ga_asset_assignment_shared_fix`,
+> `158_purchase_order_po_number_unique` (#1090), `159_installation_link_existing`
+> (#1096). Angka itu akan terus bertambah tiap ada PR ber-migrasi masuk `dev`.
+>
+> Instruksi "stop kalau jumlahnya beda" di bawah TETAP berlaku — tapi
+> pembandingnya bukan 43, melainkan hasil hitung sendiri **tepat sebelum mulai**
+> (perintahnya di bawah kotak ini). Angka itu yang harus cocok dengan hasil
+> `migrate.sh --dry-run`. Kalau dua-duanya sama, lanjut. Kalau beda, ada yang tak
+> sinkron — baru berhenti.
+
+Hitung ulang pending sebelum mulai:
+
+```bash
+git fetch origin
+comm -13 \
+  <(git ls-tree -r origin/main --name-only infra/postgres/init/ | sed 's|.*/||' | sort) \
+  <(git ls-tree -r origin/dev  --name-only infra/postgres/init/ | sed 's|.*/||' | sort) \
+  | wc -l
+```
+
+**Harapan: sebanyak hasil hitung di atas** (dulu 43: `082`–`092`, `115`–`119`,
+`127`–`154`; kini ditambah `156`, `158`, `159`). Kalau
 jumlahnya beda jauh, **stop** — berarti asumsi runbook ini sudah basi.
 
 > **Terverifikasi 26 Agu 2026: tepat 43.** Catatan kecil supaya tak bikin panik —
@@ -275,13 +344,15 @@ psql -d wrg_os_geladi -Atc \
 > penghalang adalah `item_stock_branch` gudang KEDIRI kosong (`product_pricelist`
 > prod sudah memenuhi syarat #SPH — 1.042 baris). Cukup 5 baris dari item asli:
 >
-> ```bash
-> psql -d wrg_os_geladi -c "
-> INSERT INTO item_stock_branch (item_id, warehouse_kode, quantity, source, updated_at, catatan)
-> SELECT ai.id::bigint, 'KEDIRI', 25, 'manual', now(), 'baris uji Fase 1 — bukan data gudang'
->   FROM accurate_item ai WHERE COALESCE(ai.no,'') <> '' ORDER BY ai.no LIMIT 5
->   ON CONFLICT (item_id, warehouse_kode) DO NOTHING;"
-> ```
+Sisipan minimal 5 baris KEDIRI (pengganti `seed-dev.sql` yang berbahaya):
+
+```bash
+psql -d wrg_os_geladi -c "
+INSERT INTO item_stock_branch (item_id, warehouse_kode, quantity, source, updated_at, catatan)
+SELECT ai.id::bigint, 'KEDIRI', 25, 'manual', now(), 'baris uji Fase 1 — bukan data gudang'
+  FROM accurate_item ai WHERE COALESCE(ai.no,'') <> '' ORDER BY ai.no LIMIT 5
+  ON CONFLICT (item_id, warehouse_kode) DO NOTHING;"
+```
 >
 > `source` wajib salah satu dari `manual|import|accurate` — ada CHECK constraint
 > yang menolak nilai lain (skemanya menjaga diri; jangan dilawan).
