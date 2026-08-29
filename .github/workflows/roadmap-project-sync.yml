@@ -56,11 +56,15 @@ jobs:
             // ── Uji kredensial DULUAN, sebelum early-return apa pun ──────────
             // Tanpa ini kematian token TERSAMAR: jalur "tak ada F-number" keluar
             // lebih awal tanpa pernah menyentuh API, jadi run selesai `success`.
-            // PROJECTS_TOKEN dibuat 15 Jul; dengan expiry 30 hari ia mati sekitar
-            // 14 Agu 2026 dan baru ketahuan 27 Agu, saat kebetulan ada PR
-            // ber-F-number (#1072). Sepanjang rentang itu papan berhenti
-            // ter-update sementara tiap PR tetap hijau. Cek ini menukar diam
-            // yang lama dengan gagal yang cepat: satu query murah di SETIAP PR.
+            // PROJECTS_TOKEN pernah mati tanpa ada yang tahu — ketahuan 27 Agu
+            // 2026 lewat #1072, PR pertama sesudahnya yang kebetulan ber-F-number.
+            // SEJAK KAPAN ia mati tidak diketahui: histori run hanya menjangkau
+            // 23 Agu, dan run sebelum #1072 semuanya jalur skip yang tak pernah
+            // menyentuh API. Sisir papan 29 Agu tak menemukan drift, jadi
+            // rentangnya kemungkinan pendek — tapi itu keberuntungan, bukan
+            // hasil deteksi. Justru itu intinya: tanpa cek ini, lama tidaknya
+            // token mati ditentukan kebetulan. Cek ini menukar diam yang tak
+            // terbatas dengan gagal yang cepat: satu query murah di SETIAP PR.
             //
             // Yang dibaca adalah project-nya sendiri, bukan `viewer { login }`.
             // `viewer` cuma membuktikan token sah — token tanpa scope `project`
