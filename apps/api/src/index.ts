@@ -5527,6 +5527,16 @@ function validateProficiencyTestFile(mime?: string | null, base64?: string | nul
   return null;
 }
 
+// BUG-08 — expired_date < issued_date sebelumnya diterima tanpa validasi
+// sama sekali. issued_date opsional (nullable), jadi cuma dibandingkan kalau
+// keduanya ada.
+function validateProficiencyTestDates(issuedDate: string | null | undefined, expiredDate: string | undefined): string | null {
+  if (issuedDate && expiredDate && expiredDate < issuedDate) {
+    return "expired_date tidak boleh sebelum issued_date";
+  }
+  return null;
+}
+
 app.get("/aftersales/proficiency-tests", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const rows = await listProficiencyTests();
@@ -5544,6 +5554,8 @@ app.post("/aftersales/proficiency-tests", async (c) => {
   if (!body.rs_name?.trim() || !body.test_name?.trim() || !body.expired_date) {
     return c.json({ error: "rs_name, test_name, expired_date wajib" }, 400);
   }
+  const dateErr = validateProficiencyTestDates(body.issued_date, body.expired_date);
+  if (dateErr) return c.json({ error: dateErr }, 400);
   const fileErr = validateProficiencyTestFile(body.file_mime, body.file_base64);
   if (fileErr) return c.json({ error: fileErr }, 400);
   const row = await createProficiencyTest(body);
@@ -5566,6 +5578,16 @@ app.patch("/aftersales/proficiency-tests/:id", async (c) => {
   }
   const fileErr = validateProficiencyTestFile(body.file_mime, body.file_base64);
   if (fileErr) return c.json({ error: fileErr }, 400);
+  // Validasi thd nilai HASIL MERGE (pola sama BUG-03/vendor-contract) —
+  // PATCH parsial (mis. cuma issued_date) tak boleh lolos kalau hasilnya
+  // expired_date < issued_date.
+  const existing = await getProficiencyTest(c.req.param("id"));
+  if (!existing) return c.json({ error: "tidak ditemukan" }, 404);
+  const dateErr = validateProficiencyTestDates(
+    body.issued_date !== undefined ? body.issued_date : existing.issued_date,
+    body.expired_date ?? existing.expired_date,
+  );
+  if (dateErr) return c.json({ error: dateErr }, 400);
   const row = await updateProficiencyTest(c.req.param("id"), body);
   return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
 });
