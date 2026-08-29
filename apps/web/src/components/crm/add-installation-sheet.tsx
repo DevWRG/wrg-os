@@ -17,8 +17,13 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet";
+import { CatalogPicker, type CatalogChoice } from "@/components/crm/catalog-picker";
 
-const blank = () => ({ alat_name: "", serial_number: "", customer_name: "", cabang: "", po_number: "" });
+// Alat & customer TIDAK lagi diketik bebas — wajib dipilih dari mirror Accurate
+// (keputusan Direktur 2026-08-28). Yang dikirim ke API adalah id-nya; nama
+// di-snapshot server-side dari mirror, jadi klien tak bisa mengarang nama untuk
+// id yang benar.
+const blank = () => ({ serial_number: "", cabang: "", po_number: "" });
 
 export function AddInstallationSheet() {
   const router = useRouter();
@@ -26,19 +31,24 @@ export function AddInstallationSheet() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [f, setF] = useState(blank());
+  const [alat, setAlat] = useState<CatalogChoice | null>(null);
+  const [cust, setCust] = useState<CatalogChoice | null>(null);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
     setError(null);
     try {
+      if (!alat || !cust) {
+        throw new Error("Alat & customer wajib dipilih dari katalog Accurate");
+      }
       const res = await fetch("/api/installations", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          alat_name: f.alat_name.trim(),
+          product_id: alat.id,
+          account_id: cust.id,
           serial_number: f.serial_number.trim() || undefined,
-          customer_name: f.customer_name.trim(),
           cabang: f.cabang.trim() || undefined,
           po_number: f.po_number.trim() || undefined,
         }),
@@ -46,6 +56,8 @@ export function AddInstallationSheet() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "gagal menyimpan");
       setF(blank());
+      setAlat(null);
+      setCust(null);
       setOpen(false);
       router.refresh();
     } catch (err) {
@@ -68,16 +80,30 @@ export function AddInstallationSheet() {
         <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col">
           <div className="flex flex-1 flex-col gap-4 overflow-y-auto px-4">
             <div className="grid gap-1.5">
-              <Label htmlFor="iu-alat">Nama alat *</Label>
-              <Input id="iu-alat" required value={f.alat_name} onChange={(e) => setF((p) => ({ ...p, alat_name: e.target.value }))} placeholder="mis. USG X1" />
+              <Label htmlFor="iu-alat">Alat * <span className="text-muted-foreground text-xs">(dari katalog Accurate)</span></Label>
+              <CatalogPicker
+                entity="items"
+                inputId="iu-alat"
+                required
+                value={alat}
+                onChange={setAlat}
+                placeholder="cari nama/kode alat…"
+              />
             </div>
             <div className="grid gap-1.5">
               <Label htmlFor="iu-serial">Serial number</Label>
               <Input id="iu-serial" value={f.serial_number} onChange={(e) => setF((p) => ({ ...p, serial_number: e.target.value }))} />
             </div>
             <div className="grid gap-1.5">
-              <Label htmlFor="iu-customer">Customer *</Label>
-              <Input id="iu-customer" required value={f.customer_name} onChange={(e) => setF((p) => ({ ...p, customer_name: e.target.value }))} placeholder="mis. RS Test" />
+              <Label htmlFor="iu-customer">Customer * <span className="text-muted-foreground text-xs">(dari mirror Accurate)</span></Label>
+              <CatalogPicker
+                entity="customers"
+                inputId="iu-customer"
+                required
+                value={cust}
+                onChange={setCust}
+                placeholder="cari nama/kode customer…"
+              />
             </div>
             <div className="grid gap-1.5">
               <Label htmlFor="iu-cabang">Cabang</Label>

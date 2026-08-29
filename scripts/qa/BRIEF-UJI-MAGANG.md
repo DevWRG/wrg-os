@@ -125,6 +125,27 @@ terjangkau. Itu memang disengaja untuk lingkungan uji.
 
 ---
 
+### 4. Buat akun & login — WAJIB untuk menguji dropdown
+
+`AUTH_ENABLED=false` membuat semua menu terjangkau tanpa login, TAPI itu tidak
+cukup: sebagian route data (`/api/products`, `/api/accurate-catalog`, dll) tetap
+menuntut cookie sesi lewat `sessionUser()`. Tanpa login, dropdown "pilih dari
+katalog" akan kosong terus — dan itu **bukan** bug fiturnya.
+
+```bash
+# daftar akun (pakai service token dari .env)
+curl -s -X POST -H "x-service-token: dev-token-lokal" \
+  -H 'content-type: application/json' \
+  -d '{"email":"magang@qa.invalid","password":"magang12345","name":"Magang QA","role":"admin"}' \
+  http://localhost:4000/auth/register
+```
+
+Lalu buka `http://localhost:3000` dan login dengan email/password itu.
+
+Kalau `register` menjawab `unauthorized`, `API_SERVICE_TOKEN` di `.env` tak cocok
+dengan yang dipakai API — pastikan `pnpm dev` sudah di-restart setelah `.env`
+diubah.
+
 ## Yang diuji: JALUR TULIS
 
 Membuka menu saja **tidak cukup** — jalur baca sudah diuji dan hasilnya bersih.

@@ -415,10 +415,31 @@ export async function listDeliveryOrders(opts: MirrorListOpts = {}) {
   return { rows: rows.map((r) => ({ ...r })), total: Number(count?.total ?? 0), limit, offset };
 }
 
-export async function listMirror(entity: "customers" | "items" | "branches" | "vendors", limit = 100) {
+// `q` = pencarian by nomor/nama, dipakai dropdown pilih-dari-katalog (F22).
+//
+// Tanpa `q`, satu-satunya cara mengisi dropdown adalah menarik LIMIT besar lalu
+// menyaring di klien — dan itu bukan sekadar berat: urutannya
+// `last_synced_at DESC`, jadi LIMIT n memberi potongan "paling baru disinkron"
+// yang ARBITRER. Barang yang dicari bisa saja tak ada di potongan itu, dan
+// dropdown-nya melaporkan "tak ketemu" untuk barang yang sebenarnya ada
+// (katalog prod ~5.800 item). Pencarian harus di DB.
+//
+// Diurutkan `name` saat mencari supaya hasilnya stabil & bisa diprediksi
+// (bukan urut waktu sinkron, yang tak berarti apa-apa bagi orang yang memilih).
+export async function listMirror(
+  entity: "customers" | "items" | "branches" | "vendors",
+  limit = 100,
+  q?: string,
+) {
   const sql = db();
   const table = entity === "customers" ? sql`accurate_customer` : entity === "items" ? sql`accurate_item` : entity === "vendors" ? sql`accurate_vendor` : sql`accurate_branch`;
-  const rows = await sql`SELECT * FROM ${table} ORDER BY last_synced_at DESC LIMIT ${limit}`;
+  const cari = q?.trim() ? `%${q.trim()}%` : null;
+  const rows = cari
+    ? await sql`
+        SELECT * FROM ${table}
+        WHERE no ILIKE ${cari} OR name ILIKE ${cari}
+        ORDER BY name LIMIT ${limit}`
+    : await sql`SELECT * FROM ${table} ORDER BY last_synced_at DESC LIMIT ${limit}`;
   return rows.map((r) => {
     const { raw, ...rest } = r as Record<string, unknown>;
     void raw;
