@@ -3872,6 +3872,9 @@ app.post("/supplier-eta", async (c) => {
   if (!body.vendor_name?.trim() || !body.item_desc?.trim() || !body.eta_date) {
     return c.json({ error: "vendor_name, item_desc, eta_date wajib" }, 400);
   }
+  if (body.qty != null && Number(body.qty) < 0) {
+    return c.json({ error: "qty tidak boleh negatif" }, 400);
+  }
   const row = await createSupplierEta(body);
   return c.json(row, 201);
 });
@@ -3886,6 +3889,9 @@ app.patch("/supplier-eta/:id", async (c) => {
   }
   if (body.status && !SUPPLIER_ETA_STATUSES.includes(body.status)) {
     return c.json({ error: "status tidak valid" }, 400);
+  }
+  if (body.qty != null && Number(body.qty) < 0) {
+    return c.json({ error: "qty tidak boleh negatif" }, 400);
   }
   const row = await updateSupplierEta(c.req.param("id"), body);
   return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
