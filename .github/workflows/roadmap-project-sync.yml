@@ -28,7 +28,15 @@ jobs:
   sync:
     # PR dependabot tak dapat akses secrets.PROJECTS_TOKEN (secret store terpisah) &
     # tak pernah punya F-number → skip biar tidak gagal palsu.
-    if: ${{ github.actor != 'dependabot[bot]' }}
+    #
+    # Disaring pakai NAMA BRANCH, bukan cuma `github.actor`. Guard aktor saja
+    # BOCOR di event merge: waktu PR dependabot di-merge manusia, `github.actor`
+    # adalah si manusia, bukan `dependabot[bot]`. Terbukti di run 32344413617
+    # (PR #953, actor=DevWRG) — job jalan, dan karena hash branch-nya
+    # `minor-and-patch-f182e0e817` memuat "f182", regex F-number menangkapnya
+    # sebagai fitur "F182". Nama branch itu intrinsik ke PR-nya, jadi tak bisa
+    # berubah tergantung siapa yang menekan tombol merge.
+    if: ${{ github.actor != 'dependabot[bot]' && !startsWith(github.head_ref, 'dependabot/') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/github-script@v9
@@ -97,8 +105,30 @@ jobs:
               target = 'In Progress';
             }
 
-            const text  = `${pr.head.ref}\n${pr.title}`;
-            const fnums = [...new Set((text.match(/F\d{2,3}/gi) || []).map(s => s.toUpperCase()))];
+            const text = `${pr.head.ref}\n${pr.title}`;
+
+            // F-number harus BERDIRI SENDIRI — diapit batas non-alfanumerik di
+            // KEDUA sisi. Bentuk sah semuanya lolos: `feat/f135-atk-…` (`/`…`-`),
+            // `feat(F49):` (`(`…`)`), `feat/f49-f54-…`, `F127` di awal judul.
+            //
+            // Yang disaring: F-number semu di tengah string alfanumerik. Pola
+            // lamanya `/F\d{2,3}/gi` tanpa batas apa pun, jadi hash hex apa saja
+            // yang memuat `f`+2-3 digit ikut tertangkap. Nyata terjadi: branch
+            // dependabot `minor-and-patch-f182e0e817` → dibaca "F182", dan karena
+            // F182 tak ada di papan, workflow MEMBUAT kartu draft palsu. Batas
+            // kiri saja tak cukup (`-f182…` diawali `-` yang sah); pembedanya
+            // ada di kanan — `f182e` diikuti huruf, `f135-` diikuti hyphen.
+            const RE_FNUM = /(?<![0-9A-Za-z])F\d{2,3}(?![0-9A-Za-z])/gi;
+            const fnums = [...new Set((text.match(RE_FNUM) || []).map(s => s.toUpperCase()))];
+
+            // Yang DITOLAK tetap dicatat. Kalau suatu hari F-number sah ikut
+            // tersaring, jejaknya ada di log run — bukan hilang tanpa suara.
+            const loose = [...new Set((text.match(/F\d{2,3}/gi) || []).map(s => s.toUpperCase()))];
+            const rejected = loose.filter(f => !fnums.includes(f));
+            if (rejected.length) {
+              core.info(`Ditolak (tidak berdiri sendiri, kemungkinan hash): ${rejected.join(', ')}`);
+            }
+
             if (!fnums.length) { core.info('Tidak ada F-number — skip'); return; }
             core.info(`F-number: ${fnums.join(', ')} → ${target}`);
 
