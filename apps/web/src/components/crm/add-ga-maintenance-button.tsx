@@ -84,7 +84,7 @@ export function AddGaMaintenanceButton({ assets, vendors, categories }: { assets
             <div className="grid gap-1.5">
               <Label>Aset</Label>
               <Select value={assetId || NONE} onValueChange={(v) => selectAsset(v === NONE ? "" : (v ?? ""))}>
-                <SelectTrigger>
+                <SelectTrigger className="w-full">
                   <SelectValue placeholder="Pilih aset">{(v: string) => (v === NONE ? "Pilih aset" : (() => { const a = assets.find((x) => x.id === v); return a ? `${a.asset_code} — ${a.nama}` : v; })())}</SelectValue>
                 </SelectTrigger>
                 <SelectContent>
@@ -123,7 +123,7 @@ export function AddGaMaintenanceButton({ assets, vendors, categories }: { assets
             <div className="grid gap-1.5">
               <Label>Vendor</Label>
               <Select value={vendorId || NONE} onValueChange={(v) => setVendorId(v === NONE ? "" : (v ?? ""))}>
-                <SelectTrigger>
+                <SelectTrigger className="w-full">
                   <SelectValue placeholder="Opsional">{(v: string) => (v === NONE ? "— tidak ada —" : vendors.find((x) => x.id === v)?.nama ?? v)}</SelectValue>
                 </SelectTrigger>
                 <SelectContent>

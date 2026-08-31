@@ -85,7 +85,7 @@ export function AddGaTicketButton({ categories, users }: { categories: CategoryO
             <div className="grid gap-1.5">
               <Label>Kategori</Label>
               <Select value={categoryId} onValueChange={(v) => setCategoryId(v ?? "")}>
-                <SelectTrigger>
+                <SelectTrigger className="w-full">
                   <SelectValue placeholder="Pilih kategori">{(v: string) => {
                     const c = categories.find((x) => x.id === v);
                     return c ? `${c.icon ? c.icon + " " : ""}${c.nama}` : "Pilih kategori";
@@ -116,7 +116,7 @@ export function AddGaTicketButton({ categories, users }: { categories: CategoryO
             <div className="grid gap-1.5">
               <Label>Reporter</Label>
               <Select value={reporterUserId || NONE} onValueChange={(v) => setReporterUserId(v === NONE ? "" : (v ?? ""))}>
-                <SelectTrigger>
+                <SelectTrigger className="w-full">
                   <SelectValue placeholder="Pilih user terdaftar">{(v: string) => (v === NONE ? "Pilih user terdaftar" : users.find((u) => u.id === v)?.name ?? v)}</SelectValue>
                 </SelectTrigger>
                 <SelectContent>
