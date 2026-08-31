@@ -1,6 +1,6 @@
 {
   "schemaVersion": "1.0.0",
-  "lastUpdate": "2026-08-30T00:00:12Z",
+  "lastUpdate": "2026-08-31T00:00:14Z",
   "generatedBy": "sync-state.sh (Warp cron/manual)",
   "production": {
     "version": "v1.199.1",
@@ -16,37 +16,37 @@
         "name": "wrg-prod-ai",
         "port": "8100",
         "status": "LIVE",
-        "uptime_sec": 935489
+        "uptime_sec": 1021891
       },
       {
         "name": "wrg-prod-api",
         "port": "4100",
         "status": "LIVE",
-        "uptime_sec": 158281
+        "uptime_sec": 244683
       },
       {
         "name": "wrg-prod-web",
         "port": "3100",
         "status": "LIVE",
-        "uptime_sec": 158281
+        "uptime_sec": 244683
       },
       {
         "name": "wrg-prod-wabridge",
         "port": null,
         "status": "LIVE",
-        "uptime_sec": 811743
+        "uptime_sec": 898145
       },
       {
         "name": "wrg-prod-cftunnel",
         "port": null,
         "status": "LIVE",
-        "uptime_sec": 6087478
+        "uptime_sec": 6173880
       },
       {
         "name": "wrg-prod-deployhook",
         "port": null,
         "status": "LIVE",
-        "uptime_sec": 6086968
+        "uptime_sec": 6173370
       }
     ],
     "servicesLive": 6,
@@ -61,16 +61,13 @@
     "githubRepo": "https://github.com/DevWRG/wrg-os"
   },
   "catalog": {
-    "totalFeatures": 185,
-    "range": "F1-F147",
-    "built": 55,
-    "builtDev": 43,
-    "comment": "Angka disalin manual dari array FEATURES di WRG-OS-Sprint-Dashboard.html (SoT katalog, di Drive). Terakhir dicocokkan 2026-08-29: 185 entri, 53 BUILT + 2 PROD-LIVE-WRGCRM = 55 di main, 43 BUILT-DEV menunggu promosi. Perbarui di SINI kalau blueprint berubah — file state ditulis ulang tiap run, jadi edit manual di dashboard-state.json pasti hilang."
+    "totalFeatures": 149,
+    "range": "F1-F117",
+    "comment": "Catalog detail di-maintain manual via Cowork (Sprint Dashboard FEATURES array)"
   },
   "_meta": {
     "source": "Auto-generated dari pm2 jlist + gh CLI + .env.prod",
-    "note": "2026-08-30: blok catalog SAJA yang disetel manual dari laptop (tanpa pm2/.env.prod) — nilainya disalin persis dari heredoc sync-state.sh #1103, jadi run cron berikutnya menulis angka yang sama. Blok infrastructure.services/schedulerJobs masih hasil run 2026-08-30 07:00 di Mac mini.",
-    "syncedAt": "2026-08-30T00:00:12Z",
+    "syncedAt": "2026-08-31T00:00:14Z",
     "host": "Mac-mini-Development.local"
   },
   "tooling": {
