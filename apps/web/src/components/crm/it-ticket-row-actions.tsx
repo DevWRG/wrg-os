@@ -84,12 +84,16 @@ export function ItTicketRowActions({ ticket }: { ticket: Ticket }) {
                 id="it-status"
                 className={selectCls}
                 value={f.status}
+                disabled={ticket.status === "resolved"}
                 onChange={(e) => setF((p) => ({ ...p, status: e.target.value }))}
               >
                 <option value="open">Baru</option>
                 <option value="in_progress">Dikerjakan</option>
                 <option value="resolved">Selesai</option>
               </select>
+              {ticket.status === "resolved" && (
+                <p className="text-muted-foreground text-xs">Tiket sudah selesai — status tidak bisa ditarik mundur.</p>
+              )}
             </div>
             <div className="grid gap-1.5">
               <Label htmlFor="it-pic">PIC</Label>

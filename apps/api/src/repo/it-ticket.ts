@@ -151,8 +151,17 @@ export interface ItTicketStatusInput {
 
 export async function updateTicketStatus(id: string, input: ItTicketStatusInput): Promise<ActionResult> {
   const sql = db();
-  const rows = await sql`SELECT id FROM it_ticket WHERE id = ${id}`;
+  const rows = await sql`SELECT id, status FROM it_ticket WHERE id = ${id}`;
   if (rows.length === 0) return { ok: false, error: "tiket tidak ditemukan" };
+  // resolved bersifat TERMINAL — sekali selesai gak boleh mundur ke
+  // open/in_progress. Tanpa guard ini, `resolved_at` (di-set sekali di bawah,
+  // gak pernah dikosongkan lagi) jadi basi begitu status ditarik mundur:
+  // tiket kelihatan "Baru" tapi tetap punya jejak "sudah pernah selesai" —
+  // data kontradiktif. Ditemukan via testing manual jalur tulis (API+UI
+  // sama-sama lolos sebelum fix ini).
+  if (String(rows[0].status) === "resolved" && input.status !== "resolved") {
+    return { ok: false, error: `tiket sudah resolved — tidak bisa diubah ke "${input.status}"` };
+  }
   await sql`
     UPDATE it_ticket SET
       status = ${input.status},
