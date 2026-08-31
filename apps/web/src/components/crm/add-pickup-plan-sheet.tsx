@@ -169,20 +169,20 @@ export function AddPickupPlanSheet({ accounts }: { accounts: AccountOption[] }) 
             </div>
 
             <div className="grid gap-1.5">
-              <Label htmlFor="pp-cabang">Cabang / station</Label>
-              <Input id="pp-cabang" value={cabang} onChange={(e) => setCabang(e.target.value)} placeholder="Surabaya" />
+              <Label htmlFor="pp-cabang">Cabang / station *</Label>
+              <Input id="pp-cabang" required value={cabang} onChange={(e) => setCabang(e.target.value)} placeholder="Surabaya" />
             </div>
 
             <div className="grid gap-1.5">
-              <Label htmlFor="pp-kurir">Nama kurir</Label>
-              <Input id="pp-kurir" value={kurirName} onChange={(e) => setKurirName(e.target.value)} placeholder="Munir" />
+              <Label htmlFor="pp-kurir">Nama kurir *</Label>
+              <Input id="pp-kurir" required value={kurirName} onChange={(e) => setKurirName(e.target.value)} placeholder="Munir" />
             </div>
 
             <div className="grid gap-1.5">
-              <Label htmlFor="pp-kurir-wa">Nomor WA kurir</Label>
-              <Input id="pp-kurir-wa" value={kurirWa} onChange={(e) => setKurirWa(e.target.value)} placeholder="628…" />
+              <Label htmlFor="pp-kurir-wa">Nomor WA kurir *</Label>
+              <Input id="pp-kurir-wa" required value={kurirWa} onChange={(e) => setKurirWa(e.target.value)} placeholder="628…" />
               <p className="text-muted-foreground text-xs">
-                Tujuan hasil cek H-1. Kalau kosong, notifikasi tidak dikirim (tidak di-broadcast ke grup).
+                Tujuan hasil cek H-1. Belum ada form edit setelah disimpan — pastikan benar sebelum submit.
               </p>
             </div>
 
