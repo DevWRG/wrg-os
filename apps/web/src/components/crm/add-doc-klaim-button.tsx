@@ -89,7 +89,7 @@ export function AddDocKlaimButton({ employees }: { employees: EmployeeOption[] }
           <DialogTitle>Tambah klaim manual</DialogTitle>
           <DialogDescription>Buat coba tanpa kirim WA — isi langsung, tanpa lewat OCR.</DialogDescription>
         </DialogHeader>
-        <form onSubmit={submit}>
+        <form onSubmit={submit} className="contents">
           <DialogBody className="grid gap-3">
             <div className="grid gap-1.5">
               <Label>Karyawan (opsional)</Label>

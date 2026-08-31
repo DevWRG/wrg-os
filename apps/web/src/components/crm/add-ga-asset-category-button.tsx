@@ -59,7 +59,7 @@ export function AddGaAssetCategoryButton() {
           <DialogTitle>Tambah kategori aset</DialogTitle>
           <DialogDescription>Kode harus unik (mis. AST-ELK).</DialogDescription>
         </DialogHeader>
-        <form onSubmit={submit}>
+        <form onSubmit={submit} className="contents">
           <DialogBody className="grid gap-3">
             <div className="grid gap-1.5">
               <Label htmlFor="gac-code">Kode</Label>

@@ -76,7 +76,7 @@ export function GaAssetCategoryRowActions({ category }: { category: Category }) 
           <DialogTitle>Edit — {category.code}</DialogTitle>
           <DialogDescription>Update nama, depresiasi, ikon, shared, aktif/nonaktif.</DialogDescription>
         </DialogHeader>
-        <form onSubmit={submit}>
+        <form onSubmit={submit} className="contents">
           <DialogBody className="grid gap-3">
             <div className="grid gap-1.5">
               <Label htmlFor="gace-nama">Nama</Label>

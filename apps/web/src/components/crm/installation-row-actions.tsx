@@ -165,7 +165,7 @@ export function InstallationRowActions({ row }: { row: InstallationUnit }) {
           <DialogTitle>{step.dialogTitle}</DialogTitle>
           <DialogDescription>{row.alat_name}</DialogDescription>
         </DialogHeader>
-        <form onSubmit={submit}>
+        <form onSubmit={submit} className="contents">
           <DialogBody className="grid gap-3">
             <div className="grid gap-1.5">
               <Label htmlFor={`iu-step-${row.id}`}>{step.fieldLabel}</Label>

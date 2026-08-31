@@ -82,7 +82,7 @@ export function AssignAssetButton({ assetId, users }: { assetId: string; users: 
           <DialogTitle>Assign PIC</DialogTitle>
           <DialogDescription>Tercatat di histori kalau PIC-nya user terdaftar.</DialogDescription>
         </DialogHeader>
-        <form onSubmit={submit}>
+        <form onSubmit={submit} className="contents">
           <DialogBody className="grid gap-3">
             <UserOrNamePicker users={users} userId={userId} setUserId={setUserId} picName={picName} setPicName={setPicName} label="PIC" />
             <div className="grid gap-1.5">
@@ -144,7 +144,7 @@ export function ReturnAssetButton({ assetId }: { assetId: string }) {
           <DialogTitle>Return aset</DialogTitle>
           <DialogDescription>Lepas PIC aktif dari aset ini.</DialogDescription>
         </DialogHeader>
-        <form onSubmit={submit}>
+        <form onSubmit={submit} className="contents">
           <DialogBody className="grid gap-3">
             <div className="grid gap-1.5">
               <Label htmlFor="ret-notes">Catatan</Label>
@@ -204,7 +204,7 @@ export function TransferAssetButton({ assetId, users }: { assetId: string; users
           <DialogTitle>Transfer aset</DialogTitle>
           <DialogDescription>Pindah PIC dan/atau lokasi. PIC baru wajib user terdaftar.</DialogDescription>
         </DialogHeader>
-        <form onSubmit={submit}>
+        <form onSubmit={submit} className="contents">
           <DialogBody className="grid gap-3">
             <UserOrNamePicker users={users} userId={userId} setUserId={setUserId} picName={picName} setPicName={setPicName} label="PIC Baru" />
             <div className="grid gap-1.5">

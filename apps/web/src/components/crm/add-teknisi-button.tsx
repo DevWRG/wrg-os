@@ -57,7 +57,7 @@ export function AddTeknisiButton() {
           <DialogTitle>Tambah teknisi</DialogTitle>
           <DialogDescription>Roster kapasitas kerja teknisi (Readiness Board).</DialogDescription>
         </DialogHeader>
-        <form onSubmit={submit}>
+        <form onSubmit={submit} className="contents">
           <DialogBody className="grid gap-3">
             <div className="grid gap-1.5">
               <Label htmlFor="tk-nama">Nama</Label>

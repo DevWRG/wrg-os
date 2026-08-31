@@ -73,7 +73,7 @@ export function AddLpseTenderButton({ employees }: { employees: EmployeeOption[]
           <DialogTitle>Tambah tender LPSE/E-Catalog</DialogTitle>
           <DialogDescription>Dicatat sejak pesan masuk — status berikutnya diklik manual dari tabel.</DialogDescription>
         </DialogHeader>
-        <form onSubmit={submit}>
+        <form onSubmit={submit} className="contents">
           <DialogBody className="grid gap-3">
             <div className="grid gap-1.5">
               <Label htmlFor="lt-judul">Judul / Nama Tender</Label>

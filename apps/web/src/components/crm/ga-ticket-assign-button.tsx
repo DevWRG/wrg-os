@@ -58,7 +58,7 @@ export function GaTicketAssignButton({ ticketId, currentName, users }: { ticketI
           <DialogTitle>Assign tiket</DialogTitle>
           <DialogDescription>Pilih Admin GA/Teknisi cabang penanganan.</DialogDescription>
         </DialogHeader>
-        <form onSubmit={submit}>
+        <form onSubmit={submit} className="contents">
           <DialogBody className="grid gap-3">
             <div className="grid gap-1.5">
               <Label>User terdaftar</Label>

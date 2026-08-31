@@ -79,7 +79,7 @@ export function AddGaMaintenanceButton({ assets, vendors, categories }: { assets
           <DialogTitle>Jadwalkan maintenance</DialogTitle>
           <DialogDescription>Preventive (rutin) atau repair (perbaikan).</DialogDescription>
         </DialogHeader>
-        <form onSubmit={submit}>
+        <form onSubmit={submit} className="contents">
           <DialogBody className="grid gap-3">
             <div className="grid gap-1.5">
               <Label>Aset</Label>

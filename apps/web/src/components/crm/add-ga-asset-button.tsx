@@ -73,7 +73,7 @@ export function AddGaAssetButton({ categories }: { categories: { id: string; nam
             Kode aset (AST-YYYY-NNNN) di-generate otomatis. Foto & dokumen diisi SETELAH aset disimpan, lewat tombol Edit di tabel.
           </DialogDescription>
         </DialogHeader>
-        <form onSubmit={submit}>
+        <form onSubmit={submit} className="contents">
           <DialogBody className="grid gap-3">
             <div className="grid gap-1.5">
               <Label htmlFor="ga-nama">Nama</Label>

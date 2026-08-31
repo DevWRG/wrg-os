@@ -60,7 +60,7 @@ export function AddGaTicketCategoryButton() {
           <DialogTitle>Tambah kategori tiket</DialogTitle>
           <DialogDescription>Kode harus unik (mis. AC, LISTRIK, WIFI).</DialogDescription>
         </DialogHeader>
-        <form onSubmit={submit}>
+        <form onSubmit={submit} className="contents">
           <DialogBody className="grid gap-3">
             <div className="grid gap-1.5">
               <Label htmlFor="gtc-code">Kode</Label>
