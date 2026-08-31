@@ -2,6 +2,7 @@
 
 import { Badge } from "@/components/ui/badge";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
+import { GaVendorRowActions } from "@/components/crm/ga-vendor-row-actions";
 
 export interface GaVendor {
   id: string;
@@ -33,6 +34,7 @@ export function GaVendorTable({ vendors }: { vendors: GaVendor[] }) {
     { id: "kontak", header: "Kontak", cell: (v) => v.contact_person ?? v.phone ?? <span className="text-muted-foreground text-xs">-</span> },
     { id: "kontrak", header: "Kontrak s/d", cell: (v) => (v.contract_end ? fmtDate(v.contract_end) : <span className="text-muted-foreground text-xs">-</span>) },
     { id: "status", header: "Status", cell: (v) => (v.status === "active" ? <Badge variant="outline">Aktif</Badge> : <Badge variant="secondary">Nonaktif</Badge>) },
+    { id: "aksi", header: "Aksi", align: "right", cell: (v) => <GaVendorRowActions vendor={v} /> },
   ];
 
   return <DataTable columns={columns} data={vendors} getKey={(v) => v.id} searchPlaceholder="Cari vendor…" pageSize={25} />;
