@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { Card } from "@/components/ui/card";
 
@@ -42,6 +43,12 @@ function Lbl({ children }: { children: React.ReactNode }) {
 
 // Combobox ringan: input bebas + daftar opsi ter-filter. Nilai = teks bebas
 // (boleh di luar opsi, mis. brand baru). Klik opsi → set nilai.
+//
+// Panelnya WAJIB portal + posisi fixed: dulu `absolute` di dalam Card modal
+// yang `overflow-y-auto` → daftar opsi kepotong container scroll (kelihatan
+// cuma 1 baris). Filter juga pakai `typed`, bukan `value`: begitu field sudah
+// terisi penuh (mode edit), query = nilai itu sendiri → hanya 1 opsi yang
+// lolos, jadi katalog tak bisa dijelajah lagi.
 function Combo({ value, onChange, options, placeholder }: {
   value: string;
   onChange: (v: string) => void;
@@ -49,37 +56,94 @@ function Combo({ value, onChange, options, placeholder }: {
   placeholder?: string;
 }) {
   const [open, setOpen] = useState(false);
+  const [typed, setTyped] = useState(false);
   const boxRef = useRef<HTMLDivElement>(null);
-  const q = value.trim().toLowerCase();
-  const filtered = (q ? options.filter((o) => o.toLowerCase().includes(q)) : options).slice(0, 50);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const [rect, setRect] = useState<{ top: number; left: number; width: number; up: boolean } | null>(null);
+  const q = typed ? value.trim().toLowerCase() : "";
+  const filtered = (q ? options.filter((o) => o.toLowerCase().includes(q)) : options).slice(0, 200);
+
+  // Posisi panel dihitung dari viewport; flip ke atas kalau ruang bawah sempit.
+  useLayoutEffect(() => {
+    if (!open) return; // rect basi tak masalah: panel cuma dirender saat open, dan place() jalan tiap kali dibuka
+    function place() {
+      const el = inputRef.current;
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      const below = window.innerHeight - r.bottom;
+      const up = below < 200 && r.top > below;
+      setRect({ top: up ? r.top - 4 : r.bottom + 4, left: r.left, width: r.width, up });
+    }
+    place();
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    return () => {
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+    };
+  }, [open]);
+
   useEffect(() => {
     function onDoc(e: MouseEvent) {
-      if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false);
+      const t = e.target as Node;
+      if (boxRef.current?.contains(t) || panelRef.current?.contains(t)) return;
+      setOpen(false);
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setOpen(false);
     }
     document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
   }, []);
+
+  const panel = open && rect && typeof document !== "undefined"
+    ? createPortal(
+        <div
+          ref={panelRef}
+          style={{
+            position: "fixed",
+            top: rect.up ? undefined : rect.top,
+            bottom: rect.up ? window.innerHeight - rect.top : undefined,
+            left: rect.left,
+            minWidth: rect.width,
+            maxWidth: Math.min(520, window.innerWidth - rect.left - 8),
+          }}
+          className="z-[60] max-h-64 overflow-y-auto rounded-md border border-border bg-card shadow-lg">
+          {filtered.length === 0 ? (
+            <div className="px-2 py-1.5 text-sm text-muted-foreground">tidak ada yang cocok</div>
+          ) : (
+            filtered.map((o) => (
+              <button
+                key={o}
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => { onChange(o); setTyped(false); setOpen(false); }}
+                className={`block w-full px-2 py-1.5 text-left text-sm break-words hover:bg-muted ${o === value ? "bg-muted/60 font-medium" : ""}`}>
+                {o}
+              </button>
+            ))
+          )}
+        </div>,
+        document.body,
+      )
+    : null;
+
   return (
     <div ref={boxRef} className="relative">
       <input
+        ref={inputRef}
         value={value}
         placeholder={placeholder}
-        onChange={(e) => { onChange(e.target.value); setOpen(true); }}
-        onFocus={() => setOpen(true)}
+        onChange={(e) => { onChange(e.target.value); setTyped(true); setOpen(true); }}
+        onFocus={() => { setTyped(false); setOpen(true); }}
+        onClick={() => setOpen(true)}
         className="mt-0.5 w-full rounded-md border border-input bg-background px-2 py-1" />
-      {open && filtered.length > 0 && (
-        <div className="absolute z-10 mt-1 max-h-48 w-full overflow-y-auto rounded-md border border-border bg-card shadow-md">
-          {filtered.map((o) => (
-            <button
-              key={o}
-              type="button"
-              onClick={() => { onChange(o); setOpen(false); }}
-              className="block w-full truncate px-2 py-1 text-left text-sm hover:bg-muted">
-              {o}
-            </button>
-          ))}
-        </div>
-      )}
+      {panel}
     </div>
   );
 }
