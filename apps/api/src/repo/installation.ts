@@ -179,6 +179,12 @@ export async function markPoControl(id: string, po_number?: string): Promise<Ins
   const rows = await sql`SELECT id, po_number, po_control_done FROM installation_unit WHERE id = ${id}`;
   if (rows.length === 0) return { ok: false, error: "unit instalasi tidak ditemukan" };
   if (rows[0].po_control_done) return { ok: false, error: "langkah PO control sudah selesai" };
+  // Unit boleh dibuat draft tanpa No. PO (belum tentu ada saat unit dicatat),
+  // TAPI gak boleh ditandai "PO Control selesai" tanpa PO beneran ada —
+  // baik yang sudah diisi saat create maupun yang baru diisi di langkah ini.
+  if (!po_number?.trim() && !rows[0].po_number) {
+    return { ok: false, error: "No. PO wajib diisi sebelum PO Control ditandai selesai" };
+  }
   await sql`
     UPDATE installation_unit
     SET po_number = COALESCE(${po_number ?? null}, po_number),

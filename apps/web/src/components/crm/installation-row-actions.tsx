@@ -27,6 +27,7 @@ interface InstallationUnit {
   id: string;
   alat_name: string;
   status: string;
+  po_number: string | null;
 }
 
 interface Shipment {
@@ -53,8 +54,8 @@ const STEP_BY_STATUS: Record<string, StepDef> = {
     buttonLabel: "Tandai PO Control",
     dialogTitle: "Tandai PO Control selesai",
     field: "po_number",
-    fieldLabel: "No. PO",
-    required: false,
+    fieldLabel: "No. PO *",
+    required: true,
   },
   po_control: {
     endpoint: "sj",
@@ -156,7 +157,21 @@ export function InstallationRowActions({ row }: { row: InstallationUnit }) {
   }
 
   return (
-    <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (!o) { setValue(""); setError(null); } }}>
+    <Dialog
+      open={open}
+      onOpenChange={(o) => {
+        setOpen(o);
+        if (o) {
+          // No. PO bisa saja sudah diisi saat unit dibuat (create form) —
+          // pre-fill biar user gak dipaksa ngetik ulang nilai yg udah ada,
+          // "required" cuma efektif kalau memang belum ada.
+          setValue(step.field === "po_number" ? (row.po_number ?? "") : "");
+        } else {
+          setValue("");
+          setError(null);
+        }
+      }}
+    >
       <DialogTrigger render={<Button size="sm" variant="outline" />}>
         {step.buttonLabel} <ArrowRight />
       </DialogTrigger>

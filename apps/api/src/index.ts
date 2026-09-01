@@ -2510,6 +2510,9 @@ app.post("/installations", async (c) => {
   if (body.product_id == null || body.account_id == null) {
     return c.json({ error: "product_id + account_id wajib — alat & customer dipilih dari katalog" }, 400);
   }
+  if (!body.serial_number?.trim()) {
+    return c.json({ error: "serial_number wajib" }, 400);
+  }
   const r = await createInstallation({
     product_id: Number(body.product_id),
     account_id: Number(body.account_id),

@@ -12,6 +12,7 @@ export interface InstallationUnit {
   serial_number: string | null;
   customer_name: string;
   cabang: string | null;
+  po_number: string | null;
   po_control_done: boolean;
   sj_done: boolean;
   teknisi_assign_done: boolean;
