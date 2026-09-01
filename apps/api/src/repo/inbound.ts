@@ -144,6 +144,9 @@ export function detectKind(body: string | null): InboundKind {
 // sendiri, dan balasannya harus bilang siapa yang harus dimintai.
 function pesanGagalShipping(sjNumber: string, error?: string): string {
   const e = error ?? "";
+  if (e.includes("langkah bast sudah dilakukan")) {
+    return `SJ ${sjNumber} sudah pernah ditandai BAST — tak perlu #BAST lagi. Kalau mau lanjut, pakai #BUKTI.`;
+  }
   if (e.includes("langkah terima belum ditandai")) {
     return `SJ ${sjNumber} belum ditandai TERIMA, jadi belum bisa BAST. Minta admin tandai penerimaan dulu di menu Shipping, lalu kirim #BAST lagi.`;
   }
