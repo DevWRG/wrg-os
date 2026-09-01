@@ -93,7 +93,7 @@ export function GaTicketCategoryRowActions({ category }: { category: Category })
             <DialogTitle>Edit — {category.code}</DialogTitle>
             <DialogDescription>Update nama, ikon, SLA default, prioritas default.</DialogDescription>
           </DialogHeader>
-          <form onSubmit={submit}>
+          <form onSubmit={submit} className="contents">
             <DialogBody className="grid gap-3">
               <div className="grid gap-1.5">
                 <Label htmlFor={`gtce-nama-${category.id}`}>Nama</Label>

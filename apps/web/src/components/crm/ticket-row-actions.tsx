@@ -67,7 +67,7 @@ export function TicketRowActions({ row }: { row: TicketRow }) {
           <DialogTitle>Tandai ticket selesai</DialogTitle>
           <DialogDescription>{row.complaint_text}</DialogDescription>
         </DialogHeader>
-        <form onSubmit={submit}>
+        <form onSubmit={submit} className="contents">
           <DialogBody className="grid gap-3">
             <div className="grid gap-1.5">
               <Label htmlFor={`st-note-${row.id}`}>Catatan (opsional)</Label>

@@ -84,7 +84,7 @@ export function TeknisiCardActions({ teknisi }: { teknisi: TeknisiRow }) {
             <DialogTitle>Edit teknisi</DialogTitle>
             <DialogDescription>{teknisi.nama}</DialogDescription>
           </DialogHeader>
-          <form onSubmit={submit}>
+          <form onSubmit={submit} className="contents">
             <DialogBody className="grid gap-3">
               <div className="grid gap-1.5">
                 <Label htmlFor={`tk-edit-nama-${teknisi.id}`}>Nama</Label>

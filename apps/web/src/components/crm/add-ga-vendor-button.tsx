@@ -59,7 +59,7 @@ export function AddGaVendorButton() {
           <DialogTitle>Tambah vendor GA</DialogTitle>
           <DialogDescription>Vendor servis (AC/genset/dst) — terpisah dari vendor barang di Accurate.</DialogDescription>
         </DialogHeader>
-        <form onSubmit={submit}>
+        <form onSubmit={submit} className="contents">
           <DialogBody className="grid gap-3">
             <div className="grid gap-1.5">
               <Label htmlFor="gv-nama">Nama</Label>

@@ -92,7 +92,7 @@ function AddLogDialog({ vehicle }: { vehicle: Vehicle }) {
           <DialogTitle>Tambah log — {vehicle.plate_number}</DialogTitle>
           <DialogDescription>Update KM, isi BBM, atau catat service selesai.</DialogDescription>
         </DialogHeader>
-        <form onSubmit={submit}>
+        <form onSubmit={submit} className="contents">
           <DialogBody className="grid gap-3">
             <div className="grid gap-1.5">
               <Label htmlFor="vl-type">Jenis</Label>
@@ -248,7 +248,7 @@ function EditDialog({ vehicle }: { vehicle: Vehicle }) {
           <DialogTitle>Edit — {vehicle.plate_number}</DialogTitle>
           <DialogDescription>Update sopir, STNK (reset alert kalau tanggal baru), interval service.</DialogDescription>
         </DialogHeader>
-        <form onSubmit={submit}>
+        <form onSubmit={submit} className="contents">
           <DialogBody className="grid gap-3">
             <div className="grid gap-1.5">
               <Label htmlFor="ve-sopir">Sopir *</Label>

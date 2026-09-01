@@ -156,7 +156,7 @@ export function GaAssetRowActions({ asset, categories }: { asset: Asset; categor
             Override PIC di sini hanya koreksi cepat (tanpa histori) — utk assign resmi pakai aksi Assign.
           </DialogDescription>
         </DialogHeader>
-        <form onSubmit={submit}>
+        <form onSubmit={submit} className="contents">
           <DialogBody className="grid gap-3">
             <div className="grid gap-1.5">
               <Label htmlFor="gae-nama">Nama</Label>

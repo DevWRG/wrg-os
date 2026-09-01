@@ -76,7 +76,7 @@ export function AddItTicketButton({ assets }: { assets: AssetOption[] }) {
           <DialogTitle>Buat tiket masalah</DialogTitle>
           <DialogDescription>SLA otomatis: 2 jam untuk aset kritis, 24 jam untuk aset normal (hari kerja).</DialogDescription>
         </DialogHeader>
-        <form onSubmit={submit}>
+        <form onSubmit={submit} className="contents">
           <DialogBody className="grid gap-3">
             <div className="grid gap-1.5">
               <Label htmlFor="nt-asset">Aset</Label>

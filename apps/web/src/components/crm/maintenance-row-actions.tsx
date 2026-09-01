@@ -63,7 +63,7 @@ export function MaintenanceRowActions({ row }: { row: MaintenanceScheduleRow }) 
           <DialogTitle>Tandai siklus PM/kalibrasi selesai</DialogTitle>
           <DialogDescription>{row.alat_name} — due_date siklus berikutnya otomatis dihitung ulang.</DialogDescription>
         </DialogHeader>
-        <form onSubmit={submit}>
+        <form onSubmit={submit} className="contents">
           <DialogBody className="grid gap-3">
             <div className="grid gap-1.5">
               <Label htmlFor={`ms-catatan-${row.id}`}>Catatan (opsional)</Label>

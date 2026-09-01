@@ -76,7 +76,7 @@ export function ItTicketRowActions({ ticket }: { ticket: Ticket }) {
           <DialogTitle>Update tiket — {ticket.asset_code}</DialogTitle>
           <DialogDescription>Ubah status, tugaskan PIC, atau catat penyelesaian.</DialogDescription>
         </DialogHeader>
-        <form onSubmit={submit}>
+        <form onSubmit={submit} className="contents">
           <DialogBody className="grid gap-3">
             <div className="grid gap-1.5">
               <Label htmlFor="it-status">Status</Label>

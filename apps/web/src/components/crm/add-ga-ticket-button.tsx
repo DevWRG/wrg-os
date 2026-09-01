@@ -72,7 +72,7 @@ export function AddGaTicketButton({ categories, users }: { categories: CategoryO
           <DialogTitle>Buat tiket kendala operasional</DialogTitle>
           <DialogDescription>SLA otomatis dihitung dari kategori (bisa dioverride prioritas).</DialogDescription>
         </DialogHeader>
-        <form onSubmit={submit}>
+        <form onSubmit={submit} className="contents">
           <DialogBody className="grid gap-3">
             <div className="grid gap-1.5">
               <Label htmlFor="gt-title">Judul</Label>

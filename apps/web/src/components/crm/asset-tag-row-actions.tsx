@@ -87,7 +87,7 @@ function EditDialog({ asset }: { asset: Asset }) {
           <DialogTitle>Edit — {asset.kode}</DialogTitle>
           <DialogDescription>Update nama, jenis, kategori, lokasi, aktif/nonaktif.</DialogDescription>
         </DialogHeader>
-        <form onSubmit={submit}>
+        <form onSubmit={submit} className="contents">
           <DialogBody className="grid gap-3">
             <div className="grid gap-1.5">
               <Label htmlFor="at-nama">Nama</Label>
@@ -167,7 +167,7 @@ function AuditDialog({ asset }: { asset: Asset }) {
           <DialogTitle>Catat audit — {asset.kode}</DialogTitle>
           <DialogDescription>Verifikasi fisik: label & barangnya masih ada di lokasi?</DialogDescription>
         </DialogHeader>
-        <form onSubmit={submit}>
+        <form onSubmit={submit} className="contents">
           <DialogBody className="grid gap-3">
             <div className="grid gap-1.5">
               <Label htmlFor="au-by">Diaudit oleh</Label>

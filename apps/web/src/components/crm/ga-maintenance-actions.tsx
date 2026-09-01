@@ -85,7 +85,7 @@ function CompleteButton({ id, defaultCost }: { id: string; defaultCost: number }
           <DialogTitle>Selesaikan maintenance</DialogTitle>
           <DialogDescription>Biaya aktual &gt;Rp5jt tanpa approval sebelumnya akan menunggu Finance dulu.</DialogDescription>
         </DialogHeader>
-        <form onSubmit={submit}>
+        <form onSubmit={submit} className="contents">
           <DialogBody className="grid gap-3">
             <div className="grid gap-1.5">
               <Label htmlFor="cm-cost">Biaya Aktual (Rp)</Label>
@@ -144,7 +144,7 @@ function CancelButton({ id }: { id: string }) {
         <DialogHeader>
           <DialogTitle>Batalkan jadwal maintenance</DialogTitle>
         </DialogHeader>
-        <form onSubmit={submit}>
+        <form onSubmit={submit} className="contents">
           <DialogBody className="grid gap-3">
             <div className="grid gap-1.5">
               <Label htmlFor="cx-notes">Alasan</Label>
@@ -202,7 +202,7 @@ function ApproveButton({ id, users }: { id: string; users: AppUserOption[] }) {
           <DialogTitle>Approve Finance</DialogTitle>
           <DialogDescription>Biaya &gt;Rp5jt butuh sign-off Finance sebelum status jadi Selesai.</DialogDescription>
         </DialogHeader>
-        <form onSubmit={submit}>
+        <form onSubmit={submit} className="contents">
           <DialogBody className="grid gap-3">
             <div className="grid gap-1.5">
               <Label>Disetujui sbg (kosongkan kalau sudah login)</Label>
