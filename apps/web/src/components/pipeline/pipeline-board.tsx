@@ -7,6 +7,7 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { DealFormModal, type DealFormInit } from "./deal-form-modal";
 import { PipelineExportButton } from "./pipeline-export-button";
+import { PipelineInsights } from "./pipeline-insights";
 
 // F1-SPT kanban interaktif (tahap B): board 8-stage + filter + ringkasan weighted +
 // deal detail + DRAG pindah stage (PATCH /api/deals/:id/stage, write-guard di backend).
@@ -326,6 +327,10 @@ export function PipelineBoard({ data, isAdmin = false }: { data: PipelineData; i
           </button>
         </div>
       </div>
+
+      {/* Infografis — basisnya `filtered`, sama dengan board & Export Excel, jadi
+          grafik selalu bercerita tentang deal yang sedang tampil. */}
+      <PipelineInsights deals={filtered} stages={STAGES} />
 
       {/* Hint + status */}
       <div className="flex items-center gap-3 text-xs">
