@@ -3,6 +3,7 @@
 import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { stageFill } from "@/lib/pipeline-viz";
 
 // F127 tab "Pipeline" — 3 report baca data `deal` (F1 SPT): Funnel per Tahap,
 // Perkiraan (Nilai × Peluang) per kategori forecast, dan Menang-Kalah.
@@ -30,17 +31,9 @@ const rpC = (n: number) => {
 };
 const pct1 = (n: number) => `${Math.round(n * 1000) / 10}%`;
 
-// Palet per tahap (urut funnel, dingin→hangat). Sama di light & dark (fill chart).
-const STAGE_COLOR: Record<string, string> = {
-  "Prospecting": "#94a3b8",
-  "Presentation": "#38bdf8",
-  "Quotation": "#22d3ee",
-  "Negotiation": "#f59e0b",
-  "Closing": "#fb923c",
-  "Closing-Won": "#10b981",
-  "Closing-Lost": "#ef4444",
-};
-const stageColor = (s: string) => STAGE_COLOR[s] ?? "#2563a8";
+// Palet per tahap dipusatkan di lib/pipeline-viz (dipakai board /pipeline juga) —
+// dulu salinan lokal di sini, jadi tahap yang sama bisa beda warna antar menu.
+const stageColor = stageFill;
 
 // Label tahap → Bahasa Indonesia ringkas.
 const STAGE_LABEL: Record<string, string> = {
