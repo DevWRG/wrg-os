@@ -214,6 +214,7 @@ export async function markBast(
   const sql = db();
   const rows = await sql`SELECT id, status, kirim_at, kirim_lat, kirim_lon FROM shipment_tracking WHERE id = ${id}`;
   if (rows.length === 0) return { ok: false, error: "shipment tidak ditemukan" };
+  if (rows[0].status === "bast") return { ok: false, error: "langkah bast sudah dilakukan" };
   if (rows[0].status !== "terima") return { ok: false, error: "langkah terima belum ditandai — belum bisa BAST" };
 
   const kirimLat = rows[0].kirim_lat != null ? Number(rows[0].kirim_lat) : null;
