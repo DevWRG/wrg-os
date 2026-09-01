@@ -1027,7 +1027,13 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
     if (!ams) return finish({ skipped: "unknown-sender", sender_name: row.sender_name });
     const line = stripInvisible(row.body ?? "").split(/\r?\n/).find((l) => SPH_LINE.test(l)) ?? "";
     const parsed = parseSphMessage(line);
-    if (!parsed) return finish({ error: "sph-empty" }, "sph");
+    if (!parsed) {
+      const reply = await sendViaWaGateway(
+        target,
+        `⚠️ Format #SPH tak lengkap, ${ams.nama}. Contoh: #SPH RS Fixture Sehat | KODE-SKU | 10 | 5%`,
+      );
+      return finish({ error: "sph-empty", via: ams.via, reply }, "sph");
+    }
     if ("error" in parsed) {
       const reply = await sendViaWaGateway(target, `⚠️ #SPH gagal diproses, ${ams.nama}: ${parsed.error}`);
       return finish({ error: parsed.error, via: ams.via, reply });
