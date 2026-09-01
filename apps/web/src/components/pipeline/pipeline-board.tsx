@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
-import { ArrowRightLeft } from "lucide-react";
-import { Card } from "@/components/ui/card";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { ArrowRightLeft, BarChart3, Columns3 } from "lucide-react";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DealFormModal, type DealFormInit } from "./deal-form-modal";
 import { PipelineExportButton } from "./pipeline-export-button";
 import { PipelineInsights } from "./pipeline-insights";
@@ -12,6 +13,14 @@ import { PipelineInsights } from "./pipeline-insights";
 // F1-SPT kanban interaktif (tahap B): board 8-stage + filter + ringkasan weighted +
 // deal detail + DRAG pindah stage (PATCH /api/deals/:id/stage, write-guard di backend).
 // Drop ke Closing-Lost → wajib pilih loss_reason (gate approval HoD, loss_status=pending).
+//
+// DUA MUKA sebagai TAB (permintaan user 2026-09-02): tab 1 = board kanban, tab 2 =
+// infografis. Sebelumnya infografis menempel di atas board sehingga tiap kali membuka
+// /pipeline user harus menggulir melewati grafik untuk sampai ke kartu.
+//
+// Kartu ringkasan + toolbar filter sengaja di LUAR panel tab: tab memilih MUKA, filter
+// memilih IRISAN. Karena keduanya dipakai berdua, berpindah tab mempertahankan
+// penyaringan dan angka di dua muka dijamin dari irisan yang sama (`filtered`).
 
 export interface PipelineDeal {
   deal_id: string;
@@ -158,8 +167,13 @@ function Sel({ label, val, set, options }: { label: string; val: string; set: (v
   );
 }
 
+const TAB_BOARD = "board";
+const TAB_INFO = "infografis";
+
 export function PipelineBoard({ data, isAdmin = false }: { data: PipelineData; isAdmin?: boolean }) {
   const router = useRouter();
+  const pathname = usePathname();
+  const params = useSearchParams();
   const allDeals = useMemo(() => data.stages.flatMap((s) => s.deals), [data]);
   const [f, setF] = useState({ pcat: "", cabang: "", hod: "", am: "", brand: "", coop: "", year: "", q: "" });
   const [sel, setSel] = useState<PipelineDeal | null>(null);
@@ -293,8 +307,35 @@ export function PipelineBoard({ data, isAdmin = false }: { data: PipelineData; i
   const sumW = filtered.reduce((a, d) => a + d.weighted, 0);
   const staleN = filtered.filter((d) => d.stale).length;
 
+  // Tab disimpan di URL (?tab=), bukan useState: tautan /pipeline sering dikirim lewat
+  // WA, jadi "lihat infografisnya" bisa dikirim sebagai ?tab=infografis. Board = default,
+  // sehingga URL lama tanpa query tetap membuka muka yang sama seperti sebelumnya.
+  const tab = params.get("tab") === TAB_INFO ? TAB_INFO : TAB_BOARD;
+  const pindah = useCallback((v: string) => {
+    const q = new URLSearchParams(params.toString());
+    if (v === TAB_BOARD) q.delete("tab"); else q.set("tab", v);
+    const s = q.toString();
+    // replace + scroll:false: berganti muka bukan navigasi yang layak menumpuk di
+    // riwayat, dan posisi baca tak perlu melompat ke atas.
+    router.replace(s ? `${pathname}?${s}` : pathname, { scroll: false });
+  }, [params, pathname, router]);
+
   return (
-    <div className="space-y-4">
+    <Tabs value={tab} onValueChange={(v) => pindah(String(v))} className="gap-4">
+      {/* Tab strip di kartunya sendiri, terpisah dari toolbar filter. */}
+      <Card className="py-0">
+        <CardContent className="px-3 py-2.5">
+          <TabsList>
+            <TabsTrigger value={TAB_BOARD} className="gap-1.5">
+              <Columns3 className="size-4" /> Pipeline
+            </TabsTrigger>
+            <TabsTrigger value={TAB_INFO} className="gap-1.5">
+              <BarChart3 className="size-4" /> Infografis
+            </TabsTrigger>
+          </TabsList>
+        </CardContent>
+      </Card>
+
       {/* Ringkasan */}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Card className="p-3"><div className="text-xs text-muted-foreground">Total Deal</div><div className="text-xl font-semibold tabular-nums">{filtered.length}</div></Card>
@@ -328,10 +369,7 @@ export function PipelineBoard({ data, isAdmin = false }: { data: PipelineData; i
         </div>
       </div>
 
-      {/* Infografis — basisnya `filtered`, sama dengan board & Export Excel, jadi
-          grafik selalu bercerita tentang deal yang sedang tampil. */}
-      <PipelineInsights deals={filtered} stages={STAGES} />
-
+      <TabsContent value={TAB_BOARD} className="space-y-4">
       {/* Hint + status */}
       <div className="flex items-center gap-3 text-xs">
         <span className="text-muted-foreground">💡 Seret kartu <b>atau</b> pakai tombol ⇄ di kartu untuk pindah stage — tiap perpindahan minta <b>keterangan</b>. Ke <b>Lost</b> minta alasan.</span>
@@ -393,6 +431,13 @@ export function PipelineBoard({ data, isAdmin = false }: { data: PipelineData; i
           );
         })}
       </div>
+      </TabsContent>
+
+      {/* Infografis — basisnya `filtered`, sama dengan board & Export Excel, jadi
+          grafik selalu bercerita tentang deal yang sedang tampil. */}
+      <TabsContent value={TAB_INFO}>
+        <PipelineInsights deals={filtered} stages={STAGES} />
+      </TabsContent>
 
       {/* Picker tujuan stage (tombol ⇄ di kartu — alternatif drag, ramah mobile) */}
       {movePicker && (
@@ -603,6 +648,6 @@ export function PipelineBoard({ data, isAdmin = false }: { data: PipelineData; i
           </Card>
         </div>
       )}
-    </div>
+    </Tabs>
   );
 }

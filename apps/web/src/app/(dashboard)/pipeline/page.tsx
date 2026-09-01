@@ -29,7 +29,8 @@ export default async function PipelinePage() {
       <div>
         <h1 className="text-2xl font-semibold">Sales Pipeline (F1)</h1>
         <p className="text-muted-foreground text-sm mt-1">
-          Board 7-stage pipeline penjualan (digitalisasi HS-S-1). Seret kartu untuk pindah stage; klik untuk detail.
+          Digitalisasi HS-S-1. Tab <b>Pipeline</b> = board 7-stage (seret kartu untuk pindah stage; klik untuk detail),
+          tab <b>Infografis</b> = grafik dari irisan filter yang sama.
         </p>
       </div>
       {/* Panel approval Lost — hanya tampil bila user (HoD/admin) punya loss pending. */}
