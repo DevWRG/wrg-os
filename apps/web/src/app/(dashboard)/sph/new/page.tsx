@@ -224,7 +224,7 @@ export default function SphNewPage() {
                 setCustomerId(picked?.customer_id ?? "");
               }}
             >
-              <SelectTrigger>
+              <SelectTrigger className="w-full">
                 <SelectValue placeholder="(opsional) cari customer…" />
               </SelectTrigger>
               <SelectContent>

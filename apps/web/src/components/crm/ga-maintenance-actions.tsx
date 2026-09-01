@@ -207,7 +207,7 @@ function ApproveButton({ id, users }: { id: string; users: AppUserOption[] }) {
             <div className="grid gap-1.5">
               <Label>Disetujui sbg (kosongkan kalau sudah login)</Label>
               <Select value={userId || NONE} onValueChange={(v) => setUserId(v === NONE ? "" : (v ?? ""))}>
-                <SelectTrigger>
+                <SelectTrigger className="w-full">
                   <SelectValue>{(v: string) => (v === NONE ? "— pakai sesi login —" : users.find((u) => u.id === v)?.name ?? v)}</SelectValue>
                 </SelectTrigger>
                 <SelectContent>

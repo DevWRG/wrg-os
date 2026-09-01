@@ -63,7 +63,7 @@ export function GaTicketAssignButton({ ticketId, currentName, users }: { ticketI
             <div className="grid gap-1.5">
               <Label>User terdaftar</Label>
               <Select value={userId || NONE} onValueChange={(v) => setUserId(v === NONE ? "" : (v ?? ""))}>
-                <SelectTrigger>
+                <SelectTrigger className="w-full">
                   <SelectValue placeholder="Pilih user">{(v: string) => (v === NONE ? "Pilih user" : users.find((u) => u.id === v)?.name ?? v)}</SelectValue>
                 </SelectTrigger>
                 <SelectContent>

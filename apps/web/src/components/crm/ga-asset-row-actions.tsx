@@ -165,7 +165,7 @@ export function GaAssetRowActions({ asset, categories }: { asset: Asset; categor
             <div className="grid gap-1.5">
               <Label>Kategori</Label>
               <Select value={f.category_id} onValueChange={(v) => setF((p) => ({ ...p, category_id: v ?? p.category_id }))}>
-                <SelectTrigger>
+                <SelectTrigger className="w-full">
                   {/* Base UI SelectValue render raw value (UUID) tanpa render-fn — map ke nama kategori. */}
                   <SelectValue>{(v: string) => categories.find((c) => c.id === v)?.nama ?? v}</SelectValue>
                 </SelectTrigger>

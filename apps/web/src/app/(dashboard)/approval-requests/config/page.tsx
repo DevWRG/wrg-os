@@ -149,7 +149,7 @@ export default function ApprovalConfigPage() {
                     <div className="min-w-56">
                       <Label className="mb-1 block text-xs">Pilih HoD</Label>
                       <Select value={r.hodKey ?? NONE} onValueChange={(v) => void saveHodKey(r.urutan, v ?? NONE)}>
-                        <SelectTrigger>
+                        <SelectTrigger className="w-full">
                           <SelectValue placeholder="Belum dipilih" />
                         </SelectTrigger>
                         <SelectContent>

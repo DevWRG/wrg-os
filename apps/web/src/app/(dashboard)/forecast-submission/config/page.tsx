@@ -188,7 +188,7 @@ export default function ForecastBufferConfigPage() {
               <div className="min-w-48">
                 <Label className="mb-1 block text-xs">Gudang</Label>
                 <Select value={selectedWh} onValueChange={(v) => setSelectedWh(v ?? "")}>
-                  <SelectTrigger>
+                  <SelectTrigger className="w-full">
                     <SelectValue placeholder="Pilih gudang" />
                   </SelectTrigger>
                   <SelectContent>

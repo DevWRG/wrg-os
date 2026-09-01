@@ -126,7 +126,7 @@ export function AddVisitSheet({ amOptions = [] }: { amOptions?: AmOption[] }) {
               <Label htmlFor="v-am-id">AM *</Label>
               {amOptions.length > 0 ? (
                 <Select value={f.am_id} onValueChange={(v) => setF((p) => ({ ...p, am_id: String(v) }))}>
-                  <SelectTrigger id="v-am-id" className="bg-card border-border" aria-label="AM">
+                  <SelectTrigger id="v-am-id" className="bg-card border-border w-full" aria-label="AM">
                     {/* Base UI SelectValue menampilkan value mentah (am_id) tanpa render-fn → map ke nama. */}
                     <SelectValue placeholder="Pilih AM…">{(v) => (v ? amLabel(String(v)) : "Pilih AM…")}</SelectValue>
                   </SelectTrigger>

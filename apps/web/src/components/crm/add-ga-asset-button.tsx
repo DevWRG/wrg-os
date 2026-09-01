@@ -82,7 +82,7 @@ export function AddGaAssetButton({ categories }: { categories: { id: string; nam
             <div className="grid gap-1.5">
               <Label>Kategori</Label>
               <Select value={f.category_id} onValueChange={(v) => setF((p) => ({ ...p, category_id: v ?? "" }))}>
-                <SelectTrigger>
+                <SelectTrigger className="w-full">
                   {/* Base UI SelectValue render raw value (UUID) tanpa render-fn — map ke nama kategori. */}
                   <SelectValue placeholder="Pilih kategori">{(v: string) => categories.find((c) => c.id === v)?.nama ?? v}</SelectValue>
                 </SelectTrigger>
