@@ -84,6 +84,17 @@ export function GaMaintenanceTable({ schedules, canApproveFinance, users }: { sc
       cell: (s) => (s.recur_months > 0 ? <Badge variant="outline">{s.recur_months} bln</Badge> : <span className="text-muted-foreground text-xs">-</span>),
     },
     {
+      id: "catatan",
+      header: "Catatan",
+      cell: (s) =>
+        s.notes ? (
+          <span className="block max-w-[16rem] truncate text-xs" title={s.notes}>{s.notes}</span>
+        ) : (
+          <span className="text-muted-foreground text-xs">-</span>
+        ),
+      className: "max-w-[16rem]",
+    },
+    {
       id: "aksi",
       header: "Aksi",
       align: "right",
