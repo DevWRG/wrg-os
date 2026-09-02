@@ -1837,7 +1837,7 @@ app.patch("/approval-requests/config/chain/:urutan", async (c) => {
     return c.json({ error: "invalid JSON body" }, 400);
   }
   const urutan = Number(c.req.param("urutan"));
-  if (!urutan) return c.json({ error: "urutan tidak valid" }, 400);
+  if (!urutan || !Number.isInteger(urutan)) return c.json({ error: "urutan tidak valid" }, 400);
   const r = await updateChainConfig(urutan, body);
   return c.json(r, r.ok ? 200 : 400);
 });
