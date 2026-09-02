@@ -22,6 +22,19 @@ CREATE TABLE IF NOT EXISTS wa_group_category_prefix (
 
 -- Seed (2026-09-02): awalan dibaca dari daftar grup WhatsApp milik nomor bot
 -- +6285168121906. Pencocokan case-insensitive, awalan TERPANJANG yang menang.
+--
+-- SENGAJA TIDAK DISEED — identitasnya belum pasti dari nama (terpotong di UI WA),
+-- dan menebak di sini berarti salah-kategori yang senyap. Grup-grup ini menunggu
+-- terdeteksi sendiri: begitu ada pesan pertama, mereka muncul sebagai "Belum
+-- dikategori" dan admin yang memutuskan:
+--   KSO KIMIA KLINIK ZYBIO EXC…    (pola 'KSO …' di sini justru customer, tapi
+--                                   ZYBIO itu nama brand → ambigu)
+--   Koordinasi AdamLIS x WRG       (vendor LIS, bukan principal IVD?)
+--   Abhimata - Wahana - Mitrasam…  (grup tiga pihak)
+--   PT.WRG & BINTANG MONO
+--   Wahana Rizky Gumilang-Inters…
+--   PT. Wahana - Direject
+--   PT. Wahana Rizky Gumilang - P… (nama terpotong)
 INSERT INTO wa_group_category_prefix (name_prefix, category, note) VALUES
   -- Customer: grup layanan/KSO bersama faskes
   ('Aftersales Wahana X',      'customer', NULL),  -- RS Larasati, RSUD M Z…, RSUD S…, RS Suman…, RSI Kalia…
@@ -33,14 +46,8 @@ INSERT INTO wa_group_category_prefix (name_prefix, category, note) VALUES
   ('Konsulan Alat Lab',        'customer', NULL),
   ('RSUP BETUN',               'customer', NULL),
   ('RS BHAYANGKARA BATU X',    'customer', NULL),
-  -- Principal / mitra pemegang brand
-  ('KSO KIMIA KLINIK ZYBIO',   'principal', 'Zybio'),
-  ('Koordinasi AdamLIS',       'principal', 'AdamLIS'),
-  ('Abhimata - Wahana',        'principal', 'Abhimata / Mitrasam…'),
-  ('PT.WRG & BINTANG MONO',    'principal', 'Bintang Mono'),
-  ('Wahana Rizky Gumilang-Inters', 'principal', 'Interso'),
-  ('PT. Wahana - Direject',    'principal', 'Direject'),
-  ('Wahana - Snibe',           'principal', 'Snibe'),
+  -- Principal (hanya yang identitasnya pasti)
+  ('Wahana - Snibe',           'principal', 'Snibe'),  -- Snibe = principal IVD, pasti
   -- Internal
   ('TIM WAHANA & INNOVATION',  'internal', NULL)
 ON CONFLICT (name_prefix) DO NOTHING;
