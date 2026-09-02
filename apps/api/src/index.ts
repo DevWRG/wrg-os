@@ -547,6 +547,30 @@ import {
 } from "./repo/forecast.js";
 const app = new Hono();
 
+// BUG-11/BUG-21 — parser kecil utk detail PostgresError bawaan (format bahasa
+// Inggris standar libpq: "Key (kolom)=(nilai) already exists."/"is not present
+// in table \"tbl\"."), dipakai supaya pesan 23505/23503 tak menempelkan sintaks
+// SQL mentah ke user. Kalau formatnya tak cocok (mis. detail null di 23514),
+// caller tetap fallback ke `err.detail` apa adanya.
+function parsePgKeyDetail(detail?: string): { column?: string; value?: string; table?: string } {
+  if (!detail) return {};
+  const m = detail.match(/^Key \(([^)]+)\)=\(([^)]*)\)\s+(?:already exists|is not present in table "([^"]+)")/);
+  if (!m) return {};
+  return { column: m[1], value: m[2], table: m[3] };
+}
+
+// 22003 (numeric_value_out_of_range) detail-nya berbunyi "A field with
+// precision P, scale S must round to an absolute value less than 10^N." —
+// dihitung ulang jadi batas desimal yang bisa dibaca orang, bukan istilah SQL.
+function parseNumericBound(detail?: string): string | null {
+  const m = detail?.match(/precision (\d+), scale (\d+)/);
+  if (!m) return null;
+  const precision = Number(m[1]);
+  const scale = Number(m[2]);
+  const maxAbs = Math.pow(10, precision - scale) - Math.pow(10, -scale);
+  return `maksimal ±${maxAbs}${scale > 0 ? ` (${scale} desimal)` : ""}`;
+}
+
 // Selalu balas JSON saat error / route tak ada — supaya BFF & client tak pernah
 // dapat body kosong/HTML (penyebab "Unexpected end of JSON input" di klien).
 app.onError((err, c) => {
@@ -567,14 +591,28 @@ app.onError((err, c) => {
   // contains (...)" alias dump seluruh kolom, bukan pesan yg bisa dibaca.
   if (err instanceof postgres.PostgresError) {
     switch (err.code) {
-      case "23505": // unique_violation
-        return c.json({ error: `Data duplikat: ${err.detail ?? "nilai ini sudah dipakai"}` }, 409);
-      case "23503": // foreign_key_violation
-        return c.json({ error: `Referensi tidak valid: ${err.detail ?? "data terkait tidak ditemukan"}` }, 400);
+      case "23505": { // unique_violation
+        const { column, value } = parsePgKeyDetail(err.detail);
+        const detail = column && value ? `${column} "${value}" sudah ada` : (err.detail ?? "nilai ini sudah dipakai");
+        return c.json({ error: `Data duplikat: ${detail}` }, 409);
+      }
+      case "23503": { // foreign_key_violation
+        const { column, value, table } = parsePgKeyDetail(err.detail);
+        const detail = column && value
+          ? `${column} "${value}"${table ? ` tidak ditemukan di ${table}` : " tidak ditemukan"}`
+          : (err.detail ?? "data terkait tidak ditemukan");
+        return c.json({ error: `Referensi tidak valid: ${detail}` }, 400);
+      }
       case "23514": // check_violation
         return c.json({ error: `Nilai tidak valid, melanggar aturan data (${err.constraint_name ?? "check constraint"})` }, 400);
-      case "22003": // numeric_value_out_of_range
-        return c.json({ error: `Angka di luar batas kolom: ${err.detail ?? "nilai terlalu besar"}` }, 400);
+      case "22003": { // numeric_value_out_of_range
+        const bound = parseNumericBound(err.detail);
+        return c.json({ error: `Angka di luar batas kolom${bound ? ` (${bound})` : `: ${err.detail ?? "nilai terlalu besar"}`}` }, 400);
+      }
+      case "22009": // invalid_time_zone_displacement_value — tanggal ekstrem
+        // (mis. tahun 5 digit dari input date native browser) valid secara JS
+        // Date tapi di luar jangkauan offset zona waktu yang Postgres terima.
+        return c.json({ error: "Format tanggal tidak valid" }, 400);
     }
   }
   const msg = err instanceof Error ? err.message : "internal error";
