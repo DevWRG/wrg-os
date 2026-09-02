@@ -48,7 +48,10 @@ for f in seed-asset-tag-dev seed-cek-dev seed-it-asset-dev seed-vehicle-dev; do
   psql -d "$DB" -v ON_ERROR_STOP=1 -q -f "scripts/db/$f.sql"
 done
 # Seed per-modul untuk menu yang tadinya kosong.
-for f in seed-atk-ga-dev seed-supplychain-dev seed-service-dev; do
+# Urutan penting: seed-pricebook-dev membuat product_code yang ditautkan
+# seed-kso-revenue-dev ke item Accurate (untuk /revenue-stream).
+for f in seed-atk-ga-dev seed-supplychain-dev seed-service-dev \
+         seed-pricebook-dev seed-kso-revenue-dev seed-insentif-ops-dev; do
   psql -d "$DB" -v ON_ERROR_STOP=1 -q -f "scripts/db/$f.sql"
 done
 
