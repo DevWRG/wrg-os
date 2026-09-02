@@ -6,6 +6,7 @@ import { ArrowLeft, MessagesSquare, ChevronRight } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 import { EmptyState } from "@/components/ui/empty-state";
 import { MonitorReport } from "@/components/monitor/monitor-report";
 
@@ -51,6 +52,7 @@ export function PolaView({ groups: initial, canEdit }: { groups: WaGroup[]; canE
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [noteDraft, setNoteDraft] = useState("");
 
   const counts = useMemo(() => {
     const c: Record<Filter, number> = { all: groups.length, principal: 0, internal: 0, customer: 0, none: 0 };
@@ -66,6 +68,8 @@ export function PolaView({ groups: initial, canEdit }: { groups: WaGroup[]; canE
   async function open(jid: string) {
     setSelected(jid);
     setContent(null);
+    setNoteDraft(groups.find((g) => g.group_jid === jid)?.note ?? "");
+    setError(null);
     setLoading(true);
     try {
       const res = await fetch(`/api/monitor/pola?jid=${encodeURIComponent(jid)}`, { cache: "no-store" });
@@ -91,6 +95,7 @@ export function PolaView({ groups: initial, canEdit }: { groups: WaGroup[]; canE
       const res = await fetch("/api/monitor/groups/category", {
         method: "POST",
         headers: { "content-type": "application/json" },
+        // `note` sengaja TIDAK dikirim → backend membiarkan catatan yang ada.
         body: JSON.stringify({ group_jid: jid, category: next }),
       });
       if (!res.ok) {
@@ -101,6 +106,34 @@ export function PolaView({ groups: initial, canEdit }: { groups: WaGroup[]; canE
     } catch {
       setGroups(prev);
       setError("gagal menyimpan (backend tak terjangkau)");
+    } finally {
+      setSaving(null);
+    }
+  }
+
+  // Simpan catatan bebas. Grup tanpa kategori pun boleh punya catatan — dipakai
+  // menandai grup yang kategorinya mau ditentukan sendiri nanti.
+  async function saveNote(jid: string) {
+    const g = groups.find((x) => x.group_jid === jid);
+    const next = noteDraft.trim() || null;
+    const prev = groups;
+    setGroups((gs) => gs.map((x) => (x.group_jid === jid ? { ...x, note: next } : x)));
+    setSaving(jid);
+    setError(null);
+    try {
+      const res = await fetch("/api/monitor/groups/category", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ group_jid: jid, category: g?.category ?? null, note: next }),
+      });
+      if (!res.ok) {
+        const d = (await res.json().catch(() => ({}))) as { error?: string };
+        setGroups(prev);
+        setError(d.error || `gagal menyimpan catatan (${res.status})`);
+      }
+    } catch {
+      setGroups(prev);
+      setError("gagal menyimpan catatan (backend tak terjangkau)");
     } finally {
       setSaving(null);
     }
@@ -154,6 +187,27 @@ export function PolaView({ groups: initial, canEdit }: { groups: WaGroup[]; canE
                 </select>
               ) : null}
             </div>
+            {canEdit && g ? (
+              <div className="mb-3 flex items-center gap-2">
+                <Input
+                  value={noteDraft}
+                  onChange={(e) => setNoteDraft(e.target.value)}
+                  placeholder="Catatan bebas — mis. nama principal, PIC, atau kenapa kategorinya belum jelas"
+                  maxLength={500}
+                  className="h-8 text-sm"
+                />
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => saveNote(g.group_jid)}
+                  disabled={saving === g.group_jid || noteDraft.trim() === (g.note ?? "")}
+                >
+                  Simpan catatan
+                </Button>
+              </div>
+            ) : g?.note ? (
+              <p className="text-muted-foreground mb-3 text-xs italic">{g.note}</p>
+            ) : null}
             {error ? <p className="text-destructive mb-2 text-xs">{error}</p> : null}
             {loading ? (
               <p className="text-muted-foreground text-sm">memuat…</p>
@@ -211,6 +265,9 @@ export function PolaView({ groups: initial, canEdit }: { groups: WaGroup[]; canE
                 </span>
                 <ChevronRight className="text-muted-foreground group-hover:text-primary mt-1 size-4 shrink-0" />
               </button>
+              {g.note ? (
+                <p className="text-muted-foreground line-clamp-2 pl-12 text-xs italic">{g.note}</p>
+              ) : null}
               <div className="flex items-center gap-2 pl-12">
                 {g.category ? (
                   <Badge className={CAT[g.category].badge}>{CAT[g.category].label}</Badge>

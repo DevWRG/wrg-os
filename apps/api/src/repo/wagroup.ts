@@ -72,25 +72,44 @@ export async function listWaGroups(): Promise<WaGroup[]> {
   });
 }
 
-/** Set/hapus kategori satu grup. category null → baris kategori dihapus
- * (kembali "belum dikategori"), bukan disimpan sebagai NULL. */
+/** Set kategori dan/atau catatan satu grup.
+ * - category: WaGroupCategory → set; null → kosongkan kategori.
+ * - note: string → set; "" atau null → kosongkan; undefined → biarkan apa adanya.
+ * Baris yang berakhir tanpa kategori DAN tanpa catatan dihapus (bukan disimpan
+ * sebagai baris kosong), supaya tabel cuma memuat keputusan yang nyata. */
 export async function setWaGroupCategory(
   group_jid: string,
   category: WaGroupCategory | null,
   note?: string | null,
-): Promise<{ group_jid: string; category: WaGroupCategory | null }> {
+): Promise<{ group_jid: string; category: WaGroupCategory | null; note: string | null }> {
   const sql = db();
+  const keepNote = note === undefined;
+  const nextNote = keepNote ? null : (note || "").trim() || null;
   if (!category) {
-    await sql`DELETE FROM wa_group_category WHERE group_jid = ${group_jid}`;
-    return { group_jid, category: null };
+    // Tanpa kategori: baris cuma berguna kalau catatannya ada.
+    const existing = keepNote
+      ? ((await sql`SELECT note FROM wa_group_category WHERE group_jid = ${group_jid}`)[0]?.note ?? null)
+      : nextNote;
+    const finalNote = existing ? String(existing) : null;
+    if (!finalNote) {
+      await sql`DELETE FROM wa_group_category WHERE group_jid = ${group_jid}`;
+      return { group_jid, category: null, note: null };
+    }
+    await sql`
+      INSERT INTO wa_group_category (group_jid, category, note, updated_at)
+      VALUES (${group_jid}, NULL, ${finalNote}, now())
+      ON CONFLICT (group_jid) DO UPDATE SET category = NULL, note = ${finalNote}, updated_at = now()
+    `;
+    return { group_jid, category: null, note: finalNote };
   }
-  await sql`
+  const [row] = await sql`
     INSERT INTO wa_group_category (group_jid, category, note, updated_at)
-    VALUES (${group_jid}, ${category}, ${note ?? null}, now())
+    VALUES (${group_jid}, ${category}, ${nextNote}, now())
     ON CONFLICT (group_jid) DO UPDATE SET
       category = EXCLUDED.category,
-      note = COALESCE(EXCLUDED.note, wa_group_category.note),
+      note = CASE WHEN ${keepNote} THEN wa_group_category.note ELSE ${nextNote} END,
       updated_at = now()
+    RETURNING note
   `;
-  return { group_jid, category };
+  return { group_jid, category, note: row?.note ? String(row.note) : null };
 }

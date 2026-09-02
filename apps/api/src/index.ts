@@ -1499,9 +1499,13 @@ app.get("/monitor/groups", async (c) => {
   return c.json({ groups: await listWaGroups() });
 });
 
-// Set kategori satu grup. body: {group_jid, category: principal|internal|customer|null, note?}.
-// category null/"" → hapus kategori (kembali "belum dikategori"). Gate admin ada
-// di layer WEB (apps/web .../monitor/groups/category requireAdmin).
+// Set kategori dan/atau catatan satu grup.
+// body: {group_jid, category: principal|internal|customer|null, note?}.
+// category null/"" → kosongkan kategori. `note` HILANG dari body → catatan lama
+// dibiarkan; note null/"" → catatan dikosongkan. Grup tanpa kategori tetap boleh
+// punya catatan (buat grup ambigu yang kategorinya ditulis manual nanti).
+// Gate admin ada di layer WEB (apps/web .../monitor/groups/category requireAdmin).
+const NOTE_MAX = 500;
 app.post("/monitor/groups/category", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   let body: { group_jid?: string; category?: string | null; note?: string | null } = {};
@@ -1512,12 +1516,18 @@ app.post("/monitor/groups/category", async (c) => {
   }
   const jid = (body.group_jid || "").trim();
   if (!jid) return c.json({ error: "body.group_jid wajib" }, 400);
+  // "note" ada di body tapi null/"" = perintah mengosongkan; tak ada = jangan diutak-atik.
+  const hasNote = Object.prototype.hasOwnProperty.call(body, "note");
+  const note = hasNote ? String(body.note ?? "") : undefined;
+  if (note !== undefined && note.length > NOTE_MAX) {
+    return c.json({ error: `note maksimal ${NOTE_MAX} karakter` }, 400);
+  }
   const cat = body.category ? String(body.category) : "";
-  if (!cat) return c.json(await setWaGroupCategory(jid, null));
+  if (!cat) return c.json(await setWaGroupCategory(jid, null, note));
   if (!isWaGroupCategory(cat)) {
     return c.json({ error: "category harus principal|internal|customer atau null" }, 400);
   }
-  return c.json(await setWaGroupCategory(jid, cat, body.note ?? null));
+  return c.json(await setWaGroupCategory(jid, cat, note));
 });
 
 // Generate rekap/resume via services/ai dari wa_message (generate-only — TIDAK
