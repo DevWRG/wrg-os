@@ -161,7 +161,8 @@ export function UserAccessManager({ users, roster }: { users: AppUserRow[]; rost
             <div className="grid gap-1">
               <Label htmlFor="ua-roster">Karyawan</Label>
               <Combobox id="ua-roster" value={rAm} onChange={setRAm} options={opsiRoster}
-                searchPlaceholder="Ketik nama karyawan…" emptyText="Nama tidak ada di roster." />
+                emptyOption="— pilih —" searchPlaceholder="Ketik nama karyawan…"
+                emptyText="Nama tidak ada di roster." />
             </div>
             <div className="grid gap-1"><Label htmlFor="ua-remail">Email login</Label><Input id="ua-remail" value={rEmail} onChange={(e) => setREmail(e.target.value)} placeholder="email karyawan" /></div>
             <Button size="sm" onClick={createFromRoster} disabled={busy}>Buat dari roster</Button>
