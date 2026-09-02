@@ -106,7 +106,7 @@ export function AddGaMaintenanceButton({ assets, vendors, categories }: { assets
               </div>
               <div className="grid gap-1.5">
                 <Label htmlFor="gm-due">Due Date</Label>
-                <Input id="gm-due" type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
+                <Input id="gm-due" type="date" required value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
               </div>
             </div>
             <div className="grid grid-cols-2 gap-3">

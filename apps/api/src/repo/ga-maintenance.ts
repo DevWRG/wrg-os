@@ -1,6 +1,15 @@
 import { db } from "../db.js";
 import { sendViaWaGateway } from "../wasend.js";
 
+// Round-trip lewat toISOString() (bukan cuma cek Number.isNaN) — JS Date
+// TOLERAN overflow kalender (mis. "2027-02-30" diam-diam jadi "2027-03-02"),
+// pola sama fix isIsoDate() di repo/vehicle.ts.
+const isIsoDate = (s: string): boolean => {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const d = new Date(`${s}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
+};
+
 // F137 — GA Maintenance & Recurrence Tracker. DI ATAS F132 (ga_assets,
 // migrasi 086). Upgrade sengaja dari gais/006_maintenance.sql+009 — asset_id
 // & vendor_id FK sungguhan (source cuma free-text), plus approval Finance
@@ -203,6 +212,10 @@ export async function createSchedule(input: GaMaintenanceInput): Promise<GaMaint
   if (input.cost_budget != null && (!Number.isFinite(input.cost_budget) || input.cost_budget < 0)) {
     return { ok: false, error: "cost_budget tidak boleh negatif" };
   }
+  if (!input.due_date) return { ok: false, error: "due_date wajib diisi" };
+  if (!isIsoDate(input.due_date)) {
+    return { ok: false, error: `due_date "${input.due_date}" bukan tanggal valid (format YYYY-MM-DD)` };
+  }
   const rows0 = await sql`SELECT category_id FROM ga_assets WHERE id = ${input.asset_id}`;
   if (rows0.length === 0) return { ok: false, error: "aset tidak ditemukan" };
 
@@ -236,6 +249,9 @@ export async function updateSchedule(id: string, input: GaMaintenanceUpdateInput
   const sql = db();
   if (input.cost_budget != null && (!Number.isFinite(input.cost_budget) || input.cost_budget < 0)) {
     return { ok: false, error: "cost_budget tidak boleh negatif" };
+  }
+  if (input.due_date != null && !isIsoDate(input.due_date)) {
+    return { ok: false, error: `due_date "${input.due_date}" bukan tanggal valid (format YYYY-MM-DD)` };
   }
   const rows = await sql`SELECT id FROM ga_maintenance_schedules WHERE id = ${id}`;
   if (rows.length === 0) return { ok: false, error: "jadwal tidak ditemukan" };
