@@ -200,6 +200,9 @@ export interface GaMaintenanceInput {
 
 export async function createSchedule(input: GaMaintenanceInput): Promise<GaMaintenanceRow | ActionResult> {
   const sql = db();
+  if (input.cost_budget != null && (!Number.isFinite(input.cost_budget) || input.cost_budget < 0)) {
+    return { ok: false, error: "cost_budget tidak boleh negatif" };
+  }
   const rows0 = await sql`SELECT category_id FROM ga_assets WHERE id = ${input.asset_id}`;
   if (rows0.length === 0) return { ok: false, error: "aset tidak ditemukan" };
 
@@ -231,6 +234,9 @@ export interface GaMaintenanceUpdateInput {
 
 export async function updateSchedule(id: string, input: GaMaintenanceUpdateInput): Promise<ActionResult> {
   const sql = db();
+  if (input.cost_budget != null && (!Number.isFinite(input.cost_budget) || input.cost_budget < 0)) {
+    return { ok: false, error: "cost_budget tidak boleh negatif" };
+  }
   const rows = await sql`SELECT id FROM ga_maintenance_schedules WHERE id = ${id}`;
   if (rows.length === 0) return { ok: false, error: "jadwal tidak ditemukan" };
   await sql`
@@ -291,7 +297,17 @@ export async function completeSchedule(id: string, input: CompleteInput): Promis
   const rows = await sql`SELECT * FROM ga_maintenance_schedules WHERE id = ${id}`;
   if (rows.length === 0) return { ok: false, error: "jadwal tidak ditemukan" };
   const row = rows[0];
-  if (row.status === "done" || row.status === "cancelled") return { ok: false, error: `sudah "${row.status}"` };
+  // Harus lewat start() dulu (in_progress) — tanpa guard ini, jadwal "pending"
+  // bisa langsung di-complete (skip-start), DAN jadwal "pending_finance" yang
+  // nunggu approveSchedule() bisa di-complete ULANG dgn biaya lebih rendah utk
+  // mem-bypass approval Finance sepenuhnya (approved_by/approved_at tak pernah
+  // terisi tapi status tetap jatuh ke "done").
+  if (row.status !== "in_progress") {
+    return { ok: false, error: `hanya bisa complete dari status "in_progress", saat ini "${row.status}"` };
+  }
+  if (input.cost_actual != null && (!Number.isFinite(input.cost_actual) || input.cost_actual < 0)) {
+    return { ok: false, error: "cost_actual tidak boleh negatif" };
+  }
 
   const costActual = input.cost_actual ?? Number(row.cost_actual ?? 0);
   const needsFinance = costActual > FINANCE_THRESHOLD && !row.approved_by;
