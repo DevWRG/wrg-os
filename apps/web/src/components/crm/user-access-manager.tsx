@@ -1,11 +1,12 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Combobox } from "@/components/ui/combobox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useConfirm } from "@/components/ui/use-confirm";
@@ -51,6 +52,14 @@ export function UserAccessManager({ users, roster }: { users: AppUserRow[]; rost
   // form dari roster
   const [rAm, setRAm] = useState("");
   const [rEmail, setREmail] = useState("");
+  // Roster 60+ nama: dipakai combobox yang bisa dicari, jadi urutkan menurut nama
+  // supaya hasil filter terbaca wajar (roster dari API urut am_id).
+  const opsiRoster = useMemo(
+    () => roster
+      .map((m) => ({ value: m.am_id, label: m.nama ?? m.am_id }))
+      .sort((a, b) => a.label.localeCompare(b.label, "id")),
+    [roster],
+  );
 
   async function call(path: string, method: string, body?: unknown): Promise<Record<string, unknown> | null> {
     setErr("");
@@ -151,10 +160,8 @@ export function UserAccessManager({ users, roster }: { users: AppUserRow[]; rost
           <CardContent className="space-y-2">
             <div className="grid gap-1">
               <Label htmlFor="ua-roster">Karyawan</Label>
-              <select id="ua-roster" value={rAm} onChange={(e) => setRAm(e.target.value)} className="h-9 rounded-md border bg-background px-2 text-sm">
-                <option value="">— pilih —</option>
-                {roster.map((m) => <option key={m.am_id} value={m.am_id}>{m.nama ?? m.am_id}</option>)}
-              </select>
+              <Combobox id="ua-roster" value={rAm} onChange={setRAm} options={opsiRoster}
+                searchPlaceholder="Ketik nama karyawan…" emptyText="Nama tidak ada di roster." />
             </div>
             <div className="grid gap-1"><Label htmlFor="ua-remail">Email login</Label><Input id="ua-remail" value={rEmail} onChange={(e) => setREmail(e.target.value)} placeholder="email karyawan" /></div>
             <Button size="sm" onClick={createFromRoster} disabled={busy}>Buat dari roster</Button>
