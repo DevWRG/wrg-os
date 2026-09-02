@@ -32,9 +32,25 @@ createdb "$DB"
 echo "→ migrasi schema ($(ls infra/postgres/init/*.sql | wc -l | tr -d ' ') file) ..."
 DATABASE_URL="postgres:///$DB" bash scripts/db/migrate.sh
 
-echo "→ seed data sintetis (sama dengan dev) ..."
+echo "→ anonimkan spine karyawan (migrasi 053 membawa 53 karyawan SUNGGUHAN) ..."
+# WAJIB sebelum seed lain: 053_seed_employee_spine.sql bukan DDL tapi 1.735 INSERT
+# data karyawan nyata (nama, 50 nomor WA, kutipan pribadi, OKR/KPI per orang) dan
+# jalan di semua environment — termasuk demo. Lihat komentar di skrip itu.
+psql -d "$DB" -v ON_ERROR_STOP=1 -q -f scripts/db/anonymize-employee-spine.sql
+
+echo "→ seed data sintetis (SATU SUMBER dengan dev) ..."
+# Urutan seed-dev.sql lalu seed-dev-full.sql WAJIB: yang kedua merujuk am_id
+# demo1/demo2/demo3 yang dibuat yang pertama.
 psql -d "$DB" -v ON_ERROR_STOP=1 -q -f scripts/db/seed-dev.sql
 psql -d "$DB" -v ON_ERROR_STOP=1 -q -f scripts/db/seed-dev-full.sql
+# Seed per-modul (sudah ada di repo, sebelumnya tak pernah dijalankan otomatis).
+for f in seed-asset-tag-dev seed-cek-dev seed-it-asset-dev seed-vehicle-dev; do
+  psql -d "$DB" -v ON_ERROR_STOP=1 -q -f "scripts/db/$f.sql"
+done
+# Seed per-modul untuk menu yang tadinya kosong.
+for f in seed-atk-ga-dev seed-supplychain-dev seed-service-dev; do
+  psql -d "$DB" -v ON_ERROR_STOP=1 -q -f "scripts/db/$f.sql"
+done
 
 echo "→ grant ulang ke role aplikasi demo ..."
 psql -d "$DB" -v ON_ERROR_STOP=1 -q -c "
