@@ -189,6 +189,7 @@ import { runDetectLeaveScan } from "./repo/detectleave.js";
 import { runExtractCompetitor } from "./repo/extractcompetitor.js";
 import { runWeekendBriefing } from "./repo/weekendbriefing.js";
 import { runPolaKomunikasi } from "./repo/polakomunikasi.js";
+import { listWaGroups, setWaGroupCategory, isWaGroupCategory } from "./repo/wagroup.js";
 import { runRefreshMembers } from "./repo/listmembers.js";
 import { runNotifQuota } from "./repo/notifquota.js";
 import {
@@ -1488,6 +1489,35 @@ app.post("/monitor/digests", async (c) => {
 app.get("/monitor/pola", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json(await listPola(c.req.query("jid") || undefined));
+});
+
+// Registri grup WA + kategori (principal/internal/customer) — dipakai galeri
+// Pola Komunikasi buat filter. Daftar = monitor_pola UNION wa_message ('%@g.us'),
+// jadi grup bertraffic rendah (belum punya profil pola) juga ikut terdaftar.
+app.get("/monitor/groups", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json({ groups: await listWaGroups() });
+});
+
+// Set kategori satu grup. body: {group_jid, category: principal|internal|customer|null, note?}.
+// category null/"" → hapus kategori (kembali "belum dikategori"). Gate admin ada
+// di layer WEB (apps/web .../monitor/groups/category requireAdmin).
+app.post("/monitor/groups/category", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { group_jid?: string; category?: string | null; note?: string | null } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const jid = (body.group_jid || "").trim();
+  if (!jid) return c.json({ error: "body.group_jid wajib" }, 400);
+  const cat = body.category ? String(body.category) : "";
+  if (!cat) return c.json(await setWaGroupCategory(jid, null));
+  if (!isWaGroupCategory(cat)) {
+    return c.json({ error: "category harus principal|internal|customer atau null" }, 400);
+  }
+  return c.json(await setWaGroupCategory(jid, cat, body.note ?? null));
 });
 
 // Generate rekap/resume via services/ai dari wa_message (generate-only — TIDAK
