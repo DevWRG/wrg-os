@@ -171,7 +171,7 @@ import { runDetectLeaveScan } from "./repo/detectleave.js";
 import { runExtractCompetitor } from "./repo/extractcompetitor.js";
 import { runWeekendBriefing } from "./repo/weekendbriefing.js";
 import { runPolaKomunikasi } from "./repo/polakomunikasi.js";
-import { listWaGroups, setWaGroupCategory, isWaGroupCategory } from "./repo/wagroup.js";
+import { listWaGroups, setWaGroupCategory, setWaGroupPrefixCategory, isWaGroupCategory } from "./repo/wagroup.js";
 import { runRefreshMembers } from "./repo/listmembers.js";
 import { runNotifQuota } from "./repo/notifquota.js";
 import {
@@ -1098,25 +1098,28 @@ app.get("/monitor/groups", async (c) => {
 const NOTE_MAX = 500;
 app.post("/monitor/groups/category", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let body: { group_jid?: string; category?: string | null; note?: string | null } = {};
+  let body: { group_jid?: string; name_prefix?: string; category?: string | null; note?: string | null } = {};
   try {
     body = await c.req.json();
   } catch {
     return c.json({ error: "invalid JSON body" }, 400);
   }
   const jid = (body.group_jid || "").trim();
-  if (!jid) return c.json({ error: "body.group_jid wajib" }, 400);
+  const prefix = (body.name_prefix || "").trim();
+  if (!jid && !prefix) return c.json({ error: "body.group_jid atau body.name_prefix wajib" }, 400);
   // "note" ada di body tapi null/"" = perintah mengosongkan; tak ada = jangan diutak-atik.
   const hasNote = Object.prototype.hasOwnProperty.call(body, "note");
   const note = hasNote ? String(body.note ?? "") : undefined;
   if (note !== undefined && note.length > NOTE_MAX) {
     return c.json({ error: `note maksimal ${NOTE_MAX} karakter` }, 400);
   }
-  const cat = body.category ? String(body.category) : "";
-  if (!cat) return c.json(await setWaGroupCategory(jid, null, note));
-  if (!isWaGroupCategory(cat)) {
+  const raw = body.category ? String(body.category) : "";
+  if (raw && !isWaGroupCategory(raw)) {
     return c.json({ error: "category harus principal|internal|customer atau null" }, 400);
   }
+  const cat = raw && isWaGroupCategory(raw) ? raw : null;
+  // name_prefix → pra-daftar (grup belum pernah kirim pesan, JID belum diketahui).
+  if (!jid) return c.json(await setWaGroupPrefixCategory(prefix, cat, note));
   return c.json(await setWaGroupCategory(jid, cat, note));
 });
 
