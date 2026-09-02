@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { ArrowLeft, MessagesSquare, ChevronRight } from "lucide-react";
+import { ArrowLeft, MessagesSquare, ChevronRight, Clock } from "lucide-react";
 
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -16,10 +16,14 @@ export interface WaGroup {
   group_jid: string;
   group_name: string;
   category: WaGroupCategory | null;
+  category_source: "manual" | "prefix" | null;
   note: string | null;
   has_pola: boolean;
   message_count: number;
   last_message_at: string | null;
+  /** true = pra-daftar: bot sudah di grupnya tapi grup belum pernah kirim pesan. */
+  pending: boolean;
+  name_prefix: string | null;
 }
 
 type Filter = "all" | WaGroupCategory | "none";
@@ -40,6 +44,12 @@ const FILTERS: { key: Filter; label: string }[] = [
 
 const label = (g: WaGroup) =>
   g.group_name && g.group_name !== g.group_jid ? g.group_name : g.group_jid.replace(/@g\.us$/, "");
+
+// Baris pra-daftar tak punya JID → dikunci oleh awalan namanya.
+const rowKey = (g: WaGroup) => g.group_jid || `prefix:${g.name_prefix ?? g.group_name}`;
+// Badan request: grup nyata pakai group_jid, pra-daftar pakai name_prefix.
+const rowTarget = (g: WaGroup) =>
+  g.pending ? { name_prefix: g.name_prefix ?? g.group_name } : { group_jid: g.group_jid };
 
 const selectClass =
   "border-input bg-transparent dark:bg-input/30 h-7 rounded-md border px-2 text-xs shadow-xs outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]";
@@ -86,17 +96,20 @@ export function PolaView({ groups: initial, canEdit }: { groups: WaGroup[]; canE
     }
   }
 
-  async function setCategory(jid: string, next: WaGroupCategory | null) {
+  async function setCategory(g0: WaGroup, next: WaGroupCategory | null) {
+    const key = rowKey(g0);
     const prev = groups;
-    setGroups((gs) => gs.map((g) => (g.group_jid === jid ? { ...g, category: next } : g)));
-    setSaving(jid);
+    setGroups((gs) =>
+      gs.map((g) => (rowKey(g) === key ? { ...g, category: next, category_source: "manual" as const } : g)),
+    );
+    setSaving(key);
     setError(null);
     try {
       const res = await fetch("/api/monitor/groups/category", {
         method: "POST",
         headers: { "content-type": "application/json" },
         // `note` sengaja TIDAK dikirim → backend membiarkan catatan yang ada.
-        body: JSON.stringify({ group_jid: jid, category: next }),
+        body: JSON.stringify({ ...rowTarget(g0), category: next }),
       });
       if (!res.ok) {
         const d = (await res.json().catch(() => ({}))) as { error?: string };
@@ -113,18 +126,18 @@ export function PolaView({ groups: initial, canEdit }: { groups: WaGroup[]; canE
 
   // Simpan catatan bebas. Grup tanpa kategori pun boleh punya catatan — dipakai
   // menandai grup yang kategorinya mau ditentukan sendiri nanti.
-  async function saveNote(jid: string) {
-    const g = groups.find((x) => x.group_jid === jid);
+  async function saveNote(g0: WaGroup) {
+    const key = rowKey(g0);
     const next = noteDraft.trim() || null;
     const prev = groups;
-    setGroups((gs) => gs.map((x) => (x.group_jid === jid ? { ...x, note: next } : x)));
-    setSaving(jid);
+    setGroups((gs) => gs.map((x) => (rowKey(x) === key ? { ...x, note: next } : x)));
+    setSaving(key);
     setError(null);
     try {
       const res = await fetch("/api/monitor/groups/category", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ group_jid: jid, category: g?.category ?? null, note: next }),
+        body: JSON.stringify({ ...rowTarget(g0), category: g0.category ?? null, note: next }),
       });
       if (!res.ok) {
         const d = (await res.json().catch(() => ({}))) as { error?: string };
@@ -178,7 +191,7 @@ export function PolaView({ groups: initial, canEdit }: { groups: WaGroup[]; canE
                   className={selectClass}
                   value={g.category ?? ""}
                   disabled={saving === g.group_jid}
-                  onChange={(e) => setCategory(g.group_jid, (e.target.value || null) as WaGroupCategory | null)}
+                  onChange={(e) => setCategory(g, (e.target.value || null) as WaGroupCategory | null)}
                 >
                   <option value="">— belum dikategori —</option>
                   <option value="principal">Principal</option>
@@ -199,8 +212,8 @@ export function PolaView({ groups: initial, canEdit }: { groups: WaGroup[]; canE
                 <Button
                   size="sm"
                   variant="outline"
-                  onClick={() => saveNote(g.group_jid)}
-                  disabled={saving === g.group_jid || noteDraft.trim() === (g.note ?? "")}
+                  onClick={() => saveNote(g)}
+                  disabled={saving === rowKey(g) || noteDraft.trim() === (g.note ?? "")}
                 >
                   Simpan catatan
                 </Button>
@@ -250,21 +263,36 @@ export function PolaView({ groups: initial, canEdit }: { groups: WaGroup[]; canE
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {shown.map((g) => (
             <div
-              key={g.group_jid}
-              className="border-border bg-card hover:border-primary group flex flex-col gap-2 rounded-xl border p-4"
+              key={rowKey(g)}
+              className={`border-border bg-card group flex flex-col gap-2 rounded-xl border p-4 ${g.pending ? "border-dashed" : "hover:border-primary"}`}
             >
-              <button onClick={() => open(g.group_jid)} className="flex items-start gap-3 text-left">
-                <span className="bg-primary-soft text-primary flex size-9 shrink-0 items-center justify-center rounded-lg">
-                  <MessagesSquare className="size-4" />
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="text-foreground block truncate text-sm font-medium">{label(g)}</span>
-                  <span className="text-muted-foreground text-xs">
-                    {g.has_pola ? "Lihat profil pola" : "Belum ada profil pola"}
+              {/* Baris pra-daftar tak punya profil untuk dibuka → bukan tombol. */}
+              {g.pending ? (
+                <div className="flex items-start gap-3">
+                  <span className="bg-muted text-muted-foreground flex size-9 shrink-0 items-center justify-center rounded-lg">
+                    <Clock className="size-4" />
                   </span>
-                </span>
-                <ChevronRight className="text-muted-foreground group-hover:text-primary mt-1 size-4 shrink-0" />
-              </button>
+                  <span className="min-w-0 flex-1">
+                    <span className="text-foreground block truncate text-sm font-medium">{label(g)}…</span>
+                    <span className="text-muted-foreground text-xs">
+                      Pra-daftar — menunggu pesan pertama
+                    </span>
+                  </span>
+                </div>
+              ) : (
+                <button onClick={() => open(g.group_jid)} className="flex items-start gap-3 text-left">
+                  <span className="bg-primary-soft text-primary flex size-9 shrink-0 items-center justify-center rounded-lg">
+                    <MessagesSquare className="size-4" />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="text-foreground block truncate text-sm font-medium">{label(g)}</span>
+                    <span className="text-muted-foreground text-xs">
+                      {g.has_pola ? "Lihat profil pola" : "Belum ada profil pola"}
+                    </span>
+                  </span>
+                  <ChevronRight className="text-muted-foreground group-hover:text-primary mt-1 size-4 shrink-0" />
+                </button>
+              )}
               {g.note ? (
                 <p className="text-muted-foreground line-clamp-2 pl-12 text-xs italic">{g.note}</p>
               ) : null}
@@ -279,8 +307,8 @@ export function PolaView({ groups: initial, canEdit }: { groups: WaGroup[]; canE
                     aria-label={`Kategori ${label(g)}`}
                     className={`${selectClass} ml-auto`}
                     value={g.category ?? ""}
-                    disabled={saving === g.group_jid}
-                    onChange={(e) => setCategory(g.group_jid, (e.target.value || null) as WaGroupCategory | null)}
+                    disabled={saving === rowKey(g)}
+                    onChange={(e) => setCategory(g, (e.target.value || null) as WaGroupCategory | null)}
                   >
                     <option value="">— belum —</option>
                     <option value="principal">Principal</option>
