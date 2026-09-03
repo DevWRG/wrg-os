@@ -177,6 +177,27 @@ export function InboundReceivingTable({ rows }: { rows: InboundReceivingRow[] })
     }
   }
 
+  // BUG-18 — backend (updateInboundReceiving) sudah izinkan balik ke
+  // in_progress (guard BUG-05 di updateInboundReceivingItem eksplisit
+  // menyuruh "kembalikan status ke in_progress dulu" utk bisa un-centang
+  // checklist), tapi sebelumnya tak ada tombol ini di UI sama sekali.
+  async function markInProgress() {
+    if (!sel) return;
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/inbound-receiving/${sel.id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ status: "in_progress" }),
+      });
+      if (!res.ok) throw new Error();
+      reload(sel.id);
+      router.refresh();
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function deleteReceiving() {
     if (!sel) return;
     confirm(
@@ -270,9 +291,13 @@ export function InboundReceivingTable({ rows }: { rows: InboundReceivingRow[] })
                 <Button type="button" variant="ghost" disabled={busy} onClick={deleteReceiving} className="text-danger hover:text-danger">
                   <Trash2 /> Hapus
                 </Button>
-                {sel.status === "in_progress" && (
+                {(detail ?? sel).status === "in_progress" ? (
                   <Button type="button" disabled={busy} onClick={markCompleted}>
                     Tandai Selesai
+                  </Button>
+                ) : (
+                  <Button type="button" variant="outline" disabled={busy} onClick={markInProgress}>
+                    Kembalikan ke In Progress
                   </Button>
                 )}
               </DialogFooter>
