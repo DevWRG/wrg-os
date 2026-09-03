@@ -4446,7 +4446,7 @@ app.post("/pickup-plan", async (c) => {
   // ter-simpan tapi kurirnya tak pernah diberi tahu. Diwajibkan di sini,
   // bukan cuma diandalkan validasi UI, karena baris ini TIDAK bisa diedit
   // lagi setelah tersimpan (tak ada form edit, cuma status/hapus).
-  if (!normalizeWa(kurirWa)) return c.json({ error: "nomor WA kurir wajib diisi" }, 400);
+  if (normalizeWa(kurirWa).length < 9) return c.json({ error: "nomor WA kurir wajib diisi & harus nomor yang valid" }, 400);
   const tujuan = body.tujuan == null ? "kirim" : String(body.tujuan);
   if (!["kirim", "tagih", "kirim+tagih"].includes(tujuan)) {
     return c.json({ error: "tujuan harus kirim|tagih|kirim+tagih" }, 400);
@@ -4477,6 +4477,9 @@ app.patch("/pickup-plan/:id", async (c) => {
   }
   if (body.tanggal != null && !isIsoDate(String(body.tanggal))) {
     return c.json({ error: "tanggal harus tanggal valid (YYYY-MM-DD)" }, 400);
+  }
+  if (body.kurir_wa_number != null && normalizeWa(String(body.kurir_wa_number)).length < 9) {
+    return c.json({ error: "nomor WA kurir tidak valid" }, 400);
   }
   const row = await updatePickupPlan(c.req.param("id"), {
     status: body.status == null ? undefined : (String(body.status) as "rencana" | "selesai" | "batal"),
