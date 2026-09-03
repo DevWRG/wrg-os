@@ -575,6 +575,12 @@ app.onError((err, c) => {
         return c.json({ error: `Nilai tidak valid, melanggar aturan data (${err.constraint_name ?? "check constraint"})` }, 400);
       case "22003": // numeric_value_out_of_range
         return c.json({ error: `Angka di luar batas kolom: ${err.detail ?? "nilai terlalu besar"}` }, 400);
+      case "22P02": // invalid_text_representation — format salah (paling sering: id di path/body bukan UUID)
+        return c.json({ error: `Format data tidak valid: ${err.message}` }, 400);
+      case "22001": // string_data_right_truncation — teks melebihi batas panjang kolom
+        return c.json({ error: `Teks terlalu panjang untuk kolom ini: ${err.message}` }, 400);
+      case "22008": // datetime_field_overflow — hasil kalkulasi tanggal (mis. interval bulan) di luar rentang valid
+        return c.json({ error: "Tanggal di luar rentang yang valid — cek interval/durasi yang dimasukkan" }, 400);
     }
   }
   const msg = err instanceof Error ? err.message : "internal error";
