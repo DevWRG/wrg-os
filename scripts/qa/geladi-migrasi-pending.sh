@@ -54,6 +54,8 @@ FAIL=0
 ok()   { printf '  ✅ %s\n' "$*"; }
 bad()  { printf '  ❌ %s\n' "$*"; FAIL=$((FAIL+1)); }
 head2() { printf '\n── %s\n' "$*"; }
+# ms epoch portabel: BSD date (macOS) tak punya %N, dan bash 3.2 tak punya EPOCHREALTIME.
+now_ms() { perl -MTime::HiRes -e 'printf "%.0f", Time::HiRes::time()*1000'; }
 
 # Kelima file yang belum pernah ikut geladi.
 BARU=(156_ga_asset_assignment_shared_fix.sql 158_purchase_order_po_number_unique.sql \
@@ -143,10 +145,11 @@ T0=$(date +%s)
 while IFS= read -r base; do
   [ -z "$base" ] && continue
   f="infra/postgres/init/$base"
-  s=$(date +%s%N)
+  s=$(now_ms)
   if psql "$CLONE_URL" -v ON_ERROR_STOP=1 -q -1 -f "$f" >/dev/null 2>&1; then
-    ms=$(( ($(date +%s%N) - s) / 1000000 ))
+    # Ledger DULU: pencatatan tak boleh bisa dilewati oleh bug di penghitung waktu.
     psql "$CLONE_URL" -q -c "INSERT INTO schema_migrations(filename) VALUES ('$base') ON CONFLICT DO NOTHING;" >/dev/null
+    ms=$(( $(now_ms) - s ))
     printf '  %-46s %5s ms\n' "$base" "$ms"
   else
     bad "APPLY GAGAL: $base"
@@ -161,7 +164,7 @@ echo "  total: $(( $(date +%s) - T0 )) detik"
 head2 "Idempotensi"
 AGAIN=$(DATABASE_URL="$CLONE_URL" bash scripts/db/migrate.sh --dry-run 2>&1 || true)
 echo "$AGAIN" | grep -q "tidak ada migrasi pending" && ok "migrate.sh kedua: tak ada pending (ledger benar)" \
-  || bad "migrate.sh kedua masih melihat pending: $(echo "$AGAIN" | tail -3 | tr '\n' ' ')"
+  || bad "migrate.sh kedua masih melihat $(echo "$AGAIN" | grep -coE '[0-9]{3}_[a-z0-9_]+\.sql') pending: $(echo "$AGAIN" | grep -oE '[0-9]{3}_[a-z0-9_]+\.sql' | head -4 | tr '\n' ' ')..."
 for b in "${BARU[@]}"; do
   if psql "$CLONE_URL" -v ON_ERROR_STOP=1 -q -1 -f "infra/postgres/init/$b" >/dev/null 2>&1; then
     ok "aman diulang: $b"
