@@ -60,7 +60,12 @@ const columns: DataColumn<RfidCartridgeClaim>[] = [
     header: "Status",
     sortable: true,
     accessor: (r) => r.status,
-    cell: (r) => <Badge variant={STATUS_VARIANT[r.status]}>{STATUS_LABEL[r.status]}</Badge>,
+    cell: (r) => (
+      <div>
+        <Badge variant={STATUS_VARIANT[r.status]}>{STATUS_LABEL[r.status]}</Badge>
+        {r.closed_at && <div className="text-muted-foreground mt-1 text-xs whitespace-nowrap">Ditutup {tgl(r.closed_at)}</div>}
+      </div>
+    ),
   },
   { id: "aksi", header: "Aksi", align: "right", cell: (r) => <RfidCartridgeClaimRowActions claim={r} /> },
 ];

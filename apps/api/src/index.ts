@@ -575,6 +575,12 @@ app.onError((err, c) => {
         return c.json({ error: `Nilai tidak valid, melanggar aturan data (${err.constraint_name ?? "check constraint"})` }, 400);
       case "22003": // numeric_value_out_of_range
         return c.json({ error: `Angka di luar batas kolom: ${err.detail ?? "nilai terlalu besar"}` }, 400);
+      case "22P02": // invalid_text_representation — format salah (paling sering: id di path/body bukan UUID)
+        return c.json({ error: `Format data tidak valid: ${err.message}` }, 400);
+      case "22001": // string_data_right_truncation — teks melebihi batas panjang kolom
+        return c.json({ error: `Teks terlalu panjang untuk kolom ini: ${err.message}` }, 400);
+      case "22008": // datetime_field_overflow — hasil kalkulasi tanggal (mis. interval bulan) di luar rentang valid
+        return c.json({ error: "Tanggal di luar rentang yang valid — cek interval/durasi yang dimasukkan" }, 400);
     }
   }
   const msg = err instanceof Error ? err.message : "internal error";
@@ -1880,7 +1886,7 @@ app.patch("/approval-requests/config/chain/:urutan", async (c) => {
     return c.json({ error: "invalid JSON body" }, 400);
   }
   const urutan = Number(c.req.param("urutan"));
-  if (!urutan) return c.json({ error: "urutan tidak valid" }, 400);
+  if (!urutan || !Number.isInteger(urutan)) return c.json({ error: "urutan tidak valid" }, 400);
   const r = await updateChainConfig(urutan, body);
   return c.json(r, r.ok ? 200 : 400);
 });
@@ -1975,9 +1981,11 @@ app.post("/forecast/buffer-config", async (c) => {
   return c.json(r, r.ok ? 200 : 400);
 });
 
-// F15 SPH Generator — form intake AM: pilih item katalog product_pricelist
-// PERSIS (bukan ketik nama), qty, diskon minta. Body:
-// { deal_id?, customer_id, customer_name, am_id?, periode?, items: [{pricelist_item_id, qty, diskon_requested}], created_by? }.
+// F15 SPH Generator — form intake AM: customer & item dipilih PERSIS dari
+// katalog (accurate_customer + product_pricelist), bukan ketik nama. Body:
+// { deal_id?, customer_id (WAJIB, id accurate_customer), am_id?, periode?,
+//   items: [{pricelist_item_id, qty, diskon_requested}], created_by? }.
+// customer_name tidak dikirim/diabaikan — di-derive dari mirror.
 app.post("/sph", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   let body: Parameters<typeof createSphDraft>[0] | undefined;
@@ -1986,8 +1994,16 @@ app.post("/sph", async (c) => {
   } catch {
     return c.json({ error: "invalid JSON body" }, 400);
   }
-  if (!body?.customer_name) {
-    return c.json({ error: "customer_name wajib" }, 400);
+  // `customer_id` WAJIB di jalur ini. Endpoint ini cuma dipakai form web
+  // /sph/new (lewat BFF /api/sph), dan sejak "link data existing" form itu
+  // memaksa memilih dari katalog Accurate. Jalur WA `#SPH` TIDAK lewat sini —
+  // ia memanggil createSphDraft langsung dgn nama teks dari pesan, jadi
+  // kewajiban di sini tidak mematikannya.
+  //
+  // customer_name TIDAK lagi diwajibkan: nama di-derive server-side dari
+  // mirror di createSphDraft, jadi nama kiriman klien tak dipercaya.
+  if (!body?.customer_id) {
+    return c.json({ error: "customer_id wajib — pilih customer dari katalog Accurate" }, 400);
   }
   const r = await createSphDraft(body);
   return c.json(r, r.ok ? 201 : 400);
@@ -2304,6 +2320,10 @@ app.post("/ga-assets/:id/upload", async (c) => {
   const ext = GA_UPLOAD_MIME_EXT[file.type];
   if (!ext) return c.json({ error: `tipe file "${file.type}" tak didukung (jpg/png/webp/pdf)` }, 400);
   if (file.size > 10 * 1024 * 1024) return c.json({ error: "file maksimal 10MB" }, 400);
+  // Cek aset ADA dulu sebelum tulis file ke disk — kebalikannya bikin file
+  // yatim nyangkut permanen tiap kali id-nya salah (setAssetFile menolak
+  // rapi, tapi writeFile sudah kadung jalan).
+  if (!(await getGaAsset(id))) return c.json({ error: "aset tidak ditemukan" }, 400);
 
   await mkdir(GA_UPLOAD_ROOT, { recursive: true });
   const filename = `${id}-${kind}-${Date.now()}.${ext}`;
@@ -4440,7 +4460,7 @@ app.post("/pickup-plan", async (c) => {
   // ter-simpan tapi kurirnya tak pernah diberi tahu. Diwajibkan di sini,
   // bukan cuma diandalkan validasi UI, karena baris ini TIDAK bisa diedit
   // lagi setelah tersimpan (tak ada form edit, cuma status/hapus).
-  if (!normalizeWa(kurirWa)) return c.json({ error: "nomor WA kurir wajib diisi" }, 400);
+  if (normalizeWa(kurirWa).length < 9) return c.json({ error: "nomor WA kurir wajib diisi & harus nomor yang valid" }, 400);
   const tujuan = body.tujuan == null ? "kirim" : String(body.tujuan);
   if (!["kirim", "tagih", "kirim+tagih"].includes(tujuan)) {
     return c.json({ error: "tujuan harus kirim|tagih|kirim+tagih" }, 400);
@@ -4471,6 +4491,9 @@ app.patch("/pickup-plan/:id", async (c) => {
   }
   if (body.tanggal != null && !isIsoDate(String(body.tanggal))) {
     return c.json({ error: "tanggal harus tanggal valid (YYYY-MM-DD)" }, 400);
+  }
+  if (body.kurir_wa_number != null && normalizeWa(String(body.kurir_wa_number)).length < 9) {
+    return c.json({ error: "nomor WA kurir tidak valid" }, 400);
   }
   const row = await updatePickupPlan(c.req.param("id"), {
     status: body.status == null ? undefined : (String(body.status) as "rencana" | "selesai" | "batal"),
@@ -5006,20 +5029,29 @@ app.get("/teknisi-roster", async (c) => {
 
 app.post("/service-tickets", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let body: { complaint_text?: string; customer_name?: string; area?: string };
+  let body: { complaint_text?: string; customer_id?: number | string | null; customer_name?: string; area?: string };
   try {
     body = await c.req.json();
   } catch {
     return c.json({ error: "invalid JSON body" }, 400);
   }
   if (!body.complaint_text?.trim()) return c.json({ error: "complaint_text wajib" }, 400);
-  const ticket = await createTicket({
-    complaint_text: body.complaint_text,
-    customer_name: body.customer_name,
-    area: body.area,
-    source: "manual",
-  });
-  return c.json(ticket, 201);
+  // customer_id SENGAJA opsional — tiket boleh tanpa customer (lihat migrasi
+  // 163). Tapi kalau diisi dan tak sah, createTicket melempar → 400: "id
+  // ngawur" itu salah input, dan tiketnya TIDAK boleh diam-diam tersimpan
+  // tanpa tautan seolah user tak memilih apa pun.
+  try {
+    const ticket = await createTicket({
+      complaint_text: body.complaint_text,
+      customer_id: body.customer_id ?? null,
+      customer_name: body.customer_name,
+      area: body.area,
+      source: "manual",
+    });
+    return c.json(ticket, 201);
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : "gagal membuat tiket" }, 400);
+  }
 });
 
 app.get("/service-tickets", async (c) => {
@@ -6025,25 +6057,36 @@ app.get("/it-tickets", async (c) => {
 
 app.post("/it-tickets", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let body: { asset_id?: string; masalah?: string; reported_by?: string; assigned_to?: string };
+  let body: {
+    asset_id?: string;
+    masalah?: string;
+    reported_by?: string;
+    assigned_to?: string;
+    reported_by_user_id?: string;
+    assigned_to_user_id?: string;
+  };
   try {
     body = await c.req.json();
   } catch {
     return c.json({ error: "invalid JSON body" }, 400);
   }
   if (!body.asset_id || !body.masalah) return c.json({ error: "asset_id & masalah wajib diisi" }, 400);
+  // Pelapor/PIC tetap OPSIONAL & boleh teks (087: belum tentu karyawan
+  // terdaftar). Yang baru cuma jalur ber-akun di sampingnya (migrasi 164).
   const r = await itTicketCreateTicket({
     asset_id: body.asset_id,
     masalah: body.masalah,
     reported_by: body.reported_by,
     assigned_to: body.assigned_to,
+    reported_by_user_id: body.reported_by_user_id,
+    assigned_to_user_id: body.assigned_to_user_id,
   });
   return c.json(r, "error" in r ? 400 : 201);
 });
 
 app.patch("/it-tickets/:id/status", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let body: { status?: string; assigned_to?: string; resolved_note?: string };
+  let body: { status?: string; assigned_to?: string; assigned_to_user_id?: string; resolved_note?: string };
   try {
     body = await c.req.json();
   } catch {
@@ -6055,6 +6098,7 @@ app.patch("/it-tickets/:id/status", async (c) => {
   const r = await updateTicketStatus(c.req.param("id"), {
     status: body.status,
     assigned_to: body.assigned_to,
+    assigned_to_user_id: body.assigned_to_user_id,
     resolved_note: body.resolved_note,
   });
   return c.json(r, r.ok ? 200 : 400);

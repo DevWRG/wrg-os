@@ -83,12 +83,14 @@ export function InboundReceivingTable({ rows }: { rows: InboundReceivingRow[] })
   const [detailErr, setDetailErr] = useState(false);
   const [busy, setBusy] = useState(false);
   const [newLabel, setNewLabel] = useState("");
+  const [actionErr, setActionErr] = useState<string | null>(null);
   const { confirm, dialog } = useConfirm();
 
   function openDetail(r: InboundReceivingRow) {
     setSel(r);
     setDetail(null);
     setDetailErr(false);
+    setActionErr(null);
     setNewLabel("");
     reload(r.id);
   }
@@ -103,15 +105,19 @@ export function InboundReceivingTable({ rows }: { rows: InboundReceivingRow[] })
   async function toggleItem(item: ItemRow) {
     if (!sel) return;
     setBusy(true);
+    setActionErr(null);
     try {
       const res = await fetch(`/api/inbound-receiving/${sel.id}/items/${item.id}`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ is_checked: !item.is_checked }),
       });
-      if (!res.ok) throw new Error();
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(data?.error ?? "Gagal mengubah checklist");
       reload(sel.id);
       router.refresh();
+    } catch (err) {
+      setActionErr(err instanceof Error ? err.message : "Gagal mengubah checklist");
     } finally {
       setBusy(false);
     }
@@ -153,15 +159,19 @@ export function InboundReceivingTable({ rows }: { rows: InboundReceivingRow[] })
   async function markCompleted() {
     if (!sel) return;
     setBusy(true);
+    setActionErr(null);
     try {
       const res = await fetch(`/api/inbound-receiving/${sel.id}`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ status: "completed" }),
       });
-      if (!res.ok) throw new Error();
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(data?.error ?? "Gagal menandai selesai");
       reload(sel.id);
       router.refresh();
+    } catch (err) {
+      setActionErr(err instanceof Error ? err.message : "Gagal menandai selesai");
     } finally {
       setBusy(false);
     }
@@ -276,6 +286,7 @@ export function InboundReceivingTable({ rows }: { rows: InboundReceivingRow[] })
                   </>
                 )}
               </DialogBody>
+              {actionErr && <p className="text-danger px-1 text-xs">{actionErr}</p>}
               <DialogFooter className="justify-between">
                 <Button type="button" variant="ghost" disabled={busy} onClick={deleteReceiving} className="text-danger hover:text-danger">
                   <Trash2 /> Hapus

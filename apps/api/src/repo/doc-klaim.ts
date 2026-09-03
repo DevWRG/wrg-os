@@ -169,8 +169,12 @@ export async function createKlaimManual(input: CreateKlaimManualInput): Promise<
 
 export async function deleteKlaim(id: string): Promise<ActionResult> {
   const sql = db();
-  const rows = await sql`DELETE FROM doc_klaim WHERE id = ${id} RETURNING id`;
-  if (!rows.length) return { ok: false, error: "klaim tidak ditemukan" };
+  const [row] = await sql`SELECT status FROM doc_klaim WHERE id = ${id}`;
+  if (!row) return { ok: false, error: "klaim tidak ditemukan" };
+  if (row.status === "dibayar") {
+    return { ok: false, error: "klaim sudah dibayar — tidak bisa dihapus" };
+  }
+  await sql`DELETE FROM doc_klaim WHERE id = ${id}`;
   return { ok: true };
 }
 
@@ -206,6 +210,13 @@ export async function decideKlaim(id: string, input: DecideKlaimInput): Promise<
   const fromStatus = String(row.status);
   if (!(TRANSITIONS[fromStatus] ?? []).includes(input.decision)) {
     return { ok: false, error: `transisi "${fromStatus}" -> "${input.decision}" tidak diizinkan` };
+  }
+  if (
+    input.decision === "disetujui" &&
+    input.nominal_disetujui != null &&
+    (!Number.isFinite(input.nominal_disetujui) || input.nominal_disetujui < 0)
+  ) {
+    return { ok: false, error: "nominal_disetujui tidak boleh negatif" };
   }
   const nominalDisetujui = input.decision === "disetujui" ? (input.nominal_disetujui ?? null) : null;
   await sql`

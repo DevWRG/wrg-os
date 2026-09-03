@@ -1,6 +1,15 @@
 import { db } from "../db.js";
 import { sendViaWaGateway } from "../wasend.js";
 
+// Round-trip lewat toISOString() (bukan cuma cek Number.isNaN) — JS Date
+// TOLERAN overflow kalender (mis. "2027-02-30" diam-diam jadi "2027-03-02"),
+// pola sama fix isIsoDate() di repo/vehicle.ts.
+const isIsoDate = (s: string): boolean => {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const d = new Date(`${s}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
+};
+
 // F137 — GA Maintenance & Recurrence Tracker. DI ATAS F132 (ga_assets,
 // migrasi 086). Upgrade sengaja dari gais/006_maintenance.sql+009 — asset_id
 // & vendor_id FK sungguhan (source cuma free-text), plus approval Finance
@@ -200,6 +209,13 @@ export interface GaMaintenanceInput {
 
 export async function createSchedule(input: GaMaintenanceInput): Promise<GaMaintenanceRow | ActionResult> {
   const sql = db();
+  if (input.cost_budget != null && (!Number.isFinite(input.cost_budget) || input.cost_budget < 0)) {
+    return { ok: false, error: "cost_budget tidak boleh negatif" };
+  }
+  if (!input.due_date) return { ok: false, error: "due_date wajib diisi" };
+  if (!isIsoDate(input.due_date)) {
+    return { ok: false, error: `due_date "${input.due_date}" bukan tanggal valid (format YYYY-MM-DD)` };
+  }
   const rows0 = await sql`SELECT category_id FROM ga_assets WHERE id = ${input.asset_id}`;
   if (rows0.length === 0) return { ok: false, error: "aset tidak ditemukan" };
 
@@ -231,6 +247,12 @@ export interface GaMaintenanceUpdateInput {
 
 export async function updateSchedule(id: string, input: GaMaintenanceUpdateInput): Promise<ActionResult> {
   const sql = db();
+  if (input.cost_budget != null && (!Number.isFinite(input.cost_budget) || input.cost_budget < 0)) {
+    return { ok: false, error: "cost_budget tidak boleh negatif" };
+  }
+  if (input.due_date != null && !isIsoDate(input.due_date)) {
+    return { ok: false, error: `due_date "${input.due_date}" bukan tanggal valid (format YYYY-MM-DD)` };
+  }
   const rows = await sql`SELECT id FROM ga_maintenance_schedules WHERE id = ${id}`;
   if (rows.length === 0) return { ok: false, error: "jadwal tidak ditemukan" };
   await sql`
@@ -291,7 +313,17 @@ export async function completeSchedule(id: string, input: CompleteInput): Promis
   const rows = await sql`SELECT * FROM ga_maintenance_schedules WHERE id = ${id}`;
   if (rows.length === 0) return { ok: false, error: "jadwal tidak ditemukan" };
   const row = rows[0];
-  if (row.status === "done" || row.status === "cancelled") return { ok: false, error: `sudah "${row.status}"` };
+  // Harus lewat start() dulu (in_progress) — tanpa guard ini, jadwal "pending"
+  // bisa langsung di-complete (skip-start), DAN jadwal "pending_finance" yang
+  // nunggu approveSchedule() bisa di-complete ULANG dgn biaya lebih rendah utk
+  // mem-bypass approval Finance sepenuhnya (approved_by/approved_at tak pernah
+  // terisi tapi status tetap jatuh ke "done").
+  if (row.status !== "in_progress") {
+    return { ok: false, error: `hanya bisa complete dari status "in_progress", saat ini "${row.status}"` };
+  }
+  if (input.cost_actual != null && (!Number.isFinite(input.cost_actual) || input.cost_actual < 0)) {
+    return { ok: false, error: "cost_actual tidak boleh negatif" };
+  }
 
   const costActual = input.cost_actual ?? Number(row.cost_actual ?? 0);
   const needsFinance = costActual > FINANCE_THRESHOLD && !row.approved_by;
