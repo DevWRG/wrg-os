@@ -5019,20 +5019,29 @@ app.get("/teknisi-roster", async (c) => {
 
 app.post("/service-tickets", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let body: { complaint_text?: string; customer_name?: string; area?: string };
+  let body: { complaint_text?: string; customer_id?: number | string | null; customer_name?: string; area?: string };
   try {
     body = await c.req.json();
   } catch {
     return c.json({ error: "invalid JSON body" }, 400);
   }
   if (!body.complaint_text?.trim()) return c.json({ error: "complaint_text wajib" }, 400);
-  const ticket = await createTicket({
-    complaint_text: body.complaint_text,
-    customer_name: body.customer_name,
-    area: body.area,
-    source: "manual",
-  });
-  return c.json(ticket, 201);
+  // customer_id SENGAJA opsional — tiket boleh tanpa customer (lihat migrasi
+  // 163). Tapi kalau diisi dan tak sah, createTicket melempar → 400: "id
+  // ngawur" itu salah input, dan tiketnya TIDAK boleh diam-diam tersimpan
+  // tanpa tautan seolah user tak memilih apa pun.
+  try {
+    const ticket = await createTicket({
+      complaint_text: body.complaint_text,
+      customer_id: body.customer_id ?? null,
+      customer_name: body.customer_name,
+      area: body.area,
+      source: "manual",
+    });
+    return c.json(ticket, 201);
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : "gagal membuat tiket" }, 400);
+  }
 });
 
 app.get("/service-tickets", async (c) => {
@@ -6038,25 +6047,36 @@ app.get("/it-tickets", async (c) => {
 
 app.post("/it-tickets", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let body: { asset_id?: string; masalah?: string; reported_by?: string; assigned_to?: string };
+  let body: {
+    asset_id?: string;
+    masalah?: string;
+    reported_by?: string;
+    assigned_to?: string;
+    reported_by_user_id?: string;
+    assigned_to_user_id?: string;
+  };
   try {
     body = await c.req.json();
   } catch {
     return c.json({ error: "invalid JSON body" }, 400);
   }
   if (!body.asset_id || !body.masalah) return c.json({ error: "asset_id & masalah wajib diisi" }, 400);
+  // Pelapor/PIC tetap OPSIONAL & boleh teks (087: belum tentu karyawan
+  // terdaftar). Yang baru cuma jalur ber-akun di sampingnya (migrasi 164).
   const r = await itTicketCreateTicket({
     asset_id: body.asset_id,
     masalah: body.masalah,
     reported_by: body.reported_by,
     assigned_to: body.assigned_to,
+    reported_by_user_id: body.reported_by_user_id,
+    assigned_to_user_id: body.assigned_to_user_id,
   });
   return c.json(r, "error" in r ? 400 : 201);
 });
 
 app.patch("/it-tickets/:id/status", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let body: { status?: string; assigned_to?: string; resolved_note?: string };
+  let body: { status?: string; assigned_to?: string; assigned_to_user_id?: string; resolved_note?: string };
   try {
     body = await c.req.json();
   } catch {
@@ -6068,6 +6088,7 @@ app.patch("/it-tickets/:id/status", async (c) => {
   const r = await updateTicketStatus(c.req.param("id"), {
     status: body.status,
     assigned_to: body.assigned_to,
+    assigned_to_user_id: body.assigned_to_user_id,
     resolved_note: body.resolved_note,
   });
   return c.json(r, r.ok ? 200 : 400);
