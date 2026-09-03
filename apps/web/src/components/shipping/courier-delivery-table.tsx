@@ -41,6 +41,11 @@ const STATUS_LABEL: Record<CourierDeliveryRow["status"], string> = {
 function StatusBadge({ row }: { row: CourierDeliveryRow }) {
   if (row.status === "bermasalah") return <Badge variant="destructive">Bermasalah</Badge>;
   if (row.status === "selesai") {
+    // tanggal_tiba kosong pada status "selesai" seharusnya tak terjadi lewat form
+    // (BUG-13 fix), tapi kalau tetap terjadi (data lama/API lain), is_late ikut
+    // NULL di SQL (`tanggal_tiba > target_tiba_date` dgn NULL) → jangan
+    // diasumsikan "Tepat Waktu", karena datanya memang belum diketahui.
+    if (!row.tanggal_tiba) return <Badge variant="outline">Selesai · Tgl Tiba belum tercatat</Badge>;
     return row.is_late
       ? <Badge className="bg-warning/10 text-warning">Selesai · Telat</Badge>
       : <Badge className="bg-success/10 text-success">Selesai · Tepat Waktu</Badge>;
