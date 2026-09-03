@@ -1981,9 +1981,11 @@ app.post("/forecast/buffer-config", async (c) => {
   return c.json(r, r.ok ? 200 : 400);
 });
 
-// F15 SPH Generator — form intake AM: pilih item katalog product_pricelist
-// PERSIS (bukan ketik nama), qty, diskon minta. Body:
-// { deal_id?, customer_id, customer_name, am_id?, periode?, items: [{pricelist_item_id, qty, diskon_requested}], created_by? }.
+// F15 SPH Generator — form intake AM: customer & item dipilih PERSIS dari
+// katalog (accurate_customer + product_pricelist), bukan ketik nama. Body:
+// { deal_id?, customer_id (WAJIB, id accurate_customer), am_id?, periode?,
+//   items: [{pricelist_item_id, qty, diskon_requested}], created_by? }.
+// customer_name tidak dikirim/diabaikan — di-derive dari mirror.
 app.post("/sph", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   let body: Parameters<typeof createSphDraft>[0] | undefined;
@@ -1992,8 +1994,16 @@ app.post("/sph", async (c) => {
   } catch {
     return c.json({ error: "invalid JSON body" }, 400);
   }
-  if (!body?.customer_name) {
-    return c.json({ error: "customer_name wajib" }, 400);
+  // `customer_id` WAJIB di jalur ini. Endpoint ini cuma dipakai form web
+  // /sph/new (lewat BFF /api/sph), dan sejak "link data existing" form itu
+  // memaksa memilih dari katalog Accurate. Jalur WA `#SPH` TIDAK lewat sini —
+  // ia memanggil createSphDraft langsung dgn nama teks dari pesan, jadi
+  // kewajiban di sini tidak mematikannya.
+  //
+  // customer_name TIDAK lagi diwajibkan: nama di-derive server-side dari
+  // mirror di createSphDraft, jadi nama kiriman klien tak dipercaya.
+  if (!body?.customer_id) {
+    return c.json({ error: "customer_id wajib — pilih customer dari katalog Accurate" }, 400);
   }
   const r = await createSphDraft(body);
   return c.json(r, r.ok ? 201 : 400);
