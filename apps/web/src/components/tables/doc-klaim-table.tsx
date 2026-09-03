@@ -116,7 +116,9 @@ export function DocKlaimTable({ klaim }: { klaim: DocKlaim[] }) {
       cell: (k) => (
         <div className="flex items-center justify-end gap-1">
           <DocKlaimApproval id={k.id} status={k.status} />
-          <DocKlaimDeleteButton id={k.id} label={k.employee_nama ?? k.sender_name ?? k.id} />
+          {k.status !== "dibayar" && (
+            <DocKlaimDeleteButton id={k.id} label={k.employee_nama ?? k.sender_name ?? k.id} />
+          )}
         </div>
       ),
     },

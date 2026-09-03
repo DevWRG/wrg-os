@@ -251,6 +251,12 @@ export async function createAsset(input: GaAssetInput): Promise<GaAssetRow | Act
   const nama = input.nama.trim();
   if (!nama) return { ok: false, error: "nama wajib diisi" };
   if (!input.category_id) return { ok: false, error: "category_id wajib diisi" };
+  if (input.purchase_price != null && (!Number.isFinite(input.purchase_price) || input.purchase_price < 0)) {
+    return { ok: false, error: "purchase_price tidak boleh negatif" };
+  }
+  if (input.current_value != null && (!Number.isFinite(input.current_value) || input.current_value < 0)) {
+    return { ok: false, error: "current_value tidak boleh negatif" };
+  }
   const cat = await sql`SELECT 1 FROM ga_asset_categories WHERE id = ${input.category_id}`;
   if (cat.length === 0) return { ok: false, error: "kategori tidak ditemukan" };
 
@@ -299,6 +305,12 @@ export interface GaAssetUpdateInput {
 
 export async function updateAsset(id: string, input: GaAssetUpdateInput): Promise<ActionResult> {
   const sql = db();
+  if (input.purchase_price != null && (!Number.isFinite(input.purchase_price) || input.purchase_price < 0)) {
+    return { ok: false, error: "purchase_price tidak boleh negatif" };
+  }
+  if (input.current_value != null && (!Number.isFinite(input.current_value) || input.current_value < 0)) {
+    return { ok: false, error: "current_value tidak boleh negatif" };
+  }
   const rows = await sql`SELECT id FROM ga_assets WHERE id = ${id}`;
   if (rows.length === 0) return { ok: false, error: "aset tidak ditemukan" };
   const picProvided = Object.prototype.hasOwnProperty.call(input, "pic_name_override");

@@ -294,6 +294,7 @@ export function PurchaseOrderTable({
   async function addReceipt(itemId: string) {
     if (!sel || !newReceipt.qty_received) return;
     setBusy(true);
+    setActionError(null);
     try {
       const res = await fetch(`/api/purchase-orders/${sel.id}/items/${itemId}/receipts`, {
         method: "POST",
@@ -305,11 +306,13 @@ export function PurchaseOrderTable({
           condition_notes: newReceipt.condition_notes.trim() || undefined,
         }),
       });
-      if (!res.ok) throw new Error();
+      if (!res.ok) throw new Error(await errorMessage(res));
       setNewReceipt({ qty_received: "", received_date: today(), received_by: "", condition_notes: "" });
       loadReceipts(itemId);
       reload(sel.id);
       router.refresh();
+    } catch (err) {
+      setActionError(String(err instanceof Error ? err.message : err));
     } finally {
       setBusy(false);
     }

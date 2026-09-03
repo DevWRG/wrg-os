@@ -196,6 +196,8 @@ export async function markTerima(
   const sql = db();
   const rows = await sql`SELECT id, status FROM shipment_tracking WHERE id = ${id}`;
   if (rows.length === 0) return { ok: false, error: "shipment tidak ditemukan" };
+  if (rows[0].status === "terima") return { ok: false, error: "langkah terima sudah dilakukan" };
+  if (rows[0].status === "bast") return { ok: false, error: "langkah bast sudah dilakukan — terima otomatis sudah lewat" };
   if (rows[0].status !== "dikirim") return { ok: false, error: "langkah kirim belum selesai — belum bisa tandai terima" };
   await sql`
     UPDATE shipment_tracking

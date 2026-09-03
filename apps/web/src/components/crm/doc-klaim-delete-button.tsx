@@ -10,23 +10,26 @@ import { useConfirm } from "@/components/ui/use-confirm";
 export function DocKlaimDeleteButton({ id, label }: { id: string; label: string }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const { confirm, dialog } = useConfirm();
 
   async function doDelete() {
     setBusy(true);
+    setError(null);
     try {
       const res = await fetch(`/api/doc-klaim/${id}`, { method: "DELETE" });
-      if (!res.ok) throw new Error("gagal hapus");
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error ?? "gagal hapus");
       router.refresh();
-    } catch {
-      // biarkan busy reset, tombol tetap tersedia utk retry
+    } catch (err) {
+      setError(String(err instanceof Error ? err.message : err));
     } finally {
       setBusy(false);
     }
   }
 
   return (
-    <>
+    <div className="flex flex-col items-end gap-0.5">
       {dialog}
       <Button
         size="icon-sm"
@@ -38,6 +41,7 @@ export function DocKlaimDeleteButton({ id, label }: { id: string; label: string 
       >
         <Trash2 />
       </Button>
-    </>
+      {error && <p className="text-destructive text-xs">{error}</p>}
+    </div>
   );
 }
