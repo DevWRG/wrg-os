@@ -2310,6 +2310,10 @@ app.post("/ga-assets/:id/upload", async (c) => {
   const ext = GA_UPLOAD_MIME_EXT[file.type];
   if (!ext) return c.json({ error: `tipe file "${file.type}" tak didukung (jpg/png/webp/pdf)` }, 400);
   if (file.size > 10 * 1024 * 1024) return c.json({ error: "file maksimal 10MB" }, 400);
+  // Cek aset ADA dulu sebelum tulis file ke disk — kebalikannya bikin file
+  // yatim nyangkut permanen tiap kali id-nya salah (setAssetFile menolak
+  // rapi, tapi writeFile sudah kadung jalan).
+  if (!(await getGaAsset(id))) return c.json({ error: "aset tidak ditemukan" }, 400);
 
   await mkdir(GA_UPLOAD_ROOT, { recursive: true });
   const filename = `${id}-${kind}-${Date.now()}.${ext}`;
