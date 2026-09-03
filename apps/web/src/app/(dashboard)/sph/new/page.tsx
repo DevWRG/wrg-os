@@ -1,22 +1,27 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { CatalogPicker, type CatalogChoice } from "@/components/crm/catalog-picker";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
-interface Customer {
-  // Bukan FK sungguhan & TERNYATA sering NULL di data deal existing (bukan
-  // cuma di dev) — jangan pakai sbg satu-satunya kunci unik/wajib, dedupe
-  // pakai customer_name sbg fallback (lihat pickerOptions di bawah).
-  customer_id: string | null;
-  customer_name: string;
-}
+// Customer dipilih dari katalog Accurate (`accurate_customer`) lewat
+// CatalogPicker — komponen yang sama dipakai F22.
+//
+// Sebelumnya di sini ada dua kotak: dropdown "pilih dari deal existing" (sumber
+// /api/customers) dan kotak "atau isi manual". Dua-duanya dilepas:
+//   · /api/customers itu read-model dari tabel `deal`, `customer_id`-nya sering
+//     NULL dan bukan FK sungguhan — jadi SPH tersimpan tanpa tautan ke customer
+//     mana pun, dan namanya bisa beda ejaan dari master.
+//   · kotak manual membuat nama bisa diketik ulang bebas SESUDAH memilih, jadi
+//     id dan nama bisa bercerita berbeda dalam satu dokumen.
+// Nama yang dipakai di surat sekarang di-derive server-side dari mirror
+// (repo/sph.ts), jadi yang dikirim dari sini hanya id-nya.
 
 interface PricebookItem {
   id: number;
@@ -40,9 +45,7 @@ interface CartRow {
 const rupiah = (n: number) => `Rp${Math.round(n).toLocaleString("id-ID")}`;
 
 export default function SphNewPage() {
-  const [customers, setCustomers] = useState<Customer[]>([]);
-  const [customerId, setCustomerId] = useState("");
-  const [customerName, setCustomerName] = useState("");
+  const [customer, setCustomer] = useState<CatalogChoice | null>(null);
 
   const [q, setQ] = useState("");
   const [results, setResults] = useState<PricebookItem[]>([]);
@@ -60,22 +63,6 @@ export default function SphNewPage() {
   const [paymentTerms, setPaymentTerms] = useState("");
   const [shippingTerms, setShippingTerms] = useState("");
   const [validityDays, setValidityDays] = useState(14);
-
-  useEffect(() => {
-    let active = true;
-    (async () => {
-      try {
-        const res = await fetch("/api/customers", { cache: "no-store" });
-        const data = await res.json();
-        if (active && res.ok) setCustomers(data.customers ?? []);
-      } catch {
-        /* picker tetap bisa isi manual kalau gagal */
-      }
-    })();
-    return () => {
-      active = false;
-    };
-  }, []);
 
   const search = useCallback(async () => {
     setSearching(true);
@@ -122,23 +109,10 @@ export default function SphNewPage() {
   const total = computed.reduce((acc, r) => acc + r.jumlah, 0);
   const totalPpn = computed.reduce((acc, r) => acc + r.nettPpn * r.qty, 0);
 
-  // customer_id sering NULL di data deal existing (bukan cuma dev) — dedupe
-  // pakai customer_name sbg fallback kunci, biar deal ber-id-NULL tidak
-  // collapse jadi 1 opsi doang.
-  const pickerOptions = useMemo(() => {
-    const seen = new Set<string>();
-    return customers.filter((c) => {
-      const key = c.customer_id ?? c.customer_name;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
-  }, [customers]);
-
   async function submit() {
     setSubmitError(null);
-    if (!customerName.trim()) {
-      setSubmitError("isi nama customer dulu");
+    if (!customer) {
+      setSubmitError("pilih customer dari katalog dulu");
       return;
     }
     if (cart.length === 0) {
@@ -154,9 +128,11 @@ export default function SphNewPage() {
       const res = await fetch("/api/sph", {
         method: "POST",
         headers: { "content-type": "application/json" },
+        // Cuma id yang dikirim: nama di surat di-derive server-side dari
+        // accurate_customer (repo/sph.ts), jadi tak ada jalan nama menyimpang
+        // dari master lewat payload.
         body: JSON.stringify({
-          customer_id: customerId || null,
-          customer_name: customerName,
+          customer_id: String(customer.id),
           items: cart.map((r) => ({
             pricelist_item_id: r.item.id,
             qty: r.qty,
@@ -181,7 +157,8 @@ export default function SphNewPage() {
       <div className="space-y-4 p-6">
         <h1 className="text-2xl font-semibold">SPH dibuat ✅</h1>
         <p className="text-muted-foreground">
-          Draft SPH utk {customerName} sudah tersimpan (status: draft). Lanjut review di halaman Sales Docs.
+          Draft SPH utk {customer?.label ?? "customer terpilih"} sudah tersimpan (status: draft). Lanjut review di
+          halaman Sales Docs.
         </p>
         <div className="flex gap-2">
           <Link href="/sales-docs">
@@ -209,44 +186,24 @@ export default function SphNewPage() {
         <CardHeader>
           <CardTitle className="text-base">Customer</CardTitle>
         </CardHeader>
-        <CardContent className="flex flex-wrap items-end gap-3">
-          <div className="min-w-64">
-            <Label className="mb-1 block text-xs">Pilih dari deal existing</Label>
-            <Select
-              // Selalu string (jangan `undefined`) — Select ini menentukan
-              // controlled/uncontrolled dari render PERTAMA; kalau awalnya
-              // `undefined` (customerName masih "") lalu berubah jadi string
-              // setelah user pilih, Base UI protes "uncontrolled → controlled".
-              value={customerName}
-              onValueChange={(v) => {
-                const picked = pickerOptions.find((c) => (c.customer_id ?? c.customer_name) === v);
-                setCustomerName(picked?.customer_name ?? "");
-                setCustomerId(picked?.customer_id ?? "");
-              }}
-            >
-              <SelectTrigger className="w-full">
-                <SelectValue placeholder="(opsional) cari customer…" />
-              </SelectTrigger>
-              <SelectContent>
-                {pickerOptions.map((c) => (
-                  <SelectItem key={c.customer_id ?? c.customer_name} value={c.customer_id ?? c.customer_name}>
-                    {c.customer_name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="min-w-64">
-            <Label className="mb-1 block text-xs">Atau isi manual — Nama Customer</Label>
-            <Input
-              value={customerName}
-              onChange={(e) => {
-                setCustomerName(e.target.value);
-                setCustomerId(""); // ketik manual = putus dari deal yg tadi dipilih
-              }}
-              placeholder="mis. RS Siloam Surabaya"
+        <CardContent className="space-y-2">
+          <div className="max-w-lg">
+            <Label htmlFor="sph-customer" className="mb-1 block text-xs">
+              Customer *
+            </Label>
+            <CatalogPicker
+              entity="customers"
+              value={customer}
+              onChange={setCustomer}
+              inputId="sph-customer"
+              placeholder="cari nama customer lalu pilih dari daftar…"
+              required
             />
           </div>
+          <p className="text-muted-foreground text-xs">
+            Wajib dipilih dari katalog Accurate — nama di surat diambil dari master, bukan dari yang diketik. Kalau
+            customer-nya belum ada di daftar, sinkronkan katalog customer dulu.
+          </p>
         </CardContent>
       </Card>
 
@@ -424,7 +381,10 @@ export default function SphNewPage() {
       </Card>
 
       {submitError && <p className="text-destructive text-sm">{submitError}</p>}
-      <Button onClick={() => void submit()} disabled={submitting || cart.length === 0}>
+      {/* Tombol mati kalau customer belum dipilih — cocok dengan syarat
+          server (POST /sph menolak tanpa customer_id), supaya tak ada tombol
+          yang kelihatan hidup lalu balas 400. */}
+      <Button onClick={() => void submit()} disabled={submitting || cart.length === 0 || !customer}>
         {submitting ? "Menyimpan…" : "Buat Draft SPH"}
       </Button>
     </div>

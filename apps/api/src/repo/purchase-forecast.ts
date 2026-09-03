@@ -111,9 +111,17 @@ export interface PurchaseForecastInput {
   created_by?: string | null;
 }
 
+// BUG-20 — batas bawah (>=2000) sudah ada sejak awal, tapi tanpa batas atas
+// nilai absurd (mis. 999999) diterima mentah-mentah. Batas atas dibuat
+// longgar (10 tahun ke depan) — cukup utk forecast wajar, tidak menolak
+// input sah yang cuma lebih maju dari tahun berjalan.
+function maxForecastYear(): number {
+  return new Date().getUTCFullYear() + 10;
+}
+
 function validateInput(t: { period_year: number; period_month: number; forecast_value: number }): void {
-  if (!Number.isInteger(t.period_year) || t.period_year < 2000) {
-    throw new PurchaseForecastError(400, "period_year tidak valid");
+  if (!Number.isInteger(t.period_year) || t.period_year < 2000 || t.period_year > maxForecastYear()) {
+    throw new PurchaseForecastError(400, `period_year tidak valid (2000-${maxForecastYear()})`);
   }
   if (!Number.isInteger(t.period_month) || t.period_month < 1 || t.period_month > 12) {
     throw new PurchaseForecastError(400, "period_month harus 1-12");

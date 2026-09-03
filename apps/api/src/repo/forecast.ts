@@ -255,6 +255,9 @@ export async function updateSuggestion(
   patch: { finalQty?: number | null; notes?: string | null },
 ): Promise<{ ok: boolean; error?: string }> {
   const sql = db();
+  if (patch.finalQty != null && (!Number.isFinite(patch.finalQty) || patch.finalQty < 0)) {
+    return { ok: false, error: "finalQty tidak boleh negatif" };
+  }
   const rows = await sql`SELECT status FROM forecast_suggestion WHERE id = ${id}`;
   if (rows.length === 0) return { ok: false, error: "usulan tidak ditemukan" };
   if (rows[0].status !== "draft") return { ok: false, error: `usulan sudah ${rows[0].status}, tak bisa diedit` };

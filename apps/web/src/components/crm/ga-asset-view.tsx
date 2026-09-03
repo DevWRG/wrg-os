@@ -69,7 +69,9 @@ export function GaAssetView({
         </div>
         {tab === "aset" && <AddGaAssetButton categories={activeCategories} />}
         {tab === "kategori" && <AddGaAssetCategoryButton />}
-        {tab === "tiket" && <AddItTicketButton assets={activeAssets} />}
+        {/* `users` sudah ditarik halaman ini (GET /app-users) untuk picker PIC
+            aset & approver — dipakai ulang di sini, tanpa fetch baru. */}
+        {tab === "tiket" && <AddItTicketButton assets={activeAssets} users={users} />}
         {tab === "maintenance" && (
           <AddGaMaintenanceButton
             assets={assetOptions}

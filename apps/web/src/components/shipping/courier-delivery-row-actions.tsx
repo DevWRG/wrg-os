@@ -66,7 +66,11 @@ export function CourierDeliveryRowActions({ row }: { row: CourierDeliveryRow }) 
           cabang: f.cabang.trim() || null,
           tanggal_kirim: f.tanggal_kirim,
           target_tiba_date: f.target_tiba_date || null,
-          tanggal_tiba: f.tanggal_tiba || null,
+          // Kosongkan field ini (dan tak pernah terisi sebelumnya) → jangan kirim
+          // key-nya sama sekali, biar backend pakai default "hari ini" saat status
+          // diubah ke "selesai" (lihat komentar updateCourierDelivery). Kalau dikirim
+          // eksplisit `null`, default itu tak pernah kepakai (BUG-13).
+          ...(f.tanggal_tiba || row.tanggal_tiba ? { tanggal_tiba: f.tanggal_tiba || null } : {}),
           distance_km: f.distance_km ? Number(f.distance_km) : null,
           status: f.status,
           notes: f.notes.trim() || null,

@@ -70,8 +70,13 @@ export interface ItTicketRow {
   is_critical: boolean;
   masalah: string;
   status: string;
+  // Nama yang DITAMPILKAN: akun app_user kalau tertaut, kalau tidak nama teks
+  // yang diketik (jalur non-karyawan tetap sah — lihat migrasi 087/164).
   reported_by: string | null;
   assigned_to: string | null;
+  // Tautan akun; null = memang tak tertaut, bukan "belum diisi".
+  reported_by_user_id: string | null;
+  assigned_to_user_id: string | null;
   sla_due_at: string;
   sla_overdue: boolean;
   resolved_at: string | null;
@@ -91,8 +96,21 @@ function mapTicketRow(r: Record<string, unknown>): ItTicketRow {
     is_critical: Boolean(r.is_critical),
     masalah: String(r.masalah),
     status,
-    reported_by: r.reported_by ? String(r.reported_by) : null,
-    assigned_to: r.assigned_to ? String(r.assigned_to) : null,
+    // Urutan COALESCE: nama akun MENANG atas teks. Teks itu snapshot saat
+    // tiket dibuat; kalau orangnya punya akun, nama akun yang sekarang benar
+    // (mis. ejaan diperbaiki di /users) — bukan ejaan lama yang diketik.
+    reported_by: r.reported_by_user_name
+      ? String(r.reported_by_user_name)
+      : r.reported_by
+        ? String(r.reported_by)
+        : null,
+    assigned_to: r.assigned_to_user_name
+      ? String(r.assigned_to_user_name)
+      : r.assigned_to
+        ? String(r.assigned_to)
+        : null,
+    reported_by_user_id: r.reported_by_user_id ? String(r.reported_by_user_id) : null,
+    assigned_to_user_id: r.assigned_to_user_id ? String(r.assigned_to_user_id) : null,
     sla_due_at: slaDueAt,
     sla_overdue: status !== "resolved" && new Date(slaDueAt).getTime() < Date.now(),
     resolved_at: r.resolved_at ? toIsoTs(r.resolved_at) : null,
@@ -105,8 +123,12 @@ function mapTicketRow(r: Record<string, unknown>): ItTicketRow {
 export async function listTickets(statusFilter?: string): Promise<ItTicketRow[]> {
   const sql = db();
   const rows = await sql`
-    SELECT t.*, a.asset_code, a.nama AS asset_nama, a.is_critical
+    SELECT t.*, a.asset_code, a.nama AS asset_nama, a.is_critical,
+           NULLIF(ru.name, '') AS reported_by_user_name,
+           NULLIF(au.name, '') AS assigned_to_user_name
     FROM it_ticket t JOIN ga_assets a ON a.id = t.asset_id
+    LEFT JOIN app_user ru ON ru.id = t.reported_by_user_id
+    LEFT JOIN app_user au ON au.id = t.assigned_to_user_id
     WHERE ${statusFilter ? sql`t.status = ${statusFilter}` : sql`true`}
     ORDER BY t.created_at DESC
   `;
@@ -116,6 +138,12 @@ export async function listTickets(statusFilter?: string): Promise<ItTicketRow[]>
 export interface ItTicketInput {
   asset_id: string;
   masalah: string;
+  // Dua jalur yang HIDUP BERSAMA, meniru F139 (reporter_user_id +
+  // reporter_name_override): id dipakai kalau orangnya punya akun app_user,
+  // teks dipakai kalau tidak (087 sengaja mengizinkan pelapor/PIC di luar HR).
+  // Kalau id diisi, teksnya diabaikan — nama diambil dari akun saat dibaca.
+  reported_by_user_id?: string | null;
+  assigned_to_user_id?: string | null;
   reported_by?: string | null;
   assigned_to?: string | null;
 }
@@ -127,17 +155,41 @@ export async function createTicket(input: ItTicketInput): Promise<ItTicketRow | 
   const asset = await sql`SELECT id, is_critical FROM ga_assets WHERE id = ${input.asset_id} AND active = true`;
   if (asset.length === 0) return { ok: false, error: "aset tidak ditemukan / nonaktif" };
 
+  // Id akun divalidasi SEBELUM insert supaya pesannya bisa dibaca manusia —
+  // tanpa ini FK-nya tetap menolak, tapi lewat error Postgres mentah.
+  const userIds = [input.reported_by_user_id, input.assigned_to_user_id].filter(
+    (v): v is string => typeof v === "string" && v.trim() !== "",
+  );
+  if (userIds.length) {
+    const found = await sql<{ id: string }[]>`SELECT id::text AS id FROM app_user WHERE id = ANY(${userIds})`;
+    const ok = new Set(found.map((r) => r.id));
+    const missing = userIds.filter((id) => !ok.has(id));
+    if (missing.length) return { ok: false, error: `akun tak ditemukan: ${missing.join(", ")}` };
+  }
+  // Teks diabaikan kalau id-nya ada — supaya satu tiket tak menyimpan dua
+  // versi nama yang bisa bercerita berbeda.
+  const reportedText = input.reported_by_user_id ? null : (input.reported_by?.trim() || null);
+  const assignedText = input.assigned_to_user_id ? null : (input.assigned_to?.trim() || null);
+
   const jam = asset[0].is_critical ? KRITIS_JAM : NORMAL_JAM;
   const slaDueAt = await businessHoursFromNow(Date.now(), jam);
 
   const rows = await sql`
-    INSERT INTO it_ticket (asset_id, masalah, reported_by, assigned_to, sla_due_at)
-    VALUES (${input.asset_id}, ${masalah}, ${input.reported_by ?? null}, ${input.assigned_to ?? null}, ${slaDueAt.toISOString()})
+    INSERT INTO it_ticket
+      (asset_id, masalah, reported_by, assigned_to, reported_by_user_id, assigned_to_user_id, sla_due_at)
+    VALUES (
+      ${input.asset_id}, ${masalah}, ${reportedText}, ${assignedText},
+      ${input.reported_by_user_id || null}, ${input.assigned_to_user_id || null}, ${slaDueAt.toISOString()}
+    )
     RETURNING id
   `;
   const [full] = await sql`
-    SELECT t.*, a.asset_code, a.nama AS asset_nama, a.is_critical
+    SELECT t.*, a.asset_code, a.nama AS asset_nama, a.is_critical,
+           NULLIF(ru.name, '') AS reported_by_user_name,
+           NULLIF(au.name, '') AS assigned_to_user_name
     FROM it_ticket t JOIN ga_assets a ON a.id = t.asset_id
+    LEFT JOIN app_user ru ON ru.id = t.reported_by_user_id
+    LEFT JOIN app_user au ON au.id = t.assigned_to_user_id
     WHERE t.id = ${rows[0].id}
   `;
   return mapTicketRow(full);
@@ -146,6 +198,10 @@ export async function createTicket(input: ItTicketInput): Promise<ItTicketRow | 
 export interface ItTicketStatusInput {
   status: "open" | "in_progress" | "resolved";
   assigned_to?: string | null;
+  // Alih PIC ke akun app_user. Mengisi ini MENGOSONGKAN `assigned_to` teks
+  // (dan sebaliknya) — kalau tidak, satu tiket bisa menyimpan dua nama PIC
+  // yang berbeda dan tampilan tergantung urutan COALESCE, bukan kenyataan.
+  assigned_to_user_id?: string | null;
   resolved_note?: string | null;
 }
 
@@ -162,10 +218,25 @@ export async function updateTicketStatus(id: string, input: ItTicketStatusInput)
   if (String(rows[0].status) === "resolved" && input.status !== "resolved") {
     return { ok: false, error: `tiket sudah resolved — tidak bisa diubah ke "${input.status}"` };
   }
+  const newUserId = input.assigned_to_user_id?.trim() || null;
+  const newText = input.assigned_to?.trim() || null;
+  if (newUserId) {
+    const found = await sql`SELECT id FROM app_user WHERE id = ${newUserId}`;
+    if (found.length === 0) return { ok: false, error: `akun PIC tak ditemukan: ${newUserId}` };
+  }
   await sql`
     UPDATE it_ticket SET
       status = ${input.status},
-      assigned_to = COALESCE(${input.assigned_to ?? null}, assigned_to),
+      -- Satu PIC saja: mengeset salah satu jalur mengosongkan jalur lain.
+      -- Tak ada yang diset → dua-duanya dibiarkan apa adanya.
+      assigned_to = CASE
+        WHEN ${newUserId}::uuid IS NOT NULL THEN NULL
+        WHEN ${newText}::text IS NOT NULL THEN ${newText}
+        ELSE assigned_to END,
+      assigned_to_user_id = CASE
+        WHEN ${newUserId}::uuid IS NOT NULL THEN ${newUserId}::uuid
+        WHEN ${newText}::text IS NOT NULL THEN NULL
+        ELSE assigned_to_user_id END,
       resolved_at = CASE WHEN ${input.status} = 'resolved' THEN now() ELSE resolved_at END,
       resolved_note = COALESCE(${input.resolved_note ?? null}, resolved_note),
       updated_at = now()
@@ -180,9 +251,17 @@ export async function runItTicketSlaAlerts(): Promise<{ alerts: number }> {
   const target = process.env.IT_TICKET_SLA_WA_TARGET || "";
   if (!target) return { alerts: 0 }; // anti broadcast tak sengaja tanpa tujuan jelas
 
+  // Join app_user WAJIB di sini juga, bukan cuma di listTickets: sejak PIC
+  // bisa berupa akun (migrasi 164), tiket ber-`assigned_to_user_id` punya
+  // kolom teks NULL — tanpa join, pesan WA-nya menulis "PIC: -" untuk tiket
+  // yang PIC-nya justru sudah jelas.
   const rows = await sql`
-    SELECT t.*, a.asset_code, a.nama AS asset_nama, a.is_critical
+    SELECT t.*, a.asset_code, a.nama AS asset_nama, a.is_critical,
+           NULLIF(ru.name, '') AS reported_by_user_name,
+           NULLIF(au.name, '') AS assigned_to_user_name
     FROM it_ticket t JOIN ga_assets a ON a.id = t.asset_id
+    LEFT JOIN app_user ru ON ru.id = t.reported_by_user_id
+    LEFT JOIN app_user au ON au.id = t.assigned_to_user_id
     WHERE t.status <> 'resolved' AND t.sla_due_at < now() AND t.sla_alert_sent_at IS NULL
   `;
 

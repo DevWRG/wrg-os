@@ -22,11 +22,21 @@ export interface SphItemInput {
 
 export interface CreateSphInput {
   deal_id?: string | null;
-  // Bukan FK sungguhan (sales_doc.customer_id cuma VARCHAR bebas) — banyak
-  // baris `deal` lokal ternyata NULL di sini (bukan produksi, tapi jangan
-  // andalkan selalu ada). Opsional, customer_name yang wajib.
+  // Sejak "link data existing" (susulan F22): kalau `customer_id` DIISI, ia
+  // wajib id `accurate_customer` yang benar-benar ada, dan `customer_name`
+  // di-DERIVE dari mirror itu — nama dari klien diabaikan, jadi nama di surat
+  // tak bisa menyimpang dari master hanya karena orang mengetik ulang.
+  //
+  // Tetap OPSIONAL di lapisan repo karena jalur WA `#SPH` (inbound.ts) hanya
+  // punya nama yang diketik AM di pesan, tak ada id. Kewajiban memilih dari
+  // katalog ditegakkan di `POST /sph` (jalur form web), bukan di sini —
+  // menaruhnya di sini akan mematikan #SPH.
+  //
+  // Kolom DB-nya `sales_doc.customer_id VARCHAR(50)` (bukan FK sungguhan),
+  // jadi id numerik Accurate disimpan sebagai string.
   customer_id?: string | null;
-  customer_name: string;
+  // Wajib kalau `customer_id` kosong (jalur WA). Diabaikan kalau ada id.
+  customer_name?: string;
   am_id?: string | null;
   periode?: string;
   items: SphItemInput[];
@@ -212,6 +222,35 @@ export async function createSphDraft(input: CreateSphInput): Promise<CreateSphRe
   const sql = db();
   const periode = input.periode || PERIODE_DEFAULT;
 
+  // Resolusi customer. Pola sama installation.ts: id divalidasi ke mirror
+  // SEBELUM insert, dan namanya diambil dari hasil lookup — bukan dipercaya
+  // dari input klien. NULLIF(name,'') karena kolom mirror bisa empty-string
+  // (bukan NULL), jadi COALESCE saja tak cukup; jatuh ke `no` supaya nama di
+  // surat tak pernah kosong.
+  const rawCid = String(input.customer_id ?? "").trim();
+  let customerId: string | null = null;
+  let customerName = String(input.customer_name ?? "").trim();
+  if (rawCid) {
+    if (!/^\d+$/.test(rawCid)) {
+      return { ok: false, error: `customer_id "${rawCid}" bukan id Accurate yang sah` };
+    }
+    const [cust] = await sql<{ id: string; nama: string }[]>`
+      SELECT id::text AS id, COALESCE(NULLIF(name, ''), no, '') AS nama
+      FROM accurate_customer WHERE id = ${Number(rawCid)}
+    `;
+    if (!cust) {
+      return {
+        ok: false,
+        error: `customer #${rawCid} tak ada di katalog Accurate — pilih dari daftar, atau sinkronkan katalog customer dulu`,
+      };
+    }
+    customerId = cust.id;
+    customerName = String(cust.nama).trim();
+  }
+  if (!customerName) {
+    return { ok: false, error: "customer wajib — pilih dari katalog (form web) atau tulis namanya (#SPH)" };
+  }
+
   const ids = input.items.map((it) => it.pricelist_item_id);
   const rows = await sql<Record<string, unknown>[]>`
     SELECT id, nama, brand, price_list, diskon_maks
@@ -277,12 +316,12 @@ export async function createSphDraft(input: CreateSphInput): Promise<CreateSphRe
     shippingTerms: input.terms?.shippingTerms?.trim() || "(diisi Admin Penawaran)",
     validityDays: input.terms?.validityDays,
   };
-  const { text: draftText, model } = await draftSphText(input.customer_name, lineItems, total, terms);
-  const title = `SPH — ${input.customer_name}`;
+  const { text: draftText, model } = await draftSphText(customerName, lineItems, total, terms);
+  const title = `SPH — ${customerName}`;
 
   const docRows = await sql`
     INSERT INTO sales_doc (deal_id, customer_id, customer_name, doc_type, title, draft_text, status, generated_by, model_used)
-    VALUES (${input.deal_id ?? null}, ${input.customer_id ?? null}, ${input.customer_name}, 'sph', ${title}, ${draftText}, 'draft', 'A6', ${model})
+    VALUES (${input.deal_id ?? null}, ${customerId}, ${customerName}, 'sph', ${title}, ${draftText}, 'draft', 'A6', ${model})
     RETURNING id
   `;
   const docId = docRows[0].id as string;
@@ -299,7 +338,7 @@ export async function createSphDraft(input: CreateSphInput): Promise<CreateSphRe
   await logHumanAction(
     "sph.draft.create",
     input.created_by,
-    { doc_id: docId, customer_id: input.customer_id, item_count: lineItems.length, total, model },
+    { doc_id: docId, customer_id: customerId, customer_name: customerName, item_count: lineItems.length, total, model },
     "create",
   );
 

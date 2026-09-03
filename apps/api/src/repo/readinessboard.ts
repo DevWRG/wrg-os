@@ -175,6 +175,12 @@ export async function createInstallSchedule(
   const unit = await sql`SELECT id FROM installation_unit WHERE id = ${input.installation_unit_id}`;
   if (unit.length === 0) return { ok: false, error: "alat (installation_unit) tidak ditemukan" };
 
+  if (input.teknisi_id) {
+    const tek = await sql`SELECT nama, aktif FROM teknisi_capacity WHERE id = ${input.teknisi_id}`;
+    if (tek.length === 0) return { ok: false, error: "teknisi tidak ditemukan" };
+    if (!tek[0].aktif) return { ok: false, error: `teknisi "${tek[0].nama}" sudah nonaktif — pilih teknisi lain` };
+  }
+
   const rows = await sql`
     INSERT INTO install_schedule (installation_unit_id, teknisi_id, scheduled_date, note)
     VALUES (${input.installation_unit_id}, ${input.teknisi_id ?? null}, ${input.scheduled_date}, ${input.note ?? null})

@@ -117,6 +117,11 @@ function formatEta(etaAt: Date): string {
 
 export interface CreateTicketInput {
   complaint_text: string;
+  // Kalau diisi (form web memilih dari katalog), id ini divalidasi ke
+  // accurate_customer dan `customer_name` di-DERIVE dari mirror — nama
+  // kiriman klien diabaikan. SENGAJA opsional: tiket dari WA sering tak punya
+  // kecocokan customer sama sekali, dan itu bukan bug (lihat migrasi 163).
+  customer_id?: number | string | null;
   customer_name?: string | null;
   area?: string | null; // override manual (form) — kalau kosong, dipakai hasil LLM
   source?: "manual" | "wa";
@@ -127,6 +132,7 @@ export interface CreateTicketInput {
 export interface TicketRow {
   id: string;
   source: string;
+  customer_id: string | null;
   customer_name: string | null;
   group_jid: string | null;
   wa_message_id: string | null;
@@ -149,6 +155,7 @@ function mapTicket(r: Record<string, unknown>): TicketRow {
   return {
     id: String(r.id),
     source: String(r.source),
+    customer_id: r.customer_id != null ? String(r.customer_id) : null,
     customer_name: r.customer_name ? String(r.customer_name) : null,
     group_jid: r.group_jid ? String(r.group_jid) : null,
     wa_message_id: r.wa_message_id ? String(r.wa_message_id) : null,
@@ -177,6 +184,25 @@ export async function createTicket(input: CreateTicketInput): Promise<TicketRow>
     if (existing.length) return mapTicket(existing[0]);
   }
 
+  // 0. Resolusi customer (kalau dipilih dari katalog). Divalidasi SEBELUM
+  // insert, pola sama installation.ts & repo/sph.ts; namanya diambil dari
+  // hasil lookup, bukan dipercaya dari klien. NULLIF(name,'') karena kolom
+  // mirror bisa empty-string (bukan NULL). Id tak sah → tolak, jangan
+  // diam-diam simpan tiket tanpa tautan seolah user tak memilih apa pun.
+  const rawCid = String(input.customer_id ?? "").trim();
+  let customerId: number | null = null;
+  let customerName = input.customer_name ?? null;
+  if (rawCid) {
+    if (!/^\d+$/.test(rawCid)) throw new Error(`customer_id "${rawCid}" bukan id Accurate yang sah`);
+    const [cust] = await sql<{ id: string; nama: string }[]>`
+      SELECT id::text AS id, COALESCE(NULLIF(name, ''), no, '') AS nama
+      FROM accurate_customer WHERE id = ${Number(rawCid)}
+    `;
+    if (!cust) throw new Error(`customer #${rawCid} tak ada di katalog Accurate`);
+    customerId = Number(cust.id);
+    customerName = String(cust.nama).trim() || null;
+  }
+
   // 1. Klasifikasi via services/ai (severity + area kalau input.area kosong)
   const { status, data } = await callAi("/triage-ticket", { complaint_text: input.complaint_text, dry_run: aiDryRun() });
   const llmFailed = status >= 400;
@@ -194,10 +220,10 @@ export async function createTicket(input: CreateTicketInput): Promise<TicketRow>
 
   const rows = await sql`
     INSERT INTO service_ticket
-      (source, customer_name, group_jid, wa_message_id, complaint_text, area, severity,
+      (source, customer_id, customer_name, group_jid, wa_message_id, complaint_text, area, severity,
        eta_at, assigned_teknisi_id, assigned_teknisi_name, needs_review, model_used)
     VALUES (
-      ${input.source ?? "manual"}, ${input.customer_name ?? null}, ${input.group_jid ?? null},
+      ${input.source ?? "manual"}, ${customerId}, ${customerName}, ${input.group_jid ?? null},
       ${input.wa_message_id ?? null}, ${input.complaint_text}, ${area}, ${severity},
       ${etaAt}, ${teknisi?.id ?? null}, ${teknisi?.nama ?? null}, ${needsReview}, ${modelUsed}
     )
