@@ -81,12 +81,14 @@ export function DanaOpsTable({ rows }: { rows: DanaOpsRow[] }) {
   const [detailErr, setDetailErr] = useState(false);
   const [busy, setBusy] = useState(false);
   const [newItem, setNewItem] = useState({ description: "", amount: "", receipt_date: new Date().toISOString().slice(0, 10) });
+  const [itemErr, setItemErr] = useState<string | null>(null);
   const { confirm, dialog } = useConfirm();
 
   function openDetail(r: DanaOpsRow) {
     setSel(r);
     setDetail(null);
     setDetailErr(false);
+    setItemErr(null);
     setNewItem({ description: "", amount: "", receipt_date: new Date().toISOString().slice(0, 10) });
     reload(r.id);
   }
@@ -101,6 +103,7 @@ export function DanaOpsTable({ rows }: { rows: DanaOpsRow[] }) {
   async function addItem() {
     if (!sel || !newItem.description.trim() || !newItem.amount) return;
     setBusy(true);
+    setItemErr(null);
     try {
       const res = await fetch(`/api/dana-ops/${sel.id}/items`, {
         method: "POST",
@@ -111,10 +114,13 @@ export function DanaOpsTable({ rows }: { rows: DanaOpsRow[] }) {
           receipt_date: newItem.receipt_date,
         }),
       });
-      if (!res.ok) throw new Error();
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(data?.error ?? "Gagal menambah bukti realisasi");
       setNewItem({ description: "", amount: "", receipt_date: new Date().toISOString().slice(0, 10) });
       reload(sel.id);
       router.refresh();
+    } catch (err) {
+      setItemErr(err instanceof Error ? err.message : "Gagal menambah bukti realisasi");
     } finally {
       setBusy(false);
     }
@@ -143,6 +149,26 @@ export function DanaOpsTable({ rows }: { rows: DanaOpsRow[] }) {
         method: "PATCH",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ status: "realized" }),
+      });
+      if (!res.ok) throw new Error();
+      reload(sel.id);
+      router.refresh();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // BUG-16 — backend (updateDanaOps) sudah dukung dua arah (realized_at
+  // di-null-kan lagi saat balik in_progress), tapi sebelumnya tak ada tombol
+  // ini di UI sehingga status "Direalisasi" tak bisa dibatalkan sama sekali.
+  async function markInProgress() {
+    if (!sel) return;
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/dana-ops/${sel.id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ status: "in_progress" }),
       });
       if (!res.ok) throw new Error();
       reload(sel.id);
@@ -236,6 +262,7 @@ export function DanaOpsTable({ rows }: { rows: DanaOpsRow[] }) {
                           <Plus />
                         </Button>
                       </div>
+                      {itemErr && <p className="text-danger mt-1 text-xs">{itemErr}</p>}
                     </div>
 
                     {sel.notes && (
@@ -251,9 +278,13 @@ export function DanaOpsTable({ rows }: { rows: DanaOpsRow[] }) {
                 <Button type="button" variant="ghost" disabled={busy} onClick={deleteDanaOps} className="text-danger hover:text-danger">
                   <Trash2 /> Hapus
                 </Button>
-                {sel.status === "in_progress" && (
+                {(detail ?? sel).status === "in_progress" ? (
                   <Button type="button" disabled={busy} onClick={markRealized}>
                     Tandai Direalisasi
+                  </Button>
+                ) : (
+                  <Button type="button" variant="outline" disabled={busy} onClick={markInProgress}>
+                    Batalkan Realisasi
                   </Button>
                 )}
               </DialogFooter>

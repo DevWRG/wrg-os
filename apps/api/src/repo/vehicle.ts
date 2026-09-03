@@ -114,7 +114,15 @@ export interface VehicleCreateInput {
   service_interval_km?: number | null;
 }
 
-const isIsoDate = (s: string): boolean => /^\d{4}-\d{2}-\d{2}$/.test(s) && !Number.isNaN(new Date(s).getTime());
+// `new Date()` JS TOLERAN overflow (mis. "2027-02-30" diam-diam jadi
+// "2027-03-02", getTime() tetap valid) — round-trip lewat toISOString() utk
+// pastikan tanggal yang masuk beneran ada di kalender, bukan cuma format
+// regex-nya yang cocok.
+const isIsoDate = (s: string): boolean => {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const d = new Date(`${s}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
+};
 
 // Tambah kendaraan baru — permintaan langsung user (2026-08-28), MENGGANTI
 // konvensi awal F50 ("master kecil = seed SQL, sengaja tanpa halaman tambah",
@@ -267,6 +275,9 @@ export async function createVehicleLog(
   // cuma wajib khusus jenis "bbm".
   if (input.km == null) return { ok: false, error: "km wajib diisi" };
   if (input.km < 0) return { ok: false, error: "km tak boleh negatif" };
+  if (input.log_date != null && !isIsoDate(input.log_date)) {
+    return { ok: false, error: `log_date "${input.log_date}" bukan tanggal valid (format YYYY-MM-DD)` };
+  }
   if (input.log_type === "bbm") {
     if (input.bbm_liter == null) return { ok: false, error: "liter BBM wajib diisi utk log jenis BBM" };
     if (input.bbm_cost == null) return { ok: false, error: "biaya BBM wajib diisi utk log jenis BBM" };

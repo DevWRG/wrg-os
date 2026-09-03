@@ -31,6 +31,7 @@ interface Unit {
 interface Teknisi {
   id: string;
   nama: string;
+  aktif: boolean;
 }
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -120,7 +121,7 @@ export function AddScheduleSheet() {
                 onChange={(e) => setF((p) => ({ ...p, teknisi_id: e.target.value }))}
               >
                 <option value="">belum ditentukan</option>
-                {teknisi.map((t) => (
+                {teknisi.filter((t) => t.aktif).map((t) => (
                   <option key={t.id} value={t.id}>{t.nama}</option>
                 ))}
               </select>

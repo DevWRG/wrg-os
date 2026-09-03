@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Plus } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { CatalogPicker, type CatalogChoice } from "@/components/crm/catalog-picker";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -19,14 +20,20 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 
-const blank = () => ({ complaint_text: "", customer_name: "", area: "" });
+const blank = () => ({ complaint_text: "", area: "" });
 
+// Customer dipilih dari katalog Accurate, TAPI tetap OPSIONAL — bukan
+// kelonggaran, memang desainnya: tiket juga masuk dari WA tanpa kecocokan
+// customer mana pun (migrasi 163), dan komplain harus tetap bisa tercatat
+// walau peneleponnya tak dikenali. Nama customer tak lagi diketik: kalau
+// dipilih, namanya di-derive server-side dari mirror.
 export function AddTicketSheet() {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [f, setF] = useState(blank());
+  const [customer, setCustomer] = useState<CatalogChoice | null>(null);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -38,13 +45,14 @@ export function AddTicketSheet() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           complaint_text: f.complaint_text.trim(),
-          customer_name: f.customer_name.trim() || undefined,
+          customer_id: customer ? customer.id : undefined,
           area: f.area.trim() || undefined,
         }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "gagal menyimpan");
       setF(blank());
+      setCustomer(null);
       setOpen(false);
       router.refresh();
     } catch (err) {
@@ -78,8 +86,18 @@ export function AddTicketSheet() {
               />
             </div>
             <div className="grid gap-1.5">
-              <Label htmlFor="st-customer">Nama customer</Label>
-              <Input id="st-customer" value={f.customer_name} onChange={(e) => setF((p) => ({ ...p, customer_name: e.target.value }))} />
+              <Label htmlFor="st-customer">Customer (opsional)</Label>
+              <CatalogPicker
+                entity="customers"
+                value={customer}
+                onChange={setCustomer}
+                inputId="st-customer"
+                placeholder="cari customer lalu pilih — boleh dikosongkan"
+              />
+              <p className="text-muted-foreground text-xs">
+                Kosongkan kalau peneleponnya belum jelas customer mana. Kalau dipilih, namanya diambil dari master
+                Accurate.
+              </p>
             </div>
             <div className="grid gap-1.5">
               <Label htmlFor="st-area">Area/kota (opsional)</Label>

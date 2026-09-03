@@ -170,9 +170,22 @@ export interface TransferInput {
 
 export async function transferAsset(assetId: string, input: TransferInput): Promise<GaAssetRow | ActionResult> {
   const sql = db();
-  const rows = await sql`SELECT id, asset_code, nama, current_pic_user_id, location FROM ga_assets WHERE id = ${assetId}`;
+  const rows = await sql`
+    SELECT a.id, a.asset_code, a.nama, a.current_pic_user_id, a.location, a.pic_name_override, c.is_shared
+    FROM ga_assets a JOIN ga_asset_categories c ON c.id = a.category_id
+    WHERE a.id = ${assetId}
+  `;
   if (rows.length === 0) return { ok: false, error: "aset tidak ditemukan" };
   const asset = rows[0];
+
+  // Aset yang belum pernah di-assign siapa pun tak boleh ditransfer — tanpa
+  // guard ini, transfer sukses set current_pic_user_id TAPI tak pernah
+  // insert baris ga_asset_assignments, jadi PIC baru itu tak bisa di-return
+  // maupun di-assign ulang lewat API manapun (dead-end permanen).
+  const activeAssignments = await sql`SELECT id, user_id FROM ga_asset_assignments WHERE asset_id = ${assetId} AND returned_date IS NULL`;
+  if (activeAssignments.length === 0 && !asset.current_pic_user_id && !asset.pic_name_override) {
+    return { ok: false, error: "aset ini belum di-assign — assign dulu sebelum transfer" };
+  }
 
   let toUserId = input.to_user_id ?? null;
   const toPicNameTrim = input.to_pic_name?.trim() || null;
@@ -184,9 +197,21 @@ export async function transferAsset(assetId: string, input: TransferInput): Prom
     };
   }
 
+  const transferDate = input.transfer_date ?? wibToday();
+  // Tutup assignment aktif PIC lama (kalau ada baris histori) supaya
+  // return()/assign() berikutnya tetap konsisten — transfer = return dari
+  // PIC lama + assign ke PIC baru, dicatat sbg satu event.
+  for (const a of activeAssignments) {
+    await sql`UPDATE ga_asset_assignments SET returned_date = ${transferDate}, returned_at = now() WHERE id = ${a.id}`;
+  }
+  await sql`
+    INSERT INTO ga_asset_assignments (asset_id, user_id, assigned_date, notes, is_shared_snapshot)
+    VALUES (${assetId}, ${toUserId}, ${transferDate}, ${input.reason ?? null}, ${Boolean(asset.is_shared)})
+  `;
+
   await sql`
     INSERT INTO ga_asset_transfers (asset_id, from_user_id, to_user_id, from_location, to_location, transfer_date, reason, created_by)
-    VALUES (${assetId}, ${asset.current_pic_user_id}, ${toUserId}, ${asset.location}, ${input.to_location ?? asset.location}, ${input.transfer_date ?? wibToday()}, ${input.reason ?? null}, ${input.created_by ?? null})
+    VALUES (${assetId}, ${asset.current_pic_user_id}, ${toUserId}, ${asset.location}, ${input.to_location ?? asset.location}, ${transferDate}, ${input.reason ?? null}, ${input.created_by ?? null})
   `;
   await sql`
     UPDATE ga_assets SET

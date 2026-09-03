@@ -325,12 +325,18 @@ export async function syncSalesOrders(opts: { maxPages?: number; sinceDays?: num
       const td = v.transDate != null ? String(v.transDate) : "";
       const [dd, mm, yy] = td.split("/");
       const iso = dd && mm && yy ? `${yy}-${mm}-${dd}` : null;
-      const cust = v.customer && typeof v.customer === "object" ? (v.customer as { name?: unknown }).name : null;
+      // Objek customer membawa id + name + customerNo (fields=…,customer). Dulu hanya
+      // `name` yang diambil, sehingga fitur hilir tak bisa menautkan ke
+      // accurate_customer — lihat migrasi 162. `id` diambil defensif: 0/non-angka
+      // diperlakukan sebagai "tak ada tautan" (id Accurate selalu positif).
+      const co = v.customer && typeof v.customer === "object" ? (v.customer as { name?: unknown; id?: unknown }) : null;
+      const custId = Number(co?.id);
       return {
         id: Number(v.id),
         number: v.number != null ? String(v.number) : undefined,
         trans_date: iso,
-        customer_name: cust != null ? String(cust) : undefined,
+        customer_name: co?.name != null ? String(co.name) : undefined,
+        customer_id: Number.isFinite(custId) && custId > 0 ? custId : undefined,
         status: v.statusName != null ? String(v.statusName) : undefined,
         total_amount: v.totalAmount != null ? Number(v.totalAmount) : undefined,
         raw: v,
@@ -367,12 +373,15 @@ export async function syncDeliveryOrders(opts: { maxPages?: number; sinceDays?: 
       const td = v.transDate != null ? String(v.transDate) : "";
       const [dd, mm, yy] = td.split("/");
       const iso = dd && mm && yy ? `${yy}-${mm}-${dd}` : null;
-      const cust = v.customer && typeof v.customer === "object" ? (v.customer as { name?: unknown }).name : null;
+      // Sama dengan sales-order di atas: ambil id customer, bukan cuma namanya (migrasi 162).
+      const co = v.customer && typeof v.customer === "object" ? (v.customer as { name?: unknown; id?: unknown }) : null;
+      const custId = Number(co?.id);
       return {
         id: Number(v.id),
         number: v.number != null ? String(v.number) : undefined,
         trans_date: iso,
-        customer_name: cust != null ? String(cust) : undefined,
+        customer_name: co?.name != null ? String(co.name) : undefined,
+        customer_id: Number.isFinite(custId) && custId > 0 ? custId : undefined,
         ship_to: v.toAddress != null ? String(v.toAddress) : undefined,
         status: v.statusName != null ? String(v.statusName) : undefined,
         raw: v,

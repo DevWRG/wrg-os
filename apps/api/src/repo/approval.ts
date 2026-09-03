@@ -53,10 +53,16 @@ export async function updateChainConfig(urutan: number, patch: ChainConfigPatch)
   const sql = db();
   const rows = await sql`SELECT urutan FROM approval_chain_config WHERE urutan = ${urutan}`;
   if (rows.length === 0) return { ok: false, error: `tahap urutan ${urutan} tidak ditemukan` };
+  let waNumberOverride = patch.waNumberOverride;
+  if (waNumberOverride) {
+    const normalized = normalizeWa(waNumberOverride);
+    if (normalized.length < 9) return { ok: false, error: "wa_number_override bukan nomor WA yang valid" };
+    waNumberOverride = normalized;
+  }
   await sql`
     UPDATE approval_chain_config SET
       hod_key = ${patch.hodKey === undefined ? sql`hod_key` : patch.hodKey},
-      wa_number_override = ${patch.waNumberOverride === undefined ? sql`wa_number_override` : patch.waNumberOverride},
+      wa_number_override = ${waNumberOverride === undefined ? sql`wa_number_override` : waNumberOverride},
       updated_at = now()
     WHERE urutan = ${urutan}
   `;
@@ -131,7 +137,8 @@ export interface NotifyResult {
 // diisi setelah sempat gagal.
 export async function notifyCurrentStep(requestId: string): Promise<NotifyResult> {
   const sql = db();
-  const [req] = await sql`SELECT id, kode, title, description, nominal, status, current_urutan FROM approval_request WHERE id = ${requestId}`;
+  const [req] =
+    await sql`SELECT id, kode, title, description, nominal, status, current_urutan, requested_by FROM approval_request WHERE id = ${requestId}`;
   if (!req) return { ok: false, error: "request tidak ditemukan" };
   if (req.status !== "pending") return { ok: false, error: `request sudah ${req.status}` };
   const [step] = await sql`SELECT id, urutan, label, target_type, hod_key, status FROM approval_step WHERE request_id = ${requestId} AND urutan = ${req.current_urutan}`;
@@ -233,6 +240,12 @@ export async function createApprovalRequest(input: CreateApprovalInput): Promise
   if (!isDbEnabled()) return { ok: false, error: "DATABASE_URL off" };
   if (!input.title?.trim()) return { ok: false, error: "title wajib" };
   if (!input.requestedBy?.trim()) return { ok: false, error: "requestedBy wajib" };
+  if (input.nominal != null && !Number.isFinite(input.nominal)) {
+    return { ok: false, error: "nominal harus berupa angka" };
+  }
+  if (input.nominal != null && input.nominal < 0) {
+    return { ok: false, error: "nominal tidak boleh negatif" };
+  }
   const sql = db();
 
   const attachments = input.attachments ?? [];
