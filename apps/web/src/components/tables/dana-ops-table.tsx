@@ -152,6 +152,26 @@ export function DanaOpsTable({ rows }: { rows: DanaOpsRow[] }) {
     }
   }
 
+  // BUG-16 — backend (updateDanaOps) sudah dukung dua arah (realized_at
+  // di-null-kan lagi saat balik in_progress), tapi sebelumnya tak ada tombol
+  // ini di UI sehingga status "Direalisasi" tak bisa dibatalkan sama sekali.
+  async function markInProgress() {
+    if (!sel) return;
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/dana-ops/${sel.id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ status: "in_progress" }),
+      });
+      if (!res.ok) throw new Error();
+      reload(sel.id);
+      router.refresh();
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function deleteDanaOps() {
     if (!sel) return;
     confirm(
@@ -251,9 +271,13 @@ export function DanaOpsTable({ rows }: { rows: DanaOpsRow[] }) {
                 <Button type="button" variant="ghost" disabled={busy} onClick={deleteDanaOps} className="text-danger hover:text-danger">
                   <Trash2 /> Hapus
                 </Button>
-                {sel.status === "in_progress" && (
+                {(detail ?? sel).status === "in_progress" ? (
                   <Button type="button" disabled={busy} onClick={markRealized}>
                     Tandai Direalisasi
+                  </Button>
+                ) : (
+                  <Button type="button" variant="outline" disabled={busy} onClick={markInProgress}>
+                    Batalkan Realisasi
                   </Button>
                 )}
               </DialogFooter>
