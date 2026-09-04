@@ -6,6 +6,16 @@ import { db } from "../db.js";
 const toIsoTs = (x: unknown): string => new Date(x as string | Date).toISOString();
 const toIsoDate = (x: unknown): string => toIsoTs(x).slice(0, 10);
 
+// `new Date()` JS TOLERAN overflow (mis. "2027-02-30" diam-diam jadi
+// "2027-03-02", getTime() tetap valid) — round-trip lewat toISOString() utk
+// pastikan tanggal yang masuk beneran ada di kalender. Pola sama isIsoDate()
+// di repo/vehicle.ts & repo/maintenance.ts.
+const isIsoDate = (s: string): boolean => {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const d = new Date(`${s}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
+};
+
 // F8 — Teknisi Readiness Board (AFTERSALES). Install scheduling + capacity +
 // post-install reports. teknisi_capacity SELF-CONTAINED (nama dummy, seed via
 // scripts/db/seed-dev-full.sql — TIDAK ada create/edit di F8 ini, sama
@@ -174,6 +184,10 @@ export async function createInstallSchedule(
   const sql = db();
   const unit = await sql`SELECT id FROM installation_unit WHERE id = ${input.installation_unit_id}`;
   if (unit.length === 0) return { ok: false, error: "alat (installation_unit) tidak ditemukan" };
+
+  if (!isIsoDate(input.scheduled_date)) {
+    return { ok: false, error: `scheduled_date "${input.scheduled_date}" bukan tanggal valid (format YYYY-MM-DD)` };
+  }
 
   if (input.teknisi_id) {
     const tek = await sql`SELECT nama, aktif FROM teknisi_capacity WHERE id = ${input.teknisi_id}`;
