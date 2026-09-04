@@ -14,6 +14,14 @@ import { createApprovalRequest } from "./approval.js";
 // "apakah perlu diusulkan sama sekali", jadi 1 ambang saja).
 const ED_NEAR_DAYS = 90;
 
+// postgres.js parse kolom DATE jadi objek Date — dipakai TELANJANG (String()/
+// interpolasi template literal) hasilnya verbose ("Tue Nov 10 2026 07:00:00
+// GMT+0700 ..."), bukan tanggal terbaca. Dikonfirmasi bocor ke deskripsi
+// approval F11 (ikut terkirim sbg pesan WA ke HoD) via curl 09-04.
+const toIsoDate = (x: unknown): string => new Date(x as string | Date).toISOString().slice(0, 10);
+const toIdDate = (x: unknown): string =>
+  new Date(x as string | Date).toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" });
+
 export interface BufferConfigRow {
   itemId: number;
   itemName: string;
@@ -238,7 +246,7 @@ export async function listSuggestions(status?: string): Promise<ForecastSuggesti
     reasons: Array.isArray(r.reasons) ? (r.reasons as string[]) : [],
     currentQty: Number(r.current_qty),
     bufferQty: r.buffer_qty != null ? Number(r.buffer_qty) : null,
-    nearestEdDate: r.nearest_ed_date ? String(r.nearest_ed_date) : null,
+    nearestEdDate: r.nearest_ed_date ? toIsoDate(r.nearest_ed_date) : null,
     avgMonthlyQty6m: r.avg_monthly_qty_6m != null ? Number(r.avg_monthly_qty_6m) : null,
     pipelineHotCount: Number(r.pipeline_hot_count),
     suggestedQty: Number(r.suggested_qty),
@@ -311,7 +319,7 @@ export async function submitSuggestion(id: string, submittedBy: string): Promise
   const description =
     `Item: ${r.item_name}\nGudang: ${r.warehouse_nama}\nQty diusulkan: ${qty}\n` +
     `Stok saat ini: ${r.current_qty}${r.buffer_qty != null ? ` (buffer: ${r.buffer_qty})` : ""}\n` +
-    `${r.nearest_ed_date ? `Batch ED terdekat: ${r.nearest_ed_date}\n` : ""}` +
+    `${r.nearest_ed_date ? `Batch ED terdekat: ${toIdDate(r.nearest_ed_date)}\n` : ""}` +
     `Rata-rata terjual/bulan (6bln): ${r.avg_monthly_qty_6m ?? "-"}\n` +
     `Alasan sistem: ${reasons || "-"}\n` +
     `Deal HOT aktif (konteks, bukan pemicu langsung): ${r.pipeline_hot_count}\n` +
