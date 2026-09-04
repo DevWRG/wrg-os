@@ -95,6 +95,52 @@ function describe(d) {
   return `d = ${typeof d}: ${String(d).slice(0, 80)}`;
 }
 
+// Paginasi PENUH + penyebut eksplisit.
+//
+// Kenapa ada: versi pertama skrip ini menarik SATU halaman `pageSize=100` lalu
+// mencetak panjangnya. Untuk daftar gudang, hasilnya "100" — angka yang identik
+// dengan pageSize, dan kebetulan mendekati total (109), jadi terbaca seperti
+// jawaban lengkap padahal memotong 9 baris tanpa suara. Jenis kekeliruan yang
+// sama dengan "backend limit + hitung di klien" di /visits: yang hilang tidak
+// menimbulkan gejala apa pun.
+//
+// Accurate mengembalikan penyebutnya di `sp.rowCount`, jadi di sini rowCount
+// dipakai sebagai KLAIM yang harus dipenuhi — bukan cuma looping sampai halaman
+// pendek. Kalau yang terkumpul tak sama dengan rowCount, itu DILAPORKAN, tidak
+// dibulatkan diam-diam.
+const PAGE_SIZE = 100;
+const MAX_PAGES = 50; // 5.000 baris; kalau kena, dicetak eksplisit (jangan senyap)
+
+async function fetchAllPages(creds, path, extraQs) {
+  const rows = [];
+  let rowCount = null;
+  let page = 1;
+  let last = null;
+  let capped = false;
+
+  for (; page <= MAX_PAGES; page++) {
+    const qs = [`sp.page=${page}`, `sp.pageSize=${PAGE_SIZE}`, extraQs].filter(Boolean).join("&");
+    const res = await accGet(creds, path, qs);
+    last = res;
+    if (res.httpStatus !== 200 || res.body?.s !== true) return { ...res, rows: null, rowCount: null, pages: page };
+
+    const d = res.body?.d;
+    if (!Array.isArray(d)) return { ...res, rows: null, rowCount: null, pages: page }; // bukan endpoint list
+    rows.push(...d);
+
+    // `sp` bisa absen di sebagian endpoint — kalau begitu, jatuh balik ke
+    // aturan halaman-pendek seperti syncer di accurateSync.ts.
+    const sp = res.body?.sp;
+    if (sp && Number.isFinite(Number(sp.rowCount))) rowCount = Number(sp.rowCount);
+
+    if (rowCount != null && rows.length >= rowCount) break;
+    if (d.length < PAGE_SIZE) break;
+    if (page === MAX_PAGES) capped = true;
+  }
+
+  return { ...last, rows, rowCount, pages: Math.min(page, MAX_PAGES), capped };
+}
+
 // Nama gudang paling berguna untuk diadu manual dengan seed 082 — itulah
 // pertanyaan (a). Diambil best-effort karena nama fieldnya belum diketahui.
 function warehouseNames(d) {
@@ -123,17 +169,18 @@ console.log("mode       : READ-ONLY (GET saja, tak ada tulis ke Accurate)\n");
 // `.do` gagal dan REST juga gagal dengan kode BEDA, itu informasi; kalau
 // dua-duanya 404, kemungkinan besar memang salah path, bukan soal izin.
 const TARGETS = [
-  { label: "warehouse (list.do)", path: "/accurate/api/warehouse/list.do", qs: "sp.page=1&sp.pageSize=100", key: true },
-  { label: "warehouse (REST, kontrol)", path: "/api/warehouse", qs: null },
-  { label: "stock-mutation-history-view", path: "/accurate/api/stock-mutation-history-view/list.do", qs: "sp.page=1&sp.pageSize=1" },
-  { label: "stock-opname-order", path: "/accurate/api/stock-opname-order/list.do", qs: "sp.page=1&sp.pageSize=1" },
-  { label: "stock-opname-result", path: "/accurate/api/stock-opname-result/list.do", qs: "sp.page=1&sp.pageSize=1" },
-  { label: "item-transfer", path: "/accurate/api/item-transfer/list.do", qs: "sp.page=1&sp.pageSize=1" },
+  { label: "warehouse (list.do)", path: "/accurate/api/warehouse/list.do", paginate: true, key: true },
+  { label: "warehouse (REST, kontrol)", path: "/api/warehouse", raw: true },
+  { label: "stock-mutation-history-view", path: "/accurate/api/stock-mutation-history-view/list.do", paginate: true },
+  { label: "stock-opname-order", path: "/accurate/api/stock-opname-order/list.do", paginate: true },
+  { label: "stock-opname-result", path: "/accurate/api/stock-opname-result/list.do", paginate: true },
+  { label: "item-transfer", path: "/accurate/api/item-transfer/list.do", paginate: true },
 ];
 
 const hasil = [];
 for (const t of TARGETS) {
-  const { httpStatus, body } = await accGet(creds, t.path, t.qs);
+  const r = t.raw ? await accGet(creds, t.path, null) : await fetchAllPages(creds, t.path);
+  const { httpStatus, body } = r;
   const s = body?.s;
   // Accurate membalas HTTP 200 dengan s=false untuk kegagalan logis (termasuk
   // "tak berizin") — jadi HTTP status saja TIDAK cukup untuk menyimpulkan.
@@ -143,27 +190,74 @@ for (const t of TARGETS) {
   console.log(`── ${t.label}`);
   console.log(`   ${t.path}`);
   console.log(`   HTTP ${httpStatus} · s=${JSON.stringify(s)} · ${ok ? "✅ BISA DIPAKAI" : "❌ gagal"}`);
-  if (ok) {
-    console.log(`   ${describe(body.d)}`);
-    const names = warehouseNames(body.d);
-    if (names) console.log(`   nama gudang: ${names.join(" | ")}`);
+
+  if (ok && r.rows) {
+    // Penyebut dicetak berdampingan dengan yang terkumpul supaya pemotongan
+    // diam-diam mustahil lolos dari mata pembaca.
+    const denom = r.rowCount == null ? "sp.rowCount tak dilaporkan endpoint" : `sp.rowCount=${r.rowCount}`;
+    console.log(`   terkumpul ${r.rows.length} baris dari ${denom} · ${r.pages} halaman`);
+    if (r.rowCount != null && r.rows.length !== r.rowCount) {
+      console.log(`   ⚠️  TIDAK COCOK dengan rowCount — jangan pakai angka ini untuk desain sebelum ditelusuri.`);
+    }
+    if (r.capped) {
+      console.log(`   ⚠️  BERHENTI di batas ${MAX_PAGES} halaman — daftar ini TERPOTONG, naikkan MAX_PAGES.`);
+    }
+    console.log(`   ${describe(r.rows)}`);
+    const names = warehouseNames(r.rows);
+    if (names) {
+      console.log(`   nama gudang (${names.length}):`);
+      for (const n of names) console.log(`     · ${n}`);
+    }
+  } else if (ok) {
+    console.log(`   ${describe(body?.d)}`);
   } else if (pesan) {
     console.log(`   pesan: ${typeof pesan === "string" ? pesan.slice(0, 300) : JSON.stringify(pesan).slice(0, 300)}`);
   }
   console.log("");
 
-  hasil.push({ label: t.label, path: t.path, httpStatus, s: s ?? null, ok, key: !!t.key });
+  hasil.push({
+    label: t.label,
+    path: t.path,
+    httpStatus,
+    s: s ?? null,
+    ok,
+    baris: r.rows?.length ?? null,
+    rowCount: r.rowCount ?? null,
+    terpotong: !!r.capped,
+    key: !!t.key,
+  });
 }
 
 const kunci = hasil.find((h) => h.key);
 console.log("═══ KESIMPULAN ═══");
 if (kunci?.ok) {
   console.log("✅ /accurate/api/warehouse/list.do BISA diakses.");
-  console.log("   → Adu daftar nama gudang di atas dengan seed migrasi 082 (12 gudang cabang:");
-  console.log("     SBY, LAMONGAN, TUBAN, JEMBER, KEDIRI, MADIUN, MADURA, JAKARTA, JOGJA, SOLO, NTB, NTT).");
-  console.log("   → Gudang di Accurate yang TIDAK ada di daftar itu (mis. gudang virtual milik");
-  console.log("     customer) WAJIB di-exclude puller — lihat aturan allowlist di header 082.");
-  console.log("   → Lanjut ke rencana 'endpoint TERSEDIA' di F37 §4.");
+  console.log("");
+  console.log("   Hasil jalan pertama di prod (2026-09-04) — pakai sebagai pembanding:");
+  console.log("     · 109 gudang total. 13 berawalan GUDANG, 96 sisanya gudang VIRTUAL milik");
+  console.log("       customer (DINKES/PKM/LABKESDA).");
+  console.log("     · Cocok dgn seed 082: SBY, JEMBER, KEDIRI, MADIUN, MADURA, JAKARTA.");
+  console.log("       NTB kemungkinan = GUDANG MATARAM (nama beda).");
+  console.log("       TAK ADA padanan: LAMONGAN, TUBAN, JOGJA, SOLO, NTT.");
+  console.log("       Hanya di Accurate: SURABAYA 1, SURABAYA2, PUSAT NOT AVAILABLE,");
+  console.log("       PUSAT QTN, SPAREPART KSO, TEMPORARY.");
+  console.log("");
+  console.log("   ⚠️  ALLOWLIST HARUS PAKAI ID EKSPLISIT — bukan heuristik:");
+  console.log("     · `suspended` NOL dari 109 baris, termasuk yang jelas bukan gudang");
+  console.log("       operasional → tak ada sinyal dari Accurate yang bisa dipercaya.");
+  console.log("     · Prefix nama 'GUDANG' juga bocor (SPAREPART KSO, TEMPORARY, 2× PUSAT).");
+  console.log("     Isi warehouse.accurate_warehouse_id manual sekali; kolom itu jadi");
+  console.log("     SATU-SATUNYA gerbang yang menahan 96 gudang customer masuk layar AM.");
+  console.log("");
+  console.log("   ⚠️  Endpoint stok-per-gudang BELUM ketemu — warehouse/list.do cuma daftar");
+  console.log("     gudang, bukan saldo per SKU. stock-mutation-history-view membalas 404");
+  console.log("     'URL API tidak tepat' (nama endpoint salah, BUKAN soal izin).");
+  console.log("     Kandidat berikutnya, urut dari yang paling murah panggilannya:");
+  console.log("       1. item/list.do + filter/field gudang (bulk; kalau jalan, cron 5 menit selamat)");
+  console.log("       2. warehouse/detail.do?id=<id>  (13 panggilan saja)");
+  console.log("       3. item/detail.do per SKU — ~5.800 panggilan/siklus, TAK layak 5 menit.");
+  console.log("          Kalau cuma ini yang jalan, F37 real-time tak layak → re-scope #836");
+  console.log("          jadi sinkron harian, jangan ditutup.");
 } else {
   console.log("❌ /accurate/api/warehouse/list.do TIDAK bisa diakses.");
   console.log("   JANGAN langsung simpulkan 'modul multi-gudang mati'. Bedakan dulu:");
