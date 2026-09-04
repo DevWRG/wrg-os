@@ -183,11 +183,20 @@ endpoint-endpoint ini ada:
 - `/api/stock-opname-order`, `/api/stock-opname-result`
 - `/api/item-transfer`
 
+⚠️ **Path di atas adalah penamaan skema OpenAPI, BUKAN bentuk yang kita panggil.**
+Sepuluh endpoint yang sudah hidup di `accurateSync.ts` semuanya memakai pola
+`https://<host>/accurate/api/<entity>/list.do` (atau `/detail.do`). Jadi yang
+harus dicoba adalah **`/accurate/api/warehouse/list.do`**, bukan `/api/warehouse`.
+Ini bukan detail sepele: probe ke path REST akan kena 404, dan 404 itu gampang
+disalahbaca sebagai "endpoint tak diizinkan" → orang lompat ke kesimpulan
+"modul multi-gudang mati" padahal yang salah cuma path-nya.
+
 Jadi jalur otomatis **arsitekturnya memungkinkan**. Tapi dokumen itu terpotong
 sebelum bagian definisi field, dan dua hal belum terverifikasi:
 
-1. Apakah langganan Accurate WRG mengaktifkan multi-gudang, dan apakah 5 gudang
-   ini benar terdaftar di sana.
+1. Apakah langganan Accurate WRG mengaktifkan multi-gudang, dan apakah **12
+   gudang cabang** di seed migrasi 082 benar terdaftar di sana (SBY, LAMONGAN,
+   TUBAN, JEMBER, KEDIRI, MADIUN, MADURA, JAKARTA, JOGJA, SOLO, NTB, NTT).
 2. Apakah user API kita punya izin ke endpoint tersebut.
 
 Keduanya butuh kredensial produksi. **Puller sengaja belum ditulis** —
@@ -195,11 +204,50 @@ menulisnya sekarang berarti menebak bentuk response, dan kalau tebakannya salah
 kodenya dibuang. Kolom `source` membuat peralihan nanti tidak butuh migrasi
 lagi: puller cukup menulis ke tabel yang sama dengan `source='accurate'`.
 
+#### Cara menjawab dua pertanyaan itu — `scripts/qa/probe-accurate-warehouse.mjs`
+
+Probe READ-ONLY (GET saja, tak menulis apa pun ke Accurate) yang memakai
+`loadCreds()`/`accGet()` dengan pola identik `accurateSync.ts`, jadi "jalan di
+probe" berarti "jalan juga di puller nanti". Dijalankan **di mesin yang punya
+kredensial prod** (Mac mini):
+
+```bash
+node scripts/qa/probe-accurate-warehouse.mjs
+```
+
+Kredensial dibaca env `ACCURATE_ACCESS_TOKEN`+`ACCURATE_SIGNATURE_SECRET`, atau
+fallback file `ACCURATE_CRED_FILE` (default `~/.openclaw/credentials/accurate.json`)
+— tak perlu mengutak-atik `.env.prod`. Token/secret tak pernah dicetak.
+
+Skrip mencoba `warehouse/list.do` + 4 endpoint stok lain, plus bentuk REST
+`/api/warehouse` sebagai **kontrol** untuk memisahkan "salah path" dari "tak
+berizin". Yang perlu diingat saat membaca hasilnya: **Accurate membalas HTTP 200
+dengan `s=false` untuk kegagalan logis**, termasuk penolakan izin — jadi status
+HTTP saja tidak cukup untuk menyimpulkan apa pun.
+
+Hasil probe (apa pun hasilnya) tempelkan ke issue **#836** + catat di sini
+dengan tanggal & siapa yang mengecek, supaya tak ditanyakan ulang tiap sesi QA.
+
+#### Kalau endpoint tersedia — dua hal yang gampang salah
+
+- **Job scheduler yang benar adalah `accurate-stock-sync`, bukan `accurate-sync`.**
+  `accurate-sync` cadence-nya 6×/hari untuk invoice/SO/DO dan skip hari libur —
+  tak bisa disebut real-time. `accurate-stock-sync` sudah ada, tiap 5 menit
+  (`ACCURATE_STOCK_SYNC_ENABLED`, `ACCURATE_STOCK_SYNC_CRON`), khusus menyegarkan
+  stok. Di situlah puller per-gudang bertempat.
+- **Mapping gudang perlu kolom baru** (mis. `warehouse.accurate_warehouse_id`):
+  kode di Accurate tak akan sama dengan `warehouse.kode` buatan kita. Isi manual
+  sekali untuk 12 baris — tak perlu UI CRUD.
+- **Aturan allowlist di header 082 tetap berlaku**: filter respons Accurate
+  terhadap `SELECT kode FROM warehouse WHERE jenis='cabang'`, jangan auto-insert
+  gudang baru dari respons. Itu persis cara stok gudang virtual milik customer
+  bocor ke layar AM.
+
 ### Kenapa importer, bukan form di web
 
 Stok per gudang itu data milik tim gudang yang hidupnya di Excel — pola yang
 sama sudah dipakai Price Book, Klasifikasi Produk, dan KSO master (semuanya
-importer). Mengetik ulang ribuan SKU × 5 gudang lewat form bukan alur realistis.
+importer). Mengetik ulang ribuan SKU × 12 gudang lewat form bukan alur realistis.
 
 ## 5. Cara pakai importer
 
@@ -309,8 +357,12 @@ Catatan kontrak:
 
 ## 7. Hasil pengujian lokal
 
-- Migrasi 082 diterapkan; **tepat 11 gudang cabang** ter-seed aktif, kode draft
+- Migrasi 082 diterapkan; **12 gudang cabang** ter-seed aktif, kode draft
   (`PUSAT`/`KEMANGI`/`SBY1`) dinonaktifkan bila ada. Idempoten (re-apply aman). ✅
+  <br>*(Koreksi 2026-09-04: baris ini semula menulis "tepat 11". Salah hitung —
+  seed 082 memuat 12 baris `jenis='cabang'` sejak commit pertamanya `d7b89638`
+  dan tak pernah berubah; `wrg_os_dev` juga 12. Angka 11 ikut menyebar ke brief
+  F37 yang beredar, jadi dikoreksi di sumbernya.)*
 - Importer membaca daftar gudang dari DB: kode kanonik (`SBY`, `LAMONGAN`, …)
   diterima; header memakai kode draft `SBY1` → **ditolak** beserta daftar kode
   valid. ✅
