@@ -13,6 +13,16 @@ import { sendViaWaGateway } from "../wasend.js";
 const toIsoTs = (x: unknown): string => new Date(x as string | Date).toISOString();
 const toIsoDate = (x: unknown): string => toIsoTs(x).slice(0, 10);
 
+// `new Date()` JS TOLERAN overflow (mis. "2027-02-30" diam-diam jadi
+// "2027-03-02", getTime() tetap valid) — round-trip lewat toISOString() utk
+// pastikan tanggal yang masuk beneran ada di kalender. Pola sama isIsoDate()
+// di repo/vehicle.ts & repo/ga-maintenance.ts.
+const isIsoDate = (s: string): boolean => {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const d = new Date(`${s}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
+};
+
 export interface EligibleUnit {
   id: string;
   alat_name: string;
@@ -114,6 +124,18 @@ export async function createSchedule(
   `;
   if (existing.length > 0) return { ok: false, error: "alat ini sudah punya schedule PM/kalibrasi" };
 
+  // Batas atas mencegah due_date korup: interval ekstrem (mis. 999999 bulan)
+  // bikin hasil kalkulasi tanggal melampaui rentang yang bisa ditampilkan
+  // benar (dikonfirmasi via curl 09-04: due_date jadi "+085359-12", bukan
+  // tanggal valid). 120 bulan (10 tahun) generus utk siklus PM/kalibrasi alat
+  // medis mana pun.
+  if (!Number.isInteger(input.interval_bulan) || input.interval_bulan < 1 || input.interval_bulan > 120) {
+    return { ok: false, error: "interval_bulan harus bilangan bulat 1-120" };
+  }
+  if (input.reference_date != null && !isIsoDate(input.reference_date)) {
+    return { ok: false, error: `reference_date "${input.reference_date}" bukan tanggal valid (format YYYY-MM-DD)` };
+  }
+
   const referenceDate = input.reference_date || String(units[0].bast_at).slice(0, 10);
   const rows = await sql`
     INSERT INTO maintenance_schedule
@@ -170,6 +192,12 @@ export async function markDone(
   const rows = await sql`SELECT id, interval_bulan FROM maintenance_schedule WHERE id = ${id}`;
   if (rows.length === 0) return { ok: false, error: "schedule tidak ditemukan" };
   const intervalBulan = Number(rows[0].interval_bulan);
+  // Schedule ini RECURRING (tak ada status terminal "done" — selalu balik ke
+  // 'scheduled' utk siklus berikutnya), jadi tak ada state buat dijadikan
+  // guard klasik spt F26/F8. Debounce berbasis waktu: submit ganda dalam
+  // 1 menit (double-click/double-submit, dikonfirmasi via curl 09-04
+  // menggandakan completed_count tanpa progres nyata) ditolak; siklus PM
+  // yang sungguhan tak pernah selesai 2x dalam semenit.
   const updated = await sql`
     UPDATE maintenance_schedule
     SET reference_date = current_date,
@@ -180,9 +208,12 @@ export async function markDone(
         last_note = ${catatan ?? null},
         completed_count = completed_count + 1,
         updated_at = now()
-    WHERE id = ${id}
+    WHERE id = ${id} AND (last_completed_at IS NULL OR last_completed_at < now() - interval '1 minute')
     RETURNING due_date::text
   `;
+  if (updated.length === 0) {
+    return { ok: false, error: "sudah ditandai selesai barusan — tunggu sebentar sebelum tandai lagi (cegah submit ganda)" };
+  }
   return { ok: true, next_due_date: String(updated[0].due_date) };
 }
 
