@@ -145,10 +145,38 @@ export function describe(d) {
 
 // Cari kunci yang BAUNYA seperti breakdown per gudang, di kedalaman berapa pun.
 // Dipakai probe stok: kita belum tahu nama fieldnya, jadi jangan menebak satu
-// nama — laporkan semua jalur yang mencurigakan beserta bentuk nilainya.
+// nama — telusuri dan laporkan semua jalur yang mencurigakan.
+//
+// ⚠️ PELAJARAN 2026-09-05 — kecocokan NAMA KUNCI saja tidak cukup.
+// Versi pertama fungsi ini menganggap setiap kunci yang memuat "warehouse"
+// sebagai jejak. Akibatnya `warehouse/detail.do` — yang isinya metadata gudang
+// (alamat, kota, PIC) dan NOL saldo SKU — dinilai membawa breakdown, hanya
+// karena punya dua flag boolean `scrapWarehouse: false` dan
+// `defaultWarehouse: false`. Vonis probe lalu mengambil cabang "grup B jalan,
+// 13 panggilan/siklus" dan MENYEMBUNYIKAN kesimpulan yang benar (hanya jalur
+// per-SKU yang nyata). Heuristik yang dibuat untuk mencegah false negative
+// justru melahirkan false positive yang lebih berbahaya, karena ia mengarahkan
+// desain ke jalur yang tak ada isinya.
+//
+// Karena itu hasilnya kini DIPISAH:
+//   rincian  — benar-benar berbentuk pecahan per gudang (array objek, atau
+//              objek yang memuat angka). Ini saja yang boleh dihitung "menang".
+//   metadata — kunci bernama gudang tapi nilainya skalar/kosong (flag, nama,
+//              id). Tetap dicetak supaya terlihat, tapi TIDAK pernah dianggap
+//              sebagai bukti adanya stok per gudang.
 const RE_GUDANG = /(warehouse|gudang)/i;
+
+// Pecahan per gudang selalu berbentuk koleksi berisi angka. Flag boolean,
+// string nama, dan id tunggal tidak pernah memenuhi ini.
+function bentukRincian(v) {
+  if (Array.isArray(v)) return v.length > 0 && typeof v[0] === "object" && v[0] !== null;
+  if (v && typeof v === "object") return Object.values(v).some((x) => typeof x === "number");
+  return false;
+}
+
 export function findWarehouseKeys(obj, maxDepth = 4) {
-  const hits = [];
+  const rincian = [];
+  const metadata = [];
   const walk = (node, path, depth) => {
     if (node == null || depth > maxDepth) return;
     if (Array.isArray(node)) {
@@ -165,11 +193,11 @@ export function findWarehouseKeys(obj, maxDepth = 4) {
           : v && typeof v === "object"
             ? `objek kunci: ${Object.keys(v).join(",")}`
             : `${typeof v} = ${String(v).slice(0, 40)}`;
-        hits.push({ path: p, bentuk });
+        (bentukRincian(v) ? rincian : metadata).push({ path: p, bentuk });
       }
       walk(v, p, depth + 1);
     }
   };
   walk(obj, "", 0);
-  return hits;
+  return { rincian, metadata };
 }
