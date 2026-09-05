@@ -128,6 +128,24 @@ export async function createInstallation(input: InstallationInput): Promise<Crea
   const alatName = String(item.name ?? "").trim() || String(item.no ?? "") || `Item #${input.product_id}`;
   const custName = String(cust.name ?? "").trim() || String(cust.no ?? "") || `Customer #${input.account_id}`;
 
+  // serial_number instrumen fisik semestinya unik (dicatat sejak QA 09-02
+  // sbg observasi, terbukti reproducible lewat curl 09-04) — dicek di sini
+  // (case-insensitive, kosong/NULL dilewati) supaya 2 unit tak pernah
+  // menunjuk alat fisik yang sama. Bukan constraint DB: field ini opsional
+  // & histori lama mungkin sudah punya baris kosong berulang.
+  const serial = input.serial_number?.trim();
+  if (serial) {
+    const [dupe] = await sql`
+      SELECT id, alat_name FROM installation_unit WHERE serial_number ILIKE ${serial} LIMIT 1
+    `;
+    if (dupe) {
+      return {
+        ok: false,
+        error: `serial_number "${serial}" sudah dipakai unit lain (${String(dupe.alat_name)}) — instrumen fisik seharusnya unik`,
+      };
+    }
+  }
+
   const rows = await sql`
     INSERT INTO installation_unit
       (product_id, account_id, alat_name, serial_number, customer_name, cabang, po_number, created_by)
