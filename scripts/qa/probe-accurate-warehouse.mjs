@@ -26,123 +26,18 @@
 //   2. file ACCURATE_CRED_FILE (default ~/.openclaw/credentials/accurate.json)
 // Token/secret TIDAK PERNAH dicetak — yang ditampilkan cuma sumbernya.
 
-import { createHmac } from "node:crypto";
-import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
+import {
+  loadCreds,
+  accGet,
+  fetchAllPages,
+  isOk,
+  failMessage,
+  describe,
+  MAX_PAGES,
+} from "./lib/accurate.mjs";
 
 const RAW_JSON = process.argv.includes("--json");
 
-function loadCreds() {
-  const host = process.env.ACCURATE_HOST || "zeus.accurate.id";
-  const envTok = process.env.ACCURATE_ACCESS_TOKEN;
-  const envSec = process.env.ACCURATE_SIGNATURE_SECRET;
-  if (envTok && envSec) return { token: envTok, secret: envSec, host, from: "env" };
-  const path = process.env.ACCURATE_CRED_FILE || `${homedir()}/.openclaw/credentials/accurate.json`;
-  try {
-    const j = JSON.parse(readFileSync(path, "utf8"));
-    if (j.access_token && j.signature_secret) {
-      return { token: j.access_token, secret: j.signature_secret, host, from: path };
-    }
-    return { err: `file ${path} ada tapi tak memuat access_token/signature_secret` };
-  } catch {
-    return { err: `kredensial tak ditemukan (env kosong, file ${path} tak terbaca)` };
-  }
-}
-
-// Format timestamp WIB yang dipakai Accurate — disalin dari accurateSync.ts.
-function wibTimestamp() {
-  const d = new Date(Date.now() + 7 * 3600 * 1000);
-  const p = (n) => String(n).padStart(2, "0");
-  return `${p(d.getUTCDate())}/${p(d.getUTCMonth() + 1)}/${d.getUTCFullYear()} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}`;
-}
-
-async function accGet(creds, path, qs) {
-  const ts = wibTimestamp();
-  const sig = createHmac("sha256", creds.secret).update(ts).digest("hex");
-  const url = `https://${creds.host}${path}${qs ? `?${qs}` : ""}`;
-  try {
-    const res = await fetch(url, {
-      headers: { Authorization: `Bearer ${creds.token}`, "X-Api-Timestamp": ts, "X-Api-Signature": sig },
-      signal: AbortSignal.timeout(30_000),
-    });
-    const text = await res.text();
-    let body = null;
-    try {
-      body = JSON.parse(text);
-    } catch {
-      // Accurate membalas HTML saat path tak dikenal / sesi mati — simpan
-      // cuplikannya, jangan buang: itu justru pembeda "404 salah path" vs
-      // "403 tak berizin".
-      body = { _nonJson: text.slice(0, 200) };
-    }
-    return { httpStatus: res.status, body };
-  } catch (e) {
-    return { httpStatus: 0, body: { _err: String(e?.message ?? e) } };
-  }
-}
-
-// Bentuk `d` beda-beda per endpoint (array vs objek berisi array). Diringkas
-// jadi kunci + contoh 1 baris supaya cukup untuk mendesain syncer, tanpa
-// menumpahkan seluruh katalog ke terminal.
-function describe(d) {
-  if (d == null) return "d = null/absen";
-  if (Array.isArray(d)) {
-    if (d.length === 0) return "d = array KOSONG (0 baris)";
-    const keys = Object.keys(d[0] ?? {});
-    return `d = array ${d.length} baris · kunci baris-1: ${keys.join(", ") || "(objek kosong)"}`;
-  }
-  if (typeof d === "object") return `d = objek · kunci: ${Object.keys(d).join(", ")}`;
-  return `d = ${typeof d}: ${String(d).slice(0, 80)}`;
-}
-
-// Paginasi PENUH + penyebut eksplisit.
-//
-// Kenapa ada: versi pertama skrip ini menarik SATU halaman `pageSize=100` lalu
-// mencetak panjangnya. Untuk daftar gudang, hasilnya "100" — angka yang identik
-// dengan pageSize, dan kebetulan mendekati total (109), jadi terbaca seperti
-// jawaban lengkap padahal memotong 9 baris tanpa suara. Jenis kekeliruan yang
-// sama dengan "backend limit + hitung di klien" di /visits: yang hilang tidak
-// menimbulkan gejala apa pun.
-//
-// Accurate mengembalikan penyebutnya di `sp.rowCount`, jadi di sini rowCount
-// dipakai sebagai KLAIM yang harus dipenuhi — bukan cuma looping sampai halaman
-// pendek. Kalau yang terkumpul tak sama dengan rowCount, itu DILAPORKAN, tidak
-// dibulatkan diam-diam.
-const PAGE_SIZE = 100;
-const MAX_PAGES = 50; // 5.000 baris; kalau kena, dicetak eksplisit (jangan senyap)
-
-async function fetchAllPages(creds, path, extraQs) {
-  const rows = [];
-  let rowCount = null;
-  let page = 1;
-  let last = null;
-  let capped = false;
-
-  for (; page <= MAX_PAGES; page++) {
-    const qs = [`sp.page=${page}`, `sp.pageSize=${PAGE_SIZE}`, extraQs].filter(Boolean).join("&");
-    const res = await accGet(creds, path, qs);
-    last = res;
-    if (res.httpStatus !== 200 || res.body?.s !== true) return { ...res, rows: null, rowCount: null, pages: page };
-
-    const d = res.body?.d;
-    if (!Array.isArray(d)) return { ...res, rows: null, rowCount: null, pages: page }; // bukan endpoint list
-    rows.push(...d);
-
-    // `sp` bisa absen di sebagian endpoint — kalau begitu, jatuh balik ke
-    // aturan halaman-pendek seperti syncer di accurateSync.ts.
-    const sp = res.body?.sp;
-    if (sp && Number.isFinite(Number(sp.rowCount))) rowCount = Number(sp.rowCount);
-
-    if (rowCount != null && rows.length >= rowCount) break;
-    if (d.length < PAGE_SIZE) break;
-    if (page === MAX_PAGES) capped = true;
-  }
-
-  return { ...last, rows, rowCount, pages: Math.min(page, MAX_PAGES), capped };
-}
-
-// Nama gudang paling berguna untuk diadu manual dengan seed 082 — itulah
-// pertanyaan (a). Diambil best-effort karena nama fieldnya belum diketahui.
 function warehouseNames(d) {
   if (!Array.isArray(d)) return null;
   const names = d
