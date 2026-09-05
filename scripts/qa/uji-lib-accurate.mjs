@@ -63,19 +63,44 @@ const rc = await fetchRowCount(CREDS, "/x");
 cek("fetchRowCount → nilai", rc.rowCount, 5800);
 cek("fetchRowCount → 1 panggilan", calls.length, 1);
 
-// — findWarehouseKeys —
-cek("nol jejak gudang", findWarehouseKeys({ id: 1, name: "X", quantity: 5 }).length, 0);
+// — findWarehouseKeys: memisahkan PECAHAN dari sekadar kunci bernama gudang —
+const jalur = (x) => x.map((h) => h.path);
+
+cek("nol kunci gudang → dua-duanya kosong", findWarehouseKeys({ id: 1, name: "X", quantity: 5 }), { rincian: [], metadata: [] });
+
+// Bentuk asli item/detail.do: array objek berisi saldo → INI yang dicari.
 cek(
-  "array detailWarehouseData terdeteksi",
-  findWarehouseKeys({ id: 1, detailWarehouseData: [{ warehouseId: 100, quantity: 7 }] }).map((h) => h.path),
-  ["detailWarehouseData", "detailWarehouseData[0].warehouseId"],
+  "array detailWarehouseData = rincian",
+  jalur(findWarehouseKeys({ id: 1, detailWarehouseData: [{ warehouseName: "GUDANG SBY", balance: 45 }] }).rincian),
+  ["detailWarehouseData"],
 );
-cek(
-  "bersarang dalam sampai kedalaman 4",
-  findWarehouseKeys({ d: { a: { b: { warehouseName: "GUDANG SBY" } } } }).map((h) => h.path),
-  ["d.a.b.warehouseName"],
-);
-cek("case-insensitive (Gudang)", findWarehouseKeys({ namaGudang: "SBY" }).map((h) => h.path), ["namaGudang"]);
+
+// REGRESI 2026-09-05 — inilah yang dulu bikin vonis salah.
+// warehouse/detail.do isinya metadata gudang; dua flag boolean di bawah ini
+// sempat dihitung sebagai "jejak gudang" sehingga grup B dinilai berhasil dan
+// kesimpulan sebenarnya (hanya jalur per-SKU) tersembunyi.
+const wd = findWarehouseKeys({
+  id: 100,
+  name: "GUDANG SBY",
+  city: "Surabaya",
+  scrapWarehouse: false,
+  defaultWarehouse: false,
+  suspended: false,
+});
+cek("flag boolean warehouse BUKAN rincian", wd.rincian, []);
+cek("flag boolean warehouse masuk metadata", jalur(wd.metadata), ["scrapWarehouse", "defaultWarehouse"]);
+
+// Nama gudang berupa string juga metadata — bukan bukti adanya stok.
+cek("string warehouseName = metadata", jalur(findWarehouseKeys({ d: { a: { b: { warehouseName: "GUDANG SBY" } } } }).metadata), ["d.a.b.warehouseName"]);
+cek("string warehouseName bukan rincian", findWarehouseKeys({ d: { a: { b: { warehouseName: "X" } } } }).rincian, []);
+
+// Array kosong bukan rincian — tak ada isinya untuk dibuktikan.
+cek("array kosong = metadata", findWarehouseKeys({ detailWarehouseData: [] }).rincian, []);
+
+// Objek peta gudang→angka juga sah sebagai rincian.
+cek("objek berisi angka = rincian", jalur(findWarehouseKeys({ warehouseBalances: { "100": 45, "200": 12 } }).rincian), ["warehouseBalances"]);
+
+cek("case-insensitive (Gudang)", jalur(findWarehouseKeys({ namaGudang: "SBY" }).metadata), ["namaGudang"]);
 
 console.log(gagal === 0 ? "\nSEMUA LULUS" : `\n${gagal} GAGAL`);
 process.exit(gagal ? 1 : 0);

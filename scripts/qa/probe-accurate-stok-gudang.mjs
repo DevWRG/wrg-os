@@ -14,6 +14,31 @@
 //
 // SEMUA GET. Tak ada request yang menulis ke Accurate.
 //
+// ── HASIL JALAN PERTAMA DI PROD (2026-09-05) ───────────────────────────────
+// Penyebut: 109 gudang (sp.rowCount cocok), 5.893 item.
+//   A bulk item/list.do  — GAGAL semua 5 varian. HTTP 200 s=true, tapi kunci
+//                          baris tetap {id,no,name,quantity}: detailWarehouseData /
+//                          warehouseData / detailWarehouse dan filter
+//                          sp.warehouseId / filter.warehouseId DIABAIKAN diam-diam.
+//   B warehouse/detail.do — metadata gudang (alamat, kota, PIC, flag). NOL saldo SKU.
+//   C item/detail.do      — SATU-SATUNYA yang membawa pecahan sungguhan:
+//                          detailWarehouseData = array(110) berisi warehouseName,
+//                          balance, unit1Quantity…unit5Quantity. Satu panggilan
+//                          memberi SEMUA gudang sekaligus → sapuan penuh
+//                          = 5.893 panggilan, bukan 5.893 × 109.
+//   D varian mutasi       — stock-mutation / warehouse-mutation /
+//                          stock-mutation-history semuanya 404 "URL API tidak
+//                          tepat". item-adjustment/list.do jalan tapi itu mutasi,
+//                          bukan saldo.
+//
+// VONIS: hanya jalur per-SKU yang nyata → F37 real-time tak layak lewat sini.
+// #836 di-RE-SCOPE ke sinkron harian/inkremental, BUKAN ditutup. Yang terbukti
+// adalah "kandidat yang dicoba tidak membawanya" — bukan "Accurate tak punya".
+//
+// Baris pertama detailWarehouseData di prod adalah "DINKES KAB. BUTON UTARA",
+// yaitu gudang virtual milik customer — penguat kenapa allowlist WAJIB id
+// eksplisit, bukan prefix nama.
+//
 // Jalankan DI MESIN YANG PUNYA KREDENSIAL PROD (Mac mini):
 //   node scripts/qa/probe-accurate-stok-gudang.mjs
 //   node scripts/qa/probe-accurate-stok-gudang.mjs --json
@@ -134,16 +159,32 @@ for (const grup of KANDIDAT) {
     // mengabaikan field/filter yang tak dikenalnya — itulah jebakan utama
     // langkah ini. Yang menentukan adalah: apakah responsnya benar-benar
     // memuat pecahan per gudang?
-    const hits = findWarehouseKeys(r.body?.d);
+    const { rincian, metadata } = findWarehouseKeys(r.body?.d);
     console.log(`     ${describe(r.body?.d)}`);
-    if (hits.length) {
-      console.log(`     ✅ ADA jejak gudang di response:`);
-      for (const h of hits.slice(0, 8)) console.log(`        ${h.path} → ${h.bentuk}`);
-      menang.push({ grup: grup.grup, label: u.label, path: u.path, hits: hits.slice(0, 8) });
+
+    // HANYA `rincian` yang dihitung. `metadata` tetap dicetak — berguna untuk
+    // memahami bentuk response — tapi tak pernah jadi bukti adanya stok.
+    if (rincian.length) {
+      console.log(`     ✅ ADA pecahan per gudang:`);
+      for (const h of rincian.slice(0, 8)) console.log(`        ${h.path} → ${h.bentuk}`);
+      menang.push({ grup: grup.grup, label: u.label, path: u.path, hits: rincian.slice(0, 8) });
     } else {
-      console.log(`     ⚠️  jalan, TAPI nol jejak gudang di response — field/filter kemungkinan diabaikan diam-diam.`);
+      console.log(`     ⚠️  jalan, TAPI nol pecahan per gudang — field/filter kemungkinan diabaikan diam-diam.`);
     }
-    catat({ grup: grup.grup, label: u.label, path: u.path, httpStatus: r.httpStatus, ok: true, adaGudang: hits.length > 0, hits: hits.slice(0, 8) });
+    if (metadata.length) {
+      console.log(`     ℹ️  kunci bernama gudang tapi BUKAN pecahan (diabaikan dalam vonis):`);
+      for (const h of metadata.slice(0, 6)) console.log(`        ${h.path} → ${h.bentuk}`);
+    }
+    catat({
+      grup: grup.grup,
+      label: u.label,
+      path: u.path,
+      httpStatus: r.httpStatus,
+      ok: true,
+      adaPecahan: rincian.length > 0,
+      rincian: rincian.slice(0, 8),
+      metadata: metadata.slice(0, 6),
+    });
     console.log("");
   }
 }
