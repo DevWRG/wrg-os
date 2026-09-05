@@ -4509,21 +4509,26 @@ app.post("/pickup-plan", async (c) => {
   if (!["kirim", "tagih", "kirim+tagih"].includes(tujuan)) {
     return c.json({ error: "tujuan harus kirim|tagih|kirim+tagih" }, 400);
   }
-  try {
-    const row = await createPickupPlan({
-      tanggal,
-      customer_name: customer,
-      account_id: body.account_id == null ? null : Number(body.account_id),
-      cabang,
-      tujuan: tujuan as "kirim" | "tagih" | "kirim+tagih",
-      sj_number: body.sj_number == null ? null : String(body.sj_number),
-      kurir_name: kurirName,
-      kurir_wa_number: kurirWa,
-      catatan: body.catatan == null ? null : String(body.catatan),
-      created_by: body.created_by == null ? null : String(body.created_by),
-    });
-    return c.json(row, 201);
-  } catch (e) { return c.json({ error: String((e as Error).message) }, 400); }
+  // TIDAK dibungkus try/catch lokal (dulu ada, sengaja dilepas): itu menangkap
+  // PostgresError SEBELUM sampai ke app.onError global, jadi error mentah
+  // (nama constraint FK, "invalid input syntax for type bigint") bocor apa
+  // adanya ke response — dikonfirmasi via curl 09-04. Endpoint lain (mis.
+  // shipment-tracking) tak membungkus create-nya dan otomatis dapat format
+  // rapi dari onError (23503 → "Referensi tidak valid: ...", 22P02 → "Format
+  // data tidak valid: ...") — biarkan error di sini lolos ke situ juga.
+  const row = await createPickupPlan({
+    tanggal,
+    customer_name: customer,
+    account_id: body.account_id == null ? null : Number(body.account_id),
+    cabang,
+    tujuan: tujuan as "kirim" | "tagih" | "kirim+tagih",
+    sj_number: body.sj_number == null ? null : String(body.sj_number),
+    kurir_name: kurirName,
+    kurir_wa_number: kurirWa,
+    catatan: body.catatan == null ? null : String(body.catatan),
+    created_by: body.created_by == null ? null : String(body.created_by),
+  });
+  return c.json(row, 201);
 });
 
 app.patch("/pickup-plan/:id", async (c) => {
