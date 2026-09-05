@@ -199,6 +199,13 @@ export interface AccurateSyncResult {
   days?: number;
   pages?: number;
   error?: string;
+  /** true = berhenti karena batas halaman, BUKAN karena window habis. Artinya
+   *  hasilnya TERPOTONG — jangan diperlakukan sebagai sapuan lengkap (#1177). */
+  cappedByPages?: boolean;
+  /** Jumlah baris yang dilewati karena id-nya sudah ada di mirror
+   *  (`skipExisting`). Dicetak supaya "processed kecil" tak salah dibaca
+   *  sebagai "sync tak jalan". */
+  skippedExisting?: number;
 }
 
 // Sync sales-invoice. invoiceId → satu invoice; selainnya incremental (window
@@ -559,8 +566,21 @@ export async function getVendorDetail(
   };
 }
 
+// BACKFILL (#1177): mirror tak pernah punya riwayat pra-2026 karena fungsi ini
+// selalu jalan sebagai rolling window (`days`, default 7) dan backfill
+// sekali-jalan tak pernah dilakukan. 7.234 faktur 2024-12 s/d 2025 (Rp 93 M
+// bruto) ada di Accurate, nol di mirror — angka 2026-nya sendiri valid, yang
+// hilang adalah pembanding YoY, tren multi-tahun, dan piutang 2025 di ar_aging_mv.
+//
+// Cara menariknya (di mesin berkredensial prod, faktur tertua 31/12/2024):
+//   curl -X POST -H "x-service-token: $TOK" localhost:4100/accurate/sync \
+//     -H 'content-type: application/json' \
+//     -d '{"days":700,"max_pages":300,"skip_existing":true}'
+//
+// Perkiraan: ~7.234 detail.do × jeda 150ms ≈ 30-40 menit. `skip_existing`
+// melewati 4.058 baris yang sudah ada supaya tak ditarik dua kali.
 export async function syncAccurateInvoices(
-  opts: { days?: number; invoiceId?: number } = {},
+  opts: { days?: number; invoiceId?: number; maxPages?: number; skipExisting?: boolean } = {},
 ): Promise<AccurateSyncResult> {
   const creds = loadCreds();
   if (!creds) {
@@ -584,9 +604,35 @@ export async function syncAccurateInvoices(
   const threshold = isoDaysAgo(days);
   const detailRecs: AccurateInvoice[] = [];
   let processed = 0;
+  let skippedExisting = 0;
   let page = 1;
-  for (; page <= 200; page++) {
-    const list = await accGet(creds, "/accurate/api/sales-invoice/list.do", `sp.page=${page}&sp.pageSize=50&fields=id,transDate`);
+
+  // Batas halaman: 200 × 50 = 10.000 baris. Cukup untuk window harian, TIDAK
+  // cukup untuk backfill — Accurate menyimpan 11.302 faktur (226 halaman), jadi
+  // sapuan penuh dengan batas lama memotong 1.302 baris. Lebih buruk lagi,
+  // `break` karena batas halaman dulu tak bisa dibedakan dari `break` karena
+  // window habis: dua-duanya mengembalikan ok:true (#1177).
+  const maxPages = Math.max(1, opts.maxPages ?? 200);
+  let cappedByPages = false;
+
+  // Backfill menarik ulang ribuan faktur yang sudah ada di mirror; tiap baris =
+  // satu detail.do + jeda 150ms. Melewati yang sudah ada memangkas sapuan penuh
+  // dari 11.302 panggilan jadi ~7.234 (yang benar-benar hilang).
+  // Sengaja opt-in: untuk sync harian, faktur yang sudah ada MEMANG harus
+  // ditarik ulang — statusnya bisa berubah (OPEN → PAID, pembayaran parsial).
+  let existingIds: Set<number> | null = null;
+  if (opts.skipExisting) {
+    const sql = db();
+    const rows = await sql<{ id: string }[]>`SELECT id FROM accurate_invoice`;
+    existingIds = new Set(rows.map((r) => Number(r.id)));
+  }
+
+  for (; page <= maxPages; page++) {
+    // `sp.sort=transDate|desc` — early-break di bawah bergantung pada urutan
+    // terbaru-dulu. Urutan default TIDAK dijamin API; saat diuji ia kebetulan
+    // sudah desc, tapi bergantung pada kebetulan berarti suatu hari window
+    // harian berhenti di baris pertama dan sync diam-diam berhenti bekerja.
+    const list = await accGet(creds, "/accurate/api/sales-invoice/list.do", `sp.page=${page}&sp.pageSize=50&sp.sort=transDate|desc&fields=id,transDate`);
     if (list?.s !== true) {
       if (page === 1) {
         await recordState(processed, days, false);
@@ -603,6 +649,10 @@ export async function syncAccurateInvoices(
         stop = true;
         break;
       }
+      if (existingIds?.has(Number(row.id))) {
+        skippedExisting += 1;
+        continue;
+      }
       const det = await accGet(creds, "/accurate/api/sales-invoice/detail.do", `id=${row.id}`);
       if (det?.s !== true) continue;
       if (await upsertInvoiceDetail(det.d as Detail)) {
@@ -612,6 +662,9 @@ export async function syncAccurateInvoices(
       await sleep(150);
     }
     if (stop) break;
+    // Halaman terakhir yang diizinkan tercapai TANPA pernah menyentuh
+    // threshold → hasilnya terpotong, bukan selesai.
+    if (page === maxPages) cappedByPages = true;
   }
 
   if (detailRecs.length > 0) {
@@ -622,5 +675,19 @@ export async function syncAccurateInvoices(
     }
   }
   await recordState(processed, days, true);
-  return { ok: true, mode: "incremental", processed, days, pages: page };
+  if (cappedByPages) {
+    console.warn(
+      `[accurate-sync] TERPOTONG di batas ${maxPages} halaman (${maxPages * 50} baris) ` +
+      `sebelum mencapai window ${days} hari — hasil TIDAK lengkap. Naikkan maxPages.`,
+    );
+  }
+  return {
+    ok: true,
+    mode: "incremental",
+    processed,
+    days,
+    pages: page,
+    ...(cappedByPages ? { cappedByPages: true } : {}),
+    ...(existingIds ? { skippedExisting } : {}),
+  };
 }
