@@ -104,3 +104,51 @@ SELECT r.id, 2, 'Direktur', 'direktur', NULL, 'pending'
 FROM approval_request r
 WHERE r.kode = 'APR-9002'
   AND NOT EXISTS (SELECT 1 FROM approval_step s WHERE s.request_id = r.id AND s.urutan = 2);
+
+-- ── #CEK (F4/QW3) butuh SO & SJ — dua tabel ini sebelumnya TAK PERNAH diisi ──
+-- Tanpa fixture, dua skenario #CEK cuma bisa memakai ekspektasi /.+/ ("asal ada
+-- balasan"), sehingga balasan "tidak ditemukan di data SO/SJ" ikut dianggap
+-- lulus. Itu lolos semu — pola yang sudah didokumentasikan di file ini untuk
+-- #PRICING, tapi #CEK belum kebagian (#1043).
+--
+-- ⚠️ NAMA CUSTOMER SENGAJA BERJAUHAN SECARA TRIGRAM.
+-- handleCekQuery mencari SO dan SJ INDEPENDEN, masing-masing
+-- `similarity(customer_name, q) > 0.3 ORDER BY score DESC LIMIT 1`. Kalau nama
+-- antar-kasus mirip, kasus "cuma punya SO" akan menarik SJ milik kasus lain —
+-- dan baris "Belum ada SJ tercatat" tak akan pernah muncul. Dua kasus itu
+-- saling meniadakan, dan gejalanya bukan error, cuma hasil yang kelihatan wajar.
+-- Terukur di wrg_os_dev: kemiripan antar-ketiganya 0,091-0,100, dan terhadap
+-- 44 baris SO/SJ nyata yang sudah ada maksimum 0,069 — semuanya jauh di bawah
+-- ambang 0,3. Kalau menambah kasus baru, UKUR DULU dengan similarity().
+--
+-- Tanggal dipatok tetap (bukan now()) supaya korelasi ±14 hari di cek.ts
+-- deterministik: SO 2026-03-10 dan SJ 2026-03-12 selalu berjarak 2 hari.
+
+-- Kasus 1 — punya SO DAN SJ (balasan lengkap, dua-duanya terisi).
+INSERT INTO accurate_sales_order (id, number, trans_date, customer_name, status, total_amount)
+VALUES (900001, 'SO-QA-9001', DATE '2026-03-10', 'QA MAWAR SEJAHTERA', 'Pending', 12500000)
+ON CONFLICT (id) DO UPDATE SET
+  number = EXCLUDED.number, trans_date = EXCLUDED.trans_date,
+  customer_name = EXCLUDED.customer_name, status = EXCLUDED.status,
+  total_amount = EXCLUDED.total_amount;
+
+INSERT INTO accurate_delivery_order (id, number, trans_date, customer_name, ship_to, status)
+VALUES (900001, 'SJ-QA-9001', DATE '2026-03-12', 'QA MAWAR SEJAHTERA', 'Jl. Fixture 1', 'Delivered')
+ON CONFLICT (id) DO UPDATE SET
+  number = EXCLUDED.number, trans_date = EXCLUDED.trans_date,
+  customer_name = EXCLUDED.customer_name, ship_to = EXCLUDED.ship_to, status = EXCLUDED.status;
+
+-- Kasus 2 — HANYA SO. Membuktikan baris "Belum ada SJ tercatat" benar muncul.
+INSERT INTO accurate_sales_order (id, number, trans_date, customer_name, status, total_amount)
+VALUES (900002, 'SO-QA-9002', DATE '2026-03-10', 'QA BAKTI HUSADA', 'Pending', 4750000)
+ON CONFLICT (id) DO UPDATE SET
+  number = EXCLUDED.number, trans_date = EXCLUDED.trans_date,
+  customer_name = EXCLUDED.customer_name, status = EXCLUDED.status,
+  total_amount = EXCLUDED.total_amount;
+
+-- Kasus 3 — HANYA SJ. Membuktikan baris "Belum ada SO tercatat" benar muncul.
+INSERT INTO accurate_delivery_order (id, number, trans_date, customer_name, ship_to, status)
+VALUES (900003, 'SJ-QA-9003', DATE '2026-03-11', 'QA CENDANA PRIMA', 'Jl. Fixture 3', 'Delivered')
+ON CONFLICT (id) DO UPDATE SET
+  number = EXCLUDED.number, trans_date = EXCLUDED.trans_date,
+  customer_name = EXCLUDED.customer_name, ship_to = EXCLUDED.ship_to, status = EXCLUDED.status;
