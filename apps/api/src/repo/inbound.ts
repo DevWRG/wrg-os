@@ -169,6 +169,21 @@ function extractSjNumber(body: string | null): string | null {
   return null;
 }
 
+// Ambil argumen SETELAH hashtag dari baris yang cocok — BUKAN dari body utuh.
+// `lineRegex` di-`^`-anchor tanpa flag `/m`, jadi `.replace()` langsung ke
+// body multi-baris cuma match kalau hashtag ada di baris PERTAMA. Orang kirim
+// pengantar dulu baru hashtag di baris ke-2 itu wajar di WA — tanpa fungsi
+// ini, argumennya jadi SELURUH teks (termasuk baris pengantar & hashtag-nya
+// sendiri). Dikonfirmasi bug nyata di #STOK/#CEK/#HELPDESK/#KLAIM lewat uji
+// format-bebas 09-04 (kontras dgn #SPH/#PRICING/#install dkk yang sudah benar
+// pakai pola cari-baris-dulu ini). Baris tak ketemu → "" (perilaku sama
+// dengan `.replace()` pada body kosong/tanpa match).
+function extractHashtagArg(body: string | null, lineRegex: RegExp): string {
+  if (!body) return "";
+  const line = stripInvisible(body).split(/\r?\n/).find((l) => lineRegex.test(l)) ?? "";
+  return line.replace(lineRegex, "").trim();
+}
+
 export function isInboundEnabled(): boolean {
   return (process.env.WA_INBOUND_PROCESS ?? "false").toLowerCase() === "true";
 }
@@ -831,7 +846,7 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
   // pola hybrid PIC yang justru dirancang utk kasus begini. ASUMSI rancangan,
   // gampang direvisi kalau ada spek resolusi identitas yg lebih pasti nanti.
   if (kind === "helpdesk") {
-    const text = stripInvisible(row.body ?? "").replace(HELPDESK_LINE, "").trim();
+    const text = extractHashtagArg(row.body, HELPDESK_LINE);
     if (!text) {
       const reply = await sendViaWaGateway(target, "⚠️ #HELPDESK terdeteksi tapi teks kosong. Format: #HELPDESK <deskripsi kendala>");
       return finish({ error: "empty-body", reply });
@@ -892,7 +907,7 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
       const reply = await sendViaWaGateway(target, text);
       return finish({ kind: "cek", cek_mode: "customer", via: ck.via, reply });
     }
-    const query = (row.body ?? "").replace(CEK_LINE, "").trim();
+    const query = extractHashtagArg(row.body, CEK_LINE);
     if (!query) {
       const reply = await sendViaWaGateway(
         target,
@@ -913,7 +928,7 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
       const reply = await sendViaWaGateway(target, "⚠️ #KLAIM wajib disertai foto dokumen (invoice/faktur/struk).");
       return finish({ error: "no-photo", reply });
     }
-    const caption = (row.body ?? "").replace(KLAIM_LINE, "").trim() || null;
+    const caption = extractHashtagArg(row.body, KLAIM_LINE) || null;
     const result = await ingestKlaim({
       wa_message_id: row.id,
       sender_jid: row.sender_jid,
@@ -985,7 +1000,7 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
   if (kind === "stok") {
     const st = await resolveSender({ senderJid: row.sender_jid, groupJid: row.group_jid, pushname: row.sender_name });
     if (!st) return finish({ skipped: "unknown-sender", sender_name: row.sender_name });
-    const query = (row.body ?? "").replace(STOK_LINE, "").trim();
+    const query = extractHashtagArg(row.body, STOK_LINE);
     if (!query) {
       const reply = await sendViaWaGateway(target, `⚠️ Isi nama/kode barang setelah #STOK, ${st.nama}. Contoh: #STOK Rapid Test Antigen`);
       return finish({ error: "empty-query", via: st.via, reply });
