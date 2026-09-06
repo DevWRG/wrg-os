@@ -125,13 +125,31 @@ jobs:
             // PR-nya: commit yang dipromosikan membawa judul aslinya
             // (`feat(F127): …`, `fix(F66): …`). Ini juga lebih benar secara
             // semantik — yang dipromosikan memang sekumpulan fitur, bukan satu.
-            let text = `${pr.head.ref}\n${pr.title}`;
+            let subjekCommit = [];
             const isPromosi = context.payload.action === 'closed' && pr.base.ref === 'main';
             if (isPromosi) {
               const commits = await github.paginate(github.rest.pulls.listCommits, {
                 owner: context.repo.owner, repo: context.repo.repo, pull_number: pr.number, per_page: 100,
               });
-              text += '\n' + commits.map(c => c.commit.message).join('\n');
+              // HANYA BARIS SUBJEK, bukan `c.commit.message` utuh.
+              //
+              // Badan commit sering MENYEBUT F-number lain sebagai rujukan,
+              // contoh, atau catatan konteks — bukan sebagai pekerjaan yang
+              // dibawanya. Memungut dari badan berarti sebutan terhitung
+              // sebagai fitur, dan PR promosi akan menandai kartu `Done` yang
+              // tak dibayar pekerjaan apa pun. Itu persis kebalikan dari tujuan
+              // #1104.
+              //
+              // Terbukti pada commit #1182 sendiri: subjeknya
+              // "fix(roadmap-sync): status Done bisa tercapai + F1-F9 …",
+              // tapi badannya mengutip F127 dan F66 sebagai contoh kasus. Waktu
+              // papan disisir, keduanya muncul seolah punya pekerjaan
+              // tertinggal — padahal cuma disebut.
+              //
+              // Subjek aman karena konvensi repo ini menaruh F-number di scope
+              // conventional-commit (`feat(F127): …`), dan itu memang menandai
+              // pekerjaan yang dibawa commit tsb.
+              subjekCommit = commits.map(c => String(c.commit.message).split('\n')[0]);
               core.info(`PR promosi → membaca ${commits.length} commit untuk F-number`);
               // GitHub membatasi endpoint ini di 250 commit. Promosi besar bisa
               // menembusnya (#1139 saja 191 commit), dan pemotongannya SENYAP —
@@ -165,12 +183,51 @@ jobs:
             // Batas non-alfanumerik di kedua sisi tetap menahan false positive
             // satu digit (`-f1-` di hash), dan PR dependabot sudah disaring
             // lebih dulu di `if:` job ini.
+            // RENTANG ("F1–F9") adalah DESKRIPSI, bukan dua fitur. Dibuang dulu
+            // sebelum pencocokan.
+            //
+            // Kena pada PR #1182 sendiri: judulnya "…status Done bisa tercapai
+            // + F1–F9 tak lagi dikecualikan" terbaca sebagai fitur F1 dan F9.
+            // Kebetulan tak merusak (dua-duanya memang punya kartu dan memang
+            // pantas Checking), tapi kalau F-number dalam rentang belum punya
+            // kartu, workflow akan MEMBUAT kartu draft palsu — persis kelas
+            // kejadian F182 dari hash dependabot.
+            //
+            // ⚠️ Rentang dibuang dari PROSA saja (judul PR + subjek commit),
+            // TIDAK dari nama branch. Bentuk `fN-fM` punya arti berlawanan di
+            // dua tempat itu, dan tak bisa dibedakan secara struktural:
+            //   · nama branch  → `feat/f49-f54-…` = dua fitur (konvensi sah)
+            //   · prosa        → "F1-F9 tak lagi dikecualikan" = rentang
+            // Konvensi dua-fitur itu hidup di nama branch; judul tak pernah
+            // memakainya (judul menulis `feat(F49): …`). Jadi memisahkan
+            // sumbernya menyelesaikan keduanya tanpa harus menebak.
+            const RE_RENTANG = /(?<![0-9A-Za-z])F\d{1,3}\s*[-–—]\s*F\d{1,3}(?![0-9A-Za-z])/gi;
             const RE_FNUM = /(?<![0-9A-Za-z])F\d{1,3}(?![0-9A-Za-z])/gi;
-            const fnums = [...new Set((text.match(RE_FNUM) || []).map(s => s.toUpperCase()))];
+            const ambil = (s) => new Set(((s || '').match(RE_FNUM) || []).map(x => x.toUpperCase()));
+
+            const teksProsa = [pr.title, ...subjekCommit].join('\n');
+            const rentang = teksProsa.match(RE_RENTANG) || [];
+            if (rentang.length) {
+              core.info(`Rentang diabaikan (deskripsi, bukan fitur): ${rentang.join(', ')}`);
+            }
+            const prosaBersih = teksProsa.replace(RE_RENTANG, ' ');
+
+            // Hanya prosa yang boleh MEMBUAT kartu draft baru. Nama branch
+            // cuma boleh MEMPERBARUI kartu yang sudah ada.
+            //
+            // Alasannya: salah-baca dari nama branch dengan begitu terbatas pada
+            // hal yang bisa dibatalkan (status kartu bergeser) dan bukan yang tak
+            // bisa (kartu palsu lahir lalu mengotori papan selamanya — kelas
+            // kejadian F182 dari hash dependabot). Branch PR #1182 sendiri,
+            // `fix/roadmap-sync-f1-f9`, adalah contoh bentuk ambigu itu.
+            const bolehBuat = ambil(prosaBersih);
+            const fnums = [...new Set([...ambil(pr.head.ref), ...bolehBuat])];
 
             // Yang DITOLAK tetap dicatat. Kalau suatu hari F-number sah ikut
             // tersaring, jejaknya ada di log run — bukan hilang tanpa suara.
-            const loose = [...new Set((text.match(/F\d{1,3}/gi) || []).map(s => s.toUpperCase()))];
+            // Rentang tak dihitung di sini: ia punya baris lognya sendiri, dan
+            // melaporkannya sebagai "kemungkinan hash" akan menyesatkan.
+            const loose = [...new Set(((`${pr.head.ref}\n${prosaBersih}`).match(/F\d{1,3}/gi) || []).map(s => s.toUpperCase()))];
             const rejected = loose.filter(f => !fnums.includes(f));
             if (rejected.length) {
               core.info(`Ditolak (tidak berdiri sendiri, kemungkinan hash): ${rejected.join(', ')}`);
@@ -204,6 +261,12 @@ jobs:
               // lebih gampang terjadi daripada waktu minimalnya dua digit.
               const re = new RegExp(`(?<![0-9A-Za-z])${f}(?!\\d)`, 'i');
               let matches = items.filter(it => re.test(it.content?.title || ''));
+              if (!matches.length && !bolehBuat.has(f)) {
+                // Cuma muncul di nama branch → jangan bikin kartu. Lihat
+                // catatan `bolehBuat` di atas.
+                core.info(`${f}: tak ada kartu & cuma dari nama branch — tidak dibuat`);
+                continue;
+              }
               if (!matches.length) {
                 // F-number belum ada di board → buat draft item baru.
                 // Judul dijamin memuat F-number (di depan) agar match di run berikutnya.

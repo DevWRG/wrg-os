@@ -108,6 +108,26 @@ cek("promosi: F-number dibaca dari commit → Done", r.updates, [
 ]);
 cek("promosi: nol kartu palsu dibuat", r.created, []);
 
+// REGRESI — badan commit yang MENYEBUT F-number lain tak boleh dihitung.
+// Kasus nyata: commit #1182 subjeknya soal roadmap-sync, tapi badannya mengutip
+// F127 dan F66 sebagai contoh. Kalau yang dibaca `c.commit.message` utuh,
+// promosi yang mengangkut commit itu akan menandai F127 & F66 `Done` tanpa
+// membawa pekerjaan keduanya sama sekali — `Done` yang tak dibayar apa pun,
+// persis kebalikan dari tujuan #1104.
+r = await harness({
+  action: "closed", baseRef: "main", headRef: "dev", title: "Promote dev → main",
+  commits: [
+    "fix(roadmap-sync): status Done bisa tercapai + F1-F9 tak lagi dikecualikan\n\n" +
+      "Bukti: F66 sudah di main sejak PR #614 tapi kartunya Checking.\n" +
+      "Contoh lain yang terpengaruh: F127 Sales Analytics.",
+    "fix(F19): nearest_ed_date tampil sbg Date.toString() JS mentah",
+  ],
+  cards: ["[NPK] F66 NPK Engine", "[CRM] F127 Sales Analytics", "[PO] F19 Forecast"],
+});
+cek("promosi: F-number di BADAN commit diabaikan", r.updates, [
+  { item: "[PO] F19 Forecast", status: "Done" },
+]);
+
 // ── #1104 gap 2 — F1–F9 dikecualikan regex lama `F\d{2,3}` ─────────────────
 r = await harness({
   action: "closed", baseRef: "dev", headRef: "feat/f1-spt-kanban",
@@ -123,6 +143,50 @@ r = await harness({
   cards: ["[X] F127 Analytics", "[Y] F10 Sesuatu", "[Z] PROF1 Palsu", "[SPT] F1 Asli"],
 });
 cek("F1 tidak bocor ke F10/F127/PROF1", r.updates, [{ item: "[SPT] F1 Asli", status: "Checking" }]);
+
+// ── Rentang "F1–F9" = deskripsi, bukan dua fitur ───────────────────────────
+// Kena pada judul PR #1182 sendiri. Kalau F-number dalam rentang belum punya
+// kartu, workflow akan MEMBUAT kartu draft palsu.
+r = await harness({
+  action: "closed", baseRef: "dev", headRef: "fix/roadmap-sync-rentang",
+  title: "fix(roadmap-sync): status Done bisa tercapai + F1–F9 tak lagi dikecualikan",
+  cards: ["[SPT] F1 Sales Pipeline Tracker", "[OPS] F9 Master Data Hygiene"],
+});
+cek("rentang en-dash di JUDUL tidak dibaca sebagai fitur", r.updates, []);
+cek("rentang: nol kartu palsu dibuat", r.created, []);
+
+// Bentuk `fN-fM` di NAMA BRANCH tetap ambigu dan sengaja dibiarkan cocok —
+// `feat/f49-f54-…` sah berarti dua fitur. Yang dijamin desain ini: salah-baca
+// dari nama branch hanya bisa MEMPERBARUI kartu yang sudah ada (bisa
+// dibatalkan), TIDAK PERNAH membuat kartu palsu (tak bisa dibatalkan).
+// Branch PR #1182 sendiri, `fix/roadmap-sync-f1-f9`, adalah bentuk itu.
+r = await harness({
+  action: "closed", baseRef: "dev", headRef: "fix/roadmap-sync-f1-f9",
+  title: "fix(roadmap-sync): perbaikan tanpa F-number di judul",
+  cards: ["[SPT] F1 Sales Pipeline Tracker"], // F9 sengaja TIDAK punya kartu
+});
+cek("branch ambigu: kartu yang ada boleh diperbarui", r.updates, [
+  { item: "[SPT] F1 Sales Pipeline Tracker", status: "Checking" },
+]);
+cek("branch ambigu: kartu palsu TIDAK dibuat", r.created, []);
+
+r = await harness({
+  action: "closed", baseRef: "dev", headRef: "feat/x", title: "feat: rapikan F1 - F9",
+  cards: ["[SPT] F1 A", "[OPS] F9 B"],
+});
+cek("rentang hyphen berspasi juga diabaikan", r.updates, []);
+
+// TAPI hyphen RAPAT di nama branch adalah bentuk sah dua fitur di repo ini —
+// `feat/f49-f54-…`. Ini tidak boleh ikut terbuang.
+r = await harness({
+  action: "closed", baseRef: "dev", headRef: "feat/f49-f54-satu-pr-dua-fitur",
+  title: "feat: dua fitur sekaligus",
+  cards: ["[A] F49 Satu", "[B] F54 Dua"],
+});
+cek("branch f49-f54 tetap dua fitur", r.updates, [
+  { item: "[A] F49 Satu", status: "Checking" },
+  { item: "[B] F54 Dua", status: "Checking" },
+]);
 
 // ── Jalur yang TIDAK boleh berubah perilakunya ─────────────────────────────
 r = await harness({
