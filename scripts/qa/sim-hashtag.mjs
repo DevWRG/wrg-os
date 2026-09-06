@@ -317,8 +317,25 @@ const skenario = [
   { nama: "stok · pengirim tak dikenal (gerbang)", body: "#STOK FX80", from: ASING, harap: null },
 
   // F4/QW3 #CEK — gerbang: resolveSender. Isinya data komersial.
-  { nama: "cek · varian nomor dokumen", body: "#CEK SO-00123", from: AM, harap: /.+/ },
-  { nama: "cek · varian customer", body: "#CEK CUSTOMER RSUD Kota", from: AM, harap: /.+/ },
+  // Ekspektasi menuntut NOMOR DOKUMEN yang ditemukan, bukan sekadar "ada
+  // balasan". Dengan `/.+/`, balasan "tidak ditemukan di data SO/SJ" ikut
+  // dianggap lulus — dua skenario ini hijau bertahun-tahun tanpa pernah
+  // benar-benar menguji query-nya (#1043).
+  // Fixture: scripts/qa/seed-hashtag-fixtures.sql (SO-QA-9001 dst).
+  { nama: "cek · varian nomor dokumen", body: "#CEK SO-QA-9001", from: AM,
+    harap: /(?=[\s\S]*📄 \*SO SO-QA-9001\*)(?=[\s\S]*SJ: SJ-QA-9001)/ },
+  { nama: "cek · varian customer", body: "#CEK CUSTOMER QA MAWAR SEJAHTERA", from: AM,
+    harap: /(?=[\s\S]*📋 SO SO-QA-9001)(?=[\s\S]*→ SJ SJ-QA-9001)/ },
+  // Dua kasus di bawah menguji CABANG YANG BERBEDA, bukan variasi kosmetik:
+  // handleCekQuery mencari SO dan SJ independen, jadi baris "Belum ada …"
+  // hanya muncul kalau satu sisi benar-benar kosong. Nama fixture-nya sengaja
+  // berjauhan secara trigram supaya tak saling mencuri — lihat catatan di seed.
+  { nama: "cek · customer punya SO tanpa SJ", body: "#CEK CUSTOMER QA BAKTI HUSADA", from: AM,
+    harap: /(?=[\s\S]*📋 SO SO-QA-9002)(?=[\s\S]*Belum ada SJ tercatat)/ },
+  { nama: "cek · customer punya SJ tanpa SO", body: "#CEK CUSTOMER QA CENDANA PRIMA", from: AM,
+    harap: /(?=[\s\S]*Belum ada SO tercatat)(?=[\s\S]*→ SJ SJ-QA-9003)/ },
+  { nama: "cek · customer tak ada di SO/SJ", body: "#CEK CUSTOMER ZZZ TIDAK ADA SAMA SEKALI", from: AM,
+    harap: /tidak ditemukan di data SO\/SJ/ },
   { nama: "cek · argumen kosong", body: "#CEK", from: AM, harap: new RegExp(`⚠️ Isi nomor dokumen atau nama customer setelah #CEK, ${esc(AM.nama)}`) },
   { nama: "cek · pengirim tak dikenal (gerbang)", body: "#CEK SO-00123", from: ASING, harap: null },
 
