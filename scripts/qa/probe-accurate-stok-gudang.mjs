@@ -119,18 +119,27 @@ const KANDIDAT = [
     uji: [{ label: "warehouse/detail.do", path: "/accurate/api/warehouse/detail.do", qs: `id=${contohGudang?.id ?? ""}` }],
   },
   {
-    grup: "C. MAHAL — item/detail.do (1 panggilan PER SKU)",
+    grup: "C. MAHAL — per SKU (1 panggilan untuk tiap item)",
     catatanOngkos: (n) => `≈ ${n ?? "?"} panggilan/siklus — lihat vonis di bawah`,
-    uji: [{ label: "item/detail.do", path: "/accurate/api/item/detail.do", qs: `id=${contohItem?.id ?? ""}` }],
+    uji: [
+      { label: "item/detail.do", path: "/accurate/api/item/detail.do", qs: `id=${contohItem?.id ?? ""}` },
+      // Dari probe #1191 — namanya paling menjanjikan di antara semua kandidat
+      // (harfiah "ambil stok"), dan belum pernah dicoba di v1/v2.
+      { label: "item/get-stock.do", path: "/accurate/api/item/get-stock.do", qs: `id=${contohItem?.id ?? ""}` },
+    ],
   },
   {
-    grup: "D. Varian nama utk endpoint mutasi yang 404 di v1",
+    grup: "D. Varian nama utk endpoint mutasi/opname yang 404 di v1",
     catatanOngkos: () => "tergantung bentuk; mutasi = turunan, bukan saldo",
     uji: [
       { label: "stock-mutation/list.do", path: "/accurate/api/stock-mutation/list.do", qs: "sp.page=1&sp.pageSize=1" },
       { label: "item-adjustment/list.do", path: "/accurate/api/item-adjustment/list.do", qs: "sp.page=1&sp.pageSize=1" },
       { label: "warehouse-mutation/list.do", path: "/accurate/api/warehouse-mutation/list.do", qs: "sp.page=1&sp.pageSize=1" },
       { label: "stock-mutation-history/list.do", path: "/accurate/api/stock-mutation-history/list.do", qs: "sp.page=1&sp.pageSize=1" },
+      // Dua di bawah juga dari #1191: varian tanpa sufiks `-order`/`-result`,
+      // dan `stock-adjustment` yang berbeda dari `item-adjustment` di atas.
+      { label: "stock-opname/list.do", path: "/accurate/api/stock-opname/list.do", qs: "sp.page=1&sp.pageSize=1" },
+      { label: "stock-adjustment/list.do", path: "/accurate/api/stock-adjustment/list.do", qs: "sp.page=1&sp.pageSize=1" },
     ],
   },
 ];
