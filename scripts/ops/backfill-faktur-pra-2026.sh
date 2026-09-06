@@ -94,7 +94,45 @@ if [ "$(echo "$RESP" | jq -r '.cappedByPages // false')" = "true" ]; then
   exit 1
 fi
 
-hijau "✓ Tidak terpotong (cappedByPages tak muncul)."
+# ── Jebakan 1b: API PROD BELUM PUNYA fitur ini ───────────────────────────
+# Terjadi 6 Sep 2026 pada percobaan pertama. #1183 baru mendarat di `dev`;
+# prod menjalankan `main`, yang syncAccurateInvoices-nya masih
+# `opts: { days, invoiceId }` dengan cap keras `page <= 200`. Field JSON tak
+# dikenal DIABAIKAN DIAM-DIAM oleh Hono, jadi `skip_existing` dan `max_pages`
+# tak berefek — dan `cappedByPages` tak pernah dikirim, sehingga gerbang di
+# atas MUSTAHIL menyala. Pengaman yang bergantung pada kode yang belum
+# ter-deploy bukan pengaman.
+#
+# Dua sinyal yang bekerja di KEDUA versi:
+#   · `skippedExisting` absen padahal skip_existing diminta → API lama
+#   · `pages` mencapai cap → terpotong, apa pun versinya
+API_LAMA=0
+if [ "$(echo "$RESP" | jq -r 'has("skippedExisting")')" != "true" ]; then
+  API_LAMA=1
+  kuning "⚠ API prod TIDAK mengenali skip_existing/max_pages — #1183 belum ter-deploy"
+  kuning "  ke prod (ia masih di branch dev). Akibatnya:"
+  kuning "  · tiap faktur yang SUDAH ada tetap ditarik ulang → durasi ~2x lipat"
+  kuning "  · cap keras 200 halaman = 10.000 baris tetap berlaku"
+  kuning "  · cappedByPages tak pernah dikirim → gerbang di atas TIDAK menyala"
+fi
+
+PAGES="$(echo "$RESP" | jq -r '.pages // 0')"
+CAP_EFEKTIF=$([ "$API_LAMA" = "1" ] && echo 200 || echo "$MAX_PAGES")
+if [ "$PAGES" -ge "$CAP_EFEKTIF" ]; then
+  merah "✗ TERPOTONG — berhenti di halaman $PAGES (cap $CAP_EFEKTIF = $((CAP_EFEKTIF * 50)) baris)."
+  merah "  Accurate menyimpan ~11.302 faktur; yang TIDAK tersentuh adalah yang"
+  merah "  PALING TUA (jalannya dari terbaru ke lama) — yaitu batch 2024-12."
+  if [ "$API_LAMA" = "1" ]; then
+    merah "  Mengulang TIDAK akan menolong: cap-nya keras di kode prod, dan"
+    merah "  jalannya selalu mulai dari hari ini, jadi berhenti di titik yang sama."
+    merah "  Sisa itu baru bisa ditarik setelah #1183 sampai ke main & ter-deploy."
+  else
+    merah "  Ulangi: BACKFILL_MAX_PAGES=$((CAP_EFEKTIF * 2)) bash $0"
+  fi
+  exit 1
+fi
+
+hijau "✓ Tidak terpotong (halaman $PAGES < cap $CAP_EFEKTIF)."
 echo "   diproses: $(echo "$RESP" | jq -r '.processed')   dilewati (sudah ada): $(echo "$RESP" | jq -r '.skippedExisting // 0')"
 echo
 
