@@ -17,7 +17,7 @@ import { matchCustomer, type PlanCandidate } from "./parsers/fuzzy.js";
 import { isDbEnabled, pingDb } from "./db.js";
 import { waPreflight, sendViaWaGateway, type WaSendResult } from "./wasend.js";
 import { processUnprocessed, isInboundEnabled } from "./repo/inbound.js";
-import { syncAccurateInvoices, syncVendors, syncItems, syncSalesOrders, syncDeliveryOrders, syncCustomers, syncSalesOrderItems, syncDeliveryOrderItems, getDeliveryOrderItems, getSalesOrderItems, getVendorDetail, accurateConfigured } from "./repo/accurateSync.js";
+import { syncAccurateInvoices, syncVendors, syncItems, syncSalesOrders, syncDeliveryOrders, syncCustomers, syncSalesOrderItems, syncDeliveryOrderItems, syncItemStockBranch, getDeliveryOrderItems, getSalesOrderItems, getVendorDetail, accurateConfigured } from "./repo/accurateSync.js";
 import { mirrorFreshness } from "./repo/mirror-health.js";
 import { insertAuditEvent } from "./repo/audit.js";
 import { upsertDealsFromPlan, logReportToDeals, getPipeline, getPipelineReport, getPipelineLeaderboard, transitionStage, DealError, listPendingLosses, decideLoss, getDealTimeline, createDeal, updateDeal, deleteDeal } from "./repo/deal.js";
@@ -1451,6 +1451,18 @@ app.post("/accurate/sync/doc-items", async (c) => {
   if (kind !== "so") out.deliveryOrders = await syncDeliveryOrderItems({ limit, sinceDays });
   const ok = Object.values(out).every((v) => (v as { ok: boolean }).ok);
   return c.json(out, ok ? 200 : 502);
+});
+
+// F37 (#836) — sapuan stok per gudang. BERBATAS per panggilan (default 600
+// SKU) dan melanjutkan dari yang paling lama tak tersegarkan, jadi memanggil
+// berulang-ulang aman dan itu memang cara menghabiskan backlog ±5.900 SKU.
+// `pending` di balikan = sisa SKU yang BELUM PERNAH ditarik sama sekali.
+app.post("/accurate/sync/stock-branch", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  if (!accurateConfigured()) return c.json({ error: "kredensial Accurate tak tersedia" }, 503);
+  const limit = Math.min(Math.max(Number(c.req.query("limit")) || 600, 1), 6000);
+  const r = await syncItemStockBranch({ limit });
+  return c.json(r, r.ok ? 200 : 502);
 });
 
 // Baris produk satu surat jalan (on-demand dari Accurate detail.do).

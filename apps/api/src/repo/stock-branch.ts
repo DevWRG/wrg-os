@@ -209,6 +209,11 @@ export interface StockBranchSummary {
     item_count: number;
     total_qty: number;
     terakhir_update: string | null;
+    // Asal angka gudang ini. Setelah puller F37 hidup, tabel ini berisi DUA
+    // sumber sekaligus: gudang yang dipetakan ke Accurate ('accurate') dan
+    // lima cabang yang di-skip yang tetap memakai CSV opname ('import').
+    // Tanpa kolom ini, dua-duanya tampil sebagai angka yang sama meyakinkan.
+    sumber: string[];
   }[];
 }
 
@@ -248,7 +253,8 @@ export async function stockBranchSummary(): Promise<StockBranchSummary> {
     SELECT w.kode, w.nama, w.cabang, w.aktif,
            count(sb.item_id)::int AS item_count,
            COALESCE(sum(sb.quantity), 0) AS total_qty,
-           max(sb.updated_at) AS terakhir_update
+           max(sb.updated_at) AS terakhir_update,
+           COALESCE(array_agg(DISTINCT sb.source) FILTER (WHERE sb.source IS NOT NULL), '{}') AS sumber
     FROM warehouse w
     LEFT JOIN item_stock_branch sb ON sb.warehouse_kode = w.kode
     GROUP BY w.kode, w.nama, w.cabang, w.aktif, w.urutan
@@ -272,6 +278,7 @@ export async function stockBranchSummary(): Promise<StockBranchSummary> {
       item_count: Number(r.item_count),
       total_qty: Number(r.total_qty),
       terakhir_update: r.terakhir_update == null ? null : new Date(r.terakhir_update as string | Date).toISOString(),
+      sumber: Array.isArray(r.sumber) ? (r.sumber as unknown[]).map(String) : [],
     })),
   };
 }

@@ -23,6 +23,7 @@ export interface StockBranchSummary {
     item_count: number;
     total_qty: number;
     terakhir_update: string | null;
+    sumber: string[];
   }[];
 }
 
@@ -196,6 +197,16 @@ export function StockGudangView({ initial }: { initial: StockGudangInitial }) {
                   <p className="text-muted-foreground text-xs">
                     {w.item_count === 0 ? "belum ada data" : `${fmt(w.item_count)} item`}
                   </p>
+                  {/* Setelah puller F37 hidup, kartu-kartu ini bercampur: yang
+                      dipetakan ke Accurate tersegarkan otomatis, lima cabang
+                      yang di-skip masih CSV opname. Tanpa label, keduanya
+                      tampil sama meyakinkan. */}
+                  {w.sumber.length > 0 && (
+                    <p className="text-muted-foreground mt-1 text-[11px]">
+                      sumber: {w.sumber.includes("accurate") ? "Accurate" : w.sumber.join(", ")}
+                      {w.sumber.length > 1 && ` (+${w.sumber.length - 1} lain)`}
+                    </p>
+                  )}
                 </div>
               ))}
             </div>
