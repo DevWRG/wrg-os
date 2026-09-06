@@ -7,6 +7,8 @@ import { ingestAccurateWebhook, normalizeAccurateDate, type AccurateInvoice } fr
 import {
   upsertVendors, upsertItems, upsertSalesOrders, upsertDeliveryOrders, upsertCustomers,
   replaceSalesOrderItems, replaceDeliveryOrderItems, pendingItemDocs, countPendingItemDocs,
+  warehouseAccurateMap, ringkasStokPerGudang, replaceItemStockBranch,
+  pendingStockItems, countPendingStockItems,
 } from "./accurateMirror.js";
 
 // Puller Accurate Online (pengganti legacy sync_accurate.sh). Tarik sales-invoice
@@ -453,6 +455,69 @@ async function syncDocItems(
 
 export const syncSalesOrderItems = (opts: { sinceDays?: number; limit?: number } = {}) => syncDocItems("so", opts);
 export const syncDeliveryOrderItems = (opts: { sinceDays?: number; limit?: number } = {}) => syncDocItems("do", opts);
+
+/**
+ * F37 (#836) — tarik stok PER GUDANG ke `item_stock_branch`.
+ *
+ * Jalur yang dipakai `item/detail.do` per SKU, dan itu bukan pilihan: probe di
+ * prod membuktikan `item/list.do` dengan field/filter gudang mengabaikannya
+ * DIAM-DIAM (balas 200 s=true, kunci baris tetap {id,no,name,quantity}), dan
+ * seluruh varian endpoint mutasi/opname membalas 404. Rinciannya di migrasi 166.
+ *
+ * Karena itu sapuan penuh = ±5.900 panggilan. HARIAN, bukan tiap 5 menit —
+ * jangan dipasang di cron pendek. Tiap run BERBATAS (`limit`) dan melanjutkan
+ * dari SKU yang paling lama tak tersegarkan (`accurate_item.stock_synced_at`),
+ * jadi run yang mati di tengah tidak mengulang dari awal.
+ *
+ * Satu panggilan detail membawa SEMUA gudang untuk SKU itu sekaligus, jadi
+ * ongkosnya jumlah-item, BUKAN jumlah-item × jumlah-gudang.
+ */
+export async function syncItemStockBranch(
+  opts: { limit?: number; jedaMs?: number } = {},
+): Promise<{ ok: boolean; items: number; rows: number; pending: number; skipped: number; error?: string }> {
+  const creds = loadCreds();
+  if (!creds) return { ok: false, items: 0, rows: 0, pending: 0, skipped: 0, error: "kredensial Accurate tak tersedia" };
+
+  const map = await warehouseAccurateMap();
+  if (map.length === 0) {
+    // Bukan sekadar "tak ada kerjaan": tanpa allowlist, puller yang naif akan
+    // menulis SEMUA gudang termasuk 96 milik customer. Berhenti keras supaya
+    // penyebabnya (seed migrasi 166 belum jalan) terbaca, bukan diam-diam
+    // menghasilkan nol baris yang terlihat seperti "stok memang kosong".
+    return {
+      ok: false, items: 0, rows: 0, pending: 0, skipped: 0,
+      error: "warehouse_accurate kosong — migrasi 166 belum jalan?",
+    };
+  }
+  const kodeDipetakan = [...new Set(map.map((m) => m.warehouse_kode))];
+
+  const limit = opts.limit ?? 600;
+  const jeda = opts.jedaMs ?? 150;
+  const ids = await pendingStockItems(limit);
+
+  let items = 0;
+  let rows = 0;
+  let skipped = 0;
+  for (const id of ids) {
+    const det = await accGet(creds, "/accurate/api/item/detail.do", `id=${id}`);
+    if (det?.s !== true) {
+      // SKU bermasalah tak boleh menghentikan sisanya. stock_synced_at
+      // SENGAJA tidak disentuh → SKU ini tetap di antrean depan dan dicoba
+      // lagi siklus berikutnya.
+      skipped += 1;
+      await sleep(jeda);
+      continue;
+    }
+    const d = det.d as Detail;
+    const entries = (d?.detailWarehouseData ?? []) as Detail[];
+    rows += await replaceItemStockBranch(id, ringkasStokPerGudang(entries, map), kodeDipetakan);
+    items += 1;
+    await sleep(jeda);
+  }
+
+  const pending = await countPendingStockItems();
+  return { ok: true, items, rows, pending, skipped };
+}
 
 // Ambil baris produk (detailItem) satu delivery-order via detail.do — dipakai
 // on-demand saat user buka detail Shipments (bukan disimpan tiap sync).

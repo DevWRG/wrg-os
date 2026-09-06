@@ -42,6 +42,11 @@ jobs:
       # Sebelumnya tak pernah jalan di CI — apps/api tak punya script `test`, jadi
       # `turbo run test` melewatinya tanpa suara dan pipeline tetap hijau.
       - run: pnpm test
+      # Migrasi dieksekusi menurut urutan abjad nama file (scripts/db/migrate.sh),
+      # jadi nomor ganda = urutan tak tentu, dan tak ada yang gagal sampai deploy
+      # hampir menyentuh skema prod. Cek ini menolak tabrakan BARU; 11 nomor yang
+      # sudah bertabrakan dicatat sebagai baseline (utang) di dalam skripnya.
+      - run: node scripts/db/check-migration-numbers.mjs
       # Rumus Simulator KSO menghitung harga penawaran KSO yang dikirim ke faskes.
       # Salah angka = penawaran salah, dan layarnya tetap tampil wajar — tidak ada
       # yang gagal sendiri (PR #803: control XR memakai harga XN, lolos semua cek).

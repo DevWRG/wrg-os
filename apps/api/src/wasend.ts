@@ -5,6 +5,15 @@
 //   2. DRY-RUN — WA_SEND_URL di-set TAPI WA_DRY_RUN != "false" → gateway terwiring
 //                tapi TIDAK kirim live (di-log saja). sent:true, dryRun:true.
 //                Ini default aman: set URL dulu, kirim live belakangan.
+//
+// Mode 1 & 2 mencetak isi pesan UTUH ke stdout. Ini satu-satunya cara melihat
+// teks balasan saat trial lokal: WaSendResult sengaja cuma bawa {to,sent,stub},
+// dan pesan keluar tidak disimpan ke DB. Tanpa log ini setiap orang yang mau
+// menguji command WA (#PLAN/#REPORT/#SALES/#CEK) terpaksa menulis skrip sendiri
+// yang memanggil handler-nya langsung. Sengaja utuh, bukan dipotong — balasan
+// WA itu multi-baris dan potongan 80 karakter selalu terputus di tengah.
+// Mode 3 (live) TIDAK ikut log body: di prod itu cuma menggandakan data
+// komersial ke pm2 log tanpa ada yang membacanya.
 //   3. LIVE    — WA_SEND_URL di-set DAN WA_DRY_RUN="false" → POST {to,message} ke
 //                gateway (opsional header x-wa-secret = WA_SEND_SECRET).
 //
@@ -28,17 +37,26 @@ function isDryRun(): boolean {
   return (process.env.WA_DRY_RUN ?? "true").toLowerCase() !== "false";
 }
 
+// Cetak pesan yang TIDAK jadi dikirim, utuh. Body diapit penanda supaya
+// balasan multi-baris tetap kebaca sebagai satu blok di antara log lain.
+function logNotSent(mode: string, target: string, body: string): void {
+  console.log(`[wa] ${mode} — tidak kirim live → ${target}\n--- pesan ---\n${body}\n--- selesai ---`);
+}
+
 export async function sendViaWaGateway(to: string, body: string): Promise<WaSendResult> {
   const url = process.env.WA_SEND_URL;
   const testTarget = process.env.WA_TEST_TARGET?.trim();
   const target = testTarget || to;
 
   // Mode 1: belum terwiring
-  if (!url) return { sent: true, stub: true, to: target };
+  if (!url) {
+    logNotSent("STUB (WA_SEND_URL kosong)", target, body);
+    return { sent: true, stub: true, to: target };
+  }
 
   // Mode 2: terwiring tapi tidak kirim live
   if (isDryRun()) {
-    console.log(`[wa] DRY-RUN (WA_DRY_RUN) — tidak kirim live → ${target}: ${body.slice(0, 80)}`);
+    logNotSent("DRY-RUN (WA_DRY_RUN)", target, body);
     return { sent: true, stub: false, dryRun: true, to: target };
   }
 

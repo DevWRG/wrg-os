@@ -16,12 +16,14 @@ import {
   runPeopleAnalytics,
 } from "./repo/agents.js";
 import { runReminders } from "./repo/reminder.js";
+import { runMaintenanceReminders } from "./repo/maintenance.js";
 import { runHodDaily, runMissStreakEscalation } from "./repo/hodreminder.js";
 import { runVisitWeeklyRecap } from "./repo/visitweekly.js";
 import { generateRekap, generateResume } from "./repo/monitor.js";
 import {
   syncAccurateInvoices, syncSalesOrders, syncDeliveryOrders, syncCustomers,
   syncSalesOrderItems, syncDeliveryOrderItems,
+  syncItems, syncItemStockBranch,
 } from "./repo/accurateSync.js";
 import { runPlanCheck, runReportCheck } from "./repo/compliance.js";
 import { runNotifTua } from "./repo/notiftua.js";
@@ -39,6 +41,13 @@ import { evaluateSalesAlerts } from "./repo/sales-analytics-alert-eval.js";
 import { computeNpk, currentPeriod } from "./repo/npk.js";
 import { computeNpkAm } from "./repo/npk-am.js";
 import { snapshotLastWeek } from "./repo/watchpoint-weekly.js";
+import { runPreVisitCheck } from "./repo/pickup-plan.js";
+import { runEdWatch } from "./repo/stock-batch.js";
+import { runVehicleAlerts } from "./repo/vehicle.js";
+import { runItTicketSlaAlerts } from "./repo/it-ticket.js";
+import { runMaintenanceAlerts, runGaMaintenanceBscFeed } from "./repo/ga-maintenance.js";
+import { runGaHelpdeskOverdueAlert, runGaHelpdeskBscFeed } from "./repo/ga-helpdesk.js";
+import { runLpseTenderReminder } from "./repo/lpse-tender.js";
 
 // Penjadwal agen in-process (Blueprint v2.3). Default MATI — aktif hanya bila
 // AGENT_SCHEDULE_ENABLED=true. Tiap run tetap menulis ke audit_log via repo
@@ -93,9 +102,15 @@ export function startScheduler(): ScheduleStatus {
   // Eskalasi kepatuhan (F57): AM miss plan/report N hari-kerja berturut → rekap ke
   // grup HoD. Flag SENDIRI (default off) supaya tak surprise-kirim WA saat deploy.
   const missEscalationEnabled = (process.env.MISS_ESCALATION_ENABLED ?? "false").toLowerCase() === "true";
+  // ED Watch (F38): pindai batch ber-ED, kirim peringatan saat melintasi ambang
+  // 90/60/30 hari. Flag SENDIRI (default off) — mengirim WA.
+  const edWatchEnabled = (process.env.ED_WATCH_ENABLED ?? "false").toLowerCase() === "true";
   // Rekap kunjungan mingguan (F16): volume kunjungan minggu lalu vs target per AM.
   // Flag SENDIRI (default off) — sama alasannya: jangan kirim WA tanpa diminta.
   const visitWeeklyEnabled = (process.env.VISIT_WEEKLY_ENABLED ?? "false").toLowerCase() === "true";
+  // Cek pra-trip Kirim-Tagih H-1 (F45): verifikasi hari libur + PIC untuk trip
+  // besok, kirim ke nomor kurir masing-masing. Flag SENDIRI (default off).
+  const preVisitEnabled = (process.env.PREVISIT_CHECK_ENABLED ?? "false").toLowerCase() === "true";
   // accurate-sync (puller invoice, read-only ke API Accurate, tanpa kirim WA)
   // bisa nyala SENDIRI tanpa ikut menyalakan A1-12 / monitor.
   const accurateEnabled = (process.env.ACCURATE_SCHEDULE_ENABLED ?? "false").toLowerCase() === "true";
@@ -131,6 +146,9 @@ export function startScheduler(): ScheduleStatus {
   const listMembersEnabled = (process.env.LIST_MEMBERS_ENABLED ?? "false").toLowerCase() === "true";
   // notif-quota (port notif_quota.sh) — probe OpenRouter key/limit → alert owner WA. Tiap 6 jam.
   const notifQuotaEnabled = (process.env.NOTIF_QUOTA_ENABLED ?? "false").toLowerCase() === "true";
+  // it-ticket-sla (F52) — alert tiket IT yg lewat SLA & belum resolved. Default
+  // tiap 30 menit (SLA kritis cuma 2 jam, cek jarang bikin telat ketahuan).
+  const itTicketSlaEnabled = (process.env.IT_TICKET_SLA_ENABLED ?? "false").toLowerCase() === "true";
   const salesAlertEvalEnabled = (process.env.SALES_ALERT_EVAL_ENABLED ?? "false").toLowerCase() === "true";
   // npk-compute (F66) — recompute NPK 8 HoD utk semester BERJALAN, harian 01:00.
   // Display-only (isi npk_score_semester + npk_aspect_score, tanpa WA/LLM). Sebelum
@@ -140,6 +158,25 @@ export function startScheduler(): ScheduleStatus {
   // sebelum job lain menggeser angka. Tanpa ini papan Weekly tak punya riwayat:
   // metric computed dihitung live sehingga minggu lewat ikut berubah tiap dibuka.
   const watchpointSnapshotEnabled = (process.env.WATCHPOINT_SNAPSHOT_ENABLED ?? "false").toLowerCase() === "true";
+  // ga-maintenance-alert (F137) — reminder due-date jadwal maintenance aset GA.
+  const gaMaintenanceAlertEnabled = (process.env.GA_MAINTENANCE_ALERT_ENABLED ?? "false").toLowerCase() === "true";
+  // ga-maintenance-bsc-feed (F137) — auto-isi kpi_measurement Dito bulanan
+  // (preseden pertama auto-feed, sebelumnya semua manual lewat UI).
+  const gaMaintenanceBscEnabled = (process.env.GA_MAINTENANCE_BSC_ENABLED ?? "false").toLowerCase() === "true";
+  // ga-helpdesk-overdue (F139) — alert SLA tiket helpdesk terlewati ke
+  // assignee + Husni (fixed, RACI: 1 HoD utk seluruh proses). Flag SENDIRI
+  // (default off) — mengirim WA.
+  const gaHelpdeskOverdueEnabled = (process.env.GA_HELPDESK_OVERDUE_ENABLED ?? "false").toLowerCase() === "true";
+  // ga-helpdesk-bsc-feed (F139) — auto-isi kpi_measurement Dito ('SLA
+  // compliance %'), bulanan. Display-only, tanpa WA.
+  const gaHelpdeskBscEnabled = (process.env.GA_HELPDESK_BSC_ENABLED ?? "false").toLowerCase() === "true";
+  // lpse-tender-reminder (F20) — WA ke PIC kalau tender LPSE/E-Catalog macet
+  // >N hari di status berjalan (belum selesai). Flag SENDIRI (default off).
+  const lpseTenderReminderEnabled = (process.env.LPSE_TENDER_REMINDER_ENABLED ?? "false").toLowerCase() === "true";
+  // accurate-stock-sync (F2) — refresh accurate_item.quantity tiap 5 menit,
+  // dipakai #STOK (inbound.ts) supaya total stok tak basi. Flag SENDIRI,
+  // TERPISAH dari accurate-sync (itu utk invoice/SO/DO, cadence 6x/hari).
+  const accurateStockSyncEnabled = (process.env.ACCURATE_STOCK_SYNC_ENABLED ?? "false").toLowerCase() === "true";
   const timezone = TZ();
   const jobs: JobDef[] = [
     {
@@ -215,12 +252,12 @@ export function startScheduler(): ScheduleStatus {
   ];
 
   status = {
-    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled || watchpointSnapshotEnabled,
+    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled || watchpointSnapshotEnabled || preVisitEnabled || edWatchEnabled || gaMaintenanceAlertEnabled || gaMaintenanceBscEnabled || gaHelpdeskOverdueEnabled || gaHelpdeskBscEnabled || lpseTenderReminderEnabled || accurateStockSyncEnabled,
     timezone,
     jobs: jobs.map((j) => ({ id: j.id, expr: j.expr, valid: cron.validate(j.expr) })),
   };
 
-  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled && !watchpointSnapshotEnabled) {
+  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled && !watchpointSnapshotEnabled && !preVisitEnabled && !edWatchEnabled && !gaMaintenanceAlertEnabled && !gaMaintenanceBscEnabled && !gaHelpdeskOverdueEnabled && !gaHelpdeskBscEnabled && !lpseTenderReminderEnabled && !accurateStockSyncEnabled) {
     console.log("[scheduler] semua *_SCHEDULE/_ENABLED flag != true — tidak dijadwalkan");
     return status;
   }
@@ -280,6 +317,86 @@ export function startScheduler(): ScheduleStatus {
     live.push(`${j.label}=${j.expr}`);
   }
 
+  // PM & Kalibrasi Alat (F24, AFTERSALES) — reminder H-14 ke teknisi per alat.
+  // Nyala SENDIRI (default off), tidak ikut AGENT_SCHEDULE_ENABLED.
+  const pmKalibrasiEnabled = (process.env.PM_KALIBRASI_REMINDER_ENABLED ?? "false").toLowerCase() === "true";
+  const pmKalibrasiExpr = process.env.PM_KALIBRASI_REMINDER_CRON ?? "0 8 * * *";
+  if (pmKalibrasiEnabled) {
+    if (!cron.validate(pmKalibrasiExpr)) {
+      console.error(`[scheduler] pm-kalibrasi-reminder cron-expr tidak valid: "${pmKalibrasiExpr}" — dilewati`);
+    } else {
+      cron.schedule(
+        pmKalibrasiExpr,
+        async () => {
+          const startedAt = new Date().toISOString();
+          try {
+            const r = await runMaintenanceReminders();
+            console.log(`[scheduler] pm-kalibrasi-reminder ok @ ${startedAt} ${JSON.stringify(r).slice(0, 200)}`);
+          } catch (e) {
+            console.error(`[scheduler] pm-kalibrasi-reminder gagal @ ${startedAt}:`, e);
+          }
+        },
+        { timezone },
+      );
+      live.push(`pm-kalibrasi-reminder=${pmKalibrasiExpr}`);
+    }
+  }
+
+  // F45 previsit-check — verifikasi trip Kirim-Tagih BESOK (hari libur + PIC),
+  // 16:00 sore = ~24 jam sebelum. Predikat tanggalnya `current_date + 1`, pola
+  // sama reminder-h-1 di atas.
+  //
+  // SENGAJA TIDAK dibungkus isWorkday(): justru gunanya memperingatkan bahwa
+  // BESOK libur. Kalau di-gate hari kerja, peringatan "besok cuti bersama" tak
+  // akan pernah terkirim di hari terakhir sebelum libur panjang — persis kasus
+  // yang paling bikin rebound trip. reminder-h/h-1 juga tidak di-gate.
+  const preVisitExpr = process.env.PREVISIT_CHECK_CRON ?? "0 16 * * *";
+  if (preVisitEnabled) {
+    if (!cron.validate(preVisitExpr)) {
+      console.error(`[scheduler] previsit-check cron-expr tidak valid: "${preVisitExpr}" — dilewati`);
+    } else {
+      cron.schedule(
+        preVisitExpr,
+        async () => {
+          const startedAt = new Date().toISOString();
+          try {
+            const r = await runPreVisitCheck();
+            console.log(`[scheduler] previsit-check ok @ ${startedAt} ${JSON.stringify(r).slice(0, 200)}`);
+          } catch (e) {
+            console.error(`[scheduler] previsit-check gagal @ ${startedAt}:`, e);
+          }
+        },
+        { timezone },
+      );
+      live.push(`previsit-check=${preVisitExpr}`);
+    }
+  }
+
+  // Kendaraan Operasional Log (F50, OPS) — alert service-due (km-based) +
+  // STNK H-30. Nyala SENDIRI (default off), tidak ikut AGENT_SCHEDULE_ENABLED.
+  const vehicleAlertEnabled = (process.env.VEHICLE_ALERT_ENABLED ?? "false").toLowerCase() === "true";
+  const vehicleAlertExpr = process.env.VEHICLE_ALERT_CRON ?? "0 8 * * *";
+  if (vehicleAlertEnabled) {
+    if (!cron.validate(vehicleAlertExpr)) {
+      console.error(`[scheduler] vehicle-alert cron-expr tidak valid: "${vehicleAlertExpr}" — dilewati`);
+    } else {
+      cron.schedule(
+        vehicleAlertExpr,
+        async () => {
+          const startedAt = new Date().toISOString();
+          try {
+            const r = await runVehicleAlerts();
+            console.log(`[scheduler] vehicle-alert ok @ ${startedAt} ${JSON.stringify(r)}`);
+          } catch (e) {
+            console.error(`[scheduler] vehicle-alert gagal @ ${startedAt}:`, e);
+          }
+        },
+        { timezone },
+      );
+      live.push(`vehicle-alert=${vehicleAlertExpr}`);
+    }
+  }
+
   // HOD daily reminder — rekap kepatuhan plan/report (08:30, setelah AM plan pagi).
   const hodExpr = process.env.HOD_REMINDER_CRON ?? "30 8 * * *";
   if (cron.validate(hodExpr)) {
@@ -297,6 +414,39 @@ export function startScheduler(): ScheduleStatus {
       { timezone },
     );
     live.push(`reminder-hod=${hodExpr}`);
+  }
+
+  // F38 ed-watch — pindai batch ber-ED, peringatkan saat melintasi ambang
+  // 90/60/30 hari. Pagi 07:30 supaya sudah masuk sebelum tim gudang mulai
+  // menyiapkan kiriman.
+  //
+  // SENGAJA TIDAK dibungkus isWorkday(): ED tidak berhenti jalan di hari libur,
+  // dan barang yang melintasi ambang 30 hari tepat di awal libur panjang justru
+  // yang paling perlu diketahui lebih dulu. Pola sama previsit-check (F45).
+  //
+  // Tanggal pembanding dihitung WIB di dalam runEdWatch (bukan `current_date`
+  // SQL yang mengikuti timezone container = UTC), jadi jadwal ini boleh digeser
+  // ke jam berapa pun tanpa menggeser perhitungan sisa-hari.
+  const edWatchExpr = process.env.ED_WATCH_CRON ?? "30 7 * * *";
+  if (edWatchEnabled) {
+    if (!cron.validate(edWatchExpr)) {
+      console.error(`[scheduler] ed-watch cron-expr tidak valid: "${edWatchExpr}" — dilewati`);
+    } else {
+      cron.schedule(
+        edWatchExpr,
+        async () => {
+          const startedAt = new Date().toISOString();
+          try {
+            const r = await runEdWatch();
+            console.log(`[scheduler] ed-watch ok @ ${startedAt} ${JSON.stringify(r).slice(0, 200)}`);
+          } catch (e) {
+            console.error(`[scheduler] ed-watch gagal @ ${startedAt}:`, e);
+          }
+        },
+        { timezone },
+      );
+      live.push(`ed-watch=${edWatchExpr}`);
+    }
   }
 
   // Compliance reminder per-grup (port plan_check/report_check) — ikut gating
@@ -390,6 +540,48 @@ export function startScheduler(): ScheduleStatus {
       { timezone },
     );
     live.push(`visit-weekly=${visitWeeklyExpr}`);
+  }
+
+  // ga-helpdesk-overdue (F139) — alert SLA tiket helpdesk terlewati, pagi
+  // 07:15. Naggy by design (pola F24/F52, tanpa penanda anti-spam persisten
+  // di luar sla_alert_sent_at) — anti-broadcast internal (target kosong = skip).
+  const gaHelpdeskOverdueExpr = process.env.GA_HELPDESK_OVERDUE_CRON ?? "15 7 * * *";
+  if (gaHelpdeskOverdueEnabled && cron.validate(gaHelpdeskOverdueExpr)) {
+    cron.schedule(
+      gaHelpdeskOverdueExpr,
+      async () => {
+        const startedAt = new Date().toISOString();
+        try {
+          const r = await runGaHelpdeskOverdueAlert();
+          console.log(`[scheduler] ga-helpdesk-overdue @ ${startedAt} ${JSON.stringify(r)}`);
+        } catch (e) {
+          console.error(`[scheduler] ga-helpdesk-overdue gagal @ ${startedAt}:`, e);
+        }
+      },
+      { timezone },
+    );
+    live.push(`ga-helpdesk-overdue=${gaHelpdeskOverdueExpr}`);
+  }
+
+  // ga-helpdesk-bsc-feed (F139) — auto-isi kpi_measurement Dito ('SLA
+  // compliance %'), bulanan (tgl 1, 02:15 — setelah tengah malam WIB, data
+  // bulan lalu sudah final). Display-only, tanpa WA.
+  const gaHelpdeskBscExpr = process.env.GA_HELPDESK_BSC_CRON ?? "15 2 1 * *";
+  if (gaHelpdeskBscEnabled && cron.validate(gaHelpdeskBscExpr)) {
+    cron.schedule(
+      gaHelpdeskBscExpr,
+      async () => {
+        const startedAt = new Date().toISOString();
+        try {
+          const r = await runGaHelpdeskBscFeed();
+          console.log(`[scheduler] ga-helpdesk-bsc-feed @ ${startedAt} ${JSON.stringify(r)}`);
+        } catch (e) {
+          console.error(`[scheduler] ga-helpdesk-bsc-feed gagal @ ${startedAt}:`, e);
+        }
+      },
+      { timezone },
+    );
+    live.push(`ga-helpdesk-bsc-feed=${gaHelpdeskBscExpr}`);
   }
 
   // Monitor (port wrg-monitor) — rekap & resume GENERATE-ONLY (tidak kirim WA;
@@ -502,6 +694,59 @@ export function startScheduler(): ScheduleStatus {
       { timezone },
     );
     live.push(`mirror-freshness=${freshExpr}`);
+  }
+
+  // accurate-stock-sync (F2) — refresh accurate_item.quantity tiap 5 menit
+  // (default), dipakai #STOK. TERPISAH dari accurate-sync di atas (beda
+  // cadence: 5 menit vs 6x/hari) — SENGAJA tak di-gate isWorkday/libur, sales
+  // di lapangan tetap boleh cek stok kapan pun.
+  const stockSyncExpr = process.env.ACCURATE_STOCK_SYNC_CRON ?? "*/5 * * * *";
+  if ((enabled || accurateStockSyncEnabled) && cron.validate(stockSyncExpr)) {
+    cron.schedule(
+      stockSyncExpr,
+      async () => {
+        const startedAt = new Date().toISOString();
+        try {
+          const r = await syncItems();
+          console.log(`[scheduler] accurate-stock-sync @ ${startedAt} ${JSON.stringify(r)}`);
+        } catch (e) {
+          console.error(`[scheduler] accurate-stock-sync gagal @ ${startedAt}:`, e);
+        }
+      },
+      { timezone },
+    );
+    live.push(`accurate-stock-sync=${stockSyncExpr}`);
+  }
+
+  // stok-gudang-sync (F37/#836) — stok PER GUDANG ke item_stock_branch.
+  // HARIAN 02:00, dan itu batasnya bukan pilihan gaya: saldo per gudang cuma
+  // ada di item/detail.do per SKU, jadi sapuan penuh ±5.900 panggilan. Memasang
+  // ini di cron pendek akan membanjiri API Accurate dan menabrak job lain yang
+  // memakai kredensial sama. Tiap run berbatas + melanjutkan dari yang paling
+  // lama tak tersegarkan, jadi backlog habis bertahap lintas hari.
+  //
+  // Flag SENDIRI dan TIDAK ikut `enabled`: berbeda dari accurate-stock-sync di
+  // atas, job ini menulis ke tabel yang punya sumber lain (CSV opname tim
+  // gudang). Menyalakannya harus keputusan sadar, bukan efek samping
+  // AGENT_SCHEDULE_ENABLED.
+  const stockBranchEnabled = (process.env.STOCK_BRANCH_SYNC_ENABLED ?? "false").toLowerCase() === "true";
+  const stockBranchExpr = process.env.STOCK_BRANCH_SYNC_CRON ?? "0 2 * * *";
+  const stockBranchLimit = Math.min(Math.max(Number(process.env.STOCK_BRANCH_SYNC_LIMIT) || 1500, 1), 6000);
+  if (stockBranchEnabled && cron.validate(stockBranchExpr)) {
+    cron.schedule(
+      stockBranchExpr,
+      async () => {
+        const startedAt = new Date().toISOString();
+        try {
+          const r = await syncItemStockBranch({ limit: stockBranchLimit });
+          console.log(`[scheduler] stok-gudang-sync @ ${startedAt} ${JSON.stringify(r)}`);
+        } catch (e) {
+          console.error(`[scheduler] stok-gudang-sync gagal @ ${startedAt}:`, e);
+        }
+      },
+      { timezone },
+    );
+    live.push(`stok-gudang-sync=${stockBranchExpr}`);
   }
 
   // F127 sales-alert-eval — evaluasi threshold alert & kirim WA saat transisi
@@ -760,6 +1005,25 @@ export function startScheduler(): ScheduleStatus {
     live.push(`notif-quota=${nqExpr}`);
   }
 
+  // it-ticket-sla (F52) — alert tiket IT lewat SLA & belum resolved.
+  const itSlaExpr = process.env.IT_TICKET_SLA_CRON ?? "*/30 * * * *";
+  if ((enabled || itTicketSlaEnabled) && cron.validate(itSlaExpr)) {
+    cron.schedule(
+      itSlaExpr,
+      async () => {
+        const startedAt = new Date().toISOString();
+        try {
+          const r = await runItTicketSlaAlerts();
+          if (r.alerts > 0) console.log(`[scheduler] it-ticket-sla @ ${startedAt} ${JSON.stringify(r)}`);
+        } catch (e) {
+          console.error(`[scheduler] it-ticket-sla gagal @ ${startedAt}:`, e);
+        }
+      },
+      { timezone },
+    );
+    live.push(`it-ticket-sla=${itSlaExpr}`);
+  }
+
   // npk-compute (F66) — recompute NPK semester berjalan, harian 01:00 WIB: 8 HoD
   // (npk_score_semester/…_aspect_score) DAN semua AM (npk_am_*, migrasi 078) dalam
   // satu job — dua-duanya display-only, tanpa WA/LLM, sumber datanya beririsan.
@@ -793,6 +1057,67 @@ export function startScheduler(): ScheduleStatus {
       { timezone },
     );
     live.push(`npk-compute=${npkExpr}`);
+  }
+
+  // ga-maintenance-alert (F137) — reminder due-date jadwal maintenance aset
+  // GA. Default harian 07:00. Naggy by design (pola F24, tanpa penanda
+  // anti-spam persisten) — target kosong = skip (anti broadcast).
+  const gaMaintAlertExpr = process.env.GA_MAINTENANCE_ALERT_CRON ?? "0 7 * * *";
+  if ((enabled || gaMaintenanceAlertEnabled) && cron.validate(gaMaintAlertExpr)) {
+    cron.schedule(
+      gaMaintAlertExpr,
+      async () => {
+        const startedAt = new Date().toISOString();
+        try {
+          const r = await runMaintenanceAlerts();
+          if (r.alerts > 0) console.log(`[scheduler] ga-maintenance-alert @ ${startedAt} ${JSON.stringify(r)}`);
+        } catch (e) {
+          console.error(`[scheduler] ga-maintenance-alert gagal @ ${startedAt}:`, e);
+        }
+      },
+      { timezone },
+    );
+    live.push(`ga-maintenance-alert=${gaMaintAlertExpr}`);
+  }
+
+  // ga-maintenance-bsc-feed (F137) — auto-isi kpi_measurement Dito, bulanan
+  // (tgl 1, 02:00 — setelah tengah malam WIB, data bulan lalu sudah final).
+  const gaMaintBscExpr = process.env.GA_MAINTENANCE_BSC_CRON ?? "0 2 1 * *";
+  if ((enabled || gaMaintenanceBscEnabled) && cron.validate(gaMaintBscExpr)) {
+    cron.schedule(
+      gaMaintBscExpr,
+      async () => {
+        const startedAt = new Date().toISOString();
+        try {
+          const r = await runGaMaintenanceBscFeed();
+          console.log(`[scheduler] ga-maintenance-bsc-feed @ ${startedAt} ${JSON.stringify(r)}`);
+        } catch (e) {
+          console.error(`[scheduler] ga-maintenance-bsc-feed gagal @ ${startedAt}:`, e);
+        }
+      },
+      { timezone },
+    );
+    live.push(`ga-maintenance-bsc-feed=${gaMaintBscExpr}`);
+  }
+
+  // lpse-tender-reminder (F20) — harian 08:00 WIB, cek tender macet >N hari
+  // (LPSE_TENDER_REMINDER_DAYS, default 3) di status berjalan.
+  const lpseTenderReminderExpr = process.env.LPSE_TENDER_REMINDER_CRON ?? "0 8 * * *";
+  if (lpseTenderReminderEnabled && cron.validate(lpseTenderReminderExpr)) {
+    cron.schedule(
+      lpseTenderReminderExpr,
+      async () => {
+        const startedAt = new Date().toISOString();
+        try {
+          const r = await runLpseTenderReminder();
+          console.log(`[scheduler] lpse-tender-reminder ok @ ${startedAt} ${JSON.stringify(r)}`);
+        } catch (e) {
+          console.error(`[scheduler] lpse-tender-reminder gagal @ ${startedAt}:`, e);
+        }
+      },
+      { timezone },
+    );
+    live.push(`lpse-tender-reminder=${lpseTenderReminderExpr}`);
   }
 
   console.log(`[scheduler] aktif (TZ=${timezone}): ${live.join(", ") || "(tidak ada job valid)"}`);

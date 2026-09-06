@@ -1,10 +1,14 @@
-import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { resolve, relative, isAbsolute } from "node:path";
 import { homedir } from "node:os";
 
 import { serve } from "@hono/node-server";
-import { Hono } from "hono";
-import type { Context } from "hono";
+import postgres from "postgres";
+import {
+  Hono,
+  Context,
+} from "hono";
+
 import type { EventEnvelope } from "@wrg/types";
 import { isEventEnvelope } from "./envelope.js";
 import { parsePlan } from "./parsers/plan.js";
@@ -13,7 +17,7 @@ import { matchCustomer, type PlanCandidate } from "./parsers/fuzzy.js";
 import { isDbEnabled, pingDb } from "./db.js";
 import { waPreflight, sendViaWaGateway, type WaSendResult } from "./wasend.js";
 import { processUnprocessed, isInboundEnabled } from "./repo/inbound.js";
-import { syncAccurateInvoices, syncVendors, syncItems, syncSalesOrders, syncDeliveryOrders, syncCustomers, syncSalesOrderItems, syncDeliveryOrderItems, getDeliveryOrderItems, getSalesOrderItems, getVendorDetail, accurateConfigured } from "./repo/accurateSync.js";
+import { syncAccurateInvoices, syncVendors, syncItems, syncSalesOrders, syncDeliveryOrders, syncCustomers, syncSalesOrderItems, syncDeliveryOrderItems, syncItemStockBranch, getDeliveryOrderItems, getSalesOrderItems, getVendorDetail, accurateConfigured } from "./repo/accurateSync.js";
 import { mirrorFreshness } from "./repo/mirror-health.js";
 import { insertAuditEvent } from "./repo/audit.js";
 import { upsertDealsFromPlan, logReportToDeals, getPipeline, getPipelineReport, getPipelineLeaderboard, transitionStage, DealError, listPendingLosses, decideLoss, getDealTimeline, createDeal, updateDeal, deleteDeal } from "./repo/deal.js";
@@ -22,6 +26,7 @@ import { insertRekap, insertResume, getDigestHistory, getDigestInsights } from "
 import { getDashboardStats } from "./repo/stats.js";
 import { getCustomers } from "./repo/customer.js";
 import { listAccounts, getAccount, upsertAccountFields, createContact, updateContact, deleteContact, listOwnerCandidates } from "./repo/account.js";
+import { listPickupPlans, createPickupPlan, updatePickupPlan, deletePickupPlan, previewPreVisit, runPreVisitCheck } from "./repo/pickup-plan.js";
 import {
   ingestInvoices,
   ingestAccurateWebhook,
@@ -57,6 +62,7 @@ import {
   sendSalesDoc,
   cancelSalesDoc,
 } from "./repo/salesdoc.js";
+import { createSphDraft, getSphDetail, hodReviewSph, confirmSphVariant } from "./repo/sph.js";
 import { getProductIntelligence } from "./repo/product.js";
 import { listAnnotations } from "./repo/sentiment.js";
 import { getNetworkInput, computeNetwork } from "./repo/network.js";
@@ -78,6 +84,7 @@ import {
 } from "./repo/rbac.js";
 import { listTerritory, createTerritory, updateTerritory, deleteTerritory } from "./repo/territory.js";
 import { listPricelist, upsertPricelist, publishPricelist, unpublishPricelist, deletePricelist, type PricelistInput } from "./repo/pricelist.js";
+import { listSupplierEta, createSupplierEta, updateSupplierEta, deleteSupplierEta, type SupplierEtaInput, type SupplierEtaUpdate, type SupplierEtaStatus } from "./repo/supplier-eta.js";
 import {
   listItems as listPricebookItems, summary as pricebookSummary,
   outsideKeagenan, periodeList as pricebookPeriode,
@@ -103,7 +110,7 @@ import { listCoachingNotes } from "./repo/coaching.js";
 import { getLatestCoachingNotes, computePeopleAnalytics } from "./repo/people.js";
 import { AmTidakDikenalError, createVisit, getVisit, isVisitSort, listVisits, visitKpi, visitSummary } from "./repo/visit.js";
 import { upsertDailyTodo, listTodos, markTodoReported } from "./repo/todo.js";
-import { upsertUser, listUsers, upsertTerritory, listTerritories, updateUserCabang, updateUserGolongan } from "./repo/master.js";
+import { upsertUser, listUsers, upsertTerritory, listTerritories, updateUserCabang, updateUserGolongan, normalizeWa } from "./repo/master.js";
 import { GOLONGAN, GOLONGAN_LABEL, TARGET_CUSTOMER_MINIMUM, isGolongan } from "./lib/npk-golongan.js";
 import { listTargets, upsertTargets, listCabangTargets, upsertCabangTargets, listAmTargets, upsertAmTargets, listAmCandidates, deleteAmTarget } from "./repo/sales-target.js";
 import {
@@ -119,6 +126,16 @@ import {
   listPendingLeave,
   decidePendingLeave,
 } from "./repo/leave.js";
+import {
+  createInstallation,
+  listInstallations,
+  getInstallationById,
+  markPoControl,
+  markSj,
+  markTeknisiAssign,
+  markTrainingDone,
+  markBast,
+} from "./repo/installation.js";
 import { recordCompetitor, listCompetitor, competitorSummary } from "./repo/competitor.js";
 import {
   defaultRange,
@@ -163,6 +180,7 @@ import {
   computePeriode as computeInsentifPeriode,
 } from "./repo/insentif.js";
 import { listDepartments, listEmployees, getEmployee, getRaciMatrix, getMeasurements, saveMeasurements, createEmployee, updateEmployee, deleteEmployee, replaceEmployeeDetail, getVoiceAggregate, getHodResolution, getOrgReporting, populateHodKey, getHods, type MeasurementInput, type EmployeeWrite, type SpineDetail } from "./repo/employee-spine.js";
+import { listKlaim, getKlaim, updateKategori, decideKlaim, markDibayar, createKlaimManual, deleteKlaim } from "./repo/doc-klaim.js";
 import { upsertMembers, listMembers, upsertDigests, listDigest, digestStats, upsertPola, listPola, generateRekap, generateResume, type MonitorMemberInput, type DigestInput, type PolaInput } from "./repo/monitor.js";
 import { runNotifTua } from "./repo/notiftua.js";
 import { runDailySummary } from "./repo/dailysummary.js";
@@ -175,13 +193,25 @@ import { listWaGroups, setWaGroupCategory, setWaGroupPrefixCategory, isWaGroupCa
 import { runRefreshMembers } from "./repo/listmembers.js";
 import { runNotifQuota } from "./repo/notifquota.js";
 import {
+  listTenders as listLpseTenders,
+  getTender as getLpseTender,
+  createTender as createLpseTender,
+  advanceStatus as advanceLpseTenderStatus,
+  getTenderTimeline as getLpseTenderTimeline,
+  runLpseTenderReminder,
+} from "./repo/lpse-tender.js";
+import {
   upsertCustomers,
   upsertBranches,
   upsertItems,
   listMirror,
   listSalesOrders,
   listDeliveryOrders,
+  salesOrderSummary,
+  deliveryOrderSummary,
+  isMirrorSort,
 } from "./repo/accurateMirror.js";
+import { listWarehouses, listStockBranch, stockBranchSummary } from "./repo/stock-branch.js";
 import { recordDelivery, recordEmail, recordAlert, listLogs } from "./repo/logs.js";
 import { renderSalesDocHtml, renderBriefingHtml } from "./repo/exportdoc.js";
 import { runHodDaily } from "./repo/hodreminder.js";
@@ -203,13 +233,400 @@ import { aiBaseUrl, callAi } from "./ai.js";
 import { startScheduler, getScheduleStatus } from "./scheduler.js";
 import { signJwt, verifyJwt } from "./auth.js";
 import { verifyCredentials, createUser, countUsers, listAppUsers, setUserPassword, updateAppUser, deleteAppUser, getAppUserById, createUserFromRoster, generatePassword, changeOwnPassword } from "./repo/users.js";
+import {
+  createRfidCartridgeClaim,
+  listRfidCartridgeClaims,
+  getRfidCartridgeClaim,
+  getRfidCartridgeClaimFile,
+  updateRfidCartridgeClaim,
+  deleteRfidCartridgeClaim,
+  type ClaimStatus as RfidCartridgeClaimStatus,
+} from "./repo/rfid-cartridge-claim.js";
+import {
+  createCourierDelivery,
+  listCourierDeliveries,
+  getCourierDelivery,
+  updateCourierDelivery,
+  deleteCourierDelivery,
+  getCourierPerformanceSummary,
+  isValidCourierDeliveryStatus,
+  CourierDeliveryError,
+  type CourierDeliveryStatus,
+} from "./repo/courier-delivery.js";
+import {
+  createPrintSpec,
+  listPrintSpecs,
+  getPrintSpec,
+  updatePrintSpec,
+  deletePrintSpec,
+  PrintSpecError,
+  type PaperSize,
+  type Orientation,
+} from "./repo/print-spec.js";
 
+import {
+  listTeknisi,
+  createTicket,
+  listTickets,
+  getTicketById,
+  resolveTicket,
+} from "./repo/serviceticket.js";
+import {
+  listInboundReceiving,
+  createInboundReceiving,
+  getInboundReceiving,
+  updateInboundReceiving,
+  deleteInboundReceiving,
+  addInboundReceivingItem,
+  updateInboundReceivingItem,
+  deleteInboundReceivingItem,
+  InboundReceivingError,
+  type InboundReceivingInput,
+  type InboundReceivingUpdate,
+  type InboundReceivingStatus,
+  type InboundReceivingItemUpdate,
+} from "./repo/inbound-receiving.js";
+import {
+  createDanaOps,
+  listDanaOps,
+  getDanaOps,
+  updateDanaOps,
+  deleteDanaOps,
+  addDanaOpsItem,
+  updateDanaOpsItem,
+  deleteDanaOpsItem,
+  type DanaOpsStatus,
+  type DanaOpsInput,
+  type DanaOpsUpdate,
+  type DanaOpsItemInput,
+  type DanaOpsItemUpdate,
+} from "./repo/dana-ops.js";
+import {
+  createSchedule,
+  listSchedules,
+  getScheduleById,
+  listEligibleUnits,
+  markDone,
+} from "./repo/maintenance.js";
+import {
+  listAtkCategories,
+  createAtkCategory,
+  updateAtkCategory,
+  deleteAtkCategory,
+  listAtkSuppliers,
+  createAtkSupplier,
+  updateAtkSupplier,
+  deleteAtkSupplier,
+  listAtkItems,
+  createAtkItem,
+  updateAtkItem,
+  deleteAtkItem,
+  type AtkCategoryInput,
+  type AtkCategoryUpdate,
+  type AtkSupplierInput,
+  type AtkSupplierUpdate,
+  type AtkItemInput,
+  type AtkItemUpdate,
+  type AtkTransactionCategory,
+} from "./repo/atk-master.js";
+import {
+  listAtkStockMovements,
+  createAtkStockMovement,
+  updateAtkStockMovement,
+  deleteAtkStockMovement,
+  listAtkStockLevels,
+  AtkStockMovementError,
+  type AtkStockMovementInput,
+  type AtkStockMovementUpdate,
+  type AtkMovementType,
+} from "./repo/atk-stock.js";
+import {
+  createShipment,
+  listShipments,
+  getShipmentById,
+  markKirim as markShipmentKirim,
+  markBast as markShipmentBast,
+  markTerima as markShipmentTerima,
+  markBukti as markShipmentBukti,
+} from "./repo/shipment-tracking.js";
+
+import {
+  listAtkStockOpnames,
+  createAtkStockOpname,
+  updateAtkStockOpname,
+  deleteAtkStockOpname,
+  type AtkStockOpnameInput,
+  type AtkStockOpnameUpdate,
+} from "./repo/atk-stock-opname.js";
+
+import {
+  listStockBatch,
+  stockBatchSummary,
+  runEdWatch,
+} from "./repo/stock-batch.js";
+
+import {
+  listProficiencyTests,
+  getProficiencyTest,
+  getProficiencyTestFile,
+  createProficiencyTest,
+  updateProficiencyTest,
+  deleteProficiencyTest,
+  type ProficiencyTestInput,
+  type ProficiencyTestUpdate,
+} from "./repo/proficiency-test.js";
+import {
+  listVehicles,
+  getVehicleById,
+  createVehicle,
+  updateVehicle,
+  listVehicleLogs,
+  createVehicleLog,
+  runVehicleAlerts,
+} from "./repo/vehicle.js";
+import {
+  listInventoryRelocations,
+  getInventoryRelocation,
+  createInventoryRelocation,
+  updateInventoryRelocation,
+  deleteInventoryRelocation,
+  type InventoryRelocationInput,
+  type InventoryRelocationUpdate,
+  type InventoryRelocationStatus,
+} from "./repo/inventory-relocation.js";
+import {
+  listCategories,
+  createCategory,
+  updateCategory,
+  listAssets as listGaAssets,
+  getAsset as getGaAsset,
+  createAsset as createGaAsset,
+  updateAsset as updateGaAsset,
+  setAssetFile,
+} from "./repo/ga-asset.js";
+import {
+  listTickets as itTicketListTickets,
+  createTicket as itTicketCreateTicket,
+  updateTicketStatus,
+} from "./repo/it-ticket.js";
+import {
+  listVendors,
+  getVendor,
+  createVendor,
+  updateVendor,
+  deleteVendor,
+  getVendorContract,
+  createVendorContract,
+  updateVendorContract,
+  deleteVendorContract,
+  type VendorPartnerInput,
+  type VendorPartnerUpdate,
+  type VendorContractInput,
+  type VendorContractUpdate,
+} from "./repo/vendor.js";
+import {
+  gaReportingRange,
+  gaReportingSummary,
+} from "./repo/ga-reporting.js";
+import {
+  assignAsset,
+  returnAsset,
+  transferAsset,
+  getAssetHistory,
+} from "./repo/ga-asset-assignment.js";
+import {
+  listPurchaseOrders,
+  isPurchaseOrderSort,
+  purchaseOrderSummary,
+  createPurchaseOrder,
+  getPurchaseOrder,
+  updatePurchaseOrder,
+  deletePurchaseOrder,
+  addPurchaseOrderItem,
+  updatePurchaseOrderItem,
+  deletePurchaseOrderItem,
+  addPurchaseOrderReceipt,
+  listPurchaseOrderReceipts,
+  updatePurchaseOrderReceipt,
+  deletePurchaseOrderReceipt,
+  type PurchaseOrderInput,
+  type PurchaseOrderUpdate,
+  type PurchaseOrderItemInput,
+  type PurchaseOrderItemUpdate,
+  type PurchaseOrderReceiptInput,
+  type PurchaseOrderReceiptUpdate,
+  decidePurchaseOrderApproval,
+  PurchaseOrderError,
+  type ApproverRole,
+} from "./repo/purchase-order.js";
+import {
+  listVendors as gaMaintenanceListVendors,
+  createVendor as gaMaintenanceCreateVendor,
+  updateVendor as gaMaintenanceUpdateVendor,
+  listSchedules as gaMaintenanceListSchedules,
+  getSchedule,
+  createSchedule as gaMaintenanceCreateSchedule,
+  updateSchedule,
+  startSchedule,
+  completeSchedule,
+  approveSchedule,
+  cancelSchedule,
+} from "./repo/ga-maintenance.js";
+
+import {
+  listTeknisiCapacity,
+  createTeknisiCapacity,
+  updateTeknisiCapacity,
+  deactivateTeknisiCapacity,
+  getReadinessBoard,
+  createInstallSchedule,
+  listInstallSchedule,
+  updateScheduleStatus,
+  createTeknisiReport,
+  listTeknisiReports,
+} from "./repo/readinessboard.js";
+import {
+  listPurchaseForecast,
+  createPurchaseForecast,
+  updatePurchaseForecast,
+  deletePurchaseForecast,
+  PurchaseForecastError,
+  type PurchaseForecastInput,
+  type PurchaseForecastUpdate,
+} from "./repo/purchase-forecast.js";
+import {
+  listCategories as listGaTicketCategories,
+  createCategory as createGaTicketCategory,
+  updateCategory as updateGaTicketCategory,
+  deactivateCategory as deactivateGaTicketCategory,
+  listTickets as listGaTickets,
+  getTicket as getGaTicket,
+  createTicket as createGaTicket,
+  assignTicket as assignGaTicket,
+  transitionTicket as transitionGaTicket,
+  rateTicket as rateGaTicket,
+  addComment as addGaTicketComment,
+  getTicketTimeline as getGaTicketTimeline,
+  runGaHelpdeskOverdueAlert,
+} from "./repo/ga-helpdesk.js";
+import {
+  createFundRequest,
+  listFundRequests,
+  getFundRequest,
+  deleteFundRequest,
+  decideFundRequestApproval,
+  listActiveHods,
+  FundRequestError,
+  type ApproverRole as FundRequestApproverRole,
+  type FundRequestStatus,
+} from "./repo/fund-request.js";
+import {
+  listAssetTags,
+  createAssetTag,
+  updateAssetTag,
+  listAuditLog,
+  recordAudit,
+} from "./repo/asset-tag.js";
+import {
+  createApprovalRequest,
+  listApprovalRequests,
+  getApprovalRequest,
+  listChainConfig,
+  updateChainConfig,
+  notifyCurrentStep,
+  getAttachmentFile,
+} from "./repo/approval.js";
+import {
+  generateSuggestions,
+  listSuggestions,
+  updateSuggestion,
+  dismissSuggestion,
+  submitSuggestion,
+  listBufferConfig,
+  upsertBufferConfig,
+} from "./repo/forecast.js";
 const app = new Hono();
+
+// BUG-11/BUG-21 — parser kecil utk detail PostgresError bawaan (format bahasa
+// Inggris standar libpq: "Key (kolom)=(nilai) already exists."/"is not present
+// in table \"tbl\"."), dipakai supaya pesan 23505/23503 tak menempelkan sintaks
+// SQL mentah ke user. Kalau formatnya tak cocok (mis. detail null di 23514),
+// caller tetap fallback ke `err.detail` apa adanya.
+function parsePgKeyDetail(detail?: string): { column?: string; value?: string; table?: string } {
+  if (!detail) return {};
+  // Grup kolom greedy (bukan `[^)]+`) — index case-insensitive (mis. BUG-14
+  // `lower(name)`) menaruh tanda kurung DI DALAM nama kolomnya sendiri, jadi
+  // `[^)]+` berhenti terlalu awal. Greedy + backtrack otomatis menemukan
+  // `)=(` asli (paling kanan) di string sependek "Key (lower(name))=(...)".
+  const m = detail.match(/^Key \((.+)\)=\((.*)\)\s+(?:already exists|is not present in table "([^"]+)")/);
+  if (!m) return {};
+  // lower(col) → tampilkan nama kolom aslinya, bukan sintaks SQL-nya.
+  const column = m[1].match(/^lower\((.+)\)$/)?.[1] ?? m[1];
+  return { column, value: m[2], table: m[3] };
+}
+
+// 22003 (numeric_value_out_of_range) detail-nya berbunyi "A field with
+// precision P, scale S must round to an absolute value less than 10^N." —
+// dihitung ulang jadi batas desimal yang bisa dibaca orang, bukan istilah SQL.
+function parseNumericBound(detail?: string): string | null {
+  const m = detail?.match(/precision (\d+), scale (\d+)/);
+  if (!m) return null;
+  const precision = Number(m[1]);
+  const scale = Number(m[2]);
+  const maxAbs = Math.pow(10, precision - scale) - Math.pow(10, -scale);
+  return `maksimal ±${maxAbs}${scale > 0 ? ` (${scale} desimal)` : ""}`;
+}
 
 // Selalu balas JSON saat error / route tak ada — supaya BFF & client tak pernah
 // dapat body kosong/HTML (penyebab "Unexpected end of JSON input" di klien).
 app.onError((err, c) => {
   console.error("[api] unhandled:", err);
+  // postgres.js melempar RangeError JS-native ini saat men-serialize parameter
+  // bertipe date/timestamp dari string yang tak bisa di-parse (new Date(x)
+  // lalu .toISOString() pada Invalid Date) — terjadi SEBELUM query sampai ke
+  // Postgres, jadi bukan PostgresError (tak ada kode SQLSTATE). Ini kesalahan
+  // input pengguna, bukan kegagalan server.
+  if (err instanceof RangeError && err.message === "Invalid time value") {
+    return c.json({ error: "Format tanggal tidak valid" }, 400);
+  }
+  // Constraint DB (unique/FK/check/numeric overflow) yg lolos dari validasi
+  // app-layer sebelumnya bocor sbg PostgresError mentah (kode SQLSTATE, nama
+  // constraint, dump baris) — bukan tanggung jawab repo satu-satu (banyak
+  // repo tak translate ini sama sekali), jadi ditangkap generik di sini.
+  // 23514 (check) sengaja TIDAK pakai `detail` — isinya "Failing row
+  // contains (...)" alias dump seluruh kolom, bukan pesan yg bisa dibaca.
+  if (err instanceof postgres.PostgresError) {
+    switch (err.code) {
+      case "23505": { // unique_violation
+        const { column, value } = parsePgKeyDetail(err.detail);
+        const detail = column && value ? `${column} "${value}" sudah ada` : (err.detail ?? "nilai ini sudah dipakai");
+        return c.json({ error: `Data duplikat: ${detail}` }, 409);
+      }
+      case "23503": { // foreign_key_violation
+        const { column, value, table } = parsePgKeyDetail(err.detail);
+        const detail = column && value
+          ? `${column} "${value}"${table ? ` tidak ditemukan di ${table}` : " tidak ditemukan"}`
+          : (err.detail ?? "data terkait tidak ditemukan");
+        return c.json({ error: `Referensi tidak valid: ${detail}` }, 400);
+      }
+      case "23514": // check_violation
+        return c.json({ error: `Nilai tidak valid, melanggar aturan data (${err.constraint_name ?? "check constraint"})` }, 400);
+      case "22003": { // numeric_value_out_of_range
+        const bound = parseNumericBound(err.detail);
+        return c.json({ error: `Angka di luar batas kolom${bound ? ` (${bound})` : `: ${err.detail ?? "nilai terlalu besar"}`}` }, 400);
+      }
+      case "22009": // invalid_time_zone_displacement_value — tanggal ekstrem
+        // (mis. tahun 5 digit dari input date native browser) valid secara JS
+        // Date tapi di luar jangkauan offset zona waktu yang Postgres terima.
+        return c.json({ error: "Format tanggal tidak valid" }, 400);
+      case "22P02": // invalid_text_representation — format salah (paling sering: id di path/body bukan UUID)
+        return c.json({ error: `Format data tidak valid: ${err.message}` }, 400);
+      case "22001": // string_data_right_truncation — teks melebihi batas panjang kolom
+        return c.json({ error: `Teks terlalu panjang untuk kolom ini: ${err.message}` }, 400);
+      case "22008": // datetime_field_overflow — hasil kalkulasi tanggal (mis. interval bulan) di luar rentang valid
+        return c.json({ error: "Tanggal di luar rentang yang valid — cek interval/durasi yang dimasukkan" }, 400);
+    }
+  }
   const msg = err instanceof Error ? err.message : "internal error";
   return c.json({ error: msg }, 500);
 });
@@ -390,6 +807,19 @@ app.post("/auth/change-password", async (c) => {
 app.get("/admin/users", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json({ users: await listAppUsers() });
+});
+
+// Picker ringan (id+name+active saja, BUKAN admin-only) — dipakai F133
+// (Assign/Transfer aset) & F137 (approve Finance fallback dev tanpa sesi)
+// supaya staf non-admin bisa pilih user dari akun app_user tanpa perlu izin
+// admin penuh spt /admin/users.
+app.get("/app-users", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const activeOnly = c.req.query("all") !== "true";
+  const users = (await listAppUsers())
+    .filter((u) => !activeOnly || u.active)
+    .map((u) => ({ id: u.id, name: u.name, active: u.active }));
+  return c.json({ count: users.length, users });
 });
 
 // Pesan WA berisi kredensial akses (dipakai create + reset password).
@@ -971,11 +1401,27 @@ app.get("/accurate/sales-orders/:id/items", async (c) => {
 });
 
 // List sales-order (recent-first) utk menu Orders.
+// Ringkasan agregat SO (total, bulan ini, customer unik, nilai, per-bulan).
+// Didaftarkan SEBELUM rute daftar biar literal menang, dan dihitung di SQL atas
+// SELURUH mirror — bukan dari baris yang kebetulan ter-fetch halaman.
+app.get("/accurate/sales-orders/summary", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await salesOrderSummary());
+});
+
 app.get("/accurate/sales-orders", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  const limit = Math.min(Math.max(Number(c.req.query("limit")) || 500, 1), 10000);
-  const rows = await listSalesOrders(limit);
-  return c.json({ entity: "sales-orders", count: rows.length, rows });
+  const q = c.req.query();
+  const { rows, total, limit, offset } = await listSalesOrders({
+    q: q.q || undefined,
+    from: q.from || undefined,
+    to: q.to || undefined,
+    sort: isMirrorSort(q.sort) ? q.sort : undefined,
+    dir: q.dir === "asc" ? "asc" : "desc",
+    limit: q.limit ? Number(q.limit) : undefined,
+    offset: q.offset ? Number(q.offset) : undefined,
+  });
+  return c.json({ entity: "sales-orders", count: rows.length, total_rows: total, limit, offset, rows });
 });
 
 // Sinkron delivery-order terbaru Accurate → accurate_delivery_order (menu Shipments). ?pages=N (default 5).
@@ -1007,6 +1453,18 @@ app.post("/accurate/sync/doc-items", async (c) => {
   return c.json(out, ok ? 200 : 502);
 });
 
+// F37 (#836) — sapuan stok per gudang. BERBATAS per panggilan (default 600
+// SKU) dan melanjutkan dari yang paling lama tak tersegarkan, jadi memanggil
+// berulang-ulang aman dan itu memang cara menghabiskan backlog ±5.900 SKU.
+// `pending` di balikan = sisa SKU yang BELUM PERNAH ditarik sama sekali.
+app.post("/accurate/sync/stock-branch", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  if (!accurateConfigured()) return c.json({ error: "kredensial Accurate tak tersedia" }, 503);
+  const limit = Math.min(Math.max(Number(c.req.query("limit")) || 600, 1), 6000);
+  const r = await syncItemStockBranch({ limit });
+  return c.json(r, r.ok ? 200 : 502);
+});
+
 // Baris produk satu surat jalan (on-demand dari Accurate detail.do).
 app.get("/accurate/shipments/:id/items", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
@@ -1018,11 +1476,25 @@ app.get("/accurate/shipments/:id/items", async (c) => {
 });
 
 // List delivery-order (recent-first) utk menu Shipments.
+// Ringkasan agregat DO — lihat catatan di /accurate/sales-orders/summary.
+app.get("/accurate/shipments/summary", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await deliveryOrderSummary());
+});
+
 app.get("/accurate/shipments", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  const limit = Math.min(Math.max(Number(c.req.query("limit")) || 500, 1), 10000);
-  const rows = await listDeliveryOrders(limit);
-  return c.json({ entity: "shipments", count: rows.length, rows });
+  const q = c.req.query();
+  const { rows, total, limit, offset } = await listDeliveryOrders({
+    q: q.q || undefined,
+    from: q.from || undefined,
+    to: q.to || undefined,
+    sort: isMirrorSort(q.sort) ? q.sort : undefined,
+    dir: q.dir === "asc" ? "asc" : "desc",
+    limit: q.limit ? Number(q.limit) : undefined,
+    offset: q.offset ? Number(q.offset) : undefined,
+  });
+  return c.json({ entity: "shipments", count: rows.length, total_rows: total, limit, offset, rows });
 });
 
 // AR (piutang) per customer / cabang / sales — dari accurate_invoice OPEN.
@@ -1427,6 +1899,224 @@ app.post("/sales/docs/:id/cancel", async (c) => {
   return c.json(r, r.ok ? 200 : 400);
 });
 
+// F11 Approval Engine — base/generic (migrasi 106). Body:
+// { title, description?, nominal?, requestedBy, requestedByWa? }.
+app.post("/approval-requests", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: Parameters<typeof createApprovalRequest>[0] | undefined;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body?.title || !body?.requestedBy) {
+    return c.json({ error: "title & requestedBy wajib" }, 400);
+  }
+  const r = await createApprovalRequest(body);
+  return c.json(r, r.ok ? 201 : 400);
+});
+
+app.get("/approval-requests", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listApprovalRequests(c.req.query("status") || undefined);
+  return c.json({ count: rows.length, requests: rows });
+});
+
+app.get("/approval-requests/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await getApprovalRequest(c.req.param("id"));
+  if (!r) return c.json({ error: "request tidak ditemukan" }, 404);
+  return c.json(r);
+});
+
+// Retry manual kirim notifikasi tahap current — dipakai kalau step pertama
+// gagal krn kontak belum dikonfigurasi, lalu config-nya baru diisi belakangan.
+app.post("/approval-requests/:id/notify", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await notifyCurrentStep(c.req.param("id"));
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.get("/approval-requests/config/chain", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json({ rows: await listChainConfig() });
+});
+
+app.patch("/approval-requests/config/chain/:urutan", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { hodKey?: string | null; waNumberOverride?: string | null } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const urutan = Number(c.req.param("urutan"));
+  if (!urutan || !Number.isInteger(urutan)) return c.json({ error: "urutan tidak valid" }, 400);
+  const r = await updateChainConfig(urutan, body);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+// Serve lampiran PDF/PNG approval (F11). Path-safe (getAttachmentFile join
+// di dalam APPROVAL_UPLOAD_ROOT), request_id+attachment_id harus cocok.
+app.get("/approval-requests/:id/attachments/:attachmentId", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const attachmentId = Number(c.req.param("attachmentId"));
+  if (!attachmentId) return c.json({ error: "attachmentId tidak valid" }, 400);
+  const file = await getAttachmentFile(c.req.param("id"), attachmentId);
+  if (!file) return c.json({ error: "lampiran tidak ditemukan" }, 404);
+  return c.body(new Uint8Array(file.buf), 200, {
+    "content-type": file.mimeType,
+    "content-disposition": `inline; filename="${file.filename.replace(/"/g, "")}"`,
+    "cache-control": "private, max-age=86400",
+  });
+});
+
+// F19 Forecast Submission Engine — scan gudang (F37 stok + F38 ED) → usulan.
+// Manual trigger (tombol "Generate Usulan"), bukan cron di versi ini.
+app.post("/forecast/generate", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await generateSuggestions());
+});
+
+app.get("/forecast/suggestions", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listSuggestions(c.req.query("status") || undefined);
+  return c.json({ count: rows.length, suggestions: rows });
+});
+
+app.patch("/forecast/suggestions/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { finalQty?: number | null; notes?: string | null } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const r = await updateSuggestion(c.req.param("id"), body);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.post("/forecast/suggestions/:id/dismiss", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { reviewedBy?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    /* opsional */
+  }
+  const r = await dismissSuggestion(c.req.param("id"), body.reviewedBy);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.post("/forecast/suggestions/:id/submit", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { submittedBy?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.submittedBy) return c.json({ error: "submittedBy wajib" }, 400);
+  const r = await submitSuggestion(c.req.param("id"), body.submittedBy);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.get("/forecast/buffer-config", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json({ rows: await listBufferConfig() });
+});
+
+app.post("/forecast/buffer-config", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { itemId?: number; warehouseKode?: string; bufferQty?: number; updatedBy?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.itemId || !body.warehouseKode || body.bufferQty == null) {
+    return c.json({ error: "itemId, warehouseKode, bufferQty wajib" }, 400);
+  }
+  const r = await upsertBufferConfig({
+    itemId: body.itemId,
+    warehouseKode: body.warehouseKode,
+    bufferQty: body.bufferQty,
+    updatedBy: body.updatedBy ?? null,
+  });
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+// F15 SPH Generator — form intake AM: customer & item dipilih PERSIS dari
+// katalog (accurate_customer + product_pricelist), bukan ketik nama. Body:
+// { deal_id?, customer_id (WAJIB, id accurate_customer), am_id?, periode?,
+//   items: [{pricelist_item_id, qty, diskon_requested}], created_by? }.
+// customer_name tidak dikirim/diabaikan — di-derive dari mirror.
+app.post("/sph", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: Parameters<typeof createSphDraft>[0] | undefined;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  // `customer_id` WAJIB di jalur ini. Endpoint ini cuma dipakai form web
+  // /sph/new (lewat BFF /api/sph), dan sejak "link data existing" form itu
+  // memaksa memilih dari katalog Accurate. Jalur WA `#SPH` TIDAK lewat sini —
+  // ia memanggil createSphDraft langsung dgn nama teks dari pesan, jadi
+  // kewajiban di sini tidak mematikannya.
+  //
+  // customer_name TIDAK lagi diwajibkan: nama di-derive server-side dari
+  // mirror di createSphDraft, jadi nama kiriman klien tak dipercaya.
+  if (!body?.customer_id) {
+    return c.json({ error: "customer_id wajib — pilih customer dari katalog Accurate" }, 400);
+  }
+  const r = await createSphDraft(body);
+  return c.json(r, r.ok ? 201 : 400);
+});
+
+app.get("/sph/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const detail = await getSphDetail(c.req.param("id"));
+  if (!detail) return c.json({ error: "dokumen tidak ditemukan" }, 404);
+  return c.json(detail);
+});
+
+// Tahap 1/2 approval SPH (HOD Business). draft → hod_review. Tahap 2 pakai
+// endpoint sama dgn doc_type lain: POST /sales/docs/:id/approve.
+app.post("/sph/:id/review", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { reviewer_id?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    /* body opsional */
+  }
+  const r = await hodReviewSph(c.req.param("id"), body.reviewer_id);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+// HANDOVER §6 — Admin Penawaran konfirmasi 1 baris item nama-varian-kembar.
+// Body: { line_item_id, confirmed_by? }. Wajib dilakukan tiap baris
+// unconfirmed sebelum POST /sales/docs/:id/approve bisa lolos utk SPH.
+app.post("/sph/:id/confirm-variant", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { line_item_id?: number; confirmed_by?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.line_item_id) return c.json({ error: "line_item_id wajib" }, 400);
+  const r = await confirmSphVariant(c.req.param("id"), body.line_item_id, body.confirmed_by);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+// F11 Approval Engine — base/generic (migrasi 106). Body:
+// { title, description?, nominal?, requestedBy, requestedByWa? }.
+// Retry manual kirim notifikasi tahap current — dipakai kalau step pertama
+// gagal krn kontak belum dikonfigurasi, lalu config-nya baru diisi belakangan.
+// Serve lampiran PDF/PNG approval (F11). Path-safe (getAttachmentFile join
+// di dalam APPROVAL_UPLOAD_ROOT), request_id+attachment_id harus cocok.
 // A7 Product Intelligence — agregasi intelijen produk dari pipeline (D1).
 app.post("/agents/a7/run", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
@@ -1643,8 +2333,11 @@ app.get("/visits/:id", async (c) => {
   return v ? c.json(v) : c.json({ error: "visit tak ditemukan" }, 404);
 });
 
-// Serve file media (foto kunjungan) dari capture openclaw — HANYA di bawah
-// MEDIA_ROOT (default ~/.openclaw/media), path-validated anti traversal.
+// Serve file media (foto kunjungan dari capture openclaw, ATAU upload aset
+// GA F132) — HANYA di bawah salah satu ROOT yang di-allow-list, path-validated
+// anti traversal. Dua root beda sumber & makna: MEDIA_ROOT = media MASUK
+// (WA inbound, read-only dari sisi kita), GA_UPLOAD_ROOT = file yang ADMIN
+// upload manual lewat form web (F132 foto/dokumen aset).
 const MEDIA_ROOT = resolve(process.env.MEDIA_ROOT ?? `${homedir()}/.openclaw/media`);
 const MIME: Record<string, string> = {
   jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", webp: "image/webp",
@@ -1654,8 +2347,8 @@ app.get("/media", async (c) => {
   const p = c.req.query("p");
   if (!p) return c.json({ error: "param p wajib" }, 400);
   const abs = resolve(p);
-  if (abs !== MEDIA_ROOT && !abs.startsWith(MEDIA_ROOT + "/")) {
-    return c.json({ error: "path di luar MEDIA_ROOT" }, 403);
+  if (!MEDIA_ROOTS.some((root) => isInsideRoot(abs, root))) {
+    return c.json({ error: "path di luar root media yang di-allow-list" }, 403);
   }
   try {
     const buf = await readFile(abs);
@@ -1667,6 +2360,43 @@ app.get("/media", async (c) => {
   } catch {
     return c.json({ error: "file tak ditemukan" }, 404);
   }
+});
+
+// Upload foto/dokumen aset GA (F132) — multipart/form-data, field `kind`
+// (foto|dokumen) + `file`. Disimpan di GA_UPLOAD_ROOT (BUKAN MEDIA_ROOT —
+// itu utk media WA inbound, beda sumber & siklus hidup), nama file
+// di-generate (uuid asset + timestamp) supaya tak collide/predictable.
+const GA_UPLOAD_MIME_EXT: Record<string, string> = {
+  "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "application/pdf": "pdf",
+};
+app.post("/ga-assets/:id/upload", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const id = c.req.param("id");
+  let body: Record<string, unknown>;
+  try {
+    body = await c.req.parseBody();
+  } catch {
+    return c.json({ error: "invalid multipart body" }, 400);
+  }
+  const kind = body.kind;
+  if (kind !== "foto" && kind !== "dokumen") return c.json({ error: "kind harus foto|dokumen" }, 400);
+  const file = body.file;
+  if (!(file instanceof File)) return c.json({ error: "file wajib diisi" }, 400);
+  const ext = GA_UPLOAD_MIME_EXT[file.type];
+  if (!ext) return c.json({ error: `tipe file "${file.type}" tak didukung (jpg/png/webp/pdf)` }, 400);
+  if (file.size > 10 * 1024 * 1024) return c.json({ error: "file maksimal 10MB" }, 400);
+  // Cek aset ADA dulu sebelum tulis file ke disk — kebalikannya bikin file
+  // yatim nyangkut permanen tiap kali id-nya salah (setAssetFile menolak
+  // rapi, tapi writeFile sudah kadung jalan).
+  if (!(await getGaAsset(id))) return c.json({ error: "aset tidak ditemukan" }, 400);
+
+  await mkdir(GA_UPLOAD_ROOT, { recursive: true });
+  const filename = `${id}-${kind}-${Date.now()}.${ext}`;
+  const abs = resolve(GA_UPLOAD_ROOT, filename);
+  await writeFile(abs, Buffer.from(await file.arrayBuffer()));
+
+  const r = await setAssetFile(id, kind, abs);
+  return c.json(r, r.ok ? 200 : 400);
 });
 
 // ── Daily TODO/plan per AM (port legacy sales_todo) ──
@@ -1883,6 +2613,121 @@ app.post("/leave/detect", async (c) => {
   if (!body.am_id || !body.text) return c.json({ error: "am_id + text wajib" }, 400);
   const r = await detectLeave(body.am_id, body.text, body.date);
   return c.json(r, r.detected ? 201 : 200);
+});
+
+// ── Instalasi Alat Lifecycle (F22, AFTERSALES) — checklist 5 langkah sekuensial:
+// PO control → SJ → Teknisi assign → Training done → BAST. ──
+app.post("/installations", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  // Alat & customer kini dipilih dari katalog: yang diterima product_id +
+  // account_id, BUKAN nama. Nama di-snapshot server-side dari mirror (lihat
+  // createInstallation) supaya klien tak bisa mengarang nama utk id yang benar.
+  let body: {
+    product_id?: number;
+    account_id?: number;
+    serial_number?: string;
+    cabang?: string;
+    po_number?: string;
+    created_by?: string;
+  };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (body.product_id == null || body.account_id == null) {
+    return c.json({ error: "product_id + account_id wajib — alat & customer dipilih dari katalog" }, 400);
+  }
+  if (!body.serial_number?.trim()) {
+    return c.json({ error: "serial_number wajib" }, 400);
+  }
+  const r = await createInstallation({
+    product_id: Number(body.product_id),
+    account_id: Number(body.account_id),
+    serial_number: body.serial_number,
+    cabang: body.cabang,
+    po_number: body.po_number,
+    created_by: body.created_by,
+  });
+  if (!r.ok) return c.json({ error: r.error }, 400);
+  return c.json(r.row, 201);
+});
+
+app.get("/installations", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const units = await listInstallations(c.req.query("status") || undefined, c.req.query("q") || undefined);
+  return c.json({ count: units.length, units });
+});
+
+app.get("/installations/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const u = await getInstallationById(c.req.param("id"));
+  return u ? c.json(u) : c.json({ error: "unit instalasi tidak ditemukan" }, 404);
+});
+
+app.post("/installations/:id/po-control", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { po_number?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    // po_number opsional di langkah ini
+  }
+  const r = await markPoControl(c.req.param("id"), body.po_number);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.post("/installations/:id/sj", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { sj_number?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.sj_number) return c.json({ error: "sj_number wajib" }, 400);
+  const r = await markSj(c.req.param("id"), body.sj_number);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.post("/installations/:id/assign-teknisi", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  // Teknisi dipilih dari roster: yang diterima teknisi_id (uuid
+  // teknisi_capacity), bukan nama. Nama di-snapshot di markTeknisiAssign.
+  let body: { teknisi_id?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.teknisi_id) return c.json({ error: "teknisi_id wajib — teknisi dipilih dari roster" }, 400);
+  const r = await markTeknisiAssign(c.req.param("id"), body.teknisi_id);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.post("/installations/:id/training", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { training_notes?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    // training_notes opsional
+  }
+  const r = await markTrainingDone(c.req.param("id"), body.training_notes);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.post("/installations/:id/bast", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { bast_number?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.bast_number) return c.json({ error: "bast_number wajib" }, 400);
+  const r = await markBast(c.req.param("id"), body.bast_number);
+  return c.json(r, r.ok ? 200 : 400);
 });
 
 // ── Competitor intelligence (port legacy competitor_intel) ──
@@ -2470,6 +3315,42 @@ app.get("/employee-spine/employees/:id/measurements", async (c) => {
   if (!period) return c.json({ error: "param 'period' wajib (mis. 2026-07)" }, 400);
   return c.json({ period, measurements: await getMeasurements(c.req.param("id"), period) });
 });
+
+// ── F20 E-Catalog/LPSE Compliance Tracker — status klik manual, tak ada hashtag WA ──
+app.get("/lpse-tender", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const status = c.req.query("status") ?? undefined;
+  return c.json({ tenders: await listLpseTenders({ status }) });
+});
+app.get("/lpse-tender/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const t = await getLpseTender(c.req.param("id"));
+  if (!t) return c.json({ error: "tender tidak ditemukan" }, 404);
+  return c.json({ tender: t, timeline: await getLpseTenderTimeline(t.id) });
+});
+app.post("/lpse-tender", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const body = await c.req.json().catch(() => ({}));
+  const result = await createLpseTender({ ...body, created_by_user_id: c.req.header("x-user-id") ?? null });
+  if ("ok" in result && !result.ok) return c.json({ error: result.error }, 400);
+  return c.json({ tender: result }, 201);
+});
+app.post("/lpse-tender/:id/advance", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const body = await c.req.json().catch(() => ({}));
+  const toStatus = String(body.toStatus ?? "");
+  if (!toStatus) return c.json({ error: "toStatus wajib" }, 400);
+  const result = await advanceLpseTenderStatus(c.req.param("id"), toStatus, {
+    changed_by_user_id: c.req.header("x-user-id") ?? null,
+    note: body.note ?? null,
+  });
+  if (!result.ok) return c.json({ error: result.error }, 400);
+  return c.json(result);
+});
+app.post("/lpse-tender/reminder/run", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await runLpseTenderReminder());
+});
 app.post("/employee-spine/employees/:id/measurements", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   let body: { period?: string; items?: MeasurementInput[] };
@@ -2479,6 +3360,60 @@ app.post("/employee-spine/employees/:id/measurements", async (c) => {
   if (!Array.isArray(body.items)) return c.json({ error: "field 'items' wajib array" }, 400);
   return c.json(await saveMeasurements(c.req.param("id"), period, body.items));
 });
+
+// ── DOC #KLAIM Invoice Claim OCR (Fase A) — ingestion via WA, review manual ──
+app.get("/doc-klaim", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const status = c.req.query("status") ?? undefined;
+  return c.json({ klaim: await listKlaim(status) });
+});
+// Input manual via web (buat coba tanpa kirim WA sungguhan) — TANPA OCR.
+app.post("/doc-klaim", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const body = await c.req.json().catch(() => ({}));
+  const result = await createKlaimManual(body);
+  if ("ok" in result && !result.ok) return c.json({ error: result.error }, 400);
+  return c.json({ klaim: result }, 201);
+});
+app.delete("/doc-klaim/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const result = await deleteKlaim(c.req.param("id"));
+  if (!result.ok) return c.json({ error: result.error }, 400);
+  return c.json(result);
+});
+app.get("/doc-klaim/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const k = await getKlaim(c.req.param("id"));
+  return k ? c.json({ klaim: k }) : c.json({ error: "klaim tidak ditemukan" }, 404);
+});
+app.patch("/doc-klaim/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const body = await c.req.json().catch(() => ({}));
+  const result = await updateKategori(c.req.param("id"), body.kategori ?? null);
+  if ("ok" in result && !result.ok) return c.json({ error: result.error }, 400);
+  return c.json({ klaim: result });
+});
+app.post("/doc-klaim/:id/decide", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const body = await c.req.json().catch(() => ({}));
+  const decision = body.decision;
+  if (decision !== "disetujui" && decision !== "ditolak") return c.json({ error: "decision harus disetujui/ditolak" }, 400);
+  const result = await decideKlaim(c.req.param("id"), {
+    decision,
+    nominal_disetujui: body.nominal_disetujui ?? null,
+    catatan: body.catatan ?? null,
+    decided_by_user_id: c.req.header("x-user-id") ?? null,
+  });
+  if (!result.ok) return c.json({ error: result.error }, 400);
+  return c.json(result);
+});
+app.post("/doc-klaim/:id/bayar", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const result = await markDibayar(c.req.param("id"));
+  if (!result.ok) return c.json({ error: result.error }, 400);
+  return c.json(result);
+});
+
 // F118b CRUD core karyawan (gating admin di BFF web).
 app.post("/employee-spine/employees", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
@@ -3081,6 +4016,62 @@ app.delete("/pricelist/:id", async (c) => {
   return c.json(r, r.deleted ? 200 : 404);
 });
 
+// ── F39 Supplier ETA Tracker ──
+const SUPPLIER_ETA_STATUSES: SupplierEtaStatus[] = ["pending", "arrived", "cancelled"];
+
+app.get("/supplier-eta", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const status = c.req.query("status");
+  const rows = await listSupplierEta({
+    status: SUPPLIER_ETA_STATUSES.includes(status as SupplierEtaStatus) ? (status as SupplierEtaStatus) : undefined,
+    vendorId: c.req.query("vendor_id") || undefined,
+    overdueOnly: c.req.query("overdue") === "true",
+  });
+  return c.json({ count: rows.length, rows });
+});
+
+app.post("/supplier-eta", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: SupplierEtaInput;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.vendor_name?.trim() || !body.item_desc?.trim() || !body.eta_date) {
+    return c.json({ error: "vendor_name, item_desc, eta_date wajib" }, 400);
+  }
+  if (body.qty != null && Number(body.qty) < 0) {
+    return c.json({ error: "qty tidak boleh negatif" }, 400);
+  }
+  const row = await createSupplierEta(body);
+  return c.json(row, 201);
+});
+
+app.patch("/supplier-eta/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: SupplierEtaUpdate;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (body.status && !SUPPLIER_ETA_STATUSES.includes(body.status)) {
+    return c.json({ error: "status tidak valid" }, 400);
+  }
+  if (body.qty != null && Number(body.qty) < 0) {
+    return c.json({ error: "qty tidak boleh negatif" }, 400);
+  }
+  const row = await updateSupplierEta(c.req.param("id"), body);
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+});
+
+app.delete("/supplier-eta/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await deleteSupplierEta(c.req.param("id"));
+  return c.json(r, r.deleted ? 200 : 404);
+});
+
 // ── Accurate master mirror (port legacy accurate_customer/item/branch) ──
 async function accBody<T>(c: Context): Promise<T[] | null> {
   let body: unknown;
@@ -3124,8 +4115,48 @@ app.get("/accurate/:entity", async (c) => {
     return c.json({ error: "entity harus customers|items|branches|vendors" }, 400);
   }
   const limit = Math.min(Math.max(Number(c.req.query("limit")) || 100, 1), 10000);
-  const rows = await listMirror(entity, limit);
+  // ?q= → cari by no/nama DI DB (sumber dropdown pilih-dari-katalog F22).
+  // Tanpa q, perilaku lama dipertahankan: potongan terbaru by last_synced_at.
+  const rows = await listMirror(entity, limit, c.req.query("q") || undefined);
   return c.json({ entity, count: rows.length, rows });
+});
+
+// ── F37 Cross-Branch Stock Visibility — stok per gudang + korelasi ke total ──
+// Fungsi KEDUA di menu /inventory (fungsi pertama = cek stok agregat, lihat
+// GET /accurate/items di atas). Read-only: data masuk lewat importer
+// scripts/db/import_stock_branch.py, bukan lewat endpoint ini.
+app.get("/stock/warehouses", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listWarehouses({ aktifSaja: c.req.query("aktif") === "1" });
+  return c.json({ count: rows.length, warehouses: rows });
+});
+
+app.get("/stock/branch", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const wh = c.req.query("warehouse");
+  if (wh) {
+    // Validasi terhadap master supaya typo tidak balik "0 baris" yang
+    // menyesatkan (kelihatan seperti "gudang ini kosong").
+    const known = await listWarehouses();
+    if (!known.some((w) => w.kode === wh)) {
+      return c.json({ error: `warehouse tak dikenal: ${wh}`, valid: known.map((w) => w.kode) }, 400);
+    }
+  }
+  const out = await listStockBranch({
+    q: c.req.query("q") ?? undefined,
+    warehouse: wh ?? undefined,
+    hanyaSelisih: c.req.query("selisih") === "1",
+    hanyaNegatif: c.req.query("negatif") === "1",
+    tanpaData: c.req.query("tanpa_data") === "1",
+    limit: c.req.query("limit") ? Number(c.req.query("limit")) : undefined,
+    offset: c.req.query("offset") ? Number(c.req.query("offset")) : undefined,
+  });
+  return c.json({ count: out.rows.length, total_rows: out.total_rows, rows: out.rows });
+});
+
+app.get("/stock/branch/summary", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await stockBranchSummary());
 });
 
 // ── Log operasional: delivery / email / alert (port legacy *_log) ──
@@ -3446,6 +4477,131 @@ app.get("/accounts-owners", async (c) => {
   return c.json({ owners: await listOwnerCandidates(await scopeOf(c)) });
 });
 
+// ── F45 Pickup Pre-Visit Verification — jadwal trip Kirim-Tagih ──────────────
+// Tanggal ISO yang benar-benar ada. Regex saja tidak cukup: "2026-13-45" lolos
+// pola \d{4}-\d{2}-\d{2} tapi mati di cast ::date → 500. Cek round-trip.
+const isIsoDate = (s: string): boolean => {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const d = new Date(`${s}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
+};
+app.get("/pickup-plan", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  // from/to di-cast ::date di SQL → validasi bentuknya dulu, kalau tidak
+  // "?from=xx" jadi 500 (22P02) alih-alih 400.
+  const from = c.req.query("from");
+  const to = c.req.query("to");
+  for (const [k, v] of [["from", from], ["to", to]] as const) {
+    if (v && !isIsoDate(v)) return c.json({ error: `${k} harus YYYY-MM-DD` }, 400);
+  }
+  const status = c.req.query("status");
+  if (status && !["rencana", "selesai", "batal"].includes(status)) {
+    return c.json({ error: "status harus rencana|selesai|batal" }, 400);
+  }
+  const rows = await listPickupPlans({
+    status: status ?? undefined,
+    from: from ?? undefined,
+    to: to ?? undefined,
+    limit: c.req.query("limit") ? Number(c.req.query("limit")) : undefined,
+  });
+  return c.json({ count: rows.length, plans: rows });
+});
+
+app.post("/pickup-plan", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: Record<string, unknown>;
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  const tanggal = typeof body.tanggal === "string" ? body.tanggal.trim() : "";
+  const customer = typeof body.customer_name === "string" ? body.customer_name.trim() : "";
+  const cabang = typeof body.cabang === "string" ? body.cabang.trim() : "";
+  const kurirName = typeof body.kurir_name === "string" ? body.kurir_name.trim() : "";
+  const kurirWa = typeof body.kurir_wa_number === "string" ? body.kurir_wa_number.trim() : "";
+  if (!isIsoDate(tanggal)) return c.json({ error: "tanggal wajib & harus tanggal valid (YYYY-MM-DD)" }, 400);
+  if (!customer) return c.json({ error: "customer_name wajib" }, 400);
+  if (!cabang) return c.json({ error: "cabang wajib diisi" }, 400);
+  if (!kurirName) return c.json({ error: "nama kurir wajib diisi" }, 400);
+  // Tanpa nomor kurir, notifikasi H-1 tak punya tujuan jelas (runPreVisitCheck
+  // hanya fallback ke PREVISIT_WA_TARGET, bukan broadcast) — jadi jadwal
+  // ter-simpan tapi kurirnya tak pernah diberi tahu. Diwajibkan di sini,
+  // bukan cuma diandalkan validasi UI, karena baris ini TIDAK bisa diedit
+  // lagi setelah tersimpan (tak ada form edit, cuma status/hapus).
+  if (normalizeWa(kurirWa).length < 9) return c.json({ error: "nomor WA kurir wajib diisi & harus nomor yang valid" }, 400);
+  const tujuan = body.tujuan == null ? "kirim" : String(body.tujuan);
+  if (!["kirim", "tagih", "kirim+tagih"].includes(tujuan)) {
+    return c.json({ error: "tujuan harus kirim|tagih|kirim+tagih" }, 400);
+  }
+  // TIDAK dibungkus try/catch lokal (dulu ada, sengaja dilepas): itu menangkap
+  // PostgresError SEBELUM sampai ke app.onError global, jadi error mentah
+  // (nama constraint FK, "invalid input syntax for type bigint") bocor apa
+  // adanya ke response — dikonfirmasi via curl 09-04. Endpoint lain (mis.
+  // shipment-tracking) tak membungkus create-nya dan otomatis dapat format
+  // rapi dari onError (23503 → "Referensi tidak valid: ...", 22P02 → "Format
+  // data tidak valid: ...") — biarkan error di sini lolos ke situ juga.
+  const row = await createPickupPlan({
+    tanggal,
+    customer_name: customer,
+    account_id: body.account_id == null ? null : Number(body.account_id),
+    cabang,
+    tujuan: tujuan as "kirim" | "tagih" | "kirim+tagih",
+    sj_number: body.sj_number == null ? null : String(body.sj_number),
+    kurir_name: kurirName,
+    kurir_wa_number: kurirWa,
+    catatan: body.catatan == null ? null : String(body.catatan),
+    created_by: body.created_by == null ? null : String(body.created_by),
+  });
+  return c.json(row, 201);
+});
+
+app.patch("/pickup-plan/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: Record<string, unknown>;
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  if (body.status != null && !["rencana", "selesai", "batal"].includes(String(body.status))) {
+    return c.json({ error: "status harus rencana|selesai|batal" }, 400);
+  }
+  if (body.tanggal != null && !isIsoDate(String(body.tanggal))) {
+    return c.json({ error: "tanggal harus tanggal valid (YYYY-MM-DD)" }, 400);
+  }
+  if (body.kurir_wa_number != null && normalizeWa(String(body.kurir_wa_number)).length < 9) {
+    return c.json({ error: "nomor WA kurir tidak valid" }, 400);
+  }
+  const row = await updatePickupPlan(c.req.param("id"), {
+    status: body.status == null ? undefined : (String(body.status) as "rencana" | "selesai" | "batal"),
+    tanggal: body.tanggal == null ? undefined : String(body.tanggal),
+    catatan: body.catatan == null ? undefined : String(body.catatan),
+    kurir_wa_number: body.kurir_wa_number == null ? undefined : String(body.kurir_wa_number),
+  });
+  return row ? c.json(row) : c.json({ error: "plan tak ditemukan" }, 404);
+});
+
+app.delete("/pickup-plan/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const ok = await deletePickupPlan(c.req.param("id"));
+  return ok ? c.json({ ok: true }) : c.json({ error: "plan tak ditemukan" }, 404);
+});
+
+// Pratinjau verifikasi (tanpa kirim WA, tanpa menandai) — tombol "cek sekarang".
+app.get("/pickup-plan/:id/previsit", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const t = await previewPreVisit(c.req.param("id"));
+  return t ? c.json(t) : c.json({ error: "plan tak ditemukan" }, 404);
+});
+
+// Trigger manual cron H-1 (dipakai test & recovery kalau scheduler mati).
+// `tanggal` opsional — default besok (WIB); dipakai kalau cron terlewat semalam.
+app.post("/pickup-plan/previsit/run", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: Record<string, unknown> = {};
+  try { body = await c.req.json(); } catch { /* body opsional */ }
+  if (body.tanggal != null && !isIsoDate(String(body.tanggal))) {
+    return c.json({ error: "tanggal harus tanggal valid (YYYY-MM-DD)" }, 400);
+  }
+  return c.json(await runPreVisitCheck({
+    to: body.to == null ? undefined : String(body.to),
+    tanggal: body.tanggal == null ? undefined : String(body.tanggal),
+  }));
+});
+
 // Monitoring revenue ter-faktur per customer (total/faktur/transaksi terakhir/dormant).
 app.get("/customers/revenue", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
@@ -3604,6 +4760,2439 @@ app.post("/hitl/resolve", async (c) => {
   });
   return c.json(r, r.ok ? 200 : 400);
 });
+
+// ── F23: RFID/Cartridge Error Claim Tracker (Aftersales) ──
+const RFID_CLAIM_STATUSES: RfidCartridgeClaimStatus[] = ["pending", "resolved", "rejected"];
+// Asumsi (belum ada arahan eksplisit Direktur) — sama dgn threshold dokumentasi
+// registry lain di codebase ini: mime allowlist pdf/jpg/jpeg/png, cap 8MB.
+const RFID_CLAIM_FILE_MIME_ALLOWLIST = ["application/pdf", "image/jpeg", "image/png"];
+const RFID_CLAIM_FILE_MAX_BYTES = 8 * 1024 * 1024;
+
+function decodeRfidClaimFile(input: { file_name?: string; file_mime?: string; file_base64?: string }):
+  | { error: string }
+  | { file_name: string; file_mime: string; file_size: number; file_data: Buffer }
+  | null {
+  if (!input.file_base64) return null;
+  if (!input.file_name || !input.file_mime) return { error: "file_name + file_mime wajib bila file_base64 dikirim" };
+  if (!RFID_CLAIM_FILE_MIME_ALLOWLIST.includes(input.file_mime)) {
+    return { error: "file_mime harus application/pdf, image/jpeg, atau image/png" };
+  }
+  let buf: Buffer;
+  try {
+    buf = Buffer.from(input.file_base64, "base64");
+  } catch {
+    return { error: "file_base64 tidak valid" };
+  }
+  if (buf.length === 0) return { error: "file kosong" };
+  if (buf.length > RFID_CLAIM_FILE_MAX_BYTES) return { error: "file maksimal 8MB" };
+  return { file_name: input.file_name, file_mime: input.file_mime, file_size: buf.length, file_data: buf };
+}
+
+app.post("/aftersales/rfid-cartridge-claims", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: {
+    device_name?: string;
+    cartridge_name?: string;
+    lot_number?: string;
+    serial_number?: string;
+    customer_name?: string;
+    error_description?: string;
+    reported_date?: string;
+    reported_by?: string;
+    cabang?: string;
+    notes?: string;
+    file_name?: string;
+    file_mime?: string;
+    file_base64?: string;
+  };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (
+    !body.device_name ||
+    !body.cartridge_name ||
+    !body.customer_name ||
+    !body.error_description ||
+    !body.reported_by
+  ) {
+    return c.json(
+      { error: "device_name, cartridge_name, customer_name, error_description, reported_by wajib" },
+      400,
+    );
+  }
+  const file = decodeRfidClaimFile(body);
+  if (file && "error" in file) return c.json({ error: file.error }, 400);
+  const r = await createRfidCartridgeClaim({
+    device_name: body.device_name,
+    cartridge_name: body.cartridge_name,
+    lot_number: body.lot_number,
+    serial_number: body.serial_number,
+    customer_name: body.customer_name,
+    error_description: body.error_description,
+    reported_date: body.reported_date,
+    reported_by: body.reported_by,
+    cabang: body.cabang,
+    notes: body.notes,
+    ...(file
+      ? { file_name: file.file_name, file_mime: file.file_mime, file_size: file.file_size, file_data: file.file_data }
+      : {}),
+  });
+  return c.json(r, 201);
+});
+
+app.get("/aftersales/rfid-cartridge-claims", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const status = c.req.query("status");
+  if (status && !RFID_CLAIM_STATUSES.includes(status as RfidCartridgeClaimStatus)) {
+    return c.json({ error: "status harus pending|resolved|rejected" }, 400);
+  }
+  const claims = await listRfidCartridgeClaims(status as RfidCartridgeClaimStatus | undefined);
+  return c.json({ count: claims.length, claims });
+});
+
+app.get("/aftersales/rfid-cartridge-claims/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const claim = await getRfidCartridgeClaim(c.req.param("id"));
+  return claim ? c.json(claim) : c.json({ error: "not found" }, 404);
+});
+
+// Passthrough mentah (BUKAN JSON) — dipanggil langsung, bukan lewat relay() BFF.
+app.get("/aftersales/rfid-cartridge-claims/:id/file", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const file = await getRfidCartridgeClaimFile(c.req.param("id"));
+  if (!file) return c.json({ error: "not found" }, 404);
+  return new Response(file.file_data, {
+    headers: {
+      "content-type": file.file_mime,
+      "content-disposition": `attachment; filename="${encodeURIComponent(file.file_name)}"`,
+    },
+  });
+});
+
+app.patch("/aftersales/rfid-cartridge-claims/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: {
+    device_name?: string;
+    cartridge_name?: string;
+    lot_number?: string | null;
+    serial_number?: string | null;
+    customer_name?: string;
+    error_description?: string;
+    reported_date?: string;
+    reported_by?: string;
+    cabang?: string | null;
+    status?: string;
+    resolution_notes?: string | null;
+    notes?: string | null;
+    file_name?: string;
+    file_mime?: string;
+    file_base64?: string;
+  };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (body.status && !RFID_CLAIM_STATUSES.includes(body.status as RfidCartridgeClaimStatus)) {
+    return c.json({ error: "status harus pending|resolved|rejected" }, 400);
+  }
+  const file = decodeRfidClaimFile(body);
+  if (file && "error" in file) return c.json({ error: file.error }, 400);
+  const r = await updateRfidCartridgeClaim(c.req.param("id"), {
+    device_name: body.device_name,
+    cartridge_name: body.cartridge_name,
+    lot_number: body.lot_number,
+    serial_number: body.serial_number,
+    customer_name: body.customer_name,
+    error_description: body.error_description,
+    reported_date: body.reported_date,
+    reported_by: body.reported_by,
+    cabang: body.cabang,
+    status: body.status as RfidCartridgeClaimStatus | undefined,
+    resolution_notes: body.resolution_notes,
+    notes: body.notes,
+    ...(file
+      ? { file_name: file.file_name, file_mime: file.file_mime, file_size: file.file_size, file_data: file.file_data }
+      : {}),
+  });
+  return c.json(r, r.updated ? 200 : 404);
+});
+
+app.delete("/aftersales/rfid-cartridge-claims/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await deleteRfidCartridgeClaim(c.req.param("id"));
+  return c.json(r, r.deleted ? 200 : 404);
+});
+
+// ── F43 Kurir/Ekspedisi Performance Dashboard (Shipping) ──
+// created_by dipercaya dari BFF (identitas/gating di layer WEB, pola sama
+// created_by di modul lain — lihat CLAUDE.md gotcha "Admin-gate di layer WEB").
+// /courier-deliveries/summary didaftarkan SEBELUM /:id (pola sama
+// /fund-requests/hod-options) supaya "summary" tak pernah kena-match sbg id.
+app.get("/courier-deliveries/summary", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const from = c.req.query("from") ?? undefined;
+  const to = c.req.query("to") ?? undefined;
+  return c.json(await getCourierPerformanceSummary({ from, to }));
+});
+
+app.get("/courier-deliveries", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const statusQ = c.req.query("status");
+  const status = isValidCourierDeliveryStatus(statusQ) ? statusQ : undefined;
+  return c.json(
+    await listCourierDeliveries({
+      status,
+      kurirName: c.req.query("kurir_name") ?? undefined,
+      cabang: c.req.query("cabang") ?? undefined,
+      from: c.req.query("from") ?? undefined,
+      to: c.req.query("to") ?? undefined,
+    }),
+  );
+});
+
+app.post("/courier-deliveries", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: {
+    kurir_name?: string; kurir_wa_number?: string | null; sj_number?: string | null;
+    customer_name?: string | null; cabang?: string | null; tanggal_kirim?: string;
+    target_tiba_date?: string | null; distance_km?: number | null; notes?: string | null;
+    created_by?: string | null;
+  };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.kurir_name?.trim()) return c.json({ error: "kurir_name wajib diisi" }, 400);
+  try {
+    const created = await createCourierDelivery({
+      kurir_name: body.kurir_name,
+      kurir_wa_number: body.kurir_wa_number ?? null,
+      sj_number: body.sj_number ?? null,
+      customer_name: body.customer_name ?? null,
+      cabang: body.cabang ?? null,
+      tanggal_kirim: body.tanggal_kirim,
+      target_tiba_date: body.target_tiba_date ?? null,
+      distance_km: body.distance_km != null ? Number(body.distance_km) : null,
+      notes: body.notes ?? null,
+      created_by: body.created_by ?? null,
+    });
+    return c.json(created, 201);
+  } catch (e) {
+    if (e instanceof CourierDeliveryError) return c.json({ error: e.message }, e.status as 400);
+    throw e;
+  }
+});
+
+app.get("/courier-deliveries/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const row = await getCourierDelivery(c.req.param("id"));
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+});
+
+app.patch("/courier-deliveries/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: {
+    kurir_name?: string; kurir_wa_number?: string | null; sj_number?: string | null;
+    customer_name?: string | null; cabang?: string | null; tanggal_kirim?: string;
+    target_tiba_date?: string | null; tanggal_tiba?: string | null; distance_km?: number | null;
+    status?: CourierDeliveryStatus; notes?: string | null;
+  };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  try {
+    const updated = await updateCourierDelivery(c.req.param("id"), body);
+    return c.json(updated);
+  } catch (e) {
+    if (e instanceof CourierDeliveryError) return c.json({ error: e.message }, e.status as 400 | 404);
+    throw e;
+  }
+});
+
+app.delete("/courier-deliveries/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const result = await deleteCourierDelivery(c.req.param("id"));
+  return c.json(result, result.deleted ? 200 : 404);
+});
+
+// ── F44 Document Print Spec Standardizer (Shipping) ──
+// created_by dipercaya dari BFF, pola sama created_by F43 di atas.
+app.get("/print-specs", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const activeQ = c.req.query("is_active");
+  const isActive = activeQ === "true" ? true : activeQ === "false" ? false : undefined;
+  return c.json(await listPrintSpecs({ isActive }));
+});
+
+app.post("/print-specs", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: {
+    document_type?: string; paper_size?: PaperSize; orientation?: Orientation;
+    margin_top_mm?: number; margin_right_mm?: number; margin_bottom_mm?: number; margin_left_mm?: number;
+    font_family?: string; font_size_pt?: number; has_letterhead?: boolean;
+    header_spec?: string | null; footer_spec?: string | null; notes?: string | null;
+    created_by?: string | null;
+  };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.document_type?.trim()) return c.json({ error: "document_type wajib diisi" }, 400);
+  try {
+    const created = await createPrintSpec({ ...body, document_type: body.document_type });
+    return c.json(created, 201);
+  } catch (e) {
+    if (e instanceof PrintSpecError) return c.json({ error: e.message }, e.status as 400 | 409);
+    throw e;
+  }
+});
+
+app.get("/print-specs/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const row = await getPrintSpec(c.req.param("id"));
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+});
+
+app.patch("/print-specs/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: {
+    document_type?: string; paper_size?: PaperSize; orientation?: Orientation;
+    margin_top_mm?: number; margin_right_mm?: number; margin_bottom_mm?: number; margin_left_mm?: number;
+    font_family?: string; font_size_pt?: number; has_letterhead?: boolean;
+    header_spec?: string | null; footer_spec?: string | null; notes?: string | null;
+    is_active?: boolean;
+  };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  try {
+    const updated = await updatePrintSpec(c.req.param("id"), body);
+    return c.json(updated);
+  } catch (e) {
+    if (e instanceof PrintSpecError) return c.json({ error: e.message }, e.status as 400 | 404 | 409);
+    throw e;
+  }
+});
+
+app.delete("/print-specs/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const result = await deletePrintSpec(c.req.param("id"));
+  return c.json(result, result.deleted ? 200 : 404);
+});
+
+// ── Instalasi Alat Lifecycle (F22, AFTERSALES) — checklist 5 langkah sekuensial:
+// PO control → SJ → Teknisi assign → Training done → BAST. ──
+app.get("/teknisi-roster", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const teknisi = await listTeknisi();
+  return c.json({ count: teknisi.length, teknisi });
+});
+
+app.post("/service-tickets", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { complaint_text?: string; customer_id?: number | string | null; customer_name?: string; area?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.complaint_text?.trim()) return c.json({ error: "complaint_text wajib" }, 400);
+  // customer_id SENGAJA opsional — tiket boleh tanpa customer (lihat migrasi
+  // 163). Tapi kalau diisi dan tak sah, createTicket melempar → 400: "id
+  // ngawur" itu salah input, dan tiketnya TIDAK boleh diam-diam tersimpan
+  // tanpa tautan seolah user tak memilih apa pun.
+  try {
+    const ticket = await createTicket({
+      complaint_text: body.complaint_text,
+      customer_id: body.customer_id ?? null,
+      customer_name: body.customer_name,
+      area: body.area,
+      source: "manual",
+    });
+    return c.json(ticket, 201);
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : "gagal membuat tiket" }, 400);
+  }
+});
+
+app.get("/service-tickets", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const tickets = await listTickets(c.req.query("status") || undefined);
+  return c.json({ count: tickets.length, tickets });
+});
+
+app.get("/service-tickets/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const t = await getTicketById(c.req.param("id"));
+  return t ? c.json(t) : c.json({ error: "ticket tidak ditemukan" }, 404);
+});
+
+app.post("/service-tickets/:id/resolve", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { note?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    // note opsional
+  }
+  const r = await resolveTicket(c.req.param("id"), body.note);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+// ── F39 Supplier ETA Tracker ──
+// ── F36 Inbound Receiving Checklist ──
+const INBOUND_RECEIVING_STATUSES: InboundReceivingStatus[] = ["in_progress", "completed"];
+
+app.get("/inbound-receiving", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const status = c.req.query("status");
+  const rows = await listInboundReceiving({
+    status: INBOUND_RECEIVING_STATUSES.includes(status as InboundReceivingStatus) ? (status as InboundReceivingStatus) : undefined,
+    vendorId: c.req.query("vendor_id") || undefined,
+    cabang: c.req.query("cabang") || undefined,
+  });
+  return c.json({ count: rows.length, rows });
+});
+
+app.post("/inbound-receiving", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: InboundReceivingInput;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.vendor_name?.trim()) {
+    return c.json({ error: "vendor_name wajib" }, 400);
+  }
+  const row = await createInboundReceiving(body);
+  return c.json(row, 201);
+});
+
+app.get("/inbound-receiving/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const row = await getInboundReceiving(c.req.param("id"));
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+});
+
+app.patch("/inbound-receiving/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: InboundReceivingUpdate;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (body.status && !INBOUND_RECEIVING_STATUSES.includes(body.status)) {
+    return c.json({ error: "status tidak valid" }, 400);
+  }
+  try {
+    const row = await updateInboundReceiving(c.req.param("id"), body);
+    return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+  } catch (e) {
+    if (e instanceof InboundReceivingError) return c.json({ error: e.message }, e.status as 400);
+    throw e;
+  }
+});
+
+app.delete("/inbound-receiving/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await deleteInboundReceiving(c.req.param("id"));
+  return c.json(r, r.deleted ? 200 : 404);
+});
+
+app.post("/inbound-receiving/:id/items", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { label?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.label?.trim()) return c.json({ error: "label wajib" }, 400);
+  const row = await addInboundReceivingItem(c.req.param("id"), body.label.trim());
+  return row ? c.json(row, 201) : c.json({ error: "tidak ditemukan" }, 404);
+});
+
+app.patch("/inbound-receiving/:id/items/:itemId", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: InboundReceivingItemUpdate;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  try {
+    const row = await updateInboundReceivingItem(c.req.param("id"), c.req.param("itemId"), body);
+    return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+  } catch (e) {
+    if (e instanceof InboundReceivingError) return c.json({ error: e.message }, e.status as 400);
+    throw e;
+  }
+});
+
+app.delete("/inbound-receiving/:id/items/:itemId", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await deleteInboundReceivingItem(c.req.param("id"), c.req.param("itemId"));
+  return c.json(r, r.deleted ? 200 : 404);
+});
+
+// ── F51 Dana Ops / Petty Cash Realization (General Affairs) ──
+const DANA_OPS_STATUSES: DanaOpsStatus[] = ["in_progress", "realized"];
+
+app.get("/dana-ops", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const status = c.req.query("status");
+  if (status && !DANA_OPS_STATUSES.includes(status as DanaOpsStatus)) {
+    return c.json({ error: `status harus salah satu dari ${DANA_OPS_STATUSES.join(", ")}` }, 400);
+  }
+  const rows = await listDanaOps({
+    status: status as DanaOpsStatus | undefined,
+    cabang: c.req.query("cabang") || undefined,
+    limit: c.req.query("limit") ? Number(c.req.query("limit")) : undefined,
+  });
+  return c.json({ count: rows.length, rows });
+});
+
+app.post("/dana-ops", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: DanaOpsInput;
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  if (!body.requested_by || !body.purpose || body.amount_requested == null) {
+    return c.json({ error: "requested_by, purpose, amount_requested wajib" }, 400);
+  }
+  const row = await createDanaOps(body);
+  return c.json(row, 201);
+});
+
+app.get("/dana-ops/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const row = await getDanaOps(c.req.param("id"));
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+});
+
+app.patch("/dana-ops/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: DanaOpsUpdate;
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  if (body.status && !DANA_OPS_STATUSES.includes(body.status)) {
+    return c.json({ error: `status harus salah satu dari ${DANA_OPS_STATUSES.join(", ")}` }, 400);
+  }
+  const row = await updateDanaOps(c.req.param("id"), body);
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+});
+
+app.delete("/dana-ops/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await deleteDanaOps(c.req.param("id"));
+  return c.json(r, r.deleted ? 200 : 404);
+});
+
+app.post("/dana-ops/:id/items", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: DanaOpsItemInput;
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  if (!body.description || body.amount == null) return c.json({ error: "description, amount wajib" }, 400);
+  const row = await addDanaOpsItem(c.req.param("id"), body);
+  return row ? c.json(row, 201) : c.json({ error: "dana_ops tidak ditemukan" }, 404);
+});
+
+app.patch("/dana-ops/:id/items/:itemId", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: DanaOpsItemUpdate;
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  const row = await updateDanaOpsItem(c.req.param("id"), c.req.param("itemId"), body);
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+});
+
+app.delete("/dana-ops/:id/items/:itemId", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await deleteDanaOpsItem(c.req.param("id"), c.req.param("itemId"));
+  return c.json(r, r.deleted ? 200 : 404);
+});
+
+// ── Instalasi Alat Lifecycle (F22, AFTERSALES) — checklist 5 langkah sekuensial:
+// PO control → SJ → Teknisi assign → Training done → BAST. ──
+app.get("/maintenance/eligible-units", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const units = await listEligibleUnits();
+  return c.json({ count: units.length, units });
+});
+
+app.post("/maintenance", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: {
+    installation_unit_id?: string;
+    interval_bulan?: number;
+    reference_date?: string;
+    teknisi_name?: string;
+    teknisi_wa_number?: string;
+  };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.installation_unit_id || !body.interval_bulan || body.interval_bulan <= 0) {
+    return c.json({ error: "installation_unit_id + interval_bulan (>0) wajib" }, 400);
+  }
+  const r = await createSchedule({
+    installation_unit_id: body.installation_unit_id,
+    interval_bulan: body.interval_bulan,
+    reference_date: body.reference_date,
+    teknisi_name: body.teknisi_name,
+    teknisi_wa_number: body.teknisi_wa_number,
+  });
+  return c.json(r, "ok" in r && r.ok === false ? 400 : 201);
+});
+
+app.get("/maintenance", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const schedules = await listSchedules(c.req.query("status") || undefined);
+  return c.json({ count: schedules.length, schedules });
+});
+
+app.get("/maintenance/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const s = await getScheduleById(c.req.param("id"));
+  return s ? c.json(s) : c.json({ error: "schedule tidak ditemukan" }, 404);
+});
+
+app.post("/maintenance/:id/done", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { catatan?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    // catatan opsional
+  }
+  const r = await markDone(c.req.param("id"), body.catatan);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+// ── F134 ATK Master (General Affairs) — Categories + Suppliers + Items ──
+app.get("/atk/categories", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listAtkCategories();
+  return c.json({ count: rows.length, rows });
+});
+
+app.post("/atk/categories", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: AtkCategoryInput;
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  if (!body.name) return c.json({ error: "name wajib" }, 400);
+  const row = await createAtkCategory(body);
+  return c.json(row, 201);
+});
+
+app.patch("/atk/categories/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: AtkCategoryUpdate;
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  const row = await updateAtkCategory(c.req.param("id"), body);
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+});
+
+app.delete("/atk/categories/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await deleteAtkCategory(c.req.param("id"));
+  return c.json(r, r.deleted ? 200 : 404);
+});
+
+app.get("/atk/suppliers", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listAtkSuppliers();
+  return c.json({ count: rows.length, rows });
+});
+
+app.post("/atk/suppliers", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: AtkSupplierInput;
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  if (!body.name) return c.json({ error: "name wajib" }, 400);
+  const row = await createAtkSupplier(body);
+  return c.json(row, 201);
+});
+
+app.patch("/atk/suppliers/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: AtkSupplierUpdate;
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  const row = await updateAtkSupplier(c.req.param("id"), body);
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+});
+
+app.delete("/atk/suppliers/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await deleteAtkSupplier(c.req.param("id"));
+  return c.json(r, r.deleted ? 200 : 404);
+});
+
+app.get("/atk/items", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listAtkItems();
+  return c.json({ count: rows.length, rows });
+});
+
+app.post("/atk/items", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: AtkItemInput;
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  if (!body.name || !body.unit) return c.json({ error: "name, unit wajib" }, 400);
+  if (body.transaction_category && !ATK_TRANSACTION_CATEGORIES.includes(body.transaction_category)) {
+    return c.json({ error: "transaction_category harus 'barang' atau 'materai'" }, 400);
+  }
+  const row = await createAtkItem(body);
+  return c.json(row, 201);
+});
+
+app.patch("/atk/items/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: AtkItemUpdate;
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  if (body.transaction_category && !ATK_TRANSACTION_CATEGORIES.includes(body.transaction_category)) {
+    return c.json({ error: "transaction_category harus 'barang' atau 'materai'" }, 400);
+  }
+  const row = await updateAtkItem(c.req.param("id"), body);
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+});
+
+app.delete("/atk/items/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await deleteAtkItem(c.req.param("id"));
+  return c.json(r, r.deleted ? 200 : 404);
+});
+
+// ── F134 ATK Master (General Affairs) — Categories + Suppliers + Items ──
+const ATK_MOVEMENT_TYPES: AtkMovementType[] = ["in", "out"];
+
+app.get("/atk/stock-movements", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listAtkStockMovements();
+  return c.json({ count: rows.length, rows });
+});
+
+app.post("/atk/stock-movements", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: AtkStockMovementInput;
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  if (!body.item_id || !body.movement_type || body.qty == null) {
+    return c.json({ error: "item_id, movement_type, qty wajib" }, 400);
+  }
+  if (!ATK_MOVEMENT_TYPES.includes(body.movement_type)) {
+    return c.json({ error: "movement_type harus 'in' atau 'out'" }, 400);
+  }
+  if (Number(body.qty) <= 0) return c.json({ error: "qty harus > 0" }, 400);
+  try {
+    const row = await createAtkStockMovement(body);
+    return c.json(row, 201);
+  } catch (e) {
+    if (e instanceof AtkStockMovementError) return c.json({ error: e.message }, e.status as 409);
+    throw e;
+  }
+});
+
+app.patch("/atk/stock-movements/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: AtkStockMovementUpdate;
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  if (body.movement_type && !ATK_MOVEMENT_TYPES.includes(body.movement_type)) {
+    return c.json({ error: "movement_type harus 'in' atau 'out'" }, 400);
+  }
+  if (body.qty != null && Number(body.qty) <= 0) return c.json({ error: "qty harus > 0" }, 400);
+  try {
+    const row = await updateAtkStockMovement(c.req.param("id"), body);
+    return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+  } catch (e) {
+    if (e instanceof AtkStockMovementError) return c.json({ error: e.message }, e.status as 409);
+    throw e;
+  }
+});
+
+app.delete("/atk/stock-movements/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await deleteAtkStockMovement(c.req.param("id"));
+  return c.json(r, r.deleted ? 200 : 404);
+});
+
+app.get("/atk/stock-levels", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listAtkStockLevels();
+  return c.json({ count: rows.length, rows });
+});
+
+// ── Tracking Pengiriman Digital (F12, SHIPPING) — state machine sederhana
+// draft → dikirim → bast (TTF diabaikan, arahan Direktur). Dipicu manual via
+// web ATAU WA hashtag #KIRIM/#BAST (match by sj_number, lihat repo/inbound.ts). ──
+app.post("/shipment-tracking", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: {
+    sj_number?: string;
+    customer_name?: string;
+    cabang?: string;
+    driver_name?: string;
+    driver_wa_number?: string;
+    created_by?: string;
+  };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.sj_number || !body.customer_name) {
+    return c.json({ error: "sj_number + customer_name wajib" }, 400);
+  }
+  const r = await createShipment({
+    sj_number: body.sj_number,
+    customer_name: body.customer_name,
+    cabang: body.cabang,
+    driver_name: body.driver_name,
+    driver_wa_number: body.driver_wa_number,
+    created_by: body.created_by,
+  });
+  return c.json(r, 201);
+});
+
+app.get("/shipment-tracking", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listShipments(c.req.query("status") || undefined, c.req.query("q") || undefined);
+  return c.json({ count: rows.length, shipments: rows });
+});
+
+app.get("/shipment-tracking/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await getShipmentById(c.req.param("id"));
+  return r ? c.json(r) : c.json({ error: "shipment tidak ditemukan" }, 404);
+});
+
+app.post("/shipment-tracking/:id/kirim", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { by?: string; lat?: number; lon?: number } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    // semua field opsional
+  }
+  const r = await markShipmentKirim(c.req.param("id"), { by: body.by, lat: body.lat, lon: body.lon });
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.post("/shipment-tracking/:id/bast", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { by?: string; lat?: number; lon?: number } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    // semua field opsional
+  }
+  const r = await markShipmentBast(c.req.param("id"), { by: body.by, lat: body.lat, lon: body.lon });
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+// ── Tracking Pengiriman Digital (F12, SHIPPING) — state machine sederhana
+// draft → dikirim → bast (TTF diabaikan, arahan Direktur). Dipicu manual via
+// web ATAU WA hashtag #KIRIM/#BAST (match by sj_number, lihat repo/inbound.ts). ──
+app.post("/shipment-tracking/:id/terima", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { by?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    // by opsional
+  }
+  const r = await markShipmentTerima(c.req.param("id"), { by: body.by });
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+// ── F134 ATK Master (General Affairs) — Categories + Suppliers + Items ──
+app.get("/atk/stock-opname", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listAtkStockOpnames();
+  return c.json({ count: rows.length, rows });
+});
+
+app.post("/atk/stock-opname", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: AtkStockOpnameInput;
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  if (!body.item_id || body.counted_qty == null) {
+    return c.json({ error: "item_id, counted_qty wajib" }, 400);
+  }
+  if (Number(body.counted_qty) < 0) return c.json({ error: "counted_qty tidak boleh negatif" }, 400);
+  const row = await createAtkStockOpname(body);
+  return c.json(row, 201);
+});
+
+app.patch("/atk/stock-opname/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: AtkStockOpnameUpdate;
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  const row = await updateAtkStockOpname(c.req.param("id"), body);
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+});
+
+app.delete("/atk/stock-opname/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await deleteAtkStockOpname(c.req.param("id"));
+  return c.json(r, r.deleted ? 200 : 404);
+});
+
+// ── Tracking Pengiriman Digital (F12, SHIPPING) — state machine sederhana
+// draft → dikirim → bast (TTF diabaikan, arahan Direktur). Dipicu manual via
+// web ATAU WA hashtag #KIRIM/#BAST (match by sj_number, lihat repo/inbound.ts). ──
+app.post("/shipment-tracking/:id/bukti", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { by?: string; photo_path?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    // semua field opsional
+  }
+  const r = await markShipmentBukti(c.req.param("id"), { by: body.by, photo_path: body.photo_path });
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+// ── F37 Cross-Branch Stock Visibility — stok per gudang + korelasi ke total ──
+// Fungsi KEDUA di menu /inventory (fungsi pertama = cek stok agregat, lihat
+// GET /accurate/items di atas). Read-only: data masuk lewat importer
+// scripts/db/import_stock_branch.py, bukan lewat endpoint ini.
+app.get("/stock/batch", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const wh = c.req.query("warehouse");
+  if (wh) {
+    const known = await listWarehouses();
+    if (!known.some((w) => w.kode === wh)) {
+      return c.json({ error: `warehouse tak dikenal: ${wh}`, valid: known.map((w) => w.kode) }, 400);
+    }
+  }
+  const tierRaw = c.req.query("tier");
+  if (tierRaw && !["30", "60", "90"].includes(tierRaw)) {
+    return c.json({ error: "tier harus 30|60|90" }, 400);
+  }
+  const out = await listStockBatch({
+    q: c.req.query("q") ?? undefined,
+    warehouse: wh ?? undefined,
+    tier: tierRaw ? (Number(tierRaw) as 30 | 60 | 90) : undefined,
+    hanyaLewat: c.req.query("lewat") === "1",
+    tanpaEd: c.req.query("tanpa_ed") === "1",
+    limit: c.req.query("limit") ? Number(c.req.query("limit")) : undefined,
+    offset: c.req.query("offset") ? Number(c.req.query("offset")) : undefined,
+  });
+  return c.json({ count: out.rows.length, total_rows: out.total_rows, rows: out.rows });
+});
+
+app.get("/stock/batch/summary", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await stockBatchSummary());
+});
+
+// Trigger manual cron ed-watch (test & recovery kalau scheduler mati).
+// `tanggal` opsional — default hari ini WIB; dipakai menguji ambang tanpa
+// menunggu tanggal sungguhan bergerak.
+app.post("/stock/batch/ed-watch/run", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: Record<string, unknown> = {};
+  try { body = await c.req.json(); } catch { /* body opsional */ }
+  // Validasi inline, sengaja tanpa helper bernama: branch F45 mendeklarasikan
+  // `isIsoDate` di file ini juga, jadi helper bernama sama akan bentrok saat
+  // kedua branch merge. Regex saja tidak cukup — "2026-13-45" lolos pola tapi
+  // mati di cast ::date, jadi dicek round-trip.
+  if (body.tanggal != null) {
+    const t = String(body.tanggal);
+    const d = new Date(`${t}T00:00:00Z`);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(t) || Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== t) {
+      return c.json({ error: "tanggal harus tanggal valid (YYYY-MM-DD)" }, 400);
+    }
+  }
+  return c.json(await runEdWatch({
+    to: body.to == null ? undefined : String(body.to),
+    tanggal: body.tanggal == null ? undefined : String(body.tanggal),
+    // Dengan `tanggal` override, penandaan HARUS diminta eksplisit — lihat
+    // catatan di runEdWatch: alat uji tak boleh mematikan alert produksi.
+    tandai: body.tandai === true,
+  }));
+});
+
+// ── F134 ATK Master (General Affairs) — Categories + Suppliers + Items ──
+const ATK_TRANSACTION_CATEGORIES: AtkTransactionCategory[] = ["barang", "materai"];
+
+// ── F25 Uji Profisiensi Document Registry (Aftersales/Teknis) ──
+// Cap ukuran & mime sertifikat ditegakkan di sini (bukan di DB) — belum ada
+// arahan eksplisit Direktur soal batas ini, diasumsikan 8MB (wajar utk scan
+// PDF/foto sertifikat) + pdf/jpg/jpeg/png saja. Gampang diubah kalau ternyata
+// perlu lebih besar/format lain.
+const PROFICIENCY_TEST_FILE_MAX_BYTES = 8 * 1024 * 1024;
+const PROFICIENCY_TEST_ALLOWED_MIME = ["application/pdf", "image/jpeg", "image/jpg", "image/png"];
+
+function validateProficiencyTestFile(mime?: string | null, base64?: string | null): string | null {
+  if (!base64) return null;
+  if (!mime || !PROFICIENCY_TEST_ALLOWED_MIME.includes(mime)) {
+    return "file harus PDF/JPG/PNG";
+  }
+  // base64 ~ 4/3 ukuran biner asli — cek kasar sebelum decode penuh.
+  if (base64.length * 0.75 > PROFICIENCY_TEST_FILE_MAX_BYTES) {
+    return "ukuran file maksimal 8MB";
+  }
+  return null;
+}
+
+// BUG-08 — expired_date < issued_date sebelumnya diterima tanpa validasi
+// sama sekali. issued_date opsional (nullable), jadi cuma dibandingkan kalau
+// keduanya ada.
+function validateProficiencyTestDates(issuedDate: string | null | undefined, expiredDate: string | undefined): string | null {
+  if (issuedDate && expiredDate && expiredDate < issuedDate) {
+    return "expired_date tidak boleh sebelum issued_date";
+  }
+  return null;
+}
+
+app.get("/aftersales/proficiency-tests", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listProficiencyTests();
+  return c.json({ count: rows.length, rows });
+});
+
+app.post("/aftersales/proficiency-tests", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: ProficiencyTestInput;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.rs_name?.trim() || !body.test_name?.trim() || !body.expired_date) {
+    return c.json({ error: "rs_name, test_name, expired_date wajib" }, 400);
+  }
+  const dateErr = validateProficiencyTestDates(body.issued_date, body.expired_date);
+  if (dateErr) return c.json({ error: dateErr }, 400);
+  const fileErr = validateProficiencyTestFile(body.file_mime, body.file_base64);
+  if (fileErr) return c.json({ error: fileErr }, 400);
+  const row = await createProficiencyTest(body);
+  return c.json(row, 201);
+});
+
+app.get("/aftersales/proficiency-tests/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const row = await getProficiencyTest(c.req.param("id"));
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+});
+
+app.patch("/aftersales/proficiency-tests/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: ProficiencyTestUpdate;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const fileErr = validateProficiencyTestFile(body.file_mime, body.file_base64);
+  if (fileErr) return c.json({ error: fileErr }, 400);
+  // Validasi thd nilai HASIL MERGE (pola sama BUG-03/vendor-contract) —
+  // PATCH parsial (mis. cuma issued_date) tak boleh lolos kalau hasilnya
+  // expired_date < issued_date.
+  const existing = await getProficiencyTest(c.req.param("id"));
+  if (!existing) return c.json({ error: "tidak ditemukan" }, 404);
+  const dateErr = validateProficiencyTestDates(
+    body.issued_date !== undefined ? body.issued_date : existing.issued_date,
+    body.expired_date ?? existing.expired_date,
+  );
+  if (dateErr) return c.json({ error: dateErr }, 400);
+  const row = await updateProficiencyTest(c.req.param("id"), body);
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+});
+
+app.delete("/aftersales/proficiency-tests/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await deleteProficiencyTest(c.req.param("id"));
+  return c.json(r, r.deleted ? 200 : 404);
+});
+
+app.get("/aftersales/proficiency-tests/:id/file", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const file = await getProficiencyTestFile(c.req.param("id"));
+  if (!file) return c.json({ error: "file tidak ditemukan" }, 404);
+  return new Response(new Uint8Array(file.file_data), {
+    headers: {
+      "content-type": file.file_mime,
+      "content-disposition": `attachment; filename="${encodeURIComponent(file.file_name)}"`,
+    },
+  });
+});
+
+// ── Kendaraan Operasional Log (F50, OPS) — master `vehicle` diseed manual
+// (tanpa endpoint create, lihat 149_vehicle_operational_log.sql), entri
+// transaksional lewat /vehicles/:id/logs. Alert service/STNK via cron. ──
+app.get("/vehicles", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listVehicles(c.req.query("all") !== "true");
+  return c.json({ count: rows.length, vehicles: rows });
+});
+
+app.post("/vehicles", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: {
+    plate_number?: string;
+    model?: string;
+    sopir_name?: string;
+    current_km?: number;
+    stnk_expiry?: string;
+    service_interval_km?: number;
+  };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.plate_number?.trim()) {
+    return c.json({ error: "plate_number wajib" }, 400);
+  }
+  const r = await createVehicle({
+    plate_number: body.plate_number,
+    model: body.model,
+    sopir_name: body.sopir_name,
+    current_km: body.current_km,
+    stnk_expiry: body.stnk_expiry,
+    service_interval_km: body.service_interval_km,
+  });
+  return "id" in r ? c.json(r, 201) : c.json(r, 400);
+});
+
+app.get("/vehicles/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await getVehicleById(c.req.param("id"));
+  return r ? c.json(r) : c.json({ error: "kendaraan tidak ditemukan" }, 404);
+});
+
+app.patch("/vehicles/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: {
+    sopir_name?: string;
+    stnk_expiry?: string;
+    service_interval_km?: number;
+    active?: boolean;
+  };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const r = await updateVehicle(c.req.param("id"), body);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.get("/vehicles/:id/logs", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listVehicleLogs(c.req.param("id"));
+  return c.json({ count: rows.length, logs: rows });
+});
+
+app.post("/vehicles/:id/logs", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: {
+    log_type?: "km" | "bbm" | "service";
+    log_date?: string;
+    km?: number;
+    bbm_liter?: number;
+    bbm_cost?: number;
+    note?: string;
+    created_by?: string;
+  };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.log_type || !["km", "bbm", "service"].includes(body.log_type)) {
+    return c.json({ error: "log_type wajib salah satu dari: km, bbm, service" }, 400);
+  }
+  const r = await createVehicleLog(c.req.param("id"), body as never);
+  return c.json(r, "id" in r ? 201 : 400);
+});
+
+// Trigger manual alert service-due (km) + STNK H-30 — selain cron terjadwal
+// (VEHICLE_ALERT_ENABLED, default off). Berguna buat testing tanpa nunggu
+// jadwal cron 08:00 — pola sama /pickup-plan/previsit/run, /lpse-tender/
+// reminder/run. Tetap patuh VEHICLE_ALERT_WA_TARGET (kosong = no-op) & WA_DRY_RUN.
+app.post("/vehicles/alerts/run", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await runVehicleAlerts();
+  return c.json(r);
+});
+
+// ── F25 Uji Profisiensi Document Registry (Aftersales/Teknis) ──
+// Cap ukuran & mime sertifikat ditegakkan di sini (bukan di DB) — belum ada
+// arahan eksplisit Direktur soal batas ini, diasumsikan 8MB (wajar utk scan
+// PDF/foto sertifikat) + pdf/jpg/jpeg/png saja. Gampang diubah kalau ternyata
+// perlu lebih besar/format lain.
+const INVENTORY_RELOCATION_STATUSES: InventoryRelocationStatus[] = ["pending", "completed", "cancelled"];
+
+function validateInventoryRelocationFields(b: {
+  item_desc?: string;
+  qty?: number;
+  cabang_asal?: string;
+  cabang_tujuan?: string;
+  status?: string;
+}): string | null {
+  if (b.qty !== undefined && !(Number(b.qty) > 0)) return "qty harus lebih dari 0";
+  if (b.cabang_asal !== undefined && b.cabang_tujuan !== undefined && b.cabang_asal.trim() === b.cabang_tujuan.trim() && b.cabang_asal.trim() !== "") {
+    return "cabang asal dan tujuan tidak boleh sama";
+  }
+  if (b.status !== undefined && !INVENTORY_RELOCATION_STATUSES.includes(b.status as InventoryRelocationStatus)) {
+    return "status harus salah satu dari: pending, completed, cancelled";
+  }
+  return null;
+}
+
+app.get("/inventory-relocations", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listInventoryRelocations();
+  return c.json({ count: rows.length, rows });
+});
+
+app.post("/inventory-relocations", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: InventoryRelocationInput;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.item_desc?.trim() || !body.cabang_asal?.trim() || !body.cabang_tujuan?.trim() || !(Number(body.qty) > 0)) {
+    return c.json({ error: "item_desc, qty (>0), cabang_asal, cabang_tujuan wajib" }, 400);
+  }
+  const fieldErr = validateInventoryRelocationFields(body);
+  if (fieldErr) return c.json({ error: fieldErr }, 400);
+  const row = await createInventoryRelocation(body);
+  return c.json(row, 201);
+});
+
+app.get("/inventory-relocations/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const row = await getInventoryRelocation(c.req.param("id"));
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+});
+
+app.patch("/inventory-relocations/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: InventoryRelocationUpdate;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const fieldErr = validateInventoryRelocationFields(body);
+  if (fieldErr) return c.json({ error: fieldErr }, 400);
+  const row = await updateInventoryRelocation(c.req.param("id"), body);
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+});
+
+app.delete("/inventory-relocations/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await deleteInventoryRelocation(c.req.param("id"));
+  return c.json(r, r.deleted ? 200 : 404);
+});
+
+const GA_UPLOAD_ROOT = resolve(process.env.GA_UPLOAD_DIR ?? `${homedir()}/.wrg-os/uploads/ga-assets`);
+const MEDIA_ROOTS = [MEDIA_ROOT, GA_UPLOAD_ROOT];
+// `abs.startsWith(root + "/")` gagal di Windows (path pakai backslash) —
+// path.relative aman lintas-platform: "di luar root" kalau hasilnya absolut
+// atau mulai dengan "..".
+function isInsideRoot(abs: string, root: string): boolean {
+  const rel = relative(root, abs);
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+}
+// ── F132 GA Aset Master ──────────────────────────────────────────────────
+app.get("/ga-asset-categories", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listCategories(c.req.query("all") !== "true");
+  return c.json({ count: rows.length, categories: rows });
+});
+
+app.post("/ga-asset-categories", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { code?: string; nama?: string; depreciation_years?: number; icon?: string; is_shared?: boolean; default_recur_months?: number };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.code || !body.nama) return c.json({ error: "code & nama wajib diisi" }, 400);
+  const r = await createCategory({
+    code: body.code,
+    nama: body.nama,
+    depreciation_years: body.depreciation_years,
+    icon: body.icon,
+    is_shared: body.is_shared,
+    default_recur_months: body.default_recur_months,
+  });
+  return c.json(r, "error" in r ? 400 : 201);
+});
+
+app.patch("/ga-asset-categories/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { nama?: string; depreciation_years?: number; icon?: string; is_shared?: boolean; default_recur_months?: number; active?: boolean };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const r = await updateCategory(c.req.param("id"), body);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.get("/ga-assets", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listGaAssets({
+    activeOnly: c.req.query("all") !== "true",
+    categoryId: c.req.query("category_id") || undefined,
+    status: c.req.query("status") || undefined,
+    unassigned: c.req.query("unassigned") === "true",
+  });
+  return c.json({ count: rows.length, assets: rows });
+});
+
+app.get("/ga-assets/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const row = await getGaAsset(c.req.param("id"));
+  if (!row) return c.json({ error: "aset tidak ditemukan" }, 404);
+  return c.json(row);
+});
+
+// Validasi enum di route SEBELUM hit DB — tanpa ini, nilai di luar CHECK
+// constraint (086_ga_asset_master.sql) bocor jadi HTTP 500 + nama constraint
+// Postgres mentah (app.onError gak reformat). Sama pola temuan F53.
+const GA_ASSET_CONDITIONS = ["baik", "rusak", "kurang_layak_pakai"];
+const GA_ASSET_STATUSES = ["active", "in_maintenance", "damaged", "lost", "disposed"];
+function validateGaAssetEnums(body: { condition?: unknown; status?: unknown }): string | null {
+  if (body.condition != null && !GA_ASSET_CONDITIONS.includes(body.condition as string)) {
+    return `condition harus salah satu dari: ${GA_ASSET_CONDITIONS.join(", ")}`;
+  }
+  if (body.status != null && !GA_ASSET_STATUSES.includes(body.status as string)) {
+    return `status harus salah satu dari: ${GA_ASSET_STATUSES.join(", ")}`;
+  }
+  return null;
+}
+
+app.post("/ga-assets", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: {
+    asset_code?: string; nama?: string; category_id?: string; brand?: string; model?: string; serial_number?: string;
+    purchase_date?: string; purchase_price?: number; current_value?: number; warranty_expiry?: string; location?: string;
+    department?: string; condition?: string; status?: string; foto_path?: string; dokumen_path?: string; notes?: string;
+    is_critical?: boolean;
+  };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.nama || !body.category_id) return c.json({ error: "nama & category_id wajib diisi" }, 400);
+  const enumError = validateGaAssetEnums(body);
+  if (enumError) return c.json({ error: enumError }, 400);
+  const r = await createGaAsset(body as Parameters<typeof createGaAsset>[0]);
+  return c.json(r, "error" in r ? 400 : 201);
+});
+
+app.patch("/ga-assets/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: Record<string, unknown>;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const enumError = validateGaAssetEnums(body);
+  if (enumError) return c.json({ error: enumError }, 400);
+  const r = await updateGaAsset(c.req.param("id"), body);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+// ── F52 IT Asset & Issue Tracker (menyerap F132 — asset_id sekarang FK ga_assets) ──
+app.get("/it-tickets", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const status = c.req.query("status");
+  const rows = await itTicketListTickets(status && status !== "semua" ? status : undefined);
+  return c.json({ count: rows.length, tickets: rows });
+});
+
+app.post("/it-tickets", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: {
+    asset_id?: string;
+    masalah?: string;
+    reported_by?: string;
+    assigned_to?: string;
+    reported_by_user_id?: string;
+    assigned_to_user_id?: string;
+  };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.asset_id || !body.masalah) return c.json({ error: "asset_id & masalah wajib diisi" }, 400);
+  // Pelapor/PIC tetap OPSIONAL & boleh teks (087: belum tentu karyawan
+  // terdaftar). Yang baru cuma jalur ber-akun di sampingnya (migrasi 164).
+  const r = await itTicketCreateTicket({
+    asset_id: body.asset_id,
+    masalah: body.masalah,
+    reported_by: body.reported_by,
+    assigned_to: body.assigned_to,
+    reported_by_user_id: body.reported_by_user_id,
+    assigned_to_user_id: body.assigned_to_user_id,
+  });
+  return c.json(r, "error" in r ? 400 : 201);
+});
+
+app.patch("/it-tickets/:id/status", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { status?: string; assigned_to?: string; assigned_to_user_id?: string; resolved_note?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (body.status !== "open" && body.status !== "in_progress" && body.status !== "resolved") {
+    return c.json({ error: "status harus open|in_progress|resolved" }, 400);
+  }
+  const r = await updateTicketStatus(c.req.param("id"), {
+    status: body.status,
+    assigned_to: body.assigned_to,
+    assigned_to_user_id: body.assigned_to_user_id,
+    resolved_note: body.resolved_note,
+  });
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+// ── F140 Vendor Management + Contract Expiry Alerts (Purchasing/GA, role min HOD) ──
+// Route "/vendor-management" (BUKAN "/vendors") sengaja dipilih beda dari
+// "/accurate/vendors" (mirror read-only, dipakai menu Suppliers & autocomplete
+// F39) supaya tak tabrakan nama saat branch sibling F39 merge ke dev.
+function validateVendorFields(b: Partial<VendorPartnerInput & VendorPartnerUpdate>): string | null {
+  if (b.email !== undefined && b.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(b.email)) {
+    return "email tidak valid";
+  }
+  return null;
+}
+
+function validateContractFields(b: Partial<VendorContractInput & VendorContractUpdate>): string | null {
+  if (b.start_date && b.end_date && b.end_date < b.start_date) {
+    return "end_date tidak boleh sebelum start_date";
+  }
+  if (b.value !== undefined && b.value !== null && !(Number(b.value) >= 0)) {
+    return "value tidak boleh negatif";
+  }
+  return null;
+}
+
+app.get("/vendor-management", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listVendors();
+  return c.json({ count: rows.length, rows });
+});
+
+app.post("/vendor-management", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: VendorPartnerInput;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.name?.trim()) return c.json({ error: "name wajib" }, 400);
+  const fieldErr = validateVendorFields(body);
+  if (fieldErr) return c.json({ error: fieldErr }, 400);
+  const row = await createVendor(body);
+  return c.json(row, 201);
+});
+
+app.get("/vendor-management/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const row = await getVendor(c.req.param("id"));
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+});
+
+app.patch("/vendor-management/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: VendorPartnerUpdate;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const fieldErr = validateVendorFields(body);
+  if (fieldErr) return c.json({ error: fieldErr }, 400);
+  const row = await updateVendor(c.req.param("id"), body);
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+});
+
+app.delete("/vendor-management/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await deleteVendor(c.req.param("id"));
+  return c.json(r, r.deleted ? 200 : 404);
+});
+
+app.post("/vendor-management/:id/contracts", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const vendorId = c.req.param("id");
+  if (!(await getVendor(vendorId))) return c.json({ error: "vendor tidak ditemukan" }, 404);
+  let body: VendorContractInput;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const fieldErr = validateContractFields(body);
+  if (fieldErr) return c.json({ error: fieldErr }, 400);
+  const row = await createVendorContract(vendorId, body);
+  return c.json(row, 201);
+});
+
+app.patch("/vendor-management/:id/contracts/:contractId", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: VendorContractUpdate;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  // validateContractFields cuma lihat field yg dikirim — PATCH parsial (mis.
+  // cuma start_date) lolos validasi start<end walau hasil merge dgn baris
+  // lama jadi end<start (BUG-03). Validasi thd nilai HASIL merge, bukan body
+  // mentah; field lain (mis. value) sengaja tetap dari body apa adanya, tak
+  // ikut di-merge — di luar scope BUG-03.
+  const existing = await getVendorContract(c.req.param("id"), c.req.param("contractId"));
+  if (!existing) return c.json({ error: "tidak ditemukan" }, 404);
+  const fieldErr = validateContractFields({
+    ...body,
+    start_date: body.start_date ?? existing.start_date,
+    end_date: body.end_date !== undefined ? body.end_date : existing.end_date,
+  });
+  if (fieldErr) return c.json({ error: fieldErr }, 400);
+  const row = await updateVendorContract(c.req.param("id"), c.req.param("contractId"), body);
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+});
+
+app.delete("/vendor-management/:id/contracts/:contractId", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await deleteVendorContract(c.req.param("id"), c.req.param("contractId"));
+  return c.json(r, r.deleted ? 200 : 404);
+});
+
+// F141 — GA Reporting & Analytics Dashboard (konsolidasi F49 ATK+F54 Materai,
+// F50 Kendaraan, F51 Dana Ops, F52 IT Asset, F53 Stiker Aset). Gate role
+// HOD/admin ada di layer web BFF (requireHodOrAdmin), bukan di sini — konsisten
+// pola admin-gate-di-web project ini.
+app.get("/ga-reporting/summary", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const { from, to } = gaReportingRange(c.req.query("from"), c.req.query("to"));
+  return c.json(await gaReportingSummary(from, to));
+});
+
+app.post("/ga-assets/:id/assign", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { user_id?: string; pic_name?: string; department?: string; assigned_date?: string; notes?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const r = await assignAsset(c.req.param("id"), body);
+  return c.json(r, "error" in r ? 400 : 200);
+});
+
+app.post("/ga-assets/:id/return", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { assignment_id?: string; user_id?: string; returned_date?: string; notes?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const r = await returnAsset(c.req.param("id"), body);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.post("/ga-assets/:id/transfer", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { to_user_id?: string; to_pic_name?: string; to_location?: string; reason?: string; created_by?: string; transfer_date?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const r = await transferAsset(c.req.param("id"), body);
+  return c.json(r, "error" in r ? 400 : 200);
+});
+
+app.get("/ga-assets/:id/history", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await getAssetHistory(c.req.param("id"));
+  return c.json({ count: rows.length, history: rows });
+});
+
+// ── F13 PO Tracker + Sistem Barang Masuk (Purchasing) ──
+// Paginasi + filter + urut di SQL (?limit&offset&status&q&sort&dir&vendor_id&
+// cabang). `total_rows` dipisah dari `count` supaya UI bisa membedakan "yang
+// dikirim" dari "yang cocok filter"; bentuk mengikuti /stock/branch & /visits.
+app.get("/purchase-orders", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const q = c.req.query();
+  const { rows, total, limit, offset } = await listPurchaseOrders({
+    vendorId: q.vendor_id || undefined,
+    cabang: q.cabang || undefined,
+    q: q.q || undefined,
+    status: q.status || undefined,
+    // Nama kolom urut divalidasi di sini — tak pernah masuk SQL mentah.
+    sort: isPurchaseOrderSort(q.sort) ? q.sort : undefined,
+    dir: q.dir === "asc" ? "asc" : "desc",
+    limit: q.limit ? Number(q.limit) : undefined,
+    offset: q.offset ? Number(q.offset) : undefined,
+  });
+  return c.json({ count: rows.length, total_rows: total, limit, offset, rows });
+});
+
+// Hitungan kartu KPI (per-status + telat), diagregasi di SQL atas SELURUH PO.
+// Didaftarkan SEBELUM /purchase-orders/:id biar rute literal menang.
+app.get("/purchase-orders/summary", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await purchaseOrderSummary());
+});
+
+app.post("/purchase-orders", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: PurchaseOrderInput;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.po_number?.trim()) return c.json({ error: "po_number wajib" }, 400);
+  if (!body.vendor_name?.trim()) return c.json({ error: "vendor_name wajib" }, 400);
+  if (!Array.isArray(body.items) || body.items.length === 0) {
+    return c.json({ error: "items wajib minimal 1 barang" }, 400);
+  }
+  for (const it of body.items) {
+    if (!it.item_desc?.trim()) return c.json({ error: "item_desc wajib di setiap barang" }, 400);
+    if (!(Number(it.qty_ordered) > 0)) return c.json({ error: "qty_ordered harus > 0 di setiap barang" }, 400);
+  }
+  try {
+    const row = await createPurchaseOrder(body);
+    return c.json(row, 201);
+  } catch (e) {
+    if (e instanceof PurchaseOrderError) return c.json({ error: e.message }, e.status as 400 | 404 | 409);
+    throw e;
+  }
+});
+
+app.get("/purchase-orders/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const row = await getPurchaseOrder(c.req.param("id"));
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+});
+
+app.patch("/purchase-orders/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: PurchaseOrderUpdate;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const row = await updatePurchaseOrder(c.req.param("id"), body);
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+});
+
+app.delete("/purchase-orders/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const r = await deletePurchaseOrder(c.req.param("id"));
+    return c.json(r, r.deleted ? 200 : 404);
+  } catch (e) {
+    if (e instanceof PurchaseOrderError) return c.json({ error: e.message }, e.status as 409);
+    throw e;
+  }
+});
+
+app.post("/purchase-orders/:id/items", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: PurchaseOrderItemInput;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.item_desc?.trim()) return c.json({ error: "item_desc wajib" }, 400);
+  if (!(Number(body.qty_ordered) > 0)) return c.json({ error: "qty_ordered harus > 0" }, 400);
+  const row = await addPurchaseOrderItem(c.req.param("id"), body);
+  return row ? c.json(row, 201) : c.json({ error: "PO tidak ditemukan" }, 404);
+});
+
+app.patch("/purchase-orders/:id/items/:itemId", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: PurchaseOrderItemUpdate;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (body.qty_ordered !== undefined && !(Number(body.qty_ordered) > 0)) {
+    return c.json({ error: "qty_ordered harus > 0" }, 400);
+  }
+  const row = await updatePurchaseOrderItem(c.req.param("id"), c.req.param("itemId"), body);
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+});
+
+app.delete("/purchase-orders/:id/items/:itemId", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const r = await deletePurchaseOrderItem(c.req.param("id"), c.req.param("itemId"));
+    return c.json(r, r.deleted ? 200 : 404);
+  } catch (e) {
+    if (e instanceof PurchaseOrderError) return c.json({ error: e.message }, e.status as 409);
+    throw e;
+  }
+});
+
+app.get("/purchase-orders/:id/items/:itemId/receipts", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listPurchaseOrderReceipts(c.req.param("itemId"));
+  return c.json({ count: rows.length, rows });
+});
+
+app.post("/purchase-orders/:id/items/:itemId/receipts", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: PurchaseOrderReceiptInput;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!(Number(body.qty_received) > 0)) return c.json({ error: "qty_received harus > 0" }, 400);
+  try {
+    const row = await addPurchaseOrderReceipt(c.req.param("id"), c.req.param("itemId"), body);
+    return row ? c.json(row, 201) : c.json({ error: "barang PO tidak ditemukan" }, 404);
+  } catch (e) {
+    if (e instanceof PurchaseOrderError) return c.json({ error: e.message }, e.status as 409);
+    throw e;
+  }
+});
+
+// F35 — putuskan approve/reject 1 baris approval (hod_business/hod_finance/
+// direktur). decided_by dipercaya dari BFF (identitas & gating di layer WEB,
+// pola sama created_by di POST /purchase-orders — lihat CLAUDE.md gotcha
+// "Admin-gate di layer WEB, bukan di api"). Sequencing Tier 1→Tier 2 &
+// idempotensi ditegakkan di repo (business-rule, bukan identity check).
+
+app.patch("/purchase-orders/:id/items/:itemId/receipts/:receiptId", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: PurchaseOrderReceiptUpdate;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (body.qty_received !== undefined && !(Number(body.qty_received) > 0)) {
+    return c.json({ error: "qty_received harus > 0" }, 400);
+  }
+  try {
+    const row = await updatePurchaseOrderReceipt(c.req.param("itemId"), c.req.param("receiptId"), body);
+    return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+  } catch (e) {
+    if (e instanceof PurchaseOrderError) return c.json({ error: e.message }, e.status as 409);
+    throw e;
+  }
+});
+
+app.delete("/purchase-orders/:id/items/:itemId/receipts/:receiptId", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await deletePurchaseOrderReceipt(c.req.param("itemId"), c.req.param("receiptId"));
+  return c.json(r, r.deleted ? 200 : 404);
+});
+
+app.get("/ga-vendors", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await gaMaintenanceListVendors(c.req.query("all") !== "true");
+  return c.json({ count: rows.length, vendors: rows });
+});
+
+app.post("/ga-vendors", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { nama?: string; category?: string; contact_person?: string; phone?: string; contract_end?: string; notes?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.nama) return c.json({ error: "nama wajib diisi" }, 400);
+  const r = await gaMaintenanceCreateVendor({ nama: body.nama, category: body.category, contact_person: body.contact_person, phone: body.phone, contract_end: body.contract_end, notes: body.notes });
+  return c.json(r, "error" in r ? 400 : 201);
+});
+
+app.patch("/ga-vendors/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: Record<string, unknown>;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (body.status != null && !["active", "inactive"].includes(body.status as string)) {
+    return c.json({ error: "status harus 'active' atau 'inactive'" }, 400);
+  }
+  const r = await gaMaintenanceUpdateVendor(c.req.param("id"), body);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+// Validasi enum/range di route SEBELUM hit DB — tanpa ini nilai di luar CHECK
+// constraint (089_ga_maintenance_tracker.sql) bocor jadi HTTP 500 + nama
+// constraint Postgres mentah (app.onError gak reformat). Sama pola temuan
+// F132/F53.
+function validateGaMaintenance(body: { maint_type?: unknown; recur_months?: unknown }): string | null {
+  if (body.maint_type != null && !["preventive", "repair"].includes(body.maint_type as string)) {
+    return "maint_type harus 'preventive' atau 'repair'";
+  }
+  if (body.recur_months != null) {
+    const n = Number(body.recur_months);
+    if (!Number.isInteger(n) || n < 0 || n > 60) return "recur_months harus bilangan bulat 0-60";
+  }
+  return null;
+}
+
+app.get("/ga-maintenance", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await gaMaintenanceListSchedules({
+    assetId: c.req.query("asset_id") || undefined,
+    status: c.req.query("status") || undefined,
+    vendorId: c.req.query("vendor_id") || undefined,
+  });
+  return c.json({ count: rows.length, schedules: rows });
+});
+
+app.get("/ga-maintenance/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const row = await getSchedule(c.req.param("id"));
+  if (!row) return c.json({ error: "jadwal tidak ditemukan" }, 404);
+  return c.json(row);
+});
+
+app.post("/ga-maintenance", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { asset_id?: string; maint_type?: string; due_date?: string; cost_budget?: number; vendor_id?: string; recur_months?: number; notes?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.asset_id) return c.json({ error: "asset_id wajib diisi" }, 400);
+  const enumError1 = validateGaMaintenance(body);
+  if (enumError1) return c.json({ error: enumError1 }, 400);
+  const r = await gaMaintenanceCreateSchedule(body as Parameters<typeof gaMaintenanceCreateSchedule>[0]);
+  return c.json(r, "error" in r ? 400 : 201);
+});
+
+app.patch("/ga-maintenance/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: Record<string, unknown>;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const enumError2 = validateGaMaintenance(body);
+  if (enumError2) return c.json({ error: enumError2 }, 400);
+  const r = await updateSchedule(c.req.param("id"), body);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.post("/ga-maintenance/:id/start", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await startSchedule(c.req.param("id"));
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.post("/ga-maintenance/:id/complete", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { cost_actual?: number; notes?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const r = await completeSchedule(c.req.param("id"), body);
+  return c.json(r, "error" in r ? 400 : 200);
+});
+
+app.post("/ga-maintenance/:id/approve", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { approved_by?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.approved_by) return c.json({ error: "approved_by wajib diisi" }, 400);
+  const r = await approveSchedule(c.req.param("id"), { approved_by: body.approved_by });
+  return c.json(r, "error" in r ? 400 : 200);
+});
+
+app.post("/ga-maintenance/:id/cancel", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { notes?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const r = await cancelSchedule(c.req.param("id"), body.notes);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+// ── F13 PO Tracker + Sistem Barang Masuk (Purchasing) ──
+app.patch("/purchase-orders/:id/approvals/:role", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const role = c.req.param("role");
+  if (role !== "hod_business" && role !== "hod_finance" && role !== "direktur") {
+    return c.json({ error: "role tidak valid (hod_business/hod_finance/direktur)" }, 400);
+  }
+  let body: { decision?: string; decided_by?: string | null; note?: string | null };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (body.decision !== "approve" && body.decision !== "reject") {
+    return c.json({ error: "decision wajib (approve/reject)" }, 400);
+  }
+  try {
+    const result = await decidePurchaseOrderApproval(
+      c.req.param("id"),
+      role as ApproverRole,
+      body.decision,
+      body.decided_by ?? null,
+      body.note ?? null,
+    );
+    return c.json(result);
+  } catch (e) {
+    if (e instanceof PurchaseOrderError) return c.json({ error: e.message }, e.status as 400 | 404 | 409);
+    throw e;
+  }
+});
+
+// ── Instalasi Alat Lifecycle (F22, AFTERSALES) — checklist 5 langkah sekuensial:
+// PO control → SJ → Teknisi assign → Training done → BAST. ──
+app.get("/teknisi-capacity", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const teknisi = await listTeknisiCapacity();
+  return c.json({ count: teknisi.length, teknisi });
+});
+
+app.post("/teknisi-capacity", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { nama?: string; wa_number?: string; max_concurrent_jobs?: number };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.nama?.trim()) return c.json({ error: "nama wajib" }, 400);
+  const r = await createTeknisiCapacity({
+    nama: body.nama.trim(),
+    wa_number: body.wa_number ?? null,
+    max_concurrent_jobs: body.max_concurrent_jobs,
+  });
+  return c.json(r, "ok" in r && r.ok === false ? 400 : 201);
+});
+
+app.patch("/teknisi-capacity/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { nama?: string; wa_number?: string | null; max_concurrent_jobs?: number };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const r = await updateTeknisiCapacity(c.req.param("id"), body);
+  return c.json(r, "ok" in r && r.ok === false ? 400 : 200);
+});
+
+app.patch("/teknisi-capacity/:id/deactivate", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await deactivateTeknisiCapacity(c.req.param("id"));
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.get("/readiness-board", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const board = await getReadinessBoard();
+  return c.json({ count: board.length, board });
+});
+
+app.post("/install-schedule", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { installation_unit_id?: string; teknisi_id?: string; scheduled_date?: string; note?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.installation_unit_id || !body.scheduled_date) {
+    return c.json({ error: "installation_unit_id + scheduled_date wajib" }, 400);
+  }
+  const r = await createInstallSchedule({
+    installation_unit_id: body.installation_unit_id,
+    teknisi_id: body.teknisi_id,
+    scheduled_date: body.scheduled_date,
+    note: body.note,
+  });
+  return c.json(r, "ok" in r && r.ok === false ? 400 : 201);
+});
+
+app.get("/install-schedule", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listInstallSchedule(c.req.query("status") || undefined);
+  return c.json({ count: rows.length, rows });
+});
+
+app.post("/install-schedule/:id/done", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await updateScheduleStatus(c.req.param("id"), "done");
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.post("/install-schedule/:id/cancel", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await updateScheduleStatus(c.req.param("id"), "cancelled");
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.post("/teknisi-reports", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { teknisi_id?: string; report_type?: string; body?: string; installation_unit_id?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.report_type || !body.body?.trim()) return c.json({ error: "report_type + body wajib" }, 400);
+  if (!["install", "servis", "training", "kalibrasi"].includes(body.report_type)) {
+    return c.json({ error: "report_type harus install|servis|training|kalibrasi" }, 400);
+  }
+  const r = await createTeknisiReport({
+    teknisi_id: body.teknisi_id,
+    report_type: body.report_type,
+    body: body.body,
+    source: "manual",
+    installation_unit_id: body.installation_unit_id,
+  });
+  return c.json(r, 201);
+});
+
+app.get("/teknisi-reports", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listTeknisiReports(c.req.query("report_type") || undefined);
+  return c.json({ count: rows.length, rows });
+});
+
+// ── F13 PO Tracker + Sistem Barang Masuk (Purchasing) ──
+app.get("/purchase-forecast", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const year = c.req.query("year") ? Number(c.req.query("year")) : undefined;
+  const rows = await listPurchaseForecast({ year });
+  return c.json({ count: rows.length, rows });
+});
+
+app.post("/purchase-forecast", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: PurchaseForecastInput;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  try {
+    const row = await createPurchaseForecast(body);
+    return c.json(row, 201);
+  } catch (e) {
+    if (e instanceof PurchaseForecastError) return c.json({ error: e.message }, e.status as 400 | 409);
+    throw e;
+  }
+});
+
+app.patch("/purchase-forecast/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: PurchaseForecastUpdate;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  try {
+    const row = await updatePurchaseForecast(c.req.param("id"), body);
+    return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+  } catch (e) {
+    if (e instanceof PurchaseForecastError) return c.json({ error: e.message }, e.status as 400 | 409);
+    throw e;
+  }
+});
+
+app.delete("/purchase-forecast/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await deletePurchaseForecast(c.req.param("id"));
+  return c.json(r, r.deleted ? 200 : 404);
+});
+
+// ── F139 GA Helpdesk Ticket System (Ticketing Kendala Operasional) ──────
+app.get("/ga-ticket-categories", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const activeOnly = c.req.query("active") === "true";
+  const categories = await listGaTicketCategories(activeOnly);
+  return c.json({ count: categories.length, categories });
+});
+
+// Validasi enum/range di route SEBELUM hit DB — tanpa ini nilai di luar CHECK
+// constraint (092_ga_helpdesk_ticket_system.sql) bocor jadi HTTP 500 + nama
+// constraint Postgres mentah (app.onError gak reformat). Sama pola temuan
+// F132/F53/F137.
+const GA_TICKET_PRIORITIES = ["low", "medium", "high", "critical"];
+function validateGaTicketSlaHours(hours: unknown): string | null {
+  if (hours == null) return null;
+  const n = Number(hours);
+  return Number.isFinite(n) && n > 0 ? null : "sla_hours harus angka > 0";
+}
+
+app.post("/ga-ticket-categories", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { code?: string; nama?: string; icon?: string; default_sla_hours?: number; default_priority?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.code?.trim() || !body.nama?.trim()) return c.json({ error: "code & nama wajib" }, 400);
+  if (body.default_priority != null && !GA_TICKET_PRIORITIES.includes(body.default_priority)) {
+    return c.json({ error: `default_priority harus salah satu dari: ${GA_TICKET_PRIORITIES.join(", ")}` }, 400);
+  }
+  const slaError = validateGaTicketSlaHours(body.default_sla_hours);
+  if (slaError) return c.json({ error: slaError }, 400);
+  const r = await createGaTicketCategory({
+    code: body.code, nama: body.nama, icon: body.icon ?? null,
+    default_sla_hours: body.default_sla_hours, default_priority: body.default_priority,
+  });
+  return c.json(r, "ok" in r && r.ok === false ? 400 : 201);
+});
+
+app.patch("/ga-ticket-categories/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { nama?: string; icon?: string | null; default_sla_hours?: number; default_priority?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (body.default_priority != null && !GA_TICKET_PRIORITIES.includes(body.default_priority)) {
+    return c.json({ error: `default_priority harus salah satu dari: ${GA_TICKET_PRIORITIES.join(", ")}` }, 400);
+  }
+  const slaError = validateGaTicketSlaHours(body.default_sla_hours);
+  if (slaError) return c.json({ error: slaError }, 400);
+  const r = await updateGaTicketCategory(c.req.param("id"), body);
+  return c.json(r, "ok" in r && r.ok === false ? 400 : 200);
+});
+
+app.patch("/ga-ticket-categories/:id/deactivate", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await deactivateGaTicketCategory(c.req.param("id"));
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.get("/ga-tickets", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const status = c.req.query("status") || undefined;
+  const overdue = c.req.query("overdue") === "1";
+  const tickets = await listGaTickets({ status, overdue });
+  return c.json({ count: tickets.length, tickets });
+});
+
+app.get("/ga-tickets/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const t = await getGaTicket(c.req.param("id"));
+  if (!t) return c.json({ error: "tiket tidak ditemukan" }, 404);
+  return c.json(t);
+});
+
+app.post("/ga-tickets", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: {
+    title?: string; description?: string; category_id?: string; priority?: string;
+    reporter_user_id?: string; reporter_name_override?: string; location?: string; sla_hours_override?: number;
+  };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.title?.trim() || !body.category_id) return c.json({ error: "title & category_id wajib" }, 400);
+  if (body.priority != null && !GA_TICKET_PRIORITIES.includes(body.priority)) {
+    return c.json({ error: `priority harus salah satu dari: ${GA_TICKET_PRIORITIES.join(", ")}` }, 400);
+  }
+  const slaError2 = validateGaTicketSlaHours(body.sla_hours_override);
+  if (slaError2) return c.json({ error: slaError2 }, 400);
+  const r = await createGaTicket({
+    title: body.title, description: body.description ?? null, category_id: body.category_id,
+    priority: body.priority ?? null, reporter_user_id: body.reporter_user_id ?? null,
+    reporter_name_override: body.reporter_name_override ?? null, location: body.location ?? null,
+    sla_hours_override: body.sla_hours_override ?? null,
+  });
+  return c.json(r, "ok" in r && r.ok === false ? 400 : 201);
+});
+
+app.patch("/ga-tickets/:id/assign", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { assignee_user_id?: string; assignee_name_override?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const r = await assignGaTicket(c.req.param("id"), body);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.post("/ga-tickets/:id/transition", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { to?: string; changed_by_user_id?: string; note?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.to) return c.json({ error: "to (status tujuan) wajib" }, 400);
+  const r = await transitionGaTicket(c.req.param("id"), body.to, {
+    changed_by_user_id: body.changed_by_user_id ?? null, note: body.note ?? null,
+  });
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.post("/ga-tickets/:id/rate", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { rating?: number; comment?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (typeof body.rating !== "number") return c.json({ error: "rating (1-5) wajib" }, 400);
+  const r = await rateGaTicket(c.req.param("id"), body.rating, body.comment ?? null);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.get("/ga-tickets/:id/timeline", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const timeline = await getGaTicketTimeline(c.req.param("id"));
+  return c.json({ count: timeline.length, timeline });
+});
+
+app.post("/ga-tickets/:id/comments", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { comment?: string; is_internal?: boolean; created_by_user_id?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.comment?.trim()) return c.json({ error: "comment wajib" }, 400);
+  const r = await addGaTicketComment(c.req.param("id"), {
+    comment: body.comment, is_internal: body.is_internal ?? false, created_by_user_id: body.created_by_user_id ?? null,
+  });
+  return c.json(r, "ok" in r && r.ok === false ? 400 : 201);
+});
+
+// Trigger manual (testing tanpa nunggu cron) — pola sama F45 previsit/run.
+app.post("/ga-tickets/overdue-alert/run", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await runGaHelpdeskOverdueAlert();
+  return c.json(r);
+});
+
+// ── F138 Operational Fund Request + Multi-Step Approval Workflow ──
+// requester_name/requester_email & decided_by dipercaya dari BFF (identitas &
+// gating di layer WEB, pola sama created_by di POST /purchase-orders — lihat
+// CLAUDE.md gotcha "Admin-gate di layer WEB, bukan di api"). Sequencing
+// HOD->Direktur & idempotensi ditegakkan di repo (business-rule, bukan
+// identity check).
+app.get("/fund-requests/hod-options", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await listActiveHods());
+});
+
+app.get("/fund-requests", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const status = c.req.query("status") as FundRequestStatus | undefined;
+  const cabang = c.req.query("cabang") ?? undefined;
+  const requesterEmail = c.req.query("requester_email") ?? undefined;
+  return c.json(await listFundRequests({ status, cabang, requesterEmail }));
+});
+
+app.post("/fund-requests", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: {
+    requester_name?: string; requester_email?: string; purpose?: string; amount_requested?: number;
+    cabang?: string | null; request_date?: string; hod_approver_key?: string; notes?: string | null;
+  };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.requester_name || !body.requester_email || !body.purpose || !body.hod_approver_key) {
+    return c.json({ error: "requester_name, requester_email, purpose, hod_approver_key wajib" }, 400);
+  }
+  if (!(Number(body.amount_requested) > 0)) return c.json({ error: "amount_requested harus > 0" }, 400);
+  try {
+    const created = await createFundRequest({
+      requester_name: body.requester_name,
+      requester_email: body.requester_email,
+      purpose: body.purpose,
+      amount_requested: Number(body.amount_requested),
+      cabang: body.cabang ?? null,
+      request_date: body.request_date,
+      hod_approver_key: body.hod_approver_key,
+      notes: body.notes ?? null,
+    });
+    return c.json(created, 201);
+  } catch (e) {
+    if (e instanceof FundRequestError) return c.json({ error: e.message }, e.status as 400 | 404 | 409);
+    throw e;
+  }
+});
+
+app.get("/fund-requests/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const row = await getFundRequest(c.req.param("id"));
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+});
+
+app.delete("/fund-requests/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const result = await deleteFundRequest(c.req.param("id"));
+    return c.json(result, result.deleted ? 200 : 404);
+  } catch (e) {
+    if (e instanceof FundRequestError) return c.json({ error: e.message }, e.status as 409);
+    throw e;
+  }
+});
+
+app.patch("/fund-requests/:id/approvals/:role", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const role = c.req.param("role");
+  if (role !== "hod" && role !== "direktur") {
+    return c.json({ error: "role tidak valid (hod/direktur)" }, 400);
+  }
+  let body: { decision?: string; decided_by?: string | null; note?: string | null };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (body.decision !== "approve" && body.decision !== "reject") {
+    return c.json({ error: "decision wajib (approve/reject)" }, 400);
+  }
+  try {
+    const result = await decideFundRequestApproval(
+      c.req.param("id"),
+      role as FundRequestApproverRole,
+      body.decision,
+      body.decided_by ?? null,
+      body.note ?? null,
+    );
+    return c.json(result);
+  } catch (e) {
+    if (e instanceof FundRequestError) return c.json({ error: e.message }, e.status as 400 | 404 | 409);
+    throw e;
+  }
+});
+
+// ── F53 Stiker Aset & Asset Tagging Audit ───────────────────────────────────
+app.get("/asset-tags", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listAssetTags(c.req.query("all") !== "true");
+  return c.json({ count: rows.length, assets: rows });
+});
+
+app.post("/asset-tags", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { kode?: string; nama?: string; jenis_kepemilikan?: "aset" | "inventaris"; kategori?: string; lokasi_cabang?: string; letak?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.kode || !body.nama) return c.json({ error: "kode & nama wajib diisi" }, 400);
+  if (body.jenis_kepemilikan != null && !["aset", "inventaris"].includes(body.jenis_kepemilikan)) {
+    return c.json({ error: "jenis_kepemilikan harus 'aset' atau 'inventaris'" }, 400);
+  }
+  const r = await createAssetTag({
+    kode: body.kode,
+    nama: body.nama,
+    jenis_kepemilikan: body.jenis_kepemilikan,
+    kategori: body.kategori,
+    lokasi_cabang: body.lokasi_cabang,
+    letak: body.letak,
+  });
+  return c.json(r, "error" in r ? 400 : 201);
+});
+
+app.patch("/asset-tags/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { nama?: string; jenis_kepemilikan?: "aset" | "inventaris"; kategori?: string; lokasi_cabang?: string; letak?: string; active?: boolean };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (body.jenis_kepemilikan != null && !["aset", "inventaris"].includes(body.jenis_kepemilikan)) {
+    return c.json({ error: "jenis_kepemilikan harus 'aset' atau 'inventaris'" }, 400);
+  }
+  const r = await updateAssetTag(c.req.param("id"), body);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.get("/asset-tags/:id/audit", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listAuditLog(c.req.param("id"));
+  return c.json({ count: rows.length, logs: rows });
+});
+
+app.post("/asset-tags/:id/audit", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { audited_by?: string; found?: boolean; note?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.audited_by || typeof body.found !== "boolean") {
+    return c.json({ error: "audited_by & found (boolean) wajib diisi" }, 400);
+  }
+  const r = await recordAudit(c.req.param("id"), { audited_by: body.audited_by, found: body.found, note: body.note });
+  return c.json(r, "error" in r ? 400 : 201);
+});
+
+// ── F37 Cross-Branch Stock Visibility — stok per gudang + korelasi ke total ──
+// Fungsi KEDUA di menu /inventory (fungsi pertama = cek stok agregat, lihat
+// GET /accurate/items di atas). Read-only: data masuk lewat importer
+// scripts/db/import_stock_branch.py, bukan lewat endpoint ini.
 
 const port = Number(process.env.PORT ?? 4000);
 serve({ fetch: app.fetch, port }, (info) => {

@@ -19,6 +19,7 @@ from .openrouter import (
     rekap_models,
     resume_models,
     salesdoc_models,
+    ticket_triage_models,
 )
 from .raport import build_raport_system, build_raport_user, parse_raport, template_raport
 from .rekap import build_messages_block, build_rekap_system
@@ -40,6 +41,8 @@ from .schemas import (
     GrowthLeversResponse,
     ExtractRequest,
     ExtractResponse,
+    KlaimOcrRequest,
+    KlaimOcrResponse,
     LeaveDetectRequest,
     LeaveDetectResponse,
     RekapRequest,
@@ -53,10 +56,14 @@ from .schemas import (
     SalesDocRequest,
     SalesDocResponse,
     SummarizeRequest,
+    TicketTriageRequest,
+    TicketTriageResponse,
     WeekendBriefingRequest,
     WeekendBriefingResponse,
 )
 from .executive import NAMA_PERUSAHAAN
+from .klaim import build_klaim_system, build_klaim_user, parse_klaim
+from .openrouter import chat_vision, klaim_models
 
 # System prompt stabil (cache-friendly) — port dari legacy/crm wrg-daily SKILL.md.
 DAILY_SYSTEM_PROMPT = """Kamu adalah WRG CRM Daily Summary Generator.
@@ -289,7 +296,7 @@ def sales_doc(req: SalesDocRequest) -> SalesDocResponse:
     tmpl = template_doc(req)
     if use_llm:
         text, model_used, _, _ = chat_or_fallback(
-            build_salesdoc_system(req.doc_type),
+            build_salesdoc_system(req.doc_type, req.has_final_pricing),
             build_salesdoc_user(req),
             tmpl,
             max_tokens=3000,
@@ -303,6 +310,38 @@ def sales_doc(req: SalesDocRequest) -> SalesDocResponse:
         draft_text=text,
         model=model_used,
         dry_run=not use_llm or model_used == "dry-run-fallback",
+    )
+
+
+@app.post("/ocr-klaim", response_model=KlaimOcrResponse)
+def ocr_klaim(req: KlaimOcrRequest) -> KlaimOcrResponse:
+    """DOC #KLAIM Fase A: ekstrak isi foto dokumen (invoice/faktur/struk) via
+    Gemini Vision (OpenRouter). dry_run / tanpa OPENROUTER_API_KEY → SEMUA field
+    null (TIDAK ada template fabrikasi — beda dari /sales-doc, gambar sungguhan
+    tak bisa dikira-kira isinya)."""
+    use_llm = not req.dry_run and bool(os.environ.get("OPENROUTER_API_KEY"))
+    if not use_llm:
+        return KlaimOcrResponse(model="dry-run", dry_run=True)
+    try:
+        text, model_used, _, _ = chat_vision(
+            build_klaim_system(),
+            build_klaim_user(req.caption),
+            req.image_base64,
+            req.mime_type,
+            max_tokens=1500,
+            models=klaim_models(),
+        )
+        fields = parse_klaim(text)
+    except Exception:  # noqa: BLE001 — degradasi ke dry-run, endpoint tetap 200
+        return KlaimOcrResponse(model="dry-run-fallback", dry_run=True)
+    return KlaimOcrResponse(
+        raw_text=fields["raw_text"],
+        nomor_dokumen=fields["nomor_dokumen"],
+        tanggal_dokumen=fields["tanggal_dokumen"],
+        nominal=fields["nominal"],
+        pihak=fields["pihak"],
+        model=model_used,
+        dry_run=False,
     )
 
 
@@ -468,6 +507,53 @@ def detect_leave(req: LeaveDetectRequest) -> LeaveDetectResponse:
         confidence=float(d.get("confidence") or 0.0),
         model=model,
         dry_run=model == "dry-run-fallback",
+    )
+
+
+# === F26: ticket triage (klasifikasi severity + ekstrak area dari komplain) ===
+TICKET_TRIAGE_SYSTEM_PROMPT = """Kamu mesin triage komplain customer utk distributor alat kesehatan B2B (Wahana Lifeline). Baca SATU pesan komplain WhatsApp dari customer soal alat/produk yang sudah terinstal.
+
+Klasifikasikan severity:
+- "kritis": alat TOTAL tidak berfungsi & berdampak langsung ke operasional/pasien (darurat).
+- "tinggi": alat rusak signifikan, mengganggu operasional, tapi bukan darurat.
+- "sedang": gangguan minor, alat masih bisa dipakai sebagian.
+- "rendah": pertanyaan/permintaan info, bukan laporan kerusakan.
+
+Kalau pesan menyebut nama kota/cabang/lokasi, ekstrak ke field "area" (mis. "Surabaya", "Bandung"). Kalau tidak disebut, area = null.
+
+Return STRICT JSON (no markdown): {"severity": "rendah|sedang|tinggi|kritis", "area": "<nama lokasi>" or null}"""
+
+
+@app.post("/triage-ticket", response_model=TicketTriageResponse)
+def triage_ticket(req: TicketTriageRequest) -> TicketTriageResponse:
+    """F26 — klasifikasi severity + ekstrak area dari 1 pesan komplain via LLM.
+
+    dry_run / tanpa OPENROUTER_API_KEY → severity="sedang" (fallback aman, BUKAN error).
+    """
+    if req.dry_run or not os.environ.get("OPENROUTER_API_KEY"):
+        return TicketTriageResponse(severity="sedang", area=None, model="dry-run", dry_run=True)
+    text, model, _, _ = chat_or_fallback(
+        TICKET_TRIAGE_SYSTEM_PROMPT, req.complaint_text, "", max_tokens=300, models=ticket_triage_models(),
+    )
+    cleaned = (text or "").strip()
+    if cleaned.startswith("```"):
+        cleaned = "\n".join(ln for ln in cleaned.splitlines() if not ln.strip().startswith("```"))
+    cleaned = cleaned.strip()
+    if cleaned.lower().startswith("json"):
+        cleaned = cleaned[4:].strip()
+    try:
+        d = json.loads(cleaned)
+    except (ValueError, TypeError):
+        d = {}
+    raw_severity = str(d.get("severity") or "").lower()
+    severity_uncertain = raw_severity not in ("rendah", "sedang", "tinggi", "kritis")
+    severity = "sedang" if severity_uncertain else raw_severity
+    return TicketTriageResponse(
+        severity=severity,
+        area=(d.get("area") or None),
+        model=model,
+        dry_run=model == "dry-run-fallback",
+        severity_uncertain=severity_uncertain,
     )
 
 
