@@ -146,9 +146,14 @@ curl -X POST http://localhost:4000/webhooks/wa -H 'content-type: application/jso
 
 Nama customer dummy yang tersedia (`scripts/db/seed-cek-dev.sql`): `PT Testing` /
 `RS Sehat Sentosa` (SO+SJ lengkap), `PT Alpha Order` (SO saja) / `CV Beta Kirim`
-(SJ saja), `CV Sample Satu` / `CV Sample Dua` (nama sengaja mirip — demonstrasi
-*known limitation* fuzzy-match independen SO/SJ, lihat
-`docs/features/F4-cek-faktur-so-sj-cross-ref.md`).
+(SJ saja), `CV Sample Satu` / `CV Sample Dua` (nama sengaja mirip — fixture
+regresi #839: masing-masing hanya membalas dokumennya sendiri, dan query
+setengah nama `#CEK CUSTOMER CV Sample` membalas AMBIGU alih-alih menebak;
+lihat `docs/features/F4-cek-faktur-so-sj-cross-ref.md` §6).
+
+Seed ini butuh migrasi `162_accurate_mirror_customer_id.sql` sudah jalan — ia
+mengisi `accurate_customer` dan menautkan tiap SO/SJ lewat `customer_id`, sama
+seperti data Accurate sungguhan.
 
 ### Jebakan
 

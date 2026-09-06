@@ -27,6 +27,12 @@ Dicek langsung di kode sebelum desain apa pun ditulis:
    TEKS (bukan FK), dan **recent-only ±500** dari total ±11.8rb/11.9rb transaksi
    riil. `accurate_invoice` satu-satunya yang punya `customer_id` asli (FK ke
    `accurate_customer`).
+   > ⟳ **Diperbarui Sep 2026:** migrasi `162_accurate_mirror_customer_id.sql`
+   > menambahkan `customer_id` (FK → `accurate_customer`) ke SO & SJ juga,
+   > di-backfill dari `raw->'customer'->>'id'`. Itu menghubungkan tiap dokumen
+   > ke CUSTOMER-nya — dipakai §6 untuk menutup kebocoran lintas-customer —
+   > tapi **tidak** menghubungkan SO↔SJ↔Faktur satu sama lain, jadi alasan
+   > "korelasi tetap heuristik" di §3 tidak berubah.
 2. **Live API Accurate yang sudah dipakai di kode ini cuma bisa lookup by `id`**
    (`getSalesOrderItems`/`getDeliveryOrderItems`), **tidak ada endpoint by
    nomor**. Tak terverifikasi apakah `list.do` Accurate support filter nomor —
@@ -95,29 +101,55 @@ identitas pengirim WA (`master_user`). Default: unscoped (siapa pun resolved
 employee bisa cek dokumen customer manapun) sampai ada arahan lain. Begitu
 juga tanpa filter role tambahan (parity dengan `#STOK`).
 
-## 6. Known limitation di QW3 (`#CEK CUSTOMER`) — fuzzy-match SO/SJ independen
+## 6. QW3 (`#CEK CUSTOMER`) — resolve SATU customer dulu, baru ambil SO/SJ
+
+> **Status: SUDAH DIPERBAIKI (issue #839).** Bagian ini menyimpan riwayatnya
+> karena kebocorannya pernah nyata dan seed-nya masih dipakai sebagai fixture
+> regresi — jangan dihapus.
 
 Beda modul (`apps/api/src/repo/inbound-cek.ts`, bukan `cek.ts` di atas), tapi
-dirujuk dari sini karena limitation-nya sejenis dengan §3: `handleCekQuery()`
-mencari SO dan SJ **independen**, masing-masing `ORDER BY score DESC LIMIT 1`
-via pg_trgm `similarity()` (threshold `CEK_MATCH = 0.3`,
-`inbound-cek.ts:24`, query di `:43-56`). Beda dari F4 yang exact-match by
-nomor + window tanggal (§3), QW3 murni fuzzy by nama tanpa korelasi tanggal.
+dirujuk dari sini karena akarnya sejenis dengan §3.
 
-Konsekuensinya: dua customer BEDA dengan nama yang mirip (`similarity() >
-0.3` satu sama lain) bisa saling "mencuri" hasil. Contoh nyata (seed
-`scripts/db/seed-cek-dev.sql` kasus #5): `#CEK CUSTOMER CV Sample Dua` balas
-header **"CV Sample Satu"** — SO milik "CV Sample Satu" menang skor
-similarity walau customer yang dicari adalah "CV Sample Dua" yang cuma
-punya SJ. `similarity('CV Sample Dua', 'CV Sample Satu') = 0.588`, jauh di
-atas threshold.
+**Masalahnya (PR #868, sudah tidak berlaku).** `handleCekQuery()` mencari SO
+dan SJ **independen**, masing-masing `ORDER BY score DESC LIMIT 1` via pg_trgm
+`similarity()` dengan threshold `CEK_MATCH = 0.3`. Akibatnya dua customer BEDA
+dengan nama mirip bisa saling "mencuri" hasil: `#CEK CUSTOMER CV Sample Dua`
+membalas header **"CV Sample Satu"** — SO milik "CV Sample Satu" menang skor
+walau yang dicari "CV Sample Dua" yang cuma punya SJ
+(`similarity('CV Sample Dua','CV Sample Satu') = 0.588`, jauh di atas
+threshold). Itu bukan cuma header salah: **isi SJ/SO milik customer lain
+terkirim ke pengirim WA yang tidak berhak melihatnya.**
 
-Bukan bug — ini batas struktural dari desain fuzzy-independen, bukan
-kesalahan implementasi. Kalau nanti perlu diperketat: opsi paling dekat
-dengan pola F4 di atas adalah resolve `accurate_customer` dulu (exact/ID
-match) baru JOIN ke SO/SJ per `customer_id`, bukan fuzzy-match SO & SJ
-masing-masing secara terpisah — tapi ini perubahan scope QW3, belum
-diputuskan (lihat PR #868).
+**Perbaikannya.** Sekarang identitas customer di-resolve **sekali di depan**,
+lalu SO & SJ diambil terikat ke identitas itu:
+
+1. Cocokkan query ke `accurate_customer` (threshold `CEK_MATCH = 0.45`,
+   sejajar `ACCOUNT_MATCH` di `inbound.ts` — yang dicocokkan sekarang tabel
+   master identitas, bukan teks bebas di baris transaksi).
+2. `resolveCustomer()` memilih satu identitas dengan aturan: **nama persis
+   menang** atas nama mirip berskor tinggi; beberapa record kembar bernama
+   sama dianggap **satu** identitas dan semua id-nya dipakai; **lebih dari satu
+   nama berbeda → balasannya bertanya**, mendaftar kandidat, tidak memilih
+   diam-diam.
+3. SO & SJ diambil `WHERE customer_id = ANY(<id identitas>)` (kolom dari
+   migrasi 162, lihat catatan di §1), dengan cadangan pencocokan nama
+   **persis** untuk baris lama yang `customer_id`-nya belum keisi.
+4. Kalau `accurate_customer` tak punya kandidat sama sekali (mirror belum
+   di-seed di environment itu), jalur fallback mengambil identitas dari nama
+   DISTINCT gabungan SO+SJ — tetap satu identitas untuk kedua tabel.
+
+Yang menutup kebocoran bukan angka thresholdnya, tapi strukturnya: dua blok
+balasan mustahil berasal dari customer berbeda karena cuma ada satu identitas
+yang di-resolve.
+
+Aturan pemilihannya diuji tanpa DB di
+`apps/api/src/repo/inbound-cek-resolve.test.ts`; reproduksi end-to-end tetap
+lewat `scripts/db/seed-cek-dev.sql` kasus #5 (kini berisi hasil yang
+DIHARAPKAN, bukan lagi bukti bug).
+
+Yang **tidak** berubah: korelasi SO↔SJ↔Faktur di `cek.ts` (§3) tetap heuristik
+nama + window tanggal — migrasi 162 menautkan dokumen ke customer, bukan
+dokumen ke dokumen.
 
 ## Cara kerja
 

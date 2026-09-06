@@ -112,43 +112,81 @@ WHERE r.kode = 'APR-9002'
 -- #PRICING, tapi #CEK belum kebagian (#1043).
 --
 -- ⚠️ NAMA CUSTOMER SENGAJA BERJAUHAN SECARA TRIGRAM.
--- handleCekQuery mencari SO dan SJ INDEPENDEN, masing-masing
--- `similarity(customer_name, q) > 0.3 ORDER BY score DESC LIMIT 1`. Kalau nama
--- antar-kasus mirip, kasus "cuma punya SO" akan menarik SJ milik kasus lain —
--- dan baris "Belum ada SJ tercatat" tak akan pernah muncul. Dua kasus itu
--- saling meniadakan, dan gejalanya bukan error, cuma hasil yang kelihatan wajar.
--- Terukur di wrg_os_dev: kemiripan antar-ketiganya 0,091-0,100, dan terhadap
--- 44 baris SO/SJ nyata yang sudah ada maksimum 0,069 — semuanya jauh di bawah
--- ambang 0,3. Kalau menambah kasus baru, UKUR DULU dengan similarity().
+-- Kalau nama antar-kasus mirip, kasus "cuma punya SO" bisa menarik SJ milik
+-- kasus lain — dan baris "Belum ada SJ tercatat" tak akan pernah muncul. Dua
+-- kasus itu saling meniadakan, dan gejalanya bukan error, cuma hasil yang
+-- kelihatan wajar. Terukur di wrg_os_dev: kemiripan antar-ketiganya 0,091-0,100,
+-- dan terhadap 44 baris SO/SJ nyata yang sudah ada maksimum 0,069 — semuanya
+-- jauh di bawah ambang. Kalau menambah kasus baru, UKUR DULU dengan
+-- similarity(). Sejak perbaikan #839 kemiripan nama TIDAK LAGI bisa membuat
+-- satu kasus mencuri dokumen kasus lain (identitas customer di-resolve sekali
+-- di depan, lalu SO & SJ diambil per `customer_id`) — tapi nama yang mirip
+-- sekarang memicu balasan AMBIGU, yang sama-sama menggagalkan ekspektasi tes.
+--
+-- Baris `accurate_customer` di bawah bukan pelengkap: itu yang di-resolve
+-- DULUAN oleh handleCekQuery(). Tanpanya fixture cuma menguji jalur fallback,
+-- dan hasilnya bisa tergantung isi mirror customer sungguhan di DB itu.
 --
 -- Tanggal dipatok tetap (bukan now()) supaya korelasi ±14 hari di cek.ts
 -- deterministik: SO 2026-03-10 dan SJ 2026-03-12 selalu berjarak 2 hari.
 
--- Kasus 1 — punya SO DAN SJ (balasan lengkap, dua-duanya terisi).
-INSERT INTO accurate_sales_order (id, number, trans_date, customer_name, status, total_amount)
-VALUES (900001, 'SO-QA-9001', DATE '2026-03-10', 'QA MAWAR SEJAHTERA', 'Pending', 12500000)
-ON CONFLICT (id) DO UPDATE SET
-  number = EXCLUDED.number, trans_date = EXCLUDED.trans_date,
-  customer_name = EXCLUDED.customer_name, status = EXCLUDED.status,
-  total_amount = EXCLUDED.total_amount;
+-- Kasus 4/5 (QA KEMBAR ALFA/BETA) justru SENGAJA mirip — dua-duanya diukur di
+-- wrg_os_dev: satu sama lain 0,500 dan terhadap query "QA KEMBAR" 0,667/0,667,
+-- sementara terhadap tiga nama di atas maksimum 0,148 (jauh di bawah ambang
+-- CEK_MATCH 0,45, jadi tak mengganggu kasus 1-3).
+INSERT INTO accurate_customer (id, no, name) VALUES
+  (900001, 'C-QA-9001', 'QA MAWAR SEJAHTERA'),
+  (900002, 'C-QA-9002', 'QA BAKTI HUSADA'),
+  (900003, 'C-QA-9003', 'QA CENDANA PRIMA'),
+  (900004, 'C-QA-9004', 'QA KEMBAR ALFA'),
+  (900005, 'C-QA-9005', 'QA KEMBAR BETA')
+ON CONFLICT (id) DO UPDATE SET no = EXCLUDED.no, name = EXCLUDED.name;
 
-INSERT INTO accurate_delivery_order (id, number, trans_date, customer_name, ship_to, status)
-VALUES (900001, 'SJ-QA-9001', DATE '2026-03-12', 'QA MAWAR SEJAHTERA', 'Jl. Fixture 1', 'Delivered')
+-- Kasus 1 — punya SO DAN SJ (balasan lengkap, dua-duanya terisi).
+INSERT INTO accurate_sales_order (id, number, trans_date, customer_name, customer_id, status, total_amount)
+VALUES (900001, 'SO-QA-9001', DATE '2026-03-10', 'QA MAWAR SEJAHTERA', 900001, 'Pending', 12500000)
 ON CONFLICT (id) DO UPDATE SET
   number = EXCLUDED.number, trans_date = EXCLUDED.trans_date,
-  customer_name = EXCLUDED.customer_name, ship_to = EXCLUDED.ship_to, status = EXCLUDED.status;
+  customer_name = EXCLUDED.customer_name, customer_id = EXCLUDED.customer_id,
+  status = EXCLUDED.status, total_amount = EXCLUDED.total_amount;
+
+INSERT INTO accurate_delivery_order (id, number, trans_date, customer_name, customer_id, ship_to, status)
+VALUES (900001, 'SJ-QA-9001', DATE '2026-03-12', 'QA MAWAR SEJAHTERA', 900001, 'Jl. Fixture 1', 'Delivered')
+ON CONFLICT (id) DO UPDATE SET
+  number = EXCLUDED.number, trans_date = EXCLUDED.trans_date,
+  customer_name = EXCLUDED.customer_name, customer_id = EXCLUDED.customer_id,
+  ship_to = EXCLUDED.ship_to, status = EXCLUDED.status;
 
 -- Kasus 2 — HANYA SO. Membuktikan baris "Belum ada SJ tercatat" benar muncul.
-INSERT INTO accurate_sales_order (id, number, trans_date, customer_name, status, total_amount)
-VALUES (900002, 'SO-QA-9002', DATE '2026-03-10', 'QA BAKTI HUSADA', 'Pending', 4750000)
+INSERT INTO accurate_sales_order (id, number, trans_date, customer_name, customer_id, status, total_amount)
+VALUES (900002, 'SO-QA-9002', DATE '2026-03-10', 'QA BAKTI HUSADA', 900002, 'Pending', 4750000)
 ON CONFLICT (id) DO UPDATE SET
   number = EXCLUDED.number, trans_date = EXCLUDED.trans_date,
-  customer_name = EXCLUDED.customer_name, status = EXCLUDED.status,
-  total_amount = EXCLUDED.total_amount;
+  customer_name = EXCLUDED.customer_name, customer_id = EXCLUDED.customer_id,
+  status = EXCLUDED.status, total_amount = EXCLUDED.total_amount;
 
 -- Kasus 3 — HANYA SJ. Membuktikan baris "Belum ada SO tercatat" benar muncul.
-INSERT INTO accurate_delivery_order (id, number, trans_date, customer_name, ship_to, status)
-VALUES (900003, 'SJ-QA-9003', DATE '2026-03-11', 'QA CENDANA PRIMA', 'Jl. Fixture 3', 'Delivered')
+INSERT INTO accurate_delivery_order (id, number, trans_date, customer_name, customer_id, ship_to, status)
+VALUES (900003, 'SJ-QA-9003', DATE '2026-03-11', 'QA CENDANA PRIMA', 900003, 'Jl. Fixture 3', 'Delivered')
 ON CONFLICT (id) DO UPDATE SET
   number = EXCLUDED.number, trans_date = EXCLUDED.trans_date,
-  customer_name = EXCLUDED.customer_name, ship_to = EXCLUDED.ship_to, status = EXCLUDED.status;
+  customer_name = EXCLUDED.customer_name, customer_id = EXCLUDED.customer_id,
+  ship_to = EXCLUDED.ship_to, status = EXCLUDED.status;
+
+-- Kasus 4/5 — dua customer BEDA bernama mirip, satu punya SO saja dan satunya
+-- SJ saja. Regresi #839: dulu balasan untuk "QA KEMBAR BETA" ikut membawa SO
+-- milik "QA KEMBAR ALFA" — dokumen customer lain terkirim ke pengirim yang
+-- salah. Sekaligus fixture balasan AMBIGU untuk query "QA KEMBAR".
+INSERT INTO accurate_sales_order (id, number, trans_date, customer_name, customer_id, status, total_amount)
+VALUES (900004, 'SO-QA-9004', DATE '2026-03-10', 'QA KEMBAR ALFA', 900004, 'Pending', 3300000)
+ON CONFLICT (id) DO UPDATE SET
+  number = EXCLUDED.number, trans_date = EXCLUDED.trans_date,
+  customer_name = EXCLUDED.customer_name, customer_id = EXCLUDED.customer_id,
+  status = EXCLUDED.status, total_amount = EXCLUDED.total_amount;
+
+INSERT INTO accurate_delivery_order (id, number, trans_date, customer_name, customer_id, ship_to, status)
+VALUES (900005, 'SJ-QA-9005', DATE '2026-03-11', 'QA KEMBAR BETA', 900005, 'Jl. Fixture 5', 'Delivered')
+ON CONFLICT (id) DO UPDATE SET
+  number = EXCLUDED.number, trans_date = EXCLUDED.trans_date,
+  customer_name = EXCLUDED.customer_name, customer_id = EXCLUDED.customer_id,
+  ship_to = EXCLUDED.ship_to, status = EXCLUDED.status;
