@@ -221,6 +221,7 @@ punya".
 2. **Tiga gudang Surabaya dijumlahkan** ke satu kode `SBY` (id 100, 2250, 200).
 3. **Lima cabang di-skip** — LAMONGAN, TUBAN, JOGJA, SOLO, NTT tak punya padanan
    di Accurate, jadi sengaja tak dipetakan. Stok mereka tetap dari CSV.
+   **NTB menyusul jadi yang keenam** — lihat "Pemetaan NTB dicabut" di bawah.
 
 #### Kenapa TABEL pemetaan, bukan kolom `warehouse.accurate_warehouse_id`
 
@@ -232,7 +233,7 @@ Pemetaannya BANYAK→SATU, jadi tabel.
 
 #### Akibat yang harus disadari: tabel ini kini BERCAMPUR dua sumber
 
-Gudang yang dipetakan tersegarkan otomatis (`source='accurate'`); lima cabang
+Gudang yang dipetakan tersegarkan otomatis (`source='accurate'`); enam cabang
 yang di-skip tetap memakai CSV opname (`source='import'`). Karena itu
 `stockBranchSummary()` sekarang ikut mengembalikan `sumber[]` **per gudang**,
 dan kartu ringkasan menampilkannya — tanpa label, dua-duanya tampil sebagai
@@ -243,13 +244,33 @@ cabang yang di-skip **tidak** ikut terhapus oleh puller yang tak punya angka
 untuk mereka. Untuk gudang yang dipetakan, Accurate menang — baris `import` lama
 digantikan.
 
-#### Satu pemetaan yang masih inferensi
+#### Pemetaan NTB DICABUT (migrasi 167)
 
-`NTB → GUDANG MATARAM` (id 600) berdiri di atas kecocokan nama (Mataram = ibu
-kota NTB), **belum dikonfirmasi orang**. Kalau keliru, stok NTB akan terisi angka
-gudang yang salah — dan itu tak akan tampak sebagai error. Hapus barisnya dari
-`warehouse_accurate` kalau ragu; NTB lalu jatuh ke perilaku "skip" seperti lima
-cabang lainnya.
+Migrasi 166 sempat memetakan `NTB → GUDANG MATARAM` (id 600) atas dasar
+**kecocokan nama saja** — Mataram ibu kota NTB — dan komentarnya sendiri
+menandai baris itu belum dikonfirmasi siapa pun. Pemilik fitur memutuskan
+**2026-09-06: cabut sampai ada yang mengonfirmasi**, dan itu dikerjakan migrasi
+`167_warehouse_accurate_hapus_ntb.sql`.
+
+Alasannya bukan kerapian. Pemetaan yang salah **tidak memunculkan error**:
+puller akan menulis saldo gudang Mataram ke kolom NTB, angkanya tampil rapi di
+matriks, dan satu-satunya cara ketahuannya adalah ada orang yang kebetulan
+hafal stok NTB. Kolom yang jujur kosong lebih baik daripada tebakan yang gagal
+dalam diam.
+
+Jadi allowlist sekarang **8 id → 6 kode** (`SBY` ×3, KEDIRI, MADURA, MADIUN,
+JAKARTA, JEMBER), dan NTB berperilaku persis seperti lima cabang tanpa padanan:
+puller tak menyentuhnya, stoknya tetap dari CSV.
+
+**167 additive, bukan mengedit 166** — dan itu disengaja. 166 sudah merged serta
+sudah dijalankan di setidaknya satu database; ledger `schema_migrations` memakai
+NAMA FILE, jadi mengedit isinya tak akan pernah dieksekusi ulang di database yang
+sudah mencatatnya — barisnya akan tetap ada di sana, diam-diam. Yang additive
+benar untuk kedua populasi: database baru menjalankan 166 lalu 167 (bersih di
+akhir run), database lama cukup menjalankan 167.
+
+Kalau nanti ada yang mengonfirmasi GUDANG MATARAM memang gudang NTB:
+kembalikan lewat **migrasi baru**, jangan menghidupkan kembali baris di 166.
 
 #### Riwayat: kenapa dulu sengaja belum ditulis
 

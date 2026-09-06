@@ -64,11 +64,13 @@ test("gudang VIRTUAL milik customer tak pernah lolos", () => {
   assert.deepEqual([...hasil.entries()], [["JEMBER", 12]]);
 });
 
-test("lima cabang yang di-skip tak pernah muncul sebagai kunci", () => {
+test("enam cabang yang di-skip tak pernah muncul sebagai kunci", () => {
   // Keputusan #3: LAMONGAN/TUBAN/JOGJA/SOLO/NTT tak punya baris di allowlist,
   // jadi puller tak boleh menyentuh stok mereka — angka CSV tetap berlaku.
-  const hasil = ringkasStokPerGudang([wh(100, 3), wh(450, 4)], MAP);
-  for (const kode of ["LAMONGAN", "TUBAN", "JOGJA", "SOLO", "NTT"]) {
+  // NTB menyusul lewat migrasi 167: pemetaannya ke GUDANG MATARAM (id 600)
+  // cuma kecocokan nama dan dicabut sampai ada yang mengonfirmasi.
+  const hasil = ringkasStokPerGudang([wh(100, 3), wh(450, 4), wh(600, 99)], MAP);
+  for (const kode of ["LAMONGAN", "TUBAN", "JOGJA", "SOLO", "NTT", "NTB"]) {
     assert.equal(hasil.has(kode), false, `${kode} tak boleh ditulis puller`);
   }
 });
