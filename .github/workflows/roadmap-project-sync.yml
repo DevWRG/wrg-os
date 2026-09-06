@@ -109,7 +109,43 @@ jobs:
               target = 'In Progress';
             }
 
-            const text = `${pr.head.ref}\n${pr.title}`;
+            // Sumber F-number: nama branch + judul PR.
+            //
+            // ⚠️ TIDAK CUKUP untuk PR PROMOSI `dev` → `main`. Di situ `head.ref`
+            // selalu "dev" dan judulnya berbentuk "Promote dev → main: …" atau
+            // "fix(kso): promosi #1031 — …" — tak memuat F-number sama sekali.
+            // Akibatnya cabang MERGE_TARGET.main → 'Done' TAK PERNAH dieksekusi
+            // lewat alur normal, dan sejak alur bergeser jadi
+            // feature → dev → promote main, kartu berhenti di 'Checking'
+            // SELAMANYA kecuali ada yang menyetelnya manual (#1104).
+            // Bukti: F66 sudah di `main` sejak PR #614 (19 Jul) tapi kartunya
+            // bertahan 'Checking' sampai disetel tangan 29 Agu.
+            //
+            // Karena itu untuk promosi, F-number dibaca dari COMMIT di dalam
+            // PR-nya: commit yang dipromosikan membawa judul aslinya
+            // (`feat(F127): …`, `fix(F66): …`). Ini juga lebih benar secara
+            // semantik — yang dipromosikan memang sekumpulan fitur, bukan satu.
+            let text = `${pr.head.ref}\n${pr.title}`;
+            const isPromosi = context.payload.action === 'closed' && pr.base.ref === 'main';
+            if (isPromosi) {
+              const commits = await github.paginate(github.rest.pulls.listCommits, {
+                owner: context.repo.owner, repo: context.repo.repo, pull_number: pr.number, per_page: 100,
+              });
+              text += '\n' + commits.map(c => c.commit.message).join('\n');
+              core.info(`PR promosi → membaca ${commits.length} commit untuk F-number`);
+              // GitHub membatasi endpoint ini di 250 commit. Promosi besar bisa
+              // menembusnya (#1139 saja 191 commit), dan pemotongannya SENYAP —
+              // fitur yang commit-nya kena potong akan diam-diam tak pernah
+              // jadi 'Done'. Kalau batas ini kena, bunyikan.
+              if (commits.length >= 250) {
+                core.warning(
+                  `Daftar commit kena batas API 250 (dapat ${commits.length}). ` +
+                  'F-number pada commit di luar 250 pertama TIDAK terbaca — ' +
+                  'kartunya akan tertinggal di Checking. Pecah promosi jadi ' +
+                  'beberapa PR, atau setel kartunya manual.',
+                );
+              }
+            }
 
             // F-number harus BERDIRI SENDIRI — diapit batas non-alfanumerik di
             // KEDUA sisi. Bentuk sah semuanya lolos: `feat/f135-atk-…` (`/`…`-`),
@@ -122,12 +158,19 @@ jobs:
             // F182 tak ada di papan, workflow MEMBUAT kartu draft palsu. Batas
             // kiri saja tak cukup (`-f182…` diawali `-` yang sah); pembedanya
             // ada di kanan — `f182e` diikuti huruf, `f135-` diikuti hyphen.
-            const RE_FNUM = /(?<![0-9A-Za-z])F\d{2,3}(?![0-9A-Za-z])/gi;
+            //
+            // Rentangnya {1,3}, BUKAN {2,3}: pola lama mengecualikan F1–F9
+            // seluruhnya (#1104). Itu bukan teoretis — F1 SPT kartu nyata yang
+            // sudah live di prod, dan setiap PR-nya lewat tanpa menyentuh papan.
+            // Batas non-alfanumerik di kedua sisi tetap menahan false positive
+            // satu digit (`-f1-` di hash), dan PR dependabot sudah disaring
+            // lebih dulu di `if:` job ini.
+            const RE_FNUM = /(?<![0-9A-Za-z])F\d{1,3}(?![0-9A-Za-z])/gi;
             const fnums = [...new Set((text.match(RE_FNUM) || []).map(s => s.toUpperCase()))];
 
             // Yang DITOLAK tetap dicatat. Kalau suatu hari F-number sah ikut
             // tersaring, jejaknya ada di log run — bukan hilang tanpa suara.
-            const loose = [...new Set((text.match(/F\d{2,3}/gi) || []).map(s => s.toUpperCase()))];
+            const loose = [...new Set((text.match(/F\d{1,3}/gi) || []).map(s => s.toUpperCase()))];
             const rejected = loose.filter(f => !fnums.includes(f));
             if (rejected.length) {
               core.info(`Ditolak (tidak berdiri sendiri, kemungkinan hash): ${rejected.join(', ')}`);
@@ -155,7 +198,11 @@ jobs:
 
             let touched = 0, created = 0;
             for (const f of fnums) {
-              const re = new RegExp(`${f}(?!\\d)`, 'i'); // F12 tidak match F127
+              // F12 tidak match F127 (batas kanan), dan F1 tidak match "OF1"
+              // (batas kiri). Batas kiri baru ditambahkan bersama pelonggaran
+              // ke F1–F9: dengan satu digit, kecocokan di tengah kata jadi jauh
+              // lebih gampang terjadi daripada waktu minimalnya dua digit.
+              const re = new RegExp(`(?<![0-9A-Za-z])${f}(?!\\d)`, 'i');
               let matches = items.filter(it => re.test(it.content?.title || ''));
               if (!matches.length) {
                 // F-number belum ada di board → buat draft item baru.
