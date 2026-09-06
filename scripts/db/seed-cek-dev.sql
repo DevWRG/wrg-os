@@ -9,14 +9,15 @@
 -- lengkapnya (aktifkan WA_INBOUND_PROCESS, kirim command, baca balasan di log
 -- server — lihat section #1042 di atasnya).
 --
+-- Butuh migrasi 162 (`accurate_sales_order.customer_id` / `..._delivery_order`)
+-- sudah jalan — seed ini menautkan tiap dokumen ke `accurate_customer`, persis
+-- seperti data Accurate sungguhan.
+--
 -- ── Kenapa nama-nama ini, bukan nama lain (jangan diganti sembarangan) ──
--- Query SO dan SJ di handleCekQuery() jalan INDEPENDEN, masing-masing
--- `ORDER BY score DESC LIMIT 1` (apps/api/src/repo/inbound-cek.ts:43-57,
--- threshold CEK_MATCH=0.3 di baris 24). Nama antar-kasus yang mirip akan
--- saling mencuri hasil satu sama lain: kalau kasus "cuma SO" dan "cuma SJ"
--- diberi nama beda satu-dua huruf, query kasus pertama akan menarik SJ milik
--- kasus kedua — baris "Belum ada SJ tercatat" tak akan pernah muncul. Sebelum
--- commit, similarity() dicek EMPIRIS (bukan diasumsikan) utk kelima nama:
+-- Nama antar-kasus yang mirip bisa saling mencuri hasil: kalau kasus "cuma SO"
+-- dan "cuma SJ" diberi nama beda satu-dua huruf, baris "Belum ada SJ tercatat"
+-- tak akan pernah muncul. Sebelum commit, similarity() dicek EMPIRIS (bukan
+-- diasumsikan) utk keenam nama:
 --
 --   SELECT a.name, b.name, similarity(a.name, b.name)
 --   FROM (VALUES ('PT Testing'),('PT Alpha Order'),('CV Beta Kirim'),
@@ -28,6 +29,18 @@
 -- Kalau nama diganti, ulangi verifikasi ini sebelum commit — jangan asumsi.
 
 BEGIN;
+
+-- ── Master customer — sumber identitas yang di-resolve DULUAN oleh
+-- handleCekQuery() sebelum SO/SJ diambil. Tanpa baris ini seed cuma menguji
+-- jalur fallback (nama dari SO/SJ), bukan jalur normal. ──
+INSERT INTO accurate_customer (id, no, name, raw) VALUES
+  (900020, 'C-TEST-001', 'PT Testing',       '{}'::jsonb),
+  (900021, 'C-TEST-002', 'RS Sehat Sentosa', '{}'::jsonb),
+  (900022, 'C-TEST-003', 'PT Alpha Order',   '{}'::jsonb),
+  (900023, 'C-TEST-004', 'CV Beta Kirim',    '{}'::jsonb),
+  (900024, 'C-TEST-005', 'CV Sample Satu',   '{}'::jsonb),
+  (900025, 'C-TEST-006', 'CV Sample Dua',    '{}'::jsonb)
+ON CONFLICT (id) DO NOTHING;
 
 -- ── #1 PT Testing — kasus dasar, SO+SJ lengkap ──
 INSERT INTO accurate_sales_order (id, number, trans_date, customer_name, status, total_amount, raw) VALUES
@@ -56,11 +69,17 @@ INSERT INTO accurate_delivery_order (id, number, trans_date, customer_name, ship
 ON CONFLICT (id) DO NOTHING;
 
 -- ── #5 CV Sample Satu (SO) / CV Sample Dua (SJ) — dua CUSTOMER BEDA dengan
--- nama SENGAJA mirip (similarity 0.588, lihat catatan di atas). Mendemonstrasikan
--- known limitation fuzzy-match SO/SJ independen (PR #868,
--- docs/features/F4-cek-faktur-so-sj-cross-ref.md): "#CEK CUSTOMER CV Sample Dua"
--- akan balas header "CV Sample Satu" krn SO-nya menang skor similarity — bukan
--- bug, ini bukti hidup dari limitation yang sudah didokumentasikan.
+-- nama SENGAJA mirip (similarity 0.588, lihat catatan di atas). Dulu ini bukti
+-- hidup dari kebocoran lintas-customer (PR #868): "#CEK CUSTOMER CV Sample Dua"
+-- membalas header "CV Sample Satu" karena SO-nya menang skor similarity.
+-- Sekarang jadi FIXTURE REGRESI dari perbaikan issue #839 — yang benar:
+--   #CEK CUSTOMER CV Sample Dua  → header "CV Sample Dua", SJ-TEST-003,
+--                                  "📋 Belum ada SO tercatat" (SO milik "Satu"
+--                                  TIDAK boleh ikut muncul)
+--   #CEK CUSTOMER CV Sample Satu → header "CV Sample Satu", SO-TEST-003,
+--                                  "→ Belum ada SJ tercatat"
+--   #CEK CUSTOMER CV Sample      → balasan AMBIGU: daftar kedua nama, tidak
+--                                  memilih salah satu
 INSERT INTO accurate_sales_order (id, number, trans_date, customer_name, status, total_amount, raw) VALUES
   (900016, 'SO-TEST-003', CURRENT_DATE - 5, 'CV Sample Satu', 'Closed', 2000000, '{}'::jsonb)
 ON CONFLICT (id) DO NOTHING;
@@ -68,6 +87,18 @@ INSERT INTO accurate_delivery_order (id, number, trans_date, customer_name, ship
   (900017, 'SJ-TEST-003', CURRENT_DATE - 2, 'CV Sample Dua', 'Gudang C', 'Shipped', '{}'::jsonb)
 ON CONFLICT (id) DO NOTHING;
 
+-- ── Tautkan dokumen ke customernya. Ditulis sbg UPDATE terpisah (bukan kolom
+-- di INSERT) supaya seed yang SUDAH pernah dijalankan sebelum migrasi 162 ikut
+-- diperbaiki — `ON CONFLICT DO NOTHING` di atas tak akan menyentuh baris lama. ──
+UPDATE accurate_sales_order    SET customer_id = 900020 WHERE id = 900010;
+UPDATE accurate_delivery_order SET customer_id = 900020 WHERE id = 900011;
+UPDATE accurate_sales_order    SET customer_id = 900021 WHERE id = 900012;
+UPDATE accurate_delivery_order SET customer_id = 900021 WHERE id = 900013;
+UPDATE accurate_sales_order    SET customer_id = 900022 WHERE id = 900014;
+UPDATE accurate_delivery_order SET customer_id = 900023 WHERE id = 900015;
+UPDATE accurate_sales_order    SET customer_id = 900024 WHERE id = 900016;
+UPDATE accurate_delivery_order SET customer_id = 900025 WHERE id = 900017;
+
 COMMIT;
 
-\echo 'Seed cek-dev selesai: 5 kasus (PT Testing, RS Sehat Sentosa, PT Alpha Order, CV Beta Kirim, CV Sample Satu/Dua) di accurate_sales_order/accurate_delivery_order.'
+\echo 'Seed cek-dev selesai: 6 customer + 5 kasus (PT Testing, RS Sehat Sentosa, PT Alpha Order, CV Beta Kirim, CV Sample Satu/Dua) di accurate_customer/accurate_sales_order/accurate_delivery_order.'

@@ -327,13 +327,20 @@ const skenario = [
   { nama: "cek · varian customer", body: "#CEK CUSTOMER QA MAWAR SEJAHTERA", from: AM,
     harap: /(?=[\s\S]*📋 SO SO-QA-9001)(?=[\s\S]*→ SJ SJ-QA-9001)/ },
   // Dua kasus di bawah menguji CABANG YANG BERBEDA, bukan variasi kosmetik:
-  // handleCekQuery mencari SO dan SJ independen, jadi baris "Belum ada …"
-  // hanya muncul kalau satu sisi benar-benar kosong. Nama fixture-nya sengaja
-  // berjauhan secara trigram supaya tak saling mencuri — lihat catatan di seed.
+  // baris "Belum ada …" hanya muncul kalau satu sisi benar-benar kosong. Nama
+  // fixture-nya sengaja berjauhan secara trigram — lihat catatan di seed.
   { nama: "cek · customer punya SO tanpa SJ", body: "#CEK CUSTOMER QA BAKTI HUSADA", from: AM,
     harap: /(?=[\s\S]*📋 SO SO-QA-9002)(?=[\s\S]*Belum ada SJ tercatat)/ },
   { nama: "cek · customer punya SJ tanpa SO", body: "#CEK CUSTOMER QA CENDANA PRIMA", from: AM,
     harap: /(?=[\s\S]*Belum ada SO tercatat)(?=[\s\S]*→ SJ SJ-QA-9003)/ },
+  // Regresi #839 — dulu balasan "QA KEMBAR BETA" ikut membawa SO milik
+  // "QA KEMBAR ALFA". Ekspektasinya memuat larangan EKSPLISIT (SO-QA-9004 tak
+  // boleh muncul): tanpa itu balasan bocor tetap lulus, karena klausa-klausa
+  // positifnya sudah terpenuhi.
+  { nama: "cek · nama kembar tak mencuri dokumen tetangga", body: "#CEK CUSTOMER QA KEMBAR BETA", from: AM,
+    harap: /(?=[\s\S]*QA KEMBAR BETA)(?=[\s\S]*Belum ada SO tercatat)(?=[\s\S]*→ SJ SJ-QA-9005)(?![\s\S]*SO-QA-9004)/ },
+  { nama: "cek · nama ambigu → bertanya, bukan menebak", body: "#CEK CUSTOMER QA KEMBAR", from: AM,
+    harap: /(?=[\s\S]*cocok ke 2 customer)(?=[\s\S]*QA KEMBAR ALFA)(?=[\s\S]*QA KEMBAR BETA)/ },
   { nama: "cek · customer tak ada di SO/SJ", body: "#CEK CUSTOMER ZZZ TIDAK ADA SAMA SEKALI", from: AM,
     harap: /tidak ditemukan di data SO\/SJ/ },
   { nama: "cek · argumen kosong", body: "#CEK", from: AM, harap: new RegExp(`⚠️ Isi nomor dokumen atau nama customer setelah #CEK, ${esc(AM.nama)}`) },
