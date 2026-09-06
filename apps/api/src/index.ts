@@ -893,13 +893,22 @@ app.get("/ar/invoice/:no", async (c) => {
 app.post("/accurate/sync", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   if (!accurateConfigured()) return c.json({ error: "kredensial Accurate tak tersedia" }, 503);
-  let body: { days?: number; invoice_id?: number } = {};
+  // max_pages & skip_existing dipakai untuk BACKFILL riwayat pra-2026 (#1177):
+  // batas halaman default (200 × 50 = 10.000 baris) lebih kecil dari isi
+  // Accurate (11.302 faktur), jadi sapuan penuh butuh dinaikkan. Keduanya
+  // opsional — tanpa mereka perilakunya sama persis seperti sebelumnya.
+  let body: { days?: number; invoice_id?: number; max_pages?: number; skip_existing?: boolean } = {};
   try {
     body = await c.req.json();
   } catch {
     /* body opsional */
   }
-  const r = await syncAccurateInvoices({ days: body.days, invoiceId: body.invoice_id });
+  const r = await syncAccurateInvoices({
+    days: body.days,
+    invoiceId: body.invoice_id,
+    maxPages: body.max_pages,
+    skipExisting: body.skip_existing,
+  });
   return c.json(r, r.ok ? 200 : 502);
 });
 
