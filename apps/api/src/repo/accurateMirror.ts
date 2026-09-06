@@ -452,3 +452,144 @@ export async function listMirror(
     return rest;
   });
 }
+
+// ── F37: stok per gudang (#836) ─────────────────────────────────────────────
+// Saldo per gudang hanya tersedia lewat item/detail.do per SKU — lihat alasan
+// lengkapnya di migrasi 166. Yang ada di sini bagian DB-nya; pemanggil API-nya
+// `syncItemStockBranch()` di accurateSync.ts.
+
+export interface WarehouseMapRow {
+  accurate_warehouse_id: number;
+  warehouse_kode: string;
+}
+
+/**
+ * Allowlist gudang: id Accurate → kode kita. Puller TIDAK BOLEH menerima id di
+ * luar hasil fungsi ini — 96 dari 109 gudang di Accurate adalah gudang virtual
+ * milik customer (migrasi 166).
+ */
+export async function warehouseAccurateMap(): Promise<WarehouseMapRow[]> {
+  const sql = db();
+  // Ikut menggerbang `jenis = 'cabang'` + `aktif`, sama seperti query baca di
+  // stock-branch.ts. Pemetaan yang menunjuk gudang nonaktif tak boleh diam-diam
+  // menghidupkannya kembali lewat pintu puller.
+  const rows = await sql<{ accurate_warehouse_id: string; warehouse_kode: string }[]>`
+    SELECT wa.accurate_warehouse_id::text AS accurate_warehouse_id, wa.warehouse_kode
+    FROM warehouse_accurate wa
+    JOIN warehouse w ON w.kode = wa.warehouse_kode
+    WHERE w.jenis = 'cabang' AND w.aktif
+  `;
+  return rows.map((r) => ({
+    accurate_warehouse_id: Number(r.accurate_warehouse_id),
+    warehouse_kode: String(r.warehouse_kode),
+  }));
+}
+
+/** Satu entri `detailWarehouseData` dari item/detail.do, sebatas yang dipakai. */
+export interface DetailWarehouseEntry {
+  id?: unknown;
+  balance?: unknown;
+  warehouseName?: unknown;
+}
+
+/**
+ * Ringkas `detailWarehouseData` satu SKU menjadi qty per KODE GUDANG KITA.
+ *
+ * Fungsi MURNI — di sinilah tiga keputusan 2026-09-06 benar-benar berlaku, dan
+ * di sinilah kesalahan paling mahal bisa terjadi tanpa gejala. Diuji di
+ * accurate-stock-branch.test.ts.
+ *
+ *  · id di luar allowlist DIBUANG (96 gudang customer);
+ *  · beberapa id yang menunjuk kode sama DIJUMLAHKAN (tiga Surabaya → `SBY`);
+ *  · saldo negatif dijepit ke 0 — `item_stock_branch.quantity` punya
+ *    CHECK (quantity >= 0), jadi tanpa jepitan ini satu baris minus membuat
+ *    SELURUH sapuan item itu gagal insert.
+ */
+export function ringkasStokPerGudang(
+  entries: DetailWarehouseEntry[],
+  map: WarehouseMapRow[],
+): Map<string, number> {
+  const byId = new Map<number, string>();
+  for (const m of map) byId.set(m.accurate_warehouse_id, m.warehouse_kode);
+
+  const hasil = new Map<string, number>();
+  for (const e of entries ?? []) {
+    const id = Number(e?.id);
+    if (!Number.isFinite(id)) continue;
+    const kode = byId.get(id);
+    if (!kode) continue; // di luar allowlist — gudang customer / bukan cabang
+    // `balance` kosong DILEWATI, bukan dibaca 0. Tanpa cabang eksplisit ini,
+    // `Number(null)` = 0 sementara `Number(undefined)` = NaN — dua bentuk
+    // "tidak ada angka" diperlakukan berbeda karena kebetulan JS, bukan karena
+    // keputusan, dan yang null tertulis jadi stok 0 sungguhan.
+    const bal = e?.balance;
+    if (bal === null || bal === undefined || bal === "") continue;
+    const qty = Number(bal);
+    if (!Number.isFinite(qty)) continue;
+    hasil.set(kode, (hasil.get(kode) ?? 0) + Math.max(0, qty));
+  }
+  return hasil;
+}
+
+/**
+ * Tulis stok satu SKU untuk gudang-gudang YANG DIPETAKAN saja.
+ *
+ * Cakupan hapusnya sengaja dibatasi ke `kodeDipetakan`: baris milik lima cabang
+ * yang di-skip (LAMONGAN/TUBAN/JOGJA/SOLO/NTT) berasal dari CSV dan TIDAK boleh
+ * ikut terhapus oleh puller yang tak punya angka untuk mereka.
+ *
+ * Untuk gudang yang dipetakan, Accurate adalah sumber kebenaran: baris lama
+ * (termasuk source='import') digantikan. Gudang yang saldonya 0 tidak ditulis
+ * barisnya — supaya metrik "item tanpa data" tetap bermakna, bukan penuh nol.
+ */
+export async function replaceItemStockBranch(
+  itemId: number,
+  qtyPerKode: Map<string, number>,
+  kodeDipetakan: string[],
+): Promise<number> {
+  const sql = db();
+  if (kodeDipetakan.length === 0) return 0;
+
+  await sql`
+    DELETE FROM item_stock_branch
+    WHERE item_id = ${itemId} AND warehouse_kode = ANY(${kodeDipetakan}::text[])
+  `;
+  let ditulis = 0;
+  for (const [kode, qty] of qtyPerKode) {
+    if (qty <= 0) continue;
+    await sql`
+      INSERT INTO item_stock_branch (item_id, warehouse_kode, quantity, source, updated_at)
+      VALUES (${itemId}, ${kode}, ${qty}, 'accurate', now())
+      ON CONFLICT (item_id, warehouse_kode) DO UPDATE SET
+        quantity = EXCLUDED.quantity, source = EXCLUDED.source, updated_at = EXCLUDED.updated_at
+    `;
+    ditulis += 1;
+  }
+  await sql`UPDATE accurate_item SET stock_synced_at = now() WHERE id = ${itemId}`;
+  return ditulis;
+}
+
+/** SKU yang paling lama (atau belum pernah) ditarik stok per-gudangnya. */
+export async function pendingStockItems(limit: number): Promise<number[]> {
+  const sql = db();
+  const rows = await sql<{ id: string }[]>`
+    SELECT id::text AS id FROM accurate_item
+    ORDER BY stock_synced_at ASC NULLS FIRST, id
+    LIMIT ${limit}
+  `;
+  return rows.map((r) => Number(r.id));
+}
+
+/**
+ * Sisa SKU yang belum pernah ditarik sama sekali — angka SEBENARNYA tanpa
+ * LIMIT. Memakai pendingStockItems(...).length akan mentok di nilai LIMIT dan
+ * terbaca seolah backlog tak pernah berkurang (jebakan yang sama sudah pernah
+ * dicatat untuk countPendingItemDocs).
+ */
+export async function countPendingStockItems(): Promise<number> {
+  const sql = db();
+  const [r] = await sql<{ n: string }[]>`
+    SELECT count(*)::text AS n FROM accurate_item WHERE stock_synced_at IS NULL
+  `;
+  return Number(r?.n ?? 0);
+}

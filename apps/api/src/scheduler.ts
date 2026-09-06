@@ -23,7 +23,7 @@ import { generateRekap, generateResume } from "./repo/monitor.js";
 import {
   syncAccurateInvoices, syncSalesOrders, syncDeliveryOrders, syncCustomers,
   syncSalesOrderItems, syncDeliveryOrderItems,
-  syncItems,
+  syncItems, syncItemStockBranch,
 } from "./repo/accurateSync.js";
 import { runPlanCheck, runReportCheck } from "./repo/compliance.js";
 import { runNotifTua } from "./repo/notiftua.js";
@@ -716,6 +716,37 @@ export function startScheduler(): ScheduleStatus {
       { timezone },
     );
     live.push(`accurate-stock-sync=${stockSyncExpr}`);
+  }
+
+  // stok-gudang-sync (F37/#836) — stok PER GUDANG ke item_stock_branch.
+  // HARIAN 02:00, dan itu batasnya bukan pilihan gaya: saldo per gudang cuma
+  // ada di item/detail.do per SKU, jadi sapuan penuh ±5.900 panggilan. Memasang
+  // ini di cron pendek akan membanjiri API Accurate dan menabrak job lain yang
+  // memakai kredensial sama. Tiap run berbatas + melanjutkan dari yang paling
+  // lama tak tersegarkan, jadi backlog habis bertahap lintas hari.
+  //
+  // Flag SENDIRI dan TIDAK ikut `enabled`: berbeda dari accurate-stock-sync di
+  // atas, job ini menulis ke tabel yang punya sumber lain (CSV opname tim
+  // gudang). Menyalakannya harus keputusan sadar, bukan efek samping
+  // AGENT_SCHEDULE_ENABLED.
+  const stockBranchEnabled = (process.env.STOCK_BRANCH_SYNC_ENABLED ?? "false").toLowerCase() === "true";
+  const stockBranchExpr = process.env.STOCK_BRANCH_SYNC_CRON ?? "0 2 * * *";
+  const stockBranchLimit = Math.min(Math.max(Number(process.env.STOCK_BRANCH_SYNC_LIMIT) || 1500, 1), 6000);
+  if (stockBranchEnabled && cron.validate(stockBranchExpr)) {
+    cron.schedule(
+      stockBranchExpr,
+      async () => {
+        const startedAt = new Date().toISOString();
+        try {
+          const r = await syncItemStockBranch({ limit: stockBranchLimit });
+          console.log(`[scheduler] stok-gudang-sync @ ${startedAt} ${JSON.stringify(r)}`);
+        } catch (e) {
+          console.error(`[scheduler] stok-gudang-sync gagal @ ${startedAt}:`, e);
+        }
+      },
+      { timezone },
+    );
+    live.push(`stok-gudang-sync=${stockBranchExpr}`);
   }
 
   // F127 sales-alert-eval — evaluasi threshold alert & kirim WA saat transisi

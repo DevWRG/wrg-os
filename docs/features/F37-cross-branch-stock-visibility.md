@@ -171,77 +171,124 @@ Kolom `item_stock_branch.source` menandai asal tiap angka:
 |---|---|
 | `import` | dari CSV/Excel tim gudang via `scripts/db/import_stock_branch.py` |
 | `manual` | koreksi per baris (slot disediakan, UI-nya belum dibangun) |
-| `accurate` | **nanti**, kalau puller per-gudang dibangun |
+| `accurate` | dari `syncItemStockBranch()` (job `stok-gudang-sync`, harian) — lihat di bawah |
 
-### Kenapa puller Accurate belum ditulis
+### Puller Accurate — SUDAH DITULIS (Sep 2026), harian bukan real-time
 
-Skema OpenAPI Accurate (`account.accurate.id/open-api/json.do`) **mengonfirmasi**
-endpoint-endpoint ini ada:
+> Dua pertanyaan yang dulu menahan bagian ini sudah dijawab probe di prod
+> (#836) — **2026-09-05** dan diverifikasi ulang **2026-09-06**. Riwayat
+> pertanyaannya disimpan di bawah karena jawabannya mengubah bentuk fiturnya,
+> bukan cuma mengisi kekosongan.
 
-- `/api/warehouse`
-- `/api/stock-mutation-history-view`
-- `/api/stock-opname-order`, `/api/stock-opname-result`
-- `/api/item-transfer`
+**Jawaban pertanyaan 1 & 2: keduanya YA.** `warehouse/list.do` jalan, **109
+gudang** terbaca — modul multi-gudang aktif dan user API berizin.
 
-⚠️ **Path di atas adalah penamaan skema OpenAPI, BUKAN bentuk yang kita panggil.**
-Sepuluh endpoint yang sudah hidup di `accurateSync.ts` semuanya memakai pola
-`https://<host>/accurate/api/<entity>/list.do` (atau `/detail.do`). Jadi yang
-harus dicoba adalah **`/accurate/api/warehouse/list.do`**, bukan `/api/warehouse`.
-Ini bukan detail sepele: probe ke path REST akan kena 404, dan 404 itu gampang
-disalahbaca sebagai "endpoint tak diizinkan" → orang lompat ke kesimpulan
-"modul multi-gudang mati" padahal yang salah cuma path-nya.
+**Tapi saldo per gudang tidak tersedia secara bulk.** Yang diuji dan hasilnya:
 
-Jadi jalur otomatis **arsitekturnya memungkinkan**. Tapi dokumen itu terpotong
-sebelum bagian definisi field, dan dua hal belum terverifikasi:
+| Jalur | Ongkos | Hasil |
+|---|---|---|
+| `item/list.do` + field/filter gudang (5 varian) | ~59 panggilan | ❌ balas 200 `s=true`, tapi kunci baris tetap `{id,no,name,quantity}` — `detailWarehouseData`/`warehouseData`/`sp.warehouseId`/`filter.warehouseId` **diabaikan diam-diam** |
+| `warehouse/detail.do` | ~13 panggilan | ❌ metadata gudang saja, nol saldo SKU |
+| `item/detail.do` per SKU | **~5.900 panggilan** | ✅ `detailWarehouseData` array(110): `warehouseName`, `balance`, `unit1..5Quantity` |
+| `item/get-stock.do` | — | ❌ hanya `{availableStock}`, agregat |
+| `stock-mutation` / `warehouse-mutation` / `stock-mutation-history` / `stock-opname` / `stock-adjustment` | — | ❌ semua **404 "URL API tidak tepat"** |
+
+Satu panggilan `item/detail.do` membawa **semua** gudang untuk SKU itu, jadi
+ongkosnya jumlah-item — bukan jumlah-item × jumlah-gudang. Tetap ±5.900
+panggilan untuk sapuan penuh.
+
+**Konsekuensinya bentuk fiturnya berubah: HARIAN, bukan real-time.** #836
+di-re-scope (judulnya ikut diganti), **bukan** ditutup sebagai limitasi permanen
+— yang terbukti "kandidat yang dicoba tidak membawanya", bukan "Accurate tak
+punya".
+
+#### Yang dibangun
+
+- **Migrasi `166_warehouse_accurate_map.sql`** — tabel `warehouse_accurate`
+  (id Accurate → kode kita) + kolom `accurate_item.stock_synced_at`.
+- **`syncItemStockBranch()`** di `accurateSync.ts` — berbatas per run, melanjutkan
+  dari SKU paling lama tak tersegarkan.
+- **`POST /accurate/sync/stock-branch?limit=`** — manual/catch-up.
+- **Job `stok-gudang-sync`** — harian 02:00, flag `STOCK_BRANCH_SYNC_ENABLED`.
+
+#### Tiga keputusan pemilik fitur (2026-09-06) yang dikodekan di migrasi 166
+
+1. **Allowlist pakai ID**, bukan nama/flag. Dua heuristik yang sempat masuk akal
+   TERBUKTI BOCOR: `suspended` bernilai `false` untuk **seluruh 109 baris**
+   (termasuk TEMPORARY & PUSAT NOT AVAILABLE), dan prefix nama `GUDANG` ikut
+   menangkap SPAREPART KSO, TEMPORARY, dan dua PUSAT. Dari 13 baris berawalan
+   GUDANG, hanya 8 operasional.
+2. **Tiga gudang Surabaya dijumlahkan** ke satu kode `SBY` (id 100, 2250, 200).
+3. **Lima cabang di-skip** — LAMONGAN, TUBAN, JOGJA, SOLO, NTT tak punya padanan
+   di Accurate, jadi sengaja tak dipetakan. Stok mereka tetap dari CSV.
+
+#### Kenapa TABEL pemetaan, bukan kolom `warehouse.accurate_warehouse_id`
+
+Bentuk kolom (yang disarankan kedua probe, dan dicatat di versi doc sebelumnya)
+benar sampai keputusan Surabaya turun. Accurate punya **tiga** gudang Surabaya
+sementara di kita cuma satu kode `SBY` — satu kolom tak bisa menampung tiga id,
+dan memaksakannya berarti dua gudang Surabaya diam-diam tak pernah ikut terbaca.
+Pemetaannya BANYAK→SATU, jadi tabel.
+
+#### Akibat yang harus disadari: tabel ini kini BERCAMPUR dua sumber
+
+Gudang yang dipetakan tersegarkan otomatis (`source='accurate'`); lima cabang
+yang di-skip tetap memakai CSV opname (`source='import'`). Karena itu
+`stockBranchSummary()` sekarang ikut mengembalikan `sumber[]` **per gudang**,
+dan kartu ringkasan menampilkannya — tanpa label, dua-duanya tampil sebagai
+angka yang sama meyakinkan.
+
+Cakupan hapus puller sengaja dibatasi ke gudang yang dipetakan: baris CSV milik
+cabang yang di-skip **tidak** ikut terhapus oleh puller yang tak punya angka
+untuk mereka. Untuk gudang yang dipetakan, Accurate menang — baris `import` lama
+digantikan.
+
+#### Satu pemetaan yang masih inferensi
+
+`NTB → GUDANG MATARAM` (id 600) berdiri di atas kecocokan nama (Mataram = ibu
+kota NTB), **belum dikonfirmasi orang**. Kalau keliru, stok NTB akan terisi angka
+gudang yang salah — dan itu tak akan tampak sebagai error. Hapus barisnya dari
+`warehouse_accurate` kalau ragu; NTB lalu jatuh ke perilaku "skip" seperti lima
+cabang lainnya.
+
+#### Riwayat: kenapa dulu sengaja belum ditulis
+
+Skema OpenAPI Accurate (`account.accurate.id/open-api/json.do`) menyebut
+`/api/warehouse`, `/api/stock-mutation-history-view`, `/api/stock-opname-*`,
+`/api/item-transfer`. ⚠️ Itu penamaan skema OpenAPI, **bukan** bentuk yang kita
+panggil — pola yang hidup di `accurateSync.ts` adalah
+`https://<host>/accurate/api/<entity>/list.do`. Probe ke path REST kena 404, dan
+404 itu gampang disalahbaca sebagai "tak diizinkan" → orang lompat ke kesimpulan
+"modul multi-gudang mati" padahal yang salah cuma path-nya. Terbukti relevan:
+seluruh varian mutasi/opname memang 404, dan itu **bukan** soal izin.
+
+Dua hal yang dulu belum terverifikasi (keduanya butuh kredensial prod):
 
 1. Apakah langganan Accurate WRG mengaktifkan multi-gudang, dan apakah **12
-   gudang cabang** di seed migrasi 082 benar terdaftar di sana (SBY, LAMONGAN,
-   TUBAN, JEMBER, KEDIRI, MADIUN, MADURA, JAKARTA, JOGJA, SOLO, NTB, NTT).
+   gudang cabang** di seed 082 benar terdaftar di sana.
 2. Apakah user API kita punya izin ke endpoint tersebut.
 
-Keduanya butuh kredensial produksi. **Puller sengaja belum ditulis** —
-menulisnya sekarang berarti menebak bentuk response, dan kalau tebakannya salah
-kodenya dibuang. Kolom `source` membuat peralihan nanti tidak butuh migrasi
-lagi: puller cukup menulis ke tabel yang sama dengan `source='accurate'`.
+Probe-nya: `scripts/qa/probe-accurate-warehouse.mjs` (izin & daftar gudang) dan
+`scripts/qa/probe-accurate-stok-gudang.mjs` (mana endpoint yang membawa saldo +
+berapa ongkosnya). READ-ONLY, memakai `loadCreds()`/`accGet()` berpola identik
+`accurateSync.ts`, jadi "jalan di probe" berarti "jalan juga di puller".
+Dijalankan di Mac mini; token/secret tak pernah dicetak. Ingat: **Accurate
+membalas HTTP 200 dengan `s=false` untuk kegagalan logis**, termasuk penolakan
+izin — status HTTP saja tak cukup menyimpulkan apa pun.
 
-#### Cara menjawab dua pertanyaan itu — `scripts/qa/probe-accurate-warehouse.mjs`
+#### Catatan yang sudah tidak berlaku
 
-Probe READ-ONLY (GET saja, tak menulis apa pun ke Accurate) yang memakai
-`loadCreds()`/`accGet()` dengan pola identik `accurateSync.ts`, jadi "jalan di
-probe" berarti "jalan juga di puller nanti". Dijalankan **di mesin yang punya
-kredensial prod** (Mac mini):
+Versi doc sebelumnya menyebut puller per-gudang bertempat di job
+`accurate-stock-sync` (tiap 5 menit). **Itu tidak jadi** — ±5.900 panggilan per
+siklus akan membanjiri API Accurate dan menabrak job lain yang memakai
+kredensial sama. Puller berdiri sebagai job sendiri, `stok-gudang-sync`, harian
+02:00, dengan flag terpisah yang TIDAK ikut `AGENT_SCHEDULE_ENABLED` — job ini
+menulis ke tabel yang punya sumber lain (CSV tim gudang), jadi menyalakannya
+harus keputusan sadar.
 
-```bash
-node scripts/qa/probe-accurate-warehouse.mjs
-```
-
-Kredensial dibaca env `ACCURATE_ACCESS_TOKEN`+`ACCURATE_SIGNATURE_SECRET`, atau
-fallback file `ACCURATE_CRED_FILE` (default `~/.openclaw/credentials/accurate.json`)
-— tak perlu mengutak-atik `.env.prod`. Token/secret tak pernah dicetak.
-
-Skrip mencoba `warehouse/list.do` + 4 endpoint stok lain, plus bentuk REST
-`/api/warehouse` sebagai **kontrol** untuk memisahkan "salah path" dari "tak
-berizin". Yang perlu diingat saat membaca hasilnya: **Accurate membalas HTTP 200
-dengan `s=false` untuk kegagalan logis**, termasuk penolakan izin — jadi status
-HTTP saja tidak cukup untuk menyimpulkan apa pun.
-
-Hasil probe (apa pun hasilnya) tempelkan ke issue **#836** + catat di sini
-dengan tanggal & siapa yang mengecek, supaya tak ditanyakan ulang tiap sesi QA.
-
-#### Kalau endpoint tersedia — dua hal yang gampang salah
-
-- **Job scheduler yang benar adalah `accurate-stock-sync`, bukan `accurate-sync`.**
-  `accurate-sync` cadence-nya 6×/hari untuk invoice/SO/DO dan skip hari libur —
-  tak bisa disebut real-time. `accurate-stock-sync` sudah ada, tiap 5 menit
-  (`ACCURATE_STOCK_SYNC_ENABLED`, `ACCURATE_STOCK_SYNC_CRON`), khusus menyegarkan
-  stok. Di situlah puller per-gudang bertempat.
-- **Mapping gudang perlu kolom baru** (mis. `warehouse.accurate_warehouse_id`):
-  kode di Accurate tak akan sama dengan `warehouse.kode` buatan kita. Isi manual
-  sekali untuk 12 baris — tak perlu UI CRUD.
-- **Aturan allowlist di header 082 tetap berlaku**: filter respons Accurate
-  terhadap `SELECT kode FROM warehouse WHERE jenis='cabang'`, jangan auto-insert
-  gudang baru dari respons. Itu persis cara stok gudang virtual milik customer
-  bocor ke layar AM.
+Aturan allowlist di header 082 tetap berlaku dan kini ditegakkan lewat
+`warehouse_accurate`: jangan auto-insert gudang baru dari respons Accurate. Itu
+persis cara stok gudang virtual milik customer bocor ke layar AM.
 
 ### Kenapa importer, bukan form di web
 
