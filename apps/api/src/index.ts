@@ -6716,7 +6716,7 @@ app.post("/teknisi-capacity", async (c) => {
 
 app.patch("/teknisi-capacity/:id", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let body: { nama?: string; wa_number?: string | null; max_concurrent_jobs?: number };
+  let body: { nama?: string; wa_number?: string | null; max_concurrent_jobs?: number; aktif?: boolean };
   try {
     body = await c.req.json();
   } catch {
