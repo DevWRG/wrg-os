@@ -185,7 +185,7 @@ import {
 import { recordDelivery, recordEmail, recordAlert, listLogs } from "./repo/logs.js";
 import { renderSalesDocHtml, renderBriefingHtml } from "./repo/exportdoc.js";
 import { runHodDaily } from "./repo/hodreminder.js";
-import { picFormSummary, listSopLangkah, listRaciPosisi, picFormKelengkapan, listDivisi, koordinasiGraf, raciKaryawanPosisi } from "./repo/picform.js";
+import { picFormSummary, listSopLangkah, listRaciPosisi, picFormKelengkapan, listDivisi, koordinasiGraf, raciKaryawanPosisi, setTautanManual, hapusTautanManual } from "./repo/picform.js";
 import {
   createReminder,
   updateReminder,
@@ -3209,6 +3209,30 @@ app.get("/picform/koordinasi", async (c) => {
 app.get("/picform/raci-karyawan", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json(await raciKaryawanPosisi());
+});
+
+// Satu-satunya jalur TULIS di /picform/*. Otorisasi dilakukan di lapisan WEB
+// (apps/web/src/app/api/picform/tautan/route.ts → requireRaciEdit) karena di
+// sanalah sesi login terbaca; apps/api hanya dijangkau lewat x-service-token
+// dan menerima `oleh` yang SUDAH terverifikasi. Jangan pernah memanggil
+// endpoint ini langsung dari klien.
+app.post("/picform/tautan", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let b: { employee_id?: string; posisi_id?: number; oleh?: string } = {};
+  try { b = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  if (!b.employee_id || !b.posisi_id) return c.json({ error: "employee_id + posisi_id wajib" }, 400);
+  if (!b.oleh) return c.json({ error: "oleh wajib (identitas pemutus, dari sesi login)" }, 400);
+  const out = await setTautanManual(b.employee_id, Number(b.posisi_id), b.oleh);
+  return c.json(out, out.ok ? 200 : 400);
+});
+
+app.delete("/picform/tautan", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const employeeId = c.req.query("employee_id");
+  const posisiId = c.req.query("posisi_id");
+  if (!employeeId || !posisiId) return c.json({ error: "employee_id + posisi_id wajib" }, 400);
+  const out = await hapusTautanManual(employeeId, Number(posisiId));
+  return c.json(out, out.ok ? 200 : 400);
 });
 
 // ── Log operasional: delivery / email / alert (port legacy *_log) ──
