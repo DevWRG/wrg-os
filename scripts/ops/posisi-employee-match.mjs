@@ -91,9 +91,9 @@ try {
   const [{ ada }] = await sql`
     SELECT count(*)::int AS ada FROM information_schema.tables
      WHERE table_schema = 'public'
-       AND table_name IN ('posisi','employee','posisi_employee','posisi_alias')`;
-  if (ada < 4) {
-    console.error(`TOLAK: baru ${ada}/4 tabel ada. Terapkan migrasi 168, 170 & 171 dulu.`);
+       AND table_name IN ('posisi','employee','posisi_employee','posisi_alias','employee_posisi_gap')`;
+  if (ada < 5) {
+    console.error(`TOLAK: baru ${ada}/5 tabel ada. Terapkan migrasi 168, 170, 171 & 172 dulu.`);
     process.exit(1);
   }
 
@@ -229,6 +229,7 @@ try {
 
   const semua = [...tautan.values()];
   const orangTertaut = new Set(semua.map((t) => t.e.id));
+  const belum = employee.filter((e) => !orangTertaut.has(e.id));
 
   // ---- tulis ---------------------------------------------------------------
   let hapus = 0;
@@ -239,6 +240,23 @@ try {
       if (semua.length) {
         await tx`INSERT INTO posisi_employee ${tx(semua.map((t) => ({
           posisi_id: t.p.id, employee_id: t.e.id, sumber: t.sumber, catatan: t.catatan,
+        })))}`;
+      }
+
+      // employee_posisi_gap (migrasi 172) diganti TOTAL, bukan di-upsert:
+      // begitu seseorang akhirnya tertaut, barisnya harus HILANG. Upsert akan
+      // meninggalkan alasan basi yang tetap tampil di UI padahal sudah beres —
+      // dan itu jenis kesalahan yang tak berisik.
+      //
+      // Alasannya dipersist di sini, bukan dihitung ulang sebagai view, supaya
+      // logika pencocokan cuma punya SATU tempat (lihat komentar migrasi 172).
+      await tx`DELETE FROM employee_posisi_gap`;
+      if (belum.length) {
+        await tx`INSERT INTO employee_posisi_gap ${tx(belum.map((e) => ({
+          employee_id: e.id,
+          alasan: alasanTolak.get(e.id) ?? "tak diketahui",
+          kandidat: nyata.filter((p) => bolehIsi(e, p))
+            .map((p) => `${p.nama} (kap ${p.jumlah_orang})`).join(" | ") || null,
         })))}`;
       }
     });
@@ -258,7 +276,6 @@ try {
     console.log(`   ${t.p.divisi_key.padEnd(12)} ${t.p.nama.slice(0, 36).padEnd(37)} ← ${t.e.id.padEnd(11)} ${(t.e.nama || "").slice(0, 24).padEnd(25)} [${t.sumber}]`);
   }
 
-  const belum = employee.filter((e) => !orangTertaut.has(e.id));
   console.log(`\nBELUM TERTAUT: ${belum.length} karyawan → butuh keputusan orang`);
   const perDept = {};
   for (const e of belum) (perDept[e.dept] ??= []).push(e);

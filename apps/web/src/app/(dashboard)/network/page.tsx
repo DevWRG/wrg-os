@@ -1,95 +1,45 @@
 import { gatewayFetch } from "@/lib/gateway";
 import { PageHeader } from "@/components/dashboard/page-header";
-import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { NetworkNodesTable, NetworkEdgesTable } from "@/components/tables/network-tables";
+import { KoordinasiView, type KoordGraf } from "@/components/picform/koordinasi-view";
 
 export const dynamic = "force-dynamic";
 
-interface GraphNode {
-  id: string;
-  type: string;
-  label: string;
-  degree: number;
-  frequency: number;
-}
-interface GraphEdge {
-  source: string;
-  target: string;
-  weight: number;
-}
-interface Graph {
-  summary: {
-    nodes: number;
-    edges: number;
-    components: number;
-    density: number;
-    by_type: Record<string, number>;
-  };
-  top_nodes: GraphNode[];
-  top_edges: GraphEdge[];
-}
-
-async function getGraph(): Promise<Graph | null> {
+// Spider Network — jaringan koordinasi antar posisi dari Tabel C form PIC
+// (posisi_koordinasi, migrasi 168).
+//
+// SUMBER HALAMAN INI BERPINDAH 2026-09-07, dan alasannya perlu bertahan:
+// sebelumnya ia merender /network/graph — graf co-occurrence ENTITY dari anotasi
+// A8 (node = entity + nama pengirim, edge = "muncul bersama dalam satu pesan").
+// Dua masalah sekaligus:
+//   1. `message_annotation` KOSONG di prod (0 baris), jadi halaman ini selama
+//      ini hanya menampilkan "Graf kosong. Jalankan A8 (anotasi) lalu A9.";
+//   2. graf entity itu bukan jaringan koordinasi organisasi, padahal itu yang
+//      dicari orang saat membuka menu bernama "Spider Network".
+//
+// Endpoint /network/graph dan apps/api/src/repo/network.ts SENGAJA TIDAK
+// DIHAPUS — A9 bisa dihidupkan kapan saja tanpa dibangun ulang. Yang berubah
+// hanya apa yang dirender di sini. Kalau A8/A9 nanti jalan dan graf entity-nya
+// mau ditampilkan lagi, tambahkan sebagai tab kedua, jangan tukar balik: dua
+// graf ini menjawab pertanyaan yang berbeda.
+async function getKoordinasi(): Promise<KoordGraf | null> {
   try {
-    const res = await gatewayFetch(`/network/graph`);
-    if (!res.ok) return null;
-    return (await res.json()) as Graph;
+    const res = await gatewayFetch("/picform/koordinasi");
+    return res.ok ? ((await res.json()) as KoordGraf) : null;
   } catch {
     return null;
   }
 }
 
 export default async function NetworkPage() {
-  const g = await getGraph();
+  const graf = await getKoordinasi();
 
   return (
     <>
       <PageHeader
         title="Spider Network"
-        description="Graf relasi entity↔pengirim hasil A9 (dari anotasi A8) — data live dari DB."
+        description="Jaringan koordinasi antar posisi & pihak eksternal — dari Tabel C form PIC Divisi (deklaratif, bukan hasil pengamatan chat). (F157)"
       />
-      {!g ? (
-        <p className="text-muted-foreground">
-          Data tidak tersedia. Pastikan <code>apps/api</code> jalan dengan <code>DATABASE_URL</code>.
-        </p>
-      ) : g.summary.nodes === 0 ? (
-        <p className="text-muted-foreground">Graf kosong. Jalankan A8 (anotasi) lalu A9.</p>
-      ) : (
-        <div className="space-y-6">
-          <div className="flex flex-wrap gap-2">
-            <Badge variant="outline">{g.summary.nodes} node</Badge>
-            <Badge variant="outline">{g.summary.edges} edge</Badge>
-            <Badge variant="outline">{g.summary.components} komponen</Badge>
-            <Badge variant="outline">density {g.summary.density}</Badge>
-            {Object.entries(g.summary.by_type).map(([t, n]) => (
-              <Badge key={t} variant="secondary">
-                {t}: {n}
-              </Badge>
-            ))}
-          </div>
-
-          <div className="grid gap-4 lg:grid-cols-2">
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-base">Node Tersentral</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <NetworkNodesTable nodes={g.top_nodes} />
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-base">Pasangan Terkuat</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <NetworkEdgesTable edges={g.top_edges} />
-              </CardContent>
-            </Card>
-          </div>
-        </div>
-      )}
+      <KoordinasiView graf={graf} />
     </>
   );
 }

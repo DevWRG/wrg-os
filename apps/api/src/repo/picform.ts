@@ -287,3 +287,204 @@ export async function listDivisi(): Promise<{ key: string; label: string }[]> {
   const rows = await sql`SELECT key, label FROM divisi ORDER BY seq`;
   return rows.map((r) => ({ key: r.key as string, label: r.label as string }));
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Graf koordinasi antar posisi (Tabel C form PIC) — pengisi menu Spider Network.
+//
+// KENAPA MENU ITU PINDAH SUMBER: /network sebelumnya merender graf co-occurrence
+// ENTITY dari anotasi A8 (repo/network.ts: node = entity + nama pengirim, edge =
+// "muncul bersama dalam satu pesan"). Dua hal membuatnya tak terpakai:
+//   1. `message_annotation` KOSONG di prod (0 baris) — halamannya menampilkan
+//      "Graf kosong. Jalankan A8 (anotasi) lalu A9.";
+//   2. graf itu bukan jaringan koordinasi organisasi sama sekali, padahal nama
+//      menunya ("Spider Network") dan harapan pembacanya ke arah situ.
+// repo/network.ts + endpoint /network/graph SENGAJA DIBIARKAN UTUH supaya A9
+// bisa dihidupkan kapan pun tanpa membangun ulang; yang berpindah hanya apa
+// yang dirender halaman.
+//
+// GRAFNYA CAMPUR SATUAN, DAN ITU MELEKAT DI SUMBERNYA. Node asal = POSISI
+// ('Admin Teknisi'), tapi node tujuan sudah dinormalisasi classifyRules ke
+// DIVISI ('aftersales') atau label eksternal. Jadi edge berbentuk posisi→divisi.
+//
+// Konsekuensi yang sempat saya salah tangani: uji "saling mengakui"
+// (resiprositas) MUSTAHIL menyala di level ini — sebuah divisi tak pernah
+// muncul sebagai asal, sehingga B→A tak akan pernah ada untuk A→B mana pun.
+// Versi pertama fungsi ini memasang flag `bolak_balik` per-edge dan hasilnya
+// selalu 0 dari 64; itu bukan temuan tentang organisasi, itu metrik mati.
+//
+// Ditangani dengan menyediakan DUA level, masing-masing dengan pertanyaan yang
+// memang bisa dijawabnya:
+//   • `edges`        — apa adanya dari form (posisi→tujuan). Setia pada sumber,
+//                      dipakai untuk menelusuri siapa berkoordinasi ke mana.
+//   • `edges_divisi` — asal ikut diangkat ke divisi-nya, jadi divisi↔divisi.
+//                      DI SINI resiprositas bermakna, dan `sepihak` menandai
+//                      pasangan yang cuma diakui satu sisi — itu justru sinyal
+//                      yang berguna: koordinasi yang dianggap ada oleh satu
+//                      divisi tapi tak dicatat divisi lawannya.
+export interface KoordNode {
+  id: string; label: string; grup: string; keluar: number; masuk: number; derajat: number;
+}
+export interface KoordEdge {
+  from: string; to: string; bobot: number; topik: string[];
+}
+export interface KoordEdgeDivisi {
+  from: string; to: string; bobot: number; bolak_balik: boolean; sepihak: boolean;
+}
+export interface KoordGraf {
+  ringkas: {
+    node: number; edge: number; baris: number;
+    internal: number; external: number; tak_terklasifikasi: number;
+    pasangan_divisi: number; pasangan_bolak_balik: number; pasangan_sepihak: number;
+  };
+  nodes: KoordNode[];
+  edges: KoordEdge[];
+  edges_divisi: KoordEdgeDivisi[];
+}
+
+export async function koordinasiGraf(opts: { divisi?: string } = {}): Promise<KoordGraf> {
+  const sql = db();
+  // Satu baris = satu pernyataan koordinasi. `dengan_key` bisa berupa divisi_key
+  // (internal), label eksternal (Customer/User, Vendor/Principal, Leadership),
+  // 'ALL', atau NULL kalau classifyRules tak mengenalinya.
+  const baris = await sql`
+    SELECT p.nama                                   AS dari,
+           p.divisi_key,
+           coalesce(k.dengan_key, k.dengan_raw)     AS ke,
+           k.dengan_key IS NULL                     AS tak_kenal,
+           k.dengan_grup,
+           k.apa,
+           k.pemicu
+      FROM posisi_koordinasi k
+      JOIN posisi p ON p.id = k.posisi_id
+     WHERE (${opts.divisi ?? null}::text IS NULL OR p.divisi_key = ${opts.divisi ?? null})`;
+
+  const node = new Map<string, KoordNode>();
+  const pakaiNode = (id: string, grup: string) => {
+    if (!node.has(id)) node.set(id, { id, label: id, grup, keluar: 0, masuk: 0, derajat: 0 });
+    return node.get(id)!;
+  };
+  const edge = new Map<string, KoordEdge>();
+  const edgeDiv = new Map<string, KoordEdgeDivisi>();
+
+  for (const r of baris) {
+    const dari = String(r.dari);
+    const ke = String(r.ke);
+    // Node asal SELALU 'posisi': ia memang sebuah posisi di form. Node tujuan
+    // pakai dengan_grup; NULL (mis. 'ALL') dilabeli tersendiri, bukan dipaksa
+    // internal — memaksanya akan menambah simpul palsu ke jaringan internal.
+    const a = pakaiNode(dari, "posisi");
+    const b = pakaiNode(ke, r.tak_kenal ? "tak-terklasifikasi" : ((r.dengan_grup as string | null) ?? "lain"));
+    a.keluar++; b.masuk++;
+    const k = `${dari}→${ke}`;
+    if (!edge.has(k)) edge.set(k, { from: dari, to: ke, bobot: 0, topik: [] });
+    const e = edge.get(k)!;
+    e.bobot++;
+    const topik = [r.apa, r.pemicu].filter(Boolean).join(" — ");
+    if (topik && e.topik.length < 8) e.topik.push(topik);
+
+    // Level divisi: asal diangkat dari posisi ke divisi-nya, supaya kedua ujung
+    // edge bersatuan sama dan resiprositas bisa diuji. Koordinasi di DALAM satu
+    // divisi (mis. Admin Teknisi → aftersales) dilewati — itu bukan pasangan
+    // antar-divisi, dan memasukkannya membuat tiap divisi terlihat "saling
+    // mengakui" dengan dirinya sendiri.
+    const dariDiv = String(r.divisi_key);
+    if (dariDiv !== ke) {
+      const kd = `${dariDiv}→${ke}`;
+      if (!edgeDiv.has(kd)) edgeDiv.set(kd, { from: dariDiv, to: ke, bobot: 0, bolak_balik: false, sepihak: false });
+      edgeDiv.get(kd)!.bobot++;
+    }
+  }
+  for (const n of node.values()) n.derajat = n.keluar + n.masuk;
+  for (const e of edgeDiv.values()) {
+    e.bolak_balik = edgeDiv.has(`${e.to}→${e.from}`);
+    // `sepihak` hanya bermakna untuk pasangan INTERNAL: pihak eksternal
+    // (Customer/User, Vendor/Principal, Leadership) tak punya form untuk
+    // mengakui balik, jadi menandainya sepihak akan menuduh tanpa dasar.
+    e.sepihak = !e.bolak_balik && node.get(e.to)?.grup === "internal";
+  }
+
+  const nodes = [...node.values()].sort((x, y) => y.derajat - x.derajat || x.id.localeCompare(y.id));
+  const edges = [...edge.values()].sort((x, y) => y.bobot - x.bobot || x.from.localeCompare(y.from));
+  const edgesDivisi = [...edgeDiv.values()].sort((x, y) => y.bobot - x.bobot || x.from.localeCompare(y.from));
+  return {
+    ringkas: {
+      node: nodes.length,
+      edge: edges.length,
+      baris: baris.length,
+      internal: nodes.filter((n) => n.grup === "internal").length,
+      external: nodes.filter((n) => n.grup === "external").length,
+      tak_terklasifikasi: nodes.filter((n) => n.grup === "tak-terklasifikasi").length,
+      pasangan_divisi: edgesDivisi.length,
+      pasangan_bolak_balik: edgesDivisi.filter((e) => e.bolak_balik).length,
+      pasangan_sepihak: edgesDivisi.filter((e) => e.sepihak).length,
+    },
+    nodes,
+    edges,
+    edges_divisi: edgesDivisi,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Rantai orang → posisi → proses, + karyawan yang BELUM tertaut beserta alasannya.
+//
+// Dipakai /people/raci sebagai bagian TAMBAHAN di bawah matriks F120 yang sudah
+// ada — bukan penggantinya. F120 menjawab "orang ini terlibat di proses apa"
+// (grain karyawan, turunan transkrip); bagian ini menjawab "orang ini memegang
+// posisi apa, dan posisi itu bertanggung jawab atas proses apa" (grain posisi,
+// dari form PIC). Dua pertanyaan berbeda atas dua sumber berbeda.
+export interface RantaiRow {
+  employee_id: string; karyawan: string; panggilan: string | null; dept: string | null;
+  cabang: string | null; role_roster: string | null;
+  posisi_id: number; posisi: string; jumlah_orang: number | null;
+  divisi_key: string; divisi: string; sumber: string; dasar_tautan: string | null;
+  proses: number;
+}
+export interface GapRow {
+  employee_id: string; karyawan: string; panggilan: string | null;
+  dept: string | null; role_roster: string | null; alasan: string; kandidat: string | null;
+}
+export interface RaciKaryawan {
+  ringkas: { karyawan_total: number; tertaut: number; belum: number; baris_tautan: number };
+  rantai: RantaiRow[];
+  gap: GapRow[];
+}
+
+export async function raciKaryawanPosisi(): Promise<RaciKaryawan> {
+  const sql = db();
+  const rantai = await sql`SELECT * FROM v_raci_karyawan_posisi`;
+  const gap = await sql`
+    SELECT g.employee_id, e.nama AS karyawan, e.panggilan, e.dept,
+           e.role AS role_roster, g.alasan, g.kandidat
+      FROM employee_posisi_gap g JOIN employee e ON e.id = g.employee_id
+     ORDER BY e.dept, e.nama`;
+  const [{ n: total }] = await sql`SELECT count(*)::int AS n FROM employee`;
+
+  // `tertaut` dihitung dari karyawan UNIK, bukan jumlah baris — Enggar & Nopa
+  // masing-masing punya 2 baris (merangkap), jadi menghitung baris akan
+  // melaporkan lebih banyak orang daripada yang sebenarnya ada.
+  const unik = new Set(rantai.map((r) => String(r.employee_id)));
+  return {
+    ringkas: {
+      karyawan_total: Number(total),
+      tertaut: unik.size,
+      belum: gap.length,
+      baris_tautan: rantai.length,
+    },
+    rantai: rantai.map((r) => ({
+      employee_id: r.employee_id as string, karyawan: r.karyawan as string,
+      panggilan: (r.panggilan as string | null) ?? null, dept: (r.dept as string | null) ?? null,
+      cabang: (r.cabang as string | null) ?? null, role_roster: (r.role_roster as string | null) ?? null,
+      posisi_id: Number(r.posisi_id), posisi: r.posisi as string,
+      jumlah_orang: r.jumlah_orang == null ? null : Number(r.jumlah_orang),
+      divisi_key: r.divisi_key as string, divisi: r.divisi as string,
+      sumber: r.sumber as string, dasar_tautan: (r.dasar_tautan as string | null) ?? null,
+      proses: Number(r.proses),
+    })),
+    gap: gap.map((g) => ({
+      employee_id: g.employee_id as string, karyawan: g.karyawan as string,
+      panggilan: (g.panggilan as string | null) ?? null, dept: (g.dept as string | null) ?? null,
+      role_roster: (g.role_roster as string | null) ?? null,
+      alasan: g.alasan as string, kandidat: (g.kandidat as string | null) ?? null,
+    })),
+  };
+}
