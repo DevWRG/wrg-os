@@ -224,7 +224,7 @@ import {
   isMirrorSort,
 } from "./repo/accurateMirror.js";
 import { listWarehouses, listStockBranch, stockBranchSummary } from "./repo/stock-branch.js";
-import { picFormSummary, listSopLangkah, listRaciPosisi, picFormKelengkapan, listDivisi } from "./repo/picform.js";
+import { picFormSummary, listSopLangkah, listRaciPosisi, picFormKelengkapan, listDivisi, koordinasiGraf, raciKaryawanPosisi } from "./repo/picform.js";
 import { recordDelivery, recordEmail, recordAlert, listLogs } from "./repo/logs.js";
 import { renderSalesDocHtml, renderBriefingHtml } from "./repo/exportdoc.js";
 import { runHodDaily } from "./repo/hodreminder.js";
@@ -4319,6 +4319,25 @@ app.get("/picform/kelengkapan", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const rows = await picFormKelengkapan();
   return c.json({ count: rows.length, rows });
+});
+
+// Graf koordinasi antar posisi (Tabel C) — isi menu Spider Network. Jalur A9
+// lama (/network/graph dari message_annotation) TIDAK dihapus; lihat komentar
+// koordinasiGraf() di repo/picform.ts.
+app.get("/picform/koordinasi", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const divisi = c.req.query("divisi");
+  if (divisi && !(await listDivisi()).some((d) => d.key === divisi)) {
+    return c.json({ error: `divisi tak dikenal: ${divisi}` }, 400);
+  }
+  return c.json(await koordinasiGraf({ divisi: divisi ?? undefined }));
+});
+
+// Rantai orang → posisi → proses + karyawan yang belum tertaut beserta
+// alasannya (employee_posisi_gap, ditulis posisi-employee-match.mjs).
+app.get("/picform/raci-karyawan", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await raciKaryawanPosisi());
 });
 
 // ── Log operasional: delivery / email / alert (port legacy *_log) ──
