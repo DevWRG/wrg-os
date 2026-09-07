@@ -905,6 +905,22 @@ export async function updateDeal(dealId: string, scope: DataScope, input: Record
   if (fields.customer_name != null) fields.customer_id = custId(String(fields.customer_name));
   applyEstimate(fields);
   await sql`UPDATE deal SET ${sql(fields)}, updated_at = now() WHERE deal_id = ${dealId}`;
+  // F9: createDeal cek duplikat nama saat dibuat — edit nama customer (typo diperbaiki jadi
+  // sama persis dgn customer lain, atau sengaja diganti) harus ikut kena cek yang sama,
+  // bukan cuma jalur create (issue ditemukan QA 2026-09-07: edit adalah cara termudah
+  // menghindar dari alert F9).
+  if (fields.customer_name != null) {
+    try {
+      await flagDuplicateCustomerName(
+        dealId,
+        String(fields.customer_name),
+        (fields.am_id ?? deal.am_id) == null ? null : String(fields.am_id ?? deal.am_id),
+        (fields.cabang ?? deal.cabang) == null ? null : String(fields.cabang ?? deal.cabang),
+      );
+    } catch (e) {
+      console.error("F9 dup-check gagal (non-fatal):", e);
+    }
+  }
   return { deal_id: dealId, stage: String(cur[0].stage) };
 }
 
