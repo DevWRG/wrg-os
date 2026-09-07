@@ -58,15 +58,15 @@ export function KoordinasiView({ graf }: { graf: KoordGraf | null }) {
       id: "grup", header: "Jenis", accessor: (n) => n.grup,
       cell: (n) => <span className={chip(n.grup)}>{n.grup}</span>,
     },
-    { id: "keluar", header: "Menyatakan", align: "right", accessor: (n) => n.keluar, searchable: false },
-    { id: "masuk", header: "Disebut", align: "right", accessor: (n) => n.masuk, searchable: false },
-    { id: "derajat", header: "Total", align: "right", accessor: (n) => n.derajat, searchable: false },
+    { id: "keluar", header: "Menyatakan", align: "right", accessor: (n) => n.keluar },
+    { id: "masuk", header: "Disebut", align: "right", accessor: (n) => n.masuk },
+    { id: "derajat", header: "Total", align: "right", accessor: (n) => n.derajat },
   ];
 
   const kolomEdge: DataColumn<KoordEdge>[] = [
     { id: "from", header: "Posisi", accessor: (e) => e.from },
     { id: "to", header: "Berkoordinasi dengan", accessor: (e) => e.to },
-    { id: "bobot", header: "Baris", align: "right", accessor: (e) => e.bobot, searchable: false },
+    { id: "bobot", header: "Baris", align: "right", accessor: (e) => e.bobot },
     {
       id: "topik", header: "Yang dikoordinasikan", accessor: (e) => e.topik.join(" · "),
       cell: (e) => (
@@ -81,7 +81,7 @@ export function KoordinasiView({ graf }: { graf: KoordGraf | null }) {
   const kolomDivisi: DataColumn<KoordEdgeDivisi>[] = [
     { id: "from", header: "Divisi", accessor: (e) => e.from },
     { id: "to", header: "→ Pihak", accessor: (e) => e.to },
-    { id: "bobot", header: "Baris", align: "right", accessor: (e) => e.bobot, searchable: false },
+    { id: "bobot", header: "Baris", align: "right", accessor: (e) => e.bobot },
     {
       id: "status", header: "Pengakuan", accessor: (e) => (e.bolak_balik ? "bolak-balik" : e.sepihak ? "sepihak" : "eksternal"),
       cell: (e) =>

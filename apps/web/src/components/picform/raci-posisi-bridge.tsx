@@ -60,7 +60,7 @@ export function RaciPosisiBridge({ data }: { data: RaciKaryawan | null }) {
     { id: "divisi", header: "Divisi (form)", accessor: (x) => x.divisi },
     { id: "posisi", header: "Posisi", accessor: (x) => x.posisi },
     {
-      id: "proses", header: "Proses", align: "right", searchable: false,
+      id: "proses", header: "Proses", align: "right",
       accessor: (x) => x.proses,
       cell: (x) => <span className="tabular-nums">{x.proses}</span>,
     },
