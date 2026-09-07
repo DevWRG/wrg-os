@@ -224,6 +224,7 @@ import {
   isMirrorSort,
 } from "./repo/accurateMirror.js";
 import { listWarehouses, listStockBranch, stockBranchSummary } from "./repo/stock-branch.js";
+import { picFormSummary, listSopLangkah, listRaciPosisi, picFormKelengkapan, listDivisi } from "./repo/picform.js";
 import { recordDelivery, recordEmail, recordAlert, listLogs } from "./repo/logs.js";
 import { renderSalesDocHtml, renderBriefingHtml } from "./repo/exportdoc.js";
 import { runHodDaily } from "./repo/hodreminder.js";
@@ -4255,6 +4256,69 @@ app.get("/stock/branch", async (c) => {
 app.get("/stock/branch/summary", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json(await stockBranchSummary());
+});
+
+// ── Form PIC Divisi (migrasi 168/170/171) — SEMUA read-only ──
+// Datanya masuk lewat scripts/ops/pic-form-*, bukan HTTP; tak ada POST di sini.
+app.get("/picform/summary", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await picFormSummary());
+});
+
+app.get("/picform/divisi", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listDivisi();
+  return c.json({ count: rows.length, divisi: rows });
+});
+
+// `kondisi`/`target` menerima 4 level resmi ATAU sentinel 'BELUM' (= NULL).
+// Divalidasi supaya salah ketik tidak balik "0 baris" yang terlihat seperti
+// "memang tak ada" — pola sama validasi `warehouse` di /stock/branch.
+const LEVEL_SAH = ["Manual", "Digitalisasi", "Otomasi", "AI", "BELUM"];
+app.get("/picform/sop-langkah", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const kondisi = c.req.query("kondisi");
+  const target = c.req.query("target");
+  for (const [nama, v] of [["kondisi", kondisi], ["target", target]] as const) {
+    if (v && !LEVEL_SAH.includes(v)) {
+      return c.json({ error: `${nama} tak dikenal: ${v}`, valid: LEVEL_SAH }, 400);
+    }
+  }
+  const divisi = c.req.query("divisi");
+  if (divisi && !(await listDivisi()).some((d) => d.key === divisi)) {
+    return c.json({ error: `divisi tak dikenal: ${divisi}` }, 400);
+  }
+  const out = await listSopLangkah({
+    q: c.req.query("q") ?? undefined,
+    divisi: divisi ?? undefined,
+    kondisi: kondisi ?? undefined,
+    target: target ?? undefined,
+    targetKosong: c.req.query("target_kosong") === "1",
+    limit: c.req.query("limit") ? Number(c.req.query("limit")) : undefined,
+    offset: c.req.query("offset") ? Number(c.req.query("offset")) : undefined,
+  });
+  return c.json({ count: out.rows.length, total_rows: out.total_rows, rows: out.rows });
+});
+
+app.get("/picform/raci", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const divisi = c.req.query("divisi");
+  if (divisi && !(await listDivisi()).some((d) => d.key === divisi)) {
+    return c.json({ error: `divisi tak dikenal: ${divisi}` }, 400);
+  }
+  const out = await listRaciPosisi({
+    q: c.req.query("q") ?? undefined,
+    divisi: divisi ?? undefined,
+    limit: c.req.query("limit") ? Number(c.req.query("limit")) : undefined,
+    offset: c.req.query("offset") ? Number(c.req.query("offset")) : undefined,
+  });
+  return c.json({ count: out.rows.length, total_rows: out.total_rows, rows: out.rows });
+});
+
+app.get("/picform/kelengkapan", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await picFormKelengkapan();
+  return c.json({ count: rows.length, rows });
 });
 
 // ── Log operasional: delivery / email / alert (port legacy *_log) ──
