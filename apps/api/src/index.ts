@@ -196,6 +196,7 @@ import {
   listTenders as listLpseTenders,
   getTender as getLpseTender,
   createTender as createLpseTender,
+  updateTender as updateLpseTender,
   advanceStatus as advanceLpseTenderStatus,
   getTenderTimeline as getLpseTenderTimeline,
   runLpseTenderReminder,
@@ -3334,6 +3335,13 @@ app.post("/lpse-tender", async (c) => {
   const result = await createLpseTender({ ...body, created_by_user_id: c.req.header("x-user-id") ?? null });
   if ("ok" in result && !result.ok) return c.json({ error: result.error }, 400);
   return c.json({ tender: result }, 201);
+});
+app.patch("/lpse-tender/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const body = await c.req.json().catch(() => ({}));
+  const result = await updateLpseTender(c.req.param("id"), body);
+  if ("ok" in result && !result.ok) return c.json({ error: result.error }, 400);
+  return c.json({ tender: result });
 });
 app.post("/lpse-tender/:id/advance", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);

@@ -50,7 +50,7 @@ export function LpseTenderView({ tenders, employees }: { tenders: LpseTender[]; 
           ) : filtered.length === 0 ? (
             <EmptyState title="Tak ada tender yang cocok filter" description="Coba ganti filter status." />
           ) : (
-            <LpseTenderTable tenders={filtered} />
+            <LpseTenderTable tenders={filtered} employees={employees} />
           )}
         </CardContent>
       </Card>

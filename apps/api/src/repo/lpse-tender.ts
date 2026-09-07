@@ -110,10 +110,12 @@ export async function createTender(input: CreateTenderInput): Promise<LpseTender
     if (!dept) return { ok: false, error: "dept tidak ditemukan" };
   }
 
-  if (input.pic_employee_id) {
-    const [pic] = await sql`SELECT 1 FROM employee WHERE id = ${input.pic_employee_id}`;
-    if (!pic) return { ok: false, error: "pic_employee_id tidak ditemukan" };
-  }
+  // PIC dulu opsional — tender jadi tak ada penanggung jawab & tak bisa
+  // diisi belakangan (tak ada jalur edit sama sekali sebelum ini). Sekarang
+  // wajib saat dibuat (ditemukan user 2026-09-07).
+  if (!input.pic_employee_id?.trim()) return { ok: false, error: "pic_employee_id wajib" };
+  const [pic] = await sql`SELECT 1 FROM employee WHERE id = ${input.pic_employee_id}`;
+  if (!pic) return { ok: false, error: "pic_employee_id tidak ditemukan" };
 
   const rows = await sql`
     INSERT INTO lpse_tender (tender_no, judul, instansi, platform, pic_employee_id, dept, notes, created_by_user_id)
@@ -125,6 +127,71 @@ export async function createTender(input: CreateTenderInput): Promise<LpseTender
     RETURNING id
   `;
   return (await getTender(String(rows[0].id))) as LpseTenderRow;
+}
+
+export interface UpdateTenderInput {
+  tender_no?: string | null;
+  judul?: string;
+  instansi?: string;
+  platform?: string;
+  pic_employee_id?: string;
+  dept?: string | null;
+  notes?: string | null;
+}
+
+// Sebelumnya TIDAK ADA jalur edit sama sekali — tender yang dibuat tanpa PIC
+// (waktu itu masih opsional) tak pernah bisa ditambal, cuma bisa maju status.
+// Ditemukan user 2026-09-07 bareng temuan "PIC harusnya wajib".
+export async function updateTender(id: string, input: UpdateTenderInput): Promise<LpseTenderRow | ActionResult> {
+  const sql = db();
+  const current = await sql`SELECT * FROM lpse_tender WHERE id = ${id}`;
+  if (current.length === 0) return { ok: false, error: "tender tidak ditemukan" };
+
+  const judul = input.judul !== undefined ? input.judul.trim() : String(current[0].judul);
+  const instansi = input.instansi !== undefined ? input.instansi.trim() : String(current[0].instansi);
+  if (!judul || !instansi) return { ok: false, error: "judul & instansi wajib" };
+  // Cap panjang cuma berlaku kalau NILAINYA memang berubah — form web full-edit
+  // selalu resend judul/instansi apa adanya (bukan cuma field yg disentuh
+  // user), jadi cek "!== undefined" saja tak cukup: histori lama yg lebih
+  // panjang dari cap ini (dibuat sebelum cap ada) akan ke-resend utuh cuma
+  // krn user sekadar nambal PIC, dan itu HARUS tetap boleh lewat — yang
+  // dikunci di sini "biarkan histori jelek, jangan tolak edit LAIN".
+  if (judul !== String(current[0].judul) && judul.length > 200) return { ok: false, error: "judul maksimal 200 karakter" };
+  if (instansi !== String(current[0].instansi) && instansi.length > 200) return { ok: false, error: "instansi maksimal 200 karakter" };
+
+  const platform = input.platform ?? String(current[0].platform);
+  if (!["lpse", "e_catalog"].includes(platform)) return { ok: false, error: "platform harus lpse atau e_catalog" };
+
+  // PIC wajib (sama seperti create) — tak boleh dikosongkan lewat edit,
+  // itu justru jalan pintas balik ke keadaan yang mau ditutup fix ini.
+  const picEmployeeId = input.pic_employee_id !== undefined ? input.pic_employee_id.trim() : String(current[0].pic_employee_id ?? "");
+  if (!picEmployeeId) return { ok: false, error: "pic_employee_id wajib" };
+  if (picEmployeeId !== current[0].pic_employee_id) {
+    const [pic] = await sql`SELECT 1 FROM employee WHERE id = ${picEmployeeId}`;
+    if (!pic) return { ok: false, error: "pic_employee_id tidak ditemukan" };
+  }
+
+  const dept = input.dept !== undefined ? input.dept : (current[0].dept as string | null);
+  if (dept && dept !== current[0].dept) {
+    const [d] = await sql`SELECT 1 FROM department WHERE key = ${dept}`;
+    if (!d) return { ok: false, error: "dept tidak ditemukan" };
+  }
+
+  const tenderNo = input.tender_no !== undefined ? (input.tender_no?.trim() || null) : (current[0].tender_no as string | null);
+  if (tenderNo && tenderNo !== current[0].tender_no) {
+    const [dup] = await sql`SELECT 1 FROM lpse_tender WHERE tender_no = ${tenderNo} AND id != ${id}`;
+    if (dup) return { ok: false, error: `tender_no "${tenderNo}" sudah dipakai pengadaan lain` };
+  }
+
+  const notes = input.notes !== undefined ? input.notes : (current[0].notes as string | null);
+
+  await sql`
+    UPDATE lpse_tender SET
+      tender_no = ${tenderNo}, judul = ${judul}, instansi = ${instansi}, platform = ${platform},
+      pic_employee_id = ${picEmployeeId}, dept = ${dept}, notes = ${notes}, updated_at = now()
+    WHERE id = ${id}
+  `;
+  return (await getTender(id)) as LpseTenderRow;
 }
 
 // ── State machine — forward-only, pesan_masuk -> barang_dikirim -> selesai.
