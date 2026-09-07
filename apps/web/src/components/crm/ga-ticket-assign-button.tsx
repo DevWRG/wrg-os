@@ -21,6 +21,13 @@ export interface TeknisiOption {
 }
 
 const NONE = "__none__";
+// PIC sementara "Dito Anggara" — sudah ada data karyawan di master (employee),
+// TAPI menautkannya ke sini (app_user) di luar kewenangan magang (HR/roster
+// off-limit). Quick-pick manual: isi assignee_name_override bebas, bukan
+// user_id sungguhan. Ditambahkan atas permintaan user 2026-09-07 (pola sama
+// F132/F52).
+const DITO = "__dito_anggara__";
+const DITO_NAMA = "Dito Anggara";
 
 export function GaTicketAssignButton({
   ticketId, currentName, users, teknisi,
@@ -70,15 +77,35 @@ export function GaTicketAssignButton({
           <DialogBody className="grid gap-3">
             <div className="grid gap-1.5">
               <Label>User terdaftar</Label>
-              <Select value={userId || NONE} onValueChange={(v) => setUserId(v === NONE ? "" : (v ?? ""))}>
+              <Select
+                value={userId || (!userId && name === DITO_NAMA ? DITO : NONE)}
+                onValueChange={(v) => {
+                  if (v === DITO) {
+                    setUserId("");
+                    setName(DITO_NAMA);
+                  } else {
+                    setUserId(v === NONE ? "" : (v ?? ""));
+                    if (name === DITO_NAMA) setName("");
+                  }
+                }}
+              >
                 <SelectTrigger className="w-full">
-                  <SelectValue placeholder="Pilih user">{(v: string) => (v === NONE ? "Pilih user" : users.find((u) => u.id === v)?.name ?? v)}</SelectValue>
+                  <SelectValue placeholder="Pilih user">
+                    {(v: string) => (v === NONE ? "Pilih user" : v === DITO ? DITO_NAMA : (users.find((u) => u.id === v)?.name ?? v))}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value={NONE}>— tidak pilih —</SelectItem>
                   {users.map((u) => <SelectItem key={u.id} value={u.id}>{u.name ?? u.id}</SelectItem>)}
+                  <SelectItem value={DITO}>{DITO_NAMA} (PIC sementara)</SelectItem>
                 </SelectContent>
               </Select>
+              {!userId && name === DITO_NAMA && (
+                <p className="text-muted-foreground text-xs italic">
+                  Catatan: &quot;{DITO_NAMA}&quot; ditambahkan manual sbg PIC sementara — sudah ada data karyawannya
+                  di master, tapi menautkannya di luar kewenangan magang (HR/roster off-limit).
+                </p>
+              )}
               {teknisi.length > 0 && (
                 <>
                   <p className="text-muted-foreground text-xs">Atau pilih dari roster Teknisi (F8):</p>
