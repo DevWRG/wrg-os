@@ -3,6 +3,7 @@
 import { Badge } from "@/components/ui/badge";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
 import { ItTicketRowActions } from "@/components/crm/it-ticket-row-actions";
+import type { AppUserOption } from "@/components/crm/add-it-ticket-button";
 
 export interface ItTicket {
   id: string;
@@ -14,6 +15,7 @@ export interface ItTicket {
   status: string;
   reported_by: string | null;
   assigned_to: string | null;
+  assigned_to_user_id: string | null;
   sla_due_at: string;
   sla_overdue: boolean;
   resolved_at: string | null;
@@ -26,7 +28,7 @@ const statusTone = (s: string): "default" | "secondary" | "destructive" | "outli
 const fmtDateTime = (iso: string) =>
   new Date(iso).toLocaleString("id-ID", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
 
-export function ItTicketsTable({ tickets }: { tickets: ItTicket[] }) {
+export function ItTicketsTable({ tickets, users = [] }: { tickets: ItTicket[]; users?: AppUserOption[] }) {
   const columns: DataColumn<ItTicket>[] = [
     {
       id: "aset",
@@ -62,7 +64,7 @@ export function ItTicketsTable({ tickets }: { tickets: ItTicket[] }) {
           <span className="text-xs">batas {fmtDateTime(t.sla_due_at)}</span>
         ),
     },
-    { id: "aksi", header: "Aksi", align: "right", cell: (t) => <ItTicketRowActions ticket={t} /> },
+    { id: "aksi", header: "Aksi", align: "right", cell: (t) => <ItTicketRowActions ticket={t} users={users} /> },
   ];
 
   return (

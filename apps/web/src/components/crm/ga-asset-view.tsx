@@ -125,7 +125,7 @@ export function GaAssetView({
                   description={activeAssets.length === 0 ? 'Belum ada aset aktif — tambah dulu di tab "Aset".' : 'Klik "Buat Tiket" untuk mulai.'}
                 />
               ) : (
-                <ItTicketsTable tickets={tickets} />
+                <ItTicketsTable tickets={tickets} users={users} />
               )}
             </CardContent>
           </Card>
