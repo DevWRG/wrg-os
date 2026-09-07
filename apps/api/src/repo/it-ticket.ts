@@ -238,7 +238,9 @@ export async function updateTicketStatus(id: string, input: ItTicketStatusInput)
         WHEN ${newText}::text IS NOT NULL THEN NULL
         ELSE assigned_to_user_id END,
       resolved_at = CASE WHEN ${input.status} = 'resolved' THEN now() ELSE resolved_at END,
-      resolved_note = COALESCE(${input.resolved_note ?? null}, resolved_note),
+      -- pakai cek !== undefined (bukan COALESCE thd null) supaya resolved_note
+      -- opsional bisa dikosongkan lewat null eksplisit, sapuan 2026-09-07.
+      resolved_note = ${input.resolved_note !== undefined ? input.resolved_note : sql`resolved_note`},
       updated_at = now()
     WHERE id = ${id}
   `;
