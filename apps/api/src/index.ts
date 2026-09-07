@@ -6865,10 +6865,13 @@ app.get("/ga-ticket-categories", async (c) => {
 // constraint Postgres mentah (app.onError gak reformat). Sama pola temuan
 // F132/F53/F137.
 const GA_TICKET_PRIORITIES = ["low", "medium", "high", "critical"];
+// DB CHECK (migrasi 092) cuma > 0, tak ada batas atas — SLA kategori tiket
+// helpdesk realistisnya tak mungkin lebih dari 30 hari (720 jam). Pola sama
+// F24 interval_bulan / F8 max_concurrent_jobs (sapuan 2026-09-07).
 function validateGaTicketSlaHours(hours: unknown): string | null {
   if (hours == null) return null;
   const n = Number(hours);
-  return Number.isFinite(n) && n > 0 ? null : "sla_hours harus angka > 0";
+  return Number.isFinite(n) && n > 0 && n <= 720 ? null : "sla_hours harus angka 1-720 (maks 30 hari)";
 }
 
 app.post("/ga-ticket-categories", async (c) => {
