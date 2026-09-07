@@ -43,16 +43,16 @@ export function LpseTenderTable({ tenders }: { tenders: LpseTender[] }) {
       sortable: true,
       accessor: (t) => t.judul,
       cell: (t) => (
-        <div>
-          <div className="font-medium">{t.judul}</div>
-          <div className="text-muted-foreground text-xs">
+        <div className="max-w-[20rem]">
+          <div className="truncate font-medium" title={t.judul}>{t.judul}</div>
+          <div className="text-muted-foreground truncate text-xs">
             {t.tender_no ? `${t.tender_no} · ` : ""}
             {PLATFORM_LABEL[t.platform] ?? t.platform}
           </div>
         </div>
       ),
     },
-    { id: "instansi", header: "Instansi", sortable: true, accessor: (t) => t.instansi },
+    { id: "instansi", header: "Instansi", sortable: true, accessor: (t) => t.instansi, cell: (t) => <span className="block max-w-[12rem] truncate" title={t.instansi}>{t.instansi}</span> },
     {
       id: "pic",
       header: "PIC",
