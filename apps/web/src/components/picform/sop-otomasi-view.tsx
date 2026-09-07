@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
@@ -103,7 +103,15 @@ function Kpi({ label, nilai, catatan }: { label: string; nilai: string; catatan?
 }
 
 const LIMIT = 50;
-type Halaman<T> = { rows: T[]; total_rows: number };
+
+/** Hasil satu halaman + `kunci` kombinasi filter/paginasi yang menghasilkannya.
+ *
+ *  `kunci` bukan hiasan: ia membuat status "sedang memuat" jadi TURUNAN
+ *  (`data.kunci !== kunciSekarang`) alih-alih state yang di-set di dalam
+ *  useEffect — yang dilarang react-hooks/set-state-in-effect. Sekalian ia
+ *  membuang balapan respons: jawaban yang datang untuk kunci lama tak bisa
+ *  menimpa jawaban kunci baru. */
+type Halaman<T> = { kunci: string; rows: T[]; total_rows: number };
 
 export function SopOtomasiView({
   summary, divisiOpts, kelengkapan,
@@ -119,69 +127,79 @@ export function SopOtomasiView({
   const [q, setQ] = useState("");
   const [page, setPage] = useState(0);
   const [size, setSize] = useState(LIMIT);
-  const [langkah, setLangkah] = useState<Halaman<LangkahRow>>({ rows: [], total_rows: 0 });
-  const [muat, setMuat] = useState(false);
+  const [langkah, setLangkah] = useState<Halaman<LangkahRow>>({ kunci: "", rows: [], total_rows: 0 });
   const [galat, setGalat] = useState<string | null>(null);
 
-  const ambilLangkah = useCallback(async () => {
-    setMuat(true);
-    setGalat(null);
-    const p = new URLSearchParams({ limit: String(size), offset: String(page * size) });
-    if (q.trim()) p.set("q", q.trim());
-    if (fDivisi) p.set("divisi", fDivisi);
-    if (fKondisi) p.set("kondisi", fKondisi);
-    if (fTarget) p.set("target", fTarget);
-    try {
-      const r = await fetch(`/api/picform/sop-langkah?${p}`);
-      const j = (await r.json()) as Halaman<LangkahRow> & { error?: string };
-      if (!r.ok) throw new Error(j.error ?? `HTTP ${r.status}`);
-      setLangkah({ rows: j.rows ?? [], total_rows: j.total_rows ?? 0 });
-    } catch (e) {
-      // Galat dirender DI DEKAT tabelnya, bukan di atas halaman — supaya tak
-      // terbaca sebagai kegagalan seluruh halaman saat tab lain masih sehat.
-      setGalat(e instanceof Error ? e.message : "gagal memuat");
-      setLangkah({ rows: [], total_rows: 0 });
-    } finally {
-      setMuat(false);
-    }
-  }, [q, fDivisi, fKondisi, fTarget, page, size]);
+  const kunciLangkah = [q.trim(), fDivisi, fKondisi, fTarget, page, size].join("|");
+  const muat = langkah.kunci !== kunciLangkah;
 
-  useEffect(() => { void ambilLangkah(); }, [ambilLangkah]);
-  // Ganti filter → balik ke halaman 1. Tanpa ini orang bisa terjebak di
-  // halaman 5 dari hasil filter yang cuma punya 1 halaman, dan tabelnya kosong
-  // tanpa penjelasan.
-  useEffect(() => { setPage(0); }, [q, fDivisi, fKondisi, fTarget]);
+  useEffect(() => {
+    const ac = new AbortController();
+    void (async () => {
+      const p = new URLSearchParams({ limit: String(size), offset: String(page * size) });
+      if (q.trim()) p.set("q", q.trim());
+      if (fDivisi) p.set("divisi", fDivisi);
+      if (fKondisi) p.set("kondisi", fKondisi);
+      if (fTarget) p.set("target", fTarget);
+      try {
+        const r = await fetch(`/api/picform/sop-langkah?${p}`, { signal: ac.signal });
+        const j = (await r.json()) as { rows?: LangkahRow[]; total_rows?: number; error?: string };
+        if (ac.signal.aborted) return;
+        if (!r.ok) throw new Error(j.error ?? `HTTP ${r.status}`);
+        setGalat(null);
+        setLangkah({ kunci: kunciLangkah, rows: j.rows ?? [], total_rows: j.total_rows ?? 0 });
+      } catch (e) {
+        if (ac.signal.aborted) return;
+        // Galat dirender DI DEKAT tabelnya, bukan di atas halaman — supaya tak
+        // terbaca sebagai kegagalan seluruh halaman saat tab lain masih sehat.
+        setGalat(e instanceof Error ? e.message : "gagal memuat");
+        // kunci tetap dipasang supaya status "memuat" berhenti; tanpa itu tabel
+        // tergantung meredup selamanya sesudah satu galat.
+        setLangkah({ kunci: kunciLangkah, rows: [], total_rows: 0 });
+      }
+    })();
+    return () => ac.abort();
+  }, [kunciLangkah, q, fDivisi, fKondisi, fTarget, page, size]);
+
+  // Ganti filter → balik ke halaman 1, dikerjakan DI HANDLER, bukan lewat
+  // useEffect. Tanpa reset, orang bisa terjebak di halaman 5 dari hasil filter
+  // yang cuma punya 1 halaman dan tabelnya kosong tanpa penjelasan.
+  const gantiLangkah = (set: (v: string) => void) => (v: string) => { set(v); setPage(0); };
 
   // ── tab RACI posisi ──
   const [rDivisi, setRDivisi] = useState("");
   const [rq, setRq] = useState("");
   const [rPage, setRPage] = useState(0);
   const [rSize, setRSize] = useState(LIMIT);
-  const [raci, setRaci] = useState<Halaman<RaciRow>>({ rows: [], total_rows: 0 });
-  const [rMuat, setRMuat] = useState(false);
+  const [raci, setRaci] = useState<Halaman<RaciRow>>({ kunci: "", rows: [], total_rows: 0 });
   const [rGalat, setRGalat] = useState<string | null>(null);
 
-  const ambilRaci = useCallback(async () => {
-    setRMuat(true);
-    setRGalat(null);
-    const p = new URLSearchParams({ limit: String(rSize), offset: String(rPage * rSize) });
-    if (rq.trim()) p.set("q", rq.trim());
-    if (rDivisi) p.set("divisi", rDivisi);
-    try {
-      const r = await fetch(`/api/picform/raci?${p}`);
-      const j = (await r.json()) as Halaman<RaciRow> & { error?: string };
-      if (!r.ok) throw new Error(j.error ?? `HTTP ${r.status}`);
-      setRaci({ rows: j.rows ?? [], total_rows: j.total_rows ?? 0 });
-    } catch (e) {
-      setRGalat(e instanceof Error ? e.message : "gagal memuat");
-      setRaci({ rows: [], total_rows: 0 });
-    } finally {
-      setRMuat(false);
-    }
-  }, [rq, rDivisi, rPage, rSize]);
+  const kunciRaci = [rq.trim(), rDivisi, rPage, rSize].join("|");
+  const rMuat = raci.kunci !== kunciRaci;
 
-  useEffect(() => { void ambilRaci(); }, [ambilRaci]);
-  useEffect(() => { setRPage(0); }, [rq, rDivisi]);
+  useEffect(() => {
+    const ac = new AbortController();
+    void (async () => {
+      const p = new URLSearchParams({ limit: String(rSize), offset: String(rPage * rSize) });
+      if (rq.trim()) p.set("q", rq.trim());
+      if (rDivisi) p.set("divisi", rDivisi);
+      try {
+        const r = await fetch(`/api/picform/raci?${p}`, { signal: ac.signal });
+        const j = (await r.json()) as { rows?: RaciRow[]; total_rows?: number; error?: string };
+        if (ac.signal.aborted) return;
+        if (!r.ok) throw new Error(j.error ?? `HTTP ${r.status}`);
+        setRGalat(null);
+        setRaci({ kunci: kunciRaci, rows: j.rows ?? [], total_rows: j.total_rows ?? 0 });
+      } catch (e) {
+        if (ac.signal.aborted) return;
+        setRGalat(e instanceof Error ? e.message : "gagal memuat");
+        setRaci({ kunci: kunciRaci, rows: [], total_rows: 0 });
+      }
+    })();
+    return () => ac.abort();
+  }, [kunciRaci, rq, rDivisi, rPage, rSize]);
+
+  const gantiRaci = (set: (v: string) => void) => (v: string) => { set(v); setRPage(0); };
 
   const kolomLangkah: DataColumn<LangkahRow>[] = [
     { id: "divisi", header: "Divisi", accessor: (r) => r.divisi },
@@ -336,13 +354,13 @@ export function SopOtomasiView({
         <Card>
           <CardContent className="space-y-3 pt-6">
             <div className="flex flex-wrap items-center gap-3">
-              <FilterSelect label="Divisi" value={fDivisi} onChange={setFDivisi} options={divisiOpts} />
+              <FilterSelect label="Divisi" value={fDivisi} onChange={gantiLangkah(setFDivisi)} options={divisiOpts} />
               <FilterSelect
-                label="Sekarang" value={fKondisi} onChange={setFKondisi}
+                label="Sekarang" value={fKondisi} onChange={gantiLangkah(setFKondisi)}
                 options={[...LEVEL_URUT.map((l) => ({ value: l, label: l })), { value: "BELUM", label: "belum diisi" }]}
               />
               <FilterSelect
-                label="Target" value={fTarget} onChange={setFTarget}
+                label="Target" value={fTarget} onChange={gantiLangkah(setFTarget)}
                 options={[...LEVEL_URUT.map((l) => ({ value: l, label: l })), { value: "BELUM", label: "belum diisi" }]}
               />
             </div>
@@ -359,7 +377,7 @@ export function SopOtomasiView({
                 onPageChange: setPage,
                 onPageSizeChange: (n) => { setSize(n); setPage(0); },
                 onSortChange: () => {},
-                onSearchChange: setQ,
+                onSearchChange: gantiLangkah(setQ),
                 pending: muat,
               }}
             />
@@ -377,7 +395,7 @@ export function SopOtomasiView({
               sumbernya matriks koordinasi (Tabel C) yang grain-nya pasangan posisi, bukan tugas.
             </p>
             <div className="flex flex-wrap items-center gap-3">
-              <FilterSelect label="Divisi" value={rDivisi} onChange={setRDivisi} options={divisiOpts} />
+              <FilterSelect label="Divisi" value={rDivisi} onChange={gantiRaci(setRDivisi)} options={divisiOpts} />
             </div>
             {rGalat && <p className="text-sm text-destructive">Gagal memuat RACI: {rGalat}</p>}
             <DataTable
@@ -390,7 +408,7 @@ export function SopOtomasiView({
                 onPageChange: setRPage,
                 onPageSizeChange: (n) => { setRSize(n); setRPage(0); },
                 onSortChange: () => {},
-                onSearchChange: setRq,
+                onSearchChange: gantiRaci(setRq),
                 pending: rMuat,
               }}
             />
