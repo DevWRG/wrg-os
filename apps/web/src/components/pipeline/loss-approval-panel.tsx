@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { httpErrorMessage } from "@/lib/http-error";
 
 // F1-SPT panel approval Lost: HoD/admin memutus deal yg di-drag ke Closing-Lost
 // (loss_status='pending'). Approve → tetap Lost. Reject → deal balik ke stage
@@ -75,12 +76,14 @@ export function LossApprovalPanel() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ decision, ...(note ? { note } : {}) }),
       });
-      const body = await res.json().catch(() => ({}));
       if (!res.ok) {
-        // Status code selalu diikutkan — "gagal" tanpa angka menyulitkan penelusuran.
-        setErrById((prev) => ({ ...prev, [dealId]: `${body?.error || "gagal"} (${res.status})` }));
+        // Status code selalu diikutkan — "gagal" tanpa angka menyulitkan
+        // penelusuran. Lihat httpFailure: penolakan edge dibedakan di sana.
+        const text = await httpErrorMessage(res);
+        setErrById((prev) => ({ ...prev, [dealId]: text }));
         return;
       }
+      const body = await res.json().catch(() => ({}));
       setItems((prev) => (prev ?? []).filter((x) => x.deal_id !== dealId));
       setRejecting(null);
       setMsg({
