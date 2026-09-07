@@ -6,6 +6,7 @@ import { ArrowRightLeft, BarChart3, Columns3 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { httpErrorMessage } from "@/lib/http-error";
 import { DealFormModal, type DealFormInit } from "./deal-form-modal";
 import { PipelineExportButton } from "./pipeline-export-button";
 import { PipelineInsights } from "./pipeline-insights";
@@ -224,9 +225,8 @@ export function PipelineBoard({ data, isAdmin = false }: { data: PipelineData; i
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ to_stage: toStage, ...extra }),
       });
-      const body = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setMsg({ kind: "err", text: body?.error || `gagal (${res.status})` });
+        setMsg({ kind: "err", text: await httpErrorMessage(res) });
         return false;
       }
       setMsg({ kind: "ok", text: `Dipindah ke ${stageLabel(toStage)}${toStage === "Closing-Lost" ? " — menunggu approval HoD" : ""}` });
@@ -246,8 +246,7 @@ export function PipelineBoard({ data, isAdmin = false }: { data: PipelineData; i
     setMsg(null);
     try {
       const res = await fetch(`/api/deals/${encodeURIComponent(dealId)}`, { method: "DELETE" });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok) { setMsg({ kind: "err", text: body?.error || `gagal (${res.status})` }); return; }
+      if (!res.ok) { setMsg({ kind: "err", text: await httpErrorMessage(res) }); return; }
       setMsg({ kind: "ok", text: "Deal dihapus" });
       setSel(null);
       router.refresh();
