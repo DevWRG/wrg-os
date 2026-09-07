@@ -181,6 +181,18 @@ import {
 } from "./repo/insentif.js";
 import { listDepartments, listEmployees, getEmployee, getRaciMatrix, getMeasurements, saveMeasurements, createEmployee, updateEmployee, deleteEmployee, replaceEmployeeDetail, getVoiceAggregate, getHodResolution, getOrgReporting, populateHodKey, getHods, type MeasurementInput, type EmployeeWrite, type SpineDetail } from "./repo/employee-spine.js";
 import { listKlaim, getKlaim, updateKategori, decideKlaim, markDibayar, createKlaimManual, deleteKlaim } from "./repo/doc-klaim.js";
+import {
+  formatResume,
+  ingestKoran,
+  listAccount,
+  listLine,
+  listStatement,
+  matriksKelengkapan,
+  ringkasanHarian,
+  triageLine,
+  updateAccount,
+  wibDate,
+} from "./repo/cashin.js";
 import { upsertMembers, listMembers, upsertDigests, listDigest, digestStats, upsertPola, listPola, generateRekap, generateResume, type MonitorMemberInput, type DigestInput, type PolaInput } from "./repo/monitor.js";
 import { runNotifTua } from "./repo/notiftua.js";
 import { runDailySummary } from "./repo/dailysummary.js";
@@ -3412,6 +3424,92 @@ app.post("/doc-klaim/:id/bayar", async (c) => {
   const result = await markDibayar(c.req.param("id"));
   if (!result.ok) return c.json({ error: result.error }, 400);
   return c.json(result);
+});
+
+// ── F-CASHIN Mitigasi Uang Masuk Harian (rekening koran) ─────────────────────
+// Ingest lewat dua jalur: WA #KORAN (inbound.ts) dan upload di menu web (POST
+// /cashin/upload). Klasifikasi + pencocokan puteran jalan otomatis tiap ingest.
+app.post("/cashin/upload", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const body = await c.req.json().catch(() => ({}));
+  const files = Array.isArray(body.files) ? body.files : null;
+  if (!files || !files.length) {
+    return c.json({ error: "field 'files' wajib array berisi {file_nama, pdf_base64}" }, 400);
+  }
+  // Diproses berurutan, bukan paralel: pencocokan pasangan puteran membaca
+  // seluruh baris tanggal itu, jadi dua ingest yang jalan bersamaan bisa
+  // saling menimpa hasil pasangannya.
+  const hasil = [];
+  for (const f of files) {
+    if (!f?.pdf_base64) {
+      hasil.push({ ok: false, file_nama: f?.file_nama ?? null, error: "pdf_base64 kosong" });
+      continue;
+    }
+    const r = await ingestKoran({
+      pdf_base64: String(f.pdf_base64),
+      file_nama: f.file_nama ?? null,
+      sumber: "web",
+    });
+    hasil.push("ok" in r && r.ok === true ? r : { ok: false, file_nama: f.file_nama ?? null, error: (r as { error?: string }).error });
+  }
+  return c.json({ hasil });
+});
+
+app.get("/cashin/harian", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const tanggal = c.req.query("tanggal") ?? wibDate();
+  return c.json({ ringkasan: await ringkasanHarian(tanggal), statement: await listStatement(tanggal) });
+});
+
+app.get("/cashin/resume", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const tanggal = c.req.query("tanggal") ?? wibDate();
+  const r = await ringkasanHarian(tanggal);
+  return c.json({ tanggal, teks: formatResume(r), ringkasan: r });
+});
+
+app.get("/cashin/lines", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(
+    await listLine({
+      tanggal: c.req.query("tanggal") ?? undefined,
+      kategori: c.req.query("kategori") ?? undefined,
+      bank_account_id: c.req.query("bank_account_id") ?? undefined,
+      q: c.req.query("q") ?? undefined,
+      sort: c.req.query("sort") ?? undefined,
+      dir: c.req.query("dir") ?? undefined,
+      limit: c.req.query("limit") ? Number(c.req.query("limit")) : undefined,
+      offset: c.req.query("offset") ? Number(c.req.query("offset")) : undefined,
+    }),
+  );
+});
+
+app.patch("/cashin/lines/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const body = await c.req.json().catch(() => ({}));
+  const result = await triageLine(c.req.param("id"), String(body.kategori ?? ""), body.catatan ?? null);
+  if (!result.ok) return c.json({ error: result.error }, 400);
+  return c.json(result);
+});
+
+app.get("/cashin/accounts", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json({ accounts: await listAccount() });
+});
+
+app.patch("/cashin/accounts/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const body = await c.req.json().catch(() => ({}));
+  const result = await updateAccount(c.req.param("id"), body);
+  if (!result.ok) return c.json({ error: result.error }, 400);
+  return c.json(result);
+});
+
+app.get("/cashin/kelengkapan", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const sampai = c.req.query("sampai") ?? wibDate();
+  const dari = c.req.query("dari") ?? new Date(new Date(`${sampai}T00:00:00Z`).getTime() - 29 * 86400000).toISOString().slice(0, 10);
+  return c.json({ dari, sampai, ...(await matriksKelengkapan(dari, sampai)) });
 });
 
 // F118b CRUD core karyawan (gating admin di BFF web).

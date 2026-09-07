@@ -4,6 +4,7 @@
 // feature.key = slug route (lihat featureKey()), selaras infra/postgres/init/044_rbac.sql.
 
 import {
+  Banknote,
   LayoutDashboard, LayoutGrid, Building2, Package, Boxes, ShoppingCart, Truck,
   Factory, Workflow, Receipt, BarChart3, ClipboardCheck, History, Settings,
   Sparkles, Send, FileText, ScrollText, GraduationCap, UsersRound, Network,
@@ -307,6 +308,16 @@ export const NAV: NavGroup[] = [
       // Purchasing (bukan CRM spt label blueprint) krn pemakainya
       // Supply Chain + datanya dari Stok Gudang/ED Watch section ini.
       { title: "Forecast Submission", url: "/forecast-submission", icon: TrendingUp, badge: "NEW" },
+    ],
+  },
+  {
+    // F-CASHIN — Finance belum punya grup sendiri (AR Aging nebeng Sales, Dana
+    // Ops nebeng General Affairs). Menu ini pemakainya admin Finance + Direktur
+    // dan datanya rekening bank, jadi dibuat grup sendiri daripada dipaksa
+    // masuk grup yang temanya lain (pola sama DOC & GA).
+    label: "Finance",
+    items: [
+      { title: "Uang Masuk", url: "/uang-masuk", icon: Banknote, badge: "NEW" },
     ],
   },
   {

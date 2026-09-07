@@ -9,6 +9,7 @@ import { upsertDailyTodo, computeIsLate } from "./todo.js";
 import { createReminder } from "./reminder.js";
 import { buildCekReply } from "./cek.js";
 import { ingestKlaim, type DocKlaimRow } from "./doc-klaim.js";
+import { ingestKoran, type IngestKoranResult } from "./cashin.js";
 import { createTicket, isKnownTeknisiSender } from "./serviceticket.js";
 import {
   findBySjNumber,
@@ -59,6 +60,7 @@ export const INBOUND_HASHTAGS = [
   "sales",
   "cek",
   "klaim",
+  "koran",
   "kirim",
   "bast",
   "bukti",
@@ -84,6 +86,8 @@ const LEADS_UPDATE_LINE = /^\s*#\s*(leads|update)\b/i;
 const SALES_LINE = /^\s*#\s*sales\b/i;
 const CEK_LINE = /^\s*#\s*cek\b/i;
 const KLAIM_LINE = /^\s*#\s*klaim\b/i;
+// F-CASHIN — setoran rekening koran harian dari admin Finance.
+const KORAN_LINE = /^\s*#\s*koran\b/i;
 // F12/F93 — hashtag SHIPPING dari kurir: "#KIRIM SJ-2026-001" / "#BAST
 // SJ-2026-001" / "#BUKTI SJ-2026-001" (caption foto atau teks biasa). TTF
 // sengaja tak ada hashtag (diabaikan per arahan Direktur rapat 2026-07-30 —
@@ -118,6 +122,7 @@ export function detectKind(body: string | null): InboundKind {
       // pemisahannya di handler, bukan di detektor.
       if (CEK_LINE.test(line)) return "cek";
       if (KLAIM_LINE.test(line)) return "klaim";
+      if (KORAN_LINE.test(line)) return "koran";
       const s = line.match(SHIPPING_LINE);
       if (s) return s[1].toLowerCase() as "kirim" | "bast" | "bukti";
       const r = line.match(READINESS_LINE);
@@ -955,6 +960,54 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
           .join("\n");
     const reply = await sendViaWaGateway(target, msg);
     return finish({ klaim_id: k.id, ocr_dry_run: k.ocr_dry_run, reply });
+  }
+
+  // #KORAN — F-CASHIN. Admin Finance menyetor rekening koran harian (satu file
+  // per rekening per hari). Pengirim BEBAS (pola sama #KLAIM): yang menentukan
+  // rekeningnya adalah ISI dokumen, bukan siapa yang mengirim.
+  //
+  // Lampiran wajib, dan diterima baik document (PDF — bentuk aslinya dari
+  // e-banking) maupun image (foto layar). Balasan menyebut angka checksum
+  // supaya admin tahu file itu diterima utuh atau tertahan, bukan cuma "ok".
+  if (kind === "koran") {
+    const tipe = String(row.message_type ?? "").toLowerCase();
+    if (!row.media_path || !(tipe.startsWith("document") || tipe.startsWith("image"))) {
+      const reply = await sendViaWaGateway(
+        target,
+        "⚠️ #KORAN wajib disertai lampiran rekening koran (PDF dari e-banking, atau foto).",
+      );
+      return finish({ error: "no-attachment", reply });
+    }
+    const result = await ingestKoran({
+      file_path: row.media_path,
+      file_nama: row.media_path.split("/").pop() ?? null,
+      sumber: "wa",
+      wa_message_id: row.id,
+    });
+    if ("ok" in result && result.ok === false) {
+      const reply = await sendViaWaGateway(target, `⚠️ Gagal proses #KORAN: ${(result as { error?: string }).error}`);
+      return finish({ error: (result as { error?: string }).error, reply });
+    }
+    const k = result as IngestKoranResult;
+    const rp = (n: number) => "Rp " + Math.round(n).toLocaleString("id-ID");
+    const msg =
+      k.status === "terverifikasi"
+        ? [
+            `✅ #KORAN ${k.label_file} ${k.tanggal} diterima.`,
+            `${k.jumlah_baris} transaksi · masuk ${rp(k.total_kredit)} · keluar ${rp(k.total_debit)}`,
+            k.saldo_bersambung_ok === false
+              ? "⚠️ Saldo akhir tidak bersambung ke hari berikutnya — mungkin dicetak sebelum tutup hari."
+              : null,
+          ]
+            .filter(Boolean)
+            .join("\n")
+        : [
+            `⚠️ #KORAN ${k.label_file} ${k.tanggal} TERTAHAN — belum masuk resume.`,
+            k.parse_error ?? "angka di dalamnya belum bisa diverifikasi",
+            "Silakan cetak ulang dari e-banking lalu kirim lagi.",
+          ].join("\n");
+    const reply = await sendViaWaGateway(target, msg);
+    return finish({ statement_id: k.statement_id, status: k.status, reply });
   }
 
   // F12 — #KIRIM/#BAST (SHIPPING): match by sj_number, TANPA gate sender —

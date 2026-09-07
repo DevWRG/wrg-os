@@ -63,7 +63,17 @@ from .schemas import (
 )
 from .executive import NAMA_PERUSAHAAN
 from .klaim import build_klaim_system, build_klaim_user, parse_klaim
-from .openrouter import chat_vision, klaim_models
+from .koran import (
+    apply_checksum,
+    build_koran_ocr_system,
+    build_koran_ocr_user,
+    merge_ocr_pages,
+    parse_ocr_json,
+    parse_text_pdf,
+    pdf_page_images,
+)
+from .openrouter import chat_vision, klaim_models, koran_models
+from .schemas import KoranLine, KoranParseRequest, KoranParseResponse
 
 # System prompt stabil (cache-friendly) — port dari legacy/crm wrg-daily SKILL.md.
 DAILY_SYSTEM_PROMPT = """Kamu adalah WRG CRM Daily Summary Generator.
@@ -343,6 +353,107 @@ def ocr_klaim(req: KlaimOcrRequest) -> KlaimOcrResponse:
         model=model_used,
         dry_run=False,
     )
+
+
+def _koran_response(res: dict, **over) -> KoranParseResponse:
+    lines = [KoranLine(**l) for l in (res.get("lines") or [])]
+    payload = {
+        "bank_kode": res.get("bank_kode"),
+        "no_rekening": res.get("no_rekening"),
+        "nama_pemilik": res.get("nama_pemilik"),
+        "cabang": res.get("cabang"),
+        "tanggal": res.get("tanggal"),
+        "dicetak_at": res.get("dicetak_at"),
+        "saldo_awal": res.get("saldo_awal"),
+        "saldo_akhir": res.get("saldo_akhir"),
+        "total_debit_tercetak": res.get("total_debit_tercetak"),
+        "total_kredit_tercetak": res.get("total_kredit_tercetak"),
+        "jumlah_debit": res.get("jumlah_debit"),
+        "jumlah_kredit": res.get("jumlah_kredit"),
+        "sum_debit": res.get("sum_debit") or 0,
+        "sum_kredit": res.get("sum_kredit") or 0,
+        "checksum_ok": res.get("checksum_ok"),
+        "metode": res.get("metode") or "parser",
+        "parse_error": res.get("parse_error"),
+        "raw_text": res.get("raw_text") or "",
+        "lines": lines,
+    }
+    payload.update(over)
+    return KoranParseResponse(**payload)
+
+
+@app.post("/parse-koran", response_model=KoranParseResponse)
+def parse_koran(req: KoranParseRequest) -> KoranParseResponse:
+    """F-CASHIN: baca satu file rekening koran (PDF) jadi header + baris mutasi.
+
+    Parser teks dicoba LEBIH DULU dan menang kalau checksum-nya lolos — 12 dari
+    21 file contoh sampai di titik itu tanpa menyentuh LLM sama sekali. Sisanya
+    (PDF hasil 'Print To PDF' yang tak punya teks, dan CIMB Niaga yang tata
+    kolomnya bocor saat diekstrak) dirender jadi gambar lalu dibaca vision.
+
+    Endpoint ini TIDAK mengklasifikasi apa pun — mana uang masuk riil, mana dana
+    puteran WRG, itu urusan apps/api dgn aturan deterministik + triage manusia.
+
+    Selalu balas 200: kegagalan dilaporkan lewat checksum_ok/parse_error supaya
+    apps/api bisa menyimpan statement dgn status 'perlu_review' (jejaknya ada,
+    tapi tak masuk resume) — bukan hilang jadi error 500.
+    """
+    import base64
+
+    try:
+        pdf_bytes = base64.b64decode(req.pdf_base64, validate=False)
+    except Exception:  # noqa: BLE001
+        return _koran_response({}, parse_error="pdf_base64 tidak bisa di-decode", checksum_ok=False)
+
+    res, _ = parse_text_pdf(pdf_bytes)
+    if not res.get("needs_ocr"):
+        return _koran_response(res)
+
+    # Jalur OCR. Alasan jatuh ke sini disimpan supaya tak hilang kalau OCR juga
+    # gagal — tanpa ini, pesan akhirnya cuma "OCR gagal" tanpa sebab awal.
+    alasan = res.get("parse_error") or "parser teks tidak bisa dipakai"
+    if not req.allow_ocr:
+        return _koran_response(res, checksum_ok=False,
+                               parse_error="%s; OCR dimatikan (allow_ocr=false)" % alasan)
+
+    use_llm = not req.dry_run and bool(os.environ.get("OPENROUTER_API_KEY"))
+    if not use_llm:
+        return _koran_response(res, metode="ocr", model="dry-run", dry_run=True,
+                               checksum_ok=False,
+                               parse_error="%s; OCR tidak dijalankan (dry-run / tanpa API key)" % alasan)
+
+    try:
+        images = pdf_page_images(pdf_bytes)
+    except Exception as e:  # noqa: BLE001 — pypdfium2 belum terpasang di venv juga sampai sini
+        return _koran_response(res, metode="ocr", checksum_ok=False,
+                               parse_error="%s; render halaman gagal: %s" % (alasan, e))
+    if not images:
+        return _koran_response(res, metode="ocr", checksum_ok=False,
+                               parse_error="%s; PDF tanpa halaman" % alasan)
+
+    pages = []
+    model_used = None
+    for i, img in enumerate(images):
+        try:
+            text, model_used, _, _ = chat_vision(
+                build_koran_ocr_system(),
+                build_koran_ocr_user(req.file_nama, i + 1, len(images)),
+                img,
+                "image/png",
+                max_tokens=4000,
+                models=koran_models(),
+            )
+        except Exception as e:  # noqa: BLE001
+            return _koran_response(res, metode="ocr", checksum_ok=False,
+                                   parse_error="%s; OCR halaman %d gagal: %s" % (alasan, i + 1, e))
+        pages.append(parse_ocr_json(text))
+
+    merged = merge_ocr_pages(pages)
+    merged["bank_kode"] = res.get("bank_kode")
+    merged["raw_text"] = res.get("raw_text") or ""
+    merged["metode"] = "ocr"
+    merged = apply_checksum(merged)
+    return _koran_response(merged, model=model_used, dry_run=False)
 
 
 @app.post("/extract", response_model=ExtractResponse)
