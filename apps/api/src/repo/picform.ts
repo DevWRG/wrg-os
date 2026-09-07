@@ -439,9 +439,14 @@ export interface RantaiRow {
   divisi_key: string; divisi: string; sumber: string; dasar_tautan: string | null;
   proses: number;
 }
+export interface KandidatPosisi {
+  posisi_id: number; posisi: string; divisi: string;
+  jumlah_orang: number | null; terpakai: number;
+}
 export interface GapRow {
   employee_id: string; karyawan: string; panggilan: string | null;
   dept: string | null; role_roster: string | null; alasan: string; kandidat: string | null;
+  kandidat_posisi: KandidatPosisi[];
 }
 export interface RaciKaryawan {
   ringkas: { karyawan_total: number; tertaut: number; belum: number; baris_tautan: number };
@@ -452,11 +457,42 @@ export interface RaciKaryawan {
 export async function raciKaryawanPosisi(): Promise<RaciKaryawan> {
   const sql = db();
   const rantai = await sql`SELECT * FROM v_raci_karyawan_posisi`;
+
+  // GAP DITURUNKAN DARI KETIADAAN TAUTAN, bukan dibaca apa adanya dari
+  // employee_posisi_gap. Tabel itu milik matcher dan hanya berubah saat matcher
+  // jalan; kalau daftar ini membacanya langsung, orang yang baru saja dipetakan
+  // lewat UI akan TETAP muncul sebagai "belum dipetakan" sampai matcher
+  // dijalankan lagi — persis jenis kebohongan senyap yang paling merepotkan
+  // (orangnya sudah dibereskan, layarnya masih menagih).
+  //
+  // `alasan` tetap diambil dari tabel itu sebagai pelengkap. Kalau baris
+  // alasannya belum ada (matcher belum pernah jalan sejak karyawan itu masuk
+  // roster), kolomnya diisi keterangan eksplisit — bukan dibiarkan kosong yang
+  // terbaca seperti "tanpa alasan".
   const gap = await sql`
-    SELECT g.employee_id, e.nama AS karyawan, e.panggilan, e.dept,
-           e.role AS role_roster, g.alasan, g.kandidat
-      FROM employee_posisi_gap g JOIN employee e ON e.id = g.employee_id
+    SELECT e.id AS employee_id, e.nama AS karyawan, e.panggilan, e.dept,
+           e.role AS role_roster,
+           coalesce(g.alasan, 'belum diproses matcher') AS alasan,
+           g.kandidat
+      FROM employee e
+      LEFT JOIN employee_posisi_gap g ON g.employee_id = e.id
+     WHERE NOT EXISTS (SELECT 1 FROM posisi_employee pe WHERE pe.employee_id = e.id)
      ORDER BY e.dept, e.nama`;
+
+  // Kandidat posisi untuk dropdown: posisi non-hantu di divisi yang terpetakan
+  // ke dept karyawan itu, beserta keterisiannya. `terpakai` dihitung dari
+  // subquery TERPISAH, bukan JOIN — join ke posisi_employee akan menggandakan
+  // baris posisi dan membuat hitungannya salah (kelas fan-out yang sama sudah
+  // menggigit v_posisi_employee_gap).
+  const kandidat = await sql`
+    SELECT dd.dept, p.id AS posisi_id, p.nama AS posisi, d.label AS divisi,
+           p.jumlah_orang,
+           (SELECT count(*)::int FROM posisi_employee pe WHERE pe.posisi_id = p.id) AS terpakai
+      FROM posisi p
+      JOIN divisi d ON d.key = p.divisi_key
+      JOIN divisi_department dd ON dd.divisi_key = p.divisi_key
+     WHERE p.jumlah_orang IS NOT NULL
+     ORDER BY d.seq, p.nama`;
   const [{ n: total }] = await sql`SELECT count(*)::int AS n FROM employee`;
 
   // `tertaut` dihitung dari karyawan UNIK, bukan jumlah baris — Enggar & Nopa
@@ -485,6 +521,88 @@ export async function raciKaryawanPosisi(): Promise<RaciKaryawan> {
       panggilan: (g.panggilan as string | null) ?? null, dept: (g.dept as string | null) ?? null,
       role_roster: (g.role_roster as string | null) ?? null,
       alasan: g.alasan as string, kandidat: (g.kandidat as string | null) ?? null,
+      kandidat_posisi: kandidat
+        .filter((k) => k.dept === g.dept)
+        .map((k) => ({
+          posisi_id: Number(k.posisi_id), posisi: k.posisi as string,
+          divisi: k.divisi as string,
+          jumlah_orang: k.jumlah_orang == null ? null : Number(k.jumlah_orang),
+          terpakai: Number(k.terpakai),
+        })),
     })),
   };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// JALUR TULIS — satu-satunya di seluruh modul ini.
+//
+// Semua endpoint /picform/* lain read-only karena datanya masuk lewat importer.
+// Yang ini pengecualian yang disengaja: 22 karyawan tak bisa dipasangkan ke
+// posisi oleh mesin (kapasitas form salah, role identik untuk dua posisi
+// berbeda, atau posisi SPV-nya tak ada di form), dan itu memang keputusan
+// orang. Tanpa jalur ini keputusannya cuma bisa masuk lewat SQL manual.
+//
+// SELALU sumber='manual', dan itu mengikat dua hal:
+//   • matcher TIDAK PERNAH menghapusnya (ia hanya membuang tiga sumber
+//     miliknya sendiri) — jadi keputusan orang tak bisa tersapu impor ulang;
+//   • `diputuskan_oleh` diisi dari SESI LOGIN di lapisan web, bukan dari body.
+//     Parameter `oleh` di bawah sudah hasil verifikasi pemanggilnya.
+//
+// KAPASITAS TIDAK MENGHALANGI, HANYA DILAPORKAN. Form Sales menulis
+// `Kirim Tagih` 1 orang padahal nyatanya 12; kalau kapasitas jadi pagar, 11
+// orang mustahil dipetakan dan datanya tetap bolong. Yang salah di sini
+// form-nya, bukan kenyataannya — jadi fungsi ini mengembalikan `melebihi`
+// supaya UI bisa memperingatkan, lalu tetap menulis.
+export interface HasilTautan {
+  ok: boolean;
+  error?: string;
+  melebihi?: { posisi: string; jumlah_orang: number; terpakai: number };
+}
+
+export async function setTautanManual(
+  employeeId: string, posisiId: number, oleh: string,
+): Promise<HasilTautan> {
+  const sql = db();
+  const [emp] = await sql`SELECT id FROM employee WHERE id = ${employeeId}`;
+  if (!emp) return { ok: false, error: `karyawan tak dikenal: ${employeeId}` };
+  const [pos] = await sql`SELECT id, nama, jumlah_orang FROM posisi WHERE id = ${posisiId}`;
+  if (!pos) return { ok: false, error: `posisi tak dikenal: ${posisiId}` };
+  // Posisi hantu (jumlah_orang NULL) ditolak: baris itu artefak parser sheet
+  // A/C — ada yang bahkan bukan jabatan ('Keduanya (AP & BS)', 'HOD IVD (BD)').
+  // Menautkan orang ke situ mengabadikan artefaknya.
+  if (pos.jumlah_orang == null) {
+    return { ok: false, error: `posisi '${pos.nama}' tak punya jumlah_orang (baris artefak) — betulkan xlsx dulu` };
+  }
+
+  await sql`
+    INSERT INTO posisi_employee (posisi_id, employee_id, sumber, catatan, diputuskan_oleh, diputuskan_pada)
+    VALUES (${posisiId}, ${employeeId}, 'manual',
+            ${"ditetapkan lewat UI /people/raci"}, ${oleh}, now())
+    ON CONFLICT (posisi_id, employee_id) DO UPDATE SET
+      sumber = 'manual', catatan = EXCLUDED.catatan,
+      diputuskan_oleh = EXCLUDED.diputuskan_oleh, diputuskan_pada = EXCLUDED.diputuskan_pada`;
+
+  const [{ terpakai }] = await sql`
+    SELECT count(*)::int AS terpakai FROM posisi_employee WHERE posisi_id = ${posisiId}`;
+  const n = Number(terpakai), kap = Number(pos.jumlah_orang);
+  return n > kap
+    ? { ok: true, melebihi: { posisi: pos.nama as string, jumlah_orang: kap, terpakai: n } }
+    : { ok: true };
+}
+
+// Hanya baris manual yang boleh dicabut lewat sini. Baris tulisan skrip
+// dibiarkan: mencabutnya lewat UI akan sia-sia (matcher menuliskannya lagi pada
+// run berikutnya) dan menyesatkan orang yang mengira sudah membatalkannya.
+// Yang benar untuk itu adalah membetulkan sumbernya — xlsx atau posisi_alias.
+export async function hapusTautanManual(
+  employeeId: string, posisiId: number,
+): Promise<HasilTautan> {
+  const sql = db();
+  const del = await sql`
+    DELETE FROM posisi_employee
+     WHERE employee_id = ${employeeId} AND posisi_id = ${posisiId} AND sumber = 'manual'`;
+  if (del.count === 0) {
+    return { ok: false, error: "tautan tak ditemukan, atau bukan tautan manual (tulisan skrip tak bisa dicabut dari UI — betulkan xlsx / posisi_alias)" };
+  }
+  return { ok: true };
 }

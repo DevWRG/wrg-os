@@ -2,6 +2,8 @@ import { gatewayFetch } from "@/lib/gateway";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { RaciMatrix, type RaciMatrixData } from "@/components/people/raci-matrix";
 import { RaciPosisiBridge, type RaciKaryawan } from "@/components/picform/raci-posisi-bridge";
+import { sessionUser } from "@/lib/admin-guard";
+import { canEditRaciPeta } from "@/lib/raci-peta-access";
 
 export const dynamic = "force-dynamic";
 
@@ -17,10 +19,15 @@ async function get<T>(path: string): Promise<T | null> {
 // berbeda (transkrip wawancara vs form PIC). Dua panggilan ini independen: satu
 // gagal tidak mengosongkan yang lain.
 export default async function RaciMatrixPage() {
-  const [data, jembatan] = await Promise.all([
+  const [data, jembatan, me] = await Promise.all([
     get<RaciMatrixData>("/employee-spine/raci-matrix"),
     get<RaciKaryawan>("/picform/raci-karyawan"),
+    sessionUser(),
   ]);
+  // Menyembunyikan tombolnya BUKAN pengamanan — penegakannya di
+  // requireRaciEdit() pada /api/picform/tautan. Flag ini hanya supaya orang
+  // tanpa izin tak disuguhi kontrol yang pasti ditolak server.
+  const bolehEdit = canEditRaciPeta(me);
 
   return (
     <>
@@ -34,7 +41,7 @@ export default async function RaciMatrixPage() {
         ) : (
           <p className="text-muted-foreground">Data tidak tersedia. Pastikan <code>apps/api</code> jalan &amp; spine ter-seed.</p>
         )}
-        <RaciPosisiBridge data={jembatan} />
+        <RaciPosisiBridge data={jembatan} bolehEdit={bolehEdit} />
       </div>
     </>
   );
