@@ -29,6 +29,12 @@ const selectCls =
 // sini, PIC user terdaftar tak bisa dipilih lagi begitu masuk mode edit
 // (ditemukan user 2026-09-07).
 const LUAR = "__luar__";
+// PIC sementara "Dito Anggara" — sudah ada data karyawan di master (employee),
+// TAPI menautkannya ke sini (app_user) di luar kewenangan magang (HR/roster
+// off-limit). Quick-pick manual: isi assigned_to bebas, bukan user_id
+// sungguhan. Ditambahkan atas permintaan user 2026-09-07 (pola sama F132).
+const DITO = "__dito_anggara__";
+const DITO_NAMA = "Dito Anggara";
 
 interface Ticket {
   id: string;
@@ -48,7 +54,9 @@ export function ItTicketRowActions({ ticket, users = [] }: { ticket: Ticket; use
     assigned_to: ticket.assigned_to_user_id ? "" : (ticket.assigned_to ?? ""),
     resolved_note: "",
   });
-  const [picSel, setPicSel] = useState(ticket.assigned_to_user_id ?? (ticket.assigned_to ? LUAR : ""));
+  const [picSel, setPicSel] = useState(
+    ticket.assigned_to_user_id ?? (ticket.assigned_to === DITO_NAMA ? DITO : ticket.assigned_to ? LUAR : ""),
+  );
   const userLabel = (u: AppUserOption) => u.name?.trim() || u.id.slice(0, 8);
 
   async function submit(e: React.FormEvent) {
@@ -61,8 +69,8 @@ export function ItTicketRowActions({ ticket, users = [] }: { ticket: Ticket; use
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           status: f.status,
-          assigned_to_user_id: picSel && picSel !== LUAR ? picSel : undefined,
-          assigned_to: picSel === LUAR ? f.assigned_to.trim() || undefined : undefined,
+          assigned_to_user_id: picSel && picSel !== LUAR && picSel !== DITO ? picSel : undefined,
+          assigned_to: picSel === LUAR ? f.assigned_to.trim() || undefined : picSel === DITO ? DITO_NAMA : undefined,
           resolved_note: f.resolved_note.trim() || undefined,
         }),
       });
@@ -115,6 +123,7 @@ export function ItTicketRowActions({ ticket, users = [] }: { ticket: Ticket; use
                     {userLabel(u)}
                   </option>
                 ))}
+                <option value={DITO}>{DITO_NAMA} (PIC sementara)</option>
                 <option value={LUAR}>di luar daftar (tulis nama)</option>
               </select>
               {picSel === LUAR && (
@@ -124,6 +133,12 @@ export function ItTicketRowActions({ ticket, users = [] }: { ticket: Ticket; use
                   onChange={(e) => setF((p) => ({ ...p, assigned_to: e.target.value }))}
                   placeholder="nama PIC — mis. teknisi vendor"
                 />
+              )}
+              {picSel === DITO && (
+                <p className="text-muted-foreground text-xs italic">
+                  Catatan: &quot;{DITO_NAMA}&quot; ditambahkan manual sbg PIC sementara — sudah ada data karyawannya
+                  di master, tapi menautkannya di luar kewenangan magang (HR/roster off-limit).
+                </p>
               )}
             </div>
             {f.status === "resolved" && (

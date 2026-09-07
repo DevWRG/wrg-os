@@ -47,6 +47,12 @@ export interface AppUserOption {
 // tersimpan sebagai FK (migrasi 164) sehingga bisa disaring "punya saya",
 // bukan dicocokkan lewat ejaan nama.
 const LUAR = "__luar__"; // sentinel <option> untuk "di luar daftar"
+// PIC sementara "Dito Anggara" — sudah ada data karyawan di master (employee),
+// TAPI menautkannya ke sini (app_user) di luar kewenangan magang (HR/roster
+// off-limit). Quick-pick manual: isi assigned_to bebas, bukan user_id
+// sungguhan. Ditambahkan atas permintaan user 2026-09-07 (pola sama F132).
+const DITO = "__dito_anggara__";
+const DITO_NAMA = "Dito Anggara";
 
 export function AddItTicketButton({ assets, users = [] }: { assets: AssetOption[]; users?: AppUserOption[] }) {
   const router = useRouter();
@@ -74,9 +80,9 @@ export function AddItTicketButton({ assets, users = [] }: { assets: AssetOption[
           asset_id: f.asset_id,
           masalah: f.masalah.trim(),
           reported_by_user_id: reporterSel && reporterSel !== LUAR ? reporterSel : undefined,
-          assigned_to_user_id: picSel && picSel !== LUAR ? picSel : undefined,
+          assigned_to_user_id: picSel && picSel !== LUAR && picSel !== DITO ? picSel : undefined,
           reported_by: reporterSel === LUAR ? f.reported_by.trim() || undefined : undefined,
-          assigned_to: picSel === LUAR ? f.assigned_to.trim() || undefined : undefined,
+          assigned_to: picSel === LUAR ? f.assigned_to.trim() || undefined : picSel === DITO ? DITO_NAMA : undefined,
         }),
       });
       const data = await res.json();
@@ -161,6 +167,7 @@ export function AddItTicketButton({ assets, users = [] }: { assets: AssetOption[
                     {userLabel(u)}
                   </option>
                 ))}
+                <option value={DITO}>{DITO_NAMA} (PIC sementara)</option>
                 <option value={LUAR}>di luar daftar (tulis nama)</option>
               </select>
               {picSel === LUAR && (
@@ -170,6 +177,12 @@ export function AddItTicketButton({ assets, users = [] }: { assets: AssetOption[
                   onChange={(e) => setF((p) => ({ ...p, assigned_to: e.target.value }))}
                   placeholder="nama PIC — mis. teknisi vendor"
                 />
+              )}
+              {picSel === DITO && (
+                <p className="text-muted-foreground text-xs italic">
+                  Catatan: &quot;{DITO_NAMA}&quot; ditambahkan manual sbg PIC sementara — sudah ada data karyawannya
+                  di master, tapi menautkannya di luar kewenangan magang (HR/roster off-limit).
+                </p>
               )}
             </div>
             {error && <p className="text-destructive text-sm">{error}</p>}
