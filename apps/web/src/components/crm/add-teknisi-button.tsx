@@ -19,6 +19,7 @@ export function AddTeknisiButton() {
   const [error, setError] = useState<string | null>(null);
   const [nama, setNama] = useState("");
   const [waNumber, setWaNumber] = useState("");
+  const [wilayah, setWilayah] = useState("");
   const [maxJobs, setMaxJobs] = useState("3");
 
   async function submit(e: React.FormEvent) {
@@ -32,12 +33,13 @@ export function AddTeknisiButton() {
         body: JSON.stringify({
           nama: nama.trim(),
           wa_number: waNumber.trim() || undefined,
+          wilayah: wilayah.split(",").map((w) => w.trim()).filter(Boolean),
           max_concurrent_jobs: Number(maxJobs) || 3,
         }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "gagal menyimpan");
-      setNama(""); setWaNumber(""); setMaxJobs("3");
+      setNama(""); setWaNumber(""); setWilayah(""); setMaxJobs("3");
       setOpen(false);
       router.refresh();
     } catch (err) {
@@ -66,6 +68,11 @@ export function AddTeknisiButton() {
             <div className="grid gap-1.5">
               <Label htmlFor="tk-wa">No. WA</Label>
               <Input id="tk-wa" value={waNumber} onChange={(e) => setWaNumber(e.target.value)} placeholder="opsional" />
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="tk-wilayah">Wilayah</Label>
+              <Input id="tk-wilayah" value={wilayah} onChange={(e) => setWilayah(e.target.value)} placeholder="mis. Surabaya, Sidoarjo" />
+              <p className="text-muted-foreground text-xs">Pisahkan dgn koma kalau cover lebih dari 1 kota. Dipakai F26 utk auto-assign tiket servis.</p>
             </div>
             <div className="grid gap-1.5">
               <Label htmlFor="tk-max">Kapasitas job bersamaan</Label>

@@ -17,16 +17,21 @@ const isIsoDate = (s: string): boolean => {
 };
 
 // F8 — Teknisi Readiness Board (AFTERSALES). Install scheduling + capacity +
-// post-install reports. teknisi_capacity SELF-CONTAINED (nama dummy, seed via
-// scripts/db/seed-dev-full.sql — TIDAK ada create/edit di F8 ini, sama
-// keputusan "pakai seed" dgn F26, beda tabel/lineage branch). install_schedule
-// FK ke installation_unit (F22). teknisi_report dipakai jalur manual DAN hook
-// WA (#install/#servis/#training/#kalibrasi, lihat inbound.ts).
+// post-install reports. install_schedule FK ke installation_unit (F22).
+// teknisi_report dipakai jalur manual DAN hook WA (#install/#servis/#training/
+// #kalibrasi, lihat inbound.ts).
+//
+// teknisi_capacity SEKARANG jadi SATU sumber roster teknisi F8+F26 (migrasi
+// 168, keputusan Direktur 2026-09-07) — sebelumnya F26 punya roster sendiri
+// (`teknisi_roster`, read-only dari app). `wilayah` (text[], 1 teknisi bisa
+// cover >1 kota) dipakai repo/serviceticket.ts utk auto-assign by area; F8
+// sendiri tak pernah query berdasar wilayah, cuma nampilkan+kelola.
 
 export interface Teknisi {
   id: string;
   nama: string;
   wa_number: string | null;
+  wilayah: string[];
   max_concurrent_jobs: number;
   aktif: boolean;
 }
@@ -36,6 +41,7 @@ function mapTeknisi(r: Record<string, unknown>): Teknisi {
     id: String(r.id),
     nama: String(r.nama),
     wa_number: r.wa_number ? String(r.wa_number) : null,
+    wilayah: Array.isArray(r.wilayah) ? (r.wilayah as string[]) : [],
     max_concurrent_jobs: Number(r.max_concurrent_jobs),
     aktif: Boolean(r.aktif),
   };
@@ -54,6 +60,7 @@ export async function listTeknisiCapacity(): Promise<Teknisi[]> {
 export interface CreateTeknisiInput {
   nama: string;
   wa_number?: string | null;
+  wilayah?: string[];
   max_concurrent_jobs?: number;
 }
 
@@ -63,9 +70,10 @@ export async function createTeknisiCapacity(
   const sql = db();
   const existing = await sql`SELECT id FROM teknisi_capacity WHERE nama = ${input.nama}`;
   if (existing.length) return { ok: false, error: "nama sudah ada di roster" };
+  const wilayah = (input.wilayah ?? []).map((w) => w.trim()).filter(Boolean);
   const rows = await sql`
-    INSERT INTO teknisi_capacity (nama, wa_number, max_concurrent_jobs)
-    VALUES (${input.nama}, ${input.wa_number ?? null}, ${input.max_concurrent_jobs ?? 3})
+    INSERT INTO teknisi_capacity (nama, wa_number, wilayah, max_concurrent_jobs)
+    VALUES (${input.nama}, ${input.wa_number ?? null}, ${wilayah}, ${input.max_concurrent_jobs ?? 3})
     RETURNING *
   `;
   return mapTeknisi(rows[0]);
@@ -74,6 +82,7 @@ export async function createTeknisiCapacity(
 export interface UpdateTeknisiInput {
   nama?: string;
   wa_number?: string | null;
+  wilayah?: string[];
   max_concurrent_jobs?: number;
 }
 
@@ -86,9 +95,12 @@ export async function updateTeknisiCapacity(
   if (!current.length) return { ok: false, error: "teknisi tidak ditemukan" };
   const nama = input.nama ?? String(current[0].nama);
   const waNumber = input.wa_number !== undefined ? input.wa_number : (current[0].wa_number as string | null);
+  const wilayah = input.wilayah !== undefined
+    ? input.wilayah.map((w) => w.trim()).filter(Boolean)
+    : (current[0].wilayah as string[]);
   const maxJobs = input.max_concurrent_jobs ?? Number(current[0].max_concurrent_jobs);
   const rows = await sql`
-    UPDATE teknisi_capacity SET nama = ${nama}, wa_number = ${waNumber}, max_concurrent_jobs = ${maxJobs}, updated_at = now()
+    UPDATE teknisi_capacity SET nama = ${nama}, wa_number = ${waNumber}, wilayah = ${wilayah}, max_concurrent_jobs = ${maxJobs}, updated_at = now()
     WHERE id = ${id}
     RETURNING *
   `;

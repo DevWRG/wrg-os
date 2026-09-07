@@ -6699,7 +6699,7 @@ app.get("/teknisi-capacity", async (c) => {
 
 app.post("/teknisi-capacity", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let body: { nama?: string; wa_number?: string; max_concurrent_jobs?: number };
+  let body: { nama?: string; wa_number?: string; wilayah?: string[]; max_concurrent_jobs?: number };
   try {
     body = await c.req.json();
   } catch {
@@ -6709,6 +6709,7 @@ app.post("/teknisi-capacity", async (c) => {
   const r = await createTeknisiCapacity({
     nama: body.nama.trim(),
     wa_number: body.wa_number ?? null,
+    wilayah: body.wilayah,
     max_concurrent_jobs: body.max_concurrent_jobs,
   });
   return c.json(r, "ok" in r && r.ok === false ? 400 : 201);
@@ -6716,7 +6717,7 @@ app.post("/teknisi-capacity", async (c) => {
 
 app.patch("/teknisi-capacity/:id", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let body: { nama?: string; wa_number?: string | null; max_concurrent_jobs?: number };
+  let body: { nama?: string; wa_number?: string | null; wilayah?: string[]; max_concurrent_jobs?: number };
   try {
     body = await c.req.json();
   } catch {

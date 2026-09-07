@@ -8,19 +8,21 @@ import { sendViaWaGateway } from "../wasend.js";
 const toIsoTs = (x: unknown): string => new Date(x as string | Date).toISOString();
 
 // F26 — Service Ticket Triage (AFTERSALES). LLM classify komplain customer
-// (severity + area) → auto-assign teknisi (area match, least-loaded) → ETA.
-// Self-contained: teknisi_roster/service_ticket TIDAK FK ke installation_unit
-// (F22) atau domain lain — lihat 135_service_ticket_triage.sql.
+// (severity + wilayah) → auto-assign teknisi (wilayah match, least-loaded) →
+// ETA. service_ticket TIDAK FK ke installation_unit (F22) — lihat
+// 135_service_ticket_triage.sql.
 //
-// teknisi_roster READ-ONLY dari sisi app — data di-seed via
-// scripts/db/seed-dev-full.sql (tidak ada create/edit di F26 ini, per
-// keputusan "pakai seed dulu" — lihat plan).
+// Roster teknisi: SEBELUMNYA `teknisi_roster` sendiri (read-only dari app,
+// cuma diisi via seed/SQL manual). Migrasi 168 (keputusan Direktur
+// 2026-09-07) konsolidasi ke `teknisi_capacity` (F8, repo/readinessboard.ts)
+// yang SUDAH punya UI CRUD — F26 tinggal numpang, bukan bikin roster baru.
+// `teknisi_roster` dibiarkan ada (superseded, tak dipakai lagi) utk histori.
 
 export interface Teknisi {
   id: string;
   nama: string;
   wa_number: string | null;
-  area: string[];
+  wilayah: string[];
   aktif: boolean;
   created_at: string;
 }
@@ -30,7 +32,7 @@ function mapTeknisi(r: Record<string, unknown>): Teknisi {
     id: String(r.id),
     nama: String(r.nama),
     wa_number: r.wa_number ? String(r.wa_number) : null,
-    area: Array.isArray(r.area) ? (r.area as string[]) : [],
+    wilayah: Array.isArray(r.wilayah) ? (r.wilayah as string[]) : [],
     aktif: Boolean(r.aktif),
     created_at: String(r.created_at),
   };
@@ -39,7 +41,7 @@ function mapTeknisi(r: Record<string, unknown>): Teknisi {
 export async function listTeknisi(aktifOnly = false): Promise<Teknisi[]> {
   const sql = db();
   const rows = await sql`
-    SELECT * FROM teknisi_roster WHERE ${aktifOnly ? sql`aktif = TRUE` : sql`true`} ORDER BY nama
+    SELECT * FROM teknisi_capacity WHERE ${aktifOnly ? sql`aktif = TRUE` : sql`true`} ORDER BY nama
   `;
   return rows.map(mapTeknisi);
 }
@@ -48,26 +50,32 @@ interface AssignedTeknisi {
   id: string;
   nama: string;
   wa_number: string | null;
-  areaMatched: boolean; // false = area diberikan tapi tak match siapa pun (fallback dipakai)
+  areaMatched: boolean; // false = wilayah diberikan tapi tak match siapa pun (fallback dipakai)
 }
 
-// Auto-assign: coba match area dulu (case-insensitive — LLM/manual bisa beda
-// kapitalisasi/spasi dari yang tersimpan di roster). Kalau area diisi tapi TAK
-// match teknisi manapun (atau area kosong), FALLBACK ke teknisi aktif mana pun
-// yang paling sedikit beban — jangan pernah dibiarkan unassigned kalau ada
-// teknisi aktif tersedia. `areaMatched=false` menandai fallback ini dipakai,
-// dipakai caller utk set needs_review (area asli mungkin salah/typo, perlu
-// dicek admin) — beda dgn kondisi "area kosong dari awal" yang normal/aman.
+// Auto-assign: coba match wilayah dulu (case-insensitive — LLM/manual bisa
+// beda kapitalisasi/spasi dari yang tersimpan di roster). Kalau wilayah
+// diisi tapi TAK match teknisi manapun (atau wilayah kosong), FALLBACK ke
+// teknisi aktif mana pun yang paling sedikit beban — jangan pernah dibiarkan
+// unassigned kalau ada teknisi aktif tersedia. `areaMatched=false` menandai
+// fallback ini dipakai, dipakai caller utk set needs_review (wilayah asli
+// mungkin salah/typo, perlu dicek admin) — beda dgn kondisi "wilayah kosong
+// dari awal" yang normal/aman.
+//
+// Sumber roster: teknisi_capacity (migrasi 168 — SEBELUMNYA teknisi_roster
+// sendiri, lihat komentar header file). "load" cuma menghitung service_ticket
+// open — TIDAK ikut beban F8 (install_schedule/maintenance_schedule) biar
+// scope konsolidasi ini tetap wilayah, bukan unifikasi kapasitas lintas-fitur.
 async function assignTeknisi(area: string | null): Promise<AssignedTeknisi | null> {
   const sql = db();
 
   if (area) {
     const matched = await sql`
-      SELECT tr.id, tr.nama, tr.wa_number,
-        (SELECT COUNT(*) FROM service_ticket st WHERE st.assigned_teknisi_id = tr.id AND st.status = 'open') AS load
-      FROM teknisi_roster tr
-      WHERE tr.aktif = TRUE AND EXISTS (SELECT 1 FROM unnest(tr.area) a WHERE a ILIKE ${area})
-      ORDER BY load ASC, tr.created_at ASC
+      SELECT tc.id, tc.nama, tc.wa_number,
+        (SELECT COUNT(*) FROM service_ticket st WHERE st.assigned_teknisi_id = tc.id AND st.status = 'open') AS load
+      FROM teknisi_capacity tc
+      WHERE tc.aktif = TRUE AND EXISTS (SELECT 1 FROM unnest(tc.wilayah) w WHERE w ILIKE ${area})
+      ORDER BY load ASC, tc.created_at ASC
       LIMIT 1
     `;
     if (matched.length) {
@@ -80,13 +88,13 @@ async function assignTeknisi(area: string | null): Promise<AssignedTeknisi | nul
     }
   }
 
-  // Fallback: area kosong, ATAU area diisi tapi tak match siapa pun.
+  // Fallback: wilayah kosong, ATAU wilayah diisi tapi tak match siapa pun.
   const rows = await sql`
-    SELECT tr.id, tr.nama, tr.wa_number,
-      (SELECT COUNT(*) FROM service_ticket st WHERE st.assigned_teknisi_id = tr.id AND st.status = 'open') AS load
-    FROM teknisi_roster tr
-    WHERE tr.aktif = TRUE
-    ORDER BY load ASC, tr.created_at ASC
+    SELECT tc.id, tc.nama, tc.wa_number,
+      (SELECT COUNT(*) FROM service_ticket st WHERE st.assigned_teknisi_id = tc.id AND st.status = 'open') AS load
+    FROM teknisi_capacity tc
+    WHERE tc.aktif = TRUE
+    ORDER BY load ASC, tc.created_at ASC
     LIMIT 1
   `;
   return rows.length
@@ -94,7 +102,7 @@ async function assignTeknisi(area: string | null): Promise<AssignedTeknisi | nul
         id: String(rows[0].id),
         nama: String(rows[0].nama),
         wa_number: rows[0].wa_number ? String(rows[0].wa_number) : null,
-        areaMatched: !area, // area kosong dari awal → bukan mismatch, jangan flag review
+        areaMatched: !area, // wilayah kosong dari awal → bukan mismatch, jangan flag review
       }
     : null;
 }
@@ -290,6 +298,6 @@ export async function resolveTicket(id: string, note?: string): Promise<{ ok: bo
 export async function isKnownTeknisiSender(senderName: string | null): Promise<boolean> {
   if (!senderName?.trim()) return false;
   const sql = db();
-  const rows = await sql`SELECT 1 FROM teknisi_roster WHERE aktif = TRUE AND nama ILIKE ${`%${senderName.trim()}%`} LIMIT 1`;
+  const rows = await sql`SELECT 1 FROM teknisi_capacity WHERE aktif = TRUE AND nama ILIKE ${`%${senderName.trim()}%`} LIMIT 1`;
   return rows.length > 0;
 }

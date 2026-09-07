@@ -29,6 +29,12 @@ interface EligibleUnit {
   cabang: string | null;
   bast_at: string | null;
 }
+interface Teknisi {
+  id: string;
+  nama: string;
+  wa_number: string | null;
+  aktif: boolean;
+}
 
 const blank = () => ({
   installation_unit_id: "",
@@ -45,6 +51,7 @@ export function AddMaintenanceSheet() {
   const [error, setError] = useState<string | null>(null);
   const [f, setF] = useState(blank());
   const [units, setUnits] = useState<EligibleUnit[]>([]);
+  const [teknisiRoster, setTeknisiRoster] = useState<Teknisi[]>([]);
 
   useEffect(() => {
     if (!open) return;
@@ -52,7 +59,19 @@ export function AddMaintenanceSheet() {
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => setUnits(d?.units ?? []))
       .catch(() => {});
+    // Roster F8 (teknisi_capacity) — comot nama+WA drpd ketik manual, tetap
+    // bisa diedit manual di 2 field di bawah kalau teknisinya belum ada di
+    // roster (mis. kontraktor luar).
+    void fetch("/api/teknisi-capacity", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => setTeknisiRoster(d?.teknisi ?? []))
+      .catch(() => {});
   }, [open]);
+
+  function pickTeknisi(id: string) {
+    const t = teknisiRoster.find((x) => x.id === id);
+    if (t) setF((p) => ({ ...p, teknisi_name: t.nama, teknisi_wa_number: t.wa_number ?? "" }));
+  }
 
   function selectUnit(id: string) {
     const u = units.find((x) => x.id === id);
@@ -137,6 +156,20 @@ export function AddMaintenanceSheet() {
                 value={f.reference_date}
                 onChange={(e) => setF((p) => ({ ...p, reference_date: e.target.value }))}
               />
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="ms-teknisi-roster">Pilih dari roster (opsional)</Label>
+              <select
+                id="ms-teknisi-roster"
+                className={selectCls}
+                defaultValue=""
+                onChange={(e) => pickTeknisi(e.target.value)}
+              >
+                <option value="">— pilih teknisi F8, atau isi manual di bawah —</option>
+                {teknisiRoster.filter((t) => t.aktif).map((t) => (
+                  <option key={t.id} value={t.id}>{t.nama}</option>
+                ))}
+              </select>
             </div>
             <div className="grid gap-1.5">
               <Label htmlFor="ms-teknisi">Nama teknisi</Label>

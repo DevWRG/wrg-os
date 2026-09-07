@@ -17,6 +17,7 @@ interface TeknisiRow {
   id: string;
   nama: string;
   wa_number?: string | null;
+  wilayah?: string[];
   max_concurrent_jobs: number;
   aktif: boolean;
 }
@@ -28,6 +29,7 @@ export function TeknisiCardActions({ teknisi }: { teknisi: TeknisiRow }) {
   const [error, setError] = useState<string | null>(null);
   const [nama, setNama] = useState(teknisi.nama);
   const [waNumber, setWaNumber] = useState(teknisi.wa_number ?? "");
+  const [wilayah, setWilayah] = useState((teknisi.wilayah ?? []).join(", "));
   const [maxJobs, setMaxJobs] = useState(String(teknisi.max_concurrent_jobs));
   const { confirm, dialog } = useConfirm();
 
@@ -42,6 +44,7 @@ export function TeknisiCardActions({ teknisi }: { teknisi: TeknisiRow }) {
         body: JSON.stringify({
           nama: nama.trim(),
           wa_number: waNumber.trim() || null,
+          wilayah: wilayah.split(",").map((w) => w.trim()).filter(Boolean),
           max_concurrent_jobs: Number(maxJobs) || undefined,
         }),
       });
@@ -93,6 +96,10 @@ export function TeknisiCardActions({ teknisi }: { teknisi: TeknisiRow }) {
               <div className="grid gap-1.5">
                 <Label htmlFor={`tk-edit-wa-${teknisi.id}`}>No. WA</Label>
                 <Input id={`tk-edit-wa-${teknisi.id}`} value={waNumber} onChange={(e) => setWaNumber(e.target.value)} />
+              </div>
+              <div className="grid gap-1.5">
+                <Label htmlFor={`tk-edit-wilayah-${teknisi.id}`}>Wilayah</Label>
+                <Input id={`tk-edit-wilayah-${teknisi.id}`} value={wilayah} onChange={(e) => setWilayah(e.target.value)} placeholder="mis. Surabaya, Sidoarjo" />
               </div>
               <div className="grid gap-1.5">
                 <Label htmlFor={`tk-edit-max-${teknisi.id}`}>Kapasitas job bersamaan</Label>
