@@ -101,6 +101,15 @@ export default function ForecastBufferConfigPage() {
     }
   }
 
+  // Tampilkan katalog langsung saat halaman dibuka — sebelumnya kosong sampai
+  // pencet "Cari" dulu, padahal q="" sudah valid (API balas N item pertama).
+  // Ditemukan user 2026-09-07 (pola sama F15).
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- searchItems() men-setState saat fetch; disengaja.
+    void searchItems();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- sekali saat mount saja
+  }, []);
+
   async function save() {
     setSaveError(null);
     if (!selectedItem || !selectedWh || !bufferQty) {
