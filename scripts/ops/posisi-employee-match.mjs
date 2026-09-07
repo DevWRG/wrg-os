@@ -13,7 +13,14 @@
 // tinjauan berisi kandidat + alasan kenapa tidak otomatis, untuk diputuskan
 // HoD/PIC lalu dimasukkan sebagai sumber='manual'.
 //
-// DUA TINGKAT YANG DITULIS OTOMATIS:
+// TIGA TINGKAT YANG DITULIS OTOMATIS:
+//   0. alias_jabatan        — frasa di `posisi_alias` (migrasi 171) muncul di
+//      employee.role. Tabel itu berisi pernyataan SADAR dari orang bahwa suatu
+//      frasa menamai jabatan tertentu ('account manager' = posisi 'AM'), untuk
+//      kasus di mana form PIC dan roster memakai kata berbeda untuk jabatan yang
+//      sama. Karena berdasar konfirmasi, tingkat ini MENGALAHKAN tingkat 2 saat
+//      keduanya kena — lihat blok tie-break di bawah.
+// DUA TINGKAT LAIN:
 //   1. nama_di_catatan      — nama orangnya tertulis di posisi.catatan. Cocok
 //      kalau `panggilan` muncul sebagai kata utuh, ATAU ≥2 kata dari nama
 //      lengkap muncul. Ambang ≥2 kata dipakai supaya 'Muh Halim Prayogo' di
@@ -54,7 +61,7 @@ const APPLY = process.argv.includes("--apply");
 const rIdx = process.argv.indexOf("--review");
 const REVIEW = rIdx > -1 ? process.argv[rIdx + 1] : `${process.env.HOME}/posisi-employee-tinjauan.csv`;
 
-const SKRIP = ["nama_di_catatan", "nama_posisi_di_role"];
+const SKRIP = ["nama_di_catatan", "nama_posisi_di_role", "alias_jabatan"];
 
 // staf/staff & adm/admin adalah varian ejaan yang sama, bukan jabatan berbeda.
 const SINONIM = { staf: "staff", adm: "admin", administrasi: "admin" };
@@ -83,9 +90,10 @@ const sql = db();
 try {
   const [{ ada }] = await sql`
     SELECT count(*)::int AS ada FROM information_schema.tables
-     WHERE table_schema = 'public' AND table_name IN ('posisi','employee','posisi_employee')`;
-  if (ada < 3) {
-    console.error(`TOLAK: baru ${ada}/3 tabel ada. Terapkan migrasi 168 & 170 dulu.`);
+     WHERE table_schema = 'public'
+       AND table_name IN ('posisi','employee','posisi_employee','posisi_alias')`;
+  if (ada < 4) {
+    console.error(`TOLAK: baru ${ada}/4 tabel ada. Terapkan migrasi 168, 170 & 171 dulu.`);
     process.exit(1);
   }
 
@@ -95,12 +103,21 @@ try {
   const employee = await sql`
     SELECT e.id, e.nama, e.panggilan, e.dept, e.role, e.cabang FROM employee e ORDER BY e.id`;
   const petaDept = await sql`SELECT divisi_key, dept FROM divisi_department`;
+  const alias = await sql`SELECT divisi_key, posisi_nama, alias, dept, catatan FROM posisi_alias`;
 
   const deptDivisi = {};
   for (const r of petaDept) (deptDivisi[r.divisi_key] ??= []).push(r.dept);
   const bolehIsi = (e, p) => (deptDivisi[p.divisi_key] || []).includes(e.dept);
   const hantu = (p) => p.jumlah_orang == null;
   const nyata = posisi.filter((p) => !hantu(p));
+
+  // posisi_alias TIDAK ber-FK ke posisi (migrasi 171 jalan saat posisi masih
+  // kosong di DB bersih). Konsekuensinya alias bisa menunjuk posisi yang tak
+  // ada — mis. setelah ejaan di xlsx dibetulkan. Dilaporkan, bukan didiamkan:
+  // alias yatim tidak pernah cocok apa pun, jadi gejalanya "tautan hilang tanpa
+  // sebab" kalau tak diberitahu.
+  const kunciNyata = new Set(nyata.map((p) => `${p.divisi_key}|${p.nama}`));
+  const aliasYatim = alias.filter((a) => !kunciNyata.has(`${a.divisi_key}|${a.posisi_nama}`));
 
   // ---- TINGKAT 1: nama orang di posisi.catatan ----------------------------
   const tautan = new Map();   // "posisi_id|employee_id" -> {posisi, emp, sumber, catatan}
@@ -127,37 +144,87 @@ try {
     }
   }
 
-  // ---- TINGKAT 2: nama posisi termuat di employee.role --------------------
-  const muat = (role, pos) => {
-    const R = new Set(kata(role)), P = kata(pos);
+  // ---- TINGKAT 2: nama posisi (atau alias-nya) termuat di employee.role ----
+  const muat = (role, frasa) => {
+    const R = new Set(kata(role)), P = kata(frasa);
     return P.length > 0 && P.every((t) => R.has(t));
   };
-  const klaim = new Map();          // posisi_id -> [employee]
-  const cocokPerOrang = new Map();  // employee_id -> [posisi]
+  const aliasPosisi = new Map();    // "divisi|nama" -> [{alias, dept}]
+  for (const a of alias) {
+    const k = `${a.divisi_key}|${a.posisi_nama}`;
+    if (!aliasPosisi.has(k)) aliasPosisi.set(k, []);
+    aliasPosisi.get(k).push({ alias: a.alias, dept: a.dept });
+  }
+  // `dept` pada alias membatasi ke satu dept roster. Tanpa itu alias berupa kata
+  // umum menyapu orang yang cuma MENYEBUT jabatan itu, bukan memegangnya —
+  // alias 'fakturis' kena role "Finance — Pengelola Piutang (atasan Fakturis &
+  // Petty Cash)", pengklaim jadi 3 utk kapasitas 2, dan syarat kapasitas lalu
+  // menolak ketiganya sehingga 2 Fakturis asli ikut hangus.
+  const aliasBerlaku = (a, e) => !a.dept || a.dept === e.dept;
+
+  // Semua kecocokan mentah dulu, BELUM diputuskan.
+  const cocokPerOrang = new Map();  // employee_id -> [{p, alias}]  alias=null → containment langsung
   for (const e of employee) {
     for (const p of nyata) {
-      if (!bolehIsi(e, p) || !muat(e.role, p.nama)) continue;
-      if (!klaim.has(p.id)) klaim.set(p.id, []);
+      if (!bolehIsi(e, p)) continue;
+      const daftarAlias = aliasPosisi.get(`${p.divisi_key}|${p.nama}`) || [];
+      const aliasKena = daftarAlias.find((a) => aliasBerlaku(a, e) && muat(e.role, a.alias)) || null;
+      if (!aliasKena && !muat(e.role, p.nama)) continue;
       if (!cocokPerOrang.has(e.id)) cocokPerOrang.set(e.id, []);
-      klaim.get(p.id).push(e);
-      cocokPerOrang.get(e.id).push(p);
+      cocokPerOrang.get(e.id).push({ p, alias: aliasKena ? aliasKena.alias : null });
     }
   }
+
+  // BUKTI YANG DIKONFIRMASI ORANG MENGALAHKAN CONTAINMENT KEBETULAN.
+  // Baris posisi_alias adalah pernyataan sadar bahwa frasa itu menamai jabatan
+  // tersebut; containment token cuma kebetulan kata-katanya muncul. Contoh nyata
+  // yang menuntut aturan ini: role 'Account Manager (Marketing) — baru pindah
+  // dari Kirim-Tagih' cocok ke posisi 'Kirim Tagih' lewat containment (kata
+  // 'kirim'+'tagih' ada di keterangan RIWAYAT-nya) DAN ke 'AM' lewat alias
+  // 'account manager'. Tanpa aturan ini orangnya ditolak sebagai ambigu; dengan
+  // aturan ini ia jatuh ke AM — yang memang jabatannya.
+  // Ambigu hanya kalau DUA alias berbeda sama-sama kena.
+  const pilihan = new Map();        // employee_id -> {p, alias}
   const alasanTolak = new Map();    // employee_id -> alasan
   for (const e of employee) {
-    const c = cocokPerOrang.get(e.id) || [];
-    if (c.length === 0) { alasanTolak.set(e.id, "nama posisi tidak termuat di role"); continue; }
-    if (c.length > 1) {
-      alasanTolak.set(e.id, `role memuat ${c.length} nama posisi: ${c.map((x) => x.nama).join(" / ")}`);
+    const semuaCocok = cocokPerOrang.get(e.id) || [];
+    if (semuaCocok.length === 0) {
+      alasanTolak.set(e.id, "nama posisi (atau alias-nya) tidak termuat di role");
       continue;
     }
-    const p = c[0], n = (klaim.get(p.id) || []).length;
-    if (n > p.jumlah_orang) {
-      alasanTolak.set(e.id, `kapasitas '${p.nama}' ${p.jumlah_orang} tapi ${n} orang cocok`);
+    const lewatAlias = semuaCocok.filter((c) => c.alias);
+    const kandidat = lewatAlias.length ? lewatAlias : semuaCocok;
+    if (kandidat.length > 1) {
+      alasanTolak.set(e.id, lewatAlias.length
+        ? `role cocok ${kandidat.length} alias posisi: ${kandidat.map((c) => `${c.p.nama} (via '${c.alias}')`).join(" / ")}`
+        : `role memuat ${kandidat.length} nama posisi: ${kandidat.map((c) => c.p.nama).join(" / ")}`);
       continue;
     }
-    tambah(p, e, "nama_posisi_di_role",
-      `seluruh kata '${p.nama}' ada di role; pengklaim ${n} ≤ kapasitas ${p.jumlah_orang}`);
+    pilihan.set(e.id, kandidat[0]);
+  }
+
+  // Kapasitas dihitung dari PILIHAN yang sudah diresolusi, bukan dari kecocokan
+  // mentah. Kalau dihitung dari yang mentah, posisi yang kalah tie-break tetap
+  // terhitung punya pengklaim dan ikut melampaui kapasitas tanpa alasan.
+  const klaim = new Map();          // posisi_id -> [employee]
+  for (const [empId, c] of pilihan) {
+    if (!klaim.has(c.p.id)) klaim.set(c.p.id, []);
+    klaim.get(c.p.id).push(empId);
+  }
+  for (const [empId, c] of pilihan) {
+    const n = (klaim.get(c.p.id) || []).length;
+    if (n > c.p.jumlah_orang) {
+      alasanTolak.set(empId, `kapasitas '${c.p.nama}' ${c.p.jumlah_orang} tapi ${n} orang cocok`);
+      continue;
+    }
+    const e = employee.find((x) => x.id === empId);
+    if (c.alias) {
+      tambah(c.p, e, "alias_jabatan",
+        `alias '${c.alias}' (posisi_alias) ada di role; pengklaim ${n} ≤ kapasitas ${c.p.jumlah_orang}`);
+    } else {
+      tambah(c.p, e, "nama_posisi_di_role",
+        `seluruh kata '${c.p.nama}' ada di role; pengklaim ${n} ≤ kapasitas ${c.p.jumlah_orang}`);
+    }
   }
 
   const semua = [...tautan.values()];
@@ -208,6 +275,11 @@ try {
     for (const [a, n] of Object.entries(rekap).sort((x, y) => y[1] - x[1])) {
       console.log(`        ${String(n).padStart(3)}× ${a}`);
     }
+  }
+
+  if (aliasYatim.length) {
+    console.log(`\n⚠ ALIAS YATIM (posisi_alias menunjuk posisi yang tak ada — tak akan pernah cocok): ${aliasYatim.length}`);
+    for (const a of aliasYatim) console.log(`   ${a.divisi_key} | ${a.posisi_nama} ← '${a.alias}'`);
   }
 
   const barisHantu = posisi.filter(hantu);
