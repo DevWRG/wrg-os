@@ -190,11 +190,8 @@ export async function transferAsset(assetId: string, input: TransferInput): Prom
   let toUserId = input.to_user_id ?? null;
   const toPicNameTrim = input.to_pic_name?.trim() || null;
   if (!toUserId && toPicNameTrim) toUserId = await resolveUserByName(toPicNameTrim);
-  if (!toUserId) {
-    return {
-      ok: false,
-      error: "to_user_id wajib (atau to_pic_name yang cocok nama user terdaftar) — utk PIC belum terdaftar, pakai edit \"PIC (override cepat)\" di form Aset",
-    };
+  if (!toUserId && !toPicNameTrim) {
+    return { ok: false, error: "to_user_id atau to_pic_name wajib diisi" };
   }
 
   const transferDate = input.transfer_date ?? wibToday();
@@ -204,6 +201,28 @@ export async function transferAsset(assetId: string, input: TransferInput): Prom
   for (const a of activeAssignments) {
     await sql`UPDATE ga_asset_assignments SET returned_date = ${transferDate}, returned_at = now() WHERE id = ${a.id}`;
   }
+
+  if (!toUserId) {
+    // PIC baru nama bebas, tak match user terdaftar manapun — sama pola
+    // assignAsset(): TANPA baris histori assignment/transfer resmi
+    // (ga_asset_assignments.user_id & ga_asset_transfers.to_user_id NOT
+    // NULL, gak bisa dipaksa utk PIC tanpa akun), tapi assignment lama TETAP
+    // ditutup di atas & tercatat ke audit_log. Sebelumnya transfer ke nama
+    // bebas SELALU ditolak walau caption UI bilang bisa "isi nama bebas"
+    // (ditemukan QA jalur tulis 2026-09-07, re-test pasca fitur Dito Anggara).
+    await sql`
+      UPDATE ga_assets SET
+        current_pic_user_id = NULL, pic_name_override = ${toPicNameTrim},
+        location = COALESCE(${input.to_location ?? null}, location), updated_at = now()
+      WHERE id = ${assetId}
+    `;
+    await logAudit("ga_asset.transfer_freetext", {
+      asset_id: assetId, asset_code: asset.asset_code,
+      from_user_id: asset.current_pic_user_id, to_pic_name: toPicNameTrim, reason: input.reason ?? null,
+    });
+    return (await getAsset(assetId))!;
+  }
+
   await sql`
     INSERT INTO ga_asset_assignments (asset_id, user_id, assigned_date, notes, is_shared_snapshot)
     VALUES (${assetId}, ${toUserId}, ${transferDate}, ${input.reason ?? null}, ${Boolean(asset.is_shared)})
