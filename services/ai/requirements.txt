@@ -22,3 +22,22 @@ fastapi>=0.128.8,<0.129
 uvicorn[standard]>=0.39.0,<0.40
 pydantic>=2.13.5
 httpx>=0.28.1
+
+# F-CASHIN pembaca rekening koran (app/koran.py). Keduanya masih mendukung
+# Python 3.9 (diperiksa via requires_python di PyPI, 2026-09-07):
+#   pypdf 6.17.0      requires_python >=3.9  — ekstraksi teks PDF
+#   pypdfium2 5.13.0  requires_python >=3.6  — render halaman jadi bitmap
+# Diuji langsung di venv Python 3.9.6 (interpreter yang sama dgn produksi).
+#
+# TIDAK memakai Pillow: bitmap pypdfium2 dibungkus jadi PNG oleh encoder stdlib
+# (zlib+struct) di app/koran.py, supaya venv 3.9 tak menanggung satu dependensi
+# biner lagi.
+#
+# PENTING soal deploy: scripts/ops/deploy-prod.sh TIDAK menjalankan pip install.
+# Karena itu app/koran.py meng-import kedua paket ini di DALAM fungsi, bukan di
+# tingkat modul — wrg-prod-ai tetap bisa boot walau venv belum di-update, dan
+# hanya /parse-koran yang gagal dgn pesan jelas. Setelah deploy pertama fitur
+# ini, jalankan sekali di server:
+#   services/ai/.venv/bin/pip install -r services/ai/requirements.txt
+pypdf>=6.17.0
+pypdfium2>=5.13.0
