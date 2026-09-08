@@ -389,21 +389,66 @@ export async function reportDailyTrend(from: string, to: string) {
   }));
 }
 
-// Detail plan kunjungan SEMUA AM dalam rentang (buat export Excel) — rata,
-// 1 baris per plan + hasil/next dari activity terkait.
+// Detail plan SEMUA karyawan wajib plan/report dalam rentang (buat export Excel)
+// — rata, 1 baris per item rencana.
+//
+// DUA SUMBER, JANGAN CUMA `sales_plan`. AM merencanakan kunjungan di `sales_plan`;
+// non-AM (Operasional/Admin/Finance/…) mengirim checklist harian ke `sales_todo`
+// yang tak punya kolom customer sama sekali. Versi awal fungsi ini hanya membaca
+// `sales_plan`, jadi export Excel keluar berisi AM saja padahal tabel Per Orang di
+// layar menampilkan seluruh roster — dan tidak ada error apa pun, barisnya cuma
+// hilang. Terukur di prod (60 hari): sales_plan 12 orang (semua AM) vs sales_todo
+// 35 orang (semua non-AM). Kedua tabel saling lepas per role, jadi UNION ALL di
+// bawah tidak mungkin menggandakan orang.
+//
+// Item todo di-flatten dari `report_data` bila sudah lapor (bentuk
+// {task,score,matched} baru atau {task,result,status} legacy — keduanya dikenali),
+// jatuh ke `items` bila belum. Ingat markReported() MENIMPA `items` dengan item
+// laporan, jadi report_data adalah sumber yang benar begitu ada.
 export async function reportDetailAll(from: string, to: string) {
   const sql = db();
   const rows = await sql`
-    SELECT sp.tanggal::text AS tanggal, sp.am_id,
-           COALESCE(initcap(mu.panggilan), mu.nama) AS nama, mu.role, mu.cabang,
-           sp.customer_name, sp.tujuan, sp.goal,
-           CASE WHEN sp.reported THEN 'reported' WHEN sp.is_late_plan THEN 'late' ELSE 'pending' END AS status,
-           al.hasil, al.next_action, sp.visit_lat, sp.visit_lon, sp.visit_date_mismatch
-    FROM sales_plan sp
-    JOIN master_user mu ON mu.am_id = sp.am_id
-    LEFT JOIN activity_log al ON al.id = sp.activity_id
-    WHERE sp.tanggal BETWEEN ${from} AND ${to}
-    ORDER BY sp.tanggal DESC, nama, sp.seq
+    WITH plan_rows AS (
+      SELECT sp.tanggal::text AS tanggal, sp.am_id,
+             COALESCE(initcap(mu.panggilan), mu.nama) AS nama, mu.role, mu.cabang,
+             'Kunjungan'::text AS jenis, COALESCE(sp.seq, 0)::int AS seq,
+             sp.customer_name, sp.tujuan, sp.goal,
+             CASE WHEN sp.reported THEN 'reported' WHEN sp.is_late_plan THEN 'late' ELSE 'pending' END AS status,
+             al.hasil, al.next_action, sp.visit_lat, sp.visit_lon, sp.visit_date_mismatch
+      FROM sales_plan sp
+      JOIN master_user mu ON mu.am_id = sp.am_id
+      LEFT JOIN activity_log al ON al.id = sp.activity_id
+      WHERE sp.tanggal BETWEEN ${from} AND ${to}
+    ),
+    todo_rows AS (
+      SELECT st.tanggal::text AS tanggal, st.am_id,
+             COALESCE(initcap(mu.panggilan), mu.nama) AS nama, mu.role, mu.cabang,
+             'Todo'::text AS jenis, it.ord::int AS seq,
+             NULL::text AS customer_name, it.task AS tujuan, NULL::text AS goal,
+             CASE WHEN it.matched THEN 'reported' WHEN st.is_late_plan THEN 'late' ELSE 'pending' END AS status,
+             it.hasil, NULL::text AS next_action,
+             NULL::numeric AS visit_lat, NULL::numeric AS visit_lon, FALSE AS visit_date_mismatch
+      FROM sales_todo st
+      JOIN master_user mu ON mu.am_id = st.am_id
+      CROSS JOIN LATERAL (
+        SELECT e.ord,
+               COALESCE(NULLIF(e.el->>'task',''), e.el#>>'{}') AS task,
+               ((e.el->>'matched')::boolean IS TRUE OR e.el->>'status' = 'matched') AS matched,
+               NULLIF(e.el->>'result','') AS hasil
+        FROM jsonb_array_elements(
+               CASE
+                 WHEN jsonb_typeof(st.report_data) = 'array' AND jsonb_array_length(st.report_data) > 0 THEN st.report_data
+                 WHEN jsonb_typeof(st.items) = 'array' THEN st.items
+                 ELSE '[]'::jsonb
+               END
+             ) WITH ORDINALITY e(el, ord)
+      ) it
+      WHERE st.tanggal BETWEEN ${from} AND ${to}
+    )
+    SELECT * FROM plan_rows
+    UNION ALL
+    SELECT * FROM todo_rows
+    ORDER BY tanggal DESC, nama, jenis, seq
   `;
   return rows.map((r) => ({
     tanggal: String(r.tanggal),
@@ -411,6 +456,7 @@ export async function reportDetailAll(from: string, to: string) {
     nama: r.nama ? String(r.nama) : null,
     role: r.role ? String(r.role) : null,
     cabang: r.cabang ? String(r.cabang) : null,
+    jenis: String(r.jenis),
     customer_name: r.customer_name ? String(r.customer_name) : null,
     tujuan: r.tujuan ? String(r.tujuan) : null,
     goal: r.goal ? String(r.goal) : null,
