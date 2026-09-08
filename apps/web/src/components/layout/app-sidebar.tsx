@@ -58,7 +58,10 @@ export function AppSidebar({ me }: { me: SessionUser | null }) {
                 {group.items.map((item) => (
                   <SidebarMenuItem key={item.url}>
                     <SidebarMenuButton
-                      isActive={item.exact ? pathname === item.url : pathname === item.url || pathname.startsWith(`${item.url}/`)}
+                      isActive={
+                        (item.exact ? pathname === item.url : pathname === item.url || pathname.startsWith(`${item.url}/`)) ||
+                        (item.matchPrefix?.some((p) => pathname === p || pathname.startsWith(`${p}/`)) ?? false)
+                      }
                       tooltip={item.title}
                       className="rounded-md focus-visible:ring-0 data-active:bg-primary/10 data-active:font-medium data-active:text-primary data-active:shadow-[inset_3px_0_0_var(--primary)]"
                       onClick={() => setOpenMobile(false)}
