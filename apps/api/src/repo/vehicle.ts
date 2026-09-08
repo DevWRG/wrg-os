@@ -101,7 +101,24 @@ export async function listVehicles(activeOnly = true): Promise<VehicleRow[]> {
 
 export async function getVehicleById(id: string): Promise<VehicleRow | null> {
   const sql = db();
-  const rows = await sql`SELECT * FROM vehicle WHERE id = ${id}`;
+  const monthStart = wibMonthStart();
+  // Sebelumnya SELECT polos tanpa JOIN vehicle_log — bbm_liter_bulan_ini/
+  // bbm_cost_bulan_ini selalu 0 di sini walau listVehicles() (baris di atas)
+  // benar mengagregasi. Kontrak API jadi tak konsisten antara list & detail
+  // (ditemukan QA jalur tulis 2026-09-07).
+  const rows = await sql`
+    SELECT v.*,
+      COALESCE(b.liter, 0) AS bbm_liter_bulan_ini,
+      COALESCE(b.cost, 0) AS bbm_cost_bulan_ini
+    FROM vehicle v
+    LEFT JOIN (
+      SELECT vehicle_id, SUM(bbm_liter) AS liter, SUM(bbm_cost) AS cost
+      FROM vehicle_log
+      WHERE log_type = 'bbm' AND log_date >= ${monthStart}::date
+      GROUP BY vehicle_id
+    ) b ON b.vehicle_id = v.id
+    WHERE v.id = ${id}
+  `;
   return rows.length ? mapRow(rows[0]) : null;
 }
 
