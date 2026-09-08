@@ -40,3 +40,21 @@ export async function POST(req: Request, ctx: { params: Promise<{ path?: string[
     return Response.json({ error: "backend unreachable" }, { status: 502 });
   }
 }
+
+export async function PATCH(req: Request, ctx: { params: Promise<{ path?: string[] }> }) {
+  const me = await sessionUser();
+  if (!me) return Response.json({ error: "unauthenticated" }, { status: 401 });
+  const sub = joinPath((await ctx.params).path);
+  const body = await req.text();
+  try {
+    return relay(
+      await gatewayFetch(`/lpse-tender${sub ? `/${sub}` : ""}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json", "x-user-id": me.id },
+        body,
+      }),
+    );
+  } catch {
+    return Response.json({ error: "backend unreachable" }, { status: 502 });
+  }
+}
