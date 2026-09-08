@@ -95,14 +95,18 @@ export async function updateCategory(id: string, input: GaAssetCategoryUpdateInp
   const sql = db();
   const rows = await sql`SELECT id FROM ga_asset_categories WHERE id = ${id}`;
   if (rows.length === 0) return { ok: false, error: "kategori tidak ditemukan" };
+  // `!== undefined` (bukan COALESCE(x ?? null, kolom)) — field opsional
+  // (depreciation_years/icon/default_recur_months) harus BISA dikosongkan
+  // lewat null eksplisit; COALESCE selalu jatuh balik ke nilai lama kalau
+  // input null (pola bug yang sama dgn F53 asset-tag.ts, sapuan 2026-09-07).
   await sql`
     UPDATE ga_asset_categories SET
-      nama = COALESCE(${input.nama ?? null}, nama),
-      depreciation_years = COALESCE(${input.depreciation_years ?? null}, depreciation_years),
-      icon = COALESCE(${input.icon ?? null}, icon),
-      default_recur_months = COALESCE(${input.default_recur_months ?? null}, default_recur_months),
-      is_shared = COALESCE(${input.is_shared ?? null}, is_shared),
-      active = COALESCE(${input.active ?? null}, active),
+      nama = ${input.nama !== undefined ? input.nama : sql`nama`},
+      depreciation_years = ${input.depreciation_years !== undefined ? input.depreciation_years : sql`depreciation_years`},
+      icon = ${input.icon !== undefined ? input.icon : sql`icon`},
+      default_recur_months = ${input.default_recur_months !== undefined ? input.default_recur_months : sql`default_recur_months`},
+      is_shared = ${input.is_shared !== undefined ? input.is_shared : sql`is_shared`},
+      active = ${input.active !== undefined ? input.active : sql`active`},
       updated_at = now()
     WHERE id = ${id}
   `;
@@ -315,26 +319,30 @@ export async function updateAsset(id: string, input: GaAssetUpdateInput): Promis
   if (rows.length === 0) return { ok: false, error: "aset tidak ditemukan" };
   const picProvided = Object.prototype.hasOwnProperty.call(input, "pic_name_override");
   const picValue = input.pic_name_override == null || input.pic_name_override === "" ? null : String(input.pic_name_override);
+  // `!== undefined` (bukan COALESCE(x ?? null, kolom)) — field opsional
+  // (brand/model/serial_number/tanggal/lokasi/dst) harus BISA dikosongkan
+  // lewat null eksplisit; COALESCE selalu jatuh balik ke nilai lama kalau
+  // input null (pola bug yang sama dgn F53 asset-tag.ts, sapuan 2026-09-07).
   await sql`
     UPDATE ga_assets SET
-      nama = COALESCE(${input.nama ?? null}, nama),
-      category_id = COALESCE(${input.category_id ?? null}, category_id),
-      brand = COALESCE(${input.brand ?? null}, brand),
-      model = COALESCE(${input.model ?? null}, model),
-      serial_number = COALESCE(${input.serial_number ?? null}, serial_number),
-      purchase_date = COALESCE(${input.purchase_date ?? null}, purchase_date),
-      purchase_price = COALESCE(${input.purchase_price ?? null}, purchase_price),
-      current_value = COALESCE(${input.current_value ?? null}, current_value),
-      warranty_expiry = COALESCE(${input.warranty_expiry ?? null}, warranty_expiry),
-      location = COALESCE(${input.location ?? null}, location),
-      department = COALESCE(${input.department ?? null}, department),
-      condition = COALESCE(${input.condition ?? null}, condition),
-      status = COALESCE(${input.status ?? null}, status),
-      foto_path = COALESCE(${input.foto_path ?? null}, foto_path),
-      dokumen_path = COALESCE(${input.dokumen_path ?? null}, dokumen_path),
-      notes = COALESCE(${input.notes ?? null}, notes),
-      is_critical = COALESCE(${input.is_critical ?? null}, is_critical),
-      active = COALESCE(${input.active ?? null}, active),
+      nama = ${input.nama !== undefined ? input.nama : sql`nama`},
+      category_id = ${input.category_id !== undefined ? input.category_id : sql`category_id`},
+      brand = ${input.brand !== undefined ? input.brand : sql`brand`},
+      model = ${input.model !== undefined ? input.model : sql`model`},
+      serial_number = ${input.serial_number !== undefined ? input.serial_number : sql`serial_number`},
+      purchase_date = ${input.purchase_date !== undefined ? input.purchase_date : sql`purchase_date`},
+      purchase_price = ${input.purchase_price !== undefined ? input.purchase_price : sql`purchase_price`},
+      current_value = ${input.current_value !== undefined ? input.current_value : sql`current_value`},
+      warranty_expiry = ${input.warranty_expiry !== undefined ? input.warranty_expiry : sql`warranty_expiry`},
+      location = ${input.location !== undefined ? input.location : sql`location`},
+      department = ${input.department !== undefined ? input.department : sql`department`},
+      condition = ${input.condition !== undefined ? input.condition : sql`condition`},
+      status = ${input.status !== undefined ? input.status : sql`status`},
+      foto_path = ${input.foto_path !== undefined ? input.foto_path : sql`foto_path`},
+      dokumen_path = ${input.dokumen_path !== undefined ? input.dokumen_path : sql`dokumen_path`},
+      notes = ${input.notes !== undefined ? input.notes : sql`notes`},
+      is_critical = ${input.is_critical !== undefined ? input.is_critical : sql`is_critical`},
+      active = ${input.active !== undefined ? input.active : sql`active`},
       pic_name_override = CASE WHEN ${picProvided}::boolean THEN ${picValue} ELSE pic_name_override END,
       updated_at = now()
     WHERE id = ${id}
