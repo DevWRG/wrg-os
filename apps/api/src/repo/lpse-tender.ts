@@ -115,10 +115,19 @@ export async function createTender(input: CreateTenderInput): Promise<LpseTender
     if (!pic) return { ok: false, error: "pic_employee_id tidak ditemukan" };
   }
 
+  const tenderNo = input.tender_no?.trim() || null;
+  if (tenderNo) {
+    // nomor tender LPSE identitas unik pengadaan — tanpa cek ini, salah ketik/
+    // duplikat entry tercatat sbg 2 pengadaan terpisah tanpa sinyal apa pun
+    // (ditemukan QA jalur tulis 2026-09-07).
+    const [dup] = await sql`SELECT 1 FROM lpse_tender WHERE tender_no = ${tenderNo}`;
+    if (dup) return { ok: false, error: `tender_no "${tenderNo}" sudah dipakai pengadaan lain` };
+  }
+
   const rows = await sql`
     INSERT INTO lpse_tender (tender_no, judul, instansi, platform, pic_employee_id, dept, notes, created_by_user_id)
     VALUES (
-      ${input.tender_no ?? null}, ${judul}, ${instansi}, ${platform},
+      ${tenderNo}, ${judul}, ${instansi}, ${platform},
       ${input.pic_employee_id ?? null}, ${input.dept ?? "penawaran"}, ${input.notes ?? null},
       ${input.created_by_user_id ?? null}
     )
