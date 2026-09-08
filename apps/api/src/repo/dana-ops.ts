@@ -8,6 +8,25 @@ import { db } from "../db.js";
 
 export type DanaOpsStatus = "in_progress" | "realized";
 
+export class DanaOpsError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+    this.name = "DanaOpsError";
+  }
+}
+
+// GAP-06 (ditemukan re-test 2026-09-07): tak ada guard/dedup saat form
+// di-submit berulang cepat. Frontend SUDAH disable tombol saat submit
+// (dikonfirmasi manual — klik ganda/berjeda cuma hasilkan 1 baris lewat UI
+// normal), jadi ini murni jaring pengaman kalau tombol itu ke-bypass
+// (panggilan API langsung, race sisi klien lain). Window pendek (bukan
+// larangan permanen) supaya pengajuan identik yang MEMANG disengaja
+// (mis. rutin tiap minggu) tetap boleh — cuma submit ganda dlm detik yang
+// sama yang ditolak.
+const DUPLICATE_SUBMIT_WINDOW_SECONDS = 10;
+
 export interface DanaOpsItemRow {
   id: string;
   dana_ops_id: string;
@@ -100,6 +119,18 @@ export interface DanaOpsDetail extends DanaOpsRow {
 
 export async function createDanaOps(t: DanaOpsInput): Promise<DanaOpsRow> {
   const sql = db();
+  const [dup] = await sql`
+    SELECT id FROM dana_ops
+    WHERE requested_by = ${t.requested_by}
+      AND purpose = ${t.purpose}
+      AND amount_requested = ${t.amount_requested}
+      AND cabang IS NOT DISTINCT FROM ${t.cabang ?? null}
+      AND created_at > now() - (${DUPLICATE_SUBMIT_WINDOW_SECONDS} || ' seconds')::interval
+    LIMIT 1
+  `;
+  if (dup) {
+    throw new DanaOpsError(409, "Pengajuan yang sama baru saja tersimpan — cek daftar sebelum mengirim ulang");
+  }
   const rows = await sql`
     INSERT INTO dana_ops (cabang, requested_by, purpose, amount_requested, request_date, notes, created_by)
     VALUES (${t.cabang ?? null}, ${t.requested_by}, ${t.purpose}, ${t.amount_requested},
