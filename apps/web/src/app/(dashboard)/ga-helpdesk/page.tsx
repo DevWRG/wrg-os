@@ -4,6 +4,7 @@ import { GaHelpdeskView } from "@/components/crm/ga-helpdesk-view";
 import type { GaTicket } from "@/components/tables/ga-tickets-table";
 import type { GaTicketCategory } from "@/components/tables/ga-ticket-categories-table";
 import type { AppUserOption } from "@/components/crm/add-ga-ticket-button";
+import type { TeknisiOption } from "@/components/crm/ga-ticket-assign-button";
 
 export const dynamic = "force-dynamic";
 
@@ -40,15 +41,30 @@ async function getUsers(): Promise<AppUserOption[]> {
   }
 }
 
+// Dialog assign sudah lama bilang "Pilih Admin GA/Teknisi cabang penanganan"
+// tapi cuma ada picker app_user + teks bebas — teknisi selalu masuk lewat
+// teks bebas, gak ada picker dari roster F8 (teknisi_capacity). Ditemukan
+// user 2026-09-07.
+async function getTeknisi(): Promise<TeknisiOption[]> {
+  try {
+    const res = await gatewayFetch("/teknisi-capacity");
+    if (!res.ok) return [];
+    const data = (await res.json()) as { teknisi: TeknisiOption[] };
+    return data.teknisi ?? [];
+  } catch {
+    return [];
+  }
+}
+
 export default async function GaHelpdeskPage() {
-  const [tickets, categories, users] = await Promise.all([getTickets(), getCategories(), getUsers()]);
+  const [tickets, categories, users, teknisi] = await Promise.all([getTickets(), getCategories(), getUsers(), getTeknisi()]);
   return (
     <>
       <PageHeader
         title="Helpdesk GA"
         description="Ticketing kendala operasional — SLA otomatis per kategori, tracking progres, eskalasi overdue ke assignee + HoD."
       />
-      <GaHelpdeskView tickets={tickets} categories={categories} users={users} />
+      <GaHelpdeskView tickets={tickets} categories={categories} users={users} teknisi={teknisi} />
     </>
   );
 }

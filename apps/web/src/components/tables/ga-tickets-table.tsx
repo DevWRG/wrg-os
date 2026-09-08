@@ -2,7 +2,7 @@
 
 import { Badge } from "@/components/ui/badge";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
-import { GaTicketAssignButton } from "@/components/crm/ga-ticket-assign-button";
+import { GaTicketAssignButton, type TeknisiOption } from "@/components/crm/ga-ticket-assign-button";
 import { GaTicketTransitionActions } from "@/components/crm/ga-ticket-transition-actions";
 import { GaTicketTimelineButton } from "@/components/crm/ga-ticket-timeline-button";
 import type { AppUserOption } from "@/components/crm/add-ga-ticket-button";
@@ -35,7 +35,7 @@ const PRIORITY_VARIANT: Record<string, "outline" | "secondary" | "destructive"> 
 
 const fmt = (iso: string) => new Date(iso).toLocaleString("id-ID", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
 
-export function GaTicketsTable({ tickets, users }: { tickets: GaTicket[]; users: AppUserOption[] }) {
+export function GaTicketsTable({ tickets, users, teknisi }: { tickets: GaTicket[]; users: AppUserOption[]; teknisi: TeknisiOption[] }) {
   const columns: DataColumn<GaTicket>[] = [
     {
       id: "ticket",
@@ -73,7 +73,7 @@ export function GaTicketsTable({ tickets, users }: { tickets: GaTicket[]; users:
     {
       id: "assignee",
       header: "Assignee",
-      cell: (t) => <GaTicketAssignButton ticketId={t.id} currentName={t.assignee_name} users={users} />,
+      cell: (t) => <GaTicketAssignButton ticketId={t.id} currentName={t.assignee_name} users={users} teknisi={teknisi} />,
     },
     {
       id: "aksi",
