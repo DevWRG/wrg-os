@@ -204,7 +204,7 @@ async function itAssetSummary(from: string, to: string): Promise<ItAssetSummary>
           WHERE t.status = 'resolved' AND t.resolved_at IS NOT NULL AND t.resolved_at > t.sla_due_at
             AND t.resolved_at::date BETWEEN ${from}::date AND ${to}::date
         )::int AS breach_resolved_late_count
-      FROM it_ticket t JOIN it_asset a ON a.id = t.asset_id`;
+      FROM it_ticket t JOIN ga_assets a ON a.id = t.asset_id`;
 
     return {
       available: true,
@@ -220,7 +220,7 @@ async function itAssetSummary(from: string, to: string): Promise<ItAssetSummary>
       },
     };
   } catch {
-    // it_asset/it_ticket belum ada (F52 belum merge)
+    // it_ticket belum ada (F52 belum merge) — fallback aman, bukan crash.
     return { available: false };
   }
 }
