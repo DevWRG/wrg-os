@@ -281,7 +281,13 @@ export async function cancelSchedule(id: string, notes?: string | null): Promise
   const sql = db();
   const rows = await sql`SELECT status FROM ga_maintenance_schedules WHERE id = ${id}`;
   if (rows.length === 0) return { ok: false, error: "jadwal tidak ditemukan" };
-  if (rows[0].status === "done" || rows[0].status === "cancelled") return { ok: false, error: `sudah "${rows[0].status}"` };
+  // pending_finance = pekerjaan SUDAH selesai secara fisik (cost_actual + completed_at
+  // terisi, di atas ambang approval Finance) — cancel di sini akan menghilangkan
+  // pekerjaan riil dari alur approval tanpa approved_by, bukan "membatalkan rencana".
+  // Cuma pending/in_progress yang sah dibatalkan (ditemukan QA jalur tulis 2026-09-07).
+  if (rows[0].status === "done" || rows[0].status === "cancelled" || rows[0].status === "pending_finance") {
+    return { ok: false, error: `tidak bisa dibatalkan — status sudah "${rows[0].status}"` };
+  }
   await sql`UPDATE ga_maintenance_schedules SET status = 'cancelled', notes = COALESCE(${notes ?? null}, notes), updated_at = now() WHERE id = ${id}`;
   return { ok: true };
 }
