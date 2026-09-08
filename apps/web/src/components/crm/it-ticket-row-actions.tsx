@@ -19,27 +19,37 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import type { AppUserOption } from "./add-it-ticket-button";
 
 const selectCls =
   "h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50";
+
+// "" = tak diisi · LUAR = di luar daftar (kotak teks) · selain itu = id akun.
+// Pola sama add-it-ticket-button.tsx — sebelumnya cuma kotak teks bebas di
+// sini, PIC user terdaftar tak bisa dipilih lagi begitu masuk mode edit
+// (ditemukan user 2026-09-07).
+const LUAR = "__luar__";
 
 interface Ticket {
   id: string;
   asset_code: string;
   status: string;
   assigned_to: string | null;
+  assigned_to_user_id: string | null;
 }
 
-export function ItTicketRowActions({ ticket }: { ticket: Ticket }) {
+export function ItTicketRowActions({ ticket, users = [] }: { ticket: Ticket; users?: AppUserOption[] }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [f, setF] = useState({
     status: ticket.status,
-    assigned_to: ticket.assigned_to ?? "",
+    assigned_to: ticket.assigned_to_user_id ? "" : (ticket.assigned_to ?? ""),
     resolved_note: "",
   });
+  const [picSel, setPicSel] = useState(ticket.assigned_to_user_id ?? (ticket.assigned_to ? LUAR : ""));
+  const userLabel = (u: AppUserOption) => u.name?.trim() || u.id.slice(0, 8);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -51,7 +61,8 @@ export function ItTicketRowActions({ ticket }: { ticket: Ticket }) {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           status: f.status,
-          assigned_to: f.assigned_to.trim() || undefined,
+          assigned_to_user_id: picSel && picSel !== LUAR ? picSel : undefined,
+          assigned_to: picSel === LUAR ? f.assigned_to.trim() || undefined : undefined,
           resolved_note: f.resolved_note.trim() || undefined,
         }),
       });
@@ -97,7 +108,23 @@ export function ItTicketRowActions({ ticket }: { ticket: Ticket }) {
             </div>
             <div className="grid gap-1.5">
               <Label htmlFor="it-pic">PIC</Label>
-              <Input id="it-pic" value={f.assigned_to} onChange={(e) => setF((p) => ({ ...p, assigned_to: e.target.value }))} />
+              <select id="it-pic" className={selectCls} value={picSel} onChange={(e) => setPicSel(e.target.value)}>
+                <option value="">— tak diubah —</option>
+                {users.map((u) => (
+                  <option key={u.id} value={u.id}>
+                    {userLabel(u)}
+                  </option>
+                ))}
+                <option value={LUAR}>di luar daftar (tulis nama)</option>
+              </select>
+              {picSel === LUAR && (
+                <Input
+                  aria-label="Nama PIC di luar daftar"
+                  value={f.assigned_to}
+                  onChange={(e) => setF((p) => ({ ...p, assigned_to: e.target.value }))}
+                  placeholder="nama PIC — mis. teknisi vendor"
+                />
+              )}
             </div>
             {f.status === "resolved" && (
               <div className="grid gap-1.5">
