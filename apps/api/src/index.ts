@@ -5657,6 +5657,12 @@ app.post("/atk/items", async (c) => {
   if (body.transaction_category && !ATK_TRANSACTION_CATEGORIES.includes(body.transaction_category)) {
     return c.json({ error: "transaction_category harus 'barang' atau 'materai'" }, 400);
   }
+  // GAP-05 (ditemukan re-test 2026-09-07): min_stock negatif dulu diterima
+  // diam-diam — ambang stok minimum negatif tak masuk akal & bikin
+  // is_low_stock tak pernah menyala (current_stock selalu > negatif).
+  if (body.min_stock != null && Number(body.min_stock) < 0) {
+    return c.json({ error: "min_stock tidak boleh negatif" }, 400);
+  }
   const row = await createAtkItem(body);
   return c.json(row, 201);
 });
@@ -5667,6 +5673,9 @@ app.patch("/atk/items/:id", async (c) => {
   try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
   if (body.transaction_category && !ATK_TRANSACTION_CATEGORIES.includes(body.transaction_category)) {
     return c.json({ error: "transaction_category harus 'barang' atau 'materai'" }, 400);
+  }
+  if (body.min_stock != null && Number(body.min_stock) < 0) {
+    return c.json({ error: "min_stock tidak boleh negatif" }, 400);
   }
   const row = await updateAtkItem(c.req.param("id"), body);
   return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
