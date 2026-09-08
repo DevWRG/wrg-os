@@ -7001,8 +7001,15 @@ app.post("/teknisi-reports", async (c) => {
   if (!["install", "servis", "training", "kalibrasi"].includes(body.report_type)) {
     return c.json({ error: "report_type harus install|servis|training|kalibrasi" }, 400);
   }
+  // Kolomnya uuid — id kosong/ngawur bikin Postgres melempar 22P02 mentah
+  // (bukan crash, tapi pesannya beda dgn pre-check serupa di F22 assign-teknisi).
+  // Disaring dulu supaya pesannya konsisten & bisa dibaca orang (QA 2026-09-07).
+  const teknisiId = body.teknisi_id?.trim() || null;
+  if (teknisiId && !/^[0-9a-f-]{36}$/i.test(teknisiId)) {
+    return c.json({ error: "teknisi_id bukan uuid yang sah — pilih dari daftar, jangan diketik" }, 400);
+  }
   const r = await createTeknisiReport({
-    teknisi_id: body.teknisi_id,
+    teknisi_id: teknisiId,
     report_type: body.report_type,
     body: body.body,
     source: "manual",

@@ -63,9 +63,15 @@ export async function createTeknisiCapacity(
   const sql = db();
   const existing = await sql`SELECT id FROM teknisi_capacity WHERE nama = ${input.nama}`;
   if (existing.length) return { ok: false, error: "nama sudah ada di roster" };
+  const maxJobs = input.max_concurrent_jobs ?? 3;
+  // DB CHECK cuma > 0, tak ada batas atas — 1 teknisi realistisnya tak mungkin
+  // pegang ratusan job bersamaan (pola sama F24 interval_bulan, QA 2026-09-07).
+  if (!Number.isInteger(maxJobs) || maxJobs < 1 || maxJobs > 50) {
+    return { ok: false, error: "max_concurrent_jobs harus bilangan bulat 1-50" };
+  }
   const rows = await sql`
     INSERT INTO teknisi_capacity (nama, wa_number, max_concurrent_jobs)
-    VALUES (${input.nama}, ${input.wa_number ?? null}, ${input.max_concurrent_jobs ?? 3})
+    VALUES (${input.nama}, ${input.wa_number ?? null}, ${maxJobs})
     RETURNING *
   `;
   return mapTeknisi(rows[0]);
@@ -87,6 +93,9 @@ export async function updateTeknisiCapacity(
   const nama = input.nama ?? String(current[0].nama);
   const waNumber = input.wa_number !== undefined ? input.wa_number : (current[0].wa_number as string | null);
   const maxJobs = input.max_concurrent_jobs ?? Number(current[0].max_concurrent_jobs);
+  if (!Number.isInteger(maxJobs) || maxJobs < 1 || maxJobs > 50) {
+    return { ok: false, error: "max_concurrent_jobs harus bilangan bulat 1-50" };
+  }
   const rows = await sql`
     UPDATE teknisi_capacity SET nama = ${nama}, wa_number = ${waNumber}, max_concurrent_jobs = ${maxJobs}, updated_at = now()
     WHERE id = ${id}
@@ -187,6 +196,17 @@ export async function createInstallSchedule(
 
   if (!isIsoDate(input.scheduled_date)) {
     return { ok: false, error: `scheduled_date "${input.scheduled_date}" bukan tanggal valid (format YYYY-MM-DD)` };
+  }
+
+  // Tanpa guard ini, submit ganda/paralel bikin 2 jadwal terpisah utk unit &
+  // tanggal yang sama — teknisi dijadwalkan 2x utk kerjaan sama, readiness
+  // board double-count kapasitas (ditemukan QA jalur tulis 2026-09-07). Pola
+  // sama dgn F24 (maintenance_schedule): cek dulu, bukan constraint DB.
+  const existingSchedule = await sql`
+    SELECT id FROM install_schedule WHERE installation_unit_id = ${input.installation_unit_id} AND status = 'scheduled'
+  `;
+  if (existingSchedule.length > 0) {
+    return { ok: false, error: "alat ini sudah punya jadwal instalasi aktif (status scheduled)" };
   }
 
   if (input.teknisi_id) {
