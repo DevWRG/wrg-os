@@ -309,6 +309,7 @@ import {
   addDanaOpsItem,
   updateDanaOpsItem,
   deleteDanaOpsItem,
+  DanaOpsError,
   type DanaOpsStatus,
   type DanaOpsInput,
   type DanaOpsUpdate,
@@ -5483,8 +5484,13 @@ app.post("/dana-ops", async (c) => {
   if (!body.requested_by || !body.purpose || body.amount_requested == null) {
     return c.json({ error: "requested_by, purpose, amount_requested wajib" }, 400);
   }
-  const row = await createDanaOps(body);
-  return c.json(row, 201);
+  try {
+    const row = await createDanaOps(body);
+    return c.json(row, 201);
+  } catch (e) {
+    if (e instanceof DanaOpsError) return c.json({ error: e.message }, e.status as 409);
+    throw e;
+  }
 });
 
 app.get("/dana-ops/:id", async (c) => {
