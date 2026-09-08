@@ -81,6 +81,10 @@ export interface UpdateTeknisiInput {
   nama?: string;
   wa_number?: string | null;
   max_concurrent_jobs?: number;
+  // Reaktivasi lewat sini — sebelumnya cuma ada /deactivate (satu arah),
+  // teknisi yang dinonaktifkan tak pernah bisa aktif lagi tanpa UPDATE
+  // manual ke DB (ditemukan QA jalur tulis 2026-09-07).
+  aktif?: boolean;
 }
 
 export async function updateTeknisiCapacity(
@@ -92,12 +96,13 @@ export async function updateTeknisiCapacity(
   if (!current.length) return { ok: false, error: "teknisi tidak ditemukan" };
   const nama = input.nama ?? String(current[0].nama);
   const waNumber = input.wa_number !== undefined ? input.wa_number : (current[0].wa_number as string | null);
+  const aktif = input.aktif !== undefined ? input.aktif : Boolean(current[0].aktif);
   const maxJobs = input.max_concurrent_jobs ?? Number(current[0].max_concurrent_jobs);
   if (!Number.isInteger(maxJobs) || maxJobs < 1 || maxJobs > 50) {
     return { ok: false, error: "max_concurrent_jobs harus bilangan bulat 1-50" };
   }
   const rows = await sql`
-    UPDATE teknisi_capacity SET nama = ${nama}, wa_number = ${waNumber}, max_concurrent_jobs = ${maxJobs}, updated_at = now()
+    UPDATE teknisi_capacity SET nama = ${nama}, wa_number = ${waNumber}, aktif = ${aktif}, max_concurrent_jobs = ${maxJobs}, updated_at = now()
     WHERE id = ${id}
     RETURNING *
   `;
