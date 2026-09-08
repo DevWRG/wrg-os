@@ -185,7 +185,21 @@ export async function updateAtkStockMovement(id: string, f: AtkStockMovementUpda
   return rows.length ? getAtkStockMovement(id) : null;
 }
 
+// GAP-01 (ditemukan re-test 2026-09-07): menghapus mutasi 'in' yang sudah
+// sebagian "terpakai" mutasi 'out' lain bisa bikin saldo negatif — celah
+// yang sama dgn assertNonNegativeResultingStock (create/update) tapi belum
+// tertutup di jalur hapus. Guard: hitung saldo TANPA baris ini (persis hasil
+// akhir setelah dihapus), tolak kalau negatif. Menghapus 'out' atau 'in' yang
+// belum pernah terpakai selalu aman (saldo naik/tetap ≥0), jadi tak pernah
+// ke-block oleh guard ini.
 export async function deleteAtkStockMovement(id: string): Promise<{ deleted: number }> {
+  const existing = await getAtkStockMovement(id);
+  if (!existing) return { deleted: 0 };
+  const resulting = await stockBalance(existing.item_id, id);
+  if (resulting < 0) {
+    const before = resulting + (existing.movement_type === "in" ? existing.qty : -existing.qty);
+    throw new AtkStockMovementError(409, `Saldo stok jadi negatif (saldo sebelum: ${before}, sesudah: ${resulting})`);
+  }
   const sql = db();
   const rows = await sql`DELETE FROM atk_stock_movement WHERE id = ${id} RETURNING id`;
   return { deleted: rows.length };
