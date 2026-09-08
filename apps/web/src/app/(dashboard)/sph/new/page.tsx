@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -80,6 +80,15 @@ export default function SphNewPage() {
       setSearching(false);
     }
   }, [q]);
+
+  // Tampilkan katalog langsung saat halaman dibuka — sebelumnya kosong sampai
+  // pencet "Cari" dulu, padahal q="" sudah valid (API balas N item pertama).
+  // Ditemukan user 2026-09-07.
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- search() men-setState saat fetch; disengaja.
+    void search();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- sekali saat mount saja
+  }, []);
 
   function addToCart(item: PricebookItem) {
     setCart((prev) => {
@@ -182,7 +191,11 @@ export default function SphNewPage() {
         </p>
       </div>
 
-      <Card>
+      {/* overflow-visible — override default Card overflow-hidden: CatalogPicker
+          buka dropdown `position: absolute` yg bisa lebih tinggi dari sisa
+          ruang Card, kalau enggak di-override dropdown-nya kepotong (cuma
+          keliatan 1 baris paling atas). Ditemukan user 2026-09-07. */}
+      <Card className="overflow-visible">
         <CardHeader>
           <CardTitle className="text-base">Customer</CardTitle>
         </CardHeader>
