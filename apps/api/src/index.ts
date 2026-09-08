@@ -6149,7 +6149,15 @@ function validateInventoryRelocationFields(b: {
   status?: string;
 }): string | null {
   if (b.qty !== undefined && !(Number(b.qty) > 0)) return "qty harus lebih dari 0";
-  if (b.cabang_asal !== undefined && b.cabang_tujuan !== undefined && b.cabang_asal.trim() === b.cabang_tujuan.trim() && b.cabang_asal.trim() !== "") {
+  // GAP-04 (ditemukan re-test 2026-09-07): dibandingkan case-insensitive —
+  // "Jakarta" vs "jakarta" tetap dianggap cabang yang sama (beda huruf besar/
+  // kecil, bukan cabang beda), bukan cuma exact-match string.
+  if (
+    b.cabang_asal !== undefined &&
+    b.cabang_tujuan !== undefined &&
+    b.cabang_asal.trim().toLowerCase() === b.cabang_tujuan.trim().toLowerCase() &&
+    b.cabang_asal.trim() !== ""
+  ) {
     return "cabang asal dan tujuan tidak boleh sama";
   }
   if (b.status !== undefined && !INVENTORY_RELOCATION_STATUSES.includes(b.status as InventoryRelocationStatus)) {
@@ -6195,7 +6203,18 @@ app.patch("/inventory-relocations/:id", async (c) => {
   } catch {
     return c.json({ error: "invalid JSON body" }, 400);
   }
-  const fieldErr = validateInventoryRelocationFields(body);
+  // GAP-04 (ditemukan re-test 2026-09-07): validateInventoryRelocationFields
+  // cuma lihat field yg dikirim — PATCH parsial (mis. cuma cabang_tujuan)
+  // lolos cek cabang_asal≠tujuan walau hasil merge dgn baris lama jadi sama,
+  // lalu jatuh ke pesan generik constraint DB. Validasi thd nilai HASIL
+  // merge, bukan body mentah (pola sama dgn BUG-03 vendor contract).
+  const existing = await getInventoryRelocation(c.req.param("id"));
+  if (!existing) return c.json({ error: "tidak ditemukan" }, 404);
+  const fieldErr = validateInventoryRelocationFields({
+    ...body,
+    cabang_asal: body.cabang_asal ?? existing.cabang_asal,
+    cabang_tujuan: body.cabang_tujuan ?? existing.cabang_tujuan,
+  });
   if (fieldErr) return c.json({ error: fieldErr }, 400);
   const row = await updateInventoryRelocation(c.req.param("id"), body);
   return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
