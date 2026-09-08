@@ -176,6 +176,16 @@ export async function updatePurchaseForecast(id: string, f: PurchaseForecastUpda
   const sql = db();
   const [existing] = await sql`SELECT period_year, period_month, forecast_value FROM purchase_forecast WHERE id = ${id}`;
   if (!existing) return null;
+  // GAP-03 (ditemukan re-test 2026-09-07): periode immutable by design ("hapus
+  // & buat ulang kalau perlu pindah periode") — tapi PATCH tak pernah menegakkan
+  // ini. Tolak kalau period_year/period_month dikirim DAN nilainya beda dari
+  // yang tersimpan; nilai sama (no-op) atau field tak dikirim tetap boleh.
+  if (f.period_year !== undefined && Number(f.period_year) !== Number(existing.period_year)) {
+    throw new PurchaseForecastError(400, "period_year tidak bisa diedit setelah dibuat — hapus & buat ulang kalau perlu pindah periode");
+  }
+  if (f.period_month !== undefined && Number(f.period_month) !== Number(existing.period_month)) {
+    throw new PurchaseForecastError(400, "period_month tidak bisa diedit setelah dibuat — hapus & buat ulang kalau perlu pindah periode");
+  }
   validateInput({
     period_year: f.period_year ?? Number(existing.period_year),
     period_month: f.period_month ?? Number(existing.period_month),
