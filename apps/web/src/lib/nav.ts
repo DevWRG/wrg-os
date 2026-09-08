@@ -56,6 +56,12 @@ import { canViewPurchaseForecast } from "@/lib/purchase-forecast-access";
 // menang (lihat navVisible di bawah + canOrLegacy di lib/perms).
 export interface NavItem {
   title: string; url: string; icon: LucideIcon; badge?: string; exact?: boolean;
+  // Prefix URL LAIN yang juga dianggap "sedang di menu ini" — dipakai saat sub-halaman
+  // sebuah fitur hidup di route sendiri, bukan di bawah `url` (mis. "/sph/new" dibuat
+  // dari menu "Sales Docs" tapi tak pernah otomatis nyorot krn beda prefix — /sph tak
+  // startsWith /sales-docs). Tanpa ini sidebar diam total pas ada di sub-halamannya,
+  // padahal user masih di alur fitur yang sama (ditemukan user 2026-09-07).
+  matchPrefix?: string[];
   show?: (me: AccessUser | null) => boolean;
   // Override key fitur RBAC bila slug route ≠ key `feature` di DB. Contoh: route
   // "/plan-report" tetap pakai feature.key "dashboard" (hindari migrasi & re-grant
@@ -122,7 +128,7 @@ export const NAV: NavGroup[] = [
       { title: "Customers", url: "/customers", icon: Building2 },
       { title: "Accounts", url: "/accounts", icon: Contact, badge: "NEW" },
       { title: "AR Aging", url: "/ar", icon: Receipt },
-      { title: "Sales Docs", url: "/sales-docs", icon: FileText },
+      { title: "Sales Docs", url: "/sales-docs", icon: FileText, matchPrefix: ["/sph"] },
       { title: "Collection Drafts", url: "/collection-drafts", icon: Send },
       // Simulator KSO — running cost alat lab per test, hasil penggabungan
       // aplikasi terpisah `runningcost-zybio` jadi satu menu di sini. Beda dari

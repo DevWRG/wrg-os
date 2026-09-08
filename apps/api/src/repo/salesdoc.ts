@@ -149,7 +149,10 @@ export async function approveSalesDoc(id: string, approverId?: string): Promise<
     if (pending.length > 0) {
       return {
         ok: false,
-        error: `${pending.length} item nama-varian-kembar belum dikonfirmasi: ${pending.map((p) => p.nama).join(", ")}`,
+        // Sertakan id baris (bukan cuma nama) — 2 baris nama-kembar bisa punya
+        // nama snapshot yang PERSIS sama, jadi nama saja tak cukup buat Admin
+        // Penawaran tahu baris mana yg perlu di-confirm (ditemukan QA 2026-09-07).
+        error: `${pending.length} item nama-varian-kembar belum dikonfirmasi: ${pending.map((p) => `#${p.id} ${p.nama}`).join(", ")}`,
       };
     }
   }

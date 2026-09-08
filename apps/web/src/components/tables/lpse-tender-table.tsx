@@ -4,6 +4,8 @@ import { Badge } from "@/components/ui/badge";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
 import { LpseTenderAdvanceActions } from "@/components/crm/lpse-tender-advance-actions";
 import { LpseTenderTimelineButton } from "@/components/crm/lpse-tender-timeline-button";
+import { EditLpseTenderButton } from "@/components/crm/edit-lpse-tender-button";
+import type { EmployeeOption } from "@/components/crm/add-lpse-tender-button";
 
 export interface LpseTender {
   id: string;
@@ -35,7 +37,7 @@ const PLATFORM_LABEL: Record<string, string> = { lpse: "LPSE", e_catalog: "E-Cat
 
 const fmt = (iso: string) => new Date(iso).toLocaleDateString("id-ID", { day: "2-digit", month: "short", year: "numeric" });
 
-export function LpseTenderTable({ tenders }: { tenders: LpseTender[] }) {
+export function LpseTenderTable({ tenders, employees }: { tenders: LpseTender[]; employees: EmployeeOption[] }) {
   const columns: DataColumn<LpseTender>[] = [
     {
       id: "tender",
@@ -43,16 +45,16 @@ export function LpseTenderTable({ tenders }: { tenders: LpseTender[] }) {
       sortable: true,
       accessor: (t) => t.judul,
       cell: (t) => (
-        <div>
-          <div className="font-medium">{t.judul}</div>
-          <div className="text-muted-foreground text-xs">
+        <div className="max-w-[20rem]">
+          <div className="truncate font-medium" title={t.judul}>{t.judul}</div>
+          <div className="text-muted-foreground truncate text-xs">
             {t.tender_no ? `${t.tender_no} · ` : ""}
             {PLATFORM_LABEL[t.platform] ?? t.platform}
           </div>
         </div>
       ),
     },
-    { id: "instansi", header: "Instansi", sortable: true, accessor: (t) => t.instansi },
+    { id: "instansi", header: "Instansi", sortable: true, accessor: (t) => t.instansi, cell: (t) => <span className="block max-w-[12rem] truncate" title={t.instansi}>{t.instansi}</span> },
     {
       id: "pic",
       header: "PIC",
@@ -70,6 +72,7 @@ export function LpseTenderTable({ tenders }: { tenders: LpseTender[] }) {
       align: "right",
       cell: (t) => (
         <div className="flex items-center justify-end gap-1">
+          <EditLpseTenderButton tender={t} employees={employees} />
           <LpseTenderAdvanceActions tenderId={t.id} status={t.status} />
           <LpseTenderTimelineButton tenderId={t.id} judul={t.judul} />
         </div>

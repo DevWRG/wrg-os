@@ -208,6 +208,7 @@ import {
   listTenders as listLpseTenders,
   getTender as getLpseTender,
   createTender as createLpseTender,
+  updateTender as updateLpseTender,
   advanceStatus as advanceLpseTenderStatus,
   getTenderTimeline as getLpseTenderTimeline,
   runLpseTenderReminder,
@@ -308,6 +309,7 @@ import {
   addDanaOpsItem,
   updateDanaOpsItem,
   deleteDanaOpsItem,
+  DanaOpsError,
   type DanaOpsStatus,
   type DanaOpsInput,
   type DanaOpsUpdate,
@@ -3348,6 +3350,13 @@ app.post("/lpse-tender", async (c) => {
   if ("ok" in result && !result.ok) return c.json({ error: result.error }, 400);
   return c.json({ tender: result }, 201);
 });
+app.patch("/lpse-tender/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const body = await c.req.json().catch(() => ({}));
+  const result = await updateLpseTender(c.req.param("id"), body);
+  if ("ok" in result && !result.ok) return c.json({ error: result.error }, 400);
+  return c.json({ tender: result });
+});
 app.post("/lpse-tender/:id/advance", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const body = await c.req.json().catch(() => ({}));
@@ -5475,8 +5484,13 @@ app.post("/dana-ops", async (c) => {
   if (!body.requested_by || !body.purpose || body.amount_requested == null) {
     return c.json({ error: "requested_by, purpose, amount_requested wajib" }, 400);
   }
-  const row = await createDanaOps(body);
-  return c.json(row, 201);
+  try {
+    const row = await createDanaOps(body);
+    return c.json(row, 201);
+  } catch (e) {
+    if (e instanceof DanaOpsError) return c.json({ error: e.message }, e.status as 409);
+    throw e;
+  }
 });
 
 app.get("/dana-ops/:id", async (c) => {
@@ -5657,6 +5671,12 @@ app.post("/atk/items", async (c) => {
   if (body.transaction_category && !ATK_TRANSACTION_CATEGORIES.includes(body.transaction_category)) {
     return c.json({ error: "transaction_category harus 'barang' atau 'materai'" }, 400);
   }
+  // GAP-05 (ditemukan re-test 2026-09-07): min_stock negatif dulu diterima
+  // diam-diam — ambang stok minimum negatif tak masuk akal & bikin
+  // is_low_stock tak pernah menyala (current_stock selalu > negatif).
+  if (body.min_stock != null && Number(body.min_stock) < 0) {
+    return c.json({ error: "min_stock tidak boleh negatif" }, 400);
+  }
   const row = await createAtkItem(body);
   return c.json(row, 201);
 });
@@ -5667,6 +5687,9 @@ app.patch("/atk/items/:id", async (c) => {
   try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
   if (body.transaction_category && !ATK_TRANSACTION_CATEGORIES.includes(body.transaction_category)) {
     return c.json({ error: "transaction_category harus 'barang' atau 'materai'" }, 400);
+  }
+  if (body.min_stock != null && Number(body.min_stock) < 0) {
+    return c.json({ error: "min_stock tidak boleh negatif" }, 400);
   }
   const row = await updateAtkItem(c.req.param("id"), body);
   return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
@@ -5726,8 +5749,13 @@ app.patch("/atk/stock-movements/:id", async (c) => {
 
 app.delete("/atk/stock-movements/:id", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  const r = await deleteAtkStockMovement(c.req.param("id"));
-  return c.json(r, r.deleted ? 200 : 404);
+  try {
+    const r = await deleteAtkStockMovement(c.req.param("id"));
+    return c.json(r, r.deleted ? 200 : 404);
+  } catch (e) {
+    if (e instanceof AtkStockMovementError) return c.json({ error: e.message }, e.status as 409);
+    throw e;
+  }
 });
 
 app.get("/atk/stock-levels", async (c) => {
@@ -6149,7 +6177,15 @@ function validateInventoryRelocationFields(b: {
   status?: string;
 }): string | null {
   if (b.qty !== undefined && !(Number(b.qty) > 0)) return "qty harus lebih dari 0";
-  if (b.cabang_asal !== undefined && b.cabang_tujuan !== undefined && b.cabang_asal.trim() === b.cabang_tujuan.trim() && b.cabang_asal.trim() !== "") {
+  // GAP-04 (ditemukan re-test 2026-09-07): dibandingkan case-insensitive —
+  // "Jakarta" vs "jakarta" tetap dianggap cabang yang sama (beda huruf besar/
+  // kecil, bukan cabang beda), bukan cuma exact-match string.
+  if (
+    b.cabang_asal !== undefined &&
+    b.cabang_tujuan !== undefined &&
+    b.cabang_asal.trim().toLowerCase() === b.cabang_tujuan.trim().toLowerCase() &&
+    b.cabang_asal.trim() !== ""
+  ) {
     return "cabang asal dan tujuan tidak boleh sama";
   }
   if (b.status !== undefined && !INVENTORY_RELOCATION_STATUSES.includes(b.status as InventoryRelocationStatus)) {
@@ -6195,7 +6231,18 @@ app.patch("/inventory-relocations/:id", async (c) => {
   } catch {
     return c.json({ error: "invalid JSON body" }, 400);
   }
-  const fieldErr = validateInventoryRelocationFields(body);
+  // GAP-04 (ditemukan re-test 2026-09-07): validateInventoryRelocationFields
+  // cuma lihat field yg dikirim — PATCH parsial (mis. cuma cabang_tujuan)
+  // lolos cek cabang_asal≠tujuan walau hasil merge dgn baris lama jadi sama,
+  // lalu jatuh ke pesan generik constraint DB. Validasi thd nilai HASIL
+  // merge, bukan body mentah (pola sama dgn BUG-03 vendor contract).
+  const existing = await getInventoryRelocation(c.req.param("id"));
+  if (!existing) return c.json({ error: "tidak ditemukan" }, 404);
+  const fieldErr = validateInventoryRelocationFields({
+    ...body,
+    cabang_asal: body.cabang_asal ?? existing.cabang_asal,
+    cabang_tujuan: body.cabang_tujuan ?? existing.cabang_tujuan,
+  });
   if (fieldErr) return c.json({ error: fieldErr }, 400);
   const row = await updateInventoryRelocation(c.req.param("id"), body);
   return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
@@ -6922,7 +6969,7 @@ app.post("/teknisi-capacity", async (c) => {
 
 app.patch("/teknisi-capacity/:id", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let body: { nama?: string; wa_number?: string | null; wilayah?: string[]; max_concurrent_jobs?: number };
+  let body: { nama?: string; wa_number?: string | null; wilayah?: string[]; max_concurrent_jobs?: number; aktif?: boolean };
   try {
     body = await c.req.json();
   } catch {
@@ -6994,8 +7041,15 @@ app.post("/teknisi-reports", async (c) => {
   if (!["install", "servis", "training", "kalibrasi"].includes(body.report_type)) {
     return c.json({ error: "report_type harus install|servis|training|kalibrasi" }, 400);
   }
+  // Kolomnya uuid — id kosong/ngawur bikin Postgres melempar 22P02 mentah
+  // (bukan crash, tapi pesannya beda dgn pre-check serupa di F22 assign-teknisi).
+  // Disaring dulu supaya pesannya konsisten & bisa dibaca orang (QA 2026-09-07).
+  const teknisiId = body.teknisi_id?.trim() || null;
+  if (teknisiId && !/^[0-9a-f-]{36}$/i.test(teknisiId)) {
+    return c.json({ error: "teknisi_id bukan uuid yang sah — pilih dari daftar, jangan diketik" }, 400);
+  }
   const r = await createTeknisiReport({
-    teknisi_id: body.teknisi_id,
+    teknisi_id: teknisiId,
     report_type: body.report_type,
     body: body.body,
     source: "manual",
@@ -7071,10 +7125,13 @@ app.get("/ga-ticket-categories", async (c) => {
 // constraint Postgres mentah (app.onError gak reformat). Sama pola temuan
 // F132/F53/F137.
 const GA_TICKET_PRIORITIES = ["low", "medium", "high", "critical"];
+// DB CHECK (migrasi 092) cuma > 0, tak ada batas atas — SLA kategori tiket
+// helpdesk realistisnya tak mungkin lebih dari 30 hari (720 jam). Pola sama
+// F24 interval_bulan / F8 max_concurrent_jobs (sapuan 2026-09-07).
 function validateGaTicketSlaHours(hours: unknown): string | null {
   if (hours == null) return null;
   const n = Number(hours);
-  return Number.isFinite(n) && n > 0 ? null : "sla_hours harus angka > 0";
+  return Number.isFinite(n) && n > 0 && n <= 720 ? null : "sla_hours harus angka 1-720 (maks 30 hari)";
 }
 
 app.post("/ga-ticket-categories", async (c) => {

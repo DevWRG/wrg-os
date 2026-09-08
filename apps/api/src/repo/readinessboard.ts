@@ -71,9 +71,15 @@ export async function createTeknisiCapacity(
   const existing = await sql`SELECT id FROM teknisi_capacity WHERE nama = ${input.nama}`;
   if (existing.length) return { ok: false, error: "nama sudah ada di roster" };
   const wilayah = (input.wilayah ?? []).map((w) => w.trim()).filter(Boolean);
+  const maxJobs = input.max_concurrent_jobs ?? 3;
+  // DB CHECK cuma > 0, tak ada batas atas — 1 teknisi realistisnya tak mungkin
+  // pegang ratusan job bersamaan (pola sama F24 interval_bulan, QA 2026-09-07).
+  if (!Number.isInteger(maxJobs) || maxJobs < 1 || maxJobs > 50) {
+    return { ok: false, error: "max_concurrent_jobs harus bilangan bulat 1-50" };
+  }
   const rows = await sql`
     INSERT INTO teknisi_capacity (nama, wa_number, wilayah, max_concurrent_jobs)
-    VALUES (${input.nama}, ${input.wa_number ?? null}, ${wilayah}, ${input.max_concurrent_jobs ?? 3})
+    VALUES (${input.nama}, ${input.wa_number ?? null}, ${wilayah}, ${maxJobs})
     RETURNING *
   `;
   return mapTeknisi(rows[0]);
@@ -84,6 +90,10 @@ export interface UpdateTeknisiInput {
   wa_number?: string | null;
   wilayah?: string[];
   max_concurrent_jobs?: number;
+  // Reaktivasi lewat sini — sebelumnya cuma ada /deactivate (satu arah),
+  // teknisi yang dinonaktifkan tak pernah bisa aktif lagi tanpa UPDATE
+  // manual ke DB (ditemukan QA jalur tulis 2026-09-07).
+  aktif?: boolean;
 }
 
 export async function updateTeknisiCapacity(
@@ -98,9 +108,13 @@ export async function updateTeknisiCapacity(
   const wilayah = input.wilayah !== undefined
     ? input.wilayah.map((w) => w.trim()).filter(Boolean)
     : (current[0].wilayah as string[]);
+  const aktif = input.aktif !== undefined ? input.aktif : Boolean(current[0].aktif);
   const maxJobs = input.max_concurrent_jobs ?? Number(current[0].max_concurrent_jobs);
+  if (!Number.isInteger(maxJobs) || maxJobs < 1 || maxJobs > 50) {
+    return { ok: false, error: "max_concurrent_jobs harus bilangan bulat 1-50" };
+  }
   const rows = await sql`
-    UPDATE teknisi_capacity SET nama = ${nama}, wa_number = ${waNumber}, wilayah = ${wilayah}, max_concurrent_jobs = ${maxJobs}, updated_at = now()
+    UPDATE teknisi_capacity SET nama = ${nama}, wa_number = ${waNumber}, wilayah = ${wilayah}, aktif = ${aktif}, max_concurrent_jobs = ${maxJobs}, updated_at = now()
     WHERE id = ${id}
     RETURNING *
   `;
@@ -199,6 +213,17 @@ export async function createInstallSchedule(
 
   if (!isIsoDate(input.scheduled_date)) {
     return { ok: false, error: `scheduled_date "${input.scheduled_date}" bukan tanggal valid (format YYYY-MM-DD)` };
+  }
+
+  // Tanpa guard ini, submit ganda/paralel bikin 2 jadwal terpisah utk unit &
+  // tanggal yang sama — teknisi dijadwalkan 2x utk kerjaan sama, readiness
+  // board double-count kapasitas (ditemukan QA jalur tulis 2026-09-07). Pola
+  // sama dgn F24 (maintenance_schedule): cek dulu, bukan constraint DB.
+  const existingSchedule = await sql`
+    SELECT id FROM install_schedule WHERE installation_unit_id = ${input.installation_unit_id} AND status = 'scheduled'
+  `;
+  if (existingSchedule.length > 0) {
+    return { ok: false, error: "alat ini sudah punya jadwal instalasi aktif (status scheduled)" };
   }
 
   if (input.teknisi_id) {

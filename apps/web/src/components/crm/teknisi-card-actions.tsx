@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Pencil, Ban } from "lucide-react";
+import { Pencil, Ban, RotateCcw } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -75,6 +75,23 @@ export function TeknisiCardActions({ teknisi }: { teknisi: TeknisiRow }) {
     );
   }
 
+  // Sebelumnya cuma ada deactivate (satu arah) — teknisi yg dinonaktifkan tak
+  // pernah bisa aktif lagi tanpa ubah manual ke DB (ditemukan QA 2026-09-07).
+  async function reactivate() {
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/teknisi-capacity/${teknisi.id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ aktif: true }),
+      });
+      if (!res.ok) throw new Error("gagal aktifkan");
+      router.refresh();
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div className="flex items-center gap-1">
       {dialog}
@@ -114,9 +131,13 @@ export function TeknisiCardActions({ teknisi }: { teknisi: TeknisiRow }) {
           </form>
         </DialogContent>
       </Dialog>
-      {teknisi.aktif && (
+      {teknisi.aktif ? (
         <Button size="icon-sm" variant="ghost" disabled={busy} onClick={deactivate} className="text-danger hover:text-danger">
           <Ban />
+        </Button>
+      ) : (
+        <Button size="icon-sm" variant="ghost" disabled={busy} onClick={reactivate} title="Aktifkan lagi">
+          <RotateCcw />
         </Button>
       )}
     </div>

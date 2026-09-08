@@ -271,9 +271,14 @@ export async function createSphDraft(input: CreateSphInput): Promise<CreateSphRe
   for (const it of input.items) {
     const row = byId.get(it.pricelist_item_id);
     if (!row) return { ok: false, error: `item katalog #${it.pricelist_item_id} tidak ditemukan di periode ${periode}` };
-    if (!(it.qty > 0)) return { ok: false, error: `qty item "${row.nama}" harus > 0` };
+    if (!(it.qty > 0) || !Number.isInteger(it.qty)) {
+      return { ok: false, error: `qty item "${row.nama}" harus bilangan bulat > 0` };
+    }
     const diskonMaks = Number(row.diskon_maks);
-    if (it.diskon_requested < 0 || it.diskon_requested > diskonMaks) {
+    if (it.diskon_requested < 0) {
+      return { ok: false, error: `diskon utk "${row.nama}" tidak boleh negatif (${(it.diskon_requested * 100).toFixed(0)}%)` };
+    }
+    if (it.diskon_requested > diskonMaks) {
       return {
         ok: false,
         error: `diskon utk "${row.nama}" (${(it.diskon_requested * 100).toFixed(0)}%) melebihi diskon maks SKU ini (${(diskonMaks * 100).toFixed(0)}%)`,

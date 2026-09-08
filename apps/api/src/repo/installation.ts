@@ -134,6 +134,14 @@ export async function createInstallation(input: InstallationInput): Promise<Crea
   // menunjuk alat fisik yang sama. Bukan constraint DB: field ini opsional
   // & histori lama mungkin sudah punya baris kosong berulang.
   const serial = input.serial_number?.trim();
+  // Kolomnya `text` tak berbatas — serial number instrumen fisik realistisnya
+  // tak pernah lebih dari 100 karakter; tanpa batas, input anomali (uji QA
+  // 2026-09-07) merusak tata letak tabel (SN memaksa horizontal-scroll,
+  // baris lain ikut ter-geser). UI sudah di-truncate juga, tapi akar
+  // masalahnya di sini — jangan biarkan data seburuk itu tersimpan.
+  if (serial && serial.length > 100) {
+    return { ok: false, error: "serial_number maksimal 100 karakter" };
+  }
   if (serial) {
     const [dupe] = await sql`
       SELECT id, alat_name FROM installation_unit WHERE serial_number ILIKE ${serial} LIMIT 1

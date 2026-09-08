@@ -98,14 +98,19 @@ export async function updateAssetTag(id: string, input: AssetTagUpdateInput): Pr
   const sql = db();
   const rows = await sql`SELECT id FROM asset_tag WHERE id = ${id}`;
   if (rows.length === 0) return { ok: false, error: "aset tidak ditemukan" };
+  // `!== undefined` (bukan COALESCE(x ?? null, kolom)) — field opsional
+  // (kategori/lokasi_cabang/letak) harus BISA dikosongkan lewat null eksplisit;
+  // COALESCE selalu jatuh balik ke nilai lama kalau input null, jadi field itu
+  // tak pernah bisa dikosongkan lagi setelah pernah diisi (bug ditemukan QA
+  // jalur tulis 2026-09-07 — API balas sukses tapi nilai lama tetap nongkrong).
   await sql`
     UPDATE asset_tag SET
-      nama = COALESCE(${input.nama ?? null}, nama),
-      jenis_kepemilikan = COALESCE(${input.jenis_kepemilikan ?? null}, jenis_kepemilikan),
-      kategori = COALESCE(${input.kategori ?? null}, kategori),
-      lokasi_cabang = COALESCE(${input.lokasi_cabang ?? null}, lokasi_cabang),
-      letak = COALESCE(${input.letak ?? null}, letak),
-      active = COALESCE(${input.active ?? null}, active),
+      nama = ${input.nama !== undefined ? input.nama : sql`nama`},
+      jenis_kepemilikan = ${input.jenis_kepemilikan !== undefined ? input.jenis_kepemilikan : sql`jenis_kepemilikan`},
+      kategori = ${input.kategori !== undefined ? input.kategori : sql`kategori`},
+      lokasi_cabang = ${input.lokasi_cabang !== undefined ? input.lokasi_cabang : sql`lokasi_cabang`},
+      letak = ${input.letak !== undefined ? input.letak : sql`letak`},
+      active = ${input.active !== undefined ? input.active : sql`active`},
       updated_at = now()
     WHERE id = ${id}
   `;

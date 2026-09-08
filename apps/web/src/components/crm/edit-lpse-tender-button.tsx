@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Plus } from "lucide-react";
+import { Pencil } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,49 +11,56 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   Dialog, DialogBody, DialogClose, DialogContent, DialogDescription,
-  DialogFooter, DialogHeader, DialogTitle, DialogTrigger,
+  DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
-
-export interface EmployeeOption {
-  id: string;
-  nama: string;
-  dept_label: string | null;
-}
+import type { EmployeeOption } from "./add-lpse-tender-button";
 
 const NONE = "__none__"; // sentinel Select — Base UI Select tak suka value kosong
 
-export function AddLpseTenderButton({ employees }: { employees: EmployeeOption[] }) {
+interface EditableTender {
+  id: string;
+  judul: string;
+  instansi: string;
+  tender_no: string | null;
+  platform: string;
+  pic_employee_id: string | null;
+  notes: string | null;
+}
+
+// Sebelumnya TIDAK ADA jalur edit sama sekali — tender yang dibuat tanpa PIC
+// (waktu itu masih opsional, sekarang wajib) tak pernah bisa ditambal.
+// Ditemukan user 2026-09-07.
+export function EditLpseTenderButton({ tender, employees }: { tender: EditableTender; employees: EmployeeOption[] }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [judul, setJudul] = useState("");
-  const [instansi, setInstansi] = useState("");
-  const [tenderNo, setTenderNo] = useState("");
-  const [platform, setPlatform] = useState("lpse");
-  const [picEmployeeId, setPicEmployeeId] = useState("");
-  const [notes, setNotes] = useState("");
+  const [judul, setJudul] = useState(tender.judul);
+  const [instansi, setInstansi] = useState(tender.instansi);
+  const [tenderNo, setTenderNo] = useState(tender.tender_no ?? "");
+  const [platform, setPlatform] = useState(tender.platform);
+  const [picEmployeeId, setPicEmployeeId] = useState(tender.pic_employee_id ?? "");
+  const [notes, setNotes] = useState(tender.notes ?? "");
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch("/api/lpse-tender", {
-        method: "POST",
+      const res = await fetch(`/api/lpse-tender/${tender.id}`, {
+        method: "PATCH",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           judul: judul.trim(),
           instansi: instansi.trim(),
-          tender_no: tenderNo.trim() || undefined,
+          tender_no: tenderNo.trim() || null,
           platform,
           pic_employee_id: picEmployeeId,
-          notes: notes.trim() || undefined,
+          notes: notes.trim() || null,
         }),
       });
       const data = await res.json();
       if (!res.ok || data.error) throw new Error(data.error ?? "gagal menyimpan");
-      setJudul(""); setInstansi(""); setTenderNo(""); setPlatform("lpse"); setPicEmployeeId(""); setNotes("");
       setOpen(false);
       router.refresh();
     } catch (err) {
@@ -65,27 +72,27 @@ export function AddLpseTenderButton({ employees }: { employees: EmployeeOption[]
 
   return (
     <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (!o) setError(null); }}>
-      <DialogTrigger render={<Button size="sm" />}>
-        <Plus /> Tambah Tender
-      </DialogTrigger>
+      <Button size="icon-sm" variant="ghost" onClick={() => setOpen(true)} title="Edit tender">
+        <Pencil />
+      </Button>
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle>Tambah tender LPSE/E-Catalog</DialogTitle>
-          <DialogDescription>Dicatat sejak pesan masuk — status berikutnya diklik manual dari tabel.</DialogDescription>
+          <DialogTitle>Edit tender LPSE/E-Catalog</DialogTitle>
+          <DialogDescription>{tender.judul}</DialogDescription>
         </DialogHeader>
         <form onSubmit={submit} className="contents">
           <DialogBody className="grid gap-3">
             <div className="grid gap-1.5">
-              <Label htmlFor="lt-judul">Judul / Nama Tender</Label>
-              <Input id="lt-judul" required value={judul} onChange={(e) => setJudul(e.target.value)} placeholder="mis. Pengadaan Reagen Hematologi" />
+              <Label htmlFor={`elt-judul-${tender.id}`}>Judul / Nama Tender</Label>
+              <Input id={`elt-judul-${tender.id}`} required value={judul} onChange={(e) => setJudul(e.target.value)} />
             </div>
             <div className="grid gap-1.5">
-              <Label htmlFor="lt-instansi">Instansi</Label>
-              <Input id="lt-instansi" required value={instansi} onChange={(e) => setInstansi(e.target.value)} placeholder="mis. RSUD Kota Malang" />
+              <Label htmlFor={`elt-instansi-${tender.id}`}>Instansi</Label>
+              <Input id={`elt-instansi-${tender.id}`} required value={instansi} onChange={(e) => setInstansi(e.target.value)} />
             </div>
             <div className="grid gap-1.5">
-              <Label htmlFor="lt-no">No. Tender (opsional, sering belum ada)</Label>
-              <Input id="lt-no" value={tenderNo} onChange={(e) => setTenderNo(e.target.value)} placeholder="opsional" />
+              <Label htmlFor={`elt-no-${tender.id}`}>No. Tender (opsional)</Label>
+              <Input id={`elt-no-${tender.id}`} value={tenderNo} onChange={(e) => setTenderNo(e.target.value)} placeholder="opsional" />
             </div>
             <div className="grid gap-1.5">
               <Label>Platform</Label>
@@ -101,11 +108,6 @@ export function AddLpseTenderButton({ employees }: { employees: EmployeeOption[]
             </div>
             <div className="grid gap-1.5">
               <Label>PIC *</Label>
-              {/* Trigger dilebarkan (w-full) — SelectContent lebar ikut trigger
-                  (--anchor-width), nama+dept karyawan bisa panjang & kepotong
-                  kalau trigger sekecil placeholder "Pilih PIC". Wajib diisi —
-                  tender tanpa PIC dulu bisa tersimpan tanpa penanggung jawab
-                  & tak ada jalur edit buat menambal (ditemukan user 2026-09-07). */}
               <Select value={picEmployeeId || NONE} onValueChange={(v) => setPicEmployeeId(v === NONE ? "" : (v ?? ""))}>
                 <SelectTrigger className="w-full">
                   <SelectValue placeholder="Pilih PIC">{(v: string) => (v === NONE ? "Pilih PIC" : employees.find((e) => e.id === v)?.nama ?? v)}</SelectValue>
@@ -119,8 +121,8 @@ export function AddLpseTenderButton({ employees }: { employees: EmployeeOption[]
               </Select>
             </div>
             <div className="grid gap-1.5">
-              <Label htmlFor="lt-notes">Catatan</Label>
-              <Textarea id="lt-notes" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="opsional" />
+              <Label htmlFor={`elt-notes-${tender.id}`}>Catatan</Label>
+              <Textarea id={`elt-notes-${tender.id}`} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="opsional" />
             </div>
             {error && <p className="text-destructive text-sm">{error}</p>}
           </DialogBody>

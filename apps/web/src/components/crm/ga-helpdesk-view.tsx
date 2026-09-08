@@ -9,6 +9,7 @@ import { GaTicketsTable, type GaTicket } from "@/components/tables/ga-tickets-ta
 import { GaTicketCategoriesTable, type GaTicketCategory } from "@/components/tables/ga-ticket-categories-table";
 import { AddGaTicketButton, type AppUserOption } from "./add-ga-ticket-button";
 import { AddGaTicketCategoryButton } from "./add-ga-ticket-category-button";
+import type { TeknisiOption } from "./ga-ticket-assign-button";
 
 const STATUS_FILTERS = [
   ["all", "Semua"],
@@ -23,8 +24,8 @@ const STATUS_FILTERS = [
 // F139 — satu halaman, dua tab (Tiket + Kategori), pola sama F132 (2
 // sub-view domain & fitur yang SAMA, bukan pelanggaran prinsip domain-grouping).
 export function GaHelpdeskView({
-  tickets, categories, users,
-}: { tickets: GaTicket[]; categories: GaTicketCategory[]; users: AppUserOption[] }) {
+  tickets, categories, users, teknisi,
+}: { tickets: GaTicket[]; categories: GaTicketCategory[]; users: AppUserOption[]; teknisi: TeknisiOption[] }) {
   const [tab, setTab] = useState<"tiket" | "kategori">("tiket");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [overdueOnly, setOverdueOnly] = useState(false);
@@ -96,7 +97,7 @@ export function GaHelpdeskView({
               ) : filtered.length === 0 ? (
                 <EmptyState title="Tak ada tiket yang cocok filter" description="Coba ganti filter status/overdue." />
               ) : (
-                <GaTicketsTable tickets={filtered} users={users} />
+                <GaTicketsTable tickets={filtered} users={users} teknisi={teknisi} />
               )}
             </CardContent>
           </Card>

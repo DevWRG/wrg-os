@@ -256,6 +256,14 @@ export async function assignTicket(id: string, input: AssignTicketInput): Promis
   if (!input.assignee_user_id && !input.assignee_name_override?.trim()) {
     return { ok: false, error: "assignee wajib (pilih user atau isi nama)" };
   }
+  const [cur] = await sql`SELECT status FROM ga_tickets WHERE id = ${id}`;
+  if (!cur) return { ok: false, error: "tiket tidak ditemukan" };
+  // Beda dgn transitionTicket, assign dulu tak menjaga status sama sekali —
+  // tiket closed/cancelled masih bisa direassign begitu saja (ditemukan QA
+  // jalur tulis 2026-09-07). Keduanya status terminal (lihat TRANSITIONS).
+  if (cur.status === "closed" || cur.status === "cancelled") {
+    return { ok: false, error: `tiket sudah "${cur.status}" — tidak bisa diubah assignee-nya lagi` };
+  }
   const rows = await sql`
     UPDATE ga_tickets SET assignee_user_id = ${input.assignee_user_id ?? null},
       assignee_name_override = ${input.assignee_name_override ?? null}, updated_at = now()

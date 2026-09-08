@@ -97,15 +97,19 @@ export async function updateVendor(id: string, input: GaVendorUpdateInput): Prom
   const sql = db();
   const rows = await sql`SELECT id FROM ga_vendor WHERE id = ${id}`;
   if (rows.length === 0) return { ok: false, error: "vendor tidak ditemukan" };
+  // `!== undefined` (bukan COALESCE(x ?? null, kolom)) — field opsional
+  // (contact_person/phone/contract_end/notes) harus BISA dikosongkan lewat
+  // null eksplisit; COALESCE selalu jatuh balik ke nilai lama kalau input
+  // null (pola bug yang sama dgn F53 asset-tag.ts, sapuan 2026-09-07).
   await sql`
     UPDATE ga_vendor SET
-      nama = COALESCE(${input.nama ?? null}, nama),
-      category = COALESCE(${input.category ?? null}, category),
-      contact_person = COALESCE(${input.contact_person ?? null}, contact_person),
-      phone = COALESCE(${input.phone ?? null}, phone),
-      contract_end = COALESCE(${input.contract_end ?? null}, contract_end),
-      notes = COALESCE(${input.notes ?? null}, notes),
-      status = COALESCE(${input.status ?? null}, status),
+      nama = ${input.nama !== undefined ? input.nama : sql`nama`},
+      category = ${input.category !== undefined ? input.category : sql`category`},
+      contact_person = ${input.contact_person !== undefined ? input.contact_person : sql`contact_person`},
+      phone = ${input.phone !== undefined ? input.phone : sql`phone`},
+      contract_end = ${input.contract_end !== undefined ? input.contract_end : sql`contract_end`},
+      notes = ${input.notes !== undefined ? input.notes : sql`notes`},
+      status = ${input.status !== undefined ? input.status : sql`status`},
       updated_at = now()
     WHERE id = ${id}
   `;
@@ -255,13 +259,17 @@ export async function updateSchedule(id: string, input: GaMaintenanceUpdateInput
   }
   const rows = await sql`SELECT id FROM ga_maintenance_schedules WHERE id = ${id}`;
   if (rows.length === 0) return { ok: false, error: "jadwal tidak ditemukan" };
+  // `!== undefined` (bukan COALESCE(x ?? null, kolom)) — vendor_id/notes
+  // opsional harus BISA dikosongkan lewat null eksplisit; COALESCE selalu
+  // jatuh balik ke nilai lama kalau input null (pola bug yang sama dgn F53
+  // asset-tag.ts, sapuan 2026-09-07).
   await sql`
     UPDATE ga_maintenance_schedules SET
-      due_date = COALESCE(${input.due_date ?? null}, due_date),
-      cost_budget = COALESCE(${input.cost_budget ?? null}, cost_budget),
-      vendor_id = COALESCE(${input.vendor_id ?? null}, vendor_id),
-      recur_months = COALESCE(${input.recur_months ?? null}, recur_months),
-      notes = COALESCE(${input.notes ?? null}, notes),
+      due_date = ${input.due_date !== undefined ? input.due_date : sql`due_date`},
+      cost_budget = ${input.cost_budget !== undefined ? input.cost_budget : sql`cost_budget`},
+      vendor_id = ${input.vendor_id !== undefined ? input.vendor_id : sql`vendor_id`},
+      recur_months = ${input.recur_months !== undefined ? input.recur_months : sql`recur_months`},
+      notes = ${input.notes !== undefined ? input.notes : sql`notes`},
       updated_at = now()
     WHERE id = ${id}
   `;
@@ -281,7 +289,13 @@ export async function cancelSchedule(id: string, notes?: string | null): Promise
   const sql = db();
   const rows = await sql`SELECT status FROM ga_maintenance_schedules WHERE id = ${id}`;
   if (rows.length === 0) return { ok: false, error: "jadwal tidak ditemukan" };
-  if (rows[0].status === "done" || rows[0].status === "cancelled") return { ok: false, error: `sudah "${rows[0].status}"` };
+  // pending_finance = pekerjaan SUDAH selesai secara fisik (cost_actual + completed_at
+  // terisi, di atas ambang approval Finance) — cancel di sini akan menghilangkan
+  // pekerjaan riil dari alur approval tanpa approved_by, bukan "membatalkan rencana".
+  // Cuma pending/in_progress yang sah dibatalkan (ditemukan QA jalur tulis 2026-09-07).
+  if (rows[0].status === "done" || rows[0].status === "cancelled" || rows[0].status === "pending_finance") {
+    return { ok: false, error: `tidak bisa dibatalkan — status sudah "${rows[0].status}"` };
+  }
   await sql`UPDATE ga_maintenance_schedules SET status = 'cancelled', notes = COALESCE(${notes ?? null}, notes), updated_at = now() WHERE id = ${id}`;
   return { ok: true };
 }

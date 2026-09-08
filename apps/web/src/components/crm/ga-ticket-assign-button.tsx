@@ -14,9 +14,17 @@ import {
 } from "@/components/ui/dialog";
 import type { AppUserOption } from "./add-ga-ticket-button";
 
+export interface TeknisiOption {
+  id: string;
+  nama: string;
+  aktif: boolean;
+}
+
 const NONE = "__none__";
 
-export function GaTicketAssignButton({ ticketId, currentName, users }: { ticketId: string; currentName: string | null; users: AppUserOption[] }) {
+export function GaTicketAssignButton({
+  ticketId, currentName, users, teknisi,
+}: { ticketId: string; currentName: string | null; users: AppUserOption[]; teknisi: TeknisiOption[] }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -71,7 +79,26 @@ export function GaTicketAssignButton({ ticketId, currentName, users }: { ticketI
                   {users.map((u) => <SelectItem key={u.id} value={u.id}>{u.name ?? u.id}</SelectItem>)}
                 </SelectContent>
               </Select>
-              <p className="text-muted-foreground text-xs">Atau kalau belum terdaftar, isi nama bebas:</p>
+              {teknisi.length > 0 && (
+                <>
+                  <p className="text-muted-foreground text-xs">Atau pilih dari roster Teknisi (F8):</p>
+                  <select
+                    className="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+                    defaultValue=""
+                    onChange={(e) => {
+                      if (!e.target.value) return;
+                      setUserId("");
+                      setName(teknisi.find((t) => t.id === e.target.value)?.nama ?? "");
+                    }}
+                  >
+                    <option value="">— pilih teknisi —</option>
+                    {teknisi.filter((t) => t.aktif).map((t) => (
+                      <option key={t.id} value={t.id}>{t.nama}</option>
+                    ))}
+                  </select>
+                </>
+              )}
+              <p className="text-muted-foreground text-xs">Atau kalau belum terdaftar di keduanya, isi nama bebas:</p>
               <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Nama bebas" disabled={!!userId} />
             </div>
             {error && <p className="text-destructive text-sm">{error}</p>}

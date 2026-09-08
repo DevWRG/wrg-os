@@ -33,17 +33,24 @@ const LABELS: Record<string, string> = {
   suppliers: "Suppliers",
   hitl: "HITL Review",
   "approval-requests": "Approval Requests",
-  // Segmen generik "config" dipakai /approval-requests/config (F11) — kalau
-  // nanti ada fitur lain jalan "/xxx/config" jangan lupa ini map GLOBAL
-  // (per-segmen, bukan per-parent), bisa ikut ke-relabel.
-  config: "Setup Kontak Approval",
+  "forecast-submission": "Forecast Submission",
   users: "Users",
   settings: "Settings",
   showcase: "UI Showcase",
 };
 
-const labelOf = (seg: string) =>
-  LABELS[seg] ?? seg.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+// Segmen generik ("config" dkk) dipakai lebih dari satu fitur dgn arti beda
+// per parent (/approval-requests/config = Setup Kontak Approval,
+// /forecast-submission/config = Setup Buffer Stok) — HARUS di-key per PATH
+// PENUH, bukan per-segmen, atau breadcrumb fitur kedua ikut ke-relabel jadi
+// punya fitur pertama (ditemukan user 2026-09-07, F19 nyorot judul F11).
+const PATH_LABELS: Record<string, string> = {
+  "/approval-requests/config": "Setup Kontak Approval",
+  "/forecast-submission/config": "Setup Buffer Stok",
+};
+
+const labelOf = (seg: string, href: string) =>
+  PATH_LABELS[href] ?? LABELS[seg] ?? seg.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 
 export function Breadcrumbs() {
   const pathname = usePathname();
@@ -61,10 +68,10 @@ export function Breadcrumbs() {
           <span key={href} className="flex min-w-0 items-center gap-1.5">
             <ChevronRight className="text-muted-foreground size-3.5 shrink-0" />
             {last ? (
-              <span className="truncate font-medium">{labelOf(seg)}</span>
+              <span className="truncate font-medium">{labelOf(seg, href)}</span>
             ) : (
               <Link href={href} className="text-muted-foreground hover:text-foreground truncate">
-                {labelOf(seg)}
+                {labelOf(seg, href)}
               </Link>
             )}
           </span>

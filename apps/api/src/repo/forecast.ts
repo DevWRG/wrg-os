@@ -19,6 +19,7 @@ const ED_NEAR_DAYS = 90;
 // GMT+0700 ..."), bukan tanggal terbaca. Dikonfirmasi bocor ke deskripsi
 // approval F11 (ikut terkirim sbg pesan WA ke HoD) via curl 09-04.
 const toIsoDate = (x: unknown): string => new Date(x as string | Date).toISOString().slice(0, 10);
+const toIsoTs = (x: unknown): string => new Date(x as string | Date).toISOString();
 const toIdDate = (x: unknown): string =>
   new Date(x as string | Date).toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" });
 
@@ -254,7 +255,12 @@ export async function listSuggestions(status?: string): Promise<ForecastSuggesti
     notes: r.notes ? String(r.notes) : null,
     status: String(r.status),
     approvalRequestId: r.approval_request_id ? String(r.approval_request_id) : null,
-    createdAt: String(r.created_at),
+    // Sebelumnya String(r.created_at) — postgres.js parse kolom timestamptz
+    // jadi objek Date, String() di atasnya hasilnya Date.toString() mentah
+    // ("Fri Sep 04 2026 ... GMT+0700 ..."), bukan ISO. Pola bug yang sama
+    // dgn nearestEdDate sebelum PR #1174, di kolom berbeda (ditemukan QA
+    // jalur tulis 2026-09-07).
+    createdAt: toIsoTs(r.created_at),
   }));
 }
 
