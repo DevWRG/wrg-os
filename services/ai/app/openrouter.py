@@ -86,6 +86,17 @@ def klaim_models() -> List[str]:
     return [primary, fallback]
 
 
+def koran_models() -> List[str]:
+    """Model OpenRouter (vision) untuk F-CASHIN pembaca rekening koran. Default
+    sama dgn DOC #KLAIM (Gemini — satu-satunya yg dipakai utk image input di
+    sini), tapi ENV-nya DIPISAH: menyetel model OCR nota tak boleh ikut
+    mengubah pembaca angka rekening koran, yg toleransi salahnya jauh lebih
+    kecil krn angkanya masuk resume Direktur."""
+    primary = os.environ.get("KORAN_MODEL_PRIMARY", "google/gemini-2.0-flash-001")
+    fallback = os.environ.get("KORAN_MODEL_FALLBACK", "google/gemini-flash-1.5")
+    return [primary, fallback]
+
+
 def chat_or_fallback(
     system: str,
     user: str,

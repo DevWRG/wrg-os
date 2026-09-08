@@ -401,3 +401,53 @@ class KlaimOcrResponse(BaseModel):
     pihak: Optional[str] = None
     model: str = "dry-run"
     dry_run: bool = False
+
+
+# === F-CASHIN — pembaca rekening koran harian (parser teks + OCR vision) ===
+
+
+class KoranParseRequest(BaseModel):
+    pdf_base64: str
+    file_nama: Optional[str] = None
+    # allow_ocr=False memaksa hanya jalur parser teks. Dipakai kalau pemanggil
+    # ingin memastikan angka datang dari teks digital (tanpa risiko OCR), mis.
+    # saat re-ingest massal statement lama.
+    allow_ocr: bool = True
+    dry_run: bool = False
+
+
+class KoranLine(BaseModel):
+    urut: int
+    waktu: Optional[str] = None
+    deskripsi: str = ""
+    debit: float = 0
+    kredit: float = 0
+    saldo: Optional[float] = None
+    referensi: Optional[str] = None
+
+
+class KoranParseResponse(BaseModel):
+    bank_kode: Optional[str] = None
+    no_rekening: Optional[str] = None
+    nama_pemilik: Optional[str] = None
+    cabang: Optional[str] = None
+    tanggal: Optional[str] = None
+    dicetak_at: Optional[str] = None
+    saldo_awal: Optional[float] = None
+    saldo_akhir: Optional[float] = None
+    total_debit_tercetak: Optional[float] = None
+    total_kredit_tercetak: Optional[float] = None
+    jumlah_debit: Optional[int] = None
+    jumlah_kredit: Optional[int] = None
+    sum_debit: float = 0
+    sum_kredit: float = 0
+    # None = bank tak mencetak total sama sekali (tak bisa dinilai); False =
+    # dinilai dan TIDAK cocok. Keduanya menahan statement dari resume, tapi
+    # pesannya beda dan itu penting saat menelusuri masalah.
+    checksum_ok: Optional[bool] = None
+    metode: str = "parser"
+    model: Optional[str] = None
+    dry_run: bool = False
+    parse_error: Optional[str] = None
+    raw_text: str = ""
+    lines: List[KoranLine] = []

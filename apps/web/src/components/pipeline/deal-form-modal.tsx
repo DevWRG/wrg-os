@@ -4,6 +4,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { Card } from "@/components/ui/card";
+import { httpErrorMessage } from "@/lib/http-error";
 
 // F1-SPT form deal (create + edit). Field whitelist selaras backend DEAL_EDITABLE.
 // Create → POST /api/deals (stage awal Prospecting). Edit → PATCH /api/deals/:id.
@@ -220,8 +221,7 @@ export function DealFormModal({ mode, deal, onClose, brands = [], cabangs = [], 
         headers: { "content-type": "application/json" },
         body: JSON.stringify(form),
       });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok) { setErr(body?.error || `gagal (${res.status})`); return; }
+      if (!res.ok) { setErr(await httpErrorMessage(res)); return; }
       router.refresh();
       onClose();
     } catch {

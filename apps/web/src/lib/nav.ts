@@ -4,6 +4,7 @@
 // feature.key = slug route (lihat featureKey()), selaras infra/postgres/init/044_rbac.sql.
 
 import {
+  Banknote,
   LayoutDashboard, LayoutGrid, Building2, Package, Boxes, ShoppingCart, Truck,
   Factory, Workflow, Receipt, BarChart3, ClipboardCheck, History, Settings,
   Sparkles, Send, FileText, ScrollText, GraduationCap, UsersRound, Network,
@@ -204,6 +205,15 @@ export const NAV: NavGroup[] = [
       { title: "Org Chart", url: "/people/org", icon: Building2, badge: "NEW" },
       { title: "Voice of Employee", url: "/people/voice", icon: MessagesSquare, badge: "NEW" },
       { title: "Spider Network", url: "/network", icon: Network },
+      // F157 — data 6 form PIC Divisi (migrasi 168/170/171). Sengaja menu
+      // TERSENDIRI, bukan tab di RACI Matrix / Spider Network: dua menu itu
+      // ber-grain KARYAWAN (raci_assignment) dan OBSERVASI chat WA
+      // (message_annotation), sedangkan ini grain POSISI & deklaratif dari form.
+      // Menumpangkannya akan membuat dua-duanya kehilangan makna.
+      // featureKey(url) = "sop-otomasi" → butuh Sync Fitur sekali di prod
+      // supaya barisnya muncul di matriks Akses Grup; sebelum itu hanya
+      // admin/superuser yang melihatnya (anti-lockout can()).
+      { title: "SOP & Otomasi", url: "/sop-otomasi", icon: ClipboardCheck, badge: "NEW" },
       { title: "Executive Briefings", url: "/briefings", icon: ScrollText },
       { title: "Coaching Notes", url: "/coaching", icon: GraduationCap },
       { title: "Reports", url: "/reports", icon: BarChart3 },
@@ -307,6 +317,16 @@ export const NAV: NavGroup[] = [
       // Purchasing (bukan CRM spt label blueprint) krn pemakainya
       // Supply Chain + datanya dari Stok Gudang/ED Watch section ini.
       { title: "Forecast Submission", url: "/forecast-submission", icon: TrendingUp, badge: "NEW" },
+    ],
+  },
+  {
+    // F-CASHIN — Finance belum punya grup sendiri (AR Aging nebeng Sales, Dana
+    // Ops nebeng General Affairs). Menu ini pemakainya admin Finance + Direktur
+    // dan datanya rekening bank, jadi dibuat grup sendiri daripada dipaksa
+    // masuk grup yang temanya lain (pola sama DOC & GA).
+    label: "Finance",
+    items: [
+      { title: "Uang Masuk", url: "/uang-masuk", icon: Banknote, badge: "NEW" },
     ],
   },
   {

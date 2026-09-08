@@ -181,6 +181,18 @@ import {
 } from "./repo/insentif.js";
 import { listDepartments, listEmployees, getEmployee, getRaciMatrix, getMeasurements, saveMeasurements, createEmployee, updateEmployee, deleteEmployee, replaceEmployeeDetail, getVoiceAggregate, getHodResolution, getOrgReporting, populateHodKey, getHods, type MeasurementInput, type EmployeeWrite, type SpineDetail } from "./repo/employee-spine.js";
 import { listKlaim, getKlaim, updateKategori, decideKlaim, markDibayar, createKlaimManual, deleteKlaim } from "./repo/doc-klaim.js";
+import {
+  formatResume,
+  ingestKoran,
+  listAccount,
+  listLine,
+  listStatement,
+  matriksKelengkapan,
+  ringkasanHarian,
+  triageLine,
+  updateAccount,
+  wibDate,
+} from "./repo/cashin.js";
 import { upsertMembers, listMembers, upsertDigests, listDigest, digestStats, upsertPola, listPola, generateRekap, generateResume, type MonitorMemberInput, type DigestInput, type PolaInput } from "./repo/monitor.js";
 import { runNotifTua } from "./repo/notiftua.js";
 import { runDailySummary } from "./repo/dailysummary.js";
@@ -212,6 +224,7 @@ import {
   isMirrorSort,
 } from "./repo/accurateMirror.js";
 import { listWarehouses, listStockBranch, stockBranchSummary } from "./repo/stock-branch.js";
+import { picFormSummary, listSopLangkah, listRaciPosisi, picFormKelengkapan, listDivisi, koordinasiGraf, raciKaryawanPosisi, setTautanManual, hapusTautanManual } from "./repo/picform.js";
 import { recordDelivery, recordEmail, recordAlert, listLogs } from "./repo/logs.js";
 import { renderSalesDocHtml, renderBriefingHtml } from "./repo/exportdoc.js";
 import { runHodDaily } from "./repo/hodreminder.js";
@@ -3414,6 +3427,92 @@ app.post("/doc-klaim/:id/bayar", async (c) => {
   return c.json(result);
 });
 
+// ── F-CASHIN Mitigasi Uang Masuk Harian (rekening koran) ─────────────────────
+// Ingest lewat dua jalur: WA #KORAN (inbound.ts) dan upload di menu web (POST
+// /cashin/upload). Klasifikasi + pencocokan puteran jalan otomatis tiap ingest.
+app.post("/cashin/upload", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const body = await c.req.json().catch(() => ({}));
+  const files = Array.isArray(body.files) ? body.files : null;
+  if (!files || !files.length) {
+    return c.json({ error: "field 'files' wajib array berisi {file_nama, pdf_base64}" }, 400);
+  }
+  // Diproses berurutan, bukan paralel: pencocokan pasangan puteran membaca
+  // seluruh baris tanggal itu, jadi dua ingest yang jalan bersamaan bisa
+  // saling menimpa hasil pasangannya.
+  const hasil = [];
+  for (const f of files) {
+    if (!f?.pdf_base64) {
+      hasil.push({ ok: false, file_nama: f?.file_nama ?? null, error: "pdf_base64 kosong" });
+      continue;
+    }
+    const r = await ingestKoran({
+      pdf_base64: String(f.pdf_base64),
+      file_nama: f.file_nama ?? null,
+      sumber: "web",
+    });
+    hasil.push("ok" in r && r.ok === true ? r : { ok: false, file_nama: f.file_nama ?? null, error: (r as { error?: string }).error });
+  }
+  return c.json({ hasil });
+});
+
+app.get("/cashin/harian", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const tanggal = c.req.query("tanggal") ?? wibDate();
+  return c.json({ ringkasan: await ringkasanHarian(tanggal), statement: await listStatement(tanggal) });
+});
+
+app.get("/cashin/resume", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const tanggal = c.req.query("tanggal") ?? wibDate();
+  const r = await ringkasanHarian(tanggal);
+  return c.json({ tanggal, teks: formatResume(r), ringkasan: r });
+});
+
+app.get("/cashin/lines", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(
+    await listLine({
+      tanggal: c.req.query("tanggal") ?? undefined,
+      kategori: c.req.query("kategori") ?? undefined,
+      bank_account_id: c.req.query("bank_account_id") ?? undefined,
+      q: c.req.query("q") ?? undefined,
+      sort: c.req.query("sort") ?? undefined,
+      dir: c.req.query("dir") ?? undefined,
+      limit: c.req.query("limit") ? Number(c.req.query("limit")) : undefined,
+      offset: c.req.query("offset") ? Number(c.req.query("offset")) : undefined,
+    }),
+  );
+});
+
+app.patch("/cashin/lines/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const body = await c.req.json().catch(() => ({}));
+  const result = await triageLine(c.req.param("id"), String(body.kategori ?? ""), body.catatan ?? null);
+  if (!result.ok) return c.json({ error: result.error }, 400);
+  return c.json(result);
+});
+
+app.get("/cashin/accounts", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json({ accounts: await listAccount() });
+});
+
+app.patch("/cashin/accounts/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const body = await c.req.json().catch(() => ({}));
+  const result = await updateAccount(c.req.param("id"), body);
+  if (!result.ok) return c.json({ error: result.error }, 400);
+  return c.json(result);
+});
+
+app.get("/cashin/kelengkapan", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const sampai = c.req.query("sampai") ?? wibDate();
+  const dari = c.req.query("dari") ?? new Date(new Date(`${sampai}T00:00:00Z`).getTime() - 29 * 86400000).toISOString().slice(0, 10);
+  return c.json({ dari, sampai, ...(await matriksKelengkapan(dari, sampai)) });
+});
+
 // F118b CRUD core karyawan (gating admin di BFF web).
 app.post("/employee-spine/employees", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
@@ -4157,6 +4256,112 @@ app.get("/stock/branch", async (c) => {
 app.get("/stock/branch/summary", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json(await stockBranchSummary());
+});
+
+// ── Form PIC Divisi (migrasi 168/170/171) — SEMUA read-only ──
+// Datanya masuk lewat scripts/ops/pic-form-*, bukan HTTP; tak ada POST di sini.
+app.get("/picform/summary", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await picFormSummary());
+});
+
+app.get("/picform/divisi", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listDivisi();
+  return c.json({ count: rows.length, divisi: rows });
+});
+
+// `kondisi`/`target` menerima 4 level resmi ATAU sentinel 'BELUM' (= NULL).
+// Divalidasi supaya salah ketik tidak balik "0 baris" yang terlihat seperti
+// "memang tak ada" — pola sama validasi `warehouse` di /stock/branch.
+const LEVEL_SAH = ["Manual", "Digitalisasi", "Otomasi", "AI", "BELUM"];
+app.get("/picform/sop-langkah", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const kondisi = c.req.query("kondisi");
+  const target = c.req.query("target");
+  for (const [nama, v] of [["kondisi", kondisi], ["target", target]] as const) {
+    if (v && !LEVEL_SAH.includes(v)) {
+      return c.json({ error: `${nama} tak dikenal: ${v}`, valid: LEVEL_SAH }, 400);
+    }
+  }
+  const divisi = c.req.query("divisi");
+  if (divisi && !(await listDivisi()).some((d) => d.key === divisi)) {
+    return c.json({ error: `divisi tak dikenal: ${divisi}` }, 400);
+  }
+  const out = await listSopLangkah({
+    q: c.req.query("q") ?? undefined,
+    divisi: divisi ?? undefined,
+    kondisi: kondisi ?? undefined,
+    target: target ?? undefined,
+    targetKosong: c.req.query("target_kosong") === "1",
+    limit: c.req.query("limit") ? Number(c.req.query("limit")) : undefined,
+    offset: c.req.query("offset") ? Number(c.req.query("offset")) : undefined,
+  });
+  return c.json({ count: out.rows.length, total_rows: out.total_rows, rows: out.rows });
+});
+
+app.get("/picform/raci", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const divisi = c.req.query("divisi");
+  if (divisi && !(await listDivisi()).some((d) => d.key === divisi)) {
+    return c.json({ error: `divisi tak dikenal: ${divisi}` }, 400);
+  }
+  const out = await listRaciPosisi({
+    q: c.req.query("q") ?? undefined,
+    divisi: divisi ?? undefined,
+    limit: c.req.query("limit") ? Number(c.req.query("limit")) : undefined,
+    offset: c.req.query("offset") ? Number(c.req.query("offset")) : undefined,
+  });
+  return c.json({ count: out.rows.length, total_rows: out.total_rows, rows: out.rows });
+});
+
+app.get("/picform/kelengkapan", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await picFormKelengkapan();
+  return c.json({ count: rows.length, rows });
+});
+
+// Graf koordinasi antar posisi (Tabel C) — isi menu Spider Network. Jalur A9
+// lama (/network/graph dari message_annotation) TIDAK dihapus; lihat komentar
+// koordinasiGraf() di repo/picform.ts.
+app.get("/picform/koordinasi", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const divisi = c.req.query("divisi");
+  if (divisi && !(await listDivisi()).some((d) => d.key === divisi)) {
+    return c.json({ error: `divisi tak dikenal: ${divisi}` }, 400);
+  }
+  return c.json(await koordinasiGraf({ divisi: divisi ?? undefined }));
+});
+
+// Rantai orang → posisi → proses + karyawan yang belum tertaut beserta
+// alasannya (employee_posisi_gap, ditulis posisi-employee-match.mjs).
+app.get("/picform/raci-karyawan", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await raciKaryawanPosisi());
+});
+
+// Satu-satunya jalur TULIS di /picform/*. Otorisasi dilakukan di lapisan WEB
+// (apps/web/src/app/api/picform/tautan/route.ts → requireRaciEdit) karena di
+// sanalah sesi login terbaca; apps/api hanya dijangkau lewat x-service-token
+// dan menerima `oleh` yang SUDAH terverifikasi. Jangan pernah memanggil
+// endpoint ini langsung dari klien.
+app.post("/picform/tautan", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let b: { employee_id?: string; posisi_id?: number; oleh?: string } = {};
+  try { b = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  if (!b.employee_id || !b.posisi_id) return c.json({ error: "employee_id + posisi_id wajib" }, 400);
+  if (!b.oleh) return c.json({ error: "oleh wajib (identitas pemutus, dari sesi login)" }, 400);
+  const out = await setTautanManual(b.employee_id, Number(b.posisi_id), b.oleh);
+  return c.json(out, out.ok ? 200 : 400);
+});
+
+app.delete("/picform/tautan", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const employeeId = c.req.query("employee_id");
+  const posisiId = c.req.query("posisi_id");
+  if (!employeeId || !posisiId) return c.json({ error: "employee_id + posisi_id wajib" }, 400);
+  const out = await hapusTautanManual(employeeId, Number(posisiId));
+  return c.json(out, out.ok ? 200 : 400);
 });
 
 // ── Log operasional: delivery / email / alert (port legacy *_log) ──

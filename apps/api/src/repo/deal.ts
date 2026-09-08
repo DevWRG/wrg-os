@@ -307,7 +307,22 @@ export interface PipelineWinLoss {
   lost: number;
   open: number;
   win_rate: number;
+  // Alasan yang BENAR-BENAR terisi saja. `loss_reason` kosong TIDAK ikut di
+  // sini — lihat lost_tanpa_alasan.
   by_reason: { reason: string; count: number }[];
+  // Deal kalah yang loss_reason-nya kosong. Ini BUKAN sebuah alasan, jadi tak
+  // boleh berdiri sebagai batang di grafik: kalau ikut, ia jadi kategori
+  // terbesar (190 dari 305 di prod = 62%) dan seluruh alasan nyata tampil
+  // kerdil karena skala batang mengikuti dia.
+  //
+  // Kosongnya juga bisa disimpulkan asalnya: jalur aplikasi MEWAJIBKAN
+  // loss_reason saat transisi ke Closing-Lost (lihat moveDealStage), jadi baris
+  // kosong mustahil datang dari pemakaian normal — itu sisa impor massal.
+  lost_tanpa_alasan: number;
+  // Penyebut yang benar untuk membaca by_reason: lost − lost_tanpa_alasan.
+  // Dipisah supaya pembaca tak menghitung persentase terhadap `lost` dan
+  // mendapat angka yang terlalu kecil untuk semua alasan.
+  lost_dengan_alasan: number;
 }
 export interface PipelineGroupRow {
   key: string;
@@ -411,18 +426,28 @@ export async function getPipelineReport(scope?: DataScope): Promise<PipelineRepo
     else if (String(r.stage) === "Closing-Lost") lost += n;
     else open += n;
   }
+  // Yang kosong SENGAJA disaring keluar di SQL, bukan dibuang di TypeScript:
+  // dengan COALESCE(...,'—') seperti sebelumnya, "tidak diketahui" masuk ke
+  // daftar sebagai kalau-kalau sebuah alasan dan langsung jadi yang terbesar.
   const reasonRows = await sql`
-    SELECT COALESCE(loss_reason::text, '—') AS reason, COUNT(*)::bigint AS count
-    FROM deal WHERE ${cond} AND stage = 'Closing-Lost'
-    GROUP BY COALESCE(loss_reason::text, '—')
+    SELECT loss_reason::text AS reason, COUNT(*)::bigint AS count
+    FROM deal WHERE ${cond} AND stage = 'Closing-Lost' AND loss_reason IS NOT NULL
+    GROUP BY loss_reason::text
     ORDER BY count DESC
   `;
+  const [kosong] = await sql`
+    SELECT COUNT(*)::bigint AS count
+    FROM deal WHERE ${cond} AND stage = 'Closing-Lost' AND loss_reason IS NULL
+  `;
+  const lostTanpaAlasan = Number(kosong?.count ?? 0);
   const winloss: PipelineWinLoss = {
     won,
     lost,
     open,
     win_rate: won + lost > 0 ? won / (won + lost) : 0,
     by_reason: reasonRows.map((r) => ({ reason: String(r.reason), count: Number(r.count) })),
+    lost_tanpa_alasan: lostTanpaAlasan,
+    lost_dengan_alasan: Math.max(0, lost - lostTanpaAlasan),
   };
 
   return { funnel, forecast, by_category, by_brand, winloss };

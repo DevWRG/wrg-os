@@ -39,6 +39,8 @@ interface PlanDetailRow {
   nama: string | null;
   role: string | null;
   cabang: string | null;
+  /** Kunjungan (sales_plan, AM) atau Todo (sales_todo, non-AM). */
+  jenis: string;
   customer_name: string | null;
   tujuan: string | null;
   goal: string | null;
@@ -512,28 +514,51 @@ export default function DashboardPage() {
                   pageSize={25}
                   onRowClick={(r) => router.push(`/plan-report/drilldown?am_id=${r.am_id}`)}
                   toolbar={
-                    <ExportButton<PlanDetailRow>
-                      filename="plan-report-detail"
-                      label="Export Excel (detail)"
-                      fetchData={async () => {
-                        const d = await getJson<{ detail: PlanDetailRow[] }>(`/api/report/detail?from=${range?.from ?? ""}&to=${range?.to ?? ""}`);
-                        return d?.detail ?? [];
-                      }}
-                      columns={[
-                        { header: "Tgl", value: (r) => r.tanggal },
-                        { header: "AM", value: (r) => r.nama ?? r.am_id },
-                        { header: "Role", value: (r) => r.role },
-                        { header: "Cabang", value: (r) => r.cabang },
-                        { header: "Customer", value: (r) => r.customer_name },
-                        { header: "Tujuan", value: (r) => r.tujuan },
-                        { header: "Goal", value: (r) => r.goal },
-                        { header: "Status", value: (r) => r.status },
-                        { header: "Hasil", value: (r) => r.hasil },
-                        { header: "Next", value: (r) => r.next_action },
-                        { header: "Lat", value: (r) => r.visit_lat },
-                        { header: "Lon", value: (r) => r.visit_lon },
-                      ]}
-                    />
+                    <>
+                      {/* Ringkasan = persis baris tabel di layar (seluruh roster wajib
+                          plan/report, termasuk tim non-sales). Detail = 1 baris per item
+                          rencana: kunjungan AM + item todo non-AM. */}
+                      <ExportButton<OrangRow>
+                        filename="plan-report-per-orang"
+                        label="Export Excel (ringkasan)"
+                        data={orang}
+                        columns={[
+                          { header: "Panggilan", value: (r) => r.panggilan ?? r.am_id },
+                          { header: "Nama", value: (r) => r.nama },
+                          { header: "Role", value: (r) => r.role },
+                          { header: "Cabang", value: (r) => r.cabang ?? "" },
+                          { header: "Hari", value: (r) => r.active_days },
+                          { header: "Plan", value: (r) => r.plan_count },
+                          { header: "Report", value: (r) => r.report_count },
+                          { header: "% Selesai", value: (r) => r.completion ?? "" },
+                          { header: "Late", value: (r) => r.late },
+                          { header: "Unmatched", value: (r) => r.unmatched },
+                        ]}
+                      />
+                      <ExportButton<PlanDetailRow>
+                        filename="plan-report-detail"
+                        label="Export Excel (detail)"
+                        fetchData={async () => {
+                          const d = await getJson<{ detail: PlanDetailRow[] }>(`/api/report/detail?from=${range?.from ?? ""}&to=${range?.to ?? ""}`);
+                          return d?.detail ?? [];
+                        }}
+                        columns={[
+                          { header: "Tgl", value: (r) => r.tanggal },
+                          { header: "Nama", value: (r) => r.nama ?? r.am_id },
+                          { header: "Role", value: (r) => r.role },
+                          { header: "Cabang", value: (r) => r.cabang },
+                          { header: "Jenis", value: (r) => r.jenis },
+                          { header: "Customer", value: (r) => r.customer_name },
+                          { header: "Tujuan / Item", value: (r) => r.tujuan },
+                          { header: "Goal", value: (r) => r.goal },
+                          { header: "Status", value: (r) => r.status },
+                          { header: "Hasil", value: (r) => r.hasil },
+                          { header: "Next", value: (r) => r.next_action },
+                          { header: "Lat", value: (r) => r.visit_lat },
+                          { header: "Lon", value: (r) => r.visit_lon },
+                        ]}
+                      />
+                    </>
                   }
                   columns={[
                     { id: "panggilan", header: "Panggilan", sortable: true, accessor: (r) => r.panggilan ?? r.am_id, cell: (r) => <Link href={`/plan-report/drilldown?am_id=${r.am_id}`} className="font-medium hover:text-primary hover:underline">{r.panggilan ?? r.am_id}</Link> },
