@@ -34,9 +34,11 @@ export function MaintenanceTable({ schedules }: { schedules: MaintenanceSchedule
       sortable: true,
       accessor: (s) => s.alat_name,
       cell: (s) => (
-        <div>
-          <div className="font-medium">{s.alat_name}</div>
-          {s.serial_number && <div className="text-muted-foreground text-xs">SN: {s.serial_number}</div>}
+        <div className="max-w-[16rem]">
+          <div className="truncate font-medium" title={s.alat_name}>{s.alat_name}</div>
+          {s.serial_number && (
+            <div className="text-muted-foreground truncate text-xs" title={`SN: ${s.serial_number}`}>SN: {s.serial_number}</div>
+          )}
         </div>
       ),
     },

@@ -57,9 +57,11 @@ export function InstallationsTable({ units }: { units: InstallationUnit[] }) {
       sortable: true,
       accessor: (u) => u.alat_name,
       cell: (u) => (
-        <div>
-          <div className="font-medium">{u.alat_name}</div>
-          {u.serial_number && <div className="text-muted-foreground text-xs">SN: {u.serial_number}</div>}
+        <div className="max-w-[16rem]">
+          <div className="truncate font-medium" title={u.alat_name}>{u.alat_name}</div>
+          {u.serial_number && (
+            <div className="text-muted-foreground truncate text-xs" title={`SN: ${u.serial_number}`}>SN: {u.serial_number}</div>
+          )}
         </div>
       ),
     },
