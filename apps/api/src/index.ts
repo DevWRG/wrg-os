@@ -5734,8 +5734,13 @@ app.patch("/atk/stock-movements/:id", async (c) => {
 
 app.delete("/atk/stock-movements/:id", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  const r = await deleteAtkStockMovement(c.req.param("id"));
-  return c.json(r, r.deleted ? 200 : 404);
+  try {
+    const r = await deleteAtkStockMovement(c.req.param("id"));
+    return c.json(r, r.deleted ? 200 : 404);
+  } catch (e) {
+    if (e instanceof AtkStockMovementError) return c.json({ error: e.message }, e.status as 409);
+    throw e;
+  }
 });
 
 app.get("/atk/stock-levels", async (c) => {
