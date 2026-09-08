@@ -17,25 +17,51 @@ import {
 export interface AppUserOption { id: string; name: string | null }
 
 const NONE = "__none__"; // sentinel Select "belum pilih" — bukan "" krn Base UI Select tak suka value kosong
+// PIC sementara "Dito Anggara" — sudah ada data karyawan di master (employee),
+// TAPI menautkannya ke sini (app_user/employee) di luar kewenangan magang
+// (HR/roster off-limit). Quick-pick manual: isi picName bebas, bukan user_id
+// sungguhan — tanpa histori assignment resmi, sama seperti opsi "nama bebas"
+// lain. Ditambahkan atas permintaan user 2026-09-07.
+const DITO = "__dito_anggara__";
+const DITO_NAMA = "Dito Anggara";
 
 function UserOrNamePicker({ users, userId, setUserId, picName, setPicName, label }: {
   users: AppUserOption[]; userId: string; setUserId: (v: string) => void;
   picName: string; setPicName: (v: string) => void; label: string;
 }) {
+  const isDito = !userId && picName === DITO_NAMA;
   return (
     <div className="grid gap-1.5">
       <Label>{label}</Label>
-      <Select value={userId || NONE} onValueChange={(v) => setUserId(v === NONE ? "" : (v ?? ""))}>
+      <Select
+        value={userId || (isDito ? DITO : NONE)}
+        onValueChange={(v) => {
+          if (v === DITO) {
+            setUserId("");
+            setPicName(DITO_NAMA);
+          } else {
+            setUserId(v === NONE ? "" : (v ?? ""));
+            if (isDito) setPicName("");
+          }
+        }}
+      >
         <SelectTrigger className="w-full">
-          <SelectValue placeholder="Pilih user terdaftar">{(v: string) => (v === NONE ? "Pilih user terdaftar" : users.find((u) => u.id === v)?.name ?? v)}</SelectValue>
+          <SelectValue placeholder="Pilih user terdaftar">
+            {(v: string) => (v === NONE ? "Pilih user terdaftar" : v === DITO ? DITO_NAMA : (users.find((u) => u.id === v)?.name ?? v))}
+          </SelectValue>
         </SelectTrigger>
         <SelectContent>
           <SelectItem value={NONE}>— tidak pilih —</SelectItem>
           {users.map((u) => <SelectItem key={u.id} value={u.id}>{u.name ?? u.id}</SelectItem>)}
+          <SelectItem value={DITO}>{DITO_NAMA} (PIC sementara)</SelectItem>
         </SelectContent>
       </Select>
       <p className="text-muted-foreground text-xs">Atau kalau belum terdaftar, isi nama bebas (tanpa histori):</p>
       <Input value={picName} onChange={(e) => setPicName(e.target.value)} placeholder="Nama bebas, opsional" disabled={!!userId} />
+      <p className="text-muted-foreground text-xs italic">
+        Catatan: &quot;{DITO_NAMA}&quot; ditambahkan manual sbg PIC sementara — sudah ada data karyawannya di master,
+        tapi menautkannya di luar kewenangan magang (HR/roster off-limit), jadi disimpan sbg nama bebas.
+      </p>
     </div>
   );
 }
