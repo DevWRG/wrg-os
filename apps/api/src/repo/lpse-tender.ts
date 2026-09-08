@@ -102,6 +102,10 @@ export async function createTender(input: CreateTenderInput): Promise<LpseTender
   const judul = (input.judul ?? "").trim();
   const instansi = (input.instansi ?? "").trim();
   if (!judul || !instansi) return { ok: false, error: "judul & instansi wajib" };
+  // Kolomnya text tak berbatas — judul/instansi anomali panjang merusak tata
+  // letak tabel (pola sama F22 serial_number, QA 2026-09-07).
+  if (judul.length > 200) return { ok: false, error: "judul maksimal 200 karakter" };
+  if (instansi.length > 200) return { ok: false, error: "instansi maksimal 200 karakter" };
   const platform = input.platform ?? "lpse";
   if (!["lpse", "e_catalog"].includes(platform)) return { ok: false, error: "platform harus lpse atau e_catalog" };
 
