@@ -146,6 +146,19 @@ test("args dan env.PORT satu angka — web bind ke -p, bukan ke PORT", () => {
   }
 });
 
+test("dev dapat COOKIE_SECURE=false, prod TIDAK", () => {
+  // Cookie Secure dibuang browser di http:// — tanpa ini login dev berhasil di
+  // server lalu pengguna dikembalikan ke /login tanpa pesan apa pun.
+  // Dan yang lebih penting: nilai ini TIDAK boleh muncul di entri prod.
+  const { apps } = muat({ envProd: "", envDev: DEV_OK });
+  for (const a of apps.filter((x) => x.name.startsWith("wrg-dev-"))) {
+    assert.equal(a.env?.COOKIE_SECURE, "false", `${a.name} harus dapat COOKIE_SECURE=false`);
+  }
+  for (const a of apps.filter((x) => x.name.startsWith("wrg-prod-"))) {
+    assert.equal(a.env?.COOKIE_SECURE, undefined, `${a.name} TIDAK boleh dapat COOKIE_SECURE`);
+  }
+});
+
 test("scheduler dev tetap mati walau izin kirim menyala", () => {
   // Kalau scheduler hidup di dev DAN dev boleh kirim, cron dev bisa
   // mem-broadcast ke grup Research tanpa ada yang memicunya.

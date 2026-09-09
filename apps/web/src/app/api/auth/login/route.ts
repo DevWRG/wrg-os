@@ -1,5 +1,6 @@
 import { cookies } from "next/headers";
 
+import { cookieSecure } from "@/lib/cookie-secure";
 import { gatewayFetch } from "@/lib/gateway";
 
 export const dynamic = "force-dynamic";
@@ -32,7 +33,9 @@ export async function POST(req: Request) {
   jar.set(SESSION_COOKIE, data.token as string, {
     httpOnly: true,
     sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
+    // Lihat lib/cookie-secure.ts — tumpukan dev pakai NODE_ENV=production tapi
+    // dilayani lewat http://, jadi cookie Secure akan dibuang browser.
+    secure: cookieSecure(),
     path: "/",
     maxAge: 60 * 60 * 24, // 24 jam
   });
