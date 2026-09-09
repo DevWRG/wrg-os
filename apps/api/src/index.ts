@@ -4282,7 +4282,8 @@ app.get("/picform/divisi", async (c) => {
 
 // `kondisi`/`target` menerima 4 level resmi ATAU sentinel 'BELUM' (= NULL).
 // Divalidasi supaya salah ketik tidak balik "0 baris" yang terlihat seperti
-// "memang tak ada" — pola sama validasi `warehouse` di /stock/branch.
+// "memang tak ada", bukan "filternya salah" — pola sama validasi `warehouse`
+// di /stock/branch.
 const LEVEL_SAH = ["Manual", "Digitalisasi", "Otomasi", "AI", "BELUM"];
 app.get("/picform/sop-langkah", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
