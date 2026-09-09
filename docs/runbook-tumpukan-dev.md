@@ -101,7 +101,23 @@ pm2 start ecosystem.config.cjs --only wrg-dev-ai,wrg-dev-api,wrg-dev-web
 pm2 save
 ```
 
-Dashboard dev: `http://localhost:3300` (atau lewat Tailscale ke mesin ini).
+Dashboard dev: `http://localhost:3300` di mesin itu, atau
+**`http://100.106.37.50:3300`** dari perangkat lain di tailnet.
+
+Login memakai akun di `app_user` database dev. Cookie sesi di dev sengaja
+**tidak** ber-flag `Secure` (`COOKIE_SECURE=false` di blok dev ecosystem) —
+`NODE_ENV=production` wajib karena `next start` menjalankan build produksi, tapi
+browser MEMBUANG cookie `Secure` di koneksi `http://`. Tanpa itu, login berhasil
+di server lalu kamu dikembalikan ke `/login` **tanpa pesan error apa pun**.
+Opt-out itu dijaga (`apps/web/src/lib/cookie-secure.ts`): hanya dihormati kalau
+`DATABASE_URL` benar-benar database `_dev`/`_demo`, jadi menyalinnya ke
+`.env.prod` tak melemahkan produksi.
+
+⚠️ `wrg-dev-web` bind ke semua interface (tanpa `-H`), berbeda dari
+`wrg-prod-web` yang `-H 127.0.0.1` karena Cloudflare Tunnel yang menghadapkannya.
+Itu yang membuat dev bisa dibuka lewat Tailscale tanpa SSH — tapi juga berarti
+setiap interface lain di mesin itu ikut terbuka. Kalau perlu dipersempit:
+tambahkan `-H 127.0.0.1` lalu akses lewat `ssh -N -L 3300:127.0.0.1:3300 wrg-db`.
 
 Sesudah `pm2 start`, jangan berhenti di kata `online` — pm2 mencetak itu sebelum
 proses sempat bind. Yang membuktikan hidup:
