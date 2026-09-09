@@ -18,6 +18,7 @@ import {
 import { runReminders } from "./repo/reminder.js";
 import { runMaintenanceReminders } from "./repo/maintenance.js";
 import { runHodDaily, runMissStreakEscalation } from "./repo/hodreminder.js";
+import { runGeoSweep } from "./repo/geowatch.js";
 import { runVisitWeeklyRecap } from "./repo/visitweekly.js";
 import { generateRekap, generateResume } from "./repo/monitor.js";
 import {
@@ -109,6 +110,10 @@ export function startScheduler(): ScheduleStatus {
   // Rekap kunjungan mingguan (F16): volume kunjungan minggu lalu vs target per AM.
   // Flag SENDIRI (default off) — sama alasannya: jangan kirim WA tanpa diminta.
   const visitWeeklyEnabled = (process.env.VISIT_WEEKLY_ENABLED ?? "false").toLowerCase() === "true";
+  // Sweep harian "foto visit tanpa koordinat" → grup AM. Flag SENDIRI (default
+  // off) karena mengirim WA; target grup dari GEO_SWEEP_WA_TARGET /
+  // COMPLIANCE_AM_GROUP / REMINDER_WA_TARGET.
+  const geoSweepEnabled = (process.env.GEO_SWEEP_ENABLED ?? "false").toLowerCase() === "true";
   // Cek pra-trip Kirim-Tagih H-1 (F45): verifikasi hari libur + PIC untuk trip
   // besok, kirim ke nomor kurir masing-masing. Flag SENDIRI (default off).
   const preVisitEnabled = (process.env.PREVISIT_CHECK_ENABLED ?? "false").toLowerCase() === "true";
@@ -258,12 +263,12 @@ export function startScheduler(): ScheduleStatus {
   ];
 
   status = {
-    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled || watchpointSnapshotEnabled || preVisitEnabled || edWatchEnabled || gaMaintenanceAlertEnabled || gaMaintenanceBscEnabled || gaHelpdeskOverdueEnabled || gaHelpdeskBscEnabled || lpseTenderReminderEnabled || accurateStockSyncEnabled || cashinResumeEnabled,
+    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled || watchpointSnapshotEnabled || preVisitEnabled || edWatchEnabled || gaMaintenanceAlertEnabled || gaMaintenanceBscEnabled || gaHelpdeskOverdueEnabled || gaHelpdeskBscEnabled || lpseTenderReminderEnabled || accurateStockSyncEnabled || cashinResumeEnabled || geoSweepEnabled,
     timezone,
     jobs: jobs.map((j) => ({ id: j.id, expr: j.expr, valid: cron.validate(j.expr) })),
   };
 
-  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled && !watchpointSnapshotEnabled && !preVisitEnabled && !edWatchEnabled && !gaMaintenanceAlertEnabled && !gaMaintenanceBscEnabled && !gaHelpdeskOverdueEnabled && !gaHelpdeskBscEnabled && !lpseTenderReminderEnabled && !accurateStockSyncEnabled && !cashinResumeEnabled) {
+  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled && !watchpointSnapshotEnabled && !preVisitEnabled && !edWatchEnabled && !gaMaintenanceAlertEnabled && !gaMaintenanceBscEnabled && !gaHelpdeskOverdueEnabled && !gaHelpdeskBscEnabled && !lpseTenderReminderEnabled && !accurateStockSyncEnabled && !cashinResumeEnabled && !geoSweepEnabled) {
     console.log("[scheduler] semua *_SCHEDULE/_ENABLED flag != true — tidak dijadwalkan");
     return status;
   }
@@ -546,6 +551,32 @@ export function startScheduler(): ScheduleStatus {
       { timezone },
     );
     live.push(`visit-weekly=${visitWeeklyExpr}`);
+  }
+
+  // Sweep geotag harian: kunjungan yang fotonya menempel tapi tanpa koordinat
+  // tak pernah masuk menu Visits. Jendelanya 2 hari (lihat repo/geowatch.ts) —
+  // banyak AM melapor lewat tengah malam, jadi sapuan hari-ini saja akan
+  // melewatkan mereka selamanya. Sunyi kalau bersih: tak ada pesan dikirim.
+  const geoSweepExpr = process.env.GEO_SWEEP_CRON ?? "30 21 * * *";
+  if (geoSweepEnabled) {
+    if (!cron.validate(geoSweepExpr)) {
+      console.error(`[scheduler] geo-sweep cron-expr tidak valid: "${geoSweepExpr}" — dilewati`);
+    } else {
+      cron.schedule(
+        geoSweepExpr,
+        async () => {
+          const startedAt = new Date().toISOString();
+          try {
+            const r = await runGeoSweep();
+            console.log(`[scheduler] geo-sweep @ ${startedAt} ${JSON.stringify({ tanggal: r.tanggal, am: r.am_terdampak, customer: r.customer, dikirim: r.message !== null }).slice(0, 200)}`);
+          } catch (e) {
+            console.error(`[scheduler] geo-sweep gagal @ ${startedAt}:`, e);
+          }
+        },
+        { timezone },
+      );
+      live.push(`geo-sweep=${geoSweepExpr}`);
+    }
   }
 
   // ga-helpdesk-overdue (F139) — alert SLA tiket helpdesk terlewati, pagi
