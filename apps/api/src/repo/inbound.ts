@@ -165,6 +165,9 @@ export function buildAmReportReply(
   planTotal: number,
   reported: number,
   pendingPhoto: string[],
+  // Foto sudah menempel TAPI tanpa koordinat. Dibedakan dari pendingPhoto
+  // (foto belum ada sama sekali) karena obatnya beda — lihat blok di bawah.
+  tanpaGeo: { customer: string; adaOverlay: boolean }[] = [],
 ): string {
   let s = `✅ Report EOD tercatat, ${nama}\n\n📅 ${fmtTanggalDisplay(tanggal)}\n🗒️ ${n} customer reported`;
   if (planTotal > 0) s += `\n📊 ${reported}/${planTotal} customer selesai  ${progressBar(reported, planTotal)}`;
@@ -181,7 +184,27 @@ export function buildAmReportReply(
   if (pendingPhoto.length > 0) {
     s += `\n\n⚠️ *Foto visit belum ada (${pendingPhoto.length} customer):*\n${pendingPhoto.join(", ")}`;
     s += "\n\nKirim foto Geo-Tagging Camera per customer dgn caption `Nama Customer` — fuzzy match auto-pair ke pending.";
-  } else {
+  }
+  // Foto menempel tapi TANPA koordinat = kunjungan tak pernah masuk menu Visits
+  // (`sales_plan.visit_lat IS NOT NULL`, repo/visit.ts). Sebelum blok ini balasan
+  // justru bilang "✅ Semua foto visit lengkap." — AM diberi tahu berhasil padahal
+  // visitnya tak terhitung, dan tak punya cara tahu. Cakupan geotag Arif 24%,
+  // Aulia 40% (vs Sidqi 88%) bertahan berbulan-bulan karena kegagalannya senyap.
+  if (tanpaGeo.length > 0) {
+    const tanpaOverlay = tanpaGeo.filter((g) => !g.adaOverlay).map((g) => g.customer);
+    const ocrGagal = tanpaGeo.filter((g) => g.adaOverlay).map((g) => g.customer);
+    s += `\n\n⚠️ *Foto tanpa koordinat (${tanpaGeo.length} customer)* — visit belum terhitung di menu Visits:`;
+    // Dua sebab, dua obat. Tanpa overlay = fotonya memang bukan dari kamera
+    // geotag; koordinat gagal dibaca = overlay ada (jamnya kebaca) tapi baris
+    // Lat/Long terpotong — cukup kirim ulang, tak perlu kunjungan ulang.
+    if (tanpaOverlay.length > 0) {
+      s += `\n• Tanpa overlay geotag: ${tanpaOverlay.join(", ")} — foto ulang pakai Geo-Tagging Camera. Kirim ulang dari galeri tak menolong, overlay-nya tak ikut.`;
+    }
+    if (ocrGagal.length > 0) {
+      s += `\n• Koordinat gagal dibaca: ${ocrGagal.join(", ")} — kirim ulang fotonya, pastikan baris \`Lat … Long …\` utuh dan tak tertutup jari/stiker.`;
+    }
+  }
+  if (pendingPhoto.length === 0 && tanpaGeo.length === 0) {
     s += `\n✅ Semua foto visit lengkap.`;
   }
   return s;
@@ -676,6 +699,22 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
       WHERE am_id = ${am.am_id} AND tanggal = ${tgl} AND photo_path IS NULL AND plan_id IS NOT NULL ORDER BY id
     `;
     const pendingNames = pend.map((p) => String(p.customer_name));
+    // Foto sudah menempel tapi koordinatnya nihil → tak akan pernah lolos filter
+    // menu Visits. `photo_geotag IS NULL` = tak ada overlay sama sekali;
+    // `->>'lat' IS NULL` = overlay kebaca (jam masuk) tapi koordinatnya gagal OCR
+    // (lihat tempelFotoLaporan: geo disimpan walau cuma jamnya yang utuh).
+    const tanpaGeoRows = await sql`
+      SELECT customer_name, (photo_geotag IS NOT NULL) AS ada_overlay
+      FROM activity_log
+      WHERE am_id = ${am.am_id} AND tanggal = ${tgl} AND plan_id IS NOT NULL
+        AND photo_path IS NOT NULL
+        AND (photo_geotag IS NULL OR photo_geotag->>'lat' IS NULL)
+      ORDER BY id
+    `;
+    const tanpaGeo = tanpaGeoRows.map((r) => ({
+      customer: String(r.customer_name),
+      adaOverlay: r.ada_overlay === true,
+    }));
     // note: TGL ket → am_reminder (fired H-1/H oleh scheduler reminder-h/h-1).
     let reminders = 0;
     for (const nt of ar.notes) {
@@ -689,7 +728,7 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
       });
       reminders += 1;
     }
-    let body = buildAmReportReply(am.nama, tgl, ar.items.length, res, Number(tot.plan_total), Number(tot.reported), pendingNames);
+    let body = buildAmReportReply(am.nama, tgl, ar.items.length, res, Number(tot.plan_total), Number(tot.reported), pendingNames, tanpaGeo);
     // Pergeseran tanggal HARUS terlihat oleh AM — kalau tebakannya salah, dia
     // satu-satunya yang bisa mengoreksi. Menggeser diam-diam = mengulang kelas
     // bug yang perbaikan ini justru tutup.
@@ -698,7 +737,7 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
     }
     if (reminders > 0) body += `\n\n📌 ${reminders} reminder dijadwalkan.`;
     const reply = await sendViaWaGateway(target, body);
-    return finish({ am_id: am.am_id, via: am.via, mode: "am", tanggal: tgl, tanggal_asal: ikat.dari, digeser_h1: ikat.digeser, matched: res.matched, unmatched: res.unmatched, linked: res.linked, reminders, reply, ...(foto ?? {}) });
+    return finish({ am_id: am.am_id, via: am.via, mode: "am", tanggal: tgl, tanggal_asal: ikat.dari, digeser_h1: ikat.digeser, matched: res.matched, unmatched: res.unmatched, linked: res.linked, reminders, tanpa_geo: tanpaGeo.length, reply, ...(foto ?? {}) });
   }
   // report todo — cocokkan vs plan + balasan kaya (match/baru)
   const rep = await markReported(am.am_id, am.nama, tanggal, parsed.items, row.body ?? "");
