@@ -52,9 +52,16 @@ memegang port itu. Kelihatan berhasil, padahal tidak.
 cd ~/DevWRG/wrg-os && scripts/ops/cek-port-tumpukan.sh dev
 ```
 
-Keluar 0 = aman. Keluar 1 = ada bentrok, dan barisnya menyebut siapa pemegangnya.
-Skrip itu membaca port **dari ecosystem**, jadi ia tak bisa menyimpang dari
-konfigurasi yang benar-benar dipakai pm2.
+Keluar 0 = aman. Keluar 1 = ada bentrok **atau ada `script` yang tak ada di
+jalur yang di-resolve pm2** (`cwd` + `script`), dan barisnya menyebut yang mana.
+Skrip itu membaca port, `cwd`, dan `script` **dari ecosystem**, jadi ia tak bisa
+menyimpang dari konfigurasi yang benar-benar dipakai pm2.
+
+Cek `script` ditambahkan sesudah 9 Sep 2026: ketiga entri dev memakai
+`cwd: DEV_ROOT` sementara artefaknya ada di `apps/api`, `apps/web`,
+`services/ai`. Port bebas, penjaga `devSiap` lulus, preflight exit 0 — dan
+ketiga proses tetap mati. Dua gerbang hijau di atas tumpukan yang tak pernah
+hidup.
 
 ## Setup sekali jalan
 
@@ -73,14 +80,19 @@ psql -d wrg_os_dev -f scripts/db/seed-dev-full.sql   # urutan WAJIB — yang ked
 cat > .env.dev <<'EOF'
 DATABASE_URL=postgres:///wrg_os_dev
 API_SERVICE_TOKEN=<token bebas, beda dari prod>
+JWT_SECRET=<acak, beda dari prod>
 AUTH_ENABLED=true
+WEB_NOINDEX=1
 EOF
+chmod 600 .env.dev
 
 # 4. Build
 pnpm install
 pnpm --filter @wrg/api build
 pnpm --filter @wrg/web build
-python3 -m venv .venv && .venv/bin/pip install -r services/ai/requirements.txt
+# .venv HARUS di services/ai — pm2 menjalankan wrg-dev-ai dengan
+# cwd: services/ai dan script: ".venv/bin/uvicorn" (sama seperti prod).
+( cd services/ai && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt )
 
 # 5. Nyalakan — dijalankan dari checkout PROD, karena ecosystem-nya di sana
 cd ~/DevWRG/wrg-os
