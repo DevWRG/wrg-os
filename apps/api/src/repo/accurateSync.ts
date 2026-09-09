@@ -212,12 +212,35 @@ export interface AccurateSyncResult {
 
 // Sync sales-invoice. invoiceId → satu invoice; selainnya incremental (window
 // `days` hari, recent-first, stop saat transDate < threshold).
+// Batas halaman pada syncer master (vendor/customer/item) ADA supaya loop tak
+// pernah tak berujung kalau API mengembalikan halaman penuh selamanya. Tapi
+// sampai #1177 batas itu BERHENTI DIAM-DIAM: `break` karena batas dan `break`
+// karena halaman terakhir sama-sama keluar dari loop dan sama-sama membalas
+// `ok: true`, jadi hasil terpotong menyamar jadi sapuan lengkap.
+//
+// Itu bukan hipotesis — persis begitu yang terjadi pada backfill faktur:
+// berhenti di 10.000 dari 11.323 baris, responsnya tetap ok, dan runner-nya
+// mencetak hijau. Katalog item sekarang 5.893 dari kapasitas 10.000 (59%),
+// jadi jarak ke batas itu tidak besar.
+//
+// Helper ini menyeragamkan pelaporannya: kalau batas yang menghentikan, hasilnya
+// ditandai `cappedByPages` DAN dicatat ke log. Yang memotong wajib terlihat.
+export function laporBatasHalaman(nama: string, page: number, maxPages: number, perPage: number): boolean {
+  if (page < maxPages) return false;
+  console.warn(
+    `[accurate-sync] ${nama}: BERHENTI di batas ${maxPages} halaman (${maxPages * perPage} baris) — ` +
+    "hasil kemungkinan TERPOTONG, bukan selesai. Naikkan batasnya kalau data memang lebih banyak.",
+  );
+  return true;
+}
+
 // Tarik master vendor (vendor/list.do) → mirror accurate_vendor. Paginated (100/hal).
-export async function syncVendors(): Promise<{ ok: boolean; synced: number; error?: string }> {
+export async function syncVendors(): Promise<{ ok: boolean; synced: number; error?: string; cappedByPages?: boolean }> {
   const creds = loadCreds();
   if (!creds) return { ok: false, synced: 0, error: "kredensial Accurate tak tersedia" };
   let page = 1;
   let synced = 0;
+  let capped = false;
   for (;;) {
     const list = await accGet(creds, "/accurate/api/vendor/list.do", `sp.page=${page}&sp.pageSize=100&fields=id,name,vendorBranchName`);
     const rows = Array.isArray(list.d) ? (list.d as Array<Record<string, unknown>>) : [];
@@ -231,20 +254,22 @@ export async function syncVendors(): Promise<{ ok: boolean; synced: number; erro
       })),
     );
     synced += rows.length;
-    if (rows.length < 100 || page >= 50) break;
+    if (rows.length < 100) break;
+    if (laporBatasHalaman("vendor", page, 50, 100)) { capped = true; break; }
     page += 1;
   }
-  return { ok: true, synced };
+  return { ok: true, synced, ...(capped ? { cappedByPages: true } : {}) };
 }
 
 // Tarik master customer (customer/list.do) → mirror accurate_customer (id/no/name).
 // Backfill nama yg kosong (mirror cuma diisi dari raw invoice yg kadang tanpa nama).
 // Paginated 100/hal. Guard upsert COALESCE(NULLIF(...)) → gak nge-blank nama yg udah ada.
-export async function syncCustomers(): Promise<{ ok: boolean; synced: number; error?: string }> {
+export async function syncCustomers(): Promise<{ ok: boolean; synced: number; error?: string; cappedByPages?: boolean }> {
   const creds = loadCreds();
   if (!creds) return { ok: false, synced: 0, error: "kredensial Accurate tak tersedia" };
   let page = 1;
   let synced = 0;
+  let capped = false;
   for (;;) {
     const list = await accGet(creds, "/accurate/api/customer/list.do", `sp.page=${page}&sp.pageSize=100&fields=id,name,customerNo`);
     const rows = Array.isArray(list.d) ? (list.d as Array<Record<string, unknown>>) : [];
@@ -258,20 +283,22 @@ export async function syncCustomers(): Promise<{ ok: boolean; synced: number; er
       })),
     );
     synced += rows.length;
-    if (rows.length < 100 || page >= 100) break;
+    if (rows.length < 100) break;
+    if (laporBatasHalaman("customer", page, 100, 100)) { capped = true; break; }
     page += 1;
     await new Promise((r) => setTimeout(r, 150));
   }
-  return { ok: true, synced };
+  return { ok: true, synced, ...(capped ? { cappedByPages: true } : {}) };
 }
 
 // Tarik full katalog item (item/list.do) + STOK → mirror accurate_item.
 // Paginated (100/hal, ~58 hal utk 5.794 item). Untuk menu Inventory & Products.
-export async function syncItems(): Promise<{ ok: boolean; synced: number; error?: string }> {
+export async function syncItems(): Promise<{ ok: boolean; synced: number; error?: string; cappedByPages?: boolean }> {
   const creds = loadCreds();
   if (!creds) return { ok: false, synced: 0, error: "kredensial Accurate tak tersedia" };
   let page = 1;
   let synced = 0;
+  let capped = false;
   for (;;) {
     const list = await accGet(creds, "/accurate/api/item/list.do", `sp.page=${page}&sp.pageSize=100&fields=id,no,name,itemType,unitPrice,quantity,availableToSell,unit1`);
     const rows = Array.isArray(list.d) ? (list.d as Array<Record<string, unknown>>) : [];
@@ -290,11 +317,12 @@ export async function syncItems(): Promise<{ ok: boolean; synced: number; error?
       })),
     );
     synced += rows.length;
-    if (rows.length < 100 || page >= 100) break;
+    if (rows.length < 100) break;
+    if (laporBatasHalaman("item", page, 100, 100)) { capped = true; break; }
     page += 1;
     await new Promise((r) => setTimeout(r, 150));
   }
-  return { ok: true, synced };
+  return { ok: true, synced, ...(capped ? { cappedByPages: true } : {}) };
 }
 
 // Tarik sales-order TERBARU (sales-order/list.do, sort transDate desc) → mirror
@@ -309,7 +337,7 @@ function allOlderThan(rows: { trans_date?: string | null }[], sinceDays: number)
   return dated.length > 0 && dated.every((d) => d < cutoff);
 }
 
-export async function syncSalesOrders(opts: { maxPages?: number; sinceDays?: number } = {}): Promise<{ ok: boolean; synced: number; error?: string }> {
+export async function syncSalesOrders(opts: { maxPages?: number; sinceDays?: number } = {}): Promise<{ ok: boolean; synced: number; error?: string; cappedByPages?: boolean }> {
   const creds = loadCreds();
   if (!creds) return { ok: false, synced: 0, error: "kredensial Accurate tak tersedia" };
   // Batas halaman tetap ada sebagai pagar, tapi yang menentukan berhenti adalah
@@ -321,6 +349,7 @@ export async function syncSalesOrders(opts: { maxPages?: number; sinceDays?: num
   const sinceDays = opts.sinceDays ?? 120;
   let page = 1;
   let synced = 0;
+  let capped = false;
   let cutoffReached = false;
   for (; page <= maxPages && !cutoffReached; page++) {
     const list = await accGet(
@@ -355,20 +384,26 @@ export async function syncSalesOrders(opts: { maxPages?: number; sinceDays?: num
     synced += rows.length;
     cutoffReached = allOlderThan(mapped, sinceDays);
     if (rows.length < 100) break;
+    // Loop berhenti krn batas halaman TANPA pernah menyentuh cutoff = hasil
+    // terpotong, bukan "sudah mundur cukup jauh". Bedanya penting: yang kedua
+    // memang tujuannya (recent-only by design), yang pertama kehilangan data
+    // dalam jendela yang diminta.
+    if (page >= maxPages && !cutoffReached) capped = laporBatasHalaman("sales-order", page, maxPages, 100);
     await sleep(150);
   }
-  return { ok: true, synced };
+  return { ok: true, synced, ...(capped ? { cappedByPages: true } : {}) };
 }
 
 // Tarik delivery-order TERBARU (delivery-order/list.do, sort transDate desc) →
 // mirror accurate_delivery_order utk menu Shipments. Volume ~11.9rb → recent saja.
-export async function syncDeliveryOrders(opts: { maxPages?: number; sinceDays?: number } = {}): Promise<{ ok: boolean; synced: number; error?: string }> {
+export async function syncDeliveryOrders(opts: { maxPages?: number; sinceDays?: number } = {}): Promise<{ ok: boolean; synced: number; error?: string; cappedByPages?: boolean }> {
   const creds = loadCreds();
   if (!creds) return { ok: false, synced: 0, error: "kredensial Accurate tak tersedia" };
   const maxPages = opts.maxPages ?? 40;
   const sinceDays = opts.sinceDays ?? 120;
   let page = 1;
   let synced = 0;
+  let capped = false;
   let cutoffReached = false;
   for (; page <= maxPages && !cutoffReached; page++) {
     const list = await accGet(
@@ -400,9 +435,14 @@ export async function syncDeliveryOrders(opts: { maxPages?: number; sinceDays?: 
     synced += rows.length;
     cutoffReached = allOlderThan(mapped, sinceDays);
     if (rows.length < 100) break;
+    // Loop berhenti krn batas halaman TANPA pernah menyentuh cutoff = hasil
+    // terpotong, bukan "sudah mundur cukup jauh". Bedanya penting: yang kedua
+    // memang tujuannya (recent-only by design), yang pertama kehilangan data
+    // dalam jendela yang diminta.
+    if (page >= maxPages && !cutoffReached) capped = laporBatasHalaman("delivery-order", page, maxPages, 100);
     await sleep(150);
   }
-  return { ok: true, synced };
+  return { ok: true, synced, ...(capped ? { cappedByPages: true } : {}) };
 }
 
 // ── Tarik baris item SO/DO ke mirror (migrasi 081) ────────────────
