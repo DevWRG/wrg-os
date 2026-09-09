@@ -26,6 +26,89 @@ function loadEnv(file) {
 const ROOT = __dirname;
 const base = loadEnv(path.join(ROOT, ".env.prod"));
 
+// ── Tumpukan DEV di server ────────────────────────────────────────────────
+// Supaya pengujian (dashboard web, dan nanti WA) berjalan di kode `dev` dan
+// database `dev` — bukan menumpang prod. Checkout terpisah, port terpisah,
+// .env terpisah.
+//
+// Port: prod 8100/4100/3100 · dev 8200/4200/3200. Sengaja BUKAN 8000/4000/3000
+// — itu konvensi dev di laptop, dan menabraknya bikin bingung saat seseorang
+// menjalankan dev lokal di mesin yang sama.
+//
+// DUA SIFAT KEAMANAN, keduanya ditegakkan di file ini, bukan diserahkan ke
+// disiplin pengisian .env:
+//
+//   1. Tumpukan dev TIDAK AKAN MENYALA menunjuk database prod. Kalau
+//      .env.dev tak ada, atau DATABASE_URL-nya tidak berakhiran _dev/_demo,
+//      entri dev DIHILANGKAN sepenuhnya dari ecosystem. Lebih baik tak ada
+//      tumpukan dev daripada tumpukan dev yang menulis ke prod.
+//
+//   2. Dev TIDAK BISA mengirim WhatsApp. WA_DRY_RUN dan WA_SEND_URL
+//      di-hardcode SESUDAH sebaran .env.dev, jadi isi .env.dev tak bisa
+//      menimpanya. Routing WA ke dev adalah lapis terpisah yang belum
+//      dipasang; sampai itu ada, dev harus bisu.
+//
+// Jalankan: pm2 start ecosystem.config.cjs --only wrg-dev-api,wrg-dev-web,wrg-dev-ai
+const DEV_ROOT = process.env.WRG_DEV_ROOT || path.join(path.dirname(ROOT), "wrg-os-dev");
+const devBase = loadEnv(path.join(DEV_ROOT, ".env.dev"));
+
+// Penjaga: hanya database yang jelas-jelas dev/demo yang diterima.
+const devDbAman = /_(dev|demo)(\?|$)/.test(devBase.DATABASE_URL || "");
+const devSiap = fs.existsSync(DEV_ROOT) && Boolean(devBase.DATABASE_URL) && devDbAman;
+
+if (!devSiap) {
+  const sebab = !fs.existsSync(DEV_ROOT)
+    ? `checkout dev tak ada di ${DEV_ROOT}`
+    : !devBase.DATABASE_URL
+      ? `DATABASE_URL kosong di ${DEV_ROOT}/.env.dev`
+      : `DATABASE_URL bukan database _dev/_demo — DITOLAK demi keamanan`;
+  console.warn(`[ecosystem] tumpukan dev TIDAK didaftarkan: ${sebab}`);
+}
+
+const devEnv = {
+  ...devBase,
+  NODE_ENV: "production",
+  // ⚠️ SESUDAH sebaran — .env.dev tak boleh bisa menghidupkan pengiriman WA.
+  WA_DRY_RUN: "true",
+  WA_SEND_URL: "",
+  // Scheduler mati di dev: cron yang jalan dua kali (prod + dev) atas data
+  // berbeda cuma bikin bingung, dan sebagian job menulis ke tabel digest.
+  AGENT_SCHEDULE_ENABLED: "false",
+  REMINDER_SCHEDULE_ENABLED: "false",
+};
+
+const appsDev = !devSiap ? [] : [
+  {
+    name: "wrg-dev-ai",
+    cwd: DEV_ROOT,
+    script: ".venv/bin/uvicorn",
+    args: "app.main:app --host 127.0.0.1 --port 8200",
+    interpreter: "none",
+    env: { ...devEnv, PORT: "8200" },
+    autorestart: true,
+    max_restarts: 10,
+  },
+  {
+    name: "wrg-dev-api",
+    cwd: DEV_ROOT,
+    script: "dist/index.js",
+    interpreter: "node",
+    env: { ...devEnv, PORT: "4200", AI_BASE_URL: "http://127.0.0.1:8200" },
+    autorestart: true,
+    max_restarts: 10,
+  },
+  {
+    name: "wrg-dev-web",
+    cwd: DEV_ROOT,
+    script: "node_modules/next/dist/bin/next",
+    args: "start -p 3200",
+    interpreter: "node",
+    env: { ...devEnv, PORT: "3200", API_BASE_URL: "http://127.0.0.1:4200" },
+    autorestart: true,
+    max_restarts: 10,
+  },
+];
+
 module.exports = {
   apps: [
     {
@@ -90,5 +173,6 @@ module.exports = {
       autorestart: true,
       max_restarts: 10,
     },
+    ...appsDev,
   ],
 };
