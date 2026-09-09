@@ -116,6 +116,15 @@ const devEnv = {
   // berbeda cuma bikin bingung, dan sebagian job menulis ke tabel digest.
   AGENT_SCHEDULE_ENABLED: "false",
   REMINDER_SCHEDULE_ENABLED: "false",
+  // Cookie sesi TIDAK ber-flag Secure di dev. NODE_ENV=production di atas wajib
+  // (next start menjalankan build produksi), tapi dashboard dev dilayani lewat
+  // http://<tailscale-ip>:3300 tanpa TLS — dan browser MEMBUANG cookie Secure di
+  // koneksi http biasa. Tanpa ini, login berhasil di server lalu pengguna
+  // dikembalikan ke /login tanpa pesan apa pun.
+  // Opt-out ini dijaga di apps/web/src/lib/cookie-secure.ts: hanya dihormati
+  // kalau DATABASE_URL benar-benar database _dev/_demo, jadi menyalinnya ke
+  // .env.prod tidak melemahkan produksi.
+  COOKIE_SECURE: "false",
 };
 
 // ⚠️ `cwd` HARUS per-app, sama bentuknya dengan blok prod di bawah — bukan
