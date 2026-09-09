@@ -1,31 +1,45 @@
 ## Kartu
 
 <!--
-WAJIB salah satu dari tiga baris ini — CI ("PR punya kartu") menolak kalau tak ada.
+WAJIB: satu baris di bawah, di badan PR — bukan di judul, bukan di komentar ini.
+Cek "PR punya kartu" akan menolak PR tanpa salah satunya.
 
-  Closes #123        issue ditutup otomatis saat PR ini merge
-  Refs #123          terkait issue itu, tapi PR ini belum menuntaskannya
-  No-Card: <alasan>  memang tak ada kartunya (hotfix, chore, perbaikan CI, dll)
+Contoh (jangan disalin apa adanya — ganti nomor/alasannya):
 
-Baris di dalam komentar HTML ini TIDAK dihitung — tulis pilihanmu di bawah.
+    Closes #123        menutup issue itu saat PR di-merge
+    Refs #123          terkait, tapi belum menuntaskannya
+    No-Card: <alasan>  memang tak ada kartunya (bug-fix fitur live, chore, CI)
 
-Kenapa diwajibkan: fitur sering mendarat lewat nomor PR yang berbeda dari
-kartunya, kartunya lalu menganggur terbuka berbulan-bulan dan papan jadi
-menyesatkan. Sweep 27 Agu 2026 menemukan 3 kartu basi karena ini (#771, #840,
-#617). Menautkan di sini membuat GitHub yang menutupnya, bukan orang.
+Alasan pada No-Card WAJIB diisi — "No-Card:" kosong tetap ditolak.
 
-Catatan: ini soal ISSUE. Status kartu di Projects #2 tetap diurus terpisah oleh
-roadmap-project-sync.yml lewat F-number di nama branch / judul PR.
+Kenapa jalan keluar ini ada: syarat tanpa jalan keluar akan dijawab dengan
+"Closes #1" asal lolos, dan itu lebih buruk daripada tak ada cek sama sekali.
 -->
 
-Closes #
 
 ## Ringkasan
 
-<!-- Apa yang berubah dan kenapa. Kalau ada keputusan desain yang tidak jelas
-     dari diff-nya, tulis alasannya di sini — bukan cuma daftar file. -->
+<!-- Apa yang berubah, dan KENAPA. Kalau ini bug-fix, sebutkan gejalanya —
+     bukan cuma nama fungsi yang disentuh. -->
 
-## Verifikasi
 
-<!-- Apa yang benar-benar dijalankan, bukan yang seharusnya jalan. Tempel
-     output kalau ada. "CI hijau" saja tidak cukup untuk perubahan perilaku. -->
+## Perubahan
+
+<!-- Daftar singkat per titik. Kalau ada keputusan yang bisa dibantah,
+     tulis alasannya di sini atau di komentar kode — jangan biarkan
+     pembaca berikutnya menebak. -->
+
+
+## Test plan
+
+<!-- Yang benar-benar dijalankan, bukan yang direncanakan. Sebutkan
+     angkanya (mis. "test 153/153"). Kalau ada yang BELUM diuji, tulis
+     eksplisit — itu lebih berguna daripada daftar centang yang rapi. -->
+
+- [ ] `pnpm --filter @wrg/api typecheck`
+- [ ] `pnpm --filter @wrg/api lint`
+- [ ] `pnpm --filter @wrg/api test`
+
+<!-- Kalau menyentuh migrasi: sebutkan nomornya dan pastikan
+     `node scripts/db/check-migration-numbers.mjs` hijau TERHADAP dev
+     TERBARU. CI pada PR ber-base basi bisa hijau padahal bentrok. -->
