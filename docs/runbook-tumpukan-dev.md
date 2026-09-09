@@ -1,16 +1,16 @@
 # Runbook — Tumpukan DEV di server
 
 Supaya pengujian berjalan di kode `dev` dan database `dev`, bukan menumpang
-prod. Lapis pertama: **dashboard web**. Routing WhatsApp ke dev adalah lapis
-terpisah yang belum dipasang — sampai itu ada, **dev sengaja bisu** (tak bisa
-mengirim WA sama sekali).
+prod. Ketiga lapis (tumpukan dev, routing WA masuk, allowlist WA keluar) sudah
+mendarat — tapi **dev tetap bisu sampai `WA_DEV_GROUPS` diisi** di `.env.prod`;
+lihat bagian "Menghidupkan uji WhatsApp di dev" di bawah.
 
 | | prod | dev |
 |---|---|---|
 | Branch | `main` | `dev` |
 | Checkout | `~/DevWRG/wrg-os` | `~/DevWRG/wrg-os-dev` |
 | Database | `wrg_os_prod` | `wrg_os_dev` (atau `_demo`) |
-| ai · api · web | 8100 · 4100 · 3100 | 8200 · 4200 · 3200 |
+| ai · api · web | 8100 · 4100 · 3100 | 8300 · 4300 · 3300 |
 | Kirim WA | ya | hanya ke grup di `WA_DEV_GROUPS`; bisu kalau kosong |
 | Scheduler | ya | mati |
 
@@ -25,6 +25,36 @@ Keduanya di file, bukan diserahkan ke disiplin mengisi `.env`:
 2. **Dev tak bisa mengirim WhatsApp.** `WA_DRY_RUN=true` dan `WA_SEND_URL=""`
    ditetapkan **sesudah** sebaran `.env.dev`, jadi isi `.env.dev` tak bisa
    menimpanya.
+
+**Yang TIDAK dijaga di sana: port.** Lihat bagian berikutnya — itu satu-satunya
+cara tumpukan dev bisa "berhasil" tapi sebenarnya mati.
+
+## Peta port mesin ini — periksa sebelum `pm2 start`
+
+Ada **tiga** tumpukan di Mac mini, bukan dua:
+
+| Tumpukan | ai · api · web | Konfigurasi |
+|---|---|---|
+| prod | 8100 · 4100 · 3100 | `ecosystem.config.cjs` (repo) |
+| demo | — · 4200 · 3200 | `~/DevWRG/wrg-os-demo/ecosystem.demo.config.cjs` (**di luar repo**) |
+| dev | 8300 · 4300 · 3300 | `ecosystem.config.cjs` (repo) |
+
+Dev semula memakai 8200/4200/3200 dan menabrak demo. Ketahuan 9 Sep 2026 sebelum
+dinyalakan; dev digeser ke 83xx/43xx/33xx supaya demo tak perlu disentuh.
+
+**Kenapa ini layak satu langkah tersendiri:** penjaga di ecosystem tidak
+memeriksa port. Kalau ada bentrok, `pm2 start` tetap mendaftarkan prosesnya dan
+melaporkan `online`, lalu proses itu gagal bind, autorestart 10×, dan berhenti di
+`errored` — sementara URL yang kamu buka **tetap menampilkan tumpukan lain** yang
+memegang port itu. Kelihatan berhasil, padahal tidak.
+
+```bash
+cd ~/DevWRG/wrg-os && scripts/ops/cek-port-tumpukan.sh dev
+```
+
+Keluar 0 = aman. Keluar 1 = ada bentrok, dan barisnya menyebut siapa pemegangnya.
+Skrip itu membaca port **dari ecosystem**, jadi ia tak bisa menyimpang dari
+konfigurasi yang benar-benar dipakai pm2.
 
 ## Setup sekali jalan
 
@@ -54,11 +84,20 @@ python3 -m venv .venv && .venv/bin/pip install -r services/ai/requirements.txt
 
 # 5. Nyalakan — dijalankan dari checkout PROD, karena ecosystem-nya di sana
 cd ~/DevWRG/wrg-os
+scripts/ops/cek-port-tumpukan.sh dev      # WAJIB — lihat bagian peta port di atas
 pm2 start ecosystem.config.cjs --only wrg-dev-ai,wrg-dev-api,wrg-dev-web
 pm2 save
 ```
 
-Dashboard dev: `http://localhost:3200` (atau lewat Tailscale ke mesin ini).
+Dashboard dev: `http://localhost:3300` (atau lewat Tailscale ke mesin ini).
+
+Sesudah `pm2 start`, jangan berhenti di kata `online` — pm2 mencetak itu sebelum
+proses sempat bind. Yang membuktikan hidup:
+
+```bash
+pm2 list | grep wrg-dev            # status harus tetap online sesudah ~15 detik
+curl -s localhost:3300 -o /dev/null -w '%{http_code}\n'
+```
 
 ## Menyegarkan dev setelah ada merge ke `dev`
 
@@ -95,7 +134,7 @@ tujuan pesan **keluar**.
 ```bash
 # .env.prod (di checkout PROD)
 WA_DEV_GROUPS=<jid grup Research>
-WRG_WEBHOOK_URL_DEV=http://127.0.0.1:4200/webhooks/wa
+WRG_WEBHOOK_URL_DEV=http://127.0.0.1:4300/webhooks/wa
 WRG_WEBHOOK_SECRET_DEV=<WA_WEBHOOK_SECRET dari .env.dev>
 
 # lalu
@@ -105,7 +144,7 @@ pm2 restart ecosystem.config.cjs --only wrg-prod-wabridge,wrg-dev-api --update-e
 Periksa dua baris log ini:
 
 ```
-[bridge]     routing dev: 1 grup → http://127.0.0.1:4200/webhooks/wa (...)
+[bridge]     routing dev: 1 grup → http://127.0.0.1:4300/webhooks/wa (...)
 [ecosystem]  dev boleh kirim WA — DIBATASI ke: <jid grup Research>
 ```
 
