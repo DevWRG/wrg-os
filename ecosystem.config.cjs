@@ -43,10 +43,11 @@ const base = loadEnv(path.join(ROOT, ".env.prod"));
 //      entri dev DIHILANGKAN sepenuhnya dari ecosystem. Lebih baik tak ada
 //      tumpukan dev daripada tumpukan dev yang menulis ke prod.
 //
-//   2. Dev TIDAK BISA mengirim WhatsApp. WA_DRY_RUN dan WA_SEND_URL
-//      di-hardcode SESUDAH sebaran .env.dev, jadi isi .env.dev tak bisa
-//      menimpanya. Routing WA ke dev adalah lapis terpisah yang belum
-//      dipasang; sampai itu ada, dev harus bisu.
+//   2. Dev hanya boleh mengirim WhatsApp ke GRUP YANG DI-ROUTE KE DEV, dan
+//      hanya kalau daftar itu tidak kosong. Ditegakkan dua kali: allowlist di
+//      wasend.ts (#1260) DAN penjaga di bawah yang menolak menyalakan izin
+//      kirim saat daftarnya kosong. Nilainya ditulis SESUDAH sebaran .env.dev
+//      supaya isi .env.dev tak bisa menimpanya.
 //
 // Jalankan: pm2 start ecosystem.config.cjs --only wrg-dev-api,wrg-dev-web,wrg-dev-ai
 const DEV_ROOT = process.env.WRG_DEV_ROOT || path.join(path.dirname(ROOT), "wrg-os-dev");
@@ -65,12 +66,39 @@ if (!devSiap) {
   console.warn(`[ecosystem] tumpukan dev TIDAK didaftarkan: ${sebab}`);
 }
 
+// ── Izin kirim WA untuk dev ───────────────────────────────────────────────
+// SATU SUMBER: WA_DEV_GROUPS dibaca dari .env.prod (`base`), BUKAN .env.dev.
+// Daftar itu juga dipakai bridge untuk memilih tujuan pesan MASUK (lapis 2,
+// #1259). Kalau masing-masing baca file berbeda, keduanya bisa menyimpang — dan
+// menyimpang di sini berarti dev boleh MENGIRIM ke grup yang tidak di-route ke
+// dev, yaitu grup produksi.
+const devGroups = (base.WA_DEV_GROUPS || "").trim();
+
+// ⚠️ PENJAGA: izin kirim hanya dinyalakan kalau ada grup dev terdaftar.
+// Tanpa ini, WA_SEND_ALLOWED_TARGETS jadi string kosong — dan kosong berarti
+// TANPA BATAS di wasend.ts (sengaja begitu, supaya fitur allowlist tak bisa
+// membuat prod bisu). Menyalakan WA_DRY_RUN=false dengan allowlist kosong akan
+// membalikkan makna lapis 3 sepenuhnya: dev bisa mengirim ke grup mana pun.
+const devBolehKirim = devGroups !== "";
+
+if (devSiap) {
+  console.warn(
+    devBolehKirim
+      ? `[ecosystem] dev boleh kirim WA — DIBATASI ke: ${devGroups}`
+      : "[ecosystem] dev BISU (WA_DEV_GROUPS kosong di .env.prod) — isi daftar itu dulu kalau balasan uji perlu muncul di WhatsApp",
+  );
+}
+
 const devEnv = {
   ...devBase,
   NODE_ENV: "production",
-  // ⚠️ SESUDAH sebaran — .env.dev tak boleh bisa menghidupkan pengiriman WA.
-  WA_DRY_RUN: "true",
-  WA_SEND_URL: "",
+  // ⚠️ SESUDAH sebaran — .env.dev tak boleh bisa menimpa keputusan ini.
+  WA_DRY_RUN: devBolehKirim ? "false" : "true",
+  WA_SEND_URL: devBolehKirim ? devBase.WA_SEND_URL || "http://127.0.0.1:18080/send" : "",
+  // Allowlist tujuan (lapis 3, #1260). Kosong = tanpa batas, karena itu
+  // devBolehKirim di atas memastikan mode live tak pernah menyala bersama
+  // daftar kosong.
+  WA_SEND_ALLOWED_TARGETS: devGroups,
   // Scheduler mati di dev: cron yang jalan dua kali (prod + dev) atas data
   // berbeda cuma bikin bingung, dan sebagian job menulis ke tabel digest.
   AGENT_SCHEDULE_ENABLED: "false",
