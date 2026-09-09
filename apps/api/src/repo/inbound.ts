@@ -591,6 +591,49 @@ async function tanggalIkatLaporan(
   return { tanggal: String(h1), digeser: true, dari: tglAwal };
 }
 
+/**
+ * Ambang selisih (hari) antara tanggal yang DITULIS AM di header `#REPORT` dan
+ * tanggal pesannya sendiri, di atas mana AM harus dikonfirmasi.
+ *
+ * `parsers/tanggal.ts` sudah menjaring salah-TAHUN (>= 365 hari) dan tanggal
+ * masa depan (> 7 hari), tapi sengaja memberi ruang 180 hari ke belakang untuk
+ * backdate yang sah. Celahnya justru di situ: salah ketik BULAN lolos tanpa
+ * suara. Teramati di prod (audit export grup The ALLIANCE vs prod, 9 Sep 2026):
+ *
+ *   Luri  kirim 22 Jul, tulis "14/7/2026"  -> 4 kunjungan difile ke 14 Jul
+ *   Luri  kirim 27 Jul, tulis "26/6/2026"  -> 5 kunjungan difile ke 26 Jun
+ *   Luri  kirim 29 Jul, tulis "10/6/2026"  -> 5 kunjungan difile ke 10 Jun
+ *   Yugo  kirim  6 Agu, tulis  "6/7/2026"  -> 4 kunjungan difile ke  6 Jul
+ *
+ * 22 kunjungan tercatat sebulan di belakang tanggal sebenarnya, plus ~76 baris
+ * duplikat karena laporan yang sama masuk dua kali. Di rekap harian AM tampak
+ * tidak bekerja pada hari yang justru dia bekerja.
+ *
+ * 3 hari dipilih supaya laporan H-1 dan H-2 (Senin untuk Sabtu) lewat tanpa
+ * berisik, sementara seluruh kasus yang teramati (>= 8 hari) tertangkap.
+ *
+ * Tanggalnya TIDAK diubah paksa — kita tak bisa tahu mana yang benar, dan
+ * menebak diam-diam persis kelas bug yang perbaikan ini tutup. Yang berubah:
+ * AM diberi tahu, jadi dia bisa mengoreksi malam itu juga.
+ */
+export const AMBANG_SELISIH_TANGGAL = 3;
+
+// Diekspor untuk diuji tanpa DB (repo/inbound-tanggal.test.ts).
+export function buildPeringatanTanggal(tanggalDipakai: string, tanggalPesan: string): string | null {
+  const a = Date.parse(`${tanggalDipakai}T00:00:00Z`);
+  const b = Date.parse(`${tanggalPesan}T00:00:00Z`);
+  if (Number.isNaN(a) || Number.isNaN(b)) return null;
+  const selisih = Math.round((b - a) / 86_400_000);
+  if (Math.abs(selisih) < AMBANG_SELISIH_TANGGAL) return null;
+  const arah = selisih > 0 ? "lebih tua" : "di masa depan";
+  return (
+    `\n\n📅 *Cek tanggal:* kamu menulis *${tanggalDipakai}*, tapi pesan ini masuk *${tanggalPesan}*` +
+    ` — selisih ${Math.abs(selisih)} hari (${arah}).` +
+    `\nLaporan dicatat ke *${tanggalDipakai}* sesuai yang kamu tulis. Kalau itu salah ketik,` +
+    ` kirim ulang #REPORT dengan tanggal yang benar — kalau dibiarkan, kunjungan ini tak terhitung di hari kerjanya.`
+  );
+}
+
 // ── Foto-followup (Fase 3) ──
 const PHOTO_MATCH = 0.3, PHOTO_DUP = 0.5, PHOTO_SILENT = 0.2;
 
@@ -1317,6 +1360,15 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
     // bug yang perbaikan ini justru tutup.
     if (ikat.digeser) {
       body += `\n\n🕛 Laporan masuk lewat tengah malam dan tak ada rencana ${ikat.dari}, jadi dicocokkan ke rencana ${tgl}. Kalau keliru, kirim ulang dengan menulis tanggalnya.`;
+    }
+    // Selisih tanggal header vs tanggal pesan HARUS terlihat AM — alasan
+    // lengkap di AMBANG_SELISIH_TANGGAL. Tak ditampilkan kalau tanggalnya
+    // sudah digeser H-1, karena blok di atas sudah menjelaskan pergeseran itu.
+    if (!ikat.digeser) {
+      const [{ tgl_pesan }] = await sql<{ tgl_pesan: string }[]>`
+        SELECT (${row.received_at}::timestamptz AT TIME ZONE 'Asia/Jakarta')::date::text AS tgl_pesan`;
+      const peringatan = buildPeringatanTanggal(tgl, String(tgl_pesan));
+      if (peringatan) body += peringatan;
     }
     if (reminders > 0) body += `\n\n📌 ${reminders} reminder dijadwalkan.`;
     const reply = await sendViaWaGateway(target, body);
