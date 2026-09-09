@@ -47,7 +47,12 @@ function muat({ envProd = "", envDev = null }) {
     try {
       const cfg = require(CONFIG);
       const api = cfg.apps.find((a) => a.name === "wrg-dev-api");
-      return { api, pesan, prodAda: cfg.apps.filter((a) => a.name.startsWith("wrg-prod-")).length };
+      return {
+        api,
+        pesan,
+        apps: cfg.apps,
+        prodAda: cfg.apps.filter((a) => a.name.startsWith("wrg-prod-")).length,
+      };
     } finally {
       console.warn = warnAsli;
     }
@@ -100,6 +105,45 @@ test("DATABASE_URL prod → entri dev DIHILANGKAN, prod tetap utuh", () => {
   const { api, prodAda } = muat({ envProd: `WA_DEV_GROUPS=${RESEARCH}\n`, envDev: "DATABASE_URL=postgres:///wrg_os_prod\n" });
   assert.equal(api, undefined, "dev tak boleh terdaftar menunjuk prod");
   assert.ok(prodAda >= 4, `entri prod harus tetap ada, dapat ${prodAda}`);
+});
+
+// Port tumpukan demo (~/DevWRG/wrg-os-demo, DI LUAR repo ini). Dev semula
+// memakai 4200/3200 dan menabraknya — pm2 tetap melapor "online" lalu prosesnya
+// mati diam-diam sementara URL-nya menyajikan demo. Angka ini ditulis di sini
+// supaya bentrok yang sama tertangkap CI, bukan di server.
+const PORT_DEMO = ["4200", "3200"];
+
+test("port dev tidak menabrak prod maupun demo", () => {
+  const { apps } = muat({ envProd: "", envDev: DEV_OK });
+  const portDari = (a) => a.env?.PORT || (a.args || "").match(/(?:-p|--port)\s+(\d+)/)?.[1];
+
+  const dev = apps.filter((a) => a.name.startsWith("wrg-dev-"));
+  assert.equal(dev.length, 3, "ketiga entri dev harus ada");
+
+  const prod = apps.filter((a) => a.name.startsWith("wrg-prod-")).map(portDari).filter(Boolean);
+  const terlarang = new Set([...prod, ...PORT_DEMO]);
+
+  for (const a of dev) {
+    const p = portDari(a);
+    assert.ok(p, `${a.name} tak punya port yang bisa dibaca`);
+    assert.ok(!terlarang.has(p), `${a.name} memakai port ${p} — sudah dipegang tumpukan lain`);
+  }
+
+  // Dan tidak saling menabrak sesama dev.
+  const pDev = dev.map(portDari);
+  assert.equal(new Set(pDev).size, pDev.length, `port dev kembar: ${pDev.join(",")}`);
+});
+
+test("args dan env.PORT satu angka — web bind ke -p, bukan ke PORT", () => {
+  // next start memakai `-p`; kalau env.PORT beda, yang menang adalah args dan
+  // API_BASE_URL/log bisa menunjuk port yang salah tanpa ada yang gagal.
+  const { apps } = muat({ envProd: "", envDev: DEV_OK });
+  for (const a of apps) {
+    const dariArgs = (a.args || "").match(/(?:-p|--port)\s+(\d+)/)?.[1];
+    if (dariArgs && a.env?.PORT) {
+      assert.equal(a.env.PORT, dariArgs, `${a.name}: env.PORT=${a.env.PORT} tapi args pakai ${dariArgs}`);
+    }
+  }
 });
 
 test("scheduler dev tetap mati walau izin kirim menyala", () => {

@@ -31,9 +31,22 @@ const base = loadEnv(path.join(ROOT, ".env.prod"));
 // database `dev` — bukan menumpang prod. Checkout terpisah, port terpisah,
 // .env terpisah.
 //
-// Port: prod 8100/4100/3100 · dev 8200/4200/3200. Sengaja BUKAN 8000/4000/3000
-// — itu konvensi dev di laptop, dan menabraknya bikin bingung saat seseorang
-// menjalankan dev lokal di mesin yang sama.
+// PETA PORT DI MESIN INI — periksa peta ini sebelum menambah tumpukan baru:
+//
+//   prod  8100 · 4100 · 3100   ecosystem.config.cjs (file ini)
+//   demo  ---- · 4200 · 3200   ~/DevWRG/wrg-os-demo/ecosystem.demo.config.cjs
+//   dev   8300 · 4300 · 3300   file ini
+//
+// Dev SEMULA memakai 8200/4200/3200 dan itu menabrak tumpukan demo yang sudah
+// jalan — ketahuan 9 Sep 2026 sebelum dinyalakan. Sengaja juga BUKAN
+// 8000/4000/3000: itu konvensi dev di laptop, menabraknya bikin bingung saat
+// seseorang menjalankan dev lokal di mesin yang sama.
+//
+// ⚠️ Penjaga di bawah TIDAK memeriksa port, dan itu disengaja. Pemeriksaan port
+// di sini akan melihat port yang dipegang oleh proses dev ITU SENDIRI saat
+// `pm2 restart`, lalu menghapus entri dev — restart biasa berubah jadi mati
+// total. Ketersediaan port diperiksa SEBELUM start, oleh
+// `scripts/ops/cek-port-tumpukan.sh`. Jangan pindahkan cek itu ke sini.
 //
 // DUA SIFAT KEAMANAN, keduanya ditegakkan di file ini, bukan diserahkan ke
 // disiplin pengisian .env:
@@ -110,9 +123,9 @@ const appsDev = !devSiap ? [] : [
     name: "wrg-dev-ai",
     cwd: DEV_ROOT,
     script: ".venv/bin/uvicorn",
-    args: "app.main:app --host 127.0.0.1 --port 8200",
+    args: "app.main:app --host 127.0.0.1 --port 8300",
     interpreter: "none",
-    env: { ...devEnv, PORT: "8200" },
+    env: { ...devEnv, PORT: "8300" },
     autorestart: true,
     max_restarts: 10,
   },
@@ -121,7 +134,7 @@ const appsDev = !devSiap ? [] : [
     cwd: DEV_ROOT,
     script: "dist/index.js",
     interpreter: "node",
-    env: { ...devEnv, PORT: "4200", AI_BASE_URL: "http://127.0.0.1:8200" },
+    env: { ...devEnv, PORT: "4300", AI_BASE_URL: "http://127.0.0.1:8300" },
     autorestart: true,
     max_restarts: 10,
   },
@@ -129,9 +142,9 @@ const appsDev = !devSiap ? [] : [
     name: "wrg-dev-web",
     cwd: DEV_ROOT,
     script: "node_modules/next/dist/bin/next",
-    args: "start -p 3200",
+    args: "start -p 3300",
     interpreter: "node",
-    env: { ...devEnv, PORT: "3200", API_BASE_URL: "http://127.0.0.1:4200" },
+    env: { ...devEnv, PORT: "3300", API_BASE_URL: "http://127.0.0.1:4300" },
     autorestart: true,
     max_restarts: 10,
   },

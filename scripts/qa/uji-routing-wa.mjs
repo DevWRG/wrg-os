@@ -16,7 +16,7 @@ const SALES = "120363405485256544@g.us";
 
 const cfg = (over = {}) => ({
   devGroups: parseDevGroups(RESEARCH),
-  devUrl: "http://127.0.0.1:4200/webhooks/wa",
+  devUrl: "http://127.0.0.1:4300/webhooks/wa",
   devSecret: "rahasia-dev",
   prodUrl: "http://127.0.0.1:4100/webhooks/wa",
   prodSecret: "rahasia-prod",
@@ -26,7 +26,7 @@ const cfg = (over = {}) => ({
 test("grup terdaftar → API dev, dengan secret dev", () => {
   const t = pilihTujuan({ group_jid: RESEARCH }, cfg());
   assert.equal(t.keDev, true);
-  assert.match(t.url, /4200/);
+  assert.match(t.url, /4300/);
   assert.equal(t.secret, "rahasia-dev");
 });
 
@@ -73,7 +73,7 @@ test("parseDevGroups: koma-pisah, spasi & entri kosong diabaikan", () => {
 
 test("ringkasan menyala menyebut keadaan yang benar", () => {
   assert.match(ringkasRouting(cfg({ devGroups: parseDevGroups("") })), /MATI/);
-  assert.match(ringkasRouting(cfg()), /1 grup →.*4200/);
+  assert.match(ringkasRouting(cfg()), /1 grup →.*4300/);
   // Keadaan paling berbahaya harus paling keras bunyinya.
   assert.match(ringkasRouting(cfg({ devUrl: "" })), /TERTAHAN/);
 });
