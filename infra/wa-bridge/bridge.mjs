@@ -23,6 +23,7 @@
 import http from "node:http";
 import { execFile } from "node:child_process";
 import { readFileSync, writeFileSync, existsSync, readdirSync, statSync, openSync, readSync, closeSync } from "node:fs";
+import { parseDevGroups, pilihTujuan, ringkasRouting } from "./routing.mjs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -33,6 +34,12 @@ const CHANNEL = process.env.WA_CHANNEL || "whatsapp";
 const OPENCLAW = process.env.OPENCLAW_BIN || "openclaw";
 const WEBHOOK_URL = process.env.WRG_WEBHOOK_URL || "";
 const WEBHOOK_SECRET = process.env.WRG_WEBHOOK_SECRET || "";
+// Lapis 2 — routing per grup ke tumpukan dev. Ketiganya dibaca dari .env.prod
+// lewat sebaran `...base` di ecosystem, jadi tak perlu menyentuh ecosystem.
+const DEV_GROUPS = parseDevGroups(process.env.WA_DEV_GROUPS);
+const WEBHOOK_URL_DEV = process.env.WRG_WEBHOOK_URL_DEV || "";
+const WEBHOOK_SECRET_DEV = process.env.WRG_WEBHOOK_SECRET_DEV || "";
+const ROUTING = { devGroups: DEV_GROUPS, devUrl: WEBHOOK_URL_DEV, devSecret: WEBHOOK_SECRET_DEV, prodUrl: WEBHOOK_URL, prodSecret: WEBHOOK_SECRET };
 const CAPTURE_DIR = process.env.CAPTURE_DIR || join(homedir(), ".openclaw/tmp/wrg-monitor/messages");
 const POLL_MS = Number(process.env.POLL_MS || 4000);
 const OFFSET_FILE = process.env.OFFSET_FILE || join(homedir(), ".wrg-wa-bridge-offsets.json");
@@ -151,10 +158,13 @@ function scanDirs() {
   return [...dates].map((d) => join(CAPTURE_DIR, d));
 }
 async function postWebhook(rec) {
+  // Melempar kalau grup dev terdaftar tapi tujuannya belum dikonfigurasi —
+  // pesan tertahan & terlihat, TIDAK dialihkan diam-diam ke prod.
+  const tujuan = pilihTujuan(rec, ROUTING);
   const headers = { "content-type": "application/json" };
-  if (WEBHOOK_SECRET) headers["x-wa-secret"] = WEBHOOK_SECRET;
-  const r = await fetch(WEBHOOK_URL, { method: "POST", headers, body: JSON.stringify(rec) });
-  if (!r.ok) throw new Error(`webhook ${r.status}`);
+  if (tujuan.secret) headers["x-wa-secret"] = tujuan.secret;
+  const r = await fetch(tujuan.url, { method: "POST", headers, body: JSON.stringify(rec) });
+  if (!r.ok) throw new Error(`webhook ${tujuan.keDev ? "DEV" : "prod"} ${r.status} (${tujuan.url})`);
 }
 
 let offsets = loadOffsets();
@@ -242,6 +252,7 @@ async function pollFile(path) {
 
 if (WEBHOOK_URL) {
   log(`[bridge] inbound forwarder → ${WEBHOOK_URL} (poll ${POLL_MS}ms, dir ${CAPTURE_DIR})`);
+  log(`[bridge] ${ringkasRouting(ROUTING)}`);
   setInterval(() => {
     pollInbound().catch((e) => log("[inbound] poll error:", String(e)));
   }, POLL_MS);
