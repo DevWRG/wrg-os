@@ -153,3 +153,52 @@ test("scheduler dev tetap mati walau izin kirim menyala", () => {
   assert.equal(api.env.AGENT_SCHEDULE_ENABLED, "false");
   assert.equal(api.env.REMINDER_SCHEDULE_ENABLED, "false");
 });
+
+// ── cwd & nama env ──────────────────────────────────────────────────────────
+// Dua bug yang lolos semua gerbang dan baru ketahuan di Mac mini 9 Sep 2026.
+// Keduanya diuji dari BENTUK config, bukan dari server, supaya CI yang menangkap.
+
+test("cwd dev per-app, bentuknya sama dengan prod", () => {
+  // pm2 me-resolve `script` relatif ke `cwd`. Dengan cwd: DEV_ROOT, ketiga
+  // artefak (apps/api/dist, apps/web/node_modules, services/ai/app) tak
+  // ditemukan — dan gagalnya SENYAP: preflight port tetap 0, penjaga devSiap
+  // tetap "terdaftar", prosesnya autorestart 10× lalu `errored`.
+  const { apps } = muat({ envProd: "", envDev: DEV_OK });
+  const sufiks = (a) => {
+    const i = a.cwd.indexOf("/apps/") >= 0 ? a.cwd.indexOf("/apps/") : a.cwd.indexOf("/services/");
+    return i >= 0 ? a.cwd.slice(i + 1) : null;
+  };
+  for (const bagian of ["ai", "api", "web"]) {
+    const dev = apps.find((a) => a.name === `wrg-dev-${bagian}`);
+    const prod = apps.find((a) => a.name === `wrg-prod-${bagian}`);
+    assert.ok(dev && prod, `entri ${bagian} harus ada di dev dan prod`);
+    assert.equal(
+      sufiks(dev),
+      sufiks(prod),
+      `wrg-dev-${bagian}.cwd tak sebentuk dengan prod — script "${dev.script}" takkan ditemukan`,
+    );
+    assert.ok(sufiks(dev), `wrg-dev-${bagian}.cwd masih menunjuk root checkout, bukan subdirektori app`);
+  }
+});
+
+test("nama env dev = nama yang DIBACA kode, bukan *_BASE_URL", () => {
+  // apps/api/src/ai.ts       → process.env.AI_URL  ?? http://localhost:8000
+  // apps/web/src/lib/gateway → process.env.API_URL ?? http://localhost:4000
+  // Nama yang salah tak memicu error apa pun: prosesnya naik lalu menembak
+  // port kosong. Dev api pernah menembak :8000 dan dev web :4000 karena ini.
+  const { apps } = muat({ envProd: "", envDev: DEV_OK });
+  const api = apps.find((a) => a.name === "wrg-dev-api");
+  const web = apps.find((a) => a.name === "wrg-dev-web");
+  const portDari = (a) => a.env?.PORT || (a.args || "").match(/(?:-p|--port)\s+(\d+)/)?.[1];
+
+  assert.match(api.env.AI_URL ?? "", /:\d+$/, "wrg-dev-api butuh AI_URL (bukan AI_BASE_URL)");
+  assert.equal(api.env.AI_BASE_URL, undefined, "AI_BASE_URL tak dibaca kode mana pun — hapus");
+  assert.match(web.env.API_URL ?? "", /:\d+$/, "wrg-dev-web butuh API_URL (bukan API_BASE_URL)");
+  assert.equal(web.env.API_BASE_URL, undefined, "API_BASE_URL tak dibaca kode mana pun — hapus");
+
+  // Dan URL-nya harus menunjuk port tumpukan DEV, bukan prod/demo/default.
+  assert.ok(api.env.AI_URL.endsWith(`:${portDari(apps.find((a) => a.name === "wrg-dev-ai"))}`),
+    `AI_URL=${api.env.AI_URL} tak menunjuk port wrg-dev-ai`);
+  assert.ok(web.env.API_URL.endsWith(`:${portDari(api)}`),
+    `API_URL=${web.env.API_URL} tak menunjuk port wrg-dev-api`);
+});
