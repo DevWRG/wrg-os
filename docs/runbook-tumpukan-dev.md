@@ -11,7 +11,7 @@ mengirim WA sama sekali).
 | Checkout | `~/DevWRG/wrg-os` | `~/DevWRG/wrg-os-dev` |
 | Database | `wrg_os_prod` | `wrg_os_dev` (atau `_demo`) |
 | ai · api · web | 8100 · 4100 · 3100 | 8200 · 4200 · 3200 |
-| Kirim WA | ya | **tidak pernah** |
+| Kirim WA | ya | hanya ke grup di `WA_DEV_GROUPS`; bisu kalau kosong |
 | Scheduler | ya | mati |
 
 ## Dua penjaga yang ditegakkan di `ecosystem.config.cjs`
@@ -85,10 +85,39 @@ node -e "const c=require('./ecosystem.config.cjs');
 Kalau mencetak `dev TIDAK terdaftar`, baris peringatannya menyebut sebabnya:
 checkout tak ada, `DATABASE_URL` kosong, atau database bukan `_dev`/`_demo`.
 
-## Yang BELUM tercakup lapis ini
+## Menghidupkan uji WhatsApp di dev
 
-- **WhatsApp.** Bridge masih mengirim semua pesan masuk ke API prod (4100).
-  Routing per-grup ke dev adalah lapis 2.
-- **Penyegaran otomatis** setelah merge ke `dev`.
+Ketiga lapis sudah mendarat. Yang tersisa cuma mengisi **satu daftar** di
+`.env.prod` — dan daftar itu dipakai dua kali dari SATU sumber: bridge memakainya
+untuk memilih tujuan pesan **masuk**, dan tumpukan dev memakainya sebagai batas
+tujuan pesan **keluar**.
+
+```bash
+# .env.prod (di checkout PROD)
+WA_DEV_GROUPS=<jid grup Research>
+WRG_WEBHOOK_URL_DEV=http://127.0.0.1:4200/webhooks/wa
+WRG_WEBHOOK_SECRET_DEV=<WA_WEBHOOK_SECRET dari .env.dev>
+
+# lalu
+pm2 restart ecosystem.config.cjs --only wrg-prod-wabridge,wrg-dev-api --update-env
+```
+
+Periksa dua baris log ini:
+
+```
+[bridge]     routing dev: 1 grup → http://127.0.0.1:4200/webhooks/wa (...)
+[ecosystem]  dev boleh kirim WA — DIBATASI ke: <jid grup Research>
+```
+
+Kalau `WA_DEV_GROUPS` dibiarkan kosong, dev tetap **bisu** dan ecosystem
+mengatakannya — itu keadaan aman, bukan setengah jalan.
+
+⚠️ **Jangan menyalakan `WA_DRY_RUN=false` di `.env.dev`.** Tidak akan berpengaruh
+(ecosystem menimpanya), dan yang menentukan tetap ada-tidaknya `WA_DEV_GROUPS`.
+
+## Yang BELUM tercakup
+
+- **Penyegaran otomatis** setelah merge ke `dev` — `auto-deploy` hanya melayani
+  `main`; dev masih manual.
 - **Akses publik** — dashboard dev hanya lokal/Tailscale, tidak lewat Cloudflare
   Tunnel. Itu disengaja.
