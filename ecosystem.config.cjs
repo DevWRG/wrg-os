@@ -118,10 +118,23 @@ const devEnv = {
   REMINDER_SCHEDULE_ENABLED: "false",
 };
 
+// ⚠️ `cwd` HARUS per-app, sama bentuknya dengan blok prod di bawah — bukan
+// DEV_ROOT. pm2 me-resolve `script` relatif terhadap `cwd`, dan artefaknya ada di
+// subdirektori: apps/api/dist/index.js, apps/web/node_modules/next/…,
+// services/ai/app/main.py. Dengan cwd: DEV_ROOT ketiganya tak ditemukan.
+//
+// Kegagalannya SENYAP di kedua gerbang yang kita punya: cek-port-tumpukan.sh
+// tetap exit 0 (port memang bebas) dan penjaga devSiap tetap bilang "dev
+// terdaftar" (checkout & DATABASE_URL memang benar) — sementara ketiga proses
+// gagal, autorestart 10×, lalu berhenti di `errored`. Terbukti di Mac mini
+// 9 Sep 2026; ketiga app jalan begitu cwd-nya dibetulkan.
+//
+// `.venv` ikut pindah ke services/ai/.venv (mengikuti prod) supaya
+// `script: ".venv/bin/uvicorn"` tetap resolve dari cwd yang baru.
 const appsDev = !devSiap ? [] : [
   {
     name: "wrg-dev-ai",
-    cwd: DEV_ROOT,
+    cwd: path.join(DEV_ROOT, "services/ai"),
     script: ".venv/bin/uvicorn",
     args: "app.main:app --host 127.0.0.1 --port 8300",
     interpreter: "none",
@@ -131,20 +144,26 @@ const appsDev = !devSiap ? [] : [
   },
   {
     name: "wrg-dev-api",
-    cwd: DEV_ROOT,
+    cwd: path.join(DEV_ROOT, "apps/api"),
     script: "dist/index.js",
     interpreter: "node",
-    env: { ...devEnv, PORT: "4300", AI_BASE_URL: "http://127.0.0.1:8300" },
+    // AI_URL, bukan AI_BASE_URL — apps/api/src/ai.ts membaca
+    // `process.env.AI_URL ?? "http://localhost:8000"`. Nama yang salah bukan
+    // sekadar tak berguna: dev api diam-diam menembak :8000.
+    env: { ...devEnv, PORT: "4300", AI_URL: "http://127.0.0.1:8300" },
     autorestart: true,
     max_restarts: 10,
   },
   {
     name: "wrg-dev-web",
-    cwd: DEV_ROOT,
+    cwd: path.join(DEV_ROOT, "apps/web"),
     script: "node_modules/next/dist/bin/next",
     args: "start -p 3300",
     interpreter: "node",
-    env: { ...devEnv, PORT: "3300", API_BASE_URL: "http://127.0.0.1:4300" },
+    // API_URL, bukan API_BASE_URL — apps/web/src/lib/gateway.ts membaca
+    // `process.env.API_URL ?? "http://localhost:4000"`. Dengan nama yang salah,
+    // dashboard dev naik lalu gagal fetch tanpa sebab yang kelihatan.
+    env: { ...devEnv, PORT: "3300", API_URL: "http://127.0.0.1:4300" },
     autorestart: true,
     max_restarts: 10,
   },

@@ -1,5 +1,12 @@
 #!/usr/bin/env bash
-# Preflight port untuk tumpukan pm2 — jalankan SEBELUM `pm2 start`.
+# Preflight tumpukan pm2 — jalankan SEBELUM `pm2 start`. Memeriksa DUA hal:
+#   1. port belum dipegang tumpukan lain;
+#   2. `script` tiap entri benar-benar ADA di jalur yang di-resolve pm2 (cwd+script).
+#
+# (2) ditambahkan sesudah 9 Sep 2026: ketiga entri dev memakai cwd: DEV_ROOT
+# sementara artefaknya ada di apps/api, apps/web, services/ai. Port bebas,
+# penjaga devSiap lulus, cek ini exit 0 — dan ketiga proses tetap mati. Dua
+# gerbang hijau di atas tumpukan yang tak pernah hidup.
 #
 # Kenapa ada: penjaga di ecosystem.config.cjs memvalidasi checkout, DATABASE_URL,
 # dan nama database — TAPI TIDAK port. Tanpa cek ini, tumpukan yang port-nya
@@ -108,10 +115,59 @@ if [ "$diperiksa" -eq 0 ]; then
   exit 1
 fi
 
+# ── Skrip ada di jalur yang di-resolve pm2? ─────────────────────────────────
+# pm2 me-resolve `script` relatif terhadap `cwd`. Kalau cwd salah, tak ada
+# gerbang lain yang menyadarinya: port tetap bebas dan entrinya tetap terdaftar.
+SKRIP="$(node -e '
+const path = require("path");
+const c = require(process.argv[1] + "/ecosystem.config.cjs");
+for (const a of c.apps) {
+  if (!a.cwd || !a.script) continue;
+  const utama = path.resolve(a.cwd, a.script);
+  // uvicorn: modul `app.main:app` di-import relatif terhadap cwd, jadi
+  // keberadaan binernya saja tak cukup.
+  const m = (a.args || "").match(/^([A-Za-z0-9_.]+):/);
+  const modul = m ? path.join(a.cwd, m[1].split(".").join("/") + ".py") : "";
+  console.log([a.name, utama, modul].join("\t"));
+}
+' "$ROOT" 2>/dev/null)"
+
+hilang=0
+if [ -n "$SKRIP" ]; then
+  echo
+  printf '%-18s %s\n' "PROSES" "SKRIP YANG DI-RESOLVE pm2"
+  printf '%-18s %s\n' "------------------" "-----------------------------"
+  while IFS=$'\t' read -r nama utama modul; do
+    [ -z "${nama:-}" ] && continue
+    case "$FILTER" in
+      semua) ;;
+      *) [[ "$nama" == *"-$FILTER-"* ]] || continue ;;
+    esac
+    for f in "$utama" "$modul"; do
+      [ -z "$f" ] && continue
+      if [ -e "$f" ]; then
+        printf '%-18s %s\n' "$nama" "ok  ${f#$ROOT/}"
+      else
+        printf '%-18s %s\n' "$nama" "HILANG ← $f"
+        hilang=$((hilang + 1))
+      fi
+    done
+  done <<< "$SKRIP"
+fi
+
+echo
+
 if [ "$bentrok" -gt 0 ]; then
   echo "$bentrok port BENTROK. Jangan pm2 start dulu — prosesnya akan terdaftar," >&2
   echo "lapor 'online', lalu mati diam-diam sementara port itu menyajikan tumpukan lain." >&2
   exit 1
 fi
 
-echo "Semua port bebas (atau dipegang tumpukannya sendiri). Aman untuk pm2 start."
+if [ "$hilang" -gt 0 ]; then
+  echo "$hilang skrip HILANG di jalur yang di-resolve pm2. Jangan pm2 start dulu —" >&2
+  echo "prosesnya akan autorestart lalu berhenti di 'errored'. Periksa cwd/script di" >&2
+  echo "ecosystem.config.cjs, atau build/venv yang belum dibuat (lihat runbook)." >&2
+  exit 1
+fi
+
+echo "Port bebas dan semua skrip ada. Aman untuk pm2 start."
