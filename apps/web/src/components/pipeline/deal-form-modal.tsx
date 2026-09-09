@@ -19,6 +19,7 @@ export interface DealFormInit {
   product_category?: string | null;
   estimate_amount?: number | null;
   qty_num?: number | null;
+  qty_unit?: string | null;
   unit_price?: number | null;
   coop_model?: string | null;
   cabang?: string | null;
@@ -165,6 +166,7 @@ export function DealFormModal({ mode, deal, onClose, brands = [], cabangs = [], 
     product: str(deal?.product),
     product_category: str(deal?.product_category),
     qty_num: deal?.qty_num != null ? String(deal.qty_num) : "",
+    qty_unit: str(deal?.qty_unit),
     unit_price: deal?.unit_price != null ? String(deal.unit_price) : "",
     coop_model: str(deal?.coop_model),
     cabang: str(deal?.cabang),
@@ -299,6 +301,13 @@ export function DealFormModal({ mode, deal, onClose, brands = [], cabangs = [], 
 
           <label className="text-sm"><Lbl>QTY / Test per-bulan</Lbl>
             <input type="number" inputMode="numeric" value={form.qty_num} onChange={(e) => set("qty_num", e.target.value)} className={inputCls} />
+          </label>
+          {/* Satuan qty. Tanpa ini, qty_num "50" bisa berarti 50 mesin atau 50
+              consumable, dan baris tak bisa dijumlah lintas deal (#1178). Kedua
+              importer sudah mengisinya dari teks asli ("50 unit" -> "unit"),
+              jadi field ini menutup jalur tulis web yang selama ini melewatkannya. */}
+          <label className="text-sm"><Lbl>Satuan QTY</Lbl>
+            <input value={form.qty_unit} onChange={(e) => set("qty_unit", e.target.value)} placeholder="unit / test / box" className={inputCls} />
           </label>
           <label className="text-sm"><Lbl>Harga per Test/Unit (Rp)</Lbl>
             <input type="number" inputMode="numeric" value={form.unit_price} onChange={(e) => set("unit_price", e.target.value)} className={inputCls} />

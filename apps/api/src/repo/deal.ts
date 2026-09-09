@@ -155,6 +155,13 @@ export interface PipelineDeal {
   forecast_category: string | null;
   estimate_amount: number | null;
   qty_num: number | null;              // QTY / test per-bulan
+  // Satuan dari qty_num. Kolomnya sudah ada di migrasi 057 dan DIISI kedua
+  // importer (parse_qty memecah "50 unit" → 50 + "unit"), tapi dulu tak pernah
+  // terekspos di jalur tulis web — jadi baris hasil impor punya penanda satuan
+  // sementara baris buatan UI selalu NULL. Campuran itu lebih menyesatkan
+  // daripada tak punya penanda sama sekali: qty_num bisa berarti unit mesin
+  // atau consumable, dan tak ada cara membedakannya (#1178).
+  qty_unit: string | null;
   unit_price: number | null;           // harga per test / unit
   weighted: number;                    // estimate_amount × probability(stage)
   pic_hod: string | null;
@@ -194,7 +201,7 @@ export async function getPipeline(
   const cols = sql`deal_id, customer_name, facility_name, instansi_type, am_id, brand, product, product_category,
     prospect_category, stage, probability, forecast_category,
     COALESCE(estimated_value, estimate_amount) AS estimate_amount,
-    qty_num, unit_price,
+    qty_num, qty_unit, unit_price,
     pic_hod, cabang, coop_model, city, province, purchase_month, purchase_year, notes, updated_at,
     GREATEST(0, EXTRACT(DAY FROM (now() - stage_entered_at))::int) AS days_in_stage`;
   // Row-level scope (pakai semantik isRestricted spt F127): scope TAK membatasi
@@ -244,6 +251,7 @@ export async function getPipeline(
       forecast_category: r.forecast_category ? String(r.forecast_category) : null,
       estimate_amount: est,
       qty_num: r.qty_num != null ? Number(r.qty_num) : null,
+      qty_unit: r.qty_unit ? String(r.qty_unit) : null,
       unit_price: r.unit_price != null ? Number(r.unit_price) : null,
       weighted,
       pic_hod: r.pic_hod ? String(r.pic_hod) : null,
@@ -829,7 +837,7 @@ export async function getDealTimeline(dealId: string, scope: DataScope): Promise
 // nyetel stage/loss/am_id/probability langsung; itu lewat jalur khusus).
 const DEAL_EDITABLE = [
   "customer_name", "facility_name", "brand", "product", "product_category",
-  "estimate_amount", "qty_num", "unit_price", "cabang", "coop_model", "city", "province",
+  "estimate_amount", "qty_num", "qty_unit", "unit_price", "cabang", "coop_model", "city", "province",
   "purchase_month", "purchase_year",
   "pic_hod", "notes",
 ] as const;
