@@ -23,6 +23,44 @@ export interface WaSendResult {
   to?: string;
 }
 
+// ── Allowlist tujuan (lapis 3 pemisahan environment) ──────────────────────
+//
+// WA_SEND_ALLOWED_TARGETS: kalau di-set, kirim LIVE hanya boleh ke tujuan yang
+// terdaftar. Selain itu DITOLAK — bukan dikirim.
+//
+// Kenapa di kode, bukan cukup lewat konfigurasi: yang mau dijaga justru
+// konfigurasi yang salah. Tumpukan dev membalas lewat bridge yang SAMA dengan
+// prod, jadi secara teknis ia bisa mengirim ke grup mana pun. Satu bug di dev —
+// atau satu env yang keliru — cukup untuk mengirim pesan uji ke grup Sales atau
+// grup HoD yang nyata. Penjaga di chokepoint ini membuat kesalahan itu tidak
+// mungkin, bukan cuma tidak disengaja.
+//
+// KOSONG = tanpa batas. Itu perilaku prod sekarang dan sengaja dipertahankan;
+// pembatasan ini opt-in, supaya menambahkannya tak bisa membuat prod bisu.
+export function parseAllowedTargets(raw: string | undefined): Set<string> {
+  return new Set(
+    String(raw || "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean),
+  );
+}
+
+// Cocokkan dua bentuk: apa adanya (untuk JID grup, mis. "1203…@g.us") DAN
+// digit-saja (untuk nomor telepon, yang bisa ditulis "+62 821-…" atau "6282…").
+// Tanpa bentuk kedua, allowlist nomor akan gagal cuma karena beda tanda baca.
+export function bolehKirimKe(target: string, allowed: Set<string>): boolean {
+  if (allowed.size === 0) return true; // tanpa batas
+  const t = String(target || "").trim();
+  if (allowed.has(t)) return true;
+  const digit = t.replace(/[^\d]/g, "");
+  if (!digit) return false;
+  for (const a of allowed) {
+    if (a.replace(/[^\d]/g, "") === digit) return true;
+  }
+  return false;
+}
+
 function isDryRun(): boolean {
   // default: dry-run AKTIF (aman). Hanya live bila eksplisit "false".
   return (process.env.WA_DRY_RUN ?? "true").toLowerCase() !== "false";
@@ -40,6 +78,19 @@ export async function sendViaWaGateway(to: string, body: string): Promise<WaSend
   if (isDryRun()) {
     console.log(`[wa] DRY-RUN (WA_DRY_RUN) — tidak kirim live → ${target}: ${body.slice(0, 80)}`);
     return { sent: true, stub: false, dryRun: true, to: target };
+  }
+
+  // Gerbang allowlist — HANYA untuk live. Mode stub/dry-run tak mengirim apa
+  // pun, dan memblokirnya di situ justru menyembunyikan teks balasan yang
+  // dibutuhkan saat menguji.
+  const allowed = parseAllowedTargets(process.env.WA_SEND_ALLOWED_TARGETS);
+  if (!bolehKirimKe(target, allowed)) {
+    const daftar = [...allowed].join(", ");
+    console.warn(
+      `[wa] DITOLAK — tujuan "${target}" tidak ada di WA_SEND_ALLOWED_TARGETS (${daftar}). ` +
+        "Pesan TIDAK dikirim. Kalau tujuan ini memang sah, tambahkan ke daftar itu.",
+    );
+    return { sent: false, stub: false, error: `tujuan di luar allowlist: ${target}`, to: target };
   }
 
   // Mode 3: live
@@ -66,6 +117,8 @@ export interface WaPreflight {
   dryRun: boolean;
   secretSet: boolean;
   testTarget: string | null;
+  /** null = tanpa batas (perilaku prod). Array = kirim live dibatasi ke ini. */
+  allowedTargets: string[] | null;
   reachable?: boolean;
   status?: number;
   error?: string;
@@ -83,6 +136,10 @@ export async function waPreflight(probe = false): Promise<WaPreflight> {
     dryRun,
     secretSet: !!process.env.WA_SEND_SECRET,
     testTarget: process.env.WA_TEST_TARGET?.trim() || null,
+    allowedTargets: (() => {
+      const a = parseAllowedTargets(process.env.WA_SEND_ALLOWED_TARGETS);
+      return a.size === 0 ? null : [...a];
+    })(),
   };
   if (!configured || !probe) return base;
   try {
