@@ -74,10 +74,36 @@ interface ResolvedTarget {
   name: string;
 }
 
-// Resolusi target notifikasi 1 tahap. NULL = belum bisa dikirim (kontak
-// belum dikonfigurasi ATAU app_user-nya belum py wa_number) — ini state SAH,
-// bukan exception, jadi dikembalikan sbg null, bukan throw.
-async function resolveStepTarget(step: { id: number; urutan: number; target_type: string; hod_key: string | null }): Promise<ResolvedTarget | null> {
+// Kenapa sebuah tahap tak bisa dikirimi notifikasi. Dipisah per sebab karena
+// TEMPAT MEMPERBAIKINYA BERBEDA — dan sebelumnya ketiganya dilaporkan dengan
+// satu kalimat "belum dikonfigurasi — isi di halaman config", yang benar cuma
+// untuk sebab pertama. Untuk dua sisanya kalimat itu menyesatkan: orang membuka
+// halaman config, melihat slotnya SUDAH terisi, lalu buntu (#1071).
+export type SebabTargetGagal =
+  | { sebab: "belum-dikonfigurasi"; label: string }
+  | { sebab: "hod-tanpa-pengguna"; label: string; hodKey: string }
+  | { sebab: "hod-tanpa-wa"; label: string; hodKey: string; nama: string }
+  | { sebab: "direktur-tak-ada"; label: string };
+
+// Pure — dites terpisah tanpa DB.
+export function pesanTargetGagal(g: SebabTargetGagal): string {
+  switch (g.sebab) {
+    case "belum-dikonfigurasi":
+      return `Kontak tahap "${g.label}" belum diisi — isi di halaman Config Chain (Approval → Config).`;
+    case "hod-tanpa-pengguna":
+      return `Tahap "${g.label}" menunjuk hod_key "${g.hodKey}", tapi tak ada pengguna dengan hod_key itu — perbaiki di menu Pengguna, bukan di Config Chain.`;
+    case "hod-tanpa-wa":
+      return `Tahap "${g.label}" menunjuk ${g.nama} (hod_key "${g.hodKey}"), tapi nomor WA-nya kosong — isi nomor WA pengguna itu di menu Pengguna.`;
+    case "direktur-tak-ada":
+      return `Tahap "${g.label}" menunggu Direktur, tapi tak ada pengguna ber-role "direktur" yang punya nomor WA — set di menu Pengguna.`;
+  }
+}
+
+// Resolusi target notifikasi 1 tahap. Gagal = state SAH (kontak belum diisi,
+// atau app_user-nya belum punya wa_number), bukan exception — jadi
+// dikembalikan sebagai nilai, bukan throw. Yang berubah: sebabnya ikut
+// dikembalikan supaya pesannya bisa menunjuk tempat perbaikan yang benar.
+async function resolveStepTarget(step: { id: number; urutan: number; target_type: string; hod_key: string | null; label: string }): Promise<ResolvedTarget | { gagal: SebabTargetGagal }> {
   const sql = db();
   // Config LIVE selalu dicek (bukan cuma saat snapshot kosong) — wa_number_override
   // butuh ini juga, dan hod_key di-snapshot NULL berarti "belum dikonfigurasi
@@ -92,7 +118,7 @@ async function resolveStepTarget(step: { id: number; urutan: number; target_type
 
   if (step.target_type === "direktur") {
     const rows = await sql`SELECT name, wa_number FROM app_user WHERE role = 'direktur' AND wa_number IS NOT NULL AND wa_number <> '' ORDER BY created_at LIMIT 1`;
-    if (rows.length === 0) return null;
+    if (rows.length === 0) return { gagal: { sebab: "direktur-tak-ada", label: step.label } };
     return { waNumber: String(rows[0].wa_number), name: rows[0].name ? String(rows[0].name) : "Direktur" };
   }
 
@@ -101,9 +127,18 @@ async function resolveStepTarget(step: { id: number; urutan: number; target_type
     hodKey = String(cfg.hod_key);
     await sql`UPDATE approval_step SET hod_key = ${hodKey} WHERE id = ${step.id}`;
   }
-  if (!hodKey) return null;
+  if (!hodKey) return { gagal: { sebab: "belum-dikonfigurasi", label: step.label } };
   const rows = await sql`SELECT name, wa_number FROM app_user WHERE hod_key = ${hodKey} AND wa_number IS NOT NULL AND wa_number <> '' ORDER BY created_at LIMIT 1`;
-  if (rows.length === 0) return null;
+  if (rows.length === 0) {
+    // Bedakan "tak ada penggunanya" dari "penggunanya ada tapi nomor WA kosong".
+    // Dua-duanya diperbaiki di menu Pengguna, tapi langkahnya beda: yang satu
+    // menautkan hod_key ke orang, yang satu mengisi nomor.
+    const [tanpaWa] = await sql`SELECT name FROM app_user WHERE hod_key = ${hodKey} ORDER BY created_at LIMIT 1`;
+    if (tanpaWa) {
+      return { gagal: { sebab: "hod-tanpa-wa", label: step.label, hodKey, nama: tanpaWa.name ? String(tanpaWa.name) : hodKey } };
+    }
+    return { gagal: { sebab: "hod-tanpa-pengguna", label: step.label, hodKey } };
+  }
   return { waNumber: String(rows[0].wa_number), name: rows[0].name ? String(rows[0].name) : hodKey };
 }
 
@@ -150,9 +185,10 @@ export async function notifyCurrentStep(requestId: string): Promise<NotifyResult
     urutan: Number(step.urutan),
     target_type: String(step.target_type),
     hod_key: step.hod_key ? String(step.hod_key) : null,
+    label: String(step.label),
   });
-  if (!target) {
-    return { ok: false, error: `kontak "${step.label}" belum dikonfigurasi — isi dulu di halaman config` };
+  if ("gagal" in target) {
+    return { ok: false, error: pesanTargetGagal(target.gagal) };
   }
 
   const nominalLine = req.nominal != null ? `\nNominal: Rp${Number(req.nominal).toLocaleString("id-ID")}` : "";
