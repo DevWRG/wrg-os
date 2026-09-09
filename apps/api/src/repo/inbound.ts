@@ -1142,7 +1142,13 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
     if (!approver) return finish({ skipped: "unknown-approver", sender_name: row.sender_name });
     const line = stripInvisible(row.body ?? "").split(/\r?\n/).find((l) => new RegExp(`^\\s*#\\s*${kind}\\b`, "i").test(l)) ?? "";
     const parsed = parseApprovalMessage(line, kind);
-    if (!parsed) return finish({ error: `${kind}-empty` }, kind);
+    if (!parsed) {
+      const reply = await sendViaWaGateway(
+        target,
+        `⚠️ Format #${kind.toUpperCase()} tak lengkap, ${approver.name}. Sertakan kode, mis. "#${kind.toUpperCase()} APR-0001".`,
+      );
+      return finish({ error: `${kind}-empty`, reply }, kind);
+    }
     if ("error" in parsed) {
       const reply = await sendViaWaGateway(target, `⚠️ #${kind.toUpperCase()} gagal diproses, ${approver.name}: ${parsed.error}`);
       return finish({ error: parsed.error, reply });
