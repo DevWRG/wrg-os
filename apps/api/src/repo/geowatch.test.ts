@@ -59,3 +59,35 @@ test("AM diurutkan dari temuan terbanyak", () => {
   ])!;
   assert.ok(s.indexOf("*Alpha*") < s.indexOf("*Zulu*"), "AM dgn temuan terbanyak harus di atas");
 });
+
+// ── Legenda kaki pesan ikut kondisional ──
+// Ditemukan saat uji dry-run di dev (2026-07-09, 35 temuan): semuanya bucket
+// "tanpa overlay", tapi kaki pesan tetap mencetak instruksi "koordinat gagal
+// dibaca". Baris per-AM sudah kondisional; legendanya tertinggal.
+
+test("hanya bucket tanpa-overlay → legenda OCR tidak dicetak", () => {
+  const s = buildGeoSweepMessage("2026-07-09", [am("Arif", ["RS A", "RS B"])])!;
+  assert.match(s, /\*Tanpa overlay\* → foto ulang/);
+  assert.doesNotMatch(s, /\*Koordinat gagal dibaca\* →/);
+  // penutup universal tetap ada
+  assert.match(s, /caption `Nama Customer`/);
+});
+
+test("hanya bucket OCR-gagal → legenda tanpa-overlay tidak dicetak", () => {
+  const s = buildGeoSweepMessage("2026-07-09", [am("Ari", [], ["RS X"])])!;
+  assert.match(s, /\*Koordinat gagal dibaca\* → kirim ulang/);
+  assert.doesNotMatch(s, /\*Tanpa overlay\* →/);
+  assert.match(s, /caption `Nama Customer`/);
+});
+
+test("dua bucket bercampur → kedua legenda dicetak", () => {
+  const s = buildGeoSweepMessage("2026-07-09", [am("A", ["RS A"]), am("B", [], ["RS B"])])!;
+  assert.match(s, /\*Tanpa overlay\* →/);
+  assert.match(s, /\*Koordinat gagal dibaca\* →/);
+});
+
+test("dua bucket pada AM yang SAMA juga memunculkan kedua legenda", () => {
+  const s = buildGeoSweepMessage("2026-07-09", [am("Iqbal", ["RS A"], ["RS B"])])!;
+  assert.match(s, /\*Tanpa overlay\* →/);
+  assert.match(s, /\*Koordinat gagal dibaca\* →/);
+});
