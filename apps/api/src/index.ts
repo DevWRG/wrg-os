@@ -1557,6 +1557,21 @@ app.post("/visits", async (c) => {
     return c.json({ error: "invalid JSON body" }, 400);
   }
   if (!body.am_id) return c.json({ error: "am_id wajib" }, 400);
+  // Gerbang TULIS. Sebelumnya endpoint ini tak punya gerbang sama sekali:
+  // siapa pun yang bisa login — termasuk `viewer` — dapat mem-POST kunjungan
+  // atas nama AM mana pun. Menyembunyikan tombolnya di web (canAddVisit) hanya
+  // menghilangkannya dari pandangan, bukan menutup endpointnya.
+  //
+  // Polanya disamakan dengan POST /reminders yang sudah benar. `viewer`
+  // ditolak eksplisit karena ia lolos dua saringan lain: bukan admin, bukan AM,
+  // jadi resolveScope memberinya scope penuh lewat cabang terakhir.
+  const scope = await resolveScope(c.req.header("x-user-id"));
+  if (/^viewer$/i.test(String(scope.role ?? ""))) {
+    return c.json({ error: "forbidden — viewer tidak boleh mencatat kunjungan" }, 403);
+  }
+  if (scope.amOnly && scope.amId && body.am_id !== scope.amId) {
+    return c.json({ error: "forbidden — hanya boleh mencatat kunjungan atas nama sendiri" }, 403);
+  }
   // lat/lon wajib. Tanpa koordinat, sales_plan.visit_lat NULL dan kunjungannya
   // tak akan pernah muncul di GET /visits (filter `visit_lat IS NOT NULL`) —
   // tersimpan tapi hilang. Ditolak di sini, bukan disimpan diam-diam. Di luar
