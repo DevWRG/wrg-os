@@ -461,19 +461,48 @@ async function tanggalIkatLaporan(
  */
 export const AMBANG_SELISIH_TANGGAL = 3;
 
-// Diekspor untuk diuji tanpa DB (repo/inbound-tanggal.test.ts).
-export function buildPeringatanTanggal(tanggalDipakai: string, tanggalPesan: string): string | null {
+// Selisih hari antara tanggal yang ditulis AM dan tanggal pesannya. null kalau
+// salah satu tak bisa diurai. Diekspor untuk dipakai kedua pembangun pesan.
+function selisihHariTanggal(tanggalDipakai: string, tanggalPesan: string): number | null {
   const a = Date.parse(`${tanggalDipakai}T00:00:00Z`);
   const b = Date.parse(`${tanggalPesan}T00:00:00Z`);
   if (Number.isNaN(a) || Number.isNaN(b)) return null;
-  const selisih = Math.round((b - a) / 86_400_000);
-  if (Math.abs(selisih) < AMBANG_SELISIH_TANGGAL) return null;
+  return Math.round((b - a) / 86_400_000);
+}
+
+// Diekspor untuk diuji tanpa DB (repo/inbound-tanggal.test.ts).
+export function buildPeringatanTanggal(tanggalDipakai: string, tanggalPesan: string): string | null {
+  const selisih = selisihHariTanggal(tanggalDipakai, tanggalPesan);
+  if (selisih === null || Math.abs(selisih) < AMBANG_SELISIH_TANGGAL) return null;
   const arah = selisih > 0 ? "lebih tua" : "di masa depan";
   return (
     `\n\n📅 *Cek tanggal:* kamu menulis *${tanggalDipakai}*, tapi pesan ini masuk *${tanggalPesan}*` +
     ` — selisih ${Math.abs(selisih)} hari (${arah}).` +
     `\nLaporan dicatat ke *${tanggalDipakai}* sesuai yang kamu tulis. Kalau itu salah ketik,` +
     ` kirim ulang #REPORT dengan tanggal yang benar — kalau dibiarkan, kunjungan ini tak terhitung di hari kerjanya.`
+  );
+}
+
+/**
+ * Versi PLAN. Beda dari versi REPORT di dua hal yang penting:
+ *
+ *  1. Akibatnya lebih parah, jadi dikatakan lebih tegas. Plan yang difile ke
+ *     tanggal salah membuat #REPORT malam itu tak menemukan plan untuk
+ *     dicocokkan → is_unmatched → kunjungannya tidak terhitung sama sekali.
+ *  2. Instruksi kirim-ulangnya WAJIB menyebut "lengkap". insertSalesPlan
+ *     menghapus plan yang belum direport lalu insert ulang, jadi kirim ulang
+ *     PARSIAL justru menghapus sisa plan hari itu.
+ */
+export function buildPeringatanTanggalPlan(tanggalDipakai: string, tanggalPesan: string): string | null {
+  const selisih = selisihHariTanggal(tanggalDipakai, tanggalPesan);
+  if (selisih === null || Math.abs(selisih) < AMBANG_SELISIH_TANGGAL) return null;
+  const arah = selisih > 0 ? "lebih tua" : "di masa depan";
+  return (
+    `\n\n📅 *Cek tanggal:* kamu menulis *${tanggalDipakai}*, tapi pesan ini masuk *${tanggalPesan}*` +
+    ` — selisih ${Math.abs(selisih)} hari (${arah}).` +
+    `\nPlan dicatat ke *${tanggalDipakai}*. Kalau itu salah ketik, #REPORT nanti malam TIDAK akan` +
+    ` menemukan plan ini dan kunjunganmu tak terhitung.` +
+    `\nKirim ulang #PLAN *lengkap* (semua customer hari ini) dengan tanggal yang benar.`
   );
 }
 
@@ -695,10 +724,21 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
       }
       const tgl = ap.tanggal ?? wibDate();
       const r = await insertSalesPlan(am.am_id, tgl, ap.customers, am.role, row.received_at);
-      const reply = await sendViaWaGateway(
-        target,
-        `✅ Plan tercatat, ${am.nama}\n\n📅 ${fmtTanggalDisplay(tgl)}\n🗒️ ${r.count} customer visit${r.late ? "\n⚠️ telat (lewat batas)" : ""}`,
-      );
+      let body = `✅ Plan tercatat, ${am.nama}\n\n📅 ${fmtTanggalDisplay(tgl)}\n🗒️ ${r.count} customer visit${r.late ? "\n⚠️ telat (lewat batas)" : ""}`;
+      // Peringatan selisih tanggal berlaku di jalur PLAN juga, bukan cuma REPORT.
+      // Plan yang difile ke tanggal salah lebih merusak daripada report yang
+      // salah tanggal: report malamnya tak menemukan plan untuk dicocokkan →
+      // is_unmatched → kunjungannya tak terhitung sama sekali. Audit export grup
+      // The ALLIANCE vs prod (9 Sep 2026) menemukan 56 item plan hilang karena
+      // ini — mis. "#PLAN Sidqi 16/06/2026" dikirim 17 Jun, "#Plan Vicky
+      // 02/06/2026" dikirim 2 Jul, "#PLAN 04/07/2026" dikirim 4 Agu.
+      if (row.received_at) {
+        const [{ tgl_pesan }] = await sql<{ tgl_pesan: string }[]>`
+          SELECT (${row.received_at}::timestamptz AT TIME ZONE 'Asia/Jakarta')::date::text AS tgl_pesan`;
+        const peringatan = buildPeringatanTanggalPlan(tgl, String(tgl_pesan));
+        if (peringatan) body += peringatan;
+      }
+      const reply = await sendViaWaGateway(target, body);
       return finish({ am_id: am.am_id, via: am.via, mode: "am", tanggal: tgl, customers: r.count, reply });
     }
     const r = await upsertDailyTodo({
