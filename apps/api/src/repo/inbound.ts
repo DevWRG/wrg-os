@@ -427,7 +427,14 @@ async function insertAmActivities(
         FROM activity_log
        WHERE am_id = ${amId} AND tanggal = ${tanggal} AND source = 'wa-inbound'
          AND lower(faskes_bersih(customer_name)) = lower(faskes_bersih(${it.customer}))
-       ORDER BY id
+       -- Yang SUDAH memegang rencana didahulukan, baru yang tertua. Data lama
+       -- (sebelum idempotensi) menyisakan pasangan duplikat di mana justru
+       -- baris KEDUA yang terikat -- mis. Iqbal 7 Sep: 4977 tak terikat, 4978
+       -- memegang rencana 7618. Kalau yang tertua yang dipilih, kiriman ulang
+       -- akan mengikat 4977 ke 7618 juga (gerbang anti-rebutan mengizinkannya
+       -- karena nama pengklaim lama mirip), lalu dua baris memegang satu
+       -- rencana -- persis kerusakan yang hendak dicegah.
+       ORDER BY (plan_id IS NULL), id
        LIMIT 1
     `;
 
