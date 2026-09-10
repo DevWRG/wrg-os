@@ -27,6 +27,10 @@ export async function GET(req: Request) {
 }
 
 // Gateway → apps/api POST /visits (catat kunjungan geotag+foto).
+//
+// x-user-id WAJIB diteruskan, sama seperti di GET. Tanpa itu backend jatuh ke
+// FULL_SCOPE dan gerbang tulisnya (tolak viewer; AM hanya atas nama sendiri)
+// tak pernah menyala — endpointnya kembali terbuka bagi siapa pun yang login.
 export async function POST(req: Request) {
   let body: unknown;
   try {
@@ -34,10 +38,11 @@ export async function POST(req: Request) {
   } catch {
     return Response.json({ error: "invalid JSON body" }, { status: 400 });
   }
+  const me = await sessionUser();
   try {
     const res = await gatewayFetch("/visits", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...(me ? { "x-user-id": me.id } : {}) },
       body: JSON.stringify(body),
     });
     const data = await res.json();
