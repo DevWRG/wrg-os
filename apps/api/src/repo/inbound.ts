@@ -484,8 +484,29 @@ async function resolveActivityLinks(
 }
 
 // #REPORT AM → activity_log (per customer) + fuzzy-match ke sales_plan hari itu
-// (pg_trgm > 0.3) → set plan_id + tandai plan reported. is_unmatched bila tak match.
+// (pg_trgm > 0.3 + faskes_cocok) → set plan_id + tandai plan reported.
+// is_unmatched bila tak match.
 // Sekalian resolve Account/Opportunity + simpan tipe aktivitas (F16 CRM Fase 1).
+//
+// DUA SARINGAN di atas ambang 0,3 — keduanya lahir dari audit prod 10 Sep 2026:
+//
+// 1. `faskes_cocok` (migrasi 176). Nama faskes Indonesia berbentuk
+//    `<kata generik> <pembeda> <tempat>`, jadi dua faskis BERBEDA di kota yang
+//    sama sudah lolos 0,3 hanya dari bagian yang mereka bagi bersama —
+//    `Puskesmas Peterongan` vs `Puskesmas Jabon` = 0,32, dan `rsu muh babat`
+//    vs `Rs nu babat` = 0,44 padahal itu dua rumah sakit berlainan di Babat.
+//    Terhitung 34 tautan salah faskes + 41 rencana bertanda reported palsu.
+//
+// 2. Rencana yang SUDAH diklaim laporan lain tidak boleh direbut. Dulu, saat
+//    AM mengunjungi customer di luar rencana, laporannya menyambar rencana
+//    tersisa yang kebetulan mirip — sehingga satu rencana dipegang dua laporan
+//    (32 kasus rebutan di prod, mis. rencana `Klinik MTA` dipegang laporan
+//    `Klinik MTA` DAN `Kimia Klinik`). Pengecualian `>= 0.7` menjaga agar
+//    laporan yang dikirim ULANG tetap menemukan rencananya sendiri.
+//
+// Keduanya hanya MEMPERSEMPIT: laporan yang tak lagi cocok jatuh ke
+// `is_unmatched` — jawaban jujur "kunjungan ini di luar rencana", yang memang
+// sudah jadi perilaku benar untuk 573 baris lain.
 async function insertAmActivities(
   amId: string,
   tanggal: string,
@@ -501,9 +522,18 @@ async function insertAmActivities(
     // tetap apa adanya dari AM (jejak mentah tetap di wa_message.body).
     const namaBersih = bersihkanNamaCustomer(it.customer);
     const cands = await sql`
-      SELECT id, similarity(customer_name, ${namaBersih}) AS score
-      FROM sales_plan WHERE am_id = ${amId} AND tanggal = ${tanggal}
-        AND similarity(customer_name, ${namaBersih}) > 0.3
+      SELECT sp.id, similarity(sp.customer_name, ${namaBersih}) AS score
+      FROM sales_plan sp
+      WHERE sp.am_id = ${amId} AND sp.tanggal = ${tanggal}
+        AND similarity(sp.customer_name, ${namaBersih}) > 0.3
+        AND faskes_cocok(${namaBersih}, sp.customer_name)
+        AND (
+          NOT EXISTS (SELECT 1 FROM activity_log a2 WHERE a2.plan_id = sp.id)
+          OR EXISTS (
+            SELECT 1 FROM activity_log a2
+             WHERE a2.plan_id = sp.id
+               AND similarity(faskes_bersih(a2.customer_name), ${namaBersih}) >= 0.7)
+        )
       ORDER BY score DESC LIMIT 1
     `;
     const planId = cands[0] ? Number(cands[0].id) : null;
