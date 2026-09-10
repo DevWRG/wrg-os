@@ -507,6 +507,39 @@ async function resolveActivityLinks(
 // Keduanya hanya MEMPERSEMPIT: laporan yang tak lagi cocok jatuh ke
 // `is_unmatched` — jawaban jujur "kunjungan ini di luar rencana", yang memang
 // sudah jadi perilaku benar untuk 573 baris lain.
+// IDEMPOTEN: kiriman ULANG #REPORT memperbarui baris, tidak menambah baris.
+//
+// AM rutin mengoreksi laporannya dengan mengirim ulang. Dulu tiap kiriman
+// melahirkan baris activity_log baru, jadi satu kunjungan tercatat dua-tiga
+// kali. Terhitung di prod: 94 kelompok duplikat / 121 baris berlebih, dan itu
+// terus tumbuh — sama seperti sampah over-split dulu, bedanya ini beranak tiap
+// hari.
+//
+// Kunci identitas = (am_id, tanggal, nama customer ternormalisasi).
+//
+// KENAPA BUKAN "hapus semua lalu tulis ulang" seperti insertSalesPlan:
+// AM melapor BERTAHAP, satu pesan satu customer. Dari 63 pasangan (AM,tanggal)
+// yang punya >1 pesan #REPORT sejak Agustus, hampir semuanya berisi customer
+// yang BERBEDA — mis. 17 pasangan berpesan 5 kali menghasilkan 72 baris untuk
+// 72 customer unik. Menghapus set lama akan menghancurkan laporan yang sah.
+//
+// KENAPA NAMA PERSIS, BUKAN FUZZY: pencocokan longgar (>=0,7) menggabungkan
+// faskes yang benar-benar berlainan — 'Dinas Kesehatan Kab Madiun' vs
+// 'Dinas Kesehatan Kota Madiun' berskor 0,77, 'RS PKU Muhammadiyah Selogiri'
+// vs '... Wonogiri' 0,71. Menyatukannya jauh lebih merusak daripada menyisakan
+// satu duplikat. Normalisasi dibatasi pada prefiks `Cust:` + huruf kecil.
+//
+// FOTO & GEOTAG TIDAK DISENTUH saat memperbarui. Foto menempel BELAKANGAN
+// lewat photoFollowup, jadi baris lama sering justru pemegang fotonya —
+// terhitung 19 dari 24 baris rintisan di prod. Menimpanya dengan NULL akan
+// menghapus bukti kunjungan yang geotagnya susah payah dipulihkan.
+//
+// BATAS YANG DIPILIH SADAR: dua kunjungan NYATA ke customer yang sama di hari
+// yang sama akan tergabung jadi satu baris, isinya dari kiriman terakhir. Itu
+// jarang, dan pemeriksaan 94 kelompok duplikat di prod tak menemukan satu pun
+// yang meyakinkan sebagai dua kunjungan terpisah — yang ada rintisan "visit"
+// lalu laporan asli, atau revisi. AM yang benar-benar berkunjung dua kali bisa
+// menuliskannya dalam satu baris hasil.
 async function insertAmActivities(
   amId: string,
   tanggal: string,
@@ -543,19 +576,60 @@ async function insertAmActivities(
     // Default 'Fisik' bila AM tak menyebut tipe: #REPORT AM = laporan kunjungan
     // harian (bukan kanal lain) — mempertahankan makna baris lama.
     const actType = it.activity_type ?? "Fisik";
-    const rows = await sql`
-      INSERT INTO activity_log
-        (am_id, plan_id, tanggal, customer_name, hasil, next_action, source, is_unmatched, match_score, message_id,
-         activity_type, account_id, opportunity_id)
-      VALUES
-        (${amId}, ${planId}, ${tanggal}, ${it.customer}, ${it.hasil || null}, ${it.next_action || null},
-         'wa-inbound', ${planId === null}, ${score}, ${messageId},
-         ${actType}, ${links.accountId}, ${links.opportunityId})
-      RETURNING id
+
+    // Sudah ada baris untuk (AM, tanggal, customer) ini? → PERBARUI, jangan
+    // tambah baris baru. Lihat catatan idempotensi di atas fungsi.
+    const [ada] = await sql<{ id: string; plan_id: string | null; match_score: string | null }[]>`
+      SELECT id, plan_id, match_score
+        FROM activity_log
+       WHERE am_id = ${amId} AND tanggal = ${tanggal} AND source = 'wa-inbound'
+         AND lower(faskes_bersih(customer_name)) = lower(faskes_bersih(${it.customer}))
+       ORDER BY id
+       LIMIT 1
     `;
-    if (planId !== null) {
+
+    // Rencana yang SUDAH dipegang baris lama menang: baris itu tak muncul di
+    // `cands` (gerbang anti-rebutan menyembunyikannya dari dirinya sendiri),
+    // jadi tanpa ini kiriman ulang akan melepas ikatannya sendiri.
+    const planFinal = ada?.plan_id != null ? Number(ada.plan_id) : planId;
+    const scoreFinal = ada?.plan_id != null ? (ada.match_score != null ? Number(ada.match_score) : null) : score;
+
+    let actId: number;
+    if (ada) {
+      // Foto, geotag, dan tautan Account TIDAK disentuh — foto menempel belakangan
+      // lewat photoFollowup, dan menimpanya dengan NULL akan menghapus bukti
+      // kunjungan. Yang diperbarui hanya isi laporannya.
+      await sql`
+        UPDATE activity_log
+           SET hasil = ${it.hasil || null},
+               next_action = ${it.next_action || null},
+               activity_type = ${actType},
+               message_id = ${messageId},
+               plan_id = ${planFinal},
+               match_score = ${scoreFinal},
+               is_unmatched = ${planFinal === null},
+               account_id = COALESCE(account_id, ${links.accountId}),
+               opportunity_id = COALESCE(opportunity_id, ${links.opportunityId})
+         WHERE id = ${Number(ada.id)}
+      `;
+      actId = Number(ada.id);
+    } else {
+      const rows = await sql`
+        INSERT INTO activity_log
+          (am_id, plan_id, tanggal, customer_name, hasil, next_action, source, is_unmatched, match_score, message_id,
+           activity_type, account_id, opportunity_id)
+        VALUES
+          (${amId}, ${planFinal}, ${tanggal}, ${it.customer}, ${it.hasil || null}, ${it.next_action || null},
+           'wa-inbound', ${planFinal === null}, ${scoreFinal}, ${messageId},
+           ${actType}, ${links.accountId}, ${links.opportunityId})
+        RETURNING id
+      `;
+      actId = Number(rows[0].id);
+    }
+
+    if (planFinal !== null) {
       matched += 1;
-      await sql`UPDATE sales_plan SET reported = true, reported_at = now(), activity_id = ${Number(rows[0].id)} WHERE id = ${planId} AND reported = false`;
+      await sql`UPDATE sales_plan SET reported = true, reported_at = now(), activity_id = ${actId} WHERE id = ${planFinal} AND reported = false`;
     } else {
       unmatchedNames.push(it.customer);
     }
