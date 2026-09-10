@@ -165,6 +165,9 @@ export function buildAmReportReply(
   planTotal: number,
   reported: number,
   pendingPhoto: string[],
+  // Foto sudah menempel TAPI tanpa koordinat. Dibedakan dari pendingPhoto
+  // (foto belum ada sama sekali) karena obatnya beda — lihat blok di bawah.
+  tanpaGeo: { customer: string; adaOverlay: boolean }[] = [],
 ): string {
   let s = `✅ Report EOD tercatat, ${nama}\n\n📅 ${fmtTanggalDisplay(tanggal)}\n🗒️ ${n} customer reported`;
   if (planTotal > 0) s += `\n📊 ${reported}/${planTotal} customer selesai  ${progressBar(reported, planTotal)}`;
@@ -181,7 +184,27 @@ export function buildAmReportReply(
   if (pendingPhoto.length > 0) {
     s += `\n\n⚠️ *Foto visit belum ada (${pendingPhoto.length} customer):*\n${pendingPhoto.join(", ")}`;
     s += "\n\nKirim foto Geo-Tagging Camera per customer dgn caption `Nama Customer` — fuzzy match auto-pair ke pending.";
-  } else {
+  }
+  // Foto menempel tapi TANPA koordinat = kunjungan tak pernah masuk menu Visits
+  // (`sales_plan.visit_lat IS NOT NULL`, repo/visit.ts). Sebelum blok ini balasan
+  // justru bilang "✅ Semua foto visit lengkap." — AM diberi tahu berhasil padahal
+  // visitnya tak terhitung, dan tak punya cara tahu. Cakupan geotag Arif 24%,
+  // Aulia 40% (vs Sidqi 88%) bertahan berbulan-bulan karena kegagalannya senyap.
+  if (tanpaGeo.length > 0) {
+    const tanpaOverlay = tanpaGeo.filter((g) => !g.adaOverlay).map((g) => g.customer);
+    const ocrGagal = tanpaGeo.filter((g) => g.adaOverlay).map((g) => g.customer);
+    s += `\n\n⚠️ *Foto tanpa koordinat (${tanpaGeo.length} customer)* — visit belum terhitung di menu Visits:`;
+    // Dua sebab, dua obat. Tanpa overlay = fotonya memang bukan dari kamera
+    // geotag; koordinat gagal dibaca = overlay ada (jamnya kebaca) tapi baris
+    // Lat/Long terpotong — cukup kirim ulang, tak perlu kunjungan ulang.
+    if (tanpaOverlay.length > 0) {
+      s += `\n• Tanpa overlay geotag: ${tanpaOverlay.join(", ")} — foto ulang pakai Geo-Tagging Camera. Kirim ulang dari galeri tak menolong, overlay-nya tak ikut.`;
+    }
+    if (ocrGagal.length > 0) {
+      s += `\n• Koordinat gagal dibaca: ${ocrGagal.join(", ")} — kirim ulang fotonya, pastikan baris \`Lat … Long …\` utuh dan tak tertutup jari/stiker.`;
+    }
+  }
+  if (pendingPhoto.length === 0 && tanpaGeo.length === 0) {
     s += `\n✅ Semua foto visit lengkap.`;
   }
   return s;
@@ -411,6 +434,78 @@ async function tanggalIkatLaporan(
   return { tanggal: String(h1), digeser: true, dari: tglAwal };
 }
 
+/**
+ * Ambang selisih (hari) antara tanggal yang DITULIS AM di header `#REPORT` dan
+ * tanggal pesannya sendiri, di atas mana AM harus dikonfirmasi.
+ *
+ * `parsers/tanggal.ts` sudah menjaring salah-TAHUN (>= 365 hari) dan tanggal
+ * masa depan (> 7 hari), tapi sengaja memberi ruang 180 hari ke belakang untuk
+ * backdate yang sah. Celahnya justru di situ: salah ketik BULAN lolos tanpa
+ * suara. Teramati di prod (audit export grup The ALLIANCE vs prod, 9 Sep 2026):
+ *
+ *   Luri  kirim 22 Jul, tulis "14/7/2026"  -> 4 kunjungan difile ke 14 Jul
+ *   Luri  kirim 27 Jul, tulis "26/6/2026"  -> 5 kunjungan difile ke 26 Jun
+ *   Luri  kirim 29 Jul, tulis "10/6/2026"  -> 5 kunjungan difile ke 10 Jun
+ *   Yugo  kirim  6 Agu, tulis  "6/7/2026"  -> 4 kunjungan difile ke  6 Jul
+ *
+ * 22 kunjungan tercatat sebulan di belakang tanggal sebenarnya, plus ~76 baris
+ * duplikat karena laporan yang sama masuk dua kali. Di rekap harian AM tampak
+ * tidak bekerja pada hari yang justru dia bekerja.
+ *
+ * 3 hari dipilih supaya laporan H-1 dan H-2 (Senin untuk Sabtu) lewat tanpa
+ * berisik, sementara seluruh kasus yang teramati (>= 8 hari) tertangkap.
+ *
+ * Tanggalnya TIDAK diubah paksa — kita tak bisa tahu mana yang benar, dan
+ * menebak diam-diam persis kelas bug yang perbaikan ini tutup. Yang berubah:
+ * AM diberi tahu, jadi dia bisa mengoreksi malam itu juga.
+ */
+export const AMBANG_SELISIH_TANGGAL = 3;
+
+// Selisih hari antara tanggal yang ditulis AM dan tanggal pesannya. null kalau
+// salah satu tak bisa diurai. Diekspor untuk dipakai kedua pembangun pesan.
+function selisihHariTanggal(tanggalDipakai: string, tanggalPesan: string): number | null {
+  const a = Date.parse(`${tanggalDipakai}T00:00:00Z`);
+  const b = Date.parse(`${tanggalPesan}T00:00:00Z`);
+  if (Number.isNaN(a) || Number.isNaN(b)) return null;
+  return Math.round((b - a) / 86_400_000);
+}
+
+// Diekspor untuk diuji tanpa DB (repo/inbound-tanggal.test.ts).
+export function buildPeringatanTanggal(tanggalDipakai: string, tanggalPesan: string): string | null {
+  const selisih = selisihHariTanggal(tanggalDipakai, tanggalPesan);
+  if (selisih === null || Math.abs(selisih) < AMBANG_SELISIH_TANGGAL) return null;
+  const arah = selisih > 0 ? "lebih tua" : "di masa depan";
+  return (
+    `\n\n📅 *Cek tanggal:* kamu menulis *${tanggalDipakai}*, tapi pesan ini masuk *${tanggalPesan}*` +
+    ` — selisih ${Math.abs(selisih)} hari (${arah}).` +
+    `\nLaporan dicatat ke *${tanggalDipakai}* sesuai yang kamu tulis. Kalau itu salah ketik,` +
+    ` kirim ulang #REPORT dengan tanggal yang benar — kalau dibiarkan, kunjungan ini tak terhitung di hari kerjanya.`
+  );
+}
+
+/**
+ * Versi PLAN. Beda dari versi REPORT di dua hal yang penting:
+ *
+ *  1. Akibatnya lebih parah, jadi dikatakan lebih tegas. Plan yang difile ke
+ *     tanggal salah membuat #REPORT malam itu tak menemukan plan untuk
+ *     dicocokkan → is_unmatched → kunjungannya tidak terhitung sama sekali.
+ *  2. Instruksi kirim-ulangnya WAJIB menyebut "lengkap". insertSalesPlan
+ *     menghapus plan yang belum direport lalu insert ulang, jadi kirim ulang
+ *     PARSIAL justru menghapus sisa plan hari itu.
+ */
+export function buildPeringatanTanggalPlan(tanggalDipakai: string, tanggalPesan: string): string | null {
+  const selisih = selisihHariTanggal(tanggalDipakai, tanggalPesan);
+  if (selisih === null || Math.abs(selisih) < AMBANG_SELISIH_TANGGAL) return null;
+  const arah = selisih > 0 ? "lebih tua" : "di masa depan";
+  return (
+    `\n\n📅 *Cek tanggal:* kamu menulis *${tanggalDipakai}*, tapi pesan ini masuk *${tanggalPesan}*` +
+    ` — selisih ${Math.abs(selisih)} hari (${arah}).` +
+    `\nPlan dicatat ke *${tanggalDipakai}*. Kalau itu salah ketik, #REPORT nanti malam TIDAK akan` +
+    ` menemukan plan ini dan kunjunganmu tak terhitung.` +
+    `\nKirim ulang #PLAN *lengkap* (semua customer hari ini) dengan tanggal yang benar.`
+  );
+}
+
 // ── Foto-followup (Fase 3) ──
 const PHOTO_MATCH = 0.3, PHOTO_DUP = 0.5, PHOTO_SILENT = 0.2;
 
@@ -629,10 +724,21 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
       }
       const tgl = ap.tanggal ?? wibDate();
       const r = await insertSalesPlan(am.am_id, tgl, ap.customers, am.role, row.received_at);
-      const reply = await sendViaWaGateway(
-        target,
-        `✅ Plan tercatat, ${am.nama}\n\n📅 ${fmtTanggalDisplay(tgl)}\n🗒️ ${r.count} customer visit${r.late ? "\n⚠️ telat (lewat batas)" : ""}`,
-      );
+      let body = `✅ Plan tercatat, ${am.nama}\n\n📅 ${fmtTanggalDisplay(tgl)}\n🗒️ ${r.count} customer visit${r.late ? "\n⚠️ telat (lewat batas)" : ""}`;
+      // Peringatan selisih tanggal berlaku di jalur PLAN juga, bukan cuma REPORT.
+      // Plan yang difile ke tanggal salah lebih merusak daripada report yang
+      // salah tanggal: report malamnya tak menemukan plan untuk dicocokkan →
+      // is_unmatched → kunjungannya tak terhitung sama sekali. Audit export grup
+      // The ALLIANCE vs prod (9 Sep 2026) menemukan 56 item plan hilang karena
+      // ini — mis. "#PLAN Sidqi 16/06/2026" dikirim 17 Jun, "#Plan Vicky
+      // 02/06/2026" dikirim 2 Jul, "#PLAN 04/07/2026" dikirim 4 Agu.
+      if (row.received_at) {
+        const [{ tgl_pesan }] = await sql<{ tgl_pesan: string }[]>`
+          SELECT (${row.received_at}::timestamptz AT TIME ZONE 'Asia/Jakarta')::date::text AS tgl_pesan`;
+        const peringatan = buildPeringatanTanggalPlan(tgl, String(tgl_pesan));
+        if (peringatan) body += peringatan;
+      }
+      const reply = await sendViaWaGateway(target, body);
       return finish({ am_id: am.am_id, via: am.via, mode: "am", tanggal: tgl, customers: r.count, reply });
     }
     const r = await upsertDailyTodo({
@@ -676,6 +782,22 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
       WHERE am_id = ${am.am_id} AND tanggal = ${tgl} AND photo_path IS NULL AND plan_id IS NOT NULL ORDER BY id
     `;
     const pendingNames = pend.map((p) => String(p.customer_name));
+    // Foto sudah menempel tapi koordinatnya nihil → tak akan pernah lolos filter
+    // menu Visits. `photo_geotag IS NULL` = tak ada overlay sama sekali;
+    // `->>'lat' IS NULL` = overlay kebaca (jam masuk) tapi koordinatnya gagal OCR
+    // (lihat tempelFotoLaporan: geo disimpan walau cuma jamnya yang utuh).
+    const tanpaGeoRows = await sql`
+      SELECT customer_name, (photo_geotag IS NOT NULL) AS ada_overlay
+      FROM activity_log
+      WHERE am_id = ${am.am_id} AND tanggal = ${tgl} AND plan_id IS NOT NULL
+        AND photo_path IS NOT NULL
+        AND (photo_geotag IS NULL OR photo_geotag->>'lat' IS NULL)
+      ORDER BY id
+    `;
+    const tanpaGeo = tanpaGeoRows.map((r) => ({
+      customer: String(r.customer_name),
+      adaOverlay: r.ada_overlay === true,
+    }));
     // note: TGL ket → am_reminder (fired H-1/H oleh scheduler reminder-h/h-1).
     let reminders = 0;
     for (const nt of ar.notes) {
@@ -689,16 +811,25 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
       });
       reminders += 1;
     }
-    let body = buildAmReportReply(am.nama, tgl, ar.items.length, res, Number(tot.plan_total), Number(tot.reported), pendingNames);
+    let body = buildAmReportReply(am.nama, tgl, ar.items.length, res, Number(tot.plan_total), Number(tot.reported), pendingNames, tanpaGeo);
     // Pergeseran tanggal HARUS terlihat oleh AM — kalau tebakannya salah, dia
     // satu-satunya yang bisa mengoreksi. Menggeser diam-diam = mengulang kelas
     // bug yang perbaikan ini justru tutup.
     if (ikat.digeser) {
       body += `\n\n🕛 Laporan masuk lewat tengah malam dan tak ada rencana ${ikat.dari}, jadi dicocokkan ke rencana ${tgl}. Kalau keliru, kirim ulang dengan menulis tanggalnya.`;
     }
+    // Selisih tanggal header vs tanggal pesan HARUS terlihat AM — alasan
+    // lengkap di AMBANG_SELISIH_TANGGAL. Tak ditampilkan kalau tanggalnya
+    // sudah digeser H-1, karena blok di atas sudah menjelaskan pergeseran itu.
+    if (!ikat.digeser) {
+      const [{ tgl_pesan }] = await sql<{ tgl_pesan: string }[]>`
+        SELECT (${row.received_at}::timestamptz AT TIME ZONE 'Asia/Jakarta')::date::text AS tgl_pesan`;
+      const peringatan = buildPeringatanTanggal(tgl, String(tgl_pesan));
+      if (peringatan) body += peringatan;
+    }
     if (reminders > 0) body += `\n\n📌 ${reminders} reminder dijadwalkan.`;
     const reply = await sendViaWaGateway(target, body);
-    return finish({ am_id: am.am_id, via: am.via, mode: "am", tanggal: tgl, tanggal_asal: ikat.dari, digeser_h1: ikat.digeser, matched: res.matched, unmatched: res.unmatched, linked: res.linked, reminders, reply, ...(foto ?? {}) });
+    return finish({ am_id: am.am_id, via: am.via, mode: "am", tanggal: tgl, tanggal_asal: ikat.dari, digeser_h1: ikat.digeser, matched: res.matched, unmatched: res.unmatched, linked: res.linked, reminders, tanpa_geo: tanpaGeo.length, reply, ...(foto ?? {}) });
   }
   // report todo — cocokkan vs plan + balasan kaya (match/baru)
   const rep = await markReported(am.am_id, am.nama, tanggal, parsed.items, row.body ?? "");

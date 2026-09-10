@@ -28,6 +28,13 @@ LAUNCHD_LABEL="ai.openclaw.gateway"
 BRIDGE_SEND_URL="http://127.0.0.1:18080/send"
 ENV_PROD="/Users/development/DevWRG/wrg-os/.env.prod"   # sumber WA_SEND_SECRET
 ALERT_TARGET="+6285733048855"                            # owner (DM)
+# Grup AM — tujuan PEMBERITAHUAN PASCA-PULIH, bukan alarm saat mati. Dikirim
+# setelah gateway hidup lagi, jadi pasti sampai. Ini yang menyelamatkan data:
+# AM tahu jendela mana yang hilang dan bisa kirim ulang. Dibaca dari .env.prod
+# supaya tak ada JID ter-hardcode; kosong = fitur ini diam.
+AM_GROUP_TARGET="$(grep -hE '^(COMPLIANCE_AM_GROUP|REMINDER_WA_TARGET)=' "$ENV_PROD" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"')"
+# Outage yang lebih pendek dari ini tak perlu diumumkan ke grup (blip biasa).
+RECOVERY_NOTICE_MIN_MIN=15
 DASHBOARD_HINT="os.wahanalifeline.co.id"
 
 FAIL_THRESHOLD=2            # cek tidak-sehat berturut sebelum bertindak (~4 mnt @cron 2mnt)
@@ -75,18 +82,46 @@ json.dump(s,open(f,"w"))
 PY
 }
 
-send_alert() { # $1 = message
-  local msg="$1" secret
+# $1 = message, $2 = tujuan (default: owner DM).
+#
+# Mengembalikan 0 kalau bridge menjawab 2xx. PERINGATAN: 2xx berarti "masuk
+# antrean bridge", BUKAN "sampai ke WhatsApp". Saat gateway connected=0 bridge
+# tetap menjawab 200 dan pesannya berakhir di ~/.openclaw/delivery-queue/failed/.
+# Pemanggil WAJIB memakai log_hasil_alert() supaya log tidak berbohong.
+send_alert() {
+  local msg="$1" target="${2:-$ALERT_TARGET}" secret
   secret=$(grep -E '^WA_SEND_SECRET=' "$ENV_PROD" 2>/dev/null | cut -d= -f2- | tr -d '"')
-  MSG="$msg" TARGET="$ALERT_TARGET" SECRET="$secret" URL="$BRIDGE_SEND_URL" python3 - <<'PY'
-import os,json,urllib.request
+  MSG="$msg" TARGET="$target" SECRET="$secret" URL="$BRIDGE_SEND_URL" python3 - <<'PY'
+import os,json,sys,urllib.request
 payload=json.dumps({"to":os.environ["TARGET"],"message":os.environ["MSG"]}).encode()
 req=urllib.request.Request(os.environ["URL"],data=payload,
     headers={"content-type":"application/json","x-wa-secret":os.environ["SECRET"]},method="POST")
 try:
-    with urllib.request.urlopen(req,timeout=30) as r: print("alert-http",r.status)
-except Exception as e: print("alert-err",e)
+    with urllib.request.urlopen(req,timeout=30) as r:
+        print("alert-http",r.status)
+        sys.exit(0 if 200 <= r.status < 300 else 1)
+except Exception as e:
+    print("alert-err",e); sys.exit(1)
 PY
+}
+
+# Log yang JUJUR soal nasib sebuah alert.
+#
+# Latar (audit 9 Sep 2026): watchdog ini menulis "ALERT terkirim" tiap kali
+# send_alert dipanggil. Kenyataannya 139 alarm berakhir di delivery-queue/failed/
+# — 82 di antaranya pada 10 Agu saja, hari ke-12 AM kehilangan #PLAN pagi.
+# Alarm "gateway WA mati" dikirim LEWAT WA yang sedang mati; log bilang sukses,
+# tak seorang pun diberi tahu, dan datanya hilang senyap.
+#
+# $1 = rc send_alert, $2 = tujuan, $3 = 1 kalau gateway sedang TIDAK connected
+log_hasil_alert() {
+  if [ "$3" = "1" ]; then
+    log "ALERT ke $2 MASUK ANTREAN tapi gateway connected=0 → kemungkinan besar TIDAK SAMPAI (cek delivery-queue/failed/). Pemberitahuan sebenarnya menyusul saat pulih."
+  elif [ "$1" = "0" ]; then
+    log "ALERT terkirim ke $2"
+  else
+    log "ALERT ke $2 GAGAL (bridge tak menjawab 2xx)"
+  fi
 }
 
 restart_gateway() {
@@ -146,22 +181,53 @@ LAST_RESTART=$(read_state last_restart_ts 0); LAST_RESTART=$((10#${LAST_RESTART:
 LAST_ALERT=$(read_state last_alert_ts 0);   LAST_ALERT=$((10#${LAST_ALERT:-0}))
 PREV=$(read_state last_state up)
 
+DOWN_SINCE=$(read_state down_since_ts 0); DOWN_SINCE=$((10#${DOWN_SINCE:-0}))
+
 if [ "$HEALTHY" = "1" ]; then
   if [ "$CONSEC" -gt 0 ] || [ "$PREV" = "down" ]; then
     log "RECOVERED — gateway sehat lagi (inbound_age=${INBOUND_AGE_MIN}m). reset counter."
     [ "$((NOW - LAST_ALERT))" -ge "$ALERT_COOLDOWN_SEC" ] && {
       send_alert "✅ Gateway WhatsApp pulih (auto). Inbound terakhir ${INBOUND_AGE_MIN} mnt lalu. Dashboard: $DASHBOARD_HINT"
+      rc=$?; log_hasil_alert "$rc" "$ALERT_TARGET" 0
       write_state "last_alert_ts=$NOW"
     }
+    # ── PEMBERITAHUAN PASCA-PULIH KE GRUP AM ──
+    # Inti perbaikan 2026-09-09. Alarm saat gateway mati tak pernah sampai
+    # (dikirim lewat kanal yang mati); yang MENYELAMATKAN DATA adalah
+    # pemberitahuan sesudah pulih, karena saat itu WA sudah hidup. Isinya
+    # menyebut jendela yang hilang supaya AM bisa kirim ulang #PLAN/#REPORT.
+    if [ "$DOWN_SINCE" -gt 0 ] && [ -n "$AM_GROUP_TARGET" ]; then
+      DUR_MIN=$(( (NOW - DOWN_SINCE) / 60 ))
+      if [ "$DUR_MIN" -ge "$RECOVERY_NOTICE_MIN_MIN" ]; then
+        DARI=$(date -r "$DOWN_SINCE" '+%H:%M'); SAMPAI=$(date -r "$NOW" '+%H:%M')
+        TGL=$(date -r "$DOWN_SINCE" '+%d/%m/%Y')
+        send_alert "⚠️ *Gateway WhatsApp sempat mati* — $TGL, ${DARI}–${SAMPAI} WIB (${DUR_MIN} menit).
+
+Pesan yang kalian kirim di jendela itu *TIDAK tercatat* — termasuk #PLAN dan #REPORT, walau Kapten tidak membalas apa pun.
+
+Yang perlu dilakukan:
+• Kirim ulang *#PLAN lengkap* (semua customer hari itu) kalau plan kalian masuk di jendela tersebut.
+• Kirim ulang *#REPORT* untuk kunjungan yang laporannya masuk di jendela tersebut.
+
+Kalau tidak dikirim ulang, kunjungannya tidak akan terhitung." "$AM_GROUP_TARGET"
+        rc=$?; log_hasil_alert "$rc" "grup-AM" 0
+        log "RECOVERY-NOTICE dikirim ke grup AM — jendela ${DARI}–${SAMPAI} (${DUR_MIN}m)"
+      else
+        log "RECOVERY-NOTICE di-skip — outage cuma ${DUR_MIN}m (< ${RECOVERY_NOTICE_MIN_MIN}m)"
+      fi
+    fi
   fi
   [ "$STALE_WARN" = "1" ] && log "WARN — connected tapi inbound diam ${INBOUND_AGE_MIN}m (jam aktif)."
-  write_state "consec_fail=0" "last_state=up" "last_check_ts=$NOW"
+  write_state "consec_fail=0" "last_state=up" "last_check_ts=$NOW" "down_since_ts=0"
   exit 0
 fi
 
 # tidak sehat
 CONSEC=$((CONSEC + 1))
-write_state "consec_fail=$CONSEC" "last_state=down" "last_check_ts=$NOW"
+# Catat KAPAN outage mulai (sekali, di transisi up→down) — dipakai pemberitahuan
+# pasca-pulih untuk menyebut jendela yang hilang.
+[ "$DOWN_SINCE" -eq 0 ] && DOWN_SINCE=$NOW
+write_state "consec_fail=$CONSEC" "last_state=down" "last_check_ts=$NOW" "down_since_ts=$DOWN_SINCE"
 log "UNHEALTHY ($CONSEC/$FAIL_THRESHOLD) — $REASON"
 
 if [ "$CONSEC" -lt "$FAIL_THRESHOLD" ]; then
@@ -183,8 +249,12 @@ fi
 
 if [ "$((NOW - LAST_ALERT))" -ge "$ALERT_COOLDOWN_SEC" ]; then
   send_alert "⚠️ Gateway WhatsApp BERMASALAH — $REASON. Watchdog: $DID_RESTART. Cek capture & openclaw. Dashboard: $DASHBOARD_HINT"
+  ALERT_RC=$?
   write_state "last_alert_ts=$NOW"
-  log "ALERT terkirim ke $ALERT_TARGET"
+  # Kalau penyebabnya "not-connected", alarm ini dikirim lewat kanal yang MATI —
+  # jangan tulis "terkirim". Ini yang dulu menyembunyikan 139 alarm gagal.
+  case "$REASON" in not-connected*) GW_MATI=1 ;; *) GW_MATI=0 ;; esac
+  log_hasil_alert "$ALERT_RC" "$ALERT_TARGET" "$GW_MATI"
 else
   log "ALERT di-skip (cooldown ${ALERT_COOLDOWN_SEC}s belum lewat)"
 fi
