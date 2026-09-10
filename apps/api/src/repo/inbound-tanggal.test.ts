@@ -11,7 +11,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildPeringatanTanggal, AMBANG_SELISIH_TANGGAL } from "./inbound.js";
+import { buildPeringatanTanggal, buildPeringatanTanggalPlan, AMBANG_SELISIH_TANGGAL } from "./inbound.js";
 
 test("selisih 0 hari (laporan hari itu) → diam", () => {
   assert.equal(buildPeringatanTanggal("2026-07-22", "2026-07-22"), null);
@@ -67,4 +67,50 @@ test("ambangnya 3 hari", () => {
 test("input tak valid → diam, jangan bikin balasan rusak", () => {
   assert.equal(buildPeringatanTanggal("bukan-tanggal", "2026-07-22"), null);
   assert.equal(buildPeringatanTanggal("2026-07-22", "ngawur"), null);
+});
+
+// ── Varian PLAN ──
+// Plan yang difile ke tanggal salah lebih merusak daripada report: #REPORT malam
+// itu tak menemukan plan untuk dicocokkan → is_unmatched → kunjungan tak
+// terhitung. Audit 9 Sep 2026: 56 item plan hilang lewat jalur ini, dan #1275
+// hanya menutup jalur REPORT.
+
+test("PLAN: selisih di bawah ambang → diam", () => {
+  assert.equal(buildPeringatanTanggalPlan("2026-06-16", "2026-06-17"), null);
+});
+
+test("PLAN Sidqi: tulis 16/06 kirim 17/06 masih diam (H-1 wajar)", () => {
+  assert.equal(buildPeringatanTanggalPlan("2026-06-16", "2026-06-17"), null);
+});
+
+test("PLAN Vicky: tulis 02/06 kirim 02/07 (30 hari) → diperingatkan", () => {
+  const s = buildPeringatanTanggalPlan("2026-06-02", "2026-07-02");
+  assert.match(s!, /selisih 30 hari/);
+  assert.match(s!, /Plan dicatat ke \*2026-06-02\*/);
+});
+
+test("PLAN: akibatnya disebut eksplisit — report tak akan ketemu plan", () => {
+  const s = buildPeringatanTanggalPlan("2026-07-04", "2026-08-04");
+  assert.match(s!, /#REPORT nanti malam TIDAK akan menemukan plan ini/);
+  assert.match(s!, /tak terhitung/);
+});
+
+test("PLAN: instruksi kirim ulang WAJIB menyebut lengkap", () => {
+  // insertSalesPlan menghapus plan belum-direport lalu insert ulang — kirim
+  // ulang parsial justru menghapus sisa plan hari itu.
+  const s = buildPeringatanTanggalPlan("2026-07-04", "2026-08-04");
+  assert.match(s!, /#PLAN \*lengkap\*/);
+  assert.match(s!, /semua customer hari ini/);
+});
+
+test("PLAN: teks berbeda dari versi REPORT (bukan salin-tempel)", () => {
+  const p = buildPeringatanTanggalPlan("2026-07-04", "2026-08-04")!;
+  const r = buildPeringatanTanggal("2026-07-04", "2026-08-04")!;
+  assert.notEqual(p, r);
+  assert.doesNotMatch(p, /Laporan dicatat/);
+  assert.doesNotMatch(r, /#PLAN \*lengkap\*/);
+});
+
+test("PLAN: input tak valid → diam", () => {
+  assert.equal(buildPeringatanTanggalPlan("ngawur", "2026-07-22"), null);
 });
