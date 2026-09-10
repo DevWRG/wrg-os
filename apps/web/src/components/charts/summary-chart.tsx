@@ -6,52 +6,51 @@ import { Bar, BarChart, CartesianGrid, XAxis } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart";
 
-// Ringkasan per-bulan dari baris yang SUDAH di-fetch (orders/shipments) — agregasi
-// di klien, tanpa endpoint/DB baru. Bar = jumlah dokumen per bulan (≤12 bulan terakhir).
-interface SummaryRow {
-  trans_date: string | null;
-  customer_name?: string | null;
-  total_amount?: string | null;
+/**
+ * Ringkasan per-bulan untuk menu Orders & Shipments.
+ *
+ * Angkanya datang JADI dari endpoint agregat SQL, tidak lagi dihitung di sini.
+ * Dulu komponen ini menerima `rows` — baris yang kebetulan sudah di-fetch
+ * halaman (`?limit=500`) — lalu menjumlahkan total dokumen, "bulan ini",
+ * customer unik, nilai rupiah, dan batang 12 bulan dari situ. Mirror-nya jauh
+ * lebih besar dari 500, jadi semua angka itu diam-diam terlalu rendah, dan
+ * grafiknya menampilkan bulan-bulan lama nyaris kosong seolah bisnisnya
+ * menurun padahal barisnya memang tak pernah diambil.
+ */
+export interface MirrorSummary {
+  total: number;
+  this_month_count: number;
+  unique_customers: number;
+  total_amount: number;
+  /** kronologis, maksimum 12 bulan terakhir; `month` = "YYYY-MM". */
+  by_month: { month: string; count: number; amount: number }[];
 }
 
 const MON = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"];
 const rp = (n: number) => "Rp " + new Intl.NumberFormat("id-ID", { notation: "compact", maximumFractionDigits: 1 }).format(n);
 
 export function SummaryChart({
-  rows,
+  summary,
   countLabel,
   withAmount = false,
 }: {
-  rows: SummaryRow[];
+  summary: MirrorSummary;
   countLabel: string;
   withAmount?: boolean;
 }) {
-  const { data, total, thisMonthCount, totalAmount, uniqueCust } = useMemo(() => {
-    const byMonth = new Map<string, { count: number; amount: number }>();
-    const custs = new Set<string>();
-    const nowMonth = new Date().toISOString().slice(0, 7);
-    let totalAmount = 0;
-    let thisMonthCount = 0;
-    for (const r of rows) {
-      const ym = (r.trans_date ?? "").slice(0, 7); // YYYY-MM
-      const amt = withAmount ? Number(r.total_amount) || 0 : 0;
-      totalAmount += amt;
-      if (r.customer_name) custs.add(r.customer_name);
-      if (ym === nowMonth) thisMonthCount++;
-      if (ym) {
-        const c = byMonth.get(ym) ?? { count: 0, amount: 0 };
-        c.count++;
-        c.amount += amt;
-        byMonth.set(ym, c);
-      }
-    }
-    const data = [...byMonth.keys()].sort().slice(-12).map((ym) => {
-      const [y, m] = ym.split("-");
-      const v = byMonth.get(ym)!;
-      return { month: `${MON[Number(m) - 1] ?? m} '${y.slice(2)}`, count: v.count, amount: v.amount };
-    });
-    return { data, total: rows.length, thisMonthCount, totalAmount, uniqueCust: custs.size };
-  }, [rows, withAmount]);
+  const total = summary.total;
+  const thisMonthCount = summary.this_month_count;
+  const totalAmount = summary.total_amount;
+  const uniqueCust = summary.unique_customers;
+  // Yang tersisa di klien cuma pemformatan label bulan — bukan agregasi.
+  const data = useMemo(
+    () =>
+      summary.by_month.map((b) => {
+        const [y, m] = b.month.split("-");
+        return { month: `${MON[Number(m) - 1] ?? m} '${(y ?? "").slice(2)}`, count: b.count, amount: b.amount };
+      }),
+    [summary.by_month],
+  );
 
   const config = { count: { label: countLabel, color: "var(--primary)" } } satisfies ChartConfig;
 

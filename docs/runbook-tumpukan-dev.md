@@ -14,7 +14,7 @@ lihat bagian "Menghidupkan uji WhatsApp di dev" di bawah.
 | Kirim WA | ya | hanya ke grup di `WA_DEV_GROUPS`; bisu kalau kosong |
 | Scheduler | ya | mati |
 
-## Dua penjaga yang ditegakkan di `ecosystem.config.cjs`
+## Tiga penjaga yang ditegakkan di `ecosystem.config.cjs`
 
 Keduanya di file, bukan diserahkan ke disiplin mengisi `.env`:
 
@@ -28,6 +28,41 @@ Keduanya di file, bukan diserahkan ke disiplin mengisi `.env`:
 
 **Yang TIDAK dijaga di sana: port.** Lihat bagian berikutnya — itu satu-satunya
 cara tumpukan dev bisa "berhasil" tapi sebenarnya mati.
+
+## Root berkas & kredensial dev — kenapa dipisah
+
+Setiap default berkas di `apps/api` menunjuk direktori **bersama** di `$HOME`.
+Tanpa override, tumpukan dev membaca berkas **produksi**:
+
+| Env | Default (dipakai prod) | Isi nyata di server |
+|---|---|---|
+| `MEDIA_ROOT` | `~/.openclaw/media` | ±27rb foto kunjungan WA |
+| `GA_UPLOAD_DIR` | `~/.wrg-os/uploads/ga-assets` | foto/dokumen aset GA |
+| `APPROVAL_UPLOAD_ROOT` | `~/.wrg-os/approval-uploads` | lampiran approval |
+| `OPENCLAW_SESSIONS_FILE` | `~/.openclaw/agents/main/sessions/sessions.json` | nama grup WA asli |
+| `ACCURATE_CRED_FILE` | `~/.openclaw/credentials/accurate.json` | kredensial Accurate LIVE |
+
+`ecosystem.config.cjs` mengarahkan kelimanya ke `~/.wrg-os-dev/…` untuk entri
+dev saja (ubah dengan `WRG_DEV_FILE_ROOT`). Entri prod **tidak** disetel, jadi
+prod tetap memakai defaultnya.
+
+Dua hal yang membuat ini bukan sekadar kerapian:
+
+1. `GET /media?p=<path absolut>` menyajikan **apa pun** di bawah root yang
+   di-allow-list, tanpa mengecek apakah path itu terdaftar di DB. Menyamarkan
+   kolom `media_path` di DB dev hanya menghapus nama berkasnya (jadi tak bisa
+   ditebak) — root-nya tetap di-allow-list, jadi siapa pun yang tahu satu nama
+   berkas prod tetap bisa mengunduhnya lewat dashboard dev.
+2. `loadCreds()` di `repo/accurateSync.ts` jatuh ke `ACCURATE_CRED_FILE` kalau
+   `ACCURATE_ACCESS_TOKEN`/`ACCURATE_SIGNATURE_SECRET` kosong. Berkas itu ADA di
+   server, jadi dev dulu melapor `{"configured":true}` dan
+   `POST /accurate/sync/*` dari dev menarik data Accurate **sungguhan** —
+   menimpa mirror dev yang sudah disamarkan dengan nama pelanggan asli.
+   Scheduler dev mati, tapi endpoint manualnya tidak.
+
+Untuk menyalakan sync Accurate di dev dengan sengaja, isi
+`ACCURATE_ACCESS_TOKEN` + `ACCURATE_SIGNATURE_SECRET` di `.env.dev` (env menang
+atas berkas), atau taruh berkas kredensial di `~/.wrg-os-dev/`.
 
 ## Peta port mesin ini — periksa sebelum `pm2 start`
 

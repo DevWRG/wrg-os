@@ -20,6 +20,20 @@ _DOC_INSTRUKSI = {
         "(placeholder dari estimated_value), syarat & ketentuan, masa berlaku, "
         "penutup + tanda tangan."
     ),
+    # F15 (has_final_pricing=True) — nomor/tanggal/tabel/syarat/penutup SEMUA
+    # sudah final & ditulis SISTEM (sebelum & sesudah teks ini). LLM cuma
+    # kontribusi kalimat pengantar. Kenapa selengkap ini dilarang: awalnya cuma
+    # tabel yg dilarang, tapi AI TETAP nulis nomor/tanggal/syarat/penutup
+    # sendiri (placeholder beda dgn yg ditempel sistem) — jadi SEMUA bagian
+    # struktural/faktual ditarik ke sistem, LLM ngga dikasih ruang sama sekali
+    # utk hal yg bisa salah/dobel.
+    "sph_final_pricing": (
+        "Tulis HANYA 1-3 kalimat PENGANTAR penawaran (sapaan singkat + kalimat "
+        "transisi ke daftar harga, personalisasi pakai nama pelanggan). JANGAN "
+        "tulis judul surat, nomor, tanggal, tabel/harga/qty apa pun, syarat & "
+        "ketentuan, masa berlaku, penutup, atau tanda tangan — SEMUA itu sudah "
+        "ditulis sistem tepat sebelum & sesudah kalimatmu."
+    ),
     "offering_letter": (
         "Susun Offering Letter persuasif namun formal: pembuka relasi, ringkas "
         "kebutuhan pelanggan, nilai yang ditawarkan WRG, indikasi nilai kerja "
@@ -48,8 +62,9 @@ def doc_title(req: SalesDocRequest) -> str:
     return f"{label} — {cust}"
 
 
-def build_salesdoc_system(doc_type: str) -> str:
-    instruksi = _DOC_INSTRUKSI.get(doc_type, _DOC_INSTRUKSI["sph"])
+def build_salesdoc_system(doc_type: str, has_final_pricing: bool = False) -> str:
+    key = "sph_final_pricing" if (doc_type == "sph" and has_final_pricing) else doc_type
+    instruksi = _DOC_INSTRUKSI.get(key, _DOC_INSTRUKSI["sph"])
     return (
         f"Kamu adalah staf penjualan {NAMA_PERUSAHAAN}, distributor alat "
         "kesehatan B2B (reagen lab, alat diagnostik & medis) ke RS, lab, klinik, "
@@ -111,7 +126,15 @@ def template_doc(req: SalesDocRequest) -> str:
             "Kami menantikan kesempatan menindaklanjuti penawaran ini.\n\n"
             "Hormat kami,\nTim Penjualan WRG\n"
         )
-    # default: sph
+    # sph + has_final_pricing (F15) — HANYA kalimat pengantar, sama alasan dgn
+    # instruksi LLM di atas (nomor/tanggal/tabel/syarat/penutup ditulis
+    # letterHeader/letterFooter di apps/api/src/repo/sph.ts, bukan di sini).
+    if req.doc_type == "sph" and req.has_final_pricing:
+        return (
+            f"Bersama ini {NAMA_PERUSAHAAN} dengan senang hati menyampaikan "
+            f"penawaran harga untuk kebutuhan {cust} sebagai berikut."
+        )
+    # default: sph (jalur A6 batch lama, belum ada tabel final)
     return (
         f"SURAT PENAWARAN HARGA (SPH)\nNomor: [nomor] | Tanggal: [tanggal]\n\n"
         f"Kepada Yth. {cust}\n\nBersama ini {NAMA_PERUSAHAAN} menyampaikan "
