@@ -145,9 +145,15 @@ async function resolveAccount(
   if (noRekening) {
     const digits = String(noRekening).replace(/\D/g, "");
     if (digits) {
+      // `[^0-9]`, BUKAN `\D`: di dalam template literal `\D` luruh jadi `D`,
+      // sehingga polanya membuang huruf D dari nomor rekening alih-alih
+      // karakter non-digit — '123-456' tetap '123-456' dan tak pernah sama
+      // dengan `digits` yang sudah bersih. Gagalnya senyap: rekening lolos ke
+      // pencocokan nama file. Bentuk kelas karakter ini juga yang dipakai
+      // master.ts, approval.ts, listmembers.ts, dan users.ts.
       const rows = await sql`
         SELECT id, label_file, jenis FROM bank_account
-        WHERE regexp_replace(COALESCE(no_rekening, ''), '\D', '', 'g') = ${digits}
+        WHERE regexp_replace(COALESCE(no_rekening, ''), '[^0-9]', '', 'g') = ${digits}
         LIMIT 1
       `;
       if (rows.length) {
