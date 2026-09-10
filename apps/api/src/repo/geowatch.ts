@@ -152,7 +152,23 @@ export async function runGeoSweep(to?: string, tanggal?: string): Promise<{
   // karena yang bisa membetulkan fotonya adalah AM-nya sendiri.
   const target = to || process.env.GEO_SWEEP_WA_TARGET || process.env.COMPLIANCE_AM_GROUP || process.env.REMINDER_WA_TARGET || "";
   const gateway = await sendViaWaGateway(target || "_am_group", message);
-  if (!gateway.sent) {
+  // `sent: true` TIDAK berarti terkirim. Mode STUB (WA_SEND_URL kosong) dan
+  // DRY-RUN sama-sama mengembalikannya — di situ `sent` berarti "tak ada
+  // kegagalan", bukan "pesan sampai". Tanpa penjagaan ini, menjalankan sweep
+  // dari luar proses prod meninggalkan baris audit yang menyatakan sweep
+  // TERKIRIM padahal tak satu pun pesan keluar.
+  //
+  // Sudah terjadi (audit cd1608f9, 10 Sep 2026) saat memratinjau isi pesan
+  // sebelum menyalakan job ini di produksi. Yang terpicu waktu itu jalur STUB,
+  // bukan dry-run: WA_DRY_RUN memang di-set, tapi WA_SEND_URL tidak ikut dimuat
+  // sehingga sendViaWaGateway keburu keluar di cabang stub. Karena itu KEDUANYA
+  // dijaga, bukan hanya dryRun — menjaga satu saja akan melewatkan kasus nyata
+  // yang sudah terjadi.
+  //
+  // Audit ini dipakai untuk membuktikan sweep benar-benar berjalan, jadi
+  // catatan palsu di dalamnya lebih berbahaya daripada tak ada catatan.
+  const benarTerkirim = gateway.sent && !gateway.dryRun && !gateway.stub;
+  if (!benarTerkirim) {
     return { tanggal: tgl, am_terdampak: perAm.length, customer, per_am: perAm, message, gateway, audit_id: null };
   }
 
