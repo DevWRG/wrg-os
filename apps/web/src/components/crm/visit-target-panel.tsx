@@ -14,6 +14,7 @@ export interface AmVisitProgress {
   visits: number;
   visits_geotag: number;
   visits_unbound: number;
+  planned: number;
   new_prospects: number;
   target: number;
   new_target: number;
@@ -36,6 +37,23 @@ export interface TimelinessKpi {
   on_time: number;
   pct: number | null;
   target_pct: number;
+}
+
+// Rasio kepatuhan lapor: berapa dari rencana yang dibuat AM sendiri, ia
+// laporkan. Berbeda dari `pct` yang mengukur terhadap target 20/minggu.
+//
+// Kenapa dua angka ini perlu berdampingan: minggu 37/2026 Iqbal, Luri, dan Yugo
+// tampil 3/20 (15%) — terbaca seperti gagal — padahal melaporkan 3 dari 4
+// rencana; rencananya cuma 1/hari karena 10 AM dari semua cabang sedang acara
+// di Kantor Klampis. Di minggu yang sama Aulia 1/20 dan Firman 1/20 terlihat
+// nyaris sama, padahal mereka merencanakan 17 dan 11 kunjungan lapangan lalu
+// tak melaporkannya. Rasio memisahkan keduanya: 3/4 patuh, 1/17 tidak.
+function toneRasio(visits: number, planned: number) {
+  if (planned === 0) return "text-muted-foreground";
+  const r = visits / planned;
+  if (r >= 0.9) return "text-emerald-600 dark:text-emerald-400";
+  if (r >= 0.5) return "text-amber-600 dark:text-amber-400";
+  return "text-rose-600 dark:text-rose-400";
 }
 
 // Ambang warna sengaja longgar di tengah: 100% = hijau, ≥60% = kuning (masih
@@ -114,7 +132,10 @@ export function VisitTargetTable({ kpi }: { kpi: VisitTargetKpi }) {
           <span className="font-medium">Geotag</span> menunjukkan berapa di antaranya berkoordinat.{" "}
           <span className="font-medium">Tak terikat</span> = laporan yang masuk tapi tak tersambung ke
           rencana (paling sering karena tanggal laporan beda dari tanggal rencana) — kerjanya tercatat,
-          hanya belum terhitung sebagai capaian.
+          hanya belum terhitung sebagai capaian.{" "}
+          <span className="font-medium">Dilaporkan</span> = berapa dari rencana yang dibuat AM sendiri
+          yang ia laporkan; ini memisahkan &ldquo;minggu ini memang tak ada rencana lapangan&rdquo; dari
+          &ldquo;ada rencana tapi tak dilaporkan&rdquo;, dua hal yang sama-sama menekan Progress.
         </p>
       </CardHeader>
       <CardContent>
@@ -127,6 +148,7 @@ export function VisitTargetTable({ kpi }: { kpi: VisitTargetKpi }) {
                 <th className="pb-2 text-right font-medium">Kunjungan</th>
                 <th className="pb-2 text-right font-medium">Geotag</th>
                 <th className="pb-2 text-right font-medium">Tak terikat</th>
+                <th className="pb-2 text-right font-medium">Dilaporkan</th>
                 <th className="pb-2 pl-3 font-medium">Progress</th>
                 <th className="pb-2 text-right font-medium">Prospek baru</th>
               </tr>
@@ -163,6 +185,21 @@ export function VisitTargetTable({ kpi }: { kpi: VisitTargetKpi }) {
                         </span>
                       ) : (
                         <span className="text-muted-foreground">—</span>
+                      )}
+                    </td>
+                    <td className="py-2 text-right tabular-nums">
+                      {a.planned > 0 ? (
+                        <span
+                          className={toneRasio(a.visits, a.planned)}
+                          title={`${a.visits} dari ${a.planned} rencana minggu ini dilaporkan.`}
+                        >
+                          {a.visits}
+                          <span className="text-muted-foreground">/{a.planned}</span>
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground" title="Tak ada rencana minggu ini — bukan kegagalan lapor.">
+                          —
+                        </span>
                       )}
                     </td>
                     <td className="w-[34%] py-2 pl-3">
