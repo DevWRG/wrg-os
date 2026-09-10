@@ -39,6 +39,7 @@ import { evaluateSalesAlerts } from "./repo/sales-analytics-alert-eval.js";
 import { computeNpk, currentPeriod } from "./repo/npk.js";
 import { computeNpkAm } from "./repo/npk-am.js";
 import { snapshotLastWeek } from "./repo/watchpoint-weekly.js";
+import { runGeoSweep } from "./repo/geowatch.js";
 
 // Penjadwal agen in-process (Blueprint v2.3). Default MATI — aktif hanya bila
 // AGENT_SCHEDULE_ENABLED=true. Tiap run tetap menulis ke audit_log via repo
@@ -140,6 +141,10 @@ export function startScheduler(): ScheduleStatus {
   // sebelum job lain menggeser angka. Tanpa ini papan Weekly tak punya riwayat:
   // metric computed dihitung live sehingga minggu lewat ikut berubah tiap dibuka.
   const watchpointSnapshotEnabled = (process.env.WATCHPOINT_SNAPSHOT_ENABLED ?? "false").toLowerCase() === "true";
+  // Sweep harian "foto visit tanpa koordinat" → grup AM. Flag SENDIRI (default
+  // off) karena mengirim WA; target grup dari GEO_SWEEP_WA_TARGET /
+  // COMPLIANCE_AM_GROUP / REMINDER_WA_TARGET.
+  const geoSweepEnabled = (process.env.GEO_SWEEP_ENABLED ?? "false").toLowerCase() === "true";
   const timezone = TZ();
   const jobs: JobDef[] = [
     {
@@ -215,12 +220,12 @@ export function startScheduler(): ScheduleStatus {
   ];
 
   status = {
-    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled || watchpointSnapshotEnabled,
+    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled || watchpointSnapshotEnabled || geoSweepEnabled,
     timezone,
     jobs: jobs.map((j) => ({ id: j.id, expr: j.expr, valid: cron.validate(j.expr) })),
   };
 
-  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled && !watchpointSnapshotEnabled) {
+  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled && !watchpointSnapshotEnabled && !geoSweepEnabled) {
     console.log("[scheduler] semua *_SCHEDULE/_ENABLED flag != true — tidak dijadwalkan");
     return status;
   }
@@ -793,6 +798,32 @@ export function startScheduler(): ScheduleStatus {
       { timezone },
     );
     live.push(`npk-compute=${npkExpr}`);
+  }
+
+  // Sweep geotag harian: kunjungan yang fotonya menempel tapi tanpa koordinat
+  // tak pernah masuk menu Visits. Jendelanya 2 hari (lihat repo/geowatch.ts) —
+  // banyak AM melapor lewat tengah malam, jadi sapuan hari-ini saja akan
+  // melewatkan mereka selamanya. Sunyi kalau bersih: tak ada pesan dikirim.
+  const geoSweepExpr = process.env.GEO_SWEEP_CRON ?? "30 21 * * *";
+  if (geoSweepEnabled) {
+    if (!cron.validate(geoSweepExpr)) {
+      console.error(`[scheduler] geo-sweep cron-expr tidak valid: "${geoSweepExpr}" — dilewati`);
+    } else {
+      cron.schedule(
+        geoSweepExpr,
+        async () => {
+          const startedAt = new Date().toISOString();
+          try {
+            const r = await runGeoSweep();
+            console.log(`[scheduler] geo-sweep @ ${startedAt} ${JSON.stringify({ tanggal: r.tanggal, am: r.am_terdampak, customer: r.customer, dikirim: r.message !== null }).slice(0, 200)}`);
+          } catch (e) {
+            console.error(`[scheduler] geo-sweep gagal @ ${startedAt}:`, e);
+          }
+        },
+        { timezone },
+      );
+      live.push(`geo-sweep=${geoSweepExpr}`);
+    }
   }
 
   console.log(`[scheduler] aktif (TZ=${timezone}): ${live.join(", ") || "(tidak ada job valid)"}`);
