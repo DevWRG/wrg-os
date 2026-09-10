@@ -2,7 +2,15 @@ import { createHash } from "node:crypto";
 
 import { db } from "../db.js";
 import { sendViaWaGateway, type WaSendResult } from "../wasend.js";
-import { wibDate } from "./cashin.js";
+
+// Didefinisikan lokal, BUKAN diimpor dari repo/cashin.ts. Isinya satu baris,
+// dan repo ini memang sudah mendefinisikannya lokal di lima modul lain
+// (inbound, detectleave, notiftua, scheduler, index). Mengimpornya dari
+// cashin.ts mengikat sweep geotag pada F-CASHIN — fitur yang sama sekali tak
+// berhubungan, 3.186 baris, lengkap dengan menu web + migrasi + modul AI.
+// Akibatnya sweep ini tak bisa dipromosikan ke main tanpa menyeret fitur itu
+// sekalian, hanya demi dua baris tanggal.
+const wibDate = (): string => new Date(Date.now() + 7 * 3600 * 1000).toISOString().slice(0, 10);
 
 // Sweep harian "foto visit tanpa koordinat" → grup AM.
 //
