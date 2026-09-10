@@ -502,6 +502,22 @@ export interface AmVisitProgress {
   visits_unbound: number;
   /** Bagian dari `visits` yang punya koordinat. Indikator KUALITAS, bukan target. */
   visits_geotag: number;
+  /**
+   * SELURUH rencana minggu itu, dilaporkan atau tidak. Penyebut rasio
+   * kepatuhan lapor (`visits`/`planned`).
+   *
+   * Kenapa perlu: `visits`/`target` menyamakan dua keadaan yang berlainan.
+   * Minggu 37/2026 Iqbal, Luri, dan Yugo tampil 3/20 (15%) — terbaca seperti
+   * gagal — padahal mereka melaporkan 3 dari 4 rencana; rencananya memang
+   * cuma 1/hari karena 10 AM dari semua cabang sedang acara di Kantor
+   * Klampis, bukan kunjungan lapangan. Di minggu yang sama Aulia 1/20 dan
+   * Firman 1/20 dengan tampilan nyaris sama, padahal mereka merencanakan 17
+   * dan 11 kunjungan lapangan lalu tak melaporkannya.
+   *
+   * Rasio ini memisahkan keduanya: Iqbal 3/4 = patuh, Aulia 1/17 = tidak.
+   * `planned = 0` berarti memang tak ada rencana — bukan kegagalan lapor.
+   */
+  planned: number;
   new_prospects: number;
   target: number;
   new_target: number;
@@ -579,6 +595,16 @@ export async function visitTargets(scope: DataScope = FULL_SCOPE, weekOffset = 0
       FROM sales_plan sp, span
       WHERE sp.reported AND sp.tanggal BETWEEN span.d0 AND span.d1
     ),
+    -- Penyebut rasio kepatuhan lapor: SELURUH rencana minggu itu. Sengaja
+    -- dihitung terpisah dari vis (yang hanya yang reported) supaya
+    -- 'tak punya rencana' bisa dibedakan dari 'punya rencana, tak melapor'.
+    -- (Tanpa backtick: di dalam template sql ia menutup literalnya.)
+    pln AS (
+      SELECT sp.am_id, count(*)::int AS n
+      FROM sales_plan sp, span
+      WHERE sp.tanggal BETWEEN span.d0 AND span.d1
+      GROUP BY sp.am_id
+    ),
     -- Laporan yang tercatat tapi tak terikat rencana. TIDAK digabung ke vis:
     -- target & persen tetap diukur dari rencana yang dilaporkan, supaya angka
     -- capaian tak berubah artinya. Ini kolom pengungkap, bukan penambah nilai.
@@ -596,6 +622,7 @@ export async function visitTargets(scope: DataScope = FULL_SCOPE, weekOffset = 0
            (SELECT count(*)::int FROM vis WHERE vis.am_id = mu.am_id) AS visits,
            (SELECT count(*)::int FROM vis WHERE vis.am_id = mu.am_id AND vis.ber_geotag) AS visits_geotag,
            COALESCE((SELECT unb.n FROM unb WHERE unb.am_id = mu.am_id), 0) AS visits_unbound,
+           COALESCE((SELECT pln.n FROM pln WHERE pln.am_id = mu.am_id), 0) AS planned,
            (SELECT count(DISTINCT v.customer_name)::int
               FROM vis v, span
              WHERE v.am_id = mu.am_id AND v.customer_name IS NOT NULL
@@ -629,6 +656,7 @@ export async function visitTargets(scope: DataScope = FULL_SCOPE, weekOffset = 0
       visits,
       visits_geotag: Number(r.visits_geotag ?? 0),
       visits_unbound: Number(r.visits_unbound ?? 0),
+      planned: Number(r.planned ?? 0),
       new_prospects: Number(r.new_prospects ?? 0),
       target,
       new_target: Number(r.new_target ?? 0),
