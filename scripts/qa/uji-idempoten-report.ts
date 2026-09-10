@@ -79,6 +79,28 @@ async function main() {
   cek("yang baru tak terikat rencana", r.some((x) => x.customer_name.includes("Gamma") && x.is_unmatched));
   cek("dua baris lama tetap utuh", r.filter((x) => x.photo_path === "/uji/foto.jpg").length === 1);
 
+  console.log("4) data LAMA: duplikat di mana baris KEDUA yang terikat rencana");
+  // Bentuk yang nyata di prod sebelum idempotensi (Iqbal 7 Sep): dua baris nama
+  // sama, yang tertua TAK terikat, yang kedua memegang rencananya. Kiriman ulang
+  // harus memperbarui yang TERIKAT — bukan mengikat yang tertua ke rencana yang
+  // sama, karena itu membuat dua baris memegang satu rencana.
+  await sql`DELETE FROM activity_log WHERE am_id = ${AM} AND tanggal = ${TGL}`;
+  await sql`UPDATE sales_plan SET reported = false, activity_id = NULL WHERE am_id = ${AM} AND tanggal = ${TGL}`;
+  const [pAlpha] = await sql<{ id: string }[]>`
+    SELECT id FROM sales_plan WHERE am_id = ${AM} AND tanggal = ${TGL} AND customer_name = 'RS Uji Alpha'`;
+  await sql`
+    INSERT INTO activity_log (am_id, plan_id, tanggal, customer_name, hasil, source, is_unmatched)
+    VALUES (${AM}, NULL, ${TGL}, 'RS Uji Alpha', 'yatim lama', 'wa-inbound', true),
+           (${AM}, ${Number(pAlpha.id)}, ${TGL}, 'RS Uji Alpha', 'terikat lama', 'wa-inbound', false)`;
+  await processInboundMessage(pesan(
+    `#REPORT 15/4/2026\n1. RS Uji Alpha\nhasil: kiriman ulang sesudah duplikat lama`, 4));
+  r = await baris();
+  const terikat = r.filter((x) => x.plan_id !== null);
+  cek("tak ada baris tambahan", r.length === 2, `dapat ${r.length}`);
+  cek("HANYA SATU baris memegang rencana", terikat.length === 1, `dapat ${terikat.length}`);
+  cek("yang diperbarui adalah baris yang TERIKAT",
+      (terikat[0]?.hasil ?? "").includes("kiriman ulang"), terikat[0]?.hasil ?? "-");
+
   // bersihkan
   await sql`DELETE FROM activity_log WHERE am_id = ${AM} AND tanggal = ${TGL}`;
   await sql`DELETE FROM sales_plan   WHERE am_id = ${AM} AND tanggal = ${TGL}`;
