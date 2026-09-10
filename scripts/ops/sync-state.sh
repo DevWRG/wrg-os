@@ -47,6 +47,21 @@ git fetch origin dev --quiet
 git checkout dev --quiet 2>/dev/null || git checkout -b dev --quiet origin/dev
 git reset --hard origin/dev --quiet
 
+# === RE-EXEC dari versi dev (JANGAN dihapus) ===
+# bash membaca badan skrip ini dari DISK saat run dimulai. Trap EXIT di atas
+# memarkir repo di `main` tiap selesai, jadi run berikutnya selalu membaca versi
+# `main` — perbaikan yang baru mendarat di `dev` TIDAK PERNAH jalan. Itu sebabnya
+# katalog tetap 149/F1-F117 walau #1103 (29 Agu) & #1107 (30 Agu) sudah merge ke
+# dev: run #1108 membalik 185->149 dan tiap run sesudahnya mengulanginya.
+# Setelah reset di atas, file on-disk sudah versi dev → exec ulang diri sendiri
+# SEKALI. Guard env mencegah loop; exec mengganti image proses sehingga trap EXIT
+# lama tidak ikut jalan (proses baru memasang trap-nya sendiri).
+if [ -z "${SYNC_STATE_REEXEC:-}" ]; then
+  export SYNC_STATE_REEXEC=1
+  log "re-exec dari versi dev: $REPO_DIR/scripts/ops/sync-state.sh"
+  exec bash "$REPO_DIR/scripts/ops/sync-state.sh" "$@"
+fi
+
 mkdir -p "$STATE_DIR"
 
 # === GENERATE dashboard-state.json ===
@@ -101,9 +116,11 @@ cat > "$STATE_DIR/dashboard-state.json" <<JSON
     "githubRepo": "https://github.com/DevWRG/wrg-os"
   },
   "catalog": {
-    "totalFeatures": 149,
-    "range": "F1-F117",
-    "comment": "Catalog detail di-maintain manual via Cowork (Sprint Dashboard FEATURES array)"
+    "totalFeatures": 194,
+    "range": "F1-F156",
+    "built": 56,
+    "builtDev": 46,
+    "comment": "Angka disalin manual dari array FEATURES di WRG-OS-Sprint-Dashboard.html (SoT katalog, di Drive). Terakhir dicocokkan 2026-09-06: 194 entri, 54 BUILT + 2 PROD-LIVE-WRGCRM = 56 di main, 46 BUILT-DEV menunggu promosi. Perbarui di SINI kalau blueprint berubah — file state ditulis ulang tiap run, jadi edit manual di dashboard-state.json pasti hilang."
   },
   "_meta": {
     "source": "Auto-generated dari pm2 jlist + gh CLI + .env.prod",

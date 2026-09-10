@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
@@ -16,14 +17,22 @@ interface SalesDoc {
   status: string;
   model_used: string | null;
   approved_by: string | null;
+  hod_reviewed_by: string | null;
   created_at: string;
 }
 
-const STATUSES = ["all", "draft", "approved", "sent", "canceled"] as const;
+interface SphLineItem {
+  id: number;
+  nama: string;
+  variantConfirmed: boolean;
+}
+
+const STATUSES = ["all", "draft", "hod_review", "approved", "sent", "canceled"] as const;
 type StatusFilter = (typeof STATUSES)[number];
 
 const STATUS_BADGE: Record<string, "default" | "secondary" | "outline" | "destructive"> = {
   draft: "secondary",
+  hod_review: "secondary",
   approved: "default",
   sent: "outline",
   canceled: "destructive",
@@ -36,6 +45,22 @@ export default function SalesDocsPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [toInputs, setToInputs] = useState<Record<string, string>>({});
+  // HANDOVER §6 — item nama-varian-kembar per doc SPH yg statusnya hod_review
+  // (titik paling relevan: sebelum Admin Penawaran finalisasi).
+  const [sphItems, setSphItems] = useState<Record<string, SphLineItem[]>>({});
+
+  const loadSphItems = useCallback(async (docs: SalesDoc[]) => {
+    const targets = docs.filter((d) => d.doc_type === "sph" && d.status === "hod_review");
+    for (const d of targets) {
+      try {
+        const res = await fetch(`/api/sph/${d.id}`, { cache: "no-store" });
+        const data = await res.json();
+        if (res.ok) setSphItems((prev) => ({ ...prev, [d.id]: data.items ?? [] }));
+      } catch {
+        /* non-blocking — approve tetap tervalidasi di backend walau list ini gagal muat */
+      }
+    }
+  }, []);
 
   const url = useCallback(
     (f: StatusFilter) => (f === "all" ? "/api/sales/docs" : `/api/sales/docs?status=${f}`),
@@ -51,13 +76,14 @@ export default function SalesDocsPage() {
         const data = await res.json();
         if (!res.ok) throw new Error(data.error ?? "gagal memuat dokumen");
         setDocs(data.docs ?? []);
+        void loadSphItems(data.docs ?? []);
       } catch (e) {
         setError(String(e));
       } finally {
         setLoading(false);
       }
     },
-    [url],
+    [url, loadSphItems],
   );
 
   // Initial fetch — inline async (setState hanya setelah await).
@@ -70,6 +96,7 @@ export default function SalesDocsPage() {
         if (!active) return;
         if (!res.ok) throw new Error(data.error ?? "gagal memuat dokumen");
         setDocs(data.docs ?? []);
+        void loadSphItems(data.docs ?? []);
       } catch (e) {
         if (active) setError(String(e));
       } finally {
@@ -79,19 +106,22 @@ export default function SalesDocsPage() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [loadSphItems]);
 
-  async function act(id: string, action: "approve" | "send" | "cancel") {
+  async function act(id: string, action: "review" | "approve" | "send" | "cancel") {
     setBusy(id);
     setError(null);
     try {
-      const body: Record<string, string> = { approver_id: "web-ui" };
+      // F15: "review" (tahap 1/2 HOD Business) punya endpoint sendiri di
+      // bawah /api/sph, sisanya tetap lewat /api/sales/docs (dipakai semua doc_type).
+      const path = action === "review" ? `/api/sph/${id}/review` : `/api/sales/docs/${id}/${action}`;
+      const body: Record<string, string> = action === "review" ? { reviewer_id: "web-ui" } : { approver_id: "web-ui" };
       if (action === "send") {
         const to = (toInputs[id] ?? "").trim();
         if (!to) throw new Error("isi tujuan (nomor/jid) dulu");
         body.to = to;
       }
-      const res = await fetch(`/api/sales/docs/${id}/${action}`, {
+      const res = await fetch(path, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
@@ -99,6 +129,25 @@ export default function SalesDocsPage() {
       const data = await res.json();
       if (!res.ok || data.ok === false) throw new Error(data.error ?? `gagal ${action}`);
       await load(filter);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function confirmVariant(docId: string, lineItemId: number) {
+    setBusy(docId);
+    setError(null);
+    try {
+      const res = await fetch(`/api/sph/${docId}/confirm-variant`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ line_item_id: lineItemId, confirmed_by: "web-ui" }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.ok === false) throw new Error(data.error ?? "gagal konfirmasi varian");
+      await loadSphItems(docs);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -115,7 +164,7 @@ export default function SalesDocsPage() {
             Dokumen penjualan A6 (SPH / offering / presentation / MOU) — review, approve, kirim.
           </p>
         </div>
-        <div className="flex flex-wrap gap-1">
+        <div className="flex flex-wrap items-center gap-1">
           {STATUSES.map((s) => (
             <Button
               key={s}
@@ -129,6 +178,9 @@ export default function SalesDocsPage() {
               {s === "all" ? "Semua" : s}
             </Button>
           ))}
+          <Link href="/sph/new" className="ml-2">
+            <Button size="sm">+ Buat SPH</Button>
+          </Link>
         </div>
       </div>
 
@@ -154,15 +206,23 @@ export default function SalesDocsPage() {
                 <pre className="bg-muted/50 max-h-48 overflow-auto rounded-md p-3 text-xs whitespace-pre-wrap">
                   {d.draft_text}
                 </pre>
+                <a
+                  href={`/api/export/sales-doc/${d.id}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-primary text-xs underline"
+                >
+                  🖨️ Export / Print PDF
+                </a>
                 {d.status === "draft" && (
                   <div className="flex gap-2">
                     <Button
                       size="sm"
                       className="flex-1"
                       disabled={busy === d.id}
-                      onClick={() => void act(d.id, "approve")}
+                      onClick={() => void act(d.id, d.doc_type === "sph" ? "review" : "approve")}
                     >
-                      Approve
+                      {d.doc_type === "sph" ? "Kirim ke HOD Business" : "Approve"}
                     </Button>
                     <Button
                       size="sm"
@@ -174,6 +234,55 @@ export default function SalesDocsPage() {
                     </Button>
                   </div>
                 )}
+                {d.status === "hod_review" && (() => {
+                  const pending = (sphItems[d.id] ?? []).filter((it) => !it.variantConfirmed);
+                  return (
+                    <div className="space-y-2">
+                      <p className="text-muted-foreground text-xs">
+                        Sudah direview HOD Business{d.hod_reviewed_by ? ` (${d.hod_reviewed_by})` : ""} — tahap 2:
+                        finalisasi Admin Penawaran.
+                      </p>
+                      {pending.length > 0 && (
+                        <div className="rounded-md border border-amber-300 bg-amber-50 p-2 text-xs dark:border-amber-800 dark:bg-amber-950">
+                          <p className="mb-1 font-medium text-amber-700 dark:text-amber-400">
+                            ⚠️ {pending.length} item nama-varian-kembar (HANDOVER §6) — konfirmasi dulu sebelum finalisasi:
+                          </p>
+                          {pending.map((it) => (
+                            <div key={it.id} className="flex items-center justify-between gap-2 py-0.5">
+                              <span>{it.nama}</span>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={busy === d.id}
+                                onClick={() => void confirmVariant(d.id, it.id)}
+                              >
+                                Konfirmasi
+                              </Button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <div className="flex gap-2">
+                        <Button
+                          size="sm"
+                          className="flex-1"
+                          disabled={busy === d.id || pending.length > 0}
+                          onClick={() => void act(d.id, "approve")}
+                        >
+                          Finalisasi (Approve)
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={busy === d.id}
+                          onClick={() => void act(d.id, "cancel")}
+                        >
+                          Batalkan
+                        </Button>
+                      </div>
+                    </div>
+                  );
+                })()}
                 {d.status === "approved" && (
                   <div className="space-y-2">
                     <Input

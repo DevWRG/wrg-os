@@ -19,6 +19,7 @@ from .openrouter import (
     rekap_models,
     resume_models,
     salesdoc_models,
+    ticket_triage_models,
 )
 from .raport import build_raport_system, build_raport_user, parse_raport, template_raport
 from .rekap import build_messages_block, build_rekap_system
@@ -40,6 +41,8 @@ from .schemas import (
     GrowthLeversResponse,
     ExtractRequest,
     ExtractResponse,
+    KlaimOcrRequest,
+    KlaimOcrResponse,
     LeaveDetectRequest,
     LeaveDetectResponse,
     RekapRequest,
@@ -53,10 +56,24 @@ from .schemas import (
     SalesDocRequest,
     SalesDocResponse,
     SummarizeRequest,
+    TicketTriageRequest,
+    TicketTriageResponse,
     WeekendBriefingRequest,
     WeekendBriefingResponse,
 )
 from .executive import NAMA_PERUSAHAAN
+from .klaim import build_klaim_system, build_klaim_user, parse_klaim
+from .koran import (
+    apply_checksum,
+    build_koran_ocr_system,
+    build_koran_ocr_user,
+    merge_ocr_pages,
+    parse_ocr_json,
+    parse_text_pdf,
+    pdf_page_images,
+)
+from .openrouter import chat_vision, klaim_models, koran_models
+from .schemas import KoranLine, KoranParseRequest, KoranParseResponse
 
 # System prompt stabil (cache-friendly) — port dari legacy/crm wrg-daily SKILL.md.
 DAILY_SYSTEM_PROMPT = """Kamu adalah WRG CRM Daily Summary Generator.
@@ -289,7 +306,7 @@ def sales_doc(req: SalesDocRequest) -> SalesDocResponse:
     tmpl = template_doc(req)
     if use_llm:
         text, model_used, _, _ = chat_or_fallback(
-            build_salesdoc_system(req.doc_type),
+            build_salesdoc_system(req.doc_type, req.has_final_pricing),
             build_salesdoc_user(req),
             tmpl,
             max_tokens=3000,
@@ -304,6 +321,139 @@ def sales_doc(req: SalesDocRequest) -> SalesDocResponse:
         model=model_used,
         dry_run=not use_llm or model_used == "dry-run-fallback",
     )
+
+
+@app.post("/ocr-klaim", response_model=KlaimOcrResponse)
+def ocr_klaim(req: KlaimOcrRequest) -> KlaimOcrResponse:
+    """DOC #KLAIM Fase A: ekstrak isi foto dokumen (invoice/faktur/struk) via
+    Gemini Vision (OpenRouter). dry_run / tanpa OPENROUTER_API_KEY → SEMUA field
+    null (TIDAK ada template fabrikasi — beda dari /sales-doc, gambar sungguhan
+    tak bisa dikira-kira isinya)."""
+    use_llm = not req.dry_run and bool(os.environ.get("OPENROUTER_API_KEY"))
+    if not use_llm:
+        return KlaimOcrResponse(model="dry-run", dry_run=True)
+    try:
+        text, model_used, _, _ = chat_vision(
+            build_klaim_system(),
+            build_klaim_user(req.caption),
+            req.image_base64,
+            req.mime_type,
+            max_tokens=1500,
+            models=klaim_models(),
+        )
+        fields = parse_klaim(text)
+    except Exception:  # noqa: BLE001 — degradasi ke dry-run, endpoint tetap 200
+        return KlaimOcrResponse(model="dry-run-fallback", dry_run=True)
+    return KlaimOcrResponse(
+        raw_text=fields["raw_text"],
+        nomor_dokumen=fields["nomor_dokumen"],
+        tanggal_dokumen=fields["tanggal_dokumen"],
+        nominal=fields["nominal"],
+        pihak=fields["pihak"],
+        model=model_used,
+        dry_run=False,
+    )
+
+
+def _koran_response(res: dict, **over) -> KoranParseResponse:
+    lines = [KoranLine(**l) for l in (res.get("lines") or [])]
+    payload = {
+        "bank_kode": res.get("bank_kode"),
+        "no_rekening": res.get("no_rekening"),
+        "nama_pemilik": res.get("nama_pemilik"),
+        "cabang": res.get("cabang"),
+        "tanggal": res.get("tanggal"),
+        "dicetak_at": res.get("dicetak_at"),
+        "saldo_awal": res.get("saldo_awal"),
+        "saldo_akhir": res.get("saldo_akhir"),
+        "total_debit_tercetak": res.get("total_debit_tercetak"),
+        "total_kredit_tercetak": res.get("total_kredit_tercetak"),
+        "jumlah_debit": res.get("jumlah_debit"),
+        "jumlah_kredit": res.get("jumlah_kredit"),
+        "sum_debit": res.get("sum_debit") or 0,
+        "sum_kredit": res.get("sum_kredit") or 0,
+        "checksum_ok": res.get("checksum_ok"),
+        "metode": res.get("metode") or "parser",
+        "parse_error": res.get("parse_error"),
+        "raw_text": res.get("raw_text") or "",
+        "lines": lines,
+    }
+    payload.update(over)
+    return KoranParseResponse(**payload)
+
+
+@app.post("/parse-koran", response_model=KoranParseResponse)
+def parse_koran(req: KoranParseRequest) -> KoranParseResponse:
+    """F-CASHIN: baca satu file rekening koran (PDF) jadi header + baris mutasi.
+
+    Parser teks dicoba LEBIH DULU dan menang kalau checksum-nya lolos — 12 dari
+    21 file contoh sampai di titik itu tanpa menyentuh LLM sama sekali. Sisanya
+    (PDF hasil 'Print To PDF' yang tak punya teks, dan CIMB Niaga yang tata
+    kolomnya bocor saat diekstrak) dirender jadi gambar lalu dibaca vision.
+
+    Endpoint ini TIDAK mengklasifikasi apa pun — mana uang masuk riil, mana dana
+    puteran WRG, itu urusan apps/api dgn aturan deterministik + triage manusia.
+
+    Selalu balas 200: kegagalan dilaporkan lewat checksum_ok/parse_error supaya
+    apps/api bisa menyimpan statement dgn status 'perlu_review' (jejaknya ada,
+    tapi tak masuk resume) — bukan hilang jadi error 500.
+    """
+    import base64
+
+    try:
+        pdf_bytes = base64.b64decode(req.pdf_base64, validate=False)
+    except Exception:  # noqa: BLE001
+        return _koran_response({}, parse_error="pdf_base64 tidak bisa di-decode", checksum_ok=False)
+
+    res, _ = parse_text_pdf(pdf_bytes)
+    if not res.get("needs_ocr"):
+        return _koran_response(res)
+
+    # Jalur OCR. Alasan jatuh ke sini disimpan supaya tak hilang kalau OCR juga
+    # gagal — tanpa ini, pesan akhirnya cuma "OCR gagal" tanpa sebab awal.
+    alasan = res.get("parse_error") or "parser teks tidak bisa dipakai"
+    if not req.allow_ocr:
+        return _koran_response(res, checksum_ok=False,
+                               parse_error="%s; OCR dimatikan (allow_ocr=false)" % alasan)
+
+    use_llm = not req.dry_run and bool(os.environ.get("OPENROUTER_API_KEY"))
+    if not use_llm:
+        return _koran_response(res, metode="ocr", model="dry-run", dry_run=True,
+                               checksum_ok=False,
+                               parse_error="%s; OCR tidak dijalankan (dry-run / tanpa API key)" % alasan)
+
+    try:
+        images = pdf_page_images(pdf_bytes)
+    except Exception as e:  # noqa: BLE001 — pypdfium2 belum terpasang di venv juga sampai sini
+        return _koran_response(res, metode="ocr", checksum_ok=False,
+                               parse_error="%s; render halaman gagal: %s" % (alasan, e))
+    if not images:
+        return _koran_response(res, metode="ocr", checksum_ok=False,
+                               parse_error="%s; PDF tanpa halaman" % alasan)
+
+    pages = []
+    model_used = None
+    for i, img in enumerate(images):
+        try:
+            text, model_used, _, _ = chat_vision(
+                build_koran_ocr_system(),
+                build_koran_ocr_user(req.file_nama, i + 1, len(images)),
+                img,
+                "image/png",
+                max_tokens=4000,
+                models=koran_models(),
+            )
+        except Exception as e:  # noqa: BLE001
+            return _koran_response(res, metode="ocr", checksum_ok=False,
+                                   parse_error="%s; OCR halaman %d gagal: %s" % (alasan, i + 1, e))
+        pages.append(parse_ocr_json(text))
+
+    merged = merge_ocr_pages(pages)
+    merged["bank_kode"] = res.get("bank_kode")
+    merged["raw_text"] = res.get("raw_text") or ""
+    merged["metode"] = "ocr"
+    merged = apply_checksum(merged)
+    return _koran_response(merged, model=model_used, dry_run=False)
 
 
 @app.post("/extract", response_model=ExtractResponse)
@@ -468,6 +618,53 @@ def detect_leave(req: LeaveDetectRequest) -> LeaveDetectResponse:
         confidence=float(d.get("confidence") or 0.0),
         model=model,
         dry_run=model == "dry-run-fallback",
+    )
+
+
+# === F26: ticket triage (klasifikasi severity + ekstrak area dari komplain) ===
+TICKET_TRIAGE_SYSTEM_PROMPT = """Kamu mesin triage komplain customer utk distributor alat kesehatan B2B (Wahana Lifeline). Baca SATU pesan komplain WhatsApp dari customer soal alat/produk yang sudah terinstal.
+
+Klasifikasikan severity:
+- "kritis": alat TOTAL tidak berfungsi & berdampak langsung ke operasional/pasien (darurat).
+- "tinggi": alat rusak signifikan, mengganggu operasional, tapi bukan darurat.
+- "sedang": gangguan minor, alat masih bisa dipakai sebagian.
+- "rendah": pertanyaan/permintaan info, bukan laporan kerusakan.
+
+Kalau pesan menyebut nama kota/cabang/lokasi, ekstrak ke field "area" (mis. "Surabaya", "Bandung"). Kalau tidak disebut, area = null.
+
+Return STRICT JSON (no markdown): {"severity": "rendah|sedang|tinggi|kritis", "area": "<nama lokasi>" or null}"""
+
+
+@app.post("/triage-ticket", response_model=TicketTriageResponse)
+def triage_ticket(req: TicketTriageRequest) -> TicketTriageResponse:
+    """F26 — klasifikasi severity + ekstrak area dari 1 pesan komplain via LLM.
+
+    dry_run / tanpa OPENROUTER_API_KEY → severity="sedang" (fallback aman, BUKAN error).
+    """
+    if req.dry_run or not os.environ.get("OPENROUTER_API_KEY"):
+        return TicketTriageResponse(severity="sedang", area=None, model="dry-run", dry_run=True)
+    text, model, _, _ = chat_or_fallback(
+        TICKET_TRIAGE_SYSTEM_PROMPT, req.complaint_text, "", max_tokens=300, models=ticket_triage_models(),
+    )
+    cleaned = (text or "").strip()
+    if cleaned.startswith("```"):
+        cleaned = "\n".join(ln for ln in cleaned.splitlines() if not ln.strip().startswith("```"))
+    cleaned = cleaned.strip()
+    if cleaned.lower().startswith("json"):
+        cleaned = cleaned[4:].strip()
+    try:
+        d = json.loads(cleaned)
+    except (ValueError, TypeError):
+        d = {}
+    raw_severity = str(d.get("severity") or "").lower()
+    severity_uncertain = raw_severity not in ("rendah", "sedang", "tinggi", "kritis")
+    severity = "sedang" if severity_uncertain else raw_severity
+    return TicketTriageResponse(
+        severity=severity,
+        area=(d.get("area") or None),
+        model=model,
+        dry_run=model == "dry-run-fallback",
+        severity_uncertain=severity_uncertain,
     )
 
 

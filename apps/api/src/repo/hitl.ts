@@ -41,6 +41,47 @@ export async function enqueueAmbiguous(opts: {
   return rows[0].id as string;
 }
 
+// F9 Duplicate Customer Name Alert — dipicu sinkron dari createDeal() (deal.ts),
+// BUKAN dari agent/cron. agent_id sengaja NULL (sama pola report_ambiguous_match).
+export interface DupNameCandidate {
+  kind: "deal" | "accurate_customer";
+  ref_id: string;
+  customer_name: string;
+  am_id: string | null;
+  cabang: string | null;
+  score: number;
+  exact: boolean;
+}
+
+export async function enqueueDuplicateCustomerName(opts: {
+  dealId: string;
+  customerName: string;
+  amId: string | null;
+  cabang: string | null;
+  candidates: DupNameCandidate[];
+}): Promise<string | null> {
+  const sql = db();
+  const corr = `f9-${opts.dealId}`;
+  // Anti-spam: 1 dealId cuma boleh punya 1 flag pending (dealId baru = UUID
+  // fresh, jadi ini murni pertahanan kalau fungsi ini dipanggil ulang nanti).
+  const existing = await sql`SELECT 1 FROM hitl_queue WHERE correlation_id = ${corr} AND status = 'pending' LIMIT 1`;
+  if (existing.length > 0) return null;
+  const payload = {
+    type: "duplicate_customer_name_flag",
+    deal_id: opts.dealId,
+    customer_name: opts.customerName,
+    am_id: opts.amId,
+    cabang: opts.cabang,
+    candidates: opts.candidates,
+  };
+  const rows = await sql`
+    INSERT INTO hitl_queue (correlation_id, r_tier, hitl_level, payload)
+    VALUES (${corr}, 'R1', 'L2', ${sql.json(payload as unknown as Parameters<typeof sql.json>[0])})
+    RETURNING id
+  `;
+  return rows[0].id as string;
+}
+
 export async function listHitl(status = "pending") {
   const sql = db();
   return sql`

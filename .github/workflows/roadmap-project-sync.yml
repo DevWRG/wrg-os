@@ -13,7 +13,9 @@ name: Roadmap Project Sync
 # F-number diambil dari nama branch + judul PR (mis. feat/f127-... / feat(F127): ...).
 # Jika F-number belum ada di board, item draft baru DIBUAT otomatis lalu di-set status.
 # Butuh secret PROJECTS_TOKEN (PAT dgn izin project) karena GITHUB_TOKEN default
-# tidak bisa menulis Projects v2.
+# tidak bisa menulis Projects v2. Keabsahan token diuji di AWAL job, sebelum
+# early-return F-number — kalau tidak, token mati lolos sebagai `success` di
+# setiap PR yang kebetulan tak ber-F-number (lihat komentar di dalam script).
 
 on:
   pull_request:
@@ -26,7 +28,15 @@ jobs:
   sync:
     # PR dependabot tak dapat akses secrets.PROJECTS_TOKEN (secret store terpisah) &
     # tak pernah punya F-number → skip biar tidak gagal palsu.
-    if: ${{ github.actor != 'dependabot[bot]' }}
+    #
+    # Disaring pakai NAMA BRANCH, bukan cuma `github.actor`. Guard aktor saja
+    # BOCOR di event merge: waktu PR dependabot di-merge manusia, `github.actor`
+    # adalah si manusia, bukan `dependabot[bot]`. Terbukti di run 32344413617
+    # (PR #953, actor=DevWRG) — job jalan, dan karena hash branch-nya
+    # `minor-and-patch-f182e0e817` memuat "f182", regex F-number menangkapnya
+    # sebagai fitur "F182". Nama branch itu intrinsik ke PR-nya, jadi tak bisa
+    # berubah tergantung siapa yang menekan tombol merge.
+    if: ${{ github.actor != 'dependabot[bot]' && !startsWith(github.head_ref, 'dependabot/') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/github-script@v9
@@ -43,6 +53,47 @@ jobs:
             // Base branch -> status saat PR MERGED. Base di luar peta ini diabaikan.
             const MERGE_TARGET = { dev: 'Checking', main: 'Done' };
 
+            // ── Uji kredensial DULUAN, sebelum early-return apa pun ──────────
+            // Tanpa ini kematian token TERSAMAR: jalur "tak ada F-number" keluar
+            // lebih awal tanpa pernah menyentuh API, jadi run selesai `success`.
+            // PROJECTS_TOKEN pernah mati tanpa ada yang tahu — ketahuan 27 Agu
+            // 2026 lewat #1072, PR pertama sesudahnya yang kebetulan ber-F-number.
+            // SEJAK KAPAN ia mati tidak diketahui: histori run hanya menjangkau
+            // 23 Agu, dan run sebelum #1072 semuanya jalur skip yang tak pernah
+            // menyentuh API. Sisir papan 29 Agu tak menemukan drift, jadi
+            // rentangnya kemungkinan pendek — tapi itu keberuntungan, bukan
+            // hasil deteksi. Justru itu intinya: tanpa cek ini, lama tidaknya
+            // token mati ditentukan kebetulan. Cek ini menukar diam yang tak
+            // terbatas dengan gagal yang cepat: satu query murah di SETIAP PR.
+            //
+            // Yang dibaca adalah project-nya sendiri, bukan `viewer { login }`.
+            // `viewer` cuma membuktikan token sah — token tanpa scope `project`
+            // LOLOS di situ lalu gagal belakangan, persis kelas kegagalan yang
+            // mau dihapus. Membaca ProjectV2 membuktikan sah DAN cukup scope.
+            try {
+              const probe = await github.graphql(
+                `query($id:ID!){ node(id:$id){ ... on ProjectV2 { number title } } }`,
+                { id: projectId },
+              );
+              if (!probe?.node?.number) throw new Error('project tak terbaca (node kosong)');
+              core.info(`Token OK — papan #${probe.node.number} "${probe.node.title}" terbaca.`);
+            } catch (e) {
+              core.setFailed(
+                `PROJECTS_TOKEN tidak bisa membaca papan Projects: ${e.message}\n\n` +
+                'Status papan BERHENTI ter-update sampai ini dibereskan.\n\n' +
+                'Rotasi — classic PAT, papan ini user-owned\n' +
+                '(github.com/users/DevWRG/projects/2):\n' +
+                '  1. https://github.com/settings/tokens/new — scope `project`,\n' +
+                '     Expiration "No expiration". Expiry pendek adalah penyebab\n' +
+                '     kejadian ini, bukan sekadar preferensi.\n' +
+                '  2. gh secret set PROJECTS_TOKEN --repo DevWRG/wrg-os < <file-token>\n' +
+                '  3. Perbarui juga ~/.wrg-gh-token — automation lain memakainya\n' +
+                '  4. Sisir papan: transisi selama token mati tak pernah tercatat\n\n' +
+                'Konteks: issue #1075.',
+              );
+              return;
+            }
+
             const pr = context.payload.pull_request;
             let target;
             if (context.payload.action === 'closed') {
@@ -58,8 +109,130 @@ jobs:
               target = 'In Progress';
             }
 
-            const text  = `${pr.head.ref}\n${pr.title}`;
-            const fnums = [...new Set((text.match(/F\d{2,3}/gi) || []).map(s => s.toUpperCase()))];
+            // Sumber F-number: nama branch + judul PR.
+            //
+            // ⚠️ TIDAK CUKUP untuk PR PROMOSI `dev` → `main`. Di situ `head.ref`
+            // selalu "dev" dan judulnya berbentuk "Promote dev → main: …" atau
+            // "fix(kso): promosi #1031 — …" — tak memuat F-number sama sekali.
+            // Akibatnya cabang MERGE_TARGET.main → 'Done' TAK PERNAH dieksekusi
+            // lewat alur normal, dan sejak alur bergeser jadi
+            // feature → dev → promote main, kartu berhenti di 'Checking'
+            // SELAMANYA kecuali ada yang menyetelnya manual (#1104).
+            // Bukti: F66 sudah di `main` sejak PR #614 (19 Jul) tapi kartunya
+            // bertahan 'Checking' sampai disetel tangan 29 Agu.
+            //
+            // Karena itu untuk promosi, F-number dibaca dari COMMIT di dalam
+            // PR-nya: commit yang dipromosikan membawa judul aslinya
+            // (`feat(F127): …`, `fix(F66): …`). Ini juga lebih benar secara
+            // semantik — yang dipromosikan memang sekumpulan fitur, bukan satu.
+            let subjekCommit = [];
+            const isPromosi = context.payload.action === 'closed' && pr.base.ref === 'main';
+            if (isPromosi) {
+              const commits = await github.paginate(github.rest.pulls.listCommits, {
+                owner: context.repo.owner, repo: context.repo.repo, pull_number: pr.number, per_page: 100,
+              });
+              // HANYA BARIS SUBJEK, bukan `c.commit.message` utuh.
+              //
+              // Badan commit sering MENYEBUT F-number lain sebagai rujukan,
+              // contoh, atau catatan konteks — bukan sebagai pekerjaan yang
+              // dibawanya. Memungut dari badan berarti sebutan terhitung
+              // sebagai fitur, dan PR promosi akan menandai kartu `Done` yang
+              // tak dibayar pekerjaan apa pun. Itu persis kebalikan dari tujuan
+              // #1104.
+              //
+              // Terbukti pada commit #1182 sendiri: subjeknya
+              // "fix(roadmap-sync): status Done bisa tercapai + F1-F9 …",
+              // tapi badannya mengutip F127 dan F66 sebagai contoh kasus. Waktu
+              // papan disisir, keduanya muncul seolah punya pekerjaan
+              // tertinggal — padahal cuma disebut.
+              //
+              // Subjek aman karena konvensi repo ini menaruh F-number di scope
+              // conventional-commit (`feat(F127): …`), dan itu memang menandai
+              // pekerjaan yang dibawa commit tsb.
+              subjekCommit = commits.map(c => String(c.commit.message).split('\n')[0]);
+              core.info(`PR promosi → membaca ${commits.length} commit untuk F-number`);
+              // GitHub membatasi endpoint ini di 250 commit. Promosi besar bisa
+              // menembusnya (#1139 saja 191 commit), dan pemotongannya SENYAP —
+              // fitur yang commit-nya kena potong akan diam-diam tak pernah
+              // jadi 'Done'. Kalau batas ini kena, bunyikan.
+              if (commits.length >= 250) {
+                core.warning(
+                  `Daftar commit kena batas API 250 (dapat ${commits.length}). ` +
+                  'F-number pada commit di luar 250 pertama TIDAK terbaca — ' +
+                  'kartunya akan tertinggal di Checking. Pecah promosi jadi ' +
+                  'beberapa PR, atau setel kartunya manual.',
+                );
+              }
+            }
+
+            // F-number harus BERDIRI SENDIRI — diapit batas non-alfanumerik di
+            // KEDUA sisi. Bentuk sah semuanya lolos: `feat/f135-atk-…` (`/`…`-`),
+            // `feat(F49):` (`(`…`)`), `feat/f49-f54-…`, `F127` di awal judul.
+            //
+            // Yang disaring: F-number semu di tengah string alfanumerik. Pola
+            // lamanya `/F\d{2,3}/gi` tanpa batas apa pun, jadi hash hex apa saja
+            // yang memuat `f`+2-3 digit ikut tertangkap. Nyata terjadi: branch
+            // dependabot `minor-and-patch-f182e0e817` → dibaca "F182", dan karena
+            // F182 tak ada di papan, workflow MEMBUAT kartu draft palsu. Batas
+            // kiri saja tak cukup (`-f182…` diawali `-` yang sah); pembedanya
+            // ada di kanan — `f182e` diikuti huruf, `f135-` diikuti hyphen.
+            //
+            // Rentangnya {1,3}, BUKAN {2,3}: pola lama mengecualikan F1–F9
+            // seluruhnya (#1104). Itu bukan teoretis — F1 SPT kartu nyata yang
+            // sudah live di prod, dan setiap PR-nya lewat tanpa menyentuh papan.
+            // Batas non-alfanumerik di kedua sisi tetap menahan false positive
+            // satu digit (`-f1-` di hash), dan PR dependabot sudah disaring
+            // lebih dulu di `if:` job ini.
+            // RENTANG ("F1–F9") adalah DESKRIPSI, bukan dua fitur. Dibuang dulu
+            // sebelum pencocokan.
+            //
+            // Kena pada PR #1182 sendiri: judulnya "…status Done bisa tercapai
+            // + F1–F9 tak lagi dikecualikan" terbaca sebagai fitur F1 dan F9.
+            // Kebetulan tak merusak (dua-duanya memang punya kartu dan memang
+            // pantas Checking), tapi kalau F-number dalam rentang belum punya
+            // kartu, workflow akan MEMBUAT kartu draft palsu — persis kelas
+            // kejadian F182 dari hash dependabot.
+            //
+            // ⚠️ Rentang dibuang dari PROSA saja (judul PR + subjek commit),
+            // TIDAK dari nama branch. Bentuk `fN-fM` punya arti berlawanan di
+            // dua tempat itu, dan tak bisa dibedakan secara struktural:
+            //   · nama branch  → `feat/f49-f54-…` = dua fitur (konvensi sah)
+            //   · prosa        → "F1-F9 tak lagi dikecualikan" = rentang
+            // Konvensi dua-fitur itu hidup di nama branch; judul tak pernah
+            // memakainya (judul menulis `feat(F49): …`). Jadi memisahkan
+            // sumbernya menyelesaikan keduanya tanpa harus menebak.
+            const RE_RENTANG = /(?<![0-9A-Za-z])F\d{1,3}\s*[-–—]\s*F\d{1,3}(?![0-9A-Za-z])/gi;
+            const RE_FNUM = /(?<![0-9A-Za-z])F\d{1,3}(?![0-9A-Za-z])/gi;
+            const ambil = (s) => new Set(((s || '').match(RE_FNUM) || []).map(x => x.toUpperCase()));
+
+            const teksProsa = [pr.title, ...subjekCommit].join('\n');
+            const rentang = teksProsa.match(RE_RENTANG) || [];
+            if (rentang.length) {
+              core.info(`Rentang diabaikan (deskripsi, bukan fitur): ${rentang.join(', ')}`);
+            }
+            const prosaBersih = teksProsa.replace(RE_RENTANG, ' ');
+
+            // Hanya prosa yang boleh MEMBUAT kartu draft baru. Nama branch
+            // cuma boleh MEMPERBARUI kartu yang sudah ada.
+            //
+            // Alasannya: salah-baca dari nama branch dengan begitu terbatas pada
+            // hal yang bisa dibatalkan (status kartu bergeser) dan bukan yang tak
+            // bisa (kartu palsu lahir lalu mengotori papan selamanya — kelas
+            // kejadian F182 dari hash dependabot). Branch PR #1182 sendiri,
+            // `fix/roadmap-sync-f1-f9`, adalah contoh bentuk ambigu itu.
+            const bolehBuat = ambil(prosaBersih);
+            const fnums = [...new Set([...ambil(pr.head.ref), ...bolehBuat])];
+
+            // Yang DITOLAK tetap dicatat. Kalau suatu hari F-number sah ikut
+            // tersaring, jejaknya ada di log run — bukan hilang tanpa suara.
+            // Rentang tak dihitung di sini: ia punya baris lognya sendiri, dan
+            // melaporkannya sebagai "kemungkinan hash" akan menyesatkan.
+            const loose = [...new Set(((`${pr.head.ref}\n${prosaBersih}`).match(/F\d{1,3}/gi) || []).map(s => s.toUpperCase()))];
+            const rejected = loose.filter(f => !fnums.includes(f));
+            if (rejected.length) {
+              core.info(`Ditolak (tidak berdiri sendiri, kemungkinan hash): ${rejected.join(', ')}`);
+            }
+
             if (!fnums.length) { core.info('Tidak ada F-number — skip'); return; }
             core.info(`F-number: ${fnums.join(', ')} → ${target}`);
 
@@ -82,8 +255,18 @@ jobs:
 
             let touched = 0, created = 0;
             for (const f of fnums) {
-              const re = new RegExp(`${f}(?!\\d)`, 'i'); // F12 tidak match F127
+              // F12 tidak match F127 (batas kanan), dan F1 tidak match "OF1"
+              // (batas kiri). Batas kiri baru ditambahkan bersama pelonggaran
+              // ke F1–F9: dengan satu digit, kecocokan di tengah kata jadi jauh
+              // lebih gampang terjadi daripada waktu minimalnya dua digit.
+              const re = new RegExp(`(?<![0-9A-Za-z])${f}(?!\\d)`, 'i');
               let matches = items.filter(it => re.test(it.content?.title || ''));
+              if (!matches.length && !bolehBuat.has(f)) {
+                // Cuma muncul di nama branch → jangan bikin kartu. Lihat
+                // catatan `bolehBuat` di atas.
+                core.info(`${f}: tak ada kartu & cuma dari nama branch — tidak dibuat`);
+                continue;
+              }
               if (!matches.length) {
                 // F-number belum ada di board → buat draft item baru.
                 // Judul dijamin memuat F-number (di depan) agar match di run berikutnya.

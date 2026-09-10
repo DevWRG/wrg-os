@@ -42,12 +42,25 @@ jobs:
       # Sebelumnya tak pernah jalan di CI — apps/api tak punya script `test`, jadi
       # `turbo run test` melewatinya tanpa suara dan pipeline tetap hijau.
       - run: pnpm test
+      # Migrasi dieksekusi menurut urutan abjad nama file (scripts/db/migrate.sh),
+      # jadi nomor ganda = urutan tak tentu, dan tak ada yang gagal sampai deploy
+      # hampir menyentuh skema prod. Cek ini menolak tabrakan BARU; 11 nomor yang
+      # sudah bertabrakan dicatat sebagai baseline (utang) di dalam skripnya.
+      - run: node scripts/db/check-migration-numbers.mjs
       # Rumus Simulator KSO menghitung harga penawaran KSO yang dikirim ke faskes.
       # Salah angka = penawaran salah, dan layarnya tetap tampil wajar — tidak ada
       # yang gagal sendiri (PR #803: control XR memakai harga XN, lolos semua cek).
       # Bandingkan dengan angka acuan dari aplikasi rujukan.
       - name: Paritas Simulator KSO
         run: node scripts/ops/kso-parity.mjs
+      # Penjaga tumpukan dev di ecosystem.config.cjs (DB dev vs prod, izin kirim
+      # WA, port, root berkas & kredensial). Tesnya ADA sejak #1265 tapi TIDAK
+      # PERNAH dijalankan CI: `pnpm test` hanya menjaring glob
+      # apps/*/src/**/*.test.ts, dan berkas ini di scripts/qa/. Jadi 11 tes
+      # penjaga itu hijau di laptop dan tak terjaring di mana pun — pola yang
+      # sama dengan apps/api sebelum #1265 (lihat komentar `pnpm test` di atas).
+      - name: Penjaga tumpukan dev (ecosystem)
+        run: node scripts/qa/uji-ecosystem-dev.mjs
 
   ai-check:
     name: services/ai import check

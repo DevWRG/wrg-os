@@ -107,6 +107,71 @@ curl -X POST http://localhost:4000/webhooks/wa -H 'content-type: application/jso
        "sender_name":"Budi","body":"#Report Budi\n1. kunjungan RS A - selesai","message_id":"demo-1"}'
 ```
 
+Response curl-nya cuma status pemrosesan, **bukan** isi balasan. Teks balasan
+utuh dicetak ke **log server** (terminal `pnpm dev`), diapit `--- pesan ---`:
+
+```
+[wa] STUB (WA_SEND_URL kosong) — tidak kirim live → 120363000000000001@g.us
+--- pesan ---
+✅ Report Budi tercatat ...
+--- selesai ---
+```
+
+Berlaku selama `WA_SEND_URL` kosong (stub) atau `WA_DRY_RUN != false` — dua-duanya
+default di dev, jadi tak ada yang perlu di-set. `sender_name` harus cocok dengan
+`master_user` (jalankan `scripts/db/seed-dev.sql` dulu — di situ ada AM demo
+"Budi"), kalau tidak inbound balas `skipped: unknown-sender`.
+
+---
+
+## Trial `#CEK CUSTOMER` (QW3) lokal
+
+Sama seperti trial di atas (tanpa gateway WA sungguhan) — `curl` saja sudah cukup,
+balasan tercetak ke log server persis seperti dijelaskan di section sebelumnya.
+
+```bash
+# 1) WA_INBOUND_PROCESS=true di .env, lalu (re)start `pnpm dev`
+
+# 2) Seed AM demo dulu — WAJIB, lihat "Jebakan" di bawah
+psql "$DATABASE_URL" -f scripts/db/seed-dev.sql
+
+# 3) Seed data dummy customer (sekali, idempoten)
+psql "$DATABASE_URL" -f scripts/db/seed-cek-dev.sql
+
+# 4) Kirim command — balasan tercetak di terminal pnpm dev (bukan di response curl)
+curl -X POST http://localhost:4000/webhooks/wa -H 'content-type: application/json' \
+  -d '{"group_jid":"120363000000000001@g.us","sender":"120363000000000001@g.us",
+       "sender_name":"Budi","body":"#CEK CUSTOMER PT Testing","message_id":"demo-cek-1"}'
+```
+
+Nama customer dummy yang tersedia (`scripts/db/seed-cek-dev.sql`): `PT Testing` /
+`RS Sehat Sentosa` (SO+SJ lengkap), `PT Alpha Order` (SO saja) / `CV Beta Kirim`
+(SJ saja), `CV Sample Satu` / `CV Sample Dua` (nama sengaja mirip — fixture
+regresi #839: masing-masing hanya membalas dokumennya sendiri, dan query
+setengah nama `#CEK CUSTOMER CV Sample` membalas AMBIGU alih-alih menebak;
+lihat `docs/features/F4-cek-faktur-so-sj-cross-ref.md` §6).
+
+Seed ini butuh migrasi `162_accurate_mirror_customer_id.sql` sudah jalan — ia
+mengisi `accurate_customer` dan menautkan tiap SO/SJ lewat `customer_id`, sama
+seperti data Accurate sungguhan.
+
+### Jebakan
+
+- **`seed-dev.sql` prasyarat keras, bukan opsional.** `#CEK` menolak pengirim tak
+  dikenal karena balasannya berisi data komersial (`inbound.ts:747`). Resolusinya
+  `resolveSender` Tier C pushname → `master_user` (`master.ts:287`). Tanpa AM demo
+  "Budi" dari `seed-dev.sql`, hasilnya `skipped: unknown-sender` — bukan error,
+  jadi gampang bikin bingung kalau langkah 2 di atas ke-skip.
+- Port **4000** (dev), bukan 4100 (prod).
+- Baris `· AM:` **tidak akan pernah muncul di lokal.** Itu live call ke Accurate
+  (`getSalesOrderItems`), kredensial tidak tersedia di dev, dan `catch`-nya sengaja
+  diam supaya balasan SO/SJ tetap jalan (`inbound-cek.ts:62-70`). Perilaku yang
+  diharapkan, bukan kegagalan.
+
+Selesai tes → kembalikan `WA_INBOUND_PROCESS=false` di `.env` (default aman). Data
+seed boleh dibiarkan (dummy, id ≥ 900010, tak bentrok data asli, tak satu pun seed
+lain punya cleanup script).
+
 ---
 
 Lihat juga: `docs/runbook-gateway-recovery.md`, `scripts/migrate/README.md`

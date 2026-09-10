@@ -1,12 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useState, useTransition } from "react";
+import { useCallback } from "react";
 import Link from "next/link";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 
 import { photoHref } from "@/lib/media";
 import { Badge } from "@/components/ui/badge";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
+import { useTableUrl } from "@/lib/use-table-url";
 import { DateRangeToolbar } from "@/components/ui/date-range-toolbar";
 import { ExportButton } from "@/components/ui/export-button";
 
@@ -150,44 +151,9 @@ export function VisitsTable({
   query: VisitsQuery;
 }) {
   const router = useRouter();
-  const pathname = usePathname();
+  // params masih dipakai fetchAll (baca ?status= utk export), bukan utk navigasi.
   const params = useSearchParams();
-  const [pending, startTransition] = useTransition();
-
-  // Semua state tabel hidup di URL: bisa di-share, tahan refresh, dan yang
-  // terpenting selalu ikut dikirim ke backend — search/sort/paginasi tak boleh
-  // lagi cuma mengaduk baris yang kebetulan sudah ter-load.
-  const push = useCallback(
-    (patch: Record<string, string | number | null>) => {
-      const next = new URLSearchParams(params.toString());
-      for (const [k, v] of Object.entries(patch)) {
-        if (v === null || v === "") next.delete(k);
-        else next.set(k, String(v));
-      }
-      startTransition(() => {
-        router.replace(`${pathname}${next.toString() ? `?${next.toString()}` : ""}`, { scroll: false });
-      });
-    },
-    [params, pathname, router],
-  );
-
-  // Kotak pencarian diketik lokal lalu di-debounce ke URL; tanpa debounce tiap
-  // huruf memicu satu query ke backend.
-  const qUrl = query.q;
-  const [qInput, setQInput] = useState(qUrl);
-  const [qTerakhir, setQTerakhir] = useState(qUrl);
-  // URL berubah dari luar (tombol Back, klik tab filter) → samakan kotaknya.
-  // Disesuaikan saat render, bukan lewat useEffect: efek yang memanggil
-  // setState memicu render berantai dan ditolak react-hooks/set-state-in-effect.
-  if (qUrl !== qTerakhir) {
-    setQTerakhir(qUrl);
-    setQInput(qUrl);
-  }
-  useEffect(() => {
-    if (qInput === qUrl) return;
-    const t = setTimeout(() => push({ q: qInput || null, page: null }), 350);
-    return () => clearTimeout(t);
-  }, [qInput, qUrl, push]);
+  const { push, qInput, setQInput, pending } = useTableUrl(query.q);
 
   // Export mengambil SELURUH baris yang cocok filter dari backend — bukan
   // halaman yang sedang tampil. Filternya identik dengan yang dipakai tabel,
