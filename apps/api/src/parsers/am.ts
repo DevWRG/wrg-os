@@ -156,6 +156,34 @@ const NOTE = /^\s*[.\-•*]*\s*note\s*:?\s*(.+)$/i;
  * berukuran jauh di atas ini.
  */
 const MIN_NAMA_CUSTOMER = 3;
+
+/**
+ * Panjang maksimum nama faskes yang masuk akal. Di atasnya itu bukan nama lagi,
+ * melainkan kalimat narasi yang tersasar ke slot customer.
+ *
+ * Diukur di produksi: dari 4.489 baris `sales_plan`, nama terpanjang 48
+ * karakter; dari 3.418 `activity_log` yang TERIKAT rencana — jadi terbukti
+ * kunjungan nyata — terpanjang 52. Nol baris melewati 60 di kedua tabel.
+ */
+const MAX_NAMA_CUSTOMER = 60;
+
+/**
+ * Baris yang jelas BUKAN nama faskes: kelanjutan narasi laporan.
+ *
+ * `*` SENGAJA tidak ikut: AM memakainya sebagai penanda tebal pada nama faskes
+ * ASLI (`*Rsud Ar-Rozy`, `*Update Klinik Panggih Griya Husada`), dan sebagian
+ * memang terikat rencana. Sebaliknya, dari 131 baris berawalan `-` dan 4
+ * berawalan `•` di produksi, NOL yang terikat rencana — semuanya baris
+ * inventaris alat seperti "- Mindray BC-5130 - KSO PT Citramed".
+ */
+const lanjutanNarasi = (s: string): boolean =>
+  /^\s*[-•]/.test(s) || bersihkanNamaCustomer(s).length > MAX_NAMA_CUSTOMER;
+
+/**
+ * Prefiks `Cust:` — penanda eksplisit bahwa baris membuka customer baru,
+ * dipakai berdampingan dengan nomor urut dan baris bersegmen.
+ */
+const PENANDA_CUST = /^\s*cust(?:omer)?\s*[:.]/i;
 // bersihkan tanggal dari teks → sisanya keterangan
 function dateMatchText(s: string): string | null {
   const m1 = s.match(/\d{1,2}\s+[A-Za-z]{3,9}\.?(?:\s+\d{2,4})?/);
@@ -179,6 +207,22 @@ export function parseAmReport(body: string, nowMs?: number): AmReportResult {
   const items: ReportItem[] = [];
   const notes: ReportNote[] = [];
   let cur: ReportItem | null = null;
+  // Bolehkah baris POLOS berikutnya membuka customer baru?
+  //
+  // Inilah inti perbaikan over-split. Dulu setiap baris tak berlabel membuka
+  // customer baru begitu `hasil` terisi, sehingga laporan naratif — satu faskes,
+  // paragraf panjang, daftar alat & kompetitor — pecah jadi puluhan kunjungan
+  // palsu (363 baris sampah di produksi, semuanya `is_unmatched`, yang
+  // menggelembungkan angka kepatuhan sampai tak bisa dipakai).
+  //
+  // Pembedanya bukan ada-tidaknya nomor, melainkan apakah entri berjalan sudah
+  // DITUTUP penanda eksplisit:
+  //   Irul  : `rsu muh babat` / `hasil: ketemu analis` / `Rs nu babat`
+  //           → `hasil:` berlabel dan berisi ⇒ baris polos sesudahnya faskes baru.
+  //   Sidqi : `Cust: RS PKU` / `Hasil:` / `> Instalasi Lab` / `Hematologi` / ...
+  //           → label `Hasil:` kosong lalu prosa mengalir ⇒ semuanya kelanjutan.
+  // Sekali satu baris prosa menempel, pintu tertutup sampai ada label lagi.
+  let bolehBarisPolos = false;
   // Kandidat nama faskes yang jelas bukan nama: kosong, sisa tanda baca, atau
   // baris hashtag yang lolos saringan di atas.
   const namaMasukAkal = (s: string): boolean => {
@@ -209,6 +253,18 @@ export function parseAmReport(body: string, nowMs?: number): AmReportResult {
 
     const fm = t.match(FIELD);
     const numbered = /^\s*\d+\s*[.)]/.test(raw);
+    const line = stripNum(raw);
+    // Baris bersegmen diperlakukan sebagai format inline hanya bila potongan
+    // pertamanya masuk akal sebagai nama faskes — supaya kalimat narasi yang
+    // kebetulan memuat em-dash tidak ikut membuka customer baru.
+    const bersegmen = !fm && hasSegments(line) &&
+      namaMasukAkal(splitSegments(line)[0]) && !lanjutanNarasi(splitSegments(line)[0]);
+    // ...dan ia baru MEMICU customer baru kalau posisinya memang di antara
+    // entri. Irul menulis `1. Rsab Bojonegoro` lalu baris `hadir|visit
+    // selesai|...` — baris kedua itu isi `hasil` milik entri yang sedang
+    // berjalan, bukan faskes bernama "hadir". Syarat `cur.hasil` inilah yang
+    // membedakannya, sama seperti perilaku sebelumnya.
+    const pemicuSegmen = bersegmen && (!cur || cur.hasil !== "");
 
     // Baris hasil:/next:/tipe: TANPA customer berjalan tidak punya tempat
     // menempel — dulu ia jatuh ke cabang "customer baru" dan tersimpan sebagai
@@ -225,14 +281,17 @@ export function parseAmReport(body: string, nowMs?: number): AmReportResult {
       } else {
         cur.hasil = (cur.hasil ? cur.hasil + " " : "") + fm[2].trim();
       }
+      // Label BERISI menutup entri; label kosong (`Hasil:` lalu prosa di baris
+      // berikutnya, gaya Sidqi) tidak — di situ prosanya masih milik entri ini.
+      if (!label.startsWith("tipe") && !label.startsWith("jenis") && fm[2].trim()) bolehBarisPolos = true;
       continue;
     }
 
-    // baris customer baru (numbered, atau non-field saat butuh customer baru)
-    if (numbered || !cur || (cur.hasil && !fm)) {
-      const line = stripNum(raw);
+    // baris customer baru — HANYA dari penanda eksplisit, atau saat belum ada
+    // customer berjalan sama sekali.
+    if (numbered || !cur || PENANDA_CUST.test(t) || pemicuSegmen || bolehBarisPolos) {
       // inline bersegmen: "Customer | hasil… | next…" atau "Customer — hasil — next [— tipe]"
-      if (hasSegments(line)) {
+      if (bersegmen) {
         const parts = splitSegments(line);
         push();
         cur = {
@@ -244,6 +303,17 @@ export function parseAmReport(body: string, nowMs?: number): AmReportResult {
         // bersihkan label "hasil:"/"next:" bila ada di parts
         cur.hasil = cur.hasil.replace(FIELD, "$2").trim();
         cur.next_action = cur.next_action.replace(FIELD, "$2").trim();
+        bolehBarisPolos = true;
+        continue;
+      }
+      // Kandidat yang ternyata prosa TIDAK dibuang: ia menempel ke `hasil`
+      // customer berjalan, supaya isi laporan tetap utuh dan hanya baris
+      // palsunya yang tak pernah lahir.
+      if (lanjutanNarasi(line)) {
+        if (cur) {
+          cur.hasil = (cur.hasil ? cur.hasil + " " : "") + t;
+          bolehBarisPolos = false;
+        }
         continue;
       }
       // Kandidat yang jelas bukan nama faskes DILEWATI, bukan sekadar dibuang
@@ -252,11 +322,16 @@ export function parseAmReport(body: string, nowMs?: number): AmReportResult {
       if (!namaMasukAkal(line)) continue;
       push();
       cur = { customer: line, hasil: "", next_action: "", activity_type: null };
+      bolehBarisPolos = false;
       continue;
     }
 
-    // non-field continuation tanpa label → tambah ke hasil
-    if (cur && !fm) cur.hasil = (cur.hasil ? cur.hasil + " " : "") + t;
+    // Baris tak berlabel & tanpa penanda → kelanjutan `hasil` customer berjalan,
+    // dan pintu "baris polos" tertutup sampai ada label eksplisit berikutnya.
+    if (cur && !fm) {
+      cur.hasil = (cur.hasil ? cur.hasil + " " : "") + t;
+      bolehBarisPolos = false;
+    }
   }
   push();
   return { tanggal, items: items.filter((it) => namaMasukAkal(it.customer)), notes };
