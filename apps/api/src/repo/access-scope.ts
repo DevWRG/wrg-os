@@ -19,10 +19,19 @@ export interface DataScope {
   superuser: boolean;
   cabangScope?: string[] | null; // HoD → daftar cabang timnya; null/undefined = tanpa batas cabang
   hodKey?: string | null;
+  /**
+   * Peran login (`app_user.role`) apa adanya: admin | user | viewer | null.
+   *
+   * Dibawa terpisah dari `superuser`/`amOnly` karena keduanya menjawab
+   * "boleh lihat apa", bukan "boleh menulis". `viewer` lolos dua-duanya —
+   * ia bukan admin dan bukan AM, jadi jatuh ke cabang terakhir resolveScope
+   * dan mendapat scope penuh. Untuk gerbang TULIS, peran inilah yang dipakai.
+   */
+  role?: string | null;
 }
 
 // Scope "lihat semua" (default aman bila tak ada user / DB mati).
-export const FULL_SCOPE: DataScope = { userId: null, amOnly: false, amId: null, cabang: null, superuser: false, cabangScope: null, hodKey: null };
+export const FULL_SCOPE: DataScope = { userId: null, amOnly: false, amId: null, cabang: null, superuser: false, cabangScope: null, hodKey: null, role: null };
 
 export const isAmRole = (role: unknown): boolean => /^am$/i.test(String(role ?? "").trim());
 
@@ -43,17 +52,18 @@ export async function resolveScope(userId: string | null | undefined): Promise<D
   }
   const amId = u.am_id ? String(u.am_id) : null;
   const hodKey = u.hod_key ? String(u.hod_key) : null;
+  const role = u.role ? String(u.role) : null;
 
   // Admin / superuser → lihat semua.
   if (superuser || /^admin$/i.test(String(u.role ?? ""))) {
-    return { userId: id, amOnly: false, amId, cabang: null, superuser: true, hodKey, cabangScope: null };
+    return { userId: id, amOnly: false, amId, cabang: null, superuser: true, hodKey, cabangScope: null, role };
   }
 
   // AM sejati → hanya data sendiri.
   if (amId) {
     const [m] = await sql`SELECT role, cabang FROM master_user WHERE am_id = ${amId}`;
     if (m && isAmRole(m.role)) {
-      return { userId: id, amOnly: true, amId, cabang: m.cabang ? String(m.cabang) : null, superuser: false, hodKey, cabangScope: null };
+      return { userId: id, amOnly: true, amId, cabang: m.cabang ? String(m.cabang) : null, superuser: false, hodKey, cabangScope: null, role };
     }
   }
 
@@ -70,12 +80,12 @@ export async function resolveScope(userId: string | null | undefined): Promise<D
     // cuma lebih sedikit, jadi tak ada yang curiga.
     const cabangScope = rows.map((r) => String(r.cabang).trim().toUpperCase()).filter(Boolean);
     if (cabangScope.length) {
-      return { userId: id, amOnly: false, amId, cabang: null, superuser: false, hodKey, cabangScope };
+      return { userId: id, amOnly: false, amId, cabang: null, superuser: false, hodKey, cabangScope, role };
     }
   }
 
   // Selain itu (HoD tanpa territory ter-map, office, dll) → lihat semua.
-  return { userId: id, amOnly: false, amId, cabang: null, superuser, hodKey, cabangScope: null };
+  return { userId: id, amOnly: false, amId, cabang: null, superuser, hodKey, cabangScope: null, role };
 }
 
 // true bila scope membatasi data (AM self ATAU HoD cabang-tim).
