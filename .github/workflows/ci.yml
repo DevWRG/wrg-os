@@ -53,6 +53,14 @@ jobs:
       # Bandingkan dengan angka acuan dari aplikasi rujukan.
       - name: Paritas Simulator KSO
         run: node scripts/ops/kso-parity.mjs
+      # Penjaga tumpukan dev di ecosystem.config.cjs (DB dev vs prod, izin kirim
+      # WA, port, root berkas & kredensial). Tesnya ADA sejak #1265 tapi TIDAK
+      # PERNAH dijalankan CI: `pnpm test` hanya menjaring glob
+      # apps/*/src/**/*.test.ts, dan berkas ini di scripts/qa/. Jadi 11 tes
+      # penjaga itu hijau di laptop dan tak terjaring di mana pun — pola yang
+      # sama dengan apps/api sebelum #1265 (lihat komentar `pnpm test` di atas).
+      - name: Penjaga tumpukan dev (ecosystem)
+        run: node scripts/qa/uji-ecosystem-dev.mjs
 
   ai-check:
     name: services/ai import check
