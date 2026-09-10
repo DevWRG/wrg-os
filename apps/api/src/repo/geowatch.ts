@@ -70,10 +70,22 @@ export function buildGeoSweepMessage(tanggal: string, perAm: GeoSweepAm[]): stri
     }
     lines.push("");
   }
+  // Legenda hanya memuat sebab yang BENAR-BENAR muncul hari itu. Uji dry-run
+  // 2026-07-09 di dev: 35 temuan, semuanya "tanpa overlay", tapi kaki pesan
+  // tetap mencetak instruksi "koordinat gagal dibaca" yang tak berlaku. Baris
+  // per-AM sudah kondisional sejak awal; legendanya tertinggal. Menambah satu
+  // instruksi yang tidak relevan pada pesan yang justru dibuat supaya dibaca
+  // adalah cara pelan-pelan membuatnya diabaikan.
+  const adaTanpaOverlay = urutan.some((a) => a.tanpa_overlay.length > 0);
+  const adaOcrGagal = urutan.some((a) => a.ocr_gagal.length > 0);
+  lines.push("━━━━━━━━━━━━━━━━━━━━");
+  if (adaTanpaOverlay) {
+    lines.push("*Tanpa overlay* → foto ulang pakai Geo-Tagging Camera. Kirim ulang dari galeri tak menolong, overlay-nya tak ikut.");
+  }
+  if (adaOcrGagal) {
+    lines.push("*Koordinat gagal dibaca* → kirim ulang foto yang sama, pastikan baris `Lat … Long …` utuh dan tak tertutup jari/stiker.");
+  }
   lines.push(
-    "━━━━━━━━━━━━━━━━━━━━",
-    "*Tanpa overlay* → foto ulang pakai Geo-Tagging Camera. Kirim ulang dari galeri tak menolong, overlay-nya tak ikut.",
-    "*Koordinat gagal dibaca* → kirim ulang foto yang sama, pastikan baris `Lat … Long …` utuh dan tak tertutup jari/stiker.",
     "",
     "Kirim dengan caption `Nama Customer` — masih kebaca sampai 7 hari ke belakang, jam kunjungan tetap ikut dari overlay.",
   );
