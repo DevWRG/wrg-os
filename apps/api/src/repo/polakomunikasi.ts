@@ -83,7 +83,7 @@ export async function runPolaKomunikasi(
 
     // Sample 120 pesan terakhir, urut kronologis, body dipotong 200 char.
     const [sample] = await sql`
-      SELECT string_agg(line, E'\n' ORDER BY rt) AS s FROM (
+      SELECT string_agg(line, E'\\n' ORDER BY rt) AS s FROM (
         SELECT received_at AS rt,
                '[' || to_char(received_at, 'MM-DD HH24:MI') || '] ' || COALESCE(sender_name, sender_jid, '?') || ': ' || left(COALESCE(body, ''), 200) AS line
         FROM wa_message
