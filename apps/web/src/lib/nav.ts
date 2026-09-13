@@ -448,10 +448,27 @@ export function homePath(me: AccessUser | null): string {
 export function findNavItem(pathname: string): NavItem | null {
   const path = pathname.replace(/\/+$/, "") || "/";
   let best: NavItem | null = null;
+  let bestLen = -1;
   for (const g of NAV) {
     for (const it of g.items) {
-      if (path !== it.url && !path.startsWith(`${it.url}/`)) continue;
-      if (!best || it.url.length > best.url.length) best = it;
+      // `matchPrefix` WAJIB ikut dipertimbangkan, bukan cuma `url`. Ia menyatakan
+      // "rute ini milik menu ini" — dan karena gate rute di (dashboard)/layout.tsx
+      // memakai fungsi ini, prefiks yang tak ikut dihitung = rute yang TIDAK
+      // di-gate sama sekali (findNavItem → null → layout melewatinya).
+      //
+      // Kejadian nyatanya: "/sph/new" (form SPH) milik menu Sales Docs
+      // (url "/sales-docs", matchPrefix ["/sph"]). Karena dulu hanya `url` yang
+      // dicocokkan, halaman itu terbuka untuk SIAPA PUN yang bisa login —
+      // termasuk viewer — walau menunya tersembunyi. Menyembunyikan menu bukan
+      // gerbang; ketik URL-nya langsung tetap tembus.
+      for (const p of [it.url, ...(it.matchPrefix ?? [])]) {
+        if (path !== p && !path.startsWith(`${p}/`)) continue;
+        // prefiks terpanjang menang (mis. "/insentif/tim" mengalahkan "/insentif")
+        if (p.length > bestLen) {
+          best = it;
+          bestLen = p.length;
+        }
+      }
     }
   }
   return best;
