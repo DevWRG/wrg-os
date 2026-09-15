@@ -151,11 +151,27 @@ export async function getShipmentById(id: string): Promise<ShipmentRow | null> {
 
 // Match WA hashtag #KIRIM/#BAST [SJ_no] ke record — case-insensitive, terbaru
 // menang kalau ada duplikat nomor SJ (harusnya tak terjadi, tapi tak di-UNIQUE-kan
-// krn re-kirim/retur bisa pakai SJ sama di masa depan).
+// krn re-kirim/retur bisa pakai SJ sama di masa depan, ASALKAN yang lama sudah
+// `bast` — lihat guard createShipment yang menolak duplikat SELAGI aktif).
 export async function findBySjNumber(sjNumber: string): Promise<ShipmentRow | null> {
   const sql = db();
   const rows = await sql`
     SELECT * FROM shipment_tracking WHERE sj_number ILIKE ${sjNumber} ORDER BY created_at DESC LIMIT 1
+  `;
+  return rows.length ? mapRow(rows[0]) : null;
+}
+
+// Dipakai guard create: SJ dengan nomor sama yang MASIH AKTIF (belum bast).
+// Reuse nomor SJ sah untuk retur/kirim-ulang, tapi cuma sekali yang aktif
+// pada satu waktu — dua yang aktif sekaligus bikin hashtag #KIRIM/#BAST/#BUKTI
+// salah sasaran (selalu ambil yang created_at terbaru, tanpa peduli maksud
+// pengirim yang mana).
+export async function findActiveBySjNumber(sjNumber: string): Promise<ShipmentRow | null> {
+  const sql = db();
+  const rows = await sql`
+    SELECT * FROM shipment_tracking
+    WHERE sj_number ILIKE ${sjNumber} AND status <> 'bast'
+    ORDER BY created_at DESC LIMIT 1
   `;
   return rows.length ? mapRow(rows[0]) : null;
 }
