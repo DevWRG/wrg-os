@@ -70,6 +70,9 @@ export async function createTeknisiCapacity(
   const sql = db();
   const existing = await sql`SELECT id FROM teknisi_capacity WHERE nama = ${input.nama}`;
   if (existing.length) return { ok: false, error: "nama sudah ada di roster" };
+  if (input.wilayah !== undefined && !Array.isArray(input.wilayah)) {
+    return { ok: false, error: "wilayah harus berupa array string" };
+  }
   const wilayah = (input.wilayah ?? []).map((w) => w.trim()).filter(Boolean);
   const maxJobs = input.max_concurrent_jobs ?? 3;
   // DB CHECK cuma > 0, tak ada batas atas — 1 teknisi realistisnya tak mungkin
@@ -103,6 +106,9 @@ export async function updateTeknisiCapacity(
   const sql = db();
   const current = await sql`SELECT * FROM teknisi_capacity WHERE id = ${id}`;
   if (!current.length) return { ok: false, error: "teknisi tidak ditemukan" };
+  if (input.wilayah !== undefined && !Array.isArray(input.wilayah)) {
+    return { ok: false, error: "wilayah harus berupa array string" };
+  }
   const nama = input.nama ?? String(current[0].nama);
   const waNumber = input.wa_number !== undefined ? input.wa_number : (current[0].wa_number as string | null);
   const wilayah = input.wilayah !== undefined
