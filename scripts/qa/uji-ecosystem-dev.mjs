@@ -9,6 +9,11 @@
 //   3. Izin kirim tak menyala saat WA_DEV_GROUPS kosong — kalau lolos, allowlist
 //      jadi kosong dan kosong berarti TANPA BATAS di wasend.ts, yang membalikkan
 //      makna lapis 3 sepenuhnya.
+//   4. Dev tak menunjuk root berkas/kredensial PROD. GET /media menyajikan apa pun
+//      di bawah root yang di-allow-list tanpa mengecek DB, jadi root yang salah
+//      berarti dashboard dev menyajikan berkas prod — dan kredensial Accurate
+//      bersama berarti dev bisa menarik ulang data asli ke mirror yang sudah
+//      disamarkan.
 //
 // Cara memuat: ecosystem.config.cjs membaca .env.prod dari direktori file itu
 // sendiri, jadi tes menulis .env.prod SEMENTARA di root worktree, memuat config
@@ -18,7 +23,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createRequire } from "node:module";
 import { mkdtempSync, writeFileSync, existsSync, readFileSync, unlinkSync, rmSync, mkdirSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 
 const require = createRequire(import.meta.url);
@@ -214,4 +219,65 @@ test("nama env dev = nama yang DIBACA kode, bukan *_BASE_URL", () => {
     `AI_URL=${api.env.AI_URL} tak menunjuk port wrg-dev-ai`);
   assert.ok(web.env.API_URL.endsWith(`:${portDari(api)}`),
     `API_URL=${web.env.API_URL} tak menunjuk port wrg-dev-api`);
+});
+
+// ── Isolasi root berkas & kredensial dev ────────────────────────────────────
+// Default di apps/api semuanya menunjuk direktori BERSAMA di $HOME:
+//   MEDIA_ROOT              apps/api/src/index.ts        ~/.openclaw/media
+//   GA_UPLOAD_DIR           apps/api/src/index.ts        ~/.wrg-os/uploads/ga-assets
+//   APPROVAL_UPLOAD_ROOT    apps/api/src/repo/approval.ts ~/.wrg-os/approval-uploads
+//   OPENCLAW_SESSIONS_FILE  apps/api/src/repo/group-names.ts ~/.openclaw/agents/...
+//   ACCURATE_CRED_FILE      apps/api/src/repo/accurateSync.ts ~/.openclaw/credentials/accurate.json
+// Angka & nama itu ditulis di sini supaya pergeseran default tertangkap CI.
+const ROOT_BERSAMA = [
+  join(homedir(), ".openclaw"),
+  join(homedir(), ".wrg-os"),
+];
+const KUNCI_ROOT = [
+  "MEDIA_ROOT",
+  "GA_UPLOAD_DIR",
+  "APPROVAL_UPLOAD_ROOT",
+  "OPENCLAW_SESSIONS_FILE",
+  "ACCURATE_CRED_FILE",
+];
+
+test("ketiga entri dev punya root berkas SENDIRI, bukan milik prod", () => {
+  const { apps } = muat({ envProd: "", envDev: DEV_OK });
+  const dev = apps.filter((a) => a.name.startsWith("wrg-dev-"));
+  assert.equal(dev.length, 3, "ketiga entri dev harus ada");
+
+  for (const a of dev) {
+    for (const k of KUNCI_ROOT) {
+      const v = a.env?.[k];
+      assert.ok(v, `${a.name} tak menyetel ${k} — jatuh ke default milik prod`);
+      for (const bersama of ROOT_BERSAMA) {
+        assert.ok(
+          !v.startsWith(`${bersama}/`) && v !== bersama,
+          `${a.name}.${k} = ${v} → masih di bawah root bersama ${bersama}`,
+        );
+      }
+    }
+  }
+});
+
+test("entri prod TIDAK diberi override root — defaultnya tetap berlaku", () => {
+  // Kebalikan dari tes di atas: menyetelnya di prod berarti prod berhenti
+  // membaca berkasnya sendiri (foto WA, lampiran approval) tanpa error.
+  const { apps } = muat({ envProd: "", envDev: DEV_OK });
+  for (const a of apps.filter((x) => x.name.startsWith("wrg-prod-"))) {
+    for (const k of KUNCI_ROOT) {
+      assert.equal(a.env?.[k], undefined, `${a.name} tak boleh menyetel ${k}`);
+    }
+  }
+});
+
+test(".env.dev tak bisa menimpa root berkas dev", () => {
+  // Skenario nyata: orang menyalin blok env prod ke .env.dev supaya "foto muncul
+  // di dev". Itu tepat kebocoran yang ditutup PR ini, jadi keputusannya harus
+  // menang atas .env.dev — pola sama dengan WA_DRY_RUN.
+  const nekat = `${DEV_OK}${KUNCI_ROOT.map((k) => `${k}=${join(homedir(), ".openclaw/media")}`).join("\n")}\n`;
+  const { api } = muat({ envProd: "", envDev: nekat });
+  for (const k of KUNCI_ROOT) {
+    assert.notEqual(api.env[k], join(homedir(), ".openclaw/media"), `.env.dev berhasil menimpa ${k}`);
+  }
 });

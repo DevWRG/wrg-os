@@ -565,7 +565,7 @@ function SendWaDialog({ board, hod, onClose }: { board: WeeklyBoard; hod: Weekly
           <DialogTitle>Kirim WatchPoint {board.label} — {hod.name}</DialogTitle>
           <DialogDescription>Ringkasan {board.periode} ke nomor/JID WA tujuan.</DialogDescription>
         </DialogHeader>
-        <form onSubmit={submit}>
+        <form onSubmit={submit} className="contents">
           <DialogBody className="grid gap-3">
             <div className="grid gap-1.5">
               <Label htmlFor={`wa-week-${hod.key}`}>Nomor / JID tujuan *</Label>

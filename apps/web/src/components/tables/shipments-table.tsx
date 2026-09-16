@@ -1,11 +1,12 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { Loader2 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
 import { DateRangeToolbar } from "@/components/ui/date-range-toolbar";
+import { useTableUrl } from "@/lib/use-table-url";
 import {
   Dialog,
   DialogBody,
@@ -62,20 +63,31 @@ function Field({ label, value, className }: { label: string; value: React.ReactN
   );
 }
 
-export function ShipmentsTable({ shipments }: { shipments: DeliveryOrder[] }) {
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
+export interface ShipmentsQuery {
+  q: string;
+  from: string;
+  to: string;
+  /** id kolom = MIRROR_SORTS di apps/api repo/accurateMirror.ts. */
+  sort: string;
+  dir: "asc" | "desc";
+  page: number;
+  size: number;
+}
+
+export function ShipmentsTable({
+  shipments,
+  totalRows,
+  query,
+}: {
+  shipments: DeliveryOrder[];
+  /** jumlah surat jalan yang COCOK FILTER di backend, bukan panjang `shipments`. */
+  totalRows: number;
+  query: ShipmentsQuery;
+}) {
+  const { push, qInput, setQInput, pending } = useTableUrl(query.q);
   const [sel, setSel] = useState<DeliveryOrder | null>(null);
   const [items, setItems] = useState<LineItem[] | null>(null);
   const [itemsErr, setItemsErr] = useState(false);
-
-  const filtered = useMemo(() => {
-    if (!from && !to) return shipments;
-    return shipments.filter((s) => {
-      const d = (s.trans_date ?? "").slice(0, 10);
-      return d ? (!from || d >= from) && (!to || d <= to) : false;
-    });
-  }, [shipments, from, to]);
 
   function openDetail(s: DeliveryOrder) {
     setSel(s);
@@ -94,12 +106,31 @@ export function ShipmentsTable({ shipments }: { shipments: DeliveryOrder[] }) {
     <>
       <DataTable
         columns={columns}
-        data={filtered}
+        data={shipments}
         getKey={(s) => s.id}
         searchPlaceholder="Cari surat jalan / customer / status…"
-        pageSize={25}
         onRowClick={openDetail}
-        toolbar={<DateRangeToolbar from={from} to={to} onFrom={setFrom} onTo={setTo} idPrefix="sj" />}
+        server={{
+          totalRows,
+          page: query.page,
+          pageSize: query.size,
+          sort: { id: query.sort, dir: query.dir },
+          q: qInput,
+          pending,
+          onPageChange: (p) => push({ page: p === 0 ? null : p }),
+          onPageSizeChange: (n) => push({ size: n, page: null }),
+          onSortChange: (s) => push({ sort: s?.id ?? null, dir: s?.dir ?? null, page: null }),
+          onSearchChange: setQInput,
+        }}
+        toolbar={
+          <DateRangeToolbar
+            from={query.from}
+            to={query.to}
+            onFrom={(v) => push({ from: v || null, page: null })}
+            onTo={(v) => push({ to: v || null, page: null })}
+            idPrefix="sj"
+          />
+        }
       />
 
       <Dialog open={!!sel} onOpenChange={(o) => !o && setSel(null)}>

@@ -8,7 +8,7 @@ import { FULL_SCOPE, scopeOnClause, type DataScope } from "./access-scope.js";
 // memang deal — konsisten dengan Pipeline yang sumbernya tabel sama.
 
 export interface CustomerRow {
-  customer_id: string;
+  customer_id: string | null;
   customer_name: string;
   deal_count: number;
   total_value: number;
@@ -34,7 +34,10 @@ export async function getCustomers(amId?: string, scope: DataScope = FULL_SCOPE)
     ORDER BY last_activity DESC
   `;
   return rows.map((r) => ({
-    customer_id: String(r.customer_id),
+    // BUKAN String(r.customer_id) — deal.customer_id sering NULL, dan
+    // String(null) === "null" (literal teks), bukan JSON null. Konsumen
+    // (mis. F15 /sph/new customer picker) sempat kebawa "null" apa adanya.
+    customer_id: r.customer_id === null ? null : String(r.customer_id),
     customer_name: String(r.customer_name),
     deal_count: Number(r.deal_count),
     total_value: Number(r.total_value),

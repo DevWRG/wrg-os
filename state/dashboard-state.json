@@ -1,11 +1,11 @@
 {
   "schemaVersion": "1.0.0",
-  "lastUpdate": "2026-08-20T00:00:11Z",
+  "lastUpdate": "2026-09-16T00:00:13Z",
   "generatedBy": "sync-state.sh (Warp cron/manual)",
   "production": {
-    "version": "v1.191.0",
-    "releasedAt": "2026-08-19T11:14:05Z",
-    "totalReleases": 361,
+    "version": "v1.216.3",
+    "releasedAt": "2026-09-13T20:32:56Z",
+    "totalReleases": 437,
     "goLiveDate": "2026-06-15"
   },
   "infrastructure": {
@@ -16,41 +16,41 @@
         "name": "wrg-prod-ai",
         "port": "8100",
         "status": "LIVE",
-        "uptime_sec": 71488
+        "uptime_sec": 2404290
       },
       {
         "name": "wrg-prod-api",
         "port": "4100",
         "status": "LIVE",
-        "uptime_sec": 40107
+        "uptime_sec": 185162
       },
       {
         "name": "wrg-prod-web",
         "port": "3100",
         "status": "LIVE",
-        "uptime_sec": 40107
+        "uptime_sec": 185162
       },
       {
         "name": "wrg-prod-wabridge",
         "port": null,
         "status": "LIVE",
-        "uptime_sec": 5307225
+        "uptime_sec": 2280544
       },
       {
         "name": "wrg-prod-cftunnel",
         "port": null,
         "status": "LIVE",
-        "uptime_sec": 5223477
+        "uptime_sec": 1086739
       },
       {
         "name": "wrg-prod-deployhook",
         "port": null,
         "status": "LIVE",
-        "uptime_sec": 5222967
+        "uptime_sec": 7555769
       }
     ],
     "servicesLive": 6,
-    "schedulerJobs": 17,
+    "schedulerJobs": 18,
     "cutoverMarkers": 22,
     "cutoverStatus": "TUNTAS"
   },
@@ -61,13 +61,15 @@
     "githubRepo": "https://github.com/DevWRG/wrg-os"
   },
   "catalog": {
-    "totalFeatures": 149,
-    "range": "F1-F117",
-    "comment": "Catalog detail di-maintain manual via Cowork (Sprint Dashboard FEATURES array)"
+    "totalFeatures": 196,
+    "range": "F1-F158",
+    "built": 57,
+    "builtDev": 47,
+    "comment": "Angka disalin manual dari array FEATURES di WRG-OS-Sprint-Dashboard.html (SoT katalog, di Drive). Terakhir dicocokkan 2026-09-13: 196 entri, 55 BUILT + 2 PROD-LIVE-WRGCRM = 57 di main, 47 BUILT-DEV menunggu promosi. Perbarui di SINI kalau blueprint berubah — file state ditulis ulang tiap run, jadi edit manual di dashboard-state.json pasti hilang."
   },
   "_meta": {
     "source": "Auto-generated dari pm2 jlist + gh CLI + .env.prod",
-    "syncedAt": "2026-08-20T00:00:11Z",
+    "syncedAt": "2026-09-16T00:00:13Z",
     "host": "Mac-mini-Development.local"
   },
   "tooling": {
