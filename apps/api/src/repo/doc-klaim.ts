@@ -256,7 +256,8 @@ export async function ingestKlaim(opts: {
   try {
     imageBase64 = (await readFile(opts.media_path)).toString("base64");
   } catch (e) {
-    return { ok: false, error: `gagal baca file foto: ${(e as Error).message}` };
+    console.error("[klaim] gagal baca file foto:", opts.media_path, (e as Error).message);
+    return { ok: false, error: "gagal baca file foto, coba kirim ulang fotonya" };
   }
 
   const [employeeId, { status, data }] = await Promise.all([
