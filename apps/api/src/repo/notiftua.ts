@@ -46,14 +46,111 @@ function signature(tua: string[]): string {
   return createHash("sha256").update(topics.join("\n")).digest("hex");
 }
 
-function buildMessage(tua: string[], tanggal: string, jam: string): string {
+const BULAN = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"];
+
+// "2026-09-16" → "16 Sep 2026". Bentuk lain dibiarkan apa adanya.
+function tanggalPendek(iso: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  if (!m) return iso;
+  return `${Number(m[3])} ${BULAN[Number(m[2]) - 1]} ${m[1]}`;
+}
+
+// Bersihkan artefak resume LLM yang tak berguna di WA:
+// - tag [TUA] / [TUA jika >4 jam] (judul pesan sudah bilang TUA — redundan)
+// - JID mentah (@138435419455601, @6281...@s.whatsapp.net): tanpa metadata
+//   mention, WA merendernya sebagai angka telanjang
+// - '@' di depan nama orang: bukan mention beneran, cuma bikin ramai
+// - sisa kurung/koma kosong setelah pembersihan di atas
+function bersihkan(s: string): string {
+  return s
+    .replace(/\[\s*TUA[^\]]*\]/gi, "")
+    .replace(/@\d[\d\s-]{6,}(?:@[\w.]+)?/g, "")
+    .replace(/@(?=\p{L})/gu, "")
+    .replace(/\(\s*[,;]*\s*\)/g, "")
+    .replace(/\(\s*,\s*/g, "(")
+    .replace(/\s*,\s*\)/g, ")")
+    .replace(/\s{2,}/g, " ")
+    .replace(/\s+([,.;])/g, "$1")
+    .replace(/[\s,;|]+$/, "")
+    .trim();
+}
+
+// Huruf depan tiap kata dibesarkan, sisanya DIBIARKAN — supaya "Sigit purnomo"
+// jadi "Sigit Purnomo" tanpa merusak akronim ("MEP" tetap "MEP").
+function kapitalNama(s: string): string {
+  return s.replace(/(^|[\s(/-])(\p{Ll})/gu, (_m, sep: string, c: string) => sep + c.toUpperCase());
+}
+
+export interface TuaItem {
+  topik: string;
+  dari?: string;
+  ke?: string;
+  sejak?: string;
+  umur?: string;
+  status?: string;
+  lain: string[];
+}
+
+// Pecah satu baris OUTSTANDING resume (format prompt services/ai/app/resume.py:
+// "• topik | dari X | ke Y | sejak jam HH:MM WIB (umur) [TUA] | status: Z")
+// jadi bagian-bagian. Label boleh hilang/berubah urutan — segmen yang tak
+// dikenali disimpan di `lain` supaya tak ada informasi yang menguap diam-diam.
+export function parseTuaLine(raw: string): TuaItem {
+  const segmen = bersihkan(raw.replace(/^\s*(?:[•*-]|\d+[.)])\s*/, ""))
+    .split("|")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const item: TuaItem = { topik: segmen.shift() ?? "", lain: [] };
+  for (const seg of segmen) {
+    const m = /^(dari|ke|kepada|sejak|status|kendala)\b\s*:?\s*(.*)$/i.exec(seg);
+    if (!m || !m[2]) {
+      item.lain.push(seg);
+      continue;
+    }
+    const label = m[1].toLowerCase();
+    const isi = m[2].trim();
+    if (label === "dari") item.dari = kapitalNama(isi);
+    else if (label === "ke" || label === "kepada") item.ke = kapitalNama(isi);
+    else if (label === "sejak") {
+      // "jam 12:00 WIB (10 jam)" → sejak "12:00 WIB", umur "10 jam"
+      const jam = /(\d{1,2}[.:]\d{2})/.exec(isi);
+      const umur = /\(([^)]*\b(?:jam|menit|hari)\b[^)]*)\)/i.exec(isi);
+      item.sejak = jam ? `${jam[1].replace(".", ":")} WIB` : isi;
+      if (umur) item.umur = umur[1].trim();
+    } else item.status = isi.charAt(0).toUpperCase() + isi.slice(1);
+  }
+  return item;
+}
+
+// Satu item → blok multi-baris. Baris judul dibuat tebal utuh (penanda tebal WA
+// tak boleh melintasi newline, jadi topik wajib satu baris logis).
+export function formatTuaItem(raw: string, nomor: number): string {
+  const it = parseTuaLine(raw);
+  const baris = [`*${nomor}. ${it.topik || raw.trim()}*`];
+  const alur = [it.dari, it.ke].filter(Boolean).join(" → ");
+  if (alur) baris.push(`   ${alur}`);
+  const waktu = [it.sejak ? `Sejak ${it.sejak}` : "", it.umur].filter(Boolean).join(" · ");
+  if (waktu) baris.push(`   ⏱ ${waktu}`);
+  if (it.status) baris.push(`   📌 ${it.status}`);
+  for (const l of it.lain) baris.push(`   ${l}`);
+  return baris.join("\n");
+}
+
+// Link dashboard: WEB_PUBLIC_URL (domain publik) didahulukan — selaras dgn
+// weeklyreport.ts. NOTIF_TUA_DASHBOARD_URL cuma cadangan: nilainya di prod
+// pernah menunjuk host tailnet yang tak bisa dibuka penerima di luar tailnet.
+export function dashboardLink(): string {
+  const base = (process.env.WEB_PUBLIC_URL || process.env.NOTIF_TUA_DASHBOARD_URL || "").replace(/\/+$/, "");
+  return base ? `${base}/monitor/resume` : "";
+}
+
+export function buildMessage(tua: string[], tanggal: string, jam: string): string {
   const count = tua.length;
-  const top5 = tua.slice(0, 5).map((l) => (l.startsWith("•") ? l : `• ${l}`)).join("\n");
-  let msg = `*🚨 ${count} Item TUA — Perlu Follow-Up*\n_${tanggal} ${jam} WIB | dari Resume Eksekutif_\n\n${top5}`;
-  if (count > 5) msg += `\n\n_…+${count - 5} item lainnya. Lihat dashboard untuk lengkap:_`;
-  else msg += `\n\n_Detail lengkap di dashboard:_`;
-  const dash = process.env.NOTIF_TUA_DASHBOARD_URL || process.env.WEB_PUBLIC_URL || "";
-  if (dash) msg += `\n${dash}`;
+  const items = tua.slice(0, 5).map((l, i) => formatTuaItem(l, i + 1)).join("\n\n");
+  let msg = `🚨 *${count} Item TUA — Perlu Follow-Up*\n_${tanggalPendek(tanggal)} · ${jam} WIB · dari Resume Eksekutif_\n\n${items}`;
+  if (count > 5) msg += `\n\n_…+${count - 5} item lainnya._`;
+  const link = dashboardLink();
+  if (link) msg += `\n\n🔗 Detail: ${link}`;
   return msg;
 }
 
