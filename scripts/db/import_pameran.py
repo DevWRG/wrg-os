@@ -269,6 +269,13 @@ def load_brand_alias(db):
     return {r[0]: r[1] for r in rows if len(r) >= 2}
 
 
+def cust_id(name):
+    """Tiruan custId() apps/api/src/repo/deal.ts — jalur form selalu mengisinya,
+    jadi baris hasil impor jangan beda sendiri."""
+    t = re.sub(r"[^a-z0-9]+", "-", s(name).lower()).strip("-")[:50]
+    return t or "unknown"
+
+
 def alias_key(v):
     return re.sub(r"[^A-Za-z0-9]", "", s(v)).upper()
 
@@ -395,7 +402,7 @@ ix = {
 if ix["fac"] is None or ix["brand"] is None:
     sys.exit("ERROR: kolom wajib (Nama Instansi / Brand) tidak ketemu")
 
-COLS = ["customer_name", "facility_name", "brand", "product", "product_category",
+COLS = ["customer_id", "customer_name", "facility_name", "brand", "product", "product_category",
         "prospect_category", "instansi_type", "city", "province", "am_id", "pic_hod",
         "cabang", "coop_model", "qty_text", "qty_num", "qty_unit", "unit_price",
         "estimate_amount", "purchase_month", "purchase_year", "stage", "probability",
@@ -597,6 +604,7 @@ for baris_no, r in enumerate(allrows[hi + 1:], start=hi + 2):
         est = str(float(baris["qty_num"]) * float(baris["unit_price"]))
 
     rows_out.append({
+        "customer_id": cust_id(baris["customer_name"]),
         "customer_name": baris["customer_name"], "facility_name": baris["facility_name"],
         "brand": baris["brand"], "product": baris["product"],
         "product_category": baris["product_category"], "account_id": acc_id,
@@ -626,11 +634,11 @@ CREATE TEMP TABLE stg ({', '.join(c + ' TEXT' for c in COLS)});
 CREATE TEMP TABLE ins_log AS
 WITH ins AS (
   INSERT INTO deal (
-    customer_name, facility_name, brand, product, product_category, prospect_category,
+    customer_id, customer_name, facility_name, brand, product, product_category, prospect_category,
     instansi_type, city, province, am_id, pic_hod, cabang, coop_model, qty_text, qty_num,
     qty_unit, unit_price, estimate_amount, purchase_month, purchase_year,
     stage, probability, forecast_category, notes, account_id)
-  SELECT {nz('customer_name')}, {nz('facility_name')}, {nz('brand')}, {nz('product')},
+  SELECT {nz('customer_id')}, {nz('customer_name')}, {nz('facility_name')}, {nz('brand')}, {nz('product')},
     {nz('product_category')},
     {nz('prospect_category')}, {nz('instansi_type')}, {nz('city')}, {nz('province')},
     {nz('am_id')}, {nz('pic_hod')}, {nz('cabang')}, {nz('coop_model')},
@@ -646,8 +654,14 @@ WITH ins AS (
        AND coalesce(d.brand,'') = coalesce(NULLIF(s.brand,''),'')
        AND coalesce(d.product,'') = coalesce(NULLIF(s.product,''),'')
        AND coalesce(d.am_id,'') = coalesce(NULLIF(s.am_id,''),''))
-  RETURNING deal_id, facility_name, account_id, am_id, estimate_amount, coop_model)
+  RETURNING deal_id, facility_name, brand, account_id, am_id, estimate_amount, coop_model)
 SELECT * FROM ins;
+-- Jalur form menulis satu baris timeline tiap deal dibuat. Tanpa ini, deal
+-- hasil impor tampil dgn timeline KOSONG di board — beda sendiri dari deal
+-- buatan UI. changed_by sengaja 'import-pameran' supaya asal-usulnya kelihatan.
+INSERT INTO spt_state_log (deal_id, from_stage, to_stage, changed_by, reason)
+SELECT deal_id, NULL, 'Prospecting', 'import-pameran', 'deal dibuat (impor pameran)'
+FROM ins_log;
 \\echo '--- LAPORAN DB (dalam txn) ---'
 SELECT 'staging_baris  = ' || count(*) FROM stg;
 SELECT 'ter-insert     = ' || count(*) FROM ins_log;
@@ -657,6 +671,21 @@ SELECT 'account_id match = ' || count(*) FILTER (WHERE account_id IS NOT NULL) |
 SELECT 'estimasi terisi  = ' || count(*) FILTER (WHERE estimate_amount IS NOT NULL) || '/' || count(*)
        || '  total Rp ' || coalesce(sum(estimate_amount),0)::bigint FROM ins_log;
 SELECT 'coop_model terisi= ' || count(*) FILTER (WHERE coop_model IS NOT NULL) || '/' || count(*) FROM ins_log;
+SELECT 'timeline dibuat  = ' || count(*) FROM spt_state_log l JOIN ins_log i USING (deal_id);
+\\echo '--- BENTROK: faskes+brand sama sudah punya deal lain (cek sebelum apply) ---'
+-- Kunci dedup (facility_name, brand, product, am_id) TIDAK menangkap ini karena
+-- kolom product berbeda ('DN-X5' vs isi lama). Deteksi F9 dijalankan sbg laporan
+-- saja — sengaja TIDAK di-enqueue ke hitl_queue, karena 26 dari baris ini memang
+-- ditautkan ke accurate_customer atas keputusan manusia di CSV, jadi antreannya
+-- cuma akan banjir oleh perkara yg sudah diputus.
+SELECT '  ' || i.facility_name || ' [' || i.brand || ']  sudah ada deal: '
+       || d.customer_name || ' / ' || d.brand || ' @ ' || d.stage
+  FROM ins_log i
+  JOIN deal d ON d.deal_id <> i.deal_id
+   AND similarity(d.customer_name, i.facility_name) >= 0.72
+   AND upper(regexp_replace(coalesce(d.brand,''),'[^A-Za-z0-9]','','g'))
+     = upper(regexp_replace(coalesce(i.brand,''),'[^A-Za-z0-9]','','g'))
+ ORDER BY 1;
 \\echo '--- faskes TANPA account_id (prospek baru) ---'
 SELECT '  ' || facility_name FROM ins_log WHERE account_id IS NULL ORDER BY 1;
 """
