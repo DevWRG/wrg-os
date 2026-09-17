@@ -8,6 +8,7 @@
 //   pm2 logs / pm2 status / pm2 stop ecosystem.prod.cjs
 
 const fs = require("fs");
+const os = require("os");
 const path = require("path");
 
 function loadEnv(file) {
@@ -66,6 +67,12 @@ const base = loadEnv(path.join(ROOT, ".env.prod"));
 const DEV_ROOT = process.env.WRG_DEV_ROOT || path.join(path.dirname(ROOT), "wrg-os-dev");
 const devBase = loadEnv(path.join(DEV_ROOT, ".env.dev"));
 
+// ── Root berkas & kredensial khusus dev ───────────────────────────────────
+// Dev TIDAK boleh menunjuk root berkas/kredensial milik prod. Semua default di
+// apps/api menunjuk ke direktori bersama di $HOME, jadi tanpa override eksplisit
+// tumpukan dev membacanya juga — lihat komentar di devEnv untuk akibatnya.
+const DEV_FILE_ROOT = process.env.WRG_DEV_FILE_ROOT || path.join(os.homedir(), ".wrg-os-dev");
+
 // Penjaga: hanya database yang jelas-jelas dev/demo yang diterima.
 const devDbAman = /_(dev|demo)(\?|$)/.test(devBase.DATABASE_URL || "");
 const devSiap = fs.existsSync(DEV_ROOT) && Boolean(devBase.DATABASE_URL) && devDbAman;
@@ -108,6 +115,20 @@ const devEnv = {
   // ⚠️ SESUDAH sebaran — .env.dev tak boleh bisa menimpa keputusan ini.
   WA_DRY_RUN: devBolehKirim ? "false" : "true",
   WA_SEND_URL: devBolehKirim ? devBase.WA_SEND_URL || "http://127.0.0.1:18080/send" : "",
+  // Rahasia gateway HARUS ikut URL-nya. Bridge yang dituju dev sama persis
+  // dengan milik prod dan menolak kiriman tanpa header `x-wa-secret`
+  // (bridge.mjs: 401 unauthorized) — sementara `devEnv` cuma menyebar
+  // `.env.dev`, yang tak punya rahasia itu.
+  //
+  // Gagalnya SENYAP dari sisi gerbang: semua penjaga lulus, ecosystem mencetak
+  // "dev boleh kirim WA", pesan masuk diproses dengan benar, statement
+  // tersimpan — hanya balasannya yang tak pernah sampai. Terbukti 18 Sep 2026:
+  // dua #KORAN ter-ingest 'terverifikasi' tapi
+  // processed_result.reply = {sent:false, status:401}.
+  //
+  // Diambil dari `.env.dev` dulu (kalau dev sengaja dipasangkan ke bridge lain),
+  // baru jatuh ke `.env.prod`. Dikosongkan saat dev bisu, sama seperti URL-nya.
+  WA_SEND_SECRET: devBolehKirim ? devBase.WA_SEND_SECRET || base.WA_SEND_SECRET || "" : "",
   // Allowlist tujuan (lapis 3, #1260). Kosong = tanpa batas, karena itu
   // devBolehKirim di atas memastikan mode live tak pernah menyala bersama
   // daftar kosong.
@@ -125,6 +146,29 @@ const devEnv = {
   // kalau DATABASE_URL benar-benar database _dev/_demo, jadi menyalinnya ke
   // .env.prod tidak melemahkan produksi.
   COOKIE_SECURE: "false",
+  // ── Isolasi root berkas: dev tak boleh menyajikan berkas PROD ──────────
+  // Semua default di apps/api menunjuk direktori bersama di $HOME, dan
+  // GET /media?p=<abs> menyajikan APA PUN di bawah root yang di-allow-list
+  // tanpa mengecek apakah path itu terdaftar di DB. Jadi tanpa override ini
+  // dashboard DEV bisa menyajikan berkas PROD:
+  //   MEDIA_ROOT            ~/.openclaw/media          → 27rb foto kunjungan WA
+  //   GA_UPLOAD_DIR         ~/.wrg-os/uploads/ga-assets → foto/dokumen aset GA
+  //   APPROVAL_UPLOAD_ROOT  ~/.wrg-os/approval-uploads  → lampiran approval
+  //   OPENCLAW_SESSIONS_FILE ~/.openclaw/agents/…/sessions.json → nama grup WA asli
+  // Menyamarkan kolom path di DB dev TIDAK cukup: itu hanya menghapus nama
+  // berkasnya (tak bisa ditebak), sementara root-nya tetap di-allow-list.
+  MEDIA_ROOT: path.join(DEV_FILE_ROOT, "media"),
+  GA_UPLOAD_DIR: path.join(DEV_FILE_ROOT, "uploads/ga-assets"),
+  APPROVAL_UPLOAD_ROOT: path.join(DEV_FILE_ROOT, "approval-uploads"),
+  OPENCLAW_SESSIONS_FILE: path.join(DEV_FILE_ROOT, "sessions.json"),
+  // Kredensial Accurate: loadCreds() di repo/accurateSync.ts jatuh ke BERKAS
+  // BERSAMA ~/.openclaw/credentials/accurate.json kalau env token/secret kosong.
+  // Berkas itu ADA di server, jadi dev terbaca "configured: true" dan
+  // POST /accurate/sync/* dari dev menarik data Accurate SUNGGUHAN — menimpa
+  // mirror dev (yang sudah disamarkan) dengan nama pelanggan asli. Scheduler dev
+  // mati, tapi endpoint manualnya tidak. Diarahkan ke berkas yang tak ada supaya
+  // dev harus SENGAJA diberi kredensial (lewat env di .env.dev) untuk sync.
+  ACCURATE_CRED_FILE: path.join(DEV_FILE_ROOT, "accurate-credentials.json"),
 };
 
 // ⚠️ `cwd` HARUS per-app, sama bentuknya dengan blok prod di bawah — bukan

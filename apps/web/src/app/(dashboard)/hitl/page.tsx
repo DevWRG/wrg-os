@@ -38,7 +38,24 @@ interface AnomalyPayload {
   direction: string;
   median: number;
 }
-type HitlPayload = ReportPayload | AuthenticityPayload | AnomalyPayload;
+interface DupCandidate {
+  kind: "deal" | "accurate_customer";
+  ref_id: string;
+  customer_name: string;
+  am_id: string | null;
+  cabang: string | null;
+  score: number;
+  exact: boolean;
+}
+interface DuplicateNamePayload {
+  type: "duplicate_customer_name_flag";
+  deal_id: string;
+  customer_name: string;
+  am_id: string | null;
+  cabang: string | null;
+  candidates: DupCandidate[];
+}
+type HitlPayload = ReportPayload | AuthenticityPayload | AnomalyPayload | DuplicateNamePayload;
 interface HitlItem {
   id: string;
   r_tier: string;
@@ -237,6 +254,56 @@ export default function HitlPage() {
                       onClick={() => void resolve(it.id, "reject")}
                     >
                       False positive
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            ) : it.payload.type === "duplicate_customer_name_flag" ? (
+              <Card key={it.id}>
+                <CardHeader className="flex flex-row items-start justify-between space-y-0">
+                  <CardTitle className="text-base">
+                    Nama mirip: {it.payload.customer_name}
+                  </CardTitle>
+                  <div className="flex gap-1">
+                    <Badge variant="outline">{it.r_tier}</Badge>
+                    <Badge variant="outline">{it.hitl_level}</Badge>
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <p className="text-sm text-muted-foreground">
+                    AM: {it.payload.am_id ?? "—"} {it.payload.cabang ? `· ${it.payload.cabang}` : ""}
+                  </p>
+                  <div className="space-y-1">
+                    {it.payload.candidates.map((c) => (
+                      <p key={c.ref_id} className="text-sm flex items-center justify-between gap-2">
+                        <span className="truncate">
+                          {c.customer_name}{" "}
+                          {c.kind === "accurate_customer" && <Badge variant="outline">Accurate</Badge>}
+                          {c.am_id && <span className="text-muted-foreground"> ({c.am_id})</span>}
+                        </span>
+                        <Badge variant={c.exact ? "destructive" : "secondary"}>
+                          {c.exact ? "IDENTIK" : `${(c.score * 100).toFixed(0)}%`}
+                        </Badge>
+                      </p>
+                    ))}
+                  </div>
+                  <div className="flex gap-2">
+                    <Button
+                      size="sm"
+                      className="flex-1"
+                      disabled={busy === it.id}
+                      onClick={() => void resolve(it.id, "approve")}
+                    >
+                      Sudah dicek / bukan duplikat
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="flex-1"
+                      disabled={busy === it.id}
+                      onClick={() => void resolve(it.id, "reject")}
+                    >
+                      Tolak
                     </Button>
                   </div>
                 </CardContent>

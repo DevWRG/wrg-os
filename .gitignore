@@ -14,6 +14,7 @@ out/
 .env.local
 .env.*.local
 .env.prod
+.env.demo
 .env.production
 !.env.example
 !.env.prod.example
