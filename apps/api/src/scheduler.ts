@@ -183,10 +183,12 @@ export function startScheduler(): ScheduleStatus {
   // dipakai #STOK (inbound.ts) supaya total stok tak basi. Flag SENDIRI,
   // TERPISAH dari accurate-sync (itu utk invoice/SO/DO, cadence 6x/hari).
   const accurateStockSyncEnabled = (process.env.ACCURATE_STOCK_SYNC_ENABLED ?? "false").toLowerCase() === "true";
-  // cashin-resume (F-CASHIN) — resume uang masuk harian → DM Direktur. Flag
-  // SENDIRI (default off) karena mengirim WA, dan tujuannya diambil dari env
-  // CASHIN_RESUME_TO: tanpa nomor itu resume tetap dihitung & disimpan tapi
-  // tidak dikirim ke siapa pun. Target broadcast WA ditentukan manusia.
+  // cashin-resume (F-CASHIN) — jaring pengaman gerbang konfirmasi Finance.
+  // Flag SENDIRI (default off) karena mengirim WA ke grup Finance.
+  //
+  // ⚠️ Job ini TIDAK mengirim apa pun ke Direktur. Sejak migrasi 178 resume
+  // hanya sampai ke Direktur setelah Finance membalas "ya <kode>"; job ini cuma
+  // membuat draft yang tertinggal dan mengingatkan draft yang menggantung.
   const cashinResumeEnabled = (process.env.CASHIN_RESUME_ENABLED ?? "false").toLowerCase() === "true";
   const timezone = TZ();
   const jobs: JobDef[] = [
@@ -926,16 +928,18 @@ export function startScheduler(): ScheduleStatus {
     live.push(`watchpoint-snapshot=${wpsExpr}`);
   }
 
-  // cashin-resume (F-CASHIN) — hitung uang masuk riil hari ini (total kredit
-  // dikurangi dana puteran WRG, bunga, deposito) lalu DM ke Direktur.
+  // cashin-resume (F-CASHIN) — jaring pengaman harian gerbang konfirmasi.
   //
-  // Default 20:00 Sen–Sab: admin menyetor rekening koran SETELAH tutup hari,
-  // jadi resume sore tidak boleh terlalu awal. Jam finalnya masih menunggu
-  // keputusan user — override lewat CASHIN_RESUME_CRON tanpa ubah kode.
+  // Pemicu UTAMA draft bukan di sini: draft terbentuk begitu koran hari itu
+  // lengkap (di dalam ingestKoran). Job ini menangani sisanya — draft yang
+  // tertinggal karena file terakhir masuk lewat menu web, dan draft yang
+  // menggantung tanpa konfirmasi Finance.
   //
-  // Aman dijalankan berkali-kali: monitor_digest di-UPSERT per tanggal. Yang
-  // TIDAK idempoten cuma pengiriman WA-nya, jadi jangan pasang cadence rapat.
-  const cashinExpr = process.env.CASHIN_RESUME_CRON ?? "0 20 * * 1-6";
+  // Default 17:30 Sen–Sab (keputusan user 17 Sep 2026); override lewat
+  // CASHIN_RESUME_CRON tanpa ubah kode. Aman dijalankan berkali-kali:
+  // monitor_digest di-UPSERT per tanggal, draft dikirim sekali
+  // (draft_terkirim_at), pengingat sekali sehari (ingat_terakhir_at).
+  const cashinExpr = process.env.CASHIN_RESUME_CRON ?? "30 17 * * 1-6";
   if ((enabled || cashinResumeEnabled) && cron.validate(cashinExpr)) {
     cron.schedule(
       cashinExpr,

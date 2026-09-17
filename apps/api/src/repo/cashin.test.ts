@@ -1,7 +1,18 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { berbauInternal, formatResume, kategoriAwal, type KoranLine, type RingkasanHarian } from "./cashin.js";
+import {
+  berbauInternal,
+  formatDraftKonfirmasi,
+  formatIngatanBelumLengkap,
+  formatIngatanKonfirmasi,
+  formatResume,
+  kategoriAwal,
+  miripKeputusanResume,
+  parseKeputusanResume,
+  type KoranLine,
+  type RingkasanHarian,
+} from "./cashin.js";
 
 // Semua contoh di bawah adalah baris SUNGGUHAN dari folder REKENING KORAN
 // (31 Agu – 4 Sep 2026), bukan karangan. Itu penting: yang bikin fitur ini
@@ -142,4 +153,69 @@ test("resume menyebut statement yang tidak lolos verifikasi", () => {
     }),
   );
   assert.match(teks, /MDR 038: saldo akhir tidak bersambung/);
+});
+
+// ── gerbang konfirmasi Finance (migrasi 178) ─────────────────────────────────
+
+test("balasan konfirmasi dikenali dalam bentuk yang benar-benar diketik orang", () => {
+  const ya = ["ya R12", "YA r12", "ok R12", "*ya R12*", "setuju #R12", "kirim R 12"];
+  for (const b of ya) {
+    assert.deepEqual(parseKeputusanResume(b), { keputusan: "ya", kode: "R12", alasan: null }, b);
+  }
+  // Alasan ikut terbawa saat menahan — itu yang dibaca orang besok pagi waktu
+  // bertanya "kenapa resume 4 Sep tidak dikirim".
+  assert.deepEqual(parseKeputusanResume("tidak R12 angka BJTM salah"), {
+    keputusan: "tidak",
+    kode: "R12",
+    alasan: "angka BJTM salah",
+  });
+  // Kode boleh muncul di baris kedua: orang sering mengutip draft lalu membalas
+  // di bawahnya.
+  assert.deepEqual(parseKeputusanResume("noted\nya R7"), { keputusan: "ya", kode: "R7", alasan: null });
+});
+
+test("percakapan biasa TIDAK pernah menyetujui resume", () => {
+  // Ini penjaga terpenting di modul ini: satu false-positive = angka uang masuk
+  // terkirim ke Direktur tanpa ada manusia yang memeriksanya.
+  const bukan = [
+    "ya 12",              // tanpa huruf kode — "ya 12 rb aja"
+    "ya",                 // persetujuan percakapan
+    "ok siap",
+    "iya betul yang R itu belum masuk",
+    "ya L3",              // ruang nama detect_leave (approval cuti)
+    "tidak ada koran hari ini",
+  ];
+  for (const b of bukan) assert.equal(parseKeputusanResume(b), null, b);
+});
+
+test("balasan yang jelas meniru format tapi rusak dibalas panduan, bukan didiamkan", () => {
+  // Pelajaran detect_leave: "ya LT2" dulu senyap dan approver menyangka
+  // approval-nya masuk.
+  for (const b of ["ya R", "ok r1x", "tidak R "]) assert.equal(miripKeputusanResume(b), true, b);
+  // Yang sudah benar tidak dianggap mirip (nanti dibalas dua kali).
+  assert.equal(miripKeputusanResume("ya R12"), false);
+  // Ruang nama modul lain tidak diserobot.
+  assert.equal(miripKeputusanResume("ya L3"), false);
+  // Kalimat panjang yang kebetulan berawalan kata keputusan bukan salah ketik.
+  assert.equal(miripKeputusanResume("ya rekening BJTM sudah saya kirim tadi pagi"), false);
+});
+
+test("draft menyatakan dirinya BELUM dikirim ke Direktur", () => {
+  const teks = formatDraftKonfirmasi(formatResume(ringkasan()), "R12");
+  // Kalimat ini yang mencegah draft dibaca sebagai laporan final saat di-forward.
+  assert.match(teks, /DRAFT — belum dikirim ke Direktur/);
+  assert.match(teks, /ya R12/);
+  assert.match(teks, /tidak R12/);
+  // Isi resume tetap utuh di dalam draft — Finance menyetujui teks yang persis
+  // sama dengan yang akan diterima Direktur.
+  assert.match(teks, /Uang masuk riil\s+: Rp 58\.731\.797/);
+});
+
+test("pengingat menyebut kode dan angka yang masih tertahan", () => {
+  const teks = formatIngatanKonfirmasi("R12", "2026-09-04", 3_676_320);
+  assert.match(teks, /R12/);
+  assert.match(teks, /Rp 3\.676\.320/);
+  const lengkap = formatIngatanBelumLengkap(ringkasan());
+  assert.match(lengkap, /3\/10 rekening/);
+  assert.match(lengkap, /BNI, HANA/);
 });

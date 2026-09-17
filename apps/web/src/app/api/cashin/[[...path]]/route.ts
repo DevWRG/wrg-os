@@ -1,5 +1,6 @@
 import { gatewayFetch, relay } from "@/lib/gateway";
 import { sessionUser } from "@/lib/admin-guard";
+import { can } from "@/lib/perms";
 
 export const dynamic = "force-dynamic";
 
@@ -31,7 +32,30 @@ export async function POST(req: Request, ctx: { params: Promise<{ path?: string[
   const me = await sessionUser();
   if (!me) return Response.json({ error: "unauthenticated" }, { status: 401 });
   const sub = joinPath((await ctx.params).path);
-  const body = await req.text();
+  let body = await req.text();
+
+  // Keputusan resume = satu-satunya aksi di menu ini yang MENGIRIM pesan ke
+  // Direktur. Login saja tidak cukup: gateway menyuntik x-service-token yang
+  // mem-bypass JWT apps/api, jadi tanpa cek di sini siapa pun yang punya sesi
+  // (termasuk akun view-only) bisa memicu pengiriman lewat curl.
+  //
+  // `oleh` sengaja DITIMPA dari sesi, bukan diambil dari body: kolom itu jejak
+  // audit "siapa menyetujui angka hari itu". Kalau nilainya dikirim klien,
+  // jejaknya bisa ditulis atas nama orang lain dan tetap terlihat sah.
+  if (/^resume\/[^/]+\/putuskan$/.test(sub)) {
+    if (!can(me, "uang-masuk", "edit")) {
+      return Response.json({ error: "tidak berwenang memutuskan resume" }, { status: 403 });
+    }
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(body || "{}");
+    } catch {
+      return Response.json({ error: "invalid JSON body" }, { status: 400 });
+    }
+    parsed.oleh = me.name?.trim() || me.email;
+    body = JSON.stringify(parsed);
+  }
+
   try {
     return relay(
       await gatewayFetch(`/cashin${sub ? `/${sub}` : ""}`, {
