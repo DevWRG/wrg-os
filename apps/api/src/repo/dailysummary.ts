@@ -67,6 +67,48 @@ export function paksaOverview(summary: string, s: StatsDaily): string {
   return [...lines.slice(0, i), ...blok, ...(ekor.length ? [""] : []), ...ekor].join("\n");
 }
 
+export interface DaftarNama {
+  non_reporters: string[];
+  no_plan: string[];
+  on_leave: string[];
+}
+
+// Perhatian & Ijin isinya murni daftar dari DB. Dulu LLM yang menuliskannya,
+// dengan dua akibat: (a) nama bisa salah salin, (b) kalau jawaban LLM kena
+// plafon token, section ini — yang justru paling dituntut tindak lanjut —
+// hilang tanpa jejak karena posisinya paling bawah.
+export function blokDaftar(d: DaftarNama): string {
+  const bagian: string[] = ["*Perhatian*"];
+  if (d.non_reporters.length) bagian.push(`• Belum report (${d.non_reporters.length}): ${d.non_reporters.join(", ")}`);
+  if (d.no_plan.length) bagian.push(`• Belum plan (${d.no_plan.length}): ${d.no_plan.join(", ")}`);
+  if (!d.non_reporters.length && !d.no_plan.length) bagian.push("• (semua wajib user sudah submit)");
+  if (d.on_leave.length) bagian.push("", "*Ijin*", `• ${d.on_leave.join(", ")}`);
+  return bagian.join("\n");
+}
+
+// Buang section Perhatian/Ijin versi LLM (kalau masih nekat menulis), lalu
+// tempel versi dari DB di akhir.
+export function paksaDaftar(summary: string, d: DaftarNama): string {
+  const lines = summary.split("\n");
+  const keep: string[] = [];
+  let buang = false;
+  for (const l of lines) {
+    if (isJudulSection(l)) buang = /^\*(perhatian|ijin|izin)\*$/i.test(l.trim());
+    if (!buang) keep.push(l);
+  }
+  while (keep.length && keep[keep.length - 1].trim() === "") keep.pop();
+  return `${keep.join("\n")}\n\n${blokDaftar(d)}`;
+}
+
+// Jawaban LLM yang kena plafon token berhenti di tengah kalimat — tak ada error,
+// pesan tetap terkirim separuh. Tandai supaya pembaca tahu ada yang hilang.
+export function tandaiTerpotong(summary: string): string {
+  const akhir = summary.trimEnd();
+  const barisAkhir = akhir.split("\n").pop() ?? "";
+  const utuh = /[.!?)\]]$/.test(barisAkhir) || barisAkhir.trim() === "" || isJudulSection(barisAkhir);
+  return utuh ? summary : `${akhir} …\n_(ringkasan terpotong — lihat detail di dashboard)_`;
+}
+
 export interface DailySummaryResult {
   sent: boolean;
   skipped?: "no-activity";
@@ -156,6 +198,12 @@ export async function runDailySummary(
     ORDER BY mu.nama
   `;
 
+  const daftar: DaftarNama = {
+    no_plan: noPlan.map((r) => String(r.nm)).filter(Boolean),
+    non_reporters: nonReporters.map((r) => String(r.nm)).filter(Boolean),
+    on_leave: onLeave.map((r) => String(r.nm)).filter(Boolean),
+  };
+
   const { hari, tanggal } = hariTanggal();
   const st: StatsDaily = {
     anggota_aktif: Number(stats?.anggota_aktif ?? 0),
@@ -181,9 +229,7 @@ export async function runDailySummary(
       tujuan: r.tujuan ? String(r.tujuan) : null,
       is_unmatched: Boolean(r.is_unmatched),
     })),
-    no_plan: noPlan.map((r) => String(r.nm)).filter(Boolean),
-    non_reporters: nonReporters.map((r) => String(r.nm)).filter(Boolean),
-    on_leave: onLeave.map((r) => String(r.nm)).filter(Boolean),
+    ...daftar,
     dry_run: aiDryRun(),
   });
 
@@ -196,6 +242,8 @@ export async function runDailySummary(
   // pakai nilai bash-known. Header format: "📊 *Daily Summary — {hari}, {tanggal}*".
   summary = summary.replace(/^.*Daily Summary\b.*$/m, `📊 *Daily Summary — ${hari}, ${tanggal}*`);
   summary = paksaOverview(summary, st);
+  summary = tandaiTerpotong(summary);
+  summary = paksaDaftar(summary, daftar);
 
   // Simpan untuk arsip/inspeksi (monitor_digest kind='daily').
   const dateStr = wibNow().toISOString().slice(0, 10);

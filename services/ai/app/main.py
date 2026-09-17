@@ -81,9 +81,8 @@ Buat ringkasan harian aktivitas tim sales PT Wahana Rizky Gumilang.
 
 CRITICAL RULES:
 - JANGAN mengarang nama, angka, atau fakta yg tidak ada di data input.
-- Section 'Perhatian' HANYA pakai nama dari list NON_REPORTERS & NO_PLAN yg di-input.
-  Kalau kedua list kosong, tulis '(semua wajib user sudah submit)'.
-- Section 'Ijin' HANYA pakai nama dari list ON_LEAVE. Skip section ini kalau list kosong.
+- Section 'Perhatian' & 'Ijin' TIDAK ditulis olehmu — sistem yang menempelkannya
+  dari data DB. Berhenti setelah 'Highlight'.
 - Angka overview 'anggota aktif dari N tim wajib' pakai anggota_aktif & wajib_total dari STATS
   (wajib_total sudah exclude yg ijin hari ini).
 - Persentase sesuai plan pakai matched_pct dari STATS APA ADANYA. JANGAN hitung sendiri.
@@ -122,14 +121,9 @@ _Madiun_
 *Highlight*
 • [poin penting hari ini — deal hot, prospek baru, risiko]
 
-*Perhatian*
-• Belum report ({jumlah}): [copy nama dari NON_REPORTERS, pisahkan koma]
-• Belum plan ({jumlah}): [copy nama dari NO_PLAN, pisahkan koma]
-[baris yang listnya kosong DIHILANGKAN; kalau dua-duanya kosong tulis
- '• (semua wajib user sudah submit)']
-
-*Ijin*
-• [copy nama dari ON_LEAVE list. Skip SELURUH section kalau list kosong]
+BERHENTI setelah Highlight. Section 'Perhatian' dan 'Ijin' ditambahkan sistem
+dari data DB — JANGAN kamu tulis, dan jangan sebut nama yang belum lapor di
+Highlight (nanti kembar).
 
 Gunakan Bahasa Indonesia. Singkat, informatif, eksekutif."""
 
@@ -167,9 +161,9 @@ def daily_summary(req: DailySummaryRequest) -> DailySummaryResponse:
     """
     compressed = wrg_compress(req.rows)
     s = req.stats
-    no_plan = ", ".join(req.no_plan) or "(kosong)"
-    non_reporters = ", ".join(req.non_reporters) or "(kosong)"
-    on_leave = ", ".join(req.on_leave) or "(kosong)"
+    # Nama pada ketiga list ini TIDAK dikirim ke LLM: section Perhatian & Ijin
+    # ditempel apps/api dari data DB. Yang dikirim hanya jumlahnya, sebagai
+    # konteks — nama di prompt cuma menambah peluang bocor ke Highlight.
     user_msg = (
         "============================================\n"
         "DATA INPUT (compressed):\n"
@@ -179,9 +173,9 @@ def daily_summary(req: DailySummaryRequest) -> DailySummaryResponse:
         f"total_report={s.total_report} | matched={s.matched} | "
         f"matched_pct={s.matched_pct} | "
         f"unmatched={s.unmatched} | anggota_plan={s.anggota_plan}\n\n"
-        f"NO_PLAN (wajib tapi tidak submit plan hari ini):\n{no_plan}\n\n"
-        f"NON_REPORTERS (sudah submit plan tapi belum report):\n{non_reporters}\n\n"
-        f"ON_LEAVE (wajib tapi ijin/cuti hari ini — sudah di-exclude dari wajib_total):\n{on_leave}\n"
+        f"JUMLAH (nama-namanya ditempel sistem, jangan kamu sebut):\n"
+        f"belum_plan={len(req.no_plan)} | belum_report={len(req.non_reporters)} | "
+        f"ijin={len(req.on_leave)}\n"
         "============================================"
     )
     system = DAILY_SYSTEM_PROMPT.replace("{hari}", req.hari).replace(
@@ -192,7 +186,10 @@ def daily_summary(req: DailySummaryRequest) -> DailySummaryResponse:
     if req.dry_run or not os.environ.get("OPENROUTER_API_KEY"):
         return DailySummaryResponse(summary=fallback, model="dry-run", dry_run=True)
 
-    text, model, tin, tout = chat_or_fallback(system, user_msg, fallback)
+    # 4000, bukan default 1500: bentuk daftar per orang jauh lebih panjang dari
+    # paragraf. Pada data 41 pelapor, 1500 token habis di tengah section Per Area
+    # — sisanya terpotong diam-diam (tak ada error, pesan tetap terkirim).
+    text, model, tin, tout = chat_or_fallback(system, user_msg, fallback, max_tokens=4000)
     return DailySummaryResponse(
         summary=text, model=model, tokens_in=tin, tokens_out=tout,
         dry_run=model == "dry-run-fallback",
