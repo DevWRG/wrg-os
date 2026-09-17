@@ -945,6 +945,21 @@ async function lampiranKoranTerdekat(row: WaRow): Promise<WaRow[]> {
   return rows as unknown as WaRow[];
 }
 
+/** Apakah lampiran di sekitar pesan ini SUDAH jadi statement? Dipakai untuk
+ *  membedakan "file belum dikirim" (perlu ditegur) dari "file sudah masuk lewat
+ *  baris dokumennya" (tak perlu bicara apa-apa). */
+async function lampiranKoranSudahJadiStatement(row: WaRow): Promise<boolean> {
+  const [r] = await db()`
+    SELECT 1 AS ada FROM wa_message m
+    JOIN bank_statement s ON s.wa_message_id = m.id
+    WHERE m.group_jid = ${row.group_jid}
+      AND m.received_at BETWEEN ${row.received_at}::timestamptz - ${`${KORAN_JENDELA_MENIT} minutes`}::interval
+                            AND ${row.received_at}::timestamptz + ${`${KORAN_JENDELA_MENIT} minutes`}::interval
+    LIMIT 1
+  `;
+  return Boolean(r);
+}
+
 /** Apakah ada pesan #KORAN di sekitar baris dokumen ini? */
 async function adaKoranTerdekat(row: WaRow): Promise<boolean> {
   const [r] = await db()`
@@ -1305,6 +1320,14 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
     // terpisah sebelum/sesudahnya — lihat catatan di cabang kind === "none".
     const lampiran = adaLampiranDokumen(row) ? [row] : await lampiranKoranTerdekat(row);
     if (lampiran.length === 0) {
+      // Lampirannya bisa sudah diproses duluan: baris dokumen dan baris teks
+      // kadang punya received_at yang SAMA (terbukti 18 Sep 2026, dua-duanya
+      // 00:42:59), dan yang dokumen menang urutan. Kalau file di sekitarnya
+      // sudah jadi statement, pekerjaan sudah beres — diam, jangan menyuruh
+      // admin mengirim ulang file yang justru barusan berhasil masuk.
+      if (await lampiranKoranSudahJadiStatement(row)) {
+        return finish({ skipped: "lampiran-sudah-diproses" }, "koran");
+      }
       const reply = await sendViaWaGateway(
         target,
         "⚠️ #KORAN belum ada lampirannya. Kirim file rekening koran (PDF e-banking atau foto) — boleh menyusul di pesan berikutnya.",
