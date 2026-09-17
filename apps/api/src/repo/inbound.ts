@@ -6,6 +6,7 @@ import { handleSalesAnalyticsQuery } from "./inbound-sales-analytics.js";
 import { resolveSender } from "./master.js";
 import { upsertDailyTodo, computeIsLate } from "./todo.js";
 import { createReminder } from "./reminder.js";
+import { ingestKoran, type IngestKoranResult } from "./cashin.js";
 
 // Role yang pakai alur AM per-customer (sales_plan/activity_log + foto), bukan todo.
 const AM_ROLES = new Set(["AM", "Teknisi"]);
@@ -20,10 +21,12 @@ const isAmRole = (role?: string | null) => AM_ROLES.has((role ?? "").trim());
 // → patuh WA_DRY_RUN. Idempoten: wa_message.processed_at. Pengirim tak dikenal →
 // SILENT (tak balas) supaya tak spam non-AM/pesan bot di grup campuran.
 
-export type InboundKind = "plan" | "report" | "leads" | "update" | "sales" | "none";
+export type InboundKind = "plan" | "report" | "leads" | "update" | "sales" | "koran" | "none";
 
 const LEADS_UPDATE_LINE = /^\s*#\s*(leads|update)\b/i;
 const SALES_LINE = /^\s*#\s*sales\b/i;
+// F-CASHIN — setoran rekening koran harian dari admin Finance.
+const KORAN_LINE = /^\s*#\s*koran\b/i;
 
 export function detectKind(body: string | null): InboundKind {
   const daily = detectDaily(body); // line-anchored #plan/#report (sudah strip invisible)
@@ -33,6 +36,7 @@ export function detectKind(body: string | null): InboundKind {
       const m = line.match(LEADS_UPDATE_LINE);
       if (m) return m[1].toLowerCase() as "leads" | "update";
       if (SALES_LINE.test(line)) return "sales";
+      if (KORAN_LINE.test(line)) return "koran";
     }
   }
   return "none";
@@ -745,6 +749,137 @@ async function photoFollowup(row: WaRow, am: { am_id: string; nama: string }): P
 
 // Proses SATU pesan; selalu tandai processed_at (idempoten). Pengirim tak dikenal
 // / non-submission → SILENT.
+// ── #KORAN: penjodohan hashtag ↔ lampiran (F-CASHIN) ──
+//
+// WhatsApp memisah dokumen dan teks jadi dua pesan, dan admin Finance memang
+// mengetik "#KORAN mandiri 17 sep" lalu melampirkan PDF-nya menyusul. Kedua
+// urutan harus jalan:
+//   teks dulu  → pesan hashtag mencari lampiran di sekitarnya
+//   file dulu  → baris dokumen mencari hashtag di sekitarnya
+//
+// Jendela ±10 menit: satu setoran harian berisi s/d 10 file yang dikirim
+// berurutan, dan admin kadang menyela dengan pesan lain di tengahnya.
+//
+// Pencocokan sengaja per-GRUP, bukan per-pengirim: di grup, `sender_jid` =
+// `group_jid` (jebakan lama yang tercatat di CLAUDE.md), jadi menyaring per
+// pengirim justru membuang semua pasangan yang sah.
+const KORAN_JENDELA_MENIT = 10;
+const KORAN_MAX_LAMPIRAN = 12;
+
+export function adaLampiranDokumen(row: Pick<WaRow, "media_path" | "message_type">): boolean {
+  if (!row.media_path) return false;
+  const t = String(row.message_type ?? "").toLowerCase();
+  // 'application/pdf' (bentuk asli e-banking), 'document*', dan foto layar.
+  return t.startsWith("application") || t.startsWith("document") || t.startsWith("image");
+}
+
+/** Lampiran di sekitar pesan #KORAN yang belum jadi statement mana pun. */
+async function lampiranKoranTerdekat(row: WaRow): Promise<WaRow[]> {
+  const rows = await db()`
+    SELECT m.id::text, m.group_jid, m.sender_jid, m.sender_name, m.body, m.message_type,
+           m.message_id, m.received_at::text, m.media_path
+    FROM wa_message m
+    WHERE m.group_jid = ${row.group_jid}
+      AND m.media_path IS NOT NULL
+      AND (m.message_type ~* '^(application|document|image)')
+      AND m.received_at BETWEEN ${row.received_at}::timestamptz - ${`${KORAN_JENDELA_MENIT} minutes`}::interval
+                            AND ${row.received_at}::timestamptz + ${`${KORAN_JENDELA_MENIT} minutes`}::interval
+      -- File yang sudah jadi statement tidak diulang. Ingest-nya sendiri
+      -- idempoten (UPSERT per rekening+tanggal), tapi mengulanginya berarti
+      -- satu setoran dibalas berkali-kali.
+      AND NOT EXISTS (SELECT 1 FROM bank_statement s WHERE s.wa_message_id = m.id)
+    ORDER BY m.received_at
+    LIMIT ${KORAN_MAX_LAMPIRAN}
+  `;
+  return rows as unknown as WaRow[];
+}
+
+/** Apakah lampiran di sekitar pesan ini SUDAH jadi statement? Dipakai untuk
+ *  membedakan "file belum dikirim" (perlu ditegur) dari "file sudah masuk lewat
+ *  baris dokumennya" (tak perlu bicara apa-apa). */
+async function lampiranKoranSudahJadiStatement(row: WaRow): Promise<boolean> {
+  const [r] = await db()`
+    SELECT 1 AS ada FROM wa_message m
+    JOIN bank_statement s ON s.wa_message_id = m.id
+    WHERE m.group_jid = ${row.group_jid}
+      AND m.received_at BETWEEN ${row.received_at}::timestamptz - ${`${KORAN_JENDELA_MENIT} minutes`}::interval
+                            AND ${row.received_at}::timestamptz + ${`${KORAN_JENDELA_MENIT} minutes`}::interval
+    LIMIT 1
+  `;
+  return Boolean(r);
+}
+
+/** Apakah ada pesan #KORAN di sekitar baris dokumen ini? */
+async function adaKoranTerdekat(row: WaRow): Promise<boolean> {
+  const [r] = await db()`
+    SELECT 1 AS ada FROM wa_message m
+    WHERE m.group_jid = ${row.group_jid}
+      AND m.body ~* '#\\s*koran'
+      AND m.received_at BETWEEN ${row.received_at}::timestamptz - ${`${KORAN_JENDELA_MENIT} minutes`}::interval
+                            AND ${row.received_at}::timestamptz + ${`${KORAN_JENDELA_MENIT} minutes`}::interval
+    LIMIT 1
+  `;
+  return Boolean(r);
+}
+
+/** Ingest satu/beberapa lampiran + susun balasannya. Dipakai dua jalur masuk
+ *  (pesan hashtag dan baris dokumen), jadi bunyinya selalu sama. */
+async function ingestKoranDariBaris(row: WaRow, lampiran: WaRow[]): Promise<Record<string, unknown>> {
+  const rp = (n: number) => "Rp " + Math.round(n).toLocaleString("id-ID");
+  const baris: string[] = [];
+  const hasil: Record<string, unknown>[] = [];
+
+  for (const l of lampiran) {
+    if (!l.media_path) continue;
+    const result = await ingestKoran({
+      file_path: l.media_path,
+      file_nama: l.media_path.split("/").pop() ?? null,
+      sumber: "wa",
+      wa_message_id: l.id,
+      // Grup asal = tujuan draft konfirmasi Finance nanti (migrasi 178).
+      wa_group_jid: row.group_jid,
+    });
+    if ("ok" in result && result.ok === false) {
+      baris.push(`⚠️ Gagal proses #KORAN: ${(result as { error?: string }).error}`);
+      hasil.push({ error: (result as { error?: string }).error });
+      continue;
+    }
+    const k = result as IngestKoranResult;
+    hasil.push({ statement_id: k.statement_id, status: k.status, label_file: k.label_file });
+    if (k.status === "terverifikasi") {
+      baris.push(
+        [
+          `✅ #KORAN ${k.label_file} ${k.tanggal} diterima.`,
+          `${k.jumlah_baris} transaksi · masuk ${rp(k.total_kredit)} · keluar ${rp(k.total_debit)}`,
+          k.saldo_bersambung_ok === false
+            ? "⚠️ Saldo akhir tidak bersambung ke hari berikutnya — mungkin dicetak sebelum tutup hari."
+            : null,
+        ]
+          .filter(Boolean)
+          .join("\n"),
+      );
+    } else {
+      baris.push(
+        [
+          `⚠️ #KORAN ${k.label_file} ${k.tanggal} TERTAHAN — belum masuk resume.`,
+          k.parse_error ?? "angka di dalamnya belum bisa diverifikasi",
+          "Silakan cetak ulang dari e-banking lalu kirim lagi.",
+        ].join("\n"),
+      );
+    }
+    // Status gerbang konfirmasi (migrasi 178) disebut SEKALI di akhir, bukan
+    // per file: draftnya memang satu per hari. Draft-nya sendiri dikirim
+    // sebagai pesan terpisah oleh buatDraftJikaLengkap.
+    if (l === lampiran[lampiran.length - 1]) {
+      if (k.draft_kode) baris.push(`📝 Draft resume ${k.draft_kode} menunggu konfirmasi.`);
+      else if (k.draft_alasan) baris.push(`⏳ ${k.draft_alasan}`);
+    }
+  }
+
+  const reply = await sendViaWaGateway(row.group_jid, baris.join("\n\n"));
+  return { koran: hasil, lampiran: lampiran.length, reply };
+}
+
 export async function processInboundMessage(row: WaRow): Promise<Record<string, unknown>> {
   const sql = db();
   const kind = detectKind(row.body);
@@ -759,6 +894,15 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
   };
 
   if (kind === "none") {
+    // Lampiran rekening koran yang dikirim sebagai pesan TERPISAH dari
+    // hashtagnya. WhatsApp mengirim dokumen + teks sebagai dua pesan, dan admin
+    // memang mengetik "#KORAN mandiri 17 sep" lalu melampirkan PDF-nya sesudah
+    // itu. Tanpa penjodohan ini, pesan teksnya dibalas "wajib disertai
+    // lampiran" dan PDF-nya tak pernah dilihat siapa pun — terbukti 17 Sep 2026
+    // di grup uji (23:36:24 teks, 23:36:25 PDF).
+    if (adaLampiranDokumen(row) && (await adaKoranTerdekat(row))) {
+      return finish(await ingestKoranDariBaris(row, [row]), "koran");
+    }
     // Foto tanpa hashtag (caption = customer) → foto-followup ke activity_log.
     if (String(row.message_type ?? "").toLowerCase().startsWith("image") && row.media_path) {
       const amp = await resolveSender({ senderJid: row.sender_jid, groupJid: row.group_jid, pushname: row.sender_name });
@@ -783,6 +927,28 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
     if (!amx) return finish({ skipped: "unknown-sender", sender_name: row.sender_name });
     const reply = await sendViaWaGateway(target, `ℹ️ #${kind.toUpperCase()} belum tersedia di wrg-os (menyusul).`);
     return finish({ note: "not-implemented", via: amx.via, reply });
+  }
+
+  if (kind === "koran") {
+    // Lampiran boleh menempel di pesan hashtag ini, ATAU datang sebagai pesan
+    // terpisah sebelum/sesudahnya — lihat catatan di cabang kind === "none".
+    const lampiran = adaLampiranDokumen(row) ? [row] : await lampiranKoranTerdekat(row);
+    if (lampiran.length === 0) {
+      // Lampirannya bisa sudah diproses duluan: baris dokumen dan baris teks
+      // kadang punya received_at yang SAMA (terbukti 18 Sep 2026, dua-duanya
+      // 00:42:59), dan yang dokumen menang urutan. Kalau file di sekitarnya
+      // sudah jadi statement, pekerjaan sudah beres — diam, jangan menyuruh
+      // admin mengirim ulang file yang justru barusan berhasil masuk.
+      if (await lampiranKoranSudahJadiStatement(row)) {
+        return finish({ skipped: "lampiran-sudah-diproses" }, "koran");
+      }
+      const reply = await sendViaWaGateway(
+        target,
+        "⚠️ #KORAN belum ada lampirannya. Kirim file rekening koran (PDF e-banking atau foto) — boleh menyusul di pesan berikutnya.",
+      );
+      return finish({ error: "no-attachment", reply });
+    }
+    return finish(await ingestKoranDariBaris(row, lampiran), "koran");
   }
 
   // #SALES — query analitik on-demand. Resolve pengirim (by phone/pushname),
@@ -961,8 +1127,22 @@ export async function processUnprocessed(
            media_path, geo_lat, geo_lon, geo_ts, geo_address
     FROM wa_message
     WHERE processed_at IS NULL
-      AND (body ~* '#\\s*(plan|report|leads|update|sales)'
-           OR (message_type ~* '^image' AND media_path IS NOT NULL))
+      AND (body ~* '#\\s*(plan|report|leads|update|sales|koran)'
+           OR (message_type ~* '^image' AND media_path IS NOT NULL)
+           -- Dokumen (PDF e-banking) TIDAK ber-hashtag: body-nya cuma
+           -- '<media:document>'. Tanpa cabang ini, lampiran #KORAN yang dikirim
+           -- sebagai pesan terpisah tak pernah terjaring sama sekali.
+           -- Sengaja SEMPIT — hanya dokumen yang grupnya memang sedang menyetor
+           -- #KORAN — supaya setiap PDF di grup lain tidak ikut diklaim.
+           OR (media_path IS NOT NULL
+               AND message_type ~* '^(application|document)'
+               AND EXISTS (
+                 SELECT 1 FROM wa_message k
+                 WHERE k.group_jid = wa_message.group_jid
+                   AND k.body ~* '#\\s*koran'
+                   AND k.received_at BETWEEN wa_message.received_at - interval '10 minutes'
+                                         AND wa_message.received_at + interval '10 minutes'
+               )))
     ORDER BY received_at ASC LIMIT ${limit}
   `;
   const results: Record<string, unknown>[] = [];
