@@ -42,6 +42,11 @@ export async function POST(req: Request, ctx: { params: Promise<{ path?: string[
   // `oleh` sengaja DITIMPA dari sesi, bukan diambil dari body: kolom itu jejak
   // audit "siapa menyetujui angka hari itu". Kalau nilainya dikirim klien,
   // jejaknya bisa ditulis atas nama orang lain dan tetap terlihat sah.
+  if (sub === "resume/draft" && !can(me, "uang-masuk", "edit")) {
+    // Menyusun draft = mengirim pesan ke grup Finance. Sama seperti keputusan
+    // resume, login saja tidak cukup.
+    return Response.json({ error: "tidak berwenang menyusun draft resume" }, { status: 403 });
+  }
   if (/^resume\/[^/]+\/putuskan$/.test(sub)) {
     if (!can(me, "uang-masuk", "edit")) {
       return Response.json({ error: "tidak berwenang memutuskan resume" }, { status: 403 });

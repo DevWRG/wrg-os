@@ -186,6 +186,7 @@ import {
   ingestKoran,
   listAccount,
   listLine,
+  buatDraftJikaLengkap,
   listResume,
   listStatement,
   matriksKelengkapan,
@@ -3539,6 +3540,23 @@ app.get("/cashin/resume/daftar", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const limit = c.req.query("limit") ? Number(c.req.query("limit")) : undefined;
   return c.json({ resume: await listResume(limit) });
+});
+
+// Susun draft resume SEKARANG untuk satu tanggal, tanpa menunggu periode
+// hening. Tiga pemakaian nyata: (a) tombol "susun resume" di menu web,
+// (b) tanggal yang timernya hilang karena api sempat restart, (c) statement
+// yang semuanya masuk lewat unggahan web (tak ada #KORAN yang menjadwalkan
+// apa pun). Tanpa ini, tanggal-tanggal itu tak punya jalan menuju resume sama
+// sekali kecuali menunggu file baru kebetulan datang.
+app.post("/cashin/resume/draft", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const body = await c.req.json().catch(() => ({}));
+  const tanggal = String(body.tanggal ?? "").trim() || wibDate();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(tanggal)) {
+    return c.json({ error: "field 'tanggal' harus YYYY-MM-DD" }, 400);
+  }
+  const r = await buatDraftJikaLengkap(tanggal, body.grup_jid ?? null, { paksa: true });
+  return c.json({ tanggal, ...r });
 });
 
 app.post("/cashin/resume/:kode/putuskan", async (c) => {
