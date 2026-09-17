@@ -1231,7 +1231,8 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
     try {
       text = await handleSalesAnalyticsQuery(row.body ?? "", { am_id: ams.am_id, nama: ams.nama ?? null, role: ams.role ?? null });
     } catch (e) {
-      text = `⚠️ Query #SALES gagal diproses: ${(e as Error).message}`;
+      console.error("[inbound] #SALES gagal diproses:", (e as Error).message);
+      text = "⚠️ Query #SALES gagal diproses, coba lagi sebentar lagi.";
     }
     const reply = await sendViaWaGateway(target, text);
     return finish({ kind: "sales", via: ams.via, reply });
@@ -1253,7 +1254,8 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
       try {
         text = await handleCekQuery(row.body ?? "");
       } catch (e) {
-        text = `⚠️ Query #CEK gagal diproses: ${(e as Error).message}`;
+        console.error("[inbound] #CEK gagal diproses:", (e as Error).message);
+        text = "⚠️ Query #CEK gagal diproses, coba lagi sebentar lagi.";
       }
       const reply = await sendViaWaGateway(target, text);
       return finish({ kind: "cek", cek_mode: "customer", via: ck.via, reply });
