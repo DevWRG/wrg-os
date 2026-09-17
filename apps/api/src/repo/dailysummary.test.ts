@@ -1,7 +1,16 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { blokOverview, matchedPct, paksaOverview, type StatsDaily } from "./dailysummary.js";
+import {
+  blokDaftar,
+  blokOverview,
+  matchedPct,
+  paksaDaftar,
+  paksaOverview,
+  tandaiTerpotong,
+  type DaftarNama,
+  type StatsDaily,
+} from "./dailysummary.js";
 
 const STATS: StatsDaily = { anggota_aktif: 35, total_report: 322, matched: 300, unmatched: 22, wajib_total: 48 };
 
@@ -73,4 +82,62 @@ test("judul section lain tidak salah dikenali sebagai Overview", () => {
   const llm = "📊 *Daily Summary*\n\n*Perhatian*\n• Belum report (13): A, B\n";
   const out = paksaOverview(llm, STATS);
   assert.match(out, /• Belum report \(13\): A, B/, "section Perhatian ikut hilang");
+});
+
+// === Perhatian/Ijin ditempel sistem, bukan ditulis LLM (#1324 lanjutan) ===
+// Uji nyata di prod dengan data 41 pelapor menunjukkan jawaban LLM kena plafon
+// token dan berhenti di tengah section Per Area — Highlight, Perhatian, dan Ijin
+// hilang tanpa error. Section yang isinya murni data DB tak boleh ikut hilang.
+
+const DAFTAR: DaftarNama = {
+  non_reporters: ["Akhmad Iqbal", "Angga Adhitya", "Ari Kurnia"],
+  no_plan: ["Hanasta Januar"],
+  on_leave: ["Budi (cuti)"],
+};
+
+test("Perhatian & Ijin selalu ada meski jawaban LLM terpotong", () => {
+  const terpotong = "📊 *Daily Summary*\n\n*Per Area*\n_Pusat_\n• Renika — 16 aktivitas keuangan, proses 20 transaksi masuk-keluar bank, BMHP, imun";
+  const out = paksaDaftar(terpotong, DAFTAR);
+  assert.match(out, /\*Perhatian\*/);
+  assert.match(out, /• Belum report \(3\): Akhmad Iqbal, Angga Adhitya, Ari Kurnia/);
+  assert.match(out, /• Belum plan \(1\): Hanasta Januar/);
+  assert.match(out, /\*Ijin\*\n• Budi \(cuti\)/);
+});
+
+test("versi LLM dibuang, tidak jadi dobel", () => {
+  const llm = [
+    "📊 *Daily Summary*",
+    "",
+    "*Highlight*",
+    "• Deal RSI Kalianget masuk",
+    "",
+    "*Perhatian*",
+    "• Ngawur Satu, Ngawur Dua",
+    "",
+    "*Ijin*",
+    "• Nama Karangan",
+  ].join("\n");
+  const out = paksaDaftar(llm, DAFTAR);
+  assert.doesNotMatch(out, /Ngawur|Karangan/, "section karangan LLM masih terkirim");
+  assert.equal(out.match(/\*Perhatian\*/g)?.length, 1, "Perhatian dobel");
+  assert.equal(out.match(/\*Ijin\*/g)?.length, 1, "Ijin dobel");
+  assert.match(out, /\*Highlight\*\n• Deal RSI Kalianget masuk/, "Highlight ikut terbuang");
+});
+
+test("tak ada yang ijin → section Ijin tidak muncul", () => {
+  const out = paksaDaftar("📊 *Daily Summary*\n\n*Highlight*\n• apa saja.", { ...DAFTAR, on_leave: [] });
+  assert.doesNotMatch(out, /\*Ijin\*/);
+  assert.match(out, /\*Perhatian\*/);
+});
+
+test("semua sudah submit → Perhatian tetap ada dengan kalimat aman", () => {
+  const out = blokDaftar({ non_reporters: [], no_plan: [], on_leave: [] });
+  assert.match(out, /• \(semua wajib user sudah submit\)/);
+});
+
+test("kalimat yang putus di tengah ditandai, kalimat utuh tidak", () => {
+  const putus = "📊 *Daily Summary*\n\n*Per Area*\n• Renika — proses 20 transaksi, BMHP, imun";
+  assert.match(tandaiTerpotong(putus), /…\n_\(ringkasan terpotong/);
+  const utuh = "📊 *Daily Summary*\n\n*Per Area*\n• Renika — proses 20 transaksi selesai.";
+  assert.equal(tandaiTerpotong(utuh), utuh);
 });
