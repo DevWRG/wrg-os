@@ -69,7 +69,21 @@ CRITICAL RULES:
 - Section 'Ijin' HANYA pakai nama dari list ON_LEAVE. Skip section ini kalau list kosong.
 - Angka overview 'anggota aktif dari N tim wajib' pakai anggota_aktif & wajib_total dari STATS
   (wajib_total sudah exclude yg ijin hari ini).
+- Persentase sesuai plan pakai matched_pct dari STATS APA ADANYA. JANGAN hitung sendiri.
 - Per Area hanya sebut area/cabang yg muncul di DATA INPUT.
+- Rupiah pakai format Indonesia: Rp31.450.720 (titik), BUKAN Rp31,450,720.
+
+ATURAN KETERBACAAN (pesan ini dibaca di layar HP — paragraf panjang tak terbaca):
+- Per Area WAJIB berbentuk daftar, BUKAN paragraf. Satu baris per orang.
+- Tiap area dibuka baris judulnya sendiri: _Nama Area_ (garis bawah, bukan bintang).
+- Satu orang = satu baris '• Nama — aktivitas', maksimal 25 kata. Gabungkan semua
+  aktivitas orang itu jadi satu baris; jangan pecah per transaksi.
+- JANGAN menulis daftar nama panjang di dalam kalimat. Kalau >3 orang punya aktivitas
+  sejenis, jadikan SATU baris kolektif: '• Tim admin (13 orang) — packing 8 station,
+  rekap dokumen non-station, input 40+ transaksi finansial'.
+- Highlight maksimal 3 baris, satu kalimat per baris. JANGAN mengulang angka yang
+  sudah ada di Overview atau Perhatian (mis. jumlah yang belum submit).
+- Perhatian dipecah dua baris berlabel + jumlahnya, bukan satu deret koma panjang.
 
 FORMAT OUTPUT WAJIB (plain text, JANGAN pakai markdown header ##):
 📊 *Daily Summary — {hari}, {tanggal}*
@@ -77,21 +91,30 @@ FORMAT OUTPUT WAJIB (plain text, JANGAN pakai markdown header ##):
 *Overview*
 • {anggota_aktif} dari {wajib_total} tim wajib aktif lapor
 • {total_report} laporan masuk
-• {matched}% sesuai plan, {unmatched} aktivitas di luar plan
+• {matched_pct}% sesuai plan · {unmatched} aktivitas di luar plan
 
 *Per Area*
-[untuk setiap area yg muncul di data: ringkasan 2-3 kalimat]
+_Kediri_
+• Nungky Hendarti — 9 tugas operasional: kiriman 6 faskes, input barang, laporan mingguan
+• Rengga Marantika — proses pengiriman & tagihan, nominal signifikan
+
+_Madiun_
+• Miftahul Wildha — 6 kunjungan follow-up; peluang Hematology Zybio Z50, sosialisasi GCU AKD
+[lanjutkan pola ini untuk SETIAP area di data]
 
 *Highlight*
-[maks 3 poin penting hari ini — deal hot, prospek baru, warning]
+• [poin penting hari ini — deal hot, prospek baru, risiko]
 
 *Perhatian*
-[copy nama dari NON_REPORTERS & NO_PLAN list, jangan ngarang]
+• Belum report ({jumlah}): [copy nama dari NON_REPORTERS, pisahkan koma]
+• Belum plan ({jumlah}): [copy nama dari NO_PLAN, pisahkan koma]
+[baris yang listnya kosong DIHILANGKAN; kalau dua-duanya kosong tulis
+ '• (semua wajib user sudah submit)']
 
 *Ijin*
-[copy nama dari ON_LEAVE list. Skip section kalau kosong]
+• [copy nama dari ON_LEAVE list. Skip SELURUH section kalau list kosong]
 
-Gunakan Bahasa Indonesia. Singkat, informatif, eksekutif. Maksimal 30 baris."""
+Gunakan Bahasa Indonesia. Singkat, informatif, eksekutif."""
 
 app = FastAPI(title="WRG AI Service", version="0.0.1")
 
@@ -137,6 +160,7 @@ def daily_summary(req: DailySummaryRequest) -> DailySummaryResponse:
         "STATS:\n"
         f"anggota_aktif={s.anggota_aktif} | wajib_total={s.wajib_total} | "
         f"total_report={s.total_report} | matched={s.matched} | "
+        f"matched_pct={s.matched_pct} | "
         f"unmatched={s.unmatched} | anggota_plan={s.anggota_plan}\n\n"
         f"NO_PLAN (wajib tapi tidak submit plan hari ini):\n{no_plan}\n\n"
         f"NON_REPORTERS (sudah submit plan tapi belum report):\n{non_reporters}\n\n"

@@ -24,6 +24,49 @@ function hariTanggal(): { hari: string; tanggal: string } {
   return { hari: HARI_ID[d.getUTCDay()], tanggal: `${d.getUTCDate()} ${BULAN_ID[d.getUTCMonth()]} ${d.getUTCFullYear()}` };
 }
 
+export interface StatsDaily {
+  anggota_aktif: number;
+  total_report: number;
+  matched: number;
+  unmatched: number;
+  wajib_total: number;
+}
+
+// Persen laporan sesuai plan. Dihitung DI SINI, bukan di prompt: `matched` yang
+// dikirim ke LLM itu jumlah baris, sedangkan template lama menulis "{matched}%".
+export function matchedPct(s: Pick<StatsDaily, "matched" | "total_report">): number {
+  return s.total_report > 0 ? Math.round((s.matched * 100) / s.total_report) : 0;
+}
+
+export function blokOverview(s: StatsDaily): string {
+  const baris = [
+    `• ${s.anggota_aktif} dari ${s.wajib_total} tim wajib aktif lapor`,
+    s.total_report > 0 ? `• ${s.total_report} laporan masuk` : "• Belum ada laporan masuk",
+  ];
+  if (s.total_report > 0) {
+    baris.push(`• ${matchedPct(s)}% sesuai plan · ${s.unmatched} aktivitas di luar plan`);
+  }
+  return `*Overview*\n${baris.join("\n")}`;
+}
+
+const isJudulSection = (l: string): boolean => /^\*[^*]+\*$/.test(l.trim());
+
+// Layer-2 anti-halusinasi untuk ANGKA — sekerabat dengan pemaksaan baris tanggal
+// di bawah. Seluruh isi Overview sudah diketahui pasti di sini, jadi versi LLM
+// dibuang dan diganti; tak ada gunanya memberi ruang mengarang. Kalau LLM sampai
+// tidak menulis section-nya sama sekali, blok ini disisipkan setelah judul.
+export function paksaOverview(summary: string, s: StatsDaily): string {
+  const lines = summary.split("\n");
+  const blok = blokOverview(s).split("\n");
+  const i = lines.findIndex((l) => /^\*?overview\*?$/i.test(l.trim()));
+  if (i === -1) return [lines[0] ?? "", "", ...blok, ...lines.slice(1)].join("\n");
+  let j = i + 1;
+  while (j < lines.length && !isJudulSection(lines[j])) j++;
+  // sisakan satu baris kosong sebagai pemisah ke section berikutnya
+  const ekor = lines.slice(j);
+  return [...lines.slice(0, i), ...blok, ...(ekor.length ? [""] : []), ...ekor].join("\n");
+}
+
 export interface DailySummaryResult {
   sent: boolean;
   skipped?: "no-activity";
@@ -114,16 +157,20 @@ export async function runDailySummary(
   `;
 
   const { hari, tanggal } = hariTanggal();
+  const st: StatsDaily = {
+    anggota_aktif: Number(stats?.anggota_aktif ?? 0),
+    total_report: Number(stats?.total_report ?? 0),
+    matched: Number(stats?.matched ?? 0),
+    unmatched: Number(stats?.unmatched ?? 0),
+    wajib_total: Number(wajib?.n ?? 0),
+  };
   const { status, data } = await callAi("/daily-summary", {
     hari,
     tanggal,
     stats: {
-      anggota_aktif: Number(stats?.anggota_aktif ?? 0),
-      total_report: Number(stats?.total_report ?? 0),
-      matched: Number(stats?.matched ?? 0),
-      unmatched: Number(stats?.unmatched ?? 0),
+      ...st,
+      matched_pct: matchedPct(st),
       anggota_plan: Number(stats?.anggota_plan ?? 0),
-      wajib_total: Number(wajib?.n ?? 0),
     },
     rows: rows.map((r) => ({
       nama: String(r.nama ?? ""),
@@ -148,6 +195,7 @@ export async function runDailySummary(
   // prompt-only "jangan ngarang tanggal" gagal ~10% → paksa baris header tanggal
   // pakai nilai bash-known. Header format: "📊 *Daily Summary — {hari}, {tanggal}*".
   summary = summary.replace(/^.*Daily Summary\b.*$/m, `📊 *Daily Summary — ${hari}, ${tanggal}*`);
+  summary = paksaOverview(summary, st);
 
   // Simpan untuk arsip/inspeksi (monitor_digest kind='daily').
   const dateStr = wibNow().toISOString().slice(0, 10);
