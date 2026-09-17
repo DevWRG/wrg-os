@@ -45,6 +45,10 @@ class SummaryStats(BaseModel):
     anggota_aktif: int = 0
     total_report: int = 0
     matched: int = 0
+    # Persen laporan yang sesuai plan — dihitung di apps/api, bukan oleh LLM.
+    # Prompt lama menulis "{matched}%" padahal `matched` itu JUMLAH baris, jadi
+    # persennya praktis diserahkan ke LLM untuk dikarang sendiri.
+    matched_pct: int = 0
     unmatched: int = 0
     anggota_plan: int = 0
     wajib_total: int = 0  # total user wajib lapor (sudah exclude yg ijin hari ini)
