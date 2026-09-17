@@ -1189,6 +1189,8 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
       file_nama: row.media_path.split("/").pop() ?? null,
       sumber: "wa",
       wa_message_id: row.id,
+      // Grup asal = tujuan draft konfirmasi Finance nanti (migrasi 178).
+      wa_group_jid: row.group_jid,
     });
     if ("ok" in result && result.ok === false) {
       const reply = await sendViaWaGateway(target, `⚠️ Gagal proses #KORAN: ${(result as { error?: string }).error}`);
@@ -1204,6 +1206,15 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
             k.saldo_bersambung_ok === false
               ? "⚠️ Saldo akhir tidak bersambung ke hari berikutnya — mungkin dicetak sebelum tutup hari."
               : null,
+            // Status gerbang konfirmasi (migrasi 178). Draft-nya dikirim sebagai
+            // pesan TERPISAH oleh buatDraftJikaLengkap; di sini cuma disebut apa
+            // yang masih ditunggu, supaya admin tak menebak-nebak kenapa resume
+            // belum muncul.
+            k.draft_kode
+              ? `📝 Draft resume ${k.draft_kode} menunggu konfirmasi.`
+              : k.draft_alasan
+                ? `⏳ ${k.draft_alasan}`
+                : null,
           ]
             .filter(Boolean)
             .join("\n")

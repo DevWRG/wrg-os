@@ -186,9 +186,12 @@ import {
   ingestKoran,
   listAccount,
   listLine,
+  listResume,
   listStatement,
   matriksKelengkapan,
+  putuskanResume,
   ringkasanHarian,
+  scanKonfirmasiResume,
   triageLine,
   updateAccount,
   wibDate,
@@ -3530,6 +3533,37 @@ app.patch("/cashin/accounts/:id", async (c) => {
   return c.json(result);
 });
 
+// Gerbang konfirmasi Finance (migrasi 178). Resume HANYA sampai ke Direktur
+// lewat keputusan 'ya' di sini atau lewat balasan WA — tidak ada jalur ketiga.
+app.get("/cashin/resume/daftar", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const limit = c.req.query("limit") ? Number(c.req.query("limit")) : undefined;
+  return c.json({ resume: await listResume(limit) });
+});
+
+app.post("/cashin/resume/:kode/putuskan", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const body = await c.req.json().catch(() => ({}));
+  const keputusan = String(body.keputusan ?? "").toLowerCase();
+  if (keputusan !== "ya" && keputusan !== "tidak") {
+    return c.json({ error: "field 'keputusan' wajib 'ya' atau 'tidak'" }, 400);
+  }
+  // 'oleh' WAJIB: kolomnya dipakai sebagai jejak siapa menyetujui angka hari itu.
+  // Default anonim akan membuat jejak itu bohong tanpa terlihat bohong.
+  const oleh = String(body.oleh ?? "").trim();
+  if (!oleh) return c.json({ error: "field 'oleh' wajib (nama/email pemutus)" }, 400);
+  const r = await putuskanResume(c.req.param("kode"), keputusan as "ya" | "tidak", oleh, {
+    alasan: body.alasan ?? null,
+  });
+  return r.ok ? c.json(r) : c.json(r, 400);
+});
+
+// Catch-up manual pemindai balasan konfirmasi (selain auto dari webhook WA).
+app.post("/cashin/konfirmasi/scan", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await scanKonfirmasiResume());
+});
+
 app.get("/cashin/kelengkapan", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const sampai = c.req.query("sampai") ?? wibDate();
@@ -4625,7 +4659,20 @@ app.post("/webhooks/wa", async (c) => {
       console.error("[webhooks/wa] inbound process gagal:", e);
     }
   }
-  return c.json({ ...result, inbound }, 201);
+  // Balasan konfirmasi resume ("ya R12") TIDAK ber-hashtag, jadi ia tak pernah
+  // terjaring processUnprocessed. Dipindai di sini supaya Finance mendapat
+  // jawaban seketika — kalau digantungkan ke cron, orang membalas lalu menunggu
+  // tanpa tahu balasannya masuk atau tidak. Self-guard: no-op kalau tak ada
+  // draft yang menunggu.
+  let konfirmasiCashin;
+  if (isInboundEnabled()) {
+    try {
+      konfirmasiCashin = await scanKonfirmasiResume();
+    } catch (e) {
+      console.error("[webhooks/wa] scan konfirmasi cashin gagal:", e);
+    }
+  }
+  return c.json({ ...result, inbound, konfirmasi_cashin: konfirmasiCashin }, 201);
 });
 
 // Trigger manual / batch pemrosesan inbound yang belum diproses (selain auto dari

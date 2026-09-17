@@ -115,6 +115,9 @@ export interface IngestKoranInput {
   file_nama?: string | null;
   sumber: "wa" | "web";
   wa_message_id?: string | null;
+  /** Grup WA asal #KORAN. Jadi tujuan draft konfirmasi Finance — lihat
+   *  catatan di kepala migrasi 178. NULL untuk unggahan lewat menu web. */
+  wa_group_jid?: string | null;
   /** Paksa jalur parser teks saja (tanpa OCR) — dipakai re-ingest massal. */
   allow_ocr?: boolean;
 }
@@ -132,6 +135,12 @@ export interface IngestKoranResult {
   total_kredit: number;
   total_debit: number;
   parse_error: string | null;
+  /** Kode draft resume yang ikut terbentuk karena koran hari itu jadi lengkap
+   *  (null = belum lengkap, atau resume hari itu sudah final). */
+  draft_kode?: string | null;
+  /** Kenapa draft belum dibuat — dipakai balasan #KORAN supaya admin tahu
+   *  apa yang masih ditunggu, bukan cuma diam. */
+  draft_alasan?: string | null;
 }
 
 /** Cocokkan file ke rekening. Nomor rekening dari ISI dokumen selalu menang;
@@ -258,13 +267,14 @@ export async function ingestKoran(
     INSERT INTO bank_statement (
       bank_account_id, tanggal, saldo_awal, saldo_akhir,
       total_debit_tercetak, total_kredit_tercetak, jumlah_debit, jumlah_kredit,
-      dicetak_at, sumber, wa_message_id, file_path, file_nama, metode, model_used,
+      dicetak_at, sumber, wa_message_id, wa_group_jid, file_path, file_nama, metode, model_used,
       ocr_dry_run, checksum_ok, status, parse_error, raw_text
     ) VALUES (
       ${acc.id}, ${tanggal}, ${(data.saldo_awal as number) ?? null}, ${(data.saldo_akhir as number) ?? null},
       ${(data.total_debit_tercetak as number) ?? null}, ${(data.total_kredit_tercetak as number) ?? null},
       ${(data.jumlah_debit as number) ?? null}, ${(data.jumlah_kredit as number) ?? null},
       ${(data.dicetak_at as string) ?? null}, ${input.sumber}, ${input.wa_message_id ?? null},
+      ${input.wa_group_jid ?? null},
       ${input.file_path ?? null}, ${fileNama}, ${(data.metode as string) ?? "parser"},
       ${(data.model as string) ?? null}, ${Boolean(data.dry_run)}, ${checksumOk},
       ${checksumOk === true ? "terverifikasi" : "perlu_review"}, ${parseError},
@@ -276,7 +286,11 @@ export async function ingestKoran(
       total_kredit_tercetak = EXCLUDED.total_kredit_tercetak,
       jumlah_debit = EXCLUDED.jumlah_debit, jumlah_kredit = EXCLUDED.jumlah_kredit,
       dicetak_at = EXCLUDED.dicetak_at, sumber = EXCLUDED.sumber,
-      wa_message_id = EXCLUDED.wa_message_id, file_path = EXCLUDED.file_path,
+      wa_message_id = EXCLUDED.wa_message_id,
+      -- Grup asal dipertahankan kalau kiriman baru datang tanpa grup (mis.
+      -- perbaikan lewat unggah web): draft konfirmasi tetap punya tujuan.
+      wa_group_jid = COALESCE(EXCLUDED.wa_group_jid, bank_statement.wa_group_jid),
+      file_path = EXCLUDED.file_path,
       file_nama = EXCLUDED.file_nama, metode = EXCLUDED.metode,
       model_used = EXCLUDED.model_used, ocr_dry_run = EXCLUDED.ocr_dry_run,
       checksum_ok = EXCLUDED.checksum_ok, status = EXCLUDED.status,
@@ -312,6 +326,23 @@ export async function ingestKoran(
   `;
   const [fin] = await sql`SELECT status FROM bank_statement WHERE id = ${statementId}`;
 
+  // Pemicu draft resume: begitu koran hari itu LENGKAP, Finance langsung
+  // ditanya — tak menunggu jam tertentu (keputusan user 17 Sep 2026).
+  //
+  // Dibungkus try/catch dan TIDAK boleh menggagalkan ingest: file-nya sudah
+  // tersimpan dengan benar: kegagalan mengirim draft adalah soal WA, bukan soal
+  // data. Kalau ini melempar, admin akan melihat "#KORAN gagal" untuk file yang
+  // sebenarnya sudah masuk, lalu mengirimnya ulang berkali-kali.
+  let draft: DraftResult = { dibuat: false, alasan: "statement belum terverifikasi" };
+  if (String(fin.status) === "terverifikasi") {
+    try {
+      draft = await buatDraftJikaLengkap(tanggal, input.wa_group_jid ?? null);
+    } catch (e) {
+      console.error(`[cashin] draft konfirmasi ${tanggal} gagal:`, e);
+      draft = { dibuat: false, alasan: `draft gagal dibuat: ${(e as Error).message}` };
+    }
+  }
+
   return {
     ok: true,
     statement_id: statementId,
@@ -325,6 +356,8 @@ export async function ingestKoran(
     total_debit: Number(agg.d),
     total_kredit: Number(agg.k),
     parse_error: parseError,
+    draft_kode: draft.kode ?? null,
+    draft_alasan: draft.alasan ?? null,
   };
 }
 
@@ -476,13 +509,20 @@ export async function cekSaldoBersambung(
   }
   // Statement yang baru masuk juga menjadi "hari besok" bagi hari sebelumnya —
   // nilai ulang tetangga sebelumnya supaya penilaiannya tidak tertinggal.
+  // ⚠️ to_char, BUKAN kolom date mentah. Driver mengembalikan kolom `date`
+  // sebagai objek Date JS, sehingga `String(...).slice(0,10)` menghasilkan
+  // 'Thu Sep 03' — dan nilai itu dipakai lagi sebagai parameter query di bawah.
+  // Postgres MENERIMA 'Thu Sep 03' (ditafsirkan tahun berjalan) lalu
+  // mengembalikan NOL baris tanpa error: penilaian ulang hari sebelumnya tak
+  // pernah terjadi, dan statement yang dicetak sebelum tutup hari lolos tanpa
+  // peringatan. Diverifikasi 17 Sep 2026 di wrg_os_dev.
   const [prev] = await sql`
-    SELECT tanggal FROM bank_statement
+    SELECT to_char(tanggal, 'YYYY-MM-DD') AS tanggal FROM bank_statement
     WHERE bank_account_id = ${bankAccountId} AND tanggal < ${tanggal}
     ORDER BY tanggal DESC LIMIT 1
   `;
   if (prev) {
-    const tglPrev = String(prev.tanggal).slice(0, 10);
+    const tglPrev = String(prev.tanggal);
     const hasilPrev = await nilai(bankAccountId, tglPrev);
     if (hasilPrev !== null) {
       await sql`
@@ -683,50 +723,458 @@ export function formatResume(r: RingkasanHarian): string {
   return baris.join("\n");
 }
 
-// ── job resume harian ────────────────────────────────────────────────────────
+// ── gerbang konfirmasi Finance ───────────────────────────────────────────────
+//
+// Alur yang diminta user 17 Sep 2026:
+//
+//   Finance setor #KORAN → koran hari itu LENGKAP → bot menyusun resume dan
+//   mengirim DRAFT-nya ke grup asal → Finance balas "ya <kode>" → baru resume
+//   dikirim ke Direktur.
+//
+// Konsekuensi yang paling gampang dilanggar: TIDAK ADA jalur lain menuju
+// Direktur. Job terjadwal sekarang cuma boleh membuat draft dan mengingatkan;
+// satu-satunya fungsi yang mengirim ke CASHIN_RESUME_TO adalah putuskanResume()
+// dengan keputusan 'ya'. Kalau nanti ada yang menambahkan "kirim otomatis kalau
+// lewat jam sekian", gerbang ini hilang tanpa ada yang sadar — pemiliknya
+// menyangka masih ada verifikasi manusia padahal tidak.
+
+export interface DraftResult {
+  dibuat: boolean;
+  kode?: string;
+  alasan?: string;
+  /** Draft sudah ada sebelumnya dan isinya diperbarui (koran di-ingest ulang). */
+  diperbarui?: boolean;
+}
+
+/** Balasan konfirmasi dari Finance: "ya R12", "tidak R12 angka BJTM salah".
+ *
+ *  Menyalin pola 'ya L3' detect_leave, termasuk toleransinya: huruf besar/kecil
+ *  bebas, '#' opsional, dan spasi antara huruf & angka dimaafkan. Yang TIDAK
+ *  dimaafkan: kode tanpa awalan huruf. "ya 12" ditolak supaya balasan percakapan
+ *  biasa ("ya 12 rb aja") tidak pernah menyetujui resume. */
+const KEPUTUSAN =
+  /^\s*(ya|iya|ok|oke|okay|setuju|kirim|tidak|tdk|gak|nggak|ngga|batal|no|jangan)\b[\s#]*r\s*(\d+)\b\s*(.*)$/i;
+const SETUJU = /^(ya|iya|ok|oke|okay|setuju|kirim)$/i;
+
+/** Balasan yang jelas-jelas MENIRU format keputusan tapi rusak ("ya R", "ok
+ *  r1x", "ya resume"). Dibalas panduan format, bukan didiamkan.
+ *
+ *  Pelajaran yang disalin apa adanya dari detect_leave: balasan approval yang
+ *  salah ketik dulu senyap, dan pengirimnya menyangka approval-nya masuk —
+ *  cuti 3 hari nyaris kedaluwarsa gara-gara "ya LT2". Di sini taruhannya angka
+ *  uang masuk yang tak pernah sampai ke Direktur.
+ *
+ *  Sengaja sempit: harus diawali kata keputusan, memuat 'r' + sesuatu, dan
+ *  pesannya pendek. `L\d` DIKECUALIKAN karena itu ruang nama detect_leave —
+ *  approval cuti yang kebetulan lewat di grup yang sama tidak boleh dibalas
+ *  panduan konfirmasi resume. */
+const MIRIP_KEPUTUSAN = /^\s*(ya|iya|ok|oke|okay|setuju|kirim|tidak|tdk|gak|nggak|batal|no|jangan)\b[\s#]*r/i;
+const RUANG_NAMA_LAIN = /\bl\s*\d+\b/i;
+const MIRIP_MAXLEN = 24;
+
+const stripWaFmt = (s: string): string => s.replace(/[*_~`]/g, "").trim();
+
+export interface KeputusanResume {
+  keputusan: "ya" | "tidak";
+  kode: string;
+  alasan: string | null;
+}
+
+export function parseKeputusanResume(body: string | null): KeputusanResume | null {
+  if (!body) return null;
+  for (const baris of stripWaFmt(body).split(/\r?\n/)) {
+    const m = baris.match(KEPUTUSAN);
+    if (!m) continue;
+    const alasan = (m[3] ?? "").trim();
+    return {
+      keputusan: SETUJU.test(m[1]) ? "ya" : "tidak",
+      kode: `R${m[2]}`,
+      alasan: alasan || null,
+    };
+  }
+  return null;
+}
+
+export function miripKeputusanResume(body: string | null): boolean {
+  if (!body) return false;
+  const teks = stripWaFmt(body);
+  if (teks.length > MIRIP_MAXLEN) return false;
+  if (RUANG_NAMA_LAIN.test(teks)) return false;
+  return MIRIP_KEPUTUSAN.test(teks) && parseKeputusanResume(teks) === null;
+}
+
+export function formatDraftKonfirmasi(teks: string, kode: string): string {
+  return [
+    `*DRAFT — belum dikirim ke Direktur*`,
+    "",
+    teks,
+    "",
+    `Balas *ya ${kode}* untuk kirim ke Direktur,`,
+    `atau *tidak ${kode} <alasan>* untuk menahan.`,
+  ].join("\n");
+}
+
+export function formatIngatanKonfirmasi(kode: string, tanggal: string, belumTriage: number): string {
+  return [
+    `⏰ Resume uang masuk ${tanggal} (${kode}) belum dikonfirmasi.`,
+    belumTriage > 0 ? `Masih ada ${rp(belumTriage)} berstatus belum ditriage.` : null,
+    `Balas *ya ${kode}* untuk kirim ke Direktur, atau *tidak ${kode} <alasan>*.`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+export function formatIngatanBelumLengkap(r: RingkasanHarian): string {
+  return [
+    `⏰ Koran ${r.tanggal} baru ${r.rekening_masuk}/${r.rekening_wajib} rekening.`,
+    `Belum setor: ${r.rekening_belum.join(", ")}`,
+    "Resume belum bisa disusun sampai semuanya masuk.",
+  ].join("\n");
+}
+
+/** Buat/segarkan draft resume kalau koran hari itu sudah lengkap, lalu kirim
+ *  draftnya ke grup Finance sekali.
+ *
+ *  "Lengkap" = semua rekening aktif+wajib_harian punya statement hari itu.
+ *  Sengaja tidak menuntut semuanya `terverifikasi`: statement yang checksum-nya
+ *  gagal SUDAH disebut sebagai peringatan di dalam teks resume, jadi Finance
+ *  tetap melihatnya dan bisa memutuskan. Menuntut 10/10 terverifikasi berarti
+ *  satu file bermasalah menahan resume seharian tanpa ada yang tahu.
+ *
+ *  Draft dikirim SEKALI (draft_terkirim_at). Re-ingest sesudahnya memperbarui
+ *  teksnya diam-diam — mengirim ulang draft tiap file masuk akan membuat grup
+ *  Finance dibanjiri, dan itu cara tercepat membuat orang berhenti membacanya. */
+export async function buatDraftJikaLengkap(
+  tanggal: string,
+  grupJid?: string | null,
+): Promise<DraftResult> {
+  const sql = db();
+  const r = await ringkasanHarian(tanggal);
+  const teks = formatResume(r);
+
+  // monitor_digest tetap diisi apa pun hasil gerbangnya — itu arsip harian,
+  // bukan jalur pengiriman.
+  await upsertDigests([{ kind: "cashin", tanggal, waktu: null, content: teks }]);
+
+  const [ada] = await sql`SELECT id, kode, status, grup_jid, draft_terkirim_at FROM cashin_resume WHERE tanggal = ${tanggal}`;
+
+  // Resume yang sudah diputuskan TIDAK ditimpa. Kalau koran hari itu ternyata
+  // diperbaiki sesudah Direktur menerima angkanya, itu perlu koreksi yang
+  // disengaja manusia — bukan draft baru yang diam-diam menggantikan riwayat.
+  if (ada && String(ada.status) !== "menunggu_konfirmasi") {
+    return { dibuat: false, kode: String(ada.kode), alasan: `resume ${tanggal} sudah berstatus ${String(ada.status)}` };
+  }
+
+  if (r.rekening_belum.length > 0) {
+    return {
+      dibuat: false,
+      alasan: `koran belum lengkap (${r.rekening_masuk}/${r.rekening_wajib}) — belum setor: ${r.rekening_belum.join(", ")}`,
+    };
+  }
+
+  const tujuan = (grupJid ?? "").trim() || String(ada?.grup_jid ?? "") || (await grupTerakhirKoran(tanggal)) || konfirmasiTujuanEnv();
+
+  const [row] = await sql`
+    INSERT INTO cashin_resume (tanggal, teks, ringkasan, grup_jid)
+    VALUES (${tanggal}, ${teks}, ${JSON.stringify(r)}::jsonb, ${tujuan || null})
+    ON CONFLICT (tanggal) DO UPDATE SET
+      teks = EXCLUDED.teks,
+      ringkasan = EXCLUDED.ringkasan,
+      grup_jid = COALESCE(cashin_resume.grup_jid, EXCLUDED.grup_jid),
+      updated_at = now()
+    RETURNING id, kode, grup_jid, draft_terkirim_at
+  `;
+  const kode = String(row.kode);
+  const sudahDikirim = row.draft_terkirim_at != null;
+  if (sudahDikirim) return { dibuat: false, diperbarui: true, kode, alasan: "draft sudah dikirim ke Finance, teksnya diperbarui" };
+
+  const ke = String(row.grup_jid ?? "").trim();
+  if (!ke) {
+    return {
+      dibuat: false,
+      kode,
+      alasan: "grup tujuan konfirmasi tak diketahui (statement diunggah lewat web) — set CASHIN_KONFIRMASI_TO",
+    };
+  }
+
+  const kirim = await sendViaWaGateway(ke, formatDraftKonfirmasi(teks, kode));
+  if (!kirim.sent) {
+    return { dibuat: false, kode, alasan: kirim.error ?? "gateway tidak mengirim draft" };
+  }
+  await sql`UPDATE cashin_resume SET draft_terkirim_at = now(), updated_at = now() WHERE id = ${row.id}`;
+  return { dibuat: true, kode };
+}
+
+/** Grup asal #KORAN hari itu — dipakai kalau pemanggil tak menyertakan grup
+ *  (mis. job terjadwal). Yang TERAKHIR menyetor yang menang; kalau Finance
+ *  pindah grup, draft ikut pindah tanpa perlu ubah konfigurasi. */
+async function grupTerakhirKoran(tanggal: string): Promise<string | null> {
+  const [row] = await db()`
+    SELECT wa_group_jid FROM bank_statement
+    WHERE tanggal = ${tanggal} AND wa_group_jid IS NOT NULL
+    ORDER BY updated_at DESC LIMIT 1
+  `;
+  return row ? String(row.wa_group_jid) : null;
+}
+
+/** Cadangan terakhir tujuan draft: grup/nomor yang di-set manusia. Kosong =
+ *  tidak ada tebakan — pola yang sama dengan CASHIN_RESUME_TO. */
+const konfirmasiTujuanEnv = (): string => (process.env.CASHIN_KONFIRMASI_TO ?? "").trim();
+
+export interface PutusanResult {
+  ok: boolean;
+  error?: string;
+  kode?: string;
+  tanggal?: string;
+  status?: string;
+  terkirim?: boolean;
+  alasan?: string;
+}
+
+/** Terapkan keputusan Finance. 'ya' → kirim resume ke Direktur. 'tidak' → tahan.
+ *
+ *  SATU-SATUNYA pintu menuju Direktur. Dipakai dua pemanggil: pemindai balasan
+ *  WA dan endpoint web. */
+export async function putuskanResume(
+  kode: string,
+  keputusan: "ya" | "tidak",
+  oleh: string,
+  opts: { alasan?: string | null; waMessageId?: string | null } = {},
+): Promise<PutusanResult> {
+  const sql = db();
+  const [row] = await sql`
+    SELECT id, kode, to_char(tanggal, 'YYYY-MM-DD') AS tanggal, teks, status
+    FROM cashin_resume WHERE upper(kode) = upper(${kode})
+  `;
+  if (!row) return { ok: false, error: `kode ${kode} tidak dikenal` };
+
+  const tanggal = String(row.tanggal);
+  const status = String(row.status);
+  // 'gagal_kirim' BOLEH diputuskan lagi: Finance sudah setuju, yang gagal
+  // gatewaynya. 'terkirim'/'ditolak' tidak — itu keputusan yang sudah final.
+  if (status === "terkirim" || status === "ditolak") {
+    return { ok: false, error: `resume ${tanggal} sudah ${status}`, kode: String(row.kode), tanggal, status };
+  }
+
+  if (keputusan === "tidak") {
+    await sql`
+      UPDATE cashin_resume SET status = 'ditolak', diputuskan_oleh = ${oleh}, diputuskan_at = now(),
+        alasan_tolak = ${opts.alasan ?? null}, wa_message_id = ${opts.waMessageId ?? null}, updated_at = now()
+      WHERE id = ${row.id}
+    `;
+    return { ok: true, kode: String(row.kode), tanggal, status: "ditolak", terkirim: false };
+  }
+
+  const tujuan = (process.env.CASHIN_RESUME_TO ?? "").trim();
+  if (!tujuan) {
+    return { ok: false, error: "CASHIN_RESUME_TO belum di-set (nomor WA Direktur)", kode: String(row.kode), tanggal };
+  }
+
+  const jam = new Date(Date.now() + 7 * 3600 * 1000).toISOString().slice(11, 16);
+  const teks = `${String(row.teks)}\n\n_Dikonfirmasi ${oleh} ${jam} WIB._`;
+  const kirim = await sendViaWaGateway(tujuan, teks);
+  const gagal = kirim.sent ? null : (kirim.error ?? "gateway tidak mengirim");
+
+  await sql`
+    UPDATE cashin_resume SET
+      status = ${kirim.sent ? "terkirim" : "gagal_kirim"},
+      diputuskan_oleh = ${oleh}, diputuskan_at = now(),
+      wa_message_id = ${opts.waMessageId ?? null},
+      terkirim_at = ${kirim.sent ? new Date().toISOString() : null},
+      kirim_error = ${gagal}, updated_at = now()
+    WHERE id = ${row.id}
+  `;
+  return {
+    ok: kirim.sent,
+    error: gagal ?? undefined,
+    kode: String(row.kode),
+    tanggal,
+    status: kirim.sent ? "terkirim" : "gagal_kirim",
+    terkirim: kirim.sent,
+  };
+}
+
+export interface ScanKonfirmasiResult {
+  dinilai: number;
+  diputuskan: number;
+  mirip: number;
+}
+
+/** Pindai balasan konfirmasi di grup yang punya draft menunggu.
+ *
+ *  Kenapa pemindai sendiri, bukan nebeng processUnprocessed: balasan "ya R12"
+ *  TIDAK ber-hashtag, sementara pipeline itu menyaring wa_message dengan pola
+ *  hashtag. Jejak idempotensinya pun terpisah (cashin_konfirmasi_seen), supaya
+ *  dua pipeline tak saling mencuri baris lewat processed_at. */
+export async function scanKonfirmasiResume(): Promise<ScanKonfirmasiResult> {
+  const sql = db();
+  const hasil: ScanKonfirmasiResult = { dinilai: 0, diputuskan: 0, mirip: 0 };
+
+  const draft = await sql`
+    SELECT kode, grup_jid, draft_terkirim_at FROM cashin_resume
+    WHERE status IN ('menunggu_konfirmasi', 'gagal_kirim') AND grup_jid IS NOT NULL AND draft_terkirim_at IS NOT NULL
+  `;
+  if (draft.length === 0) return hasil;
+
+  const grup = [...new Set(draft.map((d) => String(d.grup_jid)))];
+  const sejak = draft.reduce(
+    (min, d) => (String(d.draft_terkirim_at) < min ? String(d.draft_terkirim_at) : min),
+    String(draft[0].draft_terkirim_at),
+  );
+
+  // Hanya pesan SESUDAH draft dikirim. Tanpa batas waktu ini, kalimat lama di
+  // grup yang kebetulan berbunyi "ya R2" (nomor ruangan, kode barang) bisa
+  // menyetujui resume yang baru dibuat hari ini.
+  const pesan = await sql`
+    SELECT m.id, m.group_jid, m.body, m.sender_name
+    FROM wa_message m
+    WHERE m.group_jid = ANY(${grup}) AND m.received_at >= ${sejak}
+      AND m.body IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM cashin_konfirmasi_seen s WHERE s.message_id = m.id)
+    ORDER BY m.received_at
+    LIMIT 200
+  `;
+
+  for (const m of pesan) {
+    hasil.dinilai++;
+    const id = String(m.id);
+    const body = m.body == null ? null : String(m.body);
+    const oleh = String(m.sender_name ?? "").trim() || "Finance";
+    const keputusan = parseKeputusanResume(body);
+
+    if (!keputusan) {
+      if (miripKeputusanResume(body)) {
+        hasil.mirip++;
+        const daftar = draft
+          .filter((d) => String(d.grup_jid) === String(m.group_jid))
+          .map((d) => String(d.kode))
+          .join(", ");
+        await sendViaWaGateway(
+          String(m.group_jid),
+          `⚠️ Format konfirmasi resume: *ya ${daftar || "R<nomor>"}* atau *tidak ${daftar || "R<nomor>"} <alasan>*.` +
+            (daftar ? `\nMenunggu konfirmasi: ${daftar}` : ""),
+        );
+        await tandaiSeen(id, "mirip-keputusan");
+      } else {
+        await tandaiSeen(id, "bukan-keputusan");
+      }
+      continue;
+    }
+
+    const r = await putuskanResume(keputusan.kode, keputusan.keputusan, oleh, {
+      alasan: keputusan.alasan,
+      waMessageId: id,
+    });
+    if (!r.ok && r.error?.startsWith("kode")) {
+      await sendViaWaGateway(String(m.group_jid), `⚠️ ${r.error}. Kode yang menunggu: ${draft.map((d) => String(d.kode)).join(", ")}`);
+      await tandaiSeen(id, "kode-tak-dikenal");
+      continue;
+    }
+    hasil.diputuskan++;
+    const balas =
+      keputusan.keputusan === "tidak"
+        ? `🛑 Resume ${r.tanggal} ditahan${keputusan.alasan ? ` — ${keputusan.alasan}` : ""}. Tidak dikirim ke Direktur.`
+        : r.terkirim
+          ? `✅ Resume ${r.tanggal} dikirim ke Direktur.`
+          : `⚠️ Konfirmasi ${r.kode} tercatat, TAPI pengiriman ke Direktur gagal: ${r.error}. Tidak perlu konfirmasi ulang — akan dicoba lagi.`;
+    await sendViaWaGateway(String(m.group_jid), balas);
+    await tandaiSeen(id, r.ok ? "diputuskan" : "gagal-kirim");
+  }
+  return hasil;
+}
+
+async function tandaiSeen(messageId: string, status: string): Promise<void> {
+  await db()`
+    INSERT INTO cashin_konfirmasi_seen (message_id, status) VALUES (${messageId}, ${status})
+    ON CONFLICT (message_id) DO NOTHING
+  `;
+}
+
+// ── job harian ───────────────────────────────────────────────────────────────
 
 export interface RunResumeResult {
   tanggal: string;
-  terkirim: boolean;
+  /** Draft baru dibuat & dikirim ke Finance pada run ini. */
+  draft_dibuat: boolean;
+  kode?: string;
+  /** Pengingat dikirim (draft menggantung, atau koran belum lengkap). */
+  diingatkan: boolean;
   alasan?: string;
   rekening_masuk: number;
   rekening_wajib: number;
   uang_masuk_riil: number;
 }
 
-/** Hitung ringkasan hari itu, simpan ke monitor_digest, lalu kirim DM ke
- *  Direktur.
+/** Jaring pengaman harian. TIDAK mengirim apa pun ke Direktur.
  *
- *  Nomor tujuan HARUS datang dari env CASHIN_RESUME_TO. Tanpa itu resume tetap
- *  dihitung dan disimpan, tapi TIDAK dikirim — target broadcast WA ditentukan
- *  manusia, bukan ditebak dari roster oleh sistem.
+ *  Dua keadaan yang ditangani:
+ *   a. koran lengkap tapi draft belum pernah terbentuk (mis. statement terakhir
+ *      masuk lewat web) → buat draftnya sekarang;
+ *   b. draft menggantung tanpa konfirmasi, atau koran tak kunjung lengkap →
+ *      ingatkan Finance, sekali sehari (ingat_terakhir_at).
  *
- *  Hari tanpa satu pun koran masuk (libur, atau admin belum menyetor) juga
- *  tidak dikirim: resume berisi nol rupiah bukan informasi, cuma bikin
- *  penerimanya berhenti membaca notifikasi ini. */
+ *  Keputusan user 17 Sep 2026 saat memilih perilaku "tidak dikirim, ingatkan
+ *  finance": resume yang tidak dikonfirmasi TIDAK boleh lolos ke Direktur
+ *  dengan label apa pun. Diam = belum diverifikasi. */
 export async function runCashinResume(tanggal?: string): Promise<RunResumeResult> {
+  const sql = db();
   const tgl = tanggal ?? wibDate();
   const r = await ringkasanHarian(tgl);
-  const teks = formatResume(r);
-
-  await upsertDigests([{ kind: "cashin", tanggal: tgl, waktu: null, content: teks }]);
 
   const dasar = {
     tanggal: tgl,
     rekening_masuk: r.rekening_masuk,
     rekening_wajib: r.rekening_wajib,
     uang_masuk_riil: r.uang_masuk_riil,
+    draft_dibuat: false,
+    diingatkan: false,
   };
 
   if (r.rekening_masuk === 0) {
-    return { ...dasar, terkirim: false, alasan: "belum ada koran masuk hari ini" };
+    // Hari tanpa satu pun koran (libur) tidak diingatkan: pengingat yang muncul
+    // tiap tanggal merah membuat orang berhenti membaca pengingat yang penting.
+    await upsertDigests([{ kind: "cashin", tanggal: tgl, waktu: null, content: formatResume(r) }]);
+    return { ...dasar, alasan: "belum ada koran masuk hari ini" };
   }
-  const tujuan = (process.env.CASHIN_RESUME_TO ?? "").trim();
-  if (!tujuan) {
-    return { ...dasar, terkirim: false, alasan: "CASHIN_RESUME_TO belum di-set (nomor WA Direktur)" };
+
+  const draft = await buatDraftJikaLengkap(tgl);
+  if (draft.dibuat) return { ...dasar, draft_dibuat: true, kode: draft.kode };
+
+  const [row] = await sql`
+    SELECT id, kode, status, grup_jid, ingat_terakhir_at FROM cashin_resume WHERE tanggal = ${tgl}
+  `;
+  const tujuan = String(row?.grup_jid ?? "").trim() || (await grupTerakhirKoran(tgl)) || konfirmasiTujuanEnv();
+  if (!tujuan) return { ...dasar, kode: draft.kode, alasan: draft.alasan ?? "tak ada grup tujuan pengingat" };
+
+  // Sekali sehari. Pengingat yang berulang tiap run cron adalah cara tercepat
+  // membuat grup me-mute bot-nya, dan sesudah itu tak ada pengingat yang sampai.
+  const sudahDiingatkanHariIni =
+    row?.ingat_terakhir_at != null && String(row.ingat_terakhir_at).slice(0, 10) === new Date(Date.now() + 7 * 3600 * 1000).toISOString().slice(0, 10);
+  if (sudahDiingatkanHariIni) return { ...dasar, kode: draft.kode, alasan: "sudah diingatkan hari ini" };
+
+  const pesan =
+    row && String(row.status) === "menunggu_konfirmasi"
+      ? formatIngatanKonfirmasi(String(row.kode), tgl, r.belum_ditriage)
+      : r.rekening_belum.length
+        ? formatIngatanBelumLengkap(r)
+        : null;
+  if (!pesan) return { ...dasar, kode: draft.kode, alasan: draft.alasan };
+
+  const kirim = await sendViaWaGateway(tujuan, pesan);
+  if (kirim.sent && row) {
+    await sql`UPDATE cashin_resume SET ingat_terakhir_at = now(), updated_at = now() WHERE id = ${row.id}`;
   }
-  const kirim = await sendViaWaGateway(tujuan, teks);
-  return { ...dasar, terkirim: kirim.sent, alasan: kirim.sent ? undefined : (kirim.error ?? (kirim.dryRun ? "WA_DRY_RUN aktif" : "gateway tidak mengirim")) };
+  return { ...dasar, diingatkan: kirim.sent, kode: draft.kode, alasan: kirim.sent ? undefined : (kirim.error ?? "gateway tidak mengirim") };
+}
+
+/** Daftar resume untuk menu web (audit: siapa menyetujui angka hari apa). */
+export async function listResume(limit = 30): Promise<Record<string, unknown>[]> {
+  const rows = await db()`
+    SELECT id, to_char(tanggal, 'YYYY-MM-DD') AS tanggal, kode, status, teks, grup_jid, draft_terkirim_at,
+           diputuskan_oleh, diputuskan_at, alasan_tolak, terkirim_at, kirim_error
+    FROM cashin_resume ORDER BY tanggal DESC LIMIT ${Math.min(Math.max(limit, 1), 200)}
+  `;
+  return rows;
 }
 
 // ── daftar untuk menu web ────────────────────────────────────────────────────
@@ -734,7 +1182,7 @@ export async function runCashinResume(tanggal?: string): Promise<RunResumeResult
 export async function listStatement(tanggal?: string): Promise<Record<string, unknown>[]> {
   const sql = db();
   const rows = await sql`
-    SELECT s.id, s.tanggal, a.label_file, a.nama_bank, a.no_rekening, a.jenis,
+    SELECT s.id, to_char(s.tanggal, 'YYYY-MM-DD') AS tanggal, a.label_file, a.nama_bank, a.no_rekening, a.jenis,
            s.saldo_awal, s.saldo_akhir, s.total_debit_tercetak, s.total_kredit_tercetak,
            s.metode, s.status, s.checksum_ok, s.saldo_bersambung_ok, s.parse_error,
            s.dicetak_at, s.sumber, s.file_nama, s.created_at,
@@ -744,7 +1192,7 @@ export async function listStatement(tanggal?: string): Promise<Record<string, un
     WHERE ${tanggal ? sql`s.tanggal = ${tanggal}` : sql`true`}
     ORDER BY s.tanggal DESC, a.label_file
   `;
-  return rows.map((r) => ({ ...r, tanggal: String(r.tanggal).slice(0, 10) }));
+  return rows;
 }
 
 export interface ListLineOpts {
@@ -792,7 +1240,7 @@ export async function listLine(opts: ListLineOpts): Promise<Record<string, unkno
     ? sql`ORDER BY ${sql.unsafe(kolom)} ${arah}, s.tanggal DESC, a.label_file, l.urut`
     : sql`ORDER BY s.tanggal DESC, a.label_file, l.urut`;
   const rows = await sql`
-    SELECT l.id, s.tanggal, a.label_file, l.urut, l.waktu, l.deskripsi,
+    SELECT l.id, to_char(s.tanggal, 'YYYY-MM-DD') AS tanggal, a.label_file, l.urut, l.waktu, l.deskripsi,
            l.debit::numeric AS debit, l.kredit::numeric AS kredit, l.saldo::numeric AS saldo,
            l.referensi, l.kategori, l.kategori_oleh, l.pasangan_line_id, l.catatan
     FROM bank_statement_line l
@@ -810,7 +1258,7 @@ export async function listLine(opts: ListLineOpts): Promise<Record<string, unkno
     ${where}
   `;
   return {
-    rows: rows.map((r) => ({ ...r, tanggal: String(r.tanggal).slice(0, 10) })),
+    rows,
     count: rows.length,
     total_rows: Number(cnt.n),
     limit,
@@ -886,14 +1334,14 @@ export async function matriksKelengkapan(dari: string, sampai: string): Promise<
     SELECT id, label_file FROM bank_account WHERE aktif AND wajib_harian ORDER BY label_file
   `;
   const rows = await sql`
-    SELECT s.tanggal, a.label_file, s.status
+    SELECT to_char(s.tanggal, 'YYYY-MM-DD') AS tanggal, a.label_file, s.status
     FROM bank_statement s
     JOIN bank_account a ON a.id = s.bank_account_id
     WHERE s.tanggal BETWEEN ${dari} AND ${sampai}
   `;
   const isi: Record<string, Record<string, string>> = {};
   for (const r of rows) {
-    const t = String(r.tanggal).slice(0, 10);
+    const t = String(r.tanggal);
     isi[t] = isi[t] ?? {};
     isi[t][String(r.label_file)] = String(r.status);
   }
