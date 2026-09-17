@@ -766,13 +766,11 @@ export function formatResume(r: RingkasanHarian): string {
   if (r.refund > 0) baris.push(`Refund              : ${rp(r.refund)}`);
   if (r.belum_ditriage > 0) baris.push(`Belum ditriage      : ${rp(r.belum_ditriage)} ⚠️`);
 
-  if (r.penerimaan_terbesar.length) {
-    baris.push("", "*Penerimaan terbesar*");
-    r.penerimaan_terbesar.forEach((t, i) => {
-      const desc = t.deskripsi.length > 42 ? t.deskripsi.slice(0, 41) + "…" : t.deskripsi;
-      baris.push(`${i + 1}. ${desc} — ${rp(t.kredit)}`);
-    });
-  }
+  // "Penerimaan terbesar" DIBUANG dari pesan (permintaan user 18 Sep 2026):
+  // deskripsi mentah bank ('20260828PDJTIDJ1010O0101090643 PDJTIDJ1/W…') tak
+  // terbaca manusia dan memakan 6 baris tanpa menjawab pertanyaan siapa pun.
+  // Datanya TETAP dihitung dan tersimpan di ringkasan — dipakai menu web
+  // /uang-masuk yang punya ruang untuk menampilkannya dengan benar.
 
   if (r.puteran_detail.length) {
     baris.push("", "*Puteran*");
@@ -786,9 +784,15 @@ export function formatResume(r: RingkasanHarian): string {
     );
   }
 
-  baris.push("", `Koran diterima ${r.rekening_masuk}/${r.rekening_wajib} rekening`);
-  if (r.rekening_belum.length) baris.push(`⚠️ Belum setor: ${r.rekening_belum.join(", ")}`);
-  for (const s of r.statement_perlu_review) baris.push(`⚠️ ${s.label_file}: ${s.alasan}`);
+  // Daftar "belum setor" PINDAH ke pesan draft (lihat formatDraftKonfirmasi):
+  // ia memberi tahu Finance file mana yang kurang — informasi untuk BERTINDAK,
+  // dan Finance yang bertindak, bukan Direktur. Fakta bahwa angkanya belum
+  // lengkap tetap terbaca semua orang lewat peringatan di kepala resume.
+  //
+  // Peringatan integritas statement TETAP di sini: "saldo tidak bersambung"
+  // artinya angka yang SEDANG DIBACA bisa salah, bukan sekadar ada file yang
+  // belum datang. Itu harus ikut ke mana pun angkanya pergi.
+  for (const s of r.statement_perlu_review) baris.push("", `⚠️ ${s.label_file}: ${s.alasan}`);
 
   return baris.join("\n");
 }
@@ -925,15 +929,22 @@ export function miripKeputusanResume(body: string | null): boolean {
   return MIRIP_KEPUTUSAN.test(teks) && parseKeputusanResume(teks) === null;
 }
 
-export function formatDraftKonfirmasi(teks: string, kode: string): string {
-  return [
-    `*DRAFT — belum dikirim ke Direktur*`,
-    "",
-    teks,
+export function formatDraftKonfirmasi(teks: string, kode: string, r?: RingkasanHarian): string {
+  const baris = [`*DRAFT — belum dikirim ke Direktur*`, "", teks];
+  // Kelengkapan setoran ditulis di DRAFT saja, bukan di resume yang diteruskan
+  // ke Direktur: ini informasi untuk BERTINDAK (file mana yang masih kurang),
+  // dan yang bertindak Finance. Tanpa daftarnya, Finance tahu angkanya belum
+  // lengkap tapi tidak tahu harus mengejar koran yang mana.
+  if (r) {
+    baris.push("", `_Koran diterima ${r.rekening_masuk}/${r.rekening_wajib} rekening._`);
+    if (r.rekening_belum.length) baris.push(`_Belum setor: ${r.rekening_belum.join(", ")}_`);
+  }
+  baris.push(
     "",
     `Balas *ya ${kode}* untuk kirim ke Direktur,`,
     `atau *tidak ${kode} <alasan>* untuk menahan.`,
-  ].join("\n");
+  );
+  return baris.join("\n");
 }
 
 export function formatIngatanKonfirmasi(kode: string, tanggal: string, belumTriage: number): string {
@@ -1027,7 +1038,7 @@ export async function buatDraftJikaLengkap(
     };
   }
 
-  const kirim = await sendViaWaGateway(ke, formatDraftKonfirmasi(teks, kode));
+  const kirim = await sendViaWaGateway(ke, formatDraftKonfirmasi(teks, kode, r));
   if (!kirim.sent) {
     return { dibuat: false, kode, alasan: kirim.error ?? "gateway tidak mengirim draft" };
   }
