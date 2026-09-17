@@ -134,10 +134,11 @@ test("resume menyebut kelengkapan rekening dan angka tertahan", () => {
   assert.match(teks, /Jumat, 04 Sep 2026/);
   assert.match(teks, /Total uang masuk\s+: Rp 58.731.797/);
   assert.match(teks, /Belum ditriage/);
-  // Kelengkapan wajib muncul: tanpa ini resume bisa terlihat wajar padahal 7
-  // rekening belum menyetor koran.
-  assert.match(teks, /Koran diterima 3\/10 rekening/);
-  assert.match(teks, /Belum setor: BNI, HANA/);
+  // Kelengkapan tetap terbaca — tapi lewat peringatan di KEPALA resume, bukan
+  // daftar rekening di kaki (itu pindah ke draft; permintaan user 18 Sep 2026).
+  assert.match(teks, /BELUM LENGKAP — baru 3\/10 rekening/);
+  assert.doesNotMatch(teks, /Koran diterima/);
+  assert.doesNotMatch(teks, /Belum setor/);
   assert.match(teks, /BJTM → MDR 038/);
 });
 
@@ -233,15 +234,11 @@ test("resume yang belum lengkap menyatakannya di ATAS angka, bukan cuma di foote
   const teks = formatResume(ringkasan());
   const barisAwal = teks.split("\n").slice(0, 2).join("\n");
   assert.match(barisAwal, /BELUM LENGKAP — baru 3\/10 rekening/);
-  // Footer lama tetap ada (rincian rekening mana yang belum).
-  assert.match(teks, /Koran diterima 3\/10 rekening/);
-  assert.match(teks, /Belum setor: BNI, HANA/);
 });
 
 test("resume lengkap TIDAK memasang peringatan itu", () => {
   const teks = formatResume(ringkasan({ rekening_masuk: 10, rekening_belum: [] }));
   assert.doesNotMatch(teks, /BELUM LENGKAP/);
-  assert.doesNotMatch(teks, /Belum setor/);
 });
 
 test("resume merinci uang masuk per rekening, lalu totalnya", () => {
@@ -265,4 +262,37 @@ test("rincian per rekening menjumlah PERSIS ke totalnya", () => {
   const r = ringkasan();
   const jumlah = r.per_rekening.reduce((a, p) => a + p.uang_masuk, 0);
   assert.equal(jumlah, r.uang_masuk_riil);
+});
+
+test("resume tidak lagi memuat daftar transaksi mentah", () => {
+  // Dibuang atas permintaan user 18 Sep 2026: deskripsi mentah bank
+  // ('20260828PDJTIDJ1010O0101090643 PDJTIDJ1/W…') tak terbaca manusia dan
+  // memakan 6 baris. Datanya tetap dihitung untuk menu web.
+  const r = ringkasan();
+  const teks = formatResume(r);
+  assert.doesNotMatch(teks, /Penerimaan terbesar/);
+  assert.doesNotMatch(teks, /RS WAJAK HUSADA/);
+  assert.ok(r.penerimaan_terbesar.length > 0, "datanya tetap ada di ringkasan");
+});
+
+test("daftar rekening yang belum setor pindah ke DRAFT, bukan hilang", () => {
+  // Finance yang mengejar koran yang kurang, jadi daftarnya ikut ke pesan yang
+  // dibaca Finance — bukan ke resume yang diteruskan ke Direktur.
+  const r = ringkasan();
+  const draft = formatDraftKonfirmasi(formatResume(r), "R12", r);
+  assert.match(draft, /Koran diterima 3\/10 rekening/);
+  assert.match(draft, /Belum setor: BNI, HANA/);
+  // Tanpa ringkasan (pemanggil lama) draft tetap valid, cuma tanpa blok itu.
+  assert.doesNotMatch(formatDraftKonfirmasi("x", "R12"), /Koran diterima/);
+});
+
+test("peringatan integritas statement TETAP ikut ke Direktur", () => {
+  // Beda kelas dari "file belum datang": ini berarti angka yang SEDANG DIBACA
+  // bisa salah, jadi ia harus ikut ke mana pun angkanya pergi.
+  const teks = formatResume(
+    ringkasan({
+      statement_perlu_review: [{ label_file: "MDR 038", alasan: "saldo akhir tidak bersambung ke hari berikutnya" }],
+    }),
+  );
+  assert.match(teks, /MDR 038: saldo akhir tidak bersambung/);
 });
