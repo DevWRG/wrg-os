@@ -419,8 +419,9 @@ rep = {"total": 0, "skip_tanpa_brand": 0, "per_am": Counter(), "kota_tak_ketemu"
        "qty_kosong": 0, "qty_tanpa_angka": 0, "per_pcat": Counter(), "pcat_asal": Counter(),
        "pcat_bentrok": [], "putusan": Counter(), "dari_konfirmasi": 0, "faskes_kembar": [],
        "isian_terisi": Counter(), "isian_ditolak": [], "am_disunting": 0,
-       "dihapus_di_csv": []}
+       "dihapus_di_csv": [], "kandidat_dikosongkan": []}
 kunci_terpakai = set()
+katalog_by_id = {c["id"]: c["nama"] for c in katalog}
 seen_account = {}
 am_by_panggilan = {k: v[0] for k, v in am_map.items()}
 
@@ -527,9 +528,27 @@ for baris_no, r in enumerate(allrows[hi + 1:], start=hi + 2):
                 if k in REVIEW_ISIAN:
                     rep["isian_terisi"][k] += 1
         if s(sunting.get("keputusan")).lower() in ("ya", "y", "yes", "1"):
-            acc_id = s(sunting.get("kandidat_id"))
-            putusan = "DIKONFIRMASI"
-            rep["dari_konfirmasi"] += 1
+            # Tautan sah hanya kalau ID DAN NAMA kandidat sama-sama ada, dan nama
+            # itu masih cocok dgn katalog. Mengosongkan kolom nama adalah cara
+            # orang menolak kandidat; kalau cuma ID yg dibaca, penolakan itu tak
+            # terlihat dan deal nyangkut ke faskes SALAH ('RSUD Trenggalek' →
+            # 'DINAS KESEHATAN PPKB KAB. TRENGGALEK').
+            cid, cnama = s(sunting.get("kandidat_id")), s(sunting.get("kandidat_nama"))
+            if cid and not cnama:
+                acc_id, putusan = "", "KANDIDAT DIKOSONGKAN"
+                rep["kandidat_dikosongkan"].append(f"baris {baris_no}: {fac} (id {cid} diabaikan)")
+            elif not cid:
+                acc_id, putusan = "", "TANPA KANDIDAT"
+            elif katalog_by_id.get(cid) is None:
+                acc_id, putusan = "", "DITOLAK"
+                rep["isian_ditolak"].append(f"baris {baris_no}: kandidat_id {cid} tak ada di katalog")
+            elif _words(katalog_by_id[cid]) != _words(cnama):
+                acc_id, putusan = "", "DITOLAK"
+                rep["isian_ditolak"].append(
+                    f"baris {baris_no}: kandidat_id {cid} = '{katalog_by_id[cid]}' != kandidat_nama '{cnama}'")
+            else:
+                acc_id, putusan = cid, "DIKONFIRMASI"
+                rep["dari_konfirmasi"] += 1
         else:
             acc_id, putusan = "", "DITOLAK"
         # AM boleh dialihkan lewat CSV
@@ -674,6 +693,10 @@ if yatim:
     # Kebalikan dari baris-dihapus: baris CSV tanpa padanan di xlsx tak punya
     # jalan masuk sama sekali, jadi ia harus bersuara — bukan lenyap diam-diam.
     print(f"  ! baris CSV tanpa padanan xlsx: {len(yatim)} → {yatim[:8]}")
+if rep["kandidat_dikosongkan"]:
+    print(f"  kandidat dikosongkan di CSV   : {len(rep['kandidat_dikosongkan'])} → account_id TIDAK diisi")
+    for t in rep["kandidat_dikosongkan"]:
+        print(f"      - {t}")
 if rep["dihapus_di_csv"]:
     print(f"  dilewati (dihapus di CSV)     : {len(rep['dihapus_di_csv'])}")
     for t in rep["dihapus_di_csv"]:
