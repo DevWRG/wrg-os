@@ -11,10 +11,18 @@ Beda dgn import_hs_s1.py: sheet TIDAK punya kolom Sales/Status. Karena itu
     am_panggilan → master_user.am_id (pic_hod & cabang ikut dari baris yg sama).
 
 One-shot, idempoten (NOT EXISTS pada facility_name+brand+product+am_id).
-account_id di-fuzzy-match ke accurate_customer (pg_trgm ≥0.7, di SQL).
+account_id dicocokkan di Python atas INTI nama (lihat blok pencocokan di bawah),
+bukan trigram atas nama utuh — hanya kecocokan meyakinkan yg dipakai otomatis.
 
 Pakai: python3 import_pameran.py --file /tmp/pameran.xlsx [--db wrg_os_dev] [--apply]
   default = DRY-RUN (txn + ROLLBACK, cuma laporan; TIDAK insert).
+
+Alur dua langkah dgn CSV:
+  1. --review-csv tinjauan.csv   → lembar tinjauan + ISIAN (kolom yg tak ada di
+                                   sheet: coop_model, unit_price, bulan/tahun beli)
+  2. (orang mengisi CSV)
+  3. --confirmed-csv tinjauan.csv → nilai CSV MENANG atas turunan xlsx;
+                                   account_id hanya dari baris ber-keputusan 'ya'.
 
 CATATAN: master_territory KOSONG di wrg_os_dev — dry-run di dev akan melaporkan
 0 AM ter-map. Validasi pemetaan wilayah butuh DB yg punya isi master_territory.
@@ -78,12 +86,27 @@ def instansi_type(nama):
 
 def parse_qty(v):
     """'>500' → (teks, 500, ''); '130 kantong' → (teks, 130, 'kantong');
-    '350 - 450' → (teks, 350, '')  ← batas bawah; teks asli selalu disimpan utuh."""
+    '350 - 450' → (teks, 350, '')  ← batas bawah; teks asli selalu disimpan utuh.
+
+    WAJIB menerima sel MENTAH, bukan hasil str(). openpyxl mengembalikan angka
+    sebagai float ('60' di sheet → 60.0), dan membuang non-digit dari '60.0'
+    menghasilkan 600 — salah 10x tanpa suara. Sel numerik karena itu ditangani
+    sebagai angka, dan jalur teks membuang bagian desimal lebih dulu.
+    """
+    if isinstance(v, bool):
+        return "", "", ""
+    if isinstance(v, (int, float)):
+        n = int(v)
+        return str(n), str(n), ""
     t = s(v)
     if not t:
         return "", "", ""
-    nums = re.findall(r"\d[\d.,]*", t)
-    num = re.sub(r"[^\d]", "", nums[0]) if nums else ""
+    m = re.search(r"\d[\d.,]*", t)
+    num = ""
+    if m:
+        tok = m.group(0).rstrip(".,")
+        tok = re.sub(r"[.,]\d{1,2}$", "", tok)   # buang desimal, sisakan bagian bulat
+        num = re.sub(r"[^\d]", "", tok)
     unit = re.sub(r"[\d.,>\-<~+/\s]+", " ", t).strip()
     unit = re.sub(r"\s+", " ", unit)
     return t, num, unit
@@ -319,17 +342,21 @@ brand_alias = load_brand_alias(args.db)
 brand_cat = load_brand_category(args.db)
 katalog = load_accurate_customers(args.db)
 
-# keputusan manusia (kalau ada): facility_name → account_id yg disetujui
+# Suntingan manusia (kalau ada), dikunci per nomor baris sheet. CSV tinjauan
+# bukan cuma buat mencentang account_id — ia juga lembar isian untuk kolom yg
+# memang tak ada di sheet pameran (harga, model kerjasama, bulan/tahun beli).
+# Nilai di CSV MENANG atas turunan dari xlsx, jadi koreksi manual tidak tertimpa.
 confirmed = {}
 if args.confirmed_csv:
     # utf-8-sig + lewati baris 'sep=,' — CSV tinjauan sengaja ditulis ramah Excel
     with open(args.confirmed_csv, newline="", encoding="utf-8-sig") as f:
-        baris = f.readlines()
-    if baris and baris[0].lower().startswith("sep="):
-        baris = baris[1:]
-    for row in csv.DictReader(baris):
-        if s(row.get("keputusan")).lower() in ("ya", "y", "yes", "1"):
-            confirmed[s(row.get("facility_name"))] = s(row.get("kandidat_id"))
+        baris_csv = f.readlines()
+    if baris_csv and baris_csv[0].lower().startswith("sep="):
+        baris_csv = baris_csv[1:]
+    for row in csv.DictReader(baris_csv):
+        kunci = s(row.get("baris")) or s(row.get("facility_name"))
+        if kunci:
+            confirmed[kunci] = row
 
 wb = load_workbook(args.file, data_only=True)
 ws = wb[args.sheet] if args.sheet else wb.worksheets[0]
@@ -362,23 +389,56 @@ if ix["fac"] is None or ix["brand"] is None:
 
 COLS = ["customer_name", "facility_name", "brand", "product", "product_category",
         "prospect_category", "instansi_type", "city", "province", "am_id", "pic_hod",
-        "cabang", "qty_text", "qty_num", "qty_unit", "stage", "probability",
+        "cabang", "coop_model", "qty_text", "qty_num", "qty_unit", "unit_price",
+        "estimate_amount", "purchase_month", "purchase_year", "stage", "probability",
         "forecast_category", "notes", "account_id"]
 
-REVIEW_COLS = ["facility_name", "kota", "brand", "kandidat_nama", "kandidat_id",
-               "skor", "kota_cocok", "tipe_cocok", "putusan_otomatis", "keputusan"]
+# Kolom CSV tinjauan. ISIAN = kosong dari sheet, tunggu diisi orang (padanan
+# field form Deal Baru yg tak punya sumber di file pameran).
+REVIEW_EDIT = ["facility_name", "customer_name", "kota", "provinsi", "brand", "product",
+               "product_category", "am_panggilan", "pic_hod", "cabang",
+               "qty_num", "qty_unit", "notes"]
+REVIEW_ISIAN = ["coop_model", "unit_price", "purchase_month", "purchase_year"]
+REVIEW_COLS = (["baris"] + REVIEW_EDIT + REVIEW_ISIAN
+               + ["kandidat_nama", "kandidat_id", "skor", "kota_cocok", "tipe_cocok",
+                  "putusan_otomatis", "keputusan"])
+
+COOP_MODELS = ("KSO", "BELI")   # migrasi 110 — 'Sale'/'SALE' sudah pensiun
 
 rows_out, review_rows = [], []
 rep = {"total": 0, "skip_tanpa_brand": 0, "per_am": Counter(), "kota_tak_ketemu": Counter(),
        "am_tak_ketemu": Counter(), "brand_tak_dikenal": Counter(), "per_instansi_type": Counter(),
        "qty_kosong": 0, "qty_tanpa_angka": 0, "per_pcat": Counter(), "pcat_asal": Counter(),
-       "pcat_bentrok": [], "putusan": Counter(), "dari_konfirmasi": 0, "faskes_kembar": []}
+       "pcat_bentrok": [], "putusan": Counter(), "dari_konfirmasi": 0, "faskes_kembar": [],
+       "isian_terisi": Counter(), "isian_ditolak": [], "am_disunting": 0}
 seen_account = {}
+am_by_panggilan = {k: v[0] for k, v in am_map.items()}
 
-for r in allrows[hi + 1:]:
+
+def angka(v, desc, baris_no, bulat=False):
+    """Isian manusia → angka. Nilai ngawur DITOLAK + dilaporkan, bukan didiamkan."""
+    txt = s(v)
+    if not txt:
+        return ""
+    t = re.sub(r"[^\d.-]", "", txt)
+    if not t:   # ada isinya tapi tak ada angka sama sekali → laporkan, jangan buang diam-diam
+        rep["isian_ditolak"].append(f"baris {baris_no}: {desc}='{txt}' bukan angka")
+        return ""
+    try:
+        n = float(t)
+    except ValueError:
+        rep["isian_ditolak"].append(f"baris {baris_no}: {desc}='{s(v)}' bukan angka")
+        return ""
+    if bulat:
+        return str(int(n))
+    return str(int(n)) if n == int(n) else str(n)
+
+
+for baris_no, r in enumerate(allrows[hi + 1:], start=hi + 2):
     if not r:
         continue
-    get = lambda k: s(r[ix[k]]) if ix[k] is not None and len(r) > ix[k] else ""
+    mentah = lambda k: r[ix[k]] if ix[k] is not None and len(r) > ix[k] else None
+    get = lambda k: s(mentah(k))
     fac, brand = get("fac"), get("brand")
     if not fac:
         continue
@@ -393,21 +453,18 @@ for r in allrows[hi + 1:]:
 
     # wilayah → AM
     kota_raw = get("kota")
-    am_id = pic_hod = cabang = ""
+    am_panggilan = pic_hod = cabang = ""
     t = terr.get(norm_kota(kota_raw))
     if t:
         am_panggilan, pic_hod, cabang = t
         hit = am_map.get(am_panggilan.upper())
         if hit:
-            am_id = hit[0]
             cabang = cabang or hit[1]
             rep["per_am"][am_panggilan] += 1
-        else:
-            rep["am_tak_ketemu"][am_panggilan] += 1
     elif kota_raw:
         rep["kota_tak_ketemu"][kota_raw] += 1
 
-    qty_text, qty_num, qty_unit = parse_qty(get("qty"))
+    qty_text, qty_num, qty_unit = parse_qty(mentah("qty"))
     if not qty_text:
         rep["qty_kosong"] += 1
     elif not qty_num:
@@ -425,36 +482,95 @@ for r in allrows[hi + 1:]:
 
     # pencocokan faskes → account_id
     kand, putusan = match_faskes(fac, kota_raw, katalog)
-    if fac in confirmed:
-        acc_id, putusan = confirmed[fac], "DIKONFIRMASI"
-        rep["dari_konfirmasi"] += 1
-    else:
-        acc_id = kand["id"] if (kand and putusan == "AUTO") else ""
+    acc_id = kand["id"] if (kand and putusan == "AUTO") else ""
+
+    # nilai dasar dari sheet; bisa ditimpa suntingan CSV di bawah
+    baris = {
+        "baris": str(baris_no),
+        "facility_name": fac, "customer_name": fac, "kota": kota_raw, "provinsi": get("prov"),
+        "brand": brand, "product": get("type"), "product_category": pcat,
+        "am_panggilan": am_panggilan, "pic_hod": pic_hod, "cabang": cabang,
+        "qty_num": qty_num, "qty_unit": qty_unit,
+        "notes": ("Alat existing: " + alat) if alat else "",
+        "coop_model": "", "unit_price": "", "purchase_month": "", "purchase_year": "",
+        "kandidat_nama": kand["nama"] if kand else "", "kandidat_id": kand["id"] if kand else "",
+        "skor": f"{kand['sim']:.2f}" if kand else "",
+        "kota_cocok": "ya" if (kand and kand["kota_ok"]) else "tidak",
+        "tipe_cocok": "ya" if (kand and kand["fam_ok"]) else "tidak",
+    }
+
+    # ── suntingan manusia menang ──
+    sunting = confirmed.get(str(baris_no)) or confirmed.get(fac)
+    if sunting:
+        for k in REVIEW_EDIT + REVIEW_ISIAN:
+            if k in sunting and s(sunting[k]) != "":
+                baris[k] = s(sunting[k])
+                if k in REVIEW_ISIAN:
+                    rep["isian_terisi"][k] += 1
+        if s(sunting.get("keputusan")).lower() in ("ya", "y", "yes", "1"):
+            acc_id = s(sunting.get("kandidat_id"))
+            putusan = "DIKONFIRMASI"
+            rep["dari_konfirmasi"] += 1
+        else:
+            acc_id, putusan = "", "DITOLAK"
+        # AM boleh dialihkan lewat CSV
+        if baris["am_panggilan"].upper() != am_panggilan.upper():
+            rep["am_disunting"] += 1
+        # validasi isian
+        baris["unit_price"] = angka(baris["unit_price"], "unit_price", baris_no)
+        baris["qty_num"] = angka(baris["qty_num"], "qty_num", baris_no)
+        pm = angka(baris["purchase_month"], "purchase_month", baris_no, bulat=True)
+        baris["purchase_month"] = pm if (pm and 1 <= int(pm) <= 12) else ""
+        if pm and not baris["purchase_month"]:
+            rep["isian_ditolak"].append(f"baris {baris_no}: purchase_month '{pm}' di luar 1-12")
+        py = angka(baris["purchase_year"], "purchase_year", baris_no, bulat=True)
+        baris["purchase_year"] = py if (py and 2000 <= int(py) <= 2099) else ""
+        if py and not baris["purchase_year"]:
+            rep["isian_ditolak"].append(f"baris {baris_no}: purchase_year '{py}' tak masuk akal")
+        if baris["coop_model"] and baris["coop_model"].upper() not in COOP_MODELS:
+            rep["isian_ditolak"].append(
+                f"baris {baris_no}: coop_model '{baris['coop_model']}' bukan KSO/BELI")
+            baris["coop_model"] = ""
+        else:
+            baris["coop_model"] = baris["coop_model"].upper()
+        if baris["product_category"] and baris["product_category"] not in ("IVD", "Medical"):
+            rep["isian_ditolak"].append(
+                f"baris {baris_no}: product_category '{baris['product_category']}' bukan IVD/Medical")
+            baris["product_category"] = ""
+
     rep["putusan"][putusan] += 1
-    if putusan != "AUTO" or args.review_csv:
-        review_rows.append({
-            "facility_name": fac, "kota": kota_raw, "brand": brand,
-            "kandidat_nama": kand["nama"] if kand else "", "kandidat_id": kand["id"] if kand else "",
-            "skor": f"{kand['sim']:.2f}" if kand else "",
-            "kota_cocok": "ya" if (kand and kand["kota_ok"]) else "tidak",
-            "tipe_cocok": "ya" if (kand and kand["fam_ok"]) else "tidak",
-            "putusan_otomatis": putusan,
-            "keputusan": "ya" if putusan in ("AUTO", "DIKONFIRMASI") else "",
-        })
+    baris["putusan_otomatis"] = putusan
+    baris["keputusan"] = "ya" if putusan in ("AUTO", "DIKONFIRMASI") else ""
+    review_rows.append(baris)
+
     if acc_id:
-        if acc_id in seen_account and seen_account[acc_id] != fac:
-            rep["faskes_kembar"].append(f"'{seen_account[acc_id]}' & '{fac}' → account_id {acc_id}")
-        seen_account[acc_id] = fac
+        if acc_id in seen_account and seen_account[acc_id] != baris["facility_name"]:
+            rep["faskes_kembar"].append(
+                f"'{seen_account[acc_id]}' & '{baris['facility_name']}' → account_id {acc_id}")
+        seen_account[acc_id] = baris["facility_name"]
+
+    # am_panggilan (mungkin sudah disunting) → am_id
+    am_final = am_by_panggilan.get(baris["am_panggilan"].upper(), "") if baris["am_panggilan"] else ""
+    if baris["am_panggilan"] and not am_final:
+        rep["am_tak_ketemu"][baris["am_panggilan"]] += 1
+
+    est = ""
+    if baris["qty_num"] and baris["unit_price"]:
+        est = str(float(baris["qty_num"]) * float(baris["unit_price"]))
 
     rows_out.append({
-        "customer_name": fac, "facility_name": fac, "brand": brand, "product": get("type"),
-        "product_category": pcat, "account_id": acc_id,
+        "customer_name": baris["customer_name"], "facility_name": baris["facility_name"],
+        "brand": baris["brand"], "product": baris["product"],
+        "product_category": baris["product_category"], "account_id": acc_id,
         "prospect_category": PROSPECT_CATEGORY, "instansi_type": itype,
-        "city": kota_raw, "province": get("prov"),
-        "am_id": am_id, "pic_hod": pic_hod, "cabang": cabang,
-        "qty_text": qty_text, "qty_num": qty_num, "qty_unit": qty_unit,
+        "city": baris["kota"], "province": baris["provinsi"],
+        "am_id": am_final, "pic_hod": baris["pic_hod"], "cabang": baris["cabang"],
+        "coop_model": baris["coop_model"],
+        "qty_text": qty_text, "qty_num": baris["qty_num"], "qty_unit": baris["qty_unit"],
+        "unit_price": baris["unit_price"], "estimate_amount": est,
+        "purchase_month": baris["purchase_month"], "purchase_year": baris["purchase_year"],
         "stage": STAGE, "probability": str(PROBABILITY), "forecast_category": FORECAST_CATEGORY,
-        "notes": ("Alat existing: " + alat) if alat else "",
+        "notes": baris["notes"],
     })
 
 # staging CSV
@@ -473,13 +589,17 @@ CREATE TEMP TABLE ins_log AS
 WITH ins AS (
   INSERT INTO deal (
     customer_name, facility_name, brand, product, product_category, prospect_category,
-    instansi_type, city, province, am_id, pic_hod, cabang, qty_text, qty_num, qty_unit,
+    instansi_type, city, province, am_id, pic_hod, cabang, coop_model, qty_text, qty_num,
+    qty_unit, unit_price, estimate_amount, purchase_month, purchase_year,
     stage, probability, forecast_category, notes, account_id)
   SELECT {nz('customer_name')}, {nz('facility_name')}, {nz('brand')}, {nz('product')},
     {nz('product_category')},
     {nz('prospect_category')}, {nz('instansi_type')}, {nz('city')}, {nz('province')},
-    {nz('am_id')}, {nz('pic_hod')}, {nz('cabang')}, {nz('qty_text')}, {nz('qty_num')}::numeric,
-    {nz('qty_unit')}, s.stage::deal_stage, {nz('probability')}::numeric,
+    {nz('am_id')}, {nz('pic_hod')}, {nz('cabang')}, {nz('coop_model')},
+    {nz('qty_text')}, {nz('qty_num')}::numeric, {nz('qty_unit')},
+    {nz('unit_price')}::numeric, {nz('estimate_amount')}::numeric,
+    {nz('purchase_month')}::smallint, {nz('purchase_year')}::smallint,
+    s.stage::deal_stage, {nz('probability')}::numeric,
     {nz('forecast_category')}, {nz('notes')}, {nz('account_id')}::bigint
   FROM stg s
   WHERE NOT EXISTS (
@@ -488,7 +608,7 @@ WITH ins AS (
        AND coalesce(d.brand,'') = coalesce(NULLIF(s.brand,''),'')
        AND coalesce(d.product,'') = coalesce(NULLIF(s.product,''),'')
        AND coalesce(d.am_id,'') = coalesce(NULLIF(s.am_id,''),''))
-  RETURNING deal_id, facility_name, account_id, am_id)
+  RETURNING deal_id, facility_name, account_id, am_id, estimate_amount, coop_model)
 SELECT * FROM ins;
 \\echo '--- LAPORAN DB (dalam txn) ---'
 SELECT 'staging_baris  = ' || count(*) FROM stg;
@@ -496,6 +616,9 @@ SELECT 'ter-insert     = ' || count(*) FROM ins_log;
 SELECT 'skip_duplikat  = ' || ((SELECT count(*) FROM stg) - (SELECT count(*) FROM ins_log));
 SELECT 'am_id terisi   = ' || count(*) FILTER (WHERE am_id IS NOT NULL) || '/' || count(*) FROM ins_log;
 SELECT 'account_id match = ' || count(*) FILTER (WHERE account_id IS NOT NULL) || '/' || count(*) FROM ins_log;
+SELECT 'estimasi terisi  = ' || count(*) FILTER (WHERE estimate_amount IS NOT NULL) || '/' || count(*)
+       || '  total Rp ' || coalesce(sum(estimate_amount),0)::bigint FROM ins_log;
+SELECT 'coop_model terisi= ' || count(*) FILTER (WHERE coop_model IS NOT NULL) || '/' || count(*) FROM ins_log;
 \\echo '--- faskes TANPA account_id (prospek baru) ---'
 SELECT '  ' || facility_name FROM ins_log WHERE account_id IS NULL ORDER BY 1;
 """
@@ -522,6 +645,11 @@ print(f"  pencocokan faskes             : {dict(rep['putusan'])}"
       + (f" (dari CSV konfirmasi: {rep['dari_konfirmasi']})" if rep["dari_konfirmasi"] else ""))
 for d in rep["faskes_kembar"]:
     print(f"    ! dua baris → satu faskes   : {d}")
+if rep["isian_terisi"] or rep["am_disunting"]:
+    print(f"  isian manual dari CSV         : {dict(rep['isian_terisi'])}"
+          + (f" | AM dialihkan: {rep['am_disunting']}" if rep["am_disunting"] else ""))
+for t in rep["isian_ditolak"]:
+    print(f"    ! isian DITOLAK             : {t}")
 
 if args.review_csv:
     # BOM + 'sep=,' supaya kolomnya tidak gepeng saat dibuka di Excel lokal
