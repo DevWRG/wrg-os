@@ -115,6 +115,20 @@ const devEnv = {
   // ⚠️ SESUDAH sebaran — .env.dev tak boleh bisa menimpa keputusan ini.
   WA_DRY_RUN: devBolehKirim ? "false" : "true",
   WA_SEND_URL: devBolehKirim ? devBase.WA_SEND_URL || "http://127.0.0.1:18080/send" : "",
+  // Rahasia gateway HARUS ikut URL-nya. Bridge yang dituju dev sama persis
+  // dengan milik prod dan menolak kiriman tanpa header `x-wa-secret`
+  // (bridge.mjs: 401 unauthorized) — sementara `devEnv` cuma menyebar
+  // `.env.dev`, yang tak punya rahasia itu.
+  //
+  // Gagalnya SENYAP dari sisi gerbang: semua penjaga lulus, ecosystem mencetak
+  // "dev boleh kirim WA", pesan masuk diproses dengan benar, statement
+  // tersimpan — hanya balasannya yang tak pernah sampai. Terbukti 18 Sep 2026:
+  // dua #KORAN ter-ingest 'terverifikasi' tapi
+  // processed_result.reply = {sent:false, status:401}.
+  //
+  // Diambil dari `.env.dev` dulu (kalau dev sengaja dipasangkan ke bridge lain),
+  // baru jatuh ke `.env.prod`. Dikosongkan saat dev bisu, sama seperti URL-nya.
+  WA_SEND_SECRET: devBolehKirim ? devBase.WA_SEND_SECRET || base.WA_SEND_SECRET || "" : "",
   // Allowlist tujuan (lapis 3, #1260). Kosong = tanpa batas, karena itu
   // devBolehKirim di atas memastikan mode live tak pernah menyala bersama
   // daftar kosong.

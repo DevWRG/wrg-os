@@ -88,6 +88,31 @@ test("WA_DEV_GROUPS terisi → boleh kirim, DIBATASI ke daftar itu", () => {
   assert.match(pesan.join("\n"), /DIBATASI/);
 });
 
+test("rahasia gateway ikut URL-nya — tanpa itu dev kirim 401 tanpa suara", () => {
+  // Bridge yang dituju dev SAMA dengan milik prod dan menolak kiriman tanpa
+  // header x-wa-secret. Karena devEnv cuma menyebar .env.dev, rahasianya harus
+  // ikut disuntik dari .env.prod. Gagalnya senyap di semua gerbang: pesan masuk
+  // tetap diproses, statement tetap tersimpan, hanya balasannya tak pernah
+  // sampai (terbukti 18 Sep 2026, reply {sent:false,status:401}).
+  const { api } = muat({
+    envProd: `WA_DEV_GROUPS=${RESEARCH}\nWA_SEND_SECRET=rahasia-prod\n`,
+    envDev: DEV_OK,
+  });
+  assert.equal(api.env.WA_SEND_SECRET, "rahasia-prod");
+  // .env.dev menang kalau dev sengaja dipasangkan ke bridge lain.
+  const { api: api2 } = muat({
+    envProd: `WA_DEV_GROUPS=${RESEARCH}\nWA_SEND_SECRET=rahasia-prod\n`,
+    envDev: DEV_OK + "WA_SEND_SECRET=rahasia-dev\n",
+  });
+  assert.equal(api2.env.WA_SEND_SECRET, "rahasia-dev");
+});
+
+test("dev BISU → rahasia gateway ikut dikosongkan, sama seperti URL-nya", () => {
+  const { api } = muat({ envProd: "WA_SEND_SECRET=rahasia-prod\n", envDev: DEV_OK });
+  assert.equal(api.env.WA_SEND_URL, "");
+  assert.equal(api.env.WA_SEND_SECRET, "");
+});
+
 test("mode live TAK PERNAH menyala bersama allowlist kosong", () => {
   // Inti PR ini. Kosong = tanpa batas di wasend.ts, jadi kombinasi
   // WA_DRY_RUN=false + allowlist kosong akan membalikkan makna lapis 3.
