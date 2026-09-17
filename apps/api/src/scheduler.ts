@@ -29,6 +29,7 @@ import { runDailySummary } from "./repo/dailysummary.js";
 import { runRaportNarrative } from "./repo/raportnarrative.js";
 import { runWeeklyReport } from "./repo/weeklyreport.js";
 import { mirrorFreshness } from "./repo/mirror-health.js";
+import { runCashinResume } from "./repo/cashin.js";
 import { runDetectLeaveScan } from "./repo/detectleave.js";
 import { runExtractCompetitor } from "./repo/extractcompetitor.js";
 import { runWeekendBriefing } from "./repo/weekendbriefing.js";
@@ -115,6 +116,8 @@ export function startScheduler(): ScheduleStatus {
   const raportNarrativeEnabled = (process.env.RAPORT_NARRATIVE_ENABLED ?? "false").toLowerCase() === "true";
   // weekly-report (port cron_weekly_report.sh) — KPI mingguan ke HOD Squad, Senin 07:00.
   const weeklyReportEnabled = (process.env.WEEKLY_REPORT_ENABLED ?? "false").toLowerCase() === "true";
+
+
   // detect-leave (port detect_leave.sh) — scan grup HRD tiap 10 menit, deteksi
   // izin/sakit/cuti via LLM + approval admin. KIRIM WA ke grup HRD.
   const detectLeaveEnabled = (process.env.DETECT_LEAVE_ENABLED ?? "false").toLowerCase() === "true";
@@ -145,6 +148,13 @@ export function startScheduler(): ScheduleStatus {
   // off) karena mengirim WA; target grup dari GEO_SWEEP_WA_TARGET /
   // COMPLIANCE_AM_GROUP / REMINDER_WA_TARGET.
   const geoSweepEnabled = (process.env.GEO_SWEEP_ENABLED ?? "false").toLowerCase() === "true";
+  // cashin-resume (F-CASHIN) — jaring pengaman gerbang konfirmasi Finance.
+  // Flag SENDIRI (default off) karena mengirim WA ke grup Finance.
+  //
+  // ⚠️ Job ini TIDAK mengirim apa pun ke Direktur. Sejak migrasi 178 resume
+  // hanya sampai ke Direktur setelah Finance membalas "ya <kode>"; job ini cuma
+  // membuat draft yang tertinggal dan mengingatkan draft yang menggantung.
+  const cashinResumeEnabled = (process.env.CASHIN_RESUME_ENABLED ?? "false").toLowerCase() === "true";
   const timezone = TZ();
   const jobs: JobDef[] = [
     {
@@ -220,12 +230,12 @@ export function startScheduler(): ScheduleStatus {
   ];
 
   status = {
-    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled || watchpointSnapshotEnabled || geoSweepEnabled,
+    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled || watchpointSnapshotEnabled || geoSweepEnabled || cashinResumeEnabled,
     timezone,
     jobs: jobs.map((j) => ({ id: j.id, expr: j.expr, valid: cron.validate(j.expr) })),
   };
 
-  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled && !watchpointSnapshotEnabled && !geoSweepEnabled) {
+  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled && !watchpointSnapshotEnabled && !geoSweepEnabled && !cashinResumeEnabled) {
     console.log("[scheduler] semua *_SCHEDULE/_ENABLED flag != true — tidak dijadwalkan");
     return status;
   }
@@ -647,6 +657,35 @@ export function startScheduler(): ScheduleStatus {
       { timezone },
     );
     live.push(`watchpoint-snapshot=${wpsExpr}`);
+  }
+
+  // cashin-resume (F-CASHIN) — jaring pengaman harian gerbang konfirmasi.
+  //
+  // Pemicu UTAMA draft bukan di sini: draft terbentuk begitu koran hari itu
+  // lengkap (di dalam ingestKoran). Job ini menangani sisanya — draft yang
+  // tertinggal karena file terakhir masuk lewat menu web, dan draft yang
+  // menggantung tanpa konfirmasi Finance.
+  //
+  // Default 17:30 Sen–Sab (keputusan user 17 Sep 2026); override lewat
+  // CASHIN_RESUME_CRON tanpa ubah kode. Aman dijalankan berkali-kali:
+  // monitor_digest di-UPSERT per tanggal, draft dikirim sekali
+  // (draft_terkirim_at), pengingat sekali sehari (ingat_terakhir_at).
+  const cashinExpr = process.env.CASHIN_RESUME_CRON ?? "30 17 * * 1-6";
+  if ((enabled || cashinResumeEnabled) && cron.validate(cashinExpr)) {
+    cron.schedule(
+      cashinExpr,
+      async () => {
+        const startedAt = new Date().toISOString();
+        try {
+          const r = await runCashinResume();
+          console.log(`[scheduler] cashin-resume @ ${startedAt} ${JSON.stringify(r)}`);
+        } catch (e) {
+          console.error(`[scheduler] cashin-resume gagal @ ${startedAt}:`, e);
+        }
+      },
+      { timezone },
+    );
+    live.push(`cashin-resume=${cashinExpr}`);
   }
 
   // detect-leave (port detect_leave.sh) — scan grup HRD tiap 10 menit.

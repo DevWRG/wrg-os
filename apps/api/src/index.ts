@@ -201,6 +201,22 @@ import {
   type OpenclawRecord,
 } from "./repo/wa.js";
 import { aiBaseUrl, callAi } from "./ai.js";
+import {
+  buatDraftJikaLengkap,
+  formatResume,
+  ingestKoran,
+  listAccount,
+  listLine,
+  listResume,
+  listStatement,
+  matriksKelengkapan,
+  putuskanResume,
+  ringkasanHarian,
+  scanKonfirmasiResume,
+  triageLine,
+  updateAccount,
+  wibDate,
+} from "./repo/cashin.js";
 import { startScheduler, getScheduleStatus } from "./scheduler.js";
 import { signJwt, verifyJwt } from "./auth.js";
 import { verifyCredentials, createUser, countUsers, listAppUsers, setUserPassword, updateAppUser, deleteAppUser, getAppUserById, createUserFromRoster, generatePassword, changeOwnPassword } from "./repo/users.js";
@@ -3451,6 +3467,140 @@ app.post("/wa/messages", async (c) => {
 // openclaw (single | array | {messages:[...]} | {events:[...]}). Idempoten
 // (skip duplikat by input_hash). Jika WA_WEBHOOK_SECRET di-set, header
 // x-wa-secret wajib cocok.
+// ── F-CASHIN Mitigasi Uang Masuk Harian (rekening koran) ─────────────────────
+// Ingest lewat dua jalur: WA #KORAN (inbound.ts) dan upload di menu web (POST
+// /cashin/upload). Klasifikasi + pencocokan puteran jalan otomatis tiap ingest.
+app.post("/cashin/upload", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const body = await c.req.json().catch(() => ({}));
+  const files = Array.isArray(body.files) ? body.files : null;
+  if (!files || !files.length) {
+    return c.json({ error: "field 'files' wajib array berisi {file_nama, pdf_base64}" }, 400);
+  }
+  // Diproses berurutan, bukan paralel: pencocokan pasangan puteran membaca
+  // seluruh baris tanggal itu, jadi dua ingest yang jalan bersamaan bisa
+  // saling menimpa hasil pasangannya.
+  const hasil = [];
+  for (const f of files) {
+    if (!f?.pdf_base64) {
+      hasil.push({ ok: false, file_nama: f?.file_nama ?? null, error: "pdf_base64 kosong" });
+      continue;
+    }
+    const r = await ingestKoran({
+      pdf_base64: String(f.pdf_base64),
+      file_nama: f.file_nama ?? null,
+      sumber: "web",
+    });
+    hasil.push("ok" in r && r.ok === true ? r : { ok: false, file_nama: f.file_nama ?? null, error: (r as { error?: string }).error });
+  }
+  return c.json({ hasil });
+});
+
+app.get("/cashin/harian", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const tanggal = c.req.query("tanggal") ?? wibDate();
+  return c.json({ ringkasan: await ringkasanHarian(tanggal), statement: await listStatement(tanggal) });
+});
+
+app.get("/cashin/resume", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const tanggal = c.req.query("tanggal") ?? wibDate();
+  const r = await ringkasanHarian(tanggal);
+  return c.json({ tanggal, teks: formatResume(r), ringkasan: r });
+});
+
+app.get("/cashin/lines", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(
+    await listLine({
+      tanggal: c.req.query("tanggal") ?? undefined,
+      kategori: c.req.query("kategori") ?? undefined,
+      bank_account_id: c.req.query("bank_account_id") ?? undefined,
+      q: c.req.query("q") ?? undefined,
+      sort: c.req.query("sort") ?? undefined,
+      dir: c.req.query("dir") ?? undefined,
+      limit: c.req.query("limit") ? Number(c.req.query("limit")) : undefined,
+      offset: c.req.query("offset") ? Number(c.req.query("offset")) : undefined,
+    }),
+  );
+});
+
+app.patch("/cashin/lines/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const body = await c.req.json().catch(() => ({}));
+  const result = await triageLine(c.req.param("id"), String(body.kategori ?? ""), body.catatan ?? null);
+  if (!result.ok) return c.json({ error: result.error }, 400);
+  return c.json(result);
+});
+
+app.get("/cashin/accounts", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json({ accounts: await listAccount() });
+});
+
+app.patch("/cashin/accounts/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const body = await c.req.json().catch(() => ({}));
+  const result = await updateAccount(c.req.param("id"), body);
+  if (!result.ok) return c.json({ error: result.error }, 400);
+  return c.json(result);
+});
+
+// Gerbang konfirmasi Finance (migrasi 178). Resume HANYA sampai ke Direktur
+// lewat keputusan 'ya' di sini atau lewat balasan WA — tidak ada jalur ketiga.
+app.get("/cashin/resume/daftar", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const limit = c.req.query("limit") ? Number(c.req.query("limit")) : undefined;
+  return c.json({ resume: await listResume(limit) });
+});
+
+// Susun draft resume SEKARANG untuk satu tanggal, tanpa menunggu periode
+// hening. Tiga pemakaian nyata: (a) tombol "susun resume" di menu web,
+// (b) tanggal yang timernya hilang karena api sempat restart, (c) statement
+// yang semuanya masuk lewat unggahan web (tak ada #KORAN yang menjadwalkan
+// apa pun). Tanpa ini, tanggal-tanggal itu tak punya jalan menuju resume sama
+// sekali kecuali menunggu file baru kebetulan datang.
+app.post("/cashin/resume/draft", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const body = await c.req.json().catch(() => ({}));
+  const tanggal = String(body.tanggal ?? "").trim() || wibDate();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(tanggal)) {
+    return c.json({ error: "field 'tanggal' harus YYYY-MM-DD" }, 400);
+  }
+  const r = await buatDraftJikaLengkap(tanggal, body.grup_jid ?? null, { paksa: true });
+  return c.json({ tanggal, ...r });
+});
+
+app.post("/cashin/resume/:kode/putuskan", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const body = await c.req.json().catch(() => ({}));
+  const keputusan = String(body.keputusan ?? "").toLowerCase();
+  if (keputusan !== "ya" && keputusan !== "tidak") {
+    return c.json({ error: "field 'keputusan' wajib 'ya' atau 'tidak'" }, 400);
+  }
+  // 'oleh' WAJIB: kolomnya dipakai sebagai jejak siapa menyetujui angka hari itu.
+  // Default anonim akan membuat jejak itu bohong tanpa terlihat bohong.
+  const oleh = String(body.oleh ?? "").trim();
+  if (!oleh) return c.json({ error: "field 'oleh' wajib (nama/email pemutus)" }, 400);
+  const r = await putuskanResume(c.req.param("kode"), keputusan as "ya" | "tidak", oleh, {
+    alasan: body.alasan ?? null,
+  });
+  return r.ok ? c.json(r) : c.json(r, 400);
+});
+
+// Catch-up manual pemindai balasan konfirmasi (selain auto dari webhook WA).
+app.post("/cashin/konfirmasi/scan", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await scanKonfirmasiResume());
+});
+
+app.get("/cashin/kelengkapan", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const sampai = c.req.query("sampai") ?? wibDate();
+  const dari = c.req.query("dari") ?? new Date(new Date(`${sampai}T00:00:00Z`).getTime() - 29 * 86400000).toISOString().slice(0, 10);
+  return c.json({ dari, sampai, ...(await matriksKelengkapan(dari, sampai)) });
+});
+
 app.post("/webhooks/wa", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const secret = process.env.WA_WEBHOOK_SECRET;
@@ -3486,7 +3636,18 @@ app.post("/webhooks/wa", async (c) => {
       console.error("[webhooks/wa] inbound process gagal:", e);
     }
   }
-  return c.json({ ...result, inbound }, 201);
+  // Balasan konfirmasi resume ("ya R12") TIDAK ber-hashtag, jadi ia tak pernah
+  // terjaring processUnprocessed. Dipindai di sini supaya Finance mendapat
+  // jawaban seketika. Self-guard: no-op kalau tak ada draft yang menunggu.
+  let konfirmasiCashin;
+  if (isInboundEnabled()) {
+    try {
+      konfirmasiCashin = await scanKonfirmasiResume();
+    } catch (e) {
+      console.error("[webhooks/wa] scan konfirmasi cashin gagal:", e);
+    }
+  }
+  return c.json({ ...result, inbound, konfirmasi_cashin: konfirmasiCashin }, 201);
 });
 
 // Trigger manual / batch pemrosesan inbound yang belum diproses (selain auto dari

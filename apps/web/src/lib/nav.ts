@@ -10,7 +10,7 @@ import {
   Bell, MapPin, ListChecks, Swords, CalendarOff, CalendarDays, CalendarRange,
   Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, Tags, SlidersHorizontal, Microscope,
   Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, BookOpen, Calculator,
-  Wallet, Coins,
+  Wallet, Coins, Banknote,
   type LucideIcon,
 } from "lucide-react";
 
@@ -216,6 +216,15 @@ export const NAV: NavGroup[] = [
       { title: "Shipments", url: "/shipments", icon: Truck },
       { title: "Suppliers", url: "/suppliers", icon: Factory },
       { title: "HITL Review", url: "/hitl", icon: ClipboardCheck },
+    ],
+  },
+  {
+    // F-CASHIN — Mitigasi Uang Masuk Harian. Pemakainya Finance (bukan Sales/
+    // Operations) dan datanya rekening bank, jadi dibuat grup sendiri daripada
+    // dipaksa masuk grup yang temanya lain.
+    label: "Finance",
+    items: [
+      { title: "Uang Masuk", url: "/uang-masuk", icon: Banknote, badge: "NEW" },
     ],
   },
   {
