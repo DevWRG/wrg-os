@@ -57,11 +57,12 @@ ok "repo: $ROOT (branch $BR)"
 # (mis. v1.52.0-66-g… padahal rilisnya v1.58.2). Force-fetch menjamin tag sinkron.
 if [ "$NO_PULL" = 0 ] && [ "${_REEXEC:-0}" = 0 ]; then
   say "Pull $BR + tags (force)"
+  _PREV_SHA="$(git rev-parse HEAD)"
   git pull --ff-only origin "$BR"
   git fetch --tags --force --prune --prune-tags origin 2>/dev/null || git fetch --tags --force origin || true
   ok "now at $(git rev-parse --short HEAD)"
   # jalankan ulang sekali dgn script yang barusan ke-pull (kalau script ini ikut berubah)
-  export _REEXEC=1; exec bash "$0" "$@"
+  export _REEXEC=1 _PREV_SHA; exec bash "$0" "$@"
 fi
 [ "$NO_PULL" = 1 ] && warn "git pull dilewati (--no-pull) — tag mungkin tak sinkron."
 
@@ -106,6 +107,13 @@ if [ "$SKIP_BUILD" = 0 ]; then
     pnpm --filter @wrg/web build
     ok "build api + web sukses"
   fi
+  # services/ai tak punya langkah build (uvicorn baca .py langsung), tapi
+  # dependensinya TIDAK ikut ter-install di sini. Restart saja tak cukup kalau
+  # requirements berubah — uvicorn akan mati saat import, dan itu baru ketahuan
+  # dari smoke test /health di bawah.
+  if [ -n "${_PREV_SHA:-}" ] && ! git diff --quiet "$_PREV_SHA" HEAD -- services/ai/requirements.txt 2>/dev/null; then
+    warn "services/ai/requirements.txt BERUBAH — install manual: services/ai/.venv/bin/pip install -r services/ai/requirements.txt"
+  fi
 else warn "build dilewati (--skip-build)"; fi
 
 # ── 2) migrasi DB (dry-run dulu → konfirmasi → apply --backup) ─────
@@ -130,11 +138,17 @@ if [ "$SKIP_MIGRATE" = 0 ]; then
 else warn "migrasi dilewati (--skip-migrate)"; fi
 
 # ── 3) restart pm2 (bentuk ecosystem — reload .env.prod) ──────────
-say "Restart pm2 (wrg-prod-api, wrg-prod-web)"
+# wrg-prod-ai IKUT di-restart. Sampai 2026-09-18 skrip ini cuma menyentuh
+# api+web, sementara uvicorn jalan tanpa --reload — jadi tiap perubahan
+# services/ai (prompt LLM, schema) ter-pull tapi TIDAK pernah aktif sampai ada
+# yang restart manual. Empat commit services/ai menganggur sebulan karena itu,
+# dan tak ada satu pun gejala: deploy tetap hijau, smoke test tetap lulus.
+PROC="wrg-prod-api,wrg-prod-web,wrg-prod-ai"
+say "Restart pm2 ($PROC)"
 if [ "$DRY" = 1 ]; then
-  warn "akan: pm2 restart ecosystem.config.cjs --only wrg-prod-api,wrg-prod-web --update-env"
+  warn "akan: pm2 restart ecosystem.config.cjs --only $PROC --update-env"
 else
-  pm2 restart ecosystem.config.cjs --only wrg-prod-api,wrg-prod-web --update-env
+  pm2 restart ecosystem.config.cjs --only "$PROC" --update-env
   ok "pm2 di-restart"
 fi
 
@@ -149,6 +163,11 @@ if [ "$DRY" = 0 ]; then
     API="$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 -H "x-service-token: $TOK" http://localhost:4100/watchpoint || echo 000)"
     [ "$API" = 200 ] && ok "api :4100/watchpoint → HTTP $API" || warn "api :4100/watchpoint → HTTP $API (cek: pm2 logs wrg-prod-api)"
   else warn "API_SERVICE_TOKEN tak ketemu di .env.prod — skip smoke test api."; fi
+  # services/ai: uvicorn yang mati saat import TIDAK bikin deploy gagal — api &
+  # web tetap hijau, dan gejalanya baru muncul jam-jaman kemudian sebagai job
+  # rekap/resume/daily-summary yang diam. Jadi wajib diuji di sini.
+  AI="$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 http://127.0.0.1:8100/health || echo 000)"
+  [ "$AI" = 200 ] && ok "ai :8100/health → HTTP $AI" || warn "ai :8100/health → HTTP $AI (cek: pm2 logs wrg-prod-ai)"
 fi
 
 say "Selesai — deploy $VER · $CHANNEL"
