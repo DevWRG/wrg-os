@@ -9,8 +9,9 @@
 # Kalau ada pending → di-LOG + ALERT WA (rekam "auto-applying"). Idempoten, lockdir
 # anti-tumpang-tindih, semua ter-log. Promote dev→main → <interval> menit auto ke versi baru.
 #
-# HANYA menyentuh wrg-prod-api/web (via deploy-prod.sh). Python legacy (8090–8092)
-# & wa-bridge TIDAK pernah disentuh.
+# HANYA menyentuh wrg-prod-api/web/ai (via deploy-prod.sh; wrg-prod-ai ikut sejak
+# 2026-09-18 — sebelumnya perubahan prompt services/ai ter-pull tapi tak pernah
+# aktif). Python legacy (8090–8092) & wa-bridge TIDAK pernah disentuh.
 #
 # GATE MIGRASI (biar deploy migrasi tidak lagi "silent break"):
 #   - deteksi migrasi pending dg banding daftar file di origin/main vs tabel
