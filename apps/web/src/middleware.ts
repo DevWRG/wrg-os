@@ -1,8 +1,20 @@
 import { NextResponse, type NextRequest } from "next/server";
 
+import { sessionTokenValid } from "@/lib/session-token";
+
 // Gerbang sesi (opsional, default MATI). Saat AUTH_ENABLED=true, rute dashboard
-// butuh cookie sesi; tanpa itu → redirect ke /login. Verifikasi penuh JWT
-// dilakukan apps/api; di sini cukup cek keberadaan cookie (edge-friendly).
+// DAN /api/* butuh cookie sesi yang TANDA TANGANNYA SAH — bukan sekadar ada.
+//
+// ⚠️ Dulu di sini cuma dicek keberadaan cookie, dengan alasan "verifikasi penuh
+// JWT dilakukan apps/api". Itu benar untuk halaman (layout dashboard memanggil
+// sessionUser() → /auth/me), tapi TIDAK untuk /api/*: route BFF menyuntik
+// x-service-token lewat gatewayFetch, dan token itu mem-bypass JWT di apps/api.
+// Jadi rantainya jadi: cookie asal-asalan → lolos middleware → BFF → service
+// token → backend menulis. Terbukti 2026-09-18 di prod (port 3100) dan dev
+// (3300): `cookie: wrg_session=ngasal` + POST /api/holidays dijawab backend
+// "tanggal + keterangan wajib" — artinya payload sudah sampai ke apps/api, cuma
+// isinya yang kurang. Bukan sekadar "viewer bisa menulis": penyerang tanpa akun
+// pun bisa, karena nilai cookie tak pernah diperiksa.
 
 const SESSION_COOKIE = "wrg_session";
 
@@ -40,7 +52,23 @@ function pass(req: NextRequest): NextResponse {
   return noindexed(NextResponse.next({ request: { headers } }));
 }
 
-export function middleware(req: NextRequest) {
+// Sesi tak sah. Untuk halaman → redirect /login seperti dulu. Untuk /api/* →
+// 401 JSON: klien fetch() yang menerima 307 ke /login akan mengikutinya diam-diam
+// lalu mem-parse HTML halaman login sebagai JSON, dan gagalnya terbaca sebagai
+// "backend error" alih-alih "sesi habis".
+function tolak(req: NextRequest, pathname: string): NextResponse {
+  if (pathname.startsWith("/api/")) {
+    return noindexed(
+      NextResponse.json({ error: "unauthenticated" }, { status: 401 }),
+    );
+  }
+  const url = req.nextUrl.clone();
+  url.pathname = "/login";
+  url.searchParams.set("next", pathname);
+  return noindexed(NextResponse.redirect(url));
+}
+
+export async function middleware(req: NextRequest) {
   // robots.txt disajikan dari sini, BUKAN lewat app/robots.ts, supaya prod tetap
   // membalas 404 apa adanya — menambah route metadata akan mengubah permukaan
   // publik prod (404 → 200) tanpa alasan.
@@ -54,11 +82,8 @@ export function middleware(req: NextRequest) {
   if ((process.env.AUTH_ENABLED ?? "").toLowerCase() !== "true") return pass(req);
   const { pathname } = req.nextUrl;
   if (isPublic(pathname)) return pass(req);
-  if (req.cookies.get(SESSION_COOKIE)?.value) return pass(req);
-  const url = req.nextUrl.clone();
-  url.pathname = "/login";
-  url.searchParams.set("next", pathname);
-  return noindexed(NextResponse.redirect(url));
+  if (await sessionTokenValid(req.cookies.get(SESSION_COOKIE)?.value)) return pass(req);
+  return tolak(req, pathname);
 }
 
 export const config = {
