@@ -363,6 +363,7 @@ import {
   createShipment,
   listShipments,
   getShipmentById,
+  findActiveBySjNumber,
   markKirim as markShipmentKirim,
   markBast as markShipmentBast,
   markTerima as markShipmentTerima,
@@ -638,8 +639,13 @@ app.onError((err, c) => {
         // (mis. tahun 5 digit dari input date native browser) valid secara JS
         // Date tapi di luar jangkauan offset zona waktu yang Postgres terima.
         return c.json({ error: "Format tanggal tidak valid" }, 400);
-      case "22P02": // invalid_text_representation — format salah (paling sering: id di path/body bukan UUID)
-        return c.json({ error: `Format data tidak valid: ${err.message}` }, 400);
+      case "22P02": // invalid_text_representation — format salah (paling sering: id di path/body bukan UUID).
+        // Pesan generik, TANPA err.message — pesan driver Postgres utk kasus ini
+        // ("invalid input syntax for type uuid: \"...\"") membocorkan nilai input
+        // mentah ke klien tanpa memberi konteks yang berguna (ditemukan QA
+        // 2026-09-15 di /ga-maintenance/:id/approve, tapi berlaku ke semua rute
+        // krn ditangani generik di sini).
+        return c.json({ error: "Format data tidak valid — cek id/kode yang dikirim" }, 400);
       case "22001": // string_data_right_truncation — teks melebihi batas panjang kolom
         return c.json({ error: `Teks terlalu panjang untuk kolom ini: ${err.message}` }, 400);
       case "22008": // datetime_field_overflow — hasil kalkulasi tanggal (mis. interval bulan) di luar rentang valid
@@ -5865,6 +5871,15 @@ app.post("/shipment-tracking", async (c) => {
   }
   if (!body.sj_number || !body.customer_name) {
     return c.json({ error: "sj_number + customer_name wajib" }, 400);
+  }
+  const dupeActive = await findActiveBySjNumber(body.sj_number);
+  if (dupeActive) {
+    return c.json(
+      {
+        error: `SJ ${body.sj_number} masih aktif (status "${dupeActive.status}") — selesaikan (bast) dulu sebelum membuat SJ baru dengan nomor yang sama, atau pakai nomor lain`,
+      },
+      409,
+    );
   }
   const r = await createShipment({
     sj_number: body.sj_number,
