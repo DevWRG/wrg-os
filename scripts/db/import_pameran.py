@@ -353,10 +353,18 @@ if args.confirmed_csv:
         baris_csv = f.readlines()
     if baris_csv and baris_csv[0].lower().startswith("sep="):
         baris_csv = baris_csv[1:]
-    for row in csv.DictReader(baris_csv):
+    # Excel lokal menyimpan ulang CSV dgn ';' (dan membuang baris 'sep='), jadi
+    # pemisah WAJIB dideteksi — memaksa ',' bikin seluruh baris terbaca satu kolom
+    # dan tiap suntingan hilang tanpa error.
+    kepala = baris_csv[0] if baris_csv else ""
+    pemisah = ";" if kepala.count(";") > kepala.count(",") else ","
+    for row in csv.DictReader(baris_csv, delimiter=pemisah):
         kunci = s(row.get("baris")) or s(row.get("facility_name"))
         if kunci:
             confirmed[kunci] = row
+    if "facility_name" not in (csv.DictReader(baris_csv, delimiter=pemisah).fieldnames or []):
+        sys.exit(f"ERROR: kolom 'facility_name' tak ketemu di {args.confirmed_csv} "
+                 f"(pemisah terdeteksi '{pemisah}') — CSV-nya rusak/salah file?")
 
 wb = load_workbook(args.file, data_only=True)
 ws = wb[args.sheet] if args.sheet else wb.worksheets[0]
@@ -410,7 +418,9 @@ rep = {"total": 0, "skip_tanpa_brand": 0, "per_am": Counter(), "kota_tak_ketemu"
        "am_tak_ketemu": Counter(), "brand_tak_dikenal": Counter(), "per_instansi_type": Counter(),
        "qty_kosong": 0, "qty_tanpa_angka": 0, "per_pcat": Counter(), "pcat_asal": Counter(),
        "pcat_bentrok": [], "putusan": Counter(), "dari_konfirmasi": 0, "faskes_kembar": [],
-       "isian_terisi": Counter(), "isian_ditolak": [], "am_disunting": 0}
+       "isian_terisi": Counter(), "isian_ditolak": [], "am_disunting": 0,
+       "dihapus_di_csv": []}
+kunci_terpakai = set()
 seen_account = {}
 am_by_panggilan = {k: v[0] for k, v in am_map.items()}
 
@@ -484,6 +494,14 @@ for baris_no, r in enumerate(allrows[hi + 1:], start=hi + 2):
     kand, putusan = match_faskes(fac, kota_raw, katalog)
     acc_id = kand["id"] if (kand and putusan == "AUTO") else ""
 
+    # Baris yg ADA di xlsx tapi TIDAK ada di CSV konfirmasi = sengaja dihapus
+    # orang (mis. dua baris faskes kembar digabung jadi satu). Tanpa aturan ini
+    # baris itu tetap terimpor dgn nilai asli xlsx — penghapusannya sia-sia dan
+    # duplikatnya balik lagi tanpa peringatan.
+    if confirmed and str(baris_no) not in confirmed and fac not in confirmed:
+        rep["dihapus_di_csv"].append(f"baris {baris_no}: {fac}")
+        continue
+
     # nilai dasar dari sheet; bisa ditimpa suntingan CSV di bawah
     baris = {
         "baris": str(baris_no),
@@ -502,6 +520,7 @@ for baris_no, r in enumerate(allrows[hi + 1:], start=hi + 2):
     # ── suntingan manusia menang ──
     sunting = confirmed.get(str(baris_no)) or confirmed.get(fac)
     if sunting:
+        kunci_terpakai.add(str(baris_no) if str(baris_no) in confirmed else fac)
         for k in REVIEW_EDIT + REVIEW_ISIAN:
             if k in sunting and s(sunting[k]) != "":
                 baris[k] = s(sunting[k])
@@ -650,6 +669,15 @@ if rep["isian_terisi"] or rep["am_disunting"]:
           + (f" | AM dialihkan: {rep['am_disunting']}" if rep["am_disunting"] else ""))
 for t in rep["isian_ditolak"]:
     print(f"    ! isian DITOLAK             : {t}")
+yatim = [k for k in confirmed if k not in kunci_terpakai]
+if yatim:
+    # Kebalikan dari baris-dihapus: baris CSV tanpa padanan di xlsx tak punya
+    # jalan masuk sama sekali, jadi ia harus bersuara — bukan lenyap diam-diam.
+    print(f"  ! baris CSV tanpa padanan xlsx: {len(yatim)} → {yatim[:8]}")
+if rep["dihapus_di_csv"]:
+    print(f"  dilewati (dihapus di CSV)     : {len(rep['dihapus_di_csv'])}")
+    for t in rep["dihapus_di_csv"]:
+        print(f"      - {t}")
 
 if args.review_csv:
     # BOM + 'sep=,' supaya kolomnya tidak gepeng saat dibuka di Excel lokal
