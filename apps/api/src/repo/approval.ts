@@ -197,8 +197,14 @@ export async function notifyCurrentStep(requestId: string): Promise<NotifyResult
   // tak ada kontrak kirim media. Link tetap ke halaman dashboard (bukan API
   // langsung) supaya lewat gerbang sesi (middleware.ts) yg sudah ada.
   const [{ count: attachCount }] = await sql`SELECT count(*)::int AS count FROM approval_attachment WHERE request_id = ${requestId}`;
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
-  const attachLine = Number(attachCount) > 0 ? `\n📎 ${attachCount} lampiran — lihat di ${appUrl}/approval-requests/${requestId}\n` : "";
+  // WEB_PUBLIC_URL didahulukan: NEXT_PUBLIC_APP_URL tak pernah diisi di
+  // .env.prod, jadi fallback lama mengirim link "localhost:3000" ke WA orang.
+  // Kalau dua-duanya kosong, sebut jumlah lampirannya saja — link setengah
+  // jadi ("/approval-requests/12") lebih menyesatkan ketimbang tanpa link.
+  const appUrl = (process.env.WEB_PUBLIC_URL || process.env.NEXT_PUBLIC_APP_URL || "").replace(/\/+$/, "");
+  const attachLine = Number(attachCount) > 0
+    ? `\n📎 ${attachCount} lampiran${appUrl ? ` — lihat di ${appUrl}/approval-requests/${requestId}` : ""}\n`
+    : "";
   const msg =
     `🔔 *Permintaan Approval* (${step.label})\n\n` +
     `${req.title}${nominalLine}\n${req.description ? `${req.description}\n` : ""}${attachLine}` +
