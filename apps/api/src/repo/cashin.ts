@@ -562,6 +562,17 @@ export interface RingkasanHarian {
   statement_perlu_review: Array<{ label_file: string; alasan: string }>;
   penerimaan_terbesar: Array<{ label_file: string; deskripsi: string; kredit: number }>;
   puteran_detail: Array<{ dari: string; ke: string; nominal: number }>;
+  /** Uang masuk per rekening kas — permintaan Direktur 18 Sep 2026: "perlu tahu
+   *  uang yang masuk di mandiri berapa, di jatim berapa, dan seterusnya".
+   *  Hanya rekening yang korannya SUDAH masuk; yang belum setor tetap
+   *  dilaporkan terpisah lewat rekening_belum, bukan ditulis Rp 0 (nol yang
+   *  dibaca sebagai "tidak ada penerimaan" padahal datanya belum ada). */
+  per_rekening: Array<{
+    label_file: string;
+    nama_bank: string;
+    uang_masuk: number;
+    puteran_keluar: number;
+  }>;
 }
 
 const NOL: Record<string, number> = {
@@ -642,6 +653,23 @@ export async function ringkasanHarian(tanggal: string): Promise<RingkasanHarian>
     ORDER BY l.kredit DESC LIMIT 5
   `;
 
+  // Rincian per rekening. Penyaringnya HARUS sama dengan total di atas
+  // (jenis='kas' + status='terverifikasi' + kategori penerimaan), kalau tidak
+  // penjumlahan rinciannya takkan sama dengan totalnya — dan yang membaca akan
+  // menganggap salah satunya bohong. Puteran diukur dari sisi DEBIT, sama
+  // seperti totalnya.
+  const perRek = await sql`
+    SELECT a.label_file, a.nama_bank,
+           COALESCE(SUM(l.kredit) FILTER (WHERE l.kategori IN ('uang_masuk_riil', 'afiliasi_grup')), 0)::numeric AS uang_masuk,
+           COALESCE(SUM(l.debit)  FILTER (WHERE l.kategori = 'puteran_internal'), 0)::numeric AS puteran_keluar
+    FROM bank_statement s
+    JOIN bank_account a ON a.id = s.bank_account_id
+    LEFT JOIN bank_statement_line l ON l.statement_id = s.id
+    WHERE s.tanggal = ${tanggal} AND a.jenis = 'kas' AND s.status = 'terverifikasi'
+    GROUP BY a.label_file, a.nama_bank
+    ORDER BY 3 DESC, a.label_file
+  `;
+
   const puteran = await sql`
     SELECT ad.label_file AS dari, ak.label_file AS ke, ld.debit::numeric AS nominal
     FROM bank_statement_line ld
@@ -680,12 +708,23 @@ export async function ringkasanHarian(tanggal: string): Promise<RingkasanHarian>
       ke: String(r.ke),
       nominal: Number(r.nominal),
     })),
+    per_rekening: perRek.map((r) => ({
+      label_file: String(r.label_file),
+      nama_bank: String(r.nama_bank),
+      uang_masuk: Number(r.uang_masuk),
+      puteran_keluar: Number(r.puteran_keluar),
+    })),
   };
 }
 
 // ── teks resume WA ───────────────────────────────────────────────────────────
 
 const rp = (n: number): string => "Rp " + Math.round(n).toLocaleString("id-ID");
+
+/** "Bank Mandiri" → "Mandiri". Nama bank ditulis lengkap di master (dipakai
+ *  menu web), tapi di WA tiap kolom rebutan lebar layar HP. Prefiks 'Bank'
+ *  dibuang saja; 'CIMB Niaga' tak berubah. */
+const namaPendek = (nama: string): string => nama.replace(/^Bank\s+/i, "");
 
 const HARI = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
 const BULAN = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"];
@@ -707,7 +746,20 @@ export function formatResume(r: RingkasanHarian): string {
     baris.push(`⚠️ *BELUM LENGKAP — baru ${r.rekening_masuk}/${r.rekening_wajib} rekening.* Angka di bawah belum final.`);
   }
   baris.push("");
-  baris.push(`Uang masuk riil     : ${rp(r.uang_masuk_riil)}`);
+
+  // Rincian per rekening SEBELUM total. Direktur menanyakannya lebih dulu
+  // ("mandiri berapa, jatim berapa"), dan angka gabungan tanpa rinciannya tak
+  // bisa dicek siapa pun terhadap mutasi bank.
+  if (r.per_rekening.length) {
+    baris.push("*Masuk per rekening*");
+    const lebar = Math.max(...r.per_rekening.map((p) => p.label_file.length));
+    for (const p of r.per_rekening) {
+      baris.push(`${p.label_file.padEnd(lebar)} · ${namaPendek(p.nama_bank)} : ${rp(p.uang_masuk)}`);
+    }
+    baris.push("");
+  }
+
+  baris.push(`Total uang masuk    : ${rp(r.uang_masuk_riil)}`);
   if (r.afiliasi_grup > 0) baris.push(`  + afiliasi grup   : ${rp(r.afiliasi_grup)}`);
   baris.push(`Puteran internal    : ${rp(r.puteran_internal)} (dikecualikan)`);
   if (r.bunga + r.deposito > 0) baris.push(`Bunga/deposito      : ${rp(r.bunga + r.deposito)}`);

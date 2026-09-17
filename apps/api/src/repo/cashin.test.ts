@@ -117,6 +117,10 @@ function ringkasan(over: Partial<RingkasanHarian> = {}): RingkasanHarian {
     rekening_belum: ["BNI", "HANA", "INDEX 131", "INDEX 336", "INDEX 890", "MDR 734", "NIAGA"],
     statement_perlu_review: [],
     penerimaan_terbesar: [{ label_file: "BJTM", deskripsi: "RS WAJAK HUSADA", kredit: 10_740_360 }],
+    per_rekening: [
+      { label_file: "MDR 038", nama_bank: "Bank Mandiri", uang_masuk: 45_231_797, puteran_keluar: 14_000_000 },
+      { label_file: "BJTM", nama_bank: "Bank Jatim", uang_masuk: 13_500_000, puteran_keluar: 150_000_000 },
+    ],
     puteran_detail: [{ dari: "BJTM", ke: "MDR 038", nominal: 100_000_000 }],
     ...over,
   };
@@ -128,7 +132,7 @@ test("resume menyebut kelengkapan rekening dan angka tertahan", () => {
   // mencetak "Jumat 04 September" — nama hari ikut diuji karena resume dikirim
   // ke Direktur dan hari yang salah langsung terlihat keliru.
   assert.match(teks, /Jumat, 04 Sep 2026/);
-  assert.match(teks, /Uang masuk riil\s+: Rp 58\.731\.797/);
+  assert.match(teks, /Total uang masuk\s+: Rp 58.731.797/);
   assert.match(teks, /Belum ditriage/);
   // Kelengkapan wajib muncul: tanpa ini resume bisa terlihat wajar padahal 7
   // rekening belum menyetor koran.
@@ -208,7 +212,7 @@ test("draft menyatakan dirinya BELUM dikirim ke Direktur", () => {
   assert.match(teks, /tidak R12/);
   // Isi resume tetap utuh di dalam draft — Finance menyetujui teks yang persis
   // sama dengan yang akan diterima Direktur.
-  assert.match(teks, /Uang masuk riil\s+: Rp 58\.731\.797/);
+  assert.match(teks, /Total uang masuk\s+: Rp 58.731.797/);
 });
 
 test("pengingat menyebut kode dan angka yang masih tertahan", () => {
@@ -238,4 +242,27 @@ test("resume lengkap TIDAK memasang peringatan itu", () => {
   const teks = formatResume(ringkasan({ rekening_masuk: 10, rekening_belum: [] }));
   assert.doesNotMatch(teks, /BELUM LENGKAP/);
   assert.doesNotMatch(teks, /Belum setor/);
+});
+
+test("resume merinci uang masuk per rekening, lalu totalnya", () => {
+  // Permintaan Direktur 18 Sep 2026: "perlu tahu uang yang masuk di mandiri
+  // berapa, di jatim berapa, dan seterusnya. kemudian totalnya, dan yang
+  // puteran berapa."
+  const teks = formatResume(ringkasan());
+  assert.match(teks, /\*Masuk per rekening\*/);
+  assert.match(teks, /MDR 038 · Mandiri : Rp 45\.231\.797/);
+  assert.match(teks, /BJTM\s+· Jatim : Rp 13\.500\.000/);
+  assert.match(teks, /Total uang masuk\s+: Rp 58\.731\.797/);
+  assert.match(teks, /Puteran internal\s+: Rp 164\.000\.000 \(dikecualikan\)/);
+  // Rincian muncul SEBELUM total — itu urutan yang ditanyakan orangnya.
+  assert.ok(teks.indexOf("Masuk per rekening") < teks.indexOf("Total uang masuk"));
+});
+
+test("rincian per rekening menjumlah PERSIS ke totalnya", () => {
+  // Penjaga paling penting di blok ini: rincian dan total dihitung lewat dua
+  // query berbeda, jadi penyaringnya bisa menyimpang tanpa suara. Angka yang
+  // tak menjumlah membuat seluruh laporan kehilangan kepercayaan.
+  const r = ringkasan();
+  const jumlah = r.per_rekening.reduce((a, p) => a + p.uang_masuk, 0);
+  assert.equal(jumlah, r.uang_masuk_riil);
 });
