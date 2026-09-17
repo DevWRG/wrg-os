@@ -337,6 +337,13 @@ export async function ingestKoran(
   if (String(fin.status) === "terverifikasi") {
     try {
       draft = await buatDraftJikaLengkap(tanggal, input.wa_group_jid ?? null);
+      // Belum lengkap → bukan berarti tak akan pernah jadi resume. Jadwalkan
+      // ulang pengecekan; kalau tak ada koran lain menyusul dalam periode
+      // hening, setoran dianggap selesai dan draftnya dibuat apa adanya.
+      if (!draft.dibuat && !draft.kode) {
+        const dijadwal = jadwalkanDraftHening(tanggal, input.wa_group_jid ?? null);
+        if (dijadwal) draft = { ...draft, alasan: `${draft.alasan}. Draft menyusul ${heningMenit()} menit setelah koran terakhir.` };
+      }
     } catch (e) {
       console.error(`[cashin] draft konfirmasi ${tanggal} gagal:`, e);
       draft = { dibuat: false, alasan: `draft gagal dibuat: ${(e as Error).message}` };
@@ -688,7 +695,18 @@ export function formatResume(r: RingkasanHarian): string {
   const dt = new Date(Date.UTC(y, m - 1, d));
   const tgl = `${HARI[dt.getUTCDay()]}, ${String(d).padStart(2, "0")} ${BULAN[m - 1]} ${y}`;
 
-  const baris: string[] = [`*UANG MASUK — ${tgl}*`, ""];
+  const baris: string[] = [`*UANG MASUK — ${tgl}*`];
+  // Peringatan kelengkapan ditaruh di ATAS angka, bukan cuma di footer.
+  //
+  // Sejak draft boleh terbentuk dari koran yang belum lengkap (setelah hening
+  // 15 menit), resume bisa sampai ke Direktur dengan hanya 2 dari 10 rekening
+  // terhitung. Angka yang tidak lengkap TIDAK boleh terlihat seperti angka
+  // final: baris "Koran diterima N/M" di footer terlalu mudah terlewat, apalagi
+  // di WhatsApp yang pesannya dibaca sambil lalu.
+  if (r.rekening_belum.length > 0) {
+    baris.push(`⚠️ *BELUM LENGKAP — baru ${r.rekening_masuk}/${r.rekening_wajib} rekening.* Angka di bawah belum final.`);
+  }
+  baris.push("");
   baris.push(`Uang masuk riil     : ${rp(r.uang_masuk_riil)}`);
   if (r.afiliasi_grup > 0) baris.push(`  + afiliasi grup   : ${rp(r.afiliasi_grup)}`);
   baris.push(`Puteran internal    : ${rp(r.puteran_internal)} (dikecualikan)`);
@@ -744,6 +762,58 @@ export interface DraftResult {
   alasan?: string;
   /** Draft sudah ada sebelumnya dan isinya diperbarui (koran di-ingest ulang). */
   diperbarui?: boolean;
+  /** Draft dibuat dari koran yang BELUM lengkap (hening / jaring pengaman). */
+  parsial?: boolean;
+}
+
+// ── pemicu "setoran hari itu sudah selesai" ──────────────────────────────────
+//
+// Sistem tidak punya cara tahu bahwa file ke-2 adalah yang terakhir. Menunggu
+// 10/10 saja tidak cukup: kenyataannya tidak semua rekening disetor tiap hari,
+// jadi draft bisa TIDAK PERNAH terbentuk dan resume hilang diam-diam — persis
+// yang terjadi 18 Sep 2026 (2 file masuk, draft nol).
+//
+// Jadi: setiap ingest menjadwal ulang pengecekan. Kalau tak ada koran baru
+// untuk tanggal itu selama CASHIN_HENING_MENIT (default 15), setoran dianggap
+// selesai dan draft dibuat dari apa yang ADA — dengan angka kelengkapan yang
+// ditulis terang-terangan di kepala resume, bukan disembunyikan.
+//
+// Timer in-process (bukan cron) supaya ikut hidup di tumpukan dev yang
+// scheduler-nya sengaja mati. Konsekuensinya timer hilang saat proses
+// restart — itu ditanggung job harian `cashin-resume` sebagai jaring pengaman.
+const heningMenit = (): number => Number(process.env.CASHIN_HENING_MENIT ?? 15);
+// Backfill besar (mis. re-ingest arsip berbulan-bulan) tidak boleh menghasilkan
+// satu draft per tanggal lama yang membanjiri grup Finance.
+const draftMaxUmurHari = (): number => Number(process.env.CASHIN_DRAFT_MAX_UMUR_HARI ?? 30);
+
+const timerHening = new Map<string, ReturnType<typeof setTimeout>>();
+
+function umurHari(tanggal: string): number {
+  const t = Date.parse(`${tanggal}T00:00:00+07:00`);
+  if (Number.isNaN(t)) return Number.POSITIVE_INFINITY;
+  return (Date.now() - t) / 86_400_000;
+}
+
+/** Jadwalkan pembuatan draft setelah periode hening. Dipanggil ulang tiap ingest
+ *  → timer sebelumnya dibatalkan (debounce, bukan throttle): yang dihitung
+ *  adalah jeda sejak file TERAKHIR, bukan sejak file pertama. */
+export function jadwalkanDraftHening(tanggal: string, grupJid?: string | null): boolean {
+  if (umurHari(tanggal) > draftMaxUmurHari()) return false;
+  const lama = timerHening.get(tanggal);
+  if (lama) clearTimeout(lama);
+  const t = setTimeout(
+    () => {
+      timerHening.delete(tanggal);
+      buatDraftJikaLengkap(tanggal, grupJid, { paksa: true })
+        .then((r) => console.log(`[cashin] draft hening ${tanggal}: ${JSON.stringify(r)}`))
+        .catch((e) => console.error(`[cashin] draft hening ${tanggal} gagal:`, e));
+    },
+    Math.max(heningMenit(), 1) * 60_000,
+  );
+  // unref: timer ini tak boleh menahan proses tetap hidup saat shutdown.
+  if (typeof t.unref === "function") t.unref();
+  timerHening.set(tanggal, t);
+  return true;
 }
 
 /** Balasan konfirmasi dari Finance: "ya R12", "tidak R12 angka BJTM salah".
@@ -847,6 +917,7 @@ export function formatIngatanBelumLengkap(r: RingkasanHarian): string {
 export async function buatDraftJikaLengkap(
   tanggal: string,
   grupJid?: string | null,
+  opts: { paksa?: boolean } = {},
 ): Promise<DraftResult> {
   const sql = db();
   const r = await ringkasanHarian(tanggal);
@@ -865,12 +936,19 @@ export async function buatDraftJikaLengkap(
     return { dibuat: false, kode: String(ada.kode), alasan: `resume ${tanggal} sudah berstatus ${String(ada.status)}` };
   }
 
-  if (r.rekening_belum.length > 0) {
+  // `paksa` = pemicu hening / jaring pengaman harian: setoran dianggap selesai
+  // walau belum 10/10. Angkanya tetap boleh disusun — yang haram itu
+  // MENYEMBUNYIKAN ketidaklengkapannya, dan itu dijaga formatResume yang
+  // menulis "BELUM LENGKAP — baru N/M rekening" di kepala resume.
+  const parsial = r.rekening_belum.length > 0;
+  if (parsial && !opts.paksa) {
     return {
       dibuat: false,
       alasan: `koran belum lengkap (${r.rekening_masuk}/${r.rekening_wajib}) — belum setor: ${r.rekening_belum.join(", ")}`,
     };
   }
+  // Nol koran bukan "setoran selesai", itu hari tanpa setoran sama sekali.
+  if (r.rekening_masuk === 0) return { dibuat: false, alasan: "belum ada koran masuk untuk tanggal ini" };
 
   const tujuan = (grupJid ?? "").trim() || String(ada?.grup_jid ?? "") || (await grupTerakhirKoran(tanggal)) || konfirmasiTujuanEnv();
 
@@ -902,7 +980,7 @@ export async function buatDraftJikaLengkap(
     return { dibuat: false, kode, alasan: kirim.error ?? "gateway tidak mengirim draft" };
   }
   await sql`UPDATE cashin_resume SET draft_terkirim_at = now(), updated_at = now() WHERE id = ${row.id}`;
-  return { dibuat: true, kode };
+  return { dibuat: true, kode, parsial };
 }
 
 /** Grup asal #KORAN hari itu — dipakai kalau pemanggil tak menyertakan grup
@@ -1137,7 +1215,10 @@ export async function runCashinResume(tanggal?: string): Promise<RunResumeResult
     return { ...dasar, alasan: "belum ada koran masuk hari ini" };
   }
 
-  const draft = await buatDraftJikaLengkap(tgl);
+  // paksa: kalau sampai jam ini draft belum pernah terbentuk, setoran hari itu
+  // dianggap selesai apa adanya. Timer hening hidup di dalam proses, jadi ia
+  // hilang kalau api di-restart di tengah hari — job inilah yang menutupnya.
+  const draft = await buatDraftJikaLengkap(tgl, null, { paksa: true });
   if (draft.dibuat) return { ...dasar, draft_dibuat: true, kode: draft.kode };
 
   const [row] = await sql`

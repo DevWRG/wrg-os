@@ -219,3 +219,23 @@ test("pengingat menyebut kode dan angka yang masih tertahan", () => {
   assert.match(lengkap, /3\/10 rekening/);
   assert.match(lengkap, /BNI, HANA/);
 });
+
+// ── pemicu hening + label kelengkapan ────────────────────────────────────────
+
+test("resume yang belum lengkap menyatakannya di ATAS angka, bukan cuma di footer", () => {
+  // Sejak draft boleh terbentuk dari koran yang belum lengkap (hening 15 menit),
+  // teks ini bisa sampai ke Direktur dengan 2 dari 10 rekening terhitung. Yang
+  // dijaga di sini: angka parsial tidak pernah terlihat seperti angka final.
+  const teks = formatResume(ringkasan());
+  const barisAwal = teks.split("\n").slice(0, 2).join("\n");
+  assert.match(barisAwal, /BELUM LENGKAP — baru 3\/10 rekening/);
+  // Footer lama tetap ada (rincian rekening mana yang belum).
+  assert.match(teks, /Koran diterima 3\/10 rekening/);
+  assert.match(teks, /Belum setor: BNI, HANA/);
+});
+
+test("resume lengkap TIDAK memasang peringatan itu", () => {
+  const teks = formatResume(ringkasan({ rekening_masuk: 10, rekening_belum: [] }));
+  assert.doesNotMatch(teks, /BELUM LENGKAP/);
+  assert.doesNotMatch(teks, /Belum setor/);
+});
