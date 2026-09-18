@@ -53,6 +53,21 @@ export async function listTeknisiCapacity(): Promise<Teknisi[]> {
   return rows.map(mapTeknisi);
 }
 
+// Auto-provision teknisi per pushname WA (idempoten, keyed nama karena UNIQUE) —
+// dipanggil HANYA dari inbound.ts saat grup bypass aktif (wa-test-bypass.ts).
+// Nama teknisi = pushname pengirim apa adanya, jadi tiap orang di grup uji dapat
+// baris sendiri (bukan berbagi satu identitas).
+export async function ensureBypassTeknisi(nama: string, waNumber?: string | null): Promise<Teknisi> {
+  const sql = db();
+  const [row] = await sql`
+    INSERT INTO teknisi_capacity (nama, wa_number, aktif)
+    VALUES (${nama}, ${waNumber ?? null}, true)
+    ON CONFLICT (nama) DO UPDATE SET aktif = true, wa_number = EXCLUDED.wa_number
+    RETURNING *
+  `;
+  return mapTeknisi(row);
+}
+
 // CRUD roster (ditambah belakangan — awalnya read-only/seed-only). Roster
 // asli (galih/martin/nopa/haidar/halim/enggar, tabel employee BSC) TETAP
 // tidak diisi otomatis di sini — Admin input manual lewat form ini, seed
