@@ -1266,7 +1266,6 @@ export async function buatDraftJikaLengkap(
   await upsertDigests([{ kind: "cashin", tanggal, waktu: null, content: teks }]);
 
   const [ada] = await sql`SELECT id, kode, status, grup_jid, draft_terkirim_at FROM cashin_resume WHERE tanggal = ${tanggal}`;
-  const ulang = Boolean(ada) && String(ada.status) !== "menunggu_konfirmasi";
 
   // Resume yang DITOLAK boleh disusun ulang — itu justru gunanya menolak:
   // Finance menahan angka yang salah, datanya dibetulkan, lalu draft baru
