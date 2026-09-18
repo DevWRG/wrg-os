@@ -1,8 +1,10 @@
 "use client";
 
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -43,6 +45,32 @@ export function CashinClient({
   kelengkapan: CashinKelengkapan;
 }) {
   const router = useRouter();
+  const [sedang, setSedang] = useState<string | null>(null);
+  const [galat, setGalat] = useState<string | null>(null);
+
+  // Satu penulis data yang sama dengan hashtag WA (#KORAN <label> nihil) —
+  // endpointnya yang memegang aturan, bukan komponen ini.
+  async function tandaiNihil(label: string) {
+    setSedang(label);
+    setGalat(null);
+    try {
+      const res = await fetch("/api/cashin/statement/nihil", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ label_file: label, tanggal }),
+      });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d?.error ?? `gagal (${res.status})`);
+      router.refresh();
+    } catch (e) {
+      // Pesan galat dirender DI SEBELAH tombolnya, bukan di ujung halaman —
+      // pelajaran #1189: error yang jauh dari tombolnya tak terbaca.
+      setGalat((e as Error).message);
+    } finally {
+      setSedang(null);
+    }
+  }
+
   const lengkap = ringkasan.rekening_masuk >= ringkasan.rekening_wajib;
 
   const kolomStatement: DataColumn<CashinStatement>[] = [
@@ -192,6 +220,34 @@ export function CashinClient({
                   <span className="text-destructive">Belum setor: {ringkasan.rekening_belum.join(", ")}</span>
                 )}
               </div>
+
+              {/* Rekening tanpa transaksi tak bisa diunduh dari internet banking
+                  sama sekali (dilaporkan Finance 18 Sep 2026), jadi ia perlu
+                  DINYATAKAN — bukan ditunggu. Tombolnya ditaruh persis di
+                  sebelah daftar "belum setor" supaya tindakannya ada di tempat
+                  masalahnya terlihat. */}
+              {ringkasan.rekening_belum.length > 0 && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-muted-foreground text-xs">Tak ada transaksi hari itu?</span>
+                  {ringkasan.rekening_belum.map((label) => (
+                    <Button
+                      key={label}
+                      size="sm"
+                      variant="outline"
+                      disabled={sedang === label}
+                      onClick={() => tandaiNihil(label)}
+                    >
+                      {sedang === label ? "Menyimpan…" : `Tandai ${label} nihil`}
+                    </Button>
+                  ))}
+                </div>
+              )}
+              {galat && <p className="text-destructive text-sm">{galat}</p>}
+              {(ringkasan.rekening_nihil ?? []).map((n) => (
+                <p key={n.label_file} className="text-muted-foreground text-sm">
+                  {n.label_file}: nihil, tanpa transaksi — dinyatakan {n.oleh}
+                </p>
+              ))}
               {ringkasan.statement_perlu_review.map((s, i) => (
                 <p key={i} className="text-destructive text-sm">
                   ⚠️ {s.label_file}: {s.alasan}
