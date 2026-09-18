@@ -1804,7 +1804,7 @@ export async function listLine(opts: ListLineOpts): Promise<Record<string, unkno
   const rows = await sql`
     SELECT l.id, to_char(s.tanggal, 'YYYY-MM-DD') AS tanggal, a.label_file, l.urut, l.waktu, l.deskripsi,
            l.debit::numeric AS debit, l.kredit::numeric AS kredit, l.saldo::numeric AS saldo,
-           l.referensi, l.kategori, l.kategori_oleh, l.pasangan_line_id, l.catatan
+           l.referensi, l.kategori, l.kategori_oleh, l.pasangan_line_id, l.catatan, l.kode_triage
     FROM bank_statement_line l
     JOIN bank_statement s ON s.id = l.statement_id
     JOIN bank_account a ON a.id = s.bank_account_id
