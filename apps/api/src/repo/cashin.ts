@@ -973,9 +973,17 @@ export function formatResume(r: RingkasanHarian): string {
   // belum masuk — padahal artinya berlawanan: yang satu sudah tuntas, yang lain
   // masih ditunggu.
   if (r.rekening_nihil.length) {
+    // SATU baris, bukan satu baris per rekening. Hari normal bisa punya 8
+    // rekening nihil (terbukti 18 Sep 2026) — delapan baris mendorong angka
+    // yang justru mau dibaca keluar dari layar pertama WhatsApp. Nama rekening
+    // dan pernyatanya tetap disebut lengkap; yang dibuang cuma pengulangannya.
+    const label = r.rekening_nihil.map((n) => n.label_file).join(", ");
+    const orang = [...new Set(r.rekening_nihil.map((n) => n.oleh))].join(", ");
     baris.push(
       "",
-      ...r.rekening_nihil.map((n) => `_${n.label_file}: nihil, tanpa transaksi (dinyatakan ${n.oleh})_`),
+      r.rekening_nihil.length === 1
+        ? `_${label}: nihil, tanpa transaksi (dinyatakan ${orang})_`
+        : `_${r.rekening_nihil.length} rekening nihil, tanpa transaksi: ${label} — dinyatakan ${orang}_`,
     );
   }
 
