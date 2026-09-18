@@ -146,6 +146,30 @@ export interface IngestKoranResult {
 /** Cocokkan file ke rekening. Nomor rekening dari ISI dokumen selalu menang;
  *  label dari nama file hanya cadangan (nama file di folder sumber terbukti
  *  bisa salah tanggal dan salah ekstensi). */
+/** Apakah nama file ini milik rekening berlabel `labelFile`?
+ *
+ *  Membandingkan hanya HURUF & ANGKA: seluruh pemisah (spasi, underscore,
+ *  strip, titik) dibuang di kedua sisi.
+ *
+ *  Kenapa bukan sekadar membuang spasi — terbukti di prod 18 Sep 2026: lampiran
+ *  WhatsApp disimpan openclaw sebagai
+ *  `INDEX_131_170926---94521364-6f3b-4dab-8125-92eb4660a394.pdf` (spasi jadi
+ *  underscore + suffix uuid). Pencocokan lama yang cuma membuang spasi
+ *  menghasilkan kunci `INDEX_131_170926...` yang TIDAK pernah berawalan
+ *  `INDEX131`, jadi rekening tak dikenali dan file Finance ditolak — padahal
+ *  namanya jelas terbaca manusia. Ini jaring pengaman KEDUA (dipakai saat nomor
+ *  rekening di dokumen tak terbaca), jadi kalau ia ikut gagal, satu kegagalan
+ *  berubah jadi dua.
+ *
+ *  'INDEX 881' vs 'INDEX 890' tetap terpisah setelah normalisasi, jadi tak ada
+ *  label yang jadi ambigu. */
+export function cocokLabelFile(labelFile: string, fileNama: string): boolean {
+  const bersih = (t: string): string => t.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const label = bersih(labelFile);
+  if (!label) return false;
+  return bersih(basename(fileNama)).startsWith(label);
+}
+
 async function resolveAccount(
   noRekening: string | null,
   fileNama: string | null,
@@ -181,14 +205,12 @@ async function resolveAccount(
     // yang peka spasi akan menolak file yang jelas-jelas bisa dikenali manusia,
     // lalu menyalahkan adminnya. 'INDEX 881' vs 'INDEX 890' tetap terpisah
     // setelah spasi dibuang, jadi tak ada label yang jadi ambigu.
-    const kunci = basename(fileNama).toUpperCase().replace(/\s+/g, "");
     const rows = await sql`
       SELECT id, label_file, jenis FROM bank_account
       ORDER BY length(replace(label_file, ' ', '')) DESC
     `;
     for (const r of rows) {
-      const label = String(r.label_file).toUpperCase().replace(/\s+/g, "");
-      if (label && kunci.startsWith(label)) {
+      if (cocokLabelFile(String(r.label_file), fileNama)) {
         return { id: String(r.id), label_file: String(r.label_file), jenis: String(r.jenis) };
       }
     }
