@@ -379,3 +379,44 @@ test("nomor pendek dan nominal TIDAK dianggap nomor rekening", () => {
   assert.equal(berbauInternal("RS WAJAK HUSADA", ["1420075012038"]), false);
   assert.equal(berbauInternal("KU- RSUD SUKOWATI 0321", ["0321018688"]), false);
 });
+
+test("rekening nihil diringkas jadi satu baris, tanpa menghilangkan nama", () => {
+  // 18 Sep 2026 punya 8 rekening nihil; delapan baris mendorong angka yang
+  // justru mau dibaca keluar dari layar pertama WhatsApp.
+  const banyak = formatResume(
+    ringkasan({
+      rekening_nihil: [
+        { label_file: "BNI", oleh: "renika" },
+        { label_file: "HANA", oleh: "renika" },
+        { label_file: "NIAGA", oleh: "renika" },
+      ],
+    }),
+  );
+  const barisNihil = banyak.split("\n").filter((b) => b.includes("nihil"));
+  assert.equal(barisNihil.length, 1, "harus satu baris saja");
+  assert.match(barisNihil[0], /3 rekening nihil/);
+  assert.match(barisNihil[0], /BNI, HANA, NIAGA/);
+  assert.match(barisNihil[0], /dinyatakan renika/);
+});
+
+test("satu rekening nihil tetap berbunyi wajar (bukan '1 rekening nihil')", () => {
+  const satu = formatResume(ringkasan({ rekening_nihil: [{ label_file: "BNI", oleh: "Ika" }] }));
+  assert.match(satu, /_BNI: nihil, tanpa transaksi \(dinyatakan Ika\)_/);
+});
+
+test("pernyata berbeda disebut semua, tanpa diulang per rekening", () => {
+  // Kalau dua orang menyatakan di hari yang sama, jejaknya tak boleh hilang
+  // hanya karena barisnya diringkas.
+  const teks = formatResume(
+    ringkasan({
+      rekening_nihil: [
+        { label_file: "BNI", oleh: "renika" },
+        { label_file: "HANA", oleh: "Ika" },
+        { label_file: "NIAGA", oleh: "renika" },
+      ],
+    }),
+  );
+  const b = teks.split("\n").filter((x) => x.includes("nihil"));
+  assert.equal(b.length, 1);
+  assert.match(b[0], /dinyatakan renika, Ika/);
+});
