@@ -1,5 +1,6 @@
 import { db } from "../db.js";
 import { isGolongan, type Golongan } from "../lib/npk-golongan.js";
+import { isWaTestBypassGroup } from "./wa-test-bypass.js";
 
 // D1 — master data CRM (port legacy master_user + master_territory). Roster AM
 // di-key am_id (dipakai lintas deal/reminder/todo); territory map AM→HOD→cabang.
@@ -331,7 +332,26 @@ export async function resolveSender(opts: {
     if (!bolehLewat(bb, "body-fuzzy")) return null;
     return { am_id: bb.am_id, nama: bb.nama, aktif: bb.aktif, role: bb.role, via: "body-fuzzy", score: bb.score };
   }
+  // Tier E — bypass grup uji (WA_TEST_BYPASS_GROUP). Lihat wa-test-bypass.ts:
+  // hanya aktif kalau env di-set eksplisit untuk grup ini.
+  if (isIndividual && norm && isWaTestBypassGroup(opts.groupJid)) {
+    return await ensureBypassAm(norm, opts.pushname);
+  }
   return null;
+}
+
+// Auto-provision AM per nomor WA (idempoten) khusus grup bypass — supaya balasan
+// tetap menyapa nama asli pengirim tanpa perlu didaftarkan manual satu-satu.
+async function ensureBypassAm(waNumber: string, pushname?: string | null): Promise<ResolvedAm> {
+  const sql = db();
+  const nama = (pushname ?? "").trim() || `WA ${waNumber}`;
+  const amId = `WA-TEST-${waNumber}`;
+  await sql`
+    INSERT INTO master_user (am_id, nama, wa_number, role, aktif, wajib_plan_report)
+    VALUES (${amId}, ${nama}, ${waNumber}, 'AM', true, false)
+    ON CONFLICT (am_id) DO UPDATE SET nama = EXCLUDED.nama, aktif = true
+  `;
+  return { am_id: amId, nama, aktif: true, role: "AM", via: "test-bypass" };
 }
 
 export interface TerritoryInput {

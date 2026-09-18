@@ -4,7 +4,7 @@ import { parseAmPlan, parseAmReport, bersihkanNamaCustomer } from "../parsers/am
 import { sendViaWaGateway, type WaSendResult } from "../wasend.js";
 import { handleSalesAnalyticsQuery } from "./inbound-sales-analytics.js";
 import { detectCek, handleCekQuery } from "./inbound-cek.js";
-import { resolveSender } from "./master.js";
+import { resolveSender, normalizeWa } from "./master.js";
 import { upsertDailyTodo, computeIsLate } from "./todo.js";
 import { createReminder } from "./reminder.js";
 import { buildCekReply } from "./cek.js";
@@ -17,7 +17,8 @@ import {
   markBast,
   markBukti,
 } from "./shipment-tracking.js";
-import { matchTeknisiByName, createTeknisiReport } from "./readinessboard.js";
+import { matchTeknisiByName, createTeknisiReport, ensureBypassTeknisi } from "./readinessboard.js";
+import { isWaTestBypassGroup } from "./wa-test-bypass.js";
 import { createTicket as createGaTicket, listCategories as listGaTicketCategories } from "./ga-helpdesk.js";
 import { listStockBranch } from "./stock-branch.js";
 import { parseSphMessage } from "../parsers/sph.js";
@@ -1120,7 +1121,11 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
   // groupAllowed()/WA_INBOUND_GROUPS existing. Identitas via matchTeknisiByName
   // (teknisi_capacity F8, self-contained), BUKAN resolveSender/master_user.
   if (kind === "install" || kind === "servis" || kind === "training" || kind === "kalibrasi") {
-    const teknisi = await matchTeknisiByName(row.sender_name);
+    const teknisi =
+      (await matchTeknisiByName(row.sender_name)) ??
+      (isWaTestBypassGroup(row.group_jid) && row.sender_name?.trim()
+        ? await ensureBypassTeknisi(row.sender_name.trim(), normalizeWa(String(row.sender_jid ?? "").split("@")[0].split(":")[0]))
+        : null);
     if (!teknisi) return finish({ skipped: "unknown-sender", sender_name: row.sender_name });
     // Isi laporan = body SETELAH hashtag-nya dibuang. Cek `!row.body?.trim()`
     // saja tak pernah kena: body "#install" itu non-kosong, jadi laporan tanpa

@@ -445,6 +445,11 @@ export interface ResolvedApprover {
   role: string;
 }
 
+// #APPROVE/#REJECT SENGAJA TIDAK ikut bypass grup uji (wa-test-bypass.ts) —
+// beda dari resolveSender/matchTeknisiByName yang cuma membuka balasan
+// baca/lapor, approver di sini beneran bisa memutuskan approval request
+// sungguhan. Untuk tes command ini, pakai approver yang memang sudah
+// terdaftar (lihat TESTCASE-WA-HASHTAG-RESEARCH.md bagian F).
 export async function resolveApprover(senderJid: string | null | undefined): Promise<ResolvedApprover | null> {
   if (!senderJid) return null;
   const num = String(senderJid).split("@")[0].split(":")[0];
