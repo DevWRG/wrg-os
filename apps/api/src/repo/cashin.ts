@@ -740,11 +740,23 @@ export interface RingkasanHarian {
     nama_bank: string;
     uang_masuk: number;
     puteran_keluar: number;
+    /** Seluruh kredit di koran rekening itu — angka yang DILIHAT Finance di
+     *  balasan ingest ("masuk Rp …"). Jembatan ke uang_masuk ada di bawah. */
+    kredit_koran: number;
+    /** Kredit yang ternyata dana puteran (masuk dari rekening sendiri). */
+    puteran_masuk: number;
+    /** Kredit yang menunggu keputusan manusia. */
+    tertahan: number;
+    /** Bunga, deposito, refund — kredit yang bukan penerimaan usaha. */
+    lain: number;
   }>;
   /** Rekening yang DINYATAKAN tidak ada transaksi (migrasi 179) + siapa yang
    *  menyatakannya. Dipisah dari per_rekening supaya tak pernah dirender
    *  sebagai 'Rp 0' — nol tak bisa dibedakan dari "datanya belum ada". */
   rekening_nihil: Array<{ label_file: string; oleh: string }>;
+  /** Baris yang menunggu keputusan, lengkap dengan nomor rujukannya (T1, T2…)
+   *  supaya bisa diputuskan dari WhatsApp tanpa menyalin uuid. */
+  tertahan_detail: Array<{ kode: string; label_file: string; nominal: number; deskripsi: string }>;
 }
 
 const NOL: Record<string, number> = {
@@ -833,7 +845,11 @@ export async function ringkasanHarian(tanggal: string): Promise<RingkasanHarian>
   const perRek = await sql`
     SELECT a.label_file, a.nama_bank,
            COALESCE(SUM(l.kredit) FILTER (WHERE l.kategori IN ('uang_masuk_riil', 'afiliasi_grup')), 0)::numeric AS uang_masuk,
-           COALESCE(SUM(l.debit)  FILTER (WHERE l.kategori = 'puteran_internal'), 0)::numeric AS puteran_keluar
+           COALESCE(SUM(l.debit)  FILTER (WHERE l.kategori = 'puteran_internal'), 0)::numeric AS puteran_keluar,
+           COALESCE(SUM(l.kredit), 0)::numeric AS kredit_koran,
+           COALESCE(SUM(l.kredit) FILTER (WHERE l.kategori = 'puteran_internal'), 0)::numeric AS puteran_masuk,
+           COALESCE(SUM(l.kredit) FILTER (WHERE l.kategori = 'belum_ditriage'), 0)::numeric AS tertahan,
+           COALESCE(SUM(l.kredit) FILTER (WHERE l.kategori IN ('bunga', 'deposito', 'refund')), 0)::numeric AS lain
     FROM bank_statement s
     JOIN bank_account a ON a.id = s.bank_account_id
     LEFT JOIN bank_statement_line l ON l.statement_id = s.id
@@ -848,6 +864,15 @@ export async function ringkasanHarian(tanggal: string): Promise<RingkasanHarian>
     FROM bank_statement s JOIN bank_account a ON a.id = s.bank_account_id
     WHERE s.tanggal = ${tanggal} AND s.nihil
     ORDER BY a.label_file
+  `;
+
+  const tertahan = await sql`
+    SELECT l.kode_triage, a.label_file, l.kredit::numeric AS nominal, l.deskripsi
+    FROM bank_statement_line l
+    JOIN bank_statement s ON s.id = l.statement_id
+    JOIN bank_account a ON a.id = s.bank_account_id
+    WHERE s.tanggal = ${tanggal} AND l.kategori = 'belum_ditriage' AND l.kredit > 0
+    ORDER BY l.kredit DESC
   `;
 
   const puteran = await sql`
@@ -897,6 +922,16 @@ export async function ringkasanHarian(tanggal: string): Promise<RingkasanHarian>
       nama_bank: String(r.nama_bank),
       uang_masuk: Number(r.uang_masuk),
       puteran_keluar: Number(r.puteran_keluar),
+      kredit_koran: Number(r.kredit_koran),
+      puteran_masuk: Number(r.puteran_masuk),
+      tertahan: Number(r.tertahan),
+      lain: Number(r.lain),
+    })),
+    tertahan_detail: tertahan.map((r) => ({
+      kode: String(r.kode_triage ?? "-"),
+      label_file: String(r.label_file),
+      nominal: Number(r.nominal),
+      deskripsi: String(r.deskripsi ?? ""),
     })),
   };
 }
@@ -1134,6 +1169,39 @@ export function miripKeputusanResume(body: string | null): boolean {
 
 export function formatDraftKonfirmasi(teks: string, kode: string, r?: RingkasanHarian): string {
   const baris = [`*DRAFT — belum dikirim ke Direktur*`, "", teks];
+
+  // REKONSILIASI — hanya di draft, bukan di resume yang diteruskan ke Direktur.
+  //
+  // Finance melihat "masuk Rp 338.252.787" di balasan #KORAN, lalu angka lain di
+  // draft, dan 18 Sep 2026 harus mengurangi sendiri untuk menemukan selisih
+  // 50 juta. Blok ini menunjukkan jembatannya, jadi selisih menunjuk barisnya
+  // sendiri alih-alih memaksa orang menghitung ulang. Hanya rekening yang
+  // angkanya BERKURANG yang ditulis — kalau tak ada potongan, tak ada yang
+  // perlu dijelaskan.
+  if (r) {
+    const perlu = r.per_rekening.filter((p) => p.kredit_koran !== p.uang_masuk);
+    if (perlu.length) {
+      baris.push("", "*Rekonsiliasi* (kredit koran → uang masuk)");
+      for (const p of perlu) {
+        const potongan: string[] = [];
+        if (p.puteran_masuk > 0) potongan.push(`puteran −${rp(p.puteran_masuk)}`);
+        if (p.tertahan > 0) potongan.push(`tertahan −${rp(p.tertahan)}`);
+        if (p.lain > 0) potongan.push(`bunga/deposito −${rp(p.lain)}`);
+        baris.push(`${p.label_file}: ${rp(p.kredit_koran)} · ${potongan.join(" · ")} = ${rp(p.uang_masuk)}`);
+      }
+    }
+  }
+
+  // Baris yang menunggu keputusan, DENGAN nomor rujukannya — supaya Finance
+  // bisa memutuskannya dari HP tanpa membuka menu.
+  if (r && r.tertahan_detail.length) {
+    baris.push("", "*Menunggu keputusan*");
+    for (const t of r.tertahan_detail) {
+      const desk = t.deskripsi.trim() || "(deskripsi kosong)";
+      baris.push(`${t.kode} · ${t.label_file} ${rp(t.nominal)} — ${desk.length > 38 ? desk.slice(0, 37) + "…" : desk}`);
+    }
+    baris.push(`Putuskan: *#KORAN triage ${r.tertahan_detail[0].kode} uang masuk* (atau: puteran · bunga · pengeluaran · afiliasi)`);
+  }
   // Kelengkapan setoran ditulis di DRAFT saja, bukan di resume yang diteruskan
   // ke Direktur: ini informasi untuk BERTINDAK (file mana yang masih kurang),
   // dan yang bertindak Finance. Tanpa daftarnya, Finance tahu angkanya belum
@@ -1183,9 +1251,13 @@ export function formatIngatanBelumLengkap(r: RingkasanHarian): string {
 export async function buatDraftJikaLengkap(
   tanggal: string,
   grupJid?: string | null,
-  opts: { paksa?: boolean } = {},
+  opts: { paksa?: boolean; koreksi?: boolean } = {},
 ): Promise<DraftResult> {
   const sql = db();
+  // Nomor rujukan diberikan DULU: teks draft menyebut T1/T2, dan Finance
+  // membalas dengan nomor itu. Kalau penomoran menyusul, nomor di pesan dan
+  // nomor di DB bisa berbeda.
+  await beriKodeTriage(tanggal);
   const r = await ringkasanHarian(tanggal);
   const teks = formatResume(r);
 
@@ -1195,11 +1267,35 @@ export async function buatDraftJikaLengkap(
 
   const [ada] = await sql`SELECT id, kode, status, grup_jid, draft_terkirim_at FROM cashin_resume WHERE tanggal = ${tanggal}`;
 
-  // Resume yang sudah diputuskan TIDAK ditimpa. Kalau koran hari itu ternyata
-  // diperbaiki sesudah Direktur menerima angkanya, itu perlu koreksi yang
-  // disengaja manusia — bukan draft baru yang diam-diam menggantikan riwayat.
-  if (ada && String(ada.status) !== "menunggu_konfirmasi") {
-    return { dibuat: false, kode: String(ada.kode), alasan: `resume ${tanggal} sudah berstatus ${String(ada.status)}` };
+  // Resume yang DITOLAK boleh disusun ulang — itu justru gunanya menolak:
+  // Finance menahan angka yang salah, datanya dibetulkan, lalu draft baru
+  // dibuat. Sebelum migrasi 180 status 'ditolak' bersifat final dan tanggal itu
+  // TAK PERNAH bisa sampai ke Direktur lagi, bahkan sesudah dibetulkan.
+  //
+  // Yang sudah TERKIRIM tetap tidak ditimpa diam-diam: mengoreksi angka yang
+  // sudah dibaca Direktur harus disengaja (opts.koreksi), bukan efek samping
+  // dari ingest ulang.
+  const statusLama = ada ? String(ada.status) : null;
+  const bolehUlang = statusLama === "ditolak" || (statusLama === "terkirim" && opts.koreksi === true);
+  if (ada && statusLama !== "menunggu_konfirmasi" && !bolehUlang) {
+    return { dibuat: false, kode: String(ada.kode), alasan: `resume ${tanggal} sudah berstatus ${statusLama}` };
+  }
+  if (ada && bolehUlang) {
+    // Jejak keputusan lama dipindah ke riwayat SEBELUM barisnya ditulis ulang.
+    // Alasan penolakan sering satu-satunya catatan kenapa angkanya berubah.
+    await sql`
+      UPDATE cashin_resume SET
+        riwayat = riwayat || jsonb_build_object(
+          'kode', kode, 'status', status, 'oleh', diputuskan_oleh,
+          'alasan', COALESCE(alasan_tolak, kirim_error), 'at', COALESCE(diputuskan_at, updated_at)
+        ),
+        kode = 'R' || nextval('cashin_resume_kode_seq'),
+        status = 'menunggu_konfirmasi',
+        diputuskan_oleh = NULL, diputuskan_at = NULL, alasan_tolak = NULL,
+        terkirim_at = NULL, kirim_error = NULL,
+        draft_terkirim_at = NULL, ingat_terakhir_at = NULL, updated_at = now()
+      WHERE id = ${String(ada.id)}
+    `;
   }
 
   // `paksa` = pemicu hening / jaring pengaman harian: setoran dianggap selesai
@@ -1247,6 +1343,36 @@ export async function buatDraftJikaLengkap(
   }
   await sql`UPDATE cashin_resume SET draft_terkirim_at = now(), updated_at = now() WHERE id = ${row.id}`;
   return { dibuat: true, kode, parsial };
+}
+
+/** Beri nomor rujukan pendek (T1, T2, …) ke baris yang menunggu keputusan.
+ *
+ *  Idempoten: baris yang sudah bernomor mempertahankan nomornya, supaya nomor
+ *  yang sudah terlanjur dibaca Finance di draft sebelumnya tidak berpindah ke
+ *  baris lain. Nomor yang barisnya sudah diputuskan TIDAK dipakai ulang di
+ *  tanggal yang sama — kalau dipakai ulang, balasan "triage T1" yang datang
+ *  terlambat akan mengenai baris yang salah. */
+async function beriKodeTriage(tanggal: string): Promise<void> {
+  const sql = db();
+  const rows = await sql`
+    SELECT l.id, l.kode_triage
+    FROM bank_statement_line l
+    JOIN bank_statement s ON s.id = l.statement_id
+    WHERE s.tanggal = ${tanggal} AND l.kategori = 'belum_ditriage' AND l.kredit > 0
+    ORDER BY l.kredit DESC, l.id
+  `;
+  const [{ maks }] = await sql`
+    SELECT COALESCE(MAX(NULLIF(regexp_replace(l.kode_triage, '[^0-9]', '', 'g'), '')::int), 0) AS maks
+    FROM bank_statement_line l
+    JOIN bank_statement s ON s.id = l.statement_id
+    WHERE s.tanggal = ${tanggal} AND l.kode_triage IS NOT NULL
+  `;
+  let n = Number(maks);
+  for (const r of rows) {
+    if (r.kode_triage) continue;
+    n += 1;
+    await sql`UPDATE bank_statement_line SET kode_triage = ${`T${n}`} WHERE id = ${String(r.id)}`;
+  }
 }
 
 /** Grup asal #KORAN hari itu — dipakai kalau pemanggil tak menyertakan grup
@@ -1432,6 +1558,95 @@ async function tandaiSeen(messageId: string, status: string): Promise<void> {
     INSERT INTO cashin_konfirmasi_seen (message_id, status) VALUES (${messageId}, ${status})
     ON CONFLICT (message_id) DO NOTHING
   `;
+}
+
+// ── triage dari WhatsApp ─────────────────────────────────────────────────────
+//
+// Baris yang deskripsinya buntu menunggu keputusan manusia, dan sampai 18 Sep
+// 2026 keputusan itu HANYA bisa diambil lewat menu web — yang aksesnya belum
+// dibuka untuk Finance. Jadi baris tertahan mengendap tanpa ada yang bisa
+// menyentuhnya, sambil terus mengurangi angka uang masuk.
+
+/** Kata yang dipakai orang → kategori di DB. Sengaja menerima beberapa bunyi
+ *  untuk tiap kategori: yang mengetik manusia di HP, bukan API. */
+const KATA_KATEGORI: Array<[RegExp, Kategori]> = [
+  [/^(uang\s*masuk|masuk|penerimaan|riil)$/i, "uang_masuk_riil"],
+  [/^(puteran|internal|pindah\s*buku|mutasi\s*internal)$/i, "puteran_internal"],
+  [/^(afiliasi|grup|afiliasi\s*grup)$/i, "afiliasi_grup"],
+  [/^(bunga|jasa\s*giro)$/i, "bunga"],
+  [/^(deposito|fd)$/i, "deposito"],
+  [/^(refund|pengembalian)$/i, "refund"],
+  [/^(pajak|biaya|adm|admin)$/i, "biaya_pajak"],
+  [/^(pengeluaran|keluar)$/i, "pengeluaran"],
+];
+
+export interface PerintahTriage {
+  kode: string;
+  kategori: Kategori;
+}
+
+/** Baca "#KORAN triage T1 uang masuk". Mengembalikan null kalau bukan perintah
+ *  triage; kategori tak dikenal dibedakan dari bukan-perintah lewat field
+ *  `kategori: null` supaya pemanggil bisa membalas panduan, bukan diam. */
+export function parseTriage(body: string | null): PerintahTriage | { kode: string; kategori: null } | null {
+  if (!body) return null;
+  for (const b of body.split(/\r?\n/)) {
+    const m = b.match(/#\s*koran\b[\s:]*triage\s+(T\d+)\s+(.+)$/i);
+    if (!m) continue;
+    const kode = m[1].toUpperCase();
+    const kata = m[2].trim().replace(/\s+/g, " ");
+    const cocok = KATA_KATEGORI.find(([re]) => re.test(kata));
+    return cocok ? { kode, kategori: cocok[1] } : { kode, kategori: null };
+  }
+  return null;
+}
+
+/** Daftar kata yang diterima — dipakai di pesan bantuan supaya orang tak
+ *  menebak-nebak. */
+export function kataKategoriTersedia(): string {
+  return "uang masuk · puteran · afiliasi · bunga · deposito · refund · pajak · pengeluaran";
+}
+
+export interface TriageWaResult {
+  ok: boolean;
+  error?: string;
+  label_file?: string;
+  nominal?: number;
+  kategori?: string;
+}
+
+/** Terapkan keputusan triage atas satu baris, dirujuk lewat kode pendeknya.
+ *
+ *  Kode dilepas (kode_triage = NULL) sesudah diputuskan supaya tak menempel di
+ *  baris yang sudah selesai — tapi nomornya TIDAK dipakai ulang di tanggal yang
+ *  sama (lihat beriKodeTriage), supaya balasan yang datang terlambat tak
+ *  mengenai baris lain. */
+export async function triageDariWa(kode: string, kategori: Kategori, oleh: string): Promise<TriageWaResult> {
+  const sql = db();
+  const [row] = await sql`
+    SELECT l.id, l.kredit::numeric AS nominal, a.label_file, to_char(s.tanggal, 'YYYY-MM-DD') AS tanggal
+    FROM bank_statement_line l
+    JOIN bank_statement s ON s.id = l.statement_id
+    JOIN bank_account a ON a.id = s.bank_account_id
+    WHERE upper(l.kode_triage) = upper(${kode}) AND l.kategori = 'belum_ditriage'
+    ORDER BY s.tanggal DESC LIMIT 1
+  `;
+  if (!row) return { ok: false, error: `kode ${kode} tidak ditemukan (mungkin sudah diputuskan)` };
+
+  await sql`
+    UPDATE bank_statement_line
+    SET kategori = ${kategori}, kategori_oleh = 'manual', kode_triage = NULL,
+        catatan = ${`ditriage ${oleh} lewat WA`}
+    WHERE id = ${String(row.id)}
+  `;
+  // Resume tanggal itu ikut berubah → teks draftnya disegarkan kalau masih
+  // menunggu konfirmasi. Tanpa ini Finance menyetujui angka lama.
+  try {
+    await buatDraftJikaLengkap(String(row.tanggal), null, { paksa: true });
+  } catch (e) {
+    console.error(`[cashin] segarkan draft sesudah triage ${kode} gagal:`, e);
+  }
+  return { ok: true, label_file: String(row.label_file), nominal: Number(row.nominal), kategori };
 }
 
 // ── job harian ───────────────────────────────────────────────────────────────
