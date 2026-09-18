@@ -6,6 +6,7 @@ import { Area, CartesianGrid, ComposedChart, Scatter, XAxis, YAxis } from "recha
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart";
+import { SkeletonCards, SkeletonChart } from "@/components/ui/loading";
 import { PeriodPicker, defaultPeriod } from "@/components/raport/period-picker";
 
 // ── Tipe (selaras apps/api getRaportDetail) ──
@@ -91,7 +92,10 @@ export function RaportView({ endpoint }: { endpoint: string }) {
       ) : data?.linked === false ? (
         <Card><CardContent className="text-muted-foreground py-8 text-center text-sm">{data.message ?? "Akun belum tertaut ke data karyawan."}</CardContent></Card>
       ) : state === "loading" && !data ? (
-        <p className="text-muted-foreground text-sm">Memuat…</p>
+        <div className="space-y-4">
+          <SkeletonCards count={4} />
+          <SkeletonChart />
+        </div>
       ) : data && data.found !== false && data.employee ? (
         <Body data={data} />
       ) : (

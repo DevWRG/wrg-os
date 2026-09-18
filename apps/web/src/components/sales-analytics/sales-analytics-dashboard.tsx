@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
+import { LoadingInline } from "@/components/ui/loading";
 import { SalesPerformanceCards, type SalesPerformance } from "@/components/sales/sales-performance-cards";
 import { TargetPacingView, type PacingData } from "@/components/sales/target-pacing-view";
 import { PipelineReportView, type PipelineReportData } from "@/components/sales-analytics/pipeline-report-view";
@@ -342,7 +343,7 @@ export function SalesAnalyticsDashboard({ initial, initialView }: { initial: Ove
       </div>
 
       {err && <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">{err}</div>}
-      {loading && <div className="text-muted-foreground text-sm">Memuat…</div>}
+      {loading && <LoadingInline />}
 
       {tab === "overview" && cur != null && <OverviewView data={cur as OverviewResult} onNav={setTab} />}
       {tab === "per-am" && cur != null && <PerAmView data={cur as { rows: AmRow[]; scope: string }} onDrill={openDrill} />}

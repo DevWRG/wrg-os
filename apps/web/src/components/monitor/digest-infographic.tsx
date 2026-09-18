@@ -6,6 +6,7 @@ import { MessageSquare, Users, Users2, Image as ImageIcon } from "lucide-react";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart";
+import { LoadingBlock } from "@/components/ui/loading";
 
 interface DigestStats {
   date: string;
@@ -62,7 +63,7 @@ export function DigestInfographic({ date }: { date: string }) {
   if (!stats || stats.total_messages === 0) {
     return loading ? (
       <Card>
-        <CardContent className="text-muted-foreground py-6 text-center text-sm">Memuat infografis…</CardContent>
+        <CardContent><LoadingBlock label="Memuat infografis…" className="py-6" /></CardContent>
       </Card>
     ) : null;
   }

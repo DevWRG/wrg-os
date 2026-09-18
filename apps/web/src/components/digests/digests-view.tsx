@@ -11,6 +11,7 @@ import {
   ChartContainer, ChartLegend, ChartLegendContent, ChartTooltip, ChartTooltipContent,
   type ChartConfig,
 } from "@/components/ui/chart";
+import { SkeletonCards, SkeletonChart } from "@/components/ui/loading";
 
 // ── Tipe (selaras /digests & /digests/stats) ──
 interface Rekap {
@@ -200,7 +201,10 @@ function Infografis() {
       {state === "error" ? (
         <p className="text-muted-foreground">Gagal memuat infografis.</p>
       ) : state === "loading" && !data ? (
-        <p className="text-muted-foreground text-sm">Memuat…</p>
+        <div className="space-y-4">
+          <SkeletonCards count={4} />
+          <SkeletonChart />
+        </div>
       ) : data ? (
         <InfografisBody data={data} />
       ) : null}

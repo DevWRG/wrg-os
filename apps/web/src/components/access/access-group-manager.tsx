@@ -11,6 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
+import { LoadingCard } from "@/components/ui/loading";
 
 // ── Tipe (mirror apps/api/src/repo/rbac.ts) ──
 interface GroupRow { id: number; key: string; name: string; description: string | null; is_system: boolean; superuser: boolean; member_count: number }
@@ -92,7 +93,7 @@ function GroupList({ onOpen }: { onOpen: (id: number) => void }) {
   }
 
   if (error) return <Card><CardContent className="text-destructive py-8 text-center text-sm">{error}</CardContent></Card>;
-  if (!groups) return <Card><CardContent className="text-muted-foreground py-10 text-center text-sm">Memuat…</CardContent></Card>;
+  if (!groups) return <LoadingCard />;
 
   return (
     <div className="space-y-4">
@@ -181,7 +182,7 @@ function GroupEditor({ id, onBack }: { id: number; onBack: () => void }) {
   useEffect(() => { load(); }, [load]);
 
   if (error) return <div className="space-y-3"><BackBtn onBack={onBack} /><Card><CardContent className="text-destructive py-8 text-center text-sm">{error}</CardContent></Card></div>;
-  if (!detail) return <div className="space-y-3"><BackBtn onBack={onBack} /><Card><CardContent className="text-muted-foreground py-10 text-center text-sm">Memuat…</CardContent></Card></div>;
+  if (!detail) return <div className="space-y-3"><BackBtn onBack={onBack} /><LoadingCard /></div>;
 
   async function saveUmum() {
     setBusy(true); setMsg(null);
