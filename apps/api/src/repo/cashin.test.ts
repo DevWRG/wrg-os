@@ -3,6 +3,8 @@ import { test } from "node:test";
 
 import {
   berbauInternal,
+  cocokLabelFile,
+  parseNihil,
   formatDraftKonfirmasi,
   formatIngatanBelumLengkap,
   formatIngatanKonfirmasi,
@@ -121,6 +123,7 @@ function ringkasan(over: Partial<RingkasanHarian> = {}): RingkasanHarian {
       { label_file: "MDR 038", nama_bank: "Bank Mandiri", uang_masuk: 45_231_797, puteran_keluar: 14_000_000 },
       { label_file: "BJTM", nama_bank: "Bank Jatim", uang_masuk: 13_500_000, puteran_keluar: 150_000_000 },
     ],
+    rekening_nihil: [],
     puteran_detail: [{ dari: "BJTM", ke: "MDR 038", nominal: 100_000_000 }],
     ...over,
   };
@@ -295,4 +298,60 @@ test("peringatan integritas statement TETAP ikut ke Direktur", () => {
     }),
   );
   assert.match(teks, /MDR 038: saldo akhir tidak bersambung/);
+});
+
+// ── pencocokan nama file ke rekening ─────────────────────────────────────────
+
+test("nama lampiran WhatsApp dikenali walau spasi jadi underscore + suffix uuid", () => {
+  // Bentuk NYATA yang ditolak prod 18 Sep 2026: openclaw menyimpan lampiran WA
+  // dengan underscore dan menempelkan uuid. Pencocokan lama (buang spasi saja)
+  // gagal, lalu file Finance ditolak dengan "rekening tidak dikenali".
+  assert.equal(cocokLabelFile("INDEX 131", "INDEX_131_170926---94521364-6f3b-4dab-8125-92eb4660a394.pdf"), true);
+  assert.equal(cocokLabelFile("INDEX 336", "INDEX_336_170926---d0c1742e-3fa0-44ba-9325-2e6bf6c689ba.pdf"), true);
+});
+
+test("bentuk nama file lain yang dipakai admin tetap dikenali", () => {
+  // Folder sumber punya spasi ganda dan ekstensi rusak — dua-duanya nyata.
+  assert.equal(cocokLabelFile("INDEX 131", "INDEX 131  020926.pdf"), true);
+  assert.equal(cocokLabelFile("BJTM", "BJTM 030926 pdf"), true);
+  assert.equal(cocokLabelFile("MDR 038", "MDR 038 040926.pdf"), true);
+  assert.equal(cocokLabelFile("MDR 038", "mdr-038-040926.PDF"), true);
+});
+
+test("rekening berlabel mirip TIDAK saling tertukar", () => {
+  // Penjaga terpenting: normalisasi tak boleh sampai menyamakan 881 dengan 890.
+  assert.equal(cocokLabelFile("INDEX 881", "INDEX_890_170926.pdf"), false);
+  assert.equal(cocokLabelFile("INDEX 890", "INDEX_881_170926.pdf"), false);
+  assert.equal(cocokLabelFile("MDR 734", "MDR_038_040926.pdf"), false);
+  // Label harus di AWAL nama file, bukan di tengah.
+  assert.equal(cocokLabelFile("BJTM", "koran_BJTM_030926.pdf"), false);
+});
+
+// ── pernyataan nihil ─────────────────────────────────────────────────────────
+
+test("pernyataan nihil dikenali dalam bentuk yang diketik Finance", () => {
+  // Bentuk yang ditanyakan Finance 18 Sep 2026: rekening tanpa transaksi tak
+  // bisa diunduh dari internet banking, jadi ia dinyatakan lewat teks.
+  assert.deepEqual(parseNihil("#KORAN BNI nihil 17/9/2026"), { label: "BNI", tanggal: "2026-09-17" });
+  assert.deepEqual(parseNihil("#koran nihil BNI 17-09-2026"), { label: "BNI", tanggal: "2026-09-17" });
+  assert.deepEqual(parseNihil("#KORAN INDEX 336 NIHIL 17/9/26"), { label: "INDEX 336", tanggal: "2026-09-17" });
+  // Tanpa tanggal → null, artinya "pakai hari ini" (diputuskan pemanggil).
+  assert.deepEqual(parseNihil("#koran bni nihil"), { label: "bni", tanggal: null });
+});
+
+test("angka rekening TIDAK salah dibaca sebagai tanggal", () => {
+  // "INDEX 336" memuat angka; kalau pola tanggalnya longgar, 336 bisa tertelan
+  // jadi tanggal dan labelnya jadi kosong.
+  assert.deepEqual(parseNihil("#KORAN INDEX 336 nihil"), { label: "INDEX 336", tanggal: null });
+  assert.deepEqual(parseNihil("#KORAN MDR 038 nihil"), { label: "MDR 038", tanggal: null });
+});
+
+test("pesan #KORAN biasa BUKAN pernyataan nihil", () => {
+  // Kalau ini salah, setoran koran sungguhan akan dicatat sebagai hari nihil —
+  // menghapus mutasi yang sudah masuk.
+  assert.equal(parseNihil("#KORAN mandiri 17/9/2026"), null);
+  assert.equal(parseNihil("#koran index 336 17/9/2026"), null);
+  assert.equal(parseNihil(null), null);
+  // Kata 'nihil' di percakapan tanpa hashtag juga tidak memicu apa pun.
+  assert.equal(parseNihil("hari ini bni nihil kok"), null);
 });

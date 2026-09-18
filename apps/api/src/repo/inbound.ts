@@ -9,7 +9,7 @@ import { upsertDailyTodo, computeIsLate } from "./todo.js";
 import { createReminder } from "./reminder.js";
 import { buildCekReply } from "./cek.js";
 import { ingestKlaim, type DocKlaimRow } from "./doc-klaim.js";
-import { ingestKoran, type IngestKoranResult } from "./cashin.js";
+import { ingestKoran, nyatakanNihil, parseNihil, type IngestKoranResult } from "./cashin.js";
 import { createTicket, isKnownTeknisiSender } from "./serviceticket.js";
 import {
   findBySjNumber,
@@ -1320,6 +1320,28 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
   if (kind === "koran") {
     // Lampiran boleh menempel di pesan hashtag ini, ATAU datang sebagai pesan
     // terpisah sebelum/sesudahnya — lihat catatan di cabang kind === "none".
+    // Pernyataan "hari ini nihil" — TANPA lampiran, dan itu memang bentuknya:
+    // rekening tanpa transaksi tak bisa diunduh dari internet banking sama
+    // sekali (dilaporkan Finance 18 Sep 2026). Dicek SEBELUM penjodohan
+    // lampiran, kalau tidak pesan ini akan menyambar PDF rekening lain yang
+    // kebetulan dikirim beberapa menit sebelumnya.
+    const nihil = parseNihil(row.body);
+    if (nihil) {
+      const oleh = String(row.sender_name ?? "").trim() || "Finance";
+      const r = await nyatakanNihil(nihil.label, oleh, {
+        tanggal: nihil.tanggal,
+        waMessageId: row.id,
+        grupJid: row.group_jid,
+      });
+      const reply = await sendViaWaGateway(
+        target,
+        r.ok
+          ? `✅ ${r.label_file} ${r.tanggal} dicatat NIHIL (tanpa transaksi) atas pernyataan ${oleh}.`
+          : `⚠️ Gagal mencatat nihil: ${r.error}`,
+      );
+      return finish({ nihil: r, reply }, "koran");
+    }
+
     const lampiran = adaLampiranDokumen(row) ? [row] : await lampiranKoranTerdekat(row);
     if (lampiran.length === 0) {
       // Lampirannya bisa sudah diproses duluan: baris dokumen dan baris teks

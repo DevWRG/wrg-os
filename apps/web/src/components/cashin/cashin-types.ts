@@ -16,6 +16,8 @@ export interface CashinRingkasan {
   rekening_wajib: number;
   rekening_masuk: number;
   rekening_belum: string[];
+  /** Rekening yang DINYATAKAN tanpa transaksi + pernyatanya (migrasi 179). */
+  rekening_nihil?: { label_file: string; oleh: string }[];
   statement_perlu_review: Array<{ label_file: string; alasan: string }>;
   penerimaan_terbesar: Array<{ label_file: string; deskripsi: string; kredit: number }>;
   puteran_detail: Array<{ dari: string; ke: string; nominal: number }>;
