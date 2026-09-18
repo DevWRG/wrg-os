@@ -1,9 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { Loader2 } from "lucide-react";
-
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
+import { LoadingInline } from "@/components/ui/loading";
 import {
   Dialog,
   DialogBody,
@@ -80,9 +79,7 @@ export function SuppliersTable({ vendors }: { vendors: AccurateVendor[] }) {
               </DialogHeader>
               <DialogBody className="text-sm">
                 {detail === null && !err ? (
-                  <div className="text-muted-foreground flex items-center gap-2 py-2 text-xs">
-                    <Loader2 className="size-3.5 animate-spin" /> Memuat rincian…
-                  </div>
+                  <LoadingInline label="Memuat rincian…" className="py-2 text-xs" />
                 ) : err ? (
                   <div className="text-muted-foreground py-2 text-xs">Gagal memuat rincian vendor.</div>
                 ) : (

@@ -2,11 +2,12 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronDown, ChevronRight, Loader2, Plus, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Plus, Trash2 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
+import { LoadingInline } from "@/components/ui/loading";
 import { useTableUrl } from "@/lib/use-table-url";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -439,9 +440,7 @@ export function PurchaseOrderTable({
                 {detailErr ? (
                   <div className="text-muted-foreground py-1 text-xs">Gagal memuat detail.</div>
                 ) : !detail ? (
-                  <div className="text-muted-foreground flex items-center gap-2 py-1 text-xs">
-                    <Loader2 className="size-3.5 animate-spin" /> Memuat PO…
-                  </div>
+                  <LoadingInline label="Memuat PO…" className="py-1 text-xs" />
                 ) : (
                   <>
                     <div className="grid grid-cols-3 gap-3">

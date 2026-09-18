@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { SkeletonCards, SkeletonTable } from "@/components/ui/loading";
 
 // Insentif Saya — SELF-ONLY untuk semua peran, termasuk Direktur (PRD §E.3).
 // Identitas datang dari sesi lewat BFF (x-user-id) → backend /insentif/self.
@@ -87,7 +88,14 @@ export function InsentifSaya() {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
   });
 
-  if (loading) return <p className="text-sm text-muted-foreground">Memuat…</p>;
+  if (loading) {
+    return (
+      <div className="space-y-4">
+        <SkeletonCards count={4} />
+        <SkeletonTable rows={6} cols={6} />
+      </div>
+    );
+  }
   if (err) return <p className="text-sm text-destructive">Gagal memuat: {err}</p>;
 
   if (data && data.linked === false) {

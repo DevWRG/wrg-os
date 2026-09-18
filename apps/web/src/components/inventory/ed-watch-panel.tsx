@@ -6,6 +6,7 @@ import { StockBatchTable, type StockBatchRow } from "@/components/tables/stock-b
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
+import { LoadingBlock } from "@/components/ui/loading";
 
 export interface StockBatchSummary {
   hari_ini: string;
@@ -124,7 +125,7 @@ export function EdWatchPanel() {
     return (
       <Card>
         <CardContent className="pt-6">
-          <p className="text-muted-foreground text-sm">Memuat data batch & ED…</p>
+          <LoadingBlock label="Memuat data batch & ED…" />
         </CardContent>
       </Card>
     );

@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { SkeletonCardGrid } from "@/components/ui/loading";
 
 interface SalesDoc {
   id: string;
@@ -186,7 +187,7 @@ export default function SalesDocsPage() {
 
       {error && <p className="text-destructive text-sm">{error}</p>}
       {loading ? (
-        <p className="text-muted-foreground">Memuat…</p>
+        <SkeletonCardGrid count={4} />
       ) : docs.length === 0 ? (
         <p className="text-muted-foreground">Tidak ada dokumen. 🎉</p>
       ) : (

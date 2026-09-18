@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Loader2, Pencil, Plus, Trash2 } from "lucide-react";
+import { Pencil, Plus, Trash2 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useConfirm } from "@/components/ui/use-confirm";
 import { Dialog, DialogBody, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { LoadingInline } from "@/components/ui/loading";
 
 type ContractStatus = "active" | "expiring_soon" | "expired" | "no_end_date" | "terminated";
 
@@ -177,7 +178,7 @@ export function VendorDetailDialog({ vendorId, onClose }: { vendorId: string | n
           </DialogHeader>
           <DialogBody>
             {vendorId && vendor === null && !err ? (
-              <div className="text-muted-foreground flex items-center gap-2 py-3 text-xs"><Loader2 className="size-3.5 animate-spin" /> Memuat…</div>
+              <LoadingInline className="py-3 text-xs" />
             ) : err ? (
               <div className="text-muted-foreground py-3 text-xs">Detail vendor tidak ditemukan.</div>
             ) : vendor ? (
