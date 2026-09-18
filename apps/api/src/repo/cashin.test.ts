@@ -355,3 +355,27 @@ test("pesan #KORAN biasa BUKAN pernyataan nihil", () => {
   // Kata 'nihil' di percakapan tanpa hashtag juga tidak memicu apa pun.
   assert.equal(parseNihil("hari ini bni nihil kok"), null);
 });
+
+// ── puteran yang hanya dikenali lewat nomor rekening sendiri ─────────────────
+
+test("nomor rekening sendiri di deskripsi = sinyal internal", () => {
+  // Kasus NYATA 18 Sep 2026 yang lolos ke resume sebagai uang masuk riil:
+  // BJTM debit 50 jt 'IB:008 1420075012038' (nomor rekening Mandiri MDR 038)
+  // berpasangan dengan kredit 50 jt di MDR 038, 44 detik berselang. Tak satu
+  // kata pun dari daftar 'berbau internal' muncul di kedua sisi.
+  const nomor = ["1420075012038", "0321018688", "7001088131"];
+  assert.equal(berbauInternal("IB:008 1420075012038", nomor), true);
+  // Nomor dengan pemisah tetap kena (bank menulis formatnya semaunya).
+  assert.equal(berbauInternal("TRF KE 1420-0750-12038", nomor), true);
+  // Tanpa daftar nomor, perilaku lama dipertahankan.
+  assert.equal(berbauInternal("IB:008 1420075012038"), false);
+});
+
+test("nomor pendek dan nominal TIDAK dianggap nomor rekening", () => {
+  // Penjaga: kalau ambang panjangnya dilepas, angka nominal atau nomor
+  // referensi bisa kebetulan cocok dan menandai transaksi pihak ketiga sebagai
+  // puteran — uang masuk riil hilang dari laporan tanpa jejak.
+  assert.equal(berbauInternal("PEMBAYARAN INV 12345", ["12345"]), false);
+  assert.equal(berbauInternal("RS WAJAK HUSADA", ["1420075012038"]), false);
+  assert.equal(berbauInternal("KU- RSUD SUKOWATI 0321", ["0321018688"]), false);
+});

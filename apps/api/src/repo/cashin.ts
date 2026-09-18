@@ -529,6 +529,8 @@ const TOLERANSI_MENIT = 30;
  *  Baris yang sudah ditriage manusia (kategori_oleh='manual') TIDAK ditimpa. */
 export async function matchPuteran(tanggal: string): Promise<number> {
   const sql = db();
+  const nomorRows = await sql`SELECT no_rekening FROM bank_account WHERE no_rekening IS NOT NULL`;
+  const nomorSendiri = nomorRows.map((r) => String(r.no_rekening));
   const rows = await sql`
     SELECT l.id, l.debit, l.kredit, l.waktu, l.deskripsi, l.kategori, l.kategori_oleh, s.bank_account_id
     FROM bank_statement_line l
@@ -573,7 +575,7 @@ export async function matchPuteran(tanggal: string): Promise<number> {
         // riil hilang dari total. Jadi minimal SATU sisi harus berbunyi seperti
         // pindah-buku internal. Ini pemakaian nama yang benar: penguat bukti
         // pasangan, bukan bukti tunggal.
-        (berbauInternal(d.deskripsi) || berbauInternal(c.deskripsi)),
+        (berbauInternal(d.deskripsi, nomorSendiri) || berbauInternal(c.deskripsi, nomorSendiri)),
     );
     if (cocok) {
       dipakai.add(cocok.id);
@@ -607,7 +609,30 @@ export async function matchPuteran(tanggal: string): Promise<number> {
 const RE_BERBAU_INTERNAL =
   /wahana\s*rizky|wahanarizky|pemindahbukuan|paymentfrom|transfer\s*bi\s*fast|bifast|inhousetrf|pdjtidj1|bmriidja|bidxidja|hnbnidja|bniaidja|bninidja/i;
 
-export function berbauInternal(deskripsi: string): boolean {
+export function berbauInternal(deskripsi: string, nomorSendiri: string[] = []): boolean {
+  // Sinyal terkuat dan paling tak terbantah: deskripsi memuat NOMOR REKENING
+  // WRG sendiri. Bank menulis lawan transaksi apa adanya, jadi kalau nomor itu
+  // muncul, uangnya memang berpindah ke/dari rekening kita sendiri.
+  //
+  // Terbukti perlu 18 Sep 2026: BJTM debit 50 jt berdeskripsi
+  // 'IB:008 1420075012038' (nomor rekening Mandiri MDR 038) berpasangan dengan
+  // kredit 50 jt di MDR 038 berdeskripsi 'ATMB CR Transfer JTMIBANK' — 44 detik
+  // berselang. Tak satu pun kata di daftar di bawah muncul di kedua sisi, jadi
+  // pasangannya DITOLAK dan 50 jt dana puteran masuk hitungan uang masuk riil.
+  // Finance yang menangkapnya, bukan sistem.
+  //
+  // Nomor diambil dari bank_account (DATA), bukan dikonstankan di sini —
+  // menambah rekening tak boleh menuntut rilis kode.
+  const digit = String(deskripsi ?? "").replace(/[^0-9]/g, "");
+  for (const n of nomorSendiri) {
+    const bersih = String(n ?? "").replace(/[^0-9]/g, "");
+    // ≥8 digit: nomor pendek berisiko cocok kebetulan dengan nominal/referensi.
+    if (bersih.length >= 8 && digit.includes(bersih)) return true;
+  }
+  return berbauInternalKata(deskripsi);
+}
+
+function berbauInternalKata(deskripsi: string): boolean {
   return RE_BERBAU_INTERNAL.test(deskripsi || "");
 }
 
