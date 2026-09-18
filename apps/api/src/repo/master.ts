@@ -1,6 +1,6 @@
 import { db } from "../db.js";
 import { isGolongan, type Golongan } from "../lib/npk-golongan.js";
-import { isWaTestBypassGroup } from "./wa-test-bypass.js";
+import { isWaTestBypassGroup, namaUji } from "./wa-test-bypass.js";
 
 // D1 — master data CRM (port legacy master_user + master_territory). Roster AM
 // di-key am_id (dipakai lintas deal/reminder/todo); territory map AM→HOD→cabang.
@@ -341,10 +341,15 @@ export async function resolveSender(opts: {
 }
 
 // Auto-provision AM per nomor WA (idempoten) khusus grup bypass — supaya balasan
-// tetap menyapa nama asli pengirim tanpa perlu didaftarkan manual satu-satu.
+// tetap menyapa nama pengirim tanpa perlu didaftarkan manual satu-satu.
+//
+// Namanya diberi prefiks `[UJI] ` (namaUji): baris ini masuk ke roster yang SAMA
+// dengan karyawan sungguhan, dan yang dirender di dashboard adalah `nama`, bukan
+// `am_id`. Tanpa prefiks, "Michael Christopher" duduk di daftar AM dev persis
+// seperti AM asli. `am_id` tetap ber-prefiks `WA-TEST-` untuk penyapuan.
 async function ensureBypassAm(waNumber: string, pushname?: string | null): Promise<ResolvedAm> {
   const sql = db();
-  const nama = (pushname ?? "").trim() || `WA ${waNumber}`;
+  const nama = namaUji((pushname ?? "").trim() || `WA ${waNumber}`);
   const amId = `WA-TEST-${waNumber}`;
   await sql`
     INSERT INTO master_user (am_id, nama, wa_number, role, aktif, wajib_plan_report)

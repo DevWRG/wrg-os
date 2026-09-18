@@ -1,4 +1,5 @@
 import { db } from "../db.js";
+import { namaUji } from "./wa-test-bypass.js";
 
 // postgres.js parse kolom date/timestamptz jadi objek Date — String(dateObj)
 // hasilnya verbose ("Wed Aug 05 2026 …"), bukan ISO. new Date(x).toISOString()
@@ -55,10 +56,20 @@ export async function listTeknisiCapacity(): Promise<Teknisi[]> {
 
 // Auto-provision teknisi per pushname WA (idempoten, keyed nama karena UNIQUE) —
 // dipanggil HANYA dari inbound.ts saat grup bypass aktif (wa-test-bypass.ts).
-// Nama teknisi = pushname pengirim apa adanya, jadi tiap orang di grup uji dapat
-// baris sendiri (bukan berbagi satu identitas).
-export async function ensureBypassTeknisi(nama: string, waNumber?: string | null): Promise<Teknisi> {
+// Tiap orang di grup uji dapat baris sendiri (bukan berbagi satu identitas).
+//
+// Namanya WAJIB lewat namaUji() → `[UJI] <pushname>`. Tabel ini tak punya kolom
+// penanda dan di-key `nama`, jadi prefiks itu satu-satunya yang membedakan baris
+// uji dari teknisi sungguhan — di Readiness Board, di dropdown penugasan tiket,
+// dan saat pembersihan (`WHERE nama LIKE '[UJI] %'`). Lihat catatan FK
+// `service_ticket.assigned_teknisi_id` di wa-test-bypass.ts.
+//
+// `matchTeknisiByName` memakai ILIKE '%pushname%', jadi pesan berikutnya dari
+// orang yang sama tetap ketemu baris ber-prefiks ini lewat jalur normal —
+// bypass-nya tak terpanggil dua kali, dan tak ada baris kembar.
+export async function ensureBypassTeknisi(pushname: string, waNumber?: string | null): Promise<Teknisi> {
   const sql = db();
+  const nama = namaUji(pushname);
   const [row] = await sql`
     INSERT INTO teknisi_capacity (nama, wa_number, aktif)
     VALUES (${nama}, ${waNumber ?? null}, true)
