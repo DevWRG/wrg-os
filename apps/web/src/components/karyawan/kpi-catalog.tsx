@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { SkeletonCardGrid } from "@/components/ui/loading";
 import { PERSP, PORDER, perspColor, perspLabel } from "@/components/karyawan/perspektif";
 
 // F157b — tab KPI di Karyawan 360.
@@ -159,7 +160,7 @@ export function KpiCatalog() {
       {state === "error" ? (
         <p className="text-muted-foreground">Gagal memuat katalog KPI.</p>
       ) : state === "loading" && !all.length ? (
-        <p className="text-muted-foreground text-sm">Memuat…</p>
+        <SkeletonCardGrid count={3} lines={4} className="md:grid-cols-1" />
       ) : (
         <>
           {grouped.map(([key, g]) => (

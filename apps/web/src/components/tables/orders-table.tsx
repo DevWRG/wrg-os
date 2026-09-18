@@ -1,11 +1,11 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Loader2 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
 import { DateRangeToolbar } from "@/components/ui/date-range-toolbar";
+import { LoadingInline } from "@/components/ui/loading";
 import {
   Dialog,
   DialogBody,
@@ -178,9 +178,7 @@ export function OrdersTable({ orders }: { orders: SalesOrder[] }) {
                     {items && items.length > 0 && <span className="text-muted-foreground/70 normal-case">({items.length})</span>}
                   </div>
                   {items === null ? (
-                    <div className="text-muted-foreground flex items-center gap-2 py-1 text-xs">
-                      <Loader2 className="size-3.5 animate-spin" /> Memuat produk…
-                    </div>
+                    <LoadingInline label="Memuat produk…" className="py-1 text-xs" />
                   ) : itemsErr ? (
                     <div className="text-muted-foreground py-1 text-xs">Gagal memuat produk.</div>
                   ) : items.length === 0 ? (

@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { SkeletonCards, SkeletonChart } from "@/components/ui/loading";
 import {
   ChartContainer,
   ChartTooltip,
@@ -321,7 +322,10 @@ export default function DashboardPage() {
 
       {error && <p className="text-destructive text-sm">{error}</p>}
       {loading && !kpi ? (
-        <p className="text-muted-foreground">Memuat…</p>
+        <div className="space-y-4">
+          <SkeletonCards count={4} />
+          <SkeletonChart />
+        </div>
       ) : kpi ? (
         <>
           <Kpis k={kpi} />

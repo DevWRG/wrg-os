@@ -17,6 +17,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { SkeletonCards, SkeletonChart } from "@/components/ui/loading";
 import {
   ChartContainer,
   ChartTooltip,
@@ -382,7 +383,10 @@ export function UserInfographic({ amId, initialFrom, initialTo }: { amId: string
 
       {error && <p className="text-destructive text-sm">{error}</p>}
       {loading && !detail ? (
-        <p className="text-muted-foreground">Memuat…</p>
+        <div className="space-y-4">
+          <SkeletonCards count={4} />
+          <SkeletonChart />
+        </div>
       ) : !detail ? (
         <p className="text-muted-foreground">Data tidak tersedia.</p>
       ) : !u ? (
