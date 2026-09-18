@@ -3,6 +3,7 @@ import { test } from "node:test";
 
 import {
   berbauInternal,
+  cocokLabelFile,
   formatDraftKonfirmasi,
   formatIngatanBelumLengkap,
   formatIngatanKonfirmasi,
@@ -295,4 +296,31 @@ test("peringatan integritas statement TETAP ikut ke Direktur", () => {
     }),
   );
   assert.match(teks, /MDR 038: saldo akhir tidak bersambung/);
+});
+
+// ── pencocokan nama file ke rekening ─────────────────────────────────────────
+
+test("nama lampiran WhatsApp dikenali walau spasi jadi underscore + suffix uuid", () => {
+  // Bentuk NYATA yang ditolak prod 18 Sep 2026: openclaw menyimpan lampiran WA
+  // dengan underscore dan menempelkan uuid. Pencocokan lama (buang spasi saja)
+  // gagal, lalu file Finance ditolak dengan "rekening tidak dikenali".
+  assert.equal(cocokLabelFile("INDEX 131", "INDEX_131_170926---94521364-6f3b-4dab-8125-92eb4660a394.pdf"), true);
+  assert.equal(cocokLabelFile("INDEX 336", "INDEX_336_170926---d0c1742e-3fa0-44ba-9325-2e6bf6c689ba.pdf"), true);
+});
+
+test("bentuk nama file lain yang dipakai admin tetap dikenali", () => {
+  // Folder sumber punya spasi ganda dan ekstensi rusak — dua-duanya nyata.
+  assert.equal(cocokLabelFile("INDEX 131", "INDEX 131  020926.pdf"), true);
+  assert.equal(cocokLabelFile("BJTM", "BJTM 030926 pdf"), true);
+  assert.equal(cocokLabelFile("MDR 038", "MDR 038 040926.pdf"), true);
+  assert.equal(cocokLabelFile("MDR 038", "mdr-038-040926.PDF"), true);
+});
+
+test("rekening berlabel mirip TIDAK saling tertukar", () => {
+  // Penjaga terpenting: normalisasi tak boleh sampai menyamakan 881 dengan 890.
+  assert.equal(cocokLabelFile("INDEX 881", "INDEX_890_170926.pdf"), false);
+  assert.equal(cocokLabelFile("INDEX 890", "INDEX_881_170926.pdf"), false);
+  assert.equal(cocokLabelFile("MDR 734", "MDR_038_040926.pdf"), false);
+  // Label harus di AWAL nama file, bukan di tengah.
+  assert.equal(cocokLabelFile("BJTM", "koran_BJTM_030926.pdf"), false);
 });
