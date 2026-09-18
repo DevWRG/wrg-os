@@ -390,6 +390,127 @@ export async function ingestKoran(
   };
 }
 
+// ── pernyataan "hari ini nihil" ──────────────────────────────────────────────
+//
+// Dari lapangan (Finance, 18 Sep 2026): rekening yang TIDAK ada transaksi tak
+// bisa diunduh dari internet banking sama sekali. Tanpa jalan ini, rekening
+// seperti itu menahan hitungan kelengkapan selamanya.
+//
+// Prinsipnya: nihil = PERNYATAAN BERTANDA TANGAN. Lihat catatan migrasi 179.
+
+export interface PernyataanNihil {
+  /** Teks label rekening apa adanya dari pesan ("BNI", "index 336"). */
+  label: string;
+  /** null = pakai tanggal hari ini (WIB). */
+  tanggal: string | null;
+}
+
+/** Baca "#KORAN BNI nihil 17/9/2026" (urutan label & kata 'nihil' bebas).
+ *
+ *  TANGGAL DIAMBIL DARI TEKS — satu-satunya pengecualian aturan "tanggal dari
+ *  isi dokumen" (migrasi 169 butir 4), karena pernyataan nihil memang TIDAK
+ *  punya dokumen. Itu sebabnya pengecualian ini ditulis di sini terang-terangan,
+ *  bukan disembunyikan: siapa pun yang membaca aturan itu lalu melihat kode ini
+ *  harus langsung tahu kenapa keduanya tidak bertentangan.
+ *
+ *  Menolak pesan tanpa kata 'nihil' → null (bukan menebak). */
+export function parseNihil(body: string | null): PernyataanNihil | null {
+  if (!body) return null;
+  const baris = body.split(/\r?\n/).find((b) => /#\s*koran\b/i.test(b) && /\bnihil\b/i.test(b));
+  if (!baris) return null;
+
+  // Buang hashtag + kata 'nihil' + tanggal, sisanya = label rekening.
+  let sisa = baris.replace(/#\s*koran\b/i, " ").replace(/\bnihil\b/i, " ");
+
+  // Tanggal: 17/9/2026, 17-09-26, 17 09 2026. Bulan & tahun wajib ada supaya
+  // angka rekening ("336") tidak salah dibaca sebagai tanggal.
+  let tanggal: string | null = null;
+  const m = sisa.match(/\b(\d{1,2})\s*[/-]\s*(\d{1,2})\s*[/-]\s*(\d{2,4})\b/);
+  if (m) {
+    const d = Number(m[1]);
+    const bl = Number(m[2]);
+    let th = Number(m[3]);
+    if (th < 100) th += 2000;
+    if (d >= 1 && d <= 31 && bl >= 1 && bl <= 12) {
+      tanggal = `${th}-${String(bl).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+      sisa = sisa.replace(m[0], " ");
+    }
+  }
+
+  const label = sisa.replace(/\s+/g, " ").trim();
+  if (!label) return null;
+  return { label, tanggal };
+}
+
+export interface NihilResult {
+  ok: boolean;
+  error?: string;
+  label_file?: string;
+  tanggal?: string;
+}
+
+/** Catat pernyataan nihil untuk satu rekening + satu tanggal.
+ *
+ *  Statement ditulis dengan NOL baris, metode 'manual', total tercetak 0/0
+ *  (checksum 0 = 0 lolos secara trivial), dan `nihil_oleh` wajib terisi —
+ *  penjaga CHECK di migrasi 179 menolak baris nihil tanpa pernyata. */
+export async function nyatakanNihil(
+  labelInput: string,
+  oleh: string,
+  opts: { tanggal?: string | null; waMessageId?: string | null; grupJid?: string | null } = {},
+): Promise<NihilResult> {
+  const sql = db();
+  if (!oleh.trim()) return { ok: false, error: "tak tahu siapa yang menyatakan nihil" };
+
+  const tanggal = (opts.tanggal ?? "").trim() || wibDate();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(tanggal)) return { ok: false, error: `tanggal '${tanggal}' tidak dikenali` };
+
+  const rows = await sql`SELECT id, label_file FROM bank_account WHERE aktif ORDER BY length(label_file) DESC`;
+  const bersih = (t: string): string => t.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const kunci = bersih(labelInput);
+  const cocok = rows.filter((r) => {
+    const l = bersih(String(r.label_file));
+    // Dua arah: "BNI" cocok ke label "BNI", dan "index 336" cocok ke "INDEX 336".
+    return l === kunci || kunci.startsWith(l) || l.startsWith(kunci);
+  });
+  if (cocok.length === 0) {
+    return { ok: false, error: `rekening '${labelInput}' tidak dikenali. Pakai label seperti: ${rows.map((r) => String(r.label_file)).join(", ")}` };
+  }
+  // Ambigu (mis. "INDEX" cocok ke 4 rekening Index) TIDAK ditebak — menebak di
+  // sini berarti menyatakan nihil atas rekening yang salah.
+  if (cocok.length > 1) {
+    return { ok: false, error: `'${labelInput}' ambigu — cocok ke ${cocok.map((r) => String(r.label_file)).join(", ")}. Sebutkan lengkap.` };
+  }
+
+  const acc = cocok[0];
+  const [stmt] = await sql`
+    INSERT INTO bank_statement (
+      bank_account_id, tanggal, total_debit_tercetak, total_kredit_tercetak,
+      jumlah_debit, jumlah_kredit, sumber, wa_message_id, wa_group_jid,
+      metode, checksum_ok, status, nihil, nihil_oleh
+    ) VALUES (
+      ${acc.id}, ${tanggal}, 0, 0, 0, 0, ${opts.waMessageId ? "wa" : "web"},
+      ${opts.waMessageId ?? null}, ${opts.grupJid ?? null},
+      'manual', true, 'terverifikasi', true, ${oleh.trim()}
+    )
+    ON CONFLICT (bank_account_id, tanggal) DO UPDATE SET
+      total_debit_tercetak = 0, total_kredit_tercetak = 0,
+      jumlah_debit = 0, jumlah_kredit = 0,
+      sumber = EXCLUDED.sumber, wa_message_id = EXCLUDED.wa_message_id,
+      wa_group_jid = COALESCE(EXCLUDED.wa_group_jid, bank_statement.wa_group_jid),
+      metode = 'manual', checksum_ok = true, status = 'terverifikasi',
+      parse_error = NULL, raw_text = NULL,
+      nihil = true, nihil_oleh = EXCLUDED.nihil_oleh, updated_at = now()
+    RETURNING id
+  `;
+  // Kalau tanggal itu sebelumnya berisi statement sungguhan, barisnya dibuang —
+  // pernyataan nihil yang menimpa data nyata harus meninggalkan keadaan yang
+  // KONSISTEN, bukan campuran "nihil" + baris mutasi lama.
+  await sql`DELETE FROM bank_statement_line WHERE statement_id = ${String(stmt.id)}`;
+
+  return { ok: true, label_file: String(acc.label_file), tanggal };
+}
+
 // ── pencocokan pasangan puteran ──────────────────────────────────────────────
 
 /** Toleransi jarak waktu antar sisi puteran. 30 menit: pada data nyata jaraknya
@@ -595,6 +716,10 @@ export interface RingkasanHarian {
     uang_masuk: number;
     puteran_keluar: number;
   }>;
+  /** Rekening yang DINYATAKAN tidak ada transaksi (migrasi 179) + siapa yang
+   *  menyatakannya. Dipisah dari per_rekening supaya tak pernah dirender
+   *  sebagai 'Rp 0' — nol tak bisa dibedakan dari "datanya belum ada". */
+  rekening_nihil: Array<{ label_file: string; oleh: string }>;
 }
 
 const NOL: Record<string, number> = {
@@ -688,8 +813,16 @@ export async function ringkasanHarian(tanggal: string): Promise<RingkasanHarian>
     JOIN bank_account a ON a.id = s.bank_account_id
     LEFT JOIN bank_statement_line l ON l.statement_id = s.id
     WHERE s.tanggal = ${tanggal} AND a.jenis = 'kas' AND s.status = 'terverifikasi'
+      AND NOT s.nihil
     GROUP BY a.label_file, a.nama_bank
     ORDER BY 3 DESC, a.label_file
+  `;
+
+  const nihil = await sql`
+    SELECT a.label_file, s.nihil_oleh
+    FROM bank_statement s JOIN bank_account a ON a.id = s.bank_account_id
+    WHERE s.tanggal = ${tanggal} AND s.nihil
+    ORDER BY a.label_file
   `;
 
   const puteran = await sql`
@@ -729,6 +862,10 @@ export async function ringkasanHarian(tanggal: string): Promise<RingkasanHarian>
       dari: String(r.dari),
       ke: String(r.ke),
       nominal: Number(r.nominal),
+    })),
+    rekening_nihil: nihil.map((r) => ({
+      label_file: String(r.label_file),
+      oleh: String(r.nihil_oleh ?? "-"),
     })),
     per_rekening: perRek.map((r) => ({
       label_file: String(r.label_file),
@@ -803,6 +940,17 @@ export function formatResume(r: RingkasanHarian): string {
     baris.push(
       "",
       `_Rekening pinjaman/escrow (di luar hitungan): kredit ${rp(r.non_kas_kredit)}, debit ${rp(r.non_kas_debit)}_`,
+    );
+  }
+
+  // Nihil disebut EKSPLISIT beserta pernyatanya. Tanpa baris ini, rekening yang
+  // memang tak bertransaksi tak terlihat bedanya dari rekening yang korannya
+  // belum masuk — padahal artinya berlawanan: yang satu sudah tuntas, yang lain
+  // masih ditunggu.
+  if (r.rekening_nihil.length) {
+    baris.push(
+      "",
+      ...r.rekening_nihil.map((n) => `_${n.label_file}: nihil, tanpa transaksi (dinyatakan ${n.oleh})_`),
     );
   }
 
