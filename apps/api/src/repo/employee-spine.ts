@@ -331,6 +331,144 @@ export async function getOrgReporting() {
   return { hods, ambiguous, unmapped, counts: { total: emps.length, mapped, ambiguous: ambiguous.length, unmapped: unmapped.length } };
 }
 
+// ── F157b — OKR & KPI lintas orang (tab Karyawan 360) ──────────────────────
+// Dua silsilah SENGAJA bersanding tanpa dijumlahkan:
+//   · OKR divisi  = 6 form PIC (migrasi 168), grain DIVISI, deklaratif.
+//   · OKR/KPI personal = wawancara karyawan (F118), grain ORANG.
+// Menjumlahkan keduanya menghitung pekerjaan yang sama dua kali.
+//
+// `divisi_okr` + `divisi_okr_kr` terisi sejak migrasi 168 tapi belum pernah
+// dibaca satu baris kode pun; ini pembaca pertamanya.
+//
+// LEFT JOIN dari `divisi`, bukan dari `divisi_okr`: divisi yang OKR-nya belum
+// diisi harus tetap muncul sebagai baris kosong. Begitu juga Business IVD &
+// Medical yang tidak punya baris `divisi_department` sama sekali — ia punya OKR
+// divisi tapi nol karyawan tertaut, dan itu temuan yang harus kelihatan.
+export interface OkrObjective { id: string; objective: string; perspective: Perspective | null; key_results: string[] }
+export interface OkrDivisi { key: string; label: string; pic_nama: string | null; hod_nama: string | null; objectives: OkrObjective[] }
+
+export async function getOkrOverview() {
+  const sql = db();
+  const [divRows, persRows] = await Promise.all([
+    sql`
+      SELECT d.key, d.label, d.pic_nama, d.hod_nama,
+             o.id AS okr_id, o.objective, o.perspective,
+             k.key_result
+      FROM divisi d
+      LEFT JOIN divisi_okr o ON o.divisi_key = d.key
+      LEFT JOIN divisi_okr_kr k ON k.okr_id = o.id
+      ORDER BY d.seq, o.seq, k.seq`,
+    sql`
+      SELECT e.id, e.nama, e.panggilan, e.role, e.dept, dp.label AS dept_label,
+             dd.divisi_key, dv.label AS divisi_label, e.okr_objective,
+             COALESCE(json_agg(kr.key_result ORDER BY kr.seq) FILTER (WHERE kr.key_result IS NOT NULL), '[]') AS key_results
+      FROM employee e
+      LEFT JOIN department dp ON dp.key = e.dept
+      LEFT JOIN divisi_department dd ON dd.dept = e.dept
+      LEFT JOIN divisi dv ON dv.key = dd.divisi_key
+      LEFT JOIN okr_key_result kr ON kr.employee_id = e.id
+      GROUP BY e.id, e.nama, e.panggilan, e.role, e.dept, dp.label, dd.divisi_key, dv.label, dv.seq
+      ORDER BY dv.seq NULLS LAST, e.nama`,
+  ]);
+
+  const divisi: OkrDivisi[] = [];
+  const byKey = new Map<string, OkrDivisi>();
+  const byObj = new Map<string, OkrObjective>();
+  for (const r of divRows) {
+    const key = String(r.key);
+    let d = byKey.get(key);
+    if (!d) {
+      d = {
+        key, label: String(r.label),
+        pic_nama: r.pic_nama ? String(r.pic_nama) : null,
+        hod_nama: r.hod_nama ? String(r.hod_nama) : null,
+        objectives: [],
+      };
+      byKey.set(key, d);
+      divisi.push(d);
+    }
+    if (r.okr_id == null) continue;
+    const oid = String(r.okr_id);
+    let o = byObj.get(oid);
+    if (!o) {
+      // perspective NULL dibiarkan NULL — jangan di-default ke "proc" diam-diam.
+      o = { id: oid, objective: String(r.objective), perspective: r.perspective ? (String(r.perspective) as Perspective) : null, key_results: [] };
+      byObj.set(oid, o);
+      d.objectives.push(o);
+    }
+    if (r.key_result != null) o.key_results.push(String(r.key_result));
+  }
+
+  const personal = persRows.map((r) => ({
+    employee_id: String(r.id), nama: String(r.nama),
+    panggilan: r.panggilan ? String(r.panggilan) : null,
+    role: r.role ? String(r.role) : null,
+    dept: r.dept ? String(r.dept) : null,
+    dept_label: r.dept_label ? String(r.dept_label) : null,
+    divisi_key: r.divisi_key ? String(r.divisi_key) : null,
+    divisi_label: r.divisi_label ? String(r.divisi_label) : null,
+    objective: r.okr_objective ? String(r.okr_objective) : null,
+    key_results: (r.key_results ?? []) as string[],
+  }));
+
+  return {
+    divisi,
+    personal,
+    counts: {
+      divisi: divisi.length,
+      objective: divisi.reduce((s, d) => s + d.objectives.length, 0),
+      key_result: divisi.reduce((s, d) => s + d.objectives.reduce((t, o) => t + o.key_results.length, 0), 0),
+      orang: personal.length,
+      key_result_personal: personal.reduce((s, p) => s + p.key_results.length, 0),
+    },
+  };
+}
+
+// Katalog KPI lintas orang. Tanpa limit: 194 baris, dan memotongnya diam-diam
+// akan membuat kartu hitungan di atas tabel berbohong (pola yang sudah pernah
+// kena di /visits & /purchase-orders). Bentuk {count,total_rows,rows} dipakai
+// supaya konsisten dengan tabel server-mode lain.
+//
+// `tanpa_angka` = persentase tercatat tapi kolom `actual` kosong. Ini BUKAN
+// tuduhan "data palsu" — jalur simpan normal memang boleh mengosongkan `actual`.
+// Penandanya ada karena 18 baris kpi_measurement di prod adalah seed 10 Juli
+// 2026, semuanya 100% tanpa angka pendukung; tanpa penanda, katalog terbaca
+// "semua tercapai" padahal belum ada yang diukur.
+export async function getKpiCatalog(period: string) {
+  const rows = await db()`
+    SELECT k.id::text AS id, k.employee_id, e.nama, e.panggilan, e.role,
+           e.dept, dp.label AS dept_label, dp.color AS dept_color,
+           dd.divisi_key, dv.label AS divisi_label,
+           k.name, k.target, k.frequency, k.perspective, k.lower_better,
+           m.achievement_pct::float8 AS achievement_pct, m.actual
+    FROM kpi k
+    JOIN employee e ON e.id = k.employee_id
+    LEFT JOIN department dp ON dp.key = e.dept
+    LEFT JOIN divisi_department dd ON dd.dept = e.dept
+    LEFT JOIN divisi dv ON dv.key = dd.divisi_key
+    LEFT JOIN kpi_measurement m ON m.kpi_id = k.id AND m.period = ${period}
+    ORDER BY dv.seq NULLS LAST, e.nama, k.seq`;
+  const out = rows.map((r) => ({
+    id: String(r.id), employee_id: String(r.employee_id), nama: String(r.nama),
+    panggilan: r.panggilan ? String(r.panggilan) : null,
+    role: r.role ? String(r.role) : null,
+    dept: r.dept ? String(r.dept) : null,
+    dept_label: r.dept_label ? String(r.dept_label) : null,
+    dept_color: r.dept_color ? String(r.dept_color) : null,
+    divisi_key: r.divisi_key ? String(r.divisi_key) : null,
+    divisi_label: r.divisi_label ? String(r.divisi_label) : null,
+    name: String(r.name),
+    target: r.target ? String(r.target) : null,
+    frequency: r.frequency ? String(r.frequency) : null,
+    perspective: r.perspective ? (String(r.perspective) as Perspective) : null,
+    lower_better: r.lower_better === true,
+    achievement_pct: r.achievement_pct == null ? null : Number(r.achievement_pct),
+    actual: r.actual ? String(r.actual) : null,
+    tanpa_angka: r.achievement_pct != null && !r.actual,
+  }));
+  return { period, count: out.length, total_rows: out.length, rows: out };
+}
+
 // F121 — persist hasil resolver ke employee.hod_key (full-sync idempotent).
 // resolved (1 HoD) → set key; ambiguous/none → NULL (perlu review manual).
 // Aman diulang; hod_key jadi bisa dipakai fitur HoD-aware lain.

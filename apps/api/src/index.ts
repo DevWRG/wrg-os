@@ -162,7 +162,7 @@ import {
   getInsentifSelf, getInsentifList, getInsentifDetail,
   computePeriode as computeInsentifPeriode,
 } from "./repo/insentif.js";
-import { listDepartments, listEmployees, getEmployee, getRaciMatrix, getMeasurements, saveMeasurements, createEmployee, updateEmployee, deleteEmployee, replaceEmployeeDetail, getVoiceAggregate, getHodResolution, getOrgReporting, populateHodKey, getHods, type MeasurementInput, type EmployeeWrite, type SpineDetail } from "./repo/employee-spine.js";
+import { listDepartments, listEmployees, getEmployee, getRaciMatrix, getMeasurements, saveMeasurements, getOkrOverview, getKpiCatalog, createEmployee, updateEmployee, deleteEmployee, replaceEmployeeDetail, getVoiceAggregate, getHodResolution, getOrgReporting, populateHodKey, getHods, type MeasurementInput, type EmployeeWrite, type SpineDetail } from "./repo/employee-spine.js";
 import { upsertMembers, listMembers, upsertDigests, listDigest, digestStats, upsertPola, listPola, generateRekap, generateResume, type MonitorMemberInput, type DigestInput, type PolaInput } from "./repo/monitor.js";
 import { runNotifTua } from "./repo/notiftua.js";
 import { runDailySummary } from "./repo/dailysummary.js";
@@ -2501,6 +2501,24 @@ app.get("/employee-spine/employees/:id/measurements", async (c) => {
   const period = (c.req.query("period") ?? "").trim();
   if (!period) return c.json({ error: "param 'period' wajib (mis. 2026-07)" }, 400);
   return c.json({ period, measurements: await getMeasurements(c.req.param("id"), period) });
+});
+
+// F157b — OKR (divisi + personal) & katalog KPI lintas orang, jadi tab di
+// Karyawan 360. Read-only: tidak menambah jalur tulis yang bisa ditembus
+// x-service-token lewat BFF catch-all.
+app.get("/employee-spine/okr", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await getOkrOverview());
+});
+app.get("/employee-spine/kpi", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const period = (c.req.query("period") ?? "").trim();
+  // Divalidasi supaya periode salah ketik balik 400, bukan tabel "belum diukur"
+  // semua yang terbaca seperti "memang belum ada pengukuran".
+  if (!/^\d{4}-\d{2}$/.test(period)) {
+    return c.json({ error: "param 'period' wajib, format YYYY-MM (mis. 2026-09)" }, 400);
+  }
+  return c.json(await getKpiCatalog(period));
 });
 app.post("/employee-spine/employees/:id/measurements", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
