@@ -1492,10 +1492,30 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
 
   // #APPROVE/#REJECT <kode> [alasan] (F11). Approver = akun app_user
   // (HoD/Direktur), BUKAN master_user/AM — resolveApprover() beda sumber
-  // dari resolveSender() di atas. Pengirim tak dikenal → SILENT (sama pola).
+  // dari resolveSender() di atas. Pengirim tak dikenal → SILENT di grup biasa,
+  // TAPI dijawab di grup uji (lihat di bawah).
   if (kind === "approve" || kind === "reject") {
     const approver = await resolveApprover(row.sender_jid);
-    if (!approver) return finish({ skipped: "unknown-approver", sender_name: row.sender_name });
+    if (!approver) {
+      // Di grup uji, diam adalah jawaban yang salah: command lain di grup itu
+      // DIBALAS (bypass identitas), jadi penguji wajar menyimpulkan botnya rusak
+      // — bukan "kamu memang belum berhak". Terbukti membingungkan di sesi QA
+      // 2026-09-18: 13 dari 23 pesan tak berbalas, dan kekosongan itu diisi
+      // jawaban karangan dari agent lain yang memakai nomor WA yang sama.
+      //
+      // Di grup lain tetap senyap — gerbang itu juga yang menahan orang asing di
+      // grup produksi memancing balasan bot.
+      if (isWaTestBypassGroup(row.group_jid)) {
+        const reply = await sendViaWaGateway(
+          target,
+          `⚠️ #${kind.toUpperCase()} sengaja TIDAK ikut bypass grup uji — command ini benar-benar memutuskan approval request, ` +
+            `bukan sekadar balasan baca/lapor.\nPerlu akun approver terdaftar (app_user HoD/Direktur dengan nomor WA terisi). ` +
+            `Nomor kamu belum terdaftar sebagai approver.`,
+        );
+        return finish({ skipped: "unknown-approver", sender_name: row.sender_name, reply });
+      }
+      return finish({ skipped: "unknown-approver", sender_name: row.sender_name });
+    }
     const line = stripInvisible(row.body ?? "").split(/\r?\n/).find((l) => new RegExp(`^\\s*#\\s*${kind}\\b`, "i").test(l)) ?? "";
     const parsed = parseApprovalMessage(line, kind);
     if (!parsed) {

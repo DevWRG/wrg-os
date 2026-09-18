@@ -306,3 +306,40 @@ test(".env.dev tak bisa menimpa root berkas dev", () => {
     assert.notEqual(api.env[k], join(homedir(), ".openclaw/media"), `.env.dev berhasil menimpa ${k}`);
   }
 });
+
+// ── Bypass gerbang identitas WA untuk grup uji (#1341) ────────────────────
+// Kunci ini membuka auto-provision identitas: siapa pun di grup yang terdaftar
+// otomatis dianggap AM/teknisi. Karena itu dua sifatnya harus terbukti, bukan
+// cuma tertulis — prod tak boleh pernah memilikinya, dan dev tak boleh
+// mendapatkannya dari daftar grup yang berbeda dari tujuan kirimnya.
+
+test("WA_TEST_BYPASS_GROUP dev = WA_DEV_GROUPS — satu sumber, bukan salinan", () => {
+  const { api } = muat({ envProd: `WA_DEV_GROUPS=${RESEARCH}\n`, envDev: DEV_OK });
+  assert.equal(api.env.WA_TEST_BYPASS_GROUP, RESEARCH);
+  // Menyimpang dari tujuan kirim = grup yang tak di-route ke dev ikut membuka
+  // gerbang identitasnya. Keduanya wajib berangkat dari daftar yang sama.
+  assert.equal(api.env.WA_TEST_BYPASS_GROUP, api.env.WA_SEND_ALLOWED_TARGETS);
+});
+
+test("entri PROD tak pernah punya WA_TEST_BYPASS_GROUP", () => {
+  // Jaminan struktural, bukan disiplin pengisian .env: walau .env.prod nekat
+  // mengisinya, blok env prod dibangun dari `base` — jadi tes ini juga menjaga
+  // supaya kunci itu tak pernah diselipkan ke sana di kemudian hari.
+  const { apps } = muat({ envProd: `WA_DEV_GROUPS=${RESEARCH}\n`, envDev: DEV_OK });
+  for (const a of apps.filter((x) => x.name.startsWith("wrg-prod-"))) {
+    assert.equal(a.env?.WA_TEST_BYPASS_GROUP, undefined, `${a.name} tak boleh punya WA_TEST_BYPASS_GROUP`);
+  }
+});
+
+test("dev BISU → bypass ikut mati (daftar kosong = tak ada grup yang terbuka)", () => {
+  const { api } = muat({ envProd: "", envDev: DEV_OK });
+  assert.equal(api.env.WA_TEST_BYPASS_GROUP, "");
+});
+
+test(".env.dev tak bisa membuka grup lain lewat WA_TEST_BYPASS_GROUP", () => {
+  // Tanpa penjaga ini, siapa pun yang bisa menulis .env.dev bisa membuka gerbang
+  // identitas untuk grup PRODUKSI — cukup dengan menambah satu baris.
+  const nekat = `${DEV_OK}WA_TEST_BYPASS_GROUP=120363999999999999@g.us\n`;
+  const { api } = muat({ envProd: `WA_DEV_GROUPS=${RESEARCH}\n`, envDev: nekat });
+  assert.equal(api.env.WA_TEST_BYPASS_GROUP, RESEARCH, ".env.dev berhasil menimpa — penjaga bocor");
+});
