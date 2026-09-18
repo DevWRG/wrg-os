@@ -11,6 +11,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { SkeletonLines } from "@/components/ui/loading";
 
 interface ScheduleJob {
   id: string;
@@ -185,7 +186,7 @@ export function AgentSchedulerCard() {
       <CardContent className="grid gap-3">
         {error && <p className="text-destructive text-sm">{error}</p>}
         {loading ? (
-          <p className="text-muted-foreground text-sm">Memuat…</p>
+          <SkeletonLines rows={4} />
         ) : !status ? (
           <p className="text-muted-foreground text-sm">Status tidak tersedia.</p>
         ) : (

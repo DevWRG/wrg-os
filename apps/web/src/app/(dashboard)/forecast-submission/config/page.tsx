@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { SkeletonTable } from "@/components/ui/loading";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
@@ -229,7 +230,7 @@ export default function ForecastBufferConfigPage() {
         <CardContent>
           {error && <p className="text-destructive text-sm">{error}</p>}
           {loading ? (
-            <p className="text-muted-foreground text-sm">Memuat…</p>
+            <SkeletonTable rows={5} cols={5} />
           ) : rows.length === 0 ? (
             <p className="text-muted-foreground text-sm">Belum ada buffer dikonfigurasi.</p>
           ) : (

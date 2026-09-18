@@ -6,6 +6,7 @@ import { History } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
+import { SkeletonLines } from "@/components/ui/loading";
 import {
   Dialog, DialogBody, DialogClose, DialogContent, DialogDescription,
   DialogFooter, DialogHeader, DialogTitle, DialogTrigger,
@@ -50,7 +51,7 @@ export function GaAssetHistoryButton({ assetId, assetCode }: { assetId: string; 
         </DialogHeader>
         <DialogBody>
           {entries === null ? (
-            <p className="text-muted-foreground text-sm">Memuat…</p>
+            <SkeletonLines rows={5} />
           ) : entries.length === 0 ? (
             <EmptyState title="Belum ada riwayat" description="Aset ini belum pernah di-assign/transfer." />
           ) : (

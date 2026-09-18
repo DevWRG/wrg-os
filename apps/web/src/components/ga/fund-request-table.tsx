@@ -2,12 +2,13 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Loader2, Trash2 } from "lucide-react";
+import { Trash2 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
 import { Label } from "@/components/ui/label";
+import { LoadingInline } from "@/components/ui/loading";
 import { Textarea } from "@/components/ui/textarea";
 import { useConfirm } from "@/components/ui/use-confirm";
 import {
@@ -180,9 +181,7 @@ export function FundRequestTable({ rows }: { rows: FundRequestRow[] }) {
                 {detailErr ? (
                   <div className="text-muted-foreground py-1 text-xs">Gagal memuat detail.</div>
                 ) : !detail ? (
-                  <div className="text-muted-foreground flex items-center gap-2 py-1 text-xs">
-                    <Loader2 className="size-3.5 animate-spin" /> Memuat pengajuan…
-                  </div>
+                  <LoadingInline label="Memuat pengajuan…" className="py-1 text-xs" />
                 ) : (
                   <>
                     <div className="grid grid-cols-2 gap-3">

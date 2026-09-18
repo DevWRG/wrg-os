@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { SkeletonCardGrid } from "@/components/ui/loading";
 
 interface Suggestion {
   id: string;
@@ -195,7 +196,7 @@ export default function ForecastSubmissionPage() {
 
       {error && <p className="text-destructive text-sm">{error}</p>}
       {loading ? (
-        <p className="text-muted-foreground">Memuat…</p>
+        <SkeletonCardGrid count={4} />
       ) : suggestions.length === 0 ? (
         <p className="text-muted-foreground">Tidak ada usulan status &quot;{filter}&quot;.</p>
       ) : (

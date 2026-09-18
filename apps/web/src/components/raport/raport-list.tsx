@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { SkeletonTable } from "@/components/ui/loading";
 import { PeriodPicker, defaultPeriod } from "@/components/raport/period-picker";
 
 const PAGE_SIZE = 15;
@@ -79,7 +80,7 @@ export function RaportList() {
       ) : state === "error" ? (
         <p className="text-muted-foreground">Gagal memuat daftar.</p>
       ) : state === "loading" && !rows.length ? (
-        <p className="text-muted-foreground text-sm">Memuat…</p>
+        <SkeletonTable rows={8} cols={6} />
       ) : (
         <>
         <Card>

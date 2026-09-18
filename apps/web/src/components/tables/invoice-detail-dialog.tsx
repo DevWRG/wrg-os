@@ -1,9 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Loader2 } from "lucide-react";
-
 import { Dialog, DialogBody, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { LoadingInline } from "@/components/ui/loading";
 
 interface InvItem { line_no: number | null; name: string; qty: number | null; unit: string | null; unit_price: number; discount: number; total: number }
 interface InvHead { number: string; customer_name: string; tanggal: string | null; total: number; taxable: number; tax: number; paid: number; outstanding: number; status: string | null; am: string | null; cabang: string | null }
@@ -50,7 +49,7 @@ export function InvoiceDetailDialog({ no, onClose }: { no: string | null; onClos
         </DialogHeader>
         <DialogBody>
           {no && data === null && !err ? (
-            <div className="text-muted-foreground flex items-center gap-2 py-3 text-xs"><Loader2 className="size-3.5 animate-spin" /> Memuat…</div>
+            <LoadingInline className="py-3 text-xs" />
           ) : err || (data && !data.ok) ? (
             <div className="text-muted-foreground py-3 text-xs">Detail invoice tidak ditemukan.</div>
           ) : inv ? (
