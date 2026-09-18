@@ -188,6 +188,7 @@ import {
   listLine,
   buatDraftJikaLengkap,
   listResume,
+  nyatakanNihil,
   listStatement,
   matriksKelengkapan,
   putuskanResume,
@@ -3572,6 +3573,22 @@ app.get("/cashin/resume/daftar", async (c) => {
 // yang semuanya masuk lewat unggahan web (tak ada #KORAN yang menjadwalkan
 // apa pun). Tanpa ini, tanggal-tanggal itu tak punya jalan menuju resume sama
 // sekali kecuali menunggu file baru kebetulan datang.
+// Tandai satu rekening NIHIL (tanpa transaksi) untuk satu tanggal — tombol di
+// menu /uang-masuk. Jalur kedua selain hashtag WA; penulis datanya SATU
+// (nyatakanNihil) supaya kedua jalur tak bisa menyimpang.
+app.post("/cashin/statement/nihil", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const body = await c.req.json().catch(() => ({}));
+  const label = String(body.label_file ?? "").trim();
+  if (!label) return c.json({ error: "field 'label_file' wajib" }, 400);
+  // 'oleh' WAJIB — pernyataan nihil tak bisa diverifikasi mesin, jadi ia harus
+  // bisa ditelusuri ke orangnya. Penjaga CHECK di migrasi 179 menolak yang kosong.
+  const oleh = String(body.oleh ?? "").trim();
+  if (!oleh) return c.json({ error: "field 'oleh' wajib (siapa yang menyatakan)" }, 400);
+  const r = await nyatakanNihil(label, oleh, { tanggal: body.tanggal ?? null });
+  return r.ok ? c.json(r) : c.json(r, 400);
+});
+
 app.post("/cashin/resume/draft", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const body = await c.req.json().catch(() => ({}));

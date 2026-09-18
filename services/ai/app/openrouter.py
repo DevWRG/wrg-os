@@ -81,8 +81,12 @@ def klaim_models() -> List[str]:
     """Model OpenRouter (vision) untuk DOC #KLAIM OCR. Default Gemini (blueprint
     minta "Gemini Vision" eksplisit), fallback varian Gemini lain — bukan
     Claude/DeepSeek spt fitur teks lain, krn keduanya butuh dukungan image input."""
-    primary = os.environ.get("KLAIM_MODEL_PRIMARY", "google/gemini-2.0-flash-001")
-    fallback = os.environ.get("KLAIM_MODEL_FALLBACK", "google/gemini-flash-1.5")
+    # Slug lama ('google/gemini-2.0-flash-001' / 'gemini-flash-1.5') SUDAH TIDAK
+    # ADA di katalog OpenRouter → 404. Dampaknya sama persis dengan yang menimpa
+    # pembaca rekening koran 18 Sep 2026: OCR nota #KLAIM gagal SENYAP, dan
+    # gejalanya terlihat seperti dokumennya yang bermasalah. Lihat koran_models().
+    primary = os.environ.get("KLAIM_MODEL_PRIMARY", "google/gemini-3.8-flash")
+    fallback = os.environ.get("KLAIM_MODEL_FALLBACK", "google/gemini-3.5-flash")
     return [primary, fallback]
 
 
