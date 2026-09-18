@@ -6,7 +6,15 @@ import { handleSalesAnalyticsQuery } from "./inbound-sales-analytics.js";
 import { resolveSender } from "./master.js";
 import { upsertDailyTodo, computeIsLate } from "./todo.js";
 import { createReminder } from "./reminder.js";
-import { ingestKoran, nyatakanNihil, parseNihil, type IngestKoranResult } from "./cashin.js";
+import {
+  ingestKoran,
+  kataKategoriTersedia,
+  nyatakanNihil,
+  parseNihil,
+  parseTriage,
+  triageDariWa,
+  type IngestKoranResult,
+} from "./cashin.js";
 
 // Role yang pakai alur AM per-customer (sales_plan/activity_log + foto), bukan todo.
 const AM_ROLES = new Set(["AM", "Teknisi"]);
@@ -932,6 +940,30 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
   if (kind === "koran") {
     // Lampiran boleh menempel di pesan hashtag ini, ATAU datang sebagai pesan
     // terpisah sebelum/sesudahnya — lihat catatan di cabang kind === "none".
+    // "#KORAN triage T1 uang masuk" — memutuskan baris yang tertahan langsung
+    // dari grup. Dicek paling awal: perintah ini tak berlampiran dan tak boleh
+    // tertukar dengan pernyataan nihil maupun penjodohan lampiran.
+    const triage = parseTriage(row.body);
+    if (triage) {
+      const oleh = String(row.sender_name ?? "").trim() || "Finance";
+      if (triage.kategori === null) {
+        const reply = await sendViaWaGateway(
+          target,
+          `⚠️ Kategori tidak dikenali. Pakai salah satu: ${kataKategoriTersedia()}.\nContoh: *#KORAN triage ${triage.kode} uang masuk*`,
+        );
+        return finish({ error: "kategori-tak-dikenal", reply }, "koran");
+      }
+      const r = await triageDariWa(triage.kode, triage.kategori, oleh);
+      const rp = (n: number) => "Rp " + Math.round(n).toLocaleString("id-ID");
+      const reply = await sendViaWaGateway(
+        target,
+        r.ok
+          ? `✅ ${triage.kode} (${r.label_file} ${rp(r.nominal ?? 0)}) ditetapkan sebagai *${r.kategori}* oleh ${oleh}. Angka resume sudah disegarkan.`
+          : `⚠️ ${r.error}`,
+      );
+      return finish({ triage: r, reply }, "koran");
+    }
+
     // Pernyataan "hari ini nihil" — TANPA lampiran, dan itu memang bentuknya:
     // rekening tanpa transaksi tak bisa diunduh dari internet banking sama
     // sekali (dilaporkan Finance 18 Sep 2026). Dicek SEBELUM penjodohan
