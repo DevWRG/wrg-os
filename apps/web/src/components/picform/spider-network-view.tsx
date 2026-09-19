@@ -6,7 +6,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { KoordinasiView } from "./koordinasi-view";
 import { KoordGraph } from "./spider/koord-graph";
-import { WorkTree } from "./spider/work-tree";
+import { WorkForce } from "./spider/work-force";
 import type { KoordGraf, PohonPekerjaan } from "./spider/types";
 
 // Tiga tab, tiga pertanyaan berbeda — bukan tiga selera tampilan:
@@ -35,7 +35,7 @@ export function SpiderNetworkView({
 
       <TabsContent value="pohon" className="pt-3">
         {pohon && pohon.ringkas.posisi > 0 ? (
-          <WorkTree data={pohon} />
+          <WorkForce data={pohon} />
         ) : (
           <Kosong />
         )}
@@ -43,7 +43,7 @@ export function SpiderNetworkView({
 
       <TabsContent value="jaringan" className="pt-3">
         {graf && graf.ringkas.baris > 0 ? (
-          <KoordGraph graf={graf} labelDivisi={labelDivisi} />
+          <KoordGraph graf={graf} labelDivisi={labelDivisi} pohon={pohon} />
         ) : (
           <Kosong />
         )}
