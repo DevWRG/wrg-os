@@ -175,6 +175,7 @@ import { execCommand, execAmRadar, execOutletMatrix, execDormantIntel, execKpiBa
 import { evaluateSalesAlerts } from "./repo/sales-analytics-alert-eval.js";
 import { computeNpk, getNpkScores, getNpkDetail, currentPeriod, type Period } from "./repo/npk.js";
 import { computeNpkAm, getNpkAmScores, getNpkAmDetail } from "./repo/npk-am.js";
+import { hitungKpiBulan, terapkanKpiBulan } from "./repo/kpi-measure.js";
 import {
   getInsentifSelf, getInsentifList, getInsentifDetail,
   computePeriode as computeInsentifPeriode,
@@ -3098,6 +3099,35 @@ const npkParams = (c: { req: { query: (k: string) => string | undefined } }): { 
   const period: Period = p === "S1" || p === "S2" ? (p as Period) : cur.period;
   return { year, period };
 };
+
+// Isi kpi_measurement dari data operasional. GET = pratinjau (tak menulis),
+// POST = terapkan. Keduanya butuh x-service-token: ini pekerjaan ops, bukan
+// aksi pengguna — tak ada rute BFF-nya, dan memang tak perlu.
+app.get("/kpi/measure", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const svc = process.env.API_SERVICE_TOKEN;
+  if (svc && c.req.header("x-service-token") !== svc) return c.json({ error: "forbidden" }, 403);
+  const period = c.req.query("period");
+  if (!period) return c.json({ error: "query period=YYYY-MM wajib" }, 400);
+  try {
+    return c.json(await hitungKpiBulan(period));
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : "gagal" }, 400);
+  }
+});
+
+app.post("/kpi/measure", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const svc = process.env.API_SERVICE_TOKEN;
+  if (svc && c.req.header("x-service-token") !== svc) return c.json({ error: "forbidden" }, 403);
+  const period = c.req.query("period");
+  if (!period) return c.json({ error: "query period=YYYY-MM wajib" }, 400);
+  try {
+    return c.json(await terapkanKpiBulan(period));
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : "gagal" }, 400);
+  }
+});
 
 app.post("/npk/compute", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
