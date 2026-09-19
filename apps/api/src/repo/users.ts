@@ -13,7 +13,7 @@ import { isAmRole } from "./access-scope.js";
 //   direktur → gate Executive, Insentif, NPK, approval Fund Request & PO,
 //              edit target WatchPoint, Purchase Forecast, Pricebook
 //   user     → nilai netral (default). TIDAK pernah dicek — akses murni dari grup.
-// 'viewer' DIHAPUS (migrasi 180): namanya menjanjikan read-only yang tak pernah
+// 'viewer' DIHAPUS (migrasi 181): namanya menjanjikan read-only yang tak pernah
 // ditegakkan di kode, jadi menyesatkan admin yang mengaturnya.
 export const LOGIN_ROLES = ["admin", "direktur", "user"] as const;
 export type LoginRole = (typeof LOGIN_ROLES)[number];
