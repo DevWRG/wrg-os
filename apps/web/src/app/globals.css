@@ -61,6 +61,31 @@
      batang skeleton-nya tak terlihat dan layar muat terbaca blank. */
   --skeleton: #dbe3ec;
   --skeleton-highlight: #eef2f7;
+
+  /* Token graf D3 (/network — Spider Network). TERPISAH dari --chart-1..5 dengan
+     sengaja: tiga di antaranya (#ef4444 danger, #f59e0b warning, #10b981 success)
+     adalah warna STATUS, dan memakai ulangnya sebagai "kategori 3" membuat node
+     biasa terbaca seperti peringatan.
+
+     Nilai di bawah bukan pilihan selera — dipilih lewat validator palet
+     (lightness band · chroma · pemisahan buta-warna semua-pasangan · lantai
+     penglihatan normal · kontras vs permukaan) untuk DUA mode, masing-masing
+     diuji terhadap permukaan kartunya sendiri (#ffffff terang, #141b2d gelap).
+     Kalau diubah, jalankan ulang validatornya — pasangan biru/oranye ini yang
+     paling kokoh; menambah warna ketiga (merah/hijau/ungu) SELALU jatuh di
+     bawah ambang ΔE terhadap salah satu dari keduanya. Karena itu jenis node
+     dibedakan lewat BENTUK (kotak=divisi · lingkaran=posisi · belah-ketupat=
+     pihak luar), bukan lewat warna tambahan. */
+  --viz-internal: #0072b2;      /* divisi & posisi — pihak di dalam organisasi */
+  --viz-external: #c77a00;      /* Customer/User, Vendor/Principal, Leadership */
+  /* Tangga level otomasi SOP (Manual → Digitalisasi → Otomasi → AI): satu hue,
+     terang→gelap. Ordinal, jadi WAJIB satu hue — pelangi di sini akan membuat
+     "Manual" dan "AI" terbaca sebagai dua kategori tak berurut. */
+  --viz-level-1: #8fbbe8;
+  --viz-level-2: #5b93d6;
+  --viz-level-3: #2a6ab5;
+  --viz-level-4: #123a66;
+
   --shadow-card: 0 1px 3px 0 rgb(15 23 42 / 0.06), 0 1px 2px -1px rgb(15 23 42 / 0.04);
   --shadow-lg: 0 10px 15px -3px rgb(15 23 42 / 0.08), 0 4px 6px -4px rgb(15 23 42 / 0.05);
 }
@@ -115,6 +140,17 @@
   --purple: #a78bfa;
   --skeleton: #222d47;
   --skeleton-highlight: #33415f;
+
+  /* Graf D3 — langkah gelap yang DIPILIH, bukan pembalikan otomatis nilai
+     terang: tiap nilai divalidasi ulang terhadap permukaan kartu gelap
+     (#141b2d). Tangga levelnya juga berbalik arah (gelap→terang) supaya
+     "makin tinggi levelnya, makin menonjol" tetap berlaku di latar gelap. */
+  --viz-internal: #3987e5;
+  --viz-external: #c98500;
+  --viz-level-1: #2f6ea8;
+  --viz-level-2: #4a8fd0;
+  --viz-level-3: #79b4ea;
+  --viz-level-4: #b3d8fa;
   --shadow-card: 0 1px 3px 0 rgb(0 0 0 / 0.3), 0 1px 2px -1px rgb(0 0 0 / 0.25);
   --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.5), 0 4px 6px -4px rgb(0 0 0 / 0.4);
 }
