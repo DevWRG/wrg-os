@@ -56,6 +56,11 @@
   --primary-soft: #e0f7fb;
   --primary-dark: #0a8a9e;
   --purple: #8b5cf6;
+  /* Rangka muat (skeleton). TIDAK boleh memakai --muted: di terang nilainya
+     #f1f5f9, sementara --background #f0f4f8 — bedanya 1–2 per kanal, jadi
+     batang skeleton-nya tak terlihat dan layar muat terbaca blank. */
+  --skeleton: #dbe3ec;
+  --skeleton-highlight: #eef2f7;
   --shadow-card: 0 1px 3px 0 rgb(15 23 42 / 0.06), 0 1px 2px -1px rgb(15 23 42 / 0.04);
   --shadow-lg: 0 10px 15px -3px rgb(15 23 42 / 0.08), 0 4px 6px -4px rgb(15 23 42 / 0.05);
 }
@@ -108,6 +113,8 @@
   --primary-soft: #0a2e34;
   --primary-dark: #15c8dc;
   --purple: #a78bfa;
+  --skeleton: #222d47;
+  --skeleton-highlight: #33415f;
   --shadow-card: 0 1px 3px 0 rgb(0 0 0 / 0.3), 0 1px 2px -1px rgb(0 0 0 / 0.25);
   --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.5), 0 4px 6px -4px rgb(0 0 0 / 0.4);
 }
@@ -131,6 +138,7 @@
   --color-secondary-foreground: var(--secondary-foreground);
   --color-muted: var(--muted);
   --color-muted-foreground: var(--muted-foreground);
+  --color-skeleton: var(--skeleton);
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
@@ -183,6 +191,36 @@
   }
   body {
     @apply bg-background text-foreground;
+  }
+}
+
+/* Rangka muat: warna dasar --skeleton + sapuan kilau yang bergerak.
+   `animate-pulse` saja tidak cukup — ia hanya menaik-turunkan opacity, jadi
+   pada warna serendah ini gerakannya nyaris tak terbaca. Sapuan gradien
+   bergerak melintang jauh lebih kelihatan bahwa layarnya sedang bekerja,
+   bukan kosong. Prefers-reduced-motion: gerak mati, warnanya tetap ada. */
+.skeleton-sheen {
+  background-color: var(--skeleton);
+  background-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--skeleton-highlight) 50%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  background-repeat: no-repeat;
+  animation: wrg-skeleton-sheen 1.6s ease-in-out infinite;
+}
+
+@keyframes wrg-skeleton-sheen {
+  from { background-position: -100% 0; }
+  to { background-position: 200% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-sheen {
+    background-image: none;
+    animation: none;
   }
 }
 
