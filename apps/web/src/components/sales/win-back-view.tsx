@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { CardPagination, usePagedList } from "@/components/ui/card-pagination";
 import { Input } from "@/components/ui/input";
 
 export interface DormantCustomer {
@@ -49,6 +50,9 @@ export function WinBackView({ customers }: { customers: DormantCustomer[] }) {
 
   const atRisk = useMemo(() => filtered.reduce((s, c) => s + c.total, 0), [filtered]);
 
+  // Kartu dipotong per halaman; KPI & ekspor CSV tetap atas seluruh `filtered`.
+  const { visible, page, pageSize, setPage, setPageSize } = usePagedList(filtered, `${minDays}|${am}|${q}|${sort}`);
+
   const exportCsv = () => downloadCsv(
     `win-back_${minDays}hari_${new Date().toISOString().slice(0, 10)}.csv`,
     ["Pelanggan", "Cabang", "AM", "Revenue historis", "Order terakhir", "Tidak aktif (hari)", "Faktur"],
@@ -92,7 +96,7 @@ export function WinBackView({ customers }: { customers: DormantCustomer[] }) {
         <p className="text-muted-foreground text-sm">Tidak ada pelanggan tidak aktif di filter ini.</p>
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {filtered.map((c) => (
+          {visible.map((c) => (
             <Card key={c.id} className={`border-l-4 ${sevBorder(c.days_since)}`}>
               <CardContent className="py-3.5">
                 <div className="flex items-start justify-between gap-2">
@@ -116,6 +120,14 @@ export function WinBackView({ customers }: { customers: DormantCustomer[] }) {
           ))}
         </div>
       )}
+
+      <CardPagination
+        total={filtered.length}
+        page={page}
+        pageSize={pageSize}
+        onPageChange={setPage}
+        onPageSizeChange={setPageSize}
+      />
     </div>
   );
 }
