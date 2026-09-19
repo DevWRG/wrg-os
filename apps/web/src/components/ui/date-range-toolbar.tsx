@@ -8,7 +8,7 @@ const ymd = (d: Date) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 
 // Toolbar filter rentang tanggal (Dari/Sampai) + preset "Bulan ini" & Reset.
-// Dipakai di slot `toolbar` DataTable (mis. Manage Leave, Visits, Sales TODO).
+// Dipakai di slot `toolbar` DataTable (mis. Manage Leave, Visits, Operation Plan & Report).
 export function DateRangeToolbar({
   from,
   to,
