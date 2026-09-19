@@ -18,6 +18,7 @@ interface Row {
   overall: number | null; rating: string;
   compliance: number | null; bsc: number | null; revenue: number; revenue_pct: number | null;
   active_days: number; leave_days: number; has_spine: boolean;
+  bsc_terukur?: number | null; bsc_total?: number | null; bsc_tanpa_angka?: boolean;
 }
 interface ListResp { period: string; rows: Row[] }
 
@@ -115,7 +116,23 @@ export function RaportList() {
                     <td className={`px-4 py-2 text-right font-semibold tabular-nums ${scoreTone(r.overall)}`}>{r.overall ?? "—"}</td>
                     <td className="px-4 py-2"><Badge variant="outline" className={scoreTone(r.overall)}>{r.rating}</Badge></td>
                     <td className="px-4 py-2 text-right tabular-nums">{r.compliance != null ? `${r.compliance}%` : "—"}</td>
-                    <td className="px-4 py-2 text-right tabular-nums">{r.bsc ?? "—"}</td>
+                    {/* Skor BSC tak pernah berdiri sendiri: di sebelahnya selalu
+                        cakupan pengukurannya. Angka 100 dari 5/5 KPI yang semuanya
+                        tanpa angka pendukung bukan hal yang sama dengan 100 betulan. */}
+                    <td className="px-4 py-2 text-right tabular-nums">
+                      {r.bsc ?? "—"}
+                      {r.bsc != null && r.bsc_total ? (
+                        <span
+                          className="text-muted-foreground ml-1 text-xs"
+                          title={`${r.bsc_terukur} dari ${r.bsc_total} KPI diukur pada periode ini`}
+                        >
+                          {r.bsc_terukur}/{r.bsc_total}
+                        </span>
+                      ) : null}
+                      {r.bsc != null && r.bsc_tanpa_angka ? (
+                        <span className="ml-1 text-amber-600" title="Pengukurannya persentase tanpa angka pendukung (actual kosong)">⚠</span>
+                      ) : null}
+                    </td>
                     <td className="px-4 py-2 text-right tabular-nums">{r.is_am ? rp(r.revenue) : "—"}</td>
                     <td className="px-4 py-2 text-center">
                       {r.has_spine
@@ -152,7 +169,7 @@ export function RaportList() {
             <p>
               <b>Rating</b>: <span className="text-emerald-600 font-medium">≥110 Istimewa</span> · <span className="text-emerald-600 font-medium">95–109 Sesuai Target</span> · <span className="text-amber-600 font-medium">80–94 Perlu Perhatian</span> · <span className="text-red-600 font-medium">&lt;80 Perlu Perbaikan</span>.
             </p>
-            <p><b>BSC</b> = skor Balanced Scorecard (rata-rata KPI tertimbang per perspektif). <b>Compliance</b> = % kepatuhan plan &amp; report. <b>Revenue</b> hanya untuk AM (netto).</p>
+            <p><b>BSC</b> = skor Balanced Scorecard (rata-rata KPI tertimbang per perspektif), <b>hanya dari KPI yang benar-benar diukur</b> pada periode ini — KPI tanpa pengukuran tidak dianggap tercapai. Angka kecil di sebelahnya = cakupannya (mis. <span className="tabular-nums">95 <span className="text-muted-foreground">1/5</span></span> berarti skor 95 berasal dari 1 dari 5 KPI). <span className="text-amber-600">⚠</span> = pengukurannya berupa persentase tanpa angka pendukung. <b>Compliance</b> = % kepatuhan plan &amp; report. <b>Revenue</b> hanya untuk AM (netto).</p>
             <p>Tanda <b>—</b> = data belum tersedia / karyawan belum tertaut ke profil (spine). Absensi = <b>proxy</b> (cuti + hari aktif); presensi clock-in belum ada.</p>
           </CardContent>
         </Card>
