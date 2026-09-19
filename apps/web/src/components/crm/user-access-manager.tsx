@@ -28,7 +28,7 @@ interface WaStatus { mode: "stub" | "dry-run" | "live"; delivered: boolean; erro
 
 // Role login — daftar KANONIK di apps/api/src/repo/users.ts (LOGIN_ROLES); server
 // menolak nilai di luar ini dengan 400, jadi daftar di sini murni tampilan.
-// 'viewer' dibuang (migrasi 180): tak pernah dicek kode, tapi namanya menjanjikan
+// 'viewer' dibuang (migrasi 181): tak pernah dicek kode, tapi namanya menjanjikan
 // read-only sehingga admin mengira sudah membatasi orang padahal tidak.
 // 'direktur' ditambahkan: dipakai nyata (Executive, Insentif, NPK, approval Fund
 // Request & PO, target WatchPoint) tapi dulu hanya bisa di-set lewat SQL manual.
@@ -40,7 +40,7 @@ const ROLE_HINT: Record<string, string> = {
 };
 
 // Nilai lama yang tak lagi ada di daftar (mis. 'viewer' pada DB yang belum kena
-// migrasi 180) tetap ditampilkan sebagai opsi. Tanpa ini <select> merender kosong
+// migrasi 181) tetap ditampilkan sebagai opsi. Tanpa ini <select> merender kosong
 // dan sekali disentuh nilainya ketimpa diam-diam.
 function roleOptions(current: string): string[] {
   return ROLES.includes(current) ? ROLES : [...ROLES, current];
