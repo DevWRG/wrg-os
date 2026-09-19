@@ -14,7 +14,7 @@ export default async function KaryawanDetailPage({ params }: { params: Promise<{
   if (!canViewRaportList(me)) {
     return (
       <>
-        <PageHeader title="Karyawan 360" description="Raport karyawan." />
+        <PageHeader title="Raport Karyawan 360" description="Raport karyawan." />
         <p className="text-muted-foreground">Hanya HoD/admin yang dapat mengakses halaman ini.</p>
       </>
     );
@@ -22,7 +22,7 @@ export default async function KaryawanDetailPage({ params }: { params: Promise<{
   return (
     <>
       <PageHeader
-        title="Karyawan 360"
+        title="Raport Karyawan 360"
         description="Scorecard lengkap karyawan."
         action={<Link href="/karyawan" className="text-primary text-sm hover:underline">← Kembali ke daftar</Link>}
       />
