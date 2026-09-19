@@ -91,13 +91,13 @@ export const NAV: NavGroup[] = [
   {
     label: "HR",
     items: [
-      { title: "Plan & Report", url: "/plan-report", icon: LayoutDashboard, feature: "dashboard" },
+      { title: "Resume Plan & Report", url: "/plan-report", icon: LayoutDashboard, feature: "dashboard" },
       // Judul boleh diganti bebas; `url` JANGAN — feature.key diturunkan dari
       // featureKey(url), jadi mengubahnya bikin Sync Fitur menganggap 'todos'
       // zombie lalu menyemai kunci baru yang default TERTUTUP untuk semua grup
       // non-superuser (menu hilang tanpa ada yang merasa mencabut izin).
       { title: "Operation Plan & Report", url: "/todos", icon: ListChecks },
-      { title: "Visits", url: "/visits", icon: MapPin },
+      { title: "Visits Plan & Report", url: "/visits", icon: MapPin },
       { title: "Reminders", url: "/reminders", icon: Bell },
       { title: "Holidays", url: "/holidays", icon: CalendarOff },
       { title: "Manage Leave", url: "/leave", icon: CalendarDays },
