@@ -33,7 +33,7 @@ export default async function TodosPage() {
   return (
     <>
       <PageHeader
-        title="Sales TODO / Plan"
+        title="Operation Plan & Report"
         description="Rencana harian AM (port sales_todo). Late plan = disubmit setelah jam 08:00 lokal."
         action={<AddTodoSheet />}
       />
