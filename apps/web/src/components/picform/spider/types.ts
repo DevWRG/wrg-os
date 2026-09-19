@@ -57,11 +57,23 @@ export interface KoordNode {
   masuk: number;
   derajat: number;
 }
+/** Satu pernyataan koordinasi apa adanya dari Tabel C form PIC.
+ *
+ *  `apa` (ISI komunikasinya) dan `pemicu` (KAPAN/KARENA APA ia terjadi) sengaja
+ *  terpisah — lihat RinciKoord di apps/api/src/repo/picform.ts. Keduanya terisi
+ *  di seluruh 126 baris; menampilkan `apa` saja berarti membuang setengah model
+ *  komunikasinya. */
+export interface RinciKoord {
+  apa: string | null;
+  pemicu: string | null;
+  /** posisi yang menyatakan — hanya ada di level divisi */
+  dari?: string;
+}
 export interface KoordEdge {
   from: string;
   to: string;
   bobot: number;
-  topik: string[];
+  rinci: RinciKoord[];
 }
 export interface KoordEdgeDivisi {
   from: string;
@@ -69,6 +81,7 @@ export interface KoordEdgeDivisi {
   bobot: number;
   bolak_balik: boolean;
   sepihak: boolean;
+  rinci: RinciKoord[];
 }
 export interface KoordGraf {
   ringkas: {

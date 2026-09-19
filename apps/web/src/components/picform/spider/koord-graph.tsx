@@ -133,15 +133,28 @@ export function KoordGraph({
       });
     };
 
-    for (const e of sumber) {
-      pakai(e.from, mode !== "divisi");
-      pakai(e.to, false);
-      gs.push({
-        id: `k:${e.from}→${e.to}`, source: e.from, target: e.to, jenis: "koordinasi",
-        bobot: e.bobot,
-        sepihak: "sepihak" in e ? e.sepihak : false,
-        bolak_balik: "bolak_balik" in e ? e.bolak_balik : false,
-      });
+    // Dua cabang terpisah, bukan satu loop atas union bertipe longgar:
+    // 'sepihak'/'bolak_balik' HANYA ada di level divisi (di level posisi
+    // resiprositas mustahil menyala — asal selalu posisi, tujuan selalu divisi),
+    // dan memeriksanya lewat `in` membuat tipenya melebar jadi unknown.
+    if (mode === "divisi") {
+      for (const e of graf.edges_divisi) {
+        pakai(e.from, false);
+        pakai(e.to, false);
+        gs.push({
+          id: `k:${e.from}→${e.to}`, source: e.from, target: e.to, jenis: "koordinasi",
+          bobot: e.bobot, sepihak: e.sepihak, bolak_balik: e.bolak_balik,
+        });
+      }
+    } else {
+      for (const e of graf.edges) {
+        pakai(e.from, true);
+        pakai(e.to, false);
+        gs.push({
+          id: `k:${e.from}→${e.to}`, source: e.from, target: e.to, jenis: "koordinasi",
+          bobot: e.bobot, sepihak: false, bolak_balik: false,
+        });
+      }
     }
 
     // Cabang yang dibuka ditambahkan setelah simpul inti, menelusuri ke bawah
@@ -362,9 +375,27 @@ export function KoordGraph({
                           {"sepihak" in e && e.sepihak ? " · sepihak"
                             : "bolak_balik" in e && e.bolak_balik ? " · bolak-balik" : ""}
                         </span>
-                        {"topik" in e && e.topik.length > 0 && (
-                          <ul className="mt-0.5 list-inside list-disc text-xs text-muted-foreground">
-                            {e.topik.slice(0, 4).map((t, i) => <li key={i}>{t}</li>)}
+                        {/* Isi DAN pemicunya, terpisah. "Apa" saja tidak
+                            menjelaskan model komunikasinya: yang membedakan
+                            koordinasi rutin dari koordinasi kejadian justru
+                            ada di kolom pemicu ("Bulanan, tanggal 1" vs
+                            "Setiap ada transaksi aset masuk/keluar"). */}
+                        {e.rinci.length > 0 && (
+                          <ul className="mt-1 space-y-1.5">
+                            {e.rinci.map((x, i) => (
+                              <li key={i} className="border-l-2 border-border pl-2 text-xs">
+                                <div className="text-foreground/90">{x.apa ?? "— tak diisi"}</div>
+                                <div className="text-muted-foreground">
+                                  <span className="font-medium">Pemicu:</span>{" "}
+                                  {x.pemicu ?? "— tak diisi"}
+                                </div>
+                                {x.dari && (
+                                  <div className="text-muted-foreground">
+                                    <span className="font-medium">Dinyatakan oleh:</span> {x.dari}
+                                  </div>
+                                )}
+                              </li>
+                            ))}
                           </ul>
                         )}
                       </li>
@@ -380,6 +411,24 @@ export function KoordGraph({
                       <li key={`${e.from}→${e.to}`}>
                         {namaDari(e.from)}{" "}
                         <span className="text-xs text-muted-foreground">· {e.bobot} baris</span>
+                        {e.rinci.length > 0 && (
+                          <ul className="mt-1 space-y-1.5">
+                            {e.rinci.map((x, i) => (
+                              <li key={i} className="border-l-2 border-border pl-2 text-xs">
+                                <div className="text-foreground/90">{x.apa ?? "— tak diisi"}</div>
+                                <div className="text-muted-foreground">
+                                  <span className="font-medium">Pemicu:</span>{" "}
+                                  {x.pemicu ?? "— tak diisi"}
+                                </div>
+                                {x.dari && (
+                                  <div className="text-muted-foreground">
+                                    <span className="font-medium">Dinyatakan oleh:</span> {x.dari}
+                                  </div>
+                                )}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
                       </li>
                     ))}
                   </ul>

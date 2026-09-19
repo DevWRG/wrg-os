@@ -324,11 +324,29 @@ export async function listDivisi(): Promise<{ key: string; label: string }[]> {
 export interface KoordNode {
   id: string; label: string; grup: string; keluar: number; masuk: number; derajat: number;
 }
+/** Satu pernyataan koordinasi apa adanya dari Tabel C.
+ *
+ *  `apa` DAN `pemicu` DISIMPAN TERPISAH, tidak digabung jadi satu kalimat.
+ *  Versi pertama menempelkannya jadi "apa — pemicu" dan hasilnya dua hal yang
+ *  berbeda jenis terbaca sebagai satu: `apa` adalah ISI komunikasinya, `pemicu`
+ *  adalah KAPAN/KARENA APA ia terjadi ("Bulanan, tanggal 1", "Setiap ada
+ *  transaksi aset masuk/keluar"). Gabungan itu juga tak bisa dipilah lagi di
+ *  sisi UI — separator "—" muncul di dalam teks aslinya. Keduanya terisi di
+ *  seluruh 126 baris, jadi menyembunyikan `pemicu` berarti membuang setengah
+ *  model komunikasinya. */
+export interface RinciKoord {
+  apa: string | null;
+  pemicu: string | null;
+  /** posisi yang menyatakan — hanya diisi di level divisi, tempat asalnya
+   *  sudah diangkat ke divisi dan nama posisinya akan hilang tanpa ini */
+  dari?: string;
+}
 export interface KoordEdge {
-  from: string; to: string; bobot: number; topik: string[];
+  from: string; to: string; bobot: number; rinci: RinciKoord[];
 }
 export interface KoordEdgeDivisi {
   from: string; to: string; bobot: number; bolak_balik: boolean; sepihak: boolean;
+  rinci: RinciKoord[];
 }
 export interface KoordGraf {
   ringkas: {
@@ -376,11 +394,17 @@ export async function koordinasiGraf(opts: { divisi?: string } = {}): Promise<Ko
     const b = pakaiNode(ke, r.tak_kenal ? "tak-terklasifikasi" : ((r.dengan_grup as string | null) ?? "lain"));
     a.keluar++; b.masuk++;
     const k = `${dari}→${ke}`;
-    if (!edge.has(k)) edge.set(k, { from: dari, to: ke, bobot: 0, topik: [] });
+    if (!edge.has(k)) edge.set(k, { from: dari, to: ke, bobot: 0, rinci: [] });
     const e = edge.get(k)!;
     e.bobot++;
-    const topik = [r.apa, r.pemicu].filter(Boolean).join(" — ");
-    if (topik && e.topik.length < 8) e.topik.push(topik);
+    // SELURUH baris disertakan, tidak dipotong 8 teratas seperti versi pertama:
+    // seluruh tabelnya cuma 126 baris, jadi batas itu tak menghemat apa pun dan
+    // membuat `bobot` (jumlah baris) tak cocok dengan daftar yang tampil di
+    // bawahnya — pembaca menyimpulkan sisanya tak ada.
+    e.rinci.push({
+      apa: (r.apa as string | null) ?? null,
+      pemicu: (r.pemicu as string | null) ?? null,
+    });
 
     // Level divisi: asal diangkat dari posisi ke divisi-nya, supaya kedua ujung
     // edge bersatuan sama dan resiprositas bisa diuji. Koordinasi di DALAM satu
@@ -390,8 +414,19 @@ export async function koordinasiGraf(opts: { divisi?: string } = {}): Promise<Ko
     const dariDiv = String(r.divisi_key);
     if (dariDiv !== ke) {
       const kd = `${dariDiv}→${ke}`;
-      if (!edgeDiv.has(kd)) edgeDiv.set(kd, { from: dariDiv, to: ke, bobot: 0, bolak_balik: false, sepihak: false });
-      edgeDiv.get(kd)!.bobot++;
+      if (!edgeDiv.has(kd)) {
+        edgeDiv.set(kd, { from: dariDiv, to: ke, bobot: 0, bolak_balik: false, sepihak: false, rinci: [] });
+      }
+      const ed = edgeDiv.get(kd)!;
+      ed.bobot++;
+      // Nama posisi asal ikut dibawa ke level divisi. Tanpa itu, pasangan
+      // "finance_sc → aftersales" dengan 7 baris cuma jadi angka: yang menyatakan
+      // siapa, atas pemicu apa, tak bisa ditelusuri lagi dari sini.
+      ed.rinci.push({
+        apa: (r.apa as string | null) ?? null,
+        pemicu: (r.pemicu as string | null) ?? null,
+        dari,
+      });
     }
   }
   for (const n of node.values()) n.derajat = n.keluar + n.masuk;
