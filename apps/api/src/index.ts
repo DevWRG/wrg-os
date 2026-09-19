@@ -230,7 +230,7 @@ import {
   isMirrorSort,
 } from "./repo/accurateMirror.js";
 import { listWarehouses, listStockBranch, stockBranchSummary } from "./repo/stock-branch.js";
-import { picFormSummary, listSopLangkah, listRaciPosisi, picFormKelengkapan, listDivisi, koordinasiGraf, raciKaryawanPosisi, setTautanManual, hapusTautanManual } from "./repo/picform.js";
+import { picFormSummary, listSopLangkah, listRaciPosisi, picFormKelengkapan, listDivisi, koordinasiGraf, pohonPekerjaan, raciKaryawanPosisi, setTautanManual, hapusTautanManual } from "./repo/picform.js";
 import { recordDelivery, recordEmail, recordAlert, listLogs } from "./repo/logs.js";
 import { renderSalesDocHtml, renderBriefingHtml } from "./repo/exportdoc.js";
 import { runHodDaily } from "./repo/hodreminder.js";
@@ -4460,6 +4460,15 @@ app.get("/picform/koordinasi", async (c) => {
     return c.json({ error: `divisi tak dikenal: ${divisi}` }, 400);
   }
   return c.json(await koordinasiGraf({ divisi: divisi ?? undefined }));
+});
+
+// Pohon pekerjaan (divisi → posisi → tugas, dan divisi → SOP → langkah) —
+// pengisi tab "Pohon Pekerjaan" di /network. Sengaja TANPA paginasi: lihat
+// alasannya di pohonPekerjaan() (repo/picform.ts) — pohon yang dipotong memberi
+// hitungan cabang yang salah tanpa bersuara.
+app.get("/picform/pohon", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await pohonPekerjaan());
 });
 
 // Rantai orang → posisi → proses + karyawan yang belum tertaut beserta

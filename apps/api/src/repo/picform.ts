@@ -324,11 +324,29 @@ export async function listDivisi(): Promise<{ key: string; label: string }[]> {
 export interface KoordNode {
   id: string; label: string; grup: string; keluar: number; masuk: number; derajat: number;
 }
+/** Satu pernyataan koordinasi apa adanya dari Tabel C.
+ *
+ *  `apa` DAN `pemicu` DISIMPAN TERPISAH, tidak digabung jadi satu kalimat.
+ *  Versi pertama menempelkannya jadi "apa — pemicu" dan hasilnya dua hal yang
+ *  berbeda jenis terbaca sebagai satu: `apa` adalah ISI komunikasinya, `pemicu`
+ *  adalah KAPAN/KARENA APA ia terjadi ("Bulanan, tanggal 1", "Setiap ada
+ *  transaksi aset masuk/keluar"). Gabungan itu juga tak bisa dipilah lagi di
+ *  sisi UI — separator "—" muncul di dalam teks aslinya. Keduanya terisi di
+ *  seluruh 126 baris, jadi menyembunyikan `pemicu` berarti membuang setengah
+ *  model komunikasinya. */
+export interface RinciKoord {
+  apa: string | null;
+  pemicu: string | null;
+  /** posisi yang menyatakan — hanya diisi di level divisi, tempat asalnya
+   *  sudah diangkat ke divisi dan nama posisinya akan hilang tanpa ini */
+  dari?: string;
+}
 export interface KoordEdge {
-  from: string; to: string; bobot: number; topik: string[];
+  from: string; to: string; bobot: number; rinci: RinciKoord[];
 }
 export interface KoordEdgeDivisi {
   from: string; to: string; bobot: number; bolak_balik: boolean; sepihak: boolean;
+  rinci: RinciKoord[];
 }
 export interface KoordGraf {
   ringkas: {
@@ -376,11 +394,17 @@ export async function koordinasiGraf(opts: { divisi?: string } = {}): Promise<Ko
     const b = pakaiNode(ke, r.tak_kenal ? "tak-terklasifikasi" : ((r.dengan_grup as string | null) ?? "lain"));
     a.keluar++; b.masuk++;
     const k = `${dari}→${ke}`;
-    if (!edge.has(k)) edge.set(k, { from: dari, to: ke, bobot: 0, topik: [] });
+    if (!edge.has(k)) edge.set(k, { from: dari, to: ke, bobot: 0, rinci: [] });
     const e = edge.get(k)!;
     e.bobot++;
-    const topik = [r.apa, r.pemicu].filter(Boolean).join(" — ");
-    if (topik && e.topik.length < 8) e.topik.push(topik);
+    // SELURUH baris disertakan, tidak dipotong 8 teratas seperti versi pertama:
+    // seluruh tabelnya cuma 126 baris, jadi batas itu tak menghemat apa pun dan
+    // membuat `bobot` (jumlah baris) tak cocok dengan daftar yang tampil di
+    // bawahnya — pembaca menyimpulkan sisanya tak ada.
+    e.rinci.push({
+      apa: (r.apa as string | null) ?? null,
+      pemicu: (r.pemicu as string | null) ?? null,
+    });
 
     // Level divisi: asal diangkat dari posisi ke divisi-nya, supaya kedua ujung
     // edge bersatuan sama dan resiprositas bisa diuji. Koordinasi di DALAM satu
@@ -390,8 +414,19 @@ export async function koordinasiGraf(opts: { divisi?: string } = {}): Promise<Ko
     const dariDiv = String(r.divisi_key);
     if (dariDiv !== ke) {
       const kd = `${dariDiv}→${ke}`;
-      if (!edgeDiv.has(kd)) edgeDiv.set(kd, { from: dariDiv, to: ke, bobot: 0, bolak_balik: false, sepihak: false });
-      edgeDiv.get(kd)!.bobot++;
+      if (!edgeDiv.has(kd)) {
+        edgeDiv.set(kd, { from: dariDiv, to: ke, bobot: 0, bolak_balik: false, sepihak: false, rinci: [] });
+      }
+      const ed = edgeDiv.get(kd)!;
+      ed.bobot++;
+      // Nama posisi asal ikut dibawa ke level divisi. Tanpa itu, pasangan
+      // "finance_sc → aftersales" dengan 7 baris cuma jadi angka: yang menyatakan
+      // siapa, atas pemicu apa, tak bisa ditelusuri lagi dari sini.
+      ed.rinci.push({
+        apa: (r.apa as string | null) ?? null,
+        pemicu: (r.pemicu as string | null) ?? null,
+        dari,
+      });
     }
   }
   for (const n of node.values()) n.derajat = n.keluar + n.masuk;
@@ -605,4 +640,122 @@ export async function hapusTautanManual(
     return { ok: false, error: "tautan tak ditemukan, atau bukan tautan manual (tulisan skrip tak bisa dicabut dari UI — betulkan xlsx / posisi_alias)" };
   }
   return { ok: true };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Pohon pekerjaan: divisi → posisi → tugas, dan divisi → SOP → langkah.
+// Pengisi tab "Pohon Pekerjaan" di /network (visual D3).
+//
+// SOP DIGANTUNG DI DIVISI, BUKAN DI POSISI, dan itu bukan pilihan tata letak.
+// Tabel B form PIC tidak punya kolom posisi sama sekali (`sop.divisi_key`,
+// migrasi 168) — 167 SOP itu milik divisi. Menggantungkannya ke posisi berarti
+// mengarang pemetaan yang tak ada di sumbernya, persis yang dihindari saat
+// memilih grain POSISI/DIVISI ketimbang employee_id. Jadi tiap divisi punya dua
+// cabang sejajar: "Posisi" (dari Tabel A) dan "SOP" (dari Tabel B).
+//
+// SELURUH ISI DIKIRIM SEKALIGUS (283 tugas + 436 langkah ≈ 250 KB) dan tidak
+// dipaginasi. Pohon yang dipotong LIMIT akan memberi hitungan cabang yang salah
+// tanpa bersuara — pola yang sama dengan kartu KPI dari array terpotong. Kalau
+// suatu saat datanya membengkak, yang benar adalah memuat cabang saat di-expand
+// (per divisi), bukan memotong lalu tetap menampilkan total.
+export interface PohonTugas {
+  id: number; uraian: string; frekuensi: string | null; frekuensi_raw: string | null;
+  pj_key: string | null; pj_raw: string | null; kpi_target: string | null; rules: string | null;
+}
+export interface PohonPosisi {
+  id: number; nama: string; jumlah_orang: number | null; level_raw: string | null;
+  catatan: string | null; tugas: PohonTugas[];
+}
+export interface PohonLangkah {
+  id: number; seq: number; langkah: string;
+  kondisi: string | null; target_level: string | null; catatan: string | null;
+}
+export interface PohonSop { id: number; nama: string; langkah: PohonLangkah[] }
+export interface PohonDivisi {
+  key: string; label: string; pic_nama: string | null; hod_nama: string | null;
+  posisi: PohonPosisi[]; sop: PohonSop[];
+}
+export interface PohonPekerjaan {
+  ringkas: { divisi: number; posisi: number; tugas: number; sop: number; langkah: number };
+  divisi: PohonDivisi[];
+}
+
+export async function pohonPekerjaan(): Promise<PohonPekerjaan> {
+  const sql = db();
+  // Lima query datar lalu dirakit di JS — bukan jsonb_agg bersarang. Alasannya
+  // sama dengan picFormSummary(): agregat bersarang gampang kena fan-out begitu
+  // ada JOIN tambahan, dan di ukuran segini biayanya nol.
+  const [divisi, posisi, tugas, sopRows, langkah] = await Promise.all([
+    sql`SELECT key, label, pic_nama, hod_nama FROM divisi ORDER BY seq, key`,
+    sql`SELECT id, divisi_key, nama, jumlah_orang, level_raw, catatan
+          FROM posisi ORDER BY divisi_key, seq, nama`,
+    sql`SELECT id, posisi_id, uraian, frekuensi, frekuensi_raw, pj_key, pj_raw, kpi_target, rules
+          FROM posisi_tugas ORDER BY posisi_id, seq`,
+    sql`SELECT id, divisi_key, nama FROM sop ORDER BY divisi_key, seq, nama`,
+    sql`SELECT id, sop_id, seq, langkah, kondisi, target_level, catatan
+          FROM sop_langkah ORDER BY sop_id, seq`,
+  ]);
+
+  const tugasPer = new Map<number, PohonTugas[]>();
+  for (const t of tugas) {
+    const arr = tugasPer.get(Number(t.posisi_id)) ?? [];
+    arr.push({
+      id: Number(t.id), uraian: t.uraian as string,
+      frekuensi: (t.frekuensi as string | null) ?? null,
+      frekuensi_raw: (t.frekuensi_raw as string | null) ?? null,
+      pj_key: (t.pj_key as string | null) ?? null,
+      pj_raw: (t.pj_raw as string | null) ?? null,
+      kpi_target: (t.kpi_target as string | null) ?? null,
+      rules: (t.rules as string | null) ?? null,
+    });
+    tugasPer.set(Number(t.posisi_id), arr);
+  }
+  const langkahPer = new Map<number, PohonLangkah[]>();
+  for (const l of langkah) {
+    const arr = langkahPer.get(Number(l.sop_id)) ?? [];
+    arr.push({
+      id: Number(l.id), seq: Number(l.seq), langkah: l.langkah as string,
+      kondisi: (l.kondisi as string | null) ?? null,
+      target_level: (l.target_level as string | null) ?? null,
+      catatan: (l.catatan as string | null) ?? null,
+    });
+    langkahPer.set(Number(l.sop_id), arr);
+  }
+  const posisiPer = new Map<string, PohonPosisi[]>();
+  for (const p of posisi) {
+    const arr = posisiPer.get(p.divisi_key as string) ?? [];
+    arr.push({
+      id: Number(p.id), nama: p.nama as string,
+      jumlah_orang: p.jumlah_orang === null ? null : Number(p.jumlah_orang),
+      level_raw: (p.level_raw as string | null) ?? null,
+      catatan: (p.catatan as string | null) ?? null,
+      tugas: tugasPer.get(Number(p.id)) ?? [],
+    });
+    posisiPer.set(p.divisi_key as string, arr);
+  }
+  const sopPer = new Map<string, PohonSop[]>();
+  for (const s of sopRows) {
+    const arr = sopPer.get(s.divisi_key as string) ?? [];
+    arr.push({ id: Number(s.id), nama: s.nama as string, langkah: langkahPer.get(Number(s.id)) ?? [] });
+    sopPer.set(s.divisi_key as string, arr);
+  }
+
+  // Divisi tanpa posisi / tanpa SOP tetap muncul sebagai cabang kosong. Itu
+  // kondisi sah (kelengkapan form sangat tidak rata — Sales Area W&E cuma 1
+  // baris di Tabel B), dan menyembunyikannya membuat bolongnya tak terbaca.
+  const pohon: PohonDivisi[] = divisi.map((d) => ({
+    key: d.key as string, label: d.label as string,
+    pic_nama: (d.pic_nama as string | null) ?? null,
+    hod_nama: (d.hod_nama as string | null) ?? null,
+    posisi: posisiPer.get(d.key as string) ?? [],
+    sop: sopPer.get(d.key as string) ?? [],
+  }));
+
+  return {
+    ringkas: {
+      divisi: pohon.length, posisi: posisi.length, tugas: tugas.length,
+      sop: sopRows.length, langkah: langkah.length,
+    },
+    divisi: pohon,
+  };
 }
