@@ -50,6 +50,7 @@ import { runItTicketSlaAlerts } from "./repo/it-ticket.js";
 import { runMaintenanceAlerts, runGaMaintenanceBscFeed } from "./repo/ga-maintenance.js";
 import { runGaHelpdeskOverdueAlert, runGaHelpdeskBscFeed } from "./repo/ga-helpdesk.js";
 import { runLpseTenderReminder } from "./repo/lpse-tender.js";
+import { terapkanKpiBulan } from "./repo/kpi-measure.js";
 
 // Penjadwal agen in-process (Blueprint v2.3). Default MATI — aktif hanya bila
 // AGENT_SCHEDULE_ENABLED=true. Tiap run tetap menulis ke audit_log via repo
@@ -176,6 +177,13 @@ export function startScheduler(): ScheduleStatus {
   // ga-helpdesk-bsc-feed (F139) — auto-isi kpi_measurement Dito ('SLA
   // compliance %'), bulanan. Display-only, tanpa WA.
   const gaHelpdeskBscEnabled = (process.env.GA_HELPDESK_BSC_ENABLED ?? "false").toLowerCase() === "true";
+  // kpi-measure — auto-isi kpi_measurement KPI sales dari data operasional
+  // (kunjungan, kepatuhan plan-report, revenue, customer baru, prospek).
+  // Cakupannya sengaja sempit: hanya KPI yang punya sumber tak-ambigu; sisanya
+  // dibiarkan kosong. Display-only, tanpa WA. Idempoten (upsert per kpi+periode)
+  // sehingga aman dijalankan tiap hari — bulan berjalan ikut disegarkan, bukan
+  // cuma dibekukan sekali di akhir bulan.
+  const kpiMeasureEnabled = (process.env.KPI_MEASURE_ENABLED ?? "false").toLowerCase() === "true";
   // lpse-tender-reminder (F20) — WA ke PIC kalau tender LPSE/E-Catalog macet
   // >N hari di status berjalan (belum selesai). Flag SENDIRI (default off).
   const lpseTenderReminderEnabled = (process.env.LPSE_TENDER_REMINDER_ENABLED ?? "false").toLowerCase() === "true";
@@ -1166,6 +1174,32 @@ export function startScheduler(): ScheduleStatus {
       { timezone },
     );
     live.push(`ga-maintenance-bsc-feed=${gaMaintBscExpr}`);
+  }
+
+  // kpi-measure — harian 01:30 WIB. Menyegarkan BULAN BERJALAN dan bulan lalu:
+  // faktur Accurate & laporan WA masih berdatangan sesudah tanggal 1, jadi
+  // menulis sekali di akhir bulan akan membekukan angka yang belum lengkap.
+  const kpiMeasureExpr = process.env.KPI_MEASURE_CRON ?? "30 1 * * *";
+  if (kpiMeasureEnabled && cron.validate(kpiMeasureExpr)) {
+    cron.schedule(
+      kpiMeasureExpr,
+      async () => {
+        const startedAt = new Date().toISOString();
+        const kini = wibDate().slice(0, 7);
+        const [y, m] = kini.split("-").map(Number);
+        const lalu = `${m === 1 ? y - 1 : y}-${String(m === 1 ? 12 : m - 1).padStart(2, "0")}`;
+        for (const period of [lalu, kini]) {
+          try {
+            const r = await terapkanKpiBulan(period);
+            console.log(`[scheduler] kpi-measure ${period} @ ${startedAt} ${JSON.stringify(r.ringkas)}`);
+          } catch (e) {
+            console.error(`[scheduler] kpi-measure ${period} gagal @ ${startedAt}:`, e);
+          }
+        }
+      },
+      { timezone },
+    );
+    live.push(`kpi-measure=${kpiMeasureExpr}`);
   }
 
   // lpse-tender-reminder (F20) — harian 08:00 WIB, cek tender macet >N hari
