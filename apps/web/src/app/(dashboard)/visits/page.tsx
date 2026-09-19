@@ -169,7 +169,7 @@ export default async function VisitsPage({
   return (
     <>
       <PageHeader
-        title="Visits"
+        title="Visits Plan & Report"
         description="Kunjungan AM dengan geotag + foto (port visit). Geo divalidasi terhadap bbox Indonesia."
         action={canAddVisit ? <AddVisitSheet amOptions={amOptions} /> : undefined}
       />

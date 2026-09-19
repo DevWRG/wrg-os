@@ -6,10 +6,10 @@ import { ChevronRight } from "lucide-react";
 
 // Label per segmen rute (gaya WRG-CRM). Fallback: kapitalisasi segmen.
 const LABELS: Record<string, string> = {
-  "plan-report": "Plan & Report",
+  "plan-report": "Resume Plan & Report",
   drilldown: "Detail",
   todos: "Operation Plan & Report",
-  visits: "Visits",
+  visits: "Visits Plan & Report",
   reminders: "Reminders",
   holidays: "Holidays",
   leave: "Manage Leave",
