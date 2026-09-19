@@ -1,7 +1,12 @@
--- 180 — Bersihkan role login yang tak dipakai: 'viewer' → 'user'.
+-- 181 — Bersihkan role login yang tak dipakai: 'viewer' → 'user'.
 --
 -- Idempoten. CATATAN: TIDAK memanggil BEGIN/COMMIT sendiri — runner
 -- (scripts/db/migrate.sh) yang mengatur transaksi.
+--
+-- Nomornya 181, bukan 180, karena 180 sudah dipakai 180_cashin_selisih.sql yang
+-- hanya ada di main (F-CASHIN di-port langsung ke sana). Selama keduanya di
+-- branch berbeda, check-migration-numbers.mjs tak melihat tabrakannya — baru
+-- gagal saat PR promosi dev → main menyatukan kedua pohon.
 --
 -- Duduk perkaranya: app_user.role adalah sisa era pra-RBAC (sebelum 044). Sejak
 -- matriks Akses Grup ada, izin per-menu (Aktif/Buat/Ubah/Hapus/Lihat) sepenuhnya

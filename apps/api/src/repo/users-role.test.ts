@@ -22,7 +22,7 @@ test("spasi & huruf besar dirapikan, bukan ditolak", () => {
   assert.equal(normalizeLoginRole("User\n"), "user");
 });
 
-test("'viewer' ditolak — dihapus lewat migrasi 180", () => {
+test("'viewer' ditolak — dihapus lewat migrasi 181", () => {
   // Tak pernah dicek kode mana pun, tapi namanya menjanjikan read-only sehingga
   // admin mengira sudah membatasi orang padahal izin nyatanya dari Akses Grup.
   assert.equal(normalizeLoginRole("viewer"), null);
