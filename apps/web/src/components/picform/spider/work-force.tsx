@@ -117,7 +117,11 @@ function bangunPohon(data: PohonPekerjaan): Simpul {
     };
   });
 
-  return { id: "root", jenis: "root", label: "WRG-OS", sub: `${divisi.length} divisi`, anak: divisi };
+  // Label akar = nama PERUSAHAAN, bukan nama sistemnya. Simpul ini mewakili
+  // organisasi yang divisinya tergantung di bawahnya; "WRG-OS" adalah aplikasi
+  // yang menggambarnya, dan menaruhnya di puncak bagan organisasi membuat
+  // seolah-olah divisi-divisi itu milik perangkat lunak.
+  return { id: "root", jenis: "root", label: "PT WRG", sub: `${divisi.length} divisi`, anak: divisi };
 }
 
 const JARI: Record<Jenis, number> = {
