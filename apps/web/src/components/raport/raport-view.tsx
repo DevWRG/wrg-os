@@ -11,7 +11,11 @@ import { PeriodPicker, defaultPeriod } from "@/components/raport/period-picker";
 
 // ── Tipe (selaras apps/api getRaportDetail) ──
 interface ScorePart { key: string; label: string; score: number | null; weight: number; eff_weight: number }
-interface KpiRow { id: string; name: string; target: string | null; perspective: string | null; achievement_pct: number | null }
+interface KpiRow {
+  id: string; name: string; target: string | null; perspective: string | null; achievement_pct: number | null;
+  /** ada `actual` di balik persentasenya? false = persentase tanpa angka pendukung. */
+  ada_angka?: boolean;
+}
 export interface RaportDetail {
   linked?: boolean;
   message?: string;
@@ -21,7 +25,10 @@ export interface RaportDetail {
   employee: { am_id: string; nama: string; panggilan: string | null; role: string; cabang: string | null; is_am: boolean; spine_id: string | null };
   score: { overall: number | null; rating: string; parts: ScorePart[] };
   plan_report: { plan_count: number; report_count: number; completion: number | null; active_days: number; late: number; unmatched: number; expected: number; on_time: number; late_days: number; miss: number; compliance_rate: number | null } | null;
-  bsc: { score: number | null; persp: Record<string, number>; objectives: Record<string, string[]>; kpi: KpiRow[] } | null;
+  bsc: {
+    score: number | null; persp: Record<string, number>; objectives: Record<string, string[]>;
+    terukur?: number; total?: number; kpi: KpiRow[];
+  } | null;
   okr: { objective: string | null; key_results: string[] } | null;
   raci: { process: string; role_type: string; note: string | null }[];
   pdca: { plan: string | null; do: string | null; check: string | null; act: string | null } | null;
@@ -205,9 +212,27 @@ function StatRow({ pr, workload, absensi }: { pr: RaportDetail["plan_report"]; w
 }
 
 function Scorecard({ bsc }: { bsc: NonNullable<RaportDetail["bsc"]> }) {
+  // Cakupan ditulis di judul, bukan disembunyikan: skor perspektif di bawahnya
+  // hanya merata-ratakan KPI yang PUNYA pengukuran, jadi pembaca berhak tahu
+  // berapa banyak KPI yang sebetulnya ikut dihitung.
+  const total = bsc.total ?? bsc.kpi.length;
+  const terukur = bsc.terukur ?? bsc.kpi.filter((k) => k.achievement_pct != null).length;
+  const semuaTanpaAngka = terukur > 0 && bsc.kpi.every((k) => k.achievement_pct == null || k.ada_angka === false);
   return (
     <section className="space-y-3">
-      <h2 className="text-muted-foreground text-sm font-semibold tracking-wide">BALANCED SCORECARD</h2>
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <h2 className="text-muted-foreground text-sm font-semibold tracking-wide">BALANCED SCORECARD</h2>
+        {total > 0 ? (
+          <span className={`text-xs ${terukur === 0 ? "text-amber-600" : "text-muted-foreground"}`}>
+            {terukur} dari {total} KPI terukur periode ini
+            {terukur > 0 && terukur < total ? " — skor hanya mewakili yang terukur" : ""}
+            {terukur === 0 ? " — skor tidak dihitung" : ""}
+          </span>
+        ) : null}
+        {semuaTanpaAngka ? (
+          <span className="text-xs text-amber-600">⚠ semua pengukurannya persentase tanpa angka pendukung</span>
+        ) : null}
+      </div>
       <div className="grid gap-4 lg:grid-cols-2">
         {PERSPS.map((p) => {
           const objectives = bsc.objectives?.[p.key] ?? [];
@@ -416,14 +441,32 @@ function OkrBlock({ okr, kpi }: { okr: RaportDetail["okr"]; kpi: KpiRow[] }) {
       <CardContent className="space-y-3">
         {kpi.map((k) => {
           const a = k.achievement_pct;
+          // Tiga keadaan yang dulu terlihat sama: belum diukur, diukur dengan
+          // angka, dan diukur tapi persentasenya tanpa angka pendukung. Yang
+          // terakhir itulah 18 baris seed di prod — semuanya 100%.
+          const tanpaAngka = a != null && k.ada_angka === false;
           return (
             <div key={k.id} className="grid grid-cols-[1fr_auto] items-center gap-x-4 gap-y-1 sm:grid-cols-[1.4fr_1fr_120px_48px]">
-              <div className="text-sm font-medium">{k.name}</div>
+              <div className="text-sm font-medium">
+                {k.name}
+                {a == null ? (
+                  <span className="text-muted-foreground ml-2 text-xs font-normal">belum diukur — tak masuk skor</span>
+                ) : tanpaAngka ? (
+                  <span className="ml-2 text-xs font-normal text-amber-600" title="achievement_pct terisi tapi kolom actual kosong">
+                    ⚠ tanpa angka pendukung
+                  </span>
+                ) : null}
+              </div>
               <div className="text-muted-foreground hidden text-sm sm:block">{k.target ?? "—"}</div>
               <div className="bg-muted h-2 overflow-hidden rounded-full">
-                <div className="h-full rounded-full" style={{ width: `${Math.min(100, a ?? 0)}%`, background: barColor(a) }} />
+                <div
+                  className={`h-full rounded-full ${tanpaAngka ? "opacity-50" : ""}`}
+                  style={{ width: `${Math.min(100, a ?? 0)}%`, background: barColor(a) }}
+                />
               </div>
-              <div className={`text-right text-sm font-semibold tabular-nums ${scoreTone(a)}`}>{a != null ? `${Math.round(a)}%` : "—"}</div>
+              <div className={`text-right text-sm font-semibold tabular-nums ${a == null ? "text-muted-foreground" : scoreTone(a)}`}>
+                {a != null ? `${Math.round(a)}%` : "—"}
+              </div>
             </div>
           );
         })}

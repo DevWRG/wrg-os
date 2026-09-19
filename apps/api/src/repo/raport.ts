@@ -76,25 +76,36 @@ function compose(parts: { key: string; label: string; score: number | null; weig
 }
 
 // Port F119 computeScore (server-side) — skor BSC tertimbang, cap 120%, renormalisasi
-// bobot atas perspektif ber-KPI. inputs = achievement_pct per kpi_id (default 100).
+// bobot atas perspektif YANG PUNYA PENGUKURAN. inputs = achievement_pct per kpi_id.
+//
+// KPI TANPA PENGUKURAN DIKELUARKAN DARI RERATA, tidak lagi dianggap 100.
+// Default lama (`inputs[id] ?? 100`) berarti: begitu seseorang punya satu
+// measurement saja, seluruh KPI-nya yang lain ikut dinilai sempurna. Di prod itu
+// bukan kasus teoretis — dari 194 KPI hanya 13 pernah diukur, jadi satu-satunya
+// orang yang punya skor BSC mendapat 100 sebagian besar dari KPI yang tak pernah
+// diukur. Sekarang cakupannya dilaporkan (`terukur`/`total`) supaya skor parsial
+// terbaca sebagai parsial, bukan sebagai prestasi.
 function bscScore(
   kpi: { id: string; perspective: string | null }[],
   weights: Record<string, number>,
   inputs: Record<string, number>,
-): { score: number; perspScore: Record<string, number> } | null {
+): { score: number; perspScore: Record<string, number>; terukur: number; total: number } | null {
+  const total = kpi.filter((k) => k.perspective).length;
   const byP: Record<string, string[]> = {};
-  for (const k of kpi) if (k.perspective) (byP[k.perspective] ??= []).push(k.id);
+  for (const k of kpi) if (k.perspective && inputs[k.id] != null) (byP[k.perspective] ??= []).push(k.id);
   const active = Object.keys(byP);
   if (!active.length) return null;
   const perspScore: Record<string, number> = {};
+  let terukur = 0;
   for (const p of active) {
-    const vals = byP[p].map((id) => Math.min(120, inputs[id] ?? 100));
+    const vals = byP[p].map((id) => Math.min(120, inputs[id]));
+    terukur += vals.length;
     perspScore[p] = vals.reduce((a, b) => a + b, 0) / vals.length;
   }
   const wsum = active.reduce((a, p) => a + (weights[p] || 0), 0);
   let score = 0;
   for (const p of active) score += (wsum > 0 ? (weights[p] || 0) / wsum : 1 / active.length) * perspScore[p];
-  return { score: Math.round(score), perspScore };
+  return { score: Math.round(score), perspScore, terukur, total };
 }
 
 const ratingOf = (s: number | null): string =>
@@ -168,7 +179,9 @@ interface Maps {
   ar: Map<string, { outstanding: number; invoices: number }>;
   coaching: Map<string, { period: string | null; score: number | null }>;
   leave: Map<string, { days: number; events: number }>;
-  bsc: Map<string, { score: number; measured: number }>; // by am_id (via employee.am_id)
+  // by am_id (via employee.am_id). `terukur/total` = cakupan KPI periode ini;
+  // `tanpa_angka` = SEMUA pengukuran yang dipakai cuma persentase, `actual` kosong.
+  bsc: Map<string, { score: number; terukur: number; total: number; tanpa_angka: boolean }>;
 }
 
 async function collectMaps(from: string, to: string, months: string[]): Promise<Maps> {
@@ -210,7 +223,12 @@ async function collectMaps(from: string, to: string, months: string[]): Promise<
       GROUP BY am_id
     `,
     sql`
-      SELECT e.am_id, k.id::text AS kpi_id, k.perspective, e.dept, avg(m.achievement_pct)::float8 AS achievement_pct
+      SELECT e.am_id, k.id::text AS kpi_id, k.perspective, e.dept,
+             avg(m.achievement_pct)::float8 AS achievement_pct,
+             -- ada angka pendukung? 18 baris seed di prod mengisi persentase
+             -- tapi mengosongkan kolom actual; tanpa penanda ini skornya
+             -- terbaca seperti hasil pengukuran sungguhan.
+             COALESCE(bool_or(m.actual IS NOT NULL), false) AS ada_angka
       FROM employee e
       JOIN kpi k ON k.employee_id = e.id
       LEFT JOIN kpi_measurement m ON m.kpi_id = k.id AND m.period = ANY(${months})
@@ -237,23 +255,24 @@ async function collectMaps(from: string, to: string, months: string[]): Promise<
     m[String(w.perspective)] = Number(w.weight);
     weightsByDept.set(d, m);
   }
-  const kpiByAm = new Map<string, { kpi: { id: string; perspective: string | null }[]; inputs: Record<string, number>; dept: string | null; measured: number }>();
+  const kpiByAm = new Map<string, { kpi: { id: string; perspective: string | null }[]; inputs: Record<string, number>; dept: string | null; measured: number; berangka: number }>();
   for (const r of bscRows) {
     const am = String(r.am_id);
-    const e = kpiByAm.get(am) ?? { kpi: [], inputs: {}, dept: r.dept ? String(r.dept) : null, measured: 0 };
+    const e = kpiByAm.get(am) ?? { kpi: [], inputs: {}, dept: r.dept ? String(r.dept) : null, measured: 0, berangka: 0 };
     const id = String(r.kpi_id);
     e.kpi.push({ id, perspective: r.perspective ? String(r.perspective) : null });
     if (r.achievement_pct != null) {
       e.inputs[id] = Number(r.achievement_pct);
       e.measured++;
+      if (r.ada_angka === true) e.berangka++;
     }
     kpiByAm.set(am, e);
   }
-  const bsc = new Map<string, { score: number; measured: number }>();
+  const bsc: Maps["bsc"] = new Map();
   for (const [am, e] of kpiByAm) {
     if (e.measured === 0) continue; // belum diukur periode ini → dim BSC dianggap kosong
     const s = bscScore(e.kpi, weightsByDept.get(e.dept ?? "") ?? {}, e.inputs);
-    if (s) bsc.set(am, { score: s.score, measured: e.measured });
+    if (s) bsc.set(am, { score: s.score, terukur: s.terukur, total: s.total, tanpa_angka: e.berangka === 0 });
   }
 
   return { orang, compliance, revenue, ar, coaching, leave, bsc };
@@ -265,6 +284,10 @@ export interface RaportListRow {
   overall: number | null; rating: string;
   compliance: number | null; bsc: number | null; revenue: number; revenue_pct: number | null;
   active_days: number; leave_days: number; has_spine: boolean;
+  /** Cakupan KPI periode ini: berapa yang benar-benar diukur dari total KPI ber-perspektif. */
+  bsc_terukur: number | null; bsc_total: number | null;
+  /** true = semua pengukuran yang membentuk skor itu persentase tanpa `actual`. */
+  bsc_tanpa_angka: boolean;
 }
 
 export async function getRaportList(period?: string): Promise<{ period: string; period_label: string; from: string; to: string; rows: RaportListRow[] }> {
@@ -284,7 +307,8 @@ export async function getRaportList(period?: string): Promise<{ period: string; 
     const arr = M.ar.get(amId);
     const coach = M.coaching.get(amId);
     const leave = M.leave.get(amId);
-    const bscS = M.bsc.get(amId)?.score ?? null;
+    const bscInfo = M.bsc.get(amId) ?? null;
+    const bscS = bscInfo?.score ?? null;
     const monthlyTarget = rev?.target ? rev.target / 12 : null;
     const revenue = rev?.revenue ?? 0;
     const revScore = is_am ? revenueScore(revenue, monthlyTarget) : null;
@@ -314,6 +338,8 @@ export async function getRaportList(period?: string): Promise<{ period: string; 
       compliance: complianceScore(c), bsc: bscS, revenue, revenue_pct: revScore,
       active_days: o?.active_days ?? 0, leave_days: leave?.days ?? 0,
       has_spine: spineByAm.has(amId),
+      bsc_terukur: bscInfo?.terukur ?? null, bsc_total: bscInfo?.total ?? null,
+      bsc_tanpa_angka: bscInfo?.tanpa_angka ?? false,
     };
   });
 
@@ -361,7 +387,12 @@ export async function getRaportDetail(amId: string, period?: string): Promise<
       employee: { am_id: string; nama: string; panggilan: string | null; role: string; cabang: string | null; is_am: boolean; spine_id: string | null };
       score: { overall: number | null; rating: string; parts: ScorePart[] };
       plan_report: { plan_count: number; report_count: number; completion: number | null; active_days: number; late: number; unmatched: number; expected: number; on_time: number; late_days: number; miss: number; compliance_rate: number | null } | null;
-      bsc: { score: number | null; persp: Record<string, number>; objectives: Record<string, string[]>; kpi: { id: string; name: string; target: string | null; perspective: string | null; achievement_pct: number | null }[] } | null;
+      bsc: {
+        score: number | null; persp: Record<string, number>; objectives: Record<string, string[]>;
+        /** Cakupan: KPI terukur periode ini / total KPI ber-perspektif. */
+        terukur: number; total: number;
+        kpi: { id: string; name: string; target: string | null; perspective: string | null; achievement_pct: number | null; ada_angka: boolean }[];
+      } | null;
       okr: { objective: string | null; key_results: string[] } | null;
       raci: { process: string; role_type: string; note: string | null }[];
       pdca: { plan: string | null; do: string | null; check: string | null; act: string | null } | null;
@@ -430,7 +461,11 @@ export async function getRaportDetail(amId: string, period?: string): Promise<
   const c = comp.rows.find((r) => r.am_id === amId);
 
   // Spine (BSC/KPI/OKR/RACI) bila ter-bridge.
-  let bsc: { score: number | null; persp: Record<string, number>; objectives: Record<string, string[]>; kpi: { id: string; name: string; target: string | null; perspective: string | null; achievement_pct: number | null }[] } | null = null;
+  let bsc: {
+    score: number | null; persp: Record<string, number>; objectives: Record<string, string[]>;
+    terukur: number; total: number;
+    kpi: { id: string; name: string; target: string | null; perspective: string | null; achievement_pct: number | null; ada_angka: boolean }[];
+  } | null = null;
   let okr: { objective: string | null; key_results: string[] } | null = null;
   let raci: { process: string; role_type: string; note: string | null }[] = [];
   let pdca: { plan: string | null; do: string | null; check: string | null; act: string | null } | null = null;
@@ -438,7 +473,8 @@ export async function getRaportDetail(amId: string, period?: string): Promise<
     const [spine, meas] = await Promise.all([
       getEmployee(spineId),
       sql`
-        SELECT m.kpi_id::text AS kpi_id, avg(m.achievement_pct)::float8 AS achievement_pct
+        SELECT m.kpi_id::text AS kpi_id, avg(m.achievement_pct)::float8 AS achievement_pct,
+               COALESCE(bool_or(m.actual IS NOT NULL), false) AS ada_angka
         FROM kpi_measurement m JOIN kpi k ON k.id = m.kpi_id
         WHERE k.employee_id = ${spineId} AND m.period = ANY(${months})
         GROUP BY m.kpi_id
@@ -446,13 +482,22 @@ export async function getRaportDetail(amId: string, period?: string): Promise<
     ]);
     if (spine) {
       const inputs: Record<string, number> = {};
-      for (const m of meas) inputs[String(m.kpi_id)] = Number(m.achievement_pct);
+      const berangka = new Set<string>();
+      for (const m of meas) {
+        inputs[String(m.kpi_id)] = Number(m.achievement_pct);
+        if (m.ada_angka === true) berangka.add(String(m.kpi_id));
+      }
       const s = meas.length ? bscScore(spine.kpi, spine.weights as Record<string, number>, inputs) : null;
       bsc = {
         score: s?.score ?? null,
         persp: s?.perspScore ?? {},
         objectives: spine.bsc as Record<string, string[]>,
-        kpi: spine.kpi.map((k) => ({ id: k.id, name: k.name, target: k.target, perspective: k.perspective, achievement_pct: inputs[k.id] ?? null })),
+        terukur: s?.terukur ?? 0,
+        total: s?.total ?? spine.kpi.filter((k) => k.perspective).length,
+        kpi: spine.kpi.map((k) => ({
+          id: k.id, name: k.name, target: k.target, perspective: k.perspective,
+          achievement_pct: inputs[k.id] ?? null, ada_angka: berangka.has(k.id),
+        })),
       };
       okr = { objective: spine.okr_objective, key_results: spine.okr_kr };
       raci = spine.raci;
