@@ -220,7 +220,7 @@ import {
 } from "./repo/cashin.js";
 import { startScheduler, getScheduleStatus } from "./scheduler.js";
 import { signJwt, verifyJwt } from "./auth.js";
-import { verifyCredentials, createUser, countUsers, listAppUsers, setUserPassword, updateAppUser, deleteAppUser, getAppUserById, createUserFromRoster, generatePassword, changeOwnPassword } from "./repo/users.js";
+import { verifyCredentials, createUser, countUsers, listAppUsers, setUserPassword, updateAppUser, deleteAppUser, getAppUserById, createUserFromRoster, generatePassword, changeOwnPassword, normalizeLoginRole, LOGIN_ROLES } from "./repo/users.js";
 
 const app = new Hono();
 
@@ -387,7 +387,9 @@ app.post("/auth/register", async (c) => {
     return c.json({ error: "invalid JSON body" }, 400);
   }
   if (!body.email || !body.password) return c.json({ error: "email & password wajib" }, 400);
-  const user = await createUser(body.email, body.password, body.name, body.role ?? "user", body.title);
+  const role = normalizeLoginRole(body.role ?? "user");
+  if (!role) return c.json({ error: `role harus salah satu: ${LOGIN_ROLES.join(", ")}` }, 400);
+  const user = await createUser(body.email, body.password, body.name, role, body.title);
   return c.json({ user }, 201);
 });
 
@@ -430,7 +432,9 @@ app.post("/admin/users", async (c) => {
   if (!b.email) return c.json({ error: "email wajib" }, 400);
   const pw = b.password || (b.generate !== false ? generatePassword() : "");
   if (!pw) return c.json({ error: "password atau generate wajib" }, 400);
-  const user = await createUser(b.email, pw, b.name, b.role ?? "user", b.title);
+  const role = normalizeLoginRole(b.role ?? "user");
+  if (!role) return c.json({ error: `role harus salah satu: ${LOGIN_ROLES.join(", ")}` }, 400);
+  const user = await createUser(b.email, pw, b.name, role, b.title);
   if (b.wa_number) await updateAppUser(user.id, { wa_number: b.wa_number });
   // Kirim password via WA bila nomor diisi (sebelumnya tak pernah dikirim).
   const wa = b.wa_number ? waSummary(await sendViaWaGateway(b.wa_number, accessWaMsg(b.email, pw))) : undefined;
@@ -442,8 +446,10 @@ app.post("/admin/users/from-roster", async (c) => {
   let b: { am_id?: string; email?: string; role?: string } = {};
   try { b = await c.req.json(); } catch { /* opsional */ }
   if (!b.am_id || !b.email) return c.json({ error: "am_id & email wajib" }, 400);
+  const role = normalizeLoginRole(b.role ?? "user");
+  if (!role) return c.json({ error: `role harus salah satu: ${LOGIN_ROLES.join(", ")}` }, 400);
   const pw = generatePassword();
-  const r = await createUserFromRoster(b.am_id, b.email, pw, b.role ?? "user");
+  const r = await createUserFromRoster(b.am_id, b.email, pw, role);
   return r.ok ? c.json({ user: r.user, password: pw }, 201) : c.json({ error: r.error }, 400);
 });
 
@@ -451,6 +457,11 @@ app.patch("/admin/users/:id", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   let b: { name?: string; role?: string; title?: string | null; active?: boolean; wa_number?: string | null; am_id?: string | null; hod_key?: string | null } = {};
   try { b = await c.req.json(); } catch { /* opsional */ }
+  if (b.role !== undefined) {
+    const role = normalizeLoginRole(b.role);
+    if (!role) return c.json({ error: `role harus salah satu: ${LOGIN_ROLES.join(", ")}` }, 400);
+    b.role = role;
+  }
   const u = await updateAppUser(c.req.param("id"), b);
   return u ? c.json({ user: u }) : c.json({ error: "user tak ditemukan" }, 404);
 });
