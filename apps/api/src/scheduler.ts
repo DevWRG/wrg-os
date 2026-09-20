@@ -41,6 +41,7 @@ import { computeNpk, currentPeriod } from "./repo/npk.js";
 import { computeNpkAm } from "./repo/npk-am.js";
 import { snapshotLastWeek } from "./repo/watchpoint-weekly.js";
 import { runGeoSweep } from "./repo/geowatch.js";
+import { terapkanKpiBulan } from "./repo/kpi-measure.js";
 
 // Penjadwal agen in-process (Blueprint v2.3). Default MATI — aktif hanya bila
 // AGENT_SCHEDULE_ENABLED=true. Tiap run tetap menulis ke audit_log via repo
@@ -144,6 +145,13 @@ export function startScheduler(): ScheduleStatus {
   // sebelum job lain menggeser angka. Tanpa ini papan Weekly tak punya riwayat:
   // metric computed dihitung live sehingga minggu lewat ikut berubah tiap dibuka.
   const watchpointSnapshotEnabled = (process.env.WATCHPOINT_SNAPSHOT_ENABLED ?? "false").toLowerCase() === "true";
+  // kpi-measure — auto-isi kpi_measurement KPI sales dari data operasional
+  // (kunjungan, kepatuhan plan-report, revenue, customer baru, prospek).
+  // Cakupannya sengaja sempit: hanya KPI yang punya sumber tak-ambigu; sisanya
+  // dibiarkan kosong. Display-only, tanpa WA. Idempoten (upsert per kpi+periode)
+  // sehingga aman tiap hari — bulan berjalan ikut disegarkan, bukan dibekukan
+  // sekali di akhir bulan.
+  const kpiMeasureEnabled = (process.env.KPI_MEASURE_ENABLED ?? "false").toLowerCase() === "true";
   // Sweep harian "foto visit tanpa koordinat" → grup AM. Flag SENDIRI (default
   // off) karena mengirim WA; target grup dari GEO_SWEEP_WA_TARGET /
   // COMPLIANCE_AM_GROUP / REMINDER_WA_TARGET.
@@ -230,12 +238,12 @@ export function startScheduler(): ScheduleStatus {
   ];
 
   status = {
-    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled || watchpointSnapshotEnabled || geoSweepEnabled || cashinResumeEnabled,
+    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled || watchpointSnapshotEnabled || geoSweepEnabled || cashinResumeEnabled || kpiMeasureEnabled,
     timezone,
     jobs: jobs.map((j) => ({ id: j.id, expr: j.expr, valid: cron.validate(j.expr) })),
   };
 
-  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled && !watchpointSnapshotEnabled && !geoSweepEnabled && !cashinResumeEnabled) {
+  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled && !watchpointSnapshotEnabled && !geoSweepEnabled && !cashinResumeEnabled && !kpiMeasureEnabled) {
     console.log("[scheduler] semua *_SCHEDULE/_ENABLED flag != true — tidak dijadwalkan");
     return status;
   }
@@ -636,6 +644,32 @@ export function startScheduler(): ScheduleStatus {
       { timezone },
     );
     live.push(`weekly-report=${wrExpr}`);
+  }
+
+  // kpi-measure — harian 01:30 WIB. Menyegarkan BULAN BERJALAN dan bulan lalu:
+  // faktur Accurate & laporan WA masih berdatangan sesudah tanggal 1, jadi
+  // menulis sekali di akhir bulan akan membekukan angka yang belum lengkap.
+  const kpiMeasureExpr = process.env.KPI_MEASURE_CRON ?? "30 1 * * *";
+  if (kpiMeasureEnabled && cron.validate(kpiMeasureExpr)) {
+    cron.schedule(
+      kpiMeasureExpr,
+      async () => {
+        const startedAt = new Date().toISOString();
+        const kini = wibDate().slice(0, 7);
+        const [y, m] = kini.split("-").map(Number);
+        const lalu = `${m === 1 ? y - 1 : y}-${String(m === 1 ? 12 : m - 1).padStart(2, "0")}`;
+        for (const period of [lalu, kini]) {
+          try {
+            const r = await terapkanKpiBulan(period);
+            console.log(`[scheduler] kpi-measure ${period} @ ${startedAt} ${JSON.stringify(r.ringkas)}`);
+          } catch (e) {
+            console.error(`[scheduler] kpi-measure ${period} gagal @ ${startedAt}:`, e);
+          }
+        }
+      },
+      { timezone },
+    );
+    live.push(`kpi-measure=${kpiMeasureExpr}`);
   }
 
   // watchpoint-snapshot — Senin 06:00, bekukan metric computed minggu lalu ke
