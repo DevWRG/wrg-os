@@ -5,6 +5,8 @@ import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { SkeletonCards, SkeletonTable } from "@/components/ui/loading";
+import { InsentifApprovalCard } from "@/components/insentif/insentif-approval-card";
+import { statusTone, type StatusApproval } from "@/components/insentif/insentif-format";
 
 // Insentif Saya — SELF-ONLY untuk semua peran, termasuk Direktur (PRD §E.3).
 // Identitas datang dari sesi lewat BFF (x-user-id) → backend /insentif/self.
@@ -60,6 +62,10 @@ export function InsentifSaya() {
   const [data, setData] = useState<Resp | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
+  // Naik setiap aksi rantai persetujuan berhasil → dua fetch di bawah diulang.
+  // Halaman ini komponen klien, jadi router.refresh() saja tidak menyegarkan apa pun.
+  const [tick, setTick] = useState(0);
+  const [approval, setApproval] = useState<StatusApproval | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -79,7 +85,29 @@ export function InsentifSaya() {
     };
     void run();
     return () => { alive = false; };
-  }, [periode]);
+  }, [periode, tick]);
+
+  // Rantai persetujuan: am_id diambil dari respons /insentif/self, TIDAK dari sesi atau
+  // query — halaman ini tetap tak pernah menerima identitas dari luar.
+  const amIdSaya = data?.ringkas?.am_id ?? null;
+  useEffect(() => {
+    let alive = true;
+    // setState SELALU sesudah await (termasuk cabang "tak ada am_id") — menyetelnya
+    // sinkron di badan efek memicu render berantai dan ditolak lint react-hooks.
+    (async () => {
+      const hasil = amIdSaya
+        ? await fetch(
+            `/api/insentif/${encodeURIComponent(amIdSaya)}/approval?periode=${periode}`,
+            { cache: "no-store" },
+          )
+            .then((res) => (res.ok ? (res.json() as Promise<StatusApproval>) : null))
+            // Rekapnya tetap tampil walau kartu persetujuan gagal dimuat.
+            .catch(() => null)
+        : await Promise.resolve(null);
+      if (alive) setApproval(hasil);
+    })();
+    return () => { alive = false; };
+  }, [amIdSaya, periode, tick]);
 
   // Pilihan periode: 12 bulan terakhir, cukup untuk kebutuhan baca-slip.
   const opsiPeriode = Array.from({ length: 12 }, (_, i) => {
@@ -166,11 +194,20 @@ export function InsentifSaya() {
             <Card>
               <CardHeader className="pb-2"><CardTitle className="text-sm font-medium text-muted-foreground">Status</CardTitle></CardHeader>
               <CardContent>
-                <div className="text-2xl font-semibold capitalize">{r.status.replace(/_/g, " ")}</div>
+                <div className="text-2xl font-semibold">{statusTone(r.status).label}</div>
                 <div className="mt-1 text-xs text-muted-foreground">Tier {r.tier_ut}</div>
               </CardContent>
             </Card>
           </div>
+
+          {approval ? (
+            <InsentifApprovalCard
+              amId={r.am_id}
+              periode={periode}
+              data={approval}
+              onSelesai={() => setTick((t) => t + 1)}
+            />
+          ) : null}
 
           {(tanpaHpp > 0 || tanpaAging > 0) && (
             <Card className="border-amber-200 bg-amber-50/50">

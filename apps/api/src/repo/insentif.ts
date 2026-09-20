@@ -14,6 +14,7 @@ import {
 } from "../lib/insentif-calc.js";
 import type { DataScope } from "./access-scope.js";
 import { isAmRole } from "./access-scope.js";
+import { userCan } from "./rbac.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AKSES (PRD §E). Satu definisi, dipakai semua endpoint insentif.
@@ -59,6 +60,20 @@ export async function resolveAkses(scope: DataScope | undefined): Promise<AksesI
   if (scope.superuser) return { level: "all", ams: "all", selfAmId, userId };
   if (scope.amOnly && selfAmId) return { level: "self", ams: [selfAmId], selfAmId, userId };
 
+  // Finance, Corsec, HRD, Direktur: bukan AM, bukan HoD, tak punya cabang — sebelum ini
+  // mereka jatuh ke "tertutup" dan /insentif/list membalas 403. Untuk menu analitik itu
+  // tak terasa; untuk rantai persetujuan berarti rekap TIDAK PERNAH bisa lewat langkah
+  // Finance ke atas, karena orang yang harus menandatanganinya tidak berhak melihat
+  // barisnya sama sekali.
+  //
+  // Penentunya sengaja matriks Akses Grup (fitur `insentif-tim`), bukan tebakan dari
+  // role: `app_user.role` di prod cuma berisi user/direktur/admin, jadi menebak siapa
+  // "Finance" dari sana mustahil. Dengan matriks, admin mencentangnya sadar dan tercatat
+  // per grup — dan melepas centang mengembalikan akses ke nol.
+  //
+  // URUTAN PENTING: cabang HoD diperiksa DULU (di bawah), dan cabang AM di atas. AM yang
+  // kebetulan ikut grup ber-centang tetap "dirinya saja"; HoD tetap cabangnya saja.
+  // Pelebaran ini hanya untuk orang yang tidak punya keduanya.
   if (scope.cabangScope?.length) {
     const sql = db();
     const rows = await sql<{ am_id: string; role: string | null }[]>`
@@ -76,6 +91,10 @@ export async function resolveAkses(scope: DataScope | undefined): Promise<AksesI
     };
   }
 
+  if (!selfAmId && (await bolehSemuaLewatMatriks(userId))) {
+    return { level: "all", ams: "all", selfAmId, userId };
+  }
+
   // Tertaut ke karyawan tapi master_user.role BUKAN 'AM' (mis. OSP) → DIRINYA SAJA.
   // Ini **sengaja beda** dari visibleAms() di npk-am.ts yang mengembalikan [] untuk
   // kasus ini. Bukan pelebaran akses: `/insentif/self` sudah memberi data ini sebelum
@@ -85,6 +104,18 @@ export async function resolveAkses(scope: DataScope | undefined): Promise<AksesI
   if (selfAmId) return { level: "self", ams: [selfAmId], selfAmId, userId };
 
   return tertutup;
+}
+
+/**
+ * Izin fitur `insentif-tim` dari matriks Akses Grup. Dipisah supaya kegagalan RBAC
+ * (DB/tabel izin belum siap) berarti TIDAK BOLEH, bukan boleh — ini payroll, fail-closed.
+ */
+async function bolehSemuaLewatMatriks(userId: string): Promise<boolean> {
+  try {
+    return await userCan(userId, "insentif-tim", "view");
+  } catch {
+    return false;
+  }
 }
 
 /** Pembungkus tipis untuk pemanggil/tes yang hanya butuh daftar barisnya. */

@@ -27,10 +27,20 @@ async function proxy(req: Request, path: string[], method: string, body?: string
   // Gerbang TULIS. x-service-token yang disuntik gatewayFetch mem-bypass JWT di apps/api,
   // jadi route BFF yang meneruskan POST tanpa cek izin bisa dipanggil siapa pun yang
   // sudah login ([[wrg-os-gerbang-tulis-bff]]). Pagar barisnya tetap di server
-  // (setLeadType), yang di sini cuma memastikan pemanggilnya memang berhak membuka
-  // menu tim sama sekali.
-  if (method !== "GET" && !canViewInsentifTim(me)) {
-    return Response.json({ error: "forbidden" }, { status: 403 });
+  // (setLeadType / actApproval), yang di sini cuma pagar kasar "boleh menulis apa".
+  //
+  // Dua jenis tulisan dengan pemilik berbeda:
+  //   • /<amId>/lead      → penandaan tipe lead, wewenang menu tim.
+  //   • /<amId>/approval  → rantai persetujuan. Langkah PERTAMA (pengajuan) milik AM
+  //     yang bersangkutan, yang justru TIDAK berhak membuka menu tim. Kalau gerbangnya
+  //     disamakan, tombol "Ajukan" di menu Insentif Saya tertolak 403 sebelum sampai ke
+  //     server — dan rantainya tak pernah bisa dimulai.
+  if (method !== "GET") {
+    const [amId, aksi] = path ?? [];
+    const dirinya = aksi === "approval" && !!me.am_id && me.am_id === amId;
+    if (!dirinya && !canViewInsentifTim(me)) {
+      return Response.json({ error: "forbidden" }, { status: 403 });
+    }
   }
 
   const { searchParams } = new URL(req.url);
