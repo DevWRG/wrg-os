@@ -5,10 +5,12 @@ import { ArrowLeft } from "lucide-react";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { InsentifPeriodePicker } from "@/components/insentif/insentif-periode-picker";
 import { InsentifRincian } from "@/components/insentif/insentif-rincian";
+import { InsentifApprovalCard } from "@/components/insentif/insentif-approval-card";
 import {
-  periodeSah, type BarisBulanan, type BarisTransaksi,
+  periodeSah, type BarisBulanan, type BarisTransaksi, type StatusApproval,
 } from "@/components/insentif/insentif-format";
 import { sessionUser } from "@/lib/admin-guard";
+import { canViewInsentifTim } from "@/lib/insentif-access";
 import { gatewayFetch } from "@/lib/gateway";
 
 export const dynamic = "force-dynamic";
@@ -42,6 +44,21 @@ async function fetchDetail(userId: string, amId: string, periode: string): Promi
   }
 }
 
+// Rantai persetujuan dimuat terpisah dan boleh gagal: rincian angka tetap tampil walau
+// tabel langkah (183) belum ter-apply di basis data yang sedang dipakai.
+async function fetchApproval(userId: string, amId: string, periode: string): Promise<StatusApproval | null> {
+  try {
+    const res = await gatewayFetch(
+      `/insentif/${encodeURIComponent(amId)}/approval?periode=${encodeURIComponent(periode)}`,
+      { headers: { "x-user-id": userId } },
+    );
+    if (!res.ok) return null;
+    return (await res.json()) as StatusApproval;
+  } catch {
+    return null;
+  }
+}
+
 export default async function InsentifAmDetailPage({
   params,
   searchParams,
@@ -55,8 +72,15 @@ export default async function InsentifAmDetailPage({
   const periode = periodeSah(sp.periode);
   const data = await fetchDetail(me.id, p.amId, periode);
   if (!data) notFound();
+  const approval = await fetchApproval(me.id, p.amId, periode);
 
   const nama = data.ringkas.nama || p.amId;
+
+  // Penandaan lead: hanya untuk yang berhak membuka menu tim, dan TIDAK untuk baris
+  // atas namanya sendiri — menaikkan lead sendiri ke 'A' = menaikkan penghasilan
+  // sendiri. Server menolak hal yang sama (setLeadType); ini supaya kontrolnya tidak
+  // muncul dan memancing klik yang pasti gagal.
+  const bisaTandaiLead = canViewInsentifTim(me) && (me.am_id ?? null) !== p.amId;
 
   return (
     <div className="flex flex-col gap-5">
@@ -74,10 +98,15 @@ export default async function InsentifAmDetailPage({
         description={`Rincian insentif per transaksi${data.ringkas.tier_ut ? ` · tier ${data.ringkas.tier_ut}` : ""}`}
         action={<InsentifPeriodePicker periode={periode} />}
       />
+      {approval ? (
+        <InsentifApprovalCard amId={p.amId} periode={periode} data={approval} />
+      ) : null}
       <InsentifRincian
         periode={data.periode}
         ringkas={data.ringkas}
         transaksi={data.transaksi}
+        amId={p.amId}
+        bisaTandaiLead={bisaTandaiLead}
       />
     </div>
   );

@@ -160,9 +160,15 @@ import { computeNpk, getNpkScores, getNpkDetail, currentPeriod, type Period } fr
 import { computeNpkAm, getNpkAmScores, getNpkAmDetail } from "./repo/npk-am.js";
 import { hitungKpiBulan, terapkanKpiBulan } from "./repo/kpi-measure.js";
 import {
-  getInsentifSelf, getInsentifList, getInsentifDetail,
+  getInsentifSelf, getInsentifList, getInsentifDetail, setLeadType as setInsentifLeadType,
+  listEffort as listInsentifEffort, setEffort as setInsentifEffort, periodeHppDefault,
+  semuaAmBerTier,
   computePeriode as computeInsentifPeriode,
 } from "./repo/insentif.js";
+import {
+  getApproval as getInsentifApproval, actApproval as actInsentifApproval,
+  type AksiApproval,
+} from "./repo/insentif-approval.js";
 import { listDepartments, listEmployees, getEmployee, getRaciMatrix, getMeasurements, saveMeasurements, getOkrOverview, getKpiCatalog, createEmployee, updateEmployee, deleteEmployee, replaceEmployeeDetail, getVoiceAggregate, getHodResolution, getOrgReporting, populateHodKey, getHods, type MeasurementInput, type EmployeeWrite, type SpineDetail } from "./repo/employee-spine.js";
 import { upsertMembers, listMembers, upsertDigests, listDigest, digestStats, upsertPola, listPola, generateRekap, generateResume, type MonitorMemberInput, type DigestInput, type PolaInput } from "./repo/monitor.js";
 import { runNotifTua } from "./repo/notiftua.js";
@@ -2368,6 +2374,41 @@ app.get("/insentif/list", async (c) => {
   }
 });
 
+// Effort & Presales per AM per bulan (184). Dipakai sebagai pengali insentif, jadi
+// wewenangnya sama dengan penandaan lead: tim/semua, bukan AM sendiri. Menyetelnya
+// langsung memicu hitung ulang periode AM itu (lihat setEffort).
+app.get("/insentif/effort", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    return c.json(await listInsentifEffort(await scopeOf(c), insentifPeriode(c)));
+  } catch (e) {
+    const { status, body } = insentifErr(e);
+    return c.json(body, status);
+  }
+});
+
+app.post("/insentif/effort", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const body = (await c.req.json().catch(() => ({}))) as {
+    am_id?: string; effort?: number; presales?: number; catatan?: string;
+  };
+  const amId = String(body.am_id ?? "").trim();
+  if (!amId) return c.json({ error: "am_id wajib" }, 400);
+  const effort = Number(body.effort);
+  const presales = Number(body.presales ?? 0);
+  if (!Number.isFinite(effort) || !Number.isFinite(presales)) {
+    return c.json({ error: "effort & presales harus angka" }, 400);
+  }
+  try {
+    return c.json(await setInsentifEffort(await scopeOf(c), {
+      amId, periode: insentifPeriode(c), effort, presales, catatan: body.catatan ?? null,
+    }));
+  } catch (e) {
+    const { status, body: err } = insentifErr(e);
+    return c.json(err, status);
+  }
+});
+
 // Hitung ulang satu periode. Operasi ops.
 //
 // Pagar yang SELALU berlaku: superuser (dari sesi via x-user-id). Pagar service-token
@@ -2387,14 +2428,82 @@ app.post("/insentif/compute", async (c) => {
     am_ids?: unknown;
     effort?: Record<string, { effort: number; presales: number }>;
     apply?: boolean;
+    paksa?: boolean;
   };
+  // am_ids kosong = SEMUA AM yang punya tier. Sebelumnya berarti "tak menghitung
+  // siapa pun" dan endpoint-nya balas nol tanpa keluhan — bentuk gagal-senyap yang
+  // paling mahal di fitur ini, karena "0 transaksi" terlihat seperti jawaban.
+  const amIds = Array.isArray(body.am_ids) && body.am_ids.length
+    ? body.am_ids.map(String)
+    : await semuaAmBerTier();
   return c.json(await computeInsentifPeriode({
     periode: insentifPeriode(c),
-    periodeHpp: String(body.periode_hpp ?? "H2-2026"),
-    amIds: Array.isArray(body.am_ids) ? body.am_ids.map(String) : [],
+    periodeHpp: String(body.periode_hpp ?? periodeHppDefault()),
+    amIds,
     effortPerAm: new Map(Object.entries(body.effort ?? {})),
     apply: body.apply === true,
+    paksa: body.paksa === true,
   }));
+});
+
+// Tandai tipe lead satu invoice (HoD/Finance/Direktur). Semua pagar ada di lapisan data
+// (setLeadType): level akses, scope baris, larangan menandai baris sendiri, dan status
+// rekap yang masih boleh diubah. Endpoint ini sengaja tidak menyimpulkan izin sendiri.
+app.post("/insentif/:amId/lead", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const body = (await c.req.json().catch(() => ({}))) as {
+    invoice_no?: string;
+    lead_type?: string;
+    catatan?: string;
+  };
+  const invoiceNo = String(body.invoice_no ?? "").trim();
+  const leadType = String(body.lead_type ?? "").trim().toUpperCase();
+  if (!invoiceNo) return c.json({ error: "invoice_no wajib" }, 400);
+  if (!["A", "B", "C"].includes(leadType)) return c.json({ error: "lead_type harus A, B, atau C" }, 400);
+  try {
+    return c.json(await setInsentifLeadType(await scopeOf(c), {
+      amId: c.req.param("amId"),
+      periode: insentifPeriode(c),
+      invoiceNo,
+      leadType: leadType as "A" | "B" | "C",
+      catatan: body.catatan ?? null,
+    }));
+  } catch (e) {
+    const { status, body: err } = insentifErr(e);
+    return c.json(err, status);
+  }
+});
+
+// Rantai persetujuan 7 langkah (093 + 183). Wewenang per langkah dibaca dari tabel
+// insentif_approval_step, bukan dari kode; pemisahan kewenangan ditegakkan di DB.
+app.get("/insentif/:amId/approval", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    return c.json(await getInsentifApproval(await scopeOf(c), c.req.param("amId"), insentifPeriode(c)));
+  } catch (e) {
+    const { status, body } = insentifErr(e);
+    return c.json(body, status);
+  }
+});
+
+app.post("/insentif/:amId/approval", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const body = (await c.req.json().catch(() => ({}))) as { aksi?: string; catatan?: string };
+  const aksi = String(body.aksi ?? "").trim();
+  if (!["maju", "tolak", "buka"].includes(aksi)) {
+    return c.json({ error: "aksi harus maju, tolak, atau buka" }, 400);
+  }
+  try {
+    return c.json(await actInsentifApproval(await scopeOf(c), {
+      amId: c.req.param("amId"),
+      periode: insentifPeriode(c),
+      aksi: aksi as AksiApproval,
+      catatan: body.catatan ?? null,
+    }));
+  } catch (e) {
+    const { status, body: err } = insentifErr(e);
+    return c.json(err, status);
+  }
 });
 
 // :amId ditaruh PALING BAWAH supaya tidak menelan /insentif/self & /insentif/list.
