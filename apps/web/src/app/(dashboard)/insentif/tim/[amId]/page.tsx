@@ -9,6 +9,7 @@ import {
   periodeSah, type BarisBulanan, type BarisTransaksi,
 } from "@/components/insentif/insentif-format";
 import { sessionUser } from "@/lib/admin-guard";
+import { canViewInsentifTim } from "@/lib/insentif-access";
 import { gatewayFetch } from "@/lib/gateway";
 
 export const dynamic = "force-dynamic";
@@ -58,6 +59,12 @@ export default async function InsentifAmDetailPage({
 
   const nama = data.ringkas.nama || p.amId;
 
+  // Penandaan lead: hanya untuk yang berhak membuka menu tim, dan TIDAK untuk baris
+  // atas namanya sendiri — menaikkan lead sendiri ke 'A' = menaikkan penghasilan
+  // sendiri. Server menolak hal yang sama (setLeadType); ini supaya kontrolnya tidak
+  // muncul dan memancing klik yang pasti gagal.
+  const bisaTandaiLead = canViewInsentifTim(me) && (me.am_id ?? null) !== p.amId;
+
   return (
     <div className="flex flex-col gap-5">
       {/* "Kembali" di ATAS header — idiom drilldown yang sama dengan Sales Analytics per-AM. */}
@@ -78,6 +85,8 @@ export default async function InsentifAmDetailPage({
         periode={data.periode}
         ringkas={data.ringkas}
         transaksi={data.transaksi}
+        amId={p.amId}
+        bisaTandaiLead={bisaTandaiLead}
       />
     </div>
   );
