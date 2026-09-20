@@ -70,8 +70,14 @@ test("level 'self' TIDAK berhak /insentif/list — dibedakan dari 'team'", async
   }
 });
 
-test("bukan superuser, tak tertaut, tanpa cabang → TERTUTUP", async () => {
+test("bukan superuser, tak tertaut, tanpa cabang, TANPA izin matriks → TERTUTUP", async () => {
   // Staf office: di menu analitik boleh permisif, di insentif tidak.
+  //
+  // Sejak rantai persetujuan hidup, orang seperti ini BISA terbuka — tapi hanya lewat
+  // satu pintu: centang fitur `insentif-tim` di matriks Akses Grup (Finance, Corsec,
+  // HRD, Direktur yang harus menandatangani). Tes ini berjalan tanpa DB, jadi pembacaan
+  // izin gagal → bolehSemuaLewatMatriks() mengembalikan false. Itu memang yang diuji:
+  // ketika matriks TIDAK bisa dibaca, jawabannya tertutup, bukan terbuka.
   const a = await resolveAkses(scope({ userId: "u7" }));
   assert.equal(a.level, "none");
   assert.deepEqual(a.ams, []);
