@@ -20,8 +20,13 @@ async function proxy(req: Request, path: string[], method: string, body?: string
   if (!me) return Response.json({ error: "unauthenticated" }, { status: 401 });
 
   const sub = (path ?? []).join("/");
+  // Hitung ulang periode: operasi ops, dibuka HANYA untuk admin/superuser — apps/api
+  // menuntut hal yang sama (scope.superuser), jadi kalau pagar ini dilonggarkan yang
+  // terjadi cuma 403 dari backend, bukan kebocoran. Sebelum ada tombolnya di layar,
+  // jalur ini sengaja 404: yang berubah adalah tombolnya sekarang ada.
   if (sub === "compute") {
-    return Response.json({ error: "not available via web" }, { status: 404 });
+    const bolehOps = me.role === "admin" || me.superuser === true;
+    if (!bolehOps) return Response.json({ error: "not available via web" }, { status: 404 });
   }
 
   // Gerbang TULIS. x-service-token yang disuntik gatewayFetch mem-bypass JWT di apps/api,

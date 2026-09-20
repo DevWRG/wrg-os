@@ -125,6 +125,23 @@ export const LEAD_LABEL: Record<string, { label: string; porsi: string; hint: st
   C: { label: "C · HO Direct", porsi: "15%", hint: "Akun HO langsung — 15% AM, 85% HO Pool." },
 };
 
+/** Satu baris Effort/Presales per AM per periode (insentif_effort, migrasi 184). */
+export interface BarisEffort {
+  am_id: string;
+  nama: string;
+  panggilan: string | null;
+  /** null = belum pernah disetel → perhitungan memakai 60/0. */
+  effort: number | null;
+  presales: number | null;
+  sumber: string | null;
+  catatan: string | null;
+  updated_by: string | null;
+  updated_at: string | null;
+  status: string | null;
+  /** Rekapnya sudah lewat tahap review → tak boleh diubah dari layar. */
+  terkunci: boolean;
+}
+
 /** Satu langkah rantai persetujuan (insentif_approval_step, migrasi 183). */
 export interface LangkahApproval {
   step: number;
