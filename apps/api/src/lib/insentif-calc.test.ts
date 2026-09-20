@@ -10,6 +10,7 @@ import assert from "node:assert/strict";
 
 import {
   computeTransaksi, rekapBulanan, marginReward, collectionFactor,
+  porsiBerhakMrDari, KATEGORI_TANPA_MR,
   HARGA_POIN, type TrxInput,
 } from "./insentif-calc.js";
 
@@ -75,6 +76,43 @@ test("KSO memaksa MR 0 walau GP tinggi", () => {
 
 test("ECAT/Price List memaksa MR 0 (harga fixed)", () => {
   assert.equal(computeTransaksi({ ...base, isEcatPl: true }).mrPct, 0);
+});
+
+// ── Faktur campur kategori: MR proporsional ──
+//
+// Faktur Accurate nyata sering memuat KSO + REGULAR sekaligus. Aturan biner model akan
+// salah di dua arah; yang dipakai di sini porsi nilai baris yang berhak MR.
+test("faktur satu kategori: porsi 0/1 sama persis dengan aturan biner model", () => {
+  assert.equal(computeTransaksi({ ...base, porsiBerhakMr: 0 }).mrPct,
+               computeTransaksi({ ...base, isKso: true }).mrPct);
+  assert.equal(computeTransaksi({ ...base, porsiBerhakMr: 1 }).insentifAm,
+               computeTransaksi(base).insentifAm);
+});
+
+test("faktur campur: MR dikalikan porsi yang berhak", () => {
+  // 60% nilai baris di luar KSO/ECAT/PL → MR 25 × 0,6 = 15.
+  const r = computeTransaksi({ ...base, porsiBerhakMr: 0.6 });
+  assert.equal(r.porsiMr, 0.6);
+  assert.ok(Math.abs(r.mrPct - 15) < 1e-9, `mrPct ${r.mrPct}`);
+  // pengali = (1 + 0,15 + 0,30) × 1,00 × 0,87
+  assert.ok(Math.abs(r.pengali - 1.2615) < 1e-9, `pengali ${r.pengali}`);
+});
+
+test("porsi eksplisit MENANG atas label isKso — label cuma penanda mayoritas", () => {
+  const r = computeTransaksi({ ...base, isKso: true, porsiBerhakMr: 0.4 });
+  assert.ok(Math.abs(r.mrPct - 10) < 1e-9, `mrPct ${r.mrPct}`);
+});
+
+test("porsi di luar 0-1 di-clamp, NaN dianggap berhak penuh", () => {
+  assert.equal(computeTransaksi({ ...base, porsiBerhakMr: 5 }).porsiMr, 1);
+  assert.equal(computeTransaksi({ ...base, porsiBerhakMr: -2 }).porsiMr, 0);
+  assert.equal(porsiBerhakMrDari(Number.NaN), 1);
+});
+
+test("kategori tanpa MR persis tiga: KSO, ECAT, PL", () => {
+  // Kalau daftar ini berubah, yang berubah adalah berapa rupiah yang cair — jadi
+  // perubahannya harus disengaja, bukan efek samping refactor query.
+  assert.deepEqual([...KATEGORI_TANPA_MR], ["KSO", "ECAT", "PL"]);
 });
 
 test("MR ter-clamp di 35 walau selisih GP besar", () => {

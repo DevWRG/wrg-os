@@ -27,6 +27,11 @@ export interface BarisTransaksi {
   aging_days: number | null;
   ncr_type: string;
   lead_type: string;
+  /** Kapan lead_type terakhir ditandai manusia (migrasi 182). null = masih default A. */
+  lead_set_at: string | null;
+  /** Mayoritas nilai barisnya KSO / ECAT-PL → porsi yang berhak MR kecil. */
+  is_kso: boolean;
+  is_ecat_pl: boolean;
   mr_pct: number;
   ncr_pct: number;
   cf: number;
@@ -112,6 +117,13 @@ export const agingHint = (hari: number | null): string | null =>
   hari == null
     ? "Tanggal pelunasan tak tercatat (invoice sudah lunas sebelum kolomnya ada) → Collection Factor diperlakukan netral 1,00, bukan dihukum."
     : null;
+
+/** Label tipe lead + porsi yang mengalir ke AM (sisanya HO Pool). */
+export const LEAD_LABEL: Record<string, { label: string; porsi: string; hint: string }> = {
+  A: { label: "A · AM Hunt", porsi: "100%", hint: "AM prospek sendiri — seluruh insentif ke AM." },
+  B: { label: "B · Mgmt Lead", porsi: "30%", hint: "Lead dari manajemen — 30% AM, 70% HO Pool." },
+  C: { label: "C · HO Direct", porsi: "15%", hint: "Akun HO langsung — 15% AM, 85% HO Pool." },
+};
 
 /** Label + warna status rantai persetujuan (insentif_bulanan.status). */
 export function statusTone(status: string): {

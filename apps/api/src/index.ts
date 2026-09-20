@@ -160,7 +160,7 @@ import { computeNpk, getNpkScores, getNpkDetail, currentPeriod, type Period } fr
 import { computeNpkAm, getNpkAmScores, getNpkAmDetail } from "./repo/npk-am.js";
 import { hitungKpiBulan, terapkanKpiBulan } from "./repo/kpi-measure.js";
 import {
-  getInsentifSelf, getInsentifList, getInsentifDetail,
+  getInsentifSelf, getInsentifList, getInsentifDetail, setLeadType as setInsentifLeadType,
   computePeriode as computeInsentifPeriode,
 } from "./repo/insentif.js";
 import { listDepartments, listEmployees, getEmployee, getRaciMatrix, getMeasurements, saveMeasurements, getOkrOverview, getKpiCatalog, createEmployee, updateEmployee, deleteEmployee, replaceEmployeeDetail, getVoiceAggregate, getHodResolution, getOrgReporting, populateHodKey, getHods, type MeasurementInput, type EmployeeWrite, type SpineDetail } from "./repo/employee-spine.js";
@@ -2395,6 +2395,34 @@ app.post("/insentif/compute", async (c) => {
     effortPerAm: new Map(Object.entries(body.effort ?? {})),
     apply: body.apply === true,
   }));
+});
+
+// Tandai tipe lead satu invoice (HoD/Finance/Direktur). Semua pagar ada di lapisan data
+// (setLeadType): level akses, scope baris, larangan menandai baris sendiri, dan status
+// rekap yang masih boleh diubah. Endpoint ini sengaja tidak menyimpulkan izin sendiri.
+app.post("/insentif/:amId/lead", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const body = (await c.req.json().catch(() => ({}))) as {
+    invoice_no?: string;
+    lead_type?: string;
+    catatan?: string;
+  };
+  const invoiceNo = String(body.invoice_no ?? "").trim();
+  const leadType = String(body.lead_type ?? "").trim().toUpperCase();
+  if (!invoiceNo) return c.json({ error: "invoice_no wajib" }, 400);
+  if (!["A", "B", "C"].includes(leadType)) return c.json({ error: "lead_type harus A, B, atau C" }, 400);
+  try {
+    return c.json(await setInsentifLeadType(await scopeOf(c), {
+      amId: c.req.param("amId"),
+      periode: insentifPeriode(c),
+      invoiceNo,
+      leadType: leadType as "A" | "B" | "C",
+      catatan: body.catatan ?? null,
+    }));
+  } catch (e) {
+    const { status, body: err } = insentifErr(e);
+    return c.json(err, status);
+  }
 });
 
 // :amId ditaruh PALING BAWAH supaya tidak menelan /insentif/self & /insentif/list.
