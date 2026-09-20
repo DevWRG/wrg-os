@@ -11,6 +11,12 @@
 # endpoint yang sama yang nanti bisa dipakai scheduler.
 set -euo pipefail
 
+# PATH eksplisit: lewat `ssh host "bash skrip"` shell-nya non-interaktif dan
+# /opt/homebrew/bin TIDAK ikut, jadi `node` hilang. Sekali kena: POST-nya sudah
+# menulis 14 baris, lalu pipa pencetaknya mati dan layarnya cuma menampilkan
+# "node: command not found" — terbaca seperti gagal total padahal tidak.
+export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+
 PERIOD="${1:-}"
 APPLY="${2:-}"
 [ -n "$PERIOD" ] || { echo "pakai: $0 YYYY-MM [--apply]" >&2; exit 2; }
@@ -27,8 +33,16 @@ else
 fi
 
 echo "== kpi-measure $PERIOD — $LABEL =="
-curl -sS -X "$METODE" -H "x-service-token: $TOK" "$API/kpi/measure?period=$PERIOD" \
-  | node -e '
+RESP="$(curl -sS -X "$METODE" -H "x-service-token: $TOK" "$API/kpi/measure?period=$PERIOD")"
+
+if ! command -v node >/dev/null 2>&1; then
+  # Tanpa node, tampilkan apa adanya. Yang penting permintaannya SUDAH dijawab
+  # server — jangan bikin hasilnya tampak hilang cuma karena pencetaknya absen.
+  echo "$RESP"
+  exit 0
+fi
+
+printf '%s' "$RESP" | node -e '
 let d=""; process.stdin.on("data",c=>d+=c).on("end",()=>{
   const j = JSON.parse(d);
   if (j.error) { console.error("GAGAL:", j.error); process.exit(1); }
