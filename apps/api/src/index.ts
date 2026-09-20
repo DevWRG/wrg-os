@@ -180,6 +180,10 @@ import {
   getInsentifSelf, getInsentifList, getInsentifDetail, setLeadType as setInsentifLeadType,
   computePeriode as computeInsentifPeriode,
 } from "./repo/insentif.js";
+import {
+  getApproval as getInsentifApproval, actApproval as actInsentifApproval,
+  type AksiApproval,
+} from "./repo/insentif-approval.js";
 import { listDepartments, listEmployees, getEmployee, getRaciMatrix, getMeasurements, saveMeasurements, getOkrOverview, getKpiCatalog, createEmployee, updateEmployee, deleteEmployee, replaceEmployeeDetail, getVoiceAggregate, getHodResolution, getOrgReporting, populateHodKey, getHods, type MeasurementInput, type EmployeeWrite, type SpineDetail } from "./repo/employee-spine.js";
 import { listKlaim, getKlaim, updateKategori, decideKlaim, markDibayar, createKlaimManual, deleteKlaim } from "./repo/doc-klaim.js";
 import {
@@ -3270,6 +3274,38 @@ app.post("/insentif/:amId/lead", async (c) => {
       periode: insentifPeriode(c),
       invoiceNo,
       leadType: leadType as "A" | "B" | "C",
+      catatan: body.catatan ?? null,
+    }));
+  } catch (e) {
+    const { status, body: err } = insentifErr(e);
+    return c.json(err, status);
+  }
+});
+
+// Rantai persetujuan 7 langkah (093 + 183). Wewenang per langkah dibaca dari tabel
+// insentif_approval_step, bukan dari kode; pemisahan kewenangan ditegakkan di DB.
+app.get("/insentif/:amId/approval", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    return c.json(await getInsentifApproval(await scopeOf(c), c.req.param("amId"), insentifPeriode(c)));
+  } catch (e) {
+    const { status, body } = insentifErr(e);
+    return c.json(body, status);
+  }
+});
+
+app.post("/insentif/:amId/approval", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const body = (await c.req.json().catch(() => ({}))) as { aksi?: string; catatan?: string };
+  const aksi = String(body.aksi ?? "").trim();
+  if (!["maju", "tolak", "buka"].includes(aksi)) {
+    return c.json({ error: "aksi harus maju, tolak, atau buka" }, 400);
+  }
+  try {
+    return c.json(await actInsentifApproval(await scopeOf(c), {
+      amId: c.req.param("amId"),
+      periode: insentifPeriode(c),
+      aksi: aksi as AksiApproval,
       catatan: body.catatan ?? null,
     }));
   } catch (e) {
