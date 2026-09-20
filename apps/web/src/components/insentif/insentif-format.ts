@@ -125,14 +125,77 @@ export const LEAD_LABEL: Record<string, { label: string; porsi: string; hint: st
   C: { label: "C · HO Direct", porsi: "15%", hint: "Akun HO langsung — 15% AM, 85% HO Pool." },
 };
 
-/** Label + warna status rantai persetujuan (insentif_bulanan.status). */
+/** Satu baris Effort/Presales per AM per periode (insentif_effort, migrasi 184). */
+export interface BarisEffort {
+  am_id: string;
+  nama: string;
+  panggilan: string | null;
+  /** null = belum pernah disetel → perhitungan memakai 60/0. */
+  effort: number | null;
+  presales: number | null;
+  sumber: string | null;
+  catatan: string | null;
+  updated_by: string | null;
+  updated_at: string | null;
+  status: string | null;
+  /** Rekapnya sudah lewat tahap review → tak boleh diubah dari layar. */
+  terkunci: boolean;
+}
+
+/** Satu langkah rantai persetujuan (insentif_approval_step, migrasi 183). */
+export interface LangkahApproval {
+  step: number;
+  status_dari: string;
+  status_ke: string;
+  label: string;
+  group_key: string | null;
+  keterangan: string | null;
+}
+
+/** Satu baris jejak (insentif_approval_log). */
+export interface JejakApproval {
+  step: number;
+  siklus: number;
+  status_to: string;
+  actor_user_id: string;
+  actor_nama: string | null;
+  actor_role: string;
+  catatan: string | null;
+  acted_at: string;
+}
+
+/** Respons GET /insentif/:amId/approval. boleh_* dihitung server, jangan ditebak di klien. */
+export interface StatusApproval {
+  am_id: string;
+  periode: string;
+  status: string;
+  siklus: number;
+  berikutnya: LangkahApproval | null;
+  boleh_maju: boolean;
+  boleh_tolak: boolean;
+  boleh_buka: boolean;
+  alasan: string | null;
+  riwayat: JejakApproval[];
+}
+
+/** Label + warna status rantai persetujuan (insentif_bulanan.status).
+ *
+ *  Tujuh status di migrasi 093 memakai nama teknis (hod_review, corsec_compile, …).
+ *  Menampilkannya mentah membuat layar berbahasa campur dan, lebih buruk, membuat AM
+ *  menebak-nebak berkasnya ada di meja siapa. */
 export function statusTone(status: string): {
   label: string;
   tone: "netral" | "jalan" | "selesai" | "tahan";
 } {
   const s = (status ?? "").trim().toLowerCase();
   if (s === "draft") return { label: "Draft", tone: "netral" };
+  if (s === "submitted") return { label: "Diajukan · menunggu HOD", tone: "jalan" };
+  if (s === "hod_review") return { label: "Lolos HOD · menunggu Finance", tone: "jalan" };
+  if (s === "finance_verify") return { label: "Lolos Finance · menunggu Corsec", tone: "jalan" };
+  if (s === "corsec_compile") return { label: "Dikompilasi · menunggu Direktur", tone: "jalan" };
+  if (s === "direktur_approve") return { label: "Disetujui Direktur · menunggu HRD", tone: "jalan" };
   if (s === "dibayar" || s === "paid") return { label: "Dibayar", tone: "selesai" };
+  if (s === "rejected" || s === "ditolak") return { label: "Ditolak", tone: "tahan" };
   if (s === "hold" || s === "ditahan") return { label: "Ditahan", tone: "tahan" };
   return { label: status || "—", tone: "jalan" };
 }

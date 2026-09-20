@@ -14,6 +14,7 @@ import {
 } from "../lib/insentif-calc.js";
 import type { DataScope } from "./access-scope.js";
 import { isAmRole } from "./access-scope.js";
+import { userCan } from "./rbac.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AKSES (PRD §E). Satu definisi, dipakai semua endpoint insentif.
@@ -59,6 +60,20 @@ export async function resolveAkses(scope: DataScope | undefined): Promise<AksesI
   if (scope.superuser) return { level: "all", ams: "all", selfAmId, userId };
   if (scope.amOnly && selfAmId) return { level: "self", ams: [selfAmId], selfAmId, userId };
 
+  // Finance, Corsec, HRD, Direktur: bukan AM, bukan HoD, tak punya cabang — sebelum ini
+  // mereka jatuh ke "tertutup" dan /insentif/list membalas 403. Untuk menu analitik itu
+  // tak terasa; untuk rantai persetujuan berarti rekap TIDAK PERNAH bisa lewat langkah
+  // Finance ke atas, karena orang yang harus menandatanganinya tidak berhak melihat
+  // barisnya sama sekali.
+  //
+  // Penentunya sengaja matriks Akses Grup (fitur `insentif-tim`), bukan tebakan dari
+  // role: `app_user.role` di prod cuma berisi user/direktur/admin, jadi menebak siapa
+  // "Finance" dari sana mustahil. Dengan matriks, admin mencentangnya sadar dan tercatat
+  // per grup — dan melepas centang mengembalikan akses ke nol.
+  //
+  // URUTAN PENTING: cabang HoD diperiksa DULU (di bawah), dan cabang AM di atas. AM yang
+  // kebetulan ikut grup ber-centang tetap "dirinya saja"; HoD tetap cabangnya saja.
+  // Pelebaran ini hanya untuk orang yang tidak punya keduanya.
   if (scope.cabangScope?.length) {
     const sql = db();
     const rows = await sql<{ am_id: string; role: string | null }[]>`
@@ -76,6 +91,10 @@ export async function resolveAkses(scope: DataScope | undefined): Promise<AksesI
     };
   }
 
+  if (!selfAmId && (await bolehSemuaLewatMatriks(userId))) {
+    return { level: "all", ams: "all", selfAmId, userId };
+  }
+
   // Tertaut ke karyawan tapi master_user.role BUKAN 'AM' (mis. OSP) → DIRINYA SAJA.
   // Ini **sengaja beda** dari visibleAms() di npk-am.ts yang mengembalikan [] untuk
   // kasus ini. Bukan pelebaran akses: `/insentif/self` sudah memberi data ini sebelum
@@ -85,6 +104,18 @@ export async function resolveAkses(scope: DataScope | undefined): Promise<AksesI
   if (selfAmId) return { level: "self", ams: [selfAmId], selfAmId, userId };
 
   return tertutup;
+}
+
+/**
+ * Izin fitur `insentif-tim` dari matriks Akses Grup. Dipisah supaya kegagalan RBAC
+ * (DB/tabel izin belum siap) berarti TIDAK BOLEH, bukan boleh — ini payroll, fail-closed.
+ */
+async function bolehSemuaLewatMatriks(userId: string): Promise<boolean> {
+  try {
+    return await userCan(userId, "insentif-tim", "view");
+  } catch {
+    return false;
+  }
 }
 
 /** Pembungkus tipis untuk pemanggil/tes yang hanya butuh daftar barisnya. */
@@ -277,16 +308,42 @@ async function tipeCustomerBaru(
   return new Map(rows.map((r) => [r.invoice_no, r.ncr_type]));
 }
 
+/**
+ * Effort & Presales tersimpan (migrasi 184). Dipakai sebagai DEFAULT; nilai yang
+ * dikirim pemanggil menang, supaya jalur ops/uji tetap bisa mencoba angka lain tanpa
+ * mengubah data.
+ *
+ * AM tanpa baris → 60/0, sama seperti sebelumnya. Itu nilai terendah yang dianggap
+ * "masih layak bayar" di model; bukan nol, supaya hilangnya data tidak berubah jadi
+ * insentif nol tanpa penjelasan.
+ */
+export async function bacaEffort(amIds: string[], periode: string): Promise<Map<string, EffortInput>> {
+  if (amIds.length === 0) return new Map();
+  const sql = db();
+  const rows = await sql<{ am_id: string; effort: number; presales: number }[]>`
+    SELECT am_id, effort::float8 AS effort, presales::float8 AS presales
+    FROM insentif_effort WHERE periode = ${periode} AND am_id = ANY(${amIds}::text[])`;
+  return new Map(rows.map((r) => [r.am_id, { effort: r.effort, presales: r.presales }]));
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // COMPUTE
 
 export interface ComputeOptions {
   periode: string;            // 'YYYY-MM'
   periodeHpp: string;         // periode price book yang dipakai ambil HPP
+  /** Nilai yang MENANG atas isi tabel insentif_effort (jalur ops/uji). */
   effortPerAm: Map<string, EffortInput>;
   amIds: string[];
   /** true → tulis ke DB. Default false (pratinjau), meniru pola importer lain. */
   apply?: boolean;
+  /**
+   * true → tulis juga untuk AM yang rekapnya sudah lewat tahap review.
+   * Default false: rekap yang sudah diverifikasi Finance/disetujui Direktur TIDAK
+   * ditimpa hitung ulang. Tanpa pagar ini, satu job harian bisa mengubah angka yang
+   * sudah ditandatangani orang — dan tanda tangannya tetap menempel di angka baru.
+   */
+  paksa?: boolean;
 }
 
 export interface ComputeReport {
@@ -298,6 +355,7 @@ export interface ComputeReport {
   tanpa_aging: number;        // umur pelunasan tak diketahui → CF netral 1,00
   tanpa_kategori: number;     // faktur tanpa detailItem → porsi MR tak diketahui, dianggap berhak penuh
   faktur_kso: number;         // mayoritas nilainya KSO → MR nyaris nol
+  am_terkunci: string[];      // rekapnya sudah lewat review → tidak ditulis ulang
   total_am: number;
   total_ho: number;
   ditulis: boolean;
@@ -322,6 +380,20 @@ export async function computePeriode(opts: ComputeOptions): Promise<ComputeRepor
   const sql = db();
   const trx = await ambilTransaksi(opts.amIds, opts.periode, opts.periodeHpp);
   const ncrMap = await tipeCustomerBaru(opts.amIds, opts.periode);
+
+  // Effort tersimpan sebagai lapisan dasar, nilai dari pemanggil menimpanya.
+  const effort = await bacaEffort(opts.amIds, opts.periode);
+  for (const [amId, v] of opts.effortPerAm) effort.set(amId, v);
+
+  // Rekap yang sudah lewat tahap review tidak boleh ditimpa (lihat opts.paksa).
+  const terkunci = new Set<string>();
+  if (opts.apply && !opts.paksa) {
+    const rows = await sql<{ am_id: string }[]>`
+      SELECT am_id FROM insentif_bulanan
+      WHERE periode = ${opts.periode} AND am_id = ANY(${opts.amIds}::text[])
+        AND status <> ALL(${[...STATUS_LEAD_BOLEH_UBAH]}::text[])`;
+    for (const r of rows) terkunci.add(r.am_id);
+  }
 
   const perAm = new Map<string, { rows: ReturnType<typeof computeTransaksi>[]; tier: TierUt }>();
   const cfg = await sql<{ am_id: string; tier_ut: TierUt; cap_bulanan: number }[]>`
@@ -355,7 +427,7 @@ export async function computePeriode(opts: ComputeOptions): Promise<ComputeRepor
     const c = cfgByAm.get(r.am_id);
     if (!c) continue; // AM belum punya tier → tak dihitung. Sengaja diam: seed dulu.
 
-    const eff = opts.effortPerAm.get(r.am_id) ?? { effort: 60, presales: 0 };
+    const eff = effort.get(r.am_id) ?? { effort: 60, presales: 0 };
 
     // GP hanya dipercaya kalau SEMUA baris invoice ketemu HPP-nya. Kalau sebagian saja,
     // hpp_total terlalu kecil → GP terlihat tinggi palsu → MR kelebihan. Lebih baik null.
@@ -395,8 +467,9 @@ export async function computePeriode(opts: ComputeOptions): Promise<ComputeRepor
 
   if (opts.apply) {
     for (const h of hasil) {
+      if (terkunci.has(h.r.am_id)) continue;
       const c = cfgByAm.get(h.r.am_id)!;
-      const eff = opts.effortPerAm.get(h.r.am_id) ?? { effort: 60, presales: 0 };
+      const eff = effort.get(h.r.am_id) ?? { effort: 60, presales: 0 };
       await sql`
         INSERT INTO insentif_transaksi
           (am_id, periode, invoice_no, customer_id, tanggal, revenue,
@@ -432,8 +505,9 @@ export async function computePeriode(opts: ComputeOptions): Promise<ComputeRepor
     }
 
     for (const [amId, bucket] of perAm) {
+      if (terkunci.has(amId)) continue;
       const c = cfgByAm.get(amId)!;
-      const eff = opts.effortPerAm.get(amId) ?? { effort: 60, presales: 0 };
+      const eff = effort.get(amId) ?? { effort: 60, presales: 0 };
       const rk = rekapBulanan(bucket.rows, c.cap_bulanan);
       await sql`
         INSERT INTO insentif_bulanan
@@ -461,6 +535,7 @@ export async function computePeriode(opts: ComputeOptions): Promise<ComputeRepor
     tanpa_aging: tanpaAging,
     tanpa_kategori: tanpaKategori,
     faktur_kso: fakturKso,
+    am_terkunci: [...terkunci],
     total_am: totalAm,
     total_ho: totalHo,
     ditulis: !!opts.apply,
@@ -714,4 +789,134 @@ export async function setLeadType(scope: DataScope | undefined, args: SetLeadArg
     insentif_am: insentifAm,
     insentif_ho: insentifHo,
   };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EFFORT & PRESALES (migrasi 184)
+//
+// Keduanya masuk pengali sebagai (Effort + Presales)/100. Pada rentang 60-100 + 0-10,
+// selisihnya bisa nyaris MENGGANDAKAN insentif dua AM dengan penjualan identik — jadi
+// perlakuannya disamakan dengan penandaan lead: bukan hak AM, terkunci setelah review,
+// dan setiap perubahan langsung diikuti hitung ulang supaya angka tersimpan tidak
+// pernah berbeda dari angka yang dipakai.
+
+/** Semua AM yang punya tier (insentif_am_config). Dipakai sebagai cakupan default
+ *  hitung ulang: AM tanpa tier memang tidak menghasilkan apa-apa. */
+export async function semuaAmBerTier(): Promise<string[]> {
+  const rows = await db()<{ am_id: string }[]>`SELECT am_id FROM insentif_am_config ORDER BY am_id`;
+  return rows.map((r) => String(r.am_id));
+}
+
+/**
+ * Periode price book sumber HPP. Env supaya pergantian semester tidak butuh deploy;
+ * defaultnya periode yang ada isinya hari ini (lihat product_pricelist_setup).
+ */
+export const periodeHppDefault = (): string => process.env.INSENTIF_PERIODE_HPP ?? "H2-2026";
+
+export interface BarisEffort {
+  am_id: string;
+  nama: string;
+  panggilan: string | null;
+  effort: number | null;
+  presales: number | null;
+  sumber: string | null;
+  catatan: string | null;
+  updated_by: string | null;
+  updated_at: string | null;
+  status: string | null;
+  terkunci: boolean;
+}
+
+/** Daftar Effort/Presales untuk AM yang boleh dilihat pemanggil. AM murni ditolak. */
+export async function listEffort(scope: DataScope | undefined, periode: string) {
+  const akses = await resolveAkses(scope);
+  if (akses.level !== "team" && akses.level !== "all") {
+    throw Object.assign(new Error("forbidden"), { status: 403 });
+  }
+  const sql = db();
+  const semua = akses.ams === "all";
+  const daftar = semua ? [] : akses.ams;
+  if (!semua && daftar.length === 0) return { periode, baris: [] as BarisEffort[] };
+
+  // Sumbernya insentif_am_config, bukan insentif_effort: yang perlu diisi justru AM
+  // yang BELUM punya baris effort. Kalau di-drive dari tabel effort, AM yang belum
+  // pernah disetel tidak akan pernah muncul di layar untuk disetel.
+  const baris = await sql<BarisEffort[]>`
+    SELECT c.am_id, COALESCE(mu.nama, c.am_id) AS nama, mu.panggilan,
+           e.effort::float8 AS effort, e.presales::float8 AS presales,
+           e.sumber, e.catatan, e.updated_by, e.updated_at::text AS updated_at,
+           b.status,
+           COALESCE(b.status IS NOT NULL AND NOT (b.status = ANY(${[...STATUS_LEAD_BOLEH_UBAH]}::text[])), false) AS terkunci
+    FROM insentif_am_config c
+    LEFT JOIN master_user mu ON mu.am_id = c.am_id
+    LEFT JOIN insentif_effort e ON e.am_id = c.am_id AND e.periode = ${periode}
+    LEFT JOIN insentif_bulanan b ON b.am_id = c.am_id AND b.periode = ${periode}
+    ${semua ? sql`` : sql`WHERE c.am_id = ANY(${daftar}::text[])`}
+    ORDER BY nama`;
+  return { periode, baris };
+}
+
+export interface SetEffortArgs {
+  amId: string;
+  periode: string;
+  effort: number;
+  presales: number;
+  catatan?: string | null;
+}
+
+/**
+ * Setel Effort/Presales satu AM lalu HITUNG ULANG periodenya seketika.
+ *
+ * Hitung ulang itu bagian dari operasi, bukan pelengkap: tanpa itu tabel effort berkata
+ * 85 sementara insentif yang tersimpan masih memakai 60, dan tak ada di layar yang
+ * memberi tahu bahwa keduanya beda. Sama persis dengan alasan penandaan lead
+ * memperbarui bagi hasil dan rekapnya sekaligus.
+ */
+export async function setEffort(scope: DataScope | undefined, args: SetEffortArgs) {
+  const akses = await resolveAkses(scope);
+  if (akses.level !== "team" && akses.level !== "all") {
+    throw Object.assign(new Error("forbidden"), { status: 403 });
+  }
+  const bolehLihat = akses.ams === "all" || akses.ams.includes(args.amId);
+  if (!bolehLihat) throw Object.assign(new Error("not found"), { status: 404 });
+  if (akses.selfAmId && akses.selfAmId === args.amId) {
+    throw Object.assign(new Error("tidak boleh menyetel Effort untuk diri sendiri"), { status: 403 });
+  }
+  if (!(args.effort >= 0 && args.effort <= 100)) {
+    throw Object.assign(new Error("effort harus 0-100"), { status: 400 });
+  }
+  if (!(args.presales >= 0 && args.presales <= 10)) {
+    throw Object.assign(new Error("presales harus 0-10"), { status: 400 });
+  }
+
+  const sql = db();
+  const [bulanan] = await sql<{ status: string }[]>`
+    SELECT status FROM insentif_bulanan WHERE am_id = ${args.amId} AND periode = ${args.periode}`;
+  // Belum ada rekap = periode belum pernah dihitung. Itu BUKAN alasan menolak: menyetel
+  // effort lebih dulu lalu menghitung adalah urutan yang wajar di awal bulan.
+  if (bulanan && !(STATUS_LEAD_BOLEH_UBAH as readonly string[]).includes(bulanan.status)) {
+    throw Object.assign(
+      new Error(`periode sudah pada tahap '${bulanan.status}' — Effort terkunci`),
+      { status: 409 },
+    );
+  }
+
+  await sql`
+    INSERT INTO insentif_effort (am_id, periode, effort, presales, sumber, catatan, updated_by)
+    VALUES (${args.amId}, ${args.periode}, ${args.effort}, ${args.presales}, 'manual',
+            ${args.catatan ?? null}, ${akses.userId})
+    ON CONFLICT (am_id, periode) DO UPDATE SET
+      effort = EXCLUDED.effort, presales = EXCLUDED.presales, sumber = 'manual',
+      catatan = EXCLUDED.catatan, updated_by = EXCLUDED.updated_by, updated_at = now()`;
+
+  const laporan = await computePeriode({
+    periode: args.periode,
+    periodeHpp: periodeHppDefault(),
+    amIds: [args.amId],
+    effortPerAm: new Map(),
+    apply: true,
+  });
+
+  return { ok: true as const, am_id: args.amId, periode: args.periode,
+           effort: args.effort, presales: args.presales, laporan };
 }

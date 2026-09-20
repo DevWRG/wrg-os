@@ -39,6 +39,9 @@ import { runNotifQuota } from "./repo/notifquota.js";
 import { evaluateSalesAlerts } from "./repo/sales-analytics-alert-eval.js";
 import { computeNpk, currentPeriod } from "./repo/npk.js";
 import { computeNpkAm } from "./repo/npk-am.js";
+import {
+  computePeriode as computeInsentifPeriode, semuaAmBerTier, periodeHppDefault,
+} from "./repo/insentif.js";
 import { snapshotLastWeek } from "./repo/watchpoint-weekly.js";
 import { runGeoSweep } from "./repo/geowatch.js";
 import { terapkanKpiBulan } from "./repo/kpi-measure.js";
@@ -141,6 +144,15 @@ export function startScheduler(): ScheduleStatus {
   // Display-only (isi npk_score_semester + npk_aspect_score, tanpa WA/LLM). Sebelum
   // ada job ini compute cuma lewat POST /npk/compute manual → angka bisa basi berhari-hari.
   const npkComputeEnabled = (process.env.NPK_COMPUTE_ENABLED ?? "false").toLowerCase() === "true";
+  // insentif-compute (F67) — hitung ulang insentif bulan BERJALAN + bulan LALU tiap
+  // dini hari. Display-only (tanpa WA/LLM); yang membuatnya perlu berkala adalah
+  // pelunasan: sebuah faktur baru masuk hitungan setelah lunas, dan pelunasan bulan
+  // Agustus bisa terjadi di bulan Oktober. Tanpa job ini angka hanya berubah kalau
+  // ada yang menekan tombol hitung ulang.
+  //
+  // Rekap yang sudah lewat tahap review TIDAK ditimpa (computePeriode.paksa=false) —
+  // job harian tak boleh mengubah angka yang sudah ditandatangani orang.
+  const insentifComputeEnabled = (process.env.INSENTIF_COMPUTE_ENABLED ?? "false").toLowerCase() === "true";
   // watchpoint-snapshot — bekukan metric computed MINGGU LALU tiap Senin dini hari,
   // sebelum job lain menggeser angka. Tanpa ini papan Weekly tak punya riwayat:
   // metric computed dihitung live sehingga minggu lewat ikut berubah tiap dibuka.
@@ -872,6 +884,49 @@ export function startScheduler(): ScheduleStatus {
     );
     live.push(`npk-compute=${npkExpr}`);
   }
+
+  // insentif-compute (F67) — bulan berjalan + bulan lalu, harian 02:30 WIB.
+  const insentifExpr = process.env.INSENTIF_COMPUTE_CRON ?? "30 2 * * *";
+  if ((enabled || insentifComputeEnabled) && cron.validate(insentifExpr)) {
+    cron.schedule(
+      insentifExpr,
+      async () => {
+        const startedAt = new Date().toISOString();
+        try {
+          const amIds = await semuaAmBerTier();
+          if (amIds.length === 0) {
+            // Bukan error, tapi juga bukan "tidak ada apa-apa": tanpa tier tak ada
+            // satu pun insentif yang terhitung. Dicetak supaya kondisi ini kelihatan
+            // di log, bukan tampak seperti bulan yang memang sepi.
+            console.log(`[scheduler] insentif-compute skip @ ${startedAt} — insentif_am_config kosong`);
+            return;
+          }
+          // wibNow() sudah bergeser +7 jam, jadi bagian TANGGALNYA harus dibaca sebagai
+          // UTC (pola wibDate/wibJam di berkas ini). Memakai getMonth()/getFullYear()
+          // lokal akan menggeser dua kali dan, tiap tanggal 1 dini hari, menghitung
+          // bulan yang salah.
+          const now = wibNow();
+          const ym = (d: Date) => d.toISOString().slice(0, 7);
+          const lalu = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
+          for (const periode of [ym(now), ym(lalu)]) {
+            const r = await computeInsentifPeriode({
+              periode,
+              periodeHpp: periodeHppDefault(),
+              amIds,
+              effortPerAm: new Map(),   // Effort/Presales dibaca dari tabel (184)
+              apply: true,
+            });
+            console.log(`[scheduler] insentif-compute ${periode} @ ${startedAt} ${JSON.stringify(r).slice(0, 300)}`);
+          }
+        } catch (e) {
+          console.error(`[scheduler] insentif-compute gagal @ ${startedAt}:`, e);
+        }
+      },
+      { timezone },
+    );
+    live.push(`insentif-compute=${insentifExpr}`);
+  }
+
 
   // Sweep geotag harian: kunjungan yang fotonya menempel tapi tanpa koordinat
   // tak pernah masuk menu Visits. Jendelanya 2 hari (lihat repo/geowatch.ts) —
