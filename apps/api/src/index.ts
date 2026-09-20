@@ -178,6 +178,8 @@ import { computeNpkAm, getNpkAmScores, getNpkAmDetail } from "./repo/npk-am.js";
 import { hitungKpiBulan, terapkanKpiBulan } from "./repo/kpi-measure.js";
 import {
   getInsentifSelf, getInsentifList, getInsentifDetail, setLeadType as setInsentifLeadType,
+  listEffort as listInsentifEffort, setEffort as setInsentifEffort, periodeHppDefault,
+  semuaAmBerTier,
   computePeriode as computeInsentifPeriode,
 } from "./repo/insentif.js";
 import {
@@ -3225,6 +3227,41 @@ app.get("/insentif/list", async (c) => {
   }
 });
 
+// Effort & Presales per AM per bulan (184). Dipakai sebagai pengali insentif, jadi
+// wewenangnya sama dengan penandaan lead: tim/semua, bukan AM sendiri. Menyetelnya
+// langsung memicu hitung ulang periode AM itu (lihat setEffort).
+app.get("/insentif/effort", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    return c.json(await listInsentifEffort(await scopeOf(c), insentifPeriode(c)));
+  } catch (e) {
+    const { status, body } = insentifErr(e);
+    return c.json(body, status);
+  }
+});
+
+app.post("/insentif/effort", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const body = (await c.req.json().catch(() => ({}))) as {
+    am_id?: string; effort?: number; presales?: number; catatan?: string;
+  };
+  const amId = String(body.am_id ?? "").trim();
+  if (!amId) return c.json({ error: "am_id wajib" }, 400);
+  const effort = Number(body.effort);
+  const presales = Number(body.presales ?? 0);
+  if (!Number.isFinite(effort) || !Number.isFinite(presales)) {
+    return c.json({ error: "effort & presales harus angka" }, 400);
+  }
+  try {
+    return c.json(await setInsentifEffort(await scopeOf(c), {
+      amId, periode: insentifPeriode(c), effort, presales, catatan: body.catatan ?? null,
+    }));
+  } catch (e) {
+    const { status, body: err } = insentifErr(e);
+    return c.json(err, status);
+  }
+});
+
 // Hitung ulang satu periode. Operasi ops.
 //
 // Pagar yang SELALU berlaku: superuser (dari sesi via x-user-id). Pagar service-token
@@ -3244,13 +3281,21 @@ app.post("/insentif/compute", async (c) => {
     am_ids?: unknown;
     effort?: Record<string, { effort: number; presales: number }>;
     apply?: boolean;
+    paksa?: boolean;
   };
+  // am_ids kosong = SEMUA AM yang punya tier. Sebelumnya berarti "tak menghitung
+  // siapa pun" dan endpoint-nya balas nol tanpa keluhan — bentuk gagal-senyap yang
+  // paling mahal di fitur ini, karena "0 transaksi" terlihat seperti jawaban.
+  const amIds = Array.isArray(body.am_ids) && body.am_ids.length
+    ? body.am_ids.map(String)
+    : await semuaAmBerTier();
   return c.json(await computeInsentifPeriode({
     periode: insentifPeriode(c),
-    periodeHpp: String(body.periode_hpp ?? "H2-2026"),
-    amIds: Array.isArray(body.am_ids) ? body.am_ids.map(String) : [],
+    periodeHpp: String(body.periode_hpp ?? periodeHppDefault()),
+    amIds,
     effortPerAm: new Map(Object.entries(body.effort ?? {})),
     apply: body.apply === true,
+    paksa: body.paksa === true,
   }));
 });
 
