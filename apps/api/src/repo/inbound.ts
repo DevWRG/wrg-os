@@ -9,7 +9,7 @@ import { upsertDailyTodo, computeIsLate } from "./todo.js";
 import { createReminder } from "./reminder.js";
 import { buildCekReply } from "./cek.js";
 import { ingestKlaim, type DocKlaimRow } from "./doc-klaim.js";
-import { ingestKoran, nyatakanNihil, parseNihil, type IngestKoranResult } from "./cashin.js";
+import { formatStatusDraft, ingestKoran, nyatakanNihil, parseNihil, type IngestKoranResult } from "./cashin.js";
 import { createTicket, isKnownTeknisiSender } from "./serviceticket.js";
 import {
   findBySjNumber,
@@ -1023,8 +1023,8 @@ async function ingestKoranDariBaris(row: WaRow, lampiran: WaRow[]): Promise<Reco
     // per file: draftnya memang satu per hari. Draft-nya sendiri dikirim
     // sebagai pesan terpisah oleh buatDraftJikaLengkap.
     if (l === lampiran[lampiran.length - 1]) {
-      if (k.draft_kode) baris.push(`📝 Draft resume ${k.draft_kode} menunggu konfirmasi.`);
-      else if (k.draft_alasan) baris.push(`⏳ ${k.draft_alasan}`);
+      const status = formatStatusDraft(k);
+      if (status) baris.push(status);
     }
   }
 
