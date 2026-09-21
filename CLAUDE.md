@@ -94,8 +94,12 @@ final yang dipakai sales. Repo API `apps/api/src/repo/pricebook.ts` → `/priceb
 ## Operasi / Deploy (native pm2 di Mac)
 
 Proses pm2 (port): `wrg-prod-ai` (8100, uvicorn .venv), `wrg-prod-api` (4100, dist/index.js),
-`wrg-prod-web` (3100, next), `wrg-prod-wabridge`. Auto-boot via LaunchAgent
+`wrg-prod-web` (3100, next). Auto-boot via LaunchAgent
 (`~/Library/LaunchAgents/pm2.development.plist`, Label com.PM2).
+
+`wrg-prod-wabridge` **TIDAK lagi di pm2** (sejak 21 Sep 2026) — ia LaunchAgent sendiri,
+`com.wrg.wabridge`, dijalankan lewat `~/DevWRG/ops/wa-bridge-standalone.sh`. Alasannya
+di bawah (QoS). Jangan hidupkan ulang di pm2: dua pengelola akan berebut port 18080.
 
 ```bash
 # Build sebelum restart:
@@ -111,6 +115,44 @@ Smoke test endpoint protected (butuh `x-service-token`, env `API_SERVICE_TOKEN`)
 TOK=$(grep -E '^API_SERVICE_TOKEN=' .env.prod | cut -d= -f2-)
 curl -s -H "x-service-token: $TOK" "http://localhost:4100/<path>"
 ```
+
+### Layanan yang memanggil openclaw: WAJIB `ProcessType=Interactive`
+
+Setiap LaunchAgent (atau proses pm2) yang menjalankan `openclaw` **harus** memuat tiga
+baris ini di plist-nya:
+
+```xml
+<key>ProcessType</key><string>Interactive</string>
+<key>LowPriorityIO</key><false/>
+<key>LowPriorityBackgroundIO</key><false/>
+```
+
+**Kenapa.** macOS memberi QoS latar + I/O prioritas rendah pada proses keturunan daemon
+(launchd MAUPUN pm2). openclaw sangat berat I/O (`~/.openclaw/agents/main/agent/openclaw-agent.sqlite`
+sudah 52 MB per Sep 2026), jadi throttling itu melipatgandakan waktu kerjanya ~4x.
+Terukur 21 Sep 2026:
+
+| Perintah | Dari shell | Dari daemon |
+|---|---|---|
+| `openclaw --version` (tak sentuh disk) | 412 ms | 412 ms |
+| `openclaw message send` | 13-21 detik | **62 detik** |
+| startup gateway | 21 detik | **4 menit → crash-loop** |
+
+**Gejalanya menyesatkan dan senyap.** Bukan error, melainkan lambat sampai melewati
+timeout: `wa-bridge` mencatat `Command failed: openclaw message send ...` dengan
+**stderr kosong** (proses dibunuh sinyal, bukan gagal sendiri), dan gateway gagal start
+dengan `state lease heartbeat did not become ready (timeoutMs=5000)` — batas itu
+konstanta di kode openclaw, tidak bisa dikonfigurasi. Dua gejala yang tampak tak
+berhubungan, satu sebab.
+
+**Insiden 21 Sep 2026**: balasan WA mati ~15 jam. Yang sudah disingkirkan lewat uji
+bervariabel tunggal sebelum sebab sebenarnya ketemu — jangan ulangi jalan buntu ini:
+`NODE_ENV`, cwd, `PATH`, biner openclaw, `NODE_CHANNEL_FD`, `TMPDIR`, `HOME`, seluruh env
+(`env -i`), sesi proses (`setsid`), batas fd (256), `nice`, dan konektivitas ke gateway
+(TCP 1 ms, HTTP 200 dalam 12 ms dari dalam pm2).
+
+Layanan yang sudah memakai setelan ini: `com.wrg.wabridge`, `ai.openclaw.gateway`.
+
 
 ## Scheduler (apps/api/src/scheduler.ts)
 
