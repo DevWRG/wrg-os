@@ -26,7 +26,10 @@ export PATH="/opt/homebrew/opt/postgresql@16/bin:/opt/homebrew/bin:/usr/bin:/bin
 
 LOG_DIR="$HOME/DevWRG/ops/logs"
 LOG="$LOG_DIR/audit-plan-harian.log"
-KIRIM_LOG="${AUDIT_KIRIM_LOG:-}"      # log kiriman ulang (opsional)
+# Default HARUS lokasi tetap, bukan kosong. Kalau kosong, skrip tak membaca
+# riwayat kiriman ulang sama sekali dan melaporkan "belum dibalas" untuk
+# pesan yang sebenarnya sudah — kesalahan yang persis ingin dicegah skrip ini.
+KIRIM_LOG="${AUDIT_KIRIM_LOG:-$HOME/DevWRG/ops/logs/resend-log.jsonl}"
 BRIDGE_SEND="http://127.0.0.1:18080/send"
 ALERT_WA="+6285733048855"
 mkdir -p "$LOG_DIR"
