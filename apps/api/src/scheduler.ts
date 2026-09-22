@@ -49,6 +49,7 @@ import { runVehicleAlerts } from "./repo/vehicle.js";
 import { runItTicketSlaAlerts } from "./repo/it-ticket.js";
 import { runMaintenanceAlerts, runGaMaintenanceBscFeed } from "./repo/ga-maintenance.js";
 import { runGaHelpdeskOverdueAlert, runGaHelpdeskBscFeed } from "./repo/ga-helpdesk.js";
+import { runAuditFindingApprovalReminder } from "./repo/audit-finding.js";
 import { runLpseTenderReminder } from "./repo/lpse-tender.js";
 
 // Penjadwal agen in-process (Blueprint v2.3). Default MATI — aktif hanya bila
@@ -176,6 +177,10 @@ export function startScheduler(): ScheduleStatus {
   // ga-helpdesk-bsc-feed (F139) — auto-isi kpi_measurement Dito ('SLA
   // compliance %'), bulanan. Display-only, tanpa WA.
   const gaHelpdeskBscEnabled = (process.env.GA_HELPDESK_BSC_ENABLED ?? "false").toLowerCase() === "true";
+  // audit-finding-reminder (F60) — WA ke anggota grup tahap approval yang
+  // pending & telat >N hari (dedup harian via reminded_at). Flag SENDIRI
+  // (default off) — mengirim WA.
+  const auditFindingReminderEnabled = (process.env.AUDIT_FINDING_REMINDER_ENABLED ?? "false").toLowerCase() === "true";
   // lpse-tender-reminder (F20) — WA ke PIC kalau tender LPSE/E-Catalog macet
   // >N hari di status berjalan (belum selesai). Flag SENDIRI (default off).
   const lpseTenderReminderEnabled = (process.env.LPSE_TENDER_REMINDER_ENABLED ?? "false").toLowerCase() === "true";
@@ -621,6 +626,28 @@ export function startScheduler(): ScheduleStatus {
       { timezone },
     );
     live.push(`ga-helpdesk-bsc-feed=${gaHelpdeskBscExpr}`);
+  }
+
+  // audit-finding-reminder (F60) — cek tahap approval pending yang telat,
+  // pagi 08:00 hari kerja (pola sama miss-escalation). Threshold hari via env
+  // (default 3, minimal 1 — cegah salah isi jadi 0/negatif spam tiap jam).
+  const auditFindingReminderExpr = process.env.AUDIT_FINDING_REMINDER_CRON ?? "0 8 * * 1-5";
+  const auditFindingReminderDays = Math.max(1, Number(process.env.AUDIT_FINDING_REMINDER_DAYS) || 3);
+  if (auditFindingReminderEnabled && cron.validate(auditFindingReminderExpr)) {
+    cron.schedule(
+      auditFindingReminderExpr,
+      async () => {
+        const startedAt = new Date().toISOString();
+        try {
+          const r = await runAuditFindingApprovalReminder(auditFindingReminderDays);
+          console.log(`[scheduler] audit-finding-reminder @ ${startedAt} ${JSON.stringify(r)}`);
+        } catch (e) {
+          console.error(`[scheduler] audit-finding-reminder gagal @ ${startedAt}:`, e);
+        }
+      },
+      { timezone },
+    );
+    live.push(`audit-finding-reminder=${auditFindingReminderExpr}`);
   }
 
   // Monitor (port wrg-monitor) — rekap & resume GENERATE-ONLY (tidak kirim WA;

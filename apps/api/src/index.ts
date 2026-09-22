@@ -557,6 +557,20 @@ import {
   getAttachmentFile,
 } from "./repo/approval.js";
 import {
+  listChainConfig as listAuditFindingChainConfig,
+  updateChainConfigStep as updateAuditFindingChainConfigStep,
+  listFindings as listAuditFindings,
+  getFinding as getAuditFinding,
+  createFinding as createAuditFinding,
+  updateFinding as updateAuditFinding,
+  startFinding as startAuditFinding,
+  requestClosure as requestAuditFindingClosure,
+  decideStep as decideAuditFindingStep,
+  getApprovalRequest as getAuditFindingApprovalRequest,
+  getActiveApprovalRequest as getActiveAuditFindingApprovalRequest,
+  notifyCurrentStep as notifyAuditFindingCurrentStep,
+} from "./repo/audit-finding.js";
+import {
   generateSuggestions,
   listSuggestions,
   updateSuggestion,
@@ -7399,6 +7413,121 @@ app.post("/ga-tickets/overdue-alert/run", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const r = await runGaHelpdeskOverdueAlert();
   return c.json(r);
+});
+
+// ── F60 Komite Audit Findings Tracker ──
+// created_by/requested_by/decided_by dipercaya dari BFF (identitas & gating
+// izin grup di layer WEB, pola sama F138) — apps/api menegakkan business-rule
+// (sequencing tahap, keanggotaan grup SAAT decide) bukan identity check.
+app.get("/audit-findings/chain-config", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json({ config: await listAuditFindingChainConfig() });
+});
+
+app.put("/audit-findings/chain-config/:urutan", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { accessGroupId?: number | null; enabled?: boolean };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const r = await updateAuditFindingChainConfigStep(Number(c.req.param("urutan")), body);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.get("/audit-findings", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const status = c.req.query("status") || undefined;
+  const overdue = c.req.query("overdue") === "1";
+  const findings = await listAuditFindings({ status, overdue });
+  return c.json({ count: findings.length, findings });
+});
+
+app.get("/audit-findings/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const f = await getAuditFinding(c.req.param("id"));
+  if (!f) return c.json({ error: "finding tidak ditemukan" }, 404);
+  const activeRequest = await getActiveAuditFindingApprovalRequest(c.req.param("id"));
+  return c.json({ finding: f, activeRequest });
+});
+
+app.post("/audit-findings", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: {
+    title?: string; description?: string; source?: string; unit_terdampak?: string;
+    control_linkage?: string; due_date?: string; created_by?: string;
+  };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.title?.trim()) return c.json({ error: "title wajib" }, 400);
+  const r = await createAuditFinding({
+    title: body.title, description: body.description ?? null, source: body.source ?? null,
+    unit_terdampak: body.unit_terdampak ?? null, control_linkage: body.control_linkage ?? null,
+    due_date: body.due_date ?? null, created_by: body.created_by ?? null,
+  });
+  return c.json(r, "ok" in r && r.ok === false ? 400 : 201);
+});
+
+app.patch("/audit-findings/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: {
+    title?: string; description?: string | null; source?: string | null; unit_terdampak?: string | null;
+    control_linkage?: string | null; due_date?: string | null;
+  };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const r = await updateAuditFinding(c.req.param("id"), body);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.post("/audit-findings/:id/start", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await startAuditFinding(c.req.param("id"));
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.post("/audit-findings/:id/request-closure", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { requested_by?: string | null } = {};
+  try { body = await c.req.json(); } catch { /* opsional */ }
+  const r = await requestAuditFindingClosure(c.req.param("id"), body.requested_by ?? null);
+  return c.json(r, r.ok ? 201 : 400);
+});
+
+app.get("/audit-findings/approval-requests/:requestId", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await getAuditFindingApprovalRequest(c.req.param("requestId"));
+  if (!r) return c.json({ error: "request tidak ditemukan" }, 404);
+  return c.json(r);
+});
+
+app.post("/audit-findings/approval-requests/:requestId/notify", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await notifyAuditFindingCurrentStep(c.req.param("requestId"));
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.post("/audit-findings/approval-requests/:requestId/decide", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { action?: "approve" | "reject"; decider_user_id?: string; note?: string | null };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (body.action !== "approve" && body.action !== "reject") return c.json({ error: "action wajib (approve/reject)" }, 400);
+  if (!body.decider_user_id) return c.json({ error: "decider_user_id wajib" }, 400);
+  const r = await decideAuditFindingStep({
+    requestId: c.req.param("requestId"), action: body.action, deciderUserId: body.decider_user_id, note: body.note ?? null,
+  });
+  return c.json(r, r.ok ? 200 : 400);
 });
 
 // ── F138 Operational Fund Request + Multi-Step Approval Workflow ──

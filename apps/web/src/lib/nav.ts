@@ -31,6 +31,7 @@ import {
   QrCode,
   Stamp,
   TrendingUp,
+  ShieldAlert,
   type LucideIcon,
 } from "lucide-react";
 
@@ -48,6 +49,7 @@ import { canViewInventoryRelocation } from "@/lib/inventory-relocation-access";
 import { canViewVendorManagement } from "@/lib/vendor-management-access";
 import { canViewGaReporting } from "@/lib/ga-reporting-access";
 import { canViewPurchaseForecast } from "@/lib/purchase-forecast-access";
+import { canViewAuditFindings } from "@/lib/audit-finding-access";
 
 // exact: sorot aktif hanya saat path persis (untuk route induk yg punya child,
 // mis. /pricelist vs /pricelist/setup).
@@ -341,6 +343,20 @@ export const NAV: NavGroup[] = [
     label: "DOC",
     items: [
       { title: "Klaim OCR", url: "/doc-klaim", icon: ScanText, badge: "NEW" },
+    ],
+  },
+  {
+    // F60 — domain board literally "CROSS" (governance/AGC), tak cocok masuk
+    // grup existing manapun, grup sendiri (pola sama DOC/F-CASHIN bikin grup
+    // "DOC"). Fallback identitas SENGAJA sempit (admin/direktur saja, lihat
+    // audit-finding-access.ts) — post-fraud context, bukan fitur operasional
+    // biasa yang default terbuka utk semua Karyawan.
+    label: "Governance",
+    items: [
+      {
+        title: "Audit Findings", url: "/audit-findings", icon: ShieldAlert, badge: "NEW",
+        matchPrefix: ["/audit-findings/config"], show: canViewAuditFindings,
+      },
     ],
   },
   {
