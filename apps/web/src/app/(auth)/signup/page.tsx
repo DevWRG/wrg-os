@@ -4,6 +4,7 @@ import { AtSign, Lock, UserRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { PasswordInput } from "@/components/ui/password-input";
 
 export default function SignupPage() {
   return (
@@ -31,8 +32,8 @@ export default function SignupPage() {
         <div className="grid gap-2">
           <Label htmlFor="password">Password</Label>
           <div className="relative">
-            <Lock className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2" />
-            <Input id="password" type="password" placeholder="••••••••" required className="pl-9" />
+            <Lock className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 z-10" />
+            <PasswordInput id="password" placeholder="••••••••" required className="pl-9" />
           </div>
         </div>
         <Button className="w-full">Create account</Button>
