@@ -80,7 +80,7 @@ export async function produktivitas(): Promise<KsoProduktivitas> {
            v.rupiah_per_tes_customer, v.basis_tes_memadai, v.porsi_kso, v.revenue_tumpang_tindih,
            v.tes_sheet_periode_banding, v.tes_ditagihkan_accurate, v.rasio_tagih_lapor,
            v.bulan_tertagih_accurate, v.tagih_pola_datar, v.status_penagihan
-    FROM kso_asset_produktivitas_v v
+    FROM kso_asset_produktivitas_mv v
     LEFT JOIN accurate_customer c ON c.id = v.account_id
     ORDER BY v.skema, v.rupiah_per_tes_customer DESC NULLS LAST, v.customer_raw`;
 
@@ -90,7 +90,7 @@ export async function produktivitas(): Promise<KsoProduktivitas> {
     SELECT skema,
            percentile_cont(0.5) WITHIN GROUP (ORDER BY rupiah_per_tes_customer) AS median
     FROM (SELECT DISTINCT account_id, skema, rupiah_per_tes_customer
-          FROM kso_asset_produktivitas_v
+          FROM kso_asset_produktivitas_mv
           WHERE basis_tes_memadai AND rupiah_per_tes_customer IS NOT NULL) x
     GROUP BY skema`;
 
@@ -206,7 +206,7 @@ export async function faskesDetail(
   const alat = await sql`
     SELECT asset_id, sn_key, type_alat, nama_alat,
            target_jumlah_tes, total_tes, rata_tes_bulanan, capaian_target
-    FROM kso_asset_produktivitas_v
+    FROM kso_asset_produktivitas_mv
     WHERE account_id = ${accountId} AND skema = ${skema}
     ORDER BY total_tes DESC NULLS LAST, nama_alat`;
 
