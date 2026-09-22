@@ -131,8 +131,20 @@ if [ "$MODE_KIND" = "rekap" ]; then
     select(.ts_ms >= $since)
     | select(.chat_type == "group")
     | select(.group_jid as $j | $ignored | index($j) | not)
-    | { jid: .group_jid, ts: .ts_ms, sender: (.sender_name // .sender), body: (.body // "<no-body>"), media: .media_type }
-  ' | jq -sc 'sort_by(.ts) | .[] | "[\(.jid)] [\(.ts | tostring)] \(.sender): \(.body)\(if .media then " <media:\(.media)>" else "" end)"' \
+    # Sejak openclaw 2026.9.5 (21 Sep 2026) media tanpa caption datang dengan
+    # body "" — bukan null, dan bukan penanda "<media:image>" lagi. Operator //
+    # cuma menangkap null, jadi body kosong lolos dan barisnya tampil tanpa isi.
+    # Rakit teksnya di sini: caption + jenis media, jenis media saja, atau
+    # "<no-body>" kalau memang tak ada apa-apa. Penanda lama ikut dinetralkan
+    # supaya baris historis tidak tercetak dobel.
+    | { jid: .group_jid, ts: .ts_ms, sender: (.sender_name // .sender),
+        teks: ( ((.body // "") | gsub("^\\s+|\\s+$";"")) as $b
+                | (if .media_type then "<media:\(.media_type)>" else "" end) as $m
+                | if ($b | length) > 0 and $b != "<media:image>" and ($m | length) > 0 then "\($b) \($m)"
+                  elif ($b | length) > 0 and $b != "<media:image>" then $b
+                  elif ($m | length) > 0 then $m
+                  else "<no-body>" end ) }
+  ' | jq -sc 'sort_by(.ts) | .[] | "[\(.jid)] [\(.ts | tostring)] \(.sender): \(.teks)"' \
     | sed 's/^"//;s/"$//')
 
   if [ "$IGNORED_COUNT" -gt 0 ]; then
