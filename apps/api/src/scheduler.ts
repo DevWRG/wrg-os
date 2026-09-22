@@ -494,6 +494,20 @@ export function startScheduler(): ScheduleStatus {
           } catch (e3) {
             console.error(`[scheduler] accurate-sync item SO/DO gagal @ ${startedAt}:`, e3);
           }
+          // Snapshot produktivitas KSO (migrasi 185) disegarkan DI SINI, bukan
+          // lewat cron sendiri: sumbernya cuma berubah oleh sinkron di atas,
+          // jadi menempelkannya membuat snapshot selalu sesegar datanya tanpa
+          // perlu menebak jadwal. CONCURRENTLY supaya pembacaan tidak terkunci
+          // selama refresh (~2 menit) — butuh indeks unik, ada di migrasi 185.
+          // try/catch sendiri: snapshot basi jauh lebih ringan akibatnya
+          // daripada sinkron Accurate yang gagal gara-gara refresh.
+          try {
+            const t0 = Date.now();
+            await db()`REFRESH MATERIALIZED VIEW CONCURRENTLY kso_asset_produktivitas_mv`;
+            console.log(`[scheduler] kso-mv refresh ${Date.now() - t0}ms`);
+          } catch (e4) {
+            console.error(`[scheduler] kso-mv refresh gagal @ ${startedAt}:`, e4);
+          }
         } catch (e) {
           console.error(`[scheduler] accurate-sync gagal @ ${startedAt}:`, e);
         }
