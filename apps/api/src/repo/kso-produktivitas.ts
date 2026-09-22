@@ -82,7 +82,11 @@ export async function produktivitas(): Promise<KsoProduktivitas> {
            v.bulan_tertagih_accurate, v.tagih_pola_datar, v.status_penagihan
     FROM kso_asset_produktivitas_mv v
     LEFT JOIN accurate_customer c ON c.id = v.account_id
-    ORDER BY v.skema, v.rupiah_per_tes_customer DESC NULLS LAST, v.customer_raw`;
+    -- asset_id sbg pemecah seri: 397 dari 524 baris punya kunci urut yang SAMA
+    -- (skema + rupiah_per_tes + customer_raw), jadi tanpa ini urutannya ditentukan
+    -- urutan fisik penyimpanan — berubah sendiri sehabis VACUUM/refresh snapshot,
+    -- dan daftar di layar ikut teracak tanpa sebab yang terlihat.
+    ORDER BY v.skema, v.rupiah_per_tes_customer DESC NULLS LAST, v.customer_raw, v.asset_id`;
 
   // Median dihitung di SQL, bukan di TS: percentile_cont menangani jumlah baris
   // genap dengan benar dan ikut aturan NULL yang sama dengan view.
@@ -208,7 +212,7 @@ export async function faskesDetail(
            target_jumlah_tes, total_tes, rata_tes_bulanan, capaian_target
     FROM kso_asset_produktivitas_mv
     WHERE account_id = ${accountId} AND skema = ${skema}
-    ORDER BY total_tes DESC NULLS LAST, nama_alat`;
+    ORDER BY total_tes DESC NULLS LAST, nama_alat, asset_id`;
 
   // sn_raw tidak ada di view; diambil terpisah supaya view tidak perlu diubah hanya
   // demi satu kolom tampilan.

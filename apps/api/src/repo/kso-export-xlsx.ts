@@ -100,7 +100,7 @@ export async function buildKsoWorkbook(opts: KsoExportOpts): Promise<Buffer> {
     LEFT JOIN tes_aset ta ON ta.asset_id = v.asset_id
     LEFT JOIN faskes_rentang fr ON fr.account_id = v.account_id
     WHERE v.skema = ${skema}
-    ORDER BY c.name NULLS LAST, v.customer_raw, v.nama_alat`;
+    ORDER BY c.name NULLS LAST, v.customer_raw, v.nama_alat, v.asset_id`;
 
   // ── Sheet 2: REAGEN, inti permintaan ────────────────────────────────────────────
   // Dibaca dari kso_faskes_reagen_skema_v (155) — view yang sama dengan dialog detail,
