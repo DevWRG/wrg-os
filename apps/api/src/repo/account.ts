@@ -13,7 +13,13 @@ import { FULL_SCOPE, isRestricted, scopeAccountOwnerClause, type DataScope } fro
 export const CONTACT_ROLES = ["economic_buyer", "user", "technical", "champion"] as const;
 export type ContactRole = (typeof CONTACT_ROLES)[number];
 
-const nameExpr = `COALESCE(NULLIF(ac.name,''), NULLIF(max(ai.raw->'customer'->>'name'),''), NULLIF(max(ai.raw->>'retailWpName'),''), 'Customer #' || ai.customer_id::text)`;
+// Nama cadangan dari `raw` SENGAJA tidak ikut di dalam agregat — lihat catatan
+// panjang di repo/sales.ts (perProduct): `ai.raw` itu jsonb ber-TOAST 199 MB di
+// atas heap 3,4 MB, jadi `max(ai.raw->…)` di dalam GROUP BY men-detoast SELURUH
+// faktur (11.660 baris) dan membuat /accounts terukur >100 dtk saat cache dingin.
+// Di sini ia dipindah ke LATERAL ber-syarat `master_name IS NULL`, yang jalan
+// SETELAH agregat dan hanya untuk account yang namanya memang kosong di master.
+// Hasilnya identik; yang berubah cuma berapa baris yang perlu di-detoast.
 
 // Daftar account = customer yg punya faktur, + ekstensi CRM + ringkasan komersial + jml kontak.
 export async function listAccounts(scope: DataScope = FULL_SCOPE) {
@@ -21,7 +27,7 @@ export async function listAccounts(scope: DataScope = FULL_SCOPE) {
   const rows = await sql`
     WITH inv AS (
       SELECT ai.customer_id AS id,
-        ${sql.unsafe(nameExpr)} AS name,
+        NULLIF(ac.name,'') AS master_name,
         NULLIF(mode() WITHIN GROUP (ORDER BY NULLIF(mu.cabang,'')), '') AS cabang_inv,
         sum(ai.total - COALESCE(ai.tax_amount,0))::float8 AS revenue,
         count(*)::int AS invoices,
@@ -35,7 +41,9 @@ export async function listAccounts(scope: DataScope = FULL_SCOPE) {
       WHERE ai.customer_id IS NOT NULL
       GROUP BY ai.customer_id, ac.name
     )
-    SELECT i.id::text AS id, i.name, COALESCE(oa.cabang, i.cabang_inv) AS cabang,
+    SELECT i.id::text AS id,
+      COALESCE(i.master_name, NULLIF(nm.nama,''), NULLIF(nm.retail,''), 'Customer #' || i.id::text) AS name,
+      COALESCE(oa.cabang, i.cabang_inv) AS cabang,
       oa.tipe, oa.kelas_rs, oa.wilayah, oa.status_bayar,
       oa.owner_am_id, COALESCE(NULLIF(omu.nama,''), '') AS owner_nama,
       i.revenue, i.invoices, i.last_date, i.days_since, i.outstanding,
@@ -43,6 +51,12 @@ export async function listAccounts(scope: DataScope = FULL_SCOPE) {
     FROM inv i
     LEFT JOIN crm_account oa ON oa.account_id = i.id
     LEFT JOIN master_user omu ON omu.am_id = oa.owner_am_id
+    LEFT JOIN LATERAL (
+      SELECT ai.raw->'customer'->>'name' AS nama, ai.raw->>'retailWpName' AS retail
+      FROM accurate_invoice ai
+      WHERE ai.customer_id = i.id AND i.master_name IS NULL
+      LIMIT 1
+    ) nm ON TRUE
     WHERE true ${scopeAccountOwnerClause(sql, scope)}
     ORDER BY i.revenue DESC NULLS LAST`;
   return rows.map((r) => ({
