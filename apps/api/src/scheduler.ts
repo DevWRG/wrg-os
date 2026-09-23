@@ -503,6 +503,11 @@ export function startScheduler(): ScheduleStatus {
           // daripada sinkron Accurate yang gagal gara-gara refresh.
           try {
             const t0 = Date.now();
+            // URUTAN MENGIKAT: kso_asset_produktivitas_v (sumber snapshot atas)
+            // ikut membaca kso_customer_revenue_mv, jadi snapshot revenue harus
+            // segar DULU. Kalau dibalik, snapshot atas dibangun dari revenue
+            // periode sebelumnya — salah tanpa satu pun error muncul.
+            await db()`REFRESH MATERIALIZED VIEW CONCURRENTLY kso_customer_revenue_mv`;
             await db()`REFRESH MATERIALIZED VIEW CONCURRENTLY kso_asset_produktivitas_mv`;
             console.log(`[scheduler] kso-mv refresh ${Date.now() - t0}ms`);
           } catch (e4) {
