@@ -109,7 +109,7 @@ export interface StockBatchQuery {
 const KSO_HIST = `
   SELECT item_id, count(*)::int AS n_kso
   FROM accurate_invoice_item
-  WHERE item_id IS NOT NULL AND raw->>'charField1' = 'KSO'
+  WHERE item_id IS NOT NULL AND kategori_pengadaan = 'KSO'
   GROUP BY item_id
 `;
 
