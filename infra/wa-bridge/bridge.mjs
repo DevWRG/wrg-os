@@ -89,7 +89,7 @@ function openclawSend(to, message) {
     execFile(
       OPENCLAW,
       ["message", "send", "--channel", CHANNEL, "--target", String(to), "--message", String(message), "--json"],
-      { timeout: 30000, maxBuffer: 1024 * 1024 },
+      { timeout: 120000, maxBuffer: 1024 * 1024 },
       (err, stdout, stderr) => {
         if (err) {
           log(`[send] ERROR → ${to}: ${stderr || err.message}`);

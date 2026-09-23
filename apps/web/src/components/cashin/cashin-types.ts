@@ -60,6 +60,9 @@ export interface CashinLine {
   kategori_oleh: string;
   pasangan_line_id: string | null;
   catatan: string | null;
+  /** Nomor rujukan pendek (T1, T2…) untuk baris yang menunggu keputusan —
+   *  nomor yang SAMA dipakai di pesan draft WA ("#KORAN triage T1 …"). */
+  kode_triage?: string | null;
 }
 
 export interface CashinAccount {
