@@ -395,6 +395,15 @@ export const NAV: NavGroup[] = [
     ],
   },
   {
+    // F-CASHIN — Mitigasi Uang Masuk Harian. Pemakainya Finance (bukan Sales/
+    // Operations) dan datanya rekening bank, jadi dibuat grup sendiri daripada
+    // dipaksa masuk grup yang temanya lain.
+    label: "Finance",
+    items: [
+      { title: "Uang Masuk", url: "/uang-masuk", icon: Banknote, badge: "NEW" },
+    ],
+  },
+  {
     label: "Admin",
     items: [
       { title: "Sales Targets", url: "/sales/targets", icon: Target },

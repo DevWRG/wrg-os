@@ -5,6 +5,7 @@ import {
   berbauInternal,
   cocokLabelFile,
   parseNihil,
+  parseTriage,
   formatDraftKonfirmasi,
   formatIngatanBelumLengkap,
   formatIngatanKonfirmasi,
@@ -121,10 +122,19 @@ function ringkasan(over: Partial<RingkasanHarian> = {}): RingkasanHarian {
     statement_perlu_review: [],
     penerimaan_terbesar: [{ label_file: "BJTM", deskripsi: "RS WAJAK HUSADA", kredit: 10_740_360 }],
     per_rekening: [
-      { label_file: "MDR 038", nama_bank: "Bank Mandiri", uang_masuk: 45_231_797, puteran_keluar: 14_000_000 },
-      { label_file: "BJTM", nama_bank: "Bank Jatim", uang_masuk: 13_500_000, puteran_keluar: 150_000_000 },
+      {
+        label_file: "MDR 038", nama_bank: "Bank Mandiri",
+        uang_masuk: 45_231_797, puteran_keluar: 14_000_000,
+        kredit_koran: 49_231_797, puteran_masuk: 4_000_000, tertahan: 0, lain: 0,
+      },
+      {
+        label_file: "BJTM", nama_bank: "Bank Jatim",
+        uang_masuk: 13_500_000, puteran_keluar: 150_000_000,
+        kredit_koran: 17_176_320, puteran_masuk: 0, tertahan: 3_676_320, lain: 0,
+      },
     ],
     rekening_nihil: [],
+    tertahan_detail: [],
     puteran_detail: [{ dari: "BJTM", ke: "MDR 038", nominal: 100_000_000 }],
     ...over,
   };
@@ -412,4 +422,120 @@ test("belum ada draft → alasan apa adanya, dan diam kalau memang tak ada kabar
   // Tak ada kode, tak ada alasan → jangan menambah baris kosong ke balasan.
   assert.equal(formatStatusDraft({ draft_keadaan: "belum" }), null);
   assert.equal(formatStatusDraft({}), null);
+});
+
+// ── puteran yang hanya dikenali lewat nomor rekening sendiri ─────────────────
+
+test("nomor rekening sendiri di deskripsi = sinyal internal", () => {
+  // Kasus NYATA 18 Sep 2026 yang lolos ke resume sebagai uang masuk riil:
+  // BJTM debit 50 jt 'IB:008 1420075012038' (nomor rekening Mandiri MDR 038)
+  // berpasangan dengan kredit 50 jt di MDR 038, 44 detik berselang. Tak satu
+  // kata pun dari daftar 'berbau internal' muncul di kedua sisi.
+  const nomor = ["1420075012038", "0321018688", "7001088131"];
+  assert.equal(berbauInternal("IB:008 1420075012038", nomor), true);
+  // Nomor dengan pemisah tetap kena (bank menulis formatnya semaunya).
+  assert.equal(berbauInternal("TRF KE 1420-0750-12038", nomor), true);
+  // Tanpa daftar nomor, perilaku lama dipertahankan.
+  assert.equal(berbauInternal("IB:008 1420075012038"), false);
+});
+
+test("nomor pendek dan nominal TIDAK dianggap nomor rekening", () => {
+  // Penjaga: kalau ambang panjangnya dilepas, angka nominal atau nomor
+  // referensi bisa kebetulan cocok dan menandai transaksi pihak ketiga sebagai
+  // puteran — uang masuk riil hilang dari laporan tanpa jejak.
+  assert.equal(berbauInternal("PEMBAYARAN INV 12345", ["12345"]), false);
+  assert.equal(berbauInternal("RS WAJAK HUSADA", ["1420075012038"]), false);
+  assert.equal(berbauInternal("KU- RSUD SUKOWATI 0321", ["0321018688"]), false);
+});
+
+test("rekening nihil diringkas jadi satu baris, tanpa menghilangkan nama", () => {
+  // 18 Sep 2026 punya 8 rekening nihil; delapan baris mendorong angka yang
+  // justru mau dibaca keluar dari layar pertama WhatsApp.
+  const banyak = formatResume(
+    ringkasan({
+      rekening_nihil: [
+        { label_file: "BNI", oleh: "renika" },
+        { label_file: "HANA", oleh: "renika" },
+        { label_file: "NIAGA", oleh: "renika" },
+      ],
+    }),
+  );
+  const barisNihil = banyak.split("\n").filter((b) => b.includes("nihil"));
+  assert.equal(barisNihil.length, 1, "harus satu baris saja");
+  assert.match(barisNihil[0], /3 rekening nihil/);
+  assert.match(barisNihil[0], /BNI, HANA, NIAGA/);
+  assert.match(barisNihil[0], /dinyatakan renika/);
+});
+
+test("satu rekening nihil tetap berbunyi wajar (bukan '1 rekening nihil')", () => {
+  const satu = formatResume(ringkasan({ rekening_nihil: [{ label_file: "BNI", oleh: "Ika" }] }));
+  assert.match(satu, /_BNI: nihil, tanpa transaksi \(dinyatakan Ika\)_/);
+});
+
+test("pernyata berbeda disebut semua, tanpa diulang per rekening", () => {
+  // Kalau dua orang menyatakan di hari yang sama, jejaknya tak boleh hilang
+  // hanya karena barisnya diringkas.
+  const teks = formatResume(
+    ringkasan({
+      rekening_nihil: [
+        { label_file: "BNI", oleh: "renika" },
+        { label_file: "HANA", oleh: "Ika" },
+        { label_file: "NIAGA", oleh: "renika" },
+      ],
+    }),
+  );
+  const b = teks.split("\n").filter((x) => x.includes("nihil"));
+  assert.equal(b.length, 1);
+  assert.match(b[0], /dinyatakan renika, Ika/);
+});
+
+// ── triage dari WhatsApp + rekonsiliasi ──────────────────────────────────────
+
+test("perintah triage dikenali beserta ragam kata kategorinya", () => {
+  assert.deepEqual(parseTriage("#KORAN triage T1 uang masuk"), { kode: "T1", kategori: "uang_masuk_riil" });
+  assert.deepEqual(parseTriage("#koran triage t2 puteran"), { kode: "T2", kategori: "puteran_internal" });
+  assert.deepEqual(parseTriage("#KORAN triage T3 bunga"), { kode: "T3", kategori: "bunga" });
+  assert.deepEqual(parseTriage("#KORAN triage T4 pengeluaran"), { kode: "T4", kategori: "pengeluaran" });
+});
+
+test("kategori tak dikenal DIBEDAKAN dari bukan-perintah", () => {
+  // Bedanya menentukan balasan: yang satu dibalas panduan, yang lain didiamkan.
+  // Kalau disamakan, salah ketik kategori akan senyap — dan baris tertahan
+  // mengendap tanpa ada yang tahu perintahnya tak masuk.
+  assert.deepEqual(parseTriage("#KORAN triage T1 entah apa"), { kode: "T1", kategori: null });
+  assert.equal(parseTriage("#KORAN mandiri 18/9/2026"), null);
+  assert.equal(parseTriage("triage T1 uang masuk"), null, "tanpa hashtag bukan perintah");
+  assert.equal(parseTriage(null), null);
+});
+
+test("draft menunjukkan jembatan kredit koran → uang masuk", () => {
+  // 18 Sep 2026: Finance melihat 'masuk Rp 338 jt' di balasan ingest lalu angka
+  // lain di draft, dan harus mengurangi sendiri untuk menemukan selisihnya.
+  const r = ringkasan();
+  const draft = formatDraftKonfirmasi(formatResume(r), "R12", r);
+  assert.match(draft, /\*Rekonsiliasi\*/);
+  assert.match(draft, /MDR 038: Rp 49\.231\.797 · puteran −Rp 4\.000\.000 = Rp 45\.231\.797/);
+  assert.match(draft, /BJTM: Rp 17\.176\.320 · tertahan −Rp 3\.676\.320 = Rp 13\.500\.000/);
+});
+
+test("rekening tanpa potongan TIDAK ikut blok rekonsiliasi", () => {
+  // Blok ini untuk MENJELASKAN selisih; rekening yang angkanya utuh tak punya
+  // yang perlu dijelaskan, dan menampilkannya cuma memanjangkan pesan.
+  const r = ringkasan({
+    per_rekening: [
+      { label_file: "BNI", nama_bank: "Bank BNI", uang_masuk: 5_000_000, puteran_keluar: 0,
+        kredit_koran: 5_000_000, puteran_masuk: 0, tertahan: 0, lain: 0 },
+    ],
+  });
+  const draft = formatDraftKonfirmasi(formatResume(r), "R12", r);
+  assert.doesNotMatch(draft, /Rekonsiliasi/);
+});
+
+test("baris tertahan disebut dengan nomor rujukan + cara memutuskannya", () => {
+  const r = ringkasan({
+    tertahan_detail: [{ kode: "T1", label_file: "BJTM", nominal: 4_600_000, deskripsi: "" }],
+  });
+  const draft = formatDraftKonfirmasi(formatResume(r), "R12", r);
+  assert.match(draft, /T1 · BJTM Rp 4\.600\.000 — \(deskripsi kosong\)/);
+  assert.match(draft, /#KORAN triage T1 uang masuk/);
 });

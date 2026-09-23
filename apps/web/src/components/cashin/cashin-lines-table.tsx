@@ -72,6 +72,22 @@ export function CashinLinesTable({
   }
 
   const columns: DataColumn<CashinLine>[] = [
+    {
+      // Nomor rujukan baris yang menunggu keputusan. Ditaruh di kolom PERTAMA
+      // supaya orang yang sedang memegang pesan draft WA bisa menelusurinya
+      // dari kiri, bukan mencari di tengah tabel. Kosong untuk baris yang sudah
+      // berkategori — nomornya memang dilepas begitu diputuskan.
+      id: "kode_triage",
+      header: "No.",
+      sortable: true,
+      accessor: (r) => r.kode_triage ?? "",
+      cell: (r) =>
+        r.kode_triage ? (
+          <span className="bg-muted rounded px-1.5 py-0.5 font-mono text-xs">{r.kode_triage}</span>
+        ) : (
+          <span className="text-muted-foreground">-</span>
+        ),
+    },
     { id: "label_file", header: "Rekening", sortable: true, accessor: (r) => r.label_file },
     { id: "waktu", header: "Jam", sortable: true, accessor: (r) => r.waktu ?? "", cell: (r) => jam(r.waktu) },
     {
