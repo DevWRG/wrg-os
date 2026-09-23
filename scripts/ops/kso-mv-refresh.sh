@@ -11,7 +11,7 @@
 set -euo pipefail
 DB="${1:-wrg_os_prod}"
 export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
-echo "→ REFRESH kso_asset_produktivitas_mv di $DB …"
+echo "→ REFRESH kso_customer_revenue_mv + kso_asset_produktivitas_mv di $DB …"
 T0=$(date +%s)
 # Urutan mengikat: snapshot atas dibangun dari kso_customer_revenue_mv, jadi
 # revenue disegarkan lebih dulu. Terbalik = snapshot atas memakai revenue lama,
