@@ -29,7 +29,7 @@ export async function runPolaKomunikasi(
   const minMsg = opts.minMessages ?? 5;
   const res: PolaResult = { total_groups: 0, processed: 0, skipped: 0, ai_failures: 0 };
 
-  // Auto-label grup dari subject sessions.json (nama tak ada di wa_message).
+  // Auto-label grup dari subject openclaw (nama tak ada di wa_message).
   // Backfill nama yg masih kosong/JID; map dipakai juga utk grup baru di bawah.
   const subjects = loadGroupSubjects();
   if (!opts.dryRun) await syncGroupNamesFromSessions();
@@ -57,7 +57,7 @@ export async function runPolaKomunikasi(
     if (g.pola_updated && Number(g.new_since) < NEW_THRESHOLD) { res.skipped += 1; continue; }
 
     const existing = g.group_name ? String(g.group_name) : "";
-    // Pakai subject sessions.json kalau nama existing kosong/JID (grup baru).
+    // Pakai subject openclaw kalau nama existing kosong/JID (grup baru).
     const groupName = !existing || existing.endsWith("@g.us") ? (subjects[jid] || existing) : existing;
     const count = Number(g.cnt);
 
