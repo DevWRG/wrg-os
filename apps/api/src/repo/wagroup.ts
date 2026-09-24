@@ -49,6 +49,18 @@ export async function listWaGroupPrefixes(): Promise<WaGroupPrefix[]> {
     }));
 }
 
+/**
+ * Nama tampil untuk baris pra-daftar. Awalan yang disimpan admin cuma penggalan
+ * ("Group PT Wahana X"), jadi kalau bot SUDAH join grupnya, subject openclaw
+ * dipakai supaya kartunya bernama penuh seperti di WhatsApp. Cocok >1 = ambigu
+ * (awalan sengaja pendek supaya menjaring beberapa grup) → tetap pakai awalan.
+ */
+export function namaPraDaftar(prefix: string, subjects: Record<string, string>): string {
+  const p = prefix.toLowerCase();
+  const hit = Object.values(subjects).filter((s) => s.toLowerCase().startsWith(p));
+  return hit.length === 1 ? hit[0] : prefix;
+}
+
 export async function listWaGroups(): Promise<WaGroup[]> {
   const sql = db();
   const rows = await sql`
@@ -120,7 +132,7 @@ export async function listWaGroups(): Promise<WaGroup[]> {
     if (usedPrefix.has(p.name_prefix)) continue;
     groups.push({
       group_jid: "",
-      group_name: p.name_prefix,
+      group_name: namaPraDaftar(p.name_prefix, subjects),
       category: p.category,
       category_source: "prefix",
       note: p.note,
