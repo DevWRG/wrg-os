@@ -76,7 +76,8 @@ export async function listWaGroups(): Promise<WaGroup[]> {
     LEFT JOIN msg ON msg.group_jid = j.group_jid
     ORDER BY 2
   `;
-  // Nama: UTAMAKAN subject sessions.json openclaw (nama grup WA yang hidup).
+  // Nama: UTAMAKAN subject openclaw (nama grup WA yang hidup) — sejak 2026.9.5
+  // dibaca dari SQLite sesi, lihat group-names.ts.
   // monitor_pola.group_name bisa basi/keliru — mis. 6281335118687-1527497998
   // tersimpan "GROUP TRAINING KRM-TAGIH" padahal subject-nya "PENJUALAN
   // SOLO-JOGJA-PWT" (bikin dua kartu kembar di galeri). syncGroupNamesFromSessions
