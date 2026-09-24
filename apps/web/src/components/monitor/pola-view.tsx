@@ -273,7 +273,12 @@ export function PolaView({ groups: initial, canEdit }: { groups: WaGroup[]; canE
                     <Clock className="size-4" />
                   </span>
                   <span className="min-w-0 flex-1">
-                    <span className="text-foreground block truncate text-sm font-medium">{label(g)}…</span>
+                    {/* "…" hanya saat nama masih berupa awalan pra-daftar. Kalau bot sudah
+                        join grupnya, API mengirim nama penuh dari subject openclaw. */}
+                    <span className="text-foreground block text-sm font-medium break-words">
+                      {label(g)}
+                      {label(g) === g.name_prefix ? "…" : null}
+                    </span>
                     <span className="text-muted-foreground text-xs">
                       Pra-daftar — menunggu pesan pertama
                     </span>
@@ -285,7 +290,10 @@ export function PolaView({ groups: initial, canEdit }: { groups: WaGroup[]; canE
                     <MessagesSquare className="size-4" />
                   </span>
                   <span className="min-w-0 flex-1">
-                    <span className="text-foreground block truncate text-sm font-medium">{label(g)}</span>
+                    {/* Nama grup ditulis penuh — nama grup WA sering panjang dan bagian
+                        pembedanya ada di EKOR ("… RS Ganesha"), jadi truncate justru
+                        membuang yang paling perlu dibaca. */}
+                    <span className="text-foreground block text-sm font-medium break-words">{label(g)}</span>
                     <span className="text-muted-foreground text-xs">
                       {g.has_pola ? "Lihat profil pola" : "Belum ada profil pola"}
                     </span>
