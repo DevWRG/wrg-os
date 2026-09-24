@@ -39,5 +39,5 @@ httpx>=0.28.1
 # hanya /parse-koran yang gagal dgn pesan jelas. Setelah deploy pertama fitur
 # ini, jalankan sekali di server:
 #   services/ai/.venv/bin/pip install -r services/ai/requirements.txt
-pypdf>=6.18.1
+pypdf>=6.19.0
 pypdfium2>=5.13.0
