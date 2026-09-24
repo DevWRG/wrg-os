@@ -22,6 +22,36 @@ export function salesRange(from?: string, to?: string) {
   return { from: f, to: t };
 }
 
+type Sql = ReturnType<typeof db>;
+
+// Nama customer + fallback ke ai.raw. Query pemanggil WAJIB sudah punya alias
+// `ai` (accurate_invoice) dan `ac` (accurate_customer), serta GROUP BY
+// ai.customer_id.
+//
+// Fallback-nya SENGAJA subquery, bukan `max(ai.raw->...)` di dalam agregat
+// pemanggil. Bentuk lama itu tampak malas-evaluasi lewat COALESCE, padahal
+// bukan: max() adalah AGREGAT, jadi dihitung untuk SEMUA baris grup sebelum
+// COALESCE sempat memutuskan. accurate_invoice berukuran 206 MB untuk hanya
+// ~11.700 baris — hampir semuanya kolom `raw` jsonb yang ter-TOAST — sehingga
+// bentuk lama memaksa detoast seluruh tabel pada tiap request.
+//
+// Diukur di prod 23 Sep 2026 (EXPLAIN ANALYZE, BUFFERS): bentuk lama 719 ms
+// dengan ±171 MB dibaca dari disk; bentuk ini 48 ms. Join dan scan-nya sendiri
+// cuma 33 ms — seluruh selisihnya ada di tahap agregasi.
+//
+// Sebagai subquery, kemalasan COALESCE benar-benar berlaku: ia hanya jalan
+// untuk customer yang ac.name-nya kosong (di prod saat ini: nol baris), dan
+// ditopang indeks accurate_invoice_customer_idx kalau suatu saat terpicu.
+// Fallback-nya TIDAK dihapus meski kini tak terpakai — ia jaring pengaman
+// untuk faktur yang customer-nya belum ter-sync ke accurate_customer.
+function custNameExpr(sql: Sql) {
+  return sql`COALESCE(
+      NULLIF(ac.name,''),
+      (SELECT NULLIF(max(ai2.raw->'customer'->>'name'),'') FROM accurate_invoice ai2 WHERE ai2.customer_id = ai.customer_id),
+      (SELECT NULLIF(max(ai2.raw->>'retailWpName'),'')     FROM accurate_invoice ai2 WHERE ai2.customer_id = ai.customer_id),
+      'Customer #' || ai.customer_id::text)`;
+}
+
 interface RankRow {
   key: string;
   label: string;
@@ -490,7 +520,7 @@ export async function customersRevenue(scope: DataScope = FULL_SCOPE) {
   const sql = db();
   const rows = await sql`
     SELECT ai.customer_id::text AS id,
-      COALESCE(NULLIF(ac.name,''), NULLIF(max(ai.raw->'customer'->>'name'),''), NULLIF(max(ai.raw->>'retailWpName'),''), 'Customer #' || ai.customer_id::text) AS name,
+      ${custNameExpr(sql)} AS name,
       NULLIF(mode() WITHIN GROUP (ORDER BY NULLIF(mu.cabang,'')), '') AS cabang,
       sum(ai.total - COALESCE(ai.tax_amount,0))::float8 AS total,
       count(*)::int AS invoices,
@@ -575,7 +605,7 @@ export async function dormantCustomers(minDays = 60, scope: DataScope = FULL_SCO
   const rows = await sql`
     WITH cust AS (
       SELECT ai.customer_id AS cid,
-        COALESCE(NULLIF(ac.name,''), NULLIF(max(ai.raw->'customer'->>'name'),''), NULLIF(max(ai.raw->>'retailWpName'),''), 'Customer #' || ai.customer_id::text) AS name,
+        ${custNameExpr(sql)} AS name,
         NULLIF(mode() WITHIN GROUP (ORDER BY NULLIF(mu.cabang,'')), '') AS cabang,
         sum(ai.total - COALESCE(ai.tax_amount,0))::float8 AS total,
         count(*)::int AS invoices,
@@ -634,7 +664,7 @@ export async function churnCustomers(churnDays0 = DORMANT_DAYS, scope: DataScope
   const rows = await sql`
     WITH cust AS (
       SELECT ai.customer_id AS cid,
-        COALESCE(NULLIF(ac.name,''), NULLIF(max(ai.raw->'customer'->>'name'),''), NULLIF(max(ai.raw->>'retailWpName'),''), 'Customer #' || ai.customer_id::text) AS name,
+        ${custNameExpr(sql)} AS name,
         NULLIF(mode() WITHIN GROUP (ORDER BY NULLIF(mu.cabang,'')), '') AS cabang,
         sum(ai.total - COALESCE(ai.tax_amount,0))::float8 AS total,
         count(*)::int AS invoices,
