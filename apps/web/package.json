@@ -20,7 +20,7 @@
     "d3-selection": "^3.0.0",
     "d3-shape": "^3.2.0",
     "d3-zoom": "^3.0.0",
-    "lucide-react": "^1.45.0",
+    "lucide-react": "^1.47.0",
     "next": "16.3.5",
     "qrcode": "^1.5.4",
     "react": "19.3.0",
@@ -48,7 +48,7 @@
     "@wrg/types": "workspace:*",
     "eslint": "^9",
     "tailwindcss": "^4",
-    "tsx": "^4.23.13",
+    "tsx": "^4.23.15",
     "typescript": "^5"
   }
 }
