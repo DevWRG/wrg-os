@@ -13,6 +13,7 @@ import {
   kategoriAwal,
   miripKeputusanResume,
   parseKeputusanResume,
+  waktuAman,
   type KoranLine,
   type RingkasanHarian,
 } from "./cashin.js";
@@ -480,4 +481,18 @@ test("baris tertahan disebut dengan nomor rujukan + cara memutuskannya", () => {
   const draft = formatDraftKonfirmasi(formatResume(r), "R12", r);
   assert.match(draft, /T1 · BJTM Rp 4\.600\.000 — \(deskripsi kosong\)/);
   assert.match(draft, /#KORAN triage T1 uang masuk/);
+});
+
+// Insiden 25 Sep 2026: OCR menyalin jam koran BNI apa adanya, satu baris
+// '24/09/2026 18.25.14' membuat toISOString() melempar dan seluruh ingest gagal.
+test("waktuAman: bentuk ISO diteruskan", () => {
+  assert.equal(waktuAman("2026-09-24 18:25:14"), "2026-09-24 18:25:14");
+  assert.equal(waktuAman("2026-09-24T18:25:14+07:00"), "2026-09-24T18:25:14+07:00");
+  assert.equal(waktuAman("2026-09-24"), "2026-09-24");
+});
+
+test("waktuAman: bentuk yang membuat driver melempar jadi null, bukan exception", () => {
+  for (const raw of ["24/09/2026 18.25.14", "18:25:14", "2026-13-40 10:00:00", "", "kemarin", null, undefined, 1790314200]) {
+    assert.equal(waktuAman(raw), null, String(raw));
+  }
 });
