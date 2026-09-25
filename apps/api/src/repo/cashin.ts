@@ -264,9 +264,19 @@ export async function ingestKoran(
     // Tanggal SENGAJA tidak diambil dari nama file walau tersedia — lihat
     // catatan migrasi 169. Lebih baik menolak dan minta cetak ulang daripada
     // menyimpan mutasi di tanggal yang salah.
+    //
+    // Sebab dari parser ikut ditulis. Tanpa ini pesannya selalu sama persis
+    // untuk kegagalan yang berbeda jauh — "bank tidak dikenali", "OCR 403",
+    // dan "periode lebih dari satu hari" semuanya terbaca sebagai "tanggal
+    // tidak terbaca", dan 25 Sep 2026 itu membuat satu file dikirim ulang
+    // tiga kali padahal masalahnya bukan di file.
+    const sebab = ((data.parse_error as string) ?? "").trim();
     return {
       ok: false,
-      error: `tanggal tidak terbaca dari isi dokumen (${acc.label_file}). File tidak diproses — tanggal dari nama file tidak dipakai karena tidak bisa dipercaya.`,
+      error:
+        `tanggal tidak terbaca dari isi dokumen (${acc.label_file}). File tidak diproses — ` +
+        "tanggal dari nama file tidak dipakai karena tidak bisa dipercaya." +
+        (sebab ? `\nSebab: ${sebab}` : ""),
     };
   }
 

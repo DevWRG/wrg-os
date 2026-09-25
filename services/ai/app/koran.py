@@ -113,6 +113,17 @@ def detect_bank(text: str) -> Optional[str]:
     t = text.lower()
     if "transaction inquiry" in t and "account organization unit" in t:
         return "BJTM"
+    # BNI memakai judul 'TRANSACTION INQUIRY' yang SAMA dengan Bank Jatim, jadi
+    # urutannya penting: BJTM dinilai lebih dulu lewat penanda miliknya sendiri.
+    # Pembeda BNI dipilih yang positif ('Journal No.' = nama kolomnya), bukan
+    # "BJTM tapi tanpa account organization unit" — sidik jari negatif akan
+    # menangkap bank lain mana pun yang kebetulan memakai judul itu.
+    #
+    # Kata 'BNI' sendiri TIDAK bisa dipakai: logonya gambar, tak pernah muncul
+    # sebagai teks. Bukti transfer BNI ('TRANSACTION HISTORY') juga tidak cocok
+    # di sini — memang tak boleh, itu bukan rekening koran.
+    if "transaction inquiry" in t and "journal no" in t:
+        return "BNI"
     if "kopra by mandiri" in t or ("account statement summary" in t and "opening balance" in t):
         return "MDR"
     if "mutasi rekening" in t and "saldo terblokir" in t:
@@ -345,12 +356,129 @@ def parse_index(text: str) -> Dict[str, Any]:
     return out
 
 
+# ── BNI (TRANSACTION INQUIRY) ────────────────────────────────────────────────
+# Dibaca dari teks TATA LETAK (pdf_text_layout), bukan teks urutan-baca.
+#
+# Kenapa beda sendiri: urutan-baca BNI acak total — header terbelah jadi
+# 'Total Debit / Total Credit / : / : / : / :' lalu angkanya menyusul terpisah,
+# dan satu baris mutasi keluar sebagai '237,353,207.001 C106,483,050.00'
+# (saldo + nomor urut + Db/Cr + nominal MENEMPEL). Itu persis alasan CIMB Niaga
+# tak punya parser teks. Bedanya: mode layout pypdf memulihkan kolomnya utuh,
+# jadi di sini kita MEMBACA batas kolom, bukan menebaknya.
+#
+# Keterbatasan yang jujur: baru ada SATU contoh dokumen (24 Sep 2026, satu baris
+# mutasi bertanda C). Yang menahan risikonya bukan keyakinan pada regex ini,
+# melainkan checksum — parse_text_pdf menetapkan needs_ocr = checksum_ok is not
+# True, jadi salah baca TIDAK pernah lolos jadi angka; ia jatuh ke OCR.
+#
+# BNI tidak mencetak 'Ending Balance', jadi saldo_akhir diambil dari kolom
+# Balance baris TERAKHIR.
+_BNI_ROW_HEAD = re.compile(r"^\s*(?P<no>\d{1,4})\s+(?P<tgl>\d{2}/\d{2}/\d{4})\s+(?P<sisa>.*)$")
+_BNI_ROW_TAIL = re.compile(r"(?P<nominal>[\d,]+\.\d{2})\s+(?P<dbcr>[CD])\s+(?P<saldo>-?[\d,]+\.\d{2})\s*$")
+# Journal No. = angka >=4 digit pertama sesudah kolom Branch. Cabang bisa dua
+# kata ('INTERNET BANKING' terpotong kolom), jadi cabangnya non-greedy.
+_BNI_JURNAL = re.compile(r"^(?P<cabang>.*?)\s+(?P<jurnal>\d{4,})\s+(?P<desc>.*)$")
+# Jam dicetak di BAWAH tanggal (kolom Post Date), bukan di kolom sendiri.
+_BNI_JAM = re.compile(r"\b(\d{2})\.(\d{2})\.(\d{2})\b")
+
+
+def parse_bni(text: str) -> Dict[str, Any]:
+    out: Dict[str, Any] = {"bank_kode": "BNI", "lines": []}
+
+    m = re.search(r"^Account\s*:\s*(\d+)\s*/\s*(.*?)\s*\(", text, re.M)
+    if m:
+        out["no_rekening"] = m.group(1)
+        out["nama_pemilik"] = re.sub(r"\s+", " ", m.group(2)).strip()
+
+    # Period dicetak sebagai RENTANG. Koran harian WRG satu tanggal per file,
+    # jadi rentang >1 hari sengaja TIDAK dipadatkan jadi satu tanggal: semua
+    # barisnya akan tersimpan di tanggal yang salah, diam-diam.
+    m = re.search(
+        r"^Period\s*:\s*(\d{2})-([A-Za-z]{3})-(\d{4})\s*-\s*(\d{2})-([A-Za-z]{3})-(\d{4})", text, re.M
+    )
+    if m and m.group(2).lower() in _BULAN_EN and m.group(5).lower() in _BULAN_EN:
+        dari = _iso_date(int(m.group(3)), _BULAN_EN[m.group(2).lower()], int(m.group(1)))
+        sampai = _iso_date(int(m.group(6)), _BULAN_EN[m.group(5).lower()], int(m.group(4)))
+        if dari == sampai:
+            out["tanggal"] = dari
+        else:
+            out["periode_dari"] = dari
+            out["periode_sampai"] = sampai
+            out["parse_error"] = (
+                "periode BNI lebih dari satu hari (%s s/d %s) — ekspor ulang per tanggal" % (dari, sampai)
+            )
+
+    for label, key in (
+        ("Beginning Balance", "saldo_awal"),
+        ("Total Debit", "total_debit_tercetak"),
+        ("Total Credit", "total_kredit_tercetak"),
+    ):
+        m = re.search(r"^%s\s*:\s*(-?[\d,]+\.\d{2})" % re.escape(label), text, re.M)
+        if m:
+            out[key] = num_us(m.group(1))
+
+    body = text
+    idx = body.find("Journal No.")
+    if idx >= 0:
+        body = body[idx:]
+
+    urut = 0
+    # Offset kolom Description, dikalibrasi dari baris pertama tiap mutasi.
+    # TIDAK diambil dari posisi kata 'Description' di header: header dicetak
+    # di TENGAH kolom, sementara datanya rata kiri — memotong di posisi header
+    # akan memenggal deskripsi. Tanpa pemotongan kolom sama sekali, kolom
+    # Branch ikut tertelan ('… PEMINDAHAN DARI BANKING 1420075012038 …').
+    kolom_desc = None
+    for baris in body.splitlines()[1:]:
+        h = _BNI_ROW_HEAD.match(baris)
+        if h:
+            sisa = h.group("sisa")
+            t = _BNI_ROW_TAIL.search(sisa)
+            if not t:
+                continue
+            tengah = sisa[: t.start()].strip()
+            j = _BNI_JURNAL.match(tengah)
+            desc = (j.group("desc") if j else tengah).strip()
+            if j:
+                kolom_desc = h.start("sisa") + sisa.index(tengah) + j.start("desc")
+            nominal = num_us(t.group("nominal")) or 0.0
+            urut += 1
+            out["lines"].append({
+                "urut": urut,
+                "waktu": None,
+                "deskripsi": desc,
+                "debit": nominal if t.group("dbcr") == "D" else 0.0,
+                "kredit": nominal if t.group("dbcr") == "C" else 0.0,
+                "saldo": num_us(t.group("saldo")),
+                "referensi": j.group("jurnal") if j else None,
+            })
+        elif out["lines"]:
+            last = out["lines"][-1]
+            kepala = baris[:kolom_desc] if kolom_desc else baris
+            jam = _BNI_JAM.search(kepala)
+            if jam and last["waktu"] is None:
+                last["waktu"] = "%s:%s:%s" % jam.groups()
+            lanjut = (baris[kolom_desc:] if kolom_desc else baris).strip()
+            if lanjut:
+                last["deskripsi"] = (last["deskripsi"] + " " + lanjut).strip()
+
+    if out["lines"]:
+        out["saldo_akhir"] = out["lines"][-1]["saldo"]
+    return out
+
+
 # CIMB Niaga sengaja TIDAK punya parser teks. Ekstraksi teksnya membocorkan
 # kolom satu ke kolom lain ('0.00FD TR (CR) TO', '11,210,958.90260902VG11...'),
 # jadi angka dan deskripsi menempel tanpa pemisah yang bisa dipercaya. Dengan
 # satu contoh dokumen, menebak batas kolom lebih berbahaya daripada membaca
 # tabelnya lewat vision — jadi NIAGA jatuh ke jalur OCR.
-_PARSERS = {"BJTM": parse_bjtm, "MDR": parse_mandiri, "INDEX": parse_index}
+#
+# Bank Hana juga belum punya sidik jari maupun parser → tetap lewat OCR.
+_PARSERS = {"BJTM": parse_bjtm, "MDR": parse_mandiri, "INDEX": parse_index, "BNI": parse_bni}
+
+# Parser yang membaca teks TATA LETAK (kolom dipertahankan), bukan teks
+# urutan-baca. Dipisah supaya tiga parser lama tak berubah masukannya.
+_PARSERS_LAYOUT = {"BNI"}
 
 
 # ── ekstraksi teks & render halaman ──────────────────────────────────────────
@@ -362,6 +490,20 @@ def pdf_text(pdf_bytes: bytes) -> str:
 
     reader = PdfReader(io.BytesIO(pdf_bytes))
     return "\n".join((p.extract_text() or "") for p in reader.pages)
+
+
+def pdf_text_layout(pdf_bytes: bytes) -> str:
+    """Teks dengan KOLOM dipertahankan (spasi sebagai pengganti posisi-x).
+
+    Dipakai parser yang tabelnya cuma terbaca lewat batas kolom (BNI). Sengaja
+    BUKAN pengganti pdf_text(): urutan-baca dan tata letak menghasilkan string
+    yang berbeda, dan tiga parser lama sudah disetel ke urutan-baca. Mengganti
+    pdf_text() secara global berarti mengubah masukan BJTM/MDR/INDEX sekaligus.
+    """
+    from pypdf import PdfReader
+
+    reader = PdfReader(io.BytesIO(pdf_bytes))
+    return "\n".join((p.extract_text(extraction_mode="layout") or "") for p in reader.pages)
 
 
 def _png_bytes(buffer: Any, width: int, height: int, stride: int, mode: str) -> bytes:
@@ -616,8 +758,18 @@ def parse_text_pdf(pdf_bytes: bytes) -> Tuple[Dict[str, Any], str]:
                  "parse_error": "bank %s belum punya parser teks (tata kolomnya bocor saat diekstrak)" % bank},
                 text)
 
+    # Sebagian bank hanya terbaca lewat tata letak kolom. Ekstraksi keduanya
+    # dipisah supaya parser lama tetap menerima teks urutan-baca yang sama.
+    sumber = text
+    if bank in _PARSERS_LAYOUT:
+        try:
+            sumber = pdf_text_layout(pdf_bytes)
+        except Exception as e:  # noqa: BLE001
+            return ({"needs_ocr": True, "lines": [], "bank_kode": bank, "raw_text": text,
+                     "parse_error": "ekstraksi tata letak %s gagal: %s" % (bank, e)}, text)
+
     try:
-        res = parser(text)
+        res = parser(sumber)
     except Exception as e:  # noqa: BLE001
         return ({"needs_ocr": True, "lines": [], "bank_kode": bank, "raw_text": text,
                  "parse_error": "parser %s gagal: %s" % (bank, e)}, text)
