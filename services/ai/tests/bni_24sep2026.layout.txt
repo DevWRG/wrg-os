@@ -1,0 +1,17 @@
+                                                                 Account Information
+                                                           TRANSACTION INQUIRY
+
+
+
+
+
+Account                             :    1586200460 / WAHANA RIZKY GUMILANG                             PT ( IDR )
+Period                              :    24-Sep-2026                 -   24-Sep-2026
+Beginning Balance                   :    130,870,157.00
+Total Debit                         :    0.00
+Total Credit                        :    106,483,050.00
+
+No.      Post Date            Branch          Journal No.                         Description                              Amount           Db/Cr          Balance
+1    24/09/2026          INTERNET            964223         TRF/PAY/TOP-UP ECHANNEL | PEMINDAHAN DARI                      106,483,050.00      C           237,353,207.00
+     18.25.14            BANKING                            1420075012038 | 0000000000000000 | WAHANA RIZKY
+                                                            GUMILAN BI FAST Transfer
