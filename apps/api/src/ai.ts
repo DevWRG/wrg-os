@@ -17,6 +17,31 @@ export const aiDryRun = (): boolean =>
 // webhook WA. 30s = sama dengan timeout execFile di infra/wa-bridge.
 const AI_TIMEOUT_MS = Number(process.env.AI_TIMEOUT_MS ?? 30000);
 
+// Nilai `model` yang dipakai services/ai saat LLM SEHARUSNYA jalan tapi gagal
+// (key ditolak, kuota habis, semua model error) dan ia balas template.
+//
+// Bedakan baik-baik dari "dry-run": `model: "dry-run"` = sengaja tanpa LLM
+// (AI_DRY_RUN / tanpa API key) dan itu sah. `model: "dry-run-fallback"` =
+// KEGAGALAN yang menyamar jadi sukses 200.
+const MODEL_DEGRADASI = "dry-run-fallback";
+
+// Penghitung degradasi sejak proses hidup — dipapar di GET /health supaya
+// "AI-nya diam-diam mati" bisa dipantau tanpa menunggu ada orang membaca log.
+const degradasi = { total: 0, terakhirPath: "", terakhirAt: "" };
+
+export const statistikDegradasiAi = (): { total: number; terakhir_path: string; terakhir_at: string } => ({
+  total: degradasi.total,
+  terakhir_path: degradasi.terakhirPath,
+  terakhir_at: degradasi.terakhirAt,
+});
+
+export interface CallAiOpts {
+  /** Terima teks template apa adanya saat LLM gagal, alih-alih memperlakukannya
+   *  sebagai error. HANYA untuk pemanggil yang templatenya memang produk yang
+   *  sah. Default false — lihat catatan di callAi. */
+  izinkanTemplate?: boolean;
+}
+
 // Call services/ai dan parse JSON (untuk pemanggil yang perlu hasil terstruktur).
 //
 // TIDAK PERNAH melempar. services/ai mati / tak terjangkau / balasan bukan JSON
@@ -28,9 +53,27 @@ const AI_TIMEOUT_MS = Number(process.env.AI_TIMEOUT_MS ?? 30000);
 // itu sendiri sudah ditandai processed_at → klaimnya hilang permanen tanpa
 // balasan apa pun ke pengirim. Mengembalikan 503 membuat semua pemanggil masuk
 // jalur error yang sudah mereka punya.
+//
+// HASIL TERDEGRADASI DIPERLAKUKAN SEBAGAI ERROR (25 Sep 2026).
+//
+// services/ai membalas 200 + teks template saat LLM gagal, dengan penanda
+// `model: "dry-run-fallback"`. Buat pemanggil, 200 itu terlihat sukses — jadi
+// templatenya ikut DISIMPAN dan DIKIRIM seolah hasil sungguhan. Yang terjadi
+// 25 Sep 2026 saat kuota OpenRouter habis: dua baris `monitor_digest` kind
+// 'rekap' terisi DUMP PROMPT ("[DRY RUN — tanpa LLM] SYSTEM: ..."), satu di
+// antaranya 54.878 karakter. generateResume membaca rekap dari tabel yang sama,
+// jadi kesalahannya berantai; daily-summary jam 22:00 akan mengirim dump itu ke
+// grup direksi.
+//
+// Ditegakkan DI SINI, bukan di 20 pemanggil satu per satu: menambal per
+// pemanggil berarti yang terlewat gagal ke arah yang berbahaya. Di sini yang
+// terlewat gagal ke arah aman — semua pemanggil sudah punya cabang
+// `if (status >= 400)`, dan cabang itu tidak menyimpan dan tidak mengirim.
+// Pemanggil yang templatenya memang produk sah memakai `izinkanTemplate`.
 export async function callAi(
   aiPath: string,
   body: unknown,
+  opts: CallAiOpts = {},
 ): Promise<{ status: number; data: Record<string, unknown> }> {
   let res: Response;
   try {
@@ -46,7 +89,31 @@ export async function callAi(
     return { status: 503, data: { error: `services/ai tak terjangkau (${aiPath}): ${alasan}` } };
   }
   try {
-    return { status: res.status, data: (await res.json()) as Record<string, unknown> };
+    const data = (await res.json()) as Record<string, unknown>;
+    if (res.ok && data.model === MODEL_DEGRADASI) {
+      degradasi.total += 1;
+      degradasi.terakhirPath = aiPath;
+      degradasi.terakhirAt = new Date().toISOString();
+      // console.error, bukan warn: ini kegagalan yang sebelumnya tak
+      // meninggalkan satu baris pun di log mana pun.
+      console.error(
+        `[ai] DEGRADASI ${aiPath}: LLM gagal, services/ai balas template (model=${MODEL_DEGRADASI}). ` +
+          `Hasil TIDAK dipakai. Cek kuota/key OpenRouter (lihat job notif-quota).`,
+      );
+      if (!opts.izinkanTemplate) {
+        return {
+          status: 503,
+          data: {
+            error:
+              `services/ai ${aiPath}: LLM gagal dan hasilnya cuma template — tidak dipakai. ` +
+              "Cek kuota/key OpenRouter.",
+            degraded: true,
+            model: MODEL_DEGRADASI,
+          },
+        };
+      }
+    }
+    return { status: res.status, data };
   } catch {
     // Status HTTP-nya dipertahankan bila sudah error; hanya balasan 2xx yang
     // tak-JSON yang perlu dipetakan ke 503 (kontrak "data selalu objek").

@@ -255,7 +255,7 @@ import {
   type WaMessageInput,
   type OpenclawRecord,
 } from "./repo/wa.js";
-import { aiBaseUrl, callAi } from "./ai.js";
+import { aiBaseUrl, callAi, statistikDegradasiAi } from "./ai.js";
 import { startScheduler, getScheduleStatus } from "./scheduler.js";
 import { signJwt, verifyJwt } from "./auth.js";
 import { verifyCredentials, createUser, countUsers, listAppUsers, setUserPassword, updateAppUser, deleteAppUser, getAppUserById, createUserFromRoster, generatePassword, changeOwnPassword, normalizeLoginRole, LOGIN_ROLES } from "./repo/users.js";
@@ -684,7 +684,10 @@ app.use("*", async (c, next) => {
 
 app.get("/health", async (c) => {
   const db = isDbEnabled() ? (await pingDb()) ? "ok" : "down" : "disabled";
-  return c.json({ status: "ok", service: "wrg-api", db });
+  // ai_degradasi: berapa kali services/ai membalas template karena LLM gagal
+  // sejak proses ini hidup. Dipapar di sini supaya "AI diam-diam mati" bisa
+  // dipantau dari luar, tanpa menunggu ada orang membaca log. 0 = sehat.
+  return c.json({ status: "ok", service: "wrg-api", db, ai_degradasi: statistikDegradasiAi() });
 });
 
 // Kesegaran mirror Accurate. Sengaja BALIKAN 503 saat basi supaya bisa dipantau

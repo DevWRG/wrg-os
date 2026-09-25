@@ -262,12 +262,29 @@ export async function ingestKlaim(opts: {
 
   const [employeeId, { status, data }] = await Promise.all([
     resolveEmployeeByWa(opts.sender_jid),
-    callAi("/ocr-klaim", {
-      image_base64: imageBase64,
-      mime_type: mimeFromPath(opts.media_path),
-      caption: opts.caption,
-      dry_run: aiDryRun(),
-    }),
+    // izinkanTemplate: SATU-SATUNYA pengecualian dari aturan "hasil terdegradasi
+    // = error" di callAi, dan disengaja.
+    //
+    // Di sini hasil OCR yang gagal BUKAN teks palsu yang bisa tersimpan sebagai
+    // fakta: services/ai balas semua field kosong, barisnya tetap masuk dengan
+    // `model_used='dry-run-fallback'` + `ocr_dry_run`, dan pengirimnya dibalas
+    // "foto tersimpan, OCR belum aktif — ditindaklanjuti manual". Itu degradasi
+    // yang jujur dan tidak kehilangan apa pun.
+    //
+    // Kalau ikut ditolak jadi 503, ingestKlaim balik `ok:false` → TAK ADA baris
+    // doc_klaim yang ditulis, padahal baris WA-nya tetap ditandai processed.
+    // Klaimnya hilang — persis kelas kegagalan yang diperingatkan catatan
+    // panjang di ai.ts.
+    callAi(
+      "/ocr-klaim",
+      {
+        image_base64: imageBase64,
+        mime_type: mimeFromPath(opts.media_path),
+        caption: opts.caption,
+        dry_run: aiDryRun(),
+      },
+      { izinkanTemplate: true },
+    ),
   ]);
   if (status >= 400) {
     return { ok: false, error: `services/ai /ocr-klaim status ${status}: ${JSON.stringify(data)}` };
