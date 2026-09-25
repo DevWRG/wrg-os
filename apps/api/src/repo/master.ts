@@ -1,5 +1,6 @@
 import { db } from "../db.js";
 import { isGolongan, type Golongan } from "../lib/npk-golongan.js";
+import { isWaTestBypassGroup, namaUji } from "./wa-test-bypass.js";
 
 // D1 — master data CRM (port legacy master_user + master_territory). Roster AM
 // di-key am_id (dipakai lintas deal/reminder/todo); territory map AM→HOD→cabang.
@@ -257,6 +258,36 @@ export async function resolveAmByAlias(groupJid: string, pushname: string): Prom
 //   B. sender phone (wa_number), hanya bila JID individu
 //   C. sender pushname (6 sub-strategi)
 //   D. body-name fuzzy (40 ≤ score < 70)
+// Gerbang `aktif` — SATU tempat untuk keempat tier.
+//
+// `resolveAmByWa` sejak dulu berkomentar "Hanya user aktif", tapi tak satu pun
+// dari empat tier (wa / pushname / body-name / alias) pernah menyaringnya. Jadi
+// karyawan yang sudah dinonaktifkan tetap bisa memerintah bot selama barisnya
+// masih ada di master_user — dan yang keluar bukan data sepele: #CEK
+// mengembalikan nomor SO/SJ berikut nilainya, #STOK posisi stok, #PRICING
+// price book.
+//
+// Ditegakkan DI SINI, bukan dengan menambah `AND aktif` di tiap query. Dua
+// alasan:
+//   1. Kalau disaring di query, hasilnya `null` — tak bisa dibedakan dari
+//      "nomor tak dikenal", padahal dua keadaan itu butuh tindakan berbeda
+//      (daftarkan orangnya vs aktifkan kembali). Di sini kita sudah tahu
+//      SIAPA yang ditolak, jadi bisa dicatat.
+//   2. Efek gagalnya adalah DIAM. Menambah gerbang senyap lagi tanpa jejak
+//      berarti "bot tak membalas" jadi makin sulit didiagnosis.
+//
+// Sengaja TIDAK jatuh ke tier berikutnya saat menolak: tier diurutkan dari yang
+// paling andal, jadi mencocokkan ulang lewat tier yang lebih lemah berisiko
+// mengatribusikan pesan ke ORANG LAIN. Menolak lebih aman daripada salah orang.
+export function bolehLewat(orang: { am_id: string; nama: string; aktif: boolean }, via: string): boolean {
+  if (orang.aktif) return true;
+  console.warn(
+    `[inbound] pengirim dikenal TAPI non-aktif — ditolak: ${orang.am_id} (${orang.nama}) via ${via}. ` +
+    "Kalau ini keliru, set master_user.aktif = true; kalau memang sudah keluar, biarkan.",
+  );
+  return false;
+}
+
 export async function resolveSender(opts: {
   bodyName?: string | null;
   senderJid?: string | null;
@@ -268,12 +299,16 @@ export async function resolveSender(opts: {
 
   // Tier A
   if (bb && bb.score >= 70) {
+    if (!bolehLewat(bb, "body-name")) return null;
     return { am_id: bb.am_id, nama: bb.nama, aktif: bb.aktif, role: bb.role, via: "body-name", score: bb.score };
   }
   // Tier A' — alias manual (group_jid + pushname). Authoritative setelah body-name.
   if (opts.groupJid && opts.pushname) {
     const al = await resolveAmByAlias(opts.groupJid, opts.pushname);
-    if (al) return { ...al, via: "alias" };
+    if (al) {
+      if (!bolehLewat(al, "alias")) return null;
+      return { ...al, via: "alias" };
+    }
   }
   // Tier B — sender phone (JID individu @s.whatsapp.net atau nomor ≤14 digit)
   const waNum = jidNumber(opts.senderJid);
@@ -281,16 +316,64 @@ export async function resolveSender(opts: {
   const isIndividual = String(opts.senderJid ?? "").includes("@s.whatsapp.net") || (norm.length > 0 && norm.length <= 14);
   if (isIndividual && norm) {
     const b = await resolveAmByWa(norm);
-    if (b) return { ...b, via: "phone" };
+    if (b) {
+      if (!bolehLewat(b, "phone")) return null;
+      return { ...b, via: "phone" };
+    }
   }
   // Tier C — pushname
   const c = await resolveAmByPushname(opts.pushname ?? "");
-  if (c) return { ...c, via: "pushname" };
+  if (c) {
+    if (!bolehLewat(c, "pushname")) return null;
+    return { ...c, via: "pushname" };
+  }
   // Tier D — body fuzzy
   if (bb && bb.score >= 40) {
+    if (!bolehLewat(bb, "body-fuzzy")) return null;
     return { am_id: bb.am_id, nama: bb.nama, aktif: bb.aktif, role: bb.role, via: "body-fuzzy", score: bb.score };
   }
+  // Tier E — bypass grup uji (WA_TEST_BYPASS_GROUP). Lihat wa-test-bypass.ts:
+  // hanya aktif kalau env di-set eksplisit untuk grup ini.
+  //
+  // TIDAK bisa mensyaratkan `isIndividual`/`norm` (nomor turunan senderJid): DI
+  // GRUP, `sender_jid` = `group_jid` (jebakan yang sama didokumentasikan di
+  // inbound.ts:915, detectleave.ts:23, listmembers.ts:6, CLAUDE.md) — itu bikin
+  // `isIndividual` SELALU false utk pesan grup (JID grup panjang & berakhiran
+  // `@g.us`), jadi tier ini tak pernah nyala kalau disyaratkan. Dikunci dari
+  // `pushname` saja, sama pola dengan `ensureBypassTeknisi` (F8) yang sudah
+  // terbukti jalan di grup.
+  if (opts.pushname?.trim() && isWaTestBypassGroup(opts.groupJid)) {
+    return await ensureBypassAm(opts.pushname.trim(), isIndividual ? norm : null);
+  }
   return null;
+}
+
+// Auto-provision AM per pushname (idempoten) khusus grup bypass — supaya balasan
+// tetap menyapa nama pengirim tanpa perlu didaftarkan manual satu-satu.
+//
+// Namanya diberi prefiks `[UJI] ` (namaUji): baris ini masuk ke roster yang SAMA
+// dengan karyawan sungguhan, dan yang dirender di dashboard adalah `nama`, bukan
+// `am_id`. Tanpa prefiks, "Michael Christopher" duduk di daftar AM dev persis
+// seperti AM asli. `am_id` tetap ber-prefiks `WA-TEST-` untuk penyapuan.
+//
+// Dikunci dari SLUG PUSHNAME, bukan nomor WA: di grup, `waNumber` (kalau ada)
+// diturunkan dari `sender_jid` yang ternyata = `group_jid` — SAMA untuk semua
+// pengirim di grup itu. Mengunci `am_id` dari situ akan membuat semua tester
+// collision jadi satu baris AM palsu (nama saling menimpa). `wa_number` tetap
+// disimpan sebagai info tambahan kalau kebetulan valid (mis. dari DM individu).
+async function ensureBypassAm(pushname: string, waNumber?: string | null): Promise<ResolvedAm> {
+  const sql = db();
+  const nama = namaUji(pushname);
+  const slug = pushname.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "unknown";
+  const amId = `WA-TEST-${slug}`;
+  await sql`
+    INSERT INTO master_user (am_id, nama, wa_number, role, aktif, wajib_plan_report)
+    VALUES (${amId}, ${nama}, ${waNumber ?? null}, 'AM', true, false)
+    ON CONFLICT (am_id) DO UPDATE SET
+      nama = EXCLUDED.nama, aktif = true,
+      wa_number = COALESCE(EXCLUDED.wa_number, master_user.wa_number)
+  `;
+  return { am_id: amId, nama, aktif: true, role: "AM", via: "test-bypass" };
 }
 
 export interface TerritoryInput {

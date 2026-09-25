@@ -178,6 +178,13 @@ class SalesDocRequest(BaseModel):
     notes: Optional[str] = None
     doc_type: str = "sph"  # sph, offering_letter, presentation, mou
     dry_run: bool = False
+    # F15 (apps/api/src/repo/sph.ts) — True kalau pemanggil SUDAH punya tabel
+    # harga final (per-SKU, tervalidasi) dan akan menempelnya sendiri setelah
+    # teks ini. LLM/template TIDAK BOLEH ikut menggambar tabel/subtotal/PPN
+    # sendiri kalau ini True — dua tabel (satu placeholder, satu benar) di 1
+    # dokumen membingungkan customer. False (default) = jalur lama A6 batch,
+    # tak ada tabel final tersedia, LLM/template tetap boleh gambar placeholder.
+    has_final_pricing: bool = False
 
 
 class SalesDocResponse(BaseModel):
@@ -268,6 +275,25 @@ class LeaveDetectResponse(BaseModel):
     confidence: float = 0.0
     model: str = "dry-run"
     dry_run: bool = False
+
+
+# === F26 ticket triage (klasifikasi severity komplain customer) ===
+
+
+class TicketTriageRequest(BaseModel):
+    complaint_text: str
+    dry_run: bool = False
+
+
+class TicketTriageResponse(BaseModel):
+    severity: str = "sedang"  # rendah | sedang | tinggi | kritis
+    area: Optional[str] = None
+    model: str = "dry-run"
+    dry_run: bool = False
+    # True kalau LLM sukses respon TAPI severity-nya di luar 4 enum valid / JSON
+    # gagal parse — severity di-default ke "sedang" tapi caller HARUS anggap ini
+    # tidak pasti (needs_review), bukan hasil klasifikasi asli yang bisa dipercaya.
+    severity_uncertain: bool = False
 
 
 # === extract_competitor (ekstrak sebutan kompetitor dari activity_log.hasil) ===
@@ -361,14 +387,28 @@ class RaportNarrativeResponse(BaseModel):
     dry_run: bool = False
 
 
-class KoranLine(BaseModel):
-    urut: int
-    waktu: Optional[str] = None
-    deskripsi: str = ""
-    debit: float = 0
-    kredit: float = 0
-    saldo: Optional[float] = None
-    referensi: Optional[str] = None
+# === DOC #KLAIM — Invoice Claim OCR (Fase A, Gemini Vision) ===
+
+
+class KlaimOcrRequest(BaseModel):
+    image_base64: str
+    mime_type: str = "image/jpeg"
+    caption: Optional[str] = None
+    dry_run: bool = False
+
+
+class KlaimOcrResponse(BaseModel):
+    raw_text: str = ""
+    nomor_dokumen: Optional[str] = None
+    tanggal_dokumen: Optional[str] = None
+    nominal: Optional[str] = None
+    pihak: Optional[str] = None
+    model: str = "dry-run"
+    dry_run: bool = False
+
+
+# === F-CASHIN — pembaca rekening koran harian (parser teks + OCR vision) ===
+
 
 class KoranParseRequest(BaseModel):
     pdf_base64: str
@@ -378,6 +418,17 @@ class KoranParseRequest(BaseModel):
     # saat re-ingest massal statement lama.
     allow_ocr: bool = True
     dry_run: bool = False
+
+
+class KoranLine(BaseModel):
+    urut: int
+    waktu: Optional[str] = None
+    deskripsi: str = ""
+    debit: float = 0
+    kredit: float = 0
+    saldo: Optional[float] = None
+    referensi: Optional[str] = None
+
 
 class KoranParseResponse(BaseModel):
     bank_kode: Optional[str] = None

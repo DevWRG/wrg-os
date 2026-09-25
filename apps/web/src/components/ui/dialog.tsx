@@ -73,7 +73,11 @@ function DialogHeader({ className, ...props }: React.ComponentProps<"div">) {
 }
 
 function DialogBody({ className, ...props }: React.ComponentProps<"div">) {
-  return <div data-slot="dialog-body" className={cn("overflow-y-auto p-4", className)} {...props} />;
+  // flex-1 min-h-0 WAJIB: tanpa ini, flex item default `min-height: auto`
+  // mencegah body menyusut/scroll saat konten lebih tinggi dari max-h-[90vh]
+  // milik DialogContent — akibatnya overflow-hidden di parent yang menang,
+  // MEMOTONG footer (tombol Simpan/Batal) alih-alih body yang scroll.
+  return <div data-slot="dialog-body" className={cn("flex-1 min-h-0 overflow-y-auto p-4", className)} {...props} />;
 }
 
 function DialogFooter({ className, ...props }: React.ComponentProps<"div">) {

@@ -56,6 +56,13 @@ def extract_models() -> List[str]:
     return [primary, fallback]
 
 
+def ticket_triage_models() -> List[str]:
+    """Model OpenRouter untuk F26 ticket triage (token tier LOW → Haiku)."""
+    primary = os.environ.get("TICKET_TRIAGE_MODEL_PRIMARY", "anthropic/claude-haiku-4.5")
+    fallback = os.environ.get("TICKET_TRIAGE_MODEL_FALLBACK", "deepseek/deepseek-r1")
+    return [primary, fallback]
+
+
 def exec_models() -> List[str]:
     """Model OpenRouter untuk A10 executive synthesis (token tier HIGH → Sonnet)."""
     primary = os.environ.get("EXEC_MODEL_PRIMARY", "anthropic/claude-sonnet-4.6")
@@ -67,6 +74,19 @@ def raport_models() -> List[str]:
     """Model OpenRouter untuk narasi Raport 360 (token tier HIGH → Sonnet)."""
     primary = os.environ.get("RAPORT_MODEL_PRIMARY", "anthropic/claude-sonnet-4.6")
     fallback = os.environ.get("RAPORT_MODEL_FALLBACK", "anthropic/claude-haiku-4.5")
+    return [primary, fallback]
+
+
+def klaim_models() -> List[str]:
+    """Model OpenRouter (vision) untuk DOC #KLAIM OCR. Default Gemini (blueprint
+    minta "Gemini Vision" eksplisit), fallback varian Gemini lain — bukan
+    Claude/DeepSeek spt fitur teks lain, krn keduanya butuh dukungan image input."""
+    # Slug lama ('google/gemini-2.0-flash-001' / 'gemini-flash-1.5') SUDAH TIDAK
+    # ADA di katalog OpenRouter → 404. Dampaknya sama persis dengan yang menimpa
+    # pembaca rekening koran 18 Sep 2026: OCR nota #KLAIM gagal SENYAP, dan
+    # gejalanya terlihat seperti dokumennya yang bermasalah. Lihat koran_models().
+    primary = os.environ.get("KLAIM_MODEL_PRIMARY", "google/gemini-3.8-flash")
+    fallback = os.environ.get("KLAIM_MODEL_FALLBACK", "google/gemini-3.5-flash")
     return [primary, fallback]
 
 
@@ -182,7 +202,7 @@ def chat_vision(
     headers = {"Authorization": f"Bearer {key}", "content-type": "application/json"}
     last_err: Optional[Exception] = None
     with httpx.Client(timeout=60) as client:
-        for model in models or koran_models():
+        for model in models or klaim_models():
             try:
                 resp = client.post(
                     OPENROUTER_URL,

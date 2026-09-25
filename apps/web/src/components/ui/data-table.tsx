@@ -24,6 +24,16 @@ export interface DataColumn<T> {
   accessor?: (row: T) => string | number | null;
   /** render sel; default = nilai accessor. */
   cell?: (row: T) => React.ReactNode;
+  /**
+   * Ikutkan kolom ini saat pencarian. Default: true (perilaku lama dipertahankan
+   * untuk semua tabel yang sudah ada).
+   *
+   * Set `false` untuk kolom NUMERIK yang memakai nilai sentinel di accessor-nya
+   * (mis. `?? -1` untuk "tidak ada data"). Sentinel itu ikut jadi teks yang
+   * dicari: di matriks stok per gudang, 12 kolom memakai `-1` sehingga mengetik
+   * "1" mencocokkan SEMUA baris dan filter berhenti bekerja.
+   */
+  searchable?: boolean;
   className?: string;
 }
 
@@ -95,7 +105,7 @@ export function DataTable<T>({
   const sort = server ? server.sort : sortLocal;
   const size = server ? server.pageSize : sizeLocal;
 
-  const searchable = columns.filter((c) => c.accessor);
+  const searchable = columns.filter((c) => c.accessor && c.searchable !== false);
 
   const filtered = useMemo(() => {
     if (server) return data;

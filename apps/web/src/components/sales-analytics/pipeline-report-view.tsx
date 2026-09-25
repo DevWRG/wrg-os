@@ -12,6 +12,8 @@ export interface PipelineForecastRow { category: string; count: number; value: n
 export interface PipelineWinLoss {
   won: number; lost: number; open: number; win_rate: number;
   by_reason: { reason: string; count: number }[];
+  lost_tanpa_alasan: number;
+  lost_dengan_alasan: number;
 }
 export interface PipelineGroupRow { key: string; count: number; value: number; weighted: number }
 export interface PipelineReportData {
@@ -221,9 +223,18 @@ export function PipelineReportView({ data }: { data: PipelineReportData }) {
           </div>
 
           <div>
-            <div className="text-muted-foreground mb-2 text-xs font-semibold uppercase tracking-wide">Alasan Kalah</div>
+            <div className="text-muted-foreground mb-2 text-xs font-semibold uppercase tracking-wide">
+              Alasan Kalah
+              {wl.lost_dengan_alasan > 0 && (
+                <span className="ml-1 normal-case tracking-normal">
+                  ({wl.lost_dengan_alasan} dari {wl.lost} deal kalah)
+                </span>
+              )}
+            </div>
             {wl.by_reason.length === 0 ? (
-              <div className="text-muted-foreground text-sm">Belum ada deal yang kalah.</div>
+              <div className="text-muted-foreground text-sm">
+                {wl.lost === 0 ? "Belum ada deal yang kalah." : "Tak satu pun deal kalah punya alasan tercatat."}
+              </div>
             ) : (
               <div className="space-y-2">
                 {wl.by_reason.map((r) => (
@@ -232,10 +243,27 @@ export function PipelineReportView({ data }: { data: PipelineReportData }) {
                     <div className="bg-muted h-5 flex-1 overflow-hidden rounded">
                       <div className="bg-rose-500 dark:bg-rose-400/80 h-full rounded" style={{ width: `${(r.count / maxLoss) * 100}%` }} />
                     </div>
-                    <div className="w-8 shrink-0 text-right text-xs font-semibold tabular-nums">{r.count}</div>
+                    <div className="w-12 shrink-0 text-right text-xs font-semibold tabular-nums">
+                      {r.count}
+                      <span className="text-muted-foreground ml-1 font-normal">
+                        {Math.round((r.count / Math.max(1, wl.lost_dengan_alasan)) * 100)}%
+                      </span>
+                    </div>
                   </div>
                 ))}
               </div>
+            )}
+            {/* Angka yang hilang harus KELIHATAN. Tanpa baris ini, grafik di atas
+                terbaca seolah mewakili seluruh deal kalah — padahal di prod 190
+                dari 305 (62%) tak punya alasan sama sekali. Persentase di tiap
+                batang juga dihitung terhadap yang terisi, bukan terhadap total
+                kalah, supaya jumlahnya 100% dan bukan angka yang diam-diam kecil. */}
+            {wl.lost_tanpa_alasan > 0 && (
+              <p className="text-muted-foreground mt-3 text-xs">
+                ⚠️ {wl.lost_tanpa_alasan} deal kalah ({Math.round((wl.lost_tanpa_alasan / Math.max(1, wl.lost)) * 100)}%) tak punya
+                alasan tercatat — tidak ikut dihitung di atas. Alasan wajib diisi saat deal dipindah ke
+                Closing-Lost, jadi yang kosong berasal dari impor massal, bukan dari pemakaian sehari-hari.
+              </p>
             )}
           </div>
         </CardContent>
