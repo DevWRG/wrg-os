@@ -50,7 +50,7 @@ jobs:
         run: node scripts/ops/kso-parity.mjs
 
   ai-check:
-    name: services/ai import check
+    name: services/ai import + unit test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -66,6 +66,16 @@ jobs:
       - name: Import FastAPI app
         working-directory: services/ai
         run: python -c "import app.main; print('services/ai import ok')"
+      # Langkah TERPISAH dan eksplisit: `pnpm test` cuma menjaring apps/*/src,
+      # jadi tanpa baris ini tes Python tak akan pernah dijalankan siapa pun
+      # dan cuma jadi hiasan di repo (pelajaran #1280).
+      #
+      # unittest stdlib, BUKAN pytest: requirements.txt ikut terpasang di
+      # produksi, dan menambahkan dependensi uji ke sana menambah permukaan
+      # runtime tanpa satu pun manfaat saat berjalan.
+      - name: Unit test services/ai
+        working-directory: services/ai
+        run: python -m unittest discover -s tests -v
 
   build-images:
     name: Build & Push Images (web/api/ai)
