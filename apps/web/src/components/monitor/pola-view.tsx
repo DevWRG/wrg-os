@@ -1,7 +1,8 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { ArrowLeft, MessagesSquare, ChevronRight, Clock } from "lucide-react";
+// `Filter` di-alias: nama itu sudah dipakai type alias filter kategori di bawah.
+import { ArrowLeft, MessagesSquare, ChevronRight, Filter as FilterIcon } from "lucide-react";
 
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -21,7 +22,7 @@ export interface WaGroup {
   has_pola: boolean;
   message_count: number;
   last_message_at: string | null;
-  /** true = pra-daftar: bot sudah di grupnya tapi grup belum pernah kirim pesan. */
+  /** true = baris ATURAN AWALAN (bukan grup): belum ada grup yang namanya cocok. */
   pending: boolean;
   name_prefix: string | null;
 }
@@ -266,21 +267,26 @@ export function PolaView({ groups: initial, canEdit }: { groups: WaGroup[]; canE
               key={rowKey(g)}
               className={`border-border bg-card group flex flex-col gap-2 rounded-xl border p-4 ${g.pending ? "border-dashed" : "hover:border-primary"}`}
             >
-              {/* Baris pra-daftar tak punya profil untuk dibuka → bukan tombol. */}
+              {/* Kartu pra-daftar = ATURAN AWALAN, bukan satu grup: satu awalan bisa
+                  menaungi belasan grup ("Aftersales Wahana X" → …RS Larasati, …RSUD
+                  SMART, dst). Dulu kartunya ditulis seperti nama grup lengkap dengan
+                  "…" dan "menunggu pesan pertama", jadi terbaca sebagai satu grup yang
+                  namanya terpotong — dua-duanya keliru. Tak ada profil untuk dibuka →
+                  bukan tombol. */}
               {g.pending ? (
                 <div className="flex items-start gap-3">
                   <span className="bg-muted text-muted-foreground flex size-9 shrink-0 items-center justify-center rounded-lg">
-                    <Clock className="size-4" />
+                    <FilterIcon className="size-4" />
                   </span>
                   <span className="min-w-0 flex-1">
-                    {/* "…" hanya saat nama masih berupa awalan pra-daftar. Kalau bot sudah
-                        join grupnya, API mengirim nama penuh dari subject openclaw. */}
+                    <span className="text-muted-foreground block text-[11px] font-medium tracking-wide uppercase">
+                      Aturan awalan
+                    </span>
                     <span className="text-foreground block text-sm font-medium break-words">
                       {label(g)}
-                      {label(g) === g.name_prefix ? "…" : null}
                     </span>
                     <span className="text-muted-foreground text-xs">
-                      Pra-daftar — menunggu pesan pertama
+                      Berlaku untuk semua grup yang namanya diawali ini — belum ada yang cocok
                     </span>
                   </span>
                 </div>
