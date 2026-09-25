@@ -61,13 +61,103 @@ export function namaPraDaftar(prefix: string, subjects: Record<string, string>):
   return hit.length === 1 ? hit[0] : prefix;
 }
 
+/** Satu baris hasil query daftar grup — dipisah supaya perakitannya bisa diuji. */
+export interface BarisGrupDb {
+  group_jid: string;
+  group_name: string;
+  category: unknown;
+  note: unknown;
+  has_pola: boolean;
+  message_count: number;
+  last_message_at: string | null;
+}
+
+/**
+ * Rakit baris DB + subject openclaw + pra-daftar awalan jadi daftar kartu.
+ * Murni (tanpa DB) supaya aturan penamaan & prioritas kategorinya bisa diuji:
+ * aturan itu tak pernah melempar error, salahnya cuma tampak sebagai kartu
+ * bernama keliru atau kartu kembar.
+ */
+export function rakitDaftarGrup(
+  rows: BarisGrupDb[],
+  subjects: Record<string, string>,
+  prefixList: WaGroupPrefix[],
+): WaGroup[] {
+  // Pra-daftar awalan nama diurut TERPANJANG dulu: 'Wahana - Snibe' harus menang
+  // atas 'Wahana |'-style awalan pendek kalau keduanya cocok.
+  const prefixes = [...prefixList].sort((a, b) => b.name_prefix.length - a.name_prefix.length);
+  // Semua awalan yang cocok, terpanjang dulu. Yang terpanjang menentukan kategori;
+  // sisanya tetap ditandai TERPAKAI supaya awalan pendek yang ternaungi ('Wahana '
+  // di bawah 'Wahana - Snibe') tak memunculkan kartu pra-daftar hantu untuk grup
+  // yang sebenarnya sudah ada di daftar.
+  const matchPrefixes = (name: string) => {
+    const n = name.toLowerCase();
+    return prefixes.filter((p) => n.startsWith(p.name_prefix.toLowerCase()));
+  };
+  const usedPrefix = new Set<string>();
+
+  const groups: WaGroup[] = rows.map((r) => {
+    const jid = String(r.group_jid);
+    const rawName = String(r.group_name);
+    // Nama: UTAMAKAN subject openclaw (nama grup WA yang hidup).
+    // monitor_pola.group_name bisa basi/keliru — mis. 6281335118687-1527497998
+    // tersimpan "GROUP TRAINING KRM-TAGIH" padahal subject-nya "PENJUALAN
+    // SOLO-JOGJA-PWT" (bikin dua kartu kembar di galeri). syncGroupNamesFromSessions
+    // cuma mem-backfill nama yang KOSONG, jadi tak memperbaiki kasus ini.
+    const name = subjects[jid] || (rawName === jid ? jid : rawName);
+    const manual = isWaGroupCategory(r.category) ? r.category : null;
+    const cocok = matchPrefixes(name);
+    const hit = cocok[0] ?? null;
+    for (const p of cocok) usedPrefix.add(p.name_prefix);
+    return {
+      group_jid: jid,
+      group_name: name,
+      // Baris per-JID (keputusan admin) SELALU menang atas pra-daftar.
+      category: manual ?? hit?.category ?? null,
+      category_source: manual ? "manual" : hit ? "prefix" : null,
+      note: (r.note ? String(r.note) : null) ?? hit?.note ?? null,
+      has_pola: Boolean(r.has_pola),
+      message_count: Number(r.message_count),
+      last_message_at: r.last_message_at ? new Date(String(r.last_message_at)).toISOString() : null,
+      pending: false,
+      name_prefix: hit?.name_prefix ?? null,
+    };
+  });
+
+  // Awalan yang belum cocok ke grup mana pun → baris PRA-DAFTAR. Sejak JID dari
+  // openclaw ikut terdaftar, sisanya tinggal awalan yang grupnya belum di-join
+  // bot sama sekali — nama penuhnya memang belum ada di sumber mana pun.
+  for (const p of prefixes) {
+    if (usedPrefix.has(p.name_prefix)) continue;
+    groups.push({
+      group_jid: "",
+      group_name: namaPraDaftar(p.name_prefix, subjects),
+      category: p.category,
+      category_source: "prefix",
+      note: p.note,
+      has_pola: false,
+      message_count: 0,
+      last_message_at: null,
+      pending: true,
+      name_prefix: p.name_prefix,
+    });
+  }
+  return groups.sort((a, b) => a.group_name.localeCompare(b.group_name, "id"));
+}
+
 export async function listWaGroups(): Promise<WaGroup[]> {
   const sql = db();
+  const subjects = loadGroupSubjects();
   const rows = await sql`
     WITH jids AS (
       SELECT group_jid FROM monitor_pola WHERE group_jid LIKE '%@g.us'
       UNION
       SELECT DISTINCT group_jid FROM wa_message WHERE group_jid LIKE '%@g.us'
+      UNION
+      -- Grup yang bot-nya SUDAH join tapi belum pernah kirim pesan: JID & namanya
+      -- hanya ada di state openclaw. Tanpa baris ini kartunya tak pernah muncul,
+      -- atau muncul sebagai pra-daftar bernama awalan ("Group PT Wahana X…").
+      SELECT unnest(${Object.keys(subjects)}::text[])
     ), msg AS (
       SELECT group_jid,
              count(*)::int AS message_count,
@@ -88,62 +178,7 @@ export async function listWaGroups(): Promise<WaGroup[]> {
     LEFT JOIN msg ON msg.group_jid = j.group_jid
     ORDER BY 2
   `;
-  // Nama: UTAMAKAN subject openclaw (nama grup WA yang hidup) — sejak 2026.9.5
-  // dibaca dari SQLite sesi, lihat group-names.ts.
-  // monitor_pola.group_name bisa basi/keliru — mis. 6281335118687-1527497998
-  // tersimpan "GROUP TRAINING KRM-TAGIH" padahal subject-nya "PENJUALAN
-  // SOLO-JOGJA-PWT" (bikin dua kartu kembar di galeri). syncGroupNamesFromSessions
-  // cuma mem-backfill nama yang KOSONG, jadi tak memperbaiki kasus ini.
-  const subjects = loadGroupSubjects();
-  // Pra-daftar awalan nama diurut TERPANJANG dulu: 'Wahana - Snibe' harus menang
-  // atas 'Wahana |'-style awalan pendek kalau keduanya cocok.
-  const prefixes = (await listWaGroupPrefixes()).sort((a, b) => b.name_prefix.length - a.name_prefix.length);
-  const matchPrefix = (name: string) => {
-    const n = name.toLowerCase();
-    return prefixes.find((p) => n.startsWith(p.name_prefix.toLowerCase())) ?? null;
-  };
-  const usedPrefix = new Set<string>();
-
-  const groups: WaGroup[] = rows.map((r) => {
-    const jid = String(r.group_jid);
-    const rawName = String(r.group_name);
-    const name = subjects[jid] || (rawName === jid ? jid : rawName);
-    const manual = isWaGroupCategory(r.category) ? r.category : null;
-    const hit = matchPrefix(name);
-    if (hit) usedPrefix.add(hit.name_prefix);
-    return {
-      group_jid: jid,
-      group_name: name,
-      // Baris per-JID (keputusan admin) SELALU menang atas pra-daftar.
-      category: manual ?? hit?.category ?? null,
-      category_source: manual ? "manual" : hit ? "prefix" : null,
-      note: (r.note ? String(r.note) : null) ?? hit?.note ?? null,
-      has_pola: Boolean(r.has_pola),
-      message_count: Number(r.message_count),
-      last_message_at: r.last_message_at ? new Date(String(r.last_message_at)).toISOString() : null,
-      pending: false,
-      name_prefix: hit?.name_prefix ?? null,
-    };
-  });
-
-  // Awalan yang belum cocok ke grup mana pun → tampilkan sebagai baris PRA-DAFTAR
-  // supaya grup yang bot-nya sudah masuk tapi belum pernah kirim pesan tetap terlihat.
-  for (const p of prefixes) {
-    if (usedPrefix.has(p.name_prefix)) continue;
-    groups.push({
-      group_jid: "",
-      group_name: namaPraDaftar(p.name_prefix, subjects),
-      category: p.category,
-      category_source: "prefix",
-      note: p.note,
-      has_pola: false,
-      message_count: 0,
-      last_message_at: null,
-      pending: true,
-      name_prefix: p.name_prefix,
-    });
-  }
-  return groups.sort((a, b) => a.group_name.localeCompare(b.group_name, "id"));
+  return rakitDaftarGrup(rows as unknown as BarisGrupDb[], subjects, await listWaGroupPrefixes());
 }
 
 /** Set/hapus pra-daftar kategori per awalan nama. category null → baris dihapus. */
