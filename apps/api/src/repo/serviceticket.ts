@@ -217,7 +217,11 @@ export async function createTicket(input: CreateTicketInput): Promise<TicketRow>
   const severityUncertain = !llmFailed && Boolean(data.severity_uncertain);
   const severity = llmFailed ? "sedang" : String(data.severity ?? "sedang");
   const area = input.area || (llmFailed ? null : ((data.area as string | null) ?? null));
-  const modelUsed = llmFailed ? "error" : String(data.model ?? "");
+  // Hasil terdegradasi kini ditolak callAi jadi 503, tapi `model` tetap ikut
+  // di payload-nya — dipakai agar kolom audit membedakan "services/ai mati"
+  // dari "LLM gagal, hasilnya template". Keduanya tetap masuk needs_review
+  // lewat llmFailed, jadi perilakunya tak berubah; yang dijaga jejaknya.
+  const modelUsed = llmFailed ? String(data.model ?? "error") : String(data.model ?? "");
 
   // 2. Auto-assign teknisi (selalu dapat teknisi kalau ada yang aktif — lihat
   // assignTeknisi: fallback ke least-loaded kalau area tak match siapa pun).
