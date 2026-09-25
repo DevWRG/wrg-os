@@ -218,6 +218,21 @@ async function resolveAccount(
   return null;
 }
 
+/** Waktu dari services/ai yang aman untuk kolom timestamptz, atau null.
+ *
+ *  postgres.js men-serialisasi parameter timestamptz lewat new Date(x).toISOString().
+ *  String yang tak dikenali JS ('24/09/2026 18.25.14', '18:25:14') membuat
+ *  toISOString() melempar RangeError, dan SATU baris seperti itu menggagalkan
+ *  seluruh ingest (insiden 25 Sep 2026). services/ai sudah menormalkannya;
+ *  ini lapis kedua supaya bentuk baru dari OCR hanya menghilangkan jam, bukan
+ *  seluruh file. */
+export function waktuAman(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const s = raw.trim();
+  if (!/^\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?$/.test(s)) return null;
+  return Number.isNaN(new Date(s).getTime()) ? null : s;
+}
+
 export async function ingestKoran(
   input: IngestKoranInput,
 ): Promise<IngestKoranResult | ActionResult> {
@@ -278,7 +293,7 @@ export async function ingestKoran(
 
   const lines = ((data.lines as KoranLine[]) ?? []).map((l) => ({
     urut: Number(l.urut),
-    waktu: l.waktu ?? null,
+    waktu: waktuAman(l.waktu),
     deskripsi: String(l.deskripsi ?? ""),
     debit: Number(l.debit ?? 0),
     kredit: Number(l.kredit ?? 0),
@@ -295,59 +310,67 @@ export async function ingestKoran(
   // Upsert statement + ganti seluruh barisnya. Upload ulang = perbaikan
   // (parser/OCR bisa diperbaiki lalu di-ingest lagi), bukan penambahan yang
   // membuat total dobel — karena itu DELETE baris lama, bukan append.
-  const [stmt] = await sql`
-    INSERT INTO bank_statement (
-      bank_account_id, tanggal, saldo_awal, saldo_akhir,
-      total_debit_tercetak, total_kredit_tercetak, jumlah_debit, jumlah_kredit,
-      dicetak_at, sumber, wa_message_id, wa_group_jid, file_path, file_nama, metode, model_used,
-      ocr_dry_run, checksum_ok, status, parse_error, raw_text
-    ) VALUES (
-      ${acc.id}, ${tanggal}, ${(data.saldo_awal as number) ?? null}, ${(data.saldo_akhir as number) ?? null},
-      ${(data.total_debit_tercetak as number) ?? null}, ${(data.total_kredit_tercetak as number) ?? null},
-      ${(data.jumlah_debit as number) ?? null}, ${(data.jumlah_kredit as number) ?? null},
-      ${(data.dicetak_at as string) ?? null}, ${input.sumber}, ${input.wa_message_id ?? null},
-      ${input.wa_group_jid ?? null},
-      ${input.file_path ?? null}, ${fileNama}, ${(data.metode as string) ?? "parser"},
-      ${(data.model as string) ?? null}, ${Boolean(data.dry_run)}, ${checksumOk},
-      ${checksumOk === true ? "terverifikasi" : "perlu_review"}, ${parseError},
-      ${(data.raw_text as string) ?? null}
-    )
-    ON CONFLICT (bank_account_id, tanggal) DO UPDATE SET
-      saldo_awal = EXCLUDED.saldo_awal, saldo_akhir = EXCLUDED.saldo_akhir,
-      total_debit_tercetak = EXCLUDED.total_debit_tercetak,
-      total_kredit_tercetak = EXCLUDED.total_kredit_tercetak,
-      jumlah_debit = EXCLUDED.jumlah_debit, jumlah_kredit = EXCLUDED.jumlah_kredit,
-      dicetak_at = EXCLUDED.dicetak_at, sumber = EXCLUDED.sumber,
-      wa_message_id = EXCLUDED.wa_message_id,
-      -- Grup asal dipertahankan kalau kiriman baru datang tanpa grup (mis.
-      -- perbaikan lewat unggah web): draft konfirmasi tetap punya tujuan.
-      wa_group_jid = COALESCE(EXCLUDED.wa_group_jid, bank_statement.wa_group_jid),
-      file_path = EXCLUDED.file_path,
-      file_nama = EXCLUDED.file_nama, metode = EXCLUDED.metode,
-      model_used = EXCLUDED.model_used, ocr_dry_run = EXCLUDED.ocr_dry_run,
-      checksum_ok = EXCLUDED.checksum_ok, status = EXCLUDED.status,
-      parse_error = EXCLUDED.parse_error, raw_text = EXCLUDED.raw_text,
-      updated_at = now()
-    RETURNING id
-  `;
-  const statementId = String(stmt.id);
-  await sql`DELETE FROM bank_statement_line WHERE statement_id = ${statementId}`;
-
-  for (const l of lines) {
-    const kat = kategoriAwal(l, polaAfiliasi);
-    const catatan =
-      kat === "belum_ditriage" && RE_INTERNAL_WORDING.test(l.deskripsi)
-        ? "diduga pemindahbukuan internal — pasangan debit/kredit belum ketemu"
-        : null;
-    await sql`
-      INSERT INTO bank_statement_line (
-        statement_id, urut, waktu, deskripsi, debit, kredit, saldo, referensi, kategori, kategori_oleh, catatan
+  //
+  // Ketiganya SATU transaksi. Tanpa itu, baris yang gagal disisipkan
+  // meninggalkan statement 'terverifikasi' dengan nol mutasi — baris lama
+  // sudah terhapus — dan resume membacanya sebagai rekening tanpa uang masuk
+  // (BNI 24 Sep 2026: kredit Rp 106 jt hilang begitu saja).
+  const statementId = await sql.begin(async (tx) => {
+    const [stmt] = await tx`
+      INSERT INTO bank_statement (
+        bank_account_id, tanggal, saldo_awal, saldo_akhir,
+        total_debit_tercetak, total_kredit_tercetak, jumlah_debit, jumlah_kredit,
+        dicetak_at, sumber, wa_message_id, wa_group_jid, file_path, file_nama, metode, model_used,
+        ocr_dry_run, checksum_ok, status, parse_error, raw_text
       ) VALUES (
-        ${statementId}, ${l.urut}, ${l.waktu}, ${l.deskripsi}, ${l.debit}, ${l.kredit},
-        ${l.saldo}, ${l.referensi}, ${kat}, 'aturan', ${catatan}
+        ${acc.id}, ${tanggal}, ${(data.saldo_awal as number) ?? null}, ${(data.saldo_akhir as number) ?? null},
+        ${(data.total_debit_tercetak as number) ?? null}, ${(data.total_kredit_tercetak as number) ?? null},
+        ${(data.jumlah_debit as number) ?? null}, ${(data.jumlah_kredit as number) ?? null},
+        ${waktuAman(data.dicetak_at)}, ${input.sumber}, ${input.wa_message_id ?? null},
+        ${input.wa_group_jid ?? null},
+        ${input.file_path ?? null}, ${fileNama}, ${(data.metode as string) ?? "parser"},
+        ${(data.model as string) ?? null}, ${Boolean(data.dry_run)}, ${checksumOk},
+        ${checksumOk === true ? "terverifikasi" : "perlu_review"}, ${parseError},
+        ${(data.raw_text as string) ?? null}
       )
+      ON CONFLICT (bank_account_id, tanggal) DO UPDATE SET
+        saldo_awal = EXCLUDED.saldo_awal, saldo_akhir = EXCLUDED.saldo_akhir,
+        total_debit_tercetak = EXCLUDED.total_debit_tercetak,
+        total_kredit_tercetak = EXCLUDED.total_kredit_tercetak,
+        jumlah_debit = EXCLUDED.jumlah_debit, jumlah_kredit = EXCLUDED.jumlah_kredit,
+        dicetak_at = EXCLUDED.dicetak_at, sumber = EXCLUDED.sumber,
+        wa_message_id = EXCLUDED.wa_message_id,
+        -- Grup asal dipertahankan kalau kiriman baru datang tanpa grup (mis.
+        -- perbaikan lewat unggah web): draft konfirmasi tetap punya tujuan.
+        wa_group_jid = COALESCE(EXCLUDED.wa_group_jid, bank_statement.wa_group_jid),
+        file_path = EXCLUDED.file_path,
+        file_nama = EXCLUDED.file_nama, metode = EXCLUDED.metode,
+        model_used = EXCLUDED.model_used, ocr_dry_run = EXCLUDED.ocr_dry_run,
+        checksum_ok = EXCLUDED.checksum_ok, status = EXCLUDED.status,
+        parse_error = EXCLUDED.parse_error, raw_text = EXCLUDED.raw_text,
+        updated_at = now()
+      RETURNING id
     `;
-  }
+    const id = String(stmt.id);
+    await tx`DELETE FROM bank_statement_line WHERE statement_id = ${id}`;
+
+    for (const l of lines) {
+      const kat = kategoriAwal(l, polaAfiliasi);
+      const catatan =
+        kat === "belum_ditriage" && RE_INTERNAL_WORDING.test(l.deskripsi)
+          ? "diduga pemindahbukuan internal — pasangan debit/kredit belum ketemu"
+          : null;
+      await tx`
+        INSERT INTO bank_statement_line (
+          statement_id, urut, waktu, deskripsi, debit, kredit, saldo, referensi, kategori, kategori_oleh, catatan
+        ) VALUES (
+          ${id}, ${l.urut}, ${l.waktu}, ${l.deskripsi}, ${l.debit}, ${l.kredit},
+          ${l.saldo}, ${l.referensi}, ${kat}, 'aturan', ${catatan}
+        )
+      `;
+    }
+    return id;
+  });
 
   await matchPuteran(tanggal);
   const bersambung = await cekSaldoBersambung(acc.id, tanggal);

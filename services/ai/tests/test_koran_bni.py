@@ -97,8 +97,9 @@ class BarisMutasi(unittest.TestCase):
         self.assertEqual(b["referensi"], "964223")
 
     def test_jam_diambil_dari_baris_lanjutan(self):
-        # Jam dicetak DI BAWAH tanggal, bukan di kolomnya sendiri.
-        self.assertEqual(self.baris[0]["waktu"], "18:25:14")
+        # Jam dicetak DI BAWAH tanggal, bukan di kolomnya sendiri. Tanggal
+        # baris WAJIB ikut: jam saja ditolak kolom timestamptz.
+        self.assertEqual(self.baris[0]["waktu"], "2026-09-24 18:25:14")
 
     def test_deskripsi_tidak_menelan_kolom_branch(self):
         # Regresi paling mudah terjadi di sini: tanpa pemotongan kolom, kata
