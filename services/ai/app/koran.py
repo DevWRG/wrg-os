@@ -104,6 +104,44 @@ def _iso_date(y: int, m: int, d: int) -> str:
     return "%04d-%02d-%02d" % (y, m, d)
 
 
+_WAKTU_ISO = re.compile(r"^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{1,2})[:.](\d{2})(?:[:.](\d{2}))?)?$")
+_WAKTU_DMY = re.compile(r"^(\d{2})[/-](\d{2})[/-](\d{4})(?:\s+(\d{1,2})[:.](\d{2})(?:[:.](\d{2}))?)?$")
+_WAKTU_JAM = re.compile(r"^(\d{1,2})[:.](\d{2})(?:[:.](\d{2}))?$")
+
+
+def normalisasi_waktu(raw: Any, tanggal: Optional[str]) -> Optional[str]:
+    """Paksa waktu transaksi ke 'YYYY-MM-DD HH:MM:SS' (atau None).
+
+    Kolom bank_statement_line.waktu bertipe timestamptz, dan driver Postgres di
+    API mengubah string lewat new Date(). String yang tak dikenali JS — mis.
+    '24/09/2026 18.25.14' seperti tercetak di koran BNI, yang disalin apa
+    adanya oleh OCR — membuat SELURUH ingest melempar 'Invalid time value'
+    (insiden 25 Sep 2026). Jam saja ('18:25:14') dilengkapi tanggal statement.
+    Format lain dibuang jadi None: kehilangan jam jauh lebih murah daripada
+    kehilangan seluruh file."""
+    if not isinstance(raw, str):
+        return None
+    s = raw.strip()
+    m = _WAKTU_ISO.match(s)
+    if m:
+        y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        jam = m.group(4, 5, 6)
+    elif _WAKTU_DMY.match(s):
+        m = _WAKTU_DMY.match(s)
+        d, mo, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        jam = m.group(4, 5, 6)
+    else:
+        m = _WAKTU_JAM.match(s)
+        if not m or not tanggal or not re.match(r"^\d{4}-\d{2}-\d{2}$", tanggal):
+            return None
+        y, mo, d = (int(x) for x in tanggal.split("-"))
+        jam = m.group(1, 2, 3)
+    hh, mi, ss = int(jam[0] or 0), int(jam[1] or 0), int(jam[2] or 0)
+    if not (1 <= mo <= 12 and 1 <= d <= 31 and hh < 24 and mi < 60 and ss < 60):
+        return None
+    return "%s %02d:%02d:%02d" % (_iso_date(y, mo, d), hh, mi, ss)
+
+
 # ── deteksi bank ─────────────────────────────────────────────────────────────
 # Sidik jari diambil dari teks header yang dicetak sistem e-banking masing-masing,
 # BUKAN dari nama file. Nama file di folder sumber terbukti tidak bisa dipercaya:
@@ -429,9 +467,12 @@ def parse_bni(text: str) -> Dict[str, Any]:
     # akan memenggal deskripsi. Tanpa pemotongan kolom sama sekali, kolom
     # Branch ikut tertelan ('… PEMINDAHAN DARI BANKING 1420075012038 …').
     kolom_desc = None
+    tgl_baris: Optional[str] = None
     for baris in body.splitlines()[1:]:
         h = _BNI_ROW_HEAD.match(baris)
         if h:
+            dd, mm, yy = h.group("tgl").split("/")
+            tgl_baris = _iso_date(int(yy), int(mm), int(dd))
             sisa = h.group("sisa")
             t = _BNI_ROW_TAIL.search(sisa)
             if not t:
@@ -457,7 +498,10 @@ def parse_bni(text: str) -> Dict[str, Any]:
             kepala = baris[:kolom_desc] if kolom_desc else baris
             jam = _BNI_JAM.search(kepala)
             if jam and last["waktu"] is None:
-                last["waktu"] = "%s:%s:%s" % jam.groups()
+                # Jam dicetak di baris lanjutan, tanggalnya di baris kepala.
+                # Jam tanpa tanggal ditolak kolom timestamptz — lihat
+                # normalisasi_waktu.
+                last["waktu"] = "%s %s:%s:%s" % ((tgl_baris,) + jam.groups())
             lanjut = (baris[kolom_desc:] if kolom_desc else baris).strip()
             if lanjut:
                 last["deskripsi"] = (last["deskripsi"] + " " + lanjut).strip()
