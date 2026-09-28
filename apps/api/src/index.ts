@@ -125,7 +125,9 @@ import {
   updateLeave,
   listPendingLeave,
   decidePendingLeave,
+  getLeave,
 } from "./repo/leave.js";
+import { checkBackup, notifyLeaveBackupInBackground } from "./repo/leave-backup.js";
 import {
   createInstallation,
   listInstallations,
@@ -2578,7 +2580,7 @@ app.delete("/holidays/:id", async (c) => {
 
 app.post("/leave", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let body: { am_id?: string; start_date?: string; end_date?: string; jenis?: string; keterangan?: string };
+  let body: { am_id?: string; start_date?: string; end_date?: string; jenis?: string; keterangan?: string; backup_am_id?: string | null };
   try {
     body = await c.req.json();
   } catch {
@@ -2590,16 +2592,22 @@ app.post("/leave", async (c) => {
   if (!["sakit", "cuti", "ijin"].includes(body.jenis)) {
     return c.json({ error: "jenis harus sakit|cuti|ijin" }, 400);
   }
-  return c.json(
-    await createLeave({
-      am_id: body.am_id,
-      start_date: body.start_date,
-      end_date: body.end_date,
-      jenis: body.jenis as "sakit" | "cuti" | "ijin",
-      keterangan: body.keterangan,
-    }),
-    201,
-  );
+  // F55 — pengganti (backup PIC): wajib utk cuti, harus aktif & tidak ikut cuti.
+  const backupAmId = body.backup_am_id?.trim() || null;
+  const backupErr = await checkBackup({
+    am_id: body.am_id, jenis: body.jenis, start_date: body.start_date, end_date: body.end_date, backup_am_id: backupAmId,
+  });
+  if (backupErr) return c.json({ error: backupErr }, 400);
+  const created = await createLeave({
+    am_id: body.am_id,
+    start_date: body.start_date,
+    end_date: body.end_date,
+    jenis: body.jenis as "sakit" | "cuti" | "ijin",
+    keterangan: body.keterangan,
+    backup_am_id: backupAmId,
+  });
+  if (backupAmId) notifyLeaveBackupInBackground(created.id);
+  return c.json(created, 201);
 });
 
 app.get("/leave", async (c) => {
@@ -2615,22 +2623,26 @@ app.get("/leave/pending", async (c) => {
   return c.json({ count: pending.length, pending });
 });
 
-// Approve/reject pending dari dashboard. body: {approve: boolean, decided_by?}.
+// Approve/reject pending dari dashboard. body: {approve: boolean, decided_by?, backup_am_id?}.
+// F55: approve cuti wajib menyertakan backup_am_id (pengganti).
 app.post("/leave/pending/:id/decide", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let body: { approve?: boolean; decided_by?: string } = {};
+  let body: { approve?: boolean; decided_by?: string; backup_am_id?: string | null } = {};
   try {
     body = await c.req.json();
   } catch {
     /* body opsional */
   }
-  const r = await decidePendingLeave(Number(c.req.param("id")), body.approve === true, body.decided_by);
-  return c.json(r, r.ok ? 200 : 404);
+  const r = await decidePendingLeave(
+    Number(c.req.param("id")), body.approve === true, body.decided_by, body.backup_am_id?.trim() || null,
+  );
+  if (r.leave_id) notifyLeaveBackupInBackground(r.leave_id);
+  return c.json(r, r.ok ? 200 : r.error === "not-found-or-decided" ? 404 : 400);
 });
 
 app.patch("/leave/:id", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let body: { start_date?: string; end_date?: string; jenis?: string; keterangan?: string };
+  let body: { start_date?: string; end_date?: string; jenis?: string; keterangan?: string; backup_am_id?: string | null };
   try {
     body = await c.req.json();
   } catch {
@@ -2639,12 +2651,28 @@ app.patch("/leave/:id", async (c) => {
   if (body.jenis && !["sakit", "cuti", "ijin"].includes(body.jenis)) {
     return c.json({ error: "jenis harus sakit|cuti|ijin" }, 400);
   }
+  // F55 — validasi pengganti terhadap keadaan SETELAH edit (field yang tak
+  // dikirim = nilai lama). backup_am_id tidak dikirim = tidak diubah.
+  const cur = await getLeave(c.req.param("id"));
+  if (!cur) return c.json({ updated: 0 }, 404);
+  const backupAmId = body.backup_am_id === undefined ? undefined : body.backup_am_id?.trim() || null;
+  const backupErr = await checkBackup({
+    am_id: cur.am_id,
+    jenis: body.jenis ?? cur.jenis,
+    start_date: body.start_date ?? cur.start_date,
+    end_date: body.end_date ?? cur.end_date,
+    backup_am_id: backupAmId === undefined ? cur.backup_am_id : backupAmId,
+  });
+  if (backupErr) return c.json({ error: backupErr }, 400);
   const r = await updateLeave(c.req.param("id"), {
     start_date: body.start_date,
     end_date: body.end_date,
     jenis: body.jenis as "sakit" | "cuti" | "ijin" | undefined,
     keterangan: body.keterangan,
+    backup_am_id: backupAmId,
   });
+  // Pengganti/rentang berubah → umumkan ulang (notifyLeaveBackup menahan yang tak berubah).
+  if (r.updated) notifyLeaveBackupInBackground(cur.id);
   return c.json(r, r.updated ? 200 : 404);
 });
 

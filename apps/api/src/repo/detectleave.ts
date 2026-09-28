@@ -2,12 +2,15 @@ import { aiDryRun, callAi } from "../ai.js";
 import { db } from "../db.js";
 import { normalizeWa } from "./master.js";
 import { sendViaWaGateway } from "../wasend.js";
+import { approvePendingLeave, getPendingLeave } from "./leave.js";
+import { checkBackup, isBackupRequired, notifyLeaveBackup, parseBackupName } from "./leave-backup.js";
 
 // detect_leave — port wrg-crm/scripts/detect_leave.sh.
 // Scan pesan baru grup HRD (wa_message), 2 fase:
 //   A. keyword gate → services/ai /detect-leave (LLM) → resolve user wajib (fuzzy)
 //      → dedup overlap user_leave/pending → INSERT leave_pending + post approval ke grup.
 //   B. balasan "ya L<id>"/"tidak L<id>" dari ADMIN → user_leave (approve) atau batal.
+//      F55: "ya L<id> <nama pengganti>" sekaligus menunjuk backup PIC (wajib utk cuti).
 //      B'. balasan approval yang salah ketik / id tak dikenal → balas format benar
 //          + daftar pending (dulu senyap, approver menyangka approval-nya masuk).
 // Idempotent via leave_scan_seen. Skema wrg-os: am_id (bukan user_id).
@@ -114,13 +117,13 @@ async function handleNearApproval(body: string, senderWa: string, senderName: st
   return "near-approval-replied";
 }
 
-async function handleApproval(decision: string, pid: number, senderWa: string, senderName: string, grp: string): Promise<string> {
+async function handleApproval(decision: string, pid: number, rest: string, senderWa: string, senderName: string, grp: string): Promise<string> {
   const sql = db();
   const decidedBy = approverLabel(senderWa, senderName);
   if (!decidedBy) {
     return "approval-ignored-not-admin";
   }
-  const [p] = await sql`SELECT * FROM leave_pending WHERE id = ${pid} AND status = 'pending'`;
+  const p = await getPendingLeave(pid);
   if (!p) {
     // Id salah, atau sudah diputus/expired. Dulu senyap → approver menyangka
     // approval-nya masuk. Sekarang dikabari beserta daftar yang masih menunggu.
@@ -133,17 +136,35 @@ async function handleApproval(decision: string, pid: number, senderWa: string, s
   }
   const rt = rentang(p.start_date, p.end_date);
   if (/^(ya|iya|ok|setuju)$/i.test(decision)) {
-    // Idempoten: hanya insert bila tak ada overlap user_leave.
-    await sql`
-      INSERT INTO user_leave (am_id, start_date, end_date, jenis, keterangan, source)
-      SELECT ${p.am_id}, ${p.start_date}::date, ${p.end_date}::date, ${p.jenis}, 'Auto-detect HRD group, approved via WA', 'detect_leave'
-      WHERE NOT EXISTS (
-        SELECT 1 FROM user_leave WHERE am_id = ${p.am_id}
-          AND daterange(start_date, end_date, '[]') && daterange(${p.start_date}::date, ${p.end_date}::date, '[]')
-      )
-    `;
-    await sql`UPDATE leave_pending SET status='approved', decided_at=now(), decided_by=${decidedBy} WHERE id=${pid}`;
-    await sendViaWaGateway(grp, `✅ Tercatat: *${p.nama}* ${p.jenis} ${rt}. Tidak akan kena reminder/summary.`);
+    // F55 — resolve pengganti dari sisa balasan. Untuk sakit/ijin teks yang tak
+    // dikenali (mis. "ya L3 makasih") diabaikan seperti sebelumnya; untuk cuti
+    // pengganti wajib, jadi balasan tanpa/dengan nama tak dikenal ditahan.
+    const raw = parseBackupName(rest);
+    const backup = raw ? await resolveWajib(raw) : null;
+    const wajib = isBackupRequired(p.jenis, p.end_date);
+    const formatBenar = `Balas *ya L${pid} <nama pengganti>* (contoh: *ya L${pid} Budi*).`;
+    if (wajib && !backup) {
+      await sendViaWaGateway(
+        grp,
+        raw
+          ? `⚠️ Pengganti *${raw}* tidak dikenali di roster — L${pid} belum direkam.\n${formatBenar}`
+          : `⚠️ *${p.nama}* ${p.jenis} ${rt} wajib menunjuk pengganti (backup PIC) — L${pid} belum direkam.\n${formatBenar}`,
+      );
+      return "approval-need-backup";
+    }
+    const err = await checkBackup({ ...p, backup_am_id: backup?.am_id ?? null });
+    if (err) {
+      await sendViaWaGateway(grp, `⚠️ ${err} — L${pid} belum direkam.\n${formatBenar}`);
+      return "approval-backup-invalid";
+    }
+    const leaveId = await approvePendingLeave(p, {
+      backup_am_id: backup?.am_id ?? null,
+      keterangan: "Auto-detect HRD group, approved via WA",
+      decidedBy,
+    });
+    const ganti = backup ? ` Pengganti: *${backup.nama}*.` : "";
+    await sendViaWaGateway(grp, `✅ Tercatat: *${p.nama}* ${p.jenis} ${rt}.${ganti} Tidak akan kena reminder/summary.`);
+    if (backup) await notifyLeaveBackup(leaveId);
     return "approved";
   }
   await sql`UPDATE leave_pending SET status='rejected', decided_at=now(), decided_by=${decidedBy} WHERE id=${pid}`;
@@ -184,8 +205,9 @@ export async function runDetectLeaveScan(opts: { dryRun?: boolean } = {}): Promi
     if (am) {
       const decision = am[1].toLowerCase();
       const pid = Number(am[2]);
+      const rest = stripWaFmt(body).slice(am[0].length);
       if (opts.dryRun) { skip("approval-dryrun"); continue; }
-      const out = await handleApproval(decision, pid, senderWa, String(m.sender_name ?? ""), grp);
+      const out = await handleApproval(decision, pid, rest, senderWa, String(m.sender_name ?? ""), grp);
       if (out === "approved") res.approved += 1;
       else if (out === "rejected") res.rejected += 1;
       else skip(out);
@@ -246,7 +268,10 @@ export async function runDetectLeaveScan(opts: { dryRun?: boolean } = {}): Promi
     `;
     const pid = Number(ins.id);
     const rt = sd === ed ? sd : `${sd} s/d ${ed}`;
-    await sendViaWaGateway(grp, `📋 *Konfirmasi cuti* — rekam ke sistem?\n\n• Nama: *${resolved.nama}*\n• Jenis: *${jenis}*\n• Tanggal: *${rt}*\n\nAdmin balas *ya L${pid}* untuk rekam, atau *tidak L${pid}* untuk batal.`);
+    const caraYa = isBackupRequired(jenis, ed)
+      ? `*ya L${pid} <nama pengganti>* untuk rekam (pengganti wajib untuk cuti)`
+      : `*ya L${pid}* untuk rekam (opsional tunjuk pengganti: *ya L${pid} <nama>*)`;
+    await sendViaWaGateway(grp, `📋 *Konfirmasi cuti* — rekam ke sistem?\n\n• Nama: *${resolved.nama}*\n• Jenis: *${jenis}*\n• Tanggal: *${rt}*\n\nAdmin balas ${caraYa}, atau *tidak L${pid}* untuk batal.`);
     await markSeen(mid, `pending-L${pid}`);
     res.pending_created += 1;
     await sleep(300);
