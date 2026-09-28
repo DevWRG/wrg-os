@@ -6,7 +6,7 @@ import { StatCard } from "@/components/dashboard/stat-card";
 import { Card, CardContent } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { AddPurchaseOrderSheet } from "@/components/crm/add-purchase-order-sheet";
-import { PurchaseOrderTable, type PurchaseOrderRow } from "@/components/tables/purchase-order-table";
+import { PurchaseOrderTable, PoStatusFilter, type PurchaseOrderRow } from "@/components/tables/purchase-order-table";
 
 export const dynamic = "force-dynamic";
 
@@ -113,6 +113,10 @@ export default async function PurchaseOrdersPage({
       )}
       <Card>
         <CardContent className="pt-6">
+          {/* Selalu dirender, TERLEPAS dari hasil filter — dulu nempel di dalam
+              PurchaseOrderTable yang cuma dirender saat matched > 0, jadi
+              pilih tab status yang datanya kosong bikin tombolnya ikut hilang. */}
+          <PoStatusFilter q={q} status={status} />
           {!rows ? (
             <EmptyState title="Data tidak tersedia" description="Pastikan apps/api jalan & DATABASE_URL terhubung." />
           ) : matched === 0 ? (

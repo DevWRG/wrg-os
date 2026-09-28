@@ -158,6 +158,35 @@ const STATUS_FILTERS: { key: string; label: string }[] = [
   { key: "cancelled", label: "Batal" },
 ];
 
+// Tombol filter status — komponen TERPISAH dari PurchaseOrderTable (dulu
+// nempel di dalamnya) supaya tetap tampil walau filter aktif menghasilkan 0
+// baris. page.tsx cuma merender PurchaseOrderTable saat matched > 0 — kalau
+// tombolnya ikut di dalam situ, pilih tab status yang datanya kosong bikin
+// SATU-SATUNYA cara reset filter ikut hilang (user terjebak, harus edit URL
+// manual). Dirender page.tsx di luar percabangan EmptyState/tabel.
+export function PoStatusFilter({ q, status }: { q: string; status: string }) {
+  const { push } = useTableUrl(q);
+  return (
+    <div className="mb-3 flex flex-wrap gap-2">
+      {STATUS_FILTERS.map((f) => (
+        <button
+          key={f.key || "all"}
+          type="button"
+          onClick={() => push({ status: f.key || null, page: null })}
+          className={
+            "rounded-lg border px-3 py-1 text-sm transition-colors " +
+            (status === f.key
+              ? "border-primary bg-primary-soft text-primary font-medium"
+              : "border-border bg-card text-foreground hover:border-primary/40 hover:bg-muted")
+          }
+        >
+          {f.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export function PurchaseOrderTable({
   rows,
   totalRows,
@@ -382,26 +411,6 @@ export function PurchaseOrderTable({
   return (
     <>
       {dialog}
-
-      {/* Filter status memakai hitungan dari endpoint agregat lewat URL — bukan
-          menyaring baris yang kebetulan ter-load, karena tabelnya per-halaman. */}
-      <div className="mb-3 flex flex-wrap gap-2">
-        {STATUS_FILTERS.map((f) => (
-          <button
-            key={f.key || "all"}
-            type="button"
-            onClick={() => push({ status: f.key || null, page: null })}
-            className={
-              "rounded-lg border px-3 py-1 text-sm transition-colors " +
-              (query.status === f.key
-                ? "border-primary bg-primary-soft text-primary font-medium"
-                : "border-border bg-card text-foreground hover:border-primary/40 hover:bg-muted")
-            }
-          >
-            {f.label}
-          </button>
-        ))}
-      </div>
 
       <DataTable
         columns={columns}
