@@ -228,17 +228,20 @@ export interface ForecastSuggestionRow {
   approvalRequestId: string | null;
   approvalStatus: string | null;
   purchaseOrderId: string | null;
+  purchaseOrderNumber: string | null;
   createdAt: string;
 }
 
 export async function listSuggestions(status?: string): Promise<ForecastSuggestionRow[]> {
   const sql = db();
   const rows = await sql`
-    SELECT fs.*, ai.name AS item_name, w.nama AS warehouse_nama, ar.status AS approval_status
+    SELECT fs.*, ai.name AS item_name, w.nama AS warehouse_nama, ar.status AS approval_status,
+           po.po_number AS po_number
     FROM forecast_suggestion fs
     JOIN accurate_item ai ON ai.id = fs.item_id
     JOIN warehouse w ON w.kode = fs.warehouse_kode
     LEFT JOIN approval_request ar ON ar.id = fs.approval_request_id
+    LEFT JOIN purchase_order po ON po.id = fs.purchase_order_id
     WHERE ${status ? sql`fs.status = ${status}` : sql`true`}
     ORDER BY fs.created_at DESC LIMIT 200
   `;
@@ -261,6 +264,7 @@ export async function listSuggestions(status?: string): Promise<ForecastSuggesti
     approvalRequestId: r.approval_request_id ? String(r.approval_request_id) : null,
     approvalStatus: r.approval_status ? String(r.approval_status) : null,
     purchaseOrderId: r.purchase_order_id ? String(r.purchase_order_id) : null,
+    purchaseOrderNumber: r.po_number ? String(r.po_number) : null,
     // Sebelumnya String(r.created_at) — postgres.js parse kolom timestamptz
     // jadi objek Date, String() di atasnya hasilnya Date.toString() mentah
     // ("Fri Sep 04 2026 ... GMT+0700 ..."), bukan ISO. Pola bug yang sama

@@ -27,6 +27,7 @@ interface Suggestion {
   approvalRequestId: string | null;
   approvalStatus: string | null;
   purchaseOrderId: string | null;
+  purchaseOrderNumber: string | null;
   createdAt: string;
 }
 
@@ -336,9 +337,15 @@ export default function ForecastSubmissionPage() {
 
                     {s.status === "ordered" && s.purchaseOrderId && (
                       <div className="text-muted-foreground text-xs">
-                        ✅ Sudah didraft jadi PO —{" "}
-                        <Link href={`/purchase-orders/${s.purchaseOrderId}`} className="text-primary underline">
-                          Lihat PO
+                        {/* Tidak ada route detail per-ID di PO Tracker (dialog di tabel list,
+                            lihat purchase-order-table.tsx) — jadi arahkan ke tabel dgn
+                            filter ?q= nomor PO, bukan link langsung ke ID yang 404. */}
+                        ✅ Sudah didraft jadi PO {s.purchaseOrderNumber ?? ""} —{" "}
+                        <Link
+                          href={`/purchase-orders?q=${encodeURIComponent(s.purchaseOrderNumber ?? "")}`}
+                          className="text-primary underline"
+                        >
+                          Lihat di PO Tracker
                         </Link>
                       </div>
                     )}
