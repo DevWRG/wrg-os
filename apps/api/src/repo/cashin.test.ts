@@ -554,3 +554,14 @@ test("waktuAman: bentuk yang membuat driver melempar jadi null, bukan exception"
     assert.equal(waktuAman(raw), null, String(raw));
   }
 });
+
+test("draft yang diperbarui ditandai jelas dan tetap bisa dikonfirmasi", () => {
+  // R16/R18 (24–25 Sep 2026): versi baru draft tak pernah sampai ke grup,
+  // padahal teks itulah yang diteruskan ke Direktur saat Finance membalas "ya".
+  const r = ringkasan();
+  const draft = formatDraftKonfirmasi(formatResume(r), "R18", r, { diperbarui: true });
+  assert.match(draft, /DRAFT R18 DIPERBARUI/);
+  assert.match(draft, /Menggantikan draft sebelumnya/);
+  assert.match(draft, /Balas \*ya R18\*/);
+  assert.doesNotMatch(formatDraftKonfirmasi("x", "R18", r), /DIPERBARUI/);
+});
