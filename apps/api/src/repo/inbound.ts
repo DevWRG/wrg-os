@@ -977,10 +977,20 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
         waMessageId: row.id,
         grupJid: row.group_jid,
       });
+      // Status draft ikut disebut, sama seperti ekor balasan #KORAN berkas.
+      const status = !r.ok || !r.draft
+        ? null
+        : r.draft.kode
+          ? `📝 Draft resume ${r.draft.kode} menunggu konfirmasi.`
+          : r.draft.alasan
+            ? `⏳ ${r.draft.alasan}`
+            : null;
       const reply = await sendViaWaGateway(
         target,
         r.ok
-          ? `✅ ${r.label_file} ${r.tanggal} dicatat NIHIL (tanpa transaksi) atas pernyataan ${oleh}.`
+          ? [`✅ ${r.label_file} ${r.tanggal} dicatat NIHIL (tanpa transaksi) atas pernyataan ${oleh}.`, status]
+              .filter(Boolean)
+              .join("\n\n")
           : `⚠️ Gagal mencatat nihil: ${r.error}`,
       );
       return finish({ nihil: r, reply }, "koran");
