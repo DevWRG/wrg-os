@@ -574,6 +574,7 @@ import {
   submitSuggestion,
   listBufferConfig,
   upsertBufferConfig,
+  draftPurchaseOrder,
 } from "./repo/forecast.js";
 const app = new Hono();
 
@@ -2068,6 +2069,27 @@ app.post("/forecast/suggestions/:id/submit", async (c) => {
   if (!body.submittedBy) return c.json({ error: "submittedBy wajib" }, 400);
   const r = await submitSuggestion(c.req.param("id"), body.submittedBy);
   return c.json(r, r.ok ? 200 : 400);
+});
+
+// F153 "Auto-Draft PR" — convert usulan yg sudah approved (F11) jadi PO
+// nyata (F13). Vendor & lini WAJIB dikirim (dipilih manusia di form), lihat
+// komentar draftPurchaseOrder (forecast.ts).
+app.post("/forecast/suggestions/:id/draft-po", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: Parameters<typeof draftPurchaseOrder>[1] | undefined;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body) return c.json({ error: "invalid JSON body" }, 400);
+  try {
+    const r = await draftPurchaseOrder(c.req.param("id"), body);
+    return c.json(r, r.ok ? 200 : 400);
+  } catch (e) {
+    if (e instanceof PurchaseOrderError) return c.json({ error: e.message }, e.status as 400 | 404 | 409);
+    throw e;
+  }
 });
 
 app.get("/forecast/buffer-config", async (c) => {
