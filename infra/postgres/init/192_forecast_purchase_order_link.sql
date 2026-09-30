@@ -1,4 +1,4 @@
--- 189 — F153 Auto-Draft PR: link forecast_suggestion (F19) -> purchase_order (F13).
+-- 192 — F153 Auto-Draft PR: link forecast_suggestion (F19) -> purchase_order (F13).
 --
 -- forecast_suggestion yang sudah 'submitted' DAN approval_request-nya
 -- 'approved' (F11) bisa di-convert jadi PO nyata (draftPurchaseOrder(),
