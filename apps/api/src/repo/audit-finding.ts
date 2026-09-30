@@ -1,9 +1,9 @@
-// F60 — Komite Audit Findings Tracker (migrasi 190). Chain approval penutupan
+// F60 — Komite Audit Findings Tracker (migrasi 191). Chain approval penutupan
 // finding: GLOBAL config (2-5 tahap enabled, pola sama approval_chain_config
 // F11) tapi target tiap tahap adalah GRUP (access_group/app_user_group,
 // 044_rbac.sql), bukan individu hod_key — supaya pergeseran jabatan cukup
 // diurus lewat menu Akses Grup, tanpa sentuh data finding. Lihat catatan
-// lengkap di kepala migrasi 190_audit_finding_tracker.sql.
+// lengkap di kepala migrasi 191_audit_finding_tracker.sql.
 
 import { createHash } from "node:crypto";
 
