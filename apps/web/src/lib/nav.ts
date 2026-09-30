@@ -359,29 +359,25 @@ export const NAV: NavGroup[] = [
       // WA/cron — dikonfirmasi user). Role min HOD (data komersial vendor),
       // `show` di sini fallback identitas, gate nyata di BFF requireHodOrAdmin().
       { title: "Vendor Management", url: "/vendor-management", icon: Handshake, badge: "NEW", show: canViewVendorManagement },
-      // F141 — konsolidasi laporan 6 modul GA (F49 ATK+F54 Materai, F50
-      // Kendaraan, F51 Dana Ops, F52 IT Asset, F53 Stiker Aset). Role min HOD
-      // (disamakan dgn gate paling ketat di antara modul sumber, F51 Dana Ops)
-      // krn agregasi menaikkan sensitivitas data yg sebagian sumbernya terbuka.
-      { title: "GA Reporting & Analytics", url: "/ga-reporting", icon: BarChart3, badge: "NEW", show: canViewGaReporting },
-    ],
-  },
-  {
-    // Domain GA (General Affairs) per arahan Direktur soal domain grouping
-    // sidebar (sama pola Aftersales/Shipping/Purchasing). F132 Aset Master —
-    // single source of truth aset kantor, fondasi F133 (assignment/transfer)
-    // & F137 (maintenance) yang menyusul di atas branch ini.
-    label: "GA",
-    items: [
-      // 1 menu, 3 tab (Aset/Kategori/Tiket IT) — arahan Direktur eksplisit
-      // F52 gabung ke F132 juga di level MENU, bukan cuma tabel. Tab Tiket
-      // IT dilayani /ga-assets & /it-tickets sekaligus (lihat `features`).
+      // Dulu grup terpisah "GA" (F132/F139/F138) di samping grup "General
+      // Affairs" — dua grup untuk satu domain. Digabung 30 Sep 2026; key fitur
+      // tak berubah (diturunkan dari url), hanya `section` di katalog fitur.
+      // F132 Aset Master — single source of truth aset kantor, fondasi F133
+      // (assignment/transfer) & F137 (maintenance). 1 menu, 3 tab
+      // (Aset/Kategori/Tiket IT) — arahan Direktur eksplisit F52 gabung ke F132
+      // juga di level MENU, bukan cuma tabel. Tab Tiket IT dilayani /ga-assets
+      // & /it-tickets sekaligus (lihat `features`).
       {
         title: "Aset GA", url: "/ga-aset", icon: Archive, badge: "NEW",
         features: [{ key: "it-asset", name: "Tiket IT (tab di Aset GA)" }],
       },
       { title: "Helpdesk GA", url: "/ga-helpdesk", icon: Ticket, badge: "NEW" },
       { title: "Pengajuan Dana Operasional", url: "/fund-requests", icon: Wallet, badge: "NEW" },
+      // F141 — konsolidasi laporan 6 modul GA (F49 ATK+F54 Materai, F50
+      // Kendaraan, F51 Dana Ops, F52 IT Asset, F53 Stiker Aset). Role min HOD
+      // (disamakan dgn gate paling ketat di antara modul sumber, F51 Dana Ops)
+      // krn agregasi menaikkan sensitivitas data yg sebagian sumbernya terbuka.
+      { title: "GA Reporting & Analytics", url: "/ga-reporting", icon: BarChart3, badge: "NEW", show: canViewGaReporting },
     ],
   },
   {
