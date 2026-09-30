@@ -8,6 +8,7 @@ import { resolveSender, normalizeWa } from "./master.js";
 import { upsertDailyTodo, computeIsLate } from "./todo.js";
 import { createReminder } from "./reminder.js";
 import { buildCekReply } from "./cek.js";
+import { buildFakturReply } from "./faktur.js";
 import { ingestKlaim, type DocKlaimRow } from "./doc-klaim.js";
 import { formatStatusDraft, ingestKoran, nyatakanNihil, parseNihil, type IngestKoranResult } from "./cashin.js";
 import { createTicket, isKnownTeknisiSender } from "./serviceticket.js";
@@ -73,6 +74,7 @@ export const INBOUND_HASHTAGS = [
   "stok",
   "sph",
   "pricing",
+  "faktur",
   "approve",
   "reject",
 ] as const;
@@ -106,6 +108,9 @@ const STOK_LINE = /^\s*#\s*stok\b/i;
 // dibangun langsung tanpa nunggu itu.
 const SPH_LINE = /^\s*#\s*sph\b/i;
 const PRICING_LINE = /^\s*#\s*pricing\b/i;
+// F91 — cek status satu invoice. `\b` penting: #FAKTURIS (nama grup/fitur
+// F149) tidak boleh ikut terpicu.
+const FAKTUR_LINE = /^\s*#\s*faktur\b/i;
 // F11 — bisa muncul di pesan PRIVAT (DM), bukan cuma grup. Pipeline
 // ingest+dispatch ini sudah generik-jalur (wa.ts: chatJid = group_jid utk
 // grup, sender utk direct) jadi TIDAK butuh kode baru khusus DM.
@@ -132,6 +137,7 @@ export function detectKind(body: string | null): InboundKind {
       if (STOK_LINE.test(line)) return "stok";
       if (SPH_LINE.test(line)) return "sph";
       if (PRICING_LINE.test(line)) return "pricing";
+      if (FAKTUR_LINE.test(line)) return "faktur";
       const ar = line.match(APPROVE_REJECT_LINE);
       if (ar) return ar[1].toLowerCase() as "approve" | "reject";
     }
@@ -1423,6 +1429,21 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
     const text = await buildStokReply(st.am_id, query);
     const reply = await sendViaWaGateway(target, text);
     return finish({ kind: "stok", via: st.via, reply });
+  }
+
+  // #FAKTUR <no_invoice> — F91: status Open/Paid/Overdue + jatuh tempo +
+  // nominal + customer. Sender cukup dikenal & aktif, setara #CEK (keputusan
+  // user 2026-09-28) — tanpa scope per-AM.
+  if (kind === "faktur") {
+    const fk = await resolveSender({ senderJid: row.sender_jid, groupJid: row.group_jid, pushname: row.sender_name });
+    if (!fk) return finish({ skipped: "unknown-sender", sender_name: row.sender_name });
+    const arg = extractHashtagArg(row.body, FAKTUR_LINE);
+    if (!arg) {
+      const reply = await sendViaWaGateway(target, `⚠️ Isi nomor invoice setelah #FAKTUR, ${fk.nama}. Contoh: #FAKTUR SI.2026.09.00123`);
+      return finish({ error: "empty-query", via: fk.via, reply });
+    }
+    const reply = await sendViaWaGateway(target, await buildFakturReply(arg));
+    return finish({ kind: "faktur", via: fk.via, reply });
   }
 
   // #PRICING <query> — lookup harga on-demand dari F142 Price Book (F15).

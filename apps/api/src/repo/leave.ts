@@ -1,4 +1,5 @@
 import { db } from "../db.js";
+import { checkBackup } from "./leave-backup.js";
 
 // D1 — leave/cuti + holiday (port legacy user_leave + master_holiday +
 // detect_leave). isOnLeave(am, date) = ada cuti yang mencakup tanggal ATAU
@@ -36,7 +37,8 @@ export async function deleteLeave(id: string): Promise<{ deleted: number }> {
 
 export async function updateLeave(
   id: string,
-  fields: { start_date?: string; end_date?: string; jenis?: Jenis; keterangan?: string },
+  // backup_am_id: undefined = tidak diubah, null = dikosongkan (F55).
+  fields: { start_date?: string; end_date?: string; jenis?: Jenis; keterangan?: string; backup_am_id?: string | null },
 ): Promise<{ updated: number }> {
   const sql = db();
   const rows = await sql`
@@ -44,7 +46,8 @@ export async function updateLeave(
       start_date = COALESCE(${fields.start_date ?? null}, start_date),
       end_date   = COALESCE(${fields.end_date ?? null}, end_date),
       jenis      = COALESCE(${fields.jenis ?? null}, jenis),
-      keterangan = ${fields.keterangan ?? null}
+      keterangan = ${fields.keterangan ?? null},
+      backup_am_id = ${fields.backup_am_id === undefined ? sql`backup_am_id` : fields.backup_am_id}
     WHERE id = ${id}
     RETURNING id
   `;
@@ -58,12 +61,13 @@ export async function createLeave(opts: {
   jenis: Jenis;
   keterangan?: string;
   source?: string;
+  backup_am_id?: string | null;
 }): Promise<{ id: string }> {
   const sql = db();
   const rows = await sql`
-    INSERT INTO user_leave (am_id, start_date, end_date, jenis, keterangan, source)
+    INSERT INTO user_leave (am_id, start_date, end_date, jenis, keterangan, source, backup_am_id)
     VALUES (${opts.am_id}, ${opts.start_date}, ${opts.end_date}, ${opts.jenis},
-            ${opts.keterangan ?? null}, ${opts.source ?? "manual"})
+            ${opts.keterangan ?? null}, ${opts.source ?? "manual"}, ${opts.backup_am_id ?? null})
     RETURNING id
   `;
   return { id: String(rows[0].id) };
@@ -72,7 +76,7 @@ export async function createLeave(opts: {
 export async function listLeave(amId?: string, limit = 100) {
   const sql = db();
   const rows = await sql`
-    SELECT id, am_id, start_date::text, end_date::text, jenis, keterangan, source, created_at::text
+    SELECT id, am_id, start_date::text, end_date::text, jenis, keterangan, source, backup_am_id, created_at::text
     FROM user_leave
     WHERE ${amId ? sql`am_id = ${amId}` : sql`true`}
     ORDER BY start_date DESC
@@ -86,7 +90,24 @@ export async function listLeave(amId?: string, limit = 100) {
     jenis: String(r.jenis),
     keterangan: r.keterangan ? String(r.keterangan) : null,
     source: String(r.source),
+    backup_am_id: r.backup_am_id ? String(r.backup_am_id) : null,
   }));
+}
+
+export async function getLeave(id: string) {
+  const [r] = await db()`
+    SELECT id, am_id, start_date::text AS start_date, end_date::text AS end_date, jenis, backup_am_id
+    FROM user_leave WHERE id = ${id}
+  `;
+  if (!r) return null;
+  return {
+    id: String(r.id),
+    am_id: String(r.am_id),
+    start_date: String(r.start_date),
+    end_date: String(r.end_date),
+    jenis: String(r.jenis),
+    backup_am_id: r.backup_am_id ? String(r.backup_am_id) : null,
+  };
 }
 
 // Pending leave hasil detect-leave (HRD group) yg belum diputus — buat dikelola
@@ -111,30 +132,82 @@ export async function listPendingLeave() {
   }));
 }
 
-// Approve/reject pending dari dashboard. Approve → insert user_leave (idempoten,
-// anti-overlap) + tandai approved. Selaras handleApproval (jalur WA approver).
-export async function decidePendingLeave(
-  id: number,
-  approve: boolean,
-  decidedBy = "dashboard",
-): Promise<{ ok: boolean; status?: string; nama?: string; error?: string }> {
-  const sql = db();
-  const [p] = await sql`SELECT * FROM leave_pending WHERE id = ${id} AND status = 'pending'`;
-  if (!p) return { ok: false, error: "not-found-or-decided" };
-  if (approve) {
-    await sql`
-      INSERT INTO user_leave (am_id, start_date, end_date, jenis, keterangan, source)
-      SELECT ${p.am_id}, ${p.start_date}::date, ${p.end_date}::date, ${p.jenis}, 'Approved via dashboard', 'detect_leave'
+export interface PendingRow {
+  id: number;
+  am_id: string;
+  nama: string;
+  jenis: string;
+  start_date: string;
+  end_date: string;
+}
+
+export async function getPendingLeave(id: number): Promise<PendingRow | null> {
+  const [p] = await db()`
+    SELECT id, am_id, nama, jenis, start_date::text AS start_date, end_date::text AS end_date
+    FROM leave_pending WHERE id = ${id} AND status = 'pending'
+  `;
+  if (!p) return null;
+  return {
+    id: Number(p.id), am_id: String(p.am_id), nama: String(p.nama), jenis: String(p.jenis),
+    start_date: String(p.start_date), end_date: String(p.end_date),
+  };
+}
+
+// Approve satu pending → user_leave (anti-overlap) + tandai approved, dalam satu
+// transaksi. Dipakai jalur dashboard DAN balasan WA approver (detectleave.ts).
+// Bila cuti yang beririsan sudah tercatat (mis. diinput manual lebih dulu),
+// baris itu yang dipakai — pengganti diisikan ke sana bila masih kosong.
+// Return id user_leave (untuk notifikasi backup PIC, F55).
+export async function approvePendingLeave(
+  p: PendingRow,
+  opts: { backup_am_id: string | null; keterangan: string; decidedBy: string },
+): Promise<string> {
+  return db().begin(async (tx) => {
+    const [ins] = await tx`
+      INSERT INTO user_leave (am_id, start_date, end_date, jenis, keterangan, source, backup_am_id)
+      SELECT ${p.am_id}, ${p.start_date}::date, ${p.end_date}::date, ${p.jenis}, ${opts.keterangan}, 'detect_leave', ${opts.backup_am_id}
       WHERE NOT EXISTS (
         SELECT 1 FROM user_leave WHERE am_id = ${p.am_id}
           AND daterange(start_date, end_date, '[]') && daterange(${p.start_date}::date, ${p.end_date}::date, '[]')
       )
+      RETURNING id
     `;
-    await sql`UPDATE leave_pending SET status='approved', decided_at=now(), decided_by=${decidedBy} WHERE id=${id}`;
-    return { ok: true, status: "approved", nama: String(p.nama) };
+    let leaveId = ins ? String(ins.id) : "";
+    if (!leaveId) {
+      const [ex] = await tx`
+        UPDATE user_leave SET backup_am_id = COALESCE(backup_am_id, ${opts.backup_am_id})
+        WHERE id = (
+          SELECT id FROM user_leave WHERE am_id = ${p.am_id}
+            AND daterange(start_date, end_date, '[]') && daterange(${p.start_date}::date, ${p.end_date}::date, '[]')
+          ORDER BY start_date LIMIT 1
+        )
+        RETURNING id
+      `;
+      leaveId = String(ex.id);
+    }
+    await tx`UPDATE leave_pending SET status='approved', decided_at=now(), decided_by=${opts.decidedBy} WHERE id=${p.id}`;
+    return leaveId;
+  });
+}
+
+// Approve/reject pending dari dashboard. Approve → validasi pengganti (F55) lalu
+// approvePendingLeave. Selaras handleApproval (jalur WA approver).
+export async function decidePendingLeave(
+  id: number,
+  approve: boolean,
+  decidedBy = "dashboard",
+  backupAmId: string | null = null,
+): Promise<{ ok: boolean; status?: string; nama?: string; leave_id?: string; error?: string }> {
+  const p = await getPendingLeave(id);
+  if (!p) return { ok: false, error: "not-found-or-decided" };
+  if (approve) {
+    const err = await checkBackup({ ...p, backup_am_id: backupAmId });
+    if (err) return { ok: false, error: err };
+    const leaveId = await approvePendingLeave(p, { backup_am_id: backupAmId, keterangan: "Approved via dashboard", decidedBy });
+    return { ok: true, status: "approved", nama: p.nama, leave_id: leaveId };
   }
-  await sql`UPDATE leave_pending SET status='rejected', decided_at=now(), decided_by=${decidedBy} WHERE id=${id}`;
-  return { ok: true, status: "rejected", nama: String(p.nama) };
+  await db()`UPDATE leave_pending SET status='rejected', decided_at=now(), decided_by=${decidedBy} WHERE id=${id}`;
+  return { ok: true, status: "rejected", nama: p.nama };
 }
 
 export async function isOnLeave(

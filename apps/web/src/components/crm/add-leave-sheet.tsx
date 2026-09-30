@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { BackupPicField, type BackupUser } from "@/components/crm/backup-pic-field";
 import {
   Sheet,
   SheetClose,
@@ -20,15 +21,9 @@ import {
 } from "@/components/ui/sheet";
 
 const today = () => new Date().toISOString().slice(0, 10);
-const blank = () => ({ am_id: "", start_date: today(), end_date: today(), jenis: "sakit", keterangan: "" });
+const blank = () => ({ am_id: "", start_date: today(), end_date: today(), jenis: "sakit", keterangan: "", backup_am_id: "" });
 const selectCls =
   "h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50";
-
-interface UserOpt {
-  am_id: string;
-  nama: string;
-  panggilan: string | null;
-}
 
 export function AddLeaveSheet() {
   const router = useRouter();
@@ -36,7 +31,7 @@ export function AddLeaveSheet() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [f, setF] = useState(blank());
-  const [users, setUsers] = useState<UserOpt[]>([]);
+  const [users, setUsers] = useState<BackupUser[]>([]);
 
   useEffect(() => {
     if (!open || users.length > 0) return;
@@ -60,6 +55,7 @@ export function AddLeaveSheet() {
           end_date: f.end_date,
           jenis: f.jenis,
           keterangan: f.keterangan.trim() || undefined,
+          backup_am_id: f.backup_am_id || null,
         }),
       });
       const data = await res.json();
@@ -113,6 +109,14 @@ export function AddLeaveSheet() {
                 <Input id="l-end" type="date" required value={f.end_date} onChange={(e) => setF((p) => ({ ...p, end_date: e.target.value }))} />
               </div>
             </div>
+            <BackupPicField
+              id="l-backup"
+              users={users}
+              value={f.backup_am_id}
+              onChange={(v) => setF((p) => ({ ...p, backup_am_id: v }))}
+              excludeAmId={f.am_id.trim()}
+              jenis={f.jenis}
+            />
             <div className="grid gap-1.5">
               <Label htmlFor="l-ket">Keterangan</Label>
               <Textarea id="l-ket" value={f.keterangan} onChange={(e) => setF((p) => ({ ...p, keterangan: e.target.value }))} placeholder="Alasan / catatan…" />

@@ -8,6 +8,7 @@
 
 import { db, isDbEnabled } from "../db.js";
 import { createApprovalRequest } from "./approval.js";
+import { createPurchaseOrder, type PurchaseOrderLini } from "./purchase-order.js";
 
 // Ambang ED "dekat kedaluwarsa" — dipakai sbg SATU pemicu sederhana (bukan
 // 3-tier 90/60/30/0 spt F38 ed-watch, itu utk ALERT berulang; di sini cukup
@@ -225,16 +226,22 @@ export interface ForecastSuggestionRow {
   notes: string | null;
   status: string;
   approvalRequestId: string | null;
+  approvalStatus: string | null;
+  purchaseOrderId: string | null;
+  purchaseOrderNumber: string | null;
   createdAt: string;
 }
 
 export async function listSuggestions(status?: string): Promise<ForecastSuggestionRow[]> {
   const sql = db();
   const rows = await sql`
-    SELECT fs.*, ai.name AS item_name, w.nama AS warehouse_nama
+    SELECT fs.*, ai.name AS item_name, w.nama AS warehouse_nama, ar.status AS approval_status,
+           po.po_number AS po_number
     FROM forecast_suggestion fs
     JOIN accurate_item ai ON ai.id = fs.item_id
     JOIN warehouse w ON w.kode = fs.warehouse_kode
+    LEFT JOIN approval_request ar ON ar.id = fs.approval_request_id
+    LEFT JOIN purchase_order po ON po.id = fs.purchase_order_id
     WHERE ${status ? sql`fs.status = ${status}` : sql`true`}
     ORDER BY fs.created_at DESC LIMIT 200
   `;
@@ -255,6 +262,9 @@ export async function listSuggestions(status?: string): Promise<ForecastSuggesti
     notes: r.notes ? String(r.notes) : null,
     status: String(r.status),
     approvalRequestId: r.approval_request_id ? String(r.approval_request_id) : null,
+    approvalStatus: r.approval_status ? String(r.approval_status) : null,
+    purchaseOrderId: r.purchase_order_id ? String(r.purchase_order_id) : null,
+    purchaseOrderNumber: r.po_number ? String(r.po_number) : null,
     // Sebelumnya String(r.created_at) — postgres.js parse kolom timestamptz
     // jadi objek Date, String() di atasnya hasilnya Date.toString() mentah
     // ("Fri Sep 04 2026 ... GMT+0700 ..."), bukan ISO. Pola bug yang sama
@@ -343,4 +353,79 @@ export async function submitSuggestion(id: string, submittedBy: string): Promise
     WHERE id = ${id}
   `;
   return { ok: true, approvalId: res.id, approvalKode: res.kode };
+}
+
+export interface DraftPoInput {
+  vendorId: string;
+  lini: PurchaseOrderLini;
+  poNumber: string;
+  etaDate?: string | null;
+  cabang?: string | null;
+  pic?: string | null;
+  notes?: string | null;
+  createdBy?: string | null;
+}
+
+export interface DraftPoResult {
+  ok: boolean;
+  error?: string;
+  purchaseOrderId?: string;
+  poNumber?: string;
+}
+
+// F153 "Auto-Draft PR" — convert usulan yg SUDAH approved (F11) jadi PO
+// nyata (F13). "Auto" di sini artinya item/qty/gudang PREFILLED dari
+// usulan — vendor & lini bisnis TETAP keputusan manusia (Supply Chain),
+// sistem tak punya data "vendor default per item" sama sekali (migrasi
+// 192). Idempoten via forecast_suggestion.purchase_order_id: sekali
+// didraft, tak bisa didraft ulang dari usulan yg sama.
+export async function draftPurchaseOrder(id: string, input: DraftPoInput): Promise<DraftPoResult> {
+  if (!input.vendorId?.trim()) return { ok: false, error: "vendor wajib dipilih" };
+  if (input.lini !== "IVD" && input.lini !== "Medical") return { ok: false, error: "lini bisnis wajib dipilih (IVD/Medical)" };
+  if (!input.poNumber?.trim()) return { ok: false, error: "nomor PO wajib diisi" };
+
+  const sql = db();
+  const rows = await sql`
+    SELECT fs.*, ai.name AS item_name, ai.unit AS item_unit, w.cabang AS warehouse_cabang, ar.status AS approval_status
+    FROM forecast_suggestion fs
+    JOIN accurate_item ai ON ai.id = fs.item_id
+    JOIN warehouse w ON w.kode = fs.warehouse_kode
+    LEFT JOIN approval_request ar ON ar.id = fs.approval_request_id
+    WHERE fs.id = ${id}
+  `;
+  if (rows.length === 0) return { ok: false, error: "usulan tidak ditemukan" };
+  const r = rows[0];
+  if (r.purchase_order_id) return { ok: false, error: "usulan ini sudah didraft jadi PO sebelumnya" };
+  if (r.status !== "submitted") return { ok: false, error: `usulan berstatus "${r.status}" — harus "submitted" (sudah diajukan) dulu` };
+  if (r.approval_status !== "approved") {
+    return { ok: false, error: `approval usulan ini belum selesai (status: ${r.approval_status ?? "belum ada approval_request"})` };
+  }
+
+  const [vendor] = await sql`SELECT id, name FROM accurate_vendor WHERE id = ${input.vendorId}`;
+  if (!vendor) return { ok: false, error: `vendor #${input.vendorId} tidak ditemukan` };
+
+  const qty = r.final_qty != null ? Number(r.final_qty) : Number(r.suggested_qty);
+
+  const po = await createPurchaseOrder({
+    po_number: input.poNumber.trim(),
+    vendor_id: String(vendor.id),
+    vendor_name: vendor.name ? String(vendor.name) : `Vendor #${vendor.id}`,
+    eta_date: input.etaDate ?? null,
+    cabang: input.cabang?.trim() || (r.warehouse_cabang ? String(r.warehouse_cabang) : null),
+    pic: input.pic?.trim() || null,
+    notes: input.notes?.trim() || `Auto-draft dari Forecast Suggestion #${id.slice(0, 8)}`,
+    created_by: input.createdBy ?? null,
+    lini: input.lini,
+    items: [
+      {
+        item_desc: String(r.item_name),
+        qty_ordered: qty,
+        unit: r.item_unit ? String(r.item_unit) : null,
+      },
+    ],
+  });
+
+  await sql`UPDATE forecast_suggestion SET status = 'ordered', purchase_order_id = ${po.id} WHERE id = ${id}`;
+
+  return { ok: true, purchaseOrderId: po.id, poNumber: po.po_number };
 }
