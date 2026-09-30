@@ -369,7 +369,15 @@ export const NAV: NavGroup[] = [
       // & /it-tickets sekaligus (lihat `features`).
       {
         title: "Aset GA", url: "/ga-aset", icon: Archive, badge: "NEW",
-        features: [{ key: "it-asset", name: "Tiket IT (tab di Aset GA)" }],
+        // ga-finance-approval = tombol "Approve Finance" Maintenance GA (F137)
+        // di halaman ini. Dulu cuma disemai migrasi 089, bukan dari menu, jadi
+        // tiap Sync Fitur menganggapnya zombie dan MENONAKTIFKANNYA — gate-nya
+        // lalu jatuh diam-diam ke fallback title "finance", centang di Akses
+        // Grup tak berlaku. Didaftarkan di sini supaya ikut katalog.
+        features: [
+          { key: "it-asset", name: "Tiket IT (tab di Aset GA)" },
+          { key: "ga-finance-approval", name: "Approval Finance — Maintenance GA" },
+        ],
       },
       { title: "Helpdesk GA", url: "/ga-helpdesk", icon: Ticket, badge: "NEW" },
       { title: "Pengajuan Dana Operasional", url: "/fund-requests", icon: Wallet, badge: "NEW" },

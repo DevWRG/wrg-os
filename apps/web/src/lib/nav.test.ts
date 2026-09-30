@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
+import { readdirSync, readFileSync } from "node:fs";
 import { test } from "node:test";
 
-import { DEV_ONLY_URLS, devOnlyBadge, findNavItem, NAV } from "./nav.js";
+import { DEV_ONLY_URLS, devOnlyBadge, featureCatalog, findNavItem, NAV } from "./nav.js";
 
 // findNavItem dipakai (dashboard)/layout.tsx sebagai GATE rute: item null =
 // rute lolos tanpa diperiksa izinnya. Jadi tes di sini bukan soal sorot
@@ -75,4 +76,28 @@ test("tiap url menu muncul sekali saja di NAV (dan label grup tak kembar)", () =
   const labels = NAV.map((g) => g.label);
   const dupLabel = labels.filter((l, i) => labels.indexOf(l) !== i);
   assert.deepEqual(dupLabel, [], `label grup dobel: ${dupLabel.join(", ")}`);
+});
+
+// Kunci fitur yang disemai MIGRASI (bukan dari menu) tapi sudah pensiun —
+// memang seharusnya dinonaktifkan Sync Fitur. Tambah ke sini hanya kalau
+// fiturnya benar-benar tak dipakai gate mana pun lagi.
+const FITUR_PENSIUN = new Set(["sales", "people", "employee-spine"]);
+
+test("tiap kunci fitur yang disemai migrasi ikut katalog menu (atau tercatat pensiun)", () => {
+  // Sync Fitur MENONAKTIFKAN setiap fitur yang tak ada di featureCatalog().
+  // Kunci yang cuma disemai migrasi (mis. ga-finance-approval, 089) jadi mati
+  // di sync pertama, dan gate canOrLegacy() lalu jatuh diam-diam ke fallback
+  // lama — centang admin di Akses Grup tak lagi berpengaruh.
+  const dir = new URL("../../../../infra/postgres/init/", import.meta.url);
+  const katalog = new Set(featureCatalog().map((r) => r.key));
+  const yatim: string[] = [];
+  for (const f of readdirSync(dir).sort()) {
+    const sql = readFileSync(new URL(f, dir), "utf8");
+    for (const m of sql.matchAll(/INSERT INTO feature\s*\([^)]*\)\s*VALUES([\s\S]*?);/gi)) {
+      for (const k of m[1].matchAll(/\(\s*'([a-z0-9-]+)'/g)) {
+        if (!katalog.has(k[1]) && !FITUR_PENSIUN.has(k[1])) yatim.push(`${k[1]} (${f})`);
+      }
+    }
+  }
+  assert.deepEqual(yatim, [], `fitur akan dinonaktifkan Sync Fitur: ${yatim.join(", ")}`);
 });
