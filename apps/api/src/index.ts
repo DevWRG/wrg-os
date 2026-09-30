@@ -125,7 +125,9 @@ import {
   updateLeave,
   listPendingLeave,
   decidePendingLeave,
+  getLeave,
 } from "./repo/leave.js";
+import { checkBackup, notifyLeaveBackupInBackground } from "./repo/leave-backup.js";
 import {
   createInstallation,
   listInstallations,
@@ -207,6 +209,7 @@ import {
 } from "./repo/cashin.js";
 import { upsertMembers, listMembers, upsertDigests, listDigest, digestStats, upsertPola, listPola, generateRekap, generateResume, type MonitorMemberInput, type DigestInput, type PolaInput } from "./repo/monitor.js";
 import { runNotifTua } from "./repo/notiftua.js";
+import { runInvoiceReminder } from "./repo/faktur.js";
 import { runDailySummary } from "./repo/dailysummary.js";
 import { runWeeklyReport } from "./repo/weeklyreport.js";
 import { runDetectLeaveScan } from "./repo/detectleave.js";
@@ -565,6 +568,20 @@ import {
   getAttachmentFile,
 } from "./repo/approval.js";
 import {
+  listChainConfig as listAuditFindingChainConfig,
+  updateChainConfigStep as updateAuditFindingChainConfigStep,
+  listFindings as listAuditFindings,
+  getFinding as getAuditFinding,
+  createFinding as createAuditFinding,
+  updateFinding as updateAuditFinding,
+  startFinding as startAuditFinding,
+  requestClosure as requestAuditFindingClosure,
+  decideStep as decideAuditFindingStep,
+  getApprovalRequest as getAuditFindingApprovalRequest,
+  getActiveApprovalRequest as getActiveAuditFindingApprovalRequest,
+  notifyCurrentStep as notifyAuditFindingCurrentStep,
+} from "./repo/audit-finding.js";
+import {
   generateSuggestions,
   listSuggestions,
   updateSuggestion,
@@ -572,6 +589,7 @@ import {
   submitSuggestion,
   listBufferConfig,
   upsertBufferConfig,
+  draftPurchaseOrder,
 } from "./repo/forecast.js";
 const app = new Hono();
 
@@ -1365,6 +1383,19 @@ app.get("/ar/invoice/:no", async (c) => {
   return c.json(r, r.ok ? 200 : 404);
 });
 
+// F91 — jalankan reminder jatuh tempo invoice manual (uji / kirim ulang).
+// body: {dry_run?} → dry_run = susun digest tanpa kirim WA & tanpa menandai.
+app.post("/ar/invoice-reminder/run", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { dry_run?: boolean } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    /* body opsional */
+  }
+  return c.json(await runInvoiceReminder({ dryRun: body.dry_run }));
+});
+
 // Sync Accurate (puller, pengganti sync_accurate.sh). Read-only ke API Accurate
 // → mirror accurate_* + refresh ar_aging. body: {days?, invoice_id?}.
 app.post("/accurate/sync", async (c) => {
@@ -2068,6 +2099,27 @@ app.post("/forecast/suggestions/:id/submit", async (c) => {
   return c.json(r, r.ok ? 200 : 400);
 });
 
+// F153 "Auto-Draft PR" — convert usulan yg sudah approved (F11) jadi PO
+// nyata (F13). Vendor & lini WAJIB dikirim (dipilih manusia di form), lihat
+// komentar draftPurchaseOrder (forecast.ts).
+app.post("/forecast/suggestions/:id/draft-po", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: Parameters<typeof draftPurchaseOrder>[1] | undefined;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body) return c.json({ error: "invalid JSON body" }, 400);
+  try {
+    const r = await draftPurchaseOrder(c.req.param("id"), body);
+    return c.json(r, r.ok ? 200 : 400);
+  } catch (e) {
+    if (e instanceof PurchaseOrderError) return c.json({ error: e.message }, e.status as 400 | 404 | 409);
+    throw e;
+  }
+});
+
 app.get("/forecast/buffer-config", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json({ rows: await listBufferConfig() });
@@ -2578,7 +2630,7 @@ app.delete("/holidays/:id", async (c) => {
 
 app.post("/leave", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let body: { am_id?: string; start_date?: string; end_date?: string; jenis?: string; keterangan?: string };
+  let body: { am_id?: string; start_date?: string; end_date?: string; jenis?: string; keterangan?: string; backup_am_id?: string | null };
   try {
     body = await c.req.json();
   } catch {
@@ -2590,16 +2642,22 @@ app.post("/leave", async (c) => {
   if (!["sakit", "cuti", "ijin"].includes(body.jenis)) {
     return c.json({ error: "jenis harus sakit|cuti|ijin" }, 400);
   }
-  return c.json(
-    await createLeave({
-      am_id: body.am_id,
-      start_date: body.start_date,
-      end_date: body.end_date,
-      jenis: body.jenis as "sakit" | "cuti" | "ijin",
-      keterangan: body.keterangan,
-    }),
-    201,
-  );
+  // F55 — pengganti (backup PIC): wajib utk cuti, harus aktif & tidak ikut cuti.
+  const backupAmId = body.backup_am_id?.trim() || null;
+  const backupErr = await checkBackup({
+    am_id: body.am_id, jenis: body.jenis, start_date: body.start_date, end_date: body.end_date, backup_am_id: backupAmId,
+  });
+  if (backupErr) return c.json({ error: backupErr }, 400);
+  const created = await createLeave({
+    am_id: body.am_id,
+    start_date: body.start_date,
+    end_date: body.end_date,
+    jenis: body.jenis as "sakit" | "cuti" | "ijin",
+    keterangan: body.keterangan,
+    backup_am_id: backupAmId,
+  });
+  if (backupAmId) notifyLeaveBackupInBackground(created.id);
+  return c.json(created, 201);
 });
 
 app.get("/leave", async (c) => {
@@ -2615,22 +2673,26 @@ app.get("/leave/pending", async (c) => {
   return c.json({ count: pending.length, pending });
 });
 
-// Approve/reject pending dari dashboard. body: {approve: boolean, decided_by?}.
+// Approve/reject pending dari dashboard. body: {approve: boolean, decided_by?, backup_am_id?}.
+// F55: approve cuti wajib menyertakan backup_am_id (pengganti).
 app.post("/leave/pending/:id/decide", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let body: { approve?: boolean; decided_by?: string } = {};
+  let body: { approve?: boolean; decided_by?: string; backup_am_id?: string | null } = {};
   try {
     body = await c.req.json();
   } catch {
     /* body opsional */
   }
-  const r = await decidePendingLeave(Number(c.req.param("id")), body.approve === true, body.decided_by);
-  return c.json(r, r.ok ? 200 : 404);
+  const r = await decidePendingLeave(
+    Number(c.req.param("id")), body.approve === true, body.decided_by, body.backup_am_id?.trim() || null,
+  );
+  if (r.leave_id) notifyLeaveBackupInBackground(r.leave_id);
+  return c.json(r, r.ok ? 200 : r.error === "not-found-or-decided" ? 404 : 400);
 });
 
 app.patch("/leave/:id", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let body: { start_date?: string; end_date?: string; jenis?: string; keterangan?: string };
+  let body: { start_date?: string; end_date?: string; jenis?: string; keterangan?: string; backup_am_id?: string | null };
   try {
     body = await c.req.json();
   } catch {
@@ -2639,12 +2701,28 @@ app.patch("/leave/:id", async (c) => {
   if (body.jenis && !["sakit", "cuti", "ijin"].includes(body.jenis)) {
     return c.json({ error: "jenis harus sakit|cuti|ijin" }, 400);
   }
+  // F55 — validasi pengganti terhadap keadaan SETELAH edit (field yang tak
+  // dikirim = nilai lama). backup_am_id tidak dikirim = tidak diubah.
+  const cur = await getLeave(c.req.param("id"));
+  if (!cur) return c.json({ updated: 0 }, 404);
+  const backupAmId = body.backup_am_id === undefined ? undefined : body.backup_am_id?.trim() || null;
+  const backupErr = await checkBackup({
+    am_id: cur.am_id,
+    jenis: body.jenis ?? cur.jenis,
+    start_date: body.start_date ?? cur.start_date,
+    end_date: body.end_date ?? cur.end_date,
+    backup_am_id: backupAmId === undefined ? cur.backup_am_id : backupAmId,
+  });
+  if (backupErr) return c.json({ error: backupErr }, 400);
   const r = await updateLeave(c.req.param("id"), {
     start_date: body.start_date,
     end_date: body.end_date,
     jenis: body.jenis as "sakit" | "cuti" | "ijin" | undefined,
     keterangan: body.keterangan,
+    backup_am_id: backupAmId,
   });
+  // Pengganti/rentang berubah → umumkan ulang (notifyLeaveBackup menahan yang tak berubah).
+  if (r.updated) notifyLeaveBackupInBackground(cur.id);
   return c.json(r, r.updated ? 200 : 404);
 });
 
@@ -7728,6 +7806,121 @@ app.post("/ga-tickets/overdue-alert/run", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const r = await runGaHelpdeskOverdueAlert();
   return c.json(r);
+});
+
+// ── F60 Komite Audit Findings Tracker ──
+// created_by/requested_by/decided_by dipercaya dari BFF (identitas & gating
+// izin grup di layer WEB, pola sama F138) — apps/api menegakkan business-rule
+// (sequencing tahap, keanggotaan grup SAAT decide) bukan identity check.
+app.get("/audit-findings/chain-config", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json({ config: await listAuditFindingChainConfig() });
+});
+
+app.put("/audit-findings/chain-config/:urutan", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { accessGroupId?: number | null; enabled?: boolean };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const r = await updateAuditFindingChainConfigStep(Number(c.req.param("urutan")), body);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.get("/audit-findings", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const status = c.req.query("status") || undefined;
+  const overdue = c.req.query("overdue") === "1";
+  const findings = await listAuditFindings({ status, overdue });
+  return c.json({ count: findings.length, findings });
+});
+
+app.get("/audit-findings/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const f = await getAuditFinding(c.req.param("id"));
+  if (!f) return c.json({ error: "finding tidak ditemukan" }, 404);
+  const activeRequest = await getActiveAuditFindingApprovalRequest(c.req.param("id"));
+  return c.json({ finding: f, activeRequest });
+});
+
+app.post("/audit-findings", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: {
+    title?: string; description?: string; source?: string; unit_terdampak?: string;
+    control_linkage?: string; due_date?: string; created_by?: string;
+  };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.title?.trim()) return c.json({ error: "title wajib" }, 400);
+  const r = await createAuditFinding({
+    title: body.title, description: body.description ?? null, source: body.source ?? null,
+    unit_terdampak: body.unit_terdampak ?? null, control_linkage: body.control_linkage ?? null,
+    due_date: body.due_date ?? null, created_by: body.created_by ?? null,
+  });
+  return c.json(r, "ok" in r && r.ok === false ? 400 : 201);
+});
+
+app.patch("/audit-findings/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: {
+    title?: string; description?: string | null; source?: string | null; unit_terdampak?: string | null;
+    control_linkage?: string | null; due_date?: string | null;
+  };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const r = await updateAuditFinding(c.req.param("id"), body);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.post("/audit-findings/:id/start", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await startAuditFinding(c.req.param("id"));
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.post("/audit-findings/:id/request-closure", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { requested_by?: string | null } = {};
+  try { body = await c.req.json(); } catch { /* opsional */ }
+  const r = await requestAuditFindingClosure(c.req.param("id"), body.requested_by ?? null);
+  return c.json(r, r.ok ? 201 : 400);
+});
+
+app.get("/audit-findings/approval-requests/:requestId", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await getAuditFindingApprovalRequest(c.req.param("requestId"));
+  if (!r) return c.json({ error: "request tidak ditemukan" }, 404);
+  return c.json(r);
+});
+
+app.post("/audit-findings/approval-requests/:requestId/notify", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await notifyAuditFindingCurrentStep(c.req.param("requestId"));
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.post("/audit-findings/approval-requests/:requestId/decide", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { action?: "approve" | "reject"; decider_user_id?: string; note?: string | null };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (body.action !== "approve" && body.action !== "reject") return c.json({ error: "action wajib (approve/reject)" }, 400);
+  if (!body.decider_user_id) return c.json({ error: "decider_user_id wajib" }, 400);
+  const r = await decideAuditFindingStep({
+    requestId: c.req.param("requestId"), action: body.action, deciderUserId: body.decider_user_id, note: body.note ?? null,
+  });
+  return c.json(r, r.ok ? 200 : 400);
 });
 
 // ── F138 Operational Fund Request + Multi-Step Approval Workflow ──

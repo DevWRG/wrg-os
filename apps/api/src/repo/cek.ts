@@ -139,10 +139,10 @@ async function customerNameDuplicateCount(customerName: string): Promise<number>
 
 const DOC_LABEL: Record<CekDocType, string> = { so: "SO", sj: "SJ", invoice: "Faktur" };
 
-const fmtTanggal = (iso: string | null): string =>
+export const fmtTanggal = (iso: string | null): string =>
   iso ? new Date(iso).toLocaleDateString("id-ID", { day: "2-digit", month: "short", year: "numeric" }) : "-";
 
-const fmtRupiah = (n: number | null): string | null => (n == null ? null : `Rp${n.toLocaleString("id-ID")}`);
+export const fmtRupiah = (n: number | null): string | null => (n == null ? null : `Rp${n.toLocaleString("id-ID")}`);
 
 export async function buildCekReply(query: string): Promise<string> {
   const anchor = await findDocByNumber(query);

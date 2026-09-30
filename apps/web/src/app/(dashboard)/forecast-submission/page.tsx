@@ -25,7 +25,15 @@ interface Suggestion {
   notes: string | null;
   status: string;
   approvalRequestId: string | null;
+  approvalStatus: string | null;
+  purchaseOrderId: string | null;
+  purchaseOrderNumber: string | null;
   createdAt: string;
+}
+
+interface VendorOpt {
+  id: string;
+  name: string | null;
 }
 
 const REASON_LABEL: Record<string, string> = {
@@ -36,8 +44,11 @@ const STATUS_BADGE: Record<string, "default" | "secondary" | "outline" | "destru
   draft: "secondary",
   submitted: "default",
   dismissed: "outline",
+  ordered: "default",
 };
-const STATUSES = ["draft", "submitted", "dismissed"] as const;
+const STATUSES = ["draft", "submitted", "ordered", "dismissed"] as const;
+const selectCls =
+  "h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50";
 
 export default function ForecastSubmissionPage() {
   const [filter, setFilter] = useState<(typeof STATUSES)[number]>("draft");
@@ -47,6 +58,10 @@ export default function ForecastSubmissionPage() {
   const [generating, setGenerating] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<Record<string, { finalQty: string; notes: string }>>({});
+  const [vendors, setVendors] = useState<VendorOpt[]>([]);
+  const [poForm, setPoForm] = useState<
+    Record<string, { vendorId: string; lini: "" | "IVD" | "Medical"; poNumber: string }>
+  >({});
 
   const load = useCallback(async (status: string) => {
     setLoading(true);
@@ -58,11 +73,21 @@ export default function ForecastSubmissionPage() {
       const rows: Suggestion[] = data.suggestions ?? [];
       setSuggestions(rows);
       setDrafts(Object.fromEntries(rows.map((s) => [s.id, { finalQty: String(s.finalQty ?? s.suggestedQty), notes: s.notes ?? "" }])));
+      setPoForm((prev) => ({
+        ...Object.fromEntries(rows.map((s) => [s.id, prev[s.id] ?? { vendorId: "", lini: "" as const, poNumber: `PR-${s.id.slice(0, 8)}` }])),
+      }));
     } catch (e) {
       setError(String(e));
     } finally {
       setLoading(false);
     }
+  }, []);
+
+  useEffect(() => {
+    void fetch("/api/vendors", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => setVendors(d?.rows ?? []))
+      .catch(() => {});
   }, []);
 
   // Inline IIFE (bukan `void load()` langsung) — hindari lint react-hooks set-state-in-effect.
@@ -153,6 +178,38 @@ export default function ForecastSubmissionPage() {
       });
       const data = await res.json();
       if (!res.ok || data.ok === false) throw new Error(data.error ?? "gagal mengajukan");
+      await load(filter);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function draftPo(id: string) {
+    const f = poForm[id];
+    if (!f?.vendorId) {
+      setError("pilih vendor dulu");
+      return;
+    }
+    if (!f.lini) {
+      setError("pilih lini bisnis dulu");
+      return;
+    }
+    if (!f.poNumber.trim()) {
+      setError("nomor PO wajib diisi");
+      return;
+    }
+    setBusy(id);
+    setError(null);
+    try {
+      const res = await fetch(`/api/forecast/suggestions/${id}/draft-po`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ vendorId: f.vendorId, lini: f.lini, poNumber: f.poNumber.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.ok === false) throw new Error(data.error ?? "gagal draft PO");
       await load(filter);
     } catch (e) {
       setError(String(e));
@@ -263,17 +320,90 @@ export default function ForecastSubmissionPage() {
                     </div>
                   </>
                 ) : (
-                  <div className="text-muted-foreground text-xs">
-                    Qty final: {s.finalQty ?? s.suggestedQty}
-                    {s.notes ? ` · ${s.notes}` : ""}
-                    {s.approvalRequestId && (
-                      <>
-                        {" "}
-                        ·{" "}
-                        <Link href={`/approval-requests/${s.approvalRequestId}`} className="text-primary underline">
-                          Lihat status approval
+                  <div className="space-y-2">
+                    <div className="text-muted-foreground text-xs">
+                      Qty final: {s.finalQty ?? s.suggestedQty}
+                      {s.notes ? ` · ${s.notes}` : ""}
+                      {s.approvalRequestId && (
+                        <>
+                          {" "}
+                          ·{" "}
+                          <Link href={`/approval-requests/${s.approvalRequestId}`} className="text-primary underline">
+                            Lihat status approval
+                          </Link>
+                        </>
+                      )}
+                    </div>
+
+                    {s.status === "ordered" && s.purchaseOrderId && (
+                      <div className="text-muted-foreground text-xs">
+                        {/* Tidak ada route detail per-ID di PO Tracker (dialog di tabel list,
+                            lihat purchase-order-table.tsx) — jadi arahkan ke tabel dgn
+                            filter ?q= nomor PO, bukan link langsung ke ID yang 404. */}
+                        ✅ Sudah didraft jadi PO {s.purchaseOrderNumber ?? ""} —{" "}
+                        <Link
+                          href={`/purchase-orders?q=${encodeURIComponent(s.purchaseOrderNumber ?? "")}`}
+                          className="text-primary underline"
+                        >
+                          Lihat di PO Tracker
                         </Link>
-                      </>
+                      </div>
+                    )}
+
+                    {s.status === "submitted" && s.approvalStatus === "approved" && !s.purchaseOrderId && (
+                      <div className="space-y-2 border-t pt-2">
+                        <div className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+                          Draft PO (F153) — vendor & lini dipilih manual
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div className="grid gap-1">
+                            <Label className="text-xs">Vendor</Label>
+                            <select
+                              className={selectCls}
+                              value={poForm[s.id]?.vendorId ?? ""}
+                              onChange={(e) =>
+                                setPoForm((prev) => ({ ...prev, [s.id]: { ...prev[s.id], vendorId: e.target.value } }))
+                              }
+                            >
+                              <option value="">Pilih vendor…</option>
+                              {vendors.map((v) => (
+                                <option key={v.id} value={v.id}>
+                                  {v.name ?? `Vendor #${v.id}`}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <div className="grid gap-1">
+                            <Label className="text-xs">Lini</Label>
+                            <select
+                              className={selectCls}
+                              value={poForm[s.id]?.lini ?? ""}
+                              onChange={(e) =>
+                                setPoForm((prev) => ({
+                                  ...prev,
+                                  [s.id]: { ...prev[s.id], lini: e.target.value as "" | "IVD" | "Medical" },
+                                }))
+                              }
+                            >
+                              <option value="">Pilih lini…</option>
+                              <option value="IVD">IVD</option>
+                              <option value="Medical">Medical</option>
+                            </select>
+                          </div>
+                        </div>
+                        <div className="grid gap-1">
+                          <Label className="text-xs">No. PO</Label>
+                          <Input
+                            value={poForm[s.id]?.poNumber ?? ""}
+                            onChange={(e) =>
+                              setPoForm((prev) => ({ ...prev, [s.id]: { ...prev[s.id], poNumber: e.target.value } }))
+                            }
+                          />
+                        </div>
+                        <Button size="sm" className="w-full" disabled={busy === s.id} onClick={() => void draftPo(s.id)}>
+                          {busy === s.id ? "Men-draft…" : "Draft PO Sekarang"}
+                        </Button>
+                      </div>
                     )}
                   </div>
                 )}
