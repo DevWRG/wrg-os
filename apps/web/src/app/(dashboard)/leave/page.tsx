@@ -4,6 +4,7 @@ import { AddLeaveSheet } from "@/components/crm/add-leave-sheet";
 import { LeaveTable } from "@/components/tables/leave-table";
 import { PendingLeaveTable, type PendingLeave } from "@/components/tables/pending-leave-table";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import type { BackupUser } from "@/components/crm/backup-pic-field";
 
 export const dynamic = "force-dynamic";
 
@@ -15,11 +16,7 @@ interface Leave {
   jenis: string;
   keterangan: string | null;
   source: string;
-}
-interface User {
-  am_id: string;
-  nama: string;
-  panggilan: string | null;
+  backup_am_id: string | null;
 }
 
 async function getJson<T>(path: string): Promise<T | null> {
@@ -35,17 +32,18 @@ async function getJson<T>(path: string): Promise<T | null> {
 export default async function LeavePage() {
   const [leaveRes, usersRes, pendingRes] = await Promise.all([
     getJson<{ leave: Leave[] }>("/leave"),
-    getJson<{ users: User[] }>("/master/users"),
+    getJson<{ users: BackupUser[] }>("/master/users"),
     getJson<{ pending: PendingLeave[] }>("/leave/pending"),
   ]);
   const leave = leaveRes?.leave ?? null;
   const pending = pendingRes?.pending ?? [];
   const nameById: Record<string, string> = {};
-  for (const u of usersRes?.users ?? []) nameById[u.am_id] = u.panggilan ?? u.nama;
+  const users = usersRes?.users ?? [];
+  for (const u of users) nameById[u.am_id] = u.panggilan ?? u.nama;
 
   return (
     <>
-      <PageHeader title="Manage Leave" description="Cuti / sakit / izin karyawan. Pending = terdeteksi otomatis dari grup HRD, perlu di-approve." action={<AddLeaveSheet />} />
+      <PageHeader title="Manage Leave" description="Cuti / sakit / izin karyawan + pengganti (backup PIC). Pending = terdeteksi otomatis dari grup HRD, perlu di-approve." action={<AddLeaveSheet />} />
 
       {pending.length > 0 && (
         <Card className="mb-4 border-amber-300 dark:border-amber-700">
@@ -53,7 +51,7 @@ export default async function LeavePage() {
             <CardTitle className="text-base">⏳ Pending Approval ({pending.length}) — terdeteksi dari grup HRD</CardTitle>
           </CardHeader>
           <CardContent>
-            <PendingLeaveTable pending={pending} />
+            <PendingLeaveTable pending={pending} users={users} />
           </CardContent>
         </Card>
       )}
@@ -67,7 +65,7 @@ export default async function LeavePage() {
       ) : (
         <Card>
           <CardContent className="pt-6">
-            <LeaveTable leave={leave} nameById={nameById} />
+            <LeaveTable leave={leave} nameById={nameById} users={users} />
           </CardContent>
         </Card>
       )}

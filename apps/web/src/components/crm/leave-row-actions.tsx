@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useConfirm } from "@/components/ui/use-confirm";
 import { Textarea } from "@/components/ui/textarea";
+import { BackupPicField, type BackupUser } from "@/components/crm/backup-pic-field";
 import {
   Sheet,
   SheetClose,
@@ -30,9 +31,10 @@ interface LeaveRow {
   end_date: string;
   jenis: string;
   keterangan: string | null;
+  backup_am_id: string | null;
 }
 
-export function LeaveRowActions({ row, label }: { row: LeaveRow; label: string }) {
+export function LeaveRowActions({ row, label, users }: { row: LeaveRow; label: string; users: BackupUser[] }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -42,6 +44,7 @@ export function LeaveRowActions({ row, label }: { row: LeaveRow; label: string }
     end_date: row.end_date,
     jenis: row.jenis,
     keterangan: row.keterangan ?? "",
+    backup_am_id: row.backup_am_id ?? "",
   });
 
   const { confirm, dialog } = useConfirm();
@@ -59,6 +62,7 @@ export function LeaveRowActions({ row, label }: { row: LeaveRow; label: string }
           end_date: f.end_date,
           jenis: f.jenis,
           keterangan: f.keterangan.trim() || undefined,
+          backup_am_id: f.backup_am_id || null,
         }),
       });
       const data = await res.json();
@@ -117,6 +121,14 @@ export function LeaveRowActions({ row, label }: { row: LeaveRow; label: string }
                   <Input id={`le-e-${row.id}`} type="date" required value={f.end_date} onChange={(e) => setF((p) => ({ ...p, end_date: e.target.value }))} />
                 </div>
               </div>
+              <BackupPicField
+                id={`le-b-${row.id}`}
+                users={users}
+                value={f.backup_am_id}
+                onChange={(v) => setF((p) => ({ ...p, backup_am_id: v }))}
+                excludeAmId={row.am_id}
+                jenis={f.jenis}
+              />
               <div className="grid gap-1.5">
                 <Label htmlFor={`le-k-${row.id}`}>Keterangan</Label>
                 <Textarea id={`le-k-${row.id}`} value={f.keterangan} onChange={(e) => setF((p) => ({ ...p, keterangan: e.target.value }))} />
