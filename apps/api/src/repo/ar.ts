@@ -100,6 +100,33 @@ export function normalizeAccurateDate(s?: string): string | null {
   return null;
 }
 
+// F91 — status per-invoice untuk lookup cepat (#FAKTUR, dialog detail) & reminder
+// jatuh tempo. Mirror cuma kenal OPEN/PAID (accurateSync: d.outstanding), jadi
+// OVERDUE diturunkan di sini dari due date. Sisa tagihan ≤0 = lunas walau status
+// masih OPEN. Due date tak diketahui → tetap OPEN, days_to_due null (TIDAK
+// dianggap overdue — jangan menagih berdasarkan tebakan).
+export type InvoiceState = "OPEN" | "PAID" | "OVERDUE";
+
+export interface InvoiceStatus {
+  state: InvoiceState;
+  due_date: string | null; // YYYY-MM-DD
+  days_to_due: number | null; // negatif = sudah lewat N hari
+}
+
+export function deriveInvoiceStatus(
+  inv: { status: string | null; outstanding: number },
+  dueDate: string | null,
+  today: string, // YYYY-MM-DD (WIB)
+): InvoiceStatus {
+  const days = dueDate ? Math.round((Date.parse(`${dueDate}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`)) / 86400000) : null;
+  const daysToDue = days != null && Number.isFinite(days) ? days : null;
+  const paid = String(inv.status ?? "").toUpperCase() === "PAID" || !(inv.outstanding > 0);
+  const state: InvoiceState = paid ? "PAID" : daysToDue != null && daysToDue < 0 ? "OVERDUE" : "OPEN";
+  return { state, due_date: daysToDue == null ? null : dueDate, days_to_due: daysToDue };
+}
+
+const wibToday = (): string => new Date(Date.now() + 7 * 3600 * 1000).toISOString().slice(0, 10);
+
 export function mapAccurateInvoice(rec: AccurateInvoice): InvoiceInput | null {
   const invoiceNo = String(rec.number ?? rec.transNumber ?? rec.id ?? "").trim();
   const customerId = String(rec.customerId ?? rec.customer?.id ?? "").trim();
@@ -222,14 +249,20 @@ export async function invoiceDetail(no: string, scope: DataScope = FULL_SCOPE) {
       COALESCE(NULLIF(ac.name,''), NULLIF(ai.raw->'customer'->>'name',''), NULLIF(ai.raw->>'retailWpName',''), 'Customer #'||ai.customer_id::text) AS customer_name,
       ai.tanggal::text AS tanggal, ai.total::float8 AS total, ai.taxable_amount::float8 AS taxable,
       ai.tax_amount::float8 AS tax, ai.paid::float8 AS paid, ai.outstanding::float8 AS outstanding,
-      ai.status, COALESCE(NULLIF(mu.nama,''), ${AM_VACANT}) AS am, NULLIF(mu.cabang,'') AS cabang
+      ai.status, COALESCE(NULLIF(mu.nama,''), ${AM_VACANT}) AS am, NULLIF(mu.cabang,'') AS cabang,
+      ai.raw->>'dueDate' AS due_raw, ai.lunas_at::text AS lunas_at
     FROM accurate_invoice ai
     LEFT JOIN accurate_customer ac ON ac.id = ai.customer_id
     LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
     ${joinAmFromSalesman(sql)}
-    WHERE ai.number = ${no} ${scopeAccurateClause(sql, scope)}
+    WHERE lower(ai.number) = lower(${no.trim()}) ${scopeAccurateClause(sql, scope)}
     LIMIT 1`;
   if (!inv) return { ok: false as const, invoice: null, items: [] };
+  const st = deriveInvoiceStatus(
+    { status: inv.status == null ? null : String(inv.status), outstanding: Number(inv.outstanding) },
+    normalizeAccurateDate(inv.due_raw == null ? undefined : String(inv.due_raw)),
+    wibToday(),
+  );
   const items = await sql`
     SELECT aii.line_no,
       COALESCE(NULLIF(it.name,''), NULLIF(aii.raw->>'detailName',''), 'Item #'||aii.item_id::text) AS name,
@@ -249,6 +282,8 @@ export async function invoiceDetail(no: string, scope: DataScope = FULL_SCOPE) {
       paid: Number(inv.paid), outstanding: Number(inv.outstanding),
       status: inv.status ? String(inv.status) : null,
       am: inv.am ? String(inv.am) : null, cabang: inv.cabang ? String(inv.cabang) : null,
+      lunas_at: inv.lunas_at ? String(inv.lunas_at) : null,
+      ...st,
     },
     items: items.map((r) => ({
       line_no: r.line_no == null ? null : Number(r.line_no),
