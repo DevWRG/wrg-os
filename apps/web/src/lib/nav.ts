@@ -420,6 +420,54 @@ export const NAV: NavGroup[] = [
   },
 ];
 
+// Menu yang SUDAH ada di `dev` tapi BELUM ada di `main`/prod (antrean promosi
+// #1282). Sidebar memasang badge "DEV" di menu ini supaya penguji di tumpukan dev
+// (:3300) tahu mana yang belum live — lihat devOnlyBadge(). Badge TIDAK pernah
+// tampil di build produksi (NEXT_PUBLIC_BUILD_CHANNEL === "production", yaitu build
+// dari `main`), jadi Set ini aman ikut terbawa saat promosi.
+// Dicocokkan manual lawan nav.ts di `main` (audit katalog 30 Sep 2026: 33 menu).
+// Rawat: saat satu menu dipromosikan satuan ke main → hapus url-nya dari sini;
+// saat #1282 merge → kosongkan Set ini.
+export const DEV_ONLY_URLS: ReadonlySet<string> = new Set([
+  "/approval-requests",
+  "/asset-tag",
+  "/atk-master",
+  "/atk-stock-in",
+  "/atk-stock-opname",
+  "/atk-stock-out",
+  "/courier-performance",
+  "/dana-ops",
+  "/doc-klaim",
+  "/ed-watch",
+  "/forecast-submission",
+  "/fund-requests",
+  "/ga-aset",
+  "/ga-helpdesk",
+  "/ga-reporting",
+  "/inbound-receiving",
+  "/installations",
+  "/inventory-relocations",
+  "/lpse-tender",
+  "/maintenance",
+  "/pickup-plan",
+  "/print-spec",
+  "/proficiency-tests",
+  "/purchase-forecast",
+  "/purchase-orders",
+  "/readiness-board",
+  "/rfid-cartridge-claims",
+  "/service-tickets",
+  "/shipment-tracking",
+  "/stok-gudang",
+  "/supplier-eta",
+  "/vehicles",
+  "/vendor-management",
+]);
+
+export function devOnlyBadge(url: string, buildChannel: string | undefined): boolean {
+  return buildChannel !== "production" && DEV_ONLY_URLS.has(url);
+}
+
 // Fitur (RBAC) per item = slug route: /monitor/rekap → "monitor-rekap" (= feature.key).
 export const featureKey = (url: string) => url.replace(/^\//, "").replace(/\//g, "-");
 

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { findNavItem, NAV } from "./nav.js";
+import { DEV_ONLY_URLS, devOnlyBadge, findNavItem, NAV } from "./nav.js";
 
 // findNavItem dipakai (dashboard)/layout.tsx sebagai GATE rute: item null =
 // rute lolos tanpa diperiksa izinnya. Jadi tes di sini bukan soal sorot
@@ -46,4 +46,21 @@ test("setiap matchPrefix menunjuk ke rute nyata, bukan salah ketik", () => {
       }
     }
   }
+});
+
+test("badge DEV: tiap url di DEV_ONLY_URLS memang menu di NAV", () => {
+  // Salah ketik url = badge diam-diam tak pernah muncul. Menu yang dihapus dari
+  // NAV tapi tertinggal di Set juga ketahuan di sini.
+  const urls = new Set(NAV.flatMap((g) => g.items.map((it) => it.url)));
+  for (const u of DEV_ONLY_URLS) assert.ok(urls.has(u), `${u} tidak ada di NAV`);
+});
+
+test("badge DEV tidak pernah tampil di build produksi", () => {
+  for (const u of DEV_ONLY_URLS) {
+    assert.equal(devOnlyBadge(u, "production"), false);
+    assert.equal(devOnlyBadge(u, "dev build"), true);
+  }
+  // menu yang sudah live di main tak pernah diberi badge DEV
+  assert.equal(devOnlyBadge("/uang-masuk", "dev build"), false);
+  assert.equal(devOnlyBadge("/overview", undefined), false);
 });
