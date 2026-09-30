@@ -50,6 +50,7 @@ import { canViewVendorManagement } from "@/lib/vendor-management-access";
 import { canViewGaReporting } from "@/lib/ga-reporting-access";
 import { canViewPurchaseForecast } from "@/lib/purchase-forecast-access";
 import { canViewAuditFindings } from "@/lib/audit-finding-access";
+import { canViewOvertime } from "@/lib/overtime-access";
 
 // exact: sorot aktif hanya saat path persis (untuk route induk yg punya child,
 // mis. /pricelist vs /pricelist/setup).
@@ -103,6 +104,7 @@ export const NAV: NavGroup[] = [
       { title: "Reminders", url: "/reminders", icon: Bell },
       { title: "Holidays", url: "/holidays", icon: CalendarOff },
       { title: "Manage Leave", url: "/leave", icon: CalendarDays },
+      { title: "Lembur (#OVERTIME)", url: "/overtime", icon: Hourglass, badge: "NEW", show: canViewOvertime },
       { title: "Raport Saya", url: "/raport", icon: Award, exact: true, badge: "NEW" },
     ],
   },

@@ -14,8 +14,9 @@ export function parseApprovalMessage(line: string, action: "approve" | "reject")
   if (!rest) return null;
   const parts = rest.split(/\s+/);
   const kode = parts[0].toUpperCase();
-  if (!/^APR-\d+$/.test(kode)) {
-    return { error: `kode "${parts[0]}" tidak valid, format: APR-0001` };
+  // APR-xxxx = approval engine F11; OT-xxxx = pengajuan lembur (#OVERTIME).
+  if (!/^(APR|OT)-\d+$/.test(kode)) {
+    return { error: `kode "${parts[0]}" tidak valid, format: APR-0001 atau OT-0001` };
   }
   const note = parts.slice(1).join(" ").trim() || null;
   return { kode, note };
