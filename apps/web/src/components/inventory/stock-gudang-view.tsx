@@ -6,6 +6,7 @@ import { StockBranchTable, type StockBranchRow, type WarehouseCol } from "@/comp
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
+import { LoadingBlock } from "@/components/ui/loading";
 
 export interface StockBranchSummary {
   item_mirror: number;
@@ -130,7 +131,7 @@ export function StockGudangView({ initial }: { initial: StockGudangInitial }) {
     return (
       <Card>
         <CardContent className="pt-6">
-          <p className="text-muted-foreground text-sm">Memuat stok per gudang…</p>
+          <LoadingBlock label="Memuat stok per gudang…" />
         </CardContent>
       </Card>
     );

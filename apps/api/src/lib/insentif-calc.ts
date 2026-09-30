@@ -46,6 +46,33 @@ export function marginReward(
   return Math.max(0, Math.min(35, (gpActualPct - gpTargetPct) * 2.5));
 }
 
+/**
+ * Kategori pengadaan Accurate (`detailItem[].charField1`) yang TIDAK berhak Margin Reward.
+ * KSO: marginnya sudah tinggi karena investasi alat. ECAT & PL: harganya fixed, AM tak
+ * punya ruang menegosiasikan margin. Sisanya (REGULAR, RUTIN, tanpa kategori, dst) berhak.
+ *
+ * Daftar ini SATU-SATUNYA sumber kebenaran — repo/insentif.ts mengirimkannya ke SQL sebagai
+ * parameter, jangan menyalin daftarnya ke query.
+ */
+export const KATEGORI_TANPA_MR = ["KSO", "ECAT", "PL"] as const;
+
+/**
+ * Porsi nilai faktur yang berhak Margin Reward, dari porsi nilai baris per kategori.
+ *
+ * Model `wrg_incentive_console_v2.jsx` memperlakukan satu transaksi sebagai KSO ATAU bukan —
+ * datanya memang sintetis, satu baris satu kategori. Faktur Accurate yang nyata tidak begitu:
+ * 1.568 dari 6.383 faktur 12 bulan terakhir memuat 2-3 kategori sekaligus. Kalau dipaksa
+ * biner (mis. "mayoritas KSO → MR 0"), faktur 51% KSO kehilangan MR atas 49% bagian regulernya,
+ * dan faktur 40% KSO mendapat MR penuh atas bagian KSO-nya. Salah di dua arah.
+ *
+ * Karena itu MR di sini dikalikan porsi yang berhak. Untuk faktur satu kategori hasilnya
+ * PERSIS sama dengan aturan biner model (share 0 atau 1); yang berubah hanya faktur campur.
+ */
+export function porsiBerhakMrDari(porsiTanpaMr: number): number {
+  if (!Number.isFinite(porsiTanpaMr)) return 1;
+  return Math.max(0, Math.min(1, 1 - porsiTanpaMr));
+}
+
 /** Collection Factor — 5 tingkat, dari umur piutang invoice itu sendiri. */
 export function collectionFactor(agingDays: number): number {
   if (agingDays <= 10) return 1.05;
@@ -61,8 +88,14 @@ export interface TrxInput {
   /** NULL bila HPP SKU belum ada → MR 0. Jangan ditebak: menebak margin = menebak gaji orang. */
   gpActualPct: number | null;
   gpTargetPct?: number;
+  /** Label faktur (porsi mayoritas). Dipakai kalau `porsiBerhakMr` tidak diisi. */
   isKso?: boolean;
   isEcatPl?: boolean;
+  /**
+   * Porsi nilai faktur yang berhak MR (0-1), dari kategori pengadaan per baris.
+   * Diisi → menang atas isKso/isEcatPl. Tidak diisi → jatuh ke aturan biner model.
+   */
+  porsiBerhakMr?: number;
   agingDays: number;
   ncrType: NcrType;
   leadType: LeadType;
@@ -75,7 +108,10 @@ export interface TrxInput {
 export interface TrxOutput {
   piPoints: number;
   hargaPoin: number;
+  /** MR setelah dikalikan porsi yang berhak — inilah yang masuk pengali. */
   mrPct: number;
+  /** Porsi yang berhak MR, 0-1. Disimpan supaya angka mr_pct bisa ditelusuri. */
+  porsiMr: number;
   ncrPct: number;
   cf: number;
   pengali: number;
@@ -88,10 +124,21 @@ export function computeTransaksi(i: TrxInput): TrxOutput {
   const hargaPoin = HARGA_POIN[i.tier] ?? 0;
   const piPoints = i.revenue * PI_PER_RUPIAH;
 
-  const mrPct =
+  // Porsi berhak MR: eksplisit dari kategori baris kalau ada, kalau tidak jatuh ke
+  // aturan biner model (KSO/ECAT/PL → 0). Keduanya bertemu di titik yang sama untuk
+  // faktur satu kategori.
+  const porsiMr =
+    i.porsiBerhakMr != null
+      ? porsiBerhakMrDari(1 - i.porsiBerhakMr)
+      : i.isKso || i.isEcatPl
+        ? 0
+        : 1;
+
+  const mrPenuh =
     i.gpActualPct == null
       ? 0
-      : marginReward(i.gpActualPct, i.gpTargetPct ?? GP_TARGET_DEFAULT, !!i.isKso, !!i.isEcatPl);
+      : marginReward(i.gpActualPct, i.gpTargetPct ?? GP_TARGET_DEFAULT, false, false);
+  const mrPct = mrPenuh * porsiMr;
 
   const ncrPct = NCR_PCT[i.ncrType];
   const cf = collectionFactor(i.agingDays);
@@ -109,6 +156,7 @@ export function computeTransaksi(i: TrxInput): TrxOutput {
     piPoints,
     hargaPoin,
     mrPct,
+    porsiMr,
     ncrPct,
     cf,
     pengali,

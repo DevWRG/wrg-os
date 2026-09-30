@@ -133,6 +133,20 @@ const devEnv = {
   // devBolehKirim di atas memastikan mode live tak pernah menyala bersama
   // daftar kosong.
   WA_SEND_ALLOWED_TARGETS: devGroups,
+  // Bypass gerbang identitas WA untuk grup uji (#1341, wa-test-bypass.ts):
+  // pengirim yang belum terdaftar di grup itu di-auto-provision jadi AM/teknisi,
+  // supaya command hashtag bisa dicoba tanpa mendaftarkan orang satu per satu.
+  //
+  // SATU SUMBER, persis seperti WA_SEND_ALLOWED_TARGETS di atas: daftarnya
+  // WA_DEV_GROUPS dari .env.prod. Menaruh JID yang sama di .env.dev membuat
+  // salinan kedua yang harus dirawat manual — dan menyimpangnya berarti grup
+  // yang TIDAK di-route ke dev ikut membuka gerbang identitasnya.
+  //
+  // Ditulis SESUDAH sebaran .env.dev supaya tak bisa ditimpa dari sana, dan blok
+  // env prod memang tak memuat kunci ini sama sekali — jadi produksi mustahil
+  // mewarisinya, bukan sekadar "jangan diisi".
+  // Dev bisu (WA_DEV_GROUPS kosong) → "" → isWaTestBypassGroup() selalu false.
+  WA_TEST_BYPASS_GROUP: devGroups,
   // Scheduler mati di dev: cron yang jalan dua kali (prod + dev) atas data
   // berbeda cuma bikin bingung, dan sebagian job menulis ke tabel digest.
   AGENT_SCHEDULE_ENABLED: "false",

@@ -94,13 +94,13 @@ export async function buildKsoWorkbook(opts: KsoExportOpts): Promise<Buffer> {
            v.basis_tes_memadai, v.porsi_kso, v.revenue_tumpang_tindih,
            v.tes_sheet_periode_banding, v.tes_ditagihkan_accurate, v.rasio_tagih_lapor,
            v.bulan_tertagih_accurate, v.tagih_pola_datar, v.status_penagihan
-    FROM kso_asset_produktivitas_v v
+    FROM kso_asset_produktivitas_mv v
     LEFT JOIN accurate_customer c ON c.id = v.account_id
     LEFT JOIN kso_asset a ON a.id = v.asset_id
     LEFT JOIN tes_aset ta ON ta.asset_id = v.asset_id
     LEFT JOIN faskes_rentang fr ON fr.account_id = v.account_id
     WHERE v.skema = ${skema}
-    ORDER BY c.name NULLS LAST, v.customer_raw, v.nama_alat`;
+    ORDER BY c.name NULLS LAST, v.customer_raw, v.nama_alat, v.asset_id`;
 
   // ── Sheet 2: REAGEN, inti permintaan ────────────────────────────────────────────
   // Dibaca dari kso_faskes_reagen_skema_v (155) — view yang sama dengan dialog detail,

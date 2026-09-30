@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { SkeletonCards, SkeletonLines } from "@/components/ui/loading";
 import { perspColor, perspLabel } from "@/components/karyawan/perspektif";
 
 // F157b — tab OKR di Karyawan 360.
@@ -73,7 +74,14 @@ export function OkrOverview() {
     return byKey;
   }, [data, q]);
 
-  if (state === "loading") return <p className="text-muted-foreground text-sm">Memuat…</p>;
+  if (state === "loading") {
+    return (
+      <div className="space-y-4">
+        <SkeletonCards count={4} />
+        <SkeletonLines rows={6} />
+      </div>
+    );
+  }
   if (state === "error" || !data) return <p className="text-muted-foreground">Gagal memuat OKR.</p>;
 
   const c = data.counts;

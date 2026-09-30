@@ -125,7 +125,9 @@ import {
   updateLeave,
   listPendingLeave,
   decidePendingLeave,
+  getLeave,
 } from "./repo/leave.js";
+import { checkBackup, notifyLeaveBackupInBackground } from "./repo/leave-backup.js";
 import {
   createInstallation,
   listInstallations,
@@ -175,10 +177,17 @@ import { execCommand, execAmRadar, execOutletMatrix, execDormantIntel, execKpiBa
 import { evaluateSalesAlerts } from "./repo/sales-analytics-alert-eval.js";
 import { computeNpk, getNpkScores, getNpkDetail, currentPeriod, type Period } from "./repo/npk.js";
 import { computeNpkAm, getNpkAmScores, getNpkAmDetail } from "./repo/npk-am.js";
+import { hitungKpiBulan, terapkanKpiBulan } from "./repo/kpi-measure.js";
 import {
-  getInsentifSelf, getInsentifList, getInsentifDetail,
+  getInsentifSelf, getInsentifList, getInsentifDetail, setLeadType as setInsentifLeadType,
+  listEffort as listInsentifEffort, setEffort as setInsentifEffort, periodeHppDefault,
+  semuaAmBerTier,
   computePeriode as computeInsentifPeriode,
 } from "./repo/insentif.js";
+import {
+  getApproval as getInsentifApproval, actApproval as actInsentifApproval,
+  type AksiApproval,
+} from "./repo/insentif-approval.js";
 import { listDepartments, listEmployees, getEmployee, getRaciMatrix, getMeasurements, saveMeasurements, getOkrOverview, getKpiCatalog, createEmployee, updateEmployee, deleteEmployee, replaceEmployeeDetail, getVoiceAggregate, getHodResolution, getOrgReporting, populateHodKey, getHods, type MeasurementInput, type EmployeeWrite, type SpineDetail } from "./repo/employee-spine.js";
 import { listKlaim, getKlaim, updateKategori, decideKlaim, markDibayar, createKlaimManual, deleteKlaim } from "./repo/doc-klaim.js";
 import {
@@ -188,6 +197,7 @@ import {
   listLine,
   buatDraftJikaLengkap,
   listResume,
+  nyatakanNihil,
   listStatement,
   matriksKelengkapan,
   putuskanResume,
@@ -199,6 +209,7 @@ import {
 } from "./repo/cashin.js";
 import { upsertMembers, listMembers, upsertDigests, listDigest, digestStats, upsertPola, listPola, generateRekap, generateResume, type MonitorMemberInput, type DigestInput, type PolaInput } from "./repo/monitor.js";
 import { runNotifTua } from "./repo/notiftua.js";
+import { runInvoiceReminder } from "./repo/faktur.js";
 import { runDailySummary } from "./repo/dailysummary.js";
 import { runWeeklyReport } from "./repo/weeklyreport.js";
 import { runDetectLeaveScan } from "./repo/detectleave.js";
@@ -229,7 +240,7 @@ import {
   isMirrorSort,
 } from "./repo/accurateMirror.js";
 import { listWarehouses, listStockBranch, stockBranchSummary } from "./repo/stock-branch.js";
-import { picFormSummary, listSopLangkah, listRaciPosisi, picFormKelengkapan, listDivisi, koordinasiGraf, raciKaryawanPosisi, setTautanManual, hapusTautanManual } from "./repo/picform.js";
+import { picFormSummary, listSopLangkah, listRaciPosisi, picFormKelengkapan, listDivisi, koordinasiGraf, pohonPekerjaan, raciKaryawanPosisi, setTautanManual, hapusTautanManual } from "./repo/picform.js";
 import { recordDelivery, recordEmail, recordAlert, listLogs } from "./repo/logs.js";
 import { renderSalesDocHtml, renderBriefingHtml } from "./repo/exportdoc.js";
 import { runHodDaily } from "./repo/hodreminder.js";
@@ -247,10 +258,10 @@ import {
   type WaMessageInput,
   type OpenclawRecord,
 } from "./repo/wa.js";
-import { aiBaseUrl, callAi } from "./ai.js";
+import { aiBaseUrl, callAi, statistikDegradasiAi } from "./ai.js";
 import { startScheduler, getScheduleStatus } from "./scheduler.js";
 import { signJwt, verifyJwt } from "./auth.js";
-import { verifyCredentials, createUser, countUsers, listAppUsers, setUserPassword, updateAppUser, deleteAppUser, getAppUserById, createUserFromRoster, generatePassword, changeOwnPassword } from "./repo/users.js";
+import { verifyCredentials, createUser, countUsers, listAppUsers, setUserPassword, updateAppUser, deleteAppUser, getAppUserById, createUserFromRoster, generatePassword, changeOwnPassword, normalizeLoginRole, LOGIN_ROLES } from "./repo/users.js";
 import {
   createRfidCartridgeClaim,
   listRfidCartridgeClaims,
@@ -578,6 +589,7 @@ import {
   submitSuggestion,
   listBufferConfig,
   upsertBufferConfig,
+  draftPurchaseOrder,
 } from "./repo/forecast.js";
 const app = new Hono();
 
@@ -690,7 +702,10 @@ app.use("*", async (c, next) => {
 
 app.get("/health", async (c) => {
   const db = isDbEnabled() ? (await pingDb()) ? "ok" : "down" : "disabled";
-  return c.json({ status: "ok", service: "wrg-api", db });
+  // ai_degradasi: berapa kali services/ai membalas template karena LLM gagal
+  // sejak proses ini hidup. Dipapar di sini supaya "AI diam-diam mati" bisa
+  // dipantau dari luar, tanpa menunggu ada orang membaca log. 0 = sehat.
+  return c.json({ status: "ok", service: "wrg-api", db, ai_degradasi: statistikDegradasiAi() });
 });
 
 // Kesegaran mirror Accurate. Sengaja BALIKAN 503 saat basi supaya bisa dipantau
@@ -825,7 +840,9 @@ app.post("/auth/register", async (c) => {
     return c.json({ error: "invalid JSON body" }, 400);
   }
   if (!body.email || !body.password) return c.json({ error: "email & password wajib" }, 400);
-  const user = await createUser(body.email, body.password, body.name, body.role ?? "user", body.title);
+  const role = normalizeLoginRole(body.role ?? "user");
+  if (!role) return c.json({ error: `role harus salah satu: ${LOGIN_ROLES.join(", ")}` }, 400);
+  const user = await createUser(body.email, body.password, body.name, role, body.title);
   return c.json({ user }, 201);
 });
 
@@ -881,7 +898,9 @@ app.post("/admin/users", async (c) => {
   if (!b.email) return c.json({ error: "email wajib" }, 400);
   const pw = b.password || (b.generate !== false ? generatePassword() : "");
   if (!pw) return c.json({ error: "password atau generate wajib" }, 400);
-  const user = await createUser(b.email, pw, b.name, b.role ?? "user", b.title);
+  const role = normalizeLoginRole(b.role ?? "user");
+  if (!role) return c.json({ error: `role harus salah satu: ${LOGIN_ROLES.join(", ")}` }, 400);
+  const user = await createUser(b.email, pw, b.name, role, b.title);
   if (b.wa_number) await updateAppUser(user.id, { wa_number: b.wa_number });
   // Kirim password via WA bila nomor diisi (sebelumnya tak pernah dikirim).
   const wa = b.wa_number ? waSummary(await sendViaWaGateway(b.wa_number, accessWaMsg(b.email, pw))) : undefined;
@@ -893,8 +912,10 @@ app.post("/admin/users/from-roster", async (c) => {
   let b: { am_id?: string; email?: string; role?: string } = {};
   try { b = await c.req.json(); } catch { /* opsional */ }
   if (!b.am_id || !b.email) return c.json({ error: "am_id & email wajib" }, 400);
+  const role = normalizeLoginRole(b.role ?? "user");
+  if (!role) return c.json({ error: `role harus salah satu: ${LOGIN_ROLES.join(", ")}` }, 400);
   const pw = generatePassword();
-  const r = await createUserFromRoster(b.am_id, b.email, pw, b.role ?? "user");
+  const r = await createUserFromRoster(b.am_id, b.email, pw, role);
   return r.ok ? c.json({ user: r.user, password: pw }, 201) : c.json({ error: r.error }, 400);
 });
 
@@ -902,6 +923,11 @@ app.patch("/admin/users/:id", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   let b: { name?: string; role?: string; title?: string | null; active?: boolean; wa_number?: string | null; am_id?: string | null; hod_key?: string | null } = {};
   try { b = await c.req.json(); } catch { /* opsional */ }
+  if (b.role !== undefined) {
+    const role = normalizeLoginRole(b.role);
+    if (!role) return c.json({ error: `role harus salah satu: ${LOGIN_ROLES.join(", ")}` }, 400);
+    b.role = role;
+  }
   const u = await updateAppUser(c.req.param("id"), b);
   return u ? c.json({ user: u }) : c.json({ error: "user tak ditemukan" }, 404);
 });
@@ -1355,6 +1381,19 @@ app.get("/ar/invoice/:no", async (c) => {
   if (!no) return c.json({ error: "no invoice wajib" }, 400);
   const r = await invoiceDetail(no, await resolveScope(c.req.header("x-user-id")));
   return c.json(r, r.ok ? 200 : 404);
+});
+
+// F91 — jalankan reminder jatuh tempo invoice manual (uji / kirim ulang).
+// body: {dry_run?} → dry_run = susun digest tanpa kirim WA & tanpa menandai.
+app.post("/ar/invoice-reminder/run", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { dry_run?: boolean } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    /* body opsional */
+  }
+  return c.json(await runInvoiceReminder({ dryRun: body.dry_run }));
 });
 
 // Sync Accurate (puller, pengganti sync_accurate.sh). Read-only ke API Accurate
@@ -2060,6 +2099,27 @@ app.post("/forecast/suggestions/:id/submit", async (c) => {
   return c.json(r, r.ok ? 200 : 400);
 });
 
+// F153 "Auto-Draft PR" — convert usulan yg sudah approved (F11) jadi PO
+// nyata (F13). Vendor & lini WAJIB dikirim (dipilih manusia di form), lihat
+// komentar draftPurchaseOrder (forecast.ts).
+app.post("/forecast/suggestions/:id/draft-po", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: Parameters<typeof draftPurchaseOrder>[1] | undefined;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body) return c.json({ error: "invalid JSON body" }, 400);
+  try {
+    const r = await draftPurchaseOrder(c.req.param("id"), body);
+    return c.json(r, r.ok ? 200 : 400);
+  } catch (e) {
+    if (e instanceof PurchaseOrderError) return c.json({ error: e.message }, e.status as 400 | 404 | 409);
+    throw e;
+  }
+});
+
 app.get("/forecast/buffer-config", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json({ rows: await listBufferConfig() });
@@ -2570,7 +2630,7 @@ app.delete("/holidays/:id", async (c) => {
 
 app.post("/leave", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let body: { am_id?: string; start_date?: string; end_date?: string; jenis?: string; keterangan?: string };
+  let body: { am_id?: string; start_date?: string; end_date?: string; jenis?: string; keterangan?: string; backup_am_id?: string | null };
   try {
     body = await c.req.json();
   } catch {
@@ -2582,16 +2642,22 @@ app.post("/leave", async (c) => {
   if (!["sakit", "cuti", "ijin"].includes(body.jenis)) {
     return c.json({ error: "jenis harus sakit|cuti|ijin" }, 400);
   }
-  return c.json(
-    await createLeave({
-      am_id: body.am_id,
-      start_date: body.start_date,
-      end_date: body.end_date,
-      jenis: body.jenis as "sakit" | "cuti" | "ijin",
-      keterangan: body.keterangan,
-    }),
-    201,
-  );
+  // F55 — pengganti (backup PIC): wajib utk cuti, harus aktif & tidak ikut cuti.
+  const backupAmId = body.backup_am_id?.trim() || null;
+  const backupErr = await checkBackup({
+    am_id: body.am_id, jenis: body.jenis, start_date: body.start_date, end_date: body.end_date, backup_am_id: backupAmId,
+  });
+  if (backupErr) return c.json({ error: backupErr }, 400);
+  const created = await createLeave({
+    am_id: body.am_id,
+    start_date: body.start_date,
+    end_date: body.end_date,
+    jenis: body.jenis as "sakit" | "cuti" | "ijin",
+    keterangan: body.keterangan,
+    backup_am_id: backupAmId,
+  });
+  if (backupAmId) notifyLeaveBackupInBackground(created.id);
+  return c.json(created, 201);
 });
 
 app.get("/leave", async (c) => {
@@ -2607,22 +2673,26 @@ app.get("/leave/pending", async (c) => {
   return c.json({ count: pending.length, pending });
 });
 
-// Approve/reject pending dari dashboard. body: {approve: boolean, decided_by?}.
+// Approve/reject pending dari dashboard. body: {approve: boolean, decided_by?, backup_am_id?}.
+// F55: approve cuti wajib menyertakan backup_am_id (pengganti).
 app.post("/leave/pending/:id/decide", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let body: { approve?: boolean; decided_by?: string } = {};
+  let body: { approve?: boolean; decided_by?: string; backup_am_id?: string | null } = {};
   try {
     body = await c.req.json();
   } catch {
     /* body opsional */
   }
-  const r = await decidePendingLeave(Number(c.req.param("id")), body.approve === true, body.decided_by);
-  return c.json(r, r.ok ? 200 : 404);
+  const r = await decidePendingLeave(
+    Number(c.req.param("id")), body.approve === true, body.decided_by, body.backup_am_id?.trim() || null,
+  );
+  if (r.leave_id) notifyLeaveBackupInBackground(r.leave_id);
+  return c.json(r, r.ok ? 200 : r.error === "not-found-or-decided" ? 404 : 400);
 });
 
 app.patch("/leave/:id", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let body: { start_date?: string; end_date?: string; jenis?: string; keterangan?: string };
+  let body: { start_date?: string; end_date?: string; jenis?: string; keterangan?: string; backup_am_id?: string | null };
   try {
     body = await c.req.json();
   } catch {
@@ -2631,12 +2701,28 @@ app.patch("/leave/:id", async (c) => {
   if (body.jenis && !["sakit", "cuti", "ijin"].includes(body.jenis)) {
     return c.json({ error: "jenis harus sakit|cuti|ijin" }, 400);
   }
+  // F55 — validasi pengganti terhadap keadaan SETELAH edit (field yang tak
+  // dikirim = nilai lama). backup_am_id tidak dikirim = tidak diubah.
+  const cur = await getLeave(c.req.param("id"));
+  if (!cur) return c.json({ updated: 0 }, 404);
+  const backupAmId = body.backup_am_id === undefined ? undefined : body.backup_am_id?.trim() || null;
+  const backupErr = await checkBackup({
+    am_id: cur.am_id,
+    jenis: body.jenis ?? cur.jenis,
+    start_date: body.start_date ?? cur.start_date,
+    end_date: body.end_date ?? cur.end_date,
+    backup_am_id: backupAmId === undefined ? cur.backup_am_id : backupAmId,
+  });
+  if (backupErr) return c.json({ error: backupErr }, 400);
   const r = await updateLeave(c.req.param("id"), {
     start_date: body.start_date,
     end_date: body.end_date,
     jenis: body.jenis as "sakit" | "cuti" | "ijin" | undefined,
     keterangan: body.keterangan,
+    backup_am_id: backupAmId,
   });
+  // Pengganti/rentang berubah → umumkan ulang (notifyLeaveBackup menahan yang tak berubah).
+  if (r.updated) notifyLeaveBackupInBackground(cur.id);
   return c.json(r, r.updated ? 200 : 404);
 });
 
@@ -3101,6 +3187,35 @@ const npkParams = (c: { req: { query: (k: string) => string | undefined } }): { 
   return { year, period };
 };
 
+// Isi kpi_measurement dari data operasional. GET = pratinjau (tak menulis),
+// POST = terapkan. Keduanya butuh x-service-token: ini pekerjaan ops, bukan
+// aksi pengguna — tak ada rute BFF-nya, dan memang tak perlu.
+app.get("/kpi/measure", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const svc = process.env.API_SERVICE_TOKEN;
+  if (svc && c.req.header("x-service-token") !== svc) return c.json({ error: "forbidden" }, 403);
+  const period = c.req.query("period");
+  if (!period) return c.json({ error: "query period=YYYY-MM wajib" }, 400);
+  try {
+    return c.json(await hitungKpiBulan(period));
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : "gagal" }, 400);
+  }
+});
+
+app.post("/kpi/measure", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const svc = process.env.API_SERVICE_TOKEN;
+  if (svc && c.req.header("x-service-token") !== svc) return c.json({ error: "forbidden" }, 403);
+  const period = c.req.query("period");
+  if (!period) return c.json({ error: "query period=YYYY-MM wajib" }, 400);
+  try {
+    return c.json(await terapkanKpiBulan(period));
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : "gagal" }, 400);
+  }
+});
+
 app.post("/npk/compute", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const svc = process.env.API_SERVICE_TOKEN;
@@ -3193,6 +3308,41 @@ app.get("/insentif/list", async (c) => {
   }
 });
 
+// Effort & Presales per AM per bulan (184). Dipakai sebagai pengali insentif, jadi
+// wewenangnya sama dengan penandaan lead: tim/semua, bukan AM sendiri. Menyetelnya
+// langsung memicu hitung ulang periode AM itu (lihat setEffort).
+app.get("/insentif/effort", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    return c.json(await listInsentifEffort(await scopeOf(c), insentifPeriode(c)));
+  } catch (e) {
+    const { status, body } = insentifErr(e);
+    return c.json(body, status);
+  }
+});
+
+app.post("/insentif/effort", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const body = (await c.req.json().catch(() => ({}))) as {
+    am_id?: string; effort?: number; presales?: number; catatan?: string;
+  };
+  const amId = String(body.am_id ?? "").trim();
+  if (!amId) return c.json({ error: "am_id wajib" }, 400);
+  const effort = Number(body.effort);
+  const presales = Number(body.presales ?? 0);
+  if (!Number.isFinite(effort) || !Number.isFinite(presales)) {
+    return c.json({ error: "effort & presales harus angka" }, 400);
+  }
+  try {
+    return c.json(await setInsentifEffort(await scopeOf(c), {
+      amId, periode: insentifPeriode(c), effort, presales, catatan: body.catatan ?? null,
+    }));
+  } catch (e) {
+    const { status, body: err } = insentifErr(e);
+    return c.json(err, status);
+  }
+});
+
 // Hitung ulang satu periode. Operasi ops.
 //
 // Pagar yang SELALU berlaku: superuser (dari sesi via x-user-id). Pagar service-token
@@ -3212,14 +3362,82 @@ app.post("/insentif/compute", async (c) => {
     am_ids?: unknown;
     effort?: Record<string, { effort: number; presales: number }>;
     apply?: boolean;
+    paksa?: boolean;
   };
+  // am_ids kosong = SEMUA AM yang punya tier. Sebelumnya berarti "tak menghitung
+  // siapa pun" dan endpoint-nya balas nol tanpa keluhan — bentuk gagal-senyap yang
+  // paling mahal di fitur ini, karena "0 transaksi" terlihat seperti jawaban.
+  const amIds = Array.isArray(body.am_ids) && body.am_ids.length
+    ? body.am_ids.map(String)
+    : await semuaAmBerTier();
   return c.json(await computeInsentifPeriode({
     periode: insentifPeriode(c),
-    periodeHpp: String(body.periode_hpp ?? "H2-2026"),
-    amIds: Array.isArray(body.am_ids) ? body.am_ids.map(String) : [],
+    periodeHpp: String(body.periode_hpp ?? periodeHppDefault()),
+    amIds,
     effortPerAm: new Map(Object.entries(body.effort ?? {})),
     apply: body.apply === true,
+    paksa: body.paksa === true,
   }));
+});
+
+// Tandai tipe lead satu invoice (HoD/Finance/Direktur). Semua pagar ada di lapisan data
+// (setLeadType): level akses, scope baris, larangan menandai baris sendiri, dan status
+// rekap yang masih boleh diubah. Endpoint ini sengaja tidak menyimpulkan izin sendiri.
+app.post("/insentif/:amId/lead", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const body = (await c.req.json().catch(() => ({}))) as {
+    invoice_no?: string;
+    lead_type?: string;
+    catatan?: string;
+  };
+  const invoiceNo = String(body.invoice_no ?? "").trim();
+  const leadType = String(body.lead_type ?? "").trim().toUpperCase();
+  if (!invoiceNo) return c.json({ error: "invoice_no wajib" }, 400);
+  if (!["A", "B", "C"].includes(leadType)) return c.json({ error: "lead_type harus A, B, atau C" }, 400);
+  try {
+    return c.json(await setInsentifLeadType(await scopeOf(c), {
+      amId: c.req.param("amId"),
+      periode: insentifPeriode(c),
+      invoiceNo,
+      leadType: leadType as "A" | "B" | "C",
+      catatan: body.catatan ?? null,
+    }));
+  } catch (e) {
+    const { status, body: err } = insentifErr(e);
+    return c.json(err, status);
+  }
+});
+
+// Rantai persetujuan 7 langkah (093 + 183). Wewenang per langkah dibaca dari tabel
+// insentif_approval_step, bukan dari kode; pemisahan kewenangan ditegakkan di DB.
+app.get("/insentif/:amId/approval", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    return c.json(await getInsentifApproval(await scopeOf(c), c.req.param("amId"), insentifPeriode(c)));
+  } catch (e) {
+    const { status, body } = insentifErr(e);
+    return c.json(body, status);
+  }
+});
+
+app.post("/insentif/:amId/approval", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const body = (await c.req.json().catch(() => ({}))) as { aksi?: string; catatan?: string };
+  const aksi = String(body.aksi ?? "").trim();
+  if (!["maju", "tolak", "buka"].includes(aksi)) {
+    return c.json({ error: "aksi harus maju, tolak, atau buka" }, 400);
+  }
+  try {
+    return c.json(await actInsentifApproval(await scopeOf(c), {
+      amId: c.req.param("amId"),
+      periode: insentifPeriode(c),
+      aksi: aksi as AksiApproval,
+      catatan: body.catatan ?? null,
+    }));
+  } catch (e) {
+    const { status, body: err } = insentifErr(e);
+    return c.json(err, status);
+  }
 });
 
 // :amId ditaruh PALING BAWAH supaya tidak menelan /insentif/self & /insentif/list.
@@ -3586,6 +3804,22 @@ app.get("/cashin/resume/daftar", async (c) => {
 // yang semuanya masuk lewat unggahan web (tak ada #KORAN yang menjadwalkan
 // apa pun). Tanpa ini, tanggal-tanggal itu tak punya jalan menuju resume sama
 // sekali kecuali menunggu file baru kebetulan datang.
+// Tandai satu rekening NIHIL (tanpa transaksi) untuk satu tanggal — tombol di
+// menu /uang-masuk. Jalur kedua selain hashtag WA; penulis datanya SATU
+// (nyatakanNihil) supaya kedua jalur tak bisa menyimpang.
+app.post("/cashin/statement/nihil", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const body = await c.req.json().catch(() => ({}));
+  const label = String(body.label_file ?? "").trim();
+  if (!label) return c.json({ error: "field 'label_file' wajib" }, 400);
+  // 'oleh' WAJIB — pernyataan nihil tak bisa diverifikasi mesin, jadi ia harus
+  // bisa ditelusuri ke orangnya. Penjaga CHECK di migrasi 179 menolak yang kosong.
+  const oleh = String(body.oleh ?? "").trim();
+  if (!oleh) return c.json({ error: "field 'oleh' wajib (siapa yang menyatakan)" }, 400);
+  const r = await nyatakanNihil(label, oleh, { tanggal: body.tanggal ?? null });
+  return r.ok ? c.json(r) : c.json(r, 400);
+});
+
 app.post("/cashin/resume/draft", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const body = await c.req.json().catch(() => ({}));
@@ -4448,6 +4682,15 @@ app.get("/picform/koordinasi", async (c) => {
   return c.json(await koordinasiGraf({ divisi: divisi ?? undefined }));
 });
 
+// Pohon pekerjaan (divisi → posisi → tugas, dan divisi → SOP → langkah) —
+// pengisi tab "Pohon Pekerjaan" di /network. Sengaja TANPA paginasi: lihat
+// alasannya di pohonPekerjaan() (repo/picform.ts) — pohon yang dipotong memberi
+// hitungan cabang yang salah tanpa bersuara.
+app.get("/picform/pohon", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await pohonPekerjaan());
+});
+
 // Rantai orang → posisi → proses + karyawan yang belum tertaut beserta
 // alasannya (employee_posisi_gap, ditulis posisi-employee-match.mjs).
 app.get("/picform/raci-karyawan", async (c) => {
@@ -4680,6 +4923,156 @@ app.post("/wa/messages", async (c) => {
 // openclaw (single | array | {messages:[...]} | {events:[...]}). Idempoten
 // (skip duplikat by input_hash). Jika WA_WEBHOOK_SECRET di-set, header
 // x-wa-secret wajib cocok.
+// ── F-CASHIN Mitigasi Uang Masuk Harian (rekening koran) ─────────────────────
+// Ingest lewat dua jalur: WA #KORAN (inbound.ts) dan upload di menu web (POST
+// /cashin/upload). Klasifikasi + pencocokan puteran jalan otomatis tiap ingest.
+app.post("/cashin/upload", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const body = await c.req.json().catch(() => ({}));
+  const files = Array.isArray(body.files) ? body.files : null;
+  if (!files || !files.length) {
+    return c.json({ error: "field 'files' wajib array berisi {file_nama, pdf_base64}" }, 400);
+  }
+  // Diproses berurutan, bukan paralel: pencocokan pasangan puteran membaca
+  // seluruh baris tanggal itu, jadi dua ingest yang jalan bersamaan bisa
+  // saling menimpa hasil pasangannya.
+  const hasil = [];
+  for (const f of files) {
+    if (!f?.pdf_base64) {
+      hasil.push({ ok: false, file_nama: f?.file_nama ?? null, error: "pdf_base64 kosong" });
+      continue;
+    }
+    const r = await ingestKoran({
+      pdf_base64: String(f.pdf_base64),
+      file_nama: f.file_nama ?? null,
+      sumber: "web",
+    });
+    hasil.push("ok" in r && r.ok === true ? r : { ok: false, file_nama: f.file_nama ?? null, error: (r as { error?: string }).error });
+  }
+  return c.json({ hasil });
+});
+
+app.get("/cashin/harian", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const tanggal = c.req.query("tanggal") ?? wibDate();
+  return c.json({ ringkasan: await ringkasanHarian(tanggal), statement: await listStatement(tanggal) });
+});
+
+app.get("/cashin/resume", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const tanggal = c.req.query("tanggal") ?? wibDate();
+  const r = await ringkasanHarian(tanggal);
+  return c.json({ tanggal, teks: formatResume(r), ringkasan: r });
+});
+
+app.get("/cashin/lines", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(
+    await listLine({
+      tanggal: c.req.query("tanggal") ?? undefined,
+      kategori: c.req.query("kategori") ?? undefined,
+      bank_account_id: c.req.query("bank_account_id") ?? undefined,
+      q: c.req.query("q") ?? undefined,
+      sort: c.req.query("sort") ?? undefined,
+      dir: c.req.query("dir") ?? undefined,
+      limit: c.req.query("limit") ? Number(c.req.query("limit")) : undefined,
+      offset: c.req.query("offset") ? Number(c.req.query("offset")) : undefined,
+    }),
+  );
+});
+
+app.patch("/cashin/lines/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const body = await c.req.json().catch(() => ({}));
+  const result = await triageLine(c.req.param("id"), String(body.kategori ?? ""), body.catatan ?? null);
+  if (!result.ok) return c.json({ error: result.error }, 400);
+  return c.json(result);
+});
+
+app.get("/cashin/accounts", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json({ accounts: await listAccount() });
+});
+
+app.patch("/cashin/accounts/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const body = await c.req.json().catch(() => ({}));
+  const result = await updateAccount(c.req.param("id"), body);
+  if (!result.ok) return c.json({ error: result.error }, 400);
+  return c.json(result);
+});
+
+// Gerbang konfirmasi Finance (migrasi 178). Resume HANYA sampai ke Direktur
+// lewat keputusan 'ya' di sini atau lewat balasan WA — tidak ada jalur ketiga.
+app.get("/cashin/resume/daftar", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const limit = c.req.query("limit") ? Number(c.req.query("limit")) : undefined;
+  return c.json({ resume: await listResume(limit) });
+});
+
+// Susun draft resume SEKARANG untuk satu tanggal, tanpa menunggu periode
+// hening. Tiga pemakaian nyata: (a) tombol "susun resume" di menu web,
+// (b) tanggal yang timernya hilang karena api sempat restart, (c) statement
+// yang semuanya masuk lewat unggahan web (tak ada #KORAN yang menjadwalkan
+// apa pun). Tanpa ini, tanggal-tanggal itu tak punya jalan menuju resume sama
+// sekali kecuali menunggu file baru kebetulan datang.
+// Tandai satu rekening NIHIL (tanpa transaksi) untuk satu tanggal — tombol di
+// menu /uang-masuk. Jalur kedua selain hashtag WA; penulis datanya SATU
+// (nyatakanNihil) supaya kedua jalur tak bisa menyimpang.
+app.post("/cashin/statement/nihil", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const body = await c.req.json().catch(() => ({}));
+  const label = String(body.label_file ?? "").trim();
+  if (!label) return c.json({ error: "field 'label_file' wajib" }, 400);
+  // 'oleh' WAJIB — pernyataan nihil tak bisa diverifikasi mesin, jadi ia harus
+  // bisa ditelusuri ke orangnya. Penjaga CHECK di migrasi 179 menolak yang kosong.
+  const oleh = String(body.oleh ?? "").trim();
+  if (!oleh) return c.json({ error: "field 'oleh' wajib (siapa yang menyatakan)" }, 400);
+  const r = await nyatakanNihil(label, oleh, { tanggal: body.tanggal ?? null });
+  return r.ok ? c.json(r) : c.json(r, 400);
+});
+
+app.post("/cashin/resume/draft", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const body = await c.req.json().catch(() => ({}));
+  const tanggal = String(body.tanggal ?? "").trim() || wibDate();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(tanggal)) {
+    return c.json({ error: "field 'tanggal' harus YYYY-MM-DD" }, 400);
+  }
+  const r = await buatDraftJikaLengkap(tanggal, body.grup_jid ?? null, { paksa: true });
+  return c.json({ tanggal, ...r });
+});
+
+app.post("/cashin/resume/:kode/putuskan", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const body = await c.req.json().catch(() => ({}));
+  const keputusan = String(body.keputusan ?? "").toLowerCase();
+  if (keputusan !== "ya" && keputusan !== "tidak") {
+    return c.json({ error: "field 'keputusan' wajib 'ya' atau 'tidak'" }, 400);
+  }
+  // 'oleh' WAJIB: kolomnya dipakai sebagai jejak siapa menyetujui angka hari itu.
+  // Default anonim akan membuat jejak itu bohong tanpa terlihat bohong.
+  const oleh = String(body.oleh ?? "").trim();
+  if (!oleh) return c.json({ error: "field 'oleh' wajib (nama/email pemutus)" }, 400);
+  const r = await putuskanResume(c.req.param("kode"), keputusan as "ya" | "tidak", oleh, {
+    alasan: body.alasan ?? null,
+  });
+  return r.ok ? c.json(r) : c.json(r, 400);
+});
+
+// Catch-up manual pemindai balasan konfirmasi (selain auto dari webhook WA).
+app.post("/cashin/konfirmasi/scan", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await scanKonfirmasiResume());
+});
+
+app.get("/cashin/kelengkapan", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const sampai = c.req.query("sampai") ?? wibDate();
+  const dari = c.req.query("dari") ?? new Date(new Date(`${sampai}T00:00:00Z`).getTime() - 29 * 86400000).toISOString().slice(0, 10);
+  return c.json({ dari, sampai, ...(await matriksKelengkapan(dari, sampai)) });
+});
+
 app.post("/webhooks/wa", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const secret = process.env.WA_WEBHOOK_SECRET;

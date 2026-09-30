@@ -2,7 +2,10 @@ import { PageHeader } from "@/components/dashboard/page-header";
 import { EmptyState } from "@/components/ui/empty-state";
 import { InsentifPeriodePicker } from "@/components/insentif/insentif-periode-picker";
 import { InsentifTimView } from "@/components/insentif/insentif-tim-view";
-import { periodeLabel, periodeSah, type TimResult } from "@/components/insentif/insentif-format";
+import { InsentifEffortPanel } from "@/components/insentif/insentif-effort-panel";
+import {
+  periodeLabel, periodeSah, type BarisEffort, type TimResult,
+} from "@/components/insentif/insentif-format";
 import { sessionUser } from "@/lib/admin-guard";
 import { gatewayFetch } from "@/lib/gateway";
 
@@ -24,6 +27,21 @@ async function fetchList(userId: string, periode: string): Promise<{ data: TimRe
     return { data: (await res.json()) as TimResult, status: res.status };
   } catch {
     return { data: null, status: 502 };
+  }
+}
+
+// Panel Effort/Presales dimuat terpisah dan boleh gagal (mis. migrasi 184 belum
+// ter-apply): rekapnya tetap tampil, panelnya saja yang absen.
+async function fetchEffort(userId: string, periode: string): Promise<BarisEffort[]> {
+  try {
+    const res = await gatewayFetch(`/insentif/effort?periode=${encodeURIComponent(periode)}`, {
+      headers: { "x-user-id": userId },
+    });
+    if (!res.ok) return [];
+    const j = (await res.json()) as { baris?: BarisEffort[] };
+    return j.baris ?? [];
+  } catch {
+    return [];
   }
 }
 
@@ -53,6 +71,7 @@ export default async function InsentifTimPage({
   }
 
   const { data, status } = await fetchList(me.id, periode);
+  const effort = status === 403 ? [] : await fetchEffort(me.id, periode);
 
   // 403 dari backend = memang bukan hak akun ini. Bisa terjadi walau menunya tampil,
   // mis. akun HoD yang hod_territory-nya belum ter-map → server tak bisa memastikan
@@ -85,6 +104,11 @@ export default async function InsentifTimPage({
     <div className="flex flex-col gap-5">
       {header}
       <InsentifTimView data={data} />
+      <InsentifEffortPanel
+        periode={periode}
+        baris={effort}
+        bisaHitungUlang={me.role === "admin" || me.superuser === true}
+      />
     </div>
   );
 }

@@ -1683,9 +1683,19 @@ sys.stdout.write(PATTERN.sub("", sys.stdin.read()))
         if [ -n "$MEDIA_PATH" ] && [ -f "$MEDIA_PATH" ] && \
            [ -n "$MEDIA_TYPE" ] && [ "${MEDIA_TYPE#image/}" != "$MEDIA_TYPE" ]; then
           FIRST_LINE=$(echo "$BODY" | head -1)
-          # `<media:image>` is openclaw placeholder untuk media tanpa caption.
+          # `<media:...>` is openclaw placeholder untuk media tanpa caption.
           # Treat as no-caption — skip photo-followup trigger.
-          if [ "$FIRST_LINE" = "<media:image>" ]; then
+          #
+          # 22 Sep 2026: bentuk penandanya TIDAK tetap. Sejak openclaw 2026.9.5
+          # media tanpa caption datang dengan body KOSONG (aman — jatuh ke hasil
+          # yang sama), tapi bentuk lain seperti `<media:image/jpeg>` tidak sama
+          # persis dengan `<media:image>` sehingga lolos sebagai "caption" dan
+          # bisa memicu photo-followup PALSU saat ada baris pending. Cocokkan
+          # polanya, bukan satu string; spasi-saja juga dianggap tanpa caption.
+          case "$FIRST_LINE" in
+            "<media:"*">") FIRST_LINE="" ;;
+          esac
+          if [ -z "$(printf '%s' "$FIRST_LINE" | tr -d '[:space:]')" ]; then
             FIRST_LINE=""
           fi
           if echo "$FIRST_LINE" | grep -qE '^[[:space:]]*#?[[:space:]]*[0-9]+[.):]?'; then

@@ -5,6 +5,37 @@ import { isAmRole } from "./access-scope.js";
 
 // app_user — identitas pengguna dashboard. Verifikasi kredensial untuk login.
 
+// ── Role login (app_user.role) — SUMBER KEBENARAN ────────────────────────────
+// Ini BUKAN izin per-menu: izin Aktif/Buat/Ubah/Hapus/Lihat datang dari matriks
+// Akses Grup (access_permission, lihat 044_rbac.sql). Role di sini hanya dua
+// pengecualian yang dibaca kode:
+//   admin    → bypass seluruh matriks (perms.ts can()/canOrLegacy, requireAdmin)
+//   direktur → gate Executive, Insentif, NPK, approval Fund Request & PO,
+//              edit target WatchPoint, Purchase Forecast, Pricebook
+//   user     → nilai netral (default). TIDAK pernah dicek — akses murni dari grup.
+// 'viewer' DIHAPUS (migrasi 181): namanya menjanjikan read-only yang tak pernah
+// ditegakkan di kode, jadi menyesatkan admin yang mengaturnya.
+export const LOGIN_ROLES = ["admin", "direktur", "user"] as const;
+export type LoginRole = (typeof LOGIN_ROLES)[number];
+
+// Normalisasi + tolak nilai di luar daftar. WAJIB dipakai di semua jalur tulis:
+// perms.ts membandingkan `role === "admin"` PERSIS (tanpa trim/lowercase)
+// sedangkan file *-access.ts pakai norm() — tanpa gerbang ini satu typo "Admin"
+// bikin orang lolos gate Insentif tapi gagal di can(), beda-beda per menu.
+export function normalizeLoginRole(v: unknown): LoginRole | null {
+  const s = String(v ?? "").trim().toLowerCase();
+  return (LOGIN_ROLES as readonly string[]).includes(s) ? (s as LoginRole) : null;
+}
+
+// Varian melempar — dipakai di repo sebagai palang terakhir. Rute HTTP sudah
+// memvalidasi lebih dulu (400), jadi lemparan di sini hanya menjaring pemanggil
+// internal (seed/script) supaya nilai ngawur tak pernah mendarat di kolom role.
+function assertLoginRole(v: unknown): LoginRole {
+  const r = normalizeLoginRole(v);
+  if (!r) throw new Error(`role tidak dikenal: "${String(v)}" (pilihan: ${LOGIN_ROLES.join(", ")})`);
+  return r;
+}
+
 export interface AppUser {
   id: string;
   email: string;
@@ -41,9 +72,10 @@ export async function createUser(
   title?: string,
 ): Promise<AppUser> {
   const sql = db();
+  const roleOk = assertLoginRole(role);
   const rows = await sql`
     INSERT INTO app_user (email, password_hash, name, role, title)
-    VALUES (${email.toLowerCase()}, ${hashPassword(password)}, ${name ?? null}, ${role}, ${title ?? null})
+    VALUES (${email.toLowerCase()}, ${hashPassword(password)}, ${name ?? null}, ${roleOk}, ${title ?? null})
     ON CONFLICT (email) DO NOTHING
     RETURNING id, email, name, role, title
   `;
@@ -158,10 +190,11 @@ export async function updateAppUser(
   patch: { name?: string | null; role?: string; title?: string | null; active?: boolean; wa_number?: string | null; am_id?: string | null; hod_key?: string | null },
 ): Promise<AppUserRow | null> {
   const sql = db();
+  const roleOk = patch.role === undefined ? null : assertLoginRole(patch.role);
   await sql`
     UPDATE app_user SET
       name = COALESCE(${patch.name ?? null}, name),
-      role = COALESCE(${patch.role ?? null}, role),
+      role = COALESCE(${roleOk}, role),
       title = ${patch.title === undefined ? sql`title` : patch.title},
       active = COALESCE(${patch.active ?? null}, active),
       wa_number = ${patch.wa_number === undefined ? sql`wa_number` : patch.wa_number},
@@ -186,6 +219,7 @@ export async function getAppUserById(id: string): Promise<AppUserRow | null> {
 // Bikin akun login dari roster master_user (by am_id) — butuh email.
 export async function createUserFromRoster(amId: string, email: string, password: string, role = "user"): Promise<{ ok: boolean; error?: string; user?: AppUser }> {
   const sql = db();
+  const roleOk = assertLoginRole(role);
   const [m] = await sql`SELECT nama, panggilan, role AS roster_role, wa_number FROM master_user WHERE am_id = ${amId}`;
   if (!m) return { ok: false, error: "am_id tak ada di roster" };
   const name = m.nama ? String(m.nama) : (m.panggilan ? String(m.panggilan) : email);
@@ -195,7 +229,7 @@ export async function createUserFromRoster(amId: string, email: string, password
   const amIdForLogin = isAmRole(m.roster_role) ? amId : null;
   const rows = await sql`
     INSERT INTO app_user (email, password_hash, name, role, wa_number, am_id)
-    VALUES (${email.toLowerCase()}, ${hashPassword(password)}, ${name}, ${role}, ${m.wa_number ?? null}, ${amIdForLogin})
+    VALUES (${email.toLowerCase()}, ${hashPassword(password)}, ${name}, ${roleOk}, ${m.wa_number ?? null}, ${amIdForLogin})
     ON CONFLICT (email) DO NOTHING
     RETURNING id, email, name, role, title
   `;

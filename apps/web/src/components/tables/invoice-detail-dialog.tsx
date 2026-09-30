@@ -1,12 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Loader2 } from "lucide-react";
-
 import { Dialog, DialogBody, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { LoadingInline } from "@/components/ui/loading";
 
 interface InvItem { line_no: number | null; name: string; qty: number | null; unit: string | null; unit_price: number; discount: number; total: number }
-interface InvHead { number: string; customer_name: string; tanggal: string | null; total: number; taxable: number; tax: number; paid: number; outstanding: number; status: string | null; am: string | null; cabang: string | null }
+interface InvHead { number: string; customer_name: string; tanggal: string | null; total: number; taxable: number; tax: number; paid: number; outstanding: number; status: string | null; am: string | null; cabang: string | null; state?: "OPEN" | "PAID" | "OVERDUE"; due_date?: string | null; days_to_due?: number | null }
 interface InvDetail { ok: boolean; invoice: InvHead | null; items: InvItem[] }
 
 const rp = (n: number) => new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(n);
@@ -15,6 +14,13 @@ const tgl = (v: string | null) => {
   const [y, m, d] = v.split("-");
   return y && m && d ? `${d}/${m}/${y}` : v;
 };
+// F91 — status turunan API (deriveInvoiceStatus); fallback ke status mirror mentah.
+const stateLabel = (inv: InvHead) =>
+  inv.state === "OVERDUE"
+    ? `OVERDUE ${-(inv.days_to_due ?? 0)} hari`
+    : inv.state === "PAID"
+      ? "LUNAS"
+      : (inv.state ?? inv.status ?? "—");
 
 // Dialog detail satu invoice — dibuka dari tabel "Semua Invoice" & dari rincian
 // invoice per-customer. Fetch on-demand via BFF /api/ar/invoice/:no.
@@ -44,13 +50,14 @@ export function InvoiceDetailDialog({ no, onClose }: { no: string | null; onClos
           <DialogTitle className="break-words">{inv?.customer_name ?? "Detail invoice"}</DialogTitle>
           {inv && (
             <div className="text-muted-foreground text-sm">
-              {inv.am ?? "—"}{inv.cabang ? ` · ${inv.cabang}` : ""} · tanggal {tgl(inv.tanggal)} · {inv.status ?? "—"}
+              {inv.am ?? "—"}{inv.cabang ? ` · ${inv.cabang}` : ""} · tanggal {tgl(inv.tanggal)} · jatuh tempo {tgl(inv.due_date ?? null)} ·{" "}
+              <span className={inv.state === "OVERDUE" ? "font-medium text-rose-600" : undefined}>{stateLabel(inv)}</span>
             </div>
           )}
         </DialogHeader>
         <DialogBody>
           {no && data === null && !err ? (
-            <div className="text-muted-foreground flex items-center gap-2 py-3 text-xs"><Loader2 className="size-3.5 animate-spin" /> Memuat…</div>
+            <LoadingInline className="py-3 text-xs" />
           ) : err || (data && !data.ok) ? (
             <div className="text-muted-foreground py-3 text-xs">Detail invoice tidak ditemukan.</div>
           ) : inv ? (

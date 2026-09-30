@@ -57,7 +57,7 @@ test("regex penyaring tak menjaring teks tanpa hashtag", () => {
 });
 
 test("hashtag yang tak dikenal tetap 'none'", () => {
-  for (const t of ["#ticket ada kendala", "#forecast q4", "#ttf 123", "#sj 456", "#asetbaru"]) {
+  for (const t of ["#ticket ada kendala", "#forecast q4", "#ttf 123", "#sj 456", "#asetbaru", "#fakturis minta faktur", "#FAKTUR123"]) {
     assert.equal(detectKind(t), "none", `${t} seharusnya none`);
   }
 });

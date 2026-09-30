@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { SkeletonCardGrid } from "@/components/ui/loading";
 
 interface Candidate {
   deal_id: string;
@@ -152,7 +153,7 @@ export default function HitlPage() {
 
       {error && <p className="text-destructive text-sm">{error}</p>}
       {loading ? (
-        <p className="text-muted-foreground">Memuat…</p>
+        <SkeletonCardGrid count={4} />
       ) : items.length === 0 ? (
         <p className="text-muted-foreground">Tidak ada item pending. 🎉</p>
       ) : (

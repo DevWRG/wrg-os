@@ -42,6 +42,20 @@ export async function POST(req: Request, ctx: { params: Promise<{ path?: string[
   // `oleh` sengaja DITIMPA dari sesi, bukan diambil dari body: kolom itu jejak
   // audit "siapa menyetujui angka hari itu". Kalau nilainya dikirim klien,
   // jejaknya bisa ditulis atas nama orang lain dan tetap terlihat sah.
+  // Menyatakan nihil = menulis data keuangan atas nama seseorang. Sama seperti
+  // keputusan resume: butuh izin edit, dan `oleh` diambil dari SESI, bukan body.
+  if (sub === "statement/nihil") {
+    if (!can(me, "uang-masuk", "edit")) {
+      return Response.json({ error: "tidak berwenang menyatakan nihil" }, { status: 403 });
+    }
+    try {
+      const parsed = JSON.parse(body || "{}") as Record<string, unknown>;
+      parsed.oleh = me.name?.trim() || me.email;
+      body = JSON.stringify(parsed);
+    } catch {
+      return Response.json({ error: "invalid JSON body" }, { status: 400 });
+    }
+  }
   if (sub === "resume/draft" && !can(me, "uang-masuk", "edit")) {
     // Menyusun draft = mengirim pesan ke grup Finance. Sama seperti keputusan
     // resume, login saja tidak cukup.

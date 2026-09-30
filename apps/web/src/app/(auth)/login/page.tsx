@@ -6,6 +6,7 @@ import Link from "next/link";
 
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { PasswordInput } from "@/components/ui/password-input";
 
 function LoginForm() {
   const router = useRouter();
@@ -60,9 +61,8 @@ function LoginForm() {
 
         <div className="grid gap-1.5">
           <Label htmlFor="password" className="sr-only">Password</Label>
-          <Input
+          <PasswordInput
             id="password"
-            type="password"
             placeholder="Password"
             autoComplete="current-password"
             required

@@ -1,6 +1,6 @@
 import { gatewayFetch } from "@/lib/gateway";
 import { PageHeader } from "@/components/dashboard/page-header";
-import { RaciMatrix, type RaciMatrixData } from "@/components/people/raci-matrix";
+import { RaciMatrix, type PosisiIndex, type RaciMatrixData } from "@/components/people/raci-matrix";
 import { RaciPosisiBridge, type RaciKaryawan } from "@/components/picform/raci-posisi-bridge";
 import { sessionUser } from "@/lib/admin-guard";
 import { canEditRaciPeta } from "@/lib/raci-peta-access";
@@ -29,6 +29,21 @@ export default async function RaciMatrixPage() {
   // tanpa izin tak disuguhi kontrol yang pasti ditolak server.
   const bolehEdit = canEditRaciPeta(me);
 
+  // Posisi form PIC diindeks per karyawan supaya matriks bisa MENAMPILKANNYA
+  // tanpa ikut mencampur sumber sel R/A/C/I. Kalau panggilan jembatan gagal,
+  // prop-nya undefined dan matriks kembali persis seperti sebelum F157.
+  const posisiIdx: PosisiIndex | undefined = jembatan
+    ? jembatan.rantai.reduce<PosisiIndex>((acc, r) => {
+        (acc[r.employee_id] ??= []).push({ nama: r.posisi, proses: r.proses });
+        return acc;
+      }, {})
+    : undefined;
+
+  // Label dept diambil dari data matriks (satu-satunya yang membawanya) supaya
+  // kedua bagian halaman menyebut dept yang sama dengan nama yang sama.
+  const labelDept: Record<string, string> = {};
+  for (const p of data?.people ?? []) if (p.dept && p.dept_label) labelDept[p.dept] = p.dept_label;
+
   return (
     <>
       <PageHeader
@@ -37,11 +52,11 @@ export default async function RaciMatrixPage() {
       />
       <div className="space-y-6">
         {data ? (
-          <RaciMatrix data={data} />
+          <RaciMatrix data={data} posisi={posisiIdx} />
         ) : (
           <p className="text-muted-foreground">Data tidak tersedia. Pastikan <code>apps/api</code> jalan &amp; spine ter-seed.</p>
         )}
-        <RaciPosisiBridge data={jembatan} bolehEdit={bolehEdit} />
+        <RaciPosisiBridge data={jembatan} bolehEdit={bolehEdit} labelDept={labelDept} />
       </div>
     </>
   );

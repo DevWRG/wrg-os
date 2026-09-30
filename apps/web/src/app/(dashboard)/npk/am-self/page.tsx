@@ -44,7 +44,7 @@ export default async function NpkAmSelfPage({
   if (!me?.am_id) {
     return (
       <>
-        <PageHeader title="NPK Saya" description="Nilai Prestasi Karyawan Anda." />
+        <PageHeader title="NPK AM (Saya)" description="Nilai Prestasi Karyawan Anda." />
         <EmptyState
           title="Khusus AM / Sales"
           description="Menu ini menampilkan NPK untuk akun AM/sales. Akun Anda belum tertaut ke data AM (am_id). Hubungi admin bila ini keliru."
@@ -69,7 +69,7 @@ export default async function NpkAmSelfPage({
   return (
     <div className="flex flex-col gap-5">
       <PageHeader
-        title="NPK Saya"
+        title="NPK AM (Saya)"
         description="Nilai Prestasi Karyawan Anda — 7 aspek SK Pasal 3, per semester."
         action={<NpkPeriodPicker year={activeYear} period={activePeriod} />}
       />

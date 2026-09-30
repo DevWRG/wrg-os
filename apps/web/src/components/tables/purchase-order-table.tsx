@@ -2,11 +2,12 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronDown, ChevronRight, Loader2, Plus, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Plus, Trash2 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
+import { LoadingInline } from "@/components/ui/loading";
 import { useTableUrl } from "@/lib/use-table-url";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -156,6 +157,35 @@ const STATUS_FILTERS: { key: string; label: string }[] = [
   { key: "received", label: "Diterima" },
   { key: "cancelled", label: "Batal" },
 ];
+
+// Tombol filter status — komponen TERPISAH dari PurchaseOrderTable (dulu
+// nempel di dalamnya) supaya tetap tampil walau filter aktif menghasilkan 0
+// baris. page.tsx cuma merender PurchaseOrderTable saat matched > 0 — kalau
+// tombolnya ikut di dalam situ, pilih tab status yang datanya kosong bikin
+// SATU-SATUNYA cara reset filter ikut hilang (user terjebak, harus edit URL
+// manual). Dirender page.tsx di luar percabangan EmptyState/tabel.
+export function PoStatusFilter({ q, status }: { q: string; status: string }) {
+  const { push } = useTableUrl(q);
+  return (
+    <div className="mb-3 flex flex-wrap gap-2">
+      {STATUS_FILTERS.map((f) => (
+        <button
+          key={f.key || "all"}
+          type="button"
+          onClick={() => push({ status: f.key || null, page: null })}
+          className={
+            "rounded-lg border px-3 py-1 text-sm transition-colors " +
+            (status === f.key
+              ? "border-primary bg-primary-soft text-primary font-medium"
+              : "border-border bg-card text-foreground hover:border-primary/40 hover:bg-muted")
+          }
+        >
+          {f.label}
+        </button>
+      ))}
+    </div>
+  );
+}
 
 export function PurchaseOrderTable({
   rows,
@@ -382,26 +412,6 @@ export function PurchaseOrderTable({
     <>
       {dialog}
 
-      {/* Filter status memakai hitungan dari endpoint agregat lewat URL — bukan
-          menyaring baris yang kebetulan ter-load, karena tabelnya per-halaman. */}
-      <div className="mb-3 flex flex-wrap gap-2">
-        {STATUS_FILTERS.map((f) => (
-          <button
-            key={f.key || "all"}
-            type="button"
-            onClick={() => push({ status: f.key || null, page: null })}
-            className={
-              "rounded-lg border px-3 py-1 text-sm transition-colors " +
-              (query.status === f.key
-                ? "border-primary bg-primary-soft text-primary font-medium"
-                : "border-border bg-card text-foreground hover:border-primary/40 hover:bg-muted")
-            }
-          >
-            {f.label}
-          </button>
-        ))}
-      </div>
-
       <DataTable
         columns={columns}
         data={rows}
@@ -439,9 +449,7 @@ export function PurchaseOrderTable({
                 {detailErr ? (
                   <div className="text-muted-foreground py-1 text-xs">Gagal memuat detail.</div>
                 ) : !detail ? (
-                  <div className="text-muted-foreground flex items-center gap-2 py-1 text-xs">
-                    <Loader2 className="size-3.5 animate-spin" /> Memuat PO…
-                  </div>
+                  <LoadingInline label="Memuat PO…" className="py-1 text-xs" />
                 ) : (
                   <>
                     <div className="grid grid-cols-3 gap-3">

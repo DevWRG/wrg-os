@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ChevronLeft, Pin, Star } from "lucide-react";
+import { ChevronLeft, Pin, Repeat, Star } from "lucide-react";
 
 import { gatewayFetch } from "@/lib/gateway";
 import { sessionUser } from "@/lib/admin-guard";
@@ -10,6 +10,16 @@ interface DayData {
   date: string;
   holiday: string | null;
   reminders: { am_id: string; name: string; cabang: string | null; note: string }[];
+  leave?: {
+    am_id: string;
+    name: string;
+    cabang: string | null;
+    jenis: string;
+    start_date: string;
+    end_date: string;
+    backup_am_id: string | null;
+    backup_name: string | null;
+  }[];
 }
 
 const DOW = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
@@ -35,6 +45,7 @@ export default async function CalendarDayPage({ params }: { params: Promise<{ da
   }
   const reminders = data?.reminders ?? [];
   const holiday = data?.holiday ?? null;
+  const leave = data?.leave ?? [];
 
   return (
     <div className="space-y-5">
@@ -43,7 +54,7 @@ export default async function CalendarDayPage({ params }: { params: Promise<{ da
           <ChevronLeft className="size-4" /> Kembali ke kalender
         </Link>
         <h1 className="mt-1 text-2xl font-semibold tracking-tight">{prettyDate(date)}</h1>
-        <p className="text-muted-foreground text-sm">Libur nasional &amp; catatan reminder pada tanggal ini.</p>
+        <p className="text-muted-foreground text-sm">Libur nasional, yang tidak masuk (+ penggantinya) &amp; catatan reminder pada tanggal ini.</p>
       </div>
 
       {holiday && (
@@ -52,6 +63,28 @@ export default async function CalendarDayPage({ params }: { params: Promise<{ da
             <p className="text-purple bg-purple/10 inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium">
               <Star className="size-4" /> Libur nasional: {holiday}
             </p>
+          </CardContent>
+        </Card>
+      )}
+
+      {leave.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm font-medium">Tidak Masuk &amp; Backup PIC ({leave.length})</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {leave.map((l) => (
+              <div key={`${l.am_id}-${l.start_date}`} className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border px-3 py-2 text-sm">
+                <span><b>{l.name}</b>{l.cabang ? ` (${l.cabang})` : ""}</span>
+                <span className="text-muted-foreground">
+                  {l.jenis} {l.start_date === l.end_date ? "" : `s/d ${l.end_date}`}
+                </span>
+                <span className="inline-flex items-center gap-1">
+                  <Repeat className="text-muted-foreground size-3.5" />
+                  {l.backup_name ? <>ke <b>{l.backup_name}</b></> : <span className="text-muted-foreground">belum ada pengganti</span>}
+                </span>
+              </div>
+            ))}
           </CardContent>
         </Card>
       )}

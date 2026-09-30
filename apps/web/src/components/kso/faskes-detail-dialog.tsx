@@ -19,6 +19,8 @@ import { cn } from "@/lib/utils";
 import { Dialog, DialogBody, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart";
 import { ExportButton, type ExportColumn } from "@/components/ui/export-button";
+import { SkeletonChart } from "@/components/ui/loading";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   PENANDA, Pilih, Tag, angkaSumbu, awalTahunIni, bulanIni, deretBulan, labelBulan, num, rp,
   rupiahPerAlat, skalaRp, skemaPakaiRpTes, type FaskesRow,
@@ -321,6 +323,10 @@ export function FaskesDetailDialog({ g, median, onClose }: {
   //
   // Konsekuensi yang disengaja: angka ini TIDAK mengikuti rentang di atas. Karena itu
   // basisnya ditulis eksplisit di layar, bukan dibiarkan tampak seperti angka rentang.
+  // Faskes yang memang tak punya riwayat (belum terpetakan) atau yang muatannya gagal
+  // TIDAK ikut dirangkakan: di situ "—" adalah jawaban akhir, bukan penantian.
+  const belumSiap = r.accountId !== null && !gagal && (!siap || detail === null);
+
   const tagihView = r.tesDitagihkanAccurate;
   const laporView = r.tesSheetPeriodeBanding;
   const selisihTagih = tagihView !== null && laporView !== null && laporView > 0
@@ -363,10 +369,10 @@ export function FaskesDetailDialog({ g, median, onClose }: {
                 di tabel bawah ada angka tes lain dari sumber berbeda (qty penagihan =
                 ditagihkan), dan tanpa penyebutan itu keduanya terbaca sebagai satu
                 besaran yang tidak konsisten. */}
-            <Angka label="Tes dilaporkan" nilai={adaTesJdl ? num(tesJdl) : "—"}
+            <Angka label="Tes dilaporkan" nilai={adaTesJdl ? num(tesJdl) : "—"} memuat={belumSiap}
               sub={jendelaPenuh ? subSeluruh
                 : `${labelJendela} · seluruh periode ${num(r.totalTesCustomerSeskema)}`} />
-            <Angka label="Revenue netto" nilai={adaRevJdl ? rp(revJdl) : "—"}
+            <Angka label="Revenue netto" nilai={adaRevJdl ? rp(revJdl) : "—"} memuat={belumSiap}
               sub={jendelaPenuh ? subSeluruh
                 : `${labelJendela} · seluruh periode ${rp(r.revenueNettoCustomer)}`} />
             {/* Kartu ini WAJIB mengikuti kolom di tabel. Kalau tabel menyatakan skema ini
@@ -378,6 +384,9 @@ export function FaskesDetailDialog({ g, median, onClose }: {
               <Angka
                 label="Rp / tes"
                 nilai={rp(jendelaPenuh ? r.rupiahPerTesCustomer : rpTesJdl)}
+                // Rentang penuh dijawab oleh baris tabel (sudah ada di layar), jadi hanya
+                // rentang yang dipersempit yang menunggu detail.
+                memuat={belumSiap && !jendelaPenuh}
                 // "× median" HANYA saat rentang penuh: median dari server dihitung atas
                 // basis seluruh periode, jadi membandingkan angka jendela terhadapnya
                 // adalah rasio antar dua cakupan berbeda — terlihat presisi, tapi salah.
@@ -394,6 +403,7 @@ export function FaskesDetailDialog({ g, median, onClose }: {
                 nilai={rp(jendelaPenuh ? rupiahPerAlat(r)
                   : (r.alatSeskemaDiCustomer && r.alatSeskemaDiCustomer > 0 && adaRevJdl
                       ? revJdl / r.alatSeskemaDiCustomer : null))}
+                memuat={belumSiap && !jendelaPenuh}
                 sub={jendelaPenuh
                   ? "belanja per alat · bukan produktivitas"
                   : `belanja per alat · ${labelJendela}`}
@@ -457,7 +467,16 @@ export function FaskesDetailDialog({ g, median, onClose }: {
           ) : gagal ? (
             <Catatan>Gagal memuat detail. Coba tutup dan buka lagi.</Catatan>
           ) : !siap || detail === null ? (
-            <div className="text-muted-foreground py-8 text-center text-xs">Memuat riwayat…</div>
+            // Rangkanya MENIRU susunan aslinya (grafik per alat berdampingan, lalu
+            // grafik revenue selebar dialog) supaya isi dialog tidak melompat begitu
+            // data datang — pembaca sudah menunggu, jangan ditambah tata letak baru.
+            <div className="space-y-4">
+              <div className="grid gap-4 lg:grid-cols-2">
+                <SkeletonChart height={180} />
+                <SkeletonChart height={180} />
+              </div>
+              <SkeletonChart height={180} />
+            </div>
           ) : (
             <>
               {/* SATU GRAFIK TES PER ALAT (permintaan user 2026-08-19) — datanya
@@ -777,13 +796,20 @@ function FilterPeriode({ dari, sampai, setDari, setSampai, opsi, penuh }: {
   );
 }
 
-function Angka({ label, nilai, sub, redup }: {
-  label: string; nilai: string; sub?: string; redup?: boolean;
+function Angka({ label, nilai, sub, redup, memuat }: {
+  label: string; nilai: string; sub?: string; redup?: boolean; memuat?: boolean;
 }) {
   return (
     <div className="border-border rounded-lg border p-2.5">
       <div className="text-muted-foreground text-[11px]">{label}</div>
-      <div className={cn("text-base font-semibold tabular-nums", redup && "text-muted-foreground")}>{nilai}</div>
+      {/* Saat riwayat masih dimuat, angkanya BUKAN "—": em dash di sini terbaca
+          sebagai "tidak ada datanya" dan itu kesimpulan yang salah tentang faskes.
+          Rangka berdenyut menyatakan yang sebenarnya — angkanya belum tiba. */}
+      {memuat ? (
+        <Skeleton className="my-1 h-5 w-24 motion-reduce:animate-none" />
+      ) : (
+        <div className={cn("text-base font-semibold tabular-nums", redup && "text-muted-foreground")}>{nilai}</div>
+      )}
       {sub ? <div className="text-muted-foreground text-[11px]">{sub}</div> : null}
     </div>
   );

@@ -781,7 +781,7 @@ function RotationView({ d }: { d: RotationData | undefined }) {
         </Card>
       ) : null}
       {!d.computed ? (
-        <p className={cn("flex items-center gap-2 rounded-md px-3 py-2 text-[12.5px]", ST.na.chip)}><Info className="size-4" /> NPK {perStr(d.period)} belum di-compute — jalankan compute NPK dulu (menu NPK Direktur).</p>
+        <p className={cn("flex items-center gap-2 rounded-md px-3 py-2 text-[12.5px]", ST.na.chip)}><Info className="size-4" /> NPK {perStr(d.period)} belum di-compute — jalankan compute NPK dulu (menu NPK HOD).</p>
       ) : null}
 
       <div className="grid gap-3 lg:grid-cols-3">
@@ -791,7 +791,7 @@ function RotationView({ d }: { d: RotationData | undefined }) {
       </div>
 
       <Card>
-        <CardHeader className="flex items-center gap-2 space-y-0 pb-2"><UserCog className="size-4" /><CardTitle className="text-base">HoD Readiness</CardTitle><DrillLink href="/npk">NPK Direktur</DrillLink></CardHeader>
+        <CardHeader className="flex items-center gap-2 space-y-0 pb-2"><UserCog className="size-4" /><CardTitle className="text-base">HoD Readiness</CardTitle><DrillLink href="/npk">NPK HOD</DrillLink></CardHeader>
         <CardContent className="overflow-x-auto p-0">
           <Table>
             <TableHeader><TableRow>

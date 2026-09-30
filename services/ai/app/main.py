@@ -68,6 +68,7 @@ from .koran import (
     build_koran_ocr_system,
     build_koran_ocr_user,
     merge_ocr_pages,
+    normalisasi_waktu,
     parse_ocr_json,
     parse_text_pdf,
     pdf_page_images,
@@ -377,7 +378,13 @@ def ocr_klaim(req: KlaimOcrRequest) -> KlaimOcrResponse:
 
 
 def _koran_response(res: dict, **over) -> KoranParseResponse:
-    lines = [KoranLine(**l) for l in (res.get("lines") or [])]
+    # Satu pintu untuk semua jalur (parser teks, OCR, dry-run): waktu yang
+    # formatnya tak bisa dibaca timestamptz di sini dinormalkan atau dibuang.
+    tanggal = res.get("tanggal")
+    lines = [
+        KoranLine(**{**l, "waktu": normalisasi_waktu(l.get("waktu"), tanggal)})
+        for l in (res.get("lines") or [])
+    ]
     payload = {
         "bank_kode": res.get("bank_kode"),
         "no_rekening": res.get("no_rekening"),

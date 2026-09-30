@@ -18,7 +18,7 @@ export default async function KaryawanPage() {
   if (!canViewRaportList(me)) {
     return (
       <>
-        <PageHeader title="Karyawan 360" description="Penilaian & profil karyawan." />
+        <PageHeader title="Raport Karyawan 360" description="Penilaian & profil karyawan." />
         <p className="text-muted-foreground">Hanya HoD/admin yang dapat mengakses halaman ini.</p>
       </>
     );
@@ -35,7 +35,7 @@ export default async function KaryawanPage() {
   return (
     <>
       <PageHeader
-        title="Karyawan 360"
+        title="Raport Karyawan 360"
         description="Penilaian kinerja (Raport) + profil karyawan (BSC/OKR/KPI/RACI). Kelola profil khusus admin."
       />
       <Karyawan360

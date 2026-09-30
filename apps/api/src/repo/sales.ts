@@ -22,6 +22,36 @@ export function salesRange(from?: string, to?: string) {
   return { from: f, to: t };
 }
 
+type Sql = ReturnType<typeof db>;
+
+// Nama customer + fallback ke ai.raw. Query pemanggil WAJIB sudah punya alias
+// `ai` (accurate_invoice) dan `ac` (accurate_customer), serta GROUP BY
+// ai.customer_id.
+//
+// Fallback-nya SENGAJA subquery, bukan `max(ai.raw->...)` di dalam agregat
+// pemanggil. Bentuk lama itu tampak malas-evaluasi lewat COALESCE, padahal
+// bukan: max() adalah AGREGAT, jadi dihitung untuk SEMUA baris grup sebelum
+// COALESCE sempat memutuskan. accurate_invoice berukuran 206 MB untuk hanya
+// ~11.700 baris — hampir semuanya kolom `raw` jsonb yang ter-TOAST — sehingga
+// bentuk lama memaksa detoast seluruh tabel pada tiap request.
+//
+// Diukur di prod 23 Sep 2026 (EXPLAIN ANALYZE, BUFFERS): bentuk lama 719 ms
+// dengan ±171 MB dibaca dari disk; bentuk ini 48 ms. Join dan scan-nya sendiri
+// cuma 33 ms — seluruh selisihnya ada di tahap agregasi.
+//
+// Sebagai subquery, kemalasan COALESCE benar-benar berlaku: ia hanya jalan
+// untuk customer yang ac.name-nya kosong (di prod saat ini: nol baris), dan
+// ditopang indeks accurate_invoice_customer_idx kalau suatu saat terpicu.
+// Fallback-nya TIDAK dihapus meski kini tak terpakai — ia jaring pengaman
+// untuk faktur yang customer-nya belum ter-sync ke accurate_customer.
+function custNameExpr(sql: Sql) {
+  return sql`COALESCE(
+      NULLIF(ac.name,''),
+      (SELECT NULLIF(max(ai2.raw->'customer'->>'name'),'') FROM accurate_invoice ai2 WHERE ai2.customer_id = ai.customer_id),
+      (SELECT NULLIF(max(ai2.raw->>'retailWpName'),'')     FROM accurate_invoice ai2 WHERE ai2.customer_id = ai.customer_id),
+      'Customer #' || ai.customer_id::text)`;
+}
+
 interface RankRow {
   key: string;
   label: string;
@@ -190,32 +220,72 @@ export async function salesOverview(from: string, to: string) {
     WHERE ai.tanggal BETWEEN ${from} AND ${to}
     GROUP BY 1 ORDER BY sum(ai.total - COALESCE(ai.tax_amount,0)) DESC`;
   // Top Produk = netto faktur teralokasi proporsional ke baris (rekonsiliasi ke KPI revenue).
+  //
+  // KENAPA NAMA CADANGAN DIAMBIL LEWAT LATERAL, BUKAN max(raw->…) DI AGREGAT:
+  // `raw` itu jsonb ber-TOAST — heap accurate_invoice_item cuma 3,9 MB tapi
+  // TOAST-nya 141 MB (accurate_invoice: 3,4 MB vs 199 MB). Menyebut
+  // `max(aii.raw->'item'->>'name')` di dalam agregat memaksa Postgres men-DETOAST
+  // SETIAP baris yang ikut dijumlahkan; dengan shared_buffers 128 MB halaman itu
+  // tak pernah bertahan di cache, jadi kueri ini terukur 36 dtk (dan per_customer
+  // 79 dtk) tiap kali cache-nya dingin — padahal scan yang sama tanpa menyentuh
+  // `raw` cuma 0,4 dtk. Itu 85% waktu /dashboard/overview.
+  //
+  // Nama cadangan itu tetap DIPERTAHANKAN (bukan dibuang): ia hanya dipindah ke
+  // LATERAL yang jalan SETELAH LIMIT 8 dan HANYA kalau nama master kosong —
+  // `AND a.master_name IS NULL` membuat Postgres melewatkan subkueri-nya sama
+  // sekali pada baris yang namanya sudah ada. Jadi paling banyak 8 baris yang
+  // di-detoast, bukan 31.870.
   const perProduct = await sql`
     WITH inv AS (
       SELECT ai.id, (ai.total - COALESCE(ai.tax_amount,0))::numeric AS inv_net
       FROM accurate_invoice ai WHERE ai.tanggal BETWEEN ${from} AND ${to}
     ),
     line AS (
-      SELECT aii.item_id, aii.qty, inv.inv_net, aii.raw->'item'->>'name' AS raw_name,
+      SELECT aii.item_id, aii.qty, inv.inv_net,
              GREATEST(aii.total,0) AS w,
              sum(GREATEST(aii.total,0)) OVER (PARTITION BY aii.invoice_id) AS wsum,
              count(*) OVER (PARTITION BY aii.invoice_id) AS cnt
       FROM accurate_invoice_item aii JOIN inv ON inv.id = aii.invoice_id
+    ),
+    agg AS (
+      SELECT l.item_id, NULLIF(it.name,'') AS master_name,
+             NULLIF(max(it.category),'') AS category,
+             sum(CASE WHEN l.wsum > 0 THEN l.inv_net * l.w / l.wsum ELSE l.inv_net / l.cnt END)::numeric AS total,
+             sum(l.qty)::numeric AS count
+      FROM line l LEFT JOIN accurate_item it ON it.id = l.item_id
+      GROUP BY l.item_id, it.name ORDER BY total DESC LIMIT 8
     )
-    SELECT l.item_id::text AS key,
-           COALESCE(NULLIF(it.name,''), NULLIF(max(l.raw_name),''), 'Item #' || l.item_id::text) AS label,
-           NULLIF(max(it.category),'') AS category,
-           sum(CASE WHEN l.wsum > 0 THEN l.inv_net * l.w / l.wsum ELSE l.inv_net / l.cnt END)::numeric AS total,
-           sum(l.qty)::numeric AS count
-    FROM line l LEFT JOIN accurate_item it ON it.id = l.item_id
-    GROUP BY l.item_id, it.name ORDER BY total DESC LIMIT 8`;
+    SELECT a.item_id::text AS key,
+           COALESCE(a.master_name, NULLIF(f.nm,''), 'Item #' || a.item_id::text) AS label,
+           a.category, a.total, a.count
+    FROM agg a
+    LEFT JOIN LATERAL (
+      SELECT aii.raw->'item'->>'name' AS nm
+      FROM accurate_invoice_item aii
+      WHERE aii.item_id = a.item_id AND a.master_name IS NULL
+      LIMIT 1
+    ) f ON TRUE
+    ORDER BY a.total DESC`;
   const perCustomer = await sql`
-    SELECT ai.customer_id::text AS key,
-           COALESCE(NULLIF(ac.name,''), NULLIF(max(ai.raw->'customer'->>'name'),''), NULLIF(max(ai.raw->>'retailWpName'),''), 'Customer #' || ai.customer_id::text) AS label,
-           sum(ai.total - COALESCE(ai.tax_amount,0))::numeric AS total, count(*)::int AS count
-    FROM accurate_invoice ai LEFT JOIN accurate_customer ac ON ac.id = ai.customer_id
-    WHERE ai.tanggal BETWEEN ${from} AND ${to}
-    GROUP BY ai.customer_id, ac.name ORDER BY sum(ai.total - COALESCE(ai.tax_amount,0)) DESC LIMIT 8`;
+    WITH agg AS (
+      SELECT ai.customer_id AS id, NULLIF(ac.name,'') AS master_name,
+             sum(ai.total - COALESCE(ai.tax_amount,0))::numeric AS total, count(*)::int AS count
+      FROM accurate_invoice ai LEFT JOIN accurate_customer ac ON ac.id = ai.customer_id
+      WHERE ai.tanggal BETWEEN ${from} AND ${to}
+      GROUP BY ai.customer_id, ac.name
+      ORDER BY sum(ai.total - COALESCE(ai.tax_amount,0)) DESC LIMIT 8
+    )
+    SELECT a.id::text AS key,
+           COALESCE(a.master_name, NULLIF(f.nm,''), NULLIF(f.retail,''), 'Customer #' || a.id::text) AS label,
+           a.total, a.count
+    FROM agg a
+    LEFT JOIN LATERAL (
+      SELECT ai.raw->'customer'->>'name' AS nm, ai.raw->>'retailWpName' AS retail
+      FROM accurate_invoice ai
+      WHERE ai.customer_id = a.id AND a.master_name IS NULL
+      LIMIT 1
+    ) f ON TRUE
+    ORDER BY a.total DESC`;
   const perSalesman = await sql`
     SELECT COALESCE(NULLIF(mu.am_id,''),'tanpa') AS key,
            COALESCE(NULLIF(max(mu.nama),''), ${AM_VACANT}) AS label,
@@ -450,7 +520,7 @@ export async function customersRevenue(scope: DataScope = FULL_SCOPE) {
   const sql = db();
   const rows = await sql`
     SELECT ai.customer_id::text AS id,
-      COALESCE(NULLIF(ac.name,''), NULLIF(max(ai.raw->'customer'->>'name'),''), NULLIF(max(ai.raw->>'retailWpName'),''), 'Customer #' || ai.customer_id::text) AS name,
+      ${custNameExpr(sql)} AS name,
       NULLIF(mode() WITHIN GROUP (ORDER BY NULLIF(mu.cabang,'')), '') AS cabang,
       sum(ai.total - COALESCE(ai.tax_amount,0))::float8 AS total,
       count(*)::int AS invoices,
@@ -535,7 +605,7 @@ export async function dormantCustomers(minDays = 60, scope: DataScope = FULL_SCO
   const rows = await sql`
     WITH cust AS (
       SELECT ai.customer_id AS cid,
-        COALESCE(NULLIF(ac.name,''), NULLIF(max(ai.raw->'customer'->>'name'),''), NULLIF(max(ai.raw->>'retailWpName'),''), 'Customer #' || ai.customer_id::text) AS name,
+        ${custNameExpr(sql)} AS name,
         NULLIF(mode() WITHIN GROUP (ORDER BY NULLIF(mu.cabang,'')), '') AS cabang,
         sum(ai.total - COALESCE(ai.tax_amount,0))::float8 AS total,
         count(*)::int AS invoices,
@@ -594,7 +664,7 @@ export async function churnCustomers(churnDays0 = DORMANT_DAYS, scope: DataScope
   const rows = await sql`
     WITH cust AS (
       SELECT ai.customer_id AS cid,
-        COALESCE(NULLIF(ac.name,''), NULLIF(max(ai.raw->'customer'->>'name'),''), NULLIF(max(ai.raw->>'retailWpName'),''), 'Customer #' || ai.customer_id::text) AS name,
+        ${custNameExpr(sql)} AS name,
         NULLIF(mode() WITHIN GROUP (ORDER BY NULLIF(mu.cabang,'')), '') AS cabang,
         sum(ai.total - COALESCE(ai.tax_amount,0))::float8 AS total,
         count(*)::int AS invoices,

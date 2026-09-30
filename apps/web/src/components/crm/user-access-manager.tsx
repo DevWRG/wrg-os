@@ -26,7 +26,25 @@ export interface AppUserRow {
 interface RosterItem { am_id: string; nama?: string | null; wa_number?: string | null }
 interface WaStatus { mode: "stub" | "dry-run" | "live"; delivered: boolean; error?: string }
 
-const ROLES = ["admin", "user", "viewer"];
+// Role login — daftar KANONIK di apps/api/src/repo/users.ts (LOGIN_ROLES); server
+// menolak nilai di luar ini dengan 400, jadi daftar di sini murni tampilan.
+// 'viewer' dibuang (migrasi 181): tak pernah dicek kode, tapi namanya menjanjikan
+// read-only sehingga admin mengira sudah membatasi orang padahal tidak.
+// 'direktur' ditambahkan: dipakai nyata (Executive, Insentif, NPK, approval Fund
+// Request & PO, target WatchPoint) tapi dulu hanya bisa di-set lewat SQL manual.
+const ROLES = ["admin", "direktur", "user"];
+const ROLE_HINT: Record<string, string> = {
+  admin: "Akses penuh — melewati seluruh matriks Akses Grup.",
+  direktur: "Membuka menu tingkat Direktur (Executive, Insentif, NPK, approval). Menu lain tetap ikut Akses Grup.",
+  user: "Netral — seluruh aksesnya ditentukan Akses Grup.",
+};
+
+// Nilai lama yang tak lagi ada di daftar (mis. 'viewer' pada DB yang belum kena
+// migrasi 181) tetap ditampilkan sebagai opsi. Tanpa ini <select> merender kosong
+// dan sekali disentuh nilainya ketimpa diam-diam.
+function roleOptions(current: string): string[] {
+  return ROLES.includes(current) ? ROLES : [...ROLES, current];
+}
 
 // Status WA jujur: delivered hanya di mode live sukses; dry-run/stub = belum live.
 function waLabel(wa: WaStatus): { text: string; ok: boolean } {
@@ -150,6 +168,7 @@ export function UserAccessManager({ users, roster }: { users: AppUserRow[]; rost
               <select id="ua-role" value={role} onChange={(e) => setRole(e.target.value)} className="h-9 rounded-md border bg-background px-2 text-sm">
                 {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
               </select>
+              <p className="text-muted-foreground text-xs">{ROLE_HINT[role]}</p>
             </div>
             <Button size="sm" onClick={createManual} disabled={busy}>Buat + generate password</Button>
           </CardContent>
@@ -172,7 +191,13 @@ export function UserAccessManager({ users, roster }: { users: AppUserRow[]; rost
       </div>
 
       <Card>
-        <CardHeader><CardTitle className="text-base">Akun login ({users.length})</CardTitle></CardHeader>
+        <CardHeader>
+          <CardTitle className="text-base">Akun login ({users.length})</CardTitle>
+          <p className="text-muted-foreground text-xs">
+            Role di sini hanya menentukan hak istimewa (admin/direktur). Izin per-menu —
+            Aktif · Buat · Ubah · Hapus · Lihat — diatur di <b>Akses Grup</b>, bukan di sini.
+          </p>
+        </CardHeader>
         <CardContent className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="text-muted-foreground text-left">
@@ -187,8 +212,10 @@ export function UserAccessManager({ users, roster }: { users: AppUserRow[]; rost
                   <td className="py-2 pr-3 font-medium">{u.email}</td>
                   <td className="pr-3">{u.name ?? "—"}</td>
                   <td className="pr-3">
-                    <select value={u.role} onChange={(e) => setRoleFor(u, e.target.value)} disabled={busy} className="h-7 rounded border bg-background px-1 text-xs">
-                      {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
+                    <select value={u.role} onChange={(e) => setRoleFor(u, e.target.value)} disabled={busy}
+                      title={ROLE_HINT[u.role] ?? "Role lama yang tak dipakai lagi — pilih user bila tak perlu hak khusus."}
+                      className="h-7 rounded border bg-background px-1 text-xs">
+                      {roleOptions(u.role).map((r) => <option key={r} value={r}>{r}</option>)}
                     </select>
                   </td>
                   <td className="pr-3"><Badge variant={u.active ? "secondary" : "outline"}>{u.active ? "aktif" : "nonaktif"}</Badge></td>

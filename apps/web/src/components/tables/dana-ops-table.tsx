@@ -2,13 +2,14 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Loader2, Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { LoadingInline } from "@/components/ui/loading";
 import { useConfirm } from "@/components/ui/use-confirm";
 import {
   Dialog,
@@ -217,9 +218,7 @@ export function DanaOpsTable({ rows }: { rows: DanaOpsRow[] }) {
                 {detailErr ? (
                   <div className="text-muted-foreground py-1 text-xs">Gagal memuat detail.</div>
                 ) : !detail ? (
-                  <div className="text-muted-foreground flex items-center gap-2 py-1 text-xs">
-                    <Loader2 className="size-3.5 animate-spin" /> Memuat realisasi…
-                  </div>
+                  <LoadingInline label="Memuat realisasi…" className="py-1 text-xs" />
                 ) : (
                   <>
                     <div className="grid grid-cols-3 gap-3">

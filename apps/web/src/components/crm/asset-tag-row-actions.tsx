@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
+import { SkeletonLines } from "@/components/ui/loading";
 import {
   Dialog,
   DialogBody,
@@ -224,7 +225,7 @@ function HistoryDialog({ asset }: { asset: Asset }) {
         </DialogHeader>
         <DialogBody>
           {logs === null ? (
-            <p className="text-muted-foreground text-sm">Memuat…</p>
+            <SkeletonLines rows={5} />
           ) : logs.length === 0 ? (
             <p className="text-muted-foreground text-sm">Belum ada riwayat audit.</p>
           ) : (

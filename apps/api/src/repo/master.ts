@@ -1,5 +1,6 @@
 import { db } from "../db.js";
 import { isGolongan, type Golongan } from "../lib/npk-golongan.js";
+import { isWaTestBypassGroup, namaUji } from "./wa-test-bypass.js";
 
 // D1 — master data CRM (port legacy master_user + master_territory). Roster AM
 // di-key am_id (dipakai lintas deal/reminder/todo); territory map AM→HOD→cabang.
@@ -331,7 +332,48 @@ export async function resolveSender(opts: {
     if (!bolehLewat(bb, "body-fuzzy")) return null;
     return { am_id: bb.am_id, nama: bb.nama, aktif: bb.aktif, role: bb.role, via: "body-fuzzy", score: bb.score };
   }
+  // Tier E — bypass grup uji (WA_TEST_BYPASS_GROUP). Lihat wa-test-bypass.ts:
+  // hanya aktif kalau env di-set eksplisit untuk grup ini.
+  //
+  // TIDAK bisa mensyaratkan `isIndividual`/`norm` (nomor turunan senderJid): DI
+  // GRUP, `sender_jid` = `group_jid` (jebakan yang sama didokumentasikan di
+  // inbound.ts:915, detectleave.ts:23, listmembers.ts:6, CLAUDE.md) — itu bikin
+  // `isIndividual` SELALU false utk pesan grup (JID grup panjang & berakhiran
+  // `@g.us`), jadi tier ini tak pernah nyala kalau disyaratkan. Dikunci dari
+  // `pushname` saja, sama pola dengan `ensureBypassTeknisi` (F8) yang sudah
+  // terbukti jalan di grup.
+  if (opts.pushname?.trim() && isWaTestBypassGroup(opts.groupJid)) {
+    return await ensureBypassAm(opts.pushname.trim(), isIndividual ? norm : null);
+  }
   return null;
+}
+
+// Auto-provision AM per pushname (idempoten) khusus grup bypass — supaya balasan
+// tetap menyapa nama pengirim tanpa perlu didaftarkan manual satu-satu.
+//
+// Namanya diberi prefiks `[UJI] ` (namaUji): baris ini masuk ke roster yang SAMA
+// dengan karyawan sungguhan, dan yang dirender di dashboard adalah `nama`, bukan
+// `am_id`. Tanpa prefiks, "Michael Christopher" duduk di daftar AM dev persis
+// seperti AM asli. `am_id` tetap ber-prefiks `WA-TEST-` untuk penyapuan.
+//
+// Dikunci dari SLUG PUSHNAME, bukan nomor WA: di grup, `waNumber` (kalau ada)
+// diturunkan dari `sender_jid` yang ternyata = `group_jid` — SAMA untuk semua
+// pengirim di grup itu. Mengunci `am_id` dari situ akan membuat semua tester
+// collision jadi satu baris AM palsu (nama saling menimpa). `wa_number` tetap
+// disimpan sebagai info tambahan kalau kebetulan valid (mis. dari DM individu).
+async function ensureBypassAm(pushname: string, waNumber?: string | null): Promise<ResolvedAm> {
+  const sql = db();
+  const nama = namaUji(pushname);
+  const slug = pushname.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "unknown";
+  const amId = `WA-TEST-${slug}`;
+  await sql`
+    INSERT INTO master_user (am_id, nama, wa_number, role, aktif, wajib_plan_report)
+    VALUES (${amId}, ${nama}, ${waNumber ?? null}, 'AM', true, false)
+    ON CONFLICT (am_id) DO UPDATE SET
+      nama = EXCLUDED.nama, aktif = true,
+      wa_number = COALESCE(EXCLUDED.wa_number, master_user.wa_number)
+  `;
+  return { am_id: amId, nama, aktif: true, role: "AM", via: "test-bypass" };
 }
 
 export interface TerritoryInput {

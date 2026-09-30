@@ -16,6 +16,8 @@ export interface CashinRingkasan {
   rekening_wajib: number;
   rekening_masuk: number;
   rekening_belum: string[];
+  /** Rekening yang DINYATAKAN tanpa transaksi + pernyatanya (migrasi 179). */
+  rekening_nihil?: { label_file: string; oleh: string }[];
   statement_perlu_review: Array<{ label_file: string; alasan: string }>;
   penerimaan_terbesar: Array<{ label_file: string; deskripsi: string; kredit: number }>;
   puteran_detail: Array<{ dari: string; ke: string; nominal: number }>;
@@ -58,6 +60,9 @@ export interface CashinLine {
   kategori_oleh: string;
   pasangan_line_id: string | null;
   catatan: string | null;
+  /** Nomor rujukan pendek (T1, T2…) untuk baris yang menunggu keputusan —
+   *  nomor yang SAMA dipakai di pesan draft WA ("#KORAN triage T1 …"). */
+  kode_triage?: string | null;
 }
 
 export interface CashinAccount {

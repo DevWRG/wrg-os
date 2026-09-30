@@ -4,12 +4,13 @@ import { parseAmPlan, parseAmReport, bersihkanNamaCustomer } from "../parsers/am
 import { sendViaWaGateway, type WaSendResult } from "../wasend.js";
 import { handleSalesAnalyticsQuery } from "./inbound-sales-analytics.js";
 import { detectCek, handleCekQuery } from "./inbound-cek.js";
-import { resolveSender } from "./master.js";
+import { resolveSender, normalizeWa } from "./master.js";
 import { upsertDailyTodo, computeIsLate } from "./todo.js";
 import { createReminder } from "./reminder.js";
 import { buildCekReply } from "./cek.js";
+import { buildFakturReply } from "./faktur.js";
 import { ingestKlaim, type DocKlaimRow } from "./doc-klaim.js";
-import { ingestKoran, type IngestKoranResult } from "./cashin.js";
+import { formatStatusDraft, ingestKoran, nyatakanNihil, parseNihil, type IngestKoranResult } from "./cashin.js";
 import { createTicket, isKnownTeknisiSender } from "./serviceticket.js";
 import {
   findBySjNumber,
@@ -17,7 +18,8 @@ import {
   markBast,
   markBukti,
 } from "./shipment-tracking.js";
-import { matchTeknisiByName, createTeknisiReport } from "./readinessboard.js";
+import { matchTeknisiByName, createTeknisiReport, ensureBypassTeknisi } from "./readinessboard.js";
+import { isWaTestBypassGroup } from "./wa-test-bypass.js";
 import { createTicket as createGaTicket, listCategories as listGaTicketCategories } from "./ga-helpdesk.js";
 import { listStockBranch } from "./stock-branch.js";
 import { parseSphMessage } from "../parsers/sph.js";
@@ -72,6 +74,7 @@ export const INBOUND_HASHTAGS = [
   "stok",
   "sph",
   "pricing",
+  "faktur",
   "approve",
   "reject",
 ] as const;
@@ -105,6 +108,9 @@ const STOK_LINE = /^\s*#\s*stok\b/i;
 // dibangun langsung tanpa nunggu itu.
 const SPH_LINE = /^\s*#\s*sph\b/i;
 const PRICING_LINE = /^\s*#\s*pricing\b/i;
+// F91 — cek status satu invoice. `\b` penting: #FAKTURIS (nama grup/fitur
+// F149) tidak boleh ikut terpicu.
+const FAKTUR_LINE = /^\s*#\s*faktur\b/i;
 // F11 — bisa muncul di pesan PRIVAT (DM), bukan cuma grup. Pipeline
 // ingest+dispatch ini sudah generik-jalur (wa.ts: chatJid = group_jid utk
 // grup, sender utk direct) jadi TIDAK butuh kode baru khusus DM.
@@ -131,6 +137,7 @@ export function detectKind(body: string | null): InboundKind {
       if (STOK_LINE.test(line)) return "stok";
       if (SPH_LINE.test(line)) return "sph";
       if (PRICING_LINE.test(line)) return "pricing";
+      if (FAKTUR_LINE.test(line)) return "faktur";
       const ar = line.match(APPROVE_REJECT_LINE);
       if (ar) return ar[1].toLowerCase() as "approve" | "reject";
     }
@@ -1022,8 +1029,8 @@ async function ingestKoranDariBaris(row: WaRow, lampiran: WaRow[]): Promise<Reco
     // per file: draftnya memang satu per hari. Draft-nya sendiri dikirim
     // sebagai pesan terpisah oleh buatDraftJikaLengkap.
     if (l === lampiran[lampiran.length - 1]) {
-      if (k.draft_kode) baris.push(`📝 Draft resume ${k.draft_kode} menunggu konfirmasi.`);
-      else if (k.draft_alasan) baris.push(`⏳ ${k.draft_alasan}`);
+      const status = formatStatusDraft(k);
+      if (status) baris.push(status);
     }
   }
 
@@ -1120,7 +1127,11 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
   // groupAllowed()/WA_INBOUND_GROUPS existing. Identitas via matchTeknisiByName
   // (teknisi_capacity F8, self-contained), BUKAN resolveSender/master_user.
   if (kind === "install" || kind === "servis" || kind === "training" || kind === "kalibrasi") {
-    const teknisi = await matchTeknisiByName(row.sender_name);
+    const teknisi =
+      (await matchTeknisiByName(row.sender_name)) ??
+      (isWaTestBypassGroup(row.group_jid) && row.sender_name?.trim()
+        ? await ensureBypassTeknisi(row.sender_name.trim(), normalizeWa(String(row.sender_jid ?? "").split("@")[0].split(":")[0]))
+        : null);
     if (!teknisi) return finish({ skipped: "unknown-sender", sender_name: row.sender_name });
     // Isi laporan = body SETELAH hashtag-nya dibuang. Cek `!row.body?.trim()`
     // saja tak pernah kena: body "#install" itu non-kosong, jadi laporan tanpa
@@ -1320,6 +1331,34 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
   if (kind === "koran") {
     // Lampiran boleh menempel di pesan hashtag ini, ATAU datang sebagai pesan
     // terpisah sebelum/sesudahnya — lihat catatan di cabang kind === "none".
+    // Pernyataan "hari ini nihil" — TANPA lampiran, dan itu memang bentuknya:
+    // rekening tanpa transaksi tak bisa diunduh dari internet banking sama
+    // sekali (dilaporkan Finance 18 Sep 2026). Dicek SEBELUM penjodohan
+    // lampiran, kalau tidak pesan ini akan menyambar PDF rekening lain yang
+    // kebetulan dikirim beberapa menit sebelumnya.
+    const nihil = parseNihil(row.body);
+    if (nihil) {
+      const oleh = String(row.sender_name ?? "").trim() || "Finance";
+      const r = await nyatakanNihil(nihil.label, oleh, {
+        tanggal: nihil.tanggal,
+        waMessageId: row.id,
+        grupJid: row.group_jid,
+      });
+      // Status draft ikut disebut, sama seperti ekor balasan #KORAN berkas.
+      const status = r.ok && r.draft
+        ? formatStatusDraft({ draft_kode: r.draft.kode, draft_keadaan: r.draft.keadaan, draft_alasan: r.draft.alasan })
+        : null;
+      const reply = await sendViaWaGateway(
+        target,
+        r.ok
+          ? [`✅ ${r.label_file} ${r.tanggal} dicatat NIHIL (tanpa transaksi) atas pernyataan ${oleh}.`, status]
+              .filter(Boolean)
+              .join("\n\n")
+          : `⚠️ Gagal mencatat nihil: ${r.error}`,
+      );
+      return finish({ nihil: r, reply }, "koran");
+    }
+
     const lampiran = adaLampiranDokumen(row) ? [row] : await lampiranKoranTerdekat(row);
     if (lampiran.length === 0) {
       // Lampirannya bisa sudah diproses duluan: baris dokumen dan baris teks
@@ -1390,6 +1429,21 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
     const text = await buildStokReply(st.am_id, query);
     const reply = await sendViaWaGateway(target, text);
     return finish({ kind: "stok", via: st.via, reply });
+  }
+
+  // #FAKTUR <no_invoice> — F91: status Open/Paid/Overdue + jatuh tempo +
+  // nominal + customer. Sender cukup dikenal & aktif, setara #CEK (keputusan
+  // user 2026-09-28) — tanpa scope per-AM.
+  if (kind === "faktur") {
+    const fk = await resolveSender({ senderJid: row.sender_jid, groupJid: row.group_jid, pushname: row.sender_name });
+    if (!fk) return finish({ skipped: "unknown-sender", sender_name: row.sender_name });
+    const arg = extractHashtagArg(row.body, FAKTUR_LINE);
+    if (!arg) {
+      const reply = await sendViaWaGateway(target, `⚠️ Isi nomor invoice setelah #FAKTUR, ${fk.nama}. Contoh: #FAKTUR SI.2026.09.00123`);
+      return finish({ error: "empty-query", via: fk.via, reply });
+    }
+    const reply = await sendViaWaGateway(target, await buildFakturReply(arg));
+    return finish({ kind: "faktur", via: fk.via, reply });
   }
 
   // #PRICING <query> — lookup harga on-demand dari F142 Price Book (F15).
@@ -1465,10 +1519,30 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
 
   // #APPROVE/#REJECT <kode> [alasan] (F11). Approver = akun app_user
   // (HoD/Direktur), BUKAN master_user/AM — resolveApprover() beda sumber
-  // dari resolveSender() di atas. Pengirim tak dikenal → SILENT (sama pola).
+  // dari resolveSender() di atas. Pengirim tak dikenal → SILENT di grup biasa,
+  // TAPI dijawab di grup uji (lihat di bawah).
   if (kind === "approve" || kind === "reject") {
     const approver = await resolveApprover(row.sender_jid);
-    if (!approver) return finish({ skipped: "unknown-approver", sender_name: row.sender_name });
+    if (!approver) {
+      // Di grup uji, diam adalah jawaban yang salah: command lain di grup itu
+      // DIBALAS (bypass identitas), jadi penguji wajar menyimpulkan botnya rusak
+      // — bukan "kamu memang belum berhak". Terbukti membingungkan di sesi QA
+      // 2026-09-18: 13 dari 23 pesan tak berbalas, dan kekosongan itu diisi
+      // jawaban karangan dari agent lain yang memakai nomor WA yang sama.
+      //
+      // Di grup lain tetap senyap — gerbang itu juga yang menahan orang asing di
+      // grup produksi memancing balasan bot.
+      if (isWaTestBypassGroup(row.group_jid)) {
+        const reply = await sendViaWaGateway(
+          target,
+          `⚠️ #${kind.toUpperCase()} sengaja TIDAK ikut bypass grup uji — command ini benar-benar memutuskan approval request, ` +
+            `bukan sekadar balasan baca/lapor.\nPerlu akun approver terdaftar (app_user HoD/Direktur dengan nomor WA terisi). ` +
+            `Nomor kamu belum terdaftar sebagai approver.`,
+        );
+        return finish({ skipped: "unknown-approver", sender_name: row.sender_name, reply });
+      }
+      return finish({ skipped: "unknown-approver", sender_name: row.sender_name });
+    }
     const line = stripInvisible(row.body ?? "").split(/\r?\n/).find((l) => new RegExp(`^\\s*#\\s*${kind}\\b`, "i").test(l)) ?? "";
     const parsed = parseApprovalMessage(line, kind);
     if (!parsed) {

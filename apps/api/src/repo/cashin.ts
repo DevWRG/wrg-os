@@ -138,6 +138,10 @@ export interface IngestKoranResult {
   /** Kode draft resume yang ikut terbentuk karena koran hari itu jadi lengkap
    *  (null = belum lengkap, atau resume hari itu sudah final). */
   draft_kode?: string | null;
+  /** Apakah kode di atas benar-benar sampai ke grup Finance. Kode yang ADA di
+   *  DB tapi draftnya gagal terkirim TIDAK boleh diumumkan sebagai "menunggu
+   *  konfirmasi" — lihat DraftKeadaan. */
+  draft_keadaan?: DraftKeadaan;
   /** Kenapa draft belum dibuat — dipakai balasan #KORAN supaya admin tahu
    *  apa yang masih ditunggu, bukan cuma diam. */
   draft_alasan?: string | null;
@@ -146,6 +150,30 @@ export interface IngestKoranResult {
 /** Cocokkan file ke rekening. Nomor rekening dari ISI dokumen selalu menang;
  *  label dari nama file hanya cadangan (nama file di folder sumber terbukti
  *  bisa salah tanggal dan salah ekstensi). */
+/** Apakah nama file ini milik rekening berlabel `labelFile`?
+ *
+ *  Membandingkan hanya HURUF & ANGKA: seluruh pemisah (spasi, underscore,
+ *  strip, titik) dibuang di kedua sisi.
+ *
+ *  Kenapa bukan sekadar membuang spasi — terbukti di prod 18 Sep 2026: lampiran
+ *  WhatsApp disimpan openclaw sebagai
+ *  `INDEX_131_170926---94521364-6f3b-4dab-8125-92eb4660a394.pdf` (spasi jadi
+ *  underscore + suffix uuid). Pencocokan lama yang cuma membuang spasi
+ *  menghasilkan kunci `INDEX_131_170926...` yang TIDAK pernah berawalan
+ *  `INDEX131`, jadi rekening tak dikenali dan file Finance ditolak — padahal
+ *  namanya jelas terbaca manusia. Ini jaring pengaman KEDUA (dipakai saat nomor
+ *  rekening di dokumen tak terbaca), jadi kalau ia ikut gagal, satu kegagalan
+ *  berubah jadi dua.
+ *
+ *  'INDEX 881' vs 'INDEX 890' tetap terpisah setelah normalisasi, jadi tak ada
+ *  label yang jadi ambigu. */
+export function cocokLabelFile(labelFile: string, fileNama: string): boolean {
+  const bersih = (t: string): string => t.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const label = bersih(labelFile);
+  if (!label) return false;
+  return bersih(basename(fileNama)).startsWith(label);
+}
+
 async function resolveAccount(
   noRekening: string | null,
   fileNama: string | null,
@@ -181,19 +209,32 @@ async function resolveAccount(
     // yang peka spasi akan menolak file yang jelas-jelas bisa dikenali manusia,
     // lalu menyalahkan adminnya. 'INDEX 881' vs 'INDEX 890' tetap terpisah
     // setelah spasi dibuang, jadi tak ada label yang jadi ambigu.
-    const kunci = basename(fileNama).toUpperCase().replace(/\s+/g, "");
     const rows = await sql`
       SELECT id, label_file, jenis FROM bank_account
       ORDER BY length(replace(label_file, ' ', '')) DESC
     `;
     for (const r of rows) {
-      const label = String(r.label_file).toUpperCase().replace(/\s+/g, "");
-      if (label && kunci.startsWith(label)) {
+      if (cocokLabelFile(String(r.label_file), fileNama)) {
         return { id: String(r.id), label_file: String(r.label_file), jenis: String(r.jenis) };
       }
     }
   }
   return null;
+}
+
+/** Waktu dari services/ai yang aman untuk kolom timestamptz, atau null.
+ *
+ *  postgres.js men-serialisasi parameter timestamptz lewat new Date(x).toISOString().
+ *  String yang tak dikenali JS ('24/09/2026 18.25.14', '18:25:14') membuat
+ *  toISOString() melempar RangeError, dan SATU baris seperti itu menggagalkan
+ *  seluruh ingest (insiden 25 Sep 2026). services/ai sudah menormalkannya;
+ *  ini lapis kedua supaya bentuk baru dari OCR hanya menghilangkan jam, bukan
+ *  seluruh file. */
+export function waktuAman(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const s = raw.trim();
+  if (!/^\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?$/.test(s)) return null;
+  return Number.isNaN(new Date(s).getTime()) ? null : s;
 }
 
 export async function ingestKoran(
@@ -238,15 +279,25 @@ export async function ingestKoran(
     // Tanggal SENGAJA tidak diambil dari nama file walau tersedia — lihat
     // catatan migrasi 169. Lebih baik menolak dan minta cetak ulang daripada
     // menyimpan mutasi di tanggal yang salah.
+    //
+    // Sebab dari parser ikut ditulis. Tanpa ini pesannya selalu sama persis
+    // untuk kegagalan yang berbeda jauh — "bank tidak dikenali", "OCR 403",
+    // dan "periode lebih dari satu hari" semuanya terbaca sebagai "tanggal
+    // tidak terbaca", dan 25 Sep 2026 itu membuat satu file dikirim ulang
+    // tiga kali padahal masalahnya bukan di file.
+    const sebab = ((data.parse_error as string) ?? "").trim();
     return {
       ok: false,
-      error: `tanggal tidak terbaca dari isi dokumen (${acc.label_file}). File tidak diproses — tanggal dari nama file tidak dipakai karena tidak bisa dipercaya.`,
+      error:
+        `tanggal tidak terbaca dari isi dokumen (${acc.label_file}). File tidak diproses — ` +
+        "tanggal dari nama file tidak dipakai karena tidak bisa dipercaya." +
+        (sebab ? `\nSebab: ${sebab}` : ""),
     };
   }
 
   const lines = ((data.lines as KoranLine[]) ?? []).map((l) => ({
     urut: Number(l.urut),
-    waktu: l.waktu ?? null,
+    waktu: waktuAman(l.waktu),
     deskripsi: String(l.deskripsi ?? ""),
     debit: Number(l.debit ?? 0),
     kredit: Number(l.kredit ?? 0),
@@ -263,59 +314,67 @@ export async function ingestKoran(
   // Upsert statement + ganti seluruh barisnya. Upload ulang = perbaikan
   // (parser/OCR bisa diperbaiki lalu di-ingest lagi), bukan penambahan yang
   // membuat total dobel — karena itu DELETE baris lama, bukan append.
-  const [stmt] = await sql`
-    INSERT INTO bank_statement (
-      bank_account_id, tanggal, saldo_awal, saldo_akhir,
-      total_debit_tercetak, total_kredit_tercetak, jumlah_debit, jumlah_kredit,
-      dicetak_at, sumber, wa_message_id, wa_group_jid, file_path, file_nama, metode, model_used,
-      ocr_dry_run, checksum_ok, status, parse_error, raw_text
-    ) VALUES (
-      ${acc.id}, ${tanggal}, ${(data.saldo_awal as number) ?? null}, ${(data.saldo_akhir as number) ?? null},
-      ${(data.total_debit_tercetak as number) ?? null}, ${(data.total_kredit_tercetak as number) ?? null},
-      ${(data.jumlah_debit as number) ?? null}, ${(data.jumlah_kredit as number) ?? null},
-      ${(data.dicetak_at as string) ?? null}, ${input.sumber}, ${input.wa_message_id ?? null},
-      ${input.wa_group_jid ?? null},
-      ${input.file_path ?? null}, ${fileNama}, ${(data.metode as string) ?? "parser"},
-      ${(data.model as string) ?? null}, ${Boolean(data.dry_run)}, ${checksumOk},
-      ${checksumOk === true ? "terverifikasi" : "perlu_review"}, ${parseError},
-      ${(data.raw_text as string) ?? null}
-    )
-    ON CONFLICT (bank_account_id, tanggal) DO UPDATE SET
-      saldo_awal = EXCLUDED.saldo_awal, saldo_akhir = EXCLUDED.saldo_akhir,
-      total_debit_tercetak = EXCLUDED.total_debit_tercetak,
-      total_kredit_tercetak = EXCLUDED.total_kredit_tercetak,
-      jumlah_debit = EXCLUDED.jumlah_debit, jumlah_kredit = EXCLUDED.jumlah_kredit,
-      dicetak_at = EXCLUDED.dicetak_at, sumber = EXCLUDED.sumber,
-      wa_message_id = EXCLUDED.wa_message_id,
-      -- Grup asal dipertahankan kalau kiriman baru datang tanpa grup (mis.
-      -- perbaikan lewat unggah web): draft konfirmasi tetap punya tujuan.
-      wa_group_jid = COALESCE(EXCLUDED.wa_group_jid, bank_statement.wa_group_jid),
-      file_path = EXCLUDED.file_path,
-      file_nama = EXCLUDED.file_nama, metode = EXCLUDED.metode,
-      model_used = EXCLUDED.model_used, ocr_dry_run = EXCLUDED.ocr_dry_run,
-      checksum_ok = EXCLUDED.checksum_ok, status = EXCLUDED.status,
-      parse_error = EXCLUDED.parse_error, raw_text = EXCLUDED.raw_text,
-      updated_at = now()
-    RETURNING id
-  `;
-  const statementId = String(stmt.id);
-  await sql`DELETE FROM bank_statement_line WHERE statement_id = ${statementId}`;
-
-  for (const l of lines) {
-    const kat = kategoriAwal(l, polaAfiliasi);
-    const catatan =
-      kat === "belum_ditriage" && RE_INTERNAL_WORDING.test(l.deskripsi)
-        ? "diduga pemindahbukuan internal — pasangan debit/kredit belum ketemu"
-        : null;
-    await sql`
-      INSERT INTO bank_statement_line (
-        statement_id, urut, waktu, deskripsi, debit, kredit, saldo, referensi, kategori, kategori_oleh, catatan
+  //
+  // Ketiganya SATU transaksi. Tanpa itu, baris yang gagal disisipkan
+  // meninggalkan statement 'terverifikasi' dengan nol mutasi — baris lama
+  // sudah terhapus — dan resume membacanya sebagai rekening tanpa uang masuk
+  // (BNI 24 Sep 2026: kredit Rp 106 jt hilang begitu saja).
+  const statementId = await sql.begin(async (tx) => {
+    const [stmt] = await tx`
+      INSERT INTO bank_statement (
+        bank_account_id, tanggal, saldo_awal, saldo_akhir,
+        total_debit_tercetak, total_kredit_tercetak, jumlah_debit, jumlah_kredit,
+        dicetak_at, sumber, wa_message_id, wa_group_jid, file_path, file_nama, metode, model_used,
+        ocr_dry_run, checksum_ok, status, parse_error, raw_text
       ) VALUES (
-        ${statementId}, ${l.urut}, ${l.waktu}, ${l.deskripsi}, ${l.debit}, ${l.kredit},
-        ${l.saldo}, ${l.referensi}, ${kat}, 'aturan', ${catatan}
+        ${acc.id}, ${tanggal}, ${(data.saldo_awal as number) ?? null}, ${(data.saldo_akhir as number) ?? null},
+        ${(data.total_debit_tercetak as number) ?? null}, ${(data.total_kredit_tercetak as number) ?? null},
+        ${(data.jumlah_debit as number) ?? null}, ${(data.jumlah_kredit as number) ?? null},
+        ${waktuAman(data.dicetak_at)}, ${input.sumber}, ${input.wa_message_id ?? null},
+        ${input.wa_group_jid ?? null},
+        ${input.file_path ?? null}, ${fileNama}, ${(data.metode as string) ?? "parser"},
+        ${(data.model as string) ?? null}, ${Boolean(data.dry_run)}, ${checksumOk},
+        ${checksumOk === true ? "terverifikasi" : "perlu_review"}, ${parseError},
+        ${(data.raw_text as string) ?? null}
       )
+      ON CONFLICT (bank_account_id, tanggal) DO UPDATE SET
+        saldo_awal = EXCLUDED.saldo_awal, saldo_akhir = EXCLUDED.saldo_akhir,
+        total_debit_tercetak = EXCLUDED.total_debit_tercetak,
+        total_kredit_tercetak = EXCLUDED.total_kredit_tercetak,
+        jumlah_debit = EXCLUDED.jumlah_debit, jumlah_kredit = EXCLUDED.jumlah_kredit,
+        dicetak_at = EXCLUDED.dicetak_at, sumber = EXCLUDED.sumber,
+        wa_message_id = EXCLUDED.wa_message_id,
+        -- Grup asal dipertahankan kalau kiriman baru datang tanpa grup (mis.
+        -- perbaikan lewat unggah web): draft konfirmasi tetap punya tujuan.
+        wa_group_jid = COALESCE(EXCLUDED.wa_group_jid, bank_statement.wa_group_jid),
+        file_path = EXCLUDED.file_path,
+        file_nama = EXCLUDED.file_nama, metode = EXCLUDED.metode,
+        model_used = EXCLUDED.model_used, ocr_dry_run = EXCLUDED.ocr_dry_run,
+        checksum_ok = EXCLUDED.checksum_ok, status = EXCLUDED.status,
+        parse_error = EXCLUDED.parse_error, raw_text = EXCLUDED.raw_text,
+        updated_at = now()
+      RETURNING id
     `;
-  }
+    const id = String(stmt.id);
+    await tx`DELETE FROM bank_statement_line WHERE statement_id = ${id}`;
+
+    for (const l of lines) {
+      const kat = kategoriAwal(l, polaAfiliasi);
+      const catatan =
+        kat === "belum_ditriage" && RE_INTERNAL_WORDING.test(l.deskripsi)
+          ? "diduga pemindahbukuan internal — pasangan debit/kredit belum ketemu"
+          : null;
+      await tx`
+        INSERT INTO bank_statement_line (
+          statement_id, urut, waktu, deskripsi, debit, kredit, saldo, referensi, kategori, kategori_oleh, catatan
+        ) VALUES (
+          ${id}, ${l.urut}, ${l.waktu}, ${l.deskripsi}, ${l.debit}, ${l.kredit},
+          ${l.saldo}, ${l.referensi}, ${kat}, 'aturan', ${catatan}
+        )
+      `;
+    }
+    return id;
+  });
 
   await matchPuteran(tanggal);
   const bersambung = await cekSaldoBersambung(acc.id, tanggal);
@@ -328,27 +387,9 @@ export async function ingestKoran(
 
   // Pemicu draft resume: begitu koran hari itu LENGKAP, Finance langsung
   // ditanya — tak menunggu jam tertentu (keputusan user 17 Sep 2026).
-  //
-  // Dibungkus try/catch dan TIDAK boleh menggagalkan ingest: file-nya sudah
-  // tersimpan dengan benar: kegagalan mengirim draft adalah soal WA, bukan soal
-  // data. Kalau ini melempar, admin akan melihat "#KORAN gagal" untuk file yang
-  // sebenarnya sudah masuk, lalu mengirimnya ulang berkali-kali.
-  let draft: DraftResult = { dibuat: false, alasan: "statement belum terverifikasi" };
-  if (String(fin.status) === "terverifikasi") {
-    try {
-      draft = await buatDraftJikaLengkap(tanggal, input.wa_group_jid ?? null);
-      // Belum lengkap → bukan berarti tak akan pernah jadi resume. Jadwalkan
-      // ulang pengecekan; kalau tak ada koran lain menyusul dalam periode
-      // hening, setoran dianggap selesai dan draftnya dibuat apa adanya.
-      if (!draft.dibuat && !draft.kode) {
-        const dijadwal = jadwalkanDraftHening(tanggal, input.wa_group_jid ?? null);
-        if (dijadwal) draft = { ...draft, alasan: `${draft.alasan}. Draft menyusul ${heningMenit()} menit setelah koran terakhir.` };
-      }
-    } catch (e) {
-      console.error(`[cashin] draft konfirmasi ${tanggal} gagal:`, e);
-      draft = { dibuat: false, alasan: `draft gagal dibuat: ${(e as Error).message}` };
-    }
-  }
+  // picuDraft tak pernah melempar; lihat catatannya.
+  let draft: DraftResult = { dibuat: false, keadaan: "belum", alasan: "statement belum terverifikasi" };
+  if (String(fin.status) === "terverifikasi") draft = await picuDraft(tanggal, input.wa_group_jid ?? null);
 
   return {
     ok: true,
@@ -364,8 +405,160 @@ export async function ingestKoran(
     total_kredit: Number(agg.k),
     parse_error: parseError,
     draft_kode: draft.kode ?? null,
+    draft_keadaan: draft.keadaan,
     draft_alasan: draft.alasan ?? null,
   };
+}
+
+// ── pernyataan "hari ini nihil" ──────────────────────────────────────────────
+//
+// Dari lapangan (Finance, 18 Sep 2026): rekening yang TIDAK ada transaksi tak
+// bisa diunduh dari internet banking sama sekali. Tanpa jalan ini, rekening
+// seperti itu menahan hitungan kelengkapan selamanya.
+//
+// Prinsipnya: nihil = PERNYATAAN BERTANDA TANGAN. Lihat catatan migrasi 179.
+
+export interface PernyataanNihil {
+  /** Teks label rekening apa adanya dari pesan ("BNI", "index 336"). */
+  label: string;
+  /** null = pakai tanggal hari ini (WIB). */
+  tanggal: string | null;
+}
+
+/** Baca "#KORAN BNI nihil 17/9/2026" (urutan label & kata 'nihil' bebas).
+ *
+ *  TANGGAL DIAMBIL DARI TEKS — satu-satunya pengecualian aturan "tanggal dari
+ *  isi dokumen" (migrasi 169 butir 4), karena pernyataan nihil memang TIDAK
+ *  punya dokumen. Itu sebabnya pengecualian ini ditulis di sini terang-terangan,
+ *  bukan disembunyikan: siapa pun yang membaca aturan itu lalu melihat kode ini
+ *  harus langsung tahu kenapa keduanya tidak bertentangan.
+ *
+ *  Menolak pesan tanpa kata 'nihil' → null (bukan menebak). */
+export function parseNihil(body: string | null): PernyataanNihil | null {
+  if (!body) return null;
+  const baris = body.split(/\r?\n/).find((b) => /#\s*koran\b/i.test(b) && /\bnihil\b/i.test(b));
+  if (!baris) return null;
+
+  // Buang hashtag + kata 'nihil' + tanggal, sisanya = label rekening.
+  let sisa = baris.replace(/#\s*koran\b/i, " ").replace(/\bnihil\b/i, " ");
+
+  // Tanggal: 17/9/2026, 17-09-26, 17 09 2026. Bulan & tahun wajib ada supaya
+  // angka rekening ("336") tidak salah dibaca sebagai tanggal.
+  let tanggal: string | null = null;
+  const m = sisa.match(/\b(\d{1,2})\s*[/-]\s*(\d{1,2})\s*[/-]\s*(\d{2,4})\b/);
+  if (m) {
+    const d = Number(m[1]);
+    const bl = Number(m[2]);
+    let th = Number(m[3]);
+    if (th < 100) th += 2000;
+    if (d >= 1 && d <= 31 && bl >= 1 && bl <= 12) {
+      tanggal = `${th}-${String(bl).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+      sisa = sisa.replace(m[0], " ");
+    }
+  }
+
+  const label = sisa.replace(/\s+/g, " ").trim();
+  if (!label) return null;
+  return { label, tanggal };
+}
+
+/** Satu rekening untuk tanggal itu baru saja beres (ingest ATAU nihil): coba
+ *  susun draft, dan kalau belum lengkap jadwalkan pengecekan hening.
+ *
+ *  TIDAK boleh melempar: statement-nya sudah tersimpan dengan benar, dan
+ *  kegagalan draft adalah soal WA, bukan soal data. Kalau ini melempar, admin
+ *  melihat "#KORAN gagal" untuk file yang sebenarnya sudah masuk, lalu
+ *  mengirimnya ulang berkali-kali. */
+async function picuDraft(tanggal: string, grupJid: string | null): Promise<DraftResult> {
+  try {
+    let draft = await buatDraftJikaLengkap(tanggal, grupJid);
+    // Belum lengkap → bukan berarti tak akan pernah jadi resume. Jadwalkan
+    // ulang pengecekan; kalau tak ada koran lain menyusul dalam periode
+    // hening, setoran dianggap selesai dan draftnya dibuat apa adanya.
+    if (!draft.dibuat && !draft.kode) {
+      const dijadwal = jadwalkanDraftHening(tanggal, grupJid);
+      if (dijadwal) draft = { ...draft, alasan: `${draft.alasan}. Draft menyusul ${heningMenit()} menit setelah koran terakhir.` };
+    }
+    return draft;
+  } catch (e) {
+    console.error(`[cashin] draft konfirmasi ${tanggal} gagal:`, e);
+    return { dibuat: false, keadaan: "belum", alasan: `draft gagal dibuat: ${(e as Error).message}` };
+  }
+}
+
+export interface NihilResult {
+  ok: boolean;
+  error?: string;
+  label_file?: string;
+  tanggal?: string;
+  /** Status draft resume sesudah pernyataan ini — sama seperti ingest koran. */
+  draft?: DraftResult;
+}
+
+/** Catat pernyataan nihil untuk satu rekening + satu tanggal.
+ *
+ *  Statement ditulis dengan NOL baris, metode 'manual', total tercetak 0/0
+ *  (checksum 0 = 0 lolos secara trivial), dan `nihil_oleh` wajib terisi —
+ *  penjaga CHECK di migrasi 179 menolak baris nihil tanpa pernyata. */
+export async function nyatakanNihil(
+  labelInput: string,
+  oleh: string,
+  opts: { tanggal?: string | null; waMessageId?: string | null; grupJid?: string | null } = {},
+): Promise<NihilResult> {
+  const sql = db();
+  if (!oleh.trim()) return { ok: false, error: "tak tahu siapa yang menyatakan nihil" };
+
+  const tanggal = (opts.tanggal ?? "").trim() || wibDate();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(tanggal)) return { ok: false, error: `tanggal '${tanggal}' tidak dikenali` };
+
+  const rows = await sql`SELECT id, label_file FROM bank_account WHERE aktif ORDER BY length(label_file) DESC`;
+  const bersih = (t: string): string => t.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const kunci = bersih(labelInput);
+  const cocok = rows.filter((r) => {
+    const l = bersih(String(r.label_file));
+    // Dua arah: "BNI" cocok ke label "BNI", dan "index 336" cocok ke "INDEX 336".
+    return l === kunci || kunci.startsWith(l) || l.startsWith(kunci);
+  });
+  if (cocok.length === 0) {
+    return { ok: false, error: `rekening '${labelInput}' tidak dikenali. Pakai label seperti: ${rows.map((r) => String(r.label_file)).join(", ")}` };
+  }
+  // Ambigu (mis. "INDEX" cocok ke 4 rekening Index) TIDAK ditebak — menebak di
+  // sini berarti menyatakan nihil atas rekening yang salah.
+  if (cocok.length > 1) {
+    return { ok: false, error: `'${labelInput}' ambigu — cocok ke ${cocok.map((r) => String(r.label_file)).join(", ")}. Sebutkan lengkap.` };
+  }
+
+  const acc = cocok[0];
+  const [stmt] = await sql`
+    INSERT INTO bank_statement (
+      bank_account_id, tanggal, total_debit_tercetak, total_kredit_tercetak,
+      jumlah_debit, jumlah_kredit, sumber, wa_message_id, wa_group_jid,
+      metode, checksum_ok, status, nihil, nihil_oleh
+    ) VALUES (
+      ${acc.id}, ${tanggal}, 0, 0, 0, 0, ${opts.waMessageId ? "wa" : "web"},
+      ${opts.waMessageId ?? null}, ${opts.grupJid ?? null},
+      'manual', true, 'terverifikasi', true, ${oleh.trim()}
+    )
+    ON CONFLICT (bank_account_id, tanggal) DO UPDATE SET
+      total_debit_tercetak = 0, total_kredit_tercetak = 0,
+      jumlah_debit = 0, jumlah_kredit = 0,
+      sumber = EXCLUDED.sumber, wa_message_id = EXCLUDED.wa_message_id,
+      wa_group_jid = COALESCE(EXCLUDED.wa_group_jid, bank_statement.wa_group_jid),
+      metode = 'manual', checksum_ok = true, status = 'terverifikasi',
+      parse_error = NULL, raw_text = NULL,
+      nihil = true, nihil_oleh = EXCLUDED.nihil_oleh, updated_at = now()
+    RETURNING id
+  `;
+  // Kalau tanggal itu sebelumnya berisi statement sungguhan, barisnya dibuang —
+  // pernyataan nihil yang menimpa data nyata harus meninggalkan keadaan yang
+  // KONSISTEN, bukan campuran "nihil" + baris mutasi lama.
+  await sql`DELETE FROM bank_statement_line WHERE statement_id = ${String(stmt.id)}`;
+
+  // Nihil melengkapi setoran persis seperti file koran. Dulu jalur ini tak
+  // memicu draft sama sekali: NIAGA 24 Sep 2026 dinyatakan nihil sebagai
+  // rekening ke-10, dan R16 tetap berbunyi "8/10" sampai disegarkan tangan.
+  const draft = await picuDraft(tanggal, opts.grupJid ?? null);
+  return { ok: true, label_file: String(acc.label_file), tanggal, draft };
 }
 
 // ── pencocokan pasangan puteran ──────────────────────────────────────────────
@@ -386,6 +579,8 @@ const TOLERANSI_MENIT = 30;
  *  Baris yang sudah ditriage manusia (kategori_oleh='manual') TIDAK ditimpa. */
 export async function matchPuteran(tanggal: string): Promise<number> {
   const sql = db();
+  const nomorRows = await sql`SELECT no_rekening FROM bank_account WHERE no_rekening IS NOT NULL`;
+  const nomorSendiri = nomorRows.map((r) => String(r.no_rekening));
   const rows = await sql`
     SELECT l.id, l.debit, l.kredit, l.waktu, l.deskripsi, l.kategori, l.kategori_oleh, s.bank_account_id
     FROM bank_statement_line l
@@ -430,7 +625,7 @@ export async function matchPuteran(tanggal: string): Promise<number> {
         // riil hilang dari total. Jadi minimal SATU sisi harus berbunyi seperti
         // pindah-buku internal. Ini pemakaian nama yang benar: penguat bukti
         // pasangan, bukan bukti tunggal.
-        (berbauInternal(d.deskripsi) || berbauInternal(c.deskripsi)),
+        (berbauInternal(d.deskripsi, nomorSendiri) || berbauInternal(c.deskripsi, nomorSendiri)),
     );
     if (cocok) {
       dipakai.add(cocok.id);
@@ -464,7 +659,30 @@ export async function matchPuteran(tanggal: string): Promise<number> {
 const RE_BERBAU_INTERNAL =
   /wahana\s*rizky|wahanarizky|pemindahbukuan|paymentfrom|transfer\s*bi\s*fast|bifast|inhousetrf|pdjtidj1|bmriidja|bidxidja|hnbnidja|bniaidja|bninidja/i;
 
-export function berbauInternal(deskripsi: string): boolean {
+export function berbauInternal(deskripsi: string, nomorSendiri: string[] = []): boolean {
+  // Sinyal terkuat dan paling tak terbantah: deskripsi memuat NOMOR REKENING
+  // WRG sendiri. Bank menulis lawan transaksi apa adanya, jadi kalau nomor itu
+  // muncul, uangnya memang berpindah ke/dari rekening kita sendiri.
+  //
+  // Terbukti perlu 18 Sep 2026: BJTM debit 50 jt berdeskripsi
+  // 'IB:008 1420075012038' (nomor rekening Mandiri MDR 038) berpasangan dengan
+  // kredit 50 jt di MDR 038 berdeskripsi 'ATMB CR Transfer JTMIBANK' — 44 detik
+  // berselang. Tak satu pun kata di daftar di bawah muncul di kedua sisi, jadi
+  // pasangannya DITOLAK dan 50 jt dana puteran masuk hitungan uang masuk riil.
+  // Finance yang menangkapnya, bukan sistem.
+  //
+  // Nomor diambil dari bank_account (DATA), bukan dikonstankan di sini —
+  // menambah rekening tak boleh menuntut rilis kode.
+  const digit = String(deskripsi ?? "").replace(/[^0-9]/g, "");
+  for (const n of nomorSendiri) {
+    const bersih = String(n ?? "").replace(/[^0-9]/g, "");
+    // ≥8 digit: nomor pendek berisiko cocok kebetulan dengan nominal/referensi.
+    if (bersih.length >= 8 && digit.includes(bersih)) return true;
+  }
+  return berbauInternalKata(deskripsi);
+}
+
+function berbauInternalKata(deskripsi: string): boolean {
   return RE_BERBAU_INTERNAL.test(deskripsi || "");
 }
 
@@ -572,7 +790,23 @@ export interface RingkasanHarian {
     nama_bank: string;
     uang_masuk: number;
     puteran_keluar: number;
+    /** Seluruh kredit di koran rekening itu — angka yang DILIHAT Finance di
+     *  balasan ingest ("masuk Rp …"). Jembatan ke uang_masuk ada di bawah. */
+    kredit_koran: number;
+    /** Kredit yang ternyata dana puteran (masuk dari rekening sendiri). */
+    puteran_masuk: number;
+    /** Kredit yang menunggu keputusan manusia. */
+    tertahan: number;
+    /** Bunga, deposito, refund — kredit yang bukan penerimaan usaha. */
+    lain: number;
   }>;
+  /** Rekening yang DINYATAKAN tidak ada transaksi (migrasi 179) + siapa yang
+   *  menyatakannya. Dipisah dari per_rekening supaya tak pernah dirender
+   *  sebagai 'Rp 0' — nol tak bisa dibedakan dari "datanya belum ada". */
+  rekening_nihil: Array<{ label_file: string; oleh: string }>;
+  /** Baris yang menunggu keputusan, lengkap dengan nomor rujukannya (T1, T2…)
+   *  supaya bisa diputuskan dari WhatsApp tanpa menyalin uuid. */
+  tertahan_detail: Array<{ kode: string; label_file: string; nominal: number; deskripsi: string }>;
 }
 
 const NOL: Record<string, number> = {
@@ -661,13 +895,34 @@ export async function ringkasanHarian(tanggal: string): Promise<RingkasanHarian>
   const perRek = await sql`
     SELECT a.label_file, a.nama_bank,
            COALESCE(SUM(l.kredit) FILTER (WHERE l.kategori IN ('uang_masuk_riil', 'afiliasi_grup')), 0)::numeric AS uang_masuk,
-           COALESCE(SUM(l.debit)  FILTER (WHERE l.kategori = 'puteran_internal'), 0)::numeric AS puteran_keluar
+           COALESCE(SUM(l.debit)  FILTER (WHERE l.kategori = 'puteran_internal'), 0)::numeric AS puteran_keluar,
+           COALESCE(SUM(l.kredit), 0)::numeric AS kredit_koran,
+           COALESCE(SUM(l.kredit) FILTER (WHERE l.kategori = 'puteran_internal'), 0)::numeric AS puteran_masuk,
+           COALESCE(SUM(l.kredit) FILTER (WHERE l.kategori = 'belum_ditriage'), 0)::numeric AS tertahan,
+           COALESCE(SUM(l.kredit) FILTER (WHERE l.kategori IN ('bunga', 'deposito', 'refund')), 0)::numeric AS lain
     FROM bank_statement s
     JOIN bank_account a ON a.id = s.bank_account_id
     LEFT JOIN bank_statement_line l ON l.statement_id = s.id
     WHERE s.tanggal = ${tanggal} AND a.jenis = 'kas' AND s.status = 'terverifikasi'
+      AND NOT s.nihil
     GROUP BY a.label_file, a.nama_bank
     ORDER BY 3 DESC, a.label_file
+  `;
+
+  const nihil = await sql`
+    SELECT a.label_file, s.nihil_oleh
+    FROM bank_statement s JOIN bank_account a ON a.id = s.bank_account_id
+    WHERE s.tanggal = ${tanggal} AND s.nihil
+    ORDER BY a.label_file
+  `;
+
+  const tertahan = await sql`
+    SELECT l.kode_triage, a.label_file, l.kredit::numeric AS nominal, l.deskripsi
+    FROM bank_statement_line l
+    JOIN bank_statement s ON s.id = l.statement_id
+    JOIN bank_account a ON a.id = s.bank_account_id
+    WHERE s.tanggal = ${tanggal} AND l.kategori = 'belum_ditriage' AND l.kredit > 0
+    ORDER BY l.kredit DESC
   `;
 
   const puteran = await sql`
@@ -708,11 +963,25 @@ export async function ringkasanHarian(tanggal: string): Promise<RingkasanHarian>
       ke: String(r.ke),
       nominal: Number(r.nominal),
     })),
+    rekening_nihil: nihil.map((r) => ({
+      label_file: String(r.label_file),
+      oleh: String(r.nihil_oleh ?? "-"),
+    })),
     per_rekening: perRek.map((r) => ({
       label_file: String(r.label_file),
       nama_bank: String(r.nama_bank),
       uang_masuk: Number(r.uang_masuk),
       puteran_keluar: Number(r.puteran_keluar),
+      kredit_koran: Number(r.kredit_koran),
+      puteran_masuk: Number(r.puteran_masuk),
+      tertahan: Number(r.tertahan),
+      lain: Number(r.lain),
+    })),
+    tertahan_detail: tertahan.map((r) => ({
+      kode: String(r.kode_triage ?? "-"),
+      label_file: String(r.label_file),
+      nominal: Number(r.nominal),
+      deskripsi: String(r.deskripsi ?? ""),
     })),
   };
 }
@@ -784,6 +1053,25 @@ export function formatResume(r: RingkasanHarian): string {
     );
   }
 
+  // Nihil disebut EKSPLISIT beserta pernyatanya. Tanpa baris ini, rekening yang
+  // memang tak bertransaksi tak terlihat bedanya dari rekening yang korannya
+  // belum masuk — padahal artinya berlawanan: yang satu sudah tuntas, yang lain
+  // masih ditunggu.
+  if (r.rekening_nihil.length) {
+    // SATU baris, bukan satu baris per rekening. Hari normal bisa punya 8
+    // rekening nihil (terbukti 18 Sep 2026) — delapan baris mendorong angka
+    // yang justru mau dibaca keluar dari layar pertama WhatsApp. Nama rekening
+    // dan pernyatanya tetap disebut lengkap; yang dibuang cuma pengulangannya.
+    const label = r.rekening_nihil.map((n) => n.label_file).join(", ");
+    const orang = [...new Set(r.rekening_nihil.map((n) => n.oleh))].join(", ");
+    baris.push(
+      "",
+      r.rekening_nihil.length === 1
+        ? `_${label}: nihil, tanpa transaksi (dinyatakan ${orang})_`
+        : `_${r.rekening_nihil.length} rekening nihil, tanpa transaksi: ${label} — dinyatakan ${orang}_`,
+    );
+  }
+
   // Daftar "belum setor" PINDAH ke pesan draft (lihat formatDraftKonfirmasi):
   // ia memberi tahu Finance file mana yang kurang — informasi untuk BERTINDAK,
   // dan Finance yang bertindak, bukan Direktur. Fakta bahwa angkanya belum
@@ -812,10 +1100,27 @@ export function formatResume(r: RingkasanHarian): string {
 // lewat jam sekian", gerbang ini hilang tanpa ada yang sadar — pemiliknya
 // menyangka masih ada verifikasi manusia padahal tidak.
 
+/** Keadaan draft DARI SUDUT PANDANG GRUP FINANCE — bukan dari sudut pandang DB.
+ *
+ *  Dibedakan karena 19 Sep 2026: draft R9 terbentuk di DB, gateway WA wedged,
+ *  teks draftnya tak pernah sampai ke grup — tapi balasan #KORAN tetap menulis
+ *  "Draft resume R9 menunggu konfirmasi". Finance membalas "ya R9" ke draft yang
+ *  tak pernah ada, dan balasan itu tak pernah terbaca siapa pun.
+ *
+ *  - "menunggu"    → teksnya ADA di grup; balasan "ya <kode>" akan terbaca
+ *  - "gagal_kirim" → kodenya ada di DB tapi grup TAK PERNAH menerima teksnya
+ *  - "final"       → resume tanggal itu sudah terkirim/ditolak; tak ada yang
+ *                    perlu dikonfirmasi lagi
+ *  - "belum"       → belum ada draft sama sekali (koran belum lengkap, dst) */
+export type DraftKeadaan = "menunggu" | "gagal_kirim" | "final" | "belum";
+
 export interface DraftResult {
   dibuat: boolean;
   kode?: string;
   alasan?: string;
+  /** Sengaja TIDAK opsional: tiap cabang wajib menyatakan keadaannya, dan yang
+   *  menagih kompilator — bukan reviewer. */
+  keadaan: DraftKeadaan;
   /** Draft sudah ada sebelumnya dan isinya diperbarui (koran di-ingest ulang). */
   diperbarui?: boolean;
   /** Draft dibuat dari koran yang BELUM lengkap (hening / jaring pengaman). */
@@ -929,8 +1234,53 @@ export function miripKeputusanResume(body: string | null): boolean {
   return MIRIP_KEPUTUSAN.test(teks) && parseKeputusanResume(teks) === null;
 }
 
-export function formatDraftKonfirmasi(teks: string, kode: string, r?: RingkasanHarian): string {
-  const baris = [`*DRAFT — belum dikirim ke Direktur*`, "", teks];
+export function formatDraftKonfirmasi(
+  teks: string,
+  kode: string,
+  r?: RingkasanHarian,
+  opts: { diperbarui?: boolean } = {},
+): string {
+  const baris = opts.diperbarui
+    ? [
+        `📝 *DRAFT ${kode} DIPERBARUI — belum dikirim ke Direktur*`,
+        "_Menggantikan draft sebelumnya. Versi inilah yang akan diteruskan ke Direktur._",
+        "",
+        teks,
+      ]
+    : [`*DRAFT — belum dikirim ke Direktur*`, "", teks];
+
+  // REKONSILIASI — hanya di draft, bukan di resume yang diteruskan ke Direktur.
+  //
+  // Finance melihat "masuk Rp 338.252.787" di balasan #KORAN, lalu angka lain di
+  // draft, dan 18 Sep 2026 harus mengurangi sendiri untuk menemukan selisih
+  // 50 juta. Blok ini menunjukkan jembatannya, jadi selisih menunjuk barisnya
+  // sendiri alih-alih memaksa orang menghitung ulang. Hanya rekening yang
+  // angkanya BERKURANG yang ditulis — kalau tak ada potongan, tak ada yang
+  // perlu dijelaskan.
+  if (r) {
+    const perlu = r.per_rekening.filter((p) => p.kredit_koran !== p.uang_masuk);
+    if (perlu.length) {
+      baris.push("", "*Rekonsiliasi* (kredit koran → uang masuk)");
+      for (const p of perlu) {
+        const potongan: string[] = [];
+        if (p.puteran_masuk > 0) potongan.push(`puteran −${rp(p.puteran_masuk)}`);
+        if (p.tertahan > 0) potongan.push(`tertahan −${rp(p.tertahan)}`);
+        if (p.lain > 0) potongan.push(`bunga/deposito −${rp(p.lain)}`);
+        baris.push(`${p.label_file}: ${rp(p.kredit_koran)} · ${potongan.join(" · ")} = ${rp(p.uang_masuk)}`);
+      }
+    }
+  }
+
+  // Baris yang menunggu keputusan, DENGAN nomor rujukannya — supaya Finance
+  // bisa memutuskannya dari HP tanpa membuka menu.
+  if (r && r.tertahan_detail.length) {
+    baris.push("", "*Menunggu keputusan*");
+    for (const t of r.tertahan_detail) {
+      const desk = t.deskripsi.trim() || "(deskripsi kosong)";
+      baris.push(`${t.kode} · ${t.label_file} ${rp(t.nominal)} — ${desk.length > 38 ? desk.slice(0, 37) + "…" : desk}`);
+    }
+    baris.push(`Putuskan: *#KORAN triage ${r.tertahan_detail[0].kode} uang masuk* (atau: puteran · bunga · pengeluaran · afiliasi)`);
+  }
   // Kelengkapan setoran ditulis di DRAFT saja, bukan di resume yang diteruskan
   // ke Direktur: ini informasi untuk BERTINDAK (file mana yang masih kurang),
   // dan yang bertindak Finance. Tanpa daftarnya, Finance tahu angkanya belum
@@ -965,6 +1315,47 @@ export function formatIngatanBelumLengkap(r: RingkasanHarian): string {
   ].join("\n");
 }
 
+/** Satu baris status gerbang konfirmasi di ekor balasan #KORAN.
+ *
+ *  Aturan yang dijaga fungsi ini: kode draft HANYA boleh disebut bersama ajakan
+ *  membalas kalau teks draftnya memang sampai ke grup. Kalau tidak, orang yang
+ *  membalas "ya <kode>" sedang berbicara ke pesan yang tak pernah ada, dan
+ *  pemindai konfirmasi tak punya apa pun untuk dicocokkan. 19 Sep 2026 itu
+ *  memakan satu hari kerja penuh: R9 dilaporkan "menunggu konfirmasi", dibalas
+ *  "ya R9" jam 12.04, dan tak ada yang terjadi.
+ *
+ *  null = tak ada yang perlu dikatakan. */
+export function formatStatusDraft(k: {
+  draft_kode?: string | null;
+  draft_keadaan?: DraftKeadaan;
+  draft_alasan?: string | null;
+}): string | null {
+  const kode = (k.draft_kode ?? "").trim();
+  const alasan = (k.draft_alasan ?? "").trim();
+  switch (k.draft_keadaan) {
+    case "menunggu":
+      return kode ? `📝 Draft resume ${kode} menunggu konfirmasi.` : null;
+    case "gagal_kirim":
+      // Sengaja menyebut kodenya TAPI melarang membalasnya: menyembunyikan kode
+      // bikin Finance tak bisa melapor "R9 macet", menyebutnya tanpa larangan
+      // bikin Finance membalas ke ruang hampa.
+      return [
+        `⚠️ Draft resume ${kode || "(tanpa kode)"} GAGAL dikirim ke grup ini — isinya tidak pernah muncul.`,
+        alasan ? `Sebab: ${alasan}` : null,
+        `JANGAN balas "ya ${kode || "<kode>"}" sekarang — balasan itu tidak akan terbaca.`,
+        "Resume tanggal ini belum sampai ke Direktur dan masih menunggu draft dikirim ulang.",
+      ]
+        .filter(Boolean)
+        .join("\n");
+    case "final":
+      return alasan ? `ℹ️ ${alasan}` : null;
+    case "belum":
+      return alasan ? `⏳ ${alasan}` : null;
+    default:
+      return alasan ? `⏳ ${alasan}` : null;
+  }
+}
+
 /** Buat/segarkan draft resume kalau koran hari itu sudah lengkap, lalu kirim
  *  draftnya ke grup Finance sekali.
  *
@@ -974,15 +1365,23 @@ export function formatIngatanBelumLengkap(r: RingkasanHarian): string {
  *  tetap melihatnya dan bisa memutuskan. Menuntut 10/10 terverifikasi berarti
  *  satu file bermasalah menahan resume seharian tanpa ada yang tahu.
  *
- *  Draft dikirim SEKALI (draft_terkirim_at). Re-ingest sesudahnya memperbarui
- *  teksnya diam-diam — mengirim ulang draft tiap file masuk akan membuat grup
- *  Finance dibanjiri, dan itu cara tercepat membuat orang berhenti membacanya. */
+ *  Draft yang sudah terkirim dikirim ULANG hanya kalau teks resumenya BERUBAH,
+ *  dengan penanda "DIPERBARUI". Dulu pembaruannya diam-diam, padahal yang
+ *  diteruskan ke Direktur saat Finance membalas "ya" adalah teks di DB — bukan
+ *  yang pernah dilihat Finance. R16 (24 Sep 2026) dan R18 (25 Sep) sama-sama
+ *  menunggu konfirmasi atas versi basi yang belum memuat BNI. Kiriman ulang
+ *  tetap tidak membanjiri grup: file yang tak mengubah angka → teks identik →
+ *  tak ada pesan, dan draft parsial baru diperbarui lewat timer hening. */
 export async function buatDraftJikaLengkap(
   tanggal: string,
   grupJid?: string | null,
-  opts: { paksa?: boolean } = {},
+  opts: { paksa?: boolean; koreksi?: boolean } = {},
 ): Promise<DraftResult> {
   const sql = db();
+  // Nomor rujukan diberikan DULU: teks draft menyebut T1/T2, dan Finance
+  // membalas dengan nomor itu. Kalau penomoran menyusul, nomor di pesan dan
+  // nomor di DB bisa berbeda.
+  await beriKodeTriage(tanggal);
   const r = await ringkasanHarian(tanggal);
   const teks = formatResume(r);
 
@@ -992,11 +1391,35 @@ export async function buatDraftJikaLengkap(
 
   const [ada] = await sql`SELECT id, kode, status, grup_jid, draft_terkirim_at FROM cashin_resume WHERE tanggal = ${tanggal}`;
 
-  // Resume yang sudah diputuskan TIDAK ditimpa. Kalau koran hari itu ternyata
-  // diperbaiki sesudah Direktur menerima angkanya, itu perlu koreksi yang
-  // disengaja manusia — bukan draft baru yang diam-diam menggantikan riwayat.
-  if (ada && String(ada.status) !== "menunggu_konfirmasi") {
-    return { dibuat: false, kode: String(ada.kode), alasan: `resume ${tanggal} sudah berstatus ${String(ada.status)}` };
+  // Resume yang DITOLAK boleh disusun ulang — itu justru gunanya menolak:
+  // Finance menahan angka yang salah, datanya dibetulkan, lalu draft baru
+  // dibuat. Sebelum migrasi 180 status 'ditolak' bersifat final dan tanggal itu
+  // TAK PERNAH bisa sampai ke Direktur lagi, bahkan sesudah dibetulkan.
+  //
+  // Yang sudah TERKIRIM tetap tidak ditimpa diam-diam: mengoreksi angka yang
+  // sudah dibaca Direktur harus disengaja (opts.koreksi), bukan efek samping
+  // dari ingest ulang.
+  const statusLama = ada ? String(ada.status) : null;
+  const bolehUlang = statusLama === "ditolak" || (statusLama === "terkirim" && opts.koreksi === true);
+  if (ada && statusLama !== "menunggu_konfirmasi" && !bolehUlang) {
+    return { dibuat: false, keadaan: "final", kode: String(ada.kode), alasan: `resume ${tanggal} sudah berstatus ${statusLama}` };
+  }
+  if (ada && bolehUlang) {
+    // Jejak keputusan lama dipindah ke riwayat SEBELUM barisnya ditulis ulang.
+    // Alasan penolakan sering satu-satunya catatan kenapa angkanya berubah.
+    await sql`
+      UPDATE cashin_resume SET
+        riwayat = riwayat || jsonb_build_object(
+          'kode', kode, 'status', status, 'oleh', diputuskan_oleh,
+          'alasan', COALESCE(alasan_tolak, kirim_error), 'at', COALESCE(diputuskan_at, updated_at)
+        ),
+        kode = 'R' || nextval('cashin_resume_kode_seq'),
+        status = 'menunggu_konfirmasi',
+        diputuskan_oleh = NULL, diputuskan_at = NULL, alasan_tolak = NULL,
+        terkirim_at = NULL, kirim_error = NULL,
+        draft_terkirim_at = NULL, ingat_terakhir_at = NULL, updated_at = now()
+      WHERE id = ${String(ada.id)}
+    `;
   }
 
   // `paksa` = pemicu hening / jaring pengaman harian: setoran dianggap selesai
@@ -1007,32 +1430,74 @@ export async function buatDraftJikaLengkap(
   if (parsial && !opts.paksa) {
     return {
       dibuat: false,
+      keadaan: "belum",
       alasan: `koran belum lengkap (${r.rekening_masuk}/${r.rekening_wajib}) — belum setor: ${r.rekening_belum.join(", ")}`,
     };
   }
   // Nol koran bukan "setoran selesai", itu hari tanpa setoran sama sekali.
-  if (r.rekening_masuk === 0) return { dibuat: false, alasan: "belum ada koran masuk untuk tanggal ini" };
+  if (r.rekening_masuk === 0) return { dibuat: false, keadaan: "belum", alasan: "belum ada koran masuk untuk tanggal ini" };
 
   const tujuan = (grupJid ?? "").trim() || String(ada?.grup_jid ?? "") || (await grupTerakhirKoran(tanggal)) || konfirmasiTujuanEnv();
 
-  const [row] = await sql`
-    INSERT INTO cashin_resume (tanggal, teks, ringkasan, grup_jid)
-    VALUES (${tanggal}, ${teks}, ${JSON.stringify(r)}::jsonb, ${tujuan || null})
-    ON CONFLICT (tanggal) DO UPDATE SET
-      teks = EXCLUDED.teks,
-      ringkasan = EXCLUDED.ringkasan,
-      grup_jid = COALESCE(cashin_resume.grup_jid, EXCLUDED.grup_jid),
-      updated_at = now()
-    RETURNING id, kode, grup_jid, draft_terkirim_at
-  `;
+  // Teks lama dibaca DI BAWAH kunci baris, dalam transaksi yang sama dengan
+  // penulisannya. Dua pemicu yang nyaris bersamaan (timer hening + ingest)
+  // tak bisa sama-sama melihat teks lama lalu sama-sama mengirim ulang: yang
+  // kedua menunggu kunci, lalu membaca teks yang barusan ditulis yang pertama.
+  const row = await sql.begin(async (tx) => {
+    const [lama] = await tx`SELECT teks FROM cashin_resume WHERE tanggal = ${tanggal} FOR UPDATE`;
+    const [baru] = await tx`
+      INSERT INTO cashin_resume (tanggal, teks, ringkasan, grup_jid)
+      VALUES (${tanggal}, ${teks}, ${JSON.stringify(r)}::jsonb, ${tujuan || null})
+      ON CONFLICT (tanggal) DO UPDATE SET
+        teks = EXCLUDED.teks,
+        ringkasan = EXCLUDED.ringkasan,
+        grup_jid = COALESCE(cashin_resume.grup_jid, EXCLUDED.grup_jid),
+        updated_at = now()
+      RETURNING id, kode, grup_jid, draft_terkirim_at
+    `;
+    return {
+      id: String(baru.id),
+      kode: baru.kode,
+      grup_jid: baru.grup_jid,
+      draft_terkirim_at: baru.draft_terkirim_at,
+      teks_lama: lama ? lama.teks : null,
+    };
+  });
   const kode = String(row.kode);
   const sudahDikirim = row.draft_terkirim_at != null;
-  if (sudahDikirim) return { dibuat: false, diperbarui: true, kode, alasan: "draft sudah dikirim ke Finance, teksnya diperbarui" };
+  // Draft lama sudah ada di grup → "menunggu": Finance BISA membalas "ya <kode>".
+  // Teks sama → cukup diam. Teks berubah → versi barunya WAJIB sampai ke grup,
+  // karena teks inilah yang diteruskan ke Direktur (lihat docstring).
+  if (sudahDikirim) {
+    const berubah = row.teks_lama != null && String(row.teks_lama) !== teks;
+    if (!berubah) {
+      return { dibuat: false, keadaan: "menunggu", diperbarui: true, kode, alasan: "draft sudah dikirim ke Finance, isinya tidak berubah" };
+    }
+    const ke = String(row.grup_jid ?? "").trim();
+    const kirim = ke
+      ? await sendViaWaGateway(ke, formatDraftKonfirmasi(teks, kode, r, { diperbarui: true }))
+      : { sent: false, error: "grup tujuan konfirmasi tak diketahui" };
+    if (!kirim.sent) {
+      // Teks lama tetap di grup, teks baru tidak. Dilaporkan keras, bukan
+      // "menunggu": membalas "ya" sekarang meneruskan angka yang belum dilihat.
+      console.error(`[cashin] draft ${kode} diperbarui tapi gagal dikirim ulang: ${kirim.error ?? "?"}`);
+      return {
+        dibuat: false,
+        keadaan: "gagal_kirim",
+        diperbarui: true,
+        kode,
+        alasan: `teks draft berubah tapi versi barunya gagal dikirim ke grup: ${kirim.error ?? "gateway tidak mengirim"}`,
+      };
+    }
+    await sql`UPDATE cashin_resume SET draft_terkirim_at = now(), updated_at = now() WHERE id = ${row.id}`;
+    return { dibuat: false, keadaan: "menunggu", diperbarui: true, kode, parsial, alasan: "draft diperbarui dan dikirim ulang ke Finance" };
+  }
 
   const ke = String(row.grup_jid ?? "").trim();
   if (!ke) {
     return {
       dibuat: false,
+      keadaan: "gagal_kirim",
       kode,
       alasan: "grup tujuan konfirmasi tak diketahui (statement diunggah lewat web) — set CASHIN_KONFIRMASI_TO",
     };
@@ -1040,10 +1505,43 @@ export async function buatDraftJikaLengkap(
 
   const kirim = await sendViaWaGateway(ke, formatDraftKonfirmasi(teks, kode, r));
   if (!kirim.sent) {
-    return { dibuat: false, kode, alasan: kirim.error ?? "gateway tidak mengirim draft" };
+    // Kodenya SUDAH ada di DB, teksnya TIDAK ada di grup — keadaan yang dulu
+    // dilaporkan sebagai "menunggu konfirmasi" dan memakan balasan "ya R9"
+    // 19 Sep 2026 tanpa jejak.
+    return { dibuat: false, keadaan: "gagal_kirim", kode, alasan: kirim.error ?? "gateway tidak mengirim draft" };
   }
   await sql`UPDATE cashin_resume SET draft_terkirim_at = now(), updated_at = now() WHERE id = ${row.id}`;
-  return { dibuat: true, kode, parsial };
+  return { dibuat: true, keadaan: "menunggu", kode, parsial };
+}
+
+/** Beri nomor rujukan pendek (T1, T2, …) ke baris yang menunggu keputusan.
+ *
+ *  Idempoten: baris yang sudah bernomor mempertahankan nomornya, supaya nomor
+ *  yang sudah terlanjur dibaca Finance di draft sebelumnya tidak berpindah ke
+ *  baris lain. Nomor yang barisnya sudah diputuskan TIDAK dipakai ulang di
+ *  tanggal yang sama — kalau dipakai ulang, balasan "triage T1" yang datang
+ *  terlambat akan mengenai baris yang salah. */
+async function beriKodeTriage(tanggal: string): Promise<void> {
+  const sql = db();
+  const rows = await sql`
+    SELECT l.id, l.kode_triage
+    FROM bank_statement_line l
+    JOIN bank_statement s ON s.id = l.statement_id
+    WHERE s.tanggal = ${tanggal} AND l.kategori = 'belum_ditriage' AND l.kredit > 0
+    ORDER BY l.kredit DESC, l.id
+  `;
+  const [{ maks }] = await sql`
+    SELECT COALESCE(MAX(NULLIF(regexp_replace(l.kode_triage, '[^0-9]', '', 'g'), '')::int), 0) AS maks
+    FROM bank_statement_line l
+    JOIN bank_statement s ON s.id = l.statement_id
+    WHERE s.tanggal = ${tanggal} AND l.kode_triage IS NOT NULL
+  `;
+  let n = Number(maks);
+  for (const r of rows) {
+    if (r.kode_triage) continue;
+    n += 1;
+    await sql`UPDATE bank_statement_line SET kode_triage = ${`T${n}`} WHERE id = ${String(r.id)}`;
+  }
 }
 
 /** Grup asal #KORAN hari itu — dipakai kalau pemanggil tak menyertakan grup
@@ -1070,6 +1568,10 @@ export interface PutusanResult {
   status?: string;
   terkirim?: boolean;
   alasan?: string;
+  /** Ditolak karena resume-nya SUDAH final (terkirim/ditolak), bukan karena ada
+   *  yang rusak. Pemanggil harus membedakannya: "sudah beres" dan "pengiriman
+   *  gagal" tidak boleh dibalas dengan kalimat yang sama. */
+  sudah_final?: boolean;
 }
 
 /** Terapkan keputusan Finance. 'ya' → kirim resume ke Direktur. 'tidak' → tahan.
@@ -1082,57 +1584,72 @@ export async function putuskanResume(
   oleh: string,
   opts: { alasan?: string | null; waMessageId?: string | null } = {},
 ): Promise<PutusanResult> {
-  const sql = db();
-  const [row] = await sql`
-    SELECT id, kode, to_char(tanggal, 'YYYY-MM-DD') AS tanggal, teks, status
-    FROM cashin_resume WHERE upper(kode) = upper(${kode})
-  `;
-  if (!row) return { ok: false, error: `kode ${kode} tidak dikenal` };
+  // Seluruh keputusan dalam SATU transaksi dengan baris resume terkunci
+  // (FOR UPDATE), dan pengiriman WA terjadi DI DALAM kunci itu.
+  //
+  // Tanpa kunci, dua pemanggil yang hampir bersamaan (webhook yang terkirim
+  // dua kali, pemindai + tombol web) sama-sama membaca 'menunggu_konfirmasi',
+  // sama-sama mengirim, baru kemudian menulis 'terkirim'. Resume R13, R14, dan
+  // R15 (22–24 Sep 2026) sampai ke Direktur DUA kali, selisih ±2,5 detik.
+  // Dengan kunci, pemanggil kedua menunggu sampai yang pertama commit, lalu
+  // membaca status final dan berhenti tanpa mengirim.
+  //
+  // Harga yang dibayar: satu koneksi pool + kunci satu baris ditahan selama
+  // panggilan gateway (±2 detik). Status tak bisa diklaim lewat nilai baru
+  // ('mengirim') tanpa migrasi CHECK constraint, dan kunci baris cukup.
+  return db().begin(async (tx) => {
+    const [row] = await tx`
+      SELECT id, kode, to_char(tanggal, 'YYYY-MM-DD') AS tanggal, teks, status
+      FROM cashin_resume WHERE upper(kode) = upper(${kode})
+      FOR UPDATE
+    `;
+    if (!row) return { ok: false, error: `kode ${kode} tidak dikenal` };
 
-  const tanggal = String(row.tanggal);
-  const status = String(row.status);
-  // 'gagal_kirim' BOLEH diputuskan lagi: Finance sudah setuju, yang gagal
-  // gatewaynya. 'terkirim'/'ditolak' tidak — itu keputusan yang sudah final.
-  if (status === "terkirim" || status === "ditolak") {
-    return { ok: false, error: `resume ${tanggal} sudah ${status}`, kode: String(row.kode), tanggal, status };
-  }
+    const tanggal = String(row.tanggal);
+    const status = String(row.status);
+    // 'gagal_kirim' BOLEH diputuskan lagi: Finance sudah setuju, yang gagal
+    // gatewaynya. 'terkirim'/'ditolak' tidak — itu keputusan yang sudah final.
+    if (status === "terkirim" || status === "ditolak") {
+      return { ok: false, error: `resume ${tanggal} sudah ${status}`, kode: String(row.kode), tanggal, status, sudah_final: true };
+    }
 
-  if (keputusan === "tidak") {
-    await sql`
-      UPDATE cashin_resume SET status = 'ditolak', diputuskan_oleh = ${oleh}, diputuskan_at = now(),
-        alasan_tolak = ${opts.alasan ?? null}, wa_message_id = ${opts.waMessageId ?? null}, updated_at = now()
+    if (keputusan === "tidak") {
+      await tx`
+        UPDATE cashin_resume SET status = 'ditolak', diputuskan_oleh = ${oleh}, diputuskan_at = now(),
+          alasan_tolak = ${opts.alasan ?? null}, wa_message_id = ${opts.waMessageId ?? null}, updated_at = now()
+        WHERE id = ${row.id}
+      `;
+      return { ok: true, kode: String(row.kode), tanggal, status: "ditolak", terkirim: false };
+    }
+
+    const tujuan = (process.env.CASHIN_RESUME_TO ?? "").trim();
+    if (!tujuan) {
+      return { ok: false, error: "CASHIN_RESUME_TO belum di-set (nomor WA Direktur)", kode: String(row.kode), tanggal };
+    }
+
+    const jam = new Date(Date.now() + 7 * 3600 * 1000).toISOString().slice(11, 16);
+    const teks = `${String(row.teks)}\n\n_Dikonfirmasi ${oleh} ${jam} WIB._`;
+    const kirim = await sendViaWaGateway(tujuan, teks);
+    const gagal = kirim.sent ? null : (kirim.error ?? "gateway tidak mengirim");
+
+    await tx`
+      UPDATE cashin_resume SET
+        status = ${kirim.sent ? "terkirim" : "gagal_kirim"},
+        diputuskan_oleh = ${oleh}, diputuskan_at = now(),
+        wa_message_id = ${opts.waMessageId ?? null},
+        terkirim_at = ${kirim.sent ? new Date().toISOString() : null},
+        kirim_error = ${gagal}, updated_at = now()
       WHERE id = ${row.id}
     `;
-    return { ok: true, kode: String(row.kode), tanggal, status: "ditolak", terkirim: false };
-  }
-
-  const tujuan = (process.env.CASHIN_RESUME_TO ?? "").trim();
-  if (!tujuan) {
-    return { ok: false, error: "CASHIN_RESUME_TO belum di-set (nomor WA Direktur)", kode: String(row.kode), tanggal };
-  }
-
-  const jam = new Date(Date.now() + 7 * 3600 * 1000).toISOString().slice(11, 16);
-  const teks = `${String(row.teks)}\n\n_Dikonfirmasi ${oleh} ${jam} WIB._`;
-  const kirim = await sendViaWaGateway(tujuan, teks);
-  const gagal = kirim.sent ? null : (kirim.error ?? "gateway tidak mengirim");
-
-  await sql`
-    UPDATE cashin_resume SET
-      status = ${kirim.sent ? "terkirim" : "gagal_kirim"},
-      diputuskan_oleh = ${oleh}, diputuskan_at = now(),
-      wa_message_id = ${opts.waMessageId ?? null},
-      terkirim_at = ${kirim.sent ? new Date().toISOString() : null},
-      kirim_error = ${gagal}, updated_at = now()
-    WHERE id = ${row.id}
-  `;
-  return {
-    ok: kirim.sent,
-    error: gagal ?? undefined,
-    kode: String(row.kode),
-    tanggal,
-    status: kirim.sent ? "terkirim" : "gagal_kirim",
-    terkirim: kirim.sent,
-  };
+    return {
+      ok: kirim.sent,
+      error: gagal ?? undefined,
+      kode: String(row.kode),
+      tanggal,
+      status: kirim.sent ? "terkirim" : "gagal_kirim",
+      terkirim: kirim.sent,
+    };
+  });
 }
 
 export interface ScanKonfirmasiResult {
@@ -1151,34 +1668,60 @@ export async function scanKonfirmasiResume(): Promise<ScanKonfirmasiResult> {
   const sql = db();
   const hasil: ScanKonfirmasiResult = { dinilai: 0, diputuskan: 0, mirip: 0 };
 
+  // `draft_terkirim_at IS NOT NULL` DIHAPUS dari filter ini (19 Sep 2026).
+  //
+  // Dulu grup yang draftnya gagal terkirim tidak ikut dipindai sama sekali —
+  // bukan cuma kodenya yang dilewati, seluruh grupnya. R9 gagal dikirim jam
+  // 11:17, "ya R9" masuk jam 12.04, dan tak ada satu baris pun yang menilainya.
+  // Gagal kirim adalah soal gateway; kalau Finance tetap tahu kodenya dan
+  // membalas, balasan itu harus dihormati, bukan dibuang diam-diam.
+  //
+  // Batas waktunya pindah ke COALESCE(draft_terkirim_at, created_at): tetap ada
+  // titik nol yang jelas ("sejak resume ini lahir"), jadi kalimat lama di grup
+  // yang kebetulan berbunyi "ya R2" tetap tak bisa menyetujui resume baru.
   const draft = await sql`
-    SELECT kode, grup_jid, draft_terkirim_at FROM cashin_resume
-    WHERE status IN ('menunggu_konfirmasi', 'gagal_kirim') AND grup_jid IS NOT NULL AND draft_terkirim_at IS NOT NULL
+    SELECT kode, grup_jid, COALESCE(draft_terkirim_at, created_at) AS sejak
+    FROM cashin_resume
+    WHERE status IN ('menunggu_konfirmasi', 'gagal_kirim') AND grup_jid IS NOT NULL
   `;
   if (draft.length === 0) return hasil;
 
-  const grup = [...new Set(draft.map((d) => String(d.grup_jid)))];
-  const sejak = draft.reduce(
-    (min, d) => (String(d.draft_terkirim_at) < min ? String(d.draft_terkirim_at) : min),
-    String(draft[0].draft_terkirim_at),
-  );
+  // Batas waktu PER GRUP, bukan satu minimum global.
+  //
+  // Dengan minimum global, satu draft tua di grup uji menarik mundur jendela
+  // pindai SEMUA grup ke tanggalnya — grup produksi ikut dibaca berminggu-minggu
+  // ke belakang tanpa alasan. Tiap grup sekarang hanya dibaca sejak resume
+  // TERTUANYA SENDIRI yang masih menunggu.
+  const sejakPerGrup = new Map<string, string>();
+  for (const d of draft) {
+    const jid = String(d.grup_jid);
+    const s = new Date(String(d.sejak)).toISOString();
+    const ada = sejakPerGrup.get(jid);
+    if (!ada || s < ada) sejakPerGrup.set(jid, s);
+  }
+  const grup = [...sejakPerGrup.keys()];
+  const batas = grup.map((g) => sejakPerGrup.get(g) as string);
 
-  // Hanya pesan SESUDAH draft dikirim. Tanpa batas waktu ini, kalimat lama di
-  // grup yang kebetulan berbunyi "ya R2" (nomor ruangan, kode barang) bisa
-  // menyetujui resume yang baru dibuat hari ini.
   const pesan = await sql`
     SELECT m.id, m.group_jid, m.body, m.sender_name
     FROM wa_message m
-    WHERE m.group_jid = ANY(${grup}) AND m.received_at >= ${sejak}
-      AND m.body IS NOT NULL
+    JOIN unnest(${grup}::text[], ${batas}::timestamptz[]) AS b(jid, sejak)
+      ON b.jid = m.group_jid AND m.received_at >= b.sejak
+    WHERE m.body IS NOT NULL
       AND NOT EXISTS (SELECT 1 FROM cashin_konfirmasi_seen s WHERE s.message_id = m.id)
     ORDER BY m.received_at
     LIMIT 200
   `;
 
   for (const m of pesan) {
-    hasil.dinilai++;
     const id = String(m.id);
+    // Klaim pesan SEBELUM dinilai. Dulu jejak seen baru ditulis di akhir,
+    // sesudah kirim — dua pemindaian paralel (tiap webhook memicu satu) sama-
+    // sama lolos NOT EXISTS di atas dan sama-sama memutuskan pesan yang sama.
+    // Pesan yang terklaim lalu prosesnya mati di tengah tetap 'memproses' dan
+    // tidak diulang; pengingat harian cashin-resume yang menagih ulang.
+    if (!(await klaimSeen(id))) continue;
+    hasil.dinilai++;
     const body = m.body == null ? null : String(m.body);
     const oleh = String(m.sender_name ?? "").trim() || "Finance";
     const keputusan = parseKeputusanResume(body);
@@ -1211,6 +1754,18 @@ export async function scanKonfirmasiResume(): Promise<ScanKonfirmasiResult> {
       await tandaiSeen(id, "kode-tak-dikenal");
       continue;
     }
+    // Konfirmasi ganda (orang membalas dua kali, atau web sudah memutuskan
+    // duluan) BUKAN kegagalan. Sebelum ini cabangnya jatuh ke kalimat
+    // "pengiriman ke Direktur gagal … akan dicoba lagi" — laporan palsu yang
+    // membuat Finance mengira angkanya macet padahal sudah sampai.
+    if (r.sudah_final) {
+      await sendViaWaGateway(
+        String(m.group_jid),
+        `ℹ️ Resume ${r.tanggal} (${r.kode}) sudah ${r.status} — tidak perlu dikonfirmasi lagi.`,
+      );
+      await tandaiSeen(id, "sudah-final");
+      continue;
+    }
     hasil.diputuskan++;
     const balas =
       keputusan.keputusan === "tidak"
@@ -1224,11 +1779,111 @@ export async function scanKonfirmasiResume(): Promise<ScanKonfirmasiResult> {
   return hasil;
 }
 
+/** true = pemindaian ini pemilik pesan; false = sudah diklaim pemindaian lain. */
+async function klaimSeen(messageId: string): Promise<boolean> {
+  const rows = await db()`
+    INSERT INTO cashin_konfirmasi_seen (message_id, status) VALUES (${messageId}, 'memproses')
+    ON CONFLICT (message_id) DO NOTHING
+    RETURNING message_id
+  `;
+  return rows.length > 0;
+}
+
+/** Hasil akhir pesan yang SUDAH diklaim lewat klaimSeen. */
 async function tandaiSeen(messageId: string, status: string): Promise<void> {
   await db()`
     INSERT INTO cashin_konfirmasi_seen (message_id, status) VALUES (${messageId}, ${status})
-    ON CONFLICT (message_id) DO NOTHING
+    ON CONFLICT (message_id) DO UPDATE SET status = EXCLUDED.status
   `;
+}
+
+// ── triage dari WhatsApp ─────────────────────────────────────────────────────
+//
+// Baris yang deskripsinya buntu menunggu keputusan manusia, dan sampai 18 Sep
+// 2026 keputusan itu HANYA bisa diambil lewat menu web — yang aksesnya belum
+// dibuka untuk Finance. Jadi baris tertahan mengendap tanpa ada yang bisa
+// menyentuhnya, sambil terus mengurangi angka uang masuk.
+
+/** Kata yang dipakai orang → kategori di DB. Sengaja menerima beberapa bunyi
+ *  untuk tiap kategori: yang mengetik manusia di HP, bukan API. */
+const KATA_KATEGORI: Array<[RegExp, Kategori]> = [
+  [/^(uang\s*masuk|masuk|penerimaan|riil)$/i, "uang_masuk_riil"],
+  [/^(puteran|internal|pindah\s*buku|mutasi\s*internal)$/i, "puteran_internal"],
+  [/^(afiliasi|grup|afiliasi\s*grup)$/i, "afiliasi_grup"],
+  [/^(bunga|jasa\s*giro)$/i, "bunga"],
+  [/^(deposito|fd)$/i, "deposito"],
+  [/^(refund|pengembalian)$/i, "refund"],
+  [/^(pajak|biaya|adm|admin)$/i, "biaya_pajak"],
+  [/^(pengeluaran|keluar)$/i, "pengeluaran"],
+];
+
+export interface PerintahTriage {
+  kode: string;
+  kategori: Kategori;
+}
+
+/** Baca "#KORAN triage T1 uang masuk". Mengembalikan null kalau bukan perintah
+ *  triage; kategori tak dikenal dibedakan dari bukan-perintah lewat field
+ *  `kategori: null` supaya pemanggil bisa membalas panduan, bukan diam. */
+export function parseTriage(body: string | null): PerintahTriage | { kode: string; kategori: null } | null {
+  if (!body) return null;
+  for (const b of body.split(/\r?\n/)) {
+    const m = b.match(/#\s*koran\b[\s:]*triage\s+(T\d+)\s+(.+)$/i);
+    if (!m) continue;
+    const kode = m[1].toUpperCase();
+    const kata = m[2].trim().replace(/\s+/g, " ");
+    const cocok = KATA_KATEGORI.find(([re]) => re.test(kata));
+    return cocok ? { kode, kategori: cocok[1] } : { kode, kategori: null };
+  }
+  return null;
+}
+
+/** Daftar kata yang diterima — dipakai di pesan bantuan supaya orang tak
+ *  menebak-nebak. */
+export function kataKategoriTersedia(): string {
+  return "uang masuk · puteran · afiliasi · bunga · deposito · refund · pajak · pengeluaran";
+}
+
+export interface TriageWaResult {
+  ok: boolean;
+  error?: string;
+  label_file?: string;
+  nominal?: number;
+  kategori?: string;
+}
+
+/** Terapkan keputusan triage atas satu baris, dirujuk lewat kode pendeknya.
+ *
+ *  Kode dilepas (kode_triage = NULL) sesudah diputuskan supaya tak menempel di
+ *  baris yang sudah selesai — tapi nomornya TIDAK dipakai ulang di tanggal yang
+ *  sama (lihat beriKodeTriage), supaya balasan yang datang terlambat tak
+ *  mengenai baris lain. */
+export async function triageDariWa(kode: string, kategori: Kategori, oleh: string): Promise<TriageWaResult> {
+  const sql = db();
+  const [row] = await sql`
+    SELECT l.id, l.kredit::numeric AS nominal, a.label_file, to_char(s.tanggal, 'YYYY-MM-DD') AS tanggal
+    FROM bank_statement_line l
+    JOIN bank_statement s ON s.id = l.statement_id
+    JOIN bank_account a ON a.id = s.bank_account_id
+    WHERE upper(l.kode_triage) = upper(${kode}) AND l.kategori = 'belum_ditriage'
+    ORDER BY s.tanggal DESC LIMIT 1
+  `;
+  if (!row) return { ok: false, error: `kode ${kode} tidak ditemukan (mungkin sudah diputuskan)` };
+
+  await sql`
+    UPDATE bank_statement_line
+    SET kategori = ${kategori}, kategori_oleh = 'manual', kode_triage = NULL,
+        catatan = ${`ditriage ${oleh} lewat WA`}
+    WHERE id = ${String(row.id)}
+  `;
+  // Resume tanggal itu ikut berubah → teks draftnya disegarkan kalau masih
+  // menunggu konfirmasi. Tanpa ini Finance menyetujui angka lama.
+  try {
+    await buatDraftJikaLengkap(String(row.tanggal), null, { paksa: true });
+  } catch (e) {
+    console.error(`[cashin] segarkan draft sesudah triage ${kode} gagal:`, e);
+  }
+  return { ok: true, label_file: String(row.label_file), nominal: Number(row.nominal), kategori };
 }
 
 // ── job harian ───────────────────────────────────────────────────────────────
@@ -1386,7 +2041,7 @@ export async function listLine(opts: ListLineOpts): Promise<Record<string, unkno
   const rows = await sql`
     SELECT l.id, to_char(s.tanggal, 'YYYY-MM-DD') AS tanggal, a.label_file, l.urut, l.waktu, l.deskripsi,
            l.debit::numeric AS debit, l.kredit::numeric AS kredit, l.saldo::numeric AS saldo,
-           l.referensi, l.kategori, l.kategori_oleh, l.pasangan_line_id, l.catatan
+           l.referensi, l.kategori, l.kategori_oleh, l.pasangan_line_id, l.catatan, l.kode_triage
     FROM bank_statement_line l
     JOIN bank_statement s ON s.id = l.statement_id
     JOIN bank_account a ON a.id = s.bank_account_id

@@ -93,9 +93,13 @@ export const NAV: NavGroup[] = [
   {
     label: "HR",
     items: [
-      { title: "Plan & Report", url: "/plan-report", icon: LayoutDashboard, feature: "dashboard" },
-      { title: "Sales TODO", url: "/todos", icon: ListChecks },
-      { title: "Visits", url: "/visits", icon: MapPin },
+      { title: "Resume Plan & Report", url: "/plan-report", icon: LayoutDashboard, feature: "dashboard" },
+      // Judul boleh diganti bebas; `url` JANGAN — feature.key diturunkan dari
+      // featureKey(url), jadi mengubahnya bikin Sync Fitur menganggap 'todos'
+      // zombie lalu menyemai kunci baru yang default TERTUTUP untuk semua grup
+      // non-superuser (menu hilang tanpa ada yang merasa mencabut izin).
+      { title: "Operation Plan & Report", url: "/todos", icon: ListChecks },
+      { title: "Visits Plan & Report", url: "/visits", icon: MapPin },
       { title: "Reminders", url: "/reminders", icon: Bell },
       { title: "Holidays", url: "/holidays", icon: CalendarOff },
       { title: "Manage Leave", url: "/leave", icon: CalendarDays },
@@ -203,12 +207,12 @@ export const NAV: NavGroup[] = [
     label: "Analytics",
     items: [
       // NPK (F66) — gate identitas: Direktur = admin/superuser; self-view = HoD (hod_key).
-      { title: "NPK Direktur", url: "/npk", icon: Award, badge: "NEW", exact: true, show: (me) => me?.role === "admin" || me?.superuser === true },
+      { title: "NPK HOD", url: "/npk", icon: Award, badge: "NEW", exact: true, show: (me) => me?.role === "admin" || me?.superuser === true },
       { title: "NPK Saya", url: "/npk/self", icon: UserCheck, badge: "NEW", show: (me) => !!me?.hod_key },
       // NPK level AM (078): matrix semua AM untuk Direktur+HoD, self-view untuk staff AM.
       { title: "NPK AM", url: "/npk/am", icon: Award, badge: "NEW", exact: true, show: canViewNpkAm },
-      { title: "NPK Saya (AM)", url: "/npk/am-self", icon: UserCheck, badge: "NEW", show: canViewNpkAmSelf },
-      { title: "Karyawan 360", url: "/karyawan", icon: UsersRound, badge: "NEW", show: canViewRaportList },
+      { title: "NPK AM (Saya)", url: "/npk/am-self", icon: UserCheck, badge: "NEW", show: canViewNpkAmSelf },
+      { title: "Raport Karyawan 360", url: "/karyawan", icon: UsersRound, badge: "NEW", show: canViewRaportList },
       { title: "RACI Matrix", url: "/people/raci", icon: Workflow, badge: "NEW" },
       { title: "Org Chart", url: "/people/org", icon: Building2, badge: "NEW" },
       { title: "Voice of Employee", url: "/people/voice", icon: MessagesSquare, badge: "NEW" },
@@ -404,6 +408,15 @@ export const NAV: NavGroup[] = [
       },
       { title: "Helpdesk GA", url: "/ga-helpdesk", icon: Ticket, badge: "NEW" },
       { title: "Pengajuan Dana Operasional", url: "/fund-requests", icon: Wallet, badge: "NEW" },
+    ],
+  },
+  {
+    // F-CASHIN — Mitigasi Uang Masuk Harian. Pemakainya Finance (bukan Sales/
+    // Operations) dan datanya rekening bank, jadi dibuat grup sendiri daripada
+    // dipaksa masuk grup yang temanya lain.
+    label: "Finance",
+    items: [
+      { title: "Uang Masuk", url: "/uang-masuk", icon: Banknote, badge: "NEW" },
     ],
   },
   {

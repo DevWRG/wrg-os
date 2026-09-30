@@ -3,6 +3,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
+import type { KoordEdge, KoordEdgeDivisi, KoordGraf, KoordNode } from "./spider/types";
 
 // Jaringan koordinasi antar posisi — Tabel C form PIC (126 pernyataan).
 //
@@ -12,23 +13,9 @@ import { DataTable, type DataColumn } from "@/components/ui/data-table";
 // justru berlebihan untuk ukuran ini — dan yang berbahaya adalah kebalikannya,
 // yaitu memotong di backend lalu menghitung di klien.
 
-export interface KoordNode {
-  id: string; label: string; grup: string; keluar: number; masuk: number; derajat: number;
-}
-export interface KoordEdge { from: string; to: string; bobot: number; topik: string[] }
-export interface KoordEdgeDivisi {
-  from: string; to: string; bobot: number; bolak_balik: boolean; sepihak: boolean;
-}
-export interface KoordGraf {
-  ringkas: {
-    node: number; edge: number; baris: number;
-    internal: number; external: number; tak_terklasifikasi: number;
-    pasangan_divisi: number; pasangan_bolak_balik: number; pasangan_sepihak: number;
-  };
-  nodes: KoordNode[];
-  edges: KoordEdge[];
-  edges_divisi: KoordEdgeDivisi[];
-}
+// Tipe muatannya SATU tempat (spider/types.ts) — sebelumnya file ini punya
+// salinannya sendiri, dan salinan itu langsung basi begitu `topik: string[]`
+// dipecah jadi apa+pemicu di endpointnya.
 
 const GRUP_GAYA: Record<string, string> = {
   posisi: "bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-200",
@@ -68,13 +55,30 @@ export function KoordinasiView({ graf }: { graf: KoordGraf | null }) {
     { id: "to", header: "Berkoordinasi dengan", accessor: (e) => e.to },
     { id: "bobot", header: "Baris", align: "right", accessor: (e) => e.bobot },
     {
-      id: "topik", header: "Yang dikoordinasikan", accessor: (e) => e.topik.join(" · "),
+      // Isi dan pemicunya jadi DUA kolom, bukan satu kalimat gabungan: yang
+      // membedakan koordinasi rutin dari koordinasi kejadian ada di pemicunya
+      // ("Bulanan, tanggal 1" vs "Setiap ada transaksi aset masuk/keluar"),
+      // dan pencarian tabel jadi bisa menyasar salah satunya saja.
+      id: "apa", header: "Yang dikoordinasikan",
+      accessor: (e) => e.rinci.map((r) => r.apa ?? "").join(" · "),
       cell: (e) => (
         <ul className="list-inside list-disc space-y-0.5">
-          {e.topik.map((t, i) => <li key={i} className="text-xs">{t}</li>)}
+          {e.rinci.map((r, i) => <li key={i} className="text-xs">{r.apa ?? "— tak diisi"}</li>)}
         </ul>
       ),
-      className: "min-w-[22rem]",
+      className: "min-w-[20rem]",
+    },
+    {
+      id: "pemicu", header: "Pemicu",
+      accessor: (e) => e.rinci.map((r) => r.pemicu ?? "").join(" · "),
+      cell: (e) => (
+        <ul className="space-y-0.5">
+          {e.rinci.map((r, i) => (
+            <li key={i} className="text-xs text-muted-foreground">{r.pemicu ?? "— tak diisi"}</li>
+          ))}
+        </ul>
+      ),
+      className: "min-w-[14rem]",
     },
   ];
 
@@ -88,6 +92,27 @@ export function KoordinasiView({ graf }: { graf: KoordGraf | null }) {
         e.bolak_balik ? <Badge variant="secondary">bolak-balik</Badge>
           : e.sepihak ? <Badge variant="outline">sepihak</Badge>
             : <span className="text-xs text-muted-foreground">pihak luar</span>,
+    },
+    {
+      // Di level divisi, nama posisi asalnya sudah "terangkat" — tanpa kolom
+      // ini pasangan berbobot 7 cuma jadi angka, dan siapa menyatakan apa atas
+      // pemicu apa tak bisa ditelusuri lagi dari tabel ini.
+      id: "rinci", header: "Isi & pemicu",
+      accessor: (e) => e.rinci.map((r) => `${r.dari ?? ""} ${r.apa ?? ""} ${r.pemicu ?? ""}`).join(" · "),
+      cell: (e) => (
+        <ul className="space-y-1">
+          {e.rinci.map((r, i) => (
+            <li key={i} className="text-xs">
+              <span className="text-foreground/90">{r.apa ?? "— tak diisi"}</span>
+              <span className="text-muted-foreground">
+                {" · pemicu: "}{r.pemicu ?? "— tak diisi"}
+                {r.dari ? ` · oleh ${r.dari}` : ""}
+              </span>
+            </li>
+          ))}
+        </ul>
+      ),
+      className: "min-w-[26rem]",
     },
   ];
 

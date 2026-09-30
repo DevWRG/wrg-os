@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { SkeletonCardGrid } from "@/components/ui/loading";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 // Selaras HODS di apps/api/src/hod-resolver.ts — daftar 8 HoD kanonik.
@@ -132,7 +133,7 @@ export default function ApprovalConfigPage() {
 
       {error && <p className="text-destructive text-sm">{error}</p>}
       {loading ? (
-        <p className="text-muted-foreground">Memuat…</p>
+        <SkeletonCardGrid count={3} className="gap-3 md:grid-cols-1" />
       ) : (
         <div className="space-y-3">
           {rows.map((r) => (

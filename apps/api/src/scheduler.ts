@@ -41,6 +41,9 @@ import { runNotifQuota } from "./repo/notifquota.js";
 import { evaluateSalesAlerts } from "./repo/sales-analytics-alert-eval.js";
 import { computeNpk, currentPeriod } from "./repo/npk.js";
 import { computeNpkAm } from "./repo/npk-am.js";
+import {
+  computePeriode as computeInsentifPeriode, semuaAmBerTier, periodeHppDefault,
+} from "./repo/insentif.js";
 import { runCashinResume } from "./repo/cashin.js";
 import { snapshotLastWeek } from "./repo/watchpoint-weekly.js";
 import { runPreVisitCheck } from "./repo/pickup-plan.js";
@@ -51,6 +54,8 @@ import { runMaintenanceAlerts, runGaMaintenanceBscFeed } from "./repo/ga-mainten
 import { runGaHelpdeskOverdueAlert, runGaHelpdeskBscFeed } from "./repo/ga-helpdesk.js";
 import { runAuditFindingApprovalReminder } from "./repo/audit-finding.js";
 import { runLpseTenderReminder } from "./repo/lpse-tender.js";
+import { runInvoiceReminder } from "./repo/faktur.js";
+import { terapkanKpiBulan } from "./repo/kpi-measure.js";
 
 // Penjadwal agen in-process (Blueprint v2.3). Default MATI — aktif hanya bila
 // AGENT_SCHEDULE_ENABLED=true. Tiap run tetap menulis ke audit_log via repo
@@ -161,6 +166,15 @@ export function startScheduler(): ScheduleStatus {
   // Display-only (isi npk_score_semester + npk_aspect_score, tanpa WA/LLM). Sebelum
   // ada job ini compute cuma lewat POST /npk/compute manual → angka bisa basi berhari-hari.
   const npkComputeEnabled = (process.env.NPK_COMPUTE_ENABLED ?? "false").toLowerCase() === "true";
+  // insentif-compute (F67) — hitung ulang insentif bulan BERJALAN + bulan LALU tiap
+  // dini hari. Display-only (tanpa WA/LLM); yang membuatnya perlu berkala adalah
+  // pelunasan: sebuah faktur baru masuk hitungan setelah lunas, dan pelunasan bulan
+  // Agustus bisa terjadi di bulan Oktober. Tanpa job ini angka hanya berubah kalau
+  // ada yang menekan tombol hitung ulang.
+  //
+  // Rekap yang sudah lewat tahap review TIDAK ditimpa (computePeriode.paksa=false) —
+  // job harian tak boleh mengubah angka yang sudah ditandatangani orang.
+  const insentifComputeEnabled = (process.env.INSENTIF_COMPUTE_ENABLED ?? "false").toLowerCase() === "true";
   // watchpoint-snapshot — bekukan metric computed MINGGU LALU tiap Senin dini hari,
   // sebelum job lain menggeser angka. Tanpa ini papan Weekly tak punya riwayat:
   // metric computed dihitung live sehingga minggu lewat ikut berubah tiap dibuka.
@@ -181,9 +195,18 @@ export function startScheduler(): ScheduleStatus {
   // pending & telat >N hari (dedup harian via reminded_at). Flag SENDIRI
   // (default off) — mengirim WA.
   const auditFindingReminderEnabled = (process.env.AUDIT_FINDING_REMINDER_ENABLED ?? "false").toLowerCase() === "true";
+  // kpi-measure — auto-isi kpi_measurement KPI sales dari data operasional
+  // (kunjungan, kepatuhan plan-report, revenue, customer baru, prospek).
+  // Cakupannya sengaja sempit: hanya KPI yang punya sumber tak-ambigu; sisanya
+  // dibiarkan kosong. Display-only, tanpa WA. Idempoten (upsert per kpi+periode)
+  // sehingga aman dijalankan tiap hari — bulan berjalan ikut disegarkan, bukan
+  // cuma dibekukan sekali di akhir bulan.
+  const kpiMeasureEnabled = (process.env.KPI_MEASURE_ENABLED ?? "false").toLowerCase() === "true";
   // lpse-tender-reminder (F20) — WA ke PIC kalau tender LPSE/E-Catalog macet
   // >N hari di status berjalan (belum selesai). Flag SENDIRI (default off).
   const lpseTenderReminderEnabled = (process.env.LPSE_TENDER_REMINDER_ENABLED ?? "false").toLowerCase() === "true";
+  // F91 — reminder jatuh tempo invoice (D-7/D-day/overdue) ke Finance + AM.
+  const invoiceReminderEnabled = (process.env.INVOICE_REMINDER_ENABLED ?? "false").toLowerCase() === "true";
   // accurate-stock-sync (F2) — refresh accurate_item.quantity tiap 5 menit,
   // dipakai #STOK (inbound.ts) supaya total stok tak basi. Flag SENDIRI,
   // TERPISAH dari accurate-sync (itu utk invoice/SO/DO, cadence 6x/hari).
@@ -270,12 +293,12 @@ export function startScheduler(): ScheduleStatus {
   ];
 
   status = {
-    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled || watchpointSnapshotEnabled || preVisitEnabled || edWatchEnabled || gaMaintenanceAlertEnabled || gaMaintenanceBscEnabled || gaHelpdeskOverdueEnabled || gaHelpdeskBscEnabled || lpseTenderReminderEnabled || accurateStockSyncEnabled || cashinResumeEnabled || geoSweepEnabled,
+    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled || watchpointSnapshotEnabled || preVisitEnabled || edWatchEnabled || gaMaintenanceAlertEnabled || gaMaintenanceBscEnabled || gaHelpdeskOverdueEnabled || gaHelpdeskBscEnabled || lpseTenderReminderEnabled || accurateStockSyncEnabled || cashinResumeEnabled || geoSweepEnabled || kpiMeasureEnabled || invoiceReminderEnabled || auditFindingReminderEnabled,
     timezone,
     jobs: jobs.map((j) => ({ id: j.id, expr: j.expr, valid: cron.validate(j.expr) })),
   };
 
-  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled && !watchpointSnapshotEnabled && !preVisitEnabled && !edWatchEnabled && !gaMaintenanceAlertEnabled && !gaMaintenanceBscEnabled && !gaHelpdeskOverdueEnabled && !gaHelpdeskBscEnabled && !lpseTenderReminderEnabled && !accurateStockSyncEnabled && !cashinResumeEnabled && !geoSweepEnabled) {
+  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled && !watchpointSnapshotEnabled && !preVisitEnabled && !edWatchEnabled && !gaMaintenanceAlertEnabled && !gaMaintenanceBscEnabled && !gaHelpdeskOverdueEnabled && !gaHelpdeskBscEnabled && !lpseTenderReminderEnabled && !accurateStockSyncEnabled && !cashinResumeEnabled && !geoSweepEnabled && !kpiMeasureEnabled && !invoiceReminderEnabled && !auditFindingReminderEnabled) {
     console.log("[scheduler] semua *_SCHEDULE/_ENABLED flag != true — tidak dijadwalkan");
     return status;
   }
@@ -717,6 +740,26 @@ export function startScheduler(): ScheduleStatus {
           } catch (e3) {
             console.error(`[scheduler] accurate-sync item SO/DO gagal @ ${startedAt}:`, e3);
           }
+          // Snapshot produktivitas KSO (migrasi 185) disegarkan DI SINI, bukan
+          // lewat cron sendiri: sumbernya cuma berubah oleh sinkron di atas,
+          // jadi menempelkannya membuat snapshot selalu sesegar datanya tanpa
+          // perlu menebak jadwal. CONCURRENTLY supaya pembacaan tidak terkunci
+          // selama refresh (~2 menit) — butuh indeks unik, ada di migrasi 185.
+          // try/catch sendiri: snapshot basi jauh lebih ringan akibatnya
+          // daripada sinkron Accurate yang gagal gara-gara refresh.
+          try {
+            const t0 = Date.now();
+            // Lewat fungsi SECURITY DEFINER (migrasi 188), BUKAN REFRESH langsung:
+            // REFRESH menuntut kepemilikan, sedangkan aplikasi konek sebagai
+            // wrg_app yang sengaja DML-saja. Versi langsung gagal di prod dengan
+            // "must be owner of materialized view" — diam di layar, karena yang
+            // patah cuma penyegarannya, bukan pembacaannya. Urutan refresh
+            // (revenue dulu, baru snapshot atas) hidup di dalam fungsi itu.
+            await db()`SELECT kso_refresh_snapshots()`;
+            console.log(`[scheduler] kso-mv refresh ${Date.now() - t0}ms`);
+          } catch (e4) {
+            console.error(`[scheduler] kso-mv refresh gagal @ ${startedAt}:`, e4);
+          }
         } catch (e) {
           console.error(`[scheduler] accurate-sync gagal @ ${startedAt}:`, e);
         }
@@ -1154,6 +1197,48 @@ export function startScheduler(): ScheduleStatus {
     live.push(`npk-compute=${npkExpr}`);
   }
 
+  // insentif-compute (F67) — bulan berjalan + bulan lalu, harian 02:30 WIB.
+  const insentifExpr = process.env.INSENTIF_COMPUTE_CRON ?? "30 2 * * *";
+  if ((enabled || insentifComputeEnabled) && cron.validate(insentifExpr)) {
+    cron.schedule(
+      insentifExpr,
+      async () => {
+        const startedAt = new Date().toISOString();
+        try {
+          const amIds = await semuaAmBerTier();
+          if (amIds.length === 0) {
+            // Bukan error, tapi juga bukan "tidak ada apa-apa": tanpa tier tak ada
+            // satu pun insentif yang terhitung. Dicetak supaya kondisi ini kelihatan
+            // di log, bukan tampak seperti bulan yang memang sepi.
+            console.log(`[scheduler] insentif-compute skip @ ${startedAt} — insentif_am_config kosong`);
+            return;
+          }
+          // wibNow() sudah bergeser +7 jam, jadi bagian TANGGALNYA harus dibaca sebagai
+          // UTC (pola wibDate/wibJam di berkas ini). Memakai getMonth()/getFullYear()
+          // lokal akan menggeser dua kali dan, tiap tanggal 1 dini hari, menghitung
+          // bulan yang salah.
+          const now = wibNow();
+          const ym = (d: Date) => d.toISOString().slice(0, 7);
+          const lalu = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
+          for (const periode of [ym(now), ym(lalu)]) {
+            const r = await computeInsentifPeriode({
+              periode,
+              periodeHpp: periodeHppDefault(),
+              amIds,
+              effortPerAm: new Map(),   // Effort/Presales dibaca dari tabel (184)
+              apply: true,
+            });
+            console.log(`[scheduler] insentif-compute ${periode} @ ${startedAt} ${JSON.stringify(r).slice(0, 300)}`);
+          }
+        } catch (e) {
+          console.error(`[scheduler] insentif-compute gagal @ ${startedAt}:`, e);
+        }
+      },
+      { timezone },
+    );
+    live.push(`insentif-compute=${insentifExpr}`);
+  }
+
   // ga-maintenance-alert (F137) — reminder due-date jadwal maintenance aset
   // GA. Default harian 07:00. Naggy by design (pola F24, tanpa penanda
   // anti-spam persisten) — target kosong = skip (anti broadcast).
@@ -1195,6 +1280,32 @@ export function startScheduler(): ScheduleStatus {
     live.push(`ga-maintenance-bsc-feed=${gaMaintBscExpr}`);
   }
 
+  // kpi-measure — harian 01:30 WIB. Menyegarkan BULAN BERJALAN dan bulan lalu:
+  // faktur Accurate & laporan WA masih berdatangan sesudah tanggal 1, jadi
+  // menulis sekali di akhir bulan akan membekukan angka yang belum lengkap.
+  const kpiMeasureExpr = process.env.KPI_MEASURE_CRON ?? "30 1 * * *";
+  if (kpiMeasureEnabled && cron.validate(kpiMeasureExpr)) {
+    cron.schedule(
+      kpiMeasureExpr,
+      async () => {
+        const startedAt = new Date().toISOString();
+        const kini = wibDate().slice(0, 7);
+        const [y, m] = kini.split("-").map(Number);
+        const lalu = `${m === 1 ? y - 1 : y}-${String(m === 1 ? 12 : m - 1).padStart(2, "0")}`;
+        for (const period of [lalu, kini]) {
+          try {
+            const r = await terapkanKpiBulan(period);
+            console.log(`[scheduler] kpi-measure ${period} @ ${startedAt} ${JSON.stringify(r.ringkas)}`);
+          } catch (e) {
+            console.error(`[scheduler] kpi-measure ${period} gagal @ ${startedAt}:`, e);
+          }
+        }
+      },
+      { timezone },
+    );
+    live.push(`kpi-measure=${kpiMeasureExpr}`);
+  }
+
   // lpse-tender-reminder (F20) — harian 08:00 WIB, cek tender macet >N hari
   // (LPSE_TENDER_REMINDER_DAYS, default 3) di status berjalan.
   const lpseTenderReminderExpr = process.env.LPSE_TENDER_REMINDER_CRON ?? "0 8 * * *";
@@ -1213,6 +1324,30 @@ export function startScheduler(): ScheduleStatus {
       { timezone },
     );
     live.push(`lpse-tender-reminder=${lpseTenderReminderExpr}`);
+  }
+
+  // invoice-reminder (F91) — hari kerja 08:00 WIB. Tahap D-7/D-day memakai
+  // rentang, jadi hari libur yang dilewati tertangkap di run berikutnya.
+  const invoiceReminderExpr = process.env.INVOICE_REMINDER_CRON ?? "0 8 * * 1-5";
+  if (invoiceReminderEnabled && cron.validate(invoiceReminderExpr)) {
+    cron.schedule(
+      invoiceReminderExpr,
+      async () => {
+        const startedAt = new Date().toISOString();
+        try {
+          if (!(await isWorkday())) {
+            console.log(`[scheduler] invoice-reminder skip (bukan hari kerja)`);
+            return;
+          }
+          const r = await runInvoiceReminder();
+          console.log(`[scheduler] invoice-reminder ok @ ${startedAt} ${JSON.stringify(r)}`);
+        } catch (e) {
+          console.error(`[scheduler] invoice-reminder gagal @ ${startedAt}:`, e);
+        }
+      },
+      { timezone },
+    );
+    live.push(`invoice-reminder=${invoiceReminderExpr}`);
   }
 
   console.log(`[scheduler] aktif (TZ=${timezone}): ${live.join(", ") || "(tidak ada job valid)"}`);

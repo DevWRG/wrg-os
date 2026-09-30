@@ -6,6 +6,7 @@ import {
 } from "recharts";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { LoadingInline } from "@/components/ui/loading";
 
 // Kinerja Saya — halaman ber-scope ke akun login (AM=data sendiri, HoD=tim,
 // admin=semua) via resolveScope di backend. 2 tab: Revenue & AR.
@@ -337,7 +338,7 @@ export function MySalesView() {
       </div>
 
       {err && <div className="border-destructive/40 bg-destructive/10 text-destructive rounded-md border px-3 py-2 text-sm">{err}</div>}
-      {loading && <div className="text-muted-foreground text-sm">Memuat…</div>}
+      {loading && <LoadingInline />}
 
       {tab === "revenue" && <RevenueTab overview={overview} cust={cust} />}
       {tab === "ar" && <ArTab ar={ar} />}

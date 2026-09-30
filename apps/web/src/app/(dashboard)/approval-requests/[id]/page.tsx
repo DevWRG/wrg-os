@@ -7,6 +7,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { SkeletonCardGrid } from "@/components/ui/loading";
 
 interface ApprovalStep {
   urutan: number;
@@ -109,7 +110,7 @@ export default function ApprovalRequestDetailPage() {
 
       {error && <p className="text-destructive text-sm">{error}</p>}
       {loading ? (
-        <p className="text-muted-foreground">Memuat…</p>
+        <SkeletonCardGrid count={2} lines={5} className="md:grid-cols-1" />
       ) : !req ? (
         <p className="text-muted-foreground">Permintaan tidak ditemukan.</p>
       ) : (

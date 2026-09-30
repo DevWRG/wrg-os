@@ -1,12 +1,13 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Loader2, Users2, MoonStar, Wallet, Flame, FileDown } from "lucide-react";
+import { Users2, MoonStar, Wallet, Flame, FileDown } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
+import { LoadingInline } from "@/components/ui/loading";
 import {
   Dialog,
   DialogBody,
@@ -190,7 +191,7 @@ export function CustomersRevenueView({ data }: { data: CustomersRevenue }) {
               <DialogBody>
                 <div className="text-muted-foreground mb-2 text-xs font-medium tracking-wide uppercase">Revenue per Bulan (12 bln terakhir)</div>
                 {monthly === null && !err ? (
-                  <div className="text-muted-foreground flex items-center gap-2 py-2 text-xs"><Loader2 className="size-3.5 animate-spin" /> Memuat…</div>
+                  <LoadingInline className="py-2 text-xs" />
                 ) : err ? (
                   <div className="text-muted-foreground py-2 text-xs">Gagal memuat rincian.</div>
                 ) : monthly!.monthly.length === 0 ? (

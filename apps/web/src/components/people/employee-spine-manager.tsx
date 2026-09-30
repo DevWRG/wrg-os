@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { LoadingInline } from "@/components/ui/loading";
 import { useConfirm } from "@/components/ui/use-confirm";
 import { SpineDetailEditor, type DetailInit } from "@/components/people/spine-detail-editor";
 
@@ -107,7 +108,7 @@ export function EmployeeSpineManager({ departments, employees, hods = [] }: { de
           <button key={d.key} onClick={() => setDept(d.key)} className={`rounded-full px-3 py-1 text-xs font-medium ${dept === d.key ? "bg-primary text-primary-foreground" : "bg-muted hover:bg-muted/70"}`}>{d.label} ({d.count})</button>
         ))}
         <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari nama/role/cabang…" className="h-8 w-56 bg-card border-border" />
-        {loading && <span className="text-muted-foreground text-sm">Memuat…</span>}
+        {loading && <LoadingInline />}
         <Button size="sm" className="ml-auto" onClick={() => { setCreating((v) => !v); setErr(null); }}>{creating ? "Batal" : "+ Tambah Karyawan"}</Button>
       </div>
 
@@ -294,7 +295,7 @@ function ProfileView({ p, departments, hods, onBack, onUpdated }: { p: Profile; 
             <Input type="month" value={period} onChange={(e) => setPeriod(e.target.value)} className="h-8 w-40" />
           </label>
           <Button size="sm" onClick={() => void save()} disabled={saving || loadingM}>{saving ? "Menyimpan…" : "Simpan"}</Button>
-          {loadingM && <span className="text-muted-foreground text-xs">Memuat data periode…</span>}
+          {loadingM && <LoadingInline label="Memuat data periode…" className="text-xs" />}
           {savedMsg && <span className={`text-xs font-medium ${savedMsg.startsWith("Gagal") ? "text-red-600" : "text-emerald-600"}`}>{savedMsg}</span>}
         </div>
         <p className="text-muted-foreground mb-3 text-xs">Isi % pencapaian tiap KPI (cap 120%) untuk periode di atas, lalu <b>Simpan</b>. Skor per-perspektif dirata-ratakan, bobot dinormalisasi ke perspektif ber-KPI. Perspektif &lt;80% memicu PDCA. Nilai tersimpan per periode &amp; dimuat ulang saat periode diganti.</p>

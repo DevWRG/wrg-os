@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { LoadingCard } from "@/components/ui/loading";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -191,7 +192,7 @@ export function WatchPointWeeklyView() {
   }
 
   if (!sel && !err) {
-    return <Card><CardContent className="text-muted-foreground py-10 text-center text-sm">Memuat…</CardContent></Card>;
+    return <LoadingCard />;
   }
 
   return (
@@ -281,7 +282,7 @@ export function WatchPointWeeklyView() {
       )}
 
       {loading ? (
-        <Card><CardContent className="text-muted-foreground py-10 text-center text-sm">Memuat minggu…</CardContent></Card>
+        <LoadingCard label="Memuat minggu…" />
       ) : board ? (
         visible.length ? (
           <div className="space-y-4">

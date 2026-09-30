@@ -1,11 +1,13 @@
 import { gatewayFetch } from "@/lib/gateway";
 import { PageHeader } from "@/components/dashboard/page-header";
-import { KoordinasiView, type KoordGraf } from "@/components/picform/koordinasi-view";
+import { SpiderNetworkView } from "@/components/picform/spider-network-view";
+import type { KoordGraf, PohonPekerjaan } from "@/components/picform/spider/types";
 
 export const dynamic = "force-dynamic";
 
-// Spider Network — jaringan koordinasi antar posisi dari Tabel C form PIC
-// (posisi_koordinasi, migrasi 168).
+// Spider Network — dua graf D3 atas data form PIC Divisi (migrasi 168):
+// pohon pekerjaan (Tabel A + B) dan jaringan koordinasi (Tabel C), plus tabel
+// lama sebagai tab ketiga.
 //
 // SUMBER HALAMAN INI BERPINDAH 2026-09-07, dan alasannya perlu bertahan:
 // sebelumnya ia merender /network/graph — graf co-occurrence ENTITY dari anotasi
@@ -19,27 +21,35 @@ export const dynamic = "force-dynamic";
 // Endpoint /network/graph dan apps/api/src/repo/network.ts SENGAJA TIDAK
 // DIHAPUS — A9 bisa dihidupkan kapan saja tanpa dibangun ulang. Yang berubah
 // hanya apa yang dirender di sini. Kalau A8/A9 nanti jalan dan graf entity-nya
-// mau ditampilkan lagi, tambahkan sebagai tab kedua, jangan tukar balik: dua
-// graf ini menjawab pertanyaan yang berbeda.
-async function getKoordinasi(): Promise<KoordGraf | null> {
+// mau ditampilkan lagi, tambahkan sebagai tab keempat, jangan tukar balik: graf
+// itu menjawab pertanyaan yang berbeda dari kedua graf di halaman ini.
+//
+// Dua muatan diambil paralel dan masing-masing boleh gagal sendiri: tab yang
+// datanya tak datang menampilkan keadaan kosongnya, sementara tab lain tetap
+// terpakai. Satu Promise.all yang melempar akan mematikan seluruh halaman
+// gara-gara satu endpoint.
+async function ambil<T>(path: string): Promise<T | null> {
   try {
-    const res = await gatewayFetch("/picform/koordinasi");
-    return res.ok ? ((await res.json()) as KoordGraf) : null;
+    const res = await gatewayFetch(path);
+    return res.ok ? ((await res.json()) as T) : null;
   } catch {
     return null;
   }
 }
 
 export default async function NetworkPage() {
-  const graf = await getKoordinasi();
+  const [graf, pohon] = await Promise.all([
+    ambil<KoordGraf>("/picform/koordinasi"),
+    ambil<PohonPekerjaan>("/picform/pohon"),
+  ]);
 
   return (
     <>
       <PageHeader
         title="Spider Network"
-        description="Jaringan koordinasi antar posisi & pihak eksternal — dari Tabel C form PIC Divisi (deklaratif, bukan hasil pengamatan chat). (F157)"
+        description="Pohon pekerjaan per posisi & jaringan koordinasi antar divisi — dari form PIC Divisi (deklaratif, bukan hasil pengamatan chat). (F157)"
       />
-      <KoordinasiView graf={graf} />
+      <SpiderNetworkView graf={graf} pohon={pohon} />
     </>
   );
 }

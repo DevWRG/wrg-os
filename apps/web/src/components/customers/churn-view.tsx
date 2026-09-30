@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { CardPagination, usePagedList } from "@/components/ui/card-pagination";
 import { Input } from "@/components/ui/input";
 
 export type ChurnTier = "active" | "risk" | "watch";
@@ -55,6 +56,10 @@ export function ChurnView({ data }: { data: ChurnData }) {
     );
     return list.sort((a, b) => (sort === "days" ? (b.days_since ?? 0) - (a.days_since ?? 0) : b.total - a.total));
   }, [customers, tier, am, q, sort]);
+
+  // Daftar bisa ratusan kartu (519 di prod) — dipotong per halaman. Ekspor CSV
+  // tetap pakai `filtered` (seluruh hasil filter), bukan halaman yang tampak.
+  const { visible, page, pageSize, setPage, setPageSize } = usePagedList(filtered, `${tier}|${am}|${q}|${sort}`);
 
   const exportCsv = () => downloadCsv(
     `churn_${tier}_${new Date().toISOString().slice(0, 10)}.csv`,
@@ -108,7 +113,7 @@ export function ChurnView({ data }: { data: ChurnData }) {
         <p className="text-muted-foreground text-sm">Tidak ada pelanggan churn di filter ini.</p>
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {filtered.map((c) => (
+          {visible.map((c) => (
             <Card key={c.id} className={`border-l-4 ${TIER_META[c.tier].border}`}>
               <CardContent className="py-3.5">
                 <div className="flex items-start justify-between gap-2">
@@ -131,6 +136,15 @@ export function ChurnView({ data }: { data: ChurnData }) {
           ))}
         </div>
       )}
+
+      <CardPagination
+        total={filtered.length}
+        page={page}
+        pageSize={pageSize}
+        onPageChange={setPage}
+        onPageSizeChange={setPageSize}
+      />
+
       <p className="text-muted-foreground text-xs">
         🔴 Churn Aktif = pelanggan rutin (≥{summary.routine_min} order) berhenti &gt;{summary.churn_days} hari · 🟡 Risiko Churn = masih order tapi frekuensi turun &gt;50% vs rata-rata 3 bulan · ⚠️ Pantau Tanpa Order = pelanggan umum berhenti &gt;{summary.churn_days} hari. Sumber: faktur Accurate. Kirim otomatis ke WA AM menyusul (Fase 2).
       </p>

@@ -53,7 +53,7 @@ export default async function NpkDirekturPage({
   if (!isDirektur) {
     return (
       <>
-        <PageHeader title="NPK Direktur" description="Nilai Prestasi Karyawan — semua HoD." />
+        <PageHeader title="NPK HOD" description="Nilai Prestasi Karyawan — semua HoD." />
         <EmptyState title="Akses terbatas" description="Halaman ini hanya untuk Direktur (admin). Jika Anda HoD, gunakan menu “NPK Saya”." />
       </>
     );
@@ -77,7 +77,7 @@ export default async function NpkDirekturPage({
   return (
     <div className="flex flex-col gap-5">
       <PageHeader
-        title="NPK Direktur"
+        title="NPK HOD"
         description="Nilai Prestasi Karyawan per HoD — 7 aspek SK Pasal 3, per semester."
         action={<NpkPeriodPicker year={activeYear} period={activePeriod} />}
       />
