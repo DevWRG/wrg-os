@@ -489,15 +489,53 @@ await sql`UPDATE wa_message SET processed_at = now(), processed_kind = 'qa-clean
           WHERE input_hash LIKE 'qa-sim-%' AND processed_at IS NULL`;
 let buktiTerjaring = null; // null = tak diuji (mode baca-saja)
 let batchErr = null;
+// #OVERTIME lewat jalur batch (setara POST /wa/inbound/process): filter SQL
+// inboundHashtagPattern() harus menjaring varian format bebas. Skenario lain
+// memanggil processInboundMessage langsung dan MELEWATI filter itu — kalau
+// regexnya meleset, hashtag tak pernah diproses dan bot diam total (kelas bug
+// #BUKTI di atas). Null = tak diuji.
+let overtimeBatch = null;
+// Retry webhook: pesan YANG SAMA diproses dua kali → satu pengajuan, satu DM ke HoD.
+let overtimeRetry = null;
 try {
   if (!BACA_SAJA) {
     const hb = `qa-sim-bukti-teks-${Date.now()}`;
     await sql`
       INSERT INTO wa_message (group_jid, sender_jid, sender_name, message_type, body, input_hash, message_id)
       VALUES (${GRUP}, ${ASING.jid}, ${ASING.nama}, 'text', '#BUKTI SJ-QA-003', ${hb}, ${hb})`;
+    const varianOt = [
+      "# OVERTIME 30 menit: cek batch spasi",
+      "Mohon izin ya\n#Overtime 20 menit - cek batch baris kedua",
+    ];
+    for (const [i, body] of varianOt.entries()) {
+      const h = `qa-sim-ot-batch-${Date.now()}-${i}`;
+      await sql`
+        INSERT INTO wa_message (group_jid, sender_jid, sender_name, message_type, body, input_hash, message_id)
+        VALUES (${GRUP}, ${AM.jid}, ${AM.nama}, 'text', ${body}, ${h}, ${h})`;
+    }
     captured = [];
     const batch = await processUnprocessed(50);
     buktiTerjaring = batch.results.some((r) => String(r.kind) === "bukti");
+    const nOt = batch.results.filter((r) => String(r.kind) === "overtime" && r.kode).length;
+    const [{ n: nRow }] = await sql`
+      SELECT count(*)::int AS n FROM overtime_request
+      WHERE am_id = 'QA-AM-1' AND uraian IN ('cek batch spasi', 'cek batch baris kedua')`;
+    overtimeBatch = nOt === 2 && nRow === 2;
+
+    // Retry: proses ulang baris yang sama (id wa_message sama).
+    const hr = `qa-sim-ot-retry-${Date.now()}`;
+    const [rowR] = await sql`
+      INSERT INTO wa_message (group_jid, group_name, sender_jid, sender_name, message_type, body, input_hash, message_id)
+      VALUES (${GRUP}, 'Grup Simulasi QA', ${AM.jid}, ${AM.nama}, 'text', '#overtime 10 menit - uji retry webhook', ${hr}, ${hr})
+      RETURNING id::text, group_jid, sender_jid, sender_name, body, message_type, message_id, received_at::text,
+                media_path, geo_lat, geo_lon, geo_ts, geo_address`;
+    captured = [];
+    const r1 = await processInboundMessage(rowR);
+    const r2 = await processInboundMessage(rowR);
+    const dmKeHod = captured.filter((t) => /\*Pengajuan Lembur\*/.test(t)).length;
+    const [{ n: nRetry }] = await sql`
+      SELECT count(*)::int AS n FROM overtime_request WHERE uraian = 'uji retry webhook'`;
+    overtimeRetry = nRetry === 1 && dmKeHod === 1 && r2.duplicate === true && r1.kode === r2.kode;
   }
 } catch (e) {
   batchErr = e.message;
@@ -544,10 +582,13 @@ console.log(
     buktiTerjaring === null ? "tak diuji (mode baca-saja)" : buktiTerjaring ? "YA" : "TIDAK ← REGRESI"
   }`,
 );
+const ya = (v, salah) => (v === null ? "tak diuji (mode baca-saja)" : v ? "YA" : salah);
+console.log(`#OVERTIME format bebas terjaring processUnprocessed: ${ya(overtimeBatch, "TIDAK ← REGRESI")}`);
+console.log(`#OVERTIME retry webhook → 1 pengajuan, 1 DM HoD: ${ya(overtimeRetry, "TIDAK ← REGRESI")}`);
 if (batchErr) console.log(`processUnprocessed melempar: ${batchErr}`);
 console.log(`detectKind("#BUKTI SJ-1") = ${detectKind("#BUKTI SJ-1")}`);
 console.log(`\nBersihkan baris sintetis: DELETE FROM wa_message WHERE input_hash LIKE 'qa-sim-%';`);
 
 await sql.end();
 // buktiTerjaring === null (tak diuji) tak dihitung gagal.
-process.exit(n("BEDA") + n("ERROR") === 0 && buktiTerjaring !== false && !batchErr ? 0 : 1);
+process.exit(n("BEDA") + n("ERROR") === 0 && buktiTerjaring !== false && overtimeBatch !== false && overtimeRetry !== false && !batchErr ? 0 : 1);
