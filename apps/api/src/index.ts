@@ -560,6 +560,7 @@ import {
 } from "./repo/asset-tag.js";
 import {
   createApprovalRequest,
+  lengkapiAtributRequest,
   listApprovalRequests,
   getApprovalRequest,
   listChainConfig,
@@ -2001,6 +2002,20 @@ app.post("/approval-requests/:id/notify", async (c) => {
   return c.json(r, r.ok ? 200 : 400);
 });
 
+// Lengkapi wilayah/kategori request yang dibuat tanpa atribut routing
+// (migrasi 190, #1071). Hanya mengisi yang kosong, lalu retry notifikasi.
+app.patch("/approval-requests/:id/atribut", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { wilayah?: unknown; kategori?: unknown } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const r = await lengkapiAtributRequest(c.req.param("id"), body);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
 app.get("/approval-requests/config/chain", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json({ rows: await listChainConfig() });
@@ -2008,7 +2023,7 @@ app.get("/approval-requests/config/chain", async (c) => {
 
 app.patch("/approval-requests/config/chain/:urutan", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let body: { hodKey?: string | null; waNumberOverride?: string | null } = {};
+  let body: { hodKey?: string | null; waNumberOverride?: string | null; hodKeyMap?: Record<string, string | null> } = {};
   try {
     body = await c.req.json();
   } catch {

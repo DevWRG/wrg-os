@@ -8,6 +8,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { SkeletonCardGrid } from "@/components/ui/loading";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { KATEGORI_OPTIONS, labelKategori, labelWilayah, WILAYAH_OPTIONS } from "@/lib/approval-routing";
 
 interface ApprovalStep {
   urutan: number;
@@ -32,6 +34,8 @@ interface ApprovalRequest {
   description: string | null;
   nominal: number | null;
   requestedBy: string;
+  wilayah: string | null;
+  kategori: string | null;
   status: string;
   currentUrutan: number | null;
   createdAt: string;
@@ -60,6 +64,10 @@ export default function ApprovalRequestDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busyNotify, setBusyNotify] = useState(false);
+  const [draftWilayah, setDraftWilayah] = useState("");
+  const [draftKategori, setDraftKategori] = useState("");
+  const [busyAtribut, setBusyAtribut] = useState(false);
+  const [atributInfo, setAtributInfo] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setError(null);
@@ -99,6 +107,38 @@ export default function ApprovalRequestDetailPage() {
       setError(String(e));
     } finally {
       setBusyNotify(false);
+    }
+  }
+
+  // Request lama / dari pemanggil lain (mis. F19 forecast) bisa dibuat tanpa
+  // wilayah/kategori — tahap 1/2 lalu tertahan. Di sini atribut yg KOSONG bisa
+  // dilengkapi; yang sudah terisi tidak bisa diganti (API menolak).
+  async function saveAtribut() {
+    if (!req) return;
+    const body: Record<string, string> = {};
+    if (!req.wilayah && draftWilayah) body.wilayah = draftWilayah;
+    if (!req.kategori && draftKategori) body.kategori = draftKategori;
+    if (Object.keys(body).length === 0) return;
+    setBusyAtribut(true);
+    setAtributInfo(null);
+    try {
+      const res = await fetch(`/api/approval-requests/${params.id}/atribut`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (!res.ok || data.ok === false) throw new Error(data.error ?? "gagal menyimpan");
+      if (data.notify && data.notify.ok === false) {
+        setAtributInfo(`Tersimpan, tapi notifikasi tahap sekarang masih gagal: ${data.notify.error}`);
+      }
+      setDraftWilayah("");
+      setDraftKategori("");
+      await load();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusyAtribut(false);
     }
   }
 
@@ -144,6 +184,7 @@ export default function ApprovalRequestDetailPage() {
                 <p className="text-muted-foreground text-sm">
                   Diajukan oleh {req.requestedBy}
                   {req.nominal != null ? ` · ${rupiah(req.nominal)}` : ""}
+                  {` · Wilayah ${labelWilayah(req.wilayah)} · Kategori ${labelKategori(req.kategori)}`}
                 </p>
               </div>
               <Badge variant={STATUS_BADGE[req.status] ?? "secondary"}>{req.status}</Badge>
@@ -154,6 +195,62 @@ export default function ApprovalRequestDetailPage() {
               </CardContent>
             )}
           </Card>
+
+          {req.status === "pending" && (!req.wilayah || !req.kategori) && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Lengkapi Atribut Routing</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <p className="text-muted-foreground text-xs">
+                  Tahap 1 (HoD Sales) dipilih dari wilayah pengaju, tahap 2 (HoD Bisnis) dari kategori barang. Permintaan
+                  ini dibuat tanpa salah satunya, jadi tahap itu tertahan. Nilai yang sudah terisi tidak bisa diganti.
+                </p>
+                <div className="flex flex-wrap items-end gap-3">
+                  {!req.wilayah && (
+                    <div className="min-w-56">
+                      <Select value={draftWilayah} onValueChange={(v) => setDraftWilayah(v ?? "")}>
+                        <SelectTrigger className="w-full">
+                          <SelectValue placeholder="Pilih wilayah" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {WILAYAH_OPTIONS.map((o) => (
+                            <SelectItem key={o.value} value={o.value}>
+                              {o.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+                  {!req.kategori && (
+                    <div className="min-w-56">
+                      <Select value={draftKategori} onValueChange={(v) => setDraftKategori(v ?? "")}>
+                        <SelectTrigger className="w-full">
+                          <SelectValue placeholder="Pilih kategori" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {KATEGORI_OPTIONS.map((o) => (
+                            <SelectItem key={o.value} value={o.value}>
+                              {o.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+                  <Button
+                    size="sm"
+                    disabled={busyAtribut || (!draftWilayah && !draftKategori)}
+                    onClick={() => void saveAtribut()}
+                  >
+                    Simpan & Kirim Notifikasi
+                  </Button>
+                </div>
+                {atributInfo && <p className="text-sm text-amber-700 dark:text-amber-400">{atributInfo}</p>}
+              </CardContent>
+            </Card>
+          )}
 
           <Card>
             <CardHeader>

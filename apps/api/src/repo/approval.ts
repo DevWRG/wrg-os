@@ -22,6 +22,21 @@ const APPROVAL_UPLOAD_ROOT = resolve(process.env.APPROVAL_UPLOAD_ROOT ?? `${home
 const ALLOWED_MIME = new Set(["application/pdf", "image/png"]);
 const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024; // 8MB/file — cukup utk PDF/PNG dokumen, cegah abuse
 
+// Tahap yang orangnya "tergantung" (#1071, migrasi 190): routing memilih
+// atribut request yang dipakai, hod_key_map memetakan nilai atribut → hod_key.
+export type Routing = "tetap" | "wilayah" | "kategori";
+export const WILAYAH = ["east", "west"] as const;
+export const KATEGORI = ["IVD", "Medical"] as const;
+export type Wilayah = (typeof WILAYAH)[number];
+export type Kategori = (typeof KATEGORI)[number];
+
+export function isWilayah(v: unknown): v is Wilayah {
+  return typeof v === "string" && (WILAYAH as readonly string[]).includes(v);
+}
+export function isKategori(v: unknown): v is Kategori {
+  return typeof v === "string" && (KATEGORI as readonly string[]).includes(v);
+}
+
 export interface ChainConfigRow {
   urutan: number;
   label: string;
@@ -29,11 +44,48 @@ export interface ChainConfigRow {
   hodKey: string | null;
   waNumberOverride: string | null;
   catatan: string | null;
+  routing: Routing;
+  hodKeyMap: Record<string, string> | null;
+}
+
+// Nilai sah per routing — dipakai validasi PATCH peta & tampilan config.
+export function nilaiRouting(routing: Routing): readonly string[] {
+  return routing === "wilayah" ? WILAYAH : routing === "kategori" ? KATEGORI : [];
+}
+
+export type PilihanHod = { hodKey: string | null } | { kurang: "wilayah" | "kategori" };
+
+// Pure — dites terpisah tanpa DB. Menentukan hod_key sebuah tahap untuk satu
+// request. `kurang` = tahap ini diarahkan per atribut, tapi request tak
+// membawa atribut itu (beda dari peta yang belum punya entri untuk nilainya,
+// yang = belum dikonfigurasi → hodKey null).
+export function pilihHodKey(
+  cfg: { routing: Routing; hodKey: string | null; hodKeyMap: Record<string, string> | null },
+  req: { wilayah: string | null; kategori: string | null },
+): PilihanHod {
+  if (cfg.routing === "tetap") return { hodKey: cfg.hodKey };
+  const nilai = cfg.routing === "wilayah" ? req.wilayah : req.kategori;
+  if (!nilai) return { kurang: cfg.routing };
+  const hk = cfg.hodKeyMap?.[nilai];
+  return { hodKey: typeof hk === "string" && hk.trim() ? hk : null };
+}
+
+function toRouting(v: unknown): Routing {
+  return v === "wilayah" || v === "kategori" ? v : "tetap";
+}
+
+function toHodKeyMap(v: unknown): Record<string, string> | null {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return null;
+  const out: Record<string, string> = {};
+  for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
+    if (typeof val === "string" && val.trim()) out[k] = val;
+  }
+  return out;
 }
 
 export async function listChainConfig(): Promise<ChainConfigRow[]> {
   const sql = db();
-  const rows = await sql`SELECT urutan, label, target_type, hod_key, wa_number_override, catatan FROM approval_chain_config ORDER BY urutan`;
+  const rows = await sql`SELECT urutan, label, target_type, hod_key, wa_number_override, catatan, routing, hod_key_map FROM approval_chain_config ORDER BY urutan`;
   return rows.map((r) => ({
     urutan: Number(r.urutan),
     label: String(r.label),
@@ -41,18 +93,57 @@ export async function listChainConfig(): Promise<ChainConfigRow[]> {
     hodKey: r.hod_key ? String(r.hod_key) : null,
     waNumberOverride: r.wa_number_override ? String(r.wa_number_override) : null,
     catatan: r.catatan ? String(r.catatan) : null,
+    routing: toRouting(r.routing),
+    hodKeyMap: toHodKeyMap(r.hod_key_map),
   }));
 }
 
 export interface ChainConfigPatch {
   hodKey?: string | null;
   waNumberOverride?: string | null;
+  // Hanya untuk tahap ber-routing. Nilai null/"" = hapus entri (belum dikonfigurasi).
+  hodKeyMap?: Record<string, string | null>;
+}
+
+// Pure — validasi + gabung patch peta ke peta lama. Kunci di luar kosakata
+// routing ditolak supaya salah ketik ("East", "ivd") tak jadi entri mati.
+export function gabungPetaHod(
+  routing: Routing,
+  lama: Record<string, string> | null,
+  patch: Record<string, string | null>,
+): { ok: true; peta: Record<string, string> } | { ok: false; error: string } {
+  if (routing === "tetap") return { ok: false, error: "tahap ini tidak diarahkan per atribut — ubah hod_key, bukan peta" };
+  const sah = nilaiRouting(routing);
+  const peta: Record<string, string> = { ...(lama ?? {}) };
+  for (const [k, v] of Object.entries(patch)) {
+    if (!sah.includes(k)) return { ok: false, error: `kunci peta "${k}" tidak sah untuk routing ${routing} (sah: ${sah.join(", ")})` };
+    if (v === null || v === undefined || (typeof v === "string" && !v.trim())) delete peta[k];
+    else if (typeof v === "string") peta[k] = v.trim();
+    else return { ok: false, error: `nilai peta "${k}" harus hod_key (teks) atau null` };
+  }
+  return { ok: true, peta };
 }
 
 export async function updateChainConfig(urutan: number, patch: ChainConfigPatch): Promise<{ ok: boolean; error?: string }> {
   const sql = db();
-  const rows = await sql`SELECT urutan FROM approval_chain_config WHERE urutan = ${urutan}`;
+  const rows = await sql`SELECT urutan, routing, hod_key_map FROM approval_chain_config WHERE urutan = ${urutan}`;
   if (rows.length === 0) return { ok: false, error: `tahap urutan ${urutan} tidak ditemukan` };
+  const routing = toRouting(rows[0].routing);
+  // Tahap ber-routing: hod_key & override sengaja tak bisa diubah — keduanya
+  // diabaikan resolveStepTarget untuk tahap ini, jadi menyimpannya cuma
+  // menciptakan pengaturan yang tampak berlaku padahal tidak.
+  if (routing !== "tetap" && (patch.hodKey !== undefined || patch.waNumberOverride !== undefined)) {
+    return { ok: false, error: `tahap ini diarahkan per ${routing} — atur lewat peta, bukan hod_key/override` };
+  }
+  let peta: Record<string, string> | undefined;
+  if (patch.hodKeyMap !== undefined) {
+    if (!patch.hodKeyMap || typeof patch.hodKeyMap !== "object" || Array.isArray(patch.hodKeyMap)) {
+      return { ok: false, error: "hodKeyMap harus objek" };
+    }
+    const g = gabungPetaHod(routing, toHodKeyMap(rows[0].hod_key_map), patch.hodKeyMap);
+    if (!g.ok) return { ok: false, error: g.error };
+    peta = g.peta;
+  }
   let waNumberOverride = patch.waNumberOverride;
   if (waNumberOverride) {
     const normalized = normalizeWa(waNumberOverride);
@@ -63,6 +154,7 @@ export async function updateChainConfig(urutan: number, patch: ChainConfigPatch)
     UPDATE approval_chain_config SET
       hod_key = ${patch.hodKey === undefined ? sql`hod_key` : patch.hodKey},
       wa_number_override = ${waNumberOverride === undefined ? sql`wa_number_override` : waNumberOverride},
+      hod_key_map = ${peta === undefined ? sql`hod_key_map` : sql.json(peta)},
       updated_at = now()
     WHERE urutan = ${urutan}
   `;
@@ -83,7 +175,8 @@ export type SebabTargetGagal =
   | { sebab: "belum-dikonfigurasi"; label: string }
   | { sebab: "hod-tanpa-pengguna"; label: string; hodKey: string }
   | { sebab: "hod-tanpa-wa"; label: string; hodKey: string; nama: string }
-  | { sebab: "direktur-tak-ada"; label: string };
+  | { sebab: "direktur-tak-ada"; label: string }
+  | { sebab: "atribut-kosong"; label: string; atribut: "wilayah" | "kategori" };
 
 // Pure — dites terpisah tanpa DB.
 export function pesanTargetGagal(g: SebabTargetGagal): string {
@@ -96,6 +189,10 @@ export function pesanTargetGagal(g: SebabTargetGagal): string {
       return `Tahap "${g.label}" menunjuk ${g.nama} (hod_key "${g.hodKey}"), tapi nomor WA-nya kosong — isi nomor WA pengguna itu di menu Pengguna.`;
     case "direktur-tak-ada":
       return `Tahap "${g.label}" menunggu Direktur, tapi tak ada pengguna ber-role "direktur" yang punya nomor WA — set di menu Pengguna.`;
+    case "atribut-kosong":
+      return g.atribut === "wilayah"
+        ? `Tahap "${g.label}" diarahkan per wilayah pengaju (lihat peta di Config Chain), tapi permintaan ini tak mencantumkan wilayah — isi wilayahnya di halaman detail permintaan.`
+        : `Tahap "${g.label}" diarahkan per kategori barang (lihat peta di Config Chain), tapi permintaan ini tak mencantumkan kategori — isi kategorinya di halaman detail permintaan.`;
   }
 }
 
@@ -103,7 +200,10 @@ export function pesanTargetGagal(g: SebabTargetGagal): string {
 // atau app_user-nya belum punya wa_number), bukan exception — jadi
 // dikembalikan sebagai nilai, bukan throw. Yang berubah: sebabnya ikut
 // dikembalikan supaya pesannya bisa menunjuk tempat perbaikan yang benar.
-async function resolveStepTarget(step: { id: number; urutan: number; target_type: string; hod_key: string | null; label: string }): Promise<ResolvedTarget | { gagal: SebabTargetGagal }> {
+async function resolveStepTarget(
+  step: { id: number; urutan: number; target_type: string; hod_key: string | null; label: string },
+  req: { wilayah: string | null; kategori: string | null },
+): Promise<ResolvedTarget | { gagal: SebabTargetGagal }> {
   const sql = db();
   // Config LIVE selalu dicek (bukan cuma saat snapshot kosong) — wa_number_override
   // butuh ini juga, dan hod_key di-snapshot NULL berarti "belum dikonfigurasi
@@ -112,8 +212,11 @@ async function resolveStepTarget(step: { id: number; urutan: number; target_type
   // walau config global berubah nanti). Backfill snapshot kalau config live
   // sudah diisi belakangan — inilah yg bikin endpoint retry-notify
   // (POST /approval-requests/:id/notify) beneran berguna, bukan percuma.
-  const [cfg] = await sql`SELECT hod_key, wa_number_override FROM approval_chain_config WHERE urutan = ${step.urutan}`;
-  const override = cfg?.wa_number_override ? String(cfg.wa_number_override) : null;
+  const [cfg] = await sql`SELECT hod_key, wa_number_override, routing, hod_key_map FROM approval_chain_config WHERE urutan = ${step.urutan}`;
+  const routing = toRouting(cfg?.routing);
+  // Override satu nomor untuk seluruh slot bertentangan dengan routing (tahap
+  // ini sengaja ke orang berbeda per request) — jadi hanya berlaku di 'tetap'.
+  const override = routing === "tetap" && cfg?.wa_number_override ? String(cfg.wa_number_override) : null;
   if (override) return { waNumber: override, name: `(override tahap ${step.urutan})` };
 
   if (step.target_type === "direktur") {
@@ -123,9 +226,16 @@ async function resolveStepTarget(step: { id: number; urutan: number; target_type
   }
 
   let hodKey = step.hod_key;
-  if (!hodKey && cfg?.hod_key) {
-    hodKey = String(cfg.hod_key);
-    await sql`UPDATE approval_step SET hod_key = ${hodKey} WHERE id = ${step.id}`;
+  if (!hodKey && cfg) {
+    const pilih = pilihHodKey(
+      { routing, hodKey: cfg.hod_key ? String(cfg.hod_key) : null, hodKeyMap: toHodKeyMap(cfg.hod_key_map) },
+      req,
+    );
+    if ("kurang" in pilih) return { gagal: { sebab: "atribut-kosong", label: step.label, atribut: pilih.kurang } };
+    if (pilih.hodKey) {
+      hodKey = pilih.hodKey;
+      await sql`UPDATE approval_step SET hod_key = ${hodKey} WHERE id = ${step.id}`;
+    }
   }
   if (!hodKey) return { gagal: { sebab: "belum-dikonfigurasi", label: step.label } };
   const rows = await sql`SELECT name, wa_number FROM app_user WHERE hod_key = ${hodKey} AND wa_number IS NOT NULL AND wa_number <> '' ORDER BY created_at LIMIT 1`;
@@ -173,7 +283,7 @@ export interface NotifyResult {
 export async function notifyCurrentStep(requestId: string): Promise<NotifyResult> {
   const sql = db();
   const [req] =
-    await sql`SELECT id, kode, title, description, nominal, status, current_urutan, requested_by FROM approval_request WHERE id = ${requestId}`;
+    await sql`SELECT id, kode, title, description, nominal, status, current_urutan, requested_by, wilayah, kategori FROM approval_request WHERE id = ${requestId}`;
   if (!req) return { ok: false, error: "request tidak ditemukan" };
   if (req.status !== "pending") return { ok: false, error: `request sudah ${req.status}` };
   const [step] = await sql`SELECT id, urutan, label, target_type, hod_key, status FROM approval_step WHERE request_id = ${requestId} AND urutan = ${req.current_urutan}`;
@@ -186,7 +296,7 @@ export async function notifyCurrentStep(requestId: string): Promise<NotifyResult
     target_type: String(step.target_type),
     hod_key: step.hod_key ? String(step.hod_key) : null,
     label: String(step.label),
-  });
+  }, { wilayah: req.wilayah ? String(req.wilayah) : null, kategori: req.kategori ? String(req.kategori) : null });
   if ("gagal" in target) {
     return { ok: false, error: pesanTargetGagal(target.gagal) };
   }
@@ -231,6 +341,11 @@ export interface CreateApprovalInput {
   requestedBy: string;
   requestedByWa?: string | null;
   attachments?: AttachmentInput[];
+  // Dipakai tahap ber-routing (migrasi 190). Opsional di level engine supaya
+  // pemanggil lama (F19 forecast) tetap bisa membuat request; tahap yang
+  // butuh atribut kosong tertahan dengan sebab 'atribut-kosong'.
+  wilayah?: Wilayah | null;
+  kategori?: Kategori | null;
 }
 
 export interface CreateApprovalResult {
@@ -288,6 +403,14 @@ export async function createApprovalRequest(input: CreateApprovalInput): Promise
   if (input.nominal != null && input.nominal < 0) {
     return { ok: false, error: "nominal tidak boleh negatif" };
   }
+  if (input.wilayah != null && !isWilayah(input.wilayah)) {
+    return { ok: false, error: `wilayah harus salah satu dari: ${WILAYAH.join(", ")}` };
+  }
+  if (input.kategori != null && !isKategori(input.kategori)) {
+    return { ok: false, error: `kategori harus salah satu dari: ${KATEGORI.join(", ")}` };
+  }
+  const wilayah = input.wilayah ?? null;
+  const kategori = input.kategori ?? null;
   const sql = db();
 
   const attachments = input.attachments ?? [];
@@ -301,16 +424,21 @@ export async function createApprovalRequest(input: CreateApprovalInput): Promise
   const kode = generateKode(Number(nextval));
 
   const [reqRow] = await sql`
-    INSERT INTO approval_request (kode, title, description, nominal, requested_by, requested_by_wa, current_urutan)
-    VALUES (${kode}, ${input.title}, ${input.description ?? null}, ${input.nominal ?? null}, ${input.requestedBy}, ${input.requestedByWa ?? null}, ${chain[0].urutan})
+    INSERT INTO approval_request (kode, title, description, nominal, requested_by, requested_by_wa, current_urutan, wilayah, kategori)
+    VALUES (${kode}, ${input.title}, ${input.description ?? null}, ${input.nominal ?? null}, ${input.requestedBy}, ${input.requestedByWa ?? null}, ${chain[0].urutan}, ${wilayah}, ${kategori})
     RETURNING id
   `;
   const requestId = String(reqRow.id);
 
   for (const c of chain) {
+    // Snapshot hod_key per tahap: tetap = hod_key slot; ber-routing = hasil
+    // peta untuk atribut request ini (null kalau atribut/peta belum ada —
+    // diisi belakangan oleh resolveStepTarget saat retry).
+    const pilih = pilihHodKey(c, { wilayah, kategori });
+    const hodKey = "hodKey" in pilih ? pilih.hodKey : null;
     await sql`
       INSERT INTO approval_step (request_id, urutan, label, target_type, hod_key)
-      VALUES (${requestId}, ${c.urutan}, ${c.label}, ${c.targetType}, ${c.hodKey})
+      VALUES (${requestId}, ${c.urutan}, ${c.label}, ${c.targetType}, ${c.targetType === "hod" ? hodKey : c.hodKey})
     `;
   }
 
@@ -321,6 +449,40 @@ export async function createApprovalRequest(input: CreateApprovalInput): Promise
   await logAudit("approval.request.create", input.requestedBy, { request_id: requestId, kode, title: input.title, attachments: attachments.length }, "create");
   const notify = await notifyCurrentStep(requestId);
   return { ok: true, id: requestId, kode, notify };
+}
+
+// Lengkapi atribut routing request yang TERLANJUR dibuat tanpa atribut
+// (request lama, atau pemanggil yang belum mengisinya). Sengaja hanya
+// MENGISI yang kosong, tidak MENGGANTI: begitu atribut terisi, hod_key tahap
+// sudah bisa tersnapshot dan approver-nya mungkin sudah dinotifikasi —
+// mengganti diam-diam memindahkan approval ke orang lain di tengah jalan.
+export async function lengkapiAtributRequest(
+  id: string,
+  input: { wilayah?: unknown; kategori?: unknown },
+): Promise<{ ok: boolean; error?: string; notify?: NotifyResult }> {
+  if (input.wilayah === undefined && input.kategori === undefined) return { ok: false, error: "isi wilayah atau kategori" };
+  if (input.wilayah !== undefined && !isWilayah(input.wilayah)) {
+    return { ok: false, error: `wilayah harus salah satu dari: ${WILAYAH.join(", ")}` };
+  }
+  if (input.kategori !== undefined && !isKategori(input.kategori)) {
+    return { ok: false, error: `kategori harus salah satu dari: ${KATEGORI.join(", ")}` };
+  }
+  const sql = db();
+  const [req] = await sql`SELECT status, wilayah, kategori FROM approval_request WHERE id = ${id}`;
+  if (!req) return { ok: false, error: "request tidak ditemukan" };
+  if (req.status !== "pending") return { ok: false, error: `request sudah ${req.status}` };
+  if (input.wilayah !== undefined && req.wilayah) return { ok: false, error: `wilayah sudah terisi (${req.wilayah}) — tidak bisa diganti` };
+  if (input.kategori !== undefined && req.kategori) return { ok: false, error: `kategori sudah terisi (${req.kategori}) — tidak bisa diganti` };
+  await sql`
+    UPDATE approval_request SET
+      wilayah = ${input.wilayah === undefined ? sql`wilayah` : (input.wilayah as string)},
+      kategori = ${input.kategori === undefined ? sql`kategori` : (input.kategori as string)}
+    WHERE id = ${id} AND status = 'pending'
+  `;
+  await logAudit("approval.request.atribut", null, { request_id: id, wilayah: input.wilayah ?? null, kategori: input.kategori ?? null }, "update");
+  // Tahap current mungkin tadinya tertahan karena atribut ini — coba kirim.
+  const notify = await notifyCurrentStep(id);
+  return { ok: true, notify };
 }
 
 export interface ApprovalStepRow {
@@ -348,6 +510,8 @@ export interface ApprovalRequestDetail {
   description: string | null;
   nominal: number | null;
   requestedBy: string;
+  wilayah: Wilayah | null;
+  kategori: Kategori | null;
   status: string;
   currentUrutan: number | null;
   createdAt: string;
@@ -359,7 +523,7 @@ export interface ApprovalRequestDetail {
 export async function getApprovalRequest(id: string): Promise<ApprovalRequestDetail | null> {
   const sql = db();
   const rows = await sql`
-    SELECT id, kode, title, description, nominal, requested_by, status, current_urutan, created_at::text, decided_at::text
+    SELECT id, kode, title, description, nominal, requested_by, wilayah, kategori, status, current_urutan, created_at::text, decided_at::text
     FROM approval_request WHERE id = ${id}
   `;
   if (rows.length === 0) return null;
@@ -379,6 +543,8 @@ export async function getApprovalRequest(id: string): Promise<ApprovalRequestDet
     description: r.description ? String(r.description) : null,
     nominal: r.nominal != null ? Number(r.nominal) : null,
     requestedBy: String(r.requested_by),
+    wilayah: isWilayah(r.wilayah) ? r.wilayah : null,
+    kategori: isKategori(r.kategori) ? r.kategori : null,
     status: String(r.status),
     currentUrutan: r.current_urutan != null ? Number(r.current_urutan) : null,
     createdAt: String(r.created_at),
