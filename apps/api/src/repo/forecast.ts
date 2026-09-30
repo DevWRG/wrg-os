@@ -377,7 +377,7 @@ export interface DraftPoResult {
 // nyata (F13). "Auto" di sini artinya item/qty/gudang PREFILLED dari
 // usulan — vendor & lini bisnis TETAP keputusan manusia (Supply Chain),
 // sistem tak punya data "vendor default per item" sama sekali (migrasi
-// 189). Idempoten via forecast_suggestion.purchase_order_id: sekali
+// 192). Idempoten via forecast_suggestion.purchase_order_id: sekali
 // didraft, tak bisa didraft ulang dari usulan yg sama.
 export async function draftPurchaseOrder(id: string, input: DraftPoInput): Promise<DraftPoResult> {
   if (!input.vendorId?.trim()) return { ok: false, error: "vendor wajib dipilih" };
