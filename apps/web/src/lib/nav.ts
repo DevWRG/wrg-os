@@ -330,16 +330,6 @@ export const NAV: NavGroup[] = [
     ],
   },
   {
-    // F-CASHIN — Finance belum punya grup sendiri (AR Aging nebeng Sales, Dana
-    // Ops nebeng General Affairs). Menu ini pemakainya admin Finance + Direktur
-    // dan datanya rekening bank, jadi dibuat grup sendiri daripada dipaksa
-    // masuk grup yang temanya lain (pola sama DOC & GA).
-    label: "Finance",
-    items: [
-      { title: "Uang Masuk", url: "/uang-masuk", icon: Banknote, badge: "NEW" },
-    ],
-  },
-  {
     // DOC #KLAIM (FR-DOC-01) — domain board literally "DOC", tak cocok masuk
     // grup existing manapun, grup sendiri (pola sama F139 bikin grup "GA").
     label: "DOC",

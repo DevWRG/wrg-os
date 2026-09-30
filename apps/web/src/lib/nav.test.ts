@@ -64,3 +64,15 @@ test("badge DEV tidak pernah tampil di build produksi", () => {
   assert.equal(devOnlyBadge("/uang-masuk", "dev build"), false);
   assert.equal(devOnlyBadge("/overview", undefined), false);
 });
+
+test("tiap url menu muncul sekali saja di NAV (dan label grup tak kembar)", () => {
+  // Grup "Finance" sempat dobel di dev (Uang Masuk tampil 2×) — bawaan sync
+  // main → dev #1404 yang membawa blok grup dari dua sisi. Selain sidebar dobel,
+  // featureCatalog() jadi menyemai key yang sama dua kali.
+  const urls = NAV.flatMap((g) => g.items.map((it) => it.url));
+  const dupUrl = urls.filter((u, i) => urls.indexOf(u) !== i);
+  assert.deepEqual(dupUrl, [], `url dobel: ${dupUrl.join(", ")}`);
+  const labels = NAV.map((g) => g.label);
+  const dupLabel = labels.filter((l, i) => labels.indexOf(l) !== i);
+  assert.deepEqual(dupLabel, [], `label grup dobel: ${dupLabel.join(", ")}`);
+});
