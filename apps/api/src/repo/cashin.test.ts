@@ -3,6 +3,9 @@ import { test } from "node:test";
 
 import {
   berbauInternal,
+  buktiPindahBuku,
+  pasangkanPuteran,
+  type BarisPuteran,
   cocokLabelFile,
   parseNihil,
   parseTriage,
@@ -507,3 +510,66 @@ test("draft yang diperbarui ditandai jelas dan tetap bisa dikonfirmasi", () => {
   assert.match(draft, /Balas \*ya R18\*/);
   assert.doesNotMatch(formatDraftKonfirmasi("x", "R18", r), /DIPERBARUI/);
 });
+
+// ── pencocok puteran: data nyata 30 Sep 2026 (R26) ──────────────────────────
+const SWIFT = { BJTM: "PDJTIDJ1", "MDR 038": "BMRIIDJA", "INDEX 890": "BIDXIDJA", "INDEX 881": "BIDXIDJA" } as const;
+function baris(
+  id: string, label: keyof typeof SWIFT, debit: number, kredit: number, waktu: string | null, deskripsi: string,
+  kategori = debit > 0 ? "pengeluaran" : "uang_masuk_riil",
+): BarisPuteran {
+  return {
+    id, debit, kredit, deskripsi, kategori, kategori_oleh: "aturan",
+    waktu: waktu ? `2026-09-30T${waktu}+07:00` : null,
+    bank_account_id: label, label_file: label, swift_kode: SWIFT[label],
+  };
+}
+
+test("kode SWIFT bank SENDIRI bukan bukti pindah-buku (MDR 038 → BCA ≠ BJTM)", () => {
+  // Debit Mandiri ke WAHANA GIFRINDA (BCA) memuat BMRIIDJA — kode Mandiri sendiri.
+  const d = baris("d", "MDR 038", 75e6, 0, "10:55:25", "202609301000665789 CENAIDJA /WAHANA GIFRINDA INVESTAM 20260930BMRIIDJA010O9930");
+  const c = baris("c", "BJTM", 0, 75e6, "10:58:45", "TRF DEST ONLY (ATMB)");
+  assert.equal(buktiPindahBuku(d, c), false);
+});
+
+test("kode SWIFT bank LAWAN tetap bukti (MDR 038 → INDEX: BIDXIDJA)", () => {
+  const d = baris("d", "MDR 038", 104e6, 0, "18:21:10", "202609301557742689 BIDXIDJA/WAHANA RIZKY GUMILANG, PT 20260930BMRIIDJA010O99");
+  const c = baris("c", "INDEX 881", 0, 104e6, null, "BIFAST WAHANA RIZKY GUMILAN 142007501203");
+  assert.equal(buktiPindahBuku(d, c), true);
+  // Nama dihapus pun, kode bank lawan cukup.
+  assert.equal(buktiPindahBuku({ ...d, deskripsi: "2026093015 BIDXIDJA/ 20260930BMRIIDJA" }, { ...c, deskripsi: "TRF MASUK" }), true);
+});
+
+test("30 Sep: transfer generik INDEX 890 → BJTM ditahan sebagai kandidat, bukan uang masuk diam-diam", () => {
+  const debits = [
+    baris("i250", "INDEX 890", 250e6, 0, null, "BIFAST WAHANA RIZKY GUMILANG PT 03210186"),
+    baris("i75", "INDEX 890", 75e6, 0, null, "TRF KELUAR IB/IBB"),
+    baris("i85", "INDEX 890", 85e6, 0, null, "TRF KELUAR IB/IBB"),
+    baris("i90", "INDEX 890", 90e6, 0, null, "TRF KELUAR IB/IBB"),
+    baris("i100", "INDEX 890", 100e6, 0, null, "TRF KELUAR IB/IBB"),
+    baris("i2", "INDEX 890", 2.5e6, 0, null, "TRF KELUAR IB/IBB"),
+    baris("m75", "MDR 038", 75e6, 0, "10:55:25", "202609301000665789 CENAIDJA /WAHANA GIFRINDA INVESTAM 20260930BMRIIDJA010O9930"),
+  ];
+  const credits = [
+    baris("b250", "BJTM", 0, 250e6, "10:58:43", "-"),
+    baris("b75", "BJTM", 0, 75e6, "10:58:45", "TRF DEST ONLY (ATMB)"),
+    baris("b85", "BJTM", 0, 85e6, "10:58:48", "TRF DEST ONLY (ATMB)"),
+    baris("b90", "BJTM", 0, 90e6, "10:58:51", "TRF DEST ONLY (ATMB)"),
+    baris("b100", "BJTM", 0, 100e6, "10:58:53", "TRF DEST ONLY (ATMB)"),
+    baris("b2", "BJTM", 0, 2.5e6, "18:17:08", "TRF DEST ONLY (ATMB)"),
+    baris("rs", "BJTM", 0, 35950320, "08:35:01", "RSUD SRENGAT"),
+  ];
+  const { pasangan, kandidat } = pasangkanPuteran(debits, credits);
+  // Hanya yang berbukti dipasangkan otomatis — dan 75 jt TIDAK lagi ke MDR 038.
+  assert.deepEqual(pasangan, [["i250", "b250"]]);
+  assert.deepEqual(kandidat.map((k) => k.kreditId).sort(), ["b100", "b2", "b75", "b85", "b90"]);
+  assert.match(kandidat.find((k) => k.kreditId === "b75")!.catatan, /INDEX 890 \/ MDR 038/);
+  // Pembayaran customer tanpa lawan tak ikut ditahan.
+  assert.ok(!kandidat.some((k) => k.kreditId === "rs"));
+});
+
+test("kandidat tak menyentuh putusan manusia", () => {
+  const d = baris("d", "INDEX 890", 85e6, 0, null, "TRF KELUAR IB/IBB");
+  const c = { ...baris("c", "BJTM", 0, 85e6, "10:58:48", "TRF DEST ONLY (ATMB)"), kategori_oleh: "manual" };
+  assert.equal(pasangkanPuteran([d], [c]).kandidat.length, 0);
+});
+

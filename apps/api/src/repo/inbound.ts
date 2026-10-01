@@ -958,7 +958,12 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
       const reply = await sendViaWaGateway(
         target,
         r.ok
-          ? `✅ ${triage.kode} (${r.label_file} ${rp(r.nominal ?? 0)}) ditetapkan sebagai *${r.kategori}* oleh ${oleh}. Angka resume sudah disegarkan.`
+          ? [
+              `✅ ${triage.kode} (${r.label_file} ${rp(r.nominal ?? 0)}) ditetapkan sebagai *${r.kategori}* oleh ${oleh}. Angka resume sudah disegarkan.`,
+              r.dipasangkan_dengan ? `Dipasangkan dengan debit ${r.dipasangkan_dengan}.` : null,
+            ]
+              .filter(Boolean)
+              .join("\n")
           : `⚠️ ${r.error}`,
       );
       return finish({ triage: r, reply }, "koran");
