@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-import { NAV, navVisible } from "@/lib/nav";
+import { NAV, devOnlyBadge, navVisible } from "@/lib/nav";
 import { type SessionUser } from "@/lib/use-session";
 import {
   Sidebar,
@@ -20,6 +20,9 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { SidebarUser } from "@/components/layout/sidebar-user";
+
+// "production" untuk build dari `main` (lihat next.config.ts); selain itu build dev.
+const BUILD_CHANNEL = process.env.NEXT_PUBLIC_BUILD_CHANNEL;
 
 // Sesi di-pass sebagai prop SSR (anti-flicker menu saat hydrate). Gate per item
 // = navVisible(): matriks Akses Grup menentukan begitu fiturnya diatur, `show`
@@ -70,10 +73,19 @@ export function AppSidebar({ me }: { me: SessionUser | null }) {
                       <item.icon />
                       <span>{item.title}</span>
                     </SidebarMenuButton>
-                    {item.badge && (
-                      <SidebarMenuBadge className="bg-success-soft text-success top-1.5 rounded-full px-1.5 text-[9px] font-bold tracking-wide">
-                        {item.badge}
+                    {devOnlyBadge(item.url, BUILD_CHANNEL) ? (
+                      <SidebarMenuBadge
+                        className="bg-warning-soft text-warning top-1.5 rounded-full px-1.5 text-[9px] font-bold tracking-wide"
+                        title="Belum ada di produksi — menunggu promosi dev → main"
+                      >
+                        DEV
                       </SidebarMenuBadge>
+                    ) : (
+                      item.badge && (
+                        <SidebarMenuBadge className="bg-success-soft text-success top-1.5 rounded-full px-1.5 text-[9px] font-bold tracking-wide">
+                          {item.badge}
+                        </SidebarMenuBadge>
+                      )
                     )}
                   </SidebarMenuItem>
                 ))}

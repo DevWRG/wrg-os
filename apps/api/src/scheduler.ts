@@ -52,6 +52,7 @@ import { runVehicleAlerts } from "./repo/vehicle.js";
 import { runItTicketSlaAlerts } from "./repo/it-ticket.js";
 import { runMaintenanceAlerts, runGaMaintenanceBscFeed } from "./repo/ga-maintenance.js";
 import { runGaHelpdeskOverdueAlert, runGaHelpdeskBscFeed } from "./repo/ga-helpdesk.js";
+import { runAuditFindingApprovalReminder } from "./repo/audit-finding.js";
 import { runLpseTenderReminder } from "./repo/lpse-tender.js";
 import { runInvoiceReminder } from "./repo/faktur.js";
 import { terapkanKpiBulan } from "./repo/kpi-measure.js";
@@ -190,6 +191,10 @@ export function startScheduler(): ScheduleStatus {
   // ga-helpdesk-bsc-feed (F139) — auto-isi kpi_measurement Dito ('SLA
   // compliance %'), bulanan. Display-only, tanpa WA.
   const gaHelpdeskBscEnabled = (process.env.GA_HELPDESK_BSC_ENABLED ?? "false").toLowerCase() === "true";
+  // audit-finding-reminder (F60) — WA ke anggota grup tahap approval yang
+  // pending & telat >N hari (dedup harian via reminded_at). Flag SENDIRI
+  // (default off) — mengirim WA.
+  const auditFindingReminderEnabled = (process.env.AUDIT_FINDING_REMINDER_ENABLED ?? "false").toLowerCase() === "true";
   // kpi-measure — auto-isi kpi_measurement KPI sales dari data operasional
   // (kunjungan, kepatuhan plan-report, revenue, customer baru, prospek).
   // Cakupannya sengaja sempit: hanya KPI yang punya sumber tak-ambigu; sisanya
@@ -288,12 +293,12 @@ export function startScheduler(): ScheduleStatus {
   ];
 
   status = {
-    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled || watchpointSnapshotEnabled || preVisitEnabled || edWatchEnabled || gaMaintenanceAlertEnabled || gaMaintenanceBscEnabled || gaHelpdeskOverdueEnabled || gaHelpdeskBscEnabled || lpseTenderReminderEnabled || accurateStockSyncEnabled || cashinResumeEnabled || geoSweepEnabled || kpiMeasureEnabled || invoiceReminderEnabled,
+    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled || watchpointSnapshotEnabled || preVisitEnabled || edWatchEnabled || gaMaintenanceAlertEnabled || gaMaintenanceBscEnabled || gaHelpdeskOverdueEnabled || gaHelpdeskBscEnabled || lpseTenderReminderEnabled || accurateStockSyncEnabled || cashinResumeEnabled || geoSweepEnabled || kpiMeasureEnabled || invoiceReminderEnabled || auditFindingReminderEnabled,
     timezone,
     jobs: jobs.map((j) => ({ id: j.id, expr: j.expr, valid: cron.validate(j.expr) })),
   };
 
-  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled && !watchpointSnapshotEnabled && !preVisitEnabled && !edWatchEnabled && !gaMaintenanceAlertEnabled && !gaMaintenanceBscEnabled && !gaHelpdeskOverdueEnabled && !gaHelpdeskBscEnabled && !lpseTenderReminderEnabled && !accurateStockSyncEnabled && !cashinResumeEnabled && !geoSweepEnabled && !kpiMeasureEnabled && !invoiceReminderEnabled) {
+  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled && !watchpointSnapshotEnabled && !preVisitEnabled && !edWatchEnabled && !gaMaintenanceAlertEnabled && !gaMaintenanceBscEnabled && !gaHelpdeskOverdueEnabled && !gaHelpdeskBscEnabled && !lpseTenderReminderEnabled && !accurateStockSyncEnabled && !cashinResumeEnabled && !geoSweepEnabled && !kpiMeasureEnabled && !invoiceReminderEnabled && !auditFindingReminderEnabled) {
     console.log("[scheduler] semua *_SCHEDULE/_ENABLED flag != true — tidak dijadwalkan");
     return status;
   }
@@ -644,6 +649,28 @@ export function startScheduler(): ScheduleStatus {
       { timezone },
     );
     live.push(`ga-helpdesk-bsc-feed=${gaHelpdeskBscExpr}`);
+  }
+
+  // audit-finding-reminder (F60) — cek tahap approval pending yang telat,
+  // pagi 08:00 hari kerja (pola sama miss-escalation). Threshold hari via env
+  // (default 3, minimal 1 — cegah salah isi jadi 0/negatif spam tiap jam).
+  const auditFindingReminderExpr = process.env.AUDIT_FINDING_REMINDER_CRON ?? "0 8 * * 1-5";
+  const auditFindingReminderDays = Math.max(1, Number(process.env.AUDIT_FINDING_REMINDER_DAYS) || 3);
+  if (auditFindingReminderEnabled && cron.validate(auditFindingReminderExpr)) {
+    cron.schedule(
+      auditFindingReminderExpr,
+      async () => {
+        const startedAt = new Date().toISOString();
+        try {
+          const r = await runAuditFindingApprovalReminder(auditFindingReminderDays);
+          console.log(`[scheduler] audit-finding-reminder @ ${startedAt} ${JSON.stringify(r)}`);
+        } catch (e) {
+          console.error(`[scheduler] audit-finding-reminder gagal @ ${startedAt}:`, e);
+        }
+      },
+      { timezone },
+    );
+    live.push(`audit-finding-reminder=${auditFindingReminderExpr}`);
   }
 
   // Monitor (port wrg-monitor) — rekap & resume GENERATE-ONLY (tidak kirim WA;
