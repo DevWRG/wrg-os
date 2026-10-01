@@ -332,16 +332,6 @@ export const NAV: NavGroup[] = [
     ],
   },
   {
-    // F-CASHIN — Finance belum punya grup sendiri (AR Aging nebeng Sales, Dana
-    // Ops nebeng General Affairs). Menu ini pemakainya admin Finance + Direktur
-    // dan datanya rekening bank, jadi dibuat grup sendiri daripada dipaksa
-    // masuk grup yang temanya lain (pola sama DOC & GA).
-    label: "Finance",
-    items: [
-      { title: "Uang Masuk", url: "/uang-masuk", icon: Banknote, badge: "NEW" },
-    ],
-  },
-  {
     // DOC #KLAIM (FR-DOC-01) — domain board literally "DOC", tak cocok masuk
     // grup existing manapun, grup sendiri (pola sama F139 bikin grup "GA").
     label: "DOC",
@@ -385,29 +375,33 @@ export const NAV: NavGroup[] = [
       // WA/cron — dikonfirmasi user). Role min HOD (data komersial vendor),
       // `show` di sini fallback identitas, gate nyata di BFF requireHodOrAdmin().
       { title: "Vendor Management", url: "/vendor-management", icon: Handshake, badge: "NEW", show: canViewVendorManagement },
+      // Dulu grup terpisah "GA" (F132/F139/F138) di samping grup "General
+      // Affairs" — dua grup untuk satu domain. Digabung 30 Sep 2026; key fitur
+      // tak berubah (diturunkan dari url), hanya `section` di katalog fitur.
+      // F132 Aset Master — single source of truth aset kantor, fondasi F133
+      // (assignment/transfer) & F137 (maintenance). 1 menu, 3 tab
+      // (Aset/Kategori/Tiket IT) — arahan Direktur eksplisit F52 gabung ke F132
+      // juga di level MENU, bukan cuma tabel. Tab Tiket IT dilayani /ga-assets
+      // & /it-tickets sekaligus (lihat `features`).
+      {
+        title: "Aset GA", url: "/ga-aset", icon: Archive, badge: "NEW",
+        // ga-finance-approval = tombol "Approve Finance" Maintenance GA (F137)
+        // di halaman ini. Dulu cuma disemai migrasi 089, bukan dari menu, jadi
+        // tiap Sync Fitur menganggapnya zombie dan MENONAKTIFKANNYA — gate-nya
+        // lalu jatuh diam-diam ke fallback title "finance", centang di Akses
+        // Grup tak berlaku. Didaftarkan di sini supaya ikut katalog.
+        features: [
+          { key: "it-asset", name: "Tiket IT (tab di Aset GA)" },
+          { key: "ga-finance-approval", name: "Approval Finance — Maintenance GA" },
+        ],
+      },
+      { title: "Helpdesk GA", url: "/ga-helpdesk", icon: Ticket, badge: "NEW" },
+      { title: "Pengajuan Dana Operasional", url: "/fund-requests", icon: Wallet, badge: "NEW" },
       // F141 — konsolidasi laporan 6 modul GA (F49 ATK+F54 Materai, F50
       // Kendaraan, F51 Dana Ops, F52 IT Asset, F53 Stiker Aset). Role min HOD
       // (disamakan dgn gate paling ketat di antara modul sumber, F51 Dana Ops)
       // krn agregasi menaikkan sensitivitas data yg sebagian sumbernya terbuka.
       { title: "GA Reporting & Analytics", url: "/ga-reporting", icon: BarChart3, badge: "NEW", show: canViewGaReporting },
-    ],
-  },
-  {
-    // Domain GA (General Affairs) per arahan Direktur soal domain grouping
-    // sidebar (sama pola Aftersales/Shipping/Purchasing). F132 Aset Master —
-    // single source of truth aset kantor, fondasi F133 (assignment/transfer)
-    // & F137 (maintenance) yang menyusul di atas branch ini.
-    label: "GA",
-    items: [
-      // 1 menu, 3 tab (Aset/Kategori/Tiket IT) — arahan Direktur eksplisit
-      // F52 gabung ke F132 juga di level MENU, bukan cuma tabel. Tab Tiket
-      // IT dilayani /ga-assets & /it-tickets sekaligus (lihat `features`).
-      {
-        title: "Aset GA", url: "/ga-aset", icon: Archive, badge: "NEW",
-        features: [{ key: "it-asset", name: "Tiket IT (tab di Aset GA)" }],
-      },
-      { title: "Helpdesk GA", url: "/ga-helpdesk", icon: Ticket, badge: "NEW" },
-      { title: "Pengajuan Dana Operasional", url: "/fund-requests", icon: Wallet, badge: "NEW" },
     ],
   },
   {
@@ -435,6 +429,54 @@ export const NAV: NavGroup[] = [
     ],
   },
 ];
+
+// Menu yang SUDAH ada di `dev` tapi BELUM ada di `main`/prod (antrean promosi
+// #1282). Sidebar memasang badge "DEV" di menu ini supaya penguji di tumpukan dev
+// (:3300) tahu mana yang belum live — lihat devOnlyBadge(). Badge TIDAK pernah
+// tampil di build produksi (NEXT_PUBLIC_BUILD_CHANNEL === "production", yaitu build
+// dari `main`), jadi Set ini aman ikut terbawa saat promosi.
+// Dicocokkan manual lawan nav.ts di `main` (audit katalog 30 Sep 2026: 33 menu).
+// Rawat: saat satu menu dipromosikan satuan ke main → hapus url-nya dari sini;
+// saat #1282 merge → kosongkan Set ini.
+export const DEV_ONLY_URLS: ReadonlySet<string> = new Set([
+  "/approval-requests",
+  "/asset-tag",
+  "/atk-master",
+  "/atk-stock-in",
+  "/atk-stock-opname",
+  "/atk-stock-out",
+  "/courier-performance",
+  "/dana-ops",
+  "/doc-klaim",
+  "/ed-watch",
+  "/forecast-submission",
+  "/fund-requests",
+  "/ga-aset",
+  "/ga-helpdesk",
+  "/ga-reporting",
+  "/inbound-receiving",
+  "/installations",
+  "/inventory-relocations",
+  "/lpse-tender",
+  "/maintenance",
+  "/pickup-plan",
+  "/print-spec",
+  "/proficiency-tests",
+  "/purchase-forecast",
+  "/purchase-orders",
+  "/readiness-board",
+  "/rfid-cartridge-claims",
+  "/service-tickets",
+  "/shipment-tracking",
+  "/stok-gudang",
+  "/supplier-eta",
+  "/vehicles",
+  "/vendor-management",
+]);
+
+export function devOnlyBadge(url: string, buildChannel: string | undefined): boolean {
+  return buildChannel !== "production" && DEV_ONLY_URLS.has(url);
+}
 
 // Fitur (RBAC) per item = slug route: /monitor/rekap → "monitor-rekap" (= feature.key).
 export const featureKey = (url: string) => url.replace(/^\//, "").replace(/\//g, "-");
