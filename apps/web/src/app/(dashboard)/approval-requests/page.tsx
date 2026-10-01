@@ -9,6 +9,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SkeletonCardGrid } from "@/components/ui/loading";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { KATEGORI_OPTIONS, labelKategori, labelWilayah, WILAYAH_OPTIONS } from "@/lib/approval-routing";
 
 interface ApprovalStep {
   urutan: number;
@@ -27,6 +29,8 @@ interface ApprovalRequest {
   description: string | null;
   nominal: number | null;
   requestedBy: string;
+  wilayah: string | null;
+  kategori: string | null;
   status: string;
   currentUrutan: number | null;
   createdAt: string;
@@ -73,6 +77,9 @@ export default function ApprovalRequestsPage() {
   const [nominal, setNominal] = useState("");
   const [requestedBy, setRequestedBy] = useState("");
   const [requestedByWa, setRequestedByWa] = useState("");
+  // Wajib di form: tahap 1 (HoD Sales) & 2 (HoD Bisnis) dipilih dari sini.
+  const [wilayah, setWilayah] = useState<string>("");
+  const [kategori, setKategori] = useState<string>("");
   const [files, setFiles] = useState<File[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -147,6 +154,10 @@ export default function ApprovalRequestsPage() {
       setSubmitError("title & requestedBy wajib diisi");
       return;
     }
+    if (!wilayah || !kategori) {
+      setSubmitError("wilayah pengaju & kategori barang wajib dipilih — keduanya menentukan approver tahap 1 & 2");
+      return;
+    }
     setSubmitting(true);
     try {
       const attachments = await Promise.all(
@@ -161,6 +172,8 @@ export default function ApprovalRequestsPage() {
           nominal: nominal ? Number(nominal) : null,
           requestedBy,
           requestedByWa: requestedByWa || null,
+          wilayah,
+          kategori,
           attachments,
         }),
       });
@@ -180,6 +193,8 @@ export default function ApprovalRequestsPage() {
       setNominal("");
       setRequestedBy("");
       setRequestedByWa("");
+      setWilayah("");
+      setKategori("");
       setFiles([]);
       await load();
     } catch (e) {
@@ -247,6 +262,36 @@ export default function ApprovalRequestsPage() {
               <Label className="mb-1 block text-xs">WA kamu (opsional, buat notif hasil akhir)</Label>
               <Input value={requestedByWa} onChange={(e) => setRequestedByWa(e.target.value)} placeholder="628..." />
             </div>
+            <div>
+              <Label className="mb-1 block text-xs">Wilayah pengaju * (menentukan HoD Sales, tahap 1)</Label>
+              <Select value={wilayah} onValueChange={(v) => setWilayah(v ?? "")}>
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Pilih wilayah" />
+                </SelectTrigger>
+                <SelectContent>
+                  {WILAYAH_OPTIONS.map((o) => (
+                    <SelectItem key={o.value} value={o.value}>
+                      {o.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label className="mb-1 block text-xs">Kategori barang * (menentukan HoD Bisnis, tahap 2)</Label>
+              <Select value={kategori} onValueChange={(v) => setKategori(v ?? "")}>
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Pilih kategori" />
+                </SelectTrigger>
+                <SelectContent>
+                  {KATEGORI_OPTIONS.map((o) => (
+                    <SelectItem key={o.value} value={o.value}>
+                      {o.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
             <div className="md:col-span-2">
               <Label className="mb-1 block text-xs">Lampiran (opsional — PDF/PNG, maks {MAX_ATTACHMENT_MB}MB/file)</Label>
               <input
@@ -309,6 +354,7 @@ export default function ApprovalRequestsPage() {
                     <p className="text-muted-foreground text-xs">
                       Oleh {r.requestedBy}
                       {r.nominal != null ? ` · ${rupiah(r.nominal)}` : ""}
+                      {` · ${labelWilayah(r.wilayah)} / ${labelKategori(r.kategori)}`}
                       {r.attachments.length > 0 ? ` · 📎 ${r.attachments.length}` : ""}
                     </p>
                   </div>

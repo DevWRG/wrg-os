@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SkeletonCardGrid } from "@/components/ui/loading";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { KATEGORI_OPTIONS, WILAYAH_OPTIONS } from "@/lib/approval-routing";
 
 // Selaras HODS di apps/api/src/hod-resolver.ts — daftar 8 HoD kanonik.
 // Duplikat sengaja (bukan endpoint baru cuma buat 8 baris statis ini).
@@ -31,6 +32,13 @@ interface ChainRow {
   hodKey: string | null;
   waNumberOverride: string | null;
   catatan: string | null;
+  // Migrasi 190 (#1071): tahap yang orangnya dipilih per atribut request.
+  routing: "tetap" | "wilayah" | "kategori";
+  hodKeyMap: Record<string, string> | null;
+}
+
+function opsiPeta(routing: ChainRow["routing"]) {
+  return routing === "wilayah" ? WILAYAH_OPTIONS : routing === "kategori" ? KATEGORI_OPTIONS : [];
 }
 
 export default function ApprovalConfigPage() {
@@ -99,6 +107,24 @@ export default function ApprovalConfigPage() {
     }
   }
 
+  async function saveMapEntry(urutan: number, key: string, hodKey: string) {
+    setSaving(urutan);
+    try {
+      const res = await fetch(`/api/approval-requests/config/chain/${urutan}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ hodKeyMap: { [key]: hodKey === NONE ? null : hodKey } }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.ok === false) throw new Error(data.error ?? "gagal simpan");
+      await load();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setSaving(null);
+    }
+  }
+
   async function saveOverride(urutan: number) {
     setSaving(urutan);
     try {
@@ -145,7 +171,38 @@ export default function ApprovalConfigPage() {
               </CardHeader>
               <CardContent className="space-y-3">
                 {r.catatan && <p className="text-muted-foreground text-xs">{r.catatan}</p>}
-                {r.targetType === "hod" ? (
+                {r.targetType === "hod" && r.routing !== "tetap" ? (
+                  <div className="space-y-2">
+                    <p className="text-sm">
+                      Diarahkan per <b>{r.routing === "wilayah" ? "wilayah pengaju" : "kategori barang"}</b> — tiap
+                      permintaan membawa nilainya, HoD dipilih dari peta ini.
+                    </p>
+                    {opsiPeta(r.routing).map((o) => (
+                      <div key={o.value} className="flex items-end gap-3">
+                        <div className="min-w-56">
+                          <Label className="mb-1 block text-xs">{o.label.split(" — ")[0]}</Label>
+                          <Select
+                            value={r.hodKeyMap?.[o.value] ?? NONE}
+                            onValueChange={(v) => void saveMapEntry(r.urutan, o.value, v ?? NONE)}
+                          >
+                            <SelectTrigger className="w-full">
+                              <SelectValue placeholder="Belum dipilih" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value={NONE}>(belum dipilih)</SelectItem>
+                              {HOD_OPTIONS.map((h) => (
+                                <SelectItem key={h.key} value={h.key}>
+                                  {h.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
+                    ))}
+                    {saving === r.urutan && <span className="text-muted-foreground text-xs">menyimpan…</span>}
+                  </div>
+                ) : r.targetType === "hod" ? (
                   <div className="flex items-end gap-3">
                     <div className="min-w-56">
                       <Label className="mb-1 block text-xs">Pilih HoD</Label>
@@ -170,21 +227,23 @@ export default function ApprovalConfigPage() {
                     Otomatis resolve ke akun dashboard dengan role <code>direktur</code>.
                   </p>
                 )}
-                <div className="flex items-end gap-2">
-                  <div className="min-w-64 flex-1">
-                    <Label className="mb-1 block text-xs">
-                      Override nomor WA (opsional — dipakai kalau orangnya belum punya akun dashboard, mis. bukan HoD)
-                    </Label>
-                    <Input
-                      value={overrideDrafts[r.urutan] ?? ""}
-                      onChange={(e) => setOverrideDrafts((prev) => ({ ...prev, [r.urutan]: e.target.value }))}
-                      placeholder="628..."
-                    />
+                {r.routing === "tetap" && (
+                  <div className="flex items-end gap-2">
+                    <div className="min-w-64 flex-1">
+                      <Label className="mb-1 block text-xs">
+                        Override nomor WA (opsional — dipakai kalau orangnya belum punya akun dashboard, mis. bukan HoD)
+                      </Label>
+                      <Input
+                        value={overrideDrafts[r.urutan] ?? ""}
+                        onChange={(e) => setOverrideDrafts((prev) => ({ ...prev, [r.urutan]: e.target.value }))}
+                        placeholder="628..."
+                      />
+                    </div>
+                    <Button size="sm" variant="outline" disabled={saving === r.urutan} onClick={() => void saveOverride(r.urutan)}>
+                      Simpan
+                    </Button>
                   </div>
-                  <Button size="sm" variant="outline" disabled={saving === r.urutan} onClick={() => void saveOverride(r.urutan)}>
-                    Simpan
-                  </Button>
-                </div>
+                )}
               </CardContent>
             </Card>
           ))}
