@@ -582,7 +582,8 @@ export async function matchPuteran(tanggal: string): Promise<number> {
   const nomorRows = await sql`SELECT no_rekening FROM bank_account WHERE no_rekening IS NOT NULL`;
   const nomorSendiri = nomorRows.map((r) => String(r.no_rekening));
   const rows = await sql`
-    SELECT l.id, l.debit, l.kredit, l.waktu, l.deskripsi, l.kategori, l.kategori_oleh, s.bank_account_id
+    SELECT l.id, l.debit, l.kredit, l.waktu, l.deskripsi, l.kategori, l.kategori_oleh,
+           s.bank_account_id, a.label_file, a.swift_kode
     FROM bank_statement_line l
     JOIN bank_statement s ON s.id = l.statement_id
     JOIN bank_account a ON a.id = s.bank_account_id
@@ -590,19 +591,18 @@ export async function matchPuteran(tanggal: string): Promise<number> {
     ORDER BY l.waktu NULLS LAST, l.id
   `;
 
-  type Row = {
-    id: string; debit: number; kredit: number; waktu: string | null;
-    bank_account_id: string; kategori_oleh: string; deskripsi: string;
-  };
-  const debits: Row[] = [];
-  const credits: Row[] = [];
+  const debits: BarisPuteran[] = [];
+  const credits: BarisPuteran[] = [];
   for (const r of rows) {
-    const row: Row = {
+    const row: BarisPuteran = {
       id: String(r.id),
       debit: Number(r.debit),
       kredit: Number(r.kredit),
       waktu: r.waktu ? new Date(r.waktu as string).toISOString() : null,
       bank_account_id: String(r.bank_account_id),
+      label_file: String(r.label_file),
+      swift_kode: r.swift_kode ? String(r.swift_kode) : null,
+      kategori: String(r.kategori),
       kategori_oleh: String(r.kategori_oleh),
       deskripsi: String(r.deskripsi ?? ""),
     };
@@ -610,28 +610,7 @@ export async function matchPuteran(tanggal: string): Promise<number> {
     else if (row.kredit > 0) credits.push(row);
   }
 
-  const dipakai = new Set<string>();
-  const pasangan: Array<[string, string]> = [];
-  for (const d of debits) {
-    const cocok = credits.find(
-      (c) =>
-        !dipakai.has(c.id) &&
-        c.bank_account_id !== d.bank_account_id && // pindah antar rekening, bukan dalam satu rekening
-        Math.abs(c.kredit - d.debit) < 0.005 &&
-        dalamToleransi(d.waktu, c.waktu) &&
-        // Nominal + tanggal saja BELUM cukup: dua transaksi tak berhubungan
-        // bisa bernominal sama di hari yang sama (customer bayar 2,5 jt ke BJTM
-        // sementara Mandiri bayar vendor 2,5 jt). Salah pasang = uang masuk
-        // riil hilang dari total. Jadi minimal SATU sisi harus berbunyi seperti
-        // pindah-buku internal. Ini pemakaian nama yang benar: penguat bukti
-        // pasangan, bukan bukti tunggal.
-        (berbauInternal(d.deskripsi, nomorSendiri) || berbauInternal(c.deskripsi, nomorSendiri)),
-    );
-    if (cocok) {
-      dipakai.add(cocok.id);
-      pasangan.push([d.id, cocok.id]);
-    }
-  }
+  const { pasangan, kandidat } = pasangkanPuteran(debits, credits, nomorSendiri);
 
   for (const [debitId, kreditId] of pasangan) {
     await sql`
@@ -649,15 +628,124 @@ export async function matchPuteran(tanggal: string): Promise<number> {
       WHERE id = ${kreditId}
     `;
   }
+
+  // Kandidat tanpa bukti: kreditnya DITAHAN, bukan dihitung uang masuk diam-diam.
+  // Hanya baris yang kategorinya masih hasil aturan 'uang_masuk_riil' — putusan
+  // manusia tak disentuh, dan baris yang sudah ditahan tak ditulis ulang.
+  for (const k of kandidat) {
+    await sql`
+      UPDATE bank_statement_line SET kategori = 'belum_ditriage', catatan = ${k.catatan}
+      WHERE id = ${k.kreditId} AND kategori = 'uang_masuk_riil' AND kategori_oleh = 'aturan'
+    `;
+  }
   return pasangan.length;
 }
 
-// Nama entitas sendiri + kode SWIFT rekening WRG + kata kerja pindah-buku.
-// SWIFT sengaja ikut: deskripsi Mandiri menulis lawan transaksinya sebagai
-// 'BIFAST Inc GL-CS PDJTIDJ1/WAHANA RIZKY GUMILANG PT', jadi kode banknya
-// sendiri sudah menandai asal internal walau nama terpotong.
+export interface BarisPuteran {
+  id: string;
+  debit: number;
+  kredit: number;
+  waktu: string | null;
+  bank_account_id: string;
+  label_file: string;
+  swift_kode: string | null;
+  kategori: string;
+  kategori_oleh: string;
+  deskripsi: string;
+}
+
+const rpPendek = (n: number): string => "Rp " + Math.round(n).toLocaleString("id-ID");
+
+/** Debit dan kredit yang secara angka BISA satu perpindahan: rekening WRG
+ *  berbeda, nominal sama persis, waktu dalam toleransi. Belum bukti apa pun. */
+function cocokAngka(d: BarisPuteran, c: BarisPuteran): boolean {
+  return (
+    c.bank_account_id !== d.bank_account_id && // pindah antar rekening, bukan dalam satu rekening
+    Math.abs(c.kredit - d.debit) < 0.005 &&
+    dalamToleransi(d.waktu, c.waktu)
+  );
+}
+
+/** Inti pencocokan puteran, tanpa DB.
+ *
+ *  pasangan = debit↔kredit yang cocok angka DAN ada bukti pindah-buku
+ *  (buktiPindahBuku). kandidat = kredit beraturan 'uang_masuk_riil' yang cocok
+ *  angka dengan debit rekening WRG lain tapi TANPA bukti — dulu diam-diam
+ *  dihitung uang masuk riil. 30 Sep 2026: INDEX 890 → BJTM 85/90/100/2,5 jt
+ *  ('TRF KELUAR IB/IBB' | 'TRF DEST ONLY (ATMB)') menggelembungkan uang masuk
+ *  BJTM Rp 277,5 jt, dan yang menangkapnya Finance.
+ *
+ *  Kandidat sengaja TIDAK dipasangkan otomatis: nominal + jam saja juga cocok
+ *  untuk customer yang kebetulan membayar angka bulat yang sama. Ditahan untuk
+ *  diputuskan Finance; kalau Finance bilang puteran, triage memasangkannya. */
+export function pasangkanPuteran(
+  debits: BarisPuteran[],
+  credits: BarisPuteran[],
+  nomorSendiri: string[] = [],
+): { pasangan: Array<[string, string]>; kandidat: Array<{ kreditId: string; catatan: string }> } {
+  const dipakaiKredit = new Set<string>();
+  const dipakaiDebit = new Set<string>();
+  const pasangan: Array<[string, string]> = [];
+  for (const d of debits) {
+    const cocok = credits.find(
+      (c) =>
+        !dipakaiKredit.has(c.id) &&
+        cocokAngka(d, c) &&
+        // Nominal + tanggal saja BELUM cukup: dua transaksi tak berhubungan
+        // bisa bernominal sama di hari yang sama (customer bayar 2,5 jt ke BJTM
+        // sementara Mandiri bayar vendor 2,5 jt). Salah pasang = uang masuk
+        // riil hilang dari total. Jadi harus ada bukti pindah-buku internal.
+        buktiPindahBuku(d, c, nomorSendiri),
+    );
+    if (cocok) {
+      dipakaiKredit.add(cocok.id);
+      dipakaiDebit.add(d.id);
+      pasangan.push([d.id, cocok.id]);
+    }
+  }
+
+  const kandidat: Array<{ kreditId: string; catatan: string }> = [];
+  for (const c of credits) {
+    if (dipakaiKredit.has(c.id) || c.kategori !== "uang_masuk_riil" || c.kategori_oleh !== "aturan") continue;
+    const lawan = debits.filter((d) => !dipakaiDebit.has(d.id) && cocokAngka(d, c));
+    if (lawan.length === 0) continue;
+    const asal = [...new Set(lawan.map((d) => d.label_file))].join(" / ");
+    kandidat.push({
+      kreditId: c.id,
+      catatan:
+        `Kandidat puteran: nominal sama dengan debit ${asal} ${rpPendek(c.kredit)} di hari yang sama, ` +
+        "tapi deskripsinya tak menunjukkan pindah-buku. Putuskan: puteran atau uang masuk.",
+    });
+  }
+  return { pasangan, kandidat };
+}
+
+/** Bukti bahwa debit d dan kredit c adalah SATU pindah-buku internal.
+ *
+ *  Kode SWIFT hanya dihitung kalau milik bank LAWAN dan berbeda dari bank
+ *  sendiri. Kode bank sendiri muncul di setiap transfer keluar bank itu:
+ *  deskripsi Mandiri selalu memuat 'BMRIIDJA' (contoh 30 Sep 2026: '… CENAIDJA
+ *  /WAHANA GIFRINDA INVESTAM 20260930BMRIIDJA…', transfer ke BCA) — dulu itu
+ *  dianggap tanda internal dan debit 75 jt ke pihak luar dipasangkan ke kredit
+ *  BJTM 75 jt yang sebenarnya dari INDEX 890. Diuji atas 38 pasangan prod
+ *  1 Okt 2026: semua pasangan otomatis tetap berbukti. */
+export function buktiPindahBuku(
+  d: Pick<BarisPuteran, "deskripsi" | "swift_kode">,
+  c: Pick<BarisPuteran, "deskripsi" | "swift_kode">,
+  nomorSendiri: string[] = [],
+): boolean {
+  if (berbauInternal(d.deskripsi, nomorSendiri) || berbauInternal(c.deskripsi, nomorSendiri)) return true;
+  const sebutLawan = (desk: string, saya: string | null, lawan: string | null): boolean =>
+    !!lawan && lawan.toUpperCase() !== (saya ?? "").toUpperCase() && desk.toUpperCase().includes(lawan.toUpperCase());
+  return sebutLawan(d.deskripsi, d.swift_kode, c.swift_kode) || sebutLawan(c.deskripsi, c.swift_kode, d.swift_kode);
+}
+
+// Nama entitas sendiri + kata kerja pindah-buku. Kode SWIFT TIDAK lagi di
+// sini: kode bank sendiri ada di setiap transfer keluar bank itu, jadi ia
+// bukan tanda internal. SWIFT kini dinilai per PASANGAN di buktiPindahBuku —
+// hanya kode bank lawan yang dihitung.
 const RE_BERBAU_INTERNAL =
-  /wahana\s*rizky|wahanarizky|pemindahbukuan|paymentfrom|transfer\s*bi\s*fast|bifast|inhousetrf|pdjtidj1|bmriidja|bidxidja|hnbnidja|bniaidja|bninidja/i;
+  /wahana\s*rizky|wahanarizky|pemindahbukuan|paymentfrom|transfer\s*bi\s*fast|bifast|inhousetrf/i;
 
 export function berbauInternal(deskripsi: string, nomorSendiri: string[] = []): boolean {
   // Sinyal terkuat dan paling tak terbantah: deskripsi memuat NOMOR REKENING
@@ -1850,6 +1938,53 @@ export interface TriageWaResult {
   label_file?: string;
   nominal?: number;
   kategori?: string;
+  /** Label rekening debit yang dipasangkan, kalau diputuskan 'puteran_internal'. */
+  dipasangkan_dengan?: string;
+}
+
+/** Finance memutuskan sebuah baris adalah puteran → pasangkan dengan sisi
+ *  lawannya, supaya daftar "Puteran" di resume menyebut dari mana ke mana.
+ *
+ *  Bukti deskripsi TIDAK dituntut di sini — keputusan manusia itulah buktinya.
+ *  Yang tetap dituntut: sisi lawan TEPAT SATU (rekening WRG lain, nominal sama,
+ *  waktu dalam toleransi, belum berpasangan). Lebih dari satu → tidak menebak;
+ *  kategorinya tetap diterapkan, cuma tanpa pasangan.
+ *
+ *  null = tak dipasangkan. */
+async function pasangkanSesudahTriage(lineId: string): Promise<string | null> {
+  const sql = db();
+  const [x] = await sql`
+    SELECT l.id, l.debit, l.kredit, l.waktu, to_char(s.tanggal, 'YYYY-MM-DD') AS tanggal, s.bank_account_id
+    FROM bank_statement_line l JOIN bank_statement s ON s.id = l.statement_id
+    WHERE l.id = ${lineId} AND l.pasangan_line_id IS NULL
+  `;
+  if (!x) return null;
+  const sisiKredit = Number(x.kredit) > 0;
+  const nominal = sisiKredit ? Number(x.kredit) : Number(x.debit);
+  if (!(nominal > 0)) return null;
+  const lawan = await sql`
+    SELECT l.id, l.waktu, a.label_file
+    FROM bank_statement_line l
+    JOIN bank_statement s ON s.id = l.statement_id
+    JOIN bank_account a ON a.id = s.bank_account_id
+    WHERE s.tanggal = ${String(x.tanggal)}::date AND a.milik_wrg AND s.bank_account_id <> ${String(x.bank_account_id)}
+      AND l.pasangan_line_id IS NULL
+      AND ${sisiKredit ? sql`l.debit` : sql`l.kredit`} = ${nominal}
+  `;
+  const waktuX = x.waktu ? new Date(x.waktu as string).toISOString() : null;
+  const cocok = lawan.filter((l) => dalamToleransi(waktuX, l.waktu ? new Date(l.waktu as string).toISOString() : null));
+  if (cocok.length !== 1) return null;
+  const y = cocok[0];
+  await sql.begin(async (tx) => {
+    await tx`UPDATE bank_statement_line SET pasangan_line_id = ${String(y.id)} WHERE id = ${lineId}`;
+    await tx`
+      UPDATE bank_statement_line SET pasangan_line_id = ${lineId},
+        kategori = CASE WHEN kategori_oleh = 'manual' THEN kategori ELSE 'puteran_internal' END,
+        kategori_oleh = 'manual'
+      WHERE id = ${String(y.id)}
+    `;
+  });
+  return String(y.label_file);
 }
 
 /** Terapkan keputusan triage atas satu baris, dirujuk lewat kode pendeknya.
@@ -1876,6 +2011,7 @@ export async function triageDariWa(kode: string, kategori: Kategori, oleh: strin
         catatan = ${`ditriage ${oleh} lewat WA`}
     WHERE id = ${String(row.id)}
   `;
+  const dipasangkan = kategori === "puteran_internal" ? await pasangkanSesudahTriage(String(row.id)) : null;
   // Resume tanggal itu ikut berubah → teks draftnya disegarkan kalau masih
   // menunggu konfirmasi. Tanpa ini Finance menyetujui angka lama.
   try {
@@ -1883,7 +2019,13 @@ export async function triageDariWa(kode: string, kategori: Kategori, oleh: strin
   } catch (e) {
     console.error(`[cashin] segarkan draft sesudah triage ${kode} gagal:`, e);
   }
-  return { ok: true, label_file: String(row.label_file), nominal: Number(row.nominal), kategori };
+  return {
+    ok: true,
+    label_file: String(row.label_file),
+    nominal: Number(row.nominal),
+    kategori,
+    dipasangkan_dengan: dipasangkan ?? undefined,
+  };
 }
 
 // ── job harian ───────────────────────────────────────────────────────────────
@@ -2084,7 +2226,9 @@ export async function triageLine(
     SET kategori = ${kategori}, kategori_oleh = 'manual', catatan = ${catatan ?? null}
     WHERE id = ${id} RETURNING id
   `;
-  return rows.length ? { ok: true } : { ok: false, error: "baris tidak ditemukan" };
+  if (!rows.length) return { ok: false, error: "baris tidak ditemukan" };
+  if (kategori === "puteran_internal") await pasangkanSesudahTriage(id);
+  return { ok: true };
 }
 
 export async function listAccount(): Promise<Record<string, unknown>[]> {
