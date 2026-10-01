@@ -18,10 +18,18 @@ Dua jalur baca, dan urutannya penting:
      INDEX 131 020926.pdf isinya 990 KB perintah kurva, Tj/TJ/BT = 0).
      Halaman dirender jadi gambar lalu dibaca model vision.
 
-Fallback juga dipakai kalau bank-nya punya teks tapi tata kolomnya bocor saat
-diekstrak (CIMB Niaga: "0.00FD TR (CR) TO", "11,210,958.90260902VG11...").
-Menebak pemisah kolom dari satu contoh lebih berbahaya daripada membaca
-tabelnya secara visual.
+Sampai Okt 2026 HANA dan NIAGA selalu jatuh ke OCR vision padahal PDF-nya
+punya teks — Hana tak punya parser, dan urutan-baca CIMB Niaga membocorkan
+kolom ("0.00FD TR (CR) TO"). Keduanya kini punya parser teks (NIAGA lewat
+mode tata letak), jadi OCR vision tinggal untuk PDF tanpa teks.
+
+Tesseract (lokal, tanpa token) sudah diuji sebagai pengganti OCR vision dan
+DITOLAK (1 Okt 2026, 45 koran prod dirender jadi gambar): nominal terbaca
+benar setelah checksum + rantai saldo, tapi deskripsi rusak — 'WAHANA RIZ
+03210186' terbaca 'MESSY', nomor rekening hilang. apps/api memakai digit
+nomor rekening di deskripsi sebagai bukti dana puteran (berbauInternal),
+jadi deskripsi yang salah membuat klasifikasi salah tanpa checksum apa pun
+yang bisa menangkapnya.
 
 Setiap statement bank mencetak totalnya sendiri (Total Credit / Total Amount
 Credited / Total Kredit). Itu dipakai sebagai CHECKSUM: kalau jumlah baris
@@ -168,6 +176,10 @@ def detect_bank(text: str) -> Optional[str]:
         return "INDEX"
     if "daily statement of account" in t or "ledger balance" in t:
         return "NIAGA"
+    # 'Transaction History' saja tidak cukup — bukti transfer BNI memakai judul
+    # itu juga. Kolom 'Billing ID (VA)' khas ekspor Hana.
+    if "account transaction history" in t and "billing id" in t:
+        return "HANA"
     return None
 
 
@@ -511,18 +523,255 @@ def parse_bni(text: str) -> Dict[str, Any]:
     return out
 
 
-# CIMB Niaga sengaja TIDAK punya parser teks. Ekstraksi teksnya membocorkan
-# kolom satu ke kolom lain ('0.00FD TR (CR) TO', '11,210,958.90260902VG11...'),
-# jadi angka dan deskripsi menempel tanpa pemisah yang bisa dipercaya. Dengan
-# satu contoh dokumen, menebak batas kolom lebih berbahaya daripada membaca
-# tabelnya lewat vision — jadi NIAGA jatuh ke jalur OCR.
+# ── periode multi-hari & saldo awal (dipakai HANA dan NIAGA) ─────────────────
+
+def _tanggal_periode(dari: Optional[str], sampai: Optional[str], tgl_baris: List[str]) -> Tuple[Optional[str], Optional[str]]:
+    """Tentukan tanggal statement dari periode tercetak. Return (tanggal, error).
+
+    Rentang satu hari → tanggal itu. Rentang >1 hari (Hana mengekspor Jumat
+    s/d Minggu sekaligus: 'Periode 25/09/2026 - 27/09/2026') hanya diterima
+    kalau SEMUA baris mutasinya jatuh di satu tanggal di dalam rentang — itu
+    yang terjadi pada koran Hana 25 Sep 2026, dan tanggal itu pula yang dipilih
+    OCR vision sebelumnya. Kalau barisnya tersebar ke beberapa tanggal, file
+    ditolak: memadatkannya ke satu tanggal menaruh mutasi di hari yang salah
+    tanpa peringatan (alasan yang sama dgn penolakan periode BNI).
+    """
+    if not dari or not sampai:
+        return None, None
+    if dari == sampai:
+        return dari, None
+    unik = sorted(set(tgl_baris))
+    if len(unik) == 1 and dari <= unik[0] <= sampai:
+        return unik[0], None
+    return None, "periode lebih dari satu hari (%s s/d %s) dgn mutasi di %s — ekspor ulang per tanggal" % (
+        dari, sampai, ", ".join(unik) if unik else "tak ada baris")
+
+
+def _saldo_awal_konsisten(res: Dict[str, Any], tercetak: Optional[float]) -> Optional[float]:
+    """Saldo awal yang tercetak dipakai HANYA kalau bersambung dengan saldo
+    akhir lewat total tercetak; kalau tidak, diturunkan dari saldo akhir.
+
+    CIMB Niaga mencetak 'Yesterday Balance 0.00' padahal saldo sebelum mutasi
+    30 Sep 2026 adalah 13.136.454,74. Angka 0 itu ikut tersimpan lewat OCR
+    vision dan membuat cek saldo bersambung (apps/api) gagal tanpa sebab yang
+    terlihat. Turunan dari saldo akhir − kredit + debit memakai angka yang
+    juga dicetak bank, dan checksum sudah menjamin barisnya lengkap.
+    """
+    akhir = res.get("saldo_akhir")
+    td = res.get("total_debit_tercetak")
+    tk = res.get("total_kredit_tercetak")
+    if akhir is None or td is None or tk is None:
+        return tercetak
+    turunan = _round2(akhir - tk + td)
+    if tercetak is not None and _sum_close(tercetak, turunan):
+        return tercetak
+    return turunan
+
+
+# ── Bank KEB Hana (Account Transaction History) ──────────────────────────────
+# Dibaca dari teks urutan-baca: tiap baris keluar sebagai
+#   <dd/mm/yyyy> <remark ...> <debit> <kredit> IDR - <saldo>
+# dengan nominal 'IDR 11,550,685' (desimal hanya kalau ada sen) dan sel kosong
+# '-'. Rekening ini pinjaman: saldo dicetak 'IDR -' lalu angkanya di baris
+# berikutnya, jadi tanda minus terpisah spasi dari angkanya.
 #
-# Bank Hana juga belum punya sidik jari maupun parser → tetap lewat OCR.
-_PARSERS = {"BJTM": parse_bjtm, "MDR": parse_mandiri, "INDEX": parse_index, "BNI": parse_bni}
+# Baris di-anchor ke TIGA kolom angka penutupnya (pola Mandiri), bukan ke
+# tanggal: remark Hana sendiri memuat tanggal ('BUNGA(20/08/20 26~19/09/2026)').
+# Hana tak mencetak jam transaksi maupun referensi; kolom Billing ID (VA)
+# kosong di semua contoh.
+_HANA_NOM = r"IDR\s*[\d,]+(?:\.\d{1,2})?"
+_HANA_TAIL = re.compile(
+    r"(?P<debit>%s|-)\s+(?P<kredit>%s|-)\s+IDR\s*(?P<neg>-)?\s*(?P<saldo>[\d,]+(?:\.\d{1,2})?)"
+    % (_HANA_NOM, _HANA_NOM)
+)
+_HANA_TGL = re.compile(r"^\s*(\d{2})/(\d{2})/(\d{4})\s*")
+
+
+def _hana_num(s: Optional[str]) -> Optional[float]:
+    """'IDR 11,550,685' -> 11550685.0, '-' -> 0.0, 'IDR -3,944.33' -> -3944.33"""
+    if s is None:
+        return None
+    t = s.replace("IDR", "").replace(" ", "").strip()
+    if t == "-":
+        return 0.0
+    return num_us(t)
+
+
+def parse_hana(text: str) -> Dict[str, Any]:
+    flat = _flat(text)
+    out: Dict[str, Any] = {"bank_kode": "HANA", "lines": []}
+
+    m = re.search(r"Account Number\s*:\s*(\d+)", flat)
+    out["no_rekening"] = m.group(1) if m else None
+    m = re.search(r"Company Name\s*:\s*(.*?)\s+Account Number", flat)
+    out["nama_pemilik"] = m.group(1).strip() if m else None
+
+    dari = sampai = None
+    m = re.search(r"Periode\s*:\s*(\d{2})/(\d{2})/(\d{4})\s*-\s*(\d{2})/(\d{2})/(\d{4})", flat)
+    if m:
+        dari = _iso_date(int(m.group(3)), int(m.group(2)), int(m.group(1)))
+        sampai = _iso_date(int(m.group(6)), int(m.group(5)), int(m.group(4)))
+
+    # Blok total: empat label lalu empat nominal berurutan.
+    m = re.search(
+        r"Starting Balance\s+Total Debits\s+Total Credits\s+Ending Balance\s+"
+        r"(IDR\s*-?\s*[\d,]+(?:\.\d{1,2})?)\s+(%s)\s+(%s)\s+(IDR\s*-?\s*[\d,]+(?:\.\d{1,2})?)"
+        % (_HANA_NOM, _HANA_NOM),
+        flat,
+    )
+    saldo_awal_cetak = None
+    if m:
+        saldo_awal_cetak = _hana_num(m.group(1))
+        out["total_debit_tercetak"] = _hana_num(m.group(2))
+        out["total_kredit_tercetak"] = _hana_num(m.group(3))
+        out["saldo_akhir"] = _hana_num(m.group(4))
+
+    body = flat
+    idx = body.find("Billing ID (VA)")
+    if idx >= 0:
+        body = body[idx + len("Billing ID (VA)"):]
+    idx = body.find("Starting Balance")
+    if idx >= 0:
+        body = body[:idx]
+
+    tgl_baris: List[str] = []
+    pos = 0
+    for r in _HANA_TAIL.finditer(body):
+        chunk = body[pos:r.start()]
+        pos = r.end()
+        t = _HANA_TGL.match(chunk)
+        if not t:
+            # Tanpa tanggal di depannya, ini bukan awal baris mutasi — biarkan
+            # checksum yang menolak kalau memang ada baris yang terlewat.
+            continue
+        tgl_baris.append(_iso_date(int(t.group(3)), int(t.group(2)), int(t.group(1))))
+        saldo = num_us(r.group("saldo"))
+        if saldo is not None and r.group("neg"):
+            saldo = -saldo
+        out["lines"].append({
+            "urut": len(out["lines"]) + 1,
+            "waktu": None,  # Hana tidak mencetak jam transaksi
+            "deskripsi": re.sub(r"\s+", " ", chunk[t.end():]).strip(),
+            "debit": _hana_num(r.group("debit")) or 0.0,
+            "kredit": _hana_num(r.group("kredit")) or 0.0,
+            "saldo": saldo,
+            "referensi": None,
+        })
+
+    out["tanggal"], err = _tanggal_periode(dari, sampai, tgl_baris)
+    if err:
+        out["periode_dari"], out["periode_sampai"], out["parse_error"] = dari, sampai, err
+    out["saldo_awal"] = _saldo_awal_konsisten(out, saldo_awal_cetak)
+    return out
+
+
+# ── CIMB Niaga (BizChannel Daily Statement of Account) ───────────────────────
+# Dibaca dari teks TATA LETAK, seperti BNI. Urutan-baca CIMB membocorkan kolom
+# ('0.00FD TR (CR) TO', '11,210,958.90260902VG11...'), dan itulah alasan dulu
+# NIAGA dilempar ke OCR vision. Mode layout memulihkan kolomnya utuh:
+#   <post date jam> <payment date jam> <payment type> <ref...> <debit> <kredit> <saldo> <deskripsi> <cheque> <kode>
+# Payment Type yang panjang terbelah ke baris berikutnya ('MONTHLY ADMIN' /
+# 'FEE'), jadi baris lanjutan disambung ke deskripsi. Hanya baris yang
+# indentasinya sejajar kolom Payment Type yang disambung — kop halaman
+# berikutnya ('Company ID ...') mulai di kolom 1 dan tak ikut tertelan.
+#
+# Batas yang jujur: baru ada SATU contoh (30 Sep 2026, tiga baris). Yang
+# menahan risikonya checksum Total Debit/Total Credit — salah baca jatuh ke OCR.
+_TGL_EN = r"\d{1,2}\s+[A-Za-z]{3}\s+\d{4}"
+_NIAGA_ROW = re.compile(
+    r"^(?P<lead>\s*)(?P<post>%s)\s+(?P<jam>\d{2}:\d{2}:\d{2})\s+(?:%s\s+\d{2}:\d{2}:\d{2}\s+)?"
+    r"(?P<tengah>.*?)\s+(?P<debit>[\d,]+\.\d{2})\s+(?P<kredit>[\d,]+\.\d{2})\s+(?P<saldo>-?[\d,]+\.\d{2})"
+    r"(?P<ekor>.*)$" % (_TGL_EN, _TGL_EN)
+)
+# Referensi bank = satu token tanpa spasi yang memuat angka (DD4400074009120).
+_NIAGA_REF = re.compile(r"^(?=.*\d)[A-Z0-9/-]{6,}$")
+
+
+def _tgl_en(s: str) -> Optional[str]:
+    m = re.match(r"(\d{1,2})\s+([A-Za-z]{3,})\s+(\d{4})", s.strip())
+    if not m or m.group(2).lower() not in _BULAN_EN:
+        return None
+    return _iso_date(int(m.group(3)), _BULAN_EN[m.group(2).lower()], int(m.group(1)))
+
+
+def parse_niaga(text: str) -> Dict[str, Any]:
+    out: Dict[str, Any] = {"bank_kode": "NIAGA", "lines": []}
+
+    m = re.search(r"Account No\.\s+(\d+)", text)
+    out["no_rekening"] = m.group(1) if m else None
+    m = re.search(r"Account Name\s+(.+?)(?:\s{2,}|$)", text, re.M)
+    out["nama_pemilik"] = m.group(1).strip() if m else None
+    for label, key in (("Total Debit", "total_debit_tercetak"), ("Total Credit", "total_kredit_tercetak"),
+                       ("Ledger Balance", "saldo_akhir")):
+        m = re.search(r"%s\s+(-?[\d,]+\.\d{2})" % label, text)
+        if m:
+            out[key] = num_us(m.group(1))
+    m = re.search(r"Yesterday Balance\s+(-?[\d,]+\.\d{2})", text)
+    saldo_awal_cetak = num_us(m.group(1)) if m else None
+
+    dari = sampai = None
+    m = re.search(r"Period\s+(%s)\s*-\s*(%s)" % (_TGL_EN, _TGL_EN), text)
+    if m:
+        dari, sampai = _tgl_en(m.group(1)), _tgl_en(m.group(2))
+    m = re.search(r"Generated On\s+(%s)\s+(\d{2}:\d{2}:\d{2})" % _TGL_EN, text)
+    if m and _tgl_en(m.group(1)):
+        out["dicetak_at"] = "%s %s" % (_tgl_en(m.group(1)), m.group(2))
+
+    body = text
+    idx = body.find("Post Date")
+    if idx >= 0:
+        body = body[idx:]
+
+    tgl_baris: List[str] = []
+    kolom_tengah: Optional[int] = None
+    for baris in body.splitlines()[1:]:
+        r = _NIAGA_ROW.match(baris)
+        if r:
+            tgl = _tgl_en(r.group("post"))
+            if tgl is None:
+                continue
+            tgl_baris.append(tgl)
+            kolom_tengah = r.start("tengah")
+            kata, refs = [], []
+            for tok in re.split(r"\s{2,}", r.group("tengah").strip()):
+                (refs if _NIAGA_REF.match(tok) else kata).append(tok)
+            # Ekor = Description, Cheque no, Transaction. Dua kolom terakhir
+            # angka kode; yang tersisa (kalau ada) adalah deskripsi bank.
+            ekor = [t for t in re.split(r"\s{2,}", r.group("ekor").strip()) if t]
+            while ekor and re.fullmatch(r"\d+", ekor[-1]):
+                ekor.pop()
+            out["lines"].append({
+                "urut": len(out["lines"]) + 1,
+                "waktu": "%s %s" % (tgl, r.group("jam")),
+                "deskripsi": " ".join(kata + ekor).strip(),
+                "debit": num_us(r.group("debit")) or 0.0,
+                "kredit": num_us(r.group("kredit")) or 0.0,
+                "saldo": num_us(r.group("saldo")),
+                "referensi": refs[0] if refs else None,
+            })
+        elif out["lines"] and kolom_tengah is not None and baris.strip():
+            if baris.lstrip().startswith(("Generated On", "Post Date")):
+                continue
+            indent = len(baris) - len(baris.lstrip())
+            if indent >= kolom_tengah - 2:
+                last = out["lines"][-1]
+                last["deskripsi"] = (last["deskripsi"] + " " + re.sub(r"\s+", " ", baris.strip())).strip()
+
+    out["tanggal"], err = _tanggal_periode(dari, sampai, tgl_baris)
+    if err:
+        out["periode_dari"], out["periode_sampai"], out["parse_error"] = dari, sampai, err
+    out["saldo_awal"] = _saldo_awal_konsisten(out, saldo_awal_cetak)
+    return out
+
+
+_PARSERS = {
+    "BJTM": parse_bjtm, "MDR": parse_mandiri, "INDEX": parse_index, "BNI": parse_bni,
+    "HANA": parse_hana, "NIAGA": parse_niaga,
+}
 
 # Parser yang membaca teks TATA LETAK (kolom dipertahankan), bukan teks
 # urutan-baca. Dipisah supaya tiga parser lama tak berubah masukannya.
-_PARSERS_LAYOUT = {"BNI"}
+_PARSERS_LAYOUT = {"BNI", "NIAGA"}
 
 
 # ── ekstraksi teks & render halaman ──────────────────────────────────────────

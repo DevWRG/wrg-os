@@ -416,8 +416,9 @@ def parse_koran(req: KoranParseRequest) -> KoranParseResponse:
 
     Parser teks dicoba LEBIH DULU dan menang kalau checksum-nya lolos — 12 dari
     21 file contoh sampai di titik itu tanpa menyentuh LLM sama sekali. Sisanya
-    (PDF hasil 'Print To PDF' yang tak punya teks, dan CIMB Niaga yang tata
-    kolomnya bocor saat diekstrak) dirender jadi gambar lalu dibaca vision.
+    (PDF hasil 'Print To PDF' yang tak punya teks) dirender jadi gambar lalu
+    dibaca vision. HANA dan CIMB Niaga punya parser teks sejak Okt 2026 —
+    sebelumnya keduanya selalu jatuh ke vision walau PDF-nya punya teks.
 
     Endpoint ini TIDAK mengklasifikasi apa pun — mana uang masuk riil, mana dana
     puteran WRG, itu urusan apps/api dgn aturan deterministik + triage manusia.
