@@ -10,7 +10,16 @@ import { createReminder } from "./reminder.js";
 import { buildCekReply } from "./cek.js";
 import { buildFakturReply } from "./faktur.js";
 import { ingestKlaim, type DocKlaimRow } from "./doc-klaim.js";
-import { formatStatusDraft, ingestKoran, nyatakanNihil, parseNihil, type IngestKoranResult } from "./cashin.js";
+import {
+  formatStatusDraft,
+  ingestKoran,
+  kataKategoriTersedia,
+  nyatakanNihil,
+  parseNihil,
+  parseTriage,
+  triageDariWa,
+  type IngestKoranResult,
+} from "./cashin.js";
 import { createTicket, isKnownTeknisiSender } from "./serviceticket.js";
 import {
   findBySjNumber,
@@ -1331,6 +1340,39 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
   if (kind === "koran") {
     // Lampiran boleh menempel di pesan hashtag ini, ATAU datang sebagai pesan
     // terpisah sebelum/sesudahnya — lihat catatan di cabang kind === "none".
+    // "#KORAN triage T1 uang masuk" — memutuskan baris yang tertahan langsung
+    // dari grup. Dicek paling awal: perintah ini tak berlampiran dan tak boleh
+    // tertukar dengan pernyataan nihil maupun penjodohan lampiran.
+    //
+    // Diport dari main (#1348): bagian inbound.ts-nya tak pernah sampai ke dev,
+    // padahal Finance memakainya tiap hari di prod. Tanpa port ini promosi
+    // dev → main menghapus triage WA dari prod.
+    const triage = parseTriage(row.body);
+    if (triage) {
+      const oleh = String(row.sender_name ?? "").trim() || "Finance";
+      if (triage.kategori === null) {
+        const reply = await sendViaWaGateway(
+          target,
+          `⚠️ Kategori tidak dikenali. Pakai salah satu: ${kataKategoriTersedia()}.\nContoh: *#KORAN triage ${triage.kode} uang masuk*`,
+        );
+        return finish({ error: "kategori-tak-dikenal", reply }, "koran");
+      }
+      const r = await triageDariWa(triage.kode, triage.kategori, oleh);
+      const rp = (n: number) => "Rp " + Math.round(n).toLocaleString("id-ID");
+      const reply = await sendViaWaGateway(
+        target,
+        r.ok
+          ? [
+              `✅ ${triage.kode} (${r.label_file} ${rp(r.nominal ?? 0)}) ditetapkan sebagai *${r.kategori}* oleh ${oleh}. Angka resume sudah disegarkan.`,
+              r.dipasangkan_dengan ? `Dipasangkan dengan debit ${r.dipasangkan_dengan}.` : null,
+            ]
+              .filter(Boolean)
+              .join("\n")
+          : `⚠️ ${r.error}`,
+      );
+      return finish({ triage: r, reply }, "koran");
+    }
+
     // Pernyataan "hari ini nihil" — TANPA lampiran, dan itu memang bentuknya:
     // rekening tanpa transaksi tak bisa diunduh dari internet banking sama
     // sekali (dilaporkan Finance 18 Sep 2026). Dicek SEBELUM penjodohan
