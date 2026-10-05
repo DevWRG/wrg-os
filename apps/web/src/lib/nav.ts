@@ -10,7 +10,8 @@ import {
   Bell, MapPin, ListChecks, Swords, CalendarOff, CalendarDays, CalendarRange,
   Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, Tags, SlidersHorizontal, Microscope,
   Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, BookOpen, Calculator,
-  Wallet, Coins, Banknote,
+  Wallet, Coins, Banknote, Car, QrCode, PenLine, PackagePlus, PackageMinus,
+  Handshake, Archive, Ticket,
   type LucideIcon,
 } from "lucide-react";
 
@@ -23,6 +24,9 @@ import { canViewExecutive } from "@/lib/executive-access";
 import { canViewKso } from "@/lib/kso-access";
 import { canViewNpkAm, canViewNpkAmSelf } from "@/lib/npk-access";
 import { canViewInsentifTim } from "@/lib/insentif-access";
+import { canViewDanaOps } from "@/lib/dana-ops-access";
+import { canViewVendorManagement } from "@/lib/vendor-management-access";
+import { canViewGaReporting } from "@/lib/ga-reporting-access";
 
 // exact: sorot aktif hanya saat path persis (untuk route induk yg punya child,
 // mis. /pricelist vs /pricelist/setup).
@@ -220,6 +224,60 @@ export const NAV: NavGroup[] = [
       { title: "Shipments", url: "/shipments", icon: Truck },
       { title: "Suppliers", url: "/suppliers", icon: Factory },
       { title: "HITL Review", url: "/hitl", icon: ClipboardCheck },
+      { title: "Kendaraan Operasional", url: "/vehicles", icon: Car, badge: "NEW" },
+      // F53 — domain OPS tetap di Operations (sama keputusan spt F50/F52).
+      { title: "Stiker Aset", url: "/asset-tag", icon: QrCode, badge: "NEW" },
+    ],
+  },
+  {
+    label: "General Affairs",
+    items: [
+      { title: "Dana Ops", url: "/dana-ops", icon: Wallet, badge: "NEW", show: canViewDanaOps },
+      { title: "ATK Master", url: "/atk-master", icon: PenLine, badge: "NEW" },
+      // F49 sengaja 2 menu/feature-key terpisah (bukan 1 halaman gabungan):
+      // Stock In = tim GA (pencatatan pembelian/penerimaan), Stock Out = tim
+      // mana pun (self-service pengambilan barang). Belum di-gate identitas
+      // ("show") krn sistem ini belum punya konsep departemen/tim di data
+      // user — Direktur atur siapa boleh apa lewat Akses Grup (feature key
+      // "atk-stock-in" vs "atk-stock-out", auto dari url).
+      { title: "ATK Stock In", url: "/atk-stock-in", icon: PackagePlus, badge: "NEW" },
+      { title: "ATK Stock Out", url: "/atk-stock-out", icon: PackageMinus, badge: "NEW" },
+      // F136: hitung fisik vs stok sistem. Penyesuaian selisih dibuat lewat
+      // FORM YANG SAMA dgn Stock In/Out (AddAtkStockMovementSheet), bukan form
+      // baru — menu ini cuma beda submenu/konteks.
+      { title: "ATK Stock Opname", url: "/atk-stock-opname", icon: ListChecks, badge: "NEW" },
+      // F140 Vendor Management + Contract Expiry Alerts — master vendor/partner
+      // lokal + riwayat kontrak, status masa berlaku computed di query (tanpa
+      // WA/cron — dikonfirmasi user). Role min HOD (data komersial vendor),
+      // `show` di sini fallback identitas, gate nyata di BFF requireHodOrAdmin().
+      { title: "Vendor Management", url: "/vendor-management", icon: Handshake, badge: "NEW", show: canViewVendorManagement },
+      // Dulu grup terpisah "GA" (F132/F139/F138) di samping grup "General
+      // Affairs" — dua grup untuk satu domain. Digabung 30 Sep 2026; key fitur
+      // tak berubah (diturunkan dari url), hanya `section` di katalog fitur.
+      // F132 Aset Master — single source of truth aset kantor, fondasi F133
+      // (assignment/transfer) & F137 (maintenance). 1 menu, 3 tab
+      // (Aset/Kategori/Tiket IT) — arahan Direktur eksplisit F52 gabung ke F132
+      // juga di level MENU, bukan cuma tabel. Tab Tiket IT dilayani /ga-assets
+      // & /it-tickets sekaligus (lihat `features`).
+      {
+        title: "Aset GA", url: "/ga-aset", icon: Archive, badge: "NEW",
+        // ga-finance-approval = tombol "Approve Finance" Maintenance GA (F137)
+        // di halaman ini. Dulu cuma disemai migrasi 089, bukan dari menu, jadi
+        // tiap Sync Fitur menganggapnya zombie dan MENONAKTIFKANNYA — gate-nya
+        // lalu jatuh diam-diam ke fallback title "finance", centang di Akses
+        // Grup tak berlaku. Didaftarkan di sini supaya ikut katalog.
+        features: [
+          { key: "it-asset", name: "Tiket IT (tab di Aset GA)" },
+          { key: "ga-finance-approval", name: "Approval Finance — Maintenance GA" },
+        ],
+      },
+      { title: "Helpdesk GA", url: "/ga-helpdesk", icon: Ticket, badge: "NEW" },
+      { title: "Pengajuan Dana Operasional", url: "/fund-requests", icon: Wallet, badge: "NEW" },
+      // F141 — konsolidasi laporan 6 modul GA (F49 ATK+F54 Materai, F50
+      // Kendaraan, F51 Dana Ops, F52 IT Asset, F53 Stiker Aset). Role min HOD
+      // (disamakan dgn gate paling ketat di antara modul sumber, F51 Dana Ops)
+      // krn agregasi menaikkan sensitivitas data yg sebagian sumbernya terbuka.
+      { title: "GA Reporting & Analytics", url: "/ga-reporting", icon: BarChart3, badge: "NEW", show: canViewGaReporting },
     ],
   },
   {
