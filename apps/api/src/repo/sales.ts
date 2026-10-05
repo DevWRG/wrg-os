@@ -425,7 +425,7 @@ export async function reportSalesAr(from?: string, to?: string, scope: DataScope
   // fallback cabang_override. Kode salesman yg nyangkut sudah di-resolve di
   // joinAmFromSalesman (dulu CTE sm_map lokal di sini).
   const byCabang = await sql`
-    SELECT COALESCE(NULLIF(mu.cabang, ''), NULLIF(acs.cabang_override, ''), '(Tanpa cabang)') AS key,
+    SELECT COALESCE(${cabangEffSql(sql)}, '(Tanpa cabang)') AS key,
            count(*)::int AS invoices, COALESCE(sum(ai.total), 0)::float8 AS outstanding
     FROM accurate_invoice ai
     LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
@@ -437,7 +437,7 @@ export async function reportSalesAr(from?: string, to?: string, scope: DataScope
   const byArea = await sql`
     SELECT COALESCE(
              stb.area,
-             CASE WHEN UPPER(COALESCE(NULLIF(mu.cabang, ''), NULLIF(acs.cabang_override, ''), '')) = 'OFFICE' THEN 'Office' END,
+             CASE WHEN UPPER(COALESCE(${cabangEffSql(sql)}, '')) = 'OFFICE' THEN 'Office' END,
              'Belum terpetakan'
            ) AS area,
            count(DISTINCT ai.customer_id)::int AS customers,
@@ -768,7 +768,7 @@ export async function targetPacing(year0?: number, scope: DataScope = FULL_SCOPE
   // AM murni tak boleh lihat agregat cabang (isinya kontribusi rekan sekabang).
   const cbRows: { cabang: unknown; target: unknown; actual: unknown }[] = amSelf ? [] : await sql`
     WITH act AS (
-      SELECT COALESCE(NULLIF(mu.cabang,''), NULLIF(acs.cabang_override,'')) AS cabang, sum(ai.total - COALESCE(ai.tax_amount,0))::float8 AS actual
+      SELECT ${cabangEffSql(sql)} AS cabang, sum(ai.total - COALESCE(ai.tax_amount,0))::float8 AS actual
       FROM accurate_invoice ai
       JOIN accurate_salesman acs ON acs.id = ai.salesman_id
       ${joinAmFromSalesman(sql)}
