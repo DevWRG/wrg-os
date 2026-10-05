@@ -224,9 +224,6 @@ export const NAV: NavGroup[] = [
       { title: "Shipments", url: "/shipments", icon: Truck },
       { title: "Suppliers", url: "/suppliers", icon: Factory },
       { title: "HITL Review", url: "/hitl", icon: ClipboardCheck },
-      { title: "Kendaraan Operasional", url: "/vehicles", icon: Car, badge: "NEW" },
-      // F53 — domain OPS tetap di Operations (sama keputusan spt F50/F52).
-      { title: "Stiker Aset", url: "/asset-tag", icon: QrCode, badge: "NEW" },
     ],
   },
   {
@@ -271,6 +268,11 @@ export const NAV: NavGroup[] = [
           { key: "ga-finance-approval", name: "Approval Finance — Maintenance GA" },
         ],
       },
+      // F53 Stiker Aset & F50 Kendaraan Operasional — dulu di grup Operations,
+      // dipindah ke General Affairs atas arahan user 5 Okt 2026 (pengelolanya
+      // tim GA). Key fitur tak berubah (diturunkan dari url), hanya `section`.
+      { title: "Stiker Aset", url: "/asset-tag", icon: QrCode, badge: "NEW" },
+      { title: "Kendaraan Operasional", url: "/vehicles", icon: Car, badge: "NEW" },
       { title: "Helpdesk GA", url: "/ga-helpdesk", icon: Ticket, badge: "NEW" },
       { title: "Pengajuan Dana Operasional", url: "/fund-requests", icon: Wallet, badge: "NEW" },
       // F141 — konsolidasi laporan 6 modul GA (F49 ATK+F54 Materai, F50
