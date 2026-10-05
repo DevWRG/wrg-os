@@ -57,9 +57,9 @@
   "catalog": {
     "totalFeatures": 209,
     "range": "F1-F168",
-    "built": 69,
-    "builtDev": 52,
-    "comment": "Angka disalin manual dari array FEATURES di WRG-OS-Sprint-Dashboard.html (SoT katalog, di Drive). Terakhir dicocokkan 2026-10-02: 209 entri, 67 BUILT + 2 PROD-LIVE-WRGCRM = 69 di main, 52 BUILT-DEV menunggu promosi (F55/F91/F153 masuk dev 30 Sep, F60 #1396 masuk dev 1 Okt). Perbarui di SINI kalau blueprint berubah — file state ditulis ulang tiap run, jadi edit manual di dashboard-state.json pasti hilang."
+    "built": 83,
+    "builtDev": 38,
+    "comment": "Angka disalin manual dari array FEATURES di WRG-OS-Sprint-Dashboard.html (SoT katalog, di Drive). Terakhir dicocokkan 2026-10-05: 209 entri, 81 BUILT + 2 PROD-LIVE-WRGCRM = 83 di main, 38 BUILT-DEV menunggu promosi (promosi GA #1461 v1.236.0: F49/F50/F51/F53/F132-F141 BUILT-DEV -> BUILT). Perbarui di SINI kalau blueprint berubah — file state ditulis ulang tiap run, jadi edit manual di dashboard-state.json pasti hilang."
   },
   "_meta": {
     "source": "Auto-generated dari pm2 jlist + gh CLI + .env.prod",
