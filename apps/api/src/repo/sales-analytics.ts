@@ -7,7 +7,7 @@
 // query ber-scope (klausa `AND mu.am_id = ...`).
 
 import { db } from "../db.js";
-import { AM_VACANT, joinAmFromSalesman } from "./salesman-am.js";
+import { amCabangTerakhirSql, amGroupKeySql, amLabelSql, cabangEffSql, joinAmFromSalesman } from "./salesman-am.js";
 import {
   salesRange,
   salesOverview,
@@ -99,8 +99,8 @@ export async function analyticsPerAm(from0?: string, to0?: string, scope?: DataS
   const regionMap = await cabangRegionMap(sql);
   const rows = await sql`
     SELECT mu.am_id AS am_id,
-           COALESCE(NULLIF(max(mu.nama),''), ${AM_VACANT}) AS nama,
-           NULLIF(max(mu.cabang),'') AS cabang,
+           max(${amLabelSql(sql)}) AS nama,
+           ${amCabangTerakhirSql(sql)} AS cabang,
            sum(ai.total - COALESCE(ai.tax_amount,0))::float8 AS total, count(*)::int AS count,
            max(sta.target)::float8 AS target
     FROM accurate_invoice ai
@@ -108,7 +108,7 @@ export async function analyticsPerAm(from0?: string, to0?: string, scope?: DataS
     ${joinAmFromSalesman(sql)}
     LEFT JOIN sales_target_am sta ON sta.am_id = mu.am_id AND sta.year = ${year}
     WHERE ai.tanggal BETWEEN ${from} AND ${to} ${scopeClause(sql, sc)}
-    GROUP BY mu.am_id
+    GROUP BY mu.am_id, ${amGroupKeySql(sql)}
     ORDER BY sum(ai.total - COALESCE(ai.tax_amount,0)) DESC NULLS LAST`;
 
   let ranked: AmRow[] = rows.map((r, i) => {
@@ -295,7 +295,7 @@ export async function analyticsPerCabang(from0?: string, to0?: string, scope?: D
   const year = yearOf(to);
   const regionMap = await cabangRegionMap(sql);
   const rows = await sql`
-    SELECT COALESCE(NULLIF(mu.cabang,''), NULLIF(acs.cabang_override,''), 'Tanpa cabang') AS key,
+    SELECT COALESCE(${cabangEffSql(sql)}, 'Tanpa cabang') AS key,
            sum(ai.total - COALESCE(ai.tax_amount,0))::float8 AS total, count(*)::int AS count,
            count(DISTINCT ai.customer_id)::int AS customers,
            count(DISTINCT mu.am_id)::int AS am_count,
@@ -303,7 +303,7 @@ export async function analyticsPerCabang(from0?: string, to0?: string, scope?: D
     FROM accurate_invoice ai
     LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
     ${joinAmFromSalesman(sql)}
-    LEFT JOIN sales_target_cabang stc ON stc.cabang = COALESCE(NULLIF(mu.cabang,''), NULLIF(acs.cabang_override,''), 'Tanpa cabang') AND stc.year = ${year}
+    LEFT JOIN sales_target_cabang stc ON stc.cabang = COALESCE(${cabangEffSql(sql)}, 'Tanpa cabang') AND stc.year = ${year}
     WHERE ai.tanggal BETWEEN ${from} AND ${to} ${scopeClause(sql, sc)}
     GROUP BY 1 ORDER BY sum(ai.total - COALESCE(ai.tax_amount,0)) DESC`;
   return {
@@ -401,7 +401,7 @@ export async function getMyArAging(scope?: DataScope, from0?: string, to0?: stri
            m.invoice_no, m.bucket, m.days_overdue::int AS days_overdue,
            COALESCE(ai.outstanding, m.amount)::float8 AS amount,
            NULLIF(mu.cabang,'') AS cabang,
-           COALESCE(NULLIF(mu.nama,''), ${AM_VACANT}) AS am
+           ${amLabelSql(sql)} AS am
     FROM ar_aging_mv m
     LEFT JOIN accurate_invoice ai ON ai.number = m.invoice_no AND ai.customer_id::text = m.customer_id
     LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
