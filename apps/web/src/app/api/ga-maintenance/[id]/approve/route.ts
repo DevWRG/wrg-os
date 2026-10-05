@@ -1,5 +1,6 @@
 import { gatewayFetch, relay } from "@/lib/gateway";
 import { sessionUser } from "@/lib/admin-guard";
+import { canApproveGaFinance } from "@/lib/ga-maintenance-access";
 
 export const dynamic = "force-dynamic";
 
@@ -17,6 +18,17 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     // body opsional
   }
   const me = await sessionUser();
+  // Gerbang yang SAMA dgn tombol "Approve Finance" di /ga-aset. Tombol yg
+  // disembunyikan tak menutup endpoint: gatewayFetch menyuntik service token
+  // yg mem-bypass JWT di apps/api, jadi tanpa cek ini siapa pun yg login bisa
+  // meng-approve maintenance >Rp5jt lewat POST langsung.
+  if (me) {
+    if (!canApproveGaFinance(me)) {
+      return Response.json({ error: "forbidden (Approve Finance: admin/Finance/Akses Grup ga-finance-approval)" }, { status: 403 });
+    }
+  } else if ((process.env.AUTH_ENABLED ?? "").toLowerCase() === "true") {
+    return Response.json({ error: "unauthenticated" }, { status: 401 });
+  }
   const approvedBy = me?.id ?? body.approved_by;
   if (!approvedBy) return Response.json({ error: "approved_by wajib diisi (atau login dulu)" }, { status: 400 });
   try {
