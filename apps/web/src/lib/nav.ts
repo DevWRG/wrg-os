@@ -440,20 +440,10 @@ export const NAV: NavGroup[] = [
 // saat #1282 merge → kosongkan Set ini.
 export const DEV_ONLY_URLS: ReadonlySet<string> = new Set([
   "/approval-requests",
-  "/asset-tag",
-  "/atk-master",
-  "/atk-stock-in",
-  "/atk-stock-opname",
-  "/atk-stock-out",
   "/courier-performance",
-  "/dana-ops",
   "/doc-klaim",
   "/ed-watch",
   "/forecast-submission",
-  "/fund-requests",
-  "/ga-aset",
-  "/ga-helpdesk",
-  "/ga-reporting",
   "/inbound-receiving",
   "/installations",
   "/inventory-relocations",
@@ -470,8 +460,6 @@ export const DEV_ONLY_URLS: ReadonlySet<string> = new Set([
   "/shipment-tracking",
   "/stok-gudang",
   "/supplier-eta",
-  "/vehicles",
-  "/vendor-management",
 ]);
 
 export function devOnlyBadge(url: string, buildChannel: string | undefined): boolean {
