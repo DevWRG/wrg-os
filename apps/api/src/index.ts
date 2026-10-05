@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import { homedir } from "node:os";
 
@@ -228,6 +228,158 @@ import {
 import { startScheduler, getScheduleStatus } from "./scheduler.js";
 import { signJwt, verifyJwt } from "./auth.js";
 import { verifyCredentials, createUser, countUsers, listAppUsers, setUserPassword, updateAppUser, deleteAppUser, getAppUserById, createUserFromRoster, generatePassword, changeOwnPassword, normalizeLoginRole, LOGIN_ROLES } from "./repo/users.js";
+// --- GA (General Affairs) + Kendaraan + Stiker Aset — promosi khusus dari dev
+import {
+  createDanaOps,
+  listDanaOps,
+  getDanaOps,
+  updateDanaOps,
+  deleteDanaOps,
+  addDanaOpsItem,
+  updateDanaOpsItem,
+  deleteDanaOpsItem,
+  DanaOpsError,
+  type DanaOpsStatus,
+  type DanaOpsInput,
+  type DanaOpsUpdate,
+  type DanaOpsItemInput,
+  type DanaOpsItemUpdate,
+} from "./repo/dana-ops.js";
+import {
+  listAtkCategories,
+  createAtkCategory,
+  updateAtkCategory,
+  deleteAtkCategory,
+  listAtkSuppliers,
+  createAtkSupplier,
+  updateAtkSupplier,
+  deleteAtkSupplier,
+  listAtkItems,
+  createAtkItem,
+  updateAtkItem,
+  deleteAtkItem,
+  type AtkCategoryInput,
+  type AtkCategoryUpdate,
+  type AtkSupplierInput,
+  type AtkSupplierUpdate,
+  type AtkItemInput,
+  type AtkItemUpdate,
+  type AtkTransactionCategory,
+} from "./repo/atk-master.js";
+import {
+  listAtkStockMovements,
+  createAtkStockMovement,
+  updateAtkStockMovement,
+  deleteAtkStockMovement,
+  listAtkStockLevels,
+  AtkStockMovementError,
+  type AtkStockMovementInput,
+  type AtkStockMovementUpdate,
+  type AtkMovementType,
+} from "./repo/atk-stock.js";
+import {
+  listAtkStockOpnames,
+  createAtkStockOpname,
+  updateAtkStockOpname,
+  deleteAtkStockOpname,
+  type AtkStockOpnameInput,
+  type AtkStockOpnameUpdate,
+} from "./repo/atk-stock-opname.js";
+import {
+  listVehicles,
+  getVehicleById,
+  createVehicle,
+  updateVehicle,
+  listVehicleLogs,
+  createVehicleLog,
+  runVehicleAlerts,
+} from "./repo/vehicle.js";
+import {
+  listCategories,
+  createCategory,
+  updateCategory,
+  listAssets as listGaAssets,
+  getAsset as getGaAsset,
+  createAsset as createGaAsset,
+  updateAsset as updateGaAsset,
+  setAssetFile,
+} from "./repo/ga-asset.js";
+import {
+  listTickets as itTicketListTickets,
+  createTicket as itTicketCreateTicket,
+  updateTicketStatus,
+} from "./repo/it-ticket.js";
+import {
+  listVendors,
+  getVendor,
+  createVendor,
+  updateVendor,
+  deleteVendor,
+  getVendorContract,
+  createVendorContract,
+  updateVendorContract,
+  deleteVendorContract,
+  type VendorPartnerInput,
+  type VendorPartnerUpdate,
+  type VendorContractInput,
+  type VendorContractUpdate,
+} from "./repo/vendor.js";
+import {
+  gaReportingRange,
+  gaReportingSummary,
+} from "./repo/ga-reporting.js";
+import {
+  assignAsset,
+  returnAsset,
+  transferAsset,
+  getAssetHistory,
+} from "./repo/ga-asset-assignment.js";
+import {
+  listVendors as gaMaintenanceListVendors,
+  createVendor as gaMaintenanceCreateVendor,
+  updateVendor as gaMaintenanceUpdateVendor,
+  listSchedules as gaMaintenanceListSchedules,
+  getSchedule,
+  createSchedule as gaMaintenanceCreateSchedule,
+  updateSchedule,
+  startSchedule,
+  completeSchedule,
+  approveSchedule,
+  cancelSchedule,
+} from "./repo/ga-maintenance.js";
+import {
+  listCategories as listGaTicketCategories,
+  createCategory as createGaTicketCategory,
+  updateCategory as updateGaTicketCategory,
+  deactivateCategory as deactivateGaTicketCategory,
+  listTickets as listGaTickets,
+  getTicket as getGaTicket,
+  createTicket as createGaTicket,
+  assignTicket as assignGaTicket,
+  transitionTicket as transitionGaTicket,
+  rateTicket as rateGaTicket,
+  addComment as addGaTicketComment,
+  getTicketTimeline as getGaTicketTimeline,
+  runGaHelpdeskOverdueAlert,
+} from "./repo/ga-helpdesk.js";
+import {
+  createFundRequest,
+  listFundRequests,
+  getFundRequest,
+  deleteFundRequest,
+  decideFundRequestApproval,
+  listActiveHods,
+  FundRequestError,
+  type ApproverRole as FundRequestApproverRole,
+  type FundRequestStatus,
+} from "./repo/fund-request.js";
+import {
+  listAssetTags,
+  createAssetTag,
+  updateAssetTag,
+  listAuditLog,
+  recordAudit,
+} from "./repo/asset-tag.js";
 
 const app = new Hono();
 
@@ -4080,6 +4232,1235 @@ app.post("/hitl/resolve", async (c) => {
     approver_id: body.approver_id,
   });
   return c.json(r, r.ok ? 200 : 400);
+});
+
+// ===== GA (General Affairs) + Kendaraan (F50) + Stiker Aset (F53) — promosi khusus dari dev =====
+
+// Upload foto/dokumen aset GA (F132) — multipart/form-data, field `kind`
+// (foto|dokumen) + `file`. Disimpan di GA_UPLOAD_ROOT (BUKAN MEDIA_ROOT —
+// itu utk media WA inbound, beda sumber & siklus hidup), nama file
+// di-generate (uuid asset + timestamp) supaya tak collide/predictable.
+const GA_UPLOAD_MIME_EXT: Record<string, string> = {
+  "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "application/pdf": "pdf",
+};
+
+// ── F51 Dana Ops / Petty Cash Realization (General Affairs) ──
+const DANA_OPS_STATUSES: DanaOpsStatus[] = ["in_progress", "realized"];
+
+// ── F49 ATK Stock In/Out ──
+const ATK_MOVEMENT_TYPES: AtkMovementType[] = ["in", "out"];
+
+// ── F49/F54 kategori transaksi ATK (barang | materai) ──
+const ATK_TRANSACTION_CATEGORIES: AtkTransactionCategory[] = ["barang", "materai"];
+
+const GA_UPLOAD_ROOT = resolve(process.env.GA_UPLOAD_DIR ?? `${homedir()}/.wrg-os/uploads/ga-assets`);
+
+const GA_ASSET_CONDITIONS = ["baik", "rusak", "kurang_layak_pakai"];
+const GA_ASSET_STATUSES = ["active", "in_maintenance", "damaged", "lost", "disposed"];
+function validateGaAssetEnums(body: { condition?: unknown; status?: unknown }): string | null {
+  if (body.condition != null && !GA_ASSET_CONDITIONS.includes(body.condition as string)) {
+    return `condition harus salah satu dari: ${GA_ASSET_CONDITIONS.join(", ")}`;
+  }
+  if (body.status != null && !GA_ASSET_STATUSES.includes(body.status as string)) {
+    return `status harus salah satu dari: ${GA_ASSET_STATUSES.join(", ")}`;
+  }
+  return null;
+}
+
+// ── F140 Vendor Management + Contract Expiry Alerts (Purchasing/GA, role min HOD) ──
+// Route "/vendor-management" (BUKAN "/vendors") sengaja dipilih beda dari
+// "/accurate/vendors" (mirror read-only, dipakai menu Suppliers & autocomplete
+// F39) supaya tak tabrakan nama saat branch sibling F39 merge ke dev.
+function validateVendorFields(b: Partial<VendorPartnerInput & VendorPartnerUpdate>): string | null {
+  if (b.email !== undefined && b.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(b.email)) {
+    return "email tidak valid";
+  }
+  return null;
+}
+
+function validateContractFields(b: Partial<VendorContractInput & VendorContractUpdate>): string | null {
+  if (b.start_date && b.end_date && b.end_date < b.start_date) {
+    return "end_date tidak boleh sebelum start_date";
+  }
+  if (b.value !== undefined && b.value !== null && !(Number(b.value) >= 0)) {
+    return "value tidak boleh negatif";
+  }
+  return null;
+}
+
+// Validasi enum/range di route SEBELUM hit DB — tanpa ini nilai di luar CHECK
+// constraint (089_ga_maintenance_tracker.sql) bocor jadi HTTP 500 + nama
+// constraint Postgres mentah (app.onError gak reformat). Sama pola temuan
+// F132/F53.
+function validateGaMaintenance(body: { maint_type?: unknown; recur_months?: unknown }): string | null {
+  if (body.maint_type != null && !["preventive", "repair"].includes(body.maint_type as string)) {
+    return "maint_type harus 'preventive' atau 'repair'";
+  }
+  if (body.recur_months != null) {
+    const n = Number(body.recur_months);
+    if (!Number.isInteger(n) || n < 0 || n > 60) return "recur_months harus bilangan bulat 0-60";
+  }
+  return null;
+}
+
+// Validasi enum/range di route SEBELUM hit DB — tanpa ini nilai di luar CHECK
+// constraint (092_ga_helpdesk_ticket_system.sql) bocor jadi HTTP 500 + nama
+// constraint Postgres mentah (app.onError gak reformat). Sama pola temuan
+// F132/F53/F137.
+const GA_TICKET_PRIORITIES = ["low", "medium", "high", "critical"];
+
+// DB CHECK (migrasi 092) cuma > 0, tak ada batas atas — SLA kategori tiket
+// helpdesk realistisnya tak mungkin lebih dari 30 hari (720 jam). Pola sama
+// F24 interval_bulan / F8 max_concurrent_jobs (sapuan 2026-09-07).
+function validateGaTicketSlaHours(hours: unknown): string | null {
+  if (hours == null) return null;
+  const n = Number(hours);
+  return Number.isFinite(n) && n > 0 && n <= 720 ? null : "sla_hours harus angka 1-720 (maks 30 hari)";
+}
+
+app.post("/ga-assets/:id/upload", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const id = c.req.param("id");
+  let body: Record<string, unknown>;
+  try {
+    body = await c.req.parseBody();
+  } catch {
+    return c.json({ error: "invalid multipart body" }, 400);
+  }
+  const kind = body.kind;
+  if (kind !== "foto" && kind !== "dokumen") return c.json({ error: "kind harus foto|dokumen" }, 400);
+  const file = body.file;
+  if (!(file instanceof File)) return c.json({ error: "file wajib diisi" }, 400);
+  const ext = GA_UPLOAD_MIME_EXT[file.type];
+  if (!ext) return c.json({ error: `tipe file "${file.type}" tak didukung (jpg/png/webp/pdf)` }, 400);
+  if (file.size > 10 * 1024 * 1024) return c.json({ error: "file maksimal 10MB" }, 400);
+  // Cek aset ADA dulu sebelum tulis file ke disk — kebalikannya bikin file
+  // yatim nyangkut permanen tiap kali id-nya salah (setAssetFile menolak
+  // rapi, tapi writeFile sudah kadung jalan).
+  if (!(await getGaAsset(id))) return c.json({ error: "aset tidak ditemukan" }, 400);
+
+  await mkdir(GA_UPLOAD_ROOT, { recursive: true });
+  const filename = `${id}-${kind}-${Date.now()}.${ext}`;
+  const abs = resolve(GA_UPLOAD_ROOT, filename);
+  await writeFile(abs, Buffer.from(await file.arrayBuffer()));
+
+  const r = await setAssetFile(id, kind, abs);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.get("/dana-ops", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const status = c.req.query("status");
+  if (status && !DANA_OPS_STATUSES.includes(status as DanaOpsStatus)) {
+    return c.json({ error: `status harus salah satu dari ${DANA_OPS_STATUSES.join(", ")}` }, 400);
+  }
+  const rows = await listDanaOps({
+    status: status as DanaOpsStatus | undefined,
+    cabang: c.req.query("cabang") || undefined,
+    limit: c.req.query("limit") ? Number(c.req.query("limit")) : undefined,
+  });
+  return c.json({ count: rows.length, rows });
+});
+
+app.post("/dana-ops", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: DanaOpsInput;
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  if (!body.requested_by || !body.purpose || body.amount_requested == null) {
+    return c.json({ error: "requested_by, purpose, amount_requested wajib" }, 400);
+  }
+  try {
+    const row = await createDanaOps(body);
+    return c.json(row, 201);
+  } catch (e) {
+    if (e instanceof DanaOpsError) return c.json({ error: e.message }, e.status as 409);
+    throw e;
+  }
+});
+
+app.get("/dana-ops/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const row = await getDanaOps(c.req.param("id"));
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+});
+
+app.patch("/dana-ops/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: DanaOpsUpdate;
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  if (body.status && !DANA_OPS_STATUSES.includes(body.status)) {
+    return c.json({ error: `status harus salah satu dari ${DANA_OPS_STATUSES.join(", ")}` }, 400);
+  }
+  const row = await updateDanaOps(c.req.param("id"), body);
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+});
+
+app.delete("/dana-ops/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await deleteDanaOps(c.req.param("id"));
+  return c.json(r, r.deleted ? 200 : 404);
+});
+
+app.post("/dana-ops/:id/items", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: DanaOpsItemInput;
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  if (!body.description || body.amount == null) return c.json({ error: "description, amount wajib" }, 400);
+  const row = await addDanaOpsItem(c.req.param("id"), body);
+  return row ? c.json(row, 201) : c.json({ error: "dana_ops tidak ditemukan" }, 404);
+});
+
+app.patch("/dana-ops/:id/items/:itemId", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: DanaOpsItemUpdate;
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  const row = await updateDanaOpsItem(c.req.param("id"), c.req.param("itemId"), body);
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+});
+
+app.delete("/dana-ops/:id/items/:itemId", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await deleteDanaOpsItem(c.req.param("id"), c.req.param("itemId"));
+  return c.json(r, r.deleted ? 200 : 404);
+});
+
+// ── F134 ATK Master (General Affairs) — Categories + Suppliers + Items ──
+app.get("/atk/categories", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listAtkCategories();
+  return c.json({ count: rows.length, rows });
+});
+
+app.post("/atk/categories", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: AtkCategoryInput;
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  if (!body.name) return c.json({ error: "name wajib" }, 400);
+  const row = await createAtkCategory(body);
+  return c.json(row, 201);
+});
+
+app.patch("/atk/categories/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: AtkCategoryUpdate;
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  const row = await updateAtkCategory(c.req.param("id"), body);
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+});
+
+app.delete("/atk/categories/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await deleteAtkCategory(c.req.param("id"));
+  return c.json(r, r.deleted ? 200 : 404);
+});
+
+app.get("/atk/suppliers", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listAtkSuppliers();
+  return c.json({ count: rows.length, rows });
+});
+
+app.post("/atk/suppliers", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: AtkSupplierInput;
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  if (!body.name) return c.json({ error: "name wajib" }, 400);
+  const row = await createAtkSupplier(body);
+  return c.json(row, 201);
+});
+
+app.patch("/atk/suppliers/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: AtkSupplierUpdate;
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  const row = await updateAtkSupplier(c.req.param("id"), body);
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+});
+
+app.delete("/atk/suppliers/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await deleteAtkSupplier(c.req.param("id"));
+  return c.json(r, r.deleted ? 200 : 404);
+});
+
+app.get("/atk/items", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listAtkItems();
+  return c.json({ count: rows.length, rows });
+});
+
+app.post("/atk/items", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: AtkItemInput;
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  if (!body.name || !body.unit) return c.json({ error: "name, unit wajib" }, 400);
+  if (body.transaction_category && !ATK_TRANSACTION_CATEGORIES.includes(body.transaction_category)) {
+    return c.json({ error: "transaction_category harus 'barang' atau 'materai'" }, 400);
+  }
+  // GAP-05 (ditemukan re-test 2026-09-07): min_stock negatif dulu diterima
+  // diam-diam — ambang stok minimum negatif tak masuk akal & bikin
+  // is_low_stock tak pernah menyala (current_stock selalu > negatif).
+  if (body.min_stock != null && Number(body.min_stock) < 0) {
+    return c.json({ error: "min_stock tidak boleh negatif" }, 400);
+  }
+  const row = await createAtkItem(body);
+  return c.json(row, 201);
+});
+
+app.patch("/atk/items/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: AtkItemUpdate;
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  if (body.transaction_category && !ATK_TRANSACTION_CATEGORIES.includes(body.transaction_category)) {
+    return c.json({ error: "transaction_category harus 'barang' atau 'materai'" }, 400);
+  }
+  if (body.min_stock != null && Number(body.min_stock) < 0) {
+    return c.json({ error: "min_stock tidak boleh negatif" }, 400);
+  }
+  const row = await updateAtkItem(c.req.param("id"), body);
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+});
+
+app.delete("/atk/items/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await deleteAtkItem(c.req.param("id"));
+  return c.json(r, r.deleted ? 200 : 404);
+});
+
+app.get("/atk/stock-movements", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listAtkStockMovements();
+  return c.json({ count: rows.length, rows });
+});
+
+app.post("/atk/stock-movements", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: AtkStockMovementInput;
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  if (!body.item_id || !body.movement_type || body.qty == null) {
+    return c.json({ error: "item_id, movement_type, qty wajib" }, 400);
+  }
+  if (!ATK_MOVEMENT_TYPES.includes(body.movement_type)) {
+    return c.json({ error: "movement_type harus 'in' atau 'out'" }, 400);
+  }
+  if (Number(body.qty) <= 0) return c.json({ error: "qty harus > 0" }, 400);
+  try {
+    const row = await createAtkStockMovement(body);
+    return c.json(row, 201);
+  } catch (e) {
+    if (e instanceof AtkStockMovementError) return c.json({ error: e.message }, e.status as 409);
+    throw e;
+  }
+});
+
+app.patch("/atk/stock-movements/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: AtkStockMovementUpdate;
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  if (body.movement_type && !ATK_MOVEMENT_TYPES.includes(body.movement_type)) {
+    return c.json({ error: "movement_type harus 'in' atau 'out'" }, 400);
+  }
+  if (body.qty != null && Number(body.qty) <= 0) return c.json({ error: "qty harus > 0" }, 400);
+  try {
+    const row = await updateAtkStockMovement(c.req.param("id"), body);
+    return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+  } catch (e) {
+    if (e instanceof AtkStockMovementError) return c.json({ error: e.message }, e.status as 409);
+    throw e;
+  }
+});
+
+app.delete("/atk/stock-movements/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const r = await deleteAtkStockMovement(c.req.param("id"));
+    return c.json(r, r.deleted ? 200 : 404);
+  } catch (e) {
+    if (e instanceof AtkStockMovementError) return c.json({ error: e.message }, e.status as 409);
+    throw e;
+  }
+});
+
+app.get("/atk/stock-levels", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listAtkStockLevels();
+  return c.json({ count: rows.length, rows });
+});
+
+// ── F134 ATK Master (General Affairs) — Categories + Suppliers + Items ──
+app.get("/atk/stock-opname", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listAtkStockOpnames();
+  return c.json({ count: rows.length, rows });
+});
+
+app.post("/atk/stock-opname", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: AtkStockOpnameInput;
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  if (!body.item_id || body.counted_qty == null) {
+    return c.json({ error: "item_id, counted_qty wajib" }, 400);
+  }
+  if (Number(body.counted_qty) < 0) return c.json({ error: "counted_qty tidak boleh negatif" }, 400);
+  const row = await createAtkStockOpname(body);
+  return c.json(row, 201);
+});
+
+app.patch("/atk/stock-opname/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: AtkStockOpnameUpdate;
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  const row = await updateAtkStockOpname(c.req.param("id"), body);
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+});
+
+app.delete("/atk/stock-opname/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await deleteAtkStockOpname(c.req.param("id"));
+  return c.json(r, r.deleted ? 200 : 404);
+});
+
+// ── Kendaraan Operasional Log (F50, OPS) — master `vehicle` diseed manual
+// (tanpa endpoint create, lihat 149_vehicle_operational_log.sql), entri
+// transaksional lewat /vehicles/:id/logs. Alert service/STNK via cron. ──
+app.get("/vehicles", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listVehicles(c.req.query("all") !== "true");
+  return c.json({ count: rows.length, vehicles: rows });
+});
+
+app.post("/vehicles", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: {
+    plate_number?: string;
+    model?: string;
+    sopir_name?: string;
+    current_km?: number;
+    stnk_expiry?: string;
+    service_interval_km?: number;
+  };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.plate_number?.trim()) {
+    return c.json({ error: "plate_number wajib" }, 400);
+  }
+  const r = await createVehicle({
+    plate_number: body.plate_number,
+    model: body.model,
+    sopir_name: body.sopir_name,
+    current_km: body.current_km,
+    stnk_expiry: body.stnk_expiry,
+    service_interval_km: body.service_interval_km,
+  });
+  return "id" in r ? c.json(r, 201) : c.json(r, 400);
+});
+
+app.get("/vehicles/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await getVehicleById(c.req.param("id"));
+  return r ? c.json(r) : c.json({ error: "kendaraan tidak ditemukan" }, 404);
+});
+
+app.patch("/vehicles/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: {
+    sopir_name?: string;
+    stnk_expiry?: string;
+    service_interval_km?: number;
+    active?: boolean;
+  };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const r = await updateVehicle(c.req.param("id"), body);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.get("/vehicles/:id/logs", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listVehicleLogs(c.req.param("id"));
+  return c.json({ count: rows.length, logs: rows });
+});
+
+app.post("/vehicles/:id/logs", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: {
+    log_type?: "km" | "bbm" | "service";
+    log_date?: string;
+    km?: number;
+    bbm_liter?: number;
+    bbm_cost?: number;
+    note?: string;
+    created_by?: string;
+  };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.log_type || !["km", "bbm", "service"].includes(body.log_type)) {
+    return c.json({ error: "log_type wajib salah satu dari: km, bbm, service" }, 400);
+  }
+  const r = await createVehicleLog(c.req.param("id"), body as never);
+  return c.json(r, "id" in r ? 201 : 400);
+});
+
+// Trigger manual alert service-due (km) + STNK H-30 — selain cron terjadwal
+// (VEHICLE_ALERT_ENABLED, default off). Berguna buat testing tanpa nunggu
+// jadwal cron 08:00 — pola sama /pickup-plan/previsit/run, /lpse-tender/
+// reminder/run. Tetap patuh VEHICLE_ALERT_WA_TARGET (kosong = no-op) & WA_DRY_RUN.
+app.post("/vehicles/alerts/run", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await runVehicleAlerts();
+  return c.json(r);
+});
+
+// ── F132 GA Aset Master ──────────────────────────────────────────────────
+app.get("/ga-asset-categories", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listCategories(c.req.query("all") !== "true");
+  return c.json({ count: rows.length, categories: rows });
+});
+
+app.post("/ga-asset-categories", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { code?: string; nama?: string; depreciation_years?: number; icon?: string; is_shared?: boolean; default_recur_months?: number };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.code || !body.nama) return c.json({ error: "code & nama wajib diisi" }, 400);
+  const r = await createCategory({
+    code: body.code,
+    nama: body.nama,
+    depreciation_years: body.depreciation_years,
+    icon: body.icon,
+    is_shared: body.is_shared,
+    default_recur_months: body.default_recur_months,
+  });
+  return c.json(r, "error" in r ? 400 : 201);
+});
+
+app.patch("/ga-asset-categories/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { nama?: string; depreciation_years?: number; icon?: string; is_shared?: boolean; default_recur_months?: number; active?: boolean };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const r = await updateCategory(c.req.param("id"), body);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.get("/ga-assets", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listGaAssets({
+    activeOnly: c.req.query("all") !== "true",
+    categoryId: c.req.query("category_id") || undefined,
+    status: c.req.query("status") || undefined,
+    unassigned: c.req.query("unassigned") === "true",
+  });
+  return c.json({ count: rows.length, assets: rows });
+});
+
+app.get("/ga-assets/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const row = await getGaAsset(c.req.param("id"));
+  if (!row) return c.json({ error: "aset tidak ditemukan" }, 404);
+  return c.json(row);
+});
+
+app.post("/ga-assets", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: {
+    asset_code?: string; nama?: string; category_id?: string; brand?: string; model?: string; serial_number?: string;
+    purchase_date?: string; purchase_price?: number; current_value?: number; warranty_expiry?: string; location?: string;
+    department?: string; condition?: string; status?: string; foto_path?: string; dokumen_path?: string; notes?: string;
+    is_critical?: boolean;
+  };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.nama || !body.category_id) return c.json({ error: "nama & category_id wajib diisi" }, 400);
+  const enumError = validateGaAssetEnums(body);
+  if (enumError) return c.json({ error: enumError }, 400);
+  const r = await createGaAsset(body as Parameters<typeof createGaAsset>[0]);
+  return c.json(r, "error" in r ? 400 : 201);
+});
+
+app.patch("/ga-assets/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: Record<string, unknown>;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const enumError = validateGaAssetEnums(body);
+  if (enumError) return c.json({ error: enumError }, 400);
+  const r = await updateGaAsset(c.req.param("id"), body);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+// ── F52 IT Asset & Issue Tracker (menyerap F132 — asset_id sekarang FK ga_assets) ──
+app.get("/it-tickets", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const status = c.req.query("status");
+  const rows = await itTicketListTickets(status && status !== "semua" ? status : undefined);
+  return c.json({ count: rows.length, tickets: rows });
+});
+
+app.post("/it-tickets", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: {
+    asset_id?: string;
+    masalah?: string;
+    reported_by?: string;
+    assigned_to?: string;
+    reported_by_user_id?: string;
+    assigned_to_user_id?: string;
+  };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.asset_id || !body.masalah) return c.json({ error: "asset_id & masalah wajib diisi" }, 400);
+  // Pelapor/PIC tetap OPSIONAL & boleh teks (087: belum tentu karyawan
+  // terdaftar). Yang baru cuma jalur ber-akun di sampingnya (migrasi 164).
+  const r = await itTicketCreateTicket({
+    asset_id: body.asset_id,
+    masalah: body.masalah,
+    reported_by: body.reported_by,
+    assigned_to: body.assigned_to,
+    reported_by_user_id: body.reported_by_user_id,
+    assigned_to_user_id: body.assigned_to_user_id,
+  });
+  return c.json(r, "error" in r ? 400 : 201);
+});
+
+app.patch("/it-tickets/:id/status", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { status?: string; assigned_to?: string; assigned_to_user_id?: string; resolved_note?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (body.status !== "open" && body.status !== "in_progress" && body.status !== "resolved") {
+    return c.json({ error: "status harus open|in_progress|resolved" }, 400);
+  }
+  const r = await updateTicketStatus(c.req.param("id"), {
+    status: body.status,
+    assigned_to: body.assigned_to,
+    assigned_to_user_id: body.assigned_to_user_id,
+    resolved_note: body.resolved_note,
+  });
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.get("/vendor-management", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listVendors();
+  return c.json({ count: rows.length, rows });
+});
+
+app.post("/vendor-management", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: VendorPartnerInput;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.name?.trim()) return c.json({ error: "name wajib" }, 400);
+  const fieldErr = validateVendorFields(body);
+  if (fieldErr) return c.json({ error: fieldErr }, 400);
+  const row = await createVendor(body);
+  return c.json(row, 201);
+});
+
+app.get("/vendor-management/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const row = await getVendor(c.req.param("id"));
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+});
+
+app.patch("/vendor-management/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: VendorPartnerUpdate;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const fieldErr = validateVendorFields(body);
+  if (fieldErr) return c.json({ error: fieldErr }, 400);
+  const row = await updateVendor(c.req.param("id"), body);
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+});
+
+app.delete("/vendor-management/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await deleteVendor(c.req.param("id"));
+  return c.json(r, r.deleted ? 200 : 404);
+});
+
+app.post("/vendor-management/:id/contracts", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const vendorId = c.req.param("id");
+  if (!(await getVendor(vendorId))) return c.json({ error: "vendor tidak ditemukan" }, 404);
+  let body: VendorContractInput;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const fieldErr = validateContractFields(body);
+  if (fieldErr) return c.json({ error: fieldErr }, 400);
+  const row = await createVendorContract(vendorId, body);
+  return c.json(row, 201);
+});
+
+app.patch("/vendor-management/:id/contracts/:contractId", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: VendorContractUpdate;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  // validateContractFields cuma lihat field yg dikirim — PATCH parsial (mis.
+  // cuma start_date) lolos validasi start<end walau hasil merge dgn baris
+  // lama jadi end<start (BUG-03). Validasi thd nilai HASIL merge, bukan body
+  // mentah; field lain (mis. value) sengaja tetap dari body apa adanya, tak
+  // ikut di-merge — di luar scope BUG-03.
+  const existing = await getVendorContract(c.req.param("id"), c.req.param("contractId"));
+  if (!existing) return c.json({ error: "tidak ditemukan" }, 404);
+  const fieldErr = validateContractFields({
+    ...body,
+    start_date: body.start_date ?? existing.start_date,
+    end_date: body.end_date !== undefined ? body.end_date : existing.end_date,
+  });
+  if (fieldErr) return c.json({ error: fieldErr }, 400);
+  const row = await updateVendorContract(c.req.param("id"), c.req.param("contractId"), body);
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+});
+
+app.delete("/vendor-management/:id/contracts/:contractId", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await deleteVendorContract(c.req.param("id"), c.req.param("contractId"));
+  return c.json(r, r.deleted ? 200 : 404);
+});
+
+// F141 — GA Reporting & Analytics Dashboard (konsolidasi F49 ATK+F54 Materai,
+// F50 Kendaraan, F51 Dana Ops, F52 IT Asset, F53 Stiker Aset). Gate role
+// HOD/admin ada di layer web BFF (requireHodOrAdmin), bukan di sini — konsisten
+// pola admin-gate-di-web project ini.
+app.get("/ga-reporting/summary", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const { from, to } = gaReportingRange(c.req.query("from"), c.req.query("to"));
+  return c.json(await gaReportingSummary(from, to));
+});
+
+app.post("/ga-assets/:id/assign", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { user_id?: string; pic_name?: string; department?: string; assigned_date?: string; notes?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const r = await assignAsset(c.req.param("id"), body);
+  return c.json(r, "error" in r ? 400 : 200);
+});
+
+app.post("/ga-assets/:id/return", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { assignment_id?: string; user_id?: string; returned_date?: string; notes?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const r = await returnAsset(c.req.param("id"), body);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.post("/ga-assets/:id/transfer", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { to_user_id?: string; to_pic_name?: string; to_location?: string; reason?: string; created_by?: string; transfer_date?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const r = await transferAsset(c.req.param("id"), body);
+  return c.json(r, "error" in r ? 400 : 200);
+});
+
+app.get("/ga-assets/:id/history", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await getAssetHistory(c.req.param("id"));
+  return c.json({ count: rows.length, history: rows });
+});
+
+app.get("/ga-vendors", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await gaMaintenanceListVendors(c.req.query("all") !== "true");
+  return c.json({ count: rows.length, vendors: rows });
+});
+
+app.post("/ga-vendors", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { nama?: string; category?: string; contact_person?: string; phone?: string; contract_end?: string; notes?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.nama) return c.json({ error: "nama wajib diisi" }, 400);
+  const r = await gaMaintenanceCreateVendor({ nama: body.nama, category: body.category, contact_person: body.contact_person, phone: body.phone, contract_end: body.contract_end, notes: body.notes });
+  return c.json(r, "error" in r ? 400 : 201);
+});
+
+app.patch("/ga-vendors/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: Record<string, unknown>;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (body.status != null && !["active", "inactive"].includes(body.status as string)) {
+    return c.json({ error: "status harus 'active' atau 'inactive'" }, 400);
+  }
+  const r = await gaMaintenanceUpdateVendor(c.req.param("id"), body);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.get("/ga-maintenance", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await gaMaintenanceListSchedules({
+    assetId: c.req.query("asset_id") || undefined,
+    status: c.req.query("status") || undefined,
+    vendorId: c.req.query("vendor_id") || undefined,
+  });
+  return c.json({ count: rows.length, schedules: rows });
+});
+
+app.get("/ga-maintenance/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const row = await getSchedule(c.req.param("id"));
+  if (!row) return c.json({ error: "jadwal tidak ditemukan" }, 404);
+  return c.json(row);
+});
+
+app.post("/ga-maintenance", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { asset_id?: string; maint_type?: string; due_date?: string; cost_budget?: number; vendor_id?: string; recur_months?: number; notes?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.asset_id) return c.json({ error: "asset_id wajib diisi" }, 400);
+  const enumError1 = validateGaMaintenance(body);
+  if (enumError1) return c.json({ error: enumError1 }, 400);
+  const r = await gaMaintenanceCreateSchedule(body as Parameters<typeof gaMaintenanceCreateSchedule>[0]);
+  return c.json(r, "error" in r ? 400 : 201);
+});
+
+app.patch("/ga-maintenance/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: Record<string, unknown>;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const enumError2 = validateGaMaintenance(body);
+  if (enumError2) return c.json({ error: enumError2 }, 400);
+  const r = await updateSchedule(c.req.param("id"), body);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.post("/ga-maintenance/:id/start", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await startSchedule(c.req.param("id"));
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.post("/ga-maintenance/:id/complete", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { cost_actual?: number; notes?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const r = await completeSchedule(c.req.param("id"), body);
+  return c.json(r, "error" in r ? 400 : 200);
+});
+
+app.post("/ga-maintenance/:id/approve", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { approved_by?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.approved_by) return c.json({ error: "approved_by wajib diisi" }, 400);
+  const r = await approveSchedule(c.req.param("id"), { approved_by: body.approved_by });
+  return c.json(r, "error" in r ? 400 : 200);
+});
+
+app.post("/ga-maintenance/:id/cancel", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { notes?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const r = await cancelSchedule(c.req.param("id"), body.notes);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+// ── F139 GA Helpdesk Ticket System (Ticketing Kendala Operasional) ──────
+app.get("/ga-ticket-categories", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const activeOnly = c.req.query("active") === "true";
+  const categories = await listGaTicketCategories(activeOnly);
+  return c.json({ count: categories.length, categories });
+});
+
+app.post("/ga-ticket-categories", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { code?: string; nama?: string; icon?: string; default_sla_hours?: number; default_priority?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.code?.trim() || !body.nama?.trim()) return c.json({ error: "code & nama wajib" }, 400);
+  if (body.default_priority != null && !GA_TICKET_PRIORITIES.includes(body.default_priority)) {
+    return c.json({ error: `default_priority harus salah satu dari: ${GA_TICKET_PRIORITIES.join(", ")}` }, 400);
+  }
+  const slaError = validateGaTicketSlaHours(body.default_sla_hours);
+  if (slaError) return c.json({ error: slaError }, 400);
+  const r = await createGaTicketCategory({
+    code: body.code, nama: body.nama, icon: body.icon ?? null,
+    default_sla_hours: body.default_sla_hours, default_priority: body.default_priority,
+  });
+  return c.json(r, "ok" in r && r.ok === false ? 400 : 201);
+});
+
+app.patch("/ga-ticket-categories/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { nama?: string; icon?: string | null; default_sla_hours?: number; default_priority?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (body.default_priority != null && !GA_TICKET_PRIORITIES.includes(body.default_priority)) {
+    return c.json({ error: `default_priority harus salah satu dari: ${GA_TICKET_PRIORITIES.join(", ")}` }, 400);
+  }
+  const slaError = validateGaTicketSlaHours(body.default_sla_hours);
+  if (slaError) return c.json({ error: slaError }, 400);
+  const r = await updateGaTicketCategory(c.req.param("id"), body);
+  return c.json(r, "ok" in r && r.ok === false ? 400 : 200);
+});
+
+app.patch("/ga-ticket-categories/:id/deactivate", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await deactivateGaTicketCategory(c.req.param("id"));
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.get("/ga-tickets", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const status = c.req.query("status") || undefined;
+  const overdue = c.req.query("overdue") === "1";
+  const tickets = await listGaTickets({ status, overdue });
+  return c.json({ count: tickets.length, tickets });
+});
+
+app.get("/ga-tickets/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const t = await getGaTicket(c.req.param("id"));
+  if (!t) return c.json({ error: "tiket tidak ditemukan" }, 404);
+  return c.json(t);
+});
+
+app.post("/ga-tickets", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: {
+    title?: string; description?: string; category_id?: string; priority?: string;
+    reporter_user_id?: string; reporter_name_override?: string; location?: string; sla_hours_override?: number;
+  };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.title?.trim() || !body.category_id) return c.json({ error: "title & category_id wajib" }, 400);
+  if (body.priority != null && !GA_TICKET_PRIORITIES.includes(body.priority)) {
+    return c.json({ error: `priority harus salah satu dari: ${GA_TICKET_PRIORITIES.join(", ")}` }, 400);
+  }
+  const slaError2 = validateGaTicketSlaHours(body.sla_hours_override);
+  if (slaError2) return c.json({ error: slaError2 }, 400);
+  const r = await createGaTicket({
+    title: body.title, description: body.description ?? null, category_id: body.category_id,
+    priority: body.priority ?? null, reporter_user_id: body.reporter_user_id ?? null,
+    reporter_name_override: body.reporter_name_override ?? null, location: body.location ?? null,
+    sla_hours_override: body.sla_hours_override ?? null,
+  });
+  return c.json(r, "ok" in r && r.ok === false ? 400 : 201);
+});
+
+app.patch("/ga-tickets/:id/assign", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { assignee_user_id?: string; assignee_name_override?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const r = await assignGaTicket(c.req.param("id"), body);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.post("/ga-tickets/:id/transition", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { to?: string; changed_by_user_id?: string; note?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.to) return c.json({ error: "to (status tujuan) wajib" }, 400);
+  const r = await transitionGaTicket(c.req.param("id"), body.to, {
+    changed_by_user_id: body.changed_by_user_id ?? null, note: body.note ?? null,
+  });
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.post("/ga-tickets/:id/rate", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { rating?: number; comment?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (typeof body.rating !== "number") return c.json({ error: "rating (1-5) wajib" }, 400);
+  const r = await rateGaTicket(c.req.param("id"), body.rating, body.comment ?? null);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.get("/ga-tickets/:id/timeline", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const timeline = await getGaTicketTimeline(c.req.param("id"));
+  return c.json({ count: timeline.length, timeline });
+});
+
+app.post("/ga-tickets/:id/comments", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { comment?: string; is_internal?: boolean; created_by_user_id?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.comment?.trim()) return c.json({ error: "comment wajib" }, 400);
+  const r = await addGaTicketComment(c.req.param("id"), {
+    comment: body.comment, is_internal: body.is_internal ?? false, created_by_user_id: body.created_by_user_id ?? null,
+  });
+  return c.json(r, "ok" in r && r.ok === false ? 400 : 201);
+});
+
+// Trigger manual (testing tanpa nunggu cron) — pola sama F45 previsit/run.
+app.post("/ga-tickets/overdue-alert/run", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await runGaHelpdeskOverdueAlert();
+  return c.json(r);
+});
+
+// ── F138 Operational Fund Request + Multi-Step Approval Workflow ──
+// requester_name/requester_email & decided_by dipercaya dari BFF (identitas &
+// gating di layer WEB, pola sama created_by di POST /purchase-orders — lihat
+// CLAUDE.md gotcha "Admin-gate di layer WEB, bukan di api"). Sequencing
+// HOD->Direktur & idempotensi ditegakkan di repo (business-rule, bukan
+// identity check).
+app.get("/fund-requests/hod-options", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await listActiveHods());
+});
+
+app.get("/fund-requests", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const status = c.req.query("status") as FundRequestStatus | undefined;
+  const cabang = c.req.query("cabang") ?? undefined;
+  const requesterEmail = c.req.query("requester_email") ?? undefined;
+  return c.json(await listFundRequests({ status, cabang, requesterEmail }));
+});
+
+app.post("/fund-requests", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: {
+    requester_name?: string; requester_email?: string; purpose?: string; amount_requested?: number;
+    cabang?: string | null; request_date?: string; hod_approver_key?: string; notes?: string | null;
+  };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.requester_name || !body.requester_email || !body.purpose || !body.hod_approver_key) {
+    return c.json({ error: "requester_name, requester_email, purpose, hod_approver_key wajib" }, 400);
+  }
+  if (!(Number(body.amount_requested) > 0)) return c.json({ error: "amount_requested harus > 0" }, 400);
+  try {
+    const created = await createFundRequest({
+      requester_name: body.requester_name,
+      requester_email: body.requester_email,
+      purpose: body.purpose,
+      amount_requested: Number(body.amount_requested),
+      cabang: body.cabang ?? null,
+      request_date: body.request_date,
+      hod_approver_key: body.hod_approver_key,
+      notes: body.notes ?? null,
+    });
+    return c.json(created, 201);
+  } catch (e) {
+    if (e instanceof FundRequestError) return c.json({ error: e.message }, e.status as 400 | 404 | 409);
+    throw e;
+  }
+});
+
+app.get("/fund-requests/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const row = await getFundRequest(c.req.param("id"));
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+});
+
+app.delete("/fund-requests/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const result = await deleteFundRequest(c.req.param("id"));
+    return c.json(result, result.deleted ? 200 : 404);
+  } catch (e) {
+    if (e instanceof FundRequestError) return c.json({ error: e.message }, e.status as 409);
+    throw e;
+  }
+});
+
+app.patch("/fund-requests/:id/approvals/:role", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const role = c.req.param("role");
+  if (role !== "hod" && role !== "direktur") {
+    return c.json({ error: "role tidak valid (hod/direktur)" }, 400);
+  }
+  let body: { decision?: string; decided_by?: string | null; note?: string | null };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (body.decision !== "approve" && body.decision !== "reject") {
+    return c.json({ error: "decision wajib (approve/reject)" }, 400);
+  }
+  try {
+    const result = await decideFundRequestApproval(
+      c.req.param("id"),
+      role as FundRequestApproverRole,
+      body.decision,
+      body.decided_by ?? null,
+      body.note ?? null,
+    );
+    return c.json(result);
+  } catch (e) {
+    if (e instanceof FundRequestError) return c.json({ error: e.message }, e.status as 400 | 404 | 409);
+    throw e;
+  }
+});
+
+// ── F53 Stiker Aset & Asset Tagging Audit ───────────────────────────────────
+app.get("/asset-tags", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listAssetTags(c.req.query("all") !== "true");
+  return c.json({ count: rows.length, assets: rows });
+});
+
+app.post("/asset-tags", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { kode?: string; nama?: string; jenis_kepemilikan?: "aset" | "inventaris"; kategori?: string; lokasi_cabang?: string; letak?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.kode || !body.nama) return c.json({ error: "kode & nama wajib diisi" }, 400);
+  if (body.jenis_kepemilikan != null && !["aset", "inventaris"].includes(body.jenis_kepemilikan)) {
+    return c.json({ error: "jenis_kepemilikan harus 'aset' atau 'inventaris'" }, 400);
+  }
+  const r = await createAssetTag({
+    kode: body.kode,
+    nama: body.nama,
+    jenis_kepemilikan: body.jenis_kepemilikan,
+    kategori: body.kategori,
+    lokasi_cabang: body.lokasi_cabang,
+    letak: body.letak,
+  });
+  return c.json(r, "error" in r ? 400 : 201);
+});
+
+app.patch("/asset-tags/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { nama?: string; jenis_kepemilikan?: "aset" | "inventaris"; kategori?: string; lokasi_cabang?: string; letak?: string; active?: boolean };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (body.jenis_kepemilikan != null && !["aset", "inventaris"].includes(body.jenis_kepemilikan)) {
+    return c.json({ error: "jenis_kepemilikan harus 'aset' atau 'inventaris'" }, 400);
+  }
+  const r = await updateAssetTag(c.req.param("id"), body);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.get("/asset-tags/:id/audit", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listAuditLog(c.req.param("id"));
+  return c.json({ count: rows.length, logs: rows });
+});
+
+app.post("/asset-tags/:id/audit", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { audited_by?: string; found?: boolean; note?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.audited_by || typeof body.found !== "boolean") {
+    return c.json({ error: "audited_by & found (boolean) wajib diisi" }, 400);
+  }
+  const r = await recordAudit(c.req.param("id"), { audited_by: body.audited_by, found: body.found, note: body.note });
+  return c.json(r, "error" in r ? 400 : 201);
 });
 
 const port = Number(process.env.PORT ?? 4000);

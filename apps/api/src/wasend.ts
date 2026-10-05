@@ -152,3 +152,16 @@ export async function waPreflight(probe = false): Promise<WaPreflight> {
     return { ...base, reachable: false, error: String(e) };
   }
 }
+
+// Saklar notifikasi WA modul GA (Aset GA, Tiket IT, Helpdesk GA, Maintenance GA,
+// Kendaraan). Modul ini dipromosikan satuan ke main tanpa lewat uji WA di prod,
+// jadi kirimnya MATI sampai GA_WA_NOTIFY_ENABLED="true" dinyalakan eksplisit.
+// Saat mati, hasilnya meniru dry-run supaya penanda anti-spam (`*_alert_sent_at`)
+// tidak ter-set — begitu saklar dinyalakan, alert yang tertahan tetap terkirim.
+export async function sendGaWa(to: string, body: string): Promise<WaSendResult> {
+  if ((process.env.GA_WA_NOTIFY_ENABLED ?? "false").toLowerCase() !== "true") {
+    console.log(`[wa] GA_WA_NOTIFY_ENABLED mati — tidak kirim → ${to}: ${body.slice(0, 80)}`);
+    return { sent: true, stub: false, dryRun: true, to };
+  }
+  return sendViaWaGateway(to, body);
+}
