@@ -415,7 +415,7 @@ const skenario = [
   { nama: "approve · kode salah format", body: "#APPROVE 9001", from: HOD, harap: /tidak valid, format: APR-0001/ },
   { nama: "approve · bukan approver (gerbang)", body: "#APPROVE APR-9001", from: ASING, harap: null },
 
-  // #OVERTIME — pengajuan lembur SEBELUM lembur (migrasi 190). Gerbang pengirim:
+  // #OVERTIME — pengajuan lembur SEBELUM lembur (migrasi 193). Gerbang pengirim:
   // resolveSender (master_user) + aturan overtime_rule; pemutus: resolveApprover
   // (app_user) yang hod_key-nya = HoD divisi pengaju.
   // Urutan PENTING: skenario "simpan" memungut kode yang dipakai skenario sesudahnya.

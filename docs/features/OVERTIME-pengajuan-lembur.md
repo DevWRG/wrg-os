@@ -1,6 +1,6 @@
 # #OVERTIME — Pengajuan Lembur via WA
 
-Migrasi `190_overtime_request.sql`. Kartu HRIS (#PRESENCE/#OVERTIME/#SLIP) dipersempit oleh Direktur
+Migrasi `193_overtime_request.sql`. Kartu HRIS (#PRESENCE/#OVERTIME/#SLIP) dipersempit oleh Direktur
 2026-09-30: **#PRESENCE dicoret** (sudah ada absensi digital), **#SLIP dicoret** (datanya hanya
 terjangkau direksi/owner), **#OVERTIME jalan**.
 
