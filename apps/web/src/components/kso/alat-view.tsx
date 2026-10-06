@@ -138,8 +138,10 @@ export function KsoAlatView({ data }: { data: KsoAlat }) {
     { id: "pemilik", header: "Pemilik", sortable: true,
       accessor: (r) => r.pemilikAlat ?? "",
       cell: (r) => r.pemilikAlat ?? <span className="text-muted-foreground text-xs">belum diisi</span> },
-    { id: "produktivitas", header: "Rata tes/bln", align: "right", sortable: true, searchable: false,
-      accessor: (r) => r.rataTesBulanan ?? -1,
+    // Di main DataTable belum punya opsi `searchable` (baru di dev), jadi accessor
+    // mengembalikan null — bukan sentinel -1 yang ikut tercari saat mengetik "1".
+    { id: "produktivitas", header: "Rata tes/bln", align: "right", sortable: true,
+      accessor: (r) => r.rataTesBulanan,
       cell: (r) =>
         r.masukProduktivitas ? (
           <div>
