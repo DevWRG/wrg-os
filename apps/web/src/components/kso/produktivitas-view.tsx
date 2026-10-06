@@ -264,7 +264,7 @@ export function KsoProduktivitasTabel({ f }: { f: FilterKso }) {
 
       <p className="text-muted-foreground text-xs">
         Aset yang skemanya belum ditentukan tidak muncul di halaman ini — kolom STATUS-nya
-        kosong atau tidak dikenali di sheet <em>Populasi KSO</em>, sehingga tersaring di
+        kosong atau tidak dikenali di sheet <em>Populasi Alat</em>, sehingga tersaring di
         lapisan view. Perbaikannya di sheet, bukan di sini.
       </p>
 
