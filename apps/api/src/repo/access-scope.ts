@@ -10,6 +10,7 @@
 
 import { db } from "../db.js";
 import { effectivePermissions } from "./rbac.js";
+import { cabangEffSql } from "./salesman-am.js";
 
 export interface DataScope {
   userId: string | null;
@@ -124,7 +125,9 @@ export function scopeOnClause(sql: Sql, s: DataScope, amIdCol: Frag, cabangCol: 
 }
 
 export function scopeAccurateClause(sql: Sql, s: DataScope) {
-  return scopeOnClause(sql, s, sql`mu.am_id`, sql`COALESCE(NULLIF(mu.cabang,''), NULLIF(acs.cabang_override,''))`);
+  // Cabang = cabangEffSql: faktur tanpa AM (OFFICE) ikut area lokasi customer,
+  // jadi HoD melihat faktur OFFICE customer di wilayahnya (keputusan 6 Okt 2026).
+  return scopeOnClause(sql, s, sql`mu.am_id`, sql`${cabangEffSql(sql)}`);
 }
 
 export function scopeSalesPlanClause(sql: Sql, s: DataScope) {

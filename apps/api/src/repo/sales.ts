@@ -445,11 +445,11 @@ export async function reportSalesAr(from?: string, to?: string, scope: DataScope
     FROM accurate_invoice ai
     LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
     ${joinAmFromSalesman(sql)}
-    LEFT JOIN sales_target_branch stb ON UPPER(stb.cabang) = CASE UPPER(COALESCE(mu.cabang, ''))
+    LEFT JOIN sales_target_branch stb ON UPPER(stb.cabang) = CASE UPPER(COALESCE(${cabangEffSql(sql)}, ''))
       WHEN 'SBY 2' THEN 'SURABAYA 2'
       WHEN 'SOLO & YOGYAKARTA' THEN 'JAWA TENGAH'
       WHEN 'CIREBON' THEN 'JAWA BARAT'
-      ELSE UPPER(COALESCE(mu.cabang, '')) END
+      ELSE UPPER(COALESCE(${cabangEffSql(sql)}, '')) END
     WHERE ai.status = 'OPEN' ${dateClause} ${scl}
     GROUP BY 1
   `;
