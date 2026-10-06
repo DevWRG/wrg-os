@@ -263,9 +263,10 @@ export function KsoProduktivitasTabel({ f }: { f: FilterKso }) {
       </Card>
 
       <p className="text-muted-foreground text-xs">
-        Aset yang skemanya belum ditentukan tidak muncul di halaman ini — kolom STATUS-nya
-        kosong atau tidak dikenali di sheet <em>Populasi Alat</em>, sehingga tersaring di
-        lapisan view. Perbaikannya di sheet, bukan di sini.
+        Halaman ini hanya menghitung alat berstatus <strong>Operasional</strong> yang faskesnya
+        sudah terpetakan ke Accurate. Alat stok kantor, backup, not ready, nonaktif, dan yang
+        statusnya belum jelas tidak dihitung — semuanya, beserta sumber statusnya, ada di menu{" "}
+        <a href="/kso-alat" className="underline underline-offset-2">Daftar Alat</a>.
       </p>
 
       <FaskesDetailDialog g={detail} median={median} onClose={() => setDetail(null)} />

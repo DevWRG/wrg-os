@@ -99,6 +99,7 @@ import {
 } from "./repo/klasifikasi.js";
 import { master as ksoMaster } from "./repo/kso.js";
 import { produktivitas as ksoProduktivitas, faskesDetail as ksoFaskesDetail } from "./repo/kso-produktivitas.js";
+import { daftarAlat as ksoDaftarAlat } from "./repo/kso-alat.js";
 import { listCoachingNotes } from "./repo/coaching.js";
 import { getLatestCoachingNotes, computePeopleAnalytics } from "./repo/people.js";
 import { AmTidakDikenalError, createVisit, getVisit, isVisitSort, listVisits, visitKpi, visitSummary } from "./repo/visit.js";
@@ -3188,6 +3189,13 @@ app.get("/kso/master", async (c) => {
 app.get("/kso/produktivitas", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json(await ksoProduktivitas());
+});
+
+// Daftar Alat (migrasi 197) — semua alat KSO beserta status & sumbernya. Di bawah
+// /kso/ supaya ikut catch-all /api/kso/* yang sudah di-gate canViewKso di BFF.
+app.get("/kso/alat", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await ksoDaftarAlat());
 });
 
 // Export .xlsx multi-sheet (Produktivitas per alat · Reagen keluar · Tes & revenue
