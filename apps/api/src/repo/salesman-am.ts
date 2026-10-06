@@ -72,9 +72,14 @@ export function amGroupKeySql(sql: Sql) {
 }
 
 // Cabang efektif (sudut pandang AREA) per faktur, tanpa fallback akhir.
-// Faktur OFFICE tanpa record salesman (acs NULL) tetap masuk 'Office'.
+// Faktur ber-AM → cabang AM pada tanggal faktur (lihat joinAmFromSalesman).
+// Faktur tanpa AM (OFFICE / VACANT) → area LOKASI customer (migrasi 194
+// area_customer: kota dari nama customer → area_kota, fallback cabang AM
+// pemilik akun). Keputusan user 6 Okt 2026: Per Cabang tak boleh punya baris
+// "Office" — OFFICE cuma label sales; cabang_override 'Office' sengaja
+// diabaikan, override lain tetap dipakai sebagai cadangan terakhir.
 export function cabangEffSql(sql: Sql) {
-  return sql`COALESCE(NULLIF(mu.cabang,''), NULLIF(acs.cabang_override,''), CASE WHEN ${isOfficeSql(sql)} THEN 'Office' END)`;
+  return sql`COALESCE(NULLIF(mu.cabang,''), area_customer(ai.customer_id), NULLIF(NULLIF(acs.cabang_override,''),'Office'))`;
 }
 
 // Cabang yang ditampilkan di baris per-AM (sudut pandang SALES): cabang pada
