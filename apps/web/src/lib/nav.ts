@@ -9,7 +9,7 @@ import {
   Factory, Workflow, Receipt, BarChart3, ClipboardCheck, History, Settings,
   Sparkles, Send, FileText, ScrollText, GraduationCap, UsersRound, Network,
   Bell, MapPin, ListChecks, Swords, CalendarOff, CalendarDays, CalendarRange,
-  Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, Tags, SlidersHorizontal, Microscope,
+  Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, Tags, SlidersHorizontal, Microscope, MonitorCheck,
   Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, BookOpen, Calculator,
   Wallet, Coins, Route, Radio, Printer, ScanText,
   Wrench,
@@ -172,6 +172,12 @@ export const NAV: NavGroup[] = [
       // hilang karena tidak pernah ada dua izin. Rute lamanya dipertahankan sebagai
       // redirect ke ?tab=ringkasan (lihat berkas page.tsx-nya).
       { title: "Produktivitas KSO", url: "/kso-produktivitas", icon: Microscope, badge: "NEW",
+        feature: "kso-simulator", show: canViewKso },
+      // Daftar Alat — SEMUA alat yang dikelola WRG, dengan status & sumber status
+      // (migrasi 197; keputusan user 6 Okt 2026). Menumpang kunci izin yang SAMA
+      // dengan Produktivitas KSO karena alasan yang sama (lihat di atas): halaman
+      // dan BFF meng-gate dengan canViewKso, jadi kunci berbeda = dua centang.
+      { title: "Daftar Alat", url: "/kso-alat", icon: MonitorCheck, badge: "NEW",
         feature: "kso-simulator", show: canViewKso },
       // Harga jual dibagi per PEMBACA, bukan per tabel:
       //   /pricebook            sales & AM — katalog + harga terpublikasi (071/043)
