@@ -12,6 +12,11 @@ CARA PAKAI:
     # 1. Export spreadsheet-nya ke .xlsx (File > Download > Microsoft Excel)
     # 2. Konversi:
     python3 scripts/ops/kso-sheet-to-json.py ~/Downloads/kso.xlsx --out ~/kso-import.json
+    #    Populasi dari workbook "Data Populasi Tiap Alat" (sheet "Populasi Alat") — acuan
+    #    sejak Okt 2026. Boleh .xlsx workbook itu ATAU .csv ekspor sheet itu saja (ekspor
+    #    workbook utuhnya berat; File > Download > CSV hanya mengekspor sheet yang terbuka):
+    python3 scripts/ops/kso-sheet-to-json.py ~/Downloads/kso.xlsx \
+        --populasi ~/Downloads/"Data Populasi Tiap Alat - Populasi Alat.csv" --out ~/kso-import.json
     # 3. Impor (lihat scripts/ops/kso-asset-import.mjs):
     node scripts/ops/kso-asset-import.mjs --file ~/kso-import.json          # pratinjau
     node scripts/ops/kso-asset-import.mjs --file ~/kso-import.json --apply  # tulis
@@ -23,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import calendar
+import csv
 import json
 import os
 import re
@@ -37,6 +43,13 @@ except ImportError:  # pragma: no cover
     sys.exit("openpyxl belum terpasang. Jalankan: python3 -m pip install openpyxl")
 
 SHEET_POPULASI = "Populasi KSO"
+# Acuan populasi sejak Okt 2026 (workbook terpisah "Data Populasi Tiap Alat"). Isinya
+# SUPERSET Populasi KSO: semua baris KSO-nya identik, ditambah alat beli putus
+# (Keterangan='BELI') dan TRIAL. Baris BELI SENGAJA tidak dijadikan aset — alat milik
+# customer tak punya skema KSO, dan memasukkannya akan menambah penyebut produktivitas
+# KSO dengan alat yang revenue-nya bukan dari kerja sama.
+SHEET_POPULASI_ALAT = "Populasi Alat"
+KETERANGAN_BUKAN_KSO = {"BELI"}
 SHEET_TES_2026 = "2026 KSO Tes"
 SHEET_REAGENT_2026 = "2026 KSO Reagent"
 SHEET_TES_2025 = "2025 KSO Tes"
@@ -208,9 +221,40 @@ def read_sheet(wb, name):
     return out
 
 
-def build(path):
+def read_populasi_alat(path):
+    """Baris sheet "Populasi Alat", dari .xlsx workbook-nya atau .csv ekspor sheet itu.
+
+    CSV ekspor Google Sheets menulis angka DENGAN pemisah ribuan ('5,100') dan tanggal
+    sebagai teks tampilan ('25 September 2024'). Tanggal teks sudah dikenali as_date;
+    pemisah ribuan dibuang di sini — tanpa itu kolom yang di xlsx bernilai 5100 berubah
+    jadi '5,100' dan impor ulang memperbarui baris yang isinya sebenarnya sama."""
+    if path.lower().endswith(".csv"):
+        with open(path, encoding="utf-8-sig", newline="") as f:
+            rows = list(csv.DictReader(f))
+        out = []
+        for r in rows:
+            d = {}
+            for k, v in r.items():
+                if k is None:
+                    continue
+                v = (v or "").strip()
+                if re.fullmatch(r"\d{1,3}(,\d{3})+", v):
+                    v = v.replace(",", "")
+                d[k.strip()] = v or None
+            if any(d.values()):
+                out.append(d)
+        return out
+    wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
+    if SHEET_POPULASI_ALAT not in wb.sheetnames:
+        sys.exit(f"Sheet '{SHEET_POPULASI_ALAT}' tidak ada di {path}. Sheet tersedia: {wb.sheetnames}")
+    return read_sheet(wb, SHEET_POPULASI_ALAT)
+
+
+def build(path, populasi_path=None):
     wb = openpyxl.load_workbook(path, data_only=True)
-    for s in (SHEET_POPULASI, SHEET_TES_2026, SHEET_REAGENT_2026):
+    wajib = (SHEET_TES_2026, SHEET_REAGENT_2026) if populasi_path else (
+        SHEET_POPULASI, SHEET_TES_2026, SHEET_REAGENT_2026)
+    for s in wajib:
         if s not in wb.sheetnames:
             sys.exit(f"Sheet wajib '{s}' tidak ada di workbook. Sheet tersedia: {wb.sheetnames}")
 
@@ -229,13 +273,23 @@ def build(path):
         # Tanpa SN, alat tetap harus punya identitas stabil supaya import idempoten.
         return f"NOSN:{slug(row.get(customer_field))}|{slug(row.get(alat_field))}", None
 
-    # --- 1. Populasi KSO = metadata kontrak (MOU, target, paket, ritme) ---------------
-    pop = read_sheet(wb, SHEET_POPULASI)
+    # --- 1. Populasi = metadata kontrak (MOU, target, paket, ritme) -------------------
+    if populasi_path:
+        nama_pop = SHEET_POPULASI_ALAT
+        pop = read_populasi_alat(populasi_path)
+    else:
+        nama_pop = SHEET_POPULASI
+        pop = read_sheet(wb, SHEET_POPULASI)
     status_map = {"PER TEST": "PER_TEST", "PERTES": "PER_TEST", "BELI REAGEN": "BELI_REAGEN"}
     dibuang = 0
+    bukan_kso: dict[str, dict] = {}
     for r in pop:
         if not layak(r, "Customer", "Nama Alat"):
             dibuang += 1
+            continue
+        if str(r.get("Keterangan") or "").strip().upper() in KETERANGAN_BUKAN_KSO:
+            k, _ = kunci(r, "Customer", "Nama Alat")
+            bukan_kso[k] = r
             continue
         k, sn_raw = kunci(r, "Customer", "Nama Alat")
         assets[k] = {
@@ -254,13 +308,15 @@ def build(path):
             "keterangan": text(r.get("Keterangan")),
             "tgl_sj": text(r.get("TGL SJ")), "alamat": text(r.get("ALAMAT")),
             "outlet": text(r.get("OUTLET")),
-            "in_populasi": True, "sumber_sheet": [SHEET_POPULASI], "catatan": [],
+            "in_populasi": True, "sumber_sheet": [nama_pop], "catatan": [],
         }
-    report["sheet"][SHEET_POPULASI] = {
-        "baris": len(pop), "aset": len(assets), "baris_dibuang": dibuang}
+    report["sheet"][nama_pop] = {
+        "baris": len(pop), "aset": len(assets), "baris_dibuang": dibuang,
+        "baris_bukan_kso_dilewati": len(bukan_kso)}
 
     # --- 2. Sheet 2026 = kebenaran operasional untuk skema + station/admin ------------
     baru_2026 = 0
+    bentrok_bukan_kso: list[str] = []
     for sheet, skema in ((SHEET_TES_2026, "PER_TEST"), (SHEET_REAGENT_2026, "BELI_REAGEN")):
         rows = read_sheet(wb, sheet)
         dibuang = 0
@@ -283,7 +339,17 @@ def build(path):
                     "keterangan": None, "tgl_sj": None, "alamat": None, "outlet": None,
                     "in_populasi": False, "sumber_sheet": [], "catatan": [],
                 }
-                a["catatan"].append(f"Tidak ada di {SHEET_POPULASI} — perlu disisir admin.")
+                b = bukan_kso.get(k)
+                if b is not None:
+                    # Bertentangan: populasi bilang beli putus, sheet realisasi menghitungnya
+                    # sebagai KSO. Tetap diimpor (realisasinya nyata) tapi wajib terlihat.
+                    a["catatan"].append(
+                        f"{nama_pop} menandai alat ini Keterangan={text(b.get('Keterangan'))!r} "
+                        f"(Nomor MOU {text(b.get('Nomor MOU'))!r}) tapi terdaftar di {sheet} — "
+                        "KSO atau beli putus?")
+                    bentrok_bukan_kso.append(k)
+                else:
+                    a["catatan"].append(f"Tidak ada di {nama_pop} — perlu disisir admin.")
             else:
                 # Sheet 2026 menang atas STATUS di Populasi, tapi konfliknya dicatat.
                 if a["skema"] not in ("UNKNOWN", skema):
@@ -358,7 +424,7 @@ def build(path):
     if skema_tak_tentu:
         report["peringatan"].append(
             f"{skema_tak_tentu} aset tidak punya skema (STATUS kosong ATAU tidak dikenali di "
-            f"{SHEET_POPULASI}, dan tidak terdaftar di sheet Tes/Reagent). Aset-aset itu akan TERSIMPAN di kso_asset "
+            f"{nama_pop}, dan tidak terdaftar di sheet Tes/Reagent). Aset-aset itu akan TERSIMPAN di kso_asset "
             "tapi TIDAK muncul di kso_asset_produktivitas_v. Perbaikannya di sheet: isi kolom "
             "STATUS yang kosong, dan BETULKAN yang nilainya bukan jenis kerja sama (status "
             "operasional alat seperti BACKUP/NOT READY tempatnya di kolom Keterangan). "
@@ -489,6 +555,9 @@ def build(path):
         "aset_dengan_catatan": sum(1 for a in assets.values() if a["catatan_sync"]),
         # Hilang dari kso_asset_produktivitas_v sampai STATUS-nya diisi di sheet.
         "aset_skema_tak_tentu": skema_tak_tentu,
+        # Ditandai beli putus di populasi tapi muncul di sheet realisasi 2026 (diimpor,
+        # ber-catatan). Nol kalau populasi lama (Populasi KSO) yang dipakai.
+        "aset_bentrok_bukan_kso": len(bentrok_bukan_kso),
         "dugaan_duplikat_sn": dugaan_duplikat,
         "per_skema": dict(per_skema),
         "baris_tes_bulanan": len(tests),
@@ -513,6 +582,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("xlsx", help="path file .xlsx hasil export spreadsheet KSO")
+    ap.add_argument("--populasi", help='opsional: .xlsx "Data Populasi Tiap Alat" atau .csv '
+                    'ekspor sheet "Populasi Alat" — menggantikan sheet Populasi KSO di xlsx utama')
     ap.add_argument("--out", required=True, help="path JSON keluaran (WAJIB di luar repo)")
     args = ap.parse_args()
 
@@ -523,7 +594,8 @@ def main():
                  "Repo ini publik dan JSON-nya memuat nama faskes, SN alat, dan nomor MOU.\n"
                  "Pilih path di luar repo, mis. ~/kso-import.json")
 
-    hasil = build(os.path.expanduser(args.xlsx))
+    hasil = build(os.path.expanduser(args.xlsx),
+                  os.path.expanduser(args.populasi) if args.populasi else None)
     with open(out, "w", encoding="utf-8") as f:
         json.dump(hasil, f, ensure_ascii=False, indent=1)
 
