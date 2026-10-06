@@ -9,7 +9,7 @@
 // hanya utk metric "windowed" (revenue/customer_count/new_customer_count).
 
 import { db } from "../db.js";
-import { joinAmFromSalesman } from "./salesman-am.js";
+import { cabangEffSql, joinAmFromSalesman } from "./salesman-am.js";
 import { sendViaWaGateway } from "../wasend.js";
 
 type Dim = { am_id?: string; cabang?: string };
@@ -41,7 +41,7 @@ function cmp(op: string, value: number, threshold: number): boolean {
 // Klausa dimensi (join accurate_salesman→master_user tersedia di query).
 function dimClauses(sql: ReturnType<typeof db>, dim: Dim) {
   const am = dim.am_id ? sql`AND mu.am_id = ${dim.am_id}` : sql``;
-  const cab = dim.cabang ? sql`AND COALESCE(NULLIF(mu.cabang,''), NULLIF(acs.cabang_override,'')) = ${dim.cabang}` : sql``;
+  const cab = dim.cabang ? sql`AND ${cabangEffSql(sql)} = ${dim.cabang}` : sql``;
   return { am, cab };
 }
 

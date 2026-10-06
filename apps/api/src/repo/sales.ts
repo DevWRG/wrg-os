@@ -1,5 +1,5 @@
 import { db } from "../db.js";
-import { AM_VACANT, joinAmFromSalesman } from "./salesman-am.js";
+import { amCabangTerakhirSql, amGroupKeySql, amLabelSql, cabangEffSql, joinAmFromSalesman } from "./salesman-am.js";
 import { FULL_SCOPE, isRestricted, scopeAccountOwnerClause, scopeAccurateClause, scopeOnClause, type DataScope } from "./access-scope.js";
 import { getAging } from "./ar.js";
 import { listTargets, type TargetPeriod } from "./sales-target.js";
@@ -89,16 +89,16 @@ export async function reportRevenue(from: string, to: string) {
   const perSalesman = await sql`
     SELECT s.key, s.label, s.sub, s.total, s.count, sta.target::numeric AS target
     FROM (
-      SELECT COALESCE(NULLIF(mu.am_id,''),'tanpa') AS key,
-             COALESCE(NULLIF(max(mu.nama),''), ${AM_VACANT}) AS label,
-             COALESCE(NULLIF(max(mu.cabang),''), NULLIF(max(acs.cabang_override),'')) AS sub,
+      SELECT ${amGroupKeySql(sql)} AS key,
+             max(${amLabelSql(sql)}) AS label,
+             COALESCE(${amCabangTerakhirSql(sql)}, max(${cabangEffSql(sql)})) AS sub,
              NULLIF(mu.am_id,'') AS am_id,
              sum(ai.total - COALESCE(ai.tax_amount,0))::numeric AS total, count(*)::int AS count
       FROM accurate_invoice ai
       LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
       ${joinAmFromSalesman(sql)}
       WHERE ai.tanggal BETWEEN ${from} AND ${to}
-      GROUP BY mu.am_id
+      GROUP BY 1, mu.am_id
     ) s
     LEFT JOIN sales_target_am sta ON sta.am_id = s.am_id AND sta.year = ${year}
     ORDER BY s.total DESC
@@ -110,8 +110,8 @@ export async function reportRevenue(from: string, to: string) {
   const perCabang = await sql`
     SELECT c.key, c.label, c.total, c.count, stc.target::numeric AS target
     FROM (
-      SELECT COALESCE(NULLIF(mu.cabang,''), NULLIF(acs.cabang_override,''), 'Tanpa cabang') AS key,
-             COALESCE(NULLIF(mu.cabang,''), NULLIF(acs.cabang_override,''), 'Tanpa cabang') AS label,
+      SELECT COALESCE(${cabangEffSql(sql)}, 'Tanpa cabang') AS key,
+             COALESCE(${cabangEffSql(sql)}, 'Tanpa cabang') AS label,
              sum(ai.total - COALESCE(ai.tax_amount,0))::numeric AS total, count(*)::int AS count
       FROM accurate_invoice ai
       LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
@@ -211,8 +211,8 @@ export async function salesOverview(from: string, to: string) {
 
   // Cabang via salesman → master_user.cabang (branch_id invoice kosong, semua=50).
   const perCabang = await sql`
-    SELECT COALESCE(NULLIF(mu.cabang,''), NULLIF(acs.cabang_override,''), 'Tanpa cabang') AS key,
-           COALESCE(NULLIF(mu.cabang,''), NULLIF(acs.cabang_override,''), 'Tanpa cabang') AS label,
+    SELECT COALESCE(${cabangEffSql(sql)}, 'Tanpa cabang') AS key,
+           COALESCE(${cabangEffSql(sql)}, 'Tanpa cabang') AS label,
            sum(ai.total - COALESCE(ai.tax_amount,0))::numeric AS total, count(*)::int AS count
     FROM accurate_invoice ai
     LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
@@ -287,15 +287,15 @@ export async function salesOverview(from: string, to: string) {
     ) f ON TRUE
     ORDER BY a.total DESC`;
   const perSalesman = await sql`
-    SELECT COALESCE(NULLIF(mu.am_id,''),'tanpa') AS key,
-           COALESCE(NULLIF(max(mu.nama),''), ${AM_VACANT}) AS label,
-           COALESCE(NULLIF(max(mu.cabang),''), NULLIF(max(acs.cabang_override),'')) AS sub,
+    SELECT ${amGroupKeySql(sql)} AS key,
+           max(${amLabelSql(sql)}) AS label,
+           COALESCE(${amCabangTerakhirSql(sql)}, max(${cabangEffSql(sql)})) AS sub,
            sum(ai.total - COALESCE(ai.tax_amount,0))::numeric AS total, count(*)::int AS count
     FROM accurate_invoice ai
     LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
     ${joinAmFromSalesman(sql)}
     WHERE ai.tanggal BETWEEN ${from} AND ${to}
-    GROUP BY mu.am_id ORDER BY sum(ai.total - COALESCE(ai.tax_amount,0)) DESC LIMIT 8`;
+    GROUP BY 1 ORDER BY sum(ai.total - COALESCE(ai.tax_amount,0)) DESC LIMIT 8`;
 
   // Inventory & order stats (gaya dashboard: total produk, ketersediaan stok, fulfillment).
   const [inv] = await sql`
@@ -425,7 +425,7 @@ export async function reportSalesAr(from?: string, to?: string, scope: DataScope
   // fallback cabang_override. Kode salesman yg nyangkut sudah di-resolve di
   // joinAmFromSalesman (dulu CTE sm_map lokal di sini).
   const byCabang = await sql`
-    SELECT COALESCE(NULLIF(mu.cabang, ''), NULLIF(acs.cabang_override, ''), '(Tanpa cabang)') AS key,
+    SELECT COALESCE(${cabangEffSql(sql)}, '(Tanpa cabang)') AS key,
            count(*)::int AS invoices, COALESCE(sum(ai.total), 0)::float8 AS outstanding
     FROM accurate_invoice ai
     LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
@@ -437,7 +437,7 @@ export async function reportSalesAr(from?: string, to?: string, scope: DataScope
   const byArea = await sql`
     SELECT COALESCE(
              stb.area,
-             CASE WHEN UPPER(COALESCE(NULLIF(mu.cabang, ''), NULLIF(acs.cabang_override, ''), '')) = 'OFFICE' THEN 'Office' END,
+             CASE WHEN UPPER(COALESCE(${cabangEffSql(sql)}, '')) = 'OFFICE' THEN 'Office' END,
              'Belum terpetakan'
            ) AS area,
            count(DISTINCT ai.customer_id)::int AS customers,
@@ -457,7 +457,7 @@ export async function reportSalesAr(from?: string, to?: string, scope: DataScope
   // kode Accurate (LRI/GGA/…) — resolusi kode nyangkut ada di joinAmFromSalesman.
   // Sisa yg tak bisa diatribusikan melebur jadi satu baris VACANT.
   const bySales = await sql`
-    SELECT COALESCE(NULLIF(mu.nama, ''), ${AM_VACANT}) AS key,
+    SELECT ${amLabelSql(sql)} AS key,
            count(*)::int AS invoices, COALESCE(sum(ai.total), 0)::float8 AS outstanding
     FROM accurate_invoice ai
     LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
@@ -622,7 +622,7 @@ export async function dormantCustomers(minDays = 60, scope: DataScope = FULL_SCO
     ),
     last_am AS (
       SELECT DISTINCT ON (ai.customer_id) ai.customer_id AS cid,
-        COALESCE(NULLIF(mu.nama,''), ${AM_VACANT}) AS am
+        ${amLabelSql(sql)} AS am
       FROM accurate_invoice ai
       LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
       ${joinAmFromSalesman(sql)}
@@ -683,7 +683,7 @@ export async function churnCustomers(churnDays0 = DORMANT_DAYS, scope: DataScope
     ),
     last_am AS (
       SELECT DISTINCT ON (ai.customer_id) ai.customer_id AS cid,
-        COALESCE(NULLIF(mu.nama,''), ${AM_VACANT}) AS am
+        ${amLabelSql(sql)} AS am
       FROM accurate_invoice ai
       LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
       ${joinAmFromSalesman(sql)}
@@ -768,7 +768,7 @@ export async function targetPacing(year0?: number, scope: DataScope = FULL_SCOPE
   // AM murni tak boleh lihat agregat cabang (isinya kontribusi rekan sekabang).
   const cbRows: { cabang: unknown; target: unknown; actual: unknown }[] = amSelf ? [] : await sql`
     WITH act AS (
-      SELECT COALESCE(NULLIF(mu.cabang,''), NULLIF(acs.cabang_override,'')) AS cabang, sum(ai.total - COALESCE(ai.tax_amount,0))::float8 AS actual
+      SELECT ${cabangEffSql(sql)} AS cabang, sum(ai.total - COALESCE(ai.tax_amount,0))::float8 AS actual
       FROM accurate_invoice ai
       JOIN accurate_salesman acs ON acs.id = ai.salesman_id
       ${joinAmFromSalesman(sql)}
@@ -881,7 +881,7 @@ async function periodAgg(
   regionMap: Record<string, Region>,
 ): Promise<{ total: number; regions: RegionTotals }> {
   const rows = await sql`
-    SELECT COALESCE(NULLIF(mu.cabang,''), NULLIF(acs.cabang_override,''), 'Tanpa cabang') AS cabang,
+    SELECT COALESCE(${cabangEffSql(sql)}, 'Tanpa cabang') AS cabang,
            sum(ai.total - COALESCE(ai.tax_amount,0))::numeric AS total
     FROM accurate_invoice ai
     LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
