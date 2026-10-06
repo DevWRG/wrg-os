@@ -22,6 +22,7 @@ Skrip ini murni transformasi + audit: tidak menyentuh database sama sekali.
 from __future__ import annotations
 
 import argparse
+import calendar
 import json
 import os
 import re
@@ -138,7 +139,13 @@ def as_int(v):
 
 
 def as_date(v):
-    """Masa berlaku MOU ditulis dua gaya: datetime betulan dan teks '03 Mei 2024'."""
+    """Masa berlaku MOU ditulis tiga gaya: datetime betulan, teks '03 Mei 2024', dan teks
+    bulan-tahun saja 'Desember 2029'.
+
+    Bulan-tahun dibaca sebagai HARI TERAKHIR bulan itu. Sebelum gaya ini dikenali, 28 aset
+    (Okt 2026) tersimpan dengan masa berlaku NULL — tak terlihat oleh pengecekan MOU yang
+    akan habis. Akhir bulan, bukan tanggal 1: tanggal 1 membuat MOU tampak kedaluwarsa
+    hampir sebulan lebih cepat dari yang tertulis."""
     if v is None or (isinstance(v, str) and not v.strip()):
         return None
     if isinstance(v, datetime):
@@ -146,6 +153,13 @@ def as_date(v):
     if isinstance(v, date):
         return v.isoformat()
     s = str(v).strip()
+    m = re.match(r"^([A-Za-z]+)\s+(\d{4})$", s)
+    if m:
+        bulan = BULAN_KE_NOMOR.get(m.group(1).upper())
+        if bulan:
+            tahun = int(m.group(2))
+            return date(tahun, bulan, calendar.monthrange(tahun, bulan)[1]).isoformat()
+        return None
     m = re.match(r"^(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})$", s)
     if m:
         bulan = BULAN_KE_NOMOR.get(m.group(2).upper())
