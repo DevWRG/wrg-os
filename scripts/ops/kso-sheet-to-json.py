@@ -123,6 +123,28 @@ def norm_sn(raw) -> str:
     return s.lstrip("0") or s
 
 
+def periode_param(bulan_raw, default_tahun=2026):
+    """(tahun, bulan) dari kolom BULAN sheet parameter, atau None kalau tak dikenali.
+
+    Tahun DIAMBIL DARI SELNYA, bukan ditulis mati. Sheet "rekap perparameterkimia 2026"
+    juga memuat baris 'NOVEMBER 2025'/'DESEMBER 2025'; versi lama hanya membaca nama
+    bulannya dan memaku tahun 2026, sehingga data Nov–Des 2025 (358 baris, 13 alat) di
+    prod tersimpan sebagai Nov–Des 2026 — bulan yang belum terjadi saat diimpor.
+    default_tahun hanya dipakai untuk teks tanpa tahun ('MARET')."""
+    if isinstance(bulan_raw, (datetime, date)):
+        return bulan_raw.year, bulan_raw.month
+    if not bulan_raw:
+        return None
+    s = str(bulan_raw).strip().upper()
+    m = re.match(r"^([A-Z]+)\s*[-/ ]?\s*(\d{4})?$", s)
+    if not m:
+        return None
+    bulan = BULAN_KE_NOMOR.get(m.group(1))
+    if not bulan:
+        return None
+    return (int(m.group(2)) if m.group(2) else default_tahun), bulan
+
+
 def slug(s) -> str:
     s = unicodedata.normalize("NFKD", str(s or ""))
     return re.sub(r"[^A-Z0-9]", "", s.upper())
@@ -526,6 +548,10 @@ def build(path, populasi_path=None, populasi_saja=False):
     params = []
     param_tanpa_aset = Counter()
     bulan_tak_dikenal = Counter()
+    bulan_mendatang = Counter()
+    # Periode setelah bulan berjalan tidak mungkin punya realisasi: itu sel templat (sheet
+    # mengisi 0 untuk bulan yang belum lewat) atau tahun yang salah baca. Dibuang + dihitung.
+    batas = date.today().replace(day=1)
     if wb is not None and SHEET_PARAM_2026 in wb.sheetnames:
         rows = read_sheet(wb, SHEET_PARAM_2026)
         konteks = {}
@@ -539,20 +565,19 @@ def build(path, populasi_path=None, populasi_saja=False):
                 continue
             k, _ = kunci(konteks, "Customer Real", "Nama Alat")
             bulan_raw = r.get("BULAN")
-            bulan = None
-            if isinstance(bulan_raw, (datetime, date)):
-                bulan = bulan_raw.month
-            elif bulan_raw:
-                s = str(bulan_raw).strip().upper()
-                bulan = BULAN_KE_NOMOR.get(s) or BULAN_KE_NOMOR.get(s.split()[0])
-            if not bulan:
+            tb = periode_param(bulan_raw)
+            if not tb:
                 if bulan_raw:
                     bulan_tak_dikenal[str(bulan_raw)[:20]] += 1
+                continue
+            tahun, bulan = tb
+            if date(tahun, bulan, 1) > batas:
+                bulan_mendatang[f"{tahun}-{bulan:02d}"] += 1
                 continue
             if k not in assets:
                 param_tanpa_aset[k] += 1
                 continue
-            periode = f"2026-{bulan:02d}-01"
+            periode = f"{tahun}-{bulan:02d}-01"
             for kolom, nama in PARAM_COLUMNS.items():
                 nilai = as_number(r.get(kolom))
                 if nilai is None:
@@ -564,6 +589,7 @@ def build(path, populasi_path=None, populasi_saja=False):
         report["sheet"][SHEET_PARAM_2026] = {
             "baris": len(rows), "baris_parameter": len(params),
             "bulan_tak_dikenal": dict(bulan_tak_dikenal),
+            "baris_bulan_mendatang_dibuang": dict(sorted(bulan_mendatang.items())),
             "aset_tak_ketemu": len(param_tanpa_aset),
         }
         report["peringatan"].append(
