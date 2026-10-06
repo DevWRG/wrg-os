@@ -11,6 +11,8 @@
 //   • fuzzy               -> HANYA USULAN. account_id dibiarkan NULL sampai manusia
 //                            mengonfirmasi, kecuali dijalankan dengan --terima-fuzzy.
 // Baris yang `dikonfirmasi = true` tidak pernah ditimpa skrip ini.
+// Aset dengan `kso_asset.account_id_dikunci = true` (migrasi 196) tidak pernah disentuh saat
+// peta disebar — dipakai untuk alat pindahan yang riwayat tesnya milik faskes lama.
 //
 // REVISI 2026-08-18 — diukur ke data nyata (235 nama sheet x 2.932 customer Accurate).
 // Versi pertama hanya memasang 62 (26,4%). Tiga sebab, semuanya bisa diperbaiki:
@@ -291,6 +293,29 @@ try {
     console.log("  Kalau ada nama faskes betulan di daftar ini, perbaiki STASIUN di skrip.");
   }
 
+  // Ditampilkan di pratinjau DAN saat apply: kunci yang menahan aset dari petanya harus
+  // terlihat, bukan diam — kalau alasannya sudah basi, manusia yang membukanya.
+  // Dibandingkan ke peta HASIL putaran ini (bukan isi tabel saat ini), supaya pratinjau
+  // juga menampilkan aset yang baru akan tertahan oleh peta yang dibuat sekarang.
+  const petaAkhir = new Map(
+    (await sql`SELECT customer_key, account_id FROM kso_customer_map WHERE account_id IS NOT NULL`)
+      .map((r) => [r.customer_key, Number(r.account_id)]));
+  for (const h of hasil) {
+    if (h.account_id !== null) petaAkhir.set(h.key, h.account_id);
+  }
+  const tertahan = (await sql`
+    SELECT sn_key, customer_raw, account_id, account_id_alasan_kunci AS alasan
+    FROM kso_asset WHERE account_id_dikunci ORDER BY sn_key`)
+    .map((a) => ({ ...a, account_peta: petaAkhir.get(slug(a.customer_raw)) }))
+    .filter((a) => a.account_peta !== undefined && Number(a.account_id) !== a.account_peta);
+  if (tertahan.length) {
+    console.log(`\n=== Aset terkunci, TIDAK ikut peta: ${tertahan.length} ===`);
+    for (const t of tertahan) {
+      console.log(`  ${t.sn_key.padEnd(20)} ${String(t.customer_raw).slice(0, 40).padEnd(42)} ` +
+        `tetap ${t.account_id} (peta ${t.account_peta}) — ${t.alasan}`);
+    }
+  }
+
   if (!APPLY) {
     console.log("\nDRY-RUN. Tidak ada yang ditulis. Tambahkan --apply untuk mengeksekusi.");
     process.exit(0);
@@ -314,6 +339,8 @@ try {
 
   // Sebar ke aset. Hanya mengisi dari peta — TIDAK mengosongkan account_id yang sudah
   // dipasang manual lewat aplikasi (peta account_id NULL dilewati, bukan menimpa NULL).
+  // Aset terkunci dilewati: peta per NAMA customer tidak tahu bahwa riwayat tes alat
+  // pindahan milik faskes lama.
   const [{ count: disebar }] = await sql`
     WITH upd AS (
       UPDATE kso_asset a
@@ -322,6 +349,7 @@ try {
       WHERE m.customer_key = upper(regexp_replace(a.customer_raw, '[^A-Za-z0-9]', '', 'g'))
         AND m.account_id IS NOT NULL
         AND a.account_id IS DISTINCT FROM m.account_id
+        AND NOT a.account_id_dikunci
       RETURNING 1)
     SELECT count(*)::int AS count FROM upd`;
 
