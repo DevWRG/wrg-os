@@ -244,7 +244,10 @@ export function deretBulan(dari: string, sampai: string): string[] {
 // BioSet, Eti Max, DNM, Sclavo, Dus) dibiarkan apa adanya — sebagian memang khas alat
 // KSO dan tidak pernah muncul sebagai brand deal.
 const BRAND: Array<[RegExp, string]> = [
-  [/^MEK-/i, "NIHON"],          // seri Celltac; satu-satunya yang WAJIB dipetakan
+  // Sheet Populasi KSO (Okt 2026) mengganti awalan seri ini dari MEK- ke NIHON- untuk 19
+  // unit; dua ejaan hidup berdampingan selama impor bertahap. Tanpa pola kedua, NIHON-6510
+  // jatuh ke cadangan kata-pertama dan tiap model jadi "brand" sendiri.
+  [/^(MEK|NIHON)-/i, "NIHON"],  // seri Celltac; satu-satunya yang WAJIB dipetakan
   [/^ZYBIO/i, "ZYBIO"],
   [/^WONDFO/i, "WONDFO"],
   [/^CLOVER/i, "CLOVER"],
