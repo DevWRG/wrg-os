@@ -17,6 +17,9 @@ CARA PAKAI:
     #    workbook utuhnya berat; File > Download > CSV hanya mengekspor sheet yang terbuka):
     python3 scripts/ops/kso-sheet-to-json.py ~/Downloads/kso.xlsx \
         --populasi ~/Downloads/"Data Populasi Tiap Alat - Populasi Alat.csv" --out ~/kso-import.json
+    #    Populasi SAJA (workbook KSO belum ada; tes bulanan & skema 2026 tidak disentuh):
+    python3 scripts/ops/kso-sheet-to-json.py --populasi-saja \
+        --populasi ~/Downloads/"Data Populasi Tiap Alat.xlsx" --out ~/kso-populasi.json
     # 3. Impor (lihat scripts/ops/kso-asset-import.mjs):
     node scripts/ops/kso-asset-import.mjs --file ~/kso-import.json          # pratinjau
     node scripts/ops/kso-asset-import.mjs --file ~/kso-import.json --apply  # tulis
@@ -250,15 +253,24 @@ def read_populasi_alat(path):
     return read_sheet(wb, SHEET_POPULASI_ALAT)
 
 
-def build(path, populasi_path=None):
-    wb = openpyxl.load_workbook(path, data_only=True)
-    wajib = (SHEET_TES_2026, SHEET_REAGENT_2026) if populasi_path else (
-        SHEET_POPULASI, SHEET_TES_2026, SHEET_REAGENT_2026)
-    for s in wajib:
-        if s not in wb.sheetnames:
-            sys.exit(f"Sheet wajib '{s}' tidak ada di workbook. Sheet tersedia: {wb.sheetnames}")
+def build(path, populasi_path=None, populasi_saja=False):
+    """populasi_saja: hanya sheet Populasi Alat yang dibaca; workbook KSO (sheet Tes/Reagent
+    2026, tes bulanan, parameter) tidak dibutuhkan dan tidak disentuh. Dipakai saat populasi
+    berubah tapi workbook realisasinya belum ada di tangan. Importer lalu hanya memperbarui
+    kolom milik populasi — lihat MODE POPULASI-SAJA di kso-asset-import.mjs."""
+    if populasi_saja:
+        wb = None
+    else:
+        wb = openpyxl.load_workbook(path, data_only=True)
+        wajib = (SHEET_TES_2026, SHEET_REAGENT_2026) if populasi_path else (
+            SHEET_POPULASI, SHEET_TES_2026, SHEET_REAGENT_2026)
+        for s in wajib:
+            if s not in wb.sheetnames:
+                sys.exit(f"Sheet wajib '{s}' tidak ada di workbook. Sheet tersedia: {wb.sheetnames}")
 
-    report = {"sumber": os.path.basename(path), "sheet": {}, "peringatan": []}
+    report = {"sumber": os.path.basename(populasi_path if populasi_saja else path),
+              "mode": "populasi_saja" if populasi_saja else "penuh",
+              "sheet": {}, "peringatan": []}
     assets: dict[str, dict] = {}
 
     def layak(row, customer_field, alat_field):
@@ -317,7 +329,9 @@ def build(path, populasi_path=None):
     # --- 2. Sheet 2026 = kebenaran operasional untuk skema + station/admin ------------
     baru_2026 = 0
     bentrok_bukan_kso: list[str] = []
-    for sheet, skema in ((SHEET_TES_2026, "PER_TEST"), (SHEET_REAGENT_2026, "BELI_REAGEN")):
+    sheet_2026 = () if populasi_saja else (
+        (SHEET_TES_2026, "PER_TEST"), (SHEET_REAGENT_2026, "BELI_REAGEN"))
+    for sheet, skema in sheet_2026:
         rows = read_sheet(wb, sheet)
         dibuang = 0
         for r in rows:
@@ -394,6 +408,14 @@ def build(path, populasi_path=None):
     for a in assets.values():
         if a["skema"] == "UNKNOWN":
             skema_tak_tentu += 1
+            if populasi_saja:
+                # Sheet Tes/Reagent tidak dibaca, jadi "tidak terdaftar di sheet" tak bisa
+                # diklaim. Importer hanya memakai skema ini untuk aset BARU; skema aset lama
+                # tidak ditimpa.
+                a["catatan"].append(
+                    f"Skema belum ditentukan: STATUS di Populasi {a.get('status_sheet')!r}; "
+                    "sheet Tes/Reagent 2026 tidak dibaca (impor populasi-saja).")
+                continue
             # DUA SEBAB, DUA TINDAKAN BERBEDA. Versi pertama catatan ini selalu berbunyi
             # "STATUS kosong" — keliru untuk baris yang STATUS-nya justru TERISI tapi nilainya
             # bukan skema. Pada data prod 2026-08-18 ada dua: 'BACKUP' (K Lyte 5, RSUD Ketapang)
@@ -421,7 +443,12 @@ def build(path, populasi_path=None):
                     "Skema tidak dapat ditentukan: STATUS kosong di Populasi dan SN tidak "
                     "terdaftar di sheet Tes maupun Reagent. Aset ini TIDAK akan muncul di "
                     "kso_asset_produktivitas_v sampai STATUS-nya diisi.")
-    if skema_tak_tentu:
+    if skema_tak_tentu and populasi_saja:
+        report["peringatan"].append(
+            f"{skema_tak_tentu} aset populasi tanpa skema dari STATUS. Untuk aset yang sudah "
+            "ada, skema lama dipertahankan; aset BARU tersimpan UNKNOWN dan tidak muncul di "
+            "kso_asset_produktivitas_v sampai impor penuh atau STATUS-nya diisi.")
+    elif skema_tak_tentu:
         report["peringatan"].append(
             f"{skema_tak_tentu} aset tidak punya skema (STATUS kosong ATAU tidak dikenali di "
             f"{nama_pop}, dan tidak terdaftar di sheet Tes/Reagent). Aset-aset itu akan TERSIMPAN di kso_asset "
@@ -456,7 +483,9 @@ def build(path, populasi_path=None):
     tests: dict[tuple[str, str], dict] = {}
     non_numerik = Counter()
     tanpa_aset = Counter()
-    for sheet in (SHEET_TES_2025, SHEET_REAGENT_2025, SHEET_TES_2026, SHEET_REAGENT_2026):
+    sheet_bulanan = () if populasi_saja else (
+        SHEET_TES_2025, SHEET_REAGENT_2025, SHEET_TES_2026, SHEET_REAGENT_2026)
+    for sheet in sheet_bulanan:
         if sheet not in wb.sheetnames:
             continue
         rows = read_sheet(wb, sheet)
@@ -497,7 +526,7 @@ def build(path, populasi_path=None):
     params = []
     param_tanpa_aset = Counter()
     bulan_tak_dikenal = Counter()
-    if SHEET_PARAM_2026 in wb.sheetnames:
+    if wb is not None and SHEET_PARAM_2026 in wb.sheetnames:
         rows = read_sheet(wb, SHEET_PARAM_2026)
         konteks = {}
         for r in rows:
@@ -565,12 +594,15 @@ def build(path, populasi_path=None):
     }
     # Aset yang ada di Populasi tapi tak sekalipun muncul di sheet 2026 — wajar untuk alat
     # yang tidak dihitung per-tes (Hemodialisa dll), tapi angkanya harus terlihat.
-    diam = [a for a in assets.values() if a["in_populasi"] and len(a["sumber_sheet"]) == 1]
-    report["total"]["aset_tanpa_realisasi_2026"] = len(diam)
-    report["aset_tanpa_realisasi_2026_per_type"] = dict(
-        Counter(a["type_alat"] or "(kosong)" for a in diam).most_common(15))
+    # Tak bermakna di mode populasi-saja: sheet 2026 tidak dibaca, semua aset akan "diam".
+    if not populasi_saja:
+        diam = [a for a in assets.values() if a["in_populasi"] and len(a["sumber_sheet"]) == 1]
+        report["total"]["aset_tanpa_realisasi_2026"] = len(diam)
+        report["aset_tanpa_realisasi_2026_per_type"] = dict(
+            Counter(a["type_alat"] or "(kosong)" for a in diam).most_common(15))
 
     return {
+        "mode": report["mode"],
         "assets": list(assets.values()),
         "tests": list(tests.values()),
         "params": params,
@@ -581,9 +613,13 @@ def build(path, populasi_path=None):
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("xlsx", help="path file .xlsx hasil export spreadsheet KSO")
+    ap.add_argument("xlsx", nargs="?",
+                    help="path file .xlsx hasil export spreadsheet KSO (tidak dipakai dengan --populasi-saja)")
     ap.add_argument("--populasi", help='opsional: .xlsx "Data Populasi Tiap Alat" atau .csv '
                     'ekspor sheet "Populasi Alat" — menggantikan sheet Populasi KSO di xlsx utama')
+    ap.add_argument("--populasi-saja", action="store_true",
+                    help="hanya baca --populasi; workbook KSO tidak dibutuhkan. Tes bulanan & "
+                    "parameter tidak diimpor, skema/station/admin aset lama tidak ditimpa")
     ap.add_argument("--out", required=True, help="path JSON keluaran (WAJIB di luar repo)")
     args = ap.parse_args()
 
@@ -594,8 +630,16 @@ def main():
                  "Repo ini publik dan JSON-nya memuat nama faskes, SN alat, dan nomor MOU.\n"
                  "Pilih path di luar repo, mis. ~/kso-import.json")
 
-    hasil = build(os.path.expanduser(args.xlsx),
-                  os.path.expanduser(args.populasi) if args.populasi else None)
+    if args.populasi_saja and not args.populasi:
+        sys.exit("--populasi-saja butuh --populasi <xlsx|csv>.")
+    if args.populasi_saja and args.xlsx:
+        sys.exit("--populasi-saja tidak memakai workbook KSO; hapus argumen xlsx-nya.")
+    if not args.populasi_saja and not args.xlsx:
+        sys.exit("Workbook KSO (.xlsx) wajib, kecuali dengan --populasi-saja.")
+
+    hasil = build(os.path.expanduser(args.xlsx) if args.xlsx else None,
+                  os.path.expanduser(args.populasi) if args.populasi else None,
+                  populasi_saja=args.populasi_saja)
     with open(out, "w", encoding="utf-8") as f:
         json.dump(hasil, f, ensure_ascii=False, indent=1)
 
