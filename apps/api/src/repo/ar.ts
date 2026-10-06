@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 
 import { db } from "../db.js";
-import { AM_VACANT, joinAmFromSalesman } from "./salesman-am.js";
+import { amLabelSql, cabangEffSql, joinAmFromSalesman } from "./salesman-am.js";
 import { FULL_SCOPE, scopeAccurateClause, scopeOnClause, type DataScope } from "./access-scope.js";
 
 // D2 AR Aging — feeder (ingest invoice Accurate → ar_aging_mv) + read model.
@@ -222,7 +222,7 @@ export async function invoiceDetail(no: string, scope: DataScope = FULL_SCOPE) {
       COALESCE(NULLIF(ac.name,''), NULLIF(ai.raw->'customer'->>'name',''), NULLIF(ai.raw->>'retailWpName',''), 'Customer #'||ai.customer_id::text) AS customer_name,
       ai.tanggal::text AS tanggal, ai.total::float8 AS total, ai.taxable_amount::float8 AS taxable,
       ai.tax_amount::float8 AS tax, ai.paid::float8 AS paid, ai.outstanding::float8 AS outstanding,
-      ai.status, COALESCE(NULLIF(mu.nama,''), ${AM_VACANT}) AS am, NULLIF(mu.cabang,'') AS cabang
+      ai.status, ${amLabelSql(sql)} AS am, NULLIF(mu.cabang,'') AS cabang
     FROM accurate_invoice ai
     LEFT JOIN accurate_customer ac ON ac.id = ai.customer_id
     LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
@@ -289,10 +289,10 @@ export async function arAgingByCustomer(scope: DataScope = FULL_SCOPE) {
     ),
     last_am AS (
       SELECT DISTINCT ON (ai.customer_id::text) ai.customer_id::text AS cid,
-        COALESCE(NULLIF(mu.nama,''), ${AM_VACANT}) AS am,
+        ${amLabelSql(sql)} AS am,
         NULLIF(mu.cabang,'') AS cabang,
         mu.am_id AS am_id,
-        COALESCE(NULLIF(mu.cabang,''), NULLIF(acs.cabang_override,'')) AS cabang_eff
+        ${cabangEffSql(sql)} AS cabang_eff
       FROM accurate_invoice ai
       LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
       ${joinAmFromSalesman(sql)}
