@@ -7,7 +7,7 @@ import {
   Banknote,
   LayoutDashboard, LayoutGrid, Building2, Package, Boxes, ShoppingCart, Truck,
   Factory, Workflow, Receipt, BarChart3, ClipboardCheck, History, Settings,
-  Sparkles, Send, FileText, ScrollText, GraduationCap, UsersRound, Network,
+  Send, FileText, ScrollText, GraduationCap, UsersRound, Network,
   Bell, MapPin, ListChecks, Swords, CalendarOff, CalendarDays, CalendarRange,
   Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, Tags, SlidersHorizontal, Microscope, MonitorCheck,
   Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, BookOpen, Calculator,
@@ -236,7 +236,6 @@ export const NAV: NavGroup[] = [
       { title: "SOP & Otomasi", url: "/sop-otomasi", icon: ClipboardCheck, badge: "NEW" },
       { title: "Executive Briefings", url: "/briefings", icon: ScrollText },
       { title: "Coaching Notes", url: "/coaching", icon: GraduationCap },
-      { title: "Reports", url: "/reports", icon: BarChart3 },
       // Revenue per lini produk — dasar metric `revstream` (kartu Fafa, WatchPoint).
       { title: "Revenue per Lini", url: "/revenue-stream", icon: Coins, badge: "NEW" },
       { title: "Digest History", url: "/digests", icon: History },
@@ -435,7 +434,6 @@ export const NAV: NavGroup[] = [
       // bukan analytics harian → grup Admin, gate admin/superuser.
       { title: "HoD Resolver", url: "/people/hod-resolve", icon: KeyRound, show: (me) => me?.role === "admin" || me?.superuser === true },
       { title: "Settings", url: "/settings", icon: Settings },
-      { title: "UI Showcase", url: "/showcase", icon: Sparkles },
     ],
   },
 ];
