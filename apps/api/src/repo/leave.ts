@@ -201,7 +201,7 @@ export async function decidePendingLeave(
   const p = await getPendingLeave(id);
   if (!p) return { ok: false, error: "not-found-or-decided" };
   if (approve) {
-    const err = await checkBackup({ ...p, backup_am_id: backupAmId });
+    const err = await checkBackup({ ...p, backup_am_id: backupAmId, approval: true });
     if (err) return { ok: false, error: err };
     const leaveId = await approvePendingLeave(p, { backup_am_id: backupAmId, keterangan: "Approved via dashboard", decidedBy });
     return { ok: true, status: "approved", nama: p.nama, leave_id: leaveId };

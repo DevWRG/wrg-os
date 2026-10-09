@@ -27,12 +27,18 @@ Ini bagian "Backup PIC" yang dipecah dari F14 (F14 sekarang Kalender Libur saja)
 
 | Aturan | Hasil |
 |---|---|
-| Jenis `cuti` yang **belum selesai** (`end_date ≥ hari ini WIB`) tanpa pengganti | ditolak: "pengganti (backup PIC) wajib diisi untuk cuti" |
-| `sakit` / `ijin` | pengganti opsional, karena sering mendadak |
-| Cuti lampau tanpa pengganti | boleh, supaya data lama (sebelum F55) tetap bisa diedit |
+| **Approve** pending jenis `cuti` (dashboard maupun WA) tanpa pengganti | ditolak: "pengganti (backup PIC) wajib diisi untuk cuti", **apa pun tanggalnya** |
+| Tambah/edit di `/leave`: jenis `cuti` yang **belum selesai** (`end_date ≥ hari ini WIB`) tanpa pengganti | ditolak dengan pesan yang sama |
+| Tambah/edit cuti lampau tanpa pengganti | boleh, supaya data lama (sebelum F55) dan input susulan tetap bisa diedit |
+| `sakit` / `ijin` | pengganti opsional di semua jalur, karena sering mendadak |
 | Pengganti = orang yang cuti | ditolak |
 | Pengganti tidak ada di roster / `aktif = false` | ditolak |
 | Pengganti juga punya `user_leave` yang beririsan | ditolak ("… juga tidak masuk <rentang>"), karena rantai pengganti putus |
+
+Ruang lingkup "wajib" dikonfirmasi Direktur 2026-10-09 (audit Issue #1443): **hanya
+jenis cuti**; sakit/ijin tetap opsional. Pengecualian tanggal tidak berlaku saat approve,
+karena requirement-nya "wajib diisi saat approve cuti" tanpa pengecualian. Jalur approve
+memanggil `checkBackup({..., approval: true})` / `isBackupRequired(..., { approval: true })`.
 
 Satu definisi (`isBackupRequired`, `checkBackup`) dipakai oleh `POST /leave`,
 `PATCH /leave/:id`, approve dashboard, dan approve WA. PATCH memvalidasi keadaan

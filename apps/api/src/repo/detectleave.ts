@@ -141,7 +141,7 @@ async function handleApproval(decision: string, pid: number, rest: string, sende
     // pengganti wajib, jadi balasan tanpa/dengan nama tak dikenal ditahan.
     const raw = parseBackupName(rest);
     const backup = raw ? await resolveWajib(raw) : null;
-    const wajib = isBackupRequired(p.jenis, p.end_date);
+    const wajib = isBackupRequired(p.jenis, p.end_date, { approval: true });
     const formatBenar = `Balas *ya L${pid} <nama pengganti>* (contoh: *ya L${pid} Budi*).`;
     if (wajib && !backup) {
       await sendViaWaGateway(
@@ -152,7 +152,7 @@ async function handleApproval(decision: string, pid: number, rest: string, sende
       );
       return "approval-need-backup";
     }
-    const err = await checkBackup({ ...p, backup_am_id: backup?.am_id ?? null });
+    const err = await checkBackup({ ...p, backup_am_id: backup?.am_id ?? null, approval: true });
     if (err) {
       await sendViaWaGateway(grp, `⚠️ ${err} — L${pid} belum direkam.\n${formatBenar}`);
       return "approval-backup-invalid";
@@ -268,7 +268,7 @@ export async function runDetectLeaveScan(opts: { dryRun?: boolean } = {}): Promi
     `;
     const pid = Number(ins.id);
     const rt = sd === ed ? sd : `${sd} s/d ${ed}`;
-    const caraYa = isBackupRequired(jenis, ed)
+    const caraYa = isBackupRequired(jenis, ed, { approval: true })
       ? `*ya L${pid} <nama pengganti>* untuk rekam (pengganti wajib untuk cuti)`
       : `*ya L${pid}* untuk rekam (opsional tunjuk pengganti: *ya L${pid} <nama>*)`;
     await sendViaWaGateway(grp, `📋 *Konfirmasi cuti* — rekam ke sistem?\n\n• Nama: *${resolved.nama}*\n• Jenis: *${jenis}*\n• Tanggal: *${rt}*\n\nAdmin balas ${caraYa}, atau *tidak L${pid}* untuk batal.`);

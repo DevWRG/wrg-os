@@ -28,18 +28,25 @@ export const parseBackupName = (rest: string): string =>
 
 export const rentang = (sd: string, ed: string): string => (sd === ed ? sd : `${sd} s/d ${ed}`);
 
-// Wajib hanya untuk cuti yang belum selesai: cuti lampau (data lama sebelum
-// F55, input susulan) tak butuh pengganti dan tetap harus bisa diedit.
-export const isBackupRequired = (jenis: string, endDate: string, today = wibDate()): boolean =>
-  BACKUP_REQUIRED_JENIS.includes(jenis as Jenis) && endDate >= today;
+// Wajib untuk jenis cuti. Saat APPROVE (dashboard/WA) tanpa pengecualian —
+// requirement Issue #1443: "wajib diisi saat approve cuti" (dikonfirmasi
+// Direktur 2026-10-09: hanya jenis cuti, sakit/ijin opsional). Di luar approve
+// (tambah/edit di /leave) cuti yang sudah selesai dibebaskan: data lama
+// sebelum F55 & input susulan tetap harus bisa diedit.
+export const isBackupRequired = (
+  jenis: string,
+  endDate: string,
+  opts: { approval?: boolean; today?: string } = {},
+): boolean =>
+  BACKUP_REQUIRED_JENIS.includes(jenis as Jenis) && (opts.approval === true || endDate >= (opts.today ?? wibDate()));
 
 // Aturan yang tidak butuh DB — dipisah supaya bisa dites murni.
 export function backupRuleError(
-  opts: { am_id: string; jenis: string; end_date: string; backup_am_id: string | null },
+  opts: { am_id: string; jenis: string; end_date: string; backup_am_id: string | null; approval?: boolean },
   today: string,
 ): string | null {
   if (!opts.backup_am_id) {
-    return isBackupRequired(opts.jenis, opts.end_date, today) ? `pengganti (backup PIC) wajib diisi untuk ${opts.jenis}` : null;
+    return isBackupRequired(opts.jenis, opts.end_date, { approval: opts.approval, today }) ? `pengganti (backup PIC) wajib diisi untuk ${opts.jenis}` : null;
   }
   if (opts.backup_am_id === opts.am_id) return "pengganti tidak boleh orang yang sama dengan yang cuti";
   return null;
@@ -47,12 +54,14 @@ export function backupRuleError(
 
 // Validasi lengkap: aturan murni + pengganti harus karyawan aktif dan TIDAK
 // sedang cuti di rentang yang beririsan (rantai pengganti putus).
+// approval: true untuk jalur approve pending (lihat isBackupRequired).
 export async function checkBackup(opts: {
   am_id: string;
   jenis: string;
   start_date: string;
   end_date: string;
   backup_am_id: string | null;
+  approval?: boolean;
 }): Promise<string | null> {
   const rule = backupRuleError(opts, wibDate());
   if (rule || !opts.backup_am_id) return rule;
