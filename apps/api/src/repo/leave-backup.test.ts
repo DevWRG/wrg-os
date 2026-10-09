@@ -13,17 +13,26 @@ import {
 const TODAY = "2026-10-01";
 
 test("pengganti wajib untuk cuti yang belum selesai", () => {
-  assert.equal(isBackupRequired("cuti", "2026-10-03", TODAY), true);
-  assert.equal(isBackupRequired("cuti", TODAY, TODAY), true);
+  assert.equal(isBackupRequired("cuti", "2026-10-03", { today: TODAY }), true);
+  assert.equal(isBackupRequired("cuti", TODAY, { today: TODAY }), true);
 });
 
-test("sakit/ijin tidak wajib pengganti", () => {
-  assert.equal(isBackupRequired("sakit", "2026-10-03", TODAY), false);
-  assert.equal(isBackupRequired("ijin", "2026-10-03", TODAY), false);
+test("sakit/ijin tidak wajib pengganti, termasuk saat approve", () => {
+  assert.equal(isBackupRequired("sakit", "2026-10-03", { today: TODAY }), false);
+  assert.equal(isBackupRequired("ijin", "2026-10-03", { today: TODAY }), false);
+  assert.equal(isBackupRequired("sakit", "2026-10-03", { approval: true, today: TODAY }), false);
+  assert.equal(isBackupRequired("ijin", "2026-09-30", { approval: true, today: TODAY }), false);
 });
 
-test("cuti lampau tidak wajib pengganti (data lama tetap bisa diedit)", () => {
-  assert.equal(isBackupRequired("cuti", "2026-09-30", TODAY), false);
+test("cuti lampau tidak wajib pengganti di luar approve (data lama tetap bisa diedit)", () => {
+  assert.equal(isBackupRequired("cuti", "2026-09-30", { today: TODAY }), false);
+});
+
+test("saat approve, cuti tetap wajib pengganti walau tanggalnya sudah lewat", () => {
+  assert.equal(isBackupRequired("cuti", "2026-09-30", { approval: true, today: TODAY }), true);
+  const lampau = { am_id: "101", jenis: "cuti", end_date: "2026-09-30", backup_am_id: null };
+  assert.match(backupRuleError({ ...lampau, approval: true }, TODAY) ?? "", /wajib/);
+  assert.equal(backupRuleError(lampau, TODAY), null);
 });
 
 test("aturan: cuti tanpa pengganti ditolak, dengan pengganti lolos", () => {
