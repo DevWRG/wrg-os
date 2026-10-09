@@ -40,4 +40,4 @@ httpx>=0.28.1
 # ini, jalankan sekali di server:
 #   services/ai/.venv/bin/pip install -r services/ai/requirements.txt
 pypdf>=6.19.0
-pypdfium2>=5.13.0
+pypdfium2>=5.14.0
