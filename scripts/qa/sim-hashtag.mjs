@@ -42,6 +42,7 @@
 //   #SPH                → menyimpan draft SPH atas nama AM
 //   #KLAIM              → menyimpan baris doc_klaim
 //   #install dkk        → menyimpan teknisi_report
+//   #OVERTIME           → mencatat pengajuan lembur + DM ke HoD; #APPROVE OT-x memutusnya
 //
 // Terhadap data FIXTURE (dev) itu tak berbahaya: semua sasarannya milik
 // fixture sendiri (QA-AM-1, SJ-QA-00x, APR-900x). Terhadap data NYATA,
@@ -166,6 +167,13 @@ const TEKNISI = {
 // Sengaja TIDAK bisa di-override: harus tetap tak dikenal roster mana pun,
 // itu inti dari 5 uji penembusan gerbang.
 const ASING = { jid: "628999999999@s.whatsapp.net", nama: "Orang Asing" };
+// #OVERTIME — lihat blok fixture di seed-hashtag-fixtures.sql. Tono: HoD divisi
+// tak ketemu. Nita: divisi tanpa aturan (tak berhak). HODLAIN: HoD divisi lain.
+const TONO = { jid: "628111000004@s.whatsapp.net", nama: "Tono Fixture" };
+const NITA = { jid: "628111000005@s.whatsapp.net", nama: "Nita Fixture" };
+const HODLAIN = { jid: "628111000006@s.whatsapp.net", nama: "Bagus Fixture" };
+// Kode OT-xxxx hasil pengajuan, dipungut skenario berikutnya (`simpan`/`body()`).
+const kodeOt = {};
 const GRUP = process.env.QA_GRUP_JID ?? "6280000000000-1234567890@g.us";
 
 // ── mode & gerbang keamanan ───────────────────────────────────────────────
@@ -274,6 +282,9 @@ async function resetState() {
       kirim_by='qa-fixture', terima_at=now() - interval '2 day', terima_by='qa-fixture',
       bast_at=now() - interval '1 day', bast_by='qa-fixture'
     WHERE sj_number='SJ-QA-003'`;
+  // #OVERTIME: pengajuan milik pengaju fixture dibuang (kode OT-xxxx berputar
+  // terus, jadi skenario memungut kode dari hasil pengajuan, bukan hardcode).
+  await sql`DELETE FROM overtime_request WHERE am_id IN ('QA-AM-1','QA-AM-3','QA-AM-4')`;
   await sql`
     UPDATE approval_request SET status='pending', current_urutan=1, decided_at=NULL
     WHERE kode IN ('APR-9001','APR-9002','APR-9003')`;
@@ -403,6 +414,40 @@ const skenario = [
   { tulis: true, nama: "reject · ditolak", body: "#REJECT APR-9003 nominal terlalu besar", from: HOD, harap: new RegExp(`❌ APR-9003 ditolak, tercatat\\. Terima kasih, ${esc(HOD.nama)}\\.`) },
   { nama: "approve · kode salah format", body: "#APPROVE 9001", from: HOD, harap: /tidak valid, format: APR-0001/ },
   { nama: "approve · bukan approver (gerbang)", body: "#APPROVE APR-9001", from: ASING, harap: null },
+
+  // #OVERTIME — pengajuan lembur SEBELUM lembur (migrasi 193). Gerbang pengirim:
+  // resolveSender (master_user) + aturan overtime_rule; pemutus: resolveApprover
+  // (app_user) yang hod_key-nya = HoD divisi pengaju.
+  // Urutan PENTING: skenario "simpan" memungut kode yang dipakai skenario sesudahnya.
+  { tulis: true, nama: "overtime · pengajuan sah (jam+menit)", body: "#overtime 2 jam 30 menit - closing laporan bulanan", from: AM, simpan: "a",
+    harap: new RegExp(`🕒 Pengajuan lembur OT-\\d{4} tercatat, ${esc(AM.nama)}\\.\\n2 jam 30 menit — closing laporan bulanan\\nMenunggu persetujuan ${esc(HOD.nama)}\\.`) },
+  // Format bebas (checklist brief): huruf besar + spasi setelah #, dan hashtag
+  // di baris ke-2 setelah kalimat pengantar. Ketiganya harus tetap terproses.
+  { tulis: true, nama: "overtime · huruf besar & spasi setelah #", body: "# OVERTIME 90 menit: susun stok opname", from: AM, simpan: "b",
+    harap: /🕒 Pengajuan lembur OT-\d{4} tercatat, .+\.\n1 jam 30 menit — susun stok opname/ },
+  { tulis: true, nama: "overtime · hashtag di baris kedua", body: "Mohon izin ya pak\n#Overtime 1,5 jam untuk input faktur", from: AM,
+    harap: /1 jam 30 menit — input faktur\n/ },
+  { tulis: true, nama: "overtime · angka di uraian bukan durasi", body: "#overtime 1 jam input 20 faktur", from: AM,
+    harap: /1 jam — input 20 faktur\n/ },
+  { nama: "overtime · argumen kosong", body: "#overtime", from: AM, harap: new RegExp(`⚠️ #OVERTIME belum lengkap, ${esc(AM.nama)}\\. Tulis estimasi durasi di depan\\.\\nFormat: #overtime`) },
+  { nama: "overtime · tanpa durasi", body: "#overtime closing laporan", from: AM, harap: /Tulis estimasi durasi di depan/ },
+  { nama: "overtime · tanpa uraian", body: "#overtime 2 jam", from: AM, harap: /Tulis juga pekerjaan yang dikerjakan/ },
+  { nama: "overtime · lebih dari 12 jam", body: "#overtime 13 jam kerja", from: AM, harap: /Estimasi maksimal 12 jam per pengajuan/ },
+  { nama: "overtime · pengirim tak dikenal (gerbang)", body: "#overtime 1 jam - x", from: ASING, harap: null },
+  { nama: "overtime · divisi tanpa aturan (tak berhak)", body: "#overtime 1 jam - rapikan arsip", from: NITA,
+    harap: new RegExp(`⚠️ ${esc(NITA.nama)}, posisi/divisimu belum terdaftar untuk mengajukan lembur`) },
+  { tulis: true, nama: "overtime · HoD tak ketemu → tetap dicatat", body: "#overtime 45 menit: rekap retur", from: TONO,
+    harap: /🕒 Pengajuan lembur OT-\d{4} tercatat, .+\.\n45 menit — rekap retur\nTercatat, tapi HoD belum bisa dihubungi \(HoD divisi belum ketahuan/ },
+  // Keputusan — jalur WA privat. Otorisasi: hod_key pemutus = hod_key pengajuan.
+  // tulis:true krn butuh kode dari pengajuan sah di atas (dilewati di --baca-saja).
+  { tulis: true, nama: "overtime · HoD divisi lain tak berwenang", body: () => `#APPROVE ${kodeOt.a}`, from: HODLAIN, harap: /bukan HoD divisi pengaju — tidak berwenang/ },
+  { nama: "overtime · bukan approver terdaftar (gerbang)", body: () => `#APPROVE ${kodeOt.a}`, from: ASING, harap: null },
+  { tulis: true, nama: "overtime · HoD divisi menyetujui", body: () => `#APPROVE ${kodeOt.a}`, from: HOD,
+    harap: new RegExp(`✅ OT-\\d{4} disetujui, tercatat\\. Terima kasih, ${esc(HOD.nama)}\\.`) },
+  { tulis: true, nama: "overtime · setujui ulang ditolak", body: () => `#APPROVE ${kodeOt.a}`, from: HOD, harap: /pengajuan ini sudah approved/ },
+  { tulis: true, nama: "overtime · HoD menolak dengan alasan", body: () => `#REJECT ${kodeOt.b} belum perlu lembur`, from: HOD,
+    harap: new RegExp(`❌ OT-\\d{4} ditolak, tercatat\\. Terima kasih, ${esc(HOD.nama)}\\.`) },
+  { nama: "overtime · kode tak ada", body: "#APPROVE OT-9999", from: HOD, harap: /pengajuan tidak ditemukan/ },
 ];
 
 const cocokNama = (s) => !filter.length || filter.some((f) => s.nama.toLowerCase().includes(f));
@@ -410,14 +455,18 @@ const dipakai = skenario.filter((s) => cocokNama(s) && !(BACA_SAJA && s.tulis));
 const dilewati = skenario.filter((s) => cocokNama(s) && BACA_SAJA && s.tulis);
 
 const hasil = [];
-for (const s of dipakai) {
+for (let s of dipakai) {
   const aiUrlAsli = process.env.AI_URL;
   if (s.matikanAi) process.env.AI_URL = "http://127.0.0.1:9"; // port mati
   let out = {};
   let balasan = [];
   let err = null;
   try {
+    // `body` boleh fungsi: dievaluasi SAAT dijalankan supaya bisa memakai kode
+    // OT-xxxx dari skenario sebelumnya. `kirim` di laporan ikut nilai terpakai.
+    s = { ...s, body: typeof s.body === "function" ? s.body() : s.body };
     ({ out, balasan } = await kirimPesan(s));
+    if (s.simpan && out?.kode) kodeOt[s.simpan] = out.kode;
   } catch (e) {
     err = e.message;
   } finally {
@@ -440,15 +489,53 @@ await sql`UPDATE wa_message SET processed_at = now(), processed_kind = 'qa-clean
           WHERE input_hash LIKE 'qa-sim-%' AND processed_at IS NULL`;
 let buktiTerjaring = null; // null = tak diuji (mode baca-saja)
 let batchErr = null;
+// #OVERTIME lewat jalur batch (setara POST /wa/inbound/process): filter SQL
+// inboundHashtagPattern() harus menjaring varian format bebas. Skenario lain
+// memanggil processInboundMessage langsung dan MELEWATI filter itu — kalau
+// regexnya meleset, hashtag tak pernah diproses dan bot diam total (kelas bug
+// #BUKTI di atas). Null = tak diuji.
+let overtimeBatch = null;
+// Retry webhook: pesan YANG SAMA diproses dua kali → satu pengajuan, satu DM ke HoD.
+let overtimeRetry = null;
 try {
   if (!BACA_SAJA) {
     const hb = `qa-sim-bukti-teks-${Date.now()}`;
     await sql`
       INSERT INTO wa_message (group_jid, sender_jid, sender_name, message_type, body, input_hash, message_id)
       VALUES (${GRUP}, ${ASING.jid}, ${ASING.nama}, 'text', '#BUKTI SJ-QA-003', ${hb}, ${hb})`;
+    const varianOt = [
+      "# OVERTIME 30 menit: cek batch spasi",
+      "Mohon izin ya\n#Overtime 20 menit - cek batch baris kedua",
+    ];
+    for (const [i, body] of varianOt.entries()) {
+      const h = `qa-sim-ot-batch-${Date.now()}-${i}`;
+      await sql`
+        INSERT INTO wa_message (group_jid, sender_jid, sender_name, message_type, body, input_hash, message_id)
+        VALUES (${GRUP}, ${AM.jid}, ${AM.nama}, 'text', ${body}, ${h}, ${h})`;
+    }
     captured = [];
     const batch = await processUnprocessed(50);
     buktiTerjaring = batch.results.some((r) => String(r.kind) === "bukti");
+    const nOt = batch.results.filter((r) => String(r.kind) === "overtime" && r.kode).length;
+    const [{ n: nRow }] = await sql`
+      SELECT count(*)::int AS n FROM overtime_request
+      WHERE am_id = 'QA-AM-1' AND uraian IN ('cek batch spasi', 'cek batch baris kedua')`;
+    overtimeBatch = nOt === 2 && nRow === 2;
+
+    // Retry: proses ulang baris yang sama (id wa_message sama).
+    const hr = `qa-sim-ot-retry-${Date.now()}`;
+    const [rowR] = await sql`
+      INSERT INTO wa_message (group_jid, group_name, sender_jid, sender_name, message_type, body, input_hash, message_id)
+      VALUES (${GRUP}, 'Grup Simulasi QA', ${AM.jid}, ${AM.nama}, 'text', '#overtime 10 menit - uji retry webhook', ${hr}, ${hr})
+      RETURNING id::text, group_jid, sender_jid, sender_name, body, message_type, message_id, received_at::text,
+                media_path, geo_lat, geo_lon, geo_ts, geo_address`;
+    captured = [];
+    const r1 = await processInboundMessage(rowR);
+    const r2 = await processInboundMessage(rowR);
+    const dmKeHod = captured.filter((t) => /\*Pengajuan Lembur\*/.test(t)).length;
+    const [{ n: nRetry }] = await sql`
+      SELECT count(*)::int AS n FROM overtime_request WHERE uraian = 'uji retry webhook'`;
+    overtimeRetry = nRetry === 1 && dmKeHod === 1 && r2.duplicate === true && r1.kode === r2.kode;
   }
 } catch (e) {
   batchErr = e.message;
@@ -495,10 +582,13 @@ console.log(
     buktiTerjaring === null ? "tak diuji (mode baca-saja)" : buktiTerjaring ? "YA" : "TIDAK ← REGRESI"
   }`,
 );
+const ya = (v, salah) => (v === null ? "tak diuji (mode baca-saja)" : v ? "YA" : salah);
+console.log(`#OVERTIME format bebas terjaring processUnprocessed: ${ya(overtimeBatch, "TIDAK ← REGRESI")}`);
+console.log(`#OVERTIME retry webhook → 1 pengajuan, 1 DM HoD: ${ya(overtimeRetry, "TIDAK ← REGRESI")}`);
 if (batchErr) console.log(`processUnprocessed melempar: ${batchErr}`);
 console.log(`detectKind("#BUKTI SJ-1") = ${detectKind("#BUKTI SJ-1")}`);
 console.log(`\nBersihkan baris sintetis: DELETE FROM wa_message WHERE input_hash LIKE 'qa-sim-%';`);
 
 await sql.end();
 // buktiTerjaring === null (tak diuji) tak dihitung gagal.
-process.exit(n("BEDA") + n("ERROR") === 0 && buktiTerjaring !== false && !batchErr ? 0 : 1);
+process.exit(n("BEDA") + n("ERROR") === 0 && buktiTerjaring !== false && overtimeBatch !== false && overtimeRetry !== false && !batchErr ? 0 : 1);

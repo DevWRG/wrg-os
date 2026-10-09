@@ -130,6 +130,17 @@ import {
 } from "./repo/leave.js";
 import { checkBackup, notifyLeaveBackupInBackground } from "./repo/leave-backup.js";
 import {
+  assignHod as assignOvertimeHod,
+  createRule as createOvertimeRule,
+  decideOvertime,
+  deleteRule as deleteOvertimeRule,
+  listOvertime,
+  listRuleOptions as listOvertimeRuleOptions,
+  listRules as listOvertimeRules,
+  notifyApprover as notifyOvertimeApprover,
+  setRuleAktif as setOvertimeRuleAktif,
+} from "./repo/overtime.js";
+import {
   createInstallation,
   listInstallations,
   getInstallationById,
@@ -2028,6 +2039,86 @@ app.patch("/approval-requests/:id/atribut", async (c) => {
     return c.json({ error: "invalid JSON body" }, 400);
   }
   const r = await lengkapiAtributRequest(c.req.param("id"), body);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+// ── #OVERTIME — pengajuan lembur (migrasi 190, repo/overtime.ts) ──
+// Gerbang akses di layer WEB (BFF + RBAC fitur 'overtime'); identitas pemutus
+// dikirim BFF di body `actor` dari sesi login, bukan dipercaya dari klien.
+app.get("/overtime", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listOvertime({
+    status: c.req.query("status") || undefined,
+    from: c.req.query("from") || undefined,
+    to: c.req.query("to") || undefined,
+    hod_key: c.req.query("hod_key") || undefined,
+  });
+  return c.json({ count: rows.length, rows });
+});
+
+app.get("/overtime/rules", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json({ rules: await listOvertimeRules(), options: await listOvertimeRuleOptions() });
+});
+
+app.post("/overtime/rules", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { dept?: string; posisi_pattern?: string; am_id?: string; catatan?: string; created_by?: string } = {};
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  const r = await createOvertimeRule(body);
+  return c.json(r, r.ok ? 201 : 400);
+});
+
+app.patch("/overtime/rules/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { aktif?: boolean } = {};
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  const id = Number(c.req.param("id"));
+  if (!Number.isInteger(id) || typeof body.aktif !== "boolean") return c.json({ error: "id/aktif tidak valid" }, 400);
+  const r = await setOvertimeRuleAktif(id, body.aktif);
+  return c.json(r, r.ok ? 200 : 404);
+});
+
+app.delete("/overtime/rules/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const id = Number(c.req.param("id"));
+  if (!Number.isInteger(id)) return c.json({ error: "id tidak valid" }, 400);
+  const r = await deleteOvertimeRule(id);
+  return c.json(r, r.ok ? 200 : 404);
+});
+
+app.post("/overtime/:id/decide", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { action?: string; note?: string; actor?: { name?: string; hodKey?: string | null; privileged?: boolean } } = {};
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  const id = Number(c.req.param("id"));
+  if (!Number.isInteger(id)) return c.json({ error: "id tidak valid" }, 400);
+  if (body.action !== "approve" && body.action !== "reject") return c.json({ error: "action harus approve|reject" }, 400);
+  if (!body.actor?.name) return c.json({ error: "actor.name wajib" }, 400);
+  const r = await decideOvertime(
+    { id },
+    body.action,
+    { name: body.actor.name, hodKey: body.actor.hodKey ?? null, privileged: body.actor.privileged === true },
+    body.note?.trim() || null,
+  );
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.post("/overtime/:id/assign-hod", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { hodKey?: string } = {};
+  try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
+  const id = Number(c.req.param("id"));
+  if (!Number.isInteger(id)) return c.json({ error: "id tidak valid" }, 400);
+  const r = await assignOvertimeHod(id, body.hodKey ?? "");
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.post("/overtime/:id/notify", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const id = Number(c.req.param("id"));
+  if (!Number.isInteger(id)) return c.json({ error: "id tidak valid" }, 400);
+  const r = await notifyOvertimeApprover(id);
   return c.json(r, r.ok ? 200 : 400);
 });
 

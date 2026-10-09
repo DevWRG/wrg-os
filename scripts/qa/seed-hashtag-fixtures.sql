@@ -20,6 +20,38 @@ ON CONFLICT (email) DO UPDATE SET
   wa_number = EXCLUDED.wa_number, hod_key = EXCLUDED.hod_key,
   name = EXCLUDED.name, role = EXCLUDED.role, active = true;
 
+-- ── #OVERTIME (migrasi 190) ──
+-- Tiga pengaju + satu HoD "lain" untuk uji otorisasi. Divisi/HoD pengaju dibaca
+-- dari employee (via am_id), bukan dari master_user.
+--   Dewi (QA-AM-1)  finance, HoD qa-hod  → berhak (aturan dept finance), notifikasi terkirim
+--   Tono (QA-AM-3)  finance, HoD KOSONG  → berhak, tapi HoD tak ketemu → menunggu admin
+--   Nita (QA-AM-4)  ga,      HoD qa-hod  → TIDAK berhak (tak ada aturan utk dept ga)
+--   hod-lain        hod_key qa-lain      → HoD divisi lain, tak boleh memutus milik qa-hod
+INSERT INTO master_user (am_id, nama, panggilan, wa_number, role, cabang, aktif) VALUES
+  ('QA-AM-3', 'Tono Fixture', 'Tono', '628111000004', 'AM', 'KEDIRI', true),
+  ('QA-AM-4', 'Nita Fixture', 'Nita', '628111000005', 'AM', 'KEDIRI', true)
+ON CONFLICT (am_id) DO UPDATE SET
+  nama = EXCLUDED.nama, wa_number = EXCLUDED.wa_number, aktif = true;
+
+INSERT INTO employee (id, nama, dept, role, am_id, hod_key) VALUES
+  ('qa-dewi', 'Dewi Fixture', 'finance', 'Admin Finance', 'QA-AM-1', 'qa-hod'),
+  ('qa-tono', 'Tono Fixture', 'finance', 'Staf Finance',  'QA-AM-3', NULL),
+  ('qa-nita', 'Nita Fixture', 'ga',      'Staf GA',       'QA-AM-4', 'qa-hod')
+ON CONFLICT (id) DO UPDATE SET
+  dept = EXCLUDED.dept, role = EXCLUDED.role, am_id = EXCLUDED.am_id, hod_key = EXCLUDED.hod_key;
+
+INSERT INTO app_user (email, password_hash, name, role, wa_number, hod_key, active)
+VALUES ('hod-lain@qa.invalid', 'bukan-akun-login', 'Bagus Fixture', 'hod', '628111000006', 'qa-lain', true)
+ON CONFLICT (email) DO UPDATE SET
+  wa_number = EXCLUDED.wa_number, hod_key = EXCLUDED.hod_key,
+  name = EXCLUDED.name, role = EXCLUDED.role, active = true;
+
+-- Aturan pengaju: seluruh divisi finance. Ditandai catatan 'QA-fixture' supaya
+-- resetState di harness hanya menyentuh baris ini, bukan aturan asli.
+INSERT INTO overtime_rule (dept, catatan)
+SELECT 'finance', 'QA-fixture'
+WHERE NOT EXISTS (SELECT 1 FROM overtime_rule WHERE catatan = 'QA-fixture');
+
 -- ── Pengirim: teknisi (gerbang matchTeknisiByName = pushname ILIKE nama) ──
 INSERT INTO teknisi_capacity (nama, wa_number, aktif)
 SELECT 'Joko Fixture', '628111000003', true
