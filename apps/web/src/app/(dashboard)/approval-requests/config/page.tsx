@@ -9,20 +9,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SkeletonCardGrid } from "@/components/ui/loading";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { useHodOptions } from "@/components/watchpoint/hod-options";
 import { KATEGORI_OPTIONS, WILAYAH_OPTIONS } from "@/lib/approval-routing";
 
-// Selaras HODS di apps/api/src/hod-resolver.ts — daftar 8 HoD kanonik.
-// Duplikat sengaja (bukan endpoint baru cuma buat 8 baris statis ini).
-const HOD_OPTIONS = [
-  { key: "rocky", label: "Rocky — HoD Sales East" },
-  { key: "yogi", label: "Yogi — HoD Sales West" },
-  { key: "muhid", label: "Muhid — HoD Aftersales" },
-  { key: "ika", label: "Ika — HoD Finance & SC" },
-  { key: "mufid", label: "Mufid — HoD Business IVD" },
-  { key: "arman", label: "Arman — HoD Business Medical" },
-  { key: "fafa", label: "Fafa — HoD Accounting & Tax" },
-  { key: "husni", label: "Husni — HoD BD & GA" },
-];
 const NONE = "__none__";
 
 interface ChainRow {
@@ -42,6 +31,7 @@ function opsiPeta(routing: ChainRow["routing"]) {
 }
 
 export default function ApprovalConfigPage() {
+  const { hods: hodOptions } = useHodOptions();
   const [rows, setRows] = useState<ChainRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -190,7 +180,7 @@ export default function ApprovalConfigPage() {
                             </SelectTrigger>
                             <SelectContent>
                               <SelectItem value={NONE}>(belum dipilih)</SelectItem>
-                              {HOD_OPTIONS.map((h) => (
+                              {hodOptions.map((h) => (
                                 <SelectItem key={h.key} value={h.key}>
                                   {h.label}
                                 </SelectItem>
@@ -212,7 +202,7 @@ export default function ApprovalConfigPage() {
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value={NONE}>(belum dipilih)</SelectItem>
-                          {HOD_OPTIONS.map((h) => (
+                          {hodOptions.map((h) => (
                             <SelectItem key={h.key} value={h.key}>
                               {h.label}
                             </SelectItem>

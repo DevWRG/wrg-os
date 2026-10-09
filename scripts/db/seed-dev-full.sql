@@ -7,7 +7,7 @@
 --   - am_id REUSE demo1/demo2/demo3 (dari master_user, lihat seed-dev.sql).
 --   - hod_key REUSE key nyata dari HOD_CONFIG (apps/api/src/repo/watchpoint.ts):
 --     rocky (Sales East), yogi (Sales West), mufid (Business IVD), arman (Business
---     Medical & HD), pakMuhid (Aftersales), ika (Finance & SC), fafa (Accounting & Tax),
+--     Medical & HD), muhid (Aftersales), ika (Finance & SC), fafa (Accounting & Tax),
 --     husni (BD & GA).
 --
 --   docker compose exec -T postgres psql -U wrg -d wrg_os -f - < scripts/db/seed-dev-full.sql
@@ -678,7 +678,7 @@ INSERT INTO watchpoint_weekly (hod_key, iso_year, iso_week, metric_key, target, 
   ('yogi',     2026, 30, 'churn',   0,          1,        NULL,   'Snapshot minggu 30 (demo).', 'db', NOW() - INTERVAL '7 day'),
   ('mufid',    2026, 30, 'clia',    3,          2,        NULL,   'Snapshot minggu 30 (demo).', 'db', NOW() - INTERVAL '7 day'),
   ('arman',    2026, 30, 'okupansi',48,         45,        NULL,   'Snapshot minggu 30 (demo).', 'db', NOW() - INTERVAL '7 day'),
-  ('pakMuhid', 2026, 30, 'uptime',  95,         93,        NULL,   'Snapshot minggu 30 (demo).', 'db', NOW() - INTERVAL '7 day'),
+  ('muhid', 2026, 30, 'uptime',  95,         93,        NULL,   'Snapshot minggu 30 (demo).', 'db', NOW() - INTERVAL '7 day'),
   ('ika',      2026, 30, 'fillrate',95,         96,        NULL,   'Snapshot minggu 30 (demo).', 'db', NOW() - INTERVAL '7 day'),
   ('fafa',     2026, 30, 'close',   10,         9,         NULL,   'Snapshot minggu 30 (demo).', 'db', NOW() - INTERVAL '7 day'),
   ('husni',    2026, 30, 'dash',    NULL,       NULL,      'GREEN','Dashboard tetap live (demo manual).', 'manual', NOW() - INTERVAL '7 day')
@@ -687,7 +687,7 @@ ON CONFLICT (hod_key, iso_year, iso_week, metric_key) DO NOTHING;
 -- ════════════════════════════════════════════════════════════════════
 -- ── WatchPoint HoD (tab "Ringkasan HoD") — metric MANUAL utk 5 HoD non-sales ──
 -- Tanpa baris ini, buildMetric() di watchpoint.ts tak nemu row manual →
--- actual=null → status NA utk semua metric non-compute mufid/arman/pakMuhid/ika/fafa.
+-- actual=null → status NA utk semua metric non-compute mufid/arman/muhid/ika/fafa.
 -- (husni sudah ada 3 baris dari migrasi; noorder/ar90 dilewati krn punya `compute()` live.)
 -- ════════════════════════════════════════════════════════════════════
 
@@ -711,9 +711,9 @@ INSERT INTO watchpoint_metric (hod_key, metric_key, actual, status_override, not
   ('arman',    'coloc',     3,    NULL, 'Demo: 3 site co-location CLIA.'),
   ('arman',    'jv',        1,    NULL, 'Demo: 1 JV principal (Edan/Miki/Oneject).'),
   ('arman',    'xsell',     2,    NULL, 'Demo: 2 deal cross-sell.'),
-  ('pakMuhid', 'uptime',    97,   NULL, 'Demo: uptime rata-rata 97%/analyzer.'),
-  ('pakMuhid', 'rar',       210000000, NULL, 'Demo: RaR 210jt/cabang.'),
-  ('pakMuhid', 'install',   6,    NULL, 'Demo: lead time install 6 hari.'),
+  ('muhid', 'uptime',    97,   NULL, 'Demo: uptime rata-rata 97%/analyzer.'),
+  ('muhid', 'rar',       210000000, NULL, 'Demo: RaR 210jt/cabang.'),
+  ('muhid', 'install',   6,    NULL, 'Demo: lead time install 6 hari.'),
   ('ika',      'fillrate',  96,   NULL, 'Demo: fill rate 96%.'),
   ('ika',      'refi',      1,    NULL, 'Demo: 1 milestone refinancing.'),
   ('ika',      'runway',    NULL, 'GREEN', 'Demo: cash runway ~8 minggu, aman.'),
@@ -742,7 +742,7 @@ ON CONFLICT (id) DO NOTHING;
 
 -- ════════════════════════════════════════════════════════════════════
 -- ── NPK Direktur — lengkapi npk_score_semester + npk_aspect_score utk 6 HoD
--- yang belum ada baris (mufid/arman/pakMuhid/ika/fafa/husni) + period S2 2026
+-- yang belum ada baris (mufid/arman/muhid/ika/fafa/husni) + period S2 2026
 -- (default view apps/web/(dashboard)/npk/page.tsx utk bulan>=Jul). rocky/yogi
 -- sebelumnya cuma S1 → ditambah S2 juga biar toggle periode konsisten.
 --
@@ -758,7 +758,7 @@ WITH cfg(hod_key, period, npk_val) AS (
   VALUES
     ('mufid',    'S1', 78::numeric), ('mufid',    'S2', 78::numeric),
     ('arman',    'S1', 91::numeric), ('arman',    'S2', 91::numeric),
-    ('pakMuhid', 'S1', 68::numeric), ('pakMuhid', 'S2', 68::numeric),
+    ('muhid',    'S1', 68::numeric), ('muhid',    'S2', 68::numeric),
     ('ika',      'S1', 72::numeric), ('ika',      'S2', 72::numeric),
     ('fafa',     'S1', 85::numeric), ('fafa',     'S2', 85::numeric),
     ('husni',    'S1', 95::numeric), ('husni',    'S2', 95::numeric),
@@ -777,7 +777,7 @@ WITH cfg(hod_key, period, npk_val) AS (
   VALUES
     ('mufid',    'S1', 78::numeric), ('mufid',    'S2', 78::numeric),
     ('arman',    'S1', 91::numeric), ('arman',    'S2', 91::numeric),
-    ('pakMuhid', 'S1', 68::numeric), ('pakMuhid', 'S2', 68::numeric),
+    ('muhid',    'S1', 68::numeric), ('muhid',    'S2', 68::numeric),
     ('ika',      'S1', 72::numeric), ('ika',      'S2', 72::numeric),
     ('fafa',     'S1', 85::numeric), ('fafa',     'S2', 85::numeric),
     ('husni',    'S1', 95::numeric), ('husni',    'S2', 95::numeric),
