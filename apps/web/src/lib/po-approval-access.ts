@@ -1,7 +1,7 @@
 // F35 PO Approval Workflow — hak approve/reject per tier PO. hod_key kanonik
 // (mufid=HoD Business IVD, arman=HoD Business Medical, ika=HoD Finance & SC)
-// duplikat dari apps/api/src/hod-resolver.ts (HODS) — tak bisa diimpor lintas
-// app, pola duplikasi yang sama dgn HOD_DEFS (watchpoint.ts) vs hod-options.ts.
+// merujuk master_hod (migrasi 198). Pemetaan peran → key ini aturan bisnis dan
+// kembar dengan LINI_HOD_KEY di apps/api/src/repo/purchase-order.ts.
 // Direktur = role 'direktur' (pola sama executive-access.ts/pricebook-access.ts).
 // Admin/superuser boleh stand-in approve di SEMUA tier (anti-lockout, pola
 // sama perms.ts can()) — mencegah PO macet total kalau HOD terkait berhalangan.

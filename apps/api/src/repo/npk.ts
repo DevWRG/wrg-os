@@ -14,7 +14,7 @@
 
 import { db } from "../db.js";
 import { joinAmFromSalesman } from "./salesman-am.js";
-import { HODS } from "../hod-resolver.js";
+import { listHods } from "./master-hod.js";
 import { ageCutoff, elapsedFraction, ASPECT_ORDER, ASPECT_LABEL, DEFAULT_BOBOT, type AspectInput, type AspectKey, type NPKResult } from "../lib/npk-calc.js";
 import { calcNpkSk } from "../lib/npk-sk.js";
 import type { DataScope } from "./access-scope.js";
@@ -177,7 +177,7 @@ export async function computeNpk(opts: { year: number; period: Period; now?: Dat
   const { year, period } = opts;
   const now = opts.now ?? new Date();
   let computed = 0;
-  for (const hod of HODS) {
+  for (const hod of await listHods()) {
     const cabang = await hodCabangSet(sql, hod.key);
     const g = await gatherAspectInput(sql, hod.key, cabang, year, period, now);
     // Tabel berjenjang SK Pasal 3.2 (sejak v1.166.0). Sebelumnya calcNPK() linier
@@ -221,7 +221,7 @@ export interface NpkRow {
   computed_at: string | null;
 }
 
-// Nama HoD dari app_user (via hod_key) → fallback HODS[].name.
+// Nama HoD dari app_user (via hod_key) → fallback master_hod.nama.
 async function hodNameMap(sql: ReturnType<typeof db>): Promise<Record<string, { name: string; user_id: string }>> {
   const rows = await sql<{ hod_key: string; id: string; name: string | null; email: string }[]>`
     SELECT hod_key, id, name, email FROM app_user WHERE hod_key IS NOT NULL`;
@@ -256,9 +256,10 @@ export async function getNpkScores(scope: DataScope | undefined, year: number, p
     (aspByHod[a.hod_key] ??= {})[a.aspect] = { capped: a.capped == null ? null : Number(a.capped), available: a.available };
   }
 
-  const keys = vis === "all" ? HODS.map((h) => h.key) : vis;
+  const hods = await listHods();
+  const keys = vis === "all" ? hods.map((h) => h.key) : vis;
   const rows: NpkRow[] = keys.map((key) => {
-    const hod = HODS.find((h) => h.key === key);
+    const hod = hods.find((h) => h.key === key);
     const head = headByKey[key];
     const asp = aspByHod[key] ?? {};
     const aspects = Object.fromEntries(
@@ -293,8 +294,9 @@ export async function getNpkDetail(scope: DataScope | undefined, ref: string, ye
   // Resolusi ref → hod_key. ref bisa app_user.id (UUID, dari halaman self) ATAU hod_key
   // langsung (drilldown admin). Cek hod_key dulu; app_user hanya bila ref berbentuk UUID
   // (kolom id bertipe uuid → cast non-UUID akan error).
+  const hods = await listHods();
   let hodKey: string | null = null;
-  if (HODS.some((h) => h.key === ref)) {
+  if (hods.some((h) => h.key === ref)) {
     hodKey = ref;
   } else if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(ref)) {
     const [byUser] = await sql<{ hod_key: string | null }[]>`SELECT hod_key FROM app_user WHERE id = ${ref}`;
@@ -311,7 +313,7 @@ export async function getNpkDetail(scope: DataScope | undefined, ref: string, ye
   }
 
   const nameMap = await hodNameMap(sql);
-  const hod = HODS.find((h) => h.key === hodKey);
+  const hod = hods.find((h) => h.key === hodKey);
   const [head] = await sql<{ npk: number; predikat: string; computed_from: unknown; computed_at: string | null }[]>`
     SELECT npk::float8 AS npk, predikat, computed_from, computed_at::text AS computed_at
     FROM npk_score_semester WHERE hod_key = ${hodKey} AND year = ${year} AND period = ${period}`;

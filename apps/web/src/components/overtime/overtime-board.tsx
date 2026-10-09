@@ -10,19 +10,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { useHodOptions } from "@/components/watchpoint/hod-options";
 
-// Selaras HODS di apps/api/src/hod-resolver.ts (duplikat sengaja, pola sama
-// approval-requests/config/page.tsx).
-const HOD_OPTIONS = [
-  { key: "rocky", label: "Rocky — HoD Sales East" },
-  { key: "yogi", label: "Yogi — HoD Sales West" },
-  { key: "muhid", label: "Muhid — HoD Aftersales" },
-  { key: "ika", label: "Ika — HoD Finance & SC" },
-  { key: "mufid", label: "Mufid — HoD Business IVD" },
-  { key: "arman", label: "Arman — HoD Business Medical" },
-  { key: "fafa", label: "Fafa — HoD Accounting & Tax" },
-  { key: "husni", label: "Husni — HoD BD & GA" },
-];
 const ALL = "__all__";
 
 interface Row {
@@ -64,6 +53,7 @@ const statusBadge = (s: Row["status"]) =>
   );
 
 export function OvertimeBoard({ isAdmin }: { isAdmin: boolean }) {
+  const { hods: hodOptions } = useHodOptions();
   const [tab, setTab] = useState<"pengajuan" | "aturan">("pengajuan");
   const [rows, setRows] = useState<Row[]>([]);
   const [status, setStatus] = useState<string>(ALL);
@@ -299,7 +289,7 @@ export function OvertimeBoard({ isAdmin }: { isAdmin: boolean }) {
                                   <SelectValue placeholder="Tetapkan HoD" />
                                 </SelectTrigger>
                                 <SelectContent>
-                                  {HOD_OPTIONS.map((h) => (
+                                  {hodOptions.map((h) => (
                                     <SelectItem key={h.key} value={h.key}>
                                       {h.label}
                                     </SelectItem>

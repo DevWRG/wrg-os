@@ -81,7 +81,9 @@ test("tiap url menu muncul sekali saja di NAV (dan label grup tak kembar)", () =
 // Kunci fitur yang disemai MIGRASI (bukan dari menu) tapi sudah pensiun —
 // memang seharusnya dinonaktifkan Sync Fitur. Tambah ke sini hanya kalau
 // fiturnya benar-benar tak dipakai gate mana pun lagi.
-const FITUR_PENSIUN = new Set(["sales", "people", "employee-spine"]);
+// reports & showcase: menu dicabut pada audit data statis 9 Okt 2026 (placeholder &
+// katalog komponen berisi angka contoh); gate /showcase pakai role, bukan fitur.
+const FITUR_PENSIUN = new Set(["sales", "people", "employee-spine", "reports", "showcase"]);
 
 test("tiap kunci fitur yang disemai migrasi ikut katalog menu (atau tercatat pensiun)", () => {
   // Sync Fitur MENONAKTIFKAN setiap fitur yang tak ada di featureCatalog().

@@ -32,10 +32,10 @@ export type ApprovalDecisionStatus = "pending" | "approved" | "rejected";
 export type ApprovalStatus = "legacy_exempt" | "pending_tier1" | "pending_direktur" | "approved" | "rejected";
 export type PurchaseOrderLini = "IVD" | "Medical";
 
-// hod_key kanonik dari apps/api/src/hod-resolver.ts (HODS) — mufid=HoD Business
-// IVD, arman=HoD Business Medical, ika=HoD Finance & SC. Duplikasi konstanta
-// lintas file/app sudah pola existing (HOD_DEFS di watchpoint.ts vs
-// hod-options.ts di web) krn apps/api & apps/web tak saling impor.
+// Aturan bisnis "HoD mana menyetujui lini mana" — merujuk hod_key kanonik di
+// master_hod (migrasi 198): mufid=HoD Business IVD, arman=HoD Business Medical,
+// ika=HoD Finance & SC. Daftar HoD-nya sendiri TIDAK ditulis di kode; yang di
+// sini cuma pemetaan peran → key. Kembarannya di web: lib/po-approval-access.ts.
 export const LINI_HOD_KEY: Record<PurchaseOrderLini, string> = { IVD: "mufid", Medical: "arman" };
 export const FINANCE_HOD_KEY = "ika";
 

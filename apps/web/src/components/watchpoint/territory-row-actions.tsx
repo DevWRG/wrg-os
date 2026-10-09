@@ -11,13 +11,14 @@ import { useConfirm } from "@/components/ui/use-confirm";
 import {
   Sheet, SheetClose, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle, SheetTrigger,
 } from "@/components/ui/sheet";
-import { HOD_OPTIONS, hodLabel, selectClass } from "@/components/watchpoint/hod-options";
+import { hodLabel, selectClass, useHodOptions } from "@/components/watchpoint/hod-options";
 
 export function TerritoryRowActions({ id, hod_key, cabang }: { id: string; hod_key: string; cabang: string }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { hods } = useHodOptions();
   const [hod, setHod] = useState(hod_key);
   const [cab, setCab] = useState(cabang);
 
@@ -45,7 +46,7 @@ export function TerritoryRowActions({ id, hod_key, cabang }: { id: string; hod_k
   }
 
   function del() {
-    confirm({ title: "Hapus mapping?", description: `"${hodLabel(hod_key)} → ${cabang}" akan dihapus.`, destructive: true, confirmLabel: "Hapus" }, async () => {
+    confirm({ title: "Hapus mapping?", description: `"${hodLabel(hods, hod_key)} → ${cabang}" akan dihapus.`, destructive: true, confirmLabel: "Hapus" }, async () => {
       setBusy(true);
       try {
         const res = await fetch(`/api/watchpoint/territory/${id}`, { method: "DELETE" });
@@ -67,14 +68,16 @@ export function TerritoryRowActions({ id, hod_key, cabang }: { id: string; hod_k
         <SheetContent side="right" className="w-full sm:max-w-md">
           <SheetHeader>
             <SheetTitle>Edit mapping</SheetTitle>
-            <SheetDescription>{hodLabel(hod_key)} → {cabang}</SheetDescription>
+            <SheetDescription>{hodLabel(hods, hod_key)} → {cabang}</SheetDescription>
           </SheetHeader>
           <form onSubmit={save} className="flex min-h-0 flex-1 flex-col">
             <div className="flex flex-1 flex-col gap-4 overflow-y-auto px-4">
               <div className="grid gap-1.5">
                 <Label htmlFor={`te-hod-${id}`}>HoD *</Label>
                 <select id={`te-hod-${id}`} className={selectClass} value={hod} onChange={(e) => setHod(e.target.value)}>
-                  {HOD_OPTIONS.map((h) => <option key={h.key} value={h.key}>{h.label}</option>)}
+                  {/* key lama yang tak ada lagi di master tetap tampil, supaya tak diam-diam tertukar ke HoD pertama */}
+                  {!hods.some((h) => h.key === hod) && <option value={hod}>{hod}</option>}
+                  {hods.map((h) => <option key={h.key} value={h.key}>{h.label}</option>)}
                 </select>
               </div>
               <div className="grid gap-1.5">
