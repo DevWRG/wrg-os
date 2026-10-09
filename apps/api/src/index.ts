@@ -170,6 +170,7 @@ import {
   getApproval as getInsentifApproval, actApproval as actInsentifApproval,
   type AksiApproval,
 } from "./repo/insentif-approval.js";
+import { listHodOptions } from "./repo/master-hod.js";
 import { listDepartments, listEmployees, getEmployee, getRaciMatrix, getMeasurements, saveMeasurements, getOkrOverview, getKpiCatalog, createEmployee, updateEmployee, deleteEmployee, replaceEmployeeDetail, getVoiceAggregate, getHodResolution, getOrgReporting, populateHodKey, getHods, type MeasurementInput, type EmployeeWrite, type SpineDetail } from "./repo/employee-spine.js";
 import { upsertMembers, listMembers, upsertDigests, listDigest, digestStats, upsertPola, listPola, generateRekap, generateResume, type MonitorMemberInput, type DigestInput, type PolaInput } from "./repo/monitor.js";
 import { runNotifTua } from "./repo/notiftua.js";
@@ -2768,7 +2769,13 @@ app.get("/employee-spine/departments", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json({ departments: await listDepartments() });
 });
-app.get("/employee-spine/hods", async (c) => c.json({ hods: getHods() }));
+app.get("/employee-spine/hods", async (c) => c.json({ hods: await getHods() }));
+// Master HoD (migrasi 198) — daftar HoD kanonik untuk dropdown/label di web.
+// Data tak sensitif (nama + peran); gate login ada di BFF /api/hods.
+app.get("/hods", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json({ hods: await listHodOptions() });
+});
 app.get("/employee-spine/employees", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json({ employees: await listEmployees() });

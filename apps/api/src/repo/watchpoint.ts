@@ -17,6 +17,7 @@
 
 import { db, isDbEnabled } from "../db.js";
 import { joinAmFromSalesman } from "./salesman-am.js";
+import { listHods } from "./master-hod.js";
 import { arOver90Outstanding } from "./ar.js";
 import { currentWeek, weekRange, periodeLabel } from "./watchpoint-week.js";
 
@@ -402,10 +403,13 @@ interface MetricDef {
   compute?: (sql: Sql, cabang: string[], win: PeriodWindow) => Promise<number | null>;
 }
 
+// Katalog metric per hod_key. Identitas HoD (nama, peran, urutan, aktif) TIDAK
+// di sini — itu master_hod (migrasi 198). Yang tinggal di kode cuma rumus metric,
+// karena compute = logika, bukan data.
 interface HodDef {
   key: string;
-  name: string;
-  role: string;
+  /** Penanda peran kunci di papan (dulu ditulis menempel di teks role). */
+  keystone?: boolean;
   metrics: MetricDef[];
 }
 
@@ -421,10 +425,10 @@ const SALES_METRICS = (): MetricDef[] => [
 ];
 
 const HOD_DEFS: HodDef[] = [
-  { key: "rocky", name: "Rocky", role: "Sales East", metrics: SALES_METRICS() },
-  { key: "yogi", name: "Yogi", role: "Sales West", metrics: SALES_METRICS() },
+  { key: "rocky", metrics: SALES_METRICS() },
+  { key: "yogi", metrics: SALES_METRICS() },
   {
-    key: "mufid", name: "Mufid", role: "Business IVD", metrics: [
+    key: "mufid", metrics: [
       { key: "clia", label: "Site CLIA ≥800 tes/bln", target: 3, unit: "site", direction: "higher", trend: "stable", compute: (s) => siteCliaAktif(s) },
       { key: "fia", label: "FIA customer", target: 20, unit: "customer", direction: "higher", trend: "stable", compute: (s) => fiaCustomersYtd(s) },
       { key: "jv", label: "JV principal baru", target: 1, unit: "JV", direction: "higher", trend: "stable" },
@@ -433,7 +437,7 @@ const HOD_DEFS: HodDef[] = [
     ],
   },
   {
-    key: "arman", name: "Arman", role: "Business Medical & HD", metrics: [
+    key: "arman", metrics: [
       { key: "hd", label: "Site HD maju 1 milestone", target: 1, unit: "site", direction: "higher", trend: "stable" },
       { key: "okupansi", label: "Okupansi tindakan/mesin/bln", target: 48, unit: "tindakan", direction: "higher", trend: "stable" },
       { key: "coloc", label: "Co-location CLIA (Permenkes 3/2023)", target: 3, unit: "site", direction: "higher", trend: "stable" },
@@ -442,7 +446,7 @@ const HOD_DEFS: HodDef[] = [
     ],
   },
   {
-    key: "pakMuhid", name: "Pak Muhid", role: "Aftersales", metrics: [
+    key: "muhid", metrics: [
       { key: "uptime", label: "Uptime/analyzer", target: 95, unit: "%", direction: "higher", trend: "stable" },
       { key: "rar", label: "RaR/cabang", target: 202 * JT, unit: "Rp", direction: "higher", trend: "stable" },
       { key: "install", label: "Lead time install", target: 7, unit: "hari", direction: "lower", trend: "stable" },
@@ -450,7 +454,7 @@ const HOD_DEFS: HodDef[] = [
     ],
   },
   {
-    key: "ika", name: "Ika", role: "Finance & SC", metrics: [
+    key: "ika", metrics: [
       { key: "ar90", label: "AR overdue >90 hari", target: 500 * JT, unit: "Rp", direction: "lower", trend: "stable", compute: () => arOver90Outstanding() },
       { key: "fillrate", label: "Fill rate", target: 95, unit: "%", direction: "higher", trend: "stable", compute: (s, _c, w) => fillRateInWindow(s, w) },
       { key: "refi", label: "Milestone refinancing", target: 1, unit: "milestone", direction: "higher", trend: "stable" },
@@ -458,7 +462,7 @@ const HOD_DEFS: HodDef[] = [
     ],
   },
   {
-    key: "fafa", name: "Fafa", role: "Accounting & Tax", metrics: [
+    key: "fafa", metrics: [
       { key: "close", label: "Close cycle", target: 10, unit: "hari", direction: "lower", trend: "stable" },
       { key: "opex", label: "OPEX ratio", target: 35, unit: "%", direction: "lower", trend: "stable" },
       { key: "revstream", label: "Revenue-by-stream report", target: null, unit: "", direction: "higher", trend: "stable" },
@@ -466,7 +470,7 @@ const HOD_DEFS: HodDef[] = [
     ],
   },
   {
-    key: "husni", name: "Husni", role: "BD & GA ⭐ KEYSTONE", metrics: [
+    key: "husni", keystone: true, metrics: [
       { key: "spine", label: "Data Spine MVP LIVE", target: null, unit: "", direction: "higher", trend: "improving" },
       { key: "orch", label: "Orchestrating database", target: null, unit: "", direction: "higher", trend: "improving" },
       { key: "dash", label: "Dashboard LIVE", target: null, unit: "", direction: "higher", trend: "improving" },
@@ -599,11 +603,18 @@ export async function getWatchBoard(win: PeriodWindow = monthToDateWindow()): Pr
   const sql = isDbEnabled() ? db() : null;
   const manual = sql ? await loadManual(sql) : new Map<string, ManualRow>();
   const territory = sql ? await loadTerritory(sql) : new Map<string, string[]>();
+  // Urutan & identitas dari master_hod. HoD yang aktif di master tapi belum
+  // punya katalog metric di HOD_DEFS sengaja tak tampil — papan tanpa satu pun
+  // metric tak memberi informasi apa-apa; tambahkan katalognya dulu.
+  const registry = sql ? await listHods() : [];
   const hods: HodWatch[] = [];
-  for (const h of HOD_DEFS) {
+  for (const reg of registry) {
+    const h = HOD_DEFS.find((d) => d.key === reg.key);
+    if (!h) continue;
     const cabang = territory.get(h.key) ?? [];
     const metrics = await Promise.all(h.metrics.map((m) => buildMetric(sql, h.key, m, manual, cabang, win)));
-    hods.push({ key: h.key, name: h.name, role: h.role, status: worst(metrics), metrics });
+    const role = h.keystone ? `${reg.peran} ⭐ KEYSTONE` : reg.peran;
+    hods.push({ key: h.key, name: reg.panggilan, role, status: worst(metrics), metrics });
   }
   const cur = currentWeek();
   const { from, to } = weekRange(cur.isoYear, cur.isoWeek);
