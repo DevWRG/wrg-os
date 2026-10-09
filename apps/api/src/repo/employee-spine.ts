@@ -3,7 +3,8 @@
 // Voice) + bobot BSC per-dept utk kalkulator skor (F119, dihitung di klien).
 
 import { db } from "../db.js";
-import { resolveHods, HODS } from "../hod-resolver.js";
+import { resolveHods } from "../hod-resolver.js";
+import { listHods } from "./master-hod.js";
 
 export type Perspective = "fin" | "cust" | "proc" | "learn";
 
@@ -157,14 +158,14 @@ export interface EmployeeWrite {
   hod_key?: string | null;
 }
 
-// Validasi hod_key = salah satu key HoD kanonik, atau null.
-function normHodKey(v: string | null | undefined): string | null {
-  return v && HODS.some((h) => h.key === v) ? v : null;
+// Validasi hod_key = salah satu key HoD kanonik (master_hod), atau null.
+async function normHodKey(v: string | null | undefined): Promise<string | null> {
+  return v && (await listHods()).some((h) => h.key === v) ? v : null;
 }
 
 // Daftar HoD kanonik (buat dropdown assign hod_key di UI).
-export function getHods() {
-  return HODS.map((h) => ({ key: h.key, name: h.name, role: h.role }));
+export async function getHods() {
+  return (await listHods()).map((h) => ({ key: h.key, name: h.name, role: h.role }));
 }
 
 function slugify(s: string): string {
@@ -180,7 +181,7 @@ export async function createEmployee(data: EmployeeWrite): Promise<{ id: string 
     INSERT INTO employee (id, nama, dept, role, atasan_raw, lokasi, masa, panggilan, cabang, whatsapp, roster_pending, okr_objective, quote, hod_key)
     VALUES (${id}, ${data.nama}, ${data.dept ?? null}, ${data.role ?? null}, ${data.atasan_raw ?? null}, ${data.lokasi ?? null},
             ${data.masa ?? null}, ${data.panggilan ?? null}, ${data.cabang ?? null}, ${data.whatsapp ?? null},
-            ${data.roster_pending ?? false}, ${data.okr_objective ?? null}, ${data.quote ?? null}, ${normHodKey(data.hod_key)})`;
+            ${data.roster_pending ?? false}, ${data.okr_objective ?? null}, ${data.quote ?? null}, ${await normHodKey(data.hod_key)})`;
   return { id };
 }
 
@@ -190,7 +191,7 @@ export async function updateEmployee(id: string, data: EmployeeWrite): Promise<{
       nama = ${data.nama}, dept = ${data.dept ?? null}, role = ${data.role ?? null}, atasan_raw = ${data.atasan_raw ?? null},
       lokasi = ${data.lokasi ?? null}, masa = ${data.masa ?? null}, panggilan = ${data.panggilan ?? null},
       cabang = ${data.cabang ?? null}, whatsapp = ${data.whatsapp ?? null}, roster_pending = ${data.roster_pending ?? false},
-      okr_objective = ${data.okr_objective ?? null}, quote = ${data.quote ?? null}, hod_key = ${normHodKey(data.hod_key)}
+      okr_objective = ${data.okr_objective ?? null}, quote = ${data.quote ?? null}, hod_key = ${await normHodKey(data.hod_key)}
     WHERE id = ${id}`;
   return { updated: r.count > 0 };
 }
@@ -284,10 +285,11 @@ export async function getHodResolution() {
     SELECT e.id, e.nama, e.atasan_raw, e.hod_key, d.label AS dept_label
     FROM employee e LEFT JOIN department d ON d.key = e.dept
     ORDER BY d.label NULLS LAST, e.nama`;
-  const nameByKey = Object.fromEntries(HODS.map((h) => [h.key, h.name]));
+  const hods = await listHods();
+  const nameByKey = Object.fromEntries(hods.map((h) => [h.key, h.name]));
   const rows = emps.map((e) => {
     const raw = e.atasan_raw ? String(e.atasan_raw) : "";
-    const keys = raw ? resolveHods(raw) : [];
+    const keys = raw ? resolveHods(raw, hods) : [];
     const status = keys.length === 1 ? "resolved" : keys.length > 1 ? "ambiguous" : "none";
     return {
       id: String(e.id), nama: String(e.nama), dept_label: e.dept_label ? String(e.dept_label) : null,
@@ -301,7 +303,7 @@ export async function getHodResolution() {
     ambiguous: rows.filter((r) => r.status === "ambiguous").length,
     none: rows.filter((r) => r.status === "none").length,
   };
-  return { rows, summary, hods: HODS.map((h) => ({ key: h.key, name: h.name, role: h.role })) };
+  return { rows, summary, hods: hods.map((h) => ({ key: h.key, name: h.name, role: h.role })) };
 }
 
 // F129 ORG_OPTIMAL — struktur reporting-line: karyawan dikelompokkan di bawah HoD
@@ -314,19 +316,20 @@ export async function getOrgReporting() {
     SELECT e.id, e.nama, e.role, e.atasan_raw, d.label AS dept_label
     FROM employee e LEFT JOIN department d ON d.key = e.dept
     ORDER BY d.label NULLS LAST, e.nama`;
-  const nameByKey = Object.fromEntries(HODS.map((h) => [h.key, h.name]));
-  const byHod: Record<string, OrgReport[]> = Object.fromEntries(HODS.map((h) => [h.key, [] as OrgReport[]]));
+  const registry = await listHods();
+  const nameByKey = Object.fromEntries(registry.map((h) => [h.key, h.name]));
+  const byHod: Record<string, OrgReport[]> = Object.fromEntries(registry.map((h) => [h.key, [] as OrgReport[]]));
   const ambiguous: (OrgReport & { hod_names: string[] })[] = [];
   const unmapped: (OrgReport & { atasan_raw: string })[] = [];
   for (const e of emps) {
     const base: OrgReport = { id: String(e.id), nama: String(e.nama), role: e.role ? String(e.role) : null, dept_label: e.dept_label ? String(e.dept_label) : null };
     const raw = e.atasan_raw ? String(e.atasan_raw) : "";
-    const keys = raw ? resolveHods(raw) : [];
+    const keys = raw ? resolveHods(raw, registry) : [];
     if (keys.length === 1) byHod[keys[0]].push(base);
     else if (keys.length > 1) ambiguous.push({ ...base, hod_names: keys.map((k) => nameByKey[k] ?? k) });
     else unmapped.push({ ...base, atasan_raw: raw });
   }
-  const hods = HODS.map((h) => ({ key: h.key, name: h.name, role: h.role, reports: byHod[h.key] }));
+  const hods = registry.map((h) => ({ key: h.key, name: h.name, role: h.role, reports: byHod[h.key] }));
   const mapped = hods.reduce((s, h) => s + h.reports.length, 0);
   return { hods, ambiguous, unmapped, counts: { total: emps.length, mapped, ambiguous: ambiguous.length, unmapped: unmapped.length } };
 }
@@ -475,10 +478,14 @@ export async function getKpiCatalog(period: string) {
 export async function populateHodKey(): Promise<{ total: number; set: number; cleared: number }> {
   const sql = db();
   const emps = await sql`SELECT id, atasan_raw FROM employee`;
+  const hods = await listHods();
+  // Daftar kosong (tabel belum termigrasi / semua nonaktif) akan meng-NULL-kan
+  // SEMUA hod_key — lebih baik gagal keras daripada menghapus diam-diam.
+  if (hods.length === 0) throw new Error("master_hod kosong — populate hod_key dibatalkan");
   let set = 0, cleared = 0;
   for (const e of emps) {
     const raw = e.atasan_raw ? String(e.atasan_raw) : "";
-    const keys = raw ? resolveHods(raw) : [];
+    const keys = raw ? resolveHods(raw, hods) : [];
     const val = keys.length === 1 ? keys[0] : null;
     await sql`UPDATE employee SET hod_key = ${val} WHERE id = ${String(e.id)}`;
     if (val) set++; else cleared++;

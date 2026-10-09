@@ -10,14 +10,17 @@ import { Label } from "@/components/ui/label";
 import {
   Sheet, SheetClose, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle, SheetTrigger,
 } from "@/components/ui/sheet";
-import { HOD_OPTIONS, selectClass } from "@/components/watchpoint/hod-options";
+import { selectClass, useHodOptions } from "@/components/watchpoint/hod-options";
 
 export function AddTerritorySheet() {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [hodKey, setHodKey] = useState(HOD_OPTIONS[0].key);
+  const { hods, loading: hodsLoading } = useHodOptions();
+  const [hodPilihan, setHodKey] = useState("");
+  // Default = HoD pertama begitu daftar termuat (urutan master_hod).
+  const hodKey = hodPilihan || hods[0]?.key || "";
   const [cabang, setCabang] = useState("");
 
   async function submit(e: React.FormEvent) {
@@ -56,8 +59,9 @@ export function AddTerritorySheet() {
           <div className="flex flex-1 flex-col gap-4 overflow-y-auto px-4">
             <div className="grid gap-1.5">
               <Label htmlFor="t-hod">HoD *</Label>
-              <select id="t-hod" className={selectClass} value={hodKey} onChange={(e) => setHodKey(e.target.value)}>
-                {HOD_OPTIONS.map((h) => <option key={h.key} value={h.key}>{h.label}</option>)}
+              <select id="t-hod" required className={selectClass} value={hodKey} onChange={(e) => setHodKey(e.target.value)}>
+                {hods.length === 0 && <option value="">{hodsLoading ? "Memuat daftar HoD…" : "Daftar HoD gagal dimuat"}</option>}
+                {hods.map((h) => <option key={h.key} value={h.key}>{h.label}</option>)}
               </select>
             </div>
             <div className="grid gap-1.5">
@@ -67,7 +71,7 @@ export function AddTerritorySheet() {
             {error && <p className="text-destructive text-sm">{error}</p>}
           </div>
           <SheetFooter>
-            <Button type="submit" disabled={busy}>{busy ? "Menyimpan…" : "Simpan"}</Button>
+            <Button type="submit" disabled={busy || !hodKey}>{busy ? "Menyimpan…" : "Simpan"}</Button>
             <SheetClose render={<Button type="button" variant="outline" />}>Batal</SheetClose>
           </SheetFooter>
         </form>
