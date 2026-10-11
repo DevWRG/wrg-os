@@ -302,6 +302,9 @@ export async function resolveTicket(id: string, note?: string): Promise<{ ok: bo
 export async function isKnownTeknisiSender(senderName: string | null): Promise<boolean> {
   if (!senderName?.trim()) return false;
   const sql = db();
-  const rows = await sql`SELECT 1 FROM teknisi_capacity WHERE aktif = TRUE AND nama ILIKE ${`%${senderName.trim()}%`} LIMIT 1`;
+  // Nama PERSIS (dinormalisasi), bukan potongan: dulu customer bernama "Gilang"
+  // dianggap obrolan "Teknisi Gilang" dan komplainnya dibuang (uji dev 11 Okt).
+  const nama = senderName.trim().replace(/\s+/g, " ").toLowerCase();
+  const rows = await sql`SELECT 1 FROM teknisi_capacity WHERE aktif = TRUE AND lower(regexp_replace(btrim(nama), '[[:space:]]+', ' ', 'g')) = ${nama} LIMIT 1`;
   return rows.length > 0;
 }

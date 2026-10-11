@@ -1,9 +1,12 @@
 import { gatewayFetch } from "@/lib/gateway";
+import { requireFeature } from "@/lib/feature-guard";
 
 export const dynamic = "force-dynamic";
 
 // Gateway → apps/api POST /service-tickets/:id/resolve (F26, tandai selesai).
 export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
+  const guard = await requireFeature("/service-tickets", "edit");
+  if (!guard.ok) return guard.res;
   const { id } = await ctx.params;
   let body: unknown = {};
   try {

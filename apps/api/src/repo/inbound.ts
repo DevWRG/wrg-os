@@ -28,7 +28,7 @@ import {
   markBukti,
   pelakuShippingWa,
 } from "./shipment-tracking.js";
-import { matchTeknisiByName, createTeknisiReport, ensureBypassTeknisi } from "./readinessboard.js";
+import { matchTeknisi, createTeknisiReport, ensureBypassTeknisi } from "./readinessboard.js";
 import { isWaTestBypassGroup } from "./wa-test-bypass.js";
 import { createTicket as createGaTicket, listCategories as listGaTicketCategories } from "./ga-helpdesk.js";
 import { listStockBranch } from "./stock-branch.js";
@@ -58,7 +58,7 @@ const isAmRole = (role?: string | null) => AM_ROLES.has((role ?? "").trim());
 // grup YANG SAMA dgn #plan/#report Teknisi (bukan grup baru) — makanya TIDAK
 // ada env-gate baru, cukup nebeng groupAllowed()/WA_INBOUND_GROUPS existing.
 // Identitas pengirim di-match ke teknisi_capacity (F8, self-contained) via
-// matchTeknisiByName, BUKAN resolveSender/master_user.
+// matchTeknisi (nama persis / nomor via DM), BUKAN resolveSender/master_user.
 
 // SUMBER TUNGGAL daftar hashtag inbound. Dipakai dua kali: (a) menurunkan tipe
 // InboundKind, (b) menyusun regex penyaring di processUnprocessed. Dulu keduanya
@@ -1140,11 +1140,11 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
 
   // F8 — laporan lapangan Teknisi (#install/#servis/#training/#kalibrasi).
   // Grup SAMA dgn #plan/#report Teknisi (bukan grup baru) — cukup nebeng
-  // groupAllowed()/WA_INBOUND_GROUPS existing. Identitas via matchTeknisiByName
+  // groupAllowed()/WA_INBOUND_GROUPS existing. Identitas via matchTeknisi
   // (teknisi_capacity F8, self-contained), BUKAN resolveSender/master_user.
   if (kind === "install" || kind === "servis" || kind === "training" || kind === "kalibrasi") {
     const teknisi =
-      (await matchTeknisiByName(row.sender_name)) ??
+      (await matchTeknisi({ pushname: row.sender_name, senderJid: row.sender_jid, groupJid: row.group_jid })) ??
       (isWaTestBypassGroup(row.group_jid) && row.sender_name?.trim()
         ? await ensureBypassTeknisi(row.sender_name.trim(), normalizeWa(String(row.sender_jid ?? "").split("@")[0].split(":")[0]))
         : null);
