@@ -1,6 +1,6 @@
 import { gatewayFetch, relay } from "@/lib/gateway";
 import { safeSubpath, badSubpath } from "@/lib/safe-subpath";
-import { sessionUser } from "@/lib/admin-guard";
+import { requireFeature } from "@/lib/feature-guard";
 
 export const dynamic = "force-dynamic";
 
@@ -9,10 +9,12 @@ export const dynamic = "force-dynamic";
 // GET (list/detail), PATCH (kategori), POST (create/decide/bayar), DELETE.
 // Tak ada gate role khusus (approval generik, pola sama F20).
 export async function GET(req: Request, ctx: { params: Promise<{ path?: string[] }> }) {
+  const guard = await requireFeature("/doc-klaim", "view");
+  if (!guard.ok) return guard.res;
+  const me = guard.me;
   const sub = safeSubpath((await ctx.params).path);
   if (sub === null) return badSubpath();
   const qs = new URL(req.url).searchParams.toString();
-  const me = await sessionUser();
   try {
     return relay(
       await gatewayFetch(`/doc-klaim${sub ? `/${sub}` : ""}${qs ? `?${qs}` : ""}`, me ? { headers: { "x-user-id": me.id } } : undefined),
@@ -23,8 +25,9 @@ export async function GET(req: Request, ctx: { params: Promise<{ path?: string[]
 }
 
 export async function PATCH(req: Request, ctx: { params: Promise<{ path?: string[] }> }) {
-  const me = await sessionUser();
-  if (!me) return Response.json({ error: "unauthenticated" }, { status: 401 });
+  const guard = await requireFeature("/doc-klaim", "edit");
+  if (!guard.ok) return guard.res;
+  const me = guard.me;
   const sub = safeSubpath((await ctx.params).path);
   if (sub === null) return badSubpath();
   const body = await req.text();
@@ -42,8 +45,9 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ path?: string
 }
 
 export async function POST(req: Request, ctx: { params: Promise<{ path?: string[] }> }) {
-  const me = await sessionUser();
-  if (!me) return Response.json({ error: "unauthenticated" }, { status: 401 });
+  const guard = await requireFeature("/doc-klaim", "edit");
+  if (!guard.ok) return guard.res;
+  const me = guard.me;
   const sub = safeSubpath((await ctx.params).path);
   if (sub === null) return badSubpath();
   const body = await req.text();
@@ -61,8 +65,8 @@ export async function POST(req: Request, ctx: { params: Promise<{ path?: string[
 }
 
 export async function DELETE(_req: Request, ctx: { params: Promise<{ path?: string[] }> }) {
-  const me = await sessionUser();
-  if (!me) return Response.json({ error: "unauthenticated" }, { status: 401 });
+  const guard = await requireFeature("/doc-klaim", "delete");
+  if (!guard.ok) return guard.res;
   const sub = safeSubpath((await ctx.params).path);
   if (sub === null) return badSubpath();
   try {

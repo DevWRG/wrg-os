@@ -1,6 +1,6 @@
 import { gatewayFetch, relay } from "@/lib/gateway";
 import { safeSubpath, badSubpath } from "@/lib/safe-subpath";
-import { sessionUser } from "@/lib/admin-guard";
+import { requireFeature } from "@/lib/feature-guard";
 
 export const dynamic = "force-dynamic";
 
@@ -8,10 +8,12 @@ export const dynamic = "force-dynamic";
 // sama ga-helpdesk) — GET boleh anonim, mutasi (POST) butuh sesi login,
 // x-user-id diteruskan buat created_by/changed_by_user_id.
 export async function GET(req: Request, ctx: { params: Promise<{ path?: string[] }> }) {
+  const guard = await requireFeature("/lpse-tender", "view");
+  if (!guard.ok) return guard.res;
+  const me = guard.me;
   const sub = safeSubpath((await ctx.params).path);
   if (sub === null) return badSubpath();
   const qs = new URL(req.url).searchParams.toString();
-  const me = await sessionUser();
   try {
     return relay(
       await gatewayFetch(`/lpse-tender${sub ? `/${sub}` : ""}${qs ? `?${qs}` : ""}`, me ? { headers: { "x-user-id": me.id } } : undefined),
@@ -22,8 +24,9 @@ export async function GET(req: Request, ctx: { params: Promise<{ path?: string[]
 }
 
 export async function POST(req: Request, ctx: { params: Promise<{ path?: string[] }> }) {
-  const me = await sessionUser();
-  if (!me) return Response.json({ error: "unauthenticated" }, { status: 401 });
+  const guard = await requireFeature("/lpse-tender", "create");
+  if (!guard.ok) return guard.res;
+  const me = guard.me;
   const sub = safeSubpath((await ctx.params).path);
   if (sub === null) return badSubpath();
   const body = await req.text();
@@ -41,8 +44,9 @@ export async function POST(req: Request, ctx: { params: Promise<{ path?: string[
 }
 
 export async function PATCH(req: Request, ctx: { params: Promise<{ path?: string[] }> }) {
-  const me = await sessionUser();
-  if (!me) return Response.json({ error: "unauthenticated" }, { status: 401 });
+  const guard = await requireFeature("/lpse-tender", "edit");
+  if (!guard.ok) return guard.res;
+  const me = guard.me;
   const sub = safeSubpath((await ctx.params).path);
   if (sub === null) return badSubpath();
   const body = await req.text();
