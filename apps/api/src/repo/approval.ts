@@ -618,6 +618,11 @@ export interface ResolvedApprover {
 // terdaftar (lihat TESTCASE-WA-HASHTAG-RESEARCH.md bagian F).
 export async function resolveApprover(senderJid: string | null | undefined): Promise<ResolvedApprover | null> {
   if (!senderJid) return null;
+  // Pesan grup: sender_jid = group_jid (lihat inbound) — itu identitas GRUP,
+  // bukan orang. Tanpa penolakan ini, akun yang wa_number-nya kebetulan berisi
+  // id grup membuat SIAPA PUN di grup itu terbaca sebagai approver
+  // (ketemu saat uji #OVERTIME di dev, 2026-10-11).
+  if (String(senderJid).endsWith("@g.us")) return null;
   const num = String(senderJid).split("@")[0].split(":")[0];
   const norm = normalizeWa(num);
   if (!norm) return null;

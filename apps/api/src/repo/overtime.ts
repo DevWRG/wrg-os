@@ -249,7 +249,16 @@ export async function getOvertime(id: number): Promise<OvertimeRow | null> {
   return r ? mapRow(r) : null;
 }
 
-export async function listOvertime(filter: { status?: string; from?: string; to?: string; hod_key?: string; limit?: number }): Promise<OvertimeRow[]> {
+// total = jumlah baris yang cocok filter (bukan cuma yang dimuat) — supaya UI
+// bisa bilang "menampilkan X dari Y" alih-alih memotong rekap HR diam-diam.
+export async function listOvertime(filter: {
+  status?: string;
+  from?: string;
+  to?: string;
+  hod_key?: string;
+  limit?: number;
+  offset?: number;
+}): Promise<{ rows: OvertimeRow[]; total: number; limit: number; offset: number }> {
   const sql = db();
   const conds: string[] = [];
   const params: unknown[] = [];
@@ -262,12 +271,14 @@ export async function listOvertime(filter: { status?: string; from?: string; to?
   if (filter.to && /^\d{4}-\d{2}-\d{2}$/.test(filter.to)) add("tanggal_lembur <= ?::date", filter.to);
   if (filter.hod_key) add("hod_key = ?", filter.hod_key);
   const limit = Math.min(Math.max(Number(filter.limit) || 200, 1), 1000);
+  const offset = Math.max(Math.floor(Number(filter.offset) || 0), 0);
   const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
   const rows = await sql.unsafe(
-    `SELECT ${SELECT_COLS} FROM overtime_request ${where} ORDER BY created_at DESC LIMIT ${limit}`,
+    `SELECT ${SELECT_COLS} FROM overtime_request ${where} ORDER BY created_at DESC LIMIT ${limit} OFFSET ${offset}`,
     params as never[],
   );
-  return rows.map((r) => mapRow(r));
+  const [{ n }] = await sql.unsafe(`SELECT count(*)::int AS n FROM overtime_request ${where}`, params as never[]);
+  return { rows: rows.map((r) => mapRow(r)), total: Number(n), limit, offset };
 }
 
 // Kirim / kirim-ulang notifikasi ke HoD. Hasilnya dicatat ke notify_status
@@ -313,6 +324,10 @@ export async function assignHod(id: number, hodKey: string): Promise<{ ok: boole
   const sql = db();
   const key = hodKey.trim();
   if (!key) return { ok: false, error: "hod_key kosong" };
+  // Daftar HoD kanonik = master_hod (migrasi 198); key salah ketik → pengajuan
+  // menggantung tanpa pernah bisa diputus HoD mana pun.
+  const [hod] = await sql`SELECT 1 FROM master_hod WHERE hod_key = ${key} AND aktif`;
+  if (!hod) return { ok: false, error: `hod_key "${key}" tidak ada di daftar HoD aktif` };
   const rows = await sql`UPDATE overtime_request SET hod_key = ${key} WHERE id = ${id} AND status = 'pending' RETURNING id`;
   if (!rows.length) return { ok: false, error: "pengajuan tidak ditemukan atau sudah diputus" };
   return { ok: true, notify: await notifyApprover(id) };

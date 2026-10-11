@@ -29,7 +29,15 @@ terjangkau direksi/owner), **#OVERTIME jalan**.
 - Otorisasi memutus ada di satu fungsi (`decideOvertime`): HoD dengan `hod_key` sama, atau
   admin/direktur. Jalur WA dan dashboard tak bisa menyimpang.
 - Menu `/overtime` = fitur RBAC `overtime`, **default tertutup** — admin perlu Sync Fitur lalu
-  mencentangnya untuk grup HR. Tab Aturan & "Tetapkan HoD" khusus admin/superuser.
+  mencentangnya untuk grup HR **dan grup HoD**. Tab Aturan & "Tetapkan HoD" khusus admin/superuser.
+- **Scope baris di server** (`overtimeScope`, BFF memaksa `hod_key` dari sesi): HoD melihat & memutus
+  pengajuan divisinya saja; staf HR, admin, direktur, dan HoD yang diberi `overtime` + **edit**
+  melihat semua. Fallback saat fitur belum diatur di matriks: hanya HoD.
+- Rekap memuat maks 1000 baris per tampilan; API mengembalikan `total_rows`, dan UI memasang banner
+  "menampilkan X dari Y" bila terpotong (CSV ikut baris yang tampil → persempit tanggal).
+- "Tetapkan HoD" hanya menerima `hod_key` yang aktif di `master_hod`.
+- `#APPROVE`/`#REJECT` dari pesan **grup** ditolak di `resolveApprover` (sender_jid grup bukan orang) —
+  berlaku juga untuk approval F11.
 
 ## Batas yang diketahui
 

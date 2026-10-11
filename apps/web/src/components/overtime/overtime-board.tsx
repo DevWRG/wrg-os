@@ -13,6 +13,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { useHodOptions } from "@/components/watchpoint/hod-options";
 
 const ALL = "__all__";
+// Batas baris per muat. Lebih dari ini → banner "menampilkan X dari Y" (bukan
+// terpotong diam-diam; rekap & CSV HR ikut terbatas, jadi persempit tanggal).
+const LIMIT = 1000;
 
 interface Row {
   id: number;
@@ -52,10 +55,11 @@ const statusBadge = (s: Row["status"]) =>
     <Badge variant="secondary">Menunggu</Badge>
   );
 
-export function OvertimeBoard({ isAdmin }: { isAdmin: boolean }) {
+export function OvertimeBoard({ isAdmin, hodOnly = false }: { isAdmin: boolean; hodOnly?: boolean }) {
   const { hods: hodOptions } = useHodOptions();
   const [tab, setTab] = useState<"pengajuan" | "aturan">("pengajuan");
   const [rows, setRows] = useState<Row[]>([]);
+  const [total, setTotal] = useState(0);
   const [status, setStatus] = useState<string>(ALL);
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
@@ -74,11 +78,13 @@ export function OvertimeBoard({ isAdmin }: { isAdmin: boolean }) {
     if (status !== ALL) qs.set("status", status);
     if (from) qs.set("from", from);
     if (to) qs.set("to", to);
+    qs.set("limit", String(LIMIT));
     try {
       const res = await fetch(`/api/overtime?${qs}`, { cache: "no-store" });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "gagal memuat");
       setRows(data.rows ?? []);
+      setTotal(Number(data.total_rows ?? data.rows?.length ?? 0));
       setError(null);
     } catch (e) {
       setError(String(e));
@@ -223,6 +229,15 @@ export function OvertimeBoard({ isAdmin }: { isAdmin: boolean }) {
             </div>
           </CardHeader>
           <CardContent>
+            {hodOnly && (
+              <p className="text-muted-foreground mb-2 text-xs">Menampilkan pengajuan dari divisi yang kamu pimpin.</p>
+            )}
+            {total > rows.length && (
+              <p className="mb-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100">
+                Menampilkan {rows.length.toLocaleString("id-ID")} dari {total.toLocaleString("id-ID")} pengajuan (terbaru dulu).
+                Persempit rentang tanggal supaya rekap &amp; CSV lengkap.
+              </p>
+            )}
             <Table>
               <TableHeader>
                 <TableRow>
