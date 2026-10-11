@@ -195,6 +195,10 @@ import { runExtractCompetitor } from "./repo/extractcompetitor.js";
 import { runWeekendBriefing } from "./repo/weekendbriefing.js";
 import { listSeninBriefs, runSeninBrief } from "./repo/senin-brief.js";
 import { getSoPacing, runSoPacingAlert } from "./repo/so-pacing.js";
+import {
+  akunKso, buatKontrak, getKontrak, KontrakError, kelengkapanKontrak, listKontrak,
+  perpanjangKontrak, ubahKontrak, ubahStatusKontrak,
+} from "./repo/kso-kontrak.js";
 import { runPolaKomunikasi } from "./repo/polakomunikasi.js";
 import { listWaGroups, setWaGroupCategory, setWaGroupPrefixCategory, isWaGroupCategory } from "./repo/wagroup.js";
 import { runRefreshMembers } from "./repo/listmembers.js";
@@ -1748,6 +1752,61 @@ app.get("/briefings", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const briefings = await listBriefings();
   return c.json({ count: briefings.length, briefings });
+});
+
+// F47 — Kontrak KSO & Renewal (fase 1). Gerbang izin (kso-kontrak view/edit)
+// ada di BFF apps/web/src/app/api/kso-kontrak/**; `oleh` diisi BFF dari sesi,
+// bukan dari input browser. Prefix /kso-kontrak (bukan /kso/…) supaya tak
+// tertelan BFF catch-all /api/kso yang memakai izin kso-simulator.
+const kontrakErr = (c: Context, e: unknown) => {
+  if (e instanceof KontrakError) return c.json({ error: e.message }, e.status);
+  throw e;
+};
+const bodyJson = async (c: Context): Promise<Record<string, unknown>> => {
+  try {
+    return (await c.req.json()) as Record<string, unknown>;
+  } catch {
+    return {};
+  }
+};
+const olehDari = (b: Record<string, unknown>) => (typeof b.oleh === "string" && b.oleh.trim() ? b.oleh.trim() : null);
+app.get("/kso-kontrak", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await listKontrak());
+});
+app.get("/kso-kontrak/kelengkapan", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await kelengkapanKontrak());
+});
+app.get("/kso-kontrak/akun", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json({ akun: await akunKso() });
+});
+app.get("/kso-kontrak/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try { return c.json(await getKontrak(c.req.param("id"))); } catch (e) { return kontrakErr(c, e); }
+});
+app.post("/kso-kontrak", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const b = await bodyJson(c);
+  try { return c.json(await buatKontrak(b, olehDari(b)), 201); } catch (e) { return kontrakErr(c, e); }
+});
+app.patch("/kso-kontrak/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const b = await bodyJson(c);
+  try { return c.json(await ubahKontrak(c.req.param("id"), b, olehDari(b))); } catch (e) { return kontrakErr(c, e); }
+});
+app.post("/kso-kontrak/:id/status", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const b = await bodyJson(c);
+  try {
+    return c.json(await ubahStatusKontrak(c.req.param("id"), String(b.status ?? ""), typeof b.catatan === "string" ? b.catatan : null, olehDari(b)));
+  } catch (e) { return kontrakErr(c, e); }
+});
+app.post("/kso-kontrak/:id/perpanjang", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const b = await bodyJson(c);
+  try { return c.json(await perpanjangKontrak(c.req.param("id"), b, olehDari(b)), 201); } catch (e) { return kontrakErr(c, e); }
 });
 
 // F21 — pacing sales bulan berjalan per region (faktur netto + SO terbuka vs

@@ -8,7 +8,7 @@ import {
   Factory, Workflow, Receipt, BarChart3, ClipboardCheck, History, Settings,
   Send, FileText, ScrollText, GraduationCap, UsersRound, Network,
   Bell, MapPin, ListChecks, Swords, CalendarOff, CalendarDays, CalendarRange,
-  Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, Tags, SlidersHorizontal, Microscope, MonitorCheck,
+  Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, Tags, SlidersHorizontal, Microscope, MonitorCheck, FileSignature,
   Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, BookOpen, Calculator,
   Wallet, Coins, Banknote, Car, QrCode, PenLine, PackagePlus, PackageMinus,
   Handshake, Archive, Ticket,
@@ -20,6 +20,7 @@ import { can, canOrLegacy, hasPerms } from "@/lib/perms";
 import { canEditPricelistSetup, canViewPricelist, type AccessUser } from "@/lib/pricelist-access";
 import { canViewPricebook, canViewPricebookSummary } from "@/lib/pricebook-access";
 import { canViewKlasifikasi } from "@/lib/klasifikasi-access";
+import { canViewKsoKontrak } from "@/lib/kso-kontrak-access";
 import { canViewRaportList } from "@/lib/raport-access";
 import { canViewExecutive } from "@/lib/executive-access";
 import { canViewKso } from "@/lib/kso-access";
@@ -154,6 +155,11 @@ export const NAV: NavGroup[] = [
       // dan BFF meng-gate dengan canViewKso, jadi kunci berbeda = dua centang.
       { title: "Daftar Alat", url: "/kso-alat", icon: MonitorCheck, badge: "NEW",
         feature: "kso-simulator", show: canViewKso },
+      // F47 Kontrak KSO & Renewal — kunci izin SENDIRI (featureKey = "kso-kontrak"),
+      // SENGAJA tak menumpang 'kso-simulator' seperti dua menu di atas: menu ini
+      // MENULIS data (kontrak, status renewal), dan izin edit-nya dipisah dari
+      // view. Default tertutup — butuh Sync Fitur + centang di Akses Grup.
+      { title: "Kontrak KSO", url: "/kso-kontrak", icon: FileSignature, badge: "NEW", show: canViewKsoKontrak },
       // Harga jual dibagi per PEMBACA, bukan per tabel:
       //   /pricebook            sales & AM — katalog + harga terpublikasi (071/043)
       //   /pricebook/ringkasan  Direktur + HoD — bacaan portofolio
