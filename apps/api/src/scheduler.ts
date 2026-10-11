@@ -26,6 +26,7 @@ import {
 import { runPlanCheck, runReportCheck } from "./repo/compliance.js";
 import { runNotifTua } from "./repo/notiftua.js";
 import { runSeninBrief } from "./repo/senin-brief.js";
+import { runSoPacingAlert } from "./repo/so-pacing.js";
 import { runDailySummary } from "./repo/dailysummary.js";
 import { runRaportNarrative } from "./repo/raportnarrative.js";
 import { runWeeklyReport } from "./repo/weeklyreport.js";
@@ -182,6 +183,10 @@ export function startScheduler(): ScheduleStatus {
   // baru tutup → simpan → WA ke Direktur. Flag SENDIRI (default off) dan SENGAJA
   // tak ikut AGENT_SCHEDULE_ENABLED: job ini mengirim WA ke Direktur.
   const seninBriefEnabled = (process.env.SENIN_BRIEF_ENABLED ?? "false").toLowerCase() === "true";
+  // so-pacing (F21) — hari kerja 14:10, pacing sales bulan berjalan per region;
+  // WA ke grup HoD HANYA kalau ada region <50% target prorata. Flag SENDIRI
+  // (default off) — mengirim WA.
+  const soPacingEnabled = (process.env.SO_PACING_ALERT_ENABLED ?? "false").toLowerCase() === "true";
   // audit-finding-reminder (F60) — WA ke anggota grup tahap approval yang
   // pending & telat >N hari (dedup harian via reminded_at). Flag SENDIRI
   // (default off) — mengirim WA.
@@ -262,12 +267,12 @@ export function startScheduler(): ScheduleStatus {
   ];
 
   status = {
-    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled || watchpointSnapshotEnabled || geoSweepEnabled || cashinResumeEnabled || kpiMeasureEnabled || seninBriefEnabled || auditFindingReminderEnabled || invoiceReminderEnabled,
+    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled || watchpointSnapshotEnabled || geoSweepEnabled || cashinResumeEnabled || kpiMeasureEnabled || seninBriefEnabled || auditFindingReminderEnabled || invoiceReminderEnabled || soPacingEnabled,
     timezone,
     jobs: jobs.map((j) => ({ id: j.id, expr: j.expr, valid: cron.validate(j.expr) })),
   };
 
-  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled && !watchpointSnapshotEnabled && !geoSweepEnabled && !cashinResumeEnabled && !kpiMeasureEnabled && !seninBriefEnabled && !auditFindingReminderEnabled && !invoiceReminderEnabled) {
+  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled && !watchpointSnapshotEnabled && !geoSweepEnabled && !cashinResumeEnabled && !kpiMeasureEnabled && !seninBriefEnabled && !auditFindingReminderEnabled && !invoiceReminderEnabled && !soPacingEnabled) {
     console.log("[scheduler] semua *_SCHEDULE/_ENABLED flag != true — tidak dijadwalkan");
     return status;
   }
@@ -714,6 +719,30 @@ export function startScheduler(): ScheduleStatus {
       { timezone },
     );
     live.push(`kpi-measure=${kpiMeasureExpr}`);
+  }
+
+  // so-pacing (F21) — 14:10, SESUDAH accurate-sync 14:00 supaya faktur & SO
+  // siang sudah masuk. Hari libur dilewati (tak ada yang perlu dikejar).
+  const spExpr = process.env.SO_PACING_ALERT_CRON ?? "10 14 * * 1-5";
+  if (soPacingEnabled && cron.validate(spExpr)) {
+    cron.schedule(
+      spExpr,
+      async () => {
+        const startedAt = new Date().toISOString();
+        try {
+          if (!(await isWorkday())) {
+            console.log(`[scheduler] so-pacing skip (bukan hari kerja)`);
+            return;
+          }
+          const r = await runSoPacingAlert({});
+          console.log(`[scheduler] so-pacing @ ${startedAt} merah=${r.merah.join(",") || "-"} wa=${JSON.stringify(r.wa)}`);
+        } catch (e) {
+          console.error(`[scheduler] so-pacing gagal @ ${startedAt}:`, e);
+        }
+      },
+      { timezone },
+    );
+    live.push(`so-pacing=${spExpr}`);
   }
 
   // senin-brief (F85) — 30 menit setelah watchpoint-snapshot supaya angka minggu
