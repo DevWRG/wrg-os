@@ -1,9 +1,12 @@
 import { gatewayFetch } from "@/lib/gateway";
+import { requireFeature } from "@/lib/feature-guard";
 
 export const dynamic = "force-dynamic";
 
 // Gateway → apps/api GET /aftersales/rfid-cartridge-claims?status=.
 export async function GET(req: Request) {
+  const guard = await requireFeature("/rfid-cartridge-claims", "view");
+  if (!guard.ok) return guard.res;
   const status = new URL(req.url).searchParams.get("status");
   const qs = status ? `?status=${encodeURIComponent(status)}` : "";
   try {
@@ -17,6 +20,8 @@ export async function GET(req: Request) {
 
 // Gateway → apps/api POST /aftersales/rfid-cartridge-claims (catat klaim baru).
 export async function POST(req: Request) {
+  const guard = await requireFeature("/rfid-cartridge-claims", "create");
+  if (!guard.ok) return guard.res;
   let body: unknown;
   try {
     body = await req.json();

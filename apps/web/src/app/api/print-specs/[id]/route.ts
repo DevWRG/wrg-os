@@ -1,14 +1,19 @@
 import { gatewayFetch, relay } from "@/lib/gateway";
+import { requireFeature } from "@/lib/feature-guard";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const guard = await requireFeature("/print-spec", "view");
+  if (!guard.ok) return guard.res;
   const { id } = await params;
   const res = await gatewayFetch(`/print-specs/${id}`);
   return relay(res);
 }
 
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const guard = await requireFeature("/print-spec", "edit");
+  if (!guard.ok) return guard.res;
   const { id } = await params;
   let body: unknown;
   try {
@@ -25,6 +30,8 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 }
 
 export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const guard = await requireFeature("/print-spec", "delete");
+  if (!guard.ok) return guard.res;
   const { id } = await params;
   const res = await gatewayFetch(`/print-specs/${id}`, { method: "DELETE" });
   return relay(res);
