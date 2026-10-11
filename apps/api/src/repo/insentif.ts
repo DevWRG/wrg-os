@@ -346,6 +346,8 @@ export interface ComputeOptions {
   paksa?: boolean;
 }
 
+const GP_PCT_MAKS_KOLOM = 999.9995; // batas NUMERIC(6,3) setelah pembulatan
+
 export interface ComputeReport {
   periode: string;
   am_dihitung: number;
@@ -355,6 +357,7 @@ export interface ComputeReport {
   tanpa_aging: number;        // umur pelunasan tak diketahui → CF netral 1,00
   tanpa_kategori: number;     // faktur tanpa detailItem → porsi MR tak diketahui, dianggap berhak penuh
   faktur_kso: number;         // mayoritas nilainya KSO → MR nyaris nol
+  gp_ekstrem: string[];       // GP di luar ±999,999% → HPP/satuan hampir pasti salah petakan; disimpan NULL
   am_terkunci: string[];      // rekapnya sudah lewat review → tidak ditulis ulang
   total_am: number;
   total_ho: number;
@@ -416,11 +419,13 @@ export async function computePeriode(opts: ComputeOptions): Promise<ComputeRepor
   let tanpaAging = 0;
   let tanpaKategori = 0;
   let fakturKso = 0;
+  const gpEkstrem: string[] = [];
   const hasil: {
     r: RawTrx;
     out: ReturnType<typeof computeTransaksi>;
     ncr: NcrType;
     gpActualPct: number | null;
+    gpSimpan: number | null;
   }[] = [];
 
   for (const r of trx) {
@@ -436,6 +441,15 @@ export async function computePeriode(opts: ComputeOptions): Promise<ComputeRepor
       ? ((r.revenue - (r.hpp_total as number)) / r.revenue) * 100
       : null;
     if (gpActualPct == null) tanpaHpp++;
+    // gp_actual_pct = NUMERIC(6,3) → maks ±999,999. GP ≤ −1000% artinya HPP ≥ 11×
+    // revenue: bukan rugi sungguhan, tapi item salah petakan ke kode / satuan HPP
+    // beda dengan qty. Terbukti prod 9 Okt 2026: PJR/2136-2610-KDR, 50 unit seharga
+    // Rp 38.850 dipetakan ke kode ber-HPP Rp 310.000/unit → GP −39.797% → INSERT
+    // meledak "numeric field overflow" dan job insentif-compute gagal tiap malam.
+    // MR tetap dihitung dari nilai aslinya (negatif → MR 0, sama saja), yang
+    // disimpan NULL + nilai mentah di computed_from, dan fakturnya dilaporkan.
+    const gpEkstremIni = gpActualPct != null && Math.abs(gpActualPct) >= GP_PCT_MAKS_KOLOM;
+    if (gpEkstremIni) gpEkstrem.push(r.invoice_no);
     if (r.item_hpp_ambigu > 0) hppAmbigu++;
     if (r.aging_days == null) tanpaAging++;
 
@@ -456,7 +470,7 @@ export async function computePeriode(opts: ComputeOptions): Promise<ComputeRepor
       effort: eff.effort,
       presales: eff.presales,
     });
-    hasil.push({ r, out, ncr, gpActualPct });
+    hasil.push({ r, out, ncr, gpActualPct, gpSimpan: gpEkstremIni ? null : gpActualPct });
     const bucket = perAm.get(r.am_id) ?? { rows: [], tier: c.tier_ut };
     bucket.rows.push(out);
     perAm.set(r.am_id, bucket);
@@ -465,12 +479,14 @@ export async function computePeriode(opts: ComputeOptions): Promise<ComputeRepor
   const totalAm = hasil.reduce((s, h) => s + h.out.insentifAm, 0);
   const totalHo = hasil.reduce((s, h) => s + h.out.insentifHo, 0);
 
-  if (opts.apply) {
+  // Satu transaksi: dulu INSERT per baris tanpa transaksi, jadi satu baris yang
+  // gagal meninggalkan sebagian faktur tertulis sementara rekap bulanannya basi.
+  if (opts.apply) await sql.begin(async (tx) => {
     for (const h of hasil) {
       if (terkunci.has(h.r.am_id)) continue;
       const c = cfgByAm.get(h.r.am_id)!;
       const eff = effort.get(h.r.am_id) ?? { effort: 60, presales: 0 };
-      await sql`
+      await tx`
         INSERT INTO insentif_transaksi
           (am_id, periode, invoice_no, customer_id, tanggal, revenue,
            is_kso, is_ecat_pl, gp_actual_pct, aging_days, ncr_type, lead_type,
@@ -479,12 +495,13 @@ export async function computePeriode(opts: ComputeOptions): Promise<ComputeRepor
         VALUES
           (${h.r.am_id}, ${opts.periode}, ${h.r.invoice_no}, ${h.r.customer_id}, ${h.r.tanggal},
            ${h.r.revenue}, ${(h.r.porsi_kso ?? 0) >= 0.5}, ${(h.r.porsi_ecat_pl ?? 0) >= 0.5},
-           ${h.gpActualPct},
+           ${h.gpSimpan},
            ${h.r.aging_days}, ${h.ncr}, ${leadMap.get(h.r.invoice_no) ?? "A"},
            ${h.out.piPoints}, ${h.out.hargaPoin}, ${h.out.mrPct}, ${h.out.ncrPct}, ${h.out.cf},
            ${h.out.pengali}, ${h.out.insentifRaw}, ${h.out.insentifAm}, ${h.out.insentifHo},
-           ${sql.json({ effort: eff.effort, presales: eff.presales, tier_ut: c.tier_ut,
+           ${tx.json({ effort: eff.effort, presales: eff.presales, tier_ut: c.tier_ut,
                         aging_diketahui: h.r.aging_days != null,
+                        ...(h.gpSimpan == null && h.gpActualPct != null ? { gp_mentah: h.gpActualPct } : {}),
                         hpp_lengkap: h.r.item_count > 0 && h.r.item_ber_hpp === h.r.item_count,
                         // Jejak MR: porsi yang dipakai + porsi tiap kategori. Tanpa ini,
                         // mr_pct yang "cuma 8%" tak bisa dibedakan antara GP tipis dan
@@ -509,7 +526,7 @@ export async function computePeriode(opts: ComputeOptions): Promise<ComputeRepor
       const c = cfgByAm.get(amId)!;
       const eff = effort.get(amId) ?? { effort: 60, presales: 0 };
       const rk = rekapBulanan(bucket.rows, c.cap_bulanan);
-      await sql`
+      await tx`
         INSERT INTO insentif_bulanan
           (am_id, periode, tier_ut, effort_score, presales_score,
            total_insentif_am, total_insentif_ho, cap_bulanan, dibayar, retention_pool)
@@ -524,7 +541,7 @@ export async function computePeriode(opts: ComputeOptions): Promise<ComputeRepor
           cap_bulanan = EXCLUDED.cap_bulanan, dibayar = EXCLUDED.dibayar,
           retention_pool = EXCLUDED.retention_pool, computed_at = now()`;
     }
-  }
+  });
 
   return {
     periode: opts.periode,
@@ -535,6 +552,7 @@ export async function computePeriode(opts: ComputeOptions): Promise<ComputeRepor
     tanpa_aging: tanpaAging,
     tanpa_kategori: tanpaKategori,
     faktur_kso: fakturKso,
+    gp_ekstrem: gpEkstrem,
     am_terkunci: [...terkunci],
     total_am: totalAm,
     total_ho: totalHo,
