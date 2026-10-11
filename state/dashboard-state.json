@@ -57,9 +57,9 @@
   "catalog": {
     "totalFeatures": 209,
     "range": "F1-F168",
-    "built": 87,
+    "built": 88,
     "builtDev": 35,
-    "comment": "Angka disalin manual dari array FEATURES di WRG-OS-Sprint-Dashboard.html (SoT katalog, di Drive). Terakhir dicocokkan 2026-10-11: 209 entri, 85 BUILT + 2 PROD-LIVE-WRGCRM = 87 di main, 35 BUILT-DEV menunggu promosi (F52 6 Okt + F55 Cuti & Backup PIC #1548 v1.242.0: BUILT-DEV -> BUILT; F168 dikoreksi ke BUILT — sudah di main sejak 3 Sep via #1151; #OVERTIME Pengajuan Lembur #1552 v1.243.0: PENDING -> BUILT). Perbarui di SINI kalau blueprint berubah — file state ditulis ulang tiap run, jadi edit manual di dashboard-state.json pasti hilang."
+    "comment": "Angka disalin manual dari array FEATURES di WRG-OS-Sprint-Dashboard.html (SoT katalog, di Drive). Terakhir dicocokkan 2026-10-11: 209 entri, 86 BUILT + 2 PROD-LIVE-WRGCRM = 88 di main, 35 BUILT-DEV menunggu promosi (F52 6 Okt + F55 Cuti & Backup PIC #1548 v1.242.0: BUILT-DEV -> BUILT; F168 dikoreksi ke BUILT — sudah di main sejak 3 Sep via #1151; #OVERTIME Pengajuan Lembur #1552 v1.243.0: PENDING -> BUILT; #LEAVE dikoreksi PENDING -> BUILT — sudah jalan di main lewat deteksi cuti WA + approval F98/F113). Perbarui di SINI kalau blueprint berubah — file state ditulis ulang tiap run, jadi edit manual di dashboard-state.json pasti hilang."
   },
   "_meta": {
     "source": "Auto-generated dari pm2 jlist + gh CLI + .env.prod",
