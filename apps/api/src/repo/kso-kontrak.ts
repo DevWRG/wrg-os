@@ -443,7 +443,8 @@ export function alasanTolakDokumen(jenis: unknown, ukuran: number, buf: Uint8Arr
 /** Nama berkas asli → aman ditampilkan & dipakai di header (tanpa path/kontrol). */
 export function namaAsliAman(nama: string): string {
   const dasar = nama.split(/[\\/]/).pop() ?? "";
-  const bersih = dasar.replace(/[\u0000-\u001f\u007f"]/g, "").trim().slice(0, 150);
+  const bersih = [...dasar].filter((ch) => { const c = ch.charCodeAt(0); return c >= 0x20 && c !== 0x7f && ch !== '"'; })
+    .join("").trim().slice(0, 150);
   return bersih || "dokumen";
 }
 
