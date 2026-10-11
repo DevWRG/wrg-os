@@ -994,15 +994,28 @@ export function startScheduler(): ScheduleStatus {
           const now = wibNow();
           const ym = (d: Date) => d.toISOString().slice(0, 7);
           const lalu = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
+          // try per bulan: dulu satu try membungkus keduanya, jadi bulan berjalan
+          // yang gagal (overflow GP, 9–12 Okt 2026) ikut menahan bulan lalu —
+          // padahal bulan lalu justru yang sedang ditagih pelunasannya.
           for (const periode of [ym(now), ym(lalu)]) {
-            const r = await computeInsentifPeriode({
-              periode,
-              periodeHpp: periodeHppDefault(),
-              amIds,
-              effortPerAm: new Map(),   // Effort/Presales dibaca dari tabel (184)
-              apply: true,
-            });
-            console.log(`[scheduler] insentif-compute ${periode} @ ${startedAt} ${JSON.stringify(r).slice(0, 300)}`);
+            try {
+              const r = await computeInsentifPeriode({
+                periode,
+                periodeHpp: periodeHppDefault(),
+                amIds,
+                effortPerAm: new Map(),   // Effort/Presales dibaca dari tabel (184)
+                apply: true,
+              });
+              console.log(`[scheduler] insentif-compute ${periode} @ ${startedAt} ${JSON.stringify(r).slice(0, 300)}`);
+              if (r.gp_ekstrem.length > 0) {
+                console.warn(
+                  `[scheduler] insentif-compute ${periode}: ${r.gp_ekstrem.length} faktur ber-GP ekstrem (HPP/satuan salah petakan?) — ` +
+                    r.gp_ekstrem.slice(0, 10).join(", "),
+                );
+              }
+            } catch (e) {
+              console.error(`[scheduler] insentif-compute ${periode} gagal @ ${startedAt}:`, e);
+            }
           }
         } catch (e) {
           console.error(`[scheduler] insentif-compute gagal @ ${startedAt}:`, e);
