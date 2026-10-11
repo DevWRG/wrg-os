@@ -661,7 +661,7 @@ def senin_brief(req: SeninBriefRequest) -> SeninBriefResponse:
 
     dry_run / tanpa OPENROUTER_API_KEY → kembalikan prompt yang dirakit.
     """
-    system = build_senin_system(req.minggu_label, req.periode, req.health)
+    system = build_senin_system(req.minggu_label, req.periode, req.health, req.minggu_rapat)
     user = build_senin_user(req.hods)
     fallback = f"[DRY RUN — tanpa LLM]\n\nSYSTEM:\n{system}\n\nUSER:\n{user[:2000]}"
     if req.dry_run or not os.environ.get("OPENROUTER_API_KEY"):

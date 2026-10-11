@@ -94,7 +94,9 @@ function Narasi({ md }: { md: string }) {
       continue;
     }
     tutupList();
-    if (!line.trim()) continue;
+    // Garis pemisah markdown (---) bukan konten; services/ai sudah membuangnya,
+    // ini pengaman untuk brief lama.
+    if (!line.trim() || /^\s*([-*_])\1{2,}\s*$/.test(line)) continue;
     if (line.startsWith("### ")) blok.push(<h4 key={blok.length} className="mt-4 font-semibold">{inline(line.slice(4))}</h4>);
     else if (line.startsWith("## ")) blok.push(<h3 key={blok.length} className="mt-6 border-b pb-1 text-base font-semibold first:mt-0">{inline(line.slice(3))}</h3>);
     else blok.push(<p key={blok.length} className="my-2">{inline(line)}</p>);

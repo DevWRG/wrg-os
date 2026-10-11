@@ -31,7 +31,7 @@ import { mirrorFreshness } from "./mirror-health.js";
 import { reportPerHod } from "./plandash.js";
 import { listMetricDefs } from "./watchpoint.js";
 import { fmtValue, getWeeklyBoard, snapshotWeek, type WeeklyHod } from "./watchpoint-weekly.js";
-import { currentWeek, periodeLabel, previousWeek, weekRange } from "./watchpoint-week.js";
+import { currentWeek, isoWeekOf, periodeLabel, previousWeek, weekRange } from "./watchpoint-week.js";
 
 export type CekHasil = "OK" | "WARN" | "FAIL" | "NA";
 export type HodStatus = "SIAP" | "PERLU KLARIFIKASI" | "TIDAK SIAP";
@@ -133,7 +133,10 @@ export function cekDataTerkini(hod: WeeklyHod, mirror: MirrorInfo, otomatis: Set
   }
   return {
     no: 1, label: LABEL_CEK[1], hasil,
-    detail: masalah.length ? masalah.join("; ") : "metric otomatis tersnapshot, metric manual terisi & mirror Accurate segar",
+    detail: masalah.length ? masalah.join("; ") : [
+      auto.length ? `${auto.length} metric otomatis tersnapshot, mirror Accurate segar` : null,
+      manual.length ? `${manual.length} metric manual terisi` : null,
+    ].filter(Boolean).join("; ") || "tak ada metric",
   };
 }
 
@@ -361,12 +364,16 @@ export interface SeninBriefResult {
  */
 export async function runSeninBrief(opts: {
   dryRun?: boolean; kirimWa?: boolean; isoYear?: number; isoWeek?: number;
-} = {}): Promise<SeninBriefResult & { content?: string }> {
+} = {}): Promise<SeninBriefResult & { content?: string; wa_preview?: string }> {
   const cur = currentWeek();
   const barusTutup = previousWeek(cur.isoYear, cur.isoWeek);
   const minggu = opts.isoYear && opts.isoWeek ? { isoYear: opts.isoYear, isoWeek: opts.isoWeek } : barusTutup;
   const { from, to } = weekRange(minggu.isoYear, minggu.isoWeek);
   const label = `W${minggu.isoWeek}`;
+  // Rapat jatuh di minggu SESUDAH yang dinilai — jangkar tenggat di narasi LLM
+  // (tanpa ini model menulis "Rabu W40" untuk minggu yang sudah lewat).
+  const rapat = isoWeekOf(new Date(new Date(`${weekRange(minggu.isoYear, minggu.isoWeek).to}T00:00:00Z`).getTime() + 86_400_000));
+  const labelRapat = `W${rapat.isoWeek}`;
   const periode = periodeLabel(from, to);
 
   // Pastikan metric DB minggu itu sudah dibekukan. Biasanya sudah oleh job
@@ -414,6 +421,7 @@ export async function runSeninBrief(opts: {
   // berpijak pada metric sungguhan, bukan karangan.
   const { status, data } = await callAi("/senin-brief", {
     minggu_label: label,
+    minggu_rapat: labelRapat,
     periode,
     health,
     hods: hods.map((h) => {
@@ -441,7 +449,11 @@ export async function runSeninBrief(opts: {
     narasi_error: narasiOk ? undefined : String(data.error ?? (data.dry_run ? "dry-run" : "narasi kosong")),
     hods: hods.map((h) => ({ hod_key: h.hod_key, status: h.status })),
   };
-  if (opts.dryRun) return { ...hasil, content };
+  const base = (process.env.WEB_PUBLIC_URL || "").replace(/\/$/, "");
+  const waText = formatWa(label, periode, health, hods, base ? `${base}/briefings?tab=senin` : null);
+  // Dry-run ikut mengembalikan teks WA persis — operator bisa melihat pesan yang
+  // AKAN diterima Direktur sebelum flag dinyalakan.
+  if (opts.dryRun) return { ...hasil, content, wa_preview: waText };
 
   const sql = db();
   const [row] = await sql`
@@ -468,9 +480,7 @@ export async function runSeninBrief(opts: {
     await sql`UPDATE senin_brief SET wa_target = NULL, wa_sent_at = NULL, wa_error = ${hasil.wa.error!} WHERE id = ${row.id}`;
     return hasil;
   }
-  const base = (process.env.WEB_PUBLIC_URL || "").replace(/\/$/, "");
-  const link = base ? `${base}/briefings?tab=senin` : null;
-  const r = await sendViaWaGateway(target, formatWa(label, periode, health, hods, link));
+  const r = await sendViaWaGateway(target, waText);
   hasil.wa = { target, sent: r.sent, error: r.error };
   await sql`
     UPDATE senin_brief SET wa_target = ${target},

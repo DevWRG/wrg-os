@@ -29,6 +29,24 @@ class TestSenin(unittest.TestCase):
         self.assertTrue(hasil.startswith("## Gap Utama per HoD"))
         self.assertNotIn("# Brief W41", hasil)
 
+    def test_garis_pemisah_dibuang(self):
+        teks = "## Gap Utama per HoD\n- a\n\n---\n\n## Urutan Prioritas Bahasan\n1. x\n***\n"
+        hasil = bersihkan_narasi(teks)
+        self.assertNotIn("---", hasil)
+        self.assertNotIn("***", hasil)
+        self.assertIn("## Urutan Prioritas Bahasan", hasil)
+
+    def test_system_melarang_sanksi_dan_menimbang_dampak(self):
+        s = build_senin_system("W40", "28 September – 4 Oktober 2026", "RISK", "W41")
+        self.assertIn("DILARANG mengusulkan sanksi", s)
+        self.assertIn("bonus, insentif, atau kompensasi", s)
+        self.assertIn("DAMPAK BISNIS", s)
+
+    def test_tenggat_berjangkar_minggu_rapat(self):
+        s = build_senin_system("W40", "28 September – 4 Oktober 2026", "RISK", "W41")
+        self.assertIn("Minggu W40 sudah lewat", s)
+        self.assertIn("'Rabu W41'", s)
+
     def test_tanpa_bagian_dikosongkan(self):
         # Model yang tak mengikuti format → kosong, supaya apps/api menandai narasi gagal.
         self.assertEqual(bersihkan_narasi("Maaf, saya tidak bisa."), "")
