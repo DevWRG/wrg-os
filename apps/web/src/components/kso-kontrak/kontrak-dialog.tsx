@@ -12,6 +12,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 
+import { DokumenKontrakSection } from "./dokumen-kontrak";
 import { BUCKET_CLS, BUCKET_LABEL, STATUS_LABEL, kirim, rpC, sisaTeks, type DetailKontrak, type StatusKontrak } from "./types";
 
 type Mode = "lihat" | "status" | "perpanjang";
@@ -182,6 +183,8 @@ export function KontrakDialog({ id, canEdit, onClose }: { id: string | null; can
                     <Input id="kp-cat" value={p.catatan} onChange={(e) => setP({ ...p, catatan: e.target.value })} /></div>
                 </div>
               )}
+
+              {mode === "lihat" && <DokumenKontrakSection kontrakId={k.id} awal={d.dokumen ?? []} canEdit={canEdit} />}
 
               {d.log.length > 0 && mode === "lihat" && (
                 <div className="space-y-1">

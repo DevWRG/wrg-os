@@ -231,8 +231,8 @@ import { runWeekendBriefing } from "./repo/weekendbriefing.js";
 import { listSeninBriefs, runSeninBrief } from "./repo/senin-brief.js";
 import { getSoPacing, runSoPacingAlert } from "./repo/so-pacing.js";
 import {
-  akunKso, buatKontrak, getKontrak, KontrakError, kelengkapanKontrak, listKontrak,
-  perpanjangKontrak, ubahKontrak, ubahStatusKontrak,
+  akunKso, bacaDokumen, buatKontrak, getKontrak, hapusDokumen, KontrakError, kelengkapanKontrak, listKontrak,
+  MAKS_DOKUMEN, perpanjangKontrak, ubahKontrak, ubahStatusKontrak, unggahDokumen,
 } from "./repo/kso-kontrak.js";
 import { runPolaKomunikasi } from "./repo/polakomunikasi.js";
 import { listWaGroups, setWaGroupCategory, setWaGroupPrefixCategory, isWaGroupCategory } from "./repo/wagroup.js";
@@ -2475,6 +2475,45 @@ app.post("/kso-kontrak/:id/perpanjang", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const b = await bodyJson(c);
   try { return c.json(await perpanjangKontrak(c.req.param("id"), b, olehDari(b)), 201); } catch (e) { return kontrakErr(c, e); }
+});
+// Dokumen kontrak (MoU/addendum/BAST) — multipart: `file`, `jenis`,
+// `keterangan?`, `oleh` (diisi BFF dari sesi). Tipe file dicek dari ISINYA.
+app.post("/kso-kontrak/:id/dokumen", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: Record<string, unknown>;
+  try {
+    body = await c.req.parseBody();
+  } catch {
+    return c.json({ error: "invalid multipart body" }, 400);
+  }
+  const file = body.file;
+  if (!(file instanceof File)) return c.json({ error: "file wajib diisi" }, 400);
+  if (file.size > MAKS_DOKUMEN) return c.json({ error: "file maksimal 8 MB" }, 400);
+  const teks = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : null);
+  try {
+    const d = await unggahDokumen(c.req.param("id"), { nama: file.name, buf: new Uint8Array(await file.arrayBuffer()) },
+      body.jenis, teks(body.keterangan), teks(body.oleh));
+    return c.json(d, 201);
+  } catch (e) { return kontrakErr(c, e); }
+});
+app.get("/kso-kontrak/:id/dokumen/:dokId", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const d = await bacaDokumen(c.req.param("id"), c.req.param("dokId"));
+    // Header wajib ASCII: nama asli (bisa ada huruf non-Latin) lewat filename*.
+    const ascii = d.nama.replace(/[^\x20-\x7e]/g, "_");
+    return c.body(new Uint8Array(d.buf), 200, {
+      "content-type": d.mime,
+      "content-disposition": `inline; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(d.nama)}`,
+      "cache-control": "private, no-store",
+      "x-content-type-options": "nosniff",
+    });
+  } catch (e) { return kontrakErr(c, e); }
+});
+app.delete("/kso-kontrak/:id/dokumen/:dokId", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const oleh = c.req.query("oleh")?.trim() || null;
+  try { return c.json(await hapusDokumen(c.req.param("id"), c.req.param("dokId"), oleh)); } catch (e) { return kontrakErr(c, e); }
 });
 
 // F21 — pacing sales bulan berjalan per region (faktur netto + SO terbuka vs
