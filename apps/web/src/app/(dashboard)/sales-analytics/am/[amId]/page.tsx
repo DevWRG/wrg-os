@@ -26,7 +26,7 @@ export default async function AmDrilldownPage({
   let data: Drilldown | null = null;
   let error = "";
   try {
-    const res = await gatewayFetch(`/sales-analytics/per-am/${amId}/drilldown${q ? `?${q}` : ""}`, {
+    const res = await gatewayFetch(`/sales-analytics/per-am/${encodeURIComponent(amId)}/drilldown${q ? `?${q}` : ""}`, {
       headers: me?.id ? { "x-user-id": me.id } : {},
     });
     if (res.ok) data = (await res.json()) as Drilldown;
