@@ -28,6 +28,11 @@ import { joinAmFromSalesman } from "./salesman-am.js";
 // status invoice lama bisa basi (sudah lunas tapi masih OPEN). Sebelum kirim,
 // kandidat reminder ditarik ulang satu per satu dari Accurate (read-only).
 
+// Sisa tagihan Accurate bisa berpecahan sen (mis. 438.111,942) dan penjumlahan
+// float menambah ekor desimal — "Rp13.678.410.511,942" di rekap prod (uji 11 Okt
+// 2026). Semua nominal di F91 dibulatkan ke rupiah utuh sebelum diformat.
+const rupiah = (n: number): string => fmtRupiah(Math.round(n)) ?? "-";
+
 const wibDate = (): string => new Date(Date.now() + 7 * 3600 * 1000).toISOString().slice(0, 10);
 
 // ── #FAKTUR ──────────────────────────────────────────────────────────────────
@@ -62,7 +67,7 @@ export function formatFakturReply(v: FakturView): string {
     `Customer: ${v.customer_name}`,
     `Status: ${statusLine(v, v.lunas_at)}`,
     `Tanggal: ${fmtTanggal(v.tanggal)} · Jatuh tempo: ${fmtTanggal(v.due_date)}`,
-    `Total: ${fmtRupiah(v.total)} · Terbayar: ${fmtRupiah(v.paid)} · Sisa: ${fmtRupiah(v.outstanding)}`,
+    `Total: ${rupiah(v.total)} · Terbayar: ${rupiah(v.paid)} · Sisa: ${rupiah(v.outstanding)}`,
     `AM: ${v.am ?? "-"}${v.cabang ? ` (${v.cabang})` : ""}`,
   ];
   if (v.state !== "PAID") {
@@ -159,7 +164,7 @@ export function buildReminderDigest(
     const total = rows.filter((r) => r.stage === stage).length;
     const lines = list.map((r) => {
       const am = audience === "fin" ? ` · AM ${r.am_nama ?? "-"}` : "";
-      return `• ${r.number} — ${r.customer_name} — sisa ${fmtRupiah(r.outstanding)} — ${kapan(r.days_to_due)} (${fmtTanggal(r.due_date)})${am}`;
+      return `• ${r.number} — ${r.customer_name} — sisa ${rupiah(r.outstanding)} — ${kapan(r.days_to_due)} (${fmtTanggal(r.due_date)})${am}`;
     });
     parts.push(`\n${STAGE_HEAD[stage]} (${total})\n${lines.join("\n")}`);
   }
@@ -347,16 +352,16 @@ export const overdueRecapKey = (week: string): string => `f91:odrecap:${week}:fi
 // Pure — `rows` = invoice overdue (stage od). Ringkasan per umur + N terbesar.
 export function buildOverdueRecap(rows: ReminderRow[], today: string, resynced: number, topN: number = MAX_LINES_PER_MESSAGE): string {
   const total = rows.reduce((a, r) => a + r.outstanding, 0);
-  const parts = [`🔴 *Rekap Overdue Mingguan* — ${fmtTanggal(today)}`, `${rows.length} invoice · sisa ${fmtRupiah(total)}`, ""];
+  const parts = [`🔴 *Rekap Overdue Mingguan* — ${fmtTanggal(today)}`, `${rows.length} invoice · sisa ${rupiah(total)}`, ""];
   for (const b of AGING_BUCKETS) {
     const list = rows.filter((r) => -r.days_to_due >= b.min && -r.days_to_due <= b.max);
-    if (list.length) parts.push(`• ${b.label}: ${list.length} invoice · ${fmtRupiah(list.reduce((a, r) => a + r.outstanding, 0))}`);
+    if (list.length) parts.push(`• ${b.label}: ${list.length} invoice · ${rupiah(list.reduce((a, r) => a + r.outstanding, 0))}`);
   }
   const top = [...rows].sort((a, b) => b.outstanding - a.outstanding || a.id - b.id).slice(0, topN);
   if (top.length) {
     parts.push("", `*${top.length} sisa terbesar:*`);
     for (const r of top) {
-      parts.push(`• ${r.number} — ${r.customer_name} — ${fmtRupiah(r.outstanding)} — lewat ${-r.days_to_due} hari · AM ${r.am_nama ?? "-"}`);
+      parts.push(`• ${r.number} — ${r.customer_name} — ${rupiah(r.outstanding)} — lewat ${-r.days_to_due} hari · AM ${r.am_nama ?? "-"}`);
     }
   }
   parts.push(
