@@ -118,9 +118,9 @@ cat > "$STATE_DIR/dashboard-state.json" <<JSON
   "catalog": {
     "totalFeatures": 209,
     "range": "F1-F168",
-    "built": 85,
-    "builtDev": 36,
-    "comment": "Angka disalin manual dari array FEATURES di WRG-OS-Sprint-Dashboard.html (SoT katalog, di Drive). Terakhir dicocokkan 2026-10-11: 209 entri, 83 BUILT + 2 PROD-LIVE-WRGCRM = 85 di main, 36 BUILT-DEV menunggu promosi (F52 6 Okt + F55 Cuti & Backup PIC #1548 v1.242.0: BUILT-DEV -> BUILT). Perbarui di SINI kalau blueprint berubah — file state ditulis ulang tiap run, jadi edit manual di dashboard-state.json pasti hilang."
+    "built": 86,
+    "builtDev": 35,
+    "comment": "Angka disalin manual dari array FEATURES di WRG-OS-Sprint-Dashboard.html (SoT katalog, di Drive). Terakhir dicocokkan 2026-10-11: 209 entri, 84 BUILT + 2 PROD-LIVE-WRGCRM = 86 di main, 35 BUILT-DEV menunggu promosi (F52 6 Okt + F55 Cuti & Backup PIC #1548 v1.242.0: BUILT-DEV -> BUILT; F168 dikoreksi ke BUILT — sudah di main sejak 3 Sep via #1151). Perbarui di SINI kalau blueprint berubah — file state ditulis ulang tiap run, jadi edit manual di dashboard-state.json pasti hilang."
   },
   "_meta": {
     "source": "Auto-generated dari pm2 jlist + gh CLI + .env.prod",
