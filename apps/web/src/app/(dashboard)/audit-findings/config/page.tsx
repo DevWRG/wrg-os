@@ -119,6 +119,12 @@ export default function AuditFindingChainConfigPage() {
                             ))}
                           </SelectContent>
                         </Select>
+                        {c.accessGroupId != null && !c.groupCanView && (
+                          <p className="mt-1 max-w-56 text-xs text-amber-700 dark:text-amber-400">
+                            Anggota grup ini belum bisa membuka menu Audit Findings, jadi tak melihat tombol Approve.
+                            Centang izin Lihat &quot;Audit Findings&quot; untuk grup ini di Akses Grup (klik Sync Fitur dulu bila belum ada).
+                          </p>
+                        )}
                       </TableCell>
                       <TableCell>
                         <Switch

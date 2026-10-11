@@ -17,6 +17,7 @@ interface DetailResponse {
   activeRequest: ApprovalRequestDetail | null;
   canManage: boolean;
   canDecideCurrentStep: boolean;
+  decideBlockReason: string | null;
 }
 
 const STEP_VARIANT: Record<string, "outline" | "secondary" | "destructive"> = {
@@ -119,6 +120,10 @@ export function AuditFindingDetailDialog({ findingId, kode }: { findingId: strin
                       </li>
                     ))}
                   </ol>
+
+                  {activeRequest.status === "pending" && !data?.canDecideCurrentStep && data?.decideBlockReason && (
+                    <p className="text-muted-foreground text-xs">Anda tidak bisa memutus tahap ini: {data.decideBlockReason}.</p>
+                  )}
 
                   {activeRequest.status === "pending" && data?.canDecideCurrentStep && (
                     <div className="space-y-2 border-t pt-3">

@@ -7956,8 +7956,8 @@ app.get("/audit-findings", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const status = c.req.query("status") || undefined;
   const overdue = c.req.query("overdue") === "1";
-  const findings = await listAuditFindings({ status, overdue });
-  return c.json({ count: findings.length, findings });
+  const r = await listAuditFindings({ status, overdue });
+  return c.json({ count: r.findings.length, total_rows: r.total_rows, limit: r.limit, findings: r.findings });
 });
 
 app.get("/audit-findings/:id", async (c) => {

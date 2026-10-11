@@ -10,6 +10,8 @@ import { createHash } from "node:crypto";
 import { db, isDbEnabled } from "../db.js";
 import { sendViaWaGateway } from "../wasend.js";
 
+type Sql = ReturnType<typeof db>;
+
 export interface ActionResult {
   ok: boolean;
   error?: string;
@@ -26,14 +28,20 @@ export interface ChainConfigRow {
   accessGroupId: number | null;
   accessGroupName: string | null;
   enabled: boolean;
+  // Anggota grup bisa membuka menu Audit Findings? (superuser, atau izin view
+  // aktif utk fitur audit-findings di Akses Grup). false = approver tahap ini
+  // tak bisa melihat tombol Approve/Reject — panel config menampilkan peringatan.
+  groupCanView: boolean;
 }
 
 export async function listChainConfig(): Promise<ChainConfigRow[]> {
   const sql = db();
   const rows = await sql`
-    SELECT c.urutan, c.label, c.access_group_id, c.enabled, g.name AS group_name
+    SELECT c.urutan, c.label, c.access_group_id, c.enabled, g.name AS group_name,
+           (g.superuser OR COALESCE(p.active AND p.can_view, false)) AS group_can_view
     FROM audit_finding_approval_chain_config c
     LEFT JOIN access_group g ON g.id = c.access_group_id
+    LEFT JOIN access_permission p ON p.group_id = c.access_group_id AND p.feature_key = 'audit-findings'
     ORDER BY c.urutan
   `;
   return rows.map((r) => ({
@@ -42,6 +50,7 @@ export async function listChainConfig(): Promise<ChainConfigRow[]> {
     accessGroupId: r.access_group_id != null ? Number(r.access_group_id) : null,
     accessGroupName: r.group_name ? String(r.group_name) : null,
     enabled: Boolean(r.enabled),
+    groupCanView: Boolean(r.group_can_view),
   }));
 }
 
@@ -111,8 +120,10 @@ function mapFindingRow(r: Record<string, unknown>): AuditFindingRow {
   };
 }
 
-async function generateFindingCode(): Promise<string> {
-  const sql = db();
+// Dipanggil DI DALAM transaksi yang sudah memegang advisory lock (lihat
+// createFinding) — MAX+1 tanpa kunci = dua create paralel dapat kode sama dan
+// salah satunya gagal "Data duplikat".
+async function generateFindingCode(sql: Sql): Promise<string> {
   const [row] = await sql`
     SELECT 'TEMUAN-' || TO_CHAR(NOW(), 'YYYY') || '-' ||
            LPAD((COALESCE(MAX(SUBSTRING(kode FROM 13)::int), 0) + 1)::text, 5, '0') AS next_kode
@@ -127,10 +138,20 @@ export interface AuditFindingListFilter {
   overdue?: boolean;
 }
 
-export async function listFindings(filter: AuditFindingListFilter = {}): Promise<AuditFindingRow[]> {
+export const FINDINGS_LIST_LIMIT = 500;
+
+export interface AuditFindingList {
+  findings: AuditFindingRow[];
+  total_rows: number;
+  limit: number;
+}
+
+// total_rows ikut dikirim supaya UI bisa bilang "menampilkan X dari Y" — tanpa
+// itu LIMIT memotong daftar diam-diam (pola {count,total_rows,limit}).
+export async function listFindings(filter: AuditFindingListFilter = {}): Promise<AuditFindingList> {
   const sql = db();
   const rows = await sql`
-    SELECT f.id, f.kode, f.title, f.description, f.source, f.unit_terdampak, f.control_linkage,
+    SELECT count(*) OVER () AS total_rows, f.id, f.kode, f.title, f.description, f.source, f.unit_terdampak, f.control_linkage,
            f.due_date::text, f.status, f.created_by, f.created_at, f.updated_at, f.closed_at,
            u.name AS created_by_name
     FROM audit_finding f
@@ -138,9 +159,13 @@ export async function listFindings(filter: AuditFindingListFilter = {}): Promise
     WHERE ${filter.status ? sql`f.status = ${filter.status}` : sql`true`}
       AND ${filter.overdue ? sql`f.due_date < CURRENT_DATE AND f.status NOT IN ('closed')` : sql`true`}
     ORDER BY f.created_at DESC
-    LIMIT 200
+    LIMIT ${FINDINGS_LIST_LIMIT}
   `;
-  return rows.map(mapFindingRow);
+  return {
+    findings: rows.map(mapFindingRow),
+    total_rows: rows.length ? Number(rows[0].total_rows) : 0,
+    limit: FINDINGS_LIST_LIMIT,
+  };
 }
 
 // f.due_date::text WAJIB — kolom `date` polos, kalau tidak di-cast postgres.js
@@ -176,15 +201,19 @@ export async function createFinding(input: CreateFindingInput): Promise<AuditFin
   const title = input.title?.trim();
   if (!title) return { ok: false, error: "title wajib" };
   const sql = db();
-  const kode = await generateFindingCode();
-  const rows = await sql`
-    INSERT INTO audit_finding (kode, title, description, source, unit_terdampak, control_linkage, due_date, created_by)
-    VALUES (${kode}, ${title}, ${input.description ?? null}, ${input.source ?? null}, ${input.unit_terdampak ?? null},
-            ${input.control_linkage ?? null}, ${input.due_date ?? null}, ${input.created_by ?? null})
-    RETURNING id
-  `;
-  const finding = await getFinding(String(rows[0].id));
-  await logAudit("audit_finding.create", input.created_by, { finding_id: rows[0].id, kode, title }, "create");
+  const { id, kode } = await sql.begin(async (tx) => {
+    await tx`SELECT pg_advisory_xact_lock(hashtext('audit_finding.kode'))`;
+    const kode = await generateFindingCode(tx as unknown as Sql);
+    const [row] = await tx`
+      INSERT INTO audit_finding (kode, title, description, source, unit_terdampak, control_linkage, due_date, created_by)
+      VALUES (${kode}, ${title}, ${input.description ?? null}, ${input.source ?? null}, ${input.unit_terdampak ?? null},
+              ${input.control_linkage ?? null}, ${input.due_date ?? null}, ${input.created_by ?? null})
+      RETURNING id
+    `;
+    return { id: String(row.id), kode };
+  });
+  const finding = await getFinding(id);
+  await logAudit("audit_finding.create", input.created_by, { finding_id: id, kode, title }, "create");
   return finding as AuditFindingRow;
 }
 
@@ -198,12 +227,17 @@ export interface UpdateFindingInput {
 }
 
 // Edit field non-status — ditutup begitu finding closed (histori temuan yang
-// sudah tuntas tidak boleh diam-diam berubah).
+// sudah tuntas tidak boleh diam-diam berubah) DAN selama pending_closure: yang
+// disetujui approver harus sama dengan yang diajukan. Perlu ubah? Reject dulu
+// (finding kembali in_progress), edit, lalu ajukan ulang.
 export async function updateFinding(id: string, input: UpdateFindingInput): Promise<ActionResult> {
   const sql = db();
   const [cur] = await sql`SELECT status FROM audit_finding WHERE id = ${id}`;
   if (!cur) return { ok: false, error: "finding tidak ditemukan" };
   if (cur.status === "closed") return { ok: false, error: "finding sudah closed — tidak bisa diedit" };
+  if (cur.status === "pending_closure") {
+    return { ok: false, error: "finding sedang menunggu persetujuan penutupan — tidak bisa diedit sampai diputus" };
+  }
   await sql`
     UPDATE audit_finding SET
       title = ${input.title === undefined ? sql`title` : input.title},
@@ -375,39 +409,45 @@ export interface RequestClosureResult extends ActionResult {
 
 export async function requestClosure(findingId: string, requestedBy: string | null): Promise<RequestClosureResult> {
   const sql = db();
-  const [finding] = await sql`SELECT status FROM audit_finding WHERE id = ${findingId}`;
-  if (!finding) return { ok: false, error: "finding tidak ditemukan" };
-  if (finding.status !== "in_progress") {
-    return { ok: false, error: `finding berstatus "${finding.status}" — hanya "in_progress" yang bisa diajukan penutupan` };
-  }
-  const [existing] = await sql`SELECT id FROM audit_finding_approval_request WHERE finding_id = ${findingId} AND status = 'pending'`;
-  if (existing) return { ok: false, error: "sudah ada pengajuan penutupan yang masih berjalan" };
-
   const chain = await activeChain();
   if (chain.length < 2) return { ok: false, error: "chain approval aktif kurang dari 2 tahap — atur minimal 2 di panel config" };
   const missingGroup = chain.find((c) => c.accessGroupId == null);
   if (missingGroup) return { ok: false, error: `tahap "${missingGroup.label}" aktif tapi belum ada grup — atur di panel config` };
 
-  const [reqRow] = await sql`
-    INSERT INTO audit_finding_approval_request (finding_id, requested_by, current_urutan)
-    VALUES (${findingId}, ${requestedBy}, 1)
-    RETURNING id
-  `;
-  const requestId = String(reqRow.id);
+  // Satu transaksi + kunci baris finding: request, semua step, dan perubahan
+  // status jadi atomik (tak ada request setengah jadi tanpa step) dan dua klik
+  // "Ajukan" bersamaan tidak saling balapan.
+  const r = await sql.begin(async (tx): Promise<RequestClosureResult> => {
+    const [finding] = await tx`SELECT status FROM audit_finding WHERE id = ${findingId} FOR UPDATE`;
+    if (!finding) return { ok: false, error: "finding tidak ditemukan" };
+    if (finding.status !== "in_progress") {
+      return { ok: false, error: `finding berstatus "${finding.status}" — hanya "in_progress" yang bisa diajukan penutupan` };
+    }
+    const [existing] = await tx`SELECT id FROM audit_finding_approval_request WHERE finding_id = ${findingId} AND status = 'pending'`;
+    if (existing) return { ok: false, error: "sudah ada pengajuan penutupan yang masih berjalan" };
 
-  let urutan = 1;
-  for (const c of chain) {
-    await sql`
-      INSERT INTO audit_finding_approval_step (request_id, urutan, label, access_group_id)
-      VALUES (${requestId}, ${urutan}, ${c.label}, ${c.accessGroupId})
+    const [reqRow] = await tx`
+      INSERT INTO audit_finding_approval_request (finding_id, requested_by, current_urutan)
+      VALUES (${findingId}, ${requestedBy}, 1)
+      RETURNING id
     `;
-    urutan += 1;
-  }
+    const requestId = String(reqRow.id);
+    let urutan = 1;
+    for (const c of chain) {
+      await tx`
+        INSERT INTO audit_finding_approval_step (request_id, urutan, label, access_group_id)
+        VALUES (${requestId}, ${urutan}, ${c.label}, ${c.accessGroupId})
+      `;
+      urutan += 1;
+    }
+    await tx`UPDATE audit_finding SET status = 'pending_closure', updated_at = now() WHERE id = ${findingId}`;
+    return { ok: true, requestId };
+  });
+  if (!r.ok || !r.requestId) return r;
 
-  await sql`UPDATE audit_finding SET status = 'pending_closure', updated_at = now() WHERE id = ${findingId}`;
-  await logAudit("audit_finding.request_closure", requestedBy, { finding_id: findingId, request_id: requestId, steps: chain.length }, "create");
-  await notifyCurrentStep(requestId);
-  return { ok: true, requestId };
+  await logAudit("audit_finding.request_closure", requestedBy, { finding_id: findingId, request_id: r.requestId, steps: chain.length }, "create");
+  await notifyCurrentStep(r.requestId);
+  return r;
 }
 
 export interface DecideStepInput {
@@ -421,55 +461,102 @@ export interface DecideResult extends ActionResult {
   status?: string;
 }
 
+export interface DecideGuardInput {
+  deciderUserId: string;
+  requestedBy: string | null;
+  currentUrutan: number;
+  steps: { urutan: number; decidedBy: string | null }[];
+}
+
+// Pemisahan tugas (konteks post-fraud): pengaju tidak boleh ikut memutus
+// pengajuannya sendiri, dan satu orang hanya boleh memutus SATU tahap per
+// pengajuan. Tanpa ini, orang yang kebetulan anggota dua grup approver bisa
+// menutup temuan sendirian. Fungsi murni — dipakai repo & diuji unit.
+export function decideBlockReason(input: DecideGuardInput): string | null {
+  if (input.requestedBy && input.requestedBy === input.deciderUserId) {
+    return "pengaju penutupan tidak boleh ikut memutus pengajuannya sendiri";
+  }
+  const sudah = input.steps.find((s) => s.urutan !== input.currentUrutan && s.decidedBy === input.deciderUserId);
+  if (sudah) return `sudah memutus tahap ${sudah.urutan} di pengajuan ini — satu orang hanya boleh memutus satu tahap`;
+  return null;
+}
+
 // Decider DIVALIDASI harus anggota AKTIF grup tahap current SAAT INI (live —
 // pola sama decideCurrentStep F11) — cegah orang di luar grup, atau bekas
 // anggota yang sudah dikeluarkan, menyelonong approve.
+//
+// Seluruh keputusan berjalan dalam SATU transaksi yang mengunci baris request
+// (FOR UPDATE). Tanpa kunci, dua anggota grup yang menekan Approve bersamaan
+// sama-sama lolos cek "pending", lalu current_urutan naik dua kali → tahap
+// berikutnya terlewat dan temuan bisa closed dengan tahap tengah masih pending
+// (terbukti 6/6 di uji dev 11 Okt 2026). Notifikasi WA dikirim SESUDAH commit.
 export async function decideStep(input: DecideStepInput): Promise<DecideResult> {
   const sql = db();
-  const [req] = await sql`SELECT id, finding_id, status, current_urutan FROM audit_finding_approval_request WHERE id = ${input.requestId}`;
-  if (!req) return { ok: false, error: "request tidak ditemukan" };
-  if (req.status !== "pending") return { ok: false, error: `request sudah ${req.status}` };
+  const out = await sql.begin(async (tx): Promise<DecideResult & { notify?: boolean; findingId?: string; urutan?: number }> => {
+    const [req] = await tx`
+      SELECT id, finding_id, status, current_urutan, requested_by
+      FROM audit_finding_approval_request WHERE id = ${input.requestId} FOR UPDATE
+    `;
+    if (!req) return { ok: false, error: "request tidak ditemukan" };
+    if (req.status !== "pending") return { ok: false, error: `request sudah ${req.status}` };
 
-  const [step] = await sql`
-    SELECT id, urutan, access_group_id, status, label FROM audit_finding_approval_step
-    WHERE request_id = ${input.requestId} AND urutan = ${req.current_urutan}
-  `;
-  if (!step || step.status !== "pending") return { ok: false, error: "tahap current tidak valid" };
-  if (!step.access_group_id) return { ok: false, error: `tahap "${step.label}" belum ada grup — atur di panel config` };
+    const steps = await tx`
+      SELECT id, urutan, access_group_id, status, label, decided_by
+      FROM audit_finding_approval_step WHERE request_id = ${input.requestId} ORDER BY urutan
+    `;
+    const step = steps.find((s) => Number(s.urutan) === Number(req.current_urutan));
+    if (!step || step.status !== "pending") return { ok: false, error: "tahap current tidak valid" };
+    if (!step.access_group_id) return { ok: false, error: `tahap "${step.label}" belum ada grup — atur di panel config` };
 
-  const [membership] = await sql`
-    SELECT 1 FROM app_user_group WHERE group_id = ${step.access_group_id} AND user_id = ${input.deciderUserId}
-  `;
-  if (!membership) return { ok: false, error: "bukan anggota grup yang berwenang untuk tahap ini" };
+    const [membership] = await tx`
+      SELECT 1 FROM app_user_group m JOIN app_user u ON u.id = m.user_id
+      WHERE m.group_id = ${step.access_group_id} AND m.user_id = ${input.deciderUserId} AND u.active = true
+    `;
+    if (!membership) return { ok: false, error: "bukan anggota grup yang berwenang untuk tahap ini" };
 
-  if (input.action === "reject") {
-    await sql`
-      UPDATE audit_finding_approval_step SET status = 'rejected', decided_by = ${input.deciderUserId}, decided_at = now(), decision_note = ${input.note ?? null}
+    const blocked = decideBlockReason({
+      deciderUserId: input.deciderUserId,
+      requestedBy: req.requested_by ? String(req.requested_by) : null,
+      currentUrutan: Number(req.current_urutan),
+      steps: steps.map((s) => ({ urutan: Number(s.urutan), decidedBy: s.decided_by ? String(s.decided_by) : null })),
+    });
+    if (blocked) return { ok: false, error: blocked };
+
+    if (input.action === "reject") {
+      await tx`
+        UPDATE audit_finding_approval_step SET status = 'rejected', decided_by = ${input.deciderUserId}, decided_at = now(), decision_note = ${input.note ?? null}
+        WHERE id = ${step.id}
+      `;
+      await tx`UPDATE audit_finding_approval_request SET status = 'rejected', decided_at = now() WHERE id = ${req.id}`;
+      await tx`UPDATE audit_finding SET status = 'in_progress', updated_at = now() WHERE id = ${req.finding_id}`;
+      return { ok: true, status: "rejected", urutan: Number(step.urutan) };
+    }
+
+    await tx`
+      UPDATE audit_finding_approval_step SET status = 'approved', decided_by = ${input.deciderUserId}, decided_at = now(), decision_note = ${input.note ?? null}
       WHERE id = ${step.id}
     `;
-    await sql`UPDATE audit_finding_approval_request SET status = 'rejected', decided_at = now() WHERE id = ${req.id}`;
-    await sql`UPDATE audit_finding SET status = 'in_progress', updated_at = now() WHERE id = ${req.finding_id}`;
-    await logAudit("audit_finding.reject_step", input.deciderUserId, { request_id: req.id, urutan: step.urutan, note: input.note }, "reject");
-    return { ok: true, status: "rejected" };
+    const maxUrutan = Math.max(...steps.map((s) => Number(s.urutan)));
+    if (Number(step.urutan) >= maxUrutan) {
+      await tx`UPDATE audit_finding_approval_request SET status = 'approved', decided_at = now() WHERE id = ${req.id}`;
+      await tx`UPDATE audit_finding SET status = 'closed', closed_at = now(), updated_at = now() WHERE id = ${req.finding_id}`;
+      return { ok: true, status: "approved", findingId: String(req.finding_id), urutan: Number(step.urutan) };
+    }
+    await tx`UPDATE audit_finding_approval_request SET current_urutan = ${Number(step.urutan) + 1} WHERE id = ${req.id}`;
+    return { ok: true, status: "pending", notify: true, urutan: Number(step.urutan) };
+  });
+  if (!out.ok) return { ok: false, error: out.error };
+
+  if (out.status === "rejected") {
+    await logAudit("audit_finding.reject_step", input.deciderUserId, { request_id: input.requestId, urutan: out.urutan, note: input.note }, "reject");
+  } else {
+    await logAudit("audit_finding.approve_step", input.deciderUserId, { request_id: input.requestId, urutan: out.urutan }, "approve");
   }
-
-  await sql`
-    UPDATE audit_finding_approval_step SET status = 'approved', decided_by = ${input.deciderUserId}, decided_at = now(), decision_note = ${input.note ?? null}
-    WHERE id = ${step.id}
-  `;
-  await logAudit("audit_finding.approve_step", input.deciderUserId, { request_id: req.id, urutan: step.urutan }, "approve");
-
-  const [{ max_urutan }] = await sql`SELECT max(urutan) AS max_urutan FROM audit_finding_approval_step WHERE request_id = ${req.id}`;
-  if (Number(step.urutan) >= Number(max_urutan)) {
-    await sql`UPDATE audit_finding_approval_request SET status = 'approved', decided_at = now() WHERE id = ${req.id}`;
-    await sql`UPDATE audit_finding SET status = 'closed', closed_at = now(), updated_at = now() WHERE id = ${req.finding_id}`;
-    await logAudit("audit_finding.closed", input.deciderUserId, { finding_id: req.finding_id, request_id: req.id }, "close");
-    return { ok: true, status: "approved" };
+  if (out.status === "approved") {
+    await logAudit("audit_finding.closed", input.deciderUserId, { finding_id: out.findingId, request_id: input.requestId }, "close");
   }
-
-  await sql`UPDATE audit_finding_approval_request SET current_urutan = current_urutan + 1 WHERE id = ${req.id}`;
-  await notifyCurrentStep(String(req.id));
-  return { ok: true, status: "pending" };
+  if (out.notify) await notifyCurrentStep(input.requestId);
+  return { ok: true, status: out.status };
 }
 
 // ───────────────────────── Reminder overdue (cron) ─────────────────────────

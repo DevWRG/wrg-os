@@ -22,6 +22,7 @@ export interface ApprovalStep {
   accessGroupId: number | null;
   accessGroupName: string | null;
   status: "pending" | "approved" | "rejected" | "skipped";
+  decidedBy: string | null;
   decidedByName: string | null;
   decidedAt: string | null;
   decisionNote: string | null;
@@ -30,6 +31,7 @@ export interface ApprovalStep {
 export interface ApprovalRequestDetail {
   id: string;
   findingId: string;
+  requestedBy: string | null;
   requestedByName: string | null;
   requestedAt: string;
   status: "pending" | "approved" | "rejected" | "canceled";
@@ -43,6 +45,7 @@ export interface ChainConfigRow {
   accessGroupId: number | null;
   accessGroupName: string | null;
   enabled: boolean;
+  groupCanView: boolean;
 }
 
 export interface AccessGroupOption {
