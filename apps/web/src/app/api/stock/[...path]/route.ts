@@ -1,4 +1,5 @@
 import { gatewayFetch } from "@/lib/gateway";
+import { safeSubpath, badSubpath } from "@/lib/safe-subpath";
 
 export const dynamic = "force-dynamic";
 
@@ -10,7 +11,8 @@ export const dynamic = "force-dynamic";
 // terkirim di payload halaman. Tanpa ini seluruh matriks (~1,3 MB pada katalog
 // 5.800 item) ditanggung juga oleh orang yang cuma memakai tab "Semua Stok".
 export async function GET(req: Request, ctx: { params: Promise<{ path: string[] }> }) {
-  const sub = ((await ctx.params).path ?? []).join("/");
+  const sub = safeSubpath((await ctx.params).path);
+  if (sub === null) return badSubpath();
   const qs = new URL(req.url).searchParams.toString();
   try {
     const res = await gatewayFetch(`/stock/${sub}${qs ? `?${qs}` : ""}`);

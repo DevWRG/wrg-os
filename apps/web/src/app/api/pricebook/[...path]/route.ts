@@ -1,4 +1,5 @@
 import { gatewayFetch, relay } from "@/lib/gateway";
+import { safeSubpath, badSubpath } from "@/lib/safe-subpath";
 import { sessionUser } from "@/lib/admin-guard";
 import { canViewPricebook, canViewPricebookSummary } from "@/lib/pricebook-access";
 import { canEditPricelistSetup, canPublishPricelist, canViewPricelist } from "@/lib/pricelist-access";
@@ -22,7 +23,8 @@ export async function GET(req: Request, ctx: { params: Promise<{ path: string[] 
   if (!me) return Response.json({ error: "unauthenticated" }, { status: 401 });
   if (!canViewPricebook(me)) return Response.json({ error: "forbidden" }, { status: 403 });
 
-  const sub = ((await ctx.params).path ?? []).join("/");
+  const sub = safeSubpath((await ctx.params).path);
+  if (sub === null) return badSubpath();
   if (sub === "summary" && !canViewPricebookSummary(me)) {
     return Response.json({ error: "forbidden (Direktur/admin only)" }, { status: 403 });
   }
@@ -45,7 +47,8 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ path: string[
   if (!canEditPricelistSetup(me)) {
     return Response.json({ error: "forbidden (HoD Business/Purchasing only)" }, { status: 403 });
   }
-  const sub = ((await ctx.params).path ?? []).join("/");
+  const sub = safeSubpath((await ctx.params).path);
+  if (sub === null) return badSubpath();
   if (sub !== "setup") return Response.json({ error: "route tak ada" }, { status: 404 });
 
   let body: Record<string, unknown>;
@@ -70,7 +73,8 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ path: string[
 export async function POST(req: Request, ctx: { params: Promise<{ path: string[] }> }) {
   const me = await sessionUser();
   if (!me) return Response.json({ error: "unauthenticated" }, { status: 401 });
-  const sub = ((await ctx.params).path ?? []).join("/");
+  const sub = safeSubpath((await ctx.params).path);
+  if (sub === null) return badSubpath();
 
   if (sub === "published/pdf") {
     if (!canViewPricelist(me)) return Response.json({ error: "forbidden" }, { status: 403 });

@@ -1,4 +1,5 @@
 import { gatewayFetch, relay } from "@/lib/gateway";
+import { safeSubpath, badSubpath } from "@/lib/safe-subpath";
 import { sessionUser } from "@/lib/admin-guard";
 
 export const dynamic = "force-dynamic";
@@ -7,12 +8,9 @@ export const dynamic = "force-dynamic";
 // POST/DELETE di sini buat input manual+hapus data uji tanpa psql langsung.
 // GET (list/detail), PATCH (kategori), POST (create/decide/bayar), DELETE.
 // Tak ada gate role khusus (approval generik, pola sama F20).
-function joinPath(path: string[] | undefined): string {
-  return (path ?? []).join("/");
-}
-
 export async function GET(req: Request, ctx: { params: Promise<{ path?: string[] }> }) {
-  const sub = joinPath((await ctx.params).path);
+  const sub = safeSubpath((await ctx.params).path);
+  if (sub === null) return badSubpath();
   const qs = new URL(req.url).searchParams.toString();
   const me = await sessionUser();
   try {
@@ -27,7 +25,8 @@ export async function GET(req: Request, ctx: { params: Promise<{ path?: string[]
 export async function PATCH(req: Request, ctx: { params: Promise<{ path?: string[] }> }) {
   const me = await sessionUser();
   if (!me) return Response.json({ error: "unauthenticated" }, { status: 401 });
-  const sub = joinPath((await ctx.params).path);
+  const sub = safeSubpath((await ctx.params).path);
+  if (sub === null) return badSubpath();
   const body = await req.text();
   try {
     return relay(
@@ -45,7 +44,8 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ path?: string
 export async function POST(req: Request, ctx: { params: Promise<{ path?: string[] }> }) {
   const me = await sessionUser();
   if (!me) return Response.json({ error: "unauthenticated" }, { status: 401 });
-  const sub = joinPath((await ctx.params).path);
+  const sub = safeSubpath((await ctx.params).path);
+  if (sub === null) return badSubpath();
   const body = await req.text();
   try {
     return relay(
@@ -63,7 +63,8 @@ export async function POST(req: Request, ctx: { params: Promise<{ path?: string[
 export async function DELETE(_req: Request, ctx: { params: Promise<{ path?: string[] }> }) {
   const me = await sessionUser();
   if (!me) return Response.json({ error: "unauthenticated" }, { status: 401 });
-  const sub = joinPath((await ctx.params).path);
+  const sub = safeSubpath((await ctx.params).path);
+  if (sub === null) return badSubpath();
   try {
     return relay(await gatewayFetch(`/doc-klaim${sub ? `/${sub}` : ""}`, { method: "DELETE" }));
   } catch {
