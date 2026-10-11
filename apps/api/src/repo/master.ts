@@ -257,12 +257,24 @@ export async function resolveAmByAlias(groupJid: string, pushname: string): Prom
 //   B. sender phone (wa_number), hanya bila JID individu
 //   C. sender pushname (6 sub-strategi)
 //   D. body-name fuzzy (40 ≤ score < 70)
+//
+// `ketat` — untuk command yang membuka data komersial (#SALES #FAKTUR). Uji dev
+// 12 Okt 2026: nomor ASING lewat chat pribadi dengan nama tampilan = panggilan
+// seorang AM lolos Tier C. Nama tampilan WA diatur pengirimnya sendiri, jadi
+// bukan identitas. Di mode ketat:
+//   · chat pribadi → HANYA nomor (Tier B), dan hanya user aktif.
+//   · grup → alias lalu nama tampilan tetap boleh: di grup `sender_jid` =
+//     `group_jid` (nomor tak tertangkap), dan pemalsu harus sudah jadi anggota
+//     grup internal. KECUALI grup komplain customer F26.
+//   · Tier A/D (nama dari ISI pesan) tak pernah dipakai.
 export async function resolveSender(opts: {
   bodyName?: string | null;
   senderJid?: string | null;
   groupJid?: string | null;
   pushname?: string | null;
+  ketat?: boolean;
 }): Promise<ResolvedAm | null> {
+  if (opts.ketat) return resolveSenderKetat(opts);
   const tokens = bodyTokens(opts.bodyName);
   const bb = await scoreBodyName(tokens);
 
@@ -291,6 +303,36 @@ export async function resolveSender(opts: {
     return { am_id: bb.am_id, nama: bb.nama, aktif: bb.aktif, role: bb.role, via: "body-fuzzy", score: bb.score };
   }
   return null;
+}
+
+async function resolveSenderKetat(opts: {
+  senderJid?: string | null;
+  groupJid?: string | null;
+  pushname?: string | null;
+}): Promise<ResolvedAm | null> {
+  const groupJid = String(opts.groupJid ?? "");
+  const pushname = opts.pushname?.trim() ?? "";
+  let hasil: ResolvedAm | null = null;
+  if (groupJid.endsWith("@g.us")) {
+    if (pushname) {
+      const al = await resolveAmByAlias(groupJid, pushname);
+      if (al) hasil = { ...al, via: "alias" };
+    }
+    const grupKomplain = process.env.F26_COMPLAINT_GROUP_JID?.trim();
+    if (!hasil && pushname && groupJid !== grupKomplain) {
+      const c = await resolveAmByPushname(pushname);
+      if (c) hasil = { ...c, via: "pushname" };
+    }
+  } else {
+    const norm = normalizeWa(jidNumber(opts.senderJid));
+    const b = norm ? await resolveAmByWa(norm) : null;
+    if (b) hasil = { ...b, via: "phone" };
+  }
+  if (hasil && !hasil.aktif) {
+    console.warn(`[inbound] pengirim dikenal TAPI non-aktif — ditolak: ${hasil.am_id} (${hasil.nama}) via ${hasil.via}`);
+    return null;
+  }
+  return hasil;
 }
 
 export interface TerritoryInput {
