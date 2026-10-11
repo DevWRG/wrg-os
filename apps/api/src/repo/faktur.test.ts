@@ -196,3 +196,15 @@ test("detectKind: #FAKTUR terpicu, #FAKTURIS/#FAKTUR123 tidak", async () => {
   assert.equal(detectKind("#FAKTURIS rapat jam 3"), "none");
   assert.equal(detectKind("#FAKTUR123"), "none");
 });
+
+test("nominal berpecahan sen dibulatkan (rekap prod 11 Okt: Rp…,942)", () => {
+  const rows = [
+    row({ id: 1, number: "OD-A", stage: "od", days_to_due: -5, outstanding: 1000.471 }),
+    row({ id: 2, number: "OD-B", stage: "od", days_to_due: -5, outstanding: 2000.471 }),
+  ];
+  const txt = buildOverdueRecap(rows, TODAY, 0);
+  assert.match(txt, /sisa Rp3\.001\n/);
+  assert.doesNotMatch(txt, /Rp[\d.]+,\d/);
+  const d = buildReminderDigest([row({ outstanding: 1234.5 })], "fin", TODAY);
+  assert.match(d.text, /sisa Rp1\.235 /);
+});
