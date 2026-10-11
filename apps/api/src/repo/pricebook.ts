@@ -51,7 +51,9 @@ export async function listItems(f: PricebookFilter = {}): Promise<PricebookItem[
   const sql = db();
   const periode = f.periode || PERIODE_DEFAULT;
   const limit = Math.min(Math.max(f.limit ?? 5000, 1), 20000);
-  const q = f.q?.trim() ? `%${f.q.trim()}%` : null;
+  // % dan _ dari kata kunci di-escape: dulu "#PRICING %" / "_" jadi wildcard dan
+  // memuntahkan katalog (uji dev 12 Okt 2026). Backslash = escape default LIKE.
+  const q = f.q?.trim() ? `%${f.q.trim().replace(/[\\%_]/g, "\\$&")}%` : null;
 
   const rows = await sql<Record<string, unknown>[]>`
     SELECT p.id, p.kode, p.lini, p.brand, p.nama, p.varian, p.kemasan, p.kategori,

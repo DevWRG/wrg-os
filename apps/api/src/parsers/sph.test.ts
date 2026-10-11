@@ -19,3 +19,18 @@ test("qty notasi ilmiah/heksa/pecahan/raksasa/nol ditolak", () => {
     assert.match((r as { error: string }).error, /bilangan bulat 1–100\.000/);
   }
 });
+
+// Nama customer: format WA dibuang, link ditolak, panjang dibatasi (uji dev 12 Okt 2026).
+const custOf = (c: string) => parseSphMessage(`#SPH ${c} | RNI.0142 | 10 | 5%`);
+
+test("nama customer dibersihkan dari format WA", () => {
+  assert.equal((custOf("*RSUD*  _Kota_ ~Baru~") as { customerName: string }).customerName, "RSUD Kota Baru");
+  assert.equal((custOf("RS Dr. Soetomo") as { customerName: string }).customerName, "RS Dr. Soetomo");
+});
+
+test("nama customer berisi link / kosong / terlalu panjang ditolak", () => {
+  for (const c of ["*GRATIS* klik https://evil.example", "promo www.evil.example", "***", "R".repeat(121)]) {
+    const r = custOf(c);
+    assert.ok(r && "error" in r, `customer "${c.slice(0, 20)}" harus ditolak`);
+  }
+});
