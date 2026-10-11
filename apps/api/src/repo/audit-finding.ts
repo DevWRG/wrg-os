@@ -455,6 +455,10 @@ export interface DecideStepInput {
   action: "approve" | "reject";
   deciderUserId: string;
   note?: string | null;
+  // Tahap yang DILIHAT pemutus saat menekan tombol. Kalau sudah bergeser
+  // (orang lain lebih dulu memutus), keputusan ditolak — tanpa ini klik yang
+  // kalah balapan mendarat di tahap BERIKUTNYA yang tak pernah dia lihat.
+  expectedUrutan?: number | null;
 }
 
 export interface DecideResult extends ActionResult {
@@ -499,6 +503,9 @@ export async function decideStep(input: DecideStepInput): Promise<DecideResult> 
     `;
     if (!req) return { ok: false, error: "request tidak ditemukan" };
     if (req.status !== "pending") return { ok: false, error: `request sudah ${req.status}` };
+    if (input.expectedUrutan != null && Number(input.expectedUrutan) !== Number(req.current_urutan)) {
+      return { ok: false, error: `tahap sudah berubah (sekarang tahap ${req.current_urutan}) — muat ulang lalu putuskan lagi` };
+    }
 
     const steps = await tx`
       SELECT id, urutan, access_group_id, status, label, decided_by

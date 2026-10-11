@@ -8032,7 +8032,7 @@ app.post("/audit-findings/approval-requests/:requestId/notify", async (c) => {
 
 app.post("/audit-findings/approval-requests/:requestId/decide", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let body: { action?: "approve" | "reject"; decider_user_id?: string; note?: string | null };
+  let body: { action?: "approve" | "reject"; decider_user_id?: string; note?: string | null; urutan?: number | null };
   try {
     body = await c.req.json();
   } catch {
@@ -8042,6 +8042,7 @@ app.post("/audit-findings/approval-requests/:requestId/decide", async (c) => {
   if (!body.decider_user_id) return c.json({ error: "decider_user_id wajib" }, 400);
   const r = await decideAuditFindingStep({
     requestId: c.req.param("requestId"), action: body.action, deciderUserId: body.decider_user_id, note: body.note ?? null,
+    expectedUrutan: body.urutan ?? null,
   });
   return c.json(r, r.ok ? 200 : 400);
 });

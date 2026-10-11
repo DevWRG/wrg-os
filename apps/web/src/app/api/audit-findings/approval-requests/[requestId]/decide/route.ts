@@ -16,7 +16,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ requestId: str
   if (!me) return Response.json({ error: "unauthenticated" }, { status: 401 });
 
   const { requestId } = await ctx.params;
-  let body: { action?: "approve" | "reject"; note?: string | null };
+  let body: { action?: "approve" | "reject"; note?: string | null; urutan?: number | null };
   try {
     body = await req.json();
   } catch {
@@ -29,6 +29,12 @@ export async function POST(req: Request, ctx: { params: Promise<{ requestId: str
   const detailRes = await gatewayFetch(`/audit-findings/approval-requests/${encodeURIComponent(requestId)}`);
   if (!detailRes.ok) return relay(detailRes);
   const detail = (await detailRes.json()) as DecideCheckRequest;
+  if (body.urutan != null && Number(body.urutan) !== detail.currentUrutan) {
+    return Response.json(
+      { error: `tahap sudah berubah (sekarang tahap ${detail.currentUrutan}) — muat ulang lalu putuskan lagi` },
+      { status: 409 },
+    );
+  }
   const blocked = auditDecideBlockReason(me, detail);
   if (blocked) return Response.json({ error: `forbidden — ${blocked}` }, { status: 403 });
 
@@ -36,7 +42,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ requestId: str
     await gatewayFetch(`/audit-findings/approval-requests/${encodeURIComponent(requestId)}/decide`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ action: body.action, decider_user_id: me.id, note: body.note ?? undefined }),
+      body: JSON.stringify({ action: body.action, decider_user_id: me.id, note: body.note ?? undefined, urutan: body.urutan ?? undefined }),
     }),
   );
 }

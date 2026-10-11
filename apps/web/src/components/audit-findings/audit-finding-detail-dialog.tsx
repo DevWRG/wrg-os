@@ -131,14 +131,14 @@ export function AuditFindingDetailDialog({ findingId, kode }: { findingId: strin
                       <div className="flex gap-2">
                         <Button
                           size="sm" disabled={busy}
-                          onClick={() => void action(`/api/audit-findings/approval-requests/${activeRequest.id}/decide`, { action: "approve", note: note || undefined })}
+                          onClick={() => void action(`/api/audit-findings/approval-requests/${activeRequest.id}/decide`, { action: "approve", note: note || undefined, urutan: activeRequest.currentUrutan })}
                         >
                           Approve
                         </Button>
                         <Button
                           size="sm" variant="outline" className="text-destructive hover:text-destructive"
                           disabled={busy || !note.trim()}
-                          onClick={() => void action(`/api/audit-findings/approval-requests/${activeRequest.id}/decide`, { action: "reject", note })}
+                          onClick={() => void action(`/api/audit-findings/approval-requests/${activeRequest.id}/decide`, { action: "reject", note, urutan: activeRequest.currentUrutan })}
                         >
                           Reject
                         </Button>
