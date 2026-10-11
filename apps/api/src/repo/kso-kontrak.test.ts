@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { alasanTolakStatus, bucketJatuhTempo, URUTAN_BUCKET } from "./kso-kontrak.js";
+import {
+  alasanTolakDokumen, alasanTolakStatus, bucketJatuhTempo, MAKS_DOKUMEN, namaAsliAman, tipeDariIsi, URUTAN_BUCKET,
+} from "./kso-kontrak.js";
 
 test("bucket jatuh tempo mengikuti spesifikasi 30/60/90/120 hari", () => {
   assert.equal(bucketJatuhTempo("AKTIF", -1), "LEWAT");
@@ -36,4 +38,33 @@ test("membuka kembali LOST wajib catatan", () => {
   assert.match(alasanTolakStatus("LOST", "AKTIF") ?? "", /catatan/);
   assert.match(alasanTolakStatus("LOST", "AKTIF", "   ") ?? "", /catatan/);
   assert.equal(alasanTolakStatus("LOST", "AKTIF", "faskes tanda tangan ulang"), null);
+});
+
+test("tipe dokumen ditentukan dari isi, bukan label MIME browser", () => {
+  const pdf = new TextEncoder().encode("%PDF-1.7\n...");
+  const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0]);
+  const jpg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0]);
+  const exe = new TextEncoder().encode("MZ\x90\x00 bukan pdf");
+  assert.equal(tipeDariIsi(pdf), "application/pdf");
+  assert.equal(tipeDariIsi(png), "image/png");
+  assert.equal(tipeDariIsi(jpg), "image/jpeg");
+  assert.equal(tipeDariIsi(exe), null);
+  assert.equal(tipeDariIsi(new TextEncoder().encode("<html>%PDF-")), null); // magic harus di awal
+});
+
+test("dokumen ditolak: jenis asing, kosong, > 8 MB, bukan PDF/JPG/PNG", () => {
+  const pdf = new TextEncoder().encode("%PDF-1.4");
+  assert.equal(alasanTolakDokumen("MOU", pdf.length, pdf), null);
+  assert.match(alasanTolakDokumen("KTP", pdf.length, pdf) ?? "", /jenis dokumen/);
+  assert.match(alasanTolakDokumen("MOU", 0, new Uint8Array()) ?? "", /kosong/);
+  assert.match(alasanTolakDokumen("BAST", MAKS_DOKUMEN + 1, pdf) ?? "", /8 MB/);
+  assert.match(alasanTolakDokumen("ADDENDUM", 4, new TextEncoder().encode("abcd")) ?? "", /PDF, JPG, atau PNG/);
+});
+
+test("nama asli dibersihkan dari path, kutip, dan karakter kontrol", () => {
+  assert.equal(namaAsliAman("../../etc/passwd"), "passwd");
+  assert.equal(namaAsliAman("C:\\Users\\x\\MoU \"RSUD\".pdf"), "MoU RSUD.pdf");
+  assert.equal(namaAsliAman("a\r\nb.pdf"), "ab.pdf");
+  assert.equal(namaAsliAman("   "), "dokumen");
+  assert.equal(namaAsliAman("x".repeat(400)).length, 150);
 });
