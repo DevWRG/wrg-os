@@ -55,7 +55,7 @@ import { runMaintenanceAlerts, runGaMaintenanceBscFeed } from "./repo/ga-mainten
 import { runGaHelpdeskOverdueAlert, runGaHelpdeskBscFeed } from "./repo/ga-helpdesk.js";
 import { runAuditFindingApprovalReminder } from "./repo/audit-finding.js";
 import { runLpseTenderReminder } from "./repo/lpse-tender.js";
-import { runInvoiceReminder } from "./repo/faktur.js";
+import { runInvoiceReminder, runOverdueRecap } from "./repo/faktur.js";
 import { terapkanKpiBulan } from "./repo/kpi-measure.js";
 
 // Penjadwal agen in-process (Blueprint v2.3). Default MATI — aktif hanya bila
@@ -1356,8 +1356,9 @@ export function startScheduler(): ScheduleStatus {
     live.push(`lpse-tender-reminder=${lpseTenderReminderExpr}`);
   }
 
-  // invoice-reminder (F91) — hari kerja 08:00 WIB. Tahap D-7/D-day memakai
+  // invoice-reminder (F91) — hari kerja 08:00 WIB, HANYA D-7/D-day. Tahap memakai
   // rentang, jadi hari libur yang dilewati tertangkap di run berikutnya.
+  // Overdue = rekap mingguan Finance (job invoice-overdue-recap di bawah).
   const invoiceReminderExpr = process.env.INVOICE_REMINDER_CRON ?? "0 8 * * 1-5";
   if (invoiceReminderEnabled && cron.validate(invoiceReminderExpr)) {
     cron.schedule(
@@ -1378,6 +1379,28 @@ export function startScheduler(): ScheduleStatus {
       { timezone },
     );
     live.push(`invoice-reminder=${invoiceReminderExpr}`);
+  }
+
+  // invoice-overdue-recap (F91) — dicek tiap hari kerja, terkirim SEKALI per
+  // minggu ISO (dedupe notif_state) → Senin libur = terkirim Selasa, bukan hilang.
+  const overdueRecapExpr = process.env.INVOICE_OVERDUE_RECAP_CRON ?? "5 8 * * 1-5";
+  if (invoiceReminderEnabled && cron.validate(overdueRecapExpr)) {
+    cron.schedule(
+      overdueRecapExpr,
+      async () => {
+        const startedAt = new Date().toISOString();
+        try {
+          if (!(await isWorkday())) return;
+          const r = await runOverdueRecap();
+          if (r.skipped?.startsWith("sudah terkirim")) return; // hari kerja ke-2..5: diam
+          console.log(`[scheduler] invoice-overdue-recap @ ${startedAt} ${JSON.stringify({ ...r, payload: undefined })}`);
+        } catch (e) {
+          console.error(`[scheduler] invoice-overdue-recap gagal @ ${startedAt}:`, e);
+        }
+      },
+      { timezone },
+    );
+    live.push(`invoice-overdue-recap=${overdueRecapExpr}`);
   }
 
   console.log(`[scheduler] aktif (TZ=${timezone}): ${live.join(", ") || "(tidak ada job valid)"}`);

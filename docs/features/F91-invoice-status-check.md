@@ -2,7 +2,7 @@
 
 Finance/AM kirim `#FAKTUR <no_invoice>` di WA → bot balas status invoice
 (**Open / Paid / Overdue**) + jatuh tempo + nominal + customer. Ditambah cron
-reminder jatuh tempo **D-7 / D-day / overdue** ke Finance + AM. Level
+reminder jatuh tempo **D-7 / D-day** ke Finance + AM, plus rekap **overdue mingguan** ke Finance. Level
 per-INVOICE, pelengkap AR Watch (A2) & F30 AR Aging yang level per-customer.
 
 - **Domain**: FINANCE · Hashtag `#FAKTUR` · FR-KMP-91 · R0 · MUST · Sprint B1
@@ -39,35 +39,53 @@ ingest, jadi jumlah hari selalu dihitung ulang.
 - Nomor dicocokkan case-insensitive, token pertama saja (`#FAKTUR SI.1 tolong cek` → `SI.1`).
 - `#FAKTURIS…` / `#FAKTUR123` **tidak** memicu (regex `\b`, dites di `inbound-kind-filter.test.ts`).
 
-## 3. Reminder jatuh tempo (`invoice-reminder`)
+## 3. Reminder jatuh tempo
 
-Job scheduler hari kerja (`INVOICE_REMINDER_ENABLED`, `INVOICE_REMINDER_CRON`
-default `0 8 * * 1-5`, dilewati di hari libur `master_holiday`). Trigger manual:
-`POST /ar/invoice-reminder/run {"dry_run": true}`.
+Dua job, satu flag `INVOICE_REMINDER_ENABLED` (dilewati di hari libur `master_holiday`).
+
+### 3a. Harian `invoice-reminder` — D-day & D-7
+
+`INVOICE_REMINDER_CRON` default `0 8 * * 1-5`. Manual: `POST /ar/invoice-reminder/run {"dry_run": true}`.
 
 | Tahap | Rentang | Frekuensi |
 |---|---|---|
-| `d7` | 1–7 hari lagi | sekali per invoice |
-| `d0` | hari ini | sekali per invoice |
-| `od` | sudah lewat | pertama kali, lalu tiap `INVOICE_REMINDER_OVERDUE_EVERY_DAYS` (default 7) selama outstanding |
+| `d0` | hari ini | sekali per invoice × penerima |
+| `d7` | 1–7 hari lagi | sekali per invoice × penerima |
 
 Rentang (bukan tepat H-7) supaya hari yang terlewat (libur, cron mati) tetap tertangkap.
+**Overdue TIDAK ikut harian** (keputusan 11 Okt 2026) — lihat 3b.
 
-**Penerima** — satu digest per penerima, bukan satu pesan per invoice:
-- Finance → `INVOICE_REMINDER_FINANCE_TARGET` (JID grup/nomor, ditentukan user).
-  Kosong → digest Finance **dilewati**, tidak di-broadcast.
-- AM → DM `master_user.wa_number` (AM via `joinAmFromSalesman`). AM nonaktif / tanpa
-  nomor → dilewati, **tanpa** fallback ke grup (invoice tetap ada di digest Finance).
+- **Penerima** — satu digest per penerima: Finance → `INVOICE_REMINDER_FINANCE_TARGET`
+  (kosong → dilewati, tidak di-broadcast); AM → DM `master_user.wa_number` (nonaktif /
+  tanpa nomor → dilewati, tanpa fallback ke grup).
+- **Prioritas** (`byUrgency`) — D-day dulu, lalu D-7 terdekat. Dipakai untuk memilih
+  batch re-sync DAN urutan baris pesan.
+- **Batas pesan** — maks `MAX_LINES_PER_MESSAGE` (30) invoice per pesan; sisanya ditulis
+  "…dan N invoice lainnya" dan **tidak** ditandai terkirim → ikut run berikutnya.
+- **Dedupe** — `notif_state` key `f91:<tahap>:<invoice_id>:<fin|am>`, hanya untuk invoice
+  yang tampil, dan hanya setelah kirim **sungguhan** (bukan stub/dry-run gateway).
 
-**Dedupe** — `notif_state` key `f91:<tahap>:<invoice_id>:<fin|am>`; ditandai hanya
-setelah kirim **sungguhan** (bukan stub/dry-run gateway), jadi gagal kirim dicoba
-lagi run berikutnya.
+### 3b. Mingguan `invoice-overdue-recap` — overdue, Finance saja
 
-**Anti data basi** — `accurate-sync` hanya menarik ulang invoice ≤7 hari, jadi invoice
-lama bisa tercatat OPEN padahal sudah lunas. Sebelum kirim, setiap kandidat ditarik
-ulang (`syncAccurateInvoices({invoiceId})`, read-only), maks
-`INVOICE_REMINDER_RESYNC_LIMIT` (default 100) per run — sisanya ditunda ke run
-berikutnya (urut yang paling lama tak tersinkron). Tanpa kredensial Accurate / limit
+`INVOICE_OVERDUE_RECAP_CRON` default `5 8 * * 1-5`: dicek tiap hari kerja, terkirim
+**sekali per minggu ISO** (key `f91:odrecap:<YYYY-Www>:fin`) → Senin libur = terkirim
+Selasa. Manual: `POST /ar/invoice-overdue-recap/run {"dry_run": true}`.
+
+Isi: jumlah & total sisa, ember umur (1–30 / 31–60 / 61–90 / >90 hari), dan 30 invoice
+dengan sisa terbesar (beserta AM). Bukan ke AM.
+
+**Kenapa dipisah** — di prod (11 Okt 2026) ada ±1.260 invoice overdue vs ±140 yang
+jatuh tempo ≤7 hari. Selama overdue ikut antrean harian (re-sync maks 100/run, urut
+paling lama tak tersinkron), D-7/D-day selalu kalah antre — bisa tak pernah terkirim —
+dan digest Finance gabungan mencapai ±180 ribu karakter (batas WA ±65 ribu).
+
+### Anti data basi (kedua job)
+
+`accurate-sync` hanya menarik ulang invoice ≤7 hari, jadi invoice lama bisa tercatat
+OPEN padahal sudah lunas. Sebelum kirim, kandidat ditarik ulang
+(`syncAccurateInvoices({invoiceId})`, read-only), maks `INVOICE_REMINDER_RESYNC_LIMIT`
+(default 100) per run: harian = urut prioritas (yang tak kebagian ikut run berikutnya);
+rekap = sisa terbesar dulu (yang tampil di daftar). Tanpa kredensial Accurate / limit
 `0` → pakai mirror apa adanya. Gagal tarik ulang satu invoice → pakai data mirror.
 
 ## 4. Uji
