@@ -23,7 +23,7 @@ export default async function AccountsPage() {
     <>
       <PageHeader
         title="Accounts"
-        description="Profil faskes/account (CRM Fase 1): ringkasan komersial (revenue/AR) + kontak multi-stakeholder. Master dari Accurate."
+        description="Profil faskes/account (CRM Fase 1): ringkasan komersial (revenue/AR), health Hot/Warm/Cold + status KSO, dan kontak multi-stakeholder. Master dari Accurate."
       />
       {!d ? (
         <Card><CardContent className="pt-6"><EmptyState title="Data tidak tersedia" description="Pastikan apps/api jalan & data Accurate ter-sync." /></CardContent></Card>
