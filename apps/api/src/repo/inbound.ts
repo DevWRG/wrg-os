@@ -26,6 +26,7 @@ import {
   markKirim,
   markBast,
   markBukti,
+  pelakuShippingWa,
 } from "./shipment-tracking.js";
 import { matchTeknisiByName, createTeknisiReport, ensureBypassTeknisi } from "./readinessboard.js";
 import { isWaTestBypassGroup } from "./wa-test-bypass.js";
@@ -1477,9 +1478,14 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
     return finish(await ingestKoranDariBaris(row, lampiran), "koran");
   }
 
-  // F12 — #KIRIM/#BAST (SHIPPING): match by sj_number, TANPA gate sender —
-  // kurir tak punya roster master data (self-contained, sama filosofi F22).
+  // F12 — #KIRIM/#BAST/#BUKTI (SHIPPING). Dulu TANPA gate sender ("kurir tak
+  // punya roster") — artinya siapa pun di grup mana pun bisa menutup
+  // pengiriman (uji dev 11 Okt 2026). Sekarang: staf roster, ATAU driver SJ itu
+  // lewat chat pribadi (pelakuShippingWa). Pengirim lain diabaikan diam.
   if (kind === "kirim" || kind === "bast" || kind === "bukti") {
+    const roster = await resolveSender({ senderJid: row.sender_jid, groupJid: row.group_jid, pushname: row.sender_name });
+    const isDm = !String(row.group_jid ?? "").endsWith("@g.us");
+    if (!roster && !isDm) return finish({ skipped: "unknown-sender", sender_name: row.sender_name });
     const sj = extractSjNumber(row.body);
     if (!sj) {
       const reply = await sendViaWaGateway(
@@ -1490,9 +1496,18 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
     }
     const shipment = await findBySjNumber(sj);
     if (!shipment) {
+      if (!roster) return finish({ skipped: "unknown-sender", sender_name: row.sender_name });
       const reply = await sendViaWaGateway(target, `⚠️ SJ "${sj}" tidak ditemukan di tracking pengiriman.`);
       return finish({ error: "sj-not-found", sj, reply });
     }
+    const pelaku = pelakuShippingWa({
+      rosterNama: roster?.nama ?? null,
+      isDm,
+      senderNumber: String(row.sender_jid ?? "").split("@")[0].split(":")[0],
+      driverWaNumber: shipment.driver_wa_number,
+      driverName: shipment.driver_name,
+    });
+    if (!pelaku) return finish({ skipped: "unknown-sender", sender_name: row.sender_name, sj });
     const photoPath = String(row.message_type ?? "").toLowerCase().startsWith("image") ? (row.media_path ?? null) : null;
     // Foto ber-geotag (OCR check_photo_geotag.py, sama infra "Geo-Tagging
     // Camera" AM) → row.geo_lat/geo_lon terisi. #KIRIM capture titik AWAL,
@@ -1503,10 +1518,10 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
     const geo = { lat: row.geo_lat ?? null, lon: row.geo_lon ?? null };
     const action =
       kind === "kirim"
-        ? await markKirim(shipment.id, { photo_path: photoPath, by: row.sender_name, ...geo })
+        ? await markKirim(shipment.id, { photo_path: photoPath, by: pelaku, ...geo })
         : kind === "bast"
-          ? await markBast(shipment.id, { photo_path: photoPath, by: row.sender_name, ...geo })
-          : await markBukti(shipment.id, { photo_path: photoPath, by: row.sender_name });
+          ? await markBast(shipment.id, { photo_path: photoPath, by: pelaku, ...geo })
+          : await markBukti(shipment.id, { photo_path: photoPath, by: pelaku });
     const labelDone = kind === "kirim" ? "DIKIRIM" : kind === "bast" ? "BAST/SELESAI" : "BUKTI TERSIMPAN";
     const replyMsg = action.ok
       ? `✅ SJ ${shipment.sj_number} (${shipment.customer_name}) ditandai *${labelDone}*.`

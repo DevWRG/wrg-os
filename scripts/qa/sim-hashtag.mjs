@@ -37,7 +37,7 @@
 // domain. Ini bukan sekadar label — sebagian command punya efek yang nyata:
 //
 //   #APPROVE / #REJECT  → benar-benar MEMUTUSKAN approval request
-//   #KIRIM #BAST #BUKTI → memajukan status SJ di shipment_tracking
+//   #KIRIM #BAST #BUKTI → memajukan status SJ di shipment_tracking (pengirim: roster / driver SJ via DM)
 //   #HELPDESK           → membuat tiket GA bernomor urut
 //   #SPH                → menyimpan draft SPH atas nama AM
 //   #KLAIM              → menyimpan baris doc_klaim
@@ -392,17 +392,21 @@ const skenario = [
   // Hashtag polos tanpa deskripsi TIDAK boleh tersimpan sbg laporan sah.
   { nama: "install · teks kosong", body: "#install", from: TEKNISI, harap: new RegExp(`⚠️ #INSTALL terdeteksi tapi teks kosong, ${esc(TEKNISI.nama)}`) },
 
-  // F12/F42/F93 shipping — sengaja TANPA gerbang (kurir tak punya roster)
-  { tulis: true, nama: "kirim · SJ ada", body: "#KIRIM SJ-QA-001", from: ASING, type: "image", media: FOTO.kirim, geo: { lat: -7.82, lon: 112.01 }, harap: /✅ SJ SJ-QA-001 \(RSUD Fixture Kediri\) ditandai \*DIKIRIM\*\./ },
-  { tulis: true, nama: "bast · SJ sudah terima", body: "#BAST SJ-QA-002", from: ASING, type: "image", media: FOTO.bast, geo: { lat: -7.81, lon: 112.02 }, harap: /✅ SJ SJ-QA-002 \(Klinik Fixture Kediri\) ditandai \*BAST\/SELESAI\*\./ },
-  { tulis: true, nama: "bukti · SJ sudah bast", body: "#BUKTI SJ-QA-003", from: ASING, type: "image", media: FOTO.bukti, harap: /✅ SJ SJ-QA-003 \(Lab Fixture Kediri\) ditandai \*BUKTI TERSIMPAN\*\./ },
+  // F12/F42/F93 shipping — pengirim sah: staf roster, atau driver SJ itu lewat chat pribadi
+  { tulis: true, nama: "kirim · SJ ada", body: "#KIRIM SJ-QA-001", from: AM, type: "image", media: FOTO.kirim, geo: { lat: -7.82, lon: 112.01 }, harap: /✅ SJ SJ-QA-001 \(RSUD Fixture Kediri\) ditandai \*DIKIRIM\*\./ },
+  { tulis: true, nama: "bast · SJ sudah terima", body: "#BAST SJ-QA-002", from: AM, type: "image", media: FOTO.bast, geo: { lat: -7.81, lon: 112.02 }, harap: /✅ SJ SJ-QA-002 \(Klinik Fixture Kediri\) ditandai \*BAST\/SELESAI\*\./ },
+  { tulis: true, nama: "bukti · SJ sudah bast", body: "#BUKTI SJ-QA-003", from: AM, type: "image", media: FOTO.bukti, harap: /✅ SJ SJ-QA-003 \(Lab Fixture Kediri\) ditandai \*BUKTI TERSIMPAN\*\./ },
   // Galat state machine harus jadi instruksi yang bisa dikerjakan kurir —
   // langkah `terima` web-only, jadi balasannya wajib menyebut siapa dimintai.
-  { nama: "bast · SJ baru dikirim, belum terima", body: "#BAST SJ-QA-001", from: ASING, harap: /⚠️ SJ SJ-QA-001 belum ditandai TERIMA, jadi belum bisa BAST\. Minta admin tandai penerimaan dulu di menu Shipping/ },
-  { nama: "bukti · SJ belum BAST", body: "#BUKTI SJ-QA-001", from: ASING, harap: /⚠️ SJ SJ-QA-001 belum BAST, jadi bukti terima belum bisa diunggah/ },
-  { nama: "kirim · SJ sudah pernah dikirim", body: "#KIRIM SJ-QA-002", from: ASING, harap: /⚠️ SJ SJ-QA-002 sudah pernah ditandai KIRIM — tak perlu #KIRIM lagi/ },
-  { nama: "kirim · nomor SJ kosong", body: "#KIRIM", from: ASING, harap: /⚠️ Format #KIRIM tak lengkap — sertakan No\. SJ/ },
-  { nama: "kirim · SJ tak ketemu", body: "#KIRIM SJ-9999-999", from: ASING, harap: /⚠️ SJ "SJ-9999-999" tidak ditemukan di tracking pengiriman\./ },
+  { nama: "bast · SJ baru dikirim, belum terima", body: "#BAST SJ-QA-001", from: AM, harap: /⚠️ SJ SJ-QA-001 belum ditandai TERIMA, jadi belum bisa BAST\. Minta admin tandai penerimaan dulu di menu Shipping/ },
+  { nama: "bukti · SJ belum BAST", body: "#BUKTI SJ-QA-001", from: AM, harap: /⚠️ SJ SJ-QA-001 belum BAST, jadi bukti terima belum bisa diunggah/ },
+  { nama: "kirim · SJ sudah pernah dikirim", body: "#KIRIM SJ-QA-002", from: AM, harap: /⚠️ SJ SJ-QA-002 sudah pernah ditandai KIRIM — tak perlu #KIRIM lagi/ },
+  { nama: "kirim · nomor SJ kosong", body: "#KIRIM", from: AM, harap: /⚠️ Format #KIRIM tak lengkap — sertakan No\. SJ/ },
+  { nama: "kirim · SJ tak ketemu", body: "#KIRIM SJ-9999-999", from: AM, harap: /⚠️ SJ "SJ-9999-999" tidak ditemukan di tracking pengiriman\./ },
+  // Gerbang pengirim (11 Okt 2026): dulu siapa pun di grup mana pun bisa #KIRIM/#BAST,
+  // dan "%" jadi wildcard ILIKE yang menandai SJ terbaru. Keduanya kini ditutup.
+  { nama: "kirim · pengirim asing di grup (gerbang)", body: "#KIRIM SJ-QA-001", from: ASING, harap: null },
+  { nama: "kirim · wildcard % bukan nomor SJ", body: "#KIRIM %", from: AM, harap: /⚠️ SJ "%" tidak ditemukan di tracking pengiriman\./ },
 
   // F139 #HELPDESK — sengaja TANPA gerbang
   { tulis: true, nama: "helpdesk · ada deskripsi", body: "#HELPDESK AC ruang meeting mati total", from: ASING, harap: /✅ Tiket TKT-\d{4}-\d+ dibuat \(.+\), status: open\./ },
