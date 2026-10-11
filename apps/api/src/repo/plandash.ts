@@ -601,10 +601,33 @@ export async function reportCalendarDay(date: string, amId?: string, cabang?: st
       ${cabang ? sql`AND mu.cabang = ${cabang}` : sql``}
     ORDER BY name
   `;
+  // F55 — siapa tidak masuk hari ini + penggantinya, supaya tim tahu harus ke
+  // siapa. Tidak di-scope per AM (sama dgn libur): justru untuk diketahui semua.
+  const leave = await sql`
+    SELECT ul.am_id, COALESCE(mu.panggilan, mu.nama, ul.am_id) AS name, mu.cabang, ul.jenis,
+           ul.start_date::text AS start_date, ul.end_date::text AS end_date,
+           ul.backup_am_id, COALESCE(bu.panggilan, bu.nama) AS backup_name
+    FROM user_leave ul
+    LEFT JOIN master_user mu ON mu.am_id = ul.am_id
+    LEFT JOIN master_user bu ON bu.am_id = ul.backup_am_id
+    WHERE ${date}::date BETWEEN ul.start_date AND ul.end_date
+      ${cabang ? sql`AND mu.cabang = ${cabang}` : sql``}
+    ORDER BY name
+  `;
   return {
     date,
     holiday: holidays[0]?.keterangan ? String(holidays[0].keterangan) : null,
     reminders: reminders.map((r) => ({ am_id: String(r.am_id), name: r.name ? String(r.name) : "—", cabang: r.cabang ? String(r.cabang) : null, note: r.note ? String(r.note) : "" })),
+    leave: leave.map((l) => ({
+      am_id: String(l.am_id),
+      name: String(l.name),
+      cabang: l.cabang ? String(l.cabang) : null,
+      jenis: String(l.jenis),
+      start_date: String(l.start_date),
+      end_date: String(l.end_date),
+      backup_am_id: l.backup_am_id ? String(l.backup_am_id) : null,
+      backup_name: l.backup_name ? String(l.backup_name) : l.backup_am_id ? String(l.backup_am_id) : null,
+    })),
   };
 }
 

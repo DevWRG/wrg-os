@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
 import { LeaveRowActions } from "@/components/crm/leave-row-actions";
+import type { BackupUser } from "@/components/crm/backup-pic-field";
 
 interface Leave {
   id: string;
@@ -17,6 +18,7 @@ interface Leave {
   jenis: string;
   keterangan: string | null;
   source: string;
+  backup_am_id: string | null;
 }
 
 const tgl = (iso: string) => {
@@ -32,7 +34,7 @@ const thisMonth = () => {
   return { from: ymd(new Date(now.getFullYear(), now.getMonth(), 1)), to: ymd(new Date(now.getFullYear(), now.getMonth() + 1, 0)) };
 };
 
-export function LeaveTable({ leave, nameById }: { leave: Leave[]; nameById: Record<string, string> }) {
+export function LeaveTable({ leave, nameById, users }: { leave: Leave[]; nameById: Record<string, string>; users: BackupUser[] }) {
   const name = (id: string) => nameById[id] ?? id;
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
@@ -48,9 +50,10 @@ export function LeaveTable({ leave, nameById }: { leave: Leave[]; nameById: Reco
     { id: "jenis", header: "Jenis", sortable: true, accessor: (l) => l.jenis, cell: (l) => <Badge variant={jenisTone(l.jenis)}>{l.jenis}</Badge> },
     { id: "start", header: "Mulai", sortable: true, accessor: (l) => l.start_date, cell: (l) => <span className="text-muted-foreground whitespace-nowrap">{tgl(l.start_date)}</span> },
     { id: "end", header: "Selesai", sortable: true, accessor: (l) => l.end_date, cell: (l) => <span className="text-muted-foreground whitespace-nowrap">{tgl(l.end_date)}</span> },
+    { id: "backup", header: "Pengganti", sortable: true, accessor: (l) => (l.backup_am_id ? name(l.backup_am_id) : ""), cell: (l) => <span className={l.backup_am_id ? "" : "text-muted-foreground"}>{l.backup_am_id ? name(l.backup_am_id) : "—"}</span> },
     { id: "ket", header: "Keterangan", accessor: (l) => l.keterangan ?? "", cell: (l) => <span className="text-muted-foreground" title={l.keterangan ?? undefined}>{l.keterangan ? clip(l.keterangan) : "—"}</span> },
     { id: "source", header: "Sumber", sortable: true, accessor: (l) => l.source, cell: (l) => <Badge variant="outline">{l.source}</Badge> },
-    { id: "aksi", header: "Aksi", align: "right", cell: (l) => <LeaveRowActions row={l} label={name(l.am_id)} /> },
+    { id: "aksi", header: "Aksi", align: "right", cell: (l) => <LeaveRowActions row={l} label={name(l.am_id)} users={users} /> },
   ];
 
   const toolbar = (
