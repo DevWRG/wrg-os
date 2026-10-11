@@ -288,12 +288,30 @@ export function bolehLewat(orang: { am_id: string; nama: string; aktif: boolean 
   return false;
 }
 
+// `ketat` — untuk command yang membuka data komersial atau menulis atas nama
+// orang (#CEK #PRICING #SPH #STOK #SALES #FAKTUR #KIRIM/#BAST/#BUKTI). Uji dev
+// 12 Okt 2026: nomor ASING lewat chat pribadi dengan nama tampilan "KD3D"
+// (panggilan seorang AM) lolos Tier C → dibalas harga floor, SO + nominal, dan
+// bisa menyimpan draft SPH. Nama tampilan WA diatur pengirimnya sendiri, jadi
+// bukan identitas.
+//
+// Di mode ketat:
+//   · chat pribadi → HANYA nomor (Tier B). Di DM nomor pengirim tertangkap,
+//     jadi tak ada alasan menebak dari nama.
+//   · grup → alias lalu nama tampilan tetap boleh: di grup `sender_jid` =
+//     `group_jid` (nomor tak tertangkap), dan pemalsu harus sudah jadi anggota
+//     grup internal. KECUALI grup komplain customer F26 — anggotanya customer,
+//     jadi di sana cuma alias manual yang dipercaya.
+//   · Tier A/D (nama dari ISI pesan) tak pernah dipakai — siapa pun bisa
+//     mengetik nama orang lain.
 export async function resolveSender(opts: {
   bodyName?: string | null;
   senderJid?: string | null;
   groupJid?: string | null;
   pushname?: string | null;
+  ketat?: boolean;
 }): Promise<ResolvedAm | null> {
+  if (opts.ketat) return resolveSenderKetat(opts);
   const tokens = bodyTokens(opts.bodyName);
   const bb = await scoreBodyName(tokens);
 
@@ -346,6 +364,48 @@ export async function resolveSender(opts: {
     return await ensureBypassAm(opts.pushname.trim(), isIndividual ? norm : null);
   }
   return null;
+}
+
+async function resolveSenderKetat(opts: {
+  senderJid?: string | null;
+  groupJid?: string | null;
+  pushname?: string | null;
+}): Promise<ResolvedAm | null> {
+  const groupJid = String(opts.groupJid ?? "");
+  const pushname = opts.pushname?.trim() ?? "";
+  if (groupJid.endsWith("@g.us")) {
+    if (pushname) {
+      const al = await resolveAmByAlias(groupJid, pushname);
+      if (al) return bolehLewat(al, "alias") ? { ...al, via: "alias" } : null;
+    }
+    const grupKomplain = process.env.F26_COMPLAINT_GROUP_JID?.trim();
+    if (pushname && groupJid !== grupKomplain) {
+      const c = await resolveAmByPushname(pushname);
+      if (c) return bolehLewat(c, "pushname") ? { ...c, via: "pushname" } : null;
+    }
+    // Grup uji tetap dibalas (sama dengan Tier E mode biasa).
+    if (pushname && isWaTestBypassGroup(groupJid)) return await ensureBypassAm(pushname, null);
+    return null;
+  }
+  const norm = normalizeWa(jidNumber(opts.senderJid));
+  if (!norm) return null;
+  const b = await resolveAmByWa(norm);
+  if (!b) return null;
+  return bolehLewat(b, "phone") ? { ...b, via: "phone" } : null;
+}
+
+// #PRICING (harga floor) dan #SPH (draft penawaran) — hanya tim sales: AM,
+// HoD, Direktur, atau Admin yang posisinya Sales/Penawaran ("Admin Sales &
+// Penawaran" di roster). Teknisi/GA/Gudang dkk ditolak (uji dev 12 Okt 2026:
+// Teknisi melihat floor, GA menyimpan draft SPH).
+export async function bolehAksesHargaWa(amId: string): Promise<boolean> {
+  if (amId.startsWith("WA-TEST-")) return true; // grup uji
+  const sql = db();
+  const [r] = await sql`SELECT role, posisi FROM master_user WHERE am_id = ${amId}`;
+  if (!r) return false;
+  const role = String(r.role ?? "").trim().toUpperCase();
+  if (role === "AM" || role === "HOD" || role === "DIREKTUR") return true;
+  return /\b(sales|penawaran)\b/i.test(String(r.posisi ?? ""));
 }
 
 // Auto-provision AM per pushname (idempoten) khusus grup bypass — supaya balasan
