@@ -1,10 +1,13 @@
 import { gatewayFetch } from "@/lib/gateway";
+import { requireFeature } from "@/lib/feature-guard";
 
 export const dynamic = "force-dynamic";
 
 // Gateway → apps/api PATCH /approval-requests/:id/atribut (F11, migrasi 190):
 // lengkapi wilayah/kategori request yang dibuat tanpa atribut routing.
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const guard = await requireFeature("/approval-requests", "edit");
+  if (!guard.ok) return guard.res;
   const { id } = await params;
   let body: unknown = {};
   try {

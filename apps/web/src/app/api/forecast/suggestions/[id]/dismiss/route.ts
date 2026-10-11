@@ -1,9 +1,12 @@
 import { gatewayFetch } from "@/lib/gateway";
+import { actorName, requireFeature } from "@/lib/feature-guard";
 
 export const dynamic = "force-dynamic";
 
 // Gateway → apps/api POST /forecast/suggestions/:id/dismiss (F19).
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const guard = await requireFeature("/forecast-submission", "edit");
+  if (!guard.ok) return guard.res;
   const { id } = await params;
   let body: unknown = {};
   try {
@@ -15,7 +18,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const res = await gatewayFetch(`/forecast/suggestions/${encodeURIComponent(id)}/dismiss`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
+      body: JSON.stringify({ ...(body as Record<string, unknown>), reviewedBy: actorName(guard.me) }),
     });
     const data = await res.json();
     return Response.json(data, { status: res.status });

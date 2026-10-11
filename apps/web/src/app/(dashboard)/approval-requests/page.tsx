@@ -75,8 +75,6 @@ export default function ApprovalRequestsPage() {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [nominal, setNominal] = useState("");
-  const [requestedBy, setRequestedBy] = useState("");
-  const [requestedByWa, setRequestedByWa] = useState("");
   // Wajib di form: tahap 1 (HoD Sales) & 2 (HoD Bisnis) dipilih dari sini.
   const [wilayah, setWilayah] = useState<string>("");
   const [kategori, setKategori] = useState<string>("");
@@ -150,8 +148,8 @@ export default function ApprovalRequestsPage() {
   async function submit() {
     setSubmitError(null);
     setSubmitNotifyWarning(null);
-    if (!title.trim() || !requestedBy.trim()) {
-      setSubmitError("title & requestedBy wajib diisi");
+    if (!title.trim()) {
+      setSubmitError("judul wajib diisi");
       return;
     }
     if (!wilayah || !kategori) {
@@ -170,8 +168,6 @@ export default function ApprovalRequestsPage() {
           title,
           description: description || null,
           nominal: nominal ? Number(nominal) : null,
-          requestedBy,
-          requestedByWa: requestedByWa || null,
           wilayah,
           kategori,
           attachments,
@@ -191,8 +187,6 @@ export default function ApprovalRequestsPage() {
       setTitle("");
       setDescription("");
       setNominal("");
-      setRequestedBy("");
-      setRequestedByWa("");
       setWilayah("");
       setKategori("");
       setFiles([]);
@@ -254,14 +248,9 @@ export default function ApprovalRequestsPage() {
               <Label className="mb-1 block text-xs">Deskripsi</Label>
               <Input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="detail permintaan" />
             </div>
-            <div>
-              <Label className="mb-1 block text-xs">Diajukan oleh *</Label>
-              <Input value={requestedBy} onChange={(e) => setRequestedBy(e.target.value)} placeholder="nama kamu" />
-            </div>
-            <div>
-              <Label className="mb-1 block text-xs">WA kamu (opsional, buat notif hasil akhir)</Label>
-              <Input value={requestedByWa} onChange={(e) => setRequestedByWa(e.target.value)} placeholder="628..." />
-            </div>
+            <p className="text-muted-foreground text-xs md:col-span-2">
+              Diajukan atas nama akun yang sedang login. Kabar hasil akhir dikirim ke nomor WA di profil akunmu (menu Pengguna).
+            </p>
             <div>
               <Label className="mb-1 block text-xs">Wilayah pengaju * (menentukan HoD Sales, tahap 1)</Label>
               <Select value={wilayah} onValueChange={(v) => setWilayah(v ?? "")}>

@@ -323,8 +323,14 @@ export async function notifyCurrentStep(requestId: string): Promise<NotifyResult
     `Balas *#APPROVE ${req.kode}* untuk setujui, atau *#REJECT ${req.kode} ALASAN* untuk tolak.`;
 
   const gw = await sendViaWaGateway(target.waNumber, msg);
-  await sql`UPDATE approval_step SET notified_at = now() WHERE id = ${step.id}`;
   await logAudit("approval.notify", null, { request_id: requestId, kode: req.kode, urutan: step.urutan, target: target.waNumber, gateway: gw }, "notify");
+  // Gateway menolak/gagal (allowlist, HTTP error, jaringan) = BELUM terkirim.
+  // Dulu tetap dibalas ok:true + notified_at terisi, jadi layar bilang
+  // "terkirim" padahal approver tak pernah menerima apa pun.
+  if (!gw.sent) {
+    return { ok: false, error: `WA ke ${target.name} (${target.waNumber}) gagal terkirim: ${gw.error ?? `HTTP ${gw.status ?? "?"}`} — coba kirim ulang dari halaman detail permintaan.` };
+  }
+  await sql`UPDATE approval_step SET notified_at = now() WHERE id = ${step.id}`;
   return { ok: true, waNumber: target.waNumber };
 }
 
@@ -340,6 +346,9 @@ export interface CreateApprovalInput {
   nominal?: number | null;
   requestedBy: string;
   requestedByWa?: string | null;
+  // Akun pengaju (dari sesi web). Kalau ada, nomor WA untuk kabar hasil akhir
+  // diambil dari akunnya — bukan diketik bebas di form.
+  requestedByUserId?: string | null;
   attachments?: AttachmentInput[];
   // Dipakai tahap ber-routing (migrasi 190). Opsional di level engine supaya
   // pemanggil lama (F19 forecast) tetap bisa membuat request; tahap yang
@@ -413,6 +422,12 @@ export async function createApprovalRequest(input: CreateApprovalInput): Promise
   const kategori = input.kategori ?? null;
   const sql = db();
 
+  let requestedByWa = input.requestedByWa ?? null;
+  if (input.requestedByUserId) {
+    const [u] = await sql`SELECT wa_number FROM app_user WHERE id = ${input.requestedByUserId}`;
+    requestedByWa = u?.wa_number ? String(u.wa_number) : null;
+  }
+
   const attachments = input.attachments ?? [];
   const validated = validateAttachments(attachments);
   if (!validated.ok) return { ok: false, error: validated.error };
@@ -425,7 +440,7 @@ export async function createApprovalRequest(input: CreateApprovalInput): Promise
 
   const [reqRow] = await sql`
     INSERT INTO approval_request (kode, title, description, nominal, requested_by, requested_by_wa, current_urutan, wilayah, kategori)
-    VALUES (${kode}, ${input.title}, ${input.description ?? null}, ${input.nominal ?? null}, ${input.requestedBy}, ${input.requestedByWa ?? null}, ${chain[0].urutan}, ${wilayah}, ${kategori})
+    VALUES (${kode}, ${input.title}, ${input.description ?? null}, ${input.nominal ?? null}, ${input.requestedBy}, ${requestedByWa}, ${chain[0].urutan}, ${wilayah}, ${kategori})
     RETURNING id
   `;
   const requestId = String(reqRow.id);
@@ -653,40 +668,54 @@ export async function decideCurrentStep(
   note?: string | null,
 ): Promise<DecideResult> {
   const sql = db();
-  const [req] = await sql`SELECT id, status, current_urutan, requested_by_wa, title FROM approval_request WHERE kode = ${kode}`;
-  if (!req) return { ok: false, error: `kode "${kode}" tidak ditemukan` };
-  if (req.status !== "pending") return { ok: false, error: `request ini sudah ${req.status}` };
+  // Satu transaksi + kunci baris request (FOR UPDATE): webhook yang terkirim
+  // ulang / balasan dobel tak bisa memajukan tahap dua kali (pola race F60,
+  // uji dev 11 Okt 2026). Kirim WA SESUDAH commit.
+  const out = await sql.begin(async (tx): Promise<DecideResult & { notifyNext?: boolean; tellWa?: string; tellMsg?: string; requestId?: string; urutan?: number }> => {
+    const [req] = await tx`SELECT id, status, current_urutan, requested_by_wa, title FROM approval_request WHERE kode = ${kode} FOR UPDATE`;
+    if (!req) return { ok: false, error: `kode "${kode}" tidak ditemukan` };
+    if (req.status !== "pending") return { ok: false, error: `request ini sudah ${req.status}` };
 
-  const [step] = await sql`SELECT id, urutan, target_type, hod_key, status FROM approval_step WHERE request_id = ${req.id} AND urutan = ${req.current_urutan}`;
-  if (!step || step.status !== "pending") return { ok: false, error: "tahap current tidak valid" };
+    const [step] = await tx`SELECT id, urutan, target_type, hod_key, status FROM approval_step WHERE request_id = ${req.id} AND urutan = ${req.current_urutan}`;
+    if (!step || step.status !== "pending") return { ok: false, error: "tahap current tidak valid" };
 
-  const matches =
-    step.target_type === "direktur" ? approver.role === "direktur" : step.hod_key !== null && step.hod_key === approver.hodKey;
-  if (!matches) return { ok: false, error: "bukan giliran kamu approve/reject permintaan ini" };
+    const matches =
+      step.target_type === "direktur" ? approver.role === "direktur" : step.hod_key !== null && step.hod_key === approver.hodKey;
+    if (!matches) return { ok: false, error: "bukan giliran kamu approve/reject permintaan ini" };
 
-  if (action === "reject") {
-    await sql`UPDATE approval_step SET status = 'rejected', decided_by = ${approver.name}, decided_at = now(), decision_note = ${note ?? null} WHERE id = ${step.id}`;
-    await sql`UPDATE approval_request SET status = 'rejected', decided_at = now() WHERE id = ${req.id}`;
-    await logAudit("approval.reject", approver.name, { request_id: req.id, kode, urutan: step.urutan, note }, "reject");
-    if (req.requested_by_wa) {
-      await sendViaWaGateway(String(req.requested_by_wa), `❌ Permintaan "${req.title}" (${kode}) DITOLAK oleh ${approver.name}${note ? `: ${note}` : ""}.`);
+    const wa = req.requested_by_wa ? String(req.requested_by_wa) : undefined;
+    if (action === "reject") {
+      await tx`UPDATE approval_step SET status = 'rejected', decided_by = ${approver.name}, decided_at = now(), decision_note = ${note ?? null} WHERE id = ${step.id}`;
+      await tx`UPDATE approval_request SET status = 'rejected', decided_at = now() WHERE id = ${req.id}`;
+      return {
+        ok: true, status: "rejected", requestId: String(req.id), urutan: Number(step.urutan), tellWa: wa,
+        tellMsg: `❌ Permintaan "${req.title}" (${kode}) DITOLAK oleh ${approver.name}${note ? `: ${note}` : ""}.`,
+      };
     }
-    return { ok: true, status: "rejected" };
-  }
 
-  await sql`UPDATE approval_step SET status = 'approved', decided_by = ${approver.name}, decided_at = now() WHERE id = ${step.id}`;
-  await logAudit("approval.approve", approver.name, { request_id: req.id, kode, urutan: step.urutan }, "approve");
-
-  const [{ max_urutan }] = await sql`SELECT max(urutan) AS max_urutan FROM approval_step WHERE request_id = ${req.id}`;
-  if (Number(step.urutan) >= Number(max_urutan)) {
-    await sql`UPDATE approval_request SET status = 'approved', decided_at = now() WHERE id = ${req.id}`;
-    if (req.requested_by_wa) {
-      await sendViaWaGateway(String(req.requested_by_wa), `✅ Permintaan "${req.title}" (${kode}) DISETUJUI semua tahap.`);
+    await tx`UPDATE approval_step SET status = 'approved', decided_by = ${approver.name}, decided_at = now() WHERE id = ${step.id}`;
+    const [{ max_urutan }] = await tx`SELECT max(urutan) AS max_urutan FROM approval_step WHERE request_id = ${req.id}`;
+    if (Number(step.urutan) >= Number(max_urutan)) {
+      await tx`UPDATE approval_request SET status = 'approved', decided_at = now() WHERE id = ${req.id}`;
+      return {
+        ok: true, status: "approved", requestId: String(req.id), urutan: Number(step.urutan), tellWa: wa,
+        tellMsg: `✅ Permintaan "${req.title}" (${kode}) DISETUJUI semua tahap.`,
+      };
     }
-    return { ok: true, status: "approved" };
-  }
+    await tx`UPDATE approval_request SET current_urutan = ${Number(step.urutan) + 1} WHERE id = ${req.id}`;
+    return { ok: true, status: "pending", requestId: String(req.id), urutan: Number(step.urutan), notifyNext: true };
+  });
+  if (!out.ok) return { ok: false, error: out.error };
 
-  await sql`UPDATE approval_request SET current_urutan = current_urutan + 1 WHERE id = ${req.id}`;
-  const nextNotify = await notifyCurrentStep(String(req.id));
-  return { ok: true, status: "pending", nextNotify };
+  if (out.status === "rejected") {
+    await logAudit("approval.reject", approver.name, { request_id: out.requestId, kode, urutan: out.urutan, note }, "reject");
+  } else {
+    await logAudit("approval.approve", approver.name, { request_id: out.requestId, kode, urutan: out.urutan }, "approve");
+  }
+  if (out.tellWa && out.tellMsg) await sendViaWaGateway(out.tellWa, out.tellMsg);
+  if (out.notifyNext && out.requestId) {
+    const nextNotify = await notifyCurrentStep(out.requestId);
+    return { ok: true, status: "pending", nextNotify };
+  }
+  return { ok: true, status: out.status };
 }

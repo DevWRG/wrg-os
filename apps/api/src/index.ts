@@ -2199,14 +2199,14 @@ app.post("/forecast/suggestions/:id/dismiss", async (c) => {
 
 app.post("/forecast/suggestions/:id/submit", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let body: { submittedBy?: string } = {};
+  let body: { submittedBy?: string; wilayah?: unknown; kategori?: unknown } = {};
   try {
     body = await c.req.json();
   } catch {
     return c.json({ error: "invalid JSON body" }, 400);
   }
   if (!body.submittedBy) return c.json({ error: "submittedBy wajib" }, 400);
-  const r = await submitSuggestion(c.req.param("id"), body.submittedBy);
+  const r = await submitSuggestion(c.req.param("id"), body.submittedBy, { wilayah: body.wilayah, kategori: body.kategori });
   return c.json(r, r.ok ? 200 : 400);
 });
 
