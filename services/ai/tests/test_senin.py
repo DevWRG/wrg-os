@@ -9,7 +9,9 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.senin import bersihkan_narasi, build_senin_system, build_senin_user  # noqa: E402
+from app.senin import (  # noqa: E402
+    bersihkan_narasi, buang_kalimat_pelanggar, build_senin_system, build_senin_user, cek_pelanggaran,
+)
 
 HOD = {
     "hod_key": "rocky", "nama": "Rocky", "peran": "Sales East", "status": "PERLU KLARIFIKASI",
@@ -64,6 +66,44 @@ class TestSenin(unittest.TestCase):
         self.assertIn("JANGAN diubah", s)
         for bagian in ("## Gap Utama per HoD", "## Pertanyaan Kritis Direktur", "## Keputusan Direktur Minggu Ini"):
             self.assertIn(bagian, s)
+
+    def test_system_aturan_w41(self):
+        s = build_senin_system("W41", "5–11 Oktober 2026", "RED", "W42")
+        self.assertIn("ancaman bersyarat", s)
+        self.assertIn("Sales Manager", s)  # disebut sebagai contoh yang DILARANG
+        self.assertIn("Jangan memindahkan angka satu HoD ke HoD lain", s)
+        self.assertIn("'setiap Jumat'", s)
+
+    def test_pelanggaran_brief_w41_tertangkap(self):
+        # Tiga kalimat yang benar-benar muncul di brief prod 12 Okt 2026.
+        teks = (
+            "**3. Mufid, Arman: serahkan data terkini (Rabu W42), atau HoD tidak hadir rapat W43.**\n"
+            "Siapa: Rocky & Yogi via Sales Manager. Tenggat: Selasa W42 pagi.\n"
+            "**1. Rocky & Yogi wajib submit daily deal close list (nominal) setiap Jumat W42.**"
+        )
+        jenis = [x.split(":")[0] for x in cek_pelanggaran(teks)]
+        self.assertEqual(jenis, ["ancaman bersyarat", "jabatan karangan", "frekuensi kontradiktif"])
+
+    def test_kalimat_sah_tidak_tertangkap(self):
+        sah = (
+            "6/6 AM submit plan · report 95/156 plan (61%)\n"
+            "Ika presentasi AR overdue top 10 customer + jadwal bayar 14 hari, tenggat Senin W42.\n"
+            "Analisis churn per akun (alasan, nilai, PIC hubungi ulang) dari Rocky & Yogi, Selasa W42.\n"
+            "Laporan harian deal close tiap hari kerja W42; rekap mingguan Jumat."
+        )
+        self.assertEqual(cek_pelanggaran(sah), [])
+
+    def test_buang_kalimat_pelanggar_jaga_struktur(self):
+        teks = (
+            "## Keputusan Direktur Minggu Ini\n\n"
+            "**1. Lengkapi data metric manual Rabu W42, atau tidak boleh hadir rapat.**\n"
+            "Lima HoD 0 metric terisi. Siapa: Mufid via Sales Manager. Tenggat: Rabu W42."
+        )
+        b = buang_kalimat_pelanggar(teks)
+        self.assertIn("## Keputusan Direktur Minggu Ini", b)
+        self.assertNotIn("**1.", b)  # judul tinggal penanda → dibuang utuh
+        self.assertIn("Lima HoD 0 metric terisi. Tenggat: Rabu W42.", b)
+        self.assertEqual(cek_pelanggaran(b), [])
 
 
 if __name__ == "__main__":
