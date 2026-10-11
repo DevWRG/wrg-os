@@ -1,4 +1,5 @@
 import { gatewayFetch } from "@/lib/gateway";
+import { safeSubpath, badSubpath } from "@/lib/safe-subpath";
 import { sessionUser } from "@/lib/admin-guard";
 
 export const dynamic = "force-dynamic";
@@ -10,10 +11,12 @@ export const dynamic = "force-dynamic";
 // cabang timnya) bisa membatasi data. Endpoint lain mengabaikan header ini.
 export async function GET(req: Request, ctx: { params: Promise<{ path: string[] }> }) {
   const { path } = await ctx.params;
+  const sub = safeSubpath(path);
+  if (sub === null) return badSubpath();
   const search = new URL(req.url).search;
   const me = await sessionUser();
   try {
-    const res = await gatewayFetch(`/report/${path.join("/")}${search}`, me ? { headers: { "x-user-id": me.id } } : undefined);
+    const res = await gatewayFetch(`/report/${sub}${search}`, me ? { headers: { "x-user-id": me.id } } : undefined);
     const data = await res.json();
     return Response.json(data, { status: res.status });
   } catch {
@@ -24,6 +27,8 @@ export async function GET(req: Request, ctx: { params: Promise<{ path: string[] 
 // POST → apps/api POST /report/* (mis. /report/reminders/push).
 export async function POST(req: Request, ctx: { params: Promise<{ path: string[] }> }) {
   const { path } = await ctx.params;
+  const sub = safeSubpath(path);
+  if (sub === null) return badSubpath();
   let body: unknown;
   try {
     body = await req.json();
@@ -31,7 +36,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ path: string[]
     return Response.json({ error: "invalid JSON body" }, { status: 400 });
   }
   try {
-    const res = await gatewayFetch(`/report/${path.join("/")}`, {
+    const res = await gatewayFetch(`/report/${sub}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),

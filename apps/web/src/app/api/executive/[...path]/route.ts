@@ -1,4 +1,5 @@
 import { gatewayFetch } from "@/lib/gateway";
+import { safeSubpath, badSubpath } from "@/lib/safe-subpath";
 import { sessionUser } from "@/lib/admin-guard";
 
 export const dynamic = "force-dynamic";
@@ -8,7 +9,8 @@ export const dynamic = "force-dynamic";
 async function proxy(req: Request, path: string[], method: string) {
   const me = await sessionUser();
   if (!me) return Response.json({ error: "unauthenticated" }, { status: 401 });
-  const sub = (path ?? []).join("/");
+  const sub = safeSubpath(path);
+  if (sub === null) return badSubpath();
   const { searchParams } = new URL(req.url);
   const qs = searchParams.toString();
   const headers: Record<string, string> = { "x-user-id": me.id };

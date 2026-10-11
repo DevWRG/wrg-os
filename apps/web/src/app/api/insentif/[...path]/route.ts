@@ -1,4 +1,5 @@
 import { gatewayFetch } from "@/lib/gateway";
+import { safeSubpath, badSubpath } from "@/lib/safe-subpath";
 import { sessionUser } from "@/lib/admin-guard";
 import { canViewInsentifTim } from "@/lib/insentif-access";
 
@@ -19,7 +20,8 @@ async function proxy(req: Request, path: string[], method: string, body?: string
   const me = await sessionUser();
   if (!me) return Response.json({ error: "unauthenticated" }, { status: 401 });
 
-  const sub = (path ?? []).join("/");
+  const sub = safeSubpath(path);
+  if (sub === null) return badSubpath();
   // Hitung ulang periode: operasi ops, dibuka HANYA untuk admin/superuser — apps/api
   // menuntut hal yang sama (scope.superuser), jadi kalau pagar ini dilonggarkan yang
   // terjadi cuma 403 dari backend, bukan kebocoran. Sebelum ada tombolnya di layar,
