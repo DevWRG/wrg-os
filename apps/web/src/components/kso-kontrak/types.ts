@@ -27,7 +27,13 @@ export interface LogKontrak {
   aksi: string; dari_status: string | null; ke_status: string | null;
   perubahan: Record<string, unknown> | null; catatan: string | null; oleh: string | null; created_at: string;
 }
-export interface DetailKontrak { kontrak: Kontrak; alat: AlatKontrak[]; kandidat_alat: AlatKontrak[]; log: LogKontrak[] }
+export type JenisDokumen = "MOU" | "ADDENDUM" | "BAST" | "LAINNYA";
+export const JENIS_DOKUMEN_LABEL: Record<JenisDokumen, string> = { MOU: "MoU", ADDENDUM: "Addendum", BAST: "BAST", LAINNYA: "Lainnya" };
+export interface DokumenKontrak {
+  id: string; jenis: JenisDokumen; nama: string; mime: string; ukuran: number;
+  keterangan: string | null; oleh: string | null; created_at: string;
+}
+export interface DetailKontrak { kontrak: Kontrak; alat: AlatKontrak[]; kandidat_alat: AlatKontrak[]; dokumen: DokumenKontrak[]; log: LogKontrak[] }
 
 export interface AkunKso { id: string; nama: string; alat: { id: string; sn: string | null; nama_alat: string | null; nomor_sheet: string | null; berkontrak: boolean }[] }
 

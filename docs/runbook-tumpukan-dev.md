@@ -39,6 +39,7 @@ Tanpa override, tumpukan dev membaca berkas **produksi**:
 | `MEDIA_ROOT` | `~/.openclaw/media` | ±27rb foto kunjungan WA |
 | `GA_UPLOAD_DIR` | `~/.wrg-os/uploads/ga-assets` | foto/dokumen aset GA |
 | `APPROVAL_UPLOAD_ROOT` | `~/.wrg-os/approval-uploads` | lampiran approval |
+| `KSO_KONTRAK_UPLOAD_DIR` | `~/.wrg-os/uploads/kso-kontrak` | dokumen MoU KSO |
 | `OPENCLAW_SESSIONS_FILE` | `~/.openclaw/agents/main/sessions/sessions.json` | nama grup WA asli |
 | `ACCURATE_CRED_FILE` | `~/.openclaw/credentials/accurate.json` | kredensial Accurate LIVE |
 
