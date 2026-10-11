@@ -153,10 +153,14 @@ export async function getShipmentById(id: string): Promise<ShipmentRow | null> {
 // menang kalau ada duplikat nomor SJ (harusnya tak terjadi, tapi tak di-UNIQUE-kan
 // krn re-kirim/retur bisa pakai SJ sama di masa depan, ASALKAN yang lama sudah
 // `bast` — lihat guard createShipment yang menolak duplikat SELAGI aktif).
+//
+// Pencocokan PERSIS (case-insensitive) — BUKAN `ILIKE ${input}`: nomor SJ datang
+// dari teks WA, dan tanpa escape `%`/`_` jadi wildcard — "#KIRIM %" menandai SJ
+// terbaru mana pun (terbukti di uji dev 11 Okt 2026).
 export async function findBySjNumber(sjNumber: string): Promise<ShipmentRow | null> {
   const sql = db();
   const rows = await sql`
-    SELECT * FROM shipment_tracking WHERE sj_number ILIKE ${sjNumber} ORDER BY created_at DESC LIMIT 1
+    SELECT * FROM shipment_tracking WHERE lower(sj_number) = lower(${sjNumber.trim()}) ORDER BY created_at DESC LIMIT 1
   `;
   return rows.length ? mapRow(rows[0]) : null;
 }
@@ -170,10 +174,34 @@ export async function findActiveBySjNumber(sjNumber: string): Promise<ShipmentRo
   const sql = db();
   const rows = await sql`
     SELECT * FROM shipment_tracking
-    WHERE sj_number ILIKE ${sjNumber} AND status <> 'bast'
+    WHERE lower(sj_number) = lower(${sjNumber.trim()}) AND status <> 'bast'
     ORDER BY created_at DESC LIMIT 1
   `;
   return rows.length ? mapRow(rows[0]) : null;
+}
+
+// Siapa yang boleh menandai #KIRIM/#BAST/#BUKTI lewat WA (keputusan user 11 Okt
+// 2026, opsi a): staf yang dikenali roster (resolveSender), ATAU driver yang
+// nomornya tercatat di SJ itu — hanya lewat chat PRIBADI ke bot, karena di grup
+// `sender_jid` = JID grup (nomor orangnya tak ada). Selain itu = diabaikan diam,
+// sama seperti hashtag lain untuk pengirim tak dikenal. Pure — diuji unit.
+export function pelakuShippingWa(input: {
+  rosterNama: string | null;
+  isDm: boolean;
+  senderNumber: string;
+  driverWaNumber: string | null;
+  driverName: string | null;
+}): string | null {
+  if (input.rosterNama) return input.rosterNama;
+  const nomor = (s: string | null): string => {
+    const d = String(s ?? "").replace(/\D/g, "");
+    return d.startsWith("0") ? `62${d.slice(1)}` : d;
+  };
+  const driver = nomor(input.driverWaNumber);
+  if (input.isDm && driver.length >= 9 && nomor(input.senderNumber) === driver) {
+    return `driver ${input.driverName?.trim() || driver}`;
+  }
+  return null;
 }
 
 export interface ShipmentActionResult {

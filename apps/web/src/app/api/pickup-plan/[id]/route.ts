@@ -1,9 +1,12 @@
 import { gatewayFetch } from "@/lib/gateway";
+import { requireFeature } from "@/lib/feature-guard";
 
 export const dynamic = "force-dynamic";
 
 // Gateway → apps/api PATCH/DELETE /pickup-plan/:id (ubah status/tanggal, hapus).
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const guard = await requireFeature("/pickup-plan", "edit");
+  if (!guard.ok) return guard.res;
   const { id } = await params;
   let body: unknown;
   try {
@@ -25,6 +28,8 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 }
 
 export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const guard = await requireFeature("/pickup-plan", "delete");
+  if (!guard.ok) return guard.res;
   const { id } = await params;
   try {
     const res = await gatewayFetch(`/pickup-plan/${encodeURIComponent(id)}`, { method: "DELETE" });

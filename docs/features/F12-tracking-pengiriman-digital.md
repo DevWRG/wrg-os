@@ -36,11 +36,16 @@ poin 5.
 - **WA hashtag**: `apps/api/src/repo/inbound.ts` — `#KIRIM [SJ_no]` / `#BAST
   [SJ_no]` (foto ber-geotag → `row.geo_lat/geo_lon` diteruskan ke
   `markKirim`/`markBast`), match ke `shipment_tracking` by `sj_number`
-  (ILIKE, tanpa gate sender — kurir tak punya roster master data, sama
-  filosofi self-contained spt F22). SJ tak ditemukan / format hashtag tak
-  lengkap → balasan error, bukan silent-skip (beda dari unknown-sender AM
-  yang silent, krn di sini masalahnya bukan identitas pengirim melainkan
-  data SJ).
+  (persis, case-insensitive). **Gerbang pengirim (11 Okt 2026)**: dulu
+  tanpa gate sender ("kurir tak punya roster") + `ILIKE` tanpa escape —
+  uji dev membuktikan siapa pun di grup mana pun bisa menutup pengiriman,
+  dan `#KIRIM %` menandai SJ terbaru. Sekarang sah = staf roster
+  (`resolveSender`) ATAU driver yang nomornya tercatat di SJ itu, lewat
+  chat pribadi ke bot (di grup `sender_jid` = JID grup, nomor orangnya tak
+  ada). `kirim_by/bast_by` = nama roster / "driver <nama>", bukan pushname.
+  Untuk pengirim sah, SJ tak ditemukan / format hashtag tak lengkap →
+  balasan error yang jelas; pengirim tak sah diabaikan diam (sama seperti
+  hashtag lain untuk pengirim tak dikenal).
 - **Web**: halaman `/shipment-tracking` (grup Operations) — tambah tracking
   (pilih SJ dari mirror Accurate via `/api/shipments`, isi cabang sbg label
   saja — **tak ada input jarak lagi**), aksi manual "Tandai Dikirim"/"Tandai
