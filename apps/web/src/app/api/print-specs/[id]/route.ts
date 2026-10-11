@@ -7,7 +7,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   const guard = await requireFeature("/print-spec", "view");
   if (!guard.ok) return guard.res;
   const { id } = await params;
-  const res = await gatewayFetch(`/print-specs/${id}`);
+  const res = await gatewayFetch(`/print-specs/${encodeURIComponent(id)}`);
   return relay(res);
 }
 
@@ -21,7 +21,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   } catch {
     return Response.json({ error: "invalid JSON body" }, { status: 400 });
   }
-  const res = await gatewayFetch(`/print-specs/${id}`, {
+  const res = await gatewayFetch(`/print-specs/${encodeURIComponent(id)}`, {
     method: "PATCH",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
@@ -33,6 +33,6 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
   const guard = await requireFeature("/print-spec", "delete");
   if (!guard.ok) return guard.res;
   const { id } = await params;
-  const res = await gatewayFetch(`/print-specs/${id}`, { method: "DELETE" });
+  const res = await gatewayFetch(`/print-specs/${encodeURIComponent(id)}`, { method: "DELETE" });
   return relay(res);
 }

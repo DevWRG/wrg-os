@@ -7,11 +7,11 @@ type Ctx = { params: Promise<{ id: string }> };
 export async function GET(_req: Request, ctx: Ctx) {
   const id = idAman((await ctx.params).id);
   if (!id) return Response.json({ error: "id tidak valid" }, { status: 400 });
-  return teruskanGet(`/kso-kontrak/${id}`);
+  return teruskanGet(`/kso-kontrak/${encodeURIComponent(id)}`);
 }
 
 export async function PATCH(req: Request, ctx: Ctx) {
   const id = idAman((await ctx.params).id);
   if (!id) return Response.json({ error: "id tidak valid" }, { status: 400 });
-  return teruskanTulis(req, `/kso-kontrak/${id}`, "PATCH");
+  return teruskanTulis(req, `/kso-kontrak/${encodeURIComponent(id)}`, "PATCH");
 }
