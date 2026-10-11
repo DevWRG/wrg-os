@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Truck, CheckCircle2, AlertTriangle, Clock } from "lucide-react";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { isoWib } from "@/lib/tanggal-wib";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
 import { StatCard } from "@/components/dashboard/stat-card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -51,8 +52,7 @@ function periodRange(preset: string): { from?: string; to?: string } {
   const to = new Date();
   const from = new Date(to);
   from.setDate(from.getDate() - (Number(preset) - 1));
-  const iso = (d: Date) => d.toISOString().slice(0, 10);
-  return { from: iso(from), to: iso(to) };
+  return { from: isoWib(from), to: isoWib(to) };
 }
 
 const rankingColumns: DataColumn<CourierPerformanceRow>[] = [
