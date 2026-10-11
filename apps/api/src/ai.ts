@@ -11,15 +11,23 @@ export const aiBaseUrl = (): string => process.env.AI_URL ?? "http://localhost:8
 export const aiDryRun = (): boolean =>
   (process.env.AI_DRY_RUN ?? "").toLowerCase() === "true";
 
+export interface CallAiOpts {
+  /** Batas tunggu khusus panggilan ini (ms). Tanpa opsi ini perilaku lama
+   *  (tanpa batas) dipertahankan untuk semua pemanggil lain. */
+  timeoutMs?: number;
+}
+
 // Call services/ai dan parse JSON (untuk pemanggil yang perlu hasil terstruktur).
 export async function callAi(
   aiPath: string,
   body: unknown,
+  opts: CallAiOpts = {},
 ): Promise<{ status: number; data: Record<string, unknown> }> {
   const res = await fetch(`${aiBaseUrl()}${aiPath}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
+    ...(opts.timeoutMs ? { signal: AbortSignal.timeout(opts.timeoutMs) } : {}),
   });
   return { status: res.status, data: (await res.json()) as Record<string, unknown> };
 }

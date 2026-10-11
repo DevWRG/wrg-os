@@ -166,6 +166,7 @@ insentif-compute.
 - `accurate-sync` (weekday 6×) sekarang juga refresh mirror **sales-order + delivery-order** (recent) setelah pull invoice → menu Orders/Shipments auto-update.
 - `insentif-compute` (harian 02:30, `INSENTIF_COMPUTE_ENABLED`) menghitung ulang insentif F67 bulan **berjalan + bulan lalu** (pelunasan Agustus bisa terjadi Oktober). Membaca Effort/Presales dari `insentif_effort` (184) dan **tidak menimpa** rekap yang sudah lewat tahap review.
 - `watchpoint-snapshot` (Senin 06:00, `WATCHPOINT_SNAPSHOT_ENABLED`) membekukan metric computed minggu lalu ke `watchpoint_weekly` — sumber riwayat tab **WatchPoint → Weekly** & deck PPTX. Tanpa job ini minggu lewat ikut berubah tiap dibuka.
+- `senin-brief` (Senin 06:30, `SENIN_BRIEF_ENABLED`, F85) menilai kesiapan materi 8 HoD atas minggu yang baru tutup (5 cek deterministik → SIAP / PERLU KLARIFIKASI / TIDAK SIAP + Overall Health), simpan ke `senin_brief`, WA ke Direktur. LLM (`/senin-brief`) hanya menulis narasi — status tak pernah dari LLM. Generate ulang manual: `POST /senin-brief/run` (default tanpa WA).
 
 **Target broadcast WA harus ditentukan user, bukan diinferensi agent.** Crontab legacy
 sudah cutover (dash-free file di-install user; sandbox blok edit crontab).
