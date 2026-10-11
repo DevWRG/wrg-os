@@ -2,8 +2,8 @@ import { aiDryRun, callAi } from "../ai.js";
 import { db } from "../db.js";
 import { normalizeWa } from "./master.js";
 import { sendViaWaGateway } from "../wasend.js";
-import { approvePendingLeave, getPendingLeave } from "./leave.js";
-import { checkBackup, isBackupRequired, notifyLeaveBackup, parseBackupName } from "./leave-backup.js";
+import { approvePendingLeave, getApprovedPendingLeave, getPendingLeave, setLeaveBackupIfEmpty, type ApprovedLeaveRow } from "./leave.js";
+import { checkBackup, isBackupRequired, notifyLeaveBackup, parseBackupName, tanyaPengganti } from "./leave-backup.js";
 
 // detect_leave — port wrg-crm/scripts/detect_leave.sh.
 // Scan pesan baru grup HRD (wa_message), 2 fase:
@@ -11,6 +11,8 @@ import { checkBackup, isBackupRequired, notifyLeaveBackup, parseBackupName } fro
 //      → dedup overlap user_leave/pending → INSERT leave_pending + post approval ke grup.
 //   B. balasan "ya L<id>"/"tidak L<id>" dari ADMIN → user_leave (approve) atau batal.
 //      F55: "ya L<id> <nama pengganti>" sekaligus menunjuk backup PIC (wajib utk cuti).
+//      Cuti cukup "ya L<id>": tercatat dulu, lalu bot menanyakan pengganti; jawaban
+//      "ya L<id> <nama>" sesudah approved mengisi pengganti susulan.
 //      B'. balasan approval yang salah ketik / id tak dikenal → balas format benar
 //          + daftar pending (dulu senyap, approver menyangka approval-nya masuk).
 // Idempotent via leave_scan_seen. Skema wrg-os: am_id (bukan user_id).
@@ -117,6 +119,41 @@ async function handleNearApproval(body: string, senderWa: string, senderName: st
   return "near-approval-replied";
 }
 
+const YA = /^(ya|iya|ok|setuju)$/i;
+
+// F55 — "ya L<id> <nama>" untuk L<id> yang SUDAH approved: isi pengganti
+// susulan pada cuti yang tercatat. "ya L<id>" tanpa nama di sini = tanya ulang
+// selama penggantinya masih kosong. Cuti yang sudah berpengganti tidak
+// ditimpa dari WA — ganti lewat edit di /leave (jejak siapa mengubah jelas).
+async function handleBackupFollowUp(a: ApprovedLeaveRow, pid: number, raw: string, grp: string): Promise<string> {
+  const rt = rentang(a.start_date, a.end_date);
+  if (a.backup_am_id) {
+    await sendViaWaGateway(grp, `ℹ️ *${a.nama}* ${a.jenis} ${rt} (L${pid}) sudah punya pengganti *${a.backup_nama ?? a.backup_am_id}*. Untuk mengganti, edit lewat dashboard /leave.`);
+    return "backup-already-set";
+  }
+  if (!raw) {
+    await sendViaWaGateway(grp, `ℹ️ *${a.nama}* ${a.jenis} ${rt} sudah tercatat (L${pid}).\n${tanyaPengganti(pid)}`);
+    return "backup-asked";
+  }
+  const backup = await resolveWajib(raw);
+  if (!backup) {
+    await sendViaWaGateway(grp, `⚠️ Pengganti *${raw}* tidak dikenali di roster.\n${tanyaPengganti(pid)}`);
+    return "backup-unknown";
+  }
+  const err = await checkBackup({ ...a, backup_am_id: backup.am_id });
+  if (err) {
+    await sendViaWaGateway(grp, `⚠️ ${err}.\n${tanyaPengganti(pid)}`);
+    return "backup-invalid";
+  }
+  if (!(await setLeaveBackupIfEmpty(a.leave_id, backup.am_id))) {
+    await sendViaWaGateway(grp, `ℹ️ Pengganti L${pid} sudah terisi lebih dulu. Untuk mengganti, edit lewat dashboard /leave.`);
+    return "backup-already-set";
+  }
+  await sendViaWaGateway(grp, `✅ Pengganti tercatat: *${a.nama}* ${a.jenis} ${rt} → *${backup.nama}*.`);
+  await notifyLeaveBackup(a.leave_id);
+  return "backup-set";
+}
+
 async function handleApproval(decision: string, pid: number, rest: string, senderWa: string, senderName: string, grp: string): Promise<string> {
   const sql = db();
   const decidedBy = approverLabel(senderWa, senderName);
@@ -125,6 +162,14 @@ async function handleApproval(decision: string, pid: number, rest: string, sende
   }
   const p = await getPendingLeave(pid);
   if (!p) {
+    // Jawaban susulan atas pertanyaan pengganti (L<id> sudah approved).
+    if (YA.test(decision)) {
+      const a = await getApprovedPendingLeave(pid);
+      const raw = parseBackupName(rest);
+      if (a && (raw || (!a.backup_am_id && isBackupRequired(a.jenis, a.end_date, { approval: true })))) {
+        return handleBackupFollowUp(a, pid, raw, grp);
+      }
+    }
     // Id salah, atau sudah diputus/expired. Dulu senyap → approver menyangka
     // approval-nya masuk. Sekarang dikabari beserta daftar yang masih menunggu.
     const [prev] = await sql`SELECT status FROM leave_pending WHERE id = ${pid}`;
@@ -135,37 +180,39 @@ async function handleApproval(decision: string, pid: number, rest: string, sende
     return "approval-not-found";
   }
   const rt = rentang(p.start_date, p.end_date);
-  if (/^(ya|iya|ok|setuju)$/i.test(decision)) {
-    // F55 — resolve pengganti dari sisa balasan. Untuk sakit/ijin teks yang tak
-    // dikenali (mis. "ya L3 makasih") diabaikan seperti sebelumnya; untuk cuti
-    // pengganti wajib, jadi balasan tanpa/dengan nama tak dikenal ditahan.
+  if (YA.test(decision)) {
+    // F55 — approval tidak ditahan karena pengganti: cuti langsung tercatat,
+    // pengganti yang kosong/tak dikenal/bentrok ditanyakan susulan (wajib untuk
+    // cuti). Untuk sakit/ijin teks yang tak dikenali (mis. "ya L3 makasih")
+    // diabaikan seperti sebelumnya.
     const raw = parseBackupName(rest);
-    const backup = raw ? await resolveWajib(raw) : null;
+    const found = raw ? await resolveWajib(raw) : null;
     const wajib = isBackupRequired(p.jenis, p.end_date, { approval: true });
-    const formatBenar = `Balas *ya L${pid} <nama pengganti>* (contoh: *ya L${pid} Budi*).`;
-    if (wajib && !backup) {
-      await sendViaWaGateway(
-        grp,
-        raw
-          ? `⚠️ Pengganti *${raw}* tidak dikenali di roster — L${pid} belum direkam.\n${formatBenar}`
-          : `⚠️ *${p.nama}* ${p.jenis} ${rt} wajib menunjuk pengganti (backup PIC) — L${pid} belum direkam.\n${formatBenar}`,
-      );
-      return "approval-need-backup";
-    }
-    const err = await checkBackup({ ...p, backup_am_id: backup?.am_id ?? null, approval: true });
-    if (err) {
-      await sendViaWaGateway(grp, `⚠️ ${err} — L${pid} belum direkam.\n${formatBenar}`);
-      return "approval-backup-invalid";
+    let masalah: string | null = raw && !found && wajib ? `Pengganti *${raw}* tidak dikenali di roster` : null;
+    let backup = found;
+    if (found) {
+      const err = await checkBackup({ ...p, backup_am_id: found.am_id });
+      if (err) { masalah = err; backup = null; }
     }
     const leaveId = await approvePendingLeave(p, {
       backup_am_id: backup?.am_id ?? null,
       keterangan: "Auto-detect HRD group, approved via WA",
       decidedBy,
     });
-    const ganti = backup ? ` Pengganti: *${backup.nama}*.` : "";
-    await sendViaWaGateway(grp, `✅ Tercatat: *${p.nama}* ${p.jenis} ${rt}.${ganti} Tidak akan kena reminder/summary.`);
-    if (backup) await notifyLeaveBackup(leaveId);
-    return "approved";
+    // Baris cuti lama yang dipakai ulang bisa sudah punya pengganti (COALESCE
+    // di approvePendingLeave) — yang dilaporkan adalah pengganti yang TERSIMPAN.
+    const [tersimpan] = await sql`
+      SELECT l.backup_am_id, COALESCE(b.panggilan, b.nama) AS nama
+      FROM user_leave l LEFT JOIN master_user b ON b.am_id = l.backup_am_id
+      WHERE l.id = ${leaveId}
+    `;
+    const adaPengganti = !!tersimpan?.backup_am_id;
+    const ganti = adaPengganti ? ` Pengganti: *${tersimpan.nama ?? tersimpan.backup_am_id}*.` : "";
+    const catatan = masalah ? `\n⚠️ ${masalah}.` : "";
+    const tanya = !adaPengganti && wajib ? `\n${tanyaPengganti(pid)}` : "";
+    await sendViaWaGateway(grp, `✅ Tercatat: *${p.nama}* ${p.jenis} ${rt}.${ganti} Tidak akan kena reminder/summary.${catatan}${tanya}`);
+    if (adaPengganti) await notifyLeaveBackup(leaveId);
+    return tanya ? "approved-need-backup" : "approved";
   }
   await sql`UPDATE leave_pending SET status='rejected', decided_at=now(), decided_by=${decidedBy} WHERE id=${pid}`;
   await sendViaWaGateway(grp, `❌ Dibatalkan — *${p.nama}* tidak direkam (L${pid}).`);
@@ -209,6 +256,7 @@ export async function runDetectLeaveScan(opts: { dryRun?: boolean } = {}): Promi
       if (opts.dryRun) { skip("approval-dryrun"); continue; }
       const out = await handleApproval(decision, pid, rest, senderWa, String(m.sender_name ?? ""), grp);
       if (out === "approved") res.approved += 1;
+      else if (out === "approved-need-backup") { res.approved += 1; skip(out); }
       else if (out === "rejected") res.rejected += 1;
       else skip(out);
       await markSeen(mid, `reply-${out}`);
@@ -269,7 +317,7 @@ export async function runDetectLeaveScan(opts: { dryRun?: boolean } = {}): Promi
     const pid = Number(ins.id);
     const rt = sd === ed ? sd : `${sd} s/d ${ed}`;
     const caraYa = isBackupRequired(jenis, ed, { approval: true })
-      ? `*ya L${pid} <nama pengganti>* untuk rekam (pengganti wajib untuk cuti)`
+      ? `*ya L${pid}* untuk rekam (pengganti wajib untuk cuti — boleh langsung *ya L${pid} <nama pengganti>*, kalau belum akan ditanyakan)`
       : `*ya L${pid}* untuk rekam (opsional tunjuk pengganti: *ya L${pid} <nama>*)`;
     await sendViaWaGateway(grp, `📋 *Konfirmasi cuti* — rekam ke sistem?\n\n• Nama: *${resolved.nama}*\n• Jenis: *${jenis}*\n• Tanggal: *${rt}*\n\nAdmin balas ${caraYa}, atau *tidak L${pid}* untuk batal.`);
     await markSeen(mid, `pending-L${pid}`);

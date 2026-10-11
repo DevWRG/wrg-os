@@ -18,7 +18,8 @@ Ini bagian "Backup PIC" yang dipecah dari F14 (F14 sekarang Kalender Libur saja)
 |---|---|---|
 | Tambah cuti manual | Sheet "Tambah cuti" di `/leave` → `POST /leave` | field `backup_am_id` |
 | Approve pending (dashboard) | Tombol Approve di tabel Pending, membuka dialog pilih pengganti → `POST /leave/pending/:id/decide` | body `{approve:true, backup_am_id}` |
-| Approve pending (WA) | Balasan approver di grup HRD: **`ya L<id> <nama pengganti>`** | nama di-resolve dengan fuzzy match roster yang sama (`resolveWajib`); `@mention` dan kata "pengganti:" dibuang |
+| Approve pending (WA) | Balasan approver di grup HRD: **`ya L<id>`**, atau langsung **`ya L<id> <nama pengganti>`** | nama di-resolve dengan fuzzy match roster yang sama (`resolveWajib`); `@mention` dan kata "pengganti:" dibuang |
+| Pengganti susulan (WA) | Setelah `ya L<id>` tanpa pengganti, bot bertanya; approver menjawab **`ya L<id> <nama pengganti>`** | format sama dengan approve, jadi tak perlu hafal dua format |
 | Edit cuti | Sheet edit di `/leave` → `PATCH /leave/:id` | pengganti bisa diganti atau dilengkapi belakangan |
 
 `/leave/detect` (source `auto`, keyword lama) **tidak** diubah: tetap tanpa pengganti.
@@ -27,7 +28,8 @@ Ini bagian "Backup PIC" yang dipecah dari F14 (F14 sekarang Kalender Libur saja)
 
 | Aturan | Hasil |
 |---|---|
-| **Approve** pending jenis `cuti` (dashboard maupun WA) tanpa pengganti | ditolak: "pengganti (backup PIC) wajib diisi untuk cuti", **apa pun tanggalnya** |
+| **Approve dashboard** pending jenis `cuti` tanpa pengganti | ditolak: "pengganti (backup PIC) wajib diisi untuk cuti", **apa pun tanggalnya** |
+| **Approve WA** pending jenis `cuti` tanpa pengganti | cuti **tercatat**, lalu bot **menanyakan pengganti** (wajib tetap berlaku, ditagih susulan), **apa pun tanggalnya** |
 | Tambah/edit di `/leave`: jenis `cuti` yang **belum selesai** (`end_date ≥ hari ini WIB`) tanpa pengganti | ditolak dengan pesan yang sama |
 | Tambah/edit cuti lampau tanpa pengganti | boleh, supaya data lama (sebelum F55) dan input susulan tetap bisa diedit |
 | `sakit` / `ijin` | pengganti opsional di semua jalur, karena sering mendadak |
@@ -40,18 +42,35 @@ jenis cuti**; sakit/ijin tetap opsional. Pengecualian tanggal tidak berlaku saat
 karena requirement-nya "wajib diisi saat approve cuti" tanpa pengecualian. Jalur approve
 memanggil `checkBackup({..., approval: true})` / `isBackupRequired(..., { approval: true })`.
 
+**Approve WA tidak ditahan karena pengganti** (keputusan user 2026-10-11, saat uji di
+stack dev): approver cukup membalas `ya L<id>`. Menahan approval sampai nama pengganti
+diketik membuat cuti tak tercatat sama sekali kalau approver tak sempat, padahal
+pencatatan cutinya (stop reminder/summary) yang paling mendesak. Pengganti tetap wajib
+untuk cuti, tapi ditagih sesudahnya lewat pertanyaan bot. Dashboard tetap menolak approve
+tanpa pengganti, karena dialognya sudah menyediakan pilihan pengganti di tempat.
+
 Satu definisi (`isBackupRequired`, `checkBackup`) dipakai oleh `POST /leave`,
 `PATCH /leave/:id`, approve dashboard, dan approve WA. PATCH memvalidasi keadaan
 **setelah** edit: field yang tidak dikirim dianggap nilai lama, dan
 `backup_am_id` yang tidak dikirim berarti tidak diubah.
 
 **Approve WA** (`detectleave.ts handleApproval`):
-- `ya L5` untuk cuti tanpa nama: bot membalas format yang benar, L5 **tetap pending**.
-- `ya L5 Zzz` dengan nama tak dikenal: untuk cuti ditahan seperti di atas. Untuk sakit/ijin
-  teksnya diabaikan dan cuti tercatat tanpa pengganti, persis seperti sebelum F55
-  (`ya L3 makasih` tetap jalan).
-- Pengganti ketemu tapi melanggar aturan di tabel: bot membalas alasannya, L5 tetap pending.
-- Pesan konfirmasi deteksi kini menyebut format `ya L<id> <nama pengganti>`.
+- `ya L5` untuk cuti tanpa nama: cuti **tercatat** ("✅ Tercatat …"), lalu bot bertanya
+  "❓ Pengganti (backup PIC) belum ada. Balas *ya L5 <nama pengganti>*" (`tanyaPengganti`).
+- `ya L5 Zzz` dengan nama tak dikenal (cuti): tercatat, bot menyebut nama tak dikenal lalu
+  bertanya. Untuk sakit/ijin teksnya diabaikan dan cuti tercatat tanpa pengganti, persis
+  seperti sebelum F55 (`ya L3 makasih` tetap jalan).
+- Pengganti ketemu tapi melanggar aturan di tabel: tercatat tanpa pengganti, bot membalas
+  alasannya (dan bertanya ulang untuk cuti).
+- **Jawaban susulan** `ya L5 <nama>` saat L5 sudah approved (`handleBackupFollowUp`):
+  pengganti diisikan ke cuti yang tercatat (`getApprovedPendingLeave` → `user_leave`
+  beririsan milik orang yang sama), divalidasi `checkBackup` yang sama, lalu notifikasi
+  Backup PIC terkirim. Hanya mengisi yang **kosong** (`setLeaveBackupIfEmpty`): cuti yang
+  sudah berpengganti tidak ditimpa dari WA, bot mengarahkan ke edit di `/leave`.
+  `ya L5` tanpa nama saat pengganti masih kosong = bot bertanya ulang.
+- Hasil scan: `approved-need-backup` dihitung sebagai `approved` dan juga muncul di `skipped`
+  supaya terlihat berapa cuti yang masih menunggu pengganti.
+- Pesan konfirmasi deteksi menyebut `ya L<id>` cukup, dengan opsi langsung `ya L<id> <nama pengganti>`.
 - Catatan: pending tetap kedaluwarsa setelah 24 jam seperti sebelumnya.
 
 **Approve jadi satu transaksi**: `approvePendingLeave` (`leave.ts`) menjalankan insert
