@@ -31,6 +31,7 @@ import {
   type InvoiceInput,
   type AccurateInvoice,
 } from "./repo/ar.js";
+import { runInvoiceReminder, runOverdueRecap } from "./repo/faktur.js";
 import {
   runArWatch,
   runDistillationCascade,
@@ -1104,6 +1105,32 @@ app.get("/ar/invoice/:no", async (c) => {
   if (!no) return c.json({ error: "no invoice wajib" }, 400);
   const r = await invoiceDetail(no, await resolveScope(c.req.header("x-user-id")));
   return c.json(r, r.ok ? 200 : 404);
+});
+
+// F91 — jalankan reminder jatuh tempo invoice manual (uji / kirim ulang).
+// body: {dry_run?} → dry_run = susun digest tanpa kirim WA & tanpa menandai.
+app.post("/ar/invoice-reminder/run", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { dry_run?: boolean } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    /* body opsional */
+  }
+  return c.json(await runInvoiceReminder({ dryRun: body.dry_run }));
+});
+
+// F91 — rekap overdue mingguan ke Finance, manual (uji / kirim ulang).
+// body: {dry_run?}. Tanpa dry_run, tetap sekali per minggu ISO (dedupe).
+app.post("/ar/invoice-overdue-recap/run", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { dry_run?: boolean } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    /* body opsional */
+  }
+  return c.json(await runOverdueRecap({ dryRun: body.dry_run }));
 });
 
 // Sync Accurate (puller, pengganti sync_accurate.sh). Read-only ke API Accurate

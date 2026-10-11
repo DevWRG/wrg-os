@@ -47,6 +47,7 @@ import { snapshotLastWeek } from "./repo/watchpoint-weekly.js";
 import { runGeoSweep } from "./repo/geowatch.js";
 import { terapkanKpiBulan } from "./repo/kpi-measure.js";
 import { runAuditFindingApprovalReminder } from "./repo/audit-finding.js";
+import { runInvoiceReminder, runOverdueRecap } from "./repo/faktur.js";
 
 // Penjadwal agen in-process (Blueprint v2.3). Default MATI — aktif hanya bila
 // AGENT_SCHEDULE_ENABLED=true. Tiap run tetap menulis ke audit_log via repo
@@ -185,6 +186,7 @@ export function startScheduler(): ScheduleStatus {
   // pending & telat >N hari (dedup harian via reminded_at). Flag SENDIRI
   // (default off) — mengirim WA.
   const auditFindingReminderEnabled = (process.env.AUDIT_FINDING_REMINDER_ENABLED ?? "false").toLowerCase() === "true";
+  const invoiceReminderEnabled = (process.env.INVOICE_REMINDER_ENABLED ?? "false").toLowerCase() === "true";
   const timezone = TZ();
   const jobs: JobDef[] = [
     {
@@ -260,12 +262,12 @@ export function startScheduler(): ScheduleStatus {
   ];
 
   status = {
-    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled || watchpointSnapshotEnabled || geoSweepEnabled || cashinResumeEnabled || kpiMeasureEnabled || seninBriefEnabled || auditFindingReminderEnabled,
+    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled || watchpointSnapshotEnabled || geoSweepEnabled || cashinResumeEnabled || kpiMeasureEnabled || seninBriefEnabled || auditFindingReminderEnabled || invoiceReminderEnabled,
     timezone,
     jobs: jobs.map((j) => ({ id: j.id, expr: j.expr, valid: cron.validate(j.expr) })),
   };
 
-  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled && !watchpointSnapshotEnabled && !geoSweepEnabled && !cashinResumeEnabled && !kpiMeasureEnabled && !seninBriefEnabled && !auditFindingReminderEnabled) {
+  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled && !watchpointSnapshotEnabled && !geoSweepEnabled && !cashinResumeEnabled && !kpiMeasureEnabled && !seninBriefEnabled && !auditFindingReminderEnabled && !invoiceReminderEnabled) {
     console.log("[scheduler] semua *_SCHEDULE/_ENABLED flag != true — tidak dijadwalkan");
     return status;
   }
@@ -1029,6 +1031,53 @@ export function startScheduler(): ScheduleStatus {
       { timezone },
     );
     live.push(`audit-finding-reminder=${auditFindingReminderExpr}`);
+  }
+
+  // invoice-reminder (F91) — hari kerja 08:00 WIB, HANYA D-7/D-day. Tahap memakai
+  // rentang, jadi hari libur yang dilewati tertangkap di run berikutnya.
+  // Overdue = rekap mingguan Finance (job invoice-overdue-recap di bawah).
+  const invoiceReminderExpr = process.env.INVOICE_REMINDER_CRON ?? "0 8 * * 1-5";
+  if (invoiceReminderEnabled && cron.validate(invoiceReminderExpr)) {
+    cron.schedule(
+      invoiceReminderExpr,
+      async () => {
+        const startedAt = new Date().toISOString();
+        try {
+          if (!(await isWorkday())) {
+            console.log(`[scheduler] invoice-reminder skip (bukan hari kerja)`);
+            return;
+          }
+          const r = await runInvoiceReminder();
+          console.log(`[scheduler] invoice-reminder ok @ ${startedAt} ${JSON.stringify(r)}`);
+        } catch (e) {
+          console.error(`[scheduler] invoice-reminder gagal @ ${startedAt}:`, e);
+        }
+      },
+      { timezone },
+    );
+    live.push(`invoice-reminder=${invoiceReminderExpr}`);
+  }
+
+  // invoice-overdue-recap (F91) — dicek tiap hari kerja, terkirim SEKALI per
+  // minggu ISO (dedupe notif_state) → Senin libur = terkirim Selasa, bukan hilang.
+  const overdueRecapExpr = process.env.INVOICE_OVERDUE_RECAP_CRON ?? "5 8 * * 1-5";
+  if (invoiceReminderEnabled && cron.validate(overdueRecapExpr)) {
+    cron.schedule(
+      overdueRecapExpr,
+      async () => {
+        const startedAt = new Date().toISOString();
+        try {
+          if (!(await isWorkday())) return;
+          const r = await runOverdueRecap();
+          if (r.skipped?.startsWith("sudah terkirim")) return; // hari kerja ke-2..5: diam
+          console.log(`[scheduler] invoice-overdue-recap @ ${startedAt} ${JSON.stringify({ ...r, payload: undefined })}`);
+        } catch (e) {
+          console.error(`[scheduler] invoice-overdue-recap gagal @ ${startedAt}:`, e);
+        }
+      },
+      { timezone },
+    );
+    live.push(`invoice-overdue-recap=${overdueRecapExpr}`);
   }
 
   console.log(`[scheduler] aktif (TZ=${timezone}): ${live.join(", ") || "(tidak ada job valid)"}`);
