@@ -171,6 +171,14 @@ export async function updateCourierDelivery(id: string, patch: CourierDeliveryPa
   if (!existing) throw new CourierDeliveryError(404, "pengiriman tidak ditemukan");
 
   const sql = db();
+  // "Hari ini" versi WIB, bukan toISOString() (UTC): antara 00:00–06:59 WIB
+  // tanggal UTC masih kemarin → kiriman hari ini gagal ditandai selesai
+  // ("tanggal_tiba tidak boleh sebelum tanggal_kirim"), kiriman lama tercatat
+  // tiba sehari lebih awal (uji dev 12 Okt 2026 jam 03 WIB).
+  const butuhHariIni = patch.tanggal_tiba === undefined && patch.status === "selesai" && !existing.tanggal_tiba;
+  const hariIniWib = butuhHariIni
+    ? String((await sql`SELECT (now() AT TIME ZONE 'Asia/Jakarta')::date::text AS d`)[0].d)
+    : null;
   const next = {
     kurir_name: patch.kurir_name?.trim() ?? existing.kurir_name,
     kurir_wa_number: patch.kurir_wa_number !== undefined ? patch.kurir_wa_number : existing.kurir_wa_number,
@@ -183,9 +191,7 @@ export async function updateCourierDelivery(id: string, patch: CourierDeliveryPa
     tanggal_tiba:
       patch.tanggal_tiba !== undefined
         ? patch.tanggal_tiba
-        : patch.status === "selesai" && !existing.tanggal_tiba
-          ? new Date().toISOString().slice(0, 10)
-          : existing.tanggal_tiba,
+        : hariIniWib ?? existing.tanggal_tiba,
     distance_km: patch.distance_km !== undefined ? patch.distance_km : existing.distance_km,
     status: patch.status ?? existing.status,
     notes: patch.notes !== undefined ? patch.notes : existing.notes,
