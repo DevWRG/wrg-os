@@ -1,9 +1,12 @@
 import { gatewayFetch } from "@/lib/gateway";
+import { requireFeature } from "@/lib/feature-guard";
 
 export const dynamic = "force-dynamic";
 
 // Gateway → apps/api GET /aftersales/rfid-cartridge-claims/:id.
 export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }) {
+  const guard = await requireFeature("/rfid-cartridge-claims", "view");
+  if (!guard.ok) return guard.res;
   const { id } = await ctx.params;
   try {
     const res = await gatewayFetch(`/aftersales/rfid-cartridge-claims/${encodeURIComponent(id)}`);
@@ -16,6 +19,8 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
 
 // Gateway → apps/api PATCH /aftersales/rfid-cartridge-claims/:id (update field/status).
 export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }> }) {
+  const guard = await requireFeature("/rfid-cartridge-claims", "edit");
+  if (!guard.ok) return guard.res;
   const { id } = await ctx.params;
   let body: unknown;
   try {
@@ -37,6 +42,8 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
 }
 
 export async function DELETE(_req: Request, ctx: { params: Promise<{ id: string }> }) {
+  const guard = await requireFeature("/rfid-cartridge-claims", "delete");
+  if (!guard.ok) return guard.res;
   const { id } = await ctx.params;
   try {
     const res = await gatewayFetch(`/aftersales/rfid-cartridge-claims/${encodeURIComponent(id)}`, {

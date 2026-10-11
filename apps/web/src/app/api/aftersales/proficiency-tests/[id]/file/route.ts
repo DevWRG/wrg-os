@@ -1,10 +1,13 @@
 import { gatewayFetch } from "@/lib/gateway";
+import { requireFeature } from "@/lib/feature-guard";
 
 export const dynamic = "force-dynamic";
 
 // Beda dari BFF route lain (bukan JSON) — teruskan biner sertifikat apa
 // adanya, bukan lewat relay() (yg selalu parse body sbg JSON).
 export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }) {
+  const guard = await requireFeature("/proficiency-tests", "view");
+  if (!guard.ok) return guard.res;
   const { id } = await ctx.params;
   const res = await gatewayFetch(`/aftersales/proficiency-tests/${encodeURIComponent(id)}/file`);
   if (!res.ok) {
