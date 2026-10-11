@@ -11,7 +11,7 @@ import {
   Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, Tags, SlidersHorizontal, Microscope, MonitorCheck,
   Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, BookOpen, Calculator,
   Wallet, Coins, Banknote, Car, QrCode, PenLine, PackagePlus, PackageMinus,
-  Handshake, Archive, Ticket,
+  Handshake, Archive, Ticket, Printer,
   type LucideIcon,
   Hourglass, ShieldAlert,
 } from "lucide-react";
@@ -233,6 +233,14 @@ export const NAV: NavGroup[] = [
       { title: "Shipments", url: "/shipments", icon: Truck },
       { title: "Suppliers", url: "/suppliers", icon: Factory },
       { title: "HITL Review", url: "/hitl", icon: ClipboardCheck },
+    ],
+  },
+  {
+    // Domain Shipping (F44) — standalone. Dipromosikan per-fitur dari dev
+    // (12 Okt 2026); menu Shipping lain menyusul satu per satu.
+    label: "Shipping",
+    items: [
+      { title: "Spesifikasi Cetak Dokumen", url: "/print-spec", icon: Printer, badge: "NEW" },
     ],
   },
   {
