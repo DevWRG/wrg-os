@@ -54,7 +54,7 @@ ETA, balas otomatis ke grup.
 ## Limitasi yang dicatat eksplisit (bukan bug)
 
 - **Identitas pengirim di grup WA tidak reliable** (`sender_jid` = group jid,
-  bukan personal). Bedain customer vs teknisi pakai fuzzy `ILIKE` `sender_name`
+  bukan personal). Bedain customer vs teknisi pakai nama PERSIS `sender_name` (sejak 11 Okt 2026; dulu fuzzy `ILIKE` potongan nama — customer bernama "Gilang" dianggap "Teknisi Gilang" dan komplainnya dibuang)
   ke `teknisi_roster.nama` — best-effort saja.
 - **Severity di dev selalu "sedang"** — dry-run fallback krn tak ada
   `OPENROUTER_API_KEY` lokal. Differensiasi asli cuma kelihatan di production

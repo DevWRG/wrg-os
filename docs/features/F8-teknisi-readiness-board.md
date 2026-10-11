@@ -32,6 +32,8 @@ Board ini **terhubung** ke `installation_unit` (F22, penjadwalan install tertaut
 - **Hook WA inbound** (`apps/api/src/repo/inbound.ts`, EXTEND — bukan hook baru): `detectKind()` + SELECT filter `processUnprocessed()` di-extend dengan 4 hashtag baru. **Beda dari F26**: grup WA-nya KEMUNGKINAN SUDAH ADA (grup yang sama dipakai Teknisi utk `#plan`/`#report`), jadi **tidak ada env-gate baru** — cukup nebeng `WA_INBOUND_GROUPS`/`groupAllowed()` yang sudah ada. Identitas pengirim di-match ke `teknisi_capacity` via `matchTeknisiByName` (fuzzy `ILIKE`, bukan `resolveSender`/`master_user`).
 - **Web**: halaman `/readiness-board` — 3 section (Kapasitas, Install Schedule, Laporan Terbaru).
 
+> **Gerbang identitas teknisi (11 Okt 2026):** dulu `nama ILIKE '%pushname%'` (potongan nama) — pushname "a" / "jar" dari grup sembarang lolos sebagai "Teknisi Fajar". Sekarang `matchTeknisi`: pushname harus SAMA PERSIS dengan nama di `teknisi_capacity` (huruf kecil + spasi dirapikan; nama kembar = ambigu → ditolak), ATAU lewat chat pribadi dari nomor yang tercatat. Teknisi yang pushname-nya beda dari roster: samakan nama di roster, atau lapor lewat chat pribadi ke bot.
+
 ## Kapasitas — cara hitung
 
 `capacity_used` = jumlah `install_schedule` status `'scheduled'` (F8 sendiri) **+** jumlah `maintenance_schedule` (F24) status `'scheduled'`/`'notified'` yang `teknisi_name`-nya match nama teknisi ini (cross-tabel by **name-match**, `maintenance_schedule.teknisi_name` teks bebas tanpa FK).

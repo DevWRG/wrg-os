@@ -64,9 +64,9 @@ export async function listTeknisiCapacity(): Promise<Teknisi[]> {
 // dan saat pembersihan (`WHERE nama LIKE '[UJI] %'`). Lihat catatan FK
 // `service_ticket.assigned_teknisi_id` di wa-test-bypass.ts.
 //
-// `matchTeknisiByName` memakai ILIKE '%pushname%', jadi pesan berikutnya dari
-// orang yang sama tetap ketemu baris ber-prefiks ini lewat jalur normal —
-// bypass-nya tak terpanggil dua kali, dan tak ada baris kembar.
+// `matchTeknisi` mencocokkan nama PERSIS, jadi pushname "Husni" tak lagi
+// menemukan "[UJI] Husni" lewat jalur normal — bypass ini terpanggil tiap pesan,
+// tapi tetap tanpa baris kembar karena upsert `ON CONFLICT (nama)` di bawah.
 export async function ensureBypassTeknisi(pushname: string, waNumber?: string | null): Promise<Teknisi> {
   const sql = db();
   const nama = namaUji(pushname);
@@ -161,15 +161,44 @@ export async function deactivateTeknisiCapacity(id: string): Promise<{ ok: boole
   return { ok: true };
 }
 
-// Fuzzy match sender_name (pushname WA) ke roster F8 — best-effort, sama
-// limitasi F26 (identitas grup WA tak reliable). Dipakai inbound hook.
-export async function matchTeknisiByName(senderName: string | null): Promise<Teknisi | null> {
-  if (!senderName?.trim()) return null;
+// Nama dinormalisasi untuk dibandingkan PERSIS: huruf kecil + spasi dirapikan.
+// Pure — dipakai matchTeknisi (lewat SQL yang setara) & diuji unit.
+export function normNamaTeknisi(s: string | null | undefined): string {
+  return String(s ?? "").trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+// Identitas pengirim laporan teknisi (#install/#servis/#training/#kalibrasi).
+// Dulu `nama ILIKE '%pushname%'` = POTONGAN nama: pushname "a" / "jar" dari grup
+// sembarang lolos sebagai "Teknisi Fajar" (uji dev 11 Okt 2026). Keputusan user
+// (opsi a): sah kalau pushname SAMA PERSIS dengan nama di roster (dinormalisasi),
+// ATAU lewat chat PRIBADI dari nomor yang tercatat di teknisi_capacity (di grup
+// `sender_jid` = JID grup, nomor orangnya tak ada). Nama kembar = ambigu → null.
+export async function matchTeknisi(input: {
+  pushname: string | null;
+  senderJid: string | null;
+  groupJid: string | null;
+}): Promise<Teknisi | null> {
   const sql = db();
-  const rows = await sql`
-    SELECT * FROM teknisi_capacity WHERE aktif = TRUE AND nama ILIKE ${`%${senderName.trim()}%`} LIMIT 1
-  `;
-  return rows.length ? mapTeknisi(rows[0]) : null;
+  const nama = normNamaTeknisi(input.pushname);
+  if (nama) {
+    const rows = await sql`
+      SELECT * FROM teknisi_capacity
+      WHERE aktif = TRUE AND lower(regexp_replace(btrim(nama), '[[:space:]]+', ' ', 'g')) = ${nama}
+      LIMIT 2
+    `;
+    if (rows.length === 1) return mapTeknisi(rows[0]);
+  }
+  const isDm = !String(input.groupJid ?? "").endsWith("@g.us");
+  const nomor = String(input.senderJid ?? "").split("@")[0].split(":")[0].replace(/\D/g, "");
+  if (isDm && nomor.length >= 9) {
+    const rows = await sql`
+      SELECT * FROM teknisi_capacity
+      WHERE aktif = TRUE AND regexp_replace(regexp_replace(coalesce(wa_number, ''), '[^0-9]', '', 'g'), '^0', '62') = ${nomor.replace(/^0/, "62")}
+      LIMIT 2
+    `;
+    if (rows.length === 1) return mapTeknisi(rows[0]);
+  }
+  return null;
 }
 
 export interface TeknisiReadiness extends Teknisi {

@@ -391,6 +391,8 @@ const skenario = [
   { nama: "kalibrasi · bukan teknisi (gerbang)", body: "#kalibrasi Alat X", from: ASING, harap: null },
   // Hashtag polos tanpa deskripsi TIDAK boleh tersimpan sbg laporan sah.
   { nama: "install · teks kosong", body: "#install", from: TEKNISI, harap: new RegExp(`⚠️ #INSTALL terdeteksi tapi teks kosong, ${esc(TEKNISI.nama)}`) },
+  // Nama teknisi dicocokkan PERSIS (11 Okt 2026): dulu ILIKE potongan — pushname "a"/"Joko" lolos sbg teknisi.
+  { nama: "install · potongan nama teknisi (gerbang)", body: "#install coba", from: { jid: "628111000099@s.whatsapp.net", nama: "Joko" }, harap: null },
 
   // F12/F42/F93 shipping — pengirim sah: staf roster, atau driver SJ itu lewat chat pribadi
   { tulis: true, nama: "kirim · SJ ada", body: "#KIRIM SJ-QA-001", from: AM, type: "image", media: FOTO.kirim, geo: { lat: -7.82, lon: 112.01 }, harap: /✅ SJ SJ-QA-001 \(RSUD Fixture Kediri\) ditandai \*DIKIRIM\*\./ },
