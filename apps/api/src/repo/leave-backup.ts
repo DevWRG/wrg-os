@@ -30,9 +30,11 @@ export const rentang = (sd: string, ed: string): string => (sd === ed ? sd : `${
 
 // Pertanyaan susulan di grup HRD saat cuti tercatat tanpa pengganti. Approver
 // cukup "ya L<id>"; penggantinya ditanyakan sesudahnya, dijawab dengan format
-// yang sama ("ya L<id> <nama>") supaya approver tak perlu hafal dua format.
+// yang sama ("ya L<id> NAMA") supaya approver tak perlu hafal dua format.
+// Placeholder sengaja NAMA, bukan "<nama pengganti>": teks ber-kurung sudut
+// terbuang di jalur gateway WA (terlihat di uji 11 Okt: "Balas *ya L57 *").
 export const tanyaPengganti = (pid: number): string =>
-  `❓ Pengganti (backup PIC) belum ada. Balas *ya L${pid} <nama pengganti>* (contoh: *ya L${pid} Budi*).`;
+  `❓ Pengganti (backup PIC) belum ada. Balas *ya L${pid} NAMA* (contoh: *ya L${pid} Budi*).`;
 
 // Wajib untuk jenis cuti. Saat APPROVE tanpa pengecualian tanggal —
 // requirement Issue #1443: "wajib diisi saat approve cuti" (dikonfirmasi
