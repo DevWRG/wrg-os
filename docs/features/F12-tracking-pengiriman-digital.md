@@ -43,6 +43,9 @@ poin 5.
   (`resolveSender`) ATAU driver yang nomornya tercatat di SJ itu, lewat
   chat pribadi ke bot (di grup `sender_jid` = JID grup, nomor orangnya tak
   ada). `kirim_by/bast_by` = nama roster / "driver <nama>", bukan pushname.
+  Untuk pengirim sah, SJ tak ditemukan / format hashtag tak lengkap →
+  balasan error yang jelas; pengirim tak sah diabaikan diam (sama seperti
+  hashtag lain untuk pengirim tak dikenal).
 - **Web**: halaman `/shipment-tracking` (grup Operations) — tambah tracking
   (pilih SJ dari mirror Accurate via `/api/shipments`, isi cabang sbg label
   saja — **tak ada input jarak lagi**), aksi manual "Tandai Dikirim"/"Tandai
