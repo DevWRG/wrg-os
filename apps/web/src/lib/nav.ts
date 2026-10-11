@@ -13,6 +13,7 @@ import {
   Wallet, Coins, Banknote, Car, QrCode, PenLine, PackagePlus, PackageMinus,
   Handshake, Archive, Ticket,
   type LucideIcon,
+  Hourglass,
 } from "lucide-react";
 
 import { can, canOrLegacy, hasPerms } from "@/lib/perms";
@@ -24,6 +25,7 @@ import { canViewExecutive } from "@/lib/executive-access";
 import { canViewKso } from "@/lib/kso-access";
 import { canViewNpkAm, canViewNpkAmSelf } from "@/lib/npk-access";
 import { canViewInsentifTim } from "@/lib/insentif-access";
+import { canViewOvertime } from "@/lib/overtime-access";
 import { canViewDanaOps } from "@/lib/dana-ops-access";
 import { canViewVendorManagement } from "@/lib/vendor-management-access";
 import { canViewGaReporting } from "@/lib/ga-reporting-access";
@@ -74,6 +76,7 @@ export const NAV: NavGroup[] = [
       { title: "Reminders", url: "/reminders", icon: Bell },
       { title: "Holidays", url: "/holidays", icon: CalendarOff },
       { title: "Manage Leave", url: "/leave", icon: CalendarDays },
+      { title: "Lembur (#OVERTIME)", url: "/overtime", icon: Hourglass, badge: "NEW", show: canViewOvertime },
       { title: "Raport Saya", url: "/raport", icon: Award, exact: true, badge: "NEW" },
     ],
   },
