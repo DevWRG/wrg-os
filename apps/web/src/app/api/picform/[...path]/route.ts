@@ -1,4 +1,5 @@
 import { gatewayFetch } from "@/lib/gateway";
+import { safeSubpath, badSubpath } from "@/lib/safe-subpath";
 
 export const dynamic = "force-dynamic";
 
@@ -9,7 +10,8 @@ export const dynamic = "force-dynamic";
 // Ada supaya tabel langkah SOP (436 baris) & RACI posisi (283 baris) diambil
 // per halaman SAAT tab-nya dibuka, bukan ikut terkirim di payload halaman.
 export async function GET(req: Request, ctx: { params: Promise<{ path: string[] }> }) {
-  const sub = ((await ctx.params).path ?? []).join("/");
+  const sub = safeSubpath((await ctx.params).path);
+  if (sub === null) return badSubpath();
   const qs = new URL(req.url).searchParams.toString();
   try {
     const res = await gatewayFetch(`/picform/${sub}${qs ? `?${qs}` : ""}`);

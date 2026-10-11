@@ -1,4 +1,5 @@
 import { gatewayFetch } from "@/lib/gateway";
+import { safeSubpath, badSubpath } from "@/lib/safe-subpath";
 import { sessionUser } from "@/lib/admin-guard";
 
 export const dynamic = "force-dynamic";
@@ -23,7 +24,8 @@ async function forward(sub: string, method: string, userId: string, req?: Reques
 }
 
 export async function GET(req: Request, ctx: { params: Promise<{ path: string[] }> }) {
-  const sub = ((await ctx.params).path ?? []).join("/");
+  const sub = safeSubpath((await ctx.params).path);
+  if (sub === null) return badSubpath();
   const qs = new URL(req.url).searchParams.toString();
   const me = await sessionUser();
   try {
@@ -38,7 +40,9 @@ export async function GET(req: Request, ctx: { params: Promise<{ path: string[] 
 async function guarded(method: string, req: Request | undefined, ctx: { params: Promise<{ path: string[] }> }): Promise<Response> {
   const me = await sessionUser();
   if (!me) return Response.json({ error: "unauthenticated" }, { status: 401 });
-  return forward(((await ctx.params).path ?? []).join("/"), method, me.id, req);
+  const sub = safeSubpath((await ctx.params).path);
+  if (sub === null) return badSubpath();
+  return forward(sub, method, me.id, req);
 }
 export const POST = (req: Request, ctx: { params: Promise<{ path: string[] }> }) => guarded("POST", req, ctx);
 export const PATCH = (req: Request, ctx: { params: Promise<{ path: string[] }> }) => guarded("PATCH", req, ctx);

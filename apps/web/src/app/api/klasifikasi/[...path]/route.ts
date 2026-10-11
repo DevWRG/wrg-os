@@ -1,4 +1,5 @@
 import { gatewayFetch, relay } from "@/lib/gateway";
+import { safeSubpath, badSubpath } from "@/lib/safe-subpath";
 import { sessionUser } from "@/lib/admin-guard";
 import { canViewKlasifikasi, canEditKlasifikasi } from "@/lib/klasifikasi-access";
 
@@ -22,15 +23,14 @@ async function siap(tulis: boolean) {
   return { me };
 }
 
-const sub = async (ctx: { params: Promise<{ path: string[] }> }) =>
-  ((await ctx.params).path ?? []).join("/");
-
 export async function GET(req: Request, ctx: { params: Promise<{ path: string[] }> }) {
   const g = await siap(false);
   if (g.err) return g.err;
+  const sub = safeSubpath((await ctx.params).path);
+  if (sub === null) return badSubpath();
   const qs = new URL(req.url).searchParams.toString();
   try {
-    return relay(await gatewayFetch(`/klasifikasi/${await sub(ctx)}${qs ? `?${qs}` : ""}`));
+    return relay(await gatewayFetch(`/klasifikasi/${sub}${qs ? `?${qs}` : ""}`));
   } catch {
     return Response.json({ error: "backend unreachable" }, { status: 502 });
   }
@@ -39,12 +39,14 @@ export async function GET(req: Request, ctx: { params: Promise<{ path: string[] 
 export async function POST(req: Request, ctx: { params: Promise<{ path: string[] }> }) {
   const g = await siap(true);
   if (g.err) return g.err;
+  const sub = safeSubpath((await ctx.params).path);
+  if (sub === null) return badSubpath();
   let body: unknown;
   try { body = await req.json(); } catch { body = {}; }
   // created_by diisi server dari sesi — jangan percaya nilai dari klien.
   const payload = { ...(body as Record<string, unknown>), createdBy: g.me?.email ?? null };
   try {
-    return relay(await gatewayFetch(`/klasifikasi/${await sub(ctx)}`, {
+    return relay(await gatewayFetch(`/klasifikasi/${sub}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(payload),
@@ -57,9 +59,11 @@ export async function POST(req: Request, ctx: { params: Promise<{ path: string[]
 export async function DELETE(req: Request, ctx: { params: Promise<{ path: string[] }> }) {
   const g = await siap(true);
   if (g.err) return g.err;
+  const sub = safeSubpath((await ctx.params).path);
+  if (sub === null) return badSubpath();
   const qs = new URL(req.url).searchParams.toString();
   try {
-    return relay(await gatewayFetch(`/klasifikasi/${await sub(ctx)}${qs ? `?${qs}` : ""}`,
+    return relay(await gatewayFetch(`/klasifikasi/${sub}${qs ? `?${qs}` : ""}`,
       { method: "DELETE" }));
   } catch {
     return Response.json({ error: "backend unreachable" }, { status: 502 });
