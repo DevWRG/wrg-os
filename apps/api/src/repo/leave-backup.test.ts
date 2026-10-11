@@ -56,10 +56,12 @@ test("parse nama pengganti dari sisa balasan WA", () => {
   assert.equal(parseBackupName(" Backupan"), "Backupan");
 });
 
-test("pertanyaan pengganti susulan memakai format balasan yang sama (ya L<id> <nama>)", () => {
+test("pertanyaan pengganti susulan memakai format balasan yang sama (ya L<id> NAMA)", () => {
   const t = tanyaPengganti(57);
   assert.match(t, /belum ada/);
-  assert.match(t, /\*ya L57 <nama pengganti>\*/);
+  assert.match(t, /\*ya L57 NAMA\*/);
+  // Teks ber-kurung sudut terbuang di jalur gateway WA ("Balas *ya L57 *").
+  assert.doesNotMatch(t, /[<>]/);
   // Jawabannya harus lolos regex approval di detectleave.ts → sisa = nama.
   const APPROVAL = /^\s*(ya|iya|ok|setuju|tidak|tdk|gak|batal|no)\s*#?L?(\d+)/i;
   const m = "ya L57 Budi".match(APPROVAL);

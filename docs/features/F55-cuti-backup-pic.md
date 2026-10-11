@@ -56,7 +56,7 @@ Satu definisi (`isBackupRequired`, `checkBackup`) dipakai oleh `POST /leave`,
 
 **Approve WA** (`detectleave.ts handleApproval`):
 - `ya L5` untuk cuti tanpa nama: cuti **tercatat** ("✅ Tercatat …"), lalu bot bertanya
-  "❓ Pengganti (backup PIC) belum ada. Balas *ya L5 <nama pengganti>*" (`tanyaPengganti`).
+  "❓ Pengganti (backup PIC) belum ada. Balas *ya L5 NAMA*" (`tanyaPengganti`).
 - `ya L5 Zzz` dengan nama tak dikenal (cuti): tercatat, bot menyebut nama tak dikenal lalu
   bertanya. Untuk sakit/ijin teksnya diabaikan dan cuti tercatat tanpa pengganti, persis
   seperti sebelum F55 (`ya L3 makasih` tetap jalan).
@@ -71,6 +71,8 @@ Satu definisi (`isBackupRequired`, `checkBackup`) dipakai oleh `POST /leave`,
 - Hasil scan: `approved-need-backup` dihitung sebagai `approved` dan juga muncul di `skipped`
   supaya terlihat berapa cuti yang masih menunggu pengganti.
 - Pesan konfirmasi deteksi menyebut `ya L<id>` cukup, dengan opsi langsung `ya L<id> <nama pengganti>`.
+- Teks bot memakai placeholder **`NAMA`** (`ya L5 NAMA`), bukan `<nama pengganti>`: teks ber-kurung
+  sudut terbuang di jalur gateway WA (uji 11 Okt: bot tampil "Balas *ya L57 *").
 - Catatan: pending tetap kedaluwarsa setelah 24 jam seperti sebelumnya.
 
 **Approve jadi satu transaksi**: `approvePendingLeave` (`leave.ts`) menjalankan insert
