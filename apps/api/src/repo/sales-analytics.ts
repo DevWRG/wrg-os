@@ -17,6 +17,7 @@ import {
   type Region,
 } from "./sales.js";
 import { isRestricted, scopeAccurateClause, type DataScope } from "./access-scope.js";
+import { getSoPacing } from "./so-pacing.js";
 
 const yearOf = (to: string): number => Number(to.slice(0, 4));
 const pct = (num: number, den: number | null | undefined): number | null =>
@@ -72,9 +73,11 @@ export async function analyticsOverview(from0?: string, to0?: string, scope?: Da
     };
   }
 
-  // Full: reuse salesOverview (KPI+delta+tren+breakdown) + kartu region (F5).
-  const [ov, perf] = await Promise.all([salesOverview(from, to), reportSalesPerformance(to)]);
-  return { scope: "all" as const, ...ov, performance: perf };
+  // Full: reuse salesOverview (KPI+delta+tren+breakdown) + kartu region (F5)
+  // + pacing bulan berjalan per region (F21). Pacing SENGAJA tak mengikuti
+  // rentang filter: maknanya selalu "bulan ini s/d hari ini".
+  const [ov, perf, soPacing] = await Promise.all([salesOverview(from, to), reportSalesPerformance(to), getSoPacing()]);
+  return { scope: "all" as const, ...ov, performance: perf, so_pacing: soPacing };
 }
 
 // ── View #2: Per-AM Performance ───────────────────────────────────

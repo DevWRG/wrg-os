@@ -229,6 +229,7 @@ import { runDetectLeaveScan } from "./repo/detectleave.js";
 import { runExtractCompetitor } from "./repo/extractcompetitor.js";
 import { runWeekendBriefing } from "./repo/weekendbriefing.js";
 import { listSeninBriefs, runSeninBrief } from "./repo/senin-brief.js";
+import { getSoPacing, runSoPacingAlert } from "./repo/so-pacing.js";
 import { runPolaKomunikasi } from "./repo/polakomunikasi.js";
 import { listWaGroups, setWaGroupCategory, setWaGroupPrefixCategory, isWaGroupCategory } from "./repo/wagroup.js";
 import { runRefreshMembers } from "./repo/listmembers.js";
@@ -2415,6 +2416,26 @@ app.get("/briefings", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const briefings = await listBriefings();
   return c.json({ count: briefings.length, briefings });
+});
+
+// F21 — pacing sales bulan berjalan per region (faktur netto + SO terbuka vs
+// target bulan diprorata hari kerja). ?as_of=YYYY-MM-DD opsional.
+app.get("/sales/so-pacing", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await getSoPacing(c.req.query("as_of")));
+});
+
+// F21 — jalankan alert pacing manual. Sengaja TANPA route BFF (bisa kirim WA ke
+// grup HoD). body: {dry_run?, target?}. Default dry_run=true di endpoint ini.
+app.post("/sales/so-pacing/run", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { dry_run?: boolean; target?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    /* body opsional */
+  }
+  return c.json(await runSoPacingAlert({ dryRun: body.dry_run !== false, target: body.target }));
 });
 
 // F85 Senin Morning Brief — read model (tab "Senin Brief" di /briefings).
