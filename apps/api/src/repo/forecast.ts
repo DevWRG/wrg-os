@@ -7,7 +7,7 @@
 // meeting 100% sistem→Supply Chain→approval (lihat komentar migrasi 107).
 
 import { db, isDbEnabled } from "../db.js";
-import { createApprovalRequest } from "./approval.js";
+import { createApprovalRequest, isKategori, isWilayah, KATEGORI, WILAYAH, type NotifyResult } from "./approval.js";
 import { createPurchaseOrder, type PurchaseOrderLini } from "./purchase-order.js";
 
 // Ambang ED "dekat kedaluwarsa" — dipakai sbg SATU pemicu sederhana (bukan
@@ -308,12 +308,26 @@ export interface SubmitResult {
   error?: string;
   approvalId?: string;
   approvalKode?: string;
+  // Hasil notifikasi tahap 1 — dikirim balik supaya UI bisa bilang kalau
+  // approver pertama TIDAK menerima apa-apa (dulu diabaikan: layar "sukses",
+  // usulan tertahan diam-diam).
+  notify?: NotifyResult;
 }
 
 // "Ajukan" — Supply Chain kirim usulan yg sudah di-review ke approval
 // berjenjang F11. Reuse createApprovalRequest() APA ADANYA, tak ada logika
 // approval yg diduplikasi di sini.
-export async function submitSuggestion(id: string, submittedBy: string): Promise<SubmitResult> {
+// Wilayah & kategori WAJIB: tahap 1 & 2 F11 diarahkan per atribut ini
+// (migrasi 190). Usulan dari GUDANG tak punya wilayah pengaju bawaan, jadi
+// Supply Chain memilihnya saat mengajukan (keputusan 11 Okt 2026). Tanpa ini
+// request dibuat tanpa atribut dan tahap 1 tak pernah dinotifikasi.
+export async function submitSuggestion(
+  id: string,
+  submittedBy: string,
+  atribut: { wilayah?: unknown; kategori?: unknown } = {},
+): Promise<SubmitResult> {
+  if (!isWilayah(atribut.wilayah)) return { ok: false, error: `wilayah wajib dipilih (${WILAYAH.join("/")}) — menentukan HoD Sales tahap 1` };
+  if (!isKategori(atribut.kategori)) return { ok: false, error: `kategori wajib dipilih (${KATEGORI.join("/")}) — menentukan HoD Bisnis tahap 2` };
   const sql = db();
   const rows = await sql`
     SELECT fs.*, ai.name AS item_name, w.nama AS warehouse_nama
@@ -345,6 +359,8 @@ export async function submitSuggestion(id: string, submittedBy: string): Promise
     title: `Forecast: ${r.item_name} — ${r.warehouse_nama}`,
     description,
     requestedBy: submittedBy,
+    wilayah: atribut.wilayah,
+    kategori: atribut.kategori,
   });
   if (!res.ok || !res.id) return { ok: false, error: res.error ?? "gagal membuat approval request" };
 
@@ -352,7 +368,7 @@ export async function submitSuggestion(id: string, submittedBy: string): Promise
     UPDATE forecast_suggestion SET status = 'submitted', approval_request_id = ${res.id}, reviewed_by = ${submittedBy}, reviewed_at = now()
     WHERE id = ${id}
   `;
-  return { ok: true, approvalId: res.id, approvalKode: res.kode };
+  return { ok: true, approvalId: res.id, approvalKode: res.kode, notify: res.notify };
 }
 
 export interface DraftPoInput {
@@ -406,7 +422,21 @@ export async function draftPurchaseOrder(id: string, input: DraftPoInput): Promi
 
   const qty = r.final_qty != null ? Number(r.final_qty) : Number(r.suggested_qty);
 
-  const po = await createPurchaseOrder({
+  // Klaim atomik SEBELUM membuat PO: cek purchase_order_id di atas cuma baca,
+  // jadi dua klik bersamaan sama-sama lolos dan membuat DUA PO (uji dev 11 Okt
+  // 2026: 3 klik → 2 PO, satu yatim). UPDATE ... WHERE status='submitted'
+  // hanya dimenangkan satu pemanggil; kalau createPurchaseOrder gagal, klaim
+  // dikembalikan supaya usulan bisa didraft lagi.
+  const [claim] = await sql`
+    UPDATE forecast_suggestion SET status = 'ordered'
+    WHERE id = ${id} AND status = 'submitted' AND purchase_order_id IS NULL
+    RETURNING id
+  `;
+  if (!claim) return { ok: false, error: "usulan ini sudah didraft jadi PO (atau sedang didraft) — muat ulang halaman" };
+
+  let po: Awaited<ReturnType<typeof createPurchaseOrder>>;
+  try {
+    po = await createPurchaseOrder({
     po_number: input.poNumber.trim(),
     vendor_id: String(vendor.id),
     vendor_name: vendor.name ? String(vendor.name) : `Vendor #${vendor.id}`,
@@ -423,9 +453,13 @@ export async function draftPurchaseOrder(id: string, input: DraftPoInput): Promi
         unit: r.item_unit ? String(r.item_unit) : null,
       },
     ],
-  });
+    });
+  } catch (e) {
+    await sql`UPDATE forecast_suggestion SET status = 'submitted' WHERE id = ${id} AND purchase_order_id IS NULL`;
+    throw e;
+  }
 
-  await sql`UPDATE forecast_suggestion SET status = 'ordered', purchase_order_id = ${po.id} WHERE id = ${id}`;
+  await sql`UPDATE forecast_suggestion SET purchase_order_id = ${po.id} WHERE id = ${id}`;
 
   return { ok: true, purchaseOrderId: po.id, poNumber: po.po_number };
 }

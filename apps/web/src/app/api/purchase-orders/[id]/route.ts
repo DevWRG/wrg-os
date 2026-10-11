@@ -1,5 +1,5 @@
 import { gatewayFetch, relay } from "@/lib/gateway";
-import { sessionUser } from "@/lib/admin-guard";
+import { requireFeature } from "@/lib/feature-guard";
 import { myApprovableRoles } from "@/lib/po-approval-access";
 
 export const dynamic = "force-dynamic";
@@ -9,15 +9,19 @@ export const dynamic = "force-dynamic";
 // round-trip identitas terpisah. relay() sudah mengembalikan Response jadi
 // (tak bisa "dienrich"), jadi jalur sukses di-parse manual di sini.
 export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }) {
+  const guard = await requireFeature("/purchase-orders", "view");
+  if (!guard.ok) return guard.res;
   const { id } = await ctx.params;
   const res = await gatewayFetch(`/purchase-orders/${encodeURIComponent(id)}`);
   if (!res.ok) return relay(res);
   const po = await res.json();
-  const me = await sessionUser();
+  const me = guard.me;
   return Response.json({ ...po, my_roles: myApprovableRoles(me, po) }, { status: res.status });
 }
 
 export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }> }) {
+  const guard = await requireFeature("/purchase-orders", "edit");
+  if (!guard.ok) return guard.res;
   const { id } = await ctx.params;
   const body = await req.json().catch(() => ({}));
   const res = await gatewayFetch(`/purchase-orders/${encodeURIComponent(id)}`, {
@@ -29,6 +33,8 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
 }
 
 export async function DELETE(_req: Request, ctx: { params: Promise<{ id: string }> }) {
+  const guard = await requireFeature("/purchase-orders", "delete");
+  if (!guard.ok) return guard.res;
   const { id } = await ctx.params;
   const res = await gatewayFetch(`/purchase-orders/${encodeURIComponent(id)}`, { method: "DELETE" });
   return relay(res);

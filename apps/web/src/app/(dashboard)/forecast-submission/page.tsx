@@ -9,6 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SkeletonCardGrid } from "@/components/ui/loading";
+import { KATEGORI_OPTIONS, WILAYAH_OPTIONS } from "@/lib/approval-routing";
 
 interface Suggestion {
   id: string;
@@ -58,6 +59,9 @@ export default function ForecastSubmissionPage() {
   const [generating, setGenerating] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<Record<string, { finalQty: string; notes: string }>>({});
+  // Atribut routing approval F11 (migrasi 190) — dipilih Supply Chain saat Ajukan.
+  const [atribut, setAtribut] = useState<Record<string, { wilayah: string; kategori: string }>>({});
+  const [notice, setNotice] = useState<string | null>(null);
   const [vendors, setVendors] = useState<VendorOpt[]>([]);
   const [poForm, setPoForm] = useState<
     Record<string, { vendorId: string; lini: "" | "IVD" | "Medical"; poNumber: string }>
@@ -155,7 +159,7 @@ export default function ForecastSubmissionPage() {
       const res = await fetch(`/api/forecast/suggestions/${id}/dismiss`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ reviewedBy: "web-ui" }),
+        body: JSON.stringify({}),
       });
       const data = await res.json();
       if (!res.ok || data.ok === false) throw new Error(data.error ?? "gagal dismiss");
@@ -168,16 +172,27 @@ export default function ForecastSubmissionPage() {
   }
 
   async function submit(id: string) {
+    const a = atribut[id];
+    if (!a?.wilayah || !a?.kategori) {
+      setError("pilih wilayah & kategori dulu — keduanya menentukan approver tahap 1 & 2");
+      return;
+    }
     setBusy(id);
+    setNotice(null);
     try {
       await saveEdit(id); // pastikan final_qty tersimpan dulu sebelum ajukan
       const res = await fetch(`/api/forecast/suggestions/${id}/submit`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ submittedBy: "web-ui" }),
+        body: JSON.stringify({ wilayah: a.wilayah, kategori: a.kategori }),
       });
       const data = await res.json();
       if (!res.ok || data.ok === false) throw new Error(data.error ?? "gagal mengajukan");
+      // Usulan sah diajukan, tapi approver tahap 1 bisa saja tak menerima WA —
+      // itu harus terlihat sekarang, bukan ditebak dari usulan yang diam.
+      if (data.notify && data.notify.ok === false) {
+        setNotice(`${data.approvalKode} diajukan, TAPI notifikasi tahap 1 gagal: ${data.notify.error}`);
+      }
       await load(filter);
     } catch (e) {
       setError(String(e));
@@ -252,6 +267,7 @@ export default function ForecastSubmissionPage() {
       </div>
 
       {error && <p className="text-destructive text-sm">{error}</p>}
+      {notice && <p className="text-sm text-amber-700 dark:text-amber-400">{notice}</p>}
       {loading ? (
         <SkeletonCardGrid count={4} />
       ) : suggestions.length === 0 ? (
@@ -305,6 +321,34 @@ export default function ForecastSubmissionPage() {
                           onChange={(e) => setDrafts((prev) => ({ ...prev, [s.id]: { ...prev[s.id], notes: e.target.value } }))}
                           placeholder="opsional"
                         />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="grid gap-1">
+                        <Label className="text-xs">Wilayah (HoD Sales, tahap 1)</Label>
+                        <select
+                          className={selectCls}
+                          value={atribut[s.id]?.wilayah ?? ""}
+                          onChange={(e) => setAtribut((prev) => ({ ...prev, [s.id]: { kategori: prev[s.id]?.kategori ?? "", wilayah: e.target.value } }))}
+                        >
+                          <option value="">Pilih wilayah…</option>
+                          {WILAYAH_OPTIONS.map((o) => (
+                            <option key={o.value} value={o.value}>{o.label}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="grid gap-1">
+                        <Label className="text-xs">Kategori (HoD Bisnis, tahap 2)</Label>
+                        <select
+                          className={selectCls}
+                          value={atribut[s.id]?.kategori ?? ""}
+                          onChange={(e) => setAtribut((prev) => ({ ...prev, [s.id]: { wilayah: prev[s.id]?.wilayah ?? "", kategori: e.target.value } }))}
+                        >
+                          <option value="">Pilih kategori…</option>
+                          {KATEGORI_OPTIONS.map((o) => (
+                            <option key={o.value} value={o.value}>{o.label}</option>
+                          ))}
+                        </select>
                       </div>
                     </div>
                     <div className="flex gap-2">
