@@ -355,19 +355,40 @@ export async function submitSuggestion(
     `Deal HOT aktif (konteks, bukan pemicu langsung): ${r.pipeline_hot_count}\n` +
     `${r.notes ? `Catatan Supply Chain: ${r.notes}\n` : ""}`;
 
-  const res = await createApprovalRequest({
-    title: `Forecast: ${r.item_name} — ${r.warehouse_nama}`,
-    description,
-    requestedBy: submittedBy,
-    wilayah: atribut.wilayah,
-    kategori: atribut.kategori,
-  });
-  if (!res.ok || !res.id) return { ok: false, error: res.error ?? "gagal membuat approval request" };
-
-  await sql`
-    UPDATE forecast_suggestion SET status = 'submitted', approval_request_id = ${res.id}, reviewed_by = ${submittedBy}, reviewed_at = now()
-    WHERE id = ${id}
+  // Klaim atomik SEBELUM membuat approval: cek status di atas cuma baca, jadi
+  // dua klik "Ajukan" bersamaan sama-sama lolos dan masing-masing membuat
+  // approval_request (uji dev 12 Okt 2026: 3 klik → 3 APR, dua yatim yang
+  // tetap menotifikasi HoD Sales). Pola sama dengan draftPurchaseOrder.
+  const [claim] = await sql`
+    UPDATE forecast_suggestion SET status = 'submitted', reviewed_by = ${submittedBy}, reviewed_at = now()
+    WHERE id = ${id} AND status = 'draft'
+    RETURNING id
   `;
+  if (!claim) return { ok: false, error: "usulan ini sudah diajukan (atau sedang diajukan) — muat ulang halaman" };
+
+  const lepasKlaim = () => sql`
+    UPDATE forecast_suggestion SET status = 'draft', reviewed_by = NULL, reviewed_at = NULL
+    WHERE id = ${id} AND status = 'submitted' AND approval_request_id IS NULL
+  `;
+  let res: Awaited<ReturnType<typeof createApprovalRequest>>;
+  try {
+    res = await createApprovalRequest({
+      title: `Forecast: ${r.item_name} — ${r.warehouse_nama}`,
+      description,
+      requestedBy: submittedBy,
+      wilayah: atribut.wilayah,
+      kategori: atribut.kategori,
+    });
+  } catch (e) {
+    await lepasKlaim();
+    throw e;
+  }
+  if (!res.ok || !res.id) {
+    await lepasKlaim();
+    return { ok: false, error: res.error ?? "gagal membuat approval request" };
+  }
+
+  await sql`UPDATE forecast_suggestion SET approval_request_id = ${res.id} WHERE id = ${id}`;
   return { ok: true, approvalId: res.id, approvalKode: res.kode, notify: res.notify };
 }
 
