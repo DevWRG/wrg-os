@@ -72,7 +72,7 @@ export default function ApprovalRequestDetailPage() {
   const load = useCallback(async () => {
     setError(null);
     try {
-      const res = await fetch(`/api/approval-requests/${params.id}`, { cache: "no-store" });
+      const res = await fetch(`/api/approval-requests/${encodeURIComponent(params.id)}`, { cache: "no-store" });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "gagal memuat data");
       setReq(data);
@@ -99,7 +99,7 @@ export default function ApprovalRequestDetailPage() {
   async function retryNotify() {
     setBusyNotify(true);
     try {
-      const res = await fetch(`/api/approval-requests/${params.id}/notify`, { method: "POST" });
+      const res = await fetch(`/api/approval-requests/${encodeURIComponent(params.id)}/notify`, { method: "POST" });
       const data = await res.json();
       if (!res.ok || data.ok === false) throw new Error(data.error ?? "gagal kirim notifikasi");
       await load();
@@ -122,7 +122,7 @@ export default function ApprovalRequestDetailPage() {
     setBusyAtribut(true);
     setAtributInfo(null);
     try {
-      const res = await fetch(`/api/approval-requests/${params.id}/atribut`, {
+      const res = await fetch(`/api/approval-requests/${encodeURIComponent(params.id)}/atribut`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
