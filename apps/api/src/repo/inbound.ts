@@ -1058,7 +1058,7 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
   // nominal + customer. Sender cukup dikenal & aktif, setara #CEK (keputusan
   // user 2026-09-28) — tanpa scope per-AM.
   if (kind === "faktur") {
-    const fk = await resolveSender({ senderJid: row.sender_jid, groupJid: row.group_jid, pushname: row.sender_name });
+    const fk = await resolveSender({ senderJid: row.sender_jid, groupJid: row.group_jid, pushname: row.sender_name , ketat: true });
     if (!fk) return finish({ skipped: "unknown-sender", sender_name: row.sender_name });
     const arg = extractHashtagArg(row.body, FAKTUR_LINE);
     if (!arg) {
@@ -1163,7 +1163,7 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
   // #SALES — query analitik on-demand. Resolve pengirim (by phone/pushname),
   // scope AM→self via role, jawab teks ringkas.
   if (kind === "sales") {
-    const ams = await resolveSender({ senderJid: row.sender_jid, groupJid: row.group_jid, pushname: row.sender_name });
+    const ams = await resolveSender({ senderJid: row.sender_jid, groupJid: row.group_jid, pushname: row.sender_name , ketat: true });
     if (!ams) return finish({ skipped: "unknown-sender", sender_name: row.sender_name });
     let text: string;
     try {
