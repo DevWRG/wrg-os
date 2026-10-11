@@ -192,6 +192,7 @@ import { runWeeklyReport } from "./repo/weeklyreport.js";
 import { runDetectLeaveScan } from "./repo/detectleave.js";
 import { runExtractCompetitor } from "./repo/extractcompetitor.js";
 import { runWeekendBriefing } from "./repo/weekendbriefing.js";
+import { listSeninBriefs, runSeninBrief } from "./repo/senin-brief.js";
 import { runPolaKomunikasi } from "./repo/polakomunikasi.js";
 import { listWaGroups, setWaGroupCategory, setWaGroupPrefixCategory, isWaGroupCategory } from "./repo/wagroup.js";
 import { runRefreshMembers } from "./repo/listmembers.js";
@@ -1705,6 +1706,33 @@ app.get("/briefings", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const briefings = await listBriefings();
   return c.json({ count: briefings.length, briefings });
+});
+
+// F85 Senin Morning Brief — read model (tab "Senin Brief" di /briefings).
+app.get("/senin-brief", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const briefs = await listSeninBriefs();
+  return c.json({ count: briefs.length, briefs });
+});
+
+// F85 — susun brief manual (uji / generate ulang). Sengaja TANPA route BFF:
+// endpoint ini bisa mengirim WA ke Direktur, jadi hanya dipanggil operator
+// lewat service token. body: {dry_run?, kirim_wa?, iso_year?, iso_week?}.
+// Default kirim_wa=false di sini (beda dari job Senin) supaya generate ulang
+// tak mengirim WA dobel tanpa sengaja.
+app.post("/senin-brief/run", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { dry_run?: boolean; kirim_wa?: boolean; iso_year?: number; iso_week?: number } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    /* body opsional */
+  }
+  const r = await runSeninBrief({
+    dryRun: body.dry_run, kirimWa: body.kirim_wa === true,
+    isoYear: body.iso_year, isoWeek: body.iso_week,
+  });
+  return c.json(r);
 });
 
 // A11 Coaching Outcome Synthesis — coaching per AM (D1). Body opsional: { period }.
