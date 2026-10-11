@@ -352,6 +352,8 @@ class WeekendBriefingResponse(BaseModel):
 class SeninBriefRequest(BaseModel):
     minggu_label: str
     periode: str
+    # Minggu rapat (minggu SESUDAH yang dievaluasi) — jangkar tenggat di narasi.
+    minggu_rapat: str = ""
     health: str
     # Per HoD: {hod_key, nama, peran, status, checks[], watch_status, metrics[]}
     hods: List[Dict[str, Any]] = Field(default_factory=list)
