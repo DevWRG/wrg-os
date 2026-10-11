@@ -28,11 +28,18 @@ export const parseBackupName = (rest: string): string =>
 
 export const rentang = (sd: string, ed: string): string => (sd === ed ? sd : `${sd} s/d ${ed}`);
 
-// Wajib untuk jenis cuti. Saat APPROVE (dashboard/WA) tanpa pengecualian —
+// Pertanyaan susulan di grup HRD saat cuti tercatat tanpa pengganti. Approver
+// cukup "ya L<id>"; penggantinya ditanyakan sesudahnya, dijawab dengan format
+// yang sama ("ya L<id> <nama>") supaya approver tak perlu hafal dua format.
+export const tanyaPengganti = (pid: number): string =>
+  `❓ Pengganti (backup PIC) belum ada. Balas *ya L${pid} <nama pengganti>* (contoh: *ya L${pid} Budi*).`;
+
+// Wajib untuk jenis cuti. Saat APPROVE tanpa pengecualian tanggal —
 // requirement Issue #1443: "wajib diisi saat approve cuti" (dikonfirmasi
-// Direktur 2026-10-09: hanya jenis cuti, sakit/ijin opsional). Di luar approve
-// (tambah/edit di /leave) cuti yang sudah selesai dibebaskan: data lama
-// sebelum F55 & input susulan tetap harus bisa diedit.
+// Direktur 2026-10-09: hanya jenis cuti, sakit/ijin opsional). Dashboard
+// menolak approve tanpa pengganti; WA merekam dulu lalu menanyakan pengganti
+// (tanyaPengganti). Di luar approve (tambah/edit di /leave) cuti yang sudah
+// selesai dibebaskan: data lama sebelum F55 & input susulan tetap bisa diedit.
 export const isBackupRequired = (
   jenis: string,
   endDate: string,

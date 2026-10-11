@@ -7,6 +7,7 @@ import {
   buildGroupNotice,
   isBackupRequired,
   parseBackupName,
+  tanyaPengganti,
   type BackupNoticeInput,
 } from "./leave-backup.js";
 
@@ -53,6 +54,18 @@ test("parse nama pengganti dari sisa balasan WA", () => {
   assert.equal(parseBackupName(""), "");
   // "Backupan" bukan kata pengantar → tidak dipotong.
   assert.equal(parseBackupName(" Backupan"), "Backupan");
+});
+
+test("pertanyaan pengganti susulan memakai format balasan yang sama (ya L<id> <nama>)", () => {
+  const t = tanyaPengganti(57);
+  assert.match(t, /belum ada/);
+  assert.match(t, /\*ya L57 <nama pengganti>\*/);
+  // Jawabannya harus lolos regex approval di detectleave.ts → sisa = nama.
+  const APPROVAL = /^\s*(ya|iya|ok|setuju|tidak|tdk|gak|batal|no)\s*#?L?(\d+)/i;
+  const m = "ya L57 Budi".match(APPROVAL);
+  assert.ok(m);
+  assert.equal(m[2], "57");
+  assert.equal(parseBackupName("ya L57 Budi".slice(m[0].length)), "Budi");
 });
 
 const N: BackupNoticeInput = {
