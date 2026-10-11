@@ -2048,13 +2048,15 @@ app.patch("/approval-requests/:id/atribut", async (c) => {
 // dikirim BFF di body `actor` dari sesi login, bukan dipercaya dari klien.
 app.get("/overtime", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  const rows = await listOvertime({
+  const r = await listOvertime({
     status: c.req.query("status") || undefined,
     from: c.req.query("from") || undefined,
     to: c.req.query("to") || undefined,
     hod_key: c.req.query("hod_key") || undefined,
+    limit: Number(c.req.query("limit")) || undefined,
+    offset: Number(c.req.query("offset")) || undefined,
   });
-  return c.json({ count: rows.length, rows });
+  return c.json({ count: r.rows.length, total_rows: r.total, limit: r.limit, offset: r.offset, rows: r.rows });
 });
 
 app.get("/overtime/rules", async (c) => {

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { gabungPetaHod, pesanTargetGagal, pilihHodKey, type SebabTargetGagal } from "./approval.js";
+import { gabungPetaHod, pesanTargetGagal, pilihHodKey, resolveApprover, type SebabTargetGagal } from "./approval.js";
 
 // Sebelum #1071 dibereskan, KEEMPAT keadaan di bawah menghasilkan satu kalimat
 // yang sama: `kontak "..." belum dikonfigurasi — isi dulu di halaman config`.
@@ -131,4 +131,11 @@ test("gabung peta: ubah satu entri, entri lain tetap; null menghapus", () => {
   assert.deepEqual(g, { ok: true, peta: { east: "rocky", west: "rocky" } });
   const h = gabungPetaHod("kategori", TAHAP2.hodKeyMap, { Medical: null });
   assert.deepEqual(h, { ok: true, peta: { IVD: "mufid" } });
+});
+
+// Di grup, sender_jid = group_jid. Itu bukan orang → tak boleh jadi approver,
+// dan penolakan terjadi SEBELUM query (tak butuh DB).
+test("resolveApprover: JID grup ditolak tanpa menyentuh DB", async () => {
+  assert.equal(await resolveApprover("120363409252019573@g.us"), null);
+  assert.equal(await resolveApprover(null), null);
 });

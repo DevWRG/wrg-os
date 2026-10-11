@@ -1,13 +1,14 @@
 import { PageHeader } from "@/components/dashboard/page-header";
 import { OvertimeBoard } from "@/components/overtime/overtime-board";
 import { sessionUser } from "@/lib/admin-guard";
-import { canViewOvertime, isOvertimeAdmin } from "@/lib/overtime-access";
+import { isOvertimeAdmin, overtimeScope } from "@/lib/overtime-access";
 
 export const dynamic = "force-dynamic";
 
 export default async function OvertimePage() {
   const u = await sessionUser();
-  if (!canViewOvertime(u)) {
+  const scope = overtimeScope(u);
+  if (!scope) {
     return (
       <>
         <PageHeader title="Lembur" />
@@ -23,7 +24,7 @@ export default async function OvertimePage() {
         title="Lembur (#OVERTIME)"
         description="Pengajuan jam lembur dari WA, disetujui HoD divisi pengaju. Rekap ini dipakai HR."
       />
-      <OvertimeBoard isAdmin={isOvertimeAdmin(u)} />
+      <OvertimeBoard isAdmin={isOvertimeAdmin(u)} hodOnly={!scope.all} />
     </>
   );
 }
