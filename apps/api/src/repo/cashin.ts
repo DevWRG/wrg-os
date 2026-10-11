@@ -1380,7 +1380,7 @@ export function formatDraftKonfirmasi(
   baris.push(
     "",
     `Balas *ya ${kode}* untuk kirim ke Direktur,`,
-    `atau *tidak ${kode} <alasan>* untuk menahan.`,
+    `atau *tidak ${kode} ALASAN* untuk menahan.`,
   );
   return baris.join("\n");
 }
@@ -1389,7 +1389,7 @@ export function formatIngatanKonfirmasi(kode: string, tanggal: string, belumTria
   return [
     `⏰ Resume uang masuk ${tanggal} (${kode}) belum dikonfirmasi.`,
     belumTriage > 0 ? `Masih ada ${rp(belumTriage)} berstatus belum ditriage.` : null,
-    `Balas *ya ${kode}* untuk kirim ke Direktur, atau *tidak ${kode} <alasan>*.`,
+    `Balas *ya ${kode}* untuk kirim ke Direktur, atau *tidak ${kode} ALASAN*.`,
   ]
     .filter(Boolean)
     .join("\n");
@@ -1823,7 +1823,11 @@ export async function scanKonfirmasiResume(): Promise<ScanKonfirmasiResult> {
           .join(", ");
         await sendViaWaGateway(
           String(m.group_jid),
-          `⚠️ Format konfirmasi resume: *ya ${daftar || "R<nomor>"}* atau *tidak ${daftar || "R<nomor>"} <alasan>*.` +
+          // Placeholder huruf besar, bukan "<alasan>"/"R<nomor>": teks ber-kurung
+          // sudut terbuang di jalur gateway WA (ketahuan di uji F55 11 Okt).
+          (daftar
+            ? `⚠️ Format konfirmasi resume: *ya ${daftar}* atau *tidak ${daftar} ALASAN*.`
+            : `⚠️ Format konfirmasi resume: *ya R* atau *tidak R* diikuti nomor resume, plus ALASAN untuk tidak (contoh: *tidak R12 setoran belum lengkap*).`) +
             (daftar ? `\nMenunggu konfirmasi: ${daftar}` : ""),
         );
         await tandaiSeen(id, "mirip-keputusan");

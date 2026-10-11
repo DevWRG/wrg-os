@@ -298,7 +298,7 @@ export async function notifyApprover(id: number): Promise<{ ok: boolean; error?:
     `Tanggal: ${row.tanggal_lembur}\n` +
     `Estimasi: ${formatDurasi(row.estimasi_menit)}\n` +
     `Pekerjaan: ${row.uraian}\n\n` +
-    `Balas *#APPROVE ${row.kode}* untuk setujui, atau *#REJECT ${row.kode} <alasan>* untuk tolak.`;
+    `Balas *#APPROVE ${row.kode}* untuk setujui, atau *#REJECT ${row.kode} ALASAN* untuk tolak.`;
   const gw = await sendViaWaGateway(target.waNumber, msg);
   if (!gw.sent) {
     await simpan("gagal: pengiriman WA ke HoD gagal", target.name);
