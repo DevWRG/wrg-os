@@ -1,8 +1,11 @@
 import { gatewayFetch, relay } from "@/lib/gateway";
+import { requireFeature } from "@/lib/feature-guard";
 
 export const dynamic = "force-dynamic";
 
 export async function PATCH(req: Request, ctx: { params: Promise<{ id: string; itemId: string }> }) {
+  const guard = await requireFeature("/inbound-receiving", "edit");
+  if (!guard.ok) return guard.res;
   const { id, itemId } = await ctx.params;
   const body = await req.json().catch(() => ({}));
   const res = await gatewayFetch(`/inbound-receiving/${encodeURIComponent(id)}/items/${encodeURIComponent(itemId)}`, {
@@ -14,6 +17,8 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string; i
 }
 
 export async function DELETE(_req: Request, ctx: { params: Promise<{ id: string; itemId: string }> }) {
+  const guard = await requireFeature("/inbound-receiving", "edit");
+  if (!guard.ok) return guard.res;
   const { id, itemId } = await ctx.params;
   const res = await gatewayFetch(`/inbound-receiving/${encodeURIComponent(id)}/items/${encodeURIComponent(itemId)}`, { method: "DELETE" });
   return relay(res);
