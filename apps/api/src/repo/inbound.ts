@@ -15,6 +15,10 @@ import {
   triageDariWa,
   type IngestKoranResult,
 } from "./cashin.js";
+import { parseApprovalMessage } from "../parsers/approval.js";
+import { resolveApprover } from "./approval.js";
+import { parseOvertimeArg, formatDurasi } from "../parsers/overtime.js";
+import { getPengajuProfile, submitOvertime, decideOvertime } from "./overtime.js";
 
 // Role yang pakai alur AM per-customer (sales_plan/activity_log + foto), bukan todo.
 const AM_ROLES = new Set(["AM", "Teknisi"]);
@@ -29,12 +33,33 @@ const isAmRole = (role?: string | null) => AM_ROLES.has((role ?? "").trim());
 // → patuh WA_DRY_RUN. Idempoten: wa_message.processed_at. Pengirim tak dikenal →
 // SILENT (tak balas) supaya tak spam non-AM/pesan bot di grup campuran.
 
-export type InboundKind = "plan" | "report" | "leads" | "update" | "sales" | "koran" | "none";
+export type InboundKind =
+  | "plan"
+  | "report"
+  | "leads"
+  | "update"
+  | "sales"
+  | "koran"
+  | "overtime"
+  | "approve"
+  | "reject"
+  | "none";
 
 const LEADS_UPDATE_LINE = /^\s*#\s*(leads|update)\b/i;
 const SALES_LINE = /^\s*#\s*sales\b/i;
 // F-CASHIN — setoran rekening koran harian dari admin Finance.
 const KORAN_LINE = /^\s*#\s*koran\b/i;
+// #OVERTIME — pengajuan lembur SEBELUM lembur (migrasi 199, repo/overtime.ts).
+const OVERTIME_LINE = /^\s*#\s*overtime\b/i;
+// #APPROVE/#REJECT <kode> [alasan] — di main HANYA melayani kode OT-xxxx
+// (lembur). Engine approval F11 (APR-xxxx) belum dipromosikan ke main.
+const APPROVE_REJECT_LINE = /^\s*#\s*(approve|reject)\b/i;
+
+function extractHashtagArg(body: string | null, lineRegex: RegExp): string {
+  if (!body) return "";
+  const line = stripInvisible(body).split(/\r?\n/).find((l) => lineRegex.test(l)) ?? "";
+  return line.replace(lineRegex, "").trim();
+}
 
 export function detectKind(body: string | null): InboundKind {
   const daily = detectDaily(body); // line-anchored #plan/#report (sudah strip invisible)
@@ -45,6 +70,9 @@ export function detectKind(body: string | null): InboundKind {
       if (m) return m[1].toLowerCase() as "leads" | "update";
       if (SALES_LINE.test(line)) return "sales";
       if (KORAN_LINE.test(line)) return "koran";
+      const ar = line.match(APPROVE_REJECT_LINE);
+      if (ar) return ar[1].toLowerCase() as "approve" | "reject";
+      if (OVERTIME_LINE.test(line)) return "overtime";
     }
   }
   return "none";
@@ -1020,6 +1048,97 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
     return finish(await ingestKoranDariBaris(row, lampiran), "koran");
   }
 
+  // #OVERTIME — pengajuan lembur SEBELUM lembur. Format: "#overtime 2 jam 30
+  // menit - closing laporan". Identitas lewat resolveSender (master_user),
+  // divisi/HoD lewat employee.am_id. Hanya posisi/divisi yang ada di
+  // overtime_rule yang boleh mengajukan (dinamis, diatur admin). Pengirim tak
+  // dikenal → SILENT (pola sama #SALES); pengirim dikenal tapi tak berhak atau
+  // format salah → dibalas jelas, bukan diam.
+  if (kind === "overtime") {
+    const amo = await resolveSender({ senderJid: row.sender_jid, groupJid: row.group_jid, pushname: row.sender_name });
+    if (!amo) return finish({ skipped: "unknown-sender", sender_name: row.sender_name });
+    const parsedOt = parseOvertimeArg(extractHashtagArg(row.body, OVERTIME_LINE));
+    if ("error" in parsedOt) {
+      const hint =
+        parsedOt.error === "uraian-kosong"
+          ? "Tulis juga pekerjaan yang dikerjakan."
+          : parsedOt.error === "durasi-terlalu-panjang"
+            ? "Estimasi maksimal 12 jam per pengajuan."
+            : "Tulis estimasi durasi di depan.";
+      const reply = await sendViaWaGateway(
+        target,
+        `⚠️ #OVERTIME belum lengkap, ${amo.nama}. ${hint}\nFormat: #overtime 2 jam 30 menit - closing laporan bulanan`,
+      );
+      return finish({ error: parsedOt.error, reply });
+    }
+    const profile = await getPengajuProfile(amo.am_id, amo.nama);
+    const sub = await submitOvertime({
+      profile,
+      menit: parsedOt.menit,
+      uraian: parsedOt.uraian,
+      group_jid: row.group_jid,
+      wa_message_id: row.id,
+    });
+    if (!sub.ok) {
+      const reply = await sendViaWaGateway(
+        target,
+        sub.error === "tidak-berhak"
+          ? `⚠️ ${amo.nama}, posisi/divisimu belum terdaftar untuk mengajukan lembur lewat #OVERTIME. Hubungi admin bila ini keliru.`
+          : `⚠️ #OVERTIME gagal dicatat: ${sub.message ?? "kesalahan sistem"}`,
+      );
+      return finish({ error: sub.error, am_id: amo.am_id, reply });
+    }
+    const r = sub.row;
+    const menunggu = sub.notify.ok
+      ? `Menunggu persetujuan ${r.approver_nama ?? "HoD divisi"}.`
+      : `Tercatat, tapi HoD belum bisa dihubungi (${sub.notify.error}). Admin akan menindaklanjuti.`;
+    const reply = await sendViaWaGateway(
+      target,
+      `🕒 Pengajuan lembur ${r.kode} tercatat, ${r.nama}.\n${formatDurasi(r.estimasi_menit)} — ${r.uraian}\n${menunggu}`,
+    );
+    return finish({ overtime_id: r.id, kode: r.kode, notified: sub.notify.ok, duplicate: sub.duplicate ?? false, reply });
+  }
+
+  // #APPROVE/#REJECT OT-xxxx [alasan] — keputusan HoD atas pengajuan lembur,
+  // dari WA PRIVAT (di grup sender_jid = group_jid → resolveApprover menolak).
+  // Approver = akun app_user (HoD/Direktur), BUKAN master_user/AM. Pengirim
+  // tak dikenal → SILENT. Otorisasi akhir di decideOvertime().
+  if (kind === "approve" || kind === "reject") {
+    const approver = await resolveApprover(row.sender_jid);
+    if (!approver) return finish({ skipped: "unknown-approver", sender_name: row.sender_name });
+    const line = stripInvisible(row.body ?? "").split(/\r?\n/).find((l) => new RegExp(`^\\s*#\\s*${kind}\\b`, "i").test(l)) ?? "";
+    const parsed = parseApprovalMessage(line, kind);
+    if (!parsed) {
+      const reply = await sendViaWaGateway(
+        target,
+        `⚠️ Format #${kind.toUpperCase()} tak lengkap, ${approver.name}. Sertakan kode, mis. "#${kind.toUpperCase()} OT-0001".`,
+      );
+      return finish({ error: `${kind}-empty`, reply });
+    }
+    if ("error" in parsed || !parsed.kode.startsWith("OT-")) {
+      const sebab = "error" in parsed ? parsed.error : `kode ${parsed.kode} tidak dikenal, format: OT-0001`;
+      const reply = await sendViaWaGateway(target, `⚠️ #${kind.toUpperCase()} gagal diproses, ${approver.name}: ${sebab}`);
+      return finish({ error: sebab, reply });
+    }
+    const od = await decideOvertime(
+      { kode: parsed.kode },
+      kind,
+      { name: approver.name, hodKey: approver.hodKey, privileged: approver.role === "admin" || approver.role === "direktur" },
+      parsed.note,
+    );
+    if (!od.ok) {
+      const reply = await sendViaWaGateway(target, `⚠️ ${parsed.kode} gagal diproses, ${approver.name}: ${od.error}`);
+      return finish({ ok: false, error: od.error, reply });
+    }
+    const reply = await sendViaWaGateway(
+      target,
+      kind === "reject"
+        ? `❌ ${parsed.kode} ditolak, tercatat. Terima kasih, ${approver.name}.`
+        : `✅ ${parsed.kode} disetujui, tercatat. Terima kasih, ${approver.name}.`,
+    );
+    return finish({ ok: true, status: od.row.status, overtime_id: od.row.id, reply });
+  }
+
   // #SALES — query analitik on-demand. Resolve pengirim (by phone/pushname),
   // scope AM→self via role, jawab teks ringkas.
   if (kind === "sales") {
@@ -1196,7 +1315,7 @@ export async function processUnprocessed(
            media_path, geo_lat, geo_lon, geo_ts, geo_address
     FROM wa_message
     WHERE processed_at IS NULL
-      AND (body ~* '#\\s*(plan|report|leads|update|sales|koran)'
+      AND (body ~* '#\\s*(plan|report|leads|update|sales|koran|overtime|approve|reject)'
            OR (message_type ~* '^image' AND media_path IS NOT NULL)
            -- Dokumen (PDF e-banking) TIDAK ber-hashtag: body-nya cuma
            -- '<media:document>'. Tanpa cabang ini, lampiran #KORAN yang dikirim
