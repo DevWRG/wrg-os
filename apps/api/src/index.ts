@@ -210,6 +210,16 @@ import {
 import { recordDelivery, recordEmail, recordAlert, listLogs } from "./repo/logs.js";
 import { renderSalesDocHtml, renderBriefingHtml } from "./repo/exportdoc.js";
 import { runHodDaily } from "./repo/hodreminder.js";
+import {
+  createPrintSpec,
+  listPrintSpecs,
+  getPrintSpec,
+  updatePrintSpec,
+  deletePrintSpec,
+  PrintSpecError,
+  type PaperSize,
+  type Orientation,
+} from "./repo/print-spec.js";
 import { picFormSummary, listSopLangkah, listRaciPosisi, picFormKelengkapan, listDivisi, koordinasiGraf, pohonPekerjaan, raciKaryawanPosisi, setTautanManual, hapusTautanManual } from "./repo/picform.js";
 import {
   createReminder,
@@ -4844,6 +4854,73 @@ app.delete("/atk/stock-opname/:id", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const r = await deleteAtkStockOpname(c.req.param("id"));
   return c.json(r, r.deleted ? 200 : 404);
+});
+
+// ── F44 Document Print Spec Standardizer (Shipping) — master data standalone. ──
+app.get("/print-specs", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const activeQ = c.req.query("is_active");
+  const isActive = activeQ === "true" ? true : activeQ === "false" ? false : undefined;
+  return c.json(await listPrintSpecs({ isActive }));
+});
+
+app.post("/print-specs", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: {
+    document_type?: string; paper_size?: PaperSize; orientation?: Orientation;
+    margin_top_mm?: number; margin_right_mm?: number; margin_bottom_mm?: number; margin_left_mm?: number;
+    font_family?: string; font_size_pt?: number; has_letterhead?: boolean;
+    header_spec?: string | null; footer_spec?: string | null; notes?: string | null;
+    created_by?: string | null;
+  };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.document_type?.trim()) return c.json({ error: "document_type wajib diisi" }, 400);
+  try {
+    const created = await createPrintSpec({ ...body, document_type: body.document_type });
+    return c.json(created, 201);
+  } catch (e) {
+    if (e instanceof PrintSpecError) return c.json({ error: e.message }, e.status as 400 | 409);
+    throw e;
+  }
+});
+
+app.get("/print-specs/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const row = await getPrintSpec(c.req.param("id"));
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+});
+
+app.patch("/print-specs/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: {
+    document_type?: string; paper_size?: PaperSize; orientation?: Orientation;
+    margin_top_mm?: number; margin_right_mm?: number; margin_bottom_mm?: number; margin_left_mm?: number;
+    font_family?: string; font_size_pt?: number; has_letterhead?: boolean;
+    header_spec?: string | null; footer_spec?: string | null; notes?: string | null;
+    is_active?: boolean;
+  };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  try {
+    const updated = await updatePrintSpec(c.req.param("id"), body);
+    return c.json(updated);
+  } catch (e) {
+    if (e instanceof PrintSpecError) return c.json({ error: e.message }, e.status as 400 | 404 | 409);
+    throw e;
+  }
+});
+
+app.delete("/print-specs/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const result = await deletePrintSpec(c.req.param("id"));
+  return c.json(result, result.deleted ? 200 : 404);
 });
 
 // ── Kendaraan Operasional Log (F50, OPS) — master `vehicle` diseed manual
