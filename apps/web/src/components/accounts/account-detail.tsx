@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
+import { HealthBadge, KsoBadge, type KelasHealth, type KsoHealth } from "@/components/accounts/health-badge";
 
 export interface AccountContact {
   id: string; nama: string; jabatan: string | null; role_deal: string | null;
@@ -18,6 +19,8 @@ export interface AccountData {
   npwp: string | null; status_bayar: string | null; notes: string | null;
   owner_am_id: string | null; owner_nama: string | null;
   revenue: number; invoices: number; last_date: string | null; days_since: number | null; outstanding: number;
+  // F17 — Customer Health Cards
+  health: KelasHealth; health_alasan: string; kso: KsoHealth | null;
   contacts: AccountContact[];
 }
 // Kandidat pemilik dari /accounts-owners. Kosong = user ini tak berhak memindah
@@ -85,6 +88,26 @@ export function AccountDetail({ account, owners = [] }: { account: AccountData; 
         <Card><CardContent className="py-4"><div className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">Order terakhir</div><div className="mt-1 text-lg font-semibold">{account.last_date ?? "—"}</div><div className={`text-xs ${account.days_since != null && account.days_since > 60 ? "text-amber-600" : "text-muted-foreground"}`}>{account.days_since != null ? `${account.days_since} hari lalu` : ""}</div></CardContent></Card>
         <Card><CardContent className="py-4"><div className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">Kode Accurate</div><div className="mt-1 text-lg font-semibold">{account.no ?? "—"}</div></CardContent></Card>
       </div>
+
+      {/* F17 — kesehatan akun: label + alasan berangka (dihitung dari faktur, bukan AI) */}
+      <Card>
+        <CardContent className="flex flex-wrap items-start gap-x-10 gap-y-3 py-4">
+          <div className="space-y-1">
+            <div className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">Health</div>
+            <div className="flex items-center gap-2"><HealthBadge kelas={account.health} /><span className="text-muted-foreground text-xs">{account.health_alasan}</span></div>
+          </div>
+          <div className="space-y-1">
+            <div className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">Status KSO</div>
+            {account.kso
+              ? <div className="flex items-center gap-2"><KsoBadge kso={account.kso} /><span className="text-muted-foreground text-xs">{account.kso.alasan}</span></div>
+              : <div className="text-muted-foreground text-xs">Tidak punya alat KSO operasional</div>}
+          </div>
+          <div className="text-muted-foreground basis-full text-xs">
+            Hot = order ≤30 hari &amp; jumlah faktur 90 hari terakhir tidak turun lebih dari separuh · Warm = order ≤60 hari · Cold = lewat 60 hari tanpa order atau belum pernah difaktur.
+            Status KSO dihitung dari bulan yang sudah tutup tahun ini.
+          </div>
+        </CardContent>
+      </Card>
 
       {/* profil CRM */}
       <Card>
