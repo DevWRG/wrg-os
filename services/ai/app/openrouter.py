@@ -41,11 +41,11 @@ def collection_models() -> List[str]:
 def salesdoc_models() -> List[str]:
     """Model OpenRouter untuk A6 sales-doc drafter (token tier HIGH).
 
-    Default primary Claude Sonnet 4.6 (dokumen lebih panjang/terstruktur),
-    fallback Haiku. Override lewat env.
+    Default Haiku 4.5 primary, DeepSeek R1 fallback (Sonnet tak diperlukan
+    untuk draf sependek ini — biaya). Override lewat env.
     """
-    primary = os.environ.get("SALESDOC_MODEL_PRIMARY", "anthropic/claude-sonnet-4.6")
-    fallback = os.environ.get("SALESDOC_MODEL_FALLBACK", "anthropic/claude-haiku-4.5")
+    primary = os.environ.get("SALESDOC_MODEL_PRIMARY", "anthropic/claude-haiku-4.5")
+    fallback = os.environ.get("SALESDOC_MODEL_FALLBACK", "deepseek/deepseek-r1")
     return [primary, fallback]
 
 
@@ -57,16 +57,17 @@ def extract_models() -> List[str]:
 
 
 def exec_models() -> List[str]:
-    """Model OpenRouter untuk A10 executive synthesis (token tier HIGH → Sonnet)."""
-    primary = os.environ.get("EXEC_MODEL_PRIMARY", "anthropic/claude-sonnet-4.6")
-    fallback = os.environ.get("EXEC_MODEL_FALLBACK", "anthropic/claude-haiku-4.5")
+    """Model OpenRouter untuk A10 executive synthesis, growth-levers,
+    weekend-briefing, pola-profile (Haiku — Sonnet tak sepadan biayanya)."""
+    primary = os.environ.get("EXEC_MODEL_PRIMARY", "anthropic/claude-haiku-4.5")
+    fallback = os.environ.get("EXEC_MODEL_FALLBACK", "deepseek/deepseek-r1")
     return [primary, fallback]
 
 
 def raport_models() -> List[str]:
-    """Model OpenRouter untuk narasi Raport 360 (token tier HIGH → Sonnet)."""
-    primary = os.environ.get("RAPORT_MODEL_PRIMARY", "anthropic/claude-sonnet-4.6")
-    fallback = os.environ.get("RAPORT_MODEL_FALLBACK", "anthropic/claude-haiku-4.5")
+    """Model OpenRouter untuk narasi Raport 360 (Haiku — Sonnet tak sepadan biayanya)."""
+    primary = os.environ.get("RAPORT_MODEL_PRIMARY", "anthropic/claude-haiku-4.5")
+    fallback = os.environ.get("RAPORT_MODEL_FALLBACK", "deepseek/deepseek-r1")
     return [primary, fallback]
 
 
