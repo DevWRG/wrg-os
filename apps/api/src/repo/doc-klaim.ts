@@ -286,8 +286,15 @@ export async function ingestKlaim(opts: {
       { izinkanTemplate: true },
     ),
   ]);
+  // services/ai tak terjangkau / error → callAi balas 503 (izinkanTemplate hanya
+  // menutup kasus AI hidup tapi terdegradasi). Dulu langsung ok:false: klaimnya
+  // HILANG (baris WA sudah ditandai processed) dan teks error internal dibalas ke
+  // pengirim (uji dev 12 Okt 2026). Sekarang fotonya tetap dicatat sebagai
+  // dry-run — sama jujurnya dengan jalur template di atas.
+  const ocr: Record<string, unknown> =
+    status >= 400 ? { model: "ai-tak-terjangkau", dry_run: true } : data;
   if (status >= 400) {
-    return { ok: false, error: `services/ai /ocr-klaim status ${status}: ${JSON.stringify(data)}` };
+    console.error(`[klaim] services/ai /ocr-klaim status ${status} — foto disimpan tanpa OCR:`, JSON.stringify(data).slice(0, 200));
   }
 
   const rows = await sql`
@@ -296,9 +303,9 @@ export async function ingestKlaim(opts: {
       raw_text, nomor_dokumen, tanggal_dokumen, nominal, pihak, model_used, ocr_dry_run
     ) VALUES (
       ${opts.wa_message_id}, ${opts.sender_name}, ${employeeId}, ${opts.media_path}, ${opts.caption},
-      ${(data.raw_text as string) || null}, ${(data.nomor_dokumen as string) ?? null},
-      ${(data.tanggal_dokumen as string) ?? null}, ${(data.nominal as string) ?? null},
-      ${(data.pihak as string) ?? null}, ${(data.model as string) ?? null}, ${Boolean(data.dry_run)}
+      ${(ocr.raw_text as string) || null}, ${(ocr.nomor_dokumen as string) ?? null},
+      ${(ocr.tanggal_dokumen as string) ?? null}, ${(ocr.nominal as string) ?? null},
+      ${(ocr.pihak as string) ?? null}, ${(ocr.model as string) ?? null}, ${Boolean(ocr.dry_run)}
     )
     RETURNING id
   `;

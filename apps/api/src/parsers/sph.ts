@@ -6,6 +6,7 @@
 
 const SPH_PREFIX = /^\s*#\s*sph\b/i;
 const QTY_MAKS = 100_000;
+const CUSTOMER_MAKS = 120;
 
 export interface ParsedSphMessage {
   customerName: string;
@@ -24,7 +25,19 @@ export function parseSphMessage(line: string): ParseSphResult | null {
   if (parts.length !== 4) {
     return { error: `format harus "Customer | Kode | Qty | Diskon%" (4 bagian dipisah "|", dapat ${parts.length})` };
   }
-  const [customerName, kode, qtyRaw, diskonRaw] = parts;
+  const [customerRaw, kode, qtyRaw, diskonRaw] = parts;
+
+  // Nama customer teks bebas (tanpa katalog) masuk ke judul & badan surat SPH.
+  // Karakter format WA (*_~`) dibuang; URL ditolak — uji dev 12 Okt 2026:
+  // "*GRATIS* klik https://..." tersimpan apa adanya sebagai judul SPH.
+  const customerName = customerRaw.replace(/[*_~`]/g, "").replace(/\s+/g, " ").trim();
+  if (!customerName) return { error: "nama customer kosong" };
+  if (/https?:\/\/|www\./i.test(customerName)) {
+    return { error: "nama customer tidak boleh berisi link" };
+  }
+  if (customerName.length > CUSTOMER_MAKS) {
+    return { error: `nama customer maksimal ${CUSTOMER_MAKS} karakter` };
+  }
 
   // Digit polos saja. Number() menerima "1e9" (1 miliar) dan "0x10" (=16), dan
   // qty raksasa meledak "numeric field overflow" saat INSERT → AM tak dibalas
