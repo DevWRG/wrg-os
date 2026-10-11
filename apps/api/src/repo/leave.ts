@@ -190,6 +190,55 @@ export async function approvePendingLeave(
   });
 }
 
+// F55 — pengganti susulan lewat WA ("ya L<id> <nama>" sesudah L<id> di-approve
+// tanpa pengganti). Cari cuti yang tercatat dari pending yang SUDAH approved:
+// baris user_leave milik orang yang sama yang beririsan rentangnya (pola yang
+// sama dengan approvePendingLeave). Tanggal & jenis diambil dari user_leave,
+// karena bisa jadi baris lama yang dipakai ulang, bukan salinan pending.
+export interface ApprovedLeaveRow {
+  pending_id: number;
+  nama: string;
+  leave_id: string;
+  am_id: string;
+  jenis: string;
+  start_date: string;
+  end_date: string;
+  backup_am_id: string | null;
+  backup_nama: string | null;
+}
+
+export async function getApprovedPendingLeave(id: number): Promise<ApprovedLeaveRow | null> {
+  const [r] = await db()`
+    SELECT p.id AS pending_id, p.nama, l.id AS leave_id, l.am_id, l.jenis,
+           l.start_date::text AS start_date, l.end_date::text AS end_date,
+           l.backup_am_id, COALESCE(b.panggilan, b.nama) AS backup_nama
+    FROM leave_pending p
+    JOIN user_leave l ON l.am_id = p.am_id
+      AND daterange(l.start_date, l.end_date, '[]') && daterange(p.start_date, p.end_date, '[]')
+    LEFT JOIN master_user b ON b.am_id = l.backup_am_id
+    WHERE p.id = ${id} AND p.status = 'approved'
+    ORDER BY l.start_date LIMIT 1
+  `;
+  if (!r) return null;
+  return {
+    pending_id: Number(r.pending_id), nama: String(r.nama), leave_id: String(r.leave_id),
+    am_id: String(r.am_id), jenis: String(r.jenis), start_date: String(r.start_date), end_date: String(r.end_date),
+    backup_am_id: r.backup_am_id ? String(r.backup_am_id) : null,
+    backup_nama: r.backup_nama ? String(r.backup_nama) : null,
+  };
+}
+
+// Isi pengganti hanya bila masih kosong — dua balasan susulan yang datang
+// bersamaan tidak saling menimpa. false = sudah terisi lebih dulu.
+export async function setLeaveBackupIfEmpty(leaveId: string, backupAmId: string): Promise<boolean> {
+  const rows = await db()`
+    UPDATE user_leave SET backup_am_id = ${backupAmId}
+    WHERE id = ${leaveId} AND backup_am_id IS NULL
+    RETURNING id
+  `;
+  return rows.length > 0;
+}
+
 // Approve/reject pending dari dashboard. Approve → validasi pengganti (F55) lalu
 // approvePendingLeave. Selaras handleApproval (jalur WA approver).
 export async function decidePendingLeave(
