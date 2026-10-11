@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { AMBANG_MERAH, formatWaPacing, nilaiPacing, statusDariPct, type SoPacing } from "./so-pacing.js";
+import { wibToday } from "./watchpoint-week.js";
 
 test("target diprorata HARI KERJA, capaian = faktur + SO terbuka", () => {
   const h = nilaiPacing({ targetBulan: 2_200_000_000, hariKerjaBulan: 22, hariKerjaLewat: 11, faktur: 400_000_000, soTerbuka: 150_000_000 });
@@ -52,4 +53,11 @@ test("pesan WA: tanpa kurung sudut, sebut pacing + rincian faktur/SO + target se
   assert.match(wa, /target sebulan Rp 5,58 M/);
   assert.match(wa, /West\*: target bulan belum diisi/);
   assert.match(wa, /hari kerja 8\/22/);
+});
+
+test("tanggal pacing = hari ini WIB, termasuk dini hari (UTC masih kemarin)", () => {
+  // Senin 12 Okt 2026 01:27 WIB = Minggu 11 Okt 18:27 UTC.
+  const diniHari = new Date("2026-10-11T18:27:00Z");
+  assert.equal(diniHari.toISOString().slice(0, 10), "2026-10-11");
+  assert.equal(wibToday(diniHari).toISOString().slice(0, 10), "2026-10-12");
 });

@@ -21,8 +21,9 @@
 import { db } from "../db.js";
 import { sendViaWaGateway } from "../wasend.js";
 import { cabangEffSql, joinAmFromSalesman } from "./salesman-am.js";
-import { cabangRegionMap, periodAgg, salesDefaultRange, type Region } from "./sales.js";
+import { cabangRegionMap, periodAgg, type Region } from "./sales.js";
 import { listTargets } from "./sales-target.js";
+import { wibToday } from "./watchpoint-week.js";
 
 export type StatusPacing = "MERAH" | "KUNING" | "HIJAU" | "TANPA_TARGET";
 
@@ -133,7 +134,10 @@ const bulanId = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli",
 /** Pacing bulan berjalan s/d `asOf` (YYYY-MM-DD WIB, default hari ini). */
 export async function getSoPacing(asOf?: string): Promise<SoPacing> {
   const sql = db();
-  const today = asOf && /^\d{4}-\d{2}-\d{2}$/.test(asOf) ? asOf : salesDefaultRange().to;
+  // "Hari ini" WIB — BUKAN salesDefaultRange(): yang itu memakai toISOString()
+  // (UTC), sehingga pukul 00:00–07:00 WIB tanggalnya masih kemarin (kartu
+  // tercatat "s/d 2026-10-11" saat dibuka Senin 12 Okt 01:27 WIB).
+  const today = asOf && /^\d{4}-\d{2}-\d{2}$/.test(asOf) ? asOf : wibToday().toISOString().slice(0, 10);
   const y = Number(today.slice(0, 4));
   const m = Number(today.slice(5, 7));
   const awal = `${today.slice(0, 7)}-01`;
