@@ -19,6 +19,7 @@ import { parseApprovalMessage } from "../parsers/approval.js";
 import { resolveApprover } from "./approval.js";
 import { parseOvertimeArg, formatDurasi } from "../parsers/overtime.js";
 import { getPengajuProfile, submitOvertime, decideOvertime } from "./overtime.js";
+import { buildFakturReply } from "./faktur.js";
 
 // Role yang pakai alur AM per-customer (sales_plan/activity_log + foto), bukan todo.
 const AM_ROLES = new Set(["AM", "Teknisi"]);
@@ -41,6 +42,7 @@ export type InboundKind =
   | "sales"
   | "koran"
   | "overtime"
+  | "faktur"
   | "approve"
   | "reject"
   | "none";
@@ -51,6 +53,9 @@ const SALES_LINE = /^\s*#\s*sales\b/i;
 const KORAN_LINE = /^\s*#\s*koran\b/i;
 // #OVERTIME — pengajuan lembur SEBELUM lembur (migrasi 199, repo/overtime.ts).
 const OVERTIME_LINE = /^\s*#\s*overtime\b/i;
+// F91 — cek status satu invoice. `\b` penting: #FAKTURIS (nama grup/fitur
+// F149) tidak boleh ikut terpicu.
+const FAKTUR_LINE = /^\s*#\s*faktur\b/i;
 // #APPROVE/#REJECT <kode> [alasan] — di main HANYA melayani kode OT-xxxx
 // (lembur). Engine approval F11 (APR-xxxx) belum dipromosikan ke main.
 const APPROVE_REJECT_LINE = /^\s*#\s*(approve|reject)\b/i;
@@ -73,6 +78,7 @@ export function detectKind(body: string | null): InboundKind {
       const ar = line.match(APPROVE_REJECT_LINE);
       if (ar) return ar[1].toLowerCase() as "approve" | "reject";
       if (OVERTIME_LINE.test(line)) return "overtime";
+      if (FAKTUR_LINE.test(line)) return "faktur";
     }
   }
   return "none";
@@ -1046,6 +1052,21 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
       return finish({ error: "no-attachment", reply });
     }
     return finish(await ingestKoranDariBaris(row, lampiran), "koran");
+  }
+
+  // #FAKTUR <no_invoice> — F91: status Open/Paid/Overdue + jatuh tempo +
+  // nominal + customer. Sender cukup dikenal & aktif, setara #CEK (keputusan
+  // user 2026-09-28) — tanpa scope per-AM.
+  if (kind === "faktur") {
+    const fk = await resolveSender({ senderJid: row.sender_jid, groupJid: row.group_jid, pushname: row.sender_name });
+    if (!fk) return finish({ skipped: "unknown-sender", sender_name: row.sender_name });
+    const arg = extractHashtagArg(row.body, FAKTUR_LINE);
+    if (!arg) {
+      const reply = await sendViaWaGateway(target, `⚠️ Isi nomor invoice setelah #FAKTUR, ${fk.nama}. Contoh: #FAKTUR SI.2026.09.00123`);
+      return finish({ error: "empty-query", via: fk.via, reply });
+    }
+    const reply = await sendViaWaGateway(target, await buildFakturReply(arg));
+    return finish({ kind: "faktur", via: fk.via, reply });
   }
 
   // #OVERTIME — pengajuan lembur SEBELUM lembur. Format: "#overtime 2 jam 30
