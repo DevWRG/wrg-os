@@ -1,6 +1,8 @@
 import { db } from "../db.js";
 import { joinAmFromSalesman } from "./salesman-am.js";
 import { FULL_SCOPE, isRestricted, scopeAccountOwnerClause, type DataScope } from "./access-scope.js";
+import { jendelaKso, kelasHealth, statusKso } from "../lib/customer-health.js";
+import { wibToday } from "./watchpoint-week.js";
 
 // F62 Account & Contact 360 (Fase 1). Account = accurate_customer (master faskes)
 // + ekstensi CRM (crm_account) + multi-contact (crm_contact). Data komersial
@@ -21,11 +23,38 @@ export type ContactRole = (typeof CONTACT_ROLES)[number];
 // SETELAH agregat dan hanya untuk account yang namanya memang kosong di master.
 // Hasilnya identik; yang berubah cuma berapa baris yang perlu di-detoast.
 
+// F17 — akun yang punya alat KSO operasional. Satu definisi "operasional" =
+// kso_asset_status_v (migrasi 197); dihitung sekali sebagai CTE lalu di-JOIN,
+// bukan EXISTS per baris akun.
+const ksoOperasional = (sql: ReturnType<typeof db>) => sql`
+  SELECT DISTINCT a.account_id FROM kso_asset a
+  JOIN kso_asset_status_v v ON v.id = a.id
+  WHERE v.status_kode = 'operasional' AND a.account_id IS NOT NULL`;
+
+// F17 — label health per akun dari kolom agregat (lib/customer-health.ts).
+function healthOf(r: Record<string, unknown>, j: ReturnType<typeof jendelaKso>) {
+  const h = kelasHealth({
+    daysSince: r.days_since == null ? null : Number(r.days_since),
+    recent90: Number(r.recent90 ?? 0),
+    prior90: Number(r.prior90 ?? 0),
+  });
+  return {
+    health: h.kelas,
+    health_alasan: h.alasan,
+    kso: statusKso(Boolean(r.punya_kso), Number(r.bulan_kso ?? 0), j),
+  };
+}
+
 // Daftar account = customer yg punya faktur, + ekstensi CRM + ringkasan komersial + jml kontak.
+// F17: PLUS akun ber-alat KSO operasional yang belum pernah difaktur — alat
+// terpasang tanpa satu pun pembelian; justru yang paling perlu dilihat tim KSO
+// (uji prod 11 Okt 2026: 10 dari 25 akun "Tidak beli" tak pernah muncul di sini).
 export async function listAccounts(scope: DataScope = FULL_SCOPE) {
   const sql = db();
+  const j = jendelaKso(wibToday().toISOString().slice(0, 10));
   const rows = await sql`
-    WITH inv AS (
+    WITH kso AS (${ksoOperasional(sql)}),
+    inv AS (
       SELECT ai.customer_id AS id,
         NULLIF(ac.name,'') AS master_name,
         NULLIF(mode() WITHIN GROUP (ORDER BY NULLIF(mu.cabang,'')), '') AS cabang_inv,
@@ -33,13 +62,23 @@ export async function listAccounts(scope: DataScope = FULL_SCOPE) {
         count(*)::int AS invoices,
         max(ai.tanggal)::text AS last_date,
         (CURRENT_DATE - max(ai.tanggal))::int AS days_since,
-        COALESCE(sum(ai.outstanding),0)::float8 AS outstanding
+        COALESCE(sum(ai.outstanding),0)::float8 AS outstanding,
+        count(*) FILTER (WHERE ai.tanggal > CURRENT_DATE - 90)::int AS recent90,
+        count(*) FILTER (WHERE ai.tanggal > CURRENT_DATE - 180 AND ai.tanggal <= CURRENT_DATE - 90)::int AS prior90,
+        count(DISTINCT date_trunc('month', ai.tanggal))
+          FILTER (WHERE ai.tanggal >= ${j.mulai}::date AND ai.tanggal < ${j.akhir}::date)::int AS bulan_kso
       FROM accurate_invoice ai
       LEFT JOIN accurate_customer ac ON ac.id = ai.customer_id
       LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
       ${joinAmFromSalesman(sql)}
       WHERE ai.customer_id IS NOT NULL
       GROUP BY ai.customer_id, ac.name
+      UNION ALL
+      SELECT k.account_id, NULLIF(ac.name,''), NULL::text,
+        0::float8, 0, NULL::text, NULL::int, 0::float8, 0, 0, 0
+      FROM kso k
+      JOIN accurate_customer ac ON ac.id = k.account_id
+      WHERE NOT EXISTS (SELECT 1 FROM accurate_invoice ai WHERE ai.customer_id = k.account_id)
     )
     SELECT i.id::text AS id,
       COALESCE(i.master_name, NULLIF(nm.nama,''), NULLIF(nm.retail,''), 'Customer #' || i.id::text) AS name,
@@ -47,8 +86,10 @@ export async function listAccounts(scope: DataScope = FULL_SCOPE) {
       oa.tipe, oa.kelas_rs, oa.wilayah, oa.status_bayar,
       oa.owner_am_id, COALESCE(NULLIF(omu.nama,''), '') AS owner_nama,
       i.revenue, i.invoices, i.last_date, i.days_since, i.outstanding,
+      i.recent90, i.prior90, i.bulan_kso, (k.account_id IS NOT NULL) AS punya_kso,
       (SELECT count(*) FROM crm_contact c WHERE c.account_id = i.id)::int AS contacts
     FROM inv i
+    LEFT JOIN kso k ON k.account_id = i.id
     LEFT JOIN crm_account oa ON oa.account_id = i.id
     LEFT JOIN master_user omu ON omu.am_id = oa.owner_am_id
     LEFT JOIN LATERAL (
@@ -70,6 +111,7 @@ export async function listAccounts(scope: DataScope = FULL_SCOPE) {
     days_since: r.days_since == null ? null : Number(r.days_since),
     outstanding: Number(r.outstanding), contacts: Number(r.contacts),
     dormant: r.days_since != null && Number(r.days_since) > 60,
+    ...healthOf(r, j),
   }));
 }
 
@@ -78,20 +120,28 @@ export async function getAccount(id: string, scope: DataScope = FULL_SCOPE) {
   const sql = db();
   const cid = Number(id);
   if (!Number.isInteger(cid)) return null;
+  const j = jendelaKso(wibToday().toISOString().slice(0, 10));
   const [master] = await sql`
     SELECT ac.id::text AS id,
       COALESCE(NULLIF(ac.name,''), NULLIF(ai2.raw_name,''), 'Customer #' || ac.id::text) AS name,
       ac.no, oa.tipe, oa.kelas_rs, oa.wilayah, oa.cabang, oa.npwp, oa.status_bayar, oa.notes,
       oa.owner_am_id, COALESCE(NULLIF(omu.nama,''), '') AS owner_nama,
       COALESCE(s.revenue,0)::float8 AS revenue, COALESCE(s.invoices,0)::int AS invoices,
-      s.last_date, s.days_since, COALESCE(s.outstanding,0)::float8 AS outstanding
+      s.last_date, s.days_since, COALESCE(s.outstanding,0)::float8 AS outstanding,
+      COALESCE(s.recent90,0)::int AS recent90, COALESCE(s.prior90,0)::int AS prior90,
+      COALESCE(s.bulan_kso,0)::int AS bulan_kso,
+      EXISTS (SELECT 1 FROM (${ksoOperasional(sql)}) k WHERE k.account_id = ac.id) AS punya_kso
     FROM accurate_customer ac
     LEFT JOIN crm_account oa ON oa.account_id = ac.id
     LEFT JOIN master_user omu ON omu.am_id = oa.owner_am_id
     LEFT JOIN LATERAL (
       SELECT sum(ai.total - COALESCE(ai.tax_amount,0))::float8 AS revenue, count(*)::int AS invoices,
         max(ai.tanggal)::text AS last_date, (CURRENT_DATE - max(ai.tanggal))::int AS days_since,
-        COALESCE(sum(ai.outstanding),0)::float8 AS outstanding
+        COALESCE(sum(ai.outstanding),0)::float8 AS outstanding,
+        count(*) FILTER (WHERE ai.tanggal > CURRENT_DATE - 90)::int AS recent90,
+        count(*) FILTER (WHERE ai.tanggal > CURRENT_DATE - 180 AND ai.tanggal <= CURRENT_DATE - 90)::int AS prior90,
+        count(DISTINCT date_trunc('month', ai.tanggal))
+          FILTER (WHERE ai.tanggal >= ${j.mulai}::date AND ai.tanggal < ${j.akhir}::date)::int AS bulan_kso
       FROM accurate_invoice ai WHERE ai.customer_id = ac.id
     ) s ON true
     LEFT JOIN LATERAL (
@@ -115,6 +165,7 @@ export async function getAccount(id: string, scope: DataScope = FULL_SCOPE) {
     last_date: master.last_date ? String(master.last_date) : null,
     days_since: master.days_since == null ? null : Number(master.days_since),
     outstanding: Number(master.outstanding),
+    ...healthOf(master, j),
     contacts: contacts.map((c) => ({
       id: String(c.id), nama: String(c.nama), jabatan: c.jabatan ? String(c.jabatan) : null,
       role_deal: c.role_deal ? String(c.role_deal) : null, hp_wa: c.hp_wa ? String(c.hp_wa) : null,
