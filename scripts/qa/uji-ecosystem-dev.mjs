@@ -251,6 +251,7 @@ test("nama env dev = nama yang DIBACA kode, bukan *_BASE_URL", () => {
 //   MEDIA_ROOT              apps/api/src/index.ts        ~/.openclaw/media
 //   GA_UPLOAD_DIR           apps/api/src/index.ts        ~/.wrg-os/uploads/ga-assets
 //   APPROVAL_UPLOAD_ROOT    apps/api/src/repo/approval.ts ~/.wrg-os/approval-uploads
+//   KSO_KONTRAK_UPLOAD_DIR  apps/api/src/repo/kso-kontrak.ts ~/.wrg-os/uploads/kso-kontrak
 //   OPENCLAW_SESSIONS_FILE  apps/api/src/repo/group-names.ts ~/.openclaw/agents/...
 //   ACCURATE_CRED_FILE      apps/api/src/repo/accurateSync.ts ~/.openclaw/credentials/accurate.json
 // Angka & nama itu ditulis di sini supaya pergeseran default tertangkap CI.
@@ -262,6 +263,7 @@ const KUNCI_ROOT = [
   "MEDIA_ROOT",
   "GA_UPLOAD_DIR",
   "APPROVAL_UPLOAD_ROOT",
+  "KSO_KONTRAK_UPLOAD_DIR",
   "OPENCLAW_SESSIONS_FILE",
   "ACCURATE_CRED_FILE",
 ];

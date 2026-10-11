@@ -10,6 +10,11 @@
 //   - alat yang dicakup kontrak harus milik akun kontrak itu;
 //   - setiap perubahan tercatat di kso_kontrak_log beserta pelakunya.
 
+import { randomBytes } from "node:crypto";
+import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { isAbsolute, relative, resolve } from "node:path";
+
 import { db } from "../db.js";
 
 export type StatusKontrak = "AKTIF" | "NEGO" | "RENEWED" | "LOST";
@@ -168,6 +173,7 @@ export async function getKontrak(id: string) {
       id: String(a.id), sn: a.sn_raw ? String(a.sn_raw) : null, nama_alat: a.nama_alat ? String(a.nama_alat) : null,
       nomor_sheet: a.nomor_sheet ? String(a.nomor_sheet) : null,
     })),
+    dokumen: await daftarDokumen(sql, kid),
     log: log.map((l) => ({
       aksi: String(l.aksi), dari_status: l.dari_status ? String(l.dari_status) : null, ke_status: l.ke_status ? String(l.ke_status) : null,
       perubahan: l.perubahan ?? null, catatan: l.catatan ? String(l.catatan) : null, oleh: l.oleh ? String(l.oleh) : null,
@@ -404,4 +410,134 @@ export async function akunKso() {
     });
   }
   return [...akun.values()];
+}
+
+// ── Dokumen kontrak (migrasi 202) ────────────────────────────────────────
+// Root di luar allow-list GET /media: unduhan hanya lewat endpoint kontrak
+// yang dijaga izin. DB menyimpan nama berkas relatif, bukan path absolut.
+export const KSO_KONTRAK_UPLOAD_ROOT = resolve(process.env.KSO_KONTRAK_UPLOAD_DIR ?? `${homedir()}/.wrg-os/uploads/kso-kontrak`);
+export type JenisDokumen = "MOU" | "ADDENDUM" | "BAST" | "LAINNYA";
+export const JENIS_DOKUMEN: JenisDokumen[] = ["MOU", "ADDENDUM", "BAST", "LAINNYA"];
+// 8 MB, bukan 10: middleware Next (apps/web) memotong body > 10 MB, dan
+// multipart menambah overhead — file 10 MB pas akan sampai terpotong.
+export const MAKS_DOKUMEN = 8 * 1024 * 1024;
+const DOKUMEN_EXT: Record<string, string> = { "application/pdf": "pdf", "image/jpeg": "jpg", "image/png": "png" };
+
+/** Tipe file dari isi (magic bytes), bukan dari label MIME kiriman browser. */
+export function tipeDariIsi(buf: Uint8Array): string | null {
+  if (buf.length >= 5 && buf[0] === 0x25 && buf[1] === 0x50 && buf[2] === 0x44 && buf[3] === 0x46 && buf[4] === 0x2d) return "application/pdf";
+  if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return "image/jpeg";
+  if (buf.length >= 8 && [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a].every((b, i) => buf[i] === b)) return "image/png";
+  return null;
+}
+
+/** Validasi murni → pesan tolak atau null. */
+export function alasanTolakDokumen(jenis: unknown, ukuran: number, buf: Uint8Array): string | null {
+  if (!JENIS_DOKUMEN.includes(jenis as JenisDokumen)) return `jenis dokumen harus salah satu dari ${JENIS_DOKUMEN.join("/")}`;
+  if (ukuran <= 0) return "file kosong";
+  if (ukuran > MAKS_DOKUMEN) return "file maksimal 8 MB";
+  if (!tipeDariIsi(buf)) return "hanya PDF, JPG, atau PNG";
+  return null;
+}
+
+/** Nama berkas asli → aman ditampilkan & dipakai di header (tanpa path/kontrol). */
+export function namaAsliAman(nama: string): string {
+  const dasar = nama.split(/[\\/]/).pop() ?? "";
+  const bersih = [...dasar].filter((ch) => { const c = ch.charCodeAt(0); return c >= 0x20 && c !== 0x7f && ch !== '"'; })
+    .join("").trim().slice(0, 150);
+  return bersih || "dokumen";
+}
+
+export interface DokumenRow {
+  id: string; jenis: JenisDokumen; nama: string; mime: string; ukuran: number;
+  keterangan: string | null; oleh: string | null; created_at: string;
+}
+
+async function daftarDokumen(sql: ReturnType<typeof db>, kid: number): Promise<DokumenRow[]> {
+  const rows = await sql`
+    SELECT id::text AS id, jenis, nama_asli, mime, ukuran, keterangan, diunggah_oleh, created_at::text AS created_at
+    FROM kso_kontrak_dokumen WHERE kontrak_id = ${kid} ORDER BY created_at DESC, id DESC`;
+  return rows.map((d) => ({
+    id: String(d.id), jenis: d.jenis as JenisDokumen, nama: String(d.nama_asli), mime: String(d.mime), ukuran: Number(d.ukuran),
+    keterangan: d.keterangan ? String(d.keterangan) : null, oleh: d.diunggah_oleh ? String(d.diunggah_oleh) : null,
+    created_at: String(d.created_at),
+  }));
+}
+
+export async function unggahDokumen(
+  id: string,
+  file: { nama: string; buf: Uint8Array },
+  jenis: unknown,
+  keterangan: string | null,
+  oleh: string | null,
+): Promise<DokumenRow> {
+  const kid = Number(id);
+  if (!Number.isInteger(kid)) throw new KontrakError("id kontrak tidak valid", 404);
+  const tolak = alasanTolakDokumen(jenis, file.buf.length, file.buf);
+  if (tolak) throw new KontrakError(tolak);
+  const mime = tipeDariIsi(file.buf)!;
+  const sql = db();
+  // Cek kontrak ADA dulu sebelum menulis ke disk — kebalikannya meninggalkan
+  // berkas yatim tiap kali id salah.
+  const [k] = await sql`SELECT id FROM kso_kontrak WHERE id = ${kid}`;
+  if (!k) throw new KontrakError("kontrak tidak ditemukan", 404);
+
+  const nama = namaAsliAman(file.nama);
+  const namaSimpan = `${kid}-${Date.now()}-${randomBytes(6).toString("hex")}.${DOKUMEN_EXT[mime]}`;
+  await mkdir(KSO_KONTRAK_UPLOAD_ROOT, { recursive: true });
+  const abs = resolve(KSO_KONTRAK_UPLOAD_ROOT, namaSimpan);
+  await writeFile(abs, file.buf);
+  let docId: string;
+  try {
+    docId = await sql.begin(async (tx) => {
+      const [d] = await tx`
+        INSERT INTO kso_kontrak_dokumen (kontrak_id, jenis, nama_asli, nama_simpan, mime, ukuran, keterangan, diunggah_oleh)
+        VALUES (${kid}, ${jenis as string}, ${nama}, ${namaSimpan}, ${mime}, ${file.buf.length}, ${keterangan?.trim() || null}, ${oleh})
+        RETURNING id::text AS id`;
+      await tx`INSERT INTO kso_kontrak_log (kontrak_id, aksi, perubahan, oleh)
+               VALUES (${kid}, 'DOKUMEN', ${sql.json({ unggah: nama, jenis: jenis as string })}, ${oleh})`;
+      return String(d.id);
+    });
+  } catch (e) {
+    await unlink(abs).catch(() => {});
+    throw e;
+  }
+  const semua = await daftarDokumen(sql, kid);
+  return semua.find((d) => d.id === docId)!;
+}
+
+async function cariDokumen(sql: ReturnType<typeof db>, id: string, dokId: string) {
+  const kid = Number(id);
+  const did = Number(dokId);
+  if (!Number.isInteger(kid) || !Number.isInteger(did)) throw new KontrakError("dokumen tidak ditemukan", 404);
+  // kontrak_id ikut di WHERE: dokumen kontrak lain tak bisa diambil lewat id kontrak ini.
+  const [d] = await sql`SELECT id, kontrak_id, jenis, nama_asli, nama_simpan, mime FROM kso_kontrak_dokumen WHERE id = ${did} AND kontrak_id = ${kid}`;
+  if (!d) throw new KontrakError("dokumen tidak ditemukan", 404);
+  const abs = resolve(KSO_KONTRAK_UPLOAD_ROOT, String(d.nama_simpan));
+  const rel = relative(KSO_KONTRAK_UPLOAD_ROOT, abs);
+  if (!rel || rel.startsWith("..") || isAbsolute(rel)) throw new KontrakError("dokumen tidak ditemukan", 404);
+  return { kid, did, abs, nama: String(d.nama_asli), mime: String(d.mime), jenis: String(d.jenis) };
+}
+
+export async function bacaDokumen(id: string, dokId: string): Promise<{ buf: Buffer; nama: string; mime: string }> {
+  const d = await cariDokumen(db(), id, dokId);
+  try {
+    return { buf: await readFile(d.abs), nama: d.nama, mime: d.mime };
+  } catch {
+    throw new KontrakError("berkas dokumen hilang dari server", 404);
+  }
+}
+
+export async function hapusDokumen(id: string, dokId: string, oleh: string | null): Promise<{ ok: true }> {
+  const sql = db();
+  const d = await cariDokumen(sql, id, dokId);
+  await sql.begin(async (tx) => {
+    await tx`DELETE FROM kso_kontrak_dokumen WHERE id = ${d.did}`;
+    await tx`INSERT INTO kso_kontrak_log (kontrak_id, aksi, perubahan, oleh)
+             VALUES (${d.kid}, 'DOKUMEN', ${sql.json({ hapus: d.nama, jenis: d.jenis })}, ${oleh})`;
+  });
+  // Berkas dihapus SETELAH baris DB hilang: kalau unlink gagal, sisa berkas
+  // yatim tak terjangkau siapa pun — lebih aman daripada baris tanpa berkas.
+  await unlink(d.abs).catch(() => {});
+  return { ok: true };
 }
