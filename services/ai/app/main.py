@@ -24,7 +24,7 @@ from .openrouter import (
 from .raport import build_raport_system, build_raport_user, parse_raport, template_raport
 from .rekap import build_messages_block, build_rekap_system
 from .resume import build_gabungan, build_resume_system
-from .senin import bersihkan_narasi, build_senin_system, build_senin_user
+from .senin import bersihkan_narasi, buang_kalimat_pelanggar, build_senin_system, build_senin_user, cek_pelanggaran
 from .salesdoc import build_salesdoc_system, build_salesdoc_user, doc_title, template_doc
 from .schemas import (
     CollectionDraftRequest,
@@ -861,7 +861,22 @@ def senin_brief(req: SeninBriefRequest) -> SeninBriefResponse:
     text, model, _, _ = chat_or_fallback(system, user, fallback, max_tokens=4000, models=exec_models())
     if model == "dry-run-fallback":
         return SeninBriefResponse(narasi=text, model=model, dry_run=True)
-    return SeninBriefResponse(narasi=bersihkan_narasi(text), model=model, dry_run=False)
+    narasi = bersihkan_narasi(text)
+    langgar = cek_pelanggaran(narasi)
+    if langgar:
+        # Satu percobaan ulang dengan daftar pelanggarannya; pakai hasil yang
+        # pelanggarannya lebih sedikit, lalu buang kalimat yang masih tersisa.
+        koreksi = (
+            user + "\n\nDRAF SEBELUMNYA MELANGGAR ATURAN KERAS — tulis ulang seluruh brief "
+            "tanpa pelanggaran ini:\n" + "\n".join(f"- {x}" for x in langgar)
+        )
+        text2, model2, _, _ = chat_or_fallback(system, koreksi, fallback, max_tokens=4000, models=exec_models())
+        narasi2 = bersihkan_narasi(text2) if model2 != "dry-run-fallback" else ""
+        if narasi2 and len(cek_pelanggaran(narasi2)) < len(langgar):
+            narasi, model = narasi2, model2
+        print(f"[senin-brief] {len(langgar)} pelanggaran di draf pertama → {len(cek_pelanggaran(narasi))} sesudah ulang: {langgar}", flush=True)
+        narasi = buang_kalimat_pelanggar(narasi)
+    return SeninBriefResponse(narasi=narasi, model=model, dry_run=False)
 
 
 # === pola_komunikasi: profil pola komunikasi per grup (port pola_komunikasi.sh) ===

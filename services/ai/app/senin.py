@@ -42,16 +42,25 @@ def build_senin_system(minggu_label: str, periode: str, health: str, minggu_rapa
         "5. Jangan pakai tanda kurung sudut (< >) dan jangan pakai garis pemisah (---).\n"
         "6. Usulan keputusan harus OPERASIONAL dan berpijak pada data di input: siapa "
         "melengkapi data apa, deal/akun mana yang ditinjau, tenggat. DILARANG mengusulkan "
-        "sanksi, hukuman, pemotongan/pembatalan bonus, ancaman, mengeluarkan orang dari "
+        "sanksi, hukuman, pemotongan/pembatalan bonus, ancaman — TERMASUK ancaman bersyarat "
+        "('..., atau tidak hadir rapat', 'jika tidak ..., maka ...') — mengeluarkan orang dari "
         "rapat, PHK, rotasi jabatan, outsourcing, atau inisiatif baru yang tak disebut di "
         "input — itu wewenang Direktur, bukan bahan usulan otomatis. Jangan menyebut "
         "bonus, insentif, atau kompensasi dalam bentuk apa pun (hadiah maupun potongan), "
-        "dan jangan menyebut jabatan/orang yang tak ada di input (mis. CFO, analis, PM).\n"
+        "Orang yang boleh disebut HANYA nama HoD di input, Direktur, dan AM; jangan "
+        "menyebut jabatan lain (mis. Sales Manager, CFO, analis, PM, konsultan).\n"
         "7. Jangan menilai karakter atau niat orang ('tidak peduli', 'mati', 'blank "
         "total'); sebut faktanya saja (mis. '0/5 metric terisi').\n"
         f"8. Minggu {minggu_label} sudah lewat. Semua tenggat ditulis relatif terhadap "
         f"minggu rapat {rapat} (mis. 'Rabu {rapat}', 'sebelum rapat Senin depan'); "
-        "jangan mengarang nomor minggu atau tanggal lain.\n\n"
+        "jangan mengarang nomor minggu atau tanggal lain.\n"
+        "9. Setiap angka & fakta HANYA milik HoD yang tertulis di atasnya di input. "
+        "Jangan memindahkan angka satu HoD ke HoD lain (mis. 'input terakhir 60 hari "
+        "lalu' milik satu HoD tak boleh dipakai untuk HoD yang datanya 'belum pernah "
+        "diisi'). Ragu → kutip detail cek HoD itu apa adanya.\n"
+        "10. Frekuensi & tenggat harus konsisten: tugas harian = tiap hari kerja, "
+        "tugas mingguan = satu hari tertentu. Jangan menulis 'harian' sekaligus "
+        "'setiap Jumat' untuk tugas yang sama.\n\n"
         "TULIS PERSIS empat bagian markdown ini, berurutan, tanpa judul lain:\n"
         "## Gap Utama per HoD\n"
         "Per HoD: baris '**Nama** — STATUS' lalu maksimal 3 bullet gap paling "
@@ -102,3 +111,43 @@ def bersihkan_narasi(text: str) -> str:
         return ""
     baris = [b for b in t[min(idx):].split("\n") if not re.fullmatch(r"\s*([-*_])\1{2,}\s*", b)]
     return re.sub(r"\n{3,}", "\n\n", "\n".join(baris)).strip()
+
+
+# Penjaga deterministik: prompt saja terbukti tak cukup (brief W41 tetap
+# menulis "atau HoD tidak hadir rapat W43" dan "Sales Manager" walau sudah
+# dilarang). Pola di sini = pelanggaran yang pernah benar-benar muncul +
+# kerabat dekatnya; sengaja sempit supaya kalimat sah tak ikut terbuang.
+_POLA_PELANGGARAN = (
+    ("ancaman bersyarat", re.compile(r"\batau\b[^.\n]{0,60}\b(tidak|tak|dilarang)\s+(boleh\s+)?(hadir|ikut)", re.I)),
+    ("ancaman bersyarat", re.compile(r"\b(dikeluarkan|tidak diundang)\b[^.\n]{0,30}\brapat\b", re.I)),
+    ("sanksi/kompensasi", re.compile(r"\b(sanksi|hukuman|teguran|SP\s?[123]|PHK|bonus|insentif|kompensasi|denda)\b", re.I)),
+    ("jabatan karangan", re.compile(r"\b(sales manager|manajer|manager|CFO|CEO|COO|CTO|analis|konsultan|PM)\b", re.I)),
+    ("frekuensi kontradiktif", re.compile(r"\b(harian|daily|setiap hari)\b[^.\n]{0,60}\bsetiap\s+(senin|selasa|rabu|kamis|jumat|sabtu|minggu)\b", re.I)),
+)
+
+
+def cek_pelanggaran(text: str) -> List[str]:
+    """Daftar pelanggaran aturan keras di narasi — unik, urut kemunculan pola."""
+    temuan: List[str] = []
+    for nama, pola in _POLA_PELANGGARAN:
+        for m in pola.finditer(text or ""):
+            label = f"{nama}: “{m.group(0).strip()}”"
+            if label not in temuan:
+                temuan.append(label)
+    return temuan
+
+
+def buang_kalimat_pelanggar(text: str) -> str:
+    """Jalan terakhir sesudah percobaan ulang: buang KALIMAT yang melanggar
+    (bukan seluruh baris/bagian), supaya struktur brief tetap utuh."""
+    hasil: List[str] = []
+    for baris in (text or "").split("\n"):
+        if not cek_pelanggaran(baris):
+            hasil.append(baris)
+            continue
+        kalimat = re.split(r"(?<=[.!?])\s+", baris)
+        sisa = " ".join(k for k in kalimat if not cek_pelanggaran(k)).rstrip()
+        # Baris yang tinggal penanda daftar/tebal ("**1.", "-") ikut dibuang.
+        if re.sub(r"\d+\.|[\s*_#-]", "", sisa):
+            hasil.append(sisa)
+    return "\n".join(hasil)
