@@ -13,7 +13,7 @@ import {
   Wallet, Coins, Banknote, Car, QrCode, PenLine, PackagePlus, PackageMinus,
   Handshake, Archive, Ticket,
   type LucideIcon,
-  Hourglass,
+  Hourglass, ShieldAlert,
 } from "lucide-react";
 
 import { can, canOrLegacy, hasPerms } from "@/lib/perms";
@@ -26,6 +26,7 @@ import { canViewKso } from "@/lib/kso-access";
 import { canViewNpkAm, canViewNpkAmSelf } from "@/lib/npk-access";
 import { canViewInsentifTim } from "@/lib/insentif-access";
 import { canViewOvertime } from "@/lib/overtime-access";
+import { canViewAuditFindings } from "@/lib/audit-finding-access";
 import { canViewDanaOps } from "@/lib/dana-ops-access";
 import { canViewVendorManagement } from "@/lib/vendor-management-access";
 import { canViewGaReporting } from "@/lib/ga-reporting-access";
@@ -232,6 +233,19 @@ export const NAV: NavGroup[] = [
       { title: "Shipments", url: "/shipments", icon: Truck },
       { title: "Suppliers", url: "/suppliers", icon: Factory },
       { title: "HITL Review", url: "/hitl", icon: ClipboardCheck },
+    ],
+  },
+  {
+    // F60 — domain board literally "CROSS" (governance/AGC), tak cocok masuk
+    // grup existing manapun, grup sendiri (pola sama DOC/F-CASHIN bikin grup
+    // "DOC"). Fallback identitas SENGAJA sempit (admin/direktur saja, lihat
+    // audit-finding-access.ts) — post-fraud context, bukan fitur operasional
+    // biasa yang default terbuka utk semua Karyawan.
+    label: "Governance",
+    items: [
+      // /audit-findings/config ikut gerbang menu ini lewat pencocokan prefix
+      // findNavItem (url + "/"), tak perlu matchPrefix di main.
+      { title: "Audit Findings", url: "/audit-findings", icon: ShieldAlert, badge: "NEW", show: canViewAuditFindings },
     ],
   },
   {
