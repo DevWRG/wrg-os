@@ -24,6 +24,7 @@ from .openrouter import (
 from .raport import build_raport_system, build_raport_user, parse_raport, template_raport
 from .rekap import build_messages_block, build_rekap_system
 from .resume import build_gabungan, build_resume_system
+from .senin import bersihkan_narasi, build_senin_system, build_senin_user
 from .salesdoc import build_salesdoc_system, build_salesdoc_user, doc_title, template_doc
 from .schemas import (
     CollectionDraftRequest,
@@ -55,6 +56,8 @@ from .schemas import (
     RaportNarrativeResponse,
     SalesDocRequest,
     SalesDocResponse,
+    SeninBriefRequest,
+    SeninBriefResponse,
     SummarizeRequest,
     TicketTriageRequest,
     TicketTriageResponse,
@@ -839,6 +842,26 @@ def weekend_briefing(req: WeekendBriefingRequest) -> WeekendBriefingResponse:
         return WeekendBriefingResponse(briefing=fallback, model="dry-run", dry_run=True)
     text, model, _, _ = chat_or_fallback(system, user, fallback, max_tokens=4000, models=exec_models())
     return WeekendBriefingResponse(briefing=text, model=model, dry_run=model == "dry-run-fallback")
+
+
+@app.post("/senin-brief", response_model=SeninBriefResponse)
+def senin_brief(req: SeninBriefRequest) -> SeninBriefResponse:
+    """F85 — narasi brief Senin (gap, urutan bahasan, pertanyaan kritis,
+    keputusan). Status & health sudah final dari apps/api; ini hanya narasi.
+
+    dry_run / tanpa OPENROUTER_API_KEY → kembalikan prompt yang dirakit.
+    """
+    system = build_senin_system(req.minggu_label, req.periode, req.health)
+    user = build_senin_user(req.hods)
+    fallback = f"[DRY RUN — tanpa LLM]\n\nSYSTEM:\n{system}\n\nUSER:\n{user[:2000]}"
+    if req.dry_run or not os.environ.get("OPENROUTER_API_KEY"):
+        return SeninBriefResponse(narasi=fallback, model="dry-run", dry_run=True)
+    # 8 HoD × (≤3 gap + 2 pertanyaan) + urutan + keputusan ≈ 2–3 rb token;
+    # 4000 memberi ruang tanpa memotong senyap bagian terakhir.
+    text, model, _, _ = chat_or_fallback(system, user, fallback, max_tokens=4000, models=exec_models())
+    if model == "dry-run-fallback":
+        return SeninBriefResponse(narasi=text, model=model, dry_run=True)
+    return SeninBriefResponse(narasi=bersihkan_narasi(text), model=model, dry_run=False)
 
 
 # === pola_komunikasi: profil pola komunikasi per grup (port pola_komunikasi.sh) ===

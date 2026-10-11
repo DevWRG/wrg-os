@@ -40,6 +40,9 @@ export interface CallAiOpts {
    *  sebagai error. HANYA untuk pemanggil yang templatenya memang produk yang
    *  sah. Default false — lihat catatan di callAi. */
   izinkanTemplate?: boolean;
+  /** Batas tunggu khusus panggilan ini (ms). Default AI_TIMEOUT_MS. Untuk
+   *  generasi panjang terjadwal (bukan jalur webhook) yang wajar >30 dtk. */
+  timeoutMs?: number;
 }
 
 // Call services/ai dan parse JSON (untuk pemanggil yang perlu hasil terstruktur).
@@ -81,11 +84,11 @@ export async function callAi(
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(AI_TIMEOUT_MS),
+      signal: AbortSignal.timeout(opts.timeoutMs ?? AI_TIMEOUT_MS),
     });
   } catch (e) {
     const err = e as Error;
-    const alasan = err.name === "TimeoutError" || err.name === "AbortError" ? `timeout ${AI_TIMEOUT_MS}ms` : err.message;
+    const alasan = err.name === "TimeoutError" || err.name === "AbortError" ? `timeout ${opts.timeoutMs ?? AI_TIMEOUT_MS}ms` : err.message;
     return { status: 503, data: { error: `services/ai tak terjangkau (${aiPath}): ${alasan}` } };
   }
   try {
