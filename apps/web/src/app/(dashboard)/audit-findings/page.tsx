@@ -7,26 +7,27 @@ import type { AuditFinding } from "@/components/audit-findings/audit-findings-ty
 
 export const dynamic = "force-dynamic";
 
-async function getFindings(): Promise<AuditFinding[]> {
+async function getFindings(): Promise<{ findings: AuditFinding[]; totalRows: number }> {
   try {
     const res = await gatewayFetch("/audit-findings");
-    if (!res.ok) return [];
-    const data = (await res.json()) as { findings: AuditFinding[] };
-    return data.findings ?? [];
+    if (!res.ok) return { findings: [], totalRows: 0 };
+    const data = (await res.json()) as { findings: AuditFinding[]; total_rows?: number };
+    const findings = data.findings ?? [];
+    return { findings, totalRows: data.total_rows ?? findings.length };
   } catch {
-    return [];
+    return { findings: [], totalRows: 0 };
   }
 }
 
 export default async function AuditFindingsPage() {
-  const [findings, me] = await Promise.all([getFindings(), sessionUser()]);
+  const [{ findings, totalRows }, me] = await Promise.all([getFindings(), sessionUser()]);
   return (
     <>
       <PageHeader
         title="Audit Findings"
         description="Komite Audit Findings Tracker (F60) — per-finding status + control linkage, chain approval penutupan berjenjang (2-5 tahap, custom per grup)."
       />
-      <AuditFindingsView findings={findings} canManageConfig={canManageAuditFindingChainConfig(me)} />
+      <AuditFindingsView findings={findings} totalRows={totalRows} canManageConfig={canManageAuditFindingChainConfig(me)} />
     </>
   );
 }

@@ -13,7 +13,9 @@ import { STATUS_LABEL, type AuditFinding } from "./audit-findings-types";
 
 const STATUS_FILTERS = [["all", "Semua"], ...Object.entries(STATUS_LABEL)] as const;
 
-export function AuditFindingsView({ findings, canManageConfig }: { findings: AuditFinding[]; canManageConfig: boolean }) {
+export function AuditFindingsView({
+  findings, totalRows, canManageConfig,
+}: { findings: AuditFinding[]; totalRows: number; canManageConfig: boolean }) {
   const [statusFilter, setStatusFilter] = useState<string>("all");
 
   const filtered = useMemo(
@@ -40,6 +42,12 @@ export function AuditFindingsView({ findings, canManageConfig }: { findings: Aud
           <AddAuditFindingButton />
         </div>
       </div>
+
+      {totalRows > findings.length && (
+        <p className="text-muted-foreground text-sm">
+          Menampilkan {findings.length} temuan terbaru dari {totalRows}. Filter status di atas hanya menyaring yang tampil.
+        </p>
+      )}
 
       <Card>
         <CardContent className="pt-6">

@@ -17,6 +17,7 @@ interface DetailResponse {
   activeRequest: ApprovalRequestDetail | null;
   canManage: boolean;
   canDecideCurrentStep: boolean;
+  decideBlockReason: string | null;
 }
 
 const STEP_VARIANT: Record<string, "outline" | "secondary" | "destructive"> = {
@@ -120,20 +121,24 @@ export function AuditFindingDetailDialog({ findingId, kode }: { findingId: strin
                     ))}
                   </ol>
 
+                  {activeRequest.status === "pending" && !data?.canDecideCurrentStep && data?.decideBlockReason && (
+                    <p className="text-muted-foreground text-xs">Anda tidak bisa memutus tahap ini: {data.decideBlockReason}.</p>
+                  )}
+
                   {activeRequest.status === "pending" && data?.canDecideCurrentStep && (
                     <div className="space-y-2 border-t pt-3">
                       <Textarea placeholder="Catatan (wajib utk reject)" value={note} onChange={(e) => setNote(e.target.value)} />
                       <div className="flex gap-2">
                         <Button
                           size="sm" disabled={busy}
-                          onClick={() => void action(`/api/audit-findings/approval-requests/${activeRequest.id}/decide`, { action: "approve", note: note || undefined })}
+                          onClick={() => void action(`/api/audit-findings/approval-requests/${activeRequest.id}/decide`, { action: "approve", note: note || undefined, urutan: activeRequest.currentUrutan })}
                         >
                           Approve
                         </Button>
                         <Button
                           size="sm" variant="outline" className="text-destructive hover:text-destructive"
                           disabled={busy || !note.trim()}
-                          onClick={() => void action(`/api/audit-findings/approval-requests/${activeRequest.id}/decide`, { action: "reject", note })}
+                          onClick={() => void action(`/api/audit-findings/approval-requests/${activeRequest.id}/decide`, { action: "reject", note, urutan: activeRequest.currentUrutan })}
                         >
                           Reject
                         </Button>
