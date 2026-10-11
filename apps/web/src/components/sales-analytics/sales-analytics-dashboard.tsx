@@ -15,6 +15,7 @@ import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuIte
 import { LoadingInline } from "@/components/ui/loading";
 import { SalesPerformanceCards, type SalesPerformance } from "@/components/sales/sales-performance-cards";
 import { TargetPacingView, type PacingData } from "@/components/sales/target-pacing-view";
+import { SoPacingCard, type SoPacing } from "@/components/sales/so-pacing-card";
 import { PipelineReportView, type PipelineReportData } from "@/components/sales-analytics/pipeline-report-view";
 import { PipelineLeaderboardView, type LeaderboardRow } from "@/components/sales-analytics/pipeline-leaderboard-view";
 import { Input } from "@/components/ui/input";
@@ -91,6 +92,7 @@ interface OverviewAll {
   per_product: { key: string; label: string; category: string | null; total: number; count: number }[];
   per_salesman: Rank[];
   performance: SalesPerformance;
+  so_pacing?: SoPacing; // F21 — opsional supaya respons api lama tak memecahkan halaman
 }
 interface OverviewAm {
   scope: "am";
@@ -397,6 +399,7 @@ function OverviewView({ data, onNav }: { data: OverviewResult; onNav: (t: ViewKe
         <Kpi label="AR Outstanding" value={fmtRp(data.kpi.ar_outstanding)} />
       </div>
       <SalesPerformanceCards data={data.performance} />
+      {data.so_pacing && <SoPacingCard data={data.so_pacing} />}
       <Card><CardHeader className="flex flex-row items-center justify-between"><CardTitle className="text-base">Tren Revenue Harian</CardTitle><DetailLink onClick={() => onNav("trending")} /></CardHeader><CardContent><TrendChart points={data.trend} /></CardContent></Card>
       <div className="grid gap-4 lg:grid-cols-2">
         <Card><CardHeader className="flex flex-row items-center justify-between"><CardTitle className="text-base">Per Cabang</CardTitle><DetailLink onClick={() => onNav("per-cabang")} /></CardHeader>

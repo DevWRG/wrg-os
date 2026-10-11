@@ -874,7 +874,9 @@ const zeroRegions = (): RegionTotals => ({ OFFICE: 0, West: 0, East: 0 });
 
 // Total revenue + breakdown per region untuk satu rentang. Cabang dipetakan lewat
 // salesman → master_user.cabang (fallback cabang_override), sama spt reportRevenue.
-async function periodAgg(
+// Di-export untuk F21 (repo/so-pacing.ts) supaya angka faktur pacing identik
+// dengan kartu Sales Performance — jangan menyalin query ini.
+export async function periodAgg(
   sql: ReturnType<typeof db>,
   from: string,
   to: string,
