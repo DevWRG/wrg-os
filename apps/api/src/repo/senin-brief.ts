@@ -419,6 +419,9 @@ export async function runSeninBrief(opts: {
 
   // Narasi LLM — konteks angka WatchPoint ikut dikirim supaya pertanyaan kritis
   // berpijak pada metric sungguhan, bukan karangan.
+  // callAi di main bisa MELEMPAR (services/ai mati / timeout / balasan bukan
+  // JSON). Ditangkap di sini: narasi gagal tak boleh membatalkan brief — bagian
+  // deterministik tetap disimpan & dikirim ke Direktur.
   const { status, data } = await callAi("/senin-brief", {
     minggu_label: label,
     minggu_rapat: labelRapat,
@@ -435,7 +438,10 @@ export async function runSeninBrief(opts: {
       };
     }),
     dry_run: aiDryRun(),
-  }, { timeoutMs: 120_000 });
+  }, { timeoutMs: 120_000 }).catch((e: unknown) => ({
+    status: 503,
+    data: { error: `services/ai tak terjangkau (/senin-brief): ${e instanceof Error ? e.message : String(e)}` } as Record<string, unknown>,
+  }));
   const narasi = status === 200 ? String(data.narasi ?? "").trim() : "";
   const narasiOk = narasi.length >= 50 && !data.dry_run;
   const content = narasiOk
