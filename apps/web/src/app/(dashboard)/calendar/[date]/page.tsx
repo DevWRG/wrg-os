@@ -38,7 +38,7 @@ export default async function CalendarDayPage({ params }: { params: Promise<{ da
   const me = await sessionUser();
   let data: DayData | null = null;
   try {
-    const res = await gatewayFetch(`/report/calendar/day?date=${date}`, me ? { headers: { "x-user-id": me.id } } : undefined);
+    const res = await gatewayFetch(`/report/calendar/day?date=${encodeURIComponent(date)}`, me ? { headers: { "x-user-id": me.id } } : undefined);
     if (res.ok) data = await res.json();
   } catch {
     data = null;
