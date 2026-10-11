@@ -1,13 +1,16 @@
 import { gatewayFetch } from "@/lib/gateway";
+import { safeSubpath, badSubpath } from "@/lib/safe-subpath";
 
 export const dynamic = "force-dynamic";
 
 // Gateway catch-all → apps/api GET /monitor/* (members, rekap, resume, …). Query diteruskan.
 export async function GET(req: Request, ctx: { params: Promise<{ path: string[] }> }) {
   const { path } = await ctx.params;
+  const sub = safeSubpath(path);
+  if (sub === null) return badSubpath();
   const search = new URL(req.url).search;
   try {
-    const res = await gatewayFetch(`/monitor/${path.join("/")}${search}`);
+    const res = await gatewayFetch(`/monitor/${sub}${search}`);
     const data = await res.json();
     return Response.json(data, { status: res.status });
   } catch {
@@ -18,6 +21,8 @@ export async function GET(req: Request, ctx: { params: Promise<{ path: string[] 
 // POST → apps/api POST /monitor/* (mis. rekap/generate, resume/generate, digests).
 export async function POST(req: Request, ctx: { params: Promise<{ path: string[] }> }) {
   const { path } = await ctx.params;
+  const sub = safeSubpath(path);
+  if (sub === null) return badSubpath();
   let body: unknown = {};
   try {
     body = await req.json();
@@ -25,7 +30,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ path: string[]
     /* body opsional */
   }
   try {
-    const res = await gatewayFetch(`/monitor/${path.join("/")}`, {
+    const res = await gatewayFetch(`/monitor/${sub}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),

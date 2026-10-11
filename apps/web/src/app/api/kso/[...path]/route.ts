@@ -1,4 +1,5 @@
 import { gatewayFetch, relay } from "@/lib/gateway";
+import { safeSubpath, badSubpath } from "@/lib/safe-subpath";
 import { sessionUser } from "@/lib/admin-guard";
 import { canViewKso } from "@/lib/kso-access";
 
@@ -10,7 +11,8 @@ export async function GET(req: Request, ctx: { params: Promise<{ path: string[] 
   if (!me) return Response.json({ error: "unauthenticated" }, { status: 401 });
   if (!canViewKso(me)) return Response.json({ error: "forbidden" }, { status: 403 });
 
-  const sub = ((await ctx.params).path ?? []).join("/");
+  const sub = safeSubpath((await ctx.params).path);
+  if (sub === null) return badSubpath();
   const qs = new URL(req.url).searchParams.toString();
   try {
     return relay(await gatewayFetch(`/kso/${sub}${qs ? `?${qs}` : ""}`));

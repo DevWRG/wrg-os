@@ -1,4 +1,5 @@
 import { gatewayFetch } from "@/lib/gateway";
+import { safeSubpath, badSubpath } from "@/lib/safe-subpath";
 import { sessionUser, requireAdmin } from "@/lib/admin-guard";
 
 export const dynamic = "force-dynamic";
@@ -24,7 +25,8 @@ async function forward(sub: string, method: string, req?: Request): Promise<Resp
 
 export async function GET(req: Request, ctx: { params: Promise<{ path: string[] }> }) {
   const { path } = await ctx.params;
-  const sub = (path ?? []).join("/");
+  const sub = safeSubpath(path);
+  if (sub === null) return badSubpath();
   const { searchParams } = new URL(req.url);
   const qs = searchParams.toString();
   try {
@@ -37,7 +39,8 @@ export async function GET(req: Request, ctx: { params: Promise<{ path: string[] 
 }
 
 export async function POST(req: Request, ctx: { params: Promise<{ path: string[] }> }) {
-  const sub = ((await ctx.params).path ?? []).join("/");
+  const sub = safeSubpath((await ctx.params).path);
+  if (sub === null) return badSubpath();
   if (sub.endsWith("/measurements")) {
     const me = await sessionUser();
     if (!me) return Response.json({ error: "unauthenticated" }, { status: 401 });
@@ -51,17 +54,23 @@ export async function POST(req: Request, ctx: { params: Promise<{ path: string[]
 export async function PATCH(req: Request, ctx: { params: Promise<{ path: string[] }> }) {
   const g = await requireAdmin();
   if (!g.ok) return g.res;
-  return forward(((await ctx.params).path ?? []).join("/"), "PATCH", req);
+  const sub = safeSubpath((await ctx.params).path);
+  if (sub === null) return badSubpath();
+  return forward(sub, "PATCH", req);
 }
 
 export async function PUT(req: Request, ctx: { params: Promise<{ path: string[] }> }) {
   const g = await requireAdmin();
   if (!g.ok) return g.res;
-  return forward(((await ctx.params).path ?? []).join("/"), "PUT", req);
+  const sub = safeSubpath((await ctx.params).path);
+  if (sub === null) return badSubpath();
+  return forward(sub, "PUT", req);
 }
 
 export async function DELETE(_req: Request, ctx: { params: Promise<{ path: string[] }> }) {
   const g = await requireAdmin();
   if (!g.ok) return g.res;
-  return forward(((await ctx.params).path ?? []).join("/"), "DELETE");
+  const sub = safeSubpath((await ctx.params).path);
+  if (sub === null) return badSubpath();
+  return forward(sub, "DELETE");
 }
