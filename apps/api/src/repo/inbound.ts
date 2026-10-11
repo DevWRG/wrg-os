@@ -4,7 +4,7 @@ import { parseAmPlan, parseAmReport, bersihkanNamaCustomer } from "../parsers/am
 import { sendViaWaGateway, type WaSendResult } from "../wasend.js";
 import { handleSalesAnalyticsQuery } from "./inbound-sales-analytics.js";
 import { detectCek, handleCekQuery } from "./inbound-cek.js";
-import { resolveSender, normalizeWa } from "./master.js";
+import { resolveSender, normalizeWa, bolehAksesHargaWa } from "./master.js";
 import { upsertDailyTodo, computeIsLate } from "./todo.js";
 import { createReminder } from "./reminder.js";
 import { buildCekReply } from "./cek.js";
@@ -1303,7 +1303,7 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
   // #SALES — query analitik on-demand. Resolve pengirim (by phone/pushname),
   // scope AM→self via role, jawab teks ringkas.
   if (kind === "sales") {
-    const ams = await resolveSender({ senderJid: row.sender_jid, groupJid: row.group_jid, pushname: row.sender_name });
+    const ams = await resolveSender({ senderJid: row.sender_jid, groupJid: row.group_jid, pushname: row.sender_name, ketat: true });
     if (!ams) return finish({ skipped: "unknown-sender", sender_name: row.sender_name });
     let text: string;
     try {
@@ -1325,7 +1325,7 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
   // Varian CUSTOMER dicek DULU — kalau tidak, "CUSTOMER RSUD X" ikut kebaca
   // sebagai nomor dokumen dan selalu balas "tidak ditemukan".
   if (kind === "cek") {
-    const ck = await resolveSender({ senderJid: row.sender_jid, groupJid: row.group_jid, pushname: row.sender_name });
+    const ck = await resolveSender({ senderJid: row.sender_jid, groupJid: row.group_jid, pushname: row.sender_name, ketat: true });
     if (!ck) return finish({ skipped: "unknown-sender", sender_name: row.sender_name });
     if (detectCek(row.body ?? "")) {
       let text: string;
@@ -1483,7 +1483,7 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
   // pengiriman (uji dev 11 Okt 2026). Sekarang: staf roster, ATAU driver SJ itu
   // lewat chat pribadi (pelakuShippingWa). Pengirim lain diabaikan diam.
   if (kind === "kirim" || kind === "bast" || kind === "bukti") {
-    const roster = await resolveSender({ senderJid: row.sender_jid, groupJid: row.group_jid, pushname: row.sender_name });
+    const roster = await resolveSender({ senderJid: row.sender_jid, groupJid: row.group_jid, pushname: row.sender_name, ketat: true });
     const isDm = !String(row.group_jid ?? "").endsWith("@g.us");
     if (!roster && !isDm) return finish({ skipped: "unknown-sender", sender_name: row.sender_name });
     const sj = extractSjNumber(row.body);
@@ -1533,7 +1533,7 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
   // #STOK — cek stok cepat (F2 SQC). Sender WAJIB dikenal (perlu cabang AM
   // buat cari gudang-nya) — beda dari #KLAIM yang sengaja terbuka.
   if (kind === "stok") {
-    const st = await resolveSender({ senderJid: row.sender_jid, groupJid: row.group_jid, pushname: row.sender_name });
+    const st = await resolveSender({ senderJid: row.sender_jid, groupJid: row.group_jid, pushname: row.sender_name, ketat: true });
     if (!st) return finish({ skipped: "unknown-sender", sender_name: row.sender_name });
     const query = extractHashtagArg(row.body, STOK_LINE);
     if (!query) {
@@ -1549,7 +1549,7 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
   // nominal + customer. Sender cukup dikenal & aktif, setara #CEK (keputusan
   // user 2026-09-28) — tanpa scope per-AM.
   if (kind === "faktur") {
-    const fk = await resolveSender({ senderJid: row.sender_jid, groupJid: row.group_jid, pushname: row.sender_name });
+    const fk = await resolveSender({ senderJid: row.sender_jid, groupJid: row.group_jid, pushname: row.sender_name, ketat: true });
     if (!fk) return finish({ skipped: "unknown-sender", sender_name: row.sender_name });
     const arg = extractHashtagArg(row.body, FAKTUR_LINE);
     if (!arg) {
@@ -1563,8 +1563,12 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
   // #PRICING <query> — lookup harga on-demand dari F142 Price Book (F15).
   // Read-only, sama filosofi #SALES: query bebas, jawab teks ringkas.
   if (kind === "pricing") {
-    const amp = await resolveSender({ senderJid: row.sender_jid, groupJid: row.group_jid, pushname: row.sender_name });
+    const amp = await resolveSender({ senderJid: row.sender_jid, groupJid: row.group_jid, pushname: row.sender_name, ketat: true });
     if (!amp) return finish({ skipped: "unknown-sender", sender_name: row.sender_name });
+    if (!(await bolehAksesHargaWa(amp.am_id))) {
+      const reply = await sendViaWaGateway(target, `⚠️ #PRICING khusus tim sales (AM/HoD/Admin Penawaran), ${amp.nama}.`);
+      return finish({ skipped: "bukan-tim-sales", via: amp.via, reply }, "pricing");
+    }
     const line = stripInvisible(row.body ?? "").split(/\r?\n/).find((l) => PRICING_LINE.test(l)) ?? "";
     const q = line.replace(PRICING_LINE, "").trim();
     if (!q) {
@@ -1591,8 +1595,12 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
   // supaya enforcement diskon_maks & variant-confirm-gate SAMA PERSIS dgn
   // jalur web, tak ada logika bisnis yg diduplikasi.
   if (kind === "sph") {
-    const ams = await resolveSender({ senderJid: row.sender_jid, groupJid: row.group_jid, pushname: row.sender_name });
+    const ams = await resolveSender({ senderJid: row.sender_jid, groupJid: row.group_jid, pushname: row.sender_name, ketat: true });
     if (!ams) return finish({ skipped: "unknown-sender", sender_name: row.sender_name });
+    if (!(await bolehAksesHargaWa(ams.am_id))) {
+      const reply = await sendViaWaGateway(target, `⚠️ #SPH khusus tim sales (AM/HoD/Admin Penawaran), ${ams.nama}.`);
+      return finish({ skipped: "bukan-tim-sales", via: ams.via, reply }, "sph");
+    }
     const line = stripInvisible(row.body ?? "").split(/\r?\n/).find((l) => SPH_LINE.test(l)) ?? "";
     const parsed = parseSphMessage(line);
     if (!parsed) {

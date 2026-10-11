@@ -5,6 +5,7 @@
 // (HANDOVER §6) sama sekali di jalur WA. Pure function (tanpa DB).
 
 const SPH_PREFIX = /^\s*#\s*sph\b/i;
+const QTY_MAKS = 100_000;
 
 export interface ParsedSphMessage {
   customerName: string;
@@ -25,9 +26,12 @@ export function parseSphMessage(line: string): ParseSphResult | null {
   }
   const [customerName, kode, qtyRaw, diskonRaw] = parts;
 
-  const qty = Number(qtyRaw);
-  if (!Number.isFinite(qty) || qty <= 0) {
-    return { error: `qty "${qtyRaw}" harus angka > 0` };
+  // Digit polos saja. Number() menerima "1e9" (1 miliar) dan "0x10" (=16), dan
+  // qty raksasa meledak "numeric field overflow" saat INSERT → AM tak dibalas
+  // apa pun (uji dev 12 Okt 2026). Batas atas jauh di atas order wajar.
+  const qty = /^\d{1,6}$/.test(qtyRaw) ? Number(qtyRaw) : NaN;
+  if (!(qty >= 1 && qty <= QTY_MAKS)) {
+    return { error: `qty "${qtyRaw}" harus bilangan bulat 1–${QTY_MAKS.toLocaleString("id-ID")}` };
   }
 
   // Diskon WAJIB pakai tanda % — angka polos ("10") ambigu (10% atau 0.10 =
