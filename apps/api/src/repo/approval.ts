@@ -320,7 +320,7 @@ export async function notifyCurrentStep(requestId: string): Promise<NotifyResult
     `${req.title}${nominalLine}\n${req.description ? `${req.description}\n` : ""}${attachLine}` +
     `Diajukan oleh: ${req.requested_by ?? "-"}\n\n` +
     `Kode: *${req.kode}*\n` +
-    `Balas *#APPROVE ${req.kode}* untuk setujui, atau *#REJECT ${req.kode} <alasan>* untuk tolak.`;
+    `Balas *#APPROVE ${req.kode}* untuk setujui, atau *#REJECT ${req.kode} ALASAN* untuk tolak.`;
 
   const gw = await sendViaWaGateway(target.waNumber, msg);
   await sql`UPDATE approval_step SET notified_at = now() WHERE id = ${step.id}`;

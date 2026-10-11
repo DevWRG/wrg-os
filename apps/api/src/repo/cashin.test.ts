@@ -243,6 +243,17 @@ test("pengingat menyebut kode dan angka yang masih tertahan", () => {
   assert.match(lengkap, /BNI, HANA/);
 });
 
+test("placeholder alasan tanpa kurung sudut (terbuang di jalur gateway WA)", () => {
+  // "<alasan>" pernah tampil sebagai "*tidak R12 *" — Finance tak tahu harus
+  // mengetik apa. Placeholder huruf besar tetap terbaca.
+  const draft = formatDraftKonfirmasi(formatResume(ringkasan()), "R12");
+  const ingat = formatIngatanKonfirmasi("R12", "2026-09-04", 3_676_320);
+  for (const teks of [draft, ingat]) {
+    assert.match(teks, /\*tidak R12 ALASAN\*/);
+    assert.doesNotMatch(teks, /<[a-z]+>/);
+  }
+});
+
 // ── pemicu hening + label kelengkapan ────────────────────────────────────────
 
 test("resume yang belum lengkap menyatakannya di ATAS angka, bukan cuma di footer", () => {
