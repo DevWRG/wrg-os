@@ -222,7 +222,7 @@ import {
 } from "./repo/cashin.js";
 import { upsertMembers, listMembers, upsertDigests, listDigest, digestStats, upsertPola, listPola, generateRekap, generateResume, type MonitorMemberInput, type DigestInput, type PolaInput } from "./repo/monitor.js";
 import { runNotifTua } from "./repo/notiftua.js";
-import { runInvoiceReminder } from "./repo/faktur.js";
+import { runInvoiceReminder, runOverdueRecap } from "./repo/faktur.js";
 import { runDailySummary } from "./repo/dailysummary.js";
 import { runWeeklyReport } from "./repo/weeklyreport.js";
 import { runDetectLeaveScan } from "./repo/detectleave.js";
@@ -1409,6 +1409,19 @@ app.post("/ar/invoice-reminder/run", async (c) => {
     /* body opsional */
   }
   return c.json(await runInvoiceReminder({ dryRun: body.dry_run }));
+});
+
+// F91 — rekap overdue mingguan ke Finance, manual (uji / kirim ulang).
+// body: {dry_run?}. Tanpa dry_run, tetap sekali per minggu ISO (dedupe).
+app.post("/ar/invoice-overdue-recap/run", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { dry_run?: boolean } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    /* body opsional */
+  }
+  return c.json(await runOverdueRecap({ dryRun: body.dry_run }));
 });
 
 // Sync Accurate (puller, pengganti sync_accurate.sh). Read-only ke API Accurate

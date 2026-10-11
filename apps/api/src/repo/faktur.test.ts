@@ -7,10 +7,13 @@ import assert from "node:assert/strict";
 
 import { deriveInvoiceStatus } from "./ar.js";
 import {
+  buildOverdueRecap,
   buildReminderDigest,
+  byUrgency,
   formatFakturReply,
+  isoWeek,
+  overdueRecapKey,
   parseFakturArg,
-  reminderDue,
   reminderKey,
   reminderStage,
   statusLine,
@@ -58,19 +61,6 @@ test("reminderStage: rentang D-7, D-day, overdue", () => {
   assert.equal(reminderStage(0), "d0");
   assert.equal(reminderStage(-1), "od");
   assert.equal(reminderStage(-90), "od");
-});
-
-test("reminderDue: D-7/D-day sekali, overdue mingguan", () => {
-  const now = Date.parse("2026-09-28T01:00:00Z");
-  const day = 86400000;
-  assert.equal(reminderDue("d7", null, now, 7), true);
-  assert.equal(reminderDue("d7", new Date(now - 30 * day), now, 7), false);
-  assert.equal(reminderDue("d0", new Date(now - 30 * day), now, 7), false);
-  assert.equal(reminderDue("od", null, now, 7), true);
-  assert.equal(reminderDue("od", new Date(now - 6 * day), now, 7), false);
-  assert.equal(reminderDue("od", new Date(now - 7 * day), now, 7), true);
-  // cron jalan sedikit lebih awal dari minggu lalu tetap dihitung 7 hari
-  assert.equal(reminderDue("od", new Date(now - 7 * day + 10 * 60000), now, 7), true);
 });
 
 test("reminderKey unik per tahap × invoice × penerima", () => {
@@ -123,27 +113,75 @@ const row = (p: Partial<ReminderRow>): ReminderRow => ({
   ...p,
 });
 
-test("buildReminderDigest: dikelompokkan per tahap, overdue dulu", () => {
-  const txt = buildReminderDigest(
+test("buildReminderDigest: D-day dulu, lalu D-7 terdekat", () => {
+  const { text } = buildReminderDigest(
     [
-      row({ id: 1, number: "SI-D7", stage: "d7", days_to_due: 5, due_date: "2026-10-03" }),
-      row({ id: 2, number: "SI-OD", stage: "od", days_to_due: -3, due_date: "2026-09-25" }),
+      row({ id: 1, number: "SI-D7-JAUH", stage: "d7", days_to_due: 6, due_date: "2026-10-04" }),
+      row({ id: 2, number: "SI-D7-DEKAT", stage: "d7", days_to_due: 2, due_date: "2026-09-30" }),
       row({ id: 3, number: "SI-D0" }),
     ],
     "fin",
     TODAY,
   );
-  const iOd = txt.indexOf("SI-OD");
-  const iD0 = txt.indexOf("SI-D0");
-  const iD7 = txt.indexOf("SI-D7");
-  assert.ok(iOd > 0 && iOd < iD0 && iD0 < iD7, txt);
-  assert.match(txt, /lewat 3 hari/);
-  assert.match(txt, /5 hari lagi/);
-  assert.match(txt, /AM Dewi/);
+  const i0 = text.indexOf("SI-D0");
+  const i2 = text.indexOf("SI-D7-DEKAT");
+  const i6 = text.indexOf("SI-D7-JAUH");
+  assert.ok(i0 > 0 && i0 < i2 && i2 < i6, text);
+  assert.match(text, /hari ini/);
+  assert.match(text, /2 hari lagi/);
+  assert.match(text, /AM Dewi/);
 });
 
 test("buildReminderDigest AM: sapa nama, tanpa kolom AM", () => {
-  const txt = buildReminderDigest([row({})], "am", TODAY, "Dewi");
-  assert.match(txt, /Halo Dewi/);
-  assert.doesNotMatch(txt, /· AM /);
+  const { text } = buildReminderDigest([row({})], "am", TODAY, "Dewi");
+  assert.match(text, /Halo Dewi/);
+  assert.doesNotMatch(text, /· AM /);
+});
+
+test("buildReminderDigest: maks N baris, sisanya disebut & TIDAK ikut shownIds", () => {
+  const rows = Array.from({ length: 45 }, (_, k) =>
+    row({ id: k + 1, number: `SI-${k + 1}`, stage: k < 5 ? "d0" : "d7", days_to_due: k < 5 ? 0 : 1 + (k % 7) }),
+  );
+  const d = buildReminderDigest(rows, "fin", TODAY, undefined, 30);
+  assert.equal(d.shownIds.length, 30);
+  for (let k = 1; k <= 5; k++) assert.ok(d.shownIds.includes(k), "semua D-day wajib tampil");
+  assert.match(d.text, /dan 15 invoice lainnya/);
+  assert.match(d.text, /Jatuh tempo ≤7 hari\* \(40\)/); // header tetap menyebut jumlah sebenarnya
+  assert.ok(d.text.length < 6000, `pesan ${d.text.length} karakter`);
+});
+
+test("byUrgency: d0 < d7 < od, lalu yang terdekat", () => {
+  const sorted = [
+    row({ id: 1, stage: "od", days_to_due: -3 }),
+    row({ id: 2, stage: "d7", days_to_due: 5 }),
+    row({ id: 3, stage: "d0", days_to_due: 0 }),
+    row({ id: 4, stage: "d7", days_to_due: 1 }),
+  ].sort(byUrgency);
+  assert.deepEqual(sorted.map((r) => r.id), [3, 4, 2, 1]);
+});
+
+test("isoWeek: batas tahun & Senin–Minggu satu minggu", () => {
+  assert.equal(isoWeek("2026-10-12"), "2026-W42"); // Senin
+  assert.equal(isoWeek("2026-10-18"), "2026-W42"); // Minggu
+  assert.equal(isoWeek("2026-10-19"), "2026-W43");
+  assert.equal(isoWeek("2027-01-01"), "2026-W53"); // Jumat → masih minggu terakhir 2026
+  assert.equal(isoWeek("2021-01-03"), "2020-W53");
+  assert.equal(overdueRecapKey("2026-W42"), "f91:odrecap:2026-W42:fin");
+});
+
+test("buildOverdueRecap: total, ember umur, N terbesar", () => {
+  const rows = [
+    row({ id: 1, number: "OD-10", stage: "od", days_to_due: -10, outstanding: 1_000_000 }),
+    row({ id: 2, number: "OD-45", stage: "od", days_to_due: -45, outstanding: 5_000_000 }),
+    row({ id: 3, number: "OD-200", stage: "od", days_to_due: -200, outstanding: 2_000_000 }),
+  ];
+  const txt = buildOverdueRecap(rows, TODAY, 3, 2);
+  assert.match(txt, /3 invoice · sisa Rp8\.000\.000/);
+  assert.match(txt, /1–30 hari: 1 invoice · Rp1\.000\.000/);
+  assert.match(txt, /31–60 hari: 1 invoice · Rp5\.000\.000/);
+  assert.match(txt, />90 hari: 1 invoice · Rp2\.000\.000/);
+  assert.doesNotMatch(txt, /61–90 hari/); // ember kosong tak ditampilkan
+  assert.ok(txt.indexOf("OD-45") < txt.indexOf("OD-200"), "urut sisa terbesar");
+  assert.doesNotMatch(txt, /OD-10 —/); // topN=2
+  assert.match(txt, /3 invoice terbesar sudah dicek ulang/);
 });
