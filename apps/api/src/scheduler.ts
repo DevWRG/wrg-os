@@ -28,6 +28,7 @@ import {
 } from "./repo/accurateSync.js";
 import { runPlanCheck, runReportCheck } from "./repo/compliance.js";
 import { runNotifTua } from "./repo/notiftua.js";
+import { runSeninBrief } from "./repo/senin-brief.js";
 import { runDailySummary } from "./repo/dailysummary.js";
 import { runRaportNarrative } from "./repo/raportnarrative.js";
 import { runWeeklyReport } from "./repo/weeklyreport.js";
@@ -218,6 +219,10 @@ export function startScheduler(): ScheduleStatus {
   // hanya sampai ke Direktur setelah Finance membalas "ya <kode>"; job ini cuma
   // membuat draft yang tertinggal dan mengingatkan draft yang menggantung.
   const cashinResumeEnabled = (process.env.CASHIN_RESUME_ENABLED ?? "false").toLowerCase() === "true";
+  // senin-brief (F85) — Senin 06:30 nilai kesiapan materi 8 HoD atas minggu yang
+  // baru tutup → simpan → WA ke Direktur. Flag SENDIRI (default off) dan SENGAJA
+  // tak ikut AGENT_SCHEDULE_ENABLED: job ini mengirim WA ke Direktur.
+  const seninBriefEnabled = (process.env.SENIN_BRIEF_ENABLED ?? "false").toLowerCase() === "true";
   const timezone = TZ();
   const jobs: JobDef[] = [
     {
@@ -293,12 +298,12 @@ export function startScheduler(): ScheduleStatus {
   ];
 
   status = {
-    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled || watchpointSnapshotEnabled || preVisitEnabled || edWatchEnabled || gaMaintenanceAlertEnabled || gaMaintenanceBscEnabled || gaHelpdeskOverdueEnabled || gaHelpdeskBscEnabled || lpseTenderReminderEnabled || accurateStockSyncEnabled || cashinResumeEnabled || geoSweepEnabled || kpiMeasureEnabled || invoiceReminderEnabled || auditFindingReminderEnabled,
+    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled || watchpointSnapshotEnabled || preVisitEnabled || edWatchEnabled || gaMaintenanceAlertEnabled || gaMaintenanceBscEnabled || gaHelpdeskOverdueEnabled || gaHelpdeskBscEnabled || lpseTenderReminderEnabled || accurateStockSyncEnabled || cashinResumeEnabled || geoSweepEnabled || kpiMeasureEnabled || invoiceReminderEnabled || auditFindingReminderEnabled || seninBriefEnabled,
     timezone,
     jobs: jobs.map((j) => ({ id: j.id, expr: j.expr, valid: cron.validate(j.expr) })),
   };
 
-  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled && !watchpointSnapshotEnabled && !preVisitEnabled && !edWatchEnabled && !gaMaintenanceAlertEnabled && !gaMaintenanceBscEnabled && !gaHelpdeskOverdueEnabled && !gaHelpdeskBscEnabled && !lpseTenderReminderEnabled && !accurateStockSyncEnabled && !cashinResumeEnabled && !geoSweepEnabled && !kpiMeasureEnabled && !invoiceReminderEnabled && !auditFindingReminderEnabled) {
+  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled && !watchpointSnapshotEnabled && !preVisitEnabled && !edWatchEnabled && !gaMaintenanceAlertEnabled && !gaMaintenanceBscEnabled && !gaHelpdeskOverdueEnabled && !gaHelpdeskBscEnabled && !lpseTenderReminderEnabled && !accurateStockSyncEnabled && !cashinResumeEnabled && !geoSweepEnabled && !kpiMeasureEnabled && !invoiceReminderEnabled && !auditFindingReminderEnabled && !seninBriefEnabled) {
     console.log("[scheduler] semua *_SCHEDULE/_ENABLED flag != true — tidak dijadwalkan");
     return status;
   }
@@ -975,6 +980,31 @@ export function startScheduler(): ScheduleStatus {
       { timezone },
     );
     live.push(`weekly-report=${wrExpr}`);
+  }
+
+  // senin-brief (F85) — 30 menit setelah watchpoint-snapshot supaya angka minggu
+  // lalu sudah beku (runSeninBrief juga memastikan snapshot sendiri, idempoten).
+  // Senin libur = tak ada rapat → dilewati.
+  const sbExpr = process.env.SENIN_BRIEF_CRON ?? "30 6 * * 1";
+  if (seninBriefEnabled && cron.validate(sbExpr)) {
+    cron.schedule(
+      sbExpr,
+      async () => {
+        const startedAt = new Date().toISOString();
+        try {
+          if (!(await isWorkday())) {
+            console.log(`[scheduler] senin-brief skip (bukan hari kerja)`);
+            return;
+          }
+          const r = await runSeninBrief({});
+          console.log(`[scheduler] senin-brief @ ${startedAt} ${JSON.stringify(r).slice(0, 300)}`);
+        } catch (e) {
+          console.error(`[scheduler] senin-brief gagal @ ${startedAt}:`, e);
+        }
+      },
+      { timezone },
+    );
+    live.push(`senin-brief=${sbExpr}`);
   }
 
   // watchpoint-snapshot — Senin 06:00, bekukan metric computed minggu lalu ke

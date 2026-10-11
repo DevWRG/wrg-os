@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -342,6 +342,24 @@ class WeekendBriefingRequest(BaseModel):
 
 class WeekendBriefingResponse(BaseModel):
     briefing: str
+    model: str = "dry-run"
+    dry_run: bool = False
+
+
+# === F85 Senin Morning Brief (narasi di atas status deterministik apps/api) ===
+
+
+class SeninBriefRequest(BaseModel):
+    minggu_label: str
+    periode: str
+    health: str
+    # Per HoD: {hod_key, nama, peran, status, checks[], watch_status, metrics[]}
+    hods: List[Dict[str, Any]] = Field(default_factory=list)
+    dry_run: bool = False
+
+
+class SeninBriefResponse(BaseModel):
+    narasi: str
     model: str = "dry-run"
     dry_run: bool = False
 

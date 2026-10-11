@@ -167,6 +167,7 @@ stok-gudang-sync, insentif-compute.
 - `insentif-compute` (harian 02:30, `INSENTIF_COMPUTE_ENABLED`) menghitung ulang insentif F67 bulan **berjalan + bulan lalu** (pelunasan Agustus bisa terjadi Oktober). Membaca Effort/Presales dari `insentif_effort` (184) dan **tidak menimpa** rekap yang sudah lewat tahap review.
 - `stok-gudang-sync` (harian 02:00, `STOCK_BRANCH_SYNC_ENABLED`) menarik stok **per gudang** ke `item_stock_branch` lewat `item/detail.do` per SKU — jalur satu-satunya yang membawa saldo per gudang (#836). Berbatas per run (`STOCK_BRANCH_SYNC_LIMIT`, default 1500 dari ±5.900 SKU), melanjutkan dari yang paling lama tak tersegarkan. Flag TIDAK ikut `AGENT_SCHEDULE_ENABLED`: job ini menulis ke tabel yang juga diisi CSV opname tim gudang.
 - `watchpoint-snapshot` (Senin 06:00, `WATCHPOINT_SNAPSHOT_ENABLED`) membekukan metric computed minggu lalu ke `watchpoint_weekly` — sumber riwayat tab **WatchPoint → Weekly** & deck PPTX. Tanpa job ini minggu lewat ikut berubah tiap dibuka.
+- `senin-brief` (Senin 06:30, `SENIN_BRIEF_ENABLED`, F85) menilai kesiapan materi 8 HoD atas minggu yang baru tutup (5 cek deterministik → SIAP / PERLU KLARIFIKASI / TIDAK SIAP + Overall Health), simpan ke `senin_brief`, WA ke Direktur. LLM (`/senin-brief`) hanya menulis narasi — status tak pernah dari LLM. Generate ulang manual: `POST /senin-brief/run` (default tanpa WA).
 
 **Target broadcast WA harus ditentukan user, bukan diinferensi agent.** Crontab legacy
 sudah cutover (dash-free file di-install user; sandbox blok edit crontab).
