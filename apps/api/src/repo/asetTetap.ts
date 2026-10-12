@@ -121,6 +121,23 @@ export async function recordFixedAssetSyncState(ok: boolean, summary: Record<str
   `;
 }
 
+// Tandai sapuan DIMULAI. Ada karena sinkron pertama prod (12 Okt) mati di aset
+// ke-459 saat auto-deploy PR lain me-restart API: sapuan yang dibunuh tak
+// sempat menulis status apa pun, jadi halaman tetap bilang "belum pernah
+// disinkron". Dengan penanda ini, sapuan yang tak pernah selesai terlihat
+// (status 'berjalan' yang basi = terputus). last_synced_at sengaja TIDAK
+// diubah — itu waktu sapuan terakhir yang SELESAI.
+export async function markFixedAssetSyncStarted(): Promise<void> {
+  const sql = db();
+  await sql`
+    INSERT INTO accurate_sync_state (entity, last_synced_at, last_run_ok, last_run_summary)
+    VALUES ('fixed-asset', NULL, NULL, jsonb_build_object('status', 'berjalan', 'started_at', now()))
+    ON CONFLICT (entity) DO UPDATE SET last_run_ok = NULL,
+      last_run_summary = jsonb_build_object('status', 'berjalan', 'started_at', now(),
+                                            'sebelumnya', accurate_sync_state.last_run_summary)
+  `;
+}
+
 // ── Query menu Finance → Aset Tetap ────────────────────────────────────────
 
 export interface AsetTetapFilter {
@@ -213,7 +230,11 @@ export interface AsetTetapRingkasan {
   }[];
   total: { jumlah: number; disposed: number; nilai_perolehan: number; nilai_buku: number; akumulasi: number; susut_per_bulan: number };
   tipe: string[];
-  sync: { last_synced_at: string | null; last_run_ok: boolean | null; summary: unknown };
+  sync: {
+    last_synced_at: string | null; last_run_ok: boolean | null; summary: unknown;
+    /** 'berjalan' = sapuan sedang jalan; 'terputus' = penanda mulai >45 menit tanpa selesai. */
+    status_sapuan: "berjalan" | "terputus" | null; mulai_at: string | null;
+  };
 }
 
 // Agregat hanya dari kolom bertipe — tak pernah dari raw jsonb (#1417).
@@ -247,11 +268,21 @@ export async function ringkasanAsetTetap(): Promise<AsetTetapRingkasan> {
   const tipe = (await sql<{ t: string }[]>`
     SELECT DISTINCT fa_type_name AS t FROM accurate_fixed_asset WHERE fa_type_name IS NOT NULL ORDER BY 1
   `).map((r) => r.t);
-  const [st] = await sql<{ last_synced_at: string | null; last_run_ok: boolean | null; summary: unknown }[]>`
-    SELECT last_synced_at::text, last_run_ok, last_run_summary AS summary
+  // Sapuan normal ±10 menit; penanda 'berjalan' yang lewat 45 menit = prosesnya
+  // mati di tengah (mis. API di-restart auto-deploy) → 'terputus'.
+  const [st] = await sql<AsetTetapRingkasan["sync"][]>`
+    SELECT last_synced_at::text, last_run_ok, last_run_summary AS summary,
+           CASE WHEN last_run_summary->>'status' = 'berjalan'
+                THEN CASE WHEN (last_run_summary->>'started_at')::timestamptz < now() - interval '45 minutes'
+                          THEN 'terputus' ELSE 'berjalan' END
+           END AS status_sapuan,
+           CASE WHEN last_run_summary->>'status' = 'berjalan' THEN last_run_summary->>'started_at' END AS mulai_at
     FROM accurate_sync_state WHERE entity = 'fixed-asset'
   `;
-  return { per_kelompok: per, total, tipe, sync: st ?? { last_synced_at: null, last_run_ok: null, summary: null } };
+  return {
+    per_kelompok: per, total, tipe,
+    sync: st ?? { last_synced_at: null, last_run_ok: null, summary: null, status_sapuan: null, mulai_at: null },
+  };
 }
 
 export interface JadwalBaris { periode: string; susut: number; akumulasi: number; nilai_buku: number; status: "lewat" | "berjalan" | "proyeksi" }
