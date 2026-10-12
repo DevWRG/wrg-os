@@ -10,6 +10,7 @@ import {
   warehouseAccurateMap, ringkasStokPerGudang, replaceItemStockBranch,
   pendingStockItems, countPendingStockItems,
 } from "./accurateMirror.js";
+import { upsertFixedAssetDetail, pruneFixedAssets, recordFixedAssetSyncState } from "./asetTetap.js";
 
 // Puller Accurate Online (pengganti legacy sync_accurate.sh). Tarik sales-invoice
 // header+items dari zeus.accurate.id → mirror penuh accurate_* + refresh ar_aging.
@@ -795,4 +796,102 @@ export async function syncAccurateInvoices(
     ...(cappedByPages ? { cappedByPages: true } : {}),
     ...(existingIds ? { skippedExisting } : {}),
   };
+}
+
+// F34 — cermin aset tetap (fixed-asset). Bentuk data dari probe prod
+// (scripts/qa/probe-accurate-aset-tetap.mjs): list.do cuma bisa membawa 10
+// field dan TIDAK bookValue/faType/metode/umur → wajib detail.do per aset.
+// Prod 12 Okt: 1.394 aset, ≈0,26 dtk/detail + jeda 150ms ≈ 10 menit. Cukup
+// untuk job harian; tak ada jalur inkremental yang terbukti (filter.lastUpdate
+// belum diuji), jadi tiap jalan = sapuan penuh.
+//
+// Prune (hapus cermin yang tak ada lagi di Accurate) HANYA jika daftar id
+// lengkap: tak kena batas halaman DAN jumlah terkumpul = sp.rowCount. Daftar
+// parsial yang mem-prune akan menghapus aset yang sah tanpa suara.
+export interface FixedAssetSyncResult {
+  ok: boolean;
+  listed?: number;
+  rowCount?: number | null;
+  synced?: number;
+  failed?: number;
+  pruned?: number;
+  cappedByPages?: boolean;
+  error?: string;
+}
+
+// Satu sapuan pada satu waktu: job harian dan tombol manual bisa bertabrakan,
+// dan dua sapuan paralel = 2× beban ke Accurate untuk hasil yang sama.
+let fixedAssetSyncRunning = false;
+export const fixedAssetSyncBusy = () => fixedAssetSyncRunning;
+
+export async function syncFixedAssets(opts: { maxPages?: number } = {}): Promise<FixedAssetSyncResult> {
+  if (fixedAssetSyncRunning) return { ok: false, error: "sinkron aset tetap sedang berjalan" };
+  fixedAssetSyncRunning = true;
+  try {
+    return await syncFixedAssetsInner(opts);
+  } finally {
+    fixedAssetSyncRunning = false;
+  }
+}
+
+async function syncFixedAssetsInner(opts: { maxPages?: number }): Promise<FixedAssetSyncResult> {
+  const creds = loadCreds();
+  if (!creds) return { ok: false, error: "kredensial Accurate tak tersedia" };
+  const maxPages = opts.maxPages ?? 50;
+  const perPage = 100;
+  const ids: number[] = [];
+  let rowCount: number | null = null;
+  let capped = false;
+  try {
+    for (let page = 1; ; page++) {
+      const list = (await accGet(creds, "/accurate/api/fixed-asset/list.do", `sp.page=${page}&sp.pageSize=${perPage}&fields=id`)) as {
+        s?: boolean; d?: unknown; sp?: { rowCount?: unknown };
+      };
+      if (list?.s !== true) {
+        const res = { ok: false, error: `list gagal hal ${page}: ${JSON.stringify(list?.d).slice(0, 160)}` };
+        await recordFixedAssetSyncState(false, res);
+        return res;
+      }
+      const rc = Number(list.sp?.rowCount);
+      if (Number.isFinite(rc)) rowCount = rc;
+      const rows = Array.isArray(list.d) ? (list.d as Array<{ id?: unknown }>) : [];
+      for (const r of rows) {
+        const id = Number(r.id);
+        if (id > 0) ids.push(id);
+      }
+      if (rows.length < perPage || (rowCount != null && ids.length >= rowCount)) break;
+      if (laporBatasHalaman("fixed-asset", page, maxPages, perPage)) { capped = true; break; }
+      await sleep(150);
+    }
+  } catch (e) {
+    const res = { ok: false, error: `list error: ${String((e as Error)?.message ?? e).slice(0, 160)}` };
+    await recordFixedAssetSyncState(false, res);
+    return res;
+  }
+
+  let synced = 0;
+  let failed = 0;
+  for (const id of ids) {
+    try {
+      const det = await accGet(creds, "/accurate/api/fixed-asset/detail.do", `id=${id}`);
+      if (det?.s === true && (await upsertFixedAssetDetail(det.d))) synced += 1;
+      else failed += 1;
+    } catch {
+      failed += 1; // satu aset gagal tak menggagalkan sapuan; dihitung & dilaporkan
+    }
+    await sleep(150);
+  }
+
+  const lengkap = !capped && rowCount != null && ids.length === rowCount;
+  const pruned = lengkap ? await pruneFixedAssets(ids) : 0;
+  if (!lengkap) {
+    console.warn(`[accurate-sync] fixed-asset: daftar id TAK lengkap (${ids.length}/${rowCount ?? "?"}${capped ? ", kena batas halaman" : ""}) — prune dilewati`);
+  }
+  // ok=false kalau ada yang gagal: sebagian cermin basi harus terlihat, bukan hijau.
+  const res: FixedAssetSyncResult = {
+    ok: failed === 0 && lengkap, listed: ids.length, rowCount, synced, failed, pruned,
+    ...(capped ? { cappedByPages: true } : {}),
+  };
+  await recordFixedAssetSyncState(res.ok, { ...res });
+  return res;
 }
