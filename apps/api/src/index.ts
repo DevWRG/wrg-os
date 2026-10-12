@@ -6285,8 +6285,13 @@ app.patch("/inbound-receiving/:id", async (c) => {
 
 app.delete("/inbound-receiving/:id", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  const r = await deleteInboundReceiving(c.req.param("id"));
-  return c.json(r, r.deleted ? 200 : 404);
+  try {
+    const r = await deleteInboundReceiving(c.req.param("id"));
+    return c.json(r, r.deleted ? 200 : 404);
+  } catch (e) {
+    if (e instanceof InboundReceivingError) return c.json({ error: e.message }, e.status as 409);
+    throw e;
+  }
 });
 
 app.post("/inbound-receiving/:id/items", async (c) => {
