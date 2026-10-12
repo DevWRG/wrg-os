@@ -29,6 +29,7 @@ interface Suggestion {
   approvalStatus: string | null;
   purchaseOrderId: string | null;
   purchaseOrderNumber: string | null;
+  purchaseOrderMati?: boolean;
   createdAt: string;
 }
 
@@ -384,7 +385,8 @@ export default function ForecastSubmissionPage() {
                         {/* Tidak ada route detail per-ID di PO Tracker (dialog di tabel list,
                             lihat purchase-order-table.tsx) — jadi arahkan ke tabel dgn
                             filter ?q= nomor PO, bukan link langsung ke ID yang 404. */}
-                        ✅ Sudah didraft jadi PO {s.purchaseOrderNumber ?? ""} —{" "}
+                        {s.purchaseOrderMati ? "⚠️ PO" : "✅ Sudah didraft jadi PO"} {s.purchaseOrderNumber ?? ""}
+                        {s.purchaseOrderMati ? " dibatalkan/ditolak — bisa didraft ulang di bawah" : ""} —{" "}
                         <Link
                           href={`/purchase-orders?q=${encodeURIComponent(s.purchaseOrderNumber ?? "")}`}
                           className="text-primary underline"
@@ -394,7 +396,17 @@ export default function ForecastSubmissionPage() {
                       </div>
                     )}
 
-                    {s.status === "submitted" && s.approvalStatus === "approved" && !s.purchaseOrderId && (
+                    {s.status === "submitted" && (s.approvalStatus === "rejected" || s.approvalStatus === "canceled") && (
+                      <div className="flex items-center gap-2 text-xs">
+                        <span className="text-muted-foreground">Approval {s.approvalStatus === "rejected" ? "ditolak" : "dibatalkan"} — usulan ini tidak bisa dilanjutkan.</span>
+                        <Button size="sm" variant="outline" disabled={busy === s.id} onClick={() => void dismiss(s.id)}>
+                          Tutup usulan
+                        </Button>
+                      </div>
+                    )}
+
+                    {((s.status === "submitted" && s.approvalStatus === "approved" && !s.purchaseOrderId) ||
+                      (s.status === "ordered" && s.purchaseOrderMati)) && (
                       <div className="space-y-2 border-t pt-2">
                         <div className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
                           Draft PO (F153) — vendor & lini dipilih manual

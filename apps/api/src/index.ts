@@ -6277,8 +6277,13 @@ app.post("/inbound-receiving/:id/items", async (c) => {
     return c.json({ error: "invalid JSON body" }, 400);
   }
   if (!body.label?.trim()) return c.json({ error: "label wajib" }, 400);
-  const row = await addInboundReceivingItem(c.req.param("id"), body.label.trim());
-  return row ? c.json(row, 201) : c.json({ error: "tidak ditemukan" }, 404);
+  try {
+    const row = await addInboundReceivingItem(c.req.param("id"), body.label.trim());
+    return row ? c.json(row, 201) : c.json({ error: "tidak ditemukan" }, 404);
+  } catch (e) {
+    if (e instanceof InboundReceivingError) return c.json({ error: e.message }, e.status as 400);
+    throw e;
+  }
 });
 
 app.patch("/inbound-receiving/:id/items/:itemId", async (c) => {
@@ -6300,8 +6305,13 @@ app.patch("/inbound-receiving/:id/items/:itemId", async (c) => {
 
 app.delete("/inbound-receiving/:id/items/:itemId", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  const r = await deleteInboundReceivingItem(c.req.param("id"), c.req.param("itemId"));
-  return c.json(r, r.deleted ? 200 : 404);
+  try {
+    const r = await deleteInboundReceivingItem(c.req.param("id"), c.req.param("itemId"));
+    return c.json(r, r.deleted ? 200 : 404);
+  } catch (e) {
+    if (e instanceof InboundReceivingError) return c.json({ error: e.message }, e.status as 400);
+    throw e;
+  }
 });
 
 // ── F51 Dana Ops / Petty Cash Realization (General Affairs) ──
@@ -7514,8 +7524,13 @@ app.patch("/purchase-orders/:id", async (c) => {
   } catch {
     return c.json({ error: "invalid JSON body" }, 400);
   }
-  const row = await updatePurchaseOrder(c.req.param("id"), body);
-  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+  try {
+    const row = await updatePurchaseOrder(c.req.param("id"), body);
+    return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+  } catch (e) {
+    if (e instanceof PurchaseOrderError) return c.json({ error: e.message }, e.status as 409);
+    throw e;
+  }
 });
 
 app.delete("/purchase-orders/:id", async (c) => {
@@ -7539,8 +7554,13 @@ app.post("/purchase-orders/:id/items", async (c) => {
   }
   if (!body.item_desc?.trim()) return c.json({ error: "item_desc wajib" }, 400);
   if (!(Number(body.qty_ordered) > 0)) return c.json({ error: "qty_ordered harus > 0" }, 400);
-  const row = await addPurchaseOrderItem(c.req.param("id"), body);
-  return row ? c.json(row, 201) : c.json({ error: "PO tidak ditemukan" }, 404);
+  try {
+    const row = await addPurchaseOrderItem(c.req.param("id"), body);
+    return row ? c.json(row, 201) : c.json({ error: "PO tidak ditemukan" }, 404);
+  } catch (e) {
+    if (e instanceof PurchaseOrderError) return c.json({ error: e.message }, e.status as 409);
+    throw e;
+  }
 });
 
 app.patch("/purchase-orders/:id/items/:itemId", async (c) => {
@@ -7554,8 +7574,13 @@ app.patch("/purchase-orders/:id/items/:itemId", async (c) => {
   if (body.qty_ordered !== undefined && !(Number(body.qty_ordered) > 0)) {
     return c.json({ error: "qty_ordered harus > 0" }, 400);
   }
-  const row = await updatePurchaseOrderItem(c.req.param("id"), c.req.param("itemId"), body);
-  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+  try {
+    const row = await updatePurchaseOrderItem(c.req.param("id"), c.req.param("itemId"), body);
+    return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+  } catch (e) {
+    if (e instanceof PurchaseOrderError) return c.json({ error: e.message }, e.status as 409);
+    throw e;
+  }
 });
 
 app.delete("/purchase-orders/:id/items/:itemId", async (c) => {
@@ -7588,7 +7613,7 @@ app.post("/purchase-orders/:id/items/:itemId/receipts", async (c) => {
     const row = await addPurchaseOrderReceipt(c.req.param("id"), c.req.param("itemId"), body);
     return row ? c.json(row, 201) : c.json({ error: "barang PO tidak ditemukan" }, 404);
   } catch (e) {
-    if (e instanceof PurchaseOrderError) return c.json({ error: e.message }, e.status as 409);
+    if (e instanceof PurchaseOrderError) return c.json({ error: e.message }, e.status as 400 | 409);
     throw e;
   }
 });

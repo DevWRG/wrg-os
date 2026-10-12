@@ -229,6 +229,8 @@ export interface ForecastSuggestionRow {
   approvalStatus: string | null;
   purchaseOrderId: string | null;
   purchaseOrderNumber: string | null;
+  /** PO hasil draft dibatalkan / ditolak approval → usulan boleh didraft ulang. */
+  purchaseOrderMati: boolean;
   createdAt: string;
 }
 
@@ -236,7 +238,10 @@ export async function listSuggestions(status?: string): Promise<ForecastSuggesti
   const sql = db();
   const rows = await sql`
     SELECT fs.*, ai.name AS item_name, w.nama AS warehouse_nama, ar.status AS approval_status,
-           po.po_number AS po_number
+           po.po_number AS po_number,
+           (po.cancelled_at IS NOT NULL
+             OR EXISTS (SELECT 1 FROM purchase_order_approval pa WHERE pa.purchase_order_id = po.id AND pa.status = 'rejected')
+           ) AS po_mati
     FROM forecast_suggestion fs
     JOIN accurate_item ai ON ai.id = fs.item_id
     JOIN warehouse w ON w.kode = fs.warehouse_kode
@@ -265,6 +270,7 @@ export async function listSuggestions(status?: string): Promise<ForecastSuggesti
     approvalStatus: r.approval_status ? String(r.approval_status) : null,
     purchaseOrderId: r.purchase_order_id ? String(r.purchase_order_id) : null,
     purchaseOrderNumber: r.po_number ? String(r.po_number) : null,
+    purchaseOrderMati: r.po_mati === true,
     // Sebelumnya String(r.created_at) — postgres.js parse kolom timestamptz
     // jadi objek Date, String() di atasnya hasilnya Date.toString() mentah
     // ("Fri Sep 04 2026 ... GMT+0700 ..."), bukan ISO. Pola bug yang sama
@@ -294,12 +300,27 @@ export async function updateSuggestion(
   return { ok: true };
 }
 
+// Selain draft, usulan 'submitted' yang approval F11-nya DITOLAK/dibatalkan
+// juga boleh ditutup — dulu ia tertahan 'submitted' selamanya (tak bisa
+// diedit, diajukan ulang, maupun didraft jadi PO). Kekurangan stoknya sendiri
+// tetap terbaca: generate berikutnya membuat draft baru.
 export async function dismissSuggestion(id: string, reviewedBy?: string): Promise<{ ok: boolean; error?: string }> {
   const sql = db();
-  const rows = await sql`SELECT status FROM forecast_suggestion WHERE id = ${id}`;
+  const rows = await sql`
+    SELECT fs.status, ar.status AS approval_status
+    FROM forecast_suggestion fs LEFT JOIN approval_request ar ON ar.id = fs.approval_request_id
+    WHERE fs.id = ${id}
+  `;
   if (rows.length === 0) return { ok: false, error: "usulan tidak ditemukan" };
-  if (rows[0].status !== "draft") return { ok: false, error: `usulan sudah ${rows[0].status}` };
-  await sql`UPDATE forecast_suggestion SET status = 'dismissed', reviewed_by = ${reviewedBy ?? null}, reviewed_at = now() WHERE id = ${id}`;
+  const st = String(rows[0].status);
+  const apprMati = rows[0].approval_status === "rejected" || rows[0].approval_status === "canceled";
+  if (!(st === "draft" || (st === "submitted" && apprMati))) return { ok: false, error: `usulan sudah ${st}` };
+  const done = await sql`
+    UPDATE forecast_suggestion SET status = 'dismissed', reviewed_by = ${reviewedBy ?? null}, reviewed_at = now()
+    WHERE id = ${id} AND status = ${st}
+    RETURNING id
+  `;
+  if (!done.length) return { ok: false, error: "usulan berubah sementara — muat ulang halaman" };
   return { ok: true };
 }
 
@@ -423,17 +444,28 @@ export async function draftPurchaseOrder(id: string, input: DraftPoInput): Promi
 
   const sql = db();
   const rows = await sql`
-    SELECT fs.*, ai.name AS item_name, ai.unit AS item_unit, w.cabang AS warehouse_cabang, ar.status AS approval_status
+    SELECT fs.*, ai.name AS item_name, ai.unit AS item_unit, w.cabang AS warehouse_cabang, ar.status AS approval_status,
+           (po.cancelled_at IS NOT NULL
+             OR EXISTS (SELECT 1 FROM purchase_order_approval pa WHERE pa.purchase_order_id = po.id AND pa.status = 'rejected')
+           ) AS po_mati
     FROM forecast_suggestion fs
     JOIN accurate_item ai ON ai.id = fs.item_id
     JOIN warehouse w ON w.kode = fs.warehouse_kode
     LEFT JOIN approval_request ar ON ar.id = fs.approval_request_id
+    LEFT JOIN purchase_order po ON po.id = fs.purchase_order_id
     WHERE fs.id = ${id}
   `;
   if (rows.length === 0) return { ok: false, error: "usulan tidak ditemukan" };
   const r = rows[0];
-  if (r.purchase_order_id) return { ok: false, error: "usulan ini sudah didraft jadi PO sebelumnya" };
-  if (r.status !== "submitted") return { ok: false, error: `usulan berstatus "${r.status}" — harus "submitted" (sudah diajukan) dulu` };
+  // PO sebelumnya dibatalkan / ditolak approval F35 → usulan boleh didraft
+  // ulang (uji fungsional 12 Okt 2026: dulu terkunci 'ordered' selamanya,
+  // kekurangan stok yang sudah di-approve tak bisa dipesan lagi).
+  const redraft = r.status === "ordered" && !!r.purchase_order_id && r.po_mati === true;
+  const prevPoId: string | null = r.purchase_order_id ? String(r.purchase_order_id) : null;
+  if (r.purchase_order_id && !redraft) return { ok: false, error: "usulan ini sudah didraft jadi PO sebelumnya" };
+  if (r.status !== "submitted" && !redraft) {
+    return { ok: false, error: `usulan berstatus "${r.status}" — harus "submitted" (sudah diajukan) dulu` };
+  }
   if (r.approval_status !== "approved") {
     return { ok: false, error: `approval usulan ini belum selesai (status: ${r.approval_status ?? "belum ada approval_request"})` };
   }
@@ -448,11 +480,20 @@ export async function draftPurchaseOrder(id: string, input: DraftPoInput): Promi
   // 2026: 3 klik → 2 PO, satu yatim). UPDATE ... WHERE status='submitted'
   // hanya dimenangkan satu pemanggil; kalau createPurchaseOrder gagal, klaim
   // dikembalikan supaya usulan bisa didraft lagi.
-  const [claim] = await sql`
-    UPDATE forecast_suggestion SET status = 'ordered'
-    WHERE id = ${id} AND status = 'submitted' AND purchase_order_id IS NULL
-    RETURNING id
-  `;
+  // Draft ulang: klaim mengosongkan purchase_order_id (PO mati) — penanda
+  // "sedang didraft" yang sama dengan jalur pertama, jadi klik paralel kedua
+  // tak lagi cocok dengan kondisi mana pun.
+  const [claim] = redraft
+    ? await sql`
+        UPDATE forecast_suggestion SET purchase_order_id = NULL
+        WHERE id = ${id} AND status = 'ordered' AND purchase_order_id = ${prevPoId}
+        RETURNING id
+      `
+    : await sql`
+        UPDATE forecast_suggestion SET status = 'ordered'
+        WHERE id = ${id} AND status = 'submitted' AND purchase_order_id IS NULL
+        RETURNING id
+      `;
   if (!claim) return { ok: false, error: "usulan ini sudah didraft jadi PO (atau sedang didraft) — muat ulang halaman" };
 
   let po: Awaited<ReturnType<typeof createPurchaseOrder>>;
@@ -476,7 +517,9 @@ export async function draftPurchaseOrder(id: string, input: DraftPoInput): Promi
     ],
     });
   } catch (e) {
-    await sql`UPDATE forecast_suggestion SET status = 'submitted' WHERE id = ${id} AND purchase_order_id IS NULL`;
+    await (redraft
+      ? sql`UPDATE forecast_suggestion SET purchase_order_id = ${prevPoId} WHERE id = ${id} AND purchase_order_id IS NULL`
+      : sql`UPDATE forecast_suggestion SET status = 'submitted' WHERE id = ${id} AND purchase_order_id IS NULL`);
     throw e;
   }
 
