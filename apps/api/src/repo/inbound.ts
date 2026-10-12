@@ -866,6 +866,64 @@ async function adaKoranTerdekat(row: WaRow): Promise<boolean> {
 
 /** Ingest satu/beberapa lampiran + susun balasannya. Dipakai dua jalur masuk
  *  (pesan hashtag dan baris dokumen), jadi bunyinya selalu sama. */
+
+/**
+ * Tanggal yang DITULIS pengirim di caption #KORAN, mis. "#koran BNI 09/10/2026".
+ *
+ * Diekspor untuk diuji tanpa DB (repo/inbound-koran-caption.test.ts).
+ *
+ * Format Indonesia: hari DULU, bulan kedua. "09/10/2026" = 9 Oktober, bukan
+ * 10 September. Juga menerima bentuk ISO kalau ada.
+ */
+export function tanggalDariCaptionKoran(body: string | null): string | null {
+  if (!body) return null;
+  const teks = body.replace(/\u200e|\u200f/g, "");
+
+  const iso = teks.match(/\b(20\d{2})-(\d{1,2})-(\d{1,2})\b/);
+  if (iso) {
+    const [, y, m, d] = iso;
+    return `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
+  }
+
+  const id = teks.match(/\b(\d{1,2})[/-](\d{1,2})[/-](20\d{2}|\d{2})\b/);
+  if (!id) return null;
+  const hari = Number(id[1]);
+  const bulan = Number(id[2]);
+  if (hari < 1 || hari > 31 || bulan < 1 || bulan > 12) return null;
+  const tahun = id[3].length === 2 ? `20${id[3]}` : id[3];
+  return `${tahun}-${String(bulan).padStart(2, "0")}-${String(hari).padStart(2, "0")}`;
+}
+
+/**
+ * Peringatan saat tanggal di caption BEDA dari tanggal di isi dokumen.
+ *
+ * Kenapa perlu: sistem menolak keras kalau tanggal tak terbaca atau periodenya
+ * lebih dari satu hari, tapi DIAM saja kalau tanggalnya terbaca jelas namun
+ * bukan yang dimaksud pengirim. 12 Okt 2026 renika mengirim "#koran NIAGA
+ * 09/10/2026" dengan PDF bertanggal 10 Okt; balasannya berbunyi "terverifikasi"
+ * dan datanya mendarat di tanggal yang salah tanpa ada yang tahu. Resume 9 Okt
+ * tertahan karena NIAGA dianggap belum masuk, sementara 10 Okt (Sabtu) punya
+ * satu baris nyasar.
+ *
+ * Isi dokumen TETAP yang dipakai — itu sumber kebenarannya (lihat catatan
+ * migrasi 169). Yang ditambahkan hanya kabar bahwa keduanya tak cocok.
+ *
+ * Diekspor untuk diuji tanpa DB.
+ */
+export function buildPeringatanKoranCaption(
+  tanggalDokumen: string,
+  body: string | null,
+): string | null {
+  const tglCaption = tanggalDariCaptionKoran(body);
+  if (!tglCaption || tglCaption === tanggalDokumen) return null;
+  return (
+    `⚠️ Tanggal di pesan (*${tglCaption}*) BEDA dari isi dokumen (*${tanggalDokumen}*).` +
+    ` Yang dipakai isi dokumen.` +
+    `\nKalau yang kamu maksud ${tglCaption}, ekspor ulang untuk tanggal itu —` +
+    ` kalau dibiarkan, resume ${tglCaption} tertahan karena rekening ini dianggap belum masuk.`
+  );
+}
+
 async function ingestKoranDariBaris(row: WaRow, lampiran: WaRow[]): Promise<Record<string, unknown>> {
   const rp = (n: number) => "Rp " + Math.round(n).toLocaleString("id-ID");
   const baris: string[] = [];
@@ -893,6 +951,7 @@ async function ingestKoranDariBaris(row: WaRow, lampiran: WaRow[]): Promise<Reco
         [
           `✅ #KORAN ${k.label_file} ${k.tanggal} diterima.`,
           `${k.jumlah_baris} transaksi · masuk ${rp(k.total_kredit)} · keluar ${rp(k.total_debit)}`,
+          buildPeringatanKoranCaption(k.tanggal, row.body),
           k.saldo_bersambung_ok === false
             ? "⚠️ Saldo akhir tidak bersambung ke hari berikutnya — mungkin dicetak sebelum tutup hari."
             : null,
