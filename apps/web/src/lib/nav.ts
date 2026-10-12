@@ -301,7 +301,7 @@ export const NAV: NavGroup[] = [
     // mendefinisikan standar cetak dokumen.
     label: "Shipping",
     items: [
-      { title: "Kurir/Ekspedisi Performance", url: "/courier-performance", icon: Route, badge: "NEW" },
+      { title: "Kurir Performance", url: "/courier-performance", icon: Route, badge: "NEW" },
       { title: "Spesifikasi Cetak Dokumen", url: "/print-spec", icon: Printer, badge: "NEW" },
       { title: "Tracking Pengiriman", url: "/shipment-tracking", icon: Route, badge: "NEW" },
       // F45 — rencana trip kurir + cek H-1 (libur & PIC). Beda dari Shipments
@@ -459,7 +459,6 @@ export const NAV: NavGroup[] = [
 // saat #1282 merge → kosongkan Set ini.
 export const DEV_ONLY_URLS: ReadonlySet<string> = new Set([
   "/approval-requests",
-  "/courier-performance",
   "/doc-klaim",
   "/forecast-submission",
   "/installations",
@@ -472,7 +471,6 @@ export const DEV_ONLY_URLS: ReadonlySet<string> = new Set([
   "/readiness-board",
   "/rfid-cartridge-claims",
   "/service-tickets",
-  "/shipment-tracking",
   "/supplier-eta",
 ]);
 
