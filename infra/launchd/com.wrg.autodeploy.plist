@@ -3,7 +3,7 @@
 <!--
   LaunchAgent auto-deploy WRG-OS (Mac mini, user `development`).
   Tiap 120 dtk: scripts/ops/auto-deploy.sh → kalau origin/main maju, jalankan
-  deploy-prod.sh --yes. Pola sama dgn pm2 LaunchAgent (com.PM2).
+  deploy-prod.sh tanpa konfirmasi (flag yes). Pola sama dgn pm2 LaunchAgent (com.PM2).
 
   Pasang sekali (lihat docs/AUTO-DEPLOY.md):
     cp infra/launchd/com.wrg.autodeploy.plist ~/Library/LaunchAgents/
