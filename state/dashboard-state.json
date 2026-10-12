@@ -57,9 +57,9 @@
   "catalog": {
     "totalFeatures": 209,
     "range": "F1-F168",
-    "built": 93,
-    "builtDev": 33,
-    "comment": "Angka disalin manual dari array FEATURES di WRG-OS-Sprint-Dashboard.html (SoT katalog, di Drive). Terakhir dicocokkan 2026-10-11: 209 entri, 91 BUILT + 2 PROD-LIVE-WRGCRM = 93 di main, 33 BUILT-DEV menunggu promosi (F52 6 Okt + F55 Cuti & Backup PIC #1548 v1.242.0: BUILT-DEV -> BUILT; F168 dikoreksi ke BUILT — sudah di main sejak 3 Sep via #1151; #OVERTIME Pengajuan Lembur #1552 v1.243.0: PENDING -> BUILT; #LEAVE dikoreksi PENDING -> BUILT — sudah jalan di main lewat deteksi cuti WA + approval F98/F113; F85 Senin Morning Brief #1560 v1.244.0: WIP -> BUILT; F60 Audit Findings #1563 v1.245.0 dan F91 #FAKTUR #1564 v1.246.0: BUILT-DEV -> BUILT; F17 Customer Health Cards #1571 v1.247.0: DRAFT-SB3 -> BUILT; F21 Pacing Sales per Region #1579 v1.248.0: DRAFT-SB1 -> BUILT). Perbarui di SINI kalau blueprint berubah — file state ditulis ulang tiap run, jadi edit manual di dashboard-state.json pasti hilang."
+    "built": 95,
+    "builtDev": 32,
+    "comment": "Angka disalin manual dari array FEATURES di WRG-OS-Sprint-Dashboard.html (SoT katalog, di Drive). Terakhir dicocokkan 2026-10-12: 209 entri, 93 BUILT + 2 PROD-LIVE-WRGCRM = 95 di main, 32 BUILT-DEV menunggu promosi (F52 6 Okt + F55 Cuti & Backup PIC #1548 v1.242.0: BUILT-DEV -> BUILT; F168 dikoreksi ke BUILT — sudah di main sejak 3 Sep via #1151; #OVERTIME Pengajuan Lembur #1552 v1.243.0: PENDING -> BUILT; #LEAVE dikoreksi PENDING -> BUILT — sudah jalan di main lewat deteksi cuti WA + approval F98/F113; F85 Senin Morning Brief #1560 v1.244.0: WIP -> BUILT; F60 Audit Findings #1563 v1.245.0 dan F91 #FAKTUR #1564 v1.246.0: BUILT-DEV -> BUILT; F17 Customer Health Cards #1571 v1.247.0: DRAFT-SB3 -> BUILT; F21 Pacing Sales per Region #1579 v1.248.0: DRAFT-SB1 -> BUILT; F44 Spesifikasi Cetak #1590 v1.249.0: BUILT-DEV -> BUILT; F47 Kontrak KSO fase 1 #1592 v1.250.0: DRAFT-CRM-JULI -> BUILT). Perbarui di SINI kalau blueprint berubah — file state ditulis ulang tiap run, jadi edit manual di dashboard-state.json pasti hilang."
   },
   "_meta": {
     "source": "Auto-generated dari pm2 jlist + gh CLI + .env.prod",
