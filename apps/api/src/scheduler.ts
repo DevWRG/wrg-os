@@ -21,8 +21,9 @@ import { runVisitWeeklyRecap } from "./repo/visitweekly.js";
 import { generateRekap, generateResume } from "./repo/monitor.js";
 import {
   syncAccurateInvoices, syncSalesOrders, syncDeliveryOrders, syncCustomers,
-  syncSalesOrderItems, syncDeliveryOrderItems, syncFixedAssets,
+  syncSalesOrderItems, syncDeliveryOrderItems, syncFixedAssets, syncItemStockBranch,
 } from "./repo/accurateSync.js";
+import { runEdWatch } from "./repo/stock-batch.js";
 import { runPlanCheck, runReportCheck } from "./repo/compliance.js";
 import { runNotifTua } from "./repo/notiftua.js";
 import { runSeninBrief } from "./repo/senin-brief.js";
@@ -103,6 +104,9 @@ export function startScheduler(): ScheduleStatus {
   // Eskalasi kepatuhan (F57): AM miss plan/report N hari-kerja berturut → rekap ke
   // grup HoD. Flag SENDIRI (default off) supaya tak surprise-kirim WA saat deploy.
   const missEscalationEnabled = (process.env.MISS_ESCALATION_ENABLED ?? "false").toLowerCase() === "true";
+  // ED Watch (F38): pindai batch ber-ED, kirim peringatan saat melintasi ambang
+  // 90/60/30 hari. Flag SENDIRI (default off) — mengirim WA.
+  const edWatchEnabled = (process.env.ED_WATCH_ENABLED ?? "false").toLowerCase() === "true";
   // Rekap kunjungan mingguan (F16): volume kunjungan minggu lalu vs target per AM.
   // Flag SENDIRI (default off) — sama alasannya: jangan kirim WA tanpa diminta.
   const visitWeeklyEnabled = (process.env.VISIT_WEEKLY_ENABLED ?? "false").toLowerCase() === "true";
@@ -355,6 +359,39 @@ export function startScheduler(): ScheduleStatus {
     live.push(`reminder-hod=${hodExpr}`);
   }
 
+  // F38 ed-watch — pindai batch ber-ED, peringatkan saat melintasi ambang
+  // 90/60/30 hari. Pagi 07:30 supaya sudah masuk sebelum tim gudang mulai
+  // menyiapkan kiriman.
+  //
+  // SENGAJA TIDAK dibungkus isWorkday(): ED tidak berhenti jalan di hari libur,
+  // dan barang yang melintasi ambang 30 hari tepat di awal libur panjang justru
+  // yang paling perlu diketahui lebih dulu. Pola sama previsit-check (F45).
+  //
+  // Tanggal pembanding dihitung WIB di dalam runEdWatch (bukan `current_date`
+  // SQL yang mengikuti timezone container = UTC), jadi jadwal ini boleh digeser
+  // ke jam berapa pun tanpa menggeser perhitungan sisa-hari.
+  const edWatchExpr = process.env.ED_WATCH_CRON ?? "30 7 * * *";
+  if (edWatchEnabled) {
+    if (!cron.validate(edWatchExpr)) {
+      console.error(`[scheduler] ed-watch cron-expr tidak valid: "${edWatchExpr}" — dilewati`);
+    } else {
+      cron.schedule(
+        edWatchExpr,
+        async () => {
+          const startedAt = new Date().toISOString();
+          try {
+            const r = await runEdWatch();
+            console.log(`[scheduler] ed-watch ok @ ${startedAt} ${JSON.stringify(r).slice(0, 200)}`);
+          } catch (e) {
+            console.error(`[scheduler] ed-watch gagal @ ${startedAt}:`, e);
+          }
+        },
+        { timezone },
+      );
+      live.push(`ed-watch=${edWatchExpr}`);
+    }
+  }
+
   // Compliance reminder per-grup (port plan_check/report_check) — ikut gating
   // reminder. plan-check skip non-hari-kerja; report-check weekend opt-in.
   const planCheckExpr = process.env.PLAN_CHECK_CRON ?? "15 8 * * *";
@@ -578,6 +615,37 @@ export function startScheduler(): ScheduleStatus {
       { timezone },
     );
     live.push(`mirror-freshness=${freshExpr}`);
+  }
+
+  // stok-gudang-sync (F37/#836) — stok PER GUDANG ke item_stock_branch.
+  // HARIAN 02:00, dan itu batasnya bukan pilihan gaya: saldo per gudang cuma
+  // ada di item/detail.do per SKU, jadi sapuan penuh ±5.900 panggilan. Memasang
+  // ini di cron pendek akan membanjiri API Accurate dan menabrak job lain yang
+  // memakai kredensial sama. Tiap run berbatas + melanjutkan dari yang paling
+  // lama tak tersegarkan, jadi backlog habis bertahap lintas hari.
+  //
+  // Flag SENDIRI dan TIDAK ikut `enabled`: berbeda dari accurate-stock-sync di
+  // atas, job ini menulis ke tabel yang punya sumber lain (CSV opname tim
+  // gudang). Menyalakannya harus keputusan sadar, bukan efek samping
+  // AGENT_SCHEDULE_ENABLED.
+  const stockBranchEnabled = (process.env.STOCK_BRANCH_SYNC_ENABLED ?? "false").toLowerCase() === "true";
+  const stockBranchExpr = process.env.STOCK_BRANCH_SYNC_CRON ?? "0 2 * * *";
+  const stockBranchLimit = Math.min(Math.max(Number(process.env.STOCK_BRANCH_SYNC_LIMIT) || 1500, 1), 6000);
+  if (stockBranchEnabled && cron.validate(stockBranchExpr)) {
+    cron.schedule(
+      stockBranchExpr,
+      async () => {
+        const startedAt = new Date().toISOString();
+        try {
+          const r = await syncItemStockBranch({ limit: stockBranchLimit });
+          console.log(`[scheduler] stok-gudang-sync @ ${startedAt} ${JSON.stringify(r)}`);
+        } catch (e) {
+          console.error(`[scheduler] stok-gudang-sync gagal @ ${startedAt}:`, e);
+        }
+      },
+      { timezone },
+    );
+    live.push(`stok-gudang-sync=${stockBranchExpr}`);
   }
 
   // F127 sales-alert-eval — evaluasi threshold alert & kirim WA saat transisi

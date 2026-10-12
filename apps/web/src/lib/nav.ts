@@ -251,6 +251,21 @@ export const NAV: NavGroup[] = [
     ],
   },
   {
+    // Domain PURCHASING per board Roadmap — dipisah dari "Operations" (keranjang
+    // mirror Accurate) atas arahan Direktur. Dipromosikan per-fitur dari dev
+    // (12 Okt 2026); menu Purchasing lain menyusul satu per satu.
+    label: "Purchasing",
+    items: [
+      // F37 — route berdiri sendiri, dipisah dari /inventory (yang dulu 1
+      // halaman 2 tab). Key RBAC-nya sendiri (`stok-gudang`, auto dari URL),
+      // jadi bisa digrant terpisah dari izin Inventory di Akses Grup.
+      { title: "Stok Gudang", url: "/stok-gudang", icon: Boxes, badge: "NEW" },
+      // F38 — sama perlakuan spt Stok Gudang: dulu tab ketiga di /inventory,
+      // sekarang route sendiri dgn key RBAC sendiri (`ed-watch`).
+      { title: "ED & Kedaluwarsa", url: "/ed-watch", icon: Hourglass, badge: "NEW" },
+    ],
+  },
+  {
     // F60 — domain board literally "CROSS" (governance/AGC), tak cocok masuk
     // grup existing manapun, grup sendiri (pola sama DOC/F-CASHIN bikin grup
     // "DOC"). Fallback identitas SENGAJA sempit (admin/direktur saja, lihat
