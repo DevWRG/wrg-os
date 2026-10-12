@@ -84,6 +84,17 @@ class TestSenin(unittest.TestCase):
         jenis = [x.split(":")[0] for x in cek_pelanggaran(teks)]
         self.assertEqual(jenis, ["ancaman bersyarat", "jabatan karangan", "frekuensi kontradiktif"])
 
+    def test_koordinator_karangan_tertangkap(self):
+        # Muncul di uji ulang Haiku prod 12 Okt (input W41).
+        teks = (
+            "**1. Intensif Clearance AR Overdue & Fill Rate Recovery — Ika Koordinator**\n"
+            "Direktur review untuk eskalasi ke Direktur & BD Koordinator fokus akun strategis.\n"
+            "Supervisor gudang cek ulang stok."
+        )
+        # Temuan unik per teks: "Koordinator" dua kali = satu temuan.
+        self.assertEqual(cek_pelanggaran(teks), ["jabatan karangan: “Koordinator”", "jabatan karangan: “Supervisor”"])
+        self.assertEqual(cek_pelanggaran("Husni koordinasi dengan tim; Ika mengoordinasikan penagihan."), [])
+
     def test_kalimat_sah_tidak_tertangkap(self):
         sah = (
             "6/6 AM submit plan · report 95/156 plan (61%)\n"
