@@ -13,7 +13,44 @@ import { matchCustomer, type PlanCandidate } from "./parsers/fuzzy.js";
 import { isDbEnabled, pingDb } from "./db.js";
 import { waPreflight, sendViaWaGateway, type WaSendResult } from "./wasend.js";
 import { processUnprocessed, isInboundEnabled } from "./repo/inbound.js";
-import { syncAccurateInvoices, syncVendors, syncItems, syncSalesOrders, syncDeliveryOrders, syncCustomers, syncSalesOrderItems, syncDeliveryOrderItems, syncItemStockBranch, getDeliveryOrderItems, getSalesOrderItems, getVendorDetail, accurateConfigured, syncFixedAssets, fixedAssetSyncBusy } from "./repo/accurateSync.js";
+import { syncAccurateInvoices, syncVendors, syncItems, syncSalesOrders, syncDeliveryOrders, syncCustomers, syncSalesOrderItems, syncDeliveryOrderItems, syncItemStockBranch, getDeliveryOrderItems, getSalesOrderItems, getVendorDetail, accurateConfigured, syncFixedAssets, fixedAssetSyncBusy, syncPurchaseOrders, purchaseOrderSyncBusy, syncReceiveItems, receiveItemSyncBusy } from "./repo/accurateSync.js";
+import {
+  listPurchaseOrders,
+  isPurchaseOrderSort,
+  purchaseOrderSummary,
+  getPurchaseOrder,
+  updatePurchaseOrder,
+  deletePurchaseOrder,
+  addPurchaseOrderItem,
+  updatePurchaseOrderItem,
+  deletePurchaseOrderItem,
+  addPurchaseOrderReceipt,
+  listPurchaseOrderReceipts,
+  updatePurchaseOrderReceipt,
+  deletePurchaseOrderReceipt,
+  type PurchaseOrderUpdate,
+  type PurchaseOrderItemInput,
+  type PurchaseOrderItemUpdate,
+  type PurchaseOrderReceiptInput,
+  type PurchaseOrderReceiptUpdate,
+  decidePurchaseOrderApproval,
+  PurchaseOrderError,
+  type ApproverRole, purchaseOrderSyncState } from "./repo/purchase-order.js";
+import {
+  listInboundReceiving,
+  getInboundReceiving,
+  inboundReceivingSummary,
+  inboundReceivingSyncState,
+  updateInboundReceiving,
+  deleteInboundReceiving,
+  addInboundReceivingItem,
+  updateInboundReceivingItem,
+  deleteInboundReceivingItem,
+  InboundReceivingError,
+  type InboundReceivingUpdate,
+  type InboundReceivingStatus,
+  type InboundReceivingItemUpdate,
+} from "./repo/inbound-receiving.js";
 import { listWarehouses, listStockBranch, stockBranchSummary } from "./repo/stock-branch.js";
 import { listStockBatch, stockBatchSummary, runEdWatch } from "./repo/stock-batch.js";
 import { listAsetTetap, ringkasanAsetTetap, jadwalAsetTetap, simpanOverrideAsetTetap, type AsetTetapFilter } from "./repo/asetTetap.js";
@@ -1206,6 +1243,33 @@ app.post("/accurate/sync/fixed-assets", async (c) => {
   void syncFixedAssets()
     .then((r) => console.log(`[accurate-sync] fixed-asset manual: ${JSON.stringify(r)}`))
     .catch((e) => console.error("[accurate-sync] fixed-asset manual gagal:", e));
+  return c.json({ ok: true, started: true }, 202);
+});
+
+// F13 (205) — cermin PO Accurate → purchase_order (source='accurate'). Sinkron
+// pertama ±1.100 detail (beberapa menit), jadi balas 202 lalu jalan di latar;
+// hasilnya di GET /purchase-orders/sync-status. ?full=1 = abaikan watermark.
+app.post("/accurate/sync/purchase-orders", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  if (!accurateConfigured()) return c.json({ error: "kredensial Accurate tak tersedia" }, 503);
+  if (purchaseOrderSyncBusy()) return c.json({ ok: false, error: "sinkron PO sedang berjalan" }, 409);
+  const full = c.req.query("full") === "1";
+  void syncPurchaseOrders({ full })
+    .then((r) => console.log(`[accurate-sync] purchase-order manual: ${JSON.stringify(r)}`))
+    .catch((e) => console.error("[accurate-sync] purchase-order manual gagal:", e));
+  return c.json({ ok: true, started: true }, 202);
+});
+
+// F36 (206) — Penerimaan Barang Accurate → checklist inbound. Latar (202),
+// hasil di GET /inbound-receiving/sync-status. ?full=1 = abaikan watermark.
+app.post("/accurate/sync/receive-items", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  if (!accurateConfigured()) return c.json({ error: "kredensial Accurate tak tersedia" }, 503);
+  if (receiveItemSyncBusy()) return c.json({ ok: false, error: "sinkron penerimaan barang sedang berjalan" }, 409);
+  const full = c.req.query("full") === "1";
+  void syncReceiveItems({ full })
+    .then((r) => console.log(`[accurate-sync] receive-item manual: ${JSON.stringify(r)}`))
+    .catch((e) => console.error("[accurate-sync] receive-item manual gagal:", e));
   return c.json({ ok: true, started: true }, 202);
 });
 
@@ -6140,6 +6204,333 @@ app.post("/asset-tags/:id/audit", async (c) => {
   }
   const r = await recordAudit(c.req.param("id"), { audited_by: body.audited_by, found: body.found, note: body.note });
   return c.json(r, "error" in r ? 400 : 201);
+});
+
+// ── F13 PO Tracker (cermin Accurate, migrasi 205) + F36 Inbound Receiving
+// (Penerimaan Barang Accurate, migrasi 206) — promosi per-fitur dari dev. ──
+
+const INBOUND_RECEIVING_STATUSES: InboundReceivingStatus[] = ["in_progress", "completed"];
+
+app.get("/inbound-receiving", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const status = c.req.query("status");
+  const rows = await listInboundReceiving({
+    status: INBOUND_RECEIVING_STATUSES.includes(status as InboundReceivingStatus) ? (status as InboundReceivingStatus) : undefined,
+    vendorId: c.req.query("vendor_id") || undefined,
+    cabang: c.req.query("cabang") || undefined,
+  });
+  return c.json({ count: rows.length, rows });
+});
+
+// F36 (206) — penerimaan barang dicatat di Accurate; checklist inbound dibuat
+// otomatis oleh sinkron receive-item. Input manual ditutup (satu sumber).
+app.post("/inbound-receiving", (c) =>
+  c.json({ error: "Penerimaan barang dicatat di Accurate — checklist-nya muncul otomatis setelah sinkron." }, 409),
+);
+
+// Kartu KPI, diagregasi di SQL atas SELURUH penerimaan (bukan rows.filter
+// atas daftar ?limit=1000). Didaftarkan SEBELUM /inbound-receiving/:id.
+app.get("/inbound-receiving/summary", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await inboundReceivingSummary());
+});
+
+app.get("/inbound-receiving/sync-status", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json({ configured: accurateConfigured(), running: receiveItemSyncBusy(), ...(await inboundReceivingSyncState()) });
+});
+
+app.get("/inbound-receiving/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const row = await getInboundReceiving(c.req.param("id"));
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+});
+
+app.patch("/inbound-receiving/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: InboundReceivingUpdate;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (body.status && !INBOUND_RECEIVING_STATUSES.includes(body.status)) {
+    return c.json({ error: "status tidak valid" }, 400);
+  }
+  try {
+    const row = await updateInboundReceiving(c.req.param("id"), body);
+    return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+  } catch (e) {
+    if (e instanceof InboundReceivingError) return c.json({ error: e.message }, e.status as 400);
+    throw e;
+  }
+});
+
+app.delete("/inbound-receiving/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const r = await deleteInboundReceiving(c.req.param("id"));
+    return c.json(r, r.deleted ? 200 : 404);
+  } catch (e) {
+    if (e instanceof InboundReceivingError) return c.json({ error: e.message }, e.status as 409);
+    throw e;
+  }
+});
+
+app.post("/inbound-receiving/:id/items", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { label?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.label?.trim()) return c.json({ error: "label wajib" }, 400);
+  try {
+    const row = await addInboundReceivingItem(c.req.param("id"), body.label.trim());
+    return row ? c.json(row, 201) : c.json({ error: "tidak ditemukan" }, 404);
+  } catch (e) {
+    if (e instanceof InboundReceivingError) return c.json({ error: e.message }, e.status as 400);
+    throw e;
+  }
+});
+
+app.patch("/inbound-receiving/:id/items/:itemId", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: InboundReceivingItemUpdate;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  try {
+    const row = await updateInboundReceivingItem(c.req.param("id"), c.req.param("itemId"), body);
+    return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+  } catch (e) {
+    if (e instanceof InboundReceivingError) return c.json({ error: e.message }, e.status as 400);
+    throw e;
+  }
+});
+
+app.delete("/inbound-receiving/:id/items/:itemId", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const r = await deleteInboundReceivingItem(c.req.param("id"), c.req.param("itemId"));
+    return c.json(r, r.deleted ? 200 : 404);
+  } catch (e) {
+    if (e instanceof InboundReceivingError) return c.json({ error: e.message }, e.status as 400);
+    throw e;
+  }
+});
+
+// ── F13 PO Tracker + Sistem Barang Masuk (Purchasing) ──
+// Paginasi + filter + urut di SQL (?limit&offset&status&q&sort&dir&vendor_id&
+// cabang). `total_rows` dipisah dari `count` supaya UI bisa membedakan "yang
+// dikirim" dari "yang cocok filter"; bentuk mengikuti /stock/branch & /visits.
+app.get("/purchase-orders", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const q = c.req.query();
+  const { rows, total, limit, offset } = await listPurchaseOrders({
+    vendorId: q.vendor_id || undefined,
+    cabang: q.cabang || undefined,
+    q: q.q || undefined,
+    status: q.status || undefined,
+    // Nama kolom urut divalidasi di sini — tak pernah masuk SQL mentah.
+    sort: isPurchaseOrderSort(q.sort) ? q.sort : undefined,
+    dir: q.dir === "asc" ? "asc" : "desc",
+    limit: q.limit ? Number(q.limit) : undefined,
+    offset: q.offset ? Number(q.offset) : undefined,
+  });
+  return c.json({ count: rows.length, total_rows: total, limit, offset, rows });
+});
+
+// Hitungan kartu KPI (per-status + telat), diagregasi di SQL atas SELURUH PO.
+// Didaftarkan SEBELUM /purchase-orders/:id biar rute literal menang.
+app.get("/purchase-orders/summary", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await purchaseOrderSummary());
+});
+
+// Status cermin PO Accurate utk header halaman PO Tracker. Didaftarkan SEBELUM
+// /purchase-orders/:id biar rute literal menang.
+app.get("/purchase-orders/sync-status", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json({
+    configured: accurateConfigured(),
+    running: purchaseOrderSyncBusy(),
+    ...(await purchaseOrderSyncState()),
+  });
+});
+
+// F13 (205) — PO dibuat di Accurate; WRG-OS hanya menyalinnya. Input manual
+// ditutup supaya tak ada dua versi PO yang sama (keputusan user 12 Okt 2026).
+app.post("/purchase-orders", (c) =>
+  c.json({ error: "PO dibuat di Accurate — WRG-OS menyalinnya otomatis (sinkron berkala)." }, 409),
+);
+
+app.get("/purchase-orders/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const row = await getPurchaseOrder(c.req.param("id"));
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+});
+
+app.patch("/purchase-orders/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: PurchaseOrderUpdate;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  try {
+    const row = await updatePurchaseOrder(c.req.param("id"), body);
+    return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+  } catch (e) {
+    if (e instanceof PurchaseOrderError) return c.json({ error: e.message }, e.status as 409);
+    throw e;
+  }
+});
+
+app.delete("/purchase-orders/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const r = await deletePurchaseOrder(c.req.param("id"));
+    return c.json(r, r.deleted ? 200 : 404);
+  } catch (e) {
+    if (e instanceof PurchaseOrderError) return c.json({ error: e.message }, e.status as 409);
+    throw e;
+  }
+});
+
+app.post("/purchase-orders/:id/items", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: PurchaseOrderItemInput;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.item_desc?.trim()) return c.json({ error: "item_desc wajib" }, 400);
+  if (!(Number(body.qty_ordered) > 0)) return c.json({ error: "qty_ordered harus > 0" }, 400);
+  try {
+    const row = await addPurchaseOrderItem(c.req.param("id"), body);
+    return row ? c.json(row, 201) : c.json({ error: "PO tidak ditemukan" }, 404);
+  } catch (e) {
+    if (e instanceof PurchaseOrderError) return c.json({ error: e.message }, e.status as 409);
+    throw e;
+  }
+});
+
+app.patch("/purchase-orders/:id/items/:itemId", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: PurchaseOrderItemUpdate;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (body.qty_ordered !== undefined && !(Number(body.qty_ordered) > 0)) {
+    return c.json({ error: "qty_ordered harus > 0" }, 400);
+  }
+  try {
+    const row = await updatePurchaseOrderItem(c.req.param("id"), c.req.param("itemId"), body);
+    return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+  } catch (e) {
+    if (e instanceof PurchaseOrderError) return c.json({ error: e.message }, e.status as 409);
+    throw e;
+  }
+});
+
+app.delete("/purchase-orders/:id/items/:itemId", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const r = await deletePurchaseOrderItem(c.req.param("id"), c.req.param("itemId"));
+    return c.json(r, r.deleted ? 200 : 404);
+  } catch (e) {
+    if (e instanceof PurchaseOrderError) return c.json({ error: e.message }, e.status as 409);
+    throw e;
+  }
+});
+
+app.get("/purchase-orders/:id/items/:itemId/receipts", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listPurchaseOrderReceipts(c.req.param("itemId"));
+  return c.json({ count: rows.length, rows });
+});
+
+app.post("/purchase-orders/:id/items/:itemId/receipts", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: PurchaseOrderReceiptInput;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!(Number(body.qty_received) > 0)) return c.json({ error: "qty_received harus > 0" }, 400);
+  try {
+    const row = await addPurchaseOrderReceipt(c.req.param("id"), c.req.param("itemId"), body);
+    return row ? c.json(row, 201) : c.json({ error: "barang PO tidak ditemukan" }, 404);
+  } catch (e) {
+    if (e instanceof PurchaseOrderError) return c.json({ error: e.message }, e.status as 400 | 409);
+    throw e;
+  }
+});
+
+app.patch("/purchase-orders/:id/items/:itemId/receipts/:receiptId", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: PurchaseOrderReceiptUpdate;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (body.qty_received !== undefined && !(Number(body.qty_received) > 0)) {
+    return c.json({ error: "qty_received harus > 0" }, 400);
+  }
+  try {
+    const row = await updatePurchaseOrderReceipt(c.req.param("itemId"), c.req.param("receiptId"), body);
+    return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+  } catch (e) {
+    if (e instanceof PurchaseOrderError) return c.json({ error: e.message }, e.status as 409);
+    throw e;
+  }
+});
+
+app.delete("/purchase-orders/:id/items/:itemId/receipts/:receiptId", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await deletePurchaseOrderReceipt(c.req.param("itemId"), c.req.param("receiptId"));
+  return c.json(r, r.deleted ? 200 : 404);
+});
+
+// ── F13 PO Tracker + Sistem Barang Masuk (Purchasing) ──
+app.patch("/purchase-orders/:id/approvals/:role", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const role = c.req.param("role");
+  if (role !== "hod_business" && role !== "hod_finance" && role !== "direktur") {
+    return c.json({ error: "role tidak valid (hod_business/hod_finance/direktur)" }, 400);
+  }
+  let body: { decision?: string; decided_by?: string | null; note?: string | null };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (body.decision !== "approve" && body.decision !== "reject") {
+    return c.json({ error: "decision wajib (approve/reject)" }, 400);
+  }
+  try {
+    const result = await decidePurchaseOrderApproval(
+      c.req.param("id"),
+      role as ApproverRole,
+      body.decision,
+      body.decided_by ?? null,
+      body.note ?? null,
+    );
+    return c.json(result);
+  } catch (e) {
+    if (e instanceof PurchaseOrderError) return c.json({ error: e.message }, e.status as 400 | 404 | 409);
+    throw e;
+  }
 });
 
 const port = Number(process.env.PORT ?? 4000);

@@ -13,7 +13,7 @@ import {
   Wallet, Coins, Banknote, Car, QrCode, PenLine, PackagePlus, PackageMinus,
   Handshake, Archive, Ticket, Printer,
   type LucideIcon,
-  Hourglass, ShieldAlert, Landmark,
+  Hourglass, ShieldAlert, Landmark, ClipboardList, PackageCheck,
 } from "lucide-react";
 
 import { can, canOrLegacy, hasPerms } from "@/lib/perms";
@@ -263,6 +263,12 @@ export const NAV: NavGroup[] = [
       // F38 — sama perlakuan spt Stok Gudang: dulu tab ketiga di /inventory,
       // sekarang route sendiri dgn key RBAC sendiri (`ed-watch`).
       { title: "ED & Kedaluwarsa", url: "/ed-watch", icon: Hourglass, badge: "NEW" },
+      // F13 PO Tracker — cermin PO Accurate (migrasi 205): PO, approval, dan
+      // penerimaan dibuat di Accurate, halaman ini memantau (telat, sisa qty).
+      { title: "PO Tracker", url: "/purchase-orders", icon: ClipboardList, badge: "NEW" },
+      // F36 Inbound Receiving — checklist verifikasi gudang per Penerimaan
+      // Barang Accurate (migrasi 206), dibuat otomatis oleh sinkron.
+      { title: "Inbound Receiving", url: "/inbound-receiving", icon: PackageCheck, badge: "NEW" },
     ],
   },
   {
