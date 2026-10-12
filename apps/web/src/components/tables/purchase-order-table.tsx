@@ -23,7 +23,7 @@ import {
 } from "@/components/ui/dialog";
 import { type ApproverRole } from "@/lib/po-approval-access";
 
-export type PurchaseOrderStatus = "ordered" | "partial_received" | "received" | "cancelled";
+export type PurchaseOrderStatus = "ordered" | "partial_received" | "received" | "cancelled" | "rejected";
 // F35 — legacy_exempt: PO dibuat sebelum F35 (lini NULL), tidak kena gate approval.
 export type ApprovalStatus = "legacy_exempt" | "pending_tier1" | "pending_direktur" | "approved" | "rejected";
 
@@ -92,6 +92,7 @@ const isTelat = (r: Pick<PurchaseOrderRow, "status" | "eta_date">) =>
 
 function StatusBadge({ row }: { row: Pick<PurchaseOrderRow, "status" | "eta_date"> }) {
   if (row.status === "cancelled") return <Badge variant="destructive">Dibatalkan</Badge>;
+  if (row.status === "rejected") return <Badge variant="destructive">Ditolak</Badge>;
   if (row.status === "received") return <Badge className="bg-success/10 text-success">Diterima Penuh</Badge>;
   if (row.status === "partial_received") return <Badge className="bg-warning/10 text-warning">Sebagian Diterima</Badge>;
   if (isTelat(row)) return <Badge variant="destructive">Telat</Badge>;
@@ -155,6 +156,7 @@ const STATUS_FILTERS: { key: string; label: string }[] = [
   { key: "ordered", label: "Dipesan" },
   { key: "partial_received", label: "Sebagian" },
   { key: "received", label: "Diterima" },
+  { key: "rejected", label: "Ditolak" },
   { key: "cancelled", label: "Batal" },
 ];
 
@@ -557,7 +559,9 @@ export function PurchaseOrderTable({
                                   ))}
                                   {!(receipts[it.id] ?? []).length && <li className="text-muted-foreground px-2 py-1.5 text-xs">Belum ada barang masuk.</li>}
                                 </ul>
-                                {detail.approval_status === "approved" || detail.approval_status === "legacy_exempt" ? (
+                                {detail.status === "cancelled" ? (
+                                  <p className="text-muted-foreground text-xs">PO dibatalkan — barang masuk tidak bisa dicatat.</p>
+                                ) : detail.approval_status === "approved" || detail.approval_status === "legacy_exempt" ? (
                                   <>
                                     <div className="grid grid-cols-[80px_1fr_1fr_auto] gap-2">
                                       <Input type="number" min="0" step="any" value={newReceipt.qty_received} onChange={(e) => setNewReceipt((p) => ({ ...p, qty_received: e.target.value }))} placeholder="Qty" />
@@ -582,6 +586,7 @@ export function PurchaseOrderTable({
                         ))}
                         {detail.items.length === 0 && <li className="text-muted-foreground px-3 py-2 text-xs">Belum ada barang.</li>}
                       </ul>
+                      {detail.status !== "cancelled" && detail.status !== "rejected" && (
                       <div className="mt-2 grid grid-cols-[1fr_auto_auto] gap-2">
                         <Input value={newItem.item_desc} onChange={(e) => setNewItem((p) => ({ ...p, item_desc: e.target.value }))} placeholder="Tambah barang…" />
                         <Input type="number" min="0" step="any" value={newItem.qty_ordered} onChange={(e) => setNewItem((p) => ({ ...p, qty_ordered: e.target.value }))} placeholder="Qty" className="w-24" />
@@ -589,6 +594,7 @@ export function PurchaseOrderTable({
                           <Plus />
                         </Button>
                       </div>
+                      )}
                     </div>
 
                     {detail.notes && (
@@ -605,7 +611,7 @@ export function PurchaseOrderTable({
                 <Button type="button" variant="ghost" disabled={busy} onClick={deletePurchaseOrder} className="text-danger hover:text-danger">
                   <Trash2 /> Hapus
                 </Button>
-                <Button type="button" variant={detail?.status === "cancelled" ? "default" : "outline"} disabled={busy} onClick={toggleCancelled}>
+                <Button type="button" variant={detail?.status === "cancelled" ? "default" : "outline"} disabled={busy || (detail?.status === "cancelled" && detail?.approval_status === "rejected")} onClick={toggleCancelled}>
                   {detail?.status === "cancelled" ? "Batalkan Pembatalan" : "Batalkan PO"}
                 </Button>
               </DialogFooter>

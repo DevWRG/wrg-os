@@ -1,3 +1,4 @@
+import type { TransactionSql } from "postgres";
 import { db } from "../db.js";
 
 // F13 PO Tracker + Sistem Barang Masuk (Purchasing). Header (purchase_order)
@@ -16,7 +17,7 @@ import { db } from "../db.js";
 // kena gate. required_hod_key di-snapshot saat create (lihat createPurchaseOrder),
 // bukan di-resolve ulang live dari lini saat approve.
 
-export type PurchaseOrderStatus = "ordered" | "partial_received" | "received" | "cancelled";
+export type PurchaseOrderStatus = "ordered" | "partial_received" | "received" | "cancelled" | "rejected";
 
 export class PurchaseOrderError extends Error {
   status: number;
@@ -197,12 +198,17 @@ export interface PurchaseOrderRow {
  * versi JS-nya dibuang, bukan diduplikasi.
  *
  * Query WAJIB sudah punya alias `po` (purchase_order) + `agg`
- * (PO_ITEM_AGG_JOIN). Urutan cabang harus sama persis dengan versi lama:
- * cancelled menang atas segalanya, PO tanpa item = 'ordered'.
+ * (PO_ITEM_AGG_JOIN) + `appr` (PO_APPROVAL_AGG_JOIN). Urutan cabang: cancelled
+ * menang atas segalanya, lalu rejected, PO tanpa item = 'ordered'.
+ *
+ * 'rejected' ditambahkan setelah uji fungsional 12 Okt 2026: PO yang ditolak
+ * approval-nya dulu tetap 'ordered', jadi terhitung di kartu "Berjalan" dan
+ * "Telat" padahal tak akan pernah dikirim vendor.
  */
 function poStatusExpr(sql: ReturnType<typeof db>) {
   return sql`CASE
     WHEN po.cancelled_at IS NOT NULL THEN 'cancelled'
+    WHEN COALESCE(appr.any_rejected, false) THEN 'rejected'
     WHEN COALESCE(agg.item_count, 0) = 0 THEN 'ordered'
     WHEN COALESCE(agg.received_item_count, 0) = COALESCE(agg.item_count, 0) THEN 'received'
     WHEN COALESCE(agg.any_received, false) THEN 'partial_received'
@@ -478,6 +484,7 @@ export async function purchaseOrderSummary(): Promise<PurchaseOrderSummary> {
            )::int AS n_telat
     FROM purchase_order po
     ${PO_ITEM_AGG_JOIN(sql)}
+    ${PO_APPROVAL_AGG_JOIN(sql)}
     GROUP BY 1`;
   const by: Record<string, number> = {};
   let total = 0;
@@ -519,8 +526,23 @@ export interface PurchaseOrderUpdate {
   cancelled?: boolean;
 }
 
+/**
+ * PO yang approval-nya DITOLAK bersifat final (146_purchase_order_approval.sql:
+ * "Reject di mana pun = PO rejected permanen") — dulu tetap bisa diedit,
+ * ditambah barangnya, bahkan di-un-cancel. Yang masih boleh: membatalkannya
+ * (merapikan daftar). Mengubah isinya = buat PO baru.
+ */
+async function assertPoNotRejected(sql: ReturnType<typeof db>, purchaseOrderId: string): Promise<void> {
+  const [r] = await sql`
+    SELECT bool_or(status = 'rejected') AS rejected FROM purchase_order_approval WHERE purchase_order_id = ${purchaseOrderId}
+  `;
+  if (r?.rejected) throw new PurchaseOrderError(409, "PO ini sudah ditolak — tidak bisa diubah. Buat PO baru.");
+}
+
 export async function updatePurchaseOrder(id: string, f: PurchaseOrderUpdate): Promise<PurchaseOrderRow | null> {
   const sql = db();
+  const onlyCancel = Object.keys(f).every((k) => k === "cancelled") && f.cancelled === true;
+  if (!onlyCancel) await assertPoNotRejected(sql, id);
   const cancelledAt = f.cancelled === true ? new Date().toISOString() : f.cancelled === false ? null : undefined;
   const rows = await sql`
     UPDATE purchase_order SET
@@ -565,8 +587,10 @@ export async function deletePurchaseOrder(id: string): Promise<{ deleted: number
 
 export async function addPurchaseOrderItem(purchaseOrderId: string, t: PurchaseOrderItemInput): Promise<PurchaseOrderItemRow | null> {
   const sql = db();
-  const head = await sql`SELECT id FROM purchase_order WHERE id = ${purchaseOrderId}`;
+  const head = await sql`SELECT id, cancelled_at FROM purchase_order WHERE id = ${purchaseOrderId}`;
   if (!head.length) return null;
+  if (head[0].cancelled_at != null) throw new PurchaseOrderError(409, "PO sudah dibatalkan — tidak bisa menambah barang");
+  await assertPoNotRejected(sql, purchaseOrderId);
   const rows = await sql`
     INSERT INTO purchase_order_item (purchase_order_id, item_desc, qty_ordered, unit, unit_price, notes)
     VALUES (${purchaseOrderId}, ${t.item_desc}, ${t.qty_ordered}, ${t.unit ?? null}, ${t.unit_price ?? null}, ${t.notes ?? null})
@@ -590,18 +614,36 @@ export async function updatePurchaseOrderItem(
   f: PurchaseOrderItemUpdate,
 ): Promise<PurchaseOrderItemRow | null> {
   const sql = db();
-  const rows = await sql`
+  const [head] = await sql`SELECT cancelled_at FROM purchase_order WHERE id = ${purchaseOrderId}`;
+  if (!head) return null;
+  if (head.cancelled_at != null) throw new PurchaseOrderError(409, "PO sudah dibatalkan — barang tidak bisa diubah");
+  await assertPoNotRejected(sql, purchaseOrderId);
+  const ok = await sql.begin(async (tx) => {
+    // Kunci baris item supaya cek "qty_ordered >= sudah diterima" tak bisa
+    // diselip penerimaan paralel (pola sama addPurchaseOrderReceipt).
+    const [item] = await tx`
+      SELECT id FROM purchase_order_item WHERE id = ${itemId} AND purchase_order_id = ${purchaseOrderId} FOR UPDATE
+    `;
+    if (!item) return false;
+    if (f.qty_ordered !== undefined) {
+      const [agg] = await tx`SELECT COALESCE(SUM(qty_received), 0) AS total FROM purchase_order_receipt WHERE po_item_id = ${itemId}`;
+      if (Number(f.qty_ordered) < Number(agg.total)) {
+        throw new PurchaseOrderError(409, `qty_ordered (${f.qty_ordered}) tidak boleh di bawah yang sudah diterima (${Number(agg.total)})`);
+      }
+    }
+    await tx`
     UPDATE purchase_order_item SET
       item_desc   = COALESCE(${f.item_desc ?? null}, item_desc),
       qty_ordered = COALESCE(${f.qty_ordered ?? null}, qty_ordered),
-      unit        = ${f.unit !== undefined ? f.unit : sql`unit`},
-      unit_price  = ${f.unit_price !== undefined ? f.unit_price : sql`unit_price`},
-      notes       = ${f.notes !== undefined ? f.notes : sql`notes`},
+      unit        = ${f.unit !== undefined ? f.unit : tx`unit`},
+      unit_price  = ${f.unit_price !== undefined ? f.unit_price : tx`unit_price`},
+      notes       = ${f.notes !== undefined ? f.notes : tx`notes`},
       updated_at  = now()
     WHERE id = ${itemId} AND purchase_order_id = ${purchaseOrderId}
-    RETURNING id
-  `;
-  if (!rows.length) return null;
+    `;
+    return true;
+  });
+  if (!ok) return null;
   const [row] = await sql`SELECT ${itemCols(sql)} FROM purchase_order_item i ${ITEM_RECEIPT_JOIN(sql)} WHERE i.id = ${itemId}`;
   return mapItem(row);
 }
@@ -626,41 +668,81 @@ export interface PurchaseOrderReceiptInput {
   condition_notes?: string | null;
 }
 
+/**
+ * Tanggal terima wajib di antara tanggal PO dan hari ini (WIB). Uji fungsional
+ * 12 Okt 2026: 2025-01-01 untuk PO bertanggal 2026-10-01 dan 2027-12-31
+ * sama-sama diterima — barang "datang" sebelum dipesan / di masa depan.
+ */
+async function assertReceivedDate(
+  tx: TransactionSql<Record<string, unknown>>,
+  purchaseOrderId: string,
+  receivedDate: string | undefined,
+): Promise<void> {
+  if (receivedDate === undefined) return;
+  const [r] = await tx`
+    SELECT ${receivedDate}::date < po.order_date AS before_po,
+           ${receivedDate}::date > (now() AT TIME ZONE 'Asia/Jakarta')::date AS future,
+           po.order_date::text AS order_date
+    FROM purchase_order po WHERE po.id = ${purchaseOrderId}
+  `;
+  if (r?.before_po) throw new PurchaseOrderError(400, `Tanggal terima tidak boleh sebelum tanggal PO (${r.order_date})`);
+  if (r?.future) throw new PurchaseOrderError(400, "Tanggal terima tidak boleh di masa depan");
+}
+
 export async function addPurchaseOrderReceipt(
   purchaseOrderId: string,
   itemId: string,
   t: PurchaseOrderReceiptInput,
 ): Promise<PurchaseOrderReceiptRow | null> {
   const sql = db();
-  const item = await sql`SELECT id, qty_ordered FROM purchase_order_item WHERE id = ${itemId} AND purchase_order_id = ${purchaseOrderId}`;
-  if (!item.length) return null;
-  // F35 — barang masuk diblokir sampai PO fully approved (legacy_exempt/lini
-  // NULL = PO pra-F35, tidak kena gate ini).
-  const [head] = await sql`SELECT lini FROM purchase_order WHERE id = ${purchaseOrderId}`;
-  const lini = (head?.lini != null ? String(head.lini) : null) as PurchaseOrderLini | null;
-  if (lini !== null) {
-    const approvals = (await sql`SELECT ${approvalCols(sql)} FROM purchase_order_approval WHERE purchase_order_id = ${purchaseOrderId}`).map(mapApproval);
-    if (computeApprovalStatus(lini, approvals) !== "approved") {
-      throw new PurchaseOrderError(409, "PO belum fully approved — barang masuk belum bisa dicatat");
+  return sql.begin(async (tx) => {
+    // FOR UPDATE di baris item: cek "total diterima <= qty_ordered" lalu INSERT
+    // dulu tak terkunci, jadi penerimaan paralel sama-sama lolos cek (uji
+    // fungsional 12 Okt 2026: 20 POST paralel qty 1 di item qty 5 → 20 tercatat).
+    // Penerimaan kedua untuk item yang sama sekarang menunggu yang pertama commit.
+    const item = await tx`
+      SELECT id, qty_ordered FROM purchase_order_item
+      WHERE id = ${itemId} AND purchase_order_id = ${purchaseOrderId}
+      FOR UPDATE
+    `;
+    if (!item.length) return null;
+    const [head] = await tx`SELECT lini, cancelled_at FROM purchase_order WHERE id = ${purchaseOrderId}`;
+    // PO yang dibatalkan tak boleh menerima barang — dulu lolos karena gate
+    // hanya melihat approval_status.
+    if (head?.cancelled_at != null) {
+      throw new PurchaseOrderError(409, "PO sudah dibatalkan — barang masuk tidak bisa dicatat");
     }
-  }
-  // BUG-07 — total qty_received (seluruh baris receipt) tak boleh melebihi
-  // qty_ordered milik item; sebelumnya tak pernah dicek sama sekali.
-  const qtyOrdered = Number(item[0].qty_ordered);
-  const [agg] = await sql`SELECT COALESCE(SUM(qty_received), 0) AS total FROM purchase_order_receipt WHERE po_item_id = ${itemId}`;
-  const alreadyReceived = Number(agg.total);
-  if (alreadyReceived + Number(t.qty_received) > qtyOrdered) {
-    throw new PurchaseOrderError(
-      409,
-      `Over-receiving: sudah diterima ${alreadyReceived}, ditambah ${t.qty_received} akan melebihi qty_ordered (${qtyOrdered})`,
-    );
-  }
-  const rows = await sql`
-    INSERT INTO purchase_order_receipt (po_item_id, qty_received, received_date, received_by, condition_notes)
-    VALUES (${itemId}, ${t.qty_received}, ${t.received_date ?? sql`CURRENT_DATE`}, ${t.received_by ?? null}, ${t.condition_notes ?? null})
-    RETURNING ${receiptCols(sql)}
-  `;
-  return mapReceipt(rows[0]);
+    // F35 — barang masuk diblokir sampai PO fully approved (legacy_exempt/lini
+    // NULL = PO pra-F35, tidak kena gate ini).
+    const lini = (head?.lini != null ? String(head.lini) : null) as PurchaseOrderLini | null;
+    if (lini !== null) {
+      const approvals = (await tx`
+        SELECT id, purchase_order_id, approver_role, required_hod_key, status, decided_by, decided_at::text, note
+        FROM purchase_order_approval WHERE purchase_order_id = ${purchaseOrderId}
+      `).map(mapApproval);
+      if (computeApprovalStatus(lini, approvals) !== "approved") {
+        throw new PurchaseOrderError(409, "PO belum fully approved — barang masuk belum bisa dicatat");
+      }
+    }
+    await assertReceivedDate(tx, purchaseOrderId, t.received_date);
+    // BUG-07 — total qty_received (seluruh baris receipt) tak boleh melebihi
+    // qty_ordered milik item.
+    const qtyOrdered = Number(item[0].qty_ordered);
+    const [agg] = await tx`SELECT COALESCE(SUM(qty_received), 0) AS total FROM purchase_order_receipt WHERE po_item_id = ${itemId}`;
+    const alreadyReceived = Number(agg.total);
+    if (alreadyReceived + Number(t.qty_received) > qtyOrdered) {
+      throw new PurchaseOrderError(
+        409,
+        `Over-receiving: sudah diterima ${alreadyReceived}, ditambah ${t.qty_received} akan melebihi qty_ordered (${qtyOrdered})`,
+      );
+    }
+    const rows = await tx`
+      INSERT INTO purchase_order_receipt (po_item_id, qty_received, received_date, received_by, condition_notes)
+      VALUES (${itemId}, ${t.qty_received}, ${t.received_date ?? tx`(now() AT TIME ZONE 'Asia/Jakarta')::date`}, ${t.received_by ?? null}, ${t.condition_notes ?? null})
+      RETURNING id, po_item_id, qty_received, received_date::text, received_by, condition_notes, created_at::text, updated_at::text
+    `;
+    return mapReceipt(rows[0]);
+  });
 }
 
 // F35 — putuskan approve/reject 1 baris approval (role). Sequencing Tier 2
@@ -731,34 +813,40 @@ export async function updatePurchaseOrderReceipt(
   f: PurchaseOrderReceiptUpdate,
 ): Promise<PurchaseOrderReceiptRow | null> {
   const sql = db();
-  if (f.qty_received !== undefined) {
-    const [item] = await sql`
-      SELECT i.qty_ordered
+  return sql.begin(async (tx) => {
+    // Kunci item yang sama dengan addPurchaseOrderReceipt supaya edit qty dan
+    // penerimaan baru tak saling menyelip melewati batas qty_ordered.
+    const [item] = await tx`
+      SELECT i.qty_ordered, i.purchase_order_id
       FROM purchase_order_item i JOIN purchase_order_receipt r ON r.po_item_id = i.id
       WHERE r.id = ${receiptId} AND i.id = ${itemId}
+      FOR UPDATE OF i
     `;
     if (!item) return null;
-    const [agg] = await sql`SELECT COALESCE(SUM(qty_received), 0) AS total FROM purchase_order_receipt WHERE po_item_id = ${itemId} AND id != ${receiptId}`;
-    const qtyOrdered = Number(item.qty_ordered);
-    const othersReceived = Number(agg.total);
-    if (othersReceived + Number(f.qty_received) > qtyOrdered) {
-      throw new PurchaseOrderError(
-        409,
-        `Over-receiving: baris penerimaan lain sudah ${othersReceived}, ditambah ${f.qty_received} akan melebihi qty_ordered (${qtyOrdered})`,
-      );
+    await assertReceivedDate(tx, String(item.purchase_order_id), f.received_date);
+    if (f.qty_received !== undefined) {
+      const [agg] = await tx`SELECT COALESCE(SUM(qty_received), 0) AS total FROM purchase_order_receipt WHERE po_item_id = ${itemId} AND id != ${receiptId}`;
+      const qtyOrdered = Number(item.qty_ordered);
+      const othersReceived = Number(agg.total);
+      if (othersReceived + Number(f.qty_received) > qtyOrdered) {
+        throw new PurchaseOrderError(
+          409,
+          `Over-receiving: baris penerimaan lain sudah ${othersReceived}, ditambah ${f.qty_received} akan melebihi qty_ordered (${qtyOrdered})`,
+        );
+      }
     }
-  }
-  const rows = await sql`
-    UPDATE purchase_order_receipt SET
-      qty_received    = COALESCE(${f.qty_received ?? null}, qty_received),
-      received_date   = COALESCE(${f.received_date ?? null}, received_date),
-      received_by     = ${f.received_by !== undefined ? f.received_by : sql`received_by`},
-      condition_notes = ${f.condition_notes !== undefined ? f.condition_notes : sql`condition_notes`},
-      updated_at      = now()
-    WHERE id = ${receiptId} AND po_item_id = ${itemId}
-    RETURNING ${receiptCols(sql)}
-  `;
-  return rows.length ? mapReceipt(rows[0]) : null;
+    const rows = await tx`
+      UPDATE purchase_order_receipt SET
+        qty_received    = COALESCE(${f.qty_received ?? null}, qty_received),
+        received_date   = COALESCE(${f.received_date ?? null}, received_date),
+        received_by     = ${f.received_by !== undefined ? f.received_by : tx`received_by`},
+        condition_notes = ${f.condition_notes !== undefined ? f.condition_notes : tx`condition_notes`},
+        updated_at      = now()
+      WHERE id = ${receiptId} AND po_item_id = ${itemId}
+      RETURNING id, po_item_id, qty_received, received_date::text, received_by, condition_notes, created_at::text, updated_at::text
+    `;
+    return rows.length ? mapReceipt(rows[0]) : null;
+  });
 }
 
 export async function deletePurchaseOrderReceipt(itemId: string, receiptId: string): Promise<{ deleted: number }> {

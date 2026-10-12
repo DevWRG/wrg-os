@@ -196,6 +196,11 @@ export async function updateInboundReceiving(id: string, f: InboundReceivingUpda
       SELECT COUNT(*) FILTER (WHERE is_checked) AS checked_count, COUNT(*) AS item_count
       FROM inbound_receiving_item WHERE receiving_id = ${id}
     `;
+    // item_count 0 dulu lolos (0 < 0 = false): hapus semua poin lalu tandai
+    // selesai = penerimaan "terverifikasi" tanpa satu pun poin dicek.
+    if (Number(agg.item_count) === 0) {
+      throw new InboundReceivingError(400, "Checklist kosong — tambahkan minimal satu poin verifikasi sebelum ditandai selesai");
+    }
     if (Number(agg.checked_count) < Number(agg.item_count)) {
       throw new InboundReceivingError(400, "Checklist belum lengkap, tidak bisa ditandai selesai");
     }
@@ -226,6 +231,16 @@ export async function updateInboundReceiving(id: string, f: InboundReceivingUpda
   return mapRow({ ...rows[0], ...agg });
 }
 
+// Checklist yang sudah completed dibekukan utuh, bukan cuma centangnya: dulu
+// poin baru (belum dicek) bisa ditambah, poin terverifikasi dihapus, dan label
+// diganti — status tetap "completed" padahal isinya sudah bukan yang dicek.
+async function assertNotCompleted(sql: ReturnType<typeof db>, receivingId: string): Promise<void> {
+  const [header] = await sql`SELECT status FROM inbound_receiving WHERE id = ${receivingId}`;
+  if (header?.status === "completed") {
+    throw new InboundReceivingError(400, "Receiving sudah completed — kembalikan status ke in_progress dulu sebelum ubah checklist");
+  }
+}
+
 export async function deleteInboundReceiving(id: string): Promise<{ deleted: number }> {
   const sql = db();
   const rows = await sql`DELETE FROM inbound_receiving WHERE id = ${id} RETURNING id`;
@@ -236,6 +251,7 @@ export async function addInboundReceivingItem(receivingId: string, label: string
   const sql = db();
   const head = await sql`SELECT id FROM inbound_receiving WHERE id = ${receivingId}`;
   if (!head.length) return null;
+  await assertNotCompleted(sql, receivingId);
   const [maxSort] = await sql`SELECT COALESCE(MAX(sort_order), -1) AS m FROM inbound_receiving_item WHERE receiving_id = ${receivingId}`;
   const rows = await sql`
     INSERT INTO inbound_receiving_item (receiving_id, label, sort_order)
@@ -257,12 +273,7 @@ export async function updateInboundReceivingItem(
   f: InboundReceivingItemUpdate,
 ): Promise<InboundReceivingItemRow | null> {
   const sql = db();
-  if (f.is_checked !== undefined) {
-    const [header] = await sql`SELECT status FROM inbound_receiving WHERE id = ${receivingId}`;
-    if (header?.status === "completed") {
-      throw new InboundReceivingError(400, "Receiving sudah completed — kembalikan status ke in_progress dulu sebelum ubah checklist");
-    }
-  }
+  await assertNotCompleted(sql, receivingId);
   const rows = await sql`
     UPDATE inbound_receiving_item SET
       label      = COALESCE(${f.label ?? null}, label),
@@ -277,6 +288,7 @@ export async function updateInboundReceivingItem(
 
 export async function deleteInboundReceivingItem(receivingId: string, itemId: string): Promise<{ deleted: number }> {
   const sql = db();
+  await assertNotCompleted(sql, receivingId);
   const rows = await sql`DELETE FROM inbound_receiving_item WHERE id = ${itemId} AND receiving_id = ${receivingId} RETURNING id`;
   return { deleted: rows.length };
 }
