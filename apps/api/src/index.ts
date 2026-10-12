@@ -13,7 +13,8 @@ import { matchCustomer, type PlanCandidate } from "./parsers/fuzzy.js";
 import { isDbEnabled, pingDb } from "./db.js";
 import { waPreflight, sendViaWaGateway, type WaSendResult } from "./wasend.js";
 import { processUnprocessed, isInboundEnabled } from "./repo/inbound.js";
-import { syncAccurateInvoices, syncVendors, syncItems, syncSalesOrders, syncDeliveryOrders, syncCustomers, syncSalesOrderItems, syncDeliveryOrderItems, getDeliveryOrderItems, getSalesOrderItems, getVendorDetail, accurateConfigured } from "./repo/accurateSync.js";
+import { syncAccurateInvoices, syncVendors, syncItems, syncSalesOrders, syncDeliveryOrders, syncCustomers, syncSalesOrderItems, syncDeliveryOrderItems, getDeliveryOrderItems, getSalesOrderItems, getVendorDetail, accurateConfigured, syncFixedAssets, fixedAssetSyncBusy } from "./repo/accurateSync.js";
+import { listAsetTetap, ringkasanAsetTetap, jadwalAsetTetap, simpanOverrideAsetTetap, type AsetTetapFilter } from "./repo/asetTetap.js";
 import { mirrorFreshness } from "./repo/mirror-health.js";
 import { insertAuditEvent } from "./repo/audit.js";
 import { upsertDealsFromPlan, logReportToDeals, getPipeline, getPipelineReport, getPipelineLeaderboard, transitionStage, DealError, listPendingLosses, decideLoss, getDealTimeline, createDeal, updateDeal, deleteDeal } from "./repo/deal.js";
@@ -1193,6 +1194,19 @@ app.post("/accurate/sync/customers", async (c) => {
   return c.json(r, r.ok ? 200 : 502);
 });
 
+// F34 — sinkron aset tetap Accurate → accurate_fixed_asset. Sapuan penuh
+// ≈10 menit (1.394 detail), jadi TIDAK ditunggu: balas 202 lalu jalan di
+// latar; hasilnya dibaca di GET /aset-tetap/ringkasan (blok `sync`).
+app.post("/accurate/sync/fixed-assets", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  if (!accurateConfigured()) return c.json({ error: "kredensial Accurate tak tersedia" }, 503);
+  if (fixedAssetSyncBusy()) return c.json({ ok: false, error: "sinkron aset tetap sedang berjalan" }, 409);
+  void syncFixedAssets()
+    .then((r) => console.log(`[accurate-sync] fixed-asset manual: ${JSON.stringify(r)}`))
+    .catch((e) => console.error("[accurate-sync] fixed-asset manual gagal:", e));
+  return c.json({ ok: true, started: true }, 202);
+});
+
 // Sinkron full katalog item + stok Accurate → accurate_item (menu Inventory & Products).
 app.post("/accurate/sync/items", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
@@ -1780,6 +1794,41 @@ const bodyJson = async (c: Context): Promise<Record<string, unknown>> => {
   }
 };
 const olehDari = (b: Record<string, unknown>) => (typeof b.oleh === "string" && b.oleh.trim() ? b.oleh.trim() : null);
+// F34 — Aset Tetap (cermin Accurate, migrasi 203). Gerbang izin di BFF.
+app.get("/aset-tetap", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const q = c.req.query();
+  const status = ["aktif", "disposed", "habis", "semua"].includes(q.status ?? "") ? (q.status as AsetTetapFilter["status"]) : "aktif";
+  return c.json(await listAsetTetap({
+    q: q.q, prefix: q.prefix, tipe: q.tipe, status, sort: q.sort, dir: q.dir,
+    limit: Number(q.limit) || undefined, offset: Number(q.offset) || undefined,
+  }));
+});
+app.get("/aset-tetap/ringkasan", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await ringkasanAsetTetap());
+});
+app.get("/aset-tetap/:id/jadwal", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const id = Number(c.req.param("id"));
+  if (!Number.isInteger(id) || id <= 0) return c.json({ error: "id tak valid" }, 400);
+  const r = await jadwalAsetTetap(id);
+  return c.json(r, r.ok ? 200 : 404);
+});
+app.put("/aset-tetap/:id/override", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const id = Number(c.req.param("id"));
+  if (!Number.isInteger(id) || id <= 0) return c.json({ error: "id tak valid" }, 400);
+  const b = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
+  const pick: Parameters<typeof simpanOverrideAsetTetap>[1] = {};
+  if ("tgl_perolehan_asli" in b) pick.tgl_perolehan_asli = b.tgl_perolehan_asli == null || b.tgl_perolehan_asli === "" ? null : String(b.tgl_perolehan_asli);
+  if ("kso_asset_id" in b) pick.kso_asset_id = b.kso_asset_id == null || b.kso_asset_id === "" ? null : Number(b.kso_asset_id);
+  if ("catatan" in b) pick.catatan = b.catatan == null ? null : String(b.catatan);
+  if (pick.kso_asset_id != null && !(Number.isInteger(pick.kso_asset_id) && pick.kso_asset_id > 0)) return c.json({ error: "kso_asset_id tak valid" }, 400);
+  const r = await simpanOverrideAsetTetap(id, pick, olehDari(b));
+  return c.json(r, r.ok ? 200 : 400);
+});
+
 app.get("/kso-kontrak", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json(await listKontrak());
