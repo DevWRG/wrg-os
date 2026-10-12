@@ -36,7 +36,7 @@ const blank = () => ({
 
 // Catat pengiriman baru (F43). kurir_name teks bebas — tidak ada roster
 // kurir/ekspedisi di project ini (lihat komentar migrasi 095).
-export function AddCourierDeliverySheet() {
+export function AddCourierDeliverySheet({ kurirOptions = [] }: { kurirOptions?: string[] }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -93,7 +93,12 @@ export function AddCourierDeliverySheet() {
           <div className="flex flex-1 flex-col gap-4 overflow-y-auto px-4">
             <div className="grid gap-1.5">
               <Label htmlFor="cd-kurir">Kurir / Ekspedisi *</Label>
-              <Input id="cd-kurir" required value={f.kurir_name} onChange={(e) => setF((p) => ({ ...p, kurir_name: e.target.value }))} placeholder="mis. Budi (internal) / JNE / JNT" />
+              <Input id="cd-kurir" required value={f.kurir_name} onChange={(e) => setF((p) => ({ ...p, kurir_name: e.target.value }))} placeholder="mis. Budi (internal) / JNE / JNT" list="cd-kurir-options" autoComplete="off" />
+              <datalist id="cd-kurir-options">
+                {kurirOptions.map((k) => (
+                  <option key={k} value={k} />
+                ))}
+              </datalist>
             </div>
             <div className="grid gap-1.5">
               <Label htmlFor="cd-wa">No. WA Kurir</Label>

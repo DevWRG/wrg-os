@@ -45,6 +45,11 @@ export interface CourierDeliveryRow {
   duration_days: number | null;
 }
 
+// Nama kurir teks bebas → "JNE", "jne " dan "J N E" ketik-an berbeda. Simpan
+// dengan spasi dirapikan; ranking & filter membandingkan versi huruf kecil
+// (kurirKey) supaya "JNE" dan "jne" tak terpecah jadi dua kurir.
+export const rapikanNamaKurir = (s: string): string => s.trim().replace(/\s+/g, " ");
+
 function diffDays(from: string, to: string): number {
   const a = new Date(`${from}T00:00:00Z`).getTime();
   const b = new Date(`${to}T00:00:00Z`).getTime();
@@ -107,7 +112,7 @@ export async function createCourierDelivery(t: CourierDeliveryInput): Promise<Co
       kurir_name, kurir_wa_number, sj_number, customer_name, cabang,
       tanggal_kirim, target_tiba_date, distance_km, notes, created_by
     ) VALUES (
-      ${t.kurir_name.trim()}, ${t.kurir_wa_number ?? null}, ${t.sj_number ?? null}, ${t.customer_name ?? null}, ${t.cabang ?? null},
+      ${rapikanNamaKurir(t.kurir_name)}, ${t.kurir_wa_number ?? null}, ${t.sj_number ?? null}, ${t.customer_name ?? null}, ${t.cabang ?? null},
       ${t.tanggal_kirim ?? sql`CURRENT_DATE`}, ${t.target_tiba_date ?? null}, ${t.distance_km ?? null}, ${t.notes ?? null}, ${t.created_by ?? null}
     )
     RETURNING id
@@ -130,7 +135,7 @@ export async function listCourierDeliveries(opts?: {
     SELECT ${cols(sql)}
     FROM courier_delivery
     WHERE ${opts?.status ? sql`status = ${opts.status}` : sql`true`}
-      AND ${opts?.kurirName ? sql`kurir_name = ${opts.kurirName}` : sql`true`}
+      AND ${opts?.kurirName ? sql`lower(kurir_name) = lower(${rapikanNamaKurir(opts.kurirName)})` : sql`true`}
       AND ${opts?.cabang ? sql`cabang = ${opts.cabang}` : sql`true`}
       AND ${opts?.from ? sql`tanggal_kirim >= ${opts.from}::date` : sql`true`}
       AND ${opts?.to ? sql`tanggal_kirim <= ${opts.to}::date` : sql`true`}
@@ -180,7 +185,7 @@ export async function updateCourierDelivery(id: string, patch: CourierDeliveryPa
     ? String((await sql`SELECT (now() AT TIME ZONE 'Asia/Jakarta')::date::text AS d`)[0].d)
     : null;
   const next = {
-    kurir_name: patch.kurir_name?.trim() ?? existing.kurir_name,
+    kurir_name: patch.kurir_name !== undefined ? rapikanNamaKurir(patch.kurir_name) : existing.kurir_name,
     kurir_wa_number: patch.kurir_wa_number !== undefined ? patch.kurir_wa_number : existing.kurir_wa_number,
     sj_number: patch.sj_number !== undefined ? patch.sj_number : existing.sj_number,
     customer_name: patch.customer_name !== undefined ? patch.customer_name : existing.customer_name,
@@ -196,6 +201,11 @@ export async function updateCourierDelivery(id: string, patch: CourierDeliveryPa
     status: patch.status ?? existing.status,
     notes: patch.notes !== undefined ? patch.notes : existing.notes,
   };
+  // "Dalam perjalanan" = belum tiba. Membalik status dari selesai tanpa
+  // mengosongkan tanggal_tiba meninggalkan baris kontradiktif (form edit selalu
+  // mengirim ulang tanggal lama), dan saat kelak ditandai selesai lagi tanggal
+  // lama itu yang terpakai, bukan hari ini.
+  if (next.status === "dalam_perjalanan") next.tanggal_tiba = null;
   if (next.tanggal_tiba && next.tanggal_tiba < next.tanggal_kirim) {
     throw new CourierDeliveryError(400, "tanggal_tiba tidak boleh sebelum tanggal_kirim");
   }
@@ -263,7 +273,8 @@ export async function getCourierPerformanceSummary(opts?: { from?: string; to?: 
   const sql = db();
   const rows = await sql`
     SELECT
-      kurir_name,
+      -- satu baris per kurir tanpa beda huruf besar/kecil; label = ejaan terbanyak
+      mode() WITHIN GROUP (ORDER BY kurir_name) AS kurir_name,
       COUNT(*)::int AS total,
       COUNT(*) FILTER (WHERE status = 'selesai')::int AS selesai_count,
       COUNT(*) FILTER (WHERE status = 'dalam_perjalanan')::int AS dalam_perjalanan_count,
@@ -274,8 +285,8 @@ export async function getCourierPerformanceSummary(opts?: { from?: string; to?: 
     FROM courier_delivery
     WHERE ${opts?.from ? sql`tanggal_kirim >= ${opts.from}::date` : sql`true`}
       AND ${opts?.to ? sql`tanggal_kirim <= ${opts.to}::date` : sql`true`}
-    GROUP BY kurir_name
-    ORDER BY total DESC, kurir_name ASC
+    GROUP BY lower(kurir_name)
+    ORDER BY total DESC, 1 ASC
   `;
 
   const byKurir: CourierPerformanceRow[] = rows.map((r) => {
