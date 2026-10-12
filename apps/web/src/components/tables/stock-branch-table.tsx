@@ -77,7 +77,15 @@ export function StockBranchTable({
         // SKU ikut ter-scroll keluar saat membaca kolom NTB/NTT, dan angkanya
         // kehilangan identitas baris — padahal membandingkan antar-gudang per SKU
         // itu justru gunanya tabel ini.
-        cell: (r) => <span className="font-medium whitespace-nowrap">{r.no}</span>,
+        //
+        // Lebar SKU DIKUNCI (7rem isi + 2×0,75rem padding = 8,5rem) karena kolom
+        // Nama ikut dibekukan dengan `left-[8.5rem]`: kalau SKU dibiarkan selebar
+        // isinya, Nama menimpa/menganga dari SKU begitu ada SKU yang lebih panjang.
+        cell: (r) => (
+          <span className="block w-[7rem] truncate font-medium" title={r.no}>
+            {r.no}
+          </span>
+        ),
         className: "bg-card sticky left-0 z-10",
       },
       {
@@ -85,12 +93,16 @@ export function StockBranchTable({
         header: "Nama",
         sortable: true,
         accessor: (r) => r.name,
+        // Ikut dibekukan: SKU saja tak cukup dibaca orang gudang, yang mengenali
+        // barang dari namanya. Garis kanan (inset shadow, bukan border — border
+        // pada sel sticky ikut ter-scroll di tabel border-collapse) menandai batas
+        // area beku dengan kolom gudang yang lewat di bawahnya.
         cell: (r) => (
-          <span className="block max-w-[18rem] truncate" title={r.name}>
+          <span className="block w-[16rem] truncate" title={r.name}>
             {r.name}
           </span>
         ),
-        className: "max-w-[18rem]",
+        className: "bg-card sticky left-[8.5rem] z-10 shadow-[inset_-1px_0_0_var(--border)]",
       },
       {
         id: "total",
