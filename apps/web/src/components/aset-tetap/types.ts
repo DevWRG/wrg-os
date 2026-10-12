@@ -49,7 +49,10 @@ export interface Ringkasan {
   per_kelompok: Kelompok[];
   total: { jumlah: number; disposed: number; nilai_perolehan: number; nilai_buku: number; akumulasi: number; susut_per_bulan: number };
   tipe: string[];
-  sync: { last_synced_at: string | null; last_run_ok: boolean | null; summary: unknown };
+  sync: {
+    last_synced_at: string | null; last_run_ok: boolean | null; summary: unknown;
+    status_sapuan: "berjalan" | "terputus" | null; mulai_at: string | null;
+  };
 }
 
 export interface JadwalBaris { periode: string; susut: number; akumulasi: number; nilai_buku: number; status: "lewat" | "berjalan" | "proyeksi" }

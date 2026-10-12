@@ -102,19 +102,30 @@ export function AsetTetapView({ ringkasan, canEdit }: { ringkasan: Ringkasan; ca
 
   const syncInfo = ringkasan.sync;
   const ringkas = syncInfo.summary as { synced?: number; failed?: number; listed?: number; rowCount?: number | null; error?: string } | null;
+  // status_sapuan dihitung di apps/api (penanda 'berjalan' basi >45 menit = terputus).
+  const mulai = syncInfo.mulai_at ? new Date(syncInfo.mulai_at) : null;
+  const terputus = syncInfo.status_sapuan === "terputus";
+  const jam = (d: Date) => d.toLocaleString("id-ID", { dateStyle: "medium", timeStyle: "short" });
 
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
         <div className="text-muted-foreground">
+          {mulai && (
+            terputus
+              ? <span className="text-destructive">Sinkron mulai {jam(mulai)} tidak selesai (prosesnya terputus) — picu ulang. </span>
+              : <span>Sinkron sedang berjalan sejak {jam(mulai)}. </span>
+          )}
           {syncInfo.last_synced_at
-            ? <>Sinkron terakhir {new Date(syncInfo.last_synced_at).toLocaleString("id-ID", { dateStyle: "medium", timeStyle: "short" })}
-                {" · "}
-                {syncInfo.last_run_ok
-                  ? <span className="text-success">lengkap</span>
-                  : <span className="text-destructive">bermasalah{ringkas?.error ? `: ${ringkas.error}` : ringkas ? ` (${ringkas.synced ?? 0}/${ringkas.rowCount ?? ringkas.listed ?? "?"} tersinkron, ${ringkas.failed ?? 0} gagal)` : ""}</span>}
+            ? <>Sinkron selesai terakhir {jam(new Date(syncInfo.last_synced_at))}
+                {!mulai && <>
+                  {" · "}
+                  {syncInfo.last_run_ok
+                    ? <span className="text-success">lengkap</span>
+                    : <span className="text-destructive">bermasalah{ringkas?.error ? `: ${ringkas.error}` : ringkas ? ` (${ringkas.synced ?? 0}/${ringkas.rowCount ?? ringkas.listed ?? "?"} tersinkron, ${ringkas.failed ?? 0} gagal)` : ""}</span>}
+                </>}
               </>
-            : "Belum pernah disinkron dari Accurate."}
+            : !mulai && "Belum pernah disinkron dari Accurate."}
         </div>
         {canEdit && (
           <Button size="sm" variant="outline" onClick={sinkron} disabled={sync.busy}>

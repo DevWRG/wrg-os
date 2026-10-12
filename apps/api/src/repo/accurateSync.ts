@@ -8,7 +8,7 @@ import {
   upsertVendors, upsertItems, upsertSalesOrders, upsertDeliveryOrders, upsertCustomers,
   replaceSalesOrderItems, replaceDeliveryOrderItems, pendingItemDocs, countPendingItemDocs,
 } from "./accurateMirror.js";
-import { upsertFixedAssetDetail, pruneFixedAssets, recordFixedAssetSyncState } from "./asetTetap.js";
+import { upsertFixedAssetDetail, pruneFixedAssets, recordFixedAssetSyncState, markFixedAssetSyncStarted } from "./asetTetap.js";
 
 // Puller Accurate Online (pengganti legacy sync_accurate.sh). Tarik sales-invoice
 // header+items dari zeus.accurate.id → mirror penuh accurate_* + refresh ar_aging.
@@ -723,6 +723,7 @@ export async function syncFixedAssets(opts: { maxPages?: number } = {}): Promise
   if (fixedAssetSyncRunning) return { ok: false, error: "sinkron aset tetap sedang berjalan" };
   fixedAssetSyncRunning = true;
   try {
+    await markFixedAssetSyncStarted();
     return await syncFixedAssetsInner(opts);
   } finally {
     fixedAssetSyncRunning = false;
