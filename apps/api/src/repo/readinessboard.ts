@@ -207,17 +207,18 @@ export interface TeknisiReadiness extends Teknisi {
 }
 
 // Kapasitas terpakai = install_schedule 'scheduled' (F8 sendiri) + maintenance_schedule
-// (F24) 'scheduled'/'notified' YANG teknisi_name-nya match nama teknisi ini —
-// cross-tabel by name-match (F24.teknisi_name teks bebas, tanpa FK). SENGAJA
-// tanpa fallback (beda dari F26's assignTeknisi) — ini metrik DISPLAY, bukan
-// aksi assignment, jadi nama tak match = dianggap 0 kontribusi F24, dicatat
-// sbg limitasi bukan bug.
+// (F24) 'scheduled'/'notified' milik teknisi ini. Sejak migrasi 207 PM tertaut
+// lewat teknisi_id (wajib pilih roster); baris lama tanpa teknisi_id masih
+// dihitung lewat kecocokan nama persis seperti dulu. Rumus yang SAMA dipakai
+// gerbang kapasitas createInstallSchedule — ubah keduanya bersamaan.
 export async function getReadinessBoard(): Promise<TeknisiReadiness[]> {
   const sql = db();
   const rows = await sql`
     SELECT tc.*,
       (SELECT COUNT(*) FROM install_schedule ins WHERE ins.teknisi_id = tc.id AND ins.status = 'scheduled') AS install_load,
-      (SELECT COUNT(*) FROM maintenance_schedule ms WHERE ms.teknisi_name = tc.nama AND ms.status IN ('scheduled','notified')) AS pm_load
+      (SELECT COUNT(*) FROM maintenance_schedule ms
+         WHERE (ms.teknisi_id = tc.id OR (ms.teknisi_id IS NULL AND ms.teknisi_name = tc.nama))
+           AND ms.status IN ('scheduled','notified')) AS pm_load
     FROM teknisi_capacity tc
     ORDER BY tc.nama
   `;
@@ -308,12 +309,14 @@ export async function createInstallSchedule(
       if (!tek) return { ok: false as const, error: "teknisi tidak ditemukan" };
       if (!tek.aktif) return { ok: false as const, error: `teknisi "${tek.nama}" sudah nonaktif — pilih teknisi lain` };
       // Kapasitas dihitung dengan rumus yang SAMA dengan getReadinessBoard()
-      // (jadwal install 'scheduled' + PM F24 yang teknisi_name-nya sama) supaya
+      // (jadwal install 'scheduled' + PM F24 milik teknisi ini) supaya
       // angka penolakan = angka yang terlihat di board.
       const [beban] = await tx`
         SELECT
           (SELECT COUNT(*) FROM install_schedule ins WHERE ins.teknisi_id = ${tek.id} AND ins.status = 'scheduled')
-          + (SELECT COUNT(*) FROM maintenance_schedule ms WHERE ms.teknisi_name = ${tek.nama} AND ms.status IN ('scheduled','notified'))
+          + (SELECT COUNT(*) FROM maintenance_schedule ms
+               WHERE (ms.teknisi_id = ${tek.id} OR (ms.teknisi_id IS NULL AND ms.teknisi_name = ${tek.nama}))
+                 AND ms.status IN ('scheduled','notified'))
           AS used
       `;
       if (Number(beban.used) >= Number(tek.max_concurrent_jobs)) {

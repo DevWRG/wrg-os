@@ -40,8 +40,7 @@ const blank = () => ({
   installation_unit_id: "",
   interval_bulan: "6",
   reference_date: "",
-  teknisi_name: "",
-  teknisi_wa_number: "",
+  teknisi_id: "",
 });
 
 export function AddMaintenanceSheet() {
@@ -59,19 +58,15 @@ export function AddMaintenanceSheet() {
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => setUnits(d?.units ?? []))
       .catch(() => {});
-    // Roster F8 (teknisi_capacity) — comot nama+WA drpd ketik manual, tetap
-    // bisa diedit manual di 2 field di bawah kalau teknisinya belum ada di
-    // roster (mis. kontraktor luar).
+    // Roster F8 (teknisi_capacity) — teknisi PM WAJIB dipilih dari sini
+    // (migrasi 207). Dulu nama+WA bisa diketik manual, dan PM dengan nama
+    // ketikan tak terhitung di beban Readiness Board. Teknisi yang belum ada
+    // ditambahkan dulu di Readiness Board.
     void fetch("/api/teknisi-capacity", { cache: "no-store" })
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => setTeknisiRoster(d?.teknisi ?? []))
       .catch(() => {});
   }, [open]);
-
-  function pickTeknisi(id: string) {
-    const t = teknisiRoster.find((x) => x.id === id);
-    if (t) setF((p) => ({ ...p, teknisi_name: t.nama, teknisi_wa_number: t.wa_number ?? "" }));
-  }
 
   function selectUnit(id: string) {
     const u = units.find((x) => x.id === id);
@@ -90,8 +85,7 @@ export function AddMaintenanceSheet() {
           installation_unit_id: f.installation_unit_id,
           interval_bulan: Number(f.interval_bulan),
           reference_date: f.reference_date || undefined,
-          teknisi_name: f.teknisi_name.trim() || undefined,
-          teknisi_wa_number: f.teknisi_wa_number.trim() || undefined,
+          teknisi_id: f.teknisi_id || undefined,
         }),
       });
       const data = await res.json();
@@ -158,26 +152,23 @@ export function AddMaintenanceSheet() {
               />
             </div>
             <div className="grid gap-1.5">
-              <Label htmlFor="ms-teknisi-roster">Pilih dari roster (opsional)</Label>
+              <Label htmlFor="ms-teknisi">Teknisi</Label>
               <select
-                id="ms-teknisi-roster"
+                id="ms-teknisi"
                 className={selectCls}
-                defaultValue=""
-                onChange={(e) => pickTeknisi(e.target.value)}
+                value={f.teknisi_id}
+                onChange={(e) => setF((p) => ({ ...p, teknisi_id: e.target.value }))}
               >
-                <option value="">— pilih teknisi F8, atau isi manual di bawah —</option>
+                <option value="">— belum ditugaskan —</option>
                 {teknisiRoster.filter((t) => t.aktif).map((t) => (
-                  <option key={t.id} value={t.id}>{t.nama}</option>
+                  <option key={t.id} value={t.id}>
+                    {t.nama}{t.wa_number ? "" : " (tanpa no. WA)"}
+                  </option>
                 ))}
               </select>
-            </div>
-            <div className="grid gap-1.5">
-              <Label htmlFor="ms-teknisi">Nama teknisi</Label>
-              <Input id="ms-teknisi" value={f.teknisi_name} onChange={(e) => setF((p) => ({ ...p, teknisi_name: e.target.value }))} />
-            </div>
-            <div className="grid gap-1.5">
-              <Label htmlFor="ms-wa">No. WA teknisi</Label>
-              <Input id="ms-wa" value={f.teknisi_wa_number} onChange={(e) => setF((p) => ({ ...p, teknisi_wa_number: e.target.value }))} placeholder="62812xxxxxxx" />
+              <p className="text-muted-foreground text-xs">
+                Dipilih dari roster Readiness Board. Belum ada di daftar? Tambahkan dulu di Readiness Board. Reminder H-14 dikirim ke no. WA di roster.
+              </p>
             </div>
             {error && <p className="text-destructive text-sm">{error}</p>}
           </div>

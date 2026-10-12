@@ -4,8 +4,9 @@ import { sendViaWaGateway } from "../wasend.js";
 // F24 — Preventive Maintenance & Kalibrasi Schedule (AFTERSALES). 1 baris
 // RECURRING per alat (FK ke installation_unit dari F22): reminder H-14 sebelum
 // due_date, teknisi tandai selesai → reference_date/due_date di-ADVANCE ke
-// siklus berikutnya (bukan bikin baris baru). teknisi_wa_number SENGAJA teks
-// bebas — lihat 133_maintenance_schedule.sql, sama alasan dgn installation_unit.
+// siklus berikutnya (bukan bikin baris baru). Teknisi dipilih dari roster
+// teknisi_capacity (teknisi_id, migrasi 207); teknisi_name/teknisi_wa_number
+// = snapshot. Baris lama (pra-207) masih teks bebas tanpa teknisi_id.
 
 // postgres.js parse kolom date/timestamptz jadi objek Date — String(dateObj)
 // hasilnya verbose ("Wed Aug 05 2026 …"), bukan ISO. new Date(x).toISOString()
@@ -56,8 +57,13 @@ export interface MaintenanceInput {
   installation_unit_id: string;
   interval_bulan: number;
   reference_date?: string | null;
-  teknisi_name?: string | null;
-  teknisi_wa_number?: string | null;
+  // Teknisi dipilih dari roster teknisi_capacity (F8) — migrasi 207, keputusan
+  // user 2026-10-13. Nama & nomor WA TIDAK diterima dari klien lagi: keduanya
+  // di-snapshot dari roster, supaya beban PM selalu terhitung di Readiness
+  // Board (dulu dicocokkan lewat nama ketikan bebas → "Galih" ≠ "Galih Aldy
+  // Prasetyo" → beban hilang). Kosong = belum ditugaskan.
+  teknisi_id?: string | null;
+  teknisi_name?: string | null; // hanya untuk menolak klien lama yang masih kirim nama
 }
 
 export interface MaintenanceRow {
@@ -70,6 +76,7 @@ export interface MaintenanceRow {
   interval_bulan: number;
   reference_date: string;
   due_date: string;
+  teknisi_id: string | null;
   teknisi_name: string | null;
   teknisi_wa_number: string | null;
   status: string;
@@ -92,6 +99,7 @@ function mapRow(r: Record<string, unknown>): MaintenanceRow {
     interval_bulan: Number(r.interval_bulan),
     reference_date: toIsoDate(r.reference_date),
     due_date: toIsoDate(r.due_date),
+    teknisi_id: r.teknisi_id ? String(r.teknisi_id) : null,
     teknisi_name: r.teknisi_name ? String(r.teknisi_name) : null,
     teknisi_wa_number: r.teknisi_wa_number ? String(r.teknisi_wa_number) : null,
     status: String(r.status),
@@ -136,14 +144,31 @@ export async function createSchedule(
     return { ok: false, error: `reference_date "${input.reference_date}" bukan tanggal valid (format YYYY-MM-DD)` };
   }
 
+  const teknisiId = input.teknisi_id?.trim() || null;
+  if (!teknisiId && input.teknisi_name?.trim()) {
+    return { ok: false, error: "teknisi wajib dipilih dari roster (teknisi_id), bukan diketik — tambahkan dulu di Readiness Board kalau belum ada" };
+  }
+  let teknisiNama: string | null = null;
+  let teknisiWa: string | null = null;
+  if (teknisiId) {
+    // uuid ngawur → Postgres 22P02; disaring dulu supaya pesannya terbaca (pola installation.ts).
+    if (!/^[0-9a-f-]{36}$/i.test(teknisiId)) {
+      return { ok: false, error: "teknisi_id bukan uuid yang sah — pilih dari daftar, jangan diketik" };
+    }
+    const [tek] = await sql`SELECT nama, wa_number, aktif FROM teknisi_capacity WHERE id = ${teknisiId}`;
+    if (!tek) return { ok: false, error: "teknisi tak ada di roster" };
+    if (!tek.aktif) return { ok: false, error: `teknisi "${String(tek.nama)}" sudah nonaktif — pilih yang aktif` };
+    teknisiNama = String(tek.nama);
+    teknisiWa = tek.wa_number ? String(tek.wa_number) : null;
+  }
   const referenceDate = input.reference_date || String(units[0].bast_at).slice(0, 10);
   const rows = await sql`
     INSERT INTO maintenance_schedule
-      (installation_unit_id, interval_bulan, reference_date, due_date, teknisi_name, teknisi_wa_number)
+      (installation_unit_id, interval_bulan, reference_date, due_date, teknisi_id, teknisi_name, teknisi_wa_number)
     VALUES (
       ${input.installation_unit_id}, ${input.interval_bulan}, ${referenceDate},
       (${referenceDate}::date + (${input.interval_bulan} || ' months')::interval)::date,
-      ${input.teknisi_name ?? null}, ${input.teknisi_wa_number ?? null}
+      ${teknisiId}, ${teknisiNama}, ${teknisiWa}
     )
     RETURNING id
   `;
@@ -228,16 +253,22 @@ export async function runMaintenanceReminders(): Promise<{ count: number; notifi
   const sql = db();
   const due = await sql`
     SELECT ms.*, iu.alat_name, iu.serial_number, iu.customer_name, iu.cabang,
-      (ms.due_date - current_date) AS sisa_hari
+      (ms.due_date - current_date) AS sisa_hari,
+      NULLIF(btrim(tc.wa_number), '') AS wa_roster
     FROM maintenance_schedule ms
     JOIN installation_unit iu ON iu.id = ms.installation_unit_id
+    LEFT JOIN teknisi_capacity tc ON tc.id = ms.teknisi_id
     WHERE ms.status = 'scheduled' AND ms.due_date <= current_date + 14
     ORDER BY ms.due_date
   `;
   const sisaHari = new Map(due.map((r) => [String(r.id), Number(r.sisa_hari)]));
+  // Nomor WA diambil dari roster SAAT INI bila teknisinya tertaut (migrasi 207)
+  // — nomor yang diganti di Readiness Board langsung berlaku; snapshot di
+  // baris jadwal cuma cadangan untuk baris lama tanpa teknisi_id.
+  const waRoster = new Map(due.map((r) => [String(r.id), r.wa_roster ? String(r.wa_roster) : null]));
   const notified: string[] = [];
   for (const row of due.map(mapRow)) {
-    const target = row.teknisi_wa_number || process.env.MAINTENANCE_WA_TARGET || "";
+    const target = waRoster.get(row.id) || row.teknisi_wa_number || process.env.MAINTENANCE_WA_TARGET || "";
     if (!target) continue; // tak ada tujuan jelas → skip (anti broadcast tak sengaja)
     const sisa = sisaHari.get(row.id) ?? 14;
     const kapan = sisa > 0 ? `H-${sisa}` : sisa === 0 ? "HARI INI" : `TERLAMBAT ${-sisa} hari`;

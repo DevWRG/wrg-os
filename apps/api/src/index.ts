@@ -6433,8 +6433,8 @@ app.post("/maintenance", async (c) => {
     installation_unit_id?: string;
     interval_bulan?: number;
     reference_date?: string;
+    teknisi_id?: string;
     teknisi_name?: string;
-    teknisi_wa_number?: string;
   };
   try {
     body = await c.req.json();
@@ -6448,8 +6448,8 @@ app.post("/maintenance", async (c) => {
     installation_unit_id: body.installation_unit_id,
     interval_bulan: body.interval_bulan,
     reference_date: body.reference_date,
+    teknisi_id: body.teknisi_id,
     teknisi_name: body.teknisi_name,
-    teknisi_wa_number: body.teknisi_wa_number,
   });
   return c.json(r, "ok" in r && r.ok === false ? 400 : 201);
 });
