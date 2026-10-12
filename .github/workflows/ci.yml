@@ -42,12 +42,54 @@ jobs:
       # Sebelumnya tak pernah jalan di CI — apps/api tak punya script `test`, jadi
       # `turbo run test` melewatinya tanpa suara dan pipeline tetap hijau.
       - run: pnpm test
+      # Migrasi dieksekusi menurut urutan abjad nama file (scripts/db/migrate.sh),
+      # jadi nomor ganda = urutan tak tentu, dan tak ada yang gagal sampai deploy
+      # hampir menyentuh skema prod. Cek ini menolak tabrakan BARU; 11 nomor yang
+      # sudah bertabrakan dicatat sebagai baseline (utang) di dalam skripnya.
+      - run: node scripts/db/check-migration-numbers.mjs
       # Rumus Simulator KSO menghitung harga penawaran KSO yang dikirim ke faskes.
       # Salah angka = penawaran salah, dan layarnya tetap tampil wajar — tidak ada
       # yang gagal sendiri (PR #803: control XR memakai harga XN, lolos semua cek).
       # Bandingkan dengan angka acuan dari aplikasi rujukan.
       - name: Paritas Simulator KSO
         run: node scripts/ops/kso-parity.mjs
+      # Penjaga tumpukan dev di ecosystem.config.cjs (DB dev vs prod, izin kirim
+      # WA, port, root berkas & kredensial). Tesnya ADA sejak #1265 tapi TIDAK
+      # PERNAH dijalankan CI: `pnpm test` hanya menjaring glob
+      # apps/*/src/**/*.test.ts, dan berkas ini di scripts/qa/. Jadi 11 tes
+      # penjaga itu hijau di laptop dan tak terjaring di mana pun — pola yang
+      # sama dengan apps/api sebelum #1265 (lihat komentar `pnpm test` di atas).
+      - name: Penjaga tumpukan dev (ecosystem)
+        run: node scripts/qa/uji-ecosystem-dev.mjs
+
+      # Berkas di scripts/ops/ dan infra/launchd/ TIDAK terjaring mana pun:
+      # `pnpm test` hanya glob apps/*/src/**/*.test.ts, dan dua langkah di atas
+      # memanggil berkas tertentu satu per satu. Jadi skrip operasional yang
+      # menjalankan WhatsApp prod (wa-bridge-standalone.sh, watchdog, audit)
+      # bisa salah ketik dan CI tetap hijau — ketahuannya baru saat layanan
+      # gagal hidup. Ini pola yang sama dengan scripts/qa sebelum #1280.
+      #
+      # Sengaja hanya pemeriksaan SINTAKS, bukan menjalankan: skrip-skrip itu
+      # menyentuh psql, launchctl, dan gateway WA yang tak ada di runner.
+      # plutil tidak dipakai (macOS saja) — plistlib lintas platform.
+      - name: Sintaks skrip ops & plist
+        run: |
+          set -euo pipefail
+          gagal=0
+          for f in scripts/ops/*.sh; do
+            [ -e "$f" ] || continue
+            bash -n "$f" || { echo "::error file=$f::sintaks bash gagal"; gagal=1; }
+          done
+          for f in scripts/ops/*.py; do
+            [ -e "$f" ] || continue
+            python3 -m py_compile "$f" || { echo "::error file=$f::sintaks python gagal"; gagal=1; }
+          done
+          for f in infra/launchd/*.plist; do
+            [ -e "$f" ] || continue
+            python3 -c "import plistlib,sys; plistlib.load(open(sys.argv[1],'rb'))" "$f" \
+              || { echo "::error file=$f::plist tak terbaca"; gagal=1; }
+          done
+          exit $gagal
 
   ai-check:
     name: services/ai import + unit test

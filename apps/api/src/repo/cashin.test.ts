@@ -13,6 +13,7 @@ import {
   formatIngatanBelumLengkap,
   formatIngatanKonfirmasi,
   formatResume,
+  formatStatusDraft,
   kategoriAwal,
   miripKeputusanResume,
   parseKeputusanResume,
@@ -242,6 +243,17 @@ test("pengingat menyebut kode dan angka yang masih tertahan", () => {
   assert.match(lengkap, /BNI, HANA/);
 });
 
+test("placeholder alasan tanpa kurung sudut (terbuang di jalur gateway WA)", () => {
+  // "<alasan>" pernah tampil sebagai "*tidak R12 *" — Finance tak tahu harus
+  // mengetik apa. Placeholder huruf besar tetap terbaca.
+  const draft = formatDraftKonfirmasi(formatResume(ringkasan()), "R12");
+  const ingat = formatIngatanKonfirmasi("R12", "2026-09-04", 3_676_320);
+  for (const teks of [draft, ingat]) {
+    assert.match(teks, /\*tidak R12 ALASAN\*/);
+    assert.doesNotMatch(teks, /<[a-z]+>/);
+  }
+});
+
 // ── pemicu hening + label kelengkapan ────────────────────────────────────────
 
 test("resume yang belum lengkap menyatakannya di ATAS angka, bukan cuma di footer", () => {
@@ -368,6 +380,63 @@ test("pesan #KORAN biasa BUKAN pernyataan nihil", () => {
   assert.equal(parseNihil(null), null);
   // Kata 'nihil' di percakapan tanpa hashtag juga tidak memicu apa pun.
   assert.equal(parseNihil("hari ini bni nihil kok"), null);
+});
+
+// ── gerbang konfirmasi: kode yang disebut vs draft yang benar-benar sampai ────
+//
+// Semua kasus di bawah lahir dari kejadian 19 Sep 2026 (draft R9): gateway WA
+// wedged jam 11:17, draft R9 gagal terkirim, balasan #KORAN tetap menulis
+// "Draft resume R9 menunggu konfirmasi", Finance membalas "ya R9" jam 12.04,
+// dan tak ada apa pun yang terjadi. Uang masuk 19 Sep tak pernah sampai ke
+// Direktur dan tak ada satu baris log pun yang menyebut balasan itu.
+
+test("draft yang GAGAL terkirim tidak pernah diumumkan sebagai menunggu konfirmasi", () => {
+  const teks = formatStatusDraft({
+    draft_kode: "R9",
+    draft_keadaan: "gagal_kirim",
+    draft_alasan: "gateway tidak mengirim draft",
+  });
+  assert.ok(teks, "keadaan gagal_kirim harus mengatakan sesuatu, bukan diam");
+  // Inti regresinya: kalimat lama tidak boleh muncul lagi.
+  assert.doesNotMatch(teks, /menunggu konfirmasi/i);
+  // Kodenya tetap disebut (supaya Finance bisa melapor "R9 macet") …
+  assert.match(teks, /R9/);
+  // … tapi dengan larangan membalas yang eksplisit.
+  assert.match(teks, /JANGAN balas/);
+  assert.match(teks, /belum sampai ke Direktur/);
+  assert.match(teks, /gateway tidak mengirim draft/);
+});
+
+test("draft yang benar-benar sampai tetap mengajak konfirmasi seperti biasa", () => {
+  assert.equal(formatStatusDraft({ draft_kode: "R9", draft_keadaan: "menunggu" }), "📝 Draft resume R9 menunggu konfirmasi.");
+  // Draft lama yang cuma disegarkan isinya juga "menunggu": teksnya sudah ada
+  // di grup, jadi "ya R9" akan terbaca.
+  assert.match(
+    formatStatusDraft({ draft_kode: "R9", draft_keadaan: "menunggu", draft_alasan: "draft sudah dikirim ke Finance, teksnya diperbarui" }) ?? "",
+    /menunggu konfirmasi/,
+  );
+});
+
+test("resume yang sudah final tidak diiklankan sebagai draft menunggu", () => {
+  // Cabang ini dulu ikut mencetak "Draft resume R6 menunggu konfirmasi" untuk
+  // resume yang JUSTRU sudah terkirim ke Direktur.
+  const teks = formatStatusDraft({
+    draft_kode: "R6",
+    draft_keadaan: "final",
+    draft_alasan: "resume 2026-09-18 sudah berstatus terkirim",
+  });
+  assert.doesNotMatch(teks ?? "", /menunggu konfirmasi/i);
+  assert.match(teks ?? "", /sudah berstatus terkirim/);
+});
+
+test("belum ada draft → alasan apa adanya, dan diam kalau memang tak ada kabar", () => {
+  assert.match(
+    formatStatusDraft({ draft_keadaan: "belum", draft_alasan: "koran belum lengkap (3/10) — belum setor: BNI, HANA" }) ?? "",
+    /belum lengkap/,
+  );
+  // Tak ada kode, tak ada alasan → jangan menambah baris kosong ke balasan.
+  assert.equal(formatStatusDraft({ draft_keadaan: "belum" }), null);
+  assert.equal(formatStatusDraft({}), null);
 });
 
 // ── puteran yang hanya dikenali lewat nomor rekening sendiri ─────────────────

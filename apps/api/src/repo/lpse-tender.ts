@@ -1,0 +1,323 @@
+import { db } from "../db.js";
+import { sendViaWaGateway } from "../wasend.js";
+
+// F20 — E-Catalog/LPSE Compliance Tracker. Standalone dari dev, tak sentuh
+// Accurate/CRM-core/HR (lihat 151_lpse_tender_tracker.sql). Status 3-step
+// manual via web (blueprint: Hashtag "-", tak ada ingestion WA sama sekali).
+
+const toIsoTs = (x: unknown): string => new Date(x as string | Date).toISOString();
+const toIsoTsOrNull = (x: unknown): string | null => (x == null ? null : toIsoTs(x));
+
+export interface ActionResult {
+  ok: boolean;
+  error?: string;
+}
+
+export interface LpseTenderRow {
+  id: string;
+  tender_no: string | null;
+  judul: string;
+  instansi: string;
+  platform: string;
+  pic_employee_id: string | null;
+  pic_nama: string | null;
+  dept: string | null;
+  dept_label: string | null;
+  status: string;
+  pesan_masuk_at: string;
+  barang_dikirim_at: string | null;
+  selesai_at: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+function mapTenderRow(r: Record<string, unknown>): LpseTenderRow {
+  return {
+    id: String(r.id),
+    tender_no: r.tender_no ? String(r.tender_no) : null,
+    judul: String(r.judul),
+    instansi: String(r.instansi),
+    platform: String(r.platform),
+    pic_employee_id: r.pic_employee_id ? String(r.pic_employee_id) : null,
+    pic_nama: r.pic_nama ? String(r.pic_nama) : null,
+    dept: r.dept ? String(r.dept) : null,
+    dept_label: r.dept_label ? String(r.dept_label) : null,
+    status: String(r.status),
+    pesan_masuk_at: toIsoTs(r.pesan_masuk_at),
+    barang_dikirim_at: toIsoTsOrNull(r.barang_dikirim_at),
+    selesai_at: toIsoTsOrNull(r.selesai_at),
+    notes: r.notes ? String(r.notes) : null,
+    created_at: toIsoTs(r.created_at),
+    updated_at: toIsoTs(r.updated_at),
+  };
+}
+
+export interface LpseTenderListFilter {
+  status?: string;
+}
+
+export async function listTenders(filter: LpseTenderListFilter = {}): Promise<LpseTenderRow[]> {
+  const sql = db();
+  const rows = await sql`
+    SELECT t.*, e.nama AS pic_nama, d.label AS dept_label
+    FROM lpse_tender t
+    LEFT JOIN employee e ON e.id = t.pic_employee_id
+    LEFT JOIN department d ON d.key = t.dept
+    WHERE ${filter.status ? sql`t.status = ${filter.status}` : sql`true`}
+    ORDER BY t.created_at DESC
+  `;
+  return rows.map(mapTenderRow);
+}
+
+export async function getTender(id: string): Promise<LpseTenderRow | null> {
+  const sql = db();
+  const rows = await sql`
+    SELECT t.*, e.nama AS pic_nama, d.label AS dept_label
+    FROM lpse_tender t
+    LEFT JOIN employee e ON e.id = t.pic_employee_id
+    LEFT JOIN department d ON d.key = t.dept
+    WHERE t.id = ${id}
+  `;
+  return rows.length ? mapTenderRow(rows[0]) : null;
+}
+
+export interface CreateTenderInput {
+  tender_no?: string | null;
+  judul: string;
+  instansi: string;
+  platform?: string;
+  pic_employee_id?: string | null;
+  dept?: string | null;
+  notes?: string | null;
+  created_by_user_id?: string | null;
+}
+
+export async function createTender(input: CreateTenderInput): Promise<LpseTenderRow | ActionResult> {
+  const sql = db();
+  // (input.judul ?? "") — dulu `input.judul.trim()` langsung, crash 500
+  // "Cannot read properties of undefined (reading 'trim')" kalau field-nya
+  // OMITTED (undefined), bukan cuma string kosong. Ditemukan sesi QA jalur
+  // tulis 2026-08-27.
+  const judul = (input.judul ?? "").trim();
+  const instansi = (input.instansi ?? "").trim();
+  if (!judul || !instansi) return { ok: false, error: "judul & instansi wajib" };
+  // Kolomnya text tak berbatas — judul/instansi anomali panjang merusak tata
+  // letak tabel (pola sama F22 serial_number, QA 2026-09-07).
+  if (judul.length > 200) return { ok: false, error: "judul maksimal 200 karakter" };
+  if (instansi.length > 200) return { ok: false, error: "instansi maksimal 200 karakter" };
+  const platform = input.platform ?? "lpse";
+  if (!["lpse", "e_catalog"].includes(platform)) return { ok: false, error: "platform harus lpse atau e_catalog" };
+
+  if (input.dept) {
+    const [dept] = await sql`SELECT 1 FROM department WHERE key = ${input.dept}`;
+    if (!dept) return { ok: false, error: "dept tidak ditemukan" };
+  }
+
+  // PIC dulu opsional — tender jadi tak ada penanggung jawab & tak bisa
+  // diisi belakangan (tak ada jalur edit sama sekali sebelum ini). Sekarang
+  // wajib saat dibuat (ditemukan user 2026-09-07).
+  if (!input.pic_employee_id?.trim()) return { ok: false, error: "pic_employee_id wajib" };
+  const [pic] = await sql`SELECT 1 FROM employee WHERE id = ${input.pic_employee_id}`;
+  if (!pic) return { ok: false, error: "pic_employee_id tidak ditemukan" };
+
+  const tenderNo = input.tender_no?.trim() || null;
+  if (tenderNo) {
+    // nomor tender LPSE identitas unik pengadaan — tanpa cek ini, salah ketik/
+    // duplikat entry tercatat sbg 2 pengadaan terpisah tanpa sinyal apa pun
+    // (ditemukan QA jalur tulis 2026-09-07).
+    const [dup] = await sql`SELECT 1 FROM lpse_tender WHERE tender_no = ${tenderNo}`;
+    if (dup) return { ok: false, error: `tender_no "${tenderNo}" sudah dipakai pengadaan lain` };
+  }
+
+  const rows = await sql`
+    INSERT INTO lpse_tender (tender_no, judul, instansi, platform, pic_employee_id, dept, notes, created_by_user_id)
+    VALUES (
+      ${tenderNo}, ${judul}, ${instansi}, ${platform},
+      ${input.pic_employee_id ?? null}, ${input.dept ?? "penawaran"}, ${input.notes ?? null},
+      ${input.created_by_user_id ?? null}
+    )
+    RETURNING id
+  `;
+  return (await getTender(String(rows[0].id))) as LpseTenderRow;
+}
+
+export interface UpdateTenderInput {
+  tender_no?: string | null;
+  judul?: string;
+  instansi?: string;
+  platform?: string;
+  pic_employee_id?: string;
+  dept?: string | null;
+  notes?: string | null;
+}
+
+// Sebelumnya TIDAK ADA jalur edit sama sekali — tender yang dibuat tanpa PIC
+// (waktu itu masih opsional) tak pernah bisa ditambal, cuma bisa maju status.
+// Ditemukan user 2026-09-07 bareng temuan "PIC harusnya wajib".
+export async function updateTender(id: string, input: UpdateTenderInput): Promise<LpseTenderRow | ActionResult> {
+  const sql = db();
+  const current = await sql`SELECT * FROM lpse_tender WHERE id = ${id}`;
+  if (current.length === 0) return { ok: false, error: "tender tidak ditemukan" };
+
+  const judul = input.judul !== undefined ? input.judul.trim() : String(current[0].judul);
+  const instansi = input.instansi !== undefined ? input.instansi.trim() : String(current[0].instansi);
+  if (!judul || !instansi) return { ok: false, error: "judul & instansi wajib" };
+  // Cap panjang cuma berlaku kalau NILAINYA memang berubah — form web full-edit
+  // selalu resend judul/instansi apa adanya (bukan cuma field yg disentuh
+  // user), jadi cek "!== undefined" saja tak cukup: histori lama yg lebih
+  // panjang dari cap ini (dibuat sebelum cap ada) akan ke-resend utuh cuma
+  // krn user sekadar nambal PIC, dan itu HARUS tetap boleh lewat — yang
+  // dikunci di sini "biarkan histori jelek, jangan tolak edit LAIN".
+  if (judul !== String(current[0].judul) && judul.length > 200) return { ok: false, error: "judul maksimal 200 karakter" };
+  if (instansi !== String(current[0].instansi) && instansi.length > 200) return { ok: false, error: "instansi maksimal 200 karakter" };
+
+  const platform = input.platform ?? String(current[0].platform);
+  if (!["lpse", "e_catalog"].includes(platform)) return { ok: false, error: "platform harus lpse atau e_catalog" };
+
+  // PIC wajib (sama seperti create) — tak boleh dikosongkan lewat edit,
+  // itu justru jalan pintas balik ke keadaan yang mau ditutup fix ini.
+  const picEmployeeId = input.pic_employee_id !== undefined ? input.pic_employee_id.trim() : String(current[0].pic_employee_id ?? "");
+  if (!picEmployeeId) return { ok: false, error: "pic_employee_id wajib" };
+  if (picEmployeeId !== current[0].pic_employee_id) {
+    const [pic] = await sql`SELECT 1 FROM employee WHERE id = ${picEmployeeId}`;
+    if (!pic) return { ok: false, error: "pic_employee_id tidak ditemukan" };
+  }
+
+  const dept = input.dept !== undefined ? input.dept : (current[0].dept as string | null);
+  if (dept && dept !== current[0].dept) {
+    const [d] = await sql`SELECT 1 FROM department WHERE key = ${dept}`;
+    if (!d) return { ok: false, error: "dept tidak ditemukan" };
+  }
+
+  const tenderNo = input.tender_no !== undefined ? (input.tender_no?.trim() || null) : (current[0].tender_no as string | null);
+  if (tenderNo && tenderNo !== current[0].tender_no) {
+    const [dup] = await sql`SELECT 1 FROM lpse_tender WHERE tender_no = ${tenderNo} AND id != ${id}`;
+    if (dup) return { ok: false, error: `tender_no "${tenderNo}" sudah dipakai pengadaan lain` };
+  }
+
+  const notes = input.notes !== undefined ? input.notes : (current[0].notes as string | null);
+
+  await sql`
+    UPDATE lpse_tender SET
+      tender_no = ${tenderNo}, judul = ${judul}, instansi = ${instansi}, platform = ${platform},
+      pic_employee_id = ${picEmployeeId}, dept = ${dept}, notes = ${notes}, updated_at = now()
+    WHERE id = ${id}
+  `;
+  return (await getTender(id)) as LpseTenderRow;
+}
+
+// ── State machine — forward-only, pesan_masuk -> barang_dikirim -> selesai.
+// Tak ada status batal/gagal (blueprint tak menyebutnya, lihat plan F20).
+const TRANSITIONS: Record<string, string[]> = {
+  pesan_masuk: ["barang_dikirim"],
+  barang_dikirim: ["selesai"],
+  selesai: [],
+};
+
+export async function advanceStatus(
+  id: string,
+  toStatus: string,
+  opts: { changed_by_user_id?: string | null; note?: string | null } = {},
+): Promise<ActionResult> {
+  const sql = db();
+  const [row] = await sql`SELECT status FROM lpse_tender WHERE id = ${id}`;
+  if (!row) return { ok: false, error: "tender tidak ditemukan" };
+  const fromStatus = String(row.status);
+  const allowed = TRANSITIONS[fromStatus] ?? [];
+  if (!allowed.includes(toStatus)) {
+    return { ok: false, error: `transisi "${fromStatus}" -> "${toStatus}" tidak diizinkan` };
+  }
+
+  // reminder_sent_at direset tiap naik status supaya status berikutnya
+  // punya jam macet sendiri (pola sama F38 alert_tier_terkirim).
+  if (toStatus === "barang_dikirim") {
+    await sql`
+      UPDATE lpse_tender SET status = ${toStatus}, barang_dikirim_at = now(), reminder_sent_at = NULL, updated_at = now()
+      WHERE id = ${id}
+    `;
+  } else if (toStatus === "selesai") {
+    await sql`
+      UPDATE lpse_tender SET status = ${toStatus}, selesai_at = now(), reminder_sent_at = NULL, updated_at = now()
+      WHERE id = ${id}
+    `;
+  } else {
+    await sql`UPDATE lpse_tender SET status = ${toStatus}, reminder_sent_at = NULL, updated_at = now() WHERE id = ${id}`;
+  }
+
+  await sql`
+    INSERT INTO lpse_tender_status_log (tender_id, from_status, to_status, changed_by_user_id, note)
+    VALUES (${id}, ${fromStatus}, ${toStatus}, ${opts.changed_by_user_id ?? null}, ${opts.note ?? null})
+  `;
+  return { ok: true };
+}
+
+export interface LpseTenderTimelineEntry {
+  from_status: string;
+  to_status: string;
+  actor_name: string | null;
+  note: string | null;
+  at: string;
+}
+
+export async function getTenderTimeline(tenderId: string): Promise<LpseTenderTimelineEntry[]> {
+  const sql = db();
+  const rows = await sql`
+    SELECT sl.from_status, sl.to_status, sl.note, sl.created_at, u.name AS actor_name
+    FROM lpse_tender_status_log sl
+    LEFT JOIN app_user u ON u.id = sl.changed_by_user_id
+    WHERE sl.tender_id = ${tenderId}
+    ORDER BY sl.created_at ASC
+  `;
+  return rows.map((r) => ({
+    from_status: String(r.from_status),
+    to_status: String(r.to_status),
+    actor_name: r.actor_name ? String(r.actor_name) : null,
+    note: r.note ? String(r.note) : null,
+    at: toIsoTs(r.created_at),
+  }));
+}
+
+// ── Cron: reminder kalau tender macet > N hari di status berjalan (belum
+// selesai). Target WA PIC saja — skip diam-diam kalau PIC/WA kosong (bukan
+// fallback ke siapa pun), pola sama runGaHelpdeskOverdueAlert.
+export async function runLpseTenderReminder(): Promise<{ alerts: number }> {
+  const sql = db();
+  const days = Number(process.env.LPSE_TENDER_REMINDER_DAYS ?? 3) || 3;
+  const rows = await sql`
+    SELECT t.*, e.nama AS pic_nama, e.whatsapp AS pic_wa, d.label AS dept_label
+    FROM lpse_tender t
+    LEFT JOIN employee e ON e.id = t.pic_employee_id
+    LEFT JOIN department d ON d.key = t.dept
+    WHERE t.status <> 'selesai'
+      AND t.reminder_sent_at IS NULL
+      AND (CASE t.status WHEN 'pesan_masuk' THEN t.pesan_masuk_at ELSE t.barang_dikirim_at END) < now() - (${days} || ' days')::interval
+  `;
+  if (!rows.length) return { alerts: 0 };
+
+  let alerts = 0;
+  for (const r of rows) {
+    const t = mapTenderRow(r);
+    const wa = r.pic_wa ? String(r.pic_wa) : null;
+    if (!wa) continue; // anti-broadcast tak sengaja tanpa PIC/WA jelas
+
+    const stepLabel = t.status === "pesan_masuk" ? "pesan masuk" : "barang dikirim";
+    const msg = [
+      "📋 *Reminder Tender LPSE/E-Catalog Macet*",
+      `${t.judul} — ${t.instansi}`,
+      `Status "${stepLabel}" sudah ${days}+ hari belum lanjut.`,
+      t.tender_no ? `No. Tender: ${t.tender_no}` : null,
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    const gw = await sendViaWaGateway(wa, msg);
+    // gw.sent juga true di mode stub & dry-run — penanda anti-spam HANYA
+    // ditulis kalau benar-benar terkirim, pola sama F38/F45/F139.
+    if (gw.sent && !gw.stub && !gw.dryRun) {
+      await sql`UPDATE lpse_tender SET reminder_sent_at = now() WHERE id = ${t.id}`;
+      alerts += 1;
+    }
+  }
+  return { alerts };
+}

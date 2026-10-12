@@ -419,9 +419,6 @@ export async function runSeninBrief(opts: {
 
   // Narasi LLM — konteks angka WatchPoint ikut dikirim supaya pertanyaan kritis
   // berpijak pada metric sungguhan, bukan karangan.
-  // callAi di main bisa MELEMPAR (services/ai mati / timeout / balasan bukan
-  // JSON). Ditangkap di sini: narasi gagal tak boleh membatalkan brief — bagian
-  // deterministik tetap disimpan & dikirim ke Direktur.
   const { status, data } = await callAi("/senin-brief", {
     minggu_label: label,
     minggu_rapat: labelRapat,
@@ -439,6 +436,12 @@ export async function runSeninBrief(opts: {
     }),
     dry_run: aiDryRun(),
   }, { timeoutMs: 120_000 }).catch((e: unknown) => ({
+    // services/ai tak terjangkau (mati / timeout / DNS) MELEMPAR, bukan membalas
+    // status. Tanpa penangkap ini seluruh generasi Senin Brief gagal — padahal
+    // tabel & cek deterministik di atas sudah dihitung dari data dan tetap
+    // berguna tanpa narasi. Dipetakan ke 503 supaya jatuh ke cabang
+    // `status !== 200` yang sudah ada: brief tetap terbit, narasinya diganti
+    // peringatan. (Dari `main`, hilang di `dev` — lihat PR back-merge ini.)
     status: 503,
     data: { error: `services/ai tak terjangkau (/senin-brief): ${e instanceof Error ? e.message : String(e)}` } as Record<string, unknown>,
   }));

@@ -157,14 +157,15 @@ Layanan yang sudah memakai setelan ini: `com.wrg.wabridge`, `ai.openclaw.gateway
 ## Scheduler (apps/api/src/scheduler.ts)
 
 Cron in-process, granular env-gate (`*_ENABLED=true` per job; `AGENT_SCHEDULE_ENABLED=false`
-mematikan A1-12). 20 job live. Timezone WIB (wibDate/wibJam). Jadwal di-override via `*_CRON`.
+mematikan A1-12). 21 job live. Timezone WIB (wibDate/wibJam). Jadwal di-override via `*_CRON`.
 Job: reminder-h/h-1, hod-reminder, plan-check, report-check, monitor rekap/resume,
 accurate-sync, notif-tua, daily-summary, weekly-report, detect-leave, extract-competitor,
 weekend-briefing, pola-komunikasi, list-members, notif-quota, watchpoint-snapshot,
-insentif-compute.
+stok-gudang-sync, insentif-compute.
 
 - `accurate-sync` (weekday 6×) sekarang juga refresh mirror **sales-order + delivery-order** (recent) setelah pull invoice → menu Orders/Shipments auto-update.
 - `insentif-compute` (harian 02:30, `INSENTIF_COMPUTE_ENABLED`) menghitung ulang insentif F67 bulan **berjalan + bulan lalu** (pelunasan Agustus bisa terjadi Oktober). Membaca Effort/Presales dari `insentif_effort` (184) dan **tidak menimpa** rekap yang sudah lewat tahap review.
+- `stok-gudang-sync` (harian 02:00, `STOCK_BRANCH_SYNC_ENABLED`) menarik stok **per gudang** ke `item_stock_branch` lewat `item/detail.do` per SKU — jalur satu-satunya yang membawa saldo per gudang (#836). Berbatas per run (`STOCK_BRANCH_SYNC_LIMIT`, default 1500 dari ±5.900 SKU), melanjutkan dari yang paling lama tak tersegarkan. Flag TIDAK ikut `AGENT_SCHEDULE_ENABLED`: job ini menulis ke tabel yang juga diisi CSV opname tim gudang.
 - `watchpoint-snapshot` (Senin 06:00, `WATCHPOINT_SNAPSHOT_ENABLED`) membekukan metric computed minggu lalu ke `watchpoint_weekly` — sumber riwayat tab **WatchPoint → Weekly** & deck PPTX. Tanpa job ini minggu lewat ikut berubah tiap dibuka.
 - `senin-brief` (Senin 06:30, `SENIN_BRIEF_ENABLED`, F85) menilai kesiapan materi 8 HoD atas minggu yang baru tutup (5 cek deterministik → SIAP / PERLU KLARIFIKASI / TIDAK SIAP + Overall Health), simpan ke `senin_brief`, WA ke Direktur. LLM (`/senin-brief`) hanya menulis narasi — status tak pernah dari LLM. Generate ulang manual: `POST /senin-brief/run` (default tanpa WA).
 - `so-pacing` (hari kerja 14:10, `SO_PACING_ALERT_ENABLED`, F21) — pacing sales bulan berjalan per region (faktur netto via `periodAgg` + SO terbuka "Menunggu diproses", salesman dari item `raw->>'salesman1Id'`) vs target bulan `sales_region_target` diprorata hari kerja; WA ke grup HoD hanya bila ada region <50%. Endpoint `GET /sales/so-pacing`, `POST /sales/so-pacing/run` (default dry-run).

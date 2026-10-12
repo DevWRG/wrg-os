@@ -7,8 +7,18 @@ import { ingestAccurateWebhook, normalizeAccurateDate, type AccurateInvoice } fr
 import {
   upsertVendors, upsertItems, upsertSalesOrders, upsertDeliveryOrders, upsertCustomers,
   replaceSalesOrderItems, replaceDeliveryOrderItems, pendingItemDocs, countPendingItemDocs,
+  warehouseAccurateMap, ringkasStokPerGudang, replaceItemStockBranch,
+  pendingStockItems, countPendingStockItems,
 } from "./accurateMirror.js";
 import { upsertFixedAssetDetail, pruneFixedAssets, recordFixedAssetSyncState, markFixedAssetSyncStarted } from "./asetTetap.js";
+import {
+  upsertAccuratePurchaseOrders, pendingAccuratePoDetails, countPendingAccuratePoDetails, replaceAccuratePoItems,
+  type AccuratePoHeader, type AccuratePoItem,
+} from "./purchase-order.js";
+import {
+  upsertAccurateReceipts, pendingAccurateReceiptDetails, countPendingAccurateReceiptDetails, replaceAccurateReceiptLines,
+  type AccurateReceiptHeader, type AccurateReceiptLine,
+} from "./inbound-receiving.js";
 
 // Puller Accurate Online (pengganti legacy sync_accurate.sh). Tarik sales-invoice
 // header+items dari zeus.accurate.id → mirror penuh accurate_* + refresh ar_aging.
@@ -211,12 +221,35 @@ export interface AccurateSyncResult {
 
 // Sync sales-invoice. invoiceId → satu invoice; selainnya incremental (window
 // `days` hari, recent-first, stop saat transDate < threshold).
+// Batas halaman pada syncer master (vendor/customer/item) ADA supaya loop tak
+// pernah tak berujung kalau API mengembalikan halaman penuh selamanya. Tapi
+// sampai #1177 batas itu BERHENTI DIAM-DIAM: `break` karena batas dan `break`
+// karena halaman terakhir sama-sama keluar dari loop dan sama-sama membalas
+// `ok: true`, jadi hasil terpotong menyamar jadi sapuan lengkap.
+//
+// Itu bukan hipotesis — persis begitu yang terjadi pada backfill faktur:
+// berhenti di 10.000 dari 11.323 baris, responsnya tetap ok, dan runner-nya
+// mencetak hijau. Katalog item sekarang 5.893 dari kapasitas 10.000 (59%),
+// jadi jarak ke batas itu tidak besar.
+//
+// Helper ini menyeragamkan pelaporannya: kalau batas yang menghentikan, hasilnya
+// ditandai `cappedByPages` DAN dicatat ke log. Yang memotong wajib terlihat.
+export function laporBatasHalaman(nama: string, page: number, maxPages: number, perPage: number): boolean {
+  if (page < maxPages) return false;
+  console.warn(
+    `[accurate-sync] ${nama}: BERHENTI di batas ${maxPages} halaman (${maxPages * perPage} baris) — ` +
+    "hasil kemungkinan TERPOTONG, bukan selesai. Naikkan batasnya kalau data memang lebih banyak.",
+  );
+  return true;
+}
+
 // Tarik master vendor (vendor/list.do) → mirror accurate_vendor. Paginated (100/hal).
-export async function syncVendors(): Promise<{ ok: boolean; synced: number; error?: string }> {
+export async function syncVendors(): Promise<{ ok: boolean; synced: number; error?: string; cappedByPages?: boolean }> {
   const creds = loadCreds();
   if (!creds) return { ok: false, synced: 0, error: "kredensial Accurate tak tersedia" };
   let page = 1;
   let synced = 0;
+  let capped = false;
   for (;;) {
     const list = await accGet(creds, "/accurate/api/vendor/list.do", `sp.page=${page}&sp.pageSize=100&fields=id,name,vendorBranchName`);
     const rows = Array.isArray(list.d) ? (list.d as Array<Record<string, unknown>>) : [];
@@ -230,20 +263,22 @@ export async function syncVendors(): Promise<{ ok: boolean; synced: number; erro
       })),
     );
     synced += rows.length;
-    if (rows.length < 100 || page >= 50) break;
+    if (rows.length < 100) break;
+    if (laporBatasHalaman("vendor", page, 50, 100)) { capped = true; break; }
     page += 1;
   }
-  return { ok: true, synced };
+  return { ok: true, synced, ...(capped ? { cappedByPages: true } : {}) };
 }
 
 // Tarik master customer (customer/list.do) → mirror accurate_customer (id/no/name).
 // Backfill nama yg kosong (mirror cuma diisi dari raw invoice yg kadang tanpa nama).
 // Paginated 100/hal. Guard upsert COALESCE(NULLIF(...)) → gak nge-blank nama yg udah ada.
-export async function syncCustomers(): Promise<{ ok: boolean; synced: number; error?: string }> {
+export async function syncCustomers(): Promise<{ ok: boolean; synced: number; error?: string; cappedByPages?: boolean }> {
   const creds = loadCreds();
   if (!creds) return { ok: false, synced: 0, error: "kredensial Accurate tak tersedia" };
   let page = 1;
   let synced = 0;
+  let capped = false;
   for (;;) {
     const list = await accGet(creds, "/accurate/api/customer/list.do", `sp.page=${page}&sp.pageSize=100&fields=id,name,customerNo`);
     const rows = Array.isArray(list.d) ? (list.d as Array<Record<string, unknown>>) : [];
@@ -257,20 +292,22 @@ export async function syncCustomers(): Promise<{ ok: boolean; synced: number; er
       })),
     );
     synced += rows.length;
-    if (rows.length < 100 || page >= 100) break;
+    if (rows.length < 100) break;
+    if (laporBatasHalaman("customer", page, 100, 100)) { capped = true; break; }
     page += 1;
     await new Promise((r) => setTimeout(r, 150));
   }
-  return { ok: true, synced };
+  return { ok: true, synced, ...(capped ? { cappedByPages: true } : {}) };
 }
 
 // Tarik full katalog item (item/list.do) + STOK → mirror accurate_item.
 // Paginated (100/hal, ~58 hal utk 5.794 item). Untuk menu Inventory & Products.
-export async function syncItems(): Promise<{ ok: boolean; synced: number; error?: string }> {
+export async function syncItems(): Promise<{ ok: boolean; synced: number; error?: string; cappedByPages?: boolean }> {
   const creds = loadCreds();
   if (!creds) return { ok: false, synced: 0, error: "kredensial Accurate tak tersedia" };
   let page = 1;
   let synced = 0;
+  let capped = false;
   for (;;) {
     const list = await accGet(creds, "/accurate/api/item/list.do", `sp.page=${page}&sp.pageSize=100&fields=id,no,name,itemType,unitPrice,quantity,availableToSell,unit1`);
     const rows = Array.isArray(list.d) ? (list.d as Array<Record<string, unknown>>) : [];
@@ -289,11 +326,12 @@ export async function syncItems(): Promise<{ ok: boolean; synced: number; error?
       })),
     );
     synced += rows.length;
-    if (rows.length < 100 || page >= 100) break;
+    if (rows.length < 100) break;
+    if (laporBatasHalaman("item", page, 100, 100)) { capped = true; break; }
     page += 1;
     await new Promise((r) => setTimeout(r, 150));
   }
-  return { ok: true, synced };
+  return { ok: true, synced, ...(capped ? { cappedByPages: true } : {}) };
 }
 
 // Tarik sales-order TERBARU (sales-order/list.do, sort transDate desc) → mirror
@@ -308,7 +346,7 @@ function allOlderThan(rows: { trans_date?: string | null }[], sinceDays: number)
   return dated.length > 0 && dated.every((d) => d < cutoff);
 }
 
-export async function syncSalesOrders(opts: { maxPages?: number; sinceDays?: number } = {}): Promise<{ ok: boolean; synced: number; error?: string }> {
+export async function syncSalesOrders(opts: { maxPages?: number; sinceDays?: number } = {}): Promise<{ ok: boolean; synced: number; error?: string; cappedByPages?: boolean }> {
   const creds = loadCreds();
   if (!creds) return { ok: false, synced: 0, error: "kredensial Accurate tak tersedia" };
   // Batas halaman tetap ada sebagai pagar, tapi yang menentukan berhenti adalah
@@ -320,6 +358,7 @@ export async function syncSalesOrders(opts: { maxPages?: number; sinceDays?: num
   const sinceDays = opts.sinceDays ?? 120;
   let page = 1;
   let synced = 0;
+  let capped = false;
   let cutoffReached = false;
   for (; page <= maxPages && !cutoffReached; page++) {
     const list = await accGet(
@@ -354,20 +393,26 @@ export async function syncSalesOrders(opts: { maxPages?: number; sinceDays?: num
     synced += rows.length;
     cutoffReached = allOlderThan(mapped, sinceDays);
     if (rows.length < 100) break;
+    // Loop berhenti krn batas halaman TANPA pernah menyentuh cutoff = hasil
+    // terpotong, bukan "sudah mundur cukup jauh". Bedanya penting: yang kedua
+    // memang tujuannya (recent-only by design), yang pertama kehilangan data
+    // dalam jendela yang diminta.
+    if (page >= maxPages && !cutoffReached) capped = laporBatasHalaman("sales-order", page, maxPages, 100);
     await sleep(150);
   }
-  return { ok: true, synced };
+  return { ok: true, synced, ...(capped ? { cappedByPages: true } : {}) };
 }
 
 // Tarik delivery-order TERBARU (delivery-order/list.do, sort transDate desc) →
 // mirror accurate_delivery_order utk menu Shipments. Volume ~11.9rb → recent saja.
-export async function syncDeliveryOrders(opts: { maxPages?: number; sinceDays?: number } = {}): Promise<{ ok: boolean; synced: number; error?: string }> {
+export async function syncDeliveryOrders(opts: { maxPages?: number; sinceDays?: number } = {}): Promise<{ ok: boolean; synced: number; error?: string; cappedByPages?: boolean }> {
   const creds = loadCreds();
   if (!creds) return { ok: false, synced: 0, error: "kredensial Accurate tak tersedia" };
   const maxPages = opts.maxPages ?? 40;
   const sinceDays = opts.sinceDays ?? 120;
   let page = 1;
   let synced = 0;
+  let capped = false;
   let cutoffReached = false;
   for (; page <= maxPages && !cutoffReached; page++) {
     const list = await accGet(
@@ -399,9 +444,14 @@ export async function syncDeliveryOrders(opts: { maxPages?: number; sinceDays?: 
     synced += rows.length;
     cutoffReached = allOlderThan(mapped, sinceDays);
     if (rows.length < 100) break;
+    // Loop berhenti krn batas halaman TANPA pernah menyentuh cutoff = hasil
+    // terpotong, bukan "sudah mundur cukup jauh". Bedanya penting: yang kedua
+    // memang tujuannya (recent-only by design), yang pertama kehilangan data
+    // dalam jendela yang diminta.
+    if (page >= maxPages && !cutoffReached) capped = laporBatasHalaman("delivery-order", page, maxPages, 100);
     await sleep(150);
   }
-  return { ok: true, synced };
+  return { ok: true, synced, ...(capped ? { cappedByPages: true } : {}) };
 }
 
 // ── Tarik baris item SO/DO ke mirror (migrasi 081) ────────────────
@@ -454,6 +504,69 @@ async function syncDocItems(
 
 export const syncSalesOrderItems = (opts: { sinceDays?: number; limit?: number } = {}) => syncDocItems("so", opts);
 export const syncDeliveryOrderItems = (opts: { sinceDays?: number; limit?: number } = {}) => syncDocItems("do", opts);
+
+/**
+ * F37 (#836) — tarik stok PER GUDANG ke `item_stock_branch`.
+ *
+ * Jalur yang dipakai `item/detail.do` per SKU, dan itu bukan pilihan: probe di
+ * prod membuktikan `item/list.do` dengan field/filter gudang mengabaikannya
+ * DIAM-DIAM (balas 200 s=true, kunci baris tetap {id,no,name,quantity}), dan
+ * seluruh varian endpoint mutasi/opname membalas 404. Rinciannya di migrasi 166.
+ *
+ * Karena itu sapuan penuh = ±5.900 panggilan. HARIAN, bukan tiap 5 menit —
+ * jangan dipasang di cron pendek. Tiap run BERBATAS (`limit`) dan melanjutkan
+ * dari SKU yang paling lama tak tersegarkan (`accurate_item.stock_synced_at`),
+ * jadi run yang mati di tengah tidak mengulang dari awal.
+ *
+ * Satu panggilan detail membawa SEMUA gudang untuk SKU itu sekaligus, jadi
+ * ongkosnya jumlah-item, BUKAN jumlah-item × jumlah-gudang.
+ */
+export async function syncItemStockBranch(
+  opts: { limit?: number; jedaMs?: number } = {},
+): Promise<{ ok: boolean; items: number; rows: number; pending: number; skipped: number; error?: string }> {
+  const creds = loadCreds();
+  if (!creds) return { ok: false, items: 0, rows: 0, pending: 0, skipped: 0, error: "kredensial Accurate tak tersedia" };
+
+  const map = await warehouseAccurateMap();
+  if (map.length === 0) {
+    // Bukan sekadar "tak ada kerjaan": tanpa allowlist, puller yang naif akan
+    // menulis SEMUA gudang termasuk 96 milik customer. Berhenti keras supaya
+    // penyebabnya (seed migrasi 166 belum jalan) terbaca, bukan diam-diam
+    // menghasilkan nol baris yang terlihat seperti "stok memang kosong".
+    return {
+      ok: false, items: 0, rows: 0, pending: 0, skipped: 0,
+      error: "warehouse_accurate kosong — migrasi 166 belum jalan?",
+    };
+  }
+  const kodeDipetakan = [...new Set(map.map((m) => m.warehouse_kode))];
+
+  const limit = opts.limit ?? 600;
+  const jeda = opts.jedaMs ?? 150;
+  const ids = await pendingStockItems(limit);
+
+  let items = 0;
+  let rows = 0;
+  let skipped = 0;
+  for (const id of ids) {
+    const det = await accGet(creds, "/accurate/api/item/detail.do", `id=${id}`);
+    if (det?.s !== true) {
+      // SKU bermasalah tak boleh menghentikan sisanya. stock_synced_at
+      // SENGAJA tidak disentuh → SKU ini tetap di antrean depan dan dicoba
+      // lagi siklus berikutnya.
+      skipped += 1;
+      await sleep(jeda);
+      continue;
+    }
+    const d = det.d as Detail;
+    const entries = (d?.detailWarehouseData ?? []) as Detail[];
+    rows += await replaceItemStockBranch(id, ringkasStokPerGudang(entries, map), kodeDipetakan);
+    items += 1;
+    await sleep(jeda);
+  }
+
+  const pending = await countPendingStockItems();
+  return { ok: true, items, rows, pending, skipped };
+}
 
 // Ambil baris produk (detailItem) satu delivery-order via detail.do — dipakai
 // on-demand saat user buka detail Shipments (bukan disimpan tiap sync).
@@ -756,11 +869,7 @@ async function syncFixedAssetsInner(opts: { maxPages?: number }): Promise<FixedA
         if (id > 0) ids.push(id);
       }
       if (rows.length < perPage || (rowCount != null && ids.length >= rowCount)) break;
-      if (page >= maxPages) {
-        console.warn(`[accurate-sync] fixed-asset: BERHENTI di batas ${maxPages} halaman — daftar TERPOTONG`);
-        capped = true;
-        break;
-      }
+      if (laporBatasHalaman("fixed-asset", page, maxPages, perPage)) { capped = true; break; }
       await sleep(150);
     }
   } catch (e) {
@@ -794,4 +903,377 @@ async function syncFixedAssetsInner(opts: { maxPages?: number }): Promise<FixedA
   };
   await recordFixedAssetSyncState(res.ok, { ...res });
   return res;
+}
+
+// ── F13 PO Tracker = cermin Accurate (migrasi 205) ─────────────────────────
+//
+// Probe 12 Okt 2026: purchase-order/list.do MENGHORMATI fields= (number,
+// vendor, transDate, shipDate, status, statusName, approvalStatus,
+// percentShipped, totalAmount, lastUpdate) dan bisa di-sort lastUpdate desc —
+// jadi sinkron header INKREMENTAL: berhenti begitu satu halaman seluruhnya
+// lebih tua dari lastUpdate terbaru yang sudah tersimpan. Baris barang
+// (detail.do, satu panggilan per PO) hanya ditarik untuk PO yang lastUpdate-nya
+// berubah sejak tarikan detail terakhir.
+//
+// Cakupan (keputusan user 12 Okt): PO bertanggal 2026+ DITAMBAH PO lebih tua
+// yang masih terbuka (Menunggu/Sebagian diproses — 91 PO 2025 saat probe;
+// justru itu yang perlu dipantau), DITAMBAH PO yang sudah ada di cermin (supaya
+// PO 2025 yang lalu ditutup ikut ter-update, bukan beku di status lama).
+//
+// shipDate TIDAK otomatis jadi ETA: 2.599/2.683 PO punya shipDate = transDate
+// (nilai bawaan form Accurate). Dipakai sebagai eta_date hanya kalau diisi
+// lebih lambat dari tanggal PO — kalau tidak, kartu "Telat" menggelembung.
+
+const PO_SINCE = "2026-01-01";
+const PO_OPEN_STATUSES = new Set(["Menunggu diproses", "Sebagian diproses"]);
+
+/** "dd/mm/yyyy" → "yyyy-mm-dd" (null kalau bentuknya lain). */
+function accDate(v: unknown): string | null {
+  const m = /^(\d{2})\/(\d{2})\/(\d{4})/.exec(String(v ?? ""));
+  return m ? `${m[3]}-${m[2]}-${m[1]}` : null;
+}
+
+/** "dd/mm/yyyy HH:MM:SS" (WIB) → ISO dengan offset +07:00. */
+function accDateTime(v: unknown): string | null {
+  const m = /^(\d{2})\/(\d{2})\/(\d{4}) (\d{2}):(\d{2}):(\d{2})$/.exec(String(v ?? ""));
+  return m ? `${m[3]}-${m[2]}-${m[1]}T${m[4]}:${m[5]}:${m[6]}+07:00` : null;
+}
+
+export interface PurchaseOrderSyncResult {
+  ok: boolean;
+  error?: string;
+  headers: number;
+  skipped_scope: number;
+  skipped_conflict: number;
+  details: number;
+  detail_failed: number;
+  lines: number;
+  pending_details: number;
+  full: boolean;
+  cappedByPages?: boolean;
+}
+
+let poSyncRunning = false;
+export const purchaseOrderSyncBusy = () => poSyncRunning;
+
+export async function syncPurchaseOrders(opts: { full?: boolean; detailLimit?: number; maxPages?: number } = {}): Promise<PurchaseOrderSyncResult> {
+  const empty = { headers: 0, skipped_scope: 0, skipped_conflict: 0, details: 0, detail_failed: 0, lines: 0, pending_details: 0, full: !!opts.full };
+  if (poSyncRunning) return { ok: false, error: "sinkron PO sedang berjalan", ...empty };
+  const creds = loadCreds();
+  if (!creds) return { ok: false, error: "kredensial Accurate tak tersedia", ...empty };
+  poSyncRunning = true;
+  try {
+    const res = await syncPurchaseOrdersInner(creds, opts);
+    await recordPoSyncState(res);
+    return res;
+  } catch (e) {
+    const res = { ok: false, error: String((e as Error)?.message ?? e), ...empty };
+    await recordPoSyncState(res).catch(() => {});
+    return res;
+  } finally {
+    poSyncRunning = false;
+  }
+}
+
+async function recordPoSyncState(res: PurchaseOrderSyncResult): Promise<void> {
+  const sql = db();
+  const summary = JSON.parse(JSON.stringify(res));
+  await sql`
+    INSERT INTO accurate_sync_state (entity, last_synced_at, last_run_ok, last_run_summary)
+    VALUES ('purchase-order', now(), ${res.ok}, ${sql.json(summary)})
+    ON CONFLICT (entity) DO UPDATE SET last_synced_at = now(), last_run_ok = ${res.ok},
+      last_run_summary = ${sql.json(summary)}
+  `;
+}
+
+async function syncPurchaseOrdersInner(
+  creds: Creds,
+  opts: { full?: boolean; detailLimit?: number; maxPages?: number },
+): Promise<PurchaseOrderSyncResult> {
+  const sql = db();
+  const maxPages = opts.maxPages ?? 60;
+  const detailLimit = opts.detailLimit ?? 300;
+  const [wm] = await sql`SELECT max(accurate_last_update)::text AS w FROM purchase_order WHERE source = 'accurate'`;
+  // Watermark mundur 1 jam: lastUpdate Accurate per detik, dua PO bisa
+  // berbagi detik yang sama di batas halaman. Upsert idempoten, jadi tumpang
+  // tindih kecil lebih murah daripada satu PO terlewat.
+  const full = opts.full || !wm?.w;
+  const watermark = full ? null : new Date(new Date(String(wm.w)).getTime() - 3600_000);
+
+  let headers = 0;
+  let skippedScope = 0;
+  let skippedConflict = 0;
+  let capped = false;
+  let page = 1;
+  for (; page <= maxPages; page++) {
+    const list = await accGet(
+      creds,
+      "/accurate/api/purchase-order/list.do",
+      `sp.page=${page}&sp.pageSize=100&sp.sort=lastUpdate|desc&fields=id,number,transDate,shipDate,status,statusName,approvalStatus,percentShipped,totalAmount,vendor,description,lastUpdate`,
+    );
+    if (list.s !== true) throw new Error(`purchase-order/list.do gagal di halaman ${page}`);
+    const rows = Array.isArray(list.d) ? (list.d as Array<Record<string, unknown>>) : [];
+    if (rows.length === 0) break;
+
+    const ids = rows.map((r) => Number(r.id));
+    const existing = new Set(
+      (await sql`SELECT accurate_id FROM purchase_order WHERE accurate_id = ANY(${ids}::bigint[])`).map((r) => Number(r.accurate_id)),
+    );
+    const mapped: AccuratePoHeader[] = [];
+    let allOlder = true;
+    for (const v of rows) {
+      const lastUpdate = accDateTime(v.lastUpdate);
+      if (!watermark || !lastUpdate || new Date(lastUpdate) >= watermark) allOlder = false;
+      const orderDate = accDate(v.transDate);
+      const statusName = v.statusName != null ? String(v.statusName) : null;
+      const inScope =
+        existing.has(Number(v.id)) ||
+        (orderDate != null && orderDate >= PO_SINCE) ||
+        (statusName != null && PO_OPEN_STATUSES.has(statusName));
+      if (!orderDate || !inScope) { skippedScope++; continue; }
+      const shipDate = accDate(v.shipDate);
+      const vendor = v.vendor && typeof v.vendor === "object" ? (v.vendor as { id?: unknown; name?: unknown }) : null;
+      const vendorId = Number(vendor?.id);
+      mapped.push({
+        accurate_id: Number(v.id),
+        po_number: String(v.number ?? `ACC-${v.id}`),
+        vendor_id: Number.isFinite(vendorId) && vendorId > 0 ? vendorId : null,
+        vendor_name: vendor?.name != null ? String(vendor.name) : "(vendor tak diketahui)",
+        order_date: orderDate,
+        eta_date: shipDate && shipDate > orderDate ? shipDate : null,
+        accurate_status: statusName,
+        accurate_approval: v.approvalStatus != null ? String(v.approvalStatus) : null,
+        percent_shipped: v.percentShipped != null ? Number(v.percentShipped) : null,
+        total_amount: v.totalAmount != null ? Number(v.totalAmount) : null,
+        description: v.description != null && String(v.description).trim() ? String(v.description) : null,
+        last_update: lastUpdate,
+      });
+    }
+    const up = await upsertAccuratePurchaseOrders(mapped);
+    headers += up.upserted;
+    skippedConflict += up.skipped;
+    if (rows.length < 100) break;
+    if (!full && allOlder) break;
+    if (page >= maxPages) capped = laporBatasHalaman("purchase-order", page, maxPages, 100);
+    await sleep(150);
+  }
+
+  let details = 0;
+  let detailFailed = 0;
+  let lines = 0;
+  for (const po of await pendingAccuratePoDetails(detailLimit)) {
+    const det = await accGet(creds, "/accurate/api/purchase-order/detail.do", `id=${po.accurate_id}`);
+    if (det?.s !== true) {
+      // PO bermasalah (mis. dihapus di Accurate) tak boleh menghentikan sisanya;
+      // items_last_update tetap basi → dicoba lagi siklus berikutnya.
+      detailFailed++;
+      await sleep(150);
+      continue;
+    }
+    const d = det.d as Detail;
+    const items: AccuratePoItem[] = ((d?.detailItem ?? []) as Detail[])
+      .filter((it) => Number(it.quantity) > 0 && it.id != null)
+      .map((it) => ({
+        accurate_detail_id: Number(it.id),
+        item_no: it.item?.no != null ? String(it.item.no) : null,
+        item_desc: String(it.detailName ?? it.item?.name ?? "(tanpa nama)"),
+        qty_ordered: Number(it.quantity),
+        qty_shipped: num(it.shipQuantity),
+        unit: it.itemUnit?.name != null ? String(it.itemUnit.name) : null,
+        unit_price: it.unitPrice != null ? Number(it.unitPrice) : null,
+        warehouse_name: it.warehouse?.name != null ? String(it.warehouse.name) : null,
+        notes: it.detailNotes != null && String(it.detailNotes).trim() ? String(it.detailNotes) : null,
+      }));
+    lines += await replaceAccuratePoItems(po.id, po.last_update, items);
+    details++;
+    await sleep(150);
+  }
+
+  return {
+    ok: true,
+    headers,
+    skipped_scope: skippedScope,
+    skipped_conflict: skippedConflict,
+    details,
+    detail_failed: detailFailed,
+    lines,
+    pending_details: await countPendingAccuratePoDetails(),
+    full,
+    ...(capped ? { cappedByPages: true } : {}),
+  };
+}
+
+// ── F36 Inbound = Penerimaan Barang Accurate (migrasi 206) ─────────────────
+//
+// Probe 12 Okt 2026: receive-item/list.do menghormati fields (number =
+// nomor INBOUND, receiveNumber = surat jalan vendor, transDate, shipDate,
+// statusName Diajukan/Diterima/Difaktur, approvalStatus, vendor, lastUpdate)
+// dan sort lastUpdate — pola inkremental yang sama dengan syncPurchaseOrders.
+// detail.do membawa baris barang + nomor & id PO + gudang + catatan LOT/ED.
+//
+// Cakupan: penerimaan bertanggal >= INBOUND_ACCURATE_SINCE (default
+// 2026-10-01) + yang sudah ada di cermin. Penerimaan lebih tua sudah lama
+// diperiksa fisik; membuatkan checklist untuknya hanya menimbun "Proses".
+
+export interface ReceiveItemSyncResult {
+  ok: boolean;
+  error?: string;
+  headers: number;
+  created: number;
+  skipped_scope: number;
+  details: number;
+  detail_failed: number;
+  lines: number;
+  pending_details: number;
+  full: boolean;
+  since: string;
+  cappedByPages?: boolean;
+}
+
+let receiveSyncRunning = false;
+export const receiveItemSyncBusy = () => receiveSyncRunning;
+
+function inboundSince(): string {
+  const v = process.env.INBOUND_ACCURATE_SINCE ?? "";
+  return /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : "2026-10-01";
+}
+
+export async function syncReceiveItems(opts: { full?: boolean; detailLimit?: number; maxPages?: number } = {}): Promise<ReceiveItemSyncResult> {
+  const since = inboundSince();
+  const empty = { headers: 0, created: 0, skipped_scope: 0, details: 0, detail_failed: 0, lines: 0, pending_details: 0, full: !!opts.full, since };
+  if (receiveSyncRunning) return { ok: false, error: "sinkron penerimaan barang sedang berjalan", ...empty };
+  const creds = loadCreds();
+  if (!creds) return { ok: false, error: "kredensial Accurate tak tersedia", ...empty };
+  receiveSyncRunning = true;
+  try {
+    const res = await syncReceiveItemsInner(creds, since, opts);
+    await recordReceiveSyncState(res);
+    return res;
+  } catch (e) {
+    const res = { ok: false, error: String((e as Error)?.message ?? e), ...empty };
+    await recordReceiveSyncState(res).catch(() => {});
+    return res;
+  } finally {
+    receiveSyncRunning = false;
+  }
+}
+
+async function recordReceiveSyncState(res: ReceiveItemSyncResult): Promise<void> {
+  const sql = db();
+  const summary = JSON.parse(JSON.stringify(res));
+  await sql`
+    INSERT INTO accurate_sync_state (entity, last_synced_at, last_run_ok, last_run_summary)
+    VALUES ('receive-item', now(), ${res.ok}, ${sql.json(summary)})
+    ON CONFLICT (entity) DO UPDATE SET last_synced_at = now(), last_run_ok = ${res.ok},
+      last_run_summary = ${sql.json(summary)}
+  `;
+}
+
+async function syncReceiveItemsInner(
+  creds: Creds,
+  since: string,
+  opts: { full?: boolean; detailLimit?: number; maxPages?: number },
+): Promise<ReceiveItemSyncResult> {
+  const sql = db();
+  const maxPages = opts.maxPages ?? 60;
+  const detailLimit = opts.detailLimit ?? 300;
+  const [wm] = await sql`SELECT max(accurate_last_update)::text AS w FROM inbound_receiving WHERE source = 'accurate'`;
+  const full = opts.full || !wm?.w;
+  const watermark = full ? null : new Date(new Date(String(wm.w)).getTime() - 3600_000);
+
+  let headers = 0;
+  let created = 0;
+  let skippedScope = 0;
+  let capped = false;
+  for (let page = 1; page <= maxPages; page++) {
+    const list = await accGet(
+      creds,
+      "/accurate/api/receive-item/list.do",
+      `sp.page=${page}&sp.pageSize=100&sp.sort=lastUpdate|desc&fields=id,number,receiveNumber,transDate,shipDate,statusName,approvalStatus,vendor,description,lastUpdate`,
+    );
+    if (list.s !== true) throw new Error(`receive-item/list.do gagal di halaman ${page}`);
+    const rows = Array.isArray(list.d) ? (list.d as Array<Record<string, unknown>>) : [];
+    if (rows.length === 0) break;
+
+    const ids = rows.map((r) => Number(r.id));
+    const existing = new Set(
+      (await sql`SELECT accurate_id FROM inbound_receiving WHERE accurate_id = ANY(${ids}::bigint[])`).map((r) => Number(r.accurate_id)),
+    );
+    const mapped: AccurateReceiptHeader[] = [];
+    let allOlder = true;
+    for (const v of rows) {
+      const lastUpdate = accDateTime(v.lastUpdate);
+      if (!watermark || !lastUpdate || new Date(lastUpdate) >= watermark) allOlder = false;
+      const recvDate = accDate(v.transDate);
+      if (!recvDate || !(existing.has(Number(v.id)) || recvDate >= since)) { skippedScope++; continue; }
+      const vendor = v.vendor && typeof v.vendor === "object" ? (v.vendor as { id?: unknown; name?: unknown }) : null;
+      const vendorId = Number(vendor?.id);
+      mapped.push({
+        accurate_id: Number(v.id),
+        accurate_number: String(v.number ?? `RI-${v.id}`),
+        supplier_doc_number: v.receiveNumber != null && String(v.receiveNumber).trim() ? String(v.receiveNumber) : null,
+        vendor_id: Number.isFinite(vendorId) && vendorId > 0 ? vendorId : null,
+        vendor_name: vendor?.name != null ? String(vendor.name) : "(vendor tak diketahui)",
+        received_date: recvDate,
+        ship_date: accDate(v.shipDate),
+        accurate_status: v.statusName != null ? String(v.statusName) : null,
+        accurate_approval: v.approvalStatus != null ? String(v.approvalStatus) : null,
+        description: v.description != null && String(v.description).trim() ? String(v.description) : null,
+        last_update: lastUpdate,
+      });
+    }
+    const up = await upsertAccurateReceipts(mapped);
+    headers += up.upserted;
+    created += up.created;
+    if (rows.length < 100) break;
+    if (!full && allOlder) break;
+    if (page >= maxPages) capped = laporBatasHalaman("receive-item", page, maxPages, 100);
+    await sleep(150);
+  }
+
+  let details = 0;
+  let detailFailed = 0;
+  let lines = 0;
+  for (const rc of await pendingAccurateReceiptDetails(detailLimit)) {
+    const det = await accGet(creds, "/accurate/api/receive-item/detail.do", `id=${rc.accurate_id}`);
+    if (det?.s !== true) {
+      detailFailed++;
+      await sleep(150);
+      continue;
+    }
+    const d = det.d as Detail;
+    const items: AccurateReceiptLine[] = ((d?.detailItem ?? []) as Detail[])
+      .filter((it) => it.id != null)
+      .map((it) => {
+        const poId = Number(it.purchaseOrderId ?? it.purchaseOrder?.id);
+        return {
+          accurate_detail_id: Number(it.id),
+          item_no: it.item?.no != null ? String(it.item.no) : null,
+          item_desc: String(it.detailName ?? it.item?.name ?? "(tanpa nama)"),
+          qty: num(it.quantity),
+          unit: it.itemUnit?.name != null ? String(it.itemUnit.name) : null,
+          warehouse_name: it.warehouse?.name != null ? String(it.warehouse.name) : null,
+          po_number: it.purchaseOrder?.number != null ? String(it.purchaseOrder.number) : null,
+          accurate_po_id: Number.isFinite(poId) && poId > 0 ? poId : null,
+          notes: it.detailNotes != null && String(it.detailNotes).trim() ? String(it.detailNotes) : null,
+        };
+      });
+    lines += await replaceAccurateReceiptLines(rc.id, rc.last_update, items);
+    details++;
+    await sleep(150);
+  }
+
+  return {
+    ok: true,
+    headers,
+    created,
+    skipped_scope: skippedScope,
+    details,
+    detail_failed: detailFailed,
+    lines,
+    pending_details: await countPendingAccurateReceiptDetails(),
+    full,
+    since,
+    ...(capped ? { cappedByPages: true } : {}),
+  };
 }

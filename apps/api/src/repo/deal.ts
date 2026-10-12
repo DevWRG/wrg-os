@@ -2,6 +2,7 @@ import { db } from "../db.js";
 import type { PlanCustomer } from "../parsers/plan.js";
 import type { ReportItem } from "../parsers/report.js";
 import { type DataScope, isRestricted } from "./access-scope.js";
+import { enqueueDuplicateCustomerName, type DupNameCandidate } from "./hitl.js";
 
 // Jembatan parser CRM (legacy #PLAN/#REPORT) ke schema kanonik D1 (deal/spt_state_log).
 // MAPPING:
@@ -82,6 +83,62 @@ function custId(name: string): string {
   );
 }
 
+// F9 Duplicate Customer Name Alert. 0.72 SENGAJA lebih tinggi dari AUTO (0.7)
+// #REPORT di atas, bukan lebih rendah — preseden F142 Price Book: nama identik
+// tak selalu berarti entitas sama (2 cabang bisa share nama), jadi ambang
+// rendah cuma bikin alert palsu yang ngerusak kepercayaan ke dashboard HITL.
+const DUP_THRESHOLD = 0.72;
+
+// Best-effort, dipanggil setelah deal ke-INSERT — GAK PERNAH melempar (ini
+// alert, bukan gate; blocking create deal krn tebakan heuristik akan
+// mengganggu rep yang legit). 2 sinyal independen:
+//  A) vs customer_name deal LAIN (semua AM/cabang — inti masalahnya justru
+//     2 AM beda yang mengetik nama customer sama dengan ejaan beda).
+//  B) vs accurate_customer.name (customer yang sudah dikenal Accurate) — deal
+//     baru account_id-nya SELALU NULL, jadi ini nangkep "rep ngetik nama baru
+//     padahal customer-nya udah ada, seharusnya di-link bukan bikin nama baru".
+async function flagDuplicateCustomerName(dealId: string, customerName: string, amId: string | null, cabang: string | null): Promise<void> {
+  const sql = db();
+  const norm = custId(customerName);
+
+  const peers = await sql`
+    SELECT deal_id, customer_name, am_id, cabang, similarity(customer_name, ${customerName}) AS score
+    FROM deal
+    WHERE deal_id != ${dealId} AND similarity(customer_name, ${customerName}) >= ${DUP_THRESHOLD}
+    ORDER BY score DESC LIMIT 5
+  `;
+  const known = await sql`
+    SELECT id, name, similarity(name, ${customerName}) AS score
+    FROM accurate_customer
+    WHERE name IS NOT NULL AND similarity(name, ${customerName}) >= ${DUP_THRESHOLD}
+    ORDER BY score DESC LIMIT 5
+  `;
+
+  const candidates: DupNameCandidate[] = [
+    ...peers.map((r) => ({
+      kind: "deal" as const,
+      ref_id: String(r.deal_id),
+      customer_name: String(r.customer_name),
+      am_id: r.am_id == null ? null : String(r.am_id),
+      cabang: r.cabang == null ? null : String(r.cabang),
+      score: Number(r.score),
+      exact: custId(String(r.customer_name)) === norm,
+    })),
+    ...known.map((r) => ({
+      kind: "accurate_customer" as const,
+      ref_id: String(r.id),
+      customer_name: String(r.name),
+      am_id: null,
+      cabang: null,
+      score: Number(r.score),
+      exact: custId(String(r.name)) === norm,
+    })),
+  ];
+  if (candidates.length === 0) return;
+
+  await enqueueDuplicateCustomerName({ dealId, customerName, amId, cabang, candidates });
+}
+
 export interface PipelineDeal {
   deal_id: string;
   customer_name: string;
@@ -98,6 +155,13 @@ export interface PipelineDeal {
   forecast_category: string | null;
   estimate_amount: number | null;
   qty_num: number | null;              // QTY / test per-bulan
+  // Satuan dari qty_num. Kolomnya sudah ada di migrasi 057 dan DIISI kedua
+  // importer (parse_qty memecah "50 unit" → 50 + "unit"), tapi dulu tak pernah
+  // terekspos di jalur tulis web — jadi baris hasil impor punya penanda satuan
+  // sementara baris buatan UI selalu NULL. Campuran itu lebih menyesatkan
+  // daripada tak punya penanda sama sekali: qty_num bisa berarti unit mesin
+  // atau consumable, dan tak ada cara membedakannya (#1178).
+  qty_unit: string | null;
   unit_price: number | null;           // harga per test / unit
   weighted: number;                    // estimate_amount × probability(stage)
   pic_hod: string | null;
@@ -137,7 +201,7 @@ export async function getPipeline(
   const cols = sql`deal_id, customer_name, facility_name, instansi_type, am_id, brand, product, product_category,
     prospect_category, stage, probability, forecast_category,
     COALESCE(estimated_value, estimate_amount) AS estimate_amount,
-    qty_num, unit_price,
+    qty_num, qty_unit, unit_price,
     pic_hod, cabang, coop_model, city, province, purchase_month, purchase_year, notes, updated_at,
     GREATEST(0, EXTRACT(DAY FROM (now() - stage_entered_at))::int) AS days_in_stage`;
   // Row-level scope (pakai semantik isRestricted spt F127): scope TAK membatasi
@@ -187,6 +251,7 @@ export async function getPipeline(
       forecast_category: r.forecast_category ? String(r.forecast_category) : null,
       estimate_amount: est,
       qty_num: r.qty_num != null ? Number(r.qty_num) : null,
+      qty_unit: r.qty_unit ? String(r.qty_unit) : null,
       unit_price: r.unit_price != null ? Number(r.unit_price) : null,
       weighted,
       pic_hod: r.pic_hod ? String(r.pic_hod) : null,
@@ -250,7 +315,22 @@ export interface PipelineWinLoss {
   lost: number;
   open: number;
   win_rate: number;
+  // Alasan yang BENAR-BENAR terisi saja. `loss_reason` kosong TIDAK ikut di
+  // sini — lihat lost_tanpa_alasan.
   by_reason: { reason: string; count: number }[];
+  // Deal kalah yang loss_reason-nya kosong. Ini BUKAN sebuah alasan, jadi tak
+  // boleh berdiri sebagai batang di grafik: kalau ikut, ia jadi kategori
+  // terbesar (190 dari 305 di prod = 62%) dan seluruh alasan nyata tampil
+  // kerdil karena skala batang mengikuti dia.
+  //
+  // Kosongnya juga bisa disimpulkan asalnya: jalur aplikasi MEWAJIBKAN
+  // loss_reason saat transisi ke Closing-Lost (lihat moveDealStage), jadi baris
+  // kosong mustahil datang dari pemakaian normal — itu sisa impor massal.
+  lost_tanpa_alasan: number;
+  // Penyebut yang benar untuk membaca by_reason: lost − lost_tanpa_alasan.
+  // Dipisah supaya pembaca tak menghitung persentase terhadap `lost` dan
+  // mendapat angka yang terlalu kecil untuk semua alasan.
+  lost_dengan_alasan: number;
 }
 export interface PipelineGroupRow {
   key: string;
@@ -354,18 +434,28 @@ export async function getPipelineReport(scope?: DataScope): Promise<PipelineRepo
     else if (String(r.stage) === "Closing-Lost") lost += n;
     else open += n;
   }
+  // Yang kosong SENGAJA disaring keluar di SQL, bukan dibuang di TypeScript:
+  // dengan COALESCE(...,'—') seperti sebelumnya, "tidak diketahui" masuk ke
+  // daftar sebagai kalau-kalau sebuah alasan dan langsung jadi yang terbesar.
   const reasonRows = await sql`
-    SELECT COALESCE(loss_reason::text, '—') AS reason, COUNT(*)::bigint AS count
-    FROM deal WHERE ${cond} AND stage = 'Closing-Lost'
-    GROUP BY COALESCE(loss_reason::text, '—')
+    SELECT loss_reason::text AS reason, COUNT(*)::bigint AS count
+    FROM deal WHERE ${cond} AND stage = 'Closing-Lost' AND loss_reason IS NOT NULL
+    GROUP BY loss_reason::text
     ORDER BY count DESC
   `;
+  const [kosong] = await sql`
+    SELECT COUNT(*)::bigint AS count
+    FROM deal WHERE ${cond} AND stage = 'Closing-Lost' AND loss_reason IS NULL
+  `;
+  const lostTanpaAlasan = Number(kosong?.count ?? 0);
   const winloss: PipelineWinLoss = {
     won,
     lost,
     open,
     win_rate: won + lost > 0 ? won / (won + lost) : 0,
     by_reason: reasonRows.map((r) => ({ reason: String(r.reason), count: Number(r.count) })),
+    lost_tanpa_alasan: lostTanpaAlasan,
+    lost_dengan_alasan: Math.max(0, lost - lostTanpaAlasan),
   };
 
   return { funnel, forecast, by_category, by_brand, winloss };
@@ -747,7 +837,7 @@ export async function getDealTimeline(dealId: string, scope: DataScope): Promise
 // nyetel stage/loss/am_id/probability langsung; itu lewat jalur khusus).
 const DEAL_EDITABLE = [
   "customer_name", "facility_name", "brand", "product", "product_category",
-  "estimate_amount", "qty_num", "unit_price", "cabang", "coop_model", "city", "province",
+  "estimate_amount", "qty_num", "qty_unit", "unit_price", "cabang", "coop_model", "city", "province",
   "purchase_month", "purchase_year",
   "pic_hod", "notes",
 ] as const;
@@ -817,6 +907,16 @@ export async function createDeal(scope: DataScope, input: Record<string, unknown
     INSERT INTO spt_state_log (deal_id, from_stage, to_stage, changed_by, reason)
     VALUES (${dealId}, NULL, 'Prospecting', ${scope.userId ?? scope.amId}, 'deal dibuat')
   `;
+  try {
+    await flagDuplicateCustomerName(
+      dealId,
+      String(fields.customer_name),
+      fields.am_id == null ? null : String(fields.am_id),
+      fields.cabang == null ? null : String(fields.cabang),
+    );
+  } catch (e) {
+    console.error("F9 dup-check gagal (non-fatal):", e);
+  }
   return { deal_id: dealId, stage: String(rows[0].stage) };
 }
 
@@ -838,6 +938,22 @@ export async function updateDeal(dealId: string, scope: DataScope, input: Record
   if (fields.customer_name != null) fields.customer_id = custId(String(fields.customer_name));
   applyEstimate(fields);
   await sql`UPDATE deal SET ${sql(fields)}, updated_at = now() WHERE deal_id = ${dealId}`;
+  // F9: createDeal cek duplikat nama saat dibuat — edit nama customer (typo diperbaiki jadi
+  // sama persis dgn customer lain, atau sengaja diganti) harus ikut kena cek yang sama,
+  // bukan cuma jalur create (issue ditemukan QA 2026-09-07: edit adalah cara termudah
+  // menghindar dari alert F9).
+  if (fields.customer_name != null) {
+    try {
+      await flagDuplicateCustomerName(
+        dealId,
+        String(fields.customer_name),
+        (fields.am_id ?? deal.am_id) == null ? null : String(fields.am_id ?? deal.am_id),
+        (fields.cabang ?? deal.cabang) == null ? null : String(fields.cabang ?? deal.cabang),
+      );
+    } catch (e) {
+      console.error("F9 dup-check gagal (non-fatal):", e);
+    }
+  }
   return { deal_id: dealId, stage: String(cur[0].stage) };
 }
 

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { bolehKirimKe, parseAllowedTargets, sendViaWaGateway } from "./wasend.js";
+import { bolehKirimKe, parseAllowedTargets, sendViaWaGateway, ringkasGalat} from "./wasend.js";
 
 // Lapis 3 pemisahan environment. Tumpukan dev membalas lewat bridge yang SAMA
 // dengan prod, jadi secara teknis ia bisa mengirim ke grup mana pun — satu bug
@@ -141,4 +141,36 @@ test("WA_TEST_TARGET dialihkan DULU, lalu tujuan hasil alihan yang dinilai", asy
   } finally {
     globalThis.fetch = fetchAsli;
   }
+});
+
+
+// ── ringkasGalat: galat gateway tak boleh kehilangan sebabnya ──────────────
+//
+// Regresi 21 Sep 2026: `.slice(0, 200)` membuang EKOR jawaban bridge, padahal
+// di situ alasannya berada. Yang tersimpan cuma perintah yang digaungkan.
+
+test("ringkasGalat mengambil field error bila jawaban berupa JSON", () => {
+  const mentah = JSON.stringify({ sent: false, error: "GatewayTransportError: gateway timeout after 10000ms" });
+  assert.equal(ringkasGalat(mentah), "GatewayTransportError: gateway timeout after 10000ms");
+});
+
+test("ringkasGalat mempertahankan EKOR — di situ sebabnya berada", () => {
+  // Bentuk asli yang menipu: 200 karakter pertama habis oleh perintah yang
+  // digaungkan, alasan sesungguhnya menempel di ujung.
+  const perintah = "Command failed: openclaw message send --channel whatsapp --target 1203634@g.us --message " +
+    "x".repeat(4000);
+  const sebab = "SIGALRM: proses dibunuh timeout";
+  const hasil = ringkasGalat(JSON.stringify({ sent: false, error: `${perintah}\n${sebab}` }));
+  assert.ok(hasil.includes(sebab), "alasan di ekor harus ikut tersimpan");
+  assert.ok(hasil.includes("dipotong"), "harus menandai bahwa ada bagian dipotong");
+  assert.ok(hasil.length < 1400, `panjang wajar, dapat ${hasil.length}`);
+});
+
+test("ringkasGalat membiarkan teks pendek apa adanya", () => {
+  assert.equal(ringkasGalat("tujuan di luar allowlist: +628"), "tujuan di luar allowlist: +628");
+});
+
+test("ringkasGalat tahan terhadap jawaban non-JSON", () => {
+  const html = "<html><body>502 Bad Gateway</body></html>";
+  assert.equal(ringkasGalat(html), html);
 });

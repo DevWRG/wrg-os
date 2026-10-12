@@ -138,6 +138,10 @@ export interface IngestKoranResult {
   /** Kode draft resume yang ikut terbentuk karena koran hari itu jadi lengkap
    *  (null = belum lengkap, atau resume hari itu sudah final). */
   draft_kode?: string | null;
+  /** Apakah kode di atas benar-benar sampai ke grup Finance. Kode yang ADA di
+   *  DB tapi draftnya gagal terkirim TIDAK boleh diumumkan sebagai "menunggu
+   *  konfirmasi" — lihat DraftKeadaan. */
+  draft_keadaan?: DraftKeadaan;
   /** Kenapa draft belum dibuat — dipakai balasan #KORAN supaya admin tahu
    *  apa yang masih ditunggu, bukan cuma diam. */
   draft_alasan?: string | null;
@@ -411,7 +415,7 @@ export async function ingestKoran(
   // Pemicu draft resume: begitu koran hari itu LENGKAP, Finance langsung
   // ditanya — tak menunggu jam tertentu (keputusan user 17 Sep 2026).
   // picuDraft tak pernah melempar; lihat catatannya.
-  let draft: DraftResult = { dibuat: false, alasan: "statement belum terverifikasi" };
+  let draft: DraftResult = { dibuat: false, keadaan: "belum", alasan: "statement belum terverifikasi" };
   if (String(fin.status) === "terverifikasi") draft = await picuDraft(tanggal, input.wa_group_jid ?? null);
 
   return {
@@ -428,6 +432,7 @@ export async function ingestKoran(
     total_kredit: Number(agg.k),
     parse_error: parseError,
     draft_kode: draft.kode ?? null,
+    draft_keadaan: draft.keadaan,
     draft_alasan: draft.alasan ?? null,
   };
 }
@@ -504,7 +509,7 @@ async function picuDraft(tanggal: string, grupJid: string | null): Promise<Draft
     return draft;
   } catch (e) {
     console.error(`[cashin] draft konfirmasi ${tanggal} gagal:`, e);
-    return { dibuat: false, alasan: `draft gagal dibuat: ${(e as Error).message}` };
+    return { dibuat: false, keadaan: "belum", alasan: `draft gagal dibuat: ${(e as Error).message}` };
   }
 }
 
@@ -1210,10 +1215,27 @@ export function formatResume(r: RingkasanHarian): string {
 // lewat jam sekian", gerbang ini hilang tanpa ada yang sadar — pemiliknya
 // menyangka masih ada verifikasi manusia padahal tidak.
 
+/** Keadaan draft DARI SUDUT PANDANG GRUP FINANCE — bukan dari sudut pandang DB.
+ *
+ *  Dibedakan karena 19 Sep 2026: draft R9 terbentuk di DB, gateway WA wedged,
+ *  teks draftnya tak pernah sampai ke grup — tapi balasan #KORAN tetap menulis
+ *  "Draft resume R9 menunggu konfirmasi". Finance membalas "ya R9" ke draft yang
+ *  tak pernah ada, dan balasan itu tak pernah terbaca siapa pun.
+ *
+ *  - "menunggu"    → teksnya ADA di grup; balasan "ya <kode>" akan terbaca
+ *  - "gagal_kirim" → kodenya ada di DB tapi grup TAK PERNAH menerima teksnya
+ *  - "final"       → resume tanggal itu sudah terkirim/ditolak; tak ada yang
+ *                    perlu dikonfirmasi lagi
+ *  - "belum"       → belum ada draft sama sekali (koran belum lengkap, dst) */
+export type DraftKeadaan = "menunggu" | "gagal_kirim" | "final" | "belum";
+
 export interface DraftResult {
   dibuat: boolean;
   kode?: string;
   alasan?: string;
+  /** Sengaja TIDAK opsional: tiap cabang wajib menyatakan keadaannya, dan yang
+   *  menagih kompilator — bukan reviewer. */
+  keadaan: DraftKeadaan;
   /** Draft sudah ada sebelumnya dan isinya diperbarui (koran di-ingest ulang). */
   diperbarui?: boolean;
   /** Draft dibuat dari koran yang BELUM lengkap (hening / jaring pengaman). */
@@ -1385,7 +1407,7 @@ export function formatDraftKonfirmasi(
   baris.push(
     "",
     `Balas *ya ${kode}* untuk kirim ke Direktur,`,
-    `atau *tidak ${kode} <alasan>* untuk menahan.`,
+    `atau *tidak ${kode} ALASAN* untuk menahan.`,
   );
   return baris.join("\n");
 }
@@ -1394,7 +1416,7 @@ export function formatIngatanKonfirmasi(kode: string, tanggal: string, belumTria
   return [
     `⏰ Resume uang masuk ${tanggal} (${kode}) belum dikonfirmasi.`,
     belumTriage > 0 ? `Masih ada ${rp(belumTriage)} berstatus belum ditriage.` : null,
-    `Balas *ya ${kode}* untuk kirim ke Direktur, atau *tidak ${kode} <alasan>*.`,
+    `Balas *ya ${kode}* untuk kirim ke Direktur, atau *tidak ${kode} ALASAN*.`,
   ]
     .filter(Boolean)
     .join("\n");
@@ -1406,6 +1428,47 @@ export function formatIngatanBelumLengkap(r: RingkasanHarian): string {
     `Belum setor: ${r.rekening_belum.join(", ")}`,
     "Resume belum bisa disusun sampai semuanya masuk.",
   ].join("\n");
+}
+
+/** Satu baris status gerbang konfirmasi di ekor balasan #KORAN.
+ *
+ *  Aturan yang dijaga fungsi ini: kode draft HANYA boleh disebut bersama ajakan
+ *  membalas kalau teks draftnya memang sampai ke grup. Kalau tidak, orang yang
+ *  membalas "ya <kode>" sedang berbicara ke pesan yang tak pernah ada, dan
+ *  pemindai konfirmasi tak punya apa pun untuk dicocokkan. 19 Sep 2026 itu
+ *  memakan satu hari kerja penuh: R9 dilaporkan "menunggu konfirmasi", dibalas
+ *  "ya R9" jam 12.04, dan tak ada yang terjadi.
+ *
+ *  null = tak ada yang perlu dikatakan. */
+export function formatStatusDraft(k: {
+  draft_kode?: string | null;
+  draft_keadaan?: DraftKeadaan;
+  draft_alasan?: string | null;
+}): string | null {
+  const kode = (k.draft_kode ?? "").trim();
+  const alasan = (k.draft_alasan ?? "").trim();
+  switch (k.draft_keadaan) {
+    case "menunggu":
+      return kode ? `📝 Draft resume ${kode} menunggu konfirmasi.` : null;
+    case "gagal_kirim":
+      // Sengaja menyebut kodenya TAPI melarang membalasnya: menyembunyikan kode
+      // bikin Finance tak bisa melapor "R9 macet", menyebutnya tanpa larangan
+      // bikin Finance membalas ke ruang hampa.
+      return [
+        `⚠️ Draft resume ${kode || "(tanpa kode)"} GAGAL dikirim ke grup ini — isinya tidak pernah muncul.`,
+        alasan ? `Sebab: ${alasan}` : null,
+        `JANGAN balas "ya ${kode || "<kode>"}" sekarang — balasan itu tidak akan terbaca.`,
+        "Resume tanggal ini belum sampai ke Direktur dan masih menunggu draft dikirim ulang.",
+      ]
+        .filter(Boolean)
+        .join("\n");
+    case "final":
+      return alasan ? `ℹ️ ${alasan}` : null;
+    case "belum":
+      return alasan ? `⏳ ${alasan}` : null;
+    default:
+      return alasan ? `⏳ ${alasan}` : null;
+  }
 }
 
 /** Buat/segarkan draft resume kalau koran hari itu sudah lengkap, lalu kirim
@@ -1454,7 +1517,7 @@ export async function buatDraftJikaLengkap(
   const statusLama = ada ? String(ada.status) : null;
   const bolehUlang = statusLama === "ditolak" || (statusLama === "terkirim" && opts.koreksi === true);
   if (ada && statusLama !== "menunggu_konfirmasi" && !bolehUlang) {
-    return { dibuat: false, kode: String(ada.kode), alasan: `resume ${tanggal} sudah berstatus ${statusLama}` };
+    return { dibuat: false, keadaan: "final", kode: String(ada.kode), alasan: `resume ${tanggal} sudah berstatus ${statusLama}` };
   }
   if (ada && bolehUlang) {
     // Jejak keputusan lama dipindah ke riwayat SEBELUM barisnya ditulis ulang.
@@ -1482,11 +1545,12 @@ export async function buatDraftJikaLengkap(
   if (parsial && !opts.paksa) {
     return {
       dibuat: false,
+      keadaan: "belum",
       alasan: `koran belum lengkap (${r.rekening_masuk}/${r.rekening_wajib}) — belum setor: ${r.rekening_belum.join(", ")}`,
     };
   }
   // Nol koran bukan "setoran selesai", itu hari tanpa setoran sama sekali.
-  if (r.rekening_masuk === 0) return { dibuat: false, alasan: "belum ada koran masuk untuk tanggal ini" };
+  if (r.rekening_masuk === 0) return { dibuat: false, keadaan: "belum", alasan: "belum ada koran masuk untuk tanggal ini" };
 
   const tujuan = (grupJid ?? "").trim() || String(ada?.grup_jid ?? "") || (await grupTerakhirKoran(tanggal)) || konfirmasiTujuanEnv();
 
@@ -1522,7 +1586,7 @@ export async function buatDraftJikaLengkap(
   if (sudahDikirim) {
     const berubah = row.teks_lama != null && String(row.teks_lama) !== teks;
     if (!berubah) {
-      return { dibuat: false, diperbarui: true, kode, alasan: "draft sudah dikirim ke Finance, isinya tidak berubah" };
+      return { dibuat: false, keadaan: "menunggu", diperbarui: true, kode, alasan: "draft sudah dikirim ke Finance, isinya tidak berubah" };
     }
     const ke = String(row.grup_jid ?? "").trim();
     const kirim = ke
@@ -1532,22 +1596,23 @@ export async function buatDraftJikaLengkap(
       // Teks lama tetap di grup, teks baru tidak. Dilaporkan keras, bukan
       // "menunggu": membalas "ya" sekarang meneruskan angka yang belum dilihat.
       console.error(`[cashin] draft ${kode} diperbarui tapi gagal dikirim ulang: ${kirim.error ?? "?"}`);
-      // Sengaja TANPA kode: balasan #KORAN di main menulis "menunggu
-      // konfirmasi" untuk setiap draft_kode, dan itu salah di sini.
       return {
         dibuat: false,
+        keadaan: "gagal_kirim",
         diperbarui: true,
+        kode,
         alasan: `teks draft berubah tapi versi barunya gagal dikirim ke grup: ${kirim.error ?? "gateway tidak mengirim"}`,
       };
     }
     await sql`UPDATE cashin_resume SET draft_terkirim_at = now(), updated_at = now() WHERE id = ${row.id}`;
-    return { dibuat: false, diperbarui: true, kode, parsial, alasan: "draft diperbarui dan dikirim ulang ke Finance" };
+    return { dibuat: false, keadaan: "menunggu", diperbarui: true, kode, parsial, alasan: "draft diperbarui dan dikirim ulang ke Finance" };
   }
 
   const ke = String(row.grup_jid ?? "").trim();
   if (!ke) {
     return {
       dibuat: false,
+      keadaan: "gagal_kirim",
       kode,
       alasan: "grup tujuan konfirmasi tak diketahui (statement diunggah lewat web) — set CASHIN_KONFIRMASI_TO",
     };
@@ -1555,10 +1620,13 @@ export async function buatDraftJikaLengkap(
 
   const kirim = await sendViaWaGateway(ke, formatDraftKonfirmasi(teks, kode, r));
   if (!kirim.sent) {
-    return { dibuat: false, kode, alasan: kirim.error ?? "gateway tidak mengirim draft" };
+    // Kodenya SUDAH ada di DB, teksnya TIDAK ada di grup — keadaan yang dulu
+    // dilaporkan sebagai "menunggu konfirmasi" dan memakan balasan "ya R9"
+    // 19 Sep 2026 tanpa jejak.
+    return { dibuat: false, keadaan: "gagal_kirim", kode, alasan: kirim.error ?? "gateway tidak mengirim draft" };
   }
   await sql`UPDATE cashin_resume SET draft_terkirim_at = now(), updated_at = now() WHERE id = ${row.id}`;
-  return { dibuat: true, kode, parsial };
+  return { dibuat: true, keadaan: "menunggu", kode, parsial };
 }
 
 /** Beri nomor rujukan pendek (T1, T2, …) ke baris yang menunggu keputusan.
@@ -1615,6 +1683,10 @@ export interface PutusanResult {
   status?: string;
   terkirim?: boolean;
   alasan?: string;
+  /** Ditolak karena resume-nya SUDAH final (terkirim/ditolak), bukan karena ada
+   *  yang rusak. Pemanggil harus membedakannya: "sudah beres" dan "pengiriman
+   *  gagal" tidak boleh dibalas dengan kalimat yang sama. */
+  sudah_final?: boolean;
 }
 
 /** Terapkan keputusan Finance. 'ya' → kirim resume ke Direktur. 'tidak' → tahan.
@@ -1653,7 +1725,7 @@ export async function putuskanResume(
     // 'gagal_kirim' BOLEH diputuskan lagi: Finance sudah setuju, yang gagal
     // gatewaynya. 'terkirim'/'ditolak' tidak — itu keputusan yang sudah final.
     if (status === "terkirim" || status === "ditolak") {
-      return { ok: false, error: `resume ${tanggal} sudah ${status}`, kode: String(row.kode), tanggal, status };
+      return { ok: false, error: `resume ${tanggal} sudah ${status}`, kode: String(row.kode), tanggal, status, sudah_final: true };
     }
 
     if (keputusan === "tidak") {
@@ -1711,26 +1783,46 @@ export async function scanKonfirmasiResume(): Promise<ScanKonfirmasiResult> {
   const sql = db();
   const hasil: ScanKonfirmasiResult = { dinilai: 0, diputuskan: 0, mirip: 0 };
 
+  // `draft_terkirim_at IS NOT NULL` DIHAPUS dari filter ini (19 Sep 2026).
+  //
+  // Dulu grup yang draftnya gagal terkirim tidak ikut dipindai sama sekali —
+  // bukan cuma kodenya yang dilewati, seluruh grupnya. R9 gagal dikirim jam
+  // 11:17, "ya R9" masuk jam 12.04, dan tak ada satu baris pun yang menilainya.
+  // Gagal kirim adalah soal gateway; kalau Finance tetap tahu kodenya dan
+  // membalas, balasan itu harus dihormati, bukan dibuang diam-diam.
+  //
+  // Batas waktunya pindah ke COALESCE(draft_terkirim_at, created_at): tetap ada
+  // titik nol yang jelas ("sejak resume ini lahir"), jadi kalimat lama di grup
+  // yang kebetulan berbunyi "ya R2" tetap tak bisa menyetujui resume baru.
   const draft = await sql`
-    SELECT kode, grup_jid, draft_terkirim_at FROM cashin_resume
-    WHERE status IN ('menunggu_konfirmasi', 'gagal_kirim') AND grup_jid IS NOT NULL AND draft_terkirim_at IS NOT NULL
+    SELECT kode, grup_jid, COALESCE(draft_terkirim_at, created_at) AS sejak
+    FROM cashin_resume
+    WHERE status IN ('menunggu_konfirmasi', 'gagal_kirim') AND grup_jid IS NOT NULL
   `;
   if (draft.length === 0) return hasil;
 
-  const grup = [...new Set(draft.map((d) => String(d.grup_jid)))];
-  const sejak = draft.reduce(
-    (min, d) => (String(d.draft_terkirim_at) < min ? String(d.draft_terkirim_at) : min),
-    String(draft[0].draft_terkirim_at),
-  );
+  // Batas waktu PER GRUP, bukan satu minimum global.
+  //
+  // Dengan minimum global, satu draft tua di grup uji menarik mundur jendela
+  // pindai SEMUA grup ke tanggalnya — grup produksi ikut dibaca berminggu-minggu
+  // ke belakang tanpa alasan. Tiap grup sekarang hanya dibaca sejak resume
+  // TERTUANYA SENDIRI yang masih menunggu.
+  const sejakPerGrup = new Map<string, string>();
+  for (const d of draft) {
+    const jid = String(d.grup_jid);
+    const s = new Date(String(d.sejak)).toISOString();
+    const ada = sejakPerGrup.get(jid);
+    if (!ada || s < ada) sejakPerGrup.set(jid, s);
+  }
+  const grup = [...sejakPerGrup.keys()];
+  const batas = grup.map((g) => sejakPerGrup.get(g) as string);
 
-  // Hanya pesan SESUDAH draft dikirim. Tanpa batas waktu ini, kalimat lama di
-  // grup yang kebetulan berbunyi "ya R2" (nomor ruangan, kode barang) bisa
-  // menyetujui resume yang baru dibuat hari ini.
   const pesan = await sql`
     SELECT m.id, m.group_jid, m.body, m.sender_name
     FROM wa_message m
-    WHERE m.group_jid = ANY(${grup}) AND m.received_at >= ${sejak}
-      AND m.body IS NOT NULL
+    JOIN unnest(${grup}::text[], ${batas}::timestamptz[]) AS b(jid, sejak)
+      ON b.jid = m.group_jid AND m.received_at >= b.sejak
+    WHERE m.body IS NOT NULL
       AND NOT EXISTS (SELECT 1 FROM cashin_konfirmasi_seen s WHERE s.message_id = m.id)
     ORDER BY m.received_at
     LIMIT 200
@@ -1758,7 +1850,11 @@ export async function scanKonfirmasiResume(): Promise<ScanKonfirmasiResult> {
           .join(", ");
         await sendViaWaGateway(
           String(m.group_jid),
-          `⚠️ Format konfirmasi resume: *ya ${daftar || "R<nomor>"}* atau *tidak ${daftar || "R<nomor>"} <alasan>*.` +
+          // Placeholder huruf besar, bukan "<alasan>"/"R<nomor>": teks ber-kurung
+          // sudut terbuang di jalur gateway WA (ketahuan di uji F55 11 Okt).
+          (daftar
+            ? `⚠️ Format konfirmasi resume: *ya ${daftar}* atau *tidak ${daftar} ALASAN*.`
+            : `⚠️ Format konfirmasi resume: *ya R* atau *tidak R* diikuti nomor resume, plus ALASAN untuk tidak (contoh: *tidak R12 setoran belum lengkap*).`) +
             (daftar ? `\nMenunggu konfirmasi: ${daftar}` : ""),
         );
         await tandaiSeen(id, "mirip-keputusan");
@@ -1775,6 +1871,18 @@ export async function scanKonfirmasiResume(): Promise<ScanKonfirmasiResult> {
     if (!r.ok && r.error?.startsWith("kode")) {
       await sendViaWaGateway(String(m.group_jid), `⚠️ ${r.error}. Kode yang menunggu: ${draft.map((d) => String(d.kode)).join(", ")}`);
       await tandaiSeen(id, "kode-tak-dikenal");
+      continue;
+    }
+    // Konfirmasi ganda (orang membalas dua kali, atau web sudah memutuskan
+    // duluan) BUKAN kegagalan. Sebelum ini cabangnya jatuh ke kalimat
+    // "pengiriman ke Direktur gagal … akan dicoba lagi" — laporan palsu yang
+    // membuat Finance mengira angkanya macet padahal sudah sampai.
+    if (r.sudah_final) {
+      await sendViaWaGateway(
+        String(m.group_jid),
+        `ℹ️ Resume ${r.tanggal} (${r.kode}) sudah ${r.status} — tidak perlu dikonfirmasi lagi.`,
+      );
+      await tandaiSeen(id, "sudah-final");
       continue;
     }
     hasil.diputuskan++;

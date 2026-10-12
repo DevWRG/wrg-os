@@ -5,6 +5,15 @@
 //   2. DRY-RUN — WA_SEND_URL di-set TAPI WA_DRY_RUN != "false" → gateway terwiring
 //                tapi TIDAK kirim live (di-log saja). sent:true, dryRun:true.
 //                Ini default aman: set URL dulu, kirim live belakangan.
+//
+// Mode 1 & 2 mencetak isi pesan UTUH ke stdout. Ini satu-satunya cara melihat
+// teks balasan saat trial lokal: WaSendResult sengaja cuma bawa {to,sent,stub},
+// dan pesan keluar tidak disimpan ke DB. Tanpa log ini setiap orang yang mau
+// menguji command WA (#PLAN/#REPORT/#SALES/#CEK) terpaksa menulis skrip sendiri
+// yang memanggil handler-nya langsung. Sengaja utuh, bukan dipotong — balasan
+// WA itu multi-baris dan potongan 80 karakter selalu terputus di tengah.
+// Mode 3 (live) TIDAK ikut log body: di prod itu cuma menggandakan data
+// komersial ke pm2 log tanpa ada yang membacanya.
 //   3. LIVE    — WA_SEND_URL di-set DAN WA_DRY_RUN="false" → POST {to,message} ke
 //                gateway (opsional header x-wa-secret = WA_SEND_SECRET).
 //
@@ -66,17 +75,55 @@ function isDryRun(): boolean {
   return (process.env.WA_DRY_RUN ?? "true").toLowerCase() !== "false";
 }
 
+// Cetak pesan yang TIDAK jadi dikirim, utuh. Body diapit penanda supaya
+// balasan multi-baris tetap kebaca sebagai satu blok di antara log lain.
+function logNotSent(mode: string, target: string, body: string): void {
+  console.log(`[wa] ${mode} — tidak kirim live → ${target}\n--- pesan ---\n${body}\n--- selesai ---`);
+}
+
+// Ringkas galat gateway TANPA membuang bagian yang menjelaskan sebabnya.
+//
+// Versi lama: `.slice(0, 200)`. Jawaban bridge berbentuk
+//   {"sent":false,"error":"Command failed: openclaw message send --channel
+//    whatsapp --target <jid> --message <SELURUH ISI PESAN> --json\n<stderr>"}
+// sehingga 200 karakter pertama nyaris selalu habis oleh perintah yang
+// digaungkan, dan alasannya — yang ada di EKOR — ikut terpotong. Pada insiden
+// 21 Sep 2026 ini menyembunyikan sebab kegagalan selama berjam-jam: yang
+// tersimpan hanya "Command failed: openclaw message send ..." tanpa satu pun
+// petunjuk, dan diagnosis harus dikerjakan lewat forensik log bridge.
+//
+// Sekarang: kalau jawabannya JSON dan punya field `error`, ambil field itu saja
+// (sudah bersih dari derau). Kalau tidak, simpan kepala DAN ekor — ekor lebih
+// berharga karena di situ stderr berada.
+export function ringkasGalat(mentah: string, maks = 1200): string {
+  let teks = String(mentah ?? "");
+  try {
+    const j = JSON.parse(teks) as Record<string, unknown>;
+    if (typeof j.error === "string" && j.error) teks = j.error;
+  } catch {
+    // bukan JSON — pakai apa adanya
+  }
+  if (teks.length <= maks) return teks;
+  const kepala = Math.floor(maks * 0.35);
+  const ekor = maks - kepala;
+  const dipotong = teks.length - maks;
+  return `${teks.slice(0, kepala)}\n…[${dipotong} karakter dipotong]…\n${teks.slice(-ekor)}`;
+}
+
 export async function sendViaWaGateway(to: string, body: string): Promise<WaSendResult> {
   const url = process.env.WA_SEND_URL;
   const testTarget = process.env.WA_TEST_TARGET?.trim();
   const target = testTarget || to;
 
   // Mode 1: belum terwiring
-  if (!url) return { sent: true, stub: true, to: target };
+  if (!url) {
+    logNotSent("STUB (WA_SEND_URL kosong)", target, body);
+    return { sent: true, stub: true, to: target };
+  }
 
   // Mode 2: terwiring tapi tidak kirim live
   if (isDryRun()) {
-    console.log(`[wa] DRY-RUN (WA_DRY_RUN) — tidak kirim live → ${target}: ${body.slice(0, 80)}`);
+    logNotSent("DRY-RUN (WA_DRY_RUN)", target, body);
     return { sent: true, stub: false, dryRun: true, to: target };
   }
 
@@ -103,11 +150,11 @@ export async function sendViaWaGateway(to: string, body: string): Promise<WaSend
       body: JSON.stringify({ to: target, message: body }),
     });
     if (!res.ok) {
-      return { sent: false, stub: false, status: res.status, error: (await res.text()).slice(0, 200), to: target };
+      return { sent: false, stub: false, status: res.status, error: ringkasGalat(await res.text()), to: target };
     }
     return { sent: true, stub: false, status: res.status, to: target };
   } catch (e) {
-    return { sent: false, stub: false, error: String(e), to: target };
+    return { sent: false, stub: false, error: ringkasGalat(String(e)), to: target };
   }
 }
 
