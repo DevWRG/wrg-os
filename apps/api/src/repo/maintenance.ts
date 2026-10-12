@@ -218,20 +218,31 @@ export async function markDone(
 }
 
 // ── Cron: reminder H-14 ke teknisi per alat, retry-safe (gagal kirim → jangan markNotified). ──
+// Jendelanya "jatuh tempo ≤ H+14 dan belum diingatkan", BUKAN `due_date = H+14`
+// persis. Versi persis tak pernah benar-benar retry-safe: kalau kirim gagal
+// (atau server mati) tepat di hari H-14, besoknya baris itu sudah H-13 dan tak
+// terjaring lagi selamanya; jadwal yang dibuat kurang dari 14 hari sebelum
+// jatuh tempo juga tak pernah diingatkan (uji dev 12 Okt 2026). Status
+// 'notified' yang menjaga agar satu siklus cuma diingatkan sekali.
 export async function runMaintenanceReminders(): Promise<{ count: number; notified_ids: string[] }> {
   const sql = db();
   const due = await sql`
-    SELECT ms.*, iu.alat_name, iu.serial_number, iu.customer_name, iu.cabang
+    SELECT ms.*, iu.alat_name, iu.serial_number, iu.customer_name, iu.cabang,
+      (ms.due_date - current_date) AS sisa_hari
     FROM maintenance_schedule ms
     JOIN installation_unit iu ON iu.id = ms.installation_unit_id
-    WHERE ms.status = 'scheduled' AND ms.due_date = current_date + 14
+    WHERE ms.status = 'scheduled' AND ms.due_date <= current_date + 14
+    ORDER BY ms.due_date
   `;
+  const sisaHari = new Map(due.map((r) => [String(r.id), Number(r.sisa_hari)]));
   const notified: string[] = [];
   for (const row of due.map(mapRow)) {
     const target = row.teknisi_wa_number || process.env.MAINTENANCE_WA_TARGET || "";
     if (!target) continue; // tak ada tujuan jelas → skip (anti broadcast tak sengaja)
+    const sisa = sisaHari.get(row.id) ?? 14;
+    const kapan = sisa > 0 ? `H-${sisa}` : sisa === 0 ? "HARI INI" : `TERLAMBAT ${-sisa} hari`;
     const msg = [
-      "🔧 *Reminder PM/Kalibrasi (H-14)*",
+      `🔧 *Reminder PM/Kalibrasi (${kapan})*`,
       `${row.alat_name}${row.serial_number ? ` (SN ${row.serial_number})` : ""}`,
       `${row.customer_name}${row.cabang ? ` — ${row.cabang}` : ""}`,
       `Jatuh tempo: ${row.due_date}`,

@@ -142,26 +142,36 @@ export async function createInstallation(input: InstallationInput): Promise<Crea
   if (serial && serial.length > 100) {
     return { ok: false, error: "serial_number maksimal 100 karakter" };
   }
-  if (serial) {
-    const [dupe] = await sql`
-      SELECT id, alat_name FROM installation_unit WHERE serial_number ILIKE ${serial} LIMIT 1
-    `;
-    if (dupe) {
-      return {
-        ok: false,
-        error: `serial_number "${serial}" sudah dipakai unit lain (${String(dupe.alat_name)}) — instrumen fisik seharusnya unik`,
-      };
+  // Cek duplikat + INSERT dalam SATU transaksi yang dikunci per SN (advisory
+  // lock). Tanpa kunci, create paralel dengan SN sama lolos semua: masing-masing
+  // mengecek sebelum yang lain sempat INSERT (uji dev 12 Okt 2026: 5 paralel →
+  // 3 baris). Pembandingnya `lower(btrim())` dan BUKAN ILIKE: ILIKE membaca `_`
+  // dan `%` di SN sebagai wildcard, jadi "UJI_AS-012" dianggap sama dengan
+  // "UJIXAS-012" dan unit sah ditolak sebagai duplikat.
+  const rows = await sql.begin(async (tx) => {
+    if (serial) {
+      await tx`SELECT pg_advisory_xact_lock(hashtext(${`installation_unit.sn:${serial.toLowerCase()}`}))`;
+      const [dupe] = await tx`
+        SELECT id, alat_name FROM installation_unit
+        WHERE lower(btrim(serial_number)) = ${serial.toLowerCase()} LIMIT 1
+      `;
+      if (dupe) return { dupe: String(dupe.alat_name) };
     }
+    return tx`
+      INSERT INTO installation_unit
+        (product_id, account_id, alat_name, serial_number, customer_name, cabang, po_number, created_by)
+      VALUES
+        (${input.product_id}, ${input.account_id}, ${alatName}, ${serial || null},
+         ${custName}, ${input.cabang ?? null}, ${input.po_number?.trim() || null}, ${input.created_by ?? null})
+      RETURNING *
+    `;
+  });
+  if ("dupe" in rows) {
+    return {
+      ok: false,
+      error: `serial_number "${serial}" sudah dipakai unit lain (${rows.dupe}) — instrumen fisik seharusnya unik`,
+    };
   }
-
-  const rows = await sql`
-    INSERT INTO installation_unit
-      (product_id, account_id, alat_name, serial_number, customer_name, cabang, po_number, created_by)
-    VALUES
-      (${input.product_id}, ${input.account_id}, ${alatName}, ${input.serial_number ?? null},
-       ${custName}, ${input.cabang ?? null}, ${input.po_number ?? null}, ${input.created_by ?? null})
-    RETURNING *
-  `;
   return { ok: true, row: mapRow(rows[0]) };
 }
 
@@ -199,6 +209,23 @@ export interface InstallationActionResult {
 
 // ── Transisi checklist — 5 fungsi eksplisit, urutan divalidasi manual per
 // langkah (bukan helper generik) — konsisten dgn gaya salesdoc.ts. ──
+//
+// Pola tiap langkah: SELECT dulu untuk pesan error yang jelas, lalu UPDATE
+// bersyarat (`langkah sebelumnya selesai AND langkah ini belum`) yang menjadi
+// penjaga sebenarnya. Dulu cuma SELECT-lalu-UPDATE polos: 10 POST paralel ke
+// /sj → 3 sukses dan nomor SJ saling menimpa (uji dev 12 Okt 2026). UPDATE
+// bersyarat membuat hanya satu yang menang; sisanya mendapat 0 baris.
+const KALAH_BALAPAN = "langkah ini baru saja diselesaikan permintaan lain — muat ulang halaman";
+
+// Nomor dokumen (PO/SJ/BAST): dipangkas, wajib berisi, maks 100 karakter. Route
+// cuma mengecek `!sj_number`, jadi "   " dulu lolos dan tersimpan sebagai
+// nomor kosong — langkahnya tercentang tanpa dokumen apa pun.
+function nomorDokumen(raw: string | null | undefined, label: string): { ok: true; v: string } | { ok: false; error: string } {
+  const v = String(raw ?? "").trim();
+  if (!v) return { ok: false, error: `${label} wajib diisi` };
+  if (v.length > 100) return { ok: false, error: `${label} maksimal 100 karakter` };
+  return { ok: true, v };
+}
 
 export async function markPoControl(id: string, po_number?: string): Promise<InstallationActionResult> {
   const sql = db();
@@ -208,33 +235,38 @@ export async function markPoControl(id: string, po_number?: string): Promise<Ins
   // Unit boleh dibuat draft tanpa No. PO (belum tentu ada saat unit dicatat),
   // TAPI gak boleh ditandai "PO Control selesai" tanpa PO beneran ada —
   // baik yang sudah diisi saat create maupun yang baru diisi di langkah ini.
-  if (!po_number?.trim() && !rows[0].po_number) {
-    return { ok: false, error: "No. PO wajib diisi sebelum PO Control ditandai selesai" };
-  }
-  await sql`
+  const po = nomorDokumen(po_number?.trim() ? po_number : (rows[0].po_number as string | null), "No. PO");
+  if (!po.ok) return { ok: false, error: "No. PO wajib diisi sebelum PO Control ditandai selesai" };
+  const done = await sql`
     UPDATE installation_unit
-    SET po_number = COALESCE(${po_number ?? null}, po_number),
+    SET po_number = ${po.v},
         po_control_done = TRUE, po_control_at = now(),
         status = 'po_control', updated_at = now()
-    WHERE id = ${id}
+    WHERE id = ${id} AND NOT po_control_done
+    RETURNING id
   `;
+  if (done.length === 0) return { ok: false, error: KALAH_BALAPAN };
   return { ok: true, status: "po_control" };
 }
 
 export async function markSj(id: string, sj_number: string): Promise<InstallationActionResult> {
   const sql = db();
+  const sj = nomorDokumen(sj_number, "No. SJ");
+  if (!sj.ok) return { ok: false, error: sj.error };
   const rows = await sql`SELECT id, po_control_done, sj_done FROM installation_unit WHERE id = ${id}`;
   if (rows.length === 0) return { ok: false, error: "unit instalasi tidak ditemukan" };
   if (!rows[0].po_control_done) {
     return { ok: false, error: "PO control belum selesai — selesaikan langkah sebelumnya dulu" };
   }
   if (rows[0].sj_done) return { ok: false, error: "langkah SJ sudah selesai" };
-  await sql`
+  const done = await sql`
     UPDATE installation_unit
-    SET sj_number = ${sj_number}, sj_done = TRUE, sj_at = now(),
+    SET sj_number = ${sj.v}, sj_done = TRUE, sj_at = now(),
         status = 'sj', updated_at = now()
-    WHERE id = ${id}
+    WHERE id = ${id} AND po_control_done AND NOT sj_done
+    RETURNING id
   `;
+  if (done.length === 0) return { ok: false, error: KALAH_BALAPAN };
   return { ok: true, status: "sj" };
 }
 
@@ -252,7 +284,6 @@ export async function markTeknisiAssign(id: string, teknisi_id: string): Promise
     return { ok: false, error: "SJ belum selesai — selesaikan langkah sebelumnya dulu" };
   }
   if (rows[0].teknisi_assign_done) return { ok: false, error: "langkah assign teknisi sudah selesai" };
-
   if (!teknisi_id?.trim()) {
     return { ok: false, error: "teknisi wajib dipilih dari roster (teknisi_id kosong)" };
   }
@@ -265,14 +296,15 @@ export async function markTeknisiAssign(id: string, teknisi_id: string): Promise
     SELECT id, nama, aktif FROM teknisi_capacity WHERE id = ${teknisi_id.trim()}`;
   if (!tek) return { ok: false, error: "teknisi tak ada di roster" };
   if (!tek.aktif) return { ok: false, error: `teknisi "${String(tek.nama)}" sudah nonaktif — pilih yang aktif` };
-
-  await sql`
+  const done = await sql`
     UPDATE installation_unit
     SET teknisi_id = ${teknisi_id.trim()}, teknisi_name = ${String(tek.nama)},
         teknisi_assign_done = TRUE, teknisi_assign_at = now(),
         status = 'teknisi_assign', updated_at = now()
-    WHERE id = ${id}
+    WHERE id = ${id} AND sj_done AND NOT teknisi_assign_done
+    RETURNING id
   `;
+  if (done.length === 0) return { ok: false, error: KALAH_BALAPAN };
   return { ok: true, status: "teknisi_assign" };
 }
 
@@ -284,28 +316,34 @@ export async function markTrainingDone(id: string, training_notes?: string): Pro
     return { ok: false, error: "Assign teknisi belum selesai — selesaikan langkah sebelumnya dulu" };
   }
   if (rows[0].training_done) return { ok: false, error: "langkah training sudah selesai" };
-  await sql`
+  const done = await sql`
     UPDATE installation_unit
-    SET training_notes = ${training_notes ?? null}, training_done = TRUE, training_at = now(),
+    SET training_notes = ${training_notes?.trim() || null}, training_done = TRUE, training_at = now(),
         status = 'training', updated_at = now()
-    WHERE id = ${id}
+    WHERE id = ${id} AND teknisi_assign_done AND NOT training_done
+    RETURNING id
   `;
+  if (done.length === 0) return { ok: false, error: KALAH_BALAPAN };
   return { ok: true, status: "training" };
 }
 
 export async function markBast(id: string, bast_number: string): Promise<InstallationActionResult> {
   const sql = db();
+  const bast = nomorDokumen(bast_number, "No. BAST");
+  if (!bast.ok) return { ok: false, error: bast.error };
   const rows = await sql`SELECT id, training_done, bast_done FROM installation_unit WHERE id = ${id}`;
   if (rows.length === 0) return { ok: false, error: "unit instalasi tidak ditemukan" };
   if (!rows[0].training_done) {
     return { ok: false, error: "Training belum selesai — selesaikan langkah sebelumnya dulu" };
   }
   if (rows[0].bast_done) return { ok: false, error: "langkah BAST sudah selesai" };
-  await sql`
+  const done = await sql`
     UPDATE installation_unit
-    SET bast_number = ${bast_number}, bast_done = TRUE, bast_at = now(),
+    SET bast_number = ${bast.v}, bast_done = TRUE, bast_at = now(),
         status = 'bast', updated_at = now()
-    WHERE id = ${id}
+    WHERE id = ${id} AND training_done AND NOT bast_done
+    RETURNING id
   `;
+  if (done.length === 0) return { ok: false, error: KALAH_BALAPAN };
   return { ok: true, status: "bast" };
 }

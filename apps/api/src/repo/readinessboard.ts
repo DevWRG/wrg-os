@@ -269,36 +269,69 @@ export async function createInstallSchedule(
   input: CreateScheduleInput,
 ): Promise<InstallScheduleRow | { ok: false; error: string }> {
   const sql = db();
-  const unit = await sql`SELECT id FROM installation_unit WHERE id = ${input.installation_unit_id}`;
-  if (unit.length === 0) return { ok: false, error: "alat (installation_unit) tidak ditemukan" };
-
   if (!isIsoDate(input.scheduled_date)) {
     return { ok: false, error: `scheduled_date "${input.scheduled_date}" bukan tanggal valid (format YYYY-MM-DD)` };
   }
-
-  // Tanpa guard ini, submit ganda/paralel bikin 2 jadwal terpisah utk unit &
-  // tanggal yang sama — teknisi dijadwalkan 2x utk kerjaan sama, readiness
-  // board double-count kapasitas (ditemukan QA jalur tulis 2026-09-07). Pola
-  // sama dgn F24 (maintenance_schedule): cek dulu, bukan constraint DB.
-  const existingSchedule = await sql`
-    SELECT id FROM install_schedule WHERE installation_unit_id = ${input.installation_unit_id} AND status = 'scheduled'
-  `;
-  if (existingSchedule.length > 0) {
-    return { ok: false, error: "alat ini sudah punya jadwal instalasi aktif (status scheduled)" };
-  }
-
-  if (input.teknisi_id) {
-    const tek = await sql`SELECT nama, aktif FROM teknisi_capacity WHERE id = ${input.teknisi_id}`;
-    if (tek.length === 0) return { ok: false, error: "teknisi tidak ditemukan" };
-    if (!tek[0].aktif) return { ok: false, error: `teknisi "${tek[0].nama}" sudah nonaktif — pilih teknisi lain` };
-  }
-
-  const rows = await sql`
-    INSERT INTO install_schedule (installation_unit_id, teknisi_id, scheduled_date, note)
-    VALUES (${input.installation_unit_id}, ${input.teknisi_id ?? null}, ${input.scheduled_date}, ${input.note ?? null})
-    RETURNING id
-  `;
-  return (await getScheduleById(String(rows[0].id))) as InstallScheduleRow;
+  // Semua cek + INSERT dalam SATU transaksi, dengan baris unit (dan teknisi)
+  // dikunci FOR UPDATE. Dulu cek-lalu-INSERT polos: 5 POST paralel untuk unit
+  // yang sama → 5 jadwal aktif, dan kuota teknisi bisa dilewati lewat paralel
+  // juga (uji dev 12 Okt 2026). Kunci unit menyerialkan "sudah punya jadwal
+  // aktif?", kunci teknisi menyerialkan hitungan kapasitas.
+  const r = await sql.begin(async (tx) => {
+    const [unit] = await tx`
+      SELECT id, bast_done,
+        ${input.scheduled_date}::date < (now() AT TIME ZONE 'Asia/Jakarta')::date AS lampau
+      FROM installation_unit WHERE id = ${input.installation_unit_id} FOR UPDATE
+    `;
+    if (!unit) return { ok: false as const, error: "alat (installation_unit) tidak ditemukan" };
+    // Alat yang sudah BAST sudah terpasang & diserahterimakan — jadwal instalasi
+    // baru untuknya hanya memakan kapasitas teknisi. Unit yang belum BAST (status
+    // apa pun, termasuk draft) tetap boleh: menjadwalkan jauh hari itu wajar.
+    if (unit.bast_done) {
+      return { ok: false as const, error: "alat ini sudah BAST — instalasinya selesai, tak perlu dijadwalkan lagi" };
+    }
+    if (unit.lampau) {
+      return { ok: false as const, error: `scheduled_date ${input.scheduled_date} sudah lewat — jadwal instalasi harus hari ini atau sesudahnya` };
+    }
+    // Tanpa guard ini, submit ganda/paralel bikin 2 jadwal terpisah utk unit &
+    // tanggal yang sama — teknisi dijadwalkan 2x utk kerjaan sama, readiness
+    // board double-count kapasitas (ditemukan QA jalur tulis 2026-09-07).
+    const existingSchedule = await tx`
+      SELECT id FROM install_schedule WHERE installation_unit_id = ${input.installation_unit_id} AND status = 'scheduled'
+    `;
+    if (existingSchedule.length > 0) {
+      return { ok: false as const, error: "alat ini sudah punya jadwal instalasi aktif (status scheduled)" };
+    }
+    if (input.teknisi_id) {
+      const [tek] = await tx`
+        SELECT id, nama, aktif, max_concurrent_jobs FROM teknisi_capacity WHERE id = ${input.teknisi_id} FOR UPDATE`;
+      if (!tek) return { ok: false as const, error: "teknisi tidak ditemukan" };
+      if (!tek.aktif) return { ok: false as const, error: `teknisi "${tek.nama}" sudah nonaktif — pilih teknisi lain` };
+      // Kapasitas dihitung dengan rumus yang SAMA dengan getReadinessBoard()
+      // (jadwal install 'scheduled' + PM F24 yang teknisi_name-nya sama) supaya
+      // angka penolakan = angka yang terlihat di board.
+      const [beban] = await tx`
+        SELECT
+          (SELECT COUNT(*) FROM install_schedule ins WHERE ins.teknisi_id = ${tek.id} AND ins.status = 'scheduled')
+          + (SELECT COUNT(*) FROM maintenance_schedule ms WHERE ms.teknisi_name = ${tek.nama} AND ms.status IN ('scheduled','notified'))
+          AS used
+      `;
+      if (Number(beban.used) >= Number(tek.max_concurrent_jobs)) {
+        return {
+          ok: false as const,
+          error: `kapasitas teknisi "${tek.nama}" penuh (${Number(beban.used)}/${Number(tek.max_concurrent_jobs)} pekerjaan aktif) — pilih teknisi lain atau selesaikan jadwal yang ada`,
+        };
+      }
+    }
+    const [row] = await tx`
+      INSERT INTO install_schedule (installation_unit_id, teknisi_id, scheduled_date, note)
+      VALUES (${input.installation_unit_id}, ${input.teknisi_id ?? null}, ${input.scheduled_date}, ${input.note ?? null})
+      RETURNING id
+    `;
+    return { ok: true as const, id: String(row.id) };
+  });
+  if (!r.ok) return r;
+  return (await getScheduleById(r.id)) as InstallScheduleRow;
 }
 
 async function getScheduleById(id: string): Promise<InstallScheduleRow | null> {
