@@ -302,7 +302,34 @@ export async function ingestKoran(
   }));
 
   const checksumOk = data.checksum_ok == null ? null : Boolean(data.checksum_ok);
-  const parseError = (data.parse_error as string) ?? null;
+
+  // ── Penjaga: satu statement = SATU tanggal ───────────────────────────────
+  //
+  // Penjaga "periode lebih dari satu hari" di atas hanya menyala kalau parser
+  // GAGAL menentukan tanggal. Kalau ia berhasil memilih satu tanggal, seluruh
+  // isi dokumen diterima apa adanya — termasuk baris dari hari lain.
+  //
+  // 12 Okt 2026: semua rekening diekspor dengan rentang 09-11 Okt. BNI ditolak
+  // (parser gagal), tapi BJTM dan MDR 038 LOLOS: masing-masing difile ke 9 Okt
+  // sambil membawa baris 10 Okt. Rp 79.345.166 transaksi Sabtu nyaris terkirim
+  // ke Direktur sebagai uang masuk Jumat.
+  //
+  // Statement TETAP disimpan (datanya tidak dibuang) tapi berstatus
+  // perlu_review supaya tidak ikut resume, dan pengirim diberi tahu. Itu jalur
+  // yang sudah ada untuk "tersimpan tapi belum bisa dipercaya".
+  //
+  // Hanya baris BERTANGGAL yang dinilai: banyak bank tak memberi tanggal per
+  // baris (HANA, INDEX) dan itu bukan kesalahan.
+  const tanggalBaris = [...new Set(
+    lines.map((l) => (l.waktu ? String(l.waktu).slice(0, 10) : null)).filter((d): d is string => !!d),
+  )].sort();
+  const rentangBeda = tanggalBaris.length > 1;
+
+  const parseError = rentangBeda
+    ? `isi dokumen memuat ${tanggalBaris.length} tanggal berbeda (${tanggalBaris.join(", ")}) — ` +
+      `ekspor ulang khusus tanggal ${tanggal} saja` +
+      ((data.parse_error as string) ? `\n${data.parse_error as string}` : "")
+    : ((data.parse_error as string) ?? null);
 
   const polaRows = await sql`SELECT pola FROM bank_afiliasi WHERE aktif`;
   const polaAfiliasi = polaRows.map((r) => String(r.pola));
@@ -330,7 +357,7 @@ export async function ingestKoran(
         ${input.wa_group_jid ?? null},
         ${input.file_path ?? null}, ${fileNama}, ${(data.metode as string) ?? "parser"},
         ${(data.model as string) ?? null}, ${Boolean(data.dry_run)}, ${checksumOk},
-        ${checksumOk === true ? "terverifikasi" : "perlu_review"}, ${parseError},
+        ${checksumOk === true && !rentangBeda ? "terverifikasi" : "perlu_review"}, ${parseError},
         ${(data.raw_text as string) ?? null}
       )
       ON CONFLICT (bank_account_id, tanggal) DO UPDATE SET
