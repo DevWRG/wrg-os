@@ -61,7 +61,13 @@ export function StockBatchTable({ rows }: { rows: StockBatchRow[] }) {
         header: "SKU",
         sortable: true,
         accessor: (r) => r.no,
-        cell: (r) => <span className="font-medium whitespace-nowrap">{r.no}</span>,
+        // SKU + Nama dibekukan, pola sama dgn stock-branch-table (#1626): lebar
+        // SKU DIKUNCI 8,5rem supaya Nama bisa ditaruh di `left-[8.5rem]`.
+        cell: (r) => (
+          <span className="block w-[7rem] truncate font-medium" title={r.no}>
+            {r.no}
+          </span>
+        ),
         className: "bg-card sticky left-0 z-10",
       },
       {
@@ -70,11 +76,11 @@ export function StockBatchTable({ rows }: { rows: StockBatchRow[] }) {
         sortable: true,
         accessor: (r) => r.name,
         cell: (r) => (
-          <span className="block max-w-[16rem] truncate" title={r.name}>
+          <span className="block w-[16rem] truncate" title={r.name}>
             {r.name}
           </span>
         ),
-        className: "max-w-[16rem]",
+        className: "bg-card sticky left-[8.5rem] z-10 shadow-[inset_-1px_0_0_var(--border)]",
       },
       { id: "gudang", header: "Gudang", sortable: true, accessor: (r) => r.warehouse_kode },
       { id: "batch", header: "Batch", sortable: true, accessor: (r) => r.batch_no },

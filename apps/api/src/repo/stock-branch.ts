@@ -244,7 +244,14 @@ export async function stockBranchSummary(): Promise<StockBranchSummary> {
       count(*) FILTER (WHERE n_gudang > 0 AND quantity IS NOT NULL AND quantity < jumlah_cabang)::int AS item_selisih_negatif
     FROM per_item
   `;
-  const [upd] = await sql`SELECT max(updated_at) AS t FROM item_stock_branch`;
+  // Gerbang jenis juga di sini dan di per-gudang bawah: tanpa itu stok gudang
+  // virtual customer ikut muncul sebagai kartu di "Ringkasan per gudang cabang"
+  // dan menyegarkan "Data terakhir masuk" (terbukti uji P10 12 Okt 2026 dgn
+  // fixture gudang jenis 'customer'). Sama dgn gerbang di listWarehouses.
+  const [upd] = await sql`
+    SELECT max(sb.updated_at) AS t FROM item_stock_branch sb
+    JOIN warehouse w ON w.kode = sb.warehouse_kode AND w.jenis = 'cabang'
+  `;
 
   // LEFT JOIN dari `warehouse`: gudang yang belum punya satu pun baris stok
   // tetap tampil dengan 0 — kalau di-INNER JOIN, gudang yang datanya belum
@@ -257,6 +264,7 @@ export async function stockBranchSummary(): Promise<StockBranchSummary> {
            COALESCE(array_agg(DISTINCT sb.source) FILTER (WHERE sb.source IS NOT NULL), '{}') AS sumber
     FROM warehouse w
     LEFT JOIN item_stock_branch sb ON sb.warehouse_kode = w.kode
+    WHERE w.jenis = 'cabang'
     GROUP BY w.kode, w.nama, w.cabang, w.aktif, w.urutan
     ORDER BY w.urutan, w.kode
   `;
