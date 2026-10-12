@@ -31,6 +31,7 @@ import { db } from "../db.js";
 import { stripInvisible } from "../parsers/dailyplan.js";
 import { fmtRp } from "./inbound-sales-analytics.js";
 import { getSalesOrderItems } from "./accurateSync.js";
+import { resolveCustomer, normNama } from "./customer-resolve.js";
 
 const CEK_CUSTOMER_LINE = /^\s*#\s*cek\s+customer\b/i;
 // Threshold sejajar ACCOUNT_MATCH (0.45, inbound.ts:424), bukan 0.3 milik
@@ -45,7 +46,6 @@ const CEK_MATCH = 0.45;
 // — gerbang anti-bocornya bukan ambang ini, melainkan aturan "satu nama
 // kanonik untuk kedua tabel" di resolveCustomer().
 const FALLBACK_MATCH = 0.3;
-const MAX_KANDIDAT = 5;
 
 function extractCustomer(body: string | null): string | null {
   if (!body) return null;
@@ -59,66 +59,10 @@ export function detectCek(body: string | null): boolean {
   return extractCustomer(body) !== null;
 }
 
-export interface CustCandidate {
-  /** null di jalur fallback (identitas cuma punya nama, belum tentu ada di accurate_customer). */
-  id: number | null;
-  name: string;
-  score: number;
-}
-
-export type CekResolve =
-  | { kind: "none" }
-  | { kind: "one"; name: string; ids: number[] }
-  | { kind: "ambiguous"; names: string[] };
-
-/** Normalisasi buat perbandingan nama: case-insensitive + rapikan spasi. */
-export function normNama(s: string): string {
-  return s.trim().toLowerCase().replace(/\s+/g, " ");
-}
-
-/**
- * Pilih SATU identitas customer dari daftar kandidat. Dipisah jadi fungsi
- * murni supaya aturan anti-bocornya bisa diuji tanpa DB
- * (apps/api/src/repo/inbound-cek-resolve.test.ts).
- *
- * Aturan:
- *  1. Ada kandidat yang namanya PERSIS sama dengan query → itu yang dipakai,
- *     tanpa peduli ada nama mirip lain yang skornya tinggi. Ini yang menutup
- *     kasus #5: "CV Sample Dua" tak lagi kalah oleh "CV Sample Satu" (0.588).
- *  2. Beberapa baris `accurate_customer` dengan nama sama = satu entitas yang
- *     kebetulan punya record kembar di Accurate (kasus faskes kembar 744/765).
- *     Semua id-nya dipakai — memilih salah satu diam-diam akan menyembunyikan
- *     SO/SJ yang tercatat di kembarannya.
- *  3. Lebih dari satu NAMA berbeda lolos ambang → ambigu, jangan pilih.
- */
-export function resolveCustomer(q: string, rows: CustCandidate[]): CekResolve {
-  const nq = normNama(q);
-  const bersih = rows.filter((r) => r.name && r.name.trim() !== "");
-  if (bersih.length === 0) return { kind: "none" };
-
-  const persis = bersih.filter((r) => normNama(r.name) === nq);
-  if (persis.length > 0) {
-    return { kind: "one", name: persis[0].name, ids: idsDari(persis) };
-  }
-
-  // Kelompokkan per nama ternormalisasi — dua record kembar bukan dua kandidat.
-  const grup = new Map<string, CustCandidate[]>();
-  for (const r of [...bersih].sort((a, b) => b.score - a.score)) {
-    const k = normNama(r.name);
-    const g = grup.get(k);
-    if (g) g.push(r);
-    else grup.set(k, [r]);
-  }
-  const kelompok = [...grup.values()];
-  if (kelompok.length === 1) {
-    return { kind: "one", name: kelompok[0][0].name, ids: idsDari(kelompok[0]) };
-  }
-  return { kind: "ambiguous", names: kelompok.slice(0, MAX_KANDIDAT).map((g) => g[0].name) };
-}
-
-function idsDari(rows: CustCandidate[]): number[] {
-  return [...new Set(rows.map((r) => r.id).filter((v): v is number => v != null))];
-}
+// Aturan "satu identitas atau bertanya" (resolveCustomer) tinggal di
+// customer-resolve.ts — dipakai juga #CALL/#NOTE (F95), dan main tak punya
+// berkas ini. Diekspor ulang supaya pemanggil & tes lama tak berubah.
+export { resolveCustomer, normNama, type CustCandidate, type CekResolve } from "./customer-resolve.js";
 
 export function balasanAmbigu(q: string, names: string[]): string {
   return (

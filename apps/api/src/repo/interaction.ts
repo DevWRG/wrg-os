@@ -6,7 +6,7 @@
 // tak boleh ikut KPI aktivitas AM, sedangkan ±15 query KPI menghitung semua baris
 // activity_log tanpa saringan tipe/sumber.
 //
-// Resolusi faskes mengikuti aturan #CEK CUSTOMER (inbound-cek.ts): satu
+// Resolusi faskes lewat customer-resolve.ts (aturan yang sama dgn #CEK CUSTOMER): satu
 // identitas atau BERTANYA — catatan yang diam-diam menempel ke faskes yang salah
 // lebih mahal daripada AM mengetik ulang. Kandidat diambil dua jalur, nama utuh
 // dan INTI nama (kata generik dibuang, faskes_inti migrasi 176), karena nama
@@ -17,7 +17,7 @@
 
 import { db } from "../db.js";
 import { stripInvisible } from "../parsers/dailyplan.js";
-import { resolveCustomer, type CustCandidate, type CekResolve } from "./inbound-cek.js";
+import { resolveCustomer, type CustCandidate, type CekResolve } from "./customer-resolve.js";
 
 export type JenisInteraksi = "call" | "note";
 
