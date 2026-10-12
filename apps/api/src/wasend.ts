@@ -81,6 +81,35 @@ function logNotSent(mode: string, target: string, body: string): void {
   console.log(`[wa] ${mode} — tidak kirim live → ${target}\n--- pesan ---\n${body}\n--- selesai ---`);
 }
 
+// Ringkas galat gateway TANPA membuang bagian yang menjelaskan sebabnya.
+//
+// Versi lama: `.slice(0, 200)`. Jawaban bridge berbentuk
+//   {"sent":false,"error":"Command failed: openclaw message send --channel
+//    whatsapp --target <jid> --message <SELURUH ISI PESAN> --json\n<stderr>"}
+// sehingga 200 karakter pertama nyaris selalu habis oleh perintah yang
+// digaungkan, dan alasannya — yang ada di EKOR — ikut terpotong. Pada insiden
+// 21 Sep 2026 ini menyembunyikan sebab kegagalan selama berjam-jam: yang
+// tersimpan hanya "Command failed: openclaw message send ..." tanpa satu pun
+// petunjuk, dan diagnosis harus dikerjakan lewat forensik log bridge.
+//
+// Sekarang: kalau jawabannya JSON dan punya field `error`, ambil field itu saja
+// (sudah bersih dari derau). Kalau tidak, simpan kepala DAN ekor — ekor lebih
+// berharga karena di situ stderr berada.
+export function ringkasGalat(mentah: string, maks = 1200): string {
+  let teks = String(mentah ?? "");
+  try {
+    const j = JSON.parse(teks) as Record<string, unknown>;
+    if (typeof j.error === "string" && j.error) teks = j.error;
+  } catch {
+    // bukan JSON — pakai apa adanya
+  }
+  if (teks.length <= maks) return teks;
+  const kepala = Math.floor(maks * 0.35);
+  const ekor = maks - kepala;
+  const dipotong = teks.length - maks;
+  return `${teks.slice(0, kepala)}\n…[${dipotong} karakter dipotong]…\n${teks.slice(-ekor)}`;
+}
+
 export async function sendViaWaGateway(to: string, body: string): Promise<WaSendResult> {
   const url = process.env.WA_SEND_URL;
   const testTarget = process.env.WA_TEST_TARGET?.trim();
@@ -121,11 +150,11 @@ export async function sendViaWaGateway(to: string, body: string): Promise<WaSend
       body: JSON.stringify({ to: target, message: body }),
     });
     if (!res.ok) {
-      return { sent: false, stub: false, status: res.status, error: (await res.text()).slice(0, 200), to: target };
+      return { sent: false, stub: false, status: res.status, error: ringkasGalat(await res.text()), to: target };
     }
     return { sent: true, stub: false, status: res.status, to: target };
   } catch (e) {
-    return { sent: false, stub: false, error: String(e), to: target };
+    return { sent: false, stub: false, error: ringkasGalat(String(e)), to: target };
   }
 }
 
