@@ -29,7 +29,15 @@ set -uo pipefail
 export PATH="/opt/homebrew/opt/postgresql@16/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
 # ── Konfigurasi ──
-AMBANG_MENIT="${WA_WATCH_AMBANG:-45}"
+# Ambang BEDA per hari. Sabtu jauh lebih sepi — rata-rata 72 pesan (08-16)
+# lawan 377-441 di hari kerja, dan p99 jeda 93 menit lawan 10 menit. Ambang 45
+# menit yang diturunkan dari data Sen-Sab DIGABUNG ternyata salah untuk Sabtu:
+# alarm berbunyi tiap Sabtu (26 Sep, 3 Okt, 10 Okt 2026) padahal sistem sehat.
+# Alarm yang rutin salah akan diabaikan orang, jadi ini dipisah.
+#   Sen-Jum 45 mnt  → jeda >45 mnt cuma 1x dalam 35 hari
+#   Sabtu  150 mnt  → jeda >150 mnt cuma 2x dalam 10 Sabtu
+AMBANG_HARIKERJA="${WA_WATCH_AMBANG:-45}"
+AMBANG_SABTU="${WA_WATCH_AMBANG_SABTU:-150}"
 JAM_MULAI="${WA_WATCH_JAM_MULAI:-8}"      # inklusif, WIB
 JAM_SELESAI="${WA_WATCH_JAM_SELESAI:-17}" # inklusif
 COOLDOWN_MENIT="${WA_WATCH_COOLDOWN:-60}"
@@ -53,6 +61,8 @@ jam=$(date +%-H)
 if [ "$dow" -eq 7 ] || [ "$jam" -lt "$JAM_MULAI" ] || [ "$jam" -gt "$JAM_SELESAI" ]; then
   exit 0
 fi
+
+if [ "$dow" -eq 6 ]; then AMBANG_MENIT="$AMBANG_SABTU"; else AMBANG_MENIT="$AMBANG_HARIKERJA"; fi
 
 # ── Berapa menit sejak pesan terakhir? ──
 usia=$(psql -U "$DB_USER" -d "$DB_NAME" -At -c \
