@@ -48,7 +48,8 @@ def build_senin_system(minggu_label: str, periode: str, health: str, minggu_rapa
         "input — itu wewenang Direktur, bukan bahan usulan otomatis. Jangan menyebut "
         "bonus, insentif, atau kompensasi dalam bentuk apa pun (hadiah maupun potongan), "
         "Orang yang boleh disebut HANYA nama HoD di input, Direktur, dan AM; jangan "
-        "menyebut jabatan lain (mis. Sales Manager, CFO, analis, PM, konsultan).\n"
+        "menyebut jabatan atau peran lain (mis. Sales Manager, koordinator, supervisor, "
+        "CFO, analis, PM, konsultan), dan jangan menugasi satu HoD mengoordinasi HoD lain.\n"
         "7. Jangan menilai karakter atau niat orang ('tidak peduli', 'mati', 'blank "
         "total'); sebut faktanya saja (mis. '0/5 metric terisi').\n"
         f"8. Minggu {minggu_label} sudah lewat. Semua tenggat ditulis relatif terhadap "
@@ -121,7 +122,7 @@ _POLA_PELANGGARAN = (
     ("ancaman bersyarat", re.compile(r"\batau\b[^.\n]{0,60}\b(tidak|tak|dilarang)\s+(boleh\s+)?(hadir|ikut)", re.I)),
     ("ancaman bersyarat", re.compile(r"\b(dikeluarkan|tidak diundang)\b[^.\n]{0,30}\brapat\b", re.I)),
     ("sanksi/kompensasi", re.compile(r"\b(sanksi|hukuman|teguran|SP\s?[123]|PHK|bonus|insentif|kompensasi|denda)\b", re.I)),
-    ("jabatan karangan", re.compile(r"\b(sales manager|manajer|manager|CFO|CEO|COO|CTO|analis|konsultan|PM)\b", re.I)),
+    ("jabatan karangan", re.compile(r"\b(sales manager|manajer|manager|koordinator|supervisor|CFO|CEO|COO|CTO|analis|konsultan|PM)\b", re.I)),
     ("frekuensi kontradiktif", re.compile(r"\b(harian|daily|setiap hari)\b[^.\n]{0,60}\bsetiap\s+(senin|selasa|rabu|kamis|jumat|sabtu|minggu)\b", re.I)),
 )
 
