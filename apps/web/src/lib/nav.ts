@@ -461,7 +461,6 @@ export const DEV_ONLY_URLS: ReadonlySet<string> = new Set([
   "/approval-requests",
   "/courier-performance",
   "/doc-klaim",
-  "/ed-watch",
   "/forecast-submission",
   "/inbound-receiving",
   "/installations",
@@ -476,7 +475,6 @@ export const DEV_ONLY_URLS: ReadonlySet<string> = new Set([
   "/rfid-cartridge-claims",
   "/service-tickets",
   "/shipment-tracking",
-  "/stok-gudang",
   "/supplier-eta",
 ]);
 
