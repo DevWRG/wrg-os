@@ -265,6 +265,8 @@ import {
   type PaperSize,
   type Orientation,
 } from "./repo/print-spec.js";
+import { listShipments, getShipmentById } from "./repo/shipment-tracking.js";
+import { getKurirPerformaSummary } from "./repo/courier-performance.js";
 import { picFormSummary, listSopLangkah, listRaciPosisi, picFormKelengkapan, listDivisi, koordinasiGraf, pohonPekerjaan, raciKaryawanPosisi, setTautanManual, hapusTautanManual } from "./repo/picform.js";
 import {
   createReminder,
@@ -5192,6 +5194,29 @@ app.delete("/atk/stock-opname/:id", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const r = await deleteAtkStockOpname(c.req.param("id"));
   return c.json(r, r.deleted ? 200 : 404);
+});
+
+// ── Tracking Pengiriman (F12/F42/F93, SHIPPING) + Kurir Performance (F43) ──
+// BACA-SAJA. Data hanya lewat WA #KIRIM/#TERIMA/#BAST/#BUKTI (SJ dirujuk ke DO
+// Accurate, record dibuat otomatis saat #KIRIM — repo/inbound.ts); endpoint
+// tulis versi dev sengaja tak dipromosikan (keputusan user 13 Okt 2026).
+app.get("/shipment-tracking", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listShipments(c.req.query("status") || undefined, c.req.query("q") || undefined);
+  return c.json({ count: rows.length, shipments: rows });
+});
+
+app.get("/shipment-tracking/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await getShipmentById(c.req.param("id"));
+  return r ? c.json(r) : c.json({ error: "shipment tidak ditemukan" }, 404);
+});
+
+app.get("/courier-performance/summary", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const from = c.req.query("from") ?? undefined;
+  const to = c.req.query("to") ?? undefined;
+  return c.json(await getKurirPerformaSummary({ from, to }));
 });
 
 // ── F44 Document Print Spec Standardizer (Shipping) — master data standalone. ──
