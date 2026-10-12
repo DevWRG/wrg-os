@@ -56,6 +56,7 @@ import { runMaintenanceAlerts, runGaMaintenanceBscFeed } from "./repo/ga-mainten
 import { runGaHelpdeskOverdueAlert, runGaHelpdeskBscFeed } from "./repo/ga-helpdesk.js";
 import { runAuditFindingApprovalReminder } from "./repo/audit-finding.js";
 import { runLpseTenderReminder } from "./repo/lpse-tender.js";
+import { runLeadAging } from "./repo/lead.js";
 import { runInvoiceReminder, runOverdueRecap } from "./repo/faktur.js";
 import { terapkanKpiBulan } from "./repo/kpi-measure.js";
 
@@ -207,6 +208,9 @@ export function startScheduler(): ScheduleStatus {
   // lpse-tender-reminder (F20) — WA ke PIC kalau tender LPSE/E-Catalog macet
   // >N hari di status berjalan (belum selesai). Flag SENDIRI (default off).
   const lpseTenderReminderEnabled = (process.env.LPSE_TENDER_REMINDER_ENABLED ?? "false").toLowerCase() === "true";
+  // F65 — pengingat lead belum dihubungi (AM ≥3 hari kerja, HoD ≥7). DM per orang;
+  // MATI sampai user menentukan penerimanya (keputusan 13 Okt 2026).
+  const leadAgingEnabled = (process.env.LEAD_AGING_ENABLED ?? "false").toLowerCase() === "true";
   // F91 — reminder jatuh tempo invoice (D-7/D-day/overdue) ke Finance + AM.
   const invoiceReminderEnabled = (process.env.INVOICE_REMINDER_ENABLED ?? "false").toLowerCase() === "true";
   // accurate-stock-sync (F2) — refresh accurate_item.quantity tiap 5 menit,
@@ -317,12 +321,12 @@ export function startScheduler(): ScheduleStatus {
   ];
 
   status = {
-    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled || watchpointSnapshotEnabled || preVisitEnabled || edWatchEnabled || gaMaintenanceAlertEnabled || gaMaintenanceBscEnabled || gaHelpdeskOverdueEnabled || gaHelpdeskBscEnabled || lpseTenderReminderEnabled || accurateStockSyncEnabled || cashinResumeEnabled || geoSweepEnabled || kpiMeasureEnabled || invoiceReminderEnabled || auditFindingReminderEnabled || seninBriefEnabled || soPacingEnabled || fixedAssetSyncEnabled || poSyncEnabled || pmKalibrasiEnabled,
+    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled || watchpointSnapshotEnabled || preVisitEnabled || edWatchEnabled || gaMaintenanceAlertEnabled || gaMaintenanceBscEnabled || gaHelpdeskOverdueEnabled || gaHelpdeskBscEnabled || lpseTenderReminderEnabled || accurateStockSyncEnabled || cashinResumeEnabled || geoSweepEnabled || kpiMeasureEnabled || invoiceReminderEnabled || auditFindingReminderEnabled || seninBriefEnabled || soPacingEnabled || fixedAssetSyncEnabled || poSyncEnabled || pmKalibrasiEnabled || leadAgingEnabled,
     timezone,
     jobs: jobs.map((j) => ({ id: j.id, expr: j.expr, valid: cron.validate(j.expr) })),
   };
 
-  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled && !watchpointSnapshotEnabled && !preVisitEnabled && !edWatchEnabled && !gaMaintenanceAlertEnabled && !gaMaintenanceBscEnabled && !gaHelpdeskOverdueEnabled && !gaHelpdeskBscEnabled && !lpseTenderReminderEnabled && !accurateStockSyncEnabled && !cashinResumeEnabled && !geoSweepEnabled && !kpiMeasureEnabled && !invoiceReminderEnabled && !auditFindingReminderEnabled && !seninBriefEnabled && !soPacingEnabled && !fixedAssetSyncEnabled && !poSyncEnabled && !pmKalibrasiEnabled) {
+  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled && !watchpointSnapshotEnabled && !preVisitEnabled && !edWatchEnabled && !gaMaintenanceAlertEnabled && !gaMaintenanceBscEnabled && !gaHelpdeskOverdueEnabled && !gaHelpdeskBscEnabled && !lpseTenderReminderEnabled && !accurateStockSyncEnabled && !cashinResumeEnabled && !geoSweepEnabled && !kpiMeasureEnabled && !invoiceReminderEnabled && !auditFindingReminderEnabled && !seninBriefEnabled && !soPacingEnabled && !fixedAssetSyncEnabled && !poSyncEnabled && !pmKalibrasiEnabled && !leadAgingEnabled) {
     console.log("[scheduler] semua *_SCHEDULE/_ENABLED flag != true — tidak dijadwalkan");
     return status;
   }
@@ -1433,6 +1437,26 @@ export function startScheduler(): ScheduleStatus {
       { timezone },
     );
     live.push(`kpi-measure=${kpiMeasureExpr}`);
+  }
+
+  // F65 lead-aging — hari kerja 09:00 WIB; libur (master_holiday) dilewati.
+  // Satu ringkasan per AM/HoD; penanda terkirim hanya bila WA live (repo/lead.ts).
+  const leadAgingExpr = process.env.LEAD_AGING_CRON ?? "0 9 * * 1-5";
+  if (leadAgingEnabled && cron.validate(leadAgingExpr)) {
+    cron.schedule(
+      leadAgingExpr,
+      async () => {
+        try {
+          if (!(await isWorkday())) return;
+          const r = await runLeadAging();
+          console.log(`[scheduler] lead-aging → AM ${r.am}, HoD ${r.hod}${r.lewati.length ? `, dilewati: ${r.lewati.join("; ")}` : ""}`);
+        } catch (e) {
+          console.error("[scheduler] lead-aging gagal:", (e as Error).message);
+        }
+      },
+      { timezone },
+    );
+    live.push(`lead-aging=${leadAgingExpr}`);
   }
 
   // lpse-tender-reminder (F20) — harian 08:00 WIB, cek tender macet >N hari
