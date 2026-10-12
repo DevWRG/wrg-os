@@ -11,6 +11,10 @@ import {
   pendingStockItems, countPendingStockItems,
 } from "./accurateMirror.js";
 import { upsertFixedAssetDetail, pruneFixedAssets, recordFixedAssetSyncState, markFixedAssetSyncStarted } from "./asetTetap.js";
+import {
+  upsertAccuratePurchaseOrders, pendingAccuratePoDetails, countPendingAccuratePoDetails, replaceAccuratePoItems,
+  type AccuratePoHeader, type AccuratePoItem,
+} from "./purchase-order.js";
 
 // Puller Accurate Online (pengganti legacy sync_accurate.sh). Tarik sales-invoice
 // header+items dari zeus.accurate.id → mirror penuh accurate_* + refresh ar_aging.
@@ -895,4 +899,202 @@ async function syncFixedAssetsInner(opts: { maxPages?: number }): Promise<FixedA
   };
   await recordFixedAssetSyncState(res.ok, { ...res });
   return res;
+}
+
+// ── F13 PO Tracker = cermin Accurate (migrasi 205) ─────────────────────────
+//
+// Probe 12 Okt 2026: purchase-order/list.do MENGHORMATI fields= (number,
+// vendor, transDate, shipDate, status, statusName, approvalStatus,
+// percentShipped, totalAmount, lastUpdate) dan bisa di-sort lastUpdate desc —
+// jadi sinkron header INKREMENTAL: berhenti begitu satu halaman seluruhnya
+// lebih tua dari lastUpdate terbaru yang sudah tersimpan. Baris barang
+// (detail.do, satu panggilan per PO) hanya ditarik untuk PO yang lastUpdate-nya
+// berubah sejak tarikan detail terakhir.
+//
+// Cakupan (keputusan user 12 Okt): PO bertanggal 2026+ DITAMBAH PO lebih tua
+// yang masih terbuka (Menunggu/Sebagian diproses — 91 PO 2025 saat probe;
+// justru itu yang perlu dipantau), DITAMBAH PO yang sudah ada di cermin (supaya
+// PO 2025 yang lalu ditutup ikut ter-update, bukan beku di status lama).
+//
+// shipDate TIDAK otomatis jadi ETA: 2.599/2.683 PO punya shipDate = transDate
+// (nilai bawaan form Accurate). Dipakai sebagai eta_date hanya kalau diisi
+// lebih lambat dari tanggal PO — kalau tidak, kartu "Telat" menggelembung.
+
+const PO_SINCE = "2026-01-01";
+const PO_OPEN_STATUSES = new Set(["Menunggu diproses", "Sebagian diproses"]);
+
+/** "dd/mm/yyyy" → "yyyy-mm-dd" (null kalau bentuknya lain). */
+function accDate(v: unknown): string | null {
+  const m = /^(\d{2})\/(\d{2})\/(\d{4})/.exec(String(v ?? ""));
+  return m ? `${m[3]}-${m[2]}-${m[1]}` : null;
+}
+
+/** "dd/mm/yyyy HH:MM:SS" (WIB) → ISO dengan offset +07:00. */
+function accDateTime(v: unknown): string | null {
+  const m = /^(\d{2})\/(\d{2})\/(\d{4}) (\d{2}):(\d{2}):(\d{2})$/.exec(String(v ?? ""));
+  return m ? `${m[3]}-${m[2]}-${m[1]}T${m[4]}:${m[5]}:${m[6]}+07:00` : null;
+}
+
+export interface PurchaseOrderSyncResult {
+  ok: boolean;
+  error?: string;
+  headers: number;
+  skipped_scope: number;
+  skipped_conflict: number;
+  details: number;
+  detail_failed: number;
+  lines: number;
+  pending_details: number;
+  full: boolean;
+  cappedByPages?: boolean;
+}
+
+let poSyncRunning = false;
+export const purchaseOrderSyncBusy = () => poSyncRunning;
+
+export async function syncPurchaseOrders(opts: { full?: boolean; detailLimit?: number; maxPages?: number } = {}): Promise<PurchaseOrderSyncResult> {
+  const empty = { headers: 0, skipped_scope: 0, skipped_conflict: 0, details: 0, detail_failed: 0, lines: 0, pending_details: 0, full: !!opts.full };
+  if (poSyncRunning) return { ok: false, error: "sinkron PO sedang berjalan", ...empty };
+  const creds = loadCreds();
+  if (!creds) return { ok: false, error: "kredensial Accurate tak tersedia", ...empty };
+  poSyncRunning = true;
+  try {
+    const res = await syncPurchaseOrdersInner(creds, opts);
+    await recordPoSyncState(res);
+    return res;
+  } catch (e) {
+    const res = { ok: false, error: String((e as Error)?.message ?? e), ...empty };
+    await recordPoSyncState(res).catch(() => {});
+    return res;
+  } finally {
+    poSyncRunning = false;
+  }
+}
+
+async function recordPoSyncState(res: PurchaseOrderSyncResult): Promise<void> {
+  const sql = db();
+  const summary = JSON.parse(JSON.stringify(res));
+  await sql`
+    INSERT INTO accurate_sync_state (entity, last_synced_at, last_run_ok, last_run_summary)
+    VALUES ('purchase-order', now(), ${res.ok}, ${sql.json(summary)})
+    ON CONFLICT (entity) DO UPDATE SET last_synced_at = now(), last_run_ok = ${res.ok},
+      last_run_summary = ${sql.json(summary)}
+  `;
+}
+
+async function syncPurchaseOrdersInner(
+  creds: Creds,
+  opts: { full?: boolean; detailLimit?: number; maxPages?: number },
+): Promise<PurchaseOrderSyncResult> {
+  const sql = db();
+  const maxPages = opts.maxPages ?? 60;
+  const detailLimit = opts.detailLimit ?? 300;
+  const [wm] = await sql`SELECT max(accurate_last_update)::text AS w FROM purchase_order WHERE source = 'accurate'`;
+  // Watermark mundur 1 jam: lastUpdate Accurate per detik, dua PO bisa
+  // berbagi detik yang sama di batas halaman. Upsert idempoten, jadi tumpang
+  // tindih kecil lebih murah daripada satu PO terlewat.
+  const full = opts.full || !wm?.w;
+  const watermark = full ? null : new Date(new Date(String(wm.w)).getTime() - 3600_000);
+
+  let headers = 0;
+  let skippedScope = 0;
+  let skippedConflict = 0;
+  let capped = false;
+  let page = 1;
+  for (; page <= maxPages; page++) {
+    const list = await accGet(
+      creds,
+      "/accurate/api/purchase-order/list.do",
+      `sp.page=${page}&sp.pageSize=100&sp.sort=lastUpdate|desc&fields=id,number,transDate,shipDate,status,statusName,approvalStatus,percentShipped,totalAmount,vendor,description,lastUpdate`,
+    );
+    if (list.s !== true) throw new Error(`purchase-order/list.do gagal di halaman ${page}`);
+    const rows = Array.isArray(list.d) ? (list.d as Array<Record<string, unknown>>) : [];
+    if (rows.length === 0) break;
+
+    const ids = rows.map((r) => Number(r.id));
+    const existing = new Set(
+      (await sql`SELECT accurate_id FROM purchase_order WHERE accurate_id = ANY(${ids}::bigint[])`).map((r) => Number(r.accurate_id)),
+    );
+    const mapped: AccuratePoHeader[] = [];
+    let allOlder = true;
+    for (const v of rows) {
+      const lastUpdate = accDateTime(v.lastUpdate);
+      if (!watermark || !lastUpdate || new Date(lastUpdate) >= watermark) allOlder = false;
+      const orderDate = accDate(v.transDate);
+      const statusName = v.statusName != null ? String(v.statusName) : null;
+      const inScope =
+        existing.has(Number(v.id)) ||
+        (orderDate != null && orderDate >= PO_SINCE) ||
+        (statusName != null && PO_OPEN_STATUSES.has(statusName));
+      if (!orderDate || !inScope) { skippedScope++; continue; }
+      const shipDate = accDate(v.shipDate);
+      const vendor = v.vendor && typeof v.vendor === "object" ? (v.vendor as { id?: unknown; name?: unknown }) : null;
+      const vendorId = Number(vendor?.id);
+      mapped.push({
+        accurate_id: Number(v.id),
+        po_number: String(v.number ?? `ACC-${v.id}`),
+        vendor_id: Number.isFinite(vendorId) && vendorId > 0 ? vendorId : null,
+        vendor_name: vendor?.name != null ? String(vendor.name) : "(vendor tak diketahui)",
+        order_date: orderDate,
+        eta_date: shipDate && shipDate > orderDate ? shipDate : null,
+        accurate_status: statusName,
+        accurate_approval: v.approvalStatus != null ? String(v.approvalStatus) : null,
+        percent_shipped: v.percentShipped != null ? Number(v.percentShipped) : null,
+        total_amount: v.totalAmount != null ? Number(v.totalAmount) : null,
+        description: v.description != null && String(v.description).trim() ? String(v.description) : null,
+        last_update: lastUpdate,
+      });
+    }
+    const up = await upsertAccuratePurchaseOrders(mapped);
+    headers += up.upserted;
+    skippedConflict += up.skipped;
+    if (rows.length < 100) break;
+    if (!full && allOlder) break;
+    if (page >= maxPages) capped = laporBatasHalaman("purchase-order", page, maxPages, 100);
+    await sleep(150);
+  }
+
+  let details = 0;
+  let detailFailed = 0;
+  let lines = 0;
+  for (const po of await pendingAccuratePoDetails(detailLimit)) {
+    const det = await accGet(creds, "/accurate/api/purchase-order/detail.do", `id=${po.accurate_id}`);
+    if (det?.s !== true) {
+      // PO bermasalah (mis. dihapus di Accurate) tak boleh menghentikan sisanya;
+      // items_last_update tetap basi → dicoba lagi siklus berikutnya.
+      detailFailed++;
+      await sleep(150);
+      continue;
+    }
+    const d = det.d as Detail;
+    const items: AccuratePoItem[] = ((d?.detailItem ?? []) as Detail[])
+      .filter((it) => Number(it.quantity) > 0 && it.id != null)
+      .map((it) => ({
+        accurate_detail_id: Number(it.id),
+        item_no: it.item?.no != null ? String(it.item.no) : null,
+        item_desc: String(it.detailName ?? it.item?.name ?? "(tanpa nama)"),
+        qty_ordered: Number(it.quantity),
+        qty_shipped: num(it.shipQuantity),
+        unit: it.itemUnit?.name != null ? String(it.itemUnit.name) : null,
+        unit_price: it.unitPrice != null ? Number(it.unitPrice) : null,
+        warehouse_name: it.warehouse?.name != null ? String(it.warehouse.name) : null,
+        notes: it.detailNotes != null && String(it.detailNotes).trim() ? String(it.detailNotes) : null,
+      }));
+    lines += await replaceAccuratePoItems(po.id, po.last_update, items);
+    details++;
+    await sleep(150);
+  }
+
+  return {
+    ok: true,
+    headers,
+    skipped_scope: skippedScope,
+    skipped_conflict: skippedConflict,
+    details,
+    detail_failed: detailFailed,
+    lines,
+    pending_details: await countPendingAccuratePoDetails(),
+    full,
+    ...(capped ? { cappedByPages: true } : {}),
+  };
 }

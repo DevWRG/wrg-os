@@ -23,9 +23,12 @@ import {
 } from "@/components/ui/dialog";
 import { type ApproverRole } from "@/lib/po-approval-access";
 
-export type PurchaseOrderStatus = "ordered" | "partial_received" | "received" | "cancelled" | "rejected";
+export type PurchaseOrderStatus = "ordered" | "partial_received" | "received" | "cancelled" | "rejected" | "closed";
 // F35 — legacy_exempt: PO dibuat sebelum F35 (lini NULL), tidak kena gate approval.
-export type ApprovalStatus = "legacy_exempt" | "pending_tier1" | "pending_direktur" | "approved" | "rejected";
+// accurate_* — PO cermin Accurate (migrasi 205): approval-nya di Accurate.
+export type ApprovalStatus =
+  | "legacy_exempt" | "pending_tier1" | "pending_direktur" | "approved" | "rejected"
+  | "accurate_approved" | "accurate_pending";
 
 export interface PurchaseOrderRow {
   id: string;
@@ -43,6 +46,12 @@ export interface PurchaseOrderRow {
   received_item_count: number;
   lini: "IVD" | "Medical" | null;
   approval_status: ApprovalStatus;
+  /** manual = diisi di WRG-OS (pra-205), accurate = disalin dari Accurate, read-only. */
+  source: "manual" | "accurate";
+  accurate_status: string | null;
+  percent_shipped: number | null;
+  total_amount: number | null;
+  synced_at: string | null;
 }
 
 interface ApprovalRow {
@@ -64,6 +73,8 @@ interface ItemRow {
   unit_price: number | null;
   notes: string | null;
   qty_received: number;
+  item_no: string | null;
+  warehouse_name: string | null;
 }
 
 interface ReceiptRow {
@@ -87,12 +98,22 @@ const tgl = (s: string) => {
   return Number.isNaN(d.getTime()) ? s : d.toLocaleDateString("id-ID", { day: "2-digit", month: "short", year: "numeric" });
 };
 
+// timestamptz::text dari Postgres ("2026-10-12 10:30:12.1+00") → jam WIB.
+const tglJam = (s: string) => {
+  const d = new Date(s.replace(" ", "T").replace(/([+-]\d{2})$/, "$1:00"));
+  return Number.isNaN(d.getTime())
+    ? s
+    : d.toLocaleString("id-ID", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "Asia/Jakarta" });
+};
+const rupiah = (n: number) => `Rp${Math.round(n).toLocaleString("id-ID")}`;
+
 const isTelat = (r: Pick<PurchaseOrderRow, "status" | "eta_date">) =>
   (r.status === "ordered" || r.status === "partial_received") && !!r.eta_date && r.eta_date < today();
 
 function StatusBadge({ row }: { row: Pick<PurchaseOrderRow, "status" | "eta_date"> }) {
   if (row.status === "cancelled") return <Badge variant="destructive">Dibatalkan</Badge>;
   if (row.status === "rejected") return <Badge variant="destructive">Ditolak</Badge>;
+  if (row.status === "closed") return <Badge variant="outline">Ditutup</Badge>;
   if (row.status === "received") return <Badge className="bg-success/10 text-success">Diterima Penuh</Badge>;
   if (row.status === "partial_received") return <Badge className="bg-warning/10 text-warning">Sebagian Diterima</Badge>;
   if (isTelat(row)) return <Badge variant="destructive">Telat</Badge>;
@@ -106,6 +127,7 @@ function ApprovalStatusBadge({ status }: { status: ApprovalStatus }) {
   if (status === "rejected") return <Badge variant="destructive">Approval Ditolak</Badge>;
   if (status === "pending_direktur") return <Badge className="bg-warning/10 text-warning">Menunggu Direktur</Badge>;
   if (status === "pending_tier1") return <Badge className="bg-warning/10 text-warning">Menunggu Tier 1</Badge>;
+  if (status === "accurate_pending") return <Badge className="bg-warning/10 text-warning">Belum approved di Accurate</Badge>;
   return null;
 }
 
@@ -132,7 +154,12 @@ const columns: DataColumn<PurchaseOrderRow>[] = [
     accessor: (r) => r.eta_date ?? "",
     cell: (r) => <span className={`whitespace-nowrap ${isTelat(r) ? "text-destructive" : ""}`}>{r.eta_date ? tgl(r.eta_date) : "—"}</span>,
   },
-  { id: "cabang", header: "Cabang", sortable: true, accessor: (r) => r.cabang ?? "", cell: (r) => <span className="text-muted-foreground">{r.cabang ?? "—"}</span> },
+  {
+    id: "total_amount",
+    header: "Nilai",
+    accessor: (r) => r.total_amount ?? 0,
+    cell: (r) => <span className="text-muted-foreground whitespace-nowrap tabular-nums">{r.total_amount != null ? rupiah(r.total_amount) : "—"}</span>,
+  },
   {
     id: "items",
     header: "Barang",
@@ -156,7 +183,7 @@ const STATUS_FILTERS: { key: string; label: string }[] = [
   { key: "ordered", label: "Dipesan" },
   { key: "partial_received", label: "Sebagian" },
   { key: "received", label: "Diterima" },
-  { key: "rejected", label: "Ditolak" },
+  { key: "closed", label: "Ditutup" },
   { key: "cancelled", label: "Batal" },
 ];
 
@@ -459,15 +486,39 @@ export function PurchaseOrderTable({
                         <Label className="text-muted-foreground text-xs font-medium tracking-wide uppercase">ETA</Label>
                         <div className={isTelat(detail) ? "text-destructive" : ""}>{detail.eta_date ? tgl(detail.eta_date) : "—"}</div>
                       </div>
-                      <div className="min-w-0">
-                        <Label className="text-muted-foreground text-xs font-medium tracking-wide uppercase">Cabang</Label>
-                        <div>{detail.cabang ?? "—"}</div>
-                      </div>
-                      <div className="min-w-0">
-                        <Label className="text-muted-foreground text-xs font-medium tracking-wide uppercase">PIC</Label>
-                        <div>{detail.pic ?? "—"}</div>
-                      </div>
+                      {detail.source === "accurate" ? (
+                        <>
+                          <div className="min-w-0">
+                            <Label className="text-muted-foreground text-xs font-medium tracking-wide uppercase">Status Accurate</Label>
+                            <div>
+                              {detail.accurate_status ?? "—"}
+                              {detail.percent_shipped != null ? ` · ${Math.round(detail.percent_shipped)}% diterima` : ""}
+                            </div>
+                          </div>
+                          <div className="min-w-0">
+                            <Label className="text-muted-foreground text-xs font-medium tracking-wide uppercase">Nilai</Label>
+                            <div className="tabular-nums">{detail.total_amount != null ? rupiah(detail.total_amount) : "—"}</div>
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <div className="min-w-0">
+                            <Label className="text-muted-foreground text-xs font-medium tracking-wide uppercase">Cabang</Label>
+                            <div>{detail.cabang ?? "—"}</div>
+                          </div>
+                          <div className="min-w-0">
+                            <Label className="text-muted-foreground text-xs font-medium tracking-wide uppercase">PIC</Label>
+                            <div>{detail.pic ?? "—"}</div>
+                          </div>
+                        </>
+                      )}
                     </div>
+                    {detail.source === "accurate" && (
+                      <p className="text-muted-foreground text-xs">
+                        Disalin dari Accurate{detail.synced_at ? ` · sinkron ${tglJam(detail.synced_at)}` : ""}. Ubah PO, approval, dan
+                        penerimaan barang di Accurate — perubahannya ikut tersinkron.
+                      </p>
+                    )}
 
                     {detail.lini && (
                       <div>
@@ -529,18 +580,29 @@ export function PurchaseOrderTable({
                         {detail.items.map((it) => (
                           <li key={it.id} className="px-3 py-2">
                             <div className="flex items-start gap-2">
-                              <button type="button" onClick={() => toggleExpand(it.id)} className="text-muted-foreground mt-0.5 shrink-0" aria-label="Riwayat barang masuk">
-                                {expanded === it.id ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}
-                              </button>
-                              <div className="min-w-0 flex-1 cursor-pointer" onClick={() => toggleExpand(it.id)}>
-                                <div>{it.item_desc}</div>
+                              {detail.source !== "accurate" && (
+                                <button type="button" onClick={() => toggleExpand(it.id)} className="text-muted-foreground mt-0.5 shrink-0" aria-label="Riwayat barang masuk">
+                                  {expanded === it.id ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}
+                                </button>
+                              )}
+                              <div
+                                className={`min-w-0 flex-1 ${detail.source !== "accurate" ? "cursor-pointer" : ""}`}
+                                onClick={detail.source !== "accurate" ? () => toggleExpand(it.id) : undefined}
+                              >
+                                <div>
+                                  {it.item_no ? <span className="text-muted-foreground mr-1.5 text-xs">{it.item_no}</span> : null}
+                                  {it.item_desc}
+                                </div>
                                 <div className="text-muted-foreground text-xs tabular-nums">
                                   {it.qty_received}/{it.qty_ordered} {it.unit ?? ""} · {itemProgressLabel(it)}
+                                  {it.warehouse_name ? ` · ${it.warehouse_name}` : ""}
                                 </div>
                               </div>
-                              <Button variant="ghost" size="icon-sm" aria-label="Hapus barang" disabled={busy} onClick={() => removeItem(it)} className="text-danger hover:text-danger">
-                                <Trash2 />
-                              </Button>
+                              {detail.source !== "accurate" && (
+                                <Button variant="ghost" size="icon-sm" aria-label="Hapus barang" disabled={busy} onClick={() => removeItem(it)} className="text-danger hover:text-danger">
+                                  <Trash2 />
+                                </Button>
+                              )}
                             </div>
                             {expanded === it.id && (
                               <div className="mt-2 ml-6 space-y-2">
@@ -584,9 +646,13 @@ export function PurchaseOrderTable({
                             )}
                           </li>
                         ))}
-                        {detail.items.length === 0 && <li className="text-muted-foreground px-3 py-2 text-xs">Belum ada barang.</li>}
+                        {detail.items.length === 0 && (
+                          <li className="text-muted-foreground px-3 py-2 text-xs">
+                            {detail.source === "accurate" ? "Baris barang belum tersinkron dari Accurate." : "Belum ada barang."}
+                          </li>
+                        )}
                       </ul>
-                      {detail.status !== "cancelled" && detail.status !== "rejected" && (
+                      {detail.source !== "accurate" && detail.status !== "cancelled" && detail.status !== "rejected" && (
                       <div className="mt-2 grid grid-cols-[1fr_auto_auto] gap-2">
                         <Input value={newItem.item_desc} onChange={(e) => setNewItem((p) => ({ ...p, item_desc: e.target.value }))} placeholder="Tambah barang…" />
                         <Input type="number" min="0" step="any" value={newItem.qty_ordered} onChange={(e) => setNewItem((p) => ({ ...p, qty_ordered: e.target.value }))} placeholder="Qty" className="w-24" />
@@ -607,6 +673,7 @@ export function PurchaseOrderTable({
                 )}
               </DialogBody>
               {actionError && <p className="text-destructive px-4 pb-2 text-xs">{actionError}</p>}
+              {detail?.source !== "accurate" && (
               <DialogFooter className="justify-between">
                 <Button type="button" variant="ghost" disabled={busy} onClick={deletePurchaseOrder} className="text-danger hover:text-danger">
                   <Trash2 /> Hapus
@@ -615,6 +682,7 @@ export function PurchaseOrderTable({
                   {detail?.status === "cancelled" ? "Batalkan Pembatalan" : "Batalkan PO"}
                 </Button>
               </DialogFooter>
+              )}
             </>
           )}
         </DialogContent>

@@ -17,7 +17,7 @@ import { matchCustomer, type PlanCandidate } from "./parsers/fuzzy.js";
 import { isDbEnabled, pingDb } from "./db.js";
 import { waPreflight, sendViaWaGateway, type WaSendResult } from "./wasend.js";
 import { processUnprocessed, isInboundEnabled } from "./repo/inbound.js";
-import { syncAccurateInvoices, syncVendors, syncItems, syncSalesOrders, syncDeliveryOrders, syncCustomers, syncSalesOrderItems, syncDeliveryOrderItems, syncItemStockBranch, getDeliveryOrderItems, getSalesOrderItems, getVendorDetail, accurateConfigured, syncFixedAssets, fixedAssetSyncBusy } from "./repo/accurateSync.js";
+import { syncAccurateInvoices, syncVendors, syncItems, syncSalesOrders, syncDeliveryOrders, syncCustomers, syncSalesOrderItems, syncDeliveryOrderItems, syncItemStockBranch, getDeliveryOrderItems, getSalesOrderItems, getVendorDetail, accurateConfigured, syncFixedAssets, fixedAssetSyncBusy, syncPurchaseOrders, purchaseOrderSyncBusy } from "./repo/accurateSync.js";
 import { listAsetTetap, ringkasanAsetTetap, jadwalAsetTetap, simpanOverrideAsetTetap, type AsetTetapFilter } from "./repo/asetTetap.js";
 import { mirrorFreshness } from "./repo/mirror-health.js";
 import { insertAuditEvent } from "./repo/audit.js";
@@ -489,7 +489,6 @@ import {
   listPurchaseOrders,
   isPurchaseOrderSort,
   purchaseOrderSummary,
-  createPurchaseOrder,
   getPurchaseOrder,
   updatePurchaseOrder,
   deletePurchaseOrder,
@@ -500,7 +499,6 @@ import {
   listPurchaseOrderReceipts,
   updatePurchaseOrderReceipt,
   deletePurchaseOrderReceipt,
-  type PurchaseOrderInput,
   type PurchaseOrderUpdate,
   type PurchaseOrderItemInput,
   type PurchaseOrderItemUpdate,
@@ -508,8 +506,7 @@ import {
   type PurchaseOrderReceiptUpdate,
   decidePurchaseOrderApproval,
   PurchaseOrderError,
-  type ApproverRole,
-} from "./repo/purchase-order.js";
+  type ApproverRole, purchaseOrderSyncState } from "./repo/purchase-order.js";
 import {
   listVendors as gaMaintenanceListVendors,
   createVendor as gaMaintenanceCreateVendor,
@@ -610,7 +607,7 @@ import {
   submitSuggestion,
   listBufferConfig,
   upsertBufferConfig,
-  draftPurchaseOrder,
+  linkPurchaseOrder,
 } from "./repo/forecast.js";
 const app = new Hono();
 
@@ -1488,6 +1485,20 @@ app.post("/accurate/sync/fixed-assets", async (c) => {
   return c.json({ ok: true, started: true }, 202);
 });
 
+// F13 (205) — cermin PO Accurate → purchase_order (source='accurate'). Sinkron
+// pertama ±1.100 detail (beberapa menit), jadi balas 202 lalu jalan di latar;
+// hasilnya di GET /purchase-orders/sync-status. ?full=1 = abaikan watermark.
+app.post("/accurate/sync/purchase-orders", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  if (!accurateConfigured()) return c.json({ error: "kredensial Accurate tak tersedia" }, 503);
+  if (purchaseOrderSyncBusy()) return c.json({ ok: false, error: "sinkron PO sedang berjalan" }, 409);
+  const full = c.req.query("full") === "1";
+  void syncPurchaseOrders({ full })
+    .then((r) => console.log(`[accurate-sync] purchase-order manual: ${JSON.stringify(r)}`))
+    .catch((e) => console.error("[accurate-sync] purchase-order manual gagal:", e));
+  return c.json({ ok: true, started: true }, 202);
+});
+
 // Sinkron full katalog item + stok Accurate → accurate_item (menu Inventory & Products).
 app.post("/accurate/sync/items", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
@@ -2242,25 +2253,19 @@ app.post("/forecast/suggestions/:id/submit", async (c) => {
   return c.json(r, r.ok ? 200 : 400);
 });
 
-// F153 "Auto-Draft PR" — convert usulan yg sudah approved (F11) jadi PO
-// nyata (F13). Vendor & lini WAJIB dikirim (dipilih manusia di form), lihat
-// komentar draftPurchaseOrder (forecast.ts).
-app.post("/forecast/suggestions/:id/draft-po", async (c) => {
+// F153 — tautkan usulan yang sudah approved (F11) ke PO Accurate yang dibuat
+// Purchasing (PO Tracker = cermin Accurate sejak migrasi 205). Lihat komentar
+// linkPurchaseOrder (forecast.ts).
+app.post("/forecast/suggestions/:id/link-po", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let body: Parameters<typeof draftPurchaseOrder>[1] | undefined;
+  let body: { poNumber?: string } | undefined;
   try {
     body = await c.req.json();
   } catch {
     return c.json({ error: "invalid JSON body" }, 400);
   }
-  if (!body) return c.json({ error: "invalid JSON body" }, 400);
-  try {
-    const r = await draftPurchaseOrder(c.req.param("id"), body);
-    return c.json(r, r.ok ? 200 : 400);
-  } catch (e) {
-    if (e instanceof PurchaseOrderError) return c.json({ error: e.message }, e.status as 400 | 404 | 409);
-    throw e;
-  }
+  const r = await linkPurchaseOrder(c.req.param("id"), { poNumber: String(body?.poNumber ?? "") });
+  return c.json(r, r.ok ? 200 : 400);
 });
 
 app.get("/forecast/buffer-config", async (c) => {
@@ -7484,31 +7489,22 @@ app.get("/purchase-orders/summary", async (c) => {
   return c.json(await purchaseOrderSummary());
 });
 
-app.post("/purchase-orders", async (c) => {
+// Status cermin PO Accurate utk header halaman PO Tracker. Didaftarkan SEBELUM
+// /purchase-orders/:id biar rute literal menang.
+app.get("/purchase-orders/sync-status", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let body: PurchaseOrderInput;
-  try {
-    body = await c.req.json();
-  } catch {
-    return c.json({ error: "invalid JSON body" }, 400);
-  }
-  if (!body.po_number?.trim()) return c.json({ error: "po_number wajib" }, 400);
-  if (!body.vendor_name?.trim()) return c.json({ error: "vendor_name wajib" }, 400);
-  if (!Array.isArray(body.items) || body.items.length === 0) {
-    return c.json({ error: "items wajib minimal 1 barang" }, 400);
-  }
-  for (const it of body.items) {
-    if (!it.item_desc?.trim()) return c.json({ error: "item_desc wajib di setiap barang" }, 400);
-    if (!(Number(it.qty_ordered) > 0)) return c.json({ error: "qty_ordered harus > 0 di setiap barang" }, 400);
-  }
-  try {
-    const row = await createPurchaseOrder(body);
-    return c.json(row, 201);
-  } catch (e) {
-    if (e instanceof PurchaseOrderError) return c.json({ error: e.message }, e.status as 400 | 404 | 409);
-    throw e;
-  }
+  return c.json({
+    configured: accurateConfigured(),
+    running: purchaseOrderSyncBusy(),
+    ...(await purchaseOrderSyncState()),
+  });
 });
+
+// F13 (205) — PO dibuat di Accurate; WRG-OS hanya menyalinnya. Input manual
+// ditutup supaya tak ada dua versi PO yang sama (keputusan user 12 Okt 2026).
+app.post("/purchase-orders", (c) =>
+  c.json({ error: "PO dibuat di Accurate — WRG-OS menyalinnya otomatis (sinkron berkala)." }, 409),
+);
 
 app.get("/purchase-orders/:id", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);

@@ -8,12 +8,17 @@
 
 import { db, isDbEnabled } from "../db.js";
 import { createApprovalRequest, isKategori, isWilayah, KATEGORI, WILAYAH, type NotifyResult } from "./approval.js";
-import { createPurchaseOrder, type PurchaseOrderLini } from "./purchase-order.js";
 
 // Ambang ED "dekat kedaluwarsa" — dipakai sbg SATU pemicu sederhana (bukan
 // 3-tier 90/60/30/0 spt F38 ed-watch, itu utk ALERT berulang; di sini cukup
 // "apakah perlu diusulkan sama sekali", jadi 1 ambang saja).
 const ED_NEAR_DAYS = 90;
+
+// PO yang sudah "mati" → usulan boleh ditautkan ulang: dibatalkan / approval
+// F35 ditolak (PO manual lama) atau Ditutup di Accurate sebelum diterima penuh.
+const PO_MATI_SQL = `(po.cancelled_at IS NOT NULL
+  OR EXISTS (SELECT 1 FROM purchase_order_approval pa WHERE pa.purchase_order_id = po.id AND pa.status = 'rejected')
+  OR (po.source = 'accurate' AND po.accurate_status = 'Ditutup' AND COALESCE(po.percent_shipped, 0) < 100))`;
 
 // postgres.js parse kolom DATE jadi objek Date — dipakai TELANJANG (String()/
 // interpolasi template literal) hasilnya verbose ("Tue Nov 10 2026 07:00:00
@@ -239,9 +244,7 @@ export async function listSuggestions(status?: string): Promise<ForecastSuggesti
   const rows = await sql`
     SELECT fs.*, ai.name AS item_name, w.nama AS warehouse_nama, ar.status AS approval_status,
            po.po_number AS po_number,
-           (po.cancelled_at IS NOT NULL
-             OR EXISTS (SELECT 1 FROM purchase_order_approval pa WHERE pa.purchase_order_id = po.id AND pa.status = 'rejected')
-           ) AS po_mati
+           ${sql.unsafe(PO_MATI_SQL)} AS po_mati
     FROM forecast_suggestion fs
     JOIN accurate_item ai ON ai.id = fs.item_id
     JOIN warehouse w ON w.kode = fs.warehouse_kode
@@ -413,117 +416,85 @@ export async function submitSuggestion(
   return { ok: true, approvalId: res.id, approvalKode: res.kode, notify: res.notify };
 }
 
-export interface DraftPoInput {
-  vendorId: string;
-  lini: PurchaseOrderLini;
+export interface LinkPoInput {
+  /** Nomor PO Accurate (mis. 1098/WRG/1026) yang dibuat Purchasing untuk usulan ini. */
   poNumber: string;
-  etaDate?: string | null;
-  cabang?: string | null;
-  pic?: string | null;
-  notes?: string | null;
-  createdBy?: string | null;
 }
 
-export interface DraftPoResult {
+export interface LinkPoResult {
   ok: boolean;
   error?: string;
   purchaseOrderId?: string;
   poNumber?: string;
+  /** Tertaut, tapi barang usulan tak ditemukan di baris PO (mungkin diganti/salah nomor). */
+  warning?: string;
 }
 
-// F153 "Auto-Draft PR" — convert usulan yg SUDAH approved (F11) jadi PO
-// nyata (F13). "Auto" di sini artinya item/qty/gudang PREFILLED dari
-// usulan — vendor & lini bisnis TETAP keputusan manusia (Supply Chain),
-// sistem tak punya data "vendor default per item" sama sekali (migrasi
-// 192). Idempoten via forecast_suggestion.purchase_order_id: sekali
-// didraft, tak bisa didraft ulang dari usulan yg sama.
-export async function draftPurchaseOrder(id: string, input: DraftPoInput): Promise<DraftPoResult> {
-  if (!input.vendorId?.trim()) return { ok: false, error: "vendor wajib dipilih" };
-  if (input.lini !== "IVD" && input.lini !== "Medical") return { ok: false, error: "lini bisnis wajib dipilih (IVD/Medical)" };
-  if (!input.poNumber?.trim()) return { ok: false, error: "nomor PO wajib diisi" };
+
+// F153 — usulan yang SUDAH approved (F11) ditautkan ke PO nyata. Sejak PO
+// Tracker jadi cermin Accurate (migrasi 205, keputusan user 12 Okt 2026), PO
+// dibuat Purchasing DI ACCURATE; WRG-OS tak lagi membuat PO sendiri (dulu:
+// "auto-draft" PO lokal yang lalu harus diketik ulang ke Accurate = dua versi).
+// Di sini cukup menautkan nomor PO Accurate yang sudah tersinkron, supaya
+// usulan → PO → barang diterima bisa dilacak. Idempoten via
+// forecast_suggestion.purchase_order_id; klaim atomik seperti sebelumnya.
+export async function linkPurchaseOrder(id: string, input: LinkPoInput): Promise<LinkPoResult> {
+  const poNumber = String(input?.poNumber ?? "").trim();
+  if (!poNumber) return { ok: false, error: "nomor PO Accurate wajib diisi" };
 
   const sql = db();
   const rows = await sql`
-    SELECT fs.*, ai.name AS item_name, ai.unit AS item_unit, w.cabang AS warehouse_cabang, ar.status AS approval_status,
-           (po.cancelled_at IS NOT NULL
-             OR EXISTS (SELECT 1 FROM purchase_order_approval pa WHERE pa.purchase_order_id = po.id AND pa.status = 'rejected')
-           ) AS po_mati
+    SELECT fs.*, ai.no AS item_no, ar.status AS approval_status, ${sql.unsafe(PO_MATI_SQL)} AS po_mati
     FROM forecast_suggestion fs
     JOIN accurate_item ai ON ai.id = fs.item_id
-    JOIN warehouse w ON w.kode = fs.warehouse_kode
     LEFT JOIN approval_request ar ON ar.id = fs.approval_request_id
     LEFT JOIN purchase_order po ON po.id = fs.purchase_order_id
     WHERE fs.id = ${id}
   `;
   if (rows.length === 0) return { ok: false, error: "usulan tidak ditemukan" };
   const r = rows[0];
-  // PO sebelumnya dibatalkan / ditolak approval F35 → usulan boleh didraft
-  // ulang (uji fungsional 12 Okt 2026: dulu terkunci 'ordered' selamanya,
-  // kekurangan stok yang sudah di-approve tak bisa dipesan lagi).
-  const redraft = r.status === "ordered" && !!r.purchase_order_id && r.po_mati === true;
+  const relink = r.status === "ordered" && !!r.purchase_order_id && r.po_mati === true;
   const prevPoId: string | null = r.purchase_order_id ? String(r.purchase_order_id) : null;
-  if (r.purchase_order_id && !redraft) return { ok: false, error: "usulan ini sudah didraft jadi PO sebelumnya" };
-  if (r.status !== "submitted" && !redraft) {
+  if (r.purchase_order_id && !relink) return { ok: false, error: "usulan ini sudah ditautkan ke PO" };
+  if (r.status !== "submitted" && !relink) {
     return { ok: false, error: `usulan berstatus "${r.status}" — harus "submitted" (sudah diajukan) dulu` };
   }
   if (r.approval_status !== "approved") {
     return { ok: false, error: `approval usulan ini belum selesai (status: ${r.approval_status ?? "belum ada approval_request"})` };
   }
 
-  const [vendor] = await sql`SELECT id, name FROM accurate_vendor WHERE id = ${input.vendorId}`;
-  if (!vendor) return { ok: false, error: `vendor #${input.vendorId} tidak ditemukan` };
+  const [po] = await sql`
+    SELECT po.id, po.po_number, ${sql.unsafe(PO_MATI_SQL)} AS mati
+    FROM purchase_order po WHERE po.po_number = ${poNumber}
+  `;
+  if (!po) {
+    return {
+      ok: false,
+      error: `PO "${poNumber}" belum ada di PO Tracker — pastikan sudah dibuat di Accurate, lalu tunggu sinkron berikutnya (atau klik Sinkron di PO Tracker).`,
+    };
+  }
+  if (po.mati === true) return { ok: false, error: `PO "${poNumber}" sudah dibatalkan/ditutup — tautkan ke PO yang aktif` };
+  if (prevPoId === String(po.id)) return { ok: false, error: "usulan ini sudah tertaut ke PO itu" };
 
-  const qty = r.final_qty != null ? Number(r.final_qty) : Number(r.suggested_qty);
-
-  // Klaim atomik SEBELUM membuat PO: cek purchase_order_id di atas cuma baca,
-  // jadi dua klik bersamaan sama-sama lolos dan membuat DUA PO (uji dev 11 Okt
-  // 2026: 3 klik → 2 PO, satu yatim). UPDATE ... WHERE status='submitted'
-  // hanya dimenangkan satu pemanggil; kalau createPurchaseOrder gagal, klaim
-  // dikembalikan supaya usulan bisa didraft lagi.
-  // Draft ulang: klaim mengosongkan purchase_order_id (PO mati) — penanda
-  // "sedang didraft" yang sama dengan jalur pertama, jadi klik paralel kedua
-  // tak lagi cocok dengan kondisi mana pun.
-  const [claim] = redraft
+  const [claim] = relink
     ? await sql`
-        UPDATE forecast_suggestion SET purchase_order_id = NULL
+        UPDATE forecast_suggestion SET purchase_order_id = ${po.id}
         WHERE id = ${id} AND status = 'ordered' AND purchase_order_id = ${prevPoId}
         RETURNING id
       `
     : await sql`
-        UPDATE forecast_suggestion SET status = 'ordered'
+        UPDATE forecast_suggestion SET status = 'ordered', purchase_order_id = ${po.id}
         WHERE id = ${id} AND status = 'submitted' AND purchase_order_id IS NULL
         RETURNING id
       `;
-  if (!claim) return { ok: false, error: "usulan ini sudah didraft jadi PO (atau sedang didraft) — muat ulang halaman" };
+  if (!claim) return { ok: false, error: "usulan ini sudah ditautkan (atau sedang ditautkan) — muat ulang halaman" };
 
-  let po: Awaited<ReturnType<typeof createPurchaseOrder>>;
-  try {
-    po = await createPurchaseOrder({
-    po_number: input.poNumber.trim(),
-    vendor_id: String(vendor.id),
-    vendor_name: vendor.name ? String(vendor.name) : `Vendor #${vendor.id}`,
-    eta_date: input.etaDate ?? null,
-    cabang: input.cabang?.trim() || (r.warehouse_cabang ? String(r.warehouse_cabang) : null),
-    pic: input.pic?.trim() || null,
-    notes: input.notes?.trim() || `Auto-draft dari Forecast Suggestion #${id.slice(0, 8)}`,
-    created_by: input.createdBy ?? null,
-    lini: input.lini,
-    items: [
-      {
-        item_desc: String(r.item_name),
-        qty_ordered: qty,
-        unit: r.item_unit ? String(r.item_unit) : null,
-      },
-    ],
-    });
-  } catch (e) {
-    await (redraft
-      ? sql`UPDATE forecast_suggestion SET purchase_order_id = ${prevPoId} WHERE id = ${id} AND purchase_order_id IS NULL`
-      : sql`UPDATE forecast_suggestion SET status = 'submitted' WHERE id = ${id} AND purchase_order_id IS NULL`);
-    throw e;
-  }
-
-  await sql`UPDATE forecast_suggestion SET purchase_order_id = ${po.id} WHERE id = ${id}`;
-
-  return { ok: true, purchaseOrderId: po.id, poNumber: po.po_number };
+  // Cek lunak: barang usulan ada di baris PO? Baris PO Accurate bisa belum
+  // tertarik (detail menyusul), jadi kosong = tak dinilai, bukan peringatan.
+  const lines = await sql`SELECT item_no FROM purchase_order_item WHERE purchase_order_id = ${po.id}`;
+  const warning =
+    lines.length > 0 && r.item_no && !lines.some((l) => l.item_no === r.item_no)
+      ? `barang usulan (${r.item_no}) tidak ada di baris PO ${poNumber} — cek lagi nomornya`
+      : undefined;
+  return { ok: true, purchaseOrderId: String(po.id), poNumber: String(po.po_number), ...(warning ? { warning } : {}) };
 }

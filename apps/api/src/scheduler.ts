@@ -24,7 +24,7 @@ import { generateRekap, generateResume } from "./repo/monitor.js";
 import {
   syncAccurateInvoices, syncSalesOrders, syncDeliveryOrders, syncCustomers,
   syncSalesOrderItems, syncDeliveryOrderItems,
-  syncItems, syncItemStockBranch, syncFixedAssets,
+  syncItems, syncItemStockBranch, syncFixedAssets, syncPurchaseOrders,
 } from "./repo/accurateSync.js";
 import { runPlanCheck, runReportCheck } from "./repo/compliance.js";
 import { runNotifTua } from "./repo/notiftua.js";
@@ -217,6 +217,10 @@ export function startScheduler(): ScheduleStatus {
   // (tak ikut AGENT_SCHEDULE_ENABLED): sapuan ≈10 menit / 1.394 panggilan ke
   // Accurate, jadi dinyalakan eksplisit sesudah sinkron manual pertama dicek.
   const fixedAssetSyncEnabled = (process.env.ACCURATE_FA_SYNC_ENABLED ?? "false").toLowerCase() === "true";
+  // accurate-po-sync (F13, migrasi 205) — cermin PO Accurate ke PO Tracker.
+  // Flag sendiri: sinkron pertama ±1.100 panggilan detail, dinyalakan
+  // eksplisit sesudah sinkron manual pertama dicek.
+  const poSyncEnabled = (process.env.ACCURATE_PO_SYNC_ENABLED ?? "false").toLowerCase() === "true";
   // cashin-resume (F-CASHIN) — jaring pengaman gerbang konfirmasi Finance.
   // Flag SENDIRI (default off) karena mengirim WA ke grup Finance.
   //
@@ -307,12 +311,12 @@ export function startScheduler(): ScheduleStatus {
   ];
 
   status = {
-    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled || watchpointSnapshotEnabled || preVisitEnabled || edWatchEnabled || gaMaintenanceAlertEnabled || gaMaintenanceBscEnabled || gaHelpdeskOverdueEnabled || gaHelpdeskBscEnabled || lpseTenderReminderEnabled || accurateStockSyncEnabled || cashinResumeEnabled || geoSweepEnabled || kpiMeasureEnabled || invoiceReminderEnabled || auditFindingReminderEnabled || seninBriefEnabled || soPacingEnabled || fixedAssetSyncEnabled,
+    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled || watchpointSnapshotEnabled || preVisitEnabled || edWatchEnabled || gaMaintenanceAlertEnabled || gaMaintenanceBscEnabled || gaHelpdeskOverdueEnabled || gaHelpdeskBscEnabled || lpseTenderReminderEnabled || accurateStockSyncEnabled || cashinResumeEnabled || geoSweepEnabled || kpiMeasureEnabled || invoiceReminderEnabled || auditFindingReminderEnabled || seninBriefEnabled || soPacingEnabled || fixedAssetSyncEnabled || poSyncEnabled,
     timezone,
     jobs: jobs.map((j) => ({ id: j.id, expr: j.expr, valid: cron.validate(j.expr) })),
   };
 
-  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled && !watchpointSnapshotEnabled && !preVisitEnabled && !edWatchEnabled && !gaMaintenanceAlertEnabled && !gaMaintenanceBscEnabled && !gaHelpdeskOverdueEnabled && !gaHelpdeskBscEnabled && !lpseTenderReminderEnabled && !accurateStockSyncEnabled && !cashinResumeEnabled && !geoSweepEnabled && !kpiMeasureEnabled && !invoiceReminderEnabled && !auditFindingReminderEnabled && !seninBriefEnabled && !soPacingEnabled && !fixedAssetSyncEnabled) {
+  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled && !watchpointSnapshotEnabled && !preVisitEnabled && !edWatchEnabled && !gaMaintenanceAlertEnabled && !gaMaintenanceBscEnabled && !gaHelpdeskOverdueEnabled && !gaHelpdeskBscEnabled && !lpseTenderReminderEnabled && !accurateStockSyncEnabled && !cashinResumeEnabled && !geoSweepEnabled && !kpiMeasureEnabled && !invoiceReminderEnabled && !auditFindingReminderEnabled && !seninBriefEnabled && !soPacingEnabled && !fixedAssetSyncEnabled && !poSyncEnabled) {
     console.log("[scheduler] semua *_SCHEDULE/_ENABLED flag != true — tidak dijadwalkan");
     return status;
   }
@@ -837,6 +841,26 @@ export function startScheduler(): ScheduleStatus {
       { timezone },
     );
     live.push(`accurate-fa-sync=${faSyncExpr}`);
+  }
+
+  // accurate-po-sync (F13) — tiap 30 menit jam kerja-ish. Inkremental per
+  // lastUpdate Accurate, jadi siklus tanpa perubahan cuma 1 halaman list.
+  const poSyncExpr = process.env.ACCURATE_PO_SYNC_CRON ?? "*/30 7-21 * * *";
+  if (poSyncEnabled && cron.validate(poSyncExpr)) {
+    cron.schedule(
+      poSyncExpr,
+      async () => {
+        const startedAt = new Date().toISOString();
+        try {
+          const r = await syncPurchaseOrders();
+          console.log(`[scheduler] accurate-po-sync @ ${startedAt} ${JSON.stringify(r)}`);
+        } catch (e) {
+          console.error(`[scheduler] accurate-po-sync gagal @ ${startedAt}:`, e);
+        }
+      },
+      { timezone },
+    );
+    live.push(`accurate-po-sync=${poSyncExpr}`);
   }
 
   // accurate-stock-sync (F2) — refresh accurate_item.quantity tiap 5 menit
