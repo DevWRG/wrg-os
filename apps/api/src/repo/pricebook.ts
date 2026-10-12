@@ -46,14 +46,20 @@ export interface PricebookFilter {
 
 const num = (v: unknown): number => (v === null || v === undefined ? 0 : Number(v));
 
+// Pola ILIKE "mengandung" dari kata kunci pengguna. % _ \ di-escape: dulu
+// "#PRICING %" / "_" (dan kotak cari Price Book di web) jadi wildcard dan
+// memuntahkan katalog (uji dev 12 Okt 2026). Backslash = escape default LIKE.
+function polaCari(q: string | null | undefined): string | null {
+  const t = q?.trim();
+  return t ? `%${t.replace(/[\\%_]/g, "\\$&")}%` : null;
+}
+
 export async function listItems(f: PricebookFilter = {}): Promise<PricebookItem[]> {
   if (!isDbEnabled()) return [];
   const sql = db();
   const periode = f.periode || PERIODE_DEFAULT;
   const limit = Math.min(Math.max(f.limit ?? 5000, 1), 20000);
-  // % dan _ dari kata kunci di-escape: dulu "#PRICING %" / "_" jadi wildcard dan
-  // memuntahkan katalog (uji dev 12 Okt 2026). Backslash = escape default LIKE.
-  const q = f.q?.trim() ? `%${f.q.trim().replace(/[\\%_]/g, "\\$&")}%` : null;
+  const q = polaCari(f.q);
 
   const rows = await sql<Record<string, unknown>[]>`
     SELECT p.id, p.kode, p.lini, p.brand, p.nama, p.varian, p.kemasan, p.kategori,
@@ -284,7 +290,7 @@ export async function outsideKeagenan(
   const sql = db();
   const periode = opts.periode || PERIODE_DEFAULT;
   const limit = Math.min(Math.max(opts.limit ?? 5000, 1), 20000);
-  const q = opts.q?.trim() ? `%${opts.q.trim()}%` : null;
+  const q = polaCari(opts.q);
 
   const rows = await sql<Record<string, unknown>[]>`
     SELECT ai.id, ai.no, ai.name, ai.category, ai.unit, ai.unit_price, ai.quantity, ai.available
@@ -412,7 +418,7 @@ export async function listSetup(
   const sql = db();
   const periode = opts.periode || PERIODE_DEFAULT;
   const limit = Math.min(Math.max(opts.limit ?? 5000, 1), 20000);
-  const q = opts.q?.trim() ? `%${opts.q.trim()}%` : null;
+  const q = polaCari(opts.q);
 
   const rows = await sql<Record<string, unknown>[]>`
     SELECT p.row_no, p.kode, p.lini, p.brand, p.nama, p.price_list, p.diskon_maks,
@@ -635,7 +641,7 @@ export async function listPublishedKeagenan(
   const sql = db();
   const periode = opts.periode || PERIODE_DEFAULT;
   const limit = Math.min(Math.max(opts.limit ?? 5000, 1), 20000);
-  const q = opts.q?.trim() ? `%${opts.q.trim()}%` : null;
+  const q = polaCari(opts.q);
 
   const rows = await sql<Record<string, unknown>[]>`
     SELECT p.row_no, p.kode, p.lini, p.brand, p.nama, p.kategori,
