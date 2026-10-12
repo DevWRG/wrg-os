@@ -13,7 +13,7 @@ import {
   Wallet, Coins, Banknote, Car, QrCode, PenLine, PackagePlus, PackageMinus,
   Handshake, Archive, Ticket, Printer,
   type LucideIcon,
-  Hourglass, ShieldAlert,
+  Hourglass, ShieldAlert, Landmark,
 } from "lucide-react";
 
 import { can, canOrLegacy, hasPerms } from "@/lib/perms";
@@ -21,6 +21,7 @@ import { canEditPricelistSetup, canViewPricelist, type AccessUser } from "@/lib/
 import { canViewPricebook, canViewPricebookSummary } from "@/lib/pricebook-access";
 import { canViewKlasifikasi } from "@/lib/klasifikasi-access";
 import { canViewKsoKontrak } from "@/lib/kso-kontrak-access";
+import { canViewAsetTetap } from "@/lib/aset-tetap-access";
 import { canViewRaportList } from "@/lib/raport-access";
 import { canViewExecutive } from "@/lib/executive-access";
 import { canViewKso } from "@/lib/kso-access";
@@ -325,6 +326,9 @@ export const NAV: NavGroup[] = [
     label: "Finance",
     items: [
       { title: "Uang Masuk", url: "/uang-masuk", icon: Banknote, badge: "NEW" },
+      // F34 Aset Tetap — cermin register Accurate. Kunci izin sendiri
+      // (featureKey = "aset-tetap"), default tertutup: butuh Sync Fitur + centang.
+      { title: "Aset Tetap", url: "/aset-tetap", icon: Landmark, badge: "NEW", show: canViewAsetTetap },
     ],
   },
   {
