@@ -5,7 +5,7 @@ import { PageHeader } from "@/components/dashboard/page-header";
 import { StatCard } from "@/components/dashboard/stat-card";
 import { Card, CardContent } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
-import { AddPurchaseOrderSheet } from "@/components/crm/add-purchase-order-sheet";
+import { SyncPoButton, type PoSyncStatus } from "@/components/crm/sync-po-button";
 import { PurchaseOrderTable, PoStatusFilter, type PurchaseOrderRow } from "@/components/tables/purchase-order-table";
 
 export const dynamic = "force-dynamic";
@@ -73,9 +73,10 @@ export default async function PurchaseOrdersPage({
   // Sebelumnya ketiganya dihitung dengan rows.filter() atas array ?limit=1000
   // yang sama dengan tabel — begitu PO lewat 1000, kartunya ikut salah tanpa
   // memberi tanda apa pun.
-  const [list, summary] = await Promise.all([
+  const [list, summary, syncStatus] = await Promise.all([
     getJson<PurchaseOrderListResponse>(`/purchase-orders?${listQs.toString()}`),
     getJson<PurchaseOrderSummary>("/purchase-orders/summary"),
+    getJson<PoSyncStatus>("/purchase-orders/sync-status"),
   ]);
 
   const matched = list?.total_rows ?? 0;
@@ -101,8 +102,8 @@ export default async function PurchaseOrdersPage({
     <>
       <PageHeader
         title="PO Tracker & Barang Masuk"
-        description="Lacak PO ke vendor sampai barang diterima (F13) — status & riwayat penerimaan dihitung otomatis dari log barang masuk."
-        action={<AddPurchaseOrderSheet />}
+        description="Pantau PO ke vendor sampai barang diterima (F13). PO, approval, dan penerimaan barang dibuat di Accurate — halaman ini menyalinnya otomatis."
+        action={<SyncPoButton initial={syncStatus} />}
       />
       {summary && (
         <div className="grid gap-4 sm:grid-cols-3">
@@ -122,7 +123,7 @@ export default async function PurchaseOrdersPage({
           ) : matched === 0 ? (
             <EmptyState
               title={q || status ? "Tidak ada PO untuk filter ini" : "Belum ada PO"}
-              description={q || status ? "Ubah kata kunci atau filter status." : "Tambah lewat tombol Tambah PO di atas."}
+              description={q || status ? "Ubah kata kunci atau filter status." : "PO dibuat di Accurate. Klik Sinkron dari Accurate di atas untuk menyalinnya."}
             />
           ) : (
             <PurchaseOrderTable

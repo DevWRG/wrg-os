@@ -33,11 +33,6 @@ interface Suggestion {
   createdAt: string;
 }
 
-interface VendorOpt {
-  id: string;
-  name: string | null;
-}
-
 const REASON_LABEL: Record<string, string> = {
   near_buffer: "⚠️ Mendekati/di bawah buffer",
   near_ed: "⏳ Ada batch mendekati ED",
@@ -63,10 +58,9 @@ export default function ForecastSubmissionPage() {
   // Atribut routing approval F11 (migrasi 190) — dipilih Supply Chain saat Ajukan.
   const [atribut, setAtribut] = useState<Record<string, { wilayah: string; kategori: string }>>({});
   const [notice, setNotice] = useState<string | null>(null);
-  const [vendors, setVendors] = useState<VendorOpt[]>([]);
-  const [poForm, setPoForm] = useState<
-    Record<string, { vendorId: string; lini: "" | "IVD" | "Medical"; poNumber: string }>
-  >({});
+  // F153 — nomor PO Accurate yang ditautkan ke usulan approved (PO Tracker =
+  // cermin Accurate sejak migrasi 205; PO tak lagi dibuat di WRG-OS).
+  const [poForm, setPoForm] = useState<Record<string, string>>({});
 
   const load = useCallback(async (status: string) => {
     setLoading(true);
@@ -78,21 +72,12 @@ export default function ForecastSubmissionPage() {
       const rows: Suggestion[] = data.suggestions ?? [];
       setSuggestions(rows);
       setDrafts(Object.fromEntries(rows.map((s) => [s.id, { finalQty: String(s.finalQty ?? s.suggestedQty), notes: s.notes ?? "" }])));
-      setPoForm((prev) => ({
-        ...Object.fromEntries(rows.map((s) => [s.id, prev[s.id] ?? { vendorId: "", lini: "" as const, poNumber: `PR-${s.id.slice(0, 8)}` }])),
-      }));
+      setPoForm((prev) => Object.fromEntries(rows.map((s) => [s.id, prev[s.id] ?? ""])));
     } catch (e) {
       setError(String(e));
     } finally {
       setLoading(false);
     }
-  }, []);
-
-  useEffect(() => {
-    void fetch("/api/vendors", { cache: "no-store" })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => setVendors(d?.rows ?? []))
-      .catch(() => {});
   }, []);
 
   // Inline IIFE (bukan `void load()` langsung) — hindari lint react-hooks set-state-in-effect.
@@ -202,30 +187,24 @@ export default function ForecastSubmissionPage() {
     }
   }
 
-  async function draftPo(id: string) {
-    const f = poForm[id];
-    if (!f?.vendorId) {
-      setError("pilih vendor dulu");
-      return;
-    }
-    if (!f.lini) {
-      setError("pilih lini bisnis dulu");
-      return;
-    }
-    if (!f.poNumber.trim()) {
-      setError("nomor PO wajib diisi");
+  async function linkPo(id: string) {
+    const poNumber = (poForm[id] ?? "").trim();
+    if (!poNumber) {
+      setError("isi nomor PO Accurate dulu");
       return;
     }
     setBusy(id);
     setError(null);
+    setNotice(null);
     try {
-      const res = await fetch(`/api/forecast/suggestions/${id}/draft-po`, {
+      const res = await fetch(`/api/forecast/suggestions/${id}/link-po`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ vendorId: f.vendorId, lini: f.lini, poNumber: f.poNumber.trim() }),
+        body: JSON.stringify({ poNumber }),
       });
       const data = await res.json();
-      if (!res.ok || data.ok === false) throw new Error(data.error ?? "gagal draft PO");
+      if (!res.ok || data.ok === false) throw new Error(data.error ?? "gagal menautkan PO");
+      if (data.warning) setNotice(`Tertaut ke ${data.poNumber}, tapi ${data.warning}`);
       await load(filter);
     } catch (e) {
       setError(String(e));
@@ -385,8 +364,8 @@ export default function ForecastSubmissionPage() {
                         {/* Tidak ada route detail per-ID di PO Tracker (dialog di tabel list,
                             lihat purchase-order-table.tsx) — jadi arahkan ke tabel dgn
                             filter ?q= nomor PO, bukan link langsung ke ID yang 404. */}
-                        {s.purchaseOrderMati ? "⚠️ PO" : "✅ Sudah didraft jadi PO"} {s.purchaseOrderNumber ?? ""}
-                        {s.purchaseOrderMati ? " dibatalkan/ditolak — bisa didraft ulang di bawah" : ""} —{" "}
+                        {s.purchaseOrderMati ? "⚠️ PO" : "✅ Tertaut ke PO"} {s.purchaseOrderNumber ?? ""}
+                        {s.purchaseOrderMati ? " dibatalkan/ditutup — tautkan ke PO lain di bawah" : ""} —{" "}
                         <Link
                           href={`/purchase-orders?q=${encodeURIComponent(s.purchaseOrderNumber ?? "")}`}
                           className="text-primary underline"
@@ -409,55 +388,22 @@ export default function ForecastSubmissionPage() {
                       (s.status === "ordered" && s.purchaseOrderMati)) && (
                       <div className="space-y-2 border-t pt-2">
                         <div className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
-                          Draft PO (F153) — vendor & lini dipilih manual
+                          Tautkan PO Accurate (F153)
                         </div>
-                        <div className="grid grid-cols-2 gap-2">
-                          <div className="grid gap-1">
-                            <Label className="text-xs">Vendor</Label>
-                            <select
-                              className={selectCls}
-                              value={poForm[s.id]?.vendorId ?? ""}
-                              onChange={(e) =>
-                                setPoForm((prev) => ({ ...prev, [s.id]: { ...prev[s.id], vendorId: e.target.value } }))
-                              }
-                            >
-                              <option value="">Pilih vendor…</option>
-                              {vendors.map((v) => (
-                                <option key={v.id} value={v.id}>
-                                  {v.name ?? `Vendor #${v.id}`}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-                          <div className="grid gap-1">
-                            <Label className="text-xs">Lini</Label>
-                            <select
-                              className={selectCls}
-                              value={poForm[s.id]?.lini ?? ""}
-                              onChange={(e) =>
-                                setPoForm((prev) => ({
-                                  ...prev,
-                                  [s.id]: { ...prev[s.id], lini: e.target.value as "" | "IVD" | "Medical" },
-                                }))
-                              }
-                            >
-                              <option value="">Pilih lini…</option>
-                              <option value="IVD">IVD</option>
-                              <option value="Medical">Medical</option>
-                            </select>
-                          </div>
-                        </div>
+                        <p className="text-muted-foreground text-xs">
+                          Buat PO-nya di Accurate, lalu isi nomornya di sini. PO harus sudah tersalin ke PO Tracker
+                          (sinkron berkala, atau tombol Sinkron di PO Tracker).
+                        </p>
                         <div className="grid gap-1">
-                          <Label className="text-xs">No. PO</Label>
+                          <Label className="text-xs">No. PO Accurate</Label>
                           <Input
-                            value={poForm[s.id]?.poNumber ?? ""}
-                            onChange={(e) =>
-                              setPoForm((prev) => ({ ...prev, [s.id]: { ...prev[s.id], poNumber: e.target.value } }))
-                            }
+                            placeholder="mis. 1098/WRG/1026"
+                            value={poForm[s.id] ?? ""}
+                            onChange={(e) => setPoForm((prev) => ({ ...prev, [s.id]: e.target.value }))}
                           />
                         </div>
-                        <Button size="sm" className="w-full" disabled={busy === s.id} onClick={() => void draftPo(s.id)}>
-                          {busy === s.id ? "Men-draft…" : "Draft PO Sekarang"}
+                        <Button size="sm" className="w-full" disabled={busy === s.id} onClick={() => void linkPo(s.id)}>
+                          {busy === s.id ? "Menautkan…" : "Tautkan PO"}
                         </Button>
                       </div>
                     )}
