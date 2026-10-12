@@ -1,0 +1,1098 @@
+import type { TransactionSql } from "postgres";
+import { db } from "../db.js";
+
+// F13 PO Tracker + Sistem Barang Masuk (Purchasing). Header (purchase_order)
+// = satu PO ke vendor; item (purchase_order_item) = barang yang dipesan;
+// receipt (purchase_order_receipt) = log tiap kejadian barang datang per item
+// (lihat 143_purchase_order.sql). qty_received & status dihitung di
+// query/JS, bukan kolom tersimpan — pola computed sama dgn "telat" F39/
+// "stok" F49/"variance" F51. date/timestamptz eksplisit ::text di
+// SELECT/RETURNING (gotcha postgres.js yang sama di semua repo lain).
+//
+// F35 PO Approval Workflow (146_purchase_order_approval.sql) menambah gate
+// berjenjang di atas: Tier 1 (paralel) HOD Business (IVD/Medical sesuai
+// `lini`) + HOD Finance, lalu Tier 2 Direktur. approval_status DIHITUNG dari
+// baris purchase_order_approval (pola computed yang sama), bukan kolom
+// tersimpan. PO dgn lini NULL (dibuat sebelum F35) = "legacy_exempt", tidak
+// kena gate. required_hod_key di-snapshot saat create (lihat createPurchaseOrder),
+// bukan di-resolve ulang live dari lini saat approve.
+
+export type PurchaseOrderStatus = "ordered" | "partial_received" | "received" | "cancelled" | "rejected" | "closed";
+export type PurchaseOrderSource = "manual" | "accurate";
+
+export class PurchaseOrderError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+    this.name = "PurchaseOrderError";
+  }
+}
+
+export type ApproverRole = "hod_business" | "hod_finance" | "direktur";
+export type ApprovalDecisionStatus = "pending" | "approved" | "rejected";
+// accurate_approved / accurate_pending = PO cermin Accurate (205): approval-nya
+// terjadi di Accurate (approvalStatus), bukan rantai F35 WRG-OS.
+export type ApprovalStatus =
+  | "legacy_exempt" | "pending_tier1" | "pending_direktur" | "approved" | "rejected"
+  | "accurate_approved" | "accurate_pending";
+export type PurchaseOrderLini = "IVD" | "Medical";
+
+// Aturan bisnis "HoD mana menyetujui lini mana" — merujuk hod_key kanonik di
+// master_hod (migrasi 198): mufid=HoD Business IVD, arman=HoD Business Medical,
+// ika=HoD Finance & SC. Daftar HoD-nya sendiri TIDAK ditulis di kode; yang di
+// sini cuma pemetaan peran → key. Kembarannya di web: lib/po-approval-access.ts.
+export const LINI_HOD_KEY: Record<PurchaseOrderLini, string> = { IVD: "mufid", Medical: "arman" };
+export const FINANCE_HOD_KEY = "ika";
+
+export interface PurchaseOrderApprovalRow {
+  id: string;
+  purchase_order_id: string;
+  approver_role: ApproverRole;
+  required_hod_key: string | null;
+  status: ApprovalDecisionStatus;
+  decided_by: string | null;
+  decided_at: string | null;
+  note: string | null;
+}
+
+function mapApproval(r: Record<string, unknown>): PurchaseOrderApprovalRow {
+  return {
+    id: String(r.id),
+    purchase_order_id: String(r.purchase_order_id),
+    approver_role: r.approver_role as ApproverRole,
+    required_hod_key: r.required_hod_key != null ? String(r.required_hod_key) : null,
+    status: r.status as ApprovalDecisionStatus,
+    decided_by: r.decided_by != null ? String(r.decided_by) : null,
+    decided_at: r.decided_at != null ? String(r.decided_at) : null,
+    note: r.note != null ? String(r.note) : null,
+  };
+}
+
+function approvalCols(sql: ReturnType<typeof db>) {
+  return sql`id, purchase_order_id, approver_role, required_hod_key, status, decided_by, decided_at::text, note`;
+}
+
+// Satu-satunya tempat state-machine approval diputuskan (dipakai list —dari
+// flag agregat SQL— maupun detail/decide —dari baris penuh—, lihat
+// computeApprovalStatus) supaya logikanya tidak dobel.
+function deriveApprovalStatus(
+  lini: PurchaseOrderLini | null,
+  anyRejected: boolean,
+  tier1Approved: boolean,
+  direkturApproved: boolean,
+): ApprovalStatus {
+  if (lini === null) return "legacy_exempt";
+  if (anyRejected) return "rejected";
+  if (tier1Approved && direkturApproved) return "approved";
+  if (tier1Approved) return "pending_direktur";
+  return "pending_tier1";
+}
+
+export function computeApprovalStatus(lini: PurchaseOrderLini | null, rows: PurchaseOrderApprovalRow[]): ApprovalStatus {
+  const byRole = (role: ApproverRole) => rows.find((r) => r.approver_role === role)?.status;
+  const anyRejected = rows.some((r) => r.status === "rejected");
+  const tier1Approved = byRole("hod_business") === "approved" && byRole("hod_finance") === "approved";
+  const direkturApproved = byRole("direktur") === "approved";
+  return deriveApprovalStatus(lini, anyRejected, tier1Approved, direkturApproved);
+}
+
+export interface PurchaseOrderReceiptRow {
+  id: string;
+  po_item_id: string;
+  qty_received: number;
+  received_date: string;
+  received_by: string | null;
+  condition_notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+function mapReceipt(r: Record<string, unknown>): PurchaseOrderReceiptRow {
+  return {
+    id: String(r.id),
+    po_item_id: String(r.po_item_id),
+    qty_received: Number(r.qty_received),
+    received_date: String(r.received_date),
+    received_by: r.received_by != null ? String(r.received_by) : null,
+    condition_notes: r.condition_notes != null ? String(r.condition_notes) : null,
+    created_at: String(r.created_at),
+    updated_at: String(r.updated_at),
+  };
+}
+
+function receiptCols(sql: ReturnType<typeof db>) {
+  return sql`id, po_item_id, qty_received, received_date::text, received_by, condition_notes, created_at::text, updated_at::text`;
+}
+
+export interface PurchaseOrderItemRow {
+  id: string;
+  purchase_order_id: string;
+  item_desc: string;
+  qty_ordered: number;
+  unit: string | null;
+  unit_price: number | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+  qty_received: number;
+  item_no: string | null;
+  warehouse_name: string | null;
+}
+
+function mapItem(r: Record<string, unknown>): PurchaseOrderItemRow {
+  return {
+    id: String(r.id),
+    purchase_order_id: String(r.purchase_order_id),
+    item_desc: String(r.item_desc),
+    qty_ordered: Number(r.qty_ordered),
+    unit: r.unit != null ? String(r.unit) : null,
+    unit_price: r.unit_price != null ? Number(r.unit_price) : null,
+    notes: r.notes != null ? String(r.notes) : null,
+    created_at: String(r.created_at),
+    updated_at: String(r.updated_at),
+    qty_received: Number(r.qty_received ?? 0),
+    item_no: r.item_no != null ? String(r.item_no) : null,
+    warehouse_name: r.warehouse_name != null ? String(r.warehouse_name) : null,
+  };
+}
+
+function itemCols(sql: ReturnType<typeof db>) {
+  return sql`
+    i.id, i.purchase_order_id, i.item_desc, i.qty_ordered, i.unit, i.unit_price, i.notes,
+    i.created_at::text, i.updated_at::text, i.item_no, i.warehouse_name,
+    ${itemQtyReceivedExpr(sql)} AS qty_received
+  `;
+}
+
+// Qty diterima per baris: baris cermin Accurate (205) memakai shipQuantity
+// Accurate (penerimaan dicatat di sana); baris manual menjumlah log
+// purchase_order_receipt. WAJIB alias `i` + `rc` (ITEM_RECEIPT_JOIN).
+function itemQtyReceivedExpr(sql: ReturnType<typeof db>) {
+  return sql`CASE WHEN i.accurate_detail_id IS NOT NULL THEN COALESCE(i.qty_shipped, 0)
+              ELSE COALESCE(rc.qty_received, 0) END`;
+}
+
+const ITEM_RECEIPT_JOIN = (sql: ReturnType<typeof db>) => sql`
+  LEFT JOIN (
+    SELECT po_item_id, SUM(qty_received) AS qty_received
+    FROM purchase_order_receipt GROUP BY po_item_id
+  ) rc ON rc.po_item_id = i.id
+`;
+
+export interface PurchaseOrderRow {
+  id: string;
+  po_number: string;
+  vendor_id: string | null;
+  vendor_name: string;
+  order_date: string;
+  eta_date: string | null;
+  cabang: string | null;
+  pic: string | null;
+  notes: string | null;
+  cancelled_at: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+  item_count: number;
+  received_item_count: number;
+  any_received: boolean;
+  status: PurchaseOrderStatus;
+  lini: PurchaseOrderLini | null;
+  approval_status: ApprovalStatus;
+  source: PurchaseOrderSource;
+  /** statusName Accurate apa adanya (baris accurate), null utk manual. */
+  accurate_status: string | null;
+  percent_shipped: number | null;
+  total_amount: number | null;
+  synced_at: string | null;
+}
+
+/**
+ * Rumus `status` PO — SATU sumber untuk seluruh jalur baca (list, detail,
+ * hitung kartu KPI).
+ *
+ * Dulu dihitung di JS (`computeStatus`), jadi status hanya ada SETELAH baris
+ * ditarik. Akibatnya kartu "PO berjalan / telat / diterima" di halaman
+ * /purchase-orders dihitung dengan `rows.filter()` atas array `?limit=1000` —
+ * begitu PO lewat 1000, kartunya diam-diam melapor terlalu rendah padahal
+ * terbaca sebagai angka otoritatif. Menyalin rumusnya ke SQL sambil
+ * mempertahankan versi JS akan membuat satu aturan punya dua sumber; jadi
+ * versi JS-nya dibuang, bukan diduplikasi.
+ *
+ * Query WAJIB sudah punya alias `po` (purchase_order) + `agg`
+ * (PO_ITEM_AGG_JOIN) + `appr` (PO_APPROVAL_AGG_JOIN). Urutan cabang: cancelled
+ * menang atas segalanya, lalu rejected, PO tanpa item = 'ordered'.
+ *
+ * 'rejected' ditambahkan setelah uji fungsional 12 Okt 2026: PO yang ditolak
+ * approval-nya dulu tetap 'ordered', jadi terhitung di kartu "Berjalan" dan
+ * "Telat" padahal tak akan pernah dikirim vendor.
+ *
+ * Baris cermin Accurate (205) dihitung dari HEADER Accurate: percentShipped
+ * (100 = diterima penuh) + statusName 'Ditutup' (ditutup manual sebelum
+ * lengkap → 'closed'). Baris barangnya bisa belum tertarik saat header sudah
+ * ada, jadi status tak boleh bergantung pada agregat item.
+ */
+function poStatusExpr(sql: ReturnType<typeof db>) {
+  return sql`CASE
+    WHEN po.cancelled_at IS NOT NULL THEN 'cancelled'
+    WHEN po.source = 'accurate' THEN CASE
+      WHEN COALESCE(po.percent_shipped, 0) >= 100 THEN 'received'
+      WHEN po.accurate_status = 'Ditutup' THEN 'closed'
+      WHEN COALESCE(po.percent_shipped, 0) > 0 THEN 'partial_received'
+      ELSE 'ordered' END
+    WHEN COALESCE(appr.any_rejected, false) THEN 'rejected'
+    WHEN COALESCE(agg.item_count, 0) = 0 THEN 'ordered'
+    WHEN COALESCE(agg.received_item_count, 0) = COALESCE(agg.item_count, 0) THEN 'received'
+    WHEN COALESCE(agg.any_received, false) THEN 'partial_received'
+    ELSE 'ordered' END`;
+}
+
+/**
+ * "Hari ini" menurut WIB, bukan UTC.
+ *
+ * Halaman lama memakai `new Date().toISOString().slice(0,10)` untuk menghitung
+ * PO telat — itu tanggal UTC, jadi antara 00:00–07:00 WIB ia masih memakai
+ * tanggal kemarin dan PO yang jatuh tempo hari itu belum dihitung telat.
+ * Tujuh jam tiap hari kartu "Telat" melapor terlalu rendah.
+ */
+function wibTodayExpr(sql: ReturnType<typeof db>) {
+  return sql`(now() AT TIME ZONE 'Asia/Jakarta')::date`;
+}
+
+function mapRow(r: Record<string, unknown>): PurchaseOrderRow {
+  const cancelled_at = r.cancelled_at != null ? String(r.cancelled_at) : null;
+  const item_count = Number(r.item_count ?? 0);
+  const received_item_count = Number(r.received_item_count ?? 0);
+  const any_received = Boolean(r.any_received);
+  const lini = (r.lini != null ? String(r.lini) : null) as PurchaseOrderLini | null;
+  const source = String(r.source ?? "manual") as PurchaseOrderSource;
+  return {
+    id: String(r.id),
+    po_number: String(r.po_number),
+    vendor_id: r.vendor_id != null ? String(r.vendor_id) : null,
+    vendor_name: String(r.vendor_name),
+    order_date: String(r.order_date),
+    eta_date: r.eta_date != null ? String(r.eta_date) : null,
+    cabang: r.cabang != null ? String(r.cabang) : null,
+    pic: r.pic != null ? String(r.pic) : null,
+    notes: r.notes != null ? String(r.notes) : null,
+    cancelled_at,
+    created_by: r.created_by != null ? String(r.created_by) : null,
+    created_at: String(r.created_at),
+    updated_at: String(r.updated_at),
+    item_count,
+    received_item_count,
+    any_received,
+    // Dari SQL (poStatusExpr) — query WAJIB memilihnya. Kalau dihitung ulang
+    // di sini, filter/hitung di SQL dan tampilan bisa berbeda diam-diam.
+    status: String(r.status) as PurchaseOrderStatus,
+    lini,
+    approval_status:
+      source === "accurate"
+        ? r.accurate_approval === "APPROVED" ? "accurate_approved" : "accurate_pending"
+        : deriveApprovalStatus(lini, Boolean(r.approval_any_rejected), Boolean(r.approval_tier1_approved), Boolean(r.approval_direktur_approved)),
+    source,
+    accurate_status: r.accurate_status != null ? String(r.accurate_status) : null,
+    percent_shipped: r.percent_shipped != null ? Number(r.percent_shipped) : null,
+    total_amount: r.total_amount != null ? Number(r.total_amount) : null,
+    synced_at: r.synced_at != null ? String(r.synced_at) : null,
+  };
+}
+
+// date/timestamptz eksplisit ::text — tanpa ini postgres.js balikin objek
+// Date yang ke-serialize jadi "Mon Jul 20 2026 …" (toString()), bukan ISO
+// (gotcha yang sama di supplier-eta.ts/inbound-receiving.ts/dana-ops.ts).
+function poCols(sql: ReturnType<typeof db>) {
+  return sql`
+    po.id, po.po_number, po.vendor_id, po.vendor_name, po.order_date::text, po.eta_date::text,
+    po.cabang, po.pic, po.notes, po.cancelled_at::text, po.created_by, po.lini,
+    po.created_at::text, po.updated_at::text,
+    po.source, po.accurate_status, po.accurate_approval, po.percent_shipped, po.total_amount, po.synced_at::text,
+    COALESCE(agg.item_count, 0) AS item_count,
+    COALESCE(agg.received_item_count, 0) AS received_item_count,
+    COALESCE(agg.any_received, false) AS any_received,
+    ${poStatusExpr(sql)} AS status,
+    COALESCE(appr.any_rejected, false) AS approval_any_rejected,
+    COALESCE(appr.tier1_approved, false) AS approval_tier1_approved,
+    COALESCE(appr.direktur_approved, false) AS approval_direktur_approved
+  `;
+}
+
+// Ringkasan approval utk list — flag agregat, bukan baris penuh (pola sama
+// PO_ITEM_AGG_JOIN: detail baru ambil array lengkap, list cukup summary).
+const PO_APPROVAL_AGG_JOIN = (sql: ReturnType<typeof db>) => sql`
+  LEFT JOIN (
+    SELECT purchase_order_id,
+      bool_or(status = 'rejected') AS any_rejected,
+      bool_and(status = 'approved') FILTER (WHERE approver_role IN ('hod_business', 'hod_finance')) AS tier1_approved,
+      bool_or(status = 'approved' AND approver_role = 'direktur') AS direktur_approved
+    FROM purchase_order_approval
+    GROUP BY purchase_order_id
+  ) appr ON appr.purchase_order_id = po.id
+`;
+
+const PO_ITEM_AGG_JOIN = (sql: ReturnType<typeof db>) => sql`
+  LEFT JOIN (
+    SELECT i.purchase_order_id,
+      COUNT(*) AS item_count,
+      COUNT(*) FILTER (WHERE ${itemQtyReceivedExpr(sql)} >= i.qty_ordered) AS received_item_count,
+      bool_or(${itemQtyReceivedExpr(sql)} > 0) AS any_received
+    FROM purchase_order_item i
+    LEFT JOIN (
+      SELECT po_item_id, SUM(qty_received) AS qty_received
+      FROM purchase_order_receipt GROUP BY po_item_id
+    ) rc ON rc.po_item_id = i.id
+    GROUP BY i.purchase_order_id
+  ) agg ON agg.purchase_order_id = po.id
+`;
+
+export interface PurchaseOrderItemInput {
+  item_desc: string;
+  qty_ordered: number;
+  unit?: string | null;
+  unit_price?: number | null;
+  notes?: string | null;
+}
+
+export interface PurchaseOrderInput {
+  po_number: string;
+  vendor_id?: string | null;
+  vendor_name: string;
+  order_date?: string;
+  eta_date?: string | null;
+  cabang?: string | null;
+  pic?: string | null;
+  notes?: string | null;
+  created_by?: string | null;
+  lini: PurchaseOrderLini;
+  items: PurchaseOrderItemInput[];
+}
+
+export interface PurchaseOrderDetail extends PurchaseOrderRow {
+  items: PurchaseOrderItemRow[];
+  approvals: PurchaseOrderApprovalRow[];
+  /** Penerimaan Barang Accurate untuk PO ini (F36, migrasi 206) — kosong utk PO manual. */
+  receipts: { id: string; accurate_number: string | null; received_date: string; status: string; lines: number }[];
+}
+
+export async function createPurchaseOrder(t: PurchaseOrderInput): Promise<PurchaseOrderDetail> {
+  if (t.lini !== "IVD" && t.lini !== "Medical") {
+    throw new PurchaseOrderError(400, "lini wajib diisi (IVD/Medical)");
+  }
+  const sql = db();
+  const id = await sql.begin(async (tx) => {
+    const rows = await tx`
+      INSERT INTO purchase_order (po_number, vendor_id, vendor_name, order_date, eta_date, cabang, pic, notes, created_by, lini)
+      VALUES (${t.po_number}, ${t.vendor_id ?? null}, ${t.vendor_name}, ${t.order_date ?? tx`CURRENT_DATE`},
+              ${t.eta_date ?? null}, ${t.cabang ?? null}, ${t.pic ?? null}, ${t.notes ?? null}, ${t.created_by ?? null}, ${t.lini})
+      RETURNING id
+    `;
+    const poId = String(rows[0].id);
+    for (const it of t.items) {
+      await tx`
+        INSERT INTO purchase_order_item (purchase_order_id, item_desc, qty_ordered, unit, unit_price, notes)
+        VALUES (${poId}, ${it.item_desc}, ${it.qty_ordered}, ${it.unit ?? null}, ${it.unit_price ?? null}, ${it.notes ?? null})
+      `;
+    }
+    // F35 — seed 3 baris approval (Tier 1 paralel hod_business+hod_finance,
+    // Tier 2 direktur). required_hod_key di-snapshot dari lini saat ini.
+    await tx`
+      INSERT INTO purchase_order_approval (purchase_order_id, approver_role, required_hod_key)
+      VALUES
+        (${poId}, 'hod_business', ${LINI_HOD_KEY[t.lini]}),
+        (${poId}, 'hod_finance', ${FINANCE_HOD_KEY}),
+        (${poId}, 'direktur', ${null})
+    `;
+    return poId;
+  });
+  const detail = await getPurchaseOrder(id);
+  if (!detail) throw new Error("gagal membaca PO setelah dibuat");
+  return detail;
+}
+
+// Nilainya sengaja SAMA dengan id kolom di purchase-order-table.tsx supaya
+// ?sort= bisa dikirim apa adanya tanpa lapisan pemetaan yang bisa melenceng.
+export const PO_SORTS = ["order_date", "po_number", "vendor_name", "cabang", "eta_date", "status"] as const;
+export type PurchaseOrderSort = (typeof PO_SORTS)[number];
+export const isPurchaseOrderSort = (v: unknown): v is PurchaseOrderSort =>
+  PO_SORTS.includes(String(v) as PurchaseOrderSort);
+
+export interface PurchaseOrderListOpts {
+  vendorId?: string;
+  cabang?: string;
+  /** Cari di nomor PO / nama vendor / cabang / PIC. */
+  q?: string;
+  /** Filter status turunan (ordered|partial_received|received|cancelled). */
+  status?: string;
+  sort?: PurchaseOrderSort;
+  dir?: "asc" | "desc";
+  limit?: number;
+  offset?: number;
+}
+
+export interface PurchaseOrderListResult {
+  rows: PurchaseOrderRow[];
+  /** Jumlah SEMUA PO yang cocok filter — bukan yang dikirim di `rows`. */
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export const PO_PAGE_DEFAULT = 25;
+export const PO_PAGE_MAX = 5000;
+
+// Sumber baris + SELURUH filter, dipakai bersama query data dan query hitung.
+function poFrom(sql: ReturnType<typeof db>, o: PurchaseOrderListOpts) {
+  const q = (o.q ?? "").trim();
+  const like = `%${q}%`;
+  return sql`
+    FROM purchase_order po
+    ${PO_ITEM_AGG_JOIN(sql)}
+    ${PO_APPROVAL_AGG_JOIN(sql)}
+    WHERE ${o.vendorId ? sql`po.vendor_id = ${o.vendorId}` : sql`true`}
+      AND ${o.cabang ? sql`po.cabang = ${o.cabang}` : sql`true`}
+      ${o.status ? sql`AND ${poStatusExpr(sql)} = ${o.status}` : sql``}
+      ${
+        q
+          ? sql`AND (po.po_number ILIKE ${like} OR po.vendor_name ILIKE ${like}
+                  OR po.cabang ILIKE ${like} OR po.pic ILIKE ${like})`
+          : sql``
+      }`;
+}
+
+export async function listPurchaseOrders(
+  opts: PurchaseOrderListOpts = {},
+): Promise<PurchaseOrderListResult> {
+  const sql = db();
+  const limit = Math.min(Math.max(Math.trunc(Number(opts.limit) || PO_PAGE_DEFAULT), 1), PO_PAGE_MAX);
+  const offset = Math.max(Math.trunc(Number(opts.offset) || 0), 0);
+  const from = poFrom(sql, opts);
+  const asc = opts.dir === "asc";
+  // Kolom urut di-whitelist lewat tipe PurchaseOrderSort — nama kolom tak
+  // pernah datang mentah dari query string.
+  const key = opts.sort ?? "order_date";
+  const col =
+    key === "po_number" ? sql`po.po_number`
+    : key === "vendor_name" ? sql`po.vendor_name`
+    : key === "cabang" ? sql`po.cabang`
+    : key === "eta_date" ? sql`po.eta_date`
+    : key === "status" ? poStatusExpr(sql)
+    : sql`po.order_date`;
+
+  const [rows, [count]] = await Promise.all([
+    sql`
+      SELECT ${poCols(sql)}
+      ${from}
+      ORDER BY ${col} ${asc ? sql`ASC NULLS LAST` : sql`DESC NULLS LAST`},
+               po.created_at DESC, po.id DESC
+      LIMIT ${limit} OFFSET ${offset}`,
+    sql`SELECT count(*)::int AS total ${from}`,
+  ]);
+
+  return {
+    rows: (rows as unknown as Record<string, unknown>[]).map(mapRow),
+    total: Number(count?.total ?? 0),
+    limit,
+    offset,
+  };
+}
+
+export interface PurchaseOrderSummary {
+  total: number;
+  by_status: Record<string, number>;
+  /** PO belum tuntas yang ETA-nya sudah lewat (hari ini WIB). */
+  telat: number;
+}
+
+/**
+ * Hitungan untuk kartu KPI, diagregasi di SQL.
+ *
+ * Dulu halaman /purchase-orders menghitungnya dengan `rows.filter()` atas
+ * array `?limit=1000` yang sama dengan tabelnya — kartu dan tabel minum dari
+ * ember yang sama, jadi begitu PO lewat 1000 kartunya ikut salah. Lebih halus
+ * lagi: `ORDER BY order_date DESC` menyimpan yang terbaru, sedangkan PO lama
+ * umumnya sudah 'received' — jadi kartu "Diterima" yang rusak lebih dulu,
+ * sementara "Berjalan"/"Telat" masih terlihat wajar. Angka yang salah tapi
+ * masuk akal justru yang paling lama tak ketahuan.
+ *
+ * Sengaja TANPA filter daftar: kartu menggambarkan seluruh PO, bukan halaman
+ * atau filter yang sedang aktif (pola sama dengan /visits/summary).
+ */
+export async function purchaseOrderSummary(): Promise<PurchaseOrderSummary> {
+  const sql = db();
+  const rows = await sql`
+    SELECT ${poStatusExpr(sql)} AS status,
+           count(*)::int AS n,
+           count(*) FILTER (
+             WHERE po.eta_date IS NOT NULL AND po.eta_date < ${wibTodayExpr(sql)}
+           )::int AS n_telat
+    FROM purchase_order po
+    ${PO_ITEM_AGG_JOIN(sql)}
+    ${PO_APPROVAL_AGG_JOIN(sql)}
+    GROUP BY 1`;
+  const by: Record<string, number> = {};
+  let total = 0;
+  let telat = 0;
+  for (const r of rows as unknown as { status: string; n: number; n_telat: number }[]) {
+    const st = String(r.status);
+    by[st] = Number(r.n);
+    total += Number(r.n);
+    // "Telat" hanya berlaku untuk PO yang belum tuntas — PO yang sudah
+    // diterima atau dibatalkan tak bisa telat lagi.
+    if (st === "ordered" || st === "partial_received") telat += Number(r.n_telat);
+  }
+  return { total, by_status: by, telat };
+}
+
+export async function getPurchaseOrder(id: string): Promise<PurchaseOrderDetail | null> {
+  const sql = db();
+  const rows = await sql`SELECT ${poCols(sql)} FROM purchase_order po ${PO_ITEM_AGG_JOIN(sql)} ${PO_APPROVAL_AGG_JOIN(sql)} WHERE po.id = ${id}`;
+  if (!rows.length) return null;
+  const items = await sql`
+    SELECT ${itemCols(sql)} FROM purchase_order_item i ${ITEM_RECEIPT_JOIN(sql)}
+    WHERE i.purchase_order_id = ${id} ORDER BY i.created_at ASC
+  `;
+  const approvals = await sql`
+    SELECT ${approvalCols(sql)} FROM purchase_order_approval WHERE purchase_order_id = ${id} ORDER BY created_at ASC
+  `;
+  const receipts = await sql`
+    SELECT ir.id, ir.accurate_number, ir.received_date::text, ir.status, count(l.id)::int AS lines
+    FROM purchase_order po
+    JOIN inbound_receiving_line l ON l.accurate_po_id = po.accurate_id
+    JOIN inbound_receiving ir ON ir.id = l.receiving_id
+    WHERE po.id = ${id}
+    GROUP BY ir.id
+    ORDER BY ir.received_date ASC, ir.accurate_number ASC
+  `;
+  return {
+    ...mapRow(rows[0]),
+    items: items.map(mapItem),
+    approvals: approvals.map(mapApproval),
+    receipts: receipts.map((r) => ({
+      id: String(r.id),
+      accurate_number: r.accurate_number != null ? String(r.accurate_number) : null,
+      received_date: String(r.received_date),
+      status: String(r.status),
+      lines: Number(r.lines),
+    })),
+  };
+}
+
+export interface PurchaseOrderUpdate {
+  po_number?: string;
+  vendor_id?: string | null;
+  vendor_name?: string;
+  order_date?: string;
+  eta_date?: string | null;
+  cabang?: string | null;
+  pic?: string | null;
+  notes?: string | null;
+  cancelled?: boolean;
+}
+
+/**
+ * PO yang approval-nya DITOLAK bersifat final (146_purchase_order_approval.sql:
+ * "Reject di mana pun = PO rejected permanen") — dulu tetap bisa diedit,
+ * ditambah barangnya, bahkan di-un-cancel. Yang masih boleh: membatalkannya
+ * (merapikan daftar). Mengubah isinya = buat PO baru.
+ */
+const ACCURATE_READONLY = "PO ini disalin dari Accurate — ubah di Accurate, perubahannya ikut tersinkron otomatis.";
+
+/**
+ * Baris cermin Accurate (205) read-only: isi, barang, penerimaan, dan
+ * approval-nya dikelola di Accurate. Mengubahnya di sini akan ditimpa sinkron
+ * berikutnya — atau lebih buruk, tak ditimpa (penerimaan manual) dan membuat
+ * dua versi angka.
+ */
+async function assertManualPo(sql: ReturnType<typeof db>, purchaseOrderId: string): Promise<void> {
+  const [r] = await sql`SELECT source FROM purchase_order WHERE id = ${purchaseOrderId}`;
+  if (r?.source === "accurate") throw new PurchaseOrderError(409, ACCURATE_READONLY);
+}
+
+async function assertPoNotRejected(sql: ReturnType<typeof db>, purchaseOrderId: string): Promise<void> {
+  const [r] = await sql`
+    SELECT bool_or(status = 'rejected') AS rejected FROM purchase_order_approval WHERE purchase_order_id = ${purchaseOrderId}
+  `;
+  if (r?.rejected) throw new PurchaseOrderError(409, "PO ini sudah ditolak — tidak bisa diubah. Buat PO baru.");
+}
+
+export async function updatePurchaseOrder(id: string, f: PurchaseOrderUpdate): Promise<PurchaseOrderRow | null> {
+  const sql = db();
+  await assertManualPo(sql, id);
+  const onlyCancel = Object.keys(f).every((k) => k === "cancelled") && f.cancelled === true;
+  if (!onlyCancel) await assertPoNotRejected(sql, id);
+  const cancelledAt = f.cancelled === true ? new Date().toISOString() : f.cancelled === false ? null : undefined;
+  const rows = await sql`
+    UPDATE purchase_order SET
+      po_number    = COALESCE(${f.po_number ?? null}, po_number),
+      vendor_id    = ${f.vendor_id !== undefined ? f.vendor_id : sql`vendor_id`},
+      vendor_name  = COALESCE(${f.vendor_name ?? null}, vendor_name),
+      order_date   = COALESCE(${f.order_date ?? null}, order_date),
+      eta_date     = ${f.eta_date !== undefined ? f.eta_date : sql`eta_date`},
+      cabang       = ${f.cabang !== undefined ? f.cabang : sql`cabang`},
+      pic          = ${f.pic !== undefined ? f.pic : sql`pic`},
+      notes        = ${f.notes !== undefined ? f.notes : sql`notes`},
+      cancelled_at = ${cancelledAt !== undefined ? cancelledAt : sql`cancelled_at`},
+      updated_at   = now()
+    WHERE id = ${id}
+    RETURNING id
+  `;
+  if (!rows.length) return null;
+  const [row] = await sql`SELECT ${poCols(sql)} FROM purchase_order po ${PO_ITEM_AGG_JOIN(sql)} ${PO_APPROVAL_AGG_JOIN(sql)} WHERE po.id = ${id}`;
+  return mapRow(row);
+}
+
+// FK purchase_order_receipt.po_item_id sengaja RESTRICT (143_purchase_order.sql:
+// "PO/item yang sudah menerima barang tidak bisa dihapus, hanya bisa
+// dibatalkan") — tapi belum ada yg menangkap error-nya sejak F13, jadi bocor
+// jadi 500 mentah. Ditemukan & diperbaiki di sesi F35 (ketemu pas testing).
+function isForeignKeyViolation(e: unknown): boolean {
+  return typeof e === "object" && e !== null && (e as { code?: string }).code === "23503";
+}
+
+export async function deletePurchaseOrder(id: string): Promise<{ deleted: number }> {
+  const sql = db();
+  await assertManualPo(sql, id);
+  try {
+    const rows = await sql`DELETE FROM purchase_order WHERE id = ${id} RETURNING id`;
+    return { deleted: rows.length };
+  } catch (e) {
+    if (isForeignKeyViolation(e)) {
+      throw new PurchaseOrderError(409, "PO tidak bisa dihapus — sudah ada barang masuk tercatat. Batalkan PO, jangan dihapus.");
+    }
+    throw e;
+  }
+}
+
+export async function addPurchaseOrderItem(purchaseOrderId: string, t: PurchaseOrderItemInput): Promise<PurchaseOrderItemRow | null> {
+  const sql = db();
+  const head = await sql`SELECT id, cancelled_at FROM purchase_order WHERE id = ${purchaseOrderId}`;
+  if (!head.length) return null;
+  await assertManualPo(sql, purchaseOrderId);
+  if (head[0].cancelled_at != null) throw new PurchaseOrderError(409, "PO sudah dibatalkan — tidak bisa menambah barang");
+  await assertPoNotRejected(sql, purchaseOrderId);
+  const rows = await sql`
+    INSERT INTO purchase_order_item (purchase_order_id, item_desc, qty_ordered, unit, unit_price, notes)
+    VALUES (${purchaseOrderId}, ${t.item_desc}, ${t.qty_ordered}, ${t.unit ?? null}, ${t.unit_price ?? null}, ${t.notes ?? null})
+    RETURNING id
+  `;
+  const [row] = await sql`SELECT ${itemCols(sql)} FROM purchase_order_item i ${ITEM_RECEIPT_JOIN(sql)} WHERE i.id = ${rows[0].id}`;
+  return mapItem(row);
+}
+
+export interface PurchaseOrderItemUpdate {
+  item_desc?: string;
+  qty_ordered?: number;
+  unit?: string | null;
+  unit_price?: number | null;
+  notes?: string | null;
+}
+
+export async function updatePurchaseOrderItem(
+  purchaseOrderId: string,
+  itemId: string,
+  f: PurchaseOrderItemUpdate,
+): Promise<PurchaseOrderItemRow | null> {
+  const sql = db();
+  const [head] = await sql`SELECT cancelled_at FROM purchase_order WHERE id = ${purchaseOrderId}`;
+  if (!head) return null;
+  await assertManualPo(sql, purchaseOrderId);
+  if (head.cancelled_at != null) throw new PurchaseOrderError(409, "PO sudah dibatalkan — barang tidak bisa diubah");
+  await assertPoNotRejected(sql, purchaseOrderId);
+  const ok = await sql.begin(async (tx) => {
+    // Kunci baris item supaya cek "qty_ordered >= sudah diterima" tak bisa
+    // diselip penerimaan paralel (pola sama addPurchaseOrderReceipt).
+    const [item] = await tx`
+      SELECT id FROM purchase_order_item WHERE id = ${itemId} AND purchase_order_id = ${purchaseOrderId} FOR UPDATE
+    `;
+    if (!item) return false;
+    if (f.qty_ordered !== undefined) {
+      const [agg] = await tx`SELECT COALESCE(SUM(qty_received), 0) AS total FROM purchase_order_receipt WHERE po_item_id = ${itemId}`;
+      if (Number(f.qty_ordered) < Number(agg.total)) {
+        throw new PurchaseOrderError(409, `qty_ordered (${f.qty_ordered}) tidak boleh di bawah yang sudah diterima (${Number(agg.total)})`);
+      }
+    }
+    await tx`
+    UPDATE purchase_order_item SET
+      item_desc   = COALESCE(${f.item_desc ?? null}, item_desc),
+      qty_ordered = COALESCE(${f.qty_ordered ?? null}, qty_ordered),
+      unit        = ${f.unit !== undefined ? f.unit : tx`unit`},
+      unit_price  = ${f.unit_price !== undefined ? f.unit_price : tx`unit_price`},
+      notes       = ${f.notes !== undefined ? f.notes : tx`notes`},
+      updated_at  = now()
+    WHERE id = ${itemId} AND purchase_order_id = ${purchaseOrderId}
+    `;
+    return true;
+  });
+  if (!ok) return null;
+  const [row] = await sql`SELECT ${itemCols(sql)} FROM purchase_order_item i ${ITEM_RECEIPT_JOIN(sql)} WHERE i.id = ${itemId}`;
+  return mapItem(row);
+}
+
+export async function deletePurchaseOrderItem(purchaseOrderId: string, itemId: string): Promise<{ deleted: number }> {
+  const sql = db();
+  await assertManualPo(sql, purchaseOrderId);
+  try {
+    const rows = await sql`DELETE FROM purchase_order_item WHERE id = ${itemId} AND purchase_order_id = ${purchaseOrderId} RETURNING id`;
+    return { deleted: rows.length };
+  } catch (e) {
+    if (isForeignKeyViolation(e)) {
+      throw new PurchaseOrderError(409, "Barang tidak bisa dihapus — sudah ada barang masuk tercatat utk barang ini.");
+    }
+    throw e;
+  }
+}
+
+export interface PurchaseOrderReceiptInput {
+  qty_received: number;
+  received_date?: string;
+  received_by?: string | null;
+  condition_notes?: string | null;
+}
+
+/**
+ * Tanggal terima wajib di antara tanggal PO dan hari ini (WIB). Uji fungsional
+ * 12 Okt 2026: 2025-01-01 untuk PO bertanggal 2026-10-01 dan 2027-12-31
+ * sama-sama diterima — barang "datang" sebelum dipesan / di masa depan.
+ */
+async function assertReceivedDate(
+  tx: TransactionSql<Record<string, unknown>>,
+  purchaseOrderId: string,
+  receivedDate: string | undefined,
+): Promise<void> {
+  if (receivedDate === undefined) return;
+  const [r] = await tx`
+    SELECT ${receivedDate}::date < po.order_date AS before_po,
+           ${receivedDate}::date > (now() AT TIME ZONE 'Asia/Jakarta')::date AS future,
+           po.order_date::text AS order_date
+    FROM purchase_order po WHERE po.id = ${purchaseOrderId}
+  `;
+  if (r?.before_po) throw new PurchaseOrderError(400, `Tanggal terima tidak boleh sebelum tanggal PO (${r.order_date})`);
+  if (r?.future) throw new PurchaseOrderError(400, "Tanggal terima tidak boleh di masa depan");
+}
+
+export async function addPurchaseOrderReceipt(
+  purchaseOrderId: string,
+  itemId: string,
+  t: PurchaseOrderReceiptInput,
+): Promise<PurchaseOrderReceiptRow | null> {
+  const sql = db();
+  return sql.begin(async (tx) => {
+    // FOR UPDATE di baris item: cek "total diterima <= qty_ordered" lalu INSERT
+    // dulu tak terkunci, jadi penerimaan paralel sama-sama lolos cek (uji
+    // fungsional 12 Okt 2026: 20 POST paralel qty 1 di item qty 5 → 20 tercatat).
+    // Penerimaan kedua untuk item yang sama sekarang menunggu yang pertama commit.
+    const item = await tx`
+      SELECT id, qty_ordered FROM purchase_order_item
+      WHERE id = ${itemId} AND purchase_order_id = ${purchaseOrderId}
+      FOR UPDATE
+    `;
+    if (!item.length) return null;
+    const [head] = await tx`SELECT lini, cancelled_at, source FROM purchase_order WHERE id = ${purchaseOrderId}`;
+    if (head?.source === "accurate") throw new PurchaseOrderError(409, ACCURATE_READONLY);
+    // PO yang dibatalkan tak boleh menerima barang — dulu lolos karena gate
+    // hanya melihat approval_status.
+    if (head?.cancelled_at != null) {
+      throw new PurchaseOrderError(409, "PO sudah dibatalkan — barang masuk tidak bisa dicatat");
+    }
+    // F35 — barang masuk diblokir sampai PO fully approved (legacy_exempt/lini
+    // NULL = PO pra-F35, tidak kena gate ini).
+    const lini = (head?.lini != null ? String(head.lini) : null) as PurchaseOrderLini | null;
+    if (lini !== null) {
+      const approvals = (await tx`
+        SELECT id, purchase_order_id, approver_role, required_hod_key, status, decided_by, decided_at::text, note
+        FROM purchase_order_approval WHERE purchase_order_id = ${purchaseOrderId}
+      `).map(mapApproval);
+      if (computeApprovalStatus(lini, approvals) !== "approved") {
+        throw new PurchaseOrderError(409, "PO belum fully approved — barang masuk belum bisa dicatat");
+      }
+    }
+    await assertReceivedDate(tx, purchaseOrderId, t.received_date);
+    // BUG-07 — total qty_received (seluruh baris receipt) tak boleh melebihi
+    // qty_ordered milik item.
+    const qtyOrdered = Number(item[0].qty_ordered);
+    const [agg] = await tx`SELECT COALESCE(SUM(qty_received), 0) AS total FROM purchase_order_receipt WHERE po_item_id = ${itemId}`;
+    const alreadyReceived = Number(agg.total);
+    if (alreadyReceived + Number(t.qty_received) > qtyOrdered) {
+      throw new PurchaseOrderError(
+        409,
+        `Over-receiving: sudah diterima ${alreadyReceived}, ditambah ${t.qty_received} akan melebihi qty_ordered (${qtyOrdered})`,
+      );
+    }
+    const rows = await tx`
+      INSERT INTO purchase_order_receipt (po_item_id, qty_received, received_date, received_by, condition_notes)
+      VALUES (${itemId}, ${t.qty_received}, ${t.received_date ?? tx`(now() AT TIME ZONE 'Asia/Jakarta')::date`}, ${t.received_by ?? null}, ${t.condition_notes ?? null})
+      RETURNING id, po_item_id, qty_received, received_date::text, received_by, condition_notes, created_at::text, updated_at::text
+    `;
+    return mapReceipt(rows[0]);
+  });
+}
+
+// F35 — putuskan approve/reject 1 baris approval (role). Sequencing Tier 2
+// (direktur menunggu Tier 1 lengkap) & guard idempoten (WHERE status='pending'
+// langsung di UPDATE, bukan SELECT-lalu-UPDATE spt leave.ts) dibungkus 1
+// transaksi supaya check-then-act tidak race.
+export async function decidePurchaseOrderApproval(
+  purchaseOrderId: string,
+  role: ApproverRole,
+  decision: "approve" | "reject",
+  decidedBy: string | null,
+  note?: string | null,
+): Promise<{ approvals: PurchaseOrderApprovalRow[]; approval_status: ApprovalStatus }> {
+  const sql = db();
+  return sql.begin(async (tx) => {
+    const [head] = await tx`SELECT lini, source FROM purchase_order WHERE id = ${purchaseOrderId}`;
+    if (!head) throw new PurchaseOrderError(404, "PO tidak ditemukan");
+    if (head.source === "accurate") throw new PurchaseOrderError(409, "Approval PO ini dilakukan di Accurate, bukan di WRG-OS.");
+    const lini = (head.lini != null ? String(head.lini) : null) as PurchaseOrderLini | null;
+    if (lini === null) throw new PurchaseOrderError(409, "PO ini dibuat sebelum F35, tidak memakai alur approval");
+
+    // approvalCols() typed utk Sql<{}>, bukan TransactionSql<{}> (gotcha sama
+    // dgn itemCols/receivingCols di sesi F36) — kolom ditulis literal di dalam tx.
+    const rows = (await tx`
+      SELECT id, purchase_order_id, approver_role, required_hod_key, status, decided_by, decided_at::text, note
+      FROM purchase_order_approval WHERE purchase_order_id = ${purchaseOrderId}
+    `).map(mapApproval);
+    if (rows.some((r) => r.status === "rejected")) throw new PurchaseOrderError(409, "PO sudah ditolak");
+    if (role === "direktur") {
+      const tier1Done =
+        rows.find((r) => r.approver_role === "hod_business")?.status === "approved" &&
+        rows.find((r) => r.approver_role === "hod_finance")?.status === "approved";
+      if (!tier1Done) throw new PurchaseOrderError(409, "menunggu approval Tier 1 (HOD Business & HOD Finance)");
+    }
+
+    const newStatus: ApprovalDecisionStatus = decision === "approve" ? "approved" : "rejected";
+    const updated = await tx`
+      UPDATE purchase_order_approval SET
+        status = ${newStatus}, decided_by = ${decidedBy}, decided_at = now(), note = ${note ?? null}, updated_at = now()
+      WHERE purchase_order_id = ${purchaseOrderId} AND approver_role = ${role} AND status = 'pending'
+      RETURNING id
+    `;
+    if (!updated.length) throw new PurchaseOrderError(409, "baris approval ini sudah diputuskan");
+
+    const finalRows = (await tx`
+      SELECT id, purchase_order_id, approver_role, required_hod_key, status, decided_by, decided_at::text, note
+      FROM purchase_order_approval WHERE purchase_order_id = ${purchaseOrderId} ORDER BY created_at ASC
+    `).map(mapApproval);
+    return { approvals: finalRows, approval_status: computeApprovalStatus(lini, finalRows) };
+  });
+}
+
+export async function listPurchaseOrderReceipts(itemId: string): Promise<PurchaseOrderReceiptRow[]> {
+  const sql = db();
+  const rows = await sql`SELECT ${receiptCols(sql)} FROM purchase_order_receipt WHERE po_item_id = ${itemId} ORDER BY received_date ASC, created_at ASC`;
+  return rows.map(mapReceipt);
+}
+
+export interface PurchaseOrderReceiptUpdate {
+  qty_received?: number;
+  received_date?: string;
+  received_by?: string | null;
+  condition_notes?: string | null;
+}
+
+export async function updatePurchaseOrderReceipt(
+  itemId: string,
+  receiptId: string,
+  f: PurchaseOrderReceiptUpdate,
+): Promise<PurchaseOrderReceiptRow | null> {
+  const sql = db();
+  return sql.begin(async (tx) => {
+    // Kunci item yang sama dengan addPurchaseOrderReceipt supaya edit qty dan
+    // penerimaan baru tak saling menyelip melewati batas qty_ordered.
+    const [item] = await tx`
+      SELECT i.qty_ordered, i.purchase_order_id
+      FROM purchase_order_item i JOIN purchase_order_receipt r ON r.po_item_id = i.id
+      WHERE r.id = ${receiptId} AND i.id = ${itemId}
+      FOR UPDATE OF i
+    `;
+    if (!item) return null;
+    const [po] = await tx`SELECT source FROM purchase_order WHERE id = ${item.purchase_order_id}`;
+    if (po?.source === "accurate") throw new PurchaseOrderError(409, ACCURATE_READONLY);
+    await assertReceivedDate(tx, String(item.purchase_order_id), f.received_date);
+    if (f.qty_received !== undefined) {
+      const [agg] = await tx`SELECT COALESCE(SUM(qty_received), 0) AS total FROM purchase_order_receipt WHERE po_item_id = ${itemId} AND id != ${receiptId}`;
+      const qtyOrdered = Number(item.qty_ordered);
+      const othersReceived = Number(agg.total);
+      if (othersReceived + Number(f.qty_received) > qtyOrdered) {
+        throw new PurchaseOrderError(
+          409,
+          `Over-receiving: baris penerimaan lain sudah ${othersReceived}, ditambah ${f.qty_received} akan melebihi qty_ordered (${qtyOrdered})`,
+        );
+      }
+    }
+    const rows = await tx`
+      UPDATE purchase_order_receipt SET
+        qty_received    = COALESCE(${f.qty_received ?? null}, qty_received),
+        received_date   = COALESCE(${f.received_date ?? null}, received_date),
+        received_by     = ${f.received_by !== undefined ? f.received_by : tx`received_by`},
+        condition_notes = ${f.condition_notes !== undefined ? f.condition_notes : tx`condition_notes`},
+        updated_at      = now()
+      WHERE id = ${receiptId} AND po_item_id = ${itemId}
+      RETURNING id, po_item_id, qty_received, received_date::text, received_by, condition_notes, created_at::text, updated_at::text
+    `;
+    return rows.length ? mapReceipt(rows[0]) : null;
+  });
+}
+
+export async function deletePurchaseOrderReceipt(itemId: string, receiptId: string): Promise<{ deleted: number }> {
+  const sql = db();
+  const [it] = await sql`SELECT purchase_order_id FROM purchase_order_item WHERE id = ${itemId}`;
+  if (it) await assertManualPo(sql, String(it.purchase_order_id));
+  const rows = await sql`DELETE FROM purchase_order_receipt WHERE id = ${receiptId} AND po_item_id = ${itemId} RETURNING id`;
+  return { deleted: rows.length };
+}
+
+// ── Cermin Accurate (205) — dipanggil job accurate-po-sync (accurateSync.ts) ──
+
+export interface AccuratePoHeader {
+  accurate_id: number;
+  po_number: string;
+  vendor_id: number | null;
+  /** Nama dari Accurate; dipakai hanya kalau vendor belum ada di accurate_vendor. */
+  vendor_name: string;
+  order_date: string; // YYYY-MM-DD
+  eta_date: string | null;
+  accurate_status: string | null;
+  accurate_approval: string | null;
+  percent_shipped: number | null;
+  total_amount: number | null;
+  description: string | null;
+  last_update: string | null; // ISO timestamptz
+}
+
+/**
+ * Upsert header PO Accurate. Nama vendor diambil dari mirror accurate_vendor
+ * kalau ada — satu sumber nama vendor, dan di DB dev mirror itu sudah
+ * disamarkan, jadi sinkron ke dev tak membawa nama vendor asli kembali.
+ * Baris manual dengan po_number yang sama tak disentuh: konflik unik
+ * po_number dilewati dan dihitung sebagai `skipped`.
+ */
+export async function upsertAccuratePurchaseOrders(rows: AccuratePoHeader[]): Promise<{ upserted: number; skipped: number }> {
+  const sql = db();
+  let upserted = 0;
+  let skipped = 0;
+  for (const r of rows) {
+    const res = await sql`
+      INSERT INTO purchase_order (
+        po_number, vendor_id, vendor_name, order_date, eta_date, notes, source, accurate_id,
+        accurate_status, accurate_approval, percent_shipped, total_amount, accurate_last_update, synced_at, created_by
+      )
+      VALUES (
+        ${r.po_number},
+        (SELECT id FROM accurate_vendor WHERE id = ${r.vendor_id}),
+        COALESCE((SELECT NULLIF(name, '') FROM accurate_vendor WHERE id = ${r.vendor_id}), ${r.vendor_name}),
+        ${r.order_date}, ${r.eta_date}, ${r.description}, 'accurate', ${r.accurate_id},
+        ${r.accurate_status}, ${r.accurate_approval}, ${r.percent_shipped}, ${r.total_amount}, ${r.last_update}, now(), 'accurate-po-sync'
+      )
+      ON CONFLICT (accurate_id) WHERE accurate_id IS NOT NULL DO UPDATE SET
+        po_number = EXCLUDED.po_number,
+        vendor_id = EXCLUDED.vendor_id,
+        vendor_name = EXCLUDED.vendor_name,
+        order_date = EXCLUDED.order_date,
+        eta_date = EXCLUDED.eta_date,
+        notes = EXCLUDED.notes,
+        accurate_status = EXCLUDED.accurate_status,
+        accurate_approval = EXCLUDED.accurate_approval,
+        percent_shipped = EXCLUDED.percent_shipped,
+        total_amount = EXCLUDED.total_amount,
+        accurate_last_update = EXCLUDED.accurate_last_update,
+        synced_at = now(),
+        updated_at = now()
+      RETURNING id
+    `.catch((e: unknown) => {
+      // 23505 di purchase_order_po_number_key = nomor sudah dipakai PO manual.
+      if ((e as { code?: string }).code === "23505") return null;
+      throw e;
+    });
+    if (res && res.length) upserted++;
+    else skipped++;
+  }
+  return { upserted, skipped };
+}
+
+/** PO cermin yang baris barangnya perlu ditarik (baru / berubah di Accurate). */
+export async function pendingAccuratePoDetails(limit: number): Promise<{ id: string; accurate_id: number; last_update: string | null }[]> {
+  const sql = db();
+  const rows = await sql`
+    SELECT id, accurate_id, accurate_last_update::text AS last_update
+    FROM purchase_order
+    WHERE source = 'accurate'
+      AND (items_last_update IS NULL OR items_last_update IS DISTINCT FROM accurate_last_update)
+    ORDER BY order_date DESC
+    LIMIT ${limit}
+  `;
+  return rows.map((r) => ({ id: String(r.id), accurate_id: Number(r.accurate_id), last_update: r.last_update != null ? String(r.last_update) : null }));
+}
+
+export async function countPendingAccuratePoDetails(): Promise<number> {
+  const sql = db();
+  const [r] = await sql`
+    SELECT count(*)::int AS n FROM purchase_order
+    WHERE source = 'accurate' AND (items_last_update IS NULL OR items_last_update IS DISTINCT FROM accurate_last_update)
+  `;
+  return Number(r?.n ?? 0);
+}
+
+export interface AccuratePoItem {
+  accurate_detail_id: number;
+  item_no: string | null;
+  item_desc: string;
+  qty_ordered: number;
+  qty_shipped: number;
+  unit: string | null;
+  unit_price: number | null;
+  warehouse_name: string | null;
+  notes: string | null;
+}
+
+/**
+ * Ganti baris barang satu PO cermin dengan versi Accurate terbaru, lalu tandai
+ * items_last_update = lastUpdate yang dipakai. Baris yang hilang di Accurate
+ * dihapus (PO cermin tak pernah punya purchase_order_receipt — penerimaan
+ * diblokir untuk source='accurate' — jadi FK RESTRICT tak menghalangi).
+ */
+export async function replaceAccuratePoItems(poId: string, lastUpdate: string | null, items: AccuratePoItem[]): Promise<number> {
+  const sql = db();
+  return sql.begin(async (tx) => {
+    const ids = items.map((i) => i.accurate_detail_id);
+    await tx`
+      DELETE FROM purchase_order_item
+      WHERE purchase_order_id = ${poId}
+        AND (accurate_detail_id IS NULL OR NOT (accurate_detail_id = ANY(${ids}::bigint[])))
+    `;
+    for (const it of items) {
+      await tx`
+        INSERT INTO purchase_order_item (
+          purchase_order_id, accurate_detail_id, item_no, item_desc, qty_ordered, qty_shipped, unit, unit_price, warehouse_name, notes
+        )
+        VALUES (
+          ${poId}, ${it.accurate_detail_id}, ${it.item_no}, ${it.item_desc}, ${it.qty_ordered}, ${it.qty_shipped},
+          ${it.unit}, ${it.unit_price}, ${it.warehouse_name}, ${it.notes}
+        )
+        ON CONFLICT (accurate_detail_id) WHERE accurate_detail_id IS NOT NULL DO UPDATE SET
+          purchase_order_id = EXCLUDED.purchase_order_id,
+          item_no = EXCLUDED.item_no, item_desc = EXCLUDED.item_desc,
+          qty_ordered = EXCLUDED.qty_ordered, qty_shipped = EXCLUDED.qty_shipped,
+          unit = EXCLUDED.unit, unit_price = EXCLUDED.unit_price,
+          warehouse_name = EXCLUDED.warehouse_name, notes = EXCLUDED.notes,
+          updated_at = now()
+      `;
+    }
+    await tx`UPDATE purchase_order SET items_last_update = ${lastUpdate} WHERE id = ${poId}`;
+    return items.length;
+  });
+}
+
+export async function purchaseOrderSyncState(): Promise<{ last_synced_at: string | null; last_run_ok: boolean | null; summary: unknown }> {
+  const sql = db();
+  const [st] = await sql`
+    SELECT last_synced_at::text, last_run_ok, last_run_summary FROM accurate_sync_state WHERE entity = 'purchase-order'
+  `;
+  return {
+    last_synced_at: st?.last_synced_at != null ? String(st.last_synced_at) : null,
+    last_run_ok: st?.last_run_ok ?? null,
+    summary: st?.last_run_summary ?? null,
+  };
+}
