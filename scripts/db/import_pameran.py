@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Importer prospek pameran (xlsx 7-kolom) → tabel `deal`.
+"""Importer prospek pameran (xlsx 7-kolom) → tabel `lead` (default) atau `deal`.
+
+F65 (13 Okt 2026, keputusan user): hasil pameran masuk ke LEAD — dikualifikasi
+BANT dulu di menu Leads, baru dikonversi jadi deal. `--target deal` = perilaku
+lama (langsung deal Prospecting), dipertahankan untuk impor ulang data lama.
 
 Sumber: rekap prospek hasil pameran/seminar dgn kolom
   Provinsi | Kota/Kabupaten | Nama Instansi | Brand (merk) | Type |
@@ -14,7 +18,8 @@ One-shot, idempoten (NOT EXISTS pada facility_name+brand+product+am_id).
 account_id dicocokkan di Python atas INTI nama (lihat blok pencocokan di bawah),
 bukan trigram atas nama utuh — hanya kecocokan meyakinkan yg dipakai otomatis.
 
-Pakai: python3 import_pameran.py --file /tmp/pameran.xlsx [--db wrg_os_dev] [--apply]
+Pakai: python3 import_pameran.py --file /tmp/pameran.xlsx --event "Pameran X 2026" [--db wrg_os_dev] [--apply]
+       [--target lead|deal]   (default lead)
   default = DRY-RUN (txn + ROLLBACK, cuma laporan; TIDAK insert).
 
 Alur dua langkah dgn CSV:
@@ -336,6 +341,9 @@ ap.add_argument("--file", required=True)
 ap.add_argument("--db", default="wrg_os_dev")
 ap.add_argument("--sheet", default=None, help="nama sheet (default: sheet pertama)")
 ap.add_argument("--apply", action="store_true", help="commit (default dry-run rollback)")
+ap.add_argument("--target", choices=("lead", "deal"), default="lead",
+                help="lead (default, F65) = masuk menu Leads; deal = langsung Pipeline (perilaku lama)")
+ap.add_argument("--event", default=None, help="nama pameran/seminar → lead.source_detail")
 ap.add_argument("--review-csv", default=None,
                 help="tulis CSV tinjauan pencocokan faskes ke path ini")
 ap.add_argument("--confirmed-csv", default=None,
@@ -628,7 +636,7 @@ with open(csv_path, "w", newline="") as f:
         w.writerow(row)
 
 nz = lambda c: f"NULLIF(s.{c},'')"
-sql = f"""
+sql_deal = f"""
 CREATE TEMP TABLE stg ({', '.join(c + ' TEXT' for c in COLS)});
 \\copy stg FROM '{csv_path}' WITH (FORMAT csv, HEADER true)
 CREATE TEMP TABLE ins_log AS
@@ -690,9 +698,81 @@ SELECT '  ' || i.facility_name || ' [' || i.brand || ']  sudah ada deal: '
 SELECT '  ' || facility_name FROM ins_log WHERE account_id IS NULL ORDER BY 1;
 """
 
+# F65 — target LEAD. Cabang SENGAJA dari master_user.cabang AM (penamaan
+# dashboard, mis. 'SBY 2'), BUKAN kolom cabang staging yang berasal dari
+# master_territory ('SURABAYA 2'): gerbang scope HoD di menu Leads
+# membandingkan cabang persis dengan hod_territory — penamaan lama membuat lead
+# tak terlihat oleh HoD-nya. pic_hod = hod_key huruf kecil (ROCKY → rocky).
+# BANT awal: Need = minat brand/produk tercatat, Timeline = bulan beli terisi.
+ev = (args.event or "").replace("'", "''")
+sql_lead = f"""
+-- Normalisasi kota = normKota() di apps/api/src/repo/lead.ts (satu aturan):
+-- huruf kecil, non-alfanumerik → spasi, buang prefiks kab/kota. Ditulis TANPA
+-- backslash supaya tak ada escape yang luruh di f-string.
+CREATE FUNCTION pg_temp.nk(t text) RETURNS text LANGUAGE sql IMMUTABLE AS $$
+  SELECT regexp_replace(btrim(regexp_replace(lower(coalesce(t,'')), '[^a-z0-9]+', ' ', 'g')),
+                        '^(kotamadya|kabupaten|kota|kab|kodya) ', '')
+$$;
+CREATE TEMP TABLE stg ({', '.join(c + ' TEXT' for c in COLS)});
+\\copy stg FROM '{csv_path}' WITH (FORMAT csv, HEADER true)
+CREATE TEMP TABLE ins_log AS
+WITH ins AS (
+  INSERT INTO lead (
+    facility_name, city, account_id, kebutuhan, brand, product, product_category, estimate_amount,
+    purchase_month, purchase_year, notes, bant_need, bant_timeline, source, source_detail,
+    am_id, pic_hod, cabang, routing_via, created_by)
+  SELECT {nz('facility_name')}, {nz('city')}, {nz('account_id')}::bigint,
+    NULLIF(concat_ws(' · ', NULLIF(concat_ws(' ', NULLIF(s.brand,''), NULLIF(s.product,'')), ''),
+                     CASE WHEN NULLIF(s.qty_text,'') IS NOT NULL THEN 'jumlah tes ' || s.qty_text END), ''),
+    {nz('brand')}, {nz('product')}, {nz('product_category')}, {nz('estimate_amount')}::numeric,
+    {nz('purchase_month')}::smallint, {nz('purchase_year')}::smallint, {nz('notes')},
+    (NULLIF(s.brand,'') IS NOT NULL OR NULLIF(s.product,'') IS NOT NULL),
+    (NULLIF(s.purchase_month,'') IS NOT NULL),
+    'pameran', NULLIF('{ev}',''),
+    {nz('am_id')},
+    COALESCE(lower(NULLIF(s.pic_hod,'')),
+      (SELECT min(h.hod_key) FROM hod_territory h WHERE upper(btrim(h.cabang)) = cab.cabang
+        HAVING count(DISTINCT h.hod_key) = 1)),
+    cab.cabang,
+    CASE WHEN NULLIF(s.am_id,'') IS NOT NULL THEN 'wilayah' ELSE 'tak-terpetakan' END,
+    'import-pameran'
+  FROM stg s
+  -- cabang: milik AM bila ada; selain itu area_kota (kota → cabang), sama
+  -- dengan jalur WA/web. Tanpa cabang, lead hanya terlihat admin.
+  CROSS JOIN LATERAL (SELECT COALESCE(
+      (SELECT upper(btrim(mu.cabang)) FROM master_user mu WHERE mu.am_id = NULLIF(s.am_id,'')),
+      (SELECT min(upper(btrim(a.cabang))) FROM area_kota a WHERE pg_temp.nk(a.kota) = pg_temp.nk(s.city)
+        HAVING count(DISTINCT upper(btrim(a.cabang))) = 1)) AS cabang) cab
+  WHERE NOT EXISTS (
+    SELECT 1 FROM lead l
+     WHERE l.facility_name = s.facility_name AND l.status IN ('baru','dihubungi')
+       AND coalesce(l.brand,'') = coalesce(NULLIF(s.brand,''),'')
+       AND coalesce(l.product,'') = coalesce(NULLIF(s.product,''),''))
+    AND NOT EXISTS (
+    SELECT 1 FROM deal d
+     WHERE d.facility_name = s.facility_name
+       AND coalesce(d.brand,'') = coalesce(NULLIF(s.brand,''),'')
+       AND coalesce(d.product,'') = coalesce(NULLIF(s.product,''),'')
+       AND coalesce(d.am_id,'') = coalesce(NULLIF(s.am_id,''),''))
+  RETURNING kode, facility_name, brand, account_id, am_id, cabang, pic_hod)
+SELECT * FROM ins;
+\\echo '--- LAPORAN DB (dalam txn, target LEAD) ---'
+SELECT 'staging_baris  = ' || count(*) FROM stg;
+SELECT 'lead dibuat    = ' || count(*) FROM ins_log;
+SELECT 'skip_duplikat  = ' || ((SELECT count(*) FROM stg) - (SELECT count(*) FROM ins_log)) || '  (lead terbuka / deal yg sama sudah ada)';
+SELECT 'am_id terisi   = ' || count(*) FILTER (WHERE am_id IS NOT NULL) || '/' || count(*) FROM ins_log;
+SELECT 'cabang terisi  = ' || count(*) FILTER (WHERE cabang IS NOT NULL) || '/' || count(*) || '  (tanpa cabang = hanya terlihat admin)' FROM ins_log;
+SELECT 'account_id match = ' || count(*) FILTER (WHERE account_id IS NOT NULL) || '/' || count(*) FROM ins_log;
+\\echo '--- lead TANPA AM (HoD/admin perlu menunjuk) ---'
+SELECT '  ' || kode || '  ' || facility_name || coalesce('  [' || cabang || ']', '  [cabang?]') FROM ins_log WHERE am_id IS NULL ORDER BY 1;
+"""
+sql = sql_lead if args.target == "lead" else sql_deal
+
 body = "BEGIN;\n" + sql + ("\nCOMMIT;\n" if args.apply else "\nROLLBACK;\n")
 
-print(f"== Importer pameran ({'APPLY' if args.apply else 'DRY-RUN'}) → db={args.db} sheet={ws.title} ==")
+print(f"== Importer pameran ({'APPLY' if args.apply else 'DRY-RUN'}) → {args.target.upper()} db={args.db} sheet={ws.title} ==")
+if args.target == "lead" and not args.event:
+    print("  ⚠ --event kosong: lead tak membawa nama pameran (source_detail)")
 print(f"  baris valid dibaca : {rep['total']}")
 print(f"  skip (tanpa brand) : {rep['skip_tanpa_brand']}")
 print(f"  stage             : {STAGE} ({PROSPECT_CATEGORY} / {PROBABILITY} / {FORECAST_CATEGORY})")
