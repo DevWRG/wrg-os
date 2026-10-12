@@ -11,7 +11,7 @@ import {
   Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, Tags, SlidersHorizontal, Microscope, MonitorCheck, FileSignature,
   Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, BookOpen, Calculator,
   Wallet, Coins, Banknote, Car, QrCode, PenLine, PackagePlus, PackageMinus,
-  Handshake, Archive, Ticket, Printer,
+  Handshake, Archive, Ticket, Printer, Route,
   type LucideIcon,
   Hourglass, ShieldAlert, Landmark, ClipboardList, PackageCheck,
 } from "lucide-react";
@@ -248,6 +248,10 @@ export const NAV: NavGroup[] = [
     label: "Shipping",
     items: [
       { title: "Spesifikasi Cetak Dokumen", url: "/print-spec", icon: Printer, badge: "NEW" },
+      // F12/F42/F93 + F43 — 13 Okt 2026: data 100% dari WA #KIRIM/#TERIMA/
+      // #BAST/#BUKTI (SJ dari DO Accurate), kedua menu baca-saja.
+      { title: "Tracking Pengiriman", url: "/shipment-tracking", icon: Route, badge: "NEW" },
+      { title: "Kurir Performance", url: "/courier-performance", icon: Route, badge: "NEW" },
     ],
   },
   {
