@@ -27,6 +27,7 @@ import { insertRekap, insertResume, getDigestHistory, getDigestInsights } from "
 import { getDashboardStats } from "./repo/stats.js";
 import { getCustomers } from "./repo/customer.js";
 import { listAccounts, getAccount, upsertAccountFields, createContact, updateContact, deleteContact, listOwnerCandidates } from "./repo/account.js";
+import { timelineAkun } from "./repo/interaction.js";
 import { listPickupPlans, createPickupPlan, updatePickupPlan, deletePickupPlan, previewPreVisit, runPreVisitCheck } from "./repo/pickup-plan.js";
 import {
   ingestInvoices,
@@ -5524,6 +5525,19 @@ app.get("/accounts/:id", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const a = await getAccount(c.req.param("id"), await scopeOf(c));
   return a ? c.json(a) : c.json({ error: "account tak ditemukan" }, 404);
+});
+// F95 — timeline per account (interaksi #CALL/#NOTE + aktivitas AM + tahap deal +
+// faktur). Gerbang akses = getAccount dengan scope pemanggil: akun milik AM lain
+// balas 404 persis seperti halaman detailnya, timelineAkun sendiri tak menyaring.
+app.get("/accounts/:id/timeline", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const a = await getAccount(c.req.param("id"), await scopeOf(c));
+  if (!a) return c.json({ error: "account tak ditemukan" }, 404);
+  const limit = Number(c.req.query("limit") ?? 50);
+  return c.json(await timelineAkun(Number(a.id), {
+    limit: Number.isFinite(limit) ? limit : 50,
+    kursor: c.req.query("kursor") ?? null,
+  }));
 });
 app.patch("/accounts/:id", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
