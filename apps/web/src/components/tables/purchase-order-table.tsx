@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ChevronDown, ChevronRight, Plus, Trash2 } from "lucide-react";
 
@@ -88,6 +89,8 @@ interface ReceiptRow {
 interface Detail extends PurchaseOrderRow {
   items: ItemRow[];
   approvals: ApprovalRow[];
+  /** Penerimaan Barang Accurate (F36, migrasi 206) yang menaut ke PO ini. */
+  receipts?: { id: string; accurate_number: string | null; received_date: string; status: "in_progress" | "completed"; lines: number }[];
   my_roles: ApproverRole[];
 }
 
@@ -662,6 +665,39 @@ export function PurchaseOrderTable({
                       </div>
                       )}
                     </div>
+
+                    {detail.source === "accurate" && (
+                      <div>
+                        <div className="text-muted-foreground mb-2 text-xs font-medium tracking-wide uppercase">Penerimaan Barang</div>
+                        <ul className="divide-border divide-y rounded-lg border">
+                          {(detail.receipts ?? []).map((rc) => (
+                            <li key={rc.id} className="flex items-center gap-2 px-3 py-2">
+                              <div className="min-w-0 flex-1">
+                                <Link
+                                  href={`/inbound-receiving?q=${encodeURIComponent(rc.accurate_number ?? "")}`}
+                                  className="text-primary underline"
+                                >
+                                  {rc.accurate_number ?? "—"}
+                                </Link>
+                                <div className="text-muted-foreground text-xs">
+                                  {tgl(rc.received_date)} · {rc.lines} baris barang
+                                </div>
+                              </div>
+                              {rc.status === "completed" ? (
+                                <Badge className="bg-success/10 text-success">Checklist selesai</Badge>
+                              ) : (
+                                <Badge variant="outline">Checklist belum</Badge>
+                              )}
+                            </li>
+                          ))}
+                          {!(detail.receipts ?? []).length && (
+                            <li className="text-muted-foreground px-3 py-2 text-xs">
+                              Belum ada Penerimaan Barang Accurate (sejak awal cermin inbound) untuk PO ini.
+                            </li>
+                          )}
+                        </ul>
+                      </div>
+                    )}
 
                     {detail.notes && (
                       <div>

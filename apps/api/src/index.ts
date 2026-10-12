@@ -17,7 +17,7 @@ import { matchCustomer, type PlanCandidate } from "./parsers/fuzzy.js";
 import { isDbEnabled, pingDb } from "./db.js";
 import { waPreflight, sendViaWaGateway, type WaSendResult } from "./wasend.js";
 import { processUnprocessed, isInboundEnabled } from "./repo/inbound.js";
-import { syncAccurateInvoices, syncVendors, syncItems, syncSalesOrders, syncDeliveryOrders, syncCustomers, syncSalesOrderItems, syncDeliveryOrderItems, syncItemStockBranch, getDeliveryOrderItems, getSalesOrderItems, getVendorDetail, accurateConfigured, syncFixedAssets, fixedAssetSyncBusy, syncPurchaseOrders, purchaseOrderSyncBusy } from "./repo/accurateSync.js";
+import { syncAccurateInvoices, syncVendors, syncItems, syncSalesOrders, syncDeliveryOrders, syncCustomers, syncSalesOrderItems, syncDeliveryOrderItems, syncItemStockBranch, getDeliveryOrderItems, getSalesOrderItems, getVendorDetail, accurateConfigured, syncFixedAssets, fixedAssetSyncBusy, syncPurchaseOrders, purchaseOrderSyncBusy, syncReceiveItems, receiveItemSyncBusy } from "./repo/accurateSync.js";
 import { listAsetTetap, ringkasanAsetTetap, jadwalAsetTetap, simpanOverrideAsetTetap, type AsetTetapFilter } from "./repo/asetTetap.js";
 import { mirrorFreshness } from "./repo/mirror-health.js";
 import { insertAuditEvent } from "./repo/audit.js";
@@ -322,15 +322,15 @@ import {
 } from "./repo/serviceticket.js";
 import {
   listInboundReceiving,
-  createInboundReceiving,
   getInboundReceiving,
+  inboundReceivingSummary,
+  inboundReceivingSyncState,
   updateInboundReceiving,
   deleteInboundReceiving,
   addInboundReceivingItem,
   updateInboundReceivingItem,
   deleteInboundReceivingItem,
   InboundReceivingError,
-  type InboundReceivingInput,
   type InboundReceivingUpdate,
   type InboundReceivingStatus,
   type InboundReceivingItemUpdate,
@@ -1496,6 +1496,19 @@ app.post("/accurate/sync/purchase-orders", async (c) => {
   void syncPurchaseOrders({ full })
     .then((r) => console.log(`[accurate-sync] purchase-order manual: ${JSON.stringify(r)}`))
     .catch((e) => console.error("[accurate-sync] purchase-order manual gagal:", e));
+  return c.json({ ok: true, started: true }, 202);
+});
+
+// F36 (206) — Penerimaan Barang Accurate → checklist inbound. Latar (202),
+// hasil di GET /inbound-receiving/sync-status. ?full=1 = abaikan watermark.
+app.post("/accurate/sync/receive-items", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  if (!accurateConfigured()) return c.json({ error: "kredensial Accurate tak tersedia" }, 503);
+  if (receiveItemSyncBusy()) return c.json({ ok: false, error: "sinkron penerimaan barang sedang berjalan" }, 409);
+  const full = c.req.query("full") === "1";
+  void syncReceiveItems({ full })
+    .then((r) => console.log(`[accurate-sync] receive-item manual: ${JSON.stringify(r)}`))
+    .catch((e) => console.error("[accurate-sync] receive-item manual gagal:", e));
   return c.json({ ok: true, started: true }, 202);
 });
 
@@ -6226,19 +6239,22 @@ app.get("/inbound-receiving", async (c) => {
   return c.json({ count: rows.length, rows });
 });
 
-app.post("/inbound-receiving", async (c) => {
+// F36 (206) — penerimaan barang dicatat di Accurate; checklist inbound dibuat
+// otomatis oleh sinkron receive-item. Input manual ditutup (satu sumber).
+app.post("/inbound-receiving", (c) =>
+  c.json({ error: "Penerimaan barang dicatat di Accurate — checklist-nya muncul otomatis setelah sinkron." }, 409),
+);
+
+// Kartu KPI, diagregasi di SQL atas SELURUH penerimaan (bukan rows.filter
+// atas daftar ?limit=1000). Didaftarkan SEBELUM /inbound-receiving/:id.
+app.get("/inbound-receiving/summary", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let body: InboundReceivingInput;
-  try {
-    body = await c.req.json();
-  } catch {
-    return c.json({ error: "invalid JSON body" }, 400);
-  }
-  if (!body.vendor_name?.trim()) {
-    return c.json({ error: "vendor_name wajib" }, 400);
-  }
-  const row = await createInboundReceiving(body);
-  return c.json(row, 201);
+  return c.json(await inboundReceivingSummary());
+});
+
+app.get("/inbound-receiving/sync-status", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json({ configured: accurateConfigured(), running: receiveItemSyncBusy(), ...(await inboundReceivingSyncState()) });
 });
 
 app.get("/inbound-receiving/:id", async (c) => {

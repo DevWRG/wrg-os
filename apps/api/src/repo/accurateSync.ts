@@ -15,6 +15,10 @@ import {
   upsertAccuratePurchaseOrders, pendingAccuratePoDetails, countPendingAccuratePoDetails, replaceAccuratePoItems,
   type AccuratePoHeader, type AccuratePoItem,
 } from "./purchase-order.js";
+import {
+  upsertAccurateReceipts, pendingAccurateReceiptDetails, countPendingAccurateReceiptDetails, replaceAccurateReceiptLines,
+  type AccurateReceiptHeader, type AccurateReceiptLine,
+} from "./inbound-receiving.js";
 
 // Puller Accurate Online (pengganti legacy sync_accurate.sh). Tarik sales-invoice
 // header+items dari zeus.accurate.id → mirror penuh accurate_* + refresh ar_aging.
@@ -1095,6 +1099,181 @@ async function syncPurchaseOrdersInner(
     lines,
     pending_details: await countPendingAccuratePoDetails(),
     full,
+    ...(capped ? { cappedByPages: true } : {}),
+  };
+}
+
+// ── F36 Inbound = Penerimaan Barang Accurate (migrasi 206) ─────────────────
+//
+// Probe 12 Okt 2026: receive-item/list.do menghormati fields (number =
+// nomor INBOUND, receiveNumber = surat jalan vendor, transDate, shipDate,
+// statusName Diajukan/Diterima/Difaktur, approvalStatus, vendor, lastUpdate)
+// dan sort lastUpdate — pola inkremental yang sama dengan syncPurchaseOrders.
+// detail.do membawa baris barang + nomor & id PO + gudang + catatan LOT/ED.
+//
+// Cakupan: penerimaan bertanggal >= INBOUND_ACCURATE_SINCE (default
+// 2026-10-01) + yang sudah ada di cermin. Penerimaan lebih tua sudah lama
+// diperiksa fisik; membuatkan checklist untuknya hanya menimbun "Proses".
+
+export interface ReceiveItemSyncResult {
+  ok: boolean;
+  error?: string;
+  headers: number;
+  created: number;
+  skipped_scope: number;
+  details: number;
+  detail_failed: number;
+  lines: number;
+  pending_details: number;
+  full: boolean;
+  since: string;
+  cappedByPages?: boolean;
+}
+
+let receiveSyncRunning = false;
+export const receiveItemSyncBusy = () => receiveSyncRunning;
+
+function inboundSince(): string {
+  const v = process.env.INBOUND_ACCURATE_SINCE ?? "";
+  return /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : "2026-10-01";
+}
+
+export async function syncReceiveItems(opts: { full?: boolean; detailLimit?: number; maxPages?: number } = {}): Promise<ReceiveItemSyncResult> {
+  const since = inboundSince();
+  const empty = { headers: 0, created: 0, skipped_scope: 0, details: 0, detail_failed: 0, lines: 0, pending_details: 0, full: !!opts.full, since };
+  if (receiveSyncRunning) return { ok: false, error: "sinkron penerimaan barang sedang berjalan", ...empty };
+  const creds = loadCreds();
+  if (!creds) return { ok: false, error: "kredensial Accurate tak tersedia", ...empty };
+  receiveSyncRunning = true;
+  try {
+    const res = await syncReceiveItemsInner(creds, since, opts);
+    await recordReceiveSyncState(res);
+    return res;
+  } catch (e) {
+    const res = { ok: false, error: String((e as Error)?.message ?? e), ...empty };
+    await recordReceiveSyncState(res).catch(() => {});
+    return res;
+  } finally {
+    receiveSyncRunning = false;
+  }
+}
+
+async function recordReceiveSyncState(res: ReceiveItemSyncResult): Promise<void> {
+  const sql = db();
+  const summary = JSON.parse(JSON.stringify(res));
+  await sql`
+    INSERT INTO accurate_sync_state (entity, last_synced_at, last_run_ok, last_run_summary)
+    VALUES ('receive-item', now(), ${res.ok}, ${sql.json(summary)})
+    ON CONFLICT (entity) DO UPDATE SET last_synced_at = now(), last_run_ok = ${res.ok},
+      last_run_summary = ${sql.json(summary)}
+  `;
+}
+
+async function syncReceiveItemsInner(
+  creds: Creds,
+  since: string,
+  opts: { full?: boolean; detailLimit?: number; maxPages?: number },
+): Promise<ReceiveItemSyncResult> {
+  const sql = db();
+  const maxPages = opts.maxPages ?? 60;
+  const detailLimit = opts.detailLimit ?? 300;
+  const [wm] = await sql`SELECT max(accurate_last_update)::text AS w FROM inbound_receiving WHERE source = 'accurate'`;
+  const full = opts.full || !wm?.w;
+  const watermark = full ? null : new Date(new Date(String(wm.w)).getTime() - 3600_000);
+
+  let headers = 0;
+  let created = 0;
+  let skippedScope = 0;
+  let capped = false;
+  for (let page = 1; page <= maxPages; page++) {
+    const list = await accGet(
+      creds,
+      "/accurate/api/receive-item/list.do",
+      `sp.page=${page}&sp.pageSize=100&sp.sort=lastUpdate|desc&fields=id,number,receiveNumber,transDate,shipDate,statusName,approvalStatus,vendor,description,lastUpdate`,
+    );
+    if (list.s !== true) throw new Error(`receive-item/list.do gagal di halaman ${page}`);
+    const rows = Array.isArray(list.d) ? (list.d as Array<Record<string, unknown>>) : [];
+    if (rows.length === 0) break;
+
+    const ids = rows.map((r) => Number(r.id));
+    const existing = new Set(
+      (await sql`SELECT accurate_id FROM inbound_receiving WHERE accurate_id = ANY(${ids}::bigint[])`).map((r) => Number(r.accurate_id)),
+    );
+    const mapped: AccurateReceiptHeader[] = [];
+    let allOlder = true;
+    for (const v of rows) {
+      const lastUpdate = accDateTime(v.lastUpdate);
+      if (!watermark || !lastUpdate || new Date(lastUpdate) >= watermark) allOlder = false;
+      const recvDate = accDate(v.transDate);
+      if (!recvDate || !(existing.has(Number(v.id)) || recvDate >= since)) { skippedScope++; continue; }
+      const vendor = v.vendor && typeof v.vendor === "object" ? (v.vendor as { id?: unknown; name?: unknown }) : null;
+      const vendorId = Number(vendor?.id);
+      mapped.push({
+        accurate_id: Number(v.id),
+        accurate_number: String(v.number ?? `RI-${v.id}`),
+        supplier_doc_number: v.receiveNumber != null && String(v.receiveNumber).trim() ? String(v.receiveNumber) : null,
+        vendor_id: Number.isFinite(vendorId) && vendorId > 0 ? vendorId : null,
+        vendor_name: vendor?.name != null ? String(vendor.name) : "(vendor tak diketahui)",
+        received_date: recvDate,
+        ship_date: accDate(v.shipDate),
+        accurate_status: v.statusName != null ? String(v.statusName) : null,
+        accurate_approval: v.approvalStatus != null ? String(v.approvalStatus) : null,
+        description: v.description != null && String(v.description).trim() ? String(v.description) : null,
+        last_update: lastUpdate,
+      });
+    }
+    const up = await upsertAccurateReceipts(mapped);
+    headers += up.upserted;
+    created += up.created;
+    if (rows.length < 100) break;
+    if (!full && allOlder) break;
+    if (page >= maxPages) capped = laporBatasHalaman("receive-item", page, maxPages, 100);
+    await sleep(150);
+  }
+
+  let details = 0;
+  let detailFailed = 0;
+  let lines = 0;
+  for (const rc of await pendingAccurateReceiptDetails(detailLimit)) {
+    const det = await accGet(creds, "/accurate/api/receive-item/detail.do", `id=${rc.accurate_id}`);
+    if (det?.s !== true) {
+      detailFailed++;
+      await sleep(150);
+      continue;
+    }
+    const d = det.d as Detail;
+    const items: AccurateReceiptLine[] = ((d?.detailItem ?? []) as Detail[])
+      .filter((it) => it.id != null)
+      .map((it) => {
+        const poId = Number(it.purchaseOrderId ?? it.purchaseOrder?.id);
+        return {
+          accurate_detail_id: Number(it.id),
+          item_no: it.item?.no != null ? String(it.item.no) : null,
+          item_desc: String(it.detailName ?? it.item?.name ?? "(tanpa nama)"),
+          qty: num(it.quantity),
+          unit: it.itemUnit?.name != null ? String(it.itemUnit.name) : null,
+          warehouse_name: it.warehouse?.name != null ? String(it.warehouse.name) : null,
+          po_number: it.purchaseOrder?.number != null ? String(it.purchaseOrder.number) : null,
+          accurate_po_id: Number.isFinite(poId) && poId > 0 ? poId : null,
+          notes: it.detailNotes != null && String(it.detailNotes).trim() ? String(it.detailNotes) : null,
+        };
+      });
+    lines += await replaceAccurateReceiptLines(rc.id, rc.last_update, items);
+    details++;
+    await sleep(150);
+  }
+
+  return {
+    ok: true,
+    headers,
+    created,
+    skipped_scope: skippedScope,
+    details,
+    detail_failed: detailFailed,
+    lines,
+    pending_details: await countPendingAccurateReceiptDetails(),
+    full,
+    since,
     ...(capped ? { cappedByPages: true } : {}),
   };
 }

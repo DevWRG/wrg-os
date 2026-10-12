@@ -5,7 +5,7 @@ import { PageHeader } from "@/components/dashboard/page-header";
 import { StatCard } from "@/components/dashboard/stat-card";
 import { Card, CardContent } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
-import { SyncPoButton, type PoSyncStatus } from "@/components/crm/sync-po-button";
+import { SyncAccurateButton, type AccurateSyncStatus } from "@/components/crm/sync-accurate-button";
 import { PurchaseOrderTable, PoStatusFilter, type PurchaseOrderRow } from "@/components/tables/purchase-order-table";
 
 export const dynamic = "force-dynamic";
@@ -76,7 +76,7 @@ export default async function PurchaseOrdersPage({
   const [list, summary, syncStatus] = await Promise.all([
     getJson<PurchaseOrderListResponse>(`/purchase-orders?${listQs.toString()}`),
     getJson<PurchaseOrderSummary>("/purchase-orders/summary"),
-    getJson<PoSyncStatus>("/purchase-orders/sync-status"),
+    getJson<AccurateSyncStatus>("/purchase-orders/sync-status"),
   ]);
 
   const matched = list?.total_rows ?? 0;
@@ -103,7 +103,7 @@ export default async function PurchaseOrdersPage({
       <PageHeader
         title="PO Tracker & Barang Masuk"
         description="Pantau PO ke vendor sampai barang diterima (F13). PO, approval, dan penerimaan barang dibuat di Accurate — halaman ini menyalinnya otomatis."
-        action={<SyncPoButton initial={syncStatus} />}
+        action={<SyncAccurateButton initial={syncStatus} endpoint="/api/purchase-orders/sync" />}
       />
       {summary && (
         <div className="grid gap-4 sm:grid-cols-3">
