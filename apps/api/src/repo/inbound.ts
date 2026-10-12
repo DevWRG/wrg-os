@@ -19,6 +19,14 @@ import { parseApprovalMessage } from "../parsers/approval.js";
 import { resolveApprover } from "./approval.js";
 import { parseOvertimeArg, formatDurasi } from "../parsers/overtime.js";
 import { getPengajuProfile, submitOvertime, decideOvertime } from "./overtime.js";
+import {
+  parseInteraksi,
+  cariAkun,
+  catatInteraksi,
+  balasanFormat,
+  balasanAmbiguInteraksi,
+  balasanTercatat,
+} from "./interaction.js";
 import { buildFakturReply } from "./faktur.js";
 
 // Role yang pakai alur AM per-customer (sales_plan/activity_log + foto), bukan todo.
@@ -45,7 +53,19 @@ export type InboundKind =
   | "faktur"
   | "approve"
   | "reject"
+  | "call"
+  | "note"
   | "none";
+
+// Hashtag yang dijaring processUnprocessed. Diekspor supaya diuji berpasangan
+// dengan detectKind (inbound-kind-filter.test.ts): dulu ditulis inline di SQL
+// dan sudah menyimpang — `faktur` dikenali detectKind tapi HILANG dari regex
+// penyaring, jadi #FAKTUR teks di main tak pernah diproses sama sekali.
+// (dev menutup kelas bug ini dengan INBOUND_HASHTAGS sebagai sumber tunggal.)
+export const INBOUND_FILTER_KINDS = [
+  "plan", "report", "leads", "update", "sales", "koran", "overtime", "faktur", "approve", "reject", "call", "note",
+] as const;
+export const inboundHashtagPattern = (): string => `#\\s*(${INBOUND_FILTER_KINDS.join("|")})`;
 
 const LEADS_UPDATE_LINE = /^\s*#\s*(leads|update)\b/i;
 const SALES_LINE = /^\s*#\s*sales\b/i;
@@ -59,6 +79,9 @@ const FAKTUR_LINE = /^\s*#\s*faktur\b/i;
 // #APPROVE/#REJECT <kode> [alasan] — di main HANYA melayani kode OT-xxxx
 // (lembur). Engine approval F11 (APR-xxxx) belum dipromosikan ke main.
 const APPROVE_REJECT_LINE = /^\s*#\s*(approve|reject)\b/i;
+// F95 — #CALL/#NOTE per faskes ke interaction_log (repo/interaction.ts). `\b`
+// menjaga #NOTES / #CALLBACK dkk tak ikut terpicu.
+const INTERAKSI_LINE = /^\s*#\s*(call|note)\b/i;
 
 function extractHashtagArg(body: string | null, lineRegex: RegExp): string {
   if (!body) return "";
@@ -79,6 +102,8 @@ export function detectKind(body: string | null): InboundKind {
       if (ar) return ar[1].toLowerCase() as "approve" | "reject";
       if (OVERTIME_LINE.test(line)) return "overtime";
       if (FAKTUR_LINE.test(line)) return "faktur";
+      const ia = line.match(INTERAKSI_LINE);
+      if (ia) return ia[1].toLowerCase() as "call" | "note";
     }
   }
   return "none";
@@ -1128,6 +1153,47 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
     return finish({ kind: "faktur", via: fk.via, reply });
   }
 
+  // #CALL / #NOTE <faskes>: <isi> — F95 Interaction Log. Dicatat ke
+  // interaction_log, BUKAN activity_log (keputusan user 2026-10-13: tak ikut KPI
+  // aktivitas AM). Pengirim ketat seperti #CEK/#FAKTUR. Faskes ambigu/tak
+  // ketemu → TIDAK dicatat, dibalas minta ketik ulang; catatan yang menempel ke
+  // faskes yang salah jauh lebih mahal daripada satu pesan ulang.
+  if (kind === "call" || kind === "note") {
+    const pc = await resolveSender({ senderJid: row.sender_jid, groupJid: row.group_jid, pushname: row.sender_name, ketat: true });
+    if (!pc) return finish({ skipped: "unknown-sender", sender_name: row.sender_name });
+    const p = parseInteraksi(row.body, kind);
+    if (!p.ok) {
+      const reply = await sendViaWaGateway(target, balasanFormat(kind, p.alasan, pc.nama));
+      return finish({ error: `format:${p.alasan}`, via: pc.via, reply });
+    }
+    const akun = await cariAkun(p.customer);
+    if (akun.kind === "none") {
+      const reply = await sendViaWaGateway(
+        target,
+        `⚠️ Faskes "${p.customer}" tidak ketemu di master customer, ${pc.nama} — ${kind === "call" ? "#CALL" : "#NOTE"} BELUM dicatat. Cek ejaan nama faskesnya lalu kirim ulang.`,
+      );
+      return finish({ error: "customer-not-found", query: p.customer, via: pc.via, reply });
+    }
+    if (akun.kind === "ambiguous") {
+      const reply = await sendViaWaGateway(target, balasanAmbiguInteraksi(kind, p.customer, akun.names, p.isi));
+      return finish({ error: "customer-ambiguous", query: p.customer, candidates: akun.names, via: pc.via, reply });
+    }
+    const catat = await catatInteraksi({
+      account_id: akun.ids[0],
+      jenis: kind,
+      isi: p.isi,
+      am_id: pc.am_id,
+      pencatat_nama: pc.nama,
+      customer_query: p.customer,
+      source: "wa",
+      group_jid: row.group_jid,
+      wa_message_id: row.message_id,
+    });
+    const reply = await sendViaWaGateway(target, balasanTercatat(kind, akun.name, pc.nama));
+    return finish({ interaction_id: catat.id, baru: catat.baru, account_id: akun.ids[0], customer: akun.name, via: pc.via, reply });
+  }
+
+
   // #OVERTIME — pengajuan lembur SEBELUM lembur. Format: "#overtime 2 jam 30
   // menit - closing laporan". Identitas lewat resolveSender (master_user),
   // divisi/HoD lewat employee.am_id. Hanya posisi/divisi yang ada di
@@ -1395,7 +1461,7 @@ export async function processUnprocessed(
            media_path, geo_lat, geo_lon, geo_ts, geo_address
     FROM wa_message
     WHERE processed_at IS NULL
-      AND (body ~* '#\\s*(plan|report|leads|update|sales|koran|overtime|approve|reject)'
+      AND (body ~* ${inboundHashtagPattern()}
            OR (message_type ~* '^image' AND media_path IS NOT NULL)
            -- Dokumen (PDF e-banking) TIDAK ber-hashtag: body-nya cuma
            -- '<media:document>'. Tanpa cabang ini, lampiran #KORAN yang dikirim
