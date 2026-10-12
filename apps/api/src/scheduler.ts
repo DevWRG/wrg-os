@@ -24,7 +24,7 @@ import { generateRekap, generateResume } from "./repo/monitor.js";
 import {
   syncAccurateInvoices, syncSalesOrders, syncDeliveryOrders, syncCustomers,
   syncSalesOrderItems, syncDeliveryOrderItems,
-  syncItems, syncItemStockBranch,
+  syncItems, syncItemStockBranch, syncFixedAssets,
 } from "./repo/accurateSync.js";
 import { runPlanCheck, runReportCheck } from "./repo/compliance.js";
 import { runNotifTua } from "./repo/notiftua.js";
@@ -213,6 +213,10 @@ export function startScheduler(): ScheduleStatus {
   // dipakai #STOK (inbound.ts) supaya total stok tak basi. Flag SENDIRI,
   // TERPISAH dari accurate-sync (itu utk invoice/SO/DO, cadence 6x/hari).
   const accurateStockSyncEnabled = (process.env.ACCURATE_STOCK_SYNC_ENABLED ?? "false").toLowerCase() === "true";
+  // accurate-fa-sync (F34) — cermin aset tetap harian. Sengaja HANYA flag sendiri
+  // (tak ikut AGENT_SCHEDULE_ENABLED): sapuan ≈10 menit / 1.394 panggilan ke
+  // Accurate, jadi dinyalakan eksplisit sesudah sinkron manual pertama dicek.
+  const fixedAssetSyncEnabled = (process.env.ACCURATE_FA_SYNC_ENABLED ?? "false").toLowerCase() === "true";
   // cashin-resume (F-CASHIN) — jaring pengaman gerbang konfirmasi Finance.
   // Flag SENDIRI (default off) karena mengirim WA ke grup Finance.
   //
@@ -303,12 +307,12 @@ export function startScheduler(): ScheduleStatus {
   ];
 
   status = {
-    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled || watchpointSnapshotEnabled || preVisitEnabled || edWatchEnabled || gaMaintenanceAlertEnabled || gaMaintenanceBscEnabled || gaHelpdeskOverdueEnabled || gaHelpdeskBscEnabled || lpseTenderReminderEnabled || accurateStockSyncEnabled || cashinResumeEnabled || geoSweepEnabled || kpiMeasureEnabled || invoiceReminderEnabled || auditFindingReminderEnabled || seninBriefEnabled || soPacingEnabled,
+    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled || watchpointSnapshotEnabled || preVisitEnabled || edWatchEnabled || gaMaintenanceAlertEnabled || gaMaintenanceBscEnabled || gaHelpdeskOverdueEnabled || gaHelpdeskBscEnabled || lpseTenderReminderEnabled || accurateStockSyncEnabled || cashinResumeEnabled || geoSweepEnabled || kpiMeasureEnabled || invoiceReminderEnabled || auditFindingReminderEnabled || seninBriefEnabled || soPacingEnabled || fixedAssetSyncEnabled,
     timezone,
     jobs: jobs.map((j) => ({ id: j.id, expr: j.expr, valid: cron.validate(j.expr) })),
   };
 
-  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled && !watchpointSnapshotEnabled && !preVisitEnabled && !edWatchEnabled && !gaMaintenanceAlertEnabled && !gaMaintenanceBscEnabled && !gaHelpdeskOverdueEnabled && !gaHelpdeskBscEnabled && !lpseTenderReminderEnabled && !accurateStockSyncEnabled && !cashinResumeEnabled && !geoSweepEnabled && !kpiMeasureEnabled && !invoiceReminderEnabled && !auditFindingReminderEnabled && !seninBriefEnabled && !soPacingEnabled) {
+  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled && !watchpointSnapshotEnabled && !preVisitEnabled && !edWatchEnabled && !gaMaintenanceAlertEnabled && !gaMaintenanceBscEnabled && !gaHelpdeskOverdueEnabled && !gaHelpdeskBscEnabled && !lpseTenderReminderEnabled && !accurateStockSyncEnabled && !cashinResumeEnabled && !geoSweepEnabled && !kpiMeasureEnabled && !invoiceReminderEnabled && !auditFindingReminderEnabled && !seninBriefEnabled && !soPacingEnabled && !fixedAssetSyncEnabled) {
     console.log("[scheduler] semua *_SCHEDULE/_ENABLED flag != true — tidak dijadwalkan");
     return status;
   }
@@ -813,6 +817,26 @@ export function startScheduler(): ScheduleStatus {
       { timezone },
     );
     live.push(`mirror-freshness=${freshExpr}`);
+  }
+
+  // accurate-fa-sync (F34) — 02:15, sesudah jurnal depresiasi Accurate yang
+  // biasanya diposting di jam kerja; sapuan penuh, hasil di accurate_sync_state.
+  const faSyncExpr = process.env.ACCURATE_FA_SYNC_CRON ?? "15 2 * * *";
+  if (fixedAssetSyncEnabled && cron.validate(faSyncExpr)) {
+    cron.schedule(
+      faSyncExpr,
+      async () => {
+        const startedAt = new Date().toISOString();
+        try {
+          const r = await syncFixedAssets();
+          console.log(`[scheduler] accurate-fa-sync @ ${startedAt} ${JSON.stringify(r)}`);
+        } catch (e) {
+          console.error(`[scheduler] accurate-fa-sync gagal @ ${startedAt}:`, e);
+        }
+      },
+      { timezone },
+    );
+    live.push(`accurate-fa-sync=${faSyncExpr}`);
   }
 
   // accurate-stock-sync (F2) — refresh accurate_item.quantity tiap 5 menit
