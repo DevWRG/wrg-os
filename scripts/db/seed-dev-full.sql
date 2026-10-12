@@ -796,6 +796,9 @@ ON CONFLICT (hod_key, year, period, aspect) DO NOTHING;
 -- F26 — Seed teknisi_roster (DUMMY utk dev/demo, bukan data asli). Nama asli +
 -- no WA asli diisi Direktur manual langsung ke DB (tidak ada UI tambah-teknisi
 -- di F26 ini per keputusan "pakai seed dulu").
+-- teknisi_roster belum tentu ada (tabel batch magang, belum di main) — lewati kalau tak ada.
+SELECT to_regclass('public.teknisi_roster') IS NOT NULL AS ada_teknisi_roster \gset
+\if :ada_teknisi_roster
 INSERT INTO teknisi_roster (nama, wa_number, area) VALUES
   ('Teknisi Andi',  '628110000001', ARRAY['Surabaya','Sidoarjo']),
   ('Teknisi Budi',  '628110000002', ARRAY['Jakarta','Tangerang']),
@@ -803,15 +806,20 @@ INSERT INTO teknisi_roster (nama, wa_number, area) VALUES
   ('Teknisi Dedi',  '628110000004', ARRAY['Surabaya','Malang']),
   ('Teknisi Eka',   '628110000005', ARRAY['Jakarta'])
 ON CONFLICT (nama) DO NOTHING;
+\endif
 
 -- F8 — Seed teknisi_capacity (DUMMY utk dev/demo, beda dari roster F26 di
 -- atas — tabel & lineage branch berbeda). Nama asli (Enggar/Galih/Martin/
 -- Halim/Nopa) SENGAJA tidak dipakai, lihat docs/features/F8-*.md.
+-- teknisi_capacity belum tentu ada (tabel batch magang, belum di main) — lewati kalau tak ada.
+SELECT to_regclass('public.teknisi_capacity') IS NOT NULL AS ada_teknisi_capacity \gset
+\if :ada_teknisi_capacity
 INSERT INTO teknisi_capacity (nama, wa_number, max_concurrent_jobs) VALUES
   ('Teknisi Fajar',  '628110000006', 3),
   ('Teknisi Gilang', '628110000007', 2),
   ('Teknisi Hesti',  '628110000008', 4)
 ON CONFLICT (nama) DO NOTHING;
+\endif
 
 COMMIT;
 

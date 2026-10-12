@@ -6,6 +6,11 @@
 #   bash scripts/ops/demo-provision.sh            # konfirmasi dulu
 #   FORCE=1 bash scripts/ops/demo-provision.sh    # tanpa konfirmasi (cron)
 #
+# Demo melacak `main`. Seed ditulis untuk skema dev, jadi blok INSERT ke tabel
+# yang belum ada di main (batch magang) dibungkus `\if` psql dan dilewati —
+# ON_ERROR_STOP tetap aktif untuk error lain. Update kode tanpa hapus data:
+# demo-update.sh.
+#
 # AMAN: menolak jalan kalau target bukan database bernama *_demo.
 # Data dummy-nya SATU SUMBER dengan dev: scripts/db/seed-dev.sql (roster+plan)
 # lalu scripts/db/seed-dev-full.sql (67 tabel). Urutan itu WAJIB — seed-dev-full

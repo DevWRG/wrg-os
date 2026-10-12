@@ -37,12 +37,16 @@ INSERT INTO purchase_order_item (id, purchase_order_id, item_desc, qty_ordered, 
 ON CONFLICT (id) DO NOTHING;
 
 -- ── ETA supplier (satu lewat jadwal, satu sudah datang) ──
+-- supplier_eta belum tentu ada (tabel batch magang, belum di main) — lewati kalau tak ada.
+SELECT to_regclass('public.supplier_eta') IS NOT NULL AS ada_supplier_eta \gset
+\if :ada_supplier_eta
 INSERT INTO supplier_eta (id, vendor_name, po_number, item_desc, qty, eta_date, status, actual_arrival_date, cabang, notes, created_by) VALUES
   ('90000000-0000-0000-0000-000000140001', 'PT Reagen Sejahtera Demo', 'PO-DEMO-2601', 'Reagen Diluent 20L',        10, CURRENT_DATE - 10, 'arrived', CURRENT_DATE - 9, 'SURABAYA', NULL,                          'Irfan Demo'),
   ('90000000-0000-0000-0000-000000140002', 'PT Alat Lab Prima Demo',   'PO-DEMO-2602', 'Mikropipet 100-1000uL',      4, CURRENT_DATE - 2,  'pending', NULL,             'SURABAYA', 'Ditanyakan ke vendor, mundur','Irfan Demo'),
   ('90000000-0000-0000-0000-000000140003', 'PT Reagen Sejahtera Demo', 'PO-DEMO-2603', 'Kontrol Hematologi 3 level', 6, CURRENT_DATE + 5,  'pending', NULL,             'MALANG',   NULL,                          'Irfan Demo'),
   ('90000000-0000-0000-0000-000000140004', 'PT Kemasan Medis Demo',    NULL,           'Box pendingin reagen',      20, CURRENT_DATE - 6,  'cancelled', NULL,           'SURABAYA', 'Dibatalkan, ganti supplier',  'Irfan Demo')
 ON CONFLICT (id) DO NOTHING;
+\endif
 
 -- ── Inbound receiving (checklist penerimaan barang) ──
 INSERT INTO inbound_receiving (id, vendor_name, po_number, received_date, cabang, received_by, status, overall_notes, completed_at, created_by) VALUES
@@ -59,6 +63,9 @@ INSERT INTO inbound_receiving_item (id, receiving_id, label, is_checked, notes, 
 ON CONFLICT (id) DO NOTHING;
 
 -- ── Tracking pengiriman (satu per tahap status) ──
+-- shipment_tracking belum tentu ada (tabel batch magang, belum di main) — lewati kalau tak ada.
+SELECT to_regclass('public.shipment_tracking') IS NOT NULL AS ada_shipment_tracking \gset
+\if :ada_shipment_tracking
 INSERT INTO shipment_tracking (id, sj_number, customer_name, cabang, distance_km, eta_days, driver_name, driver_wa_number, status,
                                kirim_at, kirim_by, terima_at, terima_by, bast_at, bast_by, created_by) VALUES
   ('90000000-0000-0000-0000-000000170001', 'SJ-DEMO-0101', 'RS Umum Daerah Demo Sehat', 'SURABAYA', 32,  1, 'Pak Sugeng Demo', '628000000301', 'bast',    now() - interval '8 days', 'Krisna Demo', now() - interval '7 days', 'Petugas Lab Demo', now() - interval '5 days', 'Andi Demo', 'Krisna Demo'),
@@ -66,13 +73,18 @@ INSERT INTO shipment_tracking (id, sj_number, customer_name, cabang, distance_km
   ('90000000-0000-0000-0000-000000170003', 'SJ-DEMO-0103', 'Klinik Pratama Demo Jaya',  'MALANG',   145, 2, 'Pak Rudi Demo',   '628000000302', 'dikirim', now() - interval '1 day',  'Krisna Demo', NULL,                      NULL,                NULL,                      NULL,        'Krisna Demo'),
   ('90000000-0000-0000-0000-000000170004', 'SJ-DEMO-0104', 'RS Umum Daerah Demo Sehat', 'SURABAYA', 32,  1, NULL,              NULL,           'draft',   NULL,                      NULL,          NULL,                      NULL,                NULL,                      NULL,        'Krisna Demo')
 ON CONFLICT (id) DO NOTHING;
+\endif
 
 -- ── Relokasi stok antar cabang ──
+-- inventory_relocation_request belum tentu ada (tabel batch magang, belum di main) — lewati kalau tak ada.
+SELECT to_regclass('public.inventory_relocation_request') IS NOT NULL AS ada_inventory_relocation_request \gset
+\if :ada_inventory_relocation_request
 INSERT INTO inventory_relocation_request (id, item_desc, qty, unit, cabang_asal, cabang_tujuan, reason, requested_by, request_date, status, completed_at, notes) VALUES
   ('90000000-0000-0000-0000-000000180001', 'Reagen Diluent 20L',        3, 'jerigen', 'SURABAYA', 'MALANG',   'Stok Malang habis, pasien menunggu', 'Bunga Demo', CURRENT_DATE - 6, 'completed', now() - interval '4 days', NULL),
   ('90000000-0000-0000-0000-000000180002', 'Kontrol Hematologi 3 level',1, 'set',     'SURABAYA', 'JEMBER',   'Kalibrasi bulanan',                  'Lina Demo',  CURRENT_DATE - 2, 'pending',   NULL,                      'Menunggu jadwal kurir'),
   ('90000000-0000-0000-0000-000000180003', 'Mikropipet 100-1000uL',     2, 'unit',    'MALANG',   'SURABAYA', 'Dipakai training internal',          'Galih Demo', CURRENT_DATE - 9, 'cancelled', NULL,                      'Dibatalkan, unit dipakai di tempat')
 ON CONFLICT (id) DO NOTHING;
+\endif
 
 COMMIT;
 

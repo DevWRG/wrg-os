@@ -54,11 +54,15 @@ INSERT INTO dana_ops_item (id, dana_ops_id, description, amount, receipt_date, n
 ON CONFLICT (id) DO NOTHING;
 
 -- ── Tender LPSE / e-Catalog (satu per status) ──
+-- lpse_tender belum tentu ada (tabel batch magang, belum di main) — lewati kalau tak ada.
+SELECT to_regclass('public.lpse_tender') IS NOT NULL AS ada_lpse_tender \gset
+\if :ada_lpse_tender
 INSERT INTO lpse_tender (id, tender_no, judul, instansi, platform, dept, status, pesan_masuk_at, barang_dikirim_at, selesai_at, notes) VALUES
   ('90000000-0000-0000-0000-000000330001', 'TD-DEMO-001', 'Pengadaan Reagen Hematologi TA 2026', 'RSUD Demo Sehat',      'lpse',      'penawaran', 'selesai',        now() - interval '30 days', now() - interval '18 days', now() - interval '10 days', 'Pembayaran sudah masuk'),
   ('90000000-0000-0000-0000-000000330002', 'TD-DEMO-002', 'Belanja Alat Laboratorium',           'Dinkes Kota Demo',     'e_catalog', 'penawaran', 'barang_dikirim', now() - interval '14 days', now() - interval '3 days',  NULL,                       'Menunggu BAST'),
   ('90000000-0000-0000-0000-000000330003', 'TD-DEMO-003', 'Reagen Kimia Klinik Paket B',         'RS Islam Demo Husada', 'lpse',      'sales',     'pesan_masuk',    now() - interval '2 days',  NULL,                       NULL,                       'Sedang disiapkan dokumen penawaran')
 ON CONFLICT (id) DO NOTHING;
+\endif
 
 -- ── Resume monitor: isi harus berstruktur 8 seksi bernomor ──
 -- ResumeView mem-PARSE isi: seksi dikenali dari pola '^[1-8][.)] JUDUL' dan butir

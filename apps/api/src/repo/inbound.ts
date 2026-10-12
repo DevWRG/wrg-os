@@ -103,6 +103,9 @@ export const INBOUND_HASHTAGS = [
 ] as const;
 
 export type InboundKind = (typeof INBOUND_HASHTAGS)[number] | "none";
+// Nama yang sama dengan di main (main belum punya INBOUND_HASHTAGS) supaya
+// inbound-filter-paritas.test.ts identik di kedua branch.
+export const INBOUND_FILTER_KINDS = INBOUND_HASHTAGS;
 
 // Regex (dialek Postgres, dipakai dgn operator ~*) penjaring baris wa_message
 // yang layak diproses. Diekspor supaya bisa diuji tanpa DB.
