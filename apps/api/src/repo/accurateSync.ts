@@ -547,16 +547,43 @@ export async function syncItemStockBranch(
   let items = 0;
   let rows = 0;
   let skipped = 0;
+  let gagalBeruntun = 0;
+  let galatTerakhir = "";
   for (const id of ids) {
-    const det = await accGet(creds, "/accurate/api/item/detail.do", `id=${id}`);
+    // accGet MELEMPAR kalau Accurate membalas bukan-JSON (halaman HTML error/
+    // maintenance), timeout 30 dtk, atau jaringan putus. Tanpa try/catch ini satu
+    // balasan HTML menggagalkan SELURUH sapuan ("[api] unhandled SyntaxError:
+    // Unexpected token '<'", terbukti di prod 12 Okt 2026) — padahal kontraknya
+    // "SKU bermasalah dilewati". Ditangkap DI SINI, bukan di accGet: pemanggil lain
+    // (loop daftar + prune aset tetap) justru harus berhenti keras, bukan membaca
+    // kegagalan sebagai "halaman habis".
+    let det: { s?: boolean; d?: unknown } | null = null;
+    try {
+      det = await accGet(creds, "/accurate/api/item/detail.do", `id=${id}`);
+    } catch (e) {
+      galatTerakhir = String(e instanceof Error ? e.message : e).slice(0, 160);
+    }
     if (det?.s !== true) {
       // SKU bermasalah tak boleh menghentikan sisanya. stock_synced_at
       // SENGAJA tidak disentuh → SKU ini tetap di antrean depan dan dicoba
       // lagi siklus berikutnya.
       skipped += 1;
+      gagalBeruntun += 1;
+      if (det != null) galatTerakhir = `s!=true: ${JSON.stringify(det.d).slice(0, 140)}`;
+      // Pemutus: kalau Accurate sedang down, ratusan SKU sisanya hanya akan
+      // menumpuk panggilan gagal. Berhenti dan laporkan; antrean aman karena
+      // tak satu pun SKU gagal ditandai tersinkron.
+      if (gagalBeruntun >= GAGAL_BERUNTUN_MAKS) {
+        const pending = await countPendingStockItems();
+        return {
+          ok: false, items, rows, pending, skipped,
+          error: `dihentikan: ${gagalBeruntun} SKU gagal berturut-turut — terakhir: ${galatTerakhir}`,
+        };
+      }
       await sleep(jeda);
       continue;
     }
+    gagalBeruntun = 0;
     const d = det.d as Detail;
     const entries = (d?.detailWarehouseData ?? []) as Detail[];
     rows += await replaceItemStockBranch(id, ringkasStokPerGudang(entries, map), kodeDipetakan);
@@ -567,6 +594,10 @@ export async function syncItemStockBranch(
   const pending = await countPendingStockItems();
   return { ok: true, items, rows, pending, skipped };
 }
+
+// Batas kegagalan BERTURUT-TURUT sebelum sapuan stok per gudang menyerah. Satu-dua
+// SKU gagal itu biasa (dilewati); 25 beruntun berarti Accurate-nya yang bermasalah.
+const GAGAL_BERUNTUN_MAKS = 25;
 
 // Ambil baris produk (detailItem) satu delivery-order via detail.do — dipakai
 // on-demand saat user buka detail Shipments (bukan disimpan tiap sync).
