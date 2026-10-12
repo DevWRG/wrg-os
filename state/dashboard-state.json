@@ -1,11 +1,11 @@
 {
   "schemaVersion": "1.0.0",
-  "lastUpdate": "2026-10-11T00:00:24Z",
+  "lastUpdate": "2026-10-12T00:00:25Z",
   "generatedBy": "sync-state.sh (Warp cron/manual)",
   "production": {
-    "version": "v1.241.0",
-    "releasedAt": "2026-10-09T02:48:54Z",
-    "totalReleases": 499,
+    "version": "v1.251.0",
+    "releasedAt": "2026-10-11T23:34:48Z",
+    "totalReleases": 514,
     "goLiveDate": "2026-06-15"
   },
   "infrastructure": {
@@ -16,35 +16,35 @@
         "name": "wrg-prod-ai",
         "port": "8100",
         "status": "LIVE",
-        "uptime_sec": 162548
+        "uptime_sec": 1425
       },
       {
         "name": "wrg-prod-api",
         "port": "4100",
         "status": "LIVE",
-        "uptime_sec": 162548
+        "uptime_sec": 1425
       },
       {
         "name": "wrg-prod-web",
         "port": "3100",
         "status": "LIVE",
-        "uptime_sec": 162548
+        "uptime_sec": 1425
       },
       {
         "name": "wrg-prod-cftunnel",
         "port": null,
         "status": "LIVE",
-        "uptime_sec": 3246750
+        "uptime_sec": 3333151
       },
       {
         "name": "wrg-prod-deployhook",
         "port": null,
         "status": "LIVE",
-        "uptime_sec": 9715780
+        "uptime_sec": 9802181
       }
     ],
     "servicesLive": 5,
-    "schedulerJobs": 19,
+    "schedulerJobs": 20,
     "cutoverMarkers": 22,
     "cutoverStatus": "TUNTAS"
   },
@@ -63,7 +63,7 @@
   },
   "_meta": {
     "source": "Auto-generated dari pm2 jlist + gh CLI + .env.prod",
-    "syncedAt": "2026-10-11T00:00:24Z",
+    "syncedAt": "2026-10-12T00:00:25Z",
     "host": "Mac-mini-Development.local"
   },
   "tooling": {
