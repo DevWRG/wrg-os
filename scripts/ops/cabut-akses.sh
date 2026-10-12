@@ -75,6 +75,8 @@ lapor "sender_alias — override per-grup" "
   FROM sender_alias sa LEFT JOIN master_user mu ON mu.am_id = sa.am_id
   WHERE sa.pushname ILIKE $Q_LIKE OR sa.am_id ILIKE $Q_LIKE OR mu.nama ILIKE $Q_LIKE;"
 
+psql -d "$DB" -tAc "SELECT to_regclass('public.teknisi_capacity') IS NOT NULL" 2>/dev/null | grep -q t \
+  || kuning "   (catatan: tabel teknisi_capacity tak ada di $DB — dilewati)"
 lapor "teknisi_capacity — perintah F8 (jalur terpisah)" "
   SELECT id, nama, COALESCE(wa_number,'(kosong)'), aktif
   FROM teknisi_capacity
@@ -115,9 +117,17 @@ WHERE sa.am_id = mu.am_id
 DELETE FROM sender_alias WHERE pushname ILIKE $Q_LIKE OR am_id ILIKE $Q_LIKE;
 
 -- teknisi_capacity & app_user: cukup flag — dua jalur ini MEMANG menyaringnya.
-UPDATE teknisi_capacity SET aktif = false
-WHERE nama ILIKE $Q_LIKE
-   OR regexp_replace(COALESCE(wa_number,''),'[^0-9]','','g') = $Q_NORM;
+-- teknisi_capacity (F8) belum tentu ada di DB sasaran (prod belum memuatnya);
+-- tanpa penjaga ini ON_ERROR_STOP menggagalkan SELURUH transaksi pencabutan.
+DO \$\$
+BEGIN
+  IF to_regclass('public.teknisi_capacity') IS NOT NULL THEN
+    UPDATE teknisi_capacity SET aktif = false
+    WHERE nama ILIKE $Q_LIKE
+       OR regexp_replace(COALESCE(wa_number,''),'[^0-9]','','g') = $Q_NORM;
+  END IF;
+END
+\$\$;
 
 UPDATE app_user SET active = false
 WHERE name ILIKE $Q_LIKE OR email ILIKE $Q_LIKE
