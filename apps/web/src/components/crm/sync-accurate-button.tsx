@@ -6,7 +6,7 @@ import { RefreshCw } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 
-export interface PoSyncStatus {
+export interface AccurateSyncStatus {
   configured: boolean;
   running: boolean;
   last_synced_at: string | null;
@@ -22,12 +22,13 @@ const jam = (s: string) => {
     : d.toLocaleString("id-ID", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "Asia/Jakarta" });
 };
 
-// F13 (migrasi 205) — PO dibuat di Accurate, WRG-OS menyalinnya. Tombol ini
-// memicu sinkron di latar lalu menunggu sampai selesai (poll status), baru
-// me-refresh tabel. Job terjadwal accurate-po-sync melakukan hal yang sama.
-export function SyncPoButton({ initial }: { initial: PoSyncStatus | null }) {
+// Cermin Accurate — PO Tracker (F13, migrasi 205) & Inbound (F36, 206).
+// Tombol memicu sinkron di latar lalu menunggu sampai selesai (poll GET
+// `endpoint`), baru me-refresh halaman. Job accurate-po-sync melakukan hal
+// yang sama secara berkala. `endpoint` = route BFF dengan GET status + POST picu.
+export function SyncAccurateButton({ initial, endpoint }: { initial: AccurateSyncStatus | null; endpoint: string }) {
   const router = useRouter();
-  const [st, setSt] = useState<PoSyncStatus | null>(initial);
+  const [st, setSt] = useState<AccurateSyncStatus | null>(initial);
   const [err, setErr] = useState<string | null>(null);
   const [waiting, setWaiting] = useState(initial?.running ?? false);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -35,9 +36,9 @@ export function SyncPoButton({ initial }: { initial: PoSyncStatus | null }) {
   useEffect(() => {
     if (!waiting) return;
     timer.current = setInterval(async () => {
-      const res = await fetch("/api/purchase-orders/sync").catch(() => null);
+      const res = await fetch(endpoint).catch(() => null);
       if (!res?.ok) return;
-      const next = (await res.json()) as PoSyncStatus;
+      const next = (await res.json()) as AccurateSyncStatus;
       setSt(next);
       if (!next.running) {
         setWaiting(false);
@@ -47,11 +48,11 @@ export function SyncPoButton({ initial }: { initial: PoSyncStatus | null }) {
     return () => {
       if (timer.current) clearInterval(timer.current);
     };
-  }, [waiting, router]);
+  }, [waiting, router, endpoint]);
 
   async function mulai() {
     setErr(null);
-    const res = await fetch("/api/purchase-orders/sync", { method: "POST" }).catch(() => null);
+    const res = await fetch(endpoint, { method: "POST" }).catch(() => null);
     if (!res) return setErr("Gagal menghubungi server");
     const data = await res.json().catch(() => ({}));
     if (!res.ok && res.status !== 409) return setErr(data.error ?? `Gagal (HTTP ${res.status})`);

@@ -372,6 +372,8 @@ export interface PurchaseOrderInput {
 export interface PurchaseOrderDetail extends PurchaseOrderRow {
   items: PurchaseOrderItemRow[];
   approvals: PurchaseOrderApprovalRow[];
+  /** Penerimaan Barang Accurate untuk PO ini (F36, migrasi 206) — kosong utk PO manual. */
+  receipts: { id: string; accurate_number: string | null; received_date: string; status: string; lines: number }[];
 }
 
 export async function createPurchaseOrder(t: PurchaseOrderInput): Promise<PurchaseOrderDetail> {
@@ -554,7 +556,27 @@ export async function getPurchaseOrder(id: string): Promise<PurchaseOrderDetail 
   const approvals = await sql`
     SELECT ${approvalCols(sql)} FROM purchase_order_approval WHERE purchase_order_id = ${id} ORDER BY created_at ASC
   `;
-  return { ...mapRow(rows[0]), items: items.map(mapItem), approvals: approvals.map(mapApproval) };
+  const receipts = await sql`
+    SELECT ir.id, ir.accurate_number, ir.received_date::text, ir.status, count(l.id)::int AS lines
+    FROM purchase_order po
+    JOIN inbound_receiving_line l ON l.accurate_po_id = po.accurate_id
+    JOIN inbound_receiving ir ON ir.id = l.receiving_id
+    WHERE po.id = ${id}
+    GROUP BY ir.id
+    ORDER BY ir.received_date ASC, ir.accurate_number ASC
+  `;
+  return {
+    ...mapRow(rows[0]),
+    items: items.map(mapItem),
+    approvals: approvals.map(mapApproval),
+    receipts: receipts.map((r) => ({
+      id: String(r.id),
+      accurate_number: r.accurate_number != null ? String(r.accurate_number) : null,
+      received_date: String(r.received_date),
+      status: String(r.status),
+      lines: Number(r.lines),
+    })),
+  };
 }
 
 export interface PurchaseOrderUpdate {

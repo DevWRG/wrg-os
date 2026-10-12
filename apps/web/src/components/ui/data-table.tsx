@@ -77,6 +77,7 @@ export function DataTable<T>({
   toolbar,
   onRowClick,
   initialSort,
+  initialQuery,
   server,
 }: {
   columns: DataColumn<T>[];
@@ -91,10 +92,12 @@ export function DataTable<T>({
   onRowClick?: (row: T) => void;
   /** sort awal saat tabel pertama dirender (mis. {id:"total",dir:"desc"} = top Revenue). */
   initialSort?: { id: string; dir: "asc" | "desc" };
+  /** kata kunci cari awal (mode klien) — mis. dari ?q= tautan halaman lain. */
+  initialQuery?: string;
   /** aktifkan mode server-driven (lihat DataTableServer). */
   server?: DataTableServer;
 }) {
-  const [qLocal, setQLocal] = useState("");
+  const [qLocal, setQLocal] = useState(initialQuery ?? "");
   const [sortLocal, setSortLocal] = useState<{ id: string; dir: "asc" | "desc" } | null>(initialSort ?? null);
   const [page, setPage] = useState(0);
   const [sizeLocal, setSizeLocal] = useState(pageSize);
