@@ -147,7 +147,7 @@ export function CourierDeliveryRowActions({ row }: { row: CourierDeliveryRow }) 
               <div className="grid gap-1.5">
                 <Label htmlFor={`cd-e-tiba-${row.id}`}>Tgl Tiba Aktual</Label>
                 <Input id={`cd-e-tiba-${row.id}`} type="date" value={f.tanggal_tiba} onChange={(e) => setF((p) => ({ ...p, tanggal_tiba: e.target.value }))} />
-                <p className="text-muted-foreground text-xs">Kosongkan bila belum tiba — status &quot;Selesai&quot; tanpa tanggal ini otomatis diisi hari ini.</p>
+                <p className="text-muted-foreground text-xs">Kosongkan bila belum tiba — status &quot;Selesai&quot; tanpa tanggal ini otomatis diisi hari ini; status &quot;Dalam Perjalanan&quot; selalu mengosongkannya.</p>
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div className="grid gap-1.5">

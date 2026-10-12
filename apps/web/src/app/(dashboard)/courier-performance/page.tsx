@@ -1,4 +1,5 @@
 import { gatewayFetch } from "@/lib/gateway";
+import { isoWib } from "@/lib/tanggal-wib";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { AddCourierDeliverySheet } from "@/components/shipping/add-courier-delivery-sheet";
 import { CourierPerformanceClient, type CourierPerformanceSummary } from "@/components/shipping/courier-performance-client";
@@ -10,8 +11,7 @@ function last30Days(): { from: string; to: string } {
   const to = new Date();
   const from = new Date(to);
   from.setDate(from.getDate() - 29);
-  const iso = (d: Date) => d.toISOString().slice(0, 10);
-  return { from: iso(from), to: iso(to) };
+  return { from: isoWib(from), to: isoWib(to) };
 }
 
 async function getRows(): Promise<CourierDeliveryRow[] | null> {
@@ -34,6 +34,21 @@ async function getSummary(from: string, to: string): Promise<CourierPerformanceS
   }
 }
 
+// Saran isian nama kurir: satu ejaan per kurir (yang paling sering dipakai),
+// supaya pencatat memilih nama yang sudah ada alih-alih mengetik varian baru.
+function kurirOptions(rows: CourierDeliveryRow[]): string[] {
+  const hitung = new Map<string, Map<string, number>>();
+  for (const r of rows) {
+    const k = r.kurir_name.toLowerCase();
+    const ejaan = hitung.get(k) ?? new Map<string, number>();
+    ejaan.set(r.kurir_name, (ejaan.get(r.kurir_name) ?? 0) + 1);
+    hitung.set(k, ejaan);
+  }
+  return [...hitung.values()]
+    .map((ejaan) => [...ejaan.entries()].sort((a, b) => b[1] - a[1])[0][0])
+    .sort((a, b) => a.localeCompare(b));
+}
+
 // F43 Kurir/Ekspedisi Performance Dashboard — standalone (lihat migrasi 095).
 export default async function CourierPerformancePage() {
   const { from, to } = last30Days();
@@ -43,7 +58,7 @@ export default async function CourierPerformancePage() {
       <PageHeader
         title="Kurir/Ekspedisi Performance"
         description="Pantau performa pengiriman per kurir — ketepatan waktu & rata-rata durasi (F43)."
-        action={<AddCourierDeliverySheet />}
+        action={<AddCourierDeliverySheet kurirOptions={kurirOptions(rows ?? [])} />}
       />
       <CourierPerformanceClient initialRows={rows ?? []} initialSummary={summary} hasData={rows !== null} />
     </>
