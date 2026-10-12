@@ -1,5 +1,5 @@
 import { db } from "../db.js";
-import { sendViaWaGateway } from "../wasend.js";
+import { sendGaWa } from "../wasend.js";
 
 // Round-trip lewat toISOString() (bukan cuma cek Number.isNaN) — JS Date
 // TOLERAN overflow kalender (mis. "2027-02-30" diam-diam jadi "2027-03-02"),
@@ -407,7 +407,7 @@ export async function runMaintenanceAlerts(): Promise<{ alerts: number }> {
     return `${overdue ? "⚠️ LEWAT" : "•"} ${r.asset_code} — ${r.asset_nama} (${r.maint_type}), due ${r.due_date}`;
   });
   const msg = ["🔧 *Maintenance GA — due dalam " + days + " hari*", ...lines].join("\n");
-  const gw = await sendViaWaGateway(target, msg);
+  const gw = await sendGaWa(target, msg);
   // gw.sent juga true di mode stub & dry-run (lihat wasend.ts) — tanpa
   // gerbang ini return value ngaku "N alert terkirim" walau WA-nya gak
   // pernah beneran keluar (cron ini gak punya penanda persisten spt F24/

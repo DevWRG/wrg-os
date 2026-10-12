@@ -1,5 +1,5 @@
 import { db } from "../db.js";
-import { sendViaWaGateway } from "../wasend.js";
+import { sendGaWa } from "../wasend.js";
 
 // F139 — GA Helpdesk Ticket System (Ticketing Kendala Operasional). Standalone
 // dari dev (state machine disederhanakan dari source gais atas pilihan user —
@@ -436,7 +436,7 @@ export async function runGaHelpdeskOverdueAlert(): Promise<{ alerts: number }> {
 
     let anySent = false;
     for (const target of new Set(targets)) {
-      const gw = await sendViaWaGateway(target, msg);
+      const gw = await sendGaWa(target, msg);
       // gw.sent juga true di mode stub & dry-run — penanda anti-spam HANYA
       // ditulis kalau benar-benar terkirim, pola sama F52/F38.
       if (gw.sent && !gw.stub && !gw.dryRun) anySent = true;

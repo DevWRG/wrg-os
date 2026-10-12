@@ -197,3 +197,12 @@ test("nominal berpecahan sen dibulatkan (rekap prod 11 Okt: Rp…,942)", () => {
   const d = buildReminderDigest([row({ outstanding: 1234.5 })], "fin", TODAY);
   assert.match(d.text, /sisa Rp1\.235 /);
 });
+test("detectKind: #FAKTUR terpicu, #FAKTURIS/#FAKTUR123 tidak", async () => {
+  const { detectKind } = await import("./inbound.js");
+  assert.equal(detectKind("#FAKTUR SI.2026.09.00123"), "faktur");
+  assert.equal(detectKind("#faktur si.2026.09.00123 tolong dicek"), "faktur");
+  assert.equal(detectKind("pagi tim\n# FAKTUR SI-1"), "faktur");
+  assert.equal(detectKind("#FAKTURIS rapat jam 3"), "none");
+  assert.equal(detectKind("#FAKTUR123"), "none");
+});
+

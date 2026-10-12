@@ -1,5 +1,5 @@
 import { db } from "../db.js";
-import { sendViaWaGateway } from "../wasend.js";
+import { sendGaWa } from "../wasend.js";
 import { normalizeWa } from "./master.js";
 import { getAsset, resolveUserByName, type GaAssetRow } from "./ga-asset.js";
 
@@ -52,7 +52,7 @@ async function notifyPic(userId: string, assetCode: string, assetNama: string, k
   ].filter(Boolean).join("\n");
   const targets = [u.wa_number, process.env.GA_ASSET_NOTIFY_CC || null].filter((t): t is string => !!t);
   for (const t of targets) {
-    await sendViaWaGateway(normalizeWa(t), msg);
+    await sendGaWa(normalizeWa(t), msg);
   }
 }
 

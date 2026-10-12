@@ -1,5 +1,5 @@
 import { db } from "../db.js";
-import { sendViaWaGateway } from "../wasend.js";
+import { sendGaWa } from "../wasend.js";
 
 // F52 — IT Asset & Issue Tracker (OPS). Tiket masalah per aset, SLA dihitung
 // saat create. Master aset (`ga_assets`, F132, migrasi 086) DISERAP — bukan
@@ -277,7 +277,7 @@ export async function runItTicketSlaAlerts(): Promise<{ alerts: number }> {
       `PIC: ${t.assigned_to ?? "-"}`,
       `Batas SLA: ${t.sla_due_at}`,
     ].join("\n");
-    const gw = await sendViaWaGateway(target, msg);
+    const gw = await sendGaWa(target, msg);
     // gw.sent juga true di mode stub & dry-run — tanpa gerbang ini penanda
     // anti-spam ter-set walau tak ada WA yang benar-benar terkirim, dan
     // alert mati permanen begitu WA_DRY_RUN (default true) dimatikan.

@@ -1,5 +1,5 @@
 import { db } from "../db.js";
-import { sendViaWaGateway } from "../wasend.js";
+import { sendGaWa } from "../wasend.js";
 
 // F50 — Kendaraan Operasional Log (OPS). `vehicle` = master kecil (7 mobil,
 // diseed manual — lihat 149_vehicle_operational_log.sql, SENGAJA tanpa
@@ -354,7 +354,7 @@ export async function runVehicleAlerts(): Promise<{ service_alerts: number; stnk
         `KM sekarang: ${v.current_km ?? "?"} — interval service: ${v.service_interval_km} km`,
         `Sopir: ${v.sopir_name ?? "-"}`,
       ].join("\n");
-      const gw = await sendViaWaGateway(target, msg);
+      const gw = await sendGaWa(target, msg);
       // gw.sent juga true di mode stub & dry-run (lihat wasend.ts) — tanpa gerbang
       // ini penanda anti-spam ter-set walau tak ada WA yang benar-benar terkirim,
       // dan alert-nya mati permanen begitu WA_DRY_RUN (default true) dimatikan.
@@ -371,7 +371,7 @@ export async function runVehicleAlerts(): Promise<{ service_alerts: number; stnk
         `Jatuh tempo: ${v.stnk_expiry} (${v.stnk_days_left} hari lagi)`,
         `Sopir: ${v.sopir_name ?? "-"}`,
       ].join("\n");
-      const gw = await sendViaWaGateway(target, msg);
+      const gw = await sendGaWa(target, msg);
       if (gw.sent && !gw.stub && !gw.dryRun) {
         await sql`UPDATE vehicle SET stnk_alert_sent_at = now() WHERE id = ${v.id}`;
         stnkAlerts += 1;
