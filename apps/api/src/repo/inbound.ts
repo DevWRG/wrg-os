@@ -21,9 +21,16 @@ import {
   type IngestKoranResult,
 } from "./cashin.js";
 import { createTicket, isKnownTeknisiSender } from "./serviceticket.js";
+import { syncDeliveryOrders } from "./accurateSync.js";
 import {
   findBySjNumber,
   markKirim,
+  markTerima,
+  createShipment,
+  parseSjRef,
+  cariDoAccurate,
+  cabangDariNomorSj,
+  type DoAccurate,
   markBast,
   markBukti,
   pelakuShippingWa,
@@ -84,6 +91,7 @@ export const INBOUND_HASHTAGS = [
   "klaim",
   "koran",
   "kirim",
+  "terima",
   "bast",
   "bukti",
   "install",
@@ -117,12 +125,13 @@ const CEK_LINE = /^\s*#\s*cek\b/i;
 const KLAIM_LINE = /^\s*#\s*klaim\b/i;
 // F-CASHIN — setoran rekening koran harian dari admin Finance.
 const KORAN_LINE = /^\s*#\s*koran\b/i;
-// F12/F93 — hashtag SHIPPING dari kurir: "#KIRIM SJ-2026-001" / "#BAST
-// SJ-2026-001" / "#BUKTI SJ-2026-001" (caption foto atau teks biasa). TTF
+// F12/F93 — hashtag SHIPPING dari kurir: "#KIRIM SJK 6142" / "#TERIMA SJK
+// 6142" / "#BAST SJK 6142" / "#BUKTI SJK 6142" (caption foto atau teks biasa;
+// rujukan SJ = jenis + angka urut DO Accurate, lihat parseSjRef). TTF
 // sengaja tak ada hashtag (diabaikan per arahan Direktur rapat 2026-07-30 —
 // lihat docs/features/F12-*.md). #BUKTI (F93) — foto bukti terima + scan
 // tanda tangan, SETELAH bast (lihat docs/features/F93-*.md).
-const SHIPPING_LINE = /^\s*#\s*(kirim|bast|bukti)\b\s*(.*)$/i;
+const SHIPPING_LINE = /^\s*#\s*(kirim|terima|bast|bukti)\b\s*(.*)$/i;
 const READINESS_LINE = /^\s*#\s*(install|servis|training|kalibrasi)\b/i;
 // F139 — HANYA #HELPDESK diaktifkan (brief sebut #TICKET juga, sengaja
 // didiamkan dulu, bukan dihapus dari brief — lihat docs/features/F139-*.md).
@@ -161,7 +170,7 @@ export function detectKind(body: string | null): InboundKind {
       if (KLAIM_LINE.test(line)) return "klaim";
       if (KORAN_LINE.test(line)) return "koran";
       const s = line.match(SHIPPING_LINE);
-      if (s) return s[1].toLowerCase() as "kirim" | "bast" | "bukti";
+      if (s) return s[1].toLowerCase() as "kirim" | "terima" | "bast" | "bukti";
       const r = line.match(READINESS_LINE);
       if (r) return r[1].toLowerCase() as "install" | "servis" | "training" | "kalibrasi";
       if (HELPDESK_LINE.test(line)) return "helpdesk";
@@ -185,34 +194,75 @@ export function detectKind(body: string | null): InboundKind {
 // API/web, tapi kurir yang menerimanya di WA tak punya petunjuk harus apa, dan
 // gampang menyimpulkan botnya rusak.
 //
-// Penting: langkah `terima` itu WEB-ONLY (F42 #714, Admin Shipping/Kirim-Tagih)
-// dan TIDAK punya hashtag — jadi kurir memang tak bisa menyelesaikannya
-// sendiri, dan balasannya harus bilang siapa yang harus dimintai.
+// Sejak 13 Okt 2026 langkah `terima` punya hashtag sendiri (#TERIMA), jadi
+// semua langkah bisa diselesaikan kurir dari WA.
 function pesanGagalShipping(sjNumber: string, error?: string): string {
   const e = error ?? "";
   if (e.includes("langkah bast sudah dilakukan")) {
     return `SJ ${sjNumber} sudah pernah ditandai BAST — tak perlu #BAST lagi. Kalau mau lanjut, pakai #BUKTI.`;
   }
   if (e.includes("langkah terima belum ditandai")) {
-    return `SJ ${sjNumber} belum ditandai TERIMA, jadi belum bisa BAST. Minta admin tandai penerimaan dulu di menu Shipping, lalu kirim #BAST lagi.`;
+    return `SJ ${sjNumber} belum ditandai TERIMA, jadi belum bisa BAST. Kirim #TERIMA dulu, lalu #BAST lagi.`;
   }
   if (e.includes("BAST belum selesai")) {
     return `SJ ${sjNumber} belum BAST, jadi bukti terima belum bisa diunggah. Selesaikan #BAST dulu, lalu kirim #BUKTI lagi.`;
   }
   if (e.includes("langkah kirim sudah dilakukan")) {
-    return `SJ ${sjNumber} sudah pernah ditandai KIRIM — tak perlu #KIRIM lagi. Kalau mau lanjut, pakai #BAST (setelah admin tandai terima).`;
+    return `SJ ${sjNumber} sudah pernah ditandai KIRIM — tak perlu #KIRIM lagi. Langkah berikutnya #TERIMA saat barang sampai.`;
+  }
+  if (e.includes("langkah terima sudah dilakukan")) {
+    return `SJ ${sjNumber} sudah pernah ditandai TERIMA — langkah berikutnya #BAST.`;
+  }
+  if (e.includes("terima otomatis sudah lewat")) {
+    return `SJ ${sjNumber} sudah BAST — tak perlu #TERIMA lagi.`;
+  }
+  if (e.includes("langkah kirim belum selesai")) {
+    return `SJ ${sjNumber} belum ditandai KIRIM. Kirim #KIRIM dulu saat berangkat.`;
   }
   return `Gagal update SJ ${sjNumber}: ${e}`;
 }
 
-// Ambil No. SJ dari baris hashtag #KIRIM/#BAST — token pertama setelah hashtag.
-function extractSjNumber(body: string | null): string | null {
+// Ambil rujukan SJ dari baris hashtag shipping — SELURUH sisa baris, karena
+// bentuk ringkas terdiri dari beberapa token ("SJK 6142 JKT"). Diurai parseSjRef.
+function extractSjArg(body: string | null): string | null {
   if (!body) return null;
   for (const line of stripInvisible(body).split(/\r?\n/)) {
     const m = line.match(SHIPPING_LINE);
-    if (m && m[2].trim()) return m[2].trim().split(/\s+/)[0];
+    if (m && m[2].trim()) return m[2].trim();
   }
   return null;
+}
+
+// Saklar klaster shipping (#KIRIM/#TERIMA/#BAST/#BUKTI). Default MATI: di prod
+// WA_INBOUND_PROCESS sudah true, jadi tanpa saklar ini kode yang masuk main
+// langsung membalas di grup sebelum alurnya disosialisasikan ke kurir.
+export function isShippingWaEnabled(): boolean {
+  return (process.env.WA_SHIPPING_ENABLED ?? "false").toLowerCase() === "true";
+}
+
+// DO Accurate disinkron terjadwal (ACCURATE_SYNC_CRON, default jam 10–20 hari
+// kerja) — SJ yang dibuat pagi belum ada di mirror saat kurir berangkat. Kalau
+// rujukan tak ketemu, tarik 1 halaman DO terbaru (100 baris) lalu cari ulang.
+// Dibatasi sekali per menit supaya salah ketik beruntun tak membanjiri Accurate.
+let segarDoTerakhir = 0;
+async function segarkanDoTerbaru(): Promise<boolean> {
+  if (Date.now() - segarDoTerakhir < 60_000) return false;
+  segarDoTerakhir = Date.now();
+  try {
+    const r = await syncDeliveryOrders({ maxPages: 1 });
+    return r.ok;
+  } catch (e) {
+    console.error("[inbound] segarkan DO Accurate gagal:", e);
+    return false;
+  }
+}
+
+async function cariDoUntukWa(arg: string): Promise<DoAccurate[]> {
+  const ref = parseSjRef(arg);
+  if (!ref) return [];
+  const ada = await cariDoAccurate(ref);
+  if (ada.length) return ada;
+  return (await segarkanDoTerbaru()) ? cariDoAccurate(ref) : [];
 }
 
 // Ambil argumen SETELAH hashtag dari baris yang cocok — BUKAN dari body utuh.
@@ -1555,27 +1605,62 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
     return finish(await ingestKoranDariBaris(row, lampiran), "koran");
   }
 
-  // F12 — #KIRIM/#BAST/#BUKTI (SHIPPING). Dulu TANPA gate sender ("kurir tak
-  // punya roster") — artinya siapa pun di grup mana pun bisa menutup
-  // pengiriman (uji dev 11 Okt 2026). Sekarang: staf roster, ATAU driver SJ itu
-  // lewat chat pribadi (pelakuShippingWa). Pengirim lain diabaikan diam.
-  if (kind === "kirim" || kind === "bast" || kind === "bukti") {
+  // F12 — #KIRIM/#TERIMA/#BAST/#BUKTI (SHIPPING). Dulu TANPA gate sender
+  // ("kurir tak punya roster") — artinya siapa pun di grup mana pun bisa
+  // menutup pengiriman (uji dev 11 Okt 2026). Sekarang: staf roster, ATAU
+  // driver SJ itu lewat chat pribadi (pelakuShippingWa). Pengirim lain
+  // diabaikan diam. Sejak 13 Okt 2026 SJ dirujuk ke DO Accurate dan record
+  // dibuat otomatis saat #KIRIM pertama — tanpa input web.
+  if (kind === "kirim" || kind === "terima" || kind === "bast" || kind === "bukti") {
+    if (!isShippingWaEnabled()) return finish({ skipped: "shipping-disabled" });
     const roster = await resolveSender({ senderJid: row.sender_jid, groupJid: row.group_jid, pushname: row.sender_name, ketat: true });
     const isDm = !String(row.group_jid ?? "").endsWith("@g.us");
     if (!roster && !isDm) return finish({ skipped: "unknown-sender", sender_name: row.sender_name });
-    const sj = extractSjNumber(row.body);
-    if (!sj) {
+    const tag = `#${kind.toUpperCase()}`;
+    const arg = extractSjArg(row.body);
+    if (!arg) {
+      if (!roster) return finish({ skipped: "unknown-sender", sender_name: row.sender_name });
       const reply = await sendViaWaGateway(
         target,
-        `⚠️ Format #${kind.toUpperCase()} tak lengkap — sertakan No. SJ, mis. "#${kind.toUpperCase()} SJ-2026-001".`,
+        `⚠️ Format ${tag} tak lengkap — sertakan jenis + nomor SJ, mis. "${tag} SJK 6142" (boleh juga nomor lengkap).`,
       );
       return finish({ error: "missing-sj-number", reply });
     }
-    const shipment = await findBySjNumber(sj);
+    // Record lama dengan nomor persis (dibuat sebelum alur DO Accurate) tetap
+    // dikenali; selain itu rujukan diurai lalu dicari di DO Accurate.
+    let shipment = await findBySjNumber(arg.split(/\s+/)[0]);
+    let dibuat = false;
     if (!shipment) {
-      if (!roster) return finish({ skipped: "unknown-sender", sender_name: row.sender_name });
-      const reply = await sendViaWaGateway(target, `⚠️ SJ "${sj}" tidak ditemukan di tracking pengiriman.`);
-      return finish({ error: "sj-not-found", sj, reply });
+      const dos = await cariDoUntukWa(arg);
+      if (dos.length !== 1) {
+        if (!roster) return finish({ skipped: "unknown-sender", sender_name: row.sender_name });
+        const reply = await sendViaWaGateway(
+          target,
+          dos.length === 0
+            ? `⚠️ SJ "${arg}" tidak ditemukan di DO Accurate 90 hari terakhir. Cek jenis & nomornya (mis. "${tag} SJK 6142"), atau kirim nomor lengkap.`
+            : `⚠️ "${arg}" cocok dengan ${dos.length} SJ:\n${dos.map((d) => `• ${d.number} (${d.customer_name ?? "-"})`).join("\n")}\nKirim ulang ${tag} dengan nomor lengkap salah satunya.`,
+        );
+        return finish({ error: dos.length === 0 ? "sj-not-found" : "sj-ambiguous", sj: arg, kandidat: dos.length, reply });
+      }
+      const d = dos[0];
+      shipment = await findBySjNumber(d.number);
+      if (!shipment) {
+        // Hanya #KIRIM yang memulai pengiriman, dan hanya staf roster: driver
+        // lewat DM dikenali dari driver_wa_number SJ — yang belum ada sebelum
+        // record dibuat.
+        if (!roster) return finish({ skipped: "unknown-sender", sender_name: row.sender_name, sj: d.number });
+        if (kind !== "kirim") {
+          const reply = await sendViaWaGateway(target, `⚠️ SJ ${d.number} belum ditandai KIRIM. Kirim #KIRIM dulu saat berangkat.`);
+          return finish({ error: "belum-kirim", sj: d.number, reply });
+        }
+        shipment = await createShipment({
+          sj_number: d.number,
+          customer_name: d.customer_name ?? "-",
+          cabang: cabangDariNomorSj(d.number),
+          created_by: `wa:${roster.nama}`,
+        });
+        dibuat = true;
+      }
     }
     const pelaku = pelakuShippingWa({
       rosterNama: roster?.nama ?? null,
@@ -1584,27 +1669,30 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
       driverWaNumber: shipment.driver_wa_number,
       driverName: shipment.driver_name,
     });
-    if (!pelaku) return finish({ skipped: "unknown-sender", sender_name: row.sender_name, sj });
+    if (!pelaku) return finish({ skipped: "unknown-sender", sender_name: row.sender_name, sj: shipment.sj_number });
     const photoPath = String(row.message_type ?? "").toLowerCase().startsWith("image") ? (row.media_path ?? null) : null;
     // Foto ber-geotag (OCR check_photo_geotag.py, sama infra "Geo-Tagging
     // Camera" AM) → row.geo_lat/geo_lon terisi. #KIRIM capture titik AWAL,
     // #BAST capture titik CUSTOMER — dipakai hitung distance_km/eta_days
     // OTOMATIS di markBast() begitu keduanya ada (arahan Direktur 2026-07-30).
-    // #BUKTI (F93, SETELAH bast) — foto bukti terima + scan tanda tangan,
-    // TANPA geo (bukan titik baru, cuma audit trail tambahan).
+    // #TERIMA cuma penanda waktu (tanpa foto/geo). #BUKTI (F93, SETELAH bast)
+    // — foto bukti terima + scan tanda tangan, TANPA geo.
     const geo = { lat: row.geo_lat ?? null, lon: row.geo_lon ?? null };
     const action =
       kind === "kirim"
         ? await markKirim(shipment.id, { photo_path: photoPath, by: pelaku, ...geo })
-        : kind === "bast"
-          ? await markBast(shipment.id, { photo_path: photoPath, by: pelaku, ...geo })
-          : await markBukti(shipment.id, { photo_path: photoPath, by: pelaku });
-    const labelDone = kind === "kirim" ? "DIKIRIM" : kind === "bast" ? "BAST/SELESAI" : "BUKTI TERSIMPAN";
+        : kind === "terima"
+          ? await markTerima(shipment.id, { by: pelaku })
+          : kind === "bast"
+            ? await markBast(shipment.id, { photo_path: photoPath, by: pelaku, ...geo })
+            : await markBukti(shipment.id, { photo_path: photoPath, by: pelaku });
+    const labelDone =
+      kind === "kirim" ? "DIKIRIM" : kind === "terima" ? "DITERIMA" : kind === "bast" ? "BAST/SELESAI" : "BUKTI TERSIMPAN";
     const replyMsg = action.ok
       ? `✅ SJ ${shipment.sj_number} (${shipment.customer_name}) ditandai *${labelDone}*.`
       : `⚠️ ${pesanGagalShipping(shipment.sj_number, action.error)}`;
     const reply = await sendViaWaGateway(target, replyMsg);
-    return finish({ shipment_id: shipment.id, sj, ok: action.ok, error: action.error, reply });
+    return finish({ shipment_id: shipment.id, sj: shipment.sj_number, dibuat, ok: action.ok, error: action.error, reply });
   }
 
   // #STOK — cek stok cepat (F2 SQC). Sender WAJIB dikenal (perlu cabang AM
