@@ -1,40 +1,34 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { Truck, CheckCircle2, AlertTriangle, Clock } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
+import { Truck, PackageCheck, Clock, Timer } from "lucide-react";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { isoWib } from "@/lib/tanggal-wib";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
 import { StatCard } from "@/components/dashboard/stat-card";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { CourierDeliveryTable, type CourierDeliveryRow } from "./courier-delivery-table";
 
-export interface CourierPerformanceRow {
-  kurir_name: string;
+interface KurirPerformaAngka {
   total: number;
-  selesai_count: number;
-  dalam_perjalanan_count: number;
-  bermasalah_count: number;
-  late_count: number;
-  on_time_rate_pct: number | null;
-  avg_duration_days: number | null;
+  dalam_perjalanan: number;
+  diterima: number;
+  selesai: number;
+  avg_jam_terima: number | null;
+  avg_jam_bast: number | null;
+  avg_km: number | null;
 }
 
-export interface CourierPerformanceSummary {
+export interface KurirPerformaRow extends KurirPerformaAngka {
+  kurir: string;
+  terakhir_kirim: string | null;
+}
+
+export interface KurirPerformaSummary {
   from: string | null;
   to: string | null;
-  overall: {
-    total: number;
-    selesai_count: number;
-    dalam_perjalanan_count: number;
-    bermasalah_count: number;
-    late_count: number;
-    overdue_count: number;
-    on_time_rate_pct: number | null;
-    avg_duration_days: number | null;
-  };
-  by_kurir: CourierPerformanceRow[];
+  overall: KurirPerformaAngka;
+  by_kurir: KurirPerformaRow[];
 }
 
 const selectCls =
@@ -55,34 +49,35 @@ function periodRange(preset: string): { from?: string; to?: string } {
   return { from: isoWib(from), to: isoWib(to) };
 }
 
-const rankingColumns: DataColumn<CourierPerformanceRow>[] = [
-  { id: "kurir_name", header: "Kurir/Ekspedisi", sortable: true, accessor: (r) => r.kurir_name, cell: (r) => <span className="font-medium">{r.kurir_name}</span> },
-  { id: "total", header: "Total", sortable: true, accessor: (r) => r.total, align: "right" },
-  { id: "selesai_count", header: "Selesai", sortable: true, accessor: (r) => r.selesai_count, align: "right" },
-  { id: "bermasalah_count", header: "Bermasalah", sortable: true, accessor: (r) => r.bermasalah_count, align: "right" },
-  { id: "late_count", header: "Telat", sortable: true, accessor: (r) => r.late_count, align: "right" },
+// Durasi disimpan dalam jam; di bawah 2 hari tampil jam, selebihnya hari.
+export function formatDurasi(jam: number | null): string {
+  if (jam == null) return "—";
+  if (jam < 48) return `${jam.toLocaleString("id-ID", { maximumFractionDigits: 1 })} jam`;
+  return `${(jam / 24).toLocaleString("id-ID", { maximumFractionDigits: 1 })} hari`;
+}
+
+const durasiCell = (jam: number | null) =>
+  jam != null ? <span className="tabular-nums">{formatDurasi(jam)}</span> : <span className="text-muted-foreground">—</span>;
+
+const rankingColumns: DataColumn<KurirPerformaRow>[] = [
+  { id: "kurir", header: "Kurir", sortable: true, accessor: (r) => r.kurir, cell: (r) => <span className="font-medium">{r.kurir}</span> },
+  { id: "total", header: "Kiriman", sortable: true, accessor: (r) => r.total, align: "right" },
+  { id: "dalam_perjalanan", header: "Di Jalan", sortable: true, accessor: (r) => r.dalam_perjalanan, align: "right" },
+  { id: "diterima", header: "Diterima", sortable: true, accessor: (r) => r.diterima, align: "right" },
+  { id: "selesai", header: "BAST", sortable: true, accessor: (r) => r.selesai, align: "right" },
+  { id: "avg_jam_terima", header: "Rata² Kirim→Terima", sortable: true, accessor: (r) => r.avg_jam_terima ?? -1, align: "right", cell: (r) => durasiCell(r.avg_jam_terima) },
+  { id: "avg_jam_bast", header: "Rata² Kirim→BAST", sortable: true, accessor: (r) => r.avg_jam_bast ?? -1, align: "right", cell: (r) => durasiCell(r.avg_jam_bast) },
   {
-    id: "on_time_rate_pct", header: "On-Time Rate", sortable: true, accessor: (r) => r.on_time_rate_pct ?? -1, align: "right",
-    cell: (r) => (r.on_time_rate_pct != null ? <span className="tabular-nums">{r.on_time_rate_pct}%</span> : <span className="text-muted-foreground">—</span>),
-  },
-  {
-    id: "avg_duration_days", header: "Rata-rata Durasi", sortable: true, accessor: (r) => r.avg_duration_days ?? -1, align: "right",
-    cell: (r) => (r.avg_duration_days != null ? <span className="tabular-nums">{r.avg_duration_days} hari</span> : <span className="text-muted-foreground">—</span>),
+    id: "avg_km", header: "Rata² Jarak", sortable: true, accessor: (r) => r.avg_km ?? -1, align: "right",
+    cell: (r) => (r.avg_km != null ? <span className="tabular-nums">{r.avg_km} km</span> : <span className="text-muted-foreground">—</span>),
   },
 ];
 
-export function CourierPerformanceClient({
-  initialRows,
-  initialSummary,
-  hasData,
-}: {
-  initialRows: CourierDeliveryRow[];
-  initialSummary: CourierPerformanceSummary | null;
-  hasData: boolean;
-}) {
+export function CourierPerformanceClient({ initialSummary }: { initialSummary: KurirPerformaSummary | null }) {
   const [period, setPeriod] = useState("30");
   const [summary, setSummary] = useState(initialSummary);
   const [loading, setLoading] = useState(false);
+  const pertama = useRef(true);
 
   const loadSummary = useCallback(async () => {
     const { from, to } = periodRange(period);
@@ -91,8 +86,8 @@ export function CourierPerformanceClient({
     if (to) qs.set("to", to);
     setLoading(true);
     try {
-      const res = await fetch(`/api/courier-deliveries/summary?${qs.toString()}`, { cache: "no-store" });
-      setSummary(res.ok ? ((await res.json()) as CourierPerformanceSummary) : null);
+      const res = await fetch(`/api/courier-performance/summary?${qs.toString()}`, { cache: "no-store" });
+      setSummary(res.ok ? ((await res.json()) as KurirPerformaSummary) : null);
     } catch {
       setSummary(null);
     } finally {
@@ -101,16 +96,15 @@ export function CourierPerformanceClient({
   }, [period]);
 
   useEffect(() => {
-    // initialRows sengaja ikut jadi dependency (bukan cuma loadSummary/period):
-    // gatewayFetch di page.tsx no-store, jadi setiap router.refresh() (dipanggil
-    // add/edit/delete sheet) balikin array baru → trigger refetch summary utk
-    // periode yg SEDANG dipilih user. Tanpa ini, ganti status lalu pindah ke
-    // tab Dashboard Performa tampil data basi sampai reload manual.
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- loadSummary() men-setState setelah fetch periode/data berubah; disengaja.
+    // Periode awal (30 hari) sudah diambil server — fetch ulang hanya saat periode diganti.
+    if (pertama.current) {
+      pertama.current = false;
+      return;
+    }
     void loadSummary();
-  }, [loadSummary, initialRows]);
+  }, [loadSummary]);
 
-  if (!hasData) {
+  if (!initialSummary && !summary) {
     return (
       <Card>
         <CardContent className="pt-6">
@@ -125,73 +119,52 @@ export function CourierPerformanceClient({
   const o = summary?.overall;
 
   return (
-    <Tabs defaultValue="dashboard">
-      <TabsList>
-        <TabsTrigger value="dashboard">Dashboard Performa</TabsTrigger>
-        <TabsTrigger value="riwayat">Riwayat Pengiriman</TabsTrigger>
-      </TabsList>
-
-      <TabsContent value="dashboard" className="mt-4 space-y-4">
-        <div className="flex justify-end">
-          <select value={period} onChange={(e) => setPeriod(e.target.value)} className={selectCls}>
-            {PERIOD_OPTIONS.map((o2) => (
-              <option key={o2.value} value={o2.value}>{o2.label}</option>
-            ))}
-          </select>
-        </div>
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <StatCard title="Total Pengiriman" value={loading ? "…" : String(o?.total ?? 0)} icon={Truck} />
-          <StatCard
-            title="On-Time Rate"
-            value={loading ? "…" : o?.on_time_rate_pct != null ? `${o.on_time_rate_pct}%` : "—"}
-            delta={o ? `${o.selesai_count} selesai · ${o.late_count} telat` : undefined}
-            icon={CheckCircle2}
-          />
-          <StatCard
-            title="Bermasalah / Lewat Target"
-            value={loading ? "…" : String((o?.bermasalah_count ?? 0) + (o?.overdue_count ?? 0))}
-            deltaTone={(o?.bermasalah_count ?? 0) + (o?.overdue_count ?? 0) > 0 ? "negative" : "neutral"}
-            delta={o ? `${o.bermasalah_count} bermasalah · ${o.overdue_count} masih jalan lewat target` : undefined}
-            icon={AlertTriangle}
-          />
-          <StatCard
-            title="Rata-rata Durasi"
-            value={loading ? "…" : o?.avg_duration_days != null ? `${o.avg_duration_days} hari` : "—"}
-            icon={Clock}
-          />
-        </div>
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Ranking Performa Kurir</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {!summary || summary.by_kurir.length === 0 ? (
-              <p className="text-muted-foreground py-6 text-center text-sm">Belum ada data pengiriman di periode ini.</p>
-            ) : (
-              <DataTable
-                columns={rankingColumns}
-                data={summary.by_kurir}
-                getKey={(r) => r.kurir_name}
-                searchPlaceholder="Cari kurir…"
-                pageSize={25}
-                initialSort={{ id: "total", dir: "desc" }}
-              />
-            )}
-          </CardContent>
-        </Card>
-      </TabsContent>
-
-      <TabsContent value="riwayat" className="mt-4">
-        <Card>
-          <CardContent className="pt-6">
-            {initialRows.length === 0 ? (
-              <p className="text-muted-foreground">Belum ada riwayat pengiriman. Tambah via tombol di atas.</p>
-            ) : (
-              <CourierDeliveryTable rows={initialRows} />
-            )}
-          </CardContent>
-        </Card>
-      </TabsContent>
-    </Tabs>
+    <div className="space-y-4">
+      <div className="flex justify-end">
+        <select value={period} onChange={(e) => setPeriod(e.target.value)} className={selectCls} aria-label="Periode">
+          {PERIOD_OPTIONS.map((o2) => (
+            <option key={o2.value} value={o2.value}>{o2.label}</option>
+          ))}
+        </select>
+      </div>
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <StatCard
+          title="Total Kiriman"
+          value={loading ? "…" : String(o?.total ?? 0)}
+          delta={o ? `${o.dalam_perjalanan} masih di jalan` : undefined}
+          icon={Truck}
+        />
+        <StatCard
+          title="Selesai BAST"
+          value={loading ? "…" : String(o?.selesai ?? 0)}
+          delta={o ? `${o.diterima} sudah diterima` : undefined}
+          icon={PackageCheck}
+        />
+        <StatCard title="Rata² Kirim→Terima" value={loading ? "…" : formatDurasi(o?.avg_jam_terima ?? null)} icon={Timer} />
+        <StatCard title="Rata² Kirim→BAST" value={loading ? "…" : formatDurasi(o?.avg_jam_bast ?? null)} icon={Clock} />
+      </div>
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Performa per Kurir</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {!summary || summary.by_kurir.length === 0 ? (
+            <p className="text-muted-foreground py-6 text-center text-sm">
+              Belum ada kiriman di periode ini. Data muncul begitu kurir mengirim #KIRIM di WA — rincian per SJ di{" "}
+              <Link href="/shipment-tracking" className="underline">Tracking Pengiriman</Link>.
+            </p>
+          ) : (
+            <DataTable
+              columns={rankingColumns}
+              data={summary.by_kurir}
+              getKey={(r) => r.kurir.toLowerCase()}
+              searchPlaceholder="Cari kurir…"
+              pageSize={25}
+              initialSort={{ id: "total", dir: "desc" }}
+            />
+          )}
+        </CardContent>
+      </Card>
+    </div>
   );
 }

@@ -4,7 +4,6 @@ import { CheckCircle2, Circle } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
-import { ShipmentTrackingRowActions } from "@/components/crm/shipment-tracking-row-actions";
 
 export interface ShipmentTracking {
   id: string;
@@ -104,7 +103,6 @@ export function ShipmentTrackingTable({ shipments }: { shipments: ShipmentTracki
         ),
     },
     { id: "progress", header: "Progress", cell: (s) => <ProgressDots s={s} /> },
-    { id: "aksi", header: "Aksi", align: "right", cell: (s) => <ShipmentTrackingRowActions row={s} /> },
   ];
 
   return (

@@ -17,11 +17,10 @@ import { db } from "../db.js";
 // cabang dari mana" — TAK PERLU tabel referensi statis, dinamis dari foto
 // #KIRIM tiap shipment.
 //
-// Dipicu 2 arah: (1) web — Admin Shipping/Kirim-Tagih tandai manual (tanpa
-// geo, dipakai kalau WA gagal); (2) WA hashtag #KIRIM/#BAST dari kurir
-// (lihat repo/inbound.ts, match by sj_number + geo dari row.geo_lat/geo_lon
-// kalau foto ber-geotag, TANPA FK — kurir tak punya roster master data,
-// sama filosofi self-contained spt F22 installation_unit).
+// REVISI 2026-10-13 (keputusan user): SEMUA dari WA, tanpa input web. Record
+// dibuat otomatis dari DO Accurate saat #KIRIM pertama (cariDoAccurate di
+// bawah); alur #KIRIM → #TERIMA → #BAST → #BUKTI (lihat repo/inbound.ts, geo
+// dari row.geo_lat/geo_lon kalau foto ber-geotag). Menu web baca-saja.
 
 // Haversine — jarak great-circle (km) antar 2 titik lat/lon. Approksimasi
 // cukup utk analitik "kesesuaian" (bukan jarak jalan sungguhan/routing).
@@ -204,6 +203,93 @@ export function pelakuShippingWa(input: {
   return null;
 }
 
+// ── Rujukan SJ dari WA → DO Accurate (keputusan user 13 Okt 2026) ──────────
+// Data pengiriman TIDAK diinput lewat web: SJ diambil dari mirror DO Accurate
+// (accurate_delivery_order, migrasi 037), record shipment_tracking dibuat
+// otomatis saat #KIRIM pertama. Nomor SJ Accurate panjang
+// ("SJK-PJ/III.6142-JKT/WRG/VIII/2026"), jadi kurir cukup mengetik JENIS +
+// ANGKA URUT: "SJK 6142" / "SJK6142" / "SJK-6142", opsional + kode cabang
+// ("SJK 6142 JKT"), atau nomor lengkap. Jenis+angka unik 3.353/3.353 di data
+// Apr–Agu 2026; bagian /I /II /III tak perlu ikut. Angka saja ("6142") juga
+// diterima — kalau ternyata dobel, bot minta nomor lengkap, tak menebak.
+export interface SjRef {
+  full: string | null; // nomor persis apa adanya (token pertama), kalau bentuknya nomor lengkap/bebas
+  jenis: string | null; // "SJK", "SJR", ...
+  seq: string | null; // angka urut tanpa nol depan
+  cabang: string | null; // "JKT", "MLG", ...
+}
+
+const tanpaNolDepan = (d: string): string => d.replace(/^0+(?=\d)/, "");
+
+export function parseSjRef(arg: string): SjRef | null {
+  const s = arg.trim();
+  if (!s) return null;
+  const token = s.split(/\s+/)[0];
+  // Nomor lengkap Accurate: <jenis>...<.angka>-<cabang>/...
+  const lengkap = token.match(/^([A-Za-z]{2,4})[^.\s]*\.(\d+)-([A-Za-z]+)/);
+  if (lengkap) {
+    return { full: token, jenis: lengkap[1].toUpperCase(), seq: tanpaNolDepan(lengkap[2]), cabang: lengkap[3].toUpperCase() };
+  }
+  // Ringkas: "SJK 6142", "SJK-6142", "sjk6142 jkt", "6142", "6142 JKT"
+  const ringkas = s.match(/^(?:([A-Za-z]{2,4})[\s\-./]*)?(\d{1,7})(?:[\s\-/]+([A-Za-z]{2,4}))?(?:\s|$)/);
+  if (ringkas) {
+    return {
+      full: null,
+      jenis: ringkas[1] ? ringkas[1].toUpperCase() : null,
+      seq: tanpaNolDepan(ringkas[2]),
+      cabang: ringkas[3] ? ringkas[3].toUpperCase() : null,
+    };
+  }
+  // Bentuk lain (nomor SJ lama/bebas) — dicocokkan persis saja.
+  return { full: token, jenis: null, seq: null, cabang: null };
+}
+
+// Kode cabang dari nomor SJ Accurate ("...6142-JKT/WRG/..." → "JKT").
+export function cabangDariNomorSj(number: string): string | null {
+  const m = number.match(/\.\d+-([A-Za-z]+)/);
+  return m ? m[1].toUpperCase() : null;
+}
+
+export interface DoAccurate {
+  number: string;
+  trans_date: string | null;
+  customer_name: string | null;
+}
+
+// Cari DO Accurate untuk rujukan WA. Nomor lengkap → persis (tanpa batas
+// tanggal). Ringkas → angka urut (+ jenis/cabang kalau ada) di 90 hari
+// terakhir, supaya aman kalau Accurate suatu saat me-reset penomoran.
+// Maks 5 baris: >1 = ambigu, pemanggil minta nomor lengkap.
+export async function cariDoAccurate(ref: SjRef, hariMundur = 90): Promise<DoAccurate[]> {
+  const sql = db();
+  if (ref.full) {
+    const persis = await sql`
+      SELECT number, trans_date::text, customer_name FROM accurate_delivery_order
+      WHERE lower(number) = lower(${ref.full}) ORDER BY trans_date DESC NULLS LAST LIMIT 5
+    `;
+    if (persis.length || !ref.seq) return persis.map(mapDo);
+  }
+  if (!ref.seq) return [];
+  const rows = await sql`
+    SELECT number, trans_date::text, customer_name FROM accurate_delivery_order
+    WHERE trans_date >= CURRENT_DATE - ${hariMundur}::int
+      AND ltrim(substring(number from '\\.(\\d+)-'), '0') = ${ref.seq}
+      AND ${ref.jenis ? sql`upper(substring(number from '^([A-Za-z]+)')) = ${ref.jenis}` : sql`true`}
+      AND ${ref.cabang ? sql`upper(substring(number from '\\.\\d+-([A-Za-z]+)')) = ${ref.cabang}` : sql`true`}
+    ORDER BY trans_date DESC NULLS LAST
+    LIMIT 5
+  `;
+  return rows.map(mapDo);
+}
+
+function mapDo(r: Record<string, unknown>): DoAccurate {
+  return {
+    number: String(r.number),
+    trans_date: r.trans_date != null ? String(r.trans_date) : null,
+    customer_name: r.customer_name != null ? String(r.customer_name) : null,
+  };
+}
+
 export interface ShipmentActionResult {
   ok: boolean;
   error?: string;
@@ -232,7 +318,7 @@ export async function markKirim(
 }
 
 // F42 — barang diterima customer, SEBELUM BAST resmi ditandatangani.
-// Manual via web (Admin Shipping/Kirim-Tagih), bukan WA hashtag.
+// Lewat WA #TERIMA (keputusan user 13 Okt 2026; dulu manual via web).
 export async function markTerima(
   id: string,
   opts: { by?: string | null } = {},
