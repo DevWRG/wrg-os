@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.wrg.audit-plan-harian</string>
+  <key>ProgramArguments</key>
+  <array><string>/Users/development/DevWRG/wrg-os/scripts/ops/audit-plan-harian.sh</string></array>
+
+  <!-- 09.00 WIB, Senin-Sabtu. Sesudah gelombang #PLAN pagi (07.30-08.30) supaya
+       auditnya bermakna, sebelum siang supaya masih sempat ditindak. -->
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Weekday</key><integer>1</integer><key>Hour</key><integer>9</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Weekday</key><integer>2</integer><key>Hour</key><integer>9</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Weekday</key><integer>3</integer><key>Hour</key><integer>9</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Weekday</key><integer>4</integer><key>Hour</key><integer>9</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>9</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Weekday</key><integer>6</integer><key>Hour</key><integer>9</integer><key>Minute</key><integer>0</integer></dict>
+  </array>
+
+  <key>EnvironmentVariables</key>
+  <dict><key>AUDIT_KIRIM_LOG</key><string>/Users/development/DevWRG/ops/logs/resend-log.jsonl</string></dict>
+
+  <!-- Tanpa ini psql + curl ke bridge ter-throttle I/O (lihat CLAUDE.md). -->
+  <key>ProcessType</key><string>Interactive</string>
+  <key>LowPriorityIO</key><false/>
+  <key>LowPriorityBackgroundIO</key><false/>
+
+  <key>StandardOutPath</key><string>/Users/development/DevWRG/ops/logs/audit-plan-harian.stdout.log</string>
+  <key>StandardErrorPath</key><string>/Users/development/DevWRG/ops/logs/audit-plan-harian.stderr.log</string>
+</dict></plist>
