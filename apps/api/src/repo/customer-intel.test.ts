@@ -39,6 +39,7 @@ const dasar: Briefing = {
   catatan: [],
   deal: [{ stage: "Negotiation", brand: "ZYBIO", produk: "Z52", nilai: 300_000_000, hari_di_tahap: 21, am: "Budi" }],
   kso: { aktif: 2, alat: ["Zybio Z3", "EXC200"], mou_terdekat: "2026-12-31" },
+  kso_kesehatan: { status: "WASPADA", alasan: ["Median bayar 72 hari setelah faktur"] },
   demo: [],
   kompetitor: [{ tanggal: "2026-09-03", vendor: "Mindray", produk: "BC-30", harga_text: "Rp 4,5 jt", konteks: null }],
   dominan_wilayah: [{ kategori: "BGA", vendor: "Medisindo", catatan: null }],
@@ -53,6 +54,7 @@ test("formatBriefWa: memuat fakta kunci dalam urutan yang dipakai AM", () => {
   assert.match(t, /🧾 Beli terakhir 1 Okt 2026 \(12 hari lalu\) · 12 bln: Rp 1,23 M \(34 faktur\) · ZYBIO, VIVACHEK/);
   assert.match(t, /💰 Piutang Rp 120 jt · lewat jatuh tempo 3 faktur Rp 45 jt \(terlama 62 hari\)/);
   assert.match(t, /⏱️ Bayar \(12 bln, 30 faktur\): median 42 hari setelah faktur · 26% tepat waktu · telat rata-rata 18 hari · lebih lambat dari tahun sebelumnya/);
+  assert.match(t, /🩺 Kesehatan KSO: 🟡 WASPADA — Median bayar 72 hari setelah faktur/);
   assert.match(t, /🔬 KSO aktif: 2 alat \(Zybio Z3, EXC200\) · MoU terdekat habis 31 Des 2026/);
   assert.match(t, /🤝 Deal Negotiation: ZYBIO Z52 Rp 300 jt · 21 hari di tahap ini/);
   assert.match(t, /• 10 Okt \(Budi\) Presentasi: Ka\. Lab minta penawaran Z52 → Next: kirim SPH/);
@@ -67,12 +69,12 @@ test("formatBriefWa: calon pelanggan tanpa faktur, tanpa piutang/KSO/kunjungan",
     kontak: [], pembelian: { terakhir: null, hari_sejak: null, netto_12bln: 0, faktur_12bln: 0, brand_teratas: [] },
     piutang: { sisa: 0, lewat_tempo: { faktur: 0, nilai: 0, terlama_hari: 0 } },
     bayar: { faktur: 0, median_hari: null, rata_hari: null, tepat_pct: null, rata_telat_hari: null, tren: null },
-    kunjungan: [], deal: [], kso: { aktif: 0, alat: [], mou_terdekat: null }, kompetitor: [], dominan_wilayah: [],
+    kunjungan: [], deal: [], kso: { aktif: 0, alat: [], mou_terdekat: null }, kso_kesehatan: null, kompetitor: [], dominan_wilayah: [],
   });
   assert.match(t, /Belum ada AM pemilik · PIC belum dicatat/);
   assert.match(t, /Belum pernah ada faktur — calon pelanggan/);
   assert.match(t, /Belum ada laporan kunjungan tercatat/);
-  assert.doesNotMatch(t, /💰|⏱️|🔬|🤝|⚔️|🏁/);
+  assert.doesNotMatch(t, /💰|⏱️|🩺|🔬|🤝|⚔️|🏁/);
 });
 
 test("trenBayar: beda median ≥7 hari = berubah; data <3 faktur = tak dinilai", async () => {
