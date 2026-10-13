@@ -20,6 +20,7 @@ import type { DataScope } from "./access-scope.js";
 import { cariAkun, INTI_MATCH, NAMA_MATCH } from "./interaction.js";
 import { normalizeAccurateDate } from "./ar.js";
 import { ringkasPembayaran, trenBayar, type StatBayar } from "./pembayaran.js";
+import { kesehatanAkun } from "./kso-kesehatan.js";
 
 export class IntelError extends Error {
   constructor(public status: number, message: string) {
@@ -95,6 +96,8 @@ export interface Briefing {
   catatan: { tanggal: string; jenis: string; isi: string; oleh: string }[];
   deal: { stage: string; brand: string | null; produk: string | null; nilai: number | null; hari_di_tahap: number | null; am: string | null }[];
   kso: { aktif: number; alat: string[]; mou_terdekat: string | null };
+  // F73 — status kesehatan KSO faskes ini (null = bukan faskes KSO operasional).
+  kso_kesehatan: { status: "SEHAT" | "WASPADA" | "KRITIS"; alasan: string[] } | null;
   demo: { kode: string; jenis: string; alat: string; tanggal: string; tanggal_selesai: string | null }[];
   kompetitor: { tanggal: string; vendor: string; produk: string | null; harga_text: string | null; konteks: string | null }[];
   dominan_wilayah: { kategori: string; vendor: string; catatan: string | null }[];
@@ -170,6 +173,7 @@ export async function briefingFaskes(sc: DataScope, ids: number[]): Promise<Brie
   ]);
 
   const bayar = await ringkasPembayaran(ids);
+  const sehat = await kesehatanAkun(ids);
   const dominan = base.cabang
     ? await sql`SELECT kategori, vendor, catatan FROM competitor_dominan
                 WHERE status = 'dikonfirmasi' AND upper(btrim(cabang)) = ${String(base.cabang)} ORDER BY kategori`
@@ -199,6 +203,7 @@ export async function briefingFaskes(sc: DataScope, ids: number[]): Promise<Brie
     catatan: cat.map((c) => ({ tanggal: String(c.tanggal), jenis: String(c.jenis), isi: potong(c.isi, 200) ?? "", oleh: String(c.oleh) })),
     deal: deal.map((d) => ({ stage: String(d.stage), brand: d.brand ?? null, produk: potong(d.product, 60), nilai: d.nilai == null ? null : Number(d.nilai), hari_di_tahap: d.hari == null ? null : Number(d.hari), am: d.am ?? null })),
     kso: { aktif: kso.length, alat: [...new Set(kso.map((k) => String(k.alat ?? "")).filter(Boolean))].slice(0, 4), mou_terdekat: mou },
+    kso_kesehatan: sehat ? { status: sehat.status, alasan: sehat.alasan.filter((a) => a.tingkat !== "info").map((a) => a.teks) } : null,
     demo: demo.map((d) => ({ kode: String(d.kode), jenis: String(d.jenis), alat: String(d.alat), tanggal: String(d.tanggal), tanggal_selesai: d.tanggal_selesai ?? null })),
     kompetitor: komp.map((k) => ({ tanggal: String(k.tanggal), vendor: String(k.vendor), produk: potong(k.produk, 60), harga_text: potong(k.harga_text, 40), konteks: potong(k.konteks, 120) })),
     dominan_wilayah: dominan.map((d) => ({ kategori: String(d.kategori), vendor: String(d.vendor), catatan: d.catatan ?? null })),
@@ -238,6 +243,10 @@ export function formatBriefWa(b: Briefing): string {
   }
   if (b.bayar.faktur > 0) {
     out.push(`⏱️ Bayar (12 bln, ${b.bayar.faktur} faktur): median ${b.bayar.median_hari} hari setelah faktur${b.bayar.tepat_pct != null ? ` · ${b.bayar.tepat_pct}% tepat waktu` : ""}${b.bayar.rata_telat_hari ? ` · telat rata-rata ${b.bayar.rata_telat_hari} hari` : ""}${b.bayar.tren ? ` · ${b.bayar.tren} dari tahun sebelumnya` : ""}`);
+  }
+  if (b.kso_kesehatan) {
+    const k = b.kso_kesehatan;
+    out.push(`🩺 Kesehatan KSO: ${k.status === "KRITIS" ? "🔴 KRITIS" : k.status === "WASPADA" ? "🟡 WASPADA" : "🟢 SEHAT"}${k.alasan.length ? ` — ${k.alasan.slice(0, 2).join("; ")}` : ""}`);
   }
   if (b.kso.aktif) out.push(`🔬 KSO aktif: ${b.kso.aktif} alat${b.kso.alat.length ? ` (${b.kso.alat.join(", ")})` : ""}${b.kso.mou_terdekat ? ` · MoU terdekat habis ${tglPendek(b.kso.mou_terdekat, true)}` : ""}`);
   for (const d of b.deal.slice(0, 3)) {

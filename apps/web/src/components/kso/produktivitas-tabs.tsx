@@ -15,18 +15,20 @@
 
 import { useCallback } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { BarChart3, Table2 } from "lucide-react";
+import { BarChart3, HeartPulse, Table2 } from "lucide-react";
 
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { FilterBarKso, useFilterKso, type KsoProduktivitas } from "./produktivitas-shared";
 import { KsoProduktivitasTabel } from "./produktivitas-view";
 import { KsoRingkasanPanel } from "./ringkasan-view";
+import { KsoKesehatanPanel, type DataKesehatan } from "./kesehatan-view";
 
 const TAB_RINGKASAN = "ringkasan";
 const TAB_TABEL = "tabel";
+const TAB_KESEHATAN = "kesehatan";
 
-export function KsoProduktivitasTabs({ data }: { data: KsoProduktivitas }) {
+export function KsoProduktivitasTabs({ data, kesehatan = null }: { data: KsoProduktivitas; kesehatan?: DataKesehatan | null }) {
   const f = useFilterKso(data);
   const router = useRouter();
   const pathname = usePathname();
@@ -36,7 +38,8 @@ export function KsoProduktivitasTabs({ data }: { data: KsoProduktivitas }) {
   // halaman ini sering dikirim lewat WA sebagai tautan, dan sebelum jadi tab ringkasan
   // punya URL sendiri (/kso-produktivitas/ringkasan) yang sudah pernah live — tautan
   // lama diarahkan ke sini dengan ?tab=ringkasan, jadi bookmark tidak mati.
-  const tab = params.get("tab") === TAB_RINGKASAN ? TAB_RINGKASAN : TAB_TABEL;
+  const t = params.get("tab");
+  const tab = t === TAB_RINGKASAN || t === TAB_KESEHATAN ? t : TAB_TABEL;
 
   const pindah = useCallback((v: string) => {
     const q = new URLSearchParams(params.toString());
@@ -63,6 +66,9 @@ export function KsoProduktivitasTabs({ data }: { data: KsoProduktivitas }) {
             <TabsTrigger value={TAB_RINGKASAN} className="gap-1.5">
               <BarChart3 className="size-4" /> Ringkasan
             </TabsTrigger>
+            <TabsTrigger value={TAB_KESEHATAN} className="gap-1.5">
+              <HeartPulse className="size-4" /> Kesehatan
+            </TabsTrigger>
           </TabsList>
         </CardContent>
       </Card>
@@ -70,15 +76,22 @@ export function KsoProduktivitasTabs({ data }: { data: KsoProduktivitas }) {
       {/* Filter sengaja di LUAR panel tab: satu baris kendali yang berlaku bagi
           dua-duanya. Menaruhnya di dalam tiap panel membuatnya terlihat seperti dua
           filter berbeda padahal keadaannya satu. */}
-      <div className="mt-3">
-        <FilterBarKso f={f} />
-      </div>
+      {/* F73: tab Kesehatan punya sumber & saringan sendiri (ber-scope per user),
+          jadi filter produktivitas disembunyikan di sana supaya tak terbaca berlaku. */}
+      {tab !== TAB_KESEHATAN && (
+        <div className="mt-3">
+          <FilterBarKso f={f} />
+        </div>
+      )}
 
       <TabsContent value={TAB_TABEL} className="mt-4">
         <KsoProduktivitasTabel f={f} />
       </TabsContent>
       <TabsContent value={TAB_RINGKASAN} className="mt-4">
         <KsoRingkasanPanel f={f} data={data} />
+      </TabsContent>
+      <TabsContent value={TAB_KESEHATAN} className="mt-4">
+        <KsoKesehatanPanel data={kesehatan} />
       </TabsContent>
     </Tabs>
   );
