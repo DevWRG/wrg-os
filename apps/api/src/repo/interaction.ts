@@ -21,8 +21,8 @@ import { resolveCustomer, type CustCandidate, type CekResolve } from "./customer
 
 export type JenisInteraksi = "call" | "note";
 
-const NAMA_MATCH = 0.45; // sejajar ACCOUNT_MATCH / CEK_MATCH
-const INTI_MATCH = 0.4;
+export const NAMA_MATCH = 0.45; // sejajar ACCOUNT_MATCH / CEK_MATCH
+export const INTI_MATCH = 0.4;
 const ISI_MAKS = 2000;
 
 const LINE: Record<JenisInteraksi, RegExp> = {

@@ -3,7 +3,8 @@ import { detectDaily, parseDaily, stripInvisible } from "../parsers/dailyplan.js
 import { parseAmPlan, parseAmReport, bersihkanNamaCustomer } from "../parsers/am.js";
 import { sendViaWaGateway, type WaSendResult } from "../wasend.js";
 import { handleSalesAnalyticsQuery } from "./inbound-sales-analytics.js";
-import { balasanKampanye } from "./campaign.js";
+import { balasanKampanye, scopeDariPengirim } from "./campaign.js";
+import { balasanBrief } from "./customer-intel.js";
 import { detectCek, handleCekQuery } from "./inbound-cek.js";
 import { resolveSender, normalizeWa, bolehAksesHargaWa } from "./master.js";
 import { upsertDailyTodo, computeIsLate } from "./todo.js";
@@ -126,6 +127,7 @@ export const INBOUND_HASHTAGS = [
   "demo",
   "trial",
   "kampanye",
+  "brief",
 ] as const;
 
 export type InboundKind = (typeof INBOUND_HASHTAGS)[number] | "none";
@@ -177,6 +179,8 @@ const INTERAKSI_LINE = /^\s*#\s*(call|note)\b/i;
 const DEMO_TRIAL_LINE = /^\s*#\s*(demo|trial)\b/i;
 // F74 — #KAMPANYE (baca progres kampanye; tak menulis apa pun).
 const KAMPANYE_LINE = /^\s*#\s*kampanye\b/i;
+// F131 — #BRIEF <faskes>: briefing pra-kunjungan (baca saja).
+const BRIEF_LINE = /^\s*#\s*brief\b/i;
 
 export function detectKind(body: string | null): InboundKind {
   const daily = detectDaily(body); // line-anchored #plan/#report (sudah strip invisible)
@@ -208,6 +212,7 @@ export function detectKind(body: string | null): InboundKind {
       const dt = line.match(DEMO_TRIAL_LINE);
       if (dt) return dt[1].toLowerCase() as "demo" | "trial";
       if (KAMPANYE_LINE.test(line)) return "kampanye";
+      if (BRIEF_LINE.test(line)) return "brief";
     }
   }
   return "none";
@@ -1816,6 +1821,23 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
     }
     const reply = await sendViaWaGateway(target, text);
     return finish({ kind: "kampanye", via: km.via, reply });
+  }
+
+  // #BRIEF <faskes> — F131: briefing pra-kunjungan, fakta saja. Scope pengirim
+  // (AM = faskes miliknya + tanpa pemilik; HoD = timnya + tanpa pemilik).
+  if (kind === "brief") {
+    const br = await resolveSender({ senderJid: row.sender_jid, groupJid: row.group_jid, pushname: row.sender_name, ketat: true });
+    if (!br) return finish({ skipped: "unknown-sender", sender_name: row.sender_name });
+    let text: string;
+    try {
+      const sc = await scopeDariPengirim({ am_id: br.am_id, role: br.role ?? null });
+      text = await balasanBrief(extractHashtagArg(row.body, BRIEF_LINE), sc);
+    } catch (e) {
+      console.error("[inbound] #BRIEF gagal diproses:", (e as Error).message);
+      text = "⚠️ #BRIEF gagal diproses, coba lagi sebentar lagi.";
+    }
+    const reply = await sendViaWaGateway(target, text);
+    return finish({ kind: "brief", via: br.via, reply });
   }
 
   // #STOK — cek stok cepat (F2 SQC). Sender WAJIB dikenal (perlu cabang AM
