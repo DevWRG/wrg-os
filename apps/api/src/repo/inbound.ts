@@ -3,7 +3,8 @@ import { detectDaily, parseDaily, stripInvisible } from "../parsers/dailyplan.js
 import { parseAmPlan, parseAmReport, bersihkanNamaCustomer } from "../parsers/am.js";
 import { sendViaWaGateway, type WaSendResult } from "../wasend.js";
 import { handleSalesAnalyticsQuery } from "./inbound-sales-analytics.js";
-import { balasanKampanye } from "./campaign.js";
+import { balasanKampanye, scopeDariPengirim } from "./campaign.js";
+import { balasanBrief } from "./customer-intel.js";
 import { resolveSender } from "./master.js";
 import { upsertDailyTodo, computeIsLate } from "./todo.js";
 import { createReminder } from "./reminder.js";
@@ -91,6 +92,7 @@ export type InboundKind =
   | "demo"
   | "trial"
   | "kampanye"
+  | "brief"
   | "none";
 
 // Hashtag yang dijaring processUnprocessed. Diekspor supaya diuji berpasangan
@@ -100,7 +102,7 @@ export type InboundKind =
 // (dev menutup kelas bug ini dengan INBOUND_HASHTAGS sebagai sumber tunggal.)
 export const INBOUND_FILTER_KINDS = [
   "plan", "report", "leads", "update", "sales", "koran", "overtime", "faktur", "approve", "reject", "call", "note",
-  "kirim", "terima", "bast", "bukti", "demo", "trial", "kampanye",
+  "kirim", "terima", "bast", "bukti", "demo", "trial", "kampanye", "brief",
 ] as const;
 export const inboundHashtagPattern = (): string => `#\\s*(${INBOUND_FILTER_KINDS.join("|")})`;
 
@@ -123,6 +125,8 @@ const INTERAKSI_LINE = /^\s*#\s*(call|note)\b/i;
 const DEMO_TRIAL_LINE = /^\s*#\s*(demo|trial)\b/i;
 // F74 — #KAMPANYE (baca progres kampanye; tak menulis apa pun).
 const KAMPANYE_LINE = /^\s*#\s*kampanye\b/i;
+// F131 — #BRIEF <faskes>: briefing pra-kunjungan (baca saja).
+const BRIEF_LINE = /^\s*#\s*brief\b/i;
 // F12/F42/F93 — hashtag SHIPPING dari kurir: "#KIRIM SJK 6142" / "#TERIMA SJK
 // 6142" / "#BAST SJK 6142" / "#BUKTI SJK 6142" (caption foto atau teks biasa;
 // rujukan SJ = jenis + angka urut DO Accurate, lihat parseSjRef).
@@ -154,6 +158,7 @@ export function detectKind(body: string | null): InboundKind {
       const sh = line.match(SHIPPING_LINE);
       if (sh) return sh[1].toLowerCase() as "kirim" | "terima" | "bast" | "bukti";
       if (KAMPANYE_LINE.test(line)) return "kampanye";
+      if (BRIEF_LINE.test(line)) return "brief";
     }
   }
   return "none";
@@ -1447,6 +1452,23 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
     }
     const reply = await sendViaWaGateway(target, text);
     return finish({ kind: "kampanye", via: km.via, reply });
+  }
+
+  // #BRIEF <faskes> — F131: briefing pra-kunjungan, fakta saja. Scope pengirim
+  // (AM = faskes miliknya + tanpa pemilik; HoD = timnya + tanpa pemilik).
+  if (kind === "brief") {
+    const br = await resolveSender({ senderJid: row.sender_jid, groupJid: row.group_jid, pushname: row.sender_name, ketat: true });
+    if (!br) return finish({ skipped: "unknown-sender", sender_name: row.sender_name });
+    let text: string;
+    try {
+      const sc = await scopeDariPengirim({ am_id: br.am_id, role: br.role ?? null });
+      text = await balasanBrief(extractHashtagArg(row.body, BRIEF_LINE), sc);
+    } catch (e) {
+      console.error("[inbound] #BRIEF gagal diproses:", (e as Error).message);
+      text = "⚠️ #BRIEF gagal diproses, coba lagi sebentar lagi.";
+    }
+    const reply = await sendViaWaGateway(target, text);
+    return finish({ kind: "brief", via: br.via, reply });
   }
 
   // #FAKTUR <no_invoice> — F91: status Open/Paid/Overdue + jatuh tempo +

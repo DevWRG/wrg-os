@@ -1,6 +1,10 @@
 import Link from "next/link";
 
 import { gatewayFetch } from "@/lib/gateway";
+import { sessionUser } from "@/lib/admin-guard";
+import { featureAllowed } from "@/lib/feature-guard";
+import { DominasiWilayah } from "@/components/intel/dominasi-wilayah";
+import type { SelDominasi } from "@/components/intel/types";
 import { cn } from "@/lib/utils";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { AddCompetitorSheet } from "@/components/crm/add-competitor-sheet";
@@ -52,16 +56,31 @@ async function getJson<T>(path: string): Promise<T | null> {
 export default async function CompetitorPage({
   searchParams,
 }: {
-  searchParams: Promise<{ vendor?: string }>;
+  searchParams: Promise<{ vendor?: string; sendiri?: string }>;
 }) {
-  const { vendor: vendorRaw } = await searchParams;
+  const { vendor: vendorRaw, sendiri: sendiriRaw } = await searchParams;
   const vendor = vendorRaw?.trim() || "";
-  const qs = vendor ? `?vendor=${encodeURIComponent(vendor)}` : "";
+  // F131: brand Wahana sendiri (Zybio, Wondfo, Vivachek, …) disembunyikan secara
+  // bawaan — di prod 33% sebutan lama ternyata brand sendiri.
+  const sendiri = sendiriRaw === "1";
+  const p = new URLSearchParams();
+  if (vendor) p.set("vendor", vendor);
+  if (sendiri) p.set("sendiri", "1");
+  const qs = p.size ? `?${p}` : "";
+  const tautan = (v: string, s = sendiri) => {
+    const q = new URLSearchParams();
+    if (v) q.set("vendor", v);
+    if (s) q.set("sendiri", "1");
+    return q.size ? `/competitor?${q}` : "/competitor";
+  };
 
-  const [summary, list] = await Promise.all([
-    getJson<CompetitorSummary>("/competitor/summary"),
+  const me = await sessionUser();
+  const [summary, list, dominasi] = await Promise.all([
+    getJson<CompetitorSummary>(`/competitor/summary${sendiri ? "?sendiri=1" : ""}`),
     getJson<CompetitorResponse>(`/competitor${qs}`),
+    getJson<{ hari: number; sel: SelDominasi[] }>("/competitor/dominasi?hari=365"),
   ]);
+  const bolehUbah = !!me && featureAllowed(me, "/competitor", "edit");
   const items = list?.items ?? null;
   const totalVendors = summary?.count ?? 0;
   const topVendors = (summary?.summary ?? []).slice(0, 12);
@@ -73,8 +92,8 @@ export default async function CompetitorPage({
         title="Competitor Intel"
         description={
           totalRecords > 0
-            ? `${totalRecords} catatan dari ${totalVendors} kompetitor (port competitor_intel).`
-            : "Intelijen kompetitor dari lapangan (port competitor_intel)."
+            ? `${totalRecords} sebutan dari ${totalVendors} vendor — diambil otomatis dari laporan kunjungan #REPORT${sendiri ? ", termasuk brand Wahana sendiri" : "; brand Wahana sendiri tidak ditampilkan"}.`
+            : "Intelijen kompetitor dari laporan kunjungan lapangan."
         }
         action={<AddCompetitorSheet />}
       />
@@ -99,16 +118,20 @@ export default async function CompetitorPage({
             <Button type="submit" variant="outline" size="sm">
               Cari
             </Button>
+            {sendiri && <input type="hidden" name="sendiri" value="1" />}
             {vendor && (
-              <Button render={<Link href="/competitor" />} nativeButton={false} variant="ghost" size="sm">
+              <Button render={<Link href={tautan("")} />} nativeButton={false} variant="ghost" size="sm">
                 Reset
               </Button>
             )}
+            <Link href={tautan(vendor, !sendiri)} className="text-muted-foreground text-sm hover:underline">
+              {sendiri ? "Sembunyikan brand Wahana sendiri" : "Tampilkan juga brand Wahana sendiri"}
+            </Link>
           </form>
 
           <div className="flex flex-wrap gap-2">
             <Link
-              href="/competitor"
+              href={tautan("")}
               className={cn(
                 "inline-flex items-center gap-1.5 rounded-lg border px-3 py-1 text-sm transition-colors",
                 vendor === ""
@@ -124,7 +147,7 @@ export default async function CompetitorPage({
               return (
                 <Link
                   key={v.vendor}
-                  href={`/competitor?vendor=${encodeURIComponent(v.vendor)}`}
+                  href={tautan(v.vendor)}
                   className={cn(
                     "inline-flex items-center gap-1.5 rounded-lg border px-3 py-1 text-sm transition-colors",
                     isActive
@@ -150,6 +173,8 @@ export default async function CompetitorPage({
               )}
             </CardContent>
           </Card>
+
+          {dominasi && <DominasiWilayah sel={dominasi.sel} hari={dominasi.hari} bolehUbah={bolehUbah} />}
         </>
       )}
     </>
