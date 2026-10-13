@@ -1,9 +1,12 @@
 import { gatewayFetch, relay } from "@/lib/gateway";
+import { requireFeature } from "@/lib/feature-guard";
 
 export const dynamic = "force-dynamic";
 
 // Gateway → apps/api GET/POST /it-tickets (F52, OPS).
 export async function GET(req: Request) {
+  const guard = await requireFeature("/ga-aset", "view");
+  if (!guard.ok) return guard.res;
   const qs = new URL(req.url).search;
   try {
     return await relay(await gatewayFetch(`/it-tickets${qs}`));
@@ -13,6 +16,8 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
+  const guard = await requireFeature("/ga-aset", "create");
+  if (!guard.ok) return guard.res;
   let body: unknown;
   try {
     body = await req.json();
