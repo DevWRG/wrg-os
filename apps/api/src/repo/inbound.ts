@@ -58,6 +58,7 @@ import {
   cabangDariNomorSj,
   type DoAccurate,
 } from "./shipment-tracking.js";
+import { accountIdDariTulisan } from "./akun-faskes.js";
 
 // Role yang pakai alur AM per-customer (sales_plan/activity_log + foto), bukan todo.
 const AM_ROLES = new Set(["AM", "Teknisi"]);
@@ -500,13 +501,10 @@ async function resolveActivityLinks(
   customer: string,
 ): Promise<{ accountId: number | null; opportunityId: string | null }> {
   const sql = db();
-  const [acc] = await sql`
-    SELECT id, similarity(COALESCE(NULLIF(name,''), raw->>'name', ''), ${customer}) AS score
-    FROM accurate_customer
-    WHERE similarity(COALESCE(NULLIF(name,''), raw->>'name', ''), ${customer}) >= ${ACCOUNT_MATCH}
-    ORDER BY score DESC, id LIMIT 1
-  `;
-  const accountId = acc ? Number(acc.id) : null;
+  // Penaut sadar-jenis (akun-faskes.ts). Trigram nama utuh yang dulu dipakai di
+  // sini gagal pada 83% laporan (nama Accurate terbalik + awalan "Cust :") dan
+  // salah tempel sisanya (PMI → PKM/PLN) — 13 Okt 2026.
+  const accountId = await accountIdDariTulisan(customer);
 
   // Deal terbuka (belum Closing-*) milik AM ini: match by account_id, fallback
   // fuzzy facility_name. Terbaru duluan — aktivitas biasanya untuk deal berjalan.
