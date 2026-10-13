@@ -5892,6 +5892,8 @@ const RFID_CLAIM_STATUSES: RfidCartridgeClaimStatus[] = ["pending", "resolved", 
 // registry lain di codebase ini: mime allowlist pdf/jpg/jpeg/png, cap 8MB.
 const RFID_CLAIM_FILE_MIME_ALLOWLIST = ["application/pdf", "image/jpeg", "image/png"];
 const RFID_CLAIM_FILE_MAX_BYTES = 8 * 1024 * 1024;
+const RFID_CLAIM_WAJIB = ["device_name", "cartridge_name", "customer_name", "error_description", "reported_by"] as const;
+const isiTeks = (v: unknown): boolean => typeof v === "string" && v.trim() !== "";
 
 function decodeRfidClaimFile(input: { file_name?: string; file_mime?: string; file_base64?: string }):
   | { error: string }
@@ -5936,11 +5938,11 @@ app.post("/aftersales/rfid-cartridge-claims", async (c) => {
     return c.json({ error: "invalid JSON body" }, 400);
   }
   if (
-    !body.device_name ||
-    !body.cartridge_name ||
-    !body.customer_name ||
-    !body.error_description ||
-    !body.reported_by
+    !body.device_name?.trim() ||
+    !body.cartridge_name?.trim() ||
+    !body.customer_name?.trim() ||
+    !body.error_description?.trim() ||
+    !body.reported_by?.trim()
   ) {
     return c.json(
       { error: "device_name, cartridge_name, customer_name, error_description, reported_by wajib" },
@@ -6023,6 +6025,11 @@ app.patch("/aftersales/rfid-cartridge-claims/:id", async (c) => {
   if (body.status && !RFID_CLAIM_STATUSES.includes(body.status as RfidCartridgeClaimStatus)) {
     return c.json({ error: "status harus pending|resolved|rejected" }, 400);
   }
+  // Field wajib boleh tak dikirim (PATCH parsial), tapi kalau dikirim tak
+  // boleh kosong — form edit mengirim semua field ter-trim, jadi mengosongkan
+  // kolom dulu tersimpan sebagai klaim tanpa nama alat (uji dev 13 Okt 2026).
+  const kosong = RFID_CLAIM_WAJIB.filter((k) => body[k] !== undefined && !isiTeks(body[k]));
+  if (kosong.length > 0) return c.json({ error: `${kosong.join(", ")} tidak boleh kosong` }, 400);
   const file = decodeRfidClaimFile(body);
   if (file && "error" in file) return c.json({ error: file.error }, 400);
   const r = await updateRfidCartridgeClaim(c.req.param("id"), {
