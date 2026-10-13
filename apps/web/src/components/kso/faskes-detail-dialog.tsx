@@ -25,6 +25,7 @@ import {
   PENANDA, Pilih, Tag, angkaSumbu, awalTahunIni, bulanIni, deretBulan, labelBulan, num, rp,
   rupiahPerAlat, skalaRp, skemaPakaiRpTes, type FaskesRow,
 } from "./produktivitas-shared";
+import { RiwayatAlat } from "./riwayat-alat";
 
 interface Detail {
   alat: {
@@ -750,6 +751,8 @@ export function FaskesDetailDialog({ g, median, onClose }: {
                   </table>
                 </div>
               </div>
+
+              {g.r.accountId !== null ? <RiwayatAlat accountId={g.r.accountId} /> : null}
             </>
           )}
         </DialogBody>

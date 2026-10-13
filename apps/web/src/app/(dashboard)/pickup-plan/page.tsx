@@ -1,7 +1,7 @@
 import { gatewayFetch } from "@/lib/gateway";
 import { sessionUser } from "@/lib/admin-guard";
 import { PageHeader } from "@/components/dashboard/page-header";
-import { AddPickupPlanSheet, type AccountOption } from "@/components/crm/add-pickup-plan-sheet";
+import { AddPickupPlanSheet, type AccountOption, type PickupOptions } from "@/components/crm/add-pickup-plan-sheet";
 import { PickupPlanTable, type PickupPlan } from "@/components/tables/pickup-plan-table";
 import { Card, CardContent } from "@/components/ui/card";
 
@@ -37,16 +37,27 @@ async function getAccounts(userId: string | null): Promise<AccountOption[]> {
   }
 }
 
+// Roster kurir + SJ belum terkirim untuk dropdown form (lihat /pickup-plan/options).
+async function getOptions(): Promise<PickupOptions> {
+  try {
+    const res = await gatewayFetch(`/pickup-plan/options`);
+    if (!res.ok) return { kurir: [], sj: [], sj_window_days: 30 };
+    return (await res.json()) as PickupOptions;
+  } catch {
+    return { kurir: [], sj: [], sj_window_days: 30 };
+  }
+}
+
 export default async function PickupPlanPage() {
   const me = await sessionUser();
-  const [plans, accounts] = await Promise.all([getPlans(), getAccounts(me?.id ?? null)]);
+  const [plans, accounts, options] = await Promise.all([getPlans(), getAccounts(me?.id ?? null), getOptions()]);
 
   return (
     <>
       <PageHeader
         title="Jadwal Kirim-Tagih"
         description="Rencana trip kurir + cek otomatis H-1: hari libur (master_holiday) & PIC customer beserta backup-nya. Mencegah rebound trip."
-        action={<AddPickupPlanSheet accounts={accounts} />}
+        action={<AddPickupPlanSheet accounts={accounts} options={options} />}
       />
       {!plans ? (
         <p className="text-muted-foreground">

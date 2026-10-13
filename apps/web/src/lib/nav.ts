@@ -10,7 +10,7 @@ import {
   Send, FileText, ScrollText, GraduationCap, UsersRound, Network,
   Bell, MapPin, ListChecks, Swords, CalendarOff, CalendarDays, CalendarRange,
   Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, Tags, SlidersHorizontal, Microscope, MonitorCheck, FileSignature,
-  Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, BookOpen, Calculator, UserPlus, Presentation, Megaphone,
+  Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, BookOpen, Calculator, Presentation, Megaphone, Library,
   Wallet, Coins, Route, Radio, Printer, ScanText,
   Wrench,
   CalendarClock,
@@ -45,7 +45,7 @@ import { canViewAsetTetap } from "@/lib/aset-tetap-access";
 import { canViewFakturPajak } from "@/lib/faktur-pajak-access";
 import { canViewRaportList } from "@/lib/raport-access";
 import { canViewExecutive } from "@/lib/executive-access";
-import { canViewKso } from "@/lib/kso-access";
+import { canBukaDaftarAlat, canViewKso } from "@/lib/kso-access";
 import { canViewNpkAm, canViewNpkAmSelf } from "@/lib/npk-access";
 import { canViewInsentifTim } from "@/lib/insentif-access";
 import { canViewDanaOps } from "@/lib/dana-ops-access";
@@ -120,16 +120,18 @@ export const NAV: NavGroup[] = [
       { title: "Sales Analytics", url: "/sales-analytics", icon: Target, badge: "NEW" },
       { title: "Sales Alerts", url: "/sales-alerts", icon: Bell, badge: "NEW" },
       { title: "Competitor Intel", url: "/competitor", icon: Swords },
-      // F65 Leads — prospek sebelum jadi deal (BANT ≥3 → konversi ke Pipeline).
-      // Kunci izin sendiri ("leads"); default tertutup — butuh Sync Fitur +
-      // centang di Akses Grup. Barisnya di-scope server (AM/HoD/admin).
-      { title: "Leads", url: "/leads", icon: UserPlus, badge: "NEW" },
+      // F65 Leads DICABUT dari menu 13 Okt 2026 (keputusan user): #LEADS kini
+      // langsung jadi deal Prospecting di Pipeline. Tanpa item menu, Sync Fitur
+      // berikutnya menonaktifkan fitur "leads" sendiri; halaman /leads dibiarkan.
       // F18 Demo & Trial — hasil demo/trial dinilai AM, konversi per produk.
       // Kunci izin sendiri ("demo-trial"); default tertutup.
       { title: "Demo & Trial", url: "/demo-trial", icon: Presentation, badge: "NEW" },
       // F74 Kampanye (menyerap F46) — kampanye non-KSO per brand/item + periode,
       // realisasi faktur/SO otomatis. Kunci izin sendiri ("kampanye"); default tertutup.
       { title: "Kampanye", url: "/kampanye", icon: Megaphone, badge: "NEW" },
+      // F130 Brosur & Video — brosur diunggah ke Google Drive (tautan publik),
+      // video = tautan. Kunci izin sendiri ("brosur"); default tertutup.
+      { title: "Brosur & Video", url: "/brosur", icon: Library, badge: "NEW" },
       { title: "Pipeline", url: "/pipeline", icon: Workflow },
       { title: "Kinerja Saya", url: "/me", icon: UserRound, badge: "NEW" },
       // F67 Insentif. Menu terpisah dari /insentif/tim karena PERTANYAANNYA beda:
@@ -194,8 +196,12 @@ export const NAV: NavGroup[] = [
       // (migrasi 197; keputusan user 6 Okt 2026). Menumpang kunci izin yang SAMA
       // dengan Produktivitas KSO karena alasan yang sama (lihat di atas): halaman
       // dan BFF meng-gate dengan canViewKso, jadi kunci berbeda = dua centang.
+      // F169: kunci tambahan 'kso-mutasi-alat' = tombol Pindah/tarik (teknisi).
+      // Grup yang hanya punya kunci itu tetap melihat menu ini (navVisible
+      // memeriksa `features`), tanpa ikut membuka Produktivitas KSO.
       { title: "Daftar Alat", url: "/kso-alat", icon: MonitorCheck, badge: "NEW",
-        feature: "kso-simulator", show: canViewKso },
+        feature: "kso-simulator", show: canBukaDaftarAlat,
+        features: [{ key: "kso-mutasi-alat", name: "Daftar Alat — catat pindah/tarik alat (teknisi)" }] },
       // F47 Kontrak KSO & Renewal — kunci izin SENDIRI (featureKey = "kso-kontrak"),
       // SENGAJA tak menumpang 'kso-simulator' seperti dua menu di atas: menu ini
       // MENULIS data (kontrak, status renewal), dan izin edit-nya dipisah dari
@@ -466,6 +472,7 @@ export const NAV: NavGroup[] = [
 // saat #1282 merge → kosongkan Set ini.
 export const DEV_ONLY_URLS: ReadonlySet<string> = new Set([
   "/approval-requests",
+  "/brosur",
   "/doc-klaim",
   "/forecast-submission",
   "/installations",

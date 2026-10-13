@@ -223,3 +223,17 @@ mengesankan ketersediaan PIC sudah dicek.
    sebetulnya lebih banyak soal **kesiapan internal** (SJ & faktur terbit lambat,
    stok cito tak ready, NCS telat) daripada customer tutup. F45 tidak menyentuh
    itu — worth dikonfirmasi apakah prioritas Direktur memang di sisi ini.
+
+## Revisi 2026-10-13 (uji user sebelum promosi)
+
+- **Kurir = karyawan internal**: form tak lagi meminta nomor WA. Kurir dipilih dari
+  roster `master_user` (aktif, posisi *Kirim Tagih*, roster yang sama dipakai `#KIRIM`);
+  server mengambil `kurir_name` + `kurir_wa_number` dari roster, bukan dari body.
+  Cabang terisi otomatis dari cabang kurir (boleh diubah).
+- **No. SJ = dropdown cari** dari DO Accurate (`accurate_delivery_order`) 30 hari terakhir
+  yang di Shipment Tracking belum `terima`/`bast` dan belum ada di jadwal aktif lain.
+  Memilih SJ mengisi customer + `account_id` (dari `raw->customer->id`). Server menolak SJ
+  yang tak ada di mirror DO atau sudah dijadwalkan.
+- Endpoint baru `GET /pickup-plan/options` → `{ kurir, sj, sj_window_days }`.
+- Pesan WA H-1 menyebut No. SJ.
+- Migrasi 150 tak lagi menyemai `access_permission` (fitur baru default tertutup).

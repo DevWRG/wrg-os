@@ -1,6 +1,7 @@
 import { aiDryRun, callAi } from "../ai.js";
 import { db } from "../db.js";
 import { recordCompetitor } from "./competitor.js";
+import { segarkanBrandSendiri } from "./customer-intel.js";
 
 // extract_competitor — port wrg-crm/scripts/extract_competitor.sh.
 // Ambil baris activity_log.hasil yang belum di-ekstrak → services/ai
@@ -27,10 +28,16 @@ export async function runExtractCompetitor(
   const limit = opts.limit ?? 20; // batasi per-run untuk hindari lonjakan biaya API
   const res: ExtractCompetitorResult = { processed: 0, total_mentions: 0, skipped: 0 };
 
+  // F131: daftar brand sendiri ikut disegarkan tiap run (jalan malam hari) —
+  // gagal di sini tak boleh menghentikan ekstraksi.
+  if (!opts.dryRun) {
+    try { await segarkanBrandSendiri(); } catch (e) { console.error("[extract-competitor] segarkan brand_sendiri gagal:", (e as Error).message); }
+  }
+
   // Kandidat: hasil cukup panjang & belum di-state. backfill → batasi N hari.
   const rows = opts.backfillDays
     ? await sql`
-        SELECT al.id, al.am_id, al.customer_name, al.tanggal::text AS tanggal, al.hasil
+        SELECT al.id, al.am_id, al.customer_name, al.tanggal::text AS tanggal, al.hasil, al.account_id
         FROM activity_log al
         LEFT JOIN competitor_extraction_state ces ON ces.activity_id = al.id
         WHERE al.tanggal >= CURRENT_DATE - (${opts.backfillDays} || ' days')::interval
@@ -38,7 +45,7 @@ export async function runExtractCompetitor(
         ORDER BY al.id DESC LIMIT ${limit}
       `
     : await sql`
-        SELECT al.id, al.am_id, al.customer_name, al.tanggal::text AS tanggal, al.hasil
+        SELECT al.id, al.am_id, al.customer_name, al.tanggal::text AS tanggal, al.hasil, al.account_id
         FROM activity_log al
         LEFT JOIN competitor_extraction_state ces ON ces.activity_id = al.id
         WHERE al.hasil IS NOT NULL AND length(al.hasil) > 30 AND ces.activity_id IS NULL
@@ -73,6 +80,10 @@ export async function runExtractCompetitor(
           harga_numeric: m.harga_numeric ?? undefined,
           konteks: m.konteks ?? undefined,
           source: "extract",
+          // F131: tautan ke laporan asal + faskes, supaya sebutan muncul di
+          // briefing faskes & bisa dipetakan ke cabang.
+          activity_id: activityId,
+          account_id: r.account_id == null ? null : Number(r.account_id),
         });
         n += 1;
       }

@@ -31,6 +31,20 @@
 //   `in_populasi=true` di DB tapi tak ada di berkas ditandai `in_populasi=false`. Tes
 //   bulanan & parameter tidak disentuh. Semua tulisan dalam satu transaksi.
 //
+// PINDAH FASKES (migrasi 217, F169). Kolom Customer yang berubah TIDAK lagi ditimpa
+// begitu saja — itu memindahkan seluruh riwayat tes alat ke faskes baru. Tiap
+// perubahan customer aset lama digolongkan:
+//   • pindah   — TGL SJ di sheet ikut berubah dan terbaca sebagai tanggal (≤ hari ini,
+//                sesudah tanggal masuk penempatan sekarang). Dicatat lewat
+//                kso_pindahkan_alat(): penempatan lama ditutup per TGL SJ, yang baru
+//                dibuka. account_id tujuan dari kso_customer_map (NULL kalau belum
+//                terpeta — isi lewat kso-account-match.mjs).
+//   • koreksi  — nama lama & baru terpeta ke account_id yang SAMA, atau SN disebut di
+//                --anggap-koreksi SN1,SN2. Ejaan dibetulkan, riwayat tak berubah.
+//   • tertahan — selain itu. Customer di DB DIBIARKAN, dicetak untuk ditinjau: catat
+//                lewat menu (Riwayat Alat → Catat pindah) atau betulkan TGL SJ di sheet.
+// Alat BARU: tanggal masuk penempatannya diisi dari TGL SJ kalau terbaca.
+//
 // account_id sengaja dibiarkan NULL di sini. Nama customer di sheet berformat
 // "<nama>, <tipe> <KOTA>" dan tidak identik dengan accurate_customer.name; pencocokannya
 // butuh langkah terpisah yang bisa ditinjau, bukan fuzzy match diam-diam saat impor.
@@ -40,6 +54,9 @@ import { db } from "../../apps/api/dist/db.js";
 
 const APPLY = process.argv.includes("--apply");
 const PAKSA = process.argv.includes("--paksa");
+const koreksiIdx = process.argv.indexOf("--anggap-koreksi");
+const ANGGAP_KOREKSI = new Set(
+  koreksiIdx > -1 ? String(process.argv[koreksiIdx + 1] ?? "").split(",").map((x) => x.trim()).filter(Boolean) : []);
 const fileIdx = process.argv.indexOf("--file");
 const FILE = fileIdx > -1 ? process.argv[fileIdx + 1] : null;
 
@@ -103,6 +120,9 @@ try {
   console.log(`  kso_asset_param_month : ${params.length} baris`);
   console.log(`  sudah ada di DB       : ${sebelum[0].n} aset`);
 
+  const rencana = await rencanaPenempatan(assets);
+  cetakRencanaPenempatan(rencana);
+
   const konflik = assets.filter((a) => a.catatan_sync);
   console.log(`\n=== Aset dengan catatan sinkronisasi: ${konflik.length} ===`);
   for (const a of konflik.slice(0, 20)) {
@@ -115,12 +135,13 @@ try {
     process.exit(0);
   }
 
+  await terapkanPindah(sql, rencana);
   let nAsset = 0;
   for (const bagian of potong(assets)) {
     const baris = bagian.map((a) => ({
       sn_key: a.sn_key,
       sn_raw: a.sn_raw ?? null,
-      customer_raw: a.customer_raw,
+      customer_raw: rencana.customerTulis.get(a.sn_key) ?? a.customer_raw,
       kota: a.kota ?? null,
       station: a.station ?? null,
       admin: a.admin ?? null,
@@ -170,6 +191,7 @@ try {
     nAsset += bagian.length;
   }
 
+  await isiTanggalMasukBaru(sql, rencana);
   const idOf = new Map(
     (await sql`SELECT id, sn_key FROM kso_asset`).map((r) => [r.sn_key, Number(r.id)]));
 
@@ -256,6 +278,7 @@ async function imporPopulasiSaja() {
     if (berubah) asetBerubah++;
   }
   const keluar = dbRows.filter((r) => r.in_populasi && !diBerkas.has(r.sn_key));
+  const rencana = await rencanaPenempatan(assets);
   const skemaDiisi = assets.filter((a) => diDb.get(a.sn_key)?.skema === "UNKNOWN" && a.skema !== "UNKNOWN");
 
   console.log("=== MODE POPULASI-SAJA (tes bulanan, parameter, skema/station/admin aset lama tidak disentuh) ===");
@@ -283,6 +306,7 @@ async function imporPopulasiSaja() {
   for (const r of keluar) {
     console.log(`  ${r.sn_key.padEnd(20)} ${String(r.customer_raw).slice(0, 45).padEnd(47)} ${r.nama_alat ?? ""} {${r.sumber_sheet.join(", ")}}`);
   }
+  cetakRencanaPenempatan(rencana);
 
   if (!APPLY) {
     console.log("\nDRY-RUN. Tidak ada yang ditulis. Tambahkan --apply untuk mengeksekusi.");
@@ -290,11 +314,12 @@ async function imporPopulasiSaja() {
   }
 
   await sql.begin(async (tx) => {
+    await terapkanPindah(tx, rencana);
     for (const bagian of potong(assets)) {
       const baris = bagian.map((a) => ({
         sn_key: a.sn_key,
         ...Object.fromEntries(KOLOM_POPULASI.map((k) => [k, a[k] ?? null])),
-        customer_raw: a.customer_raw,
+        customer_raw: rencana.customerTulis.get(a.sn_key) ?? a.customer_raw,
         skema: a.skema,
         in_populasi: true,
         sumber_sheet: ["Populasi Alat"],
@@ -337,8 +362,144 @@ async function imporPopulasiSaja() {
           updated_at   = now()
          WHERE sn_key = ANY (${keluar.map((r) => r.sn_key)}::text[])`;
     }
+    await isiTanggalMasukBaru(tx, rencana);
   });
   const [{ n, pop }] = await sql`
     SELECT count(*)::int AS n, count(*) FILTER (WHERE in_populasi)::int AS pop FROM kso_asset`;
   console.log(`\nSELESAI. kso_asset=${n} (in_populasi=${pop}). Segarkan snapshot: bash scripts/ops/kso-mv-refresh.sh`);
+}
+
+// ── Penempatan (migrasi 217) ──────────────────────────────────────────────────────
+
+// Fungsi, bukan const di level modul: blok ini berada di bawah kode top-level yang
+// memakai await, jadi const di sini belum terinisialisasi saat dipanggil (TDZ).
+function nomorBulan(nama) {
+  return ({
+    JAN: 1, JANUARI: 1, JANUARY: 1, FEB: 2, FEBRUARI: 2, FEBRUARY: 2, MAR: 3, MARET: 3, MARCH: 3,
+    APR: 4, APRIL: 4, MEI: 5, MAY: 5, JUN: 6, JUNI: 6, JUNE: 6, JUL: 7, JULI: 7, JULY: 7,
+    AGU: 8, AGS: 8, AGT: 8, AGUSTUS: 8, AUG: 8, AUGUST: 8, SEP: 9, SEPT: 9, SEPTEMBER: 9,
+    OKT: 10, OKTOBER: 10, OCT: 10, OCTOBER: 10, NOV: 11, NOPEMBER: 11, NOVEMBER: 11,
+    DES: 12, DESEMBER: 12, DEC: 12, DECEMBER: 12,
+  })[nama] ?? null;
+}
+
+// TGL SJ ditulis bebas di sheet: "01 JULI 2021", "13 April 2026", "2026-09-29 00:00:00"
+// (sel tanggal asli dari xlsx). Tanggal bergaris miring ("11/21/2025", ekspor CSV) hanya
+// diterima kalau tak ambigu — salah tebak hari/bulan = salah bulan atribusi tes.
+// Hasil 'YYYY-MM-DD' atau null.
+function tanggalSj(v) {
+  if (v === null || v === undefined) return null;
+  const s = String(v).trim().toUpperCase();
+  let y, m, d;
+  let x = s.match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T].*)?$/);
+  if (x) [y, m, d] = [Number(x[1]), Number(x[2]), Number(x[3])];
+  else if ((x = s.match(/^(\d{1,2})[\s.-]+([A-Z]+)[\s.,-]+(\d{4})$/)) && nomorBulan(x[2])) {
+    [d, m, y] = [Number(x[1]), nomorBulan(x[2]), Number(x[3])];
+  } else if ((x = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/))) {
+    const [a, b] = [Number(x[1]), Number(x[2])];
+    if (a > 12 && b <= 12) [d, m] = [a, b];
+    else if (b > 12 && a <= 12) [m, d] = [a, b];
+    else return null;
+    y = Number(x[3]);
+  } else return null;
+  const t = new Date(Date.UTC(y, m - 1, d));
+  if (t.getUTCFullYear() !== y || t.getUTCMonth() !== m - 1 || t.getUTCDate() !== d) return null;
+  return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+}
+
+function kunciCustomer(s) {
+  return String(s ?? "").replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+}
+function sama(a, b) {
+  return String(a ?? "").trim().toUpperCase() === String(b ?? "").trim().toUpperCase();
+}
+
+async function rencanaPenempatan(daftar) {
+  const [{ ada }] = await sql`
+    SELECT count(*)::int AS ada FROM information_schema.tables
+    WHERE table_schema = 'public' AND table_name = 'kso_asset_penempatan'`;
+  if (!ada) {
+    console.error("Tabel kso_asset_penempatan belum ada. Terapkan migrasi 217 dulu.");
+    process.exit(1);
+  }
+  const db = new Map((await sql`
+    SELECT a.id, a.sn_key, a.customer_raw, a.account_id, a.tgl_sj, p.mulai::text AS mulai
+      FROM kso_asset a
+      LEFT JOIN kso_asset_penempatan p ON p.asset_id = a.id AND p.selesai IS NULL`)
+    .map((r) => [r.sn_key, r]));
+  const peta = new Map((await sql`
+    SELECT customer_key, account_id FROM kso_customer_map WHERE account_id IS NOT NULL`)
+    .map((r) => [r.customer_key, Number(r.account_id)]));
+  const hariIni = new Date().toISOString().slice(0, 10);
+
+  const pindah = [], koreksi = [], tertahan = [], masuk = [];
+  const customerTulis = new Map();
+  for (const a of daftar) {
+    const r = db.get(a.sn_key);
+    if (!r) {
+      const tgl = tanggalSj(a.tgl_sj);
+      if (tgl && tgl <= hariIni) masuk.push({ sn_key: a.sn_key, tanggal: tgl });
+      continue;
+    }
+    if (sama(r.customer_raw, a.customer_raw)) continue;
+    const accLama = r.account_id === null ? null : Number(r.account_id);
+    const accBaru = peta.get(kunciCustomer(a.customer_raw)) ?? null;
+    const tgl = tanggalSj(a.tgl_sj);
+    const sjBaru = !sama(r.tgl_sj, a.tgl_sj);
+    const dasar = { sn_key: a.sn_key, id: Number(r.id), lama: r.customer_raw, baru: a.customer_raw,
+      tgl_sj: a.tgl_sj ?? null, accLama, accBaru };
+    if (ANGGAP_KOREKSI.has(a.sn_key) || (accBaru !== null && accBaru === accLama)) {
+      koreksi.push(dasar);
+    } else if (sjBaru && tgl && tgl <= hariIni && (!r.mulai || tgl > r.mulai)) {
+      pindah.push({ ...dasar, tanggal: tgl });
+    } else {
+      const alasan = !sjBaru ? "TGL SJ tidak berubah"
+        : !tgl ? `TGL SJ "${a.tgl_sj ?? ""}" tak terbaca sebagai tanggal`
+        : tgl > hariIni ? `TGL SJ ${tgl} belum terjadi`
+        : `TGL SJ ${tgl} tidak sesudah tanggal masuk ${r.mulai}`;
+      tertahan.push({ ...dasar, alasan });
+      customerTulis.set(a.sn_key, r.customer_raw);
+    }
+  }
+  return { pindah, koreksi, tertahan, masuk, customerTulis };
+}
+
+function cetakRencanaPenempatan({ pindah, koreksi, tertahan, masuk }) {
+  const nama = (s) => String(s ?? "").slice(0, 38).padEnd(40);
+  console.log(`\n=== Pindah faskes (dicatat ke riwayat, tanggal = TGL SJ): ${pindah.length} ===`);
+  for (const p of pindah) {
+    console.log(`  ${p.sn_key.padEnd(18)} ${p.tanggal}  ${nama(p.lama)} -> ${nama(p.baru)}` +
+      (p.accBaru === null ? " [faskes tujuan belum terpeta ke Accurate]" : ""));
+  }
+  console.log(`\n=== Koreksi nama (riwayat tetap): ${koreksi.length} ===`);
+  for (const p of koreksi) console.log(`  ${p.sn_key.padEnd(18)} ${nama(p.lama)} -> ${nama(p.baru)}`);
+  console.log(`\n=== TERTAHAN — customer di DB dibiarkan: ${tertahan.length} ===`);
+  for (const p of tertahan) {
+    console.log(`  ${p.sn_key.padEnd(18)} ${nama(p.lama)} -> ${nama(p.baru)} (${p.alasan})`);
+  }
+  if (tertahan.length) {
+    console.log("  Pindah sungguhan → catat di menu Produktivitas KSO (Riwayat Alat) atau betulkan TGL SJ di sheet.");
+    console.log("  Cuma beda ejaan → ulangi dengan --anggap-koreksi " + tertahan.map((p) => p.sn_key).join(","));
+  }
+  console.log(`\n=== Alat baru dengan tanggal masuk dari TGL SJ: ${masuk.length} ===`);
+}
+
+async function terapkanPindah(tx, { pindah }) {
+  for (const p of pindah) {
+    await tx`
+      SELECT kso_pindahkan_alat(${p.id}, ${p.baru}, ${p.accBaru}, ${p.tanggal}::date, 'sheet',
+        ${`Impor sheet Populasi Alat: TGL SJ "${p.tgl_sj}"`}, 'importer sheet')`;
+  }
+}
+
+// Penempatan terbuka alat baru dibuat trigger tanpa tanggal; isi dari TGL SJ.
+async function isiTanggalMasukBaru(tx, { masuk }) {
+  for (const m of masuk) {
+    await tx`
+      UPDATE kso_asset_penempatan p SET mulai = ${m.tanggal}::date, sumber = 'sheet',
+             catatan = 'Alat baru; tanggal masuk = TGL SJ di sheet Populasi Alat.'
+        FROM kso_asset a
+       WHERE a.id = p.asset_id AND a.sn_key = ${m.sn_key} AND p.selesai IS NULL AND p.mulai IS NULL
+         AND NOT EXISTS (SELECT 1 FROM kso_asset_penempatan q WHERE q.asset_id = p.asset_id AND q.id <> p.id)`;
+  }
 }
