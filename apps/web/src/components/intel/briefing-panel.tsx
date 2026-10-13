@@ -65,17 +65,12 @@ export function BriefingPanel({ b }: { b: Briefing }) {
         {/* Kunjungan yang ada sudah tampil lengkap di Timeline (filter Aktivitas AM)
             dari sumber yang sama (activity_log.account_id) — di sini hanya
             ditampilkan bila BELUM ada sama sekali, sebagai fakta pra-kunjungan.
-            Balasan WA #BRIEF tetap memuat daftar kunjungan. */}
+            Telepon & catatan (#CALL/#NOTE) tak ditampilkan di sini sama sekali —
+            Timeline filter "Telepon & catatan" membaca interaction_log yang sama.
+            Balasan WA #BRIEF tetap memuat keduanya. */}
         {b.kunjungan.length === 0 && (
           <Baris label="Kunjungan terakhir">
             <span className="text-muted-foreground">Belum ada laporan kunjungan tercatat.</span>
-          </Baris>
-        )}
-        {b.catatan.length > 0 && (
-          <Baris label="Catatan">
-            <ul className="space-y-1">
-              {b.catatan.map((c, i) => <li key={i}><span className="text-muted-foreground tabular-nums">{tgl(c.tanggal)}</span> · {c.jenis === "call" ? "Telepon" : "Catatan"} ({c.oleh}): {c.isi}</li>)}
-            </ul>
           </Baris>
         )}
         <Baris label="Kompetitor (12 bln)">
