@@ -5700,11 +5700,11 @@ app.get("/adoption/training-needs", async (c) => {
   } catch (e) { return adoptionErr(c, e); }
 });
 
-// F27 Faktur Pajak / CoreTax Workflow (migrasi 215, repo/faktur-pajak.ts). Gerbang menu/izin
+// F27 Faktur Pajak / CoreTax Workflow (migrasi 219, repo/faktur-pajak.ts). Gerbang menu/izin
 // (requireFeature "/faktur-pajak": create = ajukan, edit = geser status) di BFF. Pelaku `oleh` dari sesi (BFF).
 const fpErr = (c: { json: (b: unknown, s?: number) => Response }, e: unknown) => {
   if (e instanceof FakturPajakError) return c.json({ error: e.message, field: e.field }, e.status);
-  // 42P01 = tabel belum ada (migrasi 215 belum diterapkan) → 503, bukan 500 buram.
+  // 42P01 = tabel belum ada (migrasi 219 belum diterapkan) → 503, bukan 500 buram.
   if ((e as { code?: string })?.code === "42P01") return c.json({ error: "migration_pending" }, 503);
   return c.json({ error: "gagal memproses faktur pajak" }, 500);
 };

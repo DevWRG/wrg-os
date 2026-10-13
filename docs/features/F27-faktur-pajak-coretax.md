@@ -5,8 +5,8 @@ Pembuatan FP-nya tetap di **CoreTax (DJP)** — sistem ini hanya melacak langkah
 
 - **Domain**: FINANCE · Hashtag `#FP` · FR-ES-27 · R2 · MUST · Sprint B2 (`DRAFT-SB2`) · owner Fafa HoD · Putri Diana · Fanessa
 - **Menu**: `/faktur-pajak` ("Faktur Pajak", grup Finance). Kunci izin `faktur-pajak` (view / create / edit).
-- **Migrasi**: `215_faktur_pajak.sql` (2 tabel). **⚠️ BUTUH MIGRASI DB** (Direktur menerapkan ke prod).
-  Nomor 215 karena 212–214 dipakai F58 / F56 / F74.
+- **Migrasi**: `219_faktur_pajak.sql` (2 tabel). **⚠️ BUTUH MIGRASI DB** (Direktur menerapkan ke prod).
+  Nomor 219 karena 212–218 sudah terpakai (awalnya 215, bentrok dengan F131).
 - **Setelah deploy**: klik **Sync Fitur** sekali agar `faktur-pajak` muncul di matriks Akses Grup (tertutup default).
 - **Bukan** F91 (status invoice di WA), F149 Fakturis (penerbitan faktur penjualan), F31 Tukar Faktur.
 
@@ -60,6 +60,6 @@ tepat di batas belum terlambat · id non-numerik (400) · tabel belum dimigrasi 
 
 ## Berkas
 
-`infra/postgres/init/215_faktur_pajak.sql` · `apps/api/src/repo/faktur-pajak.ts` (+ `.test.ts`) · `apps/api/src/index.ts` (route) ·
+`infra/postgres/init/219_faktur_pajak.sql` · `apps/api/src/repo/faktur-pajak.ts` (+ `.test.ts`) · `apps/api/src/index.ts` (route) ·
 `apps/web/src/lib/faktur-pajak-access.ts` · `apps/web/src/lib/nav.ts` · `apps/web/src/app/api/faktur-pajak/**` ·
 `apps/web/src/components/faktur-pajak/*` · `apps/web/src/app/(dashboard)/faktur-pajak/page.tsx`

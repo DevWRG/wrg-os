@@ -5,7 +5,7 @@
 --   psql "$DATABASE_URL" -f scripts/qa/seed-faktur-pajak.sql
 --   hapus saja: jalankan blok "BERSIHKAN" di bawah (3 baris DELETE) tanpa INSERT.
 --
--- Prasyarat: migrasi 215 sudah diterapkan.
+-- Prasyarat: migrasi 219 sudah diterapkan.
 
 -- ── BERSIHKAN ────────────────────────────────────────────────────────────────
 DELETE FROM faktur_pajak WHERE invoice_id >= 9100000000;

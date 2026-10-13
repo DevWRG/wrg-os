@@ -35,7 +35,7 @@ export default async function FakturPajakPage() {
         description="Tracker faktur pajak per invoice: diminta → diinput di CoreTax → disetujui → bukti. Batas terbit tanggal 15 bulan berikutnya. (F27)"
       />
       {pending
-        ? <EmptyState title="Migrasi belum diterapkan" description="Tabel faktur pajak belum ada di database (migrasi 215)." />
+        ? <EmptyState title="Migrasi belum diterapkan" description="Tabel faktur pajak belum ada di database (migrasi 219)." />
         : !data
           ? <EmptyState title="Backend tidak terjangkau" description="Coba muat ulang beberapa saat lagi." />
           : <FakturPajakView items={data.items} ringkasan={data.ringkasan}

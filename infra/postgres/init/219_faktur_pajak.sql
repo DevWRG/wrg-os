@@ -1,4 +1,4 @@
--- 215 — F27 Faktur Pajak / CoreTax Workflow (Finance). Additive, idempoten.
+-- 219 — F27 Faktur Pajak / CoreTax Workflow (Finance). Additive, idempoten.
 --
 -- Tracker Faktur Pajak (FP) per invoice penjualan: request → input CoreTax → approve → bukti.
 -- Pembuatan FP-nya sendiri tetap di CoreTax (DJP); tabel ini hanya melacak langkahnya.
@@ -8,7 +8,8 @@
 --                         diajukan ke CoreTax). invoice_id tanpa FK: mirror di-upsert berkala.
 --   faktur_pajak_event  — jejak perpindahan status (siapa, kapan, catatan). Hanya INSERT.
 --
--- Nomor 215: 212–214 sudah dipakai F58 / F56 / F74.
+-- Nomor 219: 212–218 sudah dipakai (F58, F56, F74, F131, F130, F169, F73). Awalnya 215 — diganti
+-- karena 215 terpakai F131 di main (13 Okt 2026).
 
 CREATE TABLE IF NOT EXISTS faktur_pajak (
   id              bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,

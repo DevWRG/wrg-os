@@ -1,4 +1,4 @@
-// F27 Faktur Pajak / CoreTax Workflow — migrasi 215.
+// F27 Faktur Pajak / CoreTax Workflow — migrasi 219.
 //
 // Tracker langkah Faktur Pajak (FP) per invoice penjualan: diminta → diinput_coretax → disetujui
 // → selesai (bukti). FP-nya sendiri dibuat di CoreTax (DJP); sistem ini hanya melacak langkahnya.
@@ -27,7 +27,7 @@ export const BATAS_TERBIT_TANGGAL = 15;
 export const KANDIDAT_BULAN = 4;
 export const KANDIDAT_LIMIT = 200;
 const TEXT_MAX = 500;
-const NOMOR_FP_RE = /^[0-9.\-]{10,25}$/;
+const NOMOR_FP_RE = /^[0-9.-]{10,25}$/;
 const WIB_OFFSET_MS = 7 * 3600 * 1000;
 
 export class FakturPajakError extends Error {
