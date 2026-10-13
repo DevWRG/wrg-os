@@ -43,6 +43,7 @@ import { canViewPricebook, canViewPricebookSummary } from "@/lib/pricebook-acces
 import { canViewKlasifikasi } from "@/lib/klasifikasi-access";
 import { canViewKsoKontrak } from "@/lib/kso-kontrak-access";
 import { canViewAsetTetap } from "@/lib/aset-tetap-access";
+import { canViewFakturPajak } from "@/lib/faktur-pajak-access";
 import { canViewRaportList } from "@/lib/raport-access";
 import { canViewExecutive } from "@/lib/executive-access";
 import { canBukaDaftarAlat, canViewKso } from "@/lib/kso-access";
@@ -444,6 +445,8 @@ export const NAV: NavGroup[] = [
       // F34 Aset Tetap — cermin register Accurate. Kunci izin sendiri
       // (featureKey = "aset-tetap"), default tertutup: butuh Sync Fitur + centang.
       { title: "Aset Tetap", url: "/aset-tetap", icon: Landmark, badge: "NEW", show: canViewAsetTetap },
+      // F27 Faktur Pajak / CoreTax — kunci izin "faktur-pajak" (butuh Sync Fitur), tertutup default.
+      { title: "Faktur Pajak", url: "/faktur-pajak", icon: FileCheck2, badge: "NEW", show: canViewFakturPajak },
     ],
   },
   {
