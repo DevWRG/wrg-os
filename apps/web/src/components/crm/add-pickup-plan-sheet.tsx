@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Plus } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { Combobox } from "@/components/ui/combobox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -25,9 +26,15 @@ export interface AccountOption {
   contacts: number;
 }
 
+export interface PickupOptions {
+  kurir: { wa_number: string; nama: string; cabang: string | null }[];
+  sj: { number: string; trans_date: string; customer_name: string | null; account_id: number | null }[];
+  sj_window_days: number;
+}
+
 const besok = () => new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
 
-export function AddPickupPlanSheet({ accounts }: { accounts: AccountOption[] }) {
+export function AddPickupPlanSheet({ accounts, options }: { accounts: AccountOption[]; options: PickupOptions }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -41,11 +48,49 @@ export function AddPickupPlanSheet({ accounts }: { accounts: AccountOption[] }) 
   const [cabang, setCabang] = useState("");
   const [tujuan, setTujuan] = useState("kirim");
   const [sjNumber, setSjNumber] = useState("");
-  const [kurirName, setKurirName] = useState("");
+  // Nilai = nomor WA roster; nama & nomor disimpan server dari master_user.
   const [kurirWa, setKurirWa] = useState("");
   const [catatan, setCatatan] = useState("");
 
   const dipilih = accounts.find((a) => a.id === accountId) ?? null;
+  const sjDipilih = options.sj.find((d) => d.number === sjNumber) ?? null;
+
+  const kurirOpsi = useMemo(
+    () => options.kurir.map((k) => ({ value: k.wa_number, label: k.cabang ? `${k.nama} — ${k.cabang}` : k.nama })),
+    [options.kurir],
+  );
+  const sjOpsi = useMemo(
+    () => options.sj.map((d) => ({ value: d.number, label: `${d.number} · ${d.trans_date} · ${d.customer_name ?? "?"}` })),
+    [options.sj],
+  );
+  // Akun dari SJ bisa di luar daftar akun ber-scope milik user — tetap tampilkan
+  // supaya pemicu combobox tak kosong padahal account_id terisi.
+  const akunOpsi = useMemo(() => {
+    const o = accounts.map((a) => ({
+      value: a.id,
+      label: `${a.name}${a.contacts === 0 ? " — belum ada PIC" : ` — ${a.contacts} PIC`}`,
+    }));
+    if (sjDipilih?.account_id != null && !accounts.some((a) => a.id === String(sjDipilih.account_id))) {
+      o.unshift({ value: String(sjDipilih.account_id), label: sjDipilih.customer_name ?? `Akun ${sjDipilih.account_id}` });
+    }
+    return o;
+  }, [accounts, sjDipilih]);
+
+  function pilihKurir(wa: string) {
+    setKurirWa(wa);
+    const k = options.kurir.find((x) => x.wa_number === wa);
+    // Cabang mengikuti cabang kurir di roster — tetap boleh diubah.
+    if (k?.cabang) setCabang(k.cabang);
+  }
+
+  function pilihSj(no: string) {
+    setSjNumber(no);
+    const d = options.sj.find((x) => x.number === no);
+    if (!d) return;
+    // Customer ikut DO Accurate → PIC tercek tanpa menebak dari nama.
+    if (d.account_id != null) setAccountId(String(d.account_id));
+    if (d.customer_name) setCustomerName(d.customer_name);
+  }
 
   function pilihAccount(id: string) {
     setAccountId(id);
@@ -57,6 +102,10 @@ export function AddPickupPlanSheet({ accounts }: { accounts: AccountOption[] }) 
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
+    if (!kurirWa) {
+      setError("Pilih kurir dulu.");
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -70,8 +119,7 @@ export function AddPickupPlanSheet({ accounts }: { accounts: AccountOption[] }) 
           cabang: cabang.trim() || null,
           tujuan,
           sj_number: sjNumber.trim() || null,
-          kurir_name: kurirName.trim() || null,
-          kurir_wa_number: kurirWa.trim() || null,
+          kurir_wa_number: kurirWa || null,
           catatan: catatan.trim() || null,
         }),
       });
@@ -80,6 +128,8 @@ export function AddPickupPlanSheet({ accounts }: { accounts: AccountOption[] }) 
       setAccountId("");
       setCustomerName("");
       setSjNumber("");
+      setKurirWa("");
+      setCabang("");
       setCatatan("");
       setTanggal(besok());
       setOpen(false);
@@ -111,21 +161,47 @@ export function AddPickupPlanSheet({ accounts }: { accounts: AccountOption[] }) 
             </div>
 
             <div className="grid gap-1.5">
-              <Label htmlFor="pp-account">Customer (dari daftar akun)</Label>
+              <Label htmlFor="pp-tujuan">Tujuan trip *</Label>
               <select
-                id="pp-account"
+                id="pp-tujuan"
                 className="border-input bg-background h-9 rounded-md border px-3 text-sm"
-                value={accountId}
-                onChange={(e) => pilihAccount(e.target.value)}
+                value={tujuan}
+                onChange={(e) => setTujuan(e.target.value)}
               >
-                <option value="">— pilih akun (opsional) —</option>
-                {accounts.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.name}
-                    {a.contacts === 0 ? " — belum ada PIC" : ` — ${a.contacts} PIC`}
-                  </option>
-                ))}
+                <option value="kirim">Kirim barang</option>
+                <option value="tagih">Tagih / ambil faktur</option>
+                <option value="kirim+tagih">Kirim + tagih</option>
               </select>
+            </div>
+
+            <div className="grid gap-1.5">
+              <Label htmlFor="pp-sj">No. SJ (opsional)</Label>
+              <Combobox
+                id="pp-sj"
+                value={sjNumber}
+                onChange={pilihSj}
+                options={sjOpsi}
+                emptyOption="— tanpa SJ —"
+                placeholder="— pilih SJ —"
+                searchPlaceholder="Cari nomor SJ / customer…"
+              />
+              <p className="text-muted-foreground text-xs">
+                SJ dari DO Accurate {options.sj_window_days} hari terakhir yang belum #TERIMA/#BAST dan belum
+                dijadwalkan. Memilih SJ mengisi customer otomatis. Trip tagih boleh tanpa SJ.
+              </p>
+            </div>
+
+            <div className="grid gap-1.5">
+              <Label htmlFor="pp-account">Customer (dari daftar akun)</Label>
+              <Combobox
+                id="pp-account"
+                value={accountId}
+                onChange={pilihAccount}
+                options={akunOpsi}
+                emptyOption="— tanpa akun —"
+                placeholder="— pilih akun (opsional) —"
+                searchPlaceholder="Cari faskes…"
+              />
               <p className="text-muted-foreground text-xs">
                 Pilih dari daftar supaya PIC & backup-nya bisa ikut dicek. Kalau dikosongkan, verifikasi
                 PIC dilewati — sistem sengaja tidak menebak akun dari nama.
@@ -149,41 +225,24 @@ export function AddPickupPlanSheet({ accounts }: { accounts: AccountOption[] }) 
             </div>
 
             <div className="grid gap-1.5">
-              <Label htmlFor="pp-tujuan">Tujuan trip *</Label>
-              <select
-                id="pp-tujuan"
-                className="border-input bg-background h-9 rounded-md border px-3 text-sm"
-                value={tujuan}
-                onChange={(e) => setTujuan(e.target.value)}
-              >
-                <option value="kirim">Kirim barang</option>
-                <option value="tagih">Tagih / ambil faktur</option>
-                <option value="kirim+tagih">Kirim + tagih</option>
-              </select>
-            </div>
-
-            <div className="grid gap-1.5">
-              <Label htmlFor="pp-sj">No. SJ (opsional)</Label>
-              <Input id="pp-sj" value={sjNumber} onChange={(e) => setSjNumber(e.target.value)} placeholder="SJ/2026/07/0001" />
-              <p className="text-muted-foreground text-xs">Trip tagih biasanya tanpa SJ — boleh dikosongkan.</p>
+              <Label htmlFor="pp-kurir">Kurir *</Label>
+              <Combobox
+                id="pp-kurir"
+                value={kurirWa}
+                onChange={pilihKurir}
+                options={kurirOpsi}
+                placeholder={kurirOpsi.length ? "— pilih kurir —" : "Roster Kirim Tagih kosong"}
+                searchPlaceholder="Cari nama / cabang…"
+                disabled={!kurirOpsi.length}
+              />
+              <p className="text-muted-foreground text-xs">
+                Dari roster karyawan Kirim Tagih. Hasil cek H-1 dikirim ke WA kurir yang tercatat di roster.
+              </p>
             </div>
 
             <div className="grid gap-1.5">
               <Label htmlFor="pp-cabang">Cabang / station *</Label>
-              <Input id="pp-cabang" required value={cabang} onChange={(e) => setCabang(e.target.value)} placeholder="Surabaya" />
-            </div>
-
-            <div className="grid gap-1.5">
-              <Label htmlFor="pp-kurir">Nama kurir *</Label>
-              <Input id="pp-kurir" required value={kurirName} onChange={(e) => setKurirName(e.target.value)} placeholder="Munir" />
-            </div>
-
-            <div className="grid gap-1.5">
-              <Label htmlFor="pp-kurir-wa">Nomor WA kurir *</Label>
-              <Input id="pp-kurir-wa" required value={kurirWa} onChange={(e) => setKurirWa(e.target.value)} placeholder="628…" />
-              <p className="text-muted-foreground text-xs">
-                Tujuan hasil cek H-1. Belum ada form edit setelah disimpan — pastikan benar sebelum submit.
-              </p>
+              <Input id="pp-cabang" required value={cabang} onChange={(e) => setCabang(e.target.value)} placeholder="Terisi dari cabang kurir" />
             </div>
 
             <div className="grid gap-1.5">

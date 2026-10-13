@@ -162,6 +162,97 @@ export async function updatePickupPlan(
   return rows.length ? mapRow(rows[0]) : null;
 }
 
+// ── Opsi form: kurir (roster internal) + SJ yang belum sampai ────────────────
+// Kurir = karyawan internal, jadi TIDAK diketik bebas: diambil dari roster
+// `master_user` (posisi Kirim Tagih) — roster yang sama dipakai #KIRIM untuk
+// mengenali pengirim. Nomor WA tujuan cek H-1 ikut dari roster, bukan isian form.
+export interface KurirOption {
+  wa_number: string;
+  nama: string;
+  cabang: string | null;
+}
+
+const KURIR_POSISI = "%kirim tagih%";
+
+export async function listKurirOptions(): Promise<KurirOption[]> {
+  const sql = db();
+  const rows = await sql`
+    SELECT wa_number, nama, cabang FROM master_user
+    WHERE aktif AND posisi ILIKE ${KURIR_POSISI}
+      AND wa_number IS NOT NULL AND wa_number <> ''
+    ORDER BY nama
+  `;
+  return rows.map((r) => ({
+    wa_number: String(r.wa_number),
+    nama: String(r.nama),
+    cabang: r.cabang == null ? null : String(r.cabang),
+  }));
+}
+
+// Resolusi kurir di server dari nomor WA yang dipilih — nama ikut dari roster,
+// bukan dari body, supaya baris tak bisa menyimpan nama yang tak cocok dgn nomornya.
+export async function resolveKurir(wa: string): Promise<KurirOption | null> {
+  const norm = normalizeWa(wa.trim());
+  if (!norm) return null;
+  const all = await listKurirOptions();
+  return all.find((k) => normalizeWa(k.wa_number) === norm) ?? null;
+}
+
+// SJ "belum terkirim" = DO Accurate 30 hari terakhir yang di Shipment Tracking
+// BELUM #TERIMA/#BAST (status Accurate "Dikirim"/"Difaktur" bukan bukti barang
+// sampai — itu status dokumen). DO yang sudah ada di jadwal aktif lain disaring
+// supaya satu SJ tak dijadwalkan dua kali. account_id dari raw->customer->id
+// (sama dgn accurate_customer.id) → PIC ikut tercek tanpa menebak dari nama.
+export interface SjOption {
+  number: string;
+  trans_date: string;
+  customer_name: string | null;
+  account_id: number | null;
+}
+
+export const SJ_WINDOW_DAYS = 30;
+
+export async function listSjOptions(): Promise<SjOption[]> {
+  const sql = db();
+  const rows = await sql`
+    SELECT d.number, d.trans_date, d.customer_name, a.id AS account_id
+    FROM accurate_delivery_order d
+    LEFT JOIN accurate_customer a
+      ON d.raw->'customer'->>'id' ~ '^[0-9]+$'
+     AND a.id = (d.raw->'customer'->>'id')::bigint
+    WHERE d.number IS NOT NULL
+      AND d.trans_date >= (now() AT TIME ZONE 'Asia/Jakarta')::date - ${SJ_WINDOW_DAYS}::int
+      AND NOT EXISTS (
+        SELECT 1 FROM shipment_tracking s
+        WHERE lower(s.sj_number) = lower(d.number) AND s.status IN ('terima','bast'))
+      AND NOT EXISTS (
+        SELECT 1 FROM pickup_plan p
+        WHERE lower(p.sj_number) = lower(d.number) AND p.status = 'rencana')
+    ORDER BY d.trans_date DESC, d.number DESC
+  `;
+  return rows.map((r) => ({
+    number: String(r.number),
+    trans_date: toIsoDate(r.trans_date),
+    customer_name: r.customer_name == null ? null : String(r.customer_name),
+    account_id: r.account_id == null ? null : Number(r.account_id),
+  }));
+}
+
+// Validasi SJ saat simpan: harus nomor DO yang ada (bentuk kanonik dari mirror)
+// dan belum ada di jadwal aktif lain.
+export async function cekSj(raw: string): Promise<{ ok: true; number: string } | { ok: false; error: string }> {
+  const sql = db();
+  const [d] = await sql`
+    SELECT number FROM accurate_delivery_order WHERE lower(number) = lower(${raw.trim()}) LIMIT 1
+  `;
+  if (!d) return { ok: false, error: `SJ "${raw.trim()}" tidak ditemukan di DO Accurate` };
+  const [dup] = await sql`
+    SELECT tanggal FROM pickup_plan WHERE lower(sj_number) = lower(${String(d.number)}) AND status = 'rencana' LIMIT 1
+  `;
+  if (dup) return { ok: false, error: `SJ ${String(d.number)} sudah dijadwalkan (${toIsoDate(dup.tanggal)})` };
+  return { ok: true, number: String(d.number) };
+}
+
 export async function deletePickupPlan(id: string): Promise<boolean> {
   const sql = db();
   if (!UUID_RE.test(id)) return false;
@@ -201,6 +292,7 @@ export interface PreVisitTemuan {
   customer_name: string;
   tanggal: string;
   tujuan: PickupTujuan;
+  sj_number: string | null;
   libur: string | null; // keterangan hari libur, null kalau bukan libur
   akhir_pekan: boolean;
   kalender_ada: boolean; // false = kalender libur tahun itu belum diisi
@@ -262,6 +354,7 @@ async function verifikasi(plan: PickupPlanRow, kondisi: KondisiTanggal): Promise
     customer_name: plan.customer_name,
     tanggal: plan.tanggal,
     tujuan: plan.tujuan,
+    sj_number: plan.sj_number,
     libur: kondisi.libur,
     akhir_pekan: kondisi.akhir_pekan,
     kalender_ada: kondisi.kalender_ada,
@@ -276,7 +369,7 @@ function buildMessage(temuan: PreVisitTemuan[]): string {
   const tanggal = temuan[0]?.tanggal ?? "";
   const lines = [`🚚 *Cek sebelum jalan besok (${tanggal})*`];
   for (const t of temuan) {
-    lines.push("", `*${t.customer_name}* — ${t.tujuan}`);
+    lines.push("", `*${t.customer_name}* — ${t.tujuan}${t.sj_number ? ` · SJ ${t.sj_number}` : ""}`);
     if (t.libur) lines.push(`⚠️ LIBUR: ${t.libur} — kemungkinan tutup, konfirmasi dulu`);
     if (t.akhir_pekan) lines.push("⚠️ Akhir pekan — pastikan ada yang menerima");
     if (!t.kalender_ada) {

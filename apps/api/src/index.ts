@@ -33,7 +33,7 @@ import { MateriError, buatMateri, listMateri, ubahMateri, type BerkasMasuk } fro
 import { DriveError, driveSiap } from "./gdrive.js";
 import { CampaignError, buatKampanye, cariItem, detailKampanye, listKampanye, opsiBrand, ubahKampanye } from "./repo/campaign.js";
 import { listDemoTrial, getDemoTrial, bukaDemoTrial, ubahDemoTrial, tutupDemoTrial, rekapKonversi, resolusiFaskes, dealTerlihat, DemoTrialError } from "./repo/demo-trial.js";
-import { listPickupPlans, createPickupPlan, updatePickupPlan, deletePickupPlan, previewPreVisit, runPreVisitCheck } from "./repo/pickup-plan.js";
+import { listPickupPlans, createPickupPlan, updatePickupPlan, deletePickupPlan, previewPreVisit, runPreVisitCheck, listKurirOptions, listSjOptions, resolveKurir, cekSj, SJ_WINDOW_DAYS } from "./repo/pickup-plan.js";
 import {
   ingestInvoices,
   ingestAccurateWebhook,
@@ -5857,6 +5857,13 @@ app.get("/pickup-plan", async (c) => {
   return c.json({ count: rows.length, plans: rows });
 });
 
+// Opsi form: roster kurir internal + SJ (DO Accurate) yang belum #TERIMA/#BAST.
+app.get("/pickup-plan/options", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const [kurir, sj] = await Promise.all([listKurirOptions(), listSjOptions()]);
+  return c.json({ kurir, sj, sj_window_days: SJ_WINDOW_DAYS });
+});
+
 app.post("/pickup-plan", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   let body: Record<string, unknown>;
@@ -5864,21 +5871,25 @@ app.post("/pickup-plan", async (c) => {
   const tanggal = typeof body.tanggal === "string" ? body.tanggal.trim() : "";
   const customer = typeof body.customer_name === "string" ? body.customer_name.trim() : "";
   const cabang = typeof body.cabang === "string" ? body.cabang.trim() : "";
-  const kurirName = typeof body.kurir_name === "string" ? body.kurir_name.trim() : "";
   const kurirWa = typeof body.kurir_wa_number === "string" ? body.kurir_wa_number.trim() : "";
   if (!isIsoDate(tanggal)) return c.json({ error: "tanggal wajib & harus tanggal valid (YYYY-MM-DD)" }, 400);
   if (!customer) return c.json({ error: "customer_name wajib" }, 400);
   if (!cabang) return c.json({ error: "cabang wajib diisi" }, 400);
-  if (!kurirName) return c.json({ error: "nama kurir wajib diisi" }, 400);
-  // Tanpa nomor kurir, notifikasi H-1 tak punya tujuan jelas (runPreVisitCheck
-  // hanya fallback ke PREVISIT_WA_TARGET, bukan broadcast) — jadi jadwal
-  // ter-simpan tapi kurirnya tak pernah diberi tahu. Diwajibkan di sini,
-  // bukan cuma diandalkan validasi UI, karena baris ini TIDAK bisa diedit
-  // lagi setelah tersimpan (tak ada form edit, cuma status/hapus).
-  if (normalizeWa(kurirWa).length < 9) return c.json({ error: "nomor WA kurir wajib diisi & harus nomor yang valid" }, 400);
+  // Kurir = karyawan internal: dipilih dari roster (nilai = nomor WA roster).
+  // Nama & nomor diambil dari master_user, bukan dari body — nomor itulah
+  // tujuan cek H-1, jadi tak boleh berupa isian bebas.
+  if (!kurirWa) return c.json({ error: "kurir wajib dipilih" }, 400);
+  const kurir = await resolveKurir(kurirWa);
+  if (!kurir) return c.json({ error: "kurir tidak ada di roster Kirim Tagih aktif" }, 400);
   const tujuan = body.tujuan == null ? "kirim" : String(body.tujuan);
   if (!["kirim", "tagih", "kirim+tagih"].includes(tujuan)) {
     return c.json({ error: "tujuan harus kirim|tagih|kirim+tagih" }, 400);
+  }
+  let sjNumber: string | null = null;
+  if (typeof body.sj_number === "string" && body.sj_number.trim()) {
+    const sj = await cekSj(body.sj_number);
+    if (!sj.ok) return c.json({ error: sj.error }, 400);
+    sjNumber = sj.number;
   }
   // TIDAK dibungkus try/catch lokal (dulu ada, sengaja dilepas): itu menangkap
   // PostgresError SEBELUM sampai ke app.onError global, jadi error mentah
@@ -5893,9 +5904,9 @@ app.post("/pickup-plan", async (c) => {
     account_id: body.account_id == null ? null : Number(body.account_id),
     cabang,
     tujuan: tujuan as "kirim" | "tagih" | "kirim+tagih",
-    sj_number: body.sj_number == null ? null : String(body.sj_number),
-    kurir_name: kurirName,
-    kurir_wa_number: kurirWa,
+    sj_number: sjNumber,
+    kurir_name: kurir.nama,
+    kurir_wa_number: kurir.wa_number,
     catatan: body.catatan == null ? null : String(body.catatan),
     created_by: body.created_by == null ? null : String(body.created_by),
   });
@@ -5912,8 +5923,8 @@ app.patch("/pickup-plan/:id", async (c) => {
   if (body.tanggal != null && !isIsoDate(String(body.tanggal))) {
     return c.json({ error: "tanggal harus tanggal valid (YYYY-MM-DD)" }, 400);
   }
-  if (body.kurir_wa_number != null && normalizeWa(String(body.kurir_wa_number)).length < 9) {
-    return c.json({ error: "nomor WA kurir tidak valid" }, 400);
+  if (body.kurir_wa_number != null && !(await resolveKurir(String(body.kurir_wa_number)))) {
+    return c.json({ error: "kurir tidak ada di roster Kirim Tagih aktif" }, 400);
   }
   const row = await updatePickupPlan(c.req.param("id"), {
     status: body.status == null ? undefined : (String(body.status) as "rencana" | "selesai" | "batal"),

@@ -89,9 +89,7 @@ INSERT INTO feature (key, name, section, path, sort) VALUES
   ('pickup-plan', 'Jadwal Kirim-Tagih', 'Operations', '/pickup-plan', 305)
 ON CONFLICT (key) DO UPDATE SET name = EXCLUDED.name, section = EXCLUDED.section, path = EXCLUDED.path, sort = EXCLUDED.sort;
 
-INSERT INTO access_permission (group_id, feature_key, active, can_view, can_create, can_edit, can_delete)
-SELECT g.id, 'pickup-plan', true, true, true, true, true FROM access_group g WHERE g.key = 'administrator' ON CONFLICT DO NOTHING;
-INSERT INTO access_permission (group_id, feature_key, active, can_view, can_create, can_edit, can_delete)
-SELECT g.id, 'pickup-plan', true, true, true, true, false FROM access_group g WHERE g.key = 'operator' ON CONFLICT DO NOTHING;
-INSERT INTO access_permission (group_id, feature_key, active, can_view, can_create, can_edit, can_delete)
-SELECT g.id, 'pickup-plan', true, true, false, false, false FROM access_group g WHERE g.key = 'viewer' ON CONFLICT DO NOTHING;
+-- access_permission SENGAJA tidak disemai: fitur baru default tertutup —
+-- admin membuka lewat Akses Grup sesudah Sync Fitur. (Versi awal menyemai
+-- allow utk administrator/operator/viewer; dicabut sebelum promosi ke main.
+-- Baris yang sudah terlanjur ada di DB dev tak disentuh migrasi ini.)
