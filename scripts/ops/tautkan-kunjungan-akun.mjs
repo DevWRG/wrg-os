@@ -12,6 +12,9 @@
 //   node scripts/ops/tautkan-kunjungan-akun.mjs --csv /tmp/x.csv     # + lembar tinjauan
 //   node scripts/ops/tautkan-kunjungan-akun.mjs --apply              # isi yang KOSONG saja
 //   node scripts/ops/tautkan-kunjungan-akun.mjs --apply --perbaiki-lama
+//   node scripts/ops/tautkan-kunjungan-akun.mjs --tabel deal [--apply ...]
+//        ^ tabel deal (nama faskes + KOTA deal sebagai pemecah seri antar-kota;
+//          92% deal prod tanpa account_id per 13 Okt 2026)
 //        ^ juga MENGGANTI tautan lama yang berbeda dari hasil penaut baru tier 1
 //          (mis. "PMI Kab Kediri" yang dulu tertaut ke "KRAS, PKM").
 //
@@ -27,6 +30,12 @@ const APPLY = process.argv.includes("--apply");
 const PERBAIKI = process.argv.includes("--perbaiki-lama");
 const csvIdx = process.argv.indexOf("--csv");
 const CSV = csvIdx > -1 ? process.argv[csvIdx + 1] : null;
+const tIdx = process.argv.indexOf("--tabel");
+const TABEL = tIdx > -1 ? process.argv[tIdx + 1] : "activity";
+if (!["activity", "deal"].includes(TABEL)) {
+  console.error("--tabel harus activity atau deal");
+  process.exit(1);
+}
 
 if (!process.env.DATABASE_URL) {
   console.error("DATABASE_URL belum di-set.");
@@ -35,16 +44,25 @@ if (!process.env.DATABASE_URL) {
 
 const sql = db();
 const katalog = await katalogFaskes();
-const baris = await sql`
-  SELECT al.id, al.customer_name, al.account_id,
-         COALESCE(NULLIF(ac.name,''), ac.raw->>'name') AS nama_lama
-  FROM activity_log al LEFT JOIN accurate_customer ac ON ac.id = al.account_id
-  WHERE al.customer_name IS NOT NULL`;
+// customer_name = teks yang ditautkan; kota = petunjuk pemecah seri (deal saja).
+const baris = TABEL === "deal"
+  ? await sql`
+      SELECT d.deal_id::text AS id, COALESCE(NULLIF(d.facility_name,''), d.customer_name) AS customer_name,
+             NULLIF(btrim(d.city),'') AS kota, d.account_id,
+             COALESCE(NULLIF(ac.name,''), ac.raw->>'name') AS nama_lama
+      FROM deal d LEFT JOIN accurate_customer ac ON ac.id = d.account_id
+      WHERE COALESCE(NULLIF(d.facility_name,''), d.customer_name) IS NOT NULL`
+  : await sql`
+      SELECT al.id::text AS id, al.customer_name, NULL::text AS kota, al.account_id,
+             COALESCE(NULLIF(ac.name,''), ac.raw->>'name') AS nama_lama
+      FROM activity_log al LEFT JOIN accurate_customer ac ON ac.id = al.account_id
+      WHERE al.customer_name IS NOT NULL`;
 
-// Satu kali per nama unik — ribuan baris berbagi beberapa ratus nama.
+// Satu kali per (nama, kota) unik — ribuan baris berbagi beberapa ratus nama.
+const kunci = (r) => `${r.customer_name}\u0000${r.kota ?? ""}`;
 const hasilNama = new Map();
 for (const r of baris) {
-  if (!hasilNama.has(r.customer_name)) hasilNama.set(r.customer_name, tautkanFaskes(r.customer_name, katalog));
+  if (!hasilNama.has(kunci(r))) hasilNama.set(kunci(r), tautkanFaskes(r.customer_name, katalog, { kota: r.kota }));
 }
 
 const isi = []; // [id, lama, baru]
@@ -52,12 +70,12 @@ const ganti = [];
 const hitung = { kosong: 0, tertaut_t1: 0, tertaut_t2: 0, ambigu: 0, tak_ketemu: 0, lama_sama: 0, lama_beda: 0, lama_pribadi: 0, lama_tak_yakin: 0 };
 const tinjau = [];
 for (const r of baris) {
-  const h = hasilNama.get(r.customer_name);
+  const h = hasilNama.get(kunci(r));
   if (r.account_id == null) {
     hitung.kosong++;
     if (h.kind === "one") {
       hitung[h.tier === 1 ? "tertaut_t1" : "tertaut_t2"]++;
-      isi.push([Number(r.id), null, h.id]);
+      isi.push([r.id, null, h.id]);
     } else if (h.kind === "ambiguous") hitung.ambigu++;
     else hitung.tak_ketemu++;
   } else if (h.kind === "one" && h.id === Number(r.account_id)) hitung.lama_sama++;
@@ -74,7 +92,7 @@ for (const r of baris) {
     if (sekotaSejenis) hitung.lama_pribadi++;
     else {
       hitung.lama_beda++;
-      ganti.push([Number(r.id), Number(r.account_id), h.id]);
+      ganti.push([r.id, Number(r.account_id), h.id]);
     }
   } else hitung.lama_tak_yakin++;
 }
@@ -82,21 +100,21 @@ for (const r of baris) {
 // Lembar tinjauan per NAMA (bukan per baris) — itu yang diperiksa manusia.
 const perNama = new Map();
 for (const r of baris) {
-  const k = r.customer_name;
-  const e = perNama.get(k) ?? { n: 0, lama: new Set() };
+  const k = kunci(r);
+  const e = perNama.get(k) ?? { n: 0, lama: new Set(), nama: r.customer_name, kota: r.kota };
   e.n++;
   if (r.nama_lama) e.lama.add(r.nama_lama);
   perNama.set(k, e);
 }
-for (const [nama, e] of perNama) {
-  const h = hasilNama.get(nama);
+for (const [k, e] of perNama) {
+  const h = hasilNama.get(k);
   const hasil = h.kind === "one" ? `tier${h.tier}` : h.kind;
   const ke = h.kind === "one" ? h.nama : h.kind === "ambiguous" ? h.names.join(" / ") : "";
-  tinjau.push([nama, e.n, hasil, ke, [...e.lama].join(" / ")]);
+  tinjau.push([e.nama, e.kota ?? "", e.n, hasil, ke, [...e.lama].join(" / ")]);
 }
 
-console.log(`== Tautkan kunjungan → faskes (${APPLY ? "APPLY" : "PRATINJAU"}${PERBAIKI ? " + perbaiki-lama" : ""}) ==`);
-console.log(`  baris activity_log        : ${baris.length}`);
+console.log(`== Tautkan ${TABEL === "deal" ? "deal" : "kunjungan"} → faskes (${APPLY ? "APPLY" : "PRATINJAU"}${PERBAIKI ? " + perbaiki-lama" : ""}) ==`);
+console.log(`  baris ${TABEL === "deal" ? "deal" : "activity_log"}${TABEL === "deal" ? "                " : "        "}: ${baris.length}`);
 console.log(`  belum tertaut             : ${hitung.kosong}`);
 console.log(`    → tertaut nama lengkap  : ${hitung.tertaut_t1}`);
 console.log(`    → tertaut nama sebagian : ${hitung.tertaut_t2}`);
@@ -109,7 +127,7 @@ console.log(`    → akun pribadi di instansi sama: ${hitung.lama_pribadi}  (dib
 console.log(`    → penaut baru tak yakin : ${hitung.lama_tak_yakin}  (dibiarkan)`);
 const contohBeda = new Map();
 for (const [id, lama, baru] of ganti) {
-  const r = baris.find((x) => Number(x.id) === id);
+  const r = baris.find((x) => x.id === id);
   const k = `${r.customer_name}`;
   if (!contohBeda.has(k)) contohBeda.set(k, `${r.nama_lama}  →  ${katalog.find((f) => f.id === baru)?.nama}`);
 }
@@ -117,22 +135,28 @@ for (const [k, v] of [...contohBeda].slice(0, 30)) console.log(`      ${k}:  ${v
 
 if (CSV) {
   const q = (x) => `"${String(x ?? "").replace(/"/g, '""')}"`;
-  writeFileSync(CSV, "﻿sep=;\n" + [["tulisan_am", "jumlah", "hasil", "faskes_baru", "tautan_lama"], ...tinjau.sort((a, b) => b[1] - a[1])]
+  writeFileSync(CSV, "\ufeffsep=;\n" + [["tulisan_am", "kota", "jumlah", "hasil", "faskes_baru", "tautan_lama"], ...tinjau.sort((a, b) => b[2] - a[2])]
     .map((r) => r.map(q).join(";")).join("\n"));
   console.log(`  lembar tinjauan → ${CSV}`);
 }
 
 if (APPLY) {
   const tulis = PERBAIKI ? [...isi, ...ganti] : isi;
-  const pulih = `/tmp/tautkan-kunjungan-${new Date().toISOString().replace(/[:.]/g, "-")}.csv`;
+  const pulih = `/tmp/tautkan-${TABEL === "deal" ? "deal" : "kunjungan"}-${new Date().toISOString().replace(/[:.]/g, "-")}.csv`;
   writeFileSync(pulih, "id;account_id_lama;account_id_baru\n" + tulis.map((r) => r.map((x) => x ?? "").join(";")).join("\n"));
   let n = 0;
   await sql.begin(async (tx) => {
     for (const [id, lama, baru] of tulis) {
       // Penjaga balapan: hanya bila nilainya masih seperti saat dibaca.
-      const r = lama == null
-        ? await tx`UPDATE activity_log SET account_id = ${baru} WHERE id = ${id} AND account_id IS NULL`
-        : await tx`UPDATE activity_log SET account_id = ${baru} WHERE id = ${id} AND account_id = ${lama}`;
+      // deal: updated_at sengaja TIDAK disentuh — tautan akun bukan aktivitas,
+      // jangan sampai deal mangkrak terlihat segar.
+      const r = TABEL === "deal"
+        ? (lama == null
+          ? await tx`UPDATE deal SET account_id = ${baru} WHERE deal_id = ${id}::uuid AND account_id IS NULL`
+          : await tx`UPDATE deal SET account_id = ${baru} WHERE deal_id = ${id}::uuid AND account_id = ${lama}`)
+        : (lama == null
+          ? await tx`UPDATE activity_log SET account_id = ${baru} WHERE id = ${id}::bigint AND account_id IS NULL`
+          : await tx`UPDATE activity_log SET account_id = ${baru} WHERE id = ${id}::bigint AND account_id = ${lama}`);
       n += r.count;
     }
   });

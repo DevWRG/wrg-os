@@ -148,9 +148,11 @@ export async function briefingFaskes(sc: DataScope, ids: number[]): Promise<Brie
     sql`SELECT d.stage::text AS stage, d.brand, d.product, COALESCE(d.estimated_value, d.estimate_amount)::float8 AS nilai,
                (current_date - d.stage_entered_at::date)::int AS hari, COALESCE(NULLIF(mu.nama, ''), d.am_id) AS am
         FROM deal d LEFT JOIN master_user mu ON mu.am_id = d.am_id
+        -- Hanya lewat tautan account_id. Tebakan nama di sini mencampur faskes
+        -- sekota (sama seperti kunjungan, 13 Okt 2026); deal kini ditautkan saat
+        -- dibuat/diedit + skrip tautkan-kunjungan-akun.mjs --tabel deal.
         WHERE d.stage::text NOT IN ('Closing-Won', 'Closing-Lost')
-          AND (d.account_id = ANY(${ids}::bigint[])
-               OR (d.account_id IS NULL AND ${namaCocok(sql, sql`d.facility_name`, nama)}))
+          AND d.account_id = ANY(${ids}::bigint[])
         ORDER BY COALESCE(d.estimated_value, d.estimate_amount) DESC NULLS LAST LIMIT 5`,
     sql`SELECT COALESCE(NULLIF(a.nama_alat, ''), a.type_alat) AS alat, a.mou_berlaku_sampai::text AS mou
         FROM kso_asset a JOIN kso_asset_status_v v ON v.id = a.id
