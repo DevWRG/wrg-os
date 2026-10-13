@@ -3,6 +3,7 @@ import { detectDaily, parseDaily, stripInvisible } from "../parsers/dailyplan.js
 import { parseAmPlan, parseAmReport, bersihkanNamaCustomer } from "../parsers/am.js";
 import { sendViaWaGateway, type WaSendResult } from "../wasend.js";
 import { handleSalesAnalyticsQuery } from "./inbound-sales-analytics.js";
+import { balasanKampanye } from "./campaign.js";
 import { resolveSender } from "./master.js";
 import { upsertDailyTodo, computeIsLate } from "./todo.js";
 import { createReminder } from "./reminder.js";
@@ -89,6 +90,7 @@ export type InboundKind =
   | "bukti"
   | "demo"
   | "trial"
+  | "kampanye"
   | "none";
 
 // Hashtag yang dijaring processUnprocessed. Diekspor supaya diuji berpasangan
@@ -98,7 +100,7 @@ export type InboundKind =
 // (dev menutup kelas bug ini dengan INBOUND_HASHTAGS sebagai sumber tunggal.)
 export const INBOUND_FILTER_KINDS = [
   "plan", "report", "leads", "update", "sales", "koran", "overtime", "faktur", "approve", "reject", "call", "note",
-  "kirim", "terima", "bast", "bukti", "demo", "trial",
+  "kirim", "terima", "bast", "bukti", "demo", "trial", "kampanye",
 ] as const;
 export const inboundHashtagPattern = (): string => `#\\s*(${INBOUND_FILTER_KINDS.join("|")})`;
 
@@ -119,6 +121,8 @@ const APPROVE_REJECT_LINE = /^\s*#\s*(approve|reject)\b/i;
 const INTERAKSI_LINE = /^\s*#\s*(call|note)\b/i;
 // F18 — #DEMO / #TRIAL: buka (faskes: alat) atau tutup (DM-/TR-xxxx hasil).
 const DEMO_TRIAL_LINE = /^\s*#\s*(demo|trial)\b/i;
+// F74 — #KAMPANYE (baca progres kampanye; tak menulis apa pun).
+const KAMPANYE_LINE = /^\s*#\s*kampanye\b/i;
 // F12/F42/F93 — hashtag SHIPPING dari kurir: "#KIRIM SJK 6142" / "#TERIMA SJK
 // 6142" / "#BAST SJK 6142" / "#BUKTI SJK 6142" (caption foto atau teks biasa;
 // rujukan SJ = jenis + angka urut DO Accurate, lihat parseSjRef).
@@ -149,6 +153,7 @@ export function detectKind(body: string | null): InboundKind {
       if (dt) return dt[1].toLowerCase() as "demo" | "trial";
       const sh = line.match(SHIPPING_LINE);
       if (sh) return sh[1].toLowerCase() as "kirim" | "terima" | "bast" | "bukti";
+      if (KAMPANYE_LINE.test(line)) return "kampanye";
     }
   }
   return "none";
@@ -1423,6 +1428,22 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
       : `⚠️ ${pesanGagalShipping(shipment.sj_number, action.error)}`;
     const reply = await sendViaWaGateway(target, replyMsg);
     return finish({ shipment_id: shipment.id, sj: shipment.sj_number, dibuat, ok: action.ok, error: action.error, reply });
+  }
+
+  // #KAMPANYE — F74: progres kampanye non-KSO dalam scope pengirim (AM = dirinya,
+  // HoD = timnya, admin = semua). Baca saja; pengirim wajib dikenal (ketat).
+  if (kind === "kampanye") {
+    const km = await resolveSender({ senderJid: row.sender_jid, groupJid: row.group_jid, pushname: row.sender_name, ketat: true });
+    if (!km) return finish({ skipped: "unknown-sender", sender_name: row.sender_name });
+    let text: string;
+    try {
+      text = await balasanKampanye(extractHashtagArg(row.body, KAMPANYE_LINE), { am_id: km.am_id, nama: km.nama ?? null, role: km.role ?? null });
+    } catch (e) {
+      console.error("[inbound] #KAMPANYE gagal diproses:", (e as Error).message);
+      text = "⚠️ #KAMPANYE gagal diproses, coba lagi sebentar lagi.";
+    }
+    const reply = await sendViaWaGateway(target, text);
+    return finish({ kind: "kampanye", via: km.via, reply });
   }
 
   // #FAKTUR <no_invoice> — F91: status Open/Paid/Overdue + jatuh tempo +
