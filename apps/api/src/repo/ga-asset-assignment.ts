@@ -1,7 +1,7 @@
 import { db } from "../db.js";
 import { sendGaWa } from "../wasend.js";
 import { normalizeWa } from "./master.js";
-import { getAsset, resolveUserByName, type GaAssetRow } from "./ga-asset.js";
+import { getAsset, lokasiSama, resolveUserByName, type GaAssetRow } from "./ga-asset.js";
 
 // F133 — GA Asset Assignment + Transfer + History Timeline. DI ATAS F132
 // (ga_assets, migrasi 086) — assign/return/transfer SUNGGUHAN (yang menulis
@@ -168,10 +168,9 @@ export interface TransferInput {
   transfer_date?: string | null;
 }
 
-// Samakan lokasi untuk perbandingan "berubah atau tidak": spasi & huruf besar
-// tak dianggap pindah. Pure — diuji unit.
-export const lokasiSama = (a: string | null | undefined, b: string | null | undefined): boolean =>
-  (a ?? "").trim().replace(/\s+/g, " ").toLowerCase() === (b ?? "").trim().replace(/\s+/g, " ").toLowerCase();
+// lokasiSama tinggal di ga-asset.ts (dipakai juga penjaga Edit); diekspor ulang
+// di sini supaya pemanggil lama tetap jalan.
+export { lokasiSama };
 
 export async function transferAsset(
   assetId: string,
