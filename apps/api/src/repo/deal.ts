@@ -880,6 +880,24 @@ export interface DealMutationResult {
 }
 
 /**
+ * Validasi AM tujuan penunjukan deal (form create/edit HoD/admin). AM aktif
+ * ber-peran AM; HoD hanya boleh menunjuk AM di cabang timnya — aturan yang sama
+ * dengan pemindahan pemilik akun (account.ts) supaya deal tak bisa "dibuang" ke
+ * cabang lain lalu hilang dari board HoD-nya sendiri.
+ */
+async function amTujuan(scope: DataScope, amId: string): Promise<{ nama: string; cabang: string | null }> {
+  const [mu] = await db()`
+    SELECT COALESCE(NULLIF(panggilan,''), NULLIF(nama,''), am_id) AS nama, NULLIF(upper(btrim(cabang)),'') AS cabang
+    FROM master_user WHERE am_id = ${amId} AND aktif AND upper(role) = 'AM'`;
+  if (!mu) throw new DealError(400, `AM ${amId} tidak ada / nonaktif di roster`);
+  const cabang = mu.cabang ? String(mu.cabang) : null;
+  if (!scope.superuser && scope.cabangScope?.length && !(cabang && scope.cabangScope.includes(cabang))) {
+    throw new DealError(403, "AM tujuan di luar cabang tim Anda");
+  }
+  return { nama: String(mu.nama), cabang };
+}
+
+/**
  * Buat deal baru. AM → am_id dipaksa ke dirinya; HoD/admin boleh set am_id (opsional).
  * Stage awal 'Prospecting' (derive prob/kategori/forecast), catat spt_state_log.
  */
@@ -896,6 +914,11 @@ export async function createDeal(scope: DataScope, input: Record<string, unknown
   applyEstimate(fields);
   // AM cuma boleh bikin deal atas namanya sendiri; HoD/admin boleh tunjuk am_id.
   fields.am_id = scope.amOnly ? scope.amId : (typeof input.am_id === "string" && input.am_id ? input.am_id : null);
+  if (!scope.amOnly && fields.am_id) {
+    const am = await amTujuan(scope, String(fields.am_id));
+    // tanpa cabang, deal hanya terlihat AM-nya & admin — ikut cabang AM
+    if (!fields.cabang && am.cabang) fields.cabang = am.cabang;
+  }
   const meta = STAGE_META["Prospecting"];
   fields.prospect_category = meta.prospect || null;
   fields.probability = meta.prob;
@@ -931,6 +954,18 @@ export async function updateDeal(dealId: string, scope: DataScope, input: Record
   const deal = { am_id: cur[0].am_id ? String(cur[0].am_id) : null, cabang: cur[0].cabang ? String(cur[0].cabang) : null };
   if (!canWrite(scope, deal)) throw new DealError(403, "tidak berwenang mengubah deal ini");
   const fields = pickEditable(input);
+  // Penunjukan AM (HoD/admin) — deal dari #LEADS WA yang kotanya tak
+  // terpetakan masuk tanpa AM, dan form inilah satu-satunya jalan mengisinya.
+  // AM sendiri tak boleh memindahkan deal; nilai sama dengan yang sekarang
+  // (form AM tak mengirimnya, tapi berjaga) diabaikan.
+  let amBaru: { id: string; nama: string } | null = null;
+  if (typeof input.am_id === "string" && input.am_id.trim() && input.am_id.trim() !== deal.am_id) {
+    if (scope.amOnly) throw new DealError(403, "AM tidak bisa memindahkan deal ke AM lain");
+    const am = await amTujuan(scope, input.am_id.trim());
+    fields.am_id = input.am_id.trim();
+    if (!deal.cabang && fields.cabang == null && am.cabang) fields.cabang = am.cabang;
+    amBaru = { id: input.am_id.trim(), nama: am.nama };
+  }
   if (Object.keys(fields).length === 0) throw new DealError(400, "tidak ada field untuk diupdate");
   if (fields.product_category && !PRODUCT_CATEGORIES.includes(String(fields.product_category))) {
     throw new DealError(400, "product_category harus IVD atau Medical");
@@ -938,6 +973,11 @@ export async function updateDeal(dealId: string, scope: DataScope, input: Record
   if (fields.customer_name != null) fields.customer_id = custId(String(fields.customer_name));
   applyEstimate(fields);
   await sql`UPDATE deal SET ${sql(fields)}, updated_at = now() WHERE deal_id = ${dealId}`;
+  if (amBaru) {
+    await sql`
+      INSERT INTO spt_state_log (deal_id, from_stage, to_stage, changed_by, reason)
+      VALUES (${dealId}, ${cur[0].stage}, ${cur[0].stage}, ${scope.userId ?? scope.amId}, ${`AM ditunjuk: ${amBaru.nama}`})`;
+  }
   // F9: createDeal cek duplikat nama saat dibuat — edit nama customer (typo diperbaiki jadi
   // sama persis dgn customer lain, atau sengaja diganti) harus ikut kena cek yang sama,
   // bukan cuma jalur create (issue ditemukan QA 2026-09-07: edit adalah cara termudah
