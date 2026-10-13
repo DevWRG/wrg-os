@@ -33,9 +33,12 @@ interface Detail {
     typeAlat: string | null; namaAlat: string | null;
     targetJumlahTes: number | null; totalTes: number | null;
     rataTesBulanan: number | null; capaianTarget: number | null;
+    jenis: string | null;
   }[];
   tren: { periode: string; jumlahTes: number | null; alatLapor: number | null; revenueNetto: number | null }[];
   trenAlat: { assetId: number; periode: string; jumlahTes: number | null }[];
+  // PER_TEST (migrasi 220): tes tertagih Accurate per JENIS alat; trenAlat kosong.
+  trenJenis: { jenis: string; periode: string; jumlahTes: number | null }[];
   reagen: {
     itemId: number | null; itemNo: string | null; itemNama: string | null;
     jenisAlat: string | null; kategori: string; unit: string;
@@ -213,7 +216,8 @@ export function FaskesDetailDialog({ g, median, onClose }: {
   // dengan filter tren di tab Ringkasan. Kalau hanya dari data, bulan bawaan yang belum
   // berdata tidak bisa dipilih; kalau hanya deret bawaan, riwayat 2025 tak terjangkau.
   const periodeData = [...(detail?.tren ?? []).map((t) => t.periode),
-                       ...(detail?.trenAlat ?? []).map((t) => t.periode)];
+                       ...(detail?.trenAlat ?? []).map((t) => t.periode),
+                       ...(detail?.trenJenis ?? []).map((t) => t.periode)];
   const opsiBulan = [...new Set([...periodeData, ...deretBulan(awalTahunIni(), bulanIni())])].sort();
   // Rentang PENUH menurut data — dipakai preset "semua". Menyebut tahunnya, bukan kata
   // "semua": itu pelajaran yang sama dengan `seluruh periode` yang gagal menyampaikan
@@ -255,6 +259,7 @@ export function FaskesDetailDialog({ g, median, onClose }: {
   // seperti ketidaksinkronan data.
   const tahunAda = [...new Set([
     ...(detail?.trenAlat ?? []).filter((t) => t.jumlahTes !== null).map((t) => t.periode.slice(0, 4)),
+    ...(detail?.trenJenis ?? []).filter((t) => t.jumlahTes !== null).map((t) => t.periode.slice(0, 4)),
     ...(detail?.tren ?? []).filter((t) => t.jumlahTes !== null || t.revenueNetto !== null)
       .map((t) => t.periode.slice(0, 4)),
   ])].sort();
@@ -282,6 +287,11 @@ export function FaskesDetailDialog({ g, median, onClose }: {
         keterangan: [a.rataTesBulanan !== null ? `rata ${a.rataTesBulanan}/bln` : null,
                      a.capaianTarget !== null ? `capaian ${a.capaianTarget}` : null]
           .filter(Boolean).join(" · ") });
+    }
+    for (const t of detail.trenJenis ?? []) {
+      if (!dalamJendela(t.periode)) continue;
+      out.push({ ...dasar, ...kosong, bagian: "Tes bulanan (tagihan Accurate, per jenis)",
+        nama: t.jenis, jenisAlat: t.jenis, periode: t.periode, tes: t.jumlahTes });
     }
     for (const t of detail.trenAlat) {
       if (!dalamJendela(t.periode)) continue;
@@ -483,9 +493,27 @@ export function FaskesDetailDialog({ g, median, onClose }: {
               {/* SATU GRAFIK TES PER ALAT (permintaan user 2026-08-19) — datanya
                   memang per aset di kso_asset_test_monthly. Diurutkan mengikuti daftar
                   alat di bawah (tes terbanyak dulu) supaya dua bagian ini sejalan. */}
+              {/* PER_TEST (migrasi 220): tes = PEMERIKSAAN tertagih Accurate, yang
+                  tidak mencatat SN — grafik digambar per JENIS alat, targetnya jumlah
+                  target alat sejenis. BELI_REAGEN tetap per alat dari laporan teknisi. */}
               <div className="grid gap-4 lg:grid-cols-2">
-                {detail.alat.map((a) => {
-                  const semua = detail.trenAlat.filter((t) => t.assetId === a.assetId);
+                {(r.skema === "PER_TEST"
+                  ? [...new Set(detail.alat.map((x) => x.jenis ?? x.typeAlat ?? "—"))].map((j) => {
+                      const anggota = detail.alat.filter((x) => (x.jenis ?? x.typeAlat ?? "—") === j);
+                      const tgt = anggota.reduce((n, x) => n + (x.targetJumlahTes ?? 0), 0);
+                      return {
+                        assetId: -anggota[0].assetId, namaAlat: j, snKey: j,
+                        typeAlat: `${anggota.length} alat · tagihan Accurate`,
+                        targetJumlahTes: tgt > 0 ? tgt : null,
+                        totalTes: anggota[0].totalTes,
+                        semua: (detail.trenJenis ?? []).filter((t) => t.jenis === j),
+                      };
+                    })
+                  : detail.alat.map((x) => ({
+                      ...x, semua: detail.trenAlat.filter((t) => t.assetId === x.assetId),
+                    }))
+                ).map((a) => {
+                  const semua = a.semua;
                   const per = new Map(semua.filter((t) => dalamJendela(t.periode))
                     .map((t) => [t.periode, t.jumlahTes]));
                   const seriAlat = deretBulan(dari, sampai).map((x) => ({
@@ -518,6 +546,7 @@ export function FaskesDetailDialog({ g, median, onClose }: {
                       ada={seriAlat.some((x) => x.tes !== null)}
                       kosong={punyaRiwayatLama
                         ? `Tidak ada laporan di ${dari.slice(0, 4)} — riwayatnya ada di tahun sebelumnya.`
+                        : r.skema === "PER_TEST" ? "Belum ada tes tertagih untuk jenis alat ini."
                         : "Belum ada laporan tes untuk alat ini."}
                     >
                       <LineChart data={seriAlat} margin={{ left: 4, right: 12, top: 8, bottom: 4 }}>
@@ -722,7 +751,10 @@ export function FaskesDetailDialog({ g, median, onClose }: {
                       <tr className="border-border border-b text-left">
                         <th className="py-1.5 pr-2 font-medium">Alat</th>
                         <th className="py-1.5 pr-2 font-medium">SN</th>
-                        <th className="py-1.5 pr-2 text-right font-medium">Total tes</th>
+                        <th className="py-1.5 pr-2 text-right font-medium"
+                          title={r.skema === "PER_TEST" ? "Tes tertagih Accurate untuk JENIS alat ini di faskes ini — Accurate tidak mencatat SN, jadi alat sejenis menampilkan angka yang sama" : undefined}>
+                          {r.skema === "PER_TEST" ? "Tes jenis (tagihan)" : "Total tes"}
+                        </th>
                         <th className="py-1.5 pr-2 text-right font-medium">Target/bln</th>
                         <th className="py-1.5 text-right font-medium">Capaian</th>
                       </tr>

@@ -171,6 +171,7 @@ export interface KsoFaskesDetail {
     typeAlat: string | null; namaAlat: string | null;
     targetJumlahTes: number | null; totalTes: number | null;
     rataTesBulanan: number | null; capaianTarget: number | null;
+    jenis: string | null;
   }[];
   tren: { periode: string; jumlahTes: number | null; alatLapor: number | null; revenueNetto: number | null }[];
   // Riwayat tes PER ALAT. Ada karena kso_asset_test_monthly memang per aset.
@@ -180,6 +181,9 @@ export interface KsoFaskesDetail {
   // (rata atau proporsional-tes) menghasilkan angka yang terlihat presisi padahal
   // karangan — alasan yang sama dengan rupiah_per_tes_customer di migrasi 098/100.
   trenAlat: { assetId: number; periode: string; jumlahTes: number | null }[];
+  // PER_TEST (migrasi 220): tes = PEMERIKSAAN tertagih Accurate, per JENIS alat — Accurate
+  // tidak mencatat SN. Untuk skema ini trenAlat kosong dan grafik tes digambar per jenis.
+  trenJenis: { jenis: string; periode: string; jumlahTes: number | null }[];
   // Reagen/barang yang difakturkan ke faskes ini pada jendela yang diminta.
   // `dalamSkema` = kategori pengadaannya termasuk yang dihitung sebagai revenue skema
   // ini (kso_kategori_skema). Yang FALSE tetap dikembalikan, bukan disaring: item
@@ -201,7 +205,7 @@ export interface KsoFaskesDetail {
 export async function faskesDetail(
   accountId: number, skema: string, dari: string, sampai: string,
 ): Promise<KsoFaskesDetail> {
-  if (!isDbEnabled()) return { alat: [], tren: [], trenAlat: [], reagen: [] };
+  if (!isDbEnabled()) return { alat: [], tren: [], trenAlat: [], trenJenis: [], reagen: [] };
   const sql = db();
 
   // Daftar alat dari view produktivitas, BUKAN langsung dari kso_asset: view itu yang
@@ -209,7 +213,8 @@ export async function faskesDetail(
   // dialog tidak akan pernah memuat aset yang tidak terhitung di barisnya.
   const alat = await sql`
     SELECT asset_id, sn_key, type_alat, nama_alat,
-           target_jumlah_tes, total_tes, rata_tes_bulanan, capaian_target
+           target_jumlah_tes, total_tes, rata_tes_bulanan, capaian_target,
+           kso_jenis_kanonik(type_alat) AS jenis
     FROM kso_asset_produktivitas_mv
     WHERE account_id = ${accountId} AND skema = ${skema}
     ORDER BY total_tes DESC NULLS LAST, nama_alat, asset_id`;
@@ -231,12 +236,19 @@ export async function faskesDetail(
   // query sebelumnya: satu sumber cakupan, dan tidak ada peluang dua query melihat
   // himpunan aset yang berbeda.
   // Lewat kso_tes_lokasi_v (217): hanya bulan-bulan saat alat BERADA di faskes ini.
-  const trenAlat = await sql`
+  // Hanya BELI_REAGEN: tes PER_TEST bukan lagi laporan sheet per alat (220).
+  const trenAlat = skema === "PER_TEST" ? [] : await sql`
     SELECT m.asset_id, to_char(m.periode, 'YYYY-MM-DD') AS periode, m.jumlah_tes
     FROM kso_tes_lokasi_v m
     JOIN kso_asset a ON a.id = m.asset_id
     WHERE m.account_id = ${accountId} AND a.skema = ${skema}
     ORDER BY m.asset_id, m.periode`;
+
+  const trenJenis = skema !== "PER_TEST" ? [] : await sql`
+    SELECT jenis, to_char(periode, 'YYYY-MM-DD') AS periode, jumlah_tes
+    FROM kso_tes_faskes_v
+    WHERE account_id = ${accountId} AND skema = 'PER_TEST'
+    ORDER BY jenis, periode`;
 
   // Kategori yang berlaku bagi skema ini dibaca dari kso_kategori_skema — sumber tunggal
   // aturan atribusi (107). Jangan disalin ke TS.
@@ -303,6 +315,7 @@ export async function faskesDetail(
       totalTes: num(a.total_tes),
       rataTesBulanan: num(a.rata_tes_bulanan),
       capaianTarget: num(a.capaian_target),
+      jenis: a.jenis ? String(a.jenis) : null,
     })),
     tren: tren.map((t) => ({
       periode: String(t.periode),
@@ -312,6 +325,11 @@ export async function faskesDetail(
     })),
     trenAlat: trenAlat.map((t) => ({
       assetId: Number(t.asset_id),
+      periode: String(t.periode),
+      jumlahTes: num(t.jumlah_tes),
+    })),
+    trenJenis: trenJenis.map((t) => ({
+      jenis: String(t.jenis),
       periode: String(t.periode),
       jumlahTes: num(t.jumlah_tes),
     })),
