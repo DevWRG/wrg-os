@@ -51,6 +51,7 @@ import { terapkanKpiBulan } from "./repo/kpi-measure.js";
 import { runAuditFindingApprovalReminder } from "./repo/audit-finding.js";
 import { runInvoiceReminder, runOverdueRecap } from "./repo/faktur.js";
 import { runLeadAging } from "./repo/lead.js";
+import { runTrialReminder } from "./repo/demo-trial.js";
 
 // Penjadwal agen in-process (Blueprint v2.3). Default MATI — aktif hanya bila
 // AGENT_SCHEDULE_ENABLED=true. Tiap run tetap menulis ke audit_log via repo
@@ -203,6 +204,8 @@ export function startScheduler(): ScheduleStatus {
   // F65 — pengingat lead belum dihubungi (AM ≥3 hari kerja, HoD ≥7). DM per orang;
   // MATI sampai user menentukan penerimanya (keputusan 13 Okt 2026).
   const leadAgingEnabled = (process.env.LEAD_AGING_ENABLED ?? "false").toLowerCase() === "true";
+  // F18 — pengingat trial yang sudah berakhir tapi belum dicatat hasilnya (DM ke AM). MATI by default.
+  const trialReminderEnabled = (process.env.TRIAL_REMINDER_ENABLED ?? "false").toLowerCase() === "true";
   // audit-finding-reminder (F60) — WA ke anggota grup tahap approval yang
   // pending & telat >N hari (dedup harian via reminded_at). Flag SENDIRI
   // (default off) — mengirim WA.
@@ -283,12 +286,12 @@ export function startScheduler(): ScheduleStatus {
   ];
 
   status = {
-    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled || watchpointSnapshotEnabled || geoSweepEnabled || cashinResumeEnabled || kpiMeasureEnabled || seninBriefEnabled || auditFindingReminderEnabled || invoiceReminderEnabled || soPacingEnabled || fixedAssetSyncEnabled || poSyncEnabled || leadAgingEnabled,
+    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled || watchpointSnapshotEnabled || geoSweepEnabled || cashinResumeEnabled || kpiMeasureEnabled || seninBriefEnabled || auditFindingReminderEnabled || invoiceReminderEnabled || soPacingEnabled || fixedAssetSyncEnabled || poSyncEnabled || leadAgingEnabled || trialReminderEnabled,
     timezone,
     jobs: jobs.map((j) => ({ id: j.id, expr: j.expr, valid: cron.validate(j.expr) })),
   };
 
-  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled && !watchpointSnapshotEnabled && !geoSweepEnabled && !cashinResumeEnabled && !kpiMeasureEnabled && !seninBriefEnabled && !auditFindingReminderEnabled && !invoiceReminderEnabled && !soPacingEnabled && !fixedAssetSyncEnabled && !poSyncEnabled && !leadAgingEnabled) {
+  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled && !watchpointSnapshotEnabled && !geoSweepEnabled && !cashinResumeEnabled && !kpiMeasureEnabled && !seninBriefEnabled && !auditFindingReminderEnabled && !invoiceReminderEnabled && !soPacingEnabled && !fixedAssetSyncEnabled && !poSyncEnabled && !leadAgingEnabled && !trialReminderEnabled) {
     console.log("[scheduler] semua *_SCHEDULE/_ENABLED flag != true — tidak dijadwalkan");
     return status;
   }
@@ -819,6 +822,26 @@ export function startScheduler(): ScheduleStatus {
       { timezone },
     );
     live.push(`accurate-fa-sync=${faSyncExpr}`);
+  }
+
+  // F18 trial-reminder — hari kerja 09:05 WIB; trial yang tanggal selesainya
+  // lewat & belum ditutup → DM ringkasan ke AM pemilik, sekali per trial.
+  const trialReminderExpr = process.env.TRIAL_REMINDER_CRON ?? "5 9 * * 1-5";
+  if (trialReminderEnabled && cron.validate(trialReminderExpr)) {
+    cron.schedule(
+      trialReminderExpr,
+      async () => {
+        try {
+          if (!(await isWorkday())) return;
+          const r = await runTrialReminder();
+          console.log(`[scheduler] trial-reminder → ${r.terkirim} AM${r.lewati.length ? `, dilewati: ${r.lewati.join("; ")}` : ""}`);
+        } catch (e) {
+          console.error("[scheduler] trial-reminder gagal:", (e as Error).message);
+        }
+      },
+      { timezone },
+    );
+    live.push(`trial-reminder=${trialReminderExpr}`);
   }
 
   // F65 lead-aging — hari kerja 09:00 WIB; libur (master_holiday) dilewati.

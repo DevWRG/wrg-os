@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { httpErrorMessage } from "@/lib/http-error";
 import { DealFormModal, type DealFormInit } from "./deal-form-modal";
+import { TambahDemoTrialDialog, type DariDeal } from "@/components/demo-trial/dialogs";
 import { PipelineExportButton } from "./pipeline-export-button";
 import { PipelineInsights } from "./pipeline-insights";
 
@@ -171,7 +172,7 @@ function Sel({ label, val, set, options }: { label: string; val: string; set: (v
 const TAB_BOARD = "board";
 const TAB_INFO = "infografis";
 
-export function PipelineBoard({ data, isAdmin = false }: { data: PipelineData; isAdmin?: boolean }) {
+export function PipelineBoard({ data, isAdmin = false, bolehDemo = false }: { data: PipelineData; isAdmin?: boolean; bolehDemo?: boolean }) {
   const router = useRouter();
   const pathname = usePathname();
   const params = useSearchParams();
@@ -181,6 +182,8 @@ export function PipelineBoard({ data, isAdmin = false }: { data: PipelineData; i
   const [formModal, setFormModal] = useState<{ mode: "create" } | { mode: "edit"; deal: DealFormInit } | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [confirmDel, setConfirmDel] = useState<PipelineDeal | null>(null);
+  // F18 — catat demo/trial langsung dari kartu deal (tertaut ke deal itu).
+  const [demoDeal, setDemoDeal] = useState<DariDeal | null>(null);
   const [dragId, setDragId] = useState<string | null>(null);
   const [overStage, setOverStage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -531,6 +534,10 @@ export function PipelineBoard({ data, isAdmin = false }: { data: PipelineData; i
               <div className="ml-auto flex items-center gap-2">
                 {!CLOSED_STAGES.has(sel.stage) && (
                   <>
+                    {bolehDemo && (
+                      <button onClick={() => { const d = sel; setSel(null); setDemoDeal({ deal_id: d.deal_id, facility_name: d.facility_name || d.customer_name, brand: d.brand, product: d.product }); }}
+                        className="text-sm px-3 py-1 rounded-md border hover:bg-muted">Catat demo/trial</button>
+                    )}
                     <button onClick={() => { const d = sel; setSel(null); setFormModal({ mode: "edit", deal: d as DealFormInit }); }}
                       className="text-sm px-3 py-1 rounded-md border hover:bg-muted">Edit</button>
                     {isAdmin && (
@@ -626,6 +633,11 @@ export function PipelineBoard({ data, isAdmin = false }: { data: PipelineData; i
           hods={opts.hod}
           onClose={() => setFormModal(null)}
         />
+      )}
+
+      {demoDeal && (
+        <TambahDemoTrialDialog open dariDeal={demoDeal} onClose={() => setDemoDeal(null)}
+          onSelesai={(r) => setMsg({ kind: "ok", text: `${r.kode} tercatat untuk ${r.facility_name}.` })} />
       )}
 
       {/* Modal konfirmasi hapus deal */}
