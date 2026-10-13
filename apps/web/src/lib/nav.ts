@@ -11,7 +11,7 @@ import {
   Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, Tags, SlidersHorizontal, Microscope, MonitorCheck, FileSignature,
   Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, BookOpen, Calculator, UserPlus, Presentation,
   Wallet, Coins, Banknote, Car, QrCode, PenLine, PackagePlus, PackageMinus,
-  Handshake, Archive, Ticket, Printer, Route,
+  Handshake, Archive, Ticket, Printer, Route, ArrowLeftRight,
   type LucideIcon,
   Hourglass, ShieldAlert, Landmark, ClipboardList, PackageCheck,
 } from "lucide-react";
@@ -340,6 +340,8 @@ export const NAV: NavGroup[] = [
       // F53 Stiker Aset & F50 Kendaraan Operasional — dulu di grup Operations,
       // dipindah ke General Affairs atas arahan user 5 Okt 2026 (pengelolanya
       // tim GA). Key fitur tak berubah (diturunkan dari url), hanya `section`.
+      // Relokasi aset GA + berita acara bertanda tangan (13 Okt 2026).
+      { title: "Relokasi Aset", url: "/ga-relokasi", icon: ArrowLeftRight, badge: "NEW" },
       { title: "Stiker Aset", url: "/asset-tag", icon: QrCode, badge: "NEW" },
       { title: "Kendaraan Operasional", url: "/vehicles", icon: Car, badge: "NEW" },
       { title: "Helpdesk GA", url: "/ga-helpdesk", icon: Ticket, badge: "NEW" },

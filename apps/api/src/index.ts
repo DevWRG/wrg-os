@@ -1,4 +1,4 @@
-import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { readFile, writeFile, mkdir, unlink } from "node:fs/promises";
 import { resolve } from "node:path";
 import { homedir } from "node:os";
 
@@ -409,6 +409,8 @@ import {
   assignAsset,
   returnAsset,
   transferAsset,
+  relocateAsset,
+  listRelocations,
   getAssetHistory,
 } from "./repo/ga-asset-assignment.js";
 import {
@@ -5787,6 +5789,67 @@ app.get("/ga-assets/:id/history", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const rows = await getAssetHistory(c.req.param("id"));
   return c.json({ count: rows.length, history: rows });
+});
+
+// Relokasi aset GA (13 Okt 2026) — multipart: `file` = berita acara bertanda
+// tangan (WAJIB, pdf/jpg/png/webp ≤10MB) + `to_location` + PIC (keep_pic=true,
+// atau to_user_id/to_pic_name) + relocation_date/reason. created_by(_name)
+// diisi BFF dari sesi. File ditulis dulu ke GA_UPLOAD_ROOT; kalau repo
+// menolak, file-nya dihapus lagi supaya tak ada berkas yatim.
+app.post("/ga-assets/:id/relocate", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const id = c.req.param("id");
+  let body: Record<string, unknown>;
+  try {
+    body = await c.req.parseBody();
+  } catch {
+    return c.json({ error: "invalid multipart body" }, 400);
+  }
+  const str = (k: string): string | null => (typeof body[k] === "string" && (body[k] as string).trim() ? (body[k] as string).trim() : null);
+  const file = body.file;
+  if (!(file instanceof File) || file.size === 0) return c.json({ error: "berita acara bertanda tangan wajib diunggah" }, 400);
+  const ext = GA_UPLOAD_MIME_EXT[file.type];
+  if (!ext) return c.json({ error: `tipe file "${file.type}" tak didukung (pdf/jpg/png/webp)` }, 400);
+  if (file.size > 10 * 1024 * 1024) return c.json({ error: "file maksimal 10MB" }, 400);
+  if (!str("to_location")) return c.json({ error: "lokasi tujuan wajib diisi" }, 400);
+  const tgl = str("relocation_date");
+  if (tgl && !/^\d{4}-\d{2}-\d{2}$/.test(tgl)) return c.json({ error: "relocation_date harus YYYY-MM-DD" }, 400);
+  if (!(await getGaAsset(id))) return c.json({ error: "aset tidak ditemukan" }, 404);
+
+  await mkdir(GA_UPLOAD_ROOT, { recursive: true });
+  const abs = resolve(GA_UPLOAD_ROOT, `${id}-berita-acara-${Date.now()}.${ext}`);
+  await writeFile(abs, Buffer.from(await file.arrayBuffer()));
+  try {
+    const r = await relocateAsset(id, {
+      to_location: str("to_location")!,
+      keep_pic: str("keep_pic") === "true",
+      to_user_id: str("to_user_id"),
+      to_pic_name: str("to_pic_name"),
+      relocation_date: tgl,
+      reason: str("reason"),
+      created_by: str("created_by"),
+      created_by_name: str("created_by_name"),
+      ba: { path: abs, file_name: file.name || null, mime: file.type, size: file.size },
+    });
+    if (!("relocation" in r)) {
+      await unlink(abs).catch(() => {});
+      return c.json(r, 400);
+    }
+    return c.json(r.relocation, 201);
+  } catch (e) {
+    await unlink(abs).catch(() => {});
+    throw e;
+  }
+});
+
+app.get("/ga-asset-relocations", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listRelocations({
+    assetId: c.req.query("asset_id") || undefined,
+    from: c.req.query("from") || undefined,
+    to: c.req.query("to") || undefined,
+  });
+  return c.json({ count: rows.length, relocations: rows });
 });
 
 app.get("/ga-vendors", async (c) => {
