@@ -1,7 +1,7 @@
 // Hak akses F140 Vendor Management + Contract Expiry Alerts. Role min HOD —
 // seluruh halaman di-gate HOD/admin (data kontrak/nilai komersial vendor
 // dianggap sensitif, dikonfirmasi user via AskUserQuestion). Pola sama
-// raport-access.ts / dana-ops-access.ts / inventory-relocation-access.ts F40.
+// raport-access.ts / dana-ops-access.ts.
 //
 // Begitu fitur 'vendor-management' diatur di matriks Akses Grup untuk grup
 // si user, matriks yang menentukan (lihat canOrLegacy di lib/perms).

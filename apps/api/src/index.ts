@@ -1,4 +1,4 @@
-import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { readFile, writeFile, mkdir, unlink } from "node:fs/promises";
 import { resolve, relative, isAbsolute } from "node:path";
 import { homedir } from "node:os";
 
@@ -429,16 +429,6 @@ import {
   runVehicleAlerts,
 } from "./repo/vehicle.js";
 import {
-  listInventoryRelocations,
-  getInventoryRelocation,
-  createInventoryRelocation,
-  updateInventoryRelocation,
-  deleteInventoryRelocation,
-  type InventoryRelocationInput,
-  type InventoryRelocationUpdate,
-  type InventoryRelocationStatus,
-} from "./repo/inventory-relocation.js";
-import {
   listCategories,
   createCategory,
   updateCategory,
@@ -476,6 +466,8 @@ import {
   assignAsset,
   returnAsset,
   transferAsset,
+  relocateAsset,
+  listRelocations,
   getAssetHistory,
 } from "./repo/ga-asset-assignment.js";
 import {
@@ -7083,93 +7075,6 @@ app.post("/vehicles/alerts/run", async (c) => {
 // arahan eksplisit Direktur soal batas ini, diasumsikan 8MB (wajar utk scan
 // PDF/foto sertifikat) + pdf/jpg/jpeg/png saja. Gampang diubah kalau ternyata
 // perlu lebih besar/format lain.
-const INVENTORY_RELOCATION_STATUSES: InventoryRelocationStatus[] = ["pending", "completed", "cancelled"];
-
-function validateInventoryRelocationFields(b: {
-  item_desc?: string;
-  qty?: number;
-  cabang_asal?: string;
-  cabang_tujuan?: string;
-  status?: string;
-}): string | null {
-  if (b.qty !== undefined && !(Number(b.qty) > 0)) return "qty harus lebih dari 0";
-  // GAP-04 (ditemukan re-test 2026-09-07): dibandingkan case-insensitive —
-  // "Jakarta" vs "jakarta" tetap dianggap cabang yang sama (beda huruf besar/
-  // kecil, bukan cabang beda), bukan cuma exact-match string.
-  if (
-    b.cabang_asal !== undefined &&
-    b.cabang_tujuan !== undefined &&
-    b.cabang_asal.trim().toLowerCase() === b.cabang_tujuan.trim().toLowerCase() &&
-    b.cabang_asal.trim() !== ""
-  ) {
-    return "cabang asal dan tujuan tidak boleh sama";
-  }
-  if (b.status !== undefined && !INVENTORY_RELOCATION_STATUSES.includes(b.status as InventoryRelocationStatus)) {
-    return "status harus salah satu dari: pending, completed, cancelled";
-  }
-  return null;
-}
-
-app.get("/inventory-relocations", async (c) => {
-  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  const rows = await listInventoryRelocations();
-  return c.json({ count: rows.length, rows });
-});
-
-app.post("/inventory-relocations", async (c) => {
-  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let body: InventoryRelocationInput;
-  try {
-    body = await c.req.json();
-  } catch {
-    return c.json({ error: "invalid JSON body" }, 400);
-  }
-  if (!body.item_desc?.trim() || !body.cabang_asal?.trim() || !body.cabang_tujuan?.trim() || !(Number(body.qty) > 0)) {
-    return c.json({ error: "item_desc, qty (>0), cabang_asal, cabang_tujuan wajib" }, 400);
-  }
-  const fieldErr = validateInventoryRelocationFields(body);
-  if (fieldErr) return c.json({ error: fieldErr }, 400);
-  const row = await createInventoryRelocation(body);
-  return c.json(row, 201);
-});
-
-app.get("/inventory-relocations/:id", async (c) => {
-  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  const row = await getInventoryRelocation(c.req.param("id"));
-  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
-});
-
-app.patch("/inventory-relocations/:id", async (c) => {
-  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let body: InventoryRelocationUpdate;
-  try {
-    body = await c.req.json();
-  } catch {
-    return c.json({ error: "invalid JSON body" }, 400);
-  }
-  // GAP-04 (ditemukan re-test 2026-09-07): validateInventoryRelocationFields
-  // cuma lihat field yg dikirim — PATCH parsial (mis. cuma cabang_tujuan)
-  // lolos cek cabang_asal≠tujuan walau hasil merge dgn baris lama jadi sama,
-  // lalu jatuh ke pesan generik constraint DB. Validasi thd nilai HASIL
-  // merge, bukan body mentah (pola sama dgn BUG-03 vendor contract).
-  const existing = await getInventoryRelocation(c.req.param("id"));
-  if (!existing) return c.json({ error: "tidak ditemukan" }, 404);
-  const fieldErr = validateInventoryRelocationFields({
-    ...body,
-    cabang_asal: body.cabang_asal ?? existing.cabang_asal,
-    cabang_tujuan: body.cabang_tujuan ?? existing.cabang_tujuan,
-  });
-  if (fieldErr) return c.json({ error: fieldErr }, 400);
-  const row = await updateInventoryRelocation(c.req.param("id"), body);
-  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
-});
-
-app.delete("/inventory-relocations/:id", async (c) => {
-  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  const r = await deleteInventoryRelocation(c.req.param("id"));
-  return c.json(r, r.deleted ? 200 : 404);
-});
-
 const GA_UPLOAD_ROOT = resolve(process.env.GA_UPLOAD_DIR ?? `${homedir()}/.wrg-os/uploads/ga-assets`);
 const MEDIA_ROOTS = [MEDIA_ROOT, GA_UPLOAD_ROOT];
 // `abs.startsWith(root + "/")` gagal di Windows (path pakai backslash) —
@@ -7507,6 +7412,67 @@ app.get("/ga-assets/:id/history", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const rows = await getAssetHistory(c.req.param("id"));
   return c.json({ count: rows.length, history: rows });
+});
+
+// Relokasi aset GA (13 Okt 2026) — multipart: `file` = berita acara bertanda
+// tangan (WAJIB, pdf/jpg/png/webp ≤10MB) + `to_location` + PIC (keep_pic=true,
+// atau to_user_id/to_pic_name) + relocation_date/reason. created_by(_name)
+// diisi BFF dari sesi. File ditulis dulu ke GA_UPLOAD_ROOT; kalau repo
+// menolak, file-nya dihapus lagi supaya tak ada berkas yatim.
+app.post("/ga-assets/:id/relocate", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const id = c.req.param("id");
+  let body: Record<string, unknown>;
+  try {
+    body = await c.req.parseBody();
+  } catch {
+    return c.json({ error: "invalid multipart body" }, 400);
+  }
+  const str = (k: string): string | null => (typeof body[k] === "string" && (body[k] as string).trim() ? (body[k] as string).trim() : null);
+  const file = body.file;
+  if (!(file instanceof File) || file.size === 0) return c.json({ error: "berita acara bertanda tangan wajib diunggah" }, 400);
+  const ext = GA_UPLOAD_MIME_EXT[file.type];
+  if (!ext) return c.json({ error: `tipe file "${file.type}" tak didukung (pdf/jpg/png/webp)` }, 400);
+  if (file.size > 10 * 1024 * 1024) return c.json({ error: "file maksimal 10MB" }, 400);
+  if (!str("to_location")) return c.json({ error: "lokasi tujuan wajib diisi" }, 400);
+  const tgl = str("relocation_date");
+  if (tgl && !/^\d{4}-\d{2}-\d{2}$/.test(tgl)) return c.json({ error: "relocation_date harus YYYY-MM-DD" }, 400);
+  if (!(await getGaAsset(id))) return c.json({ error: "aset tidak ditemukan" }, 404);
+
+  await mkdir(GA_UPLOAD_ROOT, { recursive: true });
+  const abs = resolve(GA_UPLOAD_ROOT, `${id}-berita-acara-${Date.now()}.${ext}`);
+  await writeFile(abs, Buffer.from(await file.arrayBuffer()));
+  try {
+    const r = await relocateAsset(id, {
+      to_location: str("to_location")!,
+      keep_pic: str("keep_pic") === "true",
+      to_user_id: str("to_user_id"),
+      to_pic_name: str("to_pic_name"),
+      relocation_date: tgl,
+      reason: str("reason"),
+      created_by: str("created_by"),
+      created_by_name: str("created_by_name"),
+      ba: { path: abs, file_name: file.name || null, mime: file.type, size: file.size },
+    });
+    if (!("relocation" in r)) {
+      await unlink(abs).catch(() => {});
+      return c.json(r, 400);
+    }
+    return c.json(r.relocation, 201);
+  } catch (e) {
+    await unlink(abs).catch(() => {});
+    throw e;
+  }
+});
+
+app.get("/ga-asset-relocations", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listRelocations({
+    assetId: c.req.query("asset_id") || undefined,
+    from: c.req.query("from") || undefined,
+    to: c.req.query("to") || undefined,
+  });
+  return c.json({ count: rows.length, relocations: rows });
 });
 
 // ── F13 PO Tracker + Sistem Barang Masuk (Purchasing) ──
