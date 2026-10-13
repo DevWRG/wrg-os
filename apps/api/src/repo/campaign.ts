@@ -296,8 +296,8 @@ async function corong(sql: Sql, brands: string[], from: string, to: string, sc: 
       ${scopeOnClause(sql, sc, sql`l.am_id`, sql`l.cabang`)}`;
   const [deal] = await sql`
     SELECT count(*)::int AS n,
-           count(*) FILTER (WHERE d.stage = 'Closing-Won')::int AS menang,
-           COALESCE(sum(COALESCE(d.estimated_value, d.estimate_amount)) FILTER (WHERE d.stage NOT LIKE 'Closing-%'), 0)::float8 AS terbuka
+           count(*) FILTER (WHERE d.stage::text = 'Closing-Won')::int AS menang,
+           COALESCE(sum(COALESCE(d.estimated_value, d.estimate_amount)) FILTER (WHERE d.stage::text NOT LIKE 'Closing-%'), 0)::float8 AS terbuka
     FROM deal d
     WHERE d.created_at >= ${from}::date AND d.created_at < ${to}::date + 1
       AND d.brand = ANY(${brands}::text[])
