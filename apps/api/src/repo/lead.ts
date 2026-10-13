@@ -116,6 +116,23 @@ export interface HasilWilayah {
   catatan: string;
 }
 
+/** Kota → cabang lewat area_kota; null bila tak ada / lebih dari satu cabang. */
+export async function cabangDariKota(city: string | null): Promise<string | null> {
+  const k = normKota(city);
+  if (!k) return null;
+  // area_kota menyimpan 'KAB. NGAWI' / 'KOTA MALANG' — dinormalkan di TS
+  // supaya aturan normKota satu definisi dengan master_territory.
+  const ak = await db()<{ kota: string; cabang: string }[]>`SELECT kota, cabang FROM area_kota`;
+  const c = [...new Set(ak.filter((r) => normKota(r.kota) === k).map((r) => String(r.cabang).trim().toUpperCase()))];
+  return c.length === 1 ? c[0] : null;
+}
+
+/** Cabang → hod_key lewat hod_territory; null bila tak ada / ganda. */
+export async function hodDariCabang(cabang: string): Promise<string | null> {
+  const h = await db()`SELECT DISTINCT hod_key FROM hod_territory WHERE upper(btrim(cabang)) = ${cabang}`;
+  return h.length === 1 ? String(h[0].hod_key) : null;
+}
+
 export async function resolveWilayah(city: string | null): Promise<HasilWilayah> {
   const sql = db();
   const kosong: HasilWilayah = { am_id: null, am_nama: null, cabang: null, pic_hod: null, via: "tak-terpetakan", catatan: "kota tidak diisi" };
@@ -141,19 +158,8 @@ export async function resolveWilayah(city: string | null): Promise<HasilWilayah>
       catatan = `AM ${pilih.am_panggilan} di peta wilayah tak ditemukan/aktif di roster`;
     }
   }
-  if (!cabang) {
-    // area_kota menyimpan 'KAB. NGAWI' / 'KOTA MALANG' — dinormalkan di TS
-    // supaya aturan normKota satu definisi dengan master_territory.
-    const ak = await sql<{ kota: string; cabang: string }[]>`SELECT kota, cabang FROM area_kota`;
-    const k = normKota(city);
-    const c = [...new Set(ak.filter((r) => normKota(r.kota) === k).map((r) => String(r.cabang).trim().toUpperCase()))];
-    if (c.length === 1) cabang = c[0];
-  }
-  let pic_hod: string | null = null;
-  if (cabang) {
-    const h = await sql`SELECT DISTINCT hod_key FROM hod_territory WHERE upper(btrim(cabang)) = ${cabang}`;
-    if (h.length === 1) pic_hod = String(h[0].hod_key);
-  }
+  if (!cabang) cabang = await cabangDariKota(city);
+  let pic_hod: string | null = cabang ? await hodDariCabang(cabang) : null;
   if (!pic_hod && pilih && pilih !== "ambigu" && pilih.hod_panggilan) pic_hod = pilih.hod_panggilan.trim().toLowerCase();
   return { am_id, am_nama, cabang, pic_hod, via: am_id ? "wilayah" : "tak-terpetakan", catatan };
 }
@@ -304,11 +310,11 @@ export async function buatLead(
   if (am_id) {
     const [mu] = await sql`SELECT NULLIF(btrim(cabang),'') AS cabang FROM master_user WHERE am_id = ${am_id}`;
     if (!mu) throw new LeadError(400, `AM ${am_id} tidak ada di roster`);
-    cabang = mu.cabang ? String(mu.cabang).toUpperCase() : null;
-    if (cabang) {
-      const h = await sql`SELECT DISTINCT hod_key FROM hod_territory WHERE upper(btrim(cabang)) = ${cabang}`;
-      if (h.length === 1) pic_hod = String(h[0].hod_key);
-    }
+    // AM tanpa cabang di roster (2 dari 16 AM aktif di dev, uji Research
+    // 13 Okt): pakai kota lead supaya HoD-nya tetap melihat lead ini —
+    // tanpa cabang, lead hanya terlihat oleh AM itu sendiri dan admin.
+    cabang = mu.cabang ? String(mu.cabang).toUpperCase() : await cabangDariKota(bersih(input.city, 100));
+    if (cabang) pic_hod = await hodDariCabang(cabang);
     routing_via = meta.via_pengirim ? "pengirim" : "manual";
   } else {
     wilayah = await resolveWilayah(bersih(input.city, 100));
@@ -426,11 +432,10 @@ export async function updateLead(scope: DataScope, id: string, input: Record<str
       const cab = mu.cabang ? String(mu.cabang).toUpperCase() : null;
       if (scope.cabangScope?.length && !(cab && scope.cabangScope.includes(cab))) throw new LeadError(403, "AM tujuan di luar cabang tim Anda");
       set.am_id = am;
-      set.cabang = cab;
-      if (cab) {
-        const h = await sql`SELECT DISTINCT hod_key FROM hod_territory WHERE upper(btrim(cabang)) = ${cab}`;
-        set.pic_hod = h.length === 1 ? String(h[0].hod_key) : lama.pic_hod;
-      }
+      // AM tanpa cabang di roster → cabang lead yang lama dipertahankan; kalau
+      // ikut dikosongkan, lead lenyap dari pandangan HoD-nya.
+      set.cabang = cab ?? lama.cabang;
+      if (cab) set.pic_hod = (await hodDariCabang(cab)) ?? lama.pic_hod;
     } else {
       set.am_id = null;
     }
