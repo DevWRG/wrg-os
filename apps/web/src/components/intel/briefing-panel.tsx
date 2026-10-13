@@ -42,6 +42,14 @@ export function BriefingPanel({ b }: { b: Briefing }) {
                 {b.bayar.tren && <span className="text-muted-foreground"> · {b.bayar.tren} dari tahun sebelumnya</span>}</>
             : <span className="text-muted-foreground">Belum ada pelunasan dalam 12 bulan.</span>}
         </Baris>
+        {b.kso_kesehatan && (
+          <Baris label="Kesehatan KSO">
+            <span className={b.kso_kesehatan.status === "KRITIS" ? "font-semibold text-rose-700 dark:text-rose-400" : b.kso_kesehatan.status === "WASPADA" ? "font-semibold text-amber-700 dark:text-amber-400" : "font-semibold text-emerald-700 dark:text-emerald-400"}>
+              {b.kso_kesehatan.status}
+            </span>
+            {b.kso_kesehatan.alasan.length > 0 && <span className="text-muted-foreground"> — {b.kso_kesehatan.alasan.join("; ")}</span>}
+          </Baris>
+        )}
         {b.kso.aktif > 0 && (
           <Baris label="KSO aktif">
             {b.kso.aktif} alat{b.kso.alat.length ? ` (${b.kso.alat.join(", ")})` : ""}{b.kso.mou_terdekat ? ` · MoU terdekat habis ${tgl(b.kso.mou_terdekat, true)}` : ""}

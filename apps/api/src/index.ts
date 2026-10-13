@@ -163,6 +163,7 @@ import {
   markBast,
 } from "./repo/installation.js";
 import { recordCompetitor, listCompetitor, competitorSummary } from "./repo/competitor.js";
+import { kesehatanKso, runRekapKesehatanKso } from "./repo/kso-kesehatan.js";
 import { IntelError, briefingFaskes, dominasiWilayah, setDominan } from "./repo/customer-intel.js";
 import { ringkasPembayaran } from "./repo/pembayaran.js";
 import {
@@ -4569,6 +4570,17 @@ app.get("/kso/master", async (c) => {
 // sensitif. Dipakai bersama atas keputusan user 2026-08-18. Kalau kelak perlu
 // dipisah, buat flag sendiri dan ganti gate-nya di BFF — endpoint ini tidak
 // perlu berubah.
+// F73 — kesehatan KSO per faskes (Sehat/Waspada/Kritis + alasan). Ber-scope
+// lewat x-user-id (BFF /api/kso meneruskannya dari sesi; gerbang menu KSO di BFF).
+app.get("/kso/kesehatan", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await kesehatanKso(await scopeOf(c)));
+});
+// Jalankan rekap mingguan secara manual (ops/uji). ?dry=1 = tanpa simpan & kirim.
+app.post("/kso/kesehatan/rekap", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await runRekapKesehatanKso({ dryRun: c.req.query("dry") === "1" }));
+});
 app.get("/kso/produktivitas", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json(await ksoProduktivitas());

@@ -6,6 +6,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Card, CardContent } from "@/components/ui/card";
 import { KsoProduktivitasTabs } from "@/components/kso/produktivitas-tabs";
 import type { KsoProduktivitas } from "@/components/kso/produktivitas-shared";
+import type { DataKesehatan } from "@/components/kso/kesehatan-view";
 
 export const dynamic = "force-dynamic";
 
@@ -27,9 +28,15 @@ export default async function KsoProduktivitasPage() {
   }
 
   let data: KsoProduktivitas | null = null;
+  let kesehatan: DataKesehatan | null = null;
   try {
-    const r = await gatewayFetch("/kso/produktivitas");
+    // F73: kesehatan ber-scope → x-user-id dari sesi.
+    const [r, k] = await Promise.all([
+      gatewayFetch("/kso/produktivitas"),
+      me ? gatewayFetch("/kso/kesehatan", { headers: { "x-user-id": me.id } }).catch(() => null) : null,
+    ]);
     if (r.ok) data = (await r.json()) as KsoProduktivitas;
+    if (k?.ok) kesehatan = (await k.json()) as DataKesehatan;
   } catch { data = null; }
 
   if (!data || data.rows.length === 0) {
@@ -72,7 +79,7 @@ export default async function KsoProduktivitasPage() {
           hint="penyebut ≥ 100 tes/thn & Rp/tes ada"
         />
       </div>
-      <KsoProduktivitasTabs data={data} />
+      <KsoProduktivitasTabs data={data} kesehatan={kesehatan} />
     </>
   );
 }

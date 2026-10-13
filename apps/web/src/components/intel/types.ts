@@ -10,6 +10,7 @@ export interface Briefing {
   catatan: { tanggal: string; jenis: string; isi: string; oleh: string }[];
   deal: { stage: string; brand: string | null; produk: string | null; nilai: number | null; hari_di_tahap: number | null; am: string | null }[];
   kso: { aktif: number; alat: string[]; mou_terdekat: string | null };
+  kso_kesehatan: { status: "SEHAT" | "WASPADA" | "KRITIS"; alasan: string[] } | null;
   demo: { kode: string; jenis: string; alat: string; tanggal: string; tanggal_selesai: string | null }[];
   kompetitor: { tanggal: string; vendor: string; produk: string | null; harga_text: string | null; konteks: string | null }[];
   dominan_wilayah: { kategori: string; vendor: string; catatan: string | null }[];
