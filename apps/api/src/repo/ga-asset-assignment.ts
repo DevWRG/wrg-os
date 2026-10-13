@@ -168,7 +168,16 @@ export interface TransferInput {
   transfer_date?: string | null;
 }
 
-export async function transferAsset(assetId: string, input: TransferInput): Promise<GaAssetRow | ActionResult> {
+// Samakan lokasi untuk perbandingan "berubah atau tidak": spasi & huruf besar
+// tak dianggap pindah. Pure — diuji unit.
+export const lokasiSama = (a: string | null | undefined, b: string | null | undefined): boolean =>
+  (a ?? "").trim().replace(/\s+/g, " ").toLowerCase() === (b ?? "").trim().replace(/\s+/g, " ").toLowerCase();
+
+export async function transferAsset(
+  assetId: string,
+  input: TransferInput,
+  opts: { dariRelokasi?: boolean } = {},
+): Promise<GaAssetRow | ActionResult> {
   const sql = db();
   const rows = await sql`
     SELECT a.id, a.asset_code, a.nama, a.current_pic_user_id, a.location, a.pic_name_override, c.is_shared
@@ -186,6 +195,17 @@ export async function transferAsset(assetId: string, input: TransferInput): Prom
   if (activeAssignments.length === 0 && !asset.current_pic_user_id && !asset.pic_name_override) {
     return { ok: false, error: "aset ini belum di-assign — assign dulu sebelum transfer" };
   }
+
+  // Pindah LOKASI wajib lewat Relokasi + berita acara bertanda tangan
+  // (keputusan user 13 Okt 2026). Transfer biasa = ganti PIC saja; tanpa
+  // penjaga ini lokasi bisa berpindah tanpa berita acara lewat dialog Transfer.
+  if (!opts.dariRelokasi && input.to_location?.trim() && !lokasiSama(input.to_location, asset.location as string | null)) {
+    return { ok: false, error: "pindah lokasi wajib lewat Relokasi (dengan berita acara bertanda tangan) — Transfer hanya untuk ganti PIC" };
+  }
+
+  // Lokasi HANYA berubah lewat Relokasi; transfer biasa mengabaikan
+  // to_location (yang "sama" pun tak ditulis ulang dengan ejaan lain).
+  const toLocation = opts.dariRelokasi ? input.to_location ?? null : null;
 
   let toUserId = input.to_user_id ?? null;
   const toPicNameTrim = input.to_pic_name?.trim() || null;
@@ -213,7 +233,7 @@ export async function transferAsset(assetId: string, input: TransferInput): Prom
     await sql`
       UPDATE ga_assets SET
         current_pic_user_id = NULL, pic_name_override = ${toPicNameTrim},
-        location = COALESCE(${input.to_location ?? null}, location), updated_at = now()
+        location = COALESCE(${toLocation}, location), updated_at = now()
       WHERE id = ${assetId}
     `;
     await logAudit("ga_asset.transfer_freetext", {
@@ -230,12 +250,12 @@ export async function transferAsset(assetId: string, input: TransferInput): Prom
 
   await sql`
     INSERT INTO ga_asset_transfers (asset_id, from_user_id, to_user_id, from_location, to_location, transfer_date, reason, created_by)
-    VALUES (${assetId}, ${asset.current_pic_user_id}, ${toUserId}, ${asset.location}, ${input.to_location ?? asset.location}, ${transferDate}, ${input.reason ?? null}, ${input.created_by ?? null})
+    VALUES (${assetId}, ${asset.current_pic_user_id}, ${toUserId}, ${asset.location}, ${toLocation ?? asset.location}, ${transferDate}, ${input.reason ?? null}, ${input.created_by ?? null})
   `;
   await sql`
     UPDATE ga_assets SET
       current_pic_user_id = ${toUserId}, pic_name_override = NULL,
-      location = COALESCE(${input.to_location ?? null}, location), updated_at = now()
+      location = COALESCE(${toLocation}, location), updated_at = now()
     WHERE id = ${assetId}
   `;
   await notifyPic(toUserId, String(asset.asset_code), String(asset.nama), "transfer").catch(() => {});
@@ -253,10 +273,186 @@ export async function transferAsset(assetId: string, input: TransferInput): Prom
   return (await getAsset(assetId))!;
 }
 
+// ───────────────────────── Relokasi (pindah lokasi + berita acara) ─────────────────────────
+// Keputusan user 13 Okt 2026: relokasi aset GA wajib berita acara bertanda
+// tangan, disimpan SATU langkah bersama datanya; PIC boleh tetap. File sudah
+// ditulis ke disk oleh pemanggil (index.ts) — kalau fungsi ini menolak,
+// pemanggil yang menghapus file-nya.
+
+export interface RelocateInput {
+  to_location: string;
+  keep_pic: boolean;
+  to_user_id?: string | null;
+  to_pic_name?: string | null;
+  relocation_date?: string | null;
+  reason?: string | null;
+  created_by?: string | null;
+  created_by_name?: string | null;
+  ba: { path: string; file_name: string | null; mime: string; size: number };
+}
+
+export interface RelocationRow {
+  id: string;
+  asset_id: string;
+  asset_code: string;
+  asset_nama: string;
+  from_location: string | null;
+  to_location: string;
+  from_pic: string | null;
+  to_pic: string | null;
+  pic_berubah: boolean;
+  relocation_date: string;
+  reason: string | null;
+  ba_path: string;
+  ba_file_name: string | null;
+  ba_mime: string | null;
+  created_by_name: string | null;
+  created_at: string;
+}
+
+export async function relocateAsset(assetId: string, input: RelocateInput): Promise<{ ok: true; relocation: RelocationRow } | ActionResult> {
+  const sql = db();
+  const before = await getAsset(assetId);
+  if (!before) return { ok: false, error: "aset tidak ditemukan" };
+  const toLocation = input.to_location?.trim().replace(/\s+/g, " ") ?? "";
+  if (!toLocation) return { ok: false, error: "lokasi tujuan wajib diisi" };
+  if (lokasiSama(toLocation, before.location)) {
+    return { ok: false, error: `lokasi tujuan sama dengan lokasi sekarang (${before.location ?? "-"})` };
+  }
+  if (!input.keep_pic && !input.to_user_id && !input.to_pic_name?.trim()) {
+    return { ok: false, error: "pilih PIC baru, atau centang PIC tetap" };
+  }
+  // PIC baru dari picker harus akun yang ada — dicek SEBELUM apa pun berubah,
+  // karena transferAsset menutup assignment lama dulu baru menulis yang baru.
+  if (!input.keep_pic && input.to_user_id) {
+    const ada = /^[0-9a-f-]{36}$/i.test(input.to_user_id)
+      && (await sql`SELECT 1 FROM app_user WHERE id = ${input.to_user_id}`).length > 0;
+    if (!ada) return { ok: false, error: "PIC baru tidak ditemukan di daftar user" };
+  }
+  const relocationDate = input.relocation_date || wibToday();
+
+  // Pencatat = id sesi dari BFF. Hanya dipakai kalau memang ada di app_user
+  // (FK di tabel ini & ga_asset_transfers) — id yang tak dikenal (mis. sesi
+  // lintas-lingkungan, uji dev 13 Okt 2026) dulu menggagalkan INSERT; namanya
+  // tetap tersimpan di created_by_name.
+  const createdBy =
+    input.created_by && /^[0-9a-f-]{36}$/i.test(input.created_by)
+      ? ((await sql`SELECT id FROM app_user WHERE id = ${input.created_by}`)[0]?.id as string | undefined) ?? null
+      : null;
+
+  // Catatan relokasi (+ berita acara) DITULIS DULU, baru lokasi/PIC aset
+  // diubah; gagal di langkah berikutnya → catatan dihapus lagi. Urutan
+  // sebaliknya (versi pertama) meninggalkan aset yang lokasinya sudah pindah
+  // TANPA catatan & berita acara begitu INSERT gagal (uji dev 13 Okt 2026).
+  const [row] = await sql`
+    INSERT INTO ga_asset_relocation (
+      asset_id, from_location, to_location, from_pic, to_pic, pic_berubah, relocation_date, reason,
+      ba_path, ba_file_name, ba_mime, ba_size, created_by, created_by_name
+    ) VALUES (
+      ${assetId}, ${before.location}, ${toLocation}, ${before.pic_name}, ${before.pic_name}, ${!input.keep_pic},
+      ${relocationDate}, ${input.reason?.trim() || null},
+      ${input.ba.path}, ${input.ba.file_name}, ${input.ba.mime}, ${input.ba.size},
+      ${createdBy}, ${input.created_by_name ?? null}
+    )
+    RETURNING id
+  `;
+  const relocationId = String(row.id);
+  const batal = async (): Promise<void> => {
+    await sql`DELETE FROM ga_asset_relocation WHERE id = ${relocationId}`;
+  };
+
+  let toPic = before.pic_name;
+  try {
+    if (input.keep_pic) {
+      await sql`UPDATE ga_assets SET location = ${toLocation}, updated_at = now() WHERE id = ${assetId}`;
+    } else if (!before.current_pic_user_id && !before.pic_name) {
+      // Aset belum punya PIC → PIC baru = assign (transfer menolak aset yang
+      // belum di-assign). Lokasi diperbarui sesudahnya.
+      const a = await assignAsset(assetId, {
+        user_id: input.to_user_id ?? null,
+        pic_name: input.to_pic_name ?? null,
+        assigned_date: relocationDate,
+        notes: input.reason ?? null,
+      });
+      if ("ok" in a && a.ok === false) {
+        await batal();
+        return a;
+      }
+      await sql`UPDATE ga_assets SET location = ${toLocation}, updated_at = now() WHERE id = ${assetId}`;
+      toPic = (await getAsset(assetId))?.pic_name ?? null;
+    } else {
+      const r = await transferAsset(
+        assetId,
+        {
+          to_user_id: input.to_user_id ?? null,
+          to_pic_name: input.to_pic_name ?? null,
+          to_location: toLocation,
+          reason: input.reason ?? null,
+          created_by: createdBy,
+          transfer_date: relocationDate,
+        },
+        { dariRelokasi: true },
+      );
+      if ("ok" in r && r.ok === false) {
+        await batal();
+        return r;
+      }
+      toPic = (r as GaAssetRow).pic_name;
+    }
+  } catch (e) {
+    await batal();
+    throw e;
+  }
+  if (toPic !== before.pic_name) {
+    await sql`UPDATE ga_asset_relocation SET to_pic = ${toPic} WHERE id = ${relocationId}`;
+  }
+
+  await logAudit("ga_asset.relocate", {
+    asset_id: assetId, asset_code: before.asset_code, from_location: before.location, to_location: toLocation,
+    pic_berubah: !input.keep_pic, relocation_id: relocationId,
+  }, input.created_by_name ?? null);
+  const [rel] = await listRelocations({ id: relocationId });
+  return { ok: true, relocation: rel };
+}
+
+export async function listRelocations(opts: { id?: string; assetId?: string; from?: string; to?: string; limit?: number } = {}): Promise<RelocationRow[]> {
+  const sql = db();
+  const rows = await sql`
+    SELECT r.id, r.asset_id, a.asset_code, a.nama AS asset_nama, r.from_location, r.to_location,
+           r.from_pic, r.to_pic, r.pic_berubah, r.relocation_date::text AS relocation_date, r.reason,
+           r.ba_path, r.ba_file_name, r.ba_mime, r.created_by_name, r.created_at::text AS created_at
+    FROM ga_asset_relocation r JOIN ga_assets a ON a.id = r.asset_id
+    WHERE ${opts.id ? sql`r.id = ${opts.id}` : sql`true`}
+      AND ${opts.assetId ? sql`r.asset_id = ${opts.assetId}` : sql`true`}
+      AND ${opts.from ? sql`r.relocation_date >= ${opts.from}::date` : sql`true`}
+      AND ${opts.to ? sql`r.relocation_date <= ${opts.to}::date` : sql`true`}
+    ORDER BY r.relocation_date DESC, r.created_at DESC
+    LIMIT ${opts.limit ?? 1000}
+  `;
+  return rows.map((r) => ({
+    id: String(r.id),
+    asset_id: String(r.asset_id),
+    asset_code: String(r.asset_code),
+    asset_nama: String(r.asset_nama),
+    from_location: r.from_location != null ? String(r.from_location) : null,
+    to_location: String(r.to_location),
+    from_pic: r.from_pic != null ? String(r.from_pic) : null,
+    to_pic: r.to_pic != null ? String(r.to_pic) : null,
+    pic_berubah: Boolean(r.pic_berubah),
+    relocation_date: String(r.relocation_date),
+    reason: r.reason != null ? String(r.reason) : null,
+    ba_path: String(r.ba_path),
+    ba_file_name: r.ba_file_name != null ? String(r.ba_file_name) : null,
+    ba_mime: r.ba_mime != null ? String(r.ba_mime) : null,
+    created_by_name: r.created_by_name != null ? String(r.created_by_name) : null,
+    created_at: String(r.created_at),
+  }));
+}
+
 // ───────────────────────── History timeline ─────────────────────────
 
 export interface HistoryEntry {
-  kind: "assign" | "return" | "transfer";
+  kind: "assign" | "return" | "transfer" | "relokasi";
   date: string;
   user_name: string | null;
   detail: string | null;
@@ -312,6 +508,17 @@ export async function getAssetHistory(assetId: string): Promise<HistoryEntry[]> 
     entries.push({
       kind: "transfer", date: String(t.transfer_date), sortKey: String(t.created_at),
       user_name: t.to_user_name ? String(t.to_user_name) : null, detail,
+    });
+  }
+  const relokasi = await sql`
+    SELECT relocation_date::text AS relocation_date, from_location, to_location, to_pic, reason, created_at::text AS created_at
+    FROM ga_asset_relocation WHERE asset_id = ${assetId}
+  `;
+  for (const r of relokasi) {
+    const detail = [`${r.from_location ?? "-"} → ${r.to_location}`, r.reason ? String(r.reason) : null].filter(Boolean).join(" — ");
+    entries.push({
+      kind: "relokasi", date: String(r.relocation_date), sortKey: String(r.created_at),
+      user_name: r.to_pic ? String(r.to_pic) : null, detail,
     });
   }
   entries.sort((x, y) => (x.sortKey < y.sortKey ? 1 : x.sortKey > y.sortKey ? -1 : 0));

@@ -13,14 +13,14 @@ import {
 } from "@/components/ui/dialog";
 
 interface HistoryEntry {
-  kind: "assign" | "return" | "transfer";
+  kind: "assign" | "return" | "transfer" | "relokasi";
   date: string;
   user_name: string | null;
   detail: string | null;
 }
 
-const KIND_LABEL: Record<HistoryEntry["kind"], string> = { assign: "Assign", return: "Return", transfer: "Transfer" };
-const KIND_VARIANT: Record<HistoryEntry["kind"], "outline" | "secondary" | "destructive"> = { assign: "outline", return: "secondary", transfer: "outline" };
+const KIND_LABEL: Record<HistoryEntry["kind"], string> = { assign: "Assign", return: "Return", transfer: "Transfer", relokasi: "Relokasi" };
+const KIND_VARIANT: Record<HistoryEntry["kind"], "outline" | "secondary" | "destructive"> = { assign: "outline", return: "secondary", transfer: "outline", relokasi: "outline" };
 
 const fmtDate = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString("id-ID", { day: "2-digit", month: "short", year: "numeric" });
 
