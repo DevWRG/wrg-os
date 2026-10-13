@@ -1,11 +1,15 @@
 // F73 KSO Utilization & Health Monitor.
 //
 // Status per faskes KSO — SEHAT / WASPADA / KRITIS + alasan — dihitung
-// DETERMINISTIK dari data sumber (keputusan user 13 Okt 2026, ambang usulan):
-//   KRITIS : tak ada pembelian KSO di 2 bulan tutup terakhir · utilisasi <50% target
-//            · piutang lewat jatuh tempo >90 hari · kontrak TERVERIFIKASI sudah lewat
-//   WASPADA: revenue KSO 3 bln turun >30% · utilisasi 50–80% · median bayar >60 hari
-//            · kontrak terverifikasi habis ≤90 hari
+// DETERMINISTIK dari data sumber. Ambang = varian "D" (13 Okt 2026), dipilih
+// sesudah ambang usulan awal disimulasikan ke data prod dan menghasilkan 132/196
+// faskes KRITIS (67%) — kebanyakan karena utilisasi vs target kontrak yang belum
+// diverifikasi & data sheet berumur 7–21 bulan:
+//   KRITIS : tak ada pembelian KSO di 2 bulan tutup terakhir · piutang lewat jatuh
+//            tempo >90 hari · kontrak TERVERIFIKASI sudah lewat
+//   WASPADA: revenue KSO 3 bln turun >30% · utilisasi <50% target · median bayar
+//            >90 hari · kontrak terverifikasi habis ≤90 hari
+//   (prod 13 Okt dgn varian D: 91 Kritis · 44 Waspada · 61 Sehat dari 196.)
 //   Kontrak BELUM terverifikasi (isian awal F47) yang sudah lewat = penanda "perlu
 //   verifikasi" saja — prod 13 Okt: 61/130 kontrak isian awal tercatat lewat.
 //
@@ -13,8 +17,9 @@
 // periode = bulan faktur − 1 — aturan yang SAMA dgn kso_asset_produktivitas_v 197)
 // dibanding target tes/bln aset. Jendela = 3 periode yang tagihannya sudah lengkap
 // (faktur di 3 bulan tutup terakhir). Cadangan: tes dari sheet
-// (kso_asset_test_monthly, 3 bulan terlapor terakhir) — diberi label bulan
-// datanya, karena impor sheet manual (prod 13 Okt: s/d Juli 2026).
+// (kso_asset_test_monthly, 3 bulan terlapor terakhir) — HANYA bila bulan datanya
+// ≤6 bulan lalu (SHEET_MAKS_BULAN), diberi label bulan datanya; impor sheet manual
+// (prod 13 Okt: s/d Juli 2026, banyak faskes terakhir melapor 2025).
 // "Pembelian KSO" = revenue kategori yang berlaku untuk skema faskes
 // (kso_kategori_skema) di kso_customer_revenue_mv.
 //
@@ -77,6 +82,15 @@ export function bulanTutup(hariIni: string, n: number): string {
   return d.toISOString().slice(0, 10);
 }
 
+export const AMBANG = { utilisasi_waspada: 0.5, bayar_waspada_hari: 90, piutang_kritis_hari: 90, revenue_turun: 0.3, kontrak_waspada_hari: 90 } as const;
+export const SHEET_MAKS_BULAN = 6;
+
+const umurBulan = (iso: string, hariIni: string): number => {
+  const [y, m] = iso.split("-").map(Number);
+  const [hy, hm] = hariIni.split("-").map(Number);
+  return (hy - y) * 12 + (hm - m);
+};
+
 export function nilaiKesehatan(m: MetrikKso, hariIni: string): HasilKesehatan {
   const alasan: Alasan[] = [];
   const tambah = (tingkat: Tingkat, kode: string, teks: string) => alasan.push({ tingkat, kode, teks });
@@ -86,7 +100,7 @@ export function nilaiKesehatan(m: MetrikKso, hariIni: string): HasilKesehatan {
     tambah("kritis", "tanpa_beli", `Tidak ada pembelian KSO di ${labelBulan(bulanTutup(hariIni, 2))} dan ${labelBulan(bulanTutup(hariIni, 1))}`);
   }
   // 2. Tren revenue
-  if (m.rev3_sebelum > 0 && m.rev3 < m.rev3_sebelum * 0.7) {
+  if (m.rev3_sebelum > 0 && m.rev3 < m.rev3_sebelum * (1 - AMBANG.revenue_turun)) {
     tambah("waspada", "revenue_turun", `Revenue KSO 3 bulan terakhir turun ${pct(1 - m.rev3 / m.rev3_sebelum)} dibanding 3 bulan sebelumnya`);
   }
   // 3. Utilisasi
@@ -95,23 +109,25 @@ export function nilaiKesehatan(m: MetrikKso, hariIni: string): HasilKesehatan {
     if (m.ada_per_test && m.tes_tagih_3bln != null && m.tes_tagih_3bln > 0) {
       const rata = m.tes_tagih_3bln / 3;
       utilisasi = { rasio: rata / m.target_bln, sumber: "accurate", rata_tes: rata };
-    } else if (m.tes_sheet_rata != null) {
+    } else if (m.tes_sheet_rata != null && m.sheet_sampai && umurBulan(m.sheet_sampai, hariIni) <= SHEET_MAKS_BULAN) {
       utilisasi = { rasio: m.tes_sheet_rata / m.target_bln, sumber: "sheet", rata_tes: m.tes_sheet_rata };
     }
     if (utilisasi.rasio != null) {
       const asal = utilisasi.sumber === "sheet" && m.sheet_sampai ? ` (data sheet s/d ${labelBulan(m.sheet_sampai)})` : " (tes tertagih Accurate)";
-      const teks = `Utilisasi ${pct(utilisasi.rasio)} dari target ${Math.round(m.target_bln).toLocaleString("id-ID")} tes/bln${asal}`;
-      if (utilisasi.rasio < 0.5) tambah("kritis", "utilisasi_rendah", teks);
-      else if (utilisasi.rasio < 0.8) tambah("waspada", "utilisasi_kurang", teks);
+      if (utilisasi.rasio < AMBANG.utilisasi_waspada) {
+        tambah("waspada", "utilisasi_rendah", `Utilisasi ${pct(utilisasi.rasio)} dari target ${Math.round(m.target_bln).toLocaleString("id-ID")} tes/bln${asal}`);
+      }
+    } else if (m.sheet_sampai && umurBulan(m.sheet_sampai, hariIni) > SHEET_MAKS_BULAN) {
+      tambah("info", "utilisasi_tak_terukur", `Utilisasi tak terukur — data sheet terakhir ${labelBulan(m.sheet_sampai)}, terlalu lama`);
     } else {
       tambah("info", "utilisasi_tak_terukur", "Utilisasi tak terukur — belum ada tes tertagih maupun data sheet");
     }
   }
   // 4. Pembayaran
-  if (m.lewat_tempo_hari != null && m.lewat_tempo_hari > 90) {
+  if (m.lewat_tempo_hari != null && m.lewat_tempo_hari > AMBANG.piutang_kritis_hari) {
     tambah("kritis", "piutang_lama", `Piutang lewat jatuh tempo ${m.lewat_tempo_hari} hari`);
   }
-  if (m.median_bayar != null && m.median_bayar > 60) {
+  if (m.median_bayar != null && m.median_bayar > AMBANG.bayar_waspada_hari) {
     tambah("waspada", "bayar_lambat", `Median bayar ${m.median_bayar} hari setelah faktur`);
   }
   // 5. Kontrak
@@ -119,7 +135,7 @@ export function nilaiKesehatan(m: MetrikKso, hariIni: string): HasilKesehatan {
     const sisa = selisihHari(hariIni, m.kontrak_berakhir);
     if (m.kontrak_terverifikasi) {
       if (sisa < 0) tambah("kritis", "kontrak_lewat", `Kontrak KSO sudah berakhir ${-sisa} hari lalu`);
-      else if (sisa <= 90) tambah("waspada", "kontrak_habis", `Kontrak KSO berakhir dalam ${sisa} hari`);
+      else if (sisa <= AMBANG.kontrak_waspada_hari) tambah("waspada", "kontrak_habis", `Kontrak KSO berakhir dalam ${sisa} hari`);
     } else if (sisa < 0) {
       tambah("info", "kontrak_perlu_verifikasi", "Kontrak (isian awal) tercatat sudah lewat — perlu verifikasi di Kontrak KSO");
     }

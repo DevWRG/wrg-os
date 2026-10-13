@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 
 import { bulanTutup, labelBulan, nilaiKesehatan, pesanRekapHod, yangMemburuk, type MetrikKso } from "./kso-kesehatan.js";
 
-// F73 KSO Health — aturan status (ambang usulan, keputusan user 13 Okt 2026).
+// F73 KSO Health — aturan status (varian D, 13 Okt 2026).
 
 const HARI = "2026-10-13";
 const sehat: MetrikKso = {
@@ -29,24 +29,26 @@ test("semua komponen baik → SEHAT tanpa alasan", () => {
   assert.equal(h.utilisasi.rasio, 0.9);
 });
 
-test("KRITIS: tanpa pembelian 2 bulan tutup, utilisasi <50%, piutang >90 hari, kontrak terverifikasi lewat", () => {
+test("KRITIS: tanpa pembelian 2 bulan tutup, piutang >90 hari, kontrak terverifikasi lewat", () => {
   const a = kode({ beli_m1: false, beli_m2: false });
   assert.equal(a.status, "KRITIS");
   assert.match(a.alasan[0].teks, /Tidak ada pembelian KSO di Agu 2026 dan Sep 2026/);
   assert.equal(kode({ beli_m1: false, beli_m2: true }).status, "SEHAT"); // satu bulan bolong belum kritis
-  assert.equal(kode({ tes_tagih_3bln: 1200 }).status, "KRITIS"); // 400/1000 = 40%
   assert.equal(kode({ lewat_tempo_hari: 91 }).status, "KRITIS");
   assert.equal(kode({ lewat_tempo_hari: 90 }).status, "SEHAT");
   assert.equal(kode({ kontrak_berakhir: "2026-10-01" }).status, "KRITIS");
 });
 
-test("WASPADA: revenue turun >30%, utilisasi 50–80%, median bayar >60, kontrak ≤90 hari", () => {
+test("WASPADA: revenue turun >30%, utilisasi <50% (tak pernah Kritis), median bayar >90, kontrak ≤90 hari", () => {
   const r = kode({ rev3: 60, rev3_sebelum: 100 });
   assert.equal(r.status, "WASPADA");
   assert.match(r.alasan[0].teks, /turun 40%/);
   assert.equal(kode({ rev3: 71, rev3_sebelum: 100 }).status, "SEHAT");
-  assert.equal(kode({ tes_tagih_3bln: 1800 }).status, "WASPADA"); // 60%
-  assert.equal(kode({ median_bayar: 61 }).status, "WASPADA");
+  assert.equal(kode({ tes_tagih_3bln: 1200 }).status, "WASPADA"); // 400/1000 = 40%
+  assert.equal(kode({ tes_tagih_3bln: 300 }).status, "WASPADA");  // 10% — tetap Waspada
+  assert.equal(kode({ tes_tagih_3bln: 1800 }).status, "SEHAT");   // 60%
+  assert.equal(kode({ median_bayar: 91 }).status, "WASPADA");
+  assert.equal(kode({ median_bayar: 90 }).status, "SEHAT");
   assert.equal(kode({ kontrak_berakhir: "2026-12-31" }).status, "WASPADA"); // 79 hari
 });
 
@@ -57,11 +59,15 @@ test("kontrak isian awal (belum terverifikasi) yang lewat = info saja, status ta
   assert.match(h.alasan[0].teks, /perlu verifikasi/);
 });
 
-test("utilisasi: cadangan sheet berlabel bulan; tanpa target = tidak dinilai; tanpa data = info", () => {
-  const s = kode({ ada_per_test: false, tes_tagih_3bln: null, tes_sheet_rata: 600, sheet_sampai: "2026-07-01" });
+test("utilisasi: cadangan sheet ≤6 bln berlabel bulan; sheet basi / tanpa data = info; tanpa target = tidak dinilai", () => {
+  const s = kode({ ada_per_test: false, tes_tagih_3bln: null, tes_sheet_rata: 300, sheet_sampai: "2026-07-01" });
   assert.equal(s.utilisasi.sumber, "sheet");
   assert.equal(s.status, "WASPADA");
   assert.match(s.alasan[0].teks, /data sheet s\/d Jul 2026/);
+  const basi = kode({ ada_per_test: false, tes_tagih_3bln: null, tes_sheet_rata: 300, sheet_sampai: "2025-11-01" });
+  assert.equal(basi.utilisasi.rasio, null);
+  assert.equal(basi.status, "SEHAT");
+  assert.match(basi.alasan[0].teks, /data sheet terakhir Nov 2025, terlalu lama/);
   assert.equal(kode({ target_bln: 0, tes_tagih_3bln: 10 }).utilisasi.rasio, null);
   const t = kode({ tes_tagih_3bln: null, tes_sheet_rata: null });
   assert.equal(t.status, "SEHAT");
