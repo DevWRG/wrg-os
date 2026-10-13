@@ -74,3 +74,15 @@ export async function sessionTokenValid(token: string | undefined | null): Promi
     return false;
   }
 }
+
+/** User id (`sub`) dari token yang SAH — null bila tanda tangan/exp tak lolos. Dipakai pencatat
+ * pemakaian fitur (F58): identitas harus terverifikasi, bukan sekadar dibaca dari cookie. */
+export async function sessionTokenSub(token: string | undefined | null): Promise<string | null> {
+  if (!(await sessionTokenValid(token))) return null;
+  try {
+    const payload = JSON.parse(new TextDecoder().decode(base64urlToBytes(token!.split(".")[1]))) as { sub?: unknown };
+    return typeof payload.sub === "string" && payload.sub ? payload.sub : null;
+  } catch {
+    return null;
+  }
+}

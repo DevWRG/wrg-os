@@ -175,6 +175,7 @@ import {
 import { salesRange, reportRevenue, reportSalesAr, salesOverview, customersRevenue, customerMonthly, dormantCustomers, churnCustomers, targetPacing, reportSalesPerformance } from "./repo/sales.js";
 import { streamRange, reportRevenueByStream } from "./repo/revenue-stream.js";
 import { resolveScope } from "./repo/access-scope.js";
+import { AdoptionError, getAdoption, LIST_LIMIT_DEFAULT, recordUsage, resolvePeriod, summarizeByFeature, trainingNeeds } from "./repo/adoption.js";
 import { getRaportList, getRaportDetail } from "./repo/raport.js";
 import { generateRaportNarrative, runRaportNarrative } from "./repo/raportnarrative.js";
 import {
@@ -5571,6 +5572,57 @@ app.post("/demo-trial/:id/tutup", async (c) => {
 app.get("/demo-trial-am", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json({ am: await listOwnerCandidates(await scopeOf(c)) });
+});
+
+// F58 Adopsi Fitur — pemakaian fitur per user (view/action) → champion vs laggard → daftar "perlu training".
+// Bukan KPI. Identitas SELALU dari x-user-id (BFF, dari sesi) — tak pernah dari body/query.
+// Gerbang menu/izin (requireFeature "/adoption") di BFF; audiens (admin/superuser/Direktur = semua,
+// HoD = cabang timnya, lainnya 403) ditegakkan di sini lewat audienceOf().
+const adoptionErr = (c: { json: (b: unknown, s?: number) => Response }, e: unknown) => {
+  if (e instanceof AdoptionError) return c.json({ error: e.message, field: e.field }, e.status);
+  // 42P01 = tabel belum ada (migrasi 212 belum diterapkan) → 503, bukan 500 buram.
+  if ((e as { code?: string })?.code === "42P01") return c.json({ error: "migration_pending" }, 503);
+  return c.json({ error: "gagal memproses adopsi fitur" }, 500);
+};
+app.post("/adoption/event", async (c) => {
+  const svc = process.env.API_SERVICE_TOKEN;
+  if (svc && c.req.header("x-service-token") !== svc) return c.json({ error: "forbidden" }, 403);
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const userId = (c.req.header("x-user-id") ?? "").trim();
+    if (!userId) return c.json({ error: "x-user-id wajib" }, 403);
+    const b = (await c.req.json().catch(() => ({}))) as { feature_key?: unknown; kind?: unknown };
+    if (typeof b.feature_key !== "string" || typeof b.kind !== "string") return c.json({ error: "feature_key + kind wajib", field: "feature_key" }, 400);
+    const r = await recordUsage(userId, b.feature_key, b.kind);
+    if (r.reason === "unknown_user_or_feature") return c.json({ error: "user atau fitur tidak dikenal", field: "feature_key" }, 400);
+    return c.json(r, r.recorded ? 201 : 200);
+  } catch (e) { return adoptionErr(c, e); }
+});
+async function adoptionData(c: { req: { header: (k: string) => string | undefined; query: (k: string) => string | undefined } }) {
+  const period = resolvePeriod(c.req.query("period"), c.req.query("month"), wibDate());
+  const data = await getAdoption(await scopeOf(c), period, {
+    feature: c.req.query("feature"), title: c.req.query("title"), q: c.req.query("q"),
+  });
+  return data;
+}
+app.get("/adoption/summary", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const d = await adoptionData(c);
+    const { rows, ...meta } = d;
+    // rows hanya untuk drill-down satu fitur; ringkasan cukup agregat per fitur.
+    return c.json({ ...meta, features: summarizeByFeature(rows), rows: c.req.query("feature") ? rows : undefined });
+  } catch (e) { return adoptionErr(c, e); }
+});
+app.get("/adoption/training-needs", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const d = await adoptionData(c);
+    const { rows, ...meta } = d;
+    const lim = Number(c.req.query("limit"));
+    const list = trainingNeeds(rows, Number.isFinite(lim) && lim > 0 ? lim : LIST_LIMIT_DEFAULT);
+    return c.json({ ...meta, total: rows.filter((r) => r.label === "laggard").length, rows: list });
+  } catch (e) { return adoptionErr(c, e); }
 });
 
 // F65 Leads — lead terpisah dari deal; lolos BANT ≥3 → konversi jadi deal.
