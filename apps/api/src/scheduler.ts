@@ -50,6 +50,7 @@ import { runGeoSweep } from "./repo/geowatch.js";
 import { terapkanKpiBulan } from "./repo/kpi-measure.js";
 import { runAuditFindingApprovalReminder } from "./repo/audit-finding.js";
 import { runInvoiceReminder, runOverdueRecap } from "./repo/faktur.js";
+import { runLeadAging } from "./repo/lead.js";
 
 // Penjadwal agen in-process (Blueprint v2.3). Default MATI — aktif hanya bila
 // AGENT_SCHEDULE_ENABLED=true. Tiap run tetap menulis ke audit_log via repo
@@ -199,6 +200,9 @@ export function startScheduler(): ScheduleStatus {
   // Flag sendiri: sinkron pertama ±1.100 panggilan detail, dinyalakan
   // eksplisit sesudah sinkron manual pertama dicek.
   const poSyncEnabled = (process.env.ACCURATE_PO_SYNC_ENABLED ?? "false").toLowerCase() === "true";
+  // F65 — pengingat lead belum dihubungi (AM ≥3 hari kerja, HoD ≥7). DM per orang;
+  // MATI sampai user menentukan penerimanya (keputusan 13 Okt 2026).
+  const leadAgingEnabled = (process.env.LEAD_AGING_ENABLED ?? "false").toLowerCase() === "true";
   // audit-finding-reminder (F60) — WA ke anggota grup tahap approval yang
   // pending & telat >N hari (dedup harian via reminded_at). Flag SENDIRI
   // (default off) — mengirim WA.
@@ -279,12 +283,12 @@ export function startScheduler(): ScheduleStatus {
   ];
 
   status = {
-    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled || watchpointSnapshotEnabled || geoSweepEnabled || cashinResumeEnabled || kpiMeasureEnabled || seninBriefEnabled || auditFindingReminderEnabled || invoiceReminderEnabled || soPacingEnabled || fixedAssetSyncEnabled || poSyncEnabled,
+    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled || watchpointSnapshotEnabled || geoSweepEnabled || cashinResumeEnabled || kpiMeasureEnabled || seninBriefEnabled || auditFindingReminderEnabled || invoiceReminderEnabled || soPacingEnabled || fixedAssetSyncEnabled || poSyncEnabled || leadAgingEnabled,
     timezone,
     jobs: jobs.map((j) => ({ id: j.id, expr: j.expr, valid: cron.validate(j.expr) })),
   };
 
-  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled && !watchpointSnapshotEnabled && !geoSweepEnabled && !cashinResumeEnabled && !kpiMeasureEnabled && !seninBriefEnabled && !auditFindingReminderEnabled && !invoiceReminderEnabled && !soPacingEnabled && !fixedAssetSyncEnabled && !poSyncEnabled) {
+  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled && !watchpointSnapshotEnabled && !geoSweepEnabled && !cashinResumeEnabled && !kpiMeasureEnabled && !seninBriefEnabled && !auditFindingReminderEnabled && !invoiceReminderEnabled && !soPacingEnabled && !fixedAssetSyncEnabled && !poSyncEnabled && !leadAgingEnabled) {
     console.log("[scheduler] semua *_SCHEDULE/_ENABLED flag != true — tidak dijadwalkan");
     return status;
   }
@@ -815,6 +819,26 @@ export function startScheduler(): ScheduleStatus {
       { timezone },
     );
     live.push(`accurate-fa-sync=${faSyncExpr}`);
+  }
+
+  // F65 lead-aging — hari kerja 09:00 WIB; libur (master_holiday) dilewati.
+  // Satu ringkasan per AM/HoD; penanda terkirim hanya bila WA live (repo/lead.ts).
+  const leadAgingExpr = process.env.LEAD_AGING_CRON ?? "0 9 * * 1-5";
+  if (leadAgingEnabled && cron.validate(leadAgingExpr)) {
+    cron.schedule(
+      leadAgingExpr,
+      async () => {
+        try {
+          if (!(await isWorkday())) return;
+          const r = await runLeadAging();
+          console.log(`[scheduler] lead-aging → AM ${r.am}, HoD ${r.hod}${r.lewati.length ? `, dilewati: ${r.lewati.join("; ")}` : ""}`);
+        } catch (e) {
+          console.error("[scheduler] lead-aging gagal:", (e as Error).message);
+        }
+      },
+      { timezone },
+    );
+    live.push(`lead-aging=${leadAgingExpr}`);
   }
 
   // accurate-po-sync (F13) — tiap 30 menit jam kerja-ish. Inkremental per
