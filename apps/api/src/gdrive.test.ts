@@ -30,17 +30,20 @@ test("bangunMultipart: metadata JSON lalu isi biner, dibatasi boundary", () => {
   assert.ok(b.includes(isi));
 });
 
-test("driveSiap: butuh kunci DAN folder tujuan", () => {
-  const simpan = { k: process.env.GDRIVE_SA_KEY_FILE, f: process.env.GDRIVE_BROSUR_FOLDER_ID };
+test("driveSiap: butuh kredensial (OAuth ATAU service account) DAN folder tujuan", () => {
+  const kunci = ["GDRIVE_SA_KEY_FILE", "GDRIVE_OAUTH_FILE", "GDRIVE_BROSUR_FOLDER_ID"] as const;
+  const simpan = Object.fromEntries(kunci.map((k) => [k, process.env[k]]));
   try {
-    delete process.env.GDRIVE_SA_KEY_FILE; delete process.env.GDRIVE_BROSUR_FOLDER_ID;
-    assert.equal(driveSiap(), false);
-    process.env.GDRIVE_SA_KEY_FILE = "/x/sa.json";
+    for (const k of kunci) delete process.env[k];
     assert.equal(driveSiap(), false);
     process.env.GDRIVE_BROSUR_FOLDER_ID = "abc";
+    assert.equal(driveSiap(), false);
+    process.env.GDRIVE_OAUTH_FILE = "/x/oauth.json";
+    assert.equal(driveSiap(), true);
+    delete process.env.GDRIVE_OAUTH_FILE;
+    process.env.GDRIVE_SA_KEY_FILE = "/x/sa.json";
     assert.equal(driveSiap(), true);
   } finally {
-    if (simpan.k === undefined) delete process.env.GDRIVE_SA_KEY_FILE; else process.env.GDRIVE_SA_KEY_FILE = simpan.k;
-    if (simpan.f === undefined) delete process.env.GDRIVE_BROSUR_FOLDER_ID; else process.env.GDRIVE_BROSUR_FOLDER_ID = simpan.f;
+    for (const k of kunci) { if (simpan[k] === undefined) delete process.env[k]; else process.env[k] = simpan[k]; }
   }
 });

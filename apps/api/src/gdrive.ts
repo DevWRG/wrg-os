@@ -2,12 +2,16 @@
 // ditandatangani dengan node:crypto, lalu REST Drive v3 lewat fetch.
 //
 // Dipakai F130 (brosur diunggah dari dashboard, file disimpan di Google Drive —
-// keputusan user 13 Okt 2026). Konfigurasi (server, bukan repo — repo PUBLIC):
-//   GDRIVE_SA_KEY_FILE      path kunci JSON service account (chmod 600)
-//   GDRIVE_BROSUR_FOLDER_ID id folder tujuan di Shared Drive (service account =
-//                           Content manager). Service account TIDAK punya kuota
-//                           My Drive, jadi wajib Shared Drive.
-// Tanpa keduanya → driveSiap() false dan unggah ditolak dengan pesan jelas.
+// keputusan user 13 Okt 2026). Dua mode kredensial (server, bukan repo — repo PUBLIC):
+//   • OAuth akun Workspace (DIPAKAI — info@, file masuk My Drive akun itu):
+//       GDRIVE_OAUTH_FILE = path JSON {client_id, client_secret, refresh_token}
+//       (chmod 600), dibuat sekali lewat scripts/ops/gdrive-oauth.mjs.
+//       Jalur ini dipilih karena organisasi memblokir kunci service account
+//       (iam.disableServiceAccountKeyCreation, "secure by default").
+//   • Service account (cadangan): GDRIVE_SA_KEY_FILE = kunci JSON; folder harus
+//       di Shared Drive (service account tak punya kuota My Drive).
+//   GDRIVE_BROSUR_FOLDER_ID = id folder tujuan (wajib, kedua mode).
+// Tanpa kredensial/folder → driveSiap() false dan unggah ditolak dengan pesan jelas.
 
 import { createSign } from "node:crypto";
 import { readFile } from "node:fs/promises";
@@ -24,7 +28,9 @@ const TOKEN_URI = "https://oauth2.googleapis.com/token";
 const SCOPE = "https://www.googleapis.com/auth/drive";
 
 export const driveSiap = (): boolean =>
-  Boolean(process.env.GDRIVE_SA_KEY_FILE?.trim() && process.env.GDRIVE_BROSUR_FOLDER_ID?.trim());
+  Boolean((process.env.GDRIVE_OAUTH_FILE?.trim() || process.env.GDRIVE_SA_KEY_FILE?.trim()) && process.env.GDRIVE_BROSUR_FOLDER_ID?.trim());
+
+interface KredOauth { client_id: string; client_secret: string; refresh_token: string }
 
 const b64url = (b: Buffer | string): string =>
   Buffer.from(b).toString("base64").replace(/=+$/, "").replace(/\+/g, "-").replace(/\//g, "_");
@@ -49,22 +55,33 @@ export function bangunMultipart(meta: Record<string, unknown>, isi: Buffer, mime
 
 let tokenCache: { token: string; habis: number } | null = null;
 
+async function tukarToken(body: URLSearchParams, uri = TOKEN_URI): Promise<string> {
+  const res = await fetch(uri, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body });
+  const d = (await res.json().catch(() => ({}))) as { access_token?: string; expires_in?: number; error?: string; error_description?: string };
+  if (!res.ok || !d.access_token) {
+    // invalid_grant = token dicabut / akun berubah sandi → jalankan ulang gdrive-oauth.mjs
+    throw new DriveError(502, `login Google Drive gagal: ${d.error_description ?? d.error ?? res.status}${d.error === "invalid_grant" ? " — sambungkan ulang akun Drive (scripts/ops/gdrive-oauth.mjs)" : ""}`);
+  }
+  tokenCache = { token: d.access_token, habis: Date.now() + (d.expires_in ?? 3600) * 1000 };
+  return d.access_token;
+}
+
 async function tokenAkses(): Promise<string> {
   if (tokenCache && tokenCache.habis > Date.now() + 60_000) return tokenCache.token;
+  const oauth = process.env.GDRIVE_OAUTH_FILE?.trim();
+  if (oauth) {
+    let k: KredOauth;
+    try { k = JSON.parse(await readFile(oauth, "utf8")) as KredOauth; }
+    catch { throw new DriveError(503, "kredensial OAuth Google Drive tak terbaca di server"); }
+    if (!k.client_id || !k.client_secret || !k.refresh_token) throw new DriveError(503, "kredensial OAuth Google Drive tidak lengkap");
+    return tukarToken(new URLSearchParams({ grant_type: "refresh_token", client_id: k.client_id, client_secret: k.client_secret, refresh_token: k.refresh_token }));
+  }
   const path = process.env.GDRIVE_SA_KEY_FILE?.trim();
-  if (!path) throw new DriveError(503, "Google Drive belum dikonfigurasi (GDRIVE_SA_KEY_FILE)");
+  if (!path) throw new DriveError(503, "Google Drive belum dikonfigurasi (GDRIVE_OAUTH_FILE / GDRIVE_SA_KEY_FILE)");
   let k: KunciSa;
   try { k = JSON.parse(await readFile(path, "utf8")) as KunciSa; }
   catch { throw new DriveError(503, "kunci service account Google Drive tak terbaca di server"); }
-  const res = await fetch(k.token_uri ?? TOKEN_URI, {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({ grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer", assertion: bangunJwt(k, Math.floor(Date.now() / 1000)) }),
-  });
-  const d = (await res.json().catch(() => ({}))) as { access_token?: string; expires_in?: number; error_description?: string };
-  if (!res.ok || !d.access_token) throw new DriveError(502, `login Google Drive gagal: ${d.error_description ?? res.status}`);
-  tokenCache = { token: d.access_token, habis: Date.now() + (d.expires_in ?? 3600) * 1000 };
-  return d.access_token;
+  return tukarToken(new URLSearchParams({ grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer", assertion: bangunJwt(k, Math.floor(Date.now() / 1000)) }), k.token_uri ?? TOKEN_URI);
 }
 
 /** Unggah file ke folder brosur; balikan id + tautan lihat. */
