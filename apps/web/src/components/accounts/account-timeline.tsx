@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { FileText, MessageSquareText, Phone, Route, Workflow } from "lucide-react";
+import { FileText, FlaskConical, MessageSquareText, Phone, Presentation, Route, Workflow } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -13,7 +13,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 // berikutnya lewat kursor dari /api/accounts/:id/timeline. Filter jenis bekerja
 // di atas baris yang sudah dimuat (bukan query ulang).
 
-type Jenis = "call" | "note" | "aktivitas" | "deal" | "faktur";
+type Jenis = "call" | "note" | "aktivitas" | "deal" | "faktur" | "demo" | "trial";
 export interface TimelineItem {
   jenis: Jenis; waktu: string; judul: string | null; isi: string | null; oleh: string | null; ref: string;
   nilai?: number; sisa?: number; status?: string | null;
@@ -27,6 +27,7 @@ const FILTER: { v: string; l: string; cocok: (j: Jenis) => boolean }[] = [
   { v: "interaksi", l: "Telepon & catatan", cocok: (j) => j === "call" || j === "note" },
   { v: "aktivitas", l: "Aktivitas AM", cocok: (j) => j === "aktivitas" },
   { v: "deal", l: "Deal", cocok: (j) => j === "deal" },
+  { v: "demo", l: "Demo & trial", cocok: (j) => j === "demo" || j === "trial" },
   { v: "faktur", l: "Faktur", cocok: (j) => j === "faktur" },
 ];
 
@@ -36,6 +37,8 @@ const GAYA: Record<Jenis, { label: string; Icon: typeof Phone; tone: string }> =
   aktivitas: { label: "Aktivitas", Icon: Route, tone: "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300" },
   deal: { label: "Deal", Icon: Workflow, tone: "bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-300" },
   faktur: { label: "Faktur", Icon: FileText, tone: "bg-slate-100 text-slate-700 dark:bg-slate-500/20 dark:text-slate-300" },
+  demo: { label: "Demo", Icon: Presentation, tone: "bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-300" },
+  trial: { label: "Trial", Icon: FlaskConical, tone: "bg-teal-100 text-teal-700 dark:bg-teal-500/20 dark:text-teal-300" },
 };
 
 const rp = (n: number) => new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(n);
@@ -108,7 +111,7 @@ export function AccountTimeline({ accountId, initial }: { accountId: string; ini
                   <span className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${g.tone}`}>{g.label}</span>
                   {i.judul && <span className="text-sm font-medium">{i.judul}</span>}
                   <span className="text-muted-foreground text-xs">
-                    {fmtWaktu(i.waktu, i.jenis !== "aktivitas" && i.jenis !== "faktur")}
+                    {fmtWaktu(i.waktu, !["aktivitas", "faktur", "demo", "trial"].includes(i.jenis))}
                     {i.oleh ? ` · ${i.oleh}` : ""}
                   </span>
                 </div>

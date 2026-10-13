@@ -149,7 +149,7 @@ export async function catatInteraksi(x: CatatInteraksi): Promise<{ id: string; b
 
 // ── Timeline Accounts 360 ───────────────────────────────────────────────────
 
-export type JenisTimeline = "call" | "note" | "aktivitas" | "deal" | "faktur";
+export type JenisTimeline = "call" | "note" | "aktivitas" | "deal" | "faktur" | "demo" | "trial";
 
 export interface TimelineItem {
   jenis: JenisTimeline;
@@ -220,6 +220,19 @@ export async function timelineAkun(accountId: number, opts: { limit?: number; ku
              ai.number, NULL, NULLIF(ai.salesman_name,''), ai.id::text,
              (ai.total - COALESCE(ai.tax_amount,0))::float8, COALESCE(ai.outstanding,0)::float8, NULLIF(ai.status,'')
       FROM accurate_invoice ai WHERE ai.customer_id = ${accountId}
+      UNION ALL
+      -- F18 demo/trial (migrasi 210). Waktu = hari demo / mulai trial.
+      SELECT dt.jenis, (dt.tanggal::timestamp AT TIME ZONE 'Asia/Jakarta'),
+             dt.kode || ' · ' || dt.alat,
+             concat_ws(chr(10),
+               CASE WHEN dt.hasil IS NOT NULL THEN 'Hasil: ' || dt.hasil || COALESCE(' — ' || NULLIF(btrim(dt.alasan_hasil),''), '')
+                    WHEN dt.tanggal_selesai IS NOT NULL THEN 'Trial s/d ' || to_char(dt.tanggal_selesai, 'DD-MM-YYYY') || ' · belum ada hasil'
+                    ELSE 'Belum ada hasil' END,
+               NULLIF(btrim(dt.catatan),'')),
+             COALESCE(NULLIF(dmu.nama,''), dt.am_id), dt.id::text,
+             NULL, NULL, NULL
+      FROM demo_trial dt LEFT JOIN master_user dmu ON dmu.am_id = dt.am_id
+      WHERE dt.account_id = ${accountId}
     ) t
     ${k ? sql`WHERE (t.waktu, t.jenis, t.ref) < (${k[0]}::timestamptz, ${k[1]}, ${k[2]})` : sql``}
     ORDER BY t.waktu DESC, t.jenis DESC, t.ref DESC

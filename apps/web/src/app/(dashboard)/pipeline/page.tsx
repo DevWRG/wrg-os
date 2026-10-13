@@ -1,5 +1,6 @@
 import { gatewayFetch } from "@/lib/gateway";
 import { sessionUser } from "@/lib/admin-guard";
+import { featureAllowed } from "@/lib/feature-guard";
 import { PipelineBoard, type PipelineData } from "@/components/pipeline/pipeline-board";
 import { LossApprovalPanel } from "@/components/pipeline/loss-approval-panel";
 
@@ -36,7 +37,7 @@ export default async function PipelinePage() {
       {/* Panel approval Lost — hanya tampil bila user (HoD/admin) punya loss pending. */}
       <LossApprovalPanel />
       {data ? (
-        <PipelineBoard data={data} isAdmin={isAdmin} />
+        <PipelineBoard data={data} isAdmin={isAdmin} bolehDemo={!!me && featureAllowed(me, "/demo-trial", "create")} />
       ) : (
         <p className="text-muted-foreground">
           Data tidak tersedia. Pastikan <code>apps/api</code> jalan dengan <code>DATABASE_URL</code>.
