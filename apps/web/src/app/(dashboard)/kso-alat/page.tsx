@@ -1,6 +1,6 @@
 import { gatewayFetch } from "@/lib/gateway";
 import { sessionUser } from "@/lib/admin-guard";
-import { canViewKso } from "@/lib/kso-access";
+import { canBukaDaftarAlat, canMutasiAlatKso } from "@/lib/kso-access";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { EmptyState } from "@/components/ui/empty-state";
 import { KsoAlatView, type KsoAlat } from "@/components/kso/alat-view";
@@ -12,11 +12,12 @@ export const dynamic = "force-dynamic";
 // menentukan baris Produktivitas KSO, jadi "Operasional" di sini = alat yang
 // dihitung di sana (kecuali faskesnya belum terpetakan ke Accurate — ditandai).
 //
-// Gate sama dengan Produktivitas KSO: canViewKso, kunci 'kso-simulator'. Kalau
-// akses dipisah kelak, ganti di sini, di nav.ts, dan di BFF bersamaan.
+// Gate: 'kso-simulator' (sama dengan Produktivitas KSO) ATAU 'kso-mutasi-alat'
+// (teknisi, F169). Tombol Pindah/tarik hanya untuk 'kso-mutasi-alat' tingkat edit;
+// gerbang sebenarnya di BFF /api/kso-penempatan/*.
 export default async function KsoAlatPage() {
   const me = await sessionUser();
-  if (!canViewKso(me)) {
+  if (!canBukaDaftarAlat(me)) {
     return (
       <>
         <PageHeader title="Daftar Alat" />
@@ -49,7 +50,7 @@ export default async function KsoAlatPage() {
         title="Daftar Alat"
         description="Semua alat yang dikelola WRG. Arahkan kursor ke status untuk melihat dari mana status itu berasal."
       />
-      <KsoAlatView data={data} />
+      <KsoAlatView data={data} bolehMutasi={canMutasiAlatKso(me)} />
     </>
   );
 }
