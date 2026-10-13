@@ -1,4 +1,4 @@
--- 213 — F74 Non-KSO Field Campaign Tracker (menyerap F46 Bulk Import Campaign).
+-- 214 — F74 Non-KSO Field Campaign Tracker (menyerap F46 Bulk Import Campaign).
 --
 -- Keputusan user (2026-10-13):
 --   • F74 menyerap F46 — satu modul kampanye (gaya "Vivachek 5000 box").

@@ -9,7 +9,7 @@
 //   • SO      : baris accurate_sales_order_item non-KSO, netto = dppAmount.
 //   • Corong  : lead / deal / demo-trial ber-brand cocok yang dibuat dalam
 //               periode; aktivitas #REPORT yang tertaut ke deal itu.
-// Brand per item = item_brand() (migrasi 213): Klasifikasi Produk → Price Book
+// Brand per item = item_brand() (migrasi 214): Klasifikasi Produk → Price Book
 // → alias brand di nama item.
 //
 // Scope: AM = dirinya, HoD = cabang timnya, admin = semua (resolveScope).
