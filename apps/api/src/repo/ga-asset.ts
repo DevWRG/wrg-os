@@ -332,6 +332,9 @@ export async function updateAsset(id: string, input: GaAssetUpdateInput): Promis
   if (editLokasiDitolak(rows[0].location as string | null, input.location)) {
     return { ok: false, error: "pindah lokasi wajib lewat Relokasi (dengan berita acara bertanda tangan) — Edit tidak bisa mengubah lokasi yang sudah terisi" };
   }
+  // Lokasi terisi yang dikirim ulang (beda spasi/huruf besar saja) = tak berubah:
+  // pertahankan teks lama, jangan timpa dengan variannya.
+  if ((rows[0].location as string | null)?.trim()) input = { ...input, location: undefined };
   const picProvided = Object.prototype.hasOwnProperty.call(input, "pic_name_override");
   const picValue = input.pic_name_override == null || input.pic_name_override === "" ? null : String(input.pic_name_override);
   // `!== undefined` (bukan COALESCE(x ?? null, kolom)) — field opsional
