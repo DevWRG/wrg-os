@@ -78,7 +78,7 @@ function kolomExportKso(): ExportColumn<KsoProduktivitasRow>[] {
   ];
 }
 
-export function KsoProduktivitasTabel({ f }: { f: FilterKso }) {
+export function KsoProduktivitasTabel({ f, bolehCatat = false }: { f: FilterKso; bolehCatat?: boolean }) {
   const { rows, median } = f;
   const [detail, setDetail] = useState<FaskesRow | null>(null);
   const kolomExport = kolomExportKso();
@@ -269,7 +269,7 @@ export function KsoProduktivitasTabel({ f }: { f: FilterKso }) {
         <a href="/kso-alat" className="underline underline-offset-2">Daftar Alat</a>.
       </p>
 
-      <FaskesDetailDialog g={detail} median={median} onClose={() => setDetail(null)} />
+      <FaskesDetailDialog g={detail} median={median} bolehCatat={bolehCatat} onClose={() => setDetail(null)} />
     </div>
   );
 }
