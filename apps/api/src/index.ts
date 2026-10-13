@@ -314,6 +314,7 @@ import {
   listTickets,
   getTicketById,
   resolveTicket,
+  assignTicketManual,
 } from "./repo/serviceticket.js";
 import {
   listInboundReceiving,
@@ -6280,6 +6281,20 @@ app.get("/service-tickets/:id", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const t = await getTicketById(c.req.param("id"));
   return t ? c.json(t) : c.json({ error: "ticket tidak ditemukan" }, 404);
+});
+
+// Penugasan manual (E7): tiket perlu review / ganti teknisi. by = nama pelaku dari BFF.
+app.post("/service-tickets/:id/assign", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { teknisi_id?: string; by?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.teknisi_id) return c.json({ error: "teknisi_id wajib" }, 400);
+  const r = await assignTicketManual(c.req.param("id"), body.teknisi_id, body.by ?? null);
+  return r.ok ? c.json(r.ticket) : c.json({ error: r.error }, r.error === "ticket tidak ditemukan" ? 404 : 400);
 });
 
 app.post("/service-tickets/:id/resolve", async (c) => {

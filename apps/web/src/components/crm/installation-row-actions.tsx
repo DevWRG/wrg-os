@@ -30,12 +30,6 @@ interface InstallationUnit {
   po_number: string | null;
 }
 
-interface Shipment {
-  number: string;
-  customer_name: string | null;
-  trans_date: string | null;
-}
-
 interface StepDef {
   endpoint: string;
   buttonLabel: string;
@@ -44,7 +38,7 @@ interface StepDef {
   fieldLabel: string;
   required: boolean;
   placeholder?: string;
-  sourceFromAccurate?: boolean; // No. SJ dipilih dari mirror Accurate (exception disetujui utk F22)
+  sourceFromAccurate?: boolean; // No. SJ dirujuk ke DO Accurate — server mencari "SJK 6142"/nomor lengkap
   sourceFromRoster?: boolean;   // Teknisi dipilih dari roster teknisi_capacity (F8), bukan diketik
 }
 
@@ -102,18 +96,9 @@ export function InstallationRowActions({ row }: { row: InstallationUnit }) {
   const [value, setValue] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [shipments, setShipments] = useState<Shipment[]>([]);
   const [teknisi, setTeknisi] = useState<{ id: string; nama: string }[]>([]);
 
   const step = STEP_BY_STATUS[row.status];
-
-  useEffect(() => {
-    if (!open || !step?.sourceFromAccurate || shipments.length > 0) return;
-    void fetch("/api/shipments?limit=200", { cache: "no-store" })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => setShipments(d?.rows ?? []))
-      .catch(() => {});
-  }, [open, step?.sourceFromAccurate, shipments.length]);
 
   // Roster teknisi utk langkah assign. Hanya yang AKTIF ditawarkan — menugaskan
   // teknisi nonaktif tersimpan wajar tapi orangnya sudah tak di roster, jadi
@@ -199,29 +184,19 @@ export function InstallationRowActions({ row }: { row: InstallationUnit }) {
                     <option key={t.id} value={t.id}>{t.nama}</option>
                   ))}
                 </select>
-              ) : step.sourceFromAccurate && shipments.length > 0 ? (
-                <select
-                  id={`iu-step-${row.id}`}
-                  required={step.required}
-                  className={selectCls}
-                  value={value}
-                  onChange={(e) => setValue(e.target.value)}
-                >
-                  <option value="" disabled>pilih SJ dari Accurate…</option>
-                  {shipments.map((s) => (
-                    <option key={s.number} value={s.number}>
-                      {s.number} — {s.customer_name ?? "?"} ({s.trans_date?.slice(0, 10) ?? "-"})
-                    </option>
-                  ))}
-                </select>
               ) : (
-                <Input
-                  id={`iu-step-${row.id}`}
-                  required={step.required}
-                  value={value}
-                  onChange={(e) => setValue(e.target.value)}
-                  placeholder={step.sourceFromAccurate ? "mirror Accurate kosong — ketik manual" : step.placeholder}
-                />
+                <>
+                  <Input
+                    id={`iu-step-${row.id}`}
+                    required={step.required}
+                    value={value}
+                    onChange={(e) => setValue(e.target.value)}
+                    placeholder={step.sourceFromAccurate ? "mis. SJK 6142, atau nomor lengkap" : step.placeholder}
+                  />
+                  {step.sourceFromAccurate && (
+                    <p className="text-muted-foreground text-xs">Dicari di Surat Jalan (DO) Accurate 90 hari terakhir; yang tersimpan nomor lengkapnya.</p>
+                  )}
+                </>
               )}
             </div>
             {error && <p className="text-destructive text-sm">{error}</p>}
