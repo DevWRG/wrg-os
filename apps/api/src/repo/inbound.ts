@@ -3,6 +3,7 @@ import { detectDaily, parseDaily, stripInvisible } from "../parsers/dailyplan.js
 import { parseAmPlan, parseAmReport, bersihkanNamaCustomer } from "../parsers/am.js";
 import { sendViaWaGateway, type WaSendResult } from "../wasend.js";
 import { handleSalesAnalyticsQuery } from "./inbound-sales-analytics.js";
+import { balasanKampanye } from "./campaign.js";
 import { detectCek, handleCekQuery } from "./inbound-cek.js";
 import { resolveSender, normalizeWa, bolehAksesHargaWa } from "./master.js";
 import { upsertDailyTodo, computeIsLate } from "./todo.js";
@@ -124,6 +125,7 @@ export const INBOUND_HASHTAGS = [
   "note",
   "demo",
   "trial",
+  "kampanye",
 ] as const;
 
 export type InboundKind = (typeof INBOUND_HASHTAGS)[number] | "none";
@@ -173,6 +175,8 @@ const OVERTIME_LINE = /^\s*#\s*overtime\b/i;
 const INTERAKSI_LINE = /^\s*#\s*(call|note)\b/i;
 // F18 — #DEMO / #TRIAL: buka (faskes: alat) atau tutup (DM-/TR-xxxx hasil).
 const DEMO_TRIAL_LINE = /^\s*#\s*(demo|trial)\b/i;
+// F74 — #KAMPANYE (baca progres kampanye; tak menulis apa pun).
+const KAMPANYE_LINE = /^\s*#\s*kampanye\b/i;
 
 export function detectKind(body: string | null): InboundKind {
   const daily = detectDaily(body); // line-anchored #plan/#report (sudah strip invisible)
@@ -203,6 +207,7 @@ export function detectKind(body: string | null): InboundKind {
       if (ia) return ia[1].toLowerCase() as "call" | "note";
       const dt = line.match(DEMO_TRIAL_LINE);
       if (dt) return dt[1].toLowerCase() as "demo" | "trial";
+      if (KAMPANYE_LINE.test(line)) return "kampanye";
     }
   }
   return "none";
@@ -1792,6 +1797,22 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
       : `⚠️ ${pesanGagalShipping(shipment.sj_number, action.error)}`;
     const reply = await sendViaWaGateway(target, replyMsg);
     return finish({ shipment_id: shipment.id, sj: shipment.sj_number, dibuat, ok: action.ok, error: action.error, reply });
+  }
+
+  // #KAMPANYE — F74: progres kampanye non-KSO dalam scope pengirim (AM = dirinya,
+  // HoD = timnya, admin = semua). Baca saja; pengirim wajib dikenal (ketat).
+  if (kind === "kampanye") {
+    const km = await resolveSender({ senderJid: row.sender_jid, groupJid: row.group_jid, pushname: row.sender_name, ketat: true });
+    if (!km) return finish({ skipped: "unknown-sender", sender_name: row.sender_name });
+    let text: string;
+    try {
+      text = await balasanKampanye(extractHashtagArg(row.body, KAMPANYE_LINE), { am_id: km.am_id, nama: km.nama ?? null, role: km.role ?? null });
+    } catch (e) {
+      console.error("[inbound] #KAMPANYE gagal diproses:", (e as Error).message);
+      text = "⚠️ #KAMPANYE gagal diproses, coba lagi sebentar lagi.";
+    }
+    const reply = await sendViaWaGateway(target, text);
+    return finish({ kind: "kampanye", via: km.via, reply });
   }
 
   // #STOK — cek stok cepat (F2 SQC). Sender WAJIB dikenal (perlu cabang AM
