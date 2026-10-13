@@ -27,6 +27,7 @@ import {
   balasanAmbiguInteraksi,
   balasanTercatat,
 } from "./interaction.js";
+import { parseLeads, contohLeads, buatLead, balasanLeadTercatat } from "./lead.js";
 import { buildFakturReply } from "./faktur.js";
 import { syncDeliveryOrders } from "./accurateSync.js";
 import {
@@ -1145,8 +1146,39 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
   const target = row.group_jid;
 
   // #LEADS/#UPDATE — tanpa body-name; resolve by phone/pushname saja.
-  if (kind === "leads" || kind === "update") {
+  // #LEADS <faskes>, <kota>: <kebutuhan> — F65. Pengirim ketat (seperti #CEK/
+  // #FAKTUR). Pengirim ber-peran AM → lead langsung miliknya; selain itu
+  // di-routing dari kota (master_territory → AM, area_kota → cabang → HoD).
+  if (kind === "leads") {
+    const pl = await resolveSender({ senderJid: row.sender_jid, groupJid: row.group_jid, pushname: row.sender_name, ketat: true });
+    if (!pl) return finish({ skipped: "unknown-sender", sender_name: row.sender_name });
+    const p = parseLeads(row.body);
+    if (!p.ok) {
+      const reply = await sendViaWaGateway(
+        target,
+        p.alasan === "terlalu-panjang"
+          ? `⚠️ #LEADS terlalu panjang, ${pl.nama}. Ringkas kebutuhannya lalu kirim ulang.`
+          : `⚠️ #LEADS belum tercatat, ${pl.nama}: nama faskes belum ada.\nContoh: ${contohLeads()}`,
+      );
+      return finish({ error: `format:${p.alasan}`, via: pl.via, reply });
+    }
+    // SENGAJA bukan isAmRole() di atas: itu memasukkan Teknisi (alur laporan
+    // per-customer), padahal lead dari teknisi harus di-routing ke AM wilayah.
+    const pengirimAm = /^am$/i.test(String(pl.role ?? "").trim());
+    const hasil = await buatLead(
+      { facility_name: p.facility_name, city: p.city, kebutuhan: p.kebutuhan, bant_need: Boolean(p.kebutuhan), source: "wa", am_id: pengirimAm ? pl.am_id : null },
+      { created_by: pl.am_id, group_jid: row.group_jid, wa_message_id: row.message_id, via_pengirim: pengirimAm },
+    );
+    const reply = await sendViaWaGateway(
+      target,
+      balasanLeadTercatat({ lead: hasil.lead, pengirim: pl.nama, duplikat: hasil.duplikat, catatanWilayah: hasil.wilayah?.catatan }),
+    );
+    return finish({ lead: hasil.lead.kode, baru: hasil.baru, am_id: hasil.lead.am_id, routing: hasil.lead.routing_via, duplikat: hasil.duplikat.length, via: pl.via, reply });
+  }
+
+  if (kind === "update") {
     const amx = await resolveSender({ senderJid: row.sender_jid, groupJid: row.group_jid, pushname: row.sender_name });
+
     if (!amx) return finish({ skipped: "unknown-sender", sender_name: row.sender_name });
     const reply = await sendViaWaGateway(target, `ℹ️ #${kind.toUpperCase()} belum tersedia di wrg-os (menyusul).`);
     return finish({ note: "not-implemented", via: amx.via, reply });

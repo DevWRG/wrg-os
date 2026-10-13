@@ -63,6 +63,7 @@ import { getDashboardStats } from "./repo/stats.js";
 import { getCustomers } from "./repo/customer.js";
 import { listAccounts, getAccount, upsertAccountFields, createContact, updateContact, deleteContact, listOwnerCandidates } from "./repo/account.js";
 import { timelineAkun } from "./repo/interaction.js";
+import { listLeads, getLead, buatLeadWeb, updateLead, konversiLead, cariDuplikat, LeadError } from "./repo/lead.js";
 import {
   ingestInvoices,
   ingestAccurateWebhook,
@@ -4610,6 +4611,50 @@ app.get("/accounts/:id", async (c) => {
   const a = await getAccount(c.req.param("id"), await scopeOf(c));
   return a ? c.json(a) : c.json({ error: "account tak ditemukan" }, 404);
 });
+// F65 Leads — lead terpisah dari deal; lolos BANT ≥3 → konversi jadi deal.
+// Ber-scope (AM = miliknya, HoD = cabang timnya, admin = semua) lewat x-user-id.
+// Gerbang menu/izin (requireFeature "/leads") ada di BFF.
+const leadErr = (c: { json: (b: unknown, s?: number) => Response }, e: unknown) =>
+  e instanceof LeadError ? c.json({ error: e.message }, e.status as 400) : c.json({ error: String((e as Error).message) }, 500);
+app.get("/leads", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listLeads(await scopeOf(c), {
+    status: c.req.query("status") || null, am_id: c.req.query("am_id") || null,
+    source: c.req.query("source") || null, basi: c.req.query("basi") === "1", q: c.req.query("q") || null,
+  });
+  return c.json({ count: rows.length, leads: rows });
+});
+app.get("/leads/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const scope = await scopeOf(c);
+  const l = await getLead(scope, c.req.param("id"));
+  if (!l) return c.json({ error: "lead tak ditemukan" }, 404);
+  return c.json({ ...l, duplikat: await cariDuplikat(l.facility_name, Number(l.id)) });
+});
+app.post("/leads", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const body = (await c.req.json()) as Record<string, unknown>;
+    return c.json(await buatLeadWeb(await scopeOf(c), body, typeof body.oleh === "string" ? body.oleh : null), 201);
+  } catch (e) { return leadErr(c, e); }
+});
+app.patch("/leads/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try { return c.json(await updateLead(await scopeOf(c), c.req.param("id"), await c.req.json())); }
+  catch (e) { return leadErr(c, e); }
+});
+app.post("/leads/:id/konversi", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
+    return c.json(await konversiLead(await scopeOf(c), c.req.param("id"), typeof body.oleh === "string" ? body.oleh : null));
+  } catch (e) { return leadErr(c, e); }
+});
+app.get("/leads-am", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json({ am: await listOwnerCandidates(await scopeOf(c)) });
+});
+
 // F95 — timeline per account (interaksi #CALL/#NOTE + aktivitas AM + tahap deal +
 // faktur). Gerbang akses = getAccount dengan scope pemanggil: akun milik AM lain
 // balas 404 persis seperti halaman detailnya, timelineAkun sendiri tak menyaring.
