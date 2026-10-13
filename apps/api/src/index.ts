@@ -117,6 +117,7 @@ import { daftarAlat as ksoDaftarAlat } from "./repo/kso-alat.js";
 import {
   riwayatFaskes as ksoRiwayatPenempatan, cariFaskes as ksoCariFaskes, bacaPindah as ksoBacaPindah,
   pindahkan as ksoPindahkan, batalkanPindah as ksoBatalkanPindah, PenempatanError,
+  riwayatAlat as ksoRiwayatAlat,
 } from "./repo/kso-penempatan.js";
 import { listCoachingNotes } from "./repo/coaching.js";
 import { getLatestCoachingNotes, computePeopleAnalytics } from "./repo/people.js";
@@ -4633,17 +4634,24 @@ app.get("/kso/produktivitas/faskes/:accountId", async (c) => {
   return c.json(await ksoFaskesDetail(accountId, skema, dari, sampai));
 });
 
-// F169 — Riwayat penempatan alat (migrasi 217). BACA di bawah /kso/ → ikut
-// catch-all GET /api/kso/* (canViewKso). TULIS sengaja di prefix lain
-// (/kso-penempatan): catch-all itu cuma GET, dan gerbang tulisnya (izin edit
-// kso-simulator) ada di BFF apps/web /api/kso-penempatan/*.
+// F169 — Riwayat penempatan alat (migrasi 217). Riwayat per FASKES (dialog
+// Produktivitas KSO, baca-saja) di bawah /kso/ → catch-all GET /api/kso/*
+// (canViewKso). Yang dipakai menu Daftar Alat — riwayat per alat, cari faskes,
+// pindah, batal — di prefix /kso-penempatan: teknisi (kunci 'kso-mutasi-alat')
+// tak punya 'kso-simulator', jadi gerbangnya sendiri di BFF /api/kso-penempatan/*.
 app.get("/kso/penempatan/faskes/:accountId", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const accountId = Number(c.req.param("accountId"));
   if (!Number.isInteger(accountId) || accountId <= 0) return c.json({ error: "accountId invalid" }, 400);
   return c.json({ rows: await ksoRiwayatPenempatan(accountId) });
 });
-app.get("/kso/penempatan/cari-faskes", async (c) => {
+app.get("/kso-penempatan/alat/:assetId", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const assetId = Number(c.req.param("assetId"));
+  if (!Number.isInteger(assetId) || assetId <= 0) return c.json({ error: "assetId invalid" }, 400);
+  return c.json({ rows: await ksoRiwayatAlat(assetId) });
+});
+app.get("/kso-penempatan/cari-faskes", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json({ rows: await ksoCariFaskes(String(c.req.query("q") ?? "").slice(0, 80)) });
 });

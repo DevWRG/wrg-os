@@ -81,6 +81,21 @@ export async function riwayatFaskes(accountId: number): Promise<PenempatanRow[]>
   return rows.map(peta);
 }
 
+// Riwayat satu alat (dialog Pindah/tarik di Daftar Alat).
+export async function riwayatAlat(assetId: number): Promise<PenempatanRow[]> {
+  if (!isDbEnabled()) return [];
+  const rows = await db()`
+    SELECT v.id, v.asset_id, v.sn_key, v.sn_raw, v.type_alat, v.nama_alat, v.skema,
+           v.account_id, v.faskes, v.customer_raw,
+           to_char(v.mulai, 'YYYY-MM-DD') AS mulai, to_char(v.selesai, 'YYYY-MM-DD') AS selesai,
+           v.terbuka, v.sumber, v.catatan, v.dicatat_oleh, v.dicatat_at::text AS dicatat_at,
+           v.tes, v.bulan_lapor
+      FROM kso_penempatan_v v
+     WHERE v.asset_id = ${assetId}
+     ORDER BY v.mulai NULLS FIRST`;
+  return rows.map(peta);
+}
+
 // Tiap kata harus muncul, urutan bebas: nama Accurate ditulis "INTI, JENIS KOTA"
 // ("HAJI, RS KOTA SURABAYA"), jadi "haji surabaya" sebagai satu frasa tak ketemu.
 export async function cariFaskes(q: string): Promise<{ id: number; nama: string }[]> {
