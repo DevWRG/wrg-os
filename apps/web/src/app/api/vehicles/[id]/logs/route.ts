@@ -1,9 +1,12 @@
 import { gatewayFetch } from "@/lib/gateway";
+import { requireFeature } from "@/lib/feature-guard";
 
 export const dynamic = "force-dynamic";
 
 // Gateway → apps/api GET/POST /vehicles/:id/logs (entri km/BBM/service, F50).
 export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }) {
+  const guard = await requireFeature("/vehicles", "view");
+  if (!guard.ok) return guard.res;
   const { id } = await ctx.params;
   try {
     const res = await gatewayFetch(`/vehicles/${encodeURIComponent(id)}/logs`);
@@ -15,6 +18,8 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
 }
 
 export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
+  const guard = await requireFeature("/vehicles", "create");
+  if (!guard.ok) return guard.res;
   const { id } = await ctx.params;
   let body: unknown;
   try {

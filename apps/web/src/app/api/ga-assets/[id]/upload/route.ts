@@ -1,4 +1,5 @@
 import { gatewayFetch, relay } from "@/lib/gateway";
+import { requireFeature } from "@/lib/feature-guard";
 
 export const dynamic = "force-dynamic";
 
@@ -7,6 +8,8 @@ export const dynamic = "force-dynamic";
 // set boundary multipart baru sendiri sesuai FormData ini, JANGAN salin
 // header content-type dari request asli (boundary-nya sudah tidak cocok).
 export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
+  const guard = await requireFeature("/ga-aset", "edit");
+  if (!guard.ok) return guard.res;
   const { id } = await ctx.params;
   let incoming: FormData;
   try {

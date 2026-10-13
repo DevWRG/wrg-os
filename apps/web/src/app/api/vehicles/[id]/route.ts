@@ -1,9 +1,12 @@
 import { gatewayFetch } from "@/lib/gateway";
+import { requireFeature } from "@/lib/feature-guard";
 
 export const dynamic = "force-dynamic";
 
 // Gateway → apps/api PATCH /vehicles/:id (edit sopir/STNK/interval/active, F50).
 export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }> }) {
+  const guard = await requireFeature("/vehicles", "edit");
+  if (!guard.ok) return guard.res;
   const { id } = await ctx.params;
   let body: unknown;
   try {
