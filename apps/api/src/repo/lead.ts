@@ -25,6 +25,7 @@ import { createDeal } from "./deal.js";
 import { cariAkun } from "./interaction.js";
 import { accountIdDariTulisan } from "./akun-faskes.js";
 import { sendViaWaGateway } from "../wasend.js";
+import { waHod } from "./hod-wa.js";
 
 export const LEAD_SOURCES = ["wa", "web", "pameran", "referral", "telepon", "lpse", "lainnya"] as const;
 export const LEAD_STATUSES = ["baru", "dihubungi", "dikonversi", "ditolak"] as const;
@@ -568,12 +569,9 @@ export async function runLeadAging(): Promise<{ am: number; hod: number; lewati:
     else if (!r.pic_hod && r.reminder_hod_at == null && lewat) lewati.push(`${r.kode}: belum ber-HoD (cabang tak terpetakan)`);
   }
   for (const [hodKey, ls] of perHod) {
-    const [u] = await sql`
-      SELECT name, wa_number FROM app_user
-      WHERE hod_key = ${hodKey} AND active = true AND wa_number IS NOT NULL AND wa_number <> ''
-      ORDER BY created_at LIMIT 1`;
-    if (!u) { lewati.push(`HoD ${hodKey}: belum ada akun ber-nomor WA`); continue; }
-    const gw = await sendViaWaGateway(String(u.wa_number), pesanAging("hod", String(u.name ?? hodKey), ls.map((l) => ({ ...l, hari: Number(l.hari) }))));
+    const u = await waHod(hodKey);
+    if (!u) { lewati.push(`HoD ${hodKey}: nomor WA tak ditemukan (akun login maupun master_user)`); continue; }
+    const gw = await sendViaWaGateway(u.wa, pesanAging("hod", u.nama, ls.map((l) => ({ ...l, hari: Number(l.hari) }))));
     if (gw.sent && !gw.stub && !gw.dryRun) {
       await sql`UPDATE lead SET reminder_hod_at = now() WHERE id = ANY(${ls.map((l) => l.id)}::bigint[])`;
       hod += 1;

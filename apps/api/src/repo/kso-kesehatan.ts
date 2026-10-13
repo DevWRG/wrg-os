@@ -30,6 +30,7 @@ import { db } from "../db.js";
 import { scopeOnClause, FULL_SCOPE, type DataScope } from "./access-scope.js";
 import { jatuhTempoSql, tglBayarSql } from "./pembayaran.js";
 import { sendViaWaGateway } from "../wasend.js";
+import { waHod } from "./hod-wa.js";
 
 export type StatusKesehatan = "SEHAT" | "WASPADA" | "KRITIS";
 export type Tingkat = "kritis" | "waspada" | "info";
@@ -354,10 +355,10 @@ export async function runRekapKesehatanKso(opts: { dryRun?: boolean } = {}) {
     });
   }
   for (const [hodKey, list] of perHod) {
-    const [u] = await sql`SELECT name, wa_number FROM app_user WHERE hod_key = ${hodKey} AND active = true AND NULLIF(btrim(wa_number), '') IS NOT NULL LIMIT 1`;
-    if (!u) { lewati.push(`HoD ${hodKey}: belum ada akun ber-nomor WA`); continue; }
+    const u = await waHod(hodKey);
+    if (!u) { lewati.push(`HoD ${hodKey}: nomor WA tak ditemukan (akun login maupun master_user)`); continue; }
     if (opts.dryRun) { kirim.push({ hod: hodKey, faskes: list.length, terkirim: false }); continue; }
-    const gw = await sendViaWaGateway(String(u.wa_number), pesanRekapHod(String(u.name ?? hodKey), list));
+    const gw = await sendViaWaGateway(u.wa, pesanRekapHod(u.nama, list));
     kirim.push({ hod: hodKey, faskes: list.length, terkirim: Boolean(gw.sent && !gw.stub && !gw.dryRun) });
   }
   return { minggu, pembanding: prev?.m ?? null, total: data.faskes.length, memburuk: memburuk.length, kirim, lewati, dry_run: Boolean(opts.dryRun) };
