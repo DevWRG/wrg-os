@@ -189,6 +189,7 @@ import {
   analyticsTrending,
   getMyArAging,
 } from "./repo/sales-analytics.js";
+import { ecatalogWatch } from "./repo/ecatalog-watch.js";
 import { listViews, saveView, deleteView, listAlerts, createAlert, deleteAlert, updateAlert, listAlertTargets } from "./repo/sales-analytics-config.js";
 import { execCommand, execAmRadar, execOutletMatrix, execDormantIntel, execKpiBaseline, execRotation, execGrowthLevers } from "./repo/exec-dashboard.js";
 import { evaluateSalesAlerts } from "./repo/sales-analytics-alert-eval.js";
@@ -3445,6 +3446,13 @@ const scopeOf = (c: { req: { header: (k: string) => string | undefined } }) =>
 app.get("/sales-analytics/overview", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json(await analyticsOverview(c.req.query("from"), c.req.query("to"), await scopeOf(c)));
+});
+// F72 E-Catalog Recovery Watch — faskes e-katalog (faktur ber-awalan PJE) per
+// status hari-sejak-terakhir + tren bulanan. Tidak ikut filter tanggal tab lain:
+// statusnya selalu "per hari ini".
+app.get("/sales-analytics/ecatalog", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await ecatalogWatch(await scopeOf(c)));
 });
 app.get("/sales-analytics/per-am", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
