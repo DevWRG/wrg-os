@@ -19,6 +19,7 @@ import { db } from "../db.js";
 import type { DataScope } from "./access-scope.js";
 import { cariAkun, INTI_MATCH, NAMA_MATCH } from "./interaction.js";
 import { normalizeAccurateDate } from "./ar.js";
+import { ringkasPembayaran, trenBayar, type StatBayar } from "./pembayaran.js";
 
 export class IntelError extends Error {
   constructor(public status: number, message: string) {
@@ -89,6 +90,7 @@ export interface Briefing {
   kontak: { nama: string; jabatan: string | null; hp_wa: string | null; utama: boolean }[];
   pembelian: { terakhir: string | null; hari_sejak: number | null; netto_12bln: number; faktur_12bln: number; brand_teratas: string[] };
   piutang: { sisa: number; lewat_tempo: { faktur: number; nilai: number; terlama_hari: number } };
+  bayar: StatBayar & { tren: "lebih cepat" | "lebih lambat" | "stabil" | null };
   kunjungan: { tanggal: string; am: string | null; tujuan: string | null; hasil: string | null; next_action: string | null }[];
   catatan: { tanggal: string; jenis: string; isi: string; oleh: string }[];
   deal: { stage: string; brand: string | null; produk: string | null; nilai: number | null; hari_di_tahap: number | null; am: string | null }[];
@@ -162,6 +164,7 @@ export async function briefingFaskes(sc: DataScope, ids: number[]): Promise<Brie
         ORDER BY ci.tanggal DESC, ci.created_at DESC LIMIT 6`,
   ]);
 
+  const bayar = await ringkasPembayaran(ids);
   const dominan = base.cabang
     ? await sql`SELECT kategori, vendor, catatan FROM competitor_dominan
                 WHERE status = 'dikonfirmasi' AND upper(btrim(cabang)) = ${String(base.cabang)} ORDER BY kategori`
@@ -186,6 +189,7 @@ export async function briefingFaskes(sc: DataScope, ids: number[]): Promise<Brie
       brand_teratas: brand.map((b) => String(b.brand)),
     },
     piutang: { sisa, lewat_tempo: { faktur: lewatN, nilai: lewatNilai, terlama_hari: terlama } },
+    bayar: { ...bayar.bayar_12bln, tren: trenBayar(bayar.bayar_12bln, bayar.bayar_sebelumnya) },
     kunjungan: kunj.map((k) => ({ tanggal: String(k.tanggal), am: k.am ?? null, tujuan: potong(k.tujuan, 60), hasil: potong(k.hasil, 220), next_action: potong(k.next_action, 120) })),
     catatan: cat.map((c) => ({ tanggal: String(c.tanggal), jenis: String(c.jenis), isi: potong(c.isi, 200) ?? "", oleh: String(c.oleh) })),
     deal: deal.map((d) => ({ stage: String(d.stage), brand: d.brand ?? null, produk: potong(d.product, 60), nilai: d.nilai == null ? null : Number(d.nilai), hari_di_tahap: d.hari == null ? null : Number(d.hari), am: d.am ?? null })),
@@ -226,6 +230,9 @@ export function formatBriefWa(b: Briefing): string {
   if (b.piutang.sisa > 0) {
     const l = b.piutang.lewat_tempo;
     out.push(`💰 Piutang ${rpWa(b.piutang.sisa)}${l.faktur ? ` · lewat jatuh tempo ${l.faktur} faktur ${rpWa(l.nilai)} (terlama ${l.terlama_hari} hari)` : " · belum ada yang lewat jatuh tempo"}`);
+  }
+  if (b.bayar.faktur > 0) {
+    out.push(`⏱️ Bayar (12 bln, ${b.bayar.faktur} faktur): median ${b.bayar.median_hari} hari setelah faktur${b.bayar.tepat_pct != null ? ` · ${b.bayar.tepat_pct}% tepat waktu` : ""}${b.bayar.rata_telat_hari ? ` · telat rata-rata ${b.bayar.rata_telat_hari} hari` : ""}${b.bayar.tren ? ` · ${b.bayar.tren} dari tahun sebelumnya` : ""}`);
   }
   if (b.kso.aktif) out.push(`🔬 KSO aktif: ${b.kso.aktif} alat${b.kso.alat.length ? ` (${b.kso.alat.join(", ")})` : ""}${b.kso.mou_terdekat ? ` · MoU terdekat habis ${tglPendek(b.kso.mou_terdekat, true)}` : ""}`);
   for (const d of b.deal.slice(0, 3)) {

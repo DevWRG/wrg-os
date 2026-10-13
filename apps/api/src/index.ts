@@ -157,6 +157,7 @@ import {
 } from "./repo/installation.js";
 import { recordCompetitor, listCompetitor, competitorSummary } from "./repo/competitor.js";
 import { IntelError, briefingFaskes, dominasiWilayah, setDominan } from "./repo/customer-intel.js";
+import { ringkasPembayaran } from "./repo/pembayaran.js";
 import {
   defaultRange,
   parseRange,
@@ -5735,6 +5736,14 @@ app.get("/accounts/:id/briefing", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   try { return c.json(await briefingFaskes(await scopeOf(c), [Number(c.req.param("id"))])); }
   catch (e) { return intelErr(c, e); }
+});
+// F131 — AR & kecepatan pembayaran per faskes (ringkasan chip "AR & pembayaran"
+// di timeline). Gerbang akses sama dgn timeline: getAccount dgn scope pemanggil.
+app.get("/accounts/:id/pembayaran", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const a = await getAccount(c.req.param("id"), await scopeOf(c));
+  if (!a) return c.json({ error: "account tak ditemukan" }, 404);
+  return c.json(await ringkasPembayaran([Number(a.id)]));
 });
 app.get("/accounts/:id/timeline", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
