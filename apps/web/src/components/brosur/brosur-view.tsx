@@ -134,9 +134,33 @@ export function BrosurView({ data, driveSiap, bolehTambah, bolehUbah }: { data: 
       router.refresh();
     } catch (e) { setInfo((e as Error).message); }
   }
+  // navigator.clipboard hanya ada di konteks aman (https/localhost). Dashboard
+  // yang dibuka lewat http://IP (stack dev) → undefined, dan dulu gagalnya
+  // diam-diam: clipboard tetap berisi isi lama (uji user 13 Okt). Cadangan:
+  // execCommand("copy") lewat textarea tersembunyi; gagal juga → tampilkan
+  // tautan terpilih untuk disalin manual.
+  const [manual, setManual] = useState<Materi | null>(null);
   async function salin(m: Materi) {
-    try { await navigator.clipboard.writeText(m.url); setInfo(`Tautan ${m.kode} disalin.`); }
-    catch { setInfo("Gagal menyalin — buka tautannya lalu salin dari browser."); }
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(m.url);
+        setInfo(`Tautan ${m.kode} disalin.`);
+        return;
+      }
+      const ta = document.createElement("textarea");
+      ta.value = m.url;
+      ta.setAttribute("readonly", "");
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand("copy");
+      document.body.removeChild(ta);
+      if (!ok) throw new Error("copy ditolak");
+      setInfo(`Tautan ${m.kode} disalin.`);
+    } catch {
+      setManual(m);
+    }
   }
 
   const kolom: DataColumn<Materi>[] = [
@@ -178,6 +202,15 @@ export function BrosurView({ data, driveSiap, bolehTambah, bolehUbah }: { data: 
         </p>
       )}
       {info && <p className="text-muted-foreground text-sm">{info}</p>}
+      {manual && (
+        <div className="space-y-1 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2">
+          <p className="text-sm text-amber-700 dark:text-amber-400">Browser menolak salin otomatis — tekan Cmd/Ctrl+C pada tautan {manual.kode} di bawah ini:</p>
+          <div className="flex gap-2">
+            <Input readOnly value={manual.url} autoFocus onFocus={(e) => e.currentTarget.select()} />
+            <Button size="sm" variant="ghost" onClick={() => setManual(null)}>Tutup</Button>
+          </div>
+        </div>
+      )}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-muted-foreground text-sm">Buka atau salin tautan, lalu teruskan ke customer. Tautan brosur bisa dibuka tanpa akun Google.</p>
         {bolehTambah && <Button size="sm" onClick={() => setDialog({ open: true, n: dialog.n + 1, awal: null })}>Tambah brosur / video</Button>}
