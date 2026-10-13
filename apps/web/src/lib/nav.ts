@@ -9,7 +9,7 @@ import {
   Send, FileText, ScrollText, GraduationCap, UsersRound, Network,
   Bell, MapPin, ListChecks, Swords, CalendarOff, CalendarDays, CalendarRange,
   Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, Tags, SlidersHorizontal, Microscope, MonitorCheck, FileSignature,
-  Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, BookOpen, Calculator, UserPlus,
+  Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, BookOpen, Calculator, UserPlus, Presentation,
   Wallet, Coins, Banknote, Car, QrCode, PenLine, PackagePlus, PackageMinus,
   Handshake, Archive, Ticket, Printer, Route,
   type LucideIcon,
@@ -94,6 +94,9 @@ export const NAV: NavGroup[] = [
       // Kunci izin sendiri ("leads"); default tertutup — butuh Sync Fitur +
       // centang di Akses Grup. Barisnya di-scope server (AM/HoD/admin).
       { title: "Leads", url: "/leads", icon: UserPlus, badge: "NEW" },
+      // F18 Demo & Trial — hasil demo/trial dinilai AM, konversi per produk.
+      // Kunci izin sendiri ("demo-trial"); default tertutup.
+      { title: "Demo & Trial", url: "/demo-trial", icon: Presentation, badge: "NEW" },
       { title: "Pipeline", url: "/pipeline", icon: Workflow },
       { title: "Kinerja Saya", url: "/me", icon: UserRound, badge: "NEW" },
       // F67 Insentif. Menu terpisah dari /insentif/tim karena PERTANYAANNYA beda:

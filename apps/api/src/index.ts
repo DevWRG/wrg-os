@@ -64,6 +64,7 @@ import { getCustomers } from "./repo/customer.js";
 import { listAccounts, getAccount, upsertAccountFields, createContact, updateContact, deleteContact, listOwnerCandidates } from "./repo/account.js";
 import { timelineAkun } from "./repo/interaction.js";
 import { listLeads, getLead, buatLeadWeb, updateLead, konversiLead, cariDuplikat, LeadError } from "./repo/lead.js";
+import { listDemoTrial, getDemoTrial, bukaDemoTrial, ubahDemoTrial, tutupDemoTrial, rekapKonversi, resolusiFaskes, dealTerlihat, DemoTrialError } from "./repo/demo-trial.js";
 import {
   ingestInvoices,
   ingestAccurateWebhook,
@@ -4611,6 +4612,69 @@ app.get("/accounts/:id", async (c) => {
   const a = await getAccount(c.req.param("id"), await scopeOf(c));
   return a ? c.json(a) : c.json({ error: "account tak ditemukan" }, 404);
 });
+// F18 Demo & Trial — hasil demo/trial dinilai AM; konversi per produk. Ber-scope
+// (AM = miliknya, HoD = cabang timnya, admin = semua). Gerbang menu di BFF.
+const dtErr = (c: { json: (b: unknown, s?: number) => Response }, e: unknown) =>
+  e instanceof DemoTrialError ? c.json({ error: e.message }, e.status as 400) : c.json({ error: String((e as Error).message) }, 500);
+app.get("/demo-trial", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const scope = await scopeOf(c);
+  const status = c.req.query("status");
+  const rows = await listDemoTrial(scope, {
+    jenis: c.req.query("jenis") || null, am_id: c.req.query("am_id") || null, deal_id: c.req.query("deal_id") || null,
+    status: status === "terbuka" || status === "ditutup" ? status : null,
+  });
+  return c.json({ count: rows.length, items: rows, konversi: rekapKonversi(rows), per_jenis: rekapKonversi(rows, "jenis") });
+});
+app.get("/demo-trial/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await getDemoTrial(await scopeOf(c), c.req.param("id"));
+  return r ? c.json(r) : c.json({ error: "tak ditemukan" }, 404);
+});
+app.post("/demo-trial", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const scope = await scopeOf(c);
+    const b = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
+    if (!b) return c.json({ error: "body bukan JSON yang sah" }, 400);
+    let am = typeof b.am_id === "string" && b.am_id ? b.am_id : null;
+    if (scope.amOnly) am = scope.amId; // AM selalu atas namanya sendiri
+    // Dari kartu deal: deal harus terlihat oleh pemanggil (scope deal = am/cabang deal).
+    const dealId = typeof b.deal_id === "string" && b.deal_id ? b.deal_id : null;
+    if (dealId && !(await dealTerlihat(scope, dealId))) return c.json({ error: "deal tak ditemukan" }, 404);
+    const facility = String(b.facility_name ?? "");
+    const f = dealId || b.account_id ? null : await resolusiFaskes(facility);
+    // Ambigu → minta pengguna memilih (UI menampilkan kandidat), jangan simpan
+    // tanpa tautan Accurate diam-diam. Nama kandidat persis selalu lolos 'one'.
+    if (f && f.kind === "ambiguous") return c.json({ error: `"${facility}" cocok ke beberapa faskes — pilih salah satu`, kandidat: f.names }, 409);
+    const r = await bukaDemoTrial({
+      jenis: b.jenis === "trial" ? "trial" : "demo", facility_name: f ? f.name : facility,
+      account_id: f && f.kind === "one" ? f.account_id : (b.account_id ? Number(b.account_id) : null),
+      alat: String(b.alat ?? ""), brand: (b.brand as string) ?? null, tanggal: (b.tanggal as string) ?? null,
+      tanggal_selesai: (b.tanggal_selesai as string) ?? null, hari: b.hari == null ? null : Number(b.hari),
+      catatan: (b.catatan as string) ?? null, deal_id: dealId, am_id: am, source: dealId ? "pipeline" : "web",
+    }, { created_by: typeof b.oleh === "string" ? b.oleh : null });
+    return c.json(r.row, 201);
+  } catch (e) { return dtErr(c, e); }
+});
+app.patch("/demo-trial/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try { return c.json(await ubahDemoTrial(await scopeOf(c), c.req.param("id"), await c.req.json())); }
+  catch (e) { return dtErr(c, e); }
+});
+app.post("/demo-trial/:id/tutup", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const b = (await c.req.json()) as Record<string, unknown>;
+    return c.json(await tutupDemoTrial(await scopeOf(c), c.req.param("id"), String(b.hasil ?? ""), (b.alasan as string) ?? null, typeof b.oleh === "string" ? b.oleh : null));
+  } catch (e) { return dtErr(c, e); }
+});
+
+app.get("/demo-trial-am", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json({ am: await listOwnerCandidates(await scopeOf(c)) });
+});
+
 // F65 Leads — lead terpisah dari deal; lolos BANT ≥3 → konversi jadi deal.
 // Ber-scope (AM = miliknya, HoD = cabang timnya, admin = semua) lewat x-user-id.
 // Gerbang menu/izin (requireFeature "/leads") ada di BFF.
