@@ -25,6 +25,7 @@ import {
   PENANDA, Pilih, Tag, angkaSumbu, awalTahunIni, bulanIni, deretBulan, labelBulan, num, rp,
   rupiahPerAlat, skalaRp, skemaPakaiRpTes, type FaskesRow,
 } from "./produktivitas-shared";
+import { RiwayatAlat } from "./riwayat-alat";
 
 interface Detail {
   alat: {
@@ -90,8 +91,8 @@ const KOLOM_EXPORT_DETAIL: ExportColumn<BarisExport>[] = [
   { header: "Keterangan", value: (b) => b.keterangan },
 ];
 
-export function FaskesDetailDialog({ g, median, onClose }: {
-  g: FaskesRow | null; median: number | null; onClose: () => void;
+export function FaskesDetailDialog({ g, median, bolehCatat = false, onClose }: {
+  g: FaskesRow | null; median: number | null; bolehCatat?: boolean; onClose: () => void;
 }) {
   // Hasil disimpan BERSAMA kuncinya, bukan di-reset saat pilihan berganti. Me-reset
   // lewat setState sinkron di dalam effect memicu render berantai (dan ditolak lint);
@@ -750,6 +751,8 @@ export function FaskesDetailDialog({ g, median, onClose }: {
                   </table>
                 </div>
               </div>
+
+              {g.r.accountId !== null ? <RiwayatAlat accountId={g.r.accountId} bolehCatat={bolehCatat} /> : null}
             </>
           )}
         </DialogBody>

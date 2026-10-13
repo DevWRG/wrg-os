@@ -1,6 +1,6 @@
 import { gatewayFetch } from "@/lib/gateway";
 import { sessionUser } from "@/lib/admin-guard";
-import { canViewKso } from "@/lib/kso-access";
+import { canEditKsoAlat, canViewKso } from "@/lib/kso-access";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Card, CardContent } from "@/components/ui/card";
@@ -72,7 +72,7 @@ export default async function KsoProduktivitasPage() {
           hint="penyebut ≥ 100 tes/thn & Rp/tes ada"
         />
       </div>
-      <KsoProduktivitasTabs data={data} />
+      <KsoProduktivitasTabs data={data} bolehCatat={canEditKsoAlat(me)} />
     </>
   );
 }

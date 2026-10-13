@@ -16,3 +16,10 @@ import { type AccessUser } from "@/lib/pricelist-access";
 export function canViewKso(u?: AccessUser | null): boolean {
   return canOrLegacy(u, "kso-simulator", false);
 }
+
+// F169 — mencatat pindah/tarik alat KSO (riwayat penempatan, migrasi 217).
+// Satu-satunya tulisan di menu KSO yang menumpang 'kso-simulator', jadi butuh
+// tingkat EDIT: yang cuma boleh melihat produktivitas tidak boleh memindahkan alat.
+export function canEditKsoAlat(u?: AccessUser | null): boolean {
+  return canOrLegacy(u, "kso-simulator", false, "edit");
+}
