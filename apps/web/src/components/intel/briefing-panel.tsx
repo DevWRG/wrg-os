@@ -62,16 +62,15 @@ export function BriefingPanel({ b }: { b: Briefing }) {
             {b.demo.map((d) => `${d.kode} ${d.alat}${d.tanggal_selesai ? ` s/d ${tgl(d.tanggal_selesai)}` : ""}`).join(" · ")} — belum ada hasil
           </Baris>
         )}
-        <Baris label="Kunjungan terakhir">
-          {b.kunjungan.length ? (
-            <ul className="space-y-1">
-              {b.kunjungan.map((k, i) => (
-                <li key={i}><span className="text-muted-foreground tabular-nums">{tgl(k.tanggal)}</span>{k.am ? ` · ${k.am}` : ""}{k.tujuan ? ` · ${k.tujuan}` : ""}: {k.hasil ?? "—"}
-                  {k.next_action && <span className="text-muted-foreground"> → Next: {k.next_action}</span>}</li>
-              ))}
-            </ul>
-          ) : <span className="text-muted-foreground">Belum ada laporan kunjungan tercatat.</span>}
-        </Baris>
+        {/* Kunjungan yang ada sudah tampil lengkap di Timeline (filter Aktivitas AM)
+            dari sumber yang sama (activity_log.account_id) — di sini hanya
+            ditampilkan bila BELUM ada sama sekali, sebagai fakta pra-kunjungan.
+            Balasan WA #BRIEF tetap memuat daftar kunjungan. */}
+        {b.kunjungan.length === 0 && (
+          <Baris label="Kunjungan terakhir">
+            <span className="text-muted-foreground">Belum ada laporan kunjungan tercatat.</span>
+          </Baris>
+        )}
         {b.catatan.length > 0 && (
           <Baris label="Catatan">
             <ul className="space-y-1">
