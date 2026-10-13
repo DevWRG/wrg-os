@@ -5,6 +5,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { AccountDetail, type AccountData, type OwnerOption } from "@/components/accounts/account-detail";
 import type { TimelinePage } from "@/components/accounts/account-timeline";
+import { BriefingPanel } from "@/components/intel/briefing-panel";
+import type { Briefing } from "@/components/intel/types";
 
 export const dynamic = "force-dynamic";
 
@@ -21,10 +23,12 @@ export default async function AccountDetailPage({ params }: { params: Promise<{ 
   const [{ id }, me] = await Promise.all([params, sessionUser()]);
   // Kandidat pemilik hanya terisi utk yg berhak memindah kepemilikan (admin =
   // semua AM, HoD = AM cabang timnya, AM = kosong → field pemilik read-only).
-  const [d, owners, timeline] = await Promise.all([
+  const [d, owners, timeline, brief] = await Promise.all([
     get<AccountData>(`/accounts/${encodeURIComponent(id)}`, me?.id),
     get<{ owners: OwnerOption[] }>(`/accounts-owners`, me?.id),
     get<TimelinePage>(`/accounts/${encodeURIComponent(id)}/timeline?limit=50`, me?.id),
+    // F131 — briefing pra-kunjungan (fakta saja); gagal/ditolak = panel tak tampil.
+    get<Briefing>(`/accounts/${encodeURIComponent(id)}/briefing`, me?.id),
   ]);
   return (
     <>
@@ -32,7 +36,10 @@ export default async function AccountDetailPage({ params }: { params: Promise<{ 
       {!d ? (
         <Card><CardContent className="pt-6"><EmptyState title="Account tak ditemukan" description="Account ini tak ada di master Accurate, atau bukan milik Anda." /></CardContent></Card>
       ) : (
-        <AccountDetail account={d} owners={owners?.owners ?? []} timeline={timeline} />
+        <div className="space-y-4">
+          {brief && <BriefingPanel b={brief} />}
+          <AccountDetail account={d} owners={owners?.owners ?? []} timeline={timeline} />
+        </div>
       )}
     </>
   );
