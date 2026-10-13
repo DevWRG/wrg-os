@@ -115,12 +115,16 @@ export function BrosurView({ data, driveSiap, bolehTambah, bolehUbah }: { data: 
   const router = useRouter();
   const [jenis, setJenis] = useState("");
   const [brand, setBrand] = useState("");
-  const [nonaktif, setNonaktif] = useState(false);
+  // Pengelola melihat yang nonaktif secara bawaan (dicoret, di bawah) — kalau
+  // disembunyikan, item yang baru dinonaktifkan seolah terhapus (uji user 13 Okt).
+  const [sembunyikanNonaktif, setSembunyikanNonaktif] = useState(false);
   const [dialog, setDialog] = useState<{ open: boolean; n: number; awal: Materi | null }>({ open: false, n: 0, awal: null });
   const [info, setInfo] = useState<string | null>(null);
 
   const brands = useMemo(() => [...new Set(data.map((m) => m.brand).filter((b): b is string => !!b))].sort(), [data]);
-  const tampil = data.filter((m) => (nonaktif || m.aktif) && (!jenis || m.jenis === jenis) && (!brand || m.brand === brand));
+  const tampil = data
+    .filter((m) => (m.aktif || !sembunyikanNonaktif) && (!jenis || m.jenis === jenis) && (!brand || m.brand === brand))
+    .sort((a, b) => Number(b.aktif) - Number(a.aktif));
 
   async function patch(m: Materi, field: "aktif" | "cek_ulang", nilai: string) {
     const fd = new FormData();
@@ -141,7 +145,10 @@ export function BrosurView({ data, driveSiap, bolehTambah, bolehUbah }: { data: 
         {m.jenis === "video" ? <Clapperboard className="text-muted-foreground mt-0.5 size-4 shrink-0" aria-hidden /> : <FileText className="text-muted-foreground mt-0.5 size-4 shrink-0" aria-hidden />}
         <div>
           <a href={m.url} target="_blank" rel="noreferrer" className={cn("font-medium hover:underline", !m.aktif && "text-muted-foreground line-through")}>{m.judul}</a>
-          <div className="text-muted-foreground text-xs">{[m.kode, m.jenis === "video" ? "video" : m.file_name, m.catatan].filter(Boolean).join(" · ")}</div>
+          <div className="text-muted-foreground text-xs">
+            {!m.aktif && <span className="mr-1 rounded bg-slate-200 px-1 py-0.5 text-[11px] font-semibold text-slate-700 dark:bg-slate-500/20 dark:text-slate-300">nonaktif</span>}
+            {[m.kode, m.jenis === "video" ? "video" : m.file_name, m.catatan].filter(Boolean).join(" · ")}
+          </div>
         </div>
       </div>) },
     { id: "brand", header: "Brand / produk", sortable: true, accessor: (m) => `${m.brand ?? ""} ${m.produk ?? ""}`, cell: (m) => (
@@ -184,7 +191,7 @@ export function BrosurView({ data, driveSiap, bolehTambah, bolehUbah }: { data: 
                 <FilterSelect label="Jenis" value={jenis} onChange={setJenis} options={[{ value: "brosur", label: "Brosur" }, { value: "video", label: "Video" }]} />
                 <FilterSelect label="Brand" value={brand} onChange={setBrand} options={brands.map((b) => ({ value: b, label: b }))} />
                 {bolehUbah && (
-                  <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={nonaktif} onChange={(e) => setNonaktif(e.target.checked)} /> Tampilkan yang nonaktif</label>
+                  <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={sembunyikanNonaktif} onChange={(e) => setSembunyikanNonaktif(e.target.checked)} /> Sembunyikan yang nonaktif</label>
                 )}
               </div>
             } />
