@@ -32,6 +32,14 @@ test("#TRIAL buka: durasi hari / sampai tanggal / default", () => {
   assert.equal((parseDemoTrial("#DEMO RS A: kit cepat, 14 hari", "demo", HARI) as { alat: string }).alat, "kit cepat, 14 hari");
 });
 
+test("uji Research 13 Okt: tanggal selesai lewat ditolak; koma di ujung alat dibuang", () => {
+  assert.deepEqual(parseDemoTrial("#TRIAL RSUD dr Soedono: Zybio EXC810, sampai 3/10", "trial", HARI), { ok: false, alasan: "tanggal-lewat" });
+  assert.equal((parseDemoTrial("#TRIAL RSUD dr Soedono: Zybio EXC810,", "trial", HARI) as { alat: string }).alat, "Zybio EXC810");
+  assert.match(balasanFormatDT("trial", "tanggal-lewat", "Husni"), /sudah lewat.*BELUM dicatat/s);
+  // sampai hari ini sendiri sah (trial satu hari)
+  assert.equal((parseDemoTrial("#TRIAL RS A: X, sampai 13/10", "trial", HARI) as { sampai: string }).sampai, "2026-10-13");
+});
+
 test("tutup: kode + hasil [: alasan]; hasil salah ditolak", () => {
   assert.deepEqual(parseDemoTrial("#DEMO DM-0001 positif: kepala lab minta penawaran", "demo", HARI),
     { ok: true, mode: "tutup", kode: "DM-0001", hasil: "positif", alasan: "kepala lab minta penawaran" });

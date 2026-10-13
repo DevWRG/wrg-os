@@ -1419,11 +1419,20 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
       const reply = await sendViaWaGateway(target, balasanAmbiguDT(kind, p.facility, f.names, p.alat));
       return finish({ error: "customer-ambiguous", query: p.facility, candidates: f.names, via: pd.via, reply });
     }
-    const r = await bukaDemoTrial(
-      { jenis: kind, facility_name: f.name, account_id: f.kind === "one" ? f.account_id : null, alat: p.alat,
-        hari: p.hari, tanggal_selesai: p.sampai, catatan: p.catatan, am_id: pengirimAm ? pd.am_id : null, source: "wa" },
-      { created_by: pd.am_id, group_jid: row.group_jid, wa_message_id: row.message_id },
-    );
+    // Galat validasi DIBALAS — tanpa ini barisnya cuma ditandai processed_kind
+    // 'error' oleh processUnprocessed dan pengirim tak pernah tahu pesannya gagal.
+    let r: Awaited<ReturnType<typeof bukaDemoTrial>>;
+    try {
+      r = await bukaDemoTrial(
+        { jenis: kind, facility_name: f.name, account_id: f.kind === "one" ? f.account_id : null, alat: p.alat,
+          hari: p.hari, tanggal_selesai: p.sampai, catatan: p.catatan, am_id: pengirimAm ? pd.am_id : null, source: "wa" },
+        { created_by: pd.am_id, group_jid: row.group_jid, wa_message_id: row.message_id },
+      );
+    } catch (e) {
+      if (!(e instanceof DemoTrialError)) throw e;
+      const reply = await sendViaWaGateway(target, `⚠️ ${kind === "demo" ? "#DEMO" : "#TRIAL"} belum tercatat, ${pd.nama}: ${e.message}.`);
+      return finish({ error: `buka:${e.message}`, via: pd.via, reply });
+    }
     const reply = await sendViaWaGateway(target, balasanBuka(r.row, pd.nama, kind === "trial" && !p.hari && !p.sampai));
     return finish({ kode: r.row.kode, baru: r.baru, account_id: r.row.account_id, deal_id: r.row.deal_id, via: pd.via, reply });
   }

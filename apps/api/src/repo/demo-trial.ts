@@ -34,7 +34,7 @@ const KODE = /^(DM|TR)-\d{1,6}$/i;
 export type ParseDT =
   | { ok: true; mode: "buka"; facility: string; alat: string; hari: number | null; sampai: string | null; catatan: string | null }
   | { ok: true; mode: "tutup"; kode: string; hasil: HasilDT; alasan: string | null }
-  | { ok: false; alasan: "kosong" | "tanpa-alat" | "hasil-salah" | "tanggal-salah" };
+  | { ok: false; alasan: "kosong" | "tanpa-alat" | "hasil-salah" | "tanggal-salah" | "tanggal-lewat" };
 
 /** 'dd/mm', 'dd/mm/yyyy', 'dd-mm-yyyy' → ISO (tahun default = tahun `hariIni`). */
 export function parseTanggal(s: string, hariIni: string): string | null {
@@ -92,9 +92,14 @@ export function parseDemoTrial(body: string | null, jenis: JenisDT, hariIni: str
     else if (ms) {
       sampai = parseTanggal(ms[1], hariIni);
       if (!sampai) return { ok: false, alasan: "tanggal-salah" };
+      // Trial dari WA selalu mulai hari ini — tanggal selesai yang sudah lewat
+      // pasti salah ketik (uji Research 13 Okt: "sampai 3/10" pada 13 Okt).
+      if (sampai < hariIni) return { ok: false, alasan: "tanggal-lewat" };
       rest = rest.slice(0, ms.index).trim();
     }
   }
+  // Tanda baca di ujung ("Zybio EXC810," — durasi lupa ditulis) dibuang.
+  rest = rest.replace(/[\s,;:.-]+$/, "").trim();
   if (!rest) return { ok: false, alasan: "tanpa-alat" };
   return { ok: true, mode: "buka", facility, alat: rest, hari, sampai, catatan };
 }
@@ -106,10 +111,11 @@ export function contohDT(jenis: JenisDT): string {
     : "#TRIAL RSUD dr Soedono: Zybio EXC810, 14 hari";
 }
 
-export function balasanFormatDT(jenis: JenisDT, alasan: "kosong" | "tanpa-alat" | "hasil-salah" | "tanggal-salah", nama: string): string {
+export function balasanFormatDT(jenis: JenisDT, alasan: "kosong" | "tanpa-alat" | "hasil-salah" | "tanggal-salah" | "tanggal-lewat", nama: string): string {
   if (alasan === "hasil-salah") {
     return `⚠️ Hasil belum terbaca, ${nama}. Tulis positif / netral / negatif sesudah kodenya.\nContoh: ${TAG[jenis]} ${jenis === "demo" ? "DM" : "TR"}-0001 positif: kepala lab minta penawaran`;
   }
+  if (alasan === "tanggal-lewat") return `⚠️ Tanggal selesai trial sudah lewat, ${nama} — trial dari WhatsApp dihitung mulai hari ini. Tulis tanggal ke depan (mis. "sampai 31/10") atau lama hari (mis. "14 hari"). ${TAG[jenis]} BELUM dicatat.`;
   if (alasan === "tanggal-salah") return `⚠️ Tanggal selesai trial tidak terbaca, ${nama}. Pakai format hari/bulan, mis. "sampai 31/10", atau "14 hari".`;
   return `⚠️ ${TAG[jenis]} belum tercatat, ${nama}: ${alasan === "tanpa-alat" ? "pisahkan nama faskes dan alatnya dengan titik dua" : "nama faskes dan alatnya belum ada"}.\nContoh: ${contohDT(jenis)}`;
 }
