@@ -62,13 +62,13 @@ export async function buildKsoWorkbook(opts: KsoExportOpts): Promise<Buffer> {
   // Memaksanya mengikuti rentang berarti mengarang definisi baru yang kebetulan bernama
   // sama — persis cara sebuah angka jadi salah tanpa terlihat salah.
   const alat = await sql`
-    WITH tes_aset AS (   -- tes per ASET dalam rentang
-      SELECT m.asset_id,
+    WITH tes_aset AS (   -- tes per ASET dalam rentang, selama di faskes tempatnya (217)
+      SELECT m.asset_id, m.account_id,
              sum(m.jumlah_tes)                                  AS tes,
              count(*) FILTER (WHERE m.jumlah_tes IS NOT NULL)    AS bulan_lapor
-      FROM kso_asset_test_monthly m
+      FROM kso_tes_lokasi_v m
       WHERE m.periode BETWEEN ${dari} AND ${sampai}
-      GROUP BY m.asset_id
+      GROUP BY m.asset_id, m.account_id
     ),
     faskes_rentang AS (  -- tes & revenue per FASKES dalam rentang, dari view tren (126)
       SELECT account_id, sum(jumlah_tes) AS tes, sum(revenue_netto) AS revenue
@@ -97,7 +97,7 @@ export async function buildKsoWorkbook(opts: KsoExportOpts): Promise<Buffer> {
     FROM kso_asset_produktivitas_mv v
     LEFT JOIN accurate_customer c ON c.id = v.account_id
     LEFT JOIN kso_asset a ON a.id = v.asset_id
-    LEFT JOIN tes_aset ta ON ta.asset_id = v.asset_id
+    LEFT JOIN tes_aset ta ON ta.asset_id = v.asset_id AND ta.account_id = v.account_id
     LEFT JOIN faskes_rentang fr ON fr.account_id = v.account_id
     WHERE v.skema = ${skema}
     ORDER BY c.name NULLS LAST, v.customer_raw, v.nama_alat, v.asset_id`;
