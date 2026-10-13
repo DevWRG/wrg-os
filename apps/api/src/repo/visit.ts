@@ -1,5 +1,6 @@
 import { db } from "../db.js";
 import { FULL_SCOPE, scopeOnClause, scopeSalesPlanClause, type DataScope } from "./access-scope.js";
+import { accountIdDariTulisan } from "./akun-faskes.js";
 
 type Sql = ReturnType<typeof db>;
 
@@ -171,14 +172,17 @@ export async function createVisit(v: VisitInput): Promise<{
       planId = Number(baru.id);
     }
 
+    // Tautkan ke faskes Accurate supaya kunjungan muncul di Timeline Accounts
+    // (dulu jalur ini tak pernah mengisi account_id). Gagal tautan = NULL.
+    const accountId = await accountIdDariTulisan(customer).catch(() => null);
     const [akt] = await tx`
       INSERT INTO activity_log
         (am_id, plan_id, tanggal, customer_name, hasil, source, is_unmatched, match_score,
-         photo_path, photo_geotag, activity_type, opportunity_id)
+         photo_path, photo_geotag, activity_type, opportunity_id, account_id)
       VALUES
         (${v.am_id}, ${planId}, ${tanggal}, ${customer}, ${v.note ?? null}, 'manual-visit',
          ${!matched}, ${score}, ${v.photo_url ?? null},
-         ${tx.json(geotag)}, 'Fisik', ${v.deal_id ?? null})
+         ${tx.json(geotag)}, 'Fisik', ${v.deal_id ?? null}, ${accountId})
       RETURNING id`;
 
     await tx`
