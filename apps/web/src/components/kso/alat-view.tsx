@@ -12,6 +12,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
 import { ExportButton, type ExportColumn } from "@/components/ui/export-button";
 import { FilterSelect } from "@/components/ui/filter-select";
+import { Button } from "@/components/ui/button";
+import { MutasiAlatDialog } from "./mutasi-alat-dialog";
 
 export interface KsoAlatRow {
   assetId: number;
@@ -71,7 +73,10 @@ function StatusBadge({ r }: { r: KsoAlatRow }) {
 const unik = (xs: Array<string | null>) =>
   [...new Set(xs.filter((x): x is string => !!x))].sort((a, b) => a.localeCompare(b, "id"));
 
-export function KsoAlatView({ data }: { data: KsoAlat }) {
+// `bolehMutasi` = kunci 'kso-mutasi-alat' tingkat edit (teknisi, F169). Hanya
+// menyembunyikan tombol; gerbangnya di BFF /api/kso-penempatan/*.
+export function KsoAlatView({ data, bolehMutasi = false }: { data: KsoAlat; bolehMutasi?: boolean }) {
+  const [mutasi, setMutasi] = useState<KsoAlatRow | null>(null);
   const [status, setStatus] = useState("");
   const [pemilik, setPemilik] = useState("");
   const [jenis, setJenis] = useState("");
@@ -159,6 +164,16 @@ export function KsoAlatView({ data }: { data: KsoAlat }) {
             tidak dihitung
           </span>
         ) },
+    ...(bolehMutasi ? [{
+      id: "aksi", header: "",
+      accessor: () => "",
+      cell: (r: KsoAlatRow) => (
+        <Button size="sm" variant="outline" className="h-7 text-xs whitespace-nowrap"
+          onClick={(e) => { e.stopPropagation(); setMutasi(r); }}>
+          Pindah / tarik
+        </Button>
+      ),
+    } satisfies DataColumn<KsoAlatRow>] : []),
   ];
 
   const kolomExport: ExportColumn<KsoAlatRow>[] = [
@@ -245,6 +260,10 @@ export function KsoAlatView({ data }: { data: KsoAlat }) {
           />
         </CardContent>
       </Card>
+      <MutasiAlatDialog
+        alat={mutasi ? { assetId: mutasi.assetId, namaAlat: mutasi.namaAlat, snLabel: mutasi.snRaw ?? mutasi.snKey } : null}
+        onClose={() => setMutasi(null)}
+      />
     </div>
   );
 }

@@ -24,7 +24,7 @@ import { canViewKsoKontrak } from "@/lib/kso-kontrak-access";
 import { canViewAsetTetap } from "@/lib/aset-tetap-access";
 import { canViewRaportList } from "@/lib/raport-access";
 import { canViewExecutive } from "@/lib/executive-access";
-import { canViewKso } from "@/lib/kso-access";
+import { canBukaDaftarAlat, canViewKso } from "@/lib/kso-access";
 import { canViewNpkAm, canViewNpkAmSelf } from "@/lib/npk-access";
 import { canViewInsentifTim } from "@/lib/insentif-access";
 import { canViewOvertime } from "@/lib/overtime-access";
@@ -166,8 +166,12 @@ export const NAV: NavGroup[] = [
       // (migrasi 197; keputusan user 6 Okt 2026). Menumpang kunci izin yang SAMA
       // dengan Produktivitas KSO karena alasan yang sama (lihat di atas): halaman
       // dan BFF meng-gate dengan canViewKso, jadi kunci berbeda = dua centang.
+      // F169: kunci tambahan 'kso-mutasi-alat' = tombol Pindah/tarik (teknisi).
+      // Grup yang hanya punya kunci itu tetap melihat menu ini (navVisible
+      // memeriksa `features`), tanpa ikut membuka Produktivitas KSO.
       { title: "Daftar Alat", url: "/kso-alat", icon: MonitorCheck, badge: "NEW",
-        feature: "kso-simulator", show: canViewKso },
+        feature: "kso-simulator", show: canBukaDaftarAlat,
+        features: [{ key: "kso-mutasi-alat", name: "Daftar Alat — catat pindah/tarik alat (teknisi)" }] },
       // F47 Kontrak KSO & Renewal — kunci izin SENDIRI (featureKey = "kso-kontrak"),
       // SENGAJA tak menumpang 'kso-simulator' seperti dua menu di atas: menu ini
       // MENULIS data (kontrak, status renewal), dan izin edit-nya dipisah dari

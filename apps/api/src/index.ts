@@ -147,6 +147,11 @@ import {
 import { master as ksoMaster } from "./repo/kso.js";
 import { produktivitas as ksoProduktivitas, faskesDetail as ksoFaskesDetail } from "./repo/kso-produktivitas.js";
 import { daftarAlat as ksoDaftarAlat } from "./repo/kso-alat.js";
+import {
+  riwayatFaskes as ksoRiwayatPenempatan, cariFaskes as ksoCariFaskes, bacaPindah as ksoBacaPindah,
+  pindahkan as ksoPindahkan, batalkanPindah as ksoBatalkanPindah, PenempatanError,
+  riwayatAlat as ksoRiwayatAlat,
+} from "./repo/kso-penempatan.js";
 import { listCoachingNotes } from "./repo/coaching.js";
 import { getLatestCoachingNotes, computePeopleAnalytics } from "./repo/people.js";
 import { AmTidakDikenalError, createVisit, getVisit, isVisitSort, listVisits, visitKpi, visitSummary } from "./repo/visit.js";
@@ -3738,6 +3743,42 @@ app.get("/kso/produktivitas/faskes/:accountId", async (c) => {
     return c.json({ error: "dari/sampai wajib YYYY-MM-DD dan dari <= sampai" }, 400);
   }
   return c.json(await ksoFaskesDetail(accountId, skema, dari, sampai));
+});
+
+// F169 — Riwayat penempatan alat (migrasi 217). Riwayat per FASKES (dialog
+// Produktivitas KSO, baca-saja) di bawah /kso/ → catch-all GET /api/kso/*
+// (canViewKso). Yang dipakai menu Daftar Alat — riwayat per alat, cari faskes,
+// pindah, batal — di prefix /kso-penempatan: teknisi (kunci 'kso-mutasi-alat')
+// tak punya 'kso-simulator', jadi gerbangnya sendiri di BFF /api/kso-penempatan/*.
+app.get("/kso/penempatan/faskes/:accountId", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const accountId = Number(c.req.param("accountId"));
+  if (!Number.isInteger(accountId) || accountId <= 0) return c.json({ error: "accountId invalid" }, 400);
+  return c.json({ rows: await ksoRiwayatPenempatan(accountId) });
+});
+app.get("/kso-penempatan/alat/:assetId", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const assetId = Number(c.req.param("assetId"));
+  if (!Number.isInteger(assetId) || assetId <= 0) return c.json({ error: "assetId invalid" }, 400);
+  return c.json({ rows: await ksoRiwayatAlat(assetId) });
+});
+app.get("/kso-penempatan/cari-faskes", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json({ rows: await ksoCariFaskes(String(c.req.query("q") ?? "").slice(0, 80)) });
+});
+const penempatanErr = (c: Context, e: unknown) => {
+  if (e instanceof PenempatanError) return c.json({ error: e.message }, e.status);
+  throw e;
+};
+app.post("/kso-penempatan/pindah", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const b = await bodyJson(c);
+  try { return c.json(await ksoPindahkan(ksoBacaPindah(b), olehDari(b)), 201); } catch (e) { return penempatanErr(c, e); }
+});
+app.post("/kso-penempatan/batal", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const b = await bodyJson(c);
+  try { return c.json(await ksoBatalkanPindah(Number(b.asset_id))); } catch (e) { return penempatanErr(c, e); }
 });
 
 // Setelan harga keagenan (migrasi 077). Gate di halaman /pricebook/setup
