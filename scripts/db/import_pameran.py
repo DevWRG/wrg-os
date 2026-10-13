@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """Importer prospek pameran (xlsx 7-kolom) → tabel `lead` (default) atau `deal`.
 
-F65 (13 Okt 2026, keputusan user): hasil pameran masuk ke LEAD — dikualifikasi
-BANT dulu di menu Leads, baru dikonversi jadi deal. `--target deal` = perilaku
-lama (langsung deal Prospecting), dipertahankan untuk impor ulang data lama.
+13 Okt 2026 (sore, keputusan user): menu Leads DIABAIKAN — hasil pameran
+kembali langsung jadi deal Prospecting (default `--target deal`). Pengunjung
+yang faskes+brand-nya SUDAH punya deal terbuka tidak dibuatkan kartu baru:
+kunjungannya dicatat di Riwayat deal itu (spt_state_log, changed_by
+'import-pameran'). `--target lead` (F65, BANT di menu Leads) masih ada tapi tak
+dipakai lagi.
 
 Sumber: rekap prospek hasil pameran/seminar dgn kolom
   Provinsi | Kota/Kabupaten | Nama Instansi | Brand (merk) | Type |
@@ -14,7 +17,8 @@ Beda dgn import_hs_s1.py: sheet TIDAK punya kolom Sales/Status. Karena itu
   - am_id DIPETAKAN DARI WILAYAH: Kota/Kabupaten → master_territory.kota →
     am_panggilan → master_user.am_id (pic_hod & cabang ikut dari baris yg sama).
 
-One-shot, idempoten (NOT EXISTS pada facility_name+brand+product+am_id).
+Idempoten: impor ulang file yg sama tidak menggandakan kartu maupun catatan —
+deal yg dibuat impor event yg sama dikenali lewat baris Riwayat pembuatannya.
 account_id dicocokkan di Python atas INTI nama (lihat blok pencocokan di bawah),
 bukan trigram atas nama utuh — hanya kecocokan meyakinkan yg dipakai otomatis.
 
@@ -341,9 +345,9 @@ ap.add_argument("--file", required=True)
 ap.add_argument("--db", default="wrg_os_dev")
 ap.add_argument("--sheet", default=None, help="nama sheet (default: sheet pertama)")
 ap.add_argument("--apply", action="store_true", help="commit (default dry-run rollback)")
-ap.add_argument("--target", choices=("lead", "deal"), default="lead",
-                help="lead (default, F65) = masuk menu Leads; deal = langsung Pipeline (perilaku lama)")
-ap.add_argument("--event", default=None, help="nama pameran/seminar → lead.source_detail")
+ap.add_argument("--target", choices=("lead", "deal"), default="deal",
+                help="deal (default) = langsung Pipeline; lead = menu Leads (F65, sudah tak dipakai)")
+ap.add_argument("--event", default=None, help="nama pameran/seminar → Riwayat deal (lead.source_detail)")
 ap.add_argument("--review-csv", default=None,
                 help="tulis CSV tinjauan pencocokan faskes ke path ini")
 ap.add_argument("--confirmed-csv", default=None,
@@ -636,9 +640,36 @@ with open(csv_path, "w", newline="") as f:
         w.writerow(row)
 
 nz = lambda c: f"NULLIF(s.{c},'')"
+ev_deal = (args.event or "").replace("'", "''")
+ev_sql = f"': {ev_deal}'" if ev_deal else "''"
+dibuat = "deal dibuat (impor pameran" + (f": {ev_deal}" if ev_deal else "") + ")"
 sql_deal = f"""
 CREATE TEMP TABLE stg ({', '.join(c + ' TEXT' for c in COLS)});
 \\copy stg FROM '{csv_path}' WITH (FORMAT csv, HEADER true)
+ALTER TABLE stg ADD COLUMN rid serial;
+-- KUNJUNGAN: pengunjung pameran yg faskes-nya SUDAH punya deal TERBUKA dgn brand
+-- yg sama (atau deal tanpa brand, mis. dari #LEADS WA) → bukan prospek baru.
+-- Faskes dicocokkan lewat account_id bila dua-duanya tertaut, selain itu dgn
+-- penyaring yg sama dgn cariDuplikat/dealTerbukaFaskes (similarity + faskes_cocok)
+-- — nama file pameran ('RSUD Karangkembang') hampir tak pernah sama persis dgn
+-- nama deal ('KARANGKEMBANG, RSUD KAB. LAMONGAN'), itu sebabnya kunci persis
+-- lama meloloskan duplikat SURAMADENUSRA.
+-- rerun = deal itu dibuat oleh impor event YANG SAMA (file dijalankan ulang).
+CREATE TEMP TABLE kunjungan AS
+SELECT s.rid, d.deal_id, d.stage::text AS stage, s.facility_name, s.brand, s.product, s.qty_text,
+       COALESCE(d.facility_name, d.customer_name) AS deal_nama, d.brand AS deal_brand,
+       EXISTS (SELECT 1 FROM spt_state_log l WHERE l.deal_id = d.deal_id AND l.from_stage IS NULL
+                 AND l.changed_by = 'import-pameran' AND l.reason = '{dibuat}') AS rerun
+FROM stg s
+JOIN deal d
+  ON d.stage::text NOT IN ('Closing-Won','Closing-Lost')
+ AND (coalesce(d.brand,'') = ''
+      OR upper(regexp_replace(d.brand,'[^A-Za-z0-9]','','g'))
+       = upper(regexp_replace(coalesce(s.brand,''),'[^A-Za-z0-9]','','g')))
+ AND ((NULLIF(s.account_id,'') IS NOT NULL AND d.account_id = NULLIF(s.account_id,'')::bigint)
+      OR ((similarity(COALESCE(d.facility_name, d.customer_name), s.facility_name) >= 0.45
+           OR similarity(faskes_inti(COALESCE(d.facility_name, d.customer_name)), faskes_inti(s.facility_name)) >= 0.5)
+          AND faskes_cocok(s.facility_name, COALESCE(d.facility_name, d.customer_name))));
 CREATE TEMP TABLE ins_log AS
 WITH ins AS (
   INSERT INTO deal (
@@ -656,44 +687,49 @@ WITH ins AS (
     s.stage::deal_stage, {nz('probability')}::numeric,
     {nz('forecast_category')}, {nz('notes')}, {nz('account_id')}::bigint
   FROM stg s
-  WHERE NOT EXISTS (
-    SELECT 1 FROM deal d
-     WHERE d.facility_name = s.facility_name
-       AND coalesce(d.brand,'') = coalesce(NULLIF(s.brand,''),'')
-       AND coalesce(d.product,'') = coalesce(NULLIF(s.product,''),'')
-       AND coalesce(d.am_id,'') = coalesce(NULLIF(s.am_id,''),''))
+  WHERE NOT EXISTS (SELECT 1 FROM kunjungan k WHERE k.rid = s.rid)
   RETURNING deal_id, facility_name, brand, account_id, am_id, estimate_amount, coop_model)
 SELECT * FROM ins;
 -- Jalur form menulis satu baris timeline tiap deal dibuat. Tanpa ini, deal
 -- hasil impor tampil dgn timeline KOSONG di board — beda sendiri dari deal
--- buatan UI. changed_by sengaja 'import-pameran' supaya asal-usulnya kelihatan.
+-- buatan UI. changed_by sengaja 'import-pameran' supaya asal-usulnya kelihatan;
+-- reason membawa nama event → penanda impor ulang (lihat kunjungan.rerun).
 INSERT INTO spt_state_log (deal_id, from_stage, to_stage, changed_by, reason)
-SELECT deal_id, NULL, 'Prospecting', 'import-pameran', 'deal dibuat (impor pameran)'
+SELECT deal_id, NULL, 'Prospecting', 'import-pameran', '{dibuat}'
 FROM ins_log;
+-- Catatan kunjungan di Riwayat deal lama. Stage & updated_at TIDAK diubah
+-- (kunjungan pameran bukan aktivitas AM). Catatan yg persis sama tak ditulis
+-- dua kali, jadi impor ulang aman.
+CREATE TEMP TABLE catat_log AS
+WITH c AS (
+  INSERT INTO spt_state_log (deal_id, from_stage, to_stage, changed_by, reason)
+  SELECT DISTINCT k.deal_id, k.stage, k.stage, 'import-pameran', r.teks
+  FROM kunjungan k
+  CROSS JOIN LATERAL (SELECT 'kunjungan pameran' || {ev_sql} || ' — tertarik '
+      || concat_ws(' ', NULLIF(k.brand,''), NULLIF(k.product,''))
+      || CASE WHEN NULLIF(k.qty_text,'') IS NOT NULL THEN ', jumlah tes ' || k.qty_text ELSE '' END AS teks) r
+  WHERE NOT k.rerun
+    AND NOT EXISTS (SELECT 1 FROM spt_state_log l WHERE l.deal_id = k.deal_id AND l.reason = r.teks)
+  RETURNING deal_id)
+SELECT * FROM c;
 \\echo '--- LAPORAN DB (dalam txn) ---'
 SELECT 'staging_baris  = ' || count(*) FROM stg;
-SELECT 'ter-insert     = ' || count(*) FROM ins_log;
-SELECT 'skip_duplikat  = ' || ((SELECT count(*) FROM stg) - (SELECT count(*) FROM ins_log));
+SELECT 'deal baru      = ' || count(*) FROM ins_log;
+SELECT 'kunjungan      = ' || count(DISTINCT rid) FILTER (WHERE NOT rerun) || ' baris (deal terbuka sudah ada) → '
+       || (SELECT count(*) FROM catat_log) || ' catatan BARU di Riwayat (sisanya sudah tercatat)' FROM kunjungan;
+SELECT 'impor ulang    = ' || count(DISTINCT rid) FILTER (WHERE rerun) || ' baris dilewati (deal dari event yg sama)' FROM kunjungan;
 SELECT 'am_id terisi   = ' || count(*) FILTER (WHERE am_id IS NOT NULL) || '/' || count(*) FROM ins_log;
 SELECT 'account_id match = ' || count(*) FILTER (WHERE account_id IS NOT NULL) || '/' || count(*) FROM ins_log;
 SELECT 'estimasi terisi  = ' || count(*) FILTER (WHERE estimate_amount IS NOT NULL) || '/' || count(*)
        || '  total Rp ' || coalesce(sum(estimate_amount),0)::bigint FROM ins_log;
 SELECT 'coop_model terisi= ' || count(*) FILTER (WHERE coop_model IS NOT NULL) || '/' || count(*) FROM ins_log;
 SELECT 'timeline dibuat  = ' || count(*) FROM spt_state_log l JOIN ins_log i USING (deal_id);
-\\echo '--- BENTROK: faskes+brand sama sudah punya deal lain (cek sebelum apply) ---'
--- Kunci dedup (facility_name, brand, product, am_id) TIDAK menangkap ini karena
--- kolom product berbeda ('DN-X5' vs isi lama). Deteksi F9 dijalankan sbg laporan
--- saja — sengaja TIDAK di-enqueue ke hitl_queue, karena 26 dari baris ini memang
--- ditautkan ke accurate_customer atas keputusan manusia di CSV, jadi antreannya
--- cuma akan banjir oleh perkara yg sudah diputus.
-SELECT '  ' || i.facility_name || ' [' || i.brand || ']  sudah ada deal: '
-       || d.customer_name || ' / ' || d.brand || ' @ ' || d.stage
-  FROM ins_log i
-  JOIN deal d ON d.deal_id <> i.deal_id
-   AND similarity(d.customer_name, i.facility_name) >= 0.72
-   AND upper(regexp_replace(coalesce(d.brand,''),'[^A-Za-z0-9]','','g'))
-     = upper(regexp_replace(coalesce(i.brand,''),'[^A-Za-z0-9]','','g'))
- ORDER BY 1;
+\\echo '--- KUNJUNGAN: sudah ada di Pipeline → TIDAK dibuat kartu baru (cek sebelum apply) ---'
+SELECT '  ' || facility_name || ' [' || brand || ']  →  deal ' || deal_nama
+       || coalesce(' / ' || deal_brand, ' / (tanpa brand)') || ' @ ' || stage
+  FROM kunjungan WHERE NOT rerun ORDER BY 1;
+\\echo '--- deal baru TANPA AM (HoD/admin menunjuk di form Edit Deal) ---'
+SELECT '  ' || facility_name FROM ins_log WHERE am_id IS NULL ORDER BY 1;
 \\echo '--- faskes TANPA account_id (prospek baru) ---'
 SELECT '  ' || facility_name FROM ins_log WHERE account_id IS NULL ORDER BY 1;
 """
@@ -771,8 +807,9 @@ sql = sql_lead if args.target == "lead" else sql_deal
 body = "BEGIN;\n" + sql + ("\nCOMMIT;\n" if args.apply else "\nROLLBACK;\n")
 
 print(f"== Importer pameran ({'APPLY' if args.apply else 'DRY-RUN'}) → {args.target.upper()} db={args.db} sheet={ws.title} ==")
-if args.target == "lead" and not args.event:
-    print("  ⚠ --event kosong: lead tak membawa nama pameran (source_detail)")
+if not args.event:
+    print("  ⚠ --event kosong: Riwayat tak membawa nama pameran, dan impor ulang file"
+          " lain tanpa --event akan dianggap impor ulang file yg sama")
 print(f"  baris valid dibaca : {rep['total']}")
 print(f"  skip (tanpa brand) : {rep['skip_tanpa_brand']}")
 print(f"  stage             : {STAGE} ({PROSPECT_CATEGORY} / {PROBABILITY} / {FORECAST_CATEGORY})")

@@ -28,7 +28,7 @@ import {
   balasanAmbiguInteraksi,
   balasanTercatat,
 } from "./interaction.js";
-import { parseLeads, contohLeads, buatLead, balasanLeadTercatat } from "./lead.js";
+import { parseLeads, contohLeads, leadsJadiDeal, balasanLeadsDeal } from "./lead.js";
 import {
   parseDemoTrial,
   balasanFormatDT,
@@ -1170,8 +1170,10 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
   const target = row.group_jid;
 
   // #LEADS/#UPDATE — tanpa body-name; resolve by phone/pushname saja.
-  // #LEADS <faskes>, <kota>: <kebutuhan> — F65. Pengirim ketat (seperti #CEK/
-  // #FAKTUR). Pengirim ber-peran AM → lead langsung miliknya; selain itu
+  // #LEADS <faskes>, <kota>: <kebutuhan> — pengirim ketat (seperti #CEK/
+  // #FAKTUR). Sejak 13 Okt 2026 langsung jadi deal Prospecting di Pipeline
+  // (menu Leads diabaikan); faskes yang sudah punya deal terbuka → dicatat di
+  // Riwayat deal itu. Pengirim ber-peran AM → deal miliknya; selain itu
   // di-routing dari kota (master_territory → AM, area_kota → cabang → HoD).
   if (kind === "leads") {
     const pl = await resolveSender({ senderJid: row.sender_jid, groupJid: row.group_jid, pushname: row.sender_name, ketat: true });
@@ -1187,17 +1189,18 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
       return finish({ error: `format:${p.alasan}`, via: pl.via, reply });
     }
     // SENGAJA bukan isAmRole() di atas: itu memasukkan Teknisi (alur laporan
-    // per-customer), padahal lead dari teknisi harus di-routing ke AM wilayah.
+    // per-customer), padahal info dari teknisi harus di-routing ke AM wilayah.
     const pengirimAm = /^am$/i.test(String(pl.role ?? "").trim());
-    const hasil = await buatLead(
-      { facility_name: p.facility_name, city: p.city, kebutuhan: p.kebutuhan, bant_need: Boolean(p.kebutuhan), source: "wa", am_id: pengirimAm ? pl.am_id : null },
-      { created_by: pl.am_id, group_jid: row.group_jid, wa_message_id: row.message_id, via_pengirim: pengirimAm },
+    const hasil = await leadsJadiDeal(
+      { facility_name: p.facility_name, city: p.city, kebutuhan: p.kebutuhan },
+      { oleh: pl.am_id, pengirim: pl.nama, am_pengirim: pengirimAm ? pl.am_id : null },
     );
-    const reply = await sendViaWaGateway(
-      target,
-      balasanLeadTercatat({ lead: hasil.lead, pengirim: pl.nama, duplikat: hasil.duplikat, catatanWilayah: hasil.wilayah?.catatan }),
+    const reply = await sendViaWaGateway(target, balasanLeadsDeal(hasil, { pengirim: pl.nama, facility_name: p.facility_name, city: p.city }));
+    return finish(
+      hasil.jenis === "baru"
+        ? { deal: hasil.deal_id, am_id: hasil.am_id, routing: hasil.routing, via: pl.via, reply }
+        : { riwayat: hasil.deals.map((d) => d.deal_id), via: pl.via, reply },
     );
-    return finish({ lead: hasil.lead.kode, baru: hasil.baru, am_id: hasil.lead.am_id, routing: hasil.lead.routing_via, duplikat: hasil.duplikat.length, via: pl.via, reply });
   }
 
   // #DEMO / #TRIAL — F18. Buka: "<faskes>: <alat>" (+ ", N hari" / ", sampai dd/mm"
