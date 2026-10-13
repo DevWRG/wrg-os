@@ -156,6 +156,13 @@ export function KsoAlatView({ data, bolehMutasi = false }: { data: KsoAlat; bole
                 {Math.round(r.capaianTarget * 100)}% target
               </div>
             ) : null}
+            {/* PER_TEST (migrasi 220): tes tertagih Accurate per JENIS alat di faskes
+                — Accurate tidak mencatat SN, jadi alat sejenis berbagi angka ini. */}
+            {r.skema === "PER_TEST" ? (
+              <div className="text-muted-foreground text-[11px]" title="Tes tertagih Accurate untuk jenis alat ini di faskes ini; target = jumlah target alat sejenis">
+                per jenis · tagihan
+              </div>
+            ) : null}
           </div>
         ) : (
           <span className="text-muted-foreground text-xs" title="Tidak dihitung di Produktivitas KSO — lihat status & penanda">
