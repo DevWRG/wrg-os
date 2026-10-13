@@ -29,6 +29,7 @@ import { getCustomers } from "./repo/customer.js";
 import { listAccounts, getAccount, upsertAccountFields, createContact, updateContact, deleteContact, listOwnerCandidates } from "./repo/account.js";
 import { timelineAkun } from "./repo/interaction.js";
 import { listLeads, getLead, buatLeadWeb, updateLead, konversiLead, cariDuplikat, LeadError } from "./repo/lead.js";
+import { CampaignError, buatKampanye, cariItem, detailKampanye, listKampanye, opsiBrand, ubahKampanye } from "./repo/campaign.js";
 import { listDemoTrial, getDemoTrial, bukaDemoTrial, ubahDemoTrial, tutupDemoTrial, rekapKonversi, resolusiFaskes, dealTerlihat, DemoTrialError } from "./repo/demo-trial.js";
 import { listPickupPlans, createPickupPlan, updatePickupPlan, deletePickupPlan, previewPreVisit, runPreVisitCheck } from "./repo/pickup-plan.js";
 import {
@@ -5667,6 +5668,45 @@ app.post("/leads/:id/konversi", async (c) => {
 app.get("/leads-am", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json({ am: await listOwnerCandidates(await scopeOf(c)) });
+});
+
+// F74 Campaign Tracker (menyerap F46) — kampanye non-KSO per brand/item +
+// periode; realisasi faktur/SO dihitung otomatis. Ber-scope lewat x-user-id;
+// gerbang menu/izin (requireFeature "/kampanye") di BFF, `oleh` dari sesi.
+const campaignErr = (c: { json: (b: unknown, s?: number) => Response }, e: unknown) =>
+  e instanceof CampaignError ? c.json({ error: e.message }, e.status as 400) : c.json({ error: String((e as Error).message) }, 500);
+app.get("/campaigns", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try { return c.json({ campaigns: await listKampanye(await scopeOf(c)) }); }
+  catch (e) { return campaignErr(c, e); }
+});
+app.get("/campaigns/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try { return c.json(await detailKampanye(await scopeOf(c), c.req.param("id"))); }
+  catch (e) { return campaignErr(c, e); }
+});
+app.post("/campaigns", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const body = (await c.req.json()) as Record<string, unknown>;
+    return c.json(await buatKampanye(await scopeOf(c), body, typeof body.oleh === "string" ? body.oleh : null), 201);
+  } catch (e) { return campaignErr(c, e); }
+});
+app.patch("/campaigns/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const body = (await c.req.json()) as Record<string, unknown>;
+    return c.json(await ubahKampanye(await scopeOf(c), c.req.param("id"), body, typeof body.oleh === "string" ? body.oleh : null));
+  } catch (e) { return campaignErr(c, e); }
+});
+app.get("/campaign-options", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const [brands, am] = await Promise.all([opsiBrand(), listOwnerCandidates(await scopeOf(c))]);
+  return c.json({ brands, am });
+});
+app.get("/campaign-items", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json({ items: await cariItem(c.req.query("q") ?? "") });
 });
 
 // F95 — timeline per account (interaksi #CALL/#NOTE + aktivitas AM + tahap deal +

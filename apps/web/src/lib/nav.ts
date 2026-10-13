@@ -10,7 +10,7 @@ import {
   Send, FileText, ScrollText, GraduationCap, UsersRound, Network,
   Bell, MapPin, ListChecks, Swords, CalendarOff, CalendarDays, CalendarRange,
   Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, Tags, SlidersHorizontal, Microscope, MonitorCheck, FileSignature,
-  Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, BookOpen, Calculator, UserPlus, Presentation,
+  Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, BookOpen, Calculator, UserPlus, Presentation, Megaphone,
   Wallet, Coins, Route, Radio, Printer, ScanText,
   Wrench,
   CalendarClock,
@@ -126,6 +126,9 @@ export const NAV: NavGroup[] = [
       // F18 Demo & Trial — hasil demo/trial dinilai AM, konversi per produk.
       // Kunci izin sendiri ("demo-trial"); default tertutup.
       { title: "Demo & Trial", url: "/demo-trial", icon: Presentation, badge: "NEW" },
+      // F74 Kampanye (menyerap F46) — kampanye non-KSO per brand/item + periode,
+      // realisasi faktur/SO otomatis. Kunci izin sendiri ("kampanye"); default tertutup.
+      { title: "Kampanye", url: "/kampanye", icon: Megaphone, badge: "NEW" },
       { title: "Pipeline", url: "/pipeline", icon: Workflow },
       { title: "Kinerja Saya", url: "/me", icon: UserRound, badge: "NEW" },
       // F67 Insentif. Menu terpisah dari /insentif/tim karena PERTANYAANNYA beda:
@@ -463,6 +466,7 @@ export const DEV_ONLY_URLS: ReadonlySet<string> = new Set([
   "/doc-klaim",
   "/forecast-submission",
   "/installations",
+  "/kampanye",
   "/lpse-tender",
   "/maintenance",
   "/pickup-plan",
