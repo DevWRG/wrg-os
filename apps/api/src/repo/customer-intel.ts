@@ -137,8 +137,11 @@ export async function briefingFaskes(sc: DataScope, ids: number[]): Promise<Brie
         FROM accurate_invoice ai WHERE ai.customer_id = ANY(${ids}::bigint[]) AND ai.outstanding > 0`,
     sql`SELECT al.tanggal::text, COALESCE(NULLIF(mu.nama, ''), al.am_id) AS am, al.tujuan, al.hasil, al.next_action
         FROM activity_log al LEFT JOIN master_user mu ON mu.am_id = al.am_id
+        -- Hanya lewat tautan account_id, sama dengan Timeline Accounts. Tebakan
+        -- nama yang dulu ada di sini mencampur faskes sekota (Puskesmas, RSUD &
+        -- Labkesda Trenggalek tampil di satu faskes, 13 Okt 2026); tautannya kini
+        -- diisi penaut sadar-jenis (akun-faskes.ts) + skrip tautkan-kunjungan-akun.
         WHERE al.account_id = ANY(${ids}::bigint[])
-           OR (al.account_id IS NULL AND al.tanggal > current_date - 365 AND ${namaCocok(sql, sql`al.customer_name`, nama)})
         ORDER BY al.tanggal DESC, al.id DESC LIMIT 3`,
     sql`SELECT il.created_at::date::text AS tanggal, il.jenis, il.isi, il.pencatat_nama AS oleh
         FROM interaction_log il WHERE il.account_id = ANY(${ids}::bigint[]) ORDER BY il.created_at DESC LIMIT 2`,
