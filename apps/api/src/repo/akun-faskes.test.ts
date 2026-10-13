@@ -30,6 +30,10 @@ const KATALOG = [
   "NATA MEDIKA, KLINIK KAB. SAMPANG",
   "KI AGENG BRONDONG, RSUD KAB. LAMONGAN",
   "DESY, BU / RS PTP KAB. JEMBER",
+  "HAJI, RSUD KOTA MAKASSAR",
+  "HAJI, RSUD KOTA SURABAYA",
+  "JOMBANG, RSI KAB. JOMBANG",
+  "JOMBANG, RSUD KAB. JOMBANG",
   "RAUF, BPK / RS PTP KAB. JEMBER",
 ].map((n, i) => uraiNamaAccurate(i + 1, n));
 
@@ -55,9 +59,9 @@ test("urai nama Accurate: inti, jenis, kota; instansi tanpa koma", () => {
 });
 
 test("tulisan AM: awalan Cust dibuang, jenis pertama, gelar & kualifikasi", () => {
-  assert.deepEqual(uraiTulisanAm("Cust : Puskesmas Pogalan"), { jenis: "PKM", kualifikasi: null, kata: ["pogalan"] });
-  assert.deepEqual(uraiTulisanAm("RSUD dr Soedono"), { jenis: "RS", kualifikasi: null, kata: ["sudono"] });
-  assert.deepEqual(uraiTulisanAm("Dinkes Kota Kediri"), { jenis: "DINKES", kualifikasi: "KOTA", kata: ["kediri"] });
+  assert.deepEqual(uraiTulisanAm("Cust : Puskesmas Pogalan"), { jenis: "PKM", jenis_asli: "puskesmas", kualifikasi: null, kata: ["pogalan"] });
+  assert.deepEqual(uraiTulisanAm("RSUD dr Soedono"), { jenis: "RS", jenis_asli: "rsud", kualifikasi: null, kata: ["sudono"] });
+  assert.deepEqual(uraiTulisanAm("Dinkes Kota Kediri"), { jenis: "DINKES", jenis_asli: "dinkes", kualifikasi: "KOTA", kata: ["kediri"] });
   assert.equal(uraiTulisanAm("‎#Report Irul 6/7/2026"), null);
   assert.equal(uraiTulisanAm(""), null);
 });
@@ -100,4 +104,17 @@ test("ambigu & akun pribadi tidak ditautkan", () => {
   // hanya ada akun pribadi orang di RS PTP — bukan akun faskesnya
   assert.equal(nama("RS PTP Jember"), "none");
   assert.equal(nama("Puskesmas Trenggalek"), "none");
+});
+
+test("pemecah seri: kota petunjuk (deal.city) lalu jenis persis", () => {
+  assert.equal(nama("RSUD Haji"), "ambiguous");
+  const h = tautkanFaskes("RSUD Haji", KATALOG, { kota: "Surabaya" });
+  assert.equal(h.kind === "one" && h.nama, "HAJI, RSUD KOTA SURABAYA");
+  // kota petunjuk yang tak cocok satu pun tidak memaksa pilihan
+  assert.equal(tautkanFaskes("RSUD Haji", KATALOG, { kota: "Bandung" }).kind, "ambiguous");
+  // kota petunjuk yang jelas berbeda = faskes lain bernama sama → tidak ditautkan
+  assert.equal(tautkanFaskes("RS Daha Husada", KATALOG, { kota: "Denpasar" }).kind, "none");
+  assert.equal(tautkanFaskes("RS Daha Husada", KATALOG, { kota: "Kediri" }).kind, "one");
+  assert.equal(nama("RSUD Kabupaten Jombang"), "JOMBANG, RSUD KAB. JOMBANG");
+  assert.equal(nama("RSI Jombang"), "JOMBANG, RSI KAB. JOMBANG");
 });

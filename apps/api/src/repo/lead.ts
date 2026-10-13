@@ -23,6 +23,7 @@ import { stripInvisible } from "../parsers/dailyplan.js";
 import { FULL_SCOPE, scopeOnClause, type DataScope } from "./access-scope.js";
 import { createDeal } from "./deal.js";
 import { cariAkun } from "./interaction.js";
+import { accountIdDariTulisan } from "./akun-faskes.js";
 import { sendViaWaGateway } from "../wasend.js";
 
 export const LEAD_SOURCES = ["wa", "web", "pameran", "referral", "telepon", "lpse", "lainnya"] as const;
@@ -674,13 +675,8 @@ export async function leadsJadiDeal(
   }
   if (cabang) pic_hod = await hodDariCabang(cabang);
 
-  let account_id: number | null = null;
-  try {
-    const akun = await cariAkun(facility);
-    if (akun.kind === "one" && akun.ids.length) account_id = akun.ids[0];
-  } catch (e) {
-    console.error("[leads→deal] cari akun gagal (non-fatal):", (e as Error).message);
-  }
+  // Penaut sadar-jenis + kota petunjuk (akun-faskes.ts), sama dengan #REPORT.
+  const account_id = await accountIdDariTulisan(facility, city).catch(() => null);
 
   // superuser: penunjukan AM di sini hasil routing sistem, bukan pilihan
   // pengirim, jadi tak dibatasi cabang. amId = pengirim → changed_by Riwayat.
