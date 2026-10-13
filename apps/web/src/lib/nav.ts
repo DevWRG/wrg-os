@@ -339,7 +339,7 @@ export const NAV: NavGroup[] = [
       // F41 Forecast vs Actual PO Gap Report — role min Management di board
       // (MAGANG-FEATURES.md), gate Direktur/HoD/admin (bukan executive-access.ts,
       // ini laporan Purchasing biasa — lihat purchase-forecast-access.ts).
-      { title: "Forecast vs Actual PO", url: "/purchase-forecast", icon: TrendingUpDown, badge: "NEW", show: canViewPurchaseForecast },
+      { title: "Forecast vs Realisasi PO", url: "/purchase-forecast", icon: TrendingUpDown, badge: "NEW", show: canViewPurchaseForecast },
       // F19 — scan buffer (di sini) + ED (F38) → usulan forecast, Supply
       // Chain review/edit, ajukan ke approval berjenjang F11. Ditaruh
       // Purchasing (bukan CRM spt label blueprint) krn pemakainya

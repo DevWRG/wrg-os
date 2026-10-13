@@ -4,52 +4,54 @@ import { gatewayFetch } from "@/lib/gateway";
 import { sessionUser } from "@/lib/admin-guard";
 import { canViewPurchaseForecast } from "@/lib/purchase-forecast-access";
 import { PageHeader } from "@/components/dashboard/page-header";
-import { AddPurchaseForecastSheet } from "@/components/crm/add-purchase-forecast-sheet";
-import { PurchaseForecastTable, type PurchaseForecast } from "@/components/tables/purchase-forecast-table";
-import { Card, CardContent } from "@/components/ui/card";
+import { PurchaseForecastDashboard, type PurchaseForecastSummary } from "@/components/purchasing/purchase-forecast-dashboard";
+import type { ForecastVendor, PurchaseForecast } from "@/components/purchasing/purchase-forecast-form";
 
 export const dynamic = "force-dynamic";
 
-// F41 — jaring kedua di server (nav.ts `show` sudah menyembunyikan menu),
-// pola sama pricebook/ringkasan/page.tsx: kalau item nav berubah/salah cocok,
-// halaman ini tidak boleh telanjur merender data forecast.
-async function getRows(): Promise<PurchaseForecast[] | null> {
+async function ambil<T>(path: string): Promise<T | null> {
   try {
-    const res = await gatewayFetch("/purchase-forecast");
-    if (!res.ok) return null;
-    return ((await res.json()) as { rows: PurchaseForecast[] }).rows;
+    const res = await gatewayFetch(path);
+    return res.ok ? ((await res.json()) as T) : null;
   } catch {
     return null;
   }
 }
 
+// F41 Forecast vs Realisasi PO — per bulan × lini × vendor (rombak 13 Okt 2026).
+// Jaring kedua di server (nav `show` sudah menyembunyikan menu).
 export default async function PurchaseForecastPage() {
   const me = await sessionUser();
   if (!canViewPurchaseForecast(me)) {
-    redirect("/akses-ditolak?menu=Forecast%20vs%20Actual%20PO");
+    redirect("/akses-ditolak?menu=Forecast%20vs%20Realisasi%20PO");
   }
-
-  const rows = await getRows();
+  // Periode awal = bulan berjalan versi WIB.
+  const [y, m] = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Jakarta" }).split("-").map(Number);
+  const qs = `year=${y}&month=${m}`;
+  const [vendors, summary, rows] = await Promise.all([
+    ambil<{ vendors: ForecastVendor[] }>("/purchase-forecast/vendors"),
+    ambil<PurchaseForecastSummary>(`/purchase-forecast/summary?${qs}`),
+    ambil<{ rows: PurchaseForecast[] }>(`/purchase-forecast?${qs}`),
+  ]);
 
   return (
     <>
       <PageHeader
-        title="Forecast vs Actual PO"
-        description="Gap rencana pembelian (forecast) vs realisasi Purchase Order per periode+lini bisnis. (F41)"
-        action={<AddPurchaseForecastSheet />}
+        title="Forecast vs Realisasi PO"
+        description="Rencana pembelian per bulan × lini × vendor dibanding PO Accurate. Lini & brand diambil dari Klasifikasi Produk."
       />
-      {!rows ? (
+      {!summary ? (
         <p className="text-muted-foreground">
           Data tidak tersedia. Pastikan <code>apps/api</code> jalan dengan <code>DATABASE_URL</code>.
         </p>
-      ) : rows.length === 0 ? (
-        <p className="text-muted-foreground">Belum ada forecast. Tambah rencana pembelian per periode dulu.</p>
       ) : (
-        <Card>
-          <CardContent className="pt-6">
-            <PurchaseForecastTable rows={rows} />
-          </CardContent>
-        </Card>
+        <PurchaseForecastDashboard
+          vendors={vendors?.vendors ?? []}
+          initialYear={y}
+          initialMonth={m}
+          initialSummary={summary}
+          initialRows={rows?.rows ?? []}
+        />
       )}
     </>
   );
