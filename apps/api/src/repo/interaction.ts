@@ -16,6 +16,7 @@
 // Muhammadiyah Babat ≠ RS NU Babat).
 
 import { db } from "../db.js";
+import { jatuhTempoSql, tglBayarSql } from "./pembayaran.js";
 import { stripInvisible } from "../parsers/dailyplan.js";
 import { resolveCustomer, type CustCandidate, type CekResolve } from "./customer-resolve.js";
 
@@ -149,7 +150,7 @@ export async function catatInteraksi(x: CatatInteraksi): Promise<{ id: string; b
 
 // ── Timeline Accounts 360 ───────────────────────────────────────────────────
 
-export type JenisTimeline = "call" | "note" | "aktivitas" | "deal" | "faktur" | "demo" | "trial";
+export type JenisTimeline = "call" | "note" | "aktivitas" | "deal" | "faktur" | "demo" | "trial" | "bayar";
 
 export interface TimelineItem {
   jenis: JenisTimeline;
@@ -221,6 +222,21 @@ export async function timelineAkun(accountId: number, opts: { limit?: number; ku
              (ai.total - COALESCE(ai.tax_amount,0))::float8, COALESCE(ai.outstanding,0)::float8, NULLIF(ai.status,'')
       FROM accurate_invoice ai WHERE ai.customer_id = ${accountId}
       UNION ALL
+      -- F131 pelunasan faktur: tanggal bayar sebenarnya (lastPaymentDateView,
+      -- cadangan lunas_at) + lama bayar & keterlambatan dari jatuh tempo.
+      -- status = 'telat' / 'tepat' / NULL (jatuh tempo tak diketahui).
+      SELECT 'bayar', (b.bayar::timestamp AT TIME ZONE 'Asia/Jakarta'), ai.number,
+             concat('Lunas ', b.bayar - ai.tanggal, ' hari setelah faktur',
+                    CASE WHEN b.due IS NULL THEN ''
+                         WHEN b.bayar > b.due THEN ' · telat ' || (b.bayar - b.due) || ' hari dari jatuh tempo'
+                         ELSE ' · tepat waktu' END),
+             NULL, ai.id::text,
+             (ai.total - COALESCE(ai.tax_amount,0))::float8, 0::float8,
+             CASE WHEN b.due IS NULL THEN NULL WHEN b.bayar > b.due THEN 'telat' ELSE 'tepat' END
+      FROM accurate_invoice ai
+      CROSS JOIN LATERAL (SELECT ${tglBayarSql(sql)} AS bayar, ${jatuhTempoSql(sql)} AS due) b
+      WHERE ai.customer_id = ${accountId} AND ai.status = 'PAID' AND b.bayar IS NOT NULL AND b.bayar >= ai.tanggal
+      UNION ALL
       -- F18 demo/trial (migrasi 210). Waktu = hari demo / mulai trial.
       SELECT dt.jenis, (dt.tanggal::timestamp AT TIME ZONE 'Asia/Jakarta'),
              dt.kode || ' · ' || dt.alat,
@@ -246,7 +262,7 @@ export async function timelineAkun(accountId: number, opts: { limit?: number; ku
       oleh: r.oleh == null || r.oleh === "" ? null : String(r.oleh),
       ref: String(r.ref),
     };
-    if (it.jenis === "faktur") {
+    if (it.jenis === "faktur" || it.jenis === "bayar") {
       it.nilai = Number(r.nilai ?? 0);
       it.sisa = Number(r.sisa ?? 0);
       it.status = r.status == null ? null : String(r.status);

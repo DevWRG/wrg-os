@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { HealthBadge, KsoBadge, type KelasHealth, type KsoHealth } from "@/components/accounts/health-badge";
-import { AccountTimeline, type TimelinePage } from "@/components/accounts/account-timeline";
+import { AccountTimeline, type RingkasPembayaran, type TimelinePage } from "@/components/accounts/account-timeline";
 
 export interface AccountContact {
   id: string; nama: string; jabatan: string | null; role_deal: string | null;
@@ -45,7 +45,7 @@ const roleTone = (v: string | null) =>
 
 const selCls = "h-8 rounded-md border border-border bg-card px-2 text-sm";
 
-export function AccountDetail({ account, owners = [], timeline = null }: { account: AccountData; owners?: OwnerOption[]; timeline?: TimelinePage | null }) {
+export function AccountDetail({ account, owners = [], timeline = null, pembayaran = null }: { account: AccountData; owners?: OwnerOption[]; timeline?: TimelinePage | null; pembayaran?: RingkasPembayaran | null }) {
   const router = useRouter();
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -179,7 +179,7 @@ export function AccountDetail({ account, owners = [], timeline = null }: { accou
       </Card>
 
       {/* F95 — timeline: telepon & catatan + aktivitas AM + tahap deal + faktur */}
-      <AccountTimeline accountId={account.id} initial={timeline} />
+      <AccountTimeline accountId={account.id} initial={timeline} pembayaran={pembayaran} />
     </div>
   );
 }
