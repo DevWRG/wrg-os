@@ -70,6 +70,35 @@ export async function buildKsoWorkbook(opts: KsoExportOpts): Promise<Buffer> {
       WHERE m.periode BETWEEN ${dari} AND ${sampai}
       GROUP BY m.asset_id, m.account_id
     ),
+    -- PER_TEST (migrasi 220): tes = PEMERIKSAAN tertagih Accurate per JENIS alat —
+    -- Accurate tidak mencatat SN, jadi alat sejenis berbagi angka ini; capaian =
+    -- rata tes jenis / jumlah target alat PER_TEST sejenis (aturan yang sama dengan
+    -- kso_asset_produktivitas_v).
+    tes_jenis AS (
+      SELECT f.account_id, f.jenis, sum(f.jumlah_tes) AS tes, count(*) AS bulan_lapor
+      FROM kso_tes_faskes_v f
+      WHERE f.skema = 'PER_TEST' AND f.periode BETWEEN ${dari} AND ${sampai}
+      GROUP BY f.account_id, f.jenis
+    ),
+    target_jenis AS (
+      SELECT account_id, kso_jenis_kanonik(type_alat) AS jenis,
+             sum(target_jumlah_tes) FILTER (WHERE target_jumlah_tes > 0) AS target
+      FROM kso_asset_produktivitas_mv
+      WHERE skema = 'PER_TEST'
+      GROUP BY account_id, kso_jenis_kanonik(type_alat)
+    ),
+    tes_unit AS (
+      SELECT v.asset_id,
+             CASE WHEN v.skema = 'PER_TEST' THEN tj.tes ELSE ta.tes END                 AS tes,
+             CASE WHEN v.skema = 'PER_TEST' THEN tj.bulan_lapor ELSE ta.bulan_lapor END AS bulan_lapor,
+             CASE WHEN v.skema = 'PER_TEST' THEN tg.target ELSE v.target_jumlah_tes END AS target
+      FROM kso_asset_produktivitas_mv v
+      LEFT JOIN tes_aset ta ON ta.asset_id = v.asset_id AND ta.account_id = v.account_id
+      LEFT JOIN tes_jenis tj ON v.skema = 'PER_TEST' AND tj.account_id = v.account_id
+                            AND tj.jenis = kso_jenis_kanonik(v.type_alat)
+      LEFT JOIN target_jenis tg ON v.skema = 'PER_TEST' AND tg.account_id = v.account_id
+                               AND tg.jenis = kso_jenis_kanonik(v.type_alat)
+    ),
     faskes_rentang AS (  -- tes & revenue per FASKES dalam rentang, dari view tren (126)
       SELECT account_id, sum(jumlah_tes) AS tes, sum(revenue_netto) AS revenue
       FROM kso_faskes_tren_v
@@ -82,8 +111,8 @@ export async function buildKsoWorkbook(opts: KsoExportOpts): Promise<Buffer> {
            ta.tes                                               AS tes_alat_rentang,
            CASE WHEN ta.bulan_lapor > 0
                 THEN ta.tes::numeric / ta.bulan_lapor END       AS rata_tes_rentang,
-           CASE WHEN v.target_jumlah_tes > 0 AND ta.bulan_lapor > 0
-                THEN round((ta.tes::numeric / ta.bulan_lapor) / v.target_jumlah_tes, 3)
+           CASE WHEN ta.target > 0 AND ta.bulan_lapor > 0
+                THEN round((ta.tes::numeric / ta.bulan_lapor) / ta.target, 3)
                 END                                             AS capaian_rentang,
            v.alat_seskema_di_customer,
            fr.tes                                               AS tes_faskes_rentang,
@@ -97,7 +126,7 @@ export async function buildKsoWorkbook(opts: KsoExportOpts): Promise<Buffer> {
     FROM kso_asset_produktivitas_mv v
     LEFT JOIN accurate_customer c ON c.id = v.account_id
     LEFT JOIN kso_asset a ON a.id = v.asset_id
-    LEFT JOIN tes_aset ta ON ta.asset_id = v.asset_id AND ta.account_id = v.account_id
+    LEFT JOIN tes_unit ta ON ta.asset_id = v.asset_id
     LEFT JOIN faskes_rentang fr ON fr.account_id = v.account_id
     WHERE v.skema = ${skema}
     ORDER BY c.name NULLS LAST, v.customer_raw, v.nama_alat, v.asset_id`;
@@ -232,6 +261,7 @@ export async function buildKsoWorkbook(opts: KsoExportOpts): Promise<Buffer> {
     ["CAKUPAN", `SEMUA sheet dibatasi rentang di atas (keputusan user 2026-08-24). Sigma 'Revenue netto' di sheet Tes & revenue bulanan = kolom 'Revenue netto faskes' di sheet Produktivitas per alat = Sigma 'Nilai netto' baris ber-'ya' di sheet Reagen keluar.`],
     ["KECUALI 4 kolom berlabel", `Kolom yang headernya menyebut '(seluruh periode)' atau '(periode banding)' TIDAK mengikuti rentang, karena definisinya bukan per-rentang: Porsi KSO ditetapkan atas seluruh data; Penyebut memadai ambangnya 100 tes per TAHUN; Rasio tagih/lapor & Tes ditagihkan memakai basis 'periode banding' sendiri. Memaksanya ikut rentang berarti besaran baru yang kebetulan bernama sama.`],
     ["Sheet Produktivitas per alat", "Satu baris per ALAT. Kolom 'Tes alat ini/Target/Rata/Capaian' milik alat itu; kolom 'Tes faskes/Revenue/Rp per tes' milik FASKES dan berulang di tiap alat milik faskes yang sama."],
+    ["Sumber tes PER_TEST (sejak 13 Okt 2026)", "Jumlah tes PER_TEST = qty PEMERIKSAAN yang DITAGIH di faktur Accurate (periode = bulan faktur dikurangi 1), bukan laporan teknisi. Accurate tidak mencatat SN, jadi 'Tes alat ini' berisi tes JENIS alat itu di faskes itu (sama untuk alat sejenis) dan 'Target' = jumlah target alat sejenis. BELI_REAGEN tetap dari laporan teknisi. Bulan terakhir bisa belum lengkap karena faktur bulan itu masih terbit."],
     ["Sheet Reagen keluar", "Satu baris per faskes x bulan x item x kategori x satuan, dibatasi rentang di atas. Nilai sudah dikali porsi KSO untuk faskes berskema ganda."],
     ["Kolom 'Masuk revenue skema'", "Hanya baris ber-'ya' yang dijumlahkan menjadi Revenue netto. Menjumlahkan seluruh kolom Nilai netto TIDAK akan cocok dengan Revenue."],
     ["Alasan 'alat tak dimiliki'", "Penagihan per-tes untuk jenis alat yang tidak ada di master aset faskes ini pada skema ini — karena itu tidak diakui sebagai revenue skema."],
