@@ -93,9 +93,20 @@ function kataSama(a: string, b: string): boolean {
 }
 
 const adaDi = (w: string, himp: string[]) => himp.some((x) => kataSama(w, x));
+
+/** Kota boleh beda satu huruf apa pun — salah ketik ada di data Accurate sendiri ("PEMEKASAN"). */
+function kotaSama(a: string, b: string): boolean {
+  if (kataSama(a, b)) return true;
+  if (a.length !== b.length || a.length < 6) return false;
+  let beda = 0;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i] && ++beda > 1) return false;
+  return true;
+}
+const kotaCocok = (petunjuk: string[], kota: string[]) =>
+  kota.length > 0 && petunjuk.every((w) => kota.some((k) => kotaSama(w, k))) && kota.every((k) => petunjuk.some((w) => kotaSama(w, k)));
 const semuaAda = (xs: string[], himp: string[]) => xs.every((w) => adaDi(w, himp));
 
-export interface TulisanAm { jenis: Jenis | null; kualifikasi: "KOTA" | "KAB" | null; kata: string[] }
+export interface TulisanAm { jenis: Jenis | null; jenis_asli: string | null; kualifikasi: "KOTA" | "KAB" | null; kata: string[] }
 
 /**
  * Bersihkan & urai tulisan AM. null = bukan nama faskes (kosong, potongan
@@ -107,23 +118,24 @@ export function uraiTulisanAm(teks: string | null | undefined): TulisanAm | null
   s = s.replace(/^\s*(cust(omer)?|faskes|instansi|nama|ke)\s*[:.-]\s*/i, "");
   const ws = kataDari(s);
   let jenis: Jenis | null = null;
+  let jenis_asli: string | null = null;
   let kualifikasi: "KOTA" | "KAB" | null = null;
   const sisa: string[] = [];
   ws.forEach((w, i) => {
     const j = JENIS_KATA[w];
     // Jenis = kata jenis PERTAMA. Kata jenis berikutnya dibuang (mis. "RSUD dr
     // Soedono": dr di sini gelar, bukan jenis PRIBADI).
-    if (j && jenis === null && i <= 1) { jenis = j; return; }
+    if (j && jenis === null && i <= 1) { jenis = j; jenis_asli = w; return; }
     if (j) return;
     if (KUALIFIKASI[w]) { kualifikasi = KUALIFIKASI[w]; return; }
     if (GELAR.has(w)) return;
     sisa.push(w);
   });
   if (!sisa.length && !jenis) return null;
-  return { jenis, kualifikasi, kata: sisa };
+  return { jenis, jenis_asli, kualifikasi, kata: sisa };
 }
 
-export interface FaskesAccurate { id: number; nama: string; jenis: Set<Jenis>; nama_kata: string[]; kota_kata: string[]; kualifikasi: "KOTA" | "KAB" | null }
+export interface FaskesAccurate { id: number; nama: string; jenis: Set<Jenis>; jenis_asli: string[]; nama_kata: string[]; kota_kata: string[]; kualifikasi: "KOTA" | "KAB" | null }
 
 /** Urai nama Accurate: "INTI, JENIS [nama tambahan] KAB./KOTA X" atau "LABKESDA KAB. X". */
 export function uraiNamaAccurate(id: number, nama: string): FaskesAccurate {
@@ -143,13 +155,14 @@ export function uraiNamaAccurate(id: number, nama: string): FaskesAccurate {
   // "WAHYU, DR. / DINKES KAB. JOMBANG" = akun pribadi dokter; DR. sesudah koma
   // adalah jenis akun, bukan gelar (di depan nama, "DR. SOEDOMO, RSUD", gelar).
   if (koma >= 0 && ["dr", "drg", "drh"].includes(tengah[0] ?? "")) jenis.add("PRIBADI");
+  const jenis_asli: string[] = [];
   for (const w of tengah) {
     const j = JENIS_KATA[w];
-    if (j) jenis.add(j);
+    if (j) { jenis.add(j); jenis_asli.push(w); }
     else if (!GELAR.has(w)) tambahan.push(w);
   }
   const nama_kata = [...kataDari(inti).filter((w) => !GELAR.has(w) && !JENIS_KATA[w]), ...tambahan];
-  return { id, nama, jenis, nama_kata, kota_kata: kota, kualifikasi };
+  return { id, nama, jenis, jenis_asli, nama_kata, kota_kata: kota, kualifikasi };
 }
 
 export type HasilTautan =
@@ -187,8 +200,12 @@ function tier(a: TulisanAm, f: FaskesAccurate): 0 | 1 | 2 {
   return 0;
 }
 
-/** Pilih satu faskes; dua faskes berbeda sama kuat = ambigu (tidak ditautkan). */
-export function tautkanFaskes(teks: string | null | undefined, katalog: FaskesAccurate[]): HasilTautan {
+/**
+ * Pilih satu faskes; dua faskes berbeda sama kuat = ambigu (tidak ditautkan).
+ * `kota` (opsional, mis. deal.city) memecah seri antar-kota: "RSUD Haji" +
+ * Surabaya → HAJI, RSUD KOTA SURABAYA, bukan Makassar/Batu.
+ */
+export function tautkanFaskes(teks: string | null | undefined, katalog: FaskesAccurate[], opts: { kota?: string | null } = {}): HasilTautan {
   const a = uraiTulisanAm(teks);
   if (!a) return { kind: "none" };
   const t1: FaskesAccurate[] = [];
@@ -210,8 +227,24 @@ export function tautkanFaskes(teks: string | null | undefined, katalog: FaskesAc
       const kunci = f.nama.toUpperCase().replace(/^\s*\[MERGED\]\s*/, "").replace(/[^A-Z0-9]/g, "");
       grup.set(kunci, [...(grup.get(kunci) ?? []), f]);
     }
-    if (grup.size > 1) return { kind: "ambiguous", names: [...grup.values()].slice(0, 5).map((g) => g[0].nama) };
-    const f = [...grup.values()][0].sort((x, y) => x.id - y.id)[0];
+    let calon = [...grup.values()];
+    // Pemecah seri, berurutan; tiap langkah hanya dipakai bila menyisakan ≥1.
+    //   1. kota petunjuk (deal.city) — "RS Bhayangkara" + Kediri.
+    //   2. jenis persis yang ditulis — "RSUD Jombang" → RSUD, bukan RSI Jombang.
+    const kotaPetunjuk = kataDari(opts.kota ?? "").filter((w) => !KUALIFIKASI[w]);
+    if (calon.length > 1 && kotaPetunjuk.length) {
+      const k = calon.filter((g) => kotaCocok(kotaPetunjuk, g[0].kota_kata));
+      if (k.length) calon = k;
+    }
+    if (calon.length > 1 && a.jenis_asli) {
+      const j = calon.filter((g) => g[0].jenis_asli.includes(a.jenis_asli as string));
+      if (j.length) calon = j;
+    }
+    if (calon.length > 1) return { kind: "ambiguous", names: calon.slice(0, 5).map((g) => g[0].nama) };
+    const f = calon[0].sort((x, y) => x.id - y.id)[0];
+    // Kota petunjuk yang JELAS berbeda = faskes lain bernama sama (cabang jaringan
+    // RS, nama umum): "RS Prima Medika" Denpasar ≠ PRIMA MEDIKA, RSU KAB. TULUNGAGUNG.
+    if (kotaPetunjuk.length && f.kota_kata.length && !kotaCocok(kotaPetunjuk, f.kota_kata)) return null;
     return { kind: "one", id: f.id, nama: f.nama, tier: tr };
   };
   return pilih(t1, 1) ?? pilih(t2, 2) ?? { kind: "none" };
@@ -230,8 +263,8 @@ export async function katalogFaskes(): Promise<FaskesAccurate[]> {
   return out;
 }
 
-/** account_id untuk satu tulisan AM, atau null bila tak yakin. */
-export async function accountIdDariTulisan(teks: string | null | undefined): Promise<number | null> {
-  const h = tautkanFaskes(teks, await katalogFaskes());
+/** account_id untuk satu tulisan AM (+ kota petunjuk bila ada), atau null bila tak yakin. */
+export async function accountIdDariTulisan(teks: string | null | undefined, kota?: string | null): Promise<number | null> {
+  const h = tautkanFaskes(teks, await katalogFaskes(), { kota });
   return h.kind === "one" ? h.id : null;
 }

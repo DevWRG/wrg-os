@@ -3,6 +3,7 @@ import type { PlanCustomer } from "../parsers/plan.js";
 import type { ReportItem } from "../parsers/report.js";
 import { type DataScope, isRestricted } from "./access-scope.js";
 import { enqueueDuplicateCustomerName, type DupNameCandidate } from "./hitl.js";
+import { accountIdDariTulisan } from "./akun-faskes.js";
 
 // Jembatan parser CRM (legacy #PLAN/#REPORT) ke schema kanonik D1 (deal/spt_state_log).
 // MAPPING:
@@ -874,6 +875,24 @@ function applyEstimate(fields: Record<string, unknown>): void {
   }
 }
 
+/**
+ * Isi deal.account_id bila masih kosong, dari nama faskes + kota deal (penaut
+ * sadar-jenis akun-faskes.ts). Tautan yang sudah ada tak pernah ditimpa. Gagal
+ * = dibiarkan kosong — deal tetap tersimpan. Tanpa tautan, deal tak muncul di
+ * briefing/timeline faskesnya (dulu 92% deal prod tanpa account_id).
+ */
+async function tautkanAkunDeal(dealId: string): Promise<void> {
+  try {
+    const sql = db();
+    const [d] = await sql`SELECT account_id, COALESCE(NULLIF(facility_name,''), customer_name) AS nama, city FROM deal WHERE deal_id = ${dealId}`;
+    if (!d || d.account_id != null) return;
+    const id = await accountIdDariTulisan(d.nama ? String(d.nama) : null, d.city ? String(d.city) : null);
+    if (id != null) await sql`UPDATE deal SET account_id = ${id} WHERE deal_id = ${dealId} AND account_id IS NULL`;
+  } catch (e) {
+    console.error("[deal] tautan akun gagal (non-fatal):", (e as Error).message);
+  }
+}
+
 export interface DealMutationResult {
   deal_id: string;
   stage: string;
@@ -926,6 +945,7 @@ export async function createDeal(scope: DataScope, input: Record<string, unknown
   // stage sengaja tak di-set → pakai default kolom 'Prospecting'.
   const rows = await sql`INSERT INTO deal ${sql(fields)} RETURNING deal_id, stage`;
   const dealId = String(rows[0].deal_id);
+  await tautkanAkunDeal(dealId);
   await sql`
     INSERT INTO spt_state_log (deal_id, from_stage, to_stage, changed_by, reason)
     VALUES (${dealId}, NULL, 'Prospecting', ${scope.userId ?? scope.amId}, 'deal dibuat')
@@ -973,6 +993,9 @@ export async function updateDeal(dealId: string, scope: DataScope, input: Record
   if (fields.customer_name != null) fields.customer_id = custId(String(fields.customer_name));
   applyEstimate(fields);
   await sql`UPDATE deal SET ${sql(fields)}, updated_at = now() WHERE deal_id = ${dealId}`;
+  if (fields.facility_name !== undefined || fields.customer_name !== undefined || fields.city !== undefined) {
+    await tautkanAkunDeal(dealId);
+  }
   if (amBaru) {
     await sql`
       INSERT INTO spt_state_log (deal_id, from_stage, to_stage, changed_by, reason)
