@@ -38,6 +38,7 @@ import {
 
 import { can, canOrLegacy, hasPerms } from "@/lib/perms";
 import { canEditPricelistSetup, canViewPricelist, type AccessUser } from "@/lib/pricelist-access";
+import { canViewOnboarding } from "@/lib/onboarding-access";
 import { canViewPricebook, canViewPricebookSummary } from "@/lib/pricebook-access";
 import { canViewKlasifikasi } from "@/lib/klasifikasi-access";
 import { canViewKsoKontrak } from "@/lib/kso-kontrak-access";
@@ -108,6 +109,8 @@ export const NAV: NavGroup[] = [
       { title: "Manage Leave", url: "/leave", icon: CalendarDays },
       { title: "Lembur (#OVERTIME)", url: "/overtime", icon: Hourglass, badge: "NEW", show: canViewOvertime },
       { title: "Raport Saya", url: "/raport", icon: Award, exact: true, badge: "NEW" },
+      // F56 Onboarding Checklist Karyawan Baru — kunci izin "onboarding" (butuh Sync Fitur), tertutup default.
+      { title: "Onboarding Karyawan", url: "/onboarding", icon: ClipboardCheck, badge: "NEW", show: canViewOnboarding },
     ],
   },
   {

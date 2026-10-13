@@ -29,6 +29,7 @@ import { getCustomers } from "./repo/customer.js";
 import { listAccounts, getAccount, upsertAccountFields, createContact, updateContact, deleteContact, listOwnerCandidates } from "./repo/account.js";
 import { timelineAkun } from "./repo/interaction.js";
 import { listLeads, getLead, buatLeadWeb, updateLead, konversiLead, cariDuplikat, LeadError } from "./repo/lead.js";
+import { OnboardingError, cancelCase as cancelOnboarding, createTemplate as createOnboardingTemplate, getCase as getOnboardingCase, listCandidates as listOnboardingCandidates, listCases as listOnboardingCases, listTemplates as listOnboardingTemplates, startCase as startOnboarding, updateItem as updateOnboardingItem, updateTemplate as updateOnboardingTemplate } from "./repo/onboarding.js";
 import { listDemoTrial, getDemoTrial, bukaDemoTrial, ubahDemoTrial, tutupDemoTrial, rekapKonversi, resolusiFaskes, dealTerlihat, DemoTrialError } from "./repo/demo-trial.js";
 import { listPickupPlans, createPickupPlan, updatePickupPlan, deletePickupPlan, previewPreVisit, runPreVisitCheck } from "./repo/pickup-plan.js";
 import {
@@ -5571,6 +5572,83 @@ app.post("/demo-trial/:id/tutup", async (c) => {
 app.get("/demo-trial-am", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json({ am: await listOwnerCandidates(await scopeOf(c)) });
+});
+
+// F56 Onboarding Checklist Karyawan Baru (migrasi 213, repo/onboarding.ts). Gerbang menu/izin
+// (requireFeature "/onboarding") di BFF; audiens (admin/superuser/Direktur = semua, HoD = cabang
+// timnya, lainnya 403) ditegakkan di repo. Pelaku `oleh` dari sesi (BFF), bukan dari pengguna.
+const onboardingErr = (c: { json: (b: unknown, s?: number) => Response }, e: unknown) => {
+  if (e instanceof OnboardingError) return c.json({ error: e.message, field: e.field }, e.status);
+  // 42P01 = tabel belum ada (migrasi 213 belum diterapkan) → 503, bukan 500 buram.
+  if ((e as { code?: string })?.code === "42P01") return c.json({ error: "migration_pending" }, 503);
+  return c.json({ error: "gagal memproses onboarding" }, 500);
+};
+const onboardingId = (v: string): number | null => (/^\d{1,15}$/.test(v) ? Number(v) : null);
+const onboardingBody = async (c: { req: { json: () => Promise<unknown> } }): Promise<Record<string, unknown>> => {
+  const b = await c.req.json().catch(() => null);
+  if (!b || typeof b !== "object" || Array.isArray(b)) throw new OnboardingError(400, "body bukan JSON object yang sah");
+  return b as Record<string, unknown>;
+};
+app.get("/onboarding", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try { return c.json({ items: await listOnboardingCases(await scopeOf(c), c.req.query("status") ?? null) }); }
+  catch (e) { return onboardingErr(c, e); }
+});
+app.get("/onboarding/candidates", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try { return c.json({ items: await listOnboardingCandidates(await scopeOf(c)) }); }
+  catch (e) { return onboardingErr(c, e); }
+});
+app.get("/onboarding/templates", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try { return c.json(await listOnboardingTemplates(await scopeOf(c))); }
+  catch (e) { return onboardingErr(c, e); }
+});
+app.post("/onboarding/templates", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try { return c.json(await createOnboardingTemplate(await scopeOf(c), await onboardingBody(c)), 201); }
+  catch (e) { return onboardingErr(c, e); }
+});
+app.patch("/onboarding/templates/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const id = onboardingId(c.req.param("id"));
+    if (id === null) return c.json({ error: "id tidak valid" }, 400);
+    return c.json(await updateOnboardingTemplate(await scopeOf(c), id, await onboardingBody(c)));
+  } catch (e) { return onboardingErr(c, e); }
+});
+app.patch("/onboarding/items/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const id = onboardingId(c.req.param("id"));
+    if (id === null) return c.json({ error: "id tidak valid" }, 400);
+    const b = await onboardingBody(c);
+    return c.json(await updateOnboardingItem(await scopeOf(c), id, b, typeof b.oleh === "string" ? b.oleh : null));
+  } catch (e) { return onboardingErr(c, e); }
+});
+app.post("/onboarding", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const b = await onboardingBody(c);
+    return c.json(await startOnboarding(await scopeOf(c), b, typeof b.oleh === "string" ? b.oleh : null), 201);
+  } catch (e) { return onboardingErr(c, e); }
+});
+app.get("/onboarding/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const id = onboardingId(c.req.param("id"));
+    if (id === null) return c.json({ error: "id tidak valid" }, 400);
+    const r = await getOnboardingCase(await scopeOf(c), id);
+    return r ? c.json(r) : c.json({ error: "onboarding tidak ditemukan" }, 404);
+  } catch (e) { return onboardingErr(c, e); }
+});
+app.post("/onboarding/:id/cancel", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const id = onboardingId(c.req.param("id"));
+    if (id === null) return c.json({ error: "id tidak valid" }, 400);
+    return c.json(await cancelOnboarding(await scopeOf(c), id));
+  } catch (e) { return onboardingErr(c, e); }
 });
 
 // F65 Leads — lead terpisah dari deal; lolos BANT ≥3 → konversi jadi deal.
