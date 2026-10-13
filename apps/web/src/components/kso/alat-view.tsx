@@ -165,7 +165,7 @@ export function KsoAlatView({ data, bolehMutasi = false }: { data: KsoAlat; bole
           </span>
         ) },
     ...(bolehMutasi ? [{
-      id: "aksi", header: "", searchable: false,
+      id: "aksi", header: "",
       accessor: () => "",
       cell: (r: KsoAlatRow) => (
         <Button size="sm" variant="outline" className="h-7 text-xs whitespace-nowrap"
