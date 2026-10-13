@@ -38,6 +38,7 @@ import {
 
 import { can, canOrLegacy, hasPerms } from "@/lib/perms";
 import { canEditPricelistSetup, canViewPricelist, type AccessUser } from "@/lib/pricelist-access";
+import { canViewAdoption } from "@/lib/adoption-access";
 import { canViewPricebook, canViewPricebookSummary } from "@/lib/pricebook-access";
 import { canViewKlasifikasi } from "@/lib/klasifikasi-access";
 import { canViewKsoKontrak } from "@/lib/kso-kontrak-access";
@@ -108,6 +109,9 @@ export const NAV: NavGroup[] = [
       { title: "Manage Leave", url: "/leave", icon: CalendarDays },
       { title: "Lembur (#OVERTIME)", url: "/overtime", icon: Hourglass, badge: "NEW", show: canViewOvertime },
       { title: "Raport Saya", url: "/raport", icon: Award, exact: true, badge: "NEW" },
+      // F58 Adopsi Fitur — champion vs laggard pemakaian fitur → daftar perlu training. Bukan KPI.
+      // Kunci izin "adoption", tertutup default (admin/Direktur; HoD hanya bila dicentang) — butuh Sync Fitur.
+      { title: "Adopsi Fitur", url: "/adoption", icon: UserCheck, badge: "NEW", show: canViewAdoption },
     ],
   },
   {
