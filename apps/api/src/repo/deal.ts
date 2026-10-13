@@ -3,6 +3,7 @@ import type { PlanCustomer } from "../parsers/plan.js";
 import type { ReportItem } from "../parsers/report.js";
 import { type DataScope, isRestricted } from "./access-scope.js";
 import { enqueueDuplicateCustomerName, type DupNameCandidate } from "./hitl.js";
+import { accountIdDariTulisan } from "./akun-faskes.js";
 
 // Jembatan parser CRM (legacy #PLAN/#REPORT) ke schema kanonik D1 (deal/spt_state_log).
 // MAPPING:
@@ -874,9 +875,45 @@ function applyEstimate(fields: Record<string, unknown>): void {
   }
 }
 
+/**
+ * Isi deal.account_id bila masih kosong, dari nama faskes + kota deal (penaut
+ * sadar-jenis akun-faskes.ts). Tautan yang sudah ada tak pernah ditimpa. Gagal
+ * = dibiarkan kosong — deal tetap tersimpan. Tanpa tautan, deal tak muncul di
+ * briefing/timeline faskesnya (dulu 92% deal prod tanpa account_id).
+ */
+async function tautkanAkunDeal(dealId: string): Promise<void> {
+  try {
+    const sql = db();
+    const [d] = await sql`SELECT account_id, COALESCE(NULLIF(facility_name,''), customer_name) AS nama, city FROM deal WHERE deal_id = ${dealId}`;
+    if (!d || d.account_id != null) return;
+    const id = await accountIdDariTulisan(d.nama ? String(d.nama) : null, d.city ? String(d.city) : null);
+    if (id != null) await sql`UPDATE deal SET account_id = ${id} WHERE deal_id = ${dealId} AND account_id IS NULL`;
+  } catch (e) {
+    console.error("[deal] tautan akun gagal (non-fatal):", (e as Error).message);
+  }
+}
+
 export interface DealMutationResult {
   deal_id: string;
   stage: string;
+}
+
+/**
+ * Validasi AM tujuan penunjukan deal (form create/edit HoD/admin). AM aktif
+ * ber-peran AM; HoD hanya boleh menunjuk AM di cabang timnya — aturan yang sama
+ * dengan pemindahan pemilik akun (account.ts) supaya deal tak bisa "dibuang" ke
+ * cabang lain lalu hilang dari board HoD-nya sendiri.
+ */
+async function amTujuan(scope: DataScope, amId: string): Promise<{ nama: string; cabang: string | null }> {
+  const [mu] = await db()`
+    SELECT COALESCE(NULLIF(panggilan,''), NULLIF(nama,''), am_id) AS nama, NULLIF(upper(btrim(cabang)),'') AS cabang
+    FROM master_user WHERE am_id = ${amId} AND aktif AND upper(role) = 'AM'`;
+  if (!mu) throw new DealError(400, `AM ${amId} tidak ada / nonaktif di roster`);
+  const cabang = mu.cabang ? String(mu.cabang) : null;
+  if (!scope.superuser && scope.cabangScope?.length && !(cabang && scope.cabangScope.includes(cabang))) {
+    throw new DealError(403, "AM tujuan di luar cabang tim Anda");
+  }
+  return { nama: String(mu.nama), cabang };
 }
 
 /**
@@ -896,6 +933,11 @@ export async function createDeal(scope: DataScope, input: Record<string, unknown
   applyEstimate(fields);
   // AM cuma boleh bikin deal atas namanya sendiri; HoD/admin boleh tunjuk am_id.
   fields.am_id = scope.amOnly ? scope.amId : (typeof input.am_id === "string" && input.am_id ? input.am_id : null);
+  if (!scope.amOnly && fields.am_id) {
+    const am = await amTujuan(scope, String(fields.am_id));
+    // tanpa cabang, deal hanya terlihat AM-nya & admin — ikut cabang AM
+    if (!fields.cabang && am.cabang) fields.cabang = am.cabang;
+  }
   const meta = STAGE_META["Prospecting"];
   fields.prospect_category = meta.prospect || null;
   fields.probability = meta.prob;
@@ -903,6 +945,7 @@ export async function createDeal(scope: DataScope, input: Record<string, unknown
   // stage sengaja tak di-set → pakai default kolom 'Prospecting'.
   const rows = await sql`INSERT INTO deal ${sql(fields)} RETURNING deal_id, stage`;
   const dealId = String(rows[0].deal_id);
+  await tautkanAkunDeal(dealId);
   await sql`
     INSERT INTO spt_state_log (deal_id, from_stage, to_stage, changed_by, reason)
     VALUES (${dealId}, NULL, 'Prospecting', ${scope.userId ?? scope.amId}, 'deal dibuat')
@@ -931,6 +974,18 @@ export async function updateDeal(dealId: string, scope: DataScope, input: Record
   const deal = { am_id: cur[0].am_id ? String(cur[0].am_id) : null, cabang: cur[0].cabang ? String(cur[0].cabang) : null };
   if (!canWrite(scope, deal)) throw new DealError(403, "tidak berwenang mengubah deal ini");
   const fields = pickEditable(input);
+  // Penunjukan AM (HoD/admin) — deal dari #LEADS WA yang kotanya tak
+  // terpetakan masuk tanpa AM, dan form inilah satu-satunya jalan mengisinya.
+  // AM sendiri tak boleh memindahkan deal; nilai sama dengan yang sekarang
+  // (form AM tak mengirimnya, tapi berjaga) diabaikan.
+  let amBaru: { id: string; nama: string } | null = null;
+  if (typeof input.am_id === "string" && input.am_id.trim() && input.am_id.trim() !== deal.am_id) {
+    if (scope.amOnly) throw new DealError(403, "AM tidak bisa memindahkan deal ke AM lain");
+    const am = await amTujuan(scope, input.am_id.trim());
+    fields.am_id = input.am_id.trim();
+    if (!deal.cabang && fields.cabang == null && am.cabang) fields.cabang = am.cabang;
+    amBaru = { id: input.am_id.trim(), nama: am.nama };
+  }
   if (Object.keys(fields).length === 0) throw new DealError(400, "tidak ada field untuk diupdate");
   if (fields.product_category && !PRODUCT_CATEGORIES.includes(String(fields.product_category))) {
     throw new DealError(400, "product_category harus IVD atau Medical");
@@ -938,6 +993,14 @@ export async function updateDeal(dealId: string, scope: DataScope, input: Record
   if (fields.customer_name != null) fields.customer_id = custId(String(fields.customer_name));
   applyEstimate(fields);
   await sql`UPDATE deal SET ${sql(fields)}, updated_at = now() WHERE deal_id = ${dealId}`;
+  if (fields.facility_name !== undefined || fields.customer_name !== undefined || fields.city !== undefined) {
+    await tautkanAkunDeal(dealId);
+  }
+  if (amBaru) {
+    await sql`
+      INSERT INTO spt_state_log (deal_id, from_stage, to_stage, changed_by, reason)
+      VALUES (${dealId}, ${cur[0].stage}, ${cur[0].stage}, ${scope.userId ?? scope.amId}, ${`AM ditunjuk: ${amBaru.nama}`})`;
+  }
   // F9: createDeal cek duplikat nama saat dibuat — edit nama customer (typo diperbaiki jadi
   // sama persis dgn customer lain, atau sengaja diganti) harus ikut kena cek yang sama,
   // bukan cuma jalur create (issue ditemukan QA 2026-09-07: edit adalah cara termudah

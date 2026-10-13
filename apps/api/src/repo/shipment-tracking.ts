@@ -1,4 +1,5 @@
 import { db } from "../db.js";
+import { syncDeliveryOrders } from "./accurateSync.js";
 
 // F12+F42 — Tracking Pengiriman (SHIPPING). State machine: draft → dikirim →
 // terima → bast (TTF sengaja diabaikan utk F12 MAUPUN F42, arahan Direktur
@@ -280,6 +281,31 @@ export async function cariDoAccurate(ref: SjRef, hariMundur = 90): Promise<DoAcc
     LIMIT 5
   `;
   return rows.map(mapDo);
+}
+
+// DO Accurate disinkron terjadwal (ACCURATE_SYNC_CRON, default jam 10–20 hari
+// kerja) — SJ yang dibuat pagi belum ada di mirror. Kalau rujukan tak ketemu,
+// tarik 1 halaman DO terbaru (100 baris) lalu cari ulang; maks sekali per
+// menit supaya salah ketik beruntun tak membanjiri Accurate. Dipakai langkah
+// SJ Instalasi (F22). (inbound.ts punya salinan lokal untuk hashtag WA.)
+let segarDoTerakhir = 0;
+async function segarkanDoTerbaru(): Promise<boolean> {
+  if (Date.now() - segarDoTerakhir < 60_000) return false;
+  segarDoTerakhir = Date.now();
+  try {
+    return (await syncDeliveryOrders({ maxPages: 1 })).ok;
+  } catch (e) {
+    console.error("[shipment-tracking] segarkan DO Accurate gagal:", e);
+    return false;
+  }
+}
+
+export async function cariDoAccurateSegar(arg: string): Promise<DoAccurate[]> {
+  const ref = parseSjRef(arg);
+  if (!ref) return [];
+  const ada = await cariDoAccurate(ref);
+  if (ada.length) return ada;
+  return (await segarkanDoTerbaru()) ? cariDoAccurate(ref) : [];
 }
 
 function mapDo(r: Record<string, unknown>): DoAccurate {

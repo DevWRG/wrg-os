@@ -15,7 +15,9 @@ export async function GET(req: Request, ctx: { params: Promise<{ path: string[] 
   if (sub === null) return badSubpath();
   const qs = new URL(req.url).searchParams.toString();
   try {
-    return relay(await gatewayFetch(`/kso/${sub}${qs ? `?${qs}` : ""}`));
+    // x-user-id dari sesi: F73 /kso/kesehatan ber-scope (AM = miliknya, HoD = timnya);
+    // endpoint KSO lain mengabaikannya.
+    return relay(await gatewayFetch(`/kso/${sub}${qs ? `?${qs}` : ""}`, { headers: { "x-user-id": me.id } }));
   } catch {
     return Response.json({ error: "backend unreachable" }, { status: 502 });
   }

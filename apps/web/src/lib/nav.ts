@@ -10,7 +10,7 @@ import {
   Send, FileText, ScrollText, GraduationCap, UsersRound, Network,
   Bell, MapPin, ListChecks, Swords, CalendarOff, CalendarDays, CalendarRange,
   Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, Tags, SlidersHorizontal, Microscope, MonitorCheck, FileSignature,
-  Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, BookOpen, Calculator, UserPlus, Presentation,
+  Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, BookOpen, Calculator, Presentation, Megaphone, Library,
   Wallet, Coins, Route, Radio, Printer, ScanText,
   Wrench,
   CalendarClock,
@@ -27,7 +27,6 @@ import {
   Handshake,
   ClipboardList,
   HardHat,
-  TrendingUpDown,
   QrCode,
   Stamp,
   TrendingUp,
@@ -39,19 +38,19 @@ import {
 import { can, canOrLegacy, hasPerms } from "@/lib/perms";
 import { canEditPricelistSetup, canViewPricelist, type AccessUser } from "@/lib/pricelist-access";
 import { canViewOnboarding } from "@/lib/onboarding-access";
+import { canViewAdoption } from "@/lib/adoption-access";
 import { canViewPricebook, canViewPricebookSummary } from "@/lib/pricebook-access";
 import { canViewKlasifikasi } from "@/lib/klasifikasi-access";
 import { canViewKsoKontrak } from "@/lib/kso-kontrak-access";
 import { canViewAsetTetap } from "@/lib/aset-tetap-access";
 import { canViewRaportList } from "@/lib/raport-access";
 import { canViewExecutive } from "@/lib/executive-access";
-import { canViewKso } from "@/lib/kso-access";
+import { canBukaDaftarAlat, canViewKso } from "@/lib/kso-access";
 import { canViewNpkAm, canViewNpkAmSelf } from "@/lib/npk-access";
 import { canViewInsentifTim } from "@/lib/insentif-access";
 import { canViewDanaOps } from "@/lib/dana-ops-access";
 import { canViewVendorManagement } from "@/lib/vendor-management-access";
 import { canViewGaReporting } from "@/lib/ga-reporting-access";
-import { canViewPurchaseForecast } from "@/lib/purchase-forecast-access";
 import { canViewAuditFindings } from "@/lib/audit-finding-access";
 import { canViewOvertime } from "@/lib/overtime-access";
 
@@ -111,6 +110,9 @@ export const NAV: NavGroup[] = [
       { title: "Raport Saya", url: "/raport", icon: Award, exact: true, badge: "NEW" },
       // F56 Onboarding Checklist Karyawan Baru — kunci izin "onboarding" (butuh Sync Fitur), tertutup default.
       { title: "Onboarding Karyawan", url: "/onboarding", icon: ClipboardCheck, badge: "NEW", show: canViewOnboarding },
+      // F58 Adopsi Fitur — champion vs laggard pemakaian fitur → daftar perlu training. Bukan KPI.
+      // Kunci izin "adoption", tertutup default (admin/Direktur; HoD hanya bila dicentang) — butuh Sync Fitur.
+      { title: "Adopsi Fitur", url: "/adoption", icon: UserCheck, badge: "NEW", show: canViewAdoption },
     ],
   },
   {
@@ -120,13 +122,18 @@ export const NAV: NavGroup[] = [
       { title: "Sales Analytics", url: "/sales-analytics", icon: Target, badge: "NEW" },
       { title: "Sales Alerts", url: "/sales-alerts", icon: Bell, badge: "NEW" },
       { title: "Competitor Intel", url: "/competitor", icon: Swords },
-      // F65 Leads — prospek sebelum jadi deal (BANT ≥3 → konversi ke Pipeline).
-      // Kunci izin sendiri ("leads"); default tertutup — butuh Sync Fitur +
-      // centang di Akses Grup. Barisnya di-scope server (AM/HoD/admin).
-      { title: "Leads", url: "/leads", icon: UserPlus, badge: "NEW" },
+      // F65 Leads DICABUT dari menu 13 Okt 2026 (keputusan user): #LEADS kini
+      // langsung jadi deal Prospecting di Pipeline. Tanpa item menu, Sync Fitur
+      // berikutnya menonaktifkan fitur "leads" sendiri; halaman /leads dibiarkan.
       // F18 Demo & Trial — hasil demo/trial dinilai AM, konversi per produk.
       // Kunci izin sendiri ("demo-trial"); default tertutup.
       { title: "Demo & Trial", url: "/demo-trial", icon: Presentation, badge: "NEW" },
+      // F74 Kampanye (menyerap F46) — kampanye non-KSO per brand/item + periode,
+      // realisasi faktur/SO otomatis. Kunci izin sendiri ("kampanye"); default tertutup.
+      { title: "Kampanye", url: "/kampanye", icon: Megaphone, badge: "NEW" },
+      // F130 Brosur & Video — brosur diunggah ke Google Drive (tautan publik),
+      // video = tautan. Kunci izin sendiri ("brosur"); default tertutup.
+      { title: "Brosur & Video", url: "/brosur", icon: Library, badge: "NEW" },
       { title: "Pipeline", url: "/pipeline", icon: Workflow },
       { title: "Kinerja Saya", url: "/me", icon: UserRound, badge: "NEW" },
       // F67 Insentif. Menu terpisah dari /insentif/tim karena PERTANYAANNYA beda:
@@ -191,8 +198,12 @@ export const NAV: NavGroup[] = [
       // (migrasi 197; keputusan user 6 Okt 2026). Menumpang kunci izin yang SAMA
       // dengan Produktivitas KSO karena alasan yang sama (lihat di atas): halaman
       // dan BFF meng-gate dengan canViewKso, jadi kunci berbeda = dua centang.
+      // F169: kunci tambahan 'kso-mutasi-alat' = tombol Pindah/tarik (teknisi).
+      // Grup yang hanya punya kunci itu tetap melihat menu ini (navVisible
+      // memeriksa `features`), tanpa ikut membuka Produktivitas KSO.
       { title: "Daftar Alat", url: "/kso-alat", icon: MonitorCheck, badge: "NEW",
-        feature: "kso-simulator", show: canViewKso },
+        feature: "kso-simulator", show: canBukaDaftarAlat,
+        features: [{ key: "kso-mutasi-alat", name: "Daftar Alat — catat pindah/tarik alat (teknisi)" }] },
       // F47 Kontrak KSO & Renewal — kunci izin SENDIRI (featureKey = "kso-kontrak"),
       // SENGAJA tak menumpang 'kso-simulator' seperti dua menu di atas: menu ini
       // MENULIS data (kontrak, status renewal), dan izin edit-nya dipisah dari
@@ -335,10 +346,6 @@ export const NAV: NavGroup[] = [
       // F13 PO Tracker + Sistem Barang Masuk — satu PO ke vendor + riwayat
       // penerimaan barang per item (migrasi 078), bukan Accurate mirror.
       { title: "PO Tracker", url: "/purchase-orders", icon: ClipboardList, badge: "NEW" },
-      // F41 Forecast vs Actual PO Gap Report — role min Management di board
-      // (MAGANG-FEATURES.md), gate Direktur/HoD/admin (bukan executive-access.ts,
-      // ini laporan Purchasing biasa — lihat purchase-forecast-access.ts).
-      { title: "Forecast vs Actual PO", url: "/purchase-forecast", icon: TrendingUpDown, badge: "NEW", show: canViewPurchaseForecast },
       // F19 — scan buffer (di sini) + ED (F38) → usulan forecast, Supply
       // Chain review/edit, ajukan ke approval berjenjang F11. Ditaruh
       // Purchasing (bukan CRM spt label blueprint) krn pemakainya
@@ -465,15 +472,15 @@ export const NAV: NavGroup[] = [
 // saat #1282 merge → kosongkan Set ini.
 export const DEV_ONLY_URLS: ReadonlySet<string> = new Set([
   "/approval-requests",
+  "/brosur",
   "/doc-klaim",
   "/forecast-submission",
-  "/ga-relokasi",
   "/installations",
+  "/kampanye",
   "/lpse-tender",
   "/maintenance",
   "/pickup-plan",
   "/proficiency-tests",
-  "/purchase-forecast",
   "/readiness-board",
   "/rfid-cartridge-claims",
   "/service-tickets",

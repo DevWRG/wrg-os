@@ -307,6 +307,18 @@ export interface GaAssetUpdateInput {
   pic_name_override?: string | null;
 }
 
+// Samakan lokasi untuk perbandingan "berubah atau tidak": spasi & huruf besar
+// tak dianggap pindah. Pure — diuji unit.
+export const lokasiSama = (a: string | null | undefined, b: string | null | undefined): boolean =>
+  (a ?? "").trim().replace(/\s+/g, " ").toLowerCase() === (b ?? "").trim().replace(/\s+/g, " ").toLowerCase();
+
+// Edit aset tak boleh memindah lokasi (13 Okt 2026): pindah lokasi wajib lewat
+// Relokasi + berita acara bertanda tangan. Lokasi yang masih KOSONG boleh diisi
+// (melengkapi data, bukan pindah); lokasi terisi tak boleh diganti/dikosongkan.
+// Tanpa penjaga ini isian Lokasi di dialog Edit melewati aturan berita acara.
+export const editLokasiDitolak = (lama: string | null | undefined, baru: string | null | undefined): boolean =>
+  baru !== undefined && !!(lama ?? "").trim() && !lokasiSama(lama, baru);
+
 export async function updateAsset(id: string, input: GaAssetUpdateInput): Promise<ActionResult> {
   const sql = db();
   if (input.purchase_price != null && (!Number.isFinite(input.purchase_price) || input.purchase_price < 0)) {
@@ -315,8 +327,14 @@ export async function updateAsset(id: string, input: GaAssetUpdateInput): Promis
   if (input.current_value != null && (!Number.isFinite(input.current_value) || input.current_value < 0)) {
     return { ok: false, error: "current_value tidak boleh negatif" };
   }
-  const rows = await sql`SELECT id FROM ga_assets WHERE id = ${id}`;
+  const rows = await sql`SELECT id, location FROM ga_assets WHERE id = ${id}`;
   if (rows.length === 0) return { ok: false, error: "aset tidak ditemukan" };
+  if (editLokasiDitolak(rows[0].location as string | null, input.location)) {
+    return { ok: false, error: "pindah lokasi wajib lewat Relokasi (dengan berita acara bertanda tangan) — Edit tidak bisa mengubah lokasi yang sudah terisi" };
+  }
+  // Lokasi terisi yang dikirim ulang (beda spasi/huruf besar saja) = tak berubah:
+  // pertahankan teks lama, jangan timpa dengan variannya.
+  if ((rows[0].location as string | null)?.trim()) input = { ...input, location: undefined };
   const picProvided = Object.prototype.hasOwnProperty.call(input, "pic_name_override");
   const picValue = input.pic_name_override == null || input.pic_name_override === "" ? null : String(input.pic_name_override);
   // `!== undefined` (bukan COALESCE(x ?? null, kolom)) — field opsional

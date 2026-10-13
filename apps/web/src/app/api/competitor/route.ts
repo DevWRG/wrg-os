@@ -1,9 +1,13 @@
 import { gatewayFetch } from "@/lib/gateway";
+import { requireFeature } from "@/lib/feature-guard";
 
 export const dynamic = "force-dynamic";
 
-// Gateway → apps/api POST /competitor (catat intel kompetitor).
+// Gateway → apps/api POST /competitor (catat intel kompetitor). F131: dulu
+// cukup login — kini izin buat di menu Competitor Intel.
 export async function POST(req: Request) {
+  const g = await requireFeature("/competitor", "create");
+  if (!g.ok) return g.res;
   let body: unknown;
   try {
     body = await req.json();

@@ -20,10 +20,12 @@
 
 import { db } from "../db.js";
 import { stripInvisible } from "../parsers/dailyplan.js";
-import { scopeOnClause, type DataScope } from "./access-scope.js";
+import { FULL_SCOPE, scopeOnClause, type DataScope } from "./access-scope.js";
 import { createDeal } from "./deal.js";
 import { cariAkun } from "./interaction.js";
+import { accountIdDariTulisan } from "./akun-faskes.js";
 import { sendViaWaGateway } from "../wasend.js";
+import { waHod } from "./hod-wa.js";
 
 export const LEAD_SOURCES = ["wa", "web", "pameran", "referral", "telepon", "lpse", "lainnya"] as const;
 export const LEAD_STATUSES = ["baru", "dihubungi", "dikonversi", "ditolak"] as const;
@@ -567,12 +569,9 @@ export async function runLeadAging(): Promise<{ am: number; hod: number; lewati:
     else if (!r.pic_hod && r.reminder_hod_at == null && lewat) lewati.push(`${r.kode}: belum ber-HoD (cabang tak terpetakan)`);
   }
   for (const [hodKey, ls] of perHod) {
-    const [u] = await sql`
-      SELECT name, wa_number FROM app_user
-      WHERE hod_key = ${hodKey} AND active = true AND wa_number IS NOT NULL AND wa_number <> ''
-      ORDER BY created_at LIMIT 1`;
-    if (!u) { lewati.push(`HoD ${hodKey}: belum ada akun ber-nomor WA`); continue; }
-    const gw = await sendViaWaGateway(String(u.wa_number), pesanAging("hod", String(u.name ?? hodKey), ls.map((l) => ({ ...l, hari: Number(l.hari) }))));
+    const u = await waHod(hodKey);
+    if (!u) { lewati.push(`HoD ${hodKey}: nomor WA tak ditemukan (akun login maupun master_user)`); continue; }
+    const gw = await sendViaWaGateway(u.wa, pesanAging("hod", u.nama, ls.map((l) => ({ ...l, hari: Number(l.hari) }))));
     if (gw.sent && !gw.stub && !gw.dryRun) {
       await sql`UPDATE lead SET reminder_hod_at = now() WHERE id = ANY(${ls.map((l) => l.id)}::bigint[])`;
       hod += 1;
@@ -581,35 +580,152 @@ export async function runLeadAging(): Promise<{ am: number; hod: number; lewati:
   return { am, hod, lewati };
 }
 
+// ── WA #LEADS → deal Pipeline ───────────────────────────────────────────────
+//
+// Keputusan user 13 Okt 2026 (sore): menu Leads DIABAIKAN supaya input & proses
+// sales tidak berlapis — tahap Prospecting di Pipeline sudah berperan sebagai
+// lead. #LEADS tetap dipakai (info prospek dari teknisi/admin sampai ke AM),
+// tetapi langsung menjadi deal Prospecting, tanpa saringan BANT. Routing tetap
+// resolveWilayah. Faskes yang SUDAH punya deal terbuka tidak dibuatkan kartu
+// baru: infonya dicatat di Riwayat deal itu (pengunjung lama ≠ prospek baru).
+
+export interface DealTerbuka { deal_id: string; nama: string; stage: string; am_id: string | null; am_nama: string | null }
+
+/** Deal TERBUKA (bukan Won/Lost) yang tampaknya faskes yang sama — penyaring sama dengan cariDuplikat. */
+export async function dealTerbukaFaskes(facility: string): Promise<DealTerbuka[]> {
+  const rows = await db()`
+    SELECT d.deal_id::text, COALESCE(d.facility_name, d.customer_name) AS nama, d.stage::text AS stage, d.am_id,
+           COALESCE(NULLIF(mu.panggilan,''), NULLIF(mu.nama,'')) AS am_nama
+    FROM deal d LEFT JOIN master_user mu ON mu.am_id = d.am_id
+    WHERE d.stage::text NOT IN ('Closing-Won','Closing-Lost')
+      AND (similarity(COALESCE(d.facility_name, d.customer_name), ${facility}) >= 0.45
+           OR similarity(faskes_inti(COALESCE(d.facility_name, d.customer_name)), faskes_inti(${facility})) >= 0.5)
+      AND faskes_cocok(${facility}, COALESCE(d.facility_name, d.customer_name))
+    ORDER BY d.updated_at DESC NULLS LAST
+    LIMIT 3`;
+  return rows.map((r) => ({
+    deal_id: String(r.deal_id), nama: String(r.nama), stage: String(r.stage),
+    am_id: r.am_id ? String(r.am_id) : null, am_nama: r.am_nama ? String(r.am_nama) : null,
+  }));
+}
+
+export type HasilLeadsDeal =
+  | { jenis: "riwayat"; deals: DealTerbuka[] }
+  | { jenis: "baru"; deal_id: string; am_id: string | null; am_nama: string | null; pic_hod: string | null;
+      pic_hod_nama: string | null; cabang: string | null; routing: "pengirim" | "wilayah" | "tak-terpetakan";
+      catatanWilayah: string | null; pelanggan: boolean };
+
+/**
+ * #LEADS WA → deal Prospecting, atau catatan Riwayat bila faskesnya sudah punya
+ * deal terbuka. Pengirim ber-peran AM → deal miliknya; selain itu routing dari
+ * kota. Idempotensi tak perlu dijaga di sini: baris wa_message sudah diklaim
+ * atomik oleh processUnprocessed sebelum diproses.
+ */
+export async function leadsJadiDeal(
+  input: { facility_name: string; city: string | null; kebutuhan: string | null },
+  meta: { oleh: string | null; pengirim: string; am_pengirim: string | null },
+): Promise<HasilLeadsDeal> {
+  const sql = db();
+  const facility = bersih(input.facility_name, 200);
+  if (!facility) throw new LeadError(400, "nama faskes wajib diisi");
+  const city = bersih(input.city, 100);
+  const kebutuhan = bersih(input.kebutuhan, 2000);
+  const asal = `#LEADS dari ${meta.pengirim}${kebutuhan ? `: ${kebutuhan}` : ""}`;
+
+  const ada = await dealTerbukaFaskes(facility);
+  if (ada.length) {
+    // Satu pesan = satu catatan per deal faskes itu (paling banyak 3). Stage &
+    // updated_at TIDAK diubah: info pihak ketiga bukan aktivitas AM, jadi tak
+    // boleh menyembunyikan deal yang sebenarnya mangkrak.
+    for (const d of ada) {
+      await sql`
+        INSERT INTO spt_state_log (deal_id, from_stage, to_stage, changed_by, reason)
+        VALUES (${d.deal_id}, ${d.stage}, ${d.stage}, ${meta.oleh}, ${"info " + asal})`;
+    }
+    return { jenis: "riwayat", deals: ada };
+  }
+
+  let am_id: string | null = null;
+  let cabang: string | null = null;
+  let pic_hod: string | null = null;
+  let routing: "pengirim" | "wilayah" | "tak-terpetakan" = "tak-terpetakan";
+  let catatanWilayah: string | null = null;
+  if (meta.am_pengirim) {
+    const [mu] = await sql`SELECT NULLIF(upper(btrim(cabang)),'') AS cabang FROM master_user WHERE am_id = ${meta.am_pengirim} AND aktif`;
+    if (mu) {
+      am_id = meta.am_pengirim;
+      cabang = mu.cabang ? String(mu.cabang) : await cabangDariKota(city);
+      routing = "pengirim";
+    }
+  }
+  if (!am_id) {
+    const w = await resolveWilayah(city);
+    // createDeal hanya menerima AM aktif ber-peran AM (amTujuan) — peta
+    // wilayah yang menunjuk orang lain dijatuhkan ke "belum ber-AM".
+    if (w.am_id) {
+      const [ok] = await sql`SELECT 1 FROM master_user WHERE am_id = ${w.am_id} AND aktif AND upper(role) = 'AM'`;
+      if (ok) am_id = w.am_id;
+      else catatanWilayah = `${w.am_nama ?? w.am_id} di peta wilayah bukan AM aktif`;
+    }
+    cabang = w.cabang;
+    routing = am_id ? "wilayah" : "tak-terpetakan";
+    if (!am_id && !catatanWilayah) catatanWilayah = w.catatan || null;
+  }
+  if (cabang) pic_hod = await hodDariCabang(cabang);
+
+  // Penaut sadar-jenis + kota petunjuk (akun-faskes.ts), sama dengan #REPORT.
+  const account_id = await accountIdDariTulisan(facility, city).catch(() => null);
+
+  // superuser: penunjukan AM di sini hasil routing sistem, bukan pilihan
+  // pengirim, jadi tak dibatasi cabang. amId = pengirim → changed_by Riwayat.
+  const d = await createDeal({ ...FULL_SCOPE, superuser: true, amId: meta.oleh }, {
+    facility_name: facility, customer_name: facility, am_id, city, cabang, pic_hod,
+    notes: [kebutuhan ? `Kebutuhan: ${kebutuhan}` : null, `Info #LEADS dari ${meta.pengirim}`].filter(Boolean).join("\n"),
+  });
+  try {
+    if (account_id) await sql`UPDATE deal SET account_id = ${account_id} WHERE deal_id = ${d.deal_id}`;
+    await sql`
+      UPDATE spt_state_log SET reason = ${`deal dibuat (${asal})`}
+      WHERE deal_id = ${d.deal_id} AND from_stage IS NULL`;
+  } catch (e) {
+    console.error("[leads→deal] pelengkap deal gagal (non-fatal):", (e as Error).message);
+  }
+
+  const [nm] = await sql`
+    SELECT (SELECT COALESCE(NULLIF(panggilan,''), NULLIF(nama,'')) FROM master_user WHERE am_id = ${am_id}) AS am_nama,
+           (SELECT NULLIF(nama,'') FROM master_hod WHERE hod_key = ${pic_hod}) AS hod_nama`;
+  return {
+    jenis: "baru", deal_id: d.deal_id, am_id, am_nama: nm?.am_nama ? String(nm.am_nama) : null,
+    pic_hod, pic_hod_nama: nm?.hod_nama ? String(nm.hod_nama) : null, cabang, routing, catatanWilayah,
+    pelanggan: account_id != null,
+  };
+}
+
 // ── Balasan WA #LEADS (murni, diuji) ────────────────────────────────────────
 
-export function balasanLeadTercatat(x: {
-  lead: Pick<LeadRow, "kode" | "facility_name" | "city" | "am_nama" | "am_id" | "pic_hod" | "routing_via" | "account_id"> & { pic_hod_nama?: string | null };
-  pengirim: string;
-  duplikat: Duplikat[];
-  catatanWilayah?: string | null;
-}): string {
-  const l = x.lead;
-  const ke = l.am_id
-    ? `diteruskan ke AM *${l.am_nama ?? l.am_id}*${l.routing_via === "pengirim" ? " (Anda sendiri)" : ""}`
-    : l.pic_hod
-      ? `BELUM ber-AM — HoD *${l.pic_hod_nama ?? l.pic_hod}* akan menunjuk AM-nya`
-      : "BELUM ber-AM — admin akan menunjuk AM-nya";
-  const baris = [
-    `✅ Lead *${l.kode}* tercatat: ${l.facility_name}${l.city ? ` (${l.city})` : ""}, ${x.pengirim}.`,
-    `→ ${ke}.`,
-    !l.am_id && x.catatanWilayah ? `   (${x.catatanWilayah})` : null,
-    l.account_id ? "ℹ️ Faskes ini sudah pelanggan di Accurate." : null,
-  ];
-  if (x.duplikat.length) {
-    baris.push("", "⚠️ Mirip yang masih terbuka:");
-    for (const d of x.duplikat.slice(0, 3)) {
-      baris.push(`• ${d.jenis === "lead" ? `lead ${d.ref}` : "deal di Pipeline"} — ${d.nama} (${d.status})`);
-    }
-    baris.push("Kalau ternyata sama, tolak lead ini di menu Leads dengan alasan duplikat.");
+export function balasanLeadsDeal(h: HasilLeadsDeal, x: { pengirim: string; facility_name: string; city: string | null }): string {
+  const faskes = `${x.facility_name}${x.city ? ` (${x.city})` : ""}`;
+  if (h.jenis === "riwayat") {
+    return [
+      `ℹ️ ${faskes} sudah ada di Pipeline, ${x.pengirim}:`,
+      ...h.deals.map((d) => `• ${d.nama} — ${d.stage}, AM ${d.am_nama ?? d.am_id ?? "belum ada"}`),
+      "Info Anda dicatat di Riwayat deal tersebut — tidak dibuat kartu baru.",
+      "Kalau ini kebutuhan BARU (alat/brand lain), minta AM-nya membuat deal baru di menu Pipeline.",
+    ].join("\n");
   }
-  baris.push("", "Lengkapi BANT (budget, pengambil keputusan, kebutuhan, waktu beli) di menu Leads — minimal 3 dari 4 untuk dikonversi jadi deal.");
-  return baris.filter((b) => b !== null).join("\n");
+  const ke = h.am_id
+    ? `AM *${h.am_nama ?? h.am_id}*${h.routing === "pengirim" ? " (Anda sendiri)" : ""}`
+    : h.pic_hod
+      ? `BELUM ber-AM — HoD *${h.pic_hod_nama ?? h.pic_hod}* akan menunjuk AM-nya di menu Pipeline`
+      : "BELUM ber-AM — admin akan menunjuk AM-nya di menu Pipeline";
+  return [
+    `✅ Deal baru di Pipeline (Prospecting): ${faskes}, ${x.pengirim}.`,
+    `→ ${ke}.`,
+    !h.am_id && h.catatanWilayah ? `   (${h.catatanWilayah})` : null,
+    h.pelanggan ? "ℹ️ Faskes ini sudah pelanggan di Accurate." : null,
+    "",
+    "Lengkapi brand, produk & perkiraan nilai di menu Pipeline.",
+  ].filter((b) => b !== null).join("\n");
 }
 
 // ── Masukan dari web (form menu Leads) ──────────────────────────────────────

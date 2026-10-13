@@ -1,4 +1,5 @@
 import { db } from "../db.js";
+import { cariDoAccurateSegar } from "./shipment-tracking.js";
 
 // postgres.js parse kolom timestamptz jadi objek Date — String(dateObj) hasilnya
 // verbose ("Wed Aug 05 2026 …"), bukan ISO. new Date(x).toISOString() aman
@@ -249,7 +250,10 @@ export async function markPoControl(id: string, po_number?: string): Promise<Ins
   return { ok: true, status: "po_control" };
 }
 
-export async function markSj(id: string, sj_number: string): Promise<InstallationActionResult> {
+// No. SJ dirujuk ke DO Accurate (keputusan user 13 Okt 2026, sama dengan WA
+// #KIRIM): "SJK 6142", "SJK6142", opsional cabang, atau nomor lengkap. Harus
+// tepat SATU DO; yang tersimpan nomor lengkap Accurate, bukan ketikan user.
+export async function markSj(id: string, sj_number: string): Promise<InstallationActionResult & { sj_number?: string; customer_name?: string | null }> {
   const sql = db();
   const sj = nomorDokumen(sj_number, "No. SJ");
   if (!sj.ok) return { ok: false, error: sj.error };
@@ -259,15 +263,23 @@ export async function markSj(id: string, sj_number: string): Promise<Installatio
     return { ok: false, error: "PO control belum selesai — selesaikan langkah sebelumnya dulu" };
   }
   if (rows[0].sj_done) return { ok: false, error: "langkah SJ sudah selesai" };
+  const dos = await cariDoAccurateSegar(sj.v);
+  if (dos.length === 0) {
+    return { ok: false, error: `SJ "${sj.v}" tidak ditemukan di DO Accurate 90 hari terakhir — cek jenis & nomornya (mis. SJK 6142) atau pakai nomor lengkap` };
+  }
+  if (dos.length > 1) {
+    return { ok: false, error: `"${sj.v}" cocok dengan ${dos.length} SJ (${dos.map((d) => d.number).join(", ")}) — pakai nomor lengkap` };
+  }
+  const nomor = dos[0].number;
   const done = await sql`
     UPDATE installation_unit
-    SET sj_number = ${sj.v}, sj_done = TRUE, sj_at = now(),
+    SET sj_number = ${nomor}, sj_done = TRUE, sj_at = now(),
         status = 'sj', updated_at = now()
     WHERE id = ${id} AND po_control_done AND NOT sj_done
     RETURNING id
   `;
   if (done.length === 0) return { ok: false, error: KALAH_BALAPAN };
-  return { ok: true, status: "sj" };
+  return { ok: true, status: "sj", sj_number: nomor, customer_name: dos[0].customer_name };
 }
 
 // Teknisi dipilih dari roster teknisi_capacity (F8), BUKAN diketik bebas —

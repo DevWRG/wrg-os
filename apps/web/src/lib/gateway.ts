@@ -37,14 +37,21 @@ export function pathGatewayAman(path: string): boolean {
 /** Fetch ke backend domain dengan base URL tergabung + no-store.
  * BFF tepercaya: sertakan x-service-token (API_SERVICE_TOKEN) bila di-set,
  * supaya apps/api mengotorisasi panggilan dari gateway saat AUTH_ENABLED. */
-export function gatewayFetch(path: string, init?: RequestInit): Promise<Response> {
+export async function gatewayFetch(path: string, init?: RequestInit): Promise<Response> {
   if (!pathGatewayAman(path)) {
-    return Promise.resolve(Response.json({ error: "path tidak sah" }, { status: 400 }));
+    return Response.json({ error: "path tidak sah" }, { status: 400 });
   }
   const headers = new Headers(init?.headers);
   const svc = process.env.API_SERVICE_TOKEN;
   if (svc) headers.set("x-service-token", svc);
-  return fetch(`${apiBaseUrl()}${path}`, { cache: "no-store", ...init, headers });
+  const res = await fetch(`${apiBaseUrl()}${path}`, { cache: "no-store", ...init, headers });
+  // F58: aksi tulis yang BERHASIL = satu "action" pemakaian fitur. Fire-and-forget; import dinamis
+  // supaya modul ini tetap ringan & tak menarik next/headers untuk panggilan GET.
+  const method = (init?.method ?? "GET").toUpperCase();
+  if (res.ok && method !== "GET" && method !== "HEAD") {
+    void import("./adoption-record").then((m) => m.captureAction(method)).catch(() => {});
+  }
+  return res;
 }
 
 /** Teruskan respons backend sbg JSON dgn AMAN — tak pernah throw walau body

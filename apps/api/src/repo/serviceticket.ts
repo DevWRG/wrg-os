@@ -74,7 +74,10 @@ async function assignTeknisi(area: string | null): Promise<AssignedTeknisi | nul
       SELECT tc.id, tc.nama, tc.wa_number,
         (SELECT COUNT(*) FROM service_ticket st WHERE st.assigned_teknisi_id = tc.id AND st.status = 'open') AS load
       FROM teknisi_capacity tc
-      WHERE tc.aktif = TRUE AND EXISTS (SELECT 1 FROM unnest(tc.wilayah) w WHERE w ILIKE ${area})
+      -- Cocok PERSIS (abai huruf/spasi tepi), bukan ILIKE: area datang dari teks
+      -- komplain/LLM, dan tanpa escape '%'/'_' jadi wildcard — area "%" dulu
+      -- "cocok" dgn wilayah siapa pun & tiketnya lolos tanpa review (uji E9).
+      WHERE tc.aktif = TRUE AND EXISTS (SELECT 1 FROM unnest(tc.wilayah) w WHERE lower(trim(w)) = lower(trim(${area})))
       ORDER BY load ASC, tc.created_at ASC
       LIMIT 1
     `;
@@ -295,6 +298,44 @@ export async function resolveTicket(id: string, note?: string): Promise<{ ok: bo
     return { ok: false, error: "ticket sudah resolved" };
   }
   return { ok: true };
+}
+
+// Penugasan MANUAL oleh HoD/admin Aftersales (keputusan user 13 Okt 2026, uji
+// E7): tiket "perlu review" (AI ragu / wilayah tak cocok / belum ada teknisi)
+// dulu tak punya aksi lanjutan selain resolve. Juga dipakai mengganti teknisi.
+// Hanya tiket open & teknisi roster aktif; flag review dilepas; teknisi baru
+// dikirimi WA ringkasan tiket (patuh WA_DRY_RUN/allowlist lewat wasend).
+export async function assignTicketManual(
+  id: string,
+  teknisiId: string,
+  by?: string | null,
+): Promise<{ ok: true; ticket: TicketRow } | { ok: false; error: string }> {
+  const sql = db();
+  if (!/^[0-9a-f-]{36}$/i.test(teknisiId)) return { ok: false, error: "teknisi_id tidak valid" };
+  const [tk] = await sql`SELECT id, nama, wa_number, aktif FROM teknisi_capacity WHERE id = ${teknisiId}`;
+  if (!tk) return { ok: false, error: "teknisi tidak ditemukan di roster" };
+  if (!tk.aktif) return { ok: false, error: "teknisi nonaktif — pilih teknisi aktif" };
+  const rows = await sql`
+    UPDATE service_ticket
+    SET assigned_teknisi_id = ${tk.id}, assigned_teknisi_name = ${tk.nama}, needs_review = false, updated_at = now()
+    WHERE id = ${id} AND status = 'open'
+    RETURNING *
+  `;
+  if (rows.length === 0) {
+    const ada = await sql`SELECT status FROM service_ticket WHERE id = ${id}`;
+    return { ok: false, error: ada.length === 0 ? "ticket tidak ditemukan" : "ticket sudah resolved" };
+  }
+  const ticket = mapTicket(rows[0]);
+  if (tk.wa_number) {
+    const msg = [
+      `${SEVERITY_LABEL[ticket.severity] ?? ticket.severity} — Tiket servis ditugaskan ke Anda${by ? ` oleh ${by}` : ""}`,
+      ticket.customer_name ? `Customer: ${ticket.customer_name}` : null,
+      `Komplain: ${ticket.complaint_text}`,
+      ticket.eta_at ? `ETA respon: ${formatEta(new Date(ticket.eta_at))}` : null,
+    ].filter(Boolean).join("\n");
+    await sendViaWaGateway(String(tk.wa_number), msg);
+  }
+  return { ok: true, ticket };
 }
 
 // Dipanggil dari inbound.ts — cek apakah pengirim (by pushname) adalah teknisi

@@ -3,6 +3,8 @@ import { detectDaily, parseDaily, stripInvisible } from "../parsers/dailyplan.js
 import { parseAmPlan, parseAmReport, bersihkanNamaCustomer } from "../parsers/am.js";
 import { sendViaWaGateway, type WaSendResult } from "../wasend.js";
 import { handleSalesAnalyticsQuery } from "./inbound-sales-analytics.js";
+import { balasanKampanye, scopeDariPengirim } from "./campaign.js";
+import { balasanBrief } from "./customer-intel.js";
 import { detectCek, handleCekQuery } from "./inbound-cek.js";
 import { resolveSender, normalizeWa, bolehAksesHargaWa } from "./master.js";
 import { upsertDailyTodo, computeIsLate } from "./todo.js";
@@ -54,7 +56,7 @@ import {
   balasanAmbiguInteraksi,
   balasanTercatat,
 } from "./interaction.js";
-import { parseLeads, contohLeads, buatLead, balasanLeadTercatat } from "./lead.js";
+import { parseLeads, contohLeads, leadsJadiDeal, balasanLeadsDeal } from "./lead.js";
 import {
   parseDemoTrial,
   balasanFormatDT,
@@ -68,6 +70,7 @@ import {
   DemoTrialError,
 } from "./demo-trial.js";
 import { FULL_SCOPE } from "./access-scope.js";
+import { accountIdDariTulisan } from "./akun-faskes.js";
 
 
 // Role yang pakai alur AM per-customer (sales_plan/activity_log + foto), bukan todo.
@@ -124,6 +127,8 @@ export const INBOUND_HASHTAGS = [
   "note",
   "demo",
   "trial",
+  "kampanye",
+  "brief",
 ] as const;
 
 export type InboundKind = (typeof INBOUND_HASHTAGS)[number] | "none";
@@ -173,6 +178,10 @@ const OVERTIME_LINE = /^\s*#\s*overtime\b/i;
 const INTERAKSI_LINE = /^\s*#\s*(call|note)\b/i;
 // F18 — #DEMO / #TRIAL: buka (faskes: alat) atau tutup (DM-/TR-xxxx hasil).
 const DEMO_TRIAL_LINE = /^\s*#\s*(demo|trial)\b/i;
+// F74 — #KAMPANYE (baca progres kampanye; tak menulis apa pun).
+const KAMPANYE_LINE = /^\s*#\s*kampanye\b/i;
+// F131 — #BRIEF <faskes>: briefing pra-kunjungan (baca saja).
+const BRIEF_LINE = /^\s*#\s*brief\b/i;
 
 export function detectKind(body: string | null): InboundKind {
   const daily = detectDaily(body); // line-anchored #plan/#report (sudah strip invisible)
@@ -203,6 +212,8 @@ export function detectKind(body: string | null): InboundKind {
       if (ia) return ia[1].toLowerCase() as "call" | "note";
       const dt = line.match(DEMO_TRIAL_LINE);
       if (dt) return dt[1].toLowerCase() as "demo" | "trial";
+      if (KAMPANYE_LINE.test(line)) return "kampanye";
+      if (BRIEF_LINE.test(line)) return "brief";
     }
   }
   return "none";
@@ -570,13 +581,10 @@ async function resolveActivityLinks(
   customer: string,
 ): Promise<{ accountId: number | null; opportunityId: string | null }> {
   const sql = db();
-  const [acc] = await sql`
-    SELECT id, similarity(COALESCE(NULLIF(name,''), raw->>'name', ''), ${customer}) AS score
-    FROM accurate_customer
-    WHERE similarity(COALESCE(NULLIF(name,''), raw->>'name', ''), ${customer}) >= ${ACCOUNT_MATCH}
-    ORDER BY score DESC, id LIMIT 1
-  `;
-  const accountId = acc ? Number(acc.id) : null;
+  // Penaut sadar-jenis (akun-faskes.ts). Trigram nama utuh yang dulu dipakai di
+  // sini gagal pada 83% laporan (nama Accurate terbalik + awalan "Cust :") dan
+  // salah tempel sisanya (PMI → PKM/PLN) — 13 Okt 2026.
+  const accountId = await accountIdDariTulisan(customer);
 
   // Deal terbuka (belum Closing-*) milik AM ini: match by account_id, fallback
   // fuzzy facility_name. Terbaru duluan — aktivitas biasanya untuk deal berjalan.
@@ -1358,8 +1366,10 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
   const target = row.group_jid;
 
   // #LEADS/#UPDATE — tanpa body-name; resolve by phone/pushname saja.
-  // #LEADS <faskes>, <kota>: <kebutuhan> — F65. Pengirim ketat (seperti #CEK/
-  // #FAKTUR). Pengirim ber-peran AM → lead langsung miliknya; selain itu
+  // #LEADS <faskes>, <kota>: <kebutuhan> — pengirim ketat (seperti #CEK/
+  // #FAKTUR). Sejak 13 Okt 2026 langsung jadi deal Prospecting di Pipeline
+  // (menu Leads diabaikan); faskes yang sudah punya deal terbuka → dicatat di
+  // Riwayat deal itu. Pengirim ber-peran AM → deal miliknya; selain itu
   // di-routing dari kota (master_territory → AM, area_kota → cabang → HoD).
   if (kind === "leads") {
     const pl = await resolveSender({ senderJid: row.sender_jid, groupJid: row.group_jid, pushname: row.sender_name, ketat: true });
@@ -1375,17 +1385,18 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
       return finish({ error: `format:${p.alasan}`, via: pl.via, reply });
     }
     // SENGAJA bukan isAmRole() di atas: itu memasukkan Teknisi (alur laporan
-    // per-customer), padahal lead dari teknisi harus di-routing ke AM wilayah.
+    // per-customer), padahal info dari teknisi harus di-routing ke AM wilayah.
     const pengirimAm = /^am$/i.test(String(pl.role ?? "").trim());
-    const hasil = await buatLead(
-      { facility_name: p.facility_name, city: p.city, kebutuhan: p.kebutuhan, bant_need: Boolean(p.kebutuhan), source: "wa", am_id: pengirimAm ? pl.am_id : null },
-      { created_by: pl.am_id, group_jid: row.group_jid, wa_message_id: row.message_id, via_pengirim: pengirimAm },
+    const hasil = await leadsJadiDeal(
+      { facility_name: p.facility_name, city: p.city, kebutuhan: p.kebutuhan },
+      { oleh: pl.am_id, pengirim: pl.nama, am_pengirim: pengirimAm ? pl.am_id : null },
     );
-    const reply = await sendViaWaGateway(
-      target,
-      balasanLeadTercatat({ lead: hasil.lead, pengirim: pl.nama, duplikat: hasil.duplikat, catatanWilayah: hasil.wilayah?.catatan }),
+    const reply = await sendViaWaGateway(target, balasanLeadsDeal(hasil, { pengirim: pl.nama, facility_name: p.facility_name, city: p.city }));
+    return finish(
+      hasil.jenis === "baru"
+        ? { deal: hasil.deal_id, am_id: hasil.am_id, routing: hasil.routing, via: pl.via, reply }
+        : { riwayat: hasil.deals.map((d) => d.deal_id), via: pl.via, reply },
     );
-    return finish({ lead: hasil.lead.kode, baru: hasil.baru, am_id: hasil.lead.am_id, routing: hasil.lead.routing_via, duplikat: hasil.duplikat.length, via: pl.via, reply });
   }
 
   // #DEMO / #TRIAL — F18. Buka: "<faskes>: <alat>" (+ ", N hari" / ", sampai dd/mm"
@@ -1792,6 +1803,39 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
       : `⚠️ ${pesanGagalShipping(shipment.sj_number, action.error)}`;
     const reply = await sendViaWaGateway(target, replyMsg);
     return finish({ shipment_id: shipment.id, sj: shipment.sj_number, dibuat, ok: action.ok, error: action.error, reply });
+  }
+
+  // #KAMPANYE — F74: progres kampanye non-KSO dalam scope pengirim (AM = dirinya,
+  // HoD = timnya, admin = semua). Baca saja; pengirim wajib dikenal (ketat).
+  if (kind === "kampanye") {
+    const km = await resolveSender({ senderJid: row.sender_jid, groupJid: row.group_jid, pushname: row.sender_name, ketat: true });
+    if (!km) return finish({ skipped: "unknown-sender", sender_name: row.sender_name });
+    let text: string;
+    try {
+      text = await balasanKampanye(extractHashtagArg(row.body, KAMPANYE_LINE), { am_id: km.am_id, nama: km.nama ?? null, role: km.role ?? null });
+    } catch (e) {
+      console.error("[inbound] #KAMPANYE gagal diproses:", (e as Error).message);
+      text = "⚠️ #KAMPANYE gagal diproses, coba lagi sebentar lagi.";
+    }
+    const reply = await sendViaWaGateway(target, text);
+    return finish({ kind: "kampanye", via: km.via, reply });
+  }
+
+  // #BRIEF <faskes> — F131: briefing pra-kunjungan, fakta saja. Scope pengirim
+  // (AM = faskes miliknya + tanpa pemilik; HoD = timnya + tanpa pemilik).
+  if (kind === "brief") {
+    const br = await resolveSender({ senderJid: row.sender_jid, groupJid: row.group_jid, pushname: row.sender_name, ketat: true });
+    if (!br) return finish({ skipped: "unknown-sender", sender_name: row.sender_name });
+    let text: string;
+    try {
+      const sc = await scopeDariPengirim({ am_id: br.am_id, role: br.role ?? null });
+      text = await balasanBrief(extractHashtagArg(row.body, BRIEF_LINE), sc);
+    } catch (e) {
+      console.error("[inbound] #BRIEF gagal diproses:", (e as Error).message);
+      text = "⚠️ #BRIEF gagal diproses, coba lagi sebentar lagi.";
+    }
+    const reply = await sendViaWaGateway(target, text);
+    return finish({ kind: "brief", via: br.via, reply });
   }
 
   // #STOK — cek stok cepat (F2 SQC). Sender WAJIB dikenal (perlu cabang AM

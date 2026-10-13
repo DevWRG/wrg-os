@@ -230,11 +230,12 @@ export async function faskesDetail(
   // Dibatasi ke aset milik faskes+skema ini lewat JOIN, bukan lewat daftar id dari
   // query sebelumnya: satu sumber cakupan, dan tidak ada peluang dua query melihat
   // himpunan aset yang berbeda.
+  // Lewat kso_tes_lokasi_v (217): hanya bulan-bulan saat alat BERADA di faskes ini.
   const trenAlat = await sql`
     SELECT m.asset_id, to_char(m.periode, 'YYYY-MM-DD') AS periode, m.jumlah_tes
-    FROM kso_asset_test_monthly m
+    FROM kso_tes_lokasi_v m
     JOIN kso_asset a ON a.id = m.asset_id
-    WHERE a.account_id = ${accountId} AND a.skema = ${skema}
+    WHERE m.account_id = ${accountId} AND a.skema = ${skema}
     ORDER BY m.asset_id, m.periode`;
 
   // Kategori yang berlaku bagi skema ini dibaca dari kso_kategori_skema — sumber tunggal

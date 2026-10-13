@@ -30,8 +30,11 @@ import { listAccounts, getAccount, upsertAccountFields, createContact, updateCon
 import { timelineAkun } from "./repo/interaction.js";
 import { listLeads, getLead, buatLeadWeb, updateLead, konversiLead, cariDuplikat, LeadError } from "./repo/lead.js";
 import { OnboardingError, cancelCase as cancelOnboarding, createTemplate as createOnboardingTemplate, getCase as getOnboardingCase, listCandidates as listOnboardingCandidates, listCases as listOnboardingCases, listTemplates as listOnboardingTemplates, startCase as startOnboarding, updateItem as updateOnboardingItem, updateTemplate as updateOnboardingTemplate } from "./repo/onboarding.js";
+import { MateriError, buatMateri, listMateri, ubahMateri, type BerkasMasuk } from "./repo/materi.js";
+import { DriveError, driveSiap } from "./gdrive.js";
+import { CampaignError, buatKampanye, cariItem, detailKampanye, listKampanye, opsiBrand, ubahKampanye } from "./repo/campaign.js";
 import { listDemoTrial, getDemoTrial, bukaDemoTrial, ubahDemoTrial, tutupDemoTrial, rekapKonversi, resolusiFaskes, dealTerlihat, DemoTrialError } from "./repo/demo-trial.js";
-import { listPickupPlans, createPickupPlan, updatePickupPlan, deletePickupPlan, previewPreVisit, runPreVisitCheck } from "./repo/pickup-plan.js";
+import { listPickupPlans, createPickupPlan, updatePickupPlan, deletePickupPlan, previewPreVisit, runPreVisitCheck, listKurirOptions, listSjOptions, resolveKurir, cekSj, SJ_WINDOW_DAYS } from "./repo/pickup-plan.js";
 import {
   ingestInvoices,
   ingestAccurateWebhook,
@@ -112,11 +115,16 @@ import {
 import { master as ksoMaster } from "./repo/kso.js";
 import { produktivitas as ksoProduktivitas, faskesDetail as ksoFaskesDetail } from "./repo/kso-produktivitas.js";
 import { daftarAlat as ksoDaftarAlat } from "./repo/kso-alat.js";
+import {
+  riwayatFaskes as ksoRiwayatPenempatan, cariFaskes as ksoCariFaskes, bacaPindah as ksoBacaPindah,
+  pindahkan as ksoPindahkan, batalkanPindah as ksoBatalkanPindah, PenempatanError,
+  riwayatAlat as ksoRiwayatAlat,
+} from "./repo/kso-penempatan.js";
 import { listCoachingNotes } from "./repo/coaching.js";
 import { getLatestCoachingNotes, computePeopleAnalytics } from "./repo/people.js";
 import { AmTidakDikenalError, createVisit, getVisit, isVisitSort, listVisits, visitKpi, visitSummary } from "./repo/visit.js";
 import { upsertDailyTodo, listTodos, markTodoReported } from "./repo/todo.js";
-import { upsertUser, listUsers, upsertTerritory, listTerritories, updateUserCabang, updateUserGolongan, normalizeWa } from "./repo/master.js";
+import { upsertUser, listUsers, upsertTerritory, listTerritories, updateUserCabang, updateUserGolongan } from "./repo/master.js";
 import { GOLONGAN, GOLONGAN_LABEL, TARGET_CUSTOMER_MINIMUM, isGolongan } from "./lib/npk-golongan.js";
 import { listTargets, upsertTargets, listCabangTargets, upsertCabangTargets, listAmTargets, upsertAmTargets, listAmCandidates, deleteAmTarget } from "./repo/sales-target.js";
 import {
@@ -156,6 +164,9 @@ import {
   markBast,
 } from "./repo/installation.js";
 import { recordCompetitor, listCompetitor, competitorSummary } from "./repo/competitor.js";
+import { kesehatanKso, runRekapKesehatanKso } from "./repo/kso-kesehatan.js";
+import { IntelError, briefingFaskes, dominasiWilayah, setDominan } from "./repo/customer-intel.js";
+import { ringkasPembayaran } from "./repo/pembayaran.js";
 import {
   defaultRange,
   parseRange,
@@ -176,6 +187,7 @@ import {
 import { salesRange, reportRevenue, reportSalesAr, salesOverview, customersRevenue, customerMonthly, dormantCustomers, churnCustomers, targetPacing, reportSalesPerformance } from "./repo/sales.js";
 import { streamRange, reportRevenueByStream } from "./repo/revenue-stream.js";
 import { resolveScope } from "./repo/access-scope.js";
+import { AdoptionError, getAdoption, LIST_LIMIT_DEFAULT, recordUsage, resolvePeriod, summarizeByFeature, trainingNeeds } from "./repo/adoption.js";
 import { getRaportList, getRaportDetail } from "./repo/raport.js";
 import { generateRaportNarrative, runRaportNarrative } from "./repo/raportnarrative.js";
 import {
@@ -189,6 +201,7 @@ import {
   analyticsTrending,
   getMyArAging,
 } from "./repo/sales-analytics.js";
+import { ecatalogWatch } from "./repo/ecatalog-watch.js";
 import { listViews, saveView, deleteView, listAlerts, createAlert, deleteAlert, updateAlert, listAlertTargets } from "./repo/sales-analytics-config.js";
 import { execCommand, execAmRadar, execOutletMatrix, execDormantIntel, execKpiBaseline, execRotation, execGrowthLevers } from "./repo/exec-dashboard.js";
 import { evaluateSalesAlerts } from "./repo/sales-analytics-alert-eval.js";
@@ -313,6 +326,7 @@ import {
   listTickets,
   getTicketById,
   resolveTicket,
+  assignTicketManual,
 } from "./repo/serviceticket.js";
 import {
   listInboundReceiving,
@@ -519,15 +533,6 @@ import {
   createTeknisiReport,
   listTeknisiReports,
 } from "./repo/readinessboard.js";
-import {
-  listPurchaseForecast,
-  createPurchaseForecast,
-  updatePurchaseForecast,
-  deletePurchaseForecast,
-  PurchaseForecastError,
-  type PurchaseForecastInput,
-  type PurchaseForecastUpdate,
-} from "./repo/purchase-forecast.js";
 import {
   listCategories as listGaTicketCategories,
   createCategory as createGaTicketCategory,
@@ -3216,16 +3221,32 @@ app.post("/competitor", async (c) => {
   );
 });
 
+// F131: brand Wahana sendiri disembunyikan secara bawaan; ?sendiri=1 = semua.
 app.get("/competitor", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  const items = await listCompetitor(c.req.query("vendor") || undefined);
+  const items = await listCompetitor(c.req.query("vendor") || undefined, 1000, { termasukSendiri: c.req.query("sendiri") === "1" });
   return c.json({ count: items.length, items });
 });
 
 app.get("/competitor/summary", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  const summary = await competitorSummary();
+  const summary = await competitorSummary({ termasukSendiri: c.req.query("sendiri") === "1" });
   return c.json({ count: summary.length, summary });
+});
+
+// F131 — kompetitor dominan per cabang × kategori (deteksi) + konfirmasi HoD.
+const intelErr = (c: { json: (b: unknown, s?: number) => Response }, e: unknown) =>
+  e instanceof IntelError ? c.json({ error: e.message }, e.status as 400) : c.json({ error: String((e as Error).message) }, 500);
+app.get("/competitor/dominasi", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await dominasiWilayah(Number(c.req.query("hari") ?? 365)));
+});
+app.post("/competitor/dominan", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const body = (await c.req.json()) as Record<string, unknown>;
+    return c.json(await setDominan(await scopeOf(c), body, typeof body.oleh === "string" ? body.oleh : null));
+  } catch (e) { return intelErr(c, e); }
 });
 
 // ── Plan & Report dashboard (replikasi WRG-CRM Adminator) ──
@@ -3443,6 +3464,13 @@ const scopeOf = (c: { req: { header: (k: string) => string | undefined } }) =>
 app.get("/sales-analytics/overview", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json(await analyticsOverview(c.req.query("from"), c.req.query("to"), await scopeOf(c)));
+});
+// F72 E-Catalog Recovery Watch — faskes e-katalog (faktur ber-awalan PJE) per
+// status hari-sejak-terakhir + tren bulanan. Tidak ikut filter tanggal tab lain:
+// statusnya selalu "per hari ini".
+app.get("/sales-analytics/ecatalog", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await ecatalogWatch(await scopeOf(c)));
 });
 app.get("/sales-analytics/per-am", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
@@ -4543,6 +4571,17 @@ app.get("/kso/master", async (c) => {
 // sensitif. Dipakai bersama atas keputusan user 2026-08-18. Kalau kelak perlu
 // dipisah, buat flag sendiri dan ganti gate-nya di BFF — endpoint ini tidak
 // perlu berubah.
+// F73 — kesehatan KSO per faskes (Sehat/Waspada/Kritis + alasan). Ber-scope
+// lewat x-user-id (BFF /api/kso meneruskannya dari sesi; gerbang menu KSO di BFF).
+app.get("/kso/kesehatan", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await kesehatanKso(await scopeOf(c)));
+});
+// Jalankan rekap mingguan secara manual (ops/uji). ?dry=1 = tanpa simpan & kirim.
+app.post("/kso/kesehatan/rekap", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await runRekapKesehatanKso({ dryRun: c.req.query("dry") === "1" }));
+});
 app.get("/kso/produktivitas", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json(await ksoProduktivitas());
@@ -4606,6 +4645,42 @@ app.get("/kso/produktivitas/faskes/:accountId", async (c) => {
     return c.json({ error: "dari/sampai wajib YYYY-MM-DD dan dari <= sampai" }, 400);
   }
   return c.json(await ksoFaskesDetail(accountId, skema, dari, sampai));
+});
+
+// F169 — Riwayat penempatan alat (migrasi 217). Riwayat per FASKES (dialog
+// Produktivitas KSO, baca-saja) di bawah /kso/ → catch-all GET /api/kso/*
+// (canViewKso). Yang dipakai menu Daftar Alat — riwayat per alat, cari faskes,
+// pindah, batal — di prefix /kso-penempatan: teknisi (kunci 'kso-mutasi-alat')
+// tak punya 'kso-simulator', jadi gerbangnya sendiri di BFF /api/kso-penempatan/*.
+app.get("/kso/penempatan/faskes/:accountId", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const accountId = Number(c.req.param("accountId"));
+  if (!Number.isInteger(accountId) || accountId <= 0) return c.json({ error: "accountId invalid" }, 400);
+  return c.json({ rows: await ksoRiwayatPenempatan(accountId) });
+});
+app.get("/kso-penempatan/alat/:assetId", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const assetId = Number(c.req.param("assetId"));
+  if (!Number.isInteger(assetId) || assetId <= 0) return c.json({ error: "assetId invalid" }, 400);
+  return c.json({ rows: await ksoRiwayatAlat(assetId) });
+});
+app.get("/kso-penempatan/cari-faskes", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json({ rows: await ksoCariFaskes(String(c.req.query("q") ?? "").slice(0, 80)) });
+});
+const penempatanErr = (c: Context, e: unknown) => {
+  if (e instanceof PenempatanError) return c.json({ error: e.message }, e.status);
+  throw e;
+};
+app.post("/kso-penempatan/pindah", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const b = await bodyJson(c);
+  try { return c.json(await ksoPindahkan(ksoBacaPindah(b), olehDari(b)), 201); } catch (e) { return penempatanErr(c, e); }
+});
+app.post("/kso-penempatan/batal", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const b = await bodyJson(c);
+  try { return c.json(await ksoBatalkanPindah(Number(b.asset_id))); } catch (e) { return penempatanErr(c, e); }
 });
 
 // Setelan harga keagenan (migrasi 077). Gate di halaman /pricebook/setup
@@ -5651,6 +5726,57 @@ app.post("/onboarding/:id/cancel", async (c) => {
   } catch (e) { return onboardingErr(c, e); }
 });
 
+// F58 Adopsi Fitur — pemakaian fitur per user (view/action) → champion vs laggard → daftar "perlu training".
+// Bukan KPI. Identitas SELALU dari x-user-id (BFF, dari sesi) — tak pernah dari body/query.
+// Gerbang menu/izin (requireFeature "/adoption") di BFF; audiens (admin/superuser/Direktur = semua,
+// HoD = cabang timnya, lainnya 403) ditegakkan di sini lewat audienceOf().
+const adoptionErr = (c: { json: (b: unknown, s?: number) => Response }, e: unknown) => {
+  if (e instanceof AdoptionError) return c.json({ error: e.message, field: e.field }, e.status);
+  // 42P01 = tabel belum ada (migrasi 212 belum diterapkan) → 503, bukan 500 buram.
+  if ((e as { code?: string })?.code === "42P01") return c.json({ error: "migration_pending" }, 503);
+  return c.json({ error: "gagal memproses adopsi fitur" }, 500);
+};
+app.post("/adoption/event", async (c) => {
+  const svc = process.env.API_SERVICE_TOKEN;
+  if (svc && c.req.header("x-service-token") !== svc) return c.json({ error: "forbidden" }, 403);
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const userId = (c.req.header("x-user-id") ?? "").trim();
+    if (!userId) return c.json({ error: "x-user-id wajib" }, 403);
+    const b = (await c.req.json().catch(() => ({}))) as { feature_key?: unknown; kind?: unknown };
+    if (typeof b.feature_key !== "string" || typeof b.kind !== "string") return c.json({ error: "feature_key + kind wajib", field: "feature_key" }, 400);
+    const r = await recordUsage(userId, b.feature_key, b.kind);
+    if (r.reason === "unknown_user_or_feature") return c.json({ error: "user atau fitur tidak dikenal", field: "feature_key" }, 400);
+    return c.json(r, r.recorded ? 201 : 200);
+  } catch (e) { return adoptionErr(c, e); }
+});
+async function adoptionData(c: { req: { header: (k: string) => string | undefined; query: (k: string) => string | undefined } }) {
+  const period = resolvePeriod(c.req.query("period"), c.req.query("month"), wibDate());
+  const data = await getAdoption(await scopeOf(c), period, {
+    feature: c.req.query("feature"), title: c.req.query("title"), q: c.req.query("q"),
+  });
+  return data;
+}
+app.get("/adoption/summary", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const d = await adoptionData(c);
+    const { rows, ...meta } = d;
+    // rows hanya untuk drill-down satu fitur; ringkasan cukup agregat per fitur.
+    return c.json({ ...meta, features: summarizeByFeature(rows), rows: c.req.query("feature") ? rows : undefined });
+  } catch (e) { return adoptionErr(c, e); }
+});
+app.get("/adoption/training-needs", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const d = await adoptionData(c);
+    const { rows, ...meta } = d;
+    const lim = Number(c.req.query("limit"));
+    const list = trainingNeeds(rows, Number.isFinite(lim) && lim > 0 ? lim : LIST_LIMIT_DEFAULT);
+    return c.json({ ...meta, total: rows.filter((r) => r.label === "laggard").length, rows: list });
+  } catch (e) { return adoptionErr(c, e); }
+});
+
 // F65 Leads — lead terpisah dari deal; lolos BANT ≥3 → konversi jadi deal.
 // Ber-scope (AM = miliknya, HoD = cabang timnya, admin = semua) lewat x-user-id.
 // Gerbang menu/izin (requireFeature "/leads") ada di BFF.
@@ -5695,9 +5821,105 @@ app.get("/leads-am", async (c) => {
   return c.json({ am: await listOwnerCandidates(await scopeOf(c)) });
 });
 
+// F130 Brosur & video produk. Brosur DIUNGGAH (multipart) → disimpan di
+// Google Drive (gdrive.ts, service account); video = tautan. Gerbang menu
+// (requireFeature "/brosur") di BFF; `oleh` dari sesi. Tanpa scope baris:
+// materi produk sama untuk semua yang punya menu.
+const materiErr = (c: { json: (b: unknown, s?: number) => Response }, e: unknown) =>
+  e instanceof MateriError || e instanceof DriveError
+    ? c.json({ error: e.message }, e.status as 400)
+    : c.json({ error: String((e as Error).message) }, 500);
+// multipart (dgn/ tanpa berkas) atau JSON → isian + berkas opsional
+async function bacaMateri(c: { req: { header: (k: string) => string | undefined; parseBody: () => Promise<Record<string, unknown>>; json: () => Promise<unknown> } }) {
+  const ct = c.req.header("content-type") ?? "";
+  if (ct.includes("multipart/form-data")) {
+    const raw = await c.req.parseBody();
+    const body: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(raw)) if (typeof v === "string") body[k] = v;
+    const f = raw.file;
+    const berkas: BerkasMasuk | null = f instanceof File && f.size > 0
+      ? { isi: Buffer.from(await f.arrayBuffer()), nama: f.name, mime: f.type }
+      : null;
+    return { body, berkas };
+  }
+  return { body: (await c.req.json()) as Record<string, unknown>, berkas: null };
+}
+app.get("/materi", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json({ materi: await listMateri({ termasukNonaktif: c.req.query("semua") === "1" }), drive_siap: driveSiap() });
+});
+app.post("/materi", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const { body, berkas } = await bacaMateri(c);
+    return c.json(await buatMateri(body, berkas, typeof body.oleh === "string" ? body.oleh : null), 201);
+  } catch (e) { return materiErr(c, e); }
+});
+app.patch("/materi/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const { body, berkas } = await bacaMateri(c);
+    return c.json(await ubahMateri(c.req.param("id"), body, berkas, typeof body.oleh === "string" ? body.oleh : null));
+  } catch (e) { return materiErr(c, e); }
+});
+
+// F74 Campaign Tracker (menyerap F46) — kampanye non-KSO per brand/item +
+// periode; realisasi faktur/SO dihitung otomatis. Ber-scope lewat x-user-id;
+// gerbang menu/izin (requireFeature "/kampanye") di BFF, `oleh` dari sesi.
+const campaignErr = (c: { json: (b: unknown, s?: number) => Response }, e: unknown) =>
+  e instanceof CampaignError ? c.json({ error: e.message }, e.status as 400) : c.json({ error: String((e as Error).message) }, 500);
+app.get("/campaigns", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try { return c.json({ campaigns: await listKampanye(await scopeOf(c)) }); }
+  catch (e) { return campaignErr(c, e); }
+});
+app.get("/campaigns/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try { return c.json(await detailKampanye(await scopeOf(c), c.req.param("id"))); }
+  catch (e) { return campaignErr(c, e); }
+});
+app.post("/campaigns", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const body = (await c.req.json()) as Record<string, unknown>;
+    return c.json(await buatKampanye(await scopeOf(c), body, typeof body.oleh === "string" ? body.oleh : null), 201);
+  } catch (e) { return campaignErr(c, e); }
+});
+app.patch("/campaigns/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const body = (await c.req.json()) as Record<string, unknown>;
+    return c.json(await ubahKampanye(await scopeOf(c), c.req.param("id"), body, typeof body.oleh === "string" ? body.oleh : null));
+  } catch (e) { return campaignErr(c, e); }
+});
+app.get("/campaign-options", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const [brands, am] = await Promise.all([opsiBrand(), listOwnerCandidates(await scopeOf(c))]);
+  return c.json({ brands, am });
+});
+app.get("/campaign-items", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json({ items: await cariItem(c.req.query("q") ?? "") });
+});
+
 // F95 — timeline per account (interaksi #CALL/#NOTE + aktivitas AM + tahap deal +
 // faktur). Gerbang akses = getAccount dengan scope pemanggil: akun milik AM lain
 // balas 404 persis seperti halaman detailnya, timelineAkun sendiri tak menyaring.
+// F131 — briefing pra-kunjungan (fakta saja). Akses: lihat cekAkses di
+// customer-intel.ts (AM = miliknya + tanpa pemilik; HoD = timnya + tanpa pemilik).
+app.get("/accounts/:id/briefing", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try { return c.json(await briefingFaskes(await scopeOf(c), [Number(c.req.param("id"))])); }
+  catch (e) { return intelErr(c, e); }
+});
+// F131 — AR & kecepatan pembayaran per faskes (ringkasan chip "AR & pembayaran"
+// di timeline). Gerbang akses sama dgn timeline: getAccount dgn scope pemanggil.
+app.get("/accounts/:id/pembayaran", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const a = await getAccount(c.req.param("id"), await scopeOf(c));
+  if (!a) return c.json({ error: "account tak ditemukan" }, 404);
+  return c.json(await ringkasPembayaran([Number(a.id)]));
+});
 app.get("/accounts/:id/timeline", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const a = await getAccount(c.req.param("id"), await scopeOf(c));
@@ -5766,6 +5988,13 @@ app.get("/pickup-plan", async (c) => {
   return c.json({ count: rows.length, plans: rows });
 });
 
+// Opsi form: roster kurir internal + SJ (DO Accurate) yang belum #TERIMA/#BAST.
+app.get("/pickup-plan/options", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const [kurir, sj] = await Promise.all([listKurirOptions(), listSjOptions()]);
+  return c.json({ kurir, sj, sj_window_days: SJ_WINDOW_DAYS });
+});
+
 app.post("/pickup-plan", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   let body: Record<string, unknown>;
@@ -5773,21 +6002,25 @@ app.post("/pickup-plan", async (c) => {
   const tanggal = typeof body.tanggal === "string" ? body.tanggal.trim() : "";
   const customer = typeof body.customer_name === "string" ? body.customer_name.trim() : "";
   const cabang = typeof body.cabang === "string" ? body.cabang.trim() : "";
-  const kurirName = typeof body.kurir_name === "string" ? body.kurir_name.trim() : "";
   const kurirWa = typeof body.kurir_wa_number === "string" ? body.kurir_wa_number.trim() : "";
   if (!isIsoDate(tanggal)) return c.json({ error: "tanggal wajib & harus tanggal valid (YYYY-MM-DD)" }, 400);
   if (!customer) return c.json({ error: "customer_name wajib" }, 400);
   if (!cabang) return c.json({ error: "cabang wajib diisi" }, 400);
-  if (!kurirName) return c.json({ error: "nama kurir wajib diisi" }, 400);
-  // Tanpa nomor kurir, notifikasi H-1 tak punya tujuan jelas (runPreVisitCheck
-  // hanya fallback ke PREVISIT_WA_TARGET, bukan broadcast) — jadi jadwal
-  // ter-simpan tapi kurirnya tak pernah diberi tahu. Diwajibkan di sini,
-  // bukan cuma diandalkan validasi UI, karena baris ini TIDAK bisa diedit
-  // lagi setelah tersimpan (tak ada form edit, cuma status/hapus).
-  if (normalizeWa(kurirWa).length < 9) return c.json({ error: "nomor WA kurir wajib diisi & harus nomor yang valid" }, 400);
+  // Kurir = karyawan internal: dipilih dari roster (nilai = nomor WA roster).
+  // Nama & nomor diambil dari master_user, bukan dari body — nomor itulah
+  // tujuan cek H-1, jadi tak boleh berupa isian bebas.
+  if (!kurirWa) return c.json({ error: "kurir wajib dipilih" }, 400);
+  const kurir = await resolveKurir(kurirWa);
+  if (!kurir) return c.json({ error: "kurir tidak ada di roster Kirim Tagih aktif" }, 400);
   const tujuan = body.tujuan == null ? "kirim" : String(body.tujuan);
   if (!["kirim", "tagih", "kirim+tagih"].includes(tujuan)) {
     return c.json({ error: "tujuan harus kirim|tagih|kirim+tagih" }, 400);
+  }
+  let sjNumber: string | null = null;
+  if (typeof body.sj_number === "string" && body.sj_number.trim()) {
+    const sj = await cekSj(body.sj_number);
+    if (!sj.ok) return c.json({ error: sj.error }, 400);
+    sjNumber = sj.number;
   }
   // TIDAK dibungkus try/catch lokal (dulu ada, sengaja dilepas): itu menangkap
   // PostgresError SEBELUM sampai ke app.onError global, jadi error mentah
@@ -5802,9 +6035,9 @@ app.post("/pickup-plan", async (c) => {
     account_id: body.account_id == null ? null : Number(body.account_id),
     cabang,
     tujuan: tujuan as "kirim" | "tagih" | "kirim+tagih",
-    sj_number: body.sj_number == null ? null : String(body.sj_number),
-    kurir_name: kurirName,
-    kurir_wa_number: kurirWa,
+    sj_number: sjNumber,
+    kurir_name: kurir.nama,
+    kurir_wa_number: kurir.wa_number,
     catatan: body.catatan == null ? null : String(body.catatan),
     created_by: body.created_by == null ? null : String(body.created_by),
   });
@@ -5821,8 +6054,8 @@ app.patch("/pickup-plan/:id", async (c) => {
   if (body.tanggal != null && !isIsoDate(String(body.tanggal))) {
     return c.json({ error: "tanggal harus tanggal valid (YYYY-MM-DD)" }, 400);
   }
-  if (body.kurir_wa_number != null && normalizeWa(String(body.kurir_wa_number)).length < 9) {
-    return c.json({ error: "nomor WA kurir tidak valid" }, 400);
+  if (body.kurir_wa_number != null && !(await resolveKurir(String(body.kurir_wa_number)))) {
+    return c.json({ error: "kurir tidak ada di roster Kirim Tagih aktif" }, 400);
   }
   const row = await updatePickupPlan(c.req.param("id"), {
     status: body.status == null ? undefined : (String(body.status) as "rencana" | "selesai" | "batal"),
@@ -5965,6 +6198,12 @@ app.post("/deals", async (c) => {
     if (e instanceof DealError) return c.json({ error: e.message }, e.status as 400 | 403);
     throw e;
   }
+});
+
+// Kandidat AM untuk penunjukan di form deal (HoD = AM cabang timnya; AM = kosong).
+app.get("/deals-am", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json({ am: await listOwnerCandidates(await scopeOf(c)) });
 });
 
 app.patch("/deals/:id", async (c) => {
@@ -6307,6 +6546,20 @@ app.get("/service-tickets/:id", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const t = await getTicketById(c.req.param("id"));
   return t ? c.json(t) : c.json({ error: "ticket tidak ditemukan" }, 404);
+});
+
+// Penugasan manual (E7): tiket perlu review / ganti teknisi. by = nama pelaku dari BFF.
+app.post("/service-tickets/:id/assign", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { teknisi_id?: string; by?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.teknisi_id) return c.json({ error: "teknisi_id wajib" }, 400);
+  const r = await assignTicketManual(c.req.param("id"), body.teknisi_id, body.by ?? null);
+  return r.ok ? c.json(r.ticket) : c.json({ error: r.error }, r.error === "ticket tidak ditemukan" ? 404 : 400);
 });
 
 app.post("/service-tickets/:id/resolve", async (c) => {
@@ -8028,54 +8281,6 @@ app.get("/teknisi-reports", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const rows = await listTeknisiReports(c.req.query("report_type") || undefined);
   return c.json({ count: rows.length, rows });
-});
-
-// ── F13 PO Tracker + Sistem Barang Masuk (Purchasing) ──
-app.get("/purchase-forecast", async (c) => {
-  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  const year = c.req.query("year") ? Number(c.req.query("year")) : undefined;
-  const rows = await listPurchaseForecast({ year });
-  return c.json({ count: rows.length, rows });
-});
-
-app.post("/purchase-forecast", async (c) => {
-  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let body: PurchaseForecastInput;
-  try {
-    body = await c.req.json();
-  } catch {
-    return c.json({ error: "invalid JSON body" }, 400);
-  }
-  try {
-    const row = await createPurchaseForecast(body);
-    return c.json(row, 201);
-  } catch (e) {
-    if (e instanceof PurchaseForecastError) return c.json({ error: e.message }, e.status as 400 | 409);
-    throw e;
-  }
-});
-
-app.patch("/purchase-forecast/:id", async (c) => {
-  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let body: PurchaseForecastUpdate;
-  try {
-    body = await c.req.json();
-  } catch {
-    return c.json({ error: "invalid JSON body" }, 400);
-  }
-  try {
-    const row = await updatePurchaseForecast(c.req.param("id"), body);
-    return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
-  } catch (e) {
-    if (e instanceof PurchaseForecastError) return c.json({ error: e.message }, e.status as 400 | 409);
-    throw e;
-  }
-});
-
-app.delete("/purchase-forecast/:id", async (c) => {
-  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  const r = await deletePurchaseForecast(c.req.param("id"));
-  return c.json(r, r.deleted ? 200 : 404);
 });
 
 // ── F139 GA Helpdesk Ticket System (Ticketing Kendala Operasional) ──────

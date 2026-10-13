@@ -108,6 +108,8 @@ export function GaAssetRowActions({ asset, categories }: { asset: Asset; categor
     active: asset.active,
   });
 
+  const lokasiTerkunci = !!asset.location?.trim();
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
@@ -125,7 +127,8 @@ export function GaAssetRowActions({ asset, categories }: { asset: Asset; categor
           purchase_date: f.purchase_date || undefined,
           purchase_price: f.purchase_price ? Number(f.purchase_price) : undefined,
           current_value: f.current_value ? Number(f.current_value) : undefined,
-          location: f.location.trim() || undefined,
+          // Lokasi terisi dikunci (pindah = Relokasi); hanya lokasi kosong yang boleh diisi.
+          location: lokasiTerkunci ? undefined : f.location.trim() || undefined,
           pic_name_override: f.pic_name_override.trim(),
           condition: f.condition,
           status: f.status,
@@ -204,7 +207,8 @@ export function GaAssetRowActions({ asset, categories }: { asset: Asset; categor
             </div>
             <div className="grid gap-1.5">
               <Label htmlFor="gae-lokasi">Lokasi</Label>
-              <Input id="gae-lokasi" value={f.location} onChange={(e) => setF((p) => ({ ...p, location: e.target.value }))} />
+              <Input id="gae-lokasi" value={f.location} disabled={lokasiTerkunci} onChange={(e) => setF((p) => ({ ...p, location: e.target.value }))} />
+              {lokasiTerkunci && <p className="text-muted-foreground text-xs">Pindah lokasi lewat tombol Relokasi (wajib berita acara).</p>}
             </div>
             <div className="grid gap-1.5">
               <Label htmlFor="gae-pic">PIC (override cepat, tanpa histori)</Label>

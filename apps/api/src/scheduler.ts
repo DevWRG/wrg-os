@@ -58,6 +58,7 @@ import { runAuditFindingApprovalReminder } from "./repo/audit-finding.js";
 import { runLpseTenderReminder } from "./repo/lpse-tender.js";
 import { runLeadAging } from "./repo/lead.js";
 import { runTrialReminder } from "./repo/demo-trial.js";
+import { runRekapKesehatanKso } from "./repo/kso-kesehatan.js";
 import { runInvoiceReminder, runOverdueRecap } from "./repo/faktur.js";
 import { terapkanKpiBulan } from "./repo/kpi-measure.js";
 
@@ -214,6 +215,9 @@ export function startScheduler(): ScheduleStatus {
   const leadAgingEnabled = (process.env.LEAD_AGING_ENABLED ?? "false").toLowerCase() === "true";
   // F18 — pengingat trial yang sudah berakhir tapi belum dicatat hasilnya (DM ke AM). MATI by default.
   const trialReminderEnabled = (process.env.TRIAL_REMINDER_ENABLED ?? "false").toLowerCase() === "true";
+  // F73 — rekap mingguan kesehatan KSO ke HoD (faskes yang baru memburuk) +
+  // snapshot pembandingnya. MATI by default (keputusan user 13 Okt 2026).
+  const ksoKesehatanEnabled = (process.env.KSO_KESEHATAN_REKAP_ENABLED ?? "false").toLowerCase() === "true";
   // F91 — reminder jatuh tempo invoice (D-7/D-day/overdue) ke Finance + AM.
   const invoiceReminderEnabled = (process.env.INVOICE_REMINDER_ENABLED ?? "false").toLowerCase() === "true";
   // accurate-stock-sync (F2) — refresh accurate_item.quantity tiap 5 menit,
@@ -324,12 +328,12 @@ export function startScheduler(): ScheduleStatus {
   ];
 
   status = {
-    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled || watchpointSnapshotEnabled || preVisitEnabled || edWatchEnabled || gaMaintenanceAlertEnabled || gaMaintenanceBscEnabled || gaHelpdeskOverdueEnabled || gaHelpdeskBscEnabled || lpseTenderReminderEnabled || accurateStockSyncEnabled || cashinResumeEnabled || geoSweepEnabled || kpiMeasureEnabled || invoiceReminderEnabled || auditFindingReminderEnabled || seninBriefEnabled || soPacingEnabled || fixedAssetSyncEnabled || poSyncEnabled || pmKalibrasiEnabled || leadAgingEnabled || trialReminderEnabled,
+    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled || watchpointSnapshotEnabled || preVisitEnabled || edWatchEnabled || gaMaintenanceAlertEnabled || gaMaintenanceBscEnabled || gaHelpdeskOverdueEnabled || gaHelpdeskBscEnabled || lpseTenderReminderEnabled || accurateStockSyncEnabled || cashinResumeEnabled || geoSweepEnabled || kpiMeasureEnabled || invoiceReminderEnabled || auditFindingReminderEnabled || seninBriefEnabled || soPacingEnabled || fixedAssetSyncEnabled || poSyncEnabled || pmKalibrasiEnabled || leadAgingEnabled || trialReminderEnabled || ksoKesehatanEnabled,
     timezone,
     jobs: jobs.map((j) => ({ id: j.id, expr: j.expr, valid: cron.validate(j.expr) })),
   };
 
-  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled && !watchpointSnapshotEnabled && !preVisitEnabled && !edWatchEnabled && !gaMaintenanceAlertEnabled && !gaMaintenanceBscEnabled && !gaHelpdeskOverdueEnabled && !gaHelpdeskBscEnabled && !lpseTenderReminderEnabled && !accurateStockSyncEnabled && !cashinResumeEnabled && !geoSweepEnabled && !kpiMeasureEnabled && !invoiceReminderEnabled && !auditFindingReminderEnabled && !seninBriefEnabled && !soPacingEnabled && !fixedAssetSyncEnabled && !poSyncEnabled && !pmKalibrasiEnabled && !leadAgingEnabled && !trialReminderEnabled) {
+  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled && !watchpointSnapshotEnabled && !preVisitEnabled && !edWatchEnabled && !gaMaintenanceAlertEnabled && !gaMaintenanceBscEnabled && !gaHelpdeskOverdueEnabled && !gaHelpdeskBscEnabled && !lpseTenderReminderEnabled && !accurateStockSyncEnabled && !cashinResumeEnabled && !geoSweepEnabled && !kpiMeasureEnabled && !invoiceReminderEnabled && !auditFindingReminderEnabled && !seninBriefEnabled && !soPacingEnabled && !fixedAssetSyncEnabled && !poSyncEnabled && !pmKalibrasiEnabled && !leadAgingEnabled && !trialReminderEnabled && !ksoKesehatanEnabled) {
     console.log("[scheduler] semua *_SCHEDULE/_ENABLED flag != true — tidak dijadwalkan");
     return status;
   }
@@ -1460,6 +1464,25 @@ export function startScheduler(): ScheduleStatus {
       { timezone },
     );
     live.push(`trial-reminder=${trialReminderExpr}`);
+  }
+
+  // F73 kso-kesehatan-rekap — Senin 07:15 WIB: snapshot status kesehatan semua
+  // faskes KSO + DM rekap ke HoD tiap cabang untuk faskes yang baru memburuk.
+  const ksoKesehatanExpr = process.env.KSO_KESEHATAN_REKAP_CRON ?? "15 7 * * 1";
+  if (ksoKesehatanEnabled && cron.validate(ksoKesehatanExpr)) {
+    cron.schedule(
+      ksoKesehatanExpr,
+      async () => {
+        try {
+          const r = await runRekapKesehatanKso();
+          console.log(`[scheduler] kso-kesehatan-rekap ${r.minggu} → ${r.memburuk} memburuk, ${r.kirim.filter((k) => k.terkirim).length} HoD${r.lewati.length ? `, dilewati: ${r.lewati.join("; ")}` : ""}`);
+        } catch (e) {
+          console.error("[scheduler] kso-kesehatan-rekap gagal:", (e as Error).message);
+        }
+      },
+      { timezone },
+    );
+    live.push(`kso-kesehatan-rekap=${ksoKesehatanExpr}`);
   }
 
   // F65 lead-aging — hari kerja 09:00 WIB; libur (master_holiday) dilewati.
