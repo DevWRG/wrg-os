@@ -524,6 +524,8 @@ import {
   createPurchaseForecast,
   updatePurchaseForecast,
   deletePurchaseForecast,
+  getPurchaseForecastSummary,
+  listForecastVendors,
   PurchaseForecastError,
   type PurchaseForecastInput,
   type PurchaseForecastUpdate,
@@ -8004,12 +8006,34 @@ app.get("/teknisi-reports", async (c) => {
   return c.json({ count: rows.length, rows });
 });
 
-// ── F13 PO Tracker + Sistem Barang Masuk (Purchasing) ──
+// ── F41 Forecast vs Realisasi PO (Purchasing) — per bulan × lini × vendor,
+// realisasi dari PO Accurate, lini via Klasifikasi Produk (rombak 13 Okt 2026).
+// /summary & /vendors didaftarkan SEBELUM /:id supaya tak tertangkap sbg id.
 app.get("/purchase-forecast", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const year = c.req.query("year") ? Number(c.req.query("year")) : undefined;
-  const rows = await listPurchaseForecast({ year });
+  const month = c.req.query("month") ? Number(c.req.query("month")) : undefined;
+  const rows = await listPurchaseForecast({ year, month });
   return c.json({ count: rows.length, rows });
+});
+
+app.get("/purchase-forecast/summary", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const year = Number(c.req.query("year"));
+  const monthQ = c.req.query("month");
+  const month = monthQ ? Number(monthQ) : null;
+  try {
+    return c.json(await getPurchaseForecastSummary(year, month));
+  } catch (e) {
+    if (e instanceof PurchaseForecastError) return c.json({ error: e.message }, e.status as 400);
+    throw e;
+  }
+});
+
+app.get("/purchase-forecast/vendors", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const vendors = await listForecastVendors();
+  return c.json({ count: vendors.length, vendors });
 });
 
 app.post("/purchase-forecast", async (c) => {
