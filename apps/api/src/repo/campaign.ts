@@ -576,7 +576,7 @@ export function barisProgres(target: number, netto: number, p: Pacing): string {
   return `${rpWa(netto)} / ${rpWa(target)} (${pctWa(p.capai_pct)}) · harapan ${pctWa(p.harapan_pct)}${ikon ? ` · ${ikon}` : ""}`;
 }
 
-async function scopeDariPengirim(sender: { am_id: string; role: string | null }): Promise<DataScope> {
+export async function scopeDariPengirim(sender: { am_id: string; role: string | null }): Promise<DataScope> {
   const [au] = await db()`SELECT id FROM app_user WHERE am_id = ${sender.am_id}`;
   if (au) return resolveScope(String(au.id));
   const am = /^am$/i.test(String(sender.role ?? "").trim());

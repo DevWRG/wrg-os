@@ -156,6 +156,7 @@ import {
   markBast,
 } from "./repo/installation.js";
 import { recordCompetitor, listCompetitor, competitorSummary } from "./repo/competitor.js";
+import { IntelError, briefingFaskes, dominasiWilayah, setDominan } from "./repo/customer-intel.js";
 import {
   defaultRange,
   parseRange,
@@ -3210,16 +3211,32 @@ app.post("/competitor", async (c) => {
   );
 });
 
+// F131: brand Wahana sendiri disembunyikan secara bawaan; ?sendiri=1 = semua.
 app.get("/competitor", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  const items = await listCompetitor(c.req.query("vendor") || undefined);
+  const items = await listCompetitor(c.req.query("vendor") || undefined, 1000, { termasukSendiri: c.req.query("sendiri") === "1" });
   return c.json({ count: items.length, items });
 });
 
 app.get("/competitor/summary", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  const summary = await competitorSummary();
+  const summary = await competitorSummary({ termasukSendiri: c.req.query("sendiri") === "1" });
   return c.json({ count: summary.length, summary });
+});
+
+// F131 — kompetitor dominan per cabang × kategori (deteksi) + konfirmasi HoD.
+const intelErr = (c: { json: (b: unknown, s?: number) => Response }, e: unknown) =>
+  e instanceof IntelError ? c.json({ error: e.message }, e.status as 400) : c.json({ error: String((e as Error).message) }, 500);
+app.get("/competitor/dominasi", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await dominasiWilayah(Number(c.req.query("hari") ?? 365)));
+});
+app.post("/competitor/dominan", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const body = (await c.req.json()) as Record<string, unknown>;
+    return c.json(await setDominan(await scopeOf(c), body, typeof body.oleh === "string" ? body.oleh : null));
+  } catch (e) { return intelErr(c, e); }
 });
 
 // ── Plan & Report dashboard (replikasi WRG-CRM Adminator) ──
@@ -5712,6 +5729,13 @@ app.get("/campaign-items", async (c) => {
 // F95 — timeline per account (interaksi #CALL/#NOTE + aktivitas AM + tahap deal +
 // faktur). Gerbang akses = getAccount dengan scope pemanggil: akun milik AM lain
 // balas 404 persis seperti halaman detailnya, timelineAkun sendiri tak menyaring.
+// F131 — briefing pra-kunjungan (fakta saja). Akses: lihat cekAkses di
+// customer-intel.ts (AM = miliknya + tanpa pemilik; HoD = timnya + tanpa pemilik).
+app.get("/accounts/:id/briefing", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try { return c.json(await briefingFaskes(await scopeOf(c), [Number(c.req.param("id"))])); }
+  catch (e) { return intelErr(c, e); }
+});
 app.get("/accounts/:id/timeline", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const a = await getAccount(c.req.param("id"), await scopeOf(c));
