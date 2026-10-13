@@ -27,7 +27,6 @@ import {
   Handshake,
   ClipboardList,
   HardHat,
-  TrendingUpDown,
   QrCode,
   Stamp,
   TrendingUp,
@@ -51,7 +50,6 @@ import { canViewInsentifTim } from "@/lib/insentif-access";
 import { canViewDanaOps } from "@/lib/dana-ops-access";
 import { canViewVendorManagement } from "@/lib/vendor-management-access";
 import { canViewGaReporting } from "@/lib/ga-reporting-access";
-import { canViewPurchaseForecast } from "@/lib/purchase-forecast-access";
 import { canViewAuditFindings } from "@/lib/audit-finding-access";
 import { canViewOvertime } from "@/lib/overtime-access";
 
@@ -336,10 +334,6 @@ export const NAV: NavGroup[] = [
       // F13 PO Tracker + Sistem Barang Masuk — satu PO ke vendor + riwayat
       // penerimaan barang per item (migrasi 078), bukan Accurate mirror.
       { title: "PO Tracker", url: "/purchase-orders", icon: ClipboardList, badge: "NEW" },
-      // F41 Forecast vs Actual PO Gap Report — role min Management di board
-      // (MAGANG-FEATURES.md), gate Direktur/HoD/admin (bukan executive-access.ts,
-      // ini laporan Purchasing biasa — lihat purchase-forecast-access.ts).
-      { title: "Forecast vs Realisasi PO", url: "/purchase-forecast", icon: TrendingUpDown, badge: "NEW", show: canViewPurchaseForecast },
       // F19 — scan buffer (di sini) + ED (F38) → usulan forecast, Supply
       // Chain review/edit, ajukan ke approval berjenjang F11. Ditaruh
       // Purchasing (bukan CRM spt label blueprint) krn pemakainya
@@ -473,7 +467,6 @@ export const DEV_ONLY_URLS: ReadonlySet<string> = new Set([
   "/maintenance",
   "/pickup-plan",
   "/proficiency-tests",
-  "/purchase-forecast",
   "/readiness-board",
   "/rfid-cartridge-claims",
   "/service-tickets",
