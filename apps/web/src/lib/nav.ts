@@ -10,7 +10,7 @@ import {
   Send, FileText, ScrollText, GraduationCap, UsersRound, Network,
   Bell, MapPin, ListChecks, Swords, CalendarOff, CalendarDays, CalendarRange,
   Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, Tags, SlidersHorizontal, Microscope, MonitorCheck, FileSignature,
-  Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, BookOpen, Calculator, UserPlus, Presentation, Megaphone,
+  Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, BookOpen, Calculator, Presentation, Megaphone,
   Wallet, Coins, Route, Radio, Printer, ScanText,
   Wrench,
   CalendarClock,
@@ -119,10 +119,9 @@ export const NAV: NavGroup[] = [
       { title: "Sales Analytics", url: "/sales-analytics", icon: Target, badge: "NEW" },
       { title: "Sales Alerts", url: "/sales-alerts", icon: Bell, badge: "NEW" },
       { title: "Competitor Intel", url: "/competitor", icon: Swords },
-      // F65 Leads — prospek sebelum jadi deal (BANT ≥3 → konversi ke Pipeline).
-      // Kunci izin sendiri ("leads"); default tertutup — butuh Sync Fitur +
-      // centang di Akses Grup. Barisnya di-scope server (AM/HoD/admin).
-      { title: "Leads", url: "/leads", icon: UserPlus, badge: "NEW" },
+      // F65 Leads DICABUT dari menu 13 Okt 2026 (keputusan user): #LEADS kini
+      // langsung jadi deal Prospecting di Pipeline. Tanpa item menu, Sync Fitur
+      // berikutnya menonaktifkan fitur "leads" sendiri; halaman /leads dibiarkan.
       // F18 Demo & Trial — hasil demo/trial dinilai AM, konversi per produk.
       // Kunci izin sendiri ("demo-trial"); default tertutup.
       { title: "Demo & Trial", url: "/demo-trial", icon: Presentation, badge: "NEW" },
