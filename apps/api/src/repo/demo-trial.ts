@@ -99,7 +99,7 @@ export function parseDemoTrial(body: string | null, jenis: JenisDT, hariIni: str
     }
   }
   // Tanda baca di ujung ("Zybio EXC810," — durasi lupa ditulis) dibuang.
-  rest = rest.replace(/[\s,;:.\-]+$/, "").trim();
+  rest = rest.replace(/[\s,;:.-]+$/, "").trim();
   if (!rest) return { ok: false, alasan: "tanpa-alat" };
   return { ok: true, mode: "buka", facility, alat: rest, hari, sampai, catatan };
 }
