@@ -521,17 +521,6 @@ import {
   listTeknisiReports,
 } from "./repo/readinessboard.js";
 import {
-  listPurchaseForecast,
-  createPurchaseForecast,
-  updatePurchaseForecast,
-  deletePurchaseForecast,
-  getPurchaseForecastSummary,
-  listForecastVendors,
-  PurchaseForecastError,
-  type PurchaseForecastInput,
-  type PurchaseForecastUpdate,
-} from "./repo/purchase-forecast.js";
-import {
   listCategories as listGaTicketCategories,
   createCategory as createGaTicketCategory,
   updateCategory as updateGaTicketCategory,
@@ -8012,76 +8001,6 @@ app.get("/teknisi-reports", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const rows = await listTeknisiReports(c.req.query("report_type") || undefined);
   return c.json({ count: rows.length, rows });
-});
-
-// ── F41 Forecast vs Realisasi PO (Purchasing) — per bulan × lini × vendor,
-// realisasi dari PO Accurate, lini via Klasifikasi Produk (rombak 13 Okt 2026).
-// /summary & /vendors didaftarkan SEBELUM /:id supaya tak tertangkap sbg id.
-app.get("/purchase-forecast", async (c) => {
-  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  const year = c.req.query("year") ? Number(c.req.query("year")) : undefined;
-  const month = c.req.query("month") ? Number(c.req.query("month")) : undefined;
-  const rows = await listPurchaseForecast({ year, month });
-  return c.json({ count: rows.length, rows });
-});
-
-app.get("/purchase-forecast/summary", async (c) => {
-  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  const year = Number(c.req.query("year"));
-  const monthQ = c.req.query("month");
-  const month = monthQ ? Number(monthQ) : null;
-  try {
-    return c.json(await getPurchaseForecastSummary(year, month));
-  } catch (e) {
-    if (e instanceof PurchaseForecastError) return c.json({ error: e.message }, e.status as 400);
-    throw e;
-  }
-});
-
-app.get("/purchase-forecast/vendors", async (c) => {
-  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  const vendors = await listForecastVendors();
-  return c.json({ count: vendors.length, vendors });
-});
-
-app.post("/purchase-forecast", async (c) => {
-  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let body: PurchaseForecastInput;
-  try {
-    body = await c.req.json();
-  } catch {
-    return c.json({ error: "invalid JSON body" }, 400);
-  }
-  try {
-    const row = await createPurchaseForecast(body);
-    return c.json(row, 201);
-  } catch (e) {
-    if (e instanceof PurchaseForecastError) return c.json({ error: e.message }, e.status as 400 | 409);
-    throw e;
-  }
-});
-
-app.patch("/purchase-forecast/:id", async (c) => {
-  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let body: PurchaseForecastUpdate;
-  try {
-    body = await c.req.json();
-  } catch {
-    return c.json({ error: "invalid JSON body" }, 400);
-  }
-  try {
-    const row = await updatePurchaseForecast(c.req.param("id"), body);
-    return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
-  } catch (e) {
-    if (e instanceof PurchaseForecastError) return c.json({ error: e.message }, e.status as 400 | 409);
-    throw e;
-  }
-});
-
-app.delete("/purchase-forecast/:id", async (c) => {
-  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  const r = await deletePurchaseForecast(c.req.param("id"));
-  return c.json(r, r.deleted ? 200 : 404);
 });
 
 // ── F139 GA Helpdesk Ticket System (Ticketing Kendala Operasional) ──────
