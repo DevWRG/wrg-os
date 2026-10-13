@@ -25,7 +25,7 @@ const NONE = "__none__"; // sentinel Select "belum pilih" — bukan "" krn Base 
 const DITO = "__dito_anggara__";
 const DITO_NAMA = "Dito Anggara";
 
-function UserOrNamePicker({ users, userId, setUserId, picName, setPicName, label }: {
+export function UserOrNamePicker({ users, userId, setUserId, picName, setPicName, label }: {
   users: AppUserOption[]; userId: string; setUserId: (v: string) => void;
   picName: string; setPicName: (v: string) => void; label: string;
 }) {
@@ -195,7 +195,6 @@ export function TransferAssetButton({ assetId, users }: { assetId: string; users
   const [error, setError] = useState<string | null>(null);
   const [userId, setUserId] = useState("");
   const [picName, setPicName] = useState("");
-  const [toLocation, setToLocation] = useState("");
   const [reason, setReason] = useState("");
 
   async function submit(e: React.FormEvent) {
@@ -206,12 +205,12 @@ export function TransferAssetButton({ assetId, users }: { assetId: string; users
       const res = await fetch(`/api/ga-assets/${assetId}/transfer`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ to_user_id: userId || undefined, to_pic_name: picName.trim() || undefined, to_location: toLocation.trim() || undefined, reason: reason.trim() || undefined }),
+        body: JSON.stringify({ to_user_id: userId || undefined, to_pic_name: picName.trim() || undefined, reason: reason.trim() || undefined }),
       });
       const data = await res.json();
       if (!res.ok || data.ok === false) throw new Error(data.error ?? "gagal transfer");
       setOpen(false);
-      setUserId(""); setPicName(""); setToLocation(""); setReason("");
+      setUserId(""); setPicName(""); setReason("");
       router.refresh();
     } catch (err) {
       setError(String(err instanceof Error ? err.message : err));
@@ -222,21 +221,17 @@ export function TransferAssetButton({ assetId, users }: { assetId: string; users
 
   return (
     <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (!o) setError(null); }}>
-      <DialogTrigger render={<Button size="sm" variant="outline" title="Transfer PIC/lokasi" />}>
+      <DialogTrigger render={<Button size="sm" variant="outline" title="Transfer PIC" />}>
         <ArrowLeftRight />
       </DialogTrigger>
       <DialogContent className="max-w-sm">
         <DialogHeader>
-          <DialogTitle>Transfer aset</DialogTitle>
-          <DialogDescription>Pindah PIC dan/atau lokasi. PIC baru wajib user terdaftar.</DialogDescription>
+          <DialogTitle>Transfer PIC aset</DialogTitle>
+          <DialogDescription>Ganti pemegang aset. Pindah lokasi lewat tombol Relokasi (wajib berita acara).</DialogDescription>
         </DialogHeader>
         <form onSubmit={submit} className="contents">
           <DialogBody className="grid gap-3">
             <UserOrNamePicker users={users} userId={userId} setUserId={setUserId} picName={picName} setPicName={setPicName} label="PIC Baru" />
-            <div className="grid gap-1.5">
-              <Label htmlFor="tr-loc">Lokasi Baru</Label>
-              <Input id="tr-loc" value={toLocation} onChange={(e) => setToLocation(e.target.value)} placeholder="opsional, kosongkan kalau tak berubah" />
-            </div>
             <div className="grid gap-1.5">
               <Label htmlFor="tr-reason">Alasan</Label>
               <Textarea id="tr-reason" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="opsional" />

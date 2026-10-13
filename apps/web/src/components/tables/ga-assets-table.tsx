@@ -5,6 +5,7 @@ import { Camera, FileText } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
 import { GaAssetRowActions } from "@/components/crm/ga-asset-row-actions";
+import { RelocateAssetButton } from "@/components/crm/ga-asset-relocate-button";
 import { AssignAssetButton, ReturnAssetButton, TransferAssetButton, type AppUserOption } from "@/components/crm/ga-asset-pic-actions";
 import { GaAssetHistoryButton } from "@/components/crm/ga-asset-history-button";
 
@@ -119,6 +120,7 @@ export function GaAssetsTable({ assets, categories, users }: { assets: GaAsset[]
             ) : (
               <AssignAssetButton assetId={a.id} users={users} />
             )}
+            <RelocateAssetButton assetId={a.id} assetCode={a.asset_code} currentLocation={a.location} users={users} />
             <GaAssetHistoryButton assetId={a.id} assetCode={a.asset_code} />
           </div>
         );
