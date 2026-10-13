@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { FileText, FlaskConical, MessageSquareText, Phone, Presentation, Route, Workflow } from "lucide-react";
+import { BadgeCheck, FileText, FlaskConical, MessageSquareText, Phone, Presentation, Route, Workflow } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -13,7 +13,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 // berikutnya lewat kursor dari /api/accounts/:id/timeline. Filter jenis bekerja
 // di atas baris yang sudah dimuat (bukan query ulang).
 
-type Jenis = "call" | "note" | "aktivitas" | "deal" | "faktur" | "demo" | "trial";
+type Jenis = "call" | "note" | "aktivitas" | "deal" | "faktur" | "demo" | "trial" | "bayar";
 export interface TimelineItem {
   jenis: Jenis; waktu: string; judul: string | null; isi: string | null; oleh: string | null; ref: string;
   nilai?: number; sisa?: number; status?: string | null;
@@ -22,13 +22,23 @@ export interface TimelineItem {
 type Item = TimelineItem;
 export interface TimelinePage { items: TimelineItem[]; berikutnya: string | null }
 
-const FILTER: { v: string; l: string; cocok: (j: Jenis) => boolean }[] = [
+// F131 — ringkasan "AR & pembayaran" (apps/api/src/repo/pembayaran.ts).
+export interface StatBayar { faktur: number; median_hari: number | null; rata_hari: number | null; tepat_pct: number | null; rata_telat_hari: number | null }
+export interface RingkasPembayaran {
+  piutang: { sisa: number; faktur_terbuka: number; lewat_tempo: { faktur: number; nilai: number; terlama_hari: number } };
+  bayar_12bln: StatBayar;
+  bayar_sebelumnya: StatBayar;
+}
+
+const FILTER: { v: string; l: string; cocok: (i: Item) => boolean }[] = [
   { v: "semua", l: "Semua", cocok: () => true },
-  { v: "interaksi", l: "Telepon & catatan", cocok: (j) => j === "call" || j === "note" },
-  { v: "aktivitas", l: "Aktivitas AM", cocok: (j) => j === "aktivitas" },
-  { v: "deal", l: "Deal", cocok: (j) => j === "deal" },
-  { v: "demo", l: "Demo & trial", cocok: (j) => j === "demo" || j === "trial" },
-  { v: "faktur", l: "Faktur", cocok: (j) => j === "faktur" },
+  { v: "interaksi", l: "Telepon & catatan", cocok: (i) => i.jenis === "call" || i.jenis === "note" },
+  { v: "aktivitas", l: "Aktivitas AM", cocok: (i) => i.jenis === "aktivitas" },
+  { v: "deal", l: "Deal", cocok: (i) => i.jenis === "deal" },
+  { v: "demo", l: "Demo & trial", cocok: (i) => i.jenis === "demo" || i.jenis === "trial" },
+  { v: "faktur", l: "Faktur", cocok: (i) => i.jenis === "faktur" },
+  // F131: pelunasan + faktur yang masih bersisa tagihan.
+  { v: "ar", l: "AR & pembayaran", cocok: (i) => i.jenis === "bayar" || (i.jenis === "faktur" && (i.sisa ?? 0) > 0) },
 ];
 
 const GAYA: Record<Jenis, { label: string; Icon: typeof Phone; tone: string }> = {
@@ -39,7 +49,44 @@ const GAYA: Record<Jenis, { label: string; Icon: typeof Phone; tone: string }> =
   faktur: { label: "Faktur", Icon: FileText, tone: "bg-slate-100 text-slate-700 dark:bg-slate-500/20 dark:text-slate-300" },
   demo: { label: "Demo", Icon: Presentation, tone: "bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-300" },
   trial: { label: "Trial", Icon: FlaskConical, tone: "bg-teal-100 text-teal-700 dark:bg-teal-500/20 dark:text-teal-300" },
+  bayar: { label: "Lunas", Icon: BadgeCheck, tone: "bg-lime-100 text-lime-800 dark:bg-lime-500/20 dark:text-lime-300" },
 };
+
+function Angka({ label, nilai, sub, tone }: { label: string; nilai: string; sub?: string; tone?: string }) {
+  return (
+    <div className="rounded-md border p-2.5">
+      <div className="text-muted-foreground text-xs">{label}</div>
+      <div className={`text-base font-semibold tabular-nums ${tone ?? ""}`}>{nilai}</div>
+      {sub && <div className="text-muted-foreground text-xs">{sub}</div>}
+    </div>
+  );
+}
+
+function RingkasanAr({ r }: { r: RingkasPembayaran }) {
+  const k = r.bayar_12bln;
+  const d = r.bayar_sebelumnya;
+  const l = r.piutang.lewat_tempo;
+  const tren = k.median_hari != null && d.median_hari != null && k.faktur >= 3 && d.faktur >= 3
+    ? (Math.abs(k.median_hari - d.median_hari) < 7 ? "stabil" : k.median_hari < d.median_hari ? "lebih cepat" : "lebih lambat")
+    : null;
+  return (
+    <div className="space-y-2">
+      <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+        <Angka label="Piutang" nilai={rp(r.piutang.sisa)} sub={`${r.piutang.faktur_terbuka} faktur terbuka`} />
+        <Angka label="Lewat jatuh tempo" nilai={l.faktur ? rp(l.nilai) : "—"} tone={l.faktur ? "text-rose-700 dark:text-rose-400" : undefined}
+          sub={l.faktur ? `${l.faktur} faktur · terlama ${l.terlama_hari} hari` : "tidak ada"} />
+        <Angka label="Kecepatan bayar (12 bln)" nilai={k.median_hari != null ? `${k.median_hari} hari` : "—"}
+          sub={k.faktur ? `median dari ${k.faktur} faktur lunas${tren ? ` · ${tren}` : ""}` : "belum ada pelunasan"} />
+        <Angka label="Tepat waktu" nilai={k.tepat_pct != null ? `${k.tepat_pct}%` : "—"}
+          sub={k.rata_telat_hari ? `yang telat rata-rata ${k.rata_telat_hari} hari` : undefined} />
+      </div>
+      <p className="text-muted-foreground text-xs">
+        Tanggal bayar dari Accurate (tanggal pelunasan; untuk cicilan = cicilan terakhir). Tepat waktu = lunas paling lambat di tanggal jatuh tempo.
+        {d.faktur ? ` 12 bulan sebelumnya: median ${d.median_hari} hari, ${d.tepat_pct ?? "—"}% tepat waktu.` : ""}
+      </p>
+    </div>
+  );
+}
 
 const rp = (n: number) => new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(n);
 // Aktivitas & faktur cuma bertanggal (jam 00:00 WIB dari backend) → tanpa jam.
@@ -49,7 +96,7 @@ const fmtWaktu = (iso: string, denganJam: boolean) =>
     ...(denganJam ? { hour: "2-digit", minute: "2-digit" } : {}),
   }).format(new Date(iso));
 
-export function AccountTimeline({ accountId, initial }: { accountId: string; initial: TimelinePage | null }) {
+export function AccountTimeline({ accountId, initial, pembayaran = null }: { accountId: string; initial: TimelinePage | null; pembayaran?: RingkasPembayaran | null }) {
   const [items, setItems] = useState<Item[]>(initial?.items ?? []);
   const [kursor, setKursor] = useState<string | null>(initial?.berikutnya ?? null);
   const [muat, setMuat] = useState(false);
@@ -74,7 +121,7 @@ export function AccountTimeline({ accountId, initial }: { accountId: string; ini
   }
 
   const cocok = FILTER.find((f) => f.v === filter)?.cocok ?? (() => true);
-  const tampil = items.filter((i) => cocok(i.jenis));
+  const tampil = items.filter((i) => cocok(i));
 
   return (
     <Card>
@@ -91,6 +138,8 @@ export function AccountTimeline({ accountId, initial }: { accountId: string; ini
           Catat dari WA: <code>#CALL nama faskes: hasil telepon</code> atau <code>#NOTE nama faskes: catatan</code>.
           Telepon &amp; catatan di sini tidak dihitung ke KPI aktivitas — laporan kunjungan tetap lewat #REPORT.
         </p>
+
+        {filter === "ar" && pembayaran && <RingkasanAr r={pembayaran} />}
 
         {err && <p className="text-destructive text-sm">{err}</p>}
         {!muat && !err && tampil.length === 0 && (
@@ -111,7 +160,7 @@ export function AccountTimeline({ accountId, initial }: { accountId: string; ini
                   <span className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${g.tone}`}>{g.label}</span>
                   {i.judul && <span className="text-sm font-medium">{i.judul}</span>}
                   <span className="text-muted-foreground text-xs">
-                    {fmtWaktu(i.waktu, !["aktivitas", "faktur", "demo", "trial"].includes(i.jenis))}
+                    {fmtWaktu(i.waktu, !["aktivitas", "faktur", "demo", "trial", "bayar"].includes(i.jenis))}
                     {i.oleh ? ` · ${i.oleh}` : ""}
                   </span>
                 </div>
@@ -121,6 +170,11 @@ export function AccountTimeline({ accountId, initial }: { accountId: string; ini
                     {(i.sisa ?? 0) > 0
                       ? <span className="ml-2 text-xs font-medium text-rose-600">sisa {rp(i.sisa ?? 0)}</span>
                       : <span className="text-muted-foreground ml-2 text-xs">{i.status ?? "lunas"}</span>}
+                  </div>
+                ) : i.jenis === "bayar" ? (
+                  <div className="text-sm">
+                    {rp(i.nilai ?? 0)} <span className="text-muted-foreground text-xs">netto</span>
+                    <span className={`ml-2 text-xs font-medium ${i.status === "telat" ? "text-rose-600" : i.status === "tepat" ? "text-emerald-700 dark:text-emerald-400" : "text-muted-foreground"}`}>{i.isi}</span>
                   </div>
                 ) : i.isi ? (
                   <div className="whitespace-pre-line text-sm">{i.isi}</div>

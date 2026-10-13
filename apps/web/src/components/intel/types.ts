@@ -5,6 +5,7 @@ export interface Briefing {
   kontak: { nama: string; jabatan: string | null; hp_wa: string | null; utama: boolean }[];
   pembelian: { terakhir: string | null; hari_sejak: number | null; netto_12bln: number; faktur_12bln: number; brand_teratas: string[] };
   piutang: { sisa: number; lewat_tempo: { faktur: number; nilai: number; terlama_hari: number } };
+  bayar: { faktur: number; median_hari: number | null; rata_hari: number | null; tepat_pct: number | null; rata_telat_hari: number | null; tren: "lebih cepat" | "lebih lambat" | "stabil" | null };
   kunjungan: { tanggal: string; am: string | null; tujuan: string | null; hasil: string | null; next_action: string | null }[];
   catatan: { tanggal: string; jenis: string; isi: string; oleh: string }[];
   deal: { stage: string; brand: string | null; produk: string | null; nilai: number | null; hari_di_tahap: number | null; am: string | null }[];

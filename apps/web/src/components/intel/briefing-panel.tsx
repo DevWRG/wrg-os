@@ -34,6 +34,14 @@ export function BriefingPanel({ b }: { b: Briefing }) {
                 : <span className="text-muted-foreground"> · belum ada yang lewat jatuh tempo</span>}</>
             : <span className="text-muted-foreground">Tidak ada.</span>}
         </Baris>
+        <Baris label="Kecepatan bayar">
+          {b.bayar.faktur > 0
+            ? <>Median <b>{b.bayar.median_hari} hari</b> setelah faktur ({b.bayar.faktur} faktur lunas, 12 bln)
+                {b.bayar.tepat_pct != null && <> · {b.bayar.tepat_pct}% tepat waktu</>}
+                {b.bayar.rata_telat_hari ? <span className="text-muted-foreground"> · yang telat rata-rata {b.bayar.rata_telat_hari} hari</span> : null}
+                {b.bayar.tren && <span className="text-muted-foreground"> · {b.bayar.tren} dari tahun sebelumnya</span>}</>
+            : <span className="text-muted-foreground">Belum ada pelunasan dalam 12 bulan.</span>}
+        </Baris>
         {b.kso.aktif > 0 && (
           <Baris label="KSO aktif">
             {b.kso.aktif} alat{b.kso.alat.length ? ` (${b.kso.alat.join(", ")})` : ""}{b.kso.mou_terdekat ? ` · MoU terdekat habis ${tgl(b.kso.mou_terdekat, true)}` : ""}
