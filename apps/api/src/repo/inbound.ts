@@ -55,6 +55,19 @@ import {
   balasanTercatat,
 } from "./interaction.js";
 import { parseLeads, contohLeads, buatLead, balasanLeadTercatat } from "./lead.js";
+import {
+  parseDemoTrial,
+  balasanFormatDT,
+  resolusiFaskes,
+  bukaDemoTrial,
+  tutupDemoTrial,
+  balasanBuka,
+  balasanAmbiguDT,
+  balasanTutup,
+  wibHariIni,
+  DemoTrialError,
+} from "./demo-trial.js";
+import { FULL_SCOPE } from "./access-scope.js";
 
 
 // Role yang pakai alur AM per-customer (sales_plan/activity_log + foto), bukan todo.
@@ -109,6 +122,8 @@ export const INBOUND_HASHTAGS = [
   "overtime",
   "call",
   "note",
+  "demo",
+  "trial",
 ] as const;
 
 export type InboundKind = (typeof INBOUND_HASHTAGS)[number] | "none";
@@ -156,6 +171,8 @@ const OVERTIME_LINE = /^\s*#\s*overtime\b/i;
 // F95 — #CALL/#NOTE per faskes ke interaction_log (repo/interaction.ts). `\b`
 // menjaga #NOTES / #CALLBACK dkk tak ikut terpicu.
 const INTERAKSI_LINE = /^\s*#\s*(call|note)\b/i;
+// F18 — #DEMO / #TRIAL: buka (faskes: alat) atau tutup (DM-/TR-xxxx hasil).
+const DEMO_TRIAL_LINE = /^\s*#\s*(demo|trial)\b/i;
 
 export function detectKind(body: string | null): InboundKind {
   const daily = detectDaily(body); // line-anchored #plan/#report (sudah strip invisible)
@@ -184,6 +201,8 @@ export function detectKind(body: string | null): InboundKind {
       if (OVERTIME_LINE.test(line)) return "overtime";
       const ia = line.match(INTERAKSI_LINE);
       if (ia) return ia[1].toLowerCase() as "call" | "note";
+      const dt = line.match(DEMO_TRIAL_LINE);
+      if (dt) return dt[1].toLowerCase() as "demo" | "trial";
     }
   }
   return "none";
@@ -1367,6 +1386,46 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
       balasanLeadTercatat({ lead: hasil.lead, pengirim: pl.nama, duplikat: hasil.duplikat, catatanWilayah: hasil.wilayah?.catatan }),
     );
     return finish({ lead: hasil.lead.kode, baru: hasil.baru, am_id: hasil.lead.am_id, routing: hasil.lead.routing_via, duplikat: hasil.duplikat.length, via: pl.via, reply });
+  }
+
+  // #DEMO / #TRIAL — F18. Buka: "<faskes>: <alat>" (+ ", N hari" / ", sampai dd/mm"
+  // untuk trial). Tutup: "<DM-/TR-xxxx> positif|netral|negatif: alasan". Faskes
+  // ambigu → bertanya; tak ketemu di Accurate → tetap dicatat sbg calon
+  // pelanggan (demo memang sering ke faskes yang belum beli). Tidak ikut KPI.
+  if (kind === "demo" || kind === "trial") {
+    const pd = await resolveSender({ senderJid: row.sender_jid, groupJid: row.group_jid, pushname: row.sender_name, ketat: true });
+    if (!pd) return finish({ skipped: "unknown-sender", sender_name: row.sender_name });
+    const p = parseDemoTrial(row.body, kind, wibHariIni());
+    if (!p.ok) {
+      const reply = await sendViaWaGateway(target, balasanFormatDT(kind, p.alasan, pd.nama));
+      return finish({ error: `format:${p.alasan}`, via: pd.via, reply });
+    }
+    const pengirimAm = /^am$/i.test(String(pd.role ?? "").trim());
+    if (p.mode === "tutup") {
+      // AM hanya boleh menutup miliknya sendiri; peran lain (HoD/admin) bebas.
+      const scope = pengirimAm ? { ...FULL_SCOPE, amOnly: true, amId: pd.am_id } : FULL_SCOPE;
+      try {
+        const r = await tutupDemoTrial(scope, p.kode, p.hasil, p.alasan, pd.nama);
+        const reply = await sendViaWaGateway(target, balasanTutup(r, pd.nama));
+        return finish({ kode: r.kode, hasil: r.hasil, via: pd.via, reply });
+      } catch (e) {
+        const pesan = e instanceof DemoTrialError ? e.message : "gagal diproses, coba lagi sebentar lagi";
+        const reply = await sendViaWaGateway(target, `⚠️ ${p.kode}: ${pesan}${e instanceof DemoTrialError && e.status === 404 && pengirimAm ? " (atau bukan milik Anda)" : ""}.`);
+        return finish({ error: `tutup:${pesan}`, kode: p.kode, via: pd.via, reply });
+      }
+    }
+    const f = await resolusiFaskes(p.facility);
+    if (f.kind === "ambiguous") {
+      const reply = await sendViaWaGateway(target, balasanAmbiguDT(kind, p.facility, f.names, p.alat));
+      return finish({ error: "customer-ambiguous", query: p.facility, candidates: f.names, via: pd.via, reply });
+    }
+    const r = await bukaDemoTrial(
+      { jenis: kind, facility_name: f.name, account_id: f.kind === "one" ? f.account_id : null, alat: p.alat,
+        hari: p.hari, tanggal_selesai: p.sampai, catatan: p.catatan, am_id: pengirimAm ? pd.am_id : null, source: "wa" },
+      { created_by: pd.am_id, group_jid: row.group_jid, wa_message_id: row.message_id },
+    );
+    const reply = await sendViaWaGateway(target, balasanBuka(r.row, pd.nama, kind === "trial" && !p.hari && !p.sampai));
+    return finish({ kode: r.row.kode, baru: r.baru, account_id: r.row.account_id, deal_id: r.row.deal_id, via: pd.via, reply });
   }
 
   if (kind === "update") {
