@@ -319,62 +319,99 @@ export async function relocateAsset(assetId: string, input: RelocateInput): Prom
   if (lokasiSama(toLocation, before.location)) {
     return { ok: false, error: `lokasi tujuan sama dengan lokasi sekarang (${before.location ?? "-"})` };
   }
+  if (!input.keep_pic && !input.to_user_id && !input.to_pic_name?.trim()) {
+    return { ok: false, error: "pilih PIC baru, atau centang PIC tetap" };
+  }
+  // PIC baru dari picker harus akun yang ada — dicek SEBELUM apa pun berubah,
+  // karena transferAsset menutup assignment lama dulu baru menulis yang baru.
+  if (!input.keep_pic && input.to_user_id) {
+    const ada = /^[0-9a-f-]{36}$/i.test(input.to_user_id)
+      && (await sql`SELECT 1 FROM app_user WHERE id = ${input.to_user_id}`).length > 0;
+    if (!ada) return { ok: false, error: "PIC baru tidak ditemukan di daftar user" };
+  }
   const relocationDate = input.relocation_date || wibToday();
 
+  // Pencatat = id sesi dari BFF. Hanya dipakai kalau memang ada di app_user
+  // (FK di tabel ini & ga_asset_transfers) — id yang tak dikenal (mis. sesi
+  // lintas-lingkungan, uji dev 13 Okt 2026) dulu menggagalkan INSERT; namanya
+  // tetap tersimpan di created_by_name.
+  const createdBy =
+    input.created_by && /^[0-9a-f-]{36}$/i.test(input.created_by)
+      ? ((await sql`SELECT id FROM app_user WHERE id = ${input.created_by}`)[0]?.id as string | undefined) ?? null
+      : null;
+
+  // Catatan relokasi (+ berita acara) DITULIS DULU, baru lokasi/PIC aset
+  // diubah; gagal di langkah berikutnya → catatan dihapus lagi. Urutan
+  // sebaliknya (versi pertama) meninggalkan aset yang lokasinya sudah pindah
+  // TANPA catatan & berita acara begitu INSERT gagal (uji dev 13 Okt 2026).
+  const [row] = await sql`
+    INSERT INTO ga_asset_relocation (
+      asset_id, from_location, to_location, from_pic, to_pic, pic_berubah, relocation_date, reason,
+      ba_path, ba_file_name, ba_mime, ba_size, created_by, created_by_name
+    ) VALUES (
+      ${assetId}, ${before.location}, ${toLocation}, ${before.pic_name}, ${before.pic_name}, ${!input.keep_pic},
+      ${relocationDate}, ${input.reason?.trim() || null},
+      ${input.ba.path}, ${input.ba.file_name}, ${input.ba.mime}, ${input.ba.size},
+      ${createdBy}, ${input.created_by_name ?? null}
+    )
+    RETURNING id
+  `;
+  const relocationId = String(row.id);
+  const batal = async (): Promise<void> => {
+    await sql`DELETE FROM ga_asset_relocation WHERE id = ${relocationId}`;
+  };
+
   let toPic = before.pic_name;
-  if (!input.keep_pic) {
-    if (!input.to_user_id && !input.to_pic_name?.trim()) {
-      return { ok: false, error: "pilih PIC baru, atau centang PIC tetap" };
-    }
-    // Aset belum punya PIC → PIC baru = assign (transfer menolak aset yang
-    // belum di-assign). Lokasi diperbarui terpisah sesudahnya.
-    const belumAdaPic = !before.current_pic_user_id && !before.pic_name;
-    if (belumAdaPic) {
+  try {
+    if (input.keep_pic) {
+      await sql`UPDATE ga_assets SET location = ${toLocation}, updated_at = now() WHERE id = ${assetId}`;
+    } else if (!before.current_pic_user_id && !before.pic_name) {
+      // Aset belum punya PIC → PIC baru = assign (transfer menolak aset yang
+      // belum di-assign). Lokasi diperbarui sesudahnya.
       const a = await assignAsset(assetId, {
         user_id: input.to_user_id ?? null,
         pic_name: input.to_pic_name ?? null,
         assigned_date: relocationDate,
         notes: input.reason ?? null,
       });
-      if ("ok" in a && a.ok === false) return a;
+      if ("ok" in a && a.ok === false) {
+        await batal();
+        return a;
+      }
       await sql`UPDATE ga_assets SET location = ${toLocation}, updated_at = now() WHERE id = ${assetId}`;
       toPic = (await getAsset(assetId))?.pic_name ?? null;
+    } else {
+      const r = await transferAsset(
+        assetId,
+        {
+          to_user_id: input.to_user_id ?? null,
+          to_pic_name: input.to_pic_name ?? null,
+          to_location: toLocation,
+          reason: input.reason ?? null,
+          created_by: createdBy,
+          transfer_date: relocationDate,
+        },
+        { dariRelokasi: true },
+      );
+      if ("ok" in r && r.ok === false) {
+        await batal();
+        return r;
+      }
+      toPic = (r as GaAssetRow).pic_name;
     }
-    const r = belumAdaPic ? null : await transferAsset(
-      assetId,
-      {
-        to_user_id: input.to_user_id ?? null,
-        to_pic_name: input.to_pic_name ?? null,
-        to_location: toLocation,
-        reason: input.reason ?? null,
-        created_by: input.created_by ?? null,
-        transfer_date: relocationDate,
-      },
-      { dariRelokasi: true },
-    );
-    if (r && "ok" in r && r.ok === false) return r;
-    if (r) toPic = (r as GaAssetRow).pic_name;
-  } else {
-    await sql`UPDATE ga_assets SET location = ${toLocation}, updated_at = now() WHERE id = ${assetId}`;
+  } catch (e) {
+    await batal();
+    throw e;
+  }
+  if (toPic !== before.pic_name) {
+    await sql`UPDATE ga_asset_relocation SET to_pic = ${toPic} WHERE id = ${relocationId}`;
   }
 
-  const [row] = await sql`
-    INSERT INTO ga_asset_relocation (
-      asset_id, from_location, to_location, from_pic, to_pic, pic_berubah, relocation_date, reason,
-      ba_path, ba_file_name, ba_mime, ba_size, created_by, created_by_name
-    ) VALUES (
-      ${assetId}, ${before.location}, ${toLocation}, ${before.pic_name}, ${toPic}, ${!input.keep_pic},
-      ${relocationDate}, ${input.reason?.trim() || null},
-      ${input.ba.path}, ${input.ba.file_name}, ${input.ba.mime}, ${input.ba.size},
-      ${input.created_by ?? null}, ${input.created_by_name ?? null}
-    )
-    RETURNING id
-  `;
   await logAudit("ga_asset.relocate", {
     asset_id: assetId, asset_code: before.asset_code, from_location: before.location, to_location: toLocation,
-    pic_berubah: !input.keep_pic, relocation_id: String(row.id),
+    pic_berubah: !input.keep_pic, relocation_id: relocationId,
   }, input.created_by_name ?? null);
-  const [rel] = await listRelocations({ id: String(row.id) });
+  const [rel] = await listRelocations({ id: relocationId });
   return { ok: true, relocation: rel };
 }
 
