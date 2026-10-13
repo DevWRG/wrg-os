@@ -28,10 +28,16 @@ export function featureAllowed(me: SessionUserSrv, path: string, action: Action)
   return true;
 }
 
-export async function requireFeature(path: string, action: Action = "view"): Promise<GuardResult> {
+// Satu route bisa dipakai beberapa menu (mis. mutasi stok ATK dipakai Stock In,
+// Stock Out, dan Opname) — lolos bila SALAH SATU menu mengizinkan aksinya.
+export function featureAllowedAny(me: SessionUserSrv, paths: string | readonly string[], action: Action): boolean {
+  return (typeof paths === "string" ? [paths] : paths).some((p) => featureAllowed(me, p, action));
+}
+
+export async function requireFeature(path: string | readonly string[], action: Action = "view"): Promise<GuardResult> {
   const me = await sessionUser();
   if (!me) return { ok: false, res: Response.json({ error: "unauthenticated" }, { status: 401 }) };
-  if (!featureAllowed(me, path, action)) {
+  if (!featureAllowedAny(me, path, action)) {
     return { ok: false, res: Response.json({ error: `forbidden — tak punya izin ${action} untuk menu ini` }, { status: 403 }) };
   }
   return { ok: true, me };

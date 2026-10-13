@@ -1,9 +1,12 @@
 import { gatewayFetch, relay } from "@/lib/gateway";
+import { requireFeature } from "@/lib/feature-guard";
 
 export const dynamic = "force-dynamic";
 
 // Gateway → apps/api POST /ga-assets/:id/transfer (F133).
 export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
+  const guard = await requireFeature("/ga-aset", "edit");
+  if (!guard.ok) return guard.res;
   const { id } = await ctx.params;
   let body: unknown;
   try {
