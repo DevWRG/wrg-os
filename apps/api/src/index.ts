@@ -29,6 +29,8 @@ import { getCustomers } from "./repo/customer.js";
 import { listAccounts, getAccount, upsertAccountFields, createContact, updateContact, deleteContact, listOwnerCandidates } from "./repo/account.js";
 import { timelineAkun } from "./repo/interaction.js";
 import { listLeads, getLead, buatLeadWeb, updateLead, konversiLead, cariDuplikat, LeadError } from "./repo/lead.js";
+import { MateriError, buatMateri, listMateri, ubahMateri, type BerkasMasuk } from "./repo/materi.js";
+import { DriveError, driveSiap } from "./gdrive.js";
 import { CampaignError, buatKampanye, cariItem, detailKampanye, listKampanye, opsiBrand, ubahKampanye } from "./repo/campaign.js";
 import { listDemoTrial, getDemoTrial, bukaDemoTrial, ubahDemoTrial, tutupDemoTrial, rekapKonversi, resolusiFaskes, dealTerlihat, DemoTrialError } from "./repo/demo-trial.js";
 import { listPickupPlans, createPickupPlan, updatePickupPlan, deletePickupPlan, previewPreVisit, runPreVisitCheck } from "./repo/pickup-plan.js";
@@ -5686,6 +5688,48 @@ app.post("/leads/:id/konversi", async (c) => {
 app.get("/leads-am", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json({ am: await listOwnerCandidates(await scopeOf(c)) });
+});
+
+// F130 Brosur & video produk. Brosur DIUNGGAH (multipart) → disimpan di
+// Google Drive (gdrive.ts, service account); video = tautan. Gerbang menu
+// (requireFeature "/brosur") di BFF; `oleh` dari sesi. Tanpa scope baris:
+// materi produk sama untuk semua yang punya menu.
+const materiErr = (c: { json: (b: unknown, s?: number) => Response }, e: unknown) =>
+  e instanceof MateriError || e instanceof DriveError
+    ? c.json({ error: e.message }, e.status as 400)
+    : c.json({ error: String((e as Error).message) }, 500);
+// multipart (dgn/ tanpa berkas) atau JSON → isian + berkas opsional
+async function bacaMateri(c: { req: { header: (k: string) => string | undefined; parseBody: () => Promise<Record<string, unknown>>; json: () => Promise<unknown> } }) {
+  const ct = c.req.header("content-type") ?? "";
+  if (ct.includes("multipart/form-data")) {
+    const raw = await c.req.parseBody();
+    const body: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(raw)) if (typeof v === "string") body[k] = v;
+    const f = raw.file;
+    const berkas: BerkasMasuk | null = f instanceof File && f.size > 0
+      ? { isi: Buffer.from(await f.arrayBuffer()), nama: f.name, mime: f.type }
+      : null;
+    return { body, berkas };
+  }
+  return { body: (await c.req.json()) as Record<string, unknown>, berkas: null };
+}
+app.get("/materi", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json({ materi: await listMateri({ termasukNonaktif: c.req.query("semua") === "1" }), drive_siap: driveSiap() });
+});
+app.post("/materi", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const { body, berkas } = await bacaMateri(c);
+    return c.json(await buatMateri(body, berkas, typeof body.oleh === "string" ? body.oleh : null), 201);
+  } catch (e) { return materiErr(c, e); }
+});
+app.patch("/materi/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const { body, berkas } = await bacaMateri(c);
+    return c.json(await ubahMateri(c.req.param("id"), body, berkas, typeof body.oleh === "string" ? body.oleh : null));
+  } catch (e) { return materiErr(c, e); }
 });
 
 // F74 Campaign Tracker (menyerap F46) — kampanye non-KSO per brand/item +
