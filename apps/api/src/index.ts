@@ -5981,6 +5981,12 @@ app.post("/deals", async (c) => {
   }
 });
 
+// Kandidat AM untuk penunjukan di form deal (HoD = AM cabang timnya; AM = kosong).
+app.get("/deals-am", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json({ am: await listOwnerCandidates(await scopeOf(c)) });
+});
+
 app.patch("/deals/:id", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const body = await c.req.json().catch(() => ({}));

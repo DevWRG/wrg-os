@@ -29,7 +29,11 @@ export interface DealFormInit {
   purchase_year?: number | null;
   pic_hod?: string | null;
   notes?: string | null;
+  am_id?: string | null;
+  am_name?: string | null;
 }
+
+interface KandidatAm { am_id: string; nama: string; cabang: string | null }
 
 const str = (v: unknown) => (v == null ? "" : String(v));
 const rp = (n: number) =>
@@ -176,7 +180,11 @@ export function DealFormModal({ mode, deal, onClose, brands = [], cabangs = [], 
     purchase_year: deal?.purchase_year != null ? String(deal.purchase_year) : "",
     pic_hod: str(deal?.pic_hod),
     notes: str(deal?.notes),
+    am_id: str(deal?.am_id),
   }));
+  // Kandidat AM untuk penunjukan (HoD = AM cabang timnya, admin = semua). AM
+  // mendapat daftar kosong → kolom AM tak tampil, deal tetap atas namanya.
+  const [amList, setAmList] = useState<KandidatAm[]>([]);
   const [products, setProducts] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -194,6 +202,20 @@ export function DealFormModal({ mode, deal, onClose, brands = [], cabangs = [], 
         if (alive) setProducts(names);
       } catch {
         if (alive) setProducts([]);
+      }
+    })();
+    return () => { alive = false; };
+  }, []);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const res = await fetch("/api/deals-am", { cache: "no-store" });
+        const data = await res.json().catch(() => ({}));
+        if (alive && res.ok && Array.isArray(data?.am)) setAmList(data.am as KandidatAm[]);
+      } catch {
+        // tanpa daftar, kolom AM disembunyikan — form lain tetap jalan
       }
     })();
     return () => { alive = false; };
@@ -284,6 +306,20 @@ export function DealFormModal({ mode, deal, onClose, brands = [], cabangs = [], 
             <input value={form.province} onChange={(e) => set("province", e.target.value)} className={inputCls} />
           </label>
 
+          {amList.length > 0 && (
+            <label className="text-sm col-span-1 sm:col-span-2"><Lbl>AM</Lbl>
+              <select value={form.am_id} onChange={(e) => set("am_id", e.target.value)} className={inputCls}>
+                {/* AM yang sudah ditunjuk hanya bisa DIGANTI, tidak dikosongkan */}
+                <option value="" disabled={Boolean(deal?.am_id)}>— belum ditunjuk —</option>
+                {amList.map((a) => (
+                  <option key={a.am_id} value={a.am_id}>{a.nama}{a.cabang ? ` · ${a.cabang}` : ""}</option>
+                ))}
+                {form.am_id && !amList.some((a) => a.am_id === form.am_id) && (
+                  <option value={form.am_id}>{deal?.am_name ?? form.am_id}</option>
+                )}
+              </select>
+            </label>
+          )}
           <label className="text-sm"><Lbl>PIC HOD</Lbl>
             {/* Dulu input teks bebas → 13 ejaan untuk 2 orang (termasuk 'Pak yofi'
                 & kembaran karena spasi di ujung). Combo bersaran: yang biasa tetap

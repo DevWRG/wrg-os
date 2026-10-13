@@ -6,7 +6,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { normKota, pilihAmWilayah, parseLeads, balasanLeadTercatat, pesanAging, BANT_LOLOS } from "./lead.js";
+import { normKota, pilihAmWilayah, parseLeads, balasanLeadsDeal, pesanAging, BANT_LOLOS } from "./lead.js";
 import { detectKind } from "./inbound.js";
 
 test("normKota menyamakan prefiks & tanda baca", () => {
@@ -64,29 +64,29 @@ test("detectKind: #LEADS tetap dikenali, #LEADSX tidak", () => {
   assert.equal(detectKind("#LEADSX rapat"), "none");
 });
 
-test("balasan #LEADS: ber-AM, belum ber-AM, duplikat", () => {
-  const ber = balasanLeadTercatat({
-    lead: { kode: "LD-0001", facility_name: "RS A", city: "Madiun", am_nama: "Budi", am_id: "budi", pic_hod: "yogi", routing_via: "wilayah", account_id: null },
-    pengirim: "Sari", duplikat: [],
-  });
-  assert.match(ber, /Lead \*LD-0001\* tercatat/);
-  assert.match(ber, /diteruskan ke AM \*Budi\*/);
-  assert.match(ber, /minimal 3 dari 4/);
+test("balasan #LEADS → deal: ber-AM, pengirim AM, belum ber-AM, sudah di Pipeline", () => {
+  const dasar = { deal_id: "u1", pic_hod: "yogi", pic_hod_nama: "Yogi", cabang: "SBY 2", catatanWilayah: null, pelanggan: false };
+  const ber = balasanLeadsDeal({ jenis: "baru", ...dasar, am_id: "budi", am_nama: "Budi", routing: "wilayah" }, { pengirim: "Sari", facility_name: "RS A", city: "Madiun" });
+  assert.match(ber, /Deal baru di Pipeline \(Prospecting\): RS A \(Madiun\), Sari/);
+  assert.match(ber, /→ AM \*Budi\*\./);
+  assert.doesNotMatch(ber, /BANT/);
 
-  const sendiri = balasanLeadTercatat({
-    lead: { kode: "LD-0002", facility_name: "RS B", city: null, am_nama: "Budi", am_id: "budi", pic_hod: null, routing_via: "pengirim", account_id: "5" },
-    pengirim: "Budi", duplikat: [{ jenis: "deal", ref: "u", nama: "RS B Kota", status: "Quotation", am_id: "budi" }],
-  });
+  const sendiri = balasanLeadsDeal({ jenis: "baru", ...dasar, am_id: "budi", am_nama: "Budi", routing: "pengirim", pelanggan: true }, { pengirim: "Budi", facility_name: "RS B", city: null });
   assert.match(sendiri, /\(Anda sendiri\)/);
   assert.match(sendiri, /sudah pelanggan/);
-  assert.match(sendiri, /Mirip yang masih terbuka/);
 
-  const tanpa = balasanLeadTercatat({
-    lead: { kode: "LD-0003", facility_name: "RS C", city: "Malang", am_nama: null, am_id: null, pic_hod: null, routing_via: "tak-terpetakan", account_id: null },
-    pengirim: "Sari", duplikat: [], catatanWilayah: "kota Malang dipegang lebih dari satu AM",
-  });
-  assert.match(tanpa, /BELUM ber-AM — admin/);
-  assert.match(tanpa, /dipegang lebih dari satu AM/);
+  const hod = balasanLeadsDeal({ jenis: "baru", ...dasar, am_id: null, am_nama: null, routing: "tak-terpetakan", catatanWilayah: "kota Malang dipegang lebih dari satu AM" }, { pengirim: "Sari", facility_name: "RS C", city: "Malang" });
+  assert.match(hod, /BELUM ber-AM — HoD \*Yogi\* akan menunjuk/);
+  assert.match(hod, /dipegang lebih dari satu AM/);
+
+  const admin = balasanLeadsDeal({ jenis: "baru", ...dasar, pic_hod: null, pic_hod_nama: null, am_id: null, am_nama: null, routing: "tak-terpetakan" }, { pengirim: "Sari", facility_name: "RS D", city: null });
+  assert.match(admin, /BELUM ber-AM — admin/);
+
+  const ada = balasanLeadsDeal({ jenis: "riwayat", deals: [{ deal_id: "u2", nama: "RSUD Grati", stage: "Quotation", am_id: "budi", am_nama: "Budi" }] }, { pengirim: "Sari", facility_name: "RSUD Grati", city: "Pasuruan" });
+  assert.match(ada, /sudah ada di Pipeline/);
+  assert.match(ada, /RSUD Grati — Quotation, AM Budi/);
+  assert.match(ada, /dicatat di Riwayat/);
+  assert.doesNotMatch(ada, /Deal baru/);
 });
 
 test("pesan aging: AM vs HoD, dipotong 15 baris", () => {
