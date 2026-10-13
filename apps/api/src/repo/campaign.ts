@@ -222,6 +222,8 @@ async function realisasiFaktur(sql: Sql, id: number, from: string, to: string, s
          OR item_brand(x.item_id) IN (SELECT brand FROM campaign_brand WHERE campaign_id = ${id})
     )
     SELECT l.invoice_id, l.item_id::text AS item_id, l.qty, l.customer_id, l.am_id, l.am_nama,
+           (NOT EXISTS (SELECT 1 FROM campaign_item WHERE campaign_id = ${id})
+             OR l.item_id IN (SELECT item_id FROM campaign_item WHERE campaign_id = ${id})) AS hitung_qty,
            COALESCE(NULLIF(it.name, ''), l.raw_name, 'Item #' || l.item_id::text) AS item_nama,
            (CASE WHEN l.wsum > 0 THEN l.inv_net * l.w / l.wsum ELSE l.inv_net / l.cnt END)::float8 AS netto
     FROM line l
@@ -234,7 +236,11 @@ async function realisasiFaktur(sql: Sql, id: number, from: string, to: string, s
   let qty = 0;
   for (const r of rows) {
     const n = Number(r.netto) || 0;
-    const q = Number(r.qty) || 0;
+    // Qty kampanye = item PILIHAN saja bila ada (satuan antar-item brand beda —
+    // strip, meter, diluent — jadi menjumlah semuanya tak bermakna); tanpa item
+    // pilihan = semua item yang cocok. Qty per item tetap apa adanya.
+    const qItem = Number(r.qty) || 0;
+    const q = r.hitung_qty ? qItem : 0;
     netto += n;
     qty += q;
     const k = r.am_id ?? "";
@@ -242,7 +248,7 @@ async function realisasiFaktur(sql: Sql, id: number, from: string, to: string, s
     a.netto += n; a.qty += q; a._f.add(String(r.invoice_id)); if (r.customer_id != null) a._c.add(String(r.customer_id));
     perAm.set(k, a);
     const it = perItem.get(r.item_id) ?? { item_id: r.item_id, nama: String(r.item_nama), brand: null, netto: 0, qty: 0 };
-    it.netto += n; it.qty += q;
+    it.netto += n; it.qty += qItem;
     perItem.set(r.item_id, it);
   }
   const fakturUnik = new Set(rows.map((r) => String(r.invoice_id))).size;
@@ -371,19 +377,19 @@ export async function listKampanye(sc: DataScope = FULL_SCOPE) {
   const sql = db();
   const hari = hariIniWib();
   const list = await muatKampanye(sql, null);
-  const out = [];
-  for (const c of list) {
-    const r = await ringkasKampanye(sql, c, sc, hari);
-    out.push({
+  return Promise.all(list.map(async (c) => {
+    const r = c.dibatalkan
+      ? { target_rp: 0, target_qty: null, f: { netto: 0, qty: 0, faktur: 0, customer: 0 } }
+      : await ringkasKampanye(sql, c, sc, hari);
+    return {
       ...c,
       ringkasan: {
         target_rp: r.target_rp, target_qty: r.target_qty, netto: r.f.netto, qty: r.f.qty,
         faktur: r.f.faktur, customer: r.f.customer,
         pacing: hitungPacing(r.target_rp, r.f.netto, c.tanggal_mulai, c.tanggal_selesai, hari),
       },
-    });
-  }
-  return out;
+    };
+  }));
 }
 
 export async function detailKampanye(sc: DataScope, idText: string) {
