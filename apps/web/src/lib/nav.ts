@@ -10,7 +10,7 @@ import {
   Send, FileText, ScrollText, GraduationCap, UsersRound, Network,
   Bell, MapPin, ListChecks, Swords, CalendarOff, CalendarDays, CalendarRange,
   Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, Tags, SlidersHorizontal, Microscope, MonitorCheck, FileSignature,
-  Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, BookOpen, Calculator, Presentation, Megaphone,
+  Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, BookOpen, Calculator, Presentation, Megaphone, Library,
   Wallet, Coins, Route, Radio, Printer, ScanText,
   Wrench,
   CalendarClock,
@@ -128,6 +128,9 @@ export const NAV: NavGroup[] = [
       // F74 Kampanye (menyerap F46) — kampanye non-KSO per brand/item + periode,
       // realisasi faktur/SO otomatis. Kunci izin sendiri ("kampanye"); default tertutup.
       { title: "Kampanye", url: "/kampanye", icon: Megaphone, badge: "NEW" },
+      // F130 Brosur & Video — brosur diunggah ke Google Drive (tautan publik),
+      // video = tautan. Kunci izin sendiri ("brosur"); default tertutup.
+      { title: "Brosur & Video", url: "/brosur", icon: Library, badge: "NEW" },
       { title: "Pipeline", url: "/pipeline", icon: Workflow },
       { title: "Kinerja Saya", url: "/me", icon: UserRound, badge: "NEW" },
       // F67 Insentif. Menu terpisah dari /insentif/tim karena PERTANYAANNYA beda:
@@ -462,6 +465,7 @@ export const NAV: NavGroup[] = [
 // saat #1282 merge → kosongkan Set ini.
 export const DEV_ONLY_URLS: ReadonlySet<string> = new Set([
   "/approval-requests",
+  "/brosur",
   "/doc-klaim",
   "/forecast-submission",
   "/installations",
