@@ -1,9 +1,13 @@
+import { requireFeature } from "@/lib/feature-guard";
 import { gatewayFetch } from "@/lib/gateway";
 
 export const dynamic = "force-dynamic";
 
 // Gateway → apps/api POST /install-schedule/:id/done (F8).
 export async function POST(_req: Request, ctx: { params: Promise<{ id: string }> }) {
+  // Jadwal & laporan teknisi dikelola di Readiness Board — dulu tanpa gerbang (13 Okt 2026).
+  const guard = await requireFeature("/readiness-board", "edit");
+  if (!guard.ok) return guard.res;
   const { id } = await ctx.params;
   try {
     const res = await gatewayFetch(`/install-schedule/${encodeURIComponent(id)}/done`, { method: "POST" });

@@ -1,9 +1,13 @@
+import { requireFeature } from "@/lib/feature-guard";
 import { gatewayFetch } from "@/lib/gateway";
 
 export const dynamic = "force-dynamic";
 
 // Gateway → apps/api POST /install-schedule (F8, jadwal install baru).
 export async function POST(req: Request) {
+  // Jadwal & laporan teknisi dikelola di Readiness Board — dulu tanpa gerbang (13 Okt 2026).
+  const guard = await requireFeature("/readiness-board", "create");
+  if (!guard.ok) return guard.res;
   let body: unknown;
   try {
     body = await req.json();
