@@ -18,8 +18,17 @@ export function canViewKso(u?: AccessUser | null): boolean {
 }
 
 // F169 — mencatat pindah/tarik alat KSO (riwayat penempatan, migrasi 217).
-// Satu-satunya tulisan di menu KSO yang menumpang 'kso-simulator', jadi butuh
-// tingkat EDIT: yang cuma boleh melihat produktivitas tidak boleh memindahkan alat.
-export function canEditKsoAlat(u?: AccessUser | null): boolean {
-  return canOrLegacy(u, "kso-simulator", false, "edit");
+// Keputusan user 13 Okt 2026: tombolnya di menu Daftar Alat dan HANYA TEKNISI
+// yang boleh menekannya. Kunci izin SENDIRI ('kso-mutasi-alat', disemai lewat
+// `features` item Daftar Alat di nav.ts) supaya bisa dicentang untuk grup teknisi
+// tanpa membuka 'kso-simulator' (yang ikut membuka revenue per faskes di
+// Produktivitas KSO). Menulis butuh tingkat EDIT; VIEW cukup untuk membuka menunya.
+// Admin/superuser tetap lolos lewat canOrLegacy — sama dengan semua fitur lain.
+export function canMutasiAlatKso(u?: AccessUser | null): boolean {
+  return canOrLegacy(u, "kso-mutasi-alat", false, "edit");
+}
+
+// Siapa yang boleh membuka Daftar Alat: pemegang 'kso-simulator' ATAU teknisi.
+export function canBukaDaftarAlat(u?: AccessUser | null): boolean {
+  return canViewKso(u) || canOrLegacy(u, "kso-mutasi-alat", false);
 }

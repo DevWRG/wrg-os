@@ -91,8 +91,8 @@ const KOLOM_EXPORT_DETAIL: ExportColumn<BarisExport>[] = [
   { header: "Keterangan", value: (b) => b.keterangan },
 ];
 
-export function FaskesDetailDialog({ g, median, bolehCatat = false, onClose }: {
-  g: FaskesRow | null; median: number | null; bolehCatat?: boolean; onClose: () => void;
+export function FaskesDetailDialog({ g, median, onClose }: {
+  g: FaskesRow | null; median: number | null; onClose: () => void;
 }) {
   // Hasil disimpan BERSAMA kuncinya, bukan di-reset saat pilihan berganti. Me-reset
   // lewat setState sinkron di dalam effect memicu render berantai (dan ditolak lint);
@@ -752,7 +752,7 @@ export function FaskesDetailDialog({ g, median, bolehCatat = false, onClose }: {
                 </div>
               </div>
 
-              {g.r.accountId !== null ? <RiwayatAlat accountId={g.r.accountId} bolehCatat={bolehCatat} /> : null}
+              {g.r.accountId !== null ? <RiwayatAlat accountId={g.r.accountId} /> : null}
             </>
           )}
         </DialogBody>

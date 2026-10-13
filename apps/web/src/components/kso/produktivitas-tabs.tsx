@@ -26,7 +26,7 @@ import { KsoRingkasanPanel } from "./ringkasan-view";
 const TAB_RINGKASAN = "ringkasan";
 const TAB_TABEL = "tabel";
 
-export function KsoProduktivitasTabs({ data, bolehCatat = false }: { data: KsoProduktivitas; bolehCatat?: boolean }) {
+export function KsoProduktivitasTabs({ data }: { data: KsoProduktivitas }) {
   const f = useFilterKso(data);
   const router = useRouter();
   const pathname = usePathname();
@@ -75,7 +75,7 @@ export function KsoProduktivitasTabs({ data, bolehCatat = false }: { data: KsoPr
       </div>
 
       <TabsContent value={TAB_TABEL} className="mt-4">
-        <KsoProduktivitasTabel f={f} bolehCatat={bolehCatat} />
+        <KsoProduktivitasTabel f={f} />
       </TabsContent>
       <TabsContent value={TAB_RINGKASAN} className="mt-4">
         <KsoRingkasanPanel f={f} data={data} />
