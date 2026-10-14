@@ -7,6 +7,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { KsoProduktivitasTabs } from "@/components/kso/produktivitas-tabs";
 import type { KsoProduktivitas } from "@/components/kso/produktivitas-shared";
 import type { DataKesehatan } from "@/components/kso/kesehatan-view";
+import type { DataSuplai } from "@/components/kso/suplai-view";
 
 export const dynamic = "force-dynamic";
 
@@ -29,14 +30,17 @@ export default async function KsoProduktivitasPage() {
 
   let data: KsoProduktivitas | null = null;
   let kesehatan: DataKesehatan | null = null;
+  let suplai: DataSuplai | null = null;
   try {
-    // F73: kesehatan ber-scope → x-user-id dari sesi.
-    const [r, k] = await Promise.all([
+    // F73 kesehatan & F7 suplai ber-scope → x-user-id dari sesi.
+    const [r, k, s] = await Promise.all([
       gatewayFetch("/kso/produktivitas"),
       me ? gatewayFetch("/kso/kesehatan", { headers: { "x-user-id": me.id } }).catch(() => null) : null,
+      me ? gatewayFetch("/kso/suplai?bulan=3", { headers: { "x-user-id": me.id } }).catch(() => null) : null,
     ]);
     if (r.ok) data = (await r.json()) as KsoProduktivitas;
     if (k?.ok) kesehatan = (await k.json()) as DataKesehatan;
+    if (s?.ok) suplai = (await s.json()) as DataSuplai;
   } catch { data = null; }
 
   if (!data || data.rows.length === 0) {
@@ -79,7 +83,7 @@ export default async function KsoProduktivitasPage() {
           hint="penyebut ≥ 100 tes/thn & Rp/tes ada"
         />
       </div>
-      <KsoProduktivitasTabs data={data} kesehatan={kesehatan} />
+      <KsoProduktivitasTabs data={data} kesehatan={kesehatan} suplai={suplai} />
     </>
   );
 }

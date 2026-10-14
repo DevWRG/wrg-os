@@ -188,6 +188,7 @@ import {
 } from "./repo/overtime.js";
 import { recordCompetitor, listCompetitor, competitorSummary } from "./repo/competitor.js";
 import { kesehatanKso, runRekapKesehatanKso } from "./repo/kso-kesehatan.js";
+import { suplaiKso, runRekapSuplaiKso } from "./repo/kso-suplai.js";
 import { IntelError, briefingFaskes, dominasiWilayah, setDominan } from "./repo/customer-intel.js";
 import { ringkasPembayaran } from "./repo/pembayaran.js";
 import {
@@ -3693,6 +3694,18 @@ app.get("/kso/kesehatan", async (c) => {
 app.post("/kso/kesehatan/rekap", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json(await runRekapKesehatanKso({ dryRun: c.req.query("dry") === "1" }));
+});
+// F7 — kontrol suplai reagen per faskes × jenis alat (dari DO Accurate) + kebutuhan
+// reagen vs stok. ?bulan= jendela rata-rata (1–12, default 3). Bagian order ber-scope
+// lewat x-user-id (BFF /api/kso meneruskannya); bagian item = agregat perusahaan.
+app.get("/kso/suplai", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await suplaiKso(await scopeOf(c), Number(c.req.query("bulan") ?? 3)));
+});
+// Rekap mingguan secara manual (ops/uji). ?dry=1 = tanpa kirim.
+app.post("/kso/suplai/rekap", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await runRekapSuplaiKso({ dryRun: c.req.query("dry") === "1" }));
 });
 app.get("/kso/produktivitas", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
