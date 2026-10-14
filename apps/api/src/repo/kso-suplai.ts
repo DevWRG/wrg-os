@@ -23,6 +23,8 @@
 //   kebutuhan/bln dihitung dari SEMUA customer (stok gudang melayani semua; item yang
 //   kritis rata-rata 4× kebutuhan KSO-nya), kebutuhan KSO ditampilkan berdampingan.
 //   KRITIS = stok < 1 bln kebutuhan · PERLU_PO = stok + sisa PO terbuka < 2 bln ·
+//   Sisa PO = PO Accurate "Menunggu/Sebagian diproses" ≤120 hari; yang lebih tua dianggap
+//   basi — prod 15 Okt: PO Mei 2025 85.000 BOX masih "sebagian" dan menutupi kekurangan palsu.
 //   STOK_0 = stok ≤0 padahal rutin dikirim (stok tak tercatat di Accurate — kirim
 //   langsung principal/konsinyasi?), sengaja dipisah dari KRITIS supaya tak menenggelamkan
 //   kekurangan nyata · AMAN.
@@ -45,6 +47,7 @@ export const ATURAN = {
   telat_min_tambah: 14,     // batas minimal ritme + 14 hari (ritme pendek tak langsung telat)
   telat_tanpa_ritme: 60,    // ≤1 gelombang di jendela → batas 60 hari
   cakupan_po_bulan: 2,      // stok + PO terbuka < 2 bulan kebutuhan → perlu PO
+  po_basi_hari: 120,        // PO terbuka lebih tua dari ini dianggap basi (tak dihitung)
   bulan_default: 3,
   bulan_maks: 12,
 } as const;
@@ -218,7 +221,7 @@ async function barisOrder(sql: Sql, sc: DataScope, hariIni: string, j: ReturnTyp
   });
 }
 
-async function barisItem(sql: Sql, j: ReturnType<typeof jendela>): Promise<BarisItem[]> {
+async function barisItem(sql: Sql, hariIni: string, j: ReturnType<typeof jendela>): Promise<BarisItem[]> {
   const rows = await sql`
     WITH kso AS (
       SELECT DISTINCT a.account_id FROM kso_asset a JOIN kso_asset_status_v v ON v.id = a.id
@@ -239,6 +242,7 @@ async function barisItem(sql: Sql, j: ReturnType<typeof jendela>): Promise<Baris
       SELECT i.item_no, sum(GREATEST(i.qty_ordered - COALESCE(i.qty_shipped, 0), 0))::float8 AS sisa
       FROM purchase_order_item i JOIN purchase_order p ON p.id = i.purchase_order_id
       WHERE p.cancelled_at IS NULL AND p.accurate_status IN ('Menunggu diproses', 'Sebagian diproses')
+        AND p.order_date >= ${hariIni}::date - ${ATURAN.po_basi_hari}::int
       GROUP BY 1
     )
     SELECT a.item_no, it.name, a.jenis, it.unit, a.qty_kso, a.qty_total, a.faskes_kso,
@@ -268,7 +272,7 @@ export async function suplaiKso(sc: DataScope = FULL_SCOPE, bulan: number = ATUR
   const [d] = await sql`SELECT min(trans_date)::text AS sejak, max(trans_date)::text AS sampai FROM accurate_delivery_order`;
   const [s] = await sql`SELECT max(stock_synced_at) AS stok_per FROM accurate_item`;
   const j = jendela(hari, bulan, d?.sejak ?? null);
-  const [order, item] = await Promise.all([barisOrder(sql, sc, hari, j, null), barisItem(sql, j)]);
+  const [order, item] = await Promise.all([barisOrder(sql, sc, hari, j, null), barisItem(sql, hari, j)]);
   order.sort((a, b) => URUT_ORDER[a.status] - URUT_ORDER[b.status] || (b.lewat_hari ?? 0) - (a.lewat_hari ?? 0) || a.nama.localeCompare(b.nama));
   item.sort((a, b) => URUT_STOK[a.status] - URUT_STOK[b.status] || b.kebutuhan_total_bln - a.kebutuhan_total_bln);
   return {
