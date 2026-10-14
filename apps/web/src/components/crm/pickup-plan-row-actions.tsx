@@ -72,21 +72,52 @@ export function PickupPlanRowActions({
     }
   }
 
-  async function setStatus(next: "selesai" | "batal") {
+  const [aksiError, setAksiError] = useState<string | null>(null);
+
+  async function kirimStatus(next: "selesai" | "batal") {
     setBusy(true);
+    setAksiError(null);
     try {
       const res = await fetch(`/api/pickup-plan/${id}`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ status: next }),
       });
-      if (!res.ok) throw new Error("gagal");
+      if (!res.ok) {
+        const data = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(data.error ?? "gagal mengubah status");
+      }
       router.refresh();
-    } catch {
-      /* biarkan tombol aktif lagi supaya bisa dicoba ulang */
+    } catch (e) {
+      // Tampilkan alasannya (mis. 409 "trip sudah #KIRIM") — dulu ditelan diam.
+      setAksiError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
+  }
+
+  // Ubah status selalu lewat konfirmasi: sekali klik ✓/✕ tak bisa dibatalkan
+  // dari UI (tak ada tombol "kembalikan ke rencana").
+  function setStatus(next: "selesai" | "batal") {
+    const kirimTagih = tujuan === "kirim+tagih";
+    confirm(
+      next === "selesai"
+        ? {
+            title: "Tandai jadwal selesai?",
+            description: kirimTagih
+              ? `Trip kirim+tagih ke "${customerName}" akan ditutup. Pastikan penagihannya sudah beres.`
+              : `Trip ke "${customerName}" akan ditandai selesai.`,
+            confirmLabel: "Tandai selesai",
+          }
+        : {
+            title: "Batalkan jadwal?",
+            description: `Trip ke "${customerName}" akan dibatalkan dan tak ikut cek H-1.`,
+            destructive: true,
+            confirmLabel: "Batalkan trip",
+            cancelLabel: "Kembali",
+          },
+      () => void kirimStatus(next),
+    );
   }
 
   function hapus() {
@@ -126,6 +157,7 @@ export function PickupPlanRowActions({
           <XCircle />
         </Button>
       )}
+      {aksiError && <span className="text-destructive self-center text-xs">{aksiError}</span>}
       {!sudahJalan && (
         <Button variant="ghost" size="icon-sm" aria-label="Hapus" disabled={busy} onClick={hapus} className="text-danger hover:text-danger">
           <Trash2 />
