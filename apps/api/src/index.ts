@@ -222,7 +222,7 @@ import {
 } from "./repo/insentif-approval.js";
 import { listHodOptions } from "./repo/master-hod.js";
 import { listDepartments, listEmployees, getEmployee, getRaciMatrix, getMeasurements, saveMeasurements, getOkrOverview, getKpiCatalog, createEmployee, updateEmployee, deleteEmployee, replaceEmployeeDetail, getVoiceAggregate, getHodResolution, getOrgReporting, populateHodKey, getHods, type MeasurementInput, type EmployeeWrite, type SpineDetail } from "./repo/employee-spine.js";
-import { listKlaim, getKlaim, updateKategori, decideKlaim, markDibayar, createKlaimManual, deleteKlaim } from "./repo/doc-klaim.js";
+import { type AktorKlaim, listKlaim, getKlaim, updateKategori, decideKlaim, markDibayar, createKlaimManual, deleteKlaim } from "./repo/doc-klaim.js";
 import {
   formatResume,
   ingestKoran,
@@ -4048,6 +4048,22 @@ app.post("/employee-spine/employees/:id/measurements", async (c) => {
 });
 
 // ── DOC #KLAIM Invoice Claim OCR (Fase A) — ingestion via WA, review manual ──
+// Identitas pemutus klaim dari user login (BFF meneruskan x-user-id). Tanpa
+// user (panggilan service-token mentah) → null: keputusan uang wajib punya pelaku.
+async function aktorKlaim(userId: string | undefined): Promise<AktorKlaim | null> {
+  if (!userId || !/^[0-9a-f-]{36}$/i.test(userId)) return null;
+  const scope = await resolveScope(userId);
+  if (!scope.userId) return null;
+  const eff = await effectivePermissions(userId);
+  return {
+    userId,
+    amId: scope.amId,
+    hodKey: scope.hodKey ?? null,
+    role: scope.role ?? null,
+    superuser: scope.superuser,
+    finance: eff.groups.some((g) => g.key === "finance-hod"),
+  };
+}
 app.get("/doc-klaim", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const status = c.req.query("status") ?? undefined;
@@ -4072,6 +4088,26 @@ app.get("/doc-klaim/:id", async (c) => {
   const k = await getKlaim(c.req.param("id"));
   return k ? c.json({ klaim: k }) : c.json({ error: "klaim tidak ditemukan" }, 404);
 });
+// Foto nota klaim. Path diambil dari DB berdasarkan id klaim — klien tak
+// pernah mengirim path (beda dari /media?p=, yang menerima path apa pun di
+// bawah root). Tetap dicek di dalam MEDIA_ROOTS sebagai lapis kedua.
+app.get("/doc-klaim/:id/foto", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const k = await getKlaim(c.req.param("id"));
+  if (!k) return c.json({ error: "klaim tidak ditemukan" }, 404);
+  if (!k.media_path) return c.json({ error: "klaim ini tanpa foto" }, 404);
+  const abs = resolve(k.media_path);
+  if (!MEDIA_ROOTS.some((root) => isInsideRoot(abs, root))) {
+    return c.json({ error: "foto di luar root media" }, 403);
+  }
+  try {
+    const buf = await readFile(abs);
+    const ext = abs.split(".").pop()?.toLowerCase() ?? "";
+    return c.body(buf, 200, { "content-type": MIME[ext] ?? "application/octet-stream" });
+  } catch {
+    return c.json({ error: "berkas foto tak ditemukan di server" }, 404);
+  }
+});
 app.patch("/doc-klaim/:id", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const body = await c.req.json().catch(() => ({}));
@@ -4084,18 +4120,21 @@ app.post("/doc-klaim/:id/decide", async (c) => {
   const body = await c.req.json().catch(() => ({}));
   const decision = body.decision;
   if (decision !== "disetujui" && decision !== "ditolak") return c.json({ error: "decision harus disetujui/ditolak" }, 400);
+  const aktor = await aktorKlaim(c.req.header("x-user-id"));
+  if (!aktor) return c.json({ error: "hanya user login yang boleh memutus klaim" }, 403);
   const result = await decideKlaim(c.req.param("id"), {
     decision,
     nominal_disetujui: body.nominal_disetujui ?? null,
     catatan: body.catatan ?? null,
-    decided_by_user_id: c.req.header("x-user-id") ?? null,
-  });
+  }, aktor);
   if (!result.ok) return c.json({ error: result.error }, 400);
   return c.json(result);
 });
 app.post("/doc-klaim/:id/bayar", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  const result = await markDibayar(c.req.param("id"));
+  const aktor = await aktorKlaim(c.req.header("x-user-id"));
+  if (!aktor) return c.json({ error: "hanya user login yang boleh menandai dibayar" }, 403);
+  const result = await markDibayar(c.req.param("id"), aktor);
   if (!result.ok) return c.json({ error: result.error }, 400);
   return c.json(result);
 });

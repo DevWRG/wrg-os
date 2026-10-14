@@ -7,6 +7,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Button } from "@/components/ui/button";
 import { DocKlaimTable, type DocKlaim } from "@/components/tables/doc-klaim-table";
 import { AddDocKlaimButton, type EmployeeOption } from "./add-doc-klaim-button";
+import type { PemutusKlaim } from "@/lib/doc-klaim-access";
 
 const STATUS_FILTERS = [
   ["all", "Semua"],
@@ -18,7 +19,7 @@ const STATUS_FILTERS = [
 
 // DOC #KLAIM — normalnya ingestion cuma dari WA, tapi "Tambah Klaim (manual)"
 // disediakan buat coba tanpa kirim WA sungguhan (tanpa OCR).
-export function DocKlaimView({ klaim, employees }: { klaim: DocKlaim[]; employees: EmployeeOption[] }) {
+export function DocKlaimView({ klaim, employees, pemutus }: { klaim: DocKlaim[]; employees: EmployeeOption[]; pemutus: PemutusKlaim }) {
   const [statusFilter, setStatusFilter] = useState<string>("all");
 
   const filtered = useMemo(
@@ -51,7 +52,7 @@ export function DocKlaimView({ klaim, employees }: { klaim: DocKlaim[]; employee
           ) : filtered.length === 0 ? (
             <EmptyState title="Tak ada klaim yang cocok filter" description="Coba ganti filter status." />
           ) : (
-            <DocKlaimTable klaim={filtered} />
+            <DocKlaimTable klaim={filtered} pemutus={pemutus} />
           )}
         </CardContent>
       </Card>

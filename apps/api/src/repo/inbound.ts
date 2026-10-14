@@ -11,7 +11,7 @@ import { upsertDailyTodo, computeIsLate } from "./todo.js";
 import { createReminder } from "./reminder.js";
 import { buildCekReply } from "./cek.js";
 import { buildFakturReply } from "./faktur.js";
-import { ingestKlaim, type DocKlaimRow } from "./doc-klaim.js";
+import { pengajuDariAmId, ingestKlaim, type DocKlaimRow } from "./doc-klaim.js";
 import {
   formatStatusDraft,
   ingestKoran,
@@ -1597,13 +1597,26 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
       const reply = await sendViaWaGateway(target, "⚠️ #KLAIM wajib disertai foto dokumen (invoice/faktur/struk).");
       return finish({ error: "no-photo", reply });
     }
+    // Pengirim wajib karyawan terdaftar (keputusan user 15 Okt 2026): klaim
+    // reimburse harus punya pemilik jelas supaya bisa diputus HoD-nya. Di grup
+    // nomor tak tersedia — dikenali lewat alias/pushname roster (ketat).
+    const pengirim = await resolveSender({ senderJid: row.sender_jid, groupJid: row.group_jid, pushname: row.sender_name, ketat: true });
+    if (!pengirim?.am_id) {
+      const reply = await sendViaWaGateway(
+        target,
+        "⚠️ #KLAIM hanya untuk karyawan terdaftar — nomor/nama WA ini belum dikenali sistem. Hubungi admin untuk didaftarkan.",
+      );
+      return finish({ skipped: "unknown-sender", sender_name: row.sender_name, reply });
+    }
+    const pengaju = await pengajuDariAmId(pengirim.am_id, row.sender_jid);
     const caption = extractHashtagArg(row.body, KLAIM_LINE) || null;
     const result = await ingestKlaim({
       wa_message_id: row.id,
       sender_jid: row.sender_jid,
-      sender_name: row.sender_name,
+      sender_name: pengirim.nama ?? row.sender_name,
       media_path: row.media_path,
       caption,
+      pengaju,
     });
     if ("ok" in result && result.ok === false) {
       const reply = await sendViaWaGateway(target, `⚠️ Gagal proses #KLAIM: ${result.error}`);
@@ -1618,7 +1631,9 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
           k.tanggal_dokumen ? `Tanggal: ${k.tanggal_dokumen}` : null,
           k.nominal ? `Nominal: ${k.nominal}` : null,
           k.pihak ? `Pihak: ${k.pihak}` : null,
-          "Akan ditindaklanjuti tim terkait.",
+          k.hod_nama
+            ? `Menunggu persetujuan HoD: ${k.hod_nama}.`
+            : "HoD-mu belum tercatat — klaim akan diputus Direktur/admin.",
         ]
           .filter(Boolean)
           .join("\n");

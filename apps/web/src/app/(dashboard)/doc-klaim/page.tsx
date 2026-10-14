@@ -1,4 +1,6 @@
 import { gatewayFetch } from "@/lib/gateway";
+import { sessionUser } from "@/lib/admin-guard";
+import type { PemutusKlaim } from "@/lib/doc-klaim-access";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { DocKlaimView } from "@/components/crm/doc-klaim-view";
 import type { DocKlaim } from "@/components/tables/doc-klaim-table";
@@ -29,14 +31,22 @@ async function getEmployees(): Promise<EmployeeOption[]> {
 }
 
 export default async function DocKlaimPage() {
-  const [klaim, employees] = await Promise.all([getKlaim(), getEmployees()]);
+  const [klaim, employees, me] = await Promise.all([getKlaim(), getEmployees(), sessionUser()]);
+  // Identitas pemutus untuk menampilkan tombol yang sesuai wewenang.
+  const pemutus: PemutusKlaim = {
+    amId: me?.am_id ?? null,
+    hodKey: me?.hod_key ?? null,
+    role: me?.role ?? null,
+    superuser: Boolean(me?.superuser),
+    finance: (me?.groups ?? []).some((g) => g.key === "finance-hod"),
+  };
   return (
     <>
       <PageHeader
         title="Klaim OCR"
-        description="Klaim reimburse dana karyawan (kebutuhan kantor/perjalanan dinas) — foto nota masuk via WA #KLAIM, diekstrak otomatis (Gemini Vision), approve/tolak/tandai dibayar di sini."
+        description="Klaim reimburse dana karyawan (kebutuhan kantor/perjalanan dinas) — foto nota masuk via WA #KLAIM, diekstrak otomatis (Gemini Vision), disetujui HoD pengaju, lalu ditandai dibayar oleh Finance."
       />
-      <DocKlaimView klaim={klaim} employees={employees} />
+      <DocKlaimView klaim={klaim} employees={employees} pemutus={pemutus} />
     </>
   );
 }

@@ -35,7 +35,6 @@ export function AddDocKlaimButton({ employees }: { employees: EmployeeOption[] }
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [employeeId, setEmployeeId] = useState(NONE);
-  const [senderName, setSenderName] = useState("");
   const [nomorDokumen, setNomorDokumen] = useState("");
   const [tanggalDokumen, setTanggalDokumen] = useState("");
   const [nominal, setNominal] = useState("");
@@ -44,12 +43,16 @@ export function AddDocKlaimButton({ employees }: { employees: EmployeeOption[] }
   const [catatan, setCatatan] = useState("");
 
   function reset() {
-    setEmployeeId(NONE); setSenderName(""); setNomorDokumen(""); setTanggalDokumen("");
+    setEmployeeId(NONE); setNomorDokumen(""); setTanggalDokumen("");
     setNominal(""); setPihak(""); setKategori(NONE); setCatatan("");
   }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
+    if (employeeId === NONE || !nominal.trim()) {
+      setError("Karyawan pengaju dan nominal wajib diisi.");
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -58,7 +61,7 @@ export function AddDocKlaimButton({ employees }: { employees: EmployeeOption[] }
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           employee_id: employeeId === NONE ? undefined : employeeId,
-          sender_name: senderName.trim() || undefined,
+          sender_name: employees.find((x) => x.id === employeeId)?.nama,
           nomor_dokumen: nomorDokumen.trim() || undefined,
           tanggal_dokumen: tanggalDokumen.trim() || undefined,
           nominal: nominal.trim() || undefined,
@@ -92,7 +95,7 @@ export function AddDocKlaimButton({ employees }: { employees: EmployeeOption[] }
         <form onSubmit={submit} className="contents">
           <DialogBody className="grid gap-3">
             <div className="grid gap-1.5">
-              <Label>Karyawan (opsional)</Label>
+              <Label>Karyawan pengaju *</Label>
               <Select value={employeeId} onValueChange={(v) => setEmployeeId(v ?? NONE)}>
                 <SelectTrigger className="w-full">
                   <SelectValue placeholder="Pilih karyawan">{(v: string) => (v === NONE ? "Pilih karyawan" : employees.find((e) => e.id === v)?.nama ?? v)}</SelectValue>
@@ -104,8 +107,7 @@ export function AddDocKlaimButton({ employees }: { employees: EmployeeOption[] }
                   ))}
                 </SelectContent>
               </Select>
-              <p className="text-muted-foreground text-xs">Atau kalau belum terdaftar, isi nama bebas:</p>
-              <Input value={senderName} onChange={(e) => setSenderName(e.target.value)} placeholder="Nama bebas" disabled={employeeId !== NONE} />
+              <p className="text-muted-foreground text-xs">Klaim diputus HoD karyawan ini, lalu dibayar Finance.</p>
             </div>
             <div className="grid gap-1.5">
               <Label htmlFor="dk-nomor">No. Dokumen</Label>
@@ -116,7 +118,7 @@ export function AddDocKlaimButton({ employees }: { employees: EmployeeOption[] }
               <Input id="dk-tanggal" value={tanggalDokumen} onChange={(e) => setTanggalDokumen(e.target.value)} placeholder="opsional, mis. 10 Agustus 2026" />
             </div>
             <div className="grid gap-1.5">
-              <Label htmlFor="dk-nominal">Nominal</Label>
+              <Label htmlFor="dk-nominal">Nominal *</Label>
               <Input id="dk-nominal" value={nominal} onChange={(e) => setNominal(e.target.value)} placeholder="mis. Rp150.000" />
             </div>
             <div className="grid gap-1.5">

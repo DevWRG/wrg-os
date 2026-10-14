@@ -14,6 +14,23 @@ export async function GET(req: Request, ctx: { params: Promise<{ path?: string[]
   const me = guard.me;
   const sub = safeSubpath((await ctx.params).path);
   if (sub === null) return badSubpath();
+  // Foto nota = biner, bukan JSON — relay() hanya untuk JSON. Path foto
+  // diambil API dari DB per id klaim, jadi gerbang view menu ini cukup.
+  if (/^[0-9a-f-]{36}\/foto$/i.test(sub)) {
+    try {
+      const res = await gatewayFetch(`/doc-klaim/${sub}`);
+      if (!res.ok) return relay(res);
+      return new Response(await res.arrayBuffer(), {
+        status: 200,
+        headers: {
+          "content-type": res.headers.get("content-type") ?? "application/octet-stream",
+          "cache-control": "private, max-age=3600",
+        },
+      });
+    } catch {
+      return Response.json({ error: "backend unreachable" }, { status: 502 });
+    }
+  }
   const qs = new URL(req.url).searchParams.toString();
   try {
     return relay(

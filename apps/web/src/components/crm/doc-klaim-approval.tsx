@@ -8,22 +8,28 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { useConfirm } from "@/components/ui/use-confirm";
+import { alasanTolakBayar, alasanTolakPutus, type PemutusKlaim } from "@/lib/doc-klaim-access";
+import type { DocKlaim } from "@/components/tables/doc-klaim-table";
 import {
   Dialog, DialogBody, DialogClose, DialogContent, DialogDescription,
   DialogFooter, DialogHeader, DialogTitle, DialogTrigger,
 } from "@/components/ui/dialog";
 
-// Approval reimburse — generik, siapa pun user login boleh decide (Owner
-// blueprint kosong, tak ada rule resmi soal approver). Forward-only, cermin
-// TRANSITIONS di apps/api/src/repo/doc-klaim.ts:
-//   baru -> disetujui|ditolak -> dibayar (hanya dari disetujui)
-export function DocKlaimApproval({ id, status }: { id: string; status: string }) {
+// Approval reimburse — HoD pengaju setujui/tolak, Finance tandai dibayar
+// (keputusan user 15 Okt 2026). Tombol hanya untuk yang berwenang; selebihnya
+// teks siapa yang ditunggu. Forward-only, cermin TRANSITIONS di
+// apps/api/src/repo/doc-klaim.ts: baru -> disetujui|ditolak -> dibayar.
+export function DocKlaimApproval({ klaim, pemutus }: { klaim: DocKlaim; pemutus: PemutusKlaim }) {
+  const { id, status } = klaim;
   const router = useRouter();
   const [open, setOpen] = useState<"disetujui" | "ditolak" | null>(null);
   const [nominal, setNominal] = useState("");
   const [catatan, setCatatan] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [bayarError, setBayarError] = useState<string | null>(null);
+  const { confirm, dialog } = useConfirm();
 
   async function decide(decision: "disetujui" | "ditolak") {
     setBusy(true);
@@ -51,20 +57,38 @@ export function DocKlaimApproval({ id, status }: { id: string; status: string })
     }
   }
 
-  async function bayar() {
+  async function kirimBayar() {
     setBusy(true);
+    setBayarError(null);
     try {
       const res = await fetch(`/api/doc-klaim/${id}/bayar`, { method: "POST" });
-      if (!res.ok) throw new Error("gagal tandai dibayar");
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.error) throw new Error(data.error ?? "gagal tandai dibayar");
       router.refresh();
-    } catch {
-      // biarkan busy reset, tombol tetap tersedia utk retry
+    } catch (err) {
+      setBayarError(String(err instanceof Error ? err.message : err));
     } finally {
       setBusy(false);
     }
   }
 
+  function bayar() {
+    const nominal = klaim.nominal_disetujui != null ? `Rp${Math.round(klaim.nominal_disetujui).toLocaleString("id-ID")}` : klaim.nominal ?? "-";
+    confirm(
+      {
+        title: "Tandai klaim dibayar?",
+        description: `Reimburse ${nominal} ke ${klaim.employee_nama ?? klaim.sender_name ?? "pengaju"} dicatat sudah dibayar. Tidak bisa dibatalkan.`,
+        confirmLabel: "Tandai dibayar",
+      },
+      () => void kirimBayar(),
+    );
+  }
+
+  const tunggu = (t: string) => <span className="text-muted-foreground text-xs whitespace-nowrap">{t}</span>;
+
   if (status === "baru") {
+    const alasan = alasanTolakPutus(klaim, pemutus);
+    if (alasan) return tunggu(alasan);
     return (
       <div className="flex gap-1">
         <Dialog open={open === "disetujui"} onOpenChange={(o) => setOpen(o ? "disetujui" : null)}>
@@ -79,7 +103,8 @@ export function DocKlaimApproval({ id, status }: { id: string; status: string })
             <DialogBody className="grid gap-3">
               <div className="grid gap-1.5">
                 <Label>Nominal disetujui (opsional)</Label>
-                <Input type="number" value={nominal} onChange={(e) => setNominal(e.target.value)} placeholder="Sesuai nota" />
+                <Input type="number" min={1} value={nominal} onChange={(e) => setNominal(e.target.value)} placeholder={`Sesuai nota${klaim.nominal ? ` (${klaim.nominal})` : ""}`} />
+                <p className="text-muted-foreground text-xs">Tidak boleh melebihi nominal nota. Wajib diisi kalau nominal nota tak terbaca.</p>
               </div>
               <div className="grid gap-1.5">
                 <Label>Catatan</Label>
@@ -120,10 +145,16 @@ export function DocKlaimApproval({ id, status }: { id: string; status: string })
   }
 
   if (status === "disetujui") {
+    const alasan = alasanTolakBayar(klaim, pemutus);
+    if (alasan) return tunggu(alasan);
     return (
-      <Button size="sm" disabled={busy} onClick={bayar}>
-        {busy ? "Menyimpan…" : "Tandai Dibayar"}
-      </Button>
+      <div className="flex flex-col items-end gap-0.5">
+        {dialog}
+        <Button size="sm" disabled={busy} onClick={bayar}>
+          {busy ? "Menyimpan…" : "Tandai Dibayar"}
+        </Button>
+        {bayarError && <span className="text-destructive text-xs">{bayarError}</span>}
+      </div>
     );
   }
 
