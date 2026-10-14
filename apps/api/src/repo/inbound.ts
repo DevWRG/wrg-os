@@ -58,6 +58,7 @@ import {
   cabangDariNomorSj,
   type DoAccurate,
 } from "./shipment-tracking.js";
+import { jadwalAktifUntukSj, tutupJadwalDariBast, catatanJadwalWa } from "./pickup-plan.js";
 import { accountIdDariTulisan } from "./akun-faskes.js";
 
 // Role yang pakai alur AM per-customer (sales_plan/activity_log + foto), bukan todo.
@@ -1394,10 +1395,16 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
           const reply = await sendViaWaGateway(target, `⚠️ SJ ${d.number} belum ditandai KIRIM. Kirim #KIRIM dulu saat berangkat.`);
           return finish({ error: "belum-kirim", sj: d.number, reply });
         }
+        // Kurir dari Jadwal Kirim-Tagih (F45) jadi driver SJ ini — supaya
+        // menu Shipment Tracking menampilkan siapa yang dijadwalkan, dan
+        // kurir itu juga bisa melanjutkan #TERIMA/#BAST lewat chat pribadi.
+        const jadwal = await jadwalAktifUntukSj(d.number);
         shipment = await createShipment({
           sj_number: d.number,
           customer_name: d.customer_name ?? "-",
           cabang: cabangDariNomorSj(d.number),
+          driver_name: jadwal?.kurir_name ?? null,
+          driver_wa_number: jadwal?.kurir_wa_number ?? null,
           created_by: `wa:${roster.nama}`,
         });
         dibuat = true;
@@ -1429,8 +1436,27 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
             : await markBukti(shipment.id, { photo_path: photoPath, by: pelaku });
     const labelDone =
       kind === "kirim" ? "DIKIRIM" : kind === "terima" ? "DITERIMA" : kind === "bast" ? "BAST/SELESAI" : "BUKTI TERSIMPAN";
+    // Sambungan ke Jadwal Kirim-Tagih (F45): #BAST menutup jadwal trip kirim;
+    // #KIRIM menyebut jadwalnya. Gagal di sini tak boleh membatalkan aksi
+    // shipping yang sudah tercatat — cukup dicatat di log.
+    let catatanJadwal: string | null = null;
+    if (action.ok) {
+      try {
+        const ditutup = kind === "bast" ? await tutupJadwalDariBast(shipment.sj_number) : [];
+        const jadwal = kind === "kirim" || kind === "bast" ? await jadwalAktifUntukSj(shipment.sj_number) : null;
+        catatanJadwal = catatanJadwalWa({
+          kind,
+          jadwal,
+          ditutup,
+          senderNumber: String(row.sender_jid ?? "").split("@")[0].split(":")[0],
+          pelaku,
+        });
+      } catch (e) {
+        console.error("[inbound] sambungan jadwal F45 gagal:", (e as Error).message);
+      }
+    }
     const replyMsg = action.ok
-      ? `✅ SJ ${shipment.sj_number} (${shipment.customer_name}) ditandai *${labelDone}*.`
+      ? `✅ SJ ${shipment.sj_number} (${shipment.customer_name}) ditandai *${labelDone}*.${catatanJadwal ? `\n${catatanJadwal}` : ""}`
       : `⚠️ ${pesanGagalShipping(shipment.sj_number, action.error)}`;
     const reply = await sendViaWaGateway(target, replyMsg);
     return finish({ shipment_id: shipment.id, sj: shipment.sj_number, dibuat, ok: action.ok, error: action.error, reply });
