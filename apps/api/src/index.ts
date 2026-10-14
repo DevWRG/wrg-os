@@ -29,7 +29,6 @@ import { getCustomers } from "./repo/customer.js";
 import { listAccounts, getAccount, upsertAccountFields, createContact, updateContact, deleteContact, listOwnerCandidates } from "./repo/account.js";
 import { timelineAkun } from "./repo/interaction.js";
 import { listLeads, getLead, buatLeadWeb, updateLead, konversiLead, cariDuplikat, LeadError } from "./repo/lead.js";
-import { FakturPajakError, getFp, listFp, listKandidat as listFpKandidat, pindahStatus as pindahStatusFp, requestFp, updateFp } from "./repo/faktur-pajak.js";
 import { OnboardingError, cancelCase as cancelOnboarding, createTemplate as createOnboardingTemplate, getCase as getOnboardingCase, listCandidates as listOnboardingCandidates, listCases as listOnboardingCases, listTemplates as listOnboardingTemplates, startCase as startOnboarding, updateItem as updateOnboardingItem, updateTemplate as updateOnboardingTemplate } from "./repo/onboarding.js";
 import { MateriError, buatMateri, listMateri, ubahMateri, type BerkasMasuk } from "./repo/materi.js";
 import { DriveError, driveSiap } from "./gdrive.js";
@@ -5776,63 +5775,6 @@ app.get("/adoption/training-needs", async (c) => {
     const list = trainingNeeds(rows, Number.isFinite(lim) && lim > 0 ? lim : LIST_LIMIT_DEFAULT);
     return c.json({ ...meta, total: rows.filter((r) => r.label === "laggard").length, rows: list });
   } catch (e) { return adoptionErr(c, e); }
-});
-
-// F27 Faktur Pajak / CoreTax Workflow (migrasi 219, repo/faktur-pajak.ts). Gerbang menu/izin
-// (requireFeature "/faktur-pajak": create = ajukan, edit = geser status) di BFF. Pelaku `oleh` dari sesi (BFF).
-const fpErr = (c: { json: (b: unknown, s?: number) => Response }, e: unknown) => {
-  if (e instanceof FakturPajakError) return c.json({ error: e.message, field: e.field }, e.status);
-  // 42P01 = tabel belum ada (migrasi 219 belum diterapkan) → 503, bukan 500 buram.
-  if ((e as { code?: string })?.code === "42P01") return c.json({ error: "migration_pending" }, 503);
-  return c.json({ error: "gagal memproses faktur pajak" }, 500);
-};
-const fpId = (v: string): number | null => (/^\d{1,15}$/.test(v) ? Number(v) : null);
-const fpBody = async (c: { req: { json: () => Promise<unknown> } }): Promise<Record<string, unknown>> => {
-  const b = await c.req.json().catch(() => null);
-  if (!b || typeof b !== "object" || Array.isArray(b)) throw new FakturPajakError(400, "body bukan JSON object yang sah");
-  return b as Record<string, unknown>;
-};
-const fpOleh = (b: Record<string, unknown>): string | null => (typeof b.oleh === "string" && b.oleh.trim() ? b.oleh.trim() : null);
-app.get("/faktur-pajak", async (c) => {
-  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  try { return c.json(await listFp({ status: c.req.query("status"), masa: c.req.query("masa"), q: c.req.query("q") })); }
-  catch (e) { return fpErr(c, e); }
-});
-app.get("/faktur-pajak/candidates", async (c) => {
-  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  try { return c.json({ items: await listFpKandidat(c.req.query("q") ?? null) }); }
-  catch (e) { return fpErr(c, e); }
-});
-app.post("/faktur-pajak", async (c) => {
-  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  try { const b = await fpBody(c); return c.json(await requestFp(b, fpOleh(b)), 201); }
-  catch (e) { return fpErr(c, e); }
-});
-app.get("/faktur-pajak/:id", async (c) => {
-  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  try {
-    const id = fpId(c.req.param("id"));
-    if (id === null) return c.json({ error: "id tidak valid" }, 400);
-    const r = await getFp(id);
-    return r ? c.json(r) : c.json({ error: "faktur pajak tidak ditemukan" }, 404);
-  } catch (e) { return fpErr(c, e); }
-});
-app.patch("/faktur-pajak/:id", async (c) => {
-  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  try {
-    const id = fpId(c.req.param("id"));
-    if (id === null) return c.json({ error: "id tidak valid" }, 400);
-    return c.json(await updateFp(id, await fpBody(c)));
-  } catch (e) { return fpErr(c, e); }
-});
-app.post("/faktur-pajak/:id/status", async (c) => {
-  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  try {
-    const id = fpId(c.req.param("id"));
-    if (id === null) return c.json({ error: "id tidak valid" }, 400);
-    const b = await fpBody(c);
-    return c.json(await pindahStatusFp(id, b, fpOleh(b)));
-  } catch (e) { return fpErr(c, e); }
 });
 
 // F65 Leads — lead terpisah dari deal; lolos BANT ≥3 → konversi jadi deal.
