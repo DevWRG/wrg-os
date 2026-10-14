@@ -3,7 +3,7 @@
 // sini → muncul di sidebar DAN bisa langsung di-sync jadi fitur yg bisa di-gate.
 // feature.key = slug route (lihat featureKey()), selaras infra/postgres/init/044_rbac.sql.
 
-import {
+import { CalendarCheck,
   LayoutDashboard, LayoutGrid, Building2, Package, Boxes, ShoppingCart, Truck,
   Factory, Workflow, Receipt, BarChart3, ClipboardCheck, History, Settings,
   Send, FileText, ScrollText, GraduationCap, UsersRound, Network,
@@ -271,6 +271,10 @@ export const NAV: NavGroup[] = [
       // #BAST/#BUKTI (SJ dari DO Accurate), kedua menu baca-saja.
       { title: "Tracking Pengiriman", url: "/shipment-tracking", icon: Route, badge: "NEW" },
       { title: "Kurir Performance", url: "/courier-performance", icon: Route, badge: "NEW" },
+      // F45 — rencana trip kurir + cek H-1 (libur & PIC), tersambung ke
+      // #KIRIM/#TERIMA/#BAST/#BUKTI lewat No. SJ. Jadwal KE DEPAN, beda dari
+      // Tracking Pengiriman (kejadian nyata dari WA).
+      { title: "Jadwal Kirim-Tagih", url: "/pickup-plan", icon: CalendarCheck, badge: "NEW" },
     ],
   },
   {
