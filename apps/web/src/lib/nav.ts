@@ -472,14 +472,11 @@ export const NAV: NavGroup[] = [
 // saat #1282 merge → kosongkan Set ini.
 export const DEV_ONLY_URLS: ReadonlySet<string> = new Set([
   "/approval-requests",
-  "/brosur",
   "/doc-klaim",
   "/forecast-submission",
   "/installations",
-  "/kampanye",
   "/lpse-tender",
   "/maintenance",
-  "/pickup-plan",
   "/proficiency-tests",
   "/readiness-board",
   "/rfid-cartridge-claims",
