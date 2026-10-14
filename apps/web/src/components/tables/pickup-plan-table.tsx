@@ -131,21 +131,29 @@ const columns: DataColumn<PickupPlan>[] = [
     // previsit_notified_at hanya terisi kalau WA benar-benar terkirim — plan
     // tanpa nomor kurir (skipped no-target) atau yang gatewaynya gagal TIDAK
     // boleh tampil "aman", karena kurirnya tak pernah menerima apa pun.
-    accessor: (p) => (!p.previsit_catatan ? 0 : !p.previsit_notified_at ? 1 : p.previsit_bermasalah ? 2 : 3),
+    // Begitu SJ sudah #KIRIM/#TERIMA/#BAST, peringatan H-1 tak relevan lagi
+    // (kurir sudah berangkat / barang sudah sampai) — jangan tampil merah
+    // "belum terkirim" yang terbaca seperti status barang.
+    accessor: (p) => (p.kirim_at ? 4 : !p.previsit_catatan ? 0 : !p.previsit_notified_at ? 1 : p.previsit_bermasalah ? 2 : 3),
     cell: (p) =>
-      !p.previsit_catatan ? (
+      p.kirim_at ? (
+        <div className="flex flex-col gap-0.5">
+          <Badge variant="secondary">{p.bast_at ? "sudah BAST" : p.terima_at ? "barang diterima" : "sudah berangkat"}</Badge>
+          <span className="text-muted-foreground text-xs">cek H-1 tak diperlukan lagi</span>
+        </div>
+      ) : !p.previsit_catatan ? (
         <span className="text-muted-foreground text-xs">belum dicek</span>
       ) : (
         <div className="flex flex-col gap-0.5">
           {!p.previsit_notified_at ? (
-            <Badge variant="destructive">belum terkirim</Badge>
+            <Badge variant="destructive">WA H-1 belum terkirim</Badge>
           ) : (
             <Badge variant={p.previsit_bermasalah ? "destructive" : "secondary"}>
               {p.previsit_bermasalah ? "perlu perhatian" : "aman"}
             </Badge>
           )}
           <span className="text-muted-foreground text-xs">
-            {!p.previsit_notified_at ? `sudah dicek, WA belum terkirim — ${p.previsit_catatan}` : p.previsit_catatan}
+            {!p.previsit_notified_at ? `sudah dicek, WA ke kurir belum terkirim — ${p.previsit_catatan}` : p.previsit_catatan}
           </span>
         </div>
       ),

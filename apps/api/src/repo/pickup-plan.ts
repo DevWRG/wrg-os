@@ -538,11 +538,12 @@ export async function runPreVisitCheck(opts: { to?: string; tanggal?: string } =
     WHERE p.tanggal = ${tanggalTarget}::date
       AND p.status = 'rencana'
       AND p.previsit_notified_at IS NULL
-      -- Barang SJ-nya sudah sampai (#TERIMA/#BAST) → tak perlu peringatan H-1.
+      -- SJ sudah #KIRIM (kurir berangkat) / #TERIMA / #BAST → peringatan H-1
+      -- tak berguna lagi.
       AND NOT EXISTS (
         SELECT 1 FROM shipment_tracking s
         WHERE p.sj_number IS NOT NULL AND lower(s.sj_number) = lower(p.sj_number)
-          AND s.status IN ('terima','bast'))
+          AND s.status IN ('dikirim','terima','bast'))
     ORDER BY p.kurir_wa_number NULLS LAST, p.customer_name
   `;
   const plans = rows.map(mapRow);

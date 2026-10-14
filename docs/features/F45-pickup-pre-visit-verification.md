@@ -247,7 +247,7 @@ daftar jadwal membaca shipment terbaru per SJ lewat `LEFT JOIN LATERAL` (tanpa m
 | Hashtag | Efek ke jadwal |
 |---|---|
 | `#KIRIM` | Shipment baru: `driver_name`/`driver_wa_number` diisi dari kurir jadwal aktif. Balasan bot menyebut jadwal; kalau pengirim bukan kurir terjadwal → tanda ⚠️ (bukan penolakan). |
-| `#TERIMA` | Tercatat; cron H-1 melewati plan yang SJ-nya sudah `terima`/`bast`. |
+| `#TERIMA` | Tercatat. Cron H-1 melewati plan yang SJ-nya sudah `dikirim`/`terima`/`bast`; kolom Cek H-1 berganti "sudah berangkat / barang diterima / sudah BAST". |
 | `#BAST` | Jadwal `rencana` bertujuan **kirim** → `selesai` otomatis. **kirim+tagih** sengaja tidak ditutup (BAST tak membuktikan penagihan) — bot mengingatkan tutup manual. |
 | `#BUKTI` | Tercatat (kolom Progres WA). |
 
