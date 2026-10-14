@@ -19,6 +19,13 @@ export interface PickupPlan {
   previsit_notified_at: string | null;
   previsit_catatan: string | null;
   previsit_bermasalah: boolean;
+  // Progres WA dari Shipment Tracking (lewat No. SJ) — null kalau belum #KIRIM.
+  kirim_status: string | null;
+  kirim_at: string | null;
+  kirim_by: string | null;
+  terima_at: string | null;
+  bast_at: string | null;
+  bukti_at: string | null;
 }
 
 // timeZone: "UTC" wajib — `new Date("2026-08-05")` itu tengah malam UTC, jadi
@@ -40,6 +47,20 @@ const statusTone = (s: string): "default" | "secondary" | "destructive" => {
   if (s === "selesai") return "secondary";
   return "default";
 };
+
+// Jam WIB singkat untuk langkah WA ("15 Okt 09.12").
+const jam = (iso: string) =>
+  new Date(iso).toLocaleString("id-ID", {
+    day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "Asia/Jakarta",
+  });
+
+// Langkah WA berurutan; yang sudah terjadi tampil tebal + jam, sisanya redup.
+const LANGKAH_WA: { label: string; at: (p: PickupPlan) => string | null }[] = [
+  { label: "#KIRIM", at: (p) => p.kirim_at },
+  { label: "#TERIMA", at: (p) => p.terima_at },
+  { label: "#BAST", at: (p) => p.bast_at },
+  { label: "#BUKTI", at: (p) => p.bukti_at },
+];
 
 const columns: DataColumn<PickupPlan>[] = [
   {
@@ -77,6 +98,31 @@ const columns: DataColumn<PickupPlan>[] = [
     ),
   },
   { id: "sj", header: "No. SJ", accessor: (p) => p.sj_number ?? "", cell: (p) => p.sj_number ?? "—" },
+  {
+    id: "progres",
+    header: "Progres WA",
+    // Urutan sort = berapa langkah sudah dilalui.
+    accessor: (p) => LANGKAH_WA.filter((l) => l.at(p)).length,
+    cell: (p) =>
+      !p.sj_number ? (
+        <span className="text-muted-foreground text-xs">tanpa SJ</span>
+      ) : !p.kirim_at ? (
+        <span className="text-muted-foreground text-xs">belum #KIRIM</span>
+      ) : (
+        <div className="flex flex-col gap-0.5 text-xs whitespace-nowrap">
+          {LANGKAH_WA.map((l) => {
+            const at = l.at(p);
+            return (
+              <span key={l.label} className={at ? "text-foreground" : "text-muted-foreground"}>
+                {at ? "✓" : "·"} {l.label}
+                {at ? ` — ${jam(at)}` : ""}
+              </span>
+            );
+          })}
+          {p.kirim_by && <span className="text-muted-foreground">oleh {p.kirim_by}</span>}
+        </div>
+      ),
+  },
   {
     id: "verifikasi",
     header: "Cek H-1",
