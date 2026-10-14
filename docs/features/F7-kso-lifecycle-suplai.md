@@ -36,7 +36,7 @@ untuk alat yang terpasang terus mengalir, dan apakah stok cukup untuk kebutuhan 
 | 13 | Penerima rekap stok = `KSO_SUPLAI_PO_HOD` (hod_key, mis. HoD Finance & SC); kosong = dilewati | daftar HoD tak boleh ditulis di kode |
 
 Angka prod 15 Okt (jendela Jul–Sep): 422 faskes×jenis dari 195 faskes → 242 rutin · 81 telat · 99 tanpa kiriman;
-185 item → 31 kritis · 22 perlu PO · 38 stok 0 · 94 aman. Rekap dry-run: 8 baru telat (Rocky 5, Yogi 3).
+185 item → 31 kritis · 25 perlu PO · 38 stok 0 · 91 aman. Rekap dry-run: 8 baru telat (Rocky 5, Yogi 3).
 
 ## API
 
