@@ -11,6 +11,7 @@ import { FilterSelect } from "@/components/ui/filter-select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
 import { AsetDialog } from "./aset-dialog";
+import { RekonKso } from "./rekon-kso";
 import { PREFIX_LABEL, ambil, rp, rpC, tgl, type AsetTetapRow, type DaftarAset, type Ringkasan } from "./types";
 
 const STATUS_OPSI = [
@@ -180,6 +181,8 @@ export function AsetTetapView({ ringkasan, canEdit }: { ringkasan: Ringkasan; ca
           <p className="text-muted-foreground mt-2 text-xs">Klik baris untuk menyaring daftar di bawah. Nilai uang hanya aset aktif.</p>
         </CardContent>
       </Card>
+
+      <RekonKso canEdit={canEdit} onChanged={muat} />
 
       {err && <div className="text-destructive text-sm">Gagal memuat daftar: {err}</div>}
       <DataTable

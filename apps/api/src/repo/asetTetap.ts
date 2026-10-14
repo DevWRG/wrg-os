@@ -361,14 +361,35 @@ export async function simpanOverrideAsetTetap(
   if (b.kso_asset_id != null) {
     const [k] = await sql`SELECT 1 FROM kso_asset WHERE id = ${b.kso_asset_id}`;
     if (!k) return { ok: false, error: "kso_asset_id tak ditemukan" };
+    // Satu alat KSO ↔ satu aset Accurate (fase 2): kalau tidak, revenue alat itu
+    // terhitung ganda saat rekonsiliasi. Indeks unik di migrasi 221 menutup balapan.
+    const [lain] = await sql<{ number: string }[]>`
+      SELECT a.number FROM fixed_asset_override o
+      JOIN accurate_fixed_asset a ON a.id = o.accurate_id
+      WHERE o.kso_asset_id = ${b.kso_asset_id} AND o.accurate_id <> ${id}`;
+    if (lain) return { ok: false, error: `alat KSO ini sudah tertaut ke ${lain.number} — lepas dulu di sana` };
   }
   const has = (k: keyof typeof b) => Object.prototype.hasOwnProperty.call(b, k);
   const catatan = has("catatan") ? (b.catatan?.trim() || null) : undefined;
   await sql`
-    INSERT INTO fixed_asset_override (accurate_id, tgl_perolehan_asli, kso_asset_id, catatan, updated_by, updated_at)
-    VALUES (${id}, ${b.tgl_perolehan_asli ?? null}, ${b.kso_asset_id ?? null}, ${catatan ?? null}, ${oleh}, now())
+    INSERT INTO fixed_asset_override (accurate_id, tgl_perolehan_asli, kso_asset_id, catatan, updated_by, updated_at, tautan_sumber, tautan_at)
+    VALUES (${id}, ${b.tgl_perolehan_asli ?? null}, ${b.kso_asset_id ?? null}, ${catatan ?? null}, ${oleh}, now(),
+            ${b.kso_asset_id != null ? "manual" : null}, ${b.kso_asset_id != null ? sql`now()` : null})
     ON CONFLICT (accurate_id) DO UPDATE SET
       tgl_perolehan_asli = ${has("tgl_perolehan_asli") ? sql`EXCLUDED.tgl_perolehan_asli` : sql`fixed_asset_override.tgl_perolehan_asli`},
+      -- Asal tautan hanya berubah bila nilainya BERUBAH: dialog mengirim ulang
+      -- kso_asset_id yang sama tiap simpan catatan, dan itu tak boleh mengubah
+      -- tautan otomatis menjadi 'manual'.
+      tautan_sumber = ${has("kso_asset_id")
+        ? sql`CASE WHEN EXCLUDED.kso_asset_id IS NULL THEN NULL
+                   WHEN fixed_asset_override.kso_asset_id IS NOT DISTINCT FROM EXCLUDED.kso_asset_id THEN fixed_asset_override.tautan_sumber
+                   ELSE 'manual' END`
+        : sql`fixed_asset_override.tautan_sumber`},
+      tautan_at = ${has("kso_asset_id")
+        ? sql`CASE WHEN EXCLUDED.kso_asset_id IS NULL THEN NULL
+                   WHEN fixed_asset_override.kso_asset_id IS NOT DISTINCT FROM EXCLUDED.kso_asset_id THEN fixed_asset_override.tautan_at
+                   ELSE now() END`
+        : sql`fixed_asset_override.tautan_at`},
       kso_asset_id = ${has("kso_asset_id") ? sql`EXCLUDED.kso_asset_id` : sql`fixed_asset_override.kso_asset_id`},
       catatan = ${has("catatan") ? sql`EXCLUDED.catatan` : sql`fixed_asset_override.catatan`},
       updated_by = EXCLUDED.updated_by, updated_at = now()
