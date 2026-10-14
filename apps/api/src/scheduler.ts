@@ -53,6 +53,7 @@ import { runInvoiceReminder, runOverdueRecap } from "./repo/faktur.js";
 import { runLeadAging } from "./repo/lead.js";
 import { runTrialReminder } from "./repo/demo-trial.js";
 import { runRekapKesehatanKso } from "./repo/kso-kesehatan.js";
+import { runRekapSuplaiKso } from "./repo/kso-suplai.js";
 import { runPreVisitCheck } from "./repo/pickup-plan.js";
 
 // Penjadwal agen in-process (Blueprint v2.3). Default MATI — aktif hanya bila
@@ -214,6 +215,9 @@ export function startScheduler(): ScheduleStatus {
   // F73 — rekap mingguan kesehatan KSO ke HoD (faskes yang baru memburuk) +
   // snapshot pembandingnya. MATI by default (keputusan user 13 Okt 2026).
   const ksoKesehatanEnabled = (process.env.KSO_KESEHATAN_REKAP_ENABLED ?? "false").toLowerCase() === "true";
+  // F7 — rekap mingguan suplai reagen KSO: faskes × jenis alat yang baru telat order ke
+  // HoD + item stok kurang ke KSO_SUPLAI_PO_HOD. Default MATI.
+  const ksoSuplaiEnabled = (process.env.KSO_SUPLAI_REKAP_ENABLED ?? "false").toLowerCase() === "true";
   // audit-finding-reminder (F60) — WA ke anggota grup tahap approval yang
   // pending & telat >N hari (dedup harian via reminded_at). Flag SENDIRI
   // (default off) — mengirim WA.
@@ -294,12 +298,12 @@ export function startScheduler(): ScheduleStatus {
   ];
 
   status = {
-    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled || watchpointSnapshotEnabled || preVisitEnabled || geoSweepEnabled || cashinResumeEnabled || kpiMeasureEnabled || seninBriefEnabled || auditFindingReminderEnabled || invoiceReminderEnabled || soPacingEnabled || fixedAssetSyncEnabled || poSyncEnabled || leadAgingEnabled || trialReminderEnabled || ksoKesehatanEnabled,
+    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled || watchpointSnapshotEnabled || preVisitEnabled || geoSweepEnabled || cashinResumeEnabled || kpiMeasureEnabled || seninBriefEnabled || auditFindingReminderEnabled || invoiceReminderEnabled || soPacingEnabled || fixedAssetSyncEnabled || poSyncEnabled || leadAgingEnabled || trialReminderEnabled || ksoKesehatanEnabled || ksoSuplaiEnabled,
     timezone,
     jobs: jobs.map((j) => ({ id: j.id, expr: j.expr, valid: cron.validate(j.expr) })),
   };
 
-  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled && !watchpointSnapshotEnabled && !preVisitEnabled && !geoSweepEnabled && !cashinResumeEnabled && !kpiMeasureEnabled && !seninBriefEnabled && !auditFindingReminderEnabled && !invoiceReminderEnabled && !soPacingEnabled && !fixedAssetSyncEnabled && !poSyncEnabled && !leadAgingEnabled && !trialReminderEnabled && !ksoKesehatanEnabled) {
+  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled && !watchpointSnapshotEnabled && !preVisitEnabled && !geoSweepEnabled && !cashinResumeEnabled && !kpiMeasureEnabled && !seninBriefEnabled && !auditFindingReminderEnabled && !invoiceReminderEnabled && !soPacingEnabled && !fixedAssetSyncEnabled && !poSyncEnabled && !leadAgingEnabled && !trialReminderEnabled && !ksoKesehatanEnabled && !ksoSuplaiEnabled) {
     console.log("[scheduler] semua *_SCHEDULE/_ENABLED flag != true — tidak dijadwalkan");
     return status;
   }
@@ -869,6 +873,25 @@ export function startScheduler(): ScheduleStatus {
       { timezone },
     );
     live.push(`kso-kesehatan-rekap=${ksoKesehatanExpr}`);
+  }
+
+  // F7 kso-suplai-rekap — Senin 07:20 WIB: faskes × jenis alat yang baru telat order
+  // (minggu ini) ke HoD cabang + item reagen stok < 2 bln ke HoD KSO_SUPLAI_PO_HOD.
+  const ksoSuplaiExpr = process.env.KSO_SUPLAI_REKAP_CRON ?? "20 7 * * 1";
+  if (ksoSuplaiEnabled && cron.validate(ksoSuplaiExpr)) {
+    cron.schedule(
+      ksoSuplaiExpr,
+      async () => {
+        try {
+          const r = await runRekapSuplaiKso();
+          console.log(`[scheduler] kso-suplai-rekap ${r.hari_ini} → ${r.baru_telat} baru telat, ${r.item_kurang} item kurang, ${r.kirim.filter((k) => k.terkirim).length} terkirim${r.lewati.length ? `, dilewati: ${r.lewati.join("; ")}` : ""}`);
+        } catch (e) {
+          console.error("[scheduler] kso-suplai-rekap gagal:", (e as Error).message);
+        }
+      },
+      { timezone },
+    );
+    live.push(`kso-suplai-rekap=${ksoSuplaiExpr}`);
   }
 
   // F65 lead-aging — hari kerja 09:00 WIB; libur (master_holiday) dilewati.
