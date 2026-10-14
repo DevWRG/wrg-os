@@ -62,6 +62,15 @@ const LANGKAH_WA: { label: string; at: (p: PickupPlan) => string | null }[] = [
   { label: "#BUKTI", at: (p) => p.bukti_at },
 ];
 
+// Status yang ditampilkan: selama masih "rencana", ikut progres WA SJ-nya.
+// Kolom DB tetap rencana/selesai/batal — #BAST yang menutupnya jadi selesai.
+const statusTampil = (p: PickupPlan): string => {
+  if (p.status !== "rencana" || !p.kirim_at) return p.status;
+  if (p.bast_at) return "BAST — tunggu tagih";
+  if (p.terima_at) return "diterima";
+  return "dalam pengiriman";
+};
+
 const columns: DataColumn<PickupPlan>[] = [
   {
     id: "tanggal",
@@ -162,14 +171,22 @@ const columns: DataColumn<PickupPlan>[] = [
     id: "status",
     header: "Status",
     sortable: true,
-    accessor: (p) => p.status,
-    cell: (p) => <Badge variant={statusTone(p.status)}>{p.status}</Badge>,
+    accessor: (p) => statusTampil(p),
+    cell: (p) => <Badge variant={statusTone(p.status)}>{statusTampil(p)}</Badge>,
   },
   {
     id: "aksi",
     header: "Aksi",
     align: "right",
-    cell: (p) => <PickupPlanRowActions id={p.id} customerName={p.customer_name} status={p.status} />,
+    cell: (p) => (
+      <PickupPlanRowActions
+        id={p.id}
+        customerName={p.customer_name}
+        status={p.status}
+        tujuan={p.tujuan}
+        sudahJalan={!!p.kirim_at}
+      />
+    ),
   },
 ];
 

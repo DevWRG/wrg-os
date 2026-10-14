@@ -361,6 +361,21 @@ export function catatanJadwalWa(input: {
   return sama || samaNama ? baris : `${baris}\n⚠️ Yang mengirim ${input.pelaku}, bukan kurir terjadwal.`;
 }
 
+// TRUE kalau SJ plan ini sudah #KIRIM (ada shipment berstatus apa pun selain
+// draft). Trip yang sudah berjalan tak boleh dibatalkan/dihapus/digeser dari
+// web — progresnya dikendalikan hashtag WA.
+export async function planSudahJalan(id: string): Promise<boolean> {
+  const sql = db();
+  if (!UUID_RE.test(id)) return false;
+  const [r] = await sql`
+    SELECT 1 FROM pickup_plan p
+    JOIN shipment_tracking s ON p.sj_number IS NOT NULL AND lower(s.sj_number) = lower(p.sj_number)
+    WHERE p.id = ${id}::uuid AND s.status <> 'draft'
+    LIMIT 1
+  `;
+  return !!r;
+}
+
 export async function deletePickupPlan(id: string): Promise<boolean> {
   const sql = db();
   if (!UUID_RE.test(id)) return false;

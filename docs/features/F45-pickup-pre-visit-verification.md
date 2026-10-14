@@ -254,3 +254,8 @@ daftar jadwal membaca shipment terbaru per SJ lewat `LEFT JOIN LATERAL` (tanpa m
 Helper di `repo/pickup-plan.ts`: `jadwalAktifUntukSj`, `tutupJadwalDariBast`,
 `catatanJadwalWa` (pure, diuji `pickup-plan.test.ts`). Kegagalan sambungan hanya
 di-log — tak membatalkan aksi shipping yang sudah tercatat.
+
+**Status & aksi ikut WA (14 Okt).** Selama `rencana`, status tampil mengikuti SJ:
+*dalam pengiriman* (#KIRIM) → *diterima* (#TERIMA) → *BAST — tunggu tagih* (kirim+tagih).
+Setelah #KIRIM: tombol cek H-1, batal, hapus disembunyikan dan server menolak (409)
+batal / geser tanggal / hapus (`planSudahJalan`). "Tandai selesai" tetap ada hanya untuk kirim+tagih.

@@ -34,7 +34,7 @@ import { MateriError, buatMateri, listMateri, ubahMateri, type BerkasMasuk } fro
 import { DriveError, driveSiap } from "./gdrive.js";
 import { CampaignError, buatKampanye, cariItem, detailKampanye, listKampanye, opsiBrand, ubahKampanye } from "./repo/campaign.js";
 import { listDemoTrial, getDemoTrial, bukaDemoTrial, ubahDemoTrial, tutupDemoTrial, rekapKonversi, resolusiFaskes, dealTerlihat, DemoTrialError } from "./repo/demo-trial.js";
-import { listPickupPlans, createPickupPlan, updatePickupPlan, deletePickupPlan, previewPreVisit, runPreVisitCheck, listKurirOptions, listSjOptions, resolveKurir, cekSj, SJ_WINDOW_DAYS } from "./repo/pickup-plan.js";
+import { listPickupPlans, createPickupPlan, updatePickupPlan, deletePickupPlan, previewPreVisit, runPreVisitCheck, listKurirOptions, listSjOptions, resolveKurir, cekSj, SJ_WINDOW_DAYS, planSudahJalan } from "./repo/pickup-plan.js";
 import {
   ingestInvoices,
   ingestAccurateWebhook,
@@ -6057,6 +6057,9 @@ app.patch("/pickup-plan/:id", async (c) => {
   if (body.kurir_wa_number != null && !(await resolveKurir(String(body.kurir_wa_number)))) {
     return c.json({ error: "kurir tidak ada di roster Kirim Tagih aktif" }, 400);
   }
+  if ((body.status === "batal" || body.tanggal != null) && (await planSudahJalan(c.req.param("id")))) {
+    return c.json({ error: "trip sudah #KIRIM lewat WA — tak bisa dibatalkan/digeser" }, 409);
+  }
   const row = await updatePickupPlan(c.req.param("id"), {
     status: body.status == null ? undefined : (String(body.status) as "rencana" | "selesai" | "batal"),
     tanggal: body.tanggal == null ? undefined : String(body.tanggal),
@@ -6068,6 +6071,9 @@ app.patch("/pickup-plan/:id", async (c) => {
 
 app.delete("/pickup-plan/:id", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  if (await planSudahJalan(c.req.param("id"))) {
+    return c.json({ error: "trip sudah #KIRIM lewat WA — tak bisa dihapus" }, 409);
+  }
   const ok = await deletePickupPlan(c.req.param("id"));
   return ok ? c.json({ ok: true }) : c.json({ error: "plan tak ditemukan" }, 404);
 });
