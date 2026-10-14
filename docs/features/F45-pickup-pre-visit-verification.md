@@ -237,3 +237,20 @@ mengesankan ketersediaan PIC sudah dicek.
 - Endpoint baru `GET /pickup-plan/options` → `{ kurir, sj, sj_window_days }`.
 - Pesan WA H-1 menyebut No. SJ.
 - Migrasi 150 tak lagi menyemai `access_permission` (fitur baru default tertutup).
+
+## Sambungan ke hashtag WA shipping (2026-10-14)
+
+Jadwal = rencana; Shipment Tracking (`#KIRIM/#TERIMA/#BAST/#BUKTI`) = kejadian nyata.
+Keduanya bertemu di **No. SJ** (case-insensitive). Progres TIDAK disalin ke `pickup_plan` —
+daftar jadwal membaca shipment terbaru per SJ lewat `LEFT JOIN LATERAL` (tanpa migrasi).
+
+| Hashtag | Efek ke jadwal |
+|---|---|
+| `#KIRIM` | Shipment baru: `driver_name`/`driver_wa_number` diisi dari kurir jadwal aktif. Balasan bot menyebut jadwal; kalau pengirim bukan kurir terjadwal → tanda ⚠️ (bukan penolakan). |
+| `#TERIMA` | Tercatat; cron H-1 melewati plan yang SJ-nya sudah `terima`/`bast`. |
+| `#BAST` | Jadwal `rencana` bertujuan **kirim** → `selesai` otomatis. **kirim+tagih** sengaja tidak ditutup (BAST tak membuktikan penagihan) — bot mengingatkan tutup manual. |
+| `#BUKTI` | Tercatat (kolom Progres WA). |
+
+Helper di `repo/pickup-plan.ts`: `jadwalAktifUntukSj`, `tutupJadwalDariBast`,
+`catatanJadwalWa` (pure, diuji `pickup-plan.test.ts`). Kegagalan sambungan hanya
+di-log — tak membatalkan aksi shipping yang sudah tercatat.

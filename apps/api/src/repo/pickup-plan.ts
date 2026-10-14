@@ -54,6 +54,15 @@ export interface PickupPlanRow {
   previsit_bermasalah: boolean;
   created_by: string | null;
   created_at: string;
+  // Progres WA dari Shipment Tracking (#KIRIM/#TERIMA/#BAST/#BUKTI), dicocokkan
+  // lewat No. SJ — DIBACA, bukan disalin, supaya satu sumber kebenaran.
+  // Semua null kalau plan tanpa SJ atau SJ belum di-#KIRIM.
+  kirim_status: string | null;
+  kirim_at: string | null;
+  kirim_by: string | null;
+  terima_at: string | null;
+  bast_at: string | null;
+  bukti_at: string | null;
 }
 
 // postgres.js mem-parse kolom date/timestamptz jadi objek Date — `String(x)`
@@ -93,8 +102,26 @@ function mapRow(r: Record<string, unknown>): PickupPlanRow {
     previsit_bermasalah: Boolean(r.previsit_bermasalah),
     created_by: r.created_by == null ? null : String(r.created_by),
     created_at: toIsoTs(r.created_at),
+    kirim_status: r.ship_status == null ? null : String(r.ship_status),
+    kirim_at: r.ship_kirim_at == null ? null : toIsoTs(r.ship_kirim_at),
+    kirim_by: r.ship_kirim_by == null ? null : String(r.ship_kirim_by),
+    terima_at: r.ship_terima_at == null ? null : toIsoTs(r.ship_terima_at),
+    bast_at: r.ship_bast_at == null ? null : toIsoTs(r.ship_bast_at),
+    bukti_at: r.ship_bukti_at == null ? null : toIsoTs(r.ship_bukti_at),
   };
 }
+
+// Shipment terbaru untuk SJ plan (nomor SJ dibandingkan case-insensitive, sama
+// dgn findBySjNumber di shipment-tracking.ts). Dipakai di SELECT daftar plan.
+const shipJoin = (sql: ReturnType<typeof db>) => sql`
+  LEFT JOIN LATERAL (
+    SELECT s.status AS ship_status, s.kirim_at AS ship_kirim_at, s.kirim_by AS ship_kirim_by,
+           s.terima_at AS ship_terima_at, s.bast_at AS ship_bast_at, s.bukti_at AS ship_bukti_at
+    FROM shipment_tracking s
+    WHERE p.sj_number IS NOT NULL AND lower(s.sj_number) = lower(p.sj_number)
+    ORDER BY s.created_at DESC
+    LIMIT 1
+  ) sh ON true`;
 
 export async function listPickupPlans(opts: {
   status?: string;
@@ -107,11 +134,12 @@ export async function listPickupPlans(opts: {
   // idiom sama endpoint lain di index.ts. Tanpa ini `LIMIT NaN` → 500.
   const limit = Math.min(Math.max(Number(opts.limit) || 200, 1), 1000);
   const rows = await sql`
-    SELECT * FROM pickup_plan
-    WHERE (${opts.status ?? null}::text IS NULL OR status = ${opts.status ?? null})
-      AND (${opts.from ?? null}::date IS NULL OR tanggal >= ${opts.from ?? null}::date)
-      AND (${opts.to ?? null}::date IS NULL OR tanggal <= ${opts.to ?? null}::date)
-    ORDER BY tanggal DESC, created_at DESC
+    SELECT p.*, sh.* FROM pickup_plan p
+    ${shipJoin(sql)}
+    WHERE (${opts.status ?? null}::text IS NULL OR p.status = ${opts.status ?? null})
+      AND (${opts.from ?? null}::date IS NULL OR p.tanggal >= ${opts.from ?? null}::date)
+      AND (${opts.to ?? null}::date IS NULL OR p.tanggal <= ${opts.to ?? null}::date)
+    ORDER BY p.tanggal DESC, p.created_at DESC
     LIMIT ${limit}
   `;
   return rows.map(mapRow);
@@ -251,6 +279,86 @@ export async function cekSj(raw: string): Promise<{ ok: true; number: string } |
   `;
   if (dup) return { ok: false, error: `SJ ${String(d.number)} sudah dijadwalkan (${toIsoDate(dup.tanggal)})` };
   return { ok: true, number: String(d.number) };
+}
+
+// ── Sambungan ke hashtag WA shipping (#KIRIM/#TERIMA/#BAST/#BUKTI) ──────────
+// Dipanggil dari repo/inbound.ts setelah aksi shipping SUKSES. Jadwal = rencana,
+// Shipment Tracking = kejadian nyata; keduanya bertemu di No. SJ.
+
+export interface JadwalSj {
+  id: string;
+  tanggal: string;
+  tujuan: PickupTujuan;
+  kurir_name: string | null;
+  kurir_wa_number: string | null;
+}
+
+// Jadwal aktif (status rencana) untuk satu SJ — paling dekat tanggalnya dulu.
+export async function jadwalAktifUntukSj(sjNumber: string): Promise<JadwalSj | null> {
+  const sql = db();
+  const [r] = await sql`
+    SELECT id, tanggal, tujuan, kurir_name, kurir_wa_number FROM pickup_plan
+    WHERE lower(sj_number) = lower(${sjNumber.trim()}) AND status = 'rencana'
+    ORDER BY tanggal, created_at
+    LIMIT 1
+  `;
+  if (!r) return null;
+  return {
+    id: String(r.id),
+    tanggal: toIsoDate(r.tanggal),
+    tujuan: String(r.tujuan) as PickupTujuan,
+    kurir_name: r.kurir_name == null ? null : String(r.kurir_name),
+    kurir_wa_number: r.kurir_wa_number == null ? null : String(r.kurir_wa_number),
+  };
+}
+
+// #BAST = barang diserahterimakan → trip KIRIM selesai. Trip "kirim+tagih"
+// SENGAJA tidak ditutup: BAST tak membuktikan penagihannya beres, jadi admin
+// yang menandai selesai. Mengembalikan baris yang ditutup.
+export async function tutupJadwalDariBast(sjNumber: string): Promise<JadwalSj[]> {
+  const sql = db();
+  const rows = await sql`
+    UPDATE pickup_plan SET status = 'selesai', updated_at = now()
+    WHERE lower(sj_number) = lower(${sjNumber.trim()}) AND status = 'rencana' AND tujuan = 'kirim'
+    RETURNING id, tanggal, tujuan, kurir_name, kurir_wa_number
+  `;
+  return rows.map((r) => ({
+    id: String(r.id),
+    tanggal: toIsoDate(r.tanggal),
+    tujuan: String(r.tujuan) as PickupTujuan,
+    kurir_name: r.kurir_name == null ? null : String(r.kurir_name),
+    kurir_wa_number: r.kurir_wa_number == null ? null : String(r.kurir_wa_number),
+  }));
+}
+
+// Baris tambahan untuk balasan bot shipping. Pure — diuji unit.
+// - kirim: sebut jadwalnya; kalau pengirim bukan kurir terjadwal, beri tanda
+//   (bukan penolakan — kurir pengganti itu wajar, tapi admin perlu tahu).
+// - bast: sebut jadwal yang otomatis ditutup, atau kenapa tidak (kirim+tagih).
+export function catatanJadwalWa(input: {
+  kind: "kirim" | "terima" | "bast" | "bukti";
+  jadwal: JadwalSj | null;
+  ditutup: JadwalSj[];
+  senderNumber: string;
+  pelaku: string;
+}): string | null {
+  const { kind, jadwal, ditutup } = input;
+  if (kind === "bast") {
+    if (ditutup.length) return `📅 Jadwal Kirim-Tagih ${ditutup[0].tanggal} ditandai *SELESAI*.`;
+    if (jadwal?.tujuan === "kirim+tagih") {
+      return `📅 Jadwal ${jadwal.tanggal} (kirim+tagih) belum ditutup — tandai selesai di dashboard setelah penagihan beres.`;
+    }
+    return null;
+  }
+  if (kind !== "kirim" || !jadwal) return null;
+  const terjadwal = jadwal.kurir_name ?? "-";
+  const sama =
+    !!jadwal.kurir_wa_number &&
+    normalizeWa(jadwal.kurir_wa_number) !== "" &&
+    normalizeWa(jadwal.kurir_wa_number) === normalizeWa(input.senderNumber);
+  const samaNama = !!jadwal.kurir_name && jadwal.kurir_name.trim().toLowerCase() === input.pelaku.trim().toLowerCase();
+  const baris = `📅 Jadwal ${jadwal.tanggal} · kurir ${terjadwal}`;
+  return sama || samaNama ? baris : `${baris}\n⚠️ Yang mengirim ${input.pelaku}, bukan kurir terjadwal.`;
 }
 
 export async function deletePickupPlan(id: string): Promise<boolean> {
@@ -426,11 +534,16 @@ export async function runPreVisitCheck(opts: { to?: string; tanggal?: string } =
   // `tanggal` bisa dioverride untuk test/recovery (mis. cron mati semalam).
   const tanggalTarget = opts.tanggal ?? besokWib();
   const rows = await sql`
-    SELECT * FROM pickup_plan
-    WHERE tanggal = ${tanggalTarget}::date
-      AND status = 'rencana'
-      AND previsit_notified_at IS NULL
-    ORDER BY kurir_wa_number NULLS LAST, customer_name
+    SELECT p.* FROM pickup_plan p
+    WHERE p.tanggal = ${tanggalTarget}::date
+      AND p.status = 'rencana'
+      AND p.previsit_notified_at IS NULL
+      -- Barang SJ-nya sudah sampai (#TERIMA/#BAST) → tak perlu peringatan H-1.
+      AND NOT EXISTS (
+        SELECT 1 FROM shipment_tracking s
+        WHERE p.sj_number IS NOT NULL AND lower(s.sj_number) = lower(p.sj_number)
+          AND s.status IN ('terima','bast'))
+    ORDER BY p.kurir_wa_number NULLS LAST, p.customer_name
   `;
   const plans = rows.map(mapRow);
   if (plans.length === 0) {
