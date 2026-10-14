@@ -247,10 +247,15 @@ daftar jadwal membaca shipment terbaru per SJ lewat `LEFT JOIN LATERAL` (tanpa m
 | Hashtag | Efek ke jadwal |
 |---|---|
 | `#KIRIM` | Shipment baru: `driver_name`/`driver_wa_number` diisi dari kurir jadwal aktif. Balasan bot menyebut jadwal; kalau pengirim bukan kurir terjadwal → tanda ⚠️ (bukan penolakan). |
-| `#TERIMA` | Tercatat; cron H-1 melewati plan yang SJ-nya sudah `terima`/`bast`. |
+| `#TERIMA` | Tercatat. Cron H-1 melewati plan yang SJ-nya sudah `dikirim`/`terima`/`bast`; kolom Cek H-1 berganti "sudah berangkat / barang diterima / sudah BAST". |
 | `#BAST` | Jadwal `rencana` bertujuan **kirim** → `selesai` otomatis. **kirim+tagih** sengaja tidak ditutup (BAST tak membuktikan penagihan) — bot mengingatkan tutup manual. |
 | `#BUKTI` | Tercatat (kolom Progres WA). |
 
 Helper di `repo/pickup-plan.ts`: `jadwalAktifUntukSj`, `tutupJadwalDariBast`,
 `catatanJadwalWa` (pure, diuji `pickup-plan.test.ts`). Kegagalan sambungan hanya
 di-log — tak membatalkan aksi shipping yang sudah tercatat.
+
+**Status & aksi ikut WA (14 Okt).** Selama `rencana`, status tampil mengikuti SJ:
+*dalam pengiriman* (#KIRIM) → *diterima* (#TERIMA) → *BAST — tunggu tagih* (kirim+tagih).
+Setelah #KIRIM: tombol cek H-1, batal, hapus disembunyikan dan server menolak (409)
+batal / geser tanggal / hapus (`planSudahJalan`). "Tandai selesai" tetap ada hanya untuk kirim+tagih.

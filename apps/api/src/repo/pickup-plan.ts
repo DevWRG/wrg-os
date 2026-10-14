@@ -361,6 +361,21 @@ export function catatanJadwalWa(input: {
   return sama || samaNama ? baris : `${baris}\n⚠️ Yang mengirim ${input.pelaku}, bukan kurir terjadwal.`;
 }
 
+// TRUE kalau SJ plan ini sudah #KIRIM (ada shipment berstatus apa pun selain
+// draft). Trip yang sudah berjalan tak boleh dibatalkan/dihapus/digeser dari
+// web — progresnya dikendalikan hashtag WA.
+export async function planSudahJalan(id: string): Promise<boolean> {
+  const sql = db();
+  if (!UUID_RE.test(id)) return false;
+  const [r] = await sql`
+    SELECT 1 FROM pickup_plan p
+    JOIN shipment_tracking s ON p.sj_number IS NOT NULL AND lower(s.sj_number) = lower(p.sj_number)
+    WHERE p.id = ${id}::uuid AND s.status <> 'draft'
+    LIMIT 1
+  `;
+  return !!r;
+}
+
 export async function deletePickupPlan(id: string): Promise<boolean> {
   const sql = db();
   if (!UUID_RE.test(id)) return false;
@@ -538,11 +553,12 @@ export async function runPreVisitCheck(opts: { to?: string; tanggal?: string } =
     WHERE p.tanggal = ${tanggalTarget}::date
       AND p.status = 'rencana'
       AND p.previsit_notified_at IS NULL
-      -- Barang SJ-nya sudah sampai (#TERIMA/#BAST) → tak perlu peringatan H-1.
+      -- SJ sudah #KIRIM (kurir berangkat) / #TERIMA / #BAST → peringatan H-1
+      -- tak berguna lagi.
       AND NOT EXISTS (
         SELECT 1 FROM shipment_tracking s
         WHERE p.sj_number IS NOT NULL AND lower(s.sj_number) = lower(p.sj_number)
-          AND s.status IN ('terima','bast'))
+          AND s.status IN ('dikirim','terima','bast'))
     ORDER BY p.kurir_wa_number NULLS LAST, p.customer_name
   `;
   const plans = rows.map(mapRow);

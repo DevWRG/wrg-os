@@ -38,10 +38,15 @@ export function PickupPlanRowActions({
   id,
   customerName,
   status,
+  tujuan,
+  sudahJalan,
 }: {
   id: string;
   customerName: string;
   status: string;
+  tujuan: string;
+  /** SJ sudah #KIRIM lewat WA — trip berjalan, jadwal dikendalikan hashtag. */
+  sudahJalan: boolean;
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
@@ -103,22 +108,29 @@ export function PickupPlanRowActions({
   return (
     <div className="flex justify-end gap-1">
       {dialog}
-      <Button variant="ghost" size="icon-sm" aria-label="Cek sekarang" onClick={cekSekarang} title="Cek libur & PIC">
-        <ShieldQuestion />
-      </Button>
-      {status === "rencana" && (
-        <>
-          <Button variant="ghost" size="icon-sm" aria-label="Tandai selesai" disabled={busy} onClick={() => setStatus("selesai")} title="Tandai selesai">
-            <CheckCircle2 />
-          </Button>
-          <Button variant="ghost" size="icon-sm" aria-label="Batalkan" disabled={busy} onClick={() => setStatus("batal")} title="Batalkan trip">
-            <XCircle />
-          </Button>
-        </>
+      {/* Setelah #KIRIM, trip dikendalikan hashtag WA: cek H-1, batal & hapus
+          tak masuk akal lagi (server juga menolaknya). Trip "kirim" ditutup
+          #BAST; "Tandai selesai" tersisa untuk kirim+tagih (tagihnya manual). */}
+      {!sudahJalan && (
+        <Button variant="ghost" size="icon-sm" aria-label="Cek sekarang" onClick={cekSekarang} title="Cek libur & PIC">
+          <ShieldQuestion />
+        </Button>
       )}
-      <Button variant="ghost" size="icon-sm" aria-label="Hapus" disabled={busy} onClick={hapus} className="text-danger hover:text-danger">
-        <Trash2 />
-      </Button>
+      {status === "rencana" && (!sudahJalan || tujuan !== "kirim") && (
+        <Button variant="ghost" size="icon-sm" aria-label="Tandai selesai" disabled={busy} onClick={() => setStatus("selesai")} title="Tandai selesai">
+          <CheckCircle2 />
+        </Button>
+      )}
+      {status === "rencana" && !sudahJalan && (
+        <Button variant="ghost" size="icon-sm" aria-label="Batalkan" disabled={busy} onClick={() => setStatus("batal")} title="Batalkan trip">
+          <XCircle />
+        </Button>
+      )}
+      {!sudahJalan && (
+        <Button variant="ghost" size="icon-sm" aria-label="Hapus" disabled={busy} onClick={hapus} className="text-danger hover:text-danger">
+          <Trash2 />
+        </Button>
+      )}
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="sm:max-w-lg">
