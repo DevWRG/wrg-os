@@ -1,4 +1,4 @@
--- 221 — F6 Product Performance Scorecard: peta lini produk → kategori kompetitor.
+-- 223 — F6 Product Performance Scorecard: peta lini produk → kategori kompetitor.
 --
 -- Deteksi kompetitor F131 (competitor_intel.produk_kategori) memakai kategori KASAR
 -- (POCT, Kimia Klinik, Hematologi, Imunologi, BGA, Alkes, BMHP, Reagen), sedangkan
@@ -9,7 +9,7 @@
 -- Kunci lini = (kategori_id, line_id) — id lini TIDAK unik sendirian (line '11' =
 -- 'POCT Cholestrol' di IVD tapi 'General Equipment' di NON IVD).
 --
--- Nomor 221: 219 terbakar (F27 dibuang, ledger dev mencatatnya), 220 = F169 fase 2.
+-- Nomor 223: 219 terbakar (F27 dibuang), 220 = F169 fase 2, 221/222 dipakai sesi lain di dev.
 
 CREATE TABLE IF NOT EXISTS product_line_kompetitor (
   kategori_id          text NOT NULL,
@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS product_line_kompetitor (
 );
 
 COMMENT ON TABLE product_line_kompetitor IS
-  'F6: lini Klasifikasi Produk (kategori_id, line_id) -> kategori kasar competitor_intel.produk_kategori (bagian sebelum "|"). Isi awal dari nama lini (migrasi 221); boleh diubah.';
+  'F6: lini Klasifikasi Produk (kategori_id, line_id) -> kategori kasar competitor_intel.produk_kategori (bagian sebelum "|"). Isi awal dari nama lini (migrasi 223); boleh diubah.';
 
 -- Isi awal dari nama lini (hanya bila tabel kosong, supaya editan tak tertimpa).
 INSERT INTO product_line_kompetitor (kategori_id, line_id, kategori_kompetitor)

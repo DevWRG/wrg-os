@@ -5,7 +5,7 @@ kinerja produk ditelusuri **kategori → lini → brand → item**. Issue #1753.
 
 - **Izin**: fitur `product-scorecard` (tertutup default — Sync Fitur + centang). Sebelum matriks diatur:
   Direktur, HoD, admin. **Margin** murni jabatan: HoD Business / Purchasing / admin / Direktur.
-- **Migrasi**: `221_product_scorecard.sql` — tabel peta `product_line_kompetitor` (lini → kategori kompetitor),
+- **Migrasi**: `223_product_scorecard.sql` — tabel peta `product_line_kompetitor` (lini → kategori kompetitor),
   isi awal 52 lini dari nama lini; boleh diedit tanpa deploy.
 
 ## Keputusan user (15 Okt 2026)
@@ -48,7 +48,7 @@ NON IVD). Item tanpa kode = "Belum terklasifikasi".
 
 ## Berkas
 
-`infra/postgres/init/221_product_scorecard.sql` · `apps/api/src/repo/product-scorecard.ts` (+ test) ·
+`infra/postgres/init/223_product_scorecard.sql` · `apps/api/src/repo/product-scorecard.ts` (+ test) ·
 `apps/api/src/index.ts` · `apps/web/src/lib/product-scorecard-access.ts` (+ test) · `apps/web/src/lib/nav.ts` ·
 `apps/web/src/app/api/product-scorecard/route.ts` · `apps/web/src/app/(dashboard)/product-scorecard/page.tsx` ·
 `apps/web/src/components/product-scorecard/scorecard-view.tsx`

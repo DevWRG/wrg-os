@@ -8,7 +8,7 @@
 //   - perputaran stok: stok Accurate vs rata kiriman (DO) 3 bulan tutup terakhir, dan
 //     jumlah item STOK MATI (stok > 0, tanpa kiriman maupun faktur 90 hari);
 //   - tekanan kompetitor (F131): faskes yang menyebut vendor pesaing di kategori yang
-//     dipetakan ke lini itu (product_line_kompetitor, migrasi 221), 365 hari;
+//     dipetakan ke lini itu (product_line_kompetitor, migrasi 223), 365 hari;
 //   - MARGIN hanya bila pemanggil boleh melihat HPP (BFF mengirim margin=1). HPP per
 //     item diringkas dulu dan hanya dipakai bila TIDAK ambigu (satu nilai) — pola sama
 //     dengan insentif.ts; satu kode bisa memetakan HPP Rp 665 rb s/d Rp 11,9 jt.
