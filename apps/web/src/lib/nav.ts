@@ -122,9 +122,6 @@ export const NAV: NavGroup[] = [
       { title: "Sales Calendar", url: "/calendar", icon: CalendarRange },
       { title: "Sales Analytics", url: "/sales-analytics", icon: Target, badge: "NEW" },
       { title: "Sales Alerts", url: "/sales-alerts", icon: Bell, badge: "NEW" },
-      // F48 PMF Scorecard — win-rate deal per brand x region. Kunci izin sendiri
-      // (featureKey = "pmf-scorecard"), default tertutup: butuh Sync Fitur + centang Direktur/HoD Sales.
-      { title: "PMF Scorecard", url: "/pmf-scorecard", icon: Target, badge: "NEW", show: canViewPmfScorecard },
       { title: "Competitor Intel", url: "/competitor", icon: Swords },
       // F65 Leads DICABUT dari menu 13 Okt 2026 (keputusan user): #LEADS kini
       // langsung jadi deal Prospecting di Pipeline. Tanpa item menu, Sync Fitur
@@ -241,6 +238,15 @@ export const NAV: NavGroup[] = [
       // F20 — status klik per tender LPSE/E-Catalog (pesan masuk -> barang
       // dikirim -> selesai) + reminder kalau macet. Tak ada hashtag WA.
       { title: "LPSE / E-Catalog", url: "/lpse-tender", icon: FileCheck2, badge: "NEW" },
+    ],
+  },
+  {
+    // Domain BUSINESS per board Roadmap (arahan user 15 Okt 2026) — dipisah dari "Sales".
+    label: "Business",
+    items: [
+      // F48 PMF Scorecard — win-rate deal per brand x region. Kunci izin sendiri
+      // (featureKey = "pmf-scorecard"), default tertutup: butuh Sync Fitur + centang Direktur/HoD Sales.
+      { title: "PMF Scorecard", url: "/pmf-scorecard", icon: Target, badge: "NEW", show: canViewPmfScorecard },
     ],
   },
   {
