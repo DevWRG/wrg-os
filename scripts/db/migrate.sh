@@ -70,14 +70,35 @@ fi
 if [ "$DRY" = 1 ]; then echo "(dry-run — tidak ada yg dijalankan)"; exit 0; fi
 
 # ── backup (disarankan utk prod) ──
+# Penjaga disk + retensi (15 Okt 2026): backup predeploy ±200 MB tiap deploy tak pernah
+# dibersihkan → 107 berkas / 13 GB → disk Mac mini penuh → Postgres prod PANIC "No space
+# left on device" dan down ±2 jam (17:59–19:46 WIB). Sekarang:
+#   - sisa disk < WRG_MIN_FREE_GB (default 5) → ABORT sebelum pg_dump (deploy berhenti,
+#     DB tetap hidup — lebih baik gagal deploy daripada DB crash);
+#   - sesudah backup ok, hanya WRG_BACKUP_KEEP (default 10) predeploy-* terbaru yang
+#     disimpan. Backup manual lain di folder ini (kso-pre-*, *.csv, *.dump) tak disentuh.
 if [ "$BACKUP" = 1 ]; then
   command -v pg_dump >/dev/null || { echo "ERROR: pg_dump tak ada (PATH postgres@16)."; exit 1; }
   mkdir -p "$BACKUP_DIR"
+  MIN_FREE_GB="${WRG_MIN_FREE_GB:-5}"
+  FREE_KB=$(df -Pk "$BACKUP_DIR" | awk 'NR==2 {print $4}')
+  if [ -n "$FREE_KB" ] && [ "$FREE_KB" -lt $((MIN_FREE_GB * 1024 * 1024)) ]; then
+    echo "ERROR: sisa disk $((FREE_KB / 1024)) MB < ${MIN_FREE_GB} GB — ABORT (tak backup, tak apply)."
+    echo "       Bersihkan disk dulu (mis. backup predeploy lama di $BACKUP_DIR, cache npm)."
+    exit 1
+  fi
   STAMP=$(date '+%Y%m%d-%H%M%S')
   OUT="$BACKUP_DIR/predeploy-$STAMP.sql.gz"
   echo "→ backup pg_dump → $OUT ..."
   pg_dump "$URL" | gzip > "$OUT" || { echo "ERROR: pg_dump gagal — ABORT (tak apply)."; exit 1; }
   echo "  backup ok ($(du -h "$OUT" | cut -f1))."
+  KEEP="${WRG_BACKUP_KEEP:-10}"
+  # ls -1t = terbaru dulu; buang sisanya. Pola dikunci ke predeploy-*.sql.gz saja.
+  LAMA=$(ls -1t "$BACKUP_DIR"/predeploy-*.sql.gz 2>/dev/null | tail -n +$((KEEP + 1)) || true)
+  if [ -n "$LAMA" ]; then
+    echo "$LAMA" | while IFS= read -r f; do rm -f -- "$f"; done
+    echo "  retensi: sisakan $KEEP backup predeploy terbaru, $(echo "$LAMA" | wc -l | tr -d ' ') lama dihapus."
+  fi
 fi
 
 # ── apply pending, per-file transaksional, catat ──
