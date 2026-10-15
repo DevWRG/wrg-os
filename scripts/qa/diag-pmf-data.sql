@@ -9,7 +9,8 @@
 --
 -- Jalankan di Mac mini (akses prod), simpan hasilnya, kirim balik:
 --   psql wrg_os_prod -X -f scripts/qa/diag-pmf-data.sql > /tmp/diag-pmf.txt
--- Isi hasil memuat nama brand/cabang/akun. Jangan commit ke repo (PUBLIC).
+-- Keluaran HANYA angka agregat: brand dianonimkan (Brand #n menurut jumlah deal), tak ada nama
+-- akun/cabang/AM. Aman dibaca peserta magang. Tetap jangan commit hasilnya ke repo (PUBLIC).
 
 \pset null '∅'
 \pset pager off
@@ -71,7 +72,7 @@ WHERE d.stage IN ('Closing-Won', 'Closing-Lost')
   AND NOT EXISTS (SELECT 1 FROM spt_state_log l
                    WHERE l.deal_id = d.deal_id AND l.changed_by = 'import-pameran');
 
-\echo '=== 5. Sel brand x region (non-impor): Won / Lost / n — 40 sel terbesar ==='
+\echo '=== 5. Sel brand x region (non-impor): Won / Lost / n — brand DIANONIMKAN (Brand #1 = terbanyak deal) ==='
 WITH rmap AS (
   SELECT upper(btrim(cabang)) AS cabang,
          CASE hod_key WHEN 'rocky' THEN 'East' WHEN 'yogi' THEN 'West' END AS region
@@ -86,12 +87,16 @@ WITH rmap AS (
     AND NOT EXISTS (SELECT 1 FROM spt_state_log l
                      WHERE l.deal_id = d.deal_id AND l.changed_by = 'import-pameran')
 )
-SELECT brand, region,
-       count(*) FILTER (WHERE stage = 'Closing-Won') AS won,
-       count(*) FILTER (WHERE stage = 'Closing-Lost') AS lost,
-       count(*) AS n,
-       round(100.0 * count(*) FILTER (WHERE stage = 'Closing-Won') / count(*), 0) AS win_rate_pct
-FROM t GROUP BY 1, 2 ORDER BY n DESC LIMIT 40;
+SELECT 'Brand #' || dense_rank() OVER (ORDER BY tb DESC, brand) AS brand_anon, region, won, lost, n, win_rate_pct
+FROM (
+  SELECT brand, region,
+         count(*) FILTER (WHERE stage = 'Closing-Won') AS won,
+         count(*) FILTER (WHERE stage = 'Closing-Lost') AS lost,
+         count(*) AS n,
+         round(100.0 * count(*) FILTER (WHERE stage = 'Closing-Won') / count(*), 0) AS win_rate_pct,
+         sum(count(*)) OVER (PARTITION BY brand) AS tb
+  FROM t GROUP BY brand, region
+) x ORDER BY tb DESC, brand, n DESC LIMIT 40;
 
 \echo '--- 5b. Berapa sel yang lolos ambang n >= 5 ---'
 WITH rmap AS (
