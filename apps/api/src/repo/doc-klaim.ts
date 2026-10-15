@@ -173,7 +173,7 @@ export async function pengajuDariAmId(amId: string, senderJid: string | null): P
 
 // Input manual via web (dipakai buat coba tanpa harus kirim WA sungguhan) —
 // TANPA OCR, semua field diketik langsung. model_used='manual' membedakan
-// dari hasil Gemini Vision (ocr_dry_run tetap false, bukan "OCR gagal", ini
+// dari hasil OCR (ocr_dry_run tetap false, bukan "OCR gagal", ini
 // memang tak pernah lewat OCR sama sekali).
 export interface CreateKlaimManualInput {
   employee_id?: string | null;

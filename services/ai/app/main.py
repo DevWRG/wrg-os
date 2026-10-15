@@ -1,3 +1,4 @@
+import base64
 import json
 from typing import Optional
 import os
@@ -65,7 +66,7 @@ from .schemas import (
     WeekendBriefingResponse,
 )
 from .executive import NAMA_PERUSAHAAN
-from .klaim import build_klaim_system, build_klaim_user, parse_klaim
+from .klaim import ekstrak_klaim, jalankan_tesseract
 from .koran import (
     apply_checksum,
     build_koran_ocr_system,
@@ -76,7 +77,7 @@ from .koran import (
     parse_text_pdf,
     pdf_page_images,
 )
-from .openrouter import chat_vision, klaim_models, koran_models
+from .openrouter import chat_vision, koran_models
 from .schemas import KoranLine, KoranParseRequest, KoranParseResponse
 
 # System prompt stabil (cache-friendly) — port dari legacy/crm wrg-daily SKILL.md.
@@ -350,38 +351,32 @@ def sales_doc(req: SalesDocRequest) -> SalesDocResponse:
 
 @app.post("/ocr-klaim", response_model=KlaimOcrResponse)
 def ocr_klaim(req: KlaimOcrRequest) -> KlaimOcrResponse:
-    """DOC #KLAIM Fase A: ekstrak isi foto dokumen (invoice/faktur/struk) via
-    Gemini Vision (OpenRouter). dry_run / tanpa OPENROUTER_API_KEY → SEMUA field
-    null (TIDAK ada template fabrikasi — beda dari /sales-doc, gambar sungguhan
-    tak bisa dikira-kira isinya)."""
-    use_llm = not req.dry_run and bool(os.environ.get("OPENROUTER_API_KEY"))
-    if not use_llm:
-        return KlaimOcrResponse(model="dry-run", dry_run=True)
+    """DOC #KLAIM: baca foto nota dengan Tesseract LOKAL (tanpa token LLM —
+    keputusan user 15 Okt 2026), lalu cari nomor/tanggal/nominal/pihak dengan
+    pola (app/klaim.py). Field yang tak yakin = null, bukan tebakan.
+
+    `dry_run` sengaja diabaikan: Tesseract gratis & lokal, tak ada biaya yang
+    perlu dicegah. Gagal (binary tak ada / gambar rusak) → dry_run=True supaya
+    apps/api tetap menyimpan fotonya untuk ditindaklanjuti manual."""
+    ext = {"image/png": ".png", "image/webp": ".webp", "image/jpeg": ".jpg", "image/jpg": ".jpg"}.get(
+        (req.mime_type or "").lower(), ".jpg"
+    )
     try:
-        text, model_used, _, _ = chat_vision(
-            build_klaim_system(),
-            build_klaim_user(req.caption),
-            req.image_base64,
-            req.mime_type,
-            max_tokens=3000,
-            models=klaim_models(),
-            # Transkripsi nota tak butuh penalaran panjang — reasoning "low"
-            # memberi hasil sama (uji 14 Okt: 4 detik vs 20 detik) dan tak
-            # menghabiskan plafon token.
-            reasoning_effort="low",
-        )
-        fields = parse_klaim(text)
+        image = base64.b64decode(req.image_base64)
+        _, teks = jalankan_tesseract(image, ext)
+        fields = ekstrak_klaim(teks)
     except Exception as e:  # noqa: BLE001 — degradasi ke dry-run, endpoint tetap 200
-        # Dulu ditelan diam: OCR gagal berminggu-minggu tanpa jejak di log.
-        print(f"[ocr-klaim] gagal, simpan sebagai dry-run: {e}", flush=True)
-        return KlaimOcrResponse(model="dry-run-fallback", dry_run=True)
+        print(f"[ocr-klaim] tesseract gagal, simpan sebagai dry-run: {e}", flush=True)
+        return KlaimOcrResponse(model="tesseract-gagal", dry_run=True)
+    if not fields["raw_text"]:
+        return KlaimOcrResponse(model="tesseract", dry_run=False)
     return KlaimOcrResponse(
         raw_text=fields["raw_text"],
         nomor_dokumen=fields["nomor_dokumen"],
         tanggal_dokumen=fields["tanggal_dokumen"],
         nominal=fields["nominal"],
         pihak=fields["pihak"],
-        model=model_used,
+        model="tesseract",
         dry_run=False,
     )
 
