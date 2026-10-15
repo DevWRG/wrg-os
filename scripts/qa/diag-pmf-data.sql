@@ -22,7 +22,7 @@ SELECT stage, count(*) AS n FROM deal GROUP BY 1 ORDER BY 2 DESC;
 WITH t AS (
   SELECT d.deal_id, d.stage,
          (SELECT max(l.occurred_at) FROM spt_state_log l
-           WHERE l.deal_id = d.deal_id AND l.to_stage = d.stage) AS tgl_log,
+           WHERE l.deal_id = d.deal_id AND l.to_stage = d.stage::text) AS tgl_log,
          EXISTS (SELECT 1 FROM spt_state_log l
                   WHERE l.deal_id = d.deal_id AND l.changed_by = 'import-pameran') AS impor
   FROM deal d WHERE d.stage IN ('Closing-Won', 'Closing-Lost')
@@ -127,7 +127,7 @@ FROM deal WHERE stage = 'Closing-Lost' GROUP BY 1 ORDER BY 2 DESC;
 SELECT to_char(date_trunc('quarter', tgl), 'YYYY-"Q"Q') AS kuartal, count(*) AS n
 FROM (
   SELECT (SELECT max(l.occurred_at) FROM spt_state_log l
-           WHERE l.deal_id = d.deal_id AND l.to_stage = d.stage) AS tgl
+           WHERE l.deal_id = d.deal_id AND l.to_stage = d.stage::text) AS tgl
   FROM deal d
   WHERE d.stage IN ('Closing-Won', 'Closing-Lost')
     AND NOT EXISTS (SELECT 1 FROM spt_state_log l

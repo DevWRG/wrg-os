@@ -210,7 +210,7 @@ export async function getPmfScorecard(tahunIn?: number, kuartalIn?: number): Pro
       LEFT JOIN master_user mu ON mu.am_id = d.am_id::text
       CROSS JOIN LATERAL (
         SELECT (SELECT max(l.occurred_at) FROM spt_state_log l
-                 WHERE l.deal_id = d.deal_id AND l.to_stage = d.stage) AS tgl_log
+                 WHERE l.deal_id = d.deal_id AND l.to_stage = d.stage::text) AS tgl_log
       ) x
       WHERE d.stage IN ('Closing-Won', 'Closing-Lost')
         AND (coalesce(x.tgl_log, d.stage_entered_at) AT TIME ZONE 'Asia/Jakarta')::date
