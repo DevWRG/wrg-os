@@ -43,6 +43,7 @@ import { canViewPricebook, canViewPricebookSummary } from "@/lib/pricebook-acces
 import { canViewKlasifikasi } from "@/lib/klasifikasi-access";
 import { canViewKsoKontrak } from "@/lib/kso-kontrak-access";
 import { canViewAsetTetap } from "@/lib/aset-tetap-access";
+import { canViewPmfScorecard } from "@/lib/pmf-access";
 import { canViewRaportList } from "@/lib/raport-access";
 import { canViewExecutive } from "@/lib/executive-access";
 import { canBukaDaftarAlat, canViewKso } from "@/lib/kso-access";
@@ -121,6 +122,9 @@ export const NAV: NavGroup[] = [
       { title: "Sales Calendar", url: "/calendar", icon: CalendarRange },
       { title: "Sales Analytics", url: "/sales-analytics", icon: Target, badge: "NEW" },
       { title: "Sales Alerts", url: "/sales-alerts", icon: Bell, badge: "NEW" },
+      // F48 PMF Scorecard — win-rate deal per brand x region. Kunci izin sendiri
+      // (featureKey = "pmf-scorecard"), default tertutup: butuh Sync Fitur + centang Direktur/HoD Sales.
+      { title: "PMF Scorecard", url: "/pmf-scorecard", icon: Target, badge: "NEW", show: canViewPmfScorecard },
       { title: "Competitor Intel", url: "/competitor", icon: Swords },
       // F65 Leads DICABUT dari menu 13 Okt 2026 (keputusan user): #LEADS kini
       // langsung jadi deal Prospecting di Pipeline. Tanpa item menu, Sync Fitur
