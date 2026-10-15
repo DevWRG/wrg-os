@@ -66,3 +66,7 @@ updates:
     ignore:
       - dependency-name: "uvicorn"
       - dependency-name: "fastapi"
+      # pydantic 2.14 juga menuntut Python >=3.10 (#1748 gagal pip install di CI 3.9).
+      # Hanya 2.14+ yang diabaikan — patch 2.13.x tetap datang.
+      - dependency-name: "pydantic"
+        versions: [">=2.14"]
