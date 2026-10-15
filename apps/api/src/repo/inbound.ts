@@ -1624,13 +1624,16 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
     }
     const k = result as DocKlaimRow;
     const msg = k.ocr_dry_run
-      ? `📥 Foto #KLAIM tersimpan. OCR belum aktif (mode dry-run) — akan ditindaklanjuti manual.`
+      ? `📥 Foto #KLAIM tersimpan, tapi teksnya belum bisa dibaca otomatis — HoD akan mengisi dari foto.`
       : [
           "✅ #KLAIM diterima, foto tersimpan.",
           k.nomor_dokumen ? `No. Dokumen: ${k.nomor_dokumen}` : null,
           k.tanggal_dokumen ? `Tanggal: ${k.tanggal_dokumen}` : null,
           k.nominal ? `Nominal: ${k.nominal}` : null,
           k.pihak ? `Pihak: ${k.pihak}` : null,
+          // OCR lokal (Tesseract) sering tak menemukan total di nota tulisan
+          // tangan/foto buram — beri tahu, jangan diam.
+          k.nominal ? null : "Nominal belum terbaca otomatis — HoD akan mengisi dari foto.",
           k.hod_nama
             ? `Menunggu persetujuan HoD: ${k.hod_nama}.`
             : "HoD-mu belum tercatat — klaim akan diputus Direktur/admin.",

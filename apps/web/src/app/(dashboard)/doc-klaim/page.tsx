@@ -44,7 +44,7 @@ export default async function DocKlaimPage() {
     <>
       <PageHeader
         title="Klaim OCR"
-        description="Klaim reimburse dana karyawan (kebutuhan kantor/perjalanan dinas) — foto nota masuk via WA #KLAIM, diekstrak otomatis (Gemini Vision), disetujui HoD pengaju, lalu ditandai dibayar oleh Finance."
+        description="Klaim reimburse dana karyawan (kebutuhan kantor/perjalanan dinas) — foto nota masuk via WA #KLAIM, dibaca otomatis (OCR Tesseract, tanpa biaya), disetujui HoD pengaju, lalu ditandai dibayar oleh Finance."
       />
       <DocKlaimView klaim={klaim} employees={employees} pemutus={pemutus} />
     </>
