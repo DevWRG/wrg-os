@@ -363,11 +363,17 @@ def ocr_klaim(req: KlaimOcrRequest) -> KlaimOcrResponse:
             build_klaim_user(req.caption),
             req.image_base64,
             req.mime_type,
-            max_tokens=1500,
+            max_tokens=3000,
             models=klaim_models(),
+            # Transkripsi nota tak butuh penalaran panjang — reasoning "low"
+            # memberi hasil sama (uji 14 Okt: 4 detik vs 20 detik) dan tak
+            # menghabiskan plafon token.
+            reasoning_effort="low",
         )
         fields = parse_klaim(text)
-    except Exception:  # noqa: BLE001 — degradasi ke dry-run, endpoint tetap 200
+    except Exception as e:  # noqa: BLE001 — degradasi ke dry-run, endpoint tetap 200
+        # Dulu ditelan diam: OCR gagal berminggu-minggu tanpa jejak di log.
+        print(f"[ocr-klaim] gagal, simpan sebagai dry-run: {e}", flush=True)
         return KlaimOcrResponse(model="dry-run-fallback", dry_run=True)
     return KlaimOcrResponse(
         raw_text=fields["raw_text"],

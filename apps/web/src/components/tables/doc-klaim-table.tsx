@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
 import { DocKlaimTriage } from "@/components/crm/doc-klaim-triage";
 import { DocKlaimApproval } from "@/components/crm/doc-klaim-approval";
+import type { PemutusKlaim } from "@/lib/doc-klaim-access";
 import { DocKlaimDeleteButton } from "@/components/crm/doc-klaim-delete-button";
 
 export interface DocKlaim {
@@ -21,6 +22,10 @@ export interface DocKlaim {
   ocr_dry_run: boolean;
   kategori: string | null;
   status: string;
+  am_id: string | null;
+  hod_key: string | null;
+  hod_nama: string | null;
+  dibayar_by_name: string | null;
   decided_by_name: string | null;
   decided_at: string | null;
   nominal_disetujui: number | null;
@@ -45,7 +50,7 @@ const KATEGORI_LABEL: Record<string, string> = {
 const fmt = (iso: string) => new Date(iso).toLocaleString("id-ID", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
 const rupiah = (n: number) => `Rp${Math.round(n).toLocaleString("id-ID")}`;
 
-export function DocKlaimTable({ klaim }: { klaim: DocKlaim[] }) {
+export function DocKlaimTable({ klaim, pemutus }: { klaim: DocKlaim[]; pemutus: PemutusKlaim }) {
   const columns: DataColumn<DocKlaim>[] = [
     {
       id: "masuk",
@@ -86,7 +91,18 @@ export function DocKlaimTable({ klaim }: { klaim: DocKlaim[] }) {
     {
       id: "foto",
       header: "Foto",
-      cell: (k) => <span className="text-muted-foreground max-w-40 truncate text-xs" title={k.media_path ?? ""}>{k.media_path ?? "-"}</span>,
+      // Thumbnail nota — klik membuka ukuran penuh di tab baru. Dulu kolom ini
+      // cuma menampilkan path berkas di server, jadi approver menyetujui
+      // reimburse tanpa bisa melihat struknya.
+      cell: (k) =>
+        k.media_path ? (
+          <a href={`/api/doc-klaim/${k.id}/foto`} target="_blank" rel="noopener noreferrer" title="Buka foto nota">
+            {/* eslint-disable-next-line @next/next/no-img-element -- foto dari BFF ber-gerbang, bukan aset statis */}
+            <img src={`/api/doc-klaim/${k.id}/foto`} alt="Foto nota" loading="lazy" className="h-14 w-14 rounded border object-cover" />
+          </a>
+        ) : (
+          <span className="text-muted-foreground text-xs">tanpa foto (input manual)</span>
+        ),
     },
     {
       id: "kategori",
@@ -106,6 +122,12 @@ export function DocKlaimTable({ klaim }: { klaim: DocKlaim[] }) {
           <Badge variant={STATUS_VARIANT[k.status] ?? "outline"}>{STATUS_LABEL[k.status] ?? k.status}</Badge>
           {k.decided_by_name && <span className="text-muted-foreground text-xs">oleh {k.decided_by_name}</span>}
           {k.nominal_disetujui != null && <span className="text-muted-foreground text-xs">Disetujui: {rupiah(k.nominal_disetujui)}</span>}
+          {k.status === "baru" && (
+            <span className="text-muted-foreground text-xs">
+              {k.hod_nama ? `Approver: HoD ${k.hod_nama}` : "Approver: Direktur/admin"}
+            </span>
+          )}
+          {k.dibayar_by_name && <span className="text-muted-foreground text-xs">dibayar oleh {k.dibayar_by_name}</span>}
         </div>
       ),
     },
@@ -115,8 +137,9 @@ export function DocKlaimTable({ klaim }: { klaim: DocKlaim[] }) {
       align: "right",
       cell: (k) => (
         <div className="flex items-center justify-end gap-1">
-          <DocKlaimApproval id={k.id} status={k.status} />
-          {k.status !== "dibayar" && (
+          <DocKlaimApproval klaim={k} pemutus={pemutus} />
+          {/* Hanya klaim yang belum diputuskan yang boleh dihapus (server juga menolak). */}
+          {k.status === "baru" && (
             <DocKlaimDeleteButton id={k.id} label={k.employee_nama ?? k.sender_name ?? k.id} />
           )}
         </div>

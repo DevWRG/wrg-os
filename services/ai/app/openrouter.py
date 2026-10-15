@@ -188,6 +188,7 @@ def chat_vision(
     mime_type: str,
     max_tokens: int = 1500,
     models: Optional[List[str]] = None,
+    reasoning_effort: Optional[str] = None,
 ) -> Tuple[str, str, Optional[int], Optional[int]]:
     """Sama seperti chat(), tapi `content` user berupa multi-part (teks + gambar
     data-URI base64) — format OpenRouter/OpenAI vision, dipakai model yg
@@ -224,11 +225,23 @@ def chat_vision(
                             },
                         ],
                         "max_tokens": max_tokens,
+                        # Gemini 3.x berpikir dulu, dan token reasoning MEMAKAN
+                        # max_tokens: nota #KLAIM 14 Okt 2026 = 1.440 dari 1.500
+                        # habis buat reasoning → JSON terpotong, semua field
+                        # kosong tanpa error. Pemanggil yang tugasnya transkripsi
+                        # (bukan penalaran) boleh membatasinya. Reasoning TAK bisa
+                        # dimatikan total untuk model ini (OpenRouter balas 400).
+                        # Default None = perilaku lama (dipakai pembaca koran).
+                        **({"reasoning": {"effort": reasoning_effort}} if reasoning_effort else {}),
                     },
                 )
                 resp.raise_for_status()
                 data = resp.json()
                 text = data["choices"][0]["message"]["content"]
+                if reasoning_effort and (data["choices"][0].get("finish_reason") or "") == "length":
+                    # Jawaban terpotong plafon token — jangan diperlakukan
+                    # sebagai hasil sah; coba model berikutnya.
+                    raise RuntimeError(f"{model}: jawaban terpotong max_tokens={max_tokens}")
                 usage = data.get("usage") or {}
                 return (
                     text,
