@@ -176,7 +176,8 @@ function Agenda({ baris, onBuka }: { baris: BarisAgenda[]; onBuka: (id: number) 
               {isi.map((b) => (
                 <li key={`${b.jenis}-${b.rencana_id}`}>
                   <button type="button" onClick={() => onBuka(b.rencana_id!)} className="hover:bg-accent flex w-full flex-wrap items-center justify-between gap-2 rounded px-2 py-1 text-left text-sm">
-                    <span><b>{b.jenis}{b.urut ?? ""}</b> · {b.faskes_nama} · {b.alat_nama} · {rpJt(b.capex)}</span>
+                    {/* nomor tampil = urutan di dalam jenisnya (urut DB untuk Agenda B dimulai 101) */}
+                    <span><b>{b.jenis}{isi.filter((x) => x.jenis === b.jenis).indexOf(b) + 1}</b> · {b.faskes_nama} · {b.alat_nama} · {rpJt(b.capex)}</span>
                     <span className="flex items-center gap-2"><PolaGerbang pola={b.pola_gerbang} /><span className="text-muted-foreground text-xs">pendapat HOD {b.pendapat_hod_masuk ?? 0}</span></span>
                   </button>
                 </li>
