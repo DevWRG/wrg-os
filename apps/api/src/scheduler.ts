@@ -1,5 +1,5 @@
 import cron from "node-cron";
-import { runAgenda, runDireksi, runLewatBatasHod, runPendapatBelumMasuk, runPenawaranPagi, runVerifikasiBulan6 } from "./repo/kso-jadwal.js";
+import { runAgenda, runDireksi, runLewatBatasHod, runPendapatBelumMasuk, runPenawaranPagi, runSegarkanReferensi, runVerifikasiBulan6 } from "./repo/kso-jadwal.js";
 
 import { db, isDbEnabled } from "./db.js";
 import {
@@ -909,6 +909,8 @@ export function startScheduler(): ScheduleStatus {
       ["kso-lewat-batas-hod", process.env.KSO_LEWAT_BATAS_CRON ?? "5 7-21 * * *", () => runLewatBatasHod()],
       ["kso-penawaran-pagi", process.env.KSO_PENAWARAN_CRON ?? "0 7 * * 1-5", async () => ((await isWorkday()) ? runPenawaranPagi() : { lewati: "libur" })],
       ["kso-verifikasi-bulan6", process.env.KSO_VERIFIKASI_CRON ?? "0 8 6 * *", () => runVerifikasiBulan6()],
+      // sesudah refresh AR harian (~18.00) & sebelum orang bekerja: piutang di gerbang 5 = kemarin malam
+      ["kso-segarkan-referensi", process.env.KSO_REFRESH_CRON ?? "30 1 * * *", () => runSegarkanReferensi()],
     ];
     for (const [nama, expr, fn] of jobKso) {
       if (!cron.validate(expr)) { console.error(`[scheduler] ${nama}: cron tidak sah "${expr}"`); continue; }
