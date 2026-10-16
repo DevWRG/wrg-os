@@ -33,6 +33,7 @@ import { listLeads, getLead, buatLeadWeb, updateLead, konversiLead, cariDuplikat
 import { OnboardingError, cancelCase as cancelOnboarding, createTemplate as createOnboardingTemplate, getCase as getOnboardingCase, listCandidates as listOnboardingCandidates, listCases as listOnboardingCases, listTemplates as listOnboardingTemplates, startCase as startOnboarding, updateItem as updateOnboardingItem, updateTemplate as updateOnboardingTemplate } from "./repo/onboarding.js";
 import { MateriError, buatMateri, listMateri, ubahMateri, type BerkasMasuk } from "./repo/materi.js";
 import { DriveError, driveSiap } from "./gdrive.js";
+import { CnError, buatKontrak as buatKontrakCn, buatPengajuan as buatPengajuanCn, cariCustomer as cariCustomerCn, getPengajuan as getPengajuanCn, laporan as laporanCn, listFakturKandidat, listKontrak as listKontrakCn, listPengajuan as listPengajuanCn, pindahStatus as pindahStatusCn, ubahStatusKontrakCn } from "./repo/cn.js";
 import { CampaignError, buatKampanye, cariItem, detailKampanye, listKampanye, opsiBrand, ubahKampanye } from "./repo/campaign.js";
 import { listDemoTrial, getDemoTrial, bukaDemoTrial, ubahDemoTrial, tutupDemoTrial, rekapKonversi, resolusiFaskes, dealTerlihat, DemoTrialError } from "./repo/demo-trial.js";
 import { listPickupPlans, createPickupPlan, updatePickupPlan, deletePickupPlan, previewPreVisit, runPreVisitCheck, listKurirOptions, listSjOptions, resolveKurir, cekSj, SJ_WINDOW_DAYS, planSudahJalan } from "./repo/pickup-plan.js";
@@ -5988,6 +5989,87 @@ app.patch("/materi/:id", async (c) => {
     const { body, berkas } = await bacaMateri(c);
     return c.json(await ubahMateri(c.req.param("id"), body, berkas, typeof body.oleh === "string" ? body.oleh : null));
   } catch (e) { return materiErr(c, e); }
+});
+
+// F151 CN (Kredit Note) Lifecycle (migrasi 230, repo/cn.ts). Gerbang menu/izin (requireFeature "/cn") dan hak
+// per tahap (HoD Sales/HoD Business/Finance/GA, apps/web/src/lib/cn-access.ts) di BFF. `oleh` dari sesi (BFF).
+const cnErr = (c: { json: (b: unknown, s?: number) => Response }, e: unknown) => {
+  if (e instanceof CnError) return c.json({ error: e.message, field: e.field }, e.status);
+  // 42P01 = tabel belum ada (migrasi 230 belum diterapkan) → 503, bukan 500 buram.
+  if ((e as { code?: string })?.code === "42P01") return c.json({ error: "migration_pending" }, 503);
+  return c.json({ error: "gagal memproses CN" }, 500);
+};
+const cnId = (v: string): number | null => (/^\d{1,15}$/.test(v) ? Number(v) : null);
+const cnBody = async (c: { req: { json: () => Promise<unknown> } }): Promise<Record<string, unknown>> => {
+  const b = await c.req.json().catch(() => null);
+  if (!b || typeof b !== "object" || Array.isArray(b)) throw new CnError(400, "body bukan JSON object yang sah");
+  return b as Record<string, unknown>;
+};
+const cnOleh = (b: Record<string, unknown>): string | null => (typeof b.oleh === "string" && b.oleh.trim() ? b.oleh.trim() : null);
+app.get("/cn/customers", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try { return c.json({ items: await cariCustomerCn(c.req.query("q") ?? null) }); }
+  catch (e) { return cnErr(c, e); }
+});
+app.get("/cn/kontrak", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try { return c.json(await listKontrakCn({ status: c.req.query("status"), q: c.req.query("q"), customer_id: cnId(c.req.query("customer_id") ?? "") })); }
+  catch (e) { return cnErr(c, e); }
+});
+app.post("/cn/kontrak", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try { const b = await cnBody(c); return c.json(await buatKontrakCn(b, cnOleh(b)), 201); }
+  catch (e) { return cnErr(c, e); }
+});
+app.post("/cn/kontrak/:id/status", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const id = cnId(c.req.param("id"));
+    if (id === null) return c.json({ error: "id tidak valid" }, 400);
+    const b = await cnBody(c);
+    return c.json(await ubahStatusKontrakCn(id, b.ke, cnOleh(b)));
+  } catch (e) { return cnErr(c, e); }
+});
+app.get("/cn/kontrak/:id/faktur", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const id = cnId(c.req.param("id"));
+    if (id === null) return c.json({ error: "id tidak valid" }, 400);
+    return c.json(await listFakturKandidat(id));
+  } catch (e) { return cnErr(c, e); }
+});
+app.get("/cn/laporan", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try { return c.json(await laporanCn({ dari: c.req.query("dari"), sampai: c.req.query("sampai") })); }
+  catch (e) { return cnErr(c, e); }
+});
+app.get("/cn/pengajuan", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try { return c.json(await listPengajuanCn({ status: c.req.query("status"), q: c.req.query("q"), customer_id: cnId(c.req.query("customer_id") ?? "") })); }
+  catch (e) { return cnErr(c, e); }
+});
+app.post("/cn/pengajuan", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try { const b = await cnBody(c); return c.json(await buatPengajuanCn(b, cnOleh(b)), 201); }
+  catch (e) { return cnErr(c, e); }
+});
+app.get("/cn/pengajuan/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const id = cnId(c.req.param("id"));
+    if (id === null) return c.json({ error: "id tidak valid" }, 400);
+    const r = await getPengajuanCn(id);
+    return r ? c.json(r) : c.json({ error: "pengajuan CN tidak ditemukan" }, 404);
+  } catch (e) { return cnErr(c, e); }
+});
+app.post("/cn/pengajuan/:id/status", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const id = cnId(c.req.param("id"));
+    if (id === null) return c.json({ error: "id tidak valid" }, 400);
+    const b = await cnBody(c);
+    return c.json(await pindahStatusCn(id, b, cnOleh(b)));
+  } catch (e) { return cnErr(c, e); }
 });
 
 // F74 Campaign Tracker (menyerap F46) — kampanye non-KSO per brand/item +
