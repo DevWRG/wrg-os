@@ -66,13 +66,17 @@ def angka_dalam_teks(teks: str) -> Set[float]:
         kandidat: List[float] = []
         # '18.500' / '1.000.000' = pemisah ribuan; '18,5' = desimal; '53.4' ambigu → dua-duanya
         if re.fullmatch(r"\d{1,3}(\.\d{3})+", mentah):
+            # titik + kelompok 3 digit = pemisah ribuan dalam penulisan Indonesia: "18.500" HANYA
+            # 18500. Uji dev 16 Okt: model mengembalikan 18,5 dan lolos karena dulu dua tafsiran
+            # diterima → harga tercatat Rp 19/test.
             kandidat.append(float(mentah.replace(".", "")))
-        if re.fullmatch(r"\d{1,3}(,\d{3})+", mentah):
-            kandidat.append(float(mentah.replace(",", "")))
-        try:
-            kandidat.append(float(mentah.replace(",", ".")))
-        except ValueError:
-            pass
+        else:
+            if re.fullmatch(r"\d{1,3}(,\d{3})+", mentah):
+                kandidat.append(float(mentah.replace(",", "")))
+            try:
+                kandidat.append(float(mentah.replace(",", ".")))
+            except ValueError:
+                pass
         for k in kandidat:
             hasil.add(k)
             if satuan in ("rb", "ribu", "k"):
@@ -195,7 +199,8 @@ def bersihkan(d: Dict[str, Any], teks: str) -> Dict[str, Any]:
         "volume_estimasi": _angka(d.get("volume_estimasi"), ta, bulat=True),
         "volume_kalimat_asli": _teks_ada(d.get("volume_kalimat_asli"), tn),
         "volume_sumber": _teks_ada(d.get("volume_sumber"), tn),
-        "harga_per_test": _angka(d.get("harga_per_test"), ta),
+        # < Rp 100/test bukan harga reagen yang masuk akal → hampir pasti salah satuan
+        "harga_per_test": (lambda h: h if h is not None and h >= 100 else None)(_angka(d.get("harga_per_test"), ta)),
         "pakai_harga_daftar": harga_daftar,
         "tenor_bulan": _angka(d.get("tenor_bulan"), ta, bulat=True),
         "unit_status": unit,

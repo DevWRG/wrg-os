@@ -81,6 +81,16 @@ class BersihkanTest(unittest.TestCase):
         h = bersihkan(dict(LLM_A, volume_sumber="komunikasi lisan dengan pengadaan"), CONTOH_A)
         self.assertIsNone(h["volume_sumber"])
 
+    def test_titik_ribuan_bukan_desimal(self):
+        # uji dev 16 Okt: "Harga 18.500" → model 18.5 → tercatat Rp 19
+        self.assertIsNone(bersihkan({"harga_per_test": 18.5}, "Harga 18.500, tanpa klausul")["harga_per_test"])
+        self.assertEqual(bersihkan({"harga_per_test": 18500}, "Harga 18.500, tanpa klausul")["harga_per_test"], 18500)
+        self.assertNotIn(18.5, angka_dalam_teks("18.500"))
+        self.assertIn(53.4, angka_dalam_teks("53.4 jt"))
+
+    def test_harga_terlalu_kecil_dibuang(self):
+        self.assertIsNone(bersihkan({"harga_per_test": 19}, "harga 19 per test")["harga_per_test"])
+
     def test_harga_ribuan(self):
         h = bersihkan({"harga_per_test": 18500}, "harga 18,5 rb per test")
         self.assertEqual(h["harga_per_test"], 18500)
