@@ -250,6 +250,7 @@ import { runDetectLeaveScan } from "./repo/detectleave.js";
 import { runExtractCompetitor } from "./repo/extractcompetitor.js";
 import { runWeekendBriefing } from "./repo/weekendbriefing.js";
 import { listSeninBriefs, runSeninBrief } from "./repo/senin-brief.js";
+import { getPmfScorecard } from "./repo/pmf-scorecard.js";
 import { getSoPacing, runSoPacingAlert } from "./repo/so-pacing.js";
 import {
   akunKso, bacaDokumen, buatKontrak, getKontrak, hapusDokumen, KontrakError, kelengkapanKontrak, listKontrak,
@@ -2605,6 +2606,15 @@ app.delete("/kso-kontrak/:id/dokumen/:dokId", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const oleh = c.req.query("oleh")?.trim() || null;
   try { return c.json(await hapusDokumen(c.req.param("id"), c.req.param("dokId"), oleh)); } catch (e) { return kontrakErr(c, e); }
+});
+
+// F48 — PMF Scorecard fase 1: win-rate deal per brand x region per kuartal. Read-only (SELECT),
+// tanpa LLM/WA/snapshot. ?tahun=YYYY&kuartal=1-4 opsional (default kuartal WIB berjalan).
+app.get("/pmf-scorecard", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const t = Number(c.req.query("tahun"));
+  const k = Number(c.req.query("kuartal"));
+  return c.json(await getPmfScorecard(Number.isFinite(t) ? t : undefined, Number.isFinite(k) ? k : undefined));
 });
 
 // F21 — pacing sales bulan berjalan per region (faktur netto + SO terbuka vs

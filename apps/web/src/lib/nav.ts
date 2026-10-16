@@ -44,6 +44,7 @@ import { canViewKlasifikasi } from "@/lib/klasifikasi-access";
 import { canViewProductScorecard } from "@/lib/product-scorecard-access";
 import { canViewKsoKontrak } from "@/lib/kso-kontrak-access";
 import { canViewAsetTetap } from "@/lib/aset-tetap-access";
+import { canViewPmfScorecard } from "@/lib/pmf-access";
 import { canViewRaportList } from "@/lib/raport-access";
 import { canViewExecutive } from "@/lib/executive-access";
 import { canBukaDaftarAlat, canViewKso } from "@/lib/kso-access";
@@ -240,6 +241,15 @@ export const NAV: NavGroup[] = [
       // F20 — status klik per tender LPSE/E-Catalog (pesan masuk -> barang
       // dikirim -> selesai) + reminder kalau macet. Tak ada hashtag WA.
       { title: "LPSE / E-Catalog", url: "/lpse-tender", icon: FileCheck2, badge: "NEW" },
+    ],
+  },
+  {
+    // Domain BUSINESS per board Roadmap (arahan user 15 Okt 2026) — dipisah dari "Sales".
+    label: "Business",
+    items: [
+      // F48 PMF Scorecard — win-rate deal per brand x region. Kunci izin sendiri
+      // (featureKey = "pmf-scorecard"), default tertutup: butuh Sync Fitur + centang Direktur/HoD Sales.
+      { title: "PMF Scorecard", url: "/pmf-scorecard", icon: Target, badge: "NEW", show: canViewPmfScorecard },
     ],
   },
   {
