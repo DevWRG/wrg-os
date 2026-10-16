@@ -167,6 +167,7 @@ import {
 import { recordCompetitor, listCompetitor, competitorSummary } from "./repo/competitor.js";
 import { kesehatanKso, runRekapKesehatanKso } from "./repo/kso-kesehatan.js";
 import { suplaiKso, runRekapSuplaiKso } from "./repo/kso-suplai.js";
+import { productScorecard } from "./repo/product-scorecard.js";
 import { IntelError, briefingFaskes, dominasiWilayah, setDominan } from "./repo/customer-intel.js";
 import { ringkasPembayaran } from "./repo/pembayaran.js";
 import {
@@ -4664,6 +4665,17 @@ app.get("/kso/suplai", async (c) => {
 app.post("/kso/suplai/rekap", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json(await runRekapSuplaiKso({ dryRun: c.req.query("dry") === "1" }));
+});
+// F6 Product Performance Scorecard — kategori → lini → brand → item. Ber-scope lewat
+// x-user-id (BFF /api/product-scorecard, gerbang menu 'product-scorecard'). margin=1
+// HANYA dikirim BFF untuk pembaca HPP (HoD Business/Purchasing/Direktur/admin).
+app.get("/product-scorecard", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const q = c.req.query();
+  return c.json(await productScorecard({
+    from: q.from, to: q.to, level: q.level, kategori: q.kategori, lini: q.lini, brand: q.brand,
+    margin: q.margin === "1", scope: await scopeOf(c),
+  }));
 });
 app.get("/kso/produktivitas", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);

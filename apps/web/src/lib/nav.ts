@@ -41,6 +41,7 @@ import { canViewOnboarding } from "@/lib/onboarding-access";
 import { canViewAdoption } from "@/lib/adoption-access";
 import { canViewPricebook, canViewPricebookSummary } from "@/lib/pricebook-access";
 import { canViewKlasifikasi } from "@/lib/klasifikasi-access";
+import { canViewProductScorecard } from "@/lib/product-scorecard-access";
 import { canViewKsoKontrak } from "@/lib/kso-kontrak-access";
 import { canViewAsetTetap } from "@/lib/aset-tetap-access";
 import { canViewRaportList } from "@/lib/raport-access";
@@ -120,6 +121,8 @@ export const NAV: NavGroup[] = [
     items: [
       { title: "Sales Calendar", url: "/calendar", icon: CalendarRange },
       { title: "Sales Analytics", url: "/sales-analytics", icon: Target, badge: "NEW" },
+      // F6 Product Scorecard — kinerja per kategori/lini/brand/item; izin sendiri, tertutup default (Sync Fitur).
+      { title: "Product Scorecard", url: "/product-scorecard", icon: TrendingUp, badge: "NEW", show: canViewProductScorecard },
       { title: "Sales Alerts", url: "/sales-alerts", icon: Bell, badge: "NEW" },
       { title: "Competitor Intel", url: "/competitor", icon: Swords },
       // F65 Leads DICABUT dari menu 13 Okt 2026 (keputusan user): #LEADS kini
