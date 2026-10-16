@@ -228,6 +228,7 @@ type Tx = TransactionSql<Record<string, unknown>>;
 /** Satu transaksi dengan identitas bot: set_config dan panggilan kso.app_bot_* WAJIB di tx yang sama (pool). */
 export async function sebagaiBot<T>(fn: (tx: Tx) => Promise<T>): Promise<T> {
   return (await db().begin(async (tx) => {
+    await tx`set local role wrg_app`; // dev = prod: pagar peran & RLS berlaku walau koneksi superuser
     await tx`select set_config('wrg.kso_user', ${KSO_BOT_USER}, true)`;
     return fn(tx as unknown as Tx);
   })) as T;
