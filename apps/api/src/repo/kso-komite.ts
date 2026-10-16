@@ -102,6 +102,10 @@ async function sebagaiPengguna<T>(userId: string, tab: TabKso, aksi: Action, fn:
   const r = refUntuk(u, tab);
   if (!r.ok) throw new GalatKso(403, r.pesan);
   return (await db().begin(async (tx) => {
+    // Selalu sebagai wrg_app: di prod koneksinya memang wrg_app, tapi di dev (socket, superuser)
+    // RLS & pagar fungsi terlewati — uji dev 16 Okt: pita ringkasan AM menampilkan angka seluruh
+    // perusahaan. SET LOCAL ROLE membuat dev = prod dan lapisan database selalu berlaku.
+    await tx`set local role wrg_app`;
     await tx`select set_config('wrg.kso_user', ${u.id}, true), set_config('wrg.kso_peran', ${TAB_KSO[tab].peran}, true),
                     set_config('wrg.kso_ref', ${r.ref ?? ""}, true)`;
     return fn(tx as unknown as Tx, u);

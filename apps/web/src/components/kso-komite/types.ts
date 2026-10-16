@@ -35,7 +35,7 @@ export interface Detail {
   klausul: { kode: string; label: string }[];
   pendapat: { hod_id: string; hod_nama: string | null; jenis: string; keputusan: string | null; catatan: string | null; dianggap_setuju: boolean; at: string }[];
   mandat: { harga_lantai: number; harga_target: number | null; tenor_maks_bulan: number; capex_maks: number; volume_minimum: number | null; berlaku_sampai: string; sumber: string } | null;
-  usulan: { usulan: string; data_kurang: string | null; pemilik: string | null; tanggal_kembali: string | null; alasan: string | null; at: string }[];
+  usulan: { usulan: string; syarat: { isi: string; tipe: string }[] | null; data_kurang: string | null; pemilik: string | null; tanggal_kembali: string | null; alasan: string | null; at: string }[];
   putusan: { putusan: string; catatan: string | null; at: string } | null;
   riwayat: { dari: string | null; ke: string; oleh: string | null; oleh_peran: string | null; oleh_nama: string | null; at: string }[];
   forum: { forum_id: number; tanggal: string } | null;

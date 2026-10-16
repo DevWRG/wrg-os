@@ -67,6 +67,7 @@ export function RencanaDialog({ tab, id, bolehAksi, onClose, onBerubah }: {
                 <Blok judul="Usulan komite">
                   {d.usulan.map((u, i) => (
                     <li key={i}><b>{STATUS_LABEL[u.usulan] ?? u.usulan}</b>{u.alasan && ` — ${u.alasan}`}
+                      {u.syarat?.length ? <> · syarat: {u.syarat.map((x) => x.isi).join("; ")}</> : null}
                       {u.data_kurang && ` · kurang: ${u.data_kurang} (oleh ${u.pemilik}, kembali ${u.tanggal_kembali})`}
                       <span className="text-muted-foreground text-xs"> {waktu(u.at)}</span></li>
                   ))}
