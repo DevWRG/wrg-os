@@ -190,6 +190,7 @@ const BRIEF_LINE = /^\s*#\s*brief\b/i;
 const BRIEFING_LINE = /^\s*#\s*briefing\b/i;
 // Peran app_user yang boleh membaca Senin Brief lewat WA.
 const BRIEFING_ROLES = new Set(["direktur", "admin", "superuser"]);
+export const briefingTerbuka = (): boolean => (process.env.BRIEFING_WA_OPEN ?? "false").toLowerCase() === "true";
 
 export function detectKind(body: string | null): InboundKind {
   const daily = detectDaily(body); // line-anchored #plan/#report (sudah strip invisible)
@@ -1902,7 +1903,11 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
   // Direktur. Bypass hanya aktif bila env di-set eksplisit di server uji — JANGAN
   // di produksi (lihat wa-test-bypass.ts): di sana isi brief nyata bocor ke grup.
   if (kind === "briefing") {
-    const bypass = isWaTestBypassGroup(row.group_jid);
+    // BRIEFING_WA_OPEN=true (sementara, permintaan user 16 Okt 2026): siapa pun
+    // di grup yang diproses inbound (WA_INBOUND_GROUPS / grup uji) boleh memakai
+    // #BRIEFING, balasan ke grup/chat asalnya. Default MATI — matikan lagi
+    // sebelum go-live: isi brief menilai kesiapan HoD.
+    const bypass = isWaTestBypassGroup(row.group_jid) || briefingTerbuka();
     const dir = bypass ? null : await resolveApprover(row.sender_jid);
     if (!bypass && (!dir || !BRIEFING_ROLES.has(dir.role.toLowerCase()))) {
       return finish({ skipped: "bukan-direktur", sender_name: row.sender_name });
@@ -1915,7 +1920,7 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
       text = "⚠️ #BRIEFING gagal diproses, coba lagi sebentar lagi.";
     }
     const reply = await sendViaWaGateway(target, text);
-    return finish({ kind: "briefing", via: bypass ? "bypass-grup-uji" : dir?.name, reply });
+    return finish({ kind: "briefing", via: bypass ? (briefingTerbuka() ? "terbuka" : "bypass-grup-uji") : dir?.name, reply });
   }
 
   // #STOK — cek stok cepat (F2 SQC). Sender WAJIB dikenal (perlu cabang AM
