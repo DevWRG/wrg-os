@@ -47,14 +47,7 @@ insert into kso.faskes (id, nama, cabang, piutang_hari, piutang_nilai, tagihan_b
   ('F07', 'RS Swasta C — Denpasar', null, 0, 0, 0),
   ('F08', 'RSIA — Gresik (faskes baru)', 'Surabaya', 0, 0, 0);
 
-insert into kso.klausul_khusus values
-  ('eksklusivitas', 'Eksklusivitas', 1),
-  ('jaminan_volume', 'Jaminan volume', 2),
-  ('alat_jatuh', 'Alat jatuh ke RS', 3),
-  ('tanpa_eskalasi', 'Tanpa eskalasi harga', 4),
-  ('tanpa_lapor', 'Tanpa lapor test', 5),
-  ('tanpa_denda', 'Tanpa denda telat bayar', 6),
-  ('draft_rs', 'Draft PKS dari RS', 7);
+-- klausul_khusus: dimuat migrasi 228 (aturan bisnis, bukan data contoh)
 
 insert into kso.am values
   ('AM-01','AM Surabaya','Surabaya','628110000001'),

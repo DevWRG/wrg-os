@@ -1,0 +1,105 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { formatBalasanDraft, parseKsoPerintah, pertanyaanKurang, pilihAlat, terjemahGalatKso, type DraftTampil } from "./kso-intake.js";
+import { detectKind } from "./inbound.js";
+
+test("parseKsoPerintah: rencana baru, lengkapi, kirim, kelonggaran, kalah, kosong", () => {
+  assert.deepEqual(parseKsoPerintah("#KSO\nFaskes: RS A\nAlat: Z3"), { aksi: "baru", draftId: undefined, nomor: undefined, isi: "Faskes: RS A\nAlat: Z3" });
+  assert.equal(parseKsoPerintah("#kso Faskes: RS A").aksi, "baru");
+  const l = parseKsoPerintah("#KSO D12 tenor 36 bulan");
+  assert.equal(l.aksi, "lengkapi");
+  assert.equal(l.draftId, 12);
+  assert.equal(l.isi, "tenor 36 bulan");
+  const k = parseKsoPerintah("#KSO kirim D12");
+  assert.equal(k.aksi, "kirim");
+  assert.equal(k.draftId, 12);
+  const g = parseKsoPerintah("#KSO minta kelonggaran KSO-2026-0012 RS minta 17.500");
+  assert.equal(g.aksi, "kelonggaran");
+  assert.equal(g.nomor, "KSO-2026-0012");
+  assert.equal(g.isi, "RS minta 17.500");
+  assert.equal(parseKsoPerintah("#KSO kalah d7: kalah harga dari Sysmex").aksi, "kalah");
+  assert.equal(parseKsoPerintah("#KSO").aksi, "kosong");
+  assert.equal(parseKsoPerintah("#KSO D12").aksi, "lengkapi"); // tanpa isi → voice note pasangannya
+});
+
+test("detectKind: '#KSO kirim D12' = kso, bukan #KIRIM pengiriman", () => {
+  assert.equal(detectKind("#KSO kirim D12"), "kso");
+  assert.equal(detectKind("#KIRIM SJ/123"), "kirim");
+  assert.equal(detectKind("#KSO\nFaskes: RS A"), "kso");
+});
+
+const KATALOG = [
+  { kode: "Z3", nama: "Z3" },
+  { kode: "Z52", nama: "Z52" },
+  { kode: "EXZ8000", nama: "EXZ8000" },
+  { kode: "DNX6", nama: "Easy Diagnosis DN-X6 — Elektrolit" },
+];
+
+test("pilihAlat: kode utuh, tanpa salah tangkap, ambigu ditanyakan", () => {
+  assert.deepEqual(pilihAlat("1 unit Z3 hematologi", KATALOG), { kind: "one", nilai: "Z3", nama: "Z3" });
+  assert.equal(pilihAlat("EXZ 8000", KATALOG).kind, "one");
+  assert.equal((pilihAlat("DN-X6", KATALOG) as { nilai: string }).nilai, "DNX6");
+  assert.equal(pilihAlat("Z5", KATALOG).kind, "none"); // bukan Z52
+  assert.equal(pilihAlat("Z3 atau Z52", KATALOG).kind, "ambiguous");
+  assert.equal(pilihAlat("Sysmex XN-550", KATALOG).kind, "none");
+});
+
+function draft(o: Partial<DraftTampil> = {}): DraftTampil {
+  return {
+    id: 12, nomor: null, status: "DRAFT", faskes: "RS SWASTA A", cabang: "SBY 2", alat: "Z3", alat_kode: "Z3", jumlah: 1,
+    volume_estimasi: 900, volume_sumber: "data LIS 3 bulan", harga_per_test: 18500, harga_standar: null, kategori: "HEMATO",
+    tenor_bulan: 36, unit_status: null, klausul: [], kolom_dinyatakan: ["jumlah", "klausul", "tenor_bulan"],
+    pendukung: [{ nama: "dr. Rina SpPK", tipe: "kepala_instalasi" }],
+    gerbang: [1, 2, 3, 4, 5, 6, 7].map((no) => ({ no, nama: `G${no}`, status: "hijau", nilai: `nilai ${no}` })),
+    kursi_hod: 2, ...o,
+  };
+}
+
+test("formatBalasanDraft: empat bagian, urutan tetap; lengkap → ajakan kirim", () => {
+  const t = formatBalasanDraft(draft(), { baru: true, nama: "Budi" });
+  const iDraft = t.indexOf("Draft D12 dibuat");
+  const iSistem = t.indexOf("Dari sistem");
+  const iGerbang = t.indexOf("Gerbang: 7 dari 7 hijau → JALUR CEPAT");
+  const iKirim = t.indexOf('Balas "#KSO kirim D12"');
+  assert.ok(iDraft === 0 && iDraft < iSistem && iSistem < iGerbang && iGerbang < iKirim, t);
+  assert.match(t, /Sumber volume: "data LIS 3 bulan"/); // dibacakan apa adanya
+  assert.match(t, /· Capex: nilai 1\n· Coverage: nilai 3\n· Piutang faskes: nilai 5/);
+});
+
+test("formatBalasanDraft: tenor tak disebut → ditanyakan, bukan diisi; tanpa ajakan kirim", () => {
+  const t = formatBalasanDraft(draft({ tenor_bulan: null, kolom_dinyatakan: ["jumlah", "klausul"] }), { baru: true, nama: "Budi" });
+  assert.match(t, /Kurang satu:\nTenor berapa bulan/);
+  assert.doesNotMatch(t, /Tenor: /);
+  assert.doesNotMatch(t, /#KSO kirim/);
+  assert.match(t, /Jawab: #KSO D12 <jawaban>/);
+});
+
+test("klausul belum dijawab: gerbang 7 tidak ditampilkan hijau dan tak ada JALUR CEPAT", () => {
+  const t = formatBalasanDraft(draft({ kolom_dinyatakan: ["jumlah", "tenor_bulan"] }), { baru: true, nama: "Budi" });
+  assert.match(t, /JALUR FORUM/);
+  assert.match(t, /❔ 7\. G7: belum dijawab/);
+  assert.match(t, /klausul khusus dari RS/);
+});
+
+test("pertanyaanKurang: sumber volume kosong ditanyakan dulu; pendukung tanpa peran ditanyakan", () => {
+  const q = pertanyaanKurang(draft({ volume_sumber: null, pendukung: [] }), ["Bu Sari"]);
+  assert.match(q[0], /dari mana angkanya/);
+  assert.ok(q.some((x) => /Apa peran Bu Sari/.test(x)));
+  assert.ok(!q.some((x) => /Siapa pendukung/.test(x)));
+});
+
+test("SBY 1 (tanpa HOD Area) → info forum", () => {
+  const t = formatBalasanDraft(draft({ kursi_hod: 1 }), { baru: false, nama: "Budi" });
+  assert.match(t, /JALUR FORUM/);
+  assert.match(t, /tanpa HOD Area/);
+});
+
+test("terjemahGalatKso: tak pernah menampilkan kode galat", () => {
+  for (const m of ["SUMBER_VOLUME_KOSONG", "KOLOM_WAJIB_KOSONG: tenor_bulan, klausul", "BUKAN_MILIK_PENGIRIM: rencana 1 bukan milik AM-3",
+    "DRAFT_TERKUNCI: status DIAJUKAN", "BUKAN_TAHAP_NEGOSIASI", "galat lain"]) {
+    const t = terjemahGalatKso(m, "D12");
+    assert.doesNotMatch(t, /[A-Z]{3,}_[A-Z_]+/, t);
+  }
+  assert.match(terjemahGalatKso("KOLOM_WAJIB_KOSONG: tenor_bulan", "D12"), /tenor/);
+  assert.match(terjemahGalatKso("BUKAN_MILIK_PENGIRIM: x", "D1"), /bukan atas nama Anda/);
+});

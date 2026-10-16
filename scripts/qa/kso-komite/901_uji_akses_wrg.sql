@@ -69,8 +69,11 @@ select uji.cek('Admin sales tidak melihat rencana yang belum punya putusan', not
 
 -- 6. Bot WhatsApp: jalur tulisnya bekerja lewat pembungkus
 select set_config('wrg.kso_user','u-bot',false);
-select uji.cek('Bot WA bisa membuat draft dan mengajukan lewat pembungkus',
-   kso.app_bot_ajukan(kso.app_bot_buat_draft('AM-03','F06','Z3',1,700,'data LIS 3 bulan',18500,'baru',36,'{}','[{"nama":"Kepala lab","tipe":"kepala_instalasi"}]'), 'AM-03') = 'CEPAT');
+-- sejak migrasi 229 jumlah & klausul wajib DINYATAKAN (lewat app_bot_lengkapi_draft) sebelum diajukan
+select uji.cek('Bot WA bisa membuat draft, melengkapi, dan mengajukan lewat pembungkus',
+   (select kso.app_bot_ajukan(x, 'AM-03') = 'CEPAT'
+      from (select kso.app_bot_buat_draft('AM-03','F06','Z3',1,700,'data LIS 3 bulan',18500,'baru',36,'{}','[{"nama":"Kepala lab","tipe":"kepala_instalasi"}]') x) d,
+           lateral (select kso.app_bot_lengkapi_draft(d.x, 'AM-03', '{"jumlah":1,"klausul":[]}')) l));
 select uji.harus_gagal('Bot tidak bisa memindahkan usulan milik AM lain',
    format('select kso.app_bot_minta_kelonggaran(%s,''AM-03'',''x'')', (select id from kso.rencana_kso where am_id='AM-01' limit 1)), 'BUKAN_MILIK_PENGIRIM');
 select uji.harus_gagal('Bot tidak bisa menandai kalah usulan milik AM lain',

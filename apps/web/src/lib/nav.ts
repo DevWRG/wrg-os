@@ -9,7 +9,7 @@ import {
   Factory, Workflow, Receipt, BarChart3, ClipboardCheck, History, Settings,
   Send, FileText, ScrollText, GraduationCap, UsersRound, Network,
   Bell, MapPin, ListChecks, Swords, CalendarOff, CalendarDays, CalendarRange,
-  Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, Tags, SlidersHorizontal, Microscope, MonitorCheck, FileSignature,
+  Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, Tags, SlidersHorizontal, Microscope, MonitorCheck, FileSignature, Gavel,
   Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, BookOpen, Calculator, Presentation, Megaphone, Library,
   Wallet, Coins, Route, Radio, Printer, ScanText,
   Wrench,
@@ -32,6 +32,7 @@ import {
   TrendingUp,
   ShieldAlert,
   Landmark,
+  Inbox,
   type LucideIcon,
 } from "lucide-react";
 
@@ -43,8 +44,10 @@ import { canViewPricebook, canViewPricebookSummary } from "@/lib/pricebook-acces
 import { canViewKlasifikasi } from "@/lib/klasifikasi-access";
 import { canViewProductScorecard } from "@/lib/product-scorecard-access";
 import { canViewKsoKontrak } from "@/lib/kso-kontrak-access";
+import { TAB_KSO, canViewKsoKomite } from "@/lib/kso-komite-access";
 import { canViewAsetTetap } from "@/lib/aset-tetap-access";
 import { canViewPmfScorecard } from "@/lib/pmf-access";
+import { canViewDirekturInbox } from "@/lib/direktur-inbox-access";
 import { canViewRaportList } from "@/lib/raport-access";
 import { canViewExecutive } from "@/lib/executive-access";
 import { canBukaDaftarAlat, canViewKso } from "@/lib/kso-access";
@@ -213,6 +216,12 @@ export const NAV: NavGroup[] = [
       // MENULIS data (kontrak, status renewal), dan izin edit-nya dipisah dari
       // view. Default tertutup — butuh Sync Fitur + centang di Akses Grup.
       { title: "Kontrak KSO", url: "/kso-kontrak", icon: FileSignature, badge: "NEW", show: canViewKsoKontrak },
+      // F170 Komite KSO — satu menu, tab per peran; tiap tab = kunci izin SENDIRI di Akses Grup
+      // (keputusan 16 Okt). Kunci utama 'kso-komite' = tab Rencana Saya (AM); kunci tab lain
+      // WAJIB terdaftar di `features` — kalau tidak, Sync Fitur mematikannya sebagai zombie.
+      // API (repo/kso-komite.ts) memeriksa ulang izin tiap permintaan.
+      { title: "Komite KSO", url: "/kso-komite", icon: Gavel, badge: "NEW", show: canViewKsoKomite,
+        features: TAB_KSO.filter((t) => t.fitur !== "kso-komite").map((t) => ({ key: t.fitur, name: t.nama })) },
       // Harga jual dibagi per PEMBACA, bukan per tabel:
       //   /pricebook            sales & AM — katalog + harga terpublikasi (071/043)
       //   /pricebook/ringkasan  Direktur + HoD — bacaan portofolio
@@ -276,6 +285,9 @@ export const NAV: NavGroup[] = [
       // admin/superuser yang melihatnya (anti-lockout can()).
       { title: "SOP & Otomasi", url: "/sop-otomasi", icon: ClipboardCheck, badge: "NEW" },
       { title: "Executive Briefings", url: "/briefings", icon: ScrollText },
+      // F59 — antrean approval yang menunggu Direktur. Izin 'direktur-inbox': fallback
+      // role direktur/admin/superuser; butuh Sync Fitur + centang grup Direktur setelah deploy.
+      { title: "Direktur Inbox", url: "/direktur-inbox", icon: Inbox, badge: "NEW", show: canViewDirekturInbox },
       { title: "Coaching Notes", url: "/coaching", icon: GraduationCap },
       // Revenue per lini produk — dasar metric `revstream` (kartu Fafa, WatchPoint).
       { title: "Revenue per Lini", url: "/revenue-stream", icon: Coins, badge: "NEW" },

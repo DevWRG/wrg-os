@@ -251,12 +251,14 @@ import { runExtractCompetitor } from "./repo/extractcompetitor.js";
 import { runWeekendBriefing } from "./repo/weekendbriefing.js";
 import { getSeninBrief, listSeninBriefs, runSeninBrief } from "./repo/senin-brief.js";
 import { namaFilePdf, seninBriefPdf } from "./repo/senin-brief-pdf.js";
+import { listDirekturInbox, runDirekturInbox } from "./repo/direktur-inbox.js";
 import { getPmfScorecard } from "./repo/pmf-scorecard.js";
 import { getSoPacing, runSoPacingAlert } from "./repo/so-pacing.js";
 import {
   akunKso, bacaDokumen, buatKontrak, getKontrak, hapusDokumen, KontrakError, kelengkapanKontrak, listKontrak,
   MAKS_DOKUMEN, perpanjangKontrak, ubahKontrak, ubahStatusKontrak, unggahDokumen,
 } from "./repo/kso-kontrak.js";
+import { GalatKso, daftarTab, detailRencana, isAksiKso, isTabKso, jalankanAksi, tabBoleh } from "./repo/kso-komite.js";
 import { runPolaKomunikasi } from "./repo/polakomunikasi.js";
 import { listWaGroups, setWaGroupCategory, setWaGroupPrefixCategory, isWaGroupCategory } from "./repo/wagroup.js";
 import { runRefreshMembers } from "./repo/listmembers.js";
@@ -2450,6 +2452,49 @@ app.get("/briefings", async (c) => {
   return c.json({ count: briefings.length, briefings });
 });
 
+// F170 — Komite KSO, layar per peran (Tahap 4). Izin tab DIPERIKSA DI SINI (Akses Grup,
+// repo/kso-komite.ts putuskanIzin) — tidak hanya di BFF — lalu transaksi diberi identitas +
+// peran tab sehingga pagar database kso.* ikut berlaku. Identitas = x-user-id dari BFF (sesi).
+const ksoKomiteErr = (c: Context, e: unknown) => {
+  if (e instanceof GalatKso) return c.json({ error: e.message }, e.status as 400);
+  console.error("[kso-komite]", e);
+  return c.json({ error: "Gagal memproses permintaan Komite KSO." }, 500);
+};
+const ksoUser = (c: Context) => (c.req.header("x-user-id") ?? "").trim();
+app.get("/kso-komite/tab", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const u = ksoUser(c);
+  if (!u) return c.json({ error: "x-user-id wajib" }, 401);
+  try { return c.json({ tab: await tabBoleh(u) }); } catch (e) { return ksoKomiteErr(c, e); }
+});
+app.get("/kso-komite/:tab", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const u = ksoUser(c);
+  const tab = c.req.param("tab");
+  if (!u) return c.json({ error: "x-user-id wajib" }, 401);
+  if (!isTabKso(tab)) return c.json({ error: "tab tidak dikenal" }, 404);
+  try { return c.json(await daftarTab(u, tab)); } catch (e) { return ksoKomiteErr(c, e); }
+});
+app.get("/kso-komite/:tab/rencana/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const u = ksoUser(c);
+  const tab = c.req.param("tab");
+  const id = Number(c.req.param("id"));
+  if (!u) return c.json({ error: "x-user-id wajib" }, 401);
+  if (!isTabKso(tab) || !Number.isInteger(id) || id <= 0) return c.json({ error: "permintaan tidak sah" }, 400);
+  try { return c.json(await detailRencana(u, tab, id)); } catch (e) { return ksoKomiteErr(c, e); }
+});
+app.post("/kso-komite/rencana/:id/:aksi", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const u = ksoUser(c);
+  const aksi = c.req.param("aksi");
+  const id = Number(c.req.param("id"));
+  if (!u) return c.json({ error: "x-user-id wajib" }, 401);
+  if (!isAksiKso(aksi) || !Number.isInteger(id) || id <= 0) return c.json({ error: "permintaan tidak sah" }, 400);
+  const b = await bodyJson(c);
+  try { return c.json(await jalankanAksi(u, id, aksi, b)); } catch (e) { return ksoKomiteErr(c, e); }
+});
+
 // F47 — Kontrak KSO & Renewal (fase 1). Gerbang izin (kso-kontrak view/edit)
 // ada di BFF apps/web/src/app/api/kso-kontrak/**; `oleh` diisi BFF dari sesi,
 // bukan dari input browser. Prefix /kso-kontrak (bukan /kso/…) supaya tak
@@ -2636,6 +2681,27 @@ app.post("/sales/so-pacing/run", async (c) => {
     /* body opsional */
   }
   return c.json(await runSoPacingAlert({ dryRun: body.dry_run !== false, target: body.target }));
+});
+
+// F59 Direktur Inbox — gabungan antrean approval yang menunggu Direktur (BACA saja;
+// memutuskan tetap lewat layar/WA tiap sumber). Gate peran ada di BFF web.
+app.get("/direktur-inbox", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await listDirekturInbox());
+});
+
+// F59 — susun/kirim digest WA manual. Sengaja TANPA route BFF (bisa mengirim WA ke
+// Direktur): hanya operator via service token. body: {dry_run?, target?}.
+// DEFAULT dry_run=true — kirim sungguhan harus eksplisit `dry_run:false`.
+app.post("/direktur-inbox/run", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { dry_run?: boolean; target?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    /* body opsional */
+  }
+  return c.json(await runDirekturInbox({ dryRun: body.dry_run !== false, target: body.target }));
 });
 
 // F85 Senin Morning Brief — read model (tab "Senin Brief" di /briefings).
