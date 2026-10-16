@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { forumBerikutnya, hariForum, pesanAgenda, pesanHod, tanggalManusia, tanggalWib } from "./kso-jadwal.js";
+import { forumBerikutnya, hariForum, pesanAgenda, pesanHod, pesanPendapatForum, tanggalManusia, tanggalWib } from "./kso-jadwal.js";
 
 const wib = (s: string) => new Date(`${s}+07:00`);
 
@@ -49,4 +49,12 @@ test("pesan HOD menyebut tab, kata kerja, dan batas", () => {
   assert.match(q, /perlu PENDAPAT/);
   assert.match(q, /bukan putusan/);
   assert.doesNotMatch(q, /dianggap setuju/);
+});
+
+test("HOD forum: satu pesan berisi semua usulan yang menunggu pendapatnya", () => {
+  const r = (n: string) => ({ nomor: n, faskes_nama: "RS X", alat_nama: "Z52", capex: 83_500_000 });
+  const t = pesanPendapatForum("Yogi", "2026-10-20", [r("KSO-2026-0036"), r("KSO-2026-0037")]);
+  assert.match(t, /\(2 usulan\)/);
+  assert.match(t, /1\. KSO-2026-0036[\s\S]*2\. KSO-2026-0037/);
+  assert.match(t, /bukan putusan/);
 });

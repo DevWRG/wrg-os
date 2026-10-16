@@ -94,6 +94,13 @@ export function pesanHod(jenis: "putusan" | "pendapat", nama: string, r: { nomor
         `Buka tab HOD → "Beri pendapat" (bukan putusan).\nBatas: ${batas}.${tautan() !== "/kso-komite" ? `\n${tautan()}` : ""}`;
 }
 
+export function pesanPendapatForum(nama: string, tgl: string, daftar: { nomor: string | null; faskes_nama: string; alat_nama: string; capex: number }[]): string {
+  return [`Halo ${nama}, forum Komite KSO *${tanggalManusia(tgl)} 16.00 WIB* menunggu *PENDAPAT* Anda (${daftar.length} usulan):`,
+    ...daftar.map((x, i) => `${i + 1}. ${x.nomor} · ${x.faskes_nama} · ${x.alat_nama} · ${rpJt(x.capex)}`),
+    `Buka tab HOD → "Beri pendapat" (bukan putusan). Batas: ${tanggalManusia(tgl)} 16.00 WIB.`,
+    ...(tautan() !== "/kso-komite" ? [tautan()] : [])].join("\n");
+}
+
 export function pesanDaftar(judul: string, baris: { nomor: string | null; faskes_nama: string; alat_nama: string; capex: number }[], penutup: string): string {
   return [`*${judul}* (${baris.length})`, ...baris.map((x, i) => `${i + 1}. ${x.nomor} · ${x.faskes_nama} · ${x.alat_nama} · ${rpJt(x.capex)}`), "", penutup,
     ...(tautan() !== "/kso-komite" ? [tautan()] : [])].join("\n");
@@ -154,10 +161,16 @@ export async function runAgenda(sekarang = new Date()) {
     return { items, hod };
   });
   const kirim = await kirimKe(await penerimaFitur("kso-komite-agenda"), `agenda:${tgl}`, "agenda", pesanAgenda(tgl, items));
+  // SATU pesan per HOD per forum (bukan satu per usulan); HOD tanpa nomor WA tercatat, tidak hilang diam-diam
+  const perHod = new Map<string, ItemAgenda[]>();
   for (const h of hod) {
-    const w = await waHod(String(h.hod_id));
     const it = items.find((x) => x.rencana_id === Number(h.rencana_id));
-    if (w && it) kirim.push(await kirimSekali(`hod-pendapat:${h.rencana_id}:${h.hod_id}`, "hod", w.wa, pesanHod("pendapat", w.nama, it, `${tanggalManusia(tgl)} 16.00 WIB`)));
+    if (it) perHod.set(String(h.hod_id), [...(perHod.get(String(h.hod_id)) ?? []), it]);
+  }
+  for (const [hodId, daftar] of perHod) {
+    const w = await waHod(hodId);
+    if (!w) { kirim.push({ kunci: `hod-pendapat-forum:${tgl}:${hodId}`, ke: "-", terkirim: false, alasan: "HOD tanpa nomor WA" }); continue; }
+    kirim.push(await kirimSekali(`hod-pendapat-forum:${tgl}:${hodId}`, "hod", w.wa, pesanPendapatForum(w.nama, tgl, daftar)));
   }
   return { tgl, agenda_a: items.filter((x) => x.jenis === "A").length, agenda_b: items.filter((x) => x.jenis === "B").length, kirim };
 }
