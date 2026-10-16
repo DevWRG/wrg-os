@@ -8,6 +8,7 @@
 // Tiap jam   : jalur cepat lewat 1 HARI KERJA tanpa putusan HOD → dianggap setuju (migrasi 231)
 // Hari kerja 07.00: daftar penawaran siap terbit → WA ke Admin Sales
 // Tanggal 6  : verifikasi bulan ke-6 dari laporan tes
+// Tiap malam : isi ulang referensi kso.* dari tabel OS (piutang, cabang, HOD, AM, alat, faskes)
 // Event      : usulan masuk antrean HOD → WA ke HOD (perlu putusan / perlu pendapat + batasnya)
 //
 // Penerima = pemegang centang tab di Akses Grup (fitur kso-komite-*), BUKAN daftar nama di kode;
@@ -217,6 +218,11 @@ export async function runPenawaranPagi(sekarang = new Date()) {
   if (baris.length === 0) return { tgl, jumlah: 0, kirim: [] };
   const isi = pesanDaftar(`Penawaran KSO siap diterbitkan — ${tanggalManusia(tgl)}`, baris as never, "Hanya mandat yang masih berlaku. Di bawah harga lantai ditolak sistem.");
   return { tgl, jumlah: baris.length, kirim: await kirimKe(await penerimaFitur("kso-komite-penawaran"), `penawaran:${tgl}`, "admin_sales", isi) };
+}
+
+/** Tiap malam — isi ulang referensi kso.* (cabang/HOD/AM/alat/faskes/piutang) dari tabel OS (migrasi 228). */
+export async function runSegarkanReferensi() {
+  return sebagaiJob(async (tx) => (await tx`select kso.segarkan_referensi() as h`)[0].h as Record<string, unknown>);
 }
 
 /** Tanggal 6 — isi verifikasi bulan ke-6 dari laporan tes (migrasi 231). */
