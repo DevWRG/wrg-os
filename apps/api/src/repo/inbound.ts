@@ -1894,18 +1894,17 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
   // ISI-nya menilai orang (TIDAK SIAP per HoD), jadi gerbangnya ketat: hanya
   // app_user Direktur/admin dengan nomor WA terdaftar, dan HANYA lewat chat
   // privat — resolveApprover menolak JID grup, sehingga balasan tak pernah
-  // sampai ke grup. Pengirim lain DIAM (tak mengungkap fiturnya), kecuali di
-  // grup uji bypass yang memang membalas semua command.
+  // sampai ke grup produksi. Pengirim lain DIAM (tak mengungkap fiturnya).
+  //
+  // PENGECUALIAN SENGAJA (keputusan user 16 Okt 2026): di grup uji bypass
+  // (WA_TEST_BYPASS_GROUP, mis. grup "Research") SIAPA PUN boleh memicu dan
+  // balasan dikirim ke grup itu, supaya fitur bisa diuji tim tanpa akun
+  // Direktur. Bypass hanya aktif bila env di-set eksplisit di server uji — JANGAN
+  // di produksi (lihat wa-test-bypass.ts): di sana isi brief nyata bocor ke grup.
   if (kind === "briefing") {
-    const dir = await resolveApprover(row.sender_jid);
-    if (!dir || !BRIEFING_ROLES.has(dir.role.toLowerCase())) {
-      if (isWaTestBypassGroup(row.group_jid)) {
-        const reply = await sendViaWaGateway(
-          target,
-          "⚠️ #BRIEFING hanya untuk Direktur/admin lewat chat pribadi ke bot (akun app_user dengan nomor WA terisi). Isinya penilaian kesiapan HoD, jadi tak dibalas di grup.",
-        );
-        return finish({ skipped: "bukan-direktur", reply });
-      }
+    const bypass = isWaTestBypassGroup(row.group_jid);
+    const dir = bypass ? null : await resolveApprover(row.sender_jid);
+    if (!bypass && (!dir || !BRIEFING_ROLES.has(dir.role.toLowerCase()))) {
       return finish({ skipped: "bukan-direktur", sender_name: row.sender_name });
     }
     let text: string;
@@ -1916,7 +1915,7 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
       text = "⚠️ #BRIEFING gagal diproses, coba lagi sebentar lagi.";
     }
     const reply = await sendViaWaGateway(target, text);
-    return finish({ kind: "briefing", user: dir.name, reply });
+    return finish({ kind: "briefing", via: bypass ? "bypass-grup-uji" : dir?.name, reply });
   }
 
   // #STOK — cek stok cepat (F2 SQC). Sender WAJIB dikenal (perlu cabang AM
