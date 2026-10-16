@@ -220,3 +220,75 @@ def chat_vision(
                 last_err = e
                 continue
     raise RuntimeError(f"semua model OpenRouter (vision) gagal: {last_err}")
+
+
+def kso_models() -> List[str]:
+    """F170 #KSO — ekstraksi rencana KSO dari pesan AM. ENV terpisah dari fitur teks lain:
+    model ekstraktor yang mengarang satu kolom merusak integritas seluruh antrean komite.
+    Fallback BUKAN model penalaran (deepseek-r1 di daily_models) — token berpikirnya
+    memakan max_tokens dan memotong JSON."""
+    primary = os.environ.get("KSO_MODEL_PRIMARY", "anthropic/claude-haiku-4.5")
+    fallback = os.environ.get("KSO_MODEL_FALLBACK", "google/gemini-3.8-flash")
+    return [primary, fallback]
+
+
+def transkrip_models() -> List[str]:
+    """F170 voice note #KSO — model yang menerima input audio (Gemini via OpenRouter)."""
+    primary = os.environ.get("TRANSKRIP_MODEL_PRIMARY", "google/gemini-3.8-flash")
+    fallback = os.environ.get("TRANSKRIP_MODEL_FALLBACK", "google/gemini-3.5-flash")
+    return [primary, fallback]
+
+
+def chat_audio(
+    system: str,
+    user: str,
+    audio_b64: str,
+    audio_format: str,
+    max_tokens: int = 4000,
+    models: Optional[List[str]] = None,
+) -> Tuple[str, str, Optional[int], Optional[int]]:
+    """Seperti chat_vision(), tapi lampirannya audio (`input_audio`, format OpenRouter).
+    Voice note WhatsApp = ogg/opus. Jawaban yang terpotong plafon token TIDAK dianggap sah
+    (transkrip setengah = isian setengah) → coba model berikutnya.
+
+    Raises RuntimeError kalau OPENROUTER_API_KEY tidak ada atau semua model gagal.
+    """
+    key = os.environ.get("OPENROUTER_API_KEY")
+    if not key:
+        raise RuntimeError("OPENROUTER_API_KEY tidak di-set")
+
+    headers = {"Authorization": f"Bearer {key}", "content-type": "application/json"}
+    last_err: Optional[Exception] = None
+    with httpx.Client(timeout=90) as client:
+        for model in models or transkrip_models():
+            try:
+                resp = client.post(
+                    OPENROUTER_URL,
+                    headers=headers,
+                    json={
+                        "model": model,
+                        "messages": [
+                            {"role": "system", "content": system},
+                            {
+                                "role": "user",
+                                "content": [
+                                    {"type": "text", "text": user},
+                                    {"type": "input_audio", "input_audio": {"data": audio_b64, "format": audio_format}},
+                                ],
+                            },
+                        ],
+                        "max_tokens": max_tokens,
+                        "reasoning": {"effort": "low"},
+                    },
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                if (data["choices"][0].get("finish_reason") or "") == "length":
+                    raise RuntimeError(f"{model}: transkrip terpotong max_tokens={max_tokens}")
+                text = data["choices"][0]["message"]["content"]
+                usage = data.get("usage") or {}
+                return (text, model, usage.get("prompt_tokens"), usage.get("completion_tokens"))
+            except Exception as e:  # noqa: BLE001 — coba model berikutnya
+                last_err = e
+                continue
+    raise RuntimeError(f"semua model OpenRouter (audio) gagal: {last_err}")
