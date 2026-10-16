@@ -63,6 +63,7 @@ test("formatBalasanDraft: empat bagian, urutan tetap; lengkap → ajakan kirim",
   const iKirim = t.indexOf('Balas "#KSO kirim D12"');
   assert.ok(iDraft === 0 && iDraft < iSistem && iSistem < iGerbang && iGerbang < iKirim, t);
   assert.match(t, /Sumber volume: "data LIS 3 bulan"/); // dibacakan apa adanya
+  assert.match(t, /· Capex: nilai 1\n· Coverage: nilai 3\n· Piutang faskes: nilai 5/);
 });
 
 test("formatBalasanDraft: tenor tak disebut → ditanyakan, bukan diisi; tanpa ajakan kirim", () => {

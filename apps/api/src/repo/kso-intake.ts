@@ -196,7 +196,8 @@ export function formatBalasanDraft(
   const sistem = [g(1), g(3), g(5)].filter((x) => x?.nilai);
   if (sistem.length) {
     out.push("\nDari sistem:");
-    for (const x of sistem) out.push(`· ${x!.nilai}`);
+    const label: Record<number, string> = { 1: "Capex", 3: "Coverage", 5: "Piutang faskes" };
+    for (const x of sistem) out.push(`· ${label[x!.no]}: ${x!.nilai}`);
   }
 
   const hijau = d.gerbang.filter((x) => x.status === "hijau").length;

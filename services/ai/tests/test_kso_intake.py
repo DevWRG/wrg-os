@@ -90,6 +90,22 @@ class BersihkanTest(unittest.TestCase):
         self.assertIsNone(h["pendukung"][0]["tipe"])
         self.assertIsNone(h["lead_asal"])
 
+    def test_jabatan_bukan_orang_kedua(self):
+        # uji dev 16 Okt: model memecah satu baris jadi dua orang & memberi tipe dari gelar
+        llm = [{"nama": "dr. Rina SpPK", "tipe": "dokter_user"}, {"nama": "kepala instalasi lab", "tipe": "kepala_instalasi"}]
+        h = bersihkan({"pendukung": llm}, "Pendukung: dr. Rina SpPK, kepala instalasi lab, ketemu 10 Okt")
+        self.assertEqual(h["pendukung"], [{"nama": "dr. Rina SpPK", "tipe": "kepala_instalasi", "tanggal": None, "cara": None}])
+
+    def test_peran_per_baris(self):
+        teks = "Pendukung:\n- dr. Rina SpPK, kepala instalasi lab\n- Bu Sari, analis lab\n- Pak Budi, pengadaan, telepon 12 Okt"
+        llm = [{"nama": "dr. Rina SpPK"}, {"nama": "Bu Sari"}, {"nama": "Pak Budi"}]
+        tipe = [p["tipe"] for p in bersihkan({"pendukung": llm}, teks)["pendukung"]]
+        self.assertEqual(tipe, ["kepala_instalasi", "analis_perawat", "pengadaan"])
+
+    def test_dokter_tanpa_jabatan_tetap_dokter_user(self):
+        h = bersihkan({"pendukung": [{"nama": "dr. Andi", "tipe": None}]}, "pendukung dr. Andi, dokter SpPD pengguna utama")
+        self.assertEqual(h["pendukung"][0]["tipe"], "dokter_user")
+
     def test_input_rusak(self):
         self.assertIsNone(bersihkan(None, "x")["faskes_teks"])  # type: ignore[arg-type]
         self.assertIsNone(parse_json_llm("bukan json"))
