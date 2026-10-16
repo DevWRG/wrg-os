@@ -237,7 +237,7 @@ async function bacaDraft(tx: Tx, id: number): Promise<DraftTampil | null> {
     select r.id::int, r.nomor, r.status::text, f.nama as faskes, f.cabang, a.nama as alat, a.kode as alat_kode,
            r.jumlah, r.volume_estimasi, r.volume_sumber, r.harga_per_test::float8, k.harga_standar_per_test::float8 as harga_standar,
            k.label as kategori, r.tenor_bulan, r.unit_status::text, r.kolom_dinyatakan,
-           coalesce((select array_agg(kode) from kso.rencana_klausul where rencana_id = r.id), '{}') as klausul,
+           coalesce((select array_agg(klausul_kode order by klausul_kode) from kso.rencana_klausul where rencana_id = r.id), '{}') as klausul,
            coalesce((select json_agg(json_build_object('nama', nama, 'tipe', tipe) order by id) from kso.rencana_pendukung where rencana_id = r.id), '[]') as pendukung,
            coalesce((select json_agg(json_build_object('no', no, 'nama', nama, 'status', status, 'nilai', nilai) order by no) from kso.gerbang_hasil where rencana_id = r.id), '[]') as gerbang,
            (select count(*)::int from kso.hod_untuk(r.id)) as kursi_hod
