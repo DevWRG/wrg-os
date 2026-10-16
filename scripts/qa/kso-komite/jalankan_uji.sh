@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# F170 Komite KSO — uji alur (900) + uji hak akses (901) terhadap BERKAS MIGRASI ASLI 224–227.
+# F170 Komite KSO — uji alur (900) + hak akses (901) + referensi OS (902) terhadap BERKAS MIGRASI ASLI 224–228.
 #
 # Pakai: PGHOST=... PGPORT=... PGUSER=... bash scripts/qa/kso-komite/jalankan_uji.sh
 # Membuat database sekali pakai `kso_komite_uji` (DROP + CREATE), tidak menyentuh database lain.
@@ -24,7 +24,8 @@ psql -d postgres -q -v ON_ERROR_STOP=1 \
 
 # urutan sama dengan migrate.sh: satu berkas = satu transaksi
 for f in "$INIT"/224_kso_komite_skema.sql "$INIT"/225_kso_komite_fungsi.sql \
-         "$INIT"/226_kso_komite_view.sql "$INIT"/227_kso_komite_akses.sql; do
+         "$INIT"/226_kso_komite_view.sql "$INIT"/227_kso_komite_akses.sql \
+         "$INIT"/228_kso_komite_referensi_os.sql; do
   psql -d $DB -q -1 -v ON_ERROR_STOP=1 -f "$f" >/dev/null
 done
 psql -d $DB -q -v ON_ERROR_STOP=1 -f 004_data_contoh.sql >/dev/null
@@ -34,4 +35,6 @@ strip() { sed -E 's/^psql:[^:]+:[0-9]+: (NOTICE|ERROR): +//'; }
   psql -d $DB -q -f 900_uji.sql 2>&1 | strip
   psql -d $DB -q -v ON_ERROR_STOP=1 -f 901_uji_akses_wrg.sql 2>&1 | strip \
     | grep -vE "^ *$|^-+$|^\(1 row\)|^ *(cek|harus_gagal|set_config) *$|^ *u-" || true
+  psql -d $DB -q -v ON_ERROR_STOP=1 -f 902_uji_referensi.sql 2>&1 | strip \
+    | grep -vE "^ *$|^-+$|^\(1 row\)|^ *(cek|segarkan_referensi) *$|^ *\{" || true
 } | tee /dev/stderr | awk '/^LULUS/{l++} /^GAGAL/{g++} END{printf "\nRingkasan: %d LULUS, %d GAGAL\n", l, g; exit (g>0 || l==0)}'
