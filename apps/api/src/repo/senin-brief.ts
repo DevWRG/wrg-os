@@ -333,7 +333,7 @@ async function manualTerakhir(): Promise<Map<string, number>> {
   return new Map(rows.map((r) => [String(r.hod_key), Number(r.umur)]));
 }
 
-async function direkturTarget(): Promise<string | null> {
+export async function direkturTarget(): Promise<string | null> {
   const env = process.env.SENIN_BRIEF_TARGET?.trim();
   if (env) return env;
   // Sama dengan approval.ts: akun direktur tertua yang punya nomor WA.

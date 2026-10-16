@@ -29,6 +29,7 @@ import {
 import { runPlanCheck, runReportCheck } from "./repo/compliance.js";
 import { runNotifTua } from "./repo/notiftua.js";
 import { runSeninBrief } from "./repo/senin-brief.js";
+import { runDirekturInbox } from "./repo/direktur-inbox.js";
 import { runSoPacingAlert } from "./repo/so-pacing.js";
 import { runDailySummary } from "./repo/dailysummary.js";
 import { runRaportNarrative } from "./repo/raportnarrative.js";
@@ -247,6 +248,11 @@ export function startScheduler(): ScheduleStatus {
   // baru tutup → simpan → WA ke Direktur. Flag SENDIRI (default off) dan SENGAJA
   // tak ikut AGENT_SCHEDULE_ENABLED: job ini mengirim WA ke Direktur.
   const seninBriefEnabled = (process.env.SENIN_BRIEF_ENABLED ?? "false").toLowerCase() === "true";
+  // direktur-inbox (F59) — hari kerja pagi, digest WA antrean approval yang menunggu
+  // Direktur (kosong = tak kirim). Flag SENDIRI (default off), tak ikut
+  // AGENT_SCHEDULE_ENABLED: mengirim WA ke Direktur. WAJIB terdaftar di DUA tempat
+  // di bawah (daftar `enabled:` DAN gerbang `return`) — lupa yang kedua = job tak jalan.
+  const direkturInboxEnabled = (process.env.DIREKTUR_INBOX_ENABLED ?? "false").toLowerCase() === "true";
   // so-pacing (F21) — hari kerja 14:10, pacing sales bulan berjalan per region;
   // WA ke grup HoD HANYA kalau ada region <50% target prorata. Flag SENDIRI
   // (default off) — mengirim WA.
@@ -332,12 +338,12 @@ export function startScheduler(): ScheduleStatus {
   ];
 
   status = {
-    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled || watchpointSnapshotEnabled || preVisitEnabled || edWatchEnabled || gaMaintenanceAlertEnabled || gaMaintenanceBscEnabled || gaHelpdeskOverdueEnabled || gaHelpdeskBscEnabled || lpseTenderReminderEnabled || accurateStockSyncEnabled || cashinResumeEnabled || geoSweepEnabled || kpiMeasureEnabled || invoiceReminderEnabled || auditFindingReminderEnabled || seninBriefEnabled || soPacingEnabled || fixedAssetSyncEnabled || poSyncEnabled || pmKalibrasiEnabled || leadAgingEnabled || trialReminderEnabled || ksoKesehatanEnabled || ksoSuplaiEnabled,
+    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled || watchpointSnapshotEnabled || preVisitEnabled || edWatchEnabled || gaMaintenanceAlertEnabled || gaMaintenanceBscEnabled || gaHelpdeskOverdueEnabled || gaHelpdeskBscEnabled || lpseTenderReminderEnabled || accurateStockSyncEnabled || cashinResumeEnabled || geoSweepEnabled || kpiMeasureEnabled || invoiceReminderEnabled || auditFindingReminderEnabled || seninBriefEnabled || soPacingEnabled || fixedAssetSyncEnabled || poSyncEnabled || pmKalibrasiEnabled || leadAgingEnabled || trialReminderEnabled || ksoKesehatanEnabled || ksoSuplaiEnabled || direkturInboxEnabled,
     timezone,
     jobs: jobs.map((j) => ({ id: j.id, expr: j.expr, valid: cron.validate(j.expr) })),
   };
 
-  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled && !watchpointSnapshotEnabled && !preVisitEnabled && !edWatchEnabled && !gaMaintenanceAlertEnabled && !gaMaintenanceBscEnabled && !gaHelpdeskOverdueEnabled && !gaHelpdeskBscEnabled && !lpseTenderReminderEnabled && !accurateStockSyncEnabled && !cashinResumeEnabled && !geoSweepEnabled && !kpiMeasureEnabled && !invoiceReminderEnabled && !auditFindingReminderEnabled && !seninBriefEnabled && !soPacingEnabled && !fixedAssetSyncEnabled && !poSyncEnabled && !pmKalibrasiEnabled && !leadAgingEnabled && !trialReminderEnabled && !ksoKesehatanEnabled && !ksoSuplaiEnabled) {
+  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled && !watchpointSnapshotEnabled && !preVisitEnabled && !edWatchEnabled && !gaMaintenanceAlertEnabled && !gaMaintenanceBscEnabled && !gaHelpdeskOverdueEnabled && !gaHelpdeskBscEnabled && !lpseTenderReminderEnabled && !accurateStockSyncEnabled && !cashinResumeEnabled && !geoSweepEnabled && !kpiMeasureEnabled && !invoiceReminderEnabled && !auditFindingReminderEnabled && !seninBriefEnabled && !soPacingEnabled && !fixedAssetSyncEnabled && !poSyncEnabled && !pmKalibrasiEnabled && !leadAgingEnabled && !trialReminderEnabled && !ksoKesehatanEnabled && !ksoSuplaiEnabled && !direkturInboxEnabled) {
     console.log("[scheduler] semua *_SCHEDULE/_ENABLED flag != true — tidak dijadwalkan");
     return status;
   }
@@ -1106,6 +1112,30 @@ export function startScheduler(): ScheduleStatus {
       { timezone },
     );
     live.push(`senin-brief=${sbExpr}`);
+  }
+
+  // direktur-inbox (F59) — 07:30 hari kerja; hari libur dilewati. Isi kosong tak dikirim,
+  // isi sama di hari yang sama tak dikirim ulang (notif_state).
+  const diExpr = process.env.DIREKTUR_INBOX_CRON ?? "30 7 * * 1-5";
+  if (direkturInboxEnabled && cron.validate(diExpr)) {
+    cron.schedule(
+      diExpr,
+      async () => {
+        const startedAt = new Date().toISOString();
+        try {
+          if (!(await isWorkday())) {
+            console.log(`[scheduler] direktur-inbox skip (bukan hari kerja)`);
+            return;
+          }
+          const r = await runDirekturInbox({});
+          console.log(`[scheduler] direktur-inbox @ ${startedAt} ${JSON.stringify({ total: r.total, gagal: r.gagal, wa: r.wa }).slice(0, 300)}`);
+        } catch (e) {
+          console.error(`[scheduler] direktur-inbox gagal @ ${startedAt}:`, e);
+        }
+      },
+      { timezone },
+    );
+    live.push(`direktur-inbox=${diExpr}`);
   }
 
   // watchpoint-snapshot — Senin 06:00, bekukan metric computed minggu lalu ke

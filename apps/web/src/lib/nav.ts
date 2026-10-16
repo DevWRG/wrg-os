@@ -32,6 +32,7 @@ import {
   TrendingUp,
   ShieldAlert,
   Landmark,
+  Inbox,
   type LucideIcon,
 } from "lucide-react";
 
@@ -45,6 +46,7 @@ import { canViewProductScorecard } from "@/lib/product-scorecard-access";
 import { canViewKsoKontrak } from "@/lib/kso-kontrak-access";
 import { canViewAsetTetap } from "@/lib/aset-tetap-access";
 import { canViewPmfScorecard } from "@/lib/pmf-access";
+import { canViewDirekturInbox } from "@/lib/direktur-inbox-access";
 import { canViewRaportList } from "@/lib/raport-access";
 import { canViewExecutive } from "@/lib/executive-access";
 import { canBukaDaftarAlat, canViewKso } from "@/lib/kso-access";
@@ -276,6 +278,9 @@ export const NAV: NavGroup[] = [
       // admin/superuser yang melihatnya (anti-lockout can()).
       { title: "SOP & Otomasi", url: "/sop-otomasi", icon: ClipboardCheck, badge: "NEW" },
       { title: "Executive Briefings", url: "/briefings", icon: ScrollText },
+      // F59 — antrean approval yang menunggu Direktur. Izin 'direktur-inbox': fallback
+      // role direktur/admin/superuser; butuh Sync Fitur + centang grup Direktur setelah deploy.
+      { title: "Direktur Inbox", url: "/direktur-inbox", icon: Inbox, badge: "NEW", show: canViewDirekturInbox },
       { title: "Coaching Notes", url: "/coaching", icon: GraduationCap },
       // Revenue per lini produk — dasar metric `revstream` (kartu Fafa, WatchPoint).
       { title: "Revenue per Lini", url: "/revenue-stream", icon: Coins, badge: "NEW" },
