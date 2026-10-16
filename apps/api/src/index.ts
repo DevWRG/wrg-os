@@ -250,6 +250,7 @@ import { runDetectLeaveScan } from "./repo/detectleave.js";
 import { runExtractCompetitor } from "./repo/extractcompetitor.js";
 import { runWeekendBriefing } from "./repo/weekendbriefing.js";
 import { listSeninBriefs, runSeninBrief } from "./repo/senin-brief.js";
+import { listDirekturInbox, runDirekturInbox } from "./repo/direktur-inbox.js";
 import { getPmfScorecard } from "./repo/pmf-scorecard.js";
 import { getSoPacing, runSoPacingAlert } from "./repo/so-pacing.js";
 import {
@@ -2635,6 +2636,27 @@ app.post("/sales/so-pacing/run", async (c) => {
     /* body opsional */
   }
   return c.json(await runSoPacingAlert({ dryRun: body.dry_run !== false, target: body.target }));
+});
+
+// F59 Direktur Inbox — gabungan antrean approval yang menunggu Direktur (BACA saja;
+// memutuskan tetap lewat layar/WA tiap sumber). Gate peran ada di BFF web.
+app.get("/direktur-inbox", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await listDirekturInbox());
+});
+
+// F59 — susun/kirim digest WA manual. Sengaja TANPA route BFF (bisa mengirim WA ke
+// Direktur): hanya operator via service token. body: {dry_run?, target?}.
+// DEFAULT dry_run=true — kirim sungguhan harus eksplisit `dry_run:false`.
+app.post("/direktur-inbox/run", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { dry_run?: boolean; target?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    /* body opsional */
+  }
+  return c.json(await runDirekturInbox({ dryRun: body.dry_run !== false, target: body.target }));
 });
 
 // F85 Senin Morning Brief — read model (tab "Senin Brief" di /briefings).
