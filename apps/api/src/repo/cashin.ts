@@ -233,6 +233,40 @@ export function waktuAman(raw: unknown): string | null {
   return Number.isNaN(new Date(s).getTime()) ? null : s;
 }
 
+// Pisahkan tanggal baris menjadi yang MASUK AKAL vs MUSTAHIL relatif terhadap
+// tanggal statement. Dipakai penjaga "satu statement = satu tanggal"; diekspor
+// supaya bisa diuji tanpa DB.
+//
+// Ekspor rentang berselisih HARI (9 vs 10 Okt) — itu kesalahan ekspor dan harus
+// menahan statement. Galat parser berselisih RIBUAN TAHUN (tahun 8000/8521/5369
+// dari nomor referensi) — itu cacat kode dan TIDAK boleh menahan statement,
+// karena angkanya sudah diadu ke total tercetak lewat checksum. Menyamakan
+// keduanya berarti menahan uang sah sambil menyuruh pengirim "ekspor ulang",
+// saran yang tak mungkin berhasil.
+export const AMBANG_HARI_MASUK_AKAL = 370;
+
+export function pisahTanggalBaris(
+  tanggalStatement: string,
+  waktuBaris: (string | null)[],
+): { masukAkal: string[]; mustahil: string[] } {
+  const patokan = Date.parse(`${tanggalStatement}T00:00:00Z`);
+  const unik = [...new Set(
+    waktuBaris.map((w) => (w ? String(w).slice(0, 10) : null)).filter((d): d is string => !!d),
+  )].sort();
+
+  // Tanpa patokan yang sah tak ada dasar menilai kemasukakalan — perlakukan
+  // semuanya sebagai masuk akal supaya perilaku lama (deteksi rentang) utuh.
+  if (!Number.isFinite(patokan)) return { masukAkal: unik, mustahil: [] };
+
+  const masukAkal: string[] = [];
+  const mustahil: string[] = [];
+  for (const d of unik) {
+    const selisih = Math.abs((Date.parse(`${d}T00:00:00Z`) - patokan) / 86_400_000);
+    (Number.isFinite(selisih) && selisih <= AMBANG_HARI_MASUK_AKAL ? masukAkal : mustahil).push(d);
+  }
+  return { masukAkal, mustahil };
+}
+
 export async function ingestKoran(
   input: IngestKoranInput,
 ): Promise<IngestKoranResult | ActionResult> {
@@ -320,16 +354,43 @@ export async function ingestKoran(
   //
   // Hanya baris BERTANGGAL yang dinilai: banyak bank tak memberi tanggal per
   // baris (HANA, INDEX) dan itu bukan kesalahan.
-  const tanggalBaris = [...new Set(
-    lines.map((l) => (l.waktu ? String(l.waktu).slice(0, 10) : null)).filter((d): d is string => !!d),
-  )].sort();
+  //
+  // Tanggal yang MUSTAHIL dipisahkan dari tanggal yang berbeda tapi masuk akal.
+  // Keduanya butuh jawaban yang berlawanan, dan menyamakannya merugikan:
+  //
+  //   15 Okt 2026 — satu baris MDR 038 terbaca bertahun 8000 (nomor referensi
+  //   berakhiran "8000" bersebelahan dengan jam setelah pemisah halaman;
+  //   lihat _MDR_DAY_MON_YEAR di services/ai/app/koran.py). Penjaga ini
+  //   membacanya sebagai "2 tanggal berbeda", menahan Rp 90.484.117 uang masuk
+  //   yang checksum-nya COCOK, dan menyuruh pengirim "ekspor ulang" — saran
+  //   yang tak mungkin berhasil karena yang rusak parser, bukan ekspornya.
+  //   Renika mengirim ulang dua kali dan dapat jawaban yang sama.
+  //
+  // Ekspor rentang berselisih HARI (9 vs 10 Okt). Galat parser berselisih
+  // ribuan tahun. Ambang 370 hari memisahkan keduanya tanpa perlu menebak.
+  const { masukAkal: tanggalBaris, mustahil: tanggalMustahil } = pisahTanggalBaris(
+    tanggal,
+    lines.map((l) => l.waktu),
+  );
+
+  // Hanya tanggal yang MASUK AKAL yang membuktikan ekspor rentang. Tanggal
+  // mustahil tetap dilaporkan — ia menandai cacat parser yang perlu ditambal —
+  // tapi tidak menahan statement: angkanya sudah diadu ke total tercetak lewat
+  // checksum, dan menahannya hanya memindahkan kerugian ke sisi sebaliknya.
   const rentangBeda = tanggalBaris.length > 1;
 
-  const parseError = rentangBeda
-    ? `isi dokumen memuat ${tanggalBaris.length} tanggal berbeda (${tanggalBaris.join(", ")}) — ` +
-      `ekspor ulang khusus tanggal ${tanggal} saja` +
-      ((data.parse_error as string) ? `\n${data.parse_error as string}` : "")
-    : ((data.parse_error as string) ?? null);
+  const peringatan = [
+    rentangBeda
+      ? `isi dokumen memuat ${tanggalBaris.length} tanggal berbeda (${tanggalBaris.join(", ")}) — ` +
+        `ekspor ulang khusus tanggal ${tanggal} saja`
+      : null,
+    tanggalMustahil.length > 0
+      ? `tanggal baris tak masuk akal (${tanggalMustahil.join(", ")}) — galat parser, ` +
+        `BUKAN kesalahan ekspor; angka tetap diadu ke total tercetak`
+      : null,
+    (data.parse_error as string) || null,
+  ].filter(Boolean);
+  const parseError = peringatan.length > 0 ? peringatan.join("\n") : null;
 
   const polaRows = await sql`SELECT pola FROM bank_afiliasi WHERE aktif`;
   const polaAfiliasi = polaRows.map((r) => String(r.pola));
