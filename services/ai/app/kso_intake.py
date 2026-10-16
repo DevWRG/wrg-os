@@ -34,7 +34,7 @@ Aturan:
 - tenor dalam tahun → ubah ke bulan (3 tahun = 36).
 - harga dalam ribuan ("18,5 rb", "18.500") → angka rupiah penuh (18500).
 - faskes_teks dan alat_teks: kembalikan teks yang diucapkan AM. Pencocokan ke master dilakukan sistem, bukan kamu.
-- pendukung: satu objek per orang. tipe hanya salah satu dari manajemen, dokter_user, kepala_instalasi, analis_perawat, pengadaan; kalau tidak jelas, null. tanggal kontak format YYYY-MM-DD bila disebut.
+- pendukung: satu objek per ORANG. "dr. Rina SpPK, kepala instalasi lab" = SATU orang (nama "dr. Rina SpPK", tipe kepala_instalasi) — jabatan sesudah koma bukan orang kedua. tipe dari jabatan yang disebut, bukan dari gelar "dr.". tipe hanya salah satu dari manajemen, dokter_user, kepala_instalasi, analis_perawat, pengadaan; kalau tidak jelas, null. tanggal kontak format YYYY-MM-DD bila disebut.
 - klausul_khusus: hanya kode dari daftar: eksklusivitas, jaminan_volume, alat_jatuh (alat jadi milik RS), tanpa_eskalasi (harga tak boleh naik), tanpa_lapor (RS tak mau lapor jumlah test), tanpa_denda, draft_rs (draft PKS dari RS).
   AM bilang "tidak ada klausul"/"tanpa klausul khusus" → []. AM TIDAK menyinggung klausul sama sekali → null.
 - unit_status hanya: baru, eks_kso, eks_demo, refurbish, pinjaman_principal, idle.
@@ -66,13 +66,17 @@ def angka_dalam_teks(teks: str) -> Set[float]:
         kandidat: List[float] = []
         # '18.500' / '1.000.000' = pemisah ribuan; '18,5' = desimal; '53.4' ambigu → dua-duanya
         if re.fullmatch(r"\d{1,3}(\.\d{3})+", mentah):
+            # titik + kelompok 3 digit = pemisah ribuan dalam penulisan Indonesia: "18.500" HANYA
+            # 18500. Uji dev 16 Okt: model mengembalikan 18,5 dan lolos karena dulu dua tafsiran
+            # diterima → harga tercatat Rp 19/test.
             kandidat.append(float(mentah.replace(".", "")))
-        if re.fullmatch(r"\d{1,3}(,\d{3})+", mentah):
-            kandidat.append(float(mentah.replace(",", "")))
-        try:
-            kandidat.append(float(mentah.replace(",", ".")))
-        except ValueError:
-            pass
+        else:
+            if re.fullmatch(r"\d{1,3}(,\d{3})+", mentah):
+                kandidat.append(float(mentah.replace(",", "")))
+            try:
+                kandidat.append(float(mentah.replace(",", ".")))
+            except ValueError:
+                pass
         for k in kandidat:
             hasil.add(k)
             if satuan in ("rb", "ribu", "k"):
@@ -113,6 +117,42 @@ def _tanggal(v: Any, teks_angka: Set[float]) -> Optional[str]:
     return f"{m.group(1)}-{m.group(2)}-{m.group(3) or '01'}"
 
 
+# Peran pendukung dari kata yang DITULIS AM setelah nama orangnya. Urutan = prioritas: "dr. X,
+# kepala instalasi lab" = kepala_instalasi (jabatan), bukan dokter_user (gelar). Uji dev 16 Okt:
+# model memecah baris itu jadi dua orang dan memberi dr. X tipe dokter_user.
+_PERAN_KATA = [
+    ("kepala_instalasi", r"kepala\s+(instalasi|lab(oratorium)?)|ka\.?\s*instalasi|kainst"),
+    ("pengadaan", r"pengadaan|procurement|\bulp\b|\bppk\b|logistik"),
+    ("manajemen", r"direktur|\bdirut\b|wadir|manajemen|kabid|kepala\s+bidang|\bkomite\b"),
+    ("analis_perawat", r"analis|perawat|\batlm\b"),
+    ("dokter_user", r"dokter|\bdr\.?\b|sp\.?\s*pk|sppk|klinisi"),
+]
+_HANYA_PERAN = re.compile(
+    r"^(bu|pak|ibu|bapak)?\s*(kepala|ka\.?|direktur|wadir|kabid|analis|perawat|dokter|dr\.?|pengadaan|manajemen|tim|bagian)\b[\w\s.]*$",
+    re.I,
+)
+
+
+def _peran_dari_teks(nama: str, teks: str) -> Optional[str]:
+    """Cari kata peran di potongan teks sesudah nama (sampai akhir baris / nama berikutnya)."""
+    i = teks.lower().find(nama.lower())
+    if i < 0:
+        return None
+    potongan = re.split(r"[\n;]|\s-\s", teks[i + len(nama):], maxsplit=1)[0][:80].lower()
+    for tipe, pola in _PERAN_KATA:
+        if re.search(pola, potongan):
+            return tipe
+    return None
+
+
+def _hanya_peran(nama: str) -> bool:
+    """'kepala instalasi lab' / 'bagian pengadaan' = jabatan tanpa nama orang → bukan pendukung."""
+    n = nama.strip()
+    if re.match(r"^(dr|drg|prof)\.?\s+[A-Z]", n):  # 'dr. Rina' = orang
+        return False
+    return bool(_HANYA_PERAN.match(n)) and not re.search(r"\b[A-Z][a-z]{2,}\b", re.sub(r"^(Bu|Pak|Ibu|Bapak)\s+", "", n).replace("Kepala", "").replace("Bagian", ""))
+
+
 def bersihkan(d: Dict[str, Any], teks: str) -> Dict[str, Any]:
     """Saring hasil LLM terhadap teks asli AM. Tidak pernah menambah nilai, hanya membuang."""
     d = d if isinstance(d, dict) else {}
@@ -137,11 +177,12 @@ def bersihkan(d: Dict[str, Any], teks: str) -> Dict[str, Any]:
         if not isinstance(p, dict):
             continue
         nama = _teks_ada(p.get("nama"), tn)
-        if not nama:
+        if not nama or _hanya_peran(nama):
             continue
+        tipe = _peran_dari_teks(nama, teks) or (p.get("tipe") if p.get("tipe") in PENDUKUNG_TIPE else None)
         pendukung.append({
             "nama": nama,
-            "tipe": p.get("tipe") if p.get("tipe") in PENDUKUNG_TIPE else None,
+            "tipe": tipe,
             "tanggal": _tanggal(p.get("tanggal"), ta),
             "cara": p.get("cara") if p.get("cara") in KONTAK_CARA else None,
         })
@@ -158,7 +199,8 @@ def bersihkan(d: Dict[str, Any], teks: str) -> Dict[str, Any]:
         "volume_estimasi": _angka(d.get("volume_estimasi"), ta, bulat=True),
         "volume_kalimat_asli": _teks_ada(d.get("volume_kalimat_asli"), tn),
         "volume_sumber": _teks_ada(d.get("volume_sumber"), tn),
-        "harga_per_test": _angka(d.get("harga_per_test"), ta),
+        # < Rp 100/test bukan harga reagen yang masuk akal → hampir pasti salah satuan
+        "harga_per_test": (lambda h: h if h is not None and h >= 100 else None)(_angka(d.get("harga_per_test"), ta)),
         "pakai_harga_daftar": harga_daftar,
         "tenor_bulan": _angka(d.get("tenor_bulan"), ta, bulat=True),
         "unit_status": unit,

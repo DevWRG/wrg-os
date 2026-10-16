@@ -1305,11 +1305,18 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
   if (kind === "kso" || (isSuara && kind === "none")) {
     if (!ksoWaAktif()) return finish({ skipped: "kso-wa-off" }, "kso");
     const amKso = await resolveSender({ senderJid: row.sender_jid, groupJid: row.group_jid, pushname: row.sender_name, ketat: true });
-    if (!amKso) return finish({ skipped: "unknown-sender", sender_name: row.sender_name }, "kso");
+    if (!amKso) {
+      // Spesifikasi 2.1: pengirim tak dikenal ditolak SOPAN, tanpa draft. Hanya untuk pesan
+      // #KSO; voice note tanpa pengirim dikenal tetap diam (bisa saja bukan untuk bot).
+      if (kind !== "kso") return finish({ skipped: "unknown-sender", sender_name: row.sender_name }, "kso");
+      const balasan = "Maaf, nama/nomor Anda belum terdaftar sebagai AM di sistem. Rencana KSO belum dicatat — hubungi admin untuk didaftarkan.";
+      const reply = await sendViaWaGateway(row.group_jid, balasan);
+      return finish({ skipped: "unknown-sender", sender_name: row.sender_name, balasan, reply }, "kso");
+    }
     const sql2 = db();
     // pasangan pesan #KSO ↔ voice note: chat sama, pengirim sama, ±jendela menit
     const pasangan = async (cariSuara: boolean) => sql2`
-      SELECT id::text, body, media_path, received_at::text FROM wa_message
+      SELECT id::text, body, media_path, received_at::text, processed_result FROM wa_message
        WHERE group_jid = ${row.group_jid} AND id <> ${row.id}
          AND coalesce(sender_name, '') = ${row.sender_name ?? ""}
          AND received_at BETWEEN ${row.received_at}::timestamptz - make_interval(mins => ${KSO_JENDELA_SUARA_MENIT})
@@ -1327,13 +1334,29 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
       if (perintah.aksi === "kosong") perintah = { ...perintah, aksi: "baru" };
       transkrip = (await transkripSuara(row.media_path!)) ?? undefined;
       if (!transkrip) {
-        const reply = await sendViaWaGateway(row.group_jid, `Maaf ${amKso.nama}, voice note belum bisa ditranskrip. Coba kirim ulang, atau tulis rencananya sebagai teks #KSO.`);
-        return finish({ error: "transkrip-gagal", reply }, "kso");
+        const balasan = `Maaf ${amKso.nama}, voice note belum bisa ditranskrip. Coba kirim ulang, atau tulis rencananya sebagai teks #KSO.`;
+        const reply = await sendViaWaGateway(row.group_jid, balasan);
+        return finish({ error: "transkrip-gagal", balasan, reply }, "kso");
       }
     } else if (!perintah.isi && (perintah.aksi === "kosong" || perintah.aksi === "lengkapi")) {
-      // "#KSO" / "#KSO D12" tanpa isi: voice note pasangannya (sebelum/sesudah) yang dikerjakan
+      // "#KSO" / "#KSO D12" tanpa isi → yang dikerjakan voice note pasangannya.
+      // Voice note yang datang LEBIH DULU sudah ditandai "suara-tanpa-kso" (belum ada
+      // pasangan saat itu) → dikerjakan di sini. Yang sudah dikerjakan → lewati.
+      // Uji dev 16 Okt: tanpa cabang ini voice note yang dikirim duluan hilang tanpa balasan.
       const [v] = await pasangan(true);
-      if (v) return finish({ skipped: "diproses-lewat-voice-note", audio_message: v.id }, "kso");
+      if (v) {
+        const hasilV = v.processed_result as Record<string, unknown> | null;
+        // belum diproses → baris voice note itu sendiri yang mengerjakan (ia menemukan #KSO ini)
+        if (hasilV == null || hasilV.skipped !== "suara-tanpa-kso")
+          return finish({ skipped: "diproses-lewat-voice-note", audio_message: v.id }, "kso");
+        if (perintah.aksi === "kosong") perintah = { ...perintah, aksi: "baru" };
+        transkrip = (await transkripSuara(String(v.media_path))) ?? undefined;
+        if (!transkrip) {
+          const balasan = `Maaf ${amKso.nama}, voice note belum bisa ditranskrip. Coba kirim ulang, atau tulis rencananya sebagai teks #KSO.`;
+          const reply = await sendViaWaGateway(row.group_jid, balasan);
+          return finish({ error: "transkrip-gagal", audio_message: v.id, balasan, reply }, "kso");
+        }
+      }
     }
     const { balasan, hasil } = await prosesKso({
       am_id: amKso.am_id,
@@ -1344,7 +1367,9 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
       wa_message_id: row.message_id,
     });
     const reply = await sendViaWaGateway(row.group_jid, balasan);
-    return finish({ ...hasil, via: amKso.via, ...(transkrip ? { transkrip } : {}), reply }, "kso");
+    // teks balasan DISIMPAN utuh: kriteria Tahap 3 = audit percakapan acak ("tak ada kolom
+    // terisi tanpa diucapkan AM"), dan WaSendResult sendiri tak membawa teksnya.
+    return finish({ ...hasil, via: amKso.via, ...(transkrip ? { transkrip } : {}), balasan, reply }, "kso");
   }
 
   // F8 — laporan lapangan Teknisi (#install/#servis/#training/#kalibrasi).
@@ -2358,6 +2383,7 @@ export async function processUnprocessed(
                AND EXISTS (
                  SELECT 1 FROM wa_message k
                  WHERE k.group_jid = wa_message.group_jid
+                   AND coalesce(k.sender_name, '') = coalesce(wa_message.sender_name, '')
                    AND k.body ~* '#\\s*kso'
                    AND k.received_at BETWEEN wa_message.received_at - make_interval(mins => ${KSO_JENDELA_SUARA_MENIT})
                                          AND wa_message.received_at + make_interval(mins => ${KSO_JENDELA_SUARA_MENIT})
