@@ -72,6 +72,7 @@ import {
 } from "./demo-trial.js";
 import { FULL_SCOPE } from "./access-scope.js";
 import { accountIdDariTulisan } from "./akun-faskes.js";
+import { KSO_JENDELA_SUARA_MENIT, KSO_LINE, ksoWaAktif, parseKsoPerintah, prosesKso, transkripSuara } from "./kso-intake.js";
 
 
 // Role yang pakai alur AM per-customer (sales_plan/activity_log + foto), bukan todo.
@@ -130,6 +131,7 @@ export const INBOUND_HASHTAGS = [
   "trial",
   "kampanye",
   "brief",
+  "kso",
 ] as const;
 
 export type InboundKind = (typeof INBOUND_HASHTAGS)[number] | "none";
@@ -189,6 +191,8 @@ export function detectKind(body: string | null): InboundKind {
   if (daily) return daily;
   if (body) {
     for (const line of stripInvisible(body).split(/\r?\n/)) {
+      // F170: dicek PERTAMA — "#KSO kirim D12" memuat kata "kirim" (bukan #KIRIM pengiriman).
+      if (KSO_LINE.test(line)) return "kso";
       const m = line.match(LEADS_UPDATE_LINE);
       if (m) return m[1].toLowerCase() as "leads" | "update";
       if (SALES_LINE.test(line)) return "sales";
@@ -1294,6 +1298,55 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
     );
   }
 
+  // F170 Komite KSO — #KSO dan voice note pasangannya. Identitas AM dari PENGIRIM (ketat:
+  // DM = nomor, grup = alias/pushname), tak pernah dari isi pesan. Mati selama
+  // KSO_WA_ENABLED bukan "true" (diam, tanpa balasan — sama seperti fitur WA lain yang di-flag).
+  const isSuara = /^audio/i.test(row.message_type ?? "") && !!row.media_path;
+  if (kind === "kso" || (isSuara && kind === "none")) {
+    if (!ksoWaAktif()) return finish({ skipped: "kso-wa-off" }, "kso");
+    const amKso = await resolveSender({ senderJid: row.sender_jid, groupJid: row.group_jid, pushname: row.sender_name, ketat: true });
+    if (!amKso) return finish({ skipped: "unknown-sender", sender_name: row.sender_name }, "kso");
+    const sql2 = db();
+    // pasangan pesan #KSO ↔ voice note: chat sama, pengirim sama, ±jendela menit
+    const pasangan = async (cariSuara: boolean) => sql2`
+      SELECT id::text, body, media_path, received_at::text FROM wa_message
+       WHERE group_jid = ${row.group_jid} AND id <> ${row.id}
+         AND coalesce(sender_name, '') = ${row.sender_name ?? ""}
+         AND received_at BETWEEN ${row.received_at}::timestamptz - make_interval(mins => ${KSO_JENDELA_SUARA_MENIT})
+                             AND ${row.received_at}::timestamptz + make_interval(mins => ${KSO_JENDELA_SUARA_MENIT})
+         AND ${cariSuara ? sql2`message_type ~* '^audio' AND media_path IS NOT NULL` : sql2`body ~* '#\\s*kso'`}
+       ORDER BY abs(extract(epoch FROM received_at - ${row.received_at}::timestamptz)) LIMIT 1`;
+    let perintah = parseKsoPerintah(row.body);
+    let transkrip: string | undefined;
+    if (isSuara) {
+      const [k] = await pasangan(false);
+      if (!k) return finish({ skipped: "suara-tanpa-kso" }, "kso");
+      perintah = parseKsoPerintah(k.body);
+      if (perintah.isi && perintah.aksi !== "kosong")
+        return finish({ skipped: "kso-pasangan-sudah-berisi-teks", kso_message: k.id }, "kso");
+      if (perintah.aksi === "kosong") perintah = { ...perintah, aksi: "baru" };
+      transkrip = (await transkripSuara(row.media_path!)) ?? undefined;
+      if (!transkrip) {
+        const reply = await sendViaWaGateway(row.group_jid, `Maaf ${amKso.nama}, voice note belum bisa ditranskrip. Coba kirim ulang, atau tulis rencananya sebagai teks #KSO.`);
+        return finish({ error: "transkrip-gagal", reply }, "kso");
+      }
+    } else if (!perintah.isi && (perintah.aksi === "kosong" || perintah.aksi === "lengkapi")) {
+      // "#KSO" / "#KSO D12" tanpa isi: voice note pasangannya (sebelum/sesudah) yang dikerjakan
+      const [v] = await pasangan(true);
+      if (v) return finish({ skipped: "diproses-lewat-voice-note", audio_message: v.id }, "kso");
+    }
+    const { balasan, hasil } = await prosesKso({
+      am_id: amKso.am_id,
+      nama: amKso.nama,
+      teks: transkrip ?? perintah.isi,
+      perintah,
+      transkrip,
+      wa_message_id: row.message_id,
+    });
+    const reply = await sendViaWaGateway(row.group_jid, balasan);
+    return finish({ ...hasil, via: amKso.via, ...(transkrip ? { transkrip } : {}), reply }, "kso");
+  }
+
   // F8 — laporan lapangan Teknisi (#install/#servis/#training/#kalibrasi).
   // Grup SAMA dgn #plan/#report Teknisi (bukan grup baru) — cukup nebeng
   // groupAllowed()/WA_INBOUND_GROUPS existing. Identitas via matchTeknisi
@@ -2297,6 +2350,17 @@ export async function processUnprocessed(
                    AND k.body ~* '#\\s*koran'
                    AND k.received_at BETWEEN wa_message.received_at - interval '10 minutes'
                                          AND wa_message.received_at + interval '10 minutes'
+               ))
+           -- F170 voice note #KSO: audio TIDAK ber-hashtag. Sengaja sempit — hanya audio yang
+           -- di chat yang sama ada pesan #KSO dalam ±10 menit (urutan kirim bebas).
+           OR (media_path IS NOT NULL
+               AND message_type ~* '^audio'
+               AND EXISTS (
+                 SELECT 1 FROM wa_message k
+                 WHERE k.group_jid = wa_message.group_jid
+                   AND k.body ~* '#\\s*kso'
+                   AND k.received_at BETWEEN wa_message.received_at - make_interval(mins => ${KSO_JENDELA_SUARA_MENIT})
+                                         AND wa_message.received_at + make_interval(mins => ${KSO_JENDELA_SUARA_MENIT})
                ))
            OR (${complaintGroupJid()} <> '' AND group_jid = ${complaintGroupJid()}))
     ORDER BY received_at ASC LIMIT ${limit}

@@ -475,3 +475,29 @@ class KoranParseResponse(BaseModel):
     parse_error: Optional[str] = None
     raw_text: str = ""
     lines: List[KoranLine] = []
+
+
+# === F170 Komite KSO: intake WhatsApp #KSO ===
+class KsoEkstrakRequest(BaseModel):
+    teks: str
+    dry_run: bool = False
+
+
+class KsoEkstrakResponse(BaseModel):
+    isian: Dict[str, Any] = {}
+    model: str
+    dry_run: bool = False
+    galat: Optional[str] = None
+
+
+class TranskripRequest(BaseModel):
+    audio_b64: str
+    format: str = "ogg"
+    dry_run: bool = False
+
+
+class TranskripResponse(BaseModel):
+    teks: str = ""
+    model: str
+    dry_run: bool = False
+    galat: Optional[str] = None
