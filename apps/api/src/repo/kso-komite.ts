@@ -148,7 +148,7 @@ export async function daftarTab(userId: string, tab: TabKso): Promise<Record<str
 }
 
 export async function detailRencana(userId: string, tab: TabKso, id: number): Promise<Record<string, unknown>> {
-  return sebagaiPengguna(userId, tab, "view", async (tx) => {
+  const d = await sebagaiPengguna(userId, tab, "view", async (tx) => {
     const [r] = await tx`select *, capex::float8 as capex from kso.v_rencana where id = ${id}`;
     if (!r) throw new GalatKso(404, "Rencana tidak ada, atau di luar akses tab ini.");
     const [gerbang, pendukung, klausul, pendapat, mandat, usulan, putusan, riwayat, agendaItem] = await Promise.all([
@@ -161,12 +161,20 @@ export async function detailRencana(userId: string, tab: TabKso, id: number): Pr
                 berlaku_sampai::text, sumber from kso.mandat where rencana_id = ${id}`,
       tx`select usulan::text, syarat, mandat_usulan, data_kurang, pemilik, tanggal_kembali::text, alasan, at::text from kso.usulan_komite_catatan where rencana_id = ${id} order by at`,
       tx`select putusan::text, catatan, at::text from kso.putusan_direksi_catatan where rencana_id = ${id}`,
-      tx`select s.dari::text, s.ke::text, s.oleh, s.oleh_peran, s.at::text, u.name as oleh_nama
-           from kso.riwayat_status s left join public.app_user u on u.id::text = s.oleh_user where s.rencana_id = ${id} order by s.at`,
+      tx`select s.dari::text, s.ke::text, s.oleh, s.oleh_peran, s.oleh_user, s.at::text
+           from kso.riwayat_status s where s.rencana_id = ${id} order by s.at`,
       tx`select ai.forum_id::int, f.tanggal::text from kso.agenda_item ai join kso.forum f on f.id = ai.forum_id where ai.rencana_id = ${id} order by f.tanggal desc limit 1`,
     ]);
     return { rencana: r, gerbang, pendukung, klausul, pendapat, mandat: mandat[0] ?? null, usulan, putusan: putusan[0] ?? null, riwayat, forum: agendaItem[0] ?? null };
   });
+  // Nama pelaku dibaca DI LUAR transaksi peran (koneksi biasa API): wrg_app tak dijamin boleh
+  // membaca app_user di setiap lingkungan, dan nama akun bukan data KSO yang perlu RLS.
+  const riwayat = d.riwayat as unknown as { oleh_user: string | null }[];
+  const ids = [...new Set(riwayat.map((h) => h.oleh_user).filter((x): x is string => !!x))];
+  const nama = new Map<string, string>();
+  if (ids.length) for (const u of await db()`SELECT id::text, name FROM app_user WHERE id::text = ANY(${ids})`) nama.set(String(u.id), String(u.name));
+  d.riwayat = riwayat.map(({ oleh_user, ...h }) => ({ ...h, oleh_nama: oleh_user ? nama.get(oleh_user) ?? null : null })) as never;
+  return d;
 }
 
 // ---------------------------------------------------------------- aksi
