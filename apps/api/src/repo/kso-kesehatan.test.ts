@@ -90,3 +90,15 @@ test("pesanRekapHod: ringkas, maksimal 15 faskes", () => {
   assert.match(p, /^🩺 \*Kesehatan KSO — tim Yogi\*\n17 faskes baru memburuk minggu ini:\n🔴 RS A: Piutang lewat jatuh tempo 120 hari/);
   assert.match(p, /… dan 2 lainnya/);
 });
+
+test("utilisasi memakai target sesuai sumber tes (15 Okt): Accurate ↔ alat PER_TEST, sheet ↔ alat lain", () => {
+  // Faskes berskema ganda: 1000 target total, 600 milik alat PER_TEST.
+  const pt = kode({ target_bln: 1000, target_pt: 600, target_lain: 400, tes_tagih_3bln: 1800 });
+  assert.equal(pt.utilisasi.sumber, "accurate");
+  assert.equal(pt.utilisasi.rasio, 1); // 600/600, bukan 600/1000
+  const sh = kode({ ada_per_test: false, target_bln: 1000, target_pt: 0, target_lain: 400, tes_tagih_3bln: null,
+    tes_sheet_rata: 100, sheet_sampai: "2026-07-01" });
+  assert.equal(sh.utilisasi.sumber, "sheet");
+  assert.equal(sh.utilisasi.rasio, 0.25);
+  assert.match(sh.alasan.find((a) => a.kode === "utilisasi_rendah")!.teks, /target 400 tes/);
+});
