@@ -516,13 +516,8 @@ export interface SeninBriefRow {
   generated_at: string;
 }
 
-export async function listSeninBriefs(limit = 12): Promise<SeninBriefRow[]> {
-  const rows = await db()`
-    SELECT id::text, iso_year, iso_week, periode, health, checks, content, narasi_ok, model_used,
-           wa_sent_at::text, wa_error, generated_at::text
-    FROM senin_brief ORDER BY iso_year DESC, iso_week DESC LIMIT ${limit}
-  `;
-  return rows.map((r) => ({
+function mapRow(r: Record<string, unknown>): SeninBriefRow {
+  return {
     id: String(r.id), iso_year: Number(r.iso_year), iso_week: Number(r.iso_week),
     periode: String(r.periode), health: r.health as Health, checks: (r.checks ?? []) as HodBrief[],
     content: String(r.content), narasi_ok: Boolean(r.narasi_ok),
@@ -531,5 +526,28 @@ export async function listSeninBriefs(limit = 12): Promise<SeninBriefRow[]> {
     wa_sent_at: r.wa_sent_at ? String(r.wa_sent_at) : null,
     wa_error: r.wa_error ? String(r.wa_error) : null,
     generated_at: String(r.generated_at),
-  }));
+  };
+}
+
+export async function listSeninBriefs(limit = 12): Promise<SeninBriefRow[]> {
+  const rows = await db()`
+    SELECT id::text, iso_year, iso_week, periode, health, checks, content, narasi_ok, model_used,
+           wa_sent_at::text, wa_error, generated_at::text
+    FROM senin_brief ORDER BY iso_year DESC, iso_week DESC LIMIT ${limit}
+  `;
+  return rows.map(mapRow);
+}
+
+/** Satu brief (untuk PDF F110). Tanpa argumen = brief terbaru; null bila tak ada. */
+export async function getSeninBrief(isoYear?: number, isoWeek?: number): Promise<SeninBriefRow | null> {
+  const rows = isoYear && isoWeek
+    ? await db()`
+        SELECT id::text, iso_year, iso_week, periode, health, checks, content, narasi_ok, model_used,
+               wa_sent_at::text, wa_error, generated_at::text
+        FROM senin_brief WHERE iso_year = ${isoYear} AND iso_week = ${isoWeek}`
+    : await db()`
+        SELECT id::text, iso_year, iso_week, periode, health, checks, content, narasi_ok, model_used,
+               wa_sent_at::text, wa_error, generated_at::text
+        FROM senin_brief ORDER BY iso_year DESC, iso_week DESC LIMIT 1`;
+  return rows.length ? mapRow(rows[0]) : null;
 }
