@@ -13,13 +13,17 @@
 //   Kontrak BELUM terverifikasi (isian awal F47) yang sudah lewat = penanda "perlu
 //   verifikasi" saja — prod 13 Okt: 61/130 kontrak isian awal tercatat lewat.
 //
-// Utilisasi = tes TERTAGIH di Accurate (qty baris "PEMERIKSAAN…"/"…PENGULANGAN…",
-// periode = bulan faktur − 1 — aturan yang SAMA dgn kso_asset_produktivitas_v 197)
-// dibanding target tes/bln aset. Jendela = 3 periode yang tagihannya sudah lengkap
-// (faktur di 3 bulan tutup terakhir). Cadangan: tes dari sheet
-// (kso_asset_test_monthly, 3 bulan terlapor terakhir) — HANYA bila bulan datanya
+// Utilisasi dibaca dari SATU sumber tes yang sama dengan Produktivitas KSO:
+// kso_tes_faskes_v (migrasi 220). PER_TEST = tes TERTAGIH Accurate (PEMERIKSAAN, per
+// jenis alat yang pernah ditempati alat PER_TEST, periode = bulan faktur − 1),
+// dibanding target alat PER_TEST. Jendela = 3 periode yang tagihannya sudah lengkap
+// (faktur di 3 bulan tutup terakhir). Cadangan: tes sheet BELI_REAGEN (ikut riwayat
+// penempatan alat, 217) dibanding target alat non-PER_TEST — HANYA bila bulan datanya
 // ≤6 bulan lalu (SHEET_MAKS_BULAN), diberi label bulan datanya; impor sheet manual
 // (prod 13 Okt: s/d Juli 2026, banyak faskes terakhir melapor 2025).
+// Sebelum 15 Okt 2026 F73 menghitung sendiri: semua PEMERIKSAAN + PENGULANGAN di
+// faskes (tanpa cek jenis alat) dibanding target SEMUA alat, dan sheet per alat dari
+// lokasi alat sekarang — dua angka bisa berbeda dari tab Tabel per faskes.
 // "Pembelian KSO" = revenue kategori yang berlaku untuk skema faskes
 // (kso_kategori_skema) di kso_customer_revenue_mv.
 //
@@ -45,6 +49,8 @@ export interface MetrikKso {
   skema: string[];
   alat: string[];
   target_bln: number;            // jumlah target tes/bln aset yang punya target (0 = tanpa target)
+  target_pt?: number;            // … hanya alat PER_TEST (pembanding tes tertagih)
+  target_lain?: number;          // … alat selain PER_TEST (pembanding tes sheet)
   ada_per_test: boolean;
   beli_m1: boolean;              // ada pembelian KSO bulan tutup terakhir
   beli_m2: boolean;              // … dan bulan sebelumnya
@@ -106,17 +112,24 @@ export function nilaiKesehatan(m: MetrikKso, hariIni: string): HasilKesehatan {
   }
   // 3. Utilisasi
   let utilisasi: HasilKesehatan["utilisasi"] = { rasio: null, sumber: null, rata_tes: null };
+  // Pembanding dipisah per sumber (sejak 15 Okt): tes tertagih Accurate hanya milik alat
+  // PER_TEST, tes sheet hanya alat lain. Tanpa field ini (data lama) = target semua alat.
+  const targetPt = m.target_pt ?? m.target_bln;
+  const targetLain = m.target_lain ?? m.target_bln;
+  let targetDipakai = m.target_bln;
   if (m.target_bln > 0) {
-    if (m.ada_per_test && m.tes_tagih_3bln != null && m.tes_tagih_3bln > 0) {
+    if (m.ada_per_test && targetPt > 0 && m.tes_tagih_3bln != null && m.tes_tagih_3bln > 0) {
       const rata = m.tes_tagih_3bln / 3;
-      utilisasi = { rasio: rata / m.target_bln, sumber: "accurate", rata_tes: rata };
-    } else if (m.tes_sheet_rata != null && m.sheet_sampai && umurBulan(m.sheet_sampai, hariIni) <= SHEET_MAKS_BULAN) {
-      utilisasi = { rasio: m.tes_sheet_rata / m.target_bln, sumber: "sheet", rata_tes: m.tes_sheet_rata };
+      utilisasi = { rasio: rata / targetPt, sumber: "accurate", rata_tes: rata };
+      targetDipakai = targetPt;
+    } else if (targetLain > 0 && m.tes_sheet_rata != null && m.sheet_sampai && umurBulan(m.sheet_sampai, hariIni) <= SHEET_MAKS_BULAN) {
+      utilisasi = { rasio: m.tes_sheet_rata / targetLain, sumber: "sheet", rata_tes: m.tes_sheet_rata };
+      targetDipakai = targetLain;
     }
     if (utilisasi.rasio != null) {
       const asal = utilisasi.sumber === "sheet" && m.sheet_sampai ? ` (data sheet s/d ${labelBulan(m.sheet_sampai)})` : " (tes tertagih Accurate)";
       if (utilisasi.rasio < AMBANG.utilisasi_waspada) {
-        tambah("waspada", "utilisasi_rendah", `Utilisasi ${pct(utilisasi.rasio)} dari target ${Math.round(m.target_bln).toLocaleString("id-ID")} tes/bln${asal}`);
+        tambah("waspada", "utilisasi_rendah", `Utilisasi ${pct(utilisasi.rasio)} dari target ${Math.round(targetDipakai).toLocaleString("id-ID")} tes/bln${asal}`);
       }
     } else if (m.sheet_sampai && umurBulan(m.sheet_sampai, hariIni) > SHEET_MAKS_BULAN) {
       tambah("info", "utilisasi_tak_terukur", `Utilisasi tak terukur — data sheet terakhir ${labelBulan(m.sheet_sampai)}, terlalu lama`);
@@ -173,6 +186,8 @@ async function metrik(sql: Sql, sc: DataScope, hariIni: string, akun: number[] |
       SELECT a.account_id, array_agg(DISTINCT a.skema) AS skema, count(*)::int AS n,
              array_agg(DISTINCT COALESCE(NULLIF(a.nama_alat, ''), a.type_alat)) FILTER (WHERE COALESCE(NULLIF(a.nama_alat, ''), a.type_alat) IS NOT NULL) AS alat,
              COALESCE(sum(a.target_jumlah_tes) FILTER (WHERE a.target_jumlah_tes > 0), 0)::float8 AS target,
+             COALESCE(sum(a.target_jumlah_tes) FILTER (WHERE a.target_jumlah_tes > 0 AND a.skema = 'PER_TEST'), 0)::float8 AS target_pt,
+             COALESCE(sum(a.target_jumlah_tes) FILTER (WHERE a.target_jumlah_tes > 0 AND a.skema <> 'PER_TEST'), 0)::float8 AS target_lain,
              bool_or(a.skema = 'PER_TEST') AS ada_per_test
       FROM kso_asset a JOIN kso_asset_status_v v ON v.id = a.id
       WHERE v.status_kode = 'operasional' AND a.account_id IS NOT NULL
@@ -196,23 +211,20 @@ async function metrik(sql: Sql, sc: DataScope, hariIni: string, akun: number[] |
       WHERE r.periode >= ${m6}::date AND r.periode < ${m0}::date
       GROUP BY r.account_id
     ),
-    tagih AS (  -- faktur di 3 bulan tutup terakhir = tes periode (bulan faktur − 1)
-      SELECT ai.customer_id AS account_id, sum(COALESCE(aii.qty, 0))::float8 AS tes
-      FROM accurate_invoice ai
-      JOIN accurate_invoice_item aii ON aii.invoice_id = ai.id
-      LEFT JOIN accurate_item it ON it.id = aii.item_id
-      WHERE ai.customer_id IN (SELECT account_id FROM aset)
-        AND ai.tanggal >= ${m3}::date AND ai.tanggal < ${m0}::date
-        AND (COALESCE(NULLIF(it.name, ''), aii.raw->'item'->>'name', '') ILIKE 'PEMERIKSAAN%'
-             OR COALESCE(NULLIF(it.name, ''), aii.raw->'item'->>'name', '') ILIKE '%PENGULANGAN%')
-      GROUP BY ai.customer_id
+    -- Sumber tes = kso_tes_faskes_v (220), sama dengan Produktivitas KSO. Faktur di 3
+    -- bulan tutup terakhir [m3, m0) = tes periode [m4, m1) karena periode = bulan faktur − 1.
+    tagih AS (
+      SELECT f.account_id, sum(f.jumlah_tes)::float8 AS tes
+      FROM kso_tes_faskes_v f
+      WHERE f.skema = 'PER_TEST' AND f.account_id IN (SELECT account_id FROM aset)
+        AND f.periode >= (${m3}::date - interval '1 month') AND f.periode < (${m0}::date - interval '1 month')
+      GROUP BY f.account_id
     ),
-    sheet_bln AS (
-      SELECT a.account_id, t.periode, sum(t.jumlah_tes)::float8 AS tes
-      FROM kso_asset a JOIN kso_asset_status_v v ON v.id = a.id
-      JOIN kso_asset_test_monthly t ON t.asset_id = a.id
-      WHERE v.status_kode = 'operasional' AND a.account_id IN (SELECT account_id FROM aset) AND t.jumlah_tes IS NOT NULL
-      GROUP BY a.account_id, t.periode
+    sheet_bln AS (  -- tes sheet (BELI_REAGEN), sudah ikut riwayat penempatan alat (217)
+      SELECT f.account_id, f.periode, sum(f.jumlah_tes)::float8 AS tes
+      FROM kso_tes_faskes_v f
+      WHERE f.skema = 'BELI_REAGEN' AND f.account_id IN (SELECT account_id FROM aset)
+      GROUP BY f.account_id, f.periode
     ),
     sheet AS (
       SELECT account_id, avg(tes)::float8 AS rata, max(periode)::text AS sampai
@@ -237,7 +249,7 @@ async function metrik(sql: Sql, sc: DataScope, hariIni: string, akun: number[] |
     SELECT a.account_id::text, COALESCE(NULLIF(ac.name, ''), 'Customer #' || a.account_id::text) AS nama,
            upper(btrim(COALESCE(NULLIF(omu.cabang, ''), NULLIF(area_customer(a.account_id), '')))) AS cabang,
            COALESCE(NULLIF(omu.nama, ''), oa.owner_am_id) AS pemilik,
-           a.n, a.skema, COALESCE(a.alat, '{}') AS alat, a.target, a.ada_per_test,
+           a.n, a.skema, COALESCE(a.alat, '{}') AS alat, a.target, a.target_pt, a.target_lain, a.ada_per_test,
            COALESCE(r.beli_m1, false) AS beli_m1, COALESCE(r.beli_m2, false) AS beli_m2,
            COALESCE(r.rev3, 0) AS rev3, COALESCE(r.rev3_sebelum, 0) AS rev3_sebelum,
            t.tes AS tes_tagih, s.rata AS sheet_rata, s.sampai AS sheet_sampai,
@@ -256,7 +268,8 @@ async function metrik(sql: Sql, sc: DataScope, hariIni: string, akun: number[] |
   return rows.map((r) => ({
     account_id: String(r.account_id), nama: String(r.nama), cabang: r.cabang ? String(r.cabang) : null,
     pemilik: r.pemilik ? String(r.pemilik) : null, aset: Number(r.n), skema: (r.skema as string[]) ?? [],
-    alat: ((r.alat as string[]) ?? []).slice(0, 6), target_bln: Number(r.target) || 0, ada_per_test: Boolean(r.ada_per_test),
+    alat: ((r.alat as string[]) ?? []).slice(0, 6), target_bln: Number(r.target) || 0,
+    target_pt: Number(r.target_pt) || 0, target_lain: Number(r.target_lain) || 0, ada_per_test: Boolean(r.ada_per_test),
     beli_m1: Boolean(r.beli_m1), beli_m2: Boolean(r.beli_m2), rev3: Number(r.rev3) || 0, rev3_sebelum: Number(r.rev3_sebelum) || 0,
     tes_tagih_3bln: r.tes_tagih == null ? null : Number(r.tes_tagih),
     tes_sheet_rata: r.sheet_rata == null ? null : Number(r.sheet_rata),
@@ -273,7 +286,7 @@ export async function kesehatanKso(sc: DataScope = FULL_SCOPE) {
   const hari = hariIniWib();
   const hasil = (await metrik(sql, sc, hari, null)).map((m) => nilaiKesehatan(m, hari))
     .sort((a, b) => URUT[a.status] - URUT[b.status] || a.nama.localeCompare(b.nama));
-  const [sheet] = await sql`SELECT max(periode)::text AS sampai FROM kso_asset_test_monthly WHERE jumlah_tes IS NOT NULL`;
+  const [sheet] = await sql`SELECT max(periode)::text AS sampai FROM kso_tes_faskes_v WHERE skema = 'BELI_REAGEN'`;
   return {
     hari_ini: hari,
     jendela: { beli: [bulanTutup(hari, 2), bulanTutup(hari, 1)], tes_tertagih: [bulanTutup(hari, 4), bulanTutup(hari, 2)] },
