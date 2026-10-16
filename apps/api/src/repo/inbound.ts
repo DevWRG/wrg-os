@@ -73,6 +73,7 @@ import {
 import { FULL_SCOPE } from "./access-scope.js";
 import { accountIdDariTulisan } from "./akun-faskes.js";
 import { KSO_JENDELA_SUARA_MENIT, KSO_LINE, ksoWaAktif, parseKsoPerintah, prosesKso, transkripSuara } from "./kso-intake.js";
+import { notifHodMasukAntrean } from "./kso-jadwal.js";
 
 
 // Role yang pakai alur AM per-customer (sales_plan/activity_log + foto), bukan todo.
@@ -1367,9 +1368,15 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
       wa_message_id: row.message_id,
     });
     const reply = await sendViaWaGateway(row.group_jid, balasan);
+    // Tahap 5: usulan baru masuk antrean HOD → kabari kursi HOD (perlu putusan / perlu pendapat).
+    // Sesudah transaksi pengajuan tersimpan; gagal notifikasi tidak menggagalkan pengajuan.
+    let notifHod: unknown;
+    if (hasil.aksi === "kirim" && typeof hasil.rencana_id === "number" && (process.env.KSO_JADWAL_ENABLED ?? "").toLowerCase() === "true") {
+      try { notifHod = await notifHodMasukAntrean(hasil.rencana_id); } catch (e) { notifHod = { error: (e as Error).message }; }
+    }
     // teks balasan DISIMPAN utuh: kriteria Tahap 3 = audit percakapan acak ("tak ada kolom
     // terisi tanpa diucapkan AM"), dan WaSendResult sendiri tak membawa teksnya.
-    return finish({ ...hasil, via: amKso.via, ...(transkrip ? { transkrip } : {}), balasan, reply }, "kso");
+    return finish({ ...hasil, via: amKso.via, ...(transkrip ? { transkrip } : {}), balasan, reply, ...(notifHod ? { notif_hod: notifHod } : {}) }, "kso");
   }
 
   // F8 — laporan lapangan Teknisi (#install/#servis/#training/#kalibrasi).
