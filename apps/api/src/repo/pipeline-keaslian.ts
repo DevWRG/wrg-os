@@ -147,7 +147,7 @@ export async function keaslianPipeline(sc: DataScope = FULL_SCOPE) {
     sql`
       SELECT customer_id AS account_id, array_agg(DISTINCT tanggal::text) AS tgl
       FROM accurate_invoice
-      WHERE customer_id = ANY(${ids}::bigint[]) AND tanggal >= ${hariIni}::date - ${ATURAN.won_jendela_hari + ATURAN.faktur_mundur_hari}
+      WHERE customer_id = ANY(${ids}::bigint[]) AND tanggal >= ${hariIni}::date - ${ATURAN.won_jendela_hari + ATURAN.faktur_mundur_hari}::int
       GROUP BY 1`,
   ]);
   const fakturAkun = new Map(faktur.map((f) => [Number(f.account_id), ((f.tgl as string[]) ?? []).map(iso).sort()]));
