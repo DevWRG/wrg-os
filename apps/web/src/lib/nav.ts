@@ -12,7 +12,7 @@ import { CalendarCheck,
   Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, BookOpen, Calculator, Presentation, Megaphone, Library,
   Wallet, Coins, Banknote, Car, QrCode, PenLine, PackagePlus, PackageMinus,
   Handshake, Archive, Ticket, Printer, Route, ArrowLeftRight,
-  type LucideIcon,
+  TrendingUp, type LucideIcon,
   Hourglass, ShieldAlert, Landmark, ClipboardList, PackageCheck,
 } from "lucide-react";
 
