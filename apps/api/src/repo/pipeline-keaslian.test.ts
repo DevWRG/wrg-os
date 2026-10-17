@@ -72,3 +72,11 @@ test("kunjunganCocok: semua kata inti nama deal ada di laporan, jenis tak berten
   assert.equal(kunjunganCocok("Puskesmas", "Puskesmas Kertosono"), false);     // terlalu umum
   assert.equal(kunjunganCocok("Dinas Kesehatan", "Dinkes Kab Kediri"), false);
 });
+
+test("info: tak pernah pindah tahap sejak dibuat (>60 hari)", () => {
+  const r = nilaiKeaslian({ stage: "Quotation", stage_masuk: "2026-07-30", dibuat: "2026-07-30", on_hold: false, tertaut: true }, [], null, HARI);
+  assert.equal(r.status, "MERAGUKAN");
+  assert.ok(r.alasan.some((a) => a.kode === "tak_pernah_bergerak" && /30 Jul 2026/.test(a.teks)));
+  const b = nilaiKeaslian({ ...buka, dibuat: "2026-09-01" }, kunjBaru, null, HARI);
+  assert.ok(!b.alasan.some((a) => a.kode === "tak_pernah_bergerak"));
+});

@@ -48,6 +48,7 @@ export interface DealInput {
   stage_masuk: string;          // YYYY-MM-DD
   on_hold: boolean;
   tertaut: boolean;             // punya account (langsung / lewat nama)
+  dibuat?: string | null;       // YYYY-MM-DD — untuk penanda "tak pernah pindah tahap"
 }
 
 export function nilaiKeaslian(d: DealInput, kunjungan: Kunjungan[], fakturSejak: string | null, hariIni: string) {
@@ -79,6 +80,11 @@ export function nilaiKeaslian(d: DealInput, kunjungan: Kunjungan[], fakturSejak:
       tambah("cek", "macet", `Di tahap ${d.stage} ${lamaTahap} hari (batas ${batas})`);
     }
     if (d.on_hold) tambah("info", "ditahan", "Deal ditahan (on hold) — lama di tahap tidak dinilai");
+    // Prod 17 Okt: 93 deal dua AM dibuat sekaligus 30 Jul 2026 (impor awal go-live CRM) dan
+    // tak pernah bergerak — konteks penting supaya "meragukan" dibaca "basi", bukan "fiktif".
+    if (d.dibuat && d.dibuat === d.stage_masuk && hari(d.dibuat, hariIni) > ATURAN.tanpa_kunjungan_hari) {
+      tambah("info", "tak_pernah_bergerak", `Belum pernah pindah tahap sejak dibuat ${tglId(d.dibuat)}`);
+    }
     if (!d.tertaut) tambah("info", "tak_tertaut", "Belum tertaut ke akun faskes — kunjungan dicocokkan lewat nama saja");
   }
 
@@ -128,6 +134,7 @@ export async function keaslianPipeline(sc: DataScope = FULL_SCOPE) {
   const hariIni = hariIniWib();
   const deals = await sql`
     SELECT d.deal_id::text, d.stage::text AS stage, (d.stage_entered_at AT TIME ZONE 'Asia/Jakarta')::date::text AS stage_masuk,
+           (d.created_at AT TIME ZONE 'Asia/Jakarta')::date::text AS dibuat,
            COALESCE(d.on_hold, false) AS on_hold, d.account_id, d.customer_name, d.facility_name, d.city,
            COALESCE(d.estimate_amount, d.estimated_value, 0)::float8 AS nilai, d.brand, d.product,
            d.am_id, COALESCE(NULLIF(mu.nama, ''), d.am_id, '(tanpa AM)') AS am, upper(btrim(COALESCE(d.cabang, mu.cabang, ''))) AS cabang
@@ -185,7 +192,7 @@ export async function keaslianPipeline(sc: DataScope = FULL_SCOPE) {
     const stageMasuk = d.stage_masuk ? String(d.stage_masuk) : hariIni;
     const batasFaktur = new Date(Date.parse(`${stageMasuk}T00:00:00Z`) - ATURAN.faktur_mundur_hari * 86_400_000).toISOString().slice(0, 10);
     const fk = acc != null ? (fakturAkun.get(acc) ?? []).find((t) => t >= batasFaktur) ?? null : null;
-    const n = nilaiKeaslian({ stage: String(d.stage), stage_masuk: stageMasuk, on_hold: Boolean(d.on_hold), tertaut: acc != null }, k, fk, hariIni);
+    const n = nilaiKeaslian({ stage: String(d.stage), stage_masuk: stageMasuk, on_hold: Boolean(d.on_hold), tertaut: acc != null, dibuat: d.dibuat ? String(d.dibuat) : null }, k, fk, hariIni);
     return {
       deal_id: did, stage: String(d.stage), customer: String(d.facility_name || d.customer_name || "—"),
       account_id: acc == null ? null : String(acc), tertaut_lewat: d.account_id != null ? "akun" : acc != null ? "nama" : null,
