@@ -30,6 +30,7 @@ import { getCustomers } from "./repo/customer.js";
 import { listAccounts, getAccount, upsertAccountFields, createContact, updateContact, deleteContact, listOwnerCandidates } from "./repo/account.js";
 import { timelineAkun } from "./repo/interaction.js";
 import { listLeads, getLead, buatLeadWeb, updateLead, konversiLead, cariDuplikat, LeadError } from "./repo/lead.js";
+import { PipError, addCheckin as addPipCheckin, addGoal as addPipGoal, addMilestone as addPipMilestone, decideMilestone as decidePipMilestone, getCase as getPipCase, getEmployeeJourney, getImprovement, listCases as listPipCases, setOutcome as setPipOutcome, startCase as startPipCase } from "./repo/pip.js";
 import { OnboardingError, cancelCase as cancelOnboarding, createTemplate as createOnboardingTemplate, getCase as getOnboardingCase, listCandidates as listOnboardingCandidates, listCases as listOnboardingCases, listTemplates as listOnboardingTemplates, startCase as startOnboarding, updateItem as updateOnboardingItem, updateTemplate as updateOnboardingTemplate } from "./repo/onboarding.js";
 import { MateriError, buatMateri, listMateri, ubahMateri, type BerkasMasuk } from "./repo/materi.js";
 import { DriveError, driveSiap } from "./gdrive.js";
@@ -5850,6 +5851,99 @@ app.post("/demo-trial/:id/tutup", async (c) => {
 app.get("/demo-trial-am", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json({ am: await listOwnerCandidates(await scopeOf(c)) });
+});
+
+// F70 PIP 90-Day Tracker + Improvement (migrasi 234, repo/pip.ts). Menu/izin = fitur 'karyawan'
+// (dijaga BFF requireFeature "/karyawan"); scope data = resolveScope seperti /raport/*. Pelaku `oleh`
+// dari sesi (BFF), bukan dari pengguna.
+const pipErr = (c: { json: (b: unknown, s?: number) => Response }, e: unknown) => {
+  if (e instanceof PipError) return c.json({ error: e.message, field: e.field }, e.status);
+  // 42P01 = tabel belum ada (migrasi 234 belum diterapkan) → 503, bukan 500 buram.
+  if ((e as { code?: string })?.code === "42P01") return c.json({ error: "migration_pending" }, 503);
+  return c.json({ error: "gagal memproses PIP" }, 500);
+};
+const pipId = (v: string): number | null => (/^\d{1,15}$/.test(v) ? Number(v) : null);
+const pipBody = async (c: { req: { json: () => Promise<unknown> } }): Promise<Record<string, unknown>> => {
+  const b = await c.req.json().catch(() => null);
+  if (!b || typeof b !== "object" || Array.isArray(b)) throw new PipError(400, "body bukan JSON object yang sah");
+  return b as Record<string, unknown>;
+};
+const pipOleh = (b: Record<string, unknown>): string | null => (typeof b.oleh === "string" && b.oleh.trim() ? b.oleh.trim().slice(0, 100) : null);
+app.get("/improvement", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try { return c.json(await getImprovement(await scopeOf(c), c.req.query("periods") ?? null)); }
+  catch (e) { return pipErr(c, e); }
+});
+app.get("/improvement/:amId", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try { return c.json(await getEmployeeJourney(await scopeOf(c), c.req.param("amId"), c.req.query("periods") ?? null)); }
+  catch (e) { return pipErr(c, e); }
+});
+app.get("/pip/cases", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try { return c.json(await listPipCases(await scopeOf(c), c.req.query("status") ?? null)); }
+  catch (e) { return pipErr(c, e); }
+});
+app.post("/pip/cases", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const b = await pipBody(c);
+    return c.json(await startPipCase(await scopeOf(c), b, pipOleh(b)), 201);
+  } catch (e) { return pipErr(c, e); }
+});
+app.get("/pip/cases/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const id = pipId(c.req.param("id"));
+    if (id == null) return c.json({ error: "id tidak valid" }, 400);
+    const r = await getPipCase(await scopeOf(c), id);
+    return r ? c.json(r) : c.json({ error: "PIP tidak ditemukan" }, 404);
+  } catch (e) { return pipErr(c, e); }
+});
+app.post("/pip/cases/:id/goals", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const id = pipId(c.req.param("id"));
+    if (id == null) return c.json({ error: "id tidak valid" }, 400);
+    const b = await pipBody(c);
+    return c.json(await addPipGoal(await scopeOf(c), id, b, pipOleh(b)), 201);
+  } catch (e) { return pipErr(c, e); }
+});
+app.post("/pip/cases/:id/milestones", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const id = pipId(c.req.param("id"));
+    if (id == null) return c.json({ error: "id tidak valid" }, 400);
+    const b = await pipBody(c);
+    return c.json(await addPipMilestone(await scopeOf(c), id, b, pipOleh(b)), 201);
+  } catch (e) { return pipErr(c, e); }
+});
+app.post("/pip/cases/:id/checkins", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const id = pipId(c.req.param("id"));
+    if (id == null) return c.json({ error: "id tidak valid" }, 400);
+    const b = await pipBody(c);
+    return c.json(await addPipCheckin(await scopeOf(c), id, b, pipOleh(b)), 201);
+  } catch (e) { return pipErr(c, e); }
+});
+app.post("/pip/cases/:id/outcome", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const id = pipId(c.req.param("id"));
+    if (id == null) return c.json({ error: "id tidak valid" }, 400);
+    const b = await pipBody(c);
+    return c.json(await setPipOutcome(await scopeOf(c), id, b, pipOleh(b)));
+  } catch (e) { return pipErr(c, e); }
+});
+app.patch("/pip/milestones/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const id = pipId(c.req.param("id"));
+    if (id == null) return c.json({ error: "id tidak valid" }, 400);
+    const b = await pipBody(c);
+    return c.json(await decidePipMilestone(await scopeOf(c), id, b, pipOleh(b)));
+  } catch (e) { return pipErr(c, e); }
 });
 
 // F56 Onboarding Checklist Karyawan Baru (migrasi 213, repo/onboarding.ts). Gerbang menu/izin
