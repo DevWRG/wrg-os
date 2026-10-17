@@ -19,6 +19,7 @@ import { SoPacingCard, type SoPacing } from "@/components/sales/so-pacing-card";
 import { PipelineReportView, type PipelineReportData } from "@/components/sales-analytics/pipeline-report-view";
 import { PipelineLeaderboardView, type LeaderboardRow } from "@/components/sales-analytics/pipeline-leaderboard-view";
 import { EcatalogView, STATUS_LABEL as ECAT_STATUS, type EcatalogData } from "@/components/sales-analytics/ecatalog-view";
+import { KeaslianView, STATUS_LABEL as KEASLIAN_STATUS, type KeaslianData } from "@/components/sales-analytics/keaslian-view";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
@@ -109,7 +110,7 @@ interface PengadaanRow { key: string; label: string; total: number; count: numbe
 interface CabangRow { cabang: string; region: string; total: number; count: number; customers: number; am_count: number; target: number | null; achievement_pct: number | null }
 interface CustRow { id: string; name: string; total: number; invoices: number; last_date: string | null; days_since: number | null; priority?: string }
 
-type ViewKey = "overview" | "per-am" | "per-produk" | "per-pengadaan" | "per-cabang" | "per-customer" | "trending" | "pacing" | "pipeline" | "leaderboard" | "ecatalog";
+type ViewKey = "overview" | "per-am" | "per-produk" | "per-pengadaan" | "per-cabang" | "per-customer" | "trending" | "pacing" | "pipeline" | "leaderboard" | "ecatalog" | "keaslian";
 const TABS: { key: ViewKey; label: string }[] = [
   { key: "overview", label: "Executive" },
   { key: "per-am", label: "Per-AM" },
@@ -123,12 +124,14 @@ const TABS: { key: ViewKey; label: string }[] = [
   { key: "leaderboard", label: "Leaderboard" },
   // F72 — e-katalog per faskes (penanda: nomor faktur PJE), status per hari ini.
   { key: "ecatalog", label: "E-Catalog" },
+  // F4 Pipeline Authenticity — keaslian deal (kunjungan, lama di tahap, faktur sesudah Won).
+  { key: "keaslian", label: "Keaslian Pipeline" },
 ];
 // tab (ViewKey) → view_type enum DB (migrasi 049). per-pengadaan/pacing/pipeline reuse
 // enum yang ada (belum ada enum tersendiri; cukup utk saved-view routing).
 const VIEW_TYPE: Record<ViewKey, string> = {
   overview: "executive", "per-am": "per_am", "per-produk": "per_produk",
-  "per-pengadaan": "per_produk", pacing: "per_am", pipeline: "per_am", leaderboard: "per_am", ecatalog: "per_customer",
+  "per-pengadaan": "per_produk", pacing: "per_am", pipeline: "per_am", leaderboard: "per_am", ecatalog: "per_customer", keaslian: "per_am",
   "per-cabang": "per_cabang", "per-customer": "per_customer", trending: "trending",
 };
 
@@ -237,6 +240,12 @@ export function SalesAnalyticsDashboard({ initial, initialView }: { initial: Ove
       const d = cur as PipelineReportData;
       return { name: `sales-analytics_pipeline_${s}`, headers: ["Tahap", "Jumlah Deal", "Nilai", "Perkiraan (×Peluang)"],
         rows: d.funnel.map((r) => [r.stage, r.count, r.value, r.weighted]) };
+    }
+    if (tab === "keaslian") {
+      const d = cur as KeaslianData;
+      return { name: `sales-analytics_keaslian-pipeline_${new Date().toISOString().slice(0, 10)}`,
+        headers: ["Faskes", "Tahap", "AM", "Cabang", "Status", "Alasan", "Kunjungan terakhir", "Kunjungan 60 hari", "Lama di tahap (hari)", "Estimasi", "Faktur pertama sesudah Won", "Tertaut lewat"],
+        rows: d.deals.map((x) => [x.customer, x.stage, x.am, x.cabang, KEASLIAN_STATUS[x.status], x.alasan.map((a) => a.teks).join("; "), x.kunjungan_terakhir, x.jumlah_kunjungan_60, x.lama_tahap, x.nilai, x.faktur_pertama, x.tertaut_lewat]) };
     }
     if (tab === "ecatalog") {
       const d = cur as EcatalogData;
@@ -367,6 +376,7 @@ export function SalesAnalyticsDashboard({ initial, initialView }: { initial: Ove
       {tab === "pipeline" && cur != null && <PipelineReportView data={cur as PipelineReportData} />}
       {tab === "leaderboard" && cur != null && <PipelineLeaderboardView data={cur as LeaderboardRow[]} />}
       {tab === "ecatalog" && cur != null && <EcatalogView data={cur as EcatalogData} />}
+      {tab === "keaslian" && cur != null && <KeaslianView data={cur as KeaslianData} />}
     </div>
   );
 }
