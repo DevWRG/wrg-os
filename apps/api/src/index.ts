@@ -249,7 +249,8 @@ import { runWeeklyReport } from "./repo/weeklyreport.js";
 import { runDetectLeaveScan } from "./repo/detectleave.js";
 import { runExtractCompetitor } from "./repo/extractcompetitor.js";
 import { runWeekendBriefing } from "./repo/weekendbriefing.js";
-import { listSeninBriefs, runSeninBrief } from "./repo/senin-brief.js";
+import { getSeninBrief, listSeninBriefs, runSeninBrief } from "./repo/senin-brief.js";
+import { namaFilePdf, seninBriefPdf } from "./repo/senin-brief-pdf.js";
 import { listDirekturInbox, runDirekturInbox } from "./repo/direktur-inbox.js";
 import { getPmfScorecard } from "./repo/pmf-scorecard.js";
 import { getSoPacing, runSoPacingAlert } from "./repo/so-pacing.js";
@@ -2708,6 +2709,29 @@ app.get("/senin-brief", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const briefs = await listSeninBriefs();
   return c.json({ count: briefs.length, briefs });
+});
+
+// F110 Pre-Meeting Briefing Direktur — PDF dari brief F85 yang SUDAH tersimpan
+// (tak menghitung ulang, tak mengirim WA). `latest` = brief terbaru; selain itu
+// /senin-brief/:tahun/:minggu/pdf. `oleh` (nama pencetak) diisi BFF dari sesi.
+const kirimSeninPdf = async (c: Context, tahun?: number, minggu?: number) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const brief = await getSeninBrief(tahun, minggu);
+  if (!brief) return c.json({ error: "Senin Brief belum ada untuk minggu itu" }, 404);
+  const pdf = await seninBriefPdf(brief, { oleh: c.req.query("oleh") ?? null });
+  return c.body(new Uint8Array(pdf), 200, {
+    "content-type": "application/pdf",
+    "content-disposition": `attachment; filename="${namaFilePdf(brief)}"`,
+  });
+};
+app.get("/senin-brief/latest/pdf", (c) => kirimSeninPdf(c));
+app.get("/senin-brief/:tahun/:minggu/pdf", (c) => {
+  const tahun = Number(c.req.param("tahun"));
+  const minggu = Number(c.req.param("minggu"));
+  if (!Number.isInteger(tahun) || !Number.isInteger(minggu) || minggu < 1 || minggu > 53) {
+    return c.json({ error: "tahun/minggu tak valid" }, 400);
+  }
+  return kirimSeninPdf(c, tahun, minggu);
 });
 
 // F85 — susun brief manual (uji / generate ulang). Sengaja TANPA route BFF:

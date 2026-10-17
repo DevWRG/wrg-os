@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
-  cekBasi, cekDataTerkini, cekKpi, cekPipeline, cekTindakLanjut, formatWa, nilaiHod,
-  overallHealth, statusHod, type HodBrief,
+  cekBasi, cekDataTerkini, cekKpi, cekPipeline, cekTindakLanjut, formatBalasanBriefing, formatWa, nilaiHod,
+  overallHealth, parseBriefingArg, statusHod, type HodBrief, type SeninBriefRow,
 } from "./senin-brief.js";
 import type { WeeklyHod, WeeklyMetric } from "./watchpoint-weekly.js";
 
@@ -115,4 +115,37 @@ test("pesan WA: tanpa kurung sudut, yang tidak siap disebut alasannya", () => {
   assert.match(wa, /briefings\?tab=senin/);
   // Urutan: yang paling butuh perhatian di atas.
   assert.ok(wa.indexOf("TIDAK SIAP") < wa.indexOf("✅ SIAP"));
+});
+
+// ── #BRIEFING (F110) ────────────────────────────────────────────
+
+test("parseBriefingArg: kosong = terbaru; W41/41 = tahun berjalan; 2026 W41 eksplisit", () => {
+  assert.deepEqual(parseBriefingArg("", 2026), {});
+  assert.deepEqual(parseBriefingArg("  ", 2026), {});
+  assert.deepEqual(parseBriefingArg("W41", 2026), { tahun: 2026, minggu: 41 });
+  assert.deepEqual(parseBriefingArg("w5", 2026), { tahun: 2026, minggu: 5 });
+  assert.deepEqual(parseBriefingArg("41", 2026), { tahun: 2026, minggu: 41 });
+  assert.deepEqual(parseBriefingArg("2025 W52", 2026), { tahun: 2025, minggu: 52 });
+  assert.deepEqual(parseBriefingArg("2025-W52", 2026), { tahun: 2025, minggu: 52 });
+});
+
+test("parseBriefingArg menolak minggu di luar 1–53 dan teks bebas", () => {
+  for (const x of ["0", "54", "W99", "minggu lalu", "W41 semua", "2026"]) {
+    assert.deepEqual(parseBriefingArg(x, 2026), { error: "format" }, x);
+  }
+});
+
+test("formatBalasanBriefing = ringkasan WA F85 + jejak waktu susun, tanpa kurung sudut", () => {
+  const b = {
+    iso_year: 2026, iso_week: 41, periode: "5–11 Okt 2026", health: "RISK", narasi_ok: false,
+    generated_at: "2026-10-12T00:00:00Z",
+    checks: [{ hod_key: "rocky", nama: "Rocky", peran: "HoD Sales", status: "TIDAK SIAP", watch_status: "RED",
+      checks: [{ no: 1, label: "Data terkini", hasil: "FAIL", detail: "x" }] }],
+  } as unknown as SeninBriefRow;
+  const t = formatBalasanBriefing(b, "https://x.test/briefings?tab=senin");
+  assert.match(t, /Senin Brief W41/);
+  assert.match(t, /TIDAK SIAP \(1\): Rocky/);
+  assert.match(t, /https:\/\/x\.test\/briefings\?tab=senin/);
+  assert.match(t, /narasi AI tak tersedia/);
+  assert.doesNotMatch(t, /[<>]/);
 });
