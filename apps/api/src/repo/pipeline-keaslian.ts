@@ -18,10 +18,13 @@
 // penaut faskes yang sama dipakai #REPORT (akun-faskes.ts: jenis = pembeda, ambigu =
 // tidak ditautkan). Kunjungan juga dicocokkan lewat nama customer persis (upper/trim)
 // sebagai cadangan. Yang tetap tak tertaut = info, tidak menurunkan status.
+// Prod 17 Okt: 219/224 deal tanpa akun memang calon pelanggan (belum ada di Accurate) →
+// kunjungannya dicocokkan lewat KATA nama (kunjunganCocok): laporan AM YANG SAMA yang
+// memuat semua kata inti nama faskes deal, jenis faskes tak bertentangan.
 
 import { db } from "../db.js";
 import { scopeOnClause, FULL_SCOPE, type DataScope } from "./access-scope.js";
-import { katalogFaskes, tautkanFaskes } from "./akun-faskes.js";
+import { katalogFaskes, tautkanFaskes, uraiTulisanAm } from "./akun-faskes.js";
 
 export type StatusKeaslian = "MERAGUKAN" | "PERLU_CEK" | "TERVERIFIKASI";
 export type Tingkat = "meragukan" | "cek" | "info";
@@ -84,6 +87,21 @@ export function nilaiKeaslian(d: DealInput, kunjungan: Kunjungan[], fakturSejak:
   return { status, alasan, kunjungan_terakhir: terakhir, lama_tahap: lamaTahap };
 }
 
+/**
+ * Laporan kunjungan (tulisan bebas AM, mis. "Cust : RSUD Trenggalek") cocok dengan nama
+ * faskes deal bila SEMUA kata inti nama deal ada di laporan dan jenis (RS/PKM/…) tak
+ * bertentangan. Nama deal tanpa kata inti ("Puskesmas", "Dinas Kesehatan") = tak cocok
+ * — terlalu umum. Pemanggil membatasi ke AM yang sama.
+ */
+export function kunjunganCocok(namaDeal: string | null | undefined, laporan: string | null | undefined): boolean {
+  const d = uraiTulisanAm(namaDeal);
+  const v = uraiTulisanAm(laporan);
+  if (!d || !v || !d.kata.length) return false;
+  if (d.jenis && v.jenis && d.jenis !== v.jenis) return false;
+  const kv = new Set(v.kata);
+  return d.kata.every((w) => kv.has(w));
+}
+
 /** Ringkasan per AM: jumlah deal, % terverifikasi, meragukan, nilai estimasi meragukan. */
 export function ringkasPerAm(rows: { am: string; status: StatusKeaslian; nilai: number }[]) {
   const m = new Map<string, { am: string; total: number; terverifikasi: number; perlu_cek: number; meragukan: number; nilai_meragukan: number }>();
@@ -134,16 +152,19 @@ export async function keaslianPipeline(sc: DataScope = FULL_SCOPE) {
   const ids = [...new Set([...akun.values()].filter((x): x is number => x != null))];
   const dealIds = deals.map((d) => String(d.deal_id));
   const nama = [...new Set(deals.flatMap((d) => [normNama(d.customer_name), normNama(d.facility_name)]).filter(Boolean))];
+  const amIds = [...new Set(deals.map((d) => d.am_id).filter(Boolean).map(String))];
   const [kunj, faktur] = await Promise.all([
     sql`
       SELECT a.account_id, a.opportunity_id::text AS deal_id, upper(regexp_replace(btrim(COALESCE(a.customer_name, '')), '\\s+', ' ', 'g')) AS nama,
+             a.am_id, a.customer_name AS tulisan,
              a.tanggal::text AS tanggal,
              (a.photo_path IS NOT NULL AND a.photo_geotag IS NOT NULL AND a.photo_geotag <> 'null'::jsonb
               AND NULLIF(a.photo_geotag->>'lat', '') IS NOT NULL) AS bukti
       FROM activity_log a
       WHERE a.tanggal >= ${hariIni}::date - 365
         AND (a.account_id = ANY(${ids}::bigint[]) OR a.opportunity_id::text = ANY(${dealIds}::text[])
-             OR upper(regexp_replace(btrim(COALESCE(a.customer_name, '')), '\\s+', ' ', 'g')) = ANY(${nama}::text[]))`,
+             OR upper(regexp_replace(btrim(COALESCE(a.customer_name, '')), '\\s+', ' ', 'g')) = ANY(${nama}::text[])
+             OR a.am_id = ANY(${amIds}::text[]))`,
     sql`
       SELECT customer_id AS account_id, array_agg(DISTINCT tanggal::text) AS tgl
       FROM accurate_invoice
@@ -156,7 +177,10 @@ export async function keaslianPipeline(sc: DataScope = FULL_SCOPE) {
     const did = String(d.deal_id);
     const acc = akun.get(did) ?? null;
     const nm = new Set([normNama(d.customer_name), normNama(d.facility_name)].filter(Boolean));
-    const k = kunj.filter((v) => (acc != null && v.account_id != null && Number(v.account_id) === acc) || v.deal_id === did || (v.nama && nm.has(String(v.nama))))
+    const teksDeal = d.facility_name || d.customer_name;
+    const k = kunj.filter((v) => (acc != null && v.account_id != null && Number(v.account_id) === acc) || v.deal_id === did
+        || (v.nama && nm.has(String(v.nama)))
+        || (d.am_id != null && v.am_id === d.am_id && (v.account_id == null || acc == null) && kunjunganCocok(teksDeal, v.tulisan)))
       .map((v) => ({ tanggal: iso(v.tanggal), bukti: Boolean(v.bukti) }));
     const stageMasuk = d.stage_masuk ? String(d.stage_masuk) : hariIni;
     const batasFaktur = new Date(Date.parse(`${stageMasuk}T00:00:00Z`) - ATURAN.faktur_mundur_hari * 86_400_000).toISOString().slice(0, 10);

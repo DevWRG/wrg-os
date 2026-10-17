@@ -62,3 +62,13 @@ test("ringkasPerAm: urut paling banyak meragukan", () => {
   assert.equal(r[0].nilai_meragukan, 10);
   assert.equal(r[1].persen_terverifikasi, 0.5);
 });
+
+test("kunjunganCocok: semua kata inti nama deal ada di laporan, jenis tak bertentangan", async () => {
+  const { kunjunganCocok } = await import("./pipeline-keaslian.js");
+  assert.equal(kunjunganCocok("RSUD Trenggalek", "Cust : RSUD Kab. Trenggalek"), true);
+  assert.equal(kunjunganCocok("RS Prima Medika", "rs prima medika denpasar"), true);
+  assert.equal(kunjunganCocok("PKM Gondang Legi", "RSI Gondang Legi"), false);  // jenis beda
+  assert.equal(kunjunganCocok("RS Harapan Sehat Jatibarang", "RS Harapan Sehat"), false); // kata kurang
+  assert.equal(kunjunganCocok("Puskesmas", "Puskesmas Kertosono"), false);     // terlalu umum
+  assert.equal(kunjunganCocok("Dinas Kesehatan", "Dinkes Kab Kediri"), false);
+});
