@@ -75,7 +75,13 @@ export class GalatKso extends Error {
 }
 
 async function bacaPengguna(userId: string): Promise<PenggunaKso | null> {
-  const [u] = await db()`SELECT id::text, name, role, am_id, hod_key FROM app_user WHERE id::text = ${userId} AND active`;
+  // Kursi HOD: app_user.hod_key bila ada, kalau tidak dari tautan khusus KSO (migrasi 233).
+  // hod_key app_user TIDAK diisi sebagai gantinya: kolom itu juga menentukan cakupan data di
+  // semua menu (resolveScope) — keputusan user 17 Okt.
+  const [u] = await db()`
+    SELECT u.id::text, u.name, u.role, u.am_id,
+           COALESCE(NULLIF(u.hod_key, ''), (SELECT ha.hod_id FROM kso.hod_akun ha WHERE ha.user_id = u.id::text)) AS hod_key
+      FROM app_user u WHERE u.id::text = ${userId} AND u.active`;
   return (u as unknown as PenggunaKso) ?? null;
 }
 
