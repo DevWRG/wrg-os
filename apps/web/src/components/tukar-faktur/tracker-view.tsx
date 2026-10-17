@@ -17,11 +17,22 @@ const rp = (n: number) => `Rp ${Math.round(n).toLocaleString("id-ID")}`;
 
 const kolom: DataColumn<TukarFakturItem>[] = [
   { id: "nomor", header: "Faktur", sortable: true, accessor: (r) => r.nomor },
-  { id: "customer", header: "Customer", sortable: true, accessor: (r) => r.customer },
   {
     id: "tahap", header: "Tahap", sortable: true, accessor: (r) => LABEL[r.tahap],
     cell: (r) => <Badge variant={r.tahap === "lunas" ? "outline" : "secondary"}>{LABEL[r.tahap]}</Badge>,
   },
+  {
+    id: "umur", header: "Umur", align: "right", sortable: true, searchable: false,
+    accessor: (r) => r.umur_hari ?? -1,
+    cell: (r) => r.umur_hari === null
+      ? "—"
+      : (
+        <span className={cn("whitespace-nowrap tabular-nums", r.tua && "font-semibold text-destructive")}>
+          {r.umur_hari} hari{r.tua ? " · TUA" : ""}
+        </span>
+      ),
+  },
+  { id: "customer", header: "Customer", sortable: true, accessor: (r) => r.customer },
   {
     id: "kategori", header: "Kategori", accessor: (r) => r.kategori.join(", "),
     cell: (r) => (r.kategori.length ? r.kategori.join(", ") : "—"),
@@ -38,17 +49,6 @@ const kolom: DataColumn<TukarFakturItem>[] = [
   {
     id: "outstanding", header: "Sisa tagihan", align: "right", sortable: true, searchable: false,
     accessor: (r) => r.outstanding, cell: (r) => rp(r.outstanding),
-  },
-  {
-    id: "umur", header: "Umur", align: "right", sortable: true, searchable: false,
-    accessor: (r) => r.umur_hari ?? -1,
-    cell: (r) => r.umur_hari === null
-      ? "—"
-      : (
-        <span className={cn("tabular-nums", r.tua && "font-semibold text-destructive")}>
-          {r.umur_hari} hari{r.tua ? " · TUA" : ""}
-        </span>
-      ),
   },
 ];
 

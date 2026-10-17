@@ -59,16 +59,16 @@ export function KalenderView() {
   const perHari = new Map<string, KejadianKlinik[]>();
   for (const e of data?.events ?? []) perHari.set(e.tanggal, [...(perHari.get(e.tanggal) ?? []), e]);
   const detail = dipilih ? perHari.get(dipilih) ?? [] : [];
-  const tombol = "rounded-md border bg-card px-3 py-1.5 text-sm hover:bg-accent";
+  const tombol = "whitespace-nowrap rounded-md border bg-card px-3 py-1.5 text-sm hover:bg-accent";
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <button type="button" className={tombol} onClick={() => pindah(geser(bulan, -1))}>←</button>
         <span className="min-w-28 text-center text-sm font-semibold tabular-nums">{bulan}</span>
         <button type="button" className={tombol} onClick={() => pindah(geser(bulan, 1))}>→</button>
         <button type="button" className={tombol} onClick={() => pindah(bulanIni())}>Bulan ini</button>
-        {data && <span className="ml-auto text-xs text-muted-foreground">{data.total} kejadian</span>}
+        {data && <span className="ml-auto whitespace-nowrap text-xs text-muted-foreground">{data.total} kejadian</span>}
       </div>
 
       {galat && <div role="alert" className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm">{galat}</div>}
