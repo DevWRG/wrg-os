@@ -48,6 +48,7 @@ import { TAB_KSO, canViewKsoKomite } from "@/lib/kso-komite-access";
 import { canViewAsetTetap } from "@/lib/aset-tetap-access";
 import { canViewPmfScorecard } from "@/lib/pmf-access";
 import { canViewDirekturInbox } from "@/lib/direktur-inbox-access";
+import { canViewTukarFaktur } from "@/lib/tukar-faktur-access";
 import { canViewRaportList } from "@/lib/raport-access";
 import { canViewExecutive } from "@/lib/executive-access";
 import { canBukaDaftarAlat, canViewKso } from "@/lib/kso-access";
@@ -162,6 +163,9 @@ export const NAV: NavGroup[] = [
       { title: "Customers", url: "/customers", icon: Building2 },
       { title: "Accounts", url: "/accounts", icon: Contact, badge: "NEW" },
       { title: "AR Aging", url: "/ar", icon: Receipt },
+      // F31 — status faktur Accurate + kalender klinik. Izin "tukar-faktur": fallback direktur/admin/superuser;
+      // butuh Sync Fitur + centang grup Finance/AR setelah deploy.
+      { title: "Tukar Faktur", url: "/tukar-faktur", icon: Receipt, badge: "NEW", show: canViewTukarFaktur },
       { title: "Sales Docs", url: "/sales-docs", icon: FileText, matchPrefix: ["/sph"] },
       { title: "Collection Drafts", url: "/collection-drafts", icon: Send },
       // Simulator KSO — running cost alat lab per test, hasil penggabungan

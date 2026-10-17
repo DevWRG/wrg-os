@@ -252,6 +252,7 @@ import { runWeekendBriefing } from "./repo/weekendbriefing.js";
 import { getSeninBrief, listSeninBriefs, runSeninBrief } from "./repo/senin-brief.js";
 import { namaFilePdf, seninBriefPdf } from "./repo/senin-brief-pdf.js";
 import { listDirekturInbox, runDirekturInbox } from "./repo/direktur-inbox.js";
+import { TukarFakturError, listKalenderKlinik, listTukarFaktur, parseBulan, parseHari } from "./repo/tukar-faktur.js";
 import { getPmfScorecard } from "./repo/pmf-scorecard.js";
 import { getSoPacing, runSoPacingAlert } from "./repo/so-pacing.js";
 import {
@@ -2688,6 +2689,32 @@ app.post("/sales/so-pacing/run", async (c) => {
 app.get("/direktur-inbox", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json(await listDirekturInbox());
+});
+
+// F31 — Tukar Faktur Tracker + Klinik Calendar (Fase 1, murni baca). Izin dicek di BFF.
+// Param salah → 400; tabel belum ada (42P01) → 503 migration_pending.
+const tukarFakturError = (c: Context, e: unknown) => {
+  if (e instanceof TukarFakturError) return c.json({ error: e.message }, e.status as 400);
+  if ((e as { code?: string })?.code === "42P01") return c.json({ error: "migration_pending" }, 503);
+  throw e;
+};
+
+app.get("/tukar-faktur", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    return c.json(await listTukarFaktur(parseHari(c.req.query("hari"))));
+  } catch (e) {
+    return tukarFakturError(c, e);
+  }
+});
+
+app.get("/tukar-faktur/kalender", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    return c.json(await listKalenderKlinik(parseBulan(c.req.query("bulan"))));
+  } catch (e) {
+    return tukarFakturError(c, e);
+  }
 });
 
 // F59 — susun/kirim digest WA manual. Sengaja TANPA route BFF (bisa mengirim WA ke
