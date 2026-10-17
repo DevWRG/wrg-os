@@ -9,7 +9,7 @@ negosiasi** dengan harga lantai.
 - **Menu**: `/kso-komite` — satu menu, tab per peran (lihat Izin)
 - **WA**: `#KSO` (bot yang sudah ada, openclaw) — saklar `KSO_WA_ENABLED`
 - **Jadwal**: scheduler API — saklar `KSO_JADWAL_ENABLED`
-- **Migrasi**: 224–232 (schema `kso`; tidak menyentuh tabel OS yang sudah ada)
+- **Migrasi**: 224–233 (schema `kso`; tidak menyentuh tabel OS yang sudah ada)
 - **Uji**: `scripts/qa/kso-komite/jalankan_uji.sh` (Postgres sekali pakai) — 161 uji
 
 ## Tahapan
@@ -34,6 +34,7 @@ negosiasi** dengan harga lantai.
 | 16 Okt | Nomor WA bot yang sekarang (bukan nomor baru); voice note diterima; **semua perintah lewat `#KSO`** (`#KSO kirim D12`, bukan balasan polos "kirim" — bentrok `#KIRIM` & "kirim R12") |
 | 16 Okt | Peran Komite/Direksi/Admin Sales/Teknik diatur di **Akses Grup** (bukan daftar di `kso.pengguna`) |
 | 16 Okt | **Aspek KSO NPK 2026 tetap kosong** sampai SK AM 2027 (lihat Pemetaan KPI) |
+| 17 Okt | Akun HOD di prod tanpa `hod_key` → tautan khusus KSO `kso.hod_akun` (migrasi 233), **bukan** mengisi `app_user.hod_key` (yang ikut membatasi cakupan semua menu) |
 
 ## Beda dari paket rujukan (sengaja, semua diuji)
 
