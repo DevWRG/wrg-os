@@ -843,3 +843,44 @@ def parse_koran(req: KoranParseRequest) -> KoranParseResponse:
     merged["metode"] = "ocr"
     merged = apply_checksum(merged)
     return _koran_response(merged, model=model_used, dry_run=False)
+
+
+# === F170 Komite KSO: intake WhatsApp #KSO ===
+from .kso_intake import KSO_SYSTEM_PROMPT, bersihkan, parse_json_llm  # noqa: E402
+from .openrouter import chat, chat_audio, kso_models  # noqa: E402
+from .schemas import KsoEkstrakRequest, KsoEkstrakResponse, TranskripRequest, TranskripResponse  # noqa: E402
+
+TRANSKRIP_SYSTEM_PROMPT = """Transkripsikan voice note WhatsApp berbahasa Indonesia (boleh campur Jawa/Inggris) KATA DEMI KATA.
+Jangan merangkum, jangan merapikan, jangan menambah tanda baca yang mengubah makna, jangan menerjemahkan.
+Angka tulis seperti diucapkan dalam angka (mis. "sembilan ratus" → 900). Bagian yang tidak jelas tulis [tidak jelas].
+Kembalikan transkrip saja, tanpa pengantar."""
+
+
+@app.post("/kso/ekstrak", response_model=KsoEkstrakResponse)
+def kso_ekstrak(req: KsoEkstrakRequest) -> KsoEkstrakResponse:
+    """Ekstrak rencana KSO dari pesan AM. Hasil LLM disaring `bersihkan` terhadap teks asli —
+    kolom yang tak bisa dilacak ke ucapan AM jadi null. Gagal LLM/JSON → galat (API membalas
+    "coba lagi"), BUKAN isian kosong yang terlihat sah."""
+    if req.dry_run or not os.environ.get("OPENROUTER_API_KEY"):
+        return KsoEkstrakResponse(model="dry-run", dry_run=True, galat="dry-run")
+    try:
+        # 3000: ruang untuk model fallback yang berpikir (Gemini) tanpa memotong JSON
+        text, model, _, _ = chat(KSO_SYSTEM_PROMPT, req.teks, max_tokens=3000, models=kso_models())
+    except Exception as e:  # noqa: BLE001
+        return KsoEkstrakResponse(model="dry-run-fallback", dry_run=True, galat=f"llm: {e}"[:300])
+    d = parse_json_llm(text)
+    if d is None:
+        return KsoEkstrakResponse(model=model, galat="json-tidak-sah")
+    return KsoEkstrakResponse(isian=bersihkan(d, req.teks), model=model)
+
+
+@app.post("/transkrip", response_model=TranskripResponse)
+def transkrip(req: TranskripRequest) -> TranskripResponse:
+    """Transkrip voice note (base64). Dipakai #KSO; transkripnya DIBACAKAN BALIK ke AM."""
+    if req.dry_run or not os.environ.get("OPENROUTER_API_KEY"):
+        return TranskripResponse(model="dry-run", dry_run=True, galat="dry-run")
+    try:
+        text, model, _, _ = chat_audio(TRANSKRIP_SYSTEM_PROMPT, "Transkripsikan voice note ini.", req.audio_b64, req.format)
+    except Exception as e:  # noqa: BLE001
+        return TranskripResponse(model="dry-run-fallback", dry_run=True, galat=f"llm: {e}"[:300])
+    return TranskripResponse(teks=(text or "").strip(), model=model)

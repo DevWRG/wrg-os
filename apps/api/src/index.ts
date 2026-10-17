@@ -257,6 +257,7 @@ import {
   akunKso, bacaDokumen, buatKontrak, getKontrak, hapusDokumen, KontrakError, kelengkapanKontrak, listKontrak,
   MAKS_DOKUMEN, perpanjangKontrak, ubahKontrak, ubahStatusKontrak, unggahDokumen,
 } from "./repo/kso-kontrak.js";
+import { GalatKso, daftarTab, detailRencana, isAksiKso, isTabKso, jalankanAksi, tabBoleh } from "./repo/kso-komite.js";
 import { runPolaKomunikasi } from "./repo/polakomunikasi.js";
 import { listWaGroups, setWaGroupCategory, setWaGroupPrefixCategory, isWaGroupCategory } from "./repo/wagroup.js";
 import { runRefreshMembers } from "./repo/listmembers.js";
@@ -1877,6 +1878,49 @@ app.get("/briefings", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const briefings = await listBriefings();
   return c.json({ count: briefings.length, briefings });
+});
+
+// F170 — Komite KSO, layar per peran (Tahap 4). Izin tab DIPERIKSA DI SINI (Akses Grup,
+// repo/kso-komite.ts putuskanIzin) — tidak hanya di BFF — lalu transaksi diberi identitas +
+// peran tab sehingga pagar database kso.* ikut berlaku. Identitas = x-user-id dari BFF (sesi).
+const ksoKomiteErr = (c: Context, e: unknown) => {
+  if (e instanceof GalatKso) return c.json({ error: e.message }, e.status as 400);
+  console.error("[kso-komite]", e);
+  return c.json({ error: "Gagal memproses permintaan Komite KSO." }, 500);
+};
+const ksoUser = (c: Context) => (c.req.header("x-user-id") ?? "").trim();
+app.get("/kso-komite/tab", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const u = ksoUser(c);
+  if (!u) return c.json({ error: "x-user-id wajib" }, 401);
+  try { return c.json({ tab: await tabBoleh(u) }); } catch (e) { return ksoKomiteErr(c, e); }
+});
+app.get("/kso-komite/:tab", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const u = ksoUser(c);
+  const tab = c.req.param("tab");
+  if (!u) return c.json({ error: "x-user-id wajib" }, 401);
+  if (!isTabKso(tab)) return c.json({ error: "tab tidak dikenal" }, 404);
+  try { return c.json(await daftarTab(u, tab)); } catch (e) { return ksoKomiteErr(c, e); }
+});
+app.get("/kso-komite/:tab/rencana/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const u = ksoUser(c);
+  const tab = c.req.param("tab");
+  const id = Number(c.req.param("id"));
+  if (!u) return c.json({ error: "x-user-id wajib" }, 401);
+  if (!isTabKso(tab) || !Number.isInteger(id) || id <= 0) return c.json({ error: "permintaan tidak sah" }, 400);
+  try { return c.json(await detailRencana(u, tab, id)); } catch (e) { return ksoKomiteErr(c, e); }
+});
+app.post("/kso-komite/rencana/:id/:aksi", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const u = ksoUser(c);
+  const aksi = c.req.param("aksi");
+  const id = Number(c.req.param("id"));
+  if (!u) return c.json({ error: "x-user-id wajib" }, 401);
+  if (!isAksiKso(aksi) || !Number.isInteger(id) || id <= 0) return c.json({ error: "permintaan tidak sah" }, 400);
+  const b = await bodyJson(c);
+  try { return c.json(await jalankanAksi(u, id, aksi, b)); } catch (e) { return ksoKomiteErr(c, e); }
 });
 
 // F47 — Kontrak KSO & Renewal (fase 1). Gerbang izin (kso-kontrak view/edit)

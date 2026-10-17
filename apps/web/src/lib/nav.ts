@@ -8,7 +8,7 @@ import { CalendarCheck,
   Factory, Workflow, Receipt, BarChart3, ClipboardCheck, History, Settings,
   Send, FileText, ScrollText, GraduationCap, UsersRound, Network,
   Bell, MapPin, ListChecks, Swords, CalendarOff, CalendarDays, CalendarRange,
-  Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, Tags, SlidersHorizontal, Microscope, MonitorCheck, FileSignature,
+  Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, Tags, SlidersHorizontal, Microscope, MonitorCheck, FileSignature, Gavel,
   Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, BookOpen, Calculator, Presentation, Megaphone, Library,
   Wallet, Coins, Banknote, Car, QrCode, PenLine, PackagePlus, PackageMinus,
   Handshake, Archive, Ticket, Printer, Route, ArrowLeftRight,
@@ -23,6 +23,7 @@ import { canViewPricebook, canViewPricebookSummary } from "@/lib/pricebook-acces
 import { canViewKlasifikasi } from "@/lib/klasifikasi-access";
 import { canViewProductScorecard } from "@/lib/product-scorecard-access";
 import { canViewKsoKontrak } from "@/lib/kso-kontrak-access";
+import { TAB_KSO, canViewKsoKomite } from "@/lib/kso-komite-access";
 import { canViewAsetTetap } from "@/lib/aset-tetap-access";
 import { canViewRaportList } from "@/lib/raport-access";
 import { canViewExecutive } from "@/lib/executive-access";
@@ -183,6 +184,12 @@ export const NAV: NavGroup[] = [
       // MENULIS data (kontrak, status renewal), dan izin edit-nya dipisah dari
       // view. Default tertutup — butuh Sync Fitur + centang di Akses Grup.
       { title: "Kontrak KSO", url: "/kso-kontrak", icon: FileSignature, badge: "NEW", show: canViewKsoKontrak },
+      // F170 Komite KSO — satu menu, tab per peran; tiap tab = kunci izin SENDIRI di Akses Grup
+      // (keputusan 16 Okt). Kunci utama 'kso-komite' = tab Rencana Saya (AM); kunci tab lain
+      // WAJIB terdaftar di `features` — kalau tidak, Sync Fitur mematikannya sebagai zombie.
+      // API (repo/kso-komite.ts) memeriksa ulang izin tiap permintaan.
+      { title: "Komite KSO", url: "/kso-komite", icon: Gavel, badge: "NEW", show: canViewKsoKomite,
+        features: TAB_KSO.filter((t) => t.fitur !== "kso-komite").map((t) => ({ key: t.fitur, name: t.nama })) },
       // Harga jual dibagi per PEMBACA, bukan per tabel:
       //   /pricebook            sales & AM — katalog + harga terpublikasi (071/043)
       //   /pricebook/ringkasan  Direktur + HoD — bacaan portofolio
