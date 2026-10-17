@@ -168,6 +168,7 @@ import { recordCompetitor, listCompetitor, competitorSummary } from "./repo/comp
 import { kesehatanKso, runRekapKesehatanKso } from "./repo/kso-kesehatan.js";
 import { suplaiKso, runRekapSuplaiKso } from "./repo/kso-suplai.js";
 import { productScorecard } from "./repo/product-scorecard.js";
+import { keaslianPipeline } from "./repo/pipeline-keaslian.js";
 import { IntelError, briefingFaskes, dominasiWilayah, setDominan } from "./repo/customer-intel.js";
 import { ringkasPembayaran } from "./repo/pembayaran.js";
 import {
@@ -3604,6 +3605,13 @@ app.get("/sales-analytics/overview", async (c) => {
 app.get("/sales-analytics/ecatalog", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json(await ecatalogWatch(await scopeOf(c)));
+});
+// Pipeline Authenticity (F4 SXR) — status keaslian tiap deal terbuka & Won ≤180 hari
+// (kunjungan, lama di tahap, faktur sesudah Won, bukti foto/geotag). Ber-scope sama
+// dengan Pipeline; tak ikut filter tanggal tab lain (selalu "per hari ini").
+app.get("/sales-analytics/keaslian", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await keaslianPipeline(await scopeOf(c)));
 });
 app.get("/sales-analytics/per-am", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
