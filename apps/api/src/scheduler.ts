@@ -62,6 +62,7 @@ import { runLeadAging } from "./repo/lead.js";
 import { runTrialReminder } from "./repo/demo-trial.js";
 import { runRekapKesehatanKso } from "./repo/kso-kesehatan.js";
 import { runRekapSuplaiKso } from "./repo/kso-suplai.js";
+import { susunDraft, bulanDepan } from "./repo/jadwal-teknisi.js";
 import { runInvoiceReminder, runOverdueRecap } from "./repo/faktur.js";
 import { terapkanKpiBulan } from "./repo/kpi-measure.js";
 
@@ -224,6 +225,9 @@ export function startScheduler(): ScheduleStatus {
   // F7 — rekap mingguan suplai reagen KSO: faskes × jenis alat yang baru telat order ke
   // HoD + item stok kurang ke KSO_SUPLAI_PO_HOD. Default MATI.
   const ksoSuplaiEnabled = (process.env.KSO_SUPLAI_REKAP_ENABLED ?? "false").toLowerCase() === "true";
+  // F154 — susun draft jadwal kunjungan rutin teknisi bulan depan (tgl 20). Tanpa WA:
+  // terbit tetap manual oleh HoD Aftersales. Default MATI.
+  const jadwalRutinEnabled = (process.env.JADWAL_RUTIN_DRAFT_ENABLED ?? "false").toLowerCase() === "true";
   // F170 Komite KSO — irama forum Selasa/Kamis + lewat batas HOD + penawaran pagi + verifikasi bulan-6.
   const ksoJadwalEnabled = (process.env.KSO_JADWAL_ENABLED ?? "false").toLowerCase() === "true";
   // F91 — reminder jatuh tempo invoice (D-7/D-day/overdue) ke Finance + AM.
@@ -341,12 +345,12 @@ export function startScheduler(): ScheduleStatus {
   ];
 
   status = {
-    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled || watchpointSnapshotEnabled || preVisitEnabled || edWatchEnabled || gaMaintenanceAlertEnabled || gaMaintenanceBscEnabled || gaHelpdeskOverdueEnabled || gaHelpdeskBscEnabled || lpseTenderReminderEnabled || accurateStockSyncEnabled || cashinResumeEnabled || geoSweepEnabled || kpiMeasureEnabled || invoiceReminderEnabled || auditFindingReminderEnabled || seninBriefEnabled || soPacingEnabled || fixedAssetSyncEnabled || poSyncEnabled || pmKalibrasiEnabled || leadAgingEnabled || trialReminderEnabled || ksoKesehatanEnabled || ksoSuplaiEnabled || ksoJadwalEnabled || direkturInboxEnabled,
+    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled || watchpointSnapshotEnabled || preVisitEnabled || edWatchEnabled || gaMaintenanceAlertEnabled || gaMaintenanceBscEnabled || gaHelpdeskOverdueEnabled || gaHelpdeskBscEnabled || lpseTenderReminderEnabled || accurateStockSyncEnabled || cashinResumeEnabled || geoSweepEnabled || kpiMeasureEnabled || invoiceReminderEnabled || auditFindingReminderEnabled || seninBriefEnabled || soPacingEnabled || fixedAssetSyncEnabled || poSyncEnabled || pmKalibrasiEnabled || leadAgingEnabled || trialReminderEnabled || ksoKesehatanEnabled || ksoSuplaiEnabled || ksoJadwalEnabled || direkturInboxEnabled || jadwalRutinEnabled,
     timezone,
     jobs: jobs.map((j) => ({ id: j.id, expr: j.expr, valid: cron.validate(j.expr) })),
   };
 
-  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled && !watchpointSnapshotEnabled && !preVisitEnabled && !edWatchEnabled && !gaMaintenanceAlertEnabled && !gaMaintenanceBscEnabled && !gaHelpdeskOverdueEnabled && !gaHelpdeskBscEnabled && !lpseTenderReminderEnabled && !accurateStockSyncEnabled && !cashinResumeEnabled && !geoSweepEnabled && !kpiMeasureEnabled && !invoiceReminderEnabled && !auditFindingReminderEnabled && !seninBriefEnabled && !soPacingEnabled && !fixedAssetSyncEnabled && !poSyncEnabled && !pmKalibrasiEnabled && !leadAgingEnabled && !trialReminderEnabled && !ksoKesehatanEnabled && !ksoSuplaiEnabled && !ksoJadwalEnabled && !direkturInboxEnabled) {
+  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled && !watchpointSnapshotEnabled && !preVisitEnabled && !edWatchEnabled && !gaMaintenanceAlertEnabled && !gaMaintenanceBscEnabled && !gaHelpdeskOverdueEnabled && !gaHelpdeskBscEnabled && !lpseTenderReminderEnabled && !accurateStockSyncEnabled && !cashinResumeEnabled && !geoSweepEnabled && !kpiMeasureEnabled && !invoiceReminderEnabled && !auditFindingReminderEnabled && !seninBriefEnabled && !soPacingEnabled && !fixedAssetSyncEnabled && !poSyncEnabled && !pmKalibrasiEnabled && !leadAgingEnabled && !trialReminderEnabled && !ksoKesehatanEnabled && !ksoSuplaiEnabled && !ksoJadwalEnabled && !direkturInboxEnabled && !jadwalRutinEnabled) {
     console.log("[scheduler] semua *_SCHEDULE/_ENABLED flag != true — tidak dijadwalkan");
     return status;
   }
@@ -1539,6 +1543,28 @@ export function startScheduler(): ScheduleStatus {
       { timezone },
     );
     live.push(`kso-suplai-rekap=${ksoSuplaiExpr}`);
+  }
+
+  // F154 jadwal-rutin-draft — tgl 20 07:00 WIB: susun draft bulan depan bila belum ada
+  // barisnya (jangan menimpa draft yang sudah mulai diedit HoD).
+  const jadwalRutinExpr = process.env.JADWAL_RUTIN_DRAFT_CRON ?? "0 7 20 * *";
+  if (jadwalRutinEnabled && cron.validate(jadwalRutinExpr)) {
+    cron.schedule(
+      jadwalRutinExpr,
+      async () => {
+        try {
+          const bulan = bulanDepan();
+          const [ada] = await db()`SELECT count(*)::int AS n FROM jadwal_rutin WHERE bulan = ${bulan}::date`;
+          if (Number(ada?.n) > 0) { console.log(`[scheduler] jadwal-rutin-draft ${bulan}: sudah ada ${ada.n} baris — dilewati`); return; }
+          const r = await susunDraft(bulan, "sistem");
+          console.log(`[scheduler] jadwal-rutin-draft ${bulan} → ${r.disusun} kunjungan (${r.tanpa_teknisi} tanpa teknisi, ${r.melebihi} melebihi hari kerja)`);
+        } catch (e) {
+          console.error("[scheduler] jadwal-rutin-draft gagal:", (e as Error).message);
+        }
+      },
+      { timezone },
+    );
+    live.push(`jadwal-rutin-draft=${jadwalRutinExpr}`);
   }
 
   // F170 Komite KSO — semua di belakang KSO_JADWAL_ENABLED. Forum Selasa/Kamis TIDAK dilewati saat

@@ -170,6 +170,7 @@ import { kesehatanKso, runRekapKesehatanKso } from "./repo/kso-kesehatan.js";
 import { suplaiKso, runRekapSuplaiKso } from "./repo/kso-suplai.js";
 import { productScorecard } from "./repo/product-scorecard.js";
 import { keaslianPipeline } from "./repo/pipeline-keaslian.js";
+import { JadwalError, daftarFrekuensi, daftarWilayah, jadwalBulan, pratinjau as pratinjauJadwal, setFrekuensi, setWilayah, susunDraft, tambahManual, terbitkan, ubahBaris, bulanDepan } from "./repo/jadwal-teknisi.js";
 import { IntelError, briefingFaskes, dominasiWilayah, setDominan } from "./repo/customer-intel.js";
 import { ringkasPembayaran } from "./repo/pembayaran.js";
 import {
@@ -3661,6 +3662,77 @@ app.get("/sales-analytics/ecatalog", async (c) => {
 app.get("/sales-analytics/keaslian", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json(await keaslianPipeline(await scopeOf(c)));
+});
+
+// F154 Jadwal Kunjungan Rutin Teknisi (migrasi 235, repo/jadwal-teknisi.ts). Gerbang
+// menu/izin di BFF (/api/jadwal-teknisi, requireFeature "/jadwal-teknisi"); pelaku
+// `oleh` dari sesi BFF. Tanpa scope baris: pembacanya HoD Aftersales/admin.
+const jadwalErr = (c: { json: (b: unknown, s?: number) => Response }, e: unknown) => {
+  if (e instanceof JadwalError) return c.json({ error: e.message, field: e.field }, e.status);
+  if ((e as { code?: string })?.code === "42P01") return c.json({ error: "migration_pending" }, 503);
+  console.error("[jadwal-teknisi]", (e as Error).message);
+  return c.json({ error: "gagal memproses jadwal teknisi" }, 500);
+};
+const bodyJadwal = async (c: { req: { json: () => Promise<unknown> } }): Promise<Record<string, unknown>> => {
+  const b = await c.req.json().catch(() => null);
+  if (!b || typeof b !== "object" || Array.isArray(b)) throw new JadwalError(400, "body bukan JSON object yang sah");
+  return b as Record<string, unknown>;
+};
+const olehJadwal = (b: Record<string, unknown>): string => String(b.oleh ?? "").trim() || "sistem";
+app.get("/jadwal-teknisi", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try { return c.json(await jadwalBulan(c.req.query("bulan") || bulanDepan())); } catch (e) { return jadwalErr(c, e); }
+});
+app.get("/jadwal-teknisi/pratinjau", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try { return c.json(await pratinjauJadwal(c.req.query("bulan") || bulanDepan())); } catch (e) { return jadwalErr(c, e); }
+});
+app.post("/jadwal-teknisi/susun", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try { const b = await bodyJadwal(c); return c.json(await susunDraft(String(b.bulan ?? ""), olehJadwal(b))); } catch (e) { return jadwalErr(c, e); }
+});
+app.post("/jadwal-teknisi/terbit", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try { const b = await bodyJadwal(c); return c.json(await terbitkan(String(b.bulan ?? ""), olehJadwal(b))); } catch (e) { return jadwalErr(c, e); }
+});
+app.post("/jadwal-teknisi/baris", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const b = await bodyJadwal(c);
+    return c.json(await tambahManual({ bulan: String(b.bulan ?? ""), account_id: Number(b.account_id), tanggal: String(b.tanggal ?? ""),
+      teknisi_id: b.teknisi_id ? String(b.teknisi_id) : null, catatan: b.catatan ? String(b.catatan) : null }, olehJadwal(b)), 201);
+  } catch (e) { return jadwalErr(c, e); }
+});
+app.patch("/jadwal-teknisi/baris/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const b = await bodyJadwal(c);
+    const ubah: Parameters<typeof ubahBaris>[1] = {};
+    if (b.tanggal !== undefined) ubah.tanggal = String(b.tanggal);
+    if (b.teknisi_id !== undefined) ubah.teknisi_id = b.teknisi_id ? String(b.teknisi_id) : null;
+    if (b.status !== undefined) ubah.status = String(b.status);
+    if (b.catatan !== undefined) ubah.catatan = b.catatan ? String(b.catatan) : null;
+    return c.json(await ubahBaris(c.req.param("id"), ubah, olehJadwal(b)));
+  } catch (e) { return jadwalErr(c, e); }
+});
+app.get("/jadwal-teknisi/wilayah", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try { return c.json(await daftarWilayah()); } catch (e) { return jadwalErr(c, e); }
+});
+app.put("/jadwal-teknisi/wilayah", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try { const b = await bodyJadwal(c); return c.json(await setWilayah(String(b.wilayah ?? ""), b.teknisi_id ? String(b.teknisi_id) : null, olehJadwal(b))); } catch (e) { return jadwalErr(c, e); }
+});
+app.get("/jadwal-teknisi/frekuensi", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try { return c.json({ faskes: await daftarFrekuensi() }); } catch (e) { return jadwalErr(c, e); }
+});
+app.put("/jadwal-teknisi/frekuensi", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const b = await bodyJadwal(c);
+    return c.json(await setFrekuensi(Number(b.account_id), b.interval_bulan == null || b.interval_bulan === "" ? null : Number(b.interval_bulan), b.catatan ? String(b.catatan) : null, olehJadwal(b)));
+  } catch (e) { return jadwalErr(c, e); }
 });
 app.get("/sales-analytics/per-am", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
