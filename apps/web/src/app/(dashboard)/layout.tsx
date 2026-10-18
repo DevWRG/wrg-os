@@ -1,7 +1,6 @@
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 
-import { UsageBeacon } from "@/components/adoption/usage-beacon";
 import { AppSidebar } from "@/components/layout/app-sidebar";
 import { Footer } from "@/components/layout/footer";
 import { Topbar } from "@/components/layout/topbar";
@@ -34,7 +33,6 @@ export default async function DashboardLayout({
 
   return (
     <SidebarProvider>
-      <UsageBeacon />
       <AppSidebar me={me} />
       <SidebarInset className="min-w-0">
         <Topbar />
