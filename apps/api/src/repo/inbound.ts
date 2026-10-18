@@ -47,6 +47,7 @@ import { createSphDraft, findPricelistByKode } from "./sph.js";
 import { listItems as listPricebookItems } from "./pricebook.js";
 import { parseApprovalMessage } from "../parsers/approval.js";
 import { resolveApprover, decideCurrentStep } from "./approval.js";
+import { balasanBriefing } from "./senin-brief.js";
 import { parseOvertimeArg, formatDurasi } from "../parsers/overtime.js";
 import { getPengajuProfile, submitOvertime, decideOvertime } from "./overtime.js";
 import {
@@ -73,6 +74,7 @@ import {
 import { FULL_SCOPE } from "./access-scope.js";
 import { accountIdDariTulisan } from "./akun-faskes.js";
 import { KSO_JENDELA_SUARA_MENIT, KSO_LINE, ksoWaAktif, parseKsoPerintah, prosesKso, transkripSuara } from "./kso-intake.js";
+import { notifHodMasukAntrean } from "./kso-jadwal.js";
 
 
 // Role yang pakai alur AM per-customer (sales_plan/activity_log + foto), bukan todo.
@@ -131,6 +133,7 @@ export const INBOUND_HASHTAGS = [
   "trial",
   "kampanye",
   "brief",
+  "briefing",
   "kso",
 ] as const;
 
@@ -185,6 +188,12 @@ const DEMO_TRIAL_LINE = /^\s*#\s*(demo|trial)\b/i;
 const KAMPANYE_LINE = /^\s*#\s*kampanye\b/i;
 // F131 — #BRIEF <faskes>: briefing pra-kunjungan (baca saja).
 const BRIEF_LINE = /^\s*#\s*brief\b/i;
+// F110 — #BRIEFING: ringkasan Senin Brief F85 untuk Direktur (baca saja). `\b`
+// membedakannya dari #BRIEF (F131): "#briefing" tak ikut terpicu #BRIEF.
+const BRIEFING_LINE = /^\s*#\s*briefing\b/i;
+// Peran app_user yang boleh membaca Senin Brief lewat WA.
+const BRIEFING_ROLES = new Set(["direktur", "admin", "superuser"]);
+export const briefingTerbuka = (): boolean => (process.env.BRIEFING_WA_OPEN ?? "false").toLowerCase() === "true";
 
 export function detectKind(body: string | null): InboundKind {
   const daily = detectDaily(body); // line-anchored #plan/#report (sudah strip invisible)
@@ -219,6 +228,7 @@ export function detectKind(body: string | null): InboundKind {
       if (dt) return dt[1].toLowerCase() as "demo" | "trial";
       if (KAMPANYE_LINE.test(line)) return "kampanye";
       if (BRIEF_LINE.test(line)) return "brief";
+      if (BRIEFING_LINE.test(line)) return "briefing";
     }
   }
   return "none";
@@ -1367,9 +1377,15 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
       wa_message_id: row.message_id,
     });
     const reply = await sendViaWaGateway(row.group_jid, balasan);
+    // Tahap 5: usulan baru masuk antrean HOD → kabari kursi HOD (perlu putusan / perlu pendapat).
+    // Sesudah transaksi pengajuan tersimpan; gagal notifikasi tidak menggagalkan pengajuan.
+    let notifHod: unknown;
+    if (hasil.aksi === "kirim" && typeof hasil.rencana_id === "number" && (process.env.KSO_JADWAL_ENABLED ?? "").toLowerCase() === "true") {
+      try { notifHod = await notifHodMasukAntrean(hasil.rencana_id); } catch (e) { notifHod = { error: (e as Error).message }; }
+    }
     // teks balasan DISIMPAN utuh: kriteria Tahap 3 = audit percakapan acak ("tak ada kolom
     // terisi tanpa diucapkan AM"), dan WaSendResult sendiri tak membawa teksnya.
-    return finish({ ...hasil, via: amKso.via, ...(transkrip ? { transkrip } : {}), balasan, reply }, "kso");
+    return finish({ ...hasil, via: amKso.via, ...(transkrip ? { transkrip } : {}), balasan, reply, ...(notifHod ? { notif_hod: notifHod } : {}) }, "kso");
   }
 
   // F8 — laporan lapangan Teknisi (#install/#servis/#training/#kalibrasi).
@@ -1958,6 +1974,38 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
     }
     const reply = await sendViaWaGateway(target, text);
     return finish({ kind: "brief", via: br.via, reply });
+  }
+
+  // #BRIEFING — F110: ringkasan Senin Brief (kesiapan 8 HoD) untuk Direktur.
+  // ISI-nya menilai orang (TIDAK SIAP per HoD), jadi gerbangnya ketat: hanya
+  // app_user Direktur/admin dengan nomor WA terdaftar, dan HANYA lewat chat
+  // privat — resolveApprover menolak JID grup, sehingga balasan tak pernah
+  // sampai ke grup produksi. Pengirim lain DIAM (tak mengungkap fiturnya).
+  //
+  // PENGECUALIAN SENGAJA (keputusan user 16 Okt 2026): di grup uji bypass
+  // (WA_TEST_BYPASS_GROUP, mis. grup "Research") SIAPA PUN boleh memicu dan
+  // balasan dikirim ke grup itu, supaya fitur bisa diuji tim tanpa akun
+  // Direktur. Bypass hanya aktif bila env di-set eksplisit di server uji — JANGAN
+  // di produksi (lihat wa-test-bypass.ts): di sana isi brief nyata bocor ke grup.
+  if (kind === "briefing") {
+    // BRIEFING_WA_OPEN=true (sementara, permintaan user 16 Okt 2026): siapa pun
+    // di grup yang diproses inbound (WA_INBOUND_GROUPS / grup uji) boleh memakai
+    // #BRIEFING, balasan ke grup/chat asalnya. Default MATI — matikan lagi
+    // sebelum go-live: isi brief menilai kesiapan HoD.
+    const bypass = isWaTestBypassGroup(row.group_jid) || briefingTerbuka();
+    const dir = bypass ? null : await resolveApprover(row.sender_jid);
+    if (!bypass && (!dir || !BRIEFING_ROLES.has(dir.role.toLowerCase()))) {
+      return finish({ skipped: "bukan-direktur", sender_name: row.sender_name });
+    }
+    let text: string;
+    try {
+      text = await balasanBriefing(extractHashtagArg(row.body, BRIEFING_LINE));
+    } catch (e) {
+      console.error("[inbound] #BRIEFING gagal diproses:", (e as Error).message);
+      text = "⚠️ #BRIEFING gagal diproses, coba lagi sebentar lagi.";
+    }
+    const reply = await sendViaWaGateway(target, text);
+    return finish({ kind: "briefing", via: bypass ? (briefingTerbuka() ? "terbuka" : "bypass-grup-uji") : dir?.name, reply });
   }
 
   // #STOK — cek stok cepat (F2 SQC). Sender WAJIB dikenal (perlu cabang AM

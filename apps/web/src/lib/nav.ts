@@ -9,7 +9,7 @@ import {
   Factory, Workflow, Receipt, BarChart3, ClipboardCheck, History, Settings,
   Send, FileText, ScrollText, GraduationCap, UsersRound, Network,
   Bell, MapPin, ListChecks, Swords, CalendarOff, CalendarDays, CalendarRange,
-  Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, Tags, SlidersHorizontal, Microscope, MonitorCheck, FileSignature,
+  Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, Tags, SlidersHorizontal, Microscope, MonitorCheck, FileSignature, Gavel,
   Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, BookOpen, Calculator, Presentation, Megaphone, Library,
   Wallet, Coins, Route, Radio, Printer, ScanText,
   Wrench,
@@ -45,9 +45,11 @@ import { canViewKlasifikasi } from "@/lib/klasifikasi-access";
 import { canViewProductScorecard } from "@/lib/product-scorecard-access";
 import { canViewKsoKontrak } from "@/lib/kso-kontrak-access";
 import { canViewCn } from "@/lib/cn-access";
+import { TAB_KSO, canViewKsoKomite } from "@/lib/kso-komite-access";
 import { canViewAsetTetap } from "@/lib/aset-tetap-access";
 import { canViewPmfScorecard } from "@/lib/pmf-access";
 import { canViewDirekturInbox } from "@/lib/direktur-inbox-access";
+import { canViewTukarFaktur } from "@/lib/tukar-faktur-access";
 import { canViewRaportList } from "@/lib/raport-access";
 import { canViewExecutive } from "@/lib/executive-access";
 import { canBukaDaftarAlat, canViewKso } from "@/lib/kso-access";
@@ -58,6 +60,7 @@ import { canViewVendorManagement } from "@/lib/vendor-management-access";
 import { canViewGaReporting } from "@/lib/ga-reporting-access";
 import { canViewAuditFindings } from "@/lib/audit-finding-access";
 import { canViewOvertime } from "@/lib/overtime-access";
+import { canViewKasStation } from "@/lib/kas-station-access";
 
 // exact: sorot aktif hanya saat path persis (untuk route induk yg punya child,
 // mis. /pricelist vs /pricelist/setup).
@@ -162,6 +165,9 @@ export const NAV: NavGroup[] = [
       { title: "Customers", url: "/customers", icon: Building2 },
       { title: "Accounts", url: "/accounts", icon: Contact, badge: "NEW" },
       { title: "AR Aging", url: "/ar", icon: Receipt },
+      // F31 — status faktur Accurate + kalender klinik. Izin "tukar-faktur": fallback direktur/admin/superuser;
+      // butuh Sync Fitur + centang grup Finance/AR setelah deploy.
+      { title: "Tukar Faktur", url: "/tukar-faktur", icon: Receipt, badge: "NEW", show: canViewTukarFaktur },
       { title: "Sales Docs", url: "/sales-docs", icon: FileText, matchPrefix: ["/sph"] },
       { title: "Collection Drafts", url: "/collection-drafts", icon: Send },
       // Simulator KSO — running cost alat lab per test, hasil penggabungan
@@ -216,6 +222,12 @@ export const NAV: NavGroup[] = [
       // MENULIS data (kontrak, status renewal), dan izin edit-nya dipisah dari
       // view. Default tertutup — butuh Sync Fitur + centang di Akses Grup.
       { title: "Kontrak KSO", url: "/kso-kontrak", icon: FileSignature, badge: "NEW", show: canViewKsoKontrak },
+      // F170 Komite KSO — satu menu, tab per peran; tiap tab = kunci izin SENDIRI di Akses Grup
+      // (keputusan 16 Okt). Kunci utama 'kso-komite' = tab Rencana Saya (AM); kunci tab lain
+      // WAJIB terdaftar di `features` — kalau tidak, Sync Fitur mematikannya sebagai zombie.
+      // API (repo/kso-komite.ts) memeriksa ulang izin tiap permintaan.
+      { title: "Komite KSO", url: "/kso-komite", icon: Gavel, badge: "NEW", show: canViewKsoKomite,
+        features: TAB_KSO.filter((t) => t.fitur !== "kso-komite").map((t) => ({ key: t.fitur, name: t.nama })) },
       // Harga jual dibagi per PEMBACA, bukan per tabel:
       //   /pricebook            sales & AM — katalog + harga terpublikasi (071/043)
       //   /pricebook/ringkasan  Direktur + HoD — bacaan portofolio
@@ -466,6 +478,12 @@ export const NAV: NavGroup[] = [
       // F151 CN (Kredit Note) — rebate customer per kontrak, dasar faktur; Sales → HoD → Finance → GA.
       // Kunci izin sendiri ("cn", featureKey dari url), default tertutup: butuh Sync Fitur + centang.
       { title: "Kredit Note (CN)", url: "/cn", icon: Receipt, badge: "NEW", show: canViewCn },
+      // F33 Kas Station — kas harian cabang → rekap mingguan → approval pusat → realisasi.
+      // Dua kunci izin: "kas-station" (station: catat & ajukan) dan "kas-station-review"
+      // (pusat: lihat rekap, approve/reject, realisasi). Default tertutup: butuh Sync Fitur +
+      // centang grup; sebelum itu fallback direktur/admin/superuser.
+      { title: "Kas Station", url: "/kas-station", icon: Wallet, badge: "NEW", show: canViewKasStation,
+        features: [{ key: "kas-station-review", name: "Kas Station — review pusat (approve & realisasi)" }] },
     ],
   },
   {

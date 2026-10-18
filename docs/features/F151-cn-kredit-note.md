@@ -5,7 +5,7 @@ Rebate ke customer berdasarkan **kontrak**, dihitung dari **DPP faktur**, diajuk
 `ditolak` / `dibatalkan` = final dan melepas faktur supaya bisa diajukan lagi.
 
 - **Menu**: `/cn` ("Kredit Note (CN)", grup Finance). Tiga tab: Pengajuan, Kontrak, Laporan. Kunci izin `cn` (view / create / edit).
-- **Migrasi**: `230_cn_kredit_note.sql` (4 tabel + 2 sequence). **⚠️ BUTUH MIGRASI DB** (diterapkan manual ke dev + prod).
+- **Migrasi**: `235_cn_kredit_note.sql` (4 tabel + 2 sequence). **⚠️ BUTUH MIGRASI DB** (diterapkan manual ke dev + prod).
 - **Setelah deploy**: klik **Sync Fitur** sekali agar `cn` muncul di matriks Akses Grup (tertutup default), lalu centang
   view/create/edit untuk Sales, HoD, Finance, GA.
 - **Bukan** F27 Faktur Pajak (dihentikan), credit memo/retur Accurate (tetap di Accurate), F31 Tukar Faktur.

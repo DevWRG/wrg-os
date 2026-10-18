@@ -30,6 +30,7 @@ import { getCustomers } from "./repo/customer.js";
 import { listAccounts, getAccount, upsertAccountFields, createContact, updateContact, deleteContact, listOwnerCandidates } from "./repo/account.js";
 import { timelineAkun } from "./repo/interaction.js";
 import { listLeads, getLead, buatLeadWeb, updateLead, konversiLead, cariDuplikat, LeadError } from "./repo/lead.js";
+import { PipError, addCheckin as addPipCheckin, addGoal as addPipGoal, addMilestone as addPipMilestone, decideMilestone as decidePipMilestone, getCase as getPipCase, getEmployeeJourney, getImprovement, listCases as listPipCases, setOutcome as setPipOutcome, startCase as startPipCase } from "./repo/pip.js";
 import { OnboardingError, cancelCase as cancelOnboarding, createTemplate as createOnboardingTemplate, getCase as getOnboardingCase, listCandidates as listOnboardingCandidates, listCases as listOnboardingCases, listTemplates as listOnboardingTemplates, startCase as startOnboarding, updateItem as updateOnboardingItem, updateTemplate as updateOnboardingTemplate } from "./repo/onboarding.js";
 import { MateriError, buatMateri, listMateri, ubahMateri, type BerkasMasuk } from "./repo/materi.js";
 import { DriveError, driveSiap } from "./gdrive.js";
@@ -169,6 +170,7 @@ import { recordCompetitor, listCompetitor, competitorSummary } from "./repo/comp
 import { kesehatanKso, runRekapKesehatanKso } from "./repo/kso-kesehatan.js";
 import { suplaiKso, runRekapSuplaiKso } from "./repo/kso-suplai.js";
 import { productScorecard } from "./repo/product-scorecard.js";
+import { keaslianPipeline } from "./repo/pipeline-keaslian.js";
 import { IntelError, briefingFaskes, dominasiWilayah, setDominan } from "./repo/customer-intel.js";
 import { ringkasPembayaran } from "./repo/pembayaran.js";
 import {
@@ -250,14 +252,17 @@ import { runWeeklyReport } from "./repo/weeklyreport.js";
 import { runDetectLeaveScan } from "./repo/detectleave.js";
 import { runExtractCompetitor } from "./repo/extractcompetitor.js";
 import { runWeekendBriefing } from "./repo/weekendbriefing.js";
-import { listSeninBriefs, runSeninBrief } from "./repo/senin-brief.js";
+import { getSeninBrief, listSeninBriefs, runSeninBrief } from "./repo/senin-brief.js";
+import { namaFilePdf, seninBriefPdf } from "./repo/senin-brief-pdf.js";
 import { listDirekturInbox, runDirekturInbox } from "./repo/direktur-inbox.js";
+import { TukarFakturError, listKalenderKlinik, listTukarFaktur, parseBulan, parseHari } from "./repo/tukar-faktur.js";
 import { getPmfScorecard } from "./repo/pmf-scorecard.js";
 import { getSoPacing, runSoPacingAlert } from "./repo/so-pacing.js";
 import {
   akunKso, bacaDokumen, buatKontrak, getKontrak, hapusDokumen, KontrakError, kelengkapanKontrak, listKontrak,
   MAKS_DOKUMEN, perpanjangKontrak, ubahKontrak, ubahStatusKontrak, unggahDokumen,
 } from "./repo/kso-kontrak.js";
+import { GalatKso, daftarTab, detailRencana, isAksiKso, isTabKso, jalankanAksi, tabBoleh } from "./repo/kso-komite.js";
 import { runPolaKomunikasi } from "./repo/polakomunikasi.js";
 import { listWaGroups, setWaGroupCategory, setWaGroupPrefixCategory, isWaGroupCategory } from "./repo/wagroup.js";
 import { runRefreshMembers } from "./repo/listmembers.js";
@@ -365,6 +370,27 @@ import {
   type DanaOpsItemInput,
   type DanaOpsItemUpdate,
 } from "./repo/dana-ops.js";
+import {
+  KasStationError,
+  addTransaksi as addKasTransaksi,
+  buatRekap as buatKasRekap,
+  createHarian as createKasHarian,
+  decideRekap as decideKasRekap,
+  deleteHarian as deleteKasHarian,
+  deleteTransaksi as deleteKasTransaksi,
+  getHarian as getKasHarian,
+  getRekap as getKasRekap,
+  isMigrationPending as isKasMigrationPending,
+  mengandungNul as kasMengandungNul,
+  isNumericOverflow as isKasNumericOverflow,
+  listCabang as listKasCabang,
+  listHarian as listKasHarian,
+  listRekap as listKasRekap,
+  realisasiRekap as realisasiKasRekap,
+  submitRekap as submitKasRekap,
+  updateHarian as updateKasHarian,
+  updateTransaksi as updateKasTransaksi,
+} from "./repo/kas-station.js";
 import {
   createSchedule,
   listSchedules,
@@ -2451,6 +2477,49 @@ app.get("/briefings", async (c) => {
   return c.json({ count: briefings.length, briefings });
 });
 
+// F170 — Komite KSO, layar per peran (Tahap 4). Izin tab DIPERIKSA DI SINI (Akses Grup,
+// repo/kso-komite.ts putuskanIzin) — tidak hanya di BFF — lalu transaksi diberi identitas +
+// peran tab sehingga pagar database kso.* ikut berlaku. Identitas = x-user-id dari BFF (sesi).
+const ksoKomiteErr = (c: Context, e: unknown) => {
+  if (e instanceof GalatKso) return c.json({ error: e.message }, e.status as 400);
+  console.error("[kso-komite]", e);
+  return c.json({ error: "Gagal memproses permintaan Komite KSO." }, 500);
+};
+const ksoUser = (c: Context) => (c.req.header("x-user-id") ?? "").trim();
+app.get("/kso-komite/tab", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const u = ksoUser(c);
+  if (!u) return c.json({ error: "x-user-id wajib" }, 401);
+  try { return c.json({ tab: await tabBoleh(u) }); } catch (e) { return ksoKomiteErr(c, e); }
+});
+app.get("/kso-komite/:tab", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const u = ksoUser(c);
+  const tab = c.req.param("tab");
+  if (!u) return c.json({ error: "x-user-id wajib" }, 401);
+  if (!isTabKso(tab)) return c.json({ error: "tab tidak dikenal" }, 404);
+  try { return c.json(await daftarTab(u, tab)); } catch (e) { return ksoKomiteErr(c, e); }
+});
+app.get("/kso-komite/:tab/rencana/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const u = ksoUser(c);
+  const tab = c.req.param("tab");
+  const id = Number(c.req.param("id"));
+  if (!u) return c.json({ error: "x-user-id wajib" }, 401);
+  if (!isTabKso(tab) || !Number.isInteger(id) || id <= 0) return c.json({ error: "permintaan tidak sah" }, 400);
+  try { return c.json(await detailRencana(u, tab, id)); } catch (e) { return ksoKomiteErr(c, e); }
+});
+app.post("/kso-komite/rencana/:id/:aksi", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const u = ksoUser(c);
+  const aksi = c.req.param("aksi");
+  const id = Number(c.req.param("id"));
+  if (!u) return c.json({ error: "x-user-id wajib" }, 401);
+  if (!isAksiKso(aksi) || !Number.isInteger(id) || id <= 0) return c.json({ error: "permintaan tidak sah" }, 400);
+  const b = await bodyJson(c);
+  try { return c.json(await jalankanAksi(u, id, aksi, b)); } catch (e) { return ksoKomiteErr(c, e); }
+});
+
 // F47 — Kontrak KSO & Renewal (fase 1). Gerbang izin (kso-kontrak view/edit)
 // ada di BFF apps/web/src/app/api/kso-kontrak/**; `oleh` diisi BFF dari sesi,
 // bukan dari input browser. Prefix /kso-kontrak (bukan /kso/…) supaya tak
@@ -2646,6 +2715,32 @@ app.get("/direktur-inbox", async (c) => {
   return c.json(await listDirekturInbox());
 });
 
+// F31 — Tukar Faktur Tracker + Klinik Calendar (Fase 1, murni baca). Izin dicek di BFF.
+// Param salah → 400; tabel belum ada (42P01) → 503 migration_pending.
+const tukarFakturError = (c: Context, e: unknown) => {
+  if (e instanceof TukarFakturError) return c.json({ error: e.message }, e.status as 400);
+  if ((e as { code?: string })?.code === "42P01") return c.json({ error: "migration_pending" }, 503);
+  throw e;
+};
+
+app.get("/tukar-faktur", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    return c.json(await listTukarFaktur(parseHari(c.req.query("hari"))));
+  } catch (e) {
+    return tukarFakturError(c, e);
+  }
+});
+
+app.get("/tukar-faktur/kalender", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    return c.json(await listKalenderKlinik(parseBulan(c.req.query("bulan"))));
+  } catch (e) {
+    return tukarFakturError(c, e);
+  }
+});
+
 // F59 — susun/kirim digest WA manual. Sengaja TANPA route BFF (bisa mengirim WA ke
 // Direktur): hanya operator via service token. body: {dry_run?, target?}.
 // DEFAULT dry_run=true — kirim sungguhan harus eksplisit `dry_run:false`.
@@ -2665,6 +2760,29 @@ app.get("/senin-brief", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const briefs = await listSeninBriefs();
   return c.json({ count: briefs.length, briefs });
+});
+
+// F110 Pre-Meeting Briefing Direktur — PDF dari brief F85 yang SUDAH tersimpan
+// (tak menghitung ulang, tak mengirim WA). `latest` = brief terbaru; selain itu
+// /senin-brief/:tahun/:minggu/pdf. `oleh` (nama pencetak) diisi BFF dari sesi.
+const kirimSeninPdf = async (c: Context, tahun?: number, minggu?: number) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const brief = await getSeninBrief(tahun, minggu);
+  if (!brief) return c.json({ error: "Senin Brief belum ada untuk minggu itu" }, 404);
+  const pdf = await seninBriefPdf(brief, { oleh: c.req.query("oleh") ?? null });
+  return c.body(new Uint8Array(pdf), 200, {
+    "content-type": "application/pdf",
+    "content-disposition": `attachment; filename="${namaFilePdf(brief)}"`,
+  });
+};
+app.get("/senin-brief/latest/pdf", (c) => kirimSeninPdf(c));
+app.get("/senin-brief/:tahun/:minggu/pdf", (c) => {
+  const tahun = Number(c.req.param("tahun"));
+  const minggu = Number(c.req.param("minggu"));
+  if (!Number.isInteger(tahun) || !Number.isInteger(minggu) || minggu < 1 || minggu > 53) {
+    return c.json({ error: "tahun/minggu tak valid" }, 400);
+  }
+  return kirimSeninPdf(c, tahun, minggu);
 });
 
 // F85 — susun brief manual (uji / generate ulang). Sengaja TANPA route BFF:
@@ -3537,6 +3655,13 @@ app.get("/sales-analytics/overview", async (c) => {
 app.get("/sales-analytics/ecatalog", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json(await ecatalogWatch(await scopeOf(c)));
+});
+// Pipeline Authenticity (F4 SXR) — status keaslian tiap deal terbuka & Won ≤180 hari
+// (kunjungan, lama di tahap, faktur sesudah Won, bukti foto/geotag). Ber-scope sama
+// dengan Pipeline; tak ikut filter tanggal tab lain (selalu "per hari ini").
+app.get("/sales-analytics/keaslian", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await keaslianPipeline(await scopeOf(c)));
 });
 app.get("/sales-analytics/per-am", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
@@ -5777,6 +5902,99 @@ app.get("/demo-trial-am", async (c) => {
   return c.json({ am: await listOwnerCandidates(await scopeOf(c)) });
 });
 
+// F70 PIP 90-Day Tracker + Improvement (migrasi 234, repo/pip.ts). Menu/izin = fitur 'karyawan'
+// (dijaga BFF requireFeature "/karyawan"); scope data = resolveScope seperti /raport/*. Pelaku `oleh`
+// dari sesi (BFF), bukan dari pengguna.
+const pipErr = (c: { json: (b: unknown, s?: number) => Response }, e: unknown) => {
+  if (e instanceof PipError) return c.json({ error: e.message, field: e.field }, e.status);
+  // 42P01 = tabel belum ada (migrasi 234 belum diterapkan) → 503, bukan 500 buram.
+  if ((e as { code?: string })?.code === "42P01") return c.json({ error: "migration_pending" }, 503);
+  return c.json({ error: "gagal memproses PIP" }, 500);
+};
+const pipId = (v: string): number | null => (/^\d{1,15}$/.test(v) ? Number(v) : null);
+const pipBody = async (c: { req: { json: () => Promise<unknown> } }): Promise<Record<string, unknown>> => {
+  const b = await c.req.json().catch(() => null);
+  if (!b || typeof b !== "object" || Array.isArray(b)) throw new PipError(400, "body bukan JSON object yang sah");
+  return b as Record<string, unknown>;
+};
+const pipOleh = (b: Record<string, unknown>): string | null => (typeof b.oleh === "string" && b.oleh.trim() ? b.oleh.trim().slice(0, 100) : null);
+app.get("/improvement", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try { return c.json(await getImprovement(await scopeOf(c), c.req.query("periods") ?? null)); }
+  catch (e) { return pipErr(c, e); }
+});
+app.get("/improvement/:amId", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try { return c.json(await getEmployeeJourney(await scopeOf(c), c.req.param("amId"), c.req.query("periods") ?? null)); }
+  catch (e) { return pipErr(c, e); }
+});
+app.get("/pip/cases", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try { return c.json(await listPipCases(await scopeOf(c), c.req.query("status") ?? null)); }
+  catch (e) { return pipErr(c, e); }
+});
+app.post("/pip/cases", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const b = await pipBody(c);
+    return c.json(await startPipCase(await scopeOf(c), b, pipOleh(b)), 201);
+  } catch (e) { return pipErr(c, e); }
+});
+app.get("/pip/cases/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const id = pipId(c.req.param("id"));
+    if (id == null) return c.json({ error: "id tidak valid" }, 400);
+    const r = await getPipCase(await scopeOf(c), id);
+    return r ? c.json(r) : c.json({ error: "PIP tidak ditemukan" }, 404);
+  } catch (e) { return pipErr(c, e); }
+});
+app.post("/pip/cases/:id/goals", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const id = pipId(c.req.param("id"));
+    if (id == null) return c.json({ error: "id tidak valid" }, 400);
+    const b = await pipBody(c);
+    return c.json(await addPipGoal(await scopeOf(c), id, b, pipOleh(b)), 201);
+  } catch (e) { return pipErr(c, e); }
+});
+app.post("/pip/cases/:id/milestones", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const id = pipId(c.req.param("id"));
+    if (id == null) return c.json({ error: "id tidak valid" }, 400);
+    const b = await pipBody(c);
+    return c.json(await addPipMilestone(await scopeOf(c), id, b, pipOleh(b)), 201);
+  } catch (e) { return pipErr(c, e); }
+});
+app.post("/pip/cases/:id/checkins", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const id = pipId(c.req.param("id"));
+    if (id == null) return c.json({ error: "id tidak valid" }, 400);
+    const b = await pipBody(c);
+    return c.json(await addPipCheckin(await scopeOf(c), id, b, pipOleh(b)), 201);
+  } catch (e) { return pipErr(c, e); }
+});
+app.post("/pip/cases/:id/outcome", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const id = pipId(c.req.param("id"));
+    if (id == null) return c.json({ error: "id tidak valid" }, 400);
+    const b = await pipBody(c);
+    return c.json(await setPipOutcome(await scopeOf(c), id, b, pipOleh(b)));
+  } catch (e) { return pipErr(c, e); }
+});
+app.patch("/pip/milestones/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const id = pipId(c.req.param("id"));
+    if (id == null) return c.json({ error: "id tidak valid" }, 400);
+    const b = await pipBody(c);
+    return c.json(await decidePipMilestone(await scopeOf(c), id, b, pipOleh(b)));
+  } catch (e) { return pipErr(c, e); }
+});
+
 // F56 Onboarding Checklist Karyawan Baru (migrasi 213, repo/onboarding.ts). Gerbang menu/izin
 // (requireFeature "/onboarding") di BFF; audiens (admin/superuser/Direktur = semua, HoD = cabang
 // timnya, lainnya 403) ditegakkan di repo. Pelaku `oleh` dari sesi (BFF), bukan dari pengguna.
@@ -6983,6 +7201,141 @@ app.delete("/dana-ops/:id/items/:itemId", async (c) => {
   const r = await deleteDanaOpsItem(c.req.param("id"), c.req.param("itemId"));
   return c.json(r, r.deleted ? 200 : 404);
 });
+
+// ── F33 Kas Station Reconcile Harian Cabang (Finance) — kas harian per station →
+// rekap mingguan (Senin–Minggu) → pengajuan ke pusat → approve/reject → realisasi.
+// Izin ditegakkan di BFF (apps/web/src/app/api/kas-station/**); pelaku dikirim BFF
+// lewat body (`actor`). Tabel belum dimigrasi → 503 migration_pending.
+async function kasStationBody(c: Context): Promise<Record<string, unknown>> {
+  let body: unknown;
+  try {
+    // Body kosong = objek kosong (mis. submit tanpa isian), bukan galat.
+    const teks = await c.req.text();
+    body = teks.trim() === "" ? {} : JSON.parse(teks);
+  } catch { throw new KasStationError(400, "invalid JSON body"); }
+  if (body == null || typeof body !== "object" || Array.isArray(body)) throw new KasStationError(400, "body harus berupa objek JSON");
+  if (kasMengandungNul(body)) throw new KasStationError(400, "teks tidak boleh mengandung karakter NUL (\\u0000)");
+  return body as Record<string, unknown>;
+}
+
+async function kasStationJalankan(c: Context, fn: () => Promise<Response>): Promise<Response> {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  if (kasMengandungNul(c.req.query())) return c.json({ error: "parameter tidak boleh mengandung karakter NUL" }, 400);
+  try {
+    return await fn();
+  } catch (e) {
+    if (e instanceof KasStationError) return c.json({ error: e.message }, e.status as 400 | 404 | 409 | 422);
+    if (isKasMigrationPending(e)) return c.json({ error: "migration_pending" }, 503);
+    if (isKasNumericOverflow(e)) return c.json({ error: "total nominal melebihi batas yang didukung" }, 422);
+    throw e;
+  }
+}
+
+const kasStationLimit = (c: Context): number | undefined => {
+  const v = c.req.query("limit");
+  return v === undefined ? undefined : Number(v);
+};
+
+app.get("/kas-station/cabang", (c) => kasStationJalankan(c, async () => c.json({ cabang: await listKasCabang() })));
+
+app.get("/kas-station/harian", (c) => kasStationJalankan(c, async () => {
+  const rows = await listKasHarian({
+    cabang: c.req.query("cabang") || undefined,
+    dari: c.req.query("dari") || undefined,
+    sampai: c.req.query("sampai") || undefined,
+    limit: kasStationLimit(c),
+  });
+  return c.json({ count: rows.length, rows });
+}));
+
+app.post("/kas-station/harian", (c) => kasStationJalankan(c, async () => {
+  const body = await kasStationBody(c);
+  const row = await createKasHarian({
+    cabang: body.cabang, tanggal: body.tanggal, saldo_awal: body.saldo_awal, saldo_fisik: body.saldo_fisik,
+    keterangan: body.keterangan, transaksi: body.transaksi as never, created_by: body.actor as string | undefined,
+  });
+  return c.json(row, 201);
+}));
+
+app.get("/kas-station/harian/:id", (c) => kasStationJalankan(c, async () => {
+  const row = await getKasHarian(c.req.param("id"));
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+}));
+
+app.patch("/kas-station/harian/:id", (c) => kasStationJalankan(c, async () => {
+  const body = await kasStationBody(c);
+  const row = await updateKasHarian(c.req.param("id"), {
+    saldo_fisik: body.saldo_fisik, keterangan: body.keterangan, saldo_awal: body.saldo_awal,
+    updated_by: body.actor as string | undefined,
+  });
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+}));
+
+app.delete("/kas-station/harian/:id", (c) => kasStationJalankan(c, async () => {
+  const r = await deleteKasHarian(c.req.param("id"), c.req.query("actor"));
+  return c.json(r, r.deleted ? 200 : 404);
+}));
+
+app.post("/kas-station/harian/:id/transaksi", (c) => kasStationJalankan(c, async () => {
+  const body = await kasStationBody(c);
+  const row = await addKasTransaksi(c.req.param("id"), {
+    jenis: body.jenis, nominal: body.nominal, uraian: body.uraian, bukti_ref: body.bukti_ref,
+    created_by: body.actor as string | undefined,
+  });
+  return row ? c.json(row, 201) : c.json({ error: "catatan kas harian tidak ditemukan" }, 404);
+}));
+
+app.patch("/kas-station/harian/:id/transaksi/:trxId", (c) => kasStationJalankan(c, async () => {
+  const body = await kasStationBody(c);
+  const row = await updateKasTransaksi(c.req.param("id"), c.req.param("trxId"), {
+    jenis: body.jenis, nominal: body.nominal, uraian: body.uraian, bukti_ref: body.bukti_ref,
+    updated_by: body.actor as string | undefined,
+  });
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+}));
+
+app.delete("/kas-station/harian/:id/transaksi/:trxId", (c) => kasStationJalankan(c, async () => {
+  const r = await deleteKasTransaksi(c.req.param("id"), c.req.param("trxId"), c.req.query("actor"));
+  return c.json(r, r.deleted ? 200 : 404);
+}));
+
+app.get("/kas-station/rekap", (c) => kasStationJalankan(c, async () => {
+  const rows = await listKasRekap({
+    cabang: c.req.query("cabang") || undefined,
+    status: c.req.query("status") || undefined,
+    limit: kasStationLimit(c),
+  });
+  return c.json({ count: rows.length, rows });
+}));
+
+app.post("/kas-station/rekap", (c) => kasStationJalankan(c, async () => {
+  const body = await kasStationBody(c);
+  const row = await buatKasRekap({ cabang: body.cabang, periode_awal: body.periode_awal, created_by: body.actor as string | undefined });
+  return c.json(row, 201);
+}));
+
+app.get("/kas-station/rekap/:id", (c) => kasStationJalankan(c, async () => {
+  const row = await getKasRekap(c.req.param("id"));
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+}));
+
+app.post("/kas-station/rekap/:id/submit", (c) => kasStationJalankan(c, async () => {
+  const body = await kasStationBody(c);
+  const row = await submitKasRekap(c.req.param("id"), body.actor as string | undefined);
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+}));
+
+app.post("/kas-station/rekap/:id/decide", (c) => kasStationJalankan(c, async () => {
+  const body = await kasStationBody(c);
+  const row = await decideKasRekap(c.req.param("id"), body.decision, body.note, body.actor as string | undefined);
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+}));
+
+app.post("/kas-station/rekap/:id/realisasi", (c) => kasStationJalankan(c, async () => {
+  const body = await kasStationBody(c);
+  const row = await realisasiKasRekap(c.req.param("id"), body.realisasi_nominal, body.actor as string | undefined);
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+}));
 
 // ── Instalasi Alat Lifecycle (F22, AFTERSALES) — checklist 5 langkah sekuensial:
 // PO control → SJ → Teknisi assign → Training done → BAST. ──

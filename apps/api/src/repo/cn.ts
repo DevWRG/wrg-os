@@ -1,4 +1,4 @@
-// F151 CN (Kredit Note) Lifecycle — migrasi 230.
+// F151 CN (Kredit Note) Lifecycle — migrasi 235.
 //
 // CN = rebate ke customer berdasarkan kontrak, diinput lewat form, dasar hitung = FAKTUR (DPP
 // accurate_invoice). Alur pengajuan:

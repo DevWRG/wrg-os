@@ -4,7 +4,8 @@
 // server yang bersangkutan. TIDAK BOLEH di-set di server produksi: begitu aktif,
 // SIAPA PUN di grup itu otomatis dianggap "dikenal" oleh resolveSender/
 // matchTeknisiByName untuk command baca/lapor (#STOK/#CEK/#PRICING/#SPH/
-// #install/#servis/#training/#kalibrasi). #APPROVE/#REJECT SENGAJA tidak ikut
+// #install/#servis/#training/#kalibrasi/#BRIEFING — yang terakhir membuka isi
+// Senin Brief nyata ke grup itu). #APPROVE/#REJECT SENGAJA tidak ikut
 // bypass ini (lihat approval.ts) — approver tetap wajib terdaftar asli.
 export function isWaTestBypassGroup(groupJid: string | null | undefined): boolean {
   const raw = process.env.WA_TEST_BYPASS_GROUP;
