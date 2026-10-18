@@ -6,15 +6,16 @@ import { RaportList } from "@/components/raport/raport-list";
 import { EmployeeSpineManager, type Dept, type EmployeeItem, type HodOpt } from "@/components/people/employee-spine-manager";
 import { OkrOverview } from "@/components/karyawan/okr-overview";
 import { KpiCatalog } from "@/components/karyawan/kpi-catalog";
+import { ImprovementTab } from "@/components/karyawan/improvement-tab";
 
 // Karyawan 360 — hub: "Raport" (penilaian, read-only) · "OKR" & "KPI" (F157b,
-// read-only, lintas orang) · "Kelola Profil" (editor spine + input pengukuran,
+// read-only, lintas orang) · "Improvement" (F70: perubahan skor antar periode + PIP) · "Kelola Profil" (editor spine + input pengukuran,
 // admin saja).
 //
 // OKR & KPI ditaruh sebagai tab di sini, BUKAN menu baru: featureKey("/karyawan")
 // sudah ada di matriks Akses Grup, jadi tidak perlu Sync Fitur dan tidak ada
 // risiko fitur baru default-tertutup lalu hilang diam-diam di prod.
-type Tab = "raport" | "okr" | "kpi" | "kelola";
+type Tab = "raport" | "okr" | "kpi" | "improvement" | "kelola";
 
 export function Karyawan360({
   canManage,
@@ -35,6 +36,7 @@ export function Karyawan360({
     { v: "raport", label: "Raport (penilaian)" },
     { v: "okr", label: "OKR" },
     { v: "kpi", label: "KPI" },
+    { v: "improvement", label: "Improvement & PIP" },
     ...(canManage ? [{ v: "kelola" as Tab, label: "Kelola Profil" }] : []),
   ];
   // Tab "kelola" hanya ada untuk admin; kalau state terlanjur ke sana tanpa izin,
@@ -54,6 +56,7 @@ export function Karyawan360({
       {active === "raport" ? <RaportList /> : null}
       {active === "okr" ? <OkrOverview /> : null}
       {active === "kpi" ? <KpiCatalog /> : null}
+      {active === "improvement" ? <ImprovementTab /> : null}
       {active === "kelola" ? <EmployeeSpineManager departments={departments} employees={employees} hods={hods} /> : null}
     </div>
   );
