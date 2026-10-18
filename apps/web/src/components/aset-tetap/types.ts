@@ -57,8 +57,17 @@ export interface Ringkasan {
 
 export interface JadwalBaris { periode: string; susut: number; akumulasi: number; nilai_buku: number; status: "lewat" | "berjalan" | "proyeksi" }
 
+export interface AlatTertaut {
+  id: number;
+  sn_key: string;
+  customer_raw: string;
+  nama_alat: string | null;
+  type_alat: string | null;
+  tautan_sumber: string | null;
+}
+
 export type DetailAset =
-  | { ok: true; aset: AsetTetapRow; jadwal: JadwalBaris[]; catatan: string | null }
+  | { ok: true; aset: AsetTetapRow; jadwal: JadwalBaris[]; catatan: string | null; alat: AlatTertaut | null }
   | { ok: false; error: string };
 
 // Label prefiks nomor Accurate (sebaran prod 12 Okt: KSO 1.165 · INK 215 ·
@@ -104,6 +113,12 @@ export interface AlatKsoRingkas {
   nama_alat: string | null;
   type_alat: string | null;
 }
+
+/** Hasil GET /api/aset-tetap/kso-alat?q= — `tertaut_ke` = nomor aset yang sudah memegang alat ini. */
+export interface AlatKsoCari extends AlatKsoRingkas { tertaut_ke: string | null }
+
+export const labelAlat = (a: Pick<AlatKsoRingkas, "nama_alat" | "type_alat">) => a.nama_alat ?? a.type_alat ?? "Alat";
+export const labelSn = (sn: string) => (sn.startsWith("NOSN:") ? "tanpa SN" : `SN ${sn}`);
 
 export interface PratinjauRekon {
   ringkasan: {

@@ -30,6 +30,17 @@ test("jenisSejalan: merek/model cocok, kata umum tak dihitung", () => {
   assert.equal(jenisSejalan({ description: "APA SAJA" }, { nama_alat: null, type_alat: null }), false);
 });
 
+test("jenisSejalan: merek menempel ke model di Accurate tetap sejalan, substring di tengah kata tidak", () => {
+  assert.equal(jenisSejalan({ description: "METROLAB2300 CHEMISTRY ANALYZER" }, { nama_alat: "Metrolab 2300", type_alat: null }), true);
+  assert.equal(jenisSejalan({ description: "METROLAB1600 CHEMISTRY ANALYZER" }, { nama_alat: "Metrolab 1600DR", type_alat: null }), true);
+  // alat lain dengan SN kebetulan sama tetap ditahan
+  assert.equal(jenisSejalan({ description: "PICTUS 400 AUTO ANALYZER" }, { nama_alat: "Metrolab 2300", type_alat: null }), false);
+  // "LYTE" ada DI TENGAH "ELECTROLYTE" — bukan awalan, jadi tidak dihitung
+  assert.equal(jenisSejalan({ description: "EDIAGNOSIS ELECTROLYTE ANALYZER" }, { nama_alat: "K Lyte 5", type_alat: null }), false);
+  // angka saja tak cukup jadi bukti merek
+  assert.equal(jenisSejalan({ description: "PICTUS 2300X" }, { nama_alat: "Metrolab 2300", type_alat: null }), false);
+});
+
 test("pasti: SN sama persis, unik, alat sejalan", () => {
   const h = cocokkan(
     [acc(1, "ZYBIO HEMATOLOGY ANALYZER 5 DIFF Z52", "XQ022407001951")],

@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { hitungJadwal } from "./asetTetap.js";
+import { cekTanggalPerolehan, hitungJadwal } from "./asetTetap.js";
 
 // Contoh nyata dari probe prod (KSO-1167, 12 Okt 2026): Rp 2.900.000, 48 bulan,
 // garis lurus, residu 0, mulai 09/10/2026.
@@ -51,4 +51,19 @@ test("tak menebak: metode lain / umur 0 / tanggal kosong / basis ≤ 0 → jadwa
   assert.deepEqual(hitungJadwal({ ...ro, current_estimated_life: 0 }), []);
   assert.deepEqual(hitungJadwal({ ...ro, current_start_date: null }), []);
   assert.deepEqual(hitungJadwal({ ...ro, residu: 2_900_000 }), []);
+});
+
+test("cekTanggalPerolehan: tanggal mustahil & masa depan ditolak, bukan digulung diam-diam", () => {
+  const kini = new Date("2026-10-18T05:00:00Z"); // 18 Okt 12:00 WIB
+  assert.equal(cekTanggalPerolehan("2024-03-15", kini), null);
+  assert.equal(cekTanggalPerolehan("2024-02-29", kini), null); // kabisat
+  assert.equal(cekTanggalPerolehan("2026-10-18", kini), null); // hari ini boleh
+  assert.match(cekTanggalPerolehan("2026-02-30", kini) ?? "", /tidak ada di kalender/);
+  assert.match(cekTanggalPerolehan("2025-02-29", kini) ?? "", /tidak ada di kalender/);
+  assert.match(cekTanggalPerolehan("2026-13-01", kini) ?? "", /tidak ada di kalender/);
+  assert.match(cekTanggalPerolehan("0000-01-01", kini) ?? "", /tidak masuk akal/);
+  assert.match(cekTanggalPerolehan("2026-10-19", kini) ?? "", /masa depan/);
+  assert.match(cekTanggalPerolehan("12/10/2026", kini) ?? "", /YYYY-MM-DD/);
+  // 23:30 WIB 18 Okt = masih 18 Okt walau UTC sudah 16:30 — tak boleh dianggap besok/kemarin
+  assert.equal(cekTanggalPerolehan("2026-10-18", new Date("2026-10-18T16:30:00Z")), null);
 });
