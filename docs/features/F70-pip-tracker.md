@@ -9,7 +9,7 @@ melacak **perjalanan 90 hari**: improvement goal, milestone, check-in mingguan, 
 - **Izin**: fitur `karyawan` yang sudah ada (`canViewRaportList`, matriks Akses Grup). Lihat = `view`, tambah data = `create`,
   putuskan/ubah = `edit` (dibatasi hanya bila matriks punya baris `karyawan`; selaras `featureAllowed`). **Tidak ada aturan akses baru.**
   Scope baris di apps/api = `resolveScope` seperti `/raport/*`: AM murni hanya datanya sendiri; AM murni & peran `viewer` tidak boleh menulis.
-- **Migrasi**: `234_pip_tracker.sql` (4 tabel). **⚠️ BUTUH MIGRASI DB** (Direktur menerapkan ke prod).
+- **Migrasi**: `236_pip_tracker.sql` (4 tabel). **⚠️ BUTUH MIGRASI DB** (Direktur menerapkan ke prod).
 - **Tanpa**: WA/hashtag, scheduler, notifikasi, jenjang persetujuan, ambang skor, auto-trigger PIP.
 
 ## Sumber arahan Direktur
@@ -60,6 +60,6 @@ periode tak sah / >8 (400) · body bukan JSON object (400) · tabel belum ada (5
 - Belum diuji dengan data prod; tidak ada baris PIP yang di-seed (Rocky tampil sebagai PIP aktif hanya bila PIP-nya dibuat lewat fitur ini).
 
 ## Berkas
-`infra/postgres/init/234_pip_tracker.sql` · `apps/api/src/repo/pip.ts` (+ `.test.ts`) · `apps/api/src/index.ts` (route) ·
+`infra/postgres/init/236_pip_tracker.sql` · `apps/api/src/repo/pip.ts` (+ `.test.ts`) · `apps/api/src/index.ts` (route) ·
 `apps/web/src/app/api/pip/[...path]/route.ts` · `apps/web/src/components/karyawan/{improvement-tab,pip-panel,pip-format}.ts(x)` (+ `pip-format.test.ts`) ·
 `karyawan-360.tsx` (tab) · `app/(dashboard)/karyawan/[amId]/page.tsx` (panel).
