@@ -1,4 +1,4 @@
--- 235 — F151 CN (Kredit Note) Lifecycle. Additive, idempoten.
+-- 237 — F151 CN (Kredit Note) Lifecycle. Additive, idempoten.
 --
 -- Keputusan user (2026-10-16, diskusi direktur Bagian 1.1):
 --   • CN = rebate ke customer berdasarkan kontrak, DIINPUT lewat form (bukan ditarik dari
