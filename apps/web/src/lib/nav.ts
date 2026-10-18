@@ -12,7 +12,7 @@ import { CalendarCheck,
   Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, BookOpen, Calculator, Presentation, Megaphone, Library,
   Wallet, Coins, Banknote, Car, QrCode, PenLine, PackagePlus, PackageMinus,
   Handshake, Archive, Ticket, Printer, Route, ArrowLeftRight,
-  TrendingUp, type LucideIcon,
+  TrendingUp, CalendarClock, type LucideIcon,
   Hourglass, ShieldAlert, Landmark, ClipboardList, PackageCheck,
 } from "lucide-react";
 
@@ -21,6 +21,7 @@ import { canEditPricelistSetup, canViewPricelist, type AccessUser } from "@/lib/
 import { canViewOnboarding } from "@/lib/onboarding-access";
 import { canViewPricebook, canViewPricebookSummary } from "@/lib/pricebook-access";
 import { canViewKlasifikasi } from "@/lib/klasifikasi-access";
+import { canViewJadwalTeknisi } from "@/lib/jadwal-teknisi-access";
 import { canViewProductScorecard } from "@/lib/product-scorecard-access";
 import { canViewKsoKontrak } from "@/lib/kso-kontrak-access";
 import { TAB_KSO, canViewKsoKomite } from "@/lib/kso-komite-access";
@@ -269,6 +270,8 @@ export const NAV: NavGroup[] = [
       { title: "Shipments", url: "/shipments", icon: Truck },
       { title: "Suppliers", url: "/suppliers", icon: Factory },
       { title: "HITL Review", url: "/hitl", icon: ClipboardCheck },
+      // F154 Jadwal Kunjungan Rutin Teknisi — izin sendiri, tertutup default (Sync Fitur).
+      { title: "Jadwal Teknisi", url: "/jadwal-teknisi", icon: CalendarClock, badge: "NEW", show: canViewJadwalTeknisi },
     ],
   },
   {

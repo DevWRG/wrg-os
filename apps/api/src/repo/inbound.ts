@@ -5,6 +5,7 @@ import { sendViaWaGateway, type WaSendResult } from "../wasend.js";
 import { handleSalesAnalyticsQuery } from "./inbound-sales-analytics.js";
 import { balasanKampanye, scopeDariPengirim } from "./campaign.js";
 import { balasanBrief } from "./customer-intel.js";
+import { balasanJadwal } from "./jadwal-teknisi.js";
 import { resolveSender } from "./master.js";
 import { upsertDailyTodo, computeIsLate } from "./todo.js";
 import { createReminder } from "./reminder.js";
@@ -98,6 +99,7 @@ export type InboundKind =
   | "kampanye"
   | "brief"
   | "kso"
+  | "jadwal"
   | "none";
 
 // Hashtag yang dijaring processUnprocessed. Diekspor supaya diuji berpasangan
@@ -107,7 +109,7 @@ export type InboundKind =
 // (dev menutup kelas bug ini dengan INBOUND_HASHTAGS sebagai sumber tunggal.)
 export const INBOUND_FILTER_KINDS = [
   "plan", "report", "leads", "update", "sales", "koran", "overtime", "faktur", "approve", "reject", "call", "note",
-  "kirim", "terima", "bast", "bukti", "demo", "trial", "kampanye", "brief", "kso",
+  "kirim", "terima", "bast", "bukti", "demo", "trial", "kampanye", "brief", "kso", "jadwal",
 ] as const;
 export const inboundHashtagPattern = (): string => `#\\s*(${INBOUND_FILTER_KINDS.join("|")})`;
 
@@ -132,6 +134,8 @@ const DEMO_TRIAL_LINE = /^\s*#\s*(demo|trial)\b/i;
 const KAMPANYE_LINE = /^\s*#\s*kampanye\b/i;
 // F131 — #BRIEF <faskes>: briefing pra-kunjungan (baca saja).
 const BRIEF_LINE = /^\s*#\s*brief\b/i;
+// F154 — #JADWAL: jadwal kunjungan rutin teknisi yang SUDAH terbit (baca saja).
+const JADWAL_LINE = /^\s*#\s*jadwal\b/i;
 // F12/F42/F93 — hashtag SHIPPING dari kurir: "#KIRIM SJK 6142" / "#TERIMA SJK
 // 6142" / "#BAST SJK 6142" / "#BUKTI SJK 6142" (caption foto atau teks biasa;
 // rujukan SJ = jenis + angka urut DO Accurate, lihat parseSjRef).
@@ -166,6 +170,7 @@ export function detectKind(body: string | null): InboundKind {
       if (sh) return sh[1].toLowerCase() as "kirim" | "terima" | "bast" | "bukti";
       if (KAMPANYE_LINE.test(line)) return "kampanye";
       if (BRIEF_LINE.test(line)) return "brief";
+      if (JADWAL_LINE.test(line)) return "jadwal";
     }
   }
   return "none";
@@ -1578,6 +1583,22 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
     }
     const reply = await sendViaWaGateway(target, text);
     return finish({ kind: "brief", via: br.via, reply });
+  }
+
+  // #JADWAL — F154: jadwal kunjungan rutin teknisi yang sudah terbit. Teknisi = jadwalnya
+  // sendiri; HoD/admin = "#JADWAL <nama teknisi>". Pengirim wajib dikenal (ketat).
+  if (kind === "jadwal") {
+    const jd = await resolveSender({ senderJid: row.sender_jid, groupJid: row.group_jid, pushname: row.sender_name, ketat: true });
+    if (!jd) return finish({ skipped: "unknown-sender", sender_name: row.sender_name });
+    let text: string;
+    try {
+      text = await balasanJadwal(extractHashtagArg(row.body, JADWAL_LINE), { am_id: jd.am_id, nama: jd.nama ?? null, role: jd.role ?? null });
+    } catch (e) {
+      console.error("[inbound] #JADWAL gagal diproses:", (e as Error).message);
+      text = "⚠️ #JADWAL gagal diproses, coba lagi sebentar lagi.";
+    }
+    const reply = await sendViaWaGateway(target, text);
+    return finish({ kind: "jadwal", via: jd.via, reply });
   }
 
   // #FAKTUR <no_invoice> — F91: status Open/Paid/Overdue + jatuh tempo +
