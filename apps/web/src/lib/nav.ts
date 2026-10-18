@@ -59,6 +59,7 @@ import { canViewVendorManagement } from "@/lib/vendor-management-access";
 import { canViewGaReporting } from "@/lib/ga-reporting-access";
 import { canViewAuditFindings } from "@/lib/audit-finding-access";
 import { canViewOvertime } from "@/lib/overtime-access";
+import { canViewKasStation } from "@/lib/kas-station-access";
 
 // exact: sorot aktif hanya saat path persis (untuk route induk yg punya child,
 // mis. /pricelist vs /pricelist/setup).
@@ -473,6 +474,12 @@ export const NAV: NavGroup[] = [
       // F34 Aset Tetap — cermin register Accurate. Kunci izin sendiri
       // (featureKey = "aset-tetap"), default tertutup: butuh Sync Fitur + centang.
       { title: "Aset Tetap", url: "/aset-tetap", icon: Landmark, badge: "NEW", show: canViewAsetTetap },
+      // F33 Kas Station — kas harian cabang → rekap mingguan → approval pusat → realisasi.
+      // Dua kunci izin: "kas-station" (station: catat & ajukan) dan "kas-station-review"
+      // (pusat: lihat rekap, approve/reject, realisasi). Default tertutup: butuh Sync Fitur +
+      // centang grup; sebelum itu fallback direktur/admin/superuser.
+      { title: "Kas Station", url: "/kas-station", icon: Wallet, badge: "NEW", show: canViewKasStation,
+        features: [{ key: "kas-station-review", name: "Kas Station — review pusat (approve & realisasi)" }] },
     ],
   },
   {
