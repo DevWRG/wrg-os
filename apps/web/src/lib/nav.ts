@@ -44,6 +44,7 @@ import { canViewPricebook, canViewPricebookSummary } from "@/lib/pricebook-acces
 import { canViewKlasifikasi } from "@/lib/klasifikasi-access";
 import { canViewProductScorecard } from "@/lib/product-scorecard-access";
 import { canViewKsoKontrak } from "@/lib/kso-kontrak-access";
+import { canViewCn } from "@/lib/cn-access";
 import { TAB_KSO, canViewKsoKomite } from "@/lib/kso-komite-access";
 import { canViewAsetTetap } from "@/lib/aset-tetap-access";
 import { canViewPmfScorecard } from "@/lib/pmf-access";
@@ -474,6 +475,9 @@ export const NAV: NavGroup[] = [
       // F34 Aset Tetap — cermin register Accurate. Kunci izin sendiri
       // (featureKey = "aset-tetap"), default tertutup: butuh Sync Fitur + centang.
       { title: "Aset Tetap", url: "/aset-tetap", icon: Landmark, badge: "NEW", show: canViewAsetTetap },
+      // F151 CN (Kredit Note) — rebate customer per kontrak, dasar faktur; Sales → HoD → Finance → GA.
+      // Kunci izin sendiri ("cn", featureKey dari url), default tertutup: butuh Sync Fitur + centang.
+      { title: "Kredit Note (CN)", url: "/cn", icon: Receipt, badge: "NEW", show: canViewCn },
       // F33 Kas Station — kas harian cabang → rekap mingguan → approval pusat → realisasi.
       // Dua kunci izin: "kas-station" (station: catat & ajukan) dan "kas-station-review"
       // (pusat: lihat rekap, approve/reject, realisasi). Default tertutup: butuh Sync Fitur +
