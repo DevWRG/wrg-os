@@ -251,16 +251,23 @@ export async function ubahBaris(id: string, b: { tanggal?: string; teknisi_id?: 
     const [dup] = await sql`SELECT 1 FROM jadwal_rutin j1 JOIN jadwal_rutin j2 ON j2.bulan = j1.bulan AND j2.account_id = j1.account_id AND j2.id <> j1.id AND j2.status <> 'batal' WHERE j1.id = ${id}`;
     if (dup) throw new JadwalError(409, "faskes ini sudah punya jadwal aktif lain bulan ini");
   }
+  // Semua parameter diberi tipe eksplisit: nilai null tanpa tipe di CASE/COALESCE membuat
+  // Postgres menolak seluruh UPDATE ("could not determine data type of parameter") —
+  // uji user 18 Okt: ganti tanggal di layar gagal diam-diam.
+  const adaTeknisi = b.teknisi_id !== undefined;
+  const adaCatatan = b.catatan !== undefined;
+  const manual = b.tanggal !== undefined || adaTeknisi;
+  const status = b.status ?? null;
   const [u] = await sql`
     UPDATE jadwal_rutin SET
       tanggal = COALESCE(${b.tanggal ?? null}::date, tanggal),
-      teknisi_id = CASE WHEN ${b.teknisi_id !== undefined} THEN ${b.teknisi_id ?? null} ELSE teknisi_id END,
-      status = COALESCE(${b.status ?? null}, status),
-      selesai_at = CASE WHEN ${b.status ?? null} = 'selesai' THEN now() WHEN ${b.status ?? null} IS NOT NULL THEN NULL ELSE selesai_at END,
-      catatan = CASE WHEN ${b.catatan !== undefined} THEN ${b.catatan ?? null} ELSE catatan END,
-      sumber = CASE WHEN ${b.tanggal !== undefined || b.teknisi_id !== undefined} THEN 'manual' ELSE sumber END,
-      oleh = ${oleh}, updated_at = now()
-    WHERE id = ${id} RETURNING id::text, status`;
+      teknisi_id = CASE WHEN ${adaTeknisi}::boolean THEN ${b.teknisi_id ?? null}::text ELSE teknisi_id END,
+      status = COALESCE(${status}::text, status),
+      selesai_at = CASE WHEN ${status}::text = 'selesai' THEN now() WHEN ${status}::text IS NOT NULL THEN NULL ELSE selesai_at END,
+      catatan = CASE WHEN ${adaCatatan}::boolean THEN ${b.catatan ?? null}::text ELSE catatan END,
+      sumber = CASE WHEN ${manual}::boolean THEN 'manual' ELSE sumber END,
+      oleh = ${oleh}::text, updated_at = now()
+    WHERE id = ${id}::bigint RETURNING id::text, status`;
   return u;
 }
 
