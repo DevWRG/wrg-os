@@ -69,7 +69,15 @@ export function jenisSejalan(acc: Pick<AsetAcc, "description">, kso: Pick<AlatKs
   const k = token(kso.nama_alat?.trim() ? kso.nama_alat : kso.type_alat);
   if (k.size === 0) return false;
   const a = token(acc.description);
-  for (const t of k) if (a.has(t)) return true;
+  for (const t of k) {
+    if (a.has(t)) return true;
+    // Accurate kerap menempel merek ke model ("METROLAB2300" vs "Metrolab 2300"):
+    // terima bila satu token menjadi AWALAN token lain. Sengaja awalan, bukan
+    // substring — "LYTE" tak boleh cocok dengan "ELECTROLYTE".
+    if (t.length >= 4 && /[A-Z]/.test(t)) {
+      for (const u of a) if (u.length >= 4 && (u.startsWith(t) || t.startsWith(u))) return true;
+    }
+  }
   return false;
 }
 
