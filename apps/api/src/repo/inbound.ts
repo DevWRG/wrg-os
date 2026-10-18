@@ -5,6 +5,7 @@ import { sendViaWaGateway, type WaSendResult } from "../wasend.js";
 import { handleSalesAnalyticsQuery } from "./inbound-sales-analytics.js";
 import { balasanKampanye, scopeDariPengirim } from "./campaign.js";
 import { balasanBrief } from "./customer-intel.js";
+import { balasanJadwal } from "./jadwal-teknisi.js";
 import { detectCek, handleCekQuery } from "./inbound-cek.js";
 import { resolveSender, normalizeWa, bolehAksesHargaWa } from "./master.js";
 import { upsertDailyTodo, computeIsLate } from "./todo.js";
@@ -135,6 +136,7 @@ export const INBOUND_HASHTAGS = [
   "brief",
   "briefing",
   "kso",
+  "jadwal",
 ] as const;
 
 export type InboundKind = (typeof INBOUND_HASHTAGS)[number] | "none";
@@ -191,6 +193,8 @@ const BRIEF_LINE = /^\s*#\s*brief\b/i;
 // F110 — #BRIEFING: ringkasan Senin Brief F85 untuk Direktur (baca saja). `\b`
 // membedakannya dari #BRIEF (F131): "#briefing" tak ikut terpicu #BRIEF.
 const BRIEFING_LINE = /^\s*#\s*briefing\b/i;
+// F154 — #JADWAL: jadwal kunjungan rutin teknisi yang SUDAH terbit (baca saja).
+const JADWAL_LINE = /^\s*#\s*jadwal\b/i;
 // Peran app_user yang boleh membaca Senin Brief lewat WA.
 const BRIEFING_ROLES = new Set(["direktur", "admin", "superuser"]);
 export const briefingTerbuka = (): boolean => (process.env.BRIEFING_WA_OPEN ?? "false").toLowerCase() === "true";
@@ -229,6 +233,7 @@ export function detectKind(body: string | null): InboundKind {
       if (KAMPANYE_LINE.test(line)) return "kampanye";
       if (BRIEF_LINE.test(line)) return "brief";
       if (BRIEFING_LINE.test(line)) return "briefing";
+      if (JADWAL_LINE.test(line)) return "jadwal";
     }
   }
   return "none";
@@ -1974,6 +1979,22 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
     }
     const reply = await sendViaWaGateway(target, text);
     return finish({ kind: "brief", via: br.via, reply });
+  }
+
+  // #JADWAL — F154: jadwal kunjungan rutin teknisi yang sudah terbit. Teknisi = jadwalnya
+  // sendiri; HoD/admin = "#JADWAL <nama teknisi>". Pengirim wajib dikenal (ketat).
+  if (kind === "jadwal") {
+    const jd = await resolveSender({ senderJid: row.sender_jid, groupJid: row.group_jid, pushname: row.sender_name, ketat: true });
+    if (!jd) return finish({ skipped: "unknown-sender", sender_name: row.sender_name });
+    let text: string;
+    try {
+      text = await balasanJadwal(extractHashtagArg(row.body, JADWAL_LINE), { am_id: jd.am_id, nama: jd.nama ?? null, role: jd.role ?? null });
+    } catch (e) {
+      console.error("[inbound] #JADWAL gagal diproses:", (e as Error).message);
+      text = "⚠️ #JADWAL gagal diproses, coba lagi sebentar lagi.";
+    }
+    const reply = await sendViaWaGateway(target, text);
+    return finish({ kind: "jadwal", via: jd.via, reply });
   }
 
   // #BRIEFING — F110: ringkasan Senin Brief (kesiapan 8 HoD) untuk Direktur.

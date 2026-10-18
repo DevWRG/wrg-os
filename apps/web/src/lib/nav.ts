@@ -42,6 +42,7 @@ import { canViewOnboarding } from "@/lib/onboarding-access";
 import { canViewAdoption } from "@/lib/adoption-access";
 import { canViewPricebook, canViewPricebookSummary } from "@/lib/pricebook-access";
 import { canViewKlasifikasi } from "@/lib/klasifikasi-access";
+import { canViewJadwalTeknisi } from "@/lib/jadwal-teknisi-access";
 import { canViewProductScorecard } from "@/lib/product-scorecard-access";
 import { canViewKsoKontrak } from "@/lib/kso-kontrak-access";
 import { canViewCn } from "@/lib/cn-access";
@@ -343,6 +344,8 @@ export const NAV: NavGroup[] = [
       // Sales→Supply Chain→Direktur), bukan spesifik 1 proses OPS — badge NEW
       // krn baru & kontak per-tahap masih perlu diisi manual (lihat /config).
       { title: "Approval Requests", url: "/approval-requests", icon: Stamp, badge: "NEW" },
+      // F154 Jadwal Kunjungan Rutin Teknisi — izin sendiri, tertutup default (Sync Fitur).
+      { title: "Jadwal Teknisi", url: "/jadwal-teknisi", icon: CalendarClock, badge: "NEW", show: canViewJadwalTeknisi },
     ],
   },
   {
