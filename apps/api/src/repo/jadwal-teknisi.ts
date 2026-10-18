@@ -237,7 +237,7 @@ export async function jadwalBulan(bulan0: string) {
 export async function ubahBaris(id: string, b: { tanggal?: string; teknisi_id?: string | null; status?: string; catatan?: string | null }, oleh: string) {
   if (!/^\d+$/.test(id)) throw new JadwalError(400, "id tidak valid");
   const sql = db();
-  const [r] = await sql`SELECT id, bulan::text, status FROM jadwal_rutin WHERE id = ${id}`;
+  const [r] = await sql`SELECT id, bulan::text, status, tanggal::text, teknisi_id FROM jadwal_rutin WHERE id = ${id}`;
   if (!r) throw new JadwalError(404, "baris jadwal tidak ditemukan");
   if (b.tanggal !== undefined) {
     if (!ISO.test(b.tanggal) || `${b.tanggal.slice(0, 7)}-01` !== String(r.bulan)) throw new JadwalError(400, `tanggal harus di bulan ${labelBulan(String(r.bulan))}`, "tanggal");
@@ -247,6 +247,15 @@ export async function ubahBaris(id: string, b: { tanggal?: string; teknisi_id?: 
     if (!t) throw new JadwalError(400, "teknisi tidak dikenal", "teknisi_id");
   }
   if (b.status !== undefined && !["rencana", "selesai", "batal"].includes(b.status)) throw new JadwalError(400, "status harus rencana/selesai/batal", "status");
+  // Kunjungan Selesai = sudah dikerjakan seseorang pada tanggalnya: wajib ada teknisi dan
+  // tanggalnya sudah tiba (uji user 18 Okt: baris tanpa teknisi, 2 Nov, bisa "Selesai").
+  const statusAkhir = b.status ?? String(r.status);
+  const teknisiAkhir = b.teknisi_id !== undefined ? b.teknisi_id : (r.teknisi_id ? String(r.teknisi_id) : null);
+  const tanggalAkhir = b.tanggal ?? String(r.tanggal);
+  if (statusAkhir === "selesai") {
+    if (!teknisiAkhir) throw new JadwalError(400, "Tetapkan teknisi dulu sebelum menandai Selesai", "teknisi_id");
+    if (tanggalAkhir > hariIniWib()) throw new JadwalError(400, `Belum bisa Selesai — kunjungan dijadwalkan ${labelTgl(tanggalAkhir)}`, "status");
+  }
   if (b.status === "rencana" && r.status === "batal") {
     const [dup] = await sql`SELECT 1 FROM jadwal_rutin j1 JOIN jadwal_rutin j2 ON j2.bulan = j1.bulan AND j2.account_id = j1.account_id AND j2.id <> j1.id AND j2.status <> 'batal' WHERE j1.id = ${id}`;
     if (dup) throw new JadwalError(409, "faskes ini sudah punya jadwal aktif lain bulan ini");

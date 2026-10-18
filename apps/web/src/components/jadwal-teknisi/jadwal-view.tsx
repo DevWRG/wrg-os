@@ -34,6 +34,7 @@ const STATUS_CLS: Record<Baris["status"], string> = {
   selesai: "bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-300",
   batal: "bg-slate-200 text-slate-700 dark:bg-slate-500/20 dark:text-slate-300",
 };
+const hariIni = new Date(Date.now() + 7 * 3600_000).toISOString().slice(0, 10);
 const SEL = "rounded-md border border-input bg-background px-2 py-1 text-xs text-foreground disabled:opacity-50";
 
 async function api<T>(url: string, method = "GET", body?: unknown): Promise<T> {
@@ -109,7 +110,9 @@ export function JadwalTeknisiView({ awal, bisaUbah }: { awal: DataJadwal | null;
       : <span>{b.teknisi ?? <span className="text-amber-700 dark:text-amber-400">belum ada</span>}</span> },
     { id: "status", header: "Status", sortable: true, accessor: (b) => b.status, cell: (b) => bisaUbah
       ? <select className={cn(SEL, STATUS_CLS[b.status])} value={b.status} disabled={sibuk} onChange={(e) => void ubah(b, { status: e.target.value })}>
-          <option value="rencana">Rencana</option><option value="selesai">Selesai</option><option value="batal">Batal</option>
+          <option value="rencana">Rencana</option>
+          <option value="selesai" disabled={!b.teknisi_id || b.tanggal > hariIni}>{!b.teknisi_id ? "Selesai (pilih teknisi dulu)" : b.tanggal > hariIni ? "Selesai (belum tanggalnya)" : "Selesai"}</option>
+          <option value="batal">Batal</option>
         </select>
       : <span className={cn("rounded px-1.5 py-0.5 text-xs font-semibold", STATUS_CLS[b.status])}>{b.status}</span> },
   ];
