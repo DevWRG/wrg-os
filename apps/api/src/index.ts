@@ -6558,12 +6558,12 @@ app.patch("/permintaan-produk/param", async (c) => {
   const oleh = ppOleh(b);
   if (!oleh) return c.json({ error: "oleh wajib (diisi BFF dari sesi)" }, 400);
   try { return c.json(await ppUbahParam(b, oleh)); } catch (e) { return ppErr(c, e); }
-// F70 PIP 90-Day Tracker + Improvement (migrasi 234, repo/pip.ts). Menu/izin = fitur 'karyawan'
+// F70 PIP 90-Day Tracker + Improvement (migrasi 236, repo/pip.ts). Menu/izin = fitur 'karyawan'
 // (dijaga BFF requireFeature "/karyawan"); scope data = resolveScope seperti /raport/*. Pelaku `oleh`
 // dari sesi (BFF), bukan dari pengguna.
 const pipErr = (c: { json: (b: unknown, s?: number) => Response }, e: unknown) => {
   if (e instanceof PipError) return c.json({ error: e.message, field: e.field }, e.status);
-  // 42P01 = tabel belum ada (migrasi 234 belum diterapkan) → 503, bukan 500 buram.
+  // 42P01 = tabel belum ada (migrasi 236 belum diterapkan) → 503, bukan 500 buram.
   if ((e as { code?: string })?.code === "42P01") return c.json({ error: "migration_pending" }, 503);
   return c.json({ error: "gagal memproses PIP" }, 500);
 };
