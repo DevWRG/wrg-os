@@ -120,8 +120,13 @@ export function JadwalTeknisiView({ awal, bisaUbah }: { awal: DataJadwal | null;
     { id: "a", header: "Alat", align: "right", sortable: true, accessor: (w) => w.alat, cell: (w) => <span className="tabular-nums">{w.alat}</span> },
     { id: "t", header: "Teknisi", cell: (w) => bisaUbah
       ? <select className={cn(SEL, !w.teknisi_id && "border-amber-500")} value={w.teknisi_id ?? ""} disabled={sibuk}
-          onChange={async (e) => { const r = await jalan(() => api(`/api/jadwal-teknisi/wilayah`, "PUT", { wilayah: w.wilayah, teknisi_id: e.target.value || null }), () => `Wilayah ${w.wilayah} disimpan`);
-            if (r && wil) setWil({ ...wil, wilayah: wil.wilayah.map((x) => x.wilayah === w.wilayah ? { ...x, teknisi_id: e.target.value || null } : x) }); }}>
+          onChange={async (e) => {
+            // Nilai diambil SEBELUM await: select ini terkendali (value dari state), jadi saat
+            // komponen render ulang selama menunggu server, e.target.value sudah kembali ke
+            // nilai lama — tersimpan di DB tapi tampil "belum ditetapkan" (uji user 18 Okt).
+            const v = e.target.value || null;
+            const r = await jalan(() => api(`/api/jadwal-teknisi/wilayah`, "PUT", { wilayah: w.wilayah, teknisi_id: v }), () => `Wilayah ${w.wilayah} disimpan`);
+            if (r) setWil((cur) => cur && { ...cur, wilayah: cur.wilayah.map((x) => x.wilayah === w.wilayah ? { ...x, teknisi_id: v } : x) }); }}>
           <option value="">— belum ditetapkan —</option>
           {(wil?.teknisi ?? []).map((t) => <option key={t.id} value={t.id}>{t.nama}{t.ada_wa ? "" : " (tanpa WA)"}</option>)}
         </select>
@@ -134,7 +139,7 @@ export function JadwalTeknisiView({ awal, bisaUbah }: { awal: DataJadwal | null;
       ? <select className={SEL} value={f.interval_bulan ?? ""} disabled={sibuk}
           onChange={async (e) => { const v = e.target.value ? Number(e.target.value) : null;
             const r = await jalan(() => api(`/api/jadwal-teknisi/frekuensi`, "PUT", { account_id: Number(f.account_id), interval_bulan: v }), () => `Frekuensi ${f.nama} disimpan`);
-            if (r && frek) setFrek(frek.map((x) => x.account_id === f.account_id ? { ...x, interval_bulan: v } : x)); }}>
+            if (r) setFrek((cur) => cur && cur.map((x) => x.account_id === f.account_id ? { ...x, interval_bulan: v } : x)); }}>
           <option value="">Default — tiap {f.interval_default} bulan</option>
           {[1, 2, 3, 4, 6, 12].map((n) => <option key={n} value={n}>Tiap {n} bulan</option>)}
         </select>
