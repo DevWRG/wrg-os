@@ -74,11 +74,11 @@ export function JadwalTeknisiView({ awal, bisaUbah }: { awal: DataJadwal | null;
   const baris = (data?.baris ?? []).filter((b) => (!fTeknisi || (fTeknisi === "__kosong" ? !b.teknisi_id : b.teknisi_id === fTeknisi)) && (!fStatus || b.status === fStatus));
   const tanpaTeknisi = (data?.baris ?? []).filter((b) => !b.teknisi_id && b.status !== "batal").length;
   const perTek = useMemo(() => {
-    const m = new Map<string, { nama: string; n: number; hari: Set<string> }>();
+    const m = new Map<string, { id: string; nama: string; n: number; hari: Set<string> }>();
     for (const b of data?.baris ?? []) {
       if (b.status === "batal") continue;
       const k = b.teknisi_id ?? "";
-      const x = m.get(k) ?? { nama: b.teknisi ?? "(belum ada teknisi)", n: 0, hari: new Set<string>() };
+      const x = m.get(k) ?? { id: k || "__kosong", nama: b.teknisi ?? "(belum ada teknisi)", n: 0, hari: new Set<string>() };
       x.n += 1; x.hari.add(b.tanggal); m.set(k, x);
     }
     return [...m.values()].sort((a, b) => b.n - a.n);
@@ -185,6 +185,13 @@ export function JadwalTeknisiView({ awal, bisaUbah }: { awal: DataJadwal | null;
                     const r = await jalan(() => api<{ kirim: { teknisi: string; kunjungan: number; terkirim: boolean; alasan?: string }[] }>(`/api/jadwal-teknisi/terbit`, "POST", { bulan }),
                       (x) => `Terbit. WA: ${x.kirim.map((k) => `${k.teknisi} ${k.terkirim ? "terkirim" : `tidak (${k.alasan ?? "gagal"})`}`).join(" · ") || "—"}`);
                     if (r) await muat(bulan); }} className="rounded-md border border-emerald-600 px-2.5 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 dark:text-emerald-400 dark:hover:bg-emerald-500/10">Terbitkan</button>
+                {/* Alasan tombol nonaktif ditulis terlihat, bukan cuma tooltip (uji user 18 Okt: "klik tak ada aksi"). */}
+                {tanpaTeknisi > 0 && (
+                  <button type="button" onClick={() => setFTeknisi("__kosong")} className="text-left text-xs text-amber-700 underline-offset-2 hover:underline dark:text-amber-400">
+                    Belum bisa terbit: {tanpaTeknisi} kunjungan belum punya teknisi — tetapkan per baris atau di tab Wilayah teknisi
+                  </button>
+                )}
+                {!data.baris.length && <span className="text-muted-foreground text-xs">Susun draft dulu sebelum terbit.</span>}
               </>}
             </CardContent>
           </Card>
@@ -200,11 +207,12 @@ export function JadwalTeknisiView({ awal, bisaUbah }: { awal: DataJadwal | null;
           {perTek.length > 0 && (
             <div className="grid gap-2 sm:grid-cols-3 lg:grid-cols-6">
               {perTek.map((t) => (
-                <div key={t.nama} className={cn("bg-card rounded-lg border p-3 shadow-[var(--shadow-card)]", t.nama.startsWith("(") && "border-amber-500")}>
+                <button key={t.id} type="button" onClick={() => setFTeknisi(fTeknisi === t.id ? "" : t.id)}
+                  className={cn("bg-card rounded-lg border p-3 text-left shadow-[var(--shadow-card)] transition-colors hover:border-primary", t.id === "__kosong" && "border-amber-500", fTeknisi === t.id && "border-primary-dark ring-2 ring-primary/30")}>
                   <div className="text-muted-foreground truncate text-xs">{t.nama}</div>
                   <div className="text-xl font-bold tabular-nums">{t.n}</div>
                   <div className="text-muted-foreground text-xs">{t.hari.size} hari</div>
-                </div>
+                </button>
               ))}
             </div>
           )}
@@ -212,6 +220,7 @@ export function JadwalTeknisiView({ awal, bisaUbah }: { awal: DataJadwal | null;
             <CardContent className="space-y-2 pt-6">
               <p className="text-muted-foreground text-xs">
                 Faskes dengan alat KSO operasional, jatuh tempo menurut frekuensinya (default: ada alat per tes → tiap 2 bulan, beli reagen → tiap 3 bulan). Satu wilayah = satu trip, maksimal 3 faskes per hari.
+                {" Terbitkan = status jadi Terbit (tak bisa disusun ulang, edit per baris), jadwal dikirim ke WA tiap teknisi bila saklar WA aktif, dan teknisi bisa melihatnya lewat #JADWAL."}
                 {data.status === "terbit" ? ` Terbit ${data.terbit_at ? new Date(data.terbit_at).toLocaleString("id-ID", { dateStyle: "medium", timeStyle: "short" }) : ""}${data.terbit_oleh ? ` oleh ${data.terbit_oleh}` : ""} — perubahan sesudah terbit tidak dikirim ulang otomatis; teknisi bisa cek lewat #JADWAL.` : " Draft bisa diedit; terbitkan sebelum tanggal 1."}
               </p>
               <DataTable columns={kolom} data={baris} getKey={(b) => b.id} searchPlaceholder="Cari faskes…" pageSize={50}
