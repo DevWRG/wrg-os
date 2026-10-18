@@ -54,6 +54,7 @@ import {
 import { listWarehouses, listStockBranch, stockBranchSummary } from "./repo/stock-branch.js";
 import { listStockBatch, stockBatchSummary, runEdWatch } from "./repo/stock-batch.js";
 import { listAsetTetap, ringkasanAsetTetap, jadwalAsetTetap, simpanOverrideAsetTetap, type AsetTetapFilter } from "./repo/asetTetap.js";
+import { pratinjauRekon, terapkanRekon, batalkanTautanOtomatis, cariAlatKso } from "./repo/asetTetapRekon.js";
 import { mirrorFreshness } from "./repo/mirror-health.js";
 import { insertAuditEvent } from "./repo/audit.js";
 import { upsertDealsFromPlan, logReportToDeals, getPipeline, getPipelineReport, getPipelineLeaderboard, transitionStage, DealError, listPendingLosses, decideLoss, getDealTimeline, createDeal, updateDeal, deleteDeal } from "./repo/deal.js";
@@ -1973,6 +1974,36 @@ app.put("/aset-tetap/:id/override", async (c) => {
   if (pick.kso_asset_id != null && !(Number.isInteger(pick.kso_asset_id) && pick.kso_asset_id > 0)) return c.json({ error: "kso_asset_id tak valid" }, 400);
   const r = await simpanOverrideAsetTetap(id, pick, olehDari(b));
   return c.json(r, r.ok ? 200 : 400);
+});
+// F34 fase 2 — jembatan KSO-n ↔ kso_asset. Pratinjau read-only; penerapan hanya
+// peringkat "pasti" atau pasangan yang dikonfirmasi (dihitung ulang di server).
+app.get("/aset-tetap/rekon-kso", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await pratinjauRekon());
+});
+app.post("/aset-tetap/rekon-kso/terapkan", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const b = await bodyJson(c);
+  let pilihan: { accurate_id: number; kso_asset_id: number }[] | undefined;
+  if (b.pilihan !== undefined) {
+    if (!Array.isArray(b.pilihan) || b.pilihan.length === 0 || b.pilihan.length > 500) return c.json({ error: "pilihan harus array 1–500 pasangan" }, 400);
+    pilihan = [];
+    for (const x of b.pilihan as Record<string, unknown>[]) {
+      const a = Number(x?.accurate_id), k = Number(x?.kso_asset_id);
+      if (!Number.isInteger(a) || a <= 0 || !Number.isInteger(k) || k <= 0) return c.json({ error: "pasangan tak valid" }, 400);
+      pilihan.push({ accurate_id: a, kso_asset_id: k });
+    }
+  }
+  return c.json(await terapkanRekon(olehDari(b), pilihan));
+});
+app.post("/aset-tetap/rekon-kso/batalkan-otomatis", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const b = await bodyJson(c);
+  return c.json({ dibatalkan: await batalkanTautanOtomatis(olehDari(b)) });
+});
+app.get("/aset-tetap/kso-alat", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json({ rows: await cariAlatKso(c.req.query("q") ?? "") });
 });
 
 app.get("/kso-kontrak", async (c) => {

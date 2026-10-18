@@ -57,8 +57,17 @@ export interface Ringkasan {
 
 export interface JadwalBaris { periode: string; susut: number; akumulasi: number; nilai_buku: number; status: "lewat" | "berjalan" | "proyeksi" }
 
+export interface AlatTertaut {
+  id: number;
+  sn_key: string;
+  customer_raw: string;
+  nama_alat: string | null;
+  type_alat: string | null;
+  tautan_sumber: string | null;
+}
+
 export type DetailAset =
-  | { ok: true; aset: AsetTetapRow; jadwal: JadwalBaris[]; catatan: string | null }
+  | { ok: true; aset: AsetTetapRow; jadwal: JadwalBaris[]; catatan: string | null; alat: AlatTertaut | null }
   | { ok: false; error: string };
 
 // Label prefiks nomor Accurate (sebaran prod 12 Okt: KSO 1.165 · INK 215 ·
@@ -80,6 +89,52 @@ export const bulan = (periode: string) => {
   const d = new Date(`${periode}-15T12:00:00Z`);
   return Number.isNaN(d.getTime()) ? periode : d.toLocaleDateString("id-ID", { month: "short", year: "numeric" });
 };
+
+// ── F34 fase 2: penautan KSO-n ↔ alat KSO (cermin apps/api/src/repo/asetTetapRekon.ts) ──
+
+export interface PasanganRekon {
+  peringkat: "pasti" | "kandidat";
+  accurate_id: number;
+  number: string;
+  description: string | null;
+  notes: string | null;
+  kso_asset_id: number;
+  sn_key: string;
+  customer_raw: string;
+  nama_alat: string | null;
+  alasan: string[];
+}
+
+export interface AlatKsoRingkas {
+  id: number;
+  sn_key: string;
+  sn_raw: string | null;
+  customer_raw: string;
+  nama_alat: string | null;
+  type_alat: string | null;
+}
+
+/** Hasil GET /api/aset-tetap/kso-alat?q= — `tertaut_ke` = nomor aset yang sudah memegang alat ini. */
+export interface AlatKsoCari extends AlatKsoRingkas { tertaut_ke: string | null }
+
+export const labelAlat = (a: Pick<AlatKsoRingkas, "nama_alat" | "type_alat">) => a.nama_alat ?? a.type_alat ?? "Alat";
+export const labelSn = (sn: string) => (sn.startsWith("NOSN:") ? "tanpa SN" : `SN ${sn}`);
+
+export interface PratinjauRekon {
+  ringkasan: {
+    accurate_kso_aktif: number;
+    kso_aktif: number;
+    sudah_tertaut: number;
+    tertaut_per_sumber: Record<string, number>;
+    pasti: number;
+    kandidat: number;
+    kso_tanpa_pasangan: number;
+    accurate_tanpa_pasangan: number;
+  };
+  pasti: PasanganRekon[];
+  kandidat: PasanganRekon[];
+  kso_tanpa_pasangan: AlatKsoRingkas[];
+}
 
 /** fetch JSON; pesan error dari apps/api diteruskan apa adanya. */
 export async function ambil<T>(url: string, init?: RequestInit): Promise<T> {

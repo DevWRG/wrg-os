@@ -291,8 +291,19 @@ export interface JadwalBaris { periode: string; susut: number; akumulasi: number
 // Status per bulan relatif ke bulan WIB sekarang (lewat/berjalan/proyeksi).
 // Apakah Accurate sudah menjurnal bulan itu dilihat dari last_journal_date aset.
 // Metode selain STRAIGHTLINE → jadwal kosong + alasan (tak menebak rumus).
+// Alat KSO yang tertaut, untuk ditampilkan di dialog (bukan sekadar id angka).
+export interface AlatTertaut {
+  id: number;
+  sn_key: string;
+  customer_raw: string;
+  nama_alat: string | null;
+  type_alat: string | null;
+  tautan_sumber: string | null;
+}
+
 export async function jadwalAsetTetap(id: number): Promise<
-  { ok: true; aset: AsetTetapRow; jadwal: JadwalBaris[]; catatan: string | null } | { ok: false; error: string }
+  | { ok: true; aset: AsetTetapRow; jadwal: JadwalBaris[]; catatan: string | null; alat: AlatTertaut | null }
+  | { ok: false; error: string }
 > {
   const sql = db();
   const [aset] = await sql<AsetTetapRow[]>`
@@ -315,7 +326,15 @@ export async function jadwalAsetTetap(id: number): Promise<
       : !aset.current_start_date || !aset.current_estimated_life
         ? "Tanggal mulai / umur periode berjalan kosong di Accurate — jadwal tak bisa dihitung."
         : null;
-  return { ok: true, aset, jadwal, catatan };
+  let alat: AlatTertaut | null = null;
+  if (aset.kso_asset_id != null) {
+    [alat = null] = await sql<AlatTertaut[]>`
+      SELECT k.id::int, k.sn_key, k.customer_raw, k.nama_alat, k.type_alat, o.tautan_sumber
+      FROM kso_asset k
+      JOIN fixed_asset_override o ON o.kso_asset_id = k.id AND o.accurate_id = ${id}
+      WHERE k.id = ${aset.kso_asset_id}`;
+  }
+  return { ok: true, aset, jadwal, catatan, alat };
 }
 
 // Murni (tanpa DB) supaya bisa diuji. Pembulatan per bulan ke rupiah; selisih
@@ -345,6 +364,25 @@ export function hitungJadwal(a: Pick<AsetTetapRow,
   return out;
 }
 
+/**
+ * Tanggal perolehan asli harus tanggal kalender yang ada dan tidak di masa
+ * depan (WIB). Regex saja tak cukup: Postgres menggulung 2026-02-30 jadi
+ * 2 Maret tanpa protes, dan balasan "ok" membuat salah ketik tak ketahuan.
+ */
+export function cekTanggalPerolehan(s: string, kini = new Date()): string | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  if (!m) return "Tanggal perolehan harus berformat YYYY-MM-DD";
+  const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  const t = new Date(Date.UTC(y, mo - 1, d));
+  if (y < 1900) return `Tahun ${y} tidak masuk akal untuk tanggal perolehan`;
+  if (t.getUTCFullYear() !== y || t.getUTCMonth() !== mo - 1 || t.getUTCDate() !== d) {
+    return `Tanggal ${s} tidak ada di kalender`;
+  }
+  const hariIni = new Date(kini.getTime() + 7 * 3600 * 1000).toISOString().slice(0, 10); // WIB
+  if (s > hariIni) return "Tanggal perolehan tidak boleh di masa depan";
+  return null;
+}
+
 // Lapisan override Finance (tak pernah disentuh syncer). Field yang tak
 // dikirim = tak diubah; kirim null untuk mengosongkan.
 export async function simpanOverrideAsetTetap(
@@ -355,20 +393,42 @@ export async function simpanOverrideAsetTetap(
   const sql = db();
   const [ada] = await sql`SELECT 1 FROM accurate_fixed_asset WHERE id = ${id}`;
   if (!ada) return { ok: false, error: "aset tak ditemukan" };
-  if (b.tgl_perolehan_asli != null && !/^\d{4}-\d{2}-\d{2}$/.test(b.tgl_perolehan_asli)) {
-    return { ok: false, error: "tgl_perolehan_asli harus YYYY-MM-DD" };
+  if (b.tgl_perolehan_asli != null) {
+    const salah = cekTanggalPerolehan(b.tgl_perolehan_asli);
+    if (salah) return { ok: false, error: salah };
   }
   if (b.kso_asset_id != null) {
     const [k] = await sql`SELECT 1 FROM kso_asset WHERE id = ${b.kso_asset_id}`;
     if (!k) return { ok: false, error: "kso_asset_id tak ditemukan" };
+    // Satu alat KSO ↔ satu aset Accurate (fase 2): kalau tidak, revenue alat itu
+    // terhitung ganda saat rekonsiliasi. Indeks unik di migrasi 221 menutup balapan.
+    const [lain] = await sql<{ number: string }[]>`
+      SELECT a.number FROM fixed_asset_override o
+      JOIN accurate_fixed_asset a ON a.id = o.accurate_id
+      WHERE o.kso_asset_id = ${b.kso_asset_id} AND o.accurate_id <> ${id}`;
+    if (lain) return { ok: false, error: `alat KSO ini sudah tertaut ke ${lain.number} — lepas dulu di sana` };
   }
   const has = (k: keyof typeof b) => Object.prototype.hasOwnProperty.call(b, k);
   const catatan = has("catatan") ? (b.catatan?.trim() || null) : undefined;
   await sql`
-    INSERT INTO fixed_asset_override (accurate_id, tgl_perolehan_asli, kso_asset_id, catatan, updated_by, updated_at)
-    VALUES (${id}, ${b.tgl_perolehan_asli ?? null}, ${b.kso_asset_id ?? null}, ${catatan ?? null}, ${oleh}, now())
+    INSERT INTO fixed_asset_override (accurate_id, tgl_perolehan_asli, kso_asset_id, catatan, updated_by, updated_at, tautan_sumber, tautan_at)
+    VALUES (${id}, ${b.tgl_perolehan_asli ?? null}, ${b.kso_asset_id ?? null}, ${catatan ?? null}, ${oleh}, now(),
+            ${b.kso_asset_id != null ? "manual" : null}, ${b.kso_asset_id != null ? sql`now()` : null})
     ON CONFLICT (accurate_id) DO UPDATE SET
       tgl_perolehan_asli = ${has("tgl_perolehan_asli") ? sql`EXCLUDED.tgl_perolehan_asli` : sql`fixed_asset_override.tgl_perolehan_asli`},
+      -- Asal tautan hanya berubah bila nilainya BERUBAH: dialog mengirim ulang
+      -- kso_asset_id yang sama tiap simpan catatan, dan itu tak boleh mengubah
+      -- tautan otomatis menjadi 'manual'.
+      tautan_sumber = ${has("kso_asset_id")
+        ? sql`CASE WHEN EXCLUDED.kso_asset_id IS NULL THEN NULL
+                   WHEN fixed_asset_override.kso_asset_id IS NOT DISTINCT FROM EXCLUDED.kso_asset_id THEN fixed_asset_override.tautan_sumber
+                   ELSE 'manual' END`
+        : sql`fixed_asset_override.tautan_sumber`},
+      tautan_at = ${has("kso_asset_id")
+        ? sql`CASE WHEN EXCLUDED.kso_asset_id IS NULL THEN NULL
+                   WHEN fixed_asset_override.kso_asset_id IS NOT DISTINCT FROM EXCLUDED.kso_asset_id THEN fixed_asset_override.tautan_at
+                   ELSE now() END`
+        : sql`fixed_asset_override.tautan_at`},
       kso_asset_id = ${has("kso_asset_id") ? sql`EXCLUDED.kso_asset_id` : sql`fixed_asset_override.kso_asset_id`},
       catatan = ${has("catatan") ? sql`EXCLUDED.catatan` : sql`fixed_asset_override.catatan`},
       updated_by = EXCLUDED.updated_by, updated_at = now()

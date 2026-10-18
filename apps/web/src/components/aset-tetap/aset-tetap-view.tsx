@@ -11,6 +11,7 @@ import { FilterSelect } from "@/components/ui/filter-select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
 import { AsetDialog } from "./aset-dialog";
+import { RekonKso } from "./rekon-kso";
 import { PREFIX_LABEL, ambil, rp, rpC, tgl, type AsetTetapRow, type DaftarAset, type Ringkasan } from "./types";
 
 const STATUS_OPSI = [
@@ -35,6 +36,7 @@ export function AsetTetapView({ ringkasan, canEdit }: { ringkasan: Ringkasan; ca
   const [err, setErr] = useState<string | null>(null);
   const [buka, setBuka] = useState<number | null>(null);
   const [sync, setSync] = useState<{ busy: boolean; msg: string | null }>({ busy: false, msg: null });
+  const [tersimpan, setTersimpan] = useState<string | null>(null);
   const reqId = useRef(0);
 
   const muat = useCallback(async () => {
@@ -54,6 +56,13 @@ export function AsetTetapView({ ringkasan, canEdit }: { ringkasan: Ringkasan; ca
       if (id === reqId.current) setPending(false);
     }
   }, [size, page, status, q, prefix, tipe, sort]);
+
+  // Konfirmasi simpan hilang sendiri — cukup lama untuk terbaca, tak menumpuk.
+  useEffect(() => {
+    if (!tersimpan) return;
+    const t = setTimeout(() => setTersimpan(null), 5000);
+    return () => clearTimeout(t);
+  }, [tersimpan]);
 
   useEffect(() => {
     const t = setTimeout(muat, q ? 300 : 0); // debounce ketikan search
@@ -181,6 +190,13 @@ export function AsetTetapView({ ringkasan, canEdit }: { ringkasan: Ringkasan; ca
         </CardContent>
       </Card>
 
+      <RekonKso canEdit={canEdit} onChanged={muat} />
+
+      {tersimpan && (
+        <div role="status" className="rounded-md bg-emerald-100 px-3 py-2 text-sm text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">
+          Catatan {tersimpan} tersimpan.
+        </div>
+      )}
       {err && <div className="text-destructive text-sm">Gagal memuat daftar: {err}</div>}
       <DataTable
         columns={columns}
@@ -210,7 +226,7 @@ export function AsetTetapView({ ringkasan, canEdit }: { ringkasan: Ringkasan; ca
         }}
       />
 
-      <AsetDialog key={buka ?? "tutup"} id={buka} canEdit={canEdit} onClose={() => setBuka(null)} onSaved={muat} />
+      <AsetDialog key={buka ?? "tutup"} id={buka} canEdit={canEdit} onClose={() => setBuka(null)} onSaved={(nomor) => { setTersimpan(nomor); void muat(); }} />
     </div>
   );
 }
