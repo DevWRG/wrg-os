@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { Dept, EmployeeItem } from "@/components/people/employee-spine-manager";
+import { pngKePdf } from "@/lib/gambar-ke-pdf";
 
 // F129 Org Chart — bagan organisasi klasik (kotak bertingkat, garis siku)
 // memakai d3-org-chart (bumbeishvili, MIT).
@@ -62,6 +63,17 @@ interface Node {
 const TINGGI = 660;
 const LEBAR_KOTAK = 224;
 const TINGGI_KOTAK = 96;
+// Resolusi unduhan (× ukuran layar) — cukup tajam untuk di-zoom dan dicetak A3.
+const SKALA_UNDUH = 3;
+
+function simpan(href: string, namaBerkas: string) {
+  const a = document.createElement("a");
+  a.href = href;
+  a.download = namaBerkas;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
 
 /** WAJIB dipakai untuk SEMUA nilai yang masuk ke nodeContent. Lihat catatan
  *  di kepala berkas: isi kotak adalah string HTML yang disuntikkan apa adanya. */
@@ -379,7 +391,30 @@ export function OrgChart({
   const expandAll = useCallback(() => chartRef.current?.expandAll().fit(), []);
   const collapseAll = useCallback(() => chartRef.current?.collapseAll().fit(), []);
   const paskan = useCallback(() => chartRef.current?.fit(), []);
-  const unduh = useCallback(() => chartRef.current?.exportImg({ full: true }), []);
+  // Yang diunduh selalu bagan UTUH: semua cabang dibuka dulu, bukan hanya
+  // cabang yang kebetulan sedang terbuka di layar. Ekspor menunggu animasi
+  // buka-cabang selesai — kalau tidak, kotak yang masih bergerak ikut terpotret.
+  const unduh = useCallback((format: "png" | "pdf") => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    const nama = mode === "reporting" ? "org-chart-reporting-line" : "org-chart-departemen";
+    chart.expandAll();
+    window.setTimeout(() => {
+      chart.exportImg({
+        full: true,
+        scale: SKALA_UNDUH,
+        save: false,
+        onLoad: (png) => {
+          if (format === "png") return simpan(png, `${nama}.png`);
+          void pngKePdf(png, SKALA_UNDUH).then((blob) => {
+            const url = URL.createObjectURL(blob);
+            simpan(url, `${nama}.pdf`);
+            window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+          });
+        },
+      });
+    }, chart.getChartState().duration + 50);
+  }, [mode]);
 
   const jenisLabel: Record<Jenis, string> = {
     root: "perusahaan", dept: "departemen", hod: "head of department",
@@ -446,7 +481,8 @@ export function OrgChart({
                 <Button size="sm" variant="outline" onClick={expandAll}>Buka semua</Button>
                 <Button size="sm" variant="outline" onClick={collapseAll}>Tutup semua</Button>
                 <Button size="sm" variant="outline" onClick={paskan}>Pas-kan</Button>
-                <Button size="sm" variant="outline" onClick={unduh}>Unduh PNG</Button>
+                <Button size="sm" variant="outline" onClick={() => unduh("png")}>Unduh PNG</Button>
+                <Button size="sm" variant="outline" onClick={() => unduh("pdf")}>Unduh PDF</Button>
               </div>
             </div>
 
