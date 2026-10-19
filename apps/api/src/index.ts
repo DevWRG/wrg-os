@@ -254,7 +254,8 @@ import { runExtractCompetitor } from "./repo/extractcompetitor.js";
 import { runWeekendBriefing } from "./repo/weekendbriefing.js";
 import { getSeninBrief, listSeninBriefs, runSeninBrief } from "./repo/senin-brief.js";
 import { namaFilePdf, seninBriefPdf } from "./repo/senin-brief-pdf.js";
-import { cekTabelPdf, namaFileTabelPdf, tabelPdf } from "./repo/tabel-pdf.js";
+import { namaFileTabelPdf, tabelPdf } from "./repo/tabel-pdf.js";
+import { adalahKeyLaporan, pratinjau as pratinjauLaporan, susunLaporan } from "./repo/report-library.js";
 import { listDirekturInbox, runDirekturInbox } from "./repo/direktur-inbox.js";
 import { TukarFakturError, listKalenderKlinik, listTukarFaktur, parseBulan, parseHari } from "./repo/tukar-faktur.js";
 import { getPmfScorecard } from "./repo/pmf-scorecard.js";
@@ -2786,15 +2787,32 @@ app.get("/senin-brief/:tahun/:minggu/pdf", (c) => {
   return kirimSeninPdf(c, tahun, minggu);
 });
 
-// F92 — PDF generik dari tabel yang sedang tampil di dashboard (tombol Export PDF).
-// Tanpa DB & tanpa data baru: hanya menata ulang baris yang dikirim browser.
-app.post("/export/pdf", async (c) => {
-  const cek = cekTabelPdf(await c.req.json().catch(() => null));
-  if (!cek.ok) return c.json({ error: cek.error }, 400);
-  const pdf = await tabelPdf(cek.data, { oleh: c.req.query("oleh") ?? null });
+// F92 Report Library — 6 laporan eksekutif (KPI HoD, pipeline, AR aging, stok, produk,
+// churn). Data memanggil fungsi repo yang sama dengan halaman sumber, dengan scope
+// dari x-user-id (BFF mengirimnya) — jadi AM tak melihat data AM lain lewat menu ini.
+// Gerbang izin per laporan = menu sumbernya, dijaga di BFF web.
+const laporanDari = async (c: Context) => {
+  if (!isDbEnabled()) return { err: c.json({ error: "DATABASE_URL off" }, 503) } as const;
+  const key = c.req.param("key") ?? "";
+  if (!adalahKeyLaporan(key)) return { err: c.json({ error: "laporan tak dikenal" }, 404) } as const;
+  return { laporan: await susunLaporan(key, await scopeOf(c)) } as const;
+};
+app.get("/report-library/:key", async (c) => {
+  const r = await laporanDari(c);
+  return "err" in r ? r.err : c.json(pratinjauLaporan(r.laporan));
+});
+app.get("/report-library/:key/pdf", async (c) => {
+  const r = await laporanDari(c);
+  if ("err" in r) return r.err;
+  const { laporan } = r;
+  if (laporan.baris.length === 0) return c.json({ error: "laporan kosong — tak ada baris untuk dicetak" }, 404);
+  const pdf = await tabelPdf(
+    { judul: laporan.judul, ringkasan: laporan.ringkasan, header: laporan.header, baris: laporan.baris },
+    { oleh: c.req.query("oleh") ?? null },
+  );
   return c.body(new Uint8Array(pdf), 200, {
     "content-type": "application/pdf",
-    "content-disposition": `attachment; filename="${namaFileTabelPdf(cek.data.judul)}"`,
+    "content-disposition": `attachment; filename="${namaFileTabelPdf(laporan.judul)}"`,
   });
 });
 

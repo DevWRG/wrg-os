@@ -1,8 +1,7 @@
 // F92 — Export PDF generik untuk tabel dashboard.
 //
-// Dipakai tombol "Export PDF" di ExportButton: browser mengirim judul + header + baris
-// yang SAMA dengan yang ditulis ke CSV, server hanya menata ulang jadi PDF. Tak ada
-// query atau angka baru di sini, jadi PDF tak bisa berbeda dari yang tampil di layar.
+// Dipakai Report Library (repo/report-library.ts): baris sudah diratakan jadi string
+// dari fungsi repo yang sama dengan halaman sumbernya, di sini hanya ditata jadi PDF.
 //
 // Dibuat di server (pdfkit), pola sama dengan senin-brief-pdf.ts. Helvetica bawaan PDF
 // tak punya emoji / ≥ / →, jadi teks dibersihkan lewat `bersih` yang sama.
@@ -22,35 +21,16 @@ const KOP = fileURLToPath(new URL("../../assets/kop-surat.png", import.meta.url)
 const KOP_RASIO = 148 / 2204;
 const C = { teks: "#0f172a", redup: "#64748b", garis: "#e2e8f0", kepala: "#0f766e", zebra: "#f8fafc" };
 
-export const MAKS_BARIS = 5000;
-export const MAKS_KOLOM = 20;
 const MAKS_SEL = 160;
 const PAD = 3;
 const FONT = 7.5;
 
 export interface TabelPdfInput {
   judul: string;
+  /** Baris "label: nilai" di bawah judul (ringkasan angka utama laporan). */
+  ringkasan?: { label: string; nilai: string }[];
   header: string[];
   baris: string[][];
-}
-
-/** Validasi body mentah; kembalikan pesan galat atau data bersih. */
-export function cekTabelPdf(body: unknown): { ok: true; data: TabelPdfInput } | { ok: false; error: string } {
-  const b = body as Partial<TabelPdfInput> | null;
-  if (!b || typeof b.judul !== "string" || !Array.isArray(b.header) || !Array.isArray(b.baris)) {
-    return { ok: false, error: "body harus {judul, header[], baris[][]}" };
-  }
-  if (b.header.length === 0 || b.header.length > MAKS_KOLOM) return { ok: false, error: `kolom 1-${MAKS_KOLOM}` };
-  if (b.baris.length === 0) return { ok: false, error: "tidak ada baris" };
-  if (b.baris.length > MAKS_BARIS) return { ok: false, error: `maksimal ${MAKS_BARIS} baris` };
-  const sel = (v: unknown) => (v === null || v === undefined ? "" : String(v));
-  const header = b.header.map(sel);
-  const baris = b.baris.map((r) => {
-    const arr = Array.isArray(r) ? r.map(sel) : [];
-    while (arr.length < header.length) arr.push("");
-    return arr.slice(0, header.length);
-  });
-  return { ok: true, data: { judul: sel(b.judul).slice(0, 120) || "Laporan", header, baris } };
 }
 
 /** Lebar kolom proporsional isi (dibatasi), total = LEBAR. Fungsi murni (dites). */
@@ -92,7 +72,21 @@ export async function tabelPdf(input: TabelPdfInput, opts: { oleh?: string | nul
   doc.fillColor(C.kepala).font("Helvetica-Bold").fontSize(14).text(bersih(input.judul), MARGIN, doc.y);
   doc.fillColor(C.redup).font("Helvetica").fontSize(8)
     .text(`${baris.length} baris · dicetak ${cetak}${opts.oleh ? ` oleh ${bersih(opts.oleh)}` : ""}`, MARGIN, doc.y + 2);
-  doc.y += 8;
+  doc.y += 6;
+
+  // Ringkasan: dua kolom label/nilai, sebelum tabel.
+  const ring = (input.ringkasan ?? []).map((r) => ({ label: bersih(r.label), nilai: bersih(r.nilai) }));
+  if (ring.length > 0) {
+    const kolW = LEBAR / 2;
+    const y0 = doc.y;
+    ring.forEach((r, i) => {
+      const x = MARGIN + (i % 2) * kolW;
+      const y = y0 + Math.floor(i / 2) * 13;
+      doc.fillColor(C.redup).font("Helvetica").fontSize(8).text(`${r.label}:`, x, y, { width: 150, lineBreak: false });
+      doc.fillColor(C.teks).font("Helvetica-Bold").fontSize(8).text(r.nilai, x + 150, y, { width: kolW - 156, lineBreak: false, ellipsis: true });
+    });
+    doc.y = y0 + Math.ceil(ring.length / 2) * 13 + 6;
+  }
 
   const kepala = (y: number) => {
     doc.font("Helvetica-Bold").fontSize(FONT);
