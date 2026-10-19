@@ -19,6 +19,10 @@ import {
   upsertAccurateReceipts, pendingAccurateReceiptDetails, countPendingAccurateReceiptDetails, replaceAccurateReceiptLines,
   type AccurateReceiptHeader, type AccurateReceiptLine,
 } from "./inbound-receiving.js";
+import {
+  upsertAccurateInvoices, pendingInvoiceDetails, countPendingInvoiceDetails, replaceInvoiceLines, petakanBarisDetail, pruneInvoices, AP_SYNC_ENTITY,
+  type AccurateInvoiceHeader,
+} from "./ap-three-way.js";
 
 // Puller Accurate Online (pengganti legacy sync_accurate.sh). Tarik sales-invoice
 // header+items dari zeus.accurate.id → mirror penuh accurate_* + refresh ar_aging.
@@ -1112,6 +1116,7 @@ async function syncPurchaseOrdersInner(
         qty_shipped: num(it.shipQuantity),
         unit: it.itemUnit?.name != null ? String(it.itemUnit.name) : null,
         unit_price: it.unitPrice != null ? Number(it.unitPrice) : null,
+        disc_raw: it.itemDiscPercent != null ? String(it.itemDiscPercent).trim() : null,
         warehouse_name: it.warehouse?.name != null ? String(it.warehouse.name) : null,
         notes: it.detailNotes != null && String(it.detailNotes).trim() ? String(it.detailNotes) : null,
       }));
@@ -1305,6 +1310,185 @@ async function syncReceiveItemsInner(
     pending_details: await countPendingAccurateReceiptDetails(),
     full,
     since,
+    ...(capped ? { cappedByPages: true } : {}),
+  };
+}
+
+// ── F152 Faktur Pembelian Accurate → cermin 3-way match (migrasi 240) ──────
+//
+// Probe 19 Okt 2026: purchase-invoice/list.do menghormati fields= (id, number, billNumber, transDate,
+// dueDate, lastUpdate, statusName, approvalStatus, totalAmount, vendor, description) dan sort
+// lastUpdate|desc — pola inkremental sama dengan syncPurchaseOrders/syncReceiveItems.
+// detail.do membawa id PO & penerimaan sampai tingkat BARIS (purchaseOrderDetailId, receiveItemDetailId).
+//
+// Cakupan: faktur bertanggal >= AP_ACCURATE_SINCE (default = INBOUND_ACCURATE_SINCE, 2026-10-01) + yang sudah
+// ada di cermin. Disamakan dengan cakupan penerimaan: faktur atas penerimaan yang tak tercermin hanya
+// akan jadi "belum sinkron".
+
+export interface PurchaseInvoiceSyncResult {
+  ok: boolean;
+  error?: string;
+  headers: number;
+  skipped_scope: number;
+  details: number;
+  detail_failed: number;
+  lines: number;
+  pending_details: number;
+  full: boolean;
+  since: string;
+  pruned?: number;
+  prune_skipped?: boolean;
+  cappedByPages?: boolean;
+}
+
+let invoiceSyncRunning = false;
+export const purchaseInvoiceSyncBusy = () => invoiceSyncRunning;
+
+function invoiceSince(): string {
+  const v = process.env.AP_ACCURATE_SINCE ?? "";
+  return /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : inboundSince();
+}
+
+export async function syncPurchaseInvoices(opts: { full?: boolean; detailLimit?: number; maxPages?: number } = {}): Promise<PurchaseInvoiceSyncResult> {
+  const since = invoiceSince();
+  const empty = { headers: 0, skipped_scope: 0, details: 0, detail_failed: 0, lines: 0, pending_details: 0, full: !!opts.full, since };
+  if (invoiceSyncRunning) return { ok: false, error: "sinkron faktur pembelian sedang berjalan", ...empty };
+  const creds = loadCreds();
+  if (!creds) return { ok: false, error: "kredensial Accurate tak tersedia", ...empty };
+  invoiceSyncRunning = true;
+  try {
+    const res = await syncPurchaseInvoicesInner(creds, since, opts);
+    await recordInvoiceSyncState(res);
+    return res;
+  } catch (e) {
+    const res = { ok: false, error: String((e as Error)?.message ?? e), ...empty };
+    await recordInvoiceSyncState(res).catch(() => {});
+    return res;
+  } finally {
+    invoiceSyncRunning = false;
+  }
+}
+
+async function recordInvoiceSyncState(res: PurchaseInvoiceSyncResult): Promise<void> {
+  const sql = db();
+  const summary = JSON.parse(JSON.stringify(res));
+  await sql`
+    INSERT INTO accurate_sync_state (entity, last_synced_at, last_run_ok, last_run_summary)
+    VALUES (${AP_SYNC_ENTITY}, now(), ${res.ok}, ${sql.json(summary)})
+    ON CONFLICT (entity) DO UPDATE SET last_synced_at = now(), last_run_ok = ${res.ok},
+      last_run_summary = ${sql.json(summary)}
+  `;
+}
+
+const textOrNull = (v: unknown): string | null => (v != null && String(v).trim() ? String(v) : null);
+const idOrNull = (v: unknown): number | null => {
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? n : null;
+};
+
+async function syncPurchaseInvoicesInner(
+  creds: Creds,
+  since: string,
+  opts: { full?: boolean; detailLimit?: number; maxPages?: number },
+): Promise<PurchaseInvoiceSyncResult> {
+  const sql = db();
+  const maxPages = opts.maxPages ?? 60;
+  const detailLimit = opts.detailLimit ?? 300;
+  const [wm] = await sql`SELECT max(accurate_last_update)::text AS w FROM accurate_purchase_invoice`;
+  const full = opts.full || !wm?.w;
+  // Mundur 1 jam: lastUpdate per detik, dua faktur bisa berbagi detik di batas halaman (upsert idempoten).
+  const watermark = full ? null : new Date(new Date(String(wm.w)).getTime() - 3600_000);
+
+  let headers = 0;
+  let skippedScope = 0;
+  let capped = false;
+  // Sapuan penuh yang tuntas (halaman habis, tak terpotong) → boleh prune faktur yang hilang di Accurate.
+  let tuntas = false;
+  const seen: number[] = [];
+  for (let page = 1; page <= maxPages; page++) {
+    const list = await accGet(
+      creds,
+      "/accurate/api/purchase-invoice/list.do",
+      `sp.page=${page}&sp.pageSize=100&sp.sort=lastUpdate|desc&fields=id,number,billNumber,transDate,dueDate,lastUpdate,statusName,approvalStatus,totalAmount,vendor,description`,
+    );
+    if (list.s !== true) throw new Error(`purchase-invoice/list.do gagal di halaman ${page}`);
+    const rows = Array.isArray(list.d) ? (list.d as Array<Record<string, unknown>>) : [];
+    if (rows.length === 0) { tuntas = true; break; }
+    for (const r of rows) seen.push(Number(r.id));
+
+    const ids = rows.map((r) => Number(r.id));
+    const existing = new Set(
+      (await sql`SELECT accurate_id FROM accurate_purchase_invoice WHERE accurate_id = ANY(${ids}::bigint[])`).map((r) => Number(r.accurate_id)),
+    );
+    const mapped: AccurateInvoiceHeader[] = [];
+    let allOlder = true;
+    for (const v of rows) {
+      const lastUpdate = accDateTime(v.lastUpdate);
+      if (!watermark || !lastUpdate || new Date(lastUpdate) >= watermark) allOlder = false;
+      const transDate = accDate(v.transDate);
+      if (!transDate || !(existing.has(Number(v.id)) || transDate >= since)) { skippedScope++; continue; }
+      const vendor = v.vendor && typeof v.vendor === "object" ? (v.vendor as { id?: unknown; name?: unknown }) : null;
+      mapped.push({
+        accurate_id: Number(v.id),
+        number: String(v.number ?? `PI-${v.id}`),
+        bill_number: textOrNull(v.billNumber),
+        vendor_id: idOrNull(vendor?.id),
+        vendor_name: vendor?.name != null ? String(vendor.name) : "(vendor tak diketahui)",
+        trans_date: transDate,
+        due_date: accDate(v.dueDate),
+        status_name: textOrNull(v.statusName),
+        approval_status: textOrNull(v.approvalStatus),
+        total_amount: v.totalAmount != null && v.totalAmount !== "" ? Number(v.totalAmount) : null,
+        description: textOrNull(v.description),
+        last_update: lastUpdate,
+        opt_lock: null,
+      });
+    }
+    headers += await upsertAccurateInvoices(mapped);
+    if (rows.length < 100) { tuntas = true; break; }
+    if (!full && allOlder) break;
+    if (page >= maxPages) capped = laporBatasHalaman("purchase-invoice", page, maxPages, 100);
+    await sleep(150);
+  }
+
+  let pruned = 0;
+  let pruneSkipped = false;
+  if (full && tuntas && !capped) {
+    const p = await pruneInvoices(seen, since);
+    pruned = p.pruned;
+    pruneSkipped = p.skipped && seen.length > 0;
+  }
+
+  let details = 0;
+  let detailFailed = 0;
+  let lines = 0;
+  for (const inv of await pendingInvoiceDetails(detailLimit)) {
+    const det = await accGet(creds, "/accurate/api/purchase-invoice/detail.do", `id=${inv.accurate_id}`);
+    if (det?.s !== true) {
+      // Faktur bermasalah tak boleh menghentikan sisanya; items_last_update tetap basi → dicoba lagi.
+      detailFailed++;
+      await sleep(150);
+      continue;
+    }
+    const d = det.d as Detail;
+    const items = petakanBarisDetail(d);
+    lines += await replaceInvoiceLines(inv.accurate_id, inv.last_update, d?.optLock != null ? Number(d.optLock) : null, items);
+    details++;
+    await sleep(150);
+  }
+
+  return {
+    ok: true,
+    headers,
+    skipped_scope: skippedScope,
+    details,
+    detail_failed: detailFailed,
+    lines,
+    pending_details: await countPendingInvoiceDetails(),
+    full,
+    since,
+    ...(pruned ? { pruned } : {}),
+    ...(pruneSkipped ? { prune_skipped: true } : {}),
     ...(capped ? { cappedByPages: true } : {}),
   };
 }
