@@ -7,6 +7,7 @@ import { balasanKampanye, scopeDariPengirim } from "./campaign.js";
 import { balasanBrief } from "./customer-intel.js";
 import { balasanJadwal } from "./jadwal-teknisi.js";
 import { resolveSender } from "./master.js";
+import { balasanOrder } from "./order-wa.js";
 import { upsertDailyTodo, computeIsLate } from "./todo.js";
 import { createReminder } from "./reminder.js";
 import {
@@ -100,6 +101,7 @@ export type InboundKind =
   | "brief"
   | "kso"
   | "jadwal"
+  | "order"
   | "none";
 
 // Hashtag yang dijaring processUnprocessed. Diekspor supaya diuji berpasangan
@@ -109,7 +111,7 @@ export type InboundKind =
 // (dev menutup kelas bug ini dengan INBOUND_HASHTAGS sebagai sumber tunggal.)
 export const INBOUND_FILTER_KINDS = [
   "plan", "report", "leads", "update", "sales", "koran", "overtime", "faktur", "approve", "reject", "call", "note",
-  "kirim", "terima", "bast", "bukti", "demo", "trial", "kampanye", "brief", "kso", "jadwal",
+  "kirim", "terima", "bast", "bukti", "demo", "trial", "kampanye", "brief", "kso", "jadwal", "order",
 ] as const;
 export const inboundHashtagPattern = (): string => `#\\s*(${INBOUND_FILTER_KINDS.join("|")})`;
 
@@ -136,6 +138,8 @@ const KAMPANYE_LINE = /^\s*#\s*kampanye\b/i;
 const BRIEF_LINE = /^\s*#\s*brief\b/i;
 // F154 — #JADWAL: jadwal kunjungan rutin teknisi yang SUDAH terbit (baca saja).
 const JADWAL_LINE = /^\s*#\s*jadwal\b/i;
+// F90 — #ORDER: pesanan AM → draft → "#ORDER ya O12" → antrean Admin Sales.
+const ORDER_LINE = /^\s*#\s*order\b/i;
 // F12/F42/F93 — hashtag SHIPPING dari kurir: "#KIRIM SJK 6142" / "#TERIMA SJK
 // 6142" / "#BAST SJK 6142" / "#BUKTI SJK 6142" (caption foto atau teks biasa;
 // rujukan SJ = jenis + angka urut DO Accurate, lihat parseSjRef).
@@ -171,6 +175,7 @@ export function detectKind(body: string | null): InboundKind {
       if (KAMPANYE_LINE.test(line)) return "kampanye";
       if (BRIEF_LINE.test(line)) return "brief";
       if (JADWAL_LINE.test(line)) return "jadwal";
+      if (ORDER_LINE.test(line)) return "order";
     }
   }
   return "none";
@@ -1613,6 +1618,22 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
     }
     const reply = await sendViaWaGateway(target, text);
     return finish({ kind: "jadwal", via: jd.via, reply });
+  }
+
+  // #ORDER — F90: pesanan AM. AM dari pengirim (ketat), tak pernah dari isi pesan; harga di
+  // bawah lantai price book ditolak; masuk antrean hanya sesudah "#ORDER ya O<id>".
+  if (kind === "order") {
+    const od = await resolveSender({ senderJid: row.sender_jid, groupJid: row.group_jid, pushname: row.sender_name, ketat: true });
+    if (!od) return finish({ skipped: "unknown-sender", sender_name: row.sender_name });
+    let text: string;
+    try {
+      text = await balasanOrder(row.body ?? "", { am_id: od.am_id, nama: od.nama ?? "", role: od.role ?? null }, target);
+    } catch (e) {
+      console.error("[inbound] #ORDER gagal diproses:", (e as Error).message);
+      text = "⚠️ #ORDER gagal diproses, coba lagi sebentar lagi.";
+    }
+    const reply = await sendViaWaGateway(target, text);
+    return finish({ kind: "order", via: od.via, reply });
   }
 
   // #FAKTUR <no_invoice> — F91: status Open/Paid/Overdue + jatuh tempo +
