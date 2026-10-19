@@ -171,6 +171,7 @@ import { kesehatanKso, runRekapKesehatanKso } from "./repo/kso-kesehatan.js";
 import { suplaiKso, runRekapSuplaiKso } from "./repo/kso-suplai.js";
 import { productScorecard } from "./repo/product-scorecard.js";
 import { keaslianPipeline } from "./repo/pipeline-keaslian.js";
+import { OrderError, daftarOrder, ubahStatusOrder } from "./repo/order-wa.js";
 import { JadwalError, daftarFrekuensi, daftarWilayah, jadwalBulan, pratinjau as pratinjauJadwal, setFrekuensi, setWilayah, susunDraft, tambahManual, terbitkan, ubahBaris, bulanDepan } from "./repo/jadwal-teknisi.js";
 import { IntelError, briefingFaskes, dominasiWilayah, setDominan } from "./repo/customer-intel.js";
 import { ringkasPembayaran } from "./repo/pembayaran.js";
@@ -3662,6 +3663,29 @@ app.get("/sales-analytics/ecatalog", async (c) => {
 app.get("/sales-analytics/keaslian", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json(await keaslianPipeline(await scopeOf(c)));
+});
+
+// F90 #ORDER — antrean pesanan AM (migrasi 239, repo/order-wa.ts). Ber-scope x-user-id (AM =
+// pesanannya, HoD = cabangnya, admin/Admin Sales berizin = semua). Gerbang menu di BFF.
+const orderErr = (c: { json: (b: unknown, s?: number) => Response }, e: unknown) => {
+  if (e instanceof OrderError) return c.json({ error: e.message, field: e.field }, e.status);
+  if ((e as { code?: string })?.code === "42P01") return c.json({ error: "migration_pending" }, 503);
+  console.error("[order-wa]", (e as Error).message);
+  return c.json({ error: "gagal memproses pesanan" }, 500);
+};
+app.get("/order-wa", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const st = c.req.query("status");
+  try { return c.json(await daftarOrder(await scopeOf(c), st && ["draft", "antrean", "diproses", "selesai", "batal"].includes(st) ? st : undefined)); } catch (e) { return orderErr(c, e); }
+});
+app.patch("/order-wa/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const b = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
+    if (!b || typeof b !== "object") throw new OrderError(400, "body bukan JSON object yang sah");
+    return c.json(await ubahStatusOrder(c.req.param("id"), { status: String(b.status ?? ""), so_number: b.so_number ? String(b.so_number) : null,
+      alasan: b.alasan ? String(b.alasan) : null, catatan: b.catatan ? String(b.catatan) : null }, String(b.oleh ?? "").trim() || "admin"));
+  } catch (e) { return orderErr(c, e); }
 });
 
 // F154 Jadwal Kunjungan Rutin Teknisi (migrasi 235, repo/jadwal-teknisi.ts). Gerbang
