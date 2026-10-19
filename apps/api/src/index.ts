@@ -254,6 +254,8 @@ import { runExtractCompetitor } from "./repo/extractcompetitor.js";
 import { runWeekendBriefing } from "./repo/weekendbriefing.js";
 import { getSeninBrief, listSeninBriefs, runSeninBrief } from "./repo/senin-brief.js";
 import { namaFilePdf, seninBriefPdf } from "./repo/senin-brief-pdf.js";
+import { namaFileTabelPdf, tabelPdf, tabelPdfGabungan } from "./repo/tabel-pdf.js";
+import { adalahKeyLaporan, pratinjau as pratinjauLaporan, susunLaporan } from "./repo/report-library.js";
 import { listDirekturInbox, runDirekturInbox } from "./repo/direktur-inbox.js";
 import { TukarFakturError, listKalenderKlinik, listTukarFaktur, parseBulan, parseHari } from "./repo/tukar-faktur.js";
 import { getPmfScorecard } from "./repo/pmf-scorecard.js";
@@ -2783,6 +2785,52 @@ app.get("/senin-brief/:tahun/:minggu/pdf", (c) => {
     return c.json({ error: "tahun/minggu tak valid" }, 400);
   }
   return kirimSeninPdf(c, tahun, minggu);
+});
+
+// F92 Report Library — 6 laporan eksekutif (KPI HoD, pipeline, AR aging, stok, produk,
+// churn). Data memanggil fungsi repo yang sama dengan halaman sumber, dengan scope
+// dari x-user-id (BFF mengirimnya) — jadi AM tak melihat data AM lain lewat menu ini.
+// Gerbang izin per laporan = menu sumbernya, dijaga di BFF web.
+const laporanDari = async (c: Context) => {
+  if (!isDbEnabled()) return { err: c.json({ error: "DATABASE_URL off" }, 503) } as const;
+  const key = c.req.param("key") ?? "";
+  if (!adalahKeyLaporan(key)) return { err: c.json({ error: "laporan tak dikenal" }, 404) } as const;
+  return { laporan: await susunLaporan(key, await scopeOf(c)) } as const;
+};
+app.get("/report-library/:key", async (c) => {
+  const r = await laporanDari(c);
+  return "err" in r ? r.err : c.json(pratinjauLaporan(r.laporan));
+});
+// Semua laporan yang diminta dalam SATU PDF. `keys` = daftar key dipisah koma, sudah
+// disaring BFF menurut izin menu sumber user; di sini hanya key valid yang dipakai.
+// Didaftarkan SEBELUM /:key/pdf supaya "semua" tak dibaca sebagai key.
+app.get("/report-library/semua/pdf", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const keys = [...new Set((c.req.query("keys") ?? "").split(",").map((k) => k.trim()).filter(adalahKeyLaporan))];
+  if (keys.length === 0) return c.json({ error: "keys wajib (daftar key laporan, dipisah koma)" }, 400);
+  const scope = await scopeOf(c);
+  const semua = await Promise.all(keys.map((k) => susunLaporan(k, scope)));
+  const bagian = semua.filter((l) => l.baris.length > 0).map((l) => ({ judul: l.judul, ringkasan: l.ringkasan, header: l.header, baris: l.baris }));
+  if (bagian.length === 0) return c.json({ error: "semua laporan kosong — tak ada baris untuk dicetak" }, 404);
+  const pdf = await tabelPdfGabungan(bagian, "Report Library", { oleh: c.req.query("oleh") ?? null });
+  return c.body(new Uint8Array(pdf), 200, {
+    "content-type": "application/pdf",
+    "content-disposition": `attachment; filename="${namaFileTabelPdf("Report Library")}"`,
+  });
+});
+app.get("/report-library/:key/pdf", async (c) => {
+  const r = await laporanDari(c);
+  if ("err" in r) return r.err;
+  const { laporan } = r;
+  if (laporan.baris.length === 0) return c.json({ error: "laporan kosong — tak ada baris untuk dicetak" }, 404);
+  const pdf = await tabelPdf(
+    { judul: laporan.judul, ringkasan: laporan.ringkasan, header: laporan.header, baris: laporan.baris },
+    { oleh: c.req.query("oleh") ?? null },
+  );
+  return c.body(new Uint8Array(pdf), 200, {
+    "content-type": "application/pdf",
+    "content-disposition": `attachment; filename="${namaFileTabelPdf(laporan.judul)}"`,
+  });
 });
 
 // F85 — susun brief manual (uji / generate ulang). Sengaja TANPA route BFF:
