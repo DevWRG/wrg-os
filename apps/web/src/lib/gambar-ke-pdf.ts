@@ -54,10 +54,13 @@ export function jpegKePdf(
   return hasil;
 }
 
-// Data URL PNG (hasil ekspor bagan, di-render `skala`× ukuran layar) → Blob PDF.
-// Halaman seukuran bagan di layar (1 px CSS = 0,75 pt), jadi teksnya tetap
-// sebesar yang dilihat orang; resolusi ekstra dari `skala` menjaga ketajaman
-// saat di-zoom atau dicetak.
+// Data URL PNG (hasil ekspor bagan, di-render `skala`× ukuran asli) → Blob PDF.
+// Halaman seukuran bagan aslinya (1 px CSS = 0,75 pt), jadi teksnya sebesar
+// yang dilihat orang; resolusi ekstra dari `skala` menjaga ketajaman saat
+// di-zoom atau dicetak. Sisi halaman dibatasi 14.400 pt (batas spesifikasi PDF)
+// — bagan yang lebih lebar diperkecil proporsional.
+const SISI_HALAMAN_MAKS = 14_400;
+
 export async function pngKePdf(dataUrl: string, skala: number): Promise<Blob> {
   const img = new Image();
   await new Promise<void>((ok, gagal) => {
@@ -75,9 +78,10 @@ export async function pngKePdf(dataUrl: string, skala: number): Promise<Blob> {
   ctx.drawImage(img, 0, 0);
   const b64 = canvas.toDataURL("image/jpeg", 0.92).split(",")[1];
   const jpeg = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+  const ptPerPx = Math.min(0.75, SISI_HALAMAN_MAKS / (Math.max(canvas.width, canvas.height) / skala));
   const pdf = jpegKePdf(
     jpeg, canvas.width, canvas.height,
-    (canvas.width / skala) * 0.75, (canvas.height / skala) * 0.75,
+    (canvas.width / skala) * ptPerPx, (canvas.height / skala) * ptPerPx,
   );
   return new Blob([pdf], { type: "application/pdf" });
 }
