@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { Dept, EmployeeItem } from "@/components/people/employee-spine-manager";
 import { pngKePdf } from "@/lib/gambar-ke-pdf";
+import { potretBagan } from "@/lib/org-chart-ekspor";
 
 // F129 Org Chart — bagan organisasi klasik (kotak bertingkat, garis siku)
 // memakai d3-org-chart (bumbeishvili, MIT).
@@ -63,8 +64,6 @@ interface Node {
 const TINGGI = 660;
 const LEBAR_KOTAK = 224;
 const TINGGI_KOTAK = 96;
-// Resolusi unduhan (× ukuran layar) — cukup tajam untuk di-zoom dan dicetak A3.
-const SKALA_UNDUH = 3;
 
 function simpan(href: string, namaBerkas: string) {
   const a = document.createElement("a");
@@ -391,30 +390,37 @@ export function OrgChart({
   const expandAll = useCallback(() => chartRef.current?.expandAll().fit(), []);
   const collapseAll = useCallback(() => chartRef.current?.collapseAll().fit(), []);
   const paskan = useCallback(() => chartRef.current?.fit(), []);
-  // Yang diunduh selalu bagan UTUH: semua cabang dibuka dulu, bukan hanya
-  // cabang yang kebetulan sedang terbuka di layar. Ekspor menunggu animasi
-  // buka-cabang selesai — kalau tidak, kotak yang masih bergerak ikut terpotret.
+  // Yang diunduh selalu bagan UTUH: semua cabang dibuka, dan selama ekspor
+  // bagan memakai tata letak ringkas (bawahan disusun dua kolom, bukan satu
+  // baris panjang) supaya hasilnya mendekati persegi dan nama tetap terbaca.
+  // Animasi dimatikan selama ekspor: kotak yang masih bergerak (atau belum
+  // muncul) ikut terpotret apa adanya, dan menunggu durasi animasi saja
+  // tidak cukup — terbukti di uji, cabang yang baru dibuka tak terpotret.
+  // Sesudahnya bagan di layar kembali ke tata letak dan animasi biasa.
+  const [mengunduh, setMengunduh] = useState(false);
   const unduh = useCallback((format: "png" | "pdf") => {
     const chart = chartRef.current;
-    if (!chart) return;
+    if (!chart || mengunduh) return;
+    setMengunduh(true);
     const nama = mode === "reporting" ? "org-chart-reporting-line" : "org-chart-departemen";
-    chart.expandAll();
-    window.setTimeout(() => {
-      chart.exportImg({
-        full: true,
-        scale: SKALA_UNDUH,
-        save: false,
-        onLoad: (png) => {
-          if (format === "png") return simpan(png, `${nama}.png`);
-          void pngKePdf(png, SKALA_UNDUH).then((blob) => {
-            const url = URL.createObjectURL(blob);
-            simpan(url, `${nama}.pdf`);
-            window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-          });
-        },
-      });
-    }, chart.getChartState().duration + 50);
-  }, [mode]);
+    const durasi = chart.getChartState().duration;
+    chart.duration(0).compact(true).expandAll();
+    window.setTimeout(async () => {
+      try {
+        const { png, skala } = await potretBagan(chart);
+        if (format === "png") {
+          simpan(png, `${nama}.png`);
+        } else {
+          const url = URL.createObjectURL(await pngKePdf(png, skala));
+          simpan(url, `${nama}.pdf`);
+          window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+        }
+      } finally {
+        chart.duration(durasi).compact(false).render().fit();
+        setMengunduh(false);
+      }
+    }, 150);
+  }, [mode, mengunduh]);
 
   const jenisLabel: Record<Jenis, string> = {
     root: "perusahaan", dept: "departemen", hod: "head of department",
@@ -481,8 +487,8 @@ export function OrgChart({
                 <Button size="sm" variant="outline" onClick={expandAll}>Buka semua</Button>
                 <Button size="sm" variant="outline" onClick={collapseAll}>Tutup semua</Button>
                 <Button size="sm" variant="outline" onClick={paskan}>Pas-kan</Button>
-                <Button size="sm" variant="outline" onClick={() => unduh("png")}>Unduh PNG</Button>
-                <Button size="sm" variant="outline" onClick={() => unduh("pdf")}>Unduh PDF</Button>
+                <Button size="sm" variant="outline" onClick={() => unduh("png")} disabled={mengunduh}>Unduh PNG</Button>
+                <Button size="sm" variant="outline" onClick={() => unduh("pdf")} disabled={mengunduh}>Unduh PDF</Button>
               </div>
             </div>
 
