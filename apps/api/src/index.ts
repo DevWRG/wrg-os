@@ -254,7 +254,7 @@ import { runExtractCompetitor } from "./repo/extractcompetitor.js";
 import { runWeekendBriefing } from "./repo/weekendbriefing.js";
 import { getSeninBrief, listSeninBriefs, runSeninBrief } from "./repo/senin-brief.js";
 import { namaFilePdf, seninBriefPdf } from "./repo/senin-brief-pdf.js";
-import { namaFileTabelPdf, tabelPdf } from "./repo/tabel-pdf.js";
+import { namaFileTabelPdf, tabelPdf, tabelPdfGabungan } from "./repo/tabel-pdf.js";
 import { adalahKeyLaporan, pratinjau as pratinjauLaporan, susunLaporan } from "./repo/report-library.js";
 import { listDirekturInbox, runDirekturInbox } from "./repo/direktur-inbox.js";
 import { TukarFakturError, listKalenderKlinik, listTukarFaktur, parseBulan, parseHari } from "./repo/tukar-faktur.js";
@@ -2800,6 +2800,23 @@ const laporanDari = async (c: Context) => {
 app.get("/report-library/:key", async (c) => {
   const r = await laporanDari(c);
   return "err" in r ? r.err : c.json(pratinjauLaporan(r.laporan));
+});
+// Semua laporan yang diminta dalam SATU PDF. `keys` = daftar key dipisah koma, sudah
+// disaring BFF menurut izin menu sumber user; di sini hanya key valid yang dipakai.
+// Didaftarkan SEBELUM /:key/pdf supaya "semua" tak dibaca sebagai key.
+app.get("/report-library/semua/pdf", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const keys = [...new Set((c.req.query("keys") ?? "").split(",").map((k) => k.trim()).filter(adalahKeyLaporan))];
+  if (keys.length === 0) return c.json({ error: "keys wajib (daftar key laporan, dipisah koma)" }, 400);
+  const scope = await scopeOf(c);
+  const semua = await Promise.all(keys.map((k) => susunLaporan(k, scope)));
+  const bagian = semua.filter((l) => l.baris.length > 0).map((l) => ({ judul: l.judul, ringkasan: l.ringkasan, header: l.header, baris: l.baris }));
+  if (bagian.length === 0) return c.json({ error: "semua laporan kosong — tak ada baris untuk dicetak" }, 404);
+  const pdf = await tabelPdfGabungan(bagian, "Report Library", { oleh: c.req.query("oleh") ?? null });
+  return c.body(new Uint8Array(pdf), 200, {
+    "content-type": "application/pdf",
+    "content-disposition": `attachment; filename="${namaFileTabelPdf("Report Library")}"`,
+  });
 });
 app.get("/report-library/:key/pdf", async (c) => {
   const r = await laporanDari(c);

@@ -52,6 +52,11 @@ export default async function ReportLibraryPage() {
       <PageHeader
         title="Report Library"
         description="Enam laporan eksekutif dalam satu tempat. Angkanya sama dengan halaman sumbernya; unduh PDF untuk dibawa ke rapat."
+        action={hasil.length > 0 ? (
+          <a href="/api/report-library/semua/pdf" download className={cn(buttonVariants({ size: "sm" }))}>
+            <FileDown className="size-4" /> Export semua (1 PDF)
+          </a>
+        ) : undefined}
       />
       {hasil.length === 0 ? (
         <EmptyState title="Belum ada laporan yang bisa dibuka" description="Laporan mengikuti izin menu sumbernya (WatchPoint, Pipeline, AR, Stok Gudang, Product Scorecard, Customers)." />
