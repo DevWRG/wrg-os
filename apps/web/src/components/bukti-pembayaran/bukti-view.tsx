@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useRef, useState } from "react";
-import { CheckCircle2, FileText, Upload } from "lucide-react";
+import { CheckCircle2, FileText, Upload, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -50,6 +50,14 @@ export function BuktiView({ awal, canUnggah }: { awal: DaftarBukti | null; canUn
       setPending(false);
     }
   }, []);
+
+  // Batalkan pilihan sebelum disimpan. Nilai <input type=file> juga dikosongkan: tanpa itu
+  // memilih ulang file yang SAMA tak memicu onChange, jadi foto yang baru dibuang tak bisa dipilih lagi.
+  function hapusPilihan() {
+    setFile(null);
+    setErr(null);
+    if (input.current) input.current.value = "";
+  }
 
   async function unggah(e: React.FormEvent) {
     e.preventDefault();
@@ -119,6 +127,12 @@ export function BuktiView({ awal, canUnggah }: { awal: DaftarBukti | null; canUn
                   <Upload className="size-4" /> Pilih foto
                 </Button>
                 <span className="text-muted-foreground text-sm">{file ? `${file.name} · ${ukuranTeks(file.size)}` : "Belum ada file"}</span>
+                {file && (
+                  <Button type="button" size="icon" variant="ghost" aria-label="Hapus foto yang dipilih" title="Hapus foto yang dipilih"
+                    disabled={busy} onClick={hapusPilihan}>
+                    <X className="size-4" />
+                  </Button>
+                )}
                 <Button type="submit" disabled={busy} className="ml-auto">{busy ? "Mengunggah…" : "Simpan bukti"}</Button>
               </div>
               <p className="text-muted-foreground text-xs">JPG, PNG, WebP, atau PDF · maks. 8 MB · bukti tidak bisa diubah atau dihapus setelah disimpan.</p>
