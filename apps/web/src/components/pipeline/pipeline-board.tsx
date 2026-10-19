@@ -85,6 +85,7 @@ const stageLabel = (s: string) => STAGE_LABEL[s] ?? s;
 // Tahap final: deal sudah diputus (Won/Lost). Detailnya jadi catatan riwayat —
 // tombol Edit & Hapus disembunyikan supaya angka yang sudah dilaporkan tidak
 // diubah belakangan. Pembetulan Lost tetap lewat jalur Persetujuan Lost.
+// Hot/Warm/Cold juga tidak berlaku lagi untuk deal final — badge-nya disembunyikan.
 const CLOSED_STAGES = new Set(["Closing-Won", "Closing-Lost"]);
 // Definisi tahap (SPT) — dipajang di header kolom biar AM seragam menilai.
 const STAGE_DESC: Record<string, string> = {
@@ -419,7 +420,7 @@ export function PipelineBoard({ data, isAdmin = false, bolehDemo = false }: { da
                       <div className="text-xs text-muted-foreground mt-1 line-clamp-1">{[d.brand, d.product].filter(Boolean).join(" · ") || "—"}</div>
                       <div className="flex items-center justify-between mt-1.5">
                         <span className="text-xs tabular-nums">{jt(d.estimate_amount)}</span>
-                        {d.prospect_category && <span className={`text-[10px] px-1.5 py-0.5 rounded ${PCAT_COLOR[d.prospect_category] ?? "bg-muted"}`}>{d.prospect_category}</span>}
+                        {d.prospect_category && !CLOSED_STAGES.has(d.stage) && <span className={`text-[10px] px-1.5 py-0.5 rounded ${PCAT_COLOR[d.prospect_category] ?? "bg-muted"}`}>{d.prospect_category}</span>}
                       </div>
                     </button>
                     <button type="button" onClick={() => setMovePicker(d)} title="Pindahkan stage" aria-label="Pindahkan stage"
@@ -474,7 +475,7 @@ export function PipelineBoard({ data, isAdmin = false, bolehDemo = false }: { da
             <div className="flex flex-wrap gap-1.5 mt-2">
               <Badge>{stageLabel(sel.stage)}</Badge>
               {sel.product_category && <Badge variant="secondary">{sel.product_category}</Badge>}
-              {sel.prospect_category && <Badge variant="outline">{sel.prospect_category}</Badge>}
+              {sel.prospect_category && !CLOSED_STAGES.has(sel.stage) && <Badge variant="outline">{sel.prospect_category}</Badge>}
               {sel.forecast_category && <Badge variant="outline">{sel.forecast_category}</Badge>}
               {sel.stale && <Badge variant="destructive">Mangkrak {sel.days_in_stage}h</Badge>}
             </div>
