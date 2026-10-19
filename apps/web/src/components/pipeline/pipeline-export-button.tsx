@@ -116,7 +116,8 @@ export function PipelineExportButton({
         str(d.brand),
         str(d.product),
         str(d.product_category),
-        str(d.prospect_category),
+        // Hot/Warm/Cold tak berlaku untuk deal final (Won/Lost).
+        str(d.stage === "Closing-Won" || d.stage === "Closing-Lost" ? null : d.prospect_category),
         str(d.forecast_category),
         str(coopLabel(d.coop_model)),
         num(d.qty_num),
