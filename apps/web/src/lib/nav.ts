@@ -61,6 +61,7 @@ import { canViewGaReporting } from "@/lib/ga-reporting-access";
 import { canViewAuditFindings } from "@/lib/audit-finding-access";
 import { canViewOvertime } from "@/lib/overtime-access";
 import { canViewKasStation } from "@/lib/kas-station-access";
+import { canViewBuktiPembayaran } from "@/lib/bukti-pembayaran-access";
 
 // exact: sorot aktif hanya saat path persis (untuk route induk yg punya child,
 // mis. /pricelist vs /pricelist/setup).
@@ -483,6 +484,10 @@ export const NAV: NavGroup[] = [
       // centang grup; sebelum itu fallback direktur/admin/superuser.
       { title: "Kas Station", url: "/kas-station", icon: Wallet, badge: "NEW", show: canViewKasStation,
         features: [{ key: "kas-station-review", name: "Kas Station — review pusat (approve & realisasi)" }] },
+      // F32 Bukti Pembayaran — foto bukti bayar + kode pengajuan, diunggah admin di dashboard
+      // (tanpa OCR/WA/Accurate). Kunci izin "bukti-pembayaran" (view/create), default tertutup:
+      // butuh Sync Fitur + centang grup; sebelum itu fallback Direktur/Finance/admin.
+      { title: "Bukti Pembayaran", url: "/bukti-pembayaran", icon: FileCheck2, badge: "NEW", show: canViewBuktiPembayaran },
     ],
   },
   {
