@@ -43,6 +43,7 @@ import { canViewOnboarding } from "@/lib/onboarding-access";
 import { canViewPricebook, canViewPricebookSummary } from "@/lib/pricebook-access";
 import { canViewKlasifikasi } from "@/lib/klasifikasi-access";
 import { canViewJadwalTeknisi } from "@/lib/jadwal-teknisi-access";
+import { canViewOrderWa } from "@/lib/order-wa-access";
 import { canViewProductScorecard } from "@/lib/product-scorecard-access";
 import { canViewKsoKontrak } from "@/lib/kso-kontrak-access";
 import { canViewCn } from "@/lib/cn-access";
@@ -128,6 +129,8 @@ export const NAV: NavGroup[] = [
     items: [
       { title: "Sales Calendar", url: "/calendar", icon: CalendarRange },
       { title: "Sales Analytics", url: "/sales-analytics", icon: Target, badge: "NEW" },
+      // F90 #ORDER — antrean pesanan AM dari WhatsApp untuk Admin Sales; izin sendiri (Sync Fitur).
+      { title: "Antrean Order", url: "/order-wa", icon: ShoppingCart, badge: "NEW", show: canViewOrderWa },
       // F6 Product Scorecard — kinerja per kategori/lini/brand/item; izin sendiri, tertutup default (Sync Fitur).
       { title: "Product Scorecard", url: "/product-scorecard", icon: TrendingUp, badge: "NEW", show: canViewProductScorecard },
       { title: "Sales Alerts", url: "/sales-alerts", icon: Bell, badge: "NEW" },
