@@ -4,21 +4,48 @@ import { db } from "../db.js";
 // (spt_state_log) untuk mendeteksi pola yang mencurigakan: stage maju tanpa
 // jejak #REPORT, deal mangkrak, lompat-stage, dan menang implausibel cepat.
 
-// Jalur maju kanonik (tanpa 'Lose' yang merupakan terminal-kalah, bukan kemajuan).
+// Jalur maju kanonik = 7 tahap SPT (migrasi 069, DEAL_STAGES di repo/deal.ts) tanpa
+// 'Closing-Lost' yang merupakan terminal-kalah, bukan kemajuan.
 export const ADV_ORDER = [
-  "Cold",
-  "Follow Up",
-  "SPH",
-  "Offering Letter",
+  "Prospecting",
   "Presentation",
-  "Negotiating",
-  "Deal",
-  "MOU",
+  "Quotation",
+  "Negotiation",
+  "Closing",
+  "Closing-Won",
 ];
-export const WON = new Set(["Deal", "MOU"]);
+
+// Nama tahap lama (sebelum migrasi 057/069) masih bisa muncul di spt_state_log
+// yang tercatat dulu. Dipetakan sama seperti migrasinya supaya riwayat lama
+// tetap terbaca.
+const LEGACY_STAGE: Record<string, string> = {
+  "cold": "Prospecting",
+  "follow up": "Prospecting",
+  "first contact": "Prospecting",
+  "sph": "Quotation",
+  "offering letter": "Quotation",
+  "offering": "Quotation",
+  "presentasi": "Presentation",
+  "negotiating": "Negotiation",
+  "negosiasi": "Negotiation",
+  "proses di manajemen": "Negotiation",
+  "deal": "Closing-Won",
+  "mou": "Closing-Won",
+  "won": "Closing-Won",
+  "lose": "Closing-Lost",
+  "gagal": "Closing-Lost",
+};
+
+export function canonStage(stage: string): string {
+  return LEGACY_STAGE[stage.trim().toLowerCase()] ?? stage;
+}
 
 export function advIdx(stage: string): number {
-  return ADV_ORDER.indexOf(stage);
+  return ADV_ORDER.indexOf(canonStage(stage));
+}
+
+export function isWonStage(stage: string): boolean {
+  return canonStage(stage) === "Closing-Won";
 }
 
 export interface DealRow {
@@ -39,7 +66,7 @@ export interface TransitionRow {
   ts_ms: number;
 }
 
-// Semua deal non-Lose + agregat aktivitas (jumlah transisi & hari mangkrak).
+// Semua deal non-Lost + agregat aktivitas (jumlah transisi & hari mangkrak).
 export async function getDealsForAudit(): Promise<DealRow[]> {
   const sql = db();
   const rows = await sql`
@@ -51,7 +78,7 @@ export async function getDealsForAudit(): Promise<DealRow[]> {
             )) / 86400)::float AS days_idle
     FROM deal d
     LEFT JOIN spt_state_log s ON s.deal_id = d.deal_id
-    WHERE d.stage <> 'Lose'
+    WHERE d.stage::text <> 'Closing-Lost'
     GROUP BY d.deal_id
   `;
   return rows.map((r) => ({
@@ -66,7 +93,7 @@ export async function getDealsForAudit(): Promise<DealRow[]> {
   }));
 }
 
-// Riwayat transisi semua deal non-Lose, urut waktu (di-group di pemanggil).
+// Riwayat transisi semua deal non-Lost, urut waktu (di-group di pemanggil).
 export async function getDealTransitions(): Promise<TransitionRow[]> {
   const sql = db();
   const rows = await sql`
@@ -74,7 +101,7 @@ export async function getDealTransitions(): Promise<TransitionRow[]> {
            (extract(epoch FROM s.occurred_at) * 1000)::bigint AS ts_ms
     FROM spt_state_log s
     JOIN deal d ON d.deal_id = s.deal_id
-    WHERE d.stage <> 'Lose'
+    WHERE d.stage::text <> 'Closing-Lost'
     ORDER BY s.occurred_at ASC
   `;
   return rows.map((r) => ({

@@ -14,7 +14,7 @@ import {
   getDealTransitions,
   enqueuePipelineFlag,
   advIdx,
-  WON,
+  isWonStage,
   type TransitionRow,
 } from "./pipeline.js";
 import {
@@ -401,14 +401,15 @@ export async function runPipelineAuthenticity(): Promise<{
     const criticalFlags = new Set<string>();
     const adv = advIdx(d.stage);
     const trail = byDeal.get(d.deal_id) ?? [];
-    const isWon = WON.has(d.stage);
+    const isWon = isWonStage(d.stage);
 
-    // 1. Maju ke SPH+ tanpa satupun transisi tercatat → tidak didukung jejak.
+    // 1. Maju ke Quotation+ tanpa satupun transisi tercatat → tidak didukung jejak.
     if (adv >= 2 && d.log_count === 0) {
       flags.push("unsupported");
       criticalFlags.add("unsupported");
     }
-    // 2. Mangkrak: masih terbuka tapi tak bergerak > STALE_DAYS.
+    // 2. Mangkrak: masih terbuka tapi tak bergerak > STALE_DAYS (Won sudah final;
+    //    Lost tidak ikut diaudit sama sekali).
     if (!isWon && d.days_idle > STALE_DAYS) flags.push("stale");
     // 3. Lompat-stage: ada transisi yang melompati >=2 tingkat maju.
     for (const t of trail) {
@@ -416,13 +417,13 @@ export async function runPipelineAuthenticity(): Promise<{
       const to = advIdx(t.to_stage);
       if (from >= 0 && to >= 0 && to - from >= 2) {
         flags.push("stage_skip");
-        if (WON.has(t.to_stage)) criticalFlags.add("stage_skip");
+        if (isWonStage(t.to_stage)) criticalFlags.add("stage_skip");
         break;
       }
     }
     // 4. Menang implausibel cepat: transisi ke WON < MIN_CYCLE_DAYS dari created.
     if (isWon) {
-      const wonT = trail.find((t) => WON.has(t.to_stage));
+      const wonT = trail.find((t) => isWonStage(t.to_stage));
       const wonMs = wonT ? wonT.ts_ms : null;
       if (wonMs !== null) {
         const cycleDays = (wonMs - d.created_ms) / 86_400_000;
