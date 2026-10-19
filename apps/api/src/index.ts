@@ -254,6 +254,7 @@ import { runExtractCompetitor } from "./repo/extractcompetitor.js";
 import { runWeekendBriefing } from "./repo/weekendbriefing.js";
 import { getSeninBrief, listSeninBriefs, runSeninBrief } from "./repo/senin-brief.js";
 import { namaFilePdf, seninBriefPdf } from "./repo/senin-brief-pdf.js";
+import { cekTabelPdf, namaFileTabelPdf, tabelPdf } from "./repo/tabel-pdf.js";
 import { listDirekturInbox, runDirekturInbox } from "./repo/direktur-inbox.js";
 import { TukarFakturError, listKalenderKlinik, listTukarFaktur, parseBulan, parseHari } from "./repo/tukar-faktur.js";
 import { getPmfScorecard } from "./repo/pmf-scorecard.js";
@@ -2783,6 +2784,18 @@ app.get("/senin-brief/:tahun/:minggu/pdf", (c) => {
     return c.json({ error: "tahun/minggu tak valid" }, 400);
   }
   return kirimSeninPdf(c, tahun, minggu);
+});
+
+// F92 — PDF generik dari tabel yang sedang tampil di dashboard (tombol Export PDF).
+// Tanpa DB & tanpa data baru: hanya menata ulang baris yang dikirim browser.
+app.post("/export/pdf", async (c) => {
+  const cek = cekTabelPdf(await c.req.json().catch(() => null));
+  if (!cek.ok) return c.json({ error: cek.error }, 400);
+  const pdf = await tabelPdf(cek.data, { oleh: c.req.query("oleh") ?? null });
+  return c.body(new Uint8Array(pdf), 200, {
+    "content-type": "application/pdf",
+    "content-disposition": `attachment; filename="${namaFileTabelPdf(cek.data.judul)}"`,
+  });
 });
 
 // F85 — susun brief manual (uji / generate ulang). Sengaja TANPA route BFF:
