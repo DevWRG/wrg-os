@@ -264,6 +264,7 @@ import {
   akunKso, bacaDokumen, buatKontrak, getKontrak, hapusDokumen, KontrakError, kelengkapanKontrak, listKontrak,
   MAKS_DOKUMEN, perpanjangKontrak, ubahKontrak, ubahStatusKontrak, unggahDokumen,
 } from "./repo/kso-kontrak.js";
+import { BuktiError, bacaBukti, daftarBukti, MAKS_BUKTI, unggahBukti } from "./repo/bukti-pembayaran.js";
 import { GalatKso, daftarTab, detailRencana, isAksiKso, isTabKso, jalankanAksi, tabBoleh } from "./repo/kso-komite.js";
 import { runPolaKomunikasi } from "./repo/polakomunikasi.js";
 import { listWaGroups, setWaGroupCategory, setWaGroupPrefixCategory, isWaGroupCategory } from "./repo/wagroup.js";
@@ -2679,6 +2680,55 @@ app.delete("/kso-kontrak/:id/dokumen/:dokId", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const oleh = c.req.query("oleh")?.trim() || null;
   try { return c.json(await hapusDokumen(c.req.param("id"), c.req.param("dokId"), oleh)); } catch (e) { return kontrakErr(c, e); }
+});
+
+// F32 Bukti Pembayaran (migrasi 238) — arsip foto bukti bayar bertanda KODE PENGAJUAN.
+// Tanpa OCR/WA/pencocokan Accurate (keputusan Direktur 2026-10-19). Append-only: sengaja
+// TIDAK ada PATCH/DELETE. Izin dijaga di BFF (service token mem-bypass JWT di sini);
+// `oleh` diisi BFF dari sesi. Multipart: `file`, `kode`, `catatan?`, `oleh`.
+const buktiErr = (c: Context, e: unknown) => {
+  if (e instanceof BuktiError) return c.json({ error: e.message, ...(e.field ? { field: e.field } : {}) }, e.status);
+  throw e;
+};
+app.post("/bukti-pembayaran", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: Record<string, unknown>;
+  try {
+    body = await c.req.parseBody();
+  } catch {
+    return c.json({ error: "invalid multipart body" }, 400);
+  }
+  const file = body.file;
+  if (!(file instanceof File)) return c.json({ error: "file wajib diisi", field: "file" }, 400);
+  if (file.size > MAKS_BUKTI) return c.json({ error: "file maksimal 8 MB", field: "file" }, 400);
+  const teks = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : null);
+  try {
+    const r = await unggahBukti({ nama: file.name, buf: new Uint8Array(await file.arrayBuffer()) }, body.kode, teks(body.catatan), teks(body.oleh));
+    return c.json(r, 201);
+  } catch (e) { return buktiErr(c, e); }
+});
+app.get("/bukti-pembayaran", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    return c.json(await daftarBukti({
+      kode: c.req.query("kode") ?? undefined, q: c.req.query("q") ?? undefined,
+      limit: Number(c.req.query("limit")) || undefined, offset: Number(c.req.query("offset")) || undefined,
+    }));
+  } catch (e) { return buktiErr(c, e); }
+});
+app.get("/bukti-pembayaran/:id/file", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const d = await bacaBukti(c.req.param("id"));
+    // Header wajib ASCII: nama asli (bisa non-Latin) lewat filename*.
+    const ascii = d.nama.replace(/[^ -~]/g, "_");
+    return c.body(new Uint8Array(d.buf), 200, {
+      "content-type": d.mime,
+      "content-disposition": `inline; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(d.nama)}`,
+      "cache-control": "private, no-store",
+      "x-content-type-options": "nosniff",
+    });
+  } catch (e) { return buktiErr(c, e); }
 });
 
 // F48 — PMF Scorecard fase 1: win-rate deal per brand x region per kuartal. Read-only (SELECT),
