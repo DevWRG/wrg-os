@@ -51,7 +51,7 @@ export function putuskanIzin(u: PenggunaKso, eff: Effective, tab: TabKso, aksi: 
   const f = TAB_KSO[tab].fitur;
   if (eff.superuser) return true;
   // Putusan Direksi TIDAK ikut konvensi "admin lolos semua" (keputusan Direktur 20 Okt): role admin
-  // dipakai juga oleh HOD (Mufid), jadi tab ini hanya lewat centang Akses Grup / role direktur.
+  // juga dipegang akun HOD, jadi tab ini hanya lewat centang Akses Grup / role direktur.
   if (u.role === "admin" && tab !== "direksi") return true;
   const p = eff.permissions[f];
   if (p) {
