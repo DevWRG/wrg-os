@@ -34,6 +34,7 @@ import {
   Landmark,
   Inbox,
   FileBarChart,
+  PackageSearch,
   type LucideIcon,
 } from "lucide-react";
 
@@ -45,6 +46,7 @@ import { canViewKlasifikasi } from "@/lib/klasifikasi-access";
 import { canViewJadwalTeknisi } from "@/lib/jadwal-teknisi-access";
 import { canViewOrderWa } from "@/lib/order-wa-access";
 import { canViewProductScorecard } from "@/lib/product-scorecard-access";
+import { FITUR_PUTUSAN as FITUR_PUTUSAN_PERMINTAAN, canViewPermintaanProduk } from "@/lib/permintaan-produk-access";
 import { canViewKsoKontrak } from "@/lib/kso-kontrak-access";
 import { canViewCn } from "@/lib/cn-access";
 import { canViewApThreeWay } from "@/lib/ap-three-way-access";
@@ -134,6 +136,10 @@ export const NAV: NavGroup[] = [
       { title: "Antrean Order", url: "/order-wa", icon: ShoppingCart, badge: "NEW", show: canViewOrderWa },
       // F6 Product Scorecard — kinerja per kategori/lini/brand/item; izin sendiri, tertutup default (Sync Fitur).
       { title: "Product Scorecard", url: "/product-scorecard", icon: TrendingUp, badge: "NEW", show: canViewProductScorecard },
+      // F171 Permintaan Produk Non-Master — log Komite Product Development (permintaan lapangan di
+      // luar 1.000 SKU). Izin sendiri, tertutup default; sub-fitur putusan Direksi & ambang.
+      { title: "Permintaan Produk", url: "/permintaan-produk", icon: PackageSearch, badge: "NEW", show: canViewPermintaanProduk,
+        features: [FITUR_PUTUSAN_PERMINTAAN] },
       { title: "Sales Alerts", url: "/sales-alerts", icon: Bell, badge: "NEW" },
       { title: "Competitor Intel", url: "/competitor", icon: Swords },
       // F65 Leads DICABUT dari menu 13 Okt 2026 (keputusan user): #LEADS kini
