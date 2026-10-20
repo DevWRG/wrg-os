@@ -44,6 +44,9 @@ export async function ingestInvoices(
 }
 
 // Upsert state aging (idempoten by customer_id+invoice_no). Tanpa logging.
+// Menulis ke ar_aging_base; `ar_aging_mv` = VIEW (migrasi 241) yang menghitung days_overdue/
+// bucket dari due_date vs hari ini WIB. Nilai yang dicap di sini cuma jejak saat ingest —
+// dulu dipakai langsung dan membeku untuk faktur yang tak ditulis ulang (90+ beku sejak 6 Sep).
 async function upsertAging(invoices: InvoiceInput[], asof?: string): Promise<void> {
   const sql = db();
   const base =
@@ -56,7 +59,7 @@ async function upsertAging(invoices: InvoiceInput[], asof?: string): Promise<voi
     const bucket = bucketOf(days);
     const isAnomaly = bucket === "90+";
     await sql`
-      INSERT INTO ar_aging_mv
+      INSERT INTO ar_aging_base
         (customer_id, customer_name, invoice_no, due_date, amount, days_overdue, bucket, is_anomaly, refreshed_at)
       VALUES
         (${inv.customer_id}, ${inv.customer_name ?? null}, ${inv.invoice_no}, ${inv.due_date},
