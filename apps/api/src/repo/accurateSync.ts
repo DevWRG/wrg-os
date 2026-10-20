@@ -134,14 +134,24 @@ async function upsertInvoiceDetail(d: Detail): Promise<boolean> {
       -- benar-benar MENGAMATI perpindahan OPEN → PAID. Urutan CASE-nya menentukan:
       --   1. balik jadi OPEN (retur/koreksi) → NULL lagi, jangan tinggalkan stempel basi
       --   2. sudah pernah distempel → pertahankan, jangan digeser tiap kali sync jalan
-      --   3. baris lama OPEN & sekarang PAID → inilah transisinya, stempel hari ini
+      --   3. baris lama OPEN & sekarang PAID → inilah transisinya. Pakai tanggal bayar ASLI
+      --      dari Accurate (raw.lastPaymentDate, "DD/MM/YYYY") bila sah (terbit ≤ bayar ≤ hari
+      --      ini); kalau tidak, hari ini. Dulu selalu hari ini: penyegaran faktur OPEN pertama
+      --      (21 Okt) mencap 723 faktur "lunas 21 Okt" padahal 407 lunas September (#1840).
+      --      Regex + pagar rentang wajib: to_date menggulung "32/13/2026" tanpa galat.
       --   4. sisanya = sudah PAID sejak pertama kali terlihat → NULL, umur tak diketahui.
       --      SENGAJA tidak distempel: kalau distempel, seluruh invoice lama akan terlihat
       --      berumur (hari ini − tanggal terbit) dan kena CF 0,50 massal.
       lunas_at = CASE
         WHEN EXCLUDED.status <> 'PAID' THEN NULL
         WHEN accurate_invoice.lunas_at IS NOT NULL THEN accurate_invoice.lunas_at
-        WHEN accurate_invoice.status = 'OPEN' THEN CURRENT_DATE
+        WHEN accurate_invoice.status = 'OPEN' THEN COALESCE(
+          -- CASE bersarang, bukan AND: hanya CASE yang menjamin regex dicek SEBELUM to_date.
+          CASE WHEN EXCLUDED.raw->>'lastPaymentDate' ~ '^[0-9]{2}/[0-9]{2}/[0-9]{4}$' THEN
+            CASE WHEN to_date(EXCLUDED.raw->>'lastPaymentDate', 'DD/MM/YYYY') BETWEEN EXCLUDED.tanggal AND CURRENT_DATE
+                 THEN to_date(EXCLUDED.raw->>'lastPaymentDate', 'DD/MM/YYYY') END
+          END,
+          CURRENT_DATE)
         ELSE NULL
       END,
       last_synced_at = now()
