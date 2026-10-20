@@ -2530,7 +2530,7 @@ app.get("/kso-komite/tab", async (c) => {
   if (!u) return c.json({ error: "x-user-id wajib" }, 401);
   try { return c.json({ tab: await tabBoleh(u) }); } catch (e) { return ksoKomiteErr(c, e); }
 });
-// Susunan Komite (migrasi 241) — jabatan & pemegang diisi dari UI; didaftarkan SEBELUM /:tab.
+// Susunan Komite (migrasi 242) — jabatan & pemegang diisi dari UI; didaftarkan SEBELUM /:tab.
 app.get("/kso-komite/susunan", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const u = ksoUser(c);

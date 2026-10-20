@@ -267,7 +267,7 @@ export function validasiAksi(aksi: AksiKso, b: Record<string, unknown>): string 
   }
 }
 
-/** Label manusia untuk kode klausul (perlindungan wajib WRG + klausul khusus RS, migrasi 228/241). */
+/** Label manusia untuk kode klausul (perlindungan wajib WRG + klausul khusus RS, migrasi 228/242). */
 export const LABEL_KLAUSUL: Record<string, string> = {
   eskalasi_tahunan: "kenaikan harga tahunan",
   lapor_test: "kewajiban lapor jumlah test",

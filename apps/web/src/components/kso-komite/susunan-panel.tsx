@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label";
 
 import { LABEL_KOMITE, kirim, waktu, type Komite, type Susunan } from "./types";
 
-// Susunan Komite (migrasi 241): siapa menjabat apa — diisi dari layar ini, tidak pernah di kode.
+// Susunan Komite (migrasi 242): siapa menjabat apa — diisi dari layar ini, tidak pernah di kode.
 // Semua pembuka menu melihatnya; tombol "Atur" hanya untuk pemegang centang kso-komite-susunan
 // (API yang menentukan lewat `bolehUbah`, dan memeriksa ulang setiap simpan).
 export function SusunanPanel() {

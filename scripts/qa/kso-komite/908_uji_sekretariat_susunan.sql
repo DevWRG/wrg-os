@@ -1,4 +1,4 @@
--- Uji migrasi 241 (peran Sekretaris + pencocokan PKS + Susunan Komite). DB UJI saja, sesudah 900–907.
+-- Uji migrasi 242 (peran Sekretaris + pencocokan PKS + Susunan Komite). DB UJI saja, sesudah 900–907.
 \set ON_ERROR_STOP on
 set timezone = 'UTC';
 create table if not exists uji.d908 (k text primary key, v bigint);

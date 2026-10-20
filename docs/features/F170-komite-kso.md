@@ -9,7 +9,7 @@ negosiasi** dengan harga lantai.
 - **Menu**: `/kso-komite` — satu menu, tab per peran (lihat Izin)
 - **WA**: `#KSO` (bot yang sudah ada, openclaw) — saklar `KSO_WA_ENABLED`
 - **Jadwal**: scheduler API — saklar `KSO_JADWAL_ENABLED`
-- **Migrasi**: 224–233, 241 (schema `kso` + `public.kso_komite_jabatan/_pemegang`; tidak menyentuh tabel OS yang sudah ada)
+- **Migrasi**: 224–233, 242 (schema `kso` + `public.kso_komite_jabatan/_pemegang`; tidak menyentuh tabel OS yang sudah ada)
 - **Uji**: `scripts/qa/kso-komite/jalankan_uji.sh` (Postgres sekali pakai) — 184 uji
 
 ## Tahapan
@@ -23,7 +23,7 @@ negosiasi** dengan harga lantai.
 | T5 | jadwal forum & notifikasi, batas HOD hari kerja (231) | #1778 |
 | T6 | label sumber volume + KPI tanpa nol palsu (232); pemetaan KPI → NPK/insentif (dokumen ini) | — |
 | T7 | siap pakai (daftar periksa di bawah) | — |
-| S1 | tab Sekretariat + pencocokan PKS penuh + Susunan Komite dari UI (241) — deck orientasi Direktur 20 Okt | #1839 |
+| S1 | tab Sekretariat + pencocokan PKS penuh + Susunan Komite dari UI (242) — deck orientasi Direktur 20 Okt | #1839 |
 
 ## Keputusan user
 
@@ -111,7 +111,7 @@ Selama C10 & register teknisi kosong, **semua** usulan masuk forum.
 - [ ] Forum pertama tidak membahas usulan baru (SK Pasal 17) — uji alur dengan 2–3 usulan nyata
 - [ ] Data contoh (`scripts/qa/kso-komite/004`) TIDAK pernah dimuat ke prod
 
-## Sekretariat & Susunan Komite (S1, migrasi 241)
+## Sekretariat & Susunan Komite (S1, migrasi 242)
 
 **Pencocokan PKS** (`kso.cocokkan_pks`, pembungkus `kso.app_cocokkan_pks` peran `sekretaris`). Isian dari
 naskah PKS — harga per test, tenor, volume minimum, klausul yang ada. Ditolak bila:

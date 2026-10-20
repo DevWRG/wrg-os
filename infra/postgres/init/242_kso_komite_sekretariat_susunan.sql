@@ -1,4 +1,4 @@
--- 241 — F170 Komite KSO: peran Sekretaris (tab Sekretariat) + Susunan Komite dinamis
+-- 242 — F170 Komite KSO: peran Sekretaris (tab Sekretariat) + Susunan Komite dinamis
 --
 -- Dasar: deck orientasi "KSO Forum" Direktur (20 Okt 2026) + keputusan user 21 Okt:
 --   * Sekretaris Komite menerbitkan penawaran, MENCOCOKKAN PKS dengan putusan, dan mencatat hasil.

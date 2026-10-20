@@ -1,4 +1,4 @@
-// F170 Komite KSO — Susunan Komite (migrasi 241).
+// F170 Komite KSO — Susunan Komite (migrasi 242).
 //
 // Jabatan (Ketua/Sekretaris KSO Forum, Product Development, cadangan) dan pemegangnya diisi dari
 // UI — nama orang TIDAK pernah ditulis di kode (keputusan user 21 Okt: ganti orang cukup dari layar).

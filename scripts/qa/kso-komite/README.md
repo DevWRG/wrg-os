@@ -6,7 +6,7 @@ Implementasi rujukan dari Paket Komite KSO v1.0 (Direktur, 15 Okt 2026), diterje
 |---|---|
 | `infra/postgres/init/224–226` | Skema, fungsi, view — salinan apa adanya dari paket (`001`–`003`) + ambang awal `kso.parameter` |
 | `infra/postgres/init/227` | Hak akses versi WRG-OS (pengganti `005_akses_supabase.sql`) |
-| `infra/postgres/init/241` | Peran Sekretaris (penawaran, pencocokan PKS penuh, kalah) + antrean Sekretariat + tabel Susunan Komite (`public.kso_komite_jabatan/_pemegang`) |
+| `infra/postgres/init/242` | Peran Sekretaris (penawaran, pencocokan PKS penuh, kalah) + antrean Sekretariat + tabel Susunan Komite (`public.kso_komite_jabatan/_pemegang`) |
 | `infra/postgres/init/233` | `kso.hod_akun`: akun login → kursi HOD khusus Komite KSO (tanpa mengubah `app_user.hod_key`/cakupan menu lain) |
 | `infra/postgres/init/232` | Label sumber volume (`kso.tebak_label_sumber` + trigger, koreksi manusia tak ditimpa) + `v_kpi_am` tanpa nol palsu |
 | `infra/postgres/init/231` | Jadwal: batas HOD 1 hari kerja (master_holiday), job idempoten `app_job_*` (akun mesin `job-jadwal`), notifikasi sekali kirim, verifikasi bulan ke-6 |

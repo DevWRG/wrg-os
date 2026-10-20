@@ -43,7 +43,7 @@ export function canTabKso(u: U, tab: TabKso, aksi: "view" | "edit" = "view"): bo
 }
 
 /**
- * Susunan Komite (jabatan & pemegang, migrasi 241) — bukan tab: panel yang terlihat oleh semua
+ * Susunan Komite (jabatan & pemegang, migrasi 242) — bukan tab: panel yang terlihat oleh semua
  * pembuka menu; MENGUBAH hanya lewat centang fitur ini atau grup superuser (role admin tidak
  * otomatis — API repo/kso-komite-susunan.ts bolehUbahSusunan yang menentukan).
  */

@@ -70,7 +70,7 @@ const tautan = () => `${(process.env.WEB_PUBLIC_URL ?? "").replace(/\/$/, "")}/k
 
 export interface ItemAgenda { jenis: string; nomor: string | null; faskes_nama: string; alat_nama: string; capex: number; gerbang_merah: string | null; am_nama: string }
 
-/** Pimpinan forum dari Susunan Komite (diisi di UI, migrasi 241) — jabatan kosong tidak ditulis. */
+/** Pimpinan forum dari Susunan Komite (diisi di UI, migrasi 242) — jabatan kosong tidak ditulis. */
 export interface PimpinanForum { ketua?: string | null; sekretaris?: string | null }
 
 export function pesanAgenda(tgl: string, items: ItemAgenda[], pimpinan: PimpinanForum = {}): string {
