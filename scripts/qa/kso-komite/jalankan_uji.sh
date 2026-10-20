@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# F170 Komite KSO — uji alur (900) + hak akses (901) + referensi OS (902) + lengkapi draft (903) + peran Akses Grup (904) + jadwal (905) + label & KPI (906) + tautan HOD (907) terhadap BERKAS MIGRASI ASLI 224–233.
+# F170 Komite KSO — uji alur (900) + hak akses (901) + referensi OS (902) + lengkapi draft (903) + peran Akses Grup (904) + jadwal (905) + label & KPI (906) + tautan HOD (907) + Sekretariat & Susunan (908) terhadap BERKAS MIGRASI ASLI 224–233 + 241.
 #
 # Pakai: PGHOST=... PGPORT=... PGUSER=... bash scripts/qa/kso-komite/jalankan_uji.sh
 # Membuat database sekali pakai `kso_komite_uji` (DROP + CREATE), tidak menyentuh database lain.
@@ -27,7 +27,8 @@ for f in "$INIT"/224_kso_komite_skema.sql "$INIT"/225_kso_komite_fungsi.sql \
          "$INIT"/226_kso_komite_view.sql "$INIT"/227_kso_komite_akses.sql \
          "$INIT"/228_kso_komite_referensi_os.sql "$INIT"/229_kso_komite_lengkapi_draft.sql \
          "$INIT"/230_kso_komite_peran_akses_grup.sql \
-         "$INIT"/231_kso_komite_jadwal.sql "$INIT"/232_kso_komite_label_sumber.sql "$INIT"/233_kso_komite_hod_akun.sql; do
+         "$INIT"/231_kso_komite_jadwal.sql "$INIT"/232_kso_komite_label_sumber.sql "$INIT"/233_kso_komite_hod_akun.sql \
+         "$INIT"/241_kso_komite_sekretariat_susunan.sql; do
   psql -d $DB -q -1 -v ON_ERROR_STOP=1 -f "$f" >/dev/null
 done
 psql -d $DB -q -v ON_ERROR_STOP=1 -f 004_data_contoh.sql >/dev/null
@@ -53,4 +54,6 @@ strip() { sed -E -e 's/^psql:[^:]+:[0-9]+: NOTICE: +//' \
     | grep -vE "^ *$|^-+$|^\(1 row\)|^ *cek *$" || true
   psql -d $DB -q -v ON_ERROR_STOP=1 -f 907_uji_hod_akun.sql 2>&1 | strip \
     | grep -vE "^ *$|^-+$|^\(1 row\)|^ *(cek|harus_gagal|set_config) *$" || true
+  psql -d $DB -q -v ON_ERROR_STOP=1 -f 908_uji_sekretariat_susunan.sql 2>&1 | strip \
+    | grep -vE "^ *$|^-+$|^\(1 row\)|^ *(cek|harus_gagal|set_config) *$|^ *[a-z0-9-]{3,40} *$" || true
 } | tee /dev/stderr | awk '/^LULUS/{l++} /^GAGAL/{g++} END{printf "\nRingkasan: %d LULUS, %d GAGAL\n", l, g; exit (g>0 || l==0)}'
