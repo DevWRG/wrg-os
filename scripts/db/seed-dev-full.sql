@@ -157,7 +157,7 @@ WHERE NOT EXISTS (SELECT 1 FROM accurate_webhook_log WHERE input_hash = v.input_
 -- ── Finance & AR (ar_aging_mv, collection_draft) ──
 -- ════════════════════════════════════════════════════════════════════
 
-INSERT INTO ar_aging_mv (customer_id, customer_name, invoice_no, due_date, amount, days_overdue, bucket, is_anomaly, refreshed_at) VALUES
+INSERT INTO ar_aging_base (customer_id, customer_name, invoice_no, due_date, amount, days_overdue, bucket, is_anomaly, refreshed_at) VALUES
   ('900003', 'Klinik Pratama Demo Jaya',       'DEMO-INV/2026/06/0003', '2026-07-05', 3552000,  23, '1-30',  FALSE, NOW()),
   ('900004', 'Laboratorium Klinik Demo Prima', 'DEMO-INV/2026/07/0001', '2026-07-17', 14420000, 11, '1-30',  FALSE, NOW()),
   ('900006', 'Klinik Utama Demo Medika',       'DEMO-INV/2026/07/0003', '2026-07-29', 10878000, 0,  'current', FALSE, NOW()),

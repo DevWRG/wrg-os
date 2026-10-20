@@ -13,7 +13,7 @@ import { matchCustomer, type PlanCandidate } from "./parsers/fuzzy.js";
 import { isDbEnabled, pingDb } from "./db.js";
 import { waPreflight, sendViaWaGateway, type WaSendResult } from "./wasend.js";
 import { processUnprocessed, isInboundEnabled } from "./repo/inbound.js";
-import { syncAccurateInvoices, syncVendors, syncItems, syncSalesOrders, syncDeliveryOrders, syncCustomers, syncSalesOrderItems, syncDeliveryOrderItems, syncItemStockBranch, getDeliveryOrderItems, getSalesOrderItems, getVendorDetail, accurateConfigured, syncFixedAssets, fixedAssetSyncBusy, syncPurchaseOrders, purchaseOrderSyncBusy, syncReceiveItems, receiveItemSyncBusy } from "./repo/accurateSync.js";
+import { syncAccurateInvoices, syncVendors, syncItems, syncSalesOrders, syncDeliveryOrders, syncCustomers, syncSalesOrderItems, syncDeliveryOrderItems, syncItemStockBranch, getDeliveryOrderItems, getSalesOrderItems, getVendorDetail, accurateConfigured, syncFixedAssets, fixedAssetSyncBusy, refreshOpenInvoices, openRefreshBusy, syncPurchaseOrders, purchaseOrderSyncBusy, syncReceiveItems, receiveItemSyncBusy } from "./repo/accurateSync.js";
 import {
   listPurchaseOrders,
   isPurchaseOrderSort,
@@ -1270,6 +1270,25 @@ app.post("/accurate/sync/fixed-assets", async (c) => {
   void syncFixedAssets()
     .then((r) => console.log(`[accurate-sync] fixed-asset manual: ${JSON.stringify(r)}`))
     .catch((e) => console.error("[accurate-sync] fixed-asset manual gagal:", e));
+  return c.json({ ok: true, started: true }, 202);
+});
+
+// #1840 — segarkan ulang semua faktur OPEN yang basi (status lunas / sisa tagihan).
+// ±1.900 detail.do (≈10 menit) → 202 lalu jalan di latar; hasil di accurate_sync_state
+// entity 'sales-invoice-open'. Body opsional { stale_hours, max_calls }.
+app.post("/accurate/sync/open-invoices", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  if (!accurateConfigured()) return c.json({ error: "kredensial Accurate tak tersedia" }, 503);
+  if (openRefreshBusy()) return c.json({ ok: false, error: "penyegaran faktur OPEN sedang berjalan" }, 409);
+  let body: { stale_hours?: number; max_calls?: number } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    /* body opsional */
+  }
+  void refreshOpenInvoices({ staleHours: body.stale_hours, maxCalls: body.max_calls })
+    .then((r) => console.log(`[accurate-sync] open-invoices manual: ${JSON.stringify(r)}`))
+    .catch((e) => console.error("[accurate-sync] open-invoices manual gagal:", e));
   return c.json({ ok: true, started: true }, 202);
 });
 
