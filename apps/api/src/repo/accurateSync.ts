@@ -803,6 +803,13 @@ export async function syncAccurateInvoices(
 // Sapuan ini menarik ulang detail SEMUA faktur OPEN yang belum disegarkan dalam
 // `staleHours` jam — yang terlama dulu, dibatasi `maxCalls` per jalan.
 // Catatan F67: lunas_at = saat sapuan MENGAMATI OPEN → PAID, bukan tanggal bayar.
+//
+// Faktur yang sudah DIHAPUS di Accurate (detail.do: "Faktur Penjualan tidak tepat") —
+// biasanya dihapus lalu diinput ulang dengan id baru — dipindah ke accurate_invoice_hilang
+// (migrasi 243) lalu dihapus dari mirror. Tanpa ini id lama tetap OPEN selamanya dan
+// faktur terhitung dua kali di piutang & pendapatan. Pengaman: sebelum menghapus apa pun,
+// satu faktur kontrol (yang paling baru disinkron) harus terbaca — kalau tidak, sesi/
+// kredensial yang bermasalah, bukan fakturnya; dan maksimum `maxHilang` per jalan.
 let openRefreshRunning = false;
 export const openRefreshBusy = () => openRefreshRunning;
 
@@ -811,12 +818,52 @@ export interface OpenRefreshResult {
   candidates?: number;
   refreshed?: number;
   nowPaid?: number;
+  hilang?: number;
+  hilangKembaran?: number;
+  nilaiHilang?: number;
   failed?: number;
+  firstError?: string;
   remaining?: number;
   error?: string;
 }
 
-export async function refreshOpenInvoices(opts: { staleHours?: number; maxCalls?: number } = {}): Promise<OpenRefreshResult> {
+/** Pesan detail.do yang berarti faktur sudah tak ada di Accurate, atau null. Sengaja sempit:
+ *  galat lain (sesi, batas laju, jaringan) TIDAK boleh berujung penghapusan. */
+export function pesanFakturHilang(d: unknown): string | null {
+  const arr = Array.isArray(d) ? d : [d];
+  const teks = arr.filter((x): x is string => typeof x === "string");
+  return teks.some((t) => /faktur penjualan tidak tepat/i.test(t)) ? teks.join("; ") : null;
+}
+
+export async function arsipkanFakturHilang(id: string, pesan: string): Promise<{ outstanding: number; kembaran: boolean } | null> {
+  const sql = db();
+  return (await sql.begin(async (tx) => {
+    const [inv] = await tx`
+      WITH inv AS (DELETE FROM accurate_invoice WHERE id = ${id}::bigint RETURNING *),
+           it  AS (DELETE FROM accurate_invoice_item WHERE invoice_id = ${id}::bigint RETURNING *)
+      INSERT INTO accurate_invoice_hilang
+        (id, number, customer_id, tanggal, total, outstanding, status, ada_kembaran, pesan_accurate, baris, items)
+      SELECT inv.id, inv.number, inv.customer_id, inv.tanggal, inv.total, inv.outstanding, inv.status,
+             EXISTS (SELECT 1 FROM accurate_invoice b WHERE b.number = inv.number AND b.id <> inv.id),
+             ${pesan}, to_jsonb(inv), COALESCE((SELECT jsonb_agg(to_jsonb(it)) FROM it), '[]'::jsonb)
+        FROM inv
+      ON CONFLICT (id) DO NOTHING
+      RETURNING number, customer_id, outstanding, ada_kembaran`;
+    if (!inv) return null;
+    // Baris aging ber-kunci nomor+customer: dibuang hanya bila tak ada lagi faktur bernomor sama.
+    if (!inv.ada_kembaran) {
+      await tx`
+        DELETE FROM ar_aging_base
+         WHERE invoice_no = ${inv.number} AND customer_id = ${String(inv.customer_id)}
+           AND NOT EXISTS (SELECT 1 FROM accurate_invoice WHERE number = ${inv.number})`;
+    }
+    return { outstanding: Number(inv.outstanding ?? 0), kembaran: inv.ada_kembaran === true };
+  })) as { outstanding: number; kembaran: boolean } | null;
+}
+
+export async function refreshOpenInvoices(
+  opts: { staleHours?: number; maxCalls?: number; maxHilang?: number } = {},
+): Promise<OpenRefreshResult> {
   if (openRefreshRunning) return { ok: false, error: "penyegaran faktur OPEN sedang berjalan" };
   const creds = loadCreds();
   if (!creds) return { ok: false, error: "kredensial Accurate tak tersedia" };
@@ -825,26 +872,55 @@ export async function refreshOpenInvoices(opts: { staleHours?: number; maxCalls?
     const sql = db();
     const staleHours = Math.max(1, opts.staleHours ?? 20);
     const maxCalls = Math.max(1, opts.maxCalls ?? 3000);
+    const maxHilang = Math.max(0, opts.maxHilang ?? 500);
+
+    // Kontrol: faktur yang paling baru disinkron PASTI ada di Accurate.
+    const [kontrol] = await sql<{ id: string }[]>`SELECT id::text FROM accurate_invoice ORDER BY last_synced_at DESC NULLS LAST LIMIT 1`;
+    if (kontrol) {
+      const k = await accGet(creds, "/accurate/api/sales-invoice/detail.do", `id=${kontrol.id}`);
+      if (k?.s !== true) return { ok: false, error: `faktur kontrol ${kontrol.id} tak terbaca — sapuan dibatalkan: ${JSON.stringify(k?.d).slice(0, 160)}` };
+    }
+
     const rows = await sql<{ id: string }[]>`
       SELECT id::text FROM accurate_invoice
        WHERE status = 'OPEN' AND last_synced_at < now() - make_interval(hours => ${staleHours})
        ORDER BY last_synced_at ASC LIMIT ${maxCalls}`;
     let refreshed = 0;
     let nowPaid = 0;
+    let hilang = 0;
+    let hilangKembaran = 0;
+    let nilaiHilang = 0;
     let failed = 0;
+    let firstError: string | undefined;
     let batch: AccurateInvoice[] = [];
     for (const r of rows) {
-      const det = await accGet(creds, "/accurate/api/sales-invoice/detail.do", `id=${r.id}`);
-      if (det?.s !== true) {
-        failed += 1;
-      } else if (await upsertInvoiceDetail(det.d as Detail)) {
-        refreshed += 1;
-        if (!(det.d as Detail).outstanding) nowPaid += 1;
-        batch.push(det.d as AccurateInvoice);
-        if (batch.length >= 200) {
-          await refreshAgingFromAccurate(batch);
-          batch = [];
+      try {
+        const det = await accGet(creds, "/accurate/api/sales-invoice/detail.do", `id=${r.id}`);
+        if (det?.s === true) {
+          if (await upsertInvoiceDetail(det.d as Detail)) {
+            refreshed += 1;
+            if (!(det.d as Detail).outstanding) nowPaid += 1;
+            batch.push(det.d as AccurateInvoice);
+            if (batch.length >= 200) {
+              await refreshAgingFromAccurate(batch);
+              batch = [];
+            }
+          }
+        } else {
+          const pesan = pesanFakturHilang(det?.d);
+          const a = pesan && hilang < maxHilang ? await arsipkanFakturHilang(r.id, pesan) : null;
+          if (a) {
+            hilang += 1;
+            nilaiHilang += a.outstanding;
+            if (a.kembaran) hilangKembaran += 1;
+          } else {
+            failed += 1;
+            firstError ??= `${r.id}: ${JSON.stringify(det?.d).slice(0, 160)}`;
+          }
         }
+      } catch (e) {
+        failed += 1;
+        firstError ??= `${r.id}: ${e instanceof Error ? e.message : String(e)}`.slice(0, 200);
       }
       await sleep(150);
     }
@@ -852,10 +928,13 @@ export async function refreshOpenInvoices(opts: { staleHours?: number; maxCalls?
     const [sisa] = await sql<{ n: number }[]>`
       SELECT count(*)::int AS n FROM accurate_invoice
        WHERE status = 'OPEN' AND last_synced_at < now() - make_interval(hours => ${staleHours})`;
-    const res = { ok: true, candidates: rows.length, refreshed, nowPaid, failed, remaining: Number(sisa?.n ?? 0) };
+    const res: OpenRefreshResult = {
+      ok: true, candidates: rows.length, refreshed, nowPaid, hilang, hilangKembaran, nilaiHilang, failed,
+      ...(firstError ? { firstError } : {}), remaining: Number(sisa?.n ?? 0),
+    };
     await sql`
       INSERT INTO accurate_sync_state (entity, last_synced_at, last_run_ok, last_run_summary)
-      VALUES ('sales-invoice-open', now(), ${failed < rows.length || rows.length === 0},
+      VALUES ('sales-invoice-open', now(), ${failed === 0},
               ${sql.json(res as unknown as Parameters<typeof sql.json>[0])})
       ON CONFLICT (entity) DO UPDATE SET last_synced_at = now(), last_run_ok = EXCLUDED.last_run_ok,
         last_run_summary = EXCLUDED.last_run_summary`;

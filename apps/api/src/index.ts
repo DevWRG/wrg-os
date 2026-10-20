@@ -1275,18 +1275,19 @@ app.post("/accurate/sync/fixed-assets", async (c) => {
 
 // #1840 — segarkan ulang semua faktur OPEN yang basi (status lunas / sisa tagihan).
 // ±1.900 detail.do (≈10 menit) → 202 lalu jalan di latar; hasil di accurate_sync_state
-// entity 'sales-invoice-open'. Body opsional { stale_hours, max_calls }.
+// entity 'sales-invoice-open'. Body opsional { stale_hours, max_calls, max_hilang }.
+// Faktur yang sudah dihapus di Accurate dipindah ke accurate_invoice_hilang (migrasi 243).
 app.post("/accurate/sync/open-invoices", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   if (!accurateConfigured()) return c.json({ error: "kredensial Accurate tak tersedia" }, 503);
   if (openRefreshBusy()) return c.json({ ok: false, error: "penyegaran faktur OPEN sedang berjalan" }, 409);
-  let body: { stale_hours?: number; max_calls?: number } = {};
+  let body: { stale_hours?: number; max_calls?: number; max_hilang?: number } = {};
   try {
     body = await c.req.json();
   } catch {
     /* body opsional */
   }
-  void refreshOpenInvoices({ staleHours: body.stale_hours, maxCalls: body.max_calls })
+  void refreshOpenInvoices({ staleHours: body.stale_hours, maxCalls: body.max_calls, maxHilang: body.max_hilang })
     .then((r) => console.log(`[accurate-sync] open-invoices manual: ${JSON.stringify(r)}`))
     .catch((e) => console.error("[accurate-sync] open-invoices manual gagal:", e));
   return c.json({ ok: true, started: true }, 202);
