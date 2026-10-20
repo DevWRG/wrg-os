@@ -71,6 +71,10 @@ import { DriveError, driveSiap } from "./gdrive.js";
 import { CampaignError, buatKampanye, cariItem, detailKampanye, listKampanye, opsiBrand, ubahKampanye } from "./repo/campaign.js";
 import { listDemoTrial, getDemoTrial, bukaDemoTrial, ubahDemoTrial, tutupDemoTrial, rekapKonversi, resolusiFaskes, dealTerlihat, DemoTrialError } from "./repo/demo-trial.js";
 import {
+  PermintaanError, analisa as ppAnalisa, cariSku as ppCariSku, catatPermintaan, listPermintaan, listReview as ppListReview,
+  opsi as ppOpsi, putuskan as ppPutuskan, simpanKelompok as ppSimpanKelompok, ubahParam as ppUbahParam, ubahPermintaan, usulkan as ppUsulkan, bacaParam as ppBacaParam,
+} from "./repo/permintaan-produk.js";
+import {
   ingestInvoices,
   ingestAccurateWebhook,
   getAging,
@@ -4976,6 +4980,86 @@ app.post("/demo-trial/:id/tutup", async (c) => {
 app.get("/demo-trial-am", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json({ am: await listOwnerCandidates(await scopeOf(c)) });
+});
+
+// F171 Permintaan Produk Non-Master (Komite Product Development, migrasi 244). Gerbang menu
+// "/permintaan-produk" (lihat/catat/ubah) + sub-fitur "permintaan-produk-putusan" (putusan &
+// ambang) DIPERIKSA DI BFF; `oleh` diisi BFF dari sesi, tak pernah dari browser.
+const ppErr = (c: Context, e: unknown) => {
+  if (e instanceof PermintaanError) {
+    const kandidat = (e as PermintaanError & { kandidat?: string[] }).kandidat;
+    return c.json(kandidat ? { error: e.message, kandidat } : { error: e.message }, e.status as 400);
+  }
+  console.error("[permintaan-produk]", e);
+  return c.json({ error: "Gagal memproses permintaan produk." }, 500);
+};
+const ppOleh = (b: Record<string, unknown>) => (typeof b.oleh === "string" && b.oleh.trim() ? b.oleh.trim() : null);
+const ppJson = async (c: Context) => ((await c.req.json().catch(() => null)) as Record<string, unknown> | null) ?? {};
+app.get("/permintaan-produk", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const n = (k: string) => { const v = Number(c.req.query(k)); return Number.isFinite(v) && v >= 0 ? v : undefined; };
+  try {
+    return c.json(await listPermintaan({ q: c.req.query("q"), cek: c.req.query("cek"), kelompok_id: n("kelompok_id") ?? null,
+      dari: c.req.query("dari"), sampai: c.req.query("sampai"), limit: n("limit"), offset: n("offset") }));
+  } catch (e) { return ppErr(c, e); }
+});
+app.get("/permintaan-produk/analisa", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try { return c.json(await ppAnalisa()); } catch (e) { return ppErr(c, e); }
+});
+app.get("/permintaan-produk/review", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try { return c.json(await ppListReview(c.req.query("kuartal"))); } catch (e) { return ppErr(c, e); }
+});
+app.get("/permintaan-produk/opsi", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try { return c.json({ ...(await ppOpsi()), param: await ppBacaParam() }); } catch (e) { return ppErr(c, e); }
+});
+app.get("/permintaan-produk/sku", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try { return c.json(await ppCariSku(c.req.query("q") ?? "")); } catch (e) { return ppErr(c, e); }
+});
+app.post("/permintaan-produk", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const b = await ppJson(c);
+  const oleh = ppOleh(b);
+  if (!oleh) return c.json({ error: "oleh wajib (diisi BFF dari sesi)" }, 400);
+  try { return c.json(await catatPermintaan(b, oleh), 201); } catch (e) { return ppErr(c, e); }
+});
+app.patch("/permintaan-produk/:id{[0-9]+}", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const b = await ppJson(c);
+  const oleh = ppOleh(b);
+  if (!oleh) return c.json({ error: "oleh wajib (diisi BFF dari sesi)" }, 400);
+  try { return c.json(await ubahPermintaan(Number(c.req.param("id")), b, oleh)); } catch (e) { return ppErr(c, e); }
+});
+app.post("/permintaan-produk/kelompok", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const b = await ppJson(c);
+  const oleh = ppOleh(b);
+  if (!oleh) return c.json({ error: "oleh wajib (diisi BFF dari sesi)" }, 400);
+  try { return c.json(await ppSimpanKelompok(b, oleh)); } catch (e) { return ppErr(c, e); }
+});
+app.post("/permintaan-produk/review", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const b = await ppJson(c);
+  const oleh = ppOleh(b);
+  if (!oleh) return c.json({ error: "oleh wajib (diisi BFF dari sesi)" }, 400);
+  try { return c.json(await ppUsulkan(b, oleh)); } catch (e) { return ppErr(c, e); }
+});
+app.post("/permintaan-produk/review/:id{[0-9]+}/putusan", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const b = await ppJson(c);
+  const oleh = ppOleh(b);
+  if (!oleh) return c.json({ error: "oleh wajib (diisi BFF dari sesi)" }, 400);
+  try { return c.json(await ppPutuskan(Number(c.req.param("id")), b, oleh)); } catch (e) { return ppErr(c, e); }
+});
+app.patch("/permintaan-produk/param", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const b = await ppJson(c);
+  const oleh = ppOleh(b);
+  if (!oleh) return c.json({ error: "oleh wajib (diisi BFF dari sesi)" }, 400);
+  try { return c.json(await ppUbahParam(b, oleh)); } catch (e) { return ppErr(c, e); }
 });
 
 // F56 Onboarding Checklist Karyawan Baru (migrasi 213, repo/onboarding.ts). Gerbang menu/izin
