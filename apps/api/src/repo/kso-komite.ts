@@ -162,6 +162,10 @@ export async function detailRencana(userId: string, tab: TabKso, id: number): Pr
   const d = await sebagaiPengguna(userId, tab, "view", async (tx) => {
     const [r] = await tx`select *, capex::float8 as capex from kso.v_rencana where id = ${id}`;
     if (!r) throw new GalatKso(404, "Rencana tidak ada, atau di luar akses tab ini.");
+    // isi PKS (migrasi 242) tidak ada di v_rencana — dibaca dari tabelnya (RLS boleh_lihat sama)
+    const [pks] = await tx`select harga_deal::float8 as harga_deal, pks_tenor_bulan, pks_volume_minimum, pks_klausul
+                             from kso.rencana_kso where id = ${id}`;
+    Object.assign(r, pks ?? {});
     const [gerbang, pendukung, klausul, pendapat, mandat, usulan, putusan, riwayat, agendaItem, klausulKhusus] = await Promise.all([
       tx`select no, nama, status::text, nilai from kso.gerbang_hasil where rencana_id = ${id} order by no`,
       tx`select nama, tipe::text, sip_faskes, kontak_terakhir_tanggal::text, kontak_terakhir_cara::text from kso.rencana_pendukung where rencana_id = ${id} order by id`,
