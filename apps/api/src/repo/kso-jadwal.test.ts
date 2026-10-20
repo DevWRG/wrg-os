@@ -58,3 +58,9 @@ test("HOD forum: satu pesan berisi semua usulan yang menunggu pendapatnya", () =
   assert.match(t, /1\. KSO-2026-0036[\s\S]*2\. KSO-2026-0037/);
   assert.match(t, /bukan putusan/);
 });
+
+test("agenda menampilkan Ketua & Sekretaris dari Susunan Komite; jabatan kosong tidak ditulis", () => {
+  const isi = pesanAgenda("2026-10-20", [], { ketua: "Ketua Uji", sekretaris: "Sekretaris Uji" });
+  assert.match(isi, /^\*Agenda Forum Komite KSO — .*\*\nKetua: Ketua Uji · Sekretaris: Sekretaris Uji\n/);
+  assert.doesNotMatch(pesanAgenda("2026-10-20", [], { ketua: null }), /Ketua:|Sekretaris:/);
+});
