@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 
 import { db } from "../db.js";
-import { ingestAccurateWebhook, normalizeAccurateDate, type AccurateInvoice } from "./ar.js";
+import { ingestAccurateWebhook, normalizeAccurateDate, refreshAgingFromAccurate, type AccurateInvoice } from "./ar.js";
 import {
   upsertVendors, upsertItems, upsertSalesOrders, upsertDeliveryOrders, upsertCustomers,
   replaceSalesOrderItems, replaceDeliveryOrderItems, pendingItemDocs, countPendingItemDocs,
@@ -839,6 +839,77 @@ export async function syncAccurateInvoices(
     ...(cappedByPages ? { cappedByPages: true } : {}),
     ...(existingIds ? { skippedExisting } : {}),
   };
+}
+
+// Penyegaran faktur OPEN (#1840). syncAccurateInvoices harian cuma menarik faktur
+// bertanggal 7 hari terakhir, jadi faktur yang lebih tua tak pernah dicek ulang:
+// pelunasan sesudahnya tak tercatat (status OPEN, outstanding, lunas_at basi). Prod
+// 21 Okt: 1.255 faktur OPEN (Rp 13,42 M) terakhir disinkron > 30 hari lalu.
+// Sapuan ini menarik ulang detail SEMUA faktur OPEN yang belum disegarkan dalam
+// `staleHours` jam — yang terlama dulu, dibatasi `maxCalls` per jalan.
+// Catatan F67: lunas_at = saat sapuan MENGAMATI OPEN → PAID, bukan tanggal bayar.
+let openRefreshRunning = false;
+export const openRefreshBusy = () => openRefreshRunning;
+
+export interface OpenRefreshResult {
+  ok: boolean;
+  candidates?: number;
+  refreshed?: number;
+  nowPaid?: number;
+  failed?: number;
+  remaining?: number;
+  error?: string;
+}
+
+export async function refreshOpenInvoices(opts: { staleHours?: number; maxCalls?: number } = {}): Promise<OpenRefreshResult> {
+  if (openRefreshRunning) return { ok: false, error: "penyegaran faktur OPEN sedang berjalan" };
+  const creds = loadCreds();
+  if (!creds) return { ok: false, error: "kredensial Accurate tak tersedia" };
+  openRefreshRunning = true;
+  try {
+    const sql = db();
+    const staleHours = Math.max(1, opts.staleHours ?? 20);
+    const maxCalls = Math.max(1, opts.maxCalls ?? 3000);
+    const rows = await sql<{ id: string }[]>`
+      SELECT id::text FROM accurate_invoice
+       WHERE status = 'OPEN' AND last_synced_at < now() - make_interval(hours => ${staleHours})
+       ORDER BY last_synced_at ASC LIMIT ${maxCalls}`;
+    let refreshed = 0;
+    let nowPaid = 0;
+    let failed = 0;
+    let batch: AccurateInvoice[] = [];
+    for (const r of rows) {
+      const det = await accGet(creds, "/accurate/api/sales-invoice/detail.do", `id=${r.id}`);
+      if (det?.s !== true) {
+        failed += 1;
+      } else if (await upsertInvoiceDetail(det.d as Detail)) {
+        refreshed += 1;
+        if (!(det.d as Detail).outstanding) nowPaid += 1;
+        batch.push(det.d as AccurateInvoice);
+        if (batch.length >= 200) {
+          await refreshAgingFromAccurate(batch);
+          batch = [];
+        }
+      }
+      await sleep(150);
+    }
+    if (batch.length > 0) await refreshAgingFromAccurate(batch);
+    const [sisa] = await sql<{ n: number }[]>`
+      SELECT count(*)::int AS n FROM accurate_invoice
+       WHERE status = 'OPEN' AND last_synced_at < now() - make_interval(hours => ${staleHours})`;
+    const res = { ok: true, candidates: rows.length, refreshed, nowPaid, failed, remaining: Number(sisa?.n ?? 0) };
+    await sql`
+      INSERT INTO accurate_sync_state (entity, last_synced_at, last_run_ok, last_run_summary)
+      VALUES ('sales-invoice-open', now(), ${failed < rows.length || rows.length === 0},
+              ${sql.json(res as unknown as Parameters<typeof sql.json>[0])})
+      ON CONFLICT (entity) DO UPDATE SET last_synced_at = now(), last_run_ok = EXCLUDED.last_run_ok,
+        last_run_summary = EXCLUDED.last_run_summary`;
+    return res;
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  } finally {
+    openRefreshRunning = false;
+  }
 }
 
 // F34 — cermin aset tetap (fixed-asset). Bentuk data dari probe prod
