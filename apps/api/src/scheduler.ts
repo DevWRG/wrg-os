@@ -25,7 +25,7 @@ import { generateRekap, generateResume } from "./repo/monitor.js";
 import {
   syncAccurateInvoices, syncSalesOrders, syncDeliveryOrders, syncCustomers,
   syncSalesOrderItems, syncDeliveryOrderItems,
-  syncItems, syncItemStockBranch, syncFixedAssets, syncPurchaseOrders, syncReceiveItems,
+  syncItems, syncItemStockBranch, syncFixedAssets, syncPurchaseOrders, syncReceiveItems, syncPurchaseInvoices,
 } from "./repo/accurateSync.js";
 import { runPlanCheck, runReportCheck } from "./repo/compliance.js";
 import { runNotifTua } from "./repo/notiftua.js";
@@ -879,7 +879,7 @@ export function startScheduler(): ScheduleStatus {
   // accurate-po-sync (F13) — tiap 30 menit jam kerja-ish. Inkremental per
   // lastUpdate Accurate, jadi siklus tanpa perubahan cuma 1 halaman list.
   // Penerimaan Barang (F36, migrasi 206) ikut di job yang sama, SESUDAH PO:
-  // baris penerimaan menaut ke PO lewat accurate_po_id.
+  // baris penerimaan menaut ke PO lewat accurate_po_id. Faktur Pembelian (F152, 240) terakhir.
   const poSyncExpr = process.env.ACCURATE_PO_SYNC_CRON ?? "*/30 7-21 * * *";
   if (poSyncEnabled && cron.validate(poSyncExpr)) {
     cron.schedule(
@@ -891,6 +891,9 @@ export function startScheduler(): ScheduleStatus {
           console.log(`[scheduler] accurate-po-sync @ ${startedAt} ${JSON.stringify(r)}`);
           const ri = await syncReceiveItems();
           console.log(`[scheduler] accurate-po-sync receive-item @ ${startedAt} ${JSON.stringify(ri)}`);
+          // F152 — faktur pembelian SESUDAH PO & penerimaan: barisnya menaut ke keduanya.
+          const pi = await syncPurchaseInvoices();
+          console.log(`[scheduler] accurate-po-sync purchase-invoice @ ${startedAt} ${JSON.stringify(pi)}`);
         } catch (e) {
           console.error(`[scheduler] accurate-po-sync gagal @ ${startedAt}:`, e);
         }

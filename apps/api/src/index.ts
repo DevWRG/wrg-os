@@ -17,7 +17,8 @@ import { matchCustomer, type PlanCandidate } from "./parsers/fuzzy.js";
 import { isDbEnabled, pingDb } from "./db.js";
 import { waPreflight, sendViaWaGateway, type WaSendResult } from "./wasend.js";
 import { processUnprocessed, isInboundEnabled } from "./repo/inbound.js";
-import { syncAccurateInvoices, syncVendors, syncItems, syncSalesOrders, syncDeliveryOrders, syncCustomers, syncSalesOrderItems, syncDeliveryOrderItems, syncItemStockBranch, getDeliveryOrderItems, getSalesOrderItems, getVendorDetail, accurateConfigured, syncFixedAssets, fixedAssetSyncBusy, syncPurchaseOrders, purchaseOrderSyncBusy, syncReceiveItems, receiveItemSyncBusy } from "./repo/accurateSync.js";
+import { syncAccurateInvoices, syncVendors, syncItems, syncSalesOrders, syncDeliveryOrders, syncCustomers, syncSalesOrderItems, syncDeliveryOrderItems, syncItemStockBranch, getDeliveryOrderItems, getSalesOrderItems, getVendorDetail, accurateConfigured, syncFixedAssets, fixedAssetSyncBusy, syncPurchaseOrders, purchaseOrderSyncBusy, syncReceiveItems, receiveItemSyncBusy, syncPurchaseInvoices, purchaseInvoiceSyncBusy } from "./repo/accurateSync.js";
+import { ApError, getFaktur as getFakturAp, listFaktur as listFakturAp } from "./repo/ap-three-way.js";
 import { listAsetTetap, ringkasanAsetTetap, jadwalAsetTetap, simpanOverrideAsetTetap, type AsetTetapFilter } from "./repo/asetTetap.js";
 import { pratinjauRekon, terapkanRekon, batalkanTautanOtomatis, cariAlatKso } from "./repo/asetTetapRekon.js";
 import { mirrorFreshness } from "./repo/mirror-health.js";
@@ -1536,6 +1537,19 @@ app.post("/accurate/sync/receive-items", async (c) => {
   void syncReceiveItems({ full })
     .then((r) => console.log(`[accurate-sync] receive-item manual: ${JSON.stringify(r)}`))
     .catch((e) => console.error("[accurate-sync] receive-item manual gagal:", e));
+  return c.json({ ok: true, started: true }, 202);
+});
+
+// F152 (240) — Faktur Pembelian Accurate → cermin 3-way match. Latar (202); hasil di
+// GET /ap/three-way (field `sinkron`). ?full=1 = abaikan watermark.
+app.post("/accurate/sync/purchase-invoices", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  if (!accurateConfigured()) return c.json({ error: "kredensial Accurate tak tersedia" }, 503);
+  if (purchaseInvoiceSyncBusy()) return c.json({ ok: false, error: "sinkron faktur pembelian sedang berjalan" }, 409);
+  const full = c.req.query("full") === "1";
+  void syncPurchaseInvoices({ full })
+    .then((r) => console.log(`[accurate-sync] purchase-invoice manual: ${JSON.stringify(r)}`))
+    .catch((e) => console.error("[accurate-sync] purchase-invoice manual gagal:", e));
   return c.json({ ok: true, started: true }, 202);
 });
 
@@ -6430,6 +6444,43 @@ app.post("/cn/pengajuan/:id/status", async (c) => {
     const b = await cnBody(c);
     return c.json(await pindahStatusCn(id, b, cnOleh(b)));
   } catch (e) { return cnErr(c, e); }
+});
+
+// F152 3-Way Match Faktur Pembelian (AP) — read-only, migrasi 240 (repo/ap-three-way.ts). Gerbang menu/izin
+// (requireFeature "/ap-three-way") di BFF. Hasil match dihitung saat dibaca, tak disimpan.
+const apErr = (c: { json: (b: unknown, s?: number) => Response }, e: unknown) => {
+  if (e instanceof ApError) return c.json({ error: e.message, field: e.field }, e.status);
+  // 42P01 = tabel belum ada (migrasi 240 belum diterapkan) → 503, bukan 500 buram.
+  if ((e as { code?: string })?.code === "42P01") return c.json({ error: "migration_pending" }, 503);
+  return c.json({ error: "gagal memproses 3-way match" }, 500);
+};
+app.get("/ap/three-way", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const vendor = c.req.query("vendor_id");
+    if (vendor && !/^\d{1,15}$/.test(vendor)) return c.json({ error: "vendor_id tidak valid", field: "vendor_id" }, 400);
+    const num = (k: string): number | null => {
+      const v = c.req.query(k);
+      return v && /^\d{1,9}$/.test(v) ? Number(v) : null;
+    };
+    for (const k of ["limit", "offset"]) {
+      const v = c.req.query(k);
+      if (v && !/^\d{1,9}$/.test(v)) return c.json({ error: `${k} tidak valid`, field: k }, 400);
+    }
+    return c.json(await listFakturAp({
+      status: c.req.query("status"), q: c.req.query("q"), vendor_id: vendor ? Number(vendor) : null,
+      dari: c.req.query("dari"), sampai: c.req.query("sampai"), limit: num("limit"), offset: num("offset"),
+    }));
+  } catch (e) { return apErr(c, e); }
+});
+app.get("/ap/three-way/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const raw = c.req.param("id");
+    if (!/^\d{1,15}$/.test(raw)) return c.json({ error: "id tidak valid" }, 400);
+    const r = await getFakturAp(Number(raw));
+    return r ? c.json(r) : c.json({ error: "faktur pembelian tidak ditemukan" }, 404);
+  } catch (e) { return apErr(c, e); }
 });
 
 // F74 Campaign Tracker (menyerap F46) — kampanye non-KSO per brand/item +
