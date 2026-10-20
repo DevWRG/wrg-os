@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -10,7 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import type { TabKso } from "@/lib/kso-komite-access";
 import { cn } from "@/lib/utils";
 
-import { GERBANG_CLS, GERBANG_IKON, STATUS_LABEL, kirim, rp, rpJt, waktu, type Detail } from "./types";
+import { GERBANG_CLS, GERBANG_IKON, LABEL_PERLINDUNGAN, STATUS_LABEL, kirim, rp, rpJt, waktu, type Detail } from "./types";
 
 // Detail satu rencana + form aksi sesuai tab. Form hanya muncul bila tab boleh "edit" DAN
 // status rencana cocok; API tetap memeriksa keduanya (tombol tersembunyi ≠ endpoint tertutup).
@@ -77,6 +78,13 @@ export function RencanaDialog({ tab, id, bolehAksi, onClose, onBerubah }: {
                 <Blok judul={`Mandat negosiasi (${d.mandat.sumber}) — berlaku s/d ${d.mandat.berlaku_sampai}`}>
                   <li>Lantai {rp(d.mandat.harga_lantai)}/test · pembuka {rp(d.mandat.harga_target)}/test</li>
                   <li>Capex maks {rpJt(d.mandat.capex_maks)} · tenor maks {d.mandat.tenor_maks_bulan} bln · volume min {d.mandat.volume_minimum ?? "—"} test/bln</li>
+                  {d.mandat.klausul_dilarang.length > 0 && <li>Klausul dilarang: {d.mandat.klausul_dilarang.map((k) => labelKlausul(d, k)).join(", ")}</li>}
+                </Blok>
+              )}
+              {r.harga_deal != null && (
+                <Blok judul="PKS (dicocokkan Sekretariat)">
+                  <li>Harga {rp(Number(r.harga_deal))}/test · tenor {String(r.pks_tenor_bulan ?? "—")} bln · volume min {String(r.pks_volume_minimum ?? "—")} test/bln</li>
+                  {Array.isArray(r.pks_klausul) && <li>Klausul: {(r.pks_klausul as string[]).map((k) => labelKlausul(d, k)).join(", ") || "—"}</li>}
                 </Blok>
               )}
               {d.putusan && <Blok judul="Putusan Direksi"><li><b>{d.putusan.putusan}</b>{d.putusan.catatan && ` — ${d.putusan.catatan}`} <span className="text-muted-foreground text-xs">{waktu(d.putusan.at)}</span></li></Blok>}
@@ -92,6 +100,8 @@ export function RencanaDialog({ tab, id, bolehAksi, onClose, onBerubah }: {
     </Dialog>
   );
 }
+
+const labelKlausul = (d: Detail, k: string) => LABEL_PERLINDUNGAN[k] ?? d.klausul_khusus.find((x) => x.kode === k)?.label ?? k;
 
 function Blok({ judul, children }: { judul: string; children: React.ReactNode }) {
   return (
@@ -144,13 +154,21 @@ function FormAksi({ tab, d, jalankan }: { tab: TabKso; d: Detail; jalankan: Jala
   if (tab === "agenda" && mandatLewat && (s === "DIPUTUS_HOD" || s === "MANDAT_TERBIT"))
     return <FormTeks judul="Tarik kembali ke forum" nada="amber" label="Alasan" aksi="tarik" kunci="alasan" jalankan={jalankan} />;
   if (tab === "direksi" && ["DIREKOMENDASIKAN", "DIREKOMENDASIKAN_BERSYARAT", "TIDAK_DIREKOMENDASIKAN"].includes(s)) return <FormDireksi d={d} jalankan={jalankan} />;
-  if (tab === "direksi" && s === "PENAWARAN_TERBIT")
-    return <FormAngka judul="Catat PKS ditandatangani" label="Harga per test di PKS (Rp)" aksi="pks" kunci="harga_deal" jalankan={jalankan} />;
-  if (tab === "penawaran" && (s === "DIPUTUS_HOD" || s === "MANDAT_TERBIT") && !mandatLewat)
+  // Sekretariat (atau Admin Sales cadangan): penawaran terbit dengan harga pembuka mandat
+  if ((tab === "sekretariat" || tab === "penawaran") && (s === "DIPUTUS_HOD" || s === "MANDAT_TERBIT") && !mandatLewat)
     return (
       <div className="space-y-3">
-        <FormAngka judul="Terbitkan penawaran" label={`Harga per test (Rp) — lantai ${rp(d.mandat?.harga_lantai)}, pembuka ${rp(d.mandat?.harga_target)}`} aksi="penawaran" kunci="harga" jalankan={jalankan} />
+        <FormAngka judul="Terbitkan penawaran" label={`Harga per test (Rp) — lantai ${rp(d.mandat?.harga_lantai)}, pembuka ${rp(d.mandat?.harga_target)}`}
+          awal={d.mandat?.harga_target ?? d.mandat?.harga_lantai ?? null} aksi="penawaran" kunci="harga" jalankan={jalankan} />
         <FormTeks judul="Catat kalah" nada="amber" label="Alasan kalah" aksi="kalah" kunci="alasan" jalankan={jalankan} />
+      </div>
+    );
+  // Sekretariat: negosiasi berjalan → cocokkan naskah PKS dengan putusan sebelum tanda tangan
+  if (tab === "sekretariat" && s === "PENAWARAN_TERBIT")
+    return (
+      <div className="space-y-3">
+        <FormPks d={d} jalankan={jalankan} />
+        <FormTeks judul="Catat kalah" nada="amber" label="Alasan kalah (wajib, dibawa ke tinjauan portofolio)" aksi="kalah" kunci="alasan" jalankan={jalankan} />
       </div>
     );
   if (tab === "teknik" && s === "PKS_TTD") return <FormSerahTerima jalankan={jalankan} />;
@@ -215,9 +233,11 @@ function FormTeks({ judul, nada, label, aksi, kunci, jalankan }: { judul: string
 
 const angka = (s: string) => (s.trim() === "" ? null : Number(s.replace(/\./g, "").replace(",", ".")));
 
-function FormAngka({ judul, label, aksi, kunci, jalankan }: { judul: string; label: string; aksi: string; kunci: string; jalankan: Jalankan }) {
+function FormAngka({ judul, label, aksi, kunci, awal = null, jalankan }: {
+  judul: string; label: string; aksi: string; kunci: string; awal?: number | null; jalankan: Jalankan;
+}) {
   const { sibuk, err, go } = useKirim(jalankan);
-  const [v, setV] = useState("");
+  const [v, setV] = useState(awal == null ? "" : String(awal));
   return (
     <Kotak judul={judul}>
       <Label>{label}</Label>
@@ -280,6 +300,49 @@ function FormDireksi({ d, jalankan }: { d: Detail; jalankan: Jalankan }) {
         putusan: p, catatan: f.catatan, lantai: angka(f.lantai), target: angka(f.target), tenor_maks: angka(f.tenor_maks),
         capex_maks: angka(f.capex_maks), volume_min: angka(f.volume_min),
       })}>Simpan putusan</Button>
+    </Kotak>
+  );
+}
+
+// Pencocokan PKS: isi dari naskah PKS, bukan dari mandat — sistem yang membandingkan dengan putusan
+// (harga ≥ lantai, tenor ≤ maks, volume ≥ minimum, perlindungan wajib ada, tanpa klausul dilarang /
+// di luar usulan). Tidak cocok = ditolak dengan rinciannya; tidak ada PKS di luar keputusan.
+function FormPks({ d, jalankan }: { d: Detail; jalankan: Jalankan }) {
+  const { sibuk, err, go } = useKirim(jalankan);
+  const [f, setF] = useState({ harga: "", tenor: "", volume: "" });
+  const [klausul, setKlausul] = useState<string[]>([]);
+  const isi = (k: keyof typeof f) => (e: { target: { value: string } }) => setF({ ...f, [k]: e.target.value });
+  const ubah = (k: string, ya: boolean) => setKlausul((x) => (ya ? [...new Set([...x, k])] : x.filter((y) => y !== k)));
+  const m = d.mandat;
+  const wajib = m?.klausul_wajib ?? Object.keys(LABEL_PERLINDUNGAN);
+  const centang = (k: string, label: string, catatan?: string) => (
+    <label key={k} className="flex items-start gap-2 text-sm">
+      <Checkbox className="mt-0.5" checked={klausul.includes(k)} onCheckedChange={(v) => ubah(k, v === true)} />
+      <span>{label}{catatan && <span className="text-muted-foreground text-xs"> — {catatan}</span>}</span>
+    </label>
+  );
+  return (
+    <Kotak judul="Cocokkan & catat PKS">
+      <p className="text-muted-foreground text-xs">Isi persis seperti naskah PKS. Putusan: lantai {rp(m?.harga_lantai)}/test · tenor maks {m?.tenor_maks_bulan ?? "—"} bln · volume min {m?.volume_minimum ?? "—"} test/bln.</p>
+      <div className="grid gap-2 sm:grid-cols-3">
+        <div><Label>Harga per test di PKS (Rp)</Label><Input inputMode="numeric" value={f.harga} onChange={isi("harga")} /></div>
+        <div><Label>Tenor di PKS (bulan)</Label><Input inputMode="numeric" value={f.tenor} onChange={isi("tenor")} /></div>
+        <div><Label>Volume minimum di PKS (test/bln)</Label><Input inputMode="numeric" value={f.volume} onChange={isi("volume")} /></div>
+      </div>
+      <div className="space-y-1">
+        <Label>Perlindungan WRG yang ada di naskah (wajib ketiganya)</Label>
+        {wajib.map((k) => centang(k, LABEL_PERLINDUNGAN[k] ?? k))}
+      </div>
+      <div className="space-y-1">
+        <Label>Klausul khusus RS yang ada di naskah</Label>
+        {d.klausul_khusus.map((k) => centang(k.kode, k.label,
+          m?.klausul_dilarang.includes(k.kode) ? "dilarang mandat" : d.klausul.some((x) => x.kode === k.kode) ? "sudah diusulkan" : "tidak pernah diusulkan"))}
+      </div>
+      {err && <p className="text-destructive text-sm">{err}</p>}
+      <Button disabled={!f.harga.trim() || !f.tenor.trim() || !f.volume.trim() || sibuk}
+        onClick={() => go("pks", { harga_deal: angka(f.harga), tenor_bulan: angka(f.tenor), volume_minimum: angka(f.volume), klausul })}>
+        Cocokkan & simpan
+      </Button>
     </Kotak>
   );
 }

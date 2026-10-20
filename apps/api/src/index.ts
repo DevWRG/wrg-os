@@ -261,6 +261,7 @@ import {
   MAKS_DOKUMEN, perpanjangKontrak, ubahKontrak, ubahStatusKontrak, unggahDokumen,
 } from "./repo/kso-kontrak.js";
 import { GalatKso, daftarTab, detailRencana, isAksiKso, isTabKso, jalankanAksi, tabBoleh } from "./repo/kso-komite.js";
+import { bacaSusunan, simpanJabatan, simpanPemegang } from "./repo/kso-komite-susunan.js";
 import { runPolaKomunikasi } from "./repo/polakomunikasi.js";
 import { listWaGroups, setWaGroupCategory, setWaGroupPrefixCategory, isWaGroupCategory } from "./repo/wagroup.js";
 import { runRefreshMembers } from "./repo/listmembers.js";
@@ -1916,6 +1917,22 @@ app.get("/kso-komite/tab", async (c) => {
   const u = ksoUser(c);
   if (!u) return c.json({ error: "x-user-id wajib" }, 401);
   try { return c.json({ tab: await tabBoleh(u) }); } catch (e) { return ksoKomiteErr(c, e); }
+});
+// Susunan Komite (migrasi 242) — jabatan & pemegang diisi dari UI; didaftarkan SEBELUM /:tab.
+app.get("/kso-komite/susunan", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const u = ksoUser(c);
+  if (!u) return c.json({ error: "x-user-id wajib" }, 401);
+  try { return c.json(await bacaSusunan(u)); } catch (e) { return ksoKomiteErr(c, e); }
+});
+app.post("/kso-komite/susunan/:jenis", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const u = ksoUser(c);
+  const jenis = c.req.param("jenis");
+  if (!u) return c.json({ error: "x-user-id wajib" }, 401);
+  if (jenis !== "pemegang" && jenis !== "jabatan") return c.json({ error: "permintaan tidak sah" }, 400);
+  const b = await bodyJson(c);
+  try { return c.json(jenis === "pemegang" ? await simpanPemegang(u, b) : await simpanJabatan(u, b)); } catch (e) { return ksoKomiteErr(c, e); }
 });
 app.get("/kso-komite/:tab", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);

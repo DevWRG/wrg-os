@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { AKSI_TAB, TAB_KSO, putuskanIzin, refUntuk, terjemahGalatWeb, validasiAksi, type PenggunaKso } from "./kso-komite.js";
+import { bolehUbahSusunan } from "./kso-komite-susunan.js";
 import type { Effective } from "./rbac.js";
 
 const user = (o: Partial<PenggunaKso> = {}): PenggunaKso => ({ id: "u1", name: "U", role: "user", am_id: null, hod_key: null, ...o });
@@ -35,7 +36,7 @@ test("fitur belum diatur → gate lama sempit; tab baru lain TERTUTUP; tanpa gru
   assert.equal(putuskanIzin(user({ am_id: "AM-1" }), eff(), "saya", "view"), true);
   assert.equal(putuskanIzin(user({ hod_key: "yogi" }), eff(), "hod", "edit"), true);
   assert.equal(putuskanIzin(user({ role: "direktur" }), eff(), "direksi", "edit"), true);
-  for (const t of ["agenda", "penawaran", "teknik", "kpi"] as const) assert.equal(putuskanIzin(user({ role: "direktur" }), eff(), t, "view"), false, t);
+  for (const t of ["agenda", "sekretariat", "penawaran", "teknik", "kpi"] as const) assert.equal(putuskanIzin(user({ role: "direktur" }), eff(), t, "view"), false, t);
   assert.equal(putuskanIzin(user({ am_id: "AM-1" }), eff({ groups: [] }), "saya", "view"), false);
 });
 
@@ -47,7 +48,7 @@ test("ref: tab AM butuh am_id, tab HOD butuh hod_key", () => {
 });
 
 test("setiap aksi dipetakan ke tab yang ada; kunci fitur unik", () => {
-  for (const t of Object.values(AKSI_TAB)) assert.ok(TAB_KSO[t]);
+  for (const daftar of Object.values(AKSI_TAB)) { assert.ok(daftar.length > 0); for (const t of daftar) assert.ok(TAB_KSO[t]); }
   const kunci = Object.values(TAB_KSO).map((t) => t.fitur);
   assert.equal(new Set(kunci).size, kunci.length);
 });
@@ -69,4 +70,34 @@ test("galat database diterjemahkan, kode tak pernah bocor", () => {
     assert.doesNotMatch(t.pesan, /[A-Z]{3,}_[A-Z_]+/);
   }
   assert.equal(terjemahGalatWeb("PERAN_TIDAK_BERWENANG: x").status, 403);
+});
+
+test("Sekretariat: PKS hanya dari tab Sekretariat; penawaran & kalah dari Sekretariat lalu Admin Sales", () => {
+  assert.deepEqual(AKSI_TAB.pks, ["sekretariat"]);
+  assert.deepEqual(AKSI_TAB.penawaran, ["sekretariat", "penawaran"]);
+  assert.deepEqual(AKSI_TAB.kalah, ["sekretariat", "penawaran"]);
+  assert.equal(TAB_KSO.sekretariat.peran, "sekretaris");
+  assert.equal(putuskanIzin(user(), eff({ permissions: { "kso-komite-sekretariat": izin(true, true) } }), "sekretariat", "edit"), true);
+});
+
+test("validasi PKS: harga, tenor, volume minimum, dan daftar klausul wajib ada", () => {
+  assert.match(validasiAksi("pks", { harga_deal: 12800 })!, /Tenor/);
+  assert.match(validasiAksi("pks", { harga_deal: 12800, tenor_bulan: 36 })!, /Volume minimum/);
+  assert.match(validasiAksi("pks", { harga_deal: 12800, tenor_bulan: 36, volume_minimum: 1920 })!, /klausul/);
+  assert.equal(validasiAksi("pks", { harga_deal: 12800, tenor_bulan: 36, volume_minimum: 0, klausul: [] }), null);
+});
+
+test("PKS tidak cocok: rincian tampil dalam bahasa manusia, tanpa kode", () => {
+  const t = terjemahGalatWeb("PKS_TIDAK_COCOK: perlindungan wajib hilang (denda_telat, lapor_test)");
+  assert.equal(t.status, 409);
+  assert.match(t.pesan, /denda keterlambatan bayar, kewajiban lapor jumlah test/);
+  assert.doesNotMatch(t.pesan, /[A-Z]{3,}_[A-Z_]+|[a-z]+_[a-z]+/);
+  assert.match(terjemahGalatWeb("PKS_TIDAK_COCOK: tenor 48 bln melebihi mandat 36 bln").pesan, /tenor 48 bln melebihi mandat 36 bln/);
+});
+
+test("Susunan Komite: diubah hanya lewat centang Akses Grup atau superuser — role admin tidak otomatis", () => {
+  assert.equal(bolehUbahSusunan(user({ role: "admin" }), eff()), false);
+  assert.equal(bolehUbahSusunan(user(), eff({ superuser: true })), true);
+  assert.equal(bolehUbahSusunan(user(), eff({ permissions: { "kso-komite-susunan": izin(true, true) } })), true);
+  assert.equal(bolehUbahSusunan(user(), eff({ permissions: { "kso-komite-susunan": izin(true, false) } })), false);
 });

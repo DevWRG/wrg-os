@@ -9,8 +9,8 @@ negosiasi** dengan harga lantai.
 - **Menu**: `/kso-komite` — satu menu, tab per peran (lihat Izin)
 - **WA**: `#KSO` (bot yang sudah ada, openclaw) — saklar `KSO_WA_ENABLED`
 - **Jadwal**: scheduler API — saklar `KSO_JADWAL_ENABLED`
-- **Migrasi**: 224–233 (schema `kso`; tidak menyentuh tabel OS yang sudah ada)
-- **Uji**: `scripts/qa/kso-komite/jalankan_uji.sh` (Postgres sekali pakai) — 161 uji
+- **Migrasi**: 224–233, 242 (schema `kso` + `public.kso_komite_jabatan/_pemegang`; tidak menyentuh tabel OS yang sudah ada)
+- **Uji**: `scripts/qa/kso-komite/jalankan_uji.sh` (Postgres sekali pakai) — 184 uji
 
 ## Tahapan
 
@@ -23,6 +23,7 @@ negosiasi** dengan harga lantai.
 | T5 | jadwal forum & notifikasi, batas HOD hari kerja (231) | #1778 |
 | T6 | label sumber volume + KPI tanpa nol palsu (232); pemetaan KPI → NPK/insentif (dokumen ini) | — |
 | T7 | siap pakai (daftar periksa di bawah) | — |
+| S1 | tab Sekretariat + pencocokan PKS penuh + Susunan Komite dari UI (242) — deck orientasi Direktur 20 Okt | #1839 |
 
 ## Keputusan user
 
@@ -34,6 +35,8 @@ negosiasi** dengan harga lantai.
 | 16 Okt | Nomor WA bot yang sekarang (bukan nomor baru); voice note diterima; **semua perintah lewat `#KSO`** (`#KSO kirim D12`, bukan balasan polos "kirim" — bentrok `#KIRIM` & "kirim R12") |
 | 16 Okt | Peran Komite/Direksi/Admin Sales/Teknik diatur di **Akses Grup** (bukan daftar di `kso.pengguna`) |
 | 16 Okt | **Aspek KSO NPK 2026 tetap kosong** sampai SK AM 2027 (lihat Pemetaan KPI) |
+| 21 Okt | **Sekretaris Komite** menerbitkan penawaran, mencocokkan PKS, mencatat hasil; **tidak menilai** (tanpa tombol Usulkan). Catat PKS **pindah total** dari Direksi; tab Penawaran (admin_sales) tetap sebagai cadangan |
+| 21 Okt | **Nama orang tidak di kode**: jabatan Komite & pemegangnya diisi dari panel Susunan Komite (izin `kso-komite-susunan`; role admin tidak otomatis) |
 | 17 Okt | Akun HOD di prod tanpa `hod_key` → tautan khusus KSO `kso.hod_akun` (migrasi 233), **bukan** mengisi `app_user.hod_key` (yang ikut membatasi cakupan semua menu) |
 
 ## Beda dari paket rujukan (sengaja, semua diuji)
@@ -55,7 +58,9 @@ negosiasi** dengan harga lantai.
 | HOD | `kso-komite-hod` | hod (hod_key) | punya `hod_key` |
 | Agenda Forum | `kso-komite-agenda` | komite | — tertutup |
 | Putusan Direksi | `kso-komite-direksi` | direksi | role `direktur` |
-| Penawaran | `kso-komite-penawaran` | admin_sales | — tertutup |
+| Sekretariat | `kso-komite-sekretariat` | sekretaris | — tertutup |
+| Penawaran (cadangan) | `kso-komite-penawaran` | admin_sales | — tertutup |
+| *(panel)* Susunan Komite — ubah | `kso-komite-susunan` | — (API, tabel public) | — tertutup; superuser lolos, role admin tidak |
 | Jadwal Pasang | `kso-komite-teknik` | teknik | — tertutup |
 | KPI AM | `kso-komite-kpi` | komite | — tertutup |
 
@@ -105,3 +110,29 @@ Selama C10 & register teknisi kosong, **semua** usulan masuk forum.
 - [ ] `KSO_WA_ENABLED=true`, lalu `KSO_JADWAL_ENABLED=true` (prod)
 - [ ] Forum pertama tidak membahas usulan baru (SK Pasal 17) — uji alur dengan 2–3 usulan nyata
 - [ ] Data contoh (`scripts/qa/kso-komite/004`) TIDAK pernah dimuat ke prod
+
+## Sekretariat & Susunan Komite (S1, migrasi 242)
+
+**Pencocokan PKS** (`kso.cocokkan_pks`, pembungkus `kso.app_cocokkan_pks` peran `sekretaris`). Isian dari
+naskah PKS — harga per test, tenor, volume minimum, klausul yang ada. Ditolak bila:
+
+| Cek | Galat |
+|---|---|
+| tidak ada mandat / mandat kedaluwarsa | `TIDAK_ADA_MANDAT` / `MANDAT_KEDALUWARSA` |
+| harga < batas bawah | `KELUAR_MANDAT` |
+| tenor > `mandat.tenor_maks_bulan` | `PKS_TIDAK_COCOK: tenor …` |
+| volume < `mandat.volume_minimum` | `PKS_TIDAK_COCOK: volume …` |
+| salah satu `mandat.klausul_wajib` (kenaikan harga tahunan, lapor jumlah test, denda telat bayar) tak ada | `PKS_TIDAK_COCOK: perlindungan wajib hilang …` |
+| ada klausul di `mandat.klausul_dilarang` | `PKS_TIDAK_COCOK: klausul dilarang mandat …` |
+| ada klausul khusus RS yang tak pernah diusulkan (`rencana_klausul`) | `PKS_TIDAK_COCOK: klausul di luar usulan …` |
+
+Pembungkus lama `kso.app_catat_pks` (harga saja) **dicabut** supaya tak ada jalan pintas. Isi PKS
+disimpan di `rencana_kso.pks_tenor_bulan / pks_volume_minimum / pks_klausul`.
+
+**Susunan Komite**: `public.kso_komite_jabatan` (6 jabatan awal, label saja) + `public.kso_komite_pemegang`
+(satu pemegang aktif per jabatan — indeks unik `selesai is null`; ganti orang = tutup baris lama + baris baru).
+Agenda WA 14.00 menulis Ketua (`ketua_kso`) & Sekretaris (`sekretaris_kso`) dari sini; jabatan kosong tidak
+ditulis. Penawaran pagi dikirim ke pemegang centang Sekretariat **dan** Penawaran (satu pesan per nomor).
+
+Setelah ke prod: **Sync Fitur** (2 kunci baru: `kso-komite-sekretariat`, `kso-komite-susunan`) → centang
+per grup → isi Susunan Komite dari layar.
