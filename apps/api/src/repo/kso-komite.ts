@@ -13,8 +13,8 @@ import type { TransactionSql } from "postgres";
 import { db } from "../db.js";
 import { effectivePermissions, type Action, type Effective } from "./rbac.js";
 
-export type TabKso = "saya" | "hod" | "agenda" | "direksi" | "penawaran" | "teknik" | "kpi";
-type PeranKso = "am" | "hod" | "komite" | "direksi" | "admin_sales" | "teknik";
+export type TabKso = "saya" | "hod" | "agenda" | "direksi" | "sekretariat" | "penawaran" | "teknik" | "kpi";
+type PeranKso = "am" | "hod" | "komite" | "direksi" | "sekretaris" | "admin_sales" | "teknik";
 
 /** SATU sumber peta tab → fitur Akses Grup → peran database. Kunci fitur = NavItem.features di web. */
 export const TAB_KSO: Record<TabKso, { fitur: string; peran: PeranKso; label: string }> = {
@@ -22,6 +22,7 @@ export const TAB_KSO: Record<TabKso, { fitur: string; peran: PeranKso; label: st
   hod: { fitur: "kso-komite-hod", peran: "hod", label: "HOD" },
   agenda: { fitur: "kso-komite-agenda", peran: "komite", label: "Agenda Forum" },
   direksi: { fitur: "kso-komite-direksi", peran: "direksi", label: "Putusan Direksi" },
+  sekretariat: { fitur: "kso-komite-sekretariat", peran: "sekretaris", label: "Sekretariat" },
   penawaran: { fitur: "kso-komite-penawaran", peran: "admin_sales", label: "Terbitkan Penawaran" },
   teknik: { fitur: "kso-komite-teknik", peran: "teknik", label: "Jadwal Pasang" },
   kpi: { fitur: "kso-komite-kpi", peran: "komite", label: "KPI AM" },
@@ -77,7 +78,7 @@ export class GalatKso extends Error {
   }
 }
 
-async function bacaPengguna(userId: string): Promise<PenggunaKso | null> {
+export async function bacaPengguna(userId: string): Promise<PenggunaKso | null> {
   // Kursi HOD: app_user.hod_key bila ada, kalau tidak dari tautan khusus KSO (migrasi 233).
   // hod_key app_user TIDAK diisi sebagai gantinya: kolom itu juga menentukan cakupan data di
   // semua menu (resolveScope) — keputusan user 17 Okt.
@@ -128,6 +129,7 @@ const ANTREAN: Record<Exclude<TabKso, "kpi">, string[]> = {
   hod: ["HOD · Minta Putusan", "HOD · Minta Pendapat"],
   agenda: ["Komite · Agenda Forum", "Komite · Mandat Kedaluwarsa"],
   direksi: ["Direksi · Putusan"],
+  sekretariat: ["Sekretariat · Terbitkan Penawaran", "Sekretariat · Cocokkan PKS"],
   penawaran: ["Admin Sales · Terbitkan Penawaran"],
   teknik: ["Teknik · Jadwal Pasang"],
 };
@@ -160,21 +162,28 @@ export async function detailRencana(userId: string, tab: TabKso, id: number): Pr
   const d = await sebagaiPengguna(userId, tab, "view", async (tx) => {
     const [r] = await tx`select *, capex::float8 as capex from kso.v_rencana where id = ${id}`;
     if (!r) throw new GalatKso(404, "Rencana tidak ada, atau di luar akses tab ini.");
-    const [gerbang, pendukung, klausul, pendapat, mandat, usulan, putusan, riwayat, agendaItem] = await Promise.all([
+    // isi PKS (migrasi 242) tidak ada di v_rencana — dibaca dari tabelnya (RLS boleh_lihat sama)
+    const [pks] = await tx`select harga_deal::float8 as harga_deal, pks_tenor_bulan, pks_volume_minimum, pks_klausul
+                             from kso.rencana_kso where id = ${id}`;
+    Object.assign(r, pks ?? {});
+    const [gerbang, pendukung, klausul, pendapat, mandat, usulan, putusan, riwayat, agendaItem, klausulKhusus] = await Promise.all([
       tx`select no, nama, status::text, nilai from kso.gerbang_hasil where rencana_id = ${id} order by no`,
       tx`select nama, tipe::text, sip_faskes, kontak_terakhir_tanggal::text, kontak_terakhir_cara::text from kso.rencana_pendukung where rencana_id = ${id} order by id`,
       tx`select k.kode, k.label from kso.rencana_klausul rk join kso.klausul_khusus k on k.kode = rk.klausul_kode where rk.rencana_id = ${id}`,
       tx`select p.hod_id, h.nama as hod_nama, p.jenis, p.keputusan, p.catatan, p.dianggap_setuju, p.at::text
            from kso.pendapat_hod p left join kso.hod h on h.id = p.hod_id where p.rencana_id = ${id} order by p.at`,
       tx`select harga_lantai::float8, harga_target::float8, tenor_maks_bulan, capex_maks::float8, volume_minimum, klausul_dilarang,
-                berlaku_sampai::text, sumber from kso.mandat where rencana_id = ${id}`,
+                klausul_wajib, berlaku_sampai::text, sumber from kso.mandat where rencana_id = ${id}`,
       tx`select usulan::text, syarat, mandat_usulan, data_kurang, pemilik, tanggal_kembali::text, alasan, at::text from kso.usulan_komite_catatan where rencana_id = ${id} order by at`,
       tx`select putusan::text, catatan, at::text from kso.putusan_direksi_catatan where rencana_id = ${id}`,
       tx`select s.dari::text, s.ke::text, s.oleh, s.oleh_peran, s.oleh_user, s.at::text
            from kso.riwayat_status s where s.rencana_id = ${id} order by s.at`,
       tx`select ai.forum_id::int, f.tanggal::text from kso.agenda_item ai join kso.forum f on f.id = ai.forum_id where ai.rencana_id = ${id} order by f.tanggal desc limit 1`,
+      // pilihan centang form PKS: klausul khusus RS (yang "tanpa_*" = kebalikan perlindungan wajib, tak perlu dicentang)
+      tx`select kode, label from kso.klausul_khusus where kode not like 'tanpa%' order by urut`,
     ]);
-    return { rencana: r, gerbang, pendukung, klausul, pendapat, mandat: mandat[0] ?? null, usulan, putusan: putusan[0] ?? null, riwayat, forum: agendaItem[0] ?? null };
+    return { rencana: r, gerbang, pendukung, klausul, pendapat, mandat: mandat[0] ?? null, usulan, putusan: putusan[0] ?? null, riwayat,
+             forum: agendaItem[0] ?? null, klausul_khusus: klausulKhusus };
   });
   // Nama pelaku dibaca DI LUAR transaksi peran (koneksi biasa API): wrg_app tak dijamin boleh
   // membaca app_user di setiap lingkungan, dan nama akun bukan data KSO yang perlu RLS.
@@ -191,17 +200,21 @@ export async function detailRencana(userId: string, tab: TabKso, id: number): Pr
 export type AksiKso =
   | "putus-hod" | "pendapat-hod" | "usulkan" | "tarik" | "putus-direksi" | "pks" | "penawaran" | "kalah" | "serah-terima";
 
-/** Aksi → tab yang berwenang. Satu tempat; web memakai daftar yang sama untuk menampilkan tombol. */
-export const AKSI_TAB: Record<AksiKso, TabKso> = {
-  "putus-hod": "hod",
-  "pendapat-hod": "hod",
-  usulkan: "agenda",
-  tarik: "agenda",
-  "putus-direksi": "direksi",
-  pks: "direksi",
-  penawaran: "penawaran",
-  kalah: "penawaran",
-  "serah-terima": "teknik",
+/**
+ * Aksi → tab yang berwenang, urut prioritas. Satu aksi bisa dari lebih dari satu tab (penawaran &
+ * kalah: Sekretariat atau Admin Sales cadangan); API memakai tab PERTAMA yang boleh "edit" bagi user.
+ * PKS hanya Sekretariat (keputusan 21 Okt: dipindah total dari Direksi).
+ */
+export const AKSI_TAB: Record<AksiKso, TabKso[]> = {
+  "putus-hod": ["hod"],
+  "pendapat-hod": ["hod"],
+  usulkan: ["agenda"],
+  tarik: ["agenda"],
+  "putus-direksi": ["direksi"],
+  pks: ["sekretariat"],
+  penawaran: ["sekretariat", "penawaran"],
+  kalah: ["sekretariat", "penawaran"],
+  "serah-terima": ["teknik"],
 };
 export function isAksiKso(a: string): a is AksiKso {
   return a in AKSI_TAB;
@@ -244,7 +257,11 @@ export function validasiAksi(aksi: AksiKso, b: Record<string, unknown>): string 
       return null;
     }
     case "pks":
-      return angka(b.harga_deal) ? null : "Harga per test di PKS wajib diisi.";
+      if (!angka(b.harga_deal)) return "Harga per test di PKS wajib diisi.";
+      if (!angka(b.tenor_bulan)) return "Tenor di PKS (bulan) wajib diisi.";
+      if (angka(b.volume_minimum) === null) return "Volume minimum di PKS wajib diisi.";
+      if (!Array.isArray(b.klausul)) return "Centang klausul yang ada di naskah PKS.";
+      return null;
     case "penawaran":
       return angka(b.harga) ? null : "Harga penawaran wajib diisi.";
     case "kalah":
@@ -254,8 +271,23 @@ export function validasiAksi(aksi: AksiKso, b: Record<string, unknown>): string 
   }
 }
 
+/** Label manusia untuk kode klausul (perlindungan wajib WRG + klausul khusus RS, migrasi 228/242). */
+export const LABEL_KLAUSUL: Record<string, string> = {
+  eskalasi_tahunan: "kenaikan harga tahunan",
+  lapor_test: "kewajiban lapor jumlah test",
+  denda_telat: "denda keterlambatan bayar",
+  eksklusivitas: "eksklusivitas",
+  jaminan_volume: "jaminan volume",
+  alat_jatuh: "alat jatuh ke RS",
+  draft_rs: "draft PKS dari RS",
+};
+const labelKlausul = (t: string) => t.replace(/[a-z]+(?:_[a-z]+)+|eksklusivitas/g, (k) => LABEL_KLAUSUL[k] ?? k);
+
 /** Galat database → kalimat untuk layar. Kode galat tak pernah sampai ke pengguna. */
 export function terjemahGalatWeb(m: string): { status: number; pesan: string } {
+  // rincian ketidakcocokan PKS ikut tampil (tanpa kode): Sekretaris perlu tahu bagian mana yang salah
+  const pks = /PKS_TIDAK_COCOK: (.+)$/.exec(m.split("\n")[0]);
+  if (pks) return { status: 409, pesan: `PKS tidak cocok dengan putusan — ${labelKlausul(pks[1])}. Tidak boleh ditandatangani.` };
   const peta: [RegExp, number, string][] = [
     [/PERAN_TIDAK_BERWENANG/, 403, "Tidak berwenang untuk aksi ini."],
     [/HOD_TIDAK_BERWENANG/, 403, "Rencana ini bukan wewenang kursi HOD Anda."],
@@ -269,16 +301,27 @@ export function terjemahGalatWeb(m: string): { status: number; pesan: string } {
     [/KELUAR_MANDAT/, 409, "Di luar batas mandat (di bawah harga lantai atau melebihi batas lain)."],
     [/GRUP_DIBEKUKAN/, 409, "Grup faskes ini dibekukan (SK Pasal 14/16) — tidak ada belanja modal baru."],
     [/NOMOR_SERI_WAJIB/, 400, "Nomor seri alat wajib diisi."],
+    [/PKS_TIDAK_LENGKAP/, 400, "Harga per test, tenor, dan volume minimum di PKS wajib diisi."],
     [/TRANSISI_TIDAK_SAH/, 409, "Aksi ini tidak berlaku untuk status rencana sekarang."],
   ];
   for (const [re, status, pesan] of peta) if (re.test(m)) return { status, pesan };
   return { status: 500, pesan: "Aksi gagal diproses. Coba lagi atau hubungi admin." };
 }
 
+/** Tab pertama (urut AKSI_TAB) tempat user boleh menjalankan aksi; tanpa tab = tab pertama (ditolak 403). */
+async function tabUntukAksi(userId: string, aksi: AksiKso): Promise<TabKso> {
+  const daftar = AKSI_TAB[aksi];
+  if (daftar.length === 1) return daftar[0];
+  const u = await bacaPengguna(userId);
+  if (!u) return daftar[0];
+  const eff = await effectivePermissions(userId);
+  return daftar.find((t) => putuskanIzin(u, eff, t, "edit") && refUntuk(u, t).ok) ?? daftar[0];
+}
+
 export async function jalankanAksi(userId: string, id: number, aksi: AksiKso, b: Record<string, unknown>): Promise<Record<string, unknown>> {
   const salah = validasiAksi(aksi, b);
   if (salah) throw new GalatKso(400, salah);
-  const tab = AKSI_TAB[aksi];
+  const tab = await tabUntukAksi(userId, aksi);
   try {
     return await sebagaiPengguna(userId, tab, "edit", async (tx) => {
       switch (aksi) {
@@ -307,9 +350,11 @@ export async function jalankanAksi(userId: string, id: number, aksi: AksiKso, b:
                      ${angka(b.lantai)}, ${angka(b.target)}, ${angka(b.tenor_maks)}, ${angka(b.capex_maks)}, ${angka(b.volume_min)}, ${dilarang})::text as status`;
           return { status: r.status };
         }
-        case "pks":
-          await tx`select kso.app_catat_pks(${id}, ${angka(b.harga_deal)})`;
+        case "pks": {
+          const klausul = (b.klausul as unknown[]).map(String).filter((k) => /^[a-z_]{2,40}$/.test(k));
+          await tx`select kso.app_cocokkan_pks(${id}, ${angka(b.harga_deal)}, ${angka(b.tenor_bulan)}, ${angka(b.volume_minimum)}, ${klausul})`;
           return { ok: true };
+        }
         case "penawaran":
           await tx`select kso.app_terbitkan_penawaran(${id}, ${angka(b.harga)})`;
           return { ok: true };

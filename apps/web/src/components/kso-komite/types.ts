@@ -34,11 +34,33 @@ export interface Detail {
   pendukung: { nama: string; tipe: string; kontak_terakhir_tanggal: string | null; kontak_terakhir_cara: string | null }[];
   klausul: { kode: string; label: string }[];
   pendapat: { hod_id: string; hod_nama: string | null; jenis: string; keputusan: string | null; catatan: string | null; dianggap_setuju: boolean; at: string }[];
-  mandat: { harga_lantai: number; harga_target: number | null; tenor_maks_bulan: number; capex_maks: number; volume_minimum: number | null; berlaku_sampai: string; sumber: string } | null;
+  mandat: {
+    harga_lantai: number; harga_target: number | null; tenor_maks_bulan: number; capex_maks: number; volume_minimum: number | null;
+    klausul_dilarang: string[]; klausul_wajib: string[]; berlaku_sampai: string; sumber: string;
+  } | null;
   usulan: { usulan: string; syarat: { isi: string; tipe: string }[] | null; data_kurang: string | null; pemilik: string | null; tanggal_kembali: string | null; alasan: string | null; at: string }[];
   putusan: { putusan: string; catatan: string | null; at: string } | null;
   riwayat: { dari: string | null; ke: string; oleh: string | null; oleh_peran: string | null; oleh_nama: string | null; at: string }[];
   forum: { forum_id: number; tanggal: string } | null;
+  /** pilihan centang form PKS: klausul khusus RS */
+  klausul_khusus: { kode: string; label: string }[];
+}
+
+/** Perlindungan wajib WRG di setiap PKS (mandat.klausul_wajib) — label untuk layar. */
+export const LABEL_PERLINDUNGAN: Record<string, string> = {
+  eskalasi_tahunan: "Kenaikan harga tahunan",
+  lapor_test: "Kewajiban lapor jumlah test",
+  denda_telat: "Denda keterlambatan bayar",
+};
+
+export type Komite = "kso_forum" | "product_development";
+export const LABEL_KOMITE: Record<Komite, string> = { kso_forum: "KSO Forum", product_development: "Product Development" };
+
+export interface Susunan {
+  bolehUbah: boolean;
+  jabatan: { kode: string; label: string; komite: Komite; urut: number; aktif: boolean; pemegang: { user_id: string; nama: string | null; mulai: string } | null }[];
+  riwayat: { jabatan_kode: string; label: string; user_id: string; nama: string | null; mulai: string; selesai: string | null; dicatat_oleh: string | null; dicatat_at: string }[];
+  akun: { id: string; name: string }[];
 }
 
 export const STATUS_LABEL: Record<string, string> = {

@@ -110,7 +110,7 @@ begin
 
   -- === forum ===
   perform uji.harus_gagal('Forum hanya Selasa/Kamis', 'select kso.susun_agenda(''2026-10-21'')', 'FORUM_HANYA_SELASA_KAMIS');
-  fr1 := kso.susun_agenda('2026-10-20');
+  fr1 := kso.susun_agenda('2026-10-20', clock_timestamp());  -- batas eksplisit: uji tak boleh kedaluwarsa karena kalender
   perform uji.cek('Agenda A maks 3, urut capex terbesar (C pertama)',
      (select count(*)=3 from kso.agenda_item where forum_id=fr1 and jenis='A')
      and (select rencana_id from kso.agenda_item where forum_id=fr1 and urut=1)=c);
@@ -141,7 +141,7 @@ begin
   k := (select rencana_id from kso.agenda_item where forum_id=fr1 and jenis='A' and rencana_id not in (b,c) limit 1);
   perform kso.usulkan(k,fr1,'DITAHAN',null,'Data volume 3 bulan dari LIS','AM pengusul','2026-10-27');
   perform uji.cek('Usulan ditahan bisa dilengkapi lalu diajukan ulang', kso.ajukan(k)='FORUM');
-  fr2 := kso.susun_agenda('2026-10-22');
+  fr2 := kso.susun_agenda('2026-10-22', clock_timestamp());
   perform uji.cek('Usulan yang pernah ditahan dapat urutan pertama di forum berikutnya',
      (select rencana_id from kso.agenda_item where forum_id=fr2 and urut=1)=k);
   perform uji.cek('Putusan jalur cepat sesudah agenda sebelumnya terbit tidak tercecer (Agenda B)',
@@ -173,7 +173,7 @@ begin
   delete from kso.agenda_item where forum_id=fr2;
   update kso.rencana_kso set status='JALUR_FORUM' where status='DIAGENDAKAN';
   update kso.rencana_kso set status='KALAH' where status='JALUR_FORUM';
-  fr3 := kso.susun_agenda('2026-10-27');
+  fr3 := kso.susun_agenda('2026-10-27', clock_timestamp());
   perform uji.cek('Tanpa usulan → forum jadi tinjauan portofolio, tidak batal', (select mode from kso.forum where id=fr3)='portofolio');
 
   -- === minta kelonggaran saat negosiasi ===
