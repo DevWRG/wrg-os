@@ -147,6 +147,15 @@ export function mapAccurateInvoice(rec: AccurateInvoice): InvoiceInput | null {
   };
 }
 
+// Segarkan aging dari detail faktur Accurate TANPA menulis accurate_webhook_log. Dipakai
+// penyegaran faktur OPEN harian (refreshOpenInvoices): ribuan detail per sapuan — kalau ikut
+// dicatat utuh seperti ingestAccurateWebhook, log tumbuh puluhan MB per hari.
+export async function refreshAgingFromAccurate(records: AccurateInvoice[]): Promise<number> {
+  const mapped = records.map(mapAccurateInvoice).filter((m): m is InvoiceInput => m !== null);
+  if (mapped.length > 0) await upsertAging(mapped);
+  return mapped.length;
+}
+
 // Ingest payload webhook Accurate → ar_aging_mv (upsert idempoten) + log raw.
 export async function ingestAccurateWebhook(
   records: AccurateInvoice[],
