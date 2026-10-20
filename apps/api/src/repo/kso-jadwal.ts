@@ -21,6 +21,7 @@ import type { TransactionSql } from "postgres";
 import { db } from "../db.js";
 import { sendViaWaGateway } from "../wasend.js";
 import { waHod } from "./hod-wa.js";
+import { pemegangAktif } from "./kso-komite-susunan.js";
 
 export const KSO_JOB_USER = "job-jadwal";
 type Tx = TransactionSql<Record<string, unknown>>;
@@ -69,10 +70,15 @@ const tautan = () => `${(process.env.WEB_PUBLIC_URL ?? "").replace(/\/$/, "")}/k
 
 export interface ItemAgenda { jenis: string; nomor: string | null; faskes_nama: string; alat_nama: string; capex: number; gerbang_merah: string | null; am_nama: string }
 
-export function pesanAgenda(tgl: string, items: ItemAgenda[]): string {
+/** Pimpinan forum dari Susunan Komite (diisi di UI, migrasi 242) — jabatan kosong tidak ditulis. */
+export interface PimpinanForum { ketua?: string | null; sekretaris?: string | null }
+
+export function pesanAgenda(tgl: string, items: ItemAgenda[], pimpinan: PimpinanForum = {}): string {
   const a = items.filter((x) => x.jenis === "A");
   const b = items.filter((x) => x.jenis === "B");
   const out = [`*Agenda Forum Komite KSO — ${tanggalManusia(tgl)}, 16.00 WIB*`];
+  const p = [pimpinan.ketua && `Ketua: ${pimpinan.ketua}`, pimpinan.sekretaris && `Sekretaris: ${pimpinan.sekretaris}`].filter(Boolean);
+  if (p.length) out.push(p.join(" · "));
   if (a.length === 0) out.push("\nTidak ada usulan baru → slot menjadi *tinjauan portofolio* (forum tidak pernah batal).");
   else {
     out.push(`\nAgenda A (${a.length}) — diuji forum:`);
@@ -161,7 +167,9 @@ export async function runAgenda(sekarang = new Date()) {
                           where ai.forum_id = ${f.id} and ai.jenis = 'A'`;
     return { items, hod };
   });
-  const kirim = await kirimKe(await penerimaFitur("kso-komite-agenda"), `agenda:${tgl}`, "agenda", pesanAgenda(tgl, items));
+  const susunan = await pemegangAktif();
+  const pimpinan = { ketua: susunan.get("ketua_kso")?.nama, sekretaris: susunan.get("sekretaris_kso")?.nama };
+  const kirim = await kirimKe(await penerimaFitur("kso-komite-agenda"), `agenda:${tgl}`, "agenda", pesanAgenda(tgl, items, pimpinan));
   // SATU pesan per HOD per forum (bukan satu per usulan); HOD tanpa nomor WA tercatat, tidak hilang diam-diam
   const perHod = new Map<string, ItemAgenda[]>();
   for (const h of hod) {
@@ -211,13 +219,16 @@ export async function runLewatBatasHod() {
   return { dianggap_setuju: n };
 }
 
-/** 07.00 hari kerja — penawaran siap terbit → Admin Sales. */
+/** 07.00 hari kerja — penawaran siap terbit → Sekretariat + Admin Sales (cadangan). */
 export async function runPenawaranPagi(sekarang = new Date()) {
   const tgl = tanggalWib(sekarang);
   const baris = await sebagaiJob(async (tx) => ANTREAN_SQL(tx, "Admin Sales · Terbitkan Penawaran"));
   if (baris.length === 0) return { tgl, jumlah: 0, kirim: [] };
   const isi = pesanDaftar(`Penawaran KSO siap diterbitkan — ${tanggalManusia(tgl)}`, baris as never, "Hanya mandat yang masih berlaku. Di bawah harga lantai ditolak sistem.");
-  return { tgl, jumlah: baris.length, kirim: await kirimKe(await penerimaFitur("kso-komite-penawaran"), `penawaran:${tgl}`, "admin_sales", isi) };
+  // satu orang bisa memegang dua centang → satu pesan per nomor WA
+  const penerima = [...new Map([...(await penerimaFitur("kso-komite-sekretariat")), ...(await penerimaFitur("kso-komite-penawaran"))]
+    .map((p) => [p.wa, p])).values()];
+  return { tgl, jumlah: baris.length, kirim: await kirimKe(penerima, `penawaran:${tgl}`, "admin_sales", isi) };
 }
 
 /** Tiap malam — isi ulang referensi kso.* (cabang/HOD/AM/alat/faskes/piutang) dari tabel OS (migrasi 228). */

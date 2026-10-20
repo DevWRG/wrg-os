@@ -6,6 +6,7 @@ Implementasi rujukan dari Paket Komite KSO v1.0 (Direktur, 15 Okt 2026), diterje
 |---|---|
 | `infra/postgres/init/224–226` | Skema, fungsi, view — salinan apa adanya dari paket (`001`–`003`) + ambang awal `kso.parameter` |
 | `infra/postgres/init/227` | Hak akses versi WRG-OS (pengganti `005_akses_supabase.sql`) |
+| `infra/postgres/init/242` | Peran Sekretaris (penawaran, pencocokan PKS penuh, kalah) + antrean Sekretariat + tabel Susunan Komite (`public.kso_komite_jabatan/_pemegang`) |
 | `infra/postgres/init/233` | `kso.hod_akun`: akun login → kursi HOD khusus Komite KSO (tanpa mengubah `app_user.hod_key`/cakupan menu lain) |
 | `infra/postgres/init/232` | Label sumber volume (`kso.tebak_label_sumber` + trigger, koreksi manusia tak ditimpa) + `v_kpi_am` tanpa nol palsu |
 | `infra/postgres/init/231` | Jadwal: batas HOD 1 hari kerja (master_holiday), job idempoten `app_job_*` (akun mesin `job-jadwal`), notifikasi sekali kirim, verifikasi bulan ke-6 |
@@ -20,12 +21,13 @@ Implementasi rujukan dari Paket Komite KSO v1.0 (Direktur, 15 Okt 2026), diterje
 | `907_uji_hod_akun.sql` | 4 uji tautan HOD: baca tanpa identitas, tulis hanya owner |
 | `906_uji_label_kpi.sql` | 14 uji label sumber & KPI NULL bila belum ada data |
 | `905_uji_jadwal.sql` | 17 uji hari kerja, idempotensi job, notifikasi sekali, verifikasi bulan-6 konservatif |
+| `908_uji_sekretariat_susunan.sql` | 23 uji Sekretaris: penawaran, tiap ketidakcocokan PKS ditolak, PKS cocok tersimpan, Direksi/Admin Sales tak bisa catat PKS, satu pemegang aktif per jabatan |
 | `904_uji_peran_akses_grup.sql` | 12 uji peran web dari GUC: tak bisa klaim bot_wa / peran karangan, AM & HOD dibatasi ref, jejak pelaku |
 
 ```bash
 # Postgres sekali pakai, BUKAN server yang memuat wrg_os_dev/prod
 PGHOST=127.0.0.1 PGPORT=5544 PGUSER=postgres bash scripts/qa/kso-komite/jalankan_uji.sh
-# → Ringkasan: 165 LULUS, 0 GAGAL (galat SQL apa pun dihitung GAGAL)
+# → Ringkasan: 184 LULUS, 0 GAGAL (galat SQL apa pun dihitung GAGAL)
 ```
 
 ## Padanan Supabase → WRG-OS

@@ -8,6 +8,7 @@ import { TAB_KSO, type TabKso } from "@/lib/kso-komite-access";
 import { cn } from "@/lib/utils";
 
 import { RencanaDialog } from "./rencana-dialog";
+import { SusunanPanel } from "./susunan-panel";
 import {
   GERBANG_CLS, POLA_STATUS, STATUS_LABEL, kirim, rpJt, waktu,
   type BarisAgenda, type BarisAntrean, type BarisKpi, type DataTab, type Ringkasan, type TabBoleh,
@@ -38,6 +39,7 @@ export function KomiteView({ tabs }: { tabs: TabBoleh[] }) {
 
   return (
     <Tabs value={tab} onValueChange={(v) => setTab(v as TabKso)} className="gap-4">
+      <SusunanPanel />
       <div className="-mx-1 overflow-x-auto px-1">
         <TabsList>
           {tabs.map((t) => (
@@ -72,6 +74,13 @@ export function KomiteView({ tabs }: { tabs: TabBoleh[] }) {
                   <Bagian judul="Mandat kedaluwarsa — tarik kembali ke forum" nada="amber"
                     baris={(d.baris ?? []).filter((b) => b.antrean === "Komite · Mandat Kedaluwarsa")} onBuka={setBuka} />
                 </>
+              ) : t.tab === "sekretariat" ? (
+                <>
+                  <Bagian judul="Mandat berlaku — terbitkan penawaran" catatan="Terbit pagi setelah putusan. Harga awal = harga pembuka; di bawah batas bawah ditolak sistem."
+                    nada="sky" baris={(d.baris ?? []).filter((b) => b.antrean === "Sekretariat · Terbitkan Penawaran")} onBuka={setBuka} />
+                  <Bagian judul="Negosiasi berjalan — cocokkan PKS atau catat kalah" catatan="PKS dicocokkan dengan putusan (harga, volume minimum, tenor, klausul) sebelum tanda tangan. Tidak cocok = tidak ditandatangani."
+                    nada="amber" baris={(d.baris ?? []).filter((b) => b.antrean === "Sekretariat · Cocokkan PKS")} onBuka={setBuka} />
+                </>
               ) : (
                 <Bagian judul={JUDUL[t.tab]} catatan={CATATAN[t.tab]} nada="sky" baris={d.baris ?? []} onBuka={setBuka} />
               )}
@@ -88,7 +97,7 @@ export function KomiteView({ tabs }: { tabs: TabBoleh[] }) {
 const JUDUL: Partial<Record<TabKso, string>> = {
   saya: "Rencana KSO saya",
   direksi: "Menunggu putusan Direksi",
-  penawaran: "Mandat berlaku — siap diterbitkan penawarannya",
+  penawaran: "Mandat berlaku — siap diterbitkan penawarannya (cadangan Sekretariat)",
   teknik: "PKS ditandatangani — jadwalkan pemasangan",
 };
 const CATATAN: Partial<Record<TabKso, string>> = {
