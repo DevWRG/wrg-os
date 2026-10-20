@@ -10,14 +10,15 @@
 import { canOrLegacy } from "@/lib/perms";
 import { type AccessUser } from "@/lib/pricelist-access";
 
-export type TabKso = "saya" | "hod" | "agenda" | "direksi" | "penawaran" | "teknik" | "kpi";
+export type TabKso = "saya" | "hod" | "agenda" | "direksi" | "sekretariat" | "penawaran" | "teknik" | "kpi";
 
 export const TAB_KSO: { tab: TabKso; fitur: string; label: string; nama: string }[] = [
   { tab: "saya", fitur: "kso-komite", label: "Rencana Saya", nama: "Komite KSO — Rencana Saya (AM, baca saja)" },
   { tab: "hod", fitur: "kso-komite-hod", label: "HOD", nama: "Komite KSO — HOD: putuskan jalur cepat & beri pendapat" },
   { tab: "agenda", fitur: "kso-komite-agenda", label: "Agenda Forum", nama: "Komite KSO — Komite: agenda forum & usulan ke Direksi" },
-  { tab: "direksi", fitur: "kso-komite-direksi", label: "Putusan Direksi", nama: "Komite KSO — Direksi: putusan, mandat, PKS" },
-  { tab: "penawaran", fitur: "kso-komite-penawaran", label: "Penawaran", nama: "Komite KSO — Admin Sales: terbitkan penawaran" },
+  { tab: "direksi", fitur: "kso-komite-direksi", label: "Putusan Direksi", nama: "Komite KSO — Direksi: putusan & mandat negosiasi" },
+  { tab: "sekretariat", fitur: "kso-komite-sekretariat", label: "Sekretariat", nama: "Komite KSO — Sekretariat: penawaran, cocokkan PKS, catat hasil" },
+  { tab: "penawaran", fitur: "kso-komite-penawaran", label: "Penawaran", nama: "Komite KSO — Admin Sales (cadangan): terbitkan penawaran" },
   { tab: "teknik", fitur: "kso-komite-teknik", label: "Jadwal Pasang", nama: "Komite KSO — Teknik: serah terima alat" },
   { tab: "kpi", fitur: "kso-komite-kpi", label: "KPI AM", nama: "Komite KSO — KPI AM" },
 ];
@@ -40,6 +41,13 @@ export function canTabKso(u: U, tab: TabKso, aksi: "view" | "edit" = "view"): bo
   const v = tab === "direksi" && u?.role === "admin" ? { ...u, role: null } : u;
   return canOrLegacy(v, t.fitur, lama(v, tab), aksi);
 }
+
+/**
+ * Susunan Komite (jabatan & pemegang, migrasi 241) — bukan tab: panel yang terlihat oleh semua
+ * pembuka menu; MENGUBAH hanya lewat centang fitur ini atau grup superuser (role admin tidak
+ * otomatis — API repo/kso-komite-susunan.ts bolehUbahSusunan yang menentukan).
+ */
+export const FITUR_SUSUNAN = { key: "kso-komite-susunan", name: "Komite KSO — Susunan Komite: ubah jabatan & pemegang" };
 
 /** Menu Komite KSO tampil bila SATU tab saja boleh dilihat. */
 export function canViewKsoKomite(u: U): boolean {
