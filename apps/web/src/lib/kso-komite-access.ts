@@ -34,7 +34,11 @@ function lama(u: U, tab: TabKso): boolean {
 
 export function canTabKso(u: U, tab: TabKso, aksi: "view" | "edit" = "view"): boolean {
   const t = TAB_KSO.find((x) => x.tab === tab);
-  return !!t && canOrLegacy(u, t.fitur, lama(u, tab), aksi);
+  if (!t) return false;
+  // Putusan Direksi: role admin tidak otomatis lolos (keputusan Direktur 20 Okt) — sama dengan
+  // putuskanIzin di API. Superuser (grup Administrator) tetap lolos lewat canOrLegacy.
+  const v = tab === "direksi" && u?.role === "admin" ? { ...u, role: null } : u;
+  return canOrLegacy(v, t.fitur, lama(v, tab), aksi);
 }
 
 /** Menu Komite KSO tampil bila SATU tab saja boleh dilihat. */
