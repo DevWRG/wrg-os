@@ -12,7 +12,7 @@ import { CalendarCheck,
   Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, BookOpen, Calculator, Presentation, Megaphone, Library,
   Wallet, Coins, Banknote, Car, QrCode, PenLine, PackagePlus, PackageMinus,
   Handshake, Archive, Ticket, Printer, Route, ArrowLeftRight,
-  TrendingUp, CalendarClock, type LucideIcon,
+  TrendingUp, CalendarClock, PackageSearch, type LucideIcon,
   Hourglass, ShieldAlert, Landmark, ClipboardList, PackageCheck,
 } from "lucide-react";
 
@@ -23,6 +23,7 @@ import { canViewPricebook, canViewPricebookSummary } from "@/lib/pricebook-acces
 import { canViewKlasifikasi } from "@/lib/klasifikasi-access";
 import { canViewJadwalTeknisi } from "@/lib/jadwal-teknisi-access";
 import { canViewProductScorecard } from "@/lib/product-scorecard-access";
+import { FITUR_PUTUSAN as FITUR_PUTUSAN_PERMINTAAN, canViewPermintaanProduk } from "@/lib/permintaan-produk-access";
 import { canViewKsoKontrak } from "@/lib/kso-kontrak-access";
 import { FITUR_SUSUNAN, TAB_KSO, canViewKsoKomite } from "@/lib/kso-komite-access";
 import { canViewAsetTetap } from "@/lib/aset-tetap-access";
@@ -96,6 +97,10 @@ export const NAV: NavGroup[] = [
       { title: "Sales Analytics", url: "/sales-analytics", icon: Target, badge: "NEW" },
       // F6 Product Scorecard — kinerja per kategori/lini/brand/item; izin sendiri, tertutup default (Sync Fitur).
       { title: "Product Scorecard", url: "/product-scorecard", icon: TrendingUp, badge: "NEW", show: canViewProductScorecard },
+      // F171 Permintaan Produk Non-Master — log Komite Product Development (permintaan lapangan di
+      // luar 1.000 SKU). Izin sendiri, tertutup default; sub-fitur putusan Direksi & ambang.
+      { title: "Permintaan Produk", url: "/permintaan-produk", icon: PackageSearch, badge: "NEW", show: canViewPermintaanProduk,
+        features: [FITUR_PUTUSAN_PERMINTAAN] },
       { title: "Sales Alerts", url: "/sales-alerts", icon: Bell, badge: "NEW" },
       { title: "Competitor Intel", url: "/competitor", icon: Swords },
       // F65 Leads DICABUT dari menu 13 Okt 2026 (keputusan user): #LEADS kini
