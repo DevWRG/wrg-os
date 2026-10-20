@@ -7,9 +7,18 @@ const user = (o: Partial<PenggunaKso> = {}): PenggunaKso => ({ id: "u1", name: "
 const eff = (o: Partial<Effective> = {}): Effective => ({ superuser: false, groups: [{ id: 1, key: "g", name: "G" }], permissions: {}, ...o });
 const izin = (view: boolean, edit: boolean, active = true) => ({ active, view, create: false, edit, delete: false });
 
-test("superuser & role admin selalu boleh (sama dengan canOrLegacy web)", () => {
+test("superuser & role admin boleh (sama dengan canOrLegacy web; kecuali admin di tab direksi)", () => {
   assert.equal(putuskanIzin(user(), eff({ superuser: true }), "direksi", "edit"), true);
   assert.equal(putuskanIzin(user({ role: "admin" }), eff(), "teknik", "edit"), true);
+});
+
+test("role admin TIDAK otomatis lolos Putusan Direksi; superuser tetap lolos", () => {
+  const ditolak = eff({ permissions: { "kso-komite-direksi": izin(false, false, false) } });
+  assert.equal(putuskanIzin(user({ role: "admin" }), ditolak, "direksi", "view"), false);
+  assert.equal(putuskanIzin(user({ role: "admin" }), eff(), "direksi", "view"), false);
+  assert.equal(putuskanIzin(user({ role: "admin" }), eff({ permissions: { "kso-komite-direksi": izin(true, true, true) } }), "direksi", "edit"), true);
+  assert.equal(putuskanIzin(user({ role: "admin" }), ditolak, "hod", "view"), true);
+  assert.equal(putuskanIzin(user({ role: "admin" }), eff({ superuser: true }), "direksi", "edit"), true);
 });
 
 test("matriks Akses Grup menentukan begitu fitur diatur — dua arah", () => {
