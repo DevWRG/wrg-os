@@ -269,6 +269,7 @@ import { getPmfScorecard } from "./repo/pmf-scorecard.js";
 import { getSoPacing, runSoPacingAlert } from "./repo/so-pacing.js";
 import { listBriefingMingguan, runWeeklyBriefing } from "./repo/weekly-briefing.js";
 import { getLeadSource, getRetensi } from "./repo/kohort.js";
+import { getRevenueArea } from "./repo/revenue-area.js";
 import {
   akunKso, bacaDokumen, buatKontrak, getKontrak, hapusDokumen, KontrakError, kelengkapanKontrak, listKontrak,
   MAKS_DOKUMEN, perpanjangKontrak, ubahKontrak, ubahStatusKontrak, unggahDokumen,
@@ -4899,6 +4900,16 @@ app.post("/sales-analytics/alerts/evaluate", async (c) => {
 
 // ── F76 WatchPoint HoD (metric-based, DB-backed + fallback manual) ──
 app.get("/watchpoint", async (c) => c.json(await getWatchBoard()));
+
+// F150 tahap 1 — revenue netto per area (cabang + region) vs periode sebelumnya.
+// Dipakai tab "Revenue Area" WatchPoint & menu /profitabilitas-area. `hod` (diisi BFF
+// dari sesi untuk akses HoD) membatasi ke cabang HoD itu. Biaya/profit belum ada.
+app.get("/revenue-area", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(
+    await getRevenueArea({ periode: c.req.query("periode"), asOf: c.req.query("asOf"), hodKey: c.req.query("hod") || null }),
+  );
+});
 
 // Kirim ringkasan WatchPoint 1 HoD via WA. Target diisi pemanggil (body.to).
 // Pengiriman patuh WA_DRY_RUN (default dry-run → aman, tak kirim live).
