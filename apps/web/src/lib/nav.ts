@@ -55,6 +55,7 @@ import { canViewAsetTetap } from "@/lib/aset-tetap-access";
 import { canViewPmfScorecard } from "@/lib/pmf-access";
 import { canViewDirekturInbox } from "@/lib/direktur-inbox-access";
 import { canViewReportLibrary } from "@/lib/report-library";
+import { canViewKohort } from "@/lib/kohort-access";
 import { canViewTukarFaktur } from "@/lib/tukar-faktur-access";
 import { canViewRaportList } from "@/lib/raport-access";
 import { canViewExecutive } from "@/lib/executive-access";
@@ -284,6 +285,9 @@ export const NAV: NavGroup[] = [
       // F92 — 6 laporan eksekutif + Export PDF. Izin 'report-library': fallback Direktur/HoD/admin;
       // butuh Sync Fitur setelah deploy. Tiap laporan tetap ikut izin menu sumbernya.
       { title: "Report Library", url: "/report-library", icon: FileBarChart, badge: "NEW", show: canViewReportLibrary },
+      // F96 Kohort & Lead Source — retensi customer per kohort kuartal + pipeline lead per sumber. Hanya baca,
+      // agregat. Kunci izin "kohort", default tertutup: Sync Fitur + centang grup; sebelum itu fallback Direktur/HoD/admin.
+      { title: "Kohort & Lead Source", url: "/kohort", icon: TrendingUp, badge: "NEW", show: canViewKohort },
       { title: "NPK HOD", url: "/npk", icon: Award, badge: "NEW", exact: true, show: (me) => me?.role === "admin" || me?.superuser === true },
       { title: "NPK Saya", url: "/npk/self", icon: UserCheck, badge: "NEW", show: (me) => !!me?.hod_key },
       // NPK level AM (078): matrix semua AM untuk Direktur+HoD, self-view untuk staff AM.
