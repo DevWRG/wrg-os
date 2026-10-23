@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { BriefingsTabs } from "@/components/briefings/briefings-tabs";
 import { SeninBriefView, type SeninBrief } from "@/components/briefings/senin-brief-view";
+import { BriefingMingguanView, type BriefingMingguan } from "@/components/briefings/briefing-mingguan-view";
 
 export const dynamic = "force-dynamic";
 
@@ -37,8 +38,19 @@ async function getSeninBriefs(): Promise<SeninBrief[] | null> {
   }
 }
 
+// F63 — briefing minggu depan tiap Senin 07:00 (tabel briefing_mingguan).
+async function getBriefingMingguan(): Promise<BriefingMingguan[] | null> {
+  try {
+    const res = await gatewayFetch(`/weekly-briefing`);
+    if (!res.ok) return null;
+    return ((await res.json()) as { briefs: BriefingMingguan[] }).briefs;
+  } catch {
+    return null;
+  }
+}
+
 export default async function BriefingsPage() {
-  const [briefings, seninBriefs] = await Promise.all([getBriefings(), getSeninBriefs()]);
+  const [briefings, seninBriefs, mingguan] = await Promise.all([getBriefings(), getSeninBriefs(), getBriefingMingguan()]);
 
   const a10 = !briefings ? (
       <p className="text-muted-foreground">
@@ -73,7 +85,7 @@ export default async function BriefingsPage() {
     <>
       <PageHeader
         title="Executive Briefings"
-        description="Briefing eksekutif A10 & Senin Brief kesiapan 8 HoD sebelum rapat Direktur — data live dari DB."
+        description="Briefing eksekutif A10, Senin Brief kesiapan 8 HoD, dan Briefing Mingguan (rekap & resume minggu lalu → minggu depan) — data live dari DB."
       />
       <BriefingsTabs
         a10={a10}
@@ -82,6 +94,15 @@ export default async function BriefingsPage() {
             <SeninBriefView briefs={seninBriefs} />
           ) : (
             <p className="text-muted-foreground">Data Senin Brief tidak tersedia.</p>
+          )
+        }
+        mingguan={
+          mingguan ? (
+            <BriefingMingguanView briefs={mingguan} />
+          ) : (
+            <p className="text-muted-foreground">
+              Data Briefing Mingguan tidak tersedia (migrasi 245 sudah diterapkan di database ini?).
+            </p>
           )
         }
       />

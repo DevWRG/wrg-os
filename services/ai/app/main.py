@@ -829,14 +829,25 @@ def weekend_briefing(req: WeekendBriefingRequest) -> WeekendBriefingResponse:
         nama_direktur=req.nama_direktur, perusahaan=NAMA_PERUSAHAAN,
         minggu_label=req.minggu_label, tanggal=req.tanggal,
     )
+    senin = req.mode == "senin"
+    if senin:
+        # F63: arah briefing = minggu yang baru mulai; dasar = rekap + resume minggu lalu.
+        system = system.replace(
+            "untuk sesi meeting " + req.nama_direktur + " di akhir pekan, dari resume harian seminggu terakhir.",
+            "untuk " + req.nama_direktur + " di awal minggu (Senin pagi), dari rekap dan resume harian MINGGU LALU, "
+            "sebagai bekal memimpin MINGGU DEPAN (minggu yang baru mulai). Soroti apa yang harus dikejar, "
+            "diputuskan, dan diantisipasi minggu ini.",
+            1,
+        )
     pola_block = "\n\n".join(f"=== POLA GRUP {p.jid} ===\n{p.content}" for p in req.pola) or "(belum ada profile pola)"
     resume_block = "\n\n".join(f"====== {r.label} ======\n{r.text}" for r in req.resumes) or "(tak ada resume)"
+    data_label = "rekap & resume harian minggu lalu" if senin else "resume harian seminggu terakhir"
     user = (
         f"{_dir_block('DIREKTORI GRUP (substitusi JID → nama)', req.groups)}\n\n"
         f"{_dir_block('DIREKTORI MEMBER (substitusi nomor → nama; jangan tebak)', req.members)}\n\n"
         f"PROFILE POLA KOMUNIKASI per-grup:\n{pola_block}\n\n"
         "============================================\n"
-        f"DATA INPUT — resume harian seminggu terakhir ({req.minggu_label}):\n\n{resume_block}"
+        f"DATA INPUT — {data_label} ({req.minggu_label}):\n\n{resume_block}"
     )
     fallback = f"[DRY RUN — tanpa LLM]\n\nSYSTEM:\n{system}\n\nUSER:\n{user[:2000]}"
     if req.dry_run or not os.environ.get("OPENROUTER_API_KEY"):

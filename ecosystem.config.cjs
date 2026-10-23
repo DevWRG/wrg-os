@@ -155,6 +155,8 @@ const devEnv = {
   // Direktur — dimatikan eksplisit supaya .env.dev yang menyalin .env.prod tak
   // membuat Direktur dapat dua brief tiap Senin.
   SENIN_BRIEF_ENABLED: "false",
+  // F63 sama: mengirim link briefing ke Direktur — jangan dobel dari dev.
+  WEEKLY_BRIEFING_ENABLED: "false",
   // F21 mengirim pacing ke grup HoD — sama alasannya: jangan dobel dari dev.
   SO_PACING_ALERT_ENABLED: "false",
   // Cookie sesi TIDAK ber-flag Secure di dev. NODE_ENV=production di atas wajib
