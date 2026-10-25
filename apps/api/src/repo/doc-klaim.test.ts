@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { alasanTolakBayar, alasanTolakPutus, parseNominalRupiah, type AktorKlaim } from "./doc-klaim.js";
+import { type AktorKlaim, alasanTolakBayar, alasanTolakPutus, hitungNominalDisetujui, parseNominalRupiah } from "./doc-klaim.js";
 
 // Wewenang klaim reimburse (keputusan user 15 Okt 2026): HoD pengaju memutus,
 // Finance membayar, pengaju tak boleh memutus/membayar klaimnya sendiri.
@@ -62,4 +62,21 @@ test("parseNominalRupiah: yang meragukan → null (tak ditebak)", () => {
   assert.equal(parseNominalRupiah("sepuluh ribu"), null);
   assert.equal(parseNominalRupiah("10.5"), null);
   assert.equal(parseNominalRupiah("0"), null);
+});
+
+// ── Nominal disetujui (dipakai dashboard DAN penangan engine/WA) ──
+test("nominal disetujui: kosong → ikut nota", () => {
+  assert.deepEqual(hitungNominalDisetujui("Rp 150.000", null), { ok: true, nominal: 150000 });
+});
+test("nominal disetujui: boleh lebih kecil dari nota, tak boleh lebih besar", () => {
+  assert.deepEqual(hitungNominalDisetujui("Rp 150.000", 100000), { ok: true, nominal: 100000 });
+  assert.equal(hitungNominalDisetujui("Rp 150.000", 200000).ok, false);
+});
+test("nominal disetujui: nota tak terbaca & isian kosong → ditolak (WA #APPROVE harus lewat dashboard)", () => {
+  const r = hitungNominalDisetujui("tak jelas", null);
+  assert.equal(r.ok, false);
+});
+test("nominal disetujui: batas maksimum & nol", () => {
+  assert.equal(hitungNominalDisetujui(null, 100_000_001).ok, false);
+  assert.equal(hitungNominalDisetujui(null, 0).ok, false);
 });

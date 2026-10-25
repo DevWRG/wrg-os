@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Check, X } from "lucide-react";
@@ -86,11 +87,27 @@ export function DocKlaimApproval({ klaim, pemutus }: { klaim: DocKlaim; pemutus:
 
   const tunggu = (t: string) => <span className="text-muted-foreground text-xs whitespace-nowrap">{t}</span>;
 
+  // Klaim di mesin approval F11: kode APR bisa diputus juga lewat WA, dan
+  // alasan tolak wajib (aturan engine).
+  const viaEngine = !!klaim.approval_request_id;
+  const kodeApr = viaEngine && klaim.approval_kode ? (
+    <Link href={`/approval-requests/${klaim.approval_request_id}`} className="text-primary text-xs underline">
+      {klaim.approval_kode}
+    </Link>
+  ) : null;
+
   if (status === "baru") {
     const alasan = alasanTolakPutus(klaim, pemutus);
-    if (alasan) return tunggu(alasan);
+    if (alasan) {
+      return (
+        <div className="flex flex-col items-start gap-0.5">
+          {tunggu(alasan)}
+          {kodeApr}
+        </div>
+      );
+    }
     return (
-      <div className="flex gap-1">
+      <div className="flex items-center gap-1">
         <Dialog open={open === "disetujui"} onOpenChange={(o) => setOpen(o ? "disetujui" : null)}>
           <DialogTrigger render={<Button size="sm" disabled={busy} />}>
             <Check /> Setujui
@@ -125,7 +142,9 @@ export function DocKlaimApproval({ klaim, pemutus }: { klaim: DocKlaim; pemutus:
           <DialogContent className="max-w-sm">
             <DialogHeader>
               <DialogTitle>Tolak klaim</DialogTitle>
-              <DialogDescription>Isi alasan penolakan (opsional, tapi sebaiknya diisi).</DialogDescription>
+              <DialogDescription>
+                {viaEngine ? "Alasan penolakan wajib diisi — dikirim ke pengaju." : "Isi alasan penolakan (opsional, tapi sebaiknya diisi)."}
+              </DialogDescription>
             </DialogHeader>
             <DialogBody className="grid gap-3">
               <div className="grid gap-1.5">
@@ -135,11 +154,14 @@ export function DocKlaimApproval({ klaim, pemutus }: { klaim: DocKlaim; pemutus:
               {error && <p className="text-destructive text-sm">{error}</p>}
             </DialogBody>
             <DialogFooter>
-              <Button variant="destructive" disabled={busy} onClick={() => decide("ditolak")}>{busy ? "Menyimpan…" : "Tolak"}</Button>
+              <Button variant="destructive" disabled={busy || (viaEngine && !catatan.trim())} onClick={() => decide("ditolak")}>
+                {busy ? "Menyimpan…" : "Tolak"}
+              </Button>
               <DialogClose render={<Button type="button" variant="outline" />}>Batal</DialogClose>
             </DialogFooter>
           </DialogContent>
         </Dialog>
+        {kodeApr}
       </div>
     );
   }

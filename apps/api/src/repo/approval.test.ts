@@ -275,3 +275,10 @@ test("resolveApproverByUserId: id bukan uuid ditolak tanpa menyentuh DB", async 
   assert.equal(await resolveApproverByUserId("1 OR 1=1"), null);
   assert.equal(await resolveApproverByUserId(null), null);
 });
+
+test("HoD pengaju kosong: default menolak, opsi 'direktur' mengizinkan (dialihkan)", () => {
+  const chain = [{ targetType: "hod_pengaju" as const, label: "HoD" }];
+  assert.notEqual(cekChainUntukRequest(chain, null), null);
+  assert.notEqual(cekChainUntukRequest(chain, null, "tolak"), null);
+  assert.equal(cekChainUntukRequest(chain, null, "direktur"), null);
+});
