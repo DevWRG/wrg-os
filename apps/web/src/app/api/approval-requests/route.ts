@@ -7,10 +7,16 @@ export const dynamic = "force-dynamic";
 export async function GET(req: Request) {
   const guard = await requireFeature("/approval-requests", "view");
   if (!guard.ok) return guard.res;
-  const status = new URL(req.url).searchParams.get("status");
-  const qs = status ? `?status=${encodeURIComponent(status)}` : "";
+  const sp = new URL(req.url).searchParams;
+  const qs = new URLSearchParams();
+  const status = sp.get("status");
+  const jenis = sp.get("jenis");
+  if (status) qs.set("status", status);
+  if (jenis) qs.set("jenis", jenis);
+  // "Menunggu Saya" — identitasnya dari sesi, bukan parameter klien.
+  if (sp.get("menunggu") === "saya") qs.set("menunggu_user_id", guard.me.id);
   try {
-    const res = await gatewayFetch(`/approval-requests${qs}`);
+    const res = await gatewayFetch(`/approval-requests${qs.size ? `?${qs}` : ""}`);
     const data = await res.json();
     return Response.json(data, { status: res.status });
   } catch {

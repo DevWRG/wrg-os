@@ -618,6 +618,10 @@ import {
   updateChainConfig,
   notifyCurrentStep,
   getAttachmentFile,
+  decideFromDashboard,
+  listAlur,
+  listGrupAkses,
+  updateAlur,
 } from "./repo/approval.js";
 import {
   listChainConfig as listAuditFindingChainConfig,
@@ -2115,8 +2119,9 @@ app.post("/sales/docs/:id/cancel", async (c) => {
   return c.json(r, r.ok ? 200 : 400);
 });
 
-// F11 Approval Engine — base/generic (migrasi 106). Body:
-// { title, description?, nominal?, requestedBy, requestedByWa? }.
+// F11 Approval Engine — kanonik (migrasi 153/190/247). Body:
+// { title, description?, nominal?, requestedBy, requestedByUserId?, jenis? }.
+// Gerbang izin di BFF; identitas pengaju diisi BFF dari sesi.
 app.post("/approval-requests", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   let body: Parameters<typeof createApprovalRequest>[0] | undefined;
@@ -2134,15 +2139,35 @@ app.post("/approval-requests", async (c) => {
 
 app.get("/approval-requests", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  const rows = await listApprovalRequests(c.req.query("status") || undefined);
+  const rows = await listApprovalRequests({
+    status: c.req.query("status") || undefined,
+    jenis: c.req.query("jenis") || undefined,
+    menungguUserId: c.req.query("menunggu_user_id") || undefined,
+  });
   return c.json({ count: rows.length, requests: rows });
 });
 
 app.get("/approval-requests/:id", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  const r = await getApprovalRequest(c.req.param("id"));
+  const r = await getApprovalRequest(c.req.param("id"), { viewerUserId: c.req.query("viewer_user_id") || null });
   if (!r) return c.json({ error: "request tidak ditemukan" }, 404);
   return c.json(r);
+});
+
+// Keputusan dari dashboard. user_id WAJIB diisi BFF dari sesi; wewenang
+// dicek engine (cekWewenang) — aturan yang sama dengan #APPROVE/#REJECT WA.
+app.post("/approval-requests/:id/decide", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { action?: string; note?: string; user_id?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (body.action !== "approve" && body.action !== "reject") return c.json({ error: "action harus approve|reject" }, 400);
+  if (!body.user_id) return c.json({ error: "user_id wajib" }, 400);
+  const r = await decideFromDashboard(c.req.param("id"), body.action, body.user_id, body.note ?? null);
+  return c.json(r, r.ok ? 200 : 400);
 });
 
 // Retry manual kirim notifikasi tahap current — dipakai kalau step pertama
@@ -2251,12 +2276,36 @@ app.post("/overtime/:id/notify", async (c) => {
 
 app.get("/approval-requests/config/chain", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  return c.json({ rows: await listChainConfig() });
+  return c.json({ rows: await listChainConfig(c.req.query("jenis") || undefined) });
+});
+
+app.get("/approval-requests/config/alur", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json({ rows: await listAlur(), grup: await listGrupAkses() });
+});
+
+app.patch("/approval-requests/config/alur/:jenis", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { slaJam?: unknown; eskalasi?: unknown } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const r = await updateAlur(c.req.param("jenis"), body);
+  return c.json(r, r.ok ? 200 : 400);
 });
 
 app.patch("/approval-requests/config/chain/:urutan", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let body: { hodKey?: string | null; waNumberOverride?: string | null; hodKeyMap?: Record<string, string | null> } = {};
+  let body: {
+    jenis?: string;
+    hodKey?: string | null;
+    waNumberOverride?: string | null;
+    hodKeyMap?: Record<string, string | null>;
+    groupKey?: string | null;
+    aktif?: boolean;
+  } = {};
   try {
     body = await c.req.json();
   } catch {
@@ -2264,7 +2313,8 @@ app.patch("/approval-requests/config/chain/:urutan", async (c) => {
   }
   const urutan = Number(c.req.param("urutan"));
   if (!urutan || !Number.isInteger(urutan)) return c.json({ error: "urutan tidak valid" }, 400);
-  const r = await updateChainConfig(urutan, body);
+  const { jenis, ...patch } = body;
+  const r = await updateChainConfig(jenis || c.req.query("jenis") || "pengadaan", urutan, patch);
   return c.json(r, r.ok ? 200 : 400);
 });
 
