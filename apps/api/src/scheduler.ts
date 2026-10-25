@@ -58,6 +58,7 @@ import { runItTicketSlaAlerts } from "./repo/it-ticket.js";
 import { runMaintenanceAlerts, runGaMaintenanceBscFeed } from "./repo/ga-maintenance.js";
 import { runGaHelpdeskOverdueAlert, runGaHelpdeskBscFeed } from "./repo/ga-helpdesk.js";
 import { runAuditFindingApprovalReminder } from "./repo/audit-finding.js";
+import { runApprovalSla } from "./repo/approval.js";
 import { runLpseTenderReminder } from "./repo/lpse-tender.js";
 import { runLeadAging } from "./repo/lead.js";
 import { runTrialReminder } from "./repo/demo-trial.js";
@@ -205,6 +206,10 @@ export function startScheduler(): ScheduleStatus {
   // pending & telat >N hari (dedup harian via reminded_at). Flag SENDIRI
   // (default off) — mengirim WA.
   const auditFindingReminderEnabled = (process.env.AUDIT_FINDING_REMINDER_ENABLED ?? "false").toLowerCase() === "true";
+  // approval-sla (F11 kanonik) — pengingat ke approver saat tahap lewat
+  // sla_jam alurnya, eskalasi ke Direktur saat lewat 2×. Flag SENDIRI
+  // (default off) — mengirim WA.
+  const approvalSlaEnabled = (process.env.APPROVAL_SLA_ENABLED ?? "false").toLowerCase() === "true";
   // kpi-measure — auto-isi kpi_measurement KPI sales dari data operasional
   // (kunjungan, kepatuhan plan-report, revenue, customer baru, prospek).
   // Cakupannya sengaja sempit: hanya KPI yang punya sumber tak-ambigu; sisanya
@@ -353,12 +358,12 @@ export function startScheduler(): ScheduleStatus {
   ];
 
   status = {
-    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled || watchpointSnapshotEnabled || preVisitEnabled || edWatchEnabled || gaMaintenanceAlertEnabled || gaMaintenanceBscEnabled || gaHelpdeskOverdueEnabled || gaHelpdeskBscEnabled || lpseTenderReminderEnabled || accurateStockSyncEnabled || cashinResumeEnabled || geoSweepEnabled || kpiMeasureEnabled || invoiceReminderEnabled || auditFindingReminderEnabled || seninBriefEnabled || soPacingEnabled || fixedAssetSyncEnabled || openRefreshEnabled || poSyncEnabled || pmKalibrasiEnabled || leadAgingEnabled || trialReminderEnabled || ksoKesehatanEnabled || ksoSuplaiEnabled || ksoJadwalEnabled || direkturInboxEnabled || jadwalRutinEnabled || weeklyBriefingEnabled,
+    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled || watchpointSnapshotEnabled || preVisitEnabled || edWatchEnabled || gaMaintenanceAlertEnabled || gaMaintenanceBscEnabled || gaHelpdeskOverdueEnabled || gaHelpdeskBscEnabled || lpseTenderReminderEnabled || accurateStockSyncEnabled || cashinResumeEnabled || geoSweepEnabled || kpiMeasureEnabled || invoiceReminderEnabled || auditFindingReminderEnabled || approvalSlaEnabled || seninBriefEnabled || soPacingEnabled || fixedAssetSyncEnabled || openRefreshEnabled || poSyncEnabled || pmKalibrasiEnabled || leadAgingEnabled || trialReminderEnabled || ksoKesehatanEnabled || ksoSuplaiEnabled || ksoJadwalEnabled || direkturInboxEnabled || jadwalRutinEnabled || weeklyBriefingEnabled,
     timezone,
     jobs: jobs.map((j) => ({ id: j.id, expr: j.expr, valid: cron.validate(j.expr) })),
   };
 
-  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled && !watchpointSnapshotEnabled && !preVisitEnabled && !edWatchEnabled && !gaMaintenanceAlertEnabled && !gaMaintenanceBscEnabled && !gaHelpdeskOverdueEnabled && !gaHelpdeskBscEnabled && !lpseTenderReminderEnabled && !accurateStockSyncEnabled && !cashinResumeEnabled && !geoSweepEnabled && !kpiMeasureEnabled && !invoiceReminderEnabled && !auditFindingReminderEnabled && !seninBriefEnabled && !soPacingEnabled && !fixedAssetSyncEnabled && !openRefreshEnabled && !poSyncEnabled && !pmKalibrasiEnabled && !leadAgingEnabled && !trialReminderEnabled && !ksoKesehatanEnabled && !ksoSuplaiEnabled && !ksoJadwalEnabled && !direkturInboxEnabled && !jadwalRutinEnabled && !weeklyBriefingEnabled) {
+  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled && !watchpointSnapshotEnabled && !preVisitEnabled && !edWatchEnabled && !gaMaintenanceAlertEnabled && !gaMaintenanceBscEnabled && !gaHelpdeskOverdueEnabled && !gaHelpdeskBscEnabled && !lpseTenderReminderEnabled && !accurateStockSyncEnabled && !cashinResumeEnabled && !geoSweepEnabled && !kpiMeasureEnabled && !invoiceReminderEnabled && !auditFindingReminderEnabled && !approvalSlaEnabled && !seninBriefEnabled && !soPacingEnabled && !fixedAssetSyncEnabled && !openRefreshEnabled && !poSyncEnabled && !pmKalibrasiEnabled && !leadAgingEnabled && !trialReminderEnabled && !ksoKesehatanEnabled && !ksoSuplaiEnabled && !ksoJadwalEnabled && !direkturInboxEnabled && !jadwalRutinEnabled && !weeklyBriefingEnabled) {
     console.log("[scheduler] semua *_SCHEDULE/_ENABLED flag != true — tidak dijadwalkan");
     return status;
   }
@@ -730,6 +735,27 @@ export function startScheduler(): ScheduleStatus {
       { timezone },
     );
     live.push(`audit-finding-reminder=${auditFindingReminderExpr}`);
+  }
+
+  // approval-sla (F11) — tiap jam di jam kerja. Hitungan SLA memakai jam
+  // kalender sejak notifikasi; job hanya MENGIRIM di jam kerja, jadi
+  // pengingat yang jatuh tempo malam hari terkirim pagi berikutnya.
+  const approvalSlaExpr = process.env.APPROVAL_SLA_CRON ?? "0 8-17 * * 1-5";
+  if (approvalSlaEnabled && cron.validate(approvalSlaExpr)) {
+    cron.schedule(
+      approvalSlaExpr,
+      async () => {
+        const startedAt = new Date().toISOString();
+        try {
+          const r = await runApprovalSla();
+          console.log(`[scheduler] approval-sla @ ${startedAt} ${JSON.stringify(r)}`);
+        } catch (e) {
+          console.error(`[scheduler] approval-sla gagal @ ${startedAt}:`, e);
+        }
+      },
+      { timezone },
+    );
+    live.push(`approval-sla=${approvalSlaExpr}`);
   }
 
   // Monitor (port wrg-monitor) — rekap & resume GENERATE-ONLY (tidak kirim WA;

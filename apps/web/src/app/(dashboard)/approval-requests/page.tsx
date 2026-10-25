@@ -25,6 +25,8 @@ interface ApprovalStep {
 interface ApprovalRequest {
   id: string;
   kode: string;
+  jenis: string;
+  jenisLabel: string;
   title: string;
   description: string | null;
   nominal: number | null;
@@ -35,6 +37,8 @@ interface ApprovalRequest {
   currentUrutan: number | null;
   createdAt: string;
   decidedAt: string | null;
+  slaDueAt: string | null;
+  slaLewat: boolean;
   steps: ApprovalStep[];
   attachments: { id: number; filename: string }[];
 }
@@ -66,11 +70,27 @@ const STEP_BADGE: Record<string, "default" | "secondary" | "outline" | "destruct
 
 const rupiah = (n: number) => `Rp${Math.round(n).toLocaleString("id-ID")}`;
 
+type Tampil = "saya" | "semua";
+const SEMUA_ALUR = "__semua";
+
+async function ambilDaftar(tampil: Tampil, jenis: string): Promise<ApprovalRequest[]> {
+  const qs = new URLSearchParams();
+  if (tampil === "saya") qs.set("menunggu", "saya");
+  if (jenis !== SEMUA_ALUR) qs.set("jenis", jenis);
+  const res = await fetch(`/api/approval-requests${qs.size ? `?${qs}` : ""}`, { cache: "no-store" });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error ?? "gagal memuat data");
+  return data.requests ?? [];
+}
+
 export default function ApprovalRequestsPage() {
   const [requests, setRequests] = useState<ApprovalRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [tampil, setTampil] = useState<Tampil>("semua");
+  const [jenisFilter, setJenisFilter] = useState<string>(SEMUA_ALUR);
+  const [alur, setAlur] = useState<{ jenis: string; label: string }[]>([]);
 
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -109,16 +129,13 @@ export default function ApprovalRequestsPage() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/approval-requests", { cache: "no-store" });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "gagal memuat data");
-      setRequests(data.requests ?? []);
+      setRequests(await ambilDaftar(tampil, jenisFilter));
     } catch (e) {
       setError(String(e));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [tampil, jenisFilter]);
 
   // Inline IIFE (bukan `void load()` langsung) — load() mulai dgn setState
   // sinkron, dipanggil langsung dari body efek kena lint react-hooks
@@ -129,15 +146,28 @@ export default function ApprovalRequestsPage() {
       setLoading(true);
       setError(null);
       try {
-        const res = await fetch("/api/approval-requests", { cache: "no-store" });
-        const data = await res.json();
-        if (!active) return;
-        if (!res.ok) throw new Error(data.error ?? "gagal memuat data");
-        setRequests(data.requests ?? []);
+        const rows = await ambilDaftar(tampil, jenisFilter);
+        if (active) setRequests(rows);
       } catch (e) {
         if (active) setError(String(e));
       } finally {
         if (active) setLoading(false);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [tampil, jenisFilter]);
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const res = await fetch("/api/approval-requests/config/alur", { cache: "no-store" });
+        const data = await res.json();
+        if (active && res.ok) setAlur(data.rows ?? []);
+      } catch {
+        /* filter alur opsional — daftar tetap jalan tanpa ini */
       }
     })();
     return () => {
@@ -218,9 +248,9 @@ export default function ApprovalRequestsPage() {
         <div>
           <h1 className="text-2xl font-semibold">Approval Requests</h1>
           <p className="text-muted-foreground">
-            F11 — engine approval berjenjang: HoD Sales → HoD Bisnis → HoD After Sales → HoD Supply Chain →
-            Direktur, notifikasi WA privat bertahap. Balas via WA: <code>#APPROVE &lt;kode&gt;</code> /{" "}
-            <code>#REJECT &lt;kode&gt; alasan</code>.
+            F11 — satu mesin approval untuk semua alur. Tiap tahap dinotifikasi lewat WA privat secara bergiliran;
+            putuskan lewat WA (<code>#APPROVE &lt;kode&gt;</code> / <code>#REJECT &lt;kode&gt; alasan</code>) atau
+            dari halaman detail permintaan.
           </p>
         </div>
         <Link href="/approval-requests/config">
@@ -232,7 +262,7 @@ export default function ApprovalRequestsPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Buat Permintaan Baru</CardTitle>
+          <CardTitle className="text-base">Buat Permintaan Baru (alur Pengadaan)</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
           <div className="grid gap-3 md:grid-cols-2">
@@ -321,11 +351,39 @@ export default function ApprovalRequestsPage() {
         </CardContent>
       </Card>
 
+      <div className="flex flex-wrap items-center gap-2">
+        <Button size="sm" variant={tampil === "saya" ? "default" : "outline"} onClick={() => setTampil("saya")}>
+          Menunggu Saya
+        </Button>
+        <Button size="sm" variant={tampil === "semua" ? "default" : "outline"} onClick={() => setTampil("semua")}>
+          Semua
+        </Button>
+        <div className="min-w-48">
+          <Select value={jenisFilter} onValueChange={(v) => setJenisFilter(v ?? SEMUA_ALUR)}>
+            <SelectTrigger className="w-full">
+              <SelectValue>
+                {(v: string) => (v === SEMUA_ALUR ? "Semua alur" : (alur.find((a) => a.jenis === v)?.label ?? v))}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={SEMUA_ALUR}>Semua alur</SelectItem>
+              {alur.map((a) => (
+                <SelectItem key={a.jenis} value={a.jenis}>
+                  {a.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+
       {error && <p className="text-destructive text-sm">{error}</p>}
       {loading ? (
         <SkeletonCardGrid count={4} />
       ) : requests.length === 0 ? (
-        <p className="text-muted-foreground">Belum ada permintaan approval.</p>
+        <p className="text-muted-foreground">
+          {tampil === "saya" ? "Tidak ada permintaan yang menunggu keputusan Anda." : "Belum ada permintaan approval."}
+        </p>
       ) : (
         <div className="grid gap-4 md:grid-cols-2">
           {requests.map((r) => {
@@ -341,9 +399,9 @@ export default function ApprovalRequestsPage() {
                       </Link>
                     </CardTitle>
                     <p className="text-muted-foreground text-xs">
-                      Oleh {r.requestedBy}
+                      {r.jenisLabel} · Oleh {r.requestedBy}
                       {r.nominal != null ? ` · ${rupiah(r.nominal)}` : ""}
-                      {` · ${labelWilayah(r.wilayah)} / ${labelKategori(r.kategori)}`}
+                      {r.jenis === "pengadaan" ? ` · ${labelWilayah(r.wilayah)} / ${labelKategori(r.kategori)}` : ""}
                       {r.attachments.length > 0 ? ` · 📎 ${r.attachments.length}` : ""}
                     </p>
                   </div>
@@ -351,6 +409,9 @@ export default function ApprovalRequestsPage() {
                 </CardHeader>
                 <CardContent className="space-y-3">
                   {r.description && <p className="text-sm">{r.description}</p>}
+                  {r.slaLewat && (
+                    <p className="text-destructive text-xs">Lewat batas SLA tahap ini.</p>
+                  )}
                   <div className="space-y-1">
                     {r.steps.map((s) => (
                       <div key={s.urutan} className="flex items-center justify-between gap-2 text-xs">

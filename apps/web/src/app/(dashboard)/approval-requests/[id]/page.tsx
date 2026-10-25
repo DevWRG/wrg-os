@@ -9,15 +9,22 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { SkeletonCardGrid } from "@/components/ui/loading";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
 import { KATEGORI_OPTIONS, labelKategori, labelWilayah, WILAYAH_OPTIONS } from "@/lib/approval-routing";
 
 interface ApprovalStep {
   urutan: number;
   label: string;
+  targetType: string;
+  hodKey: string | null;
+  groupKey: string | null;
   status: string;
   notifiedAt: string | null;
+  remindedAt: string | null;
+  escalatedAt: string | null;
   decidedBy: string | null;
   decidedAt: string | null;
+  decidedVia: string | null;
   decisionNote: string | null;
 }
 interface Attachment {
@@ -30,6 +37,8 @@ interface Attachment {
 interface ApprovalRequest {
   id: string;
   kode: string;
+  jenis: string;
+  jenisLabel: string;
   title: string;
   description: string | null;
   nominal: number | null;
@@ -39,8 +48,11 @@ interface ApprovalRequest {
   status: string;
   currentUrutan: number | null;
   createdAt: string;
+  slaDueAt: string | null;
+  slaLewat: boolean;
   steps: ApprovalStep[];
   attachments: Attachment[];
+  wewenang?: { boleh: boolean; alasan: string | null };
 }
 
 const STATUS_BADGE: Record<string, "default" | "secondary" | "outline" | "destructive"> = {
@@ -55,6 +67,14 @@ const STEP_BADGE: Record<string, "default" | "secondary" | "outline" | "destruct
   rejected: "destructive",
   skipped: "secondary",
 };
+// Siapa pemegang tahap — ditampilkan supaya orang tahu sedang menunggu siapa.
+function pemegang(s: ApprovalStep): string {
+  if (s.targetType === "direktur") return "Direktur";
+  if (s.targetType === "grup") return s.groupKey ? `grup ${s.groupKey}` : "grup belum diatur";
+  return s.hodKey ? `HoD ${s.hodKey}` : "belum ditentukan";
+}
+const waktu = (iso: string) =>
+  new Date(iso).toLocaleString("id-ID", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 const rupiah = (n: number) => `Rp${Math.round(n).toLocaleString("id-ID")}`;
 const kb = (n: number) => `${(n / 1024).toFixed(0)} KB`;
 
@@ -68,6 +88,9 @@ export default function ApprovalRequestDetailPage() {
   const [draftKategori, setDraftKategori] = useState("");
   const [busyAtribut, setBusyAtribut] = useState(false);
   const [atributInfo, setAtributInfo] = useState<string | null>(null);
+  const [note, setNote] = useState("");
+  const [busyDecide, setBusyDecide] = useState(false);
+  const [decideInfo, setDecideInfo] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setError(null);
@@ -107,6 +130,34 @@ export default function ApprovalRequestDetailPage() {
       setError(String(e));
     } finally {
       setBusyNotify(false);
+    }
+  }
+
+  async function decide(action: "approve" | "reject") {
+    if (action === "reject" && !note.trim()) {
+      setError("Tulis alasan penolakan dulu.");
+      return;
+    }
+    setBusyDecide(true);
+    setError(null);
+    setDecideInfo(null);
+    try {
+      const res = await fetch(`/api/approval-requests/${encodeURIComponent(params.id)}/decide`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action, note: note.trim() || null }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.ok === false) throw new Error(data.error ?? "gagal menyimpan keputusan");
+      if (data.status === "pending" && data.nextNotify?.ok === false) {
+        setDecideInfo(`Tersimpan, tapi notifikasi tahap berikutnya gagal: ${data.nextNotify.error}`);
+      }
+      setNote("");
+      await load();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusyDecide(false);
     }
   }
 
@@ -182,10 +233,18 @@ export default function ApprovalRequestDetailPage() {
                   {req.kode} — {req.title}
                 </CardTitle>
                 <p className="text-muted-foreground text-sm">
-                  Diajukan oleh {req.requestedBy}
+                  Alur {req.jenisLabel} · Diajukan oleh {req.requestedBy}
                   {req.nominal != null ? ` · ${rupiah(req.nominal)}` : ""}
-                  {` · Wilayah ${labelWilayah(req.wilayah)} · Kategori ${labelKategori(req.kategori)}`}
+                  {req.jenis === "pengadaan"
+                    ? ` · Wilayah ${labelWilayah(req.wilayah)} · Kategori ${labelKategori(req.kategori)}`
+                    : ""}
                 </p>
+                {req.slaDueAt && (
+                  <p className={req.slaLewat ? "text-destructive text-sm" : "text-muted-foreground text-sm"}>
+                    Batas SLA tahap ini: {waktu(req.slaDueAt)}
+                    {req.slaLewat ? " (lewat)" : ""}
+                  </p>
+                )}
               </div>
               <Badge variant={STATUS_BADGE[req.status] ?? "secondary"}>{req.status}</Badge>
             </CardHeader>
@@ -196,7 +255,43 @@ export default function ApprovalRequestDetailPage() {
             )}
           </Card>
 
-          {req.status === "pending" && (!req.wilayah || !req.kategori) && (
+          {req.status === "pending" && req.wewenang && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Keputusan Anda</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {req.wewenang.boleh ? (
+                  <>
+                    <Textarea
+                      value={note}
+                      onChange={(e) => setNote(e.target.value)}
+                      placeholder="Catatan (wajib bila menolak)"
+                      rows={2}
+                    />
+                    <div className="flex gap-2">
+                      <Button size="sm" disabled={busyDecide} onClick={() => void decide("approve")}>
+                        Setujui
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="destructive"
+                        disabled={busyDecide || !note.trim()}
+                        onClick={() => void decide("reject")}
+                      >
+                        Tolak
+                      </Button>
+                    </div>
+                  </>
+                ) : (
+                  <p className="text-muted-foreground text-sm">Anda tidak bisa memutus tahap ini: {req.wewenang.alasan}.</p>
+                )}
+                {decideInfo && <p className="text-sm text-amber-700 dark:text-amber-400">{decideInfo}</p>}
+              </CardContent>
+            </Card>
+          )}
+
+          {req.status === "pending" && req.jenis === "pengadaan" && (!req.wilayah || !req.kategori) && (
             <Card>
               <CardHeader>
                 <CardTitle className="text-base">Lengkapi Atribut Routing</CardTitle>
@@ -261,8 +356,15 @@ export default function ApprovalRequestDetailPage() {
                 <div key={s.urutan} className="flex items-center justify-between gap-2 text-sm">
                   <span className={s.urutan === req.currentUrutan ? "font-medium" : ""}>
                     {s.urutan}. {s.label}
+                    <span className="text-muted-foreground"> · {pemegang(s)}</span>
                     {s.decidedBy ? ` — ${s.decidedBy}` : ""}
+                    {s.decidedVia ? ` via ${s.decidedVia === "wa" ? "WA" : "dashboard"}` : ""}
                     {s.decisionNote ? ` (${s.decisionNote})` : ""}
+                    {s.escalatedAt ? (
+                      <span className="text-destructive"> · dieskalasi {waktu(s.escalatedAt)}</span>
+                    ) : s.remindedAt ? (
+                      <span className="text-muted-foreground"> · diingatkan {waktu(s.remindedAt)}</span>
+                    ) : null}
                   </span>
                   <Badge variant={STEP_BADGE[s.status] ?? "outline"}>{s.status}</Badge>
                 </div>

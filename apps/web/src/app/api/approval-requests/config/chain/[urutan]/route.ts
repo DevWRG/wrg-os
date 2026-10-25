@@ -10,6 +10,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ urutan
   const guard = await requireDirekturOrAdmin();
   if (!guard.ok) return guard.res;
   const { urutan } = await params;
+  const jenis = new URL(req.url).searchParams.get("jenis") ?? "pengadaan";
   let body: unknown = {};
   try {
     body = await req.json();
@@ -17,10 +18,11 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ urutan
     return Response.json({ error: "invalid JSON body" }, { status: 400 });
   }
   try {
-    const res = await gatewayFetch(`/approval-requests/config/chain/${encodeURIComponent(urutan)}`, {
+    const res = await gatewayFetch(`/approval-requests/config/chain/${encodeURIComponent(urutan)}?jenis=${encodeURIComponent(jenis)}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
+      // jenis hanya dari query; body tak boleh membelokkan ke alur lain.
+      body: JSON.stringify({ ...(body as Record<string, unknown>), jenis }),
     });
     const data = await res.json();
     return Response.json(data, { status: res.status });

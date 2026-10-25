@@ -402,6 +402,10 @@ export async function submitSuggestion(
       requestedBy: submittedBy,
       wilayah: atribut.wilayah,
       kategori: atribut.kategori,
+      // Tautan induk: index unik approval_request_ref_pending_uq menjadi
+      // pagar kedua terhadap submit kembar, di samping klaim atomik di atas.
+      refTabel: "forecast_suggestion",
+      refId: id,
     });
   } catch (e) {
     await lepasKlaim();
