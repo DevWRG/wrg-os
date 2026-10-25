@@ -266,6 +266,7 @@ import { listDirekturInbox, runDirekturInbox } from "./repo/direktur-inbox.js";
 import { TukarFakturError, listKalenderKlinik, listTukarFaktur, parseBulan, parseHari } from "./repo/tukar-faktur.js";
 import { getPmfScorecard } from "./repo/pmf-scorecard.js";
 import { getSoPacing, runSoPacingAlert } from "./repo/so-pacing.js";
+import { listBriefingMingguan, runWeeklyBriefing } from "./repo/weekly-briefing.js";
 import {
   akunKso, bacaDokumen, buatKontrak, getKontrak, hapusDokumen, KontrakError, kelengkapanKontrak, listKontrak,
   MAKS_DOKUMEN, perpanjangKontrak, ubahKontrak, ubahStatusKontrak, unggahDokumen,
@@ -2957,6 +2958,33 @@ app.post("/senin-brief/run", async (c) => {
     isoYear: body.iso_year, isoWeek: body.iso_week,
   });
   return c.json(r);
+});
+
+// F63 Weekly Briefing Direktur — read model (tab "Briefing Mingguan" di /briefings).
+app.get("/weekly-briefing", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const briefs = await listBriefingMingguan();
+  return c.json({ count: briefs.length, briefs });
+});
+
+// F63 — susun briefing manual (uji / generate ulang). Sengaja TANPA route BFF: bisa
+// mengirim WA, jadi hanya dipanggil operator lewat service token. body: {dry_run?,
+// kirim_wa?, iso_year?, iso_week?}. Default dry_run=true (beda dari job Senin) dan
+// kirim_wa=false — generate ulang tak boleh menimpa data atau mengirim WA tanpa sengaja.
+app.post("/weekly-briefing/run", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { dry_run?: boolean; kirim_wa?: boolean; iso_year?: number; iso_week?: number } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    /* body opsional */
+  }
+  return c.json(
+    await runWeeklyBriefing({
+      dryRun: body.dry_run !== false, kirimWa: body.kirim_wa === true,
+      isoYear: body.iso_year, isoWeek: body.iso_week,
+    }),
+  );
 });
 
 // A11 Coaching Outcome Synthesis — coaching per AM (D1). Body opsional: { period }.
