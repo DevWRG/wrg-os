@@ -1092,6 +1092,8 @@ export interface HasilApproval {
   refId: string;
   status: "approved" | "rejected" | "canceled";
   oleh: string;
+  // Akun pemutus (null untuk pembatalan dari sisi engine).
+  olehUserId: string | null;
   catatan: string | null;
 }
 
@@ -1163,7 +1165,7 @@ async function putuskan(
 
     const wa = req.requested_by_wa ? String(req.requested_by_wa) : undefined;
     const ref = req.ref_tabel ? { refTabel: String(req.ref_tabel), refId: String(req.ref_id) } : null;
-    const base = { requestId: String(req.id), kode, oleh: approver.name, catatan: note ?? null };
+    const base = { requestId: String(req.id), kode, oleh: approver.name, olehUserId: approver.userId, catatan: note ?? null };
 
     if (action === "reject") {
       await tx`UPDATE approval_step SET status = 'rejected', decided_by = ${approver.name}, decided_by_user_id = ${approver.userId}, decided_via = ${via}, decided_at = now(), decision_note = ${note ?? null} WHERE id = ${step.id}`;
@@ -1253,7 +1255,7 @@ export async function batalkanRequestDalamTx(
   if ("id" in where && req.ref_tabel) {
     await jalankanKonsumen(tx, {
       requestId: String(req.id), kode: String(req.kode), refTabel: String(req.ref_tabel), refId: String(req.ref_id),
-      status: "canceled", oleh, catatan: alasan,
+      status: "canceled", oleh, olehUserId: null, catatan: alasan,
     });
   }
   return { ok: true, kode: String(req.kode) };

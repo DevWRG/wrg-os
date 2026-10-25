@@ -9053,7 +9053,8 @@ app.post("/ga-maintenance/:id/start", async (c) => {
 
 app.post("/ga-maintenance/:id/complete", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let body: { cost_actual?: number; notes?: string };
+  // actor_* diisi BFF dari sesi (pengaju approval Finance bila biaya > ambang).
+  let body: { cost_actual?: number; notes?: string; actor_user_id?: string | null; actor_name?: string | null };
   try {
     body = await c.req.json();
   } catch {
@@ -9065,14 +9066,14 @@ app.post("/ga-maintenance/:id/complete", async (c) => {
 
 app.post("/ga-maintenance/:id/approve", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let body: { approved_by?: string };
+  let body: { approved_by?: string; legacy_allowed?: boolean };
   try {
     body = await c.req.json();
   } catch {
     return c.json({ error: "invalid JSON body" }, 400);
   }
   if (!body.approved_by) return c.json({ error: "approved_by wajib diisi" }, 400);
-  const r = await approveSchedule(c.req.param("id"), { approved_by: body.approved_by });
+  const r = await approveSchedule(c.req.param("id"), { approved_by: body.approved_by, legacy_allowed: body.legacy_allowed === true });
   return c.json(r, "error" in r ? 400 : 200);
 });
 

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Play, CheckCircle2, XCircle, ShieldCheck } from "lucide-react";
@@ -23,6 +24,8 @@ interface Schedule {
   id: string;
   status: string;
   cost_budget: number;
+  approval_request_id?: string | null;
+  approval_kode?: string | null;
 }
 
 const NONE = "__none__";
@@ -246,6 +249,15 @@ export function GaMaintenanceActions({ schedule, canApproveFinance, users }: { s
     );
   }
   if (schedule.status === "pending_finance") {
+    // Approval di mesin F11 (migrasi 249): keputusan (setuju/tolak) di halaman
+    // approval atau lewat WA; siapa yang berhak ditentukan grup tahapnya.
+    if (schedule.approval_request_id) {
+      return (
+        <Link href={`/approval-requests/${schedule.approval_request_id}`} title="Buka approval Finance">
+          <Badge variant="destructive">Nunggu Finance · {schedule.approval_kode ?? "approval"}</Badge>
+        </Link>
+      );
+    }
     return canApproveFinance ? (
       <ApproveButton id={schedule.id} users={users} />
     ) : (

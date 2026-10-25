@@ -22,6 +22,9 @@ export interface GaMaintenance {
   approved_by: string | null;
   approved_at: string | null;
   notes: string | null;
+  // Approval Finance di mesin F11 (migrasi 249).
+  approval_request_id?: string | null;
+  approval_kode?: string | null;
 }
 
 const STATUS_LABEL: Record<string, string> = {
