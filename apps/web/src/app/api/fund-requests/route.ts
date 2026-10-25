@@ -27,7 +27,7 @@ export async function POST(req: Request) {
   const res = await gatewayFetch("/fund-requests", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ ...body, requester_name: me.name ?? me.email, requester_email: me.email }),
+    body: JSON.stringify({ ...body, requester_name: me.name ?? me.email, requester_email: me.email, requester_user_id: me.id }),
   });
   return relay(res);
 }

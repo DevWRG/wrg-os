@@ -1,13 +1,33 @@
-import { db } from "../db.js";
+import type { TransactionSql } from "postgres";
 
-// F138 Operational Fund Request + Multi-Step Approval Workflow (General
-// Affairs). Modul standalone — TIDAK terhubung ke dana_ops (F51) dengan cara
-// apa pun (lihat 141_fund_request.sql). Semua Karyawan boleh mengajukan;
-// approval 2 tahap FIXED: HOD (dipilih manual oleh pengaju saat submit) lalu
-// Direktur (final). approval_status DIHITUNG dari baris fund_request_approval
-// (pola computed sama dgn purchase_order_approval F35), bukan kolom
-// tersimpan. date/timestamptz eksplisit ::text di SELECT/RETURNING (gotcha
-// postgres.js yang sama di semua repo lain).
+import { db } from "../db.js";
+import {
+  batalkanRequestDalamTx,
+  buatRequestDalamTx,
+  daftarKonsumen,
+  decideFromDashboard,
+  getApprovalRequest,
+  notifyCurrentStep,
+  type NotifyResult,
+} from "./approval.js";
+
+// F138 Operational Fund Request (General Affairs). Modul standalone — TIDAK
+// terhubung ke dana_ops (F51) dengan cara apa pun (lihat 141_fund_request.sql).
+// Semua Karyawan boleh mengajukan; approval 2 tahap: HOD (dipilih manual oleh
+// pengaju saat submit) lalu Direktur (final).
+//
+// Sejak migrasi 248 approval-nya lewat mesin F11 (alur 'dana-ops',
+// fund_request.approval_request_id) — WA per tahap, #APPROVE, SLA, larangan
+// memutus pengajuan sendiri. fund_request_approval tinggal jejak pengajuan
+// lama yang sudah final. approval_status DIHITUNG (dari approval_step atau,
+// untuk pengajuan lama, fund_request_approval), bukan kolom tersimpan.
+// date/timestamptz eksplisit ::text di SELECT/RETURNING (gotcha postgres.js
+// yang sama di semua repo lain).
+
+export const JENIS_DANA_OPS = "dana-ops";
+const REF_TABEL = "fund_request";
+// Tahap engine ↔ peran lama yang dipakai UI: urutan 1 = HoD, 2 = Direktur.
+const URUTAN_ROLE: Record<number, "hod" | "direktur"> = { 1: "hod", 2: "direktur" };
 
 export class FundRequestError extends Error {
   status: number;
@@ -78,6 +98,9 @@ export interface FundRequestRow {
   created_at: string;
   updated_at: string;
   approval_status: FundRequestStatus;
+  // Null = pengajuan lama (sebelum migrasi 248) yang sudah final.
+  approval_request_id: string | null;
+  approval_kode: string | null;
 }
 
 function mapRow(r: Record<string, unknown>): FundRequestRow {
@@ -97,6 +120,8 @@ function mapRow(r: Record<string, unknown>): FundRequestRow {
       r.approval_hod_status as ApprovalDecisionStatus | undefined,
       r.approval_direktur_status as ApprovalDecisionStatus | undefined,
     ),
+    approval_request_id: r.approval_request_id != null ? String(r.approval_request_id) : null,
+    approval_kode: r.approval_kode != null ? String(r.approval_kode) : null,
   };
 }
 
@@ -104,20 +129,33 @@ function frCols(sql: ReturnType<typeof db>) {
   return sql`
     fr.id, fr.requester_name, fr.requester_email, fr.purpose, fr.amount_requested,
     fr.cabang, fr.request_date::text, fr.hod_approver_key, fr.notes,
-    fr.created_at::text, fr.updated_at::text,
+    fr.created_at::text, fr.updated_at::text, fr.approval_request_id,
     appr.hod_status AS approval_hod_status,
-    appr.direktur_status AS approval_direktur_status
+    appr.direktur_status AS approval_direktur_status,
+    appr.approval_kode
   `;
 }
 
+// Status per peran: dari approval_step (pengajuan di engine) atau
+// fund_request_approval (pengajuan lama). Langkah 'skipped' (request
+// dibatalkan) dibaca sebagai pending — pengajuannya sendiri ikut terhapus.
 const FR_APPROVAL_AGG_JOIN = (sql: ReturnType<typeof db>) => sql`
-  LEFT JOIN (
-    SELECT fund_request_id,
-      MAX(status) FILTER (WHERE approver_role = 'hod') AS hod_status,
-      MAX(status) FILTER (WHERE approver_role = 'direktur') AS direktur_status
-    FROM fund_request_approval
-    GROUP BY fund_request_id
-  ) appr ON appr.fund_request_id = fr.id
+  LEFT JOIN LATERAL (
+    SELECT
+      CASE WHEN fr.approval_request_id IS NOT NULL THEN
+        (SELECT CASE s.status WHEN 'skipped' THEN 'pending' ELSE s.status END
+           FROM approval_step s WHERE s.request_id = fr.approval_request_id AND s.urutan = 1)
+      ELSE
+        (SELECT a.status FROM fund_request_approval a WHERE a.fund_request_id = fr.id AND a.approver_role = 'hod')
+      END AS hod_status,
+      CASE WHEN fr.approval_request_id IS NOT NULL THEN
+        (SELECT CASE s.status WHEN 'skipped' THEN 'pending' ELSE s.status END
+           FROM approval_step s WHERE s.request_id = fr.approval_request_id AND s.urutan = 2)
+      ELSE
+        (SELECT a.status FROM fund_request_approval a WHERE a.fund_request_id = fr.id AND a.approver_role = 'direktur')
+      END AS direktur_status,
+      (SELECT r.kode FROM approval_request r WHERE r.id = fr.approval_request_id) AS approval_kode
+  ) appr ON true
 `;
 
 export interface FundRequestInput {
@@ -129,10 +167,26 @@ export interface FundRequestInput {
   request_date?: string;
   hod_approver_key: string;
   notes?: string | null;
+  // Akun pengaju (sesi web) — dasar larangan memutus pengajuan sendiri &
+  // nomor WA untuk kabar hasil akhir.
+  requester_user_id?: string | null;
 }
 
 export interface FundRequestDetail extends FundRequestRow {
   approvals: FundRequestApprovalRow[];
+  // Diisi saat dibaca untuk pengguna tertentu (viewerUserId).
+  approval?: {
+    id: string;
+    kode: string;
+    current_role: ApproverRole | null;
+    wewenang: { boleh: boolean; alasan: string | null } | null;
+  };
+  notify?: NotifyResult;
+}
+
+// Judul request di engine — juga tampil di WA approver.
+function judulApproval(purpose: string): string {
+  return `Dana operasional: ${purpose}`.slice(0, 200);
 }
 
 export async function createFundRequest(t: FundRequestInput): Promise<FundRequestDetail> {
@@ -143,7 +197,9 @@ export async function createFundRequest(t: FundRequestInput): Promise<FundReques
   const hod = await sql`SELECT 1 FROM app_user WHERE hod_key = ${t.hod_approver_key} AND active`;
   if (!hod.length) throw new FundRequestError(400, "HOD terpilih tidak ditemukan / tidak aktif");
 
-  const id = await sql.begin(async (tx) => {
+  // Baris induk + approval lahir dalam satu transaksi; WA dikirim sesudah commit.
+  const made = await sql.begin(async (txRaw) => {
+    const tx = txRaw as unknown as TransactionSql<Record<string, unknown>>;
     const rows = await tx`
       INSERT INTO fund_request (requester_name, requester_email, purpose, amount_requested, cabang, request_date, hod_approver_key, notes)
       VALUES (${t.requester_name}, ${t.requester_email}, ${t.purpose}, ${t.amount_requested}, ${t.cabang ?? null},
@@ -151,18 +207,25 @@ export async function createFundRequest(t: FundRequestInput): Promise<FundReques
       RETURNING id
     `;
     const frId = String(rows[0].id);
-    // Seed 2 baris approval fixed: HOD (required_hod_key snapshot) lalu Direktur.
-    await tx`
-      INSERT INTO fund_request_approval (fund_request_id, approver_role, required_hod_key)
-      VALUES
-        (${frId}, 'hod', ${t.hod_approver_key}),
-        (${frId}, 'direktur', ${null})
-    `;
-    return frId;
+    const apr = await buatRequestDalamTx(tx, {
+      jenis: JENIS_DANA_OPS,
+      title: judulApproval(t.purpose),
+      description: [t.cabang ? `Cabang: ${t.cabang}` : null, t.notes].filter(Boolean).join("\n") || null,
+      nominal: t.amount_requested,
+      requestedBy: t.requester_name,
+      requestedByUserId: t.requester_user_id ?? null,
+      hodPengaju: t.hod_approver_key,
+      refTabel: REF_TABEL,
+      refId: frId,
+    });
+    if (!apr.ok) throw new FundRequestError(400, apr.error);
+    await tx`UPDATE fund_request SET approval_request_id = ${apr.id} WHERE id = ${frId}`;
+    return { frId, aprId: apr.id };
   });
-  const detail = await getFundRequest(id);
+  const notify = await notifyCurrentStep(made.aprId);
+  const detail = await getFundRequest(made.frId);
   if (!detail) throw new Error("gagal membaca fund request setelah dibuat");
-  return detail;
+  return { ...detail, notify };
 }
 
 export async function listFundRequests(opts?: {
@@ -190,21 +253,67 @@ export async function listFundRequests(opts?: {
   return filtered.slice(0, limit);
 }
 
-export async function getFundRequest(id: string): Promise<FundRequestDetail | null> {
+export async function getFundRequest(id: string, opts: { viewerUserId?: string | null } = {}): Promise<FundRequestDetail | null> {
   const sql = db();
   const rows = await sql`SELECT ${frCols(sql)} FROM fund_request fr ${FR_APPROVAL_AGG_JOIN(sql)} WHERE fr.id = ${id}`;
   if (!rows.length) return null;
-  const approvals = await sql`
-    SELECT ${approvalCols(sql)} FROM fund_request_approval WHERE fund_request_id = ${id} ORDER BY created_at ASC
-  `;
-  return { ...mapRow(rows[0]), approvals: approvals.map(mapApproval) };
+  const row = mapRow(rows[0]);
+  if (!row.approval_request_id) {
+    const approvals = await sql`
+      SELECT ${approvalCols(sql)} FROM fund_request_approval WHERE fund_request_id = ${id} ORDER BY created_at ASC
+    `;
+    return { ...row, approvals: approvals.map(mapApproval) };
+  }
+  // Pengajuan di engine: bentuk baris per peran disusun dari approval_step
+  // supaya UI lama (tabel per peran) tetap jalan tanpa tahu engine.
+  const apr = await getApprovalRequest(row.approval_request_id, { viewerUserId: opts.viewerUserId ?? null });
+  const approvals: FundRequestApprovalRow[] = (apr?.steps ?? [])
+    .filter((st) => URUTAN_ROLE[st.urutan])
+    .map((st) => ({
+      id: `${row.approval_request_id}:${st.urutan}`,
+      fund_request_id: row.id,
+      approver_role: URUTAN_ROLE[st.urutan],
+      required_hod_key: st.hodKey,
+      status: st.status === "approved" || st.status === "rejected" ? st.status : "pending",
+      decided_by: st.decidedBy,
+      decided_at: st.decidedAt,
+      note: st.decisionNote,
+    }));
+  return {
+    ...row,
+    approvals,
+    approval: apr
+      ? {
+          id: apr.id,
+          kode: apr.kode,
+          current_role: apr.status === "pending" && apr.currentUrutan != null ? (URUTAN_ROLE[apr.currentUrutan] ?? null) : null,
+          wewenang: apr.wewenang ?? null,
+        }
+      : undefined,
+  };
 }
 
 // Hanya bisa dibatalkan selama BELUM ada keputusan apa pun (approval_status
 // masih pending_hod & belum pernah decided) — sekali ada keputusan, baris
 // jadi audit trail (tidak boleh hilang).
-export async function deleteFundRequest(id: string): Promise<{ deleted: number }> {
+export async function deleteFundRequest(id: string, oleh: string | null = null): Promise<{ deleted: number }> {
   const sql = db();
+  const [head] = await sql`SELECT approval_request_id FROM fund_request WHERE id = ${id}`;
+  if (!head) return { deleted: 0 };
+  if (head.approval_request_id) {
+    return sql.begin(async (txRaw) => {
+      const tx = txRaw as unknown as TransactionSql<Record<string, unknown>>;
+      const [r] = await tx`SELECT id FROM approval_request WHERE id = ${head.approval_request_id} FOR UPDATE`;
+      const decided = r
+        ? await tx`SELECT 1 FROM approval_step WHERE request_id = ${r.id} AND status IN ('approved', 'rejected') LIMIT 1`
+        : [];
+      if (decided.length) throw new FundRequestError(409, "sudah ada keputusan approval — tidak bisa dibatalkan");
+      // Approval ditutup 'canceled' (tetap tercatat), baru induknya dihapus.
+      if (r) await batalkanRequestDalamTx(tx, { refTabel: REF_TABEL, refId: id }, oleh ?? "pengaju", "pengajuan dibatalkan");
+      const del = await tx`DELETE FROM fund_request WHERE id = ${id} RETURNING id`;
+      return { deleted: del.length };
+    });
+  }
   const rows = await sql`
     DELETE FROM fund_request fr
     WHERE fr.id = ${id}
@@ -262,6 +371,38 @@ export async function decideFundRequestApproval(
     return { approvals: finalRows, approval_status: computeFundRequestStatus(finalRows) };
   });
 }
+
+// Keputusan untuk pengajuan di engine (migrasi 248). userId dari sesi; siapa
+// yang boleh memutus ditentukan engine (cekWewenang), bukan peran di URL.
+// `role` dari UI dicocokkan ke tahap current supaya klik dari layar basi
+// (tahap sudah maju) tak memutus tahap lain diam-diam.
+export async function decideFundRequestViaEngine(
+  fundRequestId: string,
+  role: ApproverRole,
+  decision: "approve" | "reject",
+  userId: string,
+  note?: string | null,
+): Promise<{ approvals: FundRequestApprovalRow[]; approval_status: FundRequestStatus; nextNotify?: NotifyResult }> {
+  const fr = await getFundRequest(fundRequestId);
+  if (!fr) throw new FundRequestError(404, "fund request tidak ditemukan");
+  if (!fr.approval_request_id || !fr.approval) throw new FundRequestError(409, "pengajuan ini tidak memakai mesin approval");
+  if (fr.approval.current_role !== role) {
+    throw new FundRequestError(409, fr.approval.current_role ? `tahap sekarang: ${fr.approval.current_role}` : "approval sudah selesai");
+  }
+  const r = await decideFromDashboard(fr.approval_request_id, decision, userId, note ?? null);
+  if (!r.ok) {
+    const e = r.error ?? "gagal memutus";
+    throw new FundRequestError(/tidak ditemukan/.test(e) ? 404 : /wajib/.test(e) ? 400 : /sudah/.test(e) ? 409 : 403, e);
+  }
+  const after = await getFundRequest(fundRequestId);
+  return { approvals: after?.approvals ?? [], approval_status: after?.approval_status ?? fr.approval_status, nextNotify: r.nextNotify };
+}
+
+// Penangan konsumen engine: dana ops tak punya kolom status sendiri (status
+// dihitung dari approval_step), jadi cukup menandai baris induk berubah.
+daftarKonsumen(REF_TABEL, async (tx, h) => {
+  await tx`UPDATE fund_request SET updated_at = now() WHERE id = ${h.refId}`;
+});
 
 export interface HodOption {
   id: string;
