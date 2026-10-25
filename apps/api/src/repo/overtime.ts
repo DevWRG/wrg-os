@@ -1,16 +1,32 @@
 // #OVERTIME — pengajuan jam lembur via WA (SEBELUM lembur), migrasi 193.
 //
-// Satu tahap approval oleh HoD divisi pengaju. SENGAJA bukan engine F11
-// (approval.ts): chain itu global 5 tahap dan masih tersangkut #1071. Pola
-// yang ditiru leave_pending — tabel & status sendiri.
+// Satu tahap approval oleh HoD divisi pengaju. Sejak migrasi 251 keputusannya
+// lewat mesin approval F11 (alur 'lembur', overtime_request.approval_request_id):
+// WA ke HoD, #APPROVE, SLA, larangan memutus pengajuan sendiri. Kode OT-xxxx
+// tetap jadi pegangan pengaju & grup; #APPROVE OT-xxxx diteruskan ke approval-nya.
 //
 // Pengaju yang boleh mengajukan diatur dinamis lewat overtime_rule (dept /
 // pola posisi / pengecualian per orang). HoD tak ketemu → pengajuan TETAP
 // dicatat (keputusan PM), menunggu admin menetapkan HoD lewat assignHod().
 
+import type { TransactionSql } from "postgres";
+
 import { db } from "../db.js";
 import { sendViaWaGateway } from "../wasend.js";
 import { formatDurasi } from "../parsers/overtime.js";
+import {
+  buatRequestDalamTx,
+  daftarKonsumen,
+  decideCurrentStep,
+  decideFromDashboard,
+  gantiHodTahapCurrent,
+  notifyCurrentStep,
+  type ResolvedApprover,
+} from "./approval.js";
+
+type Tx = TransactionSql<Record<string, unknown>>;
+export const JENIS_LEMBUR = "lembur";
+const REF_TABEL = "overtime_request";
 
 const wibDate = (): string => new Date(Date.now() + 7 * 3600 * 1000).toISOString().slice(0, 10);
 
@@ -181,10 +197,15 @@ export interface OvertimeRow {
   decided_at: string | null;
   decision_note: string | null;
   created_at: string;
+  // Approval di mesin F11 (null = diputus sebelum 251, atau HoD belum ditetapkan).
+  approval_request_id: string | null;
+  approval_kode: string | null;
 }
 
 const SELECT_COLS = `id, kode, am_id, nama, dept, tanggal_lembur::text AS tanggal_lembur, estimasi_menit, uraian, status,
-  hod_key, approver_nama, notify_status, decided_by, decided_at::text AS decided_at, decision_note, created_at::text AS created_at`;
+  hod_key, approver_nama, notify_status, decided_by, decided_at::text AS decided_at, decision_note, created_at::text AS created_at,
+  approval_request_id,
+  (SELECT r.kode FROM approval_request r WHERE r.id = overtime_request.approval_request_id) AS approval_kode`;
 
 function mapRow(r: Record<string, unknown>): OvertimeRow {
   const s = (v: unknown): string | null => (v == null ? null : String(v));
@@ -205,7 +226,33 @@ function mapRow(r: Record<string, unknown>): OvertimeRow {
     decided_at: s(r.decided_at),
     decision_note: s(r.decision_note),
     created_at: String(r.created_at),
+    approval_request_id: s(r.approval_request_id),
+    approval_kode: s(r.approval_kode),
   };
+}
+
+// Buka approval untuk satu pengajuan yang HoD-nya sudah diketahui — di
+// transaksi pemanggil; WA ke HoD dikirim sesudah commit (notifyCurrentStep).
+async function bukaApproval(tx: Tx, id: number): Promise<string> {
+  const [o] = await tx`
+    SELECT id, kode, am_id, nama, tanggal_lembur::text AS tanggal_lembur, estimasi_menit, uraian, hod_key
+    FROM overtime_request WHERE id = ${id} FOR UPDATE
+  `;
+  if (!o || !o.hod_key) throw new Error("pengajuan tanpa HoD tak bisa dibuka approval-nya");
+  const [u] = await tx`SELECT id FROM app_user WHERE am_id = ${o.am_id} AND active ORDER BY created_at LIMIT 1`;
+  const apr = await buatRequestDalamTx(tx, {
+    jenis: JENIS_LEMBUR,
+    title: `Lembur ${o.kode}: ${o.nama}`.slice(0, 200),
+    description: `Tanggal: ${o.tanggal_lembur}\nEstimasi: ${formatDurasi(Number(o.estimasi_menit))}\nPekerjaan: ${o.uraian}`,
+    requestedBy: String(o.nama),
+    requestedByUserId: u ? String(u.id) : null,
+    hodPengaju: String(o.hod_key),
+    refTabel: REF_TABEL,
+    refId: String(o.id),
+  });
+  if (!apr.ok) throw new Error(`gagal membuka approval lembur: ${apr.error}`);
+  await tx`UPDATE overtime_request SET approval_request_id = ${apr.id} WHERE id = ${id}`;
+  return apr.id;
 }
 
 export type SubmitResult =
@@ -231,12 +278,18 @@ export async function submitOvertime(input: {
 
   const [{ seq }] = await sql`SELECT nextval('overtime_request_kode_seq') AS seq`;
   const kode = `OT-${String(Number(seq)).padStart(4, "0")}`;
-  const [ins] = await sql`
-    INSERT INTO overtime_request (kode, am_id, nama, dept, tanggal_lembur, estimasi_menit, uraian, hod_key, group_jid, wa_message_id)
-    VALUES (${kode}, ${p.am_id}, ${p.nama}, ${p.dept}, ${wibDate()}, ${input.menit}, ${input.uraian}, ${p.hod_key}, ${input.group_jid}, ${input.wa_message_id})
-    RETURNING id
-  `;
-  const id = Number(ins.id);
+  // Pengajuan + approval-nya lahir dalam satu transaksi (bila HoD diketahui).
+  const id = await sql.begin(async (txRaw) => {
+    const tx = txRaw as unknown as Tx;
+    const [ins] = await tx`
+      INSERT INTO overtime_request (kode, am_id, nama, dept, tanggal_lembur, estimasi_menit, uraian, hod_key, group_jid, wa_message_id)
+      VALUES (${kode}, ${p.am_id}, ${p.nama}, ${p.dept}, ${wibDate()}, ${input.menit}, ${input.uraian}, ${p.hod_key}, ${input.group_jid}, ${input.wa_message_id})
+      RETURNING id
+    `;
+    const newId = Number(ins.id);
+    if (p.hod_key) await bukaApproval(tx, newId);
+    return newId;
+  });
   const notify = await notifyApprover(id);
   const row = await getOvertime(id);
   if (!row) return { ok: false, error: "gagal", message: "pengajuan tersimpan tapi gagal dibaca ulang" };
@@ -283,6 +336,7 @@ export async function listOvertime(filter: {
 
 // Kirim / kirim-ulang notifikasi ke HoD. Hasilnya dicatat ke notify_status
 // supaya admin bisa melihat kenapa pengajuan "menggantung" tanpa membuka log.
+// Pengirimannya lewat engine (pesan berisi kode APR + kode OT bisa dipakai).
 export async function notifyApprover(id: number): Promise<{ ok: boolean; error?: string }> {
   const sql = db();
   const row = await getOvertime(id);
@@ -298,24 +352,17 @@ export async function notifyApprover(id: number): Promise<{ ok: boolean; error?:
     await simpan(`gagal: ${err}`, null);
     return { ok: false, error: err };
   }
+  let aprId = row.approval_request_id;
+  if (!aprId) {
+    aprId = await sql.begin((tx) => bukaApproval(tx as unknown as Tx, id));
+  }
   const target = await resolveHodTarget(row.hod_key);
-  if ("gagal" in target) {
-    await simpan(`gagal: ${target.gagal}`, null);
-    return { ok: false, error: target.gagal };
+  const n = await notifyCurrentStep(aprId);
+  if (!n.ok) {
+    await simpan(`gagal: ${n.error ?? "pengiriman WA ke HoD gagal"}`, null);
+    return { ok: false, error: n.error ?? "pengiriman WA ke HoD gagal" };
   }
-  const msg =
-    `🕒 *Pengajuan Lembur* ${row.kode}\n\n` +
-    `${row.nama}${row.dept ? ` (${row.dept})` : ""}\n` +
-    `Tanggal: ${row.tanggal_lembur}\n` +
-    `Estimasi: ${formatDurasi(row.estimasi_menit)}\n` +
-    `Pekerjaan: ${row.uraian}\n\n` +
-    `Balas *#APPROVE ${row.kode}* untuk setujui, atau *#REJECT ${row.kode} ALASAN* untuk tolak.`;
-  const gw = await sendViaWaGateway(target.waNumber, msg);
-  if (!gw.sent) {
-    await simpan("gagal: pengiriman WA ke HoD gagal", target.name);
-    return { ok: false, error: "pengiriman WA ke HoD gagal" };
-  }
-  await simpan("terkirim", target.name);
+  await simpan("terkirim", "gagal" in target ? null : target.name);
   return { ok: true };
 }
 
@@ -328,8 +375,19 @@ export async function assignHod(id: number, hodKey: string): Promise<{ ok: boole
   // menggantung tanpa pernah bisa diputus HoD mana pun.
   const [hod] = await sql`SELECT 1 FROM master_hod WHERE hod_key = ${key} AND aktif`;
   if (!hod) return { ok: false, error: `hod_key "${key}" tidak ada di daftar HoD aktif` };
-  const rows = await sql`UPDATE overtime_request SET hod_key = ${key} WHERE id = ${id} AND status = 'pending' RETURNING id`;
+  const rows = await sql`
+    UPDATE overtime_request SET hod_key = ${key} WHERE id = ${id} AND status = 'pending' RETURNING approval_request_id
+  `;
   if (!rows.length) return { ok: false, error: "pengajuan tidak ditemukan atau sudah diputus" };
+  // Sudah punya approval → ganti pemegang tahapnya di engine (jejak audit +
+  // WA ke HoD baru). Belum → notifyApprover membukanya.
+  if (rows[0].approval_request_id) {
+    const g = await gantiHodTahapCurrent(String(rows[0].approval_request_id), key, "admin lembur");
+    if (!g.ok) return { ok: false, error: g.error };
+    const notify = g.notify ?? { ok: false, error: "notifikasi tak dicoba" };
+    await sql`UPDATE overtime_request SET notify_status = ${notify.ok ? "terkirim" : `gagal: ${notify.error}`} WHERE id = ${id}`;
+    return { ok: true, notify: { ok: notify.ok, error: notify.error } };
+  }
   return { ok: true, notify: await notifyApprover(id) };
 }
 
@@ -338,8 +396,13 @@ export async function assignHod(id: number, hodKey: string): Promise<{ ok: boole
 export interface OvertimeActor {
   name: string;
   hodKey: string | null;
-  // admin / superuser / direktur boleh memutus pengajuan divisi mana pun.
+  // admin / superuser / direktur boleh memutus pengajuan divisi mana pun —
+  // HANYA untuk pengajuan tanpa approval engine (HoD belum ditetapkan /
+  // data lama). Pengajuan di engine mengikuti cekWewenang.
   privileged: boolean;
+  // Identitas untuk engine: akun sesi (dashboard) atau approver WA.
+  userId?: string | null;
+  approver?: ResolvedApprover | null;
 }
 
 export type DecideResult = { ok: true; row: OvertimeRow } | { ok: false; error: string };
@@ -362,6 +425,18 @@ export async function decideOvertime(
   const cur = mapRow(found);
   if (cur.status !== "pending") return { ok: false, error: `pengajuan ini sudah ${cur.status}` };
 
+  // Pengajuan di mesin F11: keputusan + pengumuman grup lewat engine &
+  // penangan konsumen di bawah, aturan wewenang sama dengan approval lain.
+  if (cur.approval_request_id) {
+    const r = actor.approver
+      ? await decideCurrentStep(cur.approval_kode ?? "", action, actor.approver, note ?? null)
+      : actor.userId
+        ? await decideFromDashboard(cur.approval_request_id, action, actor.userId, note ?? null)
+        : { ok: false as const, error: "identitas pemutus tak dikenal" };
+    if (!r.ok) return { ok: false, error: r.error ?? "gagal memutus" };
+    return { ok: true, row: (await getOvertime(cur.id)) ?? cur };
+  }
+
   const berwenang = actor.privileged || (cur.hod_key !== null && cur.hod_key === actor.hodKey);
   if (!berwenang) return { ok: false, error: "bukan HoD divisi pengaju — tidak berwenang memutus pengajuan ini" };
 
@@ -383,3 +458,30 @@ export async function decideOvertime(
   }
   return { ok: true, row };
 }
+
+// Penangan konsumen engine — status pengajuan ikut keputusan approval (di
+// transaksi keputusan); pengumuman ke grup asal sesudah commit.
+daftarKonsumen(
+  REF_TABEL,
+  async (tx, h) => {
+    if (h.status === "canceled") return;
+    await tx`
+      UPDATE overtime_request SET
+        status = ${h.status}, decided_by = ${h.oleh}, decided_at = now(), decision_note = ${h.catatan}
+      WHERE id = ${Number(h.refId)} AND status = 'pending' AND approval_request_id = ${h.requestId}
+    `;
+  },
+  {
+    sesudah: async (h) => {
+      if (h.status === "canceled") return;
+      const sql = db();
+      const [o] = await sql`SELECT kode, nama, estimasi_menit, group_jid FROM overtime_request WHERE id = ${Number(h.refId)}`;
+      if (!o?.group_jid) return;
+      const teks =
+        h.status === "approved"
+          ? `✅ Lembur ${o.kode} (${o.nama}, ${formatDurasi(Number(o.estimasi_menit))}) DISETUJUI oleh ${h.oleh}.`
+          : `❌ Lembur ${o.kode} (${o.nama}) DITOLAK oleh ${h.oleh}${h.catatan ? `: ${h.catatan}` : ""}.`;
+      await sendViaWaGateway(String(o.group_jid), teks);
+    },
+  },
+);

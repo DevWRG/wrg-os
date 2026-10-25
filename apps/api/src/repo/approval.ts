@@ -1127,15 +1127,33 @@ export class TolakKonsumen extends Error {
 // boleh berselisih). Jangan kirim WA dari sini; kembalikan pesannya.
 export type PenanganKonsumen = (tx: Tx, hasil: HasilApproval) => Promise<void>;
 
-const konsumen = new Map<string, PenanganKonsumen>();
+// `sesudah` (opsional) jalan SETELAH transaksi keputusan commit — tempat
+// efek luar seperti mengumumkan hasil ke grup WA asal pengajuan. Gagalnya
+// tak membatalkan keputusan (sudah tersimpan), hanya dicatat di log.
+export interface OpsiKonsumen {
+  sesudah?: (hasil: HasilApproval) => Promise<void>;
+}
 
-export function daftarKonsumen(refTabel: string, penangan: PenanganKonsumen): void {
-  konsumen.set(refTabel, penangan);
+const konsumen = new Map<string, { penangan: PenanganKonsumen; opsi: OpsiKonsumen }>();
+
+export function daftarKonsumen(refTabel: string, penangan: PenanganKonsumen, opsi: OpsiKonsumen = {}): void {
+  konsumen.set(refTabel, { penangan, opsi });
 }
 
 async function jalankanKonsumen(tx: Tx, hasil: HasilApproval): Promise<void> {
-  const h = konsumen.get(hasil.refTabel);
-  if (h) await h(tx, hasil);
+  const k = konsumen.get(hasil.refTabel);
+  if (k) await k.penangan(tx, hasil);
+}
+
+async function jalankanSesudah(hasil: HasilApproval | undefined): Promise<void> {
+  if (!hasil) return;
+  const k = konsumen.get(hasil.refTabel);
+  if (!k?.opsi.sesudah) return;
+  try {
+    await k.opsi.sesudah(hasil);
+  } catch (e) {
+    console.error(`[approval] efek sesudah keputusan ${hasil.kode} (${hasil.refTabel}) gagal:`, e);
+  }
 }
 
 // ── Keputusan ──────────────────────────────────────────────────────
@@ -1168,7 +1186,9 @@ async function putuskan(
   // Satu transaksi + kunci baris request (FOR UPDATE): webhook yang terkirim
   // ulang / balasan dobel tak bisa memajukan tahap dua kali (pola race F60,
   // uji dev 11 Okt 2026). Kirim WA SESUDAH commit.
-  type Out = DecideResult & { notifyNext?: boolean; tellWa?: string; tellMsg?: string; requestId?: string; urutan?: number };
+  type Out = DecideResult & {
+    notifyNext?: boolean; tellWa?: string; tellMsg?: string; requestId?: string; urutan?: number; hasil?: HasilApproval;
+  };
   const jalankan = () => sql.begin(async (txRaw): Promise<Out> => {
     const tx = txRaw as unknown as Tx;
     const [req] =
@@ -1196,9 +1216,10 @@ async function putuskan(
     if (action === "reject") {
       await tx`UPDATE approval_step SET status = 'rejected', decided_by = ${approver.name}, decided_by_user_id = ${approver.userId}, decided_via = ${via}, decided_at = now(), decision_note = ${note ?? null} WHERE id = ${step.id}`;
       await tx`UPDATE approval_request SET status = 'rejected', decided_at = now() WHERE id = ${req.id}`;
-      if (ref) await jalankanKonsumen(tx, { ...base, ...ref, status: "rejected" });
+      const hasil: HasilApproval | undefined = ref ? { ...base, ...ref, status: "rejected" } : undefined;
+      if (hasil) await jalankanKonsumen(tx, hasil);
       return {
-        ok: true, status: "rejected", kode, requestId: String(req.id), urutan: Number(step.urutan), tellWa: wa,
+        ok: true, status: "rejected", kode, requestId: String(req.id), urutan: Number(step.urutan), tellWa: wa, hasil,
         tellMsg: `❌ Permintaan "${req.title}" (${kode}) DITOLAK oleh ${approver.name}${note ? `: ${note}` : ""}.`,
       };
     }
@@ -1212,9 +1233,10 @@ async function putuskan(
     `;
     if (next_urutan == null) {
       await tx`UPDATE approval_request SET status = 'approved', decided_at = now() WHERE id = ${req.id}`;
-      if (ref) await jalankanKonsumen(tx, { ...base, ...ref, status: "approved" });
+      const hasil: HasilApproval | undefined = ref ? { ...base, ...ref, status: "approved" } : undefined;
+      if (hasil) await jalankanKonsumen(tx, hasil);
       return {
-        ok: true, status: "approved", kode, requestId: String(req.id), urutan: Number(step.urutan), tellWa: wa,
+        ok: true, status: "approved", kode, requestId: String(req.id), urutan: Number(step.urutan), tellWa: wa, hasil,
         tellMsg: `✅ Permintaan "${req.title}" (${kode}) DISETUJUI semua tahap.`,
       };
     }
@@ -1237,6 +1259,7 @@ async function putuskan(
     out.status === "rejected" ? "reject" : "approve",
   );
   if (out.tellWa && out.tellMsg) await sendViaWaGateway(out.tellWa, out.tellMsg);
+  await jalankanSesudah(out.hasil);
   if (out.notifyNext && out.requestId) {
     const nextNotify = await notifyCurrentStep(out.requestId);
     return { ok: true, status: "pending", kode: out.kode, nextNotify };
@@ -1265,6 +1288,38 @@ export async function decideFromDashboard(
   const approver = await resolveApproverByUserId(userId);
   if (!approver) return { ok: false, error: "akun tidak dikenal atau tidak aktif" };
   return putuskan({ id: requestId }, action, approver, note?.trim() || null, "dashboard", data);
+}
+
+// Ganti HoD pemegang tahap CURRENT yang masih menunggu — untuk modul yang
+// HoD pengajunya baru diketahui/dikoreksi belakangan (mis. lembur: admin
+// menetapkan HoD divisi). Hanya tahap ber-target hod/hod_pengaju; jejak SLA
+// direset karena notifikasi ke orang baru dimulai dari nol. Pemanggil yang
+// menentukan siapa boleh mengganti; WA ke HoD baru dikirim di sini.
+export async function gantiHodTahapCurrent(
+  requestId: string,
+  hodKey: string,
+  oleh: string,
+): Promise<{ ok: boolean; error?: string; notify?: NotifyResult }> {
+  const key = hodKey.trim();
+  if (!key) return { ok: false, error: "hod_key kosong" };
+  const sql = db();
+  const out = await sql.begin(async (txRaw): Promise<{ ok: boolean; error?: string; lama?: string | null }> => {
+    const tx = txRaw as unknown as Tx;
+    const [req] = await tx`SELECT id, kode, status, current_urutan FROM approval_request WHERE id = ${requestId} FOR UPDATE`;
+    if (!req) return { ok: false, error: "request tidak ditemukan" };
+    if (req.status !== "pending") return { ok: false, error: `request sudah ${req.status}` };
+    const [step] = await tx`SELECT id, target_type, hod_key, status FROM approval_step WHERE request_id = ${req.id} AND urutan = ${req.current_urutan}`;
+    if (!step || step.status !== "pending") return { ok: false, error: "tahap current tidak valid" };
+    if (step.target_type !== "hod" && step.target_type !== "hod_pengaju") {
+      return { ok: false, error: `tahap sekarang ber-target "${step.target_type}", bukan HoD` };
+    }
+    await tx`UPDATE approval_step SET hod_key = ${key}, notified_at = NULL, reminded_at = NULL, escalated_at = NULL WHERE id = ${step.id}`;
+    if (step.target_type === "hod_pengaju") await tx`UPDATE approval_request SET hod_pengaju = ${key} WHERE id = ${req.id}`;
+    return { ok: true, lama: step.hod_key ? String(step.hod_key) : null };
+  });
+  if (!out.ok) return { ok: false, error: out.error };
+  await logAudit("approval.reassign", oleh, { request_id: requestId, dari: out.lama, ke: key }, "update");
+  return { ok: true, notify: await notifyCurrentStep(requestId) };
 }
 
 // Batalkan request yang masih berjalan — dipakai modul konsumen saat baris

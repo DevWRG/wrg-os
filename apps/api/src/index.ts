@@ -2240,7 +2240,7 @@ app.delete("/overtime/rules/:id", async (c) => {
 
 app.post("/overtime/:id/decide", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let body: { action?: string; note?: string; actor?: { name?: string; hodKey?: string | null; privileged?: boolean } } = {};
+  let body: { action?: string; note?: string; actor?: { name?: string; hodKey?: string | null; privileged?: boolean; userId?: string | null } } = {};
   try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
   const id = Number(c.req.param("id"));
   if (!Number.isInteger(id)) return c.json({ error: "id tidak valid" }, 400);
@@ -2249,7 +2249,7 @@ app.post("/overtime/:id/decide", async (c) => {
   const r = await decideOvertime(
     { id },
     body.action,
-    { name: body.actor.name, hodKey: body.actor.hodKey ?? null, privileged: body.actor.privileged === true },
+    { name: body.actor.name, hodKey: body.actor.hodKey ?? null, privileged: body.actor.privileged === true, userId: body.actor.userId ?? null },
     body.note?.trim() || null,
   );
   return c.json(r, r.ok ? 200 : 400);
