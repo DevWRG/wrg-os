@@ -3,7 +3,7 @@ import { PageHeader } from "@/components/dashboard/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { CapacityCards, type TeknisiReadiness } from "@/components/tables/capacity-cards";
-import { AddTeknisiButton } from "@/components/crm/add-teknisi-button";
+import Link from "next/link";
 import { AddScheduleSheet } from "@/components/crm/add-schedule-sheet";
 import { InstallScheduleTable, type InstallSchedule } from "@/components/tables/install-schedule-table";
 import { AddReportSheet } from "@/components/crm/add-report-sheet";
@@ -41,13 +41,16 @@ export default async function ReadinessBoardPage() {
       <Card>
         <CardHeader className="flex items-center justify-between pb-2">
           <CardTitle className="text-base">Kapasitas Teknisi</CardTitle>
-          <AddTeknisiButton />
+          <p className="text-muted-foreground text-xs">
+            Daftar dari <Link href="/users" className="underline underline-offset-2">Users</Link> (role Teknisi) · wilayah dari{" "}
+            <Link href="/jadwal-teknisi" className="underline underline-offset-2">Jadwal Teknisi</Link>
+          </p>
         </CardHeader>
         <CardContent>
           {!board ? (
             <EmptyState title="Data tidak tersedia" description="Pastikan apps/api jalan." />
           ) : board.length === 0 ? (
-            <EmptyState title="Belum ada teknisi" description="Tambah lewat tombol di atas." />
+            <EmptyState title="Belum ada teknisi" description="Tambahkan karyawan dengan role Teknisi di menu Users." />
           ) : (
             <CapacityCards board={board} />
           )}

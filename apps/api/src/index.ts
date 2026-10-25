@@ -566,9 +566,7 @@ import {
 
 import {
   listTeknisiCapacity,
-  createTeknisiCapacity,
   updateTeknisiCapacity,
-  deactivateTeknisiCapacity,
   getReadinessBoard,
   createInstallSchedule,
   listInstallSchedule,
@@ -9078,27 +9076,10 @@ app.get("/teknisi-capacity", async (c) => {
   return c.json({ count: teknisi.length, teknisi });
 });
 
-app.post("/teknisi-capacity", async (c) => {
-  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let body: { nama?: string; wa_number?: string; wilayah?: string[]; max_concurrent_jobs?: number };
-  try {
-    body = await c.req.json();
-  } catch {
-    return c.json({ error: "invalid JSON body" }, 400);
-  }
-  if (!body.nama?.trim()) return c.json({ error: "nama wajib" }, 400);
-  const r = await createTeknisiCapacity({
-    nama: body.nama.trim(),
-    wa_number: body.wa_number ?? null,
-    wilayah: body.wilayah,
-    max_concurrent_jobs: body.max_concurrent_jobs,
-  });
-  return c.json(r, "ok" in r && r.ok === false ? 400 : 201);
-});
-
 app.patch("/teknisi-capacity/:id", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let body: { nama?: string; wa_number?: string | null; wilayah?: string[]; max_concurrent_jobs?: number; aktif?: boolean };
+  // Roster dari master_user (246): di sini cuma kapasitas yang bisa diubah.
+  let body: { max_concurrent_jobs?: number; nama?: unknown; wa_number?: unknown; wilayah?: unknown; aktif?: unknown };
   try {
     body = await c.req.json();
   } catch {
@@ -9106,12 +9087,6 @@ app.patch("/teknisi-capacity/:id", async (c) => {
   }
   const r = await updateTeknisiCapacity(c.req.param("id"), body);
   return c.json(r, "ok" in r && r.ok === false ? 400 : 200);
-});
-
-app.patch("/teknisi-capacity/:id/deactivate", async (c) => {
-  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  const r = await deactivateTeknisiCapacity(c.req.param("id"));
-  return c.json(r, r.ok ? 200 : 400);
 });
 
 app.get("/readiness-board", async (c) => {

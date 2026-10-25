@@ -27,9 +27,9 @@ export function CapacityCards({ board }: { board: TeknisiReadiness[] }) {
               <div className="text-muted-foreground text-xs">
                 {t.capacity_used} / {t.max_concurrent_jobs} job aktif
               </div>
-              {t.wilayah && t.wilayah.length > 0 && (
-                <div className="text-muted-foreground mt-0.5 text-xs">📍 {t.wilayah.join(", ")}</div>
-              )}
+              <div className="text-muted-foreground mt-0.5 text-xs">
+                📍 {t.wilayah && t.wilayah.length > 0 ? t.wilayah.join(", ") : "wilayah belum ditetapkan"}
+              </div>
             </div>
             <div className="flex items-center gap-2">
               <Badge variant={full ? "destructive" : t.capacity_used === 0 ? "outline" : "secondary"}>

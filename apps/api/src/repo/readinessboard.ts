@@ -22,14 +22,15 @@ const isIsoDate = (s: string): boolean => {
 // teknisi_report dipakai jalur manual DAN hook WA (#install/#servis/#training/
 // #kalibrasi, lihat inbound.ts).
 //
-// teknisi_capacity SEKARANG jadi SATU sumber roster teknisi F8+F26 (migrasi
-// 168, keputusan Direktur 2026-09-07) — sebelumnya F26 punya roster sendiri
-// (`teknisi_roster`, read-only dari app). `wilayah` (text[], 1 teknisi bisa
-// cover >1 kota) dipakai repo/serviceticket.ts utk auto-assign by area; F8
-// sendiri tak pernah query berdasar wilayah, cuma nampilkan+kelola.
+// Roster teknisi = master_user role Teknisi (migrasi 246, keputusan user
+// 25 Okt 2026 — satu sumber dengan F154 Jadwal Teknisi). teknisi_capacity
+// tinggal menyimpan KAPASITAS; nama/wa_number/aktif disalin trigger dari
+// master_user (diubah lewat menu Users), wilayah dibaca dari teknisi_wilayah
+// F154 (diatur di Jadwal Teknisi). Kolom teknisi_capacity.wilayah (175) mati.
 
 export interface Teknisi {
   id: string;
+  am_id: string | null;
   nama: string;
   wa_number: string | null;
   wilayah: string[];
@@ -40,6 +41,7 @@ export interface Teknisi {
 function mapTeknisi(r: Record<string, unknown>): Teknisi {
   return {
     id: String(r.id),
+    am_id: r.am_id ? String(r.am_id) : null,
     nama: String(r.nama),
     wa_number: r.wa_number ? String(r.wa_number) : null,
     wilayah: Array.isArray(r.wilayah) ? (r.wilayah as string[]) : [],
@@ -48,9 +50,19 @@ function mapTeknisi(r: Record<string, unknown>): Teknisi {
   };
 }
 
+// Kolom teknisi + wilayah F154. Baris lama di luar master_user yang sudah
+// nonaktif (dummy dev, isian manual pra-246) disembunyikan dari roster.
+const KOLOM_TEKNISI = (sql: ReturnType<typeof db>) => sql`
+  tc.id, tc.am_id, tc.nama, tc.wa_number, tc.max_concurrent_jobs, tc.aktif,
+  COALESCE((SELECT array_agg(tw.wilayah ORDER BY tw.wilayah) FROM teknisi_wilayah tw
+            WHERE tw.teknisi_id = tc.am_id), '{}') AS wilayah`;
+const ROSTER_TAMPIL = (sql: ReturnType<typeof db>) => sql`(tc.am_id IS NOT NULL OR tc.aktif)`;
+
 export async function listTeknisiCapacity(): Promise<Teknisi[]> {
   const sql = db();
-  const rows = await sql`SELECT * FROM teknisi_capacity ORDER BY nama`;
+  const rows = await sql`
+    SELECT ${KOLOM_TEKNISI(sql)} FROM teknisi_capacity tc
+    WHERE ${ROSTER_TAMPIL(sql)} ORDER BY tc.aktif DESC, tc.nama`;
   return rows.map(mapTeknisi);
 }
 
@@ -58,15 +70,11 @@ export async function listTeknisiCapacity(): Promise<Teknisi[]> {
 // dipanggil HANYA dari inbound.ts saat grup bypass aktif (wa-test-bypass.ts).
 // Tiap orang di grup uji dapat baris sendiri (bukan berbagi satu identitas).
 //
-// Namanya WAJIB lewat namaUji() → `[UJI] <pushname>`. Tabel ini tak punya kolom
-// penanda dan di-key `nama`, jadi prefiks itu satu-satunya yang membedakan baris
-// uji dari teknisi sungguhan — di Readiness Board, di dropdown penugasan tiket,
-// dan saat pembersihan (`WHERE nama LIKE '[UJI] %'`). Lihat catatan FK
-// `service_ticket.assigned_teknisi_id` di wa-test-bypass.ts.
-//
-// `matchTeknisi` mencocokkan nama PERSIS, jadi pushname "Husni" tak lagi
-// menemukan "[UJI] Husni" lewat jalur normal — bypass ini terpanggil tiap pesan,
-// tapi tetap tanpa baris kembar karena upsert `ON CONFLICT (nama)` di bawah.
+// Namanya WAJIB lewat namaUji() → `[UJI] <pushname>`. Baris ini tak punya am_id
+// (di luar master_user), dan prefiks itu yang membuat sinkron 246 tidak
+// menonaktifkannya — juga satu-satunya pembeda dari teknisi sungguhan di
+// Readiness Board, dropdown penugasan tiket, dan saat pembersihan
+// (`WHERE nama LIKE '[UJI] %'`). Lihat catatan FK di wa-test-bypass.ts.
 export async function ensureBypassTeknisi(pushname: string, waNumber?: string | null): Promise<Teknisi> {
   const sql = db();
   const nama = namaUji(pushname);
@@ -74,55 +82,21 @@ export async function ensureBypassTeknisi(pushname: string, waNumber?: string | 
     INSERT INTO teknisi_capacity (nama, wa_number, aktif)
     VALUES (${nama}, ${waNumber ?? null}, true)
     ON CONFLICT (nama) DO UPDATE SET aktif = true, wa_number = EXCLUDED.wa_number
-    RETURNING *
+    RETURNING id
   `;
-  return mapTeknisi(row);
+  const [t] = await sql`SELECT ${KOLOM_TEKNISI(sql)} FROM teknisi_capacity tc WHERE tc.id = ${row.id}`;
+  return mapTeknisi(t);
 }
 
-// CRUD roster (ditambah belakangan — awalnya read-only/seed-only). Roster
-// asli (galih/martin/nopa/haidar/halim/enggar, tabel employee BSC) TETAP
-// tidak diisi otomatis di sini — Admin input manual lewat form ini, seed
-// dummy Fajar/Gilang/Hesti dibiarkan apa adanya utk dev/demo.
-export interface CreateTeknisiInput {
-  nama: string;
-  wa_number?: string | null;
-  wilayah?: string[];
-  max_concurrent_jobs?: number;
-}
-
-export async function createTeknisiCapacity(
-  input: CreateTeknisiInput,
-): Promise<Teknisi | { ok: false; error: string }> {
-  const sql = db();
-  const existing = await sql`SELECT id FROM teknisi_capacity WHERE nama = ${input.nama}`;
-  if (existing.length) return { ok: false, error: "nama sudah ada di roster" };
-  if (input.wilayah !== undefined && !Array.isArray(input.wilayah)) {
-    return { ok: false, error: "wilayah harus berupa array string" };
-  }
-  const wilayah = (input.wilayah ?? []).map((w) => w.trim()).filter(Boolean);
-  const maxJobs = input.max_concurrent_jobs ?? 3;
-  // DB CHECK cuma > 0, tak ada batas atas — 1 teknisi realistisnya tak mungkin
-  // pegang ratusan job bersamaan (pola sama F24 interval_bulan, QA 2026-09-07).
-  if (!Number.isInteger(maxJobs) || maxJobs < 1 || maxJobs > 50) {
-    return { ok: false, error: "max_concurrent_jobs harus bilangan bulat 1-50" };
-  }
-  const rows = await sql`
-    INSERT INTO teknisi_capacity (nama, wa_number, wilayah, max_concurrent_jobs)
-    VALUES (${input.nama}, ${input.wa_number ?? null}, ${wilayah}, ${maxJobs})
-    RETURNING *
-  `;
-  return mapTeknisi(rows[0]);
-}
-
+// Hanya kapasitas yang diubah di sini. Nama/WA/aktif ikut master_user (menu
+// Users), wilayah ikut Jadwal Teknisi — klien lama yang masih mengirimnya
+// ditolak jelas, bukan diabaikan diam-diam.
 export interface UpdateTeknisiInput {
-  nama?: string;
-  wa_number?: string | null;
-  wilayah?: string[];
   max_concurrent_jobs?: number;
-  // Reaktivasi lewat sini — sebelumnya cuma ada /deactivate (satu arah),
-  // teknisi yang dinonaktifkan tak pernah bisa aktif lagi tanpa UPDATE
-  // manual ke DB (ditemukan QA jalur tulis 2026-09-07).
-  aktif?: boolean;
+  nama?: unknown;
+  wa_number?: unknown;
+  wilayah?: unknown;
+  aktif?: unknown;
 }
 
 export async function updateTeknisiCapacity(
@@ -130,35 +104,25 @@ export async function updateTeknisiCapacity(
   input: UpdateTeknisiInput,
 ): Promise<Teknisi | { ok: false; error: string }> {
   const sql = db();
-  const current = await sql`SELECT * FROM teknisi_capacity WHERE id = ${id}`;
-  if (!current.length) return { ok: false, error: "teknisi tidak ditemukan" };
-  if (input.wilayah !== undefined && !Array.isArray(input.wilayah)) {
-    return { ok: false, error: "wilayah harus berupa array string" };
+  if (input.nama !== undefined || input.wa_number !== undefined || input.aktif !== undefined) {
+    return { ok: false, error: "nama, No. WA, dan status aktif teknisi diubah di menu Users (master user role Teknisi)" };
   }
-  const nama = input.nama ?? String(current[0].nama);
-  const waNumber = input.wa_number !== undefined ? input.wa_number : (current[0].wa_number as string | null);
-  const wilayah = input.wilayah !== undefined
-    ? input.wilayah.map((w) => w.trim()).filter(Boolean)
-    : (current[0].wilayah as string[]);
-  const aktif = input.aktif !== undefined ? input.aktif : Boolean(current[0].aktif);
-  const maxJobs = input.max_concurrent_jobs ?? Number(current[0].max_concurrent_jobs);
-  if (!Number.isInteger(maxJobs) || maxJobs < 1 || maxJobs > 50) {
+  if (input.wilayah !== undefined) {
+    return { ok: false, error: "wilayah teknisi diatur di menu Jadwal Teknisi" };
+  }
+  if (!/^[0-9a-f-]{36}$/i.test(id)) return { ok: false, error: "id teknisi tidak valid" };
+  const maxJobs = input.max_concurrent_jobs;
+  // DB CHECK cuma > 0, tak ada batas atas — 1 teknisi realistisnya tak mungkin
+  // pegang ratusan job bersamaan (pola sama F24 interval_bulan, QA 2026-09-07).
+  if (maxJobs === undefined || !Number.isInteger(maxJobs) || maxJobs < 1 || maxJobs > 50) {
     return { ok: false, error: "max_concurrent_jobs harus bilangan bulat 1-50" };
   }
   const rows = await sql`
-    UPDATE teknisi_capacity SET nama = ${nama}, wa_number = ${waNumber}, wilayah = ${wilayah}, aktif = ${aktif}, max_concurrent_jobs = ${maxJobs}, updated_at = now()
-    WHERE id = ${id}
-    RETURNING *
-  `;
-  return mapTeknisi(rows[0]);
-}
-
-// Deactivate, bukan DELETE — konsisten pola project (jaga histori install_schedule/teknisi_report yg FK ke sini).
-export async function deactivateTeknisiCapacity(id: string): Promise<{ ok: boolean; error?: string }> {
-  const sql = db();
-  const rows = await sql`UPDATE teknisi_capacity SET aktif = false, updated_at = now() WHERE id = ${id} RETURNING id`;
+    UPDATE teknisi_capacity SET max_concurrent_jobs = ${maxJobs}, updated_at = now()
+    WHERE id = ${id} RETURNING id`;
   if (!rows.length) return { ok: false, error: "teknisi tidak ditemukan" };
-  return { ok: true };
+  const [t] = await sql`SELECT ${KOLOM_TEKNISI(sql)} FROM teknisi_capacity tc WHERE tc.id = ${id}`;
+  return mapTeknisi(t);
 }
 
 // Nama dinormalisasi untuk dibandingkan PERSIS: huruf kecil + spasi dirapikan.
@@ -170,9 +134,10 @@ export function normNamaTeknisi(s: string | null | undefined): string {
 // Identitas pengirim laporan teknisi (#install/#servis/#training/#kalibrasi).
 // Dulu `nama ILIKE '%pushname%'` = POTONGAN nama: pushname "a" / "jar" dari grup
 // sembarang lolos sebagai "Teknisi Fajar" (uji dev 11 Okt 2026). Keputusan user
-// (opsi a): sah kalau pushname SAMA PERSIS dengan nama di roster (dinormalisasi),
-// ATAU lewat chat PRIBADI dari nomor yang tercatat di teknisi_capacity (di grup
-// `sender_jid` = JID grup, nomor orangnya tak ada). Nama kembar = ambigu → null.
+// (opsi a): sah kalau pushname SAMA PERSIS dengan nama di roster (dinormalisasi)
+// atau dengan panggilan master_user-nya (246), ATAU lewat chat PRIBADI dari
+// nomor yang tercatat (di grup `sender_jid` = JID grup, nomor orangnya tak
+// ada). Cocok ke >1 teknisi = ambigu → null.
 export async function matchTeknisi(input: {
   pushname: string | null;
   senderJid: string | null;
@@ -182,8 +147,11 @@ export async function matchTeknisi(input: {
   const nama = normNamaTeknisi(input.pushname);
   if (nama) {
     const rows = await sql`
-      SELECT * FROM teknisi_capacity
-      WHERE aktif = TRUE AND lower(regexp_replace(btrim(nama), '[[:space:]]+', ' ', 'g')) = ${nama}
+      SELECT ${KOLOM_TEKNISI(sql)} FROM teknisi_capacity tc
+      LEFT JOIN master_user mu ON mu.am_id = tc.am_id
+      WHERE tc.aktif = TRUE
+        AND (lower(regexp_replace(btrim(tc.nama), '[[:space:]]+', ' ', 'g')) = ${nama}
+          OR lower(regexp_replace(btrim(coalesce(mu.panggilan, '')), '[[:space:]]+', ' ', 'g')) = ${nama})
       LIMIT 2
     `;
     if (rows.length === 1) return mapTeknisi(rows[0]);
@@ -192,8 +160,8 @@ export async function matchTeknisi(input: {
   const nomor = String(input.senderJid ?? "").split("@")[0].split(":")[0].replace(/\D/g, "");
   if (isDm && nomor.length >= 9) {
     const rows = await sql`
-      SELECT * FROM teknisi_capacity
-      WHERE aktif = TRUE AND regexp_replace(regexp_replace(coalesce(wa_number, ''), '[^0-9]', '', 'g'), '^0', '62') = ${nomor.replace(/^0/, "62")}
+      SELECT ${KOLOM_TEKNISI(sql)} FROM teknisi_capacity tc
+      WHERE tc.aktif = TRUE AND regexp_replace(regexp_replace(coalesce(tc.wa_number, ''), '[^0-9]', '', 'g'), '^0', '62') = ${nomor.replace(/^0/, "62")}
       LIMIT 2
     `;
     if (rows.length === 1) return mapTeknisi(rows[0]);
@@ -214,13 +182,14 @@ export interface TeknisiReadiness extends Teknisi {
 export async function getReadinessBoard(): Promise<TeknisiReadiness[]> {
   const sql = db();
   const rows = await sql`
-    SELECT tc.*,
+    SELECT ${KOLOM_TEKNISI(sql)},
       (SELECT COUNT(*) FROM install_schedule ins WHERE ins.teknisi_id = tc.id AND ins.status = 'scheduled') AS install_load,
       (SELECT COUNT(*) FROM maintenance_schedule ms
          WHERE (ms.teknisi_id = tc.id OR (ms.teknisi_id IS NULL AND ms.teknisi_name = tc.nama))
            AND ms.status IN ('scheduled','notified')) AS pm_load
     FROM teknisi_capacity tc
-    ORDER BY tc.nama
+    WHERE ${ROSTER_TAMPIL(sql)}
+    ORDER BY tc.aktif DESC, tc.nama
   `;
   return rows.map((r) => {
     const t = mapTeknisi(r);
