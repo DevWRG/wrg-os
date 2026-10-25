@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
@@ -31,6 +32,9 @@ interface Row {
   notify_status: string | null;
   decided_by: string | null;
   decision_note: string | null;
+  // Approval di mesin F11 (migrasi 251); null = HoD belum ditetapkan / data lama.
+  approval_request_id: string | null;
+  approval_kode: string | null;
 }
 interface Rule {
   id: number;
@@ -143,8 +147,14 @@ export function OvertimeBoard({ isAdmin, hodOnly = false }: { isAdmin: boolean; 
   async function decide(r: Row, action: "approve" | "reject") {
     let note: string | undefined;
     if (action === "reject") {
-      const n = window.prompt(`Alasan menolak ${r.kode} (opsional):`);
+      // Pengajuan di mesin approval: alasan tolak wajib (dikirim ke pengaju & grup).
+      const wajib = !!r.approval_request_id;
+      const n = window.prompt(`Alasan menolak ${r.kode}${wajib ? "" : " (opsional)"}:`);
       if (n === null) return;
+      if (wajib && !n.trim()) {
+        window.alert("Alasan penolakan wajib diisi.");
+        return;
+      }
       note = n;
     } else if (!window.confirm(`Setujui ${r.kode} — ${r.nama}, ${durasi(r.estimasi_menit)}?`)) {
       return;
@@ -280,6 +290,14 @@ export function OvertimeBoard({ isAdmin, hodOnly = false }: { isAdmin: boolean; 
                         <div className="text-muted-foreground text-xs">
                           {r.hod_key ? `HoD: ${r.approver_nama ?? r.hod_key}` : "HoD belum ditetapkan"}
                           {r.notify_status && r.notify_status !== "terkirim" ? ` · ${r.notify_status}` : ""}
+                          {r.approval_request_id && r.approval_kode && (
+                            <>
+                              {" · "}
+                              <Link href={`/approval-requests/${r.approval_request_id}`} className="text-primary underline">
+                                {r.approval_kode}
+                              </Link>
+                            </>
+                          )}
                         </div>
                       )}
                     </TableCell>

@@ -2238,13 +2238,14 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
       const reply = await sendViaWaGateway(target, `⚠️ #${kind.toUpperCase()} gagal diproses, ${approver.name}: ${parsed.error}`);
       return finish({ error: parsed.error, reply });
     }
-    // Kode OT-xxxx = pengajuan lembur (#OVERTIME), diputus HoD divisi pengaju,
-    // BUKAN chain F11. Otorisasi ada di decideOvertime().
+    // Kode OT-xxxx = pengajuan lembur (#OVERTIME). Sejak migrasi 251 diteruskan
+    // ke approval engine-nya (decideOvertime); pengajuan tanpa approval (HoD
+    // belum ditetapkan) memakai aturan lama.
     if (parsed.kode.startsWith("OT-")) {
       const od = await decideOvertime(
         { kode: parsed.kode },
         kind,
-        { name: approver.name, hodKey: approver.hodKey, privileged: approver.role === "admin" || approver.role === "direktur" },
+        { name: approver.name, hodKey: approver.hodKey, privileged: approver.role === "admin" || approver.role === "direktur", approver },
         parsed.note,
       );
       if (!od.ok) {
