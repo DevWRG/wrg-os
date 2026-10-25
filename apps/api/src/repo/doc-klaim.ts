@@ -1,9 +1,25 @@
 import { readFile } from "node:fs/promises";
 import { extname } from "node:path";
 
+import type { TransactionSql } from "postgres";
+
 import { db } from "../db.js";
 import { callAi, aiDryRun } from "../ai.js";
+import {
+  batalkanRequestDalamTx,
+  buatRequestDalamTx,
+  daftarKonsumen,
+  decideFromDashboard,
+  notifyCurrentStep,
+  TolakKonsumen,
+} from "./approval.js";
 import { normalizeWa } from "./master.js";
+
+type Tx = TransactionSql<Record<string, unknown>>;
+
+// Setujui/tolak klaim lewat mesin approval F11 (migrasi 250), alur 'doc-klaim'.
+export const JENIS_DOC_KLAIM = "doc-klaim";
+const REF_TABEL = "doc_klaim";
 
 // DOC #KLAIM — klaim reimburse dana karyawan (kebutuhan kantor/perjalanan
 // dinas, beli pakai uang sendiri lalu klaim disertai bukti nota). Ingestion
@@ -68,6 +84,9 @@ export interface DocKlaimRow {
   catatan: string | null;
   created_at: string;
   updated_at: string;
+  // Approval di mesin F11 (null = klaim yang diputus sebelum migrasi 250).
+  approval_request_id: string | null;
+  approval_kode: string | null;
 }
 
 function mapKlaimRow(r: Record<string, unknown>): DocKlaimRow {
@@ -99,6 +118,8 @@ function mapKlaimRow(r: Record<string, unknown>): DocKlaimRow {
     catatan: r.catatan ? String(r.catatan) : null,
     created_at: toIsoTs(r.created_at),
     updated_at: toIsoTs(r.updated_at),
+    approval_request_id: r.approval_request_id ? String(r.approval_request_id) : null,
+    approval_kode: r.approval_kode ? String(r.approval_kode) : null,
   };
 }
 
@@ -106,7 +127,8 @@ export async function listKlaim(status?: string): Promise<DocKlaimRow[]> {
   const sql = db();
   const rows = await sql`
     SELECT k.*, e.nama AS employee_nama, u.name AS decided_by_name,
-           ub.name AS dibayar_by_name, h.nama AS hod_nama
+           ub.name AS dibayar_by_name, h.nama AS hod_nama,
+           (SELECT r.kode FROM approval_request r WHERE r.id = k.approval_request_id) AS approval_kode
     FROM doc_klaim k
     LEFT JOIN employee e ON e.id = k.employee_id
     LEFT JOIN app_user u ON u.id = k.decided_by_user_id
@@ -122,7 +144,8 @@ export async function getKlaim(id: string): Promise<DocKlaimRow | null> {
   const sql = db();
   const rows = await sql`
     SELECT k.*, e.nama AS employee_nama, u.name AS decided_by_name,
-           ub.name AS dibayar_by_name, h.nama AS hod_nama
+           ub.name AS dibayar_by_name, h.nama AS hod_nama,
+           (SELECT r.kode FROM approval_request r WHERE r.id = k.approval_request_id) AS approval_kode
     FROM doc_klaim k
     LEFT JOIN employee e ON e.id = k.employee_id
     LEFT JOIN app_user u ON u.id = k.decided_by_user_id
@@ -171,6 +194,34 @@ export async function pengajuDariAmId(amId: string, senderJid: string | null): P
   return { am_id: amId, employee_id: empId, hod_key: e2?.hod_key ? String(e2.hod_key) : null };
 }
 
+// Buka approval untuk klaim yang baru masuk — DI transaksi yang sama dengan
+// INSERT klaimnya. WA ke approver dikirim pemanggil sesudah commit.
+async function bukaApprovalKlaim(
+  tx: Tx,
+  k: { id: string; am_id: string | null; hod_key: string | null; nama: string; pihak: string | null; nominal: string | null; kategori: string | null; nomor_dokumen: string | null; wa: string | null },
+): Promise<string> {
+  const [u] = k.am_id
+    ? await tx`SELECT id FROM app_user WHERE am_id = ${k.am_id} AND active ORDER BY created_at LIMIT 1`
+    : [];
+  const apr = await buatRequestDalamTx(tx, {
+    jenis: JENIS_DOC_KLAIM,
+    title: `Klaim: ${k.pihak || "nota"}${k.nominal ? ` — ${k.nominal}` : ""}`.slice(0, 200),
+    description: [k.kategori ? `Kategori: ${k.kategori}` : null, k.nomor_dokumen ? `No. nota: ${k.nomor_dokumen}` : null]
+      .filter(Boolean).join("\n") || null,
+    nominal: parseNominalRupiah(k.nominal),
+    requestedBy: k.nama,
+    requestedByWa: k.wa,
+    requestedByUserId: u ? String(u.id) : null,
+    hodPengaju: k.hod_key,
+    jikaHodKosong: "direktur",
+    refTabel: REF_TABEL,
+    refId: k.id,
+  });
+  if (!apr.ok) throw new Error(`gagal membuka approval klaim: ${apr.error}`);
+  await tx`UPDATE doc_klaim SET approval_request_id = ${apr.id} WHERE id = ${k.id}`;
+  return apr.id;
+}
+
 // Input manual via web (dipakai buat coba tanpa harus kirim WA sungguhan) —
 // TANPA OCR, semua field diketik langsung. model_used='manual' membedakan
 // dari hasil OCR (ocr_dry_run tetap false, bukan "OCR gagal", ini
@@ -193,34 +244,53 @@ export async function createKlaimManual(input: CreateKlaimManualInput): Promise<
   const sql = db();
   // Klaim selalu punya pengaju yang jelas — HoD-nya yang berwenang memutus.
   if (!input.employee_id) return { ok: false, error: "karyawan pengaju wajib dipilih" };
-  const [emp] = await sql`SELECT am_id, hod_key FROM employee WHERE id = ${input.employee_id}`;
+  const [emp] = await sql`SELECT am_id, hod_key, nama FROM employee WHERE id = ${input.employee_id}`;
   if (!emp) return { ok: false, error: "employee_id tidak ditemukan" };
   if (!input.nominal || parseNominalRupiah(input.nominal) == null) {
     return { ok: false, error: "nominal wajib diisi angka (mis. 150000 atau Rp 150.000)" };
   }
-  const rows = await sql`
-    INSERT INTO doc_klaim (employee_id, am_id, hod_key, sender_name, nomor_dokumen, tanggal_dokumen, nominal, pihak, kategori, catatan, model_used, ocr_dry_run)
-    VALUES (
-      ${input.employee_id}, ${emp.am_id ?? null}, ${emp.hod_key ?? null}, ${input.sender_name ?? null}, ${input.nomor_dokumen ?? null},
-      ${input.tanggal_dokumen ?? null}, ${input.nominal}, ${input.pihak ?? null},
-      ${input.kategori ?? null}, ${input.catatan ?? null}, 'manual', false
-    )
-    RETURNING id
-  `;
-  return (await getKlaim(String(rows[0].id))) as DocKlaimRow;
+  const made = await sql.begin(async (txRaw) => {
+    const tx = txRaw as unknown as Tx;
+    const rows = await tx`
+      INSERT INTO doc_klaim (employee_id, am_id, hod_key, sender_name, nomor_dokumen, tanggal_dokumen, nominal, pihak, kategori, catatan, model_used, ocr_dry_run)
+      VALUES (
+        ${input.employee_id!}, ${emp.am_id ?? null}, ${emp.hod_key ?? null}, ${input.sender_name ?? null}, ${input.nomor_dokumen ?? null},
+        ${input.tanggal_dokumen ?? null}, ${input.nominal!}, ${input.pihak ?? null},
+        ${input.kategori ?? null}, ${input.catatan ?? null}, 'manual', false
+      )
+      RETURNING id
+    `;
+    const id = String(rows[0].id);
+    const aprId = await bukaApprovalKlaim(tx, {
+      id, am_id: emp.am_id ? String(emp.am_id) : null, hod_key: emp.hod_key ? String(emp.hod_key) : null,
+      nama: input.sender_name?.trim() || (emp.nama ? String(emp.nama) : "Karyawan"),
+      pihak: input.pihak ?? null, nominal: input.nominal ?? null, kategori: input.kategori ?? null,
+      nomor_dokumen: input.nomor_dokumen ?? null, wa: null,
+    });
+    return { id, aprId };
+  });
+  await notifyCurrentStep(made.aprId);
+  return (await getKlaim(made.id)) as DocKlaimRow;
 }
 
 export async function deleteKlaim(id: string): Promise<ActionResult> {
   const sql = db();
-  const [row] = await sql`SELECT status FROM doc_klaim WHERE id = ${id}`;
-  if (!row) return { ok: false, error: "klaim tidak ditemukan" };
-  // Hanya klaim yang belum diputuskan yang boleh dihapus (mis. kiriman dobel).
-  // Klaim disetujui/ditolak/dibayar = jejak keputusan uang — tak boleh hilang.
-  if (row.status !== "baru") {
-    return { ok: false, error: `klaim berstatus "${row.status}" — tidak bisa dihapus` };
-  }
-  await sql`DELETE FROM doc_klaim WHERE id = ${id}`;
-  return { ok: true };
+  return sql.begin(async (txRaw): Promise<ActionResult> => {
+    const tx = txRaw as unknown as Tx;
+    const [row] = await tx`SELECT status, approval_request_id FROM doc_klaim WHERE id = ${id} FOR UPDATE`;
+    if (!row) return { ok: false, error: "klaim tidak ditemukan" };
+    // Hanya klaim yang belum diputuskan yang boleh dihapus (mis. kiriman dobel).
+    // Klaim disetujui/ditolak/dibayar = jejak keputusan uang — tak boleh hilang.
+    if (row.status !== "baru") {
+      return { ok: false, error: `klaim berstatus "${row.status}" — tidak bisa dihapus` };
+    }
+    // Approval-nya ditutup 'canceled' (tetap tercatat) sebelum klaim dihapus.
+    if (row.approval_request_id) {
+      await batalkanRequestDalamTx(tx, { refTabel: REF_TABEL, refId: id }, "penghapus klaim", "klaim dihapus");
+    }
+    await tx`DELETE FROM doc_klaim WHERE id = ${id}`;
+    return { ok: true };
+  });
 }
 
 export async function updateKategori(id: string, kategori: string | null): Promise<DocKlaimRow | ActionResult> {
@@ -296,26 +366,50 @@ export interface DecideKlaimInput {
   catatan?: string | null;
 }
 
+// Pure — nominal yang akan disetujui: isian HoD, atau nominal nota bila
+// kosong. Diuji unit; dipakai jalur dashboard DAN penangan konsumen (WA
+// #APPROVE tanpa nominal), jadi aturannya satu.
+export function hitungNominalDisetujui(notaRaw: string | null, isian: number | null | undefined): { ok: true; nominal: number } | { ok: false; error: string } {
+  const nota = parseNominalRupiah(notaRaw);
+  const diminta = isian == null ? nota : Number(isian);
+  if (diminta == null) return { ok: false, error: "nominal nota tak terbaca — isi nominal disetujui" };
+  if (!Number.isFinite(diminta) || diminta <= 0) return { ok: false, error: "nominal disetujui harus angka > 0" };
+  if (diminta > NOMINAL_KLAIM_MAKS) return { ok: false, error: "nominal disetujui melebihi batas Rp 100.000.000" };
+  if (nota != null && diminta > nota) return { ok: false, error: "nominal disetujui melebihi nominal nota" };
+  return { ok: true, nominal: diminta };
+}
+
 export async function decideKlaim(id: string, input: DecideKlaimInput, aktor: AktorKlaim): Promise<ActionResult> {
   const sql = db();
-  const [row] = await sql`SELECT status, am_id, hod_key, nominal FROM doc_klaim WHERE id = ${id}`;
+  const [row] = await sql`SELECT status, am_id, hod_key, nominal, approval_request_id FROM doc_klaim WHERE id = ${id}`;
   if (!row) return { ok: false, error: "klaim tidak ditemukan" };
   const fromStatus = String(row.status);
   if (!(TRANSITIONS[fromStatus] ?? []).includes(input.decision)) {
     return { ok: false, error: `transisi "${fromStatus}" -> "${input.decision}" tidak diizinkan` };
   }
-  const tolak = alasanTolakPutus({ am_id: row.am_id ?? null, hod_key: row.hod_key ?? null }, aktor);
-  if (tolak) return { ok: false, error: tolak };
   let nominalDisetujui: number | null = null;
   if (input.decision === "disetujui") {
-    const nota = parseNominalRupiah(row.nominal as string | null);
-    const diminta = input.nominal_disetujui == null ? nota : Number(input.nominal_disetujui);
-    if (diminta == null) return { ok: false, error: "nominal nota tak terbaca — isi nominal disetujui" };
-    if (!Number.isFinite(diminta) || diminta <= 0) return { ok: false, error: "nominal disetujui harus angka > 0" };
-    if (diminta > NOMINAL_KLAIM_MAKS) return { ok: false, error: "nominal disetujui melebihi batas Rp 100.000.000" };
-    if (nota != null && diminta > nota) return { ok: false, error: "nominal disetujui melebihi nominal nota" };
-    nominalDisetujui = diminta;
+    const n = hitungNominalDisetujui(row.nominal as string | null, input.nominal_disetujui);
+    if (!n.ok) return { ok: false, error: n.error };
+    nominalDisetujui = n.nominal;
   }
+
+  // Klaim di mesin F11 (migrasi 250): wewenang dicek engine (HoD pengaju /
+  // Direktur bila HoD tak tercatat; pengaju tak boleh memutus sendiri).
+  if (row.approval_request_id) {
+    if (!aktor.userId) return { ok: false, error: "hanya user login yang boleh memutus klaim" };
+    const r = await decideFromDashboard(
+      String(row.approval_request_id),
+      input.decision === "disetujui" ? "approve" : "reject",
+      aktor.userId,
+      input.catatan ?? null,
+      nominalDisetujui != null ? { nominal_disetujui: nominalDisetujui } : undefined,
+    );
+    return r.ok ? { ok: true } : { ok: false, error: r.error };
+  }
+
+  const tolak = alasanTolakPutus({ am_id: row.am_id ?? null, hod_key: row.hod_key ?? null }, aktor);
+  if (tolak) return { ok: false, error: tolak };
   const upd = await sql`
     UPDATE doc_klaim SET
       status = ${input.decision}, decided_by_user_id = ${aktor.userId}, decided_at = now(),
@@ -326,6 +420,32 @@ export async function decideKlaim(id: string, input: DecideKlaimInput, aktor: Ak
   if (!upd.length) return { ok: false, error: "status klaim berubah — muat ulang halaman" };
   return { ok: true };
 }
+
+// Penangan konsumen engine — jalan di transaksi keputusan approval.
+// Disetujui lewat WA tak membawa nominal → dipakai nominal nota; nota tak
+// terbaca menolak keputusan itu (TolakKonsumen) supaya diputus dari dashboard.
+daftarKonsumen(REF_TABEL, async (tx, h) => {
+  const [row] = await tx`
+    SELECT status, nominal FROM doc_klaim WHERE id = ${h.refId} AND approval_request_id = ${h.requestId} FOR UPDATE
+  `;
+  if (!row || row.status !== "baru") return;
+  if (h.status === "approved") {
+    const isian = h.data?.nominal_disetujui;
+    const n = hitungNominalDisetujui(row.nominal as string | null, typeof isian === "number" ? isian : null);
+    if (!n.ok) throw new TolakKonsumen(`${n.error} — putuskan dari halaman /doc-klaim`);
+    await tx`
+      UPDATE doc_klaim SET status = 'disetujui', decided_by_user_id = ${h.olehUserId}, decided_at = now(),
+        nominal_disetujui = ${n.nominal}, catatan = ${h.catatan}, updated_at = now()
+      WHERE id = ${h.refId}
+    `;
+  } else if (h.status === "rejected") {
+    await tx`
+      UPDATE doc_klaim SET status = 'ditolak', decided_by_user_id = ${h.olehUserId}, decided_at = now(),
+        catatan = ${h.catatan}, updated_at = now()
+      WHERE id = ${h.refId}
+    `;
+  }
+});
 
 export async function markDibayar(id: string, aktor: AktorKlaim): Promise<ActionResult> {
   const sql = db();
@@ -404,18 +524,33 @@ export async function ingestKlaim(opts: {
     console.error(`[klaim] services/ai /ocr-klaim status ${status} — foto disimpan tanpa OCR:`, JSON.stringify(data).slice(0, 200));
   }
 
-  const rows = await sql`
-    INSERT INTO doc_klaim (
-      wa_message_id, sender_name, employee_id, am_id, hod_key, media_path, caption,
-      raw_text, nomor_dokumen, tanggal_dokumen, nominal, pihak, model_used, ocr_dry_run
-    ) VALUES (
-      ${opts.wa_message_id}, ${opts.sender_name}, ${employeeId}, ${opts.pengaju.am_id}, ${opts.pengaju.hod_key},
-      ${opts.media_path}, ${opts.caption},
-      ${(ocr.raw_text as string) || null}, ${(ocr.nomor_dokumen as string) ?? null},
-      ${(ocr.tanggal_dokumen as string) ?? null}, ${(ocr.nominal as string) ?? null},
-      ${(ocr.pihak as string) ?? null}, ${(ocr.model as string) ?? null}, ${Boolean(ocr.dry_run)}
-    )
-    RETURNING id
-  `;
-  return (await getKlaim(String(rows[0].id))) as DocKlaimRow;
+  // Klaim + approval-nya lahir dalam satu transaksi; WA ke HoD sesudah commit.
+  const made = await sql.begin(async (txRaw) => {
+    const tx = txRaw as unknown as Tx;
+    const rows = await tx`
+      INSERT INTO doc_klaim (
+        wa_message_id, sender_name, employee_id, am_id, hod_key, media_path, caption,
+        raw_text, nomor_dokumen, tanggal_dokumen, nominal, pihak, model_used, ocr_dry_run
+      ) VALUES (
+        ${opts.wa_message_id}, ${opts.sender_name}, ${employeeId}, ${opts.pengaju.am_id}, ${opts.pengaju.hod_key},
+        ${opts.media_path}, ${opts.caption},
+        ${(ocr.raw_text as string) || null}, ${(ocr.nomor_dokumen as string) ?? null},
+        ${(ocr.tanggal_dokumen as string) ?? null}, ${(ocr.nominal as string) ?? null},
+        ${(ocr.pihak as string) ?? null}, ${(ocr.model as string) ?? null}, ${Boolean(ocr.dry_run)}
+      )
+      RETURNING id
+    `;
+    const id = String(rows[0].id);
+    const aprId = await bukaApprovalKlaim(tx, {
+      id, am_id: opts.pengaju.am_id, hod_key: opts.pengaju.hod_key,
+      nama: opts.sender_name?.trim() || "Karyawan",
+      pihak: (ocr.pihak as string) ?? null, nominal: (ocr.nominal as string) ?? null, kategori: null,
+      nomor_dokumen: (ocr.nomor_dokumen as string) ?? null,
+      // Hanya chat pribadi yang punya nomor orang; JID grup bukan nomor pengaju.
+      wa: opts.sender_jid?.endsWith("@s.whatsapp.net") ? normalizeWa(jidNumber(opts.sender_jid)) || null : null,
+    });
+    return { id, aprId };
+  });
+  await notifyCurrentStep(made.aprId);
+  return (await getKlaim(made.id)) as DocKlaimRow;
 }

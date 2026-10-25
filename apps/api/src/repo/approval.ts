@@ -596,8 +596,13 @@ export interface CreateApprovalInput {
   // butuh atribut kosong tertahan dengan sebab 'atribut-kosong'.
   wilayah?: Wilayah | null;
   kategori?: Kategori | null;
-  // Wajib bila alurnya punya tahap 'hod_pengaju' (mis. HoD divisi pengaju).
+  // Wajib bila alurnya punya tahap 'hod_pengaju' (mis. HoD divisi pengaju),
+  // kecuali jikaHodKosong = 'direktur'.
   hodPengaju?: string | null;
+  // Tahap 'hod_pengaju' saat HoD pengaju tak diketahui: 'tolak' (default)
+  // menolak membuat request; 'direktur' mengalihkan tahap itu ke Direktur
+  // (dicatat di langkahnya, bukan di config).
+  jikaHodKosong?: "tolak" | "direktur";
   // Tautan ke baris modul induk (konsumen). Berpasangan.
   refTabel?: string | null;
   refId?: string | null;
@@ -663,10 +668,14 @@ export function validasiInputRequest(input: CreateApprovalInput): string | null 
 // Pure — alur yang punya tahap hod_pengaju wajib dibuat dengan hodPengaju;
 // tanpa itu tahapnya tak punya orang dan request menggantung tanpa sebab yang
 // bisa diperbaiki dari halaman mana pun.
-export function cekChainUntukRequest(chain: Pick<ChainConfigRow, "targetType" | "label">[], hodPengaju: string | null): string | null {
+export function cekChainUntukRequest(
+  chain: Pick<ChainConfigRow, "targetType" | "label">[],
+  hodPengaju: string | null,
+  jikaHodKosong: "tolak" | "direktur" = "tolak",
+): string | null {
   if (chain.length === 0) return "alur ini belum punya tahap aktif";
   const butuh = chain.find((c) => c.targetType === "hod_pengaju");
-  if (butuh && !hodPengaju) return `tahap "${butuh.label}" butuh HoD pengaju, tapi permintaan tak membawanya`;
+  if (butuh && !hodPengaju && jikaHodKosong === "tolak") return `tahap "${butuh.label}" butuh HoD pengaju, tapi permintaan tak membawanya`;
   return null;
 }
 
@@ -693,7 +702,8 @@ export async function buatRequestDalamTx(
       FROM approval_chain_config WHERE jenis = ${jenis} AND aktif ORDER BY urutan
     `
   ).map(toChainRow);
-  const salahChain = cekChainUntukRequest(chain, hodPengaju);
+  const jikaHodKosong = input.jikaHodKosong ?? "tolak";
+  const salahChain = cekChainUntukRequest(chain, hodPengaju, jikaHodKosong);
   if (salahChain) return { ok: false, error: salahChain };
 
   let requestedByWa = input.requestedByWa ?? null;
@@ -725,10 +735,12 @@ export async function buatRequestDalamTx(
   for (const c of chain) {
     // Snapshot per tahap: hod_key (tetap/peta/pengaju) atau group_key. Null
     // = belum bisa ditentukan sekarang; diisi resolveStepTargets saat retry.
+    const keDirektur = c.targetType === "hod_pengaju" && !hodPengaju && jikaHodKosong === "direktur";
     const snap = snapshotTahap(c, { wilayah, kategori, hodPengaju });
     await tx`
       INSERT INTO approval_step (request_id, urutan, label, target_type, hod_key, group_key)
-      VALUES (${requestId}, ${c.urutan}, ${c.label}, ${c.targetType}, ${snap.hodKey}, ${snap.groupKey})
+      VALUES (${requestId}, ${c.urutan}, ${keDirektur ? `${c.label} (dialihkan ke Direktur)` : c.label},
+              ${keDirektur ? "direktur" : c.targetType}, ${keDirektur ? null : snap.hodKey}, ${keDirektur ? null : snap.groupKey})
     `;
   }
   return { ok: true, id: requestId, kode };
@@ -1095,6 +1107,19 @@ export interface HasilApproval {
   // Akun pemutus (null untuk pembatalan dari sisi engine).
   olehUserId: string | null;
   catatan: string | null;
+  // Data tambahan dari layar keputusan modul (mis. nominal disetujui klaim).
+  // Kosong untuk keputusan lewat WA.
+  data?: Record<string, unknown>;
+}
+
+// Dilempar penangan konsumen untuk MENOLAK keputusan dengan alasan yang
+// layak dibaca pemutus (mis. "nominal nota tak terbaca — putuskan dari
+// dashboard"). Transaksi keputusan batal; pemutus menerima pesannya.
+export class TolakKonsumen extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "TolakKonsumen";
+  }
 }
 
 // Penangan modul induk. Dijalankan DI DALAM transaksi keputusan — kalau
@@ -1134,6 +1159,7 @@ async function putuskan(
   approver: ResolvedApprover,
   note: string | null,
   via: Kanal,
+  data?: Record<string, unknown>,
 ): Promise<DecideResult> {
   if (action === "reject" && via === "dashboard" && !note?.trim()) {
     return { ok: false, error: "alasan penolakan wajib diisi" };
@@ -1143,7 +1169,7 @@ async function putuskan(
   // ulang / balasan dobel tak bisa memajukan tahap dua kali (pola race F60,
   // uji dev 11 Okt 2026). Kirim WA SESUDAH commit.
   type Out = DecideResult & { notifyNext?: boolean; tellWa?: string; tellMsg?: string; requestId?: string; urutan?: number };
-  const out = await sql.begin(async (txRaw): Promise<Out> => {
+  const jalankan = () => sql.begin(async (txRaw): Promise<Out> => {
     const tx = txRaw as unknown as Tx;
     const [req] =
       "kode" in where
@@ -1165,7 +1191,7 @@ async function putuskan(
 
     const wa = req.requested_by_wa ? String(req.requested_by_wa) : undefined;
     const ref = req.ref_tabel ? { refTabel: String(req.ref_tabel), refId: String(req.ref_id) } : null;
-    const base = { requestId: String(req.id), kode, oleh: approver.name, olehUserId: approver.userId, catatan: note ?? null };
+    const base = { requestId: String(req.id), kode, oleh: approver.name, olehUserId: approver.userId, catatan: note ?? null, data };
 
     if (action === "reject") {
       await tx`UPDATE approval_step SET status = 'rejected', decided_by = ${approver.name}, decided_by_user_id = ${approver.userId}, decided_via = ${via}, decided_at = now(), decision_note = ${note ?? null} WHERE id = ${step.id}`;
@@ -1195,6 +1221,13 @@ async function putuskan(
     await tx`UPDATE approval_request SET current_urutan = ${Number(next_urutan)} WHERE id = ${req.id}`;
     return { ok: true, status: "pending", kode, requestId: String(req.id), urutan: Number(step.urutan), notifyNext: true };
   });
+  let out: Out;
+  try {
+    out = await jalankan();
+  } catch (e) {
+    if (e instanceof TolakKonsumen) return { ok: false, error: e.message };
+    throw e;
+  }
   if (!out.ok) return { ok: false, error: out.error };
 
   await logAudit(
@@ -1227,10 +1260,11 @@ export async function decideFromDashboard(
   action: "approve" | "reject",
   userId: string,
   note?: string | null,
+  data?: Record<string, unknown>,
 ): Promise<DecideResult> {
   const approver = await resolveApproverByUserId(userId);
   if (!approver) return { ok: false, error: "akun tidak dikenal atau tidak aktif" };
-  return putuskan({ id: requestId }, action, approver, note?.trim() || null, "dashboard");
+  return putuskan({ id: requestId }, action, approver, note?.trim() || null, "dashboard", data);
 }
 
 // Batalkan request yang masih berjalan — dipakai modul konsumen saat baris

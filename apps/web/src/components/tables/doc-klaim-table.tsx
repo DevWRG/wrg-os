@@ -32,6 +32,9 @@ export interface DocKlaim {
   dibayar_at: string | null;
   catatan: string | null;
   created_at: string;
+  // Approval di mesin F11 (migrasi 250); null = klaim lama.
+  approval_request_id?: string | null;
+  approval_kode?: string | null;
 }
 
 const STATUS_LABEL: Record<string, string> = { baru: "Baru", disetujui: "Disetujui", ditolak: "Ditolak", dibayar: "Dibayar" };
