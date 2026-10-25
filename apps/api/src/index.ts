@@ -595,6 +595,7 @@ import {
   getFundRequest,
   deleteFundRequest,
   decideFundRequestApproval,
+  decideFundRequestViaEngine,
   listActiveHods,
   FundRequestError,
   type ApproverRole as FundRequestApproverRole,
@@ -9533,6 +9534,7 @@ app.post("/fund-requests", async (c) => {
   let body: {
     requester_name?: string; requester_email?: string; purpose?: string; amount_requested?: number;
     cabang?: string | null; request_date?: string; hod_approver_key?: string; notes?: string | null;
+    requester_user_id?: string | null;
   };
   try {
     body = await c.req.json();
@@ -9553,6 +9555,7 @@ app.post("/fund-requests", async (c) => {
       request_date: body.request_date,
       hod_approver_key: body.hod_approver_key,
       notes: body.notes ?? null,
+      requester_user_id: body.requester_user_id ?? null,
     });
     return c.json(created, 201);
   } catch (e) {
@@ -9563,14 +9566,14 @@ app.post("/fund-requests", async (c) => {
 
 app.get("/fund-requests/:id", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  const row = await getFundRequest(c.req.param("id"));
+  const row = await getFundRequest(c.req.param("id"), { viewerUserId: c.req.query("viewer_user_id") || null });
   return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
 });
 
 app.delete("/fund-requests/:id", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   try {
-    const result = await deleteFundRequest(c.req.param("id"));
+    const result = await deleteFundRequest(c.req.param("id"), c.req.query("oleh") || null);
     return c.json(result, result.deleted ? 200 : 404);
   } catch (e) {
     if (e instanceof FundRequestError) return c.json({ error: e.message }, e.status as 409);
@@ -9584,7 +9587,7 @@ app.patch("/fund-requests/:id/approvals/:role", async (c) => {
   if (role !== "hod" && role !== "direktur") {
     return c.json({ error: "role tidak valid (hod/direktur)" }, 400);
   }
-  let body: { decision?: string; decided_by?: string | null; note?: string | null };
+  let body: { decision?: string; decided_by?: string | null; note?: string | null; user_id?: string | null };
   try {
     body = await c.req.json();
   } catch {
@@ -9594,6 +9597,18 @@ app.patch("/fund-requests/:id/approvals/:role", async (c) => {
     return c.json({ error: "decision wajib (approve/reject)" }, 400);
   }
   try {
+    // Pengajuan di mesin F11 (migrasi 248): wewenang dicek engine dari akun
+    // sesi (user_id). Jalur lama di bawah hanya untuk pengajuan pra-248.
+    if (body.user_id) {
+      const viaEngine = await decideFundRequestViaEngine(
+        c.req.param("id"),
+        role as FundRequestApproverRole,
+        body.decision,
+        body.user_id,
+        body.note ?? null,
+      );
+      return c.json(viaEngine);
+    }
     const result = await decideFundRequestApproval(
       c.req.param("id"),
       role as FundRequestApproverRole,

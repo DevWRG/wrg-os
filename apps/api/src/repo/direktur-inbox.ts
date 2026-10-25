@@ -187,7 +187,7 @@ async function sumberPo(now: Date): Promise<InboxItem[]> {
   }));
 }
 
-/** F138: HoD sudah menyetujui, Direktur belum memutus. Tak punya kolom kode → 8 hex id. */
+/** F138 pra-migrasi 248: HoD sudah menyetujui, Direktur belum memutus. Tak punya kolom kode → 8 hex id. */
 async function sumberFund(now: Date): Promise<InboxItem[]> {
   const rows: Row[] = await db()`
     SELECT fr.id::text AS id, fr.purpose, fr.requester_name, fr.amount_requested::float8 AS nominal,
@@ -195,6 +195,9 @@ async function sumberFund(now: Date): Promise<InboxItem[]> {
     FROM fund_request fr
     JOIN fund_request_approval hod ON hod.fund_request_id = fr.id AND hod.approver_role = 'hod' AND hod.status = 'approved'
     JOIN fund_request_approval dir ON dir.fund_request_id = fr.id AND dir.approver_role = 'direktur' AND dir.status = 'pending'
+    -- Pengajuan di mesin F11 (migrasi 248) sudah muncul lewat sumberApproval;
+    -- baris fund_request_approval-nya cuma sisa, jangan dihitung dua kali.
+    WHERE fr.approval_request_id IS NULL
   `;
   return rows.map((r) => item({
     jenis: "fund", id: s(r.id), kode: `FR-${s(r.id).slice(0, 8).toUpperCase()}`, judul: s(r.purpose),

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Trash2 } from "lucide-react";
@@ -49,6 +50,9 @@ interface Detail extends FundRequestRow {
   approvals: ApprovalRow[];
   my_roles: ApproverRole[];
   can_cancel: boolean;
+  // Pengajuan di mesin approval F11 (migrasi 248); null = pengajuan lama.
+  approval_request_id: string | null;
+  approval_kode: string | null;
 }
 
 const ROLE_LABEL: Record<ApproverRole, string> = { hod: "HOD", direktur: "Direktur" };
@@ -197,6 +201,15 @@ export function FundRequestTable({ rows }: { rows: FundRequestRow[] }) {
 
                     <div>
                       <div className="text-muted-foreground mb-2 text-xs font-medium tracking-wide uppercase">Approval</div>
+                      {detail.approval_request_id && detail.approval_kode && (
+                        <p className="text-muted-foreground mb-2 text-xs">
+                          Kode{" "}
+                          <Link href={`/approval-requests/${detail.approval_request_id}`} className="text-primary underline">
+                            {detail.approval_kode}
+                          </Link>{" "}
+                          — approver juga bisa memutus lewat WA (<code>#APPROVE {detail.approval_kode}</code>).
+                        </p>
+                      )}
                       <ul className="divide-border divide-y rounded-lg border">
                         {ROLE_ORDER.map((role) => {
                           const row = detail.approvals.find((a) => a.approver_role === role);
@@ -227,11 +240,17 @@ export function FundRequestTable({ rows }: { rows: FundRequestRow[] }) {
                                   <Textarea
                                     value={rejectNote}
                                     onChange={(e) => setRejectNote(e.target.value)}
-                                    placeholder="Alasan reject (opsional)"
+                                    placeholder={detail.approval_request_id ? "Alasan reject (wajib)" : "Alasan reject (opsional)"}
                                     className="text-sm"
                                   />
                                   <div className="flex gap-2">
-                                    <Button type="button" size="sm" variant="destructive" disabled={busy} onClick={() => decideApproval(role, "reject", rejectNote)}>
+                                    <Button
+                                      type="button"
+                                      size="sm"
+                                      variant="destructive"
+                                      disabled={busy || (!!detail.approval_request_id && !rejectNote.trim())}
+                                      onClick={() => decideApproval(role, "reject", rejectNote)}
+                                    >
                                       Konfirmasi Reject
                                     </Button>
                                     <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => { setRejecting(null); setRejectNote(""); }}>
