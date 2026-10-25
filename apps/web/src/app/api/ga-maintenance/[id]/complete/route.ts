@@ -19,7 +19,12 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       await gatewayFetch(`/ga-maintenance/${encodeURIComponent(id)}/complete`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
+        // Penyelesai = akun sesi; jadi pengaju approval Finance bila biaya > ambang.
+        body: JSON.stringify({
+          ...(body as Record<string, unknown>),
+          actor_user_id: guard.me.id,
+          actor_name: guard.me.name?.trim() || guard.me.email,
+        }),
       }),
     );
   } catch {
