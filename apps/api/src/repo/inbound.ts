@@ -95,8 +95,8 @@ const isAmRole = (role?: string | null) => AM_ROLES.has((role ?? "").trim());
 // F8 — #install/#servis/#training/#kalibrasi: laporan lapangan Teknisi, di
 // grup YANG SAMA dgn #plan/#report Teknisi (bukan grup baru) — makanya TIDAK
 // ada env-gate baru, cukup nebeng groupAllowed()/WA_INBOUND_GROUPS existing.
-// Identitas pengirim di-match ke teknisi_capacity (F8, self-contained) via
-// matchTeknisi (nama persis / nomor via DM), BUKAN resolveSender/master_user.
+// Identitas pengirim di-match ke teknisi_capacity (F8; sejak 246 disalin dari
+// master_user role Teknisi) via matchTeknisi (nama/panggilan persis / nomor via DM).
 
 // SUMBER TUNGGAL daftar hashtag inbound. Dipakai dua kali: (a) menurunkan tipe
 // InboundKind, (b) menyusun regex penyaring di processUnprocessed. Dulu keduanya
@@ -1401,7 +1401,7 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
   // F8 — laporan lapangan Teknisi (#install/#servis/#training/#kalibrasi).
   // Grup SAMA dgn #plan/#report Teknisi (bukan grup baru) — cukup nebeng
   // groupAllowed()/WA_INBOUND_GROUPS existing. Identitas via matchTeknisi
-  // (teknisi_capacity F8, self-contained), BUKAN resolveSender/master_user.
+  // (teknisi_capacity F8 — sejak 246 cermin master_user role Teknisi).
   if (kind === "install" || kind === "servis" || kind === "training" || kind === "kalibrasi") {
     const teknisi =
       (await matchTeknisi({ pushname: row.sender_name, senderJid: row.sender_jid, groupJid: row.group_jid })) ??

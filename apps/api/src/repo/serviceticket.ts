@@ -14,8 +14,10 @@ const toIsoTs = (x: unknown): string => new Date(x as string | Date).toISOString
 //
 // Roster teknisi: SEBELUMNYA `teknisi_roster` sendiri (read-only dari app,
 // cuma diisi via seed/SQL manual). Migrasi 168 (keputusan Direktur
-// 2026-09-07) konsolidasi ke `teknisi_capacity` (F8, repo/readinessboard.ts)
-// yang SUDAH punya UI CRUD — F26 tinggal numpang, bukan bikin roster baru.
+// 2026-09-07) konsolidasi ke `teknisi_capacity` (F8, repo/readinessboard.ts).
+// Migrasi 246 (keputusan user 25 Okt 2026): identitas teknisi_capacity ikut
+// master_user role Teknisi dan wilayah ikut `teknisi_wilayah` F154 — satu
+// pemetaan wilayah untuk kunjungan rutin DAN tiket servis.
 // `teknisi_roster` dibiarkan ada (superseded, tak dipakai lagi) utk histori.
 
 export interface Teknisi {
@@ -41,7 +43,11 @@ function mapTeknisi(r: Record<string, unknown>): Teknisi {
 export async function listTeknisi(aktifOnly = false): Promise<Teknisi[]> {
   const sql = db();
   const rows = await sql`
-    SELECT * FROM teknisi_capacity WHERE ${aktifOnly ? sql`aktif = TRUE` : sql`true`} ORDER BY nama
+    SELECT tc.id, tc.nama, tc.wa_number, tc.aktif, tc.created_at,
+      COALESCE((SELECT array_agg(tw.wilayah ORDER BY tw.wilayah) FROM teknisi_wilayah tw
+                WHERE tw.teknisi_id = tc.am_id), '{}') AS wilayah
+    FROM teknisi_capacity tc
+    WHERE ${aktifOnly ? sql`tc.aktif = TRUE` : sql`(tc.am_id IS NOT NULL OR tc.aktif)`} ORDER BY tc.nama
   `;
   return rows.map(mapTeknisi);
 }
@@ -53,31 +59,41 @@ interface AssignedTeknisi {
   areaMatched: boolean; // false = wilayah diberikan tapi tak match siapa pun (fallback dipakai)
 }
 
-// Auto-assign: coba match wilayah dulu (case-insensitive — LLM/manual bisa
-// beda kapitalisasi/spasi dari yang tersimpan di roster). Kalau wilayah
-// diisi tapi TAK match teknisi manapun (atau wilayah kosong), FALLBACK ke
+// Auto-assign: cari teknisi penanggung jawab WILAYAH dulu. Kunci wilayah sama
+// dengan F154 Jadwal Teknisi (`teknisi_wilayah`, diatur di menu itu):
+// upper(btrim(area_customer(customer))) kalau tiket tertaut customer, kalau
+// tidak pakai `area` (isian form / tebakan LLM) yang dinormalkan sama. Cocok
+// PERSIS, bukan ILIKE: area datang dari teks komplain/LLM, dan tanpa escape
+// '%'/'_' jadi wildcard — area "%" dulu "cocok" dgn wilayah siapa pun (uji E9).
+//
+// Kalau wilayah ada tapi TAK punya teknisi (atau wilayah kosong), FALLBACK ke
 // teknisi aktif mana pun yang paling sedikit beban — jangan pernah dibiarkan
 // unassigned kalau ada teknisi aktif tersedia. `areaMatched=false` menandai
-// fallback ini dipakai, dipakai caller utk set needs_review (wilayah asli
-// mungkin salah/typo, perlu dicek admin) — beda dgn kondisi "wilayah kosong
-// dari awal" yang normal/aman.
+// fallback ini dipakai, dipakai caller utk set needs_review — beda dgn kondisi
+// "wilayah kosong dari awal" yang normal/aman.
 //
-// Sumber roster: teknisi_capacity (migrasi 168 — SEBELUMNYA teknisi_roster
-// sendiri, lihat komentar header file). "load" cuma menghitung service_ticket
-// open — TIDAK ikut beban F8 (install_schedule/maintenance_schedule) biar
-// scope konsolidasi ini tetap wilayah, bukan unifikasi kapasitas lintas-fitur.
-async function assignTeknisi(area: string | null): Promise<AssignedTeknisi | null> {
+// "load" cuma menghitung service_ticket open — TIDAK ikut beban F8
+// (install_schedule/maintenance_schedule).
+export async function wilayahTiket(customerId: number | null, area: string | null): Promise<string | null> {
+  const sql = db();
+  if (customerId) {
+    const [r] = await sql`SELECT NULLIF(upper(btrim(area_customer(${customerId}::bigint))), '') AS w`;
+    if (r?.w) return String(r.w);
+  }
+  const w = String(area ?? "").trim().replace(/\s+/g, " ").toUpperCase();
+  return w || null;
+}
+
+async function assignTeknisi(wilayah: string | null): Promise<AssignedTeknisi | null> {
   const sql = db();
 
-  if (area) {
+  if (wilayah) {
     const matched = await sql`
       SELECT tc.id, tc.nama, tc.wa_number,
         (SELECT COUNT(*) FROM service_ticket st WHERE st.assigned_teknisi_id = tc.id AND st.status = 'open') AS load
-      FROM teknisi_capacity tc
-      -- Cocok PERSIS (abai huruf/spasi tepi), bukan ILIKE: area datang dari teks
-      -- komplain/LLM, dan tanpa escape '%'/'_' jadi wildcard — area "%" dulu
-      -- "cocok" dgn wilayah siapa pun & tiketnya lolos tanpa review (uji E9).
-      WHERE tc.aktif = TRUE AND EXISTS (SELECT 1 FROM unnest(tc.wilayah) w WHERE lower(trim(w)) = lower(trim(${area})))
+      FROM teknisi_wilayah tw
+      JOIN teknisi_capacity tc ON tc.am_id = tw.teknisi_id
+      WHERE tc.aktif = TRUE AND tw.wilayah = ${wilayah}
       ORDER BY load ASC, tc.created_at ASC
       LIMIT 1
     `;
@@ -91,7 +107,7 @@ async function assignTeknisi(area: string | null): Promise<AssignedTeknisi | nul
     }
   }
 
-  // Fallback: wilayah kosong, ATAU wilayah diisi tapi tak match siapa pun.
+  // Fallback: wilayah kosong, ATAU wilayah ada tapi belum punya teknisi.
   const rows = await sql`
     SELECT tc.id, tc.nama, tc.wa_number,
       (SELECT COUNT(*) FROM service_ticket st WHERE st.assigned_teknisi_id = tc.id AND st.status = 'open') AS load
@@ -105,7 +121,7 @@ async function assignTeknisi(area: string | null): Promise<AssignedTeknisi | nul
         id: String(rows[0].id),
         nama: String(rows[0].nama),
         wa_number: rows[0].wa_number ? String(rows[0].wa_number) : null,
-        areaMatched: !area, // wilayah kosong dari awal → bukan mismatch, jangan flag review
+        areaMatched: !wilayah, // wilayah kosong dari awal → bukan mismatch, jangan flag review
       }
     : null;
 }
@@ -219,7 +235,9 @@ export async function createTicket(input: CreateTicketInput): Promise<TicketRow>
   const llmFailed = status >= 400;
   const severityUncertain = !llmFailed && Boolean(data.severity_uncertain);
   const severity = llmFailed ? "sedang" : String(data.severity ?? "sedang");
-  const area = input.area || (llmFailed ? null : ((data.area as string | null) ?? null));
+  // Wilayah tiket = kunci teknisi_wilayah (F154): dari customer kalau tertaut,
+  // kalau tidak dari isian form / tebakan LLM. Disimpan di kolom `area`.
+  const area = await wilayahTiket(customerId, input.area || (llmFailed ? null : ((data.area as string | null) ?? null)));
   // Hasil terdegradasi kini ditolak callAi jadi 503, tapi `model` tetap ikut
   // di payload-nya — dipakai agar kolom audit membedakan "services/ai mati"
   // dari "LLM gagal, hasilnya template". Keduanya tetap masuk needs_review
@@ -227,7 +245,7 @@ export async function createTicket(input: CreateTicketInput): Promise<TicketRow>
   const modelUsed = llmFailed ? String(data.model ?? "error") : String(data.model ?? "");
 
   // 2. Auto-assign teknisi (selalu dapat teknisi kalau ada yang aktif — lihat
-  // assignTeknisi: fallback ke least-loaded kalau area tak match siapa pun).
+  // assignTeknisi: fallback ke least-loaded kalau wilayah tak punya teknisi).
   const teknisi = await assignTeknisi(area);
   const needsReview =
     llmFailed || modelUsed === "dry-run-fallback" || severityUncertain || !teknisi || !teknisi.areaMatched;
