@@ -193,7 +193,7 @@ test("parseTenggat: tanpa tahun, Desember dibaca bulan Januari = tahun lalu", ()
 test("aksiLewatTenggat: lewat jadi TUA, belum lewat / tak terbaca diabaikan", () => {
   const lewat = aksiLewatTenggat("• Budi → kirim penawaran RS Sehat | 24 Okt | status: belum", SEKARANG);
   assert.ok(lewat);
-  assert.equal(lewat.it.topik, "kirim penawaran RS Sehat");
+  assert.equal(lewat.it.topik, "Kirim penawaran RS Sehat");
   assert.equal(lewat.it.dari, "Budi");
   assert.ok(lewat.lewatMenit > 24 * 60);
   assert.match(formatTuaItem(lewat.raw, 1), /lewat tenggat 24 Okt/);
