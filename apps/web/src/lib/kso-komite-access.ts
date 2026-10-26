@@ -49,7 +49,20 @@ export function canTabKso(u: U, tab: TabKso, aksi: "view" | "edit" = "view"): bo
  */
 export const FITUR_SUSUNAN = { key: "kso-komite-susunan", name: "Komite KSO — Susunan Komite: ubah jabatan & pemegang" };
 
+/**
+ * Bottom Line Alat (F172, migrasi 256) — lantai harga per tes per model alat. Tab tersendiri dengan
+ * fitur sendiri: lihat = Komite, ubah = Direktur. Gate lama = role direktur. Role admin TIDAK
+ * otomatis lolos (data HPP & biaya; role admin dipakai juga HOD) — sama dengan API
+ * repo/kso-komite-bottomline.ts izinBottomLine yang menentukan.
+ */
+export const FITUR_BOTTOMLINE = { key: "kso-komite-bottomline", name: "Komite KSO — Bottom Line Alat: lantai harga per tes (lihat = Komite, ubah = Direktur)" };
+
+export function canBottomLine(u: U, aksi: "view" | "edit" = "view"): boolean {
+  const v = u?.role === "admin" ? { ...u, role: null } : u;
+  return canOrLegacy(v, FITUR_BOTTOMLINE.key, v?.role === "direktur", aksi);
+}
+
 /** Menu Komite KSO tampil bila SATU tab saja boleh dilihat. */
 export function canViewKsoKomite(u: U): boolean {
-  return TAB_KSO.some((t) => canTabKso(u, t.tab));
+  return TAB_KSO.some((t) => canTabKso(u, t.tab)) || canBottomLine(u);
 }

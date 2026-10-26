@@ -22,9 +22,15 @@ export default async function KsoKomitePage() {
     );
   }
   let tabs: TabBoleh[] | null = null;
+  let bottomLine = false;
   try {
-    const res = await gatewayFetch("/kso-komite/tab", { headers: { "x-user-id": me.id } });
+    const [res, bl] = await Promise.all([
+      gatewayFetch("/kso-komite/tab", { headers: { "x-user-id": me.id } }),
+      // F172 Bottom Line Alat — izin fitur sendiri, diputuskan API (repo/kso-komite-bottomline.ts)
+      gatewayFetch("/kso-komite/bottom-line/akses", { headers: { "x-user-id": me.id } }),
+    ]);
     if (res.ok) tabs = ((await res.json()) as { tab: TabBoleh[] }).tab;
+    if (bl.ok) bottomLine = ((await bl.json()) as { lihat: boolean }).lihat;
   } catch { tabs = null; }
 
   return (
@@ -35,9 +41,9 @@ export default async function KsoKomitePage() {
       />
       {tabs === null
         ? <EmptyState title="Backend tidak terjangkau" description="Coba muat ulang beberapa saat lagi." />
-        : tabs.length === 0
+        : tabs.length === 0 && !bottomLine
           ? <EmptyState title="Belum ada tab yang terbuka" description="Akun ini belum tertaut ke AM/HOD atau belum diberi peran Komite KSO di Akses Grup." />
-          : <KomiteView tabs={tabs} />}
+          : <KomiteView tabs={tabs} bottomLine={bottomLine} />}
     </>
   );
 }
