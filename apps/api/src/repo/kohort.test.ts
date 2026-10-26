@@ -41,6 +41,11 @@ test("petaSumber: lima sumber Direktur + Lainnya", () => {
   assert.equal(petaSumber("referral"), "referensi");
   assert.equal(petaSumber("pameran"), "trade_show");
   assert.equal(petaSumber("telepon"), "cold_call");
+  // nilai deal.sumber_lead (migrasi 252)
+  assert.equal(petaSumber("vendor"), "vendor");
+  assert.equal(petaSumber("tender"), "tender");
+  assert.equal(petaSumber("referensi"), "referensi");
+  assert.equal(petaSumber("cold_call"), "cold_call");
   for (const s of ["wa", "web", "lainnya", "apa-saja"]) assert.equal(petaSumber(s), "lainnya");
 });
 

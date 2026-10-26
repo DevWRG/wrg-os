@@ -6,24 +6,26 @@
 Dua tab, dashboard saja (tanpa hashtag), hanya agregat:
 
 1. **Retensi Customer** — kurva retensi per kohort kuartal Q1–Q4 dalam satu tahun. Kohort = kuartal faktur pertama customer di mirror Accurate (`accurate_invoice`, faktur bernilai positif). Kuartal +k = porsi customer kohort itu yang punya faktur lagi k kuartal kemudian (+0..+4).
-2. **Lead Source** — pipeline `lead` (F65) per **sumber × status × kuartal**, plus rekap per HoD per semester (S1 = Q1–Q2, S2 = Q3–Q4) sebagai bahan menilai effort / NPK.
+2. **Lead Source** — pipeline lead per **sumber × status × kuartal**, plus rekap per HoD per semester (S1 = Q1–Q2, S2 = Q3–Q4) sebagai bahan menilai effort / NPK.
 
 Keputusan Direktur (rapat 2026-10-19; klarifikasi sumber 2026-10-21): lima sumber = Tender, Referensi customer, Vendor lead, Trade show, Cold call; bandingkan per status per kuartal untuk menilai effort, terkait NPK.
 
-## Pemetaan sumber (tanpa mengubah data)
-| Sumber Direktur | `lead.source` |
-|---|---|
-| Tender | `lpse` |
-| Referensi customer | `referral` |
-| Trade show | `pameran` |
-| Cold call | `telepon` |
-| Vendor lead | *(tidak ada nilainya — tampil 0)* |
-| Lainnya | `wa`, `web`, `lainnya` |
+## Sumber data & pemetaan sumber
+Sejak 13 Okt 2026 #LEADS langsung jadi deal, jadi asal lead dicatat di **`deal.sumber_lead`** (migrasi 252, field "Sumber Lead" di form deal + detail pipeline). Tab ini menggabungkan: (1) deal ber-`sumber_lead` atau dibuat dari #LEADS (status dipetakan dari stage: Prospecting=baru, Closing-Won=dikonversi, Closing-Lost=ditolak, lainnya=dihubungi), dan (2) tabel `lead` lama (F65). Lead lama tidak ditelusuri ulang.
 
-Vendor lead baru terisi bila `lead.source` kelak diberi nilai `vendor` (perubahan F65, belum dilakukan).
+| Sumber Direktur | `deal.sumber_lead` | `lead.source` (lama) |
+|---|---|---|
+| Tender | `tender` | `lpse` |
+| Referensi customer | `referensi` | `referral` |
+| Vendor lead (principal/vendor merekomendasikan faskes) | `vendor` | *(tidak ada)* |
+| Trade show | `pameran` | `pameran` |
+| Cold call | `cold_call` | `telepon` |
+| Lainnya | kosong (mis. #LEADS WA) | `wa`, `web`, `lainnya` |
+
+WA/web = cara lead masuk, bukan asal lead, sengaja tidak dipaksa ke lima sumber. Bila baris Lainnya ternyata besar, evaluasi apakah pengguna perlu memilih sumber asli saat mencatat (keputusan Direktur). #LEADS WA belum punya sintaks sumber.
 
 ## Batasan yang ditampilkan di UI
-- Data lead baru terkumpul sejak F65 (13 Okt 2026): kuartal sebelumnya kosong, bukan berarti tak ada lead.
+- Data baru terkumpul sejak 13 Okt 2026 (F65 / deal dari #LEADS): kuartal sebelumnya kosong, bukan berarti tak ada lead.
 - Kohort di kuartal pertama data mirror tak murni "customer baru" (diberi tanda `*`).
 - Kuartal yang masih berjalan = data parsial (tanda `†`), tidak digambar di kurva supaya tak terbaca seperti churn.
 - NPK: hanya rekap lead & konversi per HoD; **tidak mengubah skor NPK**.

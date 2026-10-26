@@ -8,8 +8,8 @@
 //      semester (kaitan NPK: tidak mengubah skor NPK, hanya memberi bahan menilai effort).
 //
 // Lima sumber dari Direktur (rapat 2026-10-19 + klarifikasi): Tender, Referensi customer, Vendor
-// lead, Trade show, Cold call. `lead.source` (migrasi 209) tak punya nilai "vendor", jadi
-// Vendor lead selalu tampil 0 sampai ada nilainya; wa/web/lainnya → baris "Lainnya". Tanpa ubah data.
+// lead, Trade show, Cold call. Sumber dibaca dari deal.sumber_lead (migrasi 252) + lead.source lama;
+// kosong / wa / web / lainnya → baris "Lainnya".
 
 import { db } from "../db.js";
 
@@ -122,13 +122,17 @@ export const SUMBER = [
 ] as const;
 export type SumberKey = (typeof SUMBER)[number]["key"];
 
-/** lead.source (migrasi 209) → lima sumber Direktur. Tak ada nilai 'vendor' di sumber data. */
+/**
+ * lead.source (migrasi 209, lead lama) ATAU deal.sumber_lead (migrasi 252) → lima sumber Direktur.
+ * Nilai 'vendor' hanya datang dari deal.sumber_lead.
+ */
 export function petaSumber(source: string): SumberKey {
   switch (source) {
-    case "lpse": return "tender";
-    case "referral": return "referensi";
+    case "lpse": case "tender": return "tender";
+    case "referral": case "referensi": return "referensi";
+    case "vendor": return "vendor";
     case "pameran": return "trade_show";
-    case "telepon": return "cold_call";
+    case "telepon": case "cold_call": return "cold_call";
     default: return "lainnya"; // wa, web, lainnya
   }
 }
@@ -211,9 +215,32 @@ export async function getLeadSource(opts: { tahun?: number }): Promise<LeadSourc
       AND created_at <  (${`${tahun + 1}-01-01`}::date::timestamp AT TIME ZONE 'Asia/Jakarta')
     GROUP BY 1, 2, 3, 4
   `;
-  const [mulai] = await sql`SELECT min(created_at AT TIME ZONE 'Asia/Jakarta')::date::text AS d FROM lead`;
+  // Sejak 13 Okt 2026 #LEADS langsung jadi deal (lead.source tak terisi lagi): deal baru dihitung bila
+  // sumbernya dipilih ATAU dibuat dari #LEADS (sumber kosong → Lainnya). Deal hasil impor tak ikut.
+  // Status deal dipetakan dari stage; nilai = estimasi deal.
+  const dealRows = await sql`
+    SELECT date_trunc('quarter', created_at AT TIME ZONE 'Asia/Jakarta')::date::text AS q,
+           COALESCE(sumber_lead, 'lainnya') AS source,
+           CASE stage WHEN 'Prospecting' THEN 'baru'
+                      WHEN 'Closing-Won' THEN 'dikonversi'
+                      WHEN 'Closing-Lost' THEN 'ditolak'
+                      ELSE 'dihubungi' END AS status,
+           NULLIF(btrim(pic_hod), '') AS hod,
+           count(*)::int AS n, COALESCE(sum(COALESCE(estimated_value, estimate_amount)), 0)::numeric AS nilai
+    FROM deal
+    WHERE (sumber_lead IS NOT NULL OR notes LIKE '%Info #LEADS dari%')
+      AND created_at >= (${`${tahun}-01-01`}::date::timestamp AT TIME ZONE 'Asia/Jakarta')
+      AND created_at <  (${`${tahun + 1}-01-01`}::date::timestamp AT TIME ZONE 'Asia/Jakarta')
+    GROUP BY 1, 2, 3, 4
+  `;
+  const [mulai] = await sql`
+    SELECT min(d)::text AS d FROM (
+      SELECT min(created_at AT TIME ZONE 'Asia/Jakarta')::date AS d FROM lead
+      UNION ALL
+      SELECT min(created_at AT TIME ZONE 'Asia/Jakarta')::date FROM deal WHERE sumber_lead IS NOT NULL OR notes LIKE '%Info #LEADS dari%'
+    ) t`;
   return susunLeadSource(
-    rows.map((r) => ({
+    [...rows, ...dealRows].map((r) => ({
       q: String(r.q), source: String(r.source), status: String(r.status),
       hod: r.hod ? String(r.hod) : null, n: Number(r.n), nilai: Number(r.nilai),
     })),
