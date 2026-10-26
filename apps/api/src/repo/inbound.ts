@@ -7,6 +7,7 @@ import { balasanKampanye, scopeDariPengirim } from "./campaign.js";
 import { balasanBrief } from "./customer-intel.js";
 import { balasanJadwal } from "./jadwal-teknisi.js";
 import { balasanOrder } from "./order-wa.js";
+import { balasanBonTeknisi, balasanOpnameWa } from "./bon-sparepart.js";
 import { detectCek, handleCekQuery } from "./inbound-cek.js";
 import { resolveSender, normalizeWa, bolehAksesHargaWa } from "./master.js";
 import { upsertDailyTodo, computeIsLate } from "./todo.js";
@@ -139,6 +140,8 @@ export const INBOUND_HASHTAGS = [
   "kso",
   "jadwal",
   "order",
+  "bon",
+  "opname",
 ] as const;
 
 export type InboundKind = (typeof INBOUND_HASHTAGS)[number] | "none";
@@ -199,6 +202,8 @@ const BRIEFING_LINE = /^\s*#\s*briefing\b/i;
 const JADWAL_LINE = /^\s*#\s*jadwal\b/i;
 // F90 — #ORDER: pesanan AM → draft → "#ORDER ya O12" → antrean Admin Sales.
 const ORDER_LINE = /^\s*#\s*order\b/i;
+const BON_LINE = /^\s*#\s*bon\b/i;
+const OPNAME_LINE = /^\s*#\s*opname\b/i;
 // Peran app_user yang boleh membaca Senin Brief lewat WA.
 const BRIEFING_ROLES = new Set(["direktur", "admin", "superuser"]);
 export const briefingTerbuka = (): boolean => (process.env.BRIEFING_WA_OPEN ?? "false").toLowerCase() === "true";
@@ -239,6 +244,8 @@ export function detectKind(body: string | null): InboundKind {
       if (BRIEFING_LINE.test(line)) return "briefing";
       if (JADWAL_LINE.test(line)) return "jadwal";
       if (ORDER_LINE.test(line)) return "order";
+      if (BON_LINE.test(line)) return "bon";
+      if (OPNAME_LINE.test(line)) return "opname";
     }
   }
   return "none";
@@ -2016,6 +2023,47 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
     }
     const reply = await sendViaWaGateway(target, text);
     return finish({ kind: "order", via: od.via, reply });
+  }
+
+  // #BON — F155: teknisi melapor sparepart yang dibawa dari gudang (satu barang per baris, "x2").
+  // Pengirim = teknisi roster (matchTeknisi; grup uji boleh bypass), pola #install. Dicocokkan ke bon
+  // gudang miliknya; tanpa bon gudang → bon bertanda 'teknisi' yang muncul di #OPNAME.
+  if (kind === "bon") {
+    const tb =
+      (await matchTeknisi({ pushname: row.sender_name, senderJid: row.sender_jid, groupJid: row.group_jid })) ??
+      (isWaTestBypassGroup(row.group_jid) && row.sender_name?.trim()
+        ? await ensureBypassTeknisi(row.sender_name.trim(), normalizeWa(String(row.sender_jid ?? "").split("@")[0].split(":")[0]))
+        : null);
+    if (!tb) return finish({ skipped: "unknown-sender", sender_name: row.sender_name });
+    let text: string;
+    try {
+      text = await balasanBonTeknisi({ id: tb.id, nama: tb.nama }, row.body ?? "", row.message_id ?? null);
+    } catch (e) {
+      console.error("[inbound] #BON gagal diproses:", (e as Error).message);
+      text = "⚠️ #BON gagal diproses, coba lagi sebentar lagi.";
+    }
+    const reply = await sendViaWaGateway(target, text);
+    return finish({ kind: "bon", teknisi: tb.nama, reply });
+  }
+
+  // #OPNAME — F155: bon sparepart yang sudah dilaporkan vs belum + rekonsiliasi ke SJ. Read-only
+  // (selain menautkan bon ke SJ yang cocok). Untuk gudang/HoD/admin; teknisi ditolak.
+  if (kind === "opname") {
+    const on = await resolveSender({ senderJid: row.sender_jid, groupJid: row.group_jid, pushname: row.sender_name, ketat: true });
+    if (!on) return finish({ skipped: "unknown-sender", sender_name: row.sender_name });
+    let text: string;
+    if (/^teknisi$/i.test(String(on.role ?? "").trim())) {
+      text = `#OPNAME untuk tim gudang/HoD, ${on.nama}. Cek bon Anda dengan #BON status.`;
+    } else {
+      try {
+        text = await balasanOpnameWa();
+      } catch (e) {
+        console.error("[inbound] #OPNAME gagal diproses:", (e as Error).message);
+        text = "⚠️ #OPNAME gagal diproses, coba lagi sebentar lagi.";
+      }
+    }
+    const reply = await sendViaWaGateway(target, text);
+    return finish({ kind: "opname", via: on.via, reply });
   }
 
   // #BRIEFING — F110: ringkasan Senin Brief (kesiapan 8 HoD) untuk Direktur.

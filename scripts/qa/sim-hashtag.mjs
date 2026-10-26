@@ -394,6 +394,16 @@ const skenario = [
   // Nama teknisi dicocokkan PERSIS (11 Okt 2026): dulu ILIKE potongan — pushname "a"/"Joko" lolos sbg teknisi.
   { nama: "install · potongan nama teknisi (gerbang)", body: "#install coba", from: { jid: "628111000099@s.whatsapp.net", nama: "Joko" }, harap: null },
 
+  // F155 #BON / #OPNAME — #BON hanya teknisi roster (gerbang matchTeknisi); #OPNAME untuk non-teknisi.
+  // Item sparepart tak ada di fixture, jadi hanya jalur bantuan / tak-ketemu / gerbang yang diuji di sini
+  // (jalur lapor + rekonsiliasi diuji lewat repo + dev DB; lihat docs/features/F155-bon-sparepart.md).
+  { nama: "bon · bantuan (tanpa isi)", body: "#BON", from: TEKNISI, harap: /Format #BON/ },
+  { nama: "bon · barang tak ada di master", body: "#BON zzz-barang-ngawur-qa x2", from: TEKNISI, harap: /#BON BELUM dicatat[\s\S]*barang tidak ditemukan di master Accurate/ },
+  { nama: "bon · status kosong", body: "#BON status", from: TEKNISI, harap: /Belum ada bon 30 hari terakhir|Bon .* \(30 hari\)/ },
+  { nama: "bon · bukan teknisi (gerbang)", body: "#BON Pompa x1", from: ASING, harap: null },
+  { nama: "opname · non-teknisi melihat ringkasan", body: "#OPNAME", from: AM, harap: /📦 \*Opname bon sparepart\*/ },
+  { nama: "opname · pengirim asing (gerbang)", body: "#OPNAME", from: ASING, harap: null },
+
   // F12/F42/F93 shipping — pengirim sah: staf roster, atau driver SJ itu lewat chat pribadi
   { tulis: true, nama: "kirim · SJ ada", body: "#KIRIM SJ-QA-001", from: AM, type: "image", media: FOTO.kirim, geo: { lat: -7.82, lon: 112.01 }, harap: /✅ SJ SJ-QA-001 \(RSUD Fixture Kediri\) ditandai \*DIKIRIM\*\./ },
   { tulis: true, nama: "bast · SJ sudah terima", body: "#BAST SJ-QA-002", from: AM, type: "image", media: FOTO.bast, geo: { lat: -7.81, lon: 112.02 }, harap: /✅ SJ SJ-QA-002 \(Klinik Fixture Kediri\) ditandai \*BAST\/SELESAI\*\./ },
