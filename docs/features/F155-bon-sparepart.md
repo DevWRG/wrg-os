@@ -27,3 +27,6 @@ Fitur `bon-sparepart` di matriks Akses Grup — **tertutup default** (perlu Sync
 - Master tidak punya kategori sparepart (`accurate_item.category` = jenis teknis) → pencarian lewat nama/kode.
 - Item SJ hanya ditarik 120 hari terakhir dan bertahap; SJ yang itemnya belum ditarik tak bisa dicocokkan otomatis (tetap bisa manual).
 - Pencocokan otomatis tidak membandingkan qty (teknisi bisa membawa lebih banyak dari yang dipakai di SJ).
+
+## Data contoh (dev/QA)
+`scripts/qa/seed-bon-sparepart.sql` — 7 bon sintetis (belum dilaporkan, sebagian, dilaporkan dengan 2 SJ kandidat, tanpa bon gudang, selesai otomatis/manual, batal), idempoten, bertanda `[SEED F155]`; bersihkan dengan `DELETE FROM bon_sparepart WHERE catatan LIKE '[SEED F155]%'`. Hanya untuk dev — memakai item/SJ sintetis `SIN.*`.
