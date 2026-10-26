@@ -13,8 +13,24 @@
 //
 // Urutan langkah + grup berwenangnya TIDAK ada di berkas ini; sumbernya tabel
 // insentif_approval_step (183). Mengubah "siapa boleh bayar" = UPDATE satu baris.
+//
+// Sejak migrasi 256 langkah 2–6 (review HOD Sales s/d Bayar HRD) berjalan di
+// mesin approval F11 (alur 'insentif', tahap target grup; wewenang diatur di
+// Config Approval). "Ajukan" (langkah 1, AM) tetap di sini dan membuka
+// approval-nya. Status insentif_bulanan + insentif_approval_log tetap ditulis
+// per tahap oleh penangan konsumen di bawah, jadi UI, Direktur Inbox, dan
+// pagar unik 183 tetap berlaku.
+
+import type { TransactionSql } from "postgres";
 
 import { db } from "../db.js";
+import {
+  buatRequestDalamTx,
+  daftarKonsumen,
+  decideFromDashboard,
+  getApprovalRequest as getEngineRequest,
+  notifyCurrentStep,
+} from "./approval.js";
 import { effectivePermissions } from "./rbac.js";
 import { resolveAkses } from "./insentif.js";
 import type { DataScope } from "./access-scope.js";
@@ -57,19 +73,39 @@ export interface StatusApproval {
 /** Grup yang boleh membuka kembali rekap yang ditolak. Superuser selalu boleh. */
 const GRUP_BUKA_KEMBALI = ["sales-hod"];
 
+type Tx = TransactionSql<Record<string, unknown>>;
+export const JENIS_INSENTIF = "insentif";
+const REF_TABEL = "insentif_bulanan";
+
+// Tahap engine k ↔ langkah insentif k+1. Status SAAT menunggu tahap k, dan
+// status SESUDAH tahap k disetujui.
+const URUTAN_DARI_STATUS: Record<string, number> = {
+  submitted: 1, hod_review: 2, finance_verify: 3, corsec_compile: 4, direktur_approve: 5,
+};
+const STATUS_SETELAH: Record<number, string> = {
+  1: "hod_review", 2: "finance_verify", 3: "corsec_compile", 4: "direktur_approve", 5: "paid",
+};
+
 interface Rekap {
   id: string;
   status: string;
   siklus: number;
+  approval_request_id: string | null;
+  total_insentif_am: number;
 }
 
 async function ambilRekap(amId: string, periode: string): Promise<Rekap | null> {
   const sql = db();
   const [r] = await sql<Rekap[]>`
-    SELECT id::text, status, siklus FROM insentif_bulanan
+    SELECT id::text, status, siklus, approval_request_id::text AS approval_request_id,
+           total_insentif_am::float8 AS total_insentif_am
+    FROM insentif_bulanan
     WHERE am_id = ${amId} AND periode = ${periode}`;
   return r ?? null;
 }
+
+// Rekap yang sedang menunggu tahap engine (bukan draft/rejected/paid).
+const diEngine = (r: Rekap): boolean => !!r.approval_request_id && URUTAN_DARI_STATUS[r.status] != null;
 
 async function langkahDari(status: string): Promise<LangkahApproval | null> {
   const sql = db();
@@ -103,6 +139,8 @@ async function grupUser(userId: string): Promise<{ keys: string[]; superuser: bo
  * Diekspor supaya bisa diuji tanpa DB — ini fungsi yang memutuskan siapa boleh
  * menandatangani pembayaran, jadi ia pantas punya tes sendiri.
  */
+const kapital = (t: string): string => (t ? t[0].toUpperCase() + t.slice(1) : t);
+
 export function berwenang(
   langkah: LangkahApproval,
   opts: { selfAmId: string | null; amId: string; grup: string[]; superuser: boolean },
@@ -150,7 +188,9 @@ export async function getApproval(
     SELECT l.step, l.siklus, l.status_to, l.actor_user_id, u.name AS actor_nama,
            l.actor_role, l.catatan, l.acted_at::text AS acted_at
     FROM insentif_approval_log l
-    LEFT JOIN app_user u ON u.id = l.actor_user_id
+    -- actor_user_id bertipe TEXT (093) sedangkan app_user.id UUID: tanpa ::text
+    -- Postgres menolak query ini (uuid = text) bahkan saat riwayatnya kosong.
+    LEFT JOIN app_user u ON u.id::text = l.actor_user_id
     WHERE l.bulanan_id = ${rekap.id}::bigint
     ORDER BY l.acted_at`;
 
@@ -168,6 +208,11 @@ export async function getApproval(
     alasan = `Tidak ada langkah lanjutan untuk status '${rekap.status}'.`;
   } else if (!akses.userId) {
     alasan = "Identitas tidak dikenal.";
+  } else if (diEngine(rekap)) {
+    // Wewenang dihitung engine (grup tahap, pengaju, satu akun satu tahap).
+    const apr = await getEngineRequest(rekap.approval_request_id!, { viewerUserId: akses.userId });
+    if (apr?.wewenang?.boleh) bolehMaju = true;
+    else alasan = apr?.wewenang?.alasan ? kapital(apr.wewenang.alasan) : "Menunggu approver tahap ini.";
   } else {
     const w = berwenang(berikutnya, {
       selfAmId: akses.selfAmId, amId, grup: grup.keys, superuser: grup.superuser,
@@ -249,6 +294,25 @@ export async function actApproval(scope: DataScope | undefined, args: ActApprova
     return { ok: true as const, status: "draft", siklus: siklusBaru };
   }
 
+  // Langkah 2–6 di mesin approval: wewenang & satu-akun-satu-tahap ditegakkan
+  // engine; status + jejak ditulis penangan konsumen di transaksi yang sama.
+  if (diEngine(rekap)) {
+    const r = await decideFromDashboard(
+      rekap.approval_request_id!,
+      args.aksi === "tolak" ? "reject" : "approve",
+      akses.userId,
+      args.catatan ?? null,
+      undefined,
+      { expectedUrutan: URUTAN_DARI_STATUS[rekap.status] },
+    );
+    if (!r.ok) {
+      const e = r.error ?? "gagal memproses langkah";
+      throw Object.assign(new Error(e), { status: /sudah|berubah/.test(e) ? 409 : /wajib/.test(e) ? 400 : 403 });
+    }
+    const after = await ambilRekap(args.amId, args.periode);
+    return { ok: true as const, status: after?.status ?? rekap.status, siklus: rekap.siklus, step: URUTAN_DARI_STATUS[rekap.status] + 1 };
+  }
+
   const langkah = await langkahDari(rekap.status);
   if (!langkah) {
     throw Object.assign(
@@ -276,9 +340,13 @@ export async function actApproval(scope: DataScope | undefined, args: ActApprova
   }
 
   const statusBaru = args.aksi === "tolak" ? "rejected" : langkah.status_ke;
+  // "Ajukan" (draft → submitted) membuka approval di engine untuk langkah 2–6.
+  const bukaEngine = rekap.status === "draft" && statusBaru === "submitted";
+  let aprId: string | null = null;
 
   try {
-    await sql.begin(async (tx) => {
+    await sql.begin(async (txRaw) => {
+      const tx = txRaw as unknown as Tx;
       await tx`
         UPDATE insentif_bulanan SET status = ${statusBaru} WHERE id = ${rekap.id}::bigint`;
       await tx`
@@ -287,6 +355,21 @@ export async function actApproval(scope: DataScope | undefined, args: ActApprova
         VALUES (${rekap.id}::bigint, ${langkah.step}, ${rekap.siklus}, ${statusBaru},
                 ${akses.userId}, ${grup.superuser ? "superuser" : akses.level},
                 ${args.catatan ?? null})`;
+      if (bukaEngine) {
+        const [nama] = await tx`SELECT nama FROM master_user WHERE am_id = ${args.amId}`;
+        const apr = await buatRequestDalamTx(tx, {
+          jenis: JENIS_INSENTIF,
+          title: `Insentif ${nama?.nama ?? args.amId} — ${args.periode}`.slice(0, 200),
+          nominal: Number(rekap.total_insentif_am) || null,
+          requestedBy: nama?.nama ? String(nama.nama) : args.amId,
+          requestedByUserId: akses.userId,
+          refTabel: REF_TABEL,
+          refId: rekap.id,
+        });
+        if (!apr.ok) throw Object.assign(new Error(apr.error), { status: 409 });
+        aprId = apr.id;
+        await tx`UPDATE insentif_bulanan SET approval_request_id = ${apr.id} WHERE id = ${rekap.id}::bigint`;
+      }
     });
   } catch (e) {
     // 23505 = unique violation → dua tab/dua klik dari akun yang sama.
@@ -299,5 +382,41 @@ export async function actApproval(scope: DataScope | undefined, args: ActApprova
     throw e;
   }
 
+  if (aprId) await notifyCurrentStep(aprId);
   return { ok: true as const, status: statusBaru, siklus: rekap.siklus, step: langkah.step };
 }
+
+// ── Penangan konsumen engine ─────────────────────────────────────────────────
+// Status insentif + jejak 183 ditulis per tahap di transaksi keputusan engine.
+// Unique index 183 (satu akun satu langkah per siklus) tetap jadi pagar akhir.
+
+async function tulisLangkah(tx: Tx, bulananId: string, step: number, statusTo: string, actor: string | null, catatan: string | null) {
+  const [b] = await tx`SELECT siklus FROM insentif_bulanan WHERE id = ${bulananId}::bigint FOR UPDATE`;
+  if (!b) return;
+  await tx`UPDATE insentif_bulanan SET status = ${statusTo} WHERE id = ${bulananId}::bigint`;
+  await tx`
+    INSERT INTO insentif_approval_log (bulanan_id, step, siklus, status_to, actor_user_id, actor_role, catatan)
+    VALUES (${bulananId}::bigint, ${step}, ${b.siklus}, ${statusTo}, ${actor}, 'approver', ${catatan})`;
+}
+
+daftarKonsumen(
+  REF_TABEL,
+  async (tx, h) => {
+    if (h.status === "canceled") return;
+    const [b] = await tx`
+      SELECT b.id, r.current_urutan FROM insentif_bulanan b JOIN approval_request r ON r.id = b.approval_request_id
+      WHERE b.id = ${h.refId}::bigint AND b.approval_request_id = ${h.requestId}`;
+    if (!b) return;
+    const urutan = Number(b.current_urutan);
+    await tulisLangkah(tx, h.refId, urutan + 1, h.status === "approved" ? "paid" : "rejected", h.olehUserId, h.catatan);
+  },
+  {
+    setiapTahap: async (tx, t) => {
+      const statusTo = STATUS_SETELAH[t.urutan];
+      if (!statusTo) return;
+      const [b] = await tx`SELECT 1 FROM insentif_bulanan WHERE id = ${t.refId}::bigint AND approval_request_id = ${t.requestId}`;
+      if (!b) return;
+      await tulisLangkah(tx, t.refId, t.urutan + 1, statusTo, t.olehUserId, t.catatan);
+    },
+  },
+);

@@ -1167,6 +1167,22 @@ export type PenanganKonsumen = (tx: Tx, hasil: HasilApproval) => Promise<void>;
 // tak membatalkan keputusan (sudah tersimpan), hanya dicatat di log.
 export interface OpsiKonsumen {
   sesudah?: (hasil: HasilApproval) => Promise<void>;
+  // Dipanggil DI transaksi keputusan setiap kali satu tahap disetujui dan
+  // request MAJU ke tahap berikutnya (bukan tahap terakhir) — untuk modul
+  // yang statusnya bergerak per tahap (mis. insentif). Melempar = keputusan batal.
+  setiapTahap?: (tx: Tx, tahap: TahapMaju) => Promise<void>;
+}
+
+export interface TahapMaju {
+  requestId: string;
+  kode: string;
+  refTabel: string;
+  refId: string;
+  urutan: number;
+  urutanBerikut: number;
+  oleh: string;
+  olehUserId: string;
+  catatan: string | null;
 }
 
 const konsumen = new Map<string, { penangan: PenanganKonsumen; opsi: OpsiKonsumen }>();
@@ -1178,6 +1194,11 @@ export function daftarKonsumen(refTabel: string, penangan: PenanganKonsumen, ops
 async function jalankanKonsumen(tx: Tx, hasil: HasilApproval): Promise<void> {
   const k = konsumen.get(hasil.refTabel);
   if (k) await k.penangan(tx, hasil);
+}
+
+async function jalankanSetiapTahap(tx: Tx, tahap: TahapMaju): Promise<void> {
+  const k = konsumen.get(tahap.refTabel);
+  if (k?.opsi.setiapTahap) await k.opsi.setiapTahap(tx, tahap);
 }
 
 async function jalankanSesudah(hasil: HasilApproval | undefined): Promise<void> {
@@ -1283,6 +1304,12 @@ async function putuskan(
       };
     }
     await tx`UPDATE approval_request SET current_urutan = ${Number(next_urutan)} WHERE id = ${req.id}`;
+    if (ref) {
+      await jalankanSetiapTahap(tx, {
+        ...ref, requestId: String(req.id), kode, urutan: Number(step.urutan), urutanBerikut: Number(next_urutan),
+        oleh: approver.name, olehUserId: approver.userId, catatan: note ?? null,
+      });
+    }
     return { ok: true, status: "pending", kode, requestId: String(req.id), urutan: Number(step.urutan), notifyNext: true };
   });
   let out: Out;
