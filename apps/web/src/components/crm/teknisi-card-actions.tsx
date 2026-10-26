@@ -30,13 +30,19 @@ export function TeknisiCardActions({ teknisi }: { teknisi: TeknisiRow }) {
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
+    // Validasi sendiri (form noValidate): pesan bawaan browser berbahasa Inggris.
+    const n = Number(maxJobs);
+    if (maxJobs.trim() === "" || !Number.isInteger(n) || n < 1 || n > 50) {
+      setError("Kapasitas harus bilangan bulat 1–50.");
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
       const res = await fetch(`/api/teknisi-capacity/${encodeURIComponent(teknisi.id)}`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ max_concurrent_jobs: Number(maxJobs) }),
+        body: JSON.stringify({ max_concurrent_jobs: n }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "gagal menyimpan");
@@ -59,7 +65,7 @@ export function TeknisiCardActions({ teknisi }: { teknisi: TeknisiRow }) {
           <DialogTitle>Kapasitas teknisi</DialogTitle>
           <DialogDescription>{teknisi.nama}</DialogDescription>
         </DialogHeader>
-        <form onSubmit={submit} className="contents">
+        <form onSubmit={submit} noValidate className="contents">
           <DialogBody className="grid gap-3">
             <div className="grid gap-1.5">
               <Label htmlFor={`tk-edit-max-${teknisi.id}`}>Kapasitas job bersamaan</Label>
