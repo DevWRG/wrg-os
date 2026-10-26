@@ -38,12 +38,35 @@ export function extractTua(content: string): string[] {
     .filter(Boolean);
 }
 
+// Semua baris item OUTSTANDING (bertag TUA maupun tidak) — bahan penilaian umur
+// QW2: ambang ditentukan di sini, bukan lagi oleh tag LLM (>4 jam untuk semua).
+export function extractOutstanding(content: string): string[] {
+  const lines = content.split(/\r?\n/);
+  let capture = false;
+  const out: string[] = [];
+  for (const raw of lines) {
+    if (/^\s*⏳\s*OUTSTANDING/.test(raw)) {
+      capture = true;
+      continue;
+    }
+    if (capture && (/^\s*\d+\.\s/.test(raw) || /^\s*Generated:/.test(raw) || /^\s*={3,}/.test(raw))) break;
+    if (!capture) continue;
+    const l = raw.trim();
+    // baris kosong / "Tidak ada" bukan item
+    if (l && /^[•*-]/.test(l)) out.push(l);
+  }
+  return out;
+}
+
 // Signature topic-only: buang bullet & segala setelah '|', sort-unik, sha256.
-function signature(tua: string[]): string {
+// `eskalasi` = topik yang baru naik ke eskalasi Direktur; masuk signature supaya
+// eskalasi baru tetap terkirim walau himpunan item TUA-nya sama.
+function signature(tua: string[], eskalasi: string[] = []): string {
   const topics = Array.from(
     new Set(tua.map((l) => l.replace(/^•\s*/, "").replace(/\s*\|.*$/, "").trim())),
   ).sort();
-  return createHash("sha256").update(topics.join("\n")).digest("hex");
+  const esk = eskalasi.slice().sort().map((k) => `!${k}`);
+  return createHash("sha256").update([...topics, ...esk].join("\n")).digest("hex");
 }
 
 const BULAN = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"];
@@ -136,6 +159,69 @@ export function formatTuaItem(raw: string, nomor: number): string {
   return baris.join("\n");
 }
 
+// ── QW2: ambang bertingkat + eskalasi Harga ──────────────────────────────────
+// Direktur (rapat 2026-10-19): konfirmasi yang belum clear = TUA bila jeda >8 jam;
+// untuk komunikasi soal Harga ambangnya >4 jam, dan >2 hari dieskalasi ke Direktur.
+export type KategoriTua = "harga" | "umum";
+
+export const AMBANG_TUA_MENIT: Record<KategoriTua, number> = { harga: 4 * 60, umum: 8 * 60 };
+export const ESKALASI_MENIT = 2 * 24 * 60;
+
+const KATA_HARGA = /\b(harga|price(?:\s*list)?|pricelist|quote|quotation|penawaran|sph|diskon|discount|nett?|launching)\b/i;
+
+export function kategoriItem(it: TuaItem): KategoriTua {
+  return KATA_HARGA.test([it.topik, it.status ?? "", ...it.lain].join(" ")) ? "harga" : "umum";
+}
+
+// "10 jam", "1 jam 20 menit", "2 hari", "45 menit" → menit; tak terbaca → null.
+export function umurMenit(umur?: string): number | null {
+  if (!umur) return null;
+  let total = 0;
+  let ada = false;
+  for (const m of umur.matchAll(/(\d+(?:[.,]\d+)?)\s*(hari|jam|menit)\b/gi)) {
+    const n = Number(m[1].replace(",", "."));
+    const u = m[2].toLowerCase();
+    total += n * (u === "hari" ? 1440 : u === "jam" ? 60 : 1);
+    ada = true;
+  }
+  return ada ? Math.round(total) : null;
+}
+
+// Kunci stabil per topik (huruf kecil, tanpa tanda baca) untuk tabel tua_item.
+export function topikKey(topik: string): string {
+  const norm = topik.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+  return createHash("sha256").update(norm).digest("hex").slice(0, 16);
+}
+
+export interface NilaiTua {
+  kategori: KategoriTua;
+  umur: number | null; // menit efektif = max(umur di resume, sejak pertama terlihat)
+  tua: boolean;
+  eskalasi: boolean;
+}
+
+// `bertag` = baris sudah ditandai TUA oleh LLM (>4 jam): dipakai hanya bila umur
+// tak terbaca sama sekali, supaya item tak hilang diam-diam.
+export function nilaiItem(it: TuaItem, bertag: boolean, firstSeenMs: number | null, nowMs: number): NilaiTua {
+  const kategori = kategoriItem(it);
+  const dariResume = umurMenit(it.umur);
+  const dariTracking = firstSeenMs == null ? null : Math.max(0, Math.round((nowMs - firstSeenMs) / 60000));
+  const umur = dariResume == null && dariTracking == null ? null : Math.max(dariResume ?? 0, dariTracking ?? 0);
+  const tua = umur == null ? bertag : umur >= AMBANG_TUA_MENIT[kategori];
+  return { kategori, umur, tua, eskalasi: kategori === "harga" && umur != null && umur > ESKALASI_MENIT };
+}
+
+export function umurTeks(menit: number): string {
+  if (menit >= 2 * 1440) return `${Math.floor(menit / 1440)} hari`;
+  if (menit >= 60) return `${Math.floor(menit / 60)} jam`;
+  return `${menit} menit`;
+}
+
+export interface EskalasiItem {
+  topik: string;
+  umur: number;
+}
+
 // Link dashboard: WEB_PUBLIC_URL (domain publik) didahulukan — selaras dgn
 // weeklyreport.ts. NOTIF_TUA_DASHBOARD_URL cuma cadangan: nilainya di prod
 // pernah menunjuk host tailnet yang tak bisa dibuka penerima di luar tailnet.
@@ -144,10 +230,14 @@ export function dashboardLink(): string {
   return base ? `${base}/monitor/resume` : "";
 }
 
-export function buildMessage(tua: string[], tanggal: string, jam: string): string {
+export function buildMessage(tua: string[], tanggal: string, jam: string, eskalasi: EskalasiItem[] = []): string {
   const count = tua.length;
   const items = tua.slice(0, 5).map((l, i) => formatTuaItem(l, i + 1)).join("\n\n");
   let msg = `🚨 *${count} Item TUA — Perlu Follow-Up*\n_${tanggalPendek(tanggal)} · ${jam} WIB · dari Resume Eksekutif_\n\n${items}`;
+  if (eskalasi.length) {
+    const baris = eskalasi.slice(0, 5).map((e) => `• ${e.topik} — ${umurTeks(e.umur)}`).join("\n");
+    msg += `\n\n🔺 *Eskalasi ke Direktur — Harga belum clear >2 hari*\n${baris}`;
+  }
   if (count > 5) msg += `\n\n_…+${count - 5} item lainnya._`;
   const link = dashboardLink();
   if (link) msg += `\n\n🔗 Detail: ${link}`;
@@ -177,7 +267,36 @@ export async function runNotifTua(opts: { dryRun?: boolean; target?: string } = 
   `;
   if (!row) return { sent: false, count: 0, skipped: "no-resume" };
 
-  const tua = extractTua(String(row.content));
+  // Item yang tak terlihat >3 hari dianggap selesai (LLM kadang melewatkan satu
+  // run, jadi tidak langsung dihapus saat absen).
+  if (!opts.dryRun) await sql`DELETE FROM tua_item WHERE last_seen < now() - interval '3 days'`;
+
+  const baris = extractOutstanding(String(row.content));
+  const parsed = baris.map((l) => {
+    const it = parseTuaLine(l);
+    return { raw: l, it, key: topikKey(it.topik || l), bertag: /TUA/.test(l) };
+  });
+  const keys = parsed.map((p) => p.key);
+  const tercatat = new Map<string, { first: number; eskalasi: boolean }>();
+  if (keys.length) {
+    const rows = await sql`SELECT topik_key, first_seen, eskalasi_at FROM tua_item WHERE topik_key = ANY(${keys}::text[])`;
+    for (const r of rows) tercatat.set(String(r.topik_key), { first: new Date(r.first_seen as string).getTime(), eskalasi: r.eskalasi_at != null });
+  }
+  const nowMs = Date.now();
+  const nilai = parsed.map((p) => ({ ...p, n: nilaiItem(p.it, p.bertag, tercatat.get(p.key)?.first ?? null, nowMs) }));
+
+  if (!opts.dryRun) {
+    for (const p of nilai) {
+      await sql`
+        INSERT INTO tua_item (topik_key, topik, kategori)
+        VALUES (${p.key}, ${(p.it.topik || p.raw).slice(0, 300)}, ${p.n.kategori})
+        ON CONFLICT (topik_key) DO UPDATE SET last_seen = now(), kategori = EXCLUDED.kategori
+      `;
+    }
+  }
+
+  const tuaItems = nilai.filter((p) => p.n.tua);
+  const tua = tuaItems.map((p) => p.raw);
   if (tua.length === 0) {
     // tidak ada item TUA → reset state (item sebelumnya dianggap selesai).
     await sql`
@@ -188,13 +307,20 @@ export async function runNotifTua(opts: { dryRun?: boolean; target?: string } = 
     return { sent: false, count: 0, skipped: "no-tua" };
   }
 
-  const sig = signature(tua);
+  // eskalasi hanya sekali per item: yang sudah pernah terkirim (eskalasi_at) dilewati.
+  const eskBaru = tuaItems.filter((p) => p.n.eskalasi && !tercatat.get(p.key)?.eskalasi);
+  const sig = signature(tua, eskBaru.map((p) => p.key));
   const [prev] = await sql`SELECT signature FROM notif_state WHERE key = ${STATE_KEY}`;
   if (!opts.dryRun && prev && String(prev.signature) === sig) {
     return { sent: false, count: tua.length, skipped: "anti-spam" };
   }
 
-  const payload = buildMessage(tua, tanggal, wibJam());
+  const payload = buildMessage(
+    tua,
+    tanggal,
+    wibJam(),
+    eskBaru.map((p) => ({ topik: p.it.topik || p.raw, umur: p.n.umur ?? 0 })),
+  );
   if (opts.dryRun) {
     return { sent: false, count: tua.length, dryRun: true, to: target, payload };
   }
@@ -206,6 +332,9 @@ export async function runNotifTua(opts: { dryRun?: boolean; target?: string } = 
       VALUES (${STATE_KEY}, ${sig}, ${tua.length}, now())
       ON CONFLICT (key) DO UPDATE SET signature = ${sig}, count = ${tua.length}, sent_at = now()
     `;
+    if (eskBaru.length && !g.dryRun) {
+      await sql`UPDATE tua_item SET eskalasi_at = now() WHERE topik_key = ANY(${eskBaru.map((p) => p.key)}::text[])`;
+    }
   }
   return { sent: g.sent, count: tua.length, dryRun: Boolean(g.dryRun), to: target };
 }

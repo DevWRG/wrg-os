@@ -1,7 +1,17 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { buildMessage, dashboardLink, formatTuaItem, parseTuaLine } from "./notiftua.js";
+import {
+  buildMessage,
+  dashboardLink,
+  extractOutstanding,
+  formatTuaItem,
+  kategoriItem,
+  nilaiItem,
+  parseTuaLine,
+  topikKey,
+  umurMenit,
+} from "./notiftua.js";
 
 // Baris nyata dari resume eksekutif 16 Sep 2026 yang terkirim ke WA. Sebelum
 // dirapikan, baris ini dikirim apa adanya: satu paragraf panjang berisi pipe,
@@ -83,4 +93,73 @@ test("lebih dari 5 item: 5 ditampilkan, sisanya dihitung", () => {
   assert.match(msg, /\*5\. Topik 5\*/);
   assert.doesNotMatch(msg, /\*6\. /);
   assert.match(msg, /…\+3 item lainnya/);
+});
+
+// ── QW2: ambang bertingkat + eskalasi Harga ──────────────────────────────────
+const JAM = 3600 * 1000;
+const HARI = 24 * JAM;
+const NOW = Date.UTC(2026, 9, 26, 7, 0);
+
+test("umurMenit membaca jam, menit, hari, dan gabungannya", () => {
+  assert.equal(umurMenit("10 jam"), 600);
+  assert.equal(umurMenit("1 jam 20 menit"), 80);
+  assert.equal(umurMenit("2 hari"), 2880);
+  assert.equal(umurMenit("45 menit"), 45);
+  assert.equal(umurMenit("belum lama"), null);
+  assert.equal(umurMenit(undefined), null);
+});
+
+test("kategori Harga dikenali dari topik atau status", () => {
+  assert.equal(kategoriItem(parseTuaLine("• Konfirmasi harga reagen ke customer | status: menunggu")), "harga");
+  assert.equal(kategoriItem(parseTuaLine("• Isi spidol | status: menunggu penawaran vendor")), "harga");
+  assert.equal(kategoriItem(parseTuaLine("• Isi spidol whiteboard | status: belum dijawab")), "umum");
+});
+
+test("ambang: umum 8 jam, Harga 4 jam", () => {
+  const umum = parseTuaLine("• Isi spidol | sejak jam 10:00 WIB (6 jam) [TUA]");
+  assert.equal(nilaiItem(umum, true, null, NOW).tua, false, "6 jam belum TUA untuk umum");
+  const umum9 = parseTuaLine("• Isi spidol | sejak jam 10:00 WIB (9 jam) [TUA]");
+  assert.equal(nilaiItem(umum9, true, null, NOW).tua, true);
+  const harga = parseTuaLine("• Harga reagen | sejak jam 10:00 WIB (5 jam) [TUA]");
+  assert.equal(nilaiItem(harga, true, null, NOW).tua, true, "Harga 5 jam sudah TUA");
+});
+
+test("umur tak terbaca: ikut tag LLM", () => {
+  const it = parseTuaLine("• Topik tanpa umur | status: menunggu");
+  assert.equal(nilaiItem(it, true, null, NOW).tua, true);
+  assert.equal(nilaiItem(it, false, null, NOW).tua, false);
+});
+
+test("eskalasi hanya Harga lebih dari 2 hari, umur dari pelacakan pertama-terlihat", () => {
+  const harga = parseTuaLine("• Harga reagen | sejak jam 10:00 WIB (5 jam)");
+  assert.equal(nilaiItem(harga, false, NOW - 3 * HARI, NOW).eskalasi, true);
+  assert.equal(nilaiItem(harga, false, NOW - 2 * HARI, NOW).eskalasi, false, "tepat 2 hari belum >2 hari");
+  const umum = parseTuaLine("• Isi spidol | sejak jam 10:00 WIB (5 jam)");
+  assert.equal(nilaiItem(umum, false, NOW - 5 * HARI, NOW).eskalasi, false, "non-Harga tak dieskalasi ke Direktur");
+  assert.equal(nilaiItem(umum, false, NOW - 5 * HARI, NOW).tua, true);
+});
+
+test("extractOutstanding mengambil semua item, bukan hanya yang bertag TUA", () => {
+  const resume = [
+    "4. KONFIRMASI TRACKING",
+    "⏳ OUTSTANDING — masih menunggu (urutkan dari paling tua):",
+    "• A | dari X | ke Y | sejak jam 08:00 WIB (6 jam) | status: m",
+    "• B | dari X | ke Y | sejak jam 02:00 WIB (12 jam) [TUA] | status: m",
+    "5. KENDALA",
+    "• bukan item",
+  ].join("\n");
+  assert.equal(extractOutstanding(resume).length, 2);
+  assert.equal(extractOutstanding("⏳ OUTSTANDING\nTidak ada\n5. X").length, 0);
+});
+
+test("topikKey stabil terhadap huruf besar & tanda baca", () => {
+  assert.equal(topikKey("Harga Reagen, X-1"), topikKey("harga reagen x 1"));
+  assert.notEqual(topikKey("harga reagen"), topikKey("harga alat"));
+});
+
+test("pesan memuat blok eskalasi ke Direktur bila ada", () => {
+  const msg = buildMessage(["• Harga reagen | status: menunggu"], "2026-10-26", "14:05", [{ topik: "Harga reagen", umur: 3 * 1440 }]);
+  assert.match(msg, /🔺 \*Eskalasi ke Direktur/);
+  assert.match(msg, /• Harga reagen — 3 hari/);
+  assert.doesNotMatch(buildMessage(["• x"], "2026-10-26", "14:05"), /Eskalasi/);
 });
