@@ -55,6 +55,7 @@ export function BonView({ awal, bisaUbah }: { awal: DataBon; bisaUbah: boolean }
   const [dipilih, setDipilih] = useState<{ sp: Sparepart; qty: string }[]>([]);
   const [q, setQ] = useState("");
   const [hasil, setHasil] = useState<Sparepart[]>([]);
+  const [infoCari, setInfoCari] = useState<{ ok: boolean; teks: string } | null>(null);
 
   async function muat() {
     const r = await api("/api/bon-sparepart", { cache: "no-store" });
@@ -84,13 +85,22 @@ export function BonView({ awal, bisaUbah }: { awal: DataBon; bisaUbah: boolean }
   const gagal = (d: Record<string, unknown>) => new Error(String(d.error ?? "gagal"));
 
   async function cari() {
-    if (!q.trim()) return;
-    const r = await api(`/api/bon-sparepart/sparepart?q=${encodeURIComponent(q.trim())}`);
-    setHasil(r.ok ? ((r.data.rows as Sparepart[]) ?? []) : []);
+    const kata = q.trim();
+    if (!kata) return;
+    setInfoCari({ ok: true, teks: "Mencari…" }); setHasil([]);
+    try {
+      const r = await api(`/api/bon-sparepart/sparepart?q=${encodeURIComponent(kata)}`);
+      if (!r.ok) { setInfoCari({ ok: false, teks: `Pencarian gagal: ${String(r.data.error ?? "server tidak merespons")}` }); return; }
+      const rows = (r.data.rows as Sparepart[]) ?? [];
+      setHasil(rows);
+      setInfoCari(rows.length ? null : { ok: false, teks: `Tidak ada sparepart yang cocok dengan "${kata}" di master Accurate — coba kata lain atau kode item.` });
+    } catch {
+      setInfoCari({ ok: false, teks: "Pencarian gagal: tidak bisa menghubungi server." });
+    }
   }
   function tambah(sp: Sparepart) {
     if (!dipilih.some((d) => d.sp.item_id === sp.item_id)) setDipilih([...dipilih, { sp, qty: "1" }]);
-    setHasil([]); setQ("");
+    setHasil([]); setQ(""); setInfoCari(null);
   }
   async function simpan() {
     await jalankan(async () => {
@@ -252,6 +262,7 @@ export function BonView({ awal, bisaUbah }: { awal: DataBon; bisaUbah: boolean }
                 <input value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void cari(); } }} placeholder="nama atau kode item" className={inputCls} />
                 <button type="button" onClick={() => void cari()} className="rounded border px-3 text-sm hover:bg-accent">Cari</button>
               </div>
+              {infoCari && <p className={cn("text-xs", infoCari.ok ? "text-muted-foreground" : "text-rose-700 dark:text-rose-400")}>{infoCari.teks}</p>}
               {hasil.length > 0 && (
                 <ul className="bg-card divide-y rounded border text-sm">
                   {hasil.map((h) => (
