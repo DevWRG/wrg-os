@@ -285,6 +285,20 @@ async function resetState() {
   // #OVERTIME: pengajuan milik pengaju fixture dibuang (kode OT-xxxx berputar
   // terus, jadi skenario memungut kode dari hasil pengajuan, bukan hardcode).
   await sql`DELETE FROM overtime_request WHERE am_id IN ('QA-AM-1','QA-AM-3','QA-AM-4')`;
+  // F155: bon milik teknisi fixture dibuang, lalu satu bon gudang (QA-SP-002 ×2) dibuat ulang supaya
+  // "#BON QA-SP-002 x2" selalu mulai dari bon yang BELUM dilaporkan. Dilewati bila migrasi 253 belum ada.
+  const [adaBon] = await sql`SELECT to_regclass('bon_sparepart') AS t`;
+  if (adaBon?.t) {
+    await sql`DELETE FROM bon_sparepart WHERE teknisi_nama = 'Joko Fixture'`;
+    const [tk] = await sql`SELECT id FROM teknisi_capacity WHERE nama = 'Joko Fixture' AND aktif LIMIT 1`;
+    if (tk) {
+      const [b] = await sql`
+        INSERT INTO bon_sparepart (teknisi_id, teknisi_nama, asal, status, catatan, dibuat_oleh)
+        VALUES (${tk.id}, 'Joko Fixture', 'gudang', 'dibuat', '[QA-fixture F155]', 'qa-fixture') RETURNING id`;
+      await sql`INSERT INTO bon_sparepart_item (bon_id, urut, item_id, item_no, item_nama, qty, satuan)
+                VALUES (${b.id}, 1, 990000002, 'QA-SP-002', 'Selang Silikon QA', 2, 'PCS')`;
+    }
+  }
   await sql`
     UPDATE approval_request SET status='pending', current_urutan=1, decided_at=NULL
     WHERE kode IN ('APR-9001','APR-9002','APR-9003')`;
@@ -403,6 +417,17 @@ const skenario = [
   { nama: "bon · bukan teknisi (gerbang)", body: "#BON Pompa x1", from: ASING, harap: null },
   { nama: "opname · non-teknisi melihat ringkasan", body: "#OPNAME", from: AM, harap: /📦 \*Opname bon sparepart\*/ },
   { nama: "opname · pengirim asing (gerbang)", body: "#OPNAME", from: ASING, harap: null },
+  // Jalur tulis #BON (fixture: bon gudang Joko Fixture = QA-SP-002 ×2, dibuat ulang tiap run di resetState).
+  // URUTAN PENTING: sebagian → melengkapi → tanpa bon gudang → opname.
+  { nama: "bon · nama ambigu → minta kode", body: "#BON Pompa Peristaltik QA", from: TEKNISI, harap: /cocok ke 2 barang, tulis kodenya: QA-SP-00[13]/ },
+  { nama: "bon · satu baris salah → seluruh pesan ditolak (atomik)", body: "#BON QA-SP-002 x1\nzzz-tak-ada-qa", from: TEKNISI, harap: /1 baris perlu diperbaiki[\s\S]*#BON BELUM dicatat|#BON BELUM dicatat/ },
+  { tulis: true, nama: "bon · lapor sebagian bon gudang", body: "#BON QA-SP-002 x1", from: TEKNISI, harap: /✅ #BON tercatat, Joko Fixture\.\nCocok sebagian dengan bon gudang: BN\d+/ },
+  { tulis: true, nama: "bon · melengkapi → bon gudang lengkap", body: "#BON QA-SP-002", from: TEKNISI, harap: /Cocok dengan bon gudang: BN\d+ \(lengkap\)/ },
+  { tulis: true, nama: "bon · tanpa bon gudang", body: "#BON QA-SP-001 x1", from: TEKNISI, harap: /BN\d+: Pompa Peristaltik QA ×1 — belum ada bon gudangnya/ },
+  { tulis: true, nama: "bon · banyak baris + qty, tanpa bon gudang", body: "#BON QA-SP-003 x2\nQA-SP-001", from: TEKNISI, harap: /Pompa Peristaltik QA Mini ×2, Pompa Peristaltik QA ×1 — belum ada bon gudangnya/ },
+  { nama: "bon · status memuat bon dilaporkan", body: "#BON status", from: TEKNISI, harap: /Bon Joko Fixture \(30 hari\)[\s\S]*dilaporkan, menunggu SJ/ },
+  { nama: "opname · memuat bon tanpa bon gudang + dilaporkan belum SJ", body: "#OPNAME", from: AM, harap: /Dilaporkan, SJ belum ada \(\d+\)[\s\S]*#BON tanpa bon gudang \(\d+\)/ },
+  { nama: "opname · dari teknisi (ditolak sopan / diam)", body: "#OPNAME", from: TEKNISI, harap: /#OPNAME untuk tim gudang\/HoD, Joko Fixture/ },
 
   // F12/F42/F93 shipping — pengirim sah: staf roster, atau driver SJ itu lewat chat pribadi
   { tulis: true, nama: "kirim · SJ ada", body: "#KIRIM SJ-QA-001", from: AM, type: "image", media: FOTO.kirim, geo: { lat: -7.82, lon: 112.01 }, harap: /✅ SJ SJ-QA-001 \(RSUD Fixture Kediri\) ditandai \*DIKIRIM\*\./ },
