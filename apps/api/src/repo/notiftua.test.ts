@@ -12,6 +12,7 @@ import {
   aksiLewatTenggat,
   extractActionItems,
   parseTenggat,
+  pilihPiutang,
   topikKey,
   umurMenit,
 } from "./notiftua.js";
@@ -213,4 +214,50 @@ test("extractActionItems hanya membaca section 3", () => {
     "• bukan aksi juga | 2 Okt",
   ].join("\n");
   assert.equal(extractActionItems(resume).length, 2);
+});
+
+// ── Piutang lewat jatuh tempo (AR Watch) ─────────────────────────────────────
+const AR = { tua: 30, eskalasi: 60 };
+const piutang = (invoice_no: string, days_overdue: number, bucket: string, is_anomaly = false, amount = 1_000_000) => ({
+  customer_name: "RS Sehat",
+  invoice_no,
+  amount,
+  days_overdue,
+  bucket,
+  is_anomaly,
+});
+
+test("pilihPiutang: hanya yang kritis (90+ atau anomali) dan lewat ambang TUA", () => {
+  const hasil = pilihPiutang(
+    [
+      piutang("A", 100, "90+"),
+      piutang("B", 45, "31-60"), // tak kritis
+      piutang("C", 45, "31-60", true), // anomali, lewat 30 hari
+      piutang("D", 20, "1-30", true), // anomali tapi belum lewat ambang TUA
+    ],
+    new Set(),
+    AR,
+  );
+  assert.deepEqual(hasil.map((p) => p.invoice_no), ["A", "C"], "urut dari yang paling lama");
+});
+
+test("pilihPiutang: eskalasi >60 hari, sekali per faktur", () => {
+  const [a, c] = pilihPiutang([piutang("A", 100, "90+"), piutang("C", 45, "31-60", true)], new Set(), AR);
+  assert.equal(a.eskalasi, true);
+  assert.equal(a.eskBaru, true);
+  assert.equal(c.eskalasi, false, "45 hari belum eskalasi");
+  const [a2] = pilihPiutang([piutang("A", 100, "90+")], new Set([a.key]), AR);
+  assert.equal(a2.eskalasi, true);
+  assert.equal(a2.eskBaru, false, "sudah pernah dieskalasi");
+});
+
+test("pesan piutang: bagian sendiri + eskalasi, tanpa item resume tetap valid", () => {
+  const p = pilihPiutang([piutang("INV-1", 95, "90+", false, 12_500_000)], new Set(), AR);
+  const msg = buildMessage([], "2026-10-26", "14:05", [], p);
+  assert.match(msg, /^🚨 \*Piutang Lewat Jatuh Tempo/);
+  assert.match(msg, /• INV-1 — RS Sehat — Rp 12\.500\.000 — 95 hari/);
+  assert.match(msg, /🔺 \*Eskalasi ke Direktur — piutang/);
+  assert.doesNotMatch(msg, /Item TUA/);
+  const tanpa = buildMessage(["• x | status: y"], "2026-10-26", "14:05", [], []);
+  assert.doesNotMatch(tanpa, /Piutang/);
 });

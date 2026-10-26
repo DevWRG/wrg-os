@@ -11,6 +11,11 @@ Job `notif-tua` (14:05 & 22:15, `repo/notiftua.ts`) membaca section "⏳ OUTSTAN
   tenggatnya sudah lewat langsung TUA; Harga yang lewat tenggat >2 hari ikut eskalasi. Tenggat tanpa jam = akhir hari itu. Format yang
   dikenali: `24 Okt`, `24 Oktober 2026`, `24/10`, `24-10-2026`, `2026-10-24`, `hari ini`, `kemarin`, `besok`, plus jam opsional.
   Tenggat yang tak terbaca ("segera", nama hari seperti "Jumat") **diabaikan**, tidak ditebak.
+- **Piutang lewat jatuh tempo (perpanjangan AR Watch)**: dibaca dari `ar_aging_mv`, bukan dari resume, jadi tetap jalan walau resume hari itu tidak ada.
+  Yang dihitung hanya yang kritis menurut AR Watch (bucket 90+ atau anomali) dan lewat **30 hari** (TUA); lewat **60 hari** dieskalasi ke Direktur
+  (sekali per faktur, `tua_item.eskalasi_at`). Ambang: `AR_TUA_HARI` (default 30), `AR_ESKALASI_HARI` (default 60). Tampil sebagai bagian
+  "💸 Piutang Kritis" terpisah (top 5 + sisa) agar tak menenggelamkan item resume. Karena yang dihitung hanya 90+ atau anomali, eskalasi praktis
+  mengenai semua 90+ dan anomali >60 hari.
 - Kategori **Harga** bila topik/status memuat harga, price list, penawaran, SPH, quote, diskon, nett, launching; selain itu **umum**.
 - TUA: umur ≥ 4 jam (Harga) / ≥ 8 jam (umum). Umur = yang terbesar antara umur di teks resume dan waktu sejak topik **pertama terlihat**.
   Bila umur tak terbaca sama sekali, tag LLM dipakai.

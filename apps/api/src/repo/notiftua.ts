@@ -320,6 +320,50 @@ export interface EskalasiItem {
   umur: number;
 }
 
+// ── Piutang lewat jatuh tempo (perpanjangan AR Watch) ────────────────────────
+// Sumbernya ar_aging_mv (bukan resume). Yang dihitung hanya yang kritis menurut
+// AR Watch (bucket 90+ atau anomali) dan lewat ambang TUA; eskalasi ke Direktur
+// bila lewat ambang eskalasi. Ambang bisa diubah lewat AR_TUA_HARI / AR_ESKALASI_HARI.
+export interface PiutangRow {
+  customer_name: string | null;
+  invoice_no: string;
+  amount: number;
+  days_overdue: number;
+  bucket: string;
+  is_anomaly: boolean;
+}
+
+export interface PiutangItem extends PiutangRow {
+  key: string;
+  eskalasi: boolean; // lewat ambang eskalasi
+  eskBaru: boolean; // eskalasi yang belum pernah terkirim
+}
+
+export function ambangPiutang(): { tua: number; eskalasi: number } {
+  const n = (v: string | undefined, d: number) => (Number(v) > 0 ? Number(v) : d);
+  return { tua: n(process.env.AR_TUA_HARI, 30), eskalasi: n(process.env.AR_ESKALASI_HARI, 60) };
+}
+
+export function pilihPiutang(
+  rows: PiutangRow[],
+  sudahEskalasi: Set<string>,
+  ambang = ambangPiutang(),
+): PiutangItem[] {
+  return rows
+    .filter((r) => (r.bucket === "90+" || r.is_anomaly) && r.days_overdue > ambang.tua)
+    .map((r) => {
+      const key = topikKey(`piutang ${r.invoice_no}`);
+      const eskalasi = r.days_overdue > ambang.eskalasi;
+      return { ...r, key, eskalasi, eskBaru: eskalasi && !sudahEskalasi.has(key) };
+    })
+    .sort((a, b) => b.days_overdue - a.days_overdue || b.amount - a.amount);
+}
+
+const rupiah = (n: number): string => `Rp ${String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ".")}`;
+
+const barisPiutang = (p: PiutangItem): string =>
+  `• ${p.invoice_no} — ${p.customer_name || "(tanpa nama)"} — ${rupiah(p.amount)} — ${p.days_overdue} hari`;
+
 // Link dashboard: WEB_PUBLIC_URL (domain publik) didahulukan — selaras dgn
 // weeklyreport.ts. NOTIF_TUA_DASHBOARD_URL cuma cadangan: nilainya di prod
 // pernah menunjuk host tailnet yang tak bisa dibuka penerima di luar tailnet.
@@ -328,15 +372,32 @@ export function dashboardLink(): string {
   return base ? `${base}/monitor/resume` : "";
 }
 
-export function buildMessage(tua: string[], tanggal: string, jam: string, eskalasi: EskalasiItem[] = []): string {
+export function buildMessage(
+  tua: string[],
+  tanggal: string,
+  jam: string,
+  eskalasi: EskalasiItem[] = [],
+  piutang: PiutangItem[] = [],
+): string {
   const count = tua.length;
-  const items = tua.slice(0, 5).map((l, i) => formatTuaItem(l, i + 1)).join("\n\n");
-  let msg = `🚨 *${count} Item TUA — Perlu Follow-Up*\n_${tanggalPendek(tanggal)} · ${jam} WIB · dari Resume Eksekutif_\n\n${items}`;
+  const judul = count ? `🚨 *${count} Item TUA — Perlu Follow-Up*` : `🚨 *Piutang Lewat Jatuh Tempo — Perlu Follow-Up*`;
+  const sumber = count ? "dari Resume Eksekutif" : "dari AR Aging";
+  let msg = `${judul}\n_${tanggalPendek(tanggal)} · ${jam} WIB · ${sumber}_`;
+  if (count) msg += `\n\n${tua.slice(0, 5).map((l, i) => formatTuaItem(l, i + 1)).join("\n\n")}`;
   if (eskalasi.length) {
     const baris = eskalasi.slice(0, 5).map((e) => `• ${e.topik} — ${umurTeks(e.umur)}`).join("\n");
     msg += `\n\n🔺 *Eskalasi ke Direktur — Harga belum clear >2 hari*\n${baris}`;
   }
   if (count > 5) msg += `\n\n_…+${count - 5} item lainnya._`;
+  if (piutang.length) {
+    msg += `\n\n💸 *${piutang.length} Piutang Kritis Lewat Jatuh Tempo*\n${piutang.slice(0, 5).map(barisPiutang).join("\n")}`;
+    if (piutang.length > 5) msg += `\n_…+${piutang.length - 5} faktur lainnya._`;
+    const esk = piutang.filter((p) => p.eskBaru);
+    if (esk.length) {
+      msg += `\n\n🔺 *Eskalasi ke Direktur — piutang lewat jatuh tempo >${ambangPiutang().eskalasi} hari*\n${esk.slice(0, 5).map(barisPiutang).join("\n")}`;
+      if (esk.length > 5) msg += `\n_…+${esk.length - 5} faktur lainnya._`;
+    }
+  }
   const link = dashboardLink();
   if (link) msg += `\n\n🔗 Detail: ${link}`;
   return msg;
@@ -363,13 +424,15 @@ export async function runNotifTua(opts: { dryRun?: boolean; target?: string } = 
     ORDER BY waktu DESC NULLS LAST, id DESC
     LIMIT 1
   `;
-  if (!row) return { sent: false, count: 0, skipped: "no-resume" };
+  // Piutang (AR Aging) tak bergantung pada resume, jadi tak adanya resume hanya
+  // mematikan bagian TUA-nya; "no-resume" dikembalikan bila piutang juga kosong.
+  const isiResume = row ? String(row.content) : "";
 
   // Item yang tak terlihat >3 hari dianggap selesai (LLM kadang melewatkan satu
   // run, jadi tidak langsung dihapus saat absen).
   if (!opts.dryRun) await sql`DELETE FROM tua_item WHERE last_seen < now() - interval '3 days'`;
 
-  const baris = extractOutstanding(String(row.content));
+  const baris = extractOutstanding(isiResume);
   const parsed = baris.map((l) => {
     const it = parseTuaLine(l);
     return { raw: l, it, key: topikKey(it.topik || l), bertag: /TUA/.test(l) };
@@ -387,7 +450,7 @@ export async function runNotifTua(opts: { dryRun?: boolean; target?: string } = 
   // Topik yang sama dengan item OUTSTANDING tidak dihitung dua kali.
   const nowWib = nowMs + 7 * 3600 * 1000;
   const sudahAda = new Set(nilai.map((p) => p.key));
-  const aksi = extractActionItems(String(row.content))
+  const aksi = extractActionItems(isiResume)
     .map((l) => aksiLewatTenggat(l, nowWib))
     .filter((a): a is AksiLewat => a !== null)
     .map((a) => ({ raw: a.raw, it: a.it, key: topikKey(`aksi ${a.it.topik}`), bertag: true, lewat: a.lewatMenit }))
@@ -420,7 +483,43 @@ export async function runNotifTua(opts: { dryRun?: boolean; target?: string } = 
 
   const tuaItems = nilai.filter((p) => p.n.tua);
   const tua = tuaItems.map((p) => p.raw);
-  if (tua.length === 0) {
+
+  const amb = ambangPiutang();
+  const arRows = await sql`
+    SELECT customer_name, invoice_no, amount, days_overdue, bucket, is_anomaly
+    FROM ar_aging_mv
+    WHERE days_overdue > ${amb.tua}
+  `;
+  const arKeys = arRows.map((r) => topikKey(`piutang ${String(r.invoice_no)}`));
+  const arSudah = new Set<string>();
+  if (arKeys.length) {
+    const rows = await sql`SELECT topik_key FROM tua_item WHERE topik_key = ANY(${arKeys}::text[]) AND eskalasi_at IS NOT NULL`;
+    for (const r of rows) arSudah.add(String(r.topik_key));
+  }
+  const piutang = pilihPiutang(
+    arRows.map((r) => ({
+      customer_name: r.customer_name ? String(r.customer_name) : null,
+      invoice_no: String(r.invoice_no),
+      amount: Number(r.amount),
+      days_overdue: Number(r.days_overdue),
+      bucket: String(r.bucket),
+      is_anomaly: Boolean(r.is_anomaly),
+    })),
+    arSudah,
+    amb,
+  );
+  if (!opts.dryRun) {
+    for (const p of piutang) {
+      await sql`
+        INSERT INTO tua_item (topik_key, topik, kategori)
+        VALUES (${p.key}, ${`Piutang ${p.invoice_no} ${p.customer_name ?? ""}`.trim().slice(0, 300)}, 'umum')
+        ON CONFLICT (topik_key) DO UPDATE SET last_seen = now()
+      `;
+    }
+  }
+
+  if (!row && piutang.length === 0) return { sent: false, count: 0, skipped: "no-resume" };
+  if (tua.length === 0 && piutang.length === 0) {
     // tidak ada item TUA → reset state (item sebelumnya dianggap selesai).
     await sql`
       INSERT INTO notif_state (key, signature, count, sent_at)
@@ -432,10 +531,13 @@ export async function runNotifTua(opts: { dryRun?: boolean; target?: string } = 
 
   // eskalasi hanya sekali per item: yang sudah pernah terkirim (eskalasi_at) dilewati.
   const eskBaru = tuaItems.filter((p) => p.n.eskalasi && !tercatat.get(p.key)?.eskalasi);
-  const sig = signature(tua, eskBaru.map((p) => p.key));
+  const sig = signature(tua, [
+    ...eskBaru.map((p) => p.key),
+    ...piutang.map((p) => `${p.key}${p.eskBaru ? "!" : ""}`),
+  ]);
   const [prev] = await sql`SELECT signature FROM notif_state WHERE key = ${STATE_KEY}`;
   if (!opts.dryRun && prev && String(prev.signature) === sig) {
-    return { sent: false, count: tua.length, skipped: "anti-spam" };
+    return { sent: false, count: tua.length + piutang.length, skipped: "anti-spam" };
   }
 
   const payload = buildMessage(
@@ -443,21 +545,23 @@ export async function runNotifTua(opts: { dryRun?: boolean; target?: string } = 
     tanggal,
     wibJam(),
     eskBaru.map((p) => ({ topik: p.it.topik || p.raw, umur: p.n.umur ?? 0 })),
+    piutang,
   );
   if (opts.dryRun) {
-    return { sent: false, count: tua.length, dryRun: true, to: target, payload };
+    return { sent: false, count: tua.length + piutang.length, dryRun: true, to: target, payload };
   }
 
   const g = await sendViaWaGateway(target, payload);
   if (g.sent) {
     await sql`
       INSERT INTO notif_state (key, signature, count, sent_at)
-      VALUES (${STATE_KEY}, ${sig}, ${tua.length}, now())
-      ON CONFLICT (key) DO UPDATE SET signature = ${sig}, count = ${tua.length}, sent_at = now()
+      VALUES (${STATE_KEY}, ${sig}, ${tua.length + piutang.length}, now())
+      ON CONFLICT (key) DO UPDATE SET signature = ${sig}, count = ${tua.length + piutang.length}, sent_at = now()
     `;
-    if (eskBaru.length && !g.dryRun) {
-      await sql`UPDATE tua_item SET eskalasi_at = now() WHERE topik_key = ANY(${eskBaru.map((p) => p.key)}::text[])`;
+    const eskKeys = [...eskBaru.map((p) => p.key), ...piutang.filter((p) => p.eskBaru).map((p) => p.key)];
+    if (eskKeys.length && !g.dryRun) {
+      await sql`UPDATE tua_item SET eskalasi_at = now() WHERE topik_key = ANY(${eskKeys}::text[])`;
     }
   }
-  return { sent: g.sent, count: tua.length, dryRun: Boolean(g.dryRun), to: target };
+  return { sent: g.sent, count: tua.length + piutang.length, dryRun: Boolean(g.dryRun), to: target };
 }
