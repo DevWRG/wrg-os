@@ -38,6 +38,7 @@ import { canViewCn } from "@/lib/cn-access";
 import { canViewApThreeWay } from "@/lib/ap-three-way-access";
 import { canViewKasStation } from "@/lib/kas-station-access";
 import { canViewBuktiPembayaran } from "@/lib/bukti-pembayaran-access";
+import { canViewKohort } from "@/lib/kohort-access";
 import { canViewRaportList } from "@/lib/raport-access";
 import { canViewReportLibrary } from "@/lib/report-library";
 import { canViewExecutive } from "@/lib/executive-access";
@@ -271,6 +272,9 @@ export const NAV: NavGroup[] = [
       // F92 — 6 laporan eksekutif + Export PDF. Izin 'report-library': fallback Direktur/HoD/admin;
       // butuh Sync Fitur setelah deploy. Tiap laporan tetap ikut izin menu sumbernya.
       { title: "Report Library", url: "/report-library", icon: FileBarChart, badge: "NEW", show: canViewReportLibrary },
+      // F96 Kohort & Lead Source — retensi customer per kohort kuartal + pipeline lead per sumber. Hanya baca,
+      // agregat. Kunci izin "kohort", default tertutup: Sync Fitur + centang grup; sebelum itu fallback Direktur/HoD/admin.
+      { title: "Kohort & Lead Source", url: "/kohort", icon: TrendingUp, badge: "NEW", show: canViewKohort },
       // NPK (F66) — gate identitas: Direktur = admin/superuser; self-view = HoD (hod_key).
       { title: "NPK HOD", url: "/npk", icon: Award, badge: "NEW", exact: true, show: (me) => me?.role === "admin" || me?.superuser === true },
       { title: "NPK Saya", url: "/npk/self", icon: UserCheck, badge: "NEW", show: (me) => !!me?.hod_key },
