@@ -199,8 +199,8 @@ function LeadSourceTab({ tahun }: { tahun: number }) {
   return (
     <div className="space-y-4">
       <p className="text-muted-foreground text-xs">
-        Lead per kuartal pembuatan, dikelompokkan ke lima sumber Direktur. Sumber diisi di field “Sumber Lead” pada form deal; deal dari #LEADS
-        WA belum membawa sumber, jadi masuk “Lainnya” (begitu juga lead lama berasal WA/web).
+        Lead per kuartal pembuatan, dikelompokkan ke lima sumber Direktur. Sumber diisi di field “Sumber Lead” pada form deal atau `sumber:` pada #LEADS WA;
+        tanpa itu masuk “Lainnya” (begitu juga lead lama berasal WA/web).
         {data.data_mulai
           ? ` Data tercatat sejak ${tglID(data.data_mulai)} — kuartal sebelumnya kosong, bukan berarti tak ada lead.`
           : " Belum ada lead tercatat."}

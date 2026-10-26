@@ -70,10 +70,23 @@ export function pilihAmWilayah(kota: string, rows: BarisTerritory[]): { am_pangg
 }
 
 export type ParseLeads =
-  | { ok: true; facility_name: string; city: string | null; kebutuhan: string | null }
+  | { ok: true; facility_name: string; city: string | null; kebutuhan: string | null; sumber_lead?: string }
   | { ok: false; alasan: "kosong" | "terlalu-panjang" };
 
 const LEADS_LINE = /^\s*#\s*leads\b/i;
+
+/** Asal lead (deal.sumber_lead, migrasi 252) → label balasan. WA/web bukan sumber. */
+export const SUMBER_LEAD_LABEL: Record<string, string> = {
+  tender: "Tender", referensi: "Referensi customer", vendor: "Vendor", pameran: "Trade show", cold_call: "Cold call",
+};
+
+// `sumber:<nilai>` di baris #LEADS. Hanya nilai dikenal yang diambil (tulisan "sumber: ..." bebas di kebutuhan
+// dibiarkan); kata tak dikenal tidak ditolak, tapi balasan bot tak menyebut sumber → pengirim tahu salah ketik.
+const SUMBER_TOKEN = /\bsumber\s*[:=]\s*(tender|lpse|referensi|referral|vendor|pameran|trade\s*show|cold\s*call|telepon)\b/i;
+const SUMBER_ALIAS: Record<string, string> = {
+  tender: "tender", lpse: "tender", referensi: "referensi", referral: "referensi", vendor: "vendor",
+  pameran: "pameran", tradeshow: "pameran", coldcall: "cold_call", telepon: "cold_call",
+};
 
 /**
  * `#LEADS <faskes>, <kota>: <kebutuhan>` — kota & kebutuhan opsional.
@@ -81,6 +94,8 @@ const LEADS_LINE = /^\s*#\s*leads\b/i;
  *   #LEADS Klinik Sehat Jaya, Kediri
  *   #LEADS RS Islam Jemursari
  *   kebutuhan bisa juga di baris-baris berikutnya (pesan yang SAMA).
+ *   #LEADS RSUD dr Soedono, Madiun sumber:vendor: butuh analyzer   ← asal lead (opsional):
+ *     tender | referensi | vendor | pameran | cold call. Tanpa sumber → "Lainnya" di F96.
  * Kota = bagian sesudah koma TERAKHIR sebelum titik dua — nama Accurate
  * bergaya "WIDODO, RS" jarang diketik orang, dan salah tebak kota cuma
  * berakibat lead belum ber-AM (routing manual), bukan salah tempel.
@@ -90,7 +105,10 @@ export function parseLeads(body: string | null): ParseLeads {
   const lines = stripInvisible(body).split(/\r?\n/);
   const idx = lines.findIndex((l) => LEADS_LINE.test(l));
   if (idx < 0) return { ok: false, alasan: "kosong" };
-  const arg = lines[idx].replace(LEADS_LINE, "").trim();
+  let arg = lines[idx].replace(LEADS_LINE, "").trim();
+  const sm = arg.match(SUMBER_TOKEN);
+  const sumber_lead = sm ? SUMBER_ALIAS[sm[1].toLowerCase().replace(/\s+/g, "")] : undefined;
+  if (sm) arg = arg.replace(SUMBER_TOKEN, " ").replace(/\s{2,}/g, " ").replace(/\s+([:,])/g, "$1").trim();
   const lanjutan = lines.slice(idx + 1).join("\n").trim();
   const ti = arg.indexOf(":");
   const kepala = (ti >= 0 ? arg.slice(0, ti) : arg).trim();
@@ -100,11 +118,11 @@ export function parseLeads(body: string | null): ParseLeads {
   const city = ki >= 0 ? kepala.slice(ki + 1).trim() || null : null;
   if (!facility) return { ok: false, alasan: "kosong" };
   if ((kebutuhan ?? "").length > 2000) return { ok: false, alasan: "terlalu-panjang" };
-  return { ok: true, facility_name: facility, city, kebutuhan };
+  return { ok: true, facility_name: facility, city, kebutuhan, ...(sumber_lead ? { sumber_lead } : {}) };
 }
 
 export function contohLeads(): string {
-  return "#LEADS RSUD dr Soedono, Madiun: butuh analyzer hematologi, pagu 2027";
+  return "#LEADS RSUD dr Soedono, Madiun sumber:vendor: butuh analyzer hematologi, pagu 2027";
 }
 
 // ── Routing ─────────────────────────────────────────────────────────────────
@@ -622,7 +640,7 @@ export type HasilLeadsDeal =
  * atomik oleh processUnprocessed sebelum diproses.
  */
 export async function leadsJadiDeal(
-  input: { facility_name: string; city: string | null; kebutuhan: string | null },
+  input: { facility_name: string; city: string | null; kebutuhan: string | null; sumber_lead?: string | null },
   meta: { oleh: string | null; pengirim: string; am_pengirim: string | null },
 ): Promise<HasilLeadsDeal> {
   const sql = db();
@@ -630,7 +648,8 @@ export async function leadsJadiDeal(
   if (!facility) throw new LeadError(400, "nama faskes wajib diisi");
   const city = bersih(input.city, 100);
   const kebutuhan = bersih(input.kebutuhan, 2000);
-  const asal = `#LEADS dari ${meta.pengirim}${kebutuhan ? `: ${kebutuhan}` : ""}`;
+  const sumber = input.sumber_lead && SUMBER_LEAD_LABEL[input.sumber_lead] ? input.sumber_lead : null;
+  const asal = `#LEADS dari ${meta.pengirim}${sumber ? ` [sumber ${SUMBER_LEAD_LABEL[sumber]}]` : ""}${kebutuhan ? `: ${kebutuhan}` : ""}`;
 
   const ada = await dealTerbukaFaskes(facility);
   if (ada.length) {
@@ -679,7 +698,7 @@ export async function leadsJadiDeal(
   // superuser: penunjukan AM di sini hasil routing sistem, bukan pilihan
   // pengirim, jadi tak dibatasi cabang. amId = pengirim → changed_by Riwayat.
   const d = await createDeal({ ...FULL_SCOPE, superuser: true, amId: meta.oleh }, {
-    facility_name: facility, customer_name: facility, am_id, city, cabang, pic_hod,
+    facility_name: facility, customer_name: facility, am_id, city, cabang, pic_hod, sumber_lead: sumber,
     notes: [kebutuhan ? `Kebutuhan: ${kebutuhan}` : null, `Info #LEADS dari ${meta.pengirim}`].filter(Boolean).join("\n"),
   });
   try {
@@ -703,7 +722,7 @@ export async function leadsJadiDeal(
 
 // ── Balasan WA #LEADS (murni, diuji) ────────────────────────────────────────
 
-export function balasanLeadsDeal(h: HasilLeadsDeal, x: { pengirim: string; facility_name: string; city: string | null }): string {
+export function balasanLeadsDeal(h: HasilLeadsDeal, x: { pengirim: string; facility_name: string; city: string | null; sumber_lead?: string | null }): string {
   const faskes = `${x.facility_name}${x.city ? ` (${x.city})` : ""}`;
   if (h.jenis === "riwayat") {
     return [
@@ -721,6 +740,7 @@ export function balasanLeadsDeal(h: HasilLeadsDeal, x: { pengirim: string; facil
   return [
     `✅ Deal baru di Pipeline (Prospecting): ${faskes}, ${x.pengirim}.`,
     `→ ${ke}.`,
+    x.sumber_lead && SUMBER_LEAD_LABEL[x.sumber_lead] ? `Sumber lead: ${SUMBER_LEAD_LABEL[x.sumber_lead]}.` : null,
     !h.am_id && h.catatanWilayah ? `   (${h.catatanWilayah})` : null,
     h.pelanggan ? "ℹ️ Faskes ini sudah pelanggan di Accurate." : null,
     "",

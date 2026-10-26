@@ -20,9 +20,9 @@ Sejak 13 Okt 2026 #LEADS langsung jadi deal, jadi asal lead dicatat di **`deal.s
 | Vendor lead (principal/vendor merekomendasikan faskes) | `vendor` | *(tidak ada)* |
 | Trade show | `pameran` | `pameran` |
 | Cold call | `cold_call` | `telepon` |
-| Lainnya | kosong (mis. #LEADS WA) | `wa`, `web`, `lainnya` |
+| Lainnya | kosong (#LEADS tanpa `sumber:`) | `wa`, `web`, `lainnya` |
 
-WA/web = cara lead masuk, bukan asal lead, sengaja tidak dipaksa ke lima sumber. Bila baris Lainnya ternyata besar, evaluasi apakah pengguna perlu memilih sumber asli saat mencatat (keputusan Direktur). #LEADS WA belum punya sintaks sumber.
+WA/web = cara lead masuk, bukan asal lead, sengaja tidak dipaksa ke lima sumber. Bila baris Lainnya ternyata besar, evaluasi apakah pengguna perlu memilih sumber asli saat mencatat (keputusan Direktur). #LEADS WA: tambahkan `sumber:<nilai>` (tender | referensi | vendor | pameran | cold call), mis. `#LEADS RSUD dr Soedono, Madiun sumber:vendor: butuh analyzer`; tanpa itu deal masuk Lainnya.
 
 ## Batasan yang ditampilkan di UI
 - Data baru terkumpul sejak 13 Okt 2026 (F65 / deal dari #LEADS): kuartal sebelumnya kosong, bukan berarti tak ada lead.
