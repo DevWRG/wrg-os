@@ -282,3 +282,9 @@ test("HoD pengaju kosong: default menolak, opsi 'direktur' mengizinkan (dialihka
   assert.notEqual(cekChainUntukRequest(chain, null, "tolak"), null);
   assert.equal(cekChainUntukRequest(chain, null, "direktur"), null);
 });
+
+test("wewenang: alur satu-orang-satu-tahap menolak orang yang sudah memutus tahap lain", () => {
+  const grup = { target_type: "grup" as const, hod_key: null, group_key: "finance-hod" };
+  assert.equal(cekWewenang(grup, ANDI, null, null), null);
+  assert.match(cekWewenang(grup, ANDI, null, 1) ?? "", /satu orang hanya boleh memutus satu tahap/);
+});

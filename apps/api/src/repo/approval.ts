@@ -939,6 +939,7 @@ export async function getApprovalRequest(id: string, opts: { viewerUserId?: stri
         { target_type: toTargetType(cur.target_type), hod_key: cur.hod_key ? String(cur.hod_key) : null, group_key: cur.group_key ? String(cur.group_key) : null },
         viewer,
         r.requested_by_user_id ? String(r.requested_by_user_id) : null,
+        await tahapLainOlehAkun(sql, String(r.id), Number(r.current_urutan), viewer.userId),
       );
       detail.wewenang = { boleh: alasan === null, alasan };
     }
@@ -994,6 +995,11 @@ export async function listApprovalRequests(filter: ListApprovalFilter = {}): Pro
             OR (s.target_type IN ('hod', 'hod_pengaju') AND s.hod_key IS NOT NULL AND s.hod_key = ${me.hodKey ?? ""})
             OR (s.target_type = 'grup' AND s.group_key = ANY(${sql.array(me.groups.length ? me.groups : [""])}::text[]))
           )
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM approval_step s2 JOIN approval_alur a2 ON a2.jenis = r.jenis
+        WHERE s2.request_id = r.id AND a2.satu_orang_satu_tahap
+          AND s2.urutan <> r.current_urutan AND s2.decided_by_user_id = ${me.userId}
       )`;
   }
   const rows = await sql`
@@ -1076,11 +1082,19 @@ export function cekWewenang(
   step: { target_type: TargetType; hod_key: string | null; group_key: string | null },
   approver: Pick<ResolvedApprover, "userId" | "hodKey" | "role" | "groups">,
   requestedByUserId: string | null,
+  // Alur ber-aturan satu_orang_satu_tahap: urutan tahap lain di request ini
+  // yang SUDAH diputus akun ini (null = belum ada / aturan tak berlaku).
+  sudahMemutusTahap: number | null = null,
 ): string | null {
   // Pemisahan tugas: pengaju tak memutuskan permintaannya sendiri, walau ia
   // kebetulan pemegang tahap itu (mis. HoD mengajukan dana ops divisinya).
   if (requestedByUserId && requestedByUserId === approver.userId) {
     return "kamu yang mengajukan permintaan ini — tidak boleh memutuskannya sendiri";
+  }
+  // Orang yang kebetulan anggota dua grup approver tak boleh meloloskan dua
+  // tahap sendirian (F60 audit finding, konteks pasca-fraud).
+  if (sudahMemutusTahap != null) {
+    return `kamu sudah memutus tahap ${sudahMemutusTahap} di permintaan ini — satu orang hanya boleh memutus satu tahap`;
   }
   switch (step.target_type) {
     case "direktur":
@@ -1093,6 +1107,27 @@ export function cekWewenang(
       if (!step.hod_key) return "approver tahap ini belum ditentukan";
       return step.hod_key === approver.hodKey ? null : "bukan giliran kamu approve/reject permintaan ini";
   }
+}
+
+// Urutan tahap lain yang sudah diputus akun ini — hanya bila alurnya
+// memberlakukan satu_orang_satu_tahap. Dipakai jalur keputusan & tampilan
+// wewenang supaya keduanya sepakat.
+async function tahapLainOlehAkun(
+  q: Tx | ReturnType<typeof db>,
+  requestId: string,
+  currentUrutan: number,
+  userId: string,
+): Promise<number | null> {
+  const run = q as unknown as Tx;
+  const [r] = await run`
+    SELECT s.urutan FROM approval_step s
+    JOIN approval_request r ON r.id = s.request_id
+    JOIN approval_alur a ON a.jenis = r.jenis
+    WHERE s.request_id = ${requestId} AND a.satu_orang_satu_tahap
+      AND s.urutan <> ${currentUrutan} AND s.decided_by_user_id = ${userId}
+    ORDER BY s.urutan LIMIT 1
+  `;
+  return r ? Number(r.urutan) : null;
 }
 
 // ── Konsumen ───────────────────────────────────────────────────────
@@ -1178,6 +1213,7 @@ async function putuskan(
   note: string | null,
   via: Kanal,
   data?: Record<string, unknown>,
+  opts: { expectedUrutan?: number | null } = {},
 ): Promise<DecideResult> {
   if (action === "reject" && via === "dashboard" && !note?.trim()) {
     return { ok: false, error: "alasan penolakan wajib diisi" };
@@ -1202,10 +1238,16 @@ async function putuskan(
     const [step] = await tx`SELECT id, urutan, target_type, hod_key, group_key, status FROM approval_step WHERE request_id = ${req.id} AND urutan = ${req.current_urutan}`;
     if (!step || step.status !== "pending") return { ok: false, error: "tahap current tidak valid" };
 
+    // Penjaga klik basi: tahap yang dilihat pemutus sudah bergeser (orang
+    // lain lebih dulu memutus) → tolak, jangan mendarat di tahap berikutnya.
+    if (opts.expectedUrutan != null && Number(opts.expectedUrutan) !== Number(req.current_urutan)) {
+      return { ok: false, error: `tahap sudah berubah (sekarang tahap ${req.current_urutan}) — muat ulang lalu putuskan lagi` };
+    }
     const tolak = cekWewenang(
       { target_type: toTargetType(step.target_type), hod_key: step.hod_key ? String(step.hod_key) : null, group_key: step.group_key ? String(step.group_key) : null },
       approver,
       req.requested_by_user_id ? String(req.requested_by_user_id) : null,
+      await tahapLainOlehAkun(tx, String(req.id), Number(req.current_urutan), approver.userId),
     );
     if (tolak) return { ok: false, error: tolak };
 
@@ -1284,10 +1326,12 @@ export async function decideFromDashboard(
   userId: string,
   note?: string | null,
   data?: Record<string, unknown>,
+  // expectedUrutan = tahap yang dilihat pemutus di layar (penjaga klik basi).
+  opts: { expectedUrutan?: number | null } = {},
 ): Promise<DecideResult> {
   const approver = await resolveApproverByUserId(userId);
   if (!approver) return { ok: false, error: "akun tidak dikenal atau tidak aktif" };
-  return putuskan({ id: requestId }, action, approver, note?.trim() || null, "dashboard", data);
+  return putuskan({ id: requestId }, action, approver, note?.trim() || null, "dashboard", data, opts);
 }
 
 // Ganti HoD pemegang tahap CURRENT yang masih menunggu — untuk modul yang
