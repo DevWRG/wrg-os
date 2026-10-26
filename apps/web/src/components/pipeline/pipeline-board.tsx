@@ -45,6 +45,7 @@ export interface PipelineDeal {
   pic_hod: string | null;
   cabang: string | null;
   coop_model: string | null;
+  sumber_lead: string | null;
   city: string | null;
   province: string | null;
   purchase_month: number | null;
@@ -123,6 +124,10 @@ const uniq = (arr: (string | null)[]) => [...new Set(arr.filter((x): x is string
 // Jaring pengaman: sejak migrasi 110 nilai tersimpan cuma KSO/BELI, tapi baris
 // lama yg belum ter-normalisasi (mis. dari backup) tetap tampil seragam.
 const coopLabel = (c: string | null) => (c == null ? c : /sale/i.test(c) ? "BELI" : c);
+const SUMBER_LABEL: Record<string, string> = {
+  tender: "Tender", referensi: "Referensi customer", vendor: "Vendor", pameran: "Trade show", cold_call: "Cold call",
+};
+const sumberLabel = (s: string | null) => (s ? SUMBER_LABEL[s] ?? s : "Lainnya");
 const MONTH_ID = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
 // Estimasi bulan beli: "September 2026" / "September" (tahun kosong) / "2026" (bulan kosong).
 const buyEta = (m: number | null, y: number | null) => {
@@ -481,7 +486,7 @@ export function PipelineBoard({ data, isAdmin = false, bolehDemo = false }: { da
             </div>
             <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1.5 mt-4 text-sm">
               {([
-                ["Brand", sel.brand], ["Produk", sel.product], ["Kerja Sama", coopLabel(sel.coop_model)],
+                ["Brand", sel.brand], ["Produk", sel.product], ["Kerja Sama", coopLabel(sel.coop_model)], ["Sumber Lead", sumberLabel(sel.sumber_lead)],
                 ["Perkiraan Nilai", jt(sel.estimate_amount)], ["Nilai × Peluang", jt(sel.weighted)],
                 ["Peluang", sel.probability != null ? `${Math.round(sel.probability * 100)}%` : "—"],
                 ["Cabang", sel.cabang], ["HOD", sel.pic_hod], ["AM", sel.am_name ?? sel.am_id],
