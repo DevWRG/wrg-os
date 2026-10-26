@@ -177,6 +177,7 @@ import { suplaiKso, runRekapSuplaiKso } from "./repo/kso-suplai.js";
 import { productScorecard } from "./repo/product-scorecard.js";
 import { keaslianPipeline } from "./repo/pipeline-keaslian.js";
 import { OrderError, daftarOrder, ubahStatusOrder } from "./repo/order-wa.js";
+import { BonError, batalkanBon, buatBonGudang, cariSparepart, daftarBon, kandidatSj, rekonsiliasiBon, tautkanSjManual } from "./repo/bon-sparepart.js";
 import { JadwalError, daftarFrekuensi, daftarWilayah, jadwalBulan, pratinjau as pratinjauJadwal, setFrekuensi, setWilayah, susunDraft, tambahManual, terbitkan, ubahBaris, bulanDepan } from "./repo/jadwal-teknisi.js";
 import { IntelError, briefingFaskes, dominasiWilayah, setDominan } from "./repo/customer-intel.js";
 import { ringkasPembayaran } from "./repo/pembayaran.js";
@@ -3929,6 +3930,56 @@ app.patch("/order-wa/:id", async (c) => {
     return c.json(await ubahStatusOrder(c.req.param("id"), { status: String(b.status ?? ""), so_number: b.so_number ? String(b.so_number) : null,
       alasan: b.alasan ? String(b.alasan) : null, catatan: b.catatan ? String(b.catatan) : null }, String(b.oleh ?? "").trim() || "admin"));
   } catch (e) { return orderErr(c, e); }
+});
+
+// F155 Bon Sparepart Teknisi (migrasi 253, repo/bon-sparepart.ts). Gerbang menu/izin di BFF
+// (/api/bon-sparepart, requireFeature "/bon-sparepart"); pelaku `oleh` dari sesi BFF. Tanpa scope baris:
+// pembacanya tim gudang/Aftersales/admin.
+const bonErr = (c: { json: (b: unknown, s?: number) => Response }, e: unknown) => {
+  if (e instanceof BonError) return c.json({ error: e.message, field: e.field }, e.status);
+  if ((e as { code?: string })?.code === "42P01") return c.json({ error: "migration_pending" }, 503);
+  console.error("[bon-sparepart]", (e as Error).message);
+  return c.json({ error: "gagal memproses bon" }, 500);
+};
+app.get("/bon-sparepart", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const st = c.req.query("status");
+  try { return c.json(await daftarBon(st && ["dibuat", "dilaporkan", "selesai", "batal"].includes(st) ? st : undefined)); } catch (e) { return bonErr(c, e); }
+});
+app.get("/bon-sparepart/sparepart", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try { return c.json({ rows: await cariSparepart(String(c.req.query("q") ?? ""), 10) }); } catch (e) { return bonErr(c, e); }
+});
+app.get("/bon-sparepart/:id/sj-kandidat", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const id = c.req.param("id");
+  if (!/^\d{1,12}$/.test(id)) return c.json({ error: "id tidak valid" }, 400);
+  try { return c.json({ rows: await kandidatSj(Number(id)) }); } catch (e) { return bonErr(c, e); }
+});
+app.post("/bon-sparepart", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const b = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
+    if (!b || typeof b !== "object") throw new BonError(400, "body bukan JSON object yang sah");
+    const item = Array.isArray(b.item) ? (b.item as Record<string, unknown>[]).map((i) => ({ item_id: Number(i?.item_id), qty: Number(i?.qty) })) : [];
+    return c.json(await buatBonGudang({ teknisi_id: String(b.teknisi_id ?? ""), item, customer_nama: b.customer_nama ? String(b.customer_nama) : null,
+      catatan: b.catatan ? String(b.catatan) : null }, String(b.oleh ?? "").trim() || "admin"), 201);
+  } catch (e) { return bonErr(c, e); }
+});
+app.post("/bon-sparepart/rekonsiliasi", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try { return c.json({ ditautkan: await rekonsiliasiBon() }); } catch (e) { return bonErr(c, e); }
+});
+app.patch("/bon-sparepart/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const b = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
+    if (!b || typeof b !== "object") throw new BonError(400, "body bukan JSON object yang sah");
+    const oleh = String(b.oleh ?? "").trim() || "admin";
+    if (b.aksi === "batal") return c.json(await batalkanBon(c.req.param("id"), String(b.alasan ?? ""), oleh));
+    if (b.aksi === "tautkan") return c.json(await tautkanSjManual(c.req.param("id"), String(b.sj_number ?? ""), oleh));
+    throw new BonError(400, "aksi harus batal atau tautkan", "aksi");
+  } catch (e) { return bonErr(c, e); }
 });
 
 // F154 Jadwal Kunjungan Rutin Teknisi (migrasi 235, repo/jadwal-teknisi.ts). Gerbang

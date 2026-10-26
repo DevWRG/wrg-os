@@ -44,6 +44,7 @@ import { canViewOnboarding } from "@/lib/onboarding-access";
 import { canViewPricebook, canViewPricebookSummary } from "@/lib/pricebook-access";
 import { canViewKlasifikasi } from "@/lib/klasifikasi-access";
 import { canViewJadwalTeknisi } from "@/lib/jadwal-teknisi-access";
+import { canViewBonSparepart } from "@/lib/bon-sparepart-access";
 import { canViewOrderWa } from "@/lib/order-wa-access";
 import { canViewProductScorecard } from "@/lib/product-scorecard-access";
 import { FITUR_PUTUSAN as FITUR_PUTUSAN_PERMINTAAN, canViewPermintaanProduk } from "@/lib/permintaan-produk-access";
@@ -362,6 +363,8 @@ export const NAV: NavGroup[] = [
       { title: "Approval Requests", url: "/approval-requests", icon: Stamp, badge: "NEW" },
       // F154 Jadwal Kunjungan Rutin Teknisi — izin sendiri, tertutup default (Sync Fitur).
       { title: "Jadwal Teknisi", url: "/jadwal-teknisi", icon: CalendarClock, badge: "NEW", show: canViewJadwalTeknisi },
+      // F155 Bon Sparepart Teknisi (#BON/#OPNAME) — izin sendiri, tertutup default (Sync Fitur).
+      { title: "Bon Sparepart", url: "/bon-sparepart", icon: Wrench, badge: "NEW", show: canViewBonSparepart },
     ],
   },
   {

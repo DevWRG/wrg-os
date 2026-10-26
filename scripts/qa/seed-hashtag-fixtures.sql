@@ -57,6 +57,21 @@ INSERT INTO teknisi_capacity (nama, wa_number, aktif)
 SELECT 'Joko Fixture', '628111000003', true
 WHERE NOT EXISTS (SELECT 1 FROM teknisi_capacity WHERE nama = 'Joko Fixture');
 
+-- Sejak 246 roster teknisi = master_user role Teknisi (teknisi_capacity hanya cermin via trigger);
+-- tanpa baris ini teknisi fixture dinonaktifkan 246 dan semua skenario teknisi jatuh ke unknown-sender.
+INSERT INTO master_user (am_id, nama, panggilan, role, aktif, wa_number)
+SELECT 'QA-TEK-1', 'Joko Fixture', 'Joko Fixture', 'Teknisi', true, '628111000003'
+WHERE NOT EXISTS (SELECT 1 FROM master_user WHERE am_id = 'QA-TEK-1');
+
+-- ── F155 #BON: tiga sparepart rekaan (nama diawali "QA", id 99000000x agar tak bentrok katalog nyata).
+-- "Pompa Peristaltik QA" ada dua (001 & 003) → #BON tanpa kode harus ambigu; 002 dipakai bon gudang fixture
+-- (dibuat harness di resetState, supaya run ulang selalu mulai dari bon yang belum dilaporkan).
+INSERT INTO accurate_item (id, no, name, unit, category, last_synced_at) VALUES
+  (990000001, 'QA-SP-001', 'Pompa Peristaltik QA', 'PCS', 'INVENTORY', now()),
+  (990000002, 'QA-SP-002', 'Selang Silikon QA', 'PCS', 'INVENTORY', now()),
+  (990000003, 'QA-SP-003', 'Pompa Peristaltik QA Mini', 'PCS', 'INVENTORY', now())
+ON CONFLICT (id) DO NOTHING;
+
 -- ── #STOK butuh gudang cabang yang cocok dgn cabang AM di atas ──
 INSERT INTO warehouse (kode, nama, cabang, jenis, aktif)
 VALUES ('KEDIRI', 'Gudang Kediri', 'Kediri', 'cabang', true)
