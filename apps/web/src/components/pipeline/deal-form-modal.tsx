@@ -22,6 +22,7 @@ export interface DealFormInit {
   qty_unit?: string | null;
   unit_price?: number | null;
   coop_model?: string | null;
+  sumber_lead?: string | null;
   cabang?: string | null;
   city?: string | null;
   province?: string | null;
@@ -173,6 +174,7 @@ export function DealFormModal({ mode, deal, onClose, brands = [], cabangs = [], 
     qty_unit: str(deal?.qty_unit),
     unit_price: deal?.unit_price != null ? String(deal.unit_price) : "",
     coop_model: str(deal?.coop_model),
+    sumber_lead: str(deal?.sumber_lead),
     cabang: str(deal?.cabang),
     city: str(deal?.city),
     province: str(deal?.province),
@@ -289,6 +291,16 @@ export function DealFormModal({ mode, deal, onClose, brands = [], cabangs = [], 
                   satu konsep, 4 ejaan di filter. Dua saja sekarang (migrasi 110). */}
               <option value="KSO">KSO</option>
               <option value="BELI">BELI</option>
+            </select>
+          </label>
+          <label className="text-sm"><Lbl>Sumber Lead</Lbl>
+            <select value={form.sumber_lead} onChange={(e) => set("sumber_lead", e.target.value)} className={inputCls}>
+              <option value="">— (Lainnya)</option>
+              <option value="tender">Tender</option>
+              <option value="referensi">Referensi customer</option>
+              <option value="vendor">Vendor (principal merekomendasikan faskes)</option>
+              <option value="pameran">Trade show</option>
+              <option value="cold_call">Cold call</option>
             </select>
           </label>
           <label className="text-sm"><Lbl>Cabang</Lbl>

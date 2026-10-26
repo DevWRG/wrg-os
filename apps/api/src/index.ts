@@ -267,6 +267,7 @@ import { TukarFakturError, listKalenderKlinik, listTukarFaktur, parseBulan, pars
 import { getPmfScorecard } from "./repo/pmf-scorecard.js";
 import { getSoPacing, runSoPacingAlert } from "./repo/so-pacing.js";
 import { listBriefingMingguan, runWeeklyBriefing } from "./repo/weekly-briefing.js";
+import { getLeadSource, getRetensi } from "./repo/kohort.js";
 import {
   akunKso, bacaDokumen, buatKontrak, getKontrak, hapusDokumen, KontrakError, kelengkapanKontrak, listKontrak,
   MAKS_DOKUMEN, perpanjangKontrak, ubahKontrak, ubahStatusKontrak, unggahDokumen,
@@ -2911,6 +2912,18 @@ app.post("/direktur-inbox/run", async (c) => {
     /* body opsional */
   }
   return c.json(await runDirekturInbox({ dryRun: body.dry_run !== false, target: body.target }));
+});
+
+// F96 Cohort & Lead Source Analytics — hanya baca, agregat (tanpa data per customer/lead).
+// Izin dicek di BFF (menu /kohort). `tahun` opsional (default tahun berjalan WIB).
+const tahunQuery = (v: string | undefined): number | undefined => (v && /^\d{4}$/.test(v) ? Number(v) : undefined);
+app.get("/kohort/retensi", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await getRetensi({ tahun: tahunQuery(c.req.query("tahun")) }));
+});
+app.get("/kohort/lead-source", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await getLeadSource({ tahun: tahunQuery(c.req.query("tahun")) }));
 });
 
 // F85 Senin Morning Brief — read model (tab "Senin Brief" di /briefings).

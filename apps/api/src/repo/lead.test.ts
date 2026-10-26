@@ -102,3 +102,24 @@ test("pesan aging: AM vs HoD, dipotong 15 baris", () => {
 test("ambang BANT = 3 (keputusan user 13 Okt)", () => {
   assert.equal(BANT_LOLOS, 3);
 });
+
+test("parseLeads: sumber:<nilai> opsional, diambil dari baris #LEADS tanpa mengganggu faskes/kota/kebutuhan", () => {
+  assert.deepEqual(parseLeads("#LEADS RSUD dr Soedono, Madiun sumber:vendor: butuh analyzer"), {
+    ok: true, facility_name: "RSUD dr Soedono", city: "Madiun", kebutuhan: "butuh analyzer", sumber_lead: "vendor",
+  });
+  assert.deepEqual(parseLeads("#leads Klinik Sehat, Kediri Sumber = Cold Call"), {
+    ok: true, facility_name: "Klinik Sehat", city: "Kediri", kebutuhan: null, sumber_lead: "cold_call",
+  });
+  assert.deepEqual(parseLeads("#LEADS Puskesmas Jabon, Sidoarjo sumber:lpse: pagu 2027"), {
+    ok: true, facility_name: "Puskesmas Jabon", city: "Sidoarjo", kebutuhan: "pagu 2027", sumber_lead: "tender",
+  });
+  assert.equal((parseLeads("#LEADS RS A, Malang sumber:trade show") as { sumber_lead?: string }).sumber_lead, "pameran");
+});
+
+test("parseLeads: sumber tak dikenal / tanpa sumber → tak ada sumber_lead; teks 'sumber' bebas di kebutuhan aman", () => {
+  const a = parseLeads("#LEADS RS A, Malang sumber:vender: x") as { sumber_lead?: string };
+  assert.equal(a.sumber_lead, undefined);
+  const b = parseLeads("#LEADS RS B, Malang: sumber dana APBD, pagu 2027") as { sumber_lead?: string; kebutuhan: string };
+  assert.equal(b.sumber_lead, undefined);
+  assert.equal(b.kebutuhan, "sumber dana APBD, pagu 2027");
+});

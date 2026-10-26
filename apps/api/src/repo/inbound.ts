@@ -1493,10 +1493,10 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
     // per-customer), padahal info dari teknisi harus di-routing ke AM wilayah.
     const pengirimAm = /^am$/i.test(String(pl.role ?? "").trim());
     const hasil = await leadsJadiDeal(
-      { facility_name: p.facility_name, city: p.city, kebutuhan: p.kebutuhan },
+      { facility_name: p.facility_name, city: p.city, kebutuhan: p.kebutuhan, sumber_lead: p.sumber_lead ?? null },
       { oleh: pl.am_id, pengirim: pl.nama, am_pengirim: pengirimAm ? pl.am_id : null },
     );
-    const reply = await sendViaWaGateway(target, balasanLeadsDeal(hasil, { pengirim: pl.nama, facility_name: p.facility_name, city: p.city }));
+    const reply = await sendViaWaGateway(target, balasanLeadsDeal(hasil, { pengirim: pl.nama, facility_name: p.facility_name, city: p.city, sumber_lead: p.sumber_lead ?? null }));
     return finish(
       hasil.jenis === "baru"
         ? { deal: hasil.deal_id, am_id: hasil.am_id, routing: hasil.routing, via: pl.via, reply }
