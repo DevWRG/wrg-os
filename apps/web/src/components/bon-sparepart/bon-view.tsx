@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { Card, CardContent } from "@/components/ui/card";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
@@ -60,6 +60,21 @@ export function BonView({ awal, bisaUbah }: { awal: DataBon; bisaUbah: boolean }
     const r = await api("/api/bon-sparepart", { cache: "no-store" });
     if (r.ok) setData(r.data as unknown as DataBon);
   }
+
+  // Segarkan sendiri tiap 30 dtk supaya #BON dari teknisi muncul tanpa muat ulang. Dilewati saat tab
+  // tersembunyi, saat ada aksi berjalan, atau saat panel tautan SJ terbuka (jangan merombak yang sedang
+  // dikerjakan). Form bon baru tak terganggu — isinya state terpisah. Gagal = diam, coba lagi di putaran berikut.
+  useEffect(() => {
+    if (sibuk || tautId !== null) return;
+    const id = setInterval(() => {
+      if (document.hidden) return;
+      void fetch("/api/bon-sparepart", { cache: "no-store" })
+        .then((r) => (r.ok ? (r.json() as Promise<DataBon>) : null))
+        .then((d) => { if (d) setData(d); })
+        .catch(() => {});
+    }, 30_000);
+    return () => clearInterval(id);
+  }, [sibuk, tautId]);
   async function jalankan(fn: () => Promise<string>) {
     setSibuk(true); setPesan(null);
     try { setPesan({ ok: true, teks: await fn() }); await muat(); }
@@ -270,7 +285,7 @@ export function BonView({ awal, bisaUbah }: { awal: DataBon; bisaUbah: boolean }
       {tab === "opname" ? (
         <div className="space-y-4">
           <p className="text-muted-foreground text-xs">
-            Sama dengan <b>#OPNAME</b> di WhatsApp. Rekonsiliasi menautkan bon yang sudah dilaporkan ke SJ Accurate secara otomatis bila tepat satu SJ cocok
+            Sama dengan <b>#OPNAME</b> di WhatsApp; diperbarui otomatis tiap 30 detik.Rekonsiliasi menautkan bon yang sudah dilaporkan ke SJ Accurate secara otomatis bila tepat satu SJ cocok
             (item sama, tanggal −1…+14 hari dari laporan, customer sama bila diisi){data.ditautkan ? ` — baru saja: ${data.ditautkan}` : ""}; selebihnya ditautkan manual.
           </p>
           {daftar("Belum dilaporkan teknisi", "Bon gudang yang teknisinya belum (lengkap) melapor #BON.", o.belum_dilaporkan, CLS.dibuat)}
