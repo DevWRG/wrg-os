@@ -9,6 +9,9 @@ import {
   kategoriItem,
   nilaiItem,
   parseTuaLine,
+  aksiLewatTenggat,
+  extractActionItems,
+  parseTenggat,
   topikKey,
   umurMenit,
 } from "./notiftua.js";
@@ -162,4 +165,52 @@ test("pesan memuat blok eskalasi ke Direktur bila ada", () => {
   assert.match(msg, /🔺 \*Eskalasi ke Direktur/);
   assert.match(msg, /• Harga reagen — 3 hari/);
   assert.doesNotMatch(buildMessage(["• x"], "2026-10-26", "14:05"), /Eskalasi/);
+});
+
+// ── Action items lewat tenggat ───────────────────────────────────────────────
+// Senin 26 Okt 2026 10:00 WIB (pseudo-UTC).
+const SEKARANG = Date.UTC(2026, 9, 26, 10, 0);
+const akhirHari = (y: number, m: number, d: number) => Date.UTC(y, m, d) + 24 * 3600 * 1000 - 60000;
+
+test("parseTenggat: berbagai format tanggal Indonesia", () => {
+  const e = akhirHari(2026, 9, 24);
+  assert.equal(parseTenggat("24 Okt", SEKARANG), e);
+  assert.equal(parseTenggat("deadline: 24 Oktober 2026", SEKARANG), e);
+  assert.equal(parseTenggat("24/10", SEKARANG), e);
+  assert.equal(parseTenggat("24-10-2026", SEKARANG), e);
+  assert.equal(parseTenggat("2026-10-24", SEKARANG), e);
+  assert.equal(parseTenggat("kemarin", SEKARANG), akhirHari(2026, 9, 25));
+  assert.equal(parseTenggat("hari ini jam 09:00", SEKARANG), Date.UTC(2026, 9, 26, 9, 0));
+  assert.equal(parseTenggat("Jumat", SEKARANG), null, "nama hari ambigu → tak ditebak");
+  assert.equal(parseTenggat("segera", SEKARANG), null);
+});
+
+test("parseTenggat: tanpa tahun, Desember dibaca bulan Januari = tahun lalu", () => {
+  const jan = Date.UTC(2027, 0, 5, 10, 0);
+  assert.equal(parseTenggat("28 Des", jan), akhirHari(2026, 11, 28));
+});
+
+test("aksiLewatTenggat: lewat jadi TUA, belum lewat / tak terbaca diabaikan", () => {
+  const lewat = aksiLewatTenggat("• Budi → kirim penawaran RS Sehat | 24 Okt | status: belum", SEKARANG);
+  assert.ok(lewat);
+  assert.equal(lewat.it.topik, "kirim penawaran RS Sehat");
+  assert.equal(lewat.it.dari, "Budi");
+  assert.ok(lewat.lewatMenit > 24 * 60);
+  assert.match(formatTuaItem(lewat.raw, 1), /lewat tenggat 24 Okt/);
+  assert.equal(aksiLewatTenggat("• Budi → kirim penawaran | 27 Okt | status: belum", SEKARANG), null, "belum lewat");
+  assert.equal(aksiLewatTenggat("• Budi → kirim penawaran | segera | status: belum", SEKARANG), null, "tenggat tak terbaca");
+  assert.equal(aksiLewatTenggat("• Tidak ada", SEKARANG), null);
+});
+
+test("extractActionItems hanya membaca section 3", () => {
+  const resume = [
+    "2. PIPELINE",
+    "• bukan aksi | 1 Okt",
+    "3. ACTION ITEMS OUTSTANDING",
+    "• Budi → A | 24 Okt | belum",
+    "• Ani → B | 30 Okt | proses",
+    "4. KONFIRMASI TRACKING",
+    "• bukan aksi juga | 2 Okt",
+  ].join("\n");
+  assert.equal(extractActionItems(resume).length, 2);
 });

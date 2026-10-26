@@ -7,6 +7,10 @@ untuk komunikasi soal **Harga** ambangnya >4 jam, dan **>2 hari dieskalasi ke Di
 Job `notif-tua` (14:05 & 22:15, `repo/notiftua.ts`) membaca section "⏳ OUTSTANDING" resume eksekutif hari ini:
 
 - Semua item OUTSTANDING dinilai sendiri (tidak lagi bergantung pada tag `[TUA]` LLM yang memakai >4 jam untuk semua).
+- **Action items lewat tenggat**: section "3. ACTION ITEMS OUTSTANDING" (`PIC → tugas | deadline | status`) juga dibaca. Tugas yang
+  tenggatnya sudah lewat langsung TUA; Harga yang lewat tenggat >2 hari ikut eskalasi. Tenggat tanpa jam = akhir hari itu. Format yang
+  dikenali: `24 Okt`, `24 Oktober 2026`, `24/10`, `24-10-2026`, `2026-10-24`, `hari ini`, `kemarin`, `besok`, plus jam opsional.
+  Tenggat yang tak terbaca ("segera", nama hari seperti "Jumat") **diabaikan**, tidak ditebak.
 - Kategori **Harga** bila topik/status memuat harga, price list, penawaran, SPH, quote, diskon, nett, launching; selain itu **umum**.
 - TUA: umur ≥ 4 jam (Harga) / ≥ 8 jam (umum). Umur = yang terbesar antara umur di teks resume dan waktu sejak topik **pertama terlihat**.
   Bila umur tak terbaca sama sekali, tag LLM dipakai.

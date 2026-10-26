@@ -58,6 +58,104 @@ export function extractOutstanding(content: string): string[] {
   return out;
 }
 
+// ── Action items lewat tenggat ───────────────────────────────────────────────
+// Section "3. ACTION ITEMS OUTSTANDING": "• PIC → tugas | deadline | status".
+// Tugas yang tenggatnya sudah lewat ikut jadi TUA. Tenggat di resume berupa teks
+// bebas LLM; yang tak terbaca pasti diabaikan (bukan ditebak).
+export function extractActionItems(content: string): string[] {
+  const out: string[] = [];
+  let capture = false;
+  for (const raw of content.split(/\r?\n/)) {
+    if (/^\s*\d+\.\s*ACTION\s+ITEM/i.test(raw)) {
+      capture = true;
+      continue;
+    }
+    if (capture && (/^\s*\d+\.\s/.test(raw) || /^\s*Generated:/.test(raw) || /^\s*={3,}/.test(raw))) break;
+    const l = raw.trim();
+    if (capture && /^[•*-]/.test(l)) out.push(l);
+  }
+  return out;
+}
+
+const BULAN_ID: Record<string, number> = {
+  jan: 0, januari: 0, feb: 1, februari: 1, mar: 2, maret: 2, apr: 3, april: 3, mei: 4, jun: 5, juni: 5,
+  jul: 6, juli: 6, agu: 7, agt: 7, agustus: 7, sep: 8, sept: 8, september: 8, okt: 9, oktober: 9,
+  nov: 10, november: 10, des: 11, desember: 11,
+};
+
+const DAY = 24 * 60 * 60 * 1000;
+
+// Tenggat → ms (pseudo-UTC, jam dinding WIB). Tanpa jam = akhir hari itu.
+// `nowWibMs` = Date.now()+7 jam, selaras wibNow(). Tak terbaca → null.
+export function parseTenggat(teks: string, nowWibMs: number): number | null {
+  const s = teks.toLowerCase().replace(/^\s*(?:deadline|tenggat|due)\s*[:=-]?\s*/, "").trim();
+  const now = new Date(nowWibMs);
+  const hariIni = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  let tgl: number | null = null;
+  let m: RegExpExecArray | null;
+  if (/\bhari ini\b/.test(s)) tgl = hariIni;
+  else if (/\bkemarin\b/.test(s)) tgl = hariIni - DAY;
+  else if (/\bbesok\b/.test(s)) tgl = hariIni + DAY;
+  else if ((m = /\b(\d{4})-(\d{1,2})-(\d{1,2})\b/.exec(s))) tgl = Date.UTC(+m[1], +m[2] - 1, +m[3]);
+  else if ((m = /\b(\d{1,2})[/.-](\d{1,2})(?:[/.-](\d{2,4}))?\b/.exec(s)) && +m[1] <= 31 && +m[2] >= 1 && +m[2] <= 12) {
+    tgl = Date.UTC(tahun(m[3], +m[2] - 1, +m[1], now), +m[2] - 1, +m[1]);
+  } else if ((m = /\b(\d{1,2})\s+([a-z]{3,9})\.?(?:\s+(\d{4}))?\b/.exec(s)) && BULAN_ID[m[2]] != null) {
+    tgl = Date.UTC(tahun(m[3], BULAN_ID[m[2]], +m[1], now), BULAN_ID[m[2]], +m[1]);
+  }
+  if (tgl == null || Number.isNaN(tgl)) return null;
+  const jam = /\b(?:jam\s*)?([01]?\d|2[0-3])[.:]([0-5]\d)\b/.exec(s);
+  return jam ? tgl + (+jam[1] * 60 + +jam[2]) * 60000 : tgl + DAY - 60000;
+}
+
+// Tahun eksplisit dipakai; tanpa tahun: tahun berjalan, kecuali tanggalnya >6 bulan
+// ke depan (berarti maksudnya tahun lalu, mis. "28 Des" dibaca di bulan Januari).
+function tahun(y: string | undefined, bulan: number, tgl: number, now: Date): number {
+  if (y) return y.length === 2 ? 2000 + +y : +y;
+  const th = now.getUTCFullYear();
+  return Date.UTC(th, bulan, tgl) - now.getTime() > 183 * DAY ? th - 1 : th;
+}
+
+export interface AksiLewat {
+  raw: string; // baris sintetis berformat TUA, siap untuk formatTuaItem
+  it: TuaItem;
+  lewatMenit: number;
+}
+
+// Satu baris action item → item TUA bila tenggatnya lewat; selain itu null.
+export function aksiLewatTenggat(line: string, nowWibMs: number): AksiLewat | null {
+  const segmen = bersihkan(line.replace(/^\s*[•*-]\s*/, ""))
+    .split("|")
+    .map((x) => x.trim())
+    .filter(Boolean);
+  if (segmen.length < 2) return null;
+  const [kepala, ...sisa] = segmen;
+  const bagi = kepala.split(/\s*(?:→|->)\s*/);
+  const pic = bagi.length > 1 ? bagi[0] : "";
+  const tugas = (bagi.length > 1 ? bagi.slice(1).join(" → ") : kepala).trim();
+  let tenggat: number | null = null;
+  let tenggatTeks = "";
+  const lain: string[] = [];
+  for (const seg of sisa) {
+    const t: number | null = tenggat == null ? parseTenggat(seg, nowWibMs) : null;
+    if (t != null) {
+      tenggat = t;
+      tenggatTeks = seg.replace(/^\s*(?:deadline|tenggat|due)\s*[:=-]?\s*/i, "");
+    } else lain.push(seg);
+  }
+  if (!tugas || tenggat == null || nowWibMs <= tenggat) return null;
+  const lewatMenit = Math.round((nowWibMs - tenggat) / 60000);
+  const status = lain.map((x) => x.replace(/^status\s*:?\s*/i, "")).join("; ");
+  const raw = [
+    `• ${tugas.charAt(0).toUpperCase()}${tugas.slice(1)}`,
+    pic ? `dari ${pic}` : "",
+    `lewat tenggat ${tenggatTeks} (${umurTeks(lewatMenit)} lewat)`,
+    status ? `status: ${status}` : "",
+  ]
+    .filter(Boolean)
+    .join(" | ");
+  return { raw, it: parseTuaLine(raw), lewatMenit };
+}
+
 // Signature topic-only: buang bullet & segala setelah '|', sort-unik, sha256.
 // `eskalasi` = topik yang baru naik ke eskalasi Direktur; masuk signature supaya
 // eskalasi baru tetap terkirim walau himpunan item TUA-nya sama.
@@ -284,6 +382,31 @@ export async function runNotifTua(opts: { dryRun?: boolean; target?: string } = 
   }
   const nowMs = Date.now();
   const nilai = parsed.map((p) => ({ ...p, n: nilaiItem(p.it, p.bertag, tercatat.get(p.key)?.first ?? null, nowMs) }));
+
+  // Action items yang lewat tenggat: selalu TUA; Harga lewat >2 hari ikut eskalasi.
+  // Topik yang sama dengan item OUTSTANDING tidak dihitung dua kali.
+  const nowWib = nowMs + 7 * 3600 * 1000;
+  const sudahAda = new Set(nilai.map((p) => p.key));
+  const aksi = extractActionItems(String(row.content))
+    .map((l) => aksiLewatTenggat(l, nowWib))
+    .filter((a): a is AksiLewat => a !== null)
+    .map((a) => ({ raw: a.raw, it: a.it, key: topikKey(`aksi ${a.it.topik}`), bertag: true, lewat: a.lewatMenit }))
+    .filter((a) => !sudahAda.has(a.key) && !sudahAda.has(topikKey(a.it.topik)));
+  if (aksi.length) {
+    const aksiKeys = aksi.map((a) => a.key);
+    const rows = await sql`SELECT topik_key, first_seen, eskalasi_at FROM tua_item WHERE topik_key = ANY(${aksiKeys}::text[])`;
+    for (const r of rows) tercatat.set(String(r.topik_key), { first: new Date(r.first_seen as string).getTime(), eskalasi: r.eskalasi_at != null });
+    for (const a of aksi) {
+      const kategori = kategoriItem(a.it);
+      nilai.push({
+        raw: a.raw,
+        it: a.it,
+        key: a.key,
+        bertag: true,
+        n: { kategori, umur: a.lewat, tua: true, eskalasi: kategori === "harga" && a.lewat > ESKALASI_MENIT },
+      });
+    }
+  }
 
   if (!opts.dryRun) {
     for (const p of nilai) {
