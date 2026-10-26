@@ -51,7 +51,7 @@ import { FITUR_PUTUSAN as FITUR_PUTUSAN_PERMINTAAN, canViewPermintaanProduk } fr
 import { canViewKsoKontrak } from "@/lib/kso-kontrak-access";
 import { canViewCn } from "@/lib/cn-access";
 import { canViewApThreeWay } from "@/lib/ap-three-way-access";
-import { FITUR_SUSUNAN, TAB_KSO, canViewKsoKomite } from "@/lib/kso-komite-access";
+import { FITUR_BOTTOMLINE, FITUR_SUSUNAN, TAB_KSO, canViewKsoKomite } from "@/lib/kso-komite-access";
 import { canViewAsetTetap } from "@/lib/aset-tetap-access";
 import { canViewPmfScorecard } from "@/lib/pmf-access";
 import { canViewDirekturInbox } from "@/lib/direktur-inbox-access";
@@ -239,7 +239,7 @@ export const NAV: NavGroup[] = [
       // WAJIB terdaftar di `features` — kalau tidak, Sync Fitur mematikannya sebagai zombie.
       // API (repo/kso-komite.ts) memeriksa ulang izin tiap permintaan.
       { title: "Komite KSO", url: "/kso-komite", icon: Gavel, badge: "NEW", show: canViewKsoKomite,
-        features: [...TAB_KSO.filter((t) => t.fitur !== "kso-komite").map((t) => ({ key: t.fitur, name: t.nama })), FITUR_SUSUNAN] },
+        features: [...TAB_KSO.filter((t) => t.fitur !== "kso-komite").map((t) => ({ key: t.fitur, name: t.nama })), FITUR_SUSUNAN, FITUR_BOTTOMLINE] },
       // Harga jual dibagi per PEMBACA, bukan per tabel:
       //   /pricebook            sales & AM — katalog + harga terpublikasi (071/043)
       //   /pricebook/ringkasan  Direktur + HoD — bacaan portofolio
