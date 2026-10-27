@@ -270,6 +270,7 @@ import { getSoPacing, runSoPacingAlert } from "./repo/so-pacing.js";
 import { listBriefingMingguan, runWeeklyBriefing } from "./repo/weekly-briefing.js";
 import { getLeadSource, getRetensi } from "./repo/kohort.js";
 import { getRevenueArea } from "./repo/revenue-area.js";
+import { biayaAreaSyncBusy, hitungUlangArea, syncBiayaArea } from "./repo/biaya-area-sync.js";
 import {
   akunKso, bacaDokumen, buatKontrak, getKontrak, hapusDokumen, KontrakError, kelengkapanKontrak, listKontrak,
   MAKS_DOKUMEN, perpanjangKontrak, ubahKontrak, ubahStatusKontrak, unggahDokumen,
@@ -4909,6 +4910,31 @@ app.get("/revenue-area", async (c) => {
   return c.json(
     await getRevenueArea({ periode: c.req.query("periode"), asOf: c.req.query("asOf"), hodKey: c.req.query("hod") || null }),
   );
+});
+
+// F150 tahap 2 — tarik biaya operasional Accurate (read-only) → biaya_area_baris. N+1 detail.do,
+// jadi 202 lalu jalan di latar; hasil di accurate_sync_state entity 'biaya-area'. Body opsional
+// { detail_limit }. Gate admin di layer WEB/service-token (bukan endpoint publik).
+app.post("/biaya-area/sync", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  if (!accurateConfigured()) return c.json({ error: "kredensial Accurate tak tersedia" }, 503);
+  if (biayaAreaSyncBusy()) return c.json({ ok: false, error: "sinkron biaya area sedang berjalan" }, 409);
+  let body: { detail_limit?: number } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    /* body opsional */
+  }
+  void syncBiayaArea({ detailLimit: body.detail_limit })
+    .then((r) => console.log(`[biaya-area] sync manual: ${JSON.stringify(r)}`))
+    .catch((e) => console.error("[biaya-area] sync manual gagal:", e));
+  return c.json({ ok: true, started: true }, 202);
+});
+
+// Terapkan ulang aturan area ke baris tersimpan (setelah kamus kota / override payee berubah). Tanpa Accurate.
+app.post("/biaya-area/recompute", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json({ ok: true, ...(await hitungUlangArea()) });
 });
 
 // Kirim ringkasan WatchPoint 1 HoD via WA. Target diisi pemanggil (body.to).

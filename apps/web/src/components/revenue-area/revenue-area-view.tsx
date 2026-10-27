@@ -21,6 +21,25 @@ interface Row {
   revenuePrev: number;
   deltaPct: number | null;
   sharePct: number;
+  biaya: number | null;
+  labaKotor: number | null;
+  hppCakupanPct: number | null;
+  profit: number | null;
+}
+
+interface KantorPusat {
+  operasional: number;
+  sdm: number;
+  luarUsaha: number;
+  total: number;
+  marketingFeeBelumTerpetakan: number;
+}
+
+interface Cakupan {
+  total: number;
+  tertandai: number;
+  pct: number | null;
+  perDasar: { dasar: string; jumlah: number }[];
 }
 
 interface Hasil {
@@ -34,6 +53,9 @@ interface Hasil {
   regions: { region: Region; revenue: number; revenuePrev: number; deltaPct: number | null }[];
   rows: Row[];
   biayaTersedia: boolean;
+  kantorPusat: KantorPusat | null;
+  cakupan: Cakupan | null;
+  terakhirSyncBiaya: string | null;
 }
 
 const PERIODES: { key: Periode; label: string }[] = [
@@ -56,12 +78,15 @@ function Delta({ v }: { v: number | null }) {
   );
 }
 
+const Rp = ({ v }: { v: number | null }) =>
+  v == null ? <span className="text-muted-foreground">—</span> : <span className={cn("tabular-nums", v < 0 && "text-red-600")}>{formatRupiah(v)}</span>;
+
 const tgl = (iso: string) => iso.split("-").reverse().join("/");
 
 // Revenue netto (tanpa PPN) per area vs periode sebelumnya. Dipakai tab "Revenue Area"
 // WatchPoint dan menu /profitabilitas-area; `endpoint` = route BFF masing-masing (izin
-// dicek di route). Kolom Biaya & Profit sengaja kosong sampai data biaya Accurate masuk
-// (BRIEF-F150-DATA-BIAYA-ACCURATE.md) — "—", bukan nol palsu.
+// dicek di route). Biaya = akun 6200 (operasional) yang ditandai area oleh aturan Direktur;
+// laba kotor = revenue − HPP wrg-os (parsial, lihat cakupan HPP). Belum ada data biaya → "—".
 export function RevenueAreaView({ endpoint, tampilkanBiaya = false }: { endpoint: string; tampilkanBiaya?: boolean }) {
   const [periode, setPeriode] = useState<Periode>("bulan");
   // Hasil disimpan bersama periodenya; "memuat" = hasil terakhir bukan untuk periode terpilih.
@@ -157,7 +182,8 @@ export function RevenueAreaView({ endpoint, tampilkanBiaya = false }: { endpoint
                       <TableHead className="text-right">Porsi</TableHead>
                       {tampilkanBiaya ? (
                         <>
-                          <TableHead className="text-right">Biaya</TableHead>
+                          <TableHead className="text-right">Laba kotor</TableHead>
+                          <TableHead className="text-right">Biaya operasional</TableHead>
                           <TableHead className="text-right">Profit / rugi</TableHead>
                         </>
                       ) : null}
@@ -183,12 +209,40 @@ export function RevenueAreaView({ endpoint, tampilkanBiaya = false }: { endpoint
                         </TableCell>
                         {tampilkanBiaya ? (
                           <>
-                            <TableCell className="text-muted-foreground text-right">—</TableCell>
-                            <TableCell className="text-muted-foreground text-right">—</TableCell>
+                            <TableCell className="text-right">
+                              <Rp v={r.labaKotor} />
+                              {r.hppCakupanPct != null && r.hppCakupanPct < 100 ? (
+                                <div className="text-muted-foreground text-[11px]" title="Porsi revenue yang punya HPP tak ambigu di tabel HPP">
+                                  HPP {r.hppCakupanPct.toFixed(0)}% revenue
+                                </div>
+                              ) : null}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              <Rp v={r.biaya} />
+                            </TableCell>
+                            <TableCell className="text-right font-medium">
+                              <Rp v={r.profit} />
+                            </TableCell>
                           </>
                         ) : null}
                       </TableRow>
                     ))}
+                    {tampilkanBiaya && data.kantorPusat ? (
+                      <TableRow className="bg-muted/40">
+                        <TableCell className="font-medium">KANTOR PUSAT</TableCell>
+                        <TableCell className="text-muted-foreground">—</TableCell>
+                        <TableCell className="text-muted-foreground text-right" colSpan={4}>
+                          Tanpa revenue. Biaya tak ber-area, gaji (6100), dan biaya luar usaha (6300) — tidak dibagi.
+                        </TableCell>
+                        <TableCell className="text-muted-foreground text-right">—</TableCell>
+                        <TableCell className="text-right" title={`Operasional ${formatRupiah(data.kantorPusat.operasional)} · SDM ${formatRupiah(data.kantorPusat.sdm)} · Luar usaha ${formatRupiah(data.kantorPusat.luarUsaha)}`}>
+                          <Rp v={data.kantorPusat.total} />
+                        </TableCell>
+                        <TableCell className="text-right font-medium">
+                          <Rp v={-data.kantorPusat.total} />
+                        </TableCell>
+                      </TableRow>
+                    ) : null}
                   </TableBody>
                 </Table>
               </CardContent>
@@ -197,8 +251,40 @@ export function RevenueAreaView({ endpoint, tampilkanBiaya = false }: { endpoint
 
           {tampilkanBiaya && !data.biayaTersedia ? (
             <p className="text-muted-foreground text-xs">
-              Biaya &amp; profit/rugi menunggu data biaya dari Accurate (akun beban per area). Profit = revenue netto − biaya operasional, tanpa HPP.
+              Biaya &amp; profit/rugi menunggu data biaya dari Accurate (sinkron biaya belum jalan atau belum ada biaya pada periode ini).
             </p>
+          ) : null}
+
+          {tampilkanBiaya && data.biayaTersedia ? (
+            <div className="space-y-2">
+              {data.cakupan ? (
+                <Card>
+                  <CardContent className="space-y-1 py-3 text-sm">
+                    <div>
+                      <span className="font-medium">Cakupan penandaan area: {data.cakupan.pct != null ? `${data.cakupan.pct.toFixed(1)}%` : "—"}</span>{" "}
+                      <span className="text-muted-foreground">
+                        dari biaya operasional {formatRupiah(data.cakupan.total)}; sisanya jatuh ke Kantor Pusat sampai Accounting mengisi Departemen = area.
+                      </span>
+                    </div>
+                    {data.cakupan.perDasar.length > 0 ? (
+                      <div className="text-muted-foreground text-xs">
+                        {data.cakupan.perDasar.map((d) => `${d.dasar}: ${formatRupiah(d.jumlah)}`).join(" · ")}
+                      </div>
+                    ) : null}
+                    {data.kantorPusat && data.kantorPusat.marketingFeeBelumTerpetakan > 0 ? (
+                      <div className="text-xs text-amber-600">
+                        Marketing fee belum terpetakan ke area: {formatRupiah(data.kantorPusat.marketingFeeBelumTerpetakan)} (menunggu peta INV → customer dari Finance; tidak ditebak).
+                      </div>
+                    ) : null}
+                  </CardContent>
+                </Card>
+              ) : null}
+              <p className="text-muted-foreground text-xs">
+                Laba kotor = revenue netto − HPP (tabel HPP wrg-os; hanya item ber-HPP tak ambigu, jadi parsial). Biaya = akun 6200 saja. Profit = laba kotor − biaya
+                operasional.
+                {data.terakhirSyncBiaya ? ` Biaya terakhir disinkron ${new Date(data.terakhirSyncBiaya).toLocaleString("id-ID")}.` : ""}
+              </p>
+            </div>
           ) : null}
         </>
       ) : null}

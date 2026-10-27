@@ -33,13 +33,13 @@ import {
 // ACCURATE_SIGNATURE_SECRET (+ACCURATE_HOST), atau file ACCURATE_CRED_FILE
 // (default ~/.openclaw/credentials/accurate.json).
 
-interface Creds {
+export interface Creds {
   token: string;
   secret: string;
   host: string;
 }
 
-function loadCreds(): Creds | null {
+export function loadCreds(): Creds | null {
   const host = process.env.ACCURATE_HOST || "zeus.accurate.id";
   const envTok = process.env.ACCURATE_ACCESS_TOKEN;
   const envSec = process.env.ACCURATE_SIGNATURE_SECRET;
@@ -64,7 +64,7 @@ function wibTimestamp(): string {
   return `${p(d.getUTCDate())}/${p(d.getUTCMonth() + 1)}/${d.getUTCFullYear()} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}`;
 }
 
-async function accGet(creds: Creds, path: string, qs?: string): Promise<{ s?: boolean; d?: unknown }> {
+export async function accGet(creds: Creds, path: string, qs?: string): Promise<{ s?: boolean; d?: unknown }> {
   const ts = wibTimestamp();
   const sig = createHmac("sha256", creds.secret).update(ts).digest("hex");
   const url = `https://${creds.host}${path}${qs ? `?${qs}` : ""}`;
@@ -1123,13 +1123,13 @@ const PO_SINCE = "2026-01-01";
 const PO_OPEN_STATUSES = new Set(["Menunggu diproses", "Sebagian diproses"]);
 
 /** "dd/mm/yyyy" → "yyyy-mm-dd" (null kalau bentuknya lain). */
-function accDate(v: unknown): string | null {
+export function accDate(v: unknown): string | null {
   const m = /^(\d{2})\/(\d{2})\/(\d{4})/.exec(String(v ?? ""));
   return m ? `${m[3]}-${m[2]}-${m[1]}` : null;
 }
 
 /** "dd/mm/yyyy HH:MM:SS" (WIB) → ISO dengan offset +07:00. */
-function accDateTime(v: unknown): string | null {
+export function accDateTime(v: unknown): string | null {
   const m = /^(\d{2})\/(\d{2})\/(\d{4}) (\d{2}):(\d{2}):(\d{2})$/.exec(String(v ?? ""));
   return m ? `${m[3]}-${m[2]}-${m[1]}T${m[4]}:${m[5]}:${m[6]}+07:00` : null;
 }

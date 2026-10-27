@@ -1,9 +1,11 @@
-// F150 (tahap 1) — revenue netto per AREA (cabang + region) untuk tab "Revenue Area"
-// di WatchPoint (F76) dan menu /profitabilitas-area.
+// F150 — revenue netto per AREA (cabang + region) untuk tab "Revenue Area" di WatchPoint
+// (F76) dan menu /profitabilitas-area.
 //
-// Sisi BIAYA belum ada: mirror Accurate tak punya beban/jurnal (lihat
-// BRIEF-F150-DATA-BIAYA-ACCURATE.md). Karena itu `biaya` & `profit` selalu null dan
-// `biayaTersedia=false` — UI menampilkan "menunggu data Accurate", bukan nol palsu.
+// Tahap 2: biaya operasional (6200) per area dari biaya_area_baris (puller
+// biaya-area-sync.ts) + laba kotor (revenue netto − HPP; HPP dari product_pricelist_setup,
+// hanya baris ber-HPP tak ambigu → `hppCakupanPct`). Biaya 6100/6300 + 6200 yang tak
+// tertandai area = baris KANTOR PUSAT (terpisah, hanya untuk akses penuh). Belum ada baris
+// biaya → `biayaTersedia=false`, UI menampilkan "—" bukan nol palsu.
 //
 // Atribusi cabang = cabangEffSql (sama dengan Sales Performance / periodAgg): faktur
 // ber-AM → cabang AM pada tanggal faktur; tanpa AM → area lokasi customer. Jangan
@@ -13,6 +15,8 @@
 import { db } from "../db.js";
 import { cabangEffSql, joinAmFromSalesman } from "./salesman-am.js";
 import { cabangRegionMap, type Region } from "./sales.js";
+import { KANTOR_PUSAT } from "./biaya-area-rules.js";
+import { muatBiayaInput, type BiayaInput } from "./biaya-area.js";
 
 export type Periode = "bulan" | "kuartal" | "tahun";
 export const PERIODES: readonly Periode[] = ["bulan", "kuartal", "tahun"];
@@ -31,8 +35,23 @@ export interface RevenueAreaRow {
   deltaPct: number | null;
   /** % dari total revenue (setelah filter akses). */
   sharePct: number;
-  biaya: null;
-  profit: null;
+  /** Biaya operasional (6200) area ini pada periode berjalan; null bila belum ada data biaya. */
+  biaya: number | null;
+  /** Laba kotor = revenue netto − HPP, hanya atas revenue ber-HPP tak ambigu (lihat hppCakupanPct). */
+  labaKotor: number | null;
+  /** % revenue area yang punya HPP tak ambigu; null bila tak ada revenue / data biaya. */
+  hppCakupanPct: number | null;
+  /** labaKotor − biaya; null bila salah satunya tak tersedia. Parsial bila hppCakupanPct < 100. */
+  profit: number | null;
+}
+
+export interface KantorPusatRow {
+  operasional: number;
+  sdm: number;
+  luarUsaha: number;
+  total: number;
+  /** Bagian dari `operasional`: marketing fee tanpa peta INV→customer (belum bisa dialokasi). */
+  marketingFeeBelumTerpetakan: number;
 }
 
 export interface RevenueAreaResult {
@@ -45,7 +64,12 @@ export interface RevenueAreaResult {
   deltaPct: number | null;
   regions: { region: Region; revenue: number; revenuePrev: number; deltaPct: number | null }[];
   rows: RevenueAreaRow[];
-  biayaTersedia: false;
+  biayaTersedia: boolean;
+  /** Hanya untuk akses penuh (bukan HoD); null untuk HoD. */
+  kantorPusat: KantorPusatRow | null;
+  /** % biaya operasional yang sudah bertanda area (wajib tampil, keputusan Direktur). */
+  cakupan: BiayaInput["cakupan"] | null;
+  terakhirSyncBiaya: string | null;
 }
 
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
@@ -76,6 +100,7 @@ export function windowsFor(periode: Periode, asOf: string): { cur: Window; prev:
 }
 
 const pct = (cur: number, prev: number): number | null => (prev > 0 ? Math.round(((cur - prev) / prev) * 1000) / 10 : null);
+const bulat = (n: number) => Math.round(n);
 
 export interface RawRow {
   cabang: string;
@@ -83,27 +108,36 @@ export interface RawRow {
   prev: number;
 }
 
+type Body = Pick<RevenueAreaResult, "total" | "totalPrev" | "deltaPct" | "regions" | "rows" | "biayaTersedia" | "kantorPusat" | "cakupan" | "terakhirSyncBiaya">;
+
 // Murni (diuji). `hodCabang` = batasi ke cabang tertentu (akses HoD); null = semua.
-export function susunRevenueArea(
-  raw: RawRow[],
-  regionMap: Record<string, Region>,
-  hodCabang: string[] | null,
-): Pick<RevenueAreaResult, "total" | "totalPrev" | "deltaPct" | "regions" | "rows"> {
+export function susunRevenueArea(raw: RawRow[], regionMap: Record<string, Region>, hodCabang: string[] | null, bi?: BiayaInput | null): Body {
   const allow = hodCabang ? new Set(hodCabang) : null;
-  const rows0 = raw.filter((r) => !allow || allow.has(r.cabang));
+  // Area yang punya biaya tapi nol revenue periode ini tetap tampil.
+  const byCabang = new Map(raw.map((r) => [r.cabang, r] as const));
+  if (bi) for (const a of bi.biaya.keys()) if (a !== KANTOR_PUSAT && !byCabang.has(a)) byCabang.set(a, { cabang: a, cur: 0, prev: 0 });
+  const rows0 = [...byCabang.values()].filter((r) => !allow || allow.has(r.cabang));
   const total = rows0.reduce((s, r) => s + r.cur, 0);
   const totalPrev = rows0.reduce((s, r) => s + r.prev, 0);
+  const biayaTersedia = !!bi && (bi.cakupan.total > 0 || bi.biaya.size > 0);
   const rows: RevenueAreaRow[] = rows0
-    .map((r) => ({
-      cabang: r.cabang,
-      region: regionMap[r.cabang] ?? ("OFFICE" as Region),
-      revenue: r.cur,
-      revenuePrev: r.prev,
-      deltaPct: pct(r.cur, r.prev),
-      sharePct: total > 0 ? Math.round((r.cur / total) * 1000) / 10 : 0,
-      biaya: null,
-      profit: null,
-    }))
+    .map((r) => {
+      const biaya = biayaTersedia ? bulat(bi!.biaya.get(r.cabang) ?? 0) : null;
+      const h = bi?.hpp.get(r.cabang);
+      const labaKotor = h ? bulat(h.gp) : biayaTersedia ? 0 : null;
+      return {
+        cabang: r.cabang,
+        region: regionMap[r.cabang] ?? ("OFFICE" as Region),
+        revenue: r.cur,
+        revenuePrev: r.prev,
+        deltaPct: pct(r.cur, r.prev),
+        sharePct: total > 0 ? Math.round((r.cur / total) * 1000) / 10 : 0,
+        biaya,
+        labaKotor,
+        hppCakupanPct: bi && r.cur > 0 ? Math.round(((h?.revHpp ?? 0) / r.cur) * 1000) / 10 : null,
+        profit: biaya != null && labaKotor != null ? labaKotor - biaya : null,
+      };
+    })
     .sort((a, b) => b.revenue - a.revenue || a.cabang.localeCompare(b.cabang));
   const regions = (["East", "West", "OFFICE"] as Region[])
     .map((region) => {
@@ -113,7 +147,22 @@ export function susunRevenueArea(
       return { region, revenue, revenuePrev, deltaPct: pct(revenue, revenuePrev) };
     })
     .filter((g) => g.revenue > 0 || g.revenuePrev > 0);
-  return { total, totalPrev, deltaPct: pct(total, totalPrev), regions, rows };
+  const kantorPusat: KantorPusatRow | null =
+    bi && biayaTersedia && !allow
+      ? {
+          operasional: bulat(bi.pusat.operasional),
+          sdm: bulat(bi.pusat.sdm),
+          luarUsaha: bulat(bi.pusat.luarUsaha),
+          total: bulat(bi.pusat.operasional + bi.pusat.sdm + bi.pusat.luarUsaha),
+          marketingFeeBelumTerpetakan: bulat(bi.pusat.marketingFeeBelumTerpetakan),
+        }
+      : null;
+  return {
+    total, totalPrev, deltaPct: pct(total, totalPrev), regions, rows, biayaTersedia, kantorPusat,
+    // Cakupan global memuat nominal seluruh perusahaan → tak ditampilkan ke HoD.
+    cakupan: bi && biayaTersedia && !allow ? bi.cakupan : null,
+    terakhirSyncBiaya: bi?.terakhirSync ?? null,
+  };
 }
 
 const wibToday = (): string => new Date(Date.now() + 7 * 3600_000).toISOString().slice(0, 10);
@@ -127,7 +176,7 @@ export async function getRevenueArea(opts: { periode?: string; asOf?: string; ho
   const { cur, prev } = windowsFor(periode, asOf);
   const sql = db();
 
-  const [rows, regionMap, hodRows] = await Promise.all([
+  const [rows, regionMap, hodRows, bi] = await Promise.all([
     sql`
       SELECT COALESCE(${cabangEffSql(sql)}, 'Tanpa cabang') AS cabang,
              COALESCE(sum(ai.total - COALESCE(ai.tax_amount,0)) FILTER (WHERE ai.tanggal BETWEEN ${cur.from} AND ${cur.to}), 0)::numeric AS cur,
@@ -140,6 +189,7 @@ export async function getRevenueArea(opts: { periode?: string; asOf?: string; ho
     `,
     cabangRegionMap(sql),
     opts.hodKey ? sql<{ cabang: string }[]>`SELECT cabang FROM hod_territory WHERE hod_key = ${opts.hodKey}` : Promise.resolve(null),
+    muatBiayaInput(cur),
   ]);
 
   const raw: RawRow[] = rows.map((r) => ({
@@ -147,6 +197,6 @@ export async function getRevenueArea(opts: { periode?: string; asOf?: string; ho
     cur: Number((r as Record<string, unknown>).cur ?? 0),
     prev: Number((r as Record<string, unknown>).prev ?? 0),
   }));
-  const body = susunRevenueArea(raw, regionMap, hodRows ? hodRows.map((h) => h.cabang) : null);
-  return { periode, asOf, cur, prev, ...body, biayaTersedia: false };
+  const body = susunRevenueArea(raw, regionMap, hodRows ? hodRows.map((h) => h.cabang) : null, bi);
+  return { periode, asOf, cur, prev, ...body };
 }
