@@ -14,6 +14,7 @@ export async function GET(req: Request) {
   const qs = new URLSearchParams();
   const periode = src.get("periode");
   if (periode === "bulan" || periode === "kuartal" || periode === "tahun") qs.set("periode", periode);
+  qs.set("biaya", "1"); // izin profitabilitas-area sudah dicek di atas
   const asOf = src.get("asOf");
   if (asOf && /^\d{4}-\d{2}-\d{2}$/.test(asOf)) qs.set("asOf", asOf);
   if (profitabilitasAccess(g.me) === "hod") {

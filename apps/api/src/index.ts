@@ -4908,7 +4908,7 @@ app.get("/watchpoint", async (c) => c.json(await getWatchBoard()));
 app.get("/revenue-area", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json(
-    await getRevenueArea({ periode: c.req.query("periode"), asOf: c.req.query("asOf"), hodKey: c.req.query("hod") || null }),
+    await getRevenueArea({ periode: c.req.query("periode"), asOf: c.req.query("asOf"), hodKey: c.req.query("hod") || null, biaya: c.req.query("biaya") === "1" }),
   );
 });
 

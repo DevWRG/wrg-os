@@ -17,7 +17,7 @@ Keputusan Direktur (rapat 2026-10-19): tujuan akhirnya biaya operasional kantor 
 
 ## Akses
 - Menu `/profitabilitas-area`: Direktur/admin/superuser = semua area + baris Kantor Pusat + kartu cakupan; HoD (punya `hod_key`) = hanya cabang di `hod_territory` miliknya, TANPA baris Kantor Pusat/cakupan perusahaan (BFF meneruskan `?hod=` dari **sesi**). Matriks Akses Grup menang begitu fitur diatur; default tertutup (butuh Sync Fitur + centang grup).
-- Tab WatchPoint: ikut izin menu WatchPoint, menampilkan semua area (papan WatchPoint memang menampilkan semua HoD).
+- Tab WatchPoint (melengkapi F76): ikut izin menu WatchPoint dan menampilkan semua area. Kolom **biaya, laba kotor, profit, baris Kantor Pusat, dan cakupan** hanya muncul bila pemanggil punya akses PENUH F150 (Direktur/admin/superuser); yang lain tetap melihat revenue saja. API `GET /revenue-area` TIDAK menyertakan biaya kecuali `biaya=1` (hanya BFF yang sudah memeriksa izin yang mengirimnya) — sebelumnya tab WatchPoint bisa membocorkan biaya ke semua pemilik izin WatchPoint. HoD melihat biaya areanya sendiri di `/profitabilitas-area`.
 
 ## Teknis
 - API `GET /revenue-area?periode=bulan|kuartal|tahun&asOf=YYYY-MM-DD&hod=<hod_key>`; repo `apps/api/src/repo/revenue-area.ts` (logika murni `windowsFor`, `shiftMonths`, `susunRevenueArea` diuji di `revenue-area.test.ts`).

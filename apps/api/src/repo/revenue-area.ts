@@ -169,8 +169,10 @@ const wibToday = (): string => new Date(Date.now() + 7 * 3600_000).toISOString()
 
 /**
  * @param hodKey bila diisi, hanya cabang HoD itu (hod_territory) yang dikembalikan.
+ * @param biaya  true = sertakan biaya/laba kotor/Kantor Pusat/cakupan. DEFAULT false: angka biaya sensitif,
+ *               jadi hanya BFF yang sudah memeriksa izin (profitabilitas-area) yang boleh memintanya.
  */
-export async function getRevenueArea(opts: { periode?: string; asOf?: string; hodKey?: string | null }): Promise<RevenueAreaResult> {
+export async function getRevenueArea(opts: { periode?: string; asOf?: string; hodKey?: string | null; biaya?: boolean }): Promise<RevenueAreaResult> {
   const periode: Periode = PERIODES.includes(opts.periode as Periode) ? (opts.periode as Periode) : "bulan";
   const asOf = opts.asOf && ISO.test(opts.asOf) ? opts.asOf : wibToday();
   const { cur, prev } = windowsFor(periode, asOf);
@@ -189,7 +191,7 @@ export async function getRevenueArea(opts: { periode?: string; asOf?: string; ho
     `,
     cabangRegionMap(sql),
     opts.hodKey ? sql<{ cabang: string }[]>`SELECT cabang FROM hod_territory WHERE hod_key = ${opts.hodKey}` : Promise.resolve(null),
-    muatBiayaInput(cur),
+    opts.biaya ? muatBiayaInput(cur) : Promise.resolve(null),
   ]);
 
   const raw: RawRow[] = rows.map((r) => ({

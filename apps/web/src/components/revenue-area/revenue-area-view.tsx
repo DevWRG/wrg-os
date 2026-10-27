@@ -112,7 +112,10 @@ export function RevenueAreaView({ endpoint, tampilkanBiaya = false }: { endpoint
   }, [endpoint, periode]);
 
   const loading = hasil?.periode !== periode;
+  // Halaman Profitabilitas Area selalu menampilkan kolom biaya; tab WatchPoint hanya bila respons membawanya
+  // (akses penuh) — selain itu tetap revenue saja.
   const data = hasil?.data ?? null;
+  const showBiaya = tampilkanBiaya || data?.biayaTersedia === true;
   const err = loading ? null : (hasil?.err ?? null);
 
   return (
@@ -180,7 +183,7 @@ export function RevenueAreaView({ endpoint, tampilkanBiaya = false }: { endpoint
                       <TableHead className="text-right">Periode lalu</TableHead>
                       <TableHead className="text-right">Δ</TableHead>
                       <TableHead className="text-right">Porsi</TableHead>
-                      {tampilkanBiaya ? (
+                      {showBiaya ? (
                         <>
                           <TableHead className="text-right">Laba kotor</TableHead>
                           <TableHead className="text-right">Biaya operasional</TableHead>
@@ -207,7 +210,7 @@ export function RevenueAreaView({ endpoint, tampilkanBiaya = false }: { endpoint
                             <span className="w-12 tabular-nums">{r.sharePct.toFixed(1)}%</span>
                           </div>
                         </TableCell>
-                        {tampilkanBiaya ? (
+                        {showBiaya ? (
                           <>
                             <TableCell className="text-right">
                               <Rp v={r.labaKotor} />
@@ -227,7 +230,7 @@ export function RevenueAreaView({ endpoint, tampilkanBiaya = false }: { endpoint
                         ) : null}
                       </TableRow>
                     ))}
-                    {tampilkanBiaya && data.kantorPusat ? (
+                    {showBiaya && data.kantorPusat ? (
                       <TableRow className="bg-muted/40">
                         <TableCell className="font-medium">KANTOR PUSAT</TableCell>
                         <TableCell className="text-muted-foreground">—</TableCell>
@@ -255,7 +258,7 @@ export function RevenueAreaView({ endpoint, tampilkanBiaya = false }: { endpoint
             </p>
           ) : null}
 
-          {tampilkanBiaya && data.biayaTersedia ? (
+          {showBiaya && data.biayaTersedia ? (
             <div className="space-y-2">
               {data.cakupan ? (
                 <Card>
