@@ -1,8 +1,10 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
+import { ChevronRight } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
 import { ExportButton, type ExportColumn } from "@/components/ui/export-button";
 import { cn } from "@/lib/utils";
@@ -18,8 +20,12 @@ const LABEL_SARING: Record<Exclude<Saring, "semua">, string> = {
   anomali: "Dokumen kurang",
 };
 
-const kolom: DataColumn<DocRow>[] = [
-  { id: "so", header: "Sales Order", sortable: true, accessor: (r) => r.so_number },
+// Dibangun di dalam komponen (butuh onBuka) — tombol "Lihat detail" di tiap baris supaya jelas bisa dibuka.
+const buatKolom = (onBuka: (soId: number) => void): DataColumn<DocRow>[] => [
+  {
+    id: "so", header: "Sales Order", sortable: true, accessor: (r) => r.so_number,
+    cell: (r) => <span className="text-primary font-medium underline-offset-2 hover:underline">{r.so_number}</span>,
+  },
   { id: "customer", header: "Customer", sortable: true, accessor: (r) => r.customer },
   {
     id: "state", header: "State", sortable: true, accessor: (r) => STATES.indexOf(r.state),
@@ -50,6 +56,14 @@ const kolom: DataColumn<DocRow>[] = [
   },
   { id: "tanggal", header: "Tgl SO", sortable: true, searchable: false, accessor: (r) => r.tanggal },
   { id: "total", header: "Nilai SO", align: "right", sortable: true, searchable: false, accessor: (r) => r.total ?? 0, cell: (r) => rp(r.total) },
+  {
+    id: "aksi", header: "Aksi", align: "right", searchable: false,
+    cell: (r) => (
+      <Button type="button" size="sm" variant="outline" onClick={() => onBuka(r.so_id)} aria-label={`Lihat detail ${r.so_number}`}>
+        Lihat detail <ChevronRight className="size-3.5" />
+      </Button>
+    ),
+  },
 ];
 
 const kolomExport: ExportColumn<DocRow>[] = [
@@ -73,6 +87,7 @@ export function DocTrackerView({ data: awal, canEdit }: { data: DocTrackerList; 
   const [state, setState] = useState<DocState | null>(null);
   const [saring, setSaring] = useState<Saring>("semua");
   const [buka, setBuka] = useState<number | null>(null);
+  const kolom = useMemo(() => buatKolom(setBuka), []);
 
   const segarkan = useCallback(async () => {
     try {
@@ -147,7 +162,10 @@ export function DocTrackerView({ data: awal, canEdit }: { data: DocTrackerList; 
         <span className="text-muted-foreground ml-auto text-xs">{data.hari} hari terakhir · maks. 500 SO terbaru</span>
       </div>
 
-      <div className="flex justify-end">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-muted-foreground text-xs">
+          Klik baris atau tombol <strong>Lihat detail</strong> untuk melihat rantai dokumen{canEdit ? ", mencatat stempel Review/Approved, dan mengisi checklist dokumen" : ""}.
+        </p>
         <ExportButton filename="document-tracker" columns={kolomExport} data={tampil} label="Export CSV" />
       </div>
       <DataTable
