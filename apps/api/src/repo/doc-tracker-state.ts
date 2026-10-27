@@ -128,14 +128,15 @@ export function hitungState(s: Snapshot): HasilState {
   };
   const hilirAda = bukti.sent.selesai || bukti.received.selesai || bukti.executed.selesai || bukti.billed.selesai || bukti.paid.selesai || kirim + terima + bast > 0;
 
-  const stempel = (at: string | null): TahapInfo => {
+  // SO lama (stempelWajib=false): tahap stempel dianggap TERSIRAT bila ada penanda yang melampauinya — tahap hilir
+  // ada, atau (khusus Review) Approved sudah distempel. SO baru: stempel wajib, tanpa tersirat.
+  const stempel = (at: string | null, adaPenanda: boolean): TahapInfo => {
     if (at) return { selesai: true, at };
-    if (!s.stempelWajib && hilirAda) return { selesai: true, at: null, tersirat: true };
+    if (!s.stempelWajib && adaPenanda) return { selesai: true, at: null, tersirat: true };
     return { selesai: false, at: null };
   };
-  const review = stempel(s.reviewAt);
-  // Approved tanpa Review tercatat = anomali, kecuali SO lama (tersirat mengikuti hilir).
-  const approved = stempel(s.approvedAt);
+  const review = stempel(s.reviewAt, hilirAda || s.approvedAt != null);
+  const approved = stempel(s.approvedAt, hilirAda);
 
   const dokumenKurang = DOKUMEN_WAJIB.filter((j) => !s.dokumen[j]);
   const closedSelesai = bukti.paid.selesai && dokumenKurang.length === 0;

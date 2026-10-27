@@ -30,7 +30,7 @@ Unit = satu **Sales Order Accurate**. State **tidak disimpan**; dihitung dari da
 ## Aturan
 - State = tahap **berurutan** terjauh yang buktinya lengkap. Bukti di tahap lebih jauh tanpa tahap sebelumnya = **anomali "dokumen kurang"** (mis. Billed tanpa BAST).
 - Kirim bertahap (banyak SJ/faktur): tahap pengiriman = yang **terendah** di antara semua SJ; Paid = semua faktur lunas. Hitungan (SJ x, BAST y, faktur lunas z) ditampilkan.
-- **SO lama** (tanggal < `DOC_TRACKER_STEMPEL_MULAI`, default 2026-11-01): Review/Approved dianggap **tersirat** bila tahap hilir ada — kalau tidak, semua SO lama tampil "Draft" dengan anomali palsu. SO baru: stempel wajib; Approved butuh Review (409 bila tidak).
+- **SO lama** (tanggal < `DOC_TRACKER_STEMPEL_MULAI`, default 2026-11-01): Review/Approved dianggap **tersirat** bila tahap hilir ada (Review juga tersirat bila Approved sudah distempel) — kalau tidak, semua SO lama tampil "Draft" dengan anomali palsu. SO baru: stempel wajib; Approved butuh Review (409 bila tidak).
 - **Billing-at-risk** = Executed (BAST ada) **dan** belum ada faktur lebih dari N hari sejak BAST (`DOC_TRACKER_BILLING_HARI`, default 3). **Penanda saja** — tanpa HOLD/release, tanpa WA (keputusan user; definisi "Faktur HOLD" belum ditetapkan Direktur/Husni).
 - TTF sengaja tidak dilacak (keputusan Direktur di F12/F42/F31). Kontrak customer (siklus lebih lebar) di luar scope v1; kontrak KSO sudah di F47.
 

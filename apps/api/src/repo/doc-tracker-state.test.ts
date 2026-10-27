@@ -95,6 +95,16 @@ test("SO lama (stempelWajib=false): Review/Approved tersirat bila hilir ada, dit
   assert.equal(kosong.tahap.review.selesai, false);
 });
 
+test("SO lama: Approved distempel tanpa Review → Review tersirat, state Approved, tanpa anomali; SO baru → anomali", () => {
+  const lama = hitungState(snap({ stempelWajib: false, approvedAt: "2026-11-03T03:00:00Z" }));
+  assert.equal(lama.state, "approved");
+  assert.equal(lama.tahap.review.tersirat, true);
+  assert.deepEqual(lama.anomali, []);
+  const baru = hitungState(snap({ approvedAt: "2026-11-03T03:00:00Z" }));
+  assert.equal(baru.state, "draft");
+  assert.deepEqual(baru.anomali, ["Approved tercatat tetapi Review belum"]);
+});
+
 test("SO baru (stempelWajib=true): kirim tanpa Review/Approved = anomali, state tetap Draft", () => {
   const r = hitungState(snap({ sj: [sj({ kirimAt: "2026-11-04T03:00:00Z" })] }));
   assert.equal(r.state, "draft");
