@@ -94,11 +94,16 @@ interface BarisBiaya {
   accurate_last_update: string | null;
 }
 
-const namaDept = (x: Doc, h: Doc): string | null => {
-  const v = x?.department?.name ?? x?.departmentName ?? h?.department?.name ?? h?.departmentName ?? null;
-  const s = oneLine(v);
-  return s && s !== "-" ? s : null;
+// Nama field Departemen di respons Accurate BELUM pernah terlihat (probe #2: departemen kosong di semua
+// sampel), jadi dibaca defensif: objek {name}, string, atau *Name di baris lalu header. "-" = kosong.
+// Kalau nanti Accounting mengisi Departemen tapi area tetap tak terbaca, periksa kunci ini lebih dulu.
+const teksDept = (v: unknown): string | null => {
+  const t = oneLine(v && typeof v === "object" ? ((v as Doc).name ?? (v as Doc).nama ?? "") : v);
+  return t && t !== "-" ? t : null;
 };
+export const namaDept = (x: Doc, h: Doc): string | null =>
+  teksDept(x?.department) ?? teksDept(x?.departmentName) ?? teksDept(x?.departemen) ??
+  teksDept(h?.department) ?? teksDept(h?.departmentName) ?? teksDept(h?.departemen);
 
 /** other-payment detail → baris biaya (murni; diuji). */
 export function barisOtherPayment(h: Doc, akunById: Map<number, { no: string; name: string }>, lastUpdate: string | null): BarisBiaya[] {

@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { barisOtherPayment, barisPurchaseInvoice } from "./biaya-area-sync.js";
+import { barisOtherPayment, barisPurchaseInvoice, namaDept } from "./biaya-area-sync.js";
 
 const akun = new Map([
   [1, { no: "6200-02", name: "BBM, TOL, PARKIR" }],
@@ -33,4 +33,14 @@ test("purchase-invoice: detailExpense, vendor jadi payee, jumlah dari expenseAmo
 
 test("dokumen tanpa tanggal/id valid → kosong", () => {
   assert.deepEqual(barisOtherPayment({ id: 0, transDate: "x", detailAccount: [{ accountId: 1, amount: 1 }] }, akun, null), []);
+});
+
+test("namaDept: objek, string, *Name, header sebagai cadangan; '-' & kosong → null; baris menang atas header", () => {
+  assert.equal(namaDept({ department: { name: "KEDIRI" } }, {}), "KEDIRI");
+  assert.equal(namaDept({ department: "MALANG" }, {}), "MALANG");
+  assert.equal(namaDept({ departmentName: "BALI" }, {}), "BALI");
+  assert.equal(namaDept({}, { department: { name: "NTB" } }), "NTB");
+  assert.equal(namaDept({ department: { name: "KEDIRI" } }, { department: { name: "NTB" } }), "KEDIRI");
+  assert.equal(namaDept({ department: { name: "-" } }, { departmentName: "  " }), null);
+  assert.equal(namaDept(undefined, undefined), null);
 });
