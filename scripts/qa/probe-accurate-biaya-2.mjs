@@ -131,7 +131,7 @@ console.log(`   sampel terbaca: ${opDocs.length}`);
 if (opDocs.length) {
   const lines = opDocs.flatMap((d) => (Array.isArray(d.detailAccount) ? d.detailAccount.map((l) => ({ d, l })) : []));
   console.log(`   baris biaya (detailAccount) di sampel: ${lines.length}`);
-  show("header: branchId", tally((x) => x.d.branchId ?? "(kosong)", opDocs));
+  show("header: branchId", tally((x) => x.branchId ?? "(kosong)", opDocs));
   show("header: payee terisi?", tally((x) => (filled(x.payee) ? "ya" : "tidak"), opDocs));
   show("header: description terisi?", tally((x) => (filled(x.description) ? "ya" : "tidak"), opDocs));
   show("baris: departemen terisi?", tally((x) => (filled(x.l.departmentId) ? "ya" : "tidak"), lines));
