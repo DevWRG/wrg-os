@@ -12,6 +12,12 @@ import { KETERANGAN_STATE, LABEL_STATE, STATES, ambil, rp, type DocRow, type Doc
 
 type Saring = "semua" | "dikirim_belum_dibayar" | "billing" | "anomali";
 
+const LABEL_SARING: Record<Exclude<Saring, "semua">, string> = {
+  dikirim_belum_dibayar: "Dikirim, belum dibayar",
+  billing: "Berisiko ditagih",
+  anomali: "Dokumen kurang",
+};
+
 const kolom: DataColumn<DocRow>[] = [
   { id: "so", header: "Sales Order", sortable: true, accessor: (r) => r.so_number },
   { id: "customer", header: "Customer", sortable: true, accessor: (r) => r.customer },
@@ -80,34 +86,62 @@ export function DocTrackerView({ data: awal, canEdit }: { data: DocTrackerList; 
     .filter((r) => (state ? r.state === state : true))
     .filter((r) => (saring === "dikirim_belum_dibayar" ? r.dikirim_belum_dibayar : saring === "billing" ? r.billing_risiko : saring === "anomali" ? r.anomali.length > 0 : true));
   const chip = (aktif: boolean) =>
-    cn("rounded-md border px-3 py-1.5 text-sm", aktif ? "border-primary bg-primary text-primary-foreground" : "bg-card hover:bg-accent");
+    cn("cursor-pointer rounded-md border px-3 py-1.5 text-sm", aktif ? "border-primary bg-primary text-primary-foreground" : "bg-card hover:bg-accent");
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-3 gap-2 sm:grid-cols-5 lg:grid-cols-9">
-        {STATES.map((s) => (
-          <button
-            key={s} type="button" onClick={() => setState(state === s ? null : s)}
-            className={cn("rounded-lg border p-2 text-left", state === s ? "border-primary bg-primary/5" : "bg-card hover:bg-accent")}
-            title={KETERANGAN_STATE[s]}
-          >
-            <div className="text-muted-foreground text-[11px] font-medium">{LABEL_STATE[s]}</div>
-            <div className="text-xl font-semibold tabular-nums">{data.funnel[s]}</div>
+      <section className="space-y-2">
+        <div className="flex flex-wrap items-baseline justify-between gap-x-3">
+          <h3 className="text-sm font-semibold">Tahap transaksi</h3>
+          <span className="text-muted-foreground text-xs">Klik salah satu tahap untuk menyaring tabel di bawah · klik lagi untuk membatalkan</span>
+        </div>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-9">
+          {STATES.map((s, i) => {
+            const aktif = state === s;
+            const n = data.funnel[s];
+            return (
+              <button
+                key={s} type="button" aria-pressed={aktif} onClick={() => setState(aktif ? null : s)}
+                className={cn(
+                  "cursor-pointer rounded-lg border p-2.5 text-left transition-colors focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none",
+                  aktif ? "border-primary bg-primary/10 ring-1 ring-primary" : "bg-card hover:border-primary/60 hover:bg-accent",
+                  n === 0 && !aktif && "opacity-60",
+                )}
+              >
+                <div className="text-muted-foreground flex items-center gap-1 text-[11px] font-medium">
+                  <span className="bg-muted inline-flex size-4 items-center justify-center rounded-full text-[10px]">{i + 1}</span>
+                  {LABEL_STATE[s]}
+                </div>
+                <div className="text-xl font-semibold tabular-nums">{n}</div>
+                <div className="text-muted-foreground text-[11px] leading-tight">{KETERANGAN_STATE[s]}</div>
+              </button>
+            );
+          })}
+        </div>
+      </section>
+
+      {(state || saring !== "semua") && (
+        <div className="border-primary/40 bg-primary/5 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border px-3 py-2 text-sm">
+          <span>
+            Menampilkan <strong className="tabular-nums">{tampil.length}</strong> dari {data.ringkas.total} transaksi
+          </span>
+          {state && <Badge variant="secondary">Tahap: {LABEL_STATE[state]}</Badge>}
+          {saring !== "semua" && <Badge variant="secondary">{LABEL_SARING[saring]}</Badge>}
+          <button type="button" onClick={() => { setState(null); setSaring("semua"); }} className="ml-auto cursor-pointer underline underline-offset-2">
+            Hapus filter
           </button>
-        ))}
-      </div>
+        </div>
+      )}
 
       <div className="flex flex-wrap items-center gap-2">
-        <button type="button" onClick={() => setSaring("semua")} className={chip(saring === "semua")}>
-          Semua <span className="tabular-nums">{data.ringkas.total}</span>
-        </button>
-        <button type="button" onClick={() => setSaring(saring === "dikirim_belum_dibayar" ? "semua" : "dikirim_belum_dibayar")} className={chip(saring === "dikirim_belum_dibayar")}>
+        <span className="text-muted-foreground text-xs font-medium">Perlu perhatian:</span>
+        <button type="button" aria-pressed={saring === "dikirim_belum_dibayar"} onClick={() => setSaring(saring === "dikirim_belum_dibayar" ? "semua" : "dikirim_belum_dibayar")} className={chip(saring === "dikirim_belum_dibayar")}>
           Dikirim, belum dibayar <span className="tabular-nums">{data.ringkas.dikirim_belum_dibayar}</span>
         </button>
-        <button type="button" onClick={() => setSaring(saring === "billing" ? "semua" : "billing")} className={chip(saring === "billing")}>
+        <button type="button" aria-pressed={saring === "billing"} onClick={() => setSaring(saring === "billing" ? "semua" : "billing")} className={chip(saring === "billing")}>
           Berisiko ditagih (&gt; {data.hari_billing_risiko} hari sejak BAST) <span className="tabular-nums">{data.ringkas.billing_risiko}</span>
         </button>
-        <button type="button" onClick={() => setSaring(saring === "anomali" ? "semua" : "anomali")} className={chip(saring === "anomali")}>
+        <button type="button" aria-pressed={saring === "anomali"} onClick={() => setSaring(saring === "anomali" ? "semua" : "anomali")} className={chip(saring === "anomali")}>
           Dokumen kurang <span className="tabular-nums">{data.ringkas.anomali}</span>
         </button>
         <span className="text-muted-foreground ml-auto text-xs">{data.hari} hari terakhir · maks. 500 SO terbaru</span>
