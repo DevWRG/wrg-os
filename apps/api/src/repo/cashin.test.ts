@@ -9,6 +9,8 @@ import {
   cocokLabelFile,
   parseNihil,
   parseTriage,
+  parsePerintahTriage,
+  saranTriageTanpaHashtag,
   formatDraftKonfirmasi,
   formatIngatanBelumLengkap,
   formatIngatanKonfirmasi,
@@ -452,6 +454,49 @@ test("kategori tak dikenal DIBEDAKAN dari bukan-perintah", () => {
   assert.equal(parseTriage("#KORAN mandiri 18/9/2026"), null);
   assert.equal(parseTriage("triage T1 uang masuk"), null, "tanpa hashtag bukan perintah");
   assert.equal(parseTriage(null), null);
+});
+
+test("triage menerima rentang, daftar, dan banyak baris dalam satu pesan", () => {
+  // 29 Okt 2026: Finance perlu memutuskan T2–T8 sebagai puteran; parser lama
+  // hanya membaca satu kode dari baris pertama.
+  const t2t8 = ["T2", "T3", "T4", "T5", "T6", "T7", "T8"];
+  assert.deepEqual(parsePerintahTriage("#KORAN triage T2-T8 puteran"), [
+    { kode: t2t8, kategori: "puteran_internal", spek: "T2-T8" },
+  ]);
+  assert.deepEqual(parsePerintahTriage("#KORAN triage T2 - T8 puteran")[0].kode, t2t8);
+  assert.deepEqual(parsePerintahTriage("#KORAN triage T2-8 puteran")[0].kode, t2t8);
+  assert.deepEqual(parsePerintahTriage("#KORAN triage T2 sd T4 bunga")[0].kode, ["T2", "T3", "T4"]);
+  assert.deepEqual(parsePerintahTriage("#KORAN triage T2, T5 dan T7 refund")[0].kode, ["T2", "T5", "T7"]);
+  const banyak = parsePerintahTriage("#KORAN triage T1 uang masuk\n#KORAN triage T2-T3 puteran");
+  assert.equal(banyak.length, 2);
+  assert.deepEqual(banyak[0], { kode: ["T1"], kategori: "uang_masuk_riil", spek: "T1" });
+  assert.deepEqual(banyak[1].kode, ["T2", "T3"]);
+});
+
+test("triage: ejaan putaran & kata pengantar diterima, tanpa merusak 'masuk'", () => {
+  assert.equal(parseTriage("#KORAN triage T2 putaran")?.kategori, "puteran_internal");
+  assert.equal(parseTriage("#KORAN triage T2 putaran internal")?.kategori, "puteran_internal");
+  assert.equal(parseTriage("#KORAN triage T2 putar'an")?.kategori, "puteran_internal");
+  assert.equal(parseTriage("#KORAN triage T2 Masuk putaran internal")?.kategori, "puteran_internal");
+  assert.equal(parseTriage("#KORAN triage T2 jadi bunga")?.kategori, "bunga");
+  assert.equal(parseTriage("#KORAN triage T2 masuk")?.kategori, "uang_masuk_riil");
+  assert.equal(parseTriage("#KORAN triage T2 uang masuk")?.kategori, "uang_masuk_riil");
+});
+
+test("triage: rentang terbalik/terlalu lebar ditolak, bukan memutuskan ratusan baris", () => {
+  assert.deepEqual(parsePerintahTriage("#KORAN triage T8-T2 puteran"), []);
+  assert.deepEqual(parsePerintahTriage("#KORAN triage T1-T200 puteran"), []);
+});
+
+test("triage tanpa #KORAN dibalas contoh perintah yang benar", () => {
+  assert.equal(
+    saranTriageTanpaHashtag("untuk triage T2 - T8 Masuk putaran internal"),
+    "#KORAN triage T2-T8 puteran",
+  );
+  assert.equal(saranTriageTanpaHashtag("triage T3"), "#KORAN triage T3 KATEGORI");
+  assert.equal(saranTriageTanpaHashtag("#KORAN triage T3 bunga"), null, "yang sudah benar tak diusik");
+  assert.equal(saranTriageTanpaHashtag("ya R40"), null);
+  assert.equal(saranTriageTanpaHashtag("tolong triage dulu ya"), null, "tanpa kode T bukan perintah");
 });
 
 test("draft menunjukkan jembatan kredit koran → uang masuk", () => {
