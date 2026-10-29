@@ -21,8 +21,8 @@ import {
   kataKategoriTersedia,
   nyatakanNihil,
   parseNihil,
-  parseTriage,
-  triageDariWa,
+  parsePerintahTriage,
+  triageBanyakDariWa,
   type IngestKoranResult,
 } from "./cashin.js";
 import { createTicket, isKnownTeknisiSender } from "./serviceticket.js";
@@ -1772,30 +1772,37 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
     // Diport dari main (#1348): bagian inbound.ts-nya tak pernah sampai ke dev,
     // padahal Finance memakainya tiap hari di prod. Tanpa port ini promosi
     // dev → main menghapus triage WA dari prod.
-    const triage = parseTriage(row.body);
-    if (triage) {
+    // Satu pesan boleh memuat beberapa baris perintah, dan tiap baris boleh
+    // menyebut rentang/daftar kode ("#KORAN triage T2-T8 puteran").
+    const perintahTriage = parsePerintahTriage(row.body);
+    if (perintahTriage.length > 0) {
       const oleh = String(row.sender_name ?? "").trim() || "Finance";
-      if (triage.kategori === null) {
-        const reply = await sendViaWaGateway(
-          target,
-          `⚠️ Kategori tidak dikenali. Pakai salah satu: ${kataKategoriTersedia()}.\nContoh: *#KORAN triage ${triage.kode} uang masuk*`,
-        );
-        return finish({ error: "kategori-tak-dikenal", reply }, "koran");
-      }
-      const r = await triageDariWa(triage.kode, triage.kategori, oleh);
       const rp = (n: number) => "Rp " + Math.round(n).toLocaleString("id-ID");
-      const reply = await sendViaWaGateway(
-        target,
-        r.ok
-          ? [
-              `✅ ${triage.kode} (${r.label_file} ${rp(r.nominal ?? 0)}) ditetapkan sebagai *${r.kategori}* oleh ${oleh}. Angka resume sudah disegarkan.`,
-              r.dipasangkan_dengan ? `Dipasangkan dengan debit ${r.dipasangkan_dengan}.` : null,
-            ]
-              .filter(Boolean)
-              .join("\n")
-          : `⚠️ ${r.error}`,
-      );
-      return finish({ triage: r, reply }, "koran");
+      const baris: string[] = [];
+      const hasilSemua: unknown[] = [];
+      for (const p of perintahTriage) {
+        if (p.kategori === null) {
+          baris.push(
+            `⚠️ ${p.spek}: kategori tidak dikenali. Pakai salah satu: ${kataKategoriTersedia()}.\nContoh: *#KORAN triage ${p.spek} uang masuk*`,
+          );
+          hasilSemua.push({ spek: p.spek, error: "kategori-tak-dikenal" });
+          continue;
+        }
+        const hasil = await triageBanyakDariWa(p.kode, p.kategori, oleh);
+        hasilSemua.push(...hasil);
+        for (const r of hasil) {
+          baris.push(
+            r.ok
+              ? `✅ ${r.kode} (${r.label_file} ${rp(r.nominal ?? 0)}) → *${r.kategori}*` +
+                  (r.dipasangkan_dengan ? ` · pasangan debit ${r.dipasangkan_dengan}` : "")
+              : `⚠️ ${r.error}`,
+          );
+        }
+      }
+      const adaBerhasil = hasilSemua.some((h) => (h as { ok?: boolean }).ok);
+      if (adaBerhasil) baris.push(`Ditetapkan oleh ${oleh}. Angka resume sudah disegarkan.`);
+      const reply = await sendViaWaGateway(target, baris.join("\n"));
+      return finish({ triage: hasilSemua, reply }, "koran");
     }
 
     // Pernyataan "hari ini nihil" — TANPA lampiran, dan itu memang bentuknya:
