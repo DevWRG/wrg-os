@@ -1811,6 +1811,16 @@ export async function scanKonfirmasiResume(): Promise<ScanKonfirmasiResult> {
     const keputusan = parseKeputusanResume(body);
 
     if (!keputusan) {
+      const saran = saranTriageTanpaHashtag(body);
+      if (saran) {
+        hasil.mirip++;
+        await sendViaWaGateway(
+          String(m.group_jid),
+          `⚠️ Perintah triage belum tercatat — wajib diawali #KORAN. Kirim:\n*${saran}*\nKategori: ${kataKategoriTersedia()}.`,
+        );
+        await tandaiSeen(id, "mirip-triage");
+        continue;
+      }
       if (miripKeputusanResume(body)) {
         hasil.mirip++;
         const daftar = draft
@@ -1880,7 +1890,9 @@ async function tandaiSeen(messageId: string, status: string): Promise<void> {
  *  untuk tiap kategori: yang mengetik manusia di HP, bukan API. */
 const KATA_KATEGORI: Array<[RegExp, Kategori]> = [
   [/^(uang\s*masuk|masuk|penerimaan|riil)$/i, "uang_masuk_riil"],
-  [/^(puteran|internal|pindah\s*buku|mutasi\s*internal)$/i, "puteran_internal"],
+  // "putaran"/"putar'an" ikut diterima: begitu Finance mengetiknya di grup
+  // 29 Okt 2026, dan perintahnya jatuh senyap.
+  [/^(put[ae]r'?an(\s*internal)?|internal|pindah\s*buku|mutasi\s*internal)$/i, "puteran_internal"],
   [/^(afiliasi|grup|afiliasi\s*grup)$/i, "afiliasi_grup"],
   [/^(bunga|jasa\s*giro)$/i, "bunga"],
   [/^(deposito|fd)$/i, "deposito"],
@@ -1894,21 +1906,104 @@ export interface PerintahTriage {
   kategori: Kategori;
 }
 
-/** Baca "#KORAN triage T1 uang masuk". Mengembalikan null kalau bukan perintah
- *  triage; kategori tak dikenal dibedakan dari bukan-perintah lewat field
- *  `kategori: null` supaya pemanggil bisa membalas panduan, bukan diam. */
-export function parseTriage(body: string | null): PerintahTriage | { kode: string; kategori: null } | null {
-  if (!body) return null;
-  for (const b of body.split(/\r?\n/)) {
-    const m = b.match(/#\s*koran\b[\s:]*triage\s+(T\d+)\s+(.+)$/i);
-    if (!m) continue;
-    const kode = m[1].toUpperCase();
-    const kata = m[2].trim().replace(/\s+/g, " ");
-    const cocok = KATA_KATEGORI.find(([re]) => re.test(kata));
-    return cocok ? { kode, kategori: cocok[1] } : { kode, kategori: null };
+/** Batas kode per perintah. Rentang dari salah ketik ("T2-T200") jangan
+ *  sampai memutuskan ratusan baris sekaligus. */
+const MAKS_KODE_PER_PERINTAH = 30;
+
+/** "T2" · "T2-T8" · "T2 - 8" · "T2 sd T8" · "T2,T3 dan T5" → daftar kode.
+ *  null kalau rentangnya terbalik atau melebihi batas. */
+function uraikanKodeTriage(spek: string): string[] | null {
+  const kode: string[] = [];
+  const bagian = spek.split(/\s*(?:,|&|\bdan\b)\s*/i).filter(Boolean);
+  for (const b of bagian) {
+    const m = b.match(/^T(\d+)(?:\s*(?:-|–|—|s\.?\s*d\.?|sampai)\s*T?(\d+))?$/i);
+    if (!m) return null;
+    const dari = Number(m[1]);
+    const ke = m[2] != null ? Number(m[2]) : dari;
+    if (ke < dari || ke - dari + 1 > MAKS_KODE_PER_PERINTAH) return null;
+    for (let n = dari; n <= ke; n++) kode.push(`T${n}`);
   }
-  return null;
+  const unik = [...new Set(kode)];
+  return unik.length > 0 && unik.length <= MAKS_KODE_PER_PERINTAH ? unik : null;
 }
+
+/** Kata pengantar yang biasa diketik sebelum kategori: "T2 masuk puteran",
+ *  "T3 jadi bunga", "T4 = pengeluaran". Dibuang hanya kalau sisanya kategori
+ *  yang dikenal — "masuk" saja tetap berarti uang masuk. */
+const RE_PENGANTAR_KATEGORI = /^(?:masuk(?:\s+ke)?|jadi|sebagai|adalah|termasuk|=|:)\s+/i;
+
+function kategoriDariKata(kata: string): Kategori | null {
+  const k = kata.trim().replace(/\s+/g, " ");
+  const cocok = KATA_KATEGORI.find(([re]) => re.test(k));
+  if (cocok) return cocok[1];
+  const tanpa = k.replace(RE_PENGANTAR_KATEGORI, "");
+  if (tanpa === k) return null;
+  return KATA_KATEGORI.find(([re]) => re.test(tanpa))?.[1] ?? null;
+}
+
+// Spek kode: T<n> diikuti rentang/daftar. Rentang boleh tanpa "T" di ujung
+// ("T2-8"), daftar wajib ber-T ("T2,T3") supaya angka di kategori tak tersedot.
+const RE_SPEK_KODE = String.raw`T\d+(?:\s*(?:-|–|—|s\.?\s*d\.?|sampai)\s*T?\d+)?(?:\s*(?:,|&|\bdan\b)\s*T\d+(?:\s*(?:-|–|—|s\.?\s*d\.?|sampai)\s*T?\d+)?)*`;
+const RE_PERINTAH_TRIAGE = new RegExp(String.raw`#\s*koran\b[\s:]*triage\s+(${RE_SPEK_KODE})\s+(.+)$`, "i");
+
+export interface PerintahTriageBanyak {
+  kode: string[];
+  /** null = kategori tak dikenal → pemanggil membalas panduan, bukan diam. */
+  kategori: Kategori | null;
+  /** Spek kode seperti diketik, untuk dikutip di pesan panduan. */
+  spek: string;
+}
+
+/** Baca SEMUA perintah triage dalam satu pesan — satu per baris, dan tiap baris
+ *  boleh menyebut rentang/daftar kode ("#KORAN triage T2-T8 puteran").
+ *  Sebelum 29 Okt 2026 hanya satu kode dari baris pertama yang dibaca, jadi
+ *  memutuskan tujuh baris puteran butuh tujuh pesan. */
+export function parsePerintahTriage(body: string | null): PerintahTriageBanyak[] {
+  if (!body) return [];
+  const hasil: PerintahTriageBanyak[] = [];
+  for (const b of body.split(/\r?\n/)) {
+    const m = b.trim().match(RE_PERINTAH_TRIAGE);
+    if (!m) continue;
+    const spek = m[1].trim();
+    const kode = uraikanKodeTriage(spek);
+    if (!kode) continue;
+    hasil.push({ kode, kategori: kategoriDariKata(m[2]), spek: spek.toUpperCase().replace(/\s+/g, "") });
+  }
+  return hasil;
+}
+
+/** Bentuk lama (satu kode) — dipertahankan untuk pemanggil & tes yang ada. */
+export function parseTriage(body: string | null): PerintahTriage | { kode: string; kategori: null } | null {
+  const p = parsePerintahTriage(body)[0];
+  if (!p) return null;
+  return p.kategori ? { kode: p.kode[0], kategori: p.kategori } : { kode: p.kode[0], kategori: null };
+}
+
+/** Pesan yang JELAS bermaksud triage tapi tanpa "#KORAN" ("untuk triage T2 -
+ *  T8 masuk putaran internal", 29 Okt 2026). Pipeline hashtag tak pernah
+ *  melihatnya, jadi tanpa ini perintahnya senyap dan Finance mengira sudah
+ *  tercatat. Mengembalikan contoh perintah yang benar, atau null. */
+export function saranTriageTanpaHashtag(body: string | null): string | null {
+  if (!body || /#\s*koran\b/i.test(body)) return null;
+  const m = body.match(new RegExp(String.raw`\btriage\s+(${RE_SPEK_KODE})(?:\s+(.+))?`, "i"));
+  if (!m) return null;
+  const spek = m[1].toUpperCase().replace(/\s+/g, "");
+  const kat = m[2] ? kategoriDariKata(m[2].split(/\r?\n/)[0]) : null;
+  const kata = kat ? KATA_UNTUK_KATEGORI[kat] : "KATEGORI";
+  return `#KORAN triage ${spek} ${kata}`;
+}
+
+/** Kata kanonik per kategori — untuk menyusun contoh perintah. */
+const KATA_UNTUK_KATEGORI: Record<string, string> = {
+  uang_masuk_riil: "uang masuk",
+  puteran_internal: "puteran",
+  afiliasi_grup: "afiliasi",
+  bunga: "bunga",
+  deposito: "deposito",
+  refund: "refund",
+  biaya_pajak: "pajak",
+  pengeluaran: "pengeluaran",
+};
 
 /** Daftar kata yang diterima — dipakai di pesan bantuan supaya orang tak
  *  menebak-nebak. */
@@ -1924,6 +2019,8 @@ export interface TriageWaResult {
   kategori?: string;
   /** Label rekening debit yang dipasangkan, kalau diputuskan 'puteran_internal'. */
   dipasangkan_dengan?: string;
+  /** Tanggal koran baris itu (YYYY-MM-DD). */
+  tanggal?: string;
 }
 
 /** Finance memutuskan sebuah baris adalah puteran → pasangkan dengan sisi
@@ -1978,6 +2075,27 @@ async function pasangkanSesudahTriage(lineId: string): Promise<string | null> {
  *  sama (lihat beriKodeTriage), supaya balasan yang datang terlambat tak
  *  mengenai baris lain. */
 export async function triageDariWa(kode: string, kategori: Kategori, oleh: string): Promise<TriageWaResult> {
+  const r = await terapkanTriage(kode, kategori, oleh);
+  if (r.ok && r.tanggal) await segarkanDraftSesudahTriage(r.tanggal, kode);
+  return r;
+}
+
+/** Beberapa kode sekaligus ("#KORAN triage T2-T8 puteran"). Draft disegarkan
+ *  SEKALI per tanggal di akhir — kalau per kode, tujuh keputusan mengirim
+ *  tujuh draft "DIPERBARUI" berturut-turut ke grup. */
+export async function triageBanyakDariWa(
+  kode: string[],
+  kategori: Kategori,
+  oleh: string,
+): Promise<Array<TriageWaResult & { kode: string }>> {
+  const hasil: Array<TriageWaResult & { kode: string }> = [];
+  for (const k of kode) hasil.push({ ...(await terapkanTriage(k, kategori, oleh)), kode: k });
+  const tanggal = [...new Set(hasil.filter((h) => h.ok && h.tanggal).map((h) => h.tanggal as string))];
+  for (const t of tanggal) await segarkanDraftSesudahTriage(t, kode.join(","));
+  return hasil;
+}
+
+async function terapkanTriage(kode: string, kategori: Kategori, oleh: string): Promise<TriageWaResult> {
   const sql = db();
   const [row] = await sql`
     SELECT l.id, l.kredit::numeric AS nominal, a.label_file, to_char(s.tanggal, 'YYYY-MM-DD') AS tanggal
@@ -1996,20 +2114,24 @@ export async function triageDariWa(kode: string, kategori: Kategori, oleh: strin
     WHERE id = ${String(row.id)}
   `;
   const dipasangkan = kategori === "puteran_internal" ? await pasangkanSesudahTriage(String(row.id)) : null;
-  // Resume tanggal itu ikut berubah → teks draftnya disegarkan kalau masih
-  // menunggu konfirmasi. Tanpa ini Finance menyetujui angka lama.
-  try {
-    await buatDraftJikaLengkap(String(row.tanggal), null, { paksa: true });
-  } catch (e) {
-    console.error(`[cashin] segarkan draft sesudah triage ${kode} gagal:`, e);
-  }
   return {
     ok: true,
     label_file: String(row.label_file),
     nominal: Number(row.nominal),
     kategori,
     dipasangkan_dengan: dipasangkan ?? undefined,
+    tanggal: String(row.tanggal),
   };
+}
+
+/** Resume tanggal itu ikut berubah → teks draftnya disegarkan kalau masih
+ *  menunggu konfirmasi. Tanpa ini Finance menyetujui angka lama. */
+async function segarkanDraftSesudahTriage(tanggal: string, kode: string): Promise<void> {
+  try {
+    await buatDraftJikaLengkap(tanggal, null, { paksa: true });
+  } catch (e) {
+    console.error(`[cashin] segarkan draft sesudah triage ${kode} gagal:`, e);
+  }
 }
 
 // ── job harian ───────────────────────────────────────────────────────────────
