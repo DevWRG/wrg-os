@@ -59,6 +59,7 @@ import { canViewDirekturInbox } from "@/lib/direktur-inbox-access";
 import { canViewReportLibrary } from "@/lib/report-library";
 import { canViewKohort } from "@/lib/kohort-access";
 import { canViewTukarFaktur } from "@/lib/tukar-faktur-access";
+import { canViewDocTracker } from "@/lib/doc-tracker-access";
 import { canViewRaportList } from "@/lib/raport-access";
 import { canViewExecutive } from "@/lib/executive-access";
 import { canBukaDaftarAlat, canViewKso } from "@/lib/kso-access";
@@ -379,6 +380,8 @@ export const NAV: NavGroup[] = [
       { title: "Kurir Performance", url: "/courier-performance", icon: Route, badge: "NEW" },
       { title: "Spesifikasi Cetak Dokumen", url: "/print-spec", icon: Printer, badge: "NEW" },
       { title: "Tracking Pengiriman", url: "/shipment-tracking", icon: Route, badge: "NEW" },
+      // DOC — rekap dokumen per transaksi (9 state: Draft → … → Closed), dihitung dari SO/SJ/BAST/faktur.
+      { title: "Document Tracker", url: "/doc-tracker", icon: FileCheck2, badge: "NEW", show: canViewDocTracker },
       // F45 — rencana trip kurir + cek H-1 (libur & PIC). Beda dari Shipments
       // (mirror delivery-order Accurate, sudah terjadi): ini jadwal KE DEPAN.
       { title: "Jadwal Kirim-Tagih", url: "/pickup-plan", icon: CalendarCheck, badge: "NEW" },

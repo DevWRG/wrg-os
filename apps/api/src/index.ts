@@ -265,6 +265,10 @@ import { namaFileTabelPdf, tabelPdf, tabelPdfGabungan } from "./repo/tabel-pdf.j
 import { adalahKeyLaporan, pratinjau as pratinjauLaporan, susunLaporan } from "./repo/report-library.js";
 import { listDirekturInbox, runDirekturInbox } from "./repo/direktur-inbox.js";
 import { TukarFakturError, listKalenderKlinik, listTukarFaktur, parseBulan, parseHari } from "./repo/tukar-faktur.js";
+import {
+  DocTrackerError, cabutStempel, getDocTracker, lepasFaktur, listDocTracker, parseHari as parseHariDoc, parseSoId, parseState,
+  setDokumen, stampTahap, tautkanFaktur,
+} from "./repo/doc-tracker.js";
 import { getPmfScorecard } from "./repo/pmf-scorecard.js";
 import { getSoPacing, runSoPacingAlert } from "./repo/so-pacing.js";
 import { listBriefingMingguan, runWeeklyBriefing } from "./repo/weekly-briefing.js";
@@ -2900,6 +2904,107 @@ app.post("/sales/so-pacing/run", async (c) => {
 app.get("/direktur-inbox", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json(await listDirekturInbox());
+});
+
+// DOC — Document Tracker 9-state (Draft → Review → Approved → Sent → Received → Executed → Billed → Paid → Closed).
+// State dihitung dari mirror Accurate + shipment_tracking; hanya stempel Review/Approved, checklist ttd dan tautan
+// faktur yang ditulis. Izin & identitas pemberi stempel (`by`) ditentukan BFF dari SESI. Param salah → 400,
+// SO tak ada → 404, urutan salah → 409, tabel belum ada (42P01) → 503 migration_pending.
+const docTrackerError = (c: Context, e: unknown) => {
+  if (e instanceof DocTrackerError) return c.json({ error: e.message }, e.status as 400);
+  if ((e as { code?: string })?.code === "42P01") return c.json({ error: "migration_pending" }, 503);
+  throw e;
+};
+const bodyDocTracker = async (c: Context): Promise<Record<string, unknown>> => {
+  try {
+    const b = await c.req.json();
+    return b && typeof b === "object" ? (b as Record<string, unknown>) : {};
+  } catch {
+    throw new DocTrackerError(400, "body bukan JSON");
+  }
+};
+
+app.get("/doc-tracker", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    return c.json(
+      await listDocTracker({
+        hari: parseHariDoc(c.req.query("hari")),
+        state: parseState(c.req.query("state")),
+        q: c.req.query("q"),
+        billingRisiko: c.req.query("billing") === "1",
+        dikirimBelumDibayar: c.req.query("dikirim_belum_dibayar") === "1",
+      }),
+    );
+  } catch (e) {
+    return docTrackerError(c, e);
+  }
+});
+
+app.get("/doc-tracker/:soId", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    return c.json(await getDocTracker(parseSoId(c.req.param("soId"))));
+  } catch (e) {
+    return docTrackerError(c, e);
+  }
+});
+
+app.post("/doc-tracker/:soId/stamp", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const b = await bodyDocTracker(c);
+    await stampTahap(parseSoId(c.req.param("soId")), b.tahap as "review" | "approved", String(b.by ?? ""), b.catatan == null ? null : String(b.catatan));
+    return c.json({ ok: true });
+  } catch (e) {
+    return docTrackerError(c, e);
+  }
+});
+
+app.post("/doc-tracker/:soId/stamp/cabut", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const b = await bodyDocTracker(c);
+    if (b.tahap !== "review" && b.tahap !== "approved") throw new DocTrackerError(400, "tahap harus review atau approved");
+    await cabutStempel(parseSoId(c.req.param("soId")), b.tahap);
+    return c.json({ ok: true });
+  } catch (e) {
+    return docTrackerError(c, e);
+  }
+});
+
+app.post("/doc-tracker/:soId/dokumen", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const b = await bodyDocTracker(c);
+    if (typeof b.ada !== "boolean") throw new DocTrackerError(400, "ada harus true/false");
+    await setDokumen(parseSoId(c.req.param("soId")), String(b.jenis ?? ""), b.ada, String(b.by ?? ""), b.catatan == null ? null : String(b.catatan));
+    return c.json({ ok: true });
+  } catch (e) {
+    return docTrackerError(c, e);
+  }
+});
+
+app.post("/doc-tracker/:soId/faktur", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const b = await bodyDocTracker(c);
+    await tautkanFaktur(parseSoId(c.req.param("soId")), parseSoId(String(b.invoice_id ?? "")), String(b.by ?? ""));
+    return c.json({ ok: true });
+  } catch (e) {
+    return docTrackerError(c, e);
+  }
+});
+
+app.post("/doc-tracker/:soId/faktur/lepas", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const b = await bodyDocTracker(c);
+    await lepasFaktur(parseSoId(c.req.param("soId")), parseSoId(String(b.invoice_id ?? "")));
+    return c.json({ ok: true });
+  } catch (e) {
+    return docTrackerError(c, e);
+  }
 });
 
 // F31 — Tukar Faktur Tracker + Klinik Calendar (Fase 1, murni baca). Izin dicek di BFF.
