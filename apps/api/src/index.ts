@@ -269,6 +269,8 @@ import { getPmfScorecard } from "./repo/pmf-scorecard.js";
 import { getSoPacing, runSoPacingAlert } from "./repo/so-pacing.js";
 import { listBriefingMingguan, runWeeklyBriefing } from "./repo/weekly-briefing.js";
 import { getLeadSource, getRetensi } from "./repo/kohort.js";
+import { getRevenueArea } from "./repo/revenue-area.js";
+import { biayaAreaSyncBusy, hitungUlangArea, syncBiayaArea } from "./repo/biaya-area-sync.js";
 import {
   akunKso, bacaDokumen, buatKontrak, getKontrak, hapusDokumen, KontrakError, kelengkapanKontrak, listKontrak,
   MAKS_DOKUMEN, perpanjangKontrak, ubahKontrak, ubahStatusKontrak, unggahDokumen,
@@ -4899,6 +4901,41 @@ app.post("/sales-analytics/alerts/evaluate", async (c) => {
 
 // ── F76 WatchPoint HoD (metric-based, DB-backed + fallback manual) ──
 app.get("/watchpoint", async (c) => c.json(await getWatchBoard()));
+
+// F150 tahap 1 — revenue netto per area (cabang + region) vs periode sebelumnya.
+// Dipakai tab "Revenue Area" WatchPoint & menu /profitabilitas-area. `hod` (diisi BFF
+// dari sesi untuk akses HoD) membatasi ke cabang HoD itu. Biaya/profit belum ada.
+app.get("/revenue-area", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(
+    await getRevenueArea({ periode: c.req.query("periode"), asOf: c.req.query("asOf"), hodKey: c.req.query("hod") || null, biaya: c.req.query("biaya") === "1" }),
+  );
+});
+
+// F150 tahap 2 — tarik biaya operasional Accurate (read-only) → biaya_area_baris. N+1 detail.do,
+// jadi 202 lalu jalan di latar; hasil di accurate_sync_state entity 'biaya-area'. Body opsional
+// { detail_limit }. Gate admin di layer WEB/service-token (bukan endpoint publik).
+app.post("/biaya-area/sync", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  if (!accurateConfigured()) return c.json({ error: "kredensial Accurate tak tersedia" }, 503);
+  if (biayaAreaSyncBusy()) return c.json({ ok: false, error: "sinkron biaya area sedang berjalan" }, 409);
+  let body: { detail_limit?: number } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    /* body opsional */
+  }
+  void syncBiayaArea({ detailLimit: body.detail_limit })
+    .then((r) => console.log(`[biaya-area] sync manual: ${JSON.stringify(r)}`))
+    .catch((e) => console.error("[biaya-area] sync manual gagal:", e));
+  return c.json({ ok: true, started: true }, 202);
+});
+
+// Terapkan ulang aturan area ke baris tersimpan (setelah kamus kota / override payee berubah). Tanpa Accurate.
+app.post("/biaya-area/recompute", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json({ ok: true, ...(await hitungUlangArea()) });
+});
 
 // Kirim ringkasan WatchPoint 1 HoD via WA. Target diisi pemanggil (body.to).
 // Pengiriman patuh WA_DRY_RUN (default dry-run → aman, tak kirim live).

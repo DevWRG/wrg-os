@@ -32,6 +32,7 @@ import {
   TrendingUp,
   ShieldAlert,
   Landmark,
+  Scale,
   Inbox,
   FileBarChart,
   PackageSearch,
@@ -70,6 +71,7 @@ import { canViewAuditFindings } from "@/lib/audit-finding-access";
 import { canViewOvertime } from "@/lib/overtime-access";
 import { canViewKasStation } from "@/lib/kas-station-access";
 import { canViewBuktiPembayaran } from "@/lib/bukti-pembayaran-access";
+import { canViewProfitabilitasArea } from "@/lib/profitabilitas-area-access";
 
 // exact: sorot aktif hanya saat path persis (untuk route induk yg punya child,
 // mis. /pricelist vs /pricelist/setup).
@@ -513,6 +515,11 @@ export const NAV: NavGroup[] = [
       // (tanpa OCR/WA/Accurate). Kunci izin "bukti-pembayaran" (view/create), default tertutup:
       // butuh Sync Fitur + centang grup; sebelum itu fallback Direktur/Finance/admin.
       { title: "Bukti Pembayaran", url: "/bukti-pembayaran", icon: FileCheck2, badge: "NEW", show: canViewBuktiPembayaran },
+      // F150 Profitabilitas Area — biaya operasional vs revenue netto per area. Tahap 1: revenue
+      // hidup, biaya/profit menunggu data Accurate. Kunci izin "profitabilitas-area", default
+      // tertutup: butuh Sync Fitur + centang grup; sebelum itu fallback Direktur/admin (penuh)
+      // dan HoD (cabang sendiri).
+      { title: "Profitabilitas Area", url: "/profitabilitas-area", icon: Scale, badge: "NEW", show: canViewProfitabilitasArea },
     ],
   },
   {
