@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 
+import { PilihKabKota, type KabKota } from "./pilih-kab-kota";
+
 // F173 — form publik di HP pengunjung pameran. Halaman publik di luar dashboard, jadi warna
 // ditulis eksplisit (bukan token tema) supaya tetap terbaca walau HP pengunjung mode gelap.
 
@@ -22,6 +24,7 @@ const INPUT = "mt-1 block w-full rounded-lg border border-slate-300 bg-white px-
 export function FormDaftarPameran({ slug, info }: { slug: string; info: InfoPameran }) {
   const [nama, setNama] = useState("");
   const [institusi, setInstitusi] = useState("");
+  const [kab, setKab] = useState<KabKota | null>(null);
   const [hp, setHp] = useState("");
   const [situs, setSitus] = useState("");
   const [kirim, setKirim] = useState(false);
@@ -66,7 +69,7 @@ export function FormDaftarPameran({ slug, info }: { slug: string; info: InfoPame
       const res = await fetch(`/api/publik/pameran/${encodeURIComponent(slug)}/daftar`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ nama, institusi, no_hp: hp, situs }),
+        body: JSON.stringify({ nama, institusi, kab_kota_kode: kab?.kode ?? "", no_hp: hp, situs }),
       });
       const data = (await res.json().catch(() => null)) as (Hasil & { error?: string }) | null;
       if (!data) throw new Error("Koneksi terputus. Muat ulang halaman lalu coba lagi.");
@@ -90,6 +93,10 @@ export function FormDaftarPameran({ slug, info }: { slug: string; info: InfoPame
         Asal institusi
         <input className={INPUT} value={institusi} onChange={(e) => setInstitusi(e.target.value)} required maxLength={160} autoComplete="organization" placeholder="RS / klinik / unit hemodialisa" />
       </label>
+      <div className="block text-sm font-medium">
+        Kota/Kabupaten asal
+        <div className="mt-1"><PilihKabKota nilai={kab} onPilih={setKab} kelasInput={INPUT.replace("mt-1 ", "")} /></div>
+      </div>
       <label className="block text-sm font-medium">
         No. HP (WhatsApp)
         <span className="ml-1 font-normal text-slate-500">— angka saja, tanpa spasi</span>

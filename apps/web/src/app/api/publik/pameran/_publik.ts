@@ -1,7 +1,7 @@
 // BFF PUBLIK F173 Pameran — form registrasi pengunjung di HP (tanpa sesi; middleware
 // meloloskan /api/publik/). gatewayFetch menyuntik x-service-token, jadi file ini SENGAJA
-// sempit: hanya dua endpoint tetap (/pameran-publik/<slug> dan …/daftar), slug divalidasi
-// ketat, body dibangun ulang dari tiga field saja — tak ada nilai mentah dari browser
+// sempit: hanya endpoint tetap (/pameran-publik/<slug>, …/daftar, /pameran-kab-kota), slug divalidasi
+// ketat, body dibangun ulang dari empat field saja — tak ada nilai mentah dari browser
 // yang diteruskan ke path atau body apps/api.
 import { gatewayFetch, relay } from "@/lib/gateway";
 
@@ -36,7 +36,9 @@ export async function daftar(req: Request, slug: string): Promise<Response> {
   // Umpan bot: field tersembunyi yang tak pernah diisi manusia. Dibalas "sukses" palsu
   // supaya pengisi otomatis tak belajar bahwa ia ketahuan.
   if (teks(b.situs, 200)) return Response.json({ kode_kupon: "-", sudah_terdaftar: false, pameran: "" }, { status: 201 });
-  const body = JSON.stringify({ nama: teks(b.nama, 200), institusi: teks(b.institusi, 200), no_hp: teks(b.no_hp, 40) });
+  const body = JSON.stringify({
+    nama: teks(b.nama, 200), institusi: teks(b.institusi, 200), kab_kota_kode: teks(b.kab_kota_kode, 10), no_hp: teks(b.no_hp, 40),
+  });
   return relay(await gatewayFetch(`/pameran-publik/${s}/daftar`, {
     method: "POST",
     headers: {
@@ -46,4 +48,13 @@ export async function daftar(req: Request, slug: string): Promise<Response> {
     },
     body,
   }));
+}
+
+/** Daftar kab/kota untuk dropdown (data statis migrasi 260) — boleh di-cache browser/CDN. */
+export async function kabKota(): Promise<Response> {
+  const res = await gatewayFetch("/pameran-kab-kota");
+  if (!res.ok) return relay(res);
+  return new Response(await res.text(), {
+    headers: { "content-type": "application/json", "cache-control": "public, max-age=86400" },
+  });
 }

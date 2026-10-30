@@ -17,10 +17,12 @@ test("no. HP: berbagai tulisan dinormalkan ke 628…, bukan seluler ditolak", ()
 test("validasi daftar: nama, institusi, HP wajib; spasi dirapikan", () => {
   assert.match((validasiDaftar({ institusi: "RS A", no_hp: "081234567890" }) as { pesan: string }).pesan, /Nama/);
   assert.match((validasiDaftar({ nama: "dr. A", no_hp: "081234567890" }) as { pesan: string }).pesan, /institusi/);
-  assert.match((validasiDaftar({ nama: "dr. A", institusi: "RS A", no_hp: "12" }) as { pesan: string }).pesan, /No\. HP/);
-  const v = validasiDaftar({ nama: "  dr.  Budi ", institusi: "RSUD  Dr. Soetomo", no_hp: "0812 3456 7890" });
+  assert.match((validasiDaftar({ nama: "dr. A", institusi: "RS A", no_hp: "081234567890" }) as { pesan: string }).pesan, /kota\/kabupaten/);
+  assert.match((validasiDaftar({ nama: "dr. A", institusi: "RS A", kab_kota_kode: "Surabaya", no_hp: "081234567890" }) as { pesan: string }).pesan, /kota\/kabupaten/);
+  assert.match((validasiDaftar({ nama: "dr. A", institusi: "RS A", kab_kota_kode: "35.78", no_hp: "12" }) as { pesan: string }).pesan, /No\. HP/);
+  const v = validasiDaftar({ nama: "  dr.  Budi ", institusi: "RSUD  Dr. Soetomo", kab_kota_kode: "35.78", no_hp: "0812 3456 7890" });
   assert.ok(v.ok);
-  assert.deepEqual(v.isi, { nama: "dr. Budi", institusi: "RSUD Dr. Soetomo", no_hp: "6281234567890" });
+  assert.deepEqual(v.isi, { nama: "dr. Budi", institusi: "RSUD Dr. Soetomo", kab_kota_kode: "35.78", no_hp: "6281234567890" });
 });
 
 test("kupon: awalan + 5 huruf tanpa karakter rancu", () => {

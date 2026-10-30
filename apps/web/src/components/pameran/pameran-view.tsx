@@ -25,7 +25,7 @@ interface Acara {
   prefix_kupon: string; buka: boolean; menerima: boolean; jumlah_pengunjung: number; jumlah_pemenang: number;
 }
 interface Pengunjung {
-  id: number; nama: string; institusi: string; no_hp: string; kode_kupon: string; daftar_at: string;
+  id: number; nama: string; institusi: string; kab_kota: string | null; provinsi: string | null; no_hp: string; kode_kupon: string; daftar_at: string;
   deal_id: string | null; hadiah: string | null; status_undian: string | null;
 }
 interface DaftarPengunjung { items: Pengunjung[]; count: number; total_rows: number; limit: number; offset: number }
@@ -241,7 +241,7 @@ function TabPengunjung({ a, izin, onBerubah }: { a: Acara; izin: Izin; onBerubah
   return (
     <section className="space-y-3">
       <div className="flex flex-wrap items-end gap-2">
-        <Input className="w-full sm:w-72" placeholder="Cari nama, institusi, kupon, no. HP…" value={q} onChange={(e) => { setQ(e.target.value); setOffset(0); }} />
+        <Input className="w-full sm:w-72" placeholder="Cari nama, institusi, kota, kupon, no. HP…" value={q} onChange={(e) => { setQ(e.target.value); setOffset(0); }} />
         <Button variant="outline" className="ml-auto" render={<a href={`/api/pameran/${a.id}/export?nama=${encodeURIComponent(a.slug)}`} download />}>
           Export CSV
         </Button>
@@ -262,7 +262,7 @@ function TabPengunjung({ a, izin, onBerubah }: { a: Acara; izin: Izin; onBerubah
                   <tr key={p.id} className="border-b last:border-0">
                     <td className="p-2 text-xs whitespace-nowrap">{jam(p.daftar_at)}</td>
                     <td className="p-2 font-medium">{p.nama}</td>
-                    <td className="p-2">{p.institusi}</td>
+                    <td className="p-2">{p.institusi}{p.kab_kota && <div className="text-muted-foreground text-xs">{p.kab_kota}</div>}</td>
                     <td className="p-2 whitespace-nowrap tabular-nums">{p.no_hp}</td>
                     <td className="p-2 font-mono text-xs whitespace-nowrap">{p.kode_kupon}</td>
                     <td className="p-2 text-xs">{p.hadiah ? <span className={p.status_undian === "hangus" ? "line-through opacity-60" : "font-medium text-emerald-700 dark:text-emerald-400"}>{p.hadiah}</span> : "—"}</td>
