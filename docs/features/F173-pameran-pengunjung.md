@@ -1,0 +1,70 @@
+# F173 — Pameran: Registrasi Pengunjung & Kupon Undian
+
+Di booth pameran/exhibition, dokter/visitor mengisi **nama, asal institusi, dan no. HP** dari HP-nya
+sendiri lewat **QR** → langsung mendapat **kode kupon undian doorprize** di layar. Datanya tercatat di
+WRG-OS: daftar, export, kocok pemenang, dan "jadikan deal" untuk prospek yang serius.
+Kebutuhan awal divisi **Medical & Hemodialisa**; divisi **IVD** bisa memakai menu yang sama.
+
+- **Domain**: Sales / Marketing · issue #1894
+- **Menu**: `/pameran` (grup Sales) — pilih pameran → kartu acara + QR, tab **Pengunjung**, **Undian**
+- **Form publik**: `/daftar/<slug>` (tanpa login) → BFF `/api/publik/pameran/<slug>[/daftar]`
+- **Migrasi**: 259 (`pameran`, `pameran_pengunjung`, `pameran_undian`)
+- **Uji**: `apps/api/src/repo/pameran.test.ts`
+
+## Keputusan user (30 Okt 2026)
+
+| Keputusan | Isi |
+|---|---|
+| Pengisi form | Pengunjung sendiri, dari HP, lewat **QR di booth** (halaman publik) |
+| Kupon | **Nomor undian doorprize** — ada fitur kocok pemenang |
+| Tindak lanjut data | Simpan + daftar + export; **jadikan deal manual** (tidak otomatis ke pipeline) |
+| Kirim WA | **Tidak** — kupon cukup tampil di layar (hindari nomor WA bisnis diblokir) |
+
+## Aturan
+
+- **1 no. HP = 1 kupon per pameran.** No. HP dinormalkan ke `628…` (0812…, +62 812…, 812… dianggap sama).
+  Daftar ulang dengan nomor yang sama mengembalikan kupon lama ("nomor Anda sudah terdaftar").
+- **Kode kupon** = awalan acara + 5 karakter acak tanpa huruf rancu (tanpa 0/O/1/I/L), mis. `MHD-7K3QX`.
+  Awalan default `MHD` (Medical & HD) / `IVD`, bisa diubah per acara.
+- **Form menerima pendaftaran** bila saklar *buka* menyala **dan** hari ini (WIB) di rentang tanggal pameran
+  ±1 hari. Di luar itu form menampilkan "pendaftaran tidak dibuka".
+- **Undian**: staf mengisi nama hadiah + jumlah → server mengocok (crypto random) dari pengunjung yang
+  **belum pernah menang**. Kocok serentak dikunci per pameran (advisory lock) — tak ada pemenang ganda.
+  Pemenang yang tak hadir ditandai **hangus** (tetap tercatat, tak ikut dikocok lagi), lalu kocok ulang.
+- **Jadikan deal**: deal Prospecting baru, `facility_name` = institusi, `product_category` ikut divisi
+  (Medical/IVD), `sumber_lead = 'pameran'`, nama + HP + kupon pengunjung di catatan. AM ikut scope
+  pemanggil (`createDeal`). Klik ganda/serentak hanya menghasilkan satu deal.
+- **Hapus** pengunjung hanya untuk entri iseng/ganda; ditolak bila sudah menang undian atau sudah jadi deal.
+
+## Izin (matriks Akses Grup, fitur `pameran`, tertutup default — perlu **Sync Fitur**)
+
+| Aksi | Untuk |
+|---|---|
+| lihat | daftar pameran, pengunjung, hasil undian, export CSV |
+| buat | buat pameran baru |
+| ubah | ubah pameran, buka/tutup form, kocok pemenang, tandai hangus, jadikan deal |
+| hapus | hapus entri pengunjung |
+
+## Keamanan jalur publik
+
+- Middleware meloloskan `/daftar/` dan `/api/publik/` tanpa sesi. **Hanya** BFF di
+  `app/api/publik/pameran` yang boleh ada di bawah `/api/publik/`: slug divalidasi regex, path API tetap,
+  body dibangun ulang dari tiga field (nama/institusi/no_hp) — field lain (mis. `oleh`) dibuang.
+- Batas kirim per IP di apps/api: 40 per 10 menit (longgar karena Wi-Fi venue = banyak pengunjung satu IP).
+  IP dari `cf-connecting-ip` (Cloudflare Tunnel).
+- Field umpan bot tersembunyi (`situs`); terisi → dibalas sukses palsu, tidak disimpan.
+- Halaman `noindex`.
+
+## Prasyarat prod (di luar repo)
+
+**Cloudflare**: `os.wahanalifeline.co.id` memasang *Managed Challenge*. Halaman `/daftar/…` bisa lolos
+(browser menyelesaikan challenge), tapi `fetch()` kirim form **tidak** — pengunjung akan gagal submit
+dengan 403. Pasang WAF Custom Rule action **Skip** (Managed Challenge/Bot Fight) untuk
+`starts_with(http.request.uri.path, "/daftar/") or starts_with(http.request.uri.path, "/api/publik/")`.
+
+## Data
+
+- `pameran` — acara (slug unik = alamat form, divisi, tanggal, awalan kupon, saklar buka).
+- `pameran_pengunjung` — unik `(pameran_id, no_hp)`, `kode_kupon` unik global, `ip`/`user_agent` untuk
+  jejak spam, `deal_id` saat dijadikan deal (`'proses'` = penanda sementara selama deal dibuat).
+- `pameran_undian` — satu baris per pemenang (`pengunjung_id` unik), status `menang`/`hangus`.

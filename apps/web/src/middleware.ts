@@ -19,7 +19,10 @@ import { sessionTokenValid } from "@/lib/session-token";
 const SESSION_COOKIE = "wrg_session";
 
 // Path publik yang tak butuh sesi.
-const PUBLIC_PREFIXES = ["/login", "/signup", "/forgot-password", "/api/auth/", "/_next/"];
+// /daftar/ + /api/publik/ = form registrasi pengunjung pameran (F173), diisi dari HP
+// pengunjung lewat QR. Route di bawah /api/publik/ WAJIB hanya meneruskan endpoint
+// publik yang sempit (lihat app/api/publik/pameran) — jangan taruh BFF biasa di sana.
+const PUBLIC_PREFIXES = ["/login", "/signup", "/forgot-password", "/api/auth/", "/_next/", "/daftar/", "/api/publik/"];
 
 function isPublic(pathname: string): boolean {
   if (PUBLIC_PREFIXES.some((p) => pathname.startsWith(p))) return true;
