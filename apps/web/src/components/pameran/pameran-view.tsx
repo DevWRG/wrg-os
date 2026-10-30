@@ -22,7 +22,7 @@ const LABEL_DIVISI: Record<Divisi, string> = { medical_hd: "Medical & Hemodialis
 
 interface Acara {
   id: number; slug: string; nama: string; divisi: Divisi; lokasi: string | null; tanggal_mulai: string; tanggal_selesai: string;
-  prefix_kupon: string; buka: boolean; menerima: boolean; jumlah_pengunjung: number; jumlah_pemenang: number;
+  prefix_kupon: string; buka: boolean; jatah_ip: number; menerima: boolean; jumlah_pengunjung: number; jumlah_pemenang: number;
 }
 interface Pengunjung {
   id: number; nama: string; institusi: string; kab_kota: string | null; provinsi: string | null; no_hp: string; kode_kupon: string; daftar_at: string;
@@ -128,6 +128,7 @@ function KartuAcara({ a, izin, onUbah, onBerubah }: { a: Acara; izin: Izin; onUb
             {salin ? "Tersalin" : "Salin tautan"}
           </Button>
           <Button size="sm" variant="outline" onClick={() => window.open(url, "_blank", "noopener")}>Buka form</Button>
+          <Button size="sm" onClick={() => window.open(`/layar/pameran/${a.id}`, "_blank", "noopener")}>Tampilkan di layar</Button>
         </div>
         {izin.ubah && (
           <div className="flex flex-wrap gap-2 pt-1">
@@ -136,7 +137,7 @@ function KartuAcara({ a, izin, onUbah, onBerubah }: { a: Acara; izin: Izin; onUb
           </div>
         )}
         {err && <p className="text-destructive text-sm">{err}</p>}
-        <p className="text-muted-foreground text-xs">Form hanya menerima pendaftaran saat dibuka dan dalam rentang tanggal pameran (±1 hari). Satu no. HP = satu kupon.</p>
+        <p className="text-muted-foreground text-xs">Form hanya menerima pendaftaran saat dibuka dan dalam rentang tanggal pameran (±1 hari). Satu no. HP = satu kupon. Jatah {a.jatah_ip.toLocaleString("id-ID")} pendaftaran per IP per 10 menit (Wi-Fi venue = satu IP untuk banyak orang).</p>
       </div>
       {qr && (
         <div className="flex shrink-0 flex-col items-center gap-2">
@@ -153,6 +154,7 @@ function FormAcara({ awal, onClose, onTersimpan }: { awal: Acara | null; onClose
   const [f, setF] = useState({
     nama: awal?.nama ?? "", divisi: (awal?.divisi ?? "medical_hd") as Divisi, lokasi: awal?.lokasi ?? "",
     tanggal_mulai: awal?.tanggal_mulai ?? "", tanggal_selesai: awal?.tanggal_selesai ?? "", slug: awal?.slug ?? "", prefix_kupon: awal?.prefix_kupon ?? "",
+    jatah_ip: String(awal?.jatah_ip ?? 600),
   });
   const [sibuk, setSibuk] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -194,6 +196,11 @@ function FormAcara({ awal, onClose, onTersimpan }: { awal: Acara | null; onClose
             <div className="grid grid-cols-2 gap-2">
               <div className="space-y-1"><Label>Alamat form (opsional)</Label><Input value={f.slug} onChange={isi("slug")} placeholder="otomatis dari nama" /></div>
               <div className="space-y-1"><Label>Awalan kupon (opsional)</Label><Input value={f.prefix_kupon} onChange={isi("prefix_kupon")} placeholder={f.divisi === "ivd" ? "IVD" : "MHD"} maxLength={5} /></div>
+            </div>
+            <div className="space-y-1">
+              <Label>Jatah pendaftaran per IP / 10 menit</Label>
+              <Input type="number" min={10} max={100000} value={f.jatah_ip} onChange={isi("jatah_ip")} />
+              <p className="text-muted-foreground text-xs">Wi-Fi venue & operator seluler membuat banyak pengunjung tampil sebagai satu IP. Booth biasa: 600. Momen panggung (QR di layar besar): isi ± 2× jumlah penonton, mis. 4000 untuk 1.800 orang.</p>
             </div>
             {awal && <p className="text-xs text-amber-700 dark:text-amber-400">Mengubah alamat form membuat QR lama tidak berlaku lagi.</p>}
             {err && <p className="text-destructive text-sm">{err}</p>}

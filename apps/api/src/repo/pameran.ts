@@ -81,8 +81,9 @@ export function slugDari(nama: string): string {
 
 export interface IsianAcara {
   nama: string; slug: string; divisi: Divisi; lokasi: string | null;
-  tanggal_mulai: string; tanggal_selesai: string; prefix_kupon: string; buka: boolean;
+  tanggal_mulai: string; tanggal_selesai: string; prefix_kupon: string; buka: boolean; jatah_ip: number;
 }
+export const JATAH_IP_DEFAULT = 600;
 export function validasiAcara(b: Record<string, unknown>): { ok: true; isi: IsianAcara } | { ok: false; pesan: string } {
   const nama = teks(b.nama, 160);
   if (!nama) return { ok: false, pesan: "Nama pameran wajib diisi." };
@@ -96,9 +97,11 @@ export function validasiAcara(b: Record<string, unknown>): { ok: true; isi: Isia
   if (!/^[a-z0-9][a-z0-9-]{2,59}$/.test(slug)) return { ok: false, pesan: "Alamat form hanya huruf kecil, angka, dan tanda minus (3–60 karakter)." };
   const prefix = (teks(b.prefix_kupon, 5) ?? (divisi === "ivd" ? "IVD" : "MHD")).toUpperCase();
   if (!/^[A-Z]{2,5}$/.test(prefix)) return { ok: false, pesan: "Awalan kupon 2–5 huruf." };
+  const jatah = b.jatah_ip == null || b.jatah_ip === "" ? JATAH_IP_DEFAULT : Number(b.jatah_ip);
+  if (!Number.isInteger(jatah) || jatah < 10 || jatah > 100_000) return { ok: false, pesan: "Jatah per IP harus bilangan bulat 10–100.000." };
   return {
     ok: true,
-    isi: { nama, slug, divisi, lokasi: teks(b.lokasi, 160), tanggal_mulai: mulai, tanggal_selesai: selesai, prefix_kupon: prefix, buka: b.buka !== false },
+    isi: { nama, slug, divisi, lokasi: teks(b.lokasi, 160), tanggal_mulai: mulai, tanggal_selesai: selesai, prefix_kupon: prefix, buka: b.buka !== false, jatah_ip: jatah },
   };
 }
 
@@ -131,12 +134,13 @@ const HARI_INI = "(now() at time zone 'Asia/Jakarta')::date";
 
 interface BarisAcara {
   id: number; slug: string; nama: string; divisi: Divisi; lokasi: string | null;
-  tanggal_mulai: string; tanggal_selesai: string; prefix_kupon: string; buka: boolean;
+  tanggal_mulai: string; tanggal_selesai: string; prefix_kupon: string; buka: boolean; jatah_ip: number;
 }
 const kolomAcara = (r: Record<string, unknown>): BarisAcara => ({
   id: Number(r.id), slug: String(r.slug), nama: String(r.nama), divisi: r.divisi as Divisi,
   lokasi: r.lokasi == null ? null : String(r.lokasi), tanggal_mulai: String(r.tanggal_mulai),
   tanggal_selesai: String(r.tanggal_selesai), prefix_kupon: String(r.prefix_kupon), buka: Boolean(r.buka),
+  jatah_ip: Number(r.jatah_ip ?? JATAH_IP_DEFAULT),
 });
 
 async function hariIniWib(): Promise<string> {
@@ -147,7 +151,7 @@ async function hariIniWib(): Promise<string> {
 async function acaraDariSlug(slug: string): Promise<BarisAcara> {
   const rows = await db()`
     select id, slug, nama, divisi, lokasi, to_char(tanggal_mulai,'YYYY-MM-DD') tanggal_mulai,
-           to_char(tanggal_selesai,'YYYY-MM-DD') tanggal_selesai, prefix_kupon, buka
+           to_char(tanggal_selesai,'YYYY-MM-DD') tanggal_selesai, prefix_kupon, buka, jatah_ip
     from pameran where slug = ${slug}`;
   if (!rows.length) throw new PameranError(404, "Pameran tidak ditemukan.");
   return kolomAcara(rows[0]);
@@ -160,9 +164,16 @@ export async function infoPublik(slug: string) {
   return { nama: a.nama, lokasi: a.lokasi, tanggal_mulai: a.tanggal_mulai, tanggal_selesai: a.tanggal_selesai, buka: sedangBuka(a, await hariIniWib()) };
 }
 
-export async function daftarPublik(slug: string, b: Record<string, unknown>, jejak: { ip: string | null; ua: string | null }) {
+/** bolehKirim(kunci, jatah) = penjaga jatah per IP milik pemanggil (in-memory di apps/api). */
+export async function daftarPublik(
+  slug: string, b: Record<string, unknown>, jejak: { ip: string | null; ua: string | null },
+  bolehKirim: (kunci: string, jatah: number) => boolean = () => true,
+) {
   const a = await acaraDariSlug(slug);
   if (!sedangBuka(a, await hariIniWib())) throw new PameranError(409, "Pendaftaran pameran ini sudah ditutup.");
+  if (!bolehKirim(`${a.id}:${jejak.ip ?? "?"}`, a.jatah_ip)) {
+    throw new PameranError(429, "Terlalu banyak pendaftaran dari jaringan ini. Coba lagi beberapa menit lagi atau pakai data seluler.");
+  }
   const v = validasiDaftar(b);
   if (!v.ok) throw new PameranError(400, v.pesan);
   const sql = db();
@@ -197,7 +208,7 @@ export async function listKabKota() {
 export async function listAcara() {
   const rows = await db()`
     select p.id, p.slug, p.nama, p.divisi, p.lokasi, to_char(p.tanggal_mulai,'YYYY-MM-DD') tanggal_mulai,
-           to_char(p.tanggal_selesai,'YYYY-MM-DD') tanggal_selesai, p.prefix_kupon, p.buka, p.dibuat_oleh,
+           to_char(p.tanggal_selesai,'YYYY-MM-DD') tanggal_selesai, p.prefix_kupon, p.buka, p.jatah_ip, p.dibuat_oleh,
            (select count(*) from pameran_pengunjung v where v.pameran_id = p.id)::int as jumlah_pengunjung,
            (select count(*) from pameran_undian u where u.pameran_id = p.id and u.status = 'menang')::int as jumlah_pemenang
     from pameran p order by p.tanggal_mulai desc, p.id desc`;
@@ -218,8 +229,8 @@ export async function buatAcara(b: Record<string, unknown>, oleh: string) {
   const i = v.isi;
   try {
     const [r] = await db()`
-      insert into pameran (slug, nama, divisi, lokasi, tanggal_mulai, tanggal_selesai, prefix_kupon, buka, dibuat_oleh)
-      values (${i.slug}, ${i.nama}, ${i.divisi}, ${i.lokasi}, ${i.tanggal_mulai}, ${i.tanggal_selesai}, ${i.prefix_kupon}, ${i.buka}, ${oleh})
+      insert into pameran (slug, nama, divisi, lokasi, tanggal_mulai, tanggal_selesai, prefix_kupon, buka, jatah_ip, dibuat_oleh)
+      values (${i.slug}, ${i.nama}, ${i.divisi}, ${i.lokasi}, ${i.tanggal_mulai}, ${i.tanggal_selesai}, ${i.prefix_kupon}, ${i.buka}, ${i.jatah_ip}, ${oleh})
       returning id`;
     return { id: Number(r.id), slug: i.slug };
   } catch (e) {
@@ -231,14 +242,14 @@ export async function buatAcara(b: Record<string, unknown>, oleh: string) {
 export async function ubahAcara(id: number, b: Record<string, unknown>) {
   const sql = db();
   const cur = await sql`select slug, nama, divisi, lokasi, to_char(tanggal_mulai,'YYYY-MM-DD') tanggal_mulai,
-    to_char(tanggal_selesai,'YYYY-MM-DD') tanggal_selesai, prefix_kupon, buka from pameran where id = ${id}`;
+    to_char(tanggal_selesai,'YYYY-MM-DD') tanggal_selesai, prefix_kupon, buka, jatah_ip from pameran where id = ${id}`;
   if (!cur.length) throw new PameranError(404, "Pameran tidak ditemukan.");
   const v = validasiAcara({ ...cur[0], ...b });
   if (!v.ok) throw new PameranError(400, v.pesan);
   const i = v.isi;
   try {
     await sql`update pameran set slug = ${i.slug}, nama = ${i.nama}, divisi = ${i.divisi}, lokasi = ${i.lokasi},
-      tanggal_mulai = ${i.tanggal_mulai}, tanggal_selesai = ${i.tanggal_selesai}, prefix_kupon = ${i.prefix_kupon},
+      tanggal_mulai = ${i.tanggal_mulai}, tanggal_selesai = ${i.tanggal_selesai}, prefix_kupon = ${i.prefix_kupon}, jatah_ip = ${i.jatah_ip},
       buka = ${i.buka}, diubah_at = now() where id = ${id}`;
   } catch (e) {
     if (slugDipakai(e)) throw new PameranError(409, `Alamat form "${i.slug}" sudah dipakai pameran lain.`);
@@ -300,6 +311,19 @@ export async function listUndian(pameranId: number) {
     })),
     sisa_peserta: Number(n.n),
   };
+}
+
+/** Ringkasan untuk layar panggung (dipoll tiap beberapa detik). */
+export async function ringkasLayar(pameranId: number) {
+  const rows = await db()`
+    select p.slug, p.nama, p.lokasi, p.buka, to_char(p.tanggal_mulai,'YYYY-MM-DD') tanggal_mulai,
+           to_char(p.tanggal_selesai,'YYYY-MM-DD') tanggal_selesai,
+           (select count(*) from pameran_pengunjung v where v.pameran_id = p.id)::int as jumlah
+    from pameran p where p.id = ${pameranId}`;
+  if (!rows.length) throw new PameranError(404, "Pameran tidak ditemukan.");
+  const r = rows[0];
+  const a = { buka: Boolean(r.buka), tanggal_mulai: String(r.tanggal_mulai), tanggal_selesai: String(r.tanggal_selesai) };
+  return { slug: String(r.slug), nama: String(r.nama), lokasi: r.lokasi == null ? null : String(r.lokasi), jumlah: Number(r.jumlah), menerima: sedangBuka(a, await hariIniWib()) };
 }
 
 /** Kocok pemenang. Dikunci per pameran (advisory lock transaksi) supaya dua staf yang

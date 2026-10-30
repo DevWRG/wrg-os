@@ -7,8 +7,9 @@ Kebutuhan awal divisi **Medical & Hemodialisa**; divisi **IVD** bisa memakai men
 
 - **Domain**: Sales / Marketing · issue #1894
 - **Menu**: `/pameran` (grup Sales) — pilih pameran → kartu acara + QR, tab **Pengunjung**, **Undian**
+- **Layar panggung**: `/layar/pameran/<id>` (tombol *Tampilkan di layar*) — QR layar penuh untuk proyektor/LED + jumlah pendaftar live (poll 5 dtk), wake lock
 - **Form publik**: `/daftar/<slug>` (tanpa login) → BFF `/api/publik/pameran/<slug>[/daftar]`
-- **Migrasi**: 259 (`pameran`, `pameran_pengunjung`, `pameran_undian`), 260 (`wilayah_kab_kota` + `pameran_pengunjung.kab_kota_kode`)
+- **Migrasi**: 259 (`pameran`, `pameran_pengunjung`, `pameran_undian`), 260 (`wilayah_kab_kota` + `pameran_pengunjung.kab_kota_kode`), 261 (`pameran.jatah_ip`)
 - **Uji**: `apps/api/src/repo/pameran.test.ts`, `apps/web/src/components/pameran/pilih-kab-kota.test.ts`
 
 ## Keputusan user (30 Okt 2026)
@@ -54,17 +55,34 @@ Kebutuhan awal divisi **Medical & Hemodialisa**; divisi **IVD** bisa memakai men
 - Middleware meloloskan `/daftar/` dan `/api/publik/` tanpa sesi. **Hanya** BFF di
   `app/api/publik/pameran` yang boleh ada di bawah `/api/publik/`: slug divalidasi regex, path API tetap,
   body dibangun ulang dari tiga field (nama/institusi/no_hp) — field lain (mis. `oleh`) dibuang.
-- Batas kirim per IP di apps/api: 40 per 10 menit (longgar karena Wi-Fi venue = banyak pengunjung satu IP).
-  IP dari `cf-connecting-ip` (Cloudflare Tunnel).
+- Batas kirim per IP **per acara** (`pameran.jatah_ip`, default 600 per 10 menit, 10–100.000, diatur
+  di form Pameran). Wi-Fi venue & CGNAT operator = ratusan pengunjung satu IP — jatah tetap 40 menolak
+  460 dari 500 di uji beban. Momen panggung: isi ± 2× jumlah penonton (mis. 4000 untuk 1.800).
 - Field umpan bot tersembunyi (`situs`); terisi → dibalas sukses palsu, tidak disimpan.
 - Halaman `noindex`.
 
 ## Prasyarat prod (di luar repo)
 
-**Cloudflare**: `os.wahanalifeline.co.id` memasang *Managed Challenge*. Halaman `/daftar/…` bisa lolos
-(browser menyelesaikan challenge), tapi `fetch()` kirim form **tidak** — pengunjung akan gagal submit
-dengan 403. Pasang WAF Custom Rule action **Skip** (Managed Challenge/Bot Fight) untuk
-`starts_with(http.request.uri.path, "/daftar/") or starts_with(http.request.uri.path, "/api/publik/")`.
+**Cloudflare**: `os.wahanalifeline.co.id` memakai **I'm Under Attack Mode** (Security Level, plan Free)
+— bukan WAF, jadi aturan *WAF Skip* TIDAK berpengaruh; satu-satunya pengecualian per path adalah
+**Configuration Rule** (Security Level → off) untuk `/daftar/` & `/api/publik/`. Keputusan user 24 Sep
+2026: UAM tetap menyala, tanpa bypass permanen — jadi ini keputusan user, bukan langkah otomatis.
+Tanpa pengecualian: pengunjung melihat layar "Checking your browser" ±5 dtk saat membuka QR, lalu
+`cf_clearance` (default 30 menit) membuat submit lolos. Gagal submit hanya bila form dibiarkan terbuka
+melewati masa cookie — pesan "Koneksi terputus. Muat ulang halaman" menuntun pengunjung.
+
+## Uji beban (30 Okt 2026, k6 di Mac mini → stack dev, tanpa Cloudflare)
+
+| Skenario | Hasil |
+|---|---|
+| 500 pengunjung dalam 60 dtk (IP berbeda) | 0% gagal, p95 10 ms |
+| 500 pengunjung dalam 10 dtk (50/dtk) | 0% gagal, p95 8 ms |
+| 500 dibuka di milidetik yang sama | ±65% ditolak di level TCP (antrean `somaxconn` 128 macOS) — artefak uji: di prod semua lewat beberapa koneksi tetap `cloudflared`, bukan 500 koneksi baru |
+| 500 dalam 60 dtk dari SATU IP | jatah lama 40 → 460 ditolak (429) → jatah per acara (261) |
+| 1.000 dalam 60 / 30 / 10 dtk | 0% gagal, p95 13 / 9 / 4 ms |
+| **1.800 (momen panggung) dalam 60 / 30 / 10 / 5 dtk** | **0% gagal**, p95 9 / 5 / 3 / 57 ms (maks 114 ms); prod /login tetap < 0,01 dtk |
+
+Data selalu konsisten: setiap pendaftar sukses = 1 baris, kupon & no. HP unik.
 
 ## Data
 
