@@ -7,7 +7,7 @@ import { useCallback, useEffect, useState } from "react";
 // jumlah pendaftar naik live (poll 5 dtk). Warna brand eksplisit — layar panggung tak ikut
 // tema terang/gelap dashboard. Uji beban 30 Okt: 1.800 penonton scan dalam 5 dtk → 0% gagal.
 
-interface Ringkas { slug: string; nama: string; lokasi: string | null; jumlah: number; menerima: boolean }
+interface Ringkas { slug: string; link_pendek: string | null; nama: string; lokasi: string | null; jumlah: number; menerima: boolean }
 
 const angka = (n: number) => n.toLocaleString("id-ID");
 
@@ -34,7 +34,7 @@ export function LayarPanggung({ id }: { id: string }) {
     return () => clearInterval(t);
   }, [muat]);
 
-  const url = d && typeof window !== "undefined" ? `${window.location.origin}/daftar/${d.slug}` : "";
+  const url = d && typeof window !== "undefined" ? (d.link_pendek ?? `${window.location.origin}/daftar/${d.slug}`) : "";
   useEffect(() => {
     if (!url) return;
     QRCode.toDataURL(url, { width: 1400, margin: 2, errorCorrectionLevel: "M", color: { dark: "#0b3d45", light: "#ffffff" } })
