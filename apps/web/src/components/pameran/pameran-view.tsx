@@ -13,6 +13,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useConfirm } from "@/components/ui/use-confirm";
 import { cn } from "@/lib/utils";
 
+import { UndianSpinner, type KuponPeserta } from "./undian-spinner";
+
 // F173 Pameran — kelola acara + QR form publik, daftar & export pengunjung, kocok pemenang
 // undian doorprize, dan "jadikan deal" manual. Tombol hanya tampil bila aksinya boleh;
 // gerbang sebenarnya di BFF.
@@ -302,26 +304,28 @@ function TabPengunjung({ a, izin, onBerubah }: { a: Acara; izin: Izin; onBerubah
 // ---------------------------------------------------------------- undian
 
 function TabUndian({ a, izin, onBerubah }: { a: Acara; izin: Izin; onBerubah: () => void }) {
-  const [d, setD] = useState<{ items: Pemenang[]; sisa_peserta: number } | null>(null);
+  const [d, setD] = useState<{ items: Pemenang[]; sisa_peserta: number; sampel: KuponPeserta[] } | null>(null);
   const [hadiah, setHadiah] = useState("");
   const [jumlah, setJumlah] = useState("1");
   const [sibuk, setSibuk] = useState(false);
   const [baru, setBaru] = useState<{ hadiah: string; pemenang: { id: number; nama: string; institusi: string; kode_kupon: string }[] } | null>(null);
+  const [spinner, setSpinner] = useState<(NonNullable<typeof baru> & { sampel: KuponPeserta[] }) | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const { confirm, dialog } = useConfirm();
 
   const muat = useCallback(() => {
-    kirim<{ items: Pemenang[]; sisa_peserta: number }>(`/api/pameran/${a.id}/undian`).then((x) => { setD(x); setErr(null); }).catch((e: Error) => setErr(e.message));
+    kirim<{ items: Pemenang[]; sisa_peserta: number; sampel: KuponPeserta[] }>(`/api/pameran/${a.id}/undian`).then((x) => { setD(x); setErr(null); }).catch((e: Error) => setErr(e.message));
   }, [a.id]);
   useEffect(() => { muat(); }, [muat]);
 
   const kocok = () => confirm(
-    { title: `Kocok ${jumlah} pemenang "${hadiah}"?`, description: "Hasil langsung tercatat dan tidak bisa dikocok ulang. Pemenang yang tidak hadir bisa ditandai hangus lalu kocok lagi.", confirmLabel: "Kocok sekarang" },
+    { title: `Kocok ${jumlah} pemenang "${hadiah}"?`, description: "Pemenang dipilih acak oleh sistem dan langsung tercatat, lalu layar spinner terbuka untuk ditampilkan ke penonton. Tidak bisa dikocok ulang — pemenang yang tidak hadir ditandai hangus lalu kocok lagi.", confirmLabel: "Kocok sekarang" },
     async () => {
       setSibuk(true); setErr(null);
+      const sampel = d?.sampel ?? [];
       try {
         const r = await kirim<NonNullable<typeof baru>>(`/api/pameran/${a.id}/undian`, json("POST", { hadiah, jumlah: Number(jumlah) }));
-        setBaru(r); muat(); onBerubah();
+        setSpinner({ ...r, sampel }); muat(); onBerubah();
       } catch (e) { setErr((e as Error).message); } finally { setSibuk(false); }
     },
   );
@@ -386,6 +390,10 @@ function TabUndian({ a, izin, onBerubah }: { a: Acara; izin: Izin; onBerubah: ()
             </tbody>
           </table>
         </div>
+      )}
+      {spinner && (
+        <UndianSpinner hadiah={spinner.hadiah} pemenang={spinner.pemenang} sampel={spinner.sampel}
+          onTutup={() => { setBaru({ hadiah: spinner.hadiah, pemenang: spinner.pemenang }); setSpinner(null); }} />
       )}
       {dialog}
     </section>
