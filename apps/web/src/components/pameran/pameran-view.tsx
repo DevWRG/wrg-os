@@ -24,7 +24,7 @@ const LABEL_DIVISI: Record<Divisi, string> = { medical_hd: "Medical & Hemodialis
 
 interface Acara {
   id: number; slug: string; nama: string; divisi: Divisi; lokasi: string | null; tanggal_mulai: string; tanggal_selesai: string;
-  prefix_kupon: string; buka: boolean; jatah_ip: number; menerima: boolean; jumlah_pengunjung: number; jumlah_pemenang: number;
+  prefix_kupon: string; buka: boolean; jatah_ip: number; link_pendek: string | null; menerima: boolean; jumlah_pengunjung: number; jumlah_pemenang: number;
 }
 interface Pengunjung {
   id: number; nama: string; institusi: string; kab_kota: string | null; provinsi: string | null; no_hp: string; kode_kupon: string; daftar_at: string;
@@ -101,7 +101,9 @@ function KartuAcara({ a, izin, onUbah, onBerubah }: { a: Acara; izin: Izin; onUb
   const [qr, setQr] = useState<string | null>(null);
   const [salin, setSalin] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const url = typeof window === "undefined" ? "" : `${window.location.origin}/daftar/${a.slug}`;
+  const asli = typeof window === "undefined" ? "" : `${window.location.origin}/daftar/${a.slug}`;
+  // Link pendek (s.id/bit.ly, migrasi 262) bila diisi: dipakai untuk QR & teks yang dilihat pengunjung.
+  const url = a.link_pendek ?? asli;
   useEffect(() => {
     if (!url) return;
     QRCode.toDataURL(url, { width: 640, margin: 2, errorCorrectionLevel: "M" }).then(setQr).catch(() => setQr(null));
@@ -129,9 +131,14 @@ function KartuAcara({ a, izin, onUbah, onBerubah }: { a: Acara; izin: Izin; onUb
           <Button size="sm" variant="outline" onClick={() => { navigator.clipboard?.writeText(url).then(() => { setSalin(true); setTimeout(() => setSalin(false), 1500); }); }}>
             {salin ? "Tersalin" : "Salin tautan"}
           </Button>
-          <Button size="sm" variant="outline" onClick={() => window.open(url, "_blank", "noopener")}>Buka form</Button>
+          <Button size="sm" variant="outline" onClick={() => window.open(url, "_blank", "noopener")}>{a.link_pendek ? "Uji link pendek" : "Buka form"}</Button>
           <Button size="sm" onClick={() => window.open(`/layar/pameran/${a.id}`, "_blank", "noopener")}>Tampilkan di layar</Button>
         </div>
+        {a.link_pendek && (
+          <p className="text-muted-foreground text-xs">
+            QR memakai link pendek → harus mengarah ke <code className="break-all">{asli}</code>. Uji sekali dari HP sebelum dipajang.
+          </p>
+        )}
         {izin.ubah && (
           <div className="flex flex-wrap gap-2 pt-1">
             <Button size="sm" variant="outline" onClick={onUbah}>Ubah pameran</Button>
@@ -156,7 +163,7 @@ function FormAcara({ awal, onClose, onTersimpan }: { awal: Acara | null; onClose
   const [f, setF] = useState({
     nama: awal?.nama ?? "", divisi: (awal?.divisi ?? "medical_hd") as Divisi, lokasi: awal?.lokasi ?? "",
     tanggal_mulai: awal?.tanggal_mulai ?? "", tanggal_selesai: awal?.tanggal_selesai ?? "", slug: awal?.slug ?? "", prefix_kupon: awal?.prefix_kupon ?? "",
-    jatah_ip: String(awal?.jatah_ip ?? 600),
+    jatah_ip: String(awal?.jatah_ip ?? 600), link_pendek: awal?.link_pendek ?? "",
   });
   const [sibuk, setSibuk] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -198,6 +205,11 @@ function FormAcara({ awal, onClose, onTersimpan }: { awal: Acara | null; onClose
             <div className="grid grid-cols-2 gap-2">
               <div className="space-y-1"><Label>Alamat form (opsional)</Label><Input value={f.slug} onChange={isi("slug")} placeholder="otomatis dari nama" /></div>
               <div className="space-y-1"><Label>Awalan kupon (opsional)</Label><Input value={f.prefix_kupon} onChange={isi("prefix_kupon")} placeholder={f.divisi === "ivd" ? "IVD" : "MHD"} maxLength={5} /></div>
+            </div>
+            <div className="space-y-1">
+              <Label>Link pendek (opsional)</Label>
+              <Input value={f.link_pendek} onChange={isi("link_pendek")} placeholder="https://s.id/wrg-pameran" />
+              <p className="text-muted-foreground text-xs">Buat dulu di s.id / bit.ly yang mengarah ke alamat form acara ini. Bila diisi, QR & layar panggung memakai link ini. Kosongkan untuk memakai alamat asli.</p>
             </div>
             <div className="space-y-1">
               <Label>Jatah pendaftaran per IP / 10 menit</Label>
