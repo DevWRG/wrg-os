@@ -153,6 +153,9 @@ export const NAV: NavGroup[] = [
       // F18 Demo & Trial — hasil demo/trial dinilai AM, konversi per produk.
       // Kunci izin sendiri ("demo-trial"); default tertutup.
       { title: "Demo & Trial", url: "/demo-trial", icon: Presentation, badge: "NEW" },
+      // F173 Pameran — registrasi pengunjung lewat QR publik (/daftar/<slug>) + kupon undian
+      // doorprize. Kunci izin sendiri ("pameran"); default tertutup.
+      { title: "Pameran", url: "/pameran", icon: Ticket, badge: "NEW" },
       // F74 Kampanye (menyerap F46) — kampanye non-KSO per brand/item + periode,
       // realisasi faktur/SO otomatis. Kunci izin sendiri ("kampanye"); default tertutup.
       { title: "Kampanye", url: "/kampanye", icon: Megaphone, badge: "NEW" },

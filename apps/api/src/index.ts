@@ -42,6 +42,11 @@ import {
   PermintaanError, analisa as ppAnalisa, cariSku as ppCariSku, catatPermintaan, listPermintaan, listReview as ppListReview,
   opsi as ppOpsi, putuskan as ppPutuskan, simpanKelompok as ppSimpanKelompok, ubahParam as ppUbahParam, ubahPermintaan, usulkan as ppUsulkan, bacaParam as ppBacaParam,
 } from "./repo/permintaan-produk.js";
+import {
+  PameranError, buatAcara as pmBuatAcara, daftarPublik as pmDaftarPublik, hapusPengunjung as pmHapusPengunjung, infoPublik as pmInfoPublik,
+  jadikanDeal as pmJadikanDeal, kocokPemenang as pmKocok, listAcara as pmListAcara, listPengunjung as pmListPengunjung,
+  listUndian as pmListUndian, ubahAcara as pmUbahAcara, ubahStatusUndian as pmUbahStatusUndian,
+} from "./repo/pameran.js";
 import { listPickupPlans, createPickupPlan, updatePickupPlan, deletePickupPlan, previewPreVisit, runPreVisitCheck, listKurirOptions, listSjOptions, resolveKurir, cekSj, SJ_WINDOW_DAYS, planSudahJalan } from "./repo/pickup-plan.js";
 import {
   ingestInvoices,
@@ -6536,6 +6541,95 @@ app.patch("/permintaan-produk/param", async (c) => {
   const oleh = ppOleh(b);
   if (!oleh) return c.json({ error: "oleh wajib (diisi BFF dari sesi)" }, 400);
   try { return c.json(await ppUbahParam(b, oleh)); } catch (e) { return ppErr(c, e); }
+});
+
+// F173 Pameran — Registrasi Pengunjung & Kupon Undian (migrasi 259). Dua jalur:
+// • /pameran-publik/:slug — form publik di HP pengunjung (BFF /api/publik/pameran tanpa sesi,
+//   hanya meneruskan dua endpoint ini). Dibatasi per IP di sini; IP diteruskan BFF.
+// • /pameran/* — menu Pameran; gerbang menu & aksi DIPERIKSA DI BFF, `oleh` dari sesi.
+const pmErr = (c: Context, e: unknown) => {
+  if (e instanceof PameranError) return c.json({ error: e.message }, e.status as 400);
+  if (e instanceof DealError) return c.json({ error: e.message }, e.status as 400);
+  console.error("[pameran]", e);
+  return c.json({ error: "Gagal memproses data pameran." }, 500);
+};
+const pmJson = async (c: Context) => ((await c.req.json().catch(() => null)) as Record<string, unknown> | null) ?? {};
+const pmSlug = (c: Context) => { const s = c.req.param("slug") ?? ""; return /^[a-z0-9][a-z0-9-]{2,59}$/.test(s) ? s : null; };
+// Jatah kirim per IP: Wi-Fi venue pameran = banyak pengunjung satu IP NAT, jadi longgar
+// (40 / 10 menit) — tujuannya menahan skrip pengisi massal, bukan antrean booth.
+const pmJatah = new Map<string, number[]>();
+function pmBolehKirim(ip: string): boolean {
+  const kini = Date.now();
+  const jejak = (pmJatah.get(ip) ?? []).filter((t) => kini - t < 10 * 60_000);
+  if (jejak.length >= 40) { pmJatah.set(ip, jejak); return false; }
+  jejak.push(kini);
+  pmJatah.set(ip, jejak);
+  if (pmJatah.size > 5000) for (const [k, v] of pmJatah) if (!v.some((t) => kini - t < 10 * 60_000)) pmJatah.delete(k);
+  return true;
+}
+app.get("/pameran-publik/:slug", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const slug = pmSlug(c);
+  if (!slug) return c.json({ error: "Pameran tidak ditemukan." }, 404);
+  try { return c.json(await pmInfoPublik(slug)); } catch (e) { return pmErr(c, e); }
+});
+app.post("/pameran-publik/:slug/daftar", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const slug = pmSlug(c);
+  if (!slug) return c.json({ error: "Pameran tidak ditemukan." }, 404);
+  const ip = c.req.header("x-pengunjung-ip")?.slice(0, 64) || null;
+  if (!pmBolehKirim(ip ?? "?")) return c.json({ error: "Terlalu banyak pendaftaran dari jaringan ini. Coba lagi beberapa menit lagi." }, 429);
+  try {
+    return c.json(await pmDaftarPublik(slug, await pmJson(c), { ip, ua: c.req.header("x-pengunjung-ua") ?? null }), 201);
+  } catch (e) { return pmErr(c, e); }
+});
+const pmOleh = (b: Record<string, unknown>) => (typeof b.oleh === "string" && b.oleh.trim() ? b.oleh.trim() : null);
+const pmNum = (c: Context, k: string) => { const v = Number(c.req.query(k)); return Number.isFinite(v) && v >= 0 ? v : undefined; };
+app.get("/pameran", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try { return c.json(await pmListAcara()); } catch (e) { return pmErr(c, e); }
+});
+app.post("/pameran", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const b = await pmJson(c);
+  const oleh = pmOleh(b);
+  if (!oleh) return c.json({ error: "oleh wajib (diisi BFF dari sesi)" }, 400);
+  try { return c.json(await pmBuatAcara(b, oleh), 201); } catch (e) { return pmErr(c, e); }
+});
+app.patch("/pameran/:id{[0-9]+}", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try { return c.json(await pmUbahAcara(Number(c.req.param("id")), await pmJson(c))); } catch (e) { return pmErr(c, e); }
+});
+app.get("/pameran/:id{[0-9]+}/pengunjung", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    return c.json(await pmListPengunjung(Number(c.req.param("id")), {
+      q: c.req.query("q"), limit: pmNum(c, "limit"), offset: pmNum(c, "offset"), semua: c.req.query("semua") === "1",
+    }));
+  } catch (e) { return pmErr(c, e); }
+});
+app.delete("/pameran/pengunjung/:id{[0-9]+}", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try { return c.json(await pmHapusPengunjung(Number(c.req.param("id")))); } catch (e) { return pmErr(c, e); }
+});
+app.post("/pameran/pengunjung/:id{[0-9]+}/deal", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try { return c.json(await pmJadikanDeal(Number(c.req.param("id")), await scopeOf(c), await pmJson(c)), 201); } catch (e) { return pmErr(c, e); }
+});
+app.get("/pameran/:id{[0-9]+}/undian", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try { return c.json(await pmListUndian(Number(c.req.param("id")))); } catch (e) { return pmErr(c, e); }
+});
+app.post("/pameran/:id{[0-9]+}/undian", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const b = await pmJson(c);
+  const oleh = pmOleh(b);
+  if (!oleh) return c.json({ error: "oleh wajib (diisi BFF dari sesi)" }, 400);
+  try { return c.json(await pmKocok(Number(c.req.param("id")), b, oleh), 201); } catch (e) { return pmErr(c, e); }
+});
+app.patch("/pameran/undian/:id{[0-9]+}", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try { return c.json(await pmUbahStatusUndian(Number(c.req.param("id")), await pmJson(c))); } catch (e) { return pmErr(c, e); }
 });
 
 // F70 PIP 90-Day Tracker + Improvement (migrasi 236, repo/pip.ts). Menu/izin = fitur 'karyawan'
