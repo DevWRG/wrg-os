@@ -303,6 +303,12 @@ export async function listUndian(pameranId: number) {
   const [n] = await db()`
     select count(*)::int n from pameran_pengunjung v
     where v.pameran_id = ${pameranId} and not exists (select 1 from pameran_undian u where u.pengunjung_id = v.id)`;
+  // Bahan animasi spinner undian (TAMPILAN saja — pemenang tetap dipilih kocokPemenang di
+  // server): sampel acak kupon peserta yang belum menang, cukup untuk kelihatan berputar.
+  const sampel = await db()`
+    select v.kode_kupon, v.nama from pameran_pengunjung v
+    where v.pameran_id = ${pameranId} and not exists (select 1 from pameran_undian u where u.pengunjung_id = v.id)
+    order by random() limit 120`;
   return {
     items: rows.map((r) => ({
       id: Number(r.id), hadiah: String(r.hadiah), status: String(r.status), diundi_oleh: String(r.diundi_oleh),
@@ -310,6 +316,7 @@ export async function listUndian(pameranId: number) {
       no_hp: hpTampil(String(r.no_hp)), kode_kupon: String(r.kode_kupon),
     })),
     sisa_peserta: Number(n.n),
+    sampel: sampel.map((r) => ({ kode_kupon: String(r.kode_kupon), nama: String(r.nama) })),
   };
 }
 
