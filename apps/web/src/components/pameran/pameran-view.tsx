@@ -133,6 +133,7 @@ function KartuAcara({ a, izin, onUbah, onBerubah }: { a: Acara; izin: Izin; onUb
           </Button>
           <Button size="sm" variant="outline" onClick={() => window.open(url, "_blank", "noopener")}>{a.link_pendek ? "Uji link pendek" : "Buka form"}</Button>
           <Button size="sm" onClick={() => window.open(`/layar/pameran/${a.id}`, "_blank", "noopener")}>Tampilkan di layar</Button>
+          <Button size="sm" variant="outline" onClick={() => window.open(`/undian/pameran/${a.id}`, "_blank", "noopener")}>Halaman undian</Button>
         </div>
         {a.link_pendek && (
           <p className="text-muted-foreground text-xs">
