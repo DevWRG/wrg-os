@@ -43,6 +43,13 @@ test("acara: slug & awalan default, tanggal selesai ≥ mulai", () => {
   assert.match((validasiAcara({ nama: "X", divisi: "lain", tanggal_mulai: "2026-11-05" }) as { pesan: string }).pesan, /divisi/);
   assert.match((validasiAcara({ nama: "X y", divisi: "ivd", tanggal_mulai: "2026-11-05", slug: "../x" }) as { pesan: string }).pesan, /Alamat/);
   assert.match((validasiAcara({ nama: "X y", divisi: "ivd", tanggal_mulai: "2026-11-05", prefix_kupon: "M1" }) as { pesan: string }).pesan, /Awalan/);
+  // jatah per IP: default 600, bisa dinaikkan untuk momen panggung, dibatasi 10–100.000
+  assert.ok(v.ok && v.isi.jatah_ip === 600);
+  const panggung = validasiAcara({ nama: "Stage", divisi: "medical_hd", tanggal_mulai: "2026-11-05", jatah_ip: "3000" });
+  assert.ok(panggung.ok && panggung.isi.jatah_ip === 3000);
+  for (const j of [5, 1.5, 200_000, "abc"]) {
+    assert.match((validasiAcara({ nama: "X y", divisi: "ivd", tanggal_mulai: "2026-11-05", jatah_ip: j }) as { pesan: string }).pesan, /Jatah/);
+  }
 });
 
 test("form buka: saklar + jendela tanggal ±1 hari", () => {

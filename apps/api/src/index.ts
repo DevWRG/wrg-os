@@ -45,7 +45,7 @@ import {
 import {
   PameranError, buatAcara as pmBuatAcara, daftarPublik as pmDaftarPublik, hapusPengunjung as pmHapusPengunjung, infoPublik as pmInfoPublik,
   jadikanDeal as pmJadikanDeal, kocokPemenang as pmKocok, listAcara as pmListAcara, listPengunjung as pmListPengunjung,
-  listKabKota as pmListKabKota, listUndian as pmListUndian, ubahAcara as pmUbahAcara, ubahStatusUndian as pmUbahStatusUndian,
+  listKabKota as pmListKabKota, ringkasLayar as pmRingkasLayar, listUndian as pmListUndian, ubahAcara as pmUbahAcara, ubahStatusUndian as pmUbahStatusUndian,
 } from "./repo/pameran.js";
 import { listPickupPlans, createPickupPlan, updatePickupPlan, deletePickupPlan, previewPreVisit, runPreVisitCheck, listKurirOptions, listSjOptions, resolveKurir, cekSj, SJ_WINDOW_DAYS, planSudahJalan } from "./repo/pickup-plan.js";
 import {
@@ -6555,15 +6555,17 @@ const pmErr = (c: Context, e: unknown) => {
 };
 const pmJson = async (c: Context) => ((await c.req.json().catch(() => null)) as Record<string, unknown> | null) ?? {};
 const pmSlug = (c: Context) => { const s = c.req.param("slug") ?? ""; return /^[a-z0-9][a-z0-9-]{2,59}$/.test(s) ? s : null; };
-// Jatah kirim per IP: Wi-Fi venue pameran = banyak pengunjung satu IP NAT, jadi longgar
-// (40 / 10 menit) — tujuannya menahan skrip pengisi massal, bukan antrean booth.
+// Jatah kirim per IP PER ACARA (kolom pameran.jatah_ip, migrasi 261) — menahan skrip pengisi
+// massal, BUKAN antrean booth. Wi-Fi venue & CGNAT operator = ratusan pengunjung satu IP:
+// uji beban 30 Okt 2026, 500 pengunjung satu IP dengan jatah tetap 40 → 460 ditolak. Momen
+// panggung (±1.800 penonton) diberi jatah besar dari form Pameran tanpa rilis.
 const pmJatah = new Map<string, number[]>();
-function pmBolehKirim(ip: string): boolean {
+function pmBolehKirim(kunci: string, jatah: number): boolean {
   const kini = Date.now();
-  const jejak = (pmJatah.get(ip) ?? []).filter((t) => kini - t < 10 * 60_000);
-  if (jejak.length >= 40) { pmJatah.set(ip, jejak); return false; }
+  const jejak = (pmJatah.get(kunci) ?? []).filter((t) => kini - t < 10 * 60_000);
+  if (jejak.length >= jatah) { pmJatah.set(kunci, jejak); return false; }
   jejak.push(kini);
-  pmJatah.set(ip, jejak);
+  pmJatah.set(kunci, jejak);
   if (pmJatah.size > 5000) for (const [k, v] of pmJatah) if (!v.some((t) => kini - t < 10 * 60_000)) pmJatah.delete(k);
   return true;
 }
@@ -6582,9 +6584,8 @@ app.post("/pameran-publik/:slug/daftar", async (c) => {
   const slug = pmSlug(c);
   if (!slug) return c.json({ error: "Pameran tidak ditemukan." }, 404);
   const ip = c.req.header("x-pengunjung-ip")?.slice(0, 64) || null;
-  if (!pmBolehKirim(ip ?? "?")) return c.json({ error: "Terlalu banyak pendaftaran dari jaringan ini. Coba lagi beberapa menit lagi." }, 429);
   try {
-    return c.json(await pmDaftarPublik(slug, await pmJson(c), { ip, ua: c.req.header("x-pengunjung-ua") ?? null }), 201);
+    return c.json(await pmDaftarPublik(slug, await pmJson(c), { ip, ua: c.req.header("x-pengunjung-ua") ?? null }, pmBolehKirim), 201);
   } catch (e) { return pmErr(c, e); }
 });
 const pmOleh = (b: Record<string, unknown>) => (typeof b.oleh === "string" && b.oleh.trim() ? b.oleh.trim() : null);
@@ -6619,6 +6620,10 @@ app.delete("/pameran/pengunjung/:id{[0-9]+}", async (c) => {
 app.post("/pameran/pengunjung/:id{[0-9]+}/deal", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   try { return c.json(await pmJadikanDeal(Number(c.req.param("id")), await scopeOf(c), await pmJson(c)), 201); } catch (e) { return pmErr(c, e); }
+});
+app.get("/pameran/:id{[0-9]+}/layar", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try { return c.json(await pmRingkasLayar(Number(c.req.param("id")))); } catch (e) { return pmErr(c, e); }
 });
 app.get("/pameran/:id{[0-9]+}/undian", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
