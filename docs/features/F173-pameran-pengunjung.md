@@ -8,8 +8,8 @@ Kebutuhan awal divisi **Medical & Hemodialisa**; divisi **IVD** bisa memakai men
 - **Domain**: Sales / Marketing · issue #1894
 - **Menu**: `/pameran` (grup Sales) — pilih pameran → kartu acara + QR, tab **Pengunjung**, **Undian**
 - **Form publik**: `/daftar/<slug>` (tanpa login) → BFF `/api/publik/pameran/<slug>[/daftar]`
-- **Migrasi**: 259 (`pameran`, `pameran_pengunjung`, `pameran_undian`)
-- **Uji**: `apps/api/src/repo/pameran.test.ts`
+- **Migrasi**: 259 (`pameran`, `pameran_pengunjung`, `pameran_undian`), 260 (`wilayah_kab_kota` + `pameran_pengunjung.kab_kota_kode`)
+- **Uji**: `apps/api/src/repo/pameran.test.ts`, `apps/web/src/components/pameran/pilih-kab-kota.test.ts`
 
 ## Keputusan user (30 Okt 2026)
 
@@ -22,6 +22,10 @@ Kebutuhan awal divisi **Medical & Hemodialisa**; divisi **IVD** bisa memakai men
 
 ## Aturan
 
+- **Isian form**: nama, asal institusi, **kota/kabupaten asal** (wajib, dropdown cari — 514 kab/kota
+  Kepmendagri 300.2.2-2138/2025, migrasi 260; ketik "malang" / "kab malang" / "surabaya"), no. HP
+  (angka saja). Pengunjung lama sebelum 260 tak punya kota (`kab_kota_kode` NULL).
+
 - **1 no. HP = 1 kupon per pameran.** No. HP dinormalkan ke `628…` (0812…, +62 812…, 812… dianggap sama).
   Daftar ulang dengan nomor yang sama mengembalikan kupon lama ("nomor Anda sudah terdaftar").
 - **Kode kupon** = awalan acara + 5 karakter acak tanpa huruf rancu (tanpa 0/O/1/I/L), mis. `MHD-7K3QX`.
@@ -32,7 +36,7 @@ Kebutuhan awal divisi **Medical & Hemodialisa**; divisi **IVD** bisa memakai men
   **belum pernah menang**. Kocok serentak dikunci per pameran (advisory lock) — tak ada pemenang ganda.
   Pemenang yang tak hadir ditandai **hangus** (tetap tercatat, tak ikut dikocok lagi), lalu kocok ulang.
 - **Jadikan deal**: deal Prospecting baru, `facility_name` = institusi, `product_category` ikut divisi
-  (Medical/IVD), `sumber_lead = 'pameran'`, nama + HP + kupon pengunjung di catatan. AM ikut scope
+  (Medical/IVD), `city`/`province` dari kota asal, `sumber_lead = 'pameran'`, nama + HP + kupon pengunjung di catatan. AM ikut scope
   pemanggil (`createDeal`). Klik ganda/serentak hanya menghasilkan satu deal.
 - **Hapus** pengunjung hanya untuk entri iseng/ganda; ditolak bila sudah menang undian atau sudah jadi deal.
 

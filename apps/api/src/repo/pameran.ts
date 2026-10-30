@@ -60,15 +60,18 @@ export function buatKupon(prefix: string, acak: (n: number) => number = randomIn
   return `${prefix}-${s}`;
 }
 
-export interface IsianDaftar { nama: string; institusi: string; no_hp: string }
+export interface IsianDaftar { nama: string; institusi: string; kab_kota_kode: string; no_hp: string }
 export function validasiDaftar(b: Record<string, unknown>): { ok: true; isi: IsianDaftar } | { ok: false; pesan: string } {
   const nama = teks(b.nama, 120);
   if (!nama) return { ok: false, pesan: "Nama wajib diisi." };
   const institusi = teks(b.institusi, 160);
   if (!institusi) return { ok: false, pesan: "Asal institusi wajib diisi." };
+  // Kode Kemendagri 'PP.KK' dari dropdown; keberadaannya dicek ke wilayah_kab_kota di DB.
+  const kab = typeof b.kab_kota_kode === "string" && /^\d{2}\.\d{2}$/.test(b.kab_kota_kode) ? b.kab_kota_kode : null;
+  if (!kab) return { ok: false, pesan: "Pilih kota/kabupaten asal dari daftar." };
   const hp = normalHp(b.no_hp);
   if (!hp) return { ok: false, pesan: "No. HP tidak valid. Contoh: 081234567890." };
-  return { ok: true, isi: { nama, institusi, no_hp: hp } };
+  return { ok: true, isi: { nama, institusi, kab_kota_kode: kab, no_hp: hp } };
 }
 
 /** Slug dari nama acara: "Pernefri 2026 — Bali" → "pernefri-2026-bali". */
@@ -163,6 +166,8 @@ export async function daftarPublik(slug: string, b: Record<string, unknown>, jej
   const v = validasiDaftar(b);
   if (!v.ok) throw new PameranError(400, v.pesan);
   const sql = db();
+  const kab = await sql`select 1 from wilayah_kab_kota where kode = ${v.isi.kab_kota_kode}`;
+  if (!kab.length) throw new PameranError(400, "Pilih kota/kabupaten asal dari daftar.");
   const lama = await sql`select kode_kupon from pameran_pengunjung where pameran_id = ${a.id} and no_hp = ${v.isi.no_hp}`;
   if (lama.length) return { kode_kupon: String(lama[0].kode_kupon), sudah_terdaftar: true, pameran: a.nama };
   // Bentrok kode (31^5 ≈ 28 juta) praktis mustahil, tapi tetap diulang; bentrok no. HP
@@ -170,8 +175,8 @@ export async function daftarPublik(slug: string, b: Record<string, unknown>, jej
   for (let i = 0; i < 5; i++) {
     const kode = buatKupon(a.prefix_kupon);
     const rows = await sql`
-      insert into pameran_pengunjung (pameran_id, nama, institusi, no_hp, kode_kupon, ip, user_agent)
-      values (${a.id}, ${v.isi.nama}, ${v.isi.institusi}, ${v.isi.no_hp}, ${kode}, ${jejak.ip}, ${jejak.ua?.slice(0, 300) ?? null})
+      insert into pameran_pengunjung (pameran_id, nama, institusi, kab_kota_kode, no_hp, kode_kupon, ip, user_agent)
+      values (${a.id}, ${v.isi.nama}, ${v.isi.institusi}, ${v.isi.kab_kota_kode}, ${v.isi.no_hp}, ${kode}, ${jejak.ip}, ${jejak.ua?.slice(0, 300) ?? null})
       on conflict do nothing
       returning kode_kupon`;
     if (rows.length) return { kode_kupon: String(rows[0].kode_kupon), sudah_terdaftar: false, pameran: a.nama };
@@ -179,6 +184,12 @@ export async function daftarPublik(slug: string, b: Record<string, unknown>, jej
     if (ada.length) return { kode_kupon: String(ada[0].kode_kupon), sudah_terdaftar: true, pameran: a.nama };
   }
   throw new PameranError(500, "Gagal membuat kupon, coba lagi.");
+}
+
+/** Daftar 514 kab/kota untuk dropdown form publik (migrasi 260). */
+export async function listKabKota() {
+  const rows = await db()`select kode, nama, provinsi from wilayah_kab_kota order by kode`;
+  return { items: rows.map((r) => ({ kode: String(r.kode), nama: String(r.nama), provinsi: String(r.provinsi) })) };
 }
 
 // ---- menu Pameran
@@ -243,17 +254,20 @@ export async function listPengunjung(pameranId: number, o: { q?: string; limit?:
   const q = o.q?.trim() ? `%${o.q.trim().replace(/[\\%_]/g, (m) => "\\" + m)}%` : null;
   const qHp = o.q?.replace(/\D/g, "") ?? "";
   const saring = q
-    ? sql`and (v.nama ilike ${q} or v.institusi ilike ${q} or v.kode_kupon ilike ${q} ${qHp.length >= 4 ? sql`or v.no_hp like ${"%" + qHp.replace(/^0/, "") + "%"}` : sql``})`
+    ? sql`and (v.nama ilike ${q} or v.institusi ilike ${q} or w.nama ilike ${q} or v.kode_kupon ilike ${q} ${qHp.length >= 4 ? sql`or v.no_hp like ${"%" + qHp.replace(/^0/, "") + "%"}` : sql``})`
     : sql``;
-  const [n] = await sql`select count(*)::int n from pameran_pengunjung v where v.pameran_id = ${pameranId} ${saring}`;
+  const [n] = await sql`select count(*)::int n from pameran_pengunjung v left join wilayah_kab_kota w on w.kode = v.kab_kota_kode
+    where v.pameran_id = ${pameranId} ${saring}`;
   const rows = await sql`
-    select v.id, v.nama, v.institusi, v.no_hp, v.kode_kupon, v.daftar_at, v.deal_id, u.hadiah, u.status as status_undian
+    select v.id, v.nama, v.institusi, w.nama as kab_kota, w.provinsi, v.no_hp, v.kode_kupon, v.daftar_at, v.deal_id, u.hadiah, u.status as status_undian
     from pameran_pengunjung v left join pameran_undian u on u.pengunjung_id = v.id
+    left join wilayah_kab_kota w on w.kode = v.kab_kota_kode
     where v.pameran_id = ${pameranId} ${saring}
     order by v.daftar_at desc, v.id desc limit ${limit} offset ${offset}`;
   const items = rows.map((r) => ({
-    id: Number(r.id), nama: String(r.nama), institusi: String(r.institusi), no_hp: hpTampil(String(r.no_hp)),
-    kode_kupon: String(r.kode_kupon), daftar_at: new Date(r.daftar_at as string).toISOString(),
+    id: Number(r.id), nama: String(r.nama), institusi: String(r.institusi),
+    kab_kota: r.kab_kota == null ? null : String(r.kab_kota), provinsi: r.provinsi == null ? null : String(r.provinsi),
+    no_hp: hpTampil(String(r.no_hp)), kode_kupon: String(r.kode_kupon), daftar_at: new Date(r.daftar_at as string).toISOString(),
     deal_id: r.deal_id == null ? null : String(r.deal_id), hadiah: r.hadiah == null ? null : String(r.hadiah),
     status_undian: r.status_undian == null ? null : String(r.status_undian),
   }));
@@ -331,8 +345,9 @@ export async function ubahStatusUndian(id: number, b: Record<string, unknown>) {
 export async function jadikanDeal(pengunjungId: number, scope: DataScope, b: Record<string, unknown>) {
   const sql = db();
   const rows = await sql`
-    select v.id, v.nama, v.institusi, v.no_hp, v.kode_kupon, v.deal_id, p.nama as pameran, p.divisi
-    from pameran_pengunjung v join pameran p on p.id = v.pameran_id where v.id = ${pengunjungId}`;
+    select v.id, v.nama, v.institusi, v.no_hp, v.kode_kupon, v.deal_id, p.nama as pameran, p.divisi, w.nama as kab_kota, w.provinsi
+    from pameran_pengunjung v join pameran p on p.id = v.pameran_id
+    left join wilayah_kab_kota w on w.kode = v.kab_kota_kode where v.id = ${pengunjungId}`;
   if (!rows.length) throw new PameranError(404, "Pengunjung tidak ditemukan.");
   const r = rows[0];
   if (r.deal_id != null) throw new PameranError(409, r.deal_id === PROSES ? "Sedang dijadikan deal, muat ulang sebentar lagi." : "Pengunjung ini sudah dijadikan deal.");
@@ -345,6 +360,7 @@ export async function jadikanDeal(pengunjungId: number, scope: DataScope, b: Rec
   try {
     deal = await createDeal(scope, {
       facility_name: String(r.institusi), product_category: KATEGORI_DEAL[r.divisi as Divisi], sumber_lead: "pameran",
+      ...(r.kab_kota ? { city: String(r.kab_kota), province: String(r.provinsi) } : {}),
       notes: teks(b.catatan, 500) ? `${catatan}\n${teks(b.catatan, 500)}` : catatan,
       ...(typeof b.am_id === "string" && b.am_id ? { am_id: b.am_id } : {}),
     });

@@ -45,7 +45,7 @@ import {
 import {
   PameranError, buatAcara as pmBuatAcara, daftarPublik as pmDaftarPublik, hapusPengunjung as pmHapusPengunjung, infoPublik as pmInfoPublik,
   jadikanDeal as pmJadikanDeal, kocokPemenang as pmKocok, listAcara as pmListAcara, listPengunjung as pmListPengunjung,
-  listUndian as pmListUndian, ubahAcara as pmUbahAcara, ubahStatusUndian as pmUbahStatusUndian,
+  listKabKota as pmListKabKota, listUndian as pmListUndian, ubahAcara as pmUbahAcara, ubahStatusUndian as pmUbahStatusUndian,
 } from "./repo/pameran.js";
 import { listPickupPlans, createPickupPlan, updatePickupPlan, deletePickupPlan, previewPreVisit, runPreVisitCheck, listKurirOptions, listSjOptions, resolveKurir, cekSj, SJ_WINDOW_DAYS, planSudahJalan } from "./repo/pickup-plan.js";
 import {
@@ -6567,6 +6567,10 @@ function pmBolehKirim(ip: string): boolean {
   if (pmJatah.size > 5000) for (const [k, v] of pmJatah) if (!v.some((t) => kini - t < 10 * 60_000)) pmJatah.delete(k);
   return true;
 }
+app.get("/pameran-kab-kota", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try { return c.json(await pmListKabKota()); } catch (e) { return pmErr(c, e); }
+});
 app.get("/pameran-publik/:slug", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const slug = pmSlug(c);
