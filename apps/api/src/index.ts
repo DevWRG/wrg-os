@@ -6555,13 +6555,17 @@ const pmErr = (c: Context, e: unknown) => {
 };
 const pmJson = async (c: Context) => ((await c.req.json().catch(() => null)) as Record<string, unknown> | null) ?? {};
 const pmSlug = (c: Context) => { const s = c.req.param("slug") ?? ""; return /^[a-z0-9][a-z0-9-]{2,59}$/.test(s) ? s : null; };
-// Jatah kirim per IP: Wi-Fi venue pameran = banyak pengunjung satu IP NAT, jadi longgar
-// (40 / 10 menit) — tujuannya menahan skrip pengisi massal, bukan antrean booth.
+// Jatah kirim per IP — menahan skrip pengisi massal, BUKAN antrean booth. Wi-Fi venue dan
+// CGNAT operator seluler = ratusan pengunjung berbagi SATU IP publik: uji beban 30 Okt 2026
+// (500 pengunjung satu IP dalam 60 dtk) dengan jatah lama 40 → 460 ditolak. Default 600 /
+// 10 menit; ubah lewat env PAMERAN_JATAH_IP tanpa rilis. Kupon palsu tak bisa menukar
+// hadiah (pemenang harus hadir), jadi jatah longgar lebih murah daripada pengunjung ditolak.
+const pmJatahIp = () => { const n = Number(process.env.PAMERAN_JATAH_IP); return Number.isInteger(n) && n > 0 ? n : 600; };
 const pmJatah = new Map<string, number[]>();
 function pmBolehKirim(ip: string): boolean {
   const kini = Date.now();
   const jejak = (pmJatah.get(ip) ?? []).filter((t) => kini - t < 10 * 60_000);
-  if (jejak.length >= 40) { pmJatah.set(ip, jejak); return false; }
+  if (jejak.length >= pmJatahIp()) { pmJatah.set(ip, jejak); return false; }
   jejak.push(kini);
   pmJatah.set(ip, jejak);
   if (pmJatah.size > 5000) for (const [k, v] of pmJatah) if (!v.some((t) => kini - t < 10 * 60_000)) pmJatah.delete(k);

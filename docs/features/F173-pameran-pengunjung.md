@@ -54,17 +54,32 @@ Kebutuhan awal divisi **Medical & Hemodialisa**; divisi **IVD** bisa memakai men
 - Middleware meloloskan `/daftar/` dan `/api/publik/` tanpa sesi. **Hanya** BFF di
   `app/api/publik/pameran` yang boleh ada di bawah `/api/publik/`: slug divalidasi regex, path API tetap,
   body dibangun ulang dari tiga field (nama/institusi/no_hp) — field lain (mis. `oleh`) dibuang.
-- Batas kirim per IP di apps/api: 40 per 10 menit (longgar karena Wi-Fi venue = banyak pengunjung satu IP).
+- Batas kirim per IP di apps/api: **600 per 10 menit** (env `PAMERAN_JATAH_IP`). Wi-Fi venue & CGNAT
+  operator = ratusan pengunjung satu IP — jatah awal 40 menolak 460 dari 500 di uji beban.
   IP dari `cf-connecting-ip` (Cloudflare Tunnel).
 - Field umpan bot tersembunyi (`situs`); terisi → dibalas sukses palsu, tidak disimpan.
 - Halaman `noindex`.
 
 ## Prasyarat prod (di luar repo)
 
-**Cloudflare**: `os.wahanalifeline.co.id` memasang *Managed Challenge*. Halaman `/daftar/…` bisa lolos
-(browser menyelesaikan challenge), tapi `fetch()` kirim form **tidak** — pengunjung akan gagal submit
-dengan 403. Pasang WAF Custom Rule action **Skip** (Managed Challenge/Bot Fight) untuk
-`starts_with(http.request.uri.path, "/daftar/") or starts_with(http.request.uri.path, "/api/publik/")`.
+**Cloudflare**: `os.wahanalifeline.co.id` memakai **I'm Under Attack Mode** (Security Level, plan Free)
+— bukan WAF, jadi aturan *WAF Skip* TIDAK berpengaruh; satu-satunya pengecualian per path adalah
+**Configuration Rule** (Security Level → off) untuk `/daftar/` & `/api/publik/`. Keputusan user 24 Sep
+2026: UAM tetap menyala, tanpa bypass permanen — jadi ini keputusan user, bukan langkah otomatis.
+Tanpa pengecualian: pengunjung melihat layar "Checking your browser" ±5 dtk saat membuka QR, lalu
+`cf_clearance` (default 30 menit) membuat submit lolos. Gagal submit hanya bila form dibiarkan terbuka
+melewati masa cookie — pesan "Koneksi terputus. Muat ulang halaman" menuntun pengunjung.
+
+## Uji beban (30 Okt 2026, k6 di Mac mini → stack dev, tanpa Cloudflare)
+
+| Skenario | Hasil |
+|---|---|
+| 500 pengunjung dalam 60 dtk (IP berbeda) | 0% gagal, p95 10 ms |
+| 500 pengunjung dalam 10 dtk (50/dtk) | 0% gagal, p95 8 ms |
+| 500 dibuka di milidetik yang sama | ±65% ditolak di level TCP (antrean `somaxconn` 128 macOS) — artefak uji: di prod semua lewat beberapa koneksi tetap `cloudflared`, bukan 500 koneksi baru |
+| 500 dalam 60 dtk dari SATU IP | jatah lama 40 → 460 ditolak (429) → jatah dinaikkan ke 600 |
+
+Data selalu konsisten: setiap pendaftar sukses = 1 baris, kupon & no. HP unik.
 
 ## Data
 
