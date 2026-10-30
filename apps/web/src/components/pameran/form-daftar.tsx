@@ -92,7 +92,8 @@ export function FormDaftarPameran({ slug, info }: { slug: string; info: InfoPame
       </label>
       <label className="block text-sm font-medium">
         No. HP (WhatsApp)
-        <input className={INPUT} value={hp} onChange={(e) => setHp(e.target.value)} required inputMode="tel" autoComplete="tel" placeholder="0812 3456 7890" />
+        <span className="ml-1 font-normal text-slate-500">— angka saja, tanpa spasi</span>
+        <input className={INPUT} value={hp} onChange={(e) => setHp(e.target.value.replace(/(?!^\+)\D/g, ""))} required inputMode="tel" autoComplete="tel" maxLength={16} placeholder="081234567890" />
       </label>
       {/* umpan bot — tersembunyi dari manusia & pembaca layar */}
       <div aria-hidden className="absolute -left-[9999px] h-0 w-0 overflow-hidden">
