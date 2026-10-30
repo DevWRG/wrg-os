@@ -67,7 +67,7 @@ export function validasiDaftar(b: Record<string, unknown>): { ok: true; isi: Isi
   const institusi = teks(b.institusi, 160);
   if (!institusi) return { ok: false, pesan: "Asal institusi wajib diisi." };
   const hp = normalHp(b.no_hp);
-  if (!hp) return { ok: false, pesan: "No. HP tidak valid. Contoh: 0812 3456 7890." };
+  if (!hp) return { ok: false, pesan: "No. HP tidak valid. Contoh: 081234567890." };
   return { ok: true, isi: { nama, institusi, no_hp: hp } };
 }
 
