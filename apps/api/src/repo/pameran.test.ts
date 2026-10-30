@@ -47,6 +47,13 @@ test("acara: slug & awalan default, tanggal selesai ≥ mulai", () => {
   assert.ok(v.ok && v.isi.jatah_ip === 600);
   const panggung = validasiAcara({ nama: "Stage", divisi: "medical_hd", tanggal_mulai: "2026-11-05", jatah_ip: "3000" });
   assert.ok(panggung.ok && panggung.isi.jatah_ip === 3000);
+  // link pendek opsional, hanya https
+  assert.ok(v.ok && v.isi.link_pendek === null);
+  const ln = validasiAcara({ nama: "Stage", divisi: "medical_hd", tanggal_mulai: "2026-11-05", link_pendek: " https://s.id/wrg-pit " });
+  assert.ok(ln.ok && ln.isi.link_pendek === "https://s.id/wrg-pit");
+  for (const l of ["http://s.id/x", "s.id/wrg", "https://s.id/ada spasi", "javascript:alert(1)"]) {
+    assert.match((validasiAcara({ nama: "X y", divisi: "ivd", tanggal_mulai: "2026-11-05", link_pendek: l }) as { pesan: string }).pesan, /Link pendek/);
+  }
   for (const j of [5, 1.5, 200_000, "abc"]) {
     assert.match((validasiAcara({ nama: "X y", divisi: "ivd", tanggal_mulai: "2026-11-05", jatah_ip: j }) as { pesan: string }).pesan, /Jatah/);
   }
