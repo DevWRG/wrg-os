@@ -18,6 +18,8 @@ export interface KsoReagent {
   yieldTest: number | null;
   hargaDp: number | null;
   hargaPl: number | null;
+  /** Harga beli WRG (Finance, migrasi 264), satuan sama dengan hargaDp. null = belum diisi. */
+  hargaBeli: number | null;
   flags: Record<string, unknown>;
 }
 
@@ -33,6 +35,9 @@ export interface KsoAnalyzer {
   defaultKsoBulan: number;
   defaultMarkup: number;
   defaultTests: number;
+  /** HPP alat F172 (HPP standar Finance / aset tetap cocok SN) — basis harga beli. */
+  hppAlat: number | null;
+  hppSumber: string | null;
   presets: number[];
   meta: KsoMeta;
   reagents: KsoReagent[];
@@ -61,6 +66,8 @@ export interface KsoParameter {
   testsPerKit: number | null;
   hargaDp: number | null;
   hargaPl: number | null;
+  /** Harga beli WRG (Finance, migrasi 264), satuan sama dengan hargaDp. null = belum diisi. */
+  hargaBeli: number | null;
   flags: Record<string, unknown>;
 }
 

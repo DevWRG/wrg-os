@@ -21,6 +21,8 @@ export interface KsoReagent {
   yieldTest: number | null;   // hasil kemasan (test) — kit/cartridge
   hargaDp: number | null;
   hargaPl: number | null;
+  /** Harga beli WRG per kemasan (Finance, migrasi 264). null = belum diisi. */
+  hargaBeli: number | null;
   flags: Record<string, unknown>;
 }
 
@@ -35,6 +37,9 @@ export interface KsoAnalyzer {
   defaultKsoBulan: number;
   defaultMarkup: number;
   defaultTests: number;
+  /** HPP alat dari F172 (HPP standar Finance / aset tetap cocok SN) lewat kso_analyzer.model_key. */
+  hppAlat: number | null;
+  hppSumber: string | null;
   presets: number[];
   meta: Record<string, unknown>;
   reagents: KsoReagent[];
@@ -49,6 +54,7 @@ export interface KsoParameter {
   testsPerKit: number | null;
   hargaDp: number | null;
   hargaPl: number | null;
+  hargaBeli: number | null;
   flags: Record<string, unknown>;
 }
 
@@ -74,17 +80,19 @@ export async function master(): Promise<KsoMaster> {
 
   const [aRows, rRows, pRows, nRows] = await Promise.all([
     sql<Record<string, unknown>[]>`
-      SELECT id, kategori, kode, label, brand, default_capex, default_capex_pl,
-             default_disc, default_kso_bulan, default_markup, default_tests, presets, meta
-        FROM kso_analyzer
-       WHERE aktif
-       ORDER BY urutan, kategori, kode`,
+      SELECT a.id, a.kategori, a.kode, a.label, a.brand, a.default_capex, a.default_capex_pl,
+             a.default_disc, a.default_kso_bulan, a.default_markup, a.default_tests, a.presets, a.meta,
+             m.hpp AS hpp_alat, m.hpp_sumber
+        FROM kso_analyzer a
+        LEFT JOIN kso_bottomline_model_v m ON m.model_key = a.model_key
+       WHERE a.aktif
+       ORDER BY a.urutan, a.kategori, a.kode`,
     sql<Record<string, unknown>[]>`
-      SELECT analyzer_id, kode, jenis, nama, pack, vol, yield_test, harga_dp, harga_pl, flags
+      SELECT analyzer_id, kode, jenis, nama, pack, vol, yield_test, harga_dp, harga_pl, harga_beli, flags
         FROM kso_reagent
        ORDER BY analyzer_id, urutan, kode`,
     sql<Record<string, unknown>[]>`
-      SELECT grup, no, nama, panel, pack, tests_per_kit, harga_dp, harga_pl, flags
+      SELECT grup, no, nama, panel, pack, tests_per_kit, harga_dp, harga_pl, harga_beli, flags
         FROM kso_parameter
        WHERE aktif
        ORDER BY grup, no`,
@@ -104,6 +112,7 @@ export async function master(): Promise<KsoMaster> {
       yieldTest: numOrNull(r.yield_test),
       hargaDp: numOrNull(r.harga_dp),
       hargaPl: numOrNull(r.harga_pl),
+      hargaBeli: numOrNull(r.harga_beli),
       flags: obj(r.flags),
     });
     perAnalyzer.set(id, list);
@@ -121,6 +130,8 @@ export async function master(): Promise<KsoMaster> {
       defaultKsoBulan: num(a.default_kso_bulan),
       defaultMarkup: num(a.default_markup),
       defaultTests: num(a.default_tests),
+      hppAlat: numOrNull(a.hpp_alat),
+      hppSumber: (a.hpp_sumber as string) ?? null,
       presets: Array.isArray(a.presets) ? (a.presets as number[]).map(Number) : [],
       meta: obj(a.meta),
       reagents: perAnalyzer.get(Number(a.id)) ?? [],
@@ -134,6 +145,7 @@ export async function master(): Promise<KsoMaster> {
       testsPerKit: numOrNull(p.tests_per_kit),
       hargaDp: numOrNull(p.harga_dp),
       hargaPl: numOrNull(p.harga_pl),
+      hargaBeli: numOrNull(p.harga_beli),
       flags: obj(p.flags),
     })),
     panels: nRows.map((n) => ({ grup: String(n.grup), nama: String(n.nama) })),
