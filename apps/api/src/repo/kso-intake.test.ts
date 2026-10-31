@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { formatBalasanDraft, parseKsoPerintah, perkiraanZona, pertanyaanKurang, pilihAlat, terjemahGalatKso, type DraftTampil } from "./kso-intake.js";
+import { KSO_BANTUAN, blokGpm, formatBalasanDraft, parseKsoPerintah, perkiraanZona, pertanyaanKurang, pilihAlat, terjemahGalatKso, type DraftTampil } from "./kso-intake.js";
 import { detectKind } from "./inbound.js";
 
 test("parseKsoPerintah: rencana baru, lengkapi, kirim, kelonggaran, kalah, kosong", () => {
@@ -117,4 +117,50 @@ test("terjemahGalatKso: tak pernah menampilkan kode galat", () => {
   }
   assert.match(terjemahGalatKso("KOLOM_WAJIB_KOSONG: tenor_bulan", "D12"), /tenor/);
   assert.match(terjemahGalatKso("BUKAN_MILIK_PENGIRIM: x", "D1"), /bukan atas nama Anda/);
+});
+
+// ---- F170 v2 Fase C2: tujuh isian + balasan GPM sebelum kirim (angka fiktif) ----
+const ANGKA = { gpm: 0.481, hd: false, catatan: "GPM 48,1% → zona Forum", biaya_per_tes: 4667,
+  harga_am: 10370.4, harga_hod: 9333.3, harga_forum: 8484.8, volume_min_forum: 763.2 };
+
+test("blokGpm: GPM, harga minimum per zona di volume AM, volume minimum zona Forum di harga AM", () => {
+  const t = blokGpm({ angka: ANGKA, volume_estimasi: 900, harga_per_test: 9000 }).join("\n");
+  assert.match(t, /GPM deal 48,1% \(biaya Rp\s?4\.667\/tes termasuk cicilan alat\)/);
+  assert.match(t, /Harga minimum di 900 tes\/bln: AM Rp\s?10\.400 · 2 HOD Rp\s?9\.400 · Forum Rp\s?8\.500/);
+  assert.match(t, /Volume minimum zona Forum di Rp\s?9\.000: 764 tes\/bln/);
+});
+
+test("blokGpm: zona Forum tak tercapai, Hemodialisa, data belum lengkap", () => {
+  assert.match(blokGpm({ angka: { ...ANGKA, volume_min_forum: null }, volume_estimasi: 900, harga_per_test: 3000 }).join(""), /tidak tercapai/);
+  assert.match(blokGpm({ angka: { ...ANGKA, hd: true }, volume_estimasi: 60, harga_per_test: 400000 }).join(""), /Kalkulator HD/);
+  assert.match(blokGpm({ angka: { ...ANGKA, gpm: null, catatan: "HPP alat belum ada" }, volume_estimasi: 900, harga_per_test: 9000 }).join(""),
+    /belum bisa: HPP alat belum ada/);
+  assert.deepEqual(blokGpm({ angka: null, volume_estimasi: 900, harga_per_test: 9000 }), []);
+});
+
+test("jumlah tak disebut = 1 unit, ditampilkan & tidak ditanyakan", () => {
+  const d = draft({ kolom_dinyatakan: ["klausul", "tenor_bulan"] });
+  assert.match(formatBalasanDraft(d, { baru: true, nama: "Budi" }), /Alat: 1 × Z3 \(dianggap 1 unit — koreksi: #KSO D12 2 unit\)/);
+  assert.ok(!pertanyaanKurang(d).some((q) => /Berapa unit/.test(q)));
+});
+
+test("zona Direktur tanpa alasan strategis → ditanyakan; HD & sudah beralasan tidak", () => {
+  const q = (o: Partial<DraftTampil>) => pertanyaanKurang(draft({ zona_dasar: "direktur", ...o }));
+  assert.ok(q({}).some((x) => /alasan strategis/i.test(x)));
+  assert.ok(!q({ alasan_strategis: "Referensi wilayah" }).some((x) => /alasan strategis/i.test(x)));
+  assert.ok(!q({ angka: { ...ANGKA, hd: true } }).some((x) => /alasan strategis/i.test(x)));
+});
+
+test("ringkasan memuat harga pesaing, alasan strategis, dan blok GPM sebelum gerbang", () => {
+  const t = formatBalasanDraft(draft({ harga_pesaing: 10500, kompetitor_alat: "Sysmex", alasan_strategis: "Referensi wilayah", angka: ANGKA }),
+    { baru: true, nama: "Budi" });
+  assert.match(t, /Harga: Rp\s?18\.500\/test \(pesaing Rp\s?10\.500, Sysmex\)/);
+  assert.match(t, /Alasan strategis: Referensi wilayah/);
+  assert.ok(t.indexOf("GPM deal") < t.indexOf("Gerbang:"));
+});
+
+test("bantuan #KSO = template tujuh isian Pedoman", () => {
+  for (const n of [1, 2, 3, 4, 5, 6, 7]) assert.match(KSO_BANTUAN, new RegExp(`\\n${n}\\. `));
+  assert.match(KSO_BANTUAN, /relokasi idle/);
+  assert.match(KSO_BANTUAN, /Pendukung:/);
 });

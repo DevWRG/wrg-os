@@ -15,7 +15,7 @@ do $$ declare d bigint; begin
   insert into uji.d903 values ('d', d);
   perform uji.cek('Draft tanpa tenor: tenor tetap kosong, tidak diisi 36 sendiri',
      (select tenor_bulan is null and harga_per_test is null from kso.rencana_kso where id = d));
-  perform uji.harus_gagal('Klausul belum dinyatakan → belum bisa dikirim walau gerbang 7 tampak hijau', format('select kso.app_bot_ajukan(%s,''AM-01'')', d), 'KOLOM_WAJIB_KOSONG: jumlah, klausul');
+  perform uji.harus_gagal('Klausul belum dinyatakan → belum bisa dikirim walau gerbang 7 tampak hijau', format('select kso.app_bot_ajukan(%s,''AM-01'')', d), 'KOLOM_WAJIB_KOSONG: klausul');
 
   -- jawaban susulan: hanya tenor
   perform kso.app_bot_lengkapi_draft(d, 'AM-01', '{"tenor_bulan": 36}');
@@ -41,14 +41,21 @@ select uji.harus_gagal('Bot tidak bisa melengkapi draft milik AM lain',
 select set_config('wrg.kso_user', 'u-am01', false);
 select uji.harus_gagal('AM tidak bisa memanggil pembungkus bot langsung',
    format('select kso.app_bot_lengkapi_draft(%s,''AM-01'',''{"tenor_bulan":12}'')', (select v from uji.d903 where k='d')), 'PERAN_TIDAK_BERWENANG');
+select uji.harus_gagal('AM tidak bisa membaca angka GPM lewat pembungkus bot',
+   format('select * from kso.app_bot_angka_gpm(%s)', (select v from uji.d903 where k='d')), 'PERAN_TIDAK_BERWENANG');
 select uji.harus_gagal('Fungsi inti lengkapi_draft tidak bisa dipanggil aplikasi',
    format('select kso.lengkapi_draft(%s,''{"tenor_bulan":12}'')', (select v from uji.d903 where k='d')), 'permission denied');
 
 select set_config('wrg.kso_user', 'bot-wa', false);
-select uji.harus_gagal('Jumlah unit belum dinyatakan AM → belum bisa dikirim (rujukan diam-diam mengisi 1)',
-   format('select kso.app_bot_ajukan(%s,''AM-01'')', (select v from uji.d903 where k='d')), 'KOLOM_WAJIB_KOSONG: jumlah');
-select kso.app_bot_lengkapi_draft((select v from uji.d903 where k='d'), 'AM-01', '{"jumlah": 1}');
-select uji.cek('Kolom yang dinyatakan tercatat', (select kolom_dinyatakan @> array['jumlah','klausul','tenor_bulan'] from kso.rencana_kso where id=(select v from uji.d903 where k='d')));
+-- F170 v2 (267, keputusan 31 Okt): jumlah tak disebut = 1 unit, tidak lagi menghalangi pengiriman
+select uji.cek('Jumlah tak disebut = 1 unit (bukan pertanyaan wajib)',
+   (select jumlah = 1 and not ('jumlah' = any(kolom_dinyatakan)) from kso.rencana_kso where id=(select v from uji.d903 where k='d')));
+select kso.app_bot_lengkapi_draft((select v from uji.d903 where k='d'), 'AM-01', '{"alasan_strategis": "Referensi wilayah", "harga_pesaing": 10500}');
+select uji.cek('Isian 3 & 7 template Pedoman tersimpan: harga pesaing & alasan strategis',
+   (select harga_pesaing = 10500 and alasan_strategis = 'Referensi wilayah' from kso.rencana_kso where id=(select v from uji.d903 where k='d')));
+select uji.cek('Bot membaca angka GPM per zona untuk balasan sebelum kirim',
+   (select gpm is not null and harga_forum > 0 from kso.app_bot_angka_gpm((select v from uji.d903 where k='d'))));
+select uji.cek('Kolom yang dinyatakan tercatat', (select kolom_dinyatakan @> array['klausul','tenor_bulan','alasan_strategis'] from kso.rencana_kso where id=(select v from uji.d903 where k='d')));
 select uji.cek('Kunci bernilai null tidak tercatat sebagai dinyatakan', (select not ('volume_sumber' = any(kolom_dinyatakan)) from kso.rencana_kso where id=(select v from uji.d903 where k='d')));
 select uji.cek('Draft lengkap bisa dikirim', kso.app_bot_ajukan((select v from uji.d903 where k='d'), 'AM-01') is not null);
 select uji.harus_gagal('Sesudah dikirim, isian terkunci',
