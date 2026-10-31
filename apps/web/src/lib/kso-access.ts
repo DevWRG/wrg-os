@@ -32,3 +32,15 @@ export function canMutasiAlatKso(u?: AccessUser | null): boolean {
 export function canBukaDaftarAlat(u?: AccessUser | null): boolean {
   return canViewKso(u) || canOrLegacy(u, "kso-mutasi-alat", false);
 }
+
+// F145 Fase B (migrasi 264, Pedoman Komite KSO Forum v01) — kelola harga beli reagen & HPP alat.
+// Kunci SENDIRI supaya Finance bisa diberi ubah tanpa membuka hal lain; tanpa gate lama (fitur baru
+// tertutup) dan role admin TIDAK otomatis (role admin juga dipakai HOD) — API
+// repo/kso-harga-beli.ts izinHargaBeli yang menentukan, ini hanya untuk tombol & BFF.
+export const FITUR_HARGA_BELI = { key: "kso-simulator-hargabeli", name: "Simulator KSO — kelola harga beli reagen & HPP alat (Finance)" };
+
+export function canKelolaHargaBeli(u?: AccessUser | null, aksi: "view" | "edit" = "view"): boolean {
+  const v = u && (u as { role?: string | null }).role === "admin" ? { ...u, role: null } : u;
+  if (aksi === "view") return canOrLegacy(v, FITUR_HARGA_BELI.key, false, "view") || canOrLegacy(v, FITUR_HARGA_BELI.key, false, "edit");
+  return canOrLegacy(v, FITUR_HARGA_BELI.key, false, "edit");
+}

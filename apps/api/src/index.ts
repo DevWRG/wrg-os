@@ -126,6 +126,7 @@ import {
   type Level as KlasifikasiLevel,
 } from "./repo/klasifikasi.js";
 import { master as ksoMaster } from "./repo/kso.js";
+import { GalatHargaBeli, aksesHargaBeli, daftarHargaBeli, simpanHargaBeli } from "./repo/kso-harga-beli.js";
 import { produktivitas as ksoProduktivitas, faskesDetail as ksoFaskesDetail } from "./repo/kso-produktivitas.js";
 import { daftarAlat as ksoDaftarAlat } from "./repo/kso-alat.js";
 import {
@@ -5358,6 +5359,27 @@ app.get("/pricebook/setup", async (c) => {
 app.get("/kso/master", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json(await ksoMaster());
+});
+
+// F145 kelola harga beli (migrasi 264, Pedoman Komite KSO Forum v01 Fase B). Izin fitur
+// kso-simulator-hargabeli diperiksa di repo dari x-user-id SESI (BFF), bukan dari body.
+const hargaBeliErr = (c: Context, e: unknown) => {
+  if (e instanceof GalatHargaBeli) return c.json({ error: e.message }, e.status as 400);
+  console.error("[kso-harga-beli]", e);
+  return c.json({ error: "Gagal memproses harga beli." }, 500);
+};
+app.get("/kso/harga-beli/akses", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try { return c.json(await aksesHargaBeli((c.req.header("x-user-id") ?? "").trim())); } catch (e) { return hargaBeliErr(c, e); }
+});
+app.get("/kso/harga-beli", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try { return c.json(await daftarHargaBeli((c.req.header("x-user-id") ?? "").trim())); } catch (e) { return hargaBeliErr(c, e); }
+});
+app.post("/kso/harga-beli", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const b = await bodyJson(c);
+  try { return c.json(await simpanHargaBeli((c.req.header("x-user-id") ?? "").trim(), b)); } catch (e) { return hargaBeliErr(c, e); }
 });
 
 // Produktivitas aset KSO (view kso_asset_produktivitas_v, migrasi 097-105).
