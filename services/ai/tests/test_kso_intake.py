@@ -122,5 +122,51 @@ class BersihkanTest(unittest.TestCase):
         self.assertEqual(parse_json_llm('```json\n{"a": 1}\n```'), {"a": 1})
 
 
+
+CONTOH_TUJUH = """USULAN KSO
+1. Faskes: RSUD Contoh, Kota Uji
+2. Alat: Z52 relokasi idle
+3. Harga deal per tes: Rp 12.000 (harga pesaing: Rp 10.500, merek Sysmex)
+4. Volume per bulan: 1.200 sampel
+5. Bukti volume: foto rekap LIS 6 bulan
+6. Tenor & klausul: 36 bulan, tanpa klausul khusus
+7. Alasan strategis: masuk jaringan RS grup di wilayah barat"""
+
+
+class TujuhIsianTest(unittest.TestCase):
+    """F170 v2 — template tujuh isian Pedoman Komite KSO Forum v01 (teks sintetis)."""
+
+    def test_template_lengkap(self):
+        d = bersihkan({
+            "faskes_teks": "RSUD Contoh, Kota Uji", "alat_teks": "Z52", "volume_estimasi": 1200,
+            "volume_sumber": "foto rekap LIS 6 bulan", "harga_per_test": 12000, "harga_pesaing": 10500,
+            "kompetitor_alat": "Sysmex", "tenor_bulan": 36, "unit_status": "idle", "klausul_khusus": [],
+            "alasan_strategis": "masuk jaringan RS grup di wilayah barat", "pendukung": [],
+        }, CONTOH_TUJUH)
+        self.assertEqual(d["harga_per_test"], 12000)
+        self.assertEqual(d["harga_pesaing"], 10500)
+        self.assertEqual(d["kompetitor_alat"], "Sysmex")
+        self.assertEqual(d["unit_status"], "idle")  # "relokasi idle"
+        self.assertEqual(d["volume_estimasi"], 1200)
+        self.assertEqual(d["volume_sumber"], "foto rekap LIS 6 bulan")
+        self.assertEqual(d["klausul_khusus"], [])
+        self.assertEqual(d["alasan_strategis"], "masuk jaringan RS grup di wilayah barat")
+
+    def test_relokasi_tanpa_kata_idle_tetap_idle(self):
+        t = CONTOH_TUJUH.replace("Z52 relokasi idle", "Z52 relokasi dari RS lain")
+        self.assertEqual(bersihkan({"unit_status": "idle"}, t)["unit_status"], "idle")
+
+    def test_tambah_unit_berarti_baru(self):
+        t = CONTOH_TUJUH.replace("Z52 relokasi idle", "Z52 tambah unit")
+        self.assertEqual(bersihkan({"unit_status": "baru"}, t)["unit_status"], "baru")
+
+    def test_harga_pesaing_karangan_dibuang(self):
+        self.assertIsNone(bersihkan({"harga_pesaing": 9800}, CONTOH_TUJUH)["harga_pesaing"])
+
+    def test_alasan_kosong_atau_karangan_jadi_null(self):
+        t = CONTOH_TUJUH.replace("masuk jaringan RS grup di wilayah barat", "tidak ada")
+        self.assertIsNone(bersihkan({"alasan_strategis": "tidak ada"}, t)["alasan_strategis"])
+        self.assertIsNone(bersihkan({"alasan_strategis": "RS rujukan utama provinsi"}, CONTOH_TUJUH)["alasan_strategis"])
+
 if __name__ == "__main__":
     unittest.main()
