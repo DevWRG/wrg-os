@@ -11,7 +11,7 @@ import { BottomLinePanel } from "./bottom-line";
 import { RencanaDialog } from "./rencana-dialog";
 import { SusunanPanel } from "./susunan-panel";
 import {
-  GERBANG_CLS, POLA_STATUS, STATUS_LABEL, kirim, rpJt, waktu,
+  GERBANG_CLS, LABEL_ZONA, POLA_STATUS, STATUS_LABEL, ZONA_CLS, kirim, persen, rpJt, waktu,
   type BarisAgenda, type BarisAntrean, type BarisKpi, type DataTab, type Ringkasan, type TabBoleh,
 } from "./types";
 
@@ -83,6 +83,8 @@ export function KomiteView({ tabs, bottomLine = false }: { tabs: TabBoleh[]; bot
                 </>
               ) : t.tab === "sekretariat" ? (
                 <>
+                  <Bagian judul="Verifikasi bukti volume — zona Forum & Direktur" catatan="Bukti tertulis (rekap LIS/SIMRS, pembelian reagen RS, surat RS) dicek sebelum forum. Perkiraan lisan tidak diterima."
+                    nada="amber" baris={d.verifikasi ?? []} onBuka={setBuka} />
                   <Bagian judul="Mandat berlaku — terbitkan penawaran" catatan="Terbit pagi setelah putusan. Harga awal = harga pembuka; di bawah batas bawah ditolak sistem."
                     nada="sky" baris={(d.baris ?? []).filter((b) => b.antrean === "Sekretariat · Terbitkan Penawaran")} onBuka={setBuka} />
                   <Bagian judul="Negosiasi berjalan — cocokkan PKS atau catat kalah" catatan="PKS dicocokkan dengan putusan (harga, volume minimum, tenor, klausul) sebelum tanda tangan. Tidak cocok = tidak ditandatangani."
@@ -166,6 +168,13 @@ function Bagian({ judul, catatan, nada, baris, onBuka }: {
                   <span className="text-muted-foreground text-xs">{b.nomor ?? `D${b.id}`} · {STATUS_LABEL[b.status] ?? b.status}</span>
                 </div>
                 <div className="text-muted-foreground mt-1 text-sm">{b.alat_nama} · {rpJt(b.capex)} · AM {b.am_nama}{b.cabang ? ` · ${b.cabang}` : ""}</div>
+                {b.zona && (
+                  <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs">
+                    <span className={cn("rounded-full px-2 py-0.5 font-semibold", ZONA_CLS[b.zona])}>{LABEL_ZONA[b.zona]}</span>
+                    {b.gpm_deal != null && <span className="tabular-nums">GPM {persen(b.gpm_deal)}</span>}
+                    {b.volume_terverifikasi === true && <span className="text-emerald-700 dark:text-emerald-400">· volume terverifikasi</span>}
+                  </div>
+                )}
                 {b.volume_sumber && <div className="mt-1 text-xs italic">Sumber volume: “{b.volume_sumber}”</div>}
                 <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
                   <PolaGerbang pola={b.pola_gerbang} />

@@ -12,6 +12,26 @@ export interface BarisAntrean {
   antrean: string; id: number; nomor: string | null; status: string; faskes_nama: string; alat_nama: string;
   capex: number; sejak: string | null; batas: string | null; am_nama: string; cabang: string | null;
   jalur: string | null; pola_gerbang: string | null; gerbang_merah: string | null; volume_sumber: string | null;
+  /** F170 v2 (266): zona setelah eskalasi + GPM deal; volume_terverifikasi NULL = belum diperiksa Sekretaris. */
+  zona?: Zona | null; gpm_deal?: number | null; volume_terverifikasi?: boolean | null;
+}
+
+export type Zona = "am" | "hod" | "forum" | "direktur";
+export const LABEL_ZONA: Record<Zona, string> = { am: "Zona AM", hod: "Zona 2 HOD", forum: "Zona Forum", direktur: "Zona Direktur" };
+// chip zona: warna/10 + teks warna-700 (bg-muted tak terlihat di mode terang — standar UI)
+export const ZONA_CLS: Record<Zona, string> = {
+  am: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
+  hod: "bg-sky-500/10 text-sky-700 dark:text-sky-400",
+  forum: "bg-amber-500/10 text-amber-700 dark:text-amber-400",
+  direktur: "bg-red-500/10 text-red-700 dark:text-red-400",
+};
+export const persen = (g: number | null | undefined) =>
+  g == null ? "—" : `${(g * 100).toLocaleString("id-ID", { maximumFractionDigits: 1 })}%`;
+
+/** Angka GPM per zona (kso.app_angka_gpm, migrasi 268). */
+export interface AngkaGpm {
+  gpm: number | null; zona: Zona | null; hd: boolean; catatan: string | null; biaya_per_tes: number | null;
+  harga_am: number | null; harga_hod: number | null; harga_forum: number | null; volume_min_forum: number | null;
 }
 
 export interface BarisAgenda {
@@ -22,20 +42,22 @@ export interface BarisAgenda {
 
 export type BarisKpi = Record<string, string | number | null> & { am_id: string; am_nama: string; periode: string };
 
-export interface DataTab { tab: TabKso; ringkasan: Ringkasan; baris?: BarisAntrean[]; agenda?: BarisAgenda[]; kpi?: BarisKpi[] }
+export interface DataTab { tab: TabKso; ringkasan: Ringkasan; baris?: BarisAntrean[]; agenda?: BarisAgenda[]; kpi?: BarisKpi[]; verifikasi?: BarisAntrean[] }
 
 export interface Detail {
   rencana: Record<string, unknown> & {
     id: number; nomor: string | null; status: string; jalur: string | null; am_nama: string; faskes_nama: string; cabang: string | null;
     alat_nama: string; jumlah: number; capex: number; volume_estimasi: number | null; volume_sumber: string | null;
     harga_per_test: number | null; tenor_bulan: number | null; alasan_forum: string | null; payback_bulan: number | null;
+    zona?: Zona | null; zona_dasar?: Zona | null; gpm_deal?: number | null; alasan_strategis?: string | null; harga_pesaing?: number | null;
+    volume_terverifikasi?: boolean | null; volume_verifikasi_catatan?: string | null; volume_verifikasi_at?: string | null;
   };
   gerbang: { no: number; nama: string; status: string; nilai: string | null }[];
   pendukung: { nama: string; tipe: string; kontak_terakhir_tanggal: string | null; kontak_terakhir_cara: string | null }[];
   klausul: { kode: string; label: string }[];
   pendapat: { hod_id: string; hod_nama: string | null; jenis: string; keputusan: string | null; catatan: string | null; dianggap_setuju: boolean; at: string }[];
   mandat: {
-    harga_lantai: number; harga_target: number | null; tenor_maks_bulan: number; capex_maks: number; volume_minimum: number | null;
+    harga_lantai: number; harga_target: number | null; harga_pembuka?: number | null; volume_terbukti?: number | null; tenor_maks_bulan: number; capex_maks: number; volume_minimum: number | null;
     klausul_dilarang: string[]; klausul_wajib: string[]; berlaku_sampai: string; sumber: string;
   } | null;
   usulan: { usulan: string; syarat: { isi: string; tipe: string }[] | null; data_kurang: string | null; pemilik: string | null; tanggal_kembali: string | null; alasan: string | null; at: string }[];
@@ -44,6 +66,8 @@ export interface Detail {
   forum: { forum_id: number; tanggal: string } | null;
   /** pilihan centang form PKS: klausul khusus RS */
   klausul_khusus: { kode: string; label: string }[];
+  /** F170 v2 (268): GPM deal + harga minimum per zona. */
+  angka_gpm?: AngkaGpm | null;
 }
 
 /** Perlindungan wajib WRG di setiap PKS (mandat.klausul_wajib) — label untuk layar. */
