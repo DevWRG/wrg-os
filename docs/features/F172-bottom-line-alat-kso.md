@@ -1,47 +1,66 @@
 # F172 — Bottom Line Alat KSO
 
-Tab **Bottom Line Alat** di menu Komite KSO (`/kso-komite`). Batas harga minimum per tes untuk tiap
-model alat KSO: Direktur menetapkan, Komite memakainya sebagai pegangan saat bilang ya atau tidak.
-Asal: artifact Direktur "Bottom Line Alat KSO" (snapshot 21 Okt 2026); keputusan user 26 Okt — jadi
-tab di Komite KSO, Direktur mengisi lewat UI WRG-OS.
+Tab **Bottom Line Alat** di menu Komite KSO (`/kso-komite`). Asal: artifact Direktur "Bottom Line Alat
+KSO" (21 Okt 2026, migrasi 256). Model hitung diganti mengikuti **Pedoman Komite KSO Forum v01**
+(27 Okt 2026, migrasi 263): satu ukuran untuk semua alat — **GPM deal**.
 
 ## Rumus
 
 ```
-lantai/tes = biaya reagen per tes + biaya tetap per bulan ÷ volume + (K × HPP) ÷ bulan ÷ volume
+GPM = 1 − (reagen/tes + (reagen tetap + QC per bulan)/volume + HPP/(tenor × volume)) ÷ harga/tes
 ```
 
-Default K = 3, bulan = 36, penyangga AM = 20% (diubah Direktur di layar, satu baris global).
-Posisi realisasi: **Aman** ≥ lantai + penyangga · **Tipis** ≥ lantai · **Di bawah lantai** < lantai.
+Tenor default 36 bulan. Zona kewenangan (diubah Direktur di layar):
 
-## Sumber data (migrasi 256)
+| GPM deal | Yang memutus |
+|---|---|
+| ≥ 55% | AM sendiri |
+| 50–55% | Dua HOD (Bisnis + Area) |
+| 45–50% | Forum → Direktur |
+| < 45% | Hanya Direktur |
+
+Tiga angka turunan untuk forum:
+- **Volume minimum** — di harga acuan, berapa tes/bulan agar GPM ≥ batas zona ("tak tercapai" bila reagen saja sudah melebihi margin).
+- **Harga minimum** — di volume acuan, harga terendah per zona. Harga minimum @45% = **bottom standar**.
+- **HPP alat maksimal** — di harga & volume ini, harga alat tertinggi yang masih ≥ 45% (bahan negosiasi ke prinsipal).
+
+Harga acuan = harga pasar terendah (isian Finance); bila kosong, realisasi Rp/tes OS. Volume acuan =
+volume historis, atau isian Direktur di keputusan. **Peta GPM** = grid volume × harga berwarna per zona.
+**Hemodialisa tidak memakai zona** (Kalkulator Investasi KSO HD, selalu Direktur).
+
+## Bottom standar vs real bottom
+
+| | Bottom standar | Real bottom |
+|---|---|---|
+| HPP | HPP standar Finance, atau aset tetap cocok SN | promo beli X gratis Y → HPP × X/(X+Y); alat didukung prinsipal → 0 |
+| QC | penuh | 0 bila prinsipal memberi QC gratis |
+| Dilihat | AM, HOD, Forum, Finance | **Direktur saja** |
+
+Dukungan prinsipal dicatat bertanggal (`kso_bottomline_dukungan`) dan dibaca lewat endpoint terpisah
+`GET /kso-komite/bottom-line/real` — tidak pernah ikut respons halaman biasa, WA, atau risalah.
+
+## Sumber data
 
 | Angka | Sumber |
 |---|---|
 | Unit, faskes, skema | `kso_asset` aktif + in_populasi; jenis = `kso_jenis_kanonik(type_alat)`, model = `nama_alat` |
-| Idle | unit di faskes dengan omzet 12 bln = 0. Unit tanpa faskes terpetakan dihitung terpisah (bukan idle) |
-| Omzet / unit / bln | `kso_revenue_jenis_v` 12 bulan penuh terakhir, kategori `kso_kategori_skema`; omzet faskes × jenis **dibagi rata** ke unit sejenis di faskes itu; dibagi bulan aktif (penempatan terbuka) |
+| Idle | unit di faskes dengan omzet 12 bln = 0. Unit tanpa faskes dihitung terpisah (bukan idle) |
+| Omzet / unit / bln | `kso_revenue_jenis_v` 12 bulan penuh terakhir, kategori `kso_kategori_skema`; omzet faskes × jenis **dibagi rata** ke unit sejenis; dibagi bulan aktif |
 | Volume historis | median omzet/unit/bln (unit yang jalan) ÷ Rp/tes jenis |
-| Rp/tes jenis | `kso_jenis_ringkas_v`, kecuali diisi manual di Acuan per jenis (Hemodialisa = tarif per tindakan) |
-| HPP | aset tetap ALAT KSO yang SN unitnya tertulis di deskripsi/catatan aset; perolehan terbaru, median bila terbaru menyimpang > 40% |
-| Biaya reagen | `kso_bottomline_biaya` per model; kalau kosong → taksiran Rp/tes × (1 − margin kotor jenis) |
+| Rp/tes jenis | `kso_jenis_ringkas_v`, kecuali diisi manual di Acuan per jenis (HD = tarif per tindakan) |
+| HPP | HPP standar Finance; bila kosong, aset tetap ALAT KSO yang SN unitnya tertulis di deskripsi/catatan (perolehan terbaru, median bila menyimpang > 40%) |
+| Reagen, reagen tetap, QC, harga pasar | `kso_bottomline_biaya` (isian Finance / impor); reagen kosong → taksiran Rp/tes × (1 − margin kotor jenis) |
 
-Beda sengaja dengan artifact: artifact menempelkan omzet faskes utuh ke tiap unit (faskes dengan dua
-alat sejenis terhitung dua kali) dan menambah unit dari aset tetap — angka WRG-OS bisa lebih rendah.
+## Izin (Akses Grup)
 
-## Tabel
+| Fitur | Lihat | Ubah |
+|---|---|---|
+| `kso-komite-bottomline` | Forum, HOD, Finance | Direktur — keputusan & parameter zona |
+| `kso-komite-bottomline-angka` | — | **Finance** — HPP standar, biaya reagen, QC, harga pasar, acuan jenis |
+| `kso-komite-bottomline-real` | **Direktur** — angka real bottom | Direktur / Finance — catat dukungan prinsipal |
 
-- `kso_bottomline_parameter` — K, bulan, penyangga (satu baris).
-- `kso_bottomline_jenis` — kelompok layar, satuan (tes/tindakan), Rp/tes pengganti, margin kotor.
-- `kso_bottomline_biaya` — biaya reagen per tes + biaya tetap per bulan per model.
-- `kso_bottomline_keputusan` — HPP/volume/K pengganti, bottom line final, keputusan, catatan.
-- `kso_bottomline_log` — riwayat setiap simpan (append-only).
-
-## Izin
-
-Fitur `kso-komite-bottomline` di Akses Grup: **lihat** = Komite, **ubah** = Direktur. Gate lama sebelum
-fitur diatur: role direktur. Role admin TIDAK otomatis lolos (data HPP & biaya; role admin juga HOD).
-Setelah rilis: Sync Fitur → centang grup Direktur (lihat+ubah) dan Komite (lihat).
+Gate lama sebelum fitur diatur: role direktur. Role admin TIDAK otomatis lolos. Setelah rilis: Sync Fitur →
+centang ketiganya (Sync membuat baris mati untuk semua grup — sebelum dicentang, Direktur pun tertutup).
 
 ## Impor biaya dari artifact
 
@@ -52,11 +71,12 @@ node scripts/ops/impor-bottomline-biaya.mjs --artifact ~/bottomline.html > /tmp/
 /opt/homebrew/bin/psql -d wrg_os_prod -v ON_ERROR_STOP=1 -f /tmp/bl.sql
 ```
 
-Mengisi biaya 13 model bersumber nyata (Simulator, harga beli, BMHP HD), margin kotor 16 jenis, dan tarif
-HD. Isian yang sudah diubah lewat layar tidak ditimpa. Aman dijalankan ulang.
+Mengisi reagen/reagen tetap/QC (terpisah) untuk model bersumber nyata, margin kotor per jenis, dan tarif HD.
+HPP standar & harga pasar TIDAK diimpor (isian Finance). Isian lewat layar tidak ditimpa. Aman diulang.
 
-## Belum (fase berikut)
+## Belum (fase berikut Pedoman)
 
-- Menyambungkan lantai per model ke gerbang 2 & mandat F170 (sekarang masih `kso.kategori.harga_standar_per_test`) —
-  butuh peta `kso.alat` ↔ model.
+- Fase B (6 Nov): kolom harga beli reagen di Simulator KSO — biaya per parameter dari PO, bukan harga LIST.
+- Fase C (13 Nov): F170 v2 — bot WA 7 isian membalas GPM + zona, antrean per zona, 7 gerbang v2, mandat tiga harga (55/50/45) berlaku 30 hari.
+- Fase D (26 Nov): GPM per customer + tinjauan portofolio (idle > 60 hari, GPM < 45% tiga bulan).
 - Model yang hanya ada di aset tetap (belum masuk populasi KSO) tidak tampil.

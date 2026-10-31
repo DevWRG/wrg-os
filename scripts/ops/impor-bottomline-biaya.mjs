@@ -8,7 +8,9 @@
 //   /opt/homebrew/bin/psql -d wrg_os_prod -v ON_ERROR_STOP=1 -f /tmp/bl.sql
 //
 // Yang diimpor:
-//   * kso_bottomline_biaya — model yang biayanya BUKAN taksiran (Simulator, harga beli, BMHP HD, …).
+//   * kso_bottomline_biaya — model yang biayanya BUKAN taksiran (Simulator, harga beli, BMHP HD, …):
+//     reagen per tes, reagen tetap per bulan, dan QC per bulan TERPISAH (migrasi 263 — QC gratis
+//     prinsipal hanya menolkan QC). HPP standar & harga pasar TIDAK diimpor: itu isian Finance.
 //     Model "Empiris" (Rp/tes × (1 − margin jenis)) tidak diimpor per model: taksiran itu dihitung
 //     view 256 dari margin kotor jenis, jadi tetap ikut kalau Rp/tes OS berubah.
 //   * kso_bottomline_jenis.margin_kotor — margin kotor per jenis (dasar taksiran di atas).
@@ -46,19 +48,19 @@ const out = [];
 out.push("-- dihasilkan scripts/ops/impor-bottomline-biaya.mjs — JANGAN di-commit (berisi angka biaya)");
 out.push("begin;");
 out.push("drop table if exists _bl_biaya;");
-out.push("create temp table _bl_biaya (model_key text, a numeric, bt numeric, sumber text, keyakinan text);");
+out.push("create temp table _bl_biaya (model_key text, a numeric, bt numeric, qc numeric, sumber text, keyakinan text);");
 if (biaya.length) {
   out.push("insert into _bl_biaya values");
-  out.push(biaya.map((x) => `  (${q(x.k)}, ${num(x.a)}, ${num((x.b || 0) + (x.qc || 0))}, ${q(`${SUMBER}: ${x.csrc}`)}, ${q(x.conf)})`).join(",\n") + ";");
+  out.push(biaya.map((x) => `  (${q(x.k)}, ${num(x.a)}, ${num(x.b || 0)}, ${num(x.qc || 0)}, ${q(`${SUMBER}: ${x.csrc}`)}, ${q(x.conf)})`).join(",\n") + ";");
 }
 out.push(`do $$ declare r record; begin
   for r in select model_key from _bl_biaya b where not exists (select 1 from kso_bottomline_model_v v where v.model_key = b.model_key) loop
     raise notice 'model tidak ada di populasi (dilewati): %', r.model_key;
   end loop; end $$;`);
-out.push(`insert into kso_bottomline_biaya (model_key, biaya_per_tes, biaya_tetap_bulan, sumber, keyakinan, diubah_oleh)
-select b.model_key, b.a, b.bt, b.sumber, b.keyakinan, 'impor-artifact'
+out.push(`insert into kso_bottomline_biaya (model_key, biaya_per_tes, biaya_tetap_bulan, qc_bulan, sumber, keyakinan, diubah_oleh)
+select b.model_key, b.a, b.bt, b.qc, b.sumber, b.keyakinan, 'impor-artifact'
   from _bl_biaya b where exists (select 1 from kso_bottomline_model_v v where v.model_key = b.model_key)
-on conflict (model_key) do update set biaya_per_tes = excluded.biaya_per_tes, biaya_tetap_bulan = excluded.biaya_tetap_bulan,
+on conflict (model_key) do update set biaya_per_tes = excluded.biaya_per_tes, biaya_tetap_bulan = excluded.biaya_tetap_bulan, qc_bulan = excluded.qc_bulan,
   sumber = excluded.sumber, keyakinan = excluded.keyakinan, diubah_oleh = excluded.diubah_oleh, diubah_at = now()
  where kso_bottomline_biaya.sumber like 'impor artifact%';`);
 for (const [j, v] of jenis) {
