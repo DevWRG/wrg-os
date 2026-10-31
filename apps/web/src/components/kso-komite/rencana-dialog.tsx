@@ -11,7 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import type { TabKso } from "@/lib/kso-komite-access";
 import { cn } from "@/lib/utils";
 
-import { GERBANG_CLS, GERBANG_IKON, LABEL_PERLINDUNGAN, STATUS_LABEL, kirim, rp, rpJt, waktu, type Detail } from "./types";
+import { GERBANG_CLS, GERBANG_IKON, LABEL_PERLINDUNGAN, LABEL_ZONA, STATUS_LABEL, ZONA_CLS, kirim, persen, rp, rpJt, waktu, type Detail } from "./types";
 
 // Detail satu rencana + form aksi sesuai tab. Form hanya muncul bila tab boleh "edit" DAN
 // status rencana cocok; API tetap memeriksa keduanya (tombol tersembunyi ≠ endpoint tertutup).
@@ -53,6 +53,7 @@ export function RencanaDialog({ tab, id, bolehAksi, onClose, onBerubah }: {
             <>
               {bolehAksi && <FormAksi tab={tab} d={d} jalankan={jalankan} />}
               <Isian d={d} />
+              <BlokGpm d={d} />
               <Gerbang d={d} />
               {d.pendapat.length > 0 && (
                 <Blok judul="HOD">
@@ -76,7 +77,8 @@ export function RencanaDialog({ tab, id, bolehAksi, onClose, onBerubah }: {
               )}
               {d.mandat && (
                 <Blok judul={`Mandat negosiasi (${d.mandat.sumber}) — berlaku s/d ${d.mandat.berlaku_sampai}`}>
-                  <li>Lantai {rp(d.mandat.harga_lantai)}/test · pembuka {rp(d.mandat.harga_target)}/test</li>
+                  <li>{d.mandat.harga_pembuka != null ? <>Pembuka {rp(d.mandat.harga_pembuka)} · target {rp(d.mandat.harga_target)} · </> : <>Target {rp(d.mandat.harga_target)} · </>}
+                    batas bawah (lantai) {rp(d.mandat.harga_lantai)}/test{d.mandat.volume_terbukti ? ` · di volume ${d.mandat.volume_terbukti} test/bln` : ""}</li>
                   <li>Capex maks {rpJt(d.mandat.capex_maks)} · tenor maks {d.mandat.tenor_maks_bulan} bln · volume min {d.mandat.volume_minimum ?? "—"} test/bln</li>
                   {d.mandat.klausul_dilarang.length > 0 && <li>Klausul dilarang: {d.mandat.klausul_dilarang.map((k) => labelKlausul(d, k)).join(", ")}</li>}
                 </Blok>
@@ -117,12 +119,42 @@ function Isian({ d }: { d: Detail }) {
   return (
     <Blok judul="Isian AM">
       <li>{r.jumlah} × {r.alat_nama} · capex {rpJt(r.capex)}{r.payback_bulan ? ` · payback ±${r.payback_bulan} bln` : ""}</li>
-      <li>Volume {r.volume_estimasi ?? "—"} test/bln · harga {rp(r.harga_per_test)}/test · tenor {r.tenor_bulan ?? "—"} bln</li>
+      <li>Volume {r.volume_estimasi ?? "—"} test/bln · harga {rp(r.harga_per_test)}/test{r.harga_pesaing != null ? ` (pesaing ${rp(r.harga_pesaing)})` : ""} · tenor {r.tenor_bulan ?? "—"} bln</li>
       {/* kalimat AM apa adanya, dalam tanda kutip — bukan kategori turunan */}
-      <li>Sumber volume: {r.volume_sumber ? <i>“{r.volume_sumber}”</i> : <span className="text-red-700 dark:text-red-400">kosong</span>}</li>
+      <li>Sumber volume: {r.volume_sumber ? <i>“{r.volume_sumber}”</i> : <span className="text-red-700 dark:text-red-400">kosong</span>}
+        {r.volume_terverifikasi === true && <span className="text-emerald-700 dark:text-emerald-400"> · diverifikasi Sekretaris</span>}
+        {r.volume_terverifikasi === false && <span className="text-red-700 dark:text-red-400"> · ditolak Sekretaris{r.volume_verifikasi_catatan ? `: ${r.volume_verifikasi_catatan}` : ""}</span>}</li>
+      {r.alasan_strategis && <li>Alasan strategis: <i>“{r.alasan_strategis}”</i></li>}
       <li>Klausul khusus: {d.klausul.length ? d.klausul.map((k) => k.label).join(", ") : "tidak ada"}</li>
       {d.pendukung.map((p, i) => <li key={i}>Pendukung: {p.nama} ({p.tipe.replace(/_/g, " ")}){p.kontak_terakhir_tanggal ? ` · kontak ${p.kontak_terakhir_tanggal}` : ""}</li>)}
       {r.alasan_forum && <li className="text-amber-700 dark:text-amber-400">Ke forum karena: {r.alasan_forum}</li>}
+    </Blok>
+  );
+}
+
+const bulat100 = (x: number | null | undefined) => (x == null ? null : Math.ceil(x / 100) * 100);
+
+/** F170 v2 (Pedoman Komite KSO Forum v01): GPM deal + zona + angka forum dari angka F172. */
+function BlokGpm({ d }: { d: Detail }) {
+  const r = d.rencana, g = d.angka_gpm;
+  if (!g && !r.zona) return null;
+  return (
+    <Blok judul="GPM deal & zona">
+      <li className="flex flex-wrap items-center gap-2">
+        {r.zona && <span className={cn("rounded-full px-2 py-0.5 text-xs font-semibold", ZONA_CLS[r.zona])}>{LABEL_ZONA[r.zona]}</span>}
+        {g?.hd ? <span>Hemodialisa — Kalkulator HD, selalu Direktur</span>
+          : g?.gpm != null ? <span className="tabular-nums">GPM {persen(g.gpm)}{g.biaya_per_tes != null ? ` · biaya ${rp(g.biaya_per_tes)}/test termasuk cicilan alat` : ""}</span>
+          : <span className="text-amber-700 dark:text-amber-400">{g?.catatan ?? "GPM belum bisa dihitung"}</span>}
+        {r.zona_dasar && r.zona && r.zona_dasar !== r.zona && <span className="text-muted-foreground text-xs">(dari GPM: {LABEL_ZONA[r.zona_dasar]}, naik karena gerbang/aturan)</span>}
+      </li>
+      {g && !g.hd && g.harga_forum != null && (
+        <li className="tabular-nums">Harga minimum di {r.volume_estimasi} test/bln: AM {rp(bulat100(g.harga_am))} · 2 HOD {rp(bulat100(g.harga_hod))} · Forum {rp(bulat100(g.harga_forum))}</li>
+      )}
+      {g && !g.hd && g.gpm != null && (
+        <li className="tabular-nums">{g.volume_min_forum != null
+          ? `Volume minimum zona Forum di ${rp(r.harga_per_test)}: ${Math.ceil(g.volume_min_forum)} test/bln`
+          : `Di ${rp(r.harga_per_test)} zona Forum tidak tercapai di volume berapa pun`}</li>
+      )}
     </Blok>
   );
 }
@@ -151,15 +183,20 @@ function FormAksi({ tab, d, jalankan }: { tab: TabKso; d: Detail; jalankan: Jala
   if (tab === "hod" && s === "JALUR_CEPAT") return <FormPutusHod jalankan={jalankan} />;
   if (tab === "hod" && (s === "JALUR_FORUM" || s === "DIAGENDAKAN")) return <FormTeks judul="Beri pendapat" nada="amber" label="Pendapat untuk komite (bukan putusan)" aksi="pendapat-hod" kunci="catatan" jalankan={jalankan} />;
   if (tab === "agenda" && s === "DIAGENDAKAN") return <FormUsulan jalankan={jalankan} />;
-  if (tab === "agenda" && mandatLewat && (s === "DIPUTUS_HOD" || s === "MANDAT_TERBIT"))
+  if (tab === "agenda" && mandatLewat && (s === "DIPUTUS_AM" || s === "DIPUTUS_HOD" || s === "MANDAT_TERBIT"))
     return <FormTeks judul="Tarik kembali ke forum" nada="amber" label="Alasan" aksi="tarik" kunci="alasan" jalankan={jalankan} />;
   if (tab === "direksi" && ["DIREKOMENDASIKAN", "DIREKOMENDASIKAN_BERSYARAT", "TIDAK_DIREKOMENDASIKAN"].includes(s)) return <FormDireksi d={d} jalankan={jalankan} />;
   // Sekretariat (atau Admin Sales cadangan): penawaran terbit dengan harga pembuka mandat
-  if ((tab === "sekretariat" || tab === "penawaran") && (s === "DIPUTUS_HOD" || s === "MANDAT_TERBIT") && !mandatLewat)
+  // F170 v2: bukti volume zona Forum & Direktur diverifikasi Sekretaris sebelum putusan
+  if (tab === "sekretariat" && ["DIAJUKAN", "JALUR_FORUM", "DIAGENDAKAN"].includes(s)
+      && (d.rencana.zona === "forum" || d.rencana.zona === "direktur") && d.rencana.volume_terverifikasi == null)
+    return <FormVerifikasi jalankan={jalankan} />;
+  if ((tab === "sekretariat" || tab === "penawaran") && (s === "DIPUTUS_AM" || s === "DIPUTUS_HOD" || s === "MANDAT_TERBIT") && !mandatLewat)
     return (
       <div className="space-y-3">
-        <FormAngka judul="Terbitkan penawaran" label={`Harga per test (Rp) — lantai ${rp(d.mandat?.harga_lantai)}, pembuka ${rp(d.mandat?.harga_target)}`}
-          awal={d.mandat?.harga_target ?? d.mandat?.harga_lantai ?? null} aksi="penawaran" kunci="harga" jalankan={jalankan} />
+        <FormAngka judul="Terbitkan penawaran"
+          label={`Harga per test (Rp) — ${d.mandat?.harga_pembuka != null ? `pembuka ${rp(d.mandat.harga_pembuka)}, ` : ""}target ${rp(d.mandat?.harga_target)}, batas bawah ${rp(d.mandat?.harga_lantai)}`}
+          awal={d.mandat?.harga_pembuka ?? d.mandat?.harga_target ?? d.mandat?.harga_lantai ?? null} aksi="penawaran" kunci="harga" jalankan={jalankan} />
         <FormTeks judul="Catat kalah" nada="amber" label="Alasan kalah" aksi="kalah" kunci="alasan" jalankan={jalankan} />
       </div>
     );
@@ -271,15 +308,36 @@ function FormUsulan({ jalankan }: { jalankan: Jalankan }) {
   );
 }
 
+/** Sekretaris: verifikasi bukti volume (Pedoman — LIS/SIMRS, pembelian reagen RS, surat RS; lisan tidak diterima). */
+function FormVerifikasi({ jalankan }: { jalankan: Jalankan }) {
+  const { sibuk, err, go } = useKirim(jalankan);
+  const [sah, setSah] = useState<"sah" | "tolak" | null>(null);
+  const [c, setC] = useState("");
+  return (
+    <Kotak judul="Verifikasi bukti volume" nada="amber">
+      <p className="text-muted-foreground text-xs">Minta berkas buktinya ke AM, cocokkan dengan volume yang diusulkan. Ditolak = gerbang 2 merah.</p>
+      <Pilihan nilai={sah} set={setSah} opsi={[["sah", "Bukti sah"], ["tolak", "Tolak bukti"]]} />
+      {sah && <><Label>{sah === "tolak" ? "Alasan penolakan (wajib)" : "Catatan (opsional)"}</Label><Textarea value={c} onChange={(e) => setC(e.target.value)} /></>}
+      {err && <p className="text-destructive text-sm">{err}</p>}
+      <Button className="w-full sm:w-auto" disabled={!sah || sibuk} onClick={() => go("verifikasi-volume", { sah: sah === "sah", catatan: c })}>Simpan verifikasi</Button>
+    </Kotak>
+  );
+}
+
 function FormDireksi({ d, jalankan }: { d: Detail; jalankan: Jalankan }) {
   const { sibuk, err, go } = useKirim(jalankan);
   const [p, setP] = useState<"SETUJU" | "BERSYARAT" | "TOLAK" | null>(null);
-  const [f, setF] = useState({ lantai: "", target: "", tenor_maks: "", capex_maks: "", volume_min: "", catatan: "" });
+  const r = d.rencana, g = d.angka_gpm;
+  // F170 v2: nilai awal = tiga harga Pedoman di volume terbukti (batas bawah @45%, target @50%); Direksi boleh mengubah
+  const awal = (x: number | null | undefined) => (x == null ? "" : String(Math.round(x)));
+  const [f, setF] = useState({
+    lantai: awal(bulat100(g?.harga_forum)), target: awal(bulat100(g?.harga_hod)), tenor_maks: awal(r.tenor_bulan),
+    capex_maks: awal(r.capex), volume_min: r.volume_estimasi ? awal(Math.floor(r.volume_estimasi * 0.8)) : "", catatan: "",
+  });
   const isi = (k: keyof typeof f) => (e: { target: { value: string } }) => setF({ ...f, [k]: e.target.value });
-  const r = d.rencana;
   const kolom: [keyof typeof f, string, string][] = [
-    ["lantai", "Harga lantai (Rp/test)", r.harga_per_test ? `usulan AM ${rp(r.harga_per_test)}` : ""],
-    ["target", "Harga pembuka (Rp/test)", ""],
+    ["lantai", "Batas bawah AM — lantai (Rp/test, GPM 45%)", r.harga_per_test ? `usulan AM ${rp(r.harga_per_test)}` : ""],
+    ["target", "Harga target (Rp/test, GPM 50%)", ""],
     ["tenor_maks", "Tenor maks (bulan)", r.tenor_bulan ? `diminta ${r.tenor_bulan}` : ""],
     ["capex_maks", "Capex maks (Rp)", `capex usulan ${rpJt(r.capex)}`],
     ["volume_min", "Volume minimum (test/bln)", r.volume_estimasi ? `estimasi ${r.volume_estimasi}` : ""],

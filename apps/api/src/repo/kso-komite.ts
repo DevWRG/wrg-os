@@ -145,8 +145,9 @@ export async function daftarTab(userId: string, tab: TabKso): Promise<Record<str
     const pemilik = tab === "saya" ? u.am_id : tab === "hod" ? u.hod_key : null;
     const baris = await tx`
       select a.antrean, a.rencana_id::int as id, a.nomor, a.status, a.faskes_nama, a.alat_nama, a.capex::float8 as capex,
-             a.sejak, a.batas, v.am_nama, v.cabang, v.jalur::text as jalur, v.pola_gerbang, v.gerbang_merah, v.volume_sumber
-        from kso.v_antrean a join kso.v_rencana v on v.id = a.rencana_id
+             a.sejak, a.batas, v.am_nama, v.cabang, v.jalur::text as jalur, v.pola_gerbang, v.gerbang_merah, v.volume_sumber,
+             r.zona, r.gpm_deal::float8 as gpm_deal, r.volume_terverifikasi
+        from kso.v_antrean a join kso.v_rencana v on v.id = a.rencana_id join kso.rencana_kso r on r.id = a.rencana_id
        where a.antrean = any(${label}) and (${pemilik}::text is null or a.pemilik_id = ${pemilik})
        order by a.batas nulls last, a.sejak desc`;
     const agenda = tab === "agenda"
@@ -154,7 +155,18 @@ export async function daftarTab(userId: string, tab: TabKso): Promise<Record<str
                         alat_nama, capex::float8 as capex, pola_gerbang, gerbang_merah, status, pendapat_hod_masuk::int
                    from kso.v_agenda where tanggal >= kso.hari_ini() - 14 order by tanggal desc, jenis, urut`
       : [];
-    return { tab, ringkasan, baris, agenda };
+    // F170 v2 (Pedoman): bukti volume zona Forum & Direktur menunggu verifikasi Sekretaris
+    const verifikasi = tab === "sekretariat"
+      ? await tx`select 'Sekretariat · Verifikasi Volume' as antrean, r.id::int as id, v.nomor, v.status::text as status, v.faskes_nama,
+                        v.alat_nama, v.capex::float8 as capex, r.diajukan_at as sejak, null::timestamptz as batas, v.am_nama, v.cabang,
+                        v.jalur::text as jalur, v.pola_gerbang, v.gerbang_merah, v.volume_sumber,
+                        r.zona, r.gpm_deal::float8 as gpm_deal, r.volume_terverifikasi
+                   from kso.rencana_kso r join kso.v_rencana v on v.id = r.id
+                  where r.zona in ('forum','direktur') and r.volume_terverifikasi is null and r.volume_sumber_label = 'data'
+                    and r.status in ('DIAJUKAN','JALUR_FORUM','DIAGENDAKAN')
+                  order by r.diajukan_at`
+      : [];
+    return { tab, ringkasan, baris, agenda, verifikasi };
   });
 }
 
@@ -163,17 +175,22 @@ export async function detailRencana(userId: string, tab: TabKso, id: number): Pr
     const [r] = await tx`select *, capex::float8 as capex from kso.v_rencana where id = ${id}`;
     if (!r) throw new GalatKso(404, "Rencana tidak ada, atau di luar akses tab ini.");
     // isi PKS (migrasi 242) tidak ada di v_rencana — dibaca dari tabelnya (RLS boleh_lihat sama)
-    const [pks] = await tx`select harga_deal::float8 as harga_deal, pks_tenor_bulan, pks_volume_minimum, pks_klausul
+    const [pks] = await tx`select harga_deal::float8 as harga_deal, pks_tenor_bulan, pks_volume_minimum, pks_klausul,
+                                  zona, zona_dasar, gpm_deal::float8 as gpm_deal, alasan_strategis, harga_pesaing::float8 as harga_pesaing,
+                                  volume_terverifikasi, volume_verifikasi_catatan, volume_verifikasi_at::text as volume_verifikasi_at
                              from kso.rencana_kso where id = ${id}`;
     Object.assign(r, pks ?? {});
+    // angka GPM per zona (268) — hanya untuk rencana yang boleh dilihat peran tab ini
+    const [angkaGpm] = await tx`select gpm::float8, zona, hd, catatan, biaya_per_tes::float8, harga_am::float8, harga_hod::float8,
+                                       harga_forum::float8, volume_min_forum::float8 from kso.app_angka_gpm(${id})`;
     const [gerbang, pendukung, klausul, pendapat, mandat, usulan, putusan, riwayat, agendaItem, klausulKhusus] = await Promise.all([
       tx`select no, nama, status::text, nilai from kso.gerbang_hasil where rencana_id = ${id} order by no`,
       tx`select nama, tipe::text, sip_faskes, kontak_terakhir_tanggal::text, kontak_terakhir_cara::text from kso.rencana_pendukung where rencana_id = ${id} order by id`,
       tx`select k.kode, k.label from kso.rencana_klausul rk join kso.klausul_khusus k on k.kode = rk.klausul_kode where rk.rencana_id = ${id}`,
       tx`select p.hod_id, h.nama as hod_nama, p.jenis, p.keputusan, p.catatan, p.dianggap_setuju, p.at::text
            from kso.pendapat_hod p left join kso.hod h on h.id = p.hod_id where p.rencana_id = ${id} order by p.at`,
-      tx`select harga_lantai::float8, harga_target::float8, tenor_maks_bulan, capex_maks::float8, volume_minimum, klausul_dilarang,
-                klausul_wajib, berlaku_sampai::text, sumber from kso.mandat where rencana_id = ${id}`,
+      tx`select harga_lantai::float8, harga_target::float8, harga_pembuka::float8, volume_terbukti, tenor_maks_bulan, capex_maks::float8,
+                volume_minimum, klausul_dilarang, klausul_wajib, berlaku_sampai::text, sumber from kso.mandat where rencana_id = ${id}`,
       tx`select usulan::text, syarat, mandat_usulan, data_kurang, pemilik, tanggal_kembali::text, alasan, at::text from kso.usulan_komite_catatan where rencana_id = ${id} order by at`,
       tx`select putusan::text, catatan, at::text from kso.putusan_direksi_catatan where rencana_id = ${id}`,
       tx`select s.dari::text, s.ke::text, s.oleh, s.oleh_peran, s.oleh_user, s.at::text
@@ -183,7 +200,7 @@ export async function detailRencana(userId: string, tab: TabKso, id: number): Pr
       tx`select kode, label from kso.klausul_khusus where kode not like 'tanpa%' order by urut`,
     ]);
     return { rencana: r, gerbang, pendukung, klausul, pendapat, mandat: mandat[0] ?? null, usulan, putusan: putusan[0] ?? null, riwayat,
-             forum: agendaItem[0] ?? null, klausul_khusus: klausulKhusus };
+             forum: agendaItem[0] ?? null, klausul_khusus: klausulKhusus, angka_gpm: angkaGpm ?? null };
   });
   // Nama pelaku dibaca DI LUAR transaksi peran (koneksi biasa API): wrg_app tak dijamin boleh
   // membaca app_user di setiap lingkungan, dan nama akun bukan data KSO yang perlu RLS.
@@ -198,7 +215,8 @@ export async function detailRencana(userId: string, tab: TabKso, id: number): Pr
 // ---------------------------------------------------------------- aksi
 
 export type AksiKso =
-  | "putus-hod" | "pendapat-hod" | "usulkan" | "tarik" | "putus-direksi" | "pks" | "penawaran" | "kalah" | "serah-terima";
+  | "putus-hod" | "pendapat-hod" | "usulkan" | "tarik" | "putus-direksi" | "pks" | "penawaran" | "kalah" | "serah-terima"
+  | "verifikasi-volume";
 
 /**
  * Aksi → tab yang berwenang, urut prioritas. Satu aksi bisa dari lebih dari satu tab (penawaran &
@@ -215,6 +233,8 @@ export const AKSI_TAB: Record<AksiKso, TabKso[]> = {
   penawaran: ["sekretariat", "penawaran"],
   kalah: ["sekretariat", "penawaran"],
   "serah-terima": ["teknik"],
+  // F170 v2 (268/266): bukti volume zona Forum & Direktur — Sekretaris
+  "verifikasi-volume": ["sekretariat"],
 };
 export function isAksiKso(a: string): a is AksiKso {
   return a in AKSI_TAB;
@@ -268,6 +288,9 @@ export function validasiAksi(aksi: AksiKso, b: Record<string, unknown>): string 
       return teks(b.alasan) ? null : "Alasan kalah wajib diisi.";
     case "serah-terima":
       return teks(b.nomor_seri) ? null : "Nomor seri alat wajib diisi.";
+    case "verifikasi-volume":
+      if (typeof b.sah !== "boolean") return "Pilih: bukti sah atau ditolak.";
+      return b.sah || teks(b.catatan) ? null : "Bukti ditolak wajib disertai alasan.";
   }
 }
 
@@ -303,6 +326,8 @@ export function terjemahGalatWeb(m: string): { status: number; pesan: string } {
     [/NOMOR_SERI_WAJIB/, 400, "Nomor seri alat wajib diisi."],
     [/PKS_TIDAK_LENGKAP/, 400, "Harga per test, tenor, dan volume minimum di PKS wajib diisi."],
     [/TRANSISI_TIDAK_SAH/, 409, "Aksi ini tidak berlaku untuk status rencana sekarang."],
+    [/BUKAN_TAHAP_VERIFIKASI/, 409, "Bukti volume hanya bisa diverifikasi sebelum putusan."],
+    [/ALASAN_WAJIB/, 400, "Bukti ditolak wajib disertai alasan."],
   ];
   for (const [re, status, pesan] of peta) if (re.test(m)) return { status, pesan };
   return { status: 500, pesan: "Aksi gagal diproses. Coba lagi atau hubungi admin." };
@@ -363,6 +388,9 @@ export async function jalankanAksi(userId: string, id: number, aksi: AksiKso, b:
           return { ok: true };
         case "serah-terima":
           await tx`select kso.app_serah_terima(${id}, ${teks(b.nomor_seri)}, ${tanggal(b.tanggal)})`;
+          return { ok: true };
+        case "verifikasi-volume":
+          await tx`select kso.app_verifikasi_volume(${id}, ${b.sah === true}, ${teks(b.catatan)})`;
           return { ok: true };
       }
     });
