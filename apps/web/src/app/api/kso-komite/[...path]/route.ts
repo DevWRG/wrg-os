@@ -28,7 +28,7 @@ export async function POST(req: Request, ctx: Ctx) {
   const g = await gerbang();
   if ("tolak" in g) return g.tolak;
   const sub = safeSubpath((await ctx.params).path);
-  if (sub === null || !/^(rencana\/\d+\/[a-z-]+|susunan\/(pemegang|jabatan)|bottom-line\/(keputusan|parameter|biaya|jenis))$/.test(sub)) return badSubpath();
+  if (sub === null || !/^(rencana\/\d+\/[a-z-]+|susunan\/(pemegang|jabatan)|bottom-line\/(keputusan|parameter|angka|jenis|dukungan))$/.test(sub)) return badSubpath();
   let body: Record<string, unknown>;
   try {
     body = (await req.json()) as Record<string, unknown>;
