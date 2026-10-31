@@ -1,4 +1,6 @@
 import { gatewayFetch } from "@/lib/gateway";
+import { sessionUser } from "@/lib/admin-guard";
+import { canKelolaHargaBeli } from "@/lib/kso-access";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { KsoView } from "@/components/kso/kso-view";
 import type { KsoMaster } from "@/lib/kso/types";
@@ -23,7 +25,9 @@ async function getMaster(): Promise<KsoMaster | null> {
 }
 
 export default async function KsoSimulatorPage() {
-  const master = await getMaster();
+  const [master, me] = await Promise.all([getMaster(), sessionUser()]);
+  // F145 Fase B: tombol "Kelola harga beli" — izin fitur kso-simulator-hargabeli (API menentukan ulang)
+  const kelolaHargaBeli = !!me && canKelolaHargaBeli(me, "view");
 
   return (
     <>
@@ -31,7 +35,7 @@ export default async function KsoSimulatorPage() {
         title="Simulator KSO"
         description="Hitung running cost alat lab per test untuk menyusun skema KSO/CPRR: CAPEX alat, reagen, consumable, dan overhead QC — sampai harga jual per test setelah markup."
       />
-      <KsoView master={master} />
+      <KsoView master={master} kelolaHargaBeli={kelolaHargaBeli} />
     </>
   );
 }
