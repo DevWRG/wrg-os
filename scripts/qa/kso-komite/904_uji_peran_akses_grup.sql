@@ -8,7 +8,8 @@ grant all on uji.d904 to wrg_app;
 -- 902 memindahkan Z3 ke kategori HEMATO (refresh dari tabel OS tiruan) → beri register teknisinya
 insert into kso.cabang_teknisi (cabang, kategori) values ('Jember', 'HEMATO') on conflict do nothing;
 do $$ declare x bigint; begin
-  x := kso.buat_draft('AM-03','F05','Z3',1,500,'data LIS',18500,'baru',36,'{}','[{"nama":"Kepala lab","tipe":"kepala_instalasi"}]');
+  -- F170 v2: zona 2 HOD (Rp 10.000 / 900 tes)
+  x := kso.buat_draft('AM-03','F05','Z3',1,900,'data LIS',10000,'baru',36,'{}','[{"nama":"Kepala lab","tipe":"kepala_instalasi"}]');
   -- semua kursi routing setuju (902 menambah HOD bisnis ivd 'mufid' di samping HB-IVD data contoh)
   perform kso.ajukan(x);
   perform kso.putus_hod(x, h.hod_id, 'setuju') from kso.hod_untuk(x) h;

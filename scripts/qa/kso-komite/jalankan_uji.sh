@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# F170 Komite KSO — uji alur (900) + hak akses (901) + referensi OS (902) + lengkapi draft (903) + peran Akses Grup (904) + jadwal (905) + label & KPI (906) + tautan HOD (907) + Sekretariat & Susunan (908) terhadap BERKAS MIGRASI ASLI 224–233 + 242.
+# F170 Komite KSO (v2 GPM + zona sejak 265/266) — uji alur (900) + hak akses (901) + referensi OS (902) + lengkapi draft (903) + peran Akses Grup (904) + jadwal (905) + label & KPI (906) + tautan HOD (907) + Sekretariat & Susunan (908) + akses zona v2 (909) terhadap BERKAS MIGRASI ASLI 224–233 + 242.
 #
 # Pakai: PGHOST=... PGPORT=... PGUSER=... bash scripts/qa/kso-komite/jalankan_uji.sh
 # Membuat database sekali pakai `kso_komite_uji` (DROP + CREATE), tidak menyentuh database lain.
@@ -28,10 +28,13 @@ for f in "$INIT"/224_kso_komite_skema.sql "$INIT"/225_kso_komite_fungsi.sql \
          "$INIT"/228_kso_komite_referensi_os.sql "$INIT"/229_kso_komite_lengkapi_draft.sql \
          "$INIT"/230_kso_komite_peran_akses_grup.sql \
          "$INIT"/231_kso_komite_jadwal.sql "$INIT"/232_kso_komite_label_sumber.sql "$INIT"/233_kso_komite_hod_akun.sql \
-         "$INIT"/242_kso_komite_sekretariat_susunan.sql; do
+         "$INIT"/242_kso_komite_sekretariat_susunan.sql \
+         "$INIT"/265_kso_komite_zona_enum.sql "$INIT"/266_kso_komite_gpm_zona.sql; do
   psql -d $DB -q -1 -v ON_ERROR_STOP=1 -f "$f" >/dev/null
 done
 psql -d $DB -q -v ON_ERROR_STOP=1 -f 004_data_contoh.sql >/dev/null
+# F170 v2 (265/266): tiruan tabel F172/F145 di public (angka fiktif) — sumber GPM & zona
+psql -d $DB -q -v ON_ERROR_STOP=1 -f 005_tiruan_bottomline.sql >/dev/null
 
 # NOTICE "LULUS …" → apa adanya. ERROR "GAGAL: …" (uji.cek) → apa adanya. ERROR lain (galat SQL
 # yang menghentikan berkas uji) → dihitung GAGAL; kalau tidak, uji sesudahnya hilang tanpa suara.
@@ -55,5 +58,7 @@ strip() { sed -E -e 's/^psql:[^:]+:[0-9]+: NOTICE: +//' \
   psql -d $DB -q -v ON_ERROR_STOP=1 -f 907_uji_hod_akun.sql 2>&1 | strip \
     | grep -vE "^ *$|^-+$|^\(1 row\)|^ *(cek|harus_gagal|set_config) *$" || true
   psql -d $DB -q -v ON_ERROR_STOP=1 -f 908_uji_sekretariat_susunan.sql 2>&1 | strip \
+    | grep -vE "^ *$|^-+$|^\(1 row\)|^ *(cek|harus_gagal|set_config) *$|^ *[a-z0-9-]{3,40} *$" || true
+  psql -d $DB -q -v ON_ERROR_STOP=1 -f 909_uji_zona_v2_akses.sql 2>&1 | strip \
     | grep -vE "^ *$|^-+$|^\(1 row\)|^ *(cek|harus_gagal|set_config) *$|^ *[a-z0-9-]{3,40} *$" || true
 } | tee /dev/stderr | awk '/^LULUS/{l++} /^GAGAL/{g++} END{printf "\nRingkasan: %d LULUS, %d GAGAL\n", l, g; exit (g>0 || l==0)}'

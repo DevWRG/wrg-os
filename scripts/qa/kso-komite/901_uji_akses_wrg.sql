@@ -17,7 +17,8 @@ insert into kso.pengguna values
  ('u-teknik','teknik',null);
 -- siapkan satu rencana berstatus PKS_TTD untuk uji Teknik, dan angka pembanding untuk uji baca
 do $$ declare x bigint; begin
-  x := kso.buat_draft('AM-04','F08','Z3',1,500,'data LIS',18500,'baru',36,'{}','[{"nama":"Kepala lab","tipe":"kepala_instalasi"}]');
+  -- F170 v2: Rp 10.000 / 900 tes = zona 2 HOD (Rp 18.500 kini zona AM)
+  x := kso.buat_draft('AM-04','F08','Z3',1,900,'data LIS',10000,'baru',36,'{}','[{"nama":"Kepala lab","tipe":"kepala_instalasi"}]');
   perform kso.ajukan(x); perform kso.putus_hod(x,'HB-IVD','setuju'); perform kso.putus_hod(x,'HA-TIM','setuju');
   perform kso.terbitkan_penawaran(x,19000); perform kso.catat_pks(x,18500);
   insert into uji.id values ('pks', x) on conflict (k) do update set v = excluded.v;
@@ -72,7 +73,7 @@ select set_config('wrg.kso_user','u-bot',false);
 -- sejak migrasi 229 jumlah & klausul wajib DINYATAKAN (lewat app_bot_lengkapi_draft) sebelum diajukan
 select uji.cek('Bot WA bisa membuat draft, melengkapi, dan mengajukan lewat pembungkus',
    (select kso.app_bot_ajukan(x, 'AM-03') = 'CEPAT'
-      from (select kso.app_bot_buat_draft('AM-03','F06','Z3',1,700,'data LIS 3 bulan',18500,'baru',36,'{}','[{"nama":"Kepala lab","tipe":"kepala_instalasi"}]') x) d,
+      from (select kso.app_bot_buat_draft('AM-03','F06','Z3',1,900,'data LIS 3 bulan',10000,'baru',36,'{}','[{"nama":"Kepala lab","tipe":"kepala_instalasi"}]') x) d,
            lateral (select kso.app_bot_lengkapi_draft(d.x, 'AM-03', '{"jumlah":1,"klausul":[]}')) l));
 select uji.harus_gagal('Bot tidak bisa memindahkan usulan milik AM lain',
    format('select kso.app_bot_minta_kelonggaran(%s,''AM-03'',''x'')', (select id from kso.rencana_kso where am_id='AM-01' limit 1)), 'BUKAN_MILIK_PENGIRIM');
