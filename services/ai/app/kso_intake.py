@@ -18,12 +18,12 @@ LEAD_ASAL = ("am", "hod", "direksi", "principal", "asosiasi", "inbound")
 
 # Kata yang harus ada di teks supaya unit_status boleh diisi.
 _UNIT_KATA = {
-    "baru": r"\bbaru\b",
+    "baru": r"\bbaru\b|\btambah\s+unit\b",          # Pedoman: "tambah unit" = unit baru tambahan
     "eks_kso": r"\beks[\s-]*kso\b|\bbekas\s+kso\b",
     "eks_demo": r"\beks[\s-]*demo\b|\bbekas\s+demo\b",
     "refurbish": r"\brefurb",
     "pinjaman_principal": r"\bpinjam",
-    "idle": r"\bidle\b|\bnganggur",
+    "idle": r"\bidle\b|\bnganggur|\brelokasi\b",   # Pedoman: "relokasi idle" = pakai unit idle
 }
 
 KSO_SYSTEM_PROMPT = """Kamu mengekstrak rencana KSO dari pesan Account Manager PT Wahana Rizky Gumilang (distributor alat laboratorium).
@@ -40,6 +40,11 @@ Aturan:
 - unit_status hanya: baru, eks_kso, eks_demo, refurbish, pinjaman_principal, idle.
 - lead_asal hanya: am, hod, direksi, principal, asosiasi, inbound.
 - kompetitor_kontrak_habis: YYYY-MM atau YYYY-MM-DD.
+- Template Pedoman Komite KSO (bernomor 1–7) boleh dipakai AM: "1. Faskes", "2. Alat (baru / relokasi idle / tambah unit)",
+  "3. Harga deal per tes (harga pesaing, merek)", "4. Volume per bulan", "5. Bukti volume", "6. Tenor & klausul", "7. Alasan strategis".
+  Isian 5 "Bukti volume" = volume_sumber (salin apa adanya). "relokasi idle" → unit_status idle; "tambah unit" atau "baru" → baru.
+- harga_pesaing: harga per tes pesaing yang DISEBUT AM (rupiah penuh). Merek/alat pesaing → kompetitor_alat.
+- alasan_strategis: salin kalimat AM di isian "alasan strategis" apa adanya; kosong/"tidak ada" → null.
 
 Kembalikan JSON SAJA (tanpa markdown), persis kunci berikut:
 {"faskes_teks": str|null, "alat_teks": str|null, "jumlah": int|null, "volume_estimasi": int|null,
@@ -48,7 +53,7 @@ Kembalikan JSON SAJA (tanpa markdown), persis kunci berikut:
  "biaya_instalasi": number|null, "klausul_khusus": [str]|null,
  "pendukung": [{"nama": str, "tipe": str|null, "tanggal": str|null, "cara": str|null}],
  "kompetitor_alat": str|null, "kompetitor_kontrak_habis": str|null, "risiko_catatan": str|null,
- "lead_asal": str|null}"""
+ "lead_asal": str|null, "harga_pesaing": number|null, "alasan_strategis": str|null}"""
 
 
 def _norm(s: str) -> str:
@@ -211,7 +216,18 @@ def bersihkan(d: Dict[str, Any], teks: str) -> Dict[str, Any]:
         "kompetitor_kontrak_habis": _tanggal(d.get("kompetitor_kontrak_habis"), ta),
         "risiko_catatan": _teks_ada(d.get("risiko_catatan"), tn),
         "lead_asal": lead if lead in LEAD_ASAL and re.search(r"lead|dari\s+(hod|direksi|direktur|principal|asosiasi)|inbound", tl) else None,
+        # F170 v2 (Pedoman, isian 3 & 7): harga pesaing harus terlacak & masuk akal; alasan harus ada di teks
+        "harga_pesaing": (lambda h: h if h is not None and h >= 100 else None)(_angka(d.get("harga_pesaing"), ta)),
+        "alasan_strategis": _alasan(d.get("alasan_strategis"), tn),
     }
+
+
+def _alasan(v: Any, tn: str) -> Optional[str]:
+    """Alasan strategis: harus muncul di teks; "tidak ada"/"-"/kosong = null (bukan alasan)."""
+    a = _teks_ada(v, tn)
+    if not a or re.fullmatch(r"(tidak|tdk|ga|gak)\s*ada|kosong|-+|nihil|none", a.strip().lower()):
+        return None
+    return a
 
 
 def parse_json_llm(text: str) -> Optional[Dict[str, Any]]:

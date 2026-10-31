@@ -29,7 +29,8 @@ for f in "$INIT"/224_kso_komite_skema.sql "$INIT"/225_kso_komite_fungsi.sql \
          "$INIT"/230_kso_komite_peran_akses_grup.sql \
          "$INIT"/231_kso_komite_jadwal.sql "$INIT"/232_kso_komite_label_sumber.sql "$INIT"/233_kso_komite_hod_akun.sql \
          "$INIT"/242_kso_komite_sekretariat_susunan.sql \
-         "$INIT"/265_kso_komite_zona_enum.sql "$INIT"/266_kso_komite_gpm_zona.sql; do
+         "$INIT"/265_kso_komite_zona_enum.sql "$INIT"/266_kso_komite_gpm_zona.sql \
+         "$INIT"/267_kso_komite_bot_tujuh_isian.sql; do
   psql -d $DB -q -1 -v ON_ERROR_STOP=1 -f "$f" >/dev/null
 done
 psql -d $DB -q -v ON_ERROR_STOP=1 -f 004_data_contoh.sql >/dev/null
