@@ -66,7 +66,7 @@ export interface Susunan {
 export const STATUS_LABEL: Record<string, string> = {
   DRAFT: "Draft", DIAJUKAN: "Diajukan", JALUR_CEPAT: "Jalur cepat", JALUR_FORUM: "Jalur forum", DIAGENDAKAN: "Diagendakan",
   DITAHAN: "Ditahan", DIREKOMENDASIKAN: "Direkomendasikan", DIREKOMENDASIKAN_BERSYARAT: "Direkomendasikan bersyarat",
-  TIDAK_DIREKOMENDASIKAN: "Tidak direkomendasikan", DIPUTUS_HOD: "Diputus HOD", DITOLAK_HOD: "Ditolak HOD",
+  TIDAK_DIREKOMENDASIKAN: "Tidak direkomendasikan", DIPUTUS_AM: "Diputus AM (zona ≥ 55%)", DIPUTUS_HOD: "Diputus HOD", DITOLAK_HOD: "Ditolak HOD",
   MANDAT_TERBIT: "Mandat terbit", DITOLAK_DIREKSI: "Ditolak Direksi", PENAWARAN_TERBIT: "Penawaran terbit",
   PKS_TTD: "PKS ditandatangani", TERPASANG: "Terpasang", KALAH: "Kalah",
 };
