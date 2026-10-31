@@ -198,7 +198,7 @@ export const NAV: NavGroup[] = [
       // WAJIB terdaftar di `features` — kalau tidak, Sync Fitur mematikannya sebagai zombie.
       // API (repo/kso-komite.ts) memeriksa ulang izin tiap permintaan.
       { title: "Komite KSO", url: "/kso-komite", icon: Gavel, badge: "NEW", show: canViewKsoKomite,
-        features: [...TAB_KSO.filter((t) => t.fitur !== "kso-komite").map((t) => ({ key: t.fitur, name: t.nama })), FITUR_SUSUNAN, FITUR_BOTTOMLINE] },
+        features: [...TAB_KSO.filter((t) => t.fitur !== "kso-komite").map((t) => ({ key: t.fitur, name: t.nama })), FITUR_SUSUNAN, ...FITUR_BOTTOMLINE] },
       // Harga jual dibagi per PEMBACA, bukan per tabel:
       //   /pricebook            sales & AM — katalog + harga terpublikasi (071/043)
       //   /pricebook/ringkasan  Direktur + HoD — bacaan portofolio

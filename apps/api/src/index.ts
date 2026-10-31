@@ -271,7 +271,7 @@ import {
 } from "./repo/kso-kontrak.js";
 import { GalatKso, daftarTab, detailRencana, isAksiKso, isTabKso, jalankanAksi, tabBoleh } from "./repo/kso-komite.js";
 import { bacaSusunan, simpanJabatan, simpanPemegang } from "./repo/kso-komite-susunan.js";
-import { aksesBottomLine, bacaBottomLine, simpanBiaya, simpanJenis, simpanKeputusan, simpanParameter } from "./repo/kso-komite-bottomline.js";
+import { aksesBottomLine, bacaBottomLine, bacaReal, simpanAngka, simpanDukungan, simpanJenis, simpanKeputusan, simpanParameter } from "./repo/kso-komite-bottomline.js";
 import { runPolaKomunikasi } from "./repo/polakomunikasi.js";
 import { listWaGroups, setWaGroupCategory, setWaGroupPrefixCategory, isWaGroupCategory } from "./repo/wagroup.js";
 import { runRefreshMembers } from "./repo/listmembers.js";
@@ -1945,7 +1945,7 @@ app.post("/kso-komite/susunan/:jenis", async (c) => {
   const b = await bodyJson(c);
   try { return c.json(jenis === "pemegang" ? await simpanPemegang(u, b) : await simpanJabatan(u, b)); } catch (e) { return ksoKomiteErr(c, e); }
 });
-// F172 Bottom Line Alat (migrasi 256) — lantai harga per tes per model alat; izin fitur
+// F172 Bottom Line Alat (migrasi 256 + 263, model GPM Pedoman v01) — lantai harga per tes per model alat; izin fitur
 // kso-komite-bottomline diperiksa di repo. Didaftarkan SEBELUM /:tab.
 app.get("/kso-komite/bottom-line/akses", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
@@ -1959,12 +1959,19 @@ app.get("/kso-komite/bottom-line", async (c) => {
   if (!u) return c.json({ error: "x-user-id wajib" }, 401);
   try { return c.json(await bacaBottomLine(u)); } catch (e) { return ksoKomiteErr(c, e); }
 });
+// real bottom (promo / dukungan prinsipal) — endpoint terpisah, hanya fitur kso-komite-bottomline-real
+app.get("/kso-komite/bottom-line/real", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const u = ksoUser(c);
+  if (!u) return c.json({ error: "x-user-id wajib" }, 401);
+  try { return c.json(await bacaReal(u)); } catch (e) { return ksoKomiteErr(c, e); }
+});
 app.post("/kso-komite/bottom-line/:jenis", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const u = ksoUser(c);
   const jenis = c.req.param("jenis");
   if (!u) return c.json({ error: "x-user-id wajib" }, 401);
-  const fn = { keputusan: simpanKeputusan, parameter: simpanParameter, biaya: simpanBiaya, jenis: simpanJenis }[jenis];
+  const fn = ({ keputusan: simpanKeputusan, parameter: simpanParameter, angka: simpanAngka, jenis: simpanJenis, dukungan: simpanDukungan } as Record<string, (u: string, b: Record<string, unknown>) => Promise<unknown>>)[jenis];
   if (!fn) return c.json({ error: "permintaan tidak sah" }, 400);
   const b = await bodyJson(c);
   try { return c.json(await fn(u, b)); } catch (e) { return ksoKomiteErr(c, e); }
