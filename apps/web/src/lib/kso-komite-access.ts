@@ -49,7 +49,28 @@ export function canTabKso(u: U, tab: TabKso, aksi: "view" | "edit" = "view"): bo
  */
 export const FITUR_SUSUNAN = { key: "kso-komite-susunan", name: "Komite KSO — Susunan Komite: ubah jabatan & pemegang" };
 
+/**
+ * Bottom Line Alat (F172, migrasi 256 + 263, model GPM Pedoman v01). Tab tersendiri, tiga fitur:
+ *   kso-komite-bottomline        lihat = Forum/HOD/Finance · ubah = Direktur (keputusan, parameter zona)
+ *   kso-komite-bottomline-angka  ubah = Finance (HPP standar, biaya reagen, QC, harga pasar)
+ *   kso-komite-bottomline-real   lihat = Direktur (real bottom) · ubah = catat promo/dukungan prinsipal
+ * Gate lama = role direktur. Role admin TIDAK otomatis lolos (data HPP & biaya; role admin dipakai
+ * juga HOD). API repo/kso-komite-bottomline.ts izinBottomLine yang menentukan; ini hanya menu/tab.
+ */
+export const FITUR_BOTTOMLINE = [
+  { key: "kso-komite-bottomline", name: "Komite KSO — Bottom Line Alat: lihat (Forum/HOD/Finance) · ubah = keputusan Direktur" },
+  { key: "kso-komite-bottomline-angka", name: "Komite KSO — Bottom Line Alat: angka Finance (HPP standar, biaya reagen, harga pasar)" },
+  { key: "kso-komite-bottomline-real", name: "Komite KSO — Bottom Line Alat: real bottom (lihat = Direktur, ubah = catat dukungan prinsipal)" },
+];
+
+/** Tab Bottom Line tampil bila salah satu dari tiga fitur boleh (lihat atau ubah). */
+export function canBottomLine(u: U): boolean {
+  const v = u?.role === "admin" ? { ...u, role: null } : u;
+  const lama = v?.role === "direktur";
+  return FITUR_BOTTOMLINE.some((f) => canOrLegacy(v, f.key, lama, "view") || canOrLegacy(v, f.key, lama, "edit"));
+}
+
 /** Menu Komite KSO tampil bila SATU tab saja boleh dilihat. */
 export function canViewKsoKomite(u: U): boolean {
-  return TAB_KSO.some((t) => canTabKso(u, t.tab));
+  return TAB_KSO.some((t) => canTabKso(u, t.tab)) || canBottomLine(u);
 }
