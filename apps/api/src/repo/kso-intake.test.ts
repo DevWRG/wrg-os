@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { formatBalasanDraft, parseKsoPerintah, pertanyaanKurang, pilihAlat, terjemahGalatKso, type DraftTampil } from "./kso-intake.js";
+import { formatBalasanDraft, parseKsoPerintah, perkiraanZona, pertanyaanKurang, pilihAlat, terjemahGalatKso, type DraftTampil } from "./kso-intake.js";
 import { detectKind } from "./inbound.js";
 
 test("parseKsoPerintah: rencana baru, lengkapi, kirim, kelonggaran, kalah, kosong", () => {
@@ -51,7 +51,7 @@ function draft(o: Partial<DraftTampil> = {}): DraftTampil {
     tenor_bulan: 36, unit_status: null, klausul: [], kolom_dinyatakan: ["jumlah", "klausul", "tenor_bulan"],
     pendukung: [{ nama: "dr. Rina SpPK", tipe: "kepala_instalasi" }],
     gerbang: [1, 2, 3, 4, 5, 6, 7].map((no) => ({ no, nama: `G${no}`, status: "hijau", nilai: `nilai ${no}` })),
-    kursi_hod: 2, ...o,
+    kursi_hod: 2, zona_dasar: "am", gpm_deal: 0.748, ...o,
   };
 }
 
@@ -59,11 +59,11 @@ test("formatBalasanDraft: empat bagian, urutan tetap; lengkap → ajakan kirim",
   const t = formatBalasanDraft(draft(), { baru: true, nama: "Budi" });
   const iDraft = t.indexOf("Draft D12 dibuat");
   const iSistem = t.indexOf("Dari sistem");
-  const iGerbang = t.indexOf("Gerbang: 7 dari 7 hijau → JALUR CEPAT");
+  const iGerbang = t.indexOf("Gerbang: 7 dari 7 hijau → ZONA AM");
   const iKirim = t.indexOf('Balas "#KSO kirim D12"');
   assert.ok(iDraft === 0 && iDraft < iSistem && iSistem < iGerbang && iGerbang < iKirim, t);
   assert.match(t, /Sumber volume: "data LIS 3 bulan"/); // dibacakan apa adanya
-  assert.match(t, /· Capex: nilai 1\n· Coverage: nilai 3\n· Piutang faskes: nilai 5/);
+  assert.match(t, /· GPM deal: nilai 1\n· Relokasi: nilai 3\n· Piutang faskes: nilai 5/);
 });
 
 test("formatBalasanDraft: tenor tak disebut → ditanyakan, bukan diisi; tanpa ajakan kirim", () => {
@@ -74,9 +74,9 @@ test("formatBalasanDraft: tenor tak disebut → ditanyakan, bukan diisi; tanpa a
   assert.match(t, /Jawab: #KSO D12 <jawaban>/);
 });
 
-test("klausul belum dijawab: gerbang 7 tidak ditampilkan hijau dan tak ada JALUR CEPAT", () => {
+test("klausul belum dijawab: gerbang 7 tidak ditampilkan hijau dan zona naik satu level", () => {
   const t = formatBalasanDraft(draft({ kolom_dinyatakan: ["jumlah", "tenor_bulan"] }), { baru: true, nama: "Budi" });
-  assert.match(t, /JALUR FORUM/);
+  assert.match(t, /ZONA 2 HOD/);
   assert.match(t, /❔ 7\. G7: belum dijawab/);
   assert.match(t, /klausul khusus dari RS/);
 });
@@ -88,15 +88,30 @@ test("pertanyaanKurang: sumber volume kosong ditanyakan dulu; pendukung tanpa pe
   assert.ok(!q.some((x) => /Siapa pendukung/.test(x)));
 });
 
-test("SBY 1 (tanpa HOD Area) → info forum", () => {
-  const t = formatBalasanDraft(draft({ kursi_hod: 1 }), { baru: false, nama: "Budi" });
-  assert.match(t, /JALUR FORUM/);
+test("SBY 1 (tanpa HOD Area) di zona HOD → info forum; di zona AM tak butuh HOD", () => {
+  const t = formatBalasanDraft(draft({ kursi_hod: 1, zona_dasar: "hod" }), { baru: false, nama: "Budi" });
+  assert.match(t, /ZONA FORUM/);
   assert.match(t, /tanpa HOD Area/);
+  const a = formatBalasanDraft(draft({ kursi_hod: 1 }), { baru: false, nama: "Budi" });
+  assert.match(a, /ZONA AM/);
+  assert.doesNotMatch(a, /tanpa HOD Area/);
+});
+
+test("perkiraanZona: cermin kso.ajukan — eskalasi satu level, data GPM kosong = forum", () => {
+  const g = (merah?: number) => [1, 2, 3, 4, 5, 6, 7].map((no) => ({ no, nama: "", status: no === merah ? "merah" : "hijau", nilai: null }));
+  const dasar = { gerbang: g(), kursi_hod: 2, kolom_dinyatakan: ["klausul"] };
+  assert.equal(perkiraanZona({ ...dasar, zona_dasar: "am" }), "am");
+  assert.equal(perkiraanZona({ ...dasar, zona_dasar: "am", gerbang: g(5) }), "hod");
+  assert.equal(perkiraanZona({ ...dasar, zona_dasar: "am", gerbang: g(1) }), "am", "gerbang 1 = GPM itu sendiri, tidak dihitung dua kali");
+  assert.equal(perkiraanZona({ ...dasar, zona_dasar: "forum", gerbang: g(2) }), "direktur");
+  assert.equal(perkiraanZona({ ...dasar, zona_dasar: "direktur", gerbang: g(2) }), "direktur");
+  assert.equal(perkiraanZona({ ...dasar, zona_dasar: null }), "forum");
+  assert.equal(perkiraanZona({ ...dasar, zona_dasar: "hod", kursi_hod: 1 }), "forum");
 });
 
 test("terjemahGalatKso: tak pernah menampilkan kode galat", () => {
   for (const m of ["SUMBER_VOLUME_KOSONG", "KOLOM_WAJIB_KOSONG: tenor_bulan, klausul", "BUKAN_MILIK_PENGIRIM: rencana 1 bukan milik AM-3",
-    "DRAFT_TERKUNCI: status DIAJUKAN", "BUKAN_TAHAP_NEGOSIASI", "galat lain"]) {
+    "DRAFT_TERKUNCI: status DIAJUKAN", "BUKAN_TAHAP_NEGOSIASI", "ALASAN_STRATEGIS_WAJIB", "galat lain"]) {
     const t = terjemahGalatKso(m, "D12");
     assert.doesNotMatch(t, /[A-Z]{3,}_[A-Z_]+/, t);
   }

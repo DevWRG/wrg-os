@@ -1,4 +1,6 @@
--- Uji otomatis. Jalankan setelah 001–004. Setiap baris "LULUS" = satu perilaku terbukti.
+-- Uji otomatis. Jalankan setelah migrasi 224–266 + 004 + 005. Setiap baris "LULUS" = satu perilaku terbukti.
+-- Sejak 265/266 (Pedoman Komite KSO Forum v01): GPM deal + 4 zona + 7 gerbang v2 + mandat tiga harga.
+-- Angka GPM dari tiruan F172 di 005_tiruan_bottomline.sql (fiktif).
 -- Sengaja dijalankan dalam zona UTC (seperti Supabase) supaya kesalahan zona waktu ketahuan.
 \set ON_ERROR_STOP on
 set timezone = 'UTC';
@@ -15,20 +17,35 @@ begin
 end $$;
 create or replace function uji.pola(p_id bigint) returns text language sql as $$
   select string_agg(case status when 'hijau' then 'h' when 'merah' then 'm' else 'b' end,'' order by no) from kso.gerbang_hasil where rencana_id=p_id $$;
+-- VOLATILE (bawaan): dibaca dengan snapshot baru, jadi melihat perubahan dari kso.ajukan() di ekspresi yang sama
+create or replace function uji.zona(p_id bigint) returns text language sql as $$ select zona from kso.rencana_kso where id=p_id $$;
+create or replace function uji.status(p_id bigint) returns text language sql as $$ select status::text from kso.rencana_kso where id=p_id $$;
 create table if not exists uji.id (k text primary key, v bigint);
 
 do $$
-declare a bigint; b bigint; c bigint; f4 bigint; f5 bigint; p1 bigint; p2 bigint; k bigint; q bigint; fr1 bigint; fr2 bigint; fr3 bigint; fx bigint;
+declare a bigint; h bigint; h2 bigint; b bigint; c bigint; k bigint; q bigint; t bigint; hd bigint; fr1 bigint; fr2 bigint; fr3 bigint; fx bigint;
   dk jsonb := '[{"nama":"dr. Rina SpPK","tipe":"kepala_instalasi","sip":["F01"],"tanggal":"2026-10-10","cara":"kunjungan"}]';
 begin
-  -- === tiga contoh deck ===
+  -- === empat zona (angka tiruan 005) ===
   a := kso.buat_draft('AM-01','F01','Z3',1,900,'data LIS 3 bulan terakhir, dikirim kepala lab',18500,'baru',36,'{}',dk);
-  perform uji.cek('Contoh A: pola gerbang hhhhhhh sebelum dikirim', uji.pola(a)='hhhhhhh');
-  perform uji.cek('Contoh A: jalur CEPAT', kso.ajukan(a)='CEPAT');
+  perform uji.cek('Zona AM: GPM Z3 @ Rp 18.500 / 900 tes ≈ 74,8%, tujuh gerbang hijau',
+                  uji.pola(a)='hhhhhhh' and (select zona_dasar='am' and round(gpm_deal,3)=0.748 from kso.rencana_kso where id=a));
+  perform uji.cek('Zona AM: diputus AM sendiri (jalur AM, DIPUTUS_AM)', kso.ajukan(a)='AM' and uji.status(a)='DIPUTUS_AM');
+  perform uji.cek('Mandat tiga harga @ 900 tes: pembuka 10.400 (55%) · target 9.400 (50%) · batas bawah 8.500 (45%)',
+                  (select harga_pembuka=10400 and harga_target=9400 and harga_lantai=8500 and volume_terbukti=900
+                          and volume_minimum=720 and sumber='otomatis' from kso.mandat where rencana_id=a));
+  h := kso.buat_draft('AM-01','F01','Z3',1,900,'data LIS 3 bulan',10000,'baru',36,'{}',dk);
+  perform uji.cek('Zona 2 HOD: Rp 10.000 → GPM ≈ 53,3% → jalur cepat', kso.ajukan(h)='CEPAT' and uji.zona(h)='hod');
   b := kso.buat_draft('AM-02','F02','Z52',1,2400,'data LIS 3 bulan, ekspor dari sistem RS',12000,'baru',36,'{}',dk);
-  perform uji.cek('Contoh B: jalur FORUM, merah hanya gerbang 1', kso.ajukan(b)='FORUM' and uji.pola(b)='mhhhhhh');
+  perform uji.cek('Zona Forum: GPM ≈ 45,1%; bukti tertulis menunggu verifikasi Sekretaris; 1 Z52 idle → relokasi merah',
+                  uji.pola(b)='hbmhhhh' and (select zona_dasar from kso.rencana_kso where id=b)='forum');
+  perform uji.cek('Zona Forum + gerbang tidak hijau → naik ke level Direktur, tetap jalur forum (keputusan 31 Okt)',
+                  kso.ajukan(b)='FORUM' and uji.zona(b)='direktur');
   c := kso.buat_draft('AM-03','F03','EXZ8000',1,1800,'catatan lisan pengadaan',95000,'baru',36,'{eksklusivitas,alat_jatuh}',dk);
-  perform uji.cek('Contoh C: jalur FORUM, merah gerbang 1,5,7', kso.ajukan(c)='FORUM' and uji.pola(c)='mhhhmhm');
+  perform uji.cek('Zona Direktur: GPM ≈ 31,9%, volume lisan, piutang 94 hari, klausul khusus', uji.pola(c)='mmhhmhm');
+  perform uji.harus_gagal('Zona Direktur tanpa alasan strategis tidak bisa dikirim', format('select kso.ajukan(%s)',c), 'ALASAN_STRATEGIS_WAJIB');
+  update kso.rencana_kso set alasan_strategis = 'Masuk jaringan RS grup — referensi wilayah Barat' where id = c;
+  perform uji.cek('Zona Direktur + alasan strategis → jalur forum (forum dulu, Direktur memutus)', kso.ajukan(c)='FORUM' and uji.zona(c)='direktur');
 
   -- === aturan intake: tidak ada kolom yang terisi diam-diam ===
   k := kso.buat_draft('AM-01','F01','Z3',1,900,'   ',18500,'baru',36,'{}',dk);
@@ -38,74 +55,85 @@ begin
   k := kso.buat_draft('AM-02','F06','Z3',1,900,'data',18500,'baru',null,'{}',dk);
   perform uji.cek('Tenor tidak diucapkan AM → tetap kosong, bukan 36', (select tenor_bulan is null from kso.rencana_kso where id=k));
   perform uji.harus_gagal('Tanpa tenor tidak bisa dikirim', format('select kso.ajukan(%s)',k), 'KOLOM_WAJIB_KOSONG: tenor_bulan');
-  k := kso.buat_draft('AM-04','F06','Z3',1,900,'data',18500,null,36,'{}',dk);
-  perform uji.cek('Status unit belum ada → gerbang 4 belum bisa dicek, bukan hijau', uji.pola(k)='hhhbhhh');
-  perform uji.cek('Gerbang belum bisa dicek → jalur forum', kso.ajukan(k)='FORUM');
+
+  -- === eskalasi: satu gerbang tidak hijau = naik satu level ===
+  k := kso.buat_draft('AM-01','F04','Z3',1,900,'data LIS',18500,'baru',36,'{}',dk);
+  perform uji.cek('Piutang 5× tagihan → gerbang 5 merah', uji.pola(k)='hhhhmhh');
+  perform uji.cek('Zona AM + satu gerbang merah → naik ke 2 HOD', kso.ajukan(k)='CEPAT' and uji.zona(k)='hod');
+  k := kso.buat_draft('AM-01','F01','Z3',1,900,'perkiraan lisan kepala lab',18500,'baru',36,'{}',dk);
+  perform uji.cek('Volume lisan tidak diterima sebagai bukti → gerbang 2 merah', substr(uji.pola(k),2,1)='m');
+  perform uji.cek('Zona AM + volume lisan → naik ke 2 HOD', kso.ajukan(k)='CEPAT');
+  k := kso.buat_draft('AM-02','F02','Z52',1,2400,'surat RS bertanda tangan direktur',12000,'idle',36,'{}',dk);
+  perform uji.cek('Surat RS = bukti tertulis; unit idle dipakai → relokasi hijau', (select volume_sumber_label='data' from kso.rencana_kso where id=k) and substr(uji.pola(k),3,1)='h');
 
   -- === gerbang spesifik ===
-  f4 := kso.buat_draft('AM-01','F04','Z3',1,900,'data LIS',18500,'baru',36,'{}',dk);
-  perform uji.cek('Piutang belum lewat tempo tapi 5× tagihan → gerbang 5 merah', uji.pola(f4)='hhhhmhh');
-  f5 := kso.buat_draft('AM-04','F05','Z52',1,1500,'data LIS',12000,'baru',36,'{}',dk);
-  perform uji.cek('Jember tanpa teknisi kimia → gerbang 1 dan 3 merah', uji.pola(f5)='mhmhhhh');
+  k := kso.buat_draft('AM-04','F05','Z52',1,1500,'data LIS',12000,'baru',36,'{}',dk);
+  perform uji.cek('Jember tanpa teknisi kimia → gerbang 4 merah', substr(uji.pola(k),4,1)='m');
   k := kso.buat_draft('AM-01','F07','Z3',1,500,'lisan',18500,'baru',36,'{}',dk);
-  perform uji.cek('Faskes luar coverage → gerbang 3 merah', substr(uji.pola(k),3,1)='m');
+  perform uji.cek('Faskes luar coverage → gerbang 4 merah', substr(uji.pola(k),4,1)='m');
   k := kso.buat_draft('AM-02','F06','Z3',1,900,'data',18500,'eks_kso',48,'{}',dk);
-  perform uji.cek('Unit eks-KSO dan tenor 48 → gerbang 4 dan 6 merah', uji.pola(k)='hhhmhmh');
-  k := kso.buat_draft('AM-02','F06','Z3',1,900,'data',17000,'baru',36,'{}',dk);
-  perform uji.cek('Harga di bawah daftar standar → gerbang 2 merah', uji.pola(k)='hmhhhhh');
-  k := kso.buat_draft('AM-02','F06','Z3',1,900,'data',18500,'baru',36,'{}',dk,null,null,8000000);
-  perform uji.cek('Instalasi ikut dihitung: Rp 52,8 jt + Rp 8 jt > Rp 60 jt → gerbang 1 merah', substr(uji.pola(k),1,1)='m');
+  perform uji.cek('Unit eks-KSO lolos relokasi; tenor 48 → gerbang 6 merah', uji.pola(k)='hhhhhmh');
+  k := kso.buat_draft('AM-02','F06','Z3',1,900,'data',9000,'baru',36,'{}',dk);
+  perform uji.cek('Harga turun ke Rp 9.000 → GPM ≈ 48,1% → zona Forum, bukti tunggu verifikasi', uji.pola(k)='hbhhhhh' and (select zona_dasar='forum' from kso.rencana_kso where id=k));
+  k := kso.buat_draft('AM-02','F06','Z3',1,900,'data',10000,'baru',36,'{}',dk,null,null,20000000);
+  perform uji.cek('Instalasi Rp 20 jt ikut cicilan → GPM turun dari zona HOD ke Forum', (select zona_dasar='forum' from kso.rencana_kso where id=k));
+  k := kso.buat_draft('AM-02','F06','Z3',2,900,'data',18500,'baru',36,'{}',dk);
+  perform uji.cek('Dua unit untuk volume yang sama → biaya tetap & cicilan ganda, GPM turun',
+                  (select gpm_deal < (select gpm_deal from kso.rencana_kso where id=a) from kso.rencana_kso where id=k));
+  t := kso.buat_draft('AM-01','F01','TANPA',1,900,'data LIS',18500,'baru',36,'{}',dk);
+  perform uji.cek('Alat tanpa peta model → GPM & relokasi belum bisa dicek', substr(uji.pola(t),1,1)='b' and substr(uji.pola(t),3,1)='b'
+                  and (select nilai like '%belum dipetakan%' from kso.gerbang_hasil where rencana_id=t and no=1));
+  perform uji.cek('Data GPM tak lengkap → jalur forum', kso.ajukan(t)='FORUM');
+  hd := kso.buat_draft('AM-01','F01','HDX',1,60,'data tindakan SIMRS',400000,'baru',36,'{}',dk);
+  perform uji.cek('Hemodialisa tanpa zona: Kalkulator HD, selalu Direktur (tanpa wajib alasan strategis)',
+                  (select nilai like '%Kalkulator HD%' from kso.gerbang_hasil where rencana_id=hd and no=1)
+                  and kso.ajukan(hd)='FORUM' and uji.zona(hd)='direktur');
   perform kso.hitung_gerbang(a, true);
   perform uji.cek('Mode data OS hari ini → gerbang 2–6 belum bisa dicek', uji.pola(a)='hbbbbbh');
   perform kso.hitung_gerbang(a, false);
+  perform uji.cek('Aturan pemecahan paket v1 tidak lagi menandai', not exists (select 1 from kso.rencana_kso where pecah_paket));
 
   -- === aturan grup mitra (SK Pasal 14) ===
   insert into kso.grup_mitra values ('GRUP-X', 4, true);
   insert into kso.faskes (id,nama,cabang,grup,piutang_hari,piutang_nilai,tagihan_bulanan) values ('F09','RS Grup X — Surabaya','Surabaya','GRUP-X',10,10000000,10000000);
-  k := kso.buat_draft('AM-02','F09','Z3',1,800,'data LIS',18500,'baru',36,'{}',dk);
-  perform uji.cek('Grup dengan KSO rating 4: tujuh gerbang hijau sebelum dikirim', uji.pola(k)='hhhhhhh');
+  k := kso.buat_draft('AM-02','F09','Z3',1,900,'data LIS',18500,'baru',36,'{}',dk);
+  perform uji.cek('Grup dengan KSO rating 4: tujuh gerbang hijau, zona AM', uji.pola(k)='hhhhhhh' and (select zona_dasar='am' from kso.rencana_kso where id=k));
   perform uji.cek('Grup dengan KSO rating 4: tetap masuk forum (SK Pasal 14)', kso.ajukan(k)='FORUM');
   perform uji.cek('Alasan forum di luar gerbang tercatat', (select alasan_forum like '%rating 4%' from kso.rencana_kso where id=k));
   insert into kso.grup_mitra values ('GRUP-Y', null, null);
   insert into kso.faskes (id,nama,cabang,grup,piutang_hari,piutang_nilai,tagihan_bulanan) values ('F10','RS Grup Y — Sidoarjo','Sidoarjo','GRUP-Y',10,10000000,10000000);
-  k := kso.buat_draft('AM-02','F10','Z3',1,800,'data LIS',18500,'baru',36,'{}',dk);
-  perform uji.cek('Status grup belum diketahui → forum, bukan jalur cepat', kso.ajukan(k)='FORUM');
-  k := kso.buat_draft('AM-03','F01','Z3',1,900,'data',18500,'baru',36,'{}',dk);
-  perform uji.cek('Instalasi belum diisi tapi PO Rp 52,8 jt + cadangan 10% < Rp 60 jt → tetap hijau', substr(uji.pola(k),1,1)='h');
-  k := kso.buat_draft('AM-03','F02','Z3',1,900,'data',18500,'baru',36,'{}',dk);
-  update kso.alat set harga_po = 56000000 where kode = 'Z3'; perform kso.hitung_gerbang(k);
-  perform uji.cek('Instalasi belum diisi dan PO + cadangan bisa melewati ambang → gerbang 1 belum bisa dicek', substr(uji.pola(k),1,1)='b');
-  update kso.alat set harga_po = 52800000 where kode = 'Z3';
+  k := kso.buat_draft('AM-02','F10','Z3',1,900,'data LIS',18500,'baru',36,'{}',dk);
+  perform uji.cek('Status grup belum diketahui → forum, bukan zona AM', kso.ajukan(k)='FORUM');
 
-  -- === anti-pemecahan paket ===
-  p1 := kso.buat_draft('AM-01','F08','Z3',1,700,'data',18500,'baru',36,'{}',dk);
-  perform uji.cek('Pecahan pertama Rp 52,8 jt → jalur cepat', kso.ajukan(p1)='CEPAT');
-  p2 := kso.buat_draft('AM-01','F08','Z3',1,700,'data',18500,'baru',36,'{}',dk);
-  perform uji.cek('Pecahan kedua ke faskes sama < 30 hari → jalur forum', kso.ajukan(p2)='FORUM');
-  perform uji.cek('Capex pecahan digabung jadi Rp 105,6 jt dan ditandai pecah paket',
-                  (select nilai from kso.gerbang_hasil where rencana_id=p2 and no=1) like '%Rp 105,6 jt%'
-                  and (select pecah_paket from kso.rencana_kso where id=p2));
+  -- === verifikasi bukti volume oleh Sekretaris ===
+  perform uji.harus_gagal('Bukti ditolak tanpa alasan ditolak', format('select kso.verifikasi_volume(%s,false,null,''uji'')',b), 'ALASAN_WAJIB');
+  perform kso.verifikasi_volume(b, true, null, 'sekretaris:uji');
+  perform uji.cek('Sekretaris memverifikasi bukti → gerbang 2 hijau', substr(uji.pola(b),2,1)='h');
+  perform uji.harus_gagal('Verifikasi sesudah putusan ditolak', format('select kso.verifikasi_volume(%s,true,null,''uji'')',a), 'BUKAN_TAHAP_VERIFIKASI');
 
   -- === jalur cepat: dua kursi HOD ===
-  perform uji.harus_gagal('HOD Area Barat tidak berwenang untuk faskes Surabaya', format('select kso.putus_hod(%s,''HA-BAR'',''setuju'')',a), 'HOD_TIDAK_BERWENANG');
-  perform uji.cek('Satu kursi setuju → masih menunggu kursi kedua', kso.putus_hod(a,'HB-IVD','setuju')='JALUR_CEPAT');
-  perform uji.cek('Dua kursi setuju → DIPUTUS_HOD', kso.putus_hod(a,'HA-TIM','setuju')='DIPUTUS_HOD');
-  perform uji.cek('Mandat otomatis: lantai = daftar standar Rp 18.500, sumber otomatis',
-                  (select harga_lantai=18500 and sumber='otomatis' and volume_minimum=720 from kso.mandat where rencana_id=a));
-  perform kso.putus_hod(p1,'HB-IVD','setuju');
-  perform uji.cek('Dua kursi bertentangan → naik otomatis ke forum', kso.putus_hod(p1,'HA-TIM','tolak')='JALUR_FORUM');
-  perform kso.simpan_pendapat_hod(p1,'HB-IVD','Setuju, volume wajar');
+  perform uji.harus_gagal('HOD Area Barat tidak berwenang untuk faskes Surabaya', format('select kso.putus_hod(%s,''HA-BAR'',''setuju'')',h), 'HOD_TIDAK_BERWENANG');
+  perform uji.cek('Satu kursi setuju → masih menunggu kursi kedua', kso.putus_hod(h,'HB-IVD','setuju')='JALUR_CEPAT');
+  perform uji.cek('Dua kursi setuju → DIPUTUS_HOD', kso.putus_hod(h,'HA-TIM','setuju')='DIPUTUS_HOD');
+  perform uji.cek('Mandat jalur HOD juga tiga harga (batas bawah 8.500 @ 900 tes)',
+                  (select harga_lantai=8500 and harga_pembuka=10400 and sumber='otomatis' from kso.mandat where rencana_id=h));
+  h2 := kso.buat_draft('AM-01','F08','Z3',1,900,'data LIS',10000,'baru',36,'{}',dk);
+  perform uji.cek('Faskes baru tanpa tagihan → jalur cepat', kso.ajukan(h2)='CEPAT');
+  perform kso.putus_hod(h2,'HB-IVD','setuju');
+  perform uji.cek('Dua kursi bertentangan → naik otomatis ke forum', kso.putus_hod(h2,'HA-TIM','tolak')='JALUR_FORUM');
+  perform kso.simpan_pendapat_hod(h2,'HB-IVD','Setuju, volume wajar');
   perform uji.cek('Putusan dan pendapat HOD tersimpan terpisah — jejak pertentangan tidak hilang',
-                  (select count(*)=2 from kso.pendapat_hod where rencana_id=p1 and hod_id='HB-IVD'));
+                  (select count(*)=2 from kso.pendapat_hod where rencana_id=h2 and hod_id='HB-IVD'));
   perform uji.harus_gagal('HOD di luar routing tidak bisa berpendapat', format('select kso.simpan_pendapat_hod(%s,''HA-BAR'',''x'')',b), 'HOD_TIDAK_BERWENANG');
 
-  -- === penawaran & negosiasi ===
-  perform uji.harus_gagal('Admin sales tidak bisa terbit di bawah lantai', format('select kso.terbitkan_penawaran(%s,18000)',a), 'KELUAR_MANDAT');
-  perform uji.harus_gagal('Admin sales tidak bisa terbit tanpa mandat', format('select kso.terbitkan_penawaran(%s,12000)',b), 'TIDAK_ADA_MANDAT');
-  perform kso.terbitkan_penawaran(a, 21000);
-  perform uji.cek('Negosiasi di atas lantai → AM jalan sendiri', kso.cek_negosiasi(a,19000,900) like 'BEBAS%');
-  perform uji.cek('Negosiasi di bawah lantai → terkunci', kso.cek_negosiasi(a,18000,900) like 'TERKUNCI%lantai%');
-  perform uji.cek('Volume turun di bawah minimum → terkunci walau harga aman', kso.cek_negosiasi(a,20000,600) like 'TERKUNCI%volume%');
+  -- === penawaran & negosiasi (mandat zona AM) ===
+  perform uji.harus_gagal('Penawaran di bawah batas bawah ditolak', format('select kso.terbitkan_penawaran(%s,8000)',a), 'KELUAR_MANDAT');
+  perform uji.harus_gagal('Penawaran tanpa mandat ditolak', format('select kso.terbitkan_penawaran(%s,12000)',b), 'TIDAK_ADA_MANDAT');
+  perform kso.terbitkan_penawaran(a, 18500);
+  perform uji.cek('Zona AM: penawaran terbit dari mandat otomatis', (select status from kso.rencana_kso where id=a)='PENAWARAN_TERBIT');
+  perform uji.cek('Negosiasi di atas batas bawah → AM jalan sendiri', kso.cek_negosiasi(a,9000,900) like 'BEBAS%');
+  perform uji.cek('Negosiasi di bawah batas bawah → terkunci', kso.cek_negosiasi(a,8000,900) like 'TERKUNCI%lantai%');
+  perform uji.cek('Volume turun > 20% dari bukti → terkunci walau harga aman', kso.cek_negosiasi(a,10000,600) like 'TERKUNCI%volume%');
   perform uji.harus_gagal('Transisi tidak sah ditolak', format('select kso.ubah_status(%s,''DIAJUKAN'',''x'')',a), 'TRANSISI_TIDAK_SAH');
 
   -- === forum ===
@@ -114,14 +142,16 @@ begin
   perform uji.cek('Agenda A maks 3, urut capex terbesar (C pertama)',
      (select count(*)=3 from kso.agenda_item where forum_id=fr1 and jenis='A')
      and (select rencana_id from kso.agenda_item where forum_id=fr1 and urut=1)=c);
-  perform uji.cek('Agenda B memuat putusan jalur cepat', exists(select 1 from kso.agenda_item where forum_id=fr1 and jenis='B' and rencana_id=a));
+  perform uji.cek('Agenda B memuat putusan zona AM (laporan ke forum) dan jalur cepat',
+     exists(select 1 from kso.agenda_item where forum_id=fr1 and jenis='B' and rencana_id=a)
+     and exists(select 1 from kso.agenda_item where forum_id=fr1 and jenis='B' and rencana_id=h));
   fx := kso.susun_agenda('2026-11-05', now() - interval '1 day');
   perform uji.cek('Usulan yang masuk sesudah batas 14.00 menunggu forum berikutnya',
      (select count(*)=0 from kso.agenda_item where forum_id=fx and jenis='A')
      and exists (select 1 from kso.rencana_kso where status='JALUR_FORUM'));
   delete from kso.forum where id = fx;
   -- putusan jalur cepat SESUDAH agenda forum 20 Okt terbit harus muncul di Agenda B forum berikutnya
-  q := kso.buat_draft('AM-04','F05','Z3',1,600,'data LIS 6 bulan',18500,'baru',36,'{}',dk);
+  q := kso.buat_draft('AM-04','F05','Z3',1,900,'data LIS 6 bulan',10000,'baru',36,'{}',dk);
   perform kso.ajukan(q); perform kso.putus_hod(q,'HB-IVD','setuju'); perform kso.putus_hod(q,'HA-TIM','setuju');
   perform kso.simpan_pendapat_hod(b,'HB-IVD','Volume wajar, data LIS terlampir');
   perform uji.harus_gagal('DITAHAN tanpa tiga kolom tidak bisa disimpan',
@@ -176,13 +206,15 @@ begin
   fr3 := kso.susun_agenda('2026-10-27', clock_timestamp());
   perform uji.cek('Tanpa usulan → forum jadi tinjauan portofolio, tidak batal', (select mode from kso.forum where id=fr3)='portofolio');
 
-  -- === minta kelonggaran saat negosiasi ===
-  perform kso.minta_kelonggaran(a,'RS menekan ke Rp 17.000');
-  perform uji.cek('Minta kelonggaran → kembali ke antrean forum', (select status from kso.rencana_kso where id=a)='JALUR_FORUM');
+  -- === minta kelonggaran saat negosiasi (zona AM) ===
+  perform kso.minta_kelonggaran(a,'RS menekan ke Rp 8.000');
+  perform uji.cek('Minta kelonggaran di bawah batas bawah → kembali ke antrean forum', (select status from kso.rencana_kso where id=a)='JALUR_FORUM');
 
   -- === view ===
   perform uji.cek('v_antrean, v_agenda, v_kpi_am, v_ringkasan bisa dibaca',
      (select count(*) from kso.v_antrean)>0 and (select count(*) from kso.v_agenda)>0
      and (select count(*) from kso.v_kpi_am)>0 and (select total_diajukan from kso.v_ringkasan)>0);
-  perform uji.cek('KPI menandai pemecahan paket AM-01', (select sum(flag_pemecahan_paket) from kso.v_kpi_am where am_id='AM-01')>=1);
+  perform uji.cek('Putusan zona AM terhitung siap penawaran / capex disetujui (DIPUTUS_AM ditambal ke view lama)',
+     position('DIPUTUS_AM' in pg_get_viewdef('kso.v_ringkasan'::regclass)) > 0
+     and position('DIPUTUS_AM' in pg_get_viewdef('kso.v_antrean'::regclass)) > 0);
 end $$;
