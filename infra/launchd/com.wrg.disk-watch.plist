@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  LaunchAgent disk-watch WRG-OS (Mac mini, user `development`).
+  Tiap 900 dtk: scripts/ops/disk-watch.sh → alert WA kalau sisa disk menipis.
+  (crontab lewat SSH ditolak macOS — "Operation not permitted" — jadi pakai launchd,
+  sama dgn job com.wrg.* lain.)
+
+  Pasang sekali:
+    cp infra/launchd/com.wrg.disk-watch.plist ~/Library/LaunchAgents/
+    launchctl load -w ~/Library/LaunchAgents/com.wrg.disk-watch.plist
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.wrg.disk-watch</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/zsh</string>
+    <string>-lc</string>
+    <string>exec /bin/bash "$HOME/DevWRG/wrg-os/scripts/ops/disk-watch.sh"</string>
+  </array>
+
+  <key>StartInterval</key>
+  <integer>900</integer>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>/Users/development/DevWRG/ops/disk-watch.launchd.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/development/DevWRG/ops/disk-watch.launchd.log</string>
+</dict>
+</plist>
