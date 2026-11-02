@@ -16,8 +16,8 @@
 # Tujuan WA dibaca dari .env.prod: DISK_ALERT_TO, kalau kosong WRG_DEPLOY_ALERT_TO.
 # Kosong keduanya → log saja.
 #
-# Dipanggil cron tiap 15 menit:
-#   */15 * * * * /bin/bash $HOME/DevWRG/wrg-os/scripts/ops/disk-watch.sh
+# Dipanggil LaunchAgent tiap 15 menit (infra/launchd/com.wrg.disk-watch.plist;
+# crontab lewat SSH ditolak macOS).
 # Uji manual:
 #   bash scripts/ops/disk-watch.sh --dry-run   # cetak status + pesan, tanpa kirim
 #   bash scripts/ops/disk-watch.sh --test      # paksa kirim satu WA (cek jalur)
