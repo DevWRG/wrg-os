@@ -78,9 +78,12 @@ export function rp(n: number | null | undefined): string {
 }
 
 export const KSO_BANTUAN =
-  "Format #KSO:\n" +
-  "#KSO\nFaskes: RS Swasta A, Surabaya\nAlat: 1 unit Z3\nVolume: 900 test/bulan\nSumber: data LIS 3 bulan\n" +
-  "Pendukung: dr. Rina SpPK, kepala instalasi lab\nDiminta: tenor 36 bulan, tanpa klausul khusus\n\n" +
+  "Format #KSO (tujuh isian Pedoman Komite KSO + pendukung):\n" +
+  "#KSO\n1. Faskes: RSUD ... (kota)\n2. Alat: Zybio Z52 (baru / relokasi idle / tambah unit)\n" +
+  "3. Harga deal per tes: Rp 12.000 (harga pesaing: Rp 10.500, merek ...)\n4. Volume per bulan: 1.200 sampel\n" +
+  "5. Bukti volume: rekap LIS 6 bulan / PO reagen RS / surat RS\n6. Tenor & klausul: 36 bulan, tanpa klausul khusus\n" +
+  "7. Alasan strategis: (kosongkan bila tidak ada)\nPendukung: dr. Rina SpPK, kepala instalasi lab\n\n" +
+  "Perkiraan lisan tidak diterima sebagai bukti volume untuk zona Forum. Sistem membalas GPM & zona sebelum kamu kirim.\n" +
   `Boleh juga kirim "#KSO" lalu voice note dalam ${KSO_JENDELA_SUARA_MENIT} menit.\n` +
   "Melengkapi: #KSO D12 <jawaban> · Mengajukan: #KSO kirim D12";
 
@@ -106,6 +109,8 @@ export function terjemahGalatKso(pesan: string, ref: string): string {
   if (/BUKAN_TAHAP_NEGOSIASI/.test(pesan)) return "Minta kelonggaran hanya untuk rencana yang penawarannya sudah terbit.";
   if (/GRUP_DIBEKUKAN/.test(pesan)) return "Grup faskes ini sedang dibekukan Direksi (SK Pasal 14) — belum bisa diproses.";
   if (/TRANSISI_TIDAK_SAH/.test(pesan)) return `Aksi itu tidak berlaku untuk status ${ref} sekarang.`;
+  if (/ALASAN_STRATEGIS_WAJIB/.test(pesan))
+    return `GPM di bawah batas Forum (zona Direktur) — tulis alasan strategisnya dulu.\nJawab: #KSO ${ref} alasan strategis <alasan>`;
   return "Maaf, permintaan belum bisa diproses. Coba lagi, atau hubungi admin.";
 }
 
@@ -130,7 +135,61 @@ export interface DraftTampil {
   pendukung: { nama: string; tipe: string }[];
   gerbang: { no: number; nama: string; status: string; nilai: string | null }[];
   kursi_hod: number;
+  /** F170 v2 (266): zona dari GPM saja + GPM deal — null bila data GPM belum lengkap. */
+  zona_dasar: "am" | "hod" | "forum" | "direktur" | null;
+  gpm_deal: number | null;
+  /** F170 v2 (267): isian 3 & 7 template Pedoman. */
+  harga_pesaing?: number | null;
+  kompetitor_alat?: string | null;
+  alasan_strategis?: string | null;
+  /** Angka GPM per zona (kso.app_bot_angka_gpm) — null bila belum dihitung. */
+  angka?: AngkaGpm | null;
 }
+
+export interface AngkaGpm {
+  gpm: number | null; hd: boolean; catatan: string | null; biaya_per_tes: number | null;
+  harga_am: number | null; harga_hod: number | null; harga_forum: number | null; volume_min_forum: number | null;
+}
+
+const persen = (x: number) => `${(x * 100).toLocaleString("id-ID", { maximumFractionDigits: 1 })}%`;
+const bulat = (x: number) => Math.ceil(x / 100) * 100;
+
+/** Blok hitungan GPM untuk balasan draft (Pedoman: AM menerima zona SEBELUM menekan kirim). */
+export function blokGpm(d: Pick<DraftTampil, "angka" | "volume_estimasi" | "harga_per_test">): string[] {
+  const a = d.angka;
+  if (!a) return [];
+  if (a.hd) return ["\nHitungan: Hemodialisa dihitung dengan Kalkulator HD — selalu diputus Direktur."];
+  if (a.gpm == null) return [`\nHitungan GPM belum bisa: ${a.catatan ?? "data belum lengkap"}.`];
+  const out = [`\nGPM deal ${persen(a.gpm)}${a.biaya_per_tes != null ? ` (biaya ${rp(a.biaya_per_tes)}/tes termasuk cicilan alat)` : ""}`];
+  if (a.harga_am != null && a.harga_hod != null && a.harga_forum != null && d.volume_estimasi)
+    out.push(`· Harga minimum di ${d.volume_estimasi} tes/bln: AM ${rp(bulat(a.harga_am))} · 2 HOD ${rp(bulat(a.harga_hod))} · Forum ${rp(bulat(a.harga_forum))}`);
+  if (d.harga_per_test != null)
+    out.push(a.volume_min_forum != null
+      ? `· Volume minimum zona Forum di ${rp(d.harga_per_test)}: ${Math.ceil(a.volume_min_forum)} tes/bln`
+      : `· Di ${rp(d.harga_per_test)} zona Forum tidak tercapai di volume berapa pun — biaya reagen terlalu tinggi`);
+  return out;
+}
+
+/**
+ * Perkiraan jalur sebelum dikirim — cermin kso.ajukan (266): level zona GPM, satu gerbang 2–7 tidak hijau
+ * (atau klausul belum dijawab) = naik satu level, routing HOD < 2 kursi di level HOD = forum.
+ * Aturan grup mitra tidak terlihat di draft — final tetap saat dikirim.
+ */
+export function perkiraanZona(d: Pick<DraftTampil, "zona_dasar" | "gerbang" | "kursi_hod" | "kolom_dinyatakan">): "am" | "hod" | "forum" | "direktur" {
+  const LEVEL = ["am", "hod", "forum", "direktur"] as const;
+  let lv = d.zona_dasar ? LEVEL.indexOf(d.zona_dasar) : 2;
+  const belumKlausul = !d.kolom_dinyatakan.includes("klausul");
+  if (belumKlausul || d.gerbang.some((x) => x.no >= 2 && x.status !== "hijau")) lv = Math.min(lv + 1, 3);
+  if (lv === 1 && d.kursi_hod < 2) lv = 2;
+  return LEVEL[lv];
+}
+
+const TEKS_ZONA: Record<"am" | "hod" | "forum" | "direktur", string> = {
+  am: "ZONA AM: kamu memutus sendiri, mandat otomatis terbit",
+  hod: "ZONA 2 HOD: jalur cepat, dua HOD memutus maks. 1 hari kerja",
+  forum: "ZONA FORUM: agenda forum Selasa/Kamis, Direktur memutus",
+  direktur: "ZONA DIREKTUR: lewat forum, Direktur memutus — wajib alasan strategis",
+};
 
 const IKON: Record<string, string> = { hijau: "✅", merah: "❌", belum: "❔" };
 const LABEL_KLAUSUL: Record<string, string> = {
@@ -151,7 +210,7 @@ export function pertanyaanKurang(d: DraftTampil, tanpaTipe: string[] = []): stri
       `Volume${d.volume_estimasi != null ? ` ${d.volume_estimasi} test/bulan` : ""} — dari mana angkanya? Boleh "catatan lisan", boleh "belum ada", tapi tidak boleh kosong.`,
     );
   if (d.volume_estimasi == null) q.push("Berapa estimasi volume test per bulan?");
-  if (!d.kolom_dinyatakan.includes("jumlah")) q.push(`Berapa unit ${d.alat_kode}?`);
+  // jumlah tak disebut = 1 unit (keputusan 31 Okt) — ditampilkan di ringkasan, tidak ditanyakan
   if (d.harga_per_test == null)
     q.push(
       d.harga_standar != null
@@ -165,6 +224,8 @@ export function pertanyaanKurang(d: DraftTampil, tanpaTipe: string[] = []): stri
     );
   for (const n of tanpaTipe)
     q.push(`Apa peran ${n}? (manajemen / dokter user / kepala instalasi / analis-perawat / pengadaan)`);
+  if (d.zona_dasar === "direktur" && !d.angka?.hd && !d.alasan_strategis?.trim())
+    q.push("GPM di bawah batas Forum (zona Direktur). Apa alasan strategisnya? Tanpa alasan tertulis, usulan tidak bisa dikirim.");
   if (d.pendukung.length === 0 && tanpaTipe.length === 0)
     q.push("Siapa pendukung di RS? Satu orang per baris: nama, peran (manajemen / dokter user / kepala instalasi / analis-perawat / pengadaan).");
   return q;
@@ -182,32 +243,37 @@ export function formatBalasanDraft(
 
   out.push("\nIsian (periksa, kamu yang bertanggung jawab atas isinya):");
   out.push(`· Faskes: ${d.faskes}${d.cabang ? ` (${d.cabang})` : ""}`);
-  out.push(`· Alat: ${d.kolom_dinyatakan.includes("jumlah") ? `${d.jumlah} × ` : ""}${d.alat}`);
+  out.push(`· Alat: ${d.jumlah} × ${d.alat}${d.kolom_dinyatakan.includes("jumlah") ? "" : ` (dianggap ${d.jumlah} unit — koreksi: #KSO ${ref} 2 unit)`}`);
   if (d.volume_estimasi != null) out.push(`· Volume: ${d.volume_estimasi} test/bulan`);
   if (d.volume_sumber) out.push(`· Sumber volume: "${d.volume_sumber}"`);
-  if (d.harga_per_test != null) out.push(`· Harga: ${rp(d.harga_per_test)}/test`);
+  if (d.harga_per_test != null) {
+    const pesaing = [d.harga_pesaing != null ? rp(d.harga_pesaing) : null, d.kompetitor_alat].filter(Boolean).join(", ");
+    out.push(`· Harga: ${rp(d.harga_per_test)}/test${pesaing ? ` (pesaing ${pesaing})` : ""}`);
+  }
   if (d.tenor_bulan != null) out.push(`· Tenor: ${d.tenor_bulan} bulan`);
   if (d.unit_status) out.push(`· Status unit: ${d.unit_status.replace(/_/g, " ")}`);
   if (d.kolom_dinyatakan.includes("klausul"))
     out.push(`· Klausul khusus: ${d.klausul.length ? d.klausul.map((k) => LABEL_KLAUSUL[k] ?? k).join(", ") : "tidak ada"}`);
   for (const p of d.pendukung) out.push(`· Pendukung: ${p.nama} (${p.tipe.replace(/_/g, " ")})`);
+  if (d.alasan_strategis) out.push(`· Alasan strategis: ${d.alasan_strategis}`);
 
   const g = (no: number) => d.gerbang.find((x) => x.no === no);
   const sistem = [g(1), g(3), g(5)].filter((x) => x?.nilai);
   if (sistem.length) {
     out.push("\nDari sistem:");
-    const label: Record<number, string> = { 1: "Capex", 3: "Coverage", 5: "Piutang faskes" };
+    const label: Record<number, string> = { 1: "GPM deal", 3: "Relokasi", 5: "Piutang faskes" };
     for (const x of sistem) out.push(`· ${label[x!.no]}: ${x!.nilai}`);
   }
 
+  out.push(...blokGpm(d));
+
   const hijau = d.gerbang.filter((x) => x.status === "hijau").length;
   const klausulBelum = !d.kolom_dinyatakan.includes("klausul");
-  const cepat = hijau === 7 && d.kursi_hod >= 2 && !klausulBelum;
-  out.push(`\nGerbang: ${hijau} dari 7 hijau → ${cepat ? "JALUR CEPAT" : "JALUR FORUM"} (perkiraan; final saat dikirim)`);
+  out.push(`\nGerbang: ${hijau} dari 7 hijau → ${TEKS_ZONA[perkiraanZona(d)]} (perkiraan; final saat dikirim)`);
   for (const x of d.gerbang)
     if (x.status !== "hijau" || (x.no === 7 && klausulBelum))
       out.push(`${x.no === 7 && klausulBelum ? IKON.belum : IKON[x.status] ?? "❔"} ${x.no}. ${x.nama}: ${x.no === 7 && klausulBelum ? "belum dijawab" : x.nilai ?? "-"}`);
-  if (d.kursi_hod < 2) out.push(`ℹ️ Cabang ini tanpa HOD Area — usulan masuk forum.`);
+  if (d.kursi_hod < 2 && perkiraanZona({ ...d, kursi_hod: 2 }) === "hod") out.push(`ℹ️ Cabang ini tanpa HOD Area — usulan masuk forum.`);
   for (const c of o.catatan ?? []) out.push(`ℹ️ ${c}`);
 
   const q = pertanyaanKurang(d, o.tanpaTipe);
@@ -242,11 +308,15 @@ async function bacaDraft(tx: Tx, id: number): Promise<DraftTampil | null> {
            coalesce((select array_agg(klausul_kode order by klausul_kode) from kso.rencana_klausul where rencana_id = r.id), '{}') as klausul,
            coalesce((select json_agg(json_build_object('nama', nama, 'tipe', tipe) order by id) from kso.rencana_pendukung where rencana_id = r.id), '[]') as pendukung,
            coalesce((select json_agg(json_build_object('no', no, 'nama', nama, 'status', status, 'nilai', nilai) order by no) from kso.gerbang_hasil where rencana_id = r.id), '[]') as gerbang,
-           (select count(*)::int from kso.hod_untuk(r.id)) as kursi_hod
+           (select count(*)::int from kso.hod_untuk(r.id)) as kursi_hod, r.zona_dasar, r.gpm_deal::float8 as gpm_deal,
+           r.harga_pesaing::float8 as harga_pesaing, r.kompetitor_alat, r.alasan_strategis
       from kso.rencana_kso r join kso.faskes f on f.id = r.faskes_id
       join kso.alat a on a.kode = r.alat_kode join kso.kategori k on k.kode = a.kategori
      where r.id = ${id}`;
-  return (r as unknown as DraftTampil) ?? null;
+  if (!r) return null;
+  const [g] = await tx`select gpm::float8, hd, catatan, biaya_per_tes::float8, harga_am::float8, harga_hod::float8,
+                              harga_forum::float8, volume_min_forum::float8 from kso.app_bot_angka_gpm(${id})`;
+  return { ...(r as unknown as DraftTampil), angka: (g as unknown as AngkaGpm) ?? null };
 }
 
 async function idDariNomor(tx: Tx, p: KsoPerintah): Promise<number | null> {
@@ -310,6 +380,8 @@ interface Isian {
   kompetitor_kontrak_habis?: string | null;
   risiko_catatan?: string | null;
   lead_asal?: string | null;
+  harga_pesaing?: number | null;
+  alasan_strategis?: string | null;
 }
 
 async function ekstrak(teks: string): Promise<Isian | null> {
@@ -336,7 +408,7 @@ export async function transkripSuara(mediaPath: string): Promise<string | null> 
 function isianLengkapi(x: Isian, hargaStandar: number | null): Record<string, unknown> {
   const o: Record<string, unknown> = {};
   const salin = ["jumlah", "volume_estimasi", "volume_sumber", "harga_per_test", "tenor_bulan", "unit_status", "biaya_instalasi",
-    "kompetitor_alat", "kompetitor_kontrak_habis", "risiko_catatan", "lead_asal"] as const;
+    "kompetitor_alat", "kompetitor_kontrak_habis", "risiko_catatan", "lead_asal", "harga_pesaing", "alasan_strategis"] as const;
   for (const k of salin) if (x[k] != null) o[k] = x[k];
   if (o.harga_per_test == null && x.pakai_harga_daftar === true && hargaStandar != null) o.harga_per_test = hargaStandar;
   if (Array.isArray(x.klausul_khusus)) o.klausul = x.klausul_khusus;
@@ -372,13 +444,18 @@ export async function prosesKso(k: KsoKonteks): Promise<{ balasan: string; hasil
         if (p.aksi === "kirim") {
           const [j] = await tx`select kso.app_bot_ajukan(${id}, ${k.am_id})::text as jalur`;
           const [r] = await tx`select nomor, alasan_forum from kso.rencana_kso where id = ${id}`;
-          const cepat = j.jalur === "CEPAT";
+          const [z] = await tx`select r.zona, r.gpm_deal::float8 as gpm, m.harga_pembuka::float8 as pembuka, m.harga_target::float8 as target,
+                                      m.harga_lantai::float8 as lantai, m.berlaku_sampai::text as sampai
+                                 from kso.rencana_kso r left join kso.mandat m on m.rencana_id = r.id where r.id = ${id}`;
+          const gpm = z?.gpm != null ? ` (GPM ${(Number(z.gpm) * 100).toLocaleString("id-ID", { maximumFractionDigits: 1 })}%)` : "";
           return {
             balasan:
               `${r.nomor} diajukan, ${k.nama}.\n` +
-              (cepat
-                ? "→ JALUR CEPAT: dua HOD memutus maksimal 1 hari kerja."
-                : `→ JALUR FORUM${r.alasan_forum ? ` (${r.alasan_forum})` : ""}: masuk agenda forum Selasa/Kamis berikutnya (batas data 14.00).`),
+              (j.jalur === "AM"
+                ? `→ ZONA AM${gpm}: kamu memutus sendiri. Mandat berlaku s/d ${z.sampai}: harga pembuka ${rp(z.pembuka)}, target ${rp(z.target)}, batas bawah ${rp(z.lantai)}/test. Di bawah batas bawah → #KSO kelonggaran.`
+                : j.jalur === "CEPAT"
+                  ? `→ ZONA 2 HOD${gpm}: dua HOD memutus maksimal 1 hari kerja.`
+                  : `→ ${z?.zona === "direktur" ? "ZONA DIREKTUR" : "ZONA FORUM"}${gpm}${r.alasan_forum ? ` (${r.alasan_forum})` : ""}: masuk agenda forum Selasa/Kamis berikutnya (batas data 14.00), Direktur memutus.`),
             hasil: { aksi: "kirim", rencana_id: id, nomor: r.nomor, jalur: j.jalur },
           };
         }

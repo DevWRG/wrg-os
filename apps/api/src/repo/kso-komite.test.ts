@@ -101,3 +101,12 @@ test("Susunan Komite: diubah hanya lewat centang Akses Grup atau superuser — r
   assert.equal(bolehUbahSusunan(user(), eff({ permissions: { "kso-komite-susunan": izin(true, true) } })), true);
   assert.equal(bolehUbahSusunan(user(), eff({ permissions: { "kso-komite-susunan": izin(true, false) } })), false);
 });
+
+test("F170 v2: verifikasi bukti volume hanya tab Sekretariat; tolak wajib alasan", () => {
+  assert.deepEqual(AKSI_TAB["verifikasi-volume"], ["sekretariat"]);
+  assert.match(validasiAksi("verifikasi-volume", {})!, /sah atau ditolak/);
+  assert.match(validasiAksi("verifikasi-volume", { sah: false, catatan: "  " })!, /alasan/);
+  assert.equal(validasiAksi("verifikasi-volume", { sah: false, catatan: "Rekap LIS tidak cocok" }), null);
+  assert.equal(validasiAksi("verifikasi-volume", { sah: true }), null);
+  assert.equal(terjemahGalatWeb("BUKAN_TAHAP_VERIFIKASI: status DIPUTUS_AM").status, 409);
+});

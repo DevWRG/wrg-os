@@ -19,7 +19,8 @@ select uji.cek('Jam WIB tetap walau server UTC (Jumat 23.30 WIB → Senin 23.30 
 -- 2. lewat batas memakai hari kerja: usulan Jumat yang "lewat 24 jam" di hari Minggu BELUM lewat batas
 do $$ declare x bigint; begin
   insert into kso.cabang_teknisi (cabang, kategori) values ('Kediri', 'HEMATO') on conflict do nothing;
-  x := kso.buat_draft('AM-02','F06','Z3',1,700,'data LIS',18500,'baru',36,'{}','[{"nama":"Kepala lab","tipe":"kepala_instalasi"}]');
+  -- F170 v2: zona 2 HOD (Rp 10.000 / 900 tes) supaya masuk antrean HOD
+  x := kso.buat_draft('AM-02','F06','Z3',1,900,'data LIS',10000,'baru',36,'{}','[{"nama":"Kepala lab","tipe":"kepala_instalasi"}]');
   perform kso.ajukan(x);
   insert into uji.d905 values ('x', x) on conflict (k) do update set v = excluded.v;
 end $$;
