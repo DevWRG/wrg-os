@@ -4,6 +4,7 @@ import { Fragment, useMemo, useState } from "react";
 import { Bar, BarChart, Cell, CartesianGrid, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { FilterCombo } from "@/components/ui/filter-select";
 import { BAR_FILL, RESULT_FILL, stageFill, stageInk } from "@/lib/pipeline-viz";
 import type { PipelineDeal } from "./pipeline-board";
 
@@ -245,13 +246,13 @@ function AlatStageTable({ deals, stages }: { deals: PipelineDeal[]; stages: stri
       hint="Angka = jumlah deal; warna makin pekat = makin banyak. Klik angka untuk melihat RS/faskes di tahap itu, klik nama alat untuk semua tahapnya. Urut: deal yang masih jalan terbanyak dulu."
     >
       <div className="mb-2 flex flex-wrap items-center gap-2">
-        <select value={brandAktif} onChange={(e) => { setBrand(e.target.value); setSel(null); setAll(false); }}
-          className="border-input bg-muted hover:bg-muted/80 focus:ring-ring/40 focus:border-ring h-8 min-w-0 cursor-pointer rounded-md border px-2 text-xs shadow-sm focus:ring-2 focus:outline-none">
-          <option value="">Brand: semua ({brandOpts.length})</option>
-          {brandOpts.map(([b, n]) => (
-            <option key={b} value={b}>{b === NO_BRAND ? "(brand belum diisi)" : b} · {n} deal</option>
-          ))}
-        </select>
+        <FilterCombo
+          label="Brand"
+          value={brandAktif}
+          onChange={(v) => { setBrand(v); setSel(null); setAll(false); }}
+          semua={`Semua (${brandOpts.length})`}
+          options={brandOpts.map(([b, n]) => ({ value: b, label: `${b === NO_BRAND ? "(brand belum diisi)" : b} · ${n} deal` }))}
+        />
         {brandAktif && (
           <button onClick={() => { setBrand(""); setSel(null); }} className="text-muted-foreground hover:text-foreground text-xs underline">
             hapus filter brand
