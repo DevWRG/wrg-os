@@ -5,7 +5,7 @@
   Tiap 10800 dtk (3 jam): scripts/ops/openclaw-tmp-clean.sh. Pasangan alert
   com.wrg.disk-watch.
 
-  Pasang sekali (sesudah --dry-run dicek):
+  Pasang sekali (sesudah mode dry-run dicek):
     cp infra/launchd/com.wrg.openclaw-tmp-clean.plist ~/Library/LaunchAgents/
     launchctl load -w ~/Library/LaunchAgents/com.wrg.openclaw-tmp-clean.plist
 -->
