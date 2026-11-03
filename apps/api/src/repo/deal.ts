@@ -30,7 +30,7 @@ export const DEAL_STAGES = [
 // F1-SPT: derive kategori/probabilitas/forecast dari stage (selaras STAGE_DERIVE
 // importer scripts/db/import_hs_s1.py + migrasi 069 — SATU sumber kebenaran, jaga
 // tetap sinkron). Kategori prospek: Cold s/d Quotation, Warm Negotiation, Hot Closing+.
-const STAGE_META: Record<string, { prospect: string; prob: number; forecast: string }> = {
+export const STAGE_META: Record<string, { prospect: string; prob: number; forecast: string }> = {
   "Prospecting":   { prospect: "Cold", prob: 0.1,  forecast: "D - Omit" },
   "Presentation":  { prospect: "Cold", prob: 0.3,  forecast: "C - Pipeline" },
   "Quotation":     { prospect: "Cold", prob: 0.5,  forecast: "C - Pipeline" },
@@ -44,6 +44,28 @@ const STAGE_META: Record<string, { prospect: string; prob: number; forecast: str
 // Opsi baru per Direktur (075). Nilai lama tetap valid di enum utk data historis,
 // tapi tak lagi ditawarkan/diterima untuk transisi baru.
 export const DEAL_LOSS_REASONS = ["spesifikasi", "harga", "populasi", "komitmen"];
+
+// Pipeline Dormant (migrasi 273) — penanda di ATAS tahap, bukan tahap ke-8.
+// 45 hari kalender tanpa pergerakan → Dormant; 15 hari lagi tetap diam → Lost
+// otomatis (job deal-dormant, repo/deal-dormant.ts). Alasan 'tidak-bergerak'
+// sengaja TIDAK masuk DEAL_LOSS_REASONS: hanya job yang boleh memakainya, supaya
+// laporan alasan kalah bisa memisahkan "gugur" dari "kalah harga/spesifikasi".
+export const DORMANT_HARI = 45;
+export const GUGUR_HARI = 15;
+export const DORMANT_ACTOR = "system:dormant";
+export const LOSS_TIDAK_BERGERAK = "tidak-bergerak";
+
+/**
+ * Pergerakan terakhir deal ber-alias `d`: pindah tahap (stage_entered_at), edit
+ * deal (updated_at), atau entri Riwayat apa pun — #REPORT, #PLAN, AM ditunjuk —
+ * KECUALI tulisan job Dormant sendiri (kalau dihitung, menandai Dormant justru
+ * melepas Dormant). JANGAN diganti stage_entered_at saja: #REPORT harian tidak
+ * mereset kolom itu, jadi deal yang rutin dilaporkan akan ikut gugur.
+ */
+export const lastActivitySql = (sql: ReturnType<typeof db>) => sql`GREATEST(
+  d.stage_entered_at, d.updated_at,
+  (SELECT max(l.occurred_at) FROM spt_state_log l
+    WHERE l.deal_id = d.deal_id AND l.changed_by IS DISTINCT FROM ${DORMANT_ACTOR}))`;
 
 // Error dgn status HTTP eksplisit → endpoint map ke response code yg tepat.
 export class DealError extends Error {
@@ -110,6 +132,12 @@ export interface PipelineDeal {
   purchase_year: number | null;
   days_in_stage: number | null;
   stale: boolean;                      // >14 hari di stage non-terminal
+  // Dormant (migrasi 273): true hanya bila dormant_at terisi DAN belum ada
+  // pergerakan sesudahnya — pergerakan baru melepasnya seketika, tanpa nunggu job.
+  dormant: boolean;
+  dormant_at: string | null;
+  gugur_at: string | null;             // dormant_at + GUGUR_HARI → otomatis Lost
+  days_idle: number | null;            // hari sejak pergerakan terakhir (deal jalan)
   notes: string | null;
   updated_at: string;
 }
@@ -127,6 +155,7 @@ export interface PipelineSummary {
   total_value: number;
   weighted_value: number;
   stale_count: number;
+  dormant_count: number;
   by_forecast: { forecast: string; count: number; value: number }[];
 }
 
@@ -140,18 +169,19 @@ export async function getPipeline(
     COALESCE(estimated_value, estimate_amount) AS estimate_amount,
     qty_num, unit_price,
     pic_hod, cabang, coop_model, city, province, purchase_month, purchase_year, notes, updated_at,
-    GREATEST(0, EXTRACT(DAY FROM (now() - stage_entered_at))::int) AS days_in_stage`;
+    GREATEST(0, EXTRACT(DAY FROM (now() - stage_entered_at))::int) AS days_in_stage,
+    dormant_at, COALESCE(on_hold, false) AS on_hold, ${lastActivitySql(sql)} AS last_activity_at`;
   // Row-level scope (pakai semantik isRestricted spt F127): scope TAK membatasi
   // (FULL_SCOPE / superuser/admin / HoD-tanpa-territory / tanpa x-user-id) → lihat
   // SEMUA; AM → deal sendiri; HoD ber-territory → deal di cabang timnya.
   let rows;
   if (!scope || !isRestricted(scope)) {
-    rows = await sql`SELECT ${cols} FROM deal ORDER BY updated_at DESC`;
+    rows = await sql`SELECT ${cols} FROM deal d ORDER BY updated_at DESC`;
   } else if (scope.amOnly && scope.amId) {
-    rows = await sql`SELECT ${cols} FROM deal WHERE am_id = ${scope.amId} ORDER BY updated_at DESC`;
+    rows = await sql`SELECT ${cols} FROM deal d WHERE am_id = ${scope.amId} ORDER BY updated_at DESC`;
   } else {
     // isRestricted true & bukan amOnly → pasti punya cabangScope (HoD ber-territory).
-    rows = await sql`SELECT ${cols} FROM deal WHERE cabang = ANY(${scope.cabangScope!}) ORDER BY updated_at DESC`;
+    rows = await sql`SELECT ${cols} FROM deal d WHERE cabang = ANY(${scope.cabangScope!}) ORDER BY updated_at DESC`;
   }
 
   // Resolve am_id → panggilan (master_user) untuk tampilan & filter AM.
@@ -161,7 +191,8 @@ export async function getPipeline(
   const TERMINAL = new Set(["Closing-Won", "Closing-Lost"]);
   const byStage = new Map<string, PipelineDeal[]>();
   for (const s of DEAL_STAGES) byStage.set(s, []);
-  let totalValue = 0, weightedTotal = 0, staleCount = 0;
+  let totalValue = 0, weightedTotal = 0, staleCount = 0, dormantCount = 0;
+  const now = Date.now();
   const byForecast = new Map<string, { count: number; value: number }>();
 
   for (const r of rows) {
@@ -172,6 +203,10 @@ export async function getPipeline(
     const dis = r.days_in_stage != null ? Number(r.days_in_stage) : null;
     const stale = !TERMINAL.has(stage) && dis != null && dis > 14;
     if (stale) staleCount += 1;
+    const lastAct = r.last_activity_at ? new Date(r.last_activity_at as string) : null;
+    const dormAt = r.dormant_at ? new Date(r.dormant_at as string) : null;
+    const dormant = !TERMINAL.has(stage) && !r.on_hold && dormAt != null && (lastAct == null || lastAct <= dormAt);
+    if (dormant) dormantCount += 1;
     const d: PipelineDeal = {
       deal_id: String(r.deal_id),
       customer_name: String(r.customer_name ?? ""),
@@ -199,6 +234,10 @@ export async function getPipeline(
       purchase_year: r.purchase_year != null ? Number(r.purchase_year) : null,
       days_in_stage: dis,
       stale,
+      dormant,
+      dormant_at: dormant && dormAt ? dormAt.toISOString() : null,
+      gugur_at: dormant && dormAt ? new Date(dormAt.getTime() + GUGUR_HARI * 86_400_000).toISOString() : null,
+      days_idle: !TERMINAL.has(stage) && lastAct ? Math.max(0, Math.floor((now - lastAct.getTime()) / 86_400_000)) : null,
       notes: r.notes ? String(r.notes) : null,
       updated_at: String(r.updated_at),
     };
@@ -223,6 +262,7 @@ export async function getPipeline(
     total_value: totalValue,
     weighted_value: weightedTotal,
     stale_count: staleCount,
+    dormant_count: dormantCount,
     by_forecast: [...byForecast.entries()]
       .map(([forecast, v]) => ({ forecast, count: v.count, value: v.value }))
       .sort((a, b) => b.value - a.value),
@@ -547,6 +587,43 @@ function canApprove(scope: DataScope, deal: { cabang: string | null }): boolean 
     return !!deal.cabang && scope.cabangScope.includes(deal.cabang);
   }
   return true; // tanpa batas cabang — persis yg dilihat di antrean
+}
+
+/** Batas panjang catatan follow-up (karakter). */
+export const DEAL_NOTE_MAX = 1000;
+/** Awalan reason di spt_state_log — Riwayat memakainya untuk label "Follow-up"
+ *  (membedakan dari entri tahap-tetap lain: #REPORT, AM ditunjuk, Dormant). */
+export const DEAL_NOTE_PREFIX = "follow-up: ";
+
+/**
+ * Catatan follow-up TANPA pindah tahap — mis. deal masih di Quotation tapi AM
+ * terus menindaklanjuti. Ditulis ke spt_state_log (from_stage = to_stage = tahap
+ * sekarang) supaya tampil di Riwayat dan TERHITUNG pergerakan: lastActivitySql
+ * membaca entri Riwayat, jadi catatan ini melepas Dormant seketika (#1955).
+ * Write-guard sama dengan transitionStage. Deal Won/Lost ditolak: catatan di sana
+ * tak menggerakkan apa pun dan cuma mengaburkan Riwayat keputusan akhirnya.
+ */
+export async function addDealNote(
+  dealId: string,
+  scope: DataScope,
+  note: string,
+): Promise<{ state_log_id: string; stage: string }> {
+  const sql = db();
+  const isi = note.replace(/\s+/g, " ").trim();
+  if (isi.length < 3) throw new DealError(400, "catatan wajib diisi (minimal 3 karakter)");
+  if (isi.length > DEAL_NOTE_MAX) throw new DealError(400, `catatan maksimal ${DEAL_NOTE_MAX} karakter`);
+  const cur = await sql`SELECT stage, am_id, cabang FROM deal WHERE deal_id = ${dealId}`;
+  if (cur.length === 0) throw new DealError(404, "deal tidak ditemukan");
+  const stage = String(cur[0].stage);
+  if (CLOSED.includes(stage)) throw new DealError(409, "deal sudah Won/Lost — pindahkan dulu ke tahap jalan kalau masih ditindaklanjuti");
+  const deal = { am_id: cur[0].am_id ? String(cur[0].am_id) : null, cabang: cur[0].cabang ? String(cur[0].cabang) : null };
+  if (!canWrite(scope, deal)) throw new DealError(403, "tidak berwenang mencatat di deal ini");
+  const rows = await sql`
+    INSERT INTO spt_state_log (deal_id, from_stage, to_stage, changed_by, reason)
+    VALUES (${dealId}, ${stage}, ${stage}, ${scope.userId ?? scope.amId}, ${DEAL_NOTE_PREFIX + isi})
+    RETURNING id`;
+  await sql`UPDATE deal SET updated_at = now() WHERE deal_id = ${dealId}`;
+  return { state_log_id: String(rows[0].id), stage };
 }
 
 export interface LossPending {

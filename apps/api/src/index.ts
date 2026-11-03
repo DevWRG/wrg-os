@@ -57,7 +57,7 @@ import { listAsetTetap, ringkasanAsetTetap, jadwalAsetTetap, simpanOverrideAsetT
 import { pratinjauRekon, terapkanRekon, batalkanTautanOtomatis, cariAlatKso } from "./repo/asetTetapRekon.js";
 import { mirrorFreshness } from "./repo/mirror-health.js";
 import { insertAuditEvent } from "./repo/audit.js";
-import { upsertDealsFromPlan, logReportToDeals, getPipeline, getPipelineReport, getPipelineLeaderboard, transitionStage, DealError, listPendingLosses, decideLoss, getDealTimeline, createDeal, updateDeal, deleteDeal } from "./repo/deal.js";
+import { upsertDealsFromPlan, logReportToDeals, getPipeline, getPipelineReport, getPipelineLeaderboard, transitionStage, DealError, listPendingLosses, decideLoss, getDealTimeline, createDeal, updateDeal, deleteDeal, addDealNote } from "./repo/deal.js";
 import {
   PameranError, buatAcara as pmBuatAcara, daftarPublik as pmDaftarPublik, hapusPengunjung as pmHapusPengunjung, infoPublik as pmInfoPublik,
   jadikanDeal as pmJadikanDeal, kocokPemenang as pmKocok, listAcara as pmListAcara, listPengunjung as pmListPengunjung,
@@ -5597,6 +5597,20 @@ app.patch("/deals/:id/stage", async (c) => {
     return c.json(res);
   } catch (e) {
     if (e instanceof DealError) return c.json({ error: e.message }, e.status as 400 | 403 | 404);
+    throw e;
+  }
+});
+
+// F174: catatan follow-up tanpa pindah tahap → Riwayat + melepas Dormant.
+// Write-guard sama dengan transisi stage. Body: { note: string }.
+app.post("/deals/:id/notes", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const body = await c.req.json().catch(() => ({}));
+  try {
+    const res = await addDealNote(c.req.param("id"), await scopeOf(c), typeof body?.note === "string" ? body.note : "");
+    return c.json(res, 201);
+  } catch (e) {
+    if (e instanceof DealError) return c.json({ error: e.message }, e.status as 400 | 403 | 404 | 409);
     throw e;
   }
 });
