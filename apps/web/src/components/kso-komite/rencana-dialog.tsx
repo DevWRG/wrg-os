@@ -264,7 +264,7 @@ function Mandat({ d }: { d: Detail }) {
     <section>
       <h3 className="mb-1.5 text-sm font-semibold">Batas negosiasi AM <span className="text-muted-foreground font-normal">· mandat {m.sumber}, berlaku s/d {m.berlaku_sampai}</span></h3>
       <div className="grid grid-cols-3 gap-2">
-        <Ubin label="Pembuka" nilai={m.harga_pembuka != null ? rp(m.harga_pembuka) : "—"} ket="GPM 55%" />
+        <Ubin label="Pembuka" nilai={m.harga_pembuka != null ? rp(m.harga_pembuka) : "—"} ket="GPM ≥ 55%, ≥ usulan AM" />
         <Ubin label="Target" nilai={rp(m.harga_target)} ket="GPM 50%" />
         <Ubin label="Batas bawah" nilai={rp(m.harga_lantai)} ket="GPM 45%" />
       </div>
@@ -429,19 +429,26 @@ function FormVerifikasi({ jalankan }: { jalankan: Jalankan }) {
   );
 }
 
+// MAX(@GPM 55%, usulan AM) — sama dengan default kso.putus_direksi (migrasi 272)
+function pembukaAwal(at55: number | null | undefined, usulan: number | null | undefined) {
+  if (at55 == null) return usulan ?? null;
+  return usulan != null && usulan > at55 ? usulan : at55;
+}
+
 function FormDireksi({ d, jalankan }: { d: Detail; jalankan: Jalankan }) {
   const { sibuk, err, go } = useKirim(jalankan);
   const [p, setP] = useState<"SETUJU" | "BERSYARAT" | "TOLAK" | null>(null);
   const r = d.rencana, g = d.angka_gpm;
-  // F170 v2: nilai awal = tiga harga Pedoman di volume terbukti (pembuka @55%, target @50%, batas bawah @45%); Direksi boleh mengubah
+  // F170 v2: nilai awal = tiga harga Pedoman di volume terbukti (pembuka @55%, target @50%, batas bawah @45%); Direksi boleh mengubah.
+  // 272: pembuka awal tak pernah di bawah harga usulan AM.
   const awal = (x: number | null | undefined) => (x == null ? "" : String(Math.round(x)));
   const [f, setF] = useState({
-    pembuka: awal(bulat100(g?.harga_am)), lantai: awal(bulat100(g?.harga_forum)), target: awal(bulat100(g?.harga_hod)), tenor_maks: awal(r.tenor_bulan),
+    pembuka: awal(pembukaAwal(bulat100(g?.harga_am), r.harga_per_test)), lantai: awal(bulat100(g?.harga_forum)), target: awal(bulat100(g?.harga_hod)), tenor_maks: awal(r.tenor_bulan),
     capex_maks: awal(r.capex), volume_min: r.volume_estimasi ? awal(Math.floor(r.volume_estimasi * 0.8)) : "", catatan: "",
   });
   const isi = (k: keyof typeof f) => (e: { target: { value: string } }) => setF({ ...f, [k]: e.target.value });
   const kolom: [keyof typeof f, string, string][] = [
-    ["pembuka", "Harga pembuka penawaran (Rp/test, GPM 55%)", r.harga_per_test ? `usulan AM ${rp(r.harga_per_test)}` : ""],
+    ["pembuka", "Harga pembuka penawaran (Rp/test, GPM ≥ 55%, ≥ usulan AM)", r.harga_per_test ? `usulan AM ${rp(r.harga_per_test)}` : ""],
     ["target", "Harga target (Rp/test, GPM 50%)", ""],
     ["lantai", "Batas bawah AM — lantai (Rp/test, GPM 45%)", ""],
     ["tenor_maks", "Tenor maks (bulan)", r.tenor_bulan ? `diminta ${r.tenor_bulan}` : ""],
