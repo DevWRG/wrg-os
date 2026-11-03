@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 
 import { EmptyState } from "@/components/ui/empty-state";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -8,10 +8,11 @@ import { TAB_KSO, type TabKso } from "@/lib/kso-komite-access";
 import { cn } from "@/lib/utils";
 
 import { BottomLinePanel } from "./bottom-line";
-import { RencanaDialog } from "./rencana-dialog";
+import { LabelStatus } from "./label-status";
+import { RencanaDialog, RencanaPanel } from "./rencana-dialog";
 import { SusunanPanel } from "./susunan-panel";
 import {
-  GERBANG_CLS, LABEL_ZONA, POLA_STATUS, STATUS_LABEL, ZONA_CLS, kirim, persen, rpJt, waktu,
+  GERBANG_SOLID, LABEL_ZONA, POLA_STATUS, ZONA_CLS, kirim, persen, rpJt, waktu,
   type BarisAgenda, type BarisAntrean, type BarisKpi, type DataTab, type Ringkasan, type TabBoleh,
 } from "./types";
 
@@ -41,10 +42,11 @@ export function KomiteView({ tabs, bottomLine = false }: { tabs: TabBoleh[]; bot
   const muat = (t: TabKso) => terapkan(t, kirim<DataTab>(`/api/kso-komite/${t}`), () => false);
 
   const aktif = tab === "bottomline" ? null : tabs.find((t) => t.tab === tab) ?? null;
+  const lebar = useLayarLebar();
   const d = tab === "bottomline" ? undefined : data[tab];
 
   return (
-    <Tabs value={tab} onValueChange={(v) => setTab(v as TabLayar)} className="gap-4">
+    <Tabs value={tab} onValueChange={(v) => { setTab(v as TabLayar); setBuka(null); }} className="gap-4">
       {tabs.length > 0 && <SusunanPanel />}
       <div className="-mx-1 overflow-x-auto px-1">
         <TabsList>
@@ -66,32 +68,39 @@ export function KomiteView({ tabs, bottomLine = false }: { tabs: TabBoleh[]; bot
                   {" "}<code>#KSO kirim D12</code> mengajukan, <code>#KSO kelonggaran</code> / <code>#KSO kalah</code>.
                 </p>
               )}
-              {t.tab === "kpi" ? <TabelKpi baris={d.kpi ?? []} /> : t.tab === "hod" ? (
+              {t.tab === "kpi" ? <TabelKpi baris={d.kpi ?? []} /> : (
+                <DuaKolom panel={lebar && aktif?.tab === t.tab ? (
+                  <RencanaPanel key={`${t.tab}-${buka ?? "kosong"}`} tab={t.tab} id={buka} bolehAksi={t.bolehAksi}
+                    onBerubah={() => muat(t.tab)} />
+                ) : null}>
+                {t.tab === "hod" ? (
                 <>
                   <Bagian judul="Perlu putusan — jalur cepat" catatan="Dua HOD sepakat setuju = diputus. Batas 1 hari kerja; lewat batas = dianggap setuju."
-                    nada="sky" baris={(d.baris ?? []).filter((b) => b.antrean === "HOD · Minta Putusan")} onBuka={setBuka} />
+                    nada="sky" baris={(d.baris ?? []).filter((b) => b.antrean === "HOD · Minta Putusan")} onBuka={setBuka} pilih={buka} />
                   <Bagian judul="Perlu pendapat — jalur forum" catatan="Pendapat dibaca komite sebelum forum (batas 16.00 hari forum). Pendapat bukan putusan."
-                    nada="amber" baris={(d.baris ?? []).filter((b) => b.antrean === "HOD · Minta Pendapat")} onBuka={setBuka} />
+                    nada="amber" baris={(d.baris ?? []).filter((b) => b.antrean === "HOD · Minta Pendapat")} onBuka={setBuka} pilih={buka} />
                 </>
               ) : t.tab === "agenda" ? (
                 <>
-                  <Agenda baris={d.agenda ?? []} onBuka={setBuka} />
+                  <Agenda baris={d.agenda ?? []} onBuka={setBuka} pilih={buka} />
                   <Bagian judul="Diagendakan — rumuskan usulan ke Direksi" nada="sky"
-                    baris={(d.baris ?? []).filter((b) => b.antrean === "Komite · Agenda Forum")} onBuka={setBuka} />
+                    baris={(d.baris ?? []).filter((b) => b.antrean === "Komite · Agenda Forum")} onBuka={setBuka} pilih={buka} />
                   <Bagian judul="Mandat kedaluwarsa — tarik kembali ke forum" nada="amber"
-                    baris={(d.baris ?? []).filter((b) => b.antrean === "Komite · Mandat Kedaluwarsa")} onBuka={setBuka} />
+                    baris={(d.baris ?? []).filter((b) => b.antrean === "Komite · Mandat Kedaluwarsa")} onBuka={setBuka} pilih={buka} />
                 </>
               ) : t.tab === "sekretariat" ? (
                 <>
                   <Bagian judul="Verifikasi bukti volume — zona Forum & Direktur" catatan="Bukti tertulis (rekap LIS/SIMRS, pembelian reagen RS, surat RS) dicek sebelum forum. Perkiraan lisan tidak diterima."
-                    nada="amber" baris={d.verifikasi ?? []} onBuka={setBuka} />
+                    nada="amber" baris={d.verifikasi ?? []} onBuka={setBuka} pilih={buka} />
                   <Bagian judul="Mandat berlaku — terbitkan penawaran" catatan="Terbit pagi setelah putusan. Harga awal = harga pembuka; di bawah batas bawah ditolak sistem."
-                    nada="sky" baris={(d.baris ?? []).filter((b) => b.antrean === "Sekretariat · Terbitkan Penawaran")} onBuka={setBuka} />
+                    nada="sky" baris={(d.baris ?? []).filter((b) => b.antrean === "Sekretariat · Terbitkan Penawaran")} onBuka={setBuka} pilih={buka} />
                   <Bagian judul="Negosiasi berjalan — cocokkan PKS atau catat kalah" catatan="PKS dicocokkan dengan putusan (harga, volume minimum, tenor, klausul) sebelum tanda tangan. Tidak cocok = tidak ditandatangani."
-                    nada="amber" baris={(d.baris ?? []).filter((b) => b.antrean === "Sekretariat · Cocokkan PKS")} onBuka={setBuka} />
+                    nada="amber" baris={(d.baris ?? []).filter((b) => b.antrean === "Sekretariat · Cocokkan PKS")} onBuka={setBuka} pilih={buka} />
                 </>
               ) : (
-                <Bagian judul={JUDUL[t.tab]} catatan={CATATAN[t.tab]} nada="sky" baris={d.baris ?? []} onBuka={setBuka} />
+                <Bagian judul={JUDUL[t.tab]} catatan={CATATAN[t.tab]} nada="sky" baris={d.baris ?? []} onBuka={setBuka} pilih={buka} />
+              )}
+                </DuaKolom>
               )}
             </>
           )}
@@ -100,7 +109,7 @@ export function KomiteView({ tabs, bottomLine = false }: { tabs: TabBoleh[]; bot
       {bottomLine && (
         <TabsContent value="bottomline"><BottomLinePanel /></TabsContent>
       )}
-      {aktif && (
+      {aktif && !lebar && (
         <RencanaDialog key={`${aktif.tab}-${buka ?? "tutup"}`} tab={aktif.tab} id={buka} bolehAksi={aktif.bolehAksi}
           onClose={() => setBuka(null)} onBerubah={() => muat(aktif.tab)} />
       )}
@@ -120,19 +129,47 @@ const CATATAN: Partial<Record<TabKso, string>> = {
   teknik: "Serah terima wajib nomor seri; verifikasi bulan ke-6 terjadwal otomatis.",
 };
 
+// Pita ringkasan (pola dashboard Direktur): satu kartu bersekat, angka besar + keterangan alur.
 function PitaAlur({ r }: { r: Ringkasan }) {
-  const isi: [string, number | string][] = [
-    ["Menunggu HOD", r.menunggu_hod], ["Menunggu forum", r.menunggu_forum], ["Menunggu Direksi", r.menunggu_direksi],
-    ["Siap penawaran", r.siap_penawaran], ["Ditahan", r.ditahan], ["Capex disetujui", rpJt(Number(r.capex_disetujui))],
+  const isi: [string, number | string, string, string][] = [
+    ["Menunggu HOD", r.menunggu_hod, "jalur cepat", "text-amber-700 dark:text-amber-400"],
+    ["Antre forum", r.menunggu_forum, "Selasa / Kamis 16.00", "text-amber-700 dark:text-amber-400"],
+    ["Menunggu Direksi", r.menunggu_direksi, "putus sebelum 22.00", "text-amber-700 dark:text-amber-400"],
+    ["Siap penawaran", r.siap_penawaran, "mandat sudah ada", "text-emerald-700 dark:text-emerald-400"],
+    ["Ditahan", r.ditahan, "data kurang", "text-red-700 dark:text-red-400"],
   ];
   return (
-    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
-      {isi.map(([l, v]) => (
-        <div key={l} className="bg-card rounded-lg border p-3">
-          <div className="text-muted-foreground text-xs">{l}</div>
-          <div className="mt-1 text-lg font-bold tabular-nums">{v}</div>
+    <div className="bg-card grid grid-cols-2 overflow-hidden rounded-xl border shadow-[var(--shadow-card)] sm:grid-cols-3 lg:grid-cols-6">
+      {isi.map(([l, v, ket, warna]) => (
+        <div key={l} className="border-border border-b p-3 sm:p-4 lg:border-r lg:border-b-0">
+          <div className={cn("text-2xl font-bold tabular-nums", Number(v) === 0 ? "text-muted-foreground" : warna)}>{v}</div>
+          <div className="mt-0.5 text-sm font-medium">{l}</div>
+          <div className="text-muted-foreground text-xs">{ket}</div>
         </div>
       ))}
+      <div className="border-border col-span-2 border-b p-3 sm:col-span-1 sm:p-4 lg:border-b-0">
+        <div className="text-2xl font-bold tabular-nums">{rpJt(Number(r.capex_disetujui))}</div>
+        <div className="mt-0.5 text-sm font-medium">Capex disetujui</div>
+        <div className="text-muted-foreground text-xs">jalur cepat + Direksi</div>
+      </div>
+    </div>
+  );
+}
+
+/** ≥ 1024 px: detail di panel kanan; lebih sempit: dialog. */
+function useLayarLebar() {
+  return useSyncExternalStore(
+    (ubah) => { const m = window.matchMedia("(min-width: 1024px)"); m.addEventListener("change", ubah); return () => m.removeEventListener("change", ubah); },
+    () => window.matchMedia("(min-width: 1024px)").matches,
+    () => false,
+  );
+}
+
+function DuaKolom({ panel, children }: { panel: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)] lg:items-start">
+      <div className="space-y-6">{children}</div>
+      {panel && <aside className="hidden lg:sticky lg:top-4 lg:block">{panel}</aside>}
     </div>
   );
 }
@@ -142,44 +179,49 @@ export function PolaGerbang({ pola }: { pola: string | null }) {
   return (
     <span className="inline-flex gap-0.5" aria-label={`gerbang ${pola}`}>
       {pola.split("").map((c, i) => (
-        <span key={i} className={cn("inline-block w-4 rounded text-center text-[10px] font-bold leading-4", GERBANG_CLS[POLA_STATUS[c] ?? "belum"])}>{i + 1}</span>
+        <span key={i} className={cn("inline-block size-4 rounded-[3px] text-center text-[10px] font-bold leading-4", GERBANG_SOLID[POLA_STATUS[c] ?? "belum"])}>{i + 1}</span>
       ))}
     </span>
   );
 }
 
-function Bagian({ judul, catatan, nada, baris, onBuka }: {
-  judul?: string; catatan?: string; nada: "sky" | "amber"; baris: BarisAntrean[]; onBuka: (id: number) => void;
+function Bagian({ judul, catatan, baris, onBuka, pilih }: {
+  judul?: string; catatan?: string; nada?: "sky" | "amber"; baris: BarisAntrean[]; onBuka: (id: number) => void; pilih: number | null;
 }) {
   return (
     <section className="space-y-2">
-      <div className={cn("border-l-4 pl-3", nada === "sky" ? "border-sky-500" : "border-amber-500")}>
-        <h2 className="font-semibold">{judul} <span className="text-muted-foreground font-normal">({baris.length})</span></h2>
+      <div>
+        <h2 className="text-base font-semibold">{judul} <span className="text-muted-foreground text-sm font-normal tabular-nums">{baris.length}</span></h2>
         {catatan && <p className="text-muted-foreground text-xs">{catatan}</p>}
       </div>
-      {baris.length === 0 ? <EmptyState title="Antrean kosong" description="Tidak ada yang menunggu di sini." /> : (
-        <ul className="grid gap-2 md:grid-cols-2">
+      {baris.length === 0 ? <p className="text-muted-foreground rounded-lg border border-dashed px-3 py-4 text-center text-sm">Tidak ada yang menunggu di sini.</p> : (
+        <ul className="space-y-2">
           {baris.map((b) => (
             <li key={`${b.antrean}-${b.id}`}>
-              <button type="button" onClick={() => onBuka(b.id)}
-                className="bg-card hover:border-primary w-full rounded-lg border p-3 text-left transition-colors">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="font-medium">{b.faskes_nama}</span>
-                  <span className="text-muted-foreground text-xs">{b.nomor ?? `D${b.id}`} · {STATUS_LABEL[b.status] ?? b.status}</span>
+              <button type="button" onClick={() => onBuka(b.id)} aria-current={pilih === b.id || undefined}
+                className={cn("bg-card w-full rounded-xl border p-3 text-left shadow-[var(--shadow-card)] transition-colors hover:border-primary-dark",
+                  pilih === b.id && "border-primary-dark ring-primary-dark ring-1")}>
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="font-semibold">{b.faskes_nama}{b.cabang ? <span className="text-muted-foreground font-normal"> — {b.cabang}</span> : null}</span>
+                  <span className="text-muted-foreground shrink-0 font-mono text-xs">{b.nomor ?? `D${b.id}`}</span>
                 </div>
-                <div className="text-muted-foreground mt-1 text-sm">{b.alat_nama} · {rpJt(b.capex)} · AM {b.am_nama}{b.cabang ? ` · ${b.cabang}` : ""}</div>
-                {b.zona && (
-                  <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs">
-                    <span className={cn("rounded-full px-2 py-0.5 font-semibold", ZONA_CLS[b.zona])}>{LABEL_ZONA[b.zona]}</span>
-                    {b.gpm_deal != null && <span className="tabular-nums">GPM {persen(b.gpm_deal)}</span>}
-                    {b.volume_terverifikasi === true && <span className="text-emerald-700 dark:text-emerald-400">· volume terverifikasi</span>}
+                <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-sm">
+                  <PolaGerbang pola={b.pola_gerbang} />
+                  <span className="text-muted-foreground">{b.alat_nama}</span>
+                  <span className="text-muted-foreground tabular-nums">{rpJt(b.capex)}</span>
+                  <LabelStatus status={b.status} />
+                  {b.zona && (
+                    <span className={cn("rounded-full px-2 py-0.5 text-xs font-semibold tabular-nums", ZONA_CLS[b.zona])}>
+                      {LABEL_ZONA[b.zona]}{b.gpm_deal != null ? ` · ${persen(b.gpm_deal)}` : ""}
+                    </span>
+                  )}
+                </div>
+                {(b.batas || b.volume_terverifikasi === true) && (
+                  <div className="mt-1.5 flex flex-wrap gap-x-3 text-xs">
+                    {b.batas && <span className="font-medium text-amber-700 dark:text-amber-400">Batas {waktu(b.batas)}</span>}
+                    {b.volume_terverifikasi === true && <span className="text-emerald-700 dark:text-emerald-400">Volume terverifikasi</span>}
                   </div>
                 )}
-                {b.volume_sumber && <div className="mt-1 text-xs italic">Sumber volume: “{b.volume_sumber}”</div>}
-                <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-                  <PolaGerbang pola={b.pola_gerbang} />
-                  {b.batas && <span className="text-xs font-medium text-amber-700 dark:text-amber-400">Batas {waktu(b.batas)}</span>}
-                </div>
               </button>
             </li>
           ))}
@@ -189,7 +231,7 @@ function Bagian({ judul, catatan, nada, baris, onBuka }: {
   );
 }
 
-function Agenda({ baris, onBuka }: { baris: BarisAgenda[]; onBuka: (id: number) => void }) {
+function Agenda({ baris, onBuka }: { baris: BarisAgenda[]; onBuka: (id: number) => void; pilih?: number | null }) {
   const forum = [...new Map(baris.map((b) => [b.forum_id, b])).values()];
   if (forum.length === 0) return <EmptyState title="Belum ada forum" description="Agenda terbit otomatis pukul 14.00 hari Selasa/Kamis." />;
   return (
@@ -197,7 +239,7 @@ function Agenda({ baris, onBuka }: { baris: BarisAgenda[]; onBuka: (id: number) 
       {forum.map((f) => {
         const isi = baris.filter((b) => b.forum_id === f.forum_id && b.rencana_id);
         return (
-          <div key={f.forum_id} className="bg-card rounded-lg border p-3">
+          <div key={f.forum_id} className="bg-card rounded-xl border p-3 shadow-[var(--shadow-card)]">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <span className="font-semibold">Forum {f.hari}, {f.tanggal}</span>
               <span className="text-muted-foreground text-xs">{f.mode === "portofolio" || isi.length === 0 ? "Tinjauan portofolio" : `${isi.filter((x) => x.jenis === "A").length} Agenda A`}</span>

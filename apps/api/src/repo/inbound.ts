@@ -1159,13 +1159,20 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
   // DM = nomor, grup = alias/pushname), tak pernah dari isi pesan. Mati selama
   // KSO_WA_ENABLED bukan "true" (diam, tanpa balasan — sama seperti fitur WA lain yang di-flag).
   const isSuara = /^audio/i.test(row.message_type ?? "") && !!row.media_path;
+  // Japri (DM) ke nomor bot: AM hanya dilayani untuk #KSO (keputusan user 2 Nov). Pesan lain
+  // dari AM di DM diam total — tanpa balasan, tanpa diproses fitur lain.
+  const japri = !String(row.group_jid ?? "").endsWith("@g.us");
+  if (japri && kind !== "kso" && !isSuara) {
+    const pengirimDm = await resolveSender({ senderJid: row.sender_jid, groupJid: row.group_jid, pushname: row.sender_name, ketat: true });
+    if (pengirimDm?.role === "AM") return finish({ skipped: "dm-am-selain-kso" });
+  }
   if (kind === "kso" || (isSuara && kind === "none")) {
     if (!ksoWaAktif()) return finish({ skipped: "kso-wa-off" }, "kso");
     const amKso = await resolveSender({ senderJid: row.sender_jid, groupJid: row.group_jid, pushname: row.sender_name, ketat: true });
     if (!amKso) {
       // Spesifikasi 2.1: pengirim tak dikenal ditolak SOPAN, tanpa draft. Hanya untuk pesan
-      // #KSO; voice note tanpa pengirim dikenal tetap diam (bisa saja bukan untuk bot).
-      if (kind !== "kso") return finish({ skipped: "unknown-sender", sender_name: row.sender_name }, "kso");
+      // #KSO di grup; voice note tanpa pengirim dikenal & DM dari nomor asing tetap diam.
+      if (kind !== "kso" || japri) return finish({ skipped: "unknown-sender", sender_name: row.sender_name }, "kso");
       const balasan = "Maaf, nama/nomor Anda belum terdaftar sebagai AM di sistem. Rencana KSO belum dicatat — hubungi admin untuk didaftarkan.";
       const reply = await sendViaWaGateway(row.group_jid, balasan);
       return finish({ skipped: "unknown-sender", sender_name: row.sender_name, balasan, reply }, "kso");

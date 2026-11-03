@@ -319,6 +319,7 @@ export function terjemahGalatWeb(m: string): { status: number; pesan: string } {
     [/BELUM_DIAGENDAKAN/, 409, "Rencana belum masuk agenda forum."],
     [/BELUM_ADA_USULAN_KOMITE/, 409, "Belum ada usulan komite untuk diputus."],
     [/MANDAT_TIDAK_LENGKAP/, 400, "Mandat wajib lengkap: lantai, pembuka, tenor, capex, volume minimum."],
+    [/MANDAT_URUTAN_HARGA/, 400, "Urutan harga mandat salah: harga pembuka ≥ target ≥ batas bawah."],
     [/MANDAT_KEDALUWARSA/, 409, "Mandat sudah kedaluwarsa — tarik kembali ke forum."],
     [/TIDAK_ADA_MANDAT/, 409, "Belum ada mandat negosiasi — penawaran tidak boleh terbit."],
     [/KELUAR_MANDAT/, 409, "Di luar batas mandat (di bawah harga lantai atau melebihi batas lain)."],
@@ -372,7 +373,8 @@ export async function jalankanAksi(userId: string, id: number, aksi: AksiKso, b:
         case "putus-direksi": {
           const dilarang = Array.isArray(b.klausul_dilarang) ? b.klausul_dilarang.map(String) : [];
           const [r] = await tx`select kso.app_putus_direksi(${id}, ${String(b.putusan)}::kso.putusan_direksi, ${teks(b.catatan)},
-                     ${angka(b.lantai)}, ${angka(b.target)}, ${angka(b.tenor_maks)}, ${angka(b.capex_maks)}, ${angka(b.volume_min)}, ${dilarang})::text as status`;
+                     ${angka(b.lantai)}, ${angka(b.target)}, ${angka(b.tenor_maks)}, ${angka(b.capex_maks)}, ${angka(b.volume_min)}, ${dilarang},
+                     ${angka(b.pembuka)})::text as status`;
           return { status: r.status };
         }
         case "pks": {
