@@ -8,14 +8,15 @@ Admin Sales tetap menginput SO di Accurate, lalu sistem mencocokkan pesanan deng
 ## Alur WA
 
 ```
-#ORDER RS Siloam Surabaya
-2 box GLU-100
-5 ARC-CRP @ 450000
-catatan: kirim minggu depan
+#ORDER RSUD Kab Kediri
+Z5 LD LYSE 500 ML 2
+IDS.0299 1 @ 38jt
 ```
 
 1. Baris pertama = faskes (`cariAkun`; harus mengerucut ke satu akun).
-2. Tiap baris berikutnya = `qty [satuan] <kode|nama> [@ harga]`, maksimal 30 baris.
+2. Tiap baris berikutnya = `<kode|nama> qty [satuan] [@ harga]` — barang DULU, jumlah di belakang
+   (sama dengan teks bantuan WA), maksimal 30 baris. Harga boleh `450000`, `450rb`, `38jt`,
+   `38.000.000`.
    - Barang dicari di `product_pricelist` periode `ORDER_PERIODE_HARGA` (default `H2-2026`): kode
      persis, atau semua token nama cocok.
    - Tanpa `@ harga` → harga = price list. Harga **di bawah lantai (`harga_nett`) ditolak**, baris
@@ -34,7 +35,9 @@ catatan: kirim minggu depan
   (wajib alasan); Buka lagi dari Masuk Accurate.
 - Cocok otomatis setiap halaman dibuka: customer sama, `trans_date` antara H-1 dan H+14 dari
   konfirmasi, minimal satu kode barang sama (bila pesanan punya kode), dan SO belum dipakai pesanan
-  lain → `selesai`, `selesai_oleh = 'otomatis'`.
+  lain → `selesai`, `selesai_oleh = 'otomatis'`. **Satu SO = satu pesanan**: bila dua pesanan
+  cocok ke SO yang sama, yang dikonfirmasi lebih dulu yang mendapatkannya (migrasi 271 + index unik);
+  input nomor SO manual yang sudah dipakai pesanan lain ditolak.
 - Scope baris: AM melihat pesanannya sendiri, HoD per cabang, admin/direktur semua.
 
 ## Saklar
