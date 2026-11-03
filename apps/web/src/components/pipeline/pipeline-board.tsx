@@ -273,6 +273,34 @@ export function PipelineBoard({ data, isAdmin = false, bolehDemo = false }: { da
     }
   }
 
+  // Catatan follow-up tanpa pindah tahap (F174). Draft disimpan bareng dealId →
+  // ganti deal = draft lama tak ikut terbawa, tanpa effect reset.
+  const [noteDraft, setNoteDraft] = useState<{ dealId: string; text: string; err?: string } | null>(null);
+  const [noteBusy, setNoteBusy] = useState(false);
+  const noteText = sel && noteDraft?.dealId === sel.deal_id ? noteDraft.text : "";
+  const noteErr = sel && noteDraft?.dealId === sel.deal_id ? noteDraft.err : undefined;
+  async function addNote(deal: PipelineDeal, text: string) {
+    setNoteBusy(true);
+    try {
+      const res = await fetch(`/api/deals/${encodeURIComponent(deal.deal_id)}/notes`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ note: text }),
+      });
+      if (!res.ok) { setNoteDraft({ dealId: deal.deal_id, text, err: await httpErrorMessage(res) }); return; }
+      setNoteDraft(null);
+      setMsg({ kind: "ok", text: deal.dormant ? "Catatan tersimpan — status Dormant lepas" : "Catatan tersimpan di Riwayat" });
+      // Objek sel baru → effect timeline memuat ulang; Dormant lepas seketika di
+      // panel (server menghitung hal yang sama begitu router.refresh selesai).
+      setSel({ ...deal, dormant: false, dormant_at: null, gugur_at: null, days_idle: 0 });
+      router.refresh();
+    } catch {
+      setNoteDraft({ dealId: deal.deal_id, text, err: "koneksi gagal" });
+    } finally {
+      setNoteBusy(false);
+    }
+  }
+
   // Hapus deal (admin) setelah konfirmasi modal; refresh + tutup modal.
   async function deleteDeal(dealId: string) {
     setDeleting(true);
@@ -525,8 +553,8 @@ export function PipelineBoard({ data, isAdmin = false, bolehDemo = false }: { da
             </div>
             {sel.dormant && (
               <div className="mt-2 rounded-md border border-violet-300 px-3 py-2 text-xs text-violet-900 dark:border-violet-500/40 dark:text-violet-200">
-                {sel.days_idle ?? DORMANT_HARI} hari tanpa pergerakan. Status Dormant lepas sendiri begitu ada #REPORT untuk faskes ini,
-                tahapnya dipindah, atau deal diedit. Tetap diam sampai {tglPendek(sel.gugur_at)} → otomatis <b>Lost</b> (alasan: tidak bergerak).
+                {sel.days_idle ?? DORMANT_HARI} hari tanpa pergerakan. Status Dormant lepas sendiri begitu ada catatan follow-up (kolom di Riwayat bawah),
+                #REPORT untuk faskes ini, tahapnya dipindah, atau deal diedit. Tetap diam sampai {tglPendek(sel.gugur_at)} → otomatis <b>Lost</b> (alasan: tidak bergerak).
               </div>
             )}
             <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1.5 mt-4 text-sm">
@@ -548,9 +576,28 @@ export function PipelineBoard({ data, isAdmin = false, bolehDemo = false }: { da
             {/* Riwayat perpindahan stage + approval (spt_state_log) */}
             <div className="mt-4 border-t pt-3">
               <div className="text-xs text-muted-foreground mb-2">Riwayat</div>
+              {!CLOSED_STAGES.has(sel.stage) && (
+                <form className="mb-3 space-y-1.5"
+                  onSubmit={(e) => { e.preventDefault(); if (noteText.trim().length >= 3 && !noteBusy) addNote(sel, noteText.trim()); }}>
+                  <textarea value={noteText} rows={2} maxLength={1000}
+                    onChange={(e) => setNoteDraft({ dealId: sel.deal_id, text: e.target.value })}
+                    placeholder={`Catat follow-up di tahap ${stageLabel(sel.stage)} — mis. sudah telepon dr. Andi, nunggu anggaran 2027`}
+                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-ring/40 focus:border-ring" />
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[11px] text-muted-foreground leading-snug">
+                      Tercatat di Riwayat tanpa pindah tahap, dan dihitung sebagai pergerakan{sel.dormant ? " — status Dormant langsung lepas" : ""}.
+                    </span>
+                    <button type="submit" disabled={noteBusy || noteText.trim().length < 3}
+                      className="shrink-0 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50">
+                      {noteBusy ? "menyimpan…" : "Catat follow-up"}
+                    </button>
+                  </div>
+                  {noteErr && <div className="text-xs text-rose-600">{noteErr}</div>}
+                </form>
+              )}
               {tlLoading && <div className="text-sm text-muted-foreground italic">memuat…</div>}
               {!tlLoading && tl && tl.length === 0 && (
-                <div className="text-sm text-muted-foreground italic">Belum ada perpindahan tercatat.</div>
+                <div className="text-sm text-muted-foreground italic">Belum ada riwayat tercatat.</div>
               )}
               {!tlLoading && tl && tl.length > 0 && (
                 <ol className="space-y-2">

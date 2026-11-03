@@ -681,6 +681,40 @@ function canApprove(scope: DataScope, deal: { cabang: string | null }): boolean 
   return true; // tanpa batas cabang — persis yg dilihat di antrean
 }
 
+/** Batas panjang catatan follow-up (karakter). */
+export const DEAL_NOTE_MAX = 1000;
+
+/**
+ * Catatan follow-up TANPA pindah tahap — mis. deal masih di Quotation tapi AM
+ * terus menindaklanjuti. Ditulis ke spt_state_log (from_stage = to_stage = tahap
+ * sekarang) supaya tampil di Riwayat dan TERHITUNG pergerakan: lastActivitySql
+ * membaca entri Riwayat, jadi catatan ini melepas Dormant seketika (#1955).
+ * Write-guard sama dengan transitionStage. Deal Won/Lost ditolak: catatan di sana
+ * tak menggerakkan apa pun dan cuma mengaburkan Riwayat keputusan akhirnya.
+ */
+export async function addDealNote(
+  dealId: string,
+  scope: DataScope,
+  note: string,
+): Promise<{ state_log_id: string; stage: string }> {
+  const sql = db();
+  const isi = note.replace(/\s+/g, " ").trim();
+  if (isi.length < 3) throw new DealError(400, "catatan wajib diisi (minimal 3 karakter)");
+  if (isi.length > DEAL_NOTE_MAX) throw new DealError(400, `catatan maksimal ${DEAL_NOTE_MAX} karakter`);
+  const cur = await sql`SELECT stage, am_id, cabang FROM deal WHERE deal_id = ${dealId}`;
+  if (cur.length === 0) throw new DealError(404, "deal tidak ditemukan");
+  const stage = String(cur[0].stage);
+  if (CLOSED.includes(stage)) throw new DealError(409, "deal sudah Won/Lost — pindahkan dulu ke tahap jalan kalau masih ditindaklanjuti");
+  const deal = { am_id: cur[0].am_id ? String(cur[0].am_id) : null, cabang: cur[0].cabang ? String(cur[0].cabang) : null };
+  if (!canWrite(scope, deal)) throw new DealError(403, "tidak berwenang mencatat di deal ini");
+  const rows = await sql`
+    INSERT INTO spt_state_log (deal_id, from_stage, to_stage, changed_by, reason)
+    VALUES (${dealId}, ${stage}, ${stage}, ${scope.userId ?? scope.amId}, ${isi})
+    RETURNING id`;
+  await sql`UPDATE deal SET updated_at = now() WHERE deal_id = ${dealId}`;
+  return { state_log_id: String(rows[0].id), stage };
+}
+
 export interface LossPending {
   deal_id: string;
   customer_name: string;
