@@ -102,6 +102,29 @@ export const GERBANG_CLS: Record<string, string> = {
   belum: "bg-amber-500/10 text-amber-700 dark:text-amber-400",
 };
 export const GERBANG_IKON: Record<string, string> = { hijau: "✓", merah: "✕", belum: "?" };
+// kotak nomor gerbang di kartu & panel: isi solid, angka putih (pola dashboard Direktur)
+export const GERBANG_SOLID: Record<string, string> = {
+  hijau: "bg-emerald-600 text-white",
+  merah: "bg-red-600 text-white",
+  belum: "bg-amber-500 text-white",
+};
+export const GERBANG_KATA: Record<string, string> = { hijau: "hijau", merah: "merah", belum: "belum dicek" };
+
+/** Nada label status: menunggu = amber, jalan = hijau, penawaran = biru, berhenti = merah, draft = abu. */
+const NADA_STATUS: Record<string, "abu" | "amber" | "hijau" | "biru" | "merah"> = {
+  DRAFT: "abu", DIAJUKAN: "amber", JALUR_CEPAT: "amber", JALUR_FORUM: "amber", DIAGENDAKAN: "amber",
+  DIREKOMENDASIKAN: "amber", DIREKOMENDASIKAN_BERSYARAT: "amber", TIDAK_DIREKOMENDASIKAN: "merah", DITAHAN: "merah",
+  DIPUTUS_AM: "hijau", DIPUTUS_HOD: "hijau", MANDAT_TERBIT: "hijau", PKS_TTD: "hijau", TERPASANG: "hijau",
+  PENAWARAN_TERBIT: "biru", DITOLAK_HOD: "merah", DITOLAK_DIREKSI: "merah", KALAH: "merah",
+};
+const NADA_CLS = {
+  abu: "bg-slate-500/10 text-slate-700 dark:text-slate-300",
+  amber: "bg-amber-500/10 text-amber-800 dark:text-amber-300",
+  hijau: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
+  biru: "bg-sky-500/10 text-sky-700 dark:text-sky-400",
+  merah: "bg-red-500/10 text-red-700 dark:text-red-400",
+} as const;
+export const statusCls = (s: string) => NADA_CLS[NADA_STATUS[s] ?? "abu"];
 export const POLA_STATUS: Record<string, string> = { h: "hijau", m: "merah", b: "belum" };
 
 export const rp = (n: number | null | undefined) =>
