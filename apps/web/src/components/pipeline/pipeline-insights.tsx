@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import { Bar, BarChart, Cell, CartesianGrid, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -127,11 +127,13 @@ function HBar({ rows, height }: { rows: Row[]; height?: number }) {
 // baris. Deal tanpa nama alat TETAP dihitung di baris sendiri — kalau dibuang,
 // total kolom tak lagi sama dengan "Sebaran deal per tahap" di atasnya.
 const NO_PRODUCT = "__none__";
+const NO_BRAND = "__none__";
+interface AlatCell { count: number; value: number; deals: PipelineDeal[] }
 interface AlatRow {
   key: string;
   label: string;
   brand: string | null;
-  byStage: Record<string, { count: number; value: number }>;
+  byStage: Record<string, AlatCell>;
   total: number;
   open: number;
 }
@@ -145,7 +147,7 @@ function alatMatrix(deals: PipelineDeal[], stages: string[]): AlatRow[] {
     if (!r) {
       r = {
         key, label: raw || "(nama alat belum diisi)", brand: null, total: 0, open: 0, brands: new Map(),
-        byStage: Object.fromEntries(stages.map((s) => [s, { count: 0, value: 0 }])),
+        byStage: Object.fromEntries(stages.map((s) => [s, { count: 0, value: 0, deals: [] }])),
       };
       m.set(key, r);
     }
@@ -153,6 +155,7 @@ function alatMatrix(deals: PipelineDeal[], stages: string[]): AlatRow[] {
     if (!cell) continue; // tahap di luar daftar board → tak tampil di kolom mana pun
     cell.count += 1;
     cell.value += d.estimate_amount ?? 0;
+    cell.deals.push(d);
     r.total += 1;
     if (d.stage !== CLOSED.won && d.stage !== CLOSED.lost) r.open += 1;
     if (d.brand) r.brands.set(d.brand, (r.brands.get(d.brand) ?? 0) + 1);
@@ -167,20 +170,94 @@ function alatMatrix(deals: PipelineDeal[], stages: string[]): AlatRow[] {
 
 const ALAT_PREVIEW = 15;
 
+// Daftar faskes di balik satu sel (alat × tahap) atau satu baris alat (semua tahap).
+function AlatDealList({ row, stage, stages }: { row: AlatRow; stage: string | null; stages: string[] }) {
+  const list = (stage ? [stage] : stages)
+    .flatMap((s) => row.byStage[s].deals)
+    .sort((a, b) => stages.indexOf(a.stage) - stages.indexOf(b.stage) || (b.estimate_amount ?? 0) - (a.estimate_amount ?? 0));
+  return (
+    <div className="bg-card border-primary/30 rounded-md border p-2 shadow-sm">
+      <div className="mb-1.5 text-xs font-medium">
+        {row.label} · {stage ? (STAGE_SHORT[stage] ?? stage) : "semua tahap"} — {list.length} deal
+      </div>
+      <div className="max-h-72 overflow-y-auto">
+        <table className="w-full text-xs">
+          <thead className="text-muted-foreground">
+            <tr>
+              <th className="px-2 py-1 text-left font-medium">RS / Faskes</th>
+              <th className="px-2 py-1 text-left font-medium">Kota</th>
+              <th className="px-2 py-1 text-left font-medium">AM</th>
+              {!stage && <th className="px-2 py-1 text-left font-medium">Tahap</th>}
+              <th className="px-2 py-1 text-right font-medium">Perkiraan nilai</th>
+            </tr>
+          </thead>
+          <tbody>
+            {list.map((d) => (
+              <tr key={d.deal_id} className="border-t">
+                <td className="px-2 py-1 font-medium">{d.facility_name || d.customer_name || "—"}</td>
+                <td className="text-muted-foreground px-2 py-1">{d.city || d.cabang || "—"}</td>
+                <td className="px-2 py-1">{d.am_name || d.am_id || "—"}</td>
+                {!stage && (
+                  <td className="px-2 py-1 whitespace-nowrap">
+                    <span className="mr-1 inline-block h-2 w-2 rounded-sm align-middle" style={{ background: stageFill(d.stage) }} />
+                    {STAGE_SHORT[d.stage] ?? d.stage}
+                  </td>
+                )}
+                <td className="px-2 py-1 text-right tabular-nums">{d.estimate_amount ? rpC(d.estimate_amount) : "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function AlatStageTable({ deals, stages }: { deals: PipelineDeal[]; stages: string[] }) {
   const [all, setAll] = useState(false);
-  const rows = useMemo(() => alatMatrix(deals, stages), [deals, stages]);
+  const [brand, setBrand] = useState("");
+  // Sel yang dibuka: alat + tahap (null = klik nama alat → semua tahap).
+  const [sel, setSel] = useState<{ key: string; stage: string | null } | null>(null);
+
+  const brandOpts = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const d of deals) m.set(d.brand || NO_BRAND, (m.get(d.brand || NO_BRAND) ?? 0) + 1);
+    return [...m.entries()].sort((a, b) => (a[0] === NO_BRAND ? 1 : 0) - (b[0] === NO_BRAND ? 1 : 0) || b[1] - a[1]);
+  }, [deals]);
+  // Brand terpilih bisa hilang saat filter board berubah → anggap "semua",
+  // jangan sampai tabel kosong tanpa sebab yang terlihat.
+  const brandAktif = brand && brandOpts.some(([b]) => b === brand) ? brand : "";
+  const rows = useMemo(
+    () => alatMatrix(brandAktif ? deals.filter((d) => (d.brand || NO_BRAND) === brandAktif) : deals, stages),
+    [deals, stages, brandAktif],
+  );
   const maxCell = Math.max(1, ...rows.flatMap((r) => stages.map((s) => r.byStage[s].count)));
   const colTotal = stages.map((s) => rows.reduce((a, r) => a + r.byStage[s].count, 0));
   const shown = all ? rows : rows.slice(0, ALAT_PREVIEW);
+  const pilih = (key: string, stage: string | null) =>
+    setSel((cur) => (cur && cur.key === key && cur.stage === stage ? null : { key, stage }));
 
   return (
     <Panel
       title={`Alat di pipeline per tahap (${rows.length} alat)`}
       wide
-      empty={rows.length === 0}
-      hint="Angka = jumlah deal; warna makin pekat = makin banyak. Arahkan kursor ke sel untuk melihat perkiraan nilai. Urut: deal yang masih jalan terbanyak dulu."
+      empty={deals.length === 0}
+      hint="Angka = jumlah deal; warna makin pekat = makin banyak. Klik angka untuk melihat RS/faskes di tahap itu, klik nama alat untuk semua tahapnya. Urut: deal yang masih jalan terbanyak dulu."
     >
+      <div className="mb-2 flex flex-wrap items-center gap-2">
+        <select value={brandAktif} onChange={(e) => { setBrand(e.target.value); setSel(null); setAll(false); }}
+          className="border-input bg-muted hover:bg-muted/80 focus:ring-ring/40 focus:border-ring h-8 min-w-0 cursor-pointer rounded-md border px-2 text-xs shadow-sm focus:ring-2 focus:outline-none">
+          <option value="">Brand: semua ({brandOpts.length})</option>
+          {brandOpts.map(([b, n]) => (
+            <option key={b} value={b}>{b === NO_BRAND ? "(brand belum diisi)" : b} · {n} deal</option>
+          ))}
+        </select>
+        {brandAktif && (
+          <button onClick={() => { setBrand(""); setSel(null); }} className="text-muted-foreground hover:text-foreground text-xs underline">
+            hapus filter brand
+          </button>
+        )}
+      </div>
       <div className="overflow-x-auto">
         <table className="w-full border-separate border-spacing-0 text-xs">
           <thead>
@@ -196,34 +273,50 @@ function AlatStageTable({ deals, stages }: { deals: PipelineDeal[]; stages: stri
             </tr>
           </thead>
           <tbody>
-            {shown.map((r) => (
-              <tr key={r.key} className="hover:bg-muted/40">
-                <td className="bg-card sticky left-0 z-10 border-b px-2 py-1.5">
-                  <div className={r.key === NO_PRODUCT ? "text-muted-foreground italic" : "font-medium"}>{r.label}</div>
-                  {r.brand && <div className="text-muted-foreground text-[10px]">{r.brand}</div>}
-                </td>
-                {stages.map((s) => {
-                  const c = r.byStage[s];
-                  // Isi sel = tint warna tahap, proporsional ke sel terbesar.
-                  // Dibatasi 45% supaya teks normal tetap terbaca di terang & gelap.
-                  const pct = c.count > 0 ? Math.round(12 + (c.count / maxCell) * 33) : 0;
-                  return (
-                    <td key={s} className="border-b px-1 py-1 text-center tabular-nums"
-                      title={c.count > 0 ? `${r.label} · ${STAGE_SHORT[s] ?? s}: ${c.count} deal · ${rpC(c.value)}` : undefined}>
-                      {c.count > 0 ? (
-                        <span className="block rounded px-1.5 py-0.5 font-medium"
-                          style={{ background: `color-mix(in srgb, ${stageFill(s)} ${pct}%, transparent)` }}>
-                          {c.count}
-                        </span>
-                      ) : (
-                        <span className="text-muted-foreground/50">·</span>
-                      )}
+            {shown.map((r) => {
+              const open = sel?.key === r.key;
+              return (
+                <Fragment key={r.key}>
+                  <tr className={open ? "bg-primary/5" : "hover:bg-muted/40"}>
+                    <td className="bg-card sticky left-0 z-10 border-b px-2 py-1.5">
+                      <button onClick={() => pilih(r.key, null)} className="text-left hover:underline" title="Lihat semua RS/faskes untuk alat ini">
+                        <div className={r.key === NO_PRODUCT ? "text-muted-foreground italic" : "font-medium"}>{r.label}</div>
+                        {r.brand && <div className="text-muted-foreground text-[10px]">{r.brand}</div>}
+                      </button>
                     </td>
-                  );
-                })}
-                <td className="border-b px-2 py-1.5 text-center font-semibold tabular-nums">{r.total}</td>
-              </tr>
-            ))}
+                    {stages.map((s) => {
+                      const c = r.byStage[s];
+                      const aktif = open && sel?.stage === s;
+                      // Isi sel = tint warna tahap, proporsional ke sel terbesar.
+                      // Dibatasi 45% supaya teks normal tetap terbaca di terang & gelap.
+                      const pct = c.count > 0 ? Math.round(12 + (c.count / maxCell) * 33) : 0;
+                      return (
+                        <td key={s} className="border-b px-1 py-1 text-center tabular-nums">
+                          {c.count > 0 ? (
+                            <button onClick={() => pilih(r.key, s)}
+                              title={`${r.label} · ${STAGE_SHORT[s] ?? s}: ${c.count} deal · ${rpC(c.value)} — klik untuk lihat faskes`}
+                              className={`block w-full cursor-pointer rounded px-1.5 py-0.5 font-medium hover:ring-2 hover:ring-ring/40 ${aktif ? "ring-2 ring-ring" : ""}`}
+                              style={{ background: `color-mix(in srgb, ${stageFill(s)} ${pct}%, transparent)` }}>
+                              {c.count}
+                            </button>
+                          ) : (
+                            <span className="text-muted-foreground/50">·</span>
+                          )}
+                        </td>
+                      );
+                    })}
+                    <td className="border-b px-2 py-1.5 text-center font-semibold tabular-nums">{r.total}</td>
+                  </tr>
+                  {open && sel && (
+                    <tr>
+                      <td colSpan={stages.length + 2} className="border-b px-1 py-2">
+                        <AlatDealList row={r} stage={sel.stage} stages={stages} />
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              );
+            })}
           </tbody>
           <tfoot>
             <tr>
