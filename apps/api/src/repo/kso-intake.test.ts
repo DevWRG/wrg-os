@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { KSO_BANTUAN, blokGpm, formatBalasanDraft, parseKsoPerintah, perkiraanZona, pertanyaanKurang, pilihAlat, terjemahGalatKso, type DraftTampil } from "./kso-intake.js";
+import { KSO_BANTUAN, blokGpm, formatBalasanDraft, parseKsoPerintah, perkiraanZona, pertanyaanKurang, pilihAlat, teksZonaForum, terjemahGalatKso, type DraftTampil } from "./kso-intake.js";
 import { detectKind } from "./inbound.js";
 
 test("parseKsoPerintah: rencana baru, lengkapi, kirim, kelonggaran, kalah, kosong", () => {
@@ -163,4 +163,21 @@ test("bantuan #KSO = template tujuh isian Pedoman", () => {
   for (const n of [1, 2, 3, 4, 5, 6, 7]) assert.match(KSO_BANTUAN, new RegExp(`\\n${n}\\. `));
   assert.match(KSO_BANTUAN, /relokasi idle/);
   assert.match(KSO_BANTUAN, /Pendukung:/);
+});
+
+test("teksZonaForum: zona Forum yang naik hanya karena bukti volume belum diperiksa → ZONA FORUM + catatan", () => {
+  const dasar = { zona: "direktur", zona_dasar: "forum", alasan_forum: null, belum_hijau: [2], gerbang2: "belum" };
+  const a = teksZonaForum(dasar);
+  assert.equal(a.label, "ZONA FORUM");
+  assert.match(a.catatan ?? "", /Zona Direktur sampai Sekretaris memverifikasi bukti volume/);
+  // gerbang lain juga tak hijau → verifikasi saja tak menurunkan zona → tetap Direktur
+  assert.deepEqual(teksZonaForum({ ...dasar, belum_hijau: [2, 4] }), { label: "ZONA DIREKTUR", catatan: null });
+  // bukti ditolak (merah) → Direktur
+  assert.deepEqual(teksZonaForum({ ...dasar, gerbang2: "merah" }), { label: "ZONA DIREKTUR", catatan: null });
+  // aturan grup memaksa forum → bukan soal bukti
+  assert.equal(teksZonaForum({ ...dasar, alasan_forum: "Grup X belum diketahui" }).label, "ZONA DIREKTUR");
+  // GPM di bawah 45% → Direktur murni
+  assert.equal(teksZonaForum({ ...dasar, zona_dasar: "direktur", belum_hijau: [] }).label, "ZONA DIREKTUR");
+  // sudah Forum (bukti disahkan) → Forum tanpa catatan
+  assert.deepEqual(teksZonaForum({ zona: "forum", zona_dasar: "forum", alasan_forum: null, belum_hijau: [], gerbang2: "hijau" }), { label: "ZONA FORUM", catatan: null });
 });
