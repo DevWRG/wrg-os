@@ -31,8 +31,8 @@ begin
   perform uji.cek('Zona AM: GPM Z3 @ Rp 18.500 / 900 tes ≈ 74,8%, tujuh gerbang hijau',
                   uji.pola(a)='hhhhhhh' and (select zona_dasar='am' and round(gpm_deal,3)=0.748 from kso.rencana_kso where id=a));
   perform uji.cek('Zona AM: diputus AM sendiri (jalur AM, DIPUTUS_AM)', kso.ajukan(a)='AM' and uji.status(a)='DIPUTUS_AM');
-  perform uji.cek('Mandat tiga harga @ 900 tes: pembuka 10.400 (55%) · target 9.400 (50%) · batas bawah 8.500 (45%)',
-                  (select harga_pembuka=10400 and harga_target=9400 and harga_lantai=8500 and volume_terbukti=900
+  perform uji.cek('Mandat tiga harga @ 900 tes: pembuka 18.500 (usulan AM > @55% 10.400; 272) · target 9.400 (50%) · batas bawah 8.500 (45%)',
+                  (select harga_pembuka=18500 and harga_target=9400 and harga_lantai=8500 and volume_terbukti=900
                           and volume_minimum=720 and sumber='otomatis' from kso.mandat where rencana_id=a));
   h := kso.buat_draft('AM-01','F01','Z3',1,900,'data LIS 3 bulan',10000,'baru',36,'{}',dk);
   perform uji.cek('Zona 2 HOD: Rp 10.000 → GPM ≈ 53,3% → jalur cepat', kso.ajukan(h)='CEPAT' and uji.zona(h)='hod');
