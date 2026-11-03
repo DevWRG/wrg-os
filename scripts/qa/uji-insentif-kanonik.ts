@@ -5,7 +5,9 @@
 //
 // WA_SEND_URL kosong = gateway STUB. Menolak jalan bila DATABASE_URL menyebut prod.
 // Fixture (akun, grup, AM, rekap) memakai id/email ber-penanda `uji270` dan dihapus
-// di akhir; grup akses & baris feature yang belum ada dibuat dan dibiarkan.
+// di akhir; grup akses & baris feature yang belum ada dibuat dan dibiarkan. Izin
+// baca `insentif-tim` diberikan lewat grup uji `uji270-insentif` — izin grup asli
+// (finance-hod/komite/hrd) TIDAK diubah, di DB dev izinnya bisa saja mati.
 //
 // Yang dibuktikan:
 //   1. Ajukan oleh AM → status submitted + approval engine (atomik), tahap 2 =
@@ -51,15 +53,15 @@ const PERIODE = "2099-01";
 async function setup() {
   await sql`
     INSERT INTO access_group (key, name) VALUES
-      ('sales-hod','Sales HoD'),('finance-hod','Finance HoD'),('komite','Komite'),('hrd','HRD'),('uji270-direksi','Uji 270 Direksi')
+      ('sales-hod','Sales HoD'),('finance-hod','Finance HoD'),('komite','Komite'),('hrd','HRD'),('uji270-insentif','Uji 270 Insentif Tim')
     ON CONFLICT (key) DO NOTHING`;
   await sql`
     INSERT INTO feature (key, name, section, path) VALUES ('insentif-tim','Insentif Tim','Sales','/insentif/tim')
     ON CONFLICT (key) DO NOTHING`;
   await sql`
     INSERT INTO access_permission (group_id, feature_key, active, can_view)
-    SELECT id, 'insentif-tim', true, true FROM access_group WHERE key IN ('finance-hod','komite','hrd','uji270-direksi')
-    ON CONFLICT (group_id, feature_key) DO NOTHING`;
+    SELECT id, 'insentif-tim', true, true FROM access_group WHERE key = 'uji270-insentif'
+    ON CONFLICT (group_id, feature_key) DO UPDATE SET active = true, can_view = true`;
   const orang: [string, string, string, string | null, string | null][] = [
     [AKUN.amA, "AM Uji270 A", "user", AM_A, null],
     [AKUN.amB, "AM Uji270 B", "user", AM_B, null],
@@ -81,8 +83,8 @@ async function setup() {
   }
   const anggota: [string, string][] = [
     [AKUN.hodX, "sales-hod"], [AKUN.hodY, "sales-hod"], [AKUN.fin1, "finance-hod"], [AKUN.fin2, "finance-hod"],
-    [AKUN.fin2, "komite"], [AKUN.kom1, "komite"], [AKUN.dir, "uji270-direksi"], [AKUN.hrd1, "hrd"],
-    [AKUN.hrd2, "hrd"], [AKUN.fin1, "hrd"],
+    [AKUN.fin2, "komite"], [AKUN.kom1, "komite"], [AKUN.hrd1, "hrd"], [AKUN.hrd2, "hrd"], [AKUN.fin1, "hrd"],
+    ...[AKUN.fin1, AKUN.fin2, AKUN.kom1, AKUN.dir, AKUN.hrd1, AKUN.hrd2].map((u) => [u, "uji270-insentif"] as [string, string]),
   ];
   for (const [uid, key] of anggota) {
     await sql`
@@ -111,7 +113,7 @@ async function bersihkan() {
   await sql`DELETE FROM hod_territory WHERE hod_key IN ('uji270x','uji270y')`;
   await sql`DELETE FROM master_user WHERE am_id IN (${AM_A}, ${AM_B})`;
   await sql`DELETE FROM app_user WHERE id IN ${sql(Object.values(AKUN))}`;
-  await sql`DELETE FROM access_group WHERE key = 'uji270-direksi'`;
+  await sql`DELETE FROM access_group WHERE key IN ('uji270-insentif', 'uji270-direksi')`;
 }
 
 const sebagai = async (uid: string) => resolveScope(uid);
