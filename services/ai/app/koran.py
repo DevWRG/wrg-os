@@ -255,6 +255,22 @@ _MDR_AMOUNTS = re.compile(
 )
 _MDR_YEAR_TIME = re.compile(r"(?P<y>\d{4}),?\s*(?P<jam>\d{2}:\s?\d{2}:\s?\d{2})")
 _MDR_DAY_MON = re.compile(r"(?P<d>\d{1,2})\s+(?P<mon>[A-Za-z]{3,})")
+# Tanggal LENGKAP dengan tahun yang dijangkarkan ke nama bulan ("15 October 2026").
+#
+# _MDR_YEAR_TIME menjangkarkan tahun ke JAM, bukan ke bulan. Normalnya aman karena
+# Kopra mencetak "15 October 2026,\n15:00:29 <ref> <angka>" — tahun persis sebelum
+# jam. Tapi saat PEMISAH HALAMAN jatuh di antara keduanya, kop halaman ikut masuk
+# dan setelah dibuang sisanya jadi:
+#
+#   15 October 2026, UBP60212399902FFFFFF420026308000   16:00:07 99102 - 1,067,220.00
+#                                              ^^^^
+#
+# nomor referensi kini bersebelahan dengan jam, dan 4 digit penutupnya terbaca
+# sebagai tahun. MDR 038 15 Okt 2026 → tahun 8000; 2 Okt → 8521; 8 Okt → 5369.
+# Dua yang terakhir masuk sebagai "terverifikasi" tanpa ada yang tahu.
+#
+# Tahun diambil dari sini bila ada, baru jatuh ke _MDR_YEAR_TIME sebagai cadangan.
+_MDR_DAY_MON_YEAR = re.compile(r"(?P<d>\d{1,2})\s+(?P<mon>[A-Za-z]{3,})\s+(?P<y>\d{4})\b")
 
 
 def parse_mandiri(text: str) -> Dict[str, Any]:
@@ -310,18 +326,37 @@ def parse_mandiri(text: str) -> Dict[str, Any]:
         waktu: Optional[str] = None
         mt = _MDR_YEAR_TIME.search(chunk)
         md = _MDR_DAY_MON.search(chunk)
+        mdy = _MDR_DAY_MON_YEAR.search(chunk)
         if mt and md and md.group("mon").lower() in _BULAN_EN:
+            # Tahun dari "DD Month YYYY" lebih dipercaya daripada 4 digit yang
+            # kebetulan mendahului jam — lihat catatan di _MDR_DAY_MON_YEAR.
+            tahun = (
+                int(mdy.group("y"))
+                if mdy and mdy.group("mon").lower() in _BULAN_EN
+                else int(mt.group("y"))
+            )
             waktu = "%s %s" % (
-                _iso_date(int(mt.group("y")), _BULAN_EN[md.group("mon").lower()], int(md.group("d"))),
+                _iso_date(tahun, _BULAN_EN[md.group("mon").lower()], int(md.group("d"))),
                 re.sub(r"\s+", "", mt.group("jam")),
             )
         # Buang penanda tanggal/jam dari chunk supaya sisanya = remark + referensi.
+        #
+        # URUTAN PENTING: _MDR_YEAR_TIME dibuang DULU karena potongannya memuat
+        # tahun + jam sekaligus ("2026, 02:15:05"). Kalau "15 October 2026"
+        # dibuang lebih dulu, potongan itu tak lagi cocok dan sisa ", 02:15:05"
+        # ikut jadi remark pada SEMUA baris — regresi yang sempat terjadi saat
+        # perbaikan ini ditulis.
         sisa = chunk
         if mt:
             sisa = sisa.replace(mt.group(0), " ")
+        if mdy:
+            sisa = sisa.replace(mdy.group(0), " ", 1)
         if md:
             sisa = sisa.replace(md.group(0), " ", 1)
         sisa = re.sub(r"\s+", " ", sisa).strip()
+        # Koma sisa pemisah "DD Month YYYY, <ref>" pada baris yang terpotong
+        # pemisah halaman — bukan bagian dari remark.
+        sisa = sisa.lstrip(", ").strip()
 
         ref: Optional[str] = None
         parts = sisa.rsplit(" ", 1)
