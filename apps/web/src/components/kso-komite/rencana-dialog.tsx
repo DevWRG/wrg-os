@@ -11,95 +11,126 @@ import { Textarea } from "@/components/ui/textarea";
 import type { TabKso } from "@/lib/kso-komite-access";
 import { cn } from "@/lib/utils";
 
-import { GERBANG_CLS, GERBANG_IKON, LABEL_PERLINDUNGAN, LABEL_ZONA, STATUS_LABEL, ZONA_CLS, kirim, persen, rp, rpJt, waktu, type Detail } from "./types";
+import { LabelStatus } from "./label-status";
+import { GERBANG_CLS, GERBANG_KATA, GERBANG_SOLID, LABEL_PERLINDUNGAN, LABEL_ZONA, STATUS_LABEL, ZONA_CLS, kirim, persen, rp, rpJt, waktu, type Detail } from "./types";
 
 // Detail satu rencana + form aksi sesuai tab. Form hanya muncul bila tab boleh "edit" DAN
 // status rencana cocok; API tetap memeriksa keduanya (tombol tersembunyi ≠ endpoint tertutup).
-export function RencanaDialog({ tab, id, bolehAksi, onClose, onBerubah }: {
-  tab: TabKso; id: number | null; bolehAksi: boolean; onClose: () => void; onBerubah: () => void;
-}) {
+// Tata letak mengikuti dashboard Komite KSO Direktur: kepala · angka kunci · peringatan ·
+// tujuh gerbang · aksi · riwayat. Layar lebar = panel kanan; layar sempit = dialog.
+type PropsDetail = { tab: TabKso; id: number | null; bolehAksi: boolean; onBerubah: () => void; onTutup?: () => void };
+
+function useDetail({ tab, id, onBerubah, onTutup }: PropsDetail) {
   const [d, setD] = useState<Detail | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const url = `/api/kso-komite/${tab}/rencana/${id}`;
-
-  // Pemuatan awal. Dialog di-remount per rencana (key di pemanggil), jadi state awal sudah bersih.
+  // Pemuatan awal. Komponen di-remount per rencana (key di pemanggil), jadi state awal sudah bersih.
   useEffect(() => {
     if (!id) return;
     let batal = false;
     kirim<Detail>(url).then((x) => { if (!batal) setD(x); }).catch((e: Error) => { if (!batal) setErr(e.message); });
     return () => { batal = true; };
   }, [id, url]);
-
   const jalankan = async (aksi: string, body: Record<string, unknown>) => {
     await kirim(`/api/kso-komite/rencana/${id}/${aksi}`, {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
     });
     // sesudah aksi, rencana bisa keluar dari akses tab ini (mis. pindah status) → tampilkan apa adanya
-    try { setD(await kirim<Detail>(url)); } catch { onClose(); }
+    try { setD(await kirim<Detail>(url)); } catch { setD(null); onTutup?.(); }
     onBerubah();
   };
+  return { d, err, jalankan };
+}
 
-  const r = d?.rencana;
+export function RencanaPanel(p: PropsDetail) {
+  const { d, err, jalankan } = useDetail(p);
   return (
-    <Dialog open={!!id} onOpenChange={(o) => { if (!o) onClose(); }}>
+    <div className="bg-card max-h-[calc(100vh-2rem)] overflow-y-auto rounded-xl border p-5 shadow-[var(--shadow-card)]">
+      {!p.id ? <p className="text-muted-foreground py-10 text-center text-sm">Pilih usulan di sebelah kiri untuk melihat rinciannya.</p>
+        : err ? <p className="text-destructive text-sm">{err}</p>
+        : !d ? <p className="text-muted-foreground text-sm">Memuat…</p>
+        : <IsiDetail tab={p.tab} d={d} bolehAksi={p.bolehAksi} jalankan={jalankan} />}
+    </div>
+  );
+}
+
+export function RencanaDialog({ onClose, ...p }: Omit<PropsDetail, "onTutup"> & { onClose: () => void }) {
+  const { d, err, jalankan } = useDetail({ ...p, onTutup: onClose });
+  return (
+    <Dialog open={!!p.id} onOpenChange={(o) => { if (!o) onClose(); }}>
       <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>{r ? r.faskes_nama : "Memuat…"}</DialogTitle>
-          {r && <DialogDescription>{r.nomor ?? `D${r.id}`} · {STATUS_LABEL[r.status] ?? r.status} · AM {r.am_nama}{r.cabang ? ` · ${r.cabang}` : ""}</DialogDescription>}
+        <DialogHeader className="sr-only">
+          <DialogTitle>{d ? d.rencana.faskes_nama : "Memuat…"}</DialogTitle>
+          <DialogDescription>Rincian rencana KSO</DialogDescription>
         </DialogHeader>
-        <DialogBody className="space-y-4">
-          {err && <p className="text-destructive text-sm">{err}</p>}
-          {d && r && (
-            <>
-              {bolehAksi && <FormAksi tab={tab} d={d} jalankan={jalankan} />}
-              <Isian d={d} />
-              <BlokGpm d={d} />
-              <Gerbang d={d} />
-              {d.pendapat.length > 0 && (
-                <Blok judul="HOD">
-                  {d.pendapat.map((p) => (
-                    <li key={`${p.hod_id}-${p.jenis}`}>
-                      <b>{p.hod_nama ?? p.hod_id}</b> · {p.jenis === "putusan" ? `putusan: ${p.keputusan}${p.dianggap_setuju ? " (lewat batas, dianggap setuju)" : ""}` : "pendapat"}
-                      {p.catatan && <> — “{p.catatan}”</>} <span className="text-muted-foreground text-xs">{waktu(p.at)}</span>
-                    </li>
-                  ))}
-                </Blok>
-              )}
-              {d.usulan.length > 0 && (
-                <Blok judul="Usulan komite">
-                  {d.usulan.map((u, i) => (
-                    <li key={i}><b>{STATUS_LABEL[u.usulan] ?? u.usulan}</b>{u.alasan && ` — ${u.alasan}`}
-                      {u.syarat?.length ? <> · syarat: {u.syarat.map((x) => x.isi).join("; ")}</> : null}
-                      {u.data_kurang && ` · kurang: ${u.data_kurang} (oleh ${u.pemilik}, kembali ${u.tanggal_kembali})`}
-                      <span className="text-muted-foreground text-xs"> {waktu(u.at)}</span></li>
-                  ))}
-                </Blok>
-              )}
-              {d.mandat && (
-                <Blok judul={`Mandat negosiasi (${d.mandat.sumber}) — berlaku s/d ${d.mandat.berlaku_sampai}`}>
-                  <li>{d.mandat.harga_pembuka != null ? <>Pembuka {rp(d.mandat.harga_pembuka)} · target {rp(d.mandat.harga_target)} · </> : <>Target {rp(d.mandat.harga_target)} · </>}
-                    batas bawah (lantai) {rp(d.mandat.harga_lantai)}/test{d.mandat.volume_terbukti ? ` · di volume ${d.mandat.volume_terbukti} test/bln` : ""}</li>
-                  <li>Capex maks {rpJt(d.mandat.capex_maks)} · tenor maks {d.mandat.tenor_maks_bulan} bln · volume min {d.mandat.volume_minimum ?? "—"} test/bln</li>
-                  {d.mandat.klausul_dilarang.length > 0 && <li>Klausul dilarang: {d.mandat.klausul_dilarang.map((k) => labelKlausul(d, k)).join(", ")}</li>}
-                </Blok>
-              )}
-              {r.harga_deal != null && (
-                <Blok judul="PKS (dicocokkan Sekretariat)">
-                  <li>Harga {rp(Number(r.harga_deal))}/test · tenor {String(r.pks_tenor_bulan ?? "—")} bln · volume min {String(r.pks_volume_minimum ?? "—")} test/bln</li>
-                  {Array.isArray(r.pks_klausul) && <li>Klausul: {(r.pks_klausul as string[]).map((k) => labelKlausul(d, k)).join(", ") || "—"}</li>}
-                </Blok>
-              )}
-              {d.putusan && <Blok judul="Putusan Direksi"><li><b>{d.putusan.putusan}</b>{d.putusan.catatan && ` — ${d.putusan.catatan}`} <span className="text-muted-foreground text-xs">{waktu(d.putusan.at)}</span></li></Blok>}
-              <Blok judul="Jejak status">
-                {d.riwayat.map((h, i) => (
-                  <li key={i} className="text-xs">{waktu(h.at)} · {STATUS_LABEL[h.ke] ?? h.ke} · {h.oleh_nama ?? h.oleh ?? "—"}{h.oleh_peran ? ` (${h.oleh_peran})` : ""}</li>
-                ))}
-              </Blok>
-            </>
-          )}
+        <DialogBody>
+          {err ? <p className="text-destructive text-sm">{err}</p>
+            : !d ? <p className="text-muted-foreground text-sm">Memuat…</p>
+            : <IsiDetail tab={p.tab} d={d} bolehAksi={p.bolehAksi} jalankan={jalankan} ruangTutup />}
         </DialogBody>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function IsiDetail({ tab, d, bolehAksi, jalankan, ruangTutup = false }: { tab: TabKso; d: Detail; bolehAksi: boolean; jalankan: Jalankan; ruangTutup?: boolean }) {
+  const r = d.rencana;
+  return (
+    <div className="space-y-5">
+      <header>
+        <div className={cn("flex items-start justify-between gap-3", ruangTutup && "pr-8")}>
+          <span className="text-muted-foreground font-mono text-xs">{r.nomor ?? `D${r.id} · draft`}</span>
+          <LabelStatus status={r.status} />
+        </div>
+        <h2 className="mt-1 text-lg font-bold leading-tight">{r.faskes_nama}</h2>
+        <p className="text-muted-foreground text-sm">{r.jumlah} × {r.alat_nama} · AM {r.am_nama}{r.cabang ? ` · ${r.cabang}` : ""}</p>
+      </header>
+      <AngkaKunci d={d} />
+      <Peringatan d={d} />
+      {bolehAksi && <FormAksi tab={tab} d={d} jalankan={jalankan} />}
+      <Gerbang d={d} />
+      <HargaZona d={d} />
+      <Isian d={d} />
+      {d.pendapat.length > 0 && (
+        <Blok judul="HOD">
+          {d.pendapat.map((p) => (
+            <li key={`${p.hod_id}-${p.jenis}`}>
+              <b>{p.hod_nama ?? p.hod_id}</b> · {p.jenis === "putusan" ? `putusan: ${p.keputusan}${p.dianggap_setuju ? " (lewat batas, dianggap setuju)" : ""}` : "pendapat"}
+              {p.catatan && <> — “{p.catatan}”</>} <span className="text-muted-foreground text-xs">{waktu(p.at)}</span>
+            </li>
+          ))}
+        </Blok>
+      )}
+      {d.usulan.length > 0 && (
+        <Blok judul="Usulan komite ke Direksi">
+          {d.usulan.map((u, i) => (
+            <li key={i}><b>{STATUS_LABEL[u.usulan] ?? u.usulan}</b>{u.alasan && ` — ${u.alasan}`}
+              {u.syarat?.length ? <> · syarat: {u.syarat.map((x) => x.isi).join("; ")}</> : null}
+              {u.data_kurang && ` · kurang: ${u.data_kurang} (oleh ${u.pemilik}, kembali ${u.tanggal_kembali})`}
+              <span className="text-muted-foreground text-xs"> {waktu(u.at)}</span></li>
+          ))}
+        </Blok>
+      )}
+      {d.putusan && <Blok judul="Putusan Direksi"><li><b>{d.putusan.putusan}</b>{d.putusan.catatan && ` — ${d.putusan.catatan}`} <span className="text-muted-foreground text-xs">{waktu(d.putusan.at)}</span></li></Blok>}
+      {d.mandat && <Mandat d={d} />}
+      {r.harga_deal != null && (
+        <Blok judul="PKS (dicocokkan Sekretariat)">
+          <li>Harga {rp(Number(r.harga_deal))}/test · tenor {String(r.pks_tenor_bulan ?? "—")} bln · volume min {String(r.pks_volume_minimum ?? "—")} test/bln</li>
+          {Array.isArray(r.pks_klausul) && <li>Klausul: {(r.pks_klausul as string[]).map((k) => labelKlausul(d, k)).join(", ") || "—"}</li>}
+        </Blok>
+      )}
+      <section>
+        <h3 className="mb-2 text-sm font-semibold">Riwayat status</h3>
+        <ol className="flex flex-wrap items-center gap-1 text-xs">
+          {d.riwayat.map((h, i) => (
+            <li key={i} className="flex items-center gap-1" title={`${waktu(h.at)} · ${h.oleh_nama ?? h.oleh ?? "—"}${h.oleh_peran ? ` (${h.oleh_peran})` : ""}`}>
+              {i > 0 && <span className="text-muted-foreground" aria-hidden>→</span>}
+              <span className="rounded-md border px-1.5 py-0.5">{STATUS_LABEL[h.ke] ?? h.ke}</span>
+            </li>
+          ))}
+        </ol>
+      </section>
+    </div>
   );
 }
 
@@ -108,9 +139,50 @@ const labelKlausul = (d: Detail, k: string) => LABEL_PERLINDUNGAN[k] ?? d.klausu
 function Blok({ judul, children }: { judul: string; children: React.ReactNode }) {
   return (
     <section>
-      <h3 className="mb-1 text-sm font-semibold">{judul}</h3>
+      <h3 className="mb-1.5 text-sm font-semibold">{judul}</h3>
       <ul className="space-y-1 text-sm">{children}</ul>
     </section>
+  );
+}
+
+/** Kisi angka kunci (CAPEX · VOLUME · HARGA/TEST · TENOR · GPM · ZONA). */
+function AngkaKunci({ d }: { d: Detail }) {
+  const r = d.rencana, g = d.angka_gpm;
+  const isi: [string, React.ReactNode][] = [
+    ["Capex", rpJt(r.capex)],
+    ["Volume", r.volume_estimasi != null ? `${r.volume_estimasi.toLocaleString("id-ID")} test/bln` : "—"],
+    ["Harga/test", rp(r.harga_per_test)],
+    ["Tenor", r.tenor_bulan != null ? `${r.tenor_bulan} bln` : "—"],
+    ["GPM deal", g?.hd ? "Hemodialisa" : persen(g?.gpm ?? r.gpm_deal)],
+    ["Zona", r.zona ? <span className={cn("rounded-full px-2 py-0.5 text-xs font-semibold", ZONA_CLS[r.zona])}>{LABEL_ZONA[r.zona]}</span> : "—"],
+  ];
+  return (
+    <dl className="grid grid-cols-2 gap-x-4 gap-y-3 border-y py-3 sm:grid-cols-3">
+      {isi.map(([l, v]) => (
+        <div key={l}>
+          <dt className="text-muted-foreground text-[11px] font-semibold uppercase tracking-wide">{l}</dt>
+          <dd className="mt-0.5 font-semibold tabular-nums">{v}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+/** Hal yang perlu diperhatikan — hanya yang ada, satu kalimat per kotak. */
+function Peringatan({ d }: { d: Detail }) {
+  const r = d.rencana, g = d.angka_gpm;
+  const merah: string[] = [], kuning: string[] = [];
+  if (!r.volume_sumber) merah.push("Sumber angka volume kosong.");
+  if (r.volume_terverifikasi === false) merah.push(`Bukti volume ditolak Sekretaris${r.volume_verifikasi_catatan ? `: ${r.volume_verifikasi_catatan}` : "."}`);
+  if (g && !g.hd && g.gpm == null && g.catatan) kuning.push(`GPM belum bisa dihitung: ${g.catatan}.`);
+  if (r.zona_dasar && r.zona && r.zona_dasar !== r.zona) kuning.push(`Dari GPM masuk ${LABEL_ZONA[r.zona_dasar]}, naik ke ${LABEL_ZONA[r.zona]} karena gerbang/aturan.`);
+  if (r.alasan_forum) kuning.push(`Ke forum karena: ${r.alasan_forum}`);
+  if (merah.length + kuning.length === 0) return null;
+  return (
+    <div className="space-y-2">
+      {merah.map((t) => <p key={t} className="rounded-md border-l-4 border-red-600 bg-red-500/10 px-3 py-2 text-sm text-red-800 dark:text-red-300">{t}</p>)}
+      {kuning.map((t) => <p key={t} className="rounded-md border-l-4 border-amber-500 bg-amber-500/10 px-3 py-2 text-sm text-amber-900 dark:text-amber-200">{t}</p>)}
+    </div>
   );
 }
 
@@ -118,57 +190,90 @@ function Isian({ d }: { d: Detail }) {
   const r = d.rencana;
   return (
     <Blok judul="Isian AM">
-      <li>{r.jumlah} × {r.alat_nama} · capex {rpJt(r.capex)}{r.payback_bulan ? ` · payback ±${r.payback_bulan} bln` : ""}</li>
-      <li>Volume {r.volume_estimasi ?? "—"} test/bln · harga {rp(r.harga_per_test)}/test{r.harga_pesaing != null ? ` (pesaing ${rp(r.harga_pesaing)})` : ""} · tenor {r.tenor_bulan ?? "—"} bln</li>
       {/* kalimat AM apa adanya, dalam tanda kutip — bukan kategori turunan */}
-      <li>Sumber volume: {r.volume_sumber ? <i>“{r.volume_sumber}”</i> : <span className="text-red-700 dark:text-red-400">kosong</span>}
-        {r.volume_terverifikasi === true && <span className="text-emerald-700 dark:text-emerald-400"> · diverifikasi Sekretaris</span>}
-        {r.volume_terverifikasi === false && <span className="text-red-700 dark:text-red-400"> · ditolak Sekretaris{r.volume_verifikasi_catatan ? `: ${r.volume_verifikasi_catatan}` : ""}</span>}</li>
-      {r.alasan_strategis && <li>Alasan strategis: <i>“{r.alasan_strategis}”</i></li>}
-      <li>Klausul khusus: {d.klausul.length ? d.klausul.map((k) => k.label).join(", ") : "tidak ada"}</li>
-      {d.pendukung.map((p, i) => <li key={i}>Pendukung: {p.nama} ({p.tipe.replace(/_/g, " ")}){p.kontak_terakhir_tanggal ? ` · kontak ${p.kontak_terakhir_tanggal}` : ""}</li>)}
-      {r.alasan_forum && <li className="text-amber-700 dark:text-amber-400">Ke forum karena: {r.alasan_forum}</li>}
+      <li><span className="text-muted-foreground">Bukti volume:</span> {r.volume_sumber ? <i>“{r.volume_sumber}”</i> : "—"}
+        {r.volume_terverifikasi === true && <span className="text-emerald-700 dark:text-emerald-400"> · diverifikasi Sekretaris</span>}</li>
+      {r.harga_pesaing != null && <li><span className="text-muted-foreground">Harga pesaing:</span> {rp(r.harga_pesaing)}/test</li>}
+      {r.alasan_strategis && <li><span className="text-muted-foreground">Alasan strategis:</span> <i>“{r.alasan_strategis}”</i></li>}
+      <li><span className="text-muted-foreground">Klausul khusus:</span> {d.klausul.length ? d.klausul.map((k) => k.label).join(", ") : "tidak ada"}</li>
+      {d.pendukung.map((p, i) => <li key={i}><span className="text-muted-foreground">Pendukung:</span> {p.nama} ({p.tipe.replace(/_/g, " ")}){p.kontak_terakhir_tanggal ? ` · kontak ${p.kontak_terakhir_tanggal}` : ""}</li>)}
+      {r.payback_bulan ? <li><span className="text-muted-foreground">Payback:</span> ±{r.payback_bulan} bln</li> : null}
     </Blok>
   );
 }
 
 const bulat100 = (x: number | null | undefined) => (x == null ? null : Math.ceil(x / 100) * 100);
 
-/** F170 v2 (Pedoman Komite KSO Forum v01): GPM deal + zona + angka forum dari angka F172. */
-function BlokGpm({ d }: { d: Detail }) {
-  const r = d.rencana, g = d.angka_gpm;
-  if (!g && !r.zona) return null;
+function Ubin({ label, nilai, ket }: { label: string; nilai: string; ket?: string }) {
   return (
-    <Blok judul="GPM deal & zona">
-      <li className="flex flex-wrap items-center gap-2">
-        {r.zona && <span className={cn("rounded-full px-2 py-0.5 text-xs font-semibold", ZONA_CLS[r.zona])}>{LABEL_ZONA[r.zona]}</span>}
-        {g?.hd ? <span>Hemodialisa — Kalkulator HD, selalu Direktur</span>
-          : g?.gpm != null ? <span className="tabular-nums">GPM {persen(g.gpm)}{g.biaya_per_tes != null ? ` · biaya ${rp(g.biaya_per_tes)}/test termasuk cicilan alat` : ""}</span>
-          : <span className="text-amber-700 dark:text-amber-400">{g?.catatan ?? "GPM belum bisa dihitung"}</span>}
-        {r.zona_dasar && r.zona && r.zona_dasar !== r.zona && <span className="text-muted-foreground text-xs">(dari GPM: {LABEL_ZONA[r.zona_dasar]}, naik karena gerbang/aturan)</span>}
-      </li>
-      {g && !g.hd && g.harga_forum != null && (
-        <li className="tabular-nums">Harga minimum di {r.volume_estimasi} test/bln: AM {rp(bulat100(g.harga_am))} · 2 HOD {rp(bulat100(g.harga_hod))} · Forum {rp(bulat100(g.harga_forum))}</li>
+    <div className="rounded-lg border px-3 py-2">
+      <div className="text-muted-foreground text-[11px] font-semibold uppercase tracking-wide">{label}</div>
+      <div className="font-semibold tabular-nums">{nilai}</div>
+      {ket && <div className="text-muted-foreground text-xs">{ket}</div>}
+    </div>
+  );
+}
+
+/** F170 v2 (Pedoman Komite KSO Forum v01): harga minimum per zona di volume usulan. */
+function HargaZona({ d }: { d: Detail }) {
+  const r = d.rencana, g = d.angka_gpm;
+  if (!g || g.hd || g.harga_forum == null) return null;
+  const v = g.volume_min_forum, vol = r.volume_estimasi ?? 0;
+  return (
+    <section>
+      <h3 className="mb-1.5 text-sm font-semibold">Harga minimum per zona <span className="text-muted-foreground font-normal">· di {vol.toLocaleString("id-ID")} test/bln</span></h3>
+      <div className="grid grid-cols-3 gap-2">
+        <Ubin label="AM ≥55%" nilai={rp(bulat100(g.harga_am))} />
+        <Ubin label="2 HOD ≥50%" nilai={rp(bulat100(g.harga_hod))} />
+        <Ubin label="Forum ≥45%" nilai={rp(bulat100(g.harga_forum))} />
+      </div>
+      {g.gpm != null && (
+        <p className="text-muted-foreground mt-1.5 text-xs">
+          {v == null ? `Di ${rp(r.harga_per_test)} zona Forum tidak tercapai di volume berapa pun.`
+            : vol > 0 && v > vol * 10 ? `Di ${rp(r.harga_per_test)} zona Forum baru tercapai di atas 10× volume usulan — tidak realistis.`
+            : `Volume minimum zona Forum di ${rp(r.harga_per_test)}: ${Math.ceil(v).toLocaleString("id-ID")} test/bln.`}
+        </p>
       )}
-      {g && !g.hd && g.gpm != null && (
-        <li className="tabular-nums">{g.volume_min_forum != null
-          ? `Volume minimum zona Forum di ${rp(r.harga_per_test)}: ${Math.ceil(g.volume_min_forum)} test/bln`
-          : `Di ${rp(r.harga_per_test)} zona Forum tidak tercapai di volume berapa pun`}</li>
-      )}
-    </Blok>
+    </section>
   );
 }
 
 function Gerbang({ d }: { d: Detail }) {
   return (
-    <Blok judul="Tujuh gerbang">
-      {d.gerbang.map((g) => (
-        <li key={g.no} className="flex items-start gap-2">
-          <span className={cn("mt-0.5 inline-block w-5 shrink-0 rounded text-center text-xs font-bold", GERBANG_CLS[g.status])}>{GERBANG_IKON[g.status]}</span>
-          <span><b>{g.no}. {g.nama}</b>{g.nilai && <span className="text-muted-foreground"> — {g.nilai}</span>}</span>
-        </li>
-      ))}
-    </Blok>
+    <section>
+      <h3 className="mb-2 text-sm font-semibold">Tujuh gerbang</h3>
+      <ul className="space-y-2">
+        {d.gerbang.map((g) => (
+          <li key={g.no} className="flex items-start gap-2.5 text-sm">
+            <span className={cn("mt-0.5 inline-flex size-5 shrink-0 items-center justify-center rounded text-xs font-bold", GERBANG_SOLID[g.status])}>{g.no}</span>
+            <span className="min-w-0 flex-1">
+              <span className="block font-medium">{g.nama}</span>
+              {g.nilai && <span className="text-muted-foreground block text-xs">{g.nilai}</span>}
+            </span>
+            <span className={cn("shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold", GERBANG_CLS[g.status])}>{GERBANG_KATA[g.status] ?? g.status}</span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function Mandat({ d }: { d: Detail }) {
+  const m = d.mandat!;
+  return (
+    <section>
+      <h3 className="mb-1.5 text-sm font-semibold">Batas negosiasi AM <span className="text-muted-foreground font-normal">· mandat {m.sumber}, berlaku s/d {m.berlaku_sampai}</span></h3>
+      <div className="grid grid-cols-3 gap-2">
+        <Ubin label="Pembuka" nilai={m.harga_pembuka != null ? rp(m.harga_pembuka) : "—"} ket="GPM 55%" />
+        <Ubin label="Target" nilai={rp(m.harga_target)} ket="GPM 50%" />
+        <Ubin label="Batas bawah" nilai={rp(m.harga_lantai)} ket="GPM 45%" />
+      </div>
+      <p className="text-muted-foreground mt-1.5 text-xs">
+        Capex maks {rpJt(m.capex_maks)} · tenor maks {m.tenor_maks_bulan} bln · volume min {m.volume_minimum ?? "—"} test/bln
+        {m.volume_terbukti ? ` · dihitung di ${m.volume_terbukti} test/bln` : ""}
+        {m.klausul_dilarang.length > 0 && ` · klausul dilarang: ${m.klausul_dilarang.map((k) => labelKlausul(d, k)).join(", ")}`}
+      </p>
+    </section>
   );
 }
 
@@ -212,9 +317,9 @@ function FormAksi({ tab, d, jalankan }: { tab: TabKso; d: Detail; jalankan: Jala
   return null;
 }
 
-function Kotak({ judul, nada = "sky", children }: { judul: string; nada?: "sky" | "amber"; children: React.ReactNode }) {
+function Kotak({ judul, children }: { judul: string; nada?: "sky" | "amber"; children: React.ReactNode }) {
   return (
-    <div className={cn("space-y-3 rounded-lg border-2 p-3", nada === "sky" ? "border-sky-500/50 bg-sky-500/5" : "border-amber-500/50 bg-amber-500/5")}>
+    <div className="border-primary-dark/40 space-y-3 rounded-lg border bg-white p-4 dark:bg-card">
       <h3 className="font-semibold">{judul}</h3>
       {children}
     </div>
@@ -235,7 +340,7 @@ function Pilihan<T extends string>({ nilai, set, opsi }: { nilai: T | null; set:
   return (
     <div className="flex flex-wrap gap-2">
       {opsi.map(([v, l]) => (
-        <Button key={v} type="button" size="sm" variant={nilai === v ? "default" : "outline"} onClick={() => set(v)}>{l}</Button>
+        <Button key={v} type="button" size="sm" variant={nilai === v ? "default" : "soft"} aria-pressed={nilai === v} onClick={() => set(v)}>{l}</Button>
       ))}
     </div>
   );
