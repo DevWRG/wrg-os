@@ -72,7 +72,7 @@ export function pesanDormantAm(nama: string, g: { baru: DormantItem[]; ingat: Do
   if (!bag.length) return "";
   bag.push(
     g.baru.length || g.ingat.length
-      ? `Supaya Dormant lepas: kirim #REPORT untuk faskesnya, pindahkan tahap, atau edit deal di menu Pipeline. Tanpa pergerakan ${GUGUR_HARI} hari, deal otomatis jadi *Lost*.`
+      ? `Supaya Dormant lepas: kirim #REPORT untuk faskesnya, atau di menu Pipeline tulis *Catat follow-up* / pindahkan tahap / edit deal. Tanpa pergerakan ${GUGUR_HARI} hari, deal otomatis jadi *Lost*.`
       : "Deal yang ternyata masih jalan bisa dipindah lagi dari kolom Lost di menu Pipeline.",
   );
   return bag.join("\n");
