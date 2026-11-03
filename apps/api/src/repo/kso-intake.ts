@@ -175,6 +175,18 @@ export function blokGpm(d: Pick<DraftTampil, "angka" | "volume_estimasi" | "harg
  * (atau klausul belum dijawab) = naik satu level, routing HOD < 2 kursi di level HOD = forum.
  * Aturan grup mitra tidak terlihat di draft — final tetap saat dikirim.
  */
+/** Label zona jalur forum di balasan "#KSO kirim". Usulan zona dasar Forum yang naik ke Direktur HANYA karena
+ *  bukti volume (gerbang 2) belum diperiksa Sekretaris disebut Zona Forum + catatan: sejak migrasi 269 zonanya
+ *  dihitung ulang dan kembali ke Forum begitu buktinya disahkan. Gerbang lain tak hijau / aturan grup = Direktur. */
+export function teksZonaForum(z: {
+  zona: string | null; zona_dasar: string | null; alasan_forum: string | null; belum_hijau: number[]; gerbang2: string | null;
+}): { label: string; catatan: string | null } {
+  if (z.zona === "direktur" && z.zona_dasar === "forum" && !z.alasan_forum
+      && z.belum_hijau.length === 1 && z.belum_hijau[0] === 2 && z.gerbang2 === "belum")
+    return { label: "ZONA FORUM", catatan: "Sementara tercatat Zona Direktur sampai Sekretaris memverifikasi bukti volume — siapkan berkas buktinya." };
+  return { label: z.zona === "direktur" ? "ZONA DIREKTUR" : "ZONA FORUM", catatan: null };
+}
+
 export function perkiraanZona(d: Pick<DraftTampil, "zona_dasar" | "gerbang" | "kursi_hod" | "kolom_dinyatakan">): "am" | "hod" | "forum" | "direktur" {
   const LEVEL = ["am", "hod", "forum", "direktur"] as const;
   let lv = d.zona_dasar ? LEVEL.indexOf(d.zona_dasar) : 2;
@@ -444,9 +456,14 @@ export async function prosesKso(k: KsoKonteks): Promise<{ balasan: string; hasil
         if (p.aksi === "kirim") {
           const [j] = await tx`select kso.app_bot_ajukan(${id}, ${k.am_id})::text as jalur`;
           const [r] = await tx`select nomor, alasan_forum from kso.rencana_kso where id = ${id}`;
-          const [z] = await tx`select r.zona, r.gpm_deal::float8 as gpm, m.harga_pembuka::float8 as pembuka, m.harga_target::float8 as target,
-                                      m.harga_lantai::float8 as lantai, m.berlaku_sampai::text as sampai
+          const [z] = await tx`select r.zona, r.zona_dasar, r.gpm_deal::float8 as gpm, m.harga_pembuka::float8 as pembuka, m.harga_target::float8 as target,
+                                      m.harga_lantai::float8 as lantai, m.berlaku_sampai::text as sampai,
+                                      coalesce((select array_agg(g.no order by g.no) from kso.gerbang_hasil g
+                                                 where g.rencana_id = r.id and g.no between 2 and 7 and g.status <> 'hijau'), '{}') as belum_hijau,
+                                      (select g.status::text from kso.gerbang_hasil g where g.rencana_id = r.id and g.no = 2) as gerbang2
                                  from kso.rencana_kso r left join kso.mandat m on m.rencana_id = r.id where r.id = ${id}`;
+          const zf = teksZonaForum({ zona: z?.zona ?? null, zona_dasar: z?.zona_dasar ?? null, alasan_forum: r.alasan_forum ?? null,
+                                     belum_hijau: (z?.belum_hijau ?? []).map(Number), gerbang2: z?.gerbang2 ?? null });
           const gpm = z?.gpm != null ? ` (GPM ${(Number(z.gpm) * 100).toLocaleString("id-ID", { maximumFractionDigits: 1 })}%)` : "";
           return {
             balasan:
@@ -455,7 +472,7 @@ export async function prosesKso(k: KsoKonteks): Promise<{ balasan: string; hasil
                 ? `→ ZONA AM${gpm}: kamu memutus sendiri. Mandat berlaku s/d ${z.sampai}: harga pembuka ${rp(z.pembuka)}, target ${rp(z.target)}, batas bawah ${rp(z.lantai)}/test. Di bawah batas bawah → #KSO kelonggaran.`
                 : j.jalur === "CEPAT"
                   ? `→ ZONA 2 HOD${gpm}: dua HOD memutus maksimal 1 hari kerja.`
-                  : `→ ${z?.zona === "direktur" ? "ZONA DIREKTUR" : "ZONA FORUM"}${gpm}${r.alasan_forum ? ` (${r.alasan_forum})` : ""}: masuk agenda forum Selasa/Kamis berikutnya (batas data 14.00), Direktur memutus.`),
+                  : `→ ${zf.label}${gpm}${r.alasan_forum ? ` (${r.alasan_forum})` : ""}: masuk agenda forum Selasa/Kamis berikutnya (batas data 14.00), Direktur memutus.${zf.catatan ? `\n${zf.catatan}` : ""}`),
             hasil: { aksi: "kirim", rencana_id: id, nomor: r.nomor, jalur: j.jalur },
           };
         }
