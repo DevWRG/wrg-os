@@ -57,3 +57,9 @@ test("ringkasDraft: total, stok kurang ditandai, perintah konfirmasi", () => {
   assert.match(t, /#ORDER ya O12/);
   assert.doesNotMatch(t, /[<>]/);
 });
+
+test("parseOrder: format jumlah-di-depan (dokumen lama) tidak diam-diam salah baca", () => {
+  // "2 box GLU" tak berakhiran angka → qty NaN → balasan "jumlah tak terbaca" + contoh format.
+  const p = parseOrder("#ORDER RSUD Kab Kediri\n2 box GLU");
+  assert.ok(p.aksi === "baru" && Number.isNaN(p.baris[0].qty));
+});

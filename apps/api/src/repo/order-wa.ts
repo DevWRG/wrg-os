@@ -223,13 +223,19 @@ async function kabariAdmin(sql: Sql, id: number) {
 
 /** Cocokkan pesanan antrean/diproses dengan SO Accurate: faskes sama, SO tertanggal −1..+14 hari dari
  *  konfirmasi, dan (bila pesanan punya item ber-kode) minimal satu kode item sama. SO yang sudah
- *  dipakai pesanan lain dilewati. Hasil: status selesai, selesai_oleh 'otomatis'. */
+ *  dipakai pesanan lain dilewati. Hasil: status selesai, selesai_oleh 'otomatis'.
+ *
+ *  Satu SO = satu pesanan, juga DI DALAM satu putaran: dua pesanan faskes sama yang sama-sama cocok
+ *  ke satu SO dulu sama-sama ditandai selesai (NOT EXISTS hanya melihat keadaan sebelum UPDATE), dan
+ *  pesanan kedua hilang dari antrean padahal SO-nya belum diinput. Sekarang SO jatuh ke pesanan
+ *  yang dikonfirmasi paling awal; sisanya menunggu SO berikutnya. Index unik 271 = pagar terakhir. */
 export async function cocokkanSo(): Promise<number> {
   const sql = db();
   const rows = await sql`
     WITH kandidat AS (
       SELECT o.id AS order_id, so.id AS so_id, so.number, so.trans_date,
-             row_number() OVER (PARTITION BY o.id ORDER BY so.trans_date, so.id) AS rn
+             row_number() OVER (PARTITION BY o.id ORDER BY so.trans_date, so.id) AS rn,
+             row_number() OVER (PARTITION BY so.id ORDER BY o.dikonfirmasi_at, o.id) AS rn_so
       FROM order_wa o
       JOIN accurate_sales_order so ON so.customer_id = o.account_id
        AND so.trans_date BETWEEN (o.dikonfirmasi_at AT TIME ZONE 'Asia/Jakarta')::date - 1 AND (o.dikonfirmasi_at AT TIME ZONE 'Asia/Jakarta')::date + 14
@@ -239,7 +245,7 @@ export async function cocokkanSo(): Promise<number> {
              OR EXISTS (SELECT 1 FROM order_wa_item i JOIN accurate_sales_order_item si ON si.order_id = so.id AND si.item_no = i.kode WHERE i.order_id = o.id))
     )
     UPDATE order_wa o SET status = 'selesai', so_id = k.so_id, so_number = k.number, selesai_at = now(), selesai_oleh = 'otomatis', updated_at = now()
-    FROM kandidat k WHERE k.order_id = o.id AND k.rn = 1
+    FROM kandidat k WHERE k.order_id = o.id AND k.rn = 1 AND k.rn_so = 1
     RETURNING o.id`;
   return rows.length;
 }
@@ -282,6 +288,15 @@ export async function ubahStatusOrder(id: string, b: { status: string; so_number
   const alasan = (b.alasan ?? "").trim() || null;
   if (ke === "selesai" && !so) throw new OrderError(400, "isi nomor SO Accurate", "so_number");
   if (ke === "batal" && !alasan) throw new OrderError(400, "isi alasan batal", "alasan");
+  if (ke === "selesai") {
+    const [dipakai] = await sql`
+      SELECT id FROM order_wa
+      WHERE id <> ${id}::bigint AND status <> 'batal'
+        AND (upper(btrim(so_number)) = upper(${so}::text)
+             OR so_id = (SELECT id FROM accurate_sales_order WHERE number = ${so}::text LIMIT 1))
+      LIMIT 1`;
+    if (dipakai) throw new OrderError(409, `SO ${so} sudah dipakai pesanan O${dipakai.id}`, "so_number");
+  }
   const [u] = await sql`
     UPDATE order_wa SET status = ${ke}::text,
       diproses_oleh = CASE WHEN ${ke}::text = 'diproses' THEN ${oleh}::text ELSE diproses_oleh END,
