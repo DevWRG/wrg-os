@@ -646,6 +646,7 @@ export interface LossPending {
   customer_name: string;
   facility_name: string | null;
   am_id: string | null;
+  am_name: string | null;    // panggilan AM (master_user); null bila am_id tak terpetakan
   brand: string | null;
   product: string | null;
   cabang: string | null;
@@ -674,8 +675,12 @@ export async function listPendingLosses(scope: DataScope): Promise<LossPending[]
     SELECT d.deal_id, d.customer_name, d.facility_name, d.am_id, d.brand, d.product, d.cabang,
       COALESCE(d.estimated_value, d.estimate_amount) AS estimate_amount, d.loss_reason,
       l.occurred_at AS requested_at, l.changed_by AS requested_by, l.reason AS requested_reason,
-      l.from_stage AS revert_stage
+      l.from_stage AS revert_stage, mu.panggilan AS am_name
     FROM deal d
+    LEFT JOIN LATERAL (
+      SELECT panggilan FROM master_user
+      WHERE am_id = d.am_id AND COALESCE(panggilan,'') <> '' LIMIT 1
+    ) mu ON true
     LEFT JOIN LATERAL (
       SELECT occurred_at, changed_by, reason, from_stage
       FROM spt_state_log
@@ -693,6 +698,7 @@ export async function listPendingLosses(scope: DataScope): Promise<LossPending[]
       customer_name: String(r.customer_name ?? ""),
       facility_name: r.facility_name ? String(r.facility_name) : null,
       am_id: r.am_id ? String(r.am_id) : null,
+      am_name: r.am_name ? String(r.am_name) : null,
       brand: r.brand ? String(r.brand) : null,
       product: r.product ? String(r.product) : null,
       cabang: r.cabang ? String(r.cabang) : null,
