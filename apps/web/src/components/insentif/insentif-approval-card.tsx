@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { CheckCircle2, Circle, RotateCcw, XCircle } from "lucide-react";
 
@@ -50,7 +51,9 @@ export function InsentifApprovalCard({
         {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ aksi, catatan: catatan.trim() || null }),
+          // step = langkah yang dilihat di layar; server menolak bila orang lain sudah
+          // lebih dulu memajukannya (klik basi), alih-alih memutus langkah berikutnya.
+          body: JSON.stringify({ aksi, catatan: catatan.trim() || null, step: data.berikutnya?.step ?? null }),
         },
       );
       if (!res.ok) {
@@ -100,6 +103,16 @@ export function InsentifApprovalCard({
           )}
         </div>
 
+        {data.approval ? (
+          <p className="text-muted-foreground text-xs">
+            Persetujuan langkah 2–5 lewat{" "}
+            <Link href={`/approval-requests/${data.approval.id}`} className="text-primary font-medium underline-offset-2 hover:underline">
+              {data.approval.kode}
+            </Link>{" "}
+            — bisa juga diputus via WA <span className="font-mono">#APPROVE {data.approval.kode}</span>.
+          </p>
+        ) : null}
+
         {data.alasan ? (
           <p className="text-muted-foreground text-xs leading-relaxed">{data.alasan}</p>
         ) : null}
@@ -116,7 +129,7 @@ export function InsentifApprovalCard({
               {data.boleh_maju ? (
                 <Button size="sm" disabled={sibuk !== null} onClick={() => void kirim("maju")}>
                   <CheckCircle2 className="size-4" />
-                  {data.berikutnya?.group_key == null ? "Ajukan" : "Setujui & teruskan"}
+                  {data.berikutnya?.step === 1 ? "Ajukan" : data.berikutnya?.step === 6 ? "Tandai dibayar" : "Setujui & teruskan"}
                 </Button>
               ) : null}
               {data.boleh_tolak ? (

@@ -210,6 +210,8 @@ async function sumberFund(now: Date): Promise<InboxItem[]> {
  * F67: rekap yang sedang di langkah milik grup `direktur` (diturunkan dari
  * insentif_approval_step, bukan di-hardcode). `direktur_approve` = SUDAH
  * disetujui Direktur (giliran HRD) — bukan antrean Direktur.
+ * Rekap di mesin F11 (migrasi 270) sudah muncul lewat sumberApproval —
+ * hanya sisa tanpa approval_request_id yang dihitung di sini.
  */
 async function sumberInsentif(now: Date): Promise<InboxItem[]> {
   const rows: Row[] = await db()`
@@ -220,6 +222,7 @@ async function sumberInsentif(now: Date): Promise<InboxItem[]> {
     FROM insentif_bulanan b
     JOIN insentif_approval_step st ON st.status_dari = b.status AND st.group_key = 'direktur'
     LEFT JOIN master_user m ON m.am_id = b.am_id
+    WHERE b.approval_request_id IS NULL
   `;
   return rows.map((r) => item({
     jenis: "insentif", id: s(r.id), kode: `INS-${s(r.periode)}-${s(r.am_id)}`, judul: `Insentif ${s(r.nama)} · ${s(r.periode)}`,
