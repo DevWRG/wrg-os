@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  LaunchAgent pembersih folder openclaw-plugin-build-* (Mac mini, user `development`).
+  Tiap 10800 dtk (3 jam): scripts/ops/openclaw-tmp-clean.sh. Pasangan alert
+  com.wrg.disk-watch.
+
+  Pasang sekali (sesudah mode dry-run dicek):
+    cp infra/launchd/com.wrg.openclaw-tmp-clean.plist ~/Library/LaunchAgents/
+    launchctl load -w ~/Library/LaunchAgents/com.wrg.openclaw-tmp-clean.plist
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.wrg.openclaw-tmp-clean</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/zsh</string>
+    <string>-lc</string>
+    <string>exec /bin/bash "$HOME/DevWRG/wrg-os/scripts/ops/openclaw-tmp-clean.sh"</string>
+  </array>
+
+  <key>StartInterval</key>
+  <integer>10800</integer>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>/Users/development/DevWRG/ops/openclaw-tmp-clean.launchd.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/development/DevWRG/ops/openclaw-tmp-clean.launchd.log</string>
+</dict>
+</plist>
