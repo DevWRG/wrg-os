@@ -38,6 +38,8 @@ const COLS_DEAL = [
   { width: 10 }, // Tahun Beli
   { width: 12 }, // Hari di Tahap
   { width: 10 }, // Mangkrak
+  { width: 14 }, // Hari Tanpa Pergerakan
+  { width: 14 }, // Dormant: otomatis Lost
   { width: 40 }, // Catatan
   { width: 18 }, // Update Terakhir
 ];
@@ -107,6 +109,7 @@ export function PipelineExportButton({
         HEAD("Peluang %", true), HEAD("Nilai x Peluang", true),
         HEAD("AM"), HEAD("HOD"), HEAD("Cabang"), HEAD("Kota"), HEAD("Provinsi"),
         HEAD("Estimasi Beli"), HEAD("Tahun Beli", true), HEAD("Hari di Tahap", true), HEAD("Mangkrak"),
+        HEAD("Hari Tanpa Pergerakan", true), HEAD("Dormant: Otomatis Lost"),
         HEAD("Catatan"), HEAD("Update Terakhir"),
       ];
       const body = deals.map((d) => [
@@ -134,6 +137,9 @@ export function PipelineExportButton({
         d.purchase_year != null ? { type: Number, value: d.purchase_year } : null,
         d.days_in_stage != null ? { type: Number, value: d.days_in_stage } : null,
         { type: String, value: d.stale ? "Ya" : "Tidak" },
+        d.days_idle != null ? { type: Number, value: d.days_idle } : null,
+        // Kosong = tidak Dormant; terisi = tanggal deal otomatis jadi Lost.
+        str(d.dormant && d.gugur_at ? new Date(d.gugur_at).toLocaleDateString("id-ID", { day: "2-digit", month: "short", year: "numeric" }) : null),
         str(d.notes),
         // Kolom Date butuh format eksplisit; kirim string lokal saja biar aman
         // dari nilai updated_at yang tak terparse.
