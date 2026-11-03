@@ -176,6 +176,8 @@ export interface StatusApproval {
   boleh_buka: boolean;
   alasan: string | null;
   riwayat: JejakApproval[];
+  /** Approval F11 (langkah 2–5) putaran ini; null = belum diajukan. */
+  approval: { id: string; kode: string; status: string; urutan: number | null } | null;
 }
 
 /** Label + warna status rantai persetujuan (insentif_bulanan.status).

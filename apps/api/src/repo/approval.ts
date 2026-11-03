@@ -1167,6 +1167,24 @@ export type PenanganKonsumen = (tx: Tx, hasil: HasilApproval) => Promise<void>;
 // tak membatalkan keputusan (sudah tersimpan), hanya dicatat di log.
 export interface OpsiKonsumen {
   sesudah?: (hasil: HasilApproval) => Promise<void>;
+  // `setiapTahap` (opsional) jalan DI DALAM transaksi keputusan setiap kali
+  // satu tahap disetujui dan request MAJU ke tahap berikutnya (bukan tahap
+  // terakhir — itu urusan penangan). Untuk modul yang status induknya ikut
+  // bergerak per tahap (insentif: submitted → hod_review → …). Boleh melempar
+  // TolakKonsumen untuk membatalkan keputusan.
+  setiapTahap?: (tx: Tx, tahap: TahapMaju) => Promise<void>;
+}
+
+export interface TahapMaju {
+  requestId: string;
+  kode: string;
+  refTabel: string;
+  refId: string;
+  urutanSelesai: number;
+  urutanBerikut: number;
+  oleh: string;
+  olehUserId: string | null;
+  catatan: string | null;
 }
 
 const konsumen = new Map<string, { penangan: PenanganKonsumen; opsi: OpsiKonsumen }>();
@@ -1283,6 +1301,13 @@ async function putuskan(
       };
     }
     await tx`UPDATE approval_request SET current_urutan = ${Number(next_urutan)} WHERE id = ${req.id}`;
+    const setiapTahap = ref ? konsumen.get(ref.refTabel)?.opsi.setiapTahap : undefined;
+    if (ref && setiapTahap) {
+      await setiapTahap(tx, {
+        ...ref, requestId: String(req.id), kode, oleh: approver.name, olehUserId: approver.userId,
+        catatan: note ?? null, urutanSelesai: Number(step.urutan), urutanBerikut: Number(next_urutan),
+      });
+    }
     return { ok: true, status: "pending", kode, requestId: String(req.id), urutan: Number(step.urutan), notifyNext: true };
   });
   let out: Out;

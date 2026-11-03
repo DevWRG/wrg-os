@@ -4484,8 +4484,8 @@ app.post("/insentif/:amId/lead", async (c) => {
   }
 });
 
-// Rantai persetujuan 7 langkah (093 + 183). Wewenang per langkah dibaca dari tabel
-// insentif_approval_step, bukan dari kode; pemisahan kewenangan ditegakkan di DB.
+// Rantai persetujuan 7 langkah (093 + 183). Langkah 2–5 diputus mesin F11 (270);
+// Ajukan & Bayar tetap di modul insentif. Pemisahan kewenangan ditegakkan di DB.
 app.get("/insentif/:amId/approval", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   try {
@@ -4498,7 +4498,7 @@ app.get("/insentif/:amId/approval", async (c) => {
 
 app.post("/insentif/:amId/approval", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  const body = (await c.req.json().catch(() => ({}))) as { aksi?: string; catatan?: string };
+  const body = (await c.req.json().catch(() => ({}))) as { aksi?: string; catatan?: string; step?: number };
   const aksi = String(body.aksi ?? "").trim();
   if (!["maju", "tolak", "buka"].includes(aksi)) {
     return c.json({ error: "aksi harus maju, tolak, atau buka" }, 400);
@@ -4509,6 +4509,7 @@ app.post("/insentif/:amId/approval", async (c) => {
       periode: insentifPeriode(c),
       aksi: aksi as AksiApproval,
       catatan: body.catatan ?? null,
+      step: Number.isInteger(body.step) ? Number(body.step) : null,
     }));
   } catch (e) {
     const { status, body: err } = insentifErr(e);

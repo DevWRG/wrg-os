@@ -59,6 +59,14 @@ test("superuser pun tidak boleh menyetujui insentif atas namanya sendiri", () =>
   assert.equal(r.ok, false);
 });
 
-test("superuser boleh menyetujui langkah bergrup milik orang lain", () => {
-  assert.equal(berwenang(reviewHod, opts({ selfAmId: "AM02", superuser: true })).ok, true);
+// Sejak migrasi 270 (#1863): tanpa jalan pintas superuser — admin mengatur anggota
+// grup, bukan menandatangani atas nama grup. berwenang() kini hanya dipakai untuk
+// langkah di luar mesin F11 (Ajukan & Bayar); langkah 2–5 diuji di cekWewenang.
+test("superuser TIDAK boleh menandatangani langkah bergrup tanpa jadi anggota grupnya", () => {
+  const bayar: LangkahApproval = {
+    step: 6, status_dari: "direktur_approve", status_ke: "paid",
+    label: "Bayar (HRD)", group_key: "hrd", keterangan: null,
+  };
+  assert.equal(berwenang(bayar, opts({ selfAmId: "AM02", superuser: true })).ok, false);
+  assert.equal(berwenang(bayar, opts({ superuser: true, grup: ["hrd"] })).ok, true);
 });
