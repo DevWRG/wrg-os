@@ -433,16 +433,17 @@ function FormDireksi({ d, jalankan }: { d: Detail; jalankan: Jalankan }) {
   const { sibuk, err, go } = useKirim(jalankan);
   const [p, setP] = useState<"SETUJU" | "BERSYARAT" | "TOLAK" | null>(null);
   const r = d.rencana, g = d.angka_gpm;
-  // F170 v2: nilai awal = tiga harga Pedoman di volume terbukti (batas bawah @45%, target @50%); Direksi boleh mengubah
+  // F170 v2: nilai awal = tiga harga Pedoman di volume terbukti (pembuka @55%, target @50%, batas bawah @45%); Direksi boleh mengubah
   const awal = (x: number | null | undefined) => (x == null ? "" : String(Math.round(x)));
   const [f, setF] = useState({
-    lantai: awal(bulat100(g?.harga_forum)), target: awal(bulat100(g?.harga_hod)), tenor_maks: awal(r.tenor_bulan),
+    pembuka: awal(bulat100(g?.harga_am)), lantai: awal(bulat100(g?.harga_forum)), target: awal(bulat100(g?.harga_hod)), tenor_maks: awal(r.tenor_bulan),
     capex_maks: awal(r.capex), volume_min: r.volume_estimasi ? awal(Math.floor(r.volume_estimasi * 0.8)) : "", catatan: "",
   });
   const isi = (k: keyof typeof f) => (e: { target: { value: string } }) => setF({ ...f, [k]: e.target.value });
   const kolom: [keyof typeof f, string, string][] = [
-    ["lantai", "Batas bawah AM — lantai (Rp/test, GPM 45%)", r.harga_per_test ? `usulan AM ${rp(r.harga_per_test)}` : ""],
+    ["pembuka", "Harga pembuka penawaran (Rp/test, GPM 55%)", r.harga_per_test ? `usulan AM ${rp(r.harga_per_test)}` : ""],
     ["target", "Harga target (Rp/test, GPM 50%)", ""],
+    ["lantai", "Batas bawah AM — lantai (Rp/test, GPM 45%)", ""],
     ["tenor_maks", "Tenor maks (bulan)", r.tenor_bulan ? `diminta ${r.tenor_bulan}` : ""],
     ["capex_maks", "Capex maks (Rp)", `capex usulan ${rpJt(r.capex)}`],
     ["volume_min", "Volume minimum (test/bln)", r.volume_estimasi ? `estimasi ${r.volume_estimasi}` : ""],
@@ -460,7 +461,7 @@ function FormDireksi({ d, jalankan }: { d: Detail; jalankan: Jalankan }) {
       {p && <><Label>{p === "TOLAK" ? "Alasan penolakan" : p === "BERSYARAT" ? "Syarat" : "Catatan (opsional)"}</Label><Textarea value={f.catatan} onChange={isi("catatan")} /></>}
       {err && <p className="text-destructive text-sm">{err}</p>}
       <Button className="w-full sm:w-auto" disabled={!p || sibuk} onClick={() => go("putus-direksi", {
-        putusan: p, catatan: f.catatan, lantai: angka(f.lantai), target: angka(f.target), tenor_maks: angka(f.tenor_maks),
+        putusan: p, catatan: f.catatan, pembuka: angka(f.pembuka), lantai: angka(f.lantai), target: angka(f.target), tenor_maks: angka(f.tenor_maks),
         capex_maks: angka(f.capex_maks), volume_min: angka(f.volume_min),
       })}>Simpan putusan</Button>
     </Kotak>
