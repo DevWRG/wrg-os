@@ -157,6 +157,19 @@ interface TimelineEntry {
 // mengandung spasi ("First Contact"), jadi pola dibatasi sampai pemisah "|".
 const stripStagePrefix = (s: string) => s.replace(/^stage\s+[^|]*→[^|]*?(?:\s*\|\s*|$)/, "").trim();
 
+// Jenis entri Riwayat yang tahapnya TETAP — tanpa label, catatan follow-up,
+// laporan #REPORT, dan penanda sistem tampak sama persis (judulnya cuma nama tahap).
+// follow-up: awalan DEAL_NOTE_PREFIX dari apps/api addDealNote.
+// #REPORT: recordReportTouch menulis "hasil | next: aksi".
+type JenisRiwayat = { label: string; cls: string; teks: string } | null;
+const jenisRiwayat = (t: TimelineEntry, teks: string): JenisRiwayat => {
+  if (t.from_stage && t.from_stage !== t.to_stage) return null;
+  if (/^follow-up:\s*/i.test(teks)) return { label: "📝 Follow-up", cls: "bg-sky-100 text-sky-800 dark:bg-sky-500/20 dark:text-sky-200", teks: teks.replace(/^follow-up:\s*/i, "") };
+  if (t.changed_by === "system:dormant") return { label: "💤 Dormant", cls: DORMANT_BADGE_TL, teks };
+  if (/\|\s*next:/i.test(teks)) return { label: "#REPORT", cls: "bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-200", teks };
+  return null;
+};
+
 // UUID mentah tak berarti apa-apa buat user. Kalau nama tak berhasil di-resolve
 // dan nilainya cuma UUID, baris "oleh …" disembunyikan sekalian.
 const isUuid = (s: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
@@ -184,6 +197,7 @@ const GUGUR_HARI = 15;
 const STATUS_DORMANT = "Dormant";
 const STATUS_MANGKRAK = "Mangkrak >2mg";
 const F_KOSONG = { pcat: "", cabang: "", hod: "", am: "", brand: "", coop: "", year: "", status: "", q: "" };
+const DORMANT_BADGE_TL = "bg-violet-100 text-violet-800 dark:bg-violet-500/20 dark:text-violet-200";
 const DORMANT_BADGE = "inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium bg-violet-100 text-violet-800 dark:bg-violet-500/20 dark:text-violet-200";
 const tglPendek = (iso: string | null) =>
   iso ? new Date(iso).toLocaleDateString("id-ID", { day: "numeric", month: "short" }) : "—";
@@ -598,7 +612,9 @@ export function PipelineBoard({ data, isAdmin = false, bolehDemo = false }: { da
                 <ol className="space-y-2">
                   {tl.map((t) => {
                     const moved = t.from_stage && t.from_stage !== t.to_stage;
-                    const note = t.reason ? stripStagePrefix(t.reason) : "";
+                    const raw = t.reason ? stripStagePrefix(t.reason) : "";
+                    const jenis = jenisRiwayat(t, raw);
+                    const note = jenis ? jenis.teks : raw;
                     const actor = actorLabel(t);
                     return (
                       <li key={t.id} className="text-sm flex gap-2">
@@ -610,6 +626,7 @@ export function PipelineBoard({ data, isAdmin = false, bolehDemo = false }: { da
                             ) : (
                               <span className="font-medium">{stageLabel(t.to_stage)}</span>
                             )}
+                            {jenis && <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${jenis.cls}`}>{jenis.label}</span>}
                             <span className="text-xs text-muted-foreground">{fmtDateTime(t.occurred_at)}</span>
                           </div>
                           {note && <div className="text-xs text-muted-foreground mt-0.5 break-words">{note}</div>}
