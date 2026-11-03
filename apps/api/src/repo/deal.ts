@@ -683,6 +683,9 @@ function canApprove(scope: DataScope, deal: { cabang: string | null }): boolean 
 
 /** Batas panjang catatan follow-up (karakter). */
 export const DEAL_NOTE_MAX = 1000;
+/** Awalan reason di spt_state_log — Riwayat memakainya untuk label "Follow-up"
+ *  (membedakan dari entri tahap-tetap lain: #REPORT, AM ditunjuk, Dormant). */
+export const DEAL_NOTE_PREFIX = "follow-up: ";
 
 /**
  * Catatan follow-up TANPA pindah tahap — mis. deal masih di Quotation tapi AM
@@ -709,7 +712,7 @@ export async function addDealNote(
   if (!canWrite(scope, deal)) throw new DealError(403, "tidak berwenang mencatat di deal ini");
   const rows = await sql`
     INSERT INTO spt_state_log (deal_id, from_stage, to_stage, changed_by, reason)
-    VALUES (${dealId}, ${stage}, ${stage}, ${scope.userId ?? scope.amId}, ${isi})
+    VALUES (${dealId}, ${stage}, ${stage}, ${scope.userId ?? scope.amId}, ${DEAL_NOTE_PREFIX + isi})
     RETURNING id`;
   await sql`UPDATE deal SET updated_at = now() WHERE deal_id = ${dealId}`;
   return { state_log_id: String(rows[0].id), stage };
