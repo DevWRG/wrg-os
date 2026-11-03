@@ -15,6 +15,7 @@ interface LossPending {
   customer_name: string;
   facility_name: string | null;
   am_id: string | null;
+  am_name: string | null;
   brand: string | null;
   product: string | null;
   cabang: string | null;
@@ -135,7 +136,7 @@ export function LossApprovalPanel() {
               <div className="flex flex-wrap items-center gap-1.5 mt-2 text-xs">
                 {d.loss_reason && <Badge variant="outline" className="border-rose-300 text-rose-700">alasan: {d.loss_reason}</Badge>}
                 {d.cabang && <span className="text-muted-foreground">{d.cabang}</span>}
-                {d.am_id && <span className="text-muted-foreground">· AM {d.am_id}</span>}
+                {d.am_id && <span className="text-muted-foreground">· {d.am_name ?? d.am_id}</span>}
                 <span className="text-muted-foreground">· diajukan {fmtDate(d.requested_at)}</span>
                 <span className="text-muted-foreground">· tolak → balik ke <b>{d.revert_stage}</b></span>
               </div>
