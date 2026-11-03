@@ -52,6 +52,7 @@ import { terapkanKpiBulan } from "./repo/kpi-measure.js";
 import { runAuditFindingApprovalReminder } from "./repo/audit-finding.js";
 import { runInvoiceReminder, runOverdueRecap } from "./repo/faktur.js";
 import { runLeadAging } from "./repo/lead.js";
+import { runDealDormant } from "./repo/deal-dormant.js";
 import { runTrialReminder } from "./repo/demo-trial.js";
 import { runRekapKesehatanKso } from "./repo/kso-kesehatan.js";
 import { runRekapSuplaiKso } from "./repo/kso-suplai.js";
@@ -226,6 +227,10 @@ export function startScheduler(): ScheduleStatus {
   // F154 — susun draft jadwal kunjungan rutin teknisi bulan depan (tgl 20). Tanpa WA:
   // terbit tetap manual oleh HoD Aftersales. Default MATI.
   const jadwalRutinEnabled = (process.env.JADWAL_RUTIN_DRAFT_ENABLED ?? "false").toLowerCase() === "true";
+  // deal-dormant (migrasi 273) — Pipeline Dormant 45 hari + gugur ke Lost 15 hari
+  // kemudian. Default MATI; begitu dinyalakan pun default DRY-RUN (hitung + log,
+  // tanpa tulis DB / WA) sampai DEAL_DORMANT_DRY_RUN=false secara sadar.
+  const dealDormantEnabled = (process.env.DEAL_DORMANT_ENABLED ?? "false").toLowerCase() === "true";
   // F170 Komite KSO — irama forum Selasa/Kamis + lewat batas HOD + penawaran pagi + verifikasi bulan-6.
   const ksoJadwalEnabled = (process.env.KSO_JADWAL_ENABLED ?? "false").toLowerCase() === "true";
   // audit-finding-reminder (F60) — WA ke anggota grup tahap approval yang
@@ -308,12 +313,12 @@ export function startScheduler(): ScheduleStatus {
   ];
 
   status = {
-    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled || watchpointSnapshotEnabled || preVisitEnabled || geoSweepEnabled || cashinResumeEnabled || kpiMeasureEnabled || seninBriefEnabled || auditFindingReminderEnabled || invoiceReminderEnabled || soPacingEnabled || fixedAssetSyncEnabled || openRefreshEnabled || poSyncEnabled || leadAgingEnabled || trialReminderEnabled || ksoKesehatanEnabled || ksoSuplaiEnabled || ksoJadwalEnabled || jadwalRutinEnabled,
+    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled || watchpointSnapshotEnabled || preVisitEnabled || geoSweepEnabled || cashinResumeEnabled || kpiMeasureEnabled || seninBriefEnabled || auditFindingReminderEnabled || invoiceReminderEnabled || soPacingEnabled || fixedAssetSyncEnabled || openRefreshEnabled || poSyncEnabled || leadAgingEnabled || trialReminderEnabled || ksoKesehatanEnabled || ksoSuplaiEnabled || ksoJadwalEnabled || jadwalRutinEnabled || dealDormantEnabled,
     timezone,
     jobs: jobs.map((j) => ({ id: j.id, expr: j.expr, valid: cron.validate(j.expr) })),
   };
 
-  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled && !watchpointSnapshotEnabled && !preVisitEnabled && !geoSweepEnabled && !cashinResumeEnabled && !kpiMeasureEnabled && !seninBriefEnabled && !auditFindingReminderEnabled && !invoiceReminderEnabled && !soPacingEnabled && !fixedAssetSyncEnabled && !openRefreshEnabled && !poSyncEnabled && !leadAgingEnabled && !trialReminderEnabled && !ksoKesehatanEnabled && !ksoSuplaiEnabled && !ksoJadwalEnabled && !jadwalRutinEnabled) {
+  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled && !watchpointSnapshotEnabled && !preVisitEnabled && !geoSweepEnabled && !cashinResumeEnabled && !kpiMeasureEnabled && !seninBriefEnabled && !auditFindingReminderEnabled && !invoiceReminderEnabled && !soPacingEnabled && !fixedAssetSyncEnabled && !openRefreshEnabled && !poSyncEnabled && !leadAgingEnabled && !trialReminderEnabled && !ksoKesehatanEnabled && !ksoSuplaiEnabled && !ksoJadwalEnabled && !jadwalRutinEnabled && !dealDormantEnabled) {
     console.log("[scheduler] semua *_SCHEDULE/_ENABLED flag != true — tidak dijadwalkan");
     return status;
   }
@@ -976,6 +981,29 @@ export function startScheduler(): ScheduleStatus {
       { timezone },
     );
     live.push(`lead-aging=${leadAgingExpr}`);
+  }
+
+  // deal-dormant — hari kerja 07:30, sebelum AM mulai lapor. Hitungan 45/15 hari
+  // tetap hari KALENDER (sama dengan "Mangkrak >2mg"); job cuma tak jalan di hari
+  // libur supaya WA tak datang saat libur — deal yang jatuh tempo di hari libur
+  // digugurkan di hari kerja berikutnya.
+  const dealDormantExpr = process.env.DEAL_DORMANT_CRON ?? "30 7 * * 1-5";
+  const dealDormantDry = (process.env.DEAL_DORMANT_DRY_RUN ?? "true").toLowerCase() !== "false";
+  if (dealDormantEnabled && cron.validate(dealDormantExpr)) {
+    cron.schedule(
+      dealDormantExpr,
+      async () => {
+        try {
+          if (!(await isWorkday())) return;
+          const r = await runDealDormant({ dryRun: dealDormantDry });
+          console.log(`[scheduler] deal-dormant${r.dry_run ? " (DRY-RUN)" : ""} → tandai ${r.tandai}, gugur ${r.gugur}, lepas ${r.lepas}, total Dormant ${r.dormant_total}, WA AM ${r.wa_am}, HoD ${r.wa_hod}${r.lewati.length ? `, dilewati: ${r.lewati.join("; ")}` : ""}`);
+        } catch (e) {
+          console.error("[scheduler] deal-dormant gagal:", (e as Error).message);
+        }
+      },
+      { timezone },
+    );
+    live.push(`deal-dormant=${dealDormantExpr}${dealDormantDry ? "(dry)" : ""}`);
   }
 
   // accurate-open-refresh (#1840) — 05:30, sebelum jam kerja dan jauh dari deploy (deploy

@@ -51,6 +51,11 @@ export interface PipelineDeal {
   purchase_year: number | null;
   days_in_stage: number | null;
   stale: boolean;
+  // Dormant (migrasi 273): 45 hari tanpa pergerakan; gugur_at = otomatis Lost.
+  dormant: boolean;
+  dormant_at: string | null;
+  gugur_at: string | null;
+  days_idle: number | null;
   notes: string | null;
   updated_at: string;
 }
@@ -68,6 +73,7 @@ export interface PipelineData {
     total_value: number;
     weighted_value: number;
     stale_count: number;
+    dormant_count: number;
     by_forecast: { forecast: string; count: number; value: number }[];
   };
 }
@@ -157,6 +163,7 @@ const isUuid = (s: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-
 const actorLabel = (t: TimelineEntry): string | null => {
   if (t.changed_by_name) return t.changed_by_name;
   if (!t.changed_by) return null;
+  if (t.changed_by === "system:dormant") return "Sistem (Dormant)";
   return isUuid(t.changed_by) ? null : t.changed_by;
 };
 
@@ -170,6 +177,23 @@ function Sel({ label, val, set, options }: { label: string; val: string; set: (v
   );
 }
 
+// Pipeline Dormant — cermin DORMANT_HARI / GUGUR_HARI di apps/api/src/repo/deal.ts
+// (yang menentukan tetap API & job; angka di sini cuma untuk teks).
+const DORMANT_HARI = 45;
+const GUGUR_HARI = 15;
+const STATUS_DORMANT = "Dormant";
+const STATUS_MANGKRAK = "Mangkrak >2mg";
+const F_KOSONG = { pcat: "", cabang: "", hod: "", am: "", brand: "", coop: "", year: "", status: "", q: "" };
+const DORMANT_BADGE = "inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium bg-violet-100 text-violet-800 dark:bg-violet-500/20 dark:text-violet-200";
+const tglPendek = (iso: string | null) =>
+  iso ? new Date(iso).toLocaleDateString("id-ID", { day: "numeric", month: "short" }) : "—";
+// Sisa hari sampai gugur. ≤0 = jatuh tempo; job hari kerja berikutnya yang memindahkannya.
+const sisaHari = (iso: string | null) => {
+  if (!iso) return "—";
+  const n = Math.ceil((new Date(iso).getTime() - Date.now()) / 86_400_000);
+  return n > 0 ? `${n} hr lagi` : "gugur hari ini";
+};
+
 const TAB_BOARD = "board";
 const TAB_INFO = "infografis";
 
@@ -178,7 +202,7 @@ export function PipelineBoard({ data, isAdmin = false, bolehDemo = false }: { da
   const pathname = usePathname();
   const params = useSearchParams();
   const allDeals = useMemo(() => data.stages.flatMap((s) => s.deals), [data]);
-  const [f, setF] = useState({ pcat: "", cabang: "", hod: "", am: "", brand: "", coop: "", year: "", q: "" });
+  const [f, setF] = useState(F_KOSONG);
   const [sel, setSel] = useState<PipelineDeal | null>(null);
   const [formModal, setFormModal] = useState<{ mode: "create" } | { mode: "edit"; deal: DealFormInit } | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -296,6 +320,7 @@ export function PipelineBoard({ data, isAdmin = false, bolehDemo = false }: { da
     (!f.brand || d.brand === f.brand) &&
     (!f.coop || d.coop_model === f.coop) &&
     (!f.year || String(d.purchase_year) === f.year) &&
+    (!f.status || (f.status === STATUS_DORMANT ? d.dormant : d.stale)) &&
     (!f.q || `${d.facility_name ?? ""} ${d.customer_name} ${d.product ?? ""}`.toLowerCase().includes(f.q.toLowerCase()))
   ), [allDeals, f]);
 
@@ -309,6 +334,7 @@ export function PipelineBoard({ data, isAdmin = false, bolehDemo = false }: { da
   const sumVal = filtered.reduce((a, d) => a + (d.estimate_amount ?? 0), 0);
   const sumW = filtered.reduce((a, d) => a + d.weighted, 0);
   const staleN = filtered.filter((d) => d.stale).length;
+  const dormantN = filtered.filter((d) => d.dormant).length;
 
   // Tab disimpan di URL (?tab=), bukan useState: tautan /pipeline sering dikirim lewat
   // WA, jadi "lihat infografisnya" bisa dikirim sebagai ?tab=infografis. Board = default,
@@ -340,11 +366,20 @@ export function PipelineBoard({ data, isAdmin = false, bolehDemo = false }: { da
       </Card>
 
       {/* Ringkasan */}
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
         <Card className="p-3"><div className="text-xs text-muted-foreground">Total Deal</div><div className="text-xl font-semibold tabular-nums">{filtered.length}</div></Card>
         <Card className="p-3"><div className="text-xs text-muted-foreground">Total Nilai</div><div className="text-xl font-semibold tabular-nums">{jt(sumVal)}</div></Card>
         <Card className="p-3"><div className="text-xs text-muted-foreground">Nilai × Peluang</div><div className="text-xl font-semibold tabular-nums text-primary">{jt(sumW)}</div></Card>
         <Card className="p-3"><div className="text-xs text-muted-foreground">Mangkrak &gt;2mg</div><div className="text-xl font-semibold tabular-nums text-rose-600">{staleN}</div></Card>
+        {/* Klik = saring board ke deal Dormant (klik lagi = lepas). */}
+        <button type="button" onClick={() => setF({ ...f, status: f.status === STATUS_DORMANT ? "" : STATUS_DORMANT })}
+          title={`${DORMANT_HARI} hari tanpa pergerakan. Tetap diam ${GUGUR_HARI} hari lagi → otomatis Lost. Klik untuk menyaring.`}
+          className="text-left">
+          <Card className={`h-full p-3 transition-colors hover:border-violet-400 ${f.status === STATUS_DORMANT ? "border-violet-500 ring-2 ring-violet-500/30" : ""}`}>
+            <div className="text-xs text-muted-foreground">Dormant {DORMANT_HARI}h+</div>
+            <div className="text-xl font-semibold tabular-nums text-violet-700 dark:text-violet-300">{dormantN}</div>
+          </Card>
+        </button>
       </div>
 
       {/* Filter toolbar */}
@@ -358,8 +393,9 @@ export function PipelineBoard({ data, isAdmin = false, bolehDemo = false }: { da
         <Sel label="Brand" val={f.brand} set={(v) => setF({ ...f, brand: v })} options={opts.brand} />
         <Sel label="Coop" val={f.coop} set={(v) => setF({ ...f, coop: v })} options={opts.coop} />
         <Sel label="Tahun" val={f.year} set={(v) => setF({ ...f, year: v })} options={opts.year} />
-        {(f.pcat || f.cabang || f.hod || f.am || f.brand || f.coop || f.year || f.q) && (
-          <button onClick={() => setF({ pcat: "", cabang: "", hod: "", am: "", brand: "", coop: "", year: "", q: "" })}
+        <Sel label="Status" val={f.status} set={(v) => setF({ ...f, status: v })} options={[STATUS_DORMANT, STATUS_MANGKRAK]} />
+        {(f.pcat || f.cabang || f.hod || f.am || f.brand || f.coop || f.year || f.status || f.q) && (
+          <button onClick={() => setF(F_KOSONG)}
             className="text-sm text-muted-foreground hover:text-foreground underline">reset</button>
         )}
         <div className="ml-auto flex items-center gap-2">
@@ -415,7 +451,9 @@ export function PipelineBoard({ data, isAdmin = false, bolehDemo = false }: { da
                       className={`w-full text-left rounded-md border bg-background p-2 pr-9 hover:border-primary transition-colors cursor-grab active:cursor-grabbing ${dragId === d.deal_id ? "opacity-40" : ""}`}>
                       <div className="flex items-start justify-between gap-1">
                         <div className="text-sm font-medium leading-tight line-clamp-2">{d.facility_name || d.customer_name}</div>
-                        {d.stale && <span title="Mangkrak >2 minggu" className="text-rose-500 text-xs shrink-0">●</span>}
+                        {d.dormant
+                          ? <span title={`Dormant ${d.days_idle ?? "?"} hari tanpa pergerakan — otomatis Lost ${tglPendek(d.gugur_at)}`} className={`${DORMANT_BADGE} shrink-0`}>💤 {sisaHari(d.gugur_at)}</span>
+                          : d.stale && <span title="Mangkrak >2 minggu" className="text-rose-500 text-xs shrink-0">●</span>}
                       </div>
                       <div className="text-xs text-muted-foreground mt-1 line-clamp-1">{[d.brand, d.product].filter(Boolean).join(" · ") || "—"}</div>
                       <div className="flex items-center justify-between mt-1.5">
@@ -478,7 +516,14 @@ export function PipelineBoard({ data, isAdmin = false, bolehDemo = false }: { da
               {sel.prospect_category && !CLOSED_STAGES.has(sel.stage) && <Badge variant="outline">{sel.prospect_category}</Badge>}
               {sel.forecast_category && <Badge variant="outline">{sel.forecast_category}</Badge>}
               {sel.stale && <Badge variant="destructive">Mangkrak {sel.days_in_stage}h</Badge>}
+              {sel.dormant && <span className={DORMANT_BADGE}>💤 Dormant — otomatis Lost {tglPendek(sel.gugur_at)} ({sisaHari(sel.gugur_at)})</span>}
             </div>
+            {sel.dormant && (
+              <div className="mt-2 rounded-md border border-violet-300 px-3 py-2 text-xs text-violet-900 dark:border-violet-500/40 dark:text-violet-200">
+                {sel.days_idle ?? DORMANT_HARI} hari tanpa pergerakan. Status Dormant lepas sendiri begitu ada #REPORT untuk faskes ini,
+                tahapnya dipindah, atau deal diedit. Tetap diam sampai {tglPendek(sel.gugur_at)} → otomatis <b>Lost</b> (alasan: tidak bergerak).
+              </div>
+            )}
             <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1.5 mt-4 text-sm">
               {([
                 ["Brand", sel.brand], ["Produk", sel.product], ["Kerja Sama", coopLabel(sel.coop_model)],
@@ -488,6 +533,7 @@ export function PipelineBoard({ data, isAdmin = false, bolehDemo = false }: { da
                 ["Kota", sel.city], ["Provinsi", sel.province],
                 ["Estimasi bulan beli", buyEta(sel.purchase_month, sel.purchase_year)],
                 ["Hari di tahap ini", sel.days_in_stage],
+                ["Hari tanpa pergerakan", sel.days_idle],
               ] as [string, string | number | null][]).map(([k, v]) => (
                 <div key={k}><dt className="text-xs text-muted-foreground">{k}</dt><dd className="tabular-nums">{v ?? "—"}</dd></div>
               ))}
