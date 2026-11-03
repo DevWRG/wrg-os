@@ -9,8 +9,21 @@ import { db } from "../db.js";
 // pengingat ke HoD tak pernah terkirim. hod_key di app_user TIDAK diisi sebagai
 // gantinya: kolom itu juga menentukan cakupan data (resolveScope) — mengisinya
 // diam-diam mengubah apa yang dilihat HoD di semua menu.
-export async function waHod(hodKey: string): Promise<{ nama: string; wa: string } | null> {
+//
+// Kunci masukan dinormalkan dulu ke master_hod.hod_key (huruf kecil). Pemanggil
+// tak selalu memegang hod_key: deal.pic_hod / lead.pic_hod berisi bentuk kanonik
+// norm_hod() = "Rocky"/"Yogi" (huruf besar di depan), sehingga pencocokan persis
+// selalu meleset dan pengingat ke HoD tak pernah terkirim (ketahuan 3 Nov 2026 di
+// job deal-dormant: "HoD Rocky: nomor WA tak ditemukan"). Cocokkan hod_key,
+// panggilan, atau alias tanpa peduli huruf besar-kecil; tak ketemu → masukan apa adanya.
+export async function waHod(masukan: string): Promise<{ nama: string; wa: string } | null> {
   const sql = db();
+  const m = masukan.trim().toLowerCase();
+  const [k] = await sql`
+    SELECT hod_key FROM master_hod
+    WHERE lower(hod_key) = ${m} OR lower(btrim(panggilan)) = ${m} OR ${m} = ANY(alias)
+    ORDER BY (lower(hod_key) = ${m}) DESC LIMIT 1`;
+  const hodKey = k ? String(k.hod_key) : masukan;
   const [u] = await sql`
     SELECT name, wa_number FROM app_user
     WHERE hod_key = ${hodKey} AND active = true AND NULLIF(btrim(wa_number), '') IS NOT NULL
