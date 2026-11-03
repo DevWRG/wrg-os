@@ -122,6 +122,127 @@ function HBar({ rows, height }: { rows: Row[]; height?: number }) {
   );
 }
 
+// Matriks alat × tahap. Kunci baris = nama alat (deal.product) yang dinormalkan
+// spasi/huruf besar, supaya "Wondfo OCG-102" dan "wondfo  ocg-102" tak pecah dua
+// baris. Deal tanpa nama alat TETAP dihitung di baris sendiri — kalau dibuang,
+// total kolom tak lagi sama dengan "Sebaran deal per tahap" di atasnya.
+const NO_PRODUCT = "__none__";
+interface AlatRow {
+  key: string;
+  label: string;
+  brand: string | null;
+  byStage: Record<string, { count: number; value: number }>;
+  total: number;
+  open: number;
+}
+
+function alatMatrix(deals: PipelineDeal[], stages: string[]): AlatRow[] {
+  const m = new Map<string, AlatRow & { brands: Map<string, number> }>();
+  for (const d of deals) {
+    const raw = (d.product ?? "").replace(/\s+/g, " ").trim();
+    const key = raw ? raw.toLowerCase() : NO_PRODUCT;
+    let r = m.get(key);
+    if (!r) {
+      r = {
+        key, label: raw || "(nama alat belum diisi)", brand: null, total: 0, open: 0, brands: new Map(),
+        byStage: Object.fromEntries(stages.map((s) => [s, { count: 0, value: 0 }])),
+      };
+      m.set(key, r);
+    }
+    const cell = r.byStage[d.stage];
+    if (!cell) continue; // tahap di luar daftar board → tak tampil di kolom mana pun
+    cell.count += 1;
+    cell.value += d.estimate_amount ?? 0;
+    r.total += 1;
+    if (d.stage !== CLOSED.won && d.stage !== CLOSED.lost) r.open += 1;
+    if (d.brand) r.brands.set(d.brand, (r.brands.get(d.brand) ?? 0) + 1);
+  }
+  return [...m.values()]
+    .filter((r) => r.total > 0)
+    .map(({ brands, ...r }) => ({ ...r, brand: [...brands.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null }))
+    // Yang masih jalan dulu (itu yang bisa dikerjakan), lalu total; baris
+    // "belum diisi" selalu paling bawah supaya tak menyerobot peringkat.
+    .sort((a, b) => (a.key === NO_PRODUCT ? 1 : 0) - (b.key === NO_PRODUCT ? 1 : 0) || b.open - a.open || b.total - a.total || a.label.localeCompare(b.label));
+}
+
+const ALAT_PREVIEW = 15;
+
+function AlatStageTable({ deals, stages }: { deals: PipelineDeal[]; stages: string[] }) {
+  const [all, setAll] = useState(false);
+  const rows = useMemo(() => alatMatrix(deals, stages), [deals, stages]);
+  const maxCell = Math.max(1, ...rows.flatMap((r) => stages.map((s) => r.byStage[s].count)));
+  const colTotal = stages.map((s) => rows.reduce((a, r) => a + r.byStage[s].count, 0));
+  const shown = all ? rows : rows.slice(0, ALAT_PREVIEW);
+
+  return (
+    <Panel
+      title={`Alat di pipeline per tahap (${rows.length} alat)`}
+      wide
+      empty={rows.length === 0}
+      hint="Angka = jumlah deal; warna makin pekat = makin banyak. Arahkan kursor ke sel untuk melihat perkiraan nilai. Urut: deal yang masih jalan terbanyak dulu."
+    >
+      <div className="overflow-x-auto">
+        <table className="w-full border-separate border-spacing-0 text-xs">
+          <thead>
+            <tr>
+              <th className="bg-card sticky left-0 z-10 min-w-[180px] border-b px-2 py-1.5 text-left font-medium">Alat</th>
+              {stages.map((s) => (
+                <th key={s} className="border-b px-2 py-1.5 text-center font-medium whitespace-nowrap">
+                  <span className="mr-1 inline-block h-2 w-2 rounded-sm align-middle" style={{ background: stageFill(s) }} />
+                  {STAGE_SHORT[s] ?? s}
+                </th>
+              ))}
+              <th className="border-b px-2 py-1.5 text-center font-semibold">Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            {shown.map((r) => (
+              <tr key={r.key} className="hover:bg-muted/40">
+                <td className="bg-card sticky left-0 z-10 border-b px-2 py-1.5">
+                  <div className={r.key === NO_PRODUCT ? "text-muted-foreground italic" : "font-medium"}>{r.label}</div>
+                  {r.brand && <div className="text-muted-foreground text-[10px]">{r.brand}</div>}
+                </td>
+                {stages.map((s) => {
+                  const c = r.byStage[s];
+                  // Isi sel = tint warna tahap, proporsional ke sel terbesar.
+                  // Dibatasi 45% supaya teks normal tetap terbaca di terang & gelap.
+                  const pct = c.count > 0 ? Math.round(12 + (c.count / maxCell) * 33) : 0;
+                  return (
+                    <td key={s} className="border-b px-1 py-1 text-center tabular-nums"
+                      title={c.count > 0 ? `${r.label} · ${STAGE_SHORT[s] ?? s}: ${c.count} deal · ${rpC(c.value)}` : undefined}>
+                      {c.count > 0 ? (
+                        <span className="block rounded px-1.5 py-0.5 font-medium"
+                          style={{ background: `color-mix(in srgb, ${stageFill(s)} ${pct}%, transparent)` }}>
+                          {c.count}
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground/50">·</span>
+                      )}
+                    </td>
+                  );
+                })}
+                <td className="border-b px-2 py-1.5 text-center font-semibold tabular-nums">{r.total}</td>
+              </tr>
+            ))}
+          </tbody>
+          <tfoot>
+            <tr>
+              <td className="bg-card sticky left-0 z-10 px-2 py-1.5 font-semibold">Total</td>
+              {colTotal.map((n, i) => <td key={stages[i]} className="px-2 py-1.5 text-center font-semibold tabular-nums">{n}</td>)}
+              <td className="px-2 py-1.5 text-center font-semibold tabular-nums">{colTotal.reduce((a, n) => a + n, 0)}</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+      {rows.length > ALAT_PREVIEW && (
+        <button onClick={() => setAll((v) => !v)} className="text-muted-foreground hover:text-foreground mt-2 text-xs underline">
+          {all ? `ringkas ke ${ALAT_PREVIEW} alat teratas` : `tampilkan semua ${rows.length} alat`}
+        </button>
+      )}
+    </Panel>
+  );
+}
+
 export function PipelineInsights({ deals, stages }: { deals: PipelineDeal[]; stages: string[] }) {
   const [open, setOpen] = useState(true);
 
@@ -232,6 +353,9 @@ export function PipelineInsights({ deals, stages }: { deals: PipelineDeal[]; sta
               })}
             </div>
           </Panel>
+
+          {/* Rincian sebaran di atas per alat — total kolomnya = angka bar di atas. */}
+          <AlatStageTable deals={deals} stages={stages} />
 
           {/* Hasil deal — donut 3 irisan + win rate sebagai angka utama. */}
           <Panel
