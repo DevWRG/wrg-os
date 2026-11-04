@@ -259,7 +259,9 @@ export async function getPipeline(
     rows = await sql`SELECT ${cols} FROM deal d WHERE am_id = ${scope.amId} AND ${bukanDrop} ORDER BY updated_at DESC`;
   } else {
     // isRestricted true & bukan amOnly → pasti punya cabangScope (HoD ber-territory).
-    rows = await sql`SELECT ${cols} FROM deal d WHERE cabang = ANY(${scope.cabangScope!}) AND ${bukanDrop} ORDER BY updated_at DESC`;
+    // upper(btrim()): cabangScope sudah huruf besar (resolveScope), kolom deal.cabang
+    // tidak selalu — perbandingan persis dulu membuang deal ber-ejaan campuran dari board HoD.
+    rows = await sql`SELECT ${cols} FROM deal d WHERE upper(btrim(cabang)) = ANY(${scope.cabangScope!}) AND ${bukanDrop} ORDER BY updated_at DESC`;
   }
 
   // Resolve am_id → panggilan (master_user) untuk tampilan & filter AM.

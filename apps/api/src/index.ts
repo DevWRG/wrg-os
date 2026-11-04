@@ -23,6 +23,7 @@ import { listAsetTetap, ringkasanAsetTetap, jadwalAsetTetap, simpanOverrideAsetT
 import { pratinjauRekon, terapkanRekon, batalkanTautanOtomatis, cariAlatKso } from "./repo/asetTetapRekon.js";
 import { mirrorFreshness } from "./repo/mirror-health.js";
 import { insertAuditEvent } from "./repo/audit.js";
+import { salesCommand, SalesCommandError } from "./repo/sales-command.js";
 import { upsertDealsFromPlan, logReportToDeals, getPipeline, getPipelineReport, getPipelineLeaderboard, transitionStage, DealError, listPendingLosses, decideLoss, getDealTimeline, createDeal, updateDeal, deleteDeal, addDealNote, tambahOpsi, jadikanOpsiUtama } from "./repo/deal.js";
 import { enqueueAmbiguous, listHitl, resolveHitl } from "./repo/hitl.js";
 import { insertRekap, insertResume, getDigestHistory, getDigestInsights } from "./repo/digest.js";
@@ -4595,6 +4596,19 @@ app.get("/executive/command", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json(await execCommand(await scopeOf(c)));
 });
+// Sales Command Center (#1979) — cockpit HoD per region. Gerbang menu di BFF
+// (requireFeature); di sini aturan region: HoD terkunci ke region timnya,
+// Direktur/admin/superuser memilih ?region=East|West, selain itu 403.
+app.get("/sales-command", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    return c.json(await salesCommand(await scopeOf(c), c.req.query("region") ?? null));
+  } catch (e) {
+    if (e instanceof SalesCommandError) return c.json({ error: e.message }, e.status);
+    throw e;
+  }
+});
+
 app.get("/executive/am-radar", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json(await execAmRadar(await scopeOf(c)));
