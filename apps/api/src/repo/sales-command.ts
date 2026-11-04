@@ -81,7 +81,7 @@ export interface BarisAm {
   deal_macet: number;
   pipeline_meragukan: number;
   ar_90: number;
-  /** Jumlah sinyal merah — dasar urutan "perlu perhatian". */
+  /** Jumlah sinyal merah — dasar urutan "perlu perhatian". Tanpa lampu YTD (lihat gabungPerAm). */
   skor: number;
 }
 
@@ -120,7 +120,11 @@ export function gabungPerAm(s: SumberAm): BarisAm[] {
   for (const [nama, n] of s.meragukanPerNama) { const id = s.namaKeAm.get(upper(nama)); if (id && m.has(id)) m.get(id)!.pipeline_meragukan += n; }
   for (const [nama, v] of s.ar90PerNama) { const id = s.namaKeAm.get(upper(nama)); if (id && m.has(id)) m.get(id)!.ar_90 += v; }
   for (const b of m.values()) {
-    b.skor = (b.lampu === "red" ? 1 : 0) + (b.pacing === "behind" ? 1 : 0) + (b.plan_report_miss > 0 ? 1 : 0)
+    // Lampu YTD SENGAJA tak dihitung: ia membandingkan penjualan sejak 1 Januari dengan
+    // target SETAHUN penuh (tak diprorata), jadi di awal tahun hampir semua AM merah dan
+    // urutan jadi tumpul. Kinerja diwakili pacing tahun (sudah diprorata) — keputusan
+    // pemilik 4 Nov 2026. Lampu tetap tampil sebagai informasi.
+    b.skor = (b.pacing === "behind" ? 1 : 0) + (b.plan_report_miss > 0 ? 1 : 0)
       + (b.deal_dormant > 0 ? 1 : 0) + (b.pipeline_meragukan > 0 ? 1 : 0) + (b.ar_90 > 0 ? 1 : 0);
   }
   return [...m.values()].sort((a, b) => b.skor - a.skor || b.ar_90 - a.ar_90 || a.nama.localeCompare(b.nama));
