@@ -62,6 +62,7 @@ import { canViewTukarFaktur } from "@/lib/tukar-faktur-access";
 import { canViewDocTracker } from "@/lib/doc-tracker-access";
 import { canViewRaportList } from "@/lib/raport-access";
 import { canViewExecutive } from "@/lib/executive-access";
+import { canViewSalesCommand } from "@/lib/sales-command-access";
 import { FITUR_HARGA_BELI, canBukaDaftarAlat, canViewKso } from "@/lib/kso-access";
 import { canViewNpkAm, canViewNpkAmSelf } from "@/lib/npk-access";
 import { canViewInsentifTim } from "@/lib/insentif-access";
@@ -137,6 +138,7 @@ export const NAV: NavGroup[] = [
     items: [
       { title: "Sales Calendar", url: "/calendar", icon: CalendarRange },
       { title: "Sales Analytics", url: "/sales-analytics", icon: Target, badge: "NEW" },
+      { title: "Sales Command Center", url: "/sales-command", icon: Gauge, badge: "NEW", show: canViewSalesCommand },
       // F90 #ORDER — antrean pesanan AM dari WhatsApp untuk Admin Sales; izin sendiri (Sync Fitur).
       { title: "Antrean Order", url: "/order-wa", icon: ShoppingCart, badge: "NEW", show: canViewOrderWa },
       // F6 Product Scorecard — kinerja per kategori/lini/brand/item; izin sendiri, tertutup default (Sync Fitur).
@@ -555,6 +557,7 @@ export const NAV: NavGroup[] = [
 // Rawat: saat satu menu dipromosikan satuan ke main → hapus url-nya dari sini;
 // saat #1282 merge → kosongkan Set ini.
 export const DEV_ONLY_URLS: ReadonlySet<string> = new Set([
+  "/sales-command",
   "/approval-requests",
   "/doc-klaim",
   "/forecast-submission",
