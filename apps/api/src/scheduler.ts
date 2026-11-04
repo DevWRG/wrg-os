@@ -959,6 +959,30 @@ export function startScheduler(): ScheduleStatus {
     live.push(`accurate-open-refresh=${openRefreshExpr}`);
   }
 
+  // accurate-reinput-sweep — Minggu 04:30, sejam sebelum open-refresh. accurate-sync harian
+  // cuma menarik faktur bertanggal 7 hari terakhir; faktur yang DIINPUT ULANG di Accurate
+  // dengan tanggal lama (id baru, nomor sama) tak pernah ditarik, sementara id lamanya
+  // diarsip open-refresh sebagai hantu → piutang hilang dari WRG-OS (PJE/2229-2609-MJK,
+  // Rp 54,8 jt, ketahuan saat rekonsiliasi Finance 4 Nov). skip_existing = cuma faktur baru.
+  // Ikut saklar open-refresh: urusan yang sama (kesegaran AR).
+  const reinputSweepExpr = process.env.ACCURATE_REINPUT_SWEEP_CRON ?? "30 4 * * 0";
+  if (openRefreshEnabled && cron.validate(reinputSweepExpr)) {
+    cron.schedule(
+      reinputSweepExpr,
+      async () => {
+        const startedAt = new Date().toISOString();
+        try {
+          const r = await syncAccurateInvoices({ days: 120, skipExisting: true });
+          console.log(`[scheduler] accurate-reinput-sweep @ ${startedAt} ${JSON.stringify(r)}`);
+        } catch (e) {
+          console.error(`[scheduler] accurate-reinput-sweep gagal @ ${startedAt}:`, e);
+        }
+      },
+      { timezone },
+    );
+    live.push(`accurate-reinput-sweep=${reinputSweepExpr}`);
+  }
+
   // accurate-po-sync (F13) — tiap 30 menit jam kerja-ish. Inkremental per
   // lastUpdate Accurate, jadi siklus tanpa perubahan cuma 1 halaman list.
   // Penerimaan Barang (F36, migrasi 206) ikut di job yang sama, SESUDAH PO:
