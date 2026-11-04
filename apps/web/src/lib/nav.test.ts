@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import { test } from "node:test";
 
-import { DEV_ONLY_URLS, devOnlyBadge, featureCatalog, findNavItem, NAV } from "./nav.js";
+import { DEV_ONLY_URLS, devOnlyBadge, featureCatalog, findNavItem, NAV, navVisible } from "./nav.js";
 
 // findNavItem dipakai (dashboard)/layout.tsx sebagai GATE rute: item null =
 // rute lolos tanpa diperiksa izinnya. Jadi tes di sini bukan soal sorot
@@ -102,4 +102,20 @@ test("tiap kunci fitur yang disemai migrasi ikut katalog menu (atau tercatat pen
     }
   }
   assert.deepEqual(yatim, [], `fitur akan dinonaktifkan Sync Fitur: ${yatim.join(", ")}`);
+});
+
+test("menu hanyaAdmin: hanya admin/superuser, matriks Akses Grup tak bisa membukanya, tak ada di katalog", () => {
+  const item = (url: string) => NAV.flatMap((g) => g.items).find((it) => it.url === url)!;
+  const izin = (key: string) => ({ [key]: { active: true, view: true, create: false, edit: false, delete: false } });
+  for (const url of ["/status-job", "/people/hod-resolve"]) {
+    const it = item(url);
+    assert.equal(it.hanyaAdmin, true, url);
+    assert.equal(navVisible({ role: "admin" }, it), true, url);
+    assert.equal(navVisible({ role: "user", superuser: true }, it), true, url);
+    assert.equal(navVisible({ role: "user" }, it), false, url);
+    // Dicentang di matriks untuk grup non-admin → tetap tertutup (dulu terbuka).
+    const key = url.replace(/^\//, "").replace(/\//g, "-");
+    assert.equal(navVisible({ role: "user", permissions: izin(key) }, it), false, url);
+    assert.equal(featureCatalog().some((r) => r.path === url), false, url);
+  }
 });
