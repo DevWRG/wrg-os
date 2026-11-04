@@ -42,6 +42,13 @@ export interface AppUser {
   name: string | null;
   role: string;
   title: string | null;
+  /** Hanya diisi verifyCredentials (respons login): user wajib ganti password dulu. */
+  force_change?: boolean;
+}
+
+// Pola password awal yang dulu dibagikan (`<panggilan>123`) — ditolak sebagai password baru.
+export function polaPasswordAwal(pw: string): boolean {
+  return /^[a-z]+123$/i.test(pw.trim());
 }
 
 // Map baris DB → AppUser (title bisa null untuk user lama tanpa jabatan).
@@ -91,7 +98,7 @@ export async function getUserByIdentifier(identifier: string) {
   const digits = v.replace(/\D/g, "");
   const phoneOk = digits.length >= 6;
   const rows = await sql`
-    SELECT id, email, password_hash, name, role, title, active
+    SELECT id, email, password_hash, name, role, title, active, force_change
     FROM app_user
     WHERE lower(email) = lower(${v})
        OR lower(name) = lower(${v})
@@ -112,7 +119,8 @@ export async function verifyCredentials(
   if (u.active === false) return null; // akun nonaktif tak bisa login
   if (!verifyPassword(password, String(u.password_hash))) return null;
   await db()`UPDATE app_user SET last_login_at = now() WHERE id = ${u.id}`;
-  return toAppUser(u);
+  // force_change dibawa ke respons login → web mengunci sesi ke /ganti-password sampai diganti.
+  return { ...toAppUser(u), force_change: u.force_change === true };
 }
 
 export async function countUsers(): Promise<number> {
@@ -175,12 +183,20 @@ export async function setUserPassword(id: string, password: string, force = fals
   return rows.length > 0;
 }
 
+// Tanda wajib-ganti-password (dibaca /auth/me tiap halaman).
+export async function getForceChange(id: string): Promise<boolean> {
+  const [r] = await db()`SELECT force_change FROM app_user WHERE id = ${id}`;
+  return r?.force_change === true;
+}
+
 // Self change-password: verifikasi current dulu.
 export async function changeOwnPassword(id: string, current: string, next: string): Promise<{ ok: boolean; error?: string }> {
   const sql = db();
   const [u] = await sql`SELECT password_hash FROM app_user WHERE id = ${id}`;
   if (!u) return { ok: false, error: "user tak ditemukan" };
   if (!verifyPassword(current, String(u.password_hash))) return { ok: false, error: "password lama salah" };
+  if (next === current) return { ok: false, error: "password baru harus berbeda dari password lama" };
+  if (polaPasswordAwal(next)) return { ok: false, error: "password baru tak boleh berpola <nama>123" };
   await sql`UPDATE app_user SET password_hash = ${hashPassword(next)}, force_change = false WHERE id = ${id}`;
   return { ok: true };
 }
