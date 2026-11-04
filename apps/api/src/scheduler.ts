@@ -1,4 +1,5 @@
-import cron from "node-cron";
+import nodeCron, { type ScheduledTask } from "node-cron";
+import { catatJalan } from "./repo/job-run.js";
 import { runAgenda, runDireksi, runLewatBatasHod, runPendapatBelumMasuk, runPenawaranPagi, runSegarkanReferensi, runVerifikasiBulan6 } from "./repo/kso-jadwal.js";
 
 import { db, isDbEnabled } from "./db.js";
@@ -90,6 +91,47 @@ export interface ScheduleStatus {
 }
 
 let status: ScheduleStatus = { enabled: false, timezone: "", jobs: [] };
+
+// ── Papan status job (migrasi 275) ──────────────────────────────────────────────
+// `cron` di file ini = pembungkus node-cron: SETIAP eksekusi job dicatat ke job_run lewat
+// catatJalan(). Nama job diambil dari `live.push("nama=expr")` yang selalu mengikuti
+// cron.schedule() di tiap blok (59 pasang per 4 Nov) — jadi job baru otomatis tercatat asal
+// mengikuti pola yang sama. Lihat repo/job-run.ts.
+interface SlotJob { nama: string | null; expr: string; task?: ScheduledTask }
+const terdaftar = new Map<string, SlotJob>();
+let slotTerakhir: SlotJob | null = null;
+
+const cron = {
+  validate: nodeCron.validate,
+  schedule(expr: string, fn: () => unknown, opts?: Parameters<typeof nodeCron.schedule>[2]): ScheduledTask {
+    const slot: SlotJob = { nama: null, expr };
+    const task = nodeCron.schedule(
+      expr,
+      () => catatJalan(slot.nama ?? `tanpa-nama ${expr}`, expr, () => task.getNextRun(), fn),
+      opts,
+    );
+    slot.task = task;
+    slotTerakhir = slot;
+    return task;
+  },
+};
+
+function namaiJob(entri: string): void {
+  const slot = slotTerakhir;
+  if (!slot) return;
+  slotTerakhir = null;
+  slot.nama = entri.split("=")[0];
+  terdaftar.set(slot.nama, slot);
+}
+
+/** Job yang benar-benar terjadwal di proses ini (saklarnya nyala) + jadwal berikutnya. */
+export function jadwalTerdaftar(): { nama: string; expr: string; berikut: string | null }[] {
+  return [...terdaftar.values()].map((s) => ({
+    nama: s.nama!,
+    expr: s.expr,
+    berikut: s.task?.getNextRun()?.toISOString() ?? null,
+  }));
+}
 
 export function getScheduleStatus(): ScheduleStatus {
   return status;
@@ -383,6 +425,11 @@ export function startScheduler(): ScheduleStatus {
   }
 
   const live: string[] = [];
+  const pushLive = live.push.bind(live);
+  live.push = (...entri: string[]) => {
+    for (const e of entri) namaiJob(e);
+    return pushLive(...entri);
+  };
   // A1-12 hanya bila AGENT_SCHEDULE_ENABLED.
   if (enabled) for (const j of jobs) {
     if (!cron.validate(j.expr)) {

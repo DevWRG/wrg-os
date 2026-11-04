@@ -543,6 +543,9 @@ export const NAV: NavGroup[] = [
       // F121 HoD Resolver: utilitas data-quality (preview atasan_raw → HoD kanonik),
       // bukan analytics harian → grup Admin, gate admin/superuser.
       { title: "HoD Resolver", url: "/people/hod-resolve", icon: KeyRound, show: (me) => me?.role === "admin" || me?.superuser === true },
+      // Papan status job terjadwal (prioritas Direktur 20 Okt, migrasi 275) — utilitas operasional
+      // server, gate admin/superuser seperti HoD Resolver.
+      { title: "Status Job", url: "/status-job", icon: Gauge, badge: "NEW", show: (me) => me?.role === "admin" || me?.superuser === true },
       { title: "Settings", url: "/settings", icon: Settings },
     ],
   },
