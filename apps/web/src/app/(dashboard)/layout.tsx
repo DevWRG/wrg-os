@@ -17,10 +17,6 @@ export default async function DashboardLayout({
   // ter-gate role langsung ter-render pas SSR, tanpa flicker "muncul telat".
   const me = await sessionUser();
 
-  // Akun bertanda force_change (password awal / direset admin) dikunci ke /ganti-password
-  // sampai menggantinya. Dicek di server tiap halaman dari DB → tak bisa dilewati lewat cookie.
-  if (me?.force_change) redirect("/ganti-password");
-
   // Gate rute: keputusan SAMA dengan sidebar (navVisible) → menu tersembunyi =
   // halaman tertutup, termasuk saat URL diketik langsung. Pathname dioper lewat
   // header dari middleware (Server Component tak bisa membacanya). Rute di luar

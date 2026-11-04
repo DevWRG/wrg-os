@@ -335,7 +335,7 @@ import {
 import { aiBaseUrl, callAi, statistikDegradasiAi } from "./ai.js";
 import { startScheduler, getScheduleStatus } from "./scheduler.js";
 import { signJwt, verifyJwt } from "./auth.js";
-import { verifyCredentials, createUser, countUsers, listAppUsers, setUserPassword, updateAppUser, deleteAppUser, getAppUserById, createUserFromRoster, generatePassword, changeOwnPassword, getForceChange, normalizeLoginRole, LOGIN_ROLES } from "./repo/users.js";
+import { verifyCredentials, createUser, countUsers, listAppUsers, setUserPassword, updateAppUser, deleteAppUser, getAppUserById, createUserFromRoster, generatePassword, changeOwnPassword, normalizeLoginRole, LOGIN_ROLES } from "./repo/users.js";
 import {
   createRfidCartridgeClaim,
   listRfidCartridgeClaims,
@@ -828,13 +828,7 @@ app.get("/auth/me", async (c) => {
   let hod_key: string | null = null; // utk gate menu Raport & NPK Saya (HoD) di web
   let is_am = false;
   let is_hod = false;
-  // force_change dibaca dari DB tiap kali (bukan dari JWT): admin bisa menandai akun
-  // kapan saja, dan layout dashboard langsung mengunci sesi itu ke /ganti-password.
-  let force_change = false;
   if (isDbEnabled() && payload.sub) {
-    try {
-      force_change = await getForceChange(String(payload.sub));
-    } catch { /* abaikan — anggap tak wajib ganti */ }
     try {
       const eff = await effectivePermissions(String(payload.sub));
       superuser = eff.superuser; groups = eff.groups; permissions = eff.permissions; rbac = true;
@@ -851,7 +845,7 @@ app.get("/auth/me", async (c) => {
     user: {
       id: payload.sub, email: payload.email, role: payload.role,
       name: payload.name ?? null, title: payload.title ?? null,
-      am_id, hod_key, is_am, is_hod, force_change,
+      am_id, hod_key, is_am, is_hod,
       superuser, groups, permissions, rbac,
     },
   });

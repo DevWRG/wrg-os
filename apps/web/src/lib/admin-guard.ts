@@ -7,8 +7,6 @@ import type { PermBag } from "@/lib/perms";
 export interface SessionUserSrv extends PermBag {
   id: string; email: string; role: string; name?: string; title?: string | null;
   am_id?: string | null; hod_key?: string | null; is_am?: boolean | null; is_hod?: boolean | null;
-  /** Akun wajib ganti password dulu (app_user.force_change) — layout mengunci ke /ganti-password. */
-  force_change?: boolean;
 }
 
 // Session user dari cookie JWT (via apps/api /auth/me). null kalau tak login.
