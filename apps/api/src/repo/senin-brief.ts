@@ -314,6 +314,7 @@ async function pipelinePerHod(): Promise<Map<string, PipelineAgg>> {
       COALESCE(sum(COALESCE(estimated_value, estimate_amount, 0) * COALESCE(probability, 0)), 0)::float8 AS weighted
     FROM deal
     WHERE stage NOT IN ('Closing-Won', 'Closing-Lost') AND NOT on_hold AND pic_hod IS NOT NULL
+      AND opsi_utama -- Multi-Opsi (274): satu kebutuhan dihitung sekali
     GROUP BY lower(pic_hod)
   `;
   return new Map(rows.map((r) => [String(r.k), {

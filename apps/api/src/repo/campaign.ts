@@ -307,6 +307,7 @@ async function corong(sql: Sql, brands: string[], from: string, to: string, sc: 
     FROM deal d
     WHERE d.created_at >= ${from}::date AND d.created_at < ${to}::date + 1
       AND d.brand = ANY(${brands}::text[])
+      AND d.opsi_utama -- Multi-Opsi (274): opsi alternatif & yang di-drop tak dihitung
       ${scopeOnClause(sql, sc, sql`d.am_id`, sql`d.cabang`)}`;
   const [akt] = await sql`
     SELECT count(*)::int AS n
