@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  LaunchAgent cadangan harian database produksi (Mac mini, user development).
+  Tiap 01:30: scripts/ops/backup-harian.sh (pg_dump terenkripsi ke Google Drive,
+  uji pulih tiap Minggu). Jalankan sekali manual dulu sebelum memasang ini.
+
+  Pasang sekali:
+    cp infra/launchd/com.wrg.backup-harian.plist ~/Library/LaunchAgents/
+    launchctl load -w ~/Library/LaunchAgents/com.wrg.backup-harian.plist
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.wrg.backup-harian</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/zsh</string>
+    <string>-lc</string>
+    <string>exec /bin/bash "$HOME/DevWRG/wrg-os/scripts/ops/backup-harian.sh"</string>
+  </array>
+
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>1</integer>
+    <key>Minute</key>
+    <integer>30</integer>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>/Users/development/DevWRG/ops/backup-harian.launchd.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/development/DevWRG/ops/backup-harian.launchd.log</string>
+</dict>
+</plist>
