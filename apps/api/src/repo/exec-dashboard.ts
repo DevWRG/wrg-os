@@ -76,7 +76,8 @@ export async function execCommand(scope?: DataScope) {
   // Opportunities: deal pipeline di stage Negosiasi (nilai terbesar) — F1 SPT.
   const negoStages = (pipe?.stages ?? []).filter((s) => /nego/i.test(s.stage));
   const opportunities = negoStages
-    .flatMap((s) => s.deals.map((d) => ({ customer: d.customer_name, value: d.estimate_amount, am_id: d.am_name ?? d.am_id, stage: s.stage })))
+    // Multi-Opsi (274): satu kebutuhan = satu baris (opsi utama), bukan tiap alternatif.
+    .flatMap((s) => s.deals.filter((d) => d.opsi_utama).map((d) => ({ customer: d.customer_name, value: d.estimate_amount, am_id: d.am_name ?? d.am_id, stage: s.stage })))
     .sort((a, b) => (b.value ?? 0) - (a.value ?? 0))
     .slice(0, 3);
 
@@ -365,7 +366,7 @@ export async function execGrowthLevers(scope?: DataScope, force = false) {
   // Stuck deals: deal stale (>14 hari di stage) — nilai terbesar dulu.
   const stuckDeals = (pipe?.stages ?? [])
     .flatMap((s) => s.deals)
-    .filter((d) => d.stale)
+    .filter((d) => d.stale && d.opsi_utama)
     .sort((a, b) => (b.estimate_amount ?? 0) - (a.estimate_amount ?? 0))
     .slice(0, 5)
     .map((d) => ({

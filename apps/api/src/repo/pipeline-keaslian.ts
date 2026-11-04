@@ -140,7 +140,9 @@ export async function keaslianPipeline(sc: DataScope = FULL_SCOPE) {
            d.am_id, COALESCE(NULLIF(mu.nama, ''), d.am_id, '(tanpa AM)') AS am, upper(btrim(COALESCE(d.cabang, mu.cabang, ''))) AS cabang
     FROM deal d
     LEFT JOIN master_user mu ON mu.am_id = d.am_id
-    WHERE (d.stage::text NOT IN ('Closing-Won', 'Closing-Lost')
+    -- Multi-Opsi (274): yang dinilai kebutuhannya (opsi utama); opsi alternatif berbagi
+    -- kunjungan yang sama, jadi menilainya sendiri-sendiri = tanda "tanpa kunjungan" palsu.
+    WHERE d.opsi_utama AND (d.stage::text NOT IN ('Closing-Won', 'Closing-Lost')
            OR (d.stage::text = 'Closing-Won' AND d.stage_entered_at >= now() - make_interval(days => ${ATURAN.won_jendela_hari})))
       ${scopeOnClause(sql, sc, sql`d.am_id`, sql`COALESCE(d.cabang, mu.cabang)`)}`;
 

@@ -58,6 +58,11 @@ export interface PipelineDeal {
   days_idle: number | null;
   notes: string | null;
   updated_at: string;
+  // Multi-Opsi (274): opsi_utama = dihitung di nilai pipeline (deal tunggal selalu true).
+  opsi_grup: string | null;
+  opsi_no: number | null;
+  opsi_utama: boolean;
+  opsi_jumlah: number;
 }
 export interface PipelineStage {
   stage: string;
@@ -218,7 +223,7 @@ export function PipelineBoard({ data, isAdmin = false, bolehDemo = false }: { da
   const allDeals = useMemo(() => data.stages.flatMap((s) => s.deals), [data]);
   const [f, setF] = useState(F_KOSONG);
   const [sel, setSel] = useState<PipelineDeal | null>(null);
-  const [formModal, setFormModal] = useState<{ mode: "create" } | { mode: "edit"; deal: DealFormInit } | null>(null);
+  const [formModal, setFormModal] = useState<{ mode: "create" } | { mode: "edit" | "opsi"; deal: DealFormInit } | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [confirmDel, setConfirmDel] = useState<PipelineDeal | null>(null);
   // F18 — catat demo/trial langsung dari kartu deal (tertaut ke deal itu).
@@ -311,6 +316,23 @@ export function PipelineBoard({ data, isAdmin = false, bolehDemo = false }: { da
   }
 
   // Hapus deal (admin) setelah konfirmasi modal; refresh + tutup modal.
+  // Multi-Opsi: pilih opsi utama (satu-satunya yang dihitung di nilai pipeline).
+  async function jadikanUtama(d: PipelineDeal) {
+    setBusy(true);
+    setMsg(null);
+    try {
+      const res = await fetch(`/api/deals/${encodeURIComponent(d.deal_id)}/opsi-utama`, { method: "POST" });
+      if (!res.ok) { setMsg({ kind: "err", text: await httpErrorMessage(res) }); return; }
+      setSel(null);
+      setMsg({ kind: "ok", text: `Opsi ${d.opsi_no} sekarang utama — nilainya yang dihitung di pipeline` });
+      router.refresh();
+    } catch {
+      setMsg({ kind: "err", text: "koneksi gagal" });
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function deleteDeal(dealId: string) {
     setDeleting(true);
     setMsg(null);
@@ -373,8 +395,10 @@ export function PipelineBoard({ data, isAdmin = false, bolehDemo = false }: { da
     return m;
   }, [filtered]);
 
-  const sumVal = filtered.reduce((a, d) => a + (d.estimate_amount ?? 0), 0);
-  const sumW = filtered.reduce((a, d) => a + d.weighted, 0);
+  // Nilai: opsi utama saja — opsi alternatif tampil sebagai kartu tapi tak menambah total.
+  const dihitung = useMemo(() => filtered.filter((d) => d.opsi_utama), [filtered]);
+  const sumVal = dihitung.reduce((a, d) => a + (d.estimate_amount ?? 0), 0);
+  const sumW = dihitung.reduce((a, d) => a + d.weighted, 0);
   const staleN = filtered.filter((d) => d.stale).length;
   const dormantN = filtered.filter((d) => d.dormant).length;
 
@@ -466,7 +490,7 @@ export function PipelineBoard({ data, isAdmin = false, bolehDemo = false }: { da
       <div className="flex gap-3 overflow-x-auto pb-3">
         {STAGES.map((stage) => {
           const deals = byStage.get(stage) ?? [];
-          const w = deals.reduce((a, d) => a + d.weighted, 0);
+          const w = deals.reduce((a, d) => a + (d.opsi_utama ? d.weighted : 0), 0);
           const isOver = overStage === stage && dragId !== null;
           const isTarget = dragId !== null && !isOver;
           return (
@@ -498,8 +522,16 @@ export function PipelineBoard({ data, isAdmin = false, bolehDemo = false }: { da
                           : d.stale && <span title="Mangkrak >2 minggu" className="text-rose-500 text-xs shrink-0">●</span>}
                       </div>
                       <div className="text-xs text-muted-foreground mt-1 line-clamp-1">{[d.brand, d.product].filter(Boolean).join(" · ") || "—"}</div>
+                      {d.opsi_grup && (
+                        <div className="mt-1">
+                          <span title={d.opsi_utama ? "Opsi utama — nilainya dihitung di pipeline" : "Opsi alternatif — nilainya tidak dihitung"}
+                            className={`text-[10px] px-1.5 py-0.5 rounded border ${d.opsi_utama ? "border-primary text-primary font-medium" : "border-border text-muted-foreground"}`}>
+                            Opsi {d.opsi_no}/{d.opsi_jumlah}{d.opsi_utama ? " · utama" : ""}
+                          </span>
+                        </div>
+                      )}
                       <div className="flex items-center justify-between mt-1.5">
-                        <span className="text-xs tabular-nums">{jt(d.estimate_amount)}</span>
+                        <span className={`text-xs tabular-nums ${d.opsi_utama ? "" : "text-muted-foreground line-through decoration-muted-foreground/50"}`}>{jt(d.estimate_amount)}</span>
                         {d.prospect_category && !CLOSED_STAGES.has(d.stage) && <span className={`text-[10px] px-1.5 py-0.5 rounded ${PCAT_COLOR[d.prospect_category] ?? "bg-muted"}`}>{d.prospect_category}</span>}
                       </div>
                     </button>
@@ -519,7 +551,7 @@ export function PipelineBoard({ data, isAdmin = false, bolehDemo = false }: { da
       {/* Infografis — basisnya `filtered`, sama dengan board & Export Excel, jadi
           grafik selalu bercerita tentang deal yang sedang tampil. */}
       <TabsContent value={TAB_INFO}>
-        <PipelineInsights deals={filtered} stages={STAGES} />
+        <PipelineInsights deals={dihitung} stages={STAGES} />
       </TabsContent>
 
       {/* Picker tujuan stage (tombol ⇄ di kartu — alternatif drag, ramah mobile) */}
@@ -581,6 +613,50 @@ export function PipelineBoard({ data, isAdmin = false, bolehDemo = false }: { da
               ))}
             </dl>
             {sel.notes && <div className="mt-4"><div className="text-xs text-muted-foreground">Catatan</div><div className="text-sm whitespace-pre-wrap mt-1">{sel.notes}</div></div>}
+
+            {/* Multi-Opsi: alternatif tawaran untuk kebutuhan yang sama (#1964). */}
+            {(sel.opsi_grup || !CLOSED_STAGES.has(sel.stage)) && (() => {
+              const saudara = sel.opsi_grup
+                ? allDeals.filter((d) => d.opsi_grup === sel.opsi_grup).sort((a, b) => (a.opsi_no ?? 0) - (b.opsi_no ?? 0))
+                : [];
+              const adaWon = saudara.some((d) => d.stage === "Closing-Won");
+              const bolehTambah = !CLOSED_STAGES.has(sel.stage) && !adaWon && sel.opsi_jumlah < 3;
+              return (
+                <div className="mt-4 border-t pt-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-xs text-muted-foreground">Opsi penawaran</div>
+                    {bolehTambah && (
+                      <button disabled={busy} onClick={() => { const d = sel; setSel(null); setFormModal({ mode: "opsi", deal: d as DealFormInit }); }}
+                        className="text-xs px-2 py-1 rounded-md border hover:bg-muted disabled:opacity-50">+ Tambah opsi</button>
+                    )}
+                  </div>
+                  {saudara.length === 0 ? (
+                    <p className="text-xs text-muted-foreground mt-1 leading-snug">
+                      Tawarkan beberapa alternatif (brand/skema berbeda) untuk kebutuhan ini sebagai Opsi 1/2/3. Hanya opsi utama yang
+                      dihitung di nilai pipeline; begitu satu opsi Won, opsi lain otomatis di-drop (bukan Lost).
+                    </p>
+                  ) : (
+                    <ul className="mt-2 space-y-1.5">
+                      {saudara.map((d) => (
+                        <li key={d.deal_id} className={`flex items-center gap-2 rounded-md border px-2 py-1.5 text-sm ${d.deal_id === sel.deal_id ? "border-primary" : ""}`}>
+                          <span className="font-medium shrink-0">Opsi {d.opsi_no}</span>
+                          <span className="min-w-0 flex-1 truncate text-muted-foreground">
+                            {[d.brand, d.product, coopLabel(d.coop_model)].filter(Boolean).join(" · ") || "—"} · {stageLabel(d.stage)}
+                          </span>
+                          <span className="tabular-nums text-xs shrink-0">{jt(d.estimate_amount)}</span>
+                          {d.opsi_utama ? (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded border border-primary text-primary font-medium shrink-0">utama</span>
+                          ) : !CLOSED_STAGES.has(d.stage) && !adaWon ? (
+                            <button disabled={busy} onClick={() => jadikanUtama(d)}
+                              className="text-[11px] px-1.5 py-0.5 rounded border hover:bg-muted disabled:opacity-50 shrink-0">jadikan utama</button>
+                          ) : null}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              );
+            })()}
 
             {/* Riwayat perpindahan stage + approval (spt_state_log) */}
             <div className="mt-4 border-t pt-3">

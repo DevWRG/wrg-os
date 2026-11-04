@@ -57,7 +57,7 @@ import { listAsetTetap, ringkasanAsetTetap, jadwalAsetTetap, simpanOverrideAsetT
 import { pratinjauRekon, terapkanRekon, batalkanTautanOtomatis, cariAlatKso } from "./repo/asetTetapRekon.js";
 import { mirrorFreshness } from "./repo/mirror-health.js";
 import { insertAuditEvent } from "./repo/audit.js";
-import { upsertDealsFromPlan, logReportToDeals, getPipeline, getPipelineReport, getPipelineLeaderboard, transitionStage, DealError, listPendingLosses, decideLoss, getDealTimeline, createDeal, updateDeal, deleteDeal, addDealNote } from "./repo/deal.js";
+import { upsertDealsFromPlan, logReportToDeals, getPipeline, getPipelineReport, getPipelineLeaderboard, transitionStage, DealError, listPendingLosses, decideLoss, getDealTimeline, createDeal, updateDeal, deleteDeal, addDealNote, tambahOpsi, jadikanOpsiUtama } from "./repo/deal.js";
 import {
   PameranError, buatAcara as pmBuatAcara, daftarPublik as pmDaftarPublik, hapusPengunjung as pmHapusPengunjung, infoPublik as pmInfoPublik,
   jadikanDeal as pmJadikanDeal, kocokPemenang as pmKocok, listAcara as pmListAcara, listPengunjung as pmListPengunjung,
@@ -5611,6 +5611,29 @@ app.post("/deals/:id/notes", async (c) => {
     return c.json(res, 201);
   } catch (e) {
     if (e instanceof DealError) return c.json({ error: e.message }, e.status as 400 | 403 | 404 | 409);
+    throw e;
+  }
+});
+
+// Multi-Opsi (#1964, 274): tambah opsi alternatif untuk kebutuhan yang sama, dan pilih
+// opsi utama (satu-satunya yang dihitung di nilai pipeline). Write-guard = transisi stage.
+app.post("/deals/:id/opsi", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const body = await c.req.json().catch(() => ({}));
+  try {
+    return c.json(await tambahOpsi(c.req.param("id"), await scopeOf(c), body ?? {}), 201);
+  } catch (e) {
+    if (e instanceof DealError) return c.json({ error: e.message }, e.status as 400 | 403 | 404 | 409);
+    throw e;
+  }
+});
+
+app.post("/deals/:id/opsi-utama", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    return c.json(await jadikanOpsiUtama(c.req.param("id"), await scopeOf(c)));
+  } catch (e) {
+    if (e instanceof DealError) return c.json({ error: e.message }, e.status as 403 | 404 | 409);
     throw e;
   }
 });
