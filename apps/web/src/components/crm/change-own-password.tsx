@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { PasswordInput } from "@/components/ui/password-input";
 
-export function ChangeOwnPassword() {
+export function ChangeOwnPassword({ onSuccess }: { onSuccess?: () => void } = {}) {
   const [cur, setCur] = useState("");
   const [next, setNext] = useState("");
   const [conf, setConf] = useState("");
@@ -18,6 +18,8 @@ export function ChangeOwnPassword() {
     setMsg(null);
     if (next.length < 6) return setMsg({ ok: false, text: "password baru minimal 6 karakter" });
     if (next !== conf) return setMsg({ ok: false, text: "konfirmasi tidak cocok" });
+    if (next === cur) return setMsg({ ok: false, text: "password baru harus berbeda dari password lama" });
+    if (/^[a-z]+123$/i.test(next.trim())) return setMsg({ ok: false, text: "password baru tak boleh berpola <nama>123" });
     setBusy(true);
     try {
       const res = await fetch("/api/auth/change-password", {
@@ -25,7 +27,7 @@ export function ChangeOwnPassword() {
         body: JSON.stringify({ current: cur, next }),
       });
       const d = await res.json().catch(() => ({}));
-      if (res.ok && d.ok) { setMsg({ ok: true, text: "Password berhasil diganti." }); setCur(""); setNext(""); setConf(""); }
+      if (res.ok && d.ok) { setMsg({ ok: true, text: "Password berhasil diganti." }); setCur(""); setNext(""); setConf(""); onSuccess?.(); }
       else setMsg({ ok: false, text: String(d.error ?? `HTTP ${res.status}`) });
     } catch {
       setMsg({ ok: false, text: "gagal hubungi server" });

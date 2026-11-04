@@ -95,9 +95,6 @@ function LoginForm() {
           Hubungi admin
         </Link>
       </p>
-      <p className="text-muted-foreground/70 mt-4 text-xs leading-relaxed">
-        Password awal: <code className="text-foreground/70">&lt;panggilan&gt;123</code> — segera ganti.
-      </p>
     </div>
   );
 }
