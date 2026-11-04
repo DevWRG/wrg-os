@@ -48,6 +48,12 @@ import { canViewGaReporting } from "@/lib/ga-reporting-access";
 export interface NavItem {
   title: string; url: string; icon: LucideIcon; badge?: string; exact?: boolean;
   show?: (me: AccessUser | null) => boolean;
+  // Menu KHUSUS admin/superuser: data/utilitas internal yang server-nya hanya melayani
+  // admin. Matriks Akses Grup TIDAK bisa membukanya untuk grup lain dan menu ini tak
+  // ikut katalog fitur (tak muncul sebagai centang di Akses Grup). Dulu pakai `show` →
+  // canOrLegacy membiarkan matriks menang: Status Job tampil tapi datanya 403, dan
+  // HoD Resolver (data diambil lewat gateway tanpa identitas) malah terbuka.
+  hanyaAdmin?: boolean;
   // Override key fitur RBAC bila slug route ≠ key `feature` di DB. Contoh: route
   // "/plan-report" tetap pakai feature.key "dashboard" (hindari migrasi & re-grant
   // saat rename route). Default: featureKey(url).
@@ -419,10 +425,10 @@ export const NAV: NavGroup[] = [
       { title: "Akses Grup", url: "/access-groups", icon: ShieldCheck },
       // F121 HoD Resolver: utilitas data-quality (preview atasan_raw → HoD kanonik),
       // bukan analytics harian → grup Admin, gate admin/superuser.
-      { title: "HoD Resolver", url: "/people/hod-resolve", icon: KeyRound, show: (me) => me?.role === "admin" || me?.superuser === true },
+      { title: "HoD Resolver", url: "/people/hod-resolve", icon: KeyRound, hanyaAdmin: true },
       // Papan status job terjadwal (prioritas Direktur 20 Okt, migrasi 275) — utilitas operasional
       // server, gate admin/superuser seperti HoD Resolver.
-      { title: "Status Job", url: "/status-job", icon: Gauge, badge: "NEW", show: (me) => me?.role === "admin" || me?.superuser === true },
+      { title: "Status Job", url: "/status-job", icon: Gauge, badge: "NEW", hanyaAdmin: true },
       { title: "Settings", url: "/settings", icon: Settings },
     ],
   },
@@ -441,7 +447,10 @@ export const featureKey = (url: string) => url.replace(/^\//, "").replace(/\//g,
 //   5. Menu hasil peleburan (`features`) tampil kalau SALAH SATU fitur yang
 //      dilayaninya diizinkan — kalau tidak, orang yang cuma diizinkan fitur lama
 //      (mis. AM dengan 'pricelist') terbentur gate fitur induknya.
+export const adalahAdmin = (me: AccessUser | null): boolean => me?.role === "admin" || me?.superuser === true;
+
 export function navVisible(me: AccessUser | null, it: NavItem): boolean {
+  if (it.hanyaAdmin) return adalahAdmin(me);
   const key = it.feature ?? featureKey(it.url);
   if (!hasPerms(me)) return it.show ? it.show(me) : true;
   if (canOrLegacy(me, key, it.show ? it.show(me) : false)) return true;
@@ -495,6 +504,8 @@ export function featureCatalog(): FeatureCatalogRow[] {
   let sort = 10;
   for (const g of NAV) {
     for (const it of g.items) {
+      // Menu khusus admin tak bisa diatur lewat matriks — jangan tampilkan centangnya.
+      if (it.hanyaAdmin) continue;
       push({ key: it.feature ?? featureKey(it.url), name: it.title, section: g.label, path: it.url, sort });
       sort += 10;
       // Fitur yang menunya sudah lebur jadi tab tetap ikut disemai — kalau tidak,
