@@ -86,11 +86,15 @@ export async function runArWatch(): Promise<{
   top_findings: ArFinding[];
 }> {
   const sql = db();
+  // ar_aging_mv memuat juga faktur LUNAS (amount 0, kebanyakan bucket 90+) → saring sisa > 0,
+  // pola sama dengan getAging (/ar). Tanpa ini hitungan overdue/kritis ikut ±11rb faktur lunas.
   const rows = await sql`
-    SELECT customer_id, customer_name, invoice_no, amount, days_overdue, bucket, is_anomaly
-    FROM ar_aging_mv
-    WHERE days_overdue > 0
-    ORDER BY days_overdue DESC, amount DESC
+    SELECT m.customer_id, m.customer_name, m.invoice_no, COALESCE(ai.outstanding, m.amount)::float8 AS amount,
+      m.days_overdue, m.bucket, m.is_anomaly
+    FROM ar_aging_mv m
+    LEFT JOIN accurate_invoice ai ON ai.number = m.invoice_no AND ai.customer_id::text = m.customer_id
+    WHERE m.days_overdue > 0 AND COALESCE(ai.outstanding, m.amount) > 0
+    ORDER BY m.days_overdue DESC, amount DESC
   `;
 
   const findings: ArFinding[] = rows.map((r) => ({
