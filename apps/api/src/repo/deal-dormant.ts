@@ -123,7 +123,12 @@ export async function runDealDormant(opts: { dryRun?: boolean } = {}): Promise<D
   const last = lastActivitySql(sql);
   // Deal jalan & tidak ditahan. on_hold dikecualikan — konvensi yang sama dengan
   // Keaslian Pipeline & Senin Brief: deal yang sengaja ditahan tak dinilai diamnya.
-  const OPEN = sql`d.stage NOT IN ('Closing-Won', 'Closing-Lost') AND NOT COALESCE(d.on_hold, false)`;
+  //
+  // Multi-Opsi (274): hanya opsi UTAMA yang dinilai. #REPORT & follow-up menempel ke
+  // opsi utama, jadi opsi alternatif selalu tampak diam — tanpa saringan ini ia ditandai
+  // Dormant lalu gugur jadi Lost padahal kebutuhannya masih hidup. Penanda yang
+  // terlanjur ada di opsi alternatif ikut dilepas di langkah LEPAS (NOT OPEN).
+  const OPEN = sql`d.stage NOT IN ('Closing-Won', 'Closing-Lost') AND NOT COALESCE(d.on_hold, false) AND d.opsi_utama`;
   const lewati: string[] = [];
   const amCols = sql`NULLIF(mu.nama, '') AS am_nama, NULLIF(btrim(mu.wa_number), '') AS am_wa`;
 
