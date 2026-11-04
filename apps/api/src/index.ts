@@ -335,7 +335,8 @@ import {
   updateAccount,
   wibDate,
 } from "./repo/cashin.js";
-import { startScheduler, getScheduleStatus } from "./scheduler.js";
+import { startScheduler, getScheduleStatus, jadwalTerdaftar } from "./scheduler.js";
+import { statusJob } from "./repo/job-run.js";
 import { signJwt, verifyJwt } from "./auth.js";
 import { verifyCredentials, createUser, countUsers, listAppUsers, setUserPassword, updateAppUser, deleteAppUser, getAppUserById, createUserFromRoster, generatePassword, changeOwnPassword, normalizeLoginRole, LOGIN_ROLES } from "./repo/users.js";
 import { listPickupPlans, createPickupPlan, updatePickupPlan, deletePickupPlan, previewPreVisit, runPreVisitCheck, listKurirOptions, listSjOptions, resolveKurir, cekSj, SJ_WINDOW_DAYS, planSudahJalan } from "./repo/pickup-plan.js";
@@ -4746,6 +4747,13 @@ app.post("/reminders/run", async (c) => {
 
 // Status penjadwal agen (cron in-process) — observabilitas konfigurasi.
 app.get("/agents/schedule", (c) => c.json(getScheduleStatus()));
+
+// Papan status job terjadwal (migrasi 275): status tiap job dari job_run + jadwal yang
+// benar-benar terdaftar di proses ini. Web: /status-job (admin).
+app.get("/jobs/status", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json({ sekarang: new Date().toISOString(), jobs: await statusJob(jadwalTerdaftar()) });
+});
 
 // ── WhatsApp raw store (D1b): feeder pesan mentah → wa_message ──
 app.post("/wa/messages", async (c) => {
