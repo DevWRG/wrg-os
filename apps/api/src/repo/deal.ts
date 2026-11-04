@@ -140,6 +140,12 @@ export interface PipelineDeal {
   days_idle: number | null;            // hari sejak pergerakan terakhir (deal jalan)
   notes: string | null;
   updated_at: string;
+  // Multi-Opsi (274). opsi_utama = baris ini DIHITUNG di nilai pipeline (deal tunggal
+  // selalu true); opsi lain dalam grupnya false — kartunya tetap tampil, nilainya tidak.
+  opsi_grup: string | null;
+  opsi_no: number | null;
+  opsi_utama: boolean;
+  opsi_jumlah: number;
 }
 
 export interface PipelineStage {
@@ -170,18 +176,23 @@ export async function getPipeline(
     qty_num, unit_price,
     pic_hod, cabang, coop_model, city, province, purchase_month, purchase_year, notes, updated_at,
     GREATEST(0, EXTRACT(DAY FROM (now() - stage_entered_at))::int) AS days_in_stage,
-    dormant_at, COALESCE(on_hold, false) AS on_hold, ${lastActivitySql(sql)} AS last_activity_at`;
+    dormant_at, COALESCE(on_hold, false) AS on_hold, ${lastActivitySql(sql)} AS last_activity_at,
+    opsi_grup, opsi_no, opsi_utama,
+    CASE WHEN opsi_grup IS NULL THEN 1 ELSE count(*) FILTER (WHERE loss_status IS DISTINCT FROM 'dropped') OVER (PARTITION BY opsi_grup) END AS opsi_jumlah`;
+  // Opsi yang di-drop (opsi lain Won) bukan kekalahan dan bukan pekerjaan — tak ditampilkan
+  // di board. Riwayatnya tetap ada di spt_state_log.
+  const bukanDrop = sql`loss_status IS DISTINCT FROM 'dropped'`;
   // Row-level scope (pakai semantik isRestricted spt F127): scope TAK membatasi
   // (FULL_SCOPE / superuser/admin / HoD-tanpa-territory / tanpa x-user-id) → lihat
   // SEMUA; AM → deal sendiri; HoD ber-territory → deal di cabang timnya.
   let rows;
   if (!scope || !isRestricted(scope)) {
-    rows = await sql`SELECT ${cols} FROM deal d ORDER BY updated_at DESC`;
+    rows = await sql`SELECT ${cols} FROM deal d WHERE ${bukanDrop} ORDER BY updated_at DESC`;
   } else if (scope.amOnly && scope.amId) {
-    rows = await sql`SELECT ${cols} FROM deal d WHERE am_id = ${scope.amId} ORDER BY updated_at DESC`;
+    rows = await sql`SELECT ${cols} FROM deal d WHERE am_id = ${scope.amId} AND ${bukanDrop} ORDER BY updated_at DESC`;
   } else {
     // isRestricted true & bukan amOnly → pasti punya cabangScope (HoD ber-territory).
-    rows = await sql`SELECT ${cols} FROM deal d WHERE cabang = ANY(${scope.cabangScope!}) ORDER BY updated_at DESC`;
+    rows = await sql`SELECT ${cols} FROM deal d WHERE cabang = ANY(${scope.cabangScope!}) AND ${bukanDrop} ORDER BY updated_at DESC`;
   }
 
   // Resolve am_id → panggilan (master_user) untuk tampilan & filter AM.
@@ -240,9 +251,17 @@ export async function getPipeline(
       days_idle: !TERMINAL.has(stage) && lastAct ? Math.max(0, Math.floor((now - lastAct.getTime()) / 86_400_000)) : null,
       notes: r.notes ? String(r.notes) : null,
       updated_at: String(r.updated_at),
+      opsi_grup: r.opsi_grup ? String(r.opsi_grup) : null,
+      opsi_no: r.opsi_no != null ? Number(r.opsi_no) : null,
+      opsi_utama: r.opsi_utama !== false,
+      opsi_jumlah: Number(r.opsi_jumlah ?? 1),
     };
     if (!byStage.has(stage)) byStage.set(stage, []);
     byStage.get(stage)!.push(d);
+    // Nilai grup Multi-Opsi = opsi utama saja (keputusan pemilik): opsi lain tampil
+    // sebagai kartu, tapi tak menambah total — kalau dijumlah, satu kebutuhan RS
+    // terhitung dua-tiga kali.
+    if (!d.opsi_utama) continue;
     totalValue += est ?? 0;
     weightedTotal += weighted;
     const fc = d.forecast_category ?? "—";
@@ -253,8 +272,8 @@ export async function getPipeline(
   const stages: PipelineStage[] = [...byStage.entries()].map(([stage, deals]) => ({
     stage,
     count: deals.length,
-    total_value: deals.reduce((a, d) => a + (d.estimate_amount ?? 0), 0),
-    weighted_value: deals.reduce((a, d) => a + d.weighted, 0),
+    total_value: deals.reduce((a, d) => a + (d.opsi_utama ? (d.estimate_amount ?? 0) : 0), 0),
+    weighted_value: deals.reduce((a, d) => a + (d.opsi_utama ? d.weighted : 0), 0),
     deals,
   }));
   const summary: PipelineSummary = {
@@ -311,12 +330,15 @@ export async function getPipelineReport(scope?: DataScope): Promise<PipelineRepo
   const sql = db();
   // Fragment kondisi reusable (tanpa keyword WHERE → gampang di-AND untuk by_reason).
   // Semantik sama isRestricted spt getPipeline: scope TAK membatasi → TRUE (semua).
+  // `opsi_utama`: grup Multi-Opsi dihitung SEKALI lewat opsi utamanya (274) — funnel,
+  // forecast, win-loss, dan alasan kalah membaca kebutuhan, bukan alternatif tawaran.
+  // Opsi yang di-drop (opsi_utama false) otomatis tak ikut Lost.
   const cond =
     !scope || !isRestricted(scope)
-      ? sql`TRUE`
+      ? sql`opsi_utama`
       : scope.amOnly && scope.amId
-        ? sql`am_id = ${scope.amId}`
-        : sql`cabang = ANY(${scope.cabangScope!})`;
+        ? sql`opsi_utama AND am_id = ${scope.amId}`
+        : sql`opsi_utama AND cabang = ANY(${scope.cabangScope!})`;
   const val = sql`COALESCE(estimated_value, estimate_amount)`;
   const weighted = sql`COALESCE(estimated_value, estimate_amount) * COALESCE(probability, 0)`;
 
@@ -435,12 +457,15 @@ export interface LeaderboardRow {
  */
 export async function getPipelineLeaderboard(scope?: DataScope): Promise<LeaderboardRow[]> {
   const sql = db();
+  // `opsi_utama`: grup Multi-Opsi dihitung SEKALI lewat opsi utamanya (274) — funnel,
+  // forecast, win-loss, dan alasan kalah membaca kebutuhan, bukan alternatif tawaran.
+  // Opsi yang di-drop (opsi_utama false) otomatis tak ikut Lost.
   const cond =
     !scope || !isRestricted(scope)
-      ? sql`TRUE`
+      ? sql`opsi_utama`
       : scope.amOnly && scope.amId
-        ? sql`am_id = ${scope.amId}`
-        : sql`cabang = ANY(${scope.cabangScope!})`;
+        ? sql`opsi_utama AND am_id = ${scope.amId}`
+        : sql`opsi_utama AND cabang = ANY(${scope.cabangScope!})`;
   const val = sql`COALESCE(estimated_value, estimate_amount)`;
   const weighted = sql`COALESCE(estimated_value, estimate_amount) * COALESCE(probability, 0)`;
 
@@ -513,9 +538,14 @@ export async function transitionStage(
   if (!DEAL_STAGES.includes(toStage)) {
     throw new DealError(400, `stage tidak valid: ${toStage}`);
   }
-  const cur = await sql`SELECT stage, am_id, cabang FROM deal WHERE deal_id = ${dealId}`;
+  const cur = await sql`SELECT stage, am_id, cabang, loss_status FROM deal WHERE deal_id = ${dealId}`;
   if (cur.length === 0) throw new DealError(404, "deal tidak ditemukan");
   const fromStage = String(cur[0].stage);
+  // Opsi yang di-drop hidup lagi HANYA lewat pembatalan Won opsi pemenangnya (trigger
+  // 274) — kalau digeser sendiri, grup bisa punya dua opsi berjalan di samping yang Won.
+  if (cur[0].loss_status === "dropped") {
+    throw new DealError(409, "opsi ini di-drop karena opsi lain Won — batalkan Won opsi itu untuk menghidupkannya lagi");
+  }
   const deal = { am_id: cur[0].am_id ? String(cur[0].am_id) : null, cabang: cur[0].cabang ? String(cur[0].cabang) : null };
   if (!canWrite(scope, deal)) throw new DealError(403, "tidak berwenang mengubah deal ini");
 
@@ -997,8 +1027,10 @@ export async function deleteDeal(dealId: string, scope: DataScope): Promise<{ de
   const cur = await sql`SELECT deal_id FROM deal WHERE deal_id = ${dealId}`;
   if (cur.length === 0) throw new DealError(404, "deal tidak ditemukan");
   await sql.begin(async (tx) => {
+    const [g] = await tx`SELECT opsi_grup FROM deal WHERE deal_id = ${dealId} FOR UPDATE`;
     await tx`DELETE FROM spt_state_log WHERE deal_id = ${dealId}`;
     await tx`DELETE FROM deal WHERE deal_id = ${dealId}`;
+    if (g?.opsi_grup) await rapikanGrupSesudahHapus(tx as unknown as Sql, String(g.opsi_grup));
   });
   return { deleted: dealId };
 }
@@ -1021,7 +1053,7 @@ export async function upsertDealsFromPlan(
       SELECT deal_id, stage FROM deal
       WHERE am_id = ${amId} AND customer_name = ${c.customer}
         AND stage NOT IN ${sql(CLOSED)}
-      ORDER BY updated_at DESC LIMIT 1
+      ORDER BY opsi_utama DESC, updated_at DESC LIMIT 1
     `;
     const notes = `[${c.tujuan}] ${c.goal}`.trim();
     if (existing.length > 0) {
@@ -1094,7 +1126,8 @@ export async function logReportToDeals(
       SELECT deal_id, customer_name, stage, similarity(customer_name, ${it.customer}) AS score
       FROM deal
       WHERE am_id = ${amId} AND similarity(customer_name, ${it.customer}) > 0.25
-      ORDER BY score DESC LIMIT 3
+        AND loss_status IS DISTINCT FROM 'dropped'
+      ORDER BY score DESC, opsi_utama DESC LIMIT 3
     `;
     const top = cands[0];
     const candidates = cands.map((r) => ({
@@ -1130,4 +1163,110 @@ export async function logReportToDeals(
     });
   }
   return out;
+}
+
+// ── Multi-Opsi (#1964, migrasi 274) ──────────────────────────────────────
+// Aturan Won → drop dan perpindahan utama ada di TRIGGER deal_opsi_atur (274) supaya
+// berlaku di semua jalur pindah tahap. Di sini hanya aksi yang dimulai pengguna:
+// menambah opsi dan memilih opsi utama.
+
+type Sql = ReturnType<typeof db>;
+export const OPSI_MAKS = 3;
+const TERBUKA = (stage: string) => !CLOSED.includes(stage);
+
+// Kolom yang disalin dari opsi asal: identitas kebutuhan (faskes, AM, wilayah,
+// jadwal beli). Brand/produk/qty/harga/skema justru yang membedakan opsi.
+const OPSI_SALIN = [
+  "customer_id", "customer_name", "facility_name", "instansi_type", "account_id", "am_id", "cabang",
+  "pic_hod", "city", "province", "product_category", "purchase_month", "purchase_year",
+  "stage", "prospect_category", "probability", "forecast_category",
+];
+
+/** Satu anggota grup terhapus: grup tinggal satu → bubarkan; utama hilang → pilih ulang. */
+async function rapikanGrupSesudahHapus(tx: Sql, grup: string): Promise<void> {
+  const sisa = await tx`SELECT deal_id, stage::text AS stage, opsi_no, opsi_utama, loss_status FROM deal WHERE opsi_grup = ${grup} ORDER BY opsi_no`;
+  if (sisa.length === 0) return;
+  if (sisa.length === 1) {
+    await tx`UPDATE deal SET opsi_grup = NULL, opsi_no = NULL, opsi_utama = true WHERE deal_id = ${sisa[0].deal_id}`;
+    return;
+  }
+  if (sisa.some((r) => r.opsi_utama)) return;
+  const pilih = sisa.find((r) => r.stage === "Closing-Won") ?? sisa.find((r) => TERBUKA(String(r.stage)))
+    ?? sisa.find((r) => r.loss_status !== "dropped") ?? sisa[0];
+  await tx`UPDATE deal SET opsi_utama = true WHERE deal_id = ${pilih.deal_id}`;
+}
+
+/**
+ * Tambah opsi penawaran alternatif untuk kebutuhan yang sama. Deal asal yang belum
+ * bergrup menjadi Opsi 1 (dan tetap utama). Opsi baru mewarisi faskes/AM/wilayah/tahap
+ * dari deal asal; brand, produk, qty, harga, skema diisi dari input. Opsi baru TIDAK
+ * utama — AM memindahkannya lewat jadikanOpsiUtama.
+ */
+export async function tambahOpsi(dealId: string, scope: DataScope, input: Record<string, unknown>): Promise<DealMutationResult & { opsi_no: number }> {
+  const sql = db();
+  const isian = pickEditable(input);
+  for (const k of ["am_id", "cabang", "customer_name", "facility_name"]) delete isian[k];
+  if (isian.product_category && !PRODUCT_CATEGORIES.includes(String(isian.product_category))) {
+    throw new DealError(400, "product_category harus IVD atau Medical");
+  }
+  applyEstimate(isian);
+
+  const hasil = await sql.begin(async (txRaw) => {
+    const tx = txRaw as unknown as Sql;
+    const [asal] = await tx`SELECT * FROM deal WHERE deal_id = ${dealId} FOR UPDATE`;
+    if (!asal) throw new DealError(404, "deal tidak ditemukan");
+    if (!canWrite(scope, { am_id: asal.am_id ? String(asal.am_id) : null, cabang: asal.cabang ? String(asal.cabang) : null })) {
+      throw new DealError(403, "tidak berwenang mengubah deal ini");
+    }
+    if (!TERBUKA(String(asal.stage))) throw new DealError(409, "opsi hanya bisa ditambah dari deal yang masih berjalan");
+    const grup = asal.opsi_grup ? String(asal.opsi_grup) : String(asal.deal_id);
+    const anggota = asal.opsi_grup
+      ? await tx`SELECT opsi_no, stage::text AS stage FROM deal WHERE opsi_grup = ${grup} FOR UPDATE`
+      : [];
+    if (anggota.some((r) => r.stage === "Closing-Won")) throw new DealError(409, "salah satu opsi sudah Won — grup ini selesai");
+    const terpakai = new Set(anggota.map((r) => Number(r.opsi_no)));
+    if (!asal.opsi_grup) terpakai.add(1);
+    const no = [1, 2, 3].find((n) => !terpakai.has(n));
+    if (!no) throw new DealError(409, `maksimal ${OPSI_MAKS} opsi per kebutuhan`);
+    if (!asal.opsi_grup) {
+      await tx`UPDATE deal SET opsi_grup = ${grup}, opsi_no = 1, updated_at = now() WHERE deal_id = ${dealId}`;
+      await tx`
+        INSERT INTO spt_state_log (deal_id, from_stage, to_stage, changed_by, reason)
+        VALUES (${dealId}, ${asal.stage}, ${asal.stage}, ${scope.userId ?? scope.amId}, 'jadi Opsi 1 (opsi alternatif ditambahkan)')`;
+    }
+    const baris: Record<string, unknown> = {};
+    for (const k of OPSI_SALIN) if (asal[k] !== undefined) baris[k] = asal[k];
+    Object.assign(baris, isian, { opsi_grup: grup, opsi_no: no, opsi_utama: false });
+    const [baru] = await tx`INSERT INTO deal ${tx(baris)} RETURNING deal_id, stage`;
+    await tx`
+      INSERT INTO spt_state_log (deal_id, from_stage, to_stage, changed_by, reason)
+      VALUES (${baru.deal_id}, NULL, ${baru.stage}, ${scope.userId ?? scope.amId}, ${`Opsi ${no} dibuat`})`;
+    return { deal_id: String(baru.deal_id), stage: String(baru.stage), opsi_no: no };
+  });
+  return hasil;
+}
+
+/** Pilih opsi utama grup — hanya opsi utama yang dihitung di nilai pipeline. */
+export async function jadikanOpsiUtama(dealId: string, scope: DataScope): Promise<{ deal_id: string; opsi_no: number }> {
+  const sql = db();
+  return await sql.begin(async (txRaw) => {
+    const tx = txRaw as unknown as Sql;
+    const [d] = await tx`SELECT deal_id, stage::text AS stage, am_id, cabang, opsi_grup, opsi_no, opsi_utama FROM deal WHERE deal_id = ${dealId} FOR UPDATE`;
+    if (!d) throw new DealError(404, "deal tidak ditemukan");
+    if (!canWrite(scope, { am_id: d.am_id ? String(d.am_id) : null, cabang: d.cabang ? String(d.cabang) : null })) {
+      throw new DealError(403, "tidak berwenang mengubah deal ini");
+    }
+    if (!d.opsi_grup) throw new DealError(409, "deal ini tidak punya opsi alternatif");
+    if (!TERBUKA(String(d.stage))) throw new DealError(409, "opsi yang sudah tertutup tidak bisa dijadikan utama");
+    const anggota = await tx`SELECT deal_id, stage::text AS stage, opsi_utama FROM deal WHERE opsi_grup = ${d.opsi_grup} FOR UPDATE`;
+    if (anggota.some((r) => r.stage === "Closing-Won")) throw new DealError(409, "salah satu opsi sudah Won — grup ini selesai");
+    if (!d.opsi_utama) {
+      await tx`UPDATE deal SET opsi_utama = false WHERE opsi_grup = ${d.opsi_grup} AND opsi_utama`;
+      await tx`UPDATE deal SET opsi_utama = true, updated_at = now() WHERE deal_id = ${dealId}`;
+      await tx`
+        INSERT INTO spt_state_log (deal_id, from_stage, to_stage, changed_by, reason)
+        VALUES (${dealId}, ${d.stage}, ${d.stage}, ${scope.userId ?? scope.amId}, ${`Opsi ${d.opsi_no} dijadikan utama`})`;
+    }
+    return { deal_id: dealId, opsi_no: Number(d.opsi_no) };
+  });
 }

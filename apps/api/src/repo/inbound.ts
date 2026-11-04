@@ -532,7 +532,7 @@ async function resolveActivityLinks(
         (${accountId}::bigint IS NOT NULL AND account_id = ${accountId})
         OR similarity(COALESCE(NULLIF(facility_name,''), customer_name, ''), ${customer}) >= ${ACCOUNT_MATCH}
       )
-    ORDER BY stage_entered_at DESC NULLS LAST, updated_at DESC
+    ORDER BY opsi_utama DESC, stage_entered_at DESC NULLS LAST, updated_at DESC
     LIMIT 1
   `;
   return { accountId, opportunityId: deal ? String(deal.deal_id) : null };

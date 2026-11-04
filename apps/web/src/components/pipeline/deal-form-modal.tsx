@@ -8,6 +8,8 @@ import { httpErrorMessage } from "@/lib/http-error";
 
 // F1-SPT form deal (create + edit). Field whitelist selaras backend DEAL_EDITABLE.
 // Create → POST /api/deals (stage awal Prospecting). Edit → PATCH /api/deals/:id.
+// Opsi → POST /api/deals/:id/opsi (Multi-Opsi #1964): faskes/AM/wilayah ikut deal asal,
+// yang diisi hanya pembeda tawaran (brand, produk, skema, qty, harga).
 // Estimasi Nilai = QTY/test per-bulan × harga per unit (backend authoritative).
 
 export interface DealFormInit {
@@ -42,6 +44,9 @@ const uniqSorted = (arr: (string | null | undefined)[]) =>
   [...new Set(arr.filter((x): x is string => !!x && x.trim() !== ""))].sort((a, b) => a.localeCompare(b));
 
 const INPUT_CLS = "mt-0.5 w-full rounded-md border border-input bg-background px-2 py-1";
+// Isian yang dikirim saat menambah opsi — pembeda tawaran saja (backend menyalin sisanya).
+const OPSI_FIELDS = ["brand", "product", "product_category", "coop_model", "qty_num", "unit_price",
+  "purchase_month", "purchase_year", "notes"];
 function Lbl({ children }: { children: React.ReactNode }) {
   return <span className="text-xs text-muted-foreground">{children}</span>;
 }
@@ -154,7 +159,7 @@ function Combo({ value, onChange, options, placeholder }: {
 }
 
 export function DealFormModal({ mode, deal, onClose, brands = [], cabangs = [], hods = [] }: {
-  mode: "create" | "edit";
+  mode: "create" | "edit" | "opsi";
   deal?: DealFormInit;
   onClose: () => void;
   brands?: string[];
@@ -162,22 +167,25 @@ export function DealFormModal({ mode, deal, onClose, brands = [], cabangs = [], 
   hods?: string[];
 }) {
   const router = useRouter();
+  const opsi = mode === "opsi";
+  // Mode opsi: pembeda tawaran dikosongkan supaya tak tersalin dari opsi asal.
+  const kosongkan = (v: string) => (opsi ? "" : v);
   const [form, setForm] = useState<Record<string, string>>(() => ({
     customer_name: str(deal?.customer_name),
     facility_name: str(deal?.facility_name),
-    brand: str(deal?.brand),
-    product: str(deal?.product),
+    brand: kosongkan(str(deal?.brand)),
+    product: kosongkan(str(deal?.product)),
     product_category: str(deal?.product_category),
-    qty_num: deal?.qty_num != null ? String(deal.qty_num) : "",
-    unit_price: deal?.unit_price != null ? String(deal.unit_price) : "",
-    coop_model: str(deal?.coop_model),
+    qty_num: kosongkan(deal?.qty_num != null ? String(deal.qty_num) : ""),
+    unit_price: kosongkan(deal?.unit_price != null ? String(deal.unit_price) : ""),
+    coop_model: kosongkan(str(deal?.coop_model)),
     cabang: str(deal?.cabang),
     city: str(deal?.city),
     province: str(deal?.province),
     purchase_month: deal?.purchase_month != null ? String(deal.purchase_month) : "",
     purchase_year: deal?.purchase_year != null ? String(deal.purchase_year) : "",
     pic_hod: str(deal?.pic_hod),
-    notes: str(deal?.notes),
+    notes: kosongkan(str(deal?.notes)),
     am_id: str(deal?.am_id),
   }));
   // Kandidat AM untuk penunjukan (HoD = AM cabang timnya, admin = semua). AM
@@ -227,21 +235,26 @@ export function DealFormModal({ mode, deal, onClose, brands = [], cabangs = [], 
   const computed =
     form.qty_num !== "" && form.unit_price !== "" && Number.isFinite(qtyN) && Number.isFinite(priceN)
       ? qtyN * priceN
-      : deal?.estimate_amount ?? null;
+      : opsi ? null : deal?.estimate_amount ?? null;
 
   async function submit() {
-    if (!form.customer_name.trim() && !form.facility_name.trim()) {
+    if (!opsi && !form.customer_name.trim() && !form.facility_name.trim()) {
       setErr("Nama customer atau faskes wajib diisi");
       return;
     }
     setBusy(true);
     setErr(null);
     try {
-      const url = mode === "create" ? "/api/deals" : `/api/deals/${encodeURIComponent(deal!.deal_id!)}`;
+      const url = mode === "create" ? "/api/deals"
+        : opsi ? `/api/deals/${encodeURIComponent(deal!.deal_id!)}/opsi`
+        : `/api/deals/${encodeURIComponent(deal!.deal_id!)}`;
+      const body = opsi
+        ? Object.fromEntries(OPSI_FIELDS.map((k) => [k, form[k]]))
+        : form;
       const res = await fetch(url, {
-        method: mode === "create" ? "POST" : "PATCH",
+        method: mode === "edit" ? "PATCH" : "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(form),
+        body: JSON.stringify(body),
       });
       if (!res.ok) { setErr(await httpErrorMessage(res)); return; }
       router.refresh();
@@ -259,19 +272,26 @@ export function DealFormModal({ mode, deal, onClose, brands = [], cabangs = [], 
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
       <Card className="max-w-lg w-full max-h-[88vh] overflow-y-auto p-5" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-start justify-between gap-2">
-          <h2 className="text-lg font-semibold">{mode === "create" ? "Deal Baru" : "Edit Deal"}</h2>
+          <h2 className="text-lg font-semibold">{mode === "create" ? "Deal Baru" : opsi ? "Tambah Opsi Penawaran" : "Edit Deal"}</h2>
           <button onClick={onClose} className="text-muted-foreground hover:text-foreground text-xl leading-none">×</button>
         </div>
 
         {err && <div className="mt-3 text-sm px-2 py-1 rounded bg-rose-100 text-rose-700">{err}</div>}
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4">
+          {opsi ? (
+            <p className="text-sm col-span-1 sm:col-span-2 leading-snug">
+              Alternatif tawaran untuk <b>{deal?.facility_name || deal?.customer_name}</b> — faskes, AM, dan tahap ikut
+              deal asal. Nilai pipeline tetap dihitung dari <b>opsi utama</b> saja; opsi baru tidak menambah total.
+            </p>
+          ) : (<>
           <label className="text-sm col-span-1 sm:col-span-2"><Lbl>Nama Faskes</Lbl>
             <input value={form.facility_name} onChange={(e) => set("facility_name", e.target.value)} className={inputCls} />
           </label>
           <label className="text-sm col-span-1 sm:col-span-2"><Lbl>Nama Customer</Lbl>
             <input value={form.customer_name} onChange={(e) => set("customer_name", e.target.value)} className={inputCls} />
           </label>
+          </>)}
 
           <label className="text-sm"><Lbl>Brand</Lbl>
             <Combo value={form.brand} onChange={(v) => set("brand", v)} options={brands} placeholder="cari / ketik brand…" />
@@ -289,6 +309,7 @@ export function DealFormModal({ mode, deal, onClose, brands = [], cabangs = [], 
               <option value="BELI">BELI</option>
             </select>
           </label>
+          {!opsi && (<>
           <label className="text-sm"><Lbl>Cabang</Lbl>
             <select value={form.cabang} onChange={(e) => set("cabang", e.target.value)} className={inputCls}>
               <option value="">—</option>
@@ -325,6 +346,7 @@ export function DealFormModal({ mode, deal, onClose, brands = [], cabangs = [], 
                 trigger di DB (migrasi 110). */}
             <Combo value={form.pic_hod} onChange={(v) => set("pic_hod", v)} options={hods} placeholder="pilih / ketik HOD…" />
           </label>
+          </>)}
           <label className="text-sm"><Lbl>Kategori</Lbl>
             <select value={form.product_category} onChange={(e) => set("product_category", e.target.value)} className={inputCls}>
               <option value="">—</option>
@@ -370,7 +392,7 @@ export function DealFormModal({ mode, deal, onClose, brands = [], cabangs = [], 
           <button disabled={busy} onClick={onClose} className="text-sm px-3 py-1.5 rounded-md border hover:bg-muted">Batal</button>
           <button disabled={busy} onClick={submit}
             className="text-sm px-3 py-1.5 rounded-md bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-50">
-            {busy ? "menyimpan…" : mode === "create" ? "Buat Deal" : "Simpan"}
+            {busy ? "menyimpan…" : mode === "create" ? "Buat Deal" : opsi ? "Tambah Opsi" : "Simpan"}
           </button>
         </div>
       </Card>
