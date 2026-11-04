@@ -182,7 +182,8 @@ export default async function SalesCommandPage({ searchParams }: { searchParams:
             </Table>
           )}
           <p className="mt-3 text-xs text-muted-foreground">
-            Urut dari sinyal terbanyak. Lampu YTD = capaian vs target tahunan (AM Radar); pacing tahun = proyeksi akhir tahun
+            Urut dari sinyal terbanyak (pacing Tertinggal, PLAN/REPORT bolong, Dormant, meragukan, AR &gt; 90). Lampu YTD = capaian vs
+            target SETAHUN penuh (AM Radar) — hanya informasi, tak dihitung sebagai sinyal; pacing tahun = proyeksi akhir tahun
             (Sales Analytics → Pacing); PLAN/REPORT sejak Senin; Dormant/macet = deal opsi utama; meragukan = Keaslian Pipeline.
           </p>
         </CardContent>

@@ -48,8 +48,18 @@ test("gabungPerAm: sinyal per AM digabung, nama→am_id, urut skor", () => {
   assert.equal(rows[0].am_id, "A1");
   assert.deepEqual(
     { d: rows[0].deal_dormant, m: rows[0].deal_macet, q: rows[0].pipeline_meragukan, ar: rows[0].ar_90, skor: rows[0].skor },
-    { d: 1, m: 1, q: 3, ar: 5_000_000, skor: 5 },
+    { d: 1, m: 1, q: 3, ar: 5_000_000, skor: 4 },
   );
   assert.equal(rows[1].plan_report_miss, 2);
   assert.equal(rows.length, 2, "AM di luar region (LUAR) tidak ditambahkan dari deal");
+});
+
+test("gabungPerAm: lampu YTD merah TIDAK menambah skor — kinerja diwakili pacing (diprorata)", () => {
+  const [b] = gabungPerAm({
+    radar: [{ am_id: "A1", nama: "Andi", cabang: "SURABAYA", light: "red", achievement_pct: 10 }],
+    pacing: [{ am_id: "A1", nama: "Andi", cabang: "SURABAYA", status: "on-track", projected_pct: 102 }],
+    compliance: [], deals: [], meragukanPerNama: new Map(), ar90PerNama: new Map(), namaKeAm: new Map(),
+  });
+  assert.equal(b.lampu, "red");
+  assert.equal(b.skor, 0);
 });
