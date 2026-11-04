@@ -751,7 +751,7 @@ export async function syncAccurateInvoices(
     if (det?.s !== true) return { ok: false, error: `detail gagal: ${JSON.stringify(det?.d).slice(0, 200)}` };
     const done = await upsertInvoiceDetail(det.d as Detail);
     try {
-      await ingestAccurateWebhook([det.d as AccurateInvoice]);
+      await ingestAccurateWebhook([det.d as AccurateInvoice], undefined, { ringkas: true });
     } catch {
       /* aging refresh opsional */
     }
@@ -828,7 +828,7 @@ export async function syncAccurateInvoices(
 
   if (detailRecs.length > 0) {
     try {
-      await ingestAccurateWebhook(detailRecs);
+      await ingestAccurateWebhook(detailRecs, undefined, { ringkas: true });
     } catch {
       /* aging refresh opsional */
     }

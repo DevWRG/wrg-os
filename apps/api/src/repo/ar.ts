@@ -156,10 +156,16 @@ export async function refreshAgingFromAccurate(records: AccurateInvoice[]): Prom
   return mapped.length;
 }
 
-// Ingest payload webhook Accurate → ar_aging_mv (upsert idempoten) + log raw.
+// Ingest payload webhook Accurate → ar_aging_mv (upsert idempoten) + log.
+//
+// `ringkas` = log cuma {jumlah, id, nomor} alih-alih payload utuh. Dipakai sync faktur
+// (accurateSync): detail utuhnya sudah tersimpan di accurate_invoice.raw, jadi log utuh = dobel —
+// tabel ini sempat 1,2 GB = 66% database (3.100 baris, ±350 KB/baris, tak ada pembacanya).
+// Endpoint POST /accurate/webhook tetap log utuh: jalurnya tak menulis accurate_invoice.
 export async function ingestAccurateWebhook(
   records: AccurateInvoice[],
   asof?: string,
+  opts: { ringkas?: boolean } = {},
 ): Promise<{ ingested: number; skipped: number; webhook_id: string }> {
   const sql = db();
   const mapped: InvoiceInput[] = [];
@@ -172,9 +178,12 @@ export async function ingestAccurateWebhook(
   if (mapped.length > 0) await upsertAging(mapped, asof);
 
   const hash = createHash("sha256").update(JSON.stringify(records)).digest("hex");
+  const payload = opts.ringkas
+    ? { ringkas: true, jumlah: records.length, faktur: records.map((r) => ({ id: r.id ?? null, number: r.number ?? null })) }
+    : records;
   const [wh] = await sql`
     INSERT INTO accurate_webhook_log (event_type, payload, input_hash, processed)
-    VALUES ('accurate.webhook', ${sql.json(records as unknown as Parameters<typeof sql.json>[0])}, ${hash}, ${mapped.length > 0})
+    VALUES ('accurate.webhook', ${sql.json(payload as unknown as Parameters<typeof sql.json>[0])}, ${hash}, ${mapped.length > 0})
     RETURNING id
   `;
   return { ingested: mapped.length, skipped, webhook_id: wh.id as string };
