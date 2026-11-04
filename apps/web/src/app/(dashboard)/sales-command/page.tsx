@@ -32,6 +32,11 @@ interface Data {
   pipeline: { total_value: number; weighted_value: number; dormant: number; macet: number; meragukan: number; nilai_meragukan: number };
   ar: { outstanding: number; lewat_90: number; kritis: number };
   per_am: BarisAm[];
+  kualitas_data: {
+    terbuka: number; bulan_lewat: number; tanpa_bulan: number; tanpa_nilai: number;
+    per_am: { am_id: string | null; nama: string; terbuka: number; bulan_lewat: number; tanpa_bulan: number; tanpa_nilai: number }[];
+    deals: { deal_id: string; am: string | null; faskes: string; stage: string; purchase_month: number | null; purchase_year: number | null; nilai: number | null; masalah: string[] }[];
+  };
   dormant_teratas: { deal_id: string; faskes: string; am: string | null; stage: string; nilai: number | null; gugur_at: string | null; days_idle: number | null }[];
   alert_aktif: { id: number; nama: string; metrik: string }[];
 }
@@ -189,6 +194,8 @@ export default async function SalesCommandPage({ searchParams }: { searchParams:
         </CardContent>
       </Card>
 
+      <KartuKualitasData k={d.kualitas_data} />
+
       <div className="grid gap-3 lg:grid-cols-2">
         <Card>
           <CardHeader><CardTitle className="text-base"><Link href="/pipeline" className="hover:underline">Deal Dormant — segera gugur</Link></CardTitle></CardHeader>
@@ -233,5 +240,82 @@ export default async function SalesCommandPage({ searchParams }: { searchParams:
         </Card>
       </div>
     </div>
+  );
+}
+
+const MASALAH: Record<string, string> = { bulan_lewat: "bulan beli lewat", tanpa_bulan: "bulan beli kosong", tanpa_nilai: "tanpa nilai" };
+const BULAN = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"];
+
+// Kualitas data pipeline — prasyarat forecast per region (Fase B ditunda sampai data
+// layak: cek prod 4 Nov 2026, 75% estimasi bulan beli sudah lewat). Tiap deal menaut ke
+// board Pipeline (?deal=) supaya AM/HoD langsung memperbarui bulan beli & nilainya.
+function KartuKualitasData({ k }: { k: Data["kualitas_data"] }) {
+  const pct = (n: number) => (k.terbuka ? Math.round((n / k.terbuka) * 100) : 0);
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0">
+        <CardTitle className="text-base">Kualitas data pipeline</CardTitle>
+        <span className="text-xs text-muted-foreground">{k.terbuka} deal terbuka (opsi utama)</span>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-3">
+        <div className="flex flex-wrap gap-2 text-sm">
+          <Chip tone={k.bulan_lewat ? "merah" : "hijau"}>{k.bulan_lewat} bulan beli lewat · {pct(k.bulan_lewat)}%</Chip>
+          <Chip tone={k.tanpa_bulan ? "kuning" : "hijau"}>{k.tanpa_bulan} bulan beli kosong · {pct(k.tanpa_bulan)}%</Chip>
+          <Chip tone={k.tanpa_nilai ? "kuning" : "hijau"}>{k.tanpa_nilai} tanpa nilai · {pct(k.tanpa_nilai)}%</Chip>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Forecast per region menunggu data ini layak: deal yang masih jalan tapi estimasi bulan belinya sudah lewat, kosong,
+          atau tanpa nilai tak bisa dipakai memperkirakan penjualan. Perbarui lewat tombol Edit di detail deal.
+        </p>
+        {k.per_am.length > 0 && (
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>AM</TableHead>
+                  <TableHead className="text-right">Deal terbuka</TableHead>
+                  <TableHead className="text-right">Bulan beli lewat</TableHead>
+                  <TableHead className="text-right">Bulan beli kosong</TableHead>
+                  <TableHead className="text-right">Tanpa nilai</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {k.per_am.map((a) => (
+                  <TableRow key={a.am_id ?? a.nama}>
+                    <TableCell className="font-medium">{a.nama}</TableCell>
+                    <TableCell className="text-right tabular-nums">{a.terbuka}</TableCell>
+                    <TableCell className="text-right"><Angka n={a.bulan_lewat} merah /></TableCell>
+                    <TableCell className="text-right"><Angka n={a.tanpa_bulan} /></TableCell>
+                    <TableCell className="text-right"><Angka n={a.tanpa_nilai} /></TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+        {k.deals.length > 0 && (
+          <details className="rounded-md border border-border">
+            <summary className="cursor-pointer px-3 py-2 text-sm font-medium">
+              Daftar deal yang perlu diperbarui ({k.deals.length}{k.deals.length >= 150 ? "+" : ""})
+            </summary>
+            <ul className="flex flex-col divide-y divide-border">
+              {k.deals.map((x) => (
+                <li key={x.deal_id} className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
+                  <span className="min-w-0">
+                    <Link href={`/pipeline?deal=${encodeURIComponent(x.deal_id)}`} className="block truncate font-medium hover:underline">{x.faskes}</Link>
+                    <span className="text-xs text-muted-foreground">
+                      {x.am ?? "tanpa AM"} · {x.stage} · beli {x.purchase_month && x.purchase_year ? `${BULAN[x.purchase_month - 1]} ${x.purchase_year}` : "—"} · {jt(x.nilai)}
+                    </span>
+                  </span>
+                  <span className="flex shrink-0 flex-wrap justify-end gap-1">
+                    {x.masalah.map((m) => <Chip key={m} tone={m === "bulan_lewat" ? "merah" : "kuning"}>{MASALAH[m] ?? m}</Chip>)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </details>
+        )}
+      </CardContent>
+    </Card>
   );
 }
