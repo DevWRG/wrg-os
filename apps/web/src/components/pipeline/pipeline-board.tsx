@@ -222,7 +222,13 @@ export function PipelineBoard({ data, isAdmin = false, bolehDemo = false }: { da
   const params = useSearchParams();
   const allDeals = useMemo(() => data.stages.flatMap((s) => s.deals), [data]);
   const [f, setF] = useState(F_KOSONG);
-  const [sel, setSel] = useState<PipelineDeal | null>(null);
+  // ?deal=<id> membuka detail deal itu langsung (tautan dari Sales Command Center →
+  // Kualitas data pipeline). Hanya saat muat awal; deal di luar scope pengguna tak ada
+  // di allDeals sehingga diabaikan.
+  const [sel, setSel] = useState<PipelineDeal | null>(() => {
+    const id = params.get("deal");
+    return id ? allDeals.find((d) => d.deal_id === id) ?? null : null;
+  });
   const [formModal, setFormModal] = useState<{ mode: "create" } | { mode: "edit" | "opsi"; deal: DealFormInit } | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [confirmDel, setConfirmDel] = useState<PipelineDeal | null>(null);
