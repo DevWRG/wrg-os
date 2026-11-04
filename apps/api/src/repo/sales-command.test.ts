@@ -6,7 +6,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { gabungPerAm, SalesCommandError, tentukanRegion } from "./sales-command.js";
+import { gabungPerAm, kualitasDataPipeline, SalesCommandError, tentukanRegion } from "./sales-command.js";
 
 const peta = { "SURABAYA": "East", "MALANG": "East", "JAKARTA": "West", "PUSAT": "OFFICE" };
 const sc = (o: Record<string, unknown>) => ({ superuser: false, role: null, cabangScope: null, amOnly: false, ...o });
@@ -62,4 +62,19 @@ test("gabungPerAm: lampu YTD merah TIDAK menambah skor — kinerja diwakili paci
   });
   assert.equal(b.lampu, "red");
   assert.equal(b.skor, 0);
+});
+
+test("kualitasDataPipeline: bulan lewat / kosong / tanpa nilai, per AM, deal bermasalah saja", () => {
+  const d = (id: string, am: string, m: number | null, y: number | null, nilai: number | null) =>
+    ({ deal_id: id, am_id: am, am: am, faskes: id, stage: "Quotation", purchase_month: m, purchase_year: y, nilai });
+  const k = kualitasDataPipeline([
+    d("a", "A1", 10, 2026, 100),   // lewat (bulan ini 2026-11)
+    d("b", "A1", 11, 2026, 100),   // bulan ini — beres
+    d("c", "A1", null, null, 0),   // kosong + tanpa nilai
+    d("e", "A2", 1, 2027, 50),     // depan — beres
+    d("f", "A2", 12, 2025, null),  // lewat (tahun lalu) + tanpa nilai
+  ], "2026-11");
+  assert.deepEqual([k.terbuka, k.bulan_lewat, k.tanpa_bulan, k.tanpa_nilai], [5, 2, 1, 2]);
+  assert.deepEqual(k.deals.map((x) => x.deal_id).sort(), ["a", "c", "f"]);
+  assert.deepEqual(k.per_am.map((a) => [a.am_id, a.bulan_lewat, a.tanpa_bulan, a.tanpa_nilai]), [["A1", 1, 1, 1], ["A2", 1, 0, 1]]);
 });

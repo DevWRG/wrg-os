@@ -136,6 +136,49 @@ const senin = (iso: string): string => {
   d.setUTCDate(d.getUTCDate() - hari);
   return d.toISOString().slice(0, 10);
 };
+export type MasalahData = "bulan_lewat" | "tanpa_bulan" | "tanpa_nilai";
+export interface DealKualitas {
+  deal_id: string; am_id: string | null; am: string | null; faskes: string; stage: string;
+  purchase_month: number | null; purchase_year: number | null; nilai: number | null;
+}
+
+/**
+ * Murni: kualitas data deal TERBUKA untuk forecast (Fase B ditunda sampai layak —
+ * keputusan pemilik 4 Nov 2026: cek prod 75% estimasi bulan beli sudah lewat).
+ * bulan_lewat = estimasi bulan beli sebelum bulan berjalan; tanpa_bulan = bulan/tahun
+ * kosong; tanpa_nilai = nilai deal kosong/nol. `bulanIni` = "YYYY-MM".
+ */
+export function kualitasDataPipeline(deals: DealKualitas[], bulanIni: string) {
+  const [yy, mm] = bulanIni.split("-").map(Number);
+  const kini = yy * 12 + (mm - 1);
+  const perAm = new Map<string, { am_id: string | null; nama: string; terbuka: number; bulan_lewat: number; tanpa_bulan: number; tanpa_nilai: number }>();
+  const bermasalah: (DealKualitas & { masalah: MasalahData[] })[] = [];
+  let lewat = 0, kosong = 0, nol = 0;
+  for (const d of deals) {
+    const masalah: MasalahData[] = [];
+    if (d.purchase_month == null || d.purchase_year == null) masalah.push("tanpa_bulan");
+    else if (d.purchase_year * 12 + (d.purchase_month - 1) < kini) masalah.push("bulan_lewat");
+    if (!(Number(d.nilai) > 0)) masalah.push("tanpa_nilai");
+    const k = d.am_id ?? "(tanpa AM)";
+    const a = perAm.get(k) ?? { am_id: d.am_id, nama: d.am ?? d.am_id ?? "(tanpa AM)", terbuka: 0, bulan_lewat: 0, tanpa_bulan: 0, tanpa_nilai: 0 };
+    a.terbuka += 1;
+    for (const m of masalah) a[m] += 1;
+    perAm.set(k, a);
+    if (masalah.includes("bulan_lewat")) lewat += 1;
+    if (masalah.includes("tanpa_bulan")) kosong += 1;
+    if (masalah.includes("tanpa_nilai")) nol += 1;
+    if (masalah.length) bermasalah.push({ ...d, masalah });
+  }
+  const skor = (a: { bulan_lewat: number; tanpa_bulan: number; tanpa_nilai: number }) => a.bulan_lewat + a.tanpa_bulan + a.tanpa_nilai;
+  return {
+    terbuka: deals.length, bulan_lewat: lewat, tanpa_bulan: kosong, tanpa_nilai: nol,
+    per_am: [...perAm.values()].filter((a) => skor(a) > 0).sort((a, b) => skor(b) - skor(a) || a.nama.localeCompare(b.nama)),
+    deals: bermasalah
+      .sort((a, b) => (a.am ?? "").localeCompare(b.am ?? "") || (Number(b.nilai) || 0) - (Number(a.nilai) || 0))
+      .slice(0, 150),
+  };
+}
+
 const hariIniWib = () => new Date(Date.now() + 7 * 3600_000).toISOString().slice(0, 10);
 
 export async function salesCommand(scope: DataScope, regionDiminta: string | null) {
@@ -226,6 +269,12 @@ export async function salesCommand(scope: DataScope, regionDiminta: string | nul
       kritis: ar.summary.kritis,
     },
     per_am: perAm,
+    kualitas_data: kualitasDataPipeline(
+      deals.filter((d) => d.stage !== "Closing-Won" && d.stage !== "Closing-Lost").map((d) => ({
+        deal_id: d.deal_id, am_id: d.am_id, am: d.am_name ?? d.am_id, faskes: d.facility_name || d.customer_name,
+        stage: d.stage, purchase_month: d.purchase_month, purchase_year: d.purchase_year, nilai: d.estimate_amount })),
+      tgl.slice(0, 7),
+    ),
     dormant_teratas: dormant,
     alert_aktif: alerts.filter((a) => a.active && a.last_state === "breach")
       .map((a) => ({ id: a.id, nama: a.alert_name, metrik: a.metric_key })),
