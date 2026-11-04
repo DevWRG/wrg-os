@@ -167,6 +167,7 @@ export async function hitungKpiBulan(period: string): Promise<HasilUkur> {
     sql`
       SELECT am_id, count(*)::int AS n FROM deal
        WHERE created_at >= ${from}::date AND created_at < (${to}::date + 1) AND am_id IS NOT NULL
+         AND opsi_utama -- opsi alternatif (274) bukan deal baru
        GROUP BY am_id`,
     reportCompliance(from, to),
     sql`

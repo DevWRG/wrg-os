@@ -213,6 +213,7 @@ export async function getPmfScorecard(tahunIn?: number, kuartalIn?: number): Pro
                  WHERE l.deal_id = d.deal_id AND l.to_stage = d.stage::text) AS tgl_log
       ) x
       WHERE d.stage IN ('Closing-Won', 'Closing-Lost')
+        AND d.opsi_utama -- Multi-Opsi (274): opsi di-drop bukan kekalahan
         AND (coalesce(x.tgl_log, d.stage_entered_at) AT TIME ZONE 'Asia/Jakarta')::date
             BETWEEN ${dari}::date AND ${sampai}::date`,
     cabangRegionMap(sql),

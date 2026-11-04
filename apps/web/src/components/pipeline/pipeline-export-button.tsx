@@ -24,6 +24,7 @@ const COLS_DEAL = [
   { width: 14 }, // Kategori Prospek
   { width: 14 }, // Forecast
   { width: 14 }, // Kerja Sama
+  { width: 14 }, // Opsi (Multi-Opsi)
   { width: 8 }, // Qty
   { width: 16 }, // Harga Satuan
   { width: 18 }, // Perkiraan Nilai
@@ -104,7 +105,7 @@ export function PipelineExportButton({
     try {
       const header = [
         HEAD("Stage"), HEAD("Jenis Faskes"), HEAD("Customer"), HEAD("Brand"), HEAD("Produk"),
-        HEAD("Kategori Produk"), HEAD("Kategori Prospek"), HEAD("Forecast"), HEAD("Kerja Sama"),
+        HEAD("Kategori Produk"), HEAD("Kategori Prospek"), HEAD("Forecast"), HEAD("Kerja Sama"), HEAD("Opsi"),
         HEAD("Qty", true), HEAD("Harga Satuan", true), HEAD("Perkiraan Nilai", true),
         HEAD("Peluang %", true), HEAD("Nilai x Peluang", true),
         HEAD("AM"), HEAD("HOD"), HEAD("Cabang"), HEAD("Kota"), HEAD("Provinsi"),
@@ -123,6 +124,8 @@ export function PipelineExportButton({
         str(d.stage === "Closing-Won" || d.stage === "Closing-Lost" ? null : d.prospect_category),
         str(d.forecast_category),
         str(coopLabel(d.coop_model)),
+        // Multi-Opsi: "Opsi 2/3" = alternatif, nilainya tak ikut TOTAL; "· utama" = dihitung.
+        str(d.opsi_grup ? `Opsi ${d.opsi_no}/${d.opsi_jumlah}${d.opsi_utama ? " · utama" : ""}` : null),
         num(d.qty_num),
         num(d.unit_price),
         num(d.estimate_amount),
@@ -158,8 +161,8 @@ export function PipelineExportButton({
           return {
             stage: s,
             count: ds.length,
-            total: ds.reduce((a, d) => a + (d.estimate_amount ?? 0), 0),
-            weighted: ds.reduce((a, d) => a + d.weighted, 0),
+            total: ds.reduce((a, d) => a + (d.opsi_utama ? (d.estimate_amount ?? 0) : 0), 0),
+            weighted: ds.reduce((a, d) => a + (d.opsi_utama ? d.weighted : 0), 0),
           };
         })
         .filter((r) => r.count > 0);
@@ -174,13 +177,13 @@ export function PipelineExportButton({
         { type: Number, value: deals.length, fontWeight: "bold" as const },
         {
           type: Number,
-          value: deals.reduce((a, d) => a + (d.estimate_amount ?? 0), 0),
+          value: deals.reduce((a, d) => a + (d.opsi_utama ? (d.estimate_amount ?? 0) : 0), 0),
           format: "#,##0",
           fontWeight: "bold" as const,
         },
         {
           type: Number,
-          value: Math.round(deals.reduce((a, d) => a + d.weighted, 0)),
+          value: Math.round(deals.reduce((a, d) => a + (d.opsi_utama ? d.weighted : 0), 0)),
           format: "#,##0",
           fontWeight: "bold" as const,
         },
