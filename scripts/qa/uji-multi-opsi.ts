@@ -19,6 +19,7 @@
 import { db } from "../../apps/api/src/db.js";
 import type { DataScope } from "../../apps/api/src/repo/access-scope.js";
 import { FULL_SCOPE } from "../../apps/api/src/repo/access-scope.js";
+import { runDealDormant } from "../../apps/api/src/repo/deal-dormant.js";
 import {
   createDeal, deleteDeal, getPipeline, getPipelineLeaderboard, getPipelineReport,
   jadikanOpsiUtama, recordReportTouch, tambahOpsi, transitionStage,
@@ -112,6 +113,19 @@ async function main() {
   const e2 = await tambahOpsi(e1, scAm, { brand: "B", qty_num: 1, unit_price: 90 });
   await transitionStage(e1, "Closing-Lost", scAm, { lossReason: "harga" });
   cek("utama pindah ke Opsi 2 yang masih jalan", (await baris(e2.deal_id)).opsi_utama && !(await baris(e1)).opsi_utama);
+
+  console.log("6b. Dormant hanya menilai opsi utama");
+  const f1 = (await createDeal(scAm, { facility_name: "RSUD UJI274 Dorman", qty_num: 1, unit_price: 50 })).deal_id;
+  const f2 = await tambahOpsi(f1, scAm, { brand: "C", qty_num: 1, unit_price: 40 });
+  // Keduanya diam 60 hari; opsi alternatif juga sudah terlanjur bertanda Dormant.
+  await sql`UPDATE deal SET stage_entered_at = now() - interval '60 days', updated_at = now() - interval '60 days' WHERE deal_id IN (${f1}, ${f2.deal_id})`;
+  await sql`UPDATE spt_state_log SET occurred_at = now() - interval '60 days' WHERE deal_id IN (${f1}, ${f2.deal_id})`;
+  await sql`UPDATE deal SET dormant_at = now() - interval '20 days' WHERE deal_id = ${f2.deal_id}`;
+  await runDealDormant({});
+  const g1 = (await sql`SELECT stage::text AS stage, dormant_at FROM deal WHERE deal_id = ${f1}`)[0];
+  const g2 = (await sql`SELECT stage::text AS stage, dormant_at FROM deal WHERE deal_id = ${f2.deal_id}`)[0];
+  cek("opsi utama yang diam ditandai Dormant", g1.dormant_at != null && g1.stage !== "Closing-Lost");
+  cek("opsi alternatif tak digugurkan & penandanya dilepas", g2.stage !== "Closing-Lost" && g2.dormant_at == null, `${g2.stage} ${g2.dormant_at}`);
 
   console.log("7. Hapus opsi");
   await deleteDeal(e1, scAdmin);
