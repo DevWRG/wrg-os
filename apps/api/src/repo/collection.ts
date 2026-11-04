@@ -17,17 +17,22 @@ export interface OverdueItem {
 }
 
 // Invoice overdue yang BELUM punya draft (hindari duplikat antar-run).
+// Hanya faktur yang MASIH bersisa: ar_aging_mv memuat juga faktur lunas (amount 0) dan
+// urutan "paling tua dulu" akan memilih faktur lunas → draf penagihan untuk tagihan yang sudah dibayar.
 export async function getOverdueForDrafting(limit = 10): Promise<OverdueItem[]> {
   const sql = db();
   const rows = await sql`
-    SELECT a.customer_id, a.customer_name, a.invoice_no, a.amount, a.days_overdue, a.bucket
+    SELECT a.customer_id, a.customer_name, a.invoice_no, COALESCE(ai.outstanding, a.amount)::float8 AS amount,
+      a.days_overdue, a.bucket
     FROM ar_aging_mv a
+    LEFT JOIN accurate_invoice ai ON ai.number = a.invoice_no AND ai.customer_id::text = a.customer_id
     WHERE a.days_overdue > 0
+      AND COALESCE(ai.outstanding, a.amount) > 0
       AND NOT EXISTS (
         SELECT 1 FROM collection_draft d
         WHERE d.invoice_no = a.invoice_no AND d.customer_id = a.customer_id
       )
-    ORDER BY a.days_overdue DESC, a.amount DESC
+    ORDER BY a.days_overdue DESC, amount DESC
     LIMIT ${limit}
   `;
   return rows.map((r) => ({

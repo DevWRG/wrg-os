@@ -27,12 +27,15 @@ export async function getDealValueSeries(): Promise<SeriesPoint[]> {
 }
 
 // Nominal invoice AR — outlier bisa berarti tagihan ganda / salah angka.
+// Hanya faktur bersisa: ribuan faktur lunas (amount 0) di ar_aging_mv meruntuhkan median/MAD ke 0
+// sehingga hampir semua faktur aktif terbaca outlier.
 export async function getArAmountSeries(): Promise<SeriesPoint[]> {
   const sql = db();
   const rows = await sql`
-    SELECT customer_id, customer_name, invoice_no, amount
-    FROM ar_aging_mv
-    WHERE amount IS NOT NULL
+    SELECT m.customer_id, m.customer_name, m.invoice_no, COALESCE(ai.outstanding, m.amount)::float8 AS amount
+    FROM ar_aging_mv m
+    LEFT JOIN accurate_invoice ai ON ai.number = m.invoice_no AND ai.customer_id::text = m.customer_id
+    WHERE COALESCE(ai.outstanding, m.amount) > 0
   `;
   return rows.map((r) => ({
     entity_id: `${String(r.customer_id)}:${String(r.invoice_no)}`,
