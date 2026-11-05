@@ -47,6 +47,7 @@ interface HitlItem {
   agent_id: string | null;
   payload: HitlPayload;
   created_at: string;
+  am_name: string | null;
 }
 
 export default function HitlPage() {
@@ -207,7 +208,7 @@ export default function HitlPage() {
                 <CardContent className="space-y-3">
                   <div className="text-sm">
                     <p>
-                      <span className="text-muted-foreground">AM:</span> {it.payload.am_id}
+                      <span className="text-muted-foreground">AM:</span> {it.am_name ?? `AM ${it.payload.am_id}`}
                     </p>
                     <p>
                       <span className="text-muted-foreground">Stage:</span>{" "}
