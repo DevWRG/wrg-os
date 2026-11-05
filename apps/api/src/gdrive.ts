@@ -114,3 +114,55 @@ export async function bukaUntukPublik(fileId: string): Promise<boolean> {
   }
   return true;
 }
+
+// ── F156 Arsip Dokumen: folder sendiri, berkas PRIVAT ─────────────────────
+// Kredensial sama dengan brosur (OAuth info@), folder GDRIVE_ARSIP_FOLDER_ID.
+// Berkas TIDAK pernah dibuka untuk publik — dokumen keuangan diunduh lewat
+// API yang dijaga izin (unduhDariDrive), bukan lewat tautan Drive.
+
+export const driveArsipSiap = (): boolean =>
+  Boolean((process.env.GDRIVE_OAUTH_FILE?.trim() || process.env.GDRIVE_SA_KEY_FILE?.trim()) && process.env.GDRIVE_ARSIP_FOLDER_ID?.trim());
+
+/** Unggah resumable (dua langkah) — upload multipart Drive dibatasi 5 MB, scan arsip bisa sampai 8 MB. */
+export async function unggahArsipKeDrive(isi: Buffer, nama: string, mime: string): Promise<{ id: string }> {
+  if (!driveArsipSiap()) throw new DriveError(503, "folder Google Drive arsip belum dikonfigurasi di server (GDRIVE_ARSIP_FOLDER_ID) — hubungi admin");
+  const token = await tokenAkses();
+  const mulai = await fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&supportsAllDrives=true&fields=id", {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json; charset=UTF-8", "x-upload-content-type": mime, "x-upload-content-length": String(isi.length) },
+    body: JSON.stringify({ name: nama, parents: [process.env.GDRIVE_ARSIP_FOLDER_ID!.trim()] }),
+  });
+  const sesi = mulai.headers.get("location");
+  if (!mulai.ok || !sesi) {
+    const d = (await mulai.json().catch(() => ({}))) as { error?: { message?: string } };
+    throw new DriveError(502, `unggah ke Google Drive gagal: ${d.error?.message ?? mulai.status}`);
+  }
+  const res = await fetch(sesi, { method: "PUT", headers: { "content-type": mime }, body: new Uint8Array(isi) });
+  const d = (await res.json().catch(() => ({}))) as { id?: string; error?: { message?: string } };
+  if (!res.ok || !d.id) throw new DriveError(502, `unggah ke Google Drive gagal: ${d.error?.message ?? res.status}`);
+  return { id: d.id };
+}
+
+/** Isi berkas Drive (alt=media). 404 Drive → DriveError 404. */
+export async function unduhDariDrive(fileId: string): Promise<Buffer> {
+  const token = await tokenAkses();
+  const res = await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?alt=media&supportsAllDrives=true`, {
+    headers: { authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) {
+    const d = (await res.json().catch(() => ({}))) as { error?: { message?: string } };
+    throw new DriveError(res.status === 404 ? 404 : 502, res.status === 404 ? "berkas tidak ditemukan di Google Drive" : `unduh dari Google Drive gagal: ${d.error?.message ?? res.status}`);
+  }
+  return Buffer.from(await res.arrayBuffer());
+}
+
+/** Pindahkan ke sampah Drive (bisa dipulihkan 30 hari) — dipakai bila simpan DB gagal sesudah unggah. */
+export async function buangKeSampahDrive(fileId: string): Promise<void> {
+  const token = await tokenAkses();
+  const res = await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?supportsAllDrives=true`, {
+    method: "PATCH",
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    body: JSON.stringify({ trashed: true }),
+  });
+  if (!res.ok) console.error("[gdrive] buang ke sampah gagal:", fileId, res.status);
+}

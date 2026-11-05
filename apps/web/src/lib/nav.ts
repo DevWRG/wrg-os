@@ -50,6 +50,7 @@ import { canViewOrderWa } from "@/lib/order-wa-access";
 import { canViewProductScorecard } from "@/lib/product-scorecard-access";
 import { FITUR_PUTUSAN as FITUR_PUTUSAN_PERMINTAAN, canViewPermintaanProduk } from "@/lib/permintaan-produk-access";
 import { canViewKsoKontrak } from "@/lib/kso-kontrak-access";
+import { canViewArsipDokumen } from "@/lib/arsip-dokumen-access";
 import { canViewCn } from "@/lib/cn-access";
 import { canViewApThreeWay } from "@/lib/ap-three-way-access";
 import { FITUR_BOTTOMLINE, FITUR_SUSUNAN, TAB_KSO, canViewKsoKomite } from "@/lib/kso-komite-access";
@@ -430,6 +431,8 @@ export const NAV: NavGroup[] = [
     label: "DOC",
     items: [
       { title: "Klaim OCR", url: "/doc-klaim", icon: ScanText, badge: "NEW" },
+      // F156 Arsip Dokumen — kunci izin sendiri ("arsip-dokumen"), default tertutup.
+      { title: "Arsip Dokumen", url: "/arsip-dokumen", icon: Archive, badge: "NEW", show: canViewArsipDokumen },
     ],
   },
   {
