@@ -126,7 +126,7 @@ export default function HitlPage() {
         <div>
           <h1 className="text-2xl font-semibold">HITL Review</h1>
           <p className="text-muted-foreground">
-            Konfirmasi match #REPORT ambiguous (gate D6) — pilih deal yang benar atau tolak.
+            Temuan agen yang menunggu keputusan manusia — A4 keaslian pipeline (harian 09:00) &amp; A5 anomali (09:15).
           </p>
         </div>
         <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
