@@ -1,5 +1,6 @@
 import os
 import sys
+import time
 from typing import List, Optional, Tuple
 
 import httpx
@@ -26,6 +27,31 @@ def _catat_galat(model: str, e: Exception) -> Exception:
         pesan = f"HTTP {e.response.status_code}: {body[:400]}"
     print(f"[openrouter] model {model} gagal — {pesan}", file=sys.stderr, flush=True)
     return RuntimeError(f"{model}: {pesan}")
+
+
+# 429 dari OpenRouter = kapasitas upstream model sedang penuh ("temporarily
+# rate-limited upstream"), bukan key/kredit kita. 5-6 Nov 2026 flash-lite kena 9×
+# saat pola-komunikasi mengirim ~27 panggilan beruntun; tanpa coba ulang tiap 429
+# langsung lompat ke fallback. Satu kali coba ulang setelah jeda pendek biasanya lolos.
+RETRY_429_DETIK = 3.0
+RETRY_429_MAKS_DETIK = 10.0
+
+
+def _post(client: httpx.Client, url: str, **kwargs) -> httpx.Response:
+    """client.post + satu kali coba ulang bila 429. Status lain dikembalikan apa adanya
+    (pemanggil tetap raise_for_status → model berikutnya)."""
+    resp = client.post(url, **kwargs)
+    if resp.status_code != 429:
+        return resp
+    jeda = RETRY_429_DETIK
+    try:
+        jeda = min(float(resp.headers.get("retry-after", jeda)), RETRY_429_MAKS_DETIK)
+    except ValueError:
+        pass
+    model = (kwargs.get("json") or {}).get("model")
+    print(f"[openrouter] model {model} 429 — coba ulang sekali setelah {jeda:.0f} dtk", file=sys.stderr, flush=True)
+    time.sleep(jeda)
+    return client.post(url, **kwargs)
 
 
 def daily_models() -> List[str]:
@@ -177,7 +203,7 @@ def chat(
     with httpx.Client(timeout=60) as client:
         for model in models or daily_models():
             try:
-                resp = client.post(
+                resp = _post(client,
                     OPENROUTER_URL,
                     headers=headers,
                     json={
@@ -230,7 +256,7 @@ def chat_vision(
     with httpx.Client(timeout=60) as client:
         for model in models or klaim_models():
             try:
-                resp = client.post(
+                resp = _post(client,
                     OPENROUTER_URL,
                     headers=headers,
                     json={
@@ -319,7 +345,7 @@ def chat_audio(
     with httpx.Client(timeout=90) as client:
         for model in models or transkrip_models():
             try:
-                resp = client.post(
+                resp = _post(client,
                     OPENROUTER_URL,
                     headers=headers,
                     json={
