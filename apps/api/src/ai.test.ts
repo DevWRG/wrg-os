@@ -154,11 +154,18 @@ test("timeout → 503 yang menyebut batas waktunya", async () => {
     new Promise((_res, rej) => {
       init?.signal?.addEventListener("abort", () => rej(init.signal?.reason));
     })) as unknown as typeof fetch;
+  // Timer AbortSignal.timeout di Node di-unref: kalau tak ada kerja lain,
+  // event loop habis SEBELUM abort sempat jalan → "Promise resolution is still
+  // pending but the event loop has already resolved". Selalu gagal di Node 22
+  // (CI) bila file ini jalan sendirian; lolos di Node 24 lokal. Interval ini
+  // menahan event loop sampai callAi selesai.
+  const jaga = setInterval(() => {}, 1000);
   try {
     const r = await callAi("/rekap", {}, { timeoutMs: 20 });
     assert.equal(r.status, 503);
     assert.match(String(r.data.error), /timeout 20ms/);
   } finally {
+    clearInterval(jaga);
     globalThis.fetch = asli;
   }
 });
