@@ -85,8 +85,15 @@ export async function enqueueDuplicateCustomerName(opts: {
 export async function listHitl(status = "pending") {
   const sql = db();
   return sql`
-    SELECT id, correlation_id, agent_id, r_tier, hitl_level, status, payload, created_at
-    FROM hitl_queue WHERE status = ${status} ORDER BY created_at
+    SELECT h.id, h.correlation_id, h.agent_id, h.r_tier, h.hitl_level, h.status, h.payload,
+           h.created_at, mu.am_name
+    FROM hitl_queue h
+    -- am_id prod berupa angka ("10") — sertakan nama dari master_user untuk kartu.
+    LEFT JOIN LATERAL (
+      SELECT COALESCE(NULLIF(nama, ''), NULLIF(panggilan, '')) AS am_name
+      FROM master_user WHERE am_id = h.payload->>'am_id' LIMIT 1
+    ) mu ON true
+    WHERE h.status = ${status} ORDER BY h.created_at
   `;
 }
 
