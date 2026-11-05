@@ -69,6 +69,55 @@ class TestGalatOpenRouter(unittest.TestCase):
         self.assertIn("Key limit exceeded", str(cm.exception))
 
 
+BODY_429 = '{"error":{"message":"Provider returned error","code":429,"metadata":{"raw":"google/gemini-2.5-flash-lite is temporarily rate-limited upstream."}}}'
+BODY_OK = '{"choices":[{"message":{"content":"OK"}}],"usage":{"prompt_tokens":3,"completion_tokens":1}}'
+
+
+class TestCobaUlang429(unittest.TestCase):
+    """6 Nov 2026: flash-lite kena 429 upstream 9× semalam dan tiap kali langsung lompat
+    ke fallback. Sekarang 429 dicoba ulang SEKALI pada model yang sama dulu."""
+
+    def _jalankan(self, urutan_status):
+        panggilan = []
+
+        def transport(req: httpx.Request) -> httpx.Response:
+            model = json.loads(req.content)["model"]
+            panggilan.append(model)
+            st = urutan_status.pop(0) if urutan_status else 200
+            return httpx.Response(st, text=BODY_429 if st == 429 else BODY_OK, request=req)
+
+        class Client(httpx.Client):
+            def __init__(self, *a, **kw):
+                kw.pop("timeout", None)
+                super().__init__(transport=httpx.MockTransport(transport))
+
+        err = io.StringIO()
+        with mock.patch.dict(os.environ, {"OPENROUTER_API_KEY": "uji"}), \
+                mock.patch.object(openrouter.httpx, "Client", Client), \
+                mock.patch.object(openrouter.time, "sleep") as tidur, \
+                redirect_stderr(err):
+            hasil = openrouter.chat("s", "u", models=["google/gemini-2.5-flash-lite", "deepseek/deepseek-v3.2"])
+        return hasil, panggilan, tidur, err.getvalue()
+
+    def test_429_sekali_lalu_lolos_di_model_yang_sama(self):
+        (text, model, _, _), panggilan, tidur, log = self._jalankan([429, 200])
+        self.assertEqual((text, model), ("OK", "google/gemini-2.5-flash-lite"))
+        self.assertEqual(panggilan, ["google/gemini-2.5-flash-lite"] * 2)
+        tidur.assert_called_once()
+        self.assertIn("429 — coba ulang", log)
+
+    def test_429_dua_kali_pindah_ke_fallback(self):
+        (text, model, _, _), panggilan, tidur, log = self._jalankan([429, 429, 200])
+        self.assertEqual(model, "deepseek/deepseek-v3.2")
+        self.assertEqual(panggilan, ["google/gemini-2.5-flash-lite"] * 2 + ["deepseek/deepseek-v3.2"])
+        self.assertIn("gemini-2.5-flash-lite gagal — HTTP 429", log)
+
+    def test_status_lain_tak_dicoba_ulang(self):
+        _, panggilan, tidur, _ = self._jalankan([500, 200])
+        self.assertEqual(panggilan, ["google/gemini-2.5-flash-lite", "deepseek/deepseek-v3.2"])
+        tidur.assert_not_called()
+
+
 class TestModelCadangan(unittest.TestCase):
     def test_tak_ada_default_deepseek_r1(self):
         # Slug ini sudah 404 di OpenRouter; default kode tak boleh memakainya lagi.
