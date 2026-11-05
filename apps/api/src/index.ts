@@ -6536,7 +6536,7 @@ const ppErr = (c: Context, e: unknown) => {
 };
 const ppOleh = (b: Record<string, unknown>) => (typeof b.oleh === "string" && b.oleh.trim() ? b.oleh.trim() : null);
 const ppJson = async (c: Context) => ((await c.req.json().catch(() => null)) as Record<string, unknown> | null) ?? {};
-// F156 Arsip Dokumen (migrasi 277) — berkas di Google Drive PRIVAT, diunduh lewat sini.
+// F156 Arsip Dokumen (migrasi 279) — berkas di Google Drive PRIVAT, diunduh lewat sini.
 // Gerbang menu "/arsip-dokumen" (lihat/buat/ubah/hapus) + kode buku (admin) DIPERIKSA DI BFF;
 // service token mem-bypass JWT di sini. `oleh` diisi BFF dari sesi.
 const arsipErr = (c: Context, e: unknown) => {
