@@ -85,7 +85,8 @@ export const KSO_BANTUAN =
   "7. Alasan strategis: (kosongkan bila tidak ada)\nPendukung: dr. Rina SpPK, kepala instalasi lab\n\n" +
   "Perkiraan lisan tidak diterima sebagai bukti volume untuk zona Forum. Sistem membalas GPM & zona sebelum kamu kirim.\n" +
   `Boleh juga kirim "#KSO" lalu voice note dalam ${KSO_JENDELA_SUARA_MENIT} menit.\n` +
-  "Melengkapi: #KSO D12 <jawaban> · Mengajukan: #KSO kirim D12";
+  "Melengkapi: #KSO D12 <jawaban> · Mengajukan: #KSO kirim D12\n" +
+  "Volume RS turun sesudah mandat terbit: #KSO D12 volume 900 (turun > 20% → mandat dihitung ulang)";
 
 /** Terjemahan galat fungsi kso.* ke bahasa manusia. Tak pernah menampilkan nama fungsi/kode. */
 export function terjemahGalatKso(pesan: string, ref: string): string {
@@ -107,6 +108,8 @@ export function terjemahGalatKso(pesan: string, ref: string): string {
   if (/BUKAN_MILIK_PENGIRIM|RENCANA_TIDAK_ADA/.test(pesan)) return "Rencana itu bukan atas nama Anda, atau nomornya tidak ada.";
   if (/DRAFT_TERKUNCI|TIDAK_BISA_DIAJUKAN/.test(pesan)) return `Rencana ${ref} sudah diajukan — isiannya tidak bisa diubah lagi lewat WA.`;
   if (/BUKAN_TAHAP_NEGOSIASI/.test(pesan)) return "Minta kelonggaran hanya untuk rencana yang penawarannya sudah terbit.";
+  if (/BUKAN_TAHAP_MANDAT|TIDAK_ADA_MANDAT/.test(pesan)) return `Laporan volume hanya untuk rencana yang sudah punya mandat — ${ref} belum.`;
+  if (/VOLUME_TIDAK_SAH/.test(pesan)) return `Volume harus angka tes per bulan, mis. "#KSO ${ref} volume 900".`;
   if (/GRUP_DIBEKUKAN/.test(pesan)) return "Grup faskes ini sedang dibekukan Direksi (SK Pasal 14) — belum bisa diproses.";
   if (/TRANSISI_TIDAK_SAH/.test(pesan)) return `Aksi itu tidak berlaku untuk status ${ref} sekarang.`;
   if (/ALASAN_STRATEGIS_WAJIB/.test(pesan))
@@ -185,6 +188,30 @@ export function teksZonaForum(z: {
       && z.belum_hijau.length === 1 && z.belum_hijau[0] === 2 && z.gerbang2 === "belum")
     return { label: "ZONA FORUM", catatan: "Sementara tercatat Zona Direktur sampai Sekretaris memverifikasi bukti volume — siapkan berkas buktinya." };
   return { label: z.zona === "direktur" ? "ZONA DIREKTUR" : "ZONA FORUM", catatan: null };
+}
+
+/** Angka volume dari "#KSO D12 volume 900" / "volume turun jadi 1.100 tes" — titik = ribuan. null bila tak ada. */
+export function volumeDariTeks(t: string): number | null {
+  const m = /\bvolume\b[^\d]{0,30}(\d{1,3}(?:\.\d{3})+|\d+)/i.exec(t);
+  if (!m) return null;
+  const v = Number(m[1].replace(/\./g, ""));
+  return Number.isFinite(v) && v > 0 ? v : null;
+}
+
+const LABEL_ZONA_BOT: Record<string, string> = { am: "AM", hod: "2 HOD", forum: "Forum", direktur: "Direktur" };
+
+/** Balasan kso.volume_turun (278): toleransi · dihitung ulang · ditarik ke forum. Murni — diuji tanpa DB. */
+export function balasanVolumeTurun(ref: string, h: Record<string, unknown>): string {
+  const n = (k: string) => (h[k] == null ? null : Number(h[k]));
+  const tes = (v: number | null) => (v == null ? "—" : v.toLocaleString("id-ID"));
+  if (h.hasil === "toleransi")
+    return `${ref}: volume ${tes(n("volume_baru"))} tes/bln masih dalam toleransi (≥ ${tes(n("volume_batas"))}, 80% dari ${tes(n("volume_dasar"))}). Mandat tetap.`;
+  const turun = `${ref}: volume turun dari ${tes(n("volume_dasar"))} ke ${tes(n("volume_baru"))} tes/bln (> 20%)`;
+  if (h.hasil === "dihitung_ulang")
+    return `${turun} — mandat dihitung ulang. Berlaku s/d ${String(h.berlaku_sampai)}: harga pembuka ${rp(n("pembuka"))}, target ${rp(n("target"))}, `
+      + `batas bawah ${rp(n("lantai"))}/test, volume minimum ${tes(n("volume_minimum"))} tes/bln. Penawaran berikutnya pakai angka ini.`;
+  return `${turun} — ${h.tanpa_angka ? "angka GPM belum lengkap, mandat tak bisa dihitung ulang" : `GPM turun ke zona ${LABEL_ZONA_BOT[String(h.zona)] ?? String(h.zona)}`}. `
+    + "Mandat lama gugur; usulan masuk agenda forum berikutnya. Jangan lanjutkan penawaran dengan harga lama.";
 }
 
 export function perkiraanZona(d: Pick<DraftTampil, "zona_dasar" | "gerbang" | "kursi_hod" | "kolom_dinyatakan">): "am" | "hod" | "forum" | "direktur" {
@@ -485,6 +512,27 @@ export async function prosesKso(k: KsoKonteks): Promise<{ balasan: string; hasil
       });
     } catch (e) {
       const m = (e as Error).message;
+      return { balasan: terjemahGalatKso(m, ref), hasil: { error: "kso-galat", galat: m.slice(0, 200) } };
+    }
+  }
+
+  // "#KSO D12 volume 900" untuk usulan yang SUDAH memegang mandat → volume turun (Pedoman: > 20% = mandat dihitung
+  // ulang; keputusan user 5 Nov: dilaporkan AM lewat #KSO). Deterministik, tanpa LLM. Draft → alur lengkapi biasa.
+  const volBaru = p.aksi === "lengkapi" ? volumeDariTeks(k.teks) : null;
+  if (volBaru != null && ref) {
+    try {
+      const hasilVol = await sebagaiBot(async (tx) => {
+        const id = await idDariNomor(tx, p);
+        if (!id) return { balasan: "Rencana itu bukan atas nama Anda, atau nomornya tidak ada.", hasil: { error: "ref-tidak-ada", ref } };
+        const [st] = await tx`select status::text as status from kso.rencana_kso where id = ${id}`;
+        if (!["DIPUTUS_AM", "DIPUTUS_HOD", "MANDAT_TERBIT", "PENAWARAN_TERBIT"].includes(String(st?.status))) return null;
+        const [v] = await tx`select kso.app_bot_volume_turun(${id}, ${k.am_id}, ${volBaru}) as h`;
+        const h = v.h as Record<string, unknown>;
+        return { balasan: balasanVolumeTurun(ref, h), hasil: { aksi: "volume", rencana_id: id, ...h } };
+      });
+      if (hasilVol) return hasilVol;
+    } catch (e) {
+      const m = e instanceof Error ? e.message : String(e);
       return { balasan: terjemahGalatKso(m, ref), hasil: { error: "kso-galat", galat: m.slice(0, 200) } };
     }
   }
