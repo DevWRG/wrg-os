@@ -77,6 +77,8 @@ export async function insertCoachingNote(opts: {
 export interface CoachingNoteRow {
   id: string;
   am_id: string;
+  // Nama dari master_user (am_id prod berupa angka "10", tak terbaca manusia).
+  am_name: string | null;
   period: string | null;
   metrics: unknown;
   strengths: string[];
@@ -89,15 +91,21 @@ export interface CoachingNoteRow {
 export async function listCoachingNotes(amId?: string, limit = 50): Promise<CoachingNoteRow[]> {
   const sql = db();
   const rows = await sql`
-    SELECT id, am_id, period, metrics, strengths, gaps, recommendations, score, created_at::text
-    FROM coaching_note
-    WHERE ${amId ? sql`am_id = ${amId}` : sql`true`}
-    ORDER BY created_at DESC
+    SELECT cn.id, cn.am_id, mu.am_name, cn.period, cn.metrics, cn.strengths, cn.gaps,
+           cn.recommendations, cn.score, cn.created_at::text
+    FROM coaching_note cn
+    LEFT JOIN LATERAL (
+      SELECT COALESCE(NULLIF(nama, ''), NULLIF(panggilan, '')) AS am_name
+      FROM master_user WHERE am_id = cn.am_id LIMIT 1
+    ) mu ON true
+    WHERE ${amId ? sql`cn.am_id = ${amId}` : sql`true`}
+    ORDER BY cn.created_at DESC
     LIMIT ${limit}
   `;
   return rows.map((r) => ({
     id: String(r.id),
     am_id: String(r.am_id),
+    am_name: r.am_name ? String(r.am_name) : null,
     period: r.period ? String(r.period) : null,
     metrics: r.metrics ?? {},
     strengths: Array.isArray(r.strengths) ? (r.strengths as string[]) : [],
