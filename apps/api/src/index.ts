@@ -289,7 +289,7 @@ import {
 import { BuktiError, bacaBukti, daftarBukti, MAKS_BUKTI, unggahBukti } from "./repo/bukti-pembayaran.js";
 import { GalatKso, daftarTab, detailRencana, isAksiKso, isTabKso, jalankanAksi, tabBoleh } from "./repo/kso-komite.js";
 import { bacaSusunan, simpanJabatan, simpanPemegang } from "./repo/kso-komite-susunan.js";
-import { aksesBottomLine, bacaBottomLine, bacaReal, simpanAngka, simpanDukungan, simpanJenis, simpanKeputusan, simpanParameter } from "./repo/kso-komite-bottomline.js";
+import { aksesBottomLine, bacaBottomLine, bacaPortofolio, bacaReal, simpanAngka, simpanDukungan, simpanJenis, simpanKeputusan, simpanParameter } from "./repo/kso-komite-bottomline.js";
 import { runPolaKomunikasi } from "./repo/polakomunikasi.js";
 import { listWaGroups, setWaGroupCategory, setWaGroupPrefixCategory, isWaGroupCategory } from "./repo/wagroup.js";
 import { runRefreshMembers } from "./repo/listmembers.js";
@@ -2638,6 +2638,13 @@ app.get("/kso-komite/bottom-line/real", async (c) => {
   const u = ksoUser(c);
   if (!u) return c.json({ error: "x-user-id wajib" }, 401);
   try { return c.json(await bacaReal(u)); } catch (e) { return ksoKomiteErr(c, e); }
+});
+// F170 Fase D — Tinjauan Portofolio (migrasi 277). Izin = lihat Bottom Line (kso-komite-bottomline). Sebelum /:tab.
+app.get("/kso-komite/portofolio", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const u = ksoUser(c);
+  if (!u) return c.json({ error: "x-user-id wajib" }, 401);
+  try { return c.json(await bacaPortofolio(u)); } catch (e) { return ksoKomiteErr(c, e); }
 });
 app.post("/kso-komite/bottom-line/:jenis", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
