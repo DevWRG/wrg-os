@@ -28,7 +28,10 @@ export async function getAmsNeedingCoaching(period: string): Promise<AmMetrics[]
            coalesce(sum(estimated_value) FILTER (WHERE stage NOT IN ('Closing-Won','Closing-Lost')), 0) AS open_value,
            (SELECT count(*) FROM spt_state_log s WHERE s.changed_by = d.am_id)::int AS activity
     FROM deal d
-    WHERE NOT EXISTS (
+    -- Deal tanpa AM (VACANT) bukan orang yang bisa di-coaching; tanpa saringan
+    -- ini String(null) tersimpan sebagai am_id "null" dan tiap run menambah lagi.
+    WHERE d.am_id IS NOT NULL AND btrim(d.am_id) <> ''
+      AND NOT EXISTS (
       SELECT 1 FROM coaching_note cn WHERE cn.am_id = d.am_id AND cn.period = ${period}
     )
     GROUP BY d.am_id
