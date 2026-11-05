@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { nilaiUnitPortofolio, type BarisPortofolio } from "./kso-komite-bottomline.js";
 import {
   angkaReal, biayaTes, cicilanTes, gpm, gridHarga, gridVolume, hargaMin, hppMaks, izinBottomLine, volumeMin, zona,
   type Angka,
@@ -86,4 +87,50 @@ test("izin: superuser semua; role admin TIDAK otomatis; direktur lewat gate lama
   // real bottom tertutup bila fitur real diatur tanpa centang, walau role direktur
   const tutup = izinBottomLine(user({ role: "direktur" }), eff({ permissions: { "kso-komite-bottomline-real": izin(false, false) } }));
   assert.equal(tutup.realLihat, false);
+});
+
+// ---------------------------------------------------------------- Tinjauan Portofolio (F170 Fase D)
+
+const P = { tenor: 36, zona: { am: 0.55, hod: 0.5, forum: 0.45 } };
+const AP = { reagen: 6000, tetap: 1_500_000, qc: 500_000, hpp: 63_250_000 }; // fiktif — biaya Rp 9.415/tes di 1.100 tes
+const HARI_INI = new Date(Date.UTC(2026, 10, 5)); // 5 Nov 2026
+const unitDasar: BarisPortofolio = { account_id: 1, mulai: "2025-06-01", omzet: [19_470_000, 19_470_000, 19_470_000], omzet_terakhir: "2026-10-01", piutang_hari: 10 };
+
+test("portofolio: GPM per bulan = gpm() Bottom Line di Rp/tes realisasi; 46,8% → pantau (45–50%)", () => {
+  const h = nilaiUnitPortofolio(unitDasar, AP, 17_700, false, P, HARI_INI);
+  assert.ok(Math.abs((h.gpm[0] ?? 0) - 0.468) < 0.001);
+  assert.deepEqual(h.kondisi, ["gpm_pantau"]);
+});
+
+test("portofolio: GPM < 45% tiga bulan berturut-turut; satu bulan tanpa omzet = belum tiga bulan", () => {
+  const rendah = { ...unitDasar, omzet: [11_000_000, 11_000_000, 11_000_000] };
+  assert.ok(nilaiUnitPortofolio(rendah, AP, 10_000, false, P, HARI_INI).kondisi.includes("gpm_rendah"));
+  const bolong = { ...rendah, omzet: [11_000_000, 0, 11_000_000] };
+  assert.ok(!nilaiUnitPortofolio(bolong, AP, 10_000, false, P, HARI_INI).kondisi.includes("gpm_rendah"));
+});
+
+test("portofolio: idle > 60 hari dari akhir bulan omzet terakhir; alat yang baru ditempatkan tidak", () => {
+  const idle = nilaiUnitPortofolio({ ...unitDasar, omzet: [0, 0, 0], omzet_terakhir: "2026-08-01" }, AP, 17_700, false, P, HARI_INI);
+  assert.ok(idle.kondisi.includes("idle"));
+  assert.equal(idle.idle_hari, 66); // 31 Agu → 5 Nov
+  const baru = nilaiUnitPortofolio({ ...unitDasar, mulai: "2026-10-10", omzet: [0, 0, 0], omzet_terakhir: null }, AP, 17_700, false, P, HARI_INI);
+  assert.ok(!baru.kondisi.includes("idle"));
+  const jalan = nilaiUnitPortofolio(unitDasar, AP, 17_700, false, P, HARI_INI);
+  assert.ok(!jalan.kondisi.includes("idle"));
+});
+
+test("portofolio: piutang > 90 hari, alat di gudang, biaya kosong & Hemodialisa tanpa GPM", () => {
+  assert.ok(nilaiUnitPortofolio({ ...unitDasar, piutang_hari: 91 }, AP, 17_700, false, P, HARI_INI).kondisi.includes("piutang"));
+  assert.deepEqual(nilaiUnitPortofolio({ ...unitDasar, account_id: null }, AP, 17_700, false, P, HARI_INI).kondisi, ["gudang"]);
+  const kosong = nilaiUnitPortofolio(unitDasar, { ...AP, reagen: null }, 17_700, false, P, HARI_INI);
+  assert.deepEqual(kosong.gpm, [null, null, null]);
+  assert.deepEqual(kosong.kondisi, []);
+  assert.deepEqual(nilaiUnitPortofolio(unitDasar, AP, 17_700, true, P, HARI_INI).gpm, [null, null, null]);
+});
+
+test("portofolio: cicilan HPP berhenti sesudah masa tenor sejak alat ditempatkan", () => {
+  const lama = nilaiUnitPortofolio({ ...unitDasar, mulai: "2022-01-01" }, AP, 17_700, false, P, HARI_INI);
+  assert.equal(lama.cicilan_dihitung, false);
+  assert.ok((lama.gpm[0] ?? 0) > 0.55); // tanpa cicilan Rp 1.597/tes → 55,8%
+  assert.equal(nilaiUnitPortofolio(unitDasar, AP, 17_700, false, P, HARI_INI).cicilan_dihitung, true);
 });
