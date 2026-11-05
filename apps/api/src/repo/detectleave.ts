@@ -47,6 +47,26 @@ const stripWaFmt = (s: string) => s.replace(/[*_~`]/g, "").trim();
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const wibDate = (): string => new Date(Date.now() + 7 * 3600 * 1000).toISOString().slice(0, 10);
 
+// Putusan atas balasan /detect-leave — dipisah jadi fungsi murni supaya bisa dites
+// tanpa DB (#2007).
+//
+// "bukan-izin" ⇒ pesan ditandai `not-leave` di leave_scan_seen dan TIDAK PERNAH
+// dipindai ulang. Jadi putusan itu hanya boleh lahir dari LLM yang benar-benar
+// berjalan. 5 Nov 2026: kuota OpenRouter habis, services/ai balas 200 +
+// `is_leave:false, model:"dry-run-fallback"` ⇒ tiga pengajuan izin asli tertandai
+// `not-leave` dan hilang tanpa jejak. Sekarang:
+//   - status ≠ 200 (termasuk 503 dari callAi untuk hasil terdegradasi) → coba lagi;
+//   - `dry_run: true` (LLM tak berjalan — fallback, tanpa key, atau AI_DRY_RUN)
+//     → coba lagi, bukan putusan. Jendela scan 2 hari memberi waktu pulih.
+export type PutusanDeteksi = "coba-lagi" | "bukan-izin" | "izin";
+
+export function putusanDeteksiAi(status: number, data: Record<string, unknown>): PutusanDeteksi {
+  if (status !== 200) return "coba-lagi";
+  if (data.dry_run === true || data.model === "dry-run-fallback" || data.model === "dry-run") return "coba-lagi";
+  if (!data.is_leave || Number(data.confidence ?? 0) < 0.6) return "bukan-izin";
+  return "izin";
+}
+
 async function markSeen(messageId: string, status: string): Promise<void> {
   await db()`
     INSERT INTO leave_scan_seen (message_id, status) VALUES (${messageId}, ${status})
@@ -281,8 +301,9 @@ export async function runDetectLeaveScan(opts: { dryRun?: boolean } = {}): Promi
     const { status, data } = await callAi("/detect-leave", {
       sender: String(m.sender_name ?? ""), body, msgdate: msgDate, dry_run: aiDryRun(),
     });
-    if (status !== 200) { skip(`ai-${status}`); continue; } // jangan mark — coba lagi nanti
-    if (!data.is_leave || Number(data.confidence ?? 0) < 0.6) {
+    const putusan = putusanDeteksiAi(status, data);
+    if (putusan === "coba-lagi") { skip(status !== 200 ? `ai-${status}` : "ai-tanpa-llm"); continue; } // jangan mark — coba lagi nanti
+    if (putusan === "bukan-izin") {
       await markSeen(mid, "not-leave"); skip("not-leave"); continue;
     }
     const namaRaw = data.nama ? String(data.nama) : "";
