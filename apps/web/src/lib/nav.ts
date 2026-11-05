@@ -26,6 +26,7 @@ import { canViewOrderWa } from "@/lib/order-wa-access";
 import { canViewProductScorecard } from "@/lib/product-scorecard-access";
 import { FITUR_PUTUSAN as FITUR_PUTUSAN_PERMINTAAN, canViewPermintaanProduk } from "@/lib/permintaan-produk-access";
 import { canViewKsoKontrak } from "@/lib/kso-kontrak-access";
+import { canViewArsipDokumen } from "@/lib/arsip-dokumen-access";
 import { FITUR_BOTTOMLINE, FITUR_SUSUNAN, TAB_KSO, canViewKsoKomite } from "@/lib/kso-komite-access";
 import { canViewAsetTetap } from "@/lib/aset-tetap-access";
 import { canViewRaportList } from "@/lib/raport-access";
@@ -330,6 +331,14 @@ export const NAV: NavGroup[] = [
       // F36 Inbound Receiving — checklist verifikasi gudang per Penerimaan
       // Barang Accurate (migrasi 206), dibuat otomatis oleh sinkron.
       { title: "Inbound Receiving", url: "/inbound-receiving", icon: PackageCheck, badge: "NEW" },
+    ],
+  },
+  {
+    // F156 Arsip Dokumen — domain board "DOC", grup sendiri (pola sama F139
+    // bikin grup "GA"). Kunci izin sendiri ("arsip-dokumen"), default tertutup.
+    label: "DOC",
+    items: [
+      { title: "Arsip Dokumen", url: "/arsip-dokumen", icon: Archive, badge: "NEW", show: canViewArsipDokumen },
     ],
   },
   {
