@@ -80,6 +80,7 @@ import {
   PermintaanError, analisa as ppAnalisa, cariSku as ppCariSku, catatPermintaan, listPermintaan, listReview as ppListReview,
   opsi as ppOpsi, putuskan as ppPutuskan, simpanKelompok as ppSimpanKelompok, ubahParam as ppUbahParam, ubahPermintaan, usulkan as ppUsulkan, bacaParam as ppBacaParam,
 } from "./repo/permintaan-produk.js";
+import { ArsipError, bacaBerkasArsip, hapusArsip, listArsip, listBuku as arsipListBuku, simpanBuku as arsipSimpanBuku, ubahArsip, unggahArsip } from "./repo/arsip-dokumen.js";
 import {
   ingestInvoices,
   ingestAccurateWebhook,
@@ -5110,6 +5111,65 @@ const ppErr = (c: Context, e: unknown) => {
 };
 const ppOleh = (b: Record<string, unknown>) => (typeof b.oleh === "string" && b.oleh.trim() ? b.oleh.trim() : null);
 const ppJson = async (c: Context) => ((await c.req.json().catch(() => null)) as Record<string, unknown> | null) ?? {};
+// F156 Arsip Dokumen (migrasi 279) — berkas di Google Drive PRIVAT, diunduh lewat sini.
+// Gerbang menu "/arsip-dokumen" (lihat/buat/ubah/hapus) + kode buku (admin) DIPERIKSA DI BFF;
+// service token mem-bypass JWT di sini. `oleh` diisi BFF dari sesi.
+const arsipErr = (c: Context, e: unknown) => {
+  if (e instanceof ArsipError) return c.json(e.field ? { error: e.message, field: e.field } : { error: e.message }, e.status as 400);
+  console.error("[arsip-dokumen]", e);
+  return c.json({ error: "Gagal memproses arsip dokumen." }, 500);
+};
+const arsipOleh = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : null);
+app.get("/arsip-dokumen", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const n = (k: string) => { const v = Number(c.req.query(k)); return Number.isFinite(v) && v >= 0 ? v : undefined; };
+  try {
+    return c.json(await listArsip({ q: c.req.query("q"), buku: c.req.query("buku"), periode: c.req.query("periode"), limit: n("limit"), offset: n("offset") }));
+  } catch (e) { return arsipErr(c, e); }
+});
+app.get("/arsip-dokumen/buku", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try { return c.json({ items: await arsipListBuku() }); } catch (e) { return arsipErr(c, e); }
+});
+app.post("/arsip-dokumen/buku", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const b = ((await c.req.json().catch(() => null)) as Record<string, unknown> | null) ?? {};
+  try { return c.json({ items: await arsipSimpanBuku(b, arsipOleh(b.oleh)) }); } catch (e) { return arsipErr(c, e); }
+});
+// Multipart: `file`, `buku_kode`, `tanggal_dokumen`, `judul`, metadata opsional, `oleh`. Tipe dicek dari ISI berkas.
+app.post("/arsip-dokumen", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: Record<string, unknown>;
+  try { body = await c.req.parseBody(); } catch { return c.json({ error: "invalid multipart body" }, 400); }
+  const file = body.file;
+  if (!(file instanceof File)) return c.json({ error: "berkas wajib dipilih", field: "file" }, 400);
+  if (file.size > MAKS_DOKUMEN) return c.json({ error: "berkas maksimal 8 MB", field: "file" }, 400);
+  try {
+    return c.json(await unggahArsip(body, { nama: file.name, buf: new Uint8Array(await file.arrayBuffer()) }, arsipOleh(body.oleh)), 201);
+  } catch (e) { return arsipErr(c, e); }
+});
+app.patch("/arsip-dokumen/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const b = ((await c.req.json().catch(() => null)) as Record<string, unknown> | null) ?? {};
+  try { return c.json(await ubahArsip(c.req.param("id"), b, arsipOleh(b.oleh))); } catch (e) { return arsipErr(c, e); }
+});
+app.delete("/arsip-dokumen/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try { return c.json(await hapusArsip(c.req.param("id"), arsipOleh(c.req.query("oleh")))); } catch (e) { return arsipErr(c, e); }
+});
+app.get("/arsip-dokumen/:id/berkas", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const d = await bacaBerkasArsip(c.req.param("id"));
+    const ascii = d.nama.replace(/[^\x20-\x7e]/g, "_").replace(/"/g, "");
+    return c.body(new Uint8Array(d.buf), 200, {
+      "content-type": d.mime,
+      "content-disposition": `inline; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(d.nama)}`,
+      "cache-control": "private, no-store",
+      "x-content-type-options": "nosniff",
+    });
+  } catch (e) { return arsipErr(c, e); }
+});
 app.get("/permintaan-produk", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const n = (k: string) => { const v = Number(c.req.query(k)); return Number.isFinite(v) && v >= 0 ? v : undefined; };
