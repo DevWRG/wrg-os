@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils";
 
 import { BottomLinePanel } from "./bottom-line";
 import { LabelStatus } from "./label-status";
+import { PortofolioPanel } from "./portofolio";
 import { RencanaDialog, RencanaPanel } from "./rencana-dialog";
 import { SusunanPanel } from "./susunan-panel";
 import {
@@ -20,8 +21,9 @@ import {
 // apps/api/src/repo/kso-komite.ts; tombol aksi hanya tampil bila tab itu boleh "edit", dan
 // API memeriksanya lagi. AM tidak punya tombol apa pun — semua aksi AM lewat WhatsApp #KSO.
 // Tab "Bottom Line Alat" (F172) bukan tab peran: datanya sendiri (/api/kso-komite/bottom-line) dan
-// izinnya fitur kso-komite-bottomline — tampil bila `bottomLine` true.
-type TabLayar = TabKso | "bottomline";
+// izinnya fitur kso-komite-bottomline — tampil bila `bottomLine` true. Tab "Tinjauan Portofolio" (F170 Fase D)
+// memakai izin yang sama.
+type TabLayar = TabKso | "bottomline" | "portofolio";
 
 export function KomiteView({ tabs, bottomLine = false }: { tabs: TabBoleh[]; bottomLine?: boolean }) {
   const [tab, setTab] = useState<TabLayar>(tabs[0]?.tab ?? "bottomline");
@@ -34,16 +36,16 @@ export function KomiteView({ tabs, bottomLine = false }: { tabs: TabBoleh[]; bot
       .catch((e: Error) => { if (!batal()) setErr(e.message); });
   }, []);
   useEffect(() => {
-    if (tab === "bottomline") return;
+    if (tab === "bottomline" || tab === "portofolio") return;
     let batal = false;
     terapkan(tab, kirim<DataTab>(`/api/kso-komite/${tab}`), () => batal);
     return () => { batal = true; };
   }, [tab, terapkan]);
   const muat = (t: TabKso) => terapkan(t, kirim<DataTab>(`/api/kso-komite/${t}`), () => false);
 
-  const aktif = tab === "bottomline" ? null : tabs.find((t) => t.tab === tab) ?? null;
+  const aktif = tab === "bottomline" || tab === "portofolio" ? null : tabs.find((t) => t.tab === tab) ?? null;
   const lebar = useLayarLebar();
-  const d = tab === "bottomline" ? undefined : data[tab];
+  const d = tab === "bottomline" || tab === "portofolio" ? undefined : data[tab];
 
   return (
     <Tabs value={tab} onValueChange={(v) => { setTab(v as TabLayar); setBuka(null); }} className="gap-4">
@@ -54,6 +56,7 @@ export function KomiteView({ tabs, bottomLine = false }: { tabs: TabBoleh[]; bot
             <TabsTrigger key={t.tab} value={t.tab}>{TAB_KSO.find((x) => x.tab === t.tab)!.label}</TabsTrigger>
           ))}
           {bottomLine && <TabsTrigger value="bottomline">Bottom Line Alat</TabsTrigger>}
+          {bottomLine && <TabsTrigger value="portofolio">Tinjauan Portofolio</TabsTrigger>}
         </TabsList>
       </div>
       {err && <p className="text-destructive text-sm">{err}</p>}
@@ -108,6 +111,9 @@ export function KomiteView({ tabs, bottomLine = false }: { tabs: TabBoleh[]; bot
       ))}
       {bottomLine && (
         <TabsContent value="bottomline"><BottomLinePanel /></TabsContent>
+      )}
+      {bottomLine && (
+        <TabsContent value="portofolio"><PortofolioPanel /></TabsContent>
       )}
       {aktif && !lebar && (
         <RencanaDialog key={`${aktif.tab}-${buka ?? "tutup"}`} tab={aktif.tab} id={buka} bolehAksi={aktif.bolehAksi}

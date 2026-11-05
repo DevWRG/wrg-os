@@ -426,3 +426,91 @@ export async function simpanDukungan(userId: string, b: Record<string, unknown>)
     return { ok: true, id: Number(r.id) };
   });
 }
+
+// ---------------------------------------------------------------- Tinjauan Portofolio (F170 Fase D, migrasi 277)
+//
+// Pedoman Komite KSO Forum v01 — forum Kamis minggu ke-4 meninjau alat yang sudah terpasang. Empat kondisi,
+// masing-masing dengan tindakan wajib & tenggat dari Pedoman. GPM per bulan per unit memakai gpm() yang sama
+// dengan tab Bottom Line: harga = Rp/tes realisasi model, volume = omzet bulan unit ÷ Rp/tes. Cicilan HPP
+// hanya dihitung selama masa tenor sejak alat ditempatkan (alat lunas tak boleh tampak rugi karena cicilan).
+
+export type KondisiPortofolio = "idle" | "gpm_rendah" | "gpm_pantau" | "piutang" | "gudang";
+export const TINDAKAN_PORTOFOLIO: Record<KondisiPortofolio, { judul: string; tindakan: string; tenggat: string }> = {
+  idle: { judul: "Idle (omzet 0) > 60 hari", tindakan: "Relokasi ke RS di antrean, atau tarik ke gudang", tenggat: "30 hari" },
+  gpm_rendah: { judul: "GPM < 45% tiga bulan berturut-turut", tindakan: "AM bawa rencana: naik harga, naik volume, atau tukar ke alat lebih murah", tenggat: "Forum berikutnya" },
+  gpm_pantau: { judul: "GPM 45–50%", tindakan: "Pantau; tidak ada penempatan tambahan di faskes itu", tenggat: "—" },
+  piutang: { judul: "Faskes dengan piutang > 90 hari", tindakan: "Pengiriman reagen ditahan sampai ada jadwal bayar", tenggat: "Segera" },
+  gudang: { judul: "Tanpa faskes (di gudang)", tindakan: "Kandidat relokasi — pakai sebelum membeli alat baru (gerbang 3)", tenggat: "—" },
+};
+
+export interface BarisPortofolio {
+  account_id: string | number | null; mulai: string | null; omzet: (number | null)[]; omzet_terakhir: string | null; piutang_hari: number | null;
+}
+export interface HasilUnit { gpm: (number | null)[]; kondisi: KondisiPortofolio[]; idle_hari: number | null; cicilan_dihitung: boolean }
+
+const HARI = 86_400_000;
+const akhirBulan = (iso: string) => { const d = new Date(`${iso.slice(0, 10)}T00:00:00Z`); return Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0); };
+
+/** Nilai satu unit: GPM tiga bulan (b1 = bulan lalu) + kondisi Pedoman. Murni — diuji tanpa DB. */
+export function nilaiUnitPortofolio(r: BarisPortofolio, a: Angka, hargaTes: number | null, hd: boolean, p: Param, hariIni: Date): HasilUnit {
+  const sekarang = Date.UTC(hariIni.getUTCFullYear(), hariIni.getUTCMonth(), hariIni.getUTCDate());
+  const bulanJalan = r.mulai ? (sekarang - Date.parse(`${r.mulai.slice(0, 10)}T00:00:00Z`)) / (HARI * 30.44) : null;
+  const cicilan = bulanJalan == null || bulanJalan <= p.tenor;
+  const ak: Angka = cicilan ? a : { ...a, hpp: 0 };
+  const g = r.omzet.map((o) => (hd || !o || o <= 0 || !hargaTes || hargaTes <= 0 ? null : gpm(ak, hargaTes, o / hargaTes, p.tenor)));
+  const kondisi: KondisiPortofolio[] = [];
+  let idle_hari: number | null = null;
+  if (r.account_id == null) kondisi.push("gudang");
+  else {
+    const sejak = r.omzet_terakhir ? akhirBulan(r.omzet_terakhir) : r.mulai ? Date.parse(`${r.mulai.slice(0, 10)}T00:00:00Z`) : null;
+    idle_hari = sejak == null ? null : Math.floor((sekarang - sejak) / HARI);
+    const baruDitempatkan = r.mulai != null && (sekarang - Date.parse(`${r.mulai.slice(0, 10)}T00:00:00Z`)) / HARI <= 60;
+    if (!baruDitempatkan && (sejak == null || (idle_hari ?? 0) > 60)) kondisi.push("idle");
+    if (g.every((x) => x != null && x < p.zona.forum)) kondisi.push("gpm_rendah");
+    else if (g[0] != null && g[0] >= p.zona.forum && g[0] < p.zona.hod) kondisi.push("gpm_pantau");
+    if ((r.piutang_hari ?? 0) > 90) kondisi.push("piutang");
+  }
+  return { gpm: g, kondisi, idle_hari, cicilan_dihitung: cicilan };
+}
+
+export async function bacaPortofolio(userId: string) {
+  await izin(userId);
+  const sql = db();
+  const p = await bacaParam();
+  const [models, rows] = await Promise.all([
+    sql`SELECT model_key, satuan, rupiah_per_tes, biaya_per_tes, biaya_tetap_bulan, qc_bulan, hpp FROM kso_bottomline_model_v`,
+    sql`SELECT asset_id::text, account_id::text, faskes, sn_key, skema, jenis, model, model_key, mulai::text, cabang, am_nama,
+               bulan_1::text, bulan_2::text, bulan_3::text, omzet_1::float8, omzet_2::float8, omzet_3::float8,
+               omzet_terakhir::text, piutang_hari::int, piutang_nilai::float8
+          FROM kso_portofolio_unit_v ORDER BY faskes NULLS LAST, model`,
+  ]);
+  const mod = new Map(models.map((m) => [String(m.model_key), m]));
+  const hariIni = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Jakarta" }));
+  let gpmTersedia = 0;
+  const unit = rows.map((r) => {
+    const m = mod.get(String(r.model_key)) ?? {};
+    const a = angkaDari(m as Record<string, unknown>);
+    const hd = String((m as Record<string, unknown>).satuan ?? "tes") !== "tes";
+    const h = nilaiUnitPortofolio(
+      { account_id: r.account_id as string | null, mulai: r.mulai as string | null, omzet: [n(r.omzet_1), n(r.omzet_2), n(r.omzet_3)],
+        omzet_terakhir: r.omzet_terakhir as string | null, piutang_hari: n(r.piutang_hari) },
+      a, n((m as Record<string, unknown>).rupiah_per_tes), hd, p, hariIni);
+    if (h.gpm.some((x) => x != null)) gpmTersedia++;
+    return {
+      asset_id: r.asset_id, account_id: r.account_id, faskes: r.faskes, cabang: r.cabang, am_nama: r.am_nama, sn: r.sn_key, skema: r.skema,
+      jenis: r.jenis, model: r.model, hd, mulai: r.mulai, omzet: [n(r.omzet_1), n(r.omzet_2), n(r.omzet_3)], omzet_terakhir: r.omzet_terakhir,
+      piutang_hari: n(r.piutang_hari), piutang_nilai: n(r.piutang_nilai), biaya_ada: a.reagen != null && a.hpp != null, ...h,
+    };
+  });
+  const hitung = (k: KondisiPortofolio) => unit.filter((u) => u.kondisi.includes(k)).length;
+  return {
+    bulan: rows[0] ? [rows[0].bulan_1, rows[0].bulan_2, rows[0].bulan_3] : [],
+    zona: p.zona, tenor: p.tenor, tindakan: TINDAKAN_PORTOFOLIO,
+    ringkasan: {
+      unit: unit.length, di_faskes: unit.filter((u) => u.account_id != null).length, gpm_tersedia: gpmTersedia,
+      idle: hitung("idle"), gpm_rendah: hitung("gpm_rendah"), gpm_pantau: hitung("gpm_pantau"),
+      piutang_faskes: new Set(unit.filter((u) => u.kondisi.includes("piutang")).map((u) => u.account_id)).size, gudang: hitung("gudang"),
+    },
+    unit,
+  };
+}
