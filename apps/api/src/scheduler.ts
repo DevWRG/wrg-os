@@ -148,6 +148,12 @@ async function isWorkday(): Promise<boolean> {
 
 export function startScheduler(): ScheduleStatus {
   const enabled = (process.env.AGENT_SCHEDULE_ENABLED ?? "false").toLowerCase() === "true";
+  // Per-agen: AGENT_<ID>_ENABLED=true (mis. AGENT_A11_ENABLED) menyalakan SATU
+  // agen A1-12 tanpa menghidupkan semuanya (A8/A10 ber-LLM → mahal). Pengisi
+  // /hitl = A4+A5, pengisi /coaching = A11 — tanpa ini kedua halaman kosong
+  // selama AGENT_SCHEDULE_ENABLED=false (kondisi prod sejak awal).
+  const agentOn = (id: string): boolean =>
+    enabled || (process.env[`AGENT_${id}_ENABLED`] ?? "false").toLowerCase() === "true";
   // Gating granular: reminder (AM note + HOD) bisa nyala SENDIRI tanpa memicu
   // A1-12 / monitor / accurate-sync (yang ikut AGENT_SCHEDULE_ENABLED).
   const remindersEnabled = (process.env.REMINDER_SCHEDULE_ENABLED ?? "false").toLowerCase() === "true";
@@ -353,14 +359,15 @@ export function startScheduler(): ScheduleStatus {
       run: () => runPeopleAnalytics(),
     },
   ];
+  const anyAgent = jobs.some((j) => agentOn(j.id));
 
   status = {
-    enabled: enabled || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled || watchpointSnapshotEnabled || preVisitEnabled || geoSweepEnabled || cashinResumeEnabled || kpiMeasureEnabled || seninBriefEnabled || auditFindingReminderEnabled || invoiceReminderEnabled || soPacingEnabled || fixedAssetSyncEnabled || openRefreshEnabled || poSyncEnabled || leadAgingEnabled || trialReminderEnabled || ksoKesehatanEnabled || ksoSuplaiEnabled || ksoJadwalEnabled || jadwalRutinEnabled || dealDormantEnabled,
+    enabled: anyAgent || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled || watchpointSnapshotEnabled || preVisitEnabled || geoSweepEnabled || cashinResumeEnabled || kpiMeasureEnabled || seninBriefEnabled || auditFindingReminderEnabled || invoiceReminderEnabled || soPacingEnabled || fixedAssetSyncEnabled || openRefreshEnabled || poSyncEnabled || leadAgingEnabled || trialReminderEnabled || ksoKesehatanEnabled || ksoSuplaiEnabled || ksoJadwalEnabled || jadwalRutinEnabled || dealDormantEnabled,
     timezone,
     jobs: jobs.map((j) => ({ id: j.id, expr: j.expr, valid: cron.validate(j.expr) })),
   };
 
-  if (!enabled && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled && !watchpointSnapshotEnabled && !preVisitEnabled && !geoSweepEnabled && !cashinResumeEnabled && !kpiMeasureEnabled && !seninBriefEnabled && !auditFindingReminderEnabled && !invoiceReminderEnabled && !soPacingEnabled && !fixedAssetSyncEnabled && !openRefreshEnabled && !poSyncEnabled && !leadAgingEnabled && !trialReminderEnabled && !ksoKesehatanEnabled && !ksoSuplaiEnabled && !ksoJadwalEnabled && !jadwalRutinEnabled && !dealDormantEnabled) {
+  if (!anyAgent && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled && !watchpointSnapshotEnabled && !preVisitEnabled && !geoSweepEnabled && !cashinResumeEnabled && !kpiMeasureEnabled && !seninBriefEnabled && !auditFindingReminderEnabled && !invoiceReminderEnabled && !soPacingEnabled && !fixedAssetSyncEnabled && !openRefreshEnabled && !poSyncEnabled && !leadAgingEnabled && !trialReminderEnabled && !ksoKesehatanEnabled && !ksoSuplaiEnabled && !ksoJadwalEnabled && !jadwalRutinEnabled && !dealDormantEnabled) {
     console.log("[scheduler] semua *_SCHEDULE/_ENABLED flag != true — tidak dijadwalkan");
     return status;
   }
@@ -376,8 +383,9 @@ export function startScheduler(): ScheduleStatus {
     for (const e of entri) namaiJob(e);
     return pushLive(...entri);
   };
-  // A1-12 hanya bila AGENT_SCHEDULE_ENABLED.
-  if (enabled) for (const j of jobs) {
+  // A1-12 bila AGENT_SCHEDULE_ENABLED, atau per agen lewat AGENT_<ID>_ENABLED.
+  for (const j of jobs) {
+    if (!agentOn(j.id)) continue;
     if (!cron.validate(j.expr)) {
       console.error(`[scheduler] ${j.id} cron-expr tidak valid: "${j.expr}" — dilewati`);
       continue;
