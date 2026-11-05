@@ -130,6 +130,14 @@ test("blokGpm: GPM, harga minimum per zona di volume AM, volume minimum zona For
   assert.match(t, /Volume minimum zona Forum di Rp\s?9\.000: 764 tes\/bln/);
 });
 
+test("blokGpm: volume minimum > 10× volume usulan ditulis tidak realistis, bukan angka puluhan ribu", () => {
+  const t = blokGpm({ angka: { ...ANGKA, volume_min_forum: 75139 }, volume_estimasi: 900, harga_per_test: 6900 }).join("\n");
+  assert.match(t, /baru tercapai di atas 10× volume usulan — tidak realistis/);
+  assert.doesNotMatch(t, /75139|75\.139/);
+  // tepat 10× masih ditulis angkanya
+  assert.match(blokGpm({ angka: { ...ANGKA, volume_min_forum: 9000 }, volume_estimasi: 900, harga_per_test: 9000 }).join(""), /9000 tes\/bln/);
+});
+
 test("blokGpm: zona Forum tak tercapai, Hemodialisa, data belum lengkap", () => {
   assert.match(blokGpm({ angka: { ...ANGKA, volume_min_forum: null }, volume_estimasi: 900, harga_per_test: 3000 }).join(""), /tidak tercapai/);
   assert.match(blokGpm({ angka: { ...ANGKA, hd: true }, volume_estimasi: 60, harga_per_test: 400000 }).join(""), /Kalkulator HD/);
