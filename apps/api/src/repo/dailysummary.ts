@@ -236,6 +236,14 @@ export async function runDailySummary(
   if (status !== 200) return { sent: false, error: `services/ai ${status}`, rows: rows.length };
   let summary = String(data.summary ?? "");
   if (summary.length < 50) return { sent: false, error: "AI returned empty/short", rows: rows.length };
+  // model "dry-run" = services/ai sengaja tak memanggil LLM (AI_DRY_RUN atau
+  // OPENROUTER_API_KEY tak terbaca) dan `summary` berisi dump prompt, bukan
+  // ringkasan. callAi cuma menolak "dry-run-fallback", jadi yang ini dulu lolos
+  // dan terkirim ke grup (5 Nov 2026). Pratinjau (opts.dryRun) tetap boleh lihat.
+  if (data.dry_run && !opts.dryRun) {
+    console.error(`[daily-summary] services/ai mode dry-run (model=${String(data.model ?? "")}) — TIDAK disimpan & TIDAK dikirim.`);
+    return { sent: false, error: "services/ai mode dry-run (LLM tidak dipanggil) — cek OPENROUTER_API_KEY / AI_DRY_RUN", rows: rows.length };
+  }
 
   // Layer-2 anti-halusinasi (port pelajaran legacy ai-placeholder-hallucination):
   // prompt-only "jangan ngarang tanggal" gagal ~10% → paksa baris header tanggal
