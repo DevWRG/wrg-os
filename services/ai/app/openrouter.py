@@ -1,4 +1,5 @@
 import os
+import sys
 from typing import List, Optional, Tuple
 
 import httpx
@@ -6,35 +7,57 @@ import httpx
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 
+def _catat_galat(model: str, e: Exception) -> Exception:
+    """Cetak sebab kegagalan satu model ke stderr (pm2 error log), lalu kembalikan
+    exception yang membawa isi balasan OpenRouter.
+
+    Dulu exception cuma disimpan di last_err lalu ditelan chat_or_fallback, jadi
+    tak satu baris pun tercatat. 5 Nov 2026 seluruh LLM prod mati karena limit
+    mingguan key habis ("Key limit exceeded", 403) dan fallback deepseek-r1
+    sudah 404 — dari log yang terlihat cuma "POST /daily-summary 200 OK".
+    HTTPStatusError bawaan httpx tak memuat body; sebabnya justru ada di body.
+    """
+    pesan = f"{type(e).__name__}: {e}"
+    if isinstance(e, httpx.HTTPStatusError):
+        try:
+            body = e.response.text
+        except Exception:  # noqa: BLE001
+            body = ""
+        pesan = f"HTTP {e.response.status_code}: {body[:400]}"
+    print(f"[openrouter] model {model} gagal — {pesan}", file=sys.stderr, flush=True)
+    return RuntimeError(f"{model}: {pesan}")
+
+
 def daily_models() -> List[str]:
     """Model OpenRouter untuk daily-summary (env-configurable).
 
-    Default: Claude Haiku 4.5 primary, DeepSeek R1 fallback (konvensi legacy WRG).
+    Default: Claude Haiku 4.5 primary, DeepSeek V3.2 fallback. `deepseek/deepseek-r1`
+    (konvensi legacy) dihapus OpenRouter — 404 "no provider serves this model" (5 Nov 2026).
     Slug OpenRouter native: 'anthropic/claude-haiku-4.5' (bukan 'openrouter/...').
     """
     primary = os.environ.get("DAILY_MODEL_PRIMARY", "anthropic/claude-haiku-4.5")
-    fallback = os.environ.get("DAILY_MODEL_FALLBACK", "deepseek/deepseek-r1")
+    fallback = os.environ.get("DAILY_MODEL_FALLBACK", "deepseek/deepseek-v3.2")
     return [primary, fallback]
 
 
 def rekap_models() -> List[str]:
     """Model OpenRouter untuk monitor rekap (env-configurable, default sama)."""
     primary = os.environ.get("REKAP_MODEL_PRIMARY", "anthropic/claude-haiku-4.5")
-    fallback = os.environ.get("REKAP_MODEL_FALLBACK", "deepseek/deepseek-r1")
+    fallback = os.environ.get("REKAP_MODEL_FALLBACK", "deepseek/deepseek-v3.2")
     return [primary, fallback]
 
 
 def resume_models() -> List[str]:
     """Model OpenRouter untuk resume eksekutif (env-configurable, default sama)."""
     primary = os.environ.get("RESUME_MODEL_PRIMARY", "anthropic/claude-haiku-4.5")
-    fallback = os.environ.get("RESUME_MODEL_FALLBACK", "deepseek/deepseek-r1")
+    fallback = os.environ.get("RESUME_MODEL_FALLBACK", "deepseek/deepseek-v3.2")
     return [primary, fallback]
 
 
 def collection_models() -> List[str]:
     """Model OpenRouter untuk A3 collection drafter (env-configurable, default sama)."""
     primary = os.environ.get("COLLECTION_MODEL_PRIMARY", "anthropic/claude-haiku-4.5")
-    fallback = os.environ.get("COLLECTION_MODEL_FALLBACK", "deepseek/deepseek-r1")
+    fallback = os.environ.get("COLLECTION_MODEL_FALLBACK", "deepseek/deepseek-v3.2")
     return [primary, fallback]
 
 
@@ -45,14 +68,14 @@ def salesdoc_models() -> List[str]:
     untuk draf sependek ini — biaya). Override lewat env.
     """
     primary = os.environ.get("SALESDOC_MODEL_PRIMARY", "anthropic/claude-haiku-4.5")
-    fallback = os.environ.get("SALESDOC_MODEL_FALLBACK", "deepseek/deepseek-r1")
+    fallback = os.environ.get("SALESDOC_MODEL_FALLBACK", "deepseek/deepseek-v3.2")
     return [primary, fallback]
 
 
 def extract_models() -> List[str]:
     """Model OpenRouter untuk A8 sentiment/entity (token tier LOW → Haiku)."""
     primary = os.environ.get("EXTRACT_MODEL_PRIMARY", "anthropic/claude-haiku-4.5")
-    fallback = os.environ.get("EXTRACT_MODEL_FALLBACK", "deepseek/deepseek-r1")
+    fallback = os.environ.get("EXTRACT_MODEL_FALLBACK", "deepseek/deepseek-v3.2")
     return [primary, fallback]
 
 
@@ -60,14 +83,14 @@ def exec_models() -> List[str]:
     """Model OpenRouter untuk A10 executive synthesis, growth-levers,
     weekend-briefing, pola-profile (Haiku — Sonnet tak sepadan biayanya)."""
     primary = os.environ.get("EXEC_MODEL_PRIMARY", "anthropic/claude-haiku-4.5")
-    fallback = os.environ.get("EXEC_MODEL_FALLBACK", "deepseek/deepseek-r1")
+    fallback = os.environ.get("EXEC_MODEL_FALLBACK", "deepseek/deepseek-v3.2")
     return [primary, fallback]
 
 
 def raport_models() -> List[str]:
     """Model OpenRouter untuk narasi Raport 360 (Haiku — Sonnet tak sepadan biayanya)."""
     primary = os.environ.get("RAPORT_MODEL_PRIMARY", "anthropic/claude-haiku-4.5")
-    fallback = os.environ.get("RAPORT_MODEL_FALLBACK", "deepseek/deepseek-r1")
+    fallback = os.environ.get("RAPORT_MODEL_FALLBACK", "deepseek/deepseek-v3.2")
     return [primary, fallback]
 
 
@@ -109,7 +132,8 @@ def chat_or_fallback(
     """
     try:
         return chat(system, user, max_tokens=max_tokens, models=models)
-    except Exception:  # noqa: BLE001 — degradasi ke template
+    except Exception as e:  # noqa: BLE001 — degradasi ke template
+        print(f"[openrouter] DEGRADASI ke template — {e}", file=sys.stderr, flush=True)
         return fallback_text, "dry-run-fallback", None, None
 
 
@@ -156,7 +180,7 @@ def chat(
                     usage.get("completion_tokens"),
                 )
             except Exception as e:  # noqa: BLE001 — coba model berikutnya
-                last_err = e
+                last_err = _catat_galat(model, e)
                 continue
     raise RuntimeError(f"semua model OpenRouter gagal: {last_err}")
 
@@ -217,7 +241,7 @@ def chat_vision(
                     usage.get("completion_tokens"),
                 )
             except Exception as e:  # noqa: BLE001 — coba model berikutnya
-                last_err = e
+                last_err = _catat_galat(model, e)
                 continue
     raise RuntimeError(f"semua model OpenRouter (vision) gagal: {last_err}")
 
@@ -289,6 +313,6 @@ def chat_audio(
                 usage = data.get("usage") or {}
                 return (text, model, usage.get("prompt_tokens"), usage.get("completion_tokens"))
             except Exception as e:  # noqa: BLE001 — coba model berikutnya
-                last_err = e
+                last_err = _catat_galat(model, e)
                 continue
     raise RuntimeError(f"semua model OpenRouter (audio) gagal: {last_err}")

@@ -14,7 +14,7 @@ apps/
             x-service-token → api, bypass JWT). Auth gate via middleware + admin-guard.ts.
 services/
   ai/       Python FastAPI (uvicorn, .venv). OpenRouter via openrouter.py. Model per-task
-            via env (REKAP_MODEL_PRIMARY, EXEC_MODEL_PRIMARY, default haiku→deepseek-r1).
+            via env (REKAP_MODEL_PRIMARY, EXEC_MODEL_PRIMARY, default haiku→deepseek-v3.2).
             chat_or_fallback menelan error secara senyap.
 packages/   config, types, ui (shared).
 infra/postgres/init/*.sql  Migrasi berurut (0xx_*.sql). Applied manual ke dev + prod.
