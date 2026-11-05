@@ -8,6 +8,7 @@ import { AddScheduleSheet } from "@/components/crm/add-schedule-sheet";
 import { InstallScheduleTable, type InstallSchedule } from "@/components/tables/install-schedule-table";
 import { AddReportSheet } from "@/components/crm/add-report-sheet";
 import { TeknisiReportsTable, type TeknisiReport } from "@/components/tables/teknisi-reports-table";
+import { ReadinessBoardTabs } from "@/components/crm/readiness-board-tabs";
 
 export const dynamic = "force-dynamic";
 
@@ -38,56 +39,63 @@ export default async function ReadinessBoardPage() {
         description="Kapasitas teknisi, jadwal install (dari Instalasi Alat), dan laporan lapangan (#install/#servis/#training/#kalibrasi)."
       />
 
-      <Card>
-        <CardHeader className="flex items-center justify-between pb-2">
-          <CardTitle className="text-base">Kapasitas Teknisi</CardTitle>
-          <p className="text-muted-foreground text-xs">
-            Daftar dari <Link href="/users" className="underline underline-offset-2">Users</Link> (role Teknisi) · wilayah dari{" "}
-            <Link href="/jadwal-teknisi" className="underline underline-offset-2">Jadwal Teknisi</Link>
-          </p>
-        </CardHeader>
-        <CardContent>
-          {!board ? (
-            <EmptyState title="Data tidak tersedia" description="Pastikan apps/api jalan." />
-          ) : board.length === 0 ? (
-            <EmptyState title="Belum ada teknisi" description="Tambahkan karyawan dengan role Teknisi di menu Users." />
-          ) : (
-            <CapacityCards board={board} />
-          )}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader className="flex items-center justify-between pb-2">
-          <CardTitle className="text-base">Install Schedule</CardTitle>
-          <AddScheduleSheet />
-        </CardHeader>
-        <CardContent>
-          {!schedule ? (
-            <EmptyState title="Data tidak tersedia" description="Pastikan apps/api jalan." />
-          ) : schedule.length === 0 ? (
-            <EmptyState title="Belum ada jadwal install" description="Tambah lewat tombol di atas (alat harus terdaftar dulu di Instalasi Alat)." />
-          ) : (
-            <InstallScheduleTable schedule={schedule} />
-          )}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader className="flex items-center justify-between pb-2">
-          <CardTitle className="text-base">Laporan Terbaru</CardTitle>
-          <AddReportSheet />
-        </CardHeader>
-        <CardContent>
-          {!reports ? (
-            <EmptyState title="Data tidak tersedia" description="Pastikan apps/api jalan." />
-          ) : reports.length === 0 ? (
-            <EmptyState title="Belum ada laporan" description="Tambah manual lewat tombol di atas, atau lewat #install/#servis/#training/#kalibrasi di WA." />
-          ) : (
-            <TeknisiReportsTable reports={reports} />
-          )}
-        </CardContent>
-      </Card>
+      <ReadinessBoardTabs
+        jumlah={{ kapasitas: board?.length ?? null, jadwal: schedule?.length ?? null, laporan: reports?.length ?? null }}
+        kapasitas={
+          <Card>
+            <CardHeader className="flex items-center justify-between pb-2">
+              <CardTitle className="text-base">Kapasitas Teknisi</CardTitle>
+              <p className="text-muted-foreground text-xs">
+                Daftar dari <Link href="/users" className="underline underline-offset-2">Users</Link> (role Teknisi) · wilayah dari{" "}
+                <Link href="/jadwal-teknisi" className="underline underline-offset-2">Jadwal Teknisi</Link>
+              </p>
+            </CardHeader>
+            <CardContent>
+              {!board ? (
+                <EmptyState title="Data tidak tersedia" description="Pastikan apps/api jalan." />
+              ) : board.length === 0 ? (
+                <EmptyState title="Belum ada teknisi" description="Tambahkan karyawan dengan role Teknisi di menu Users." />
+              ) : (
+                <CapacityCards board={board} />
+              )}
+            </CardContent>
+          </Card>
+        }
+        jadwal={
+          <Card>
+            <CardHeader className="flex items-center justify-between pb-2">
+              <CardTitle className="text-base">Install Schedule</CardTitle>
+              <AddScheduleSheet />
+            </CardHeader>
+            <CardContent>
+              {!schedule ? (
+                <EmptyState title="Data tidak tersedia" description="Pastikan apps/api jalan." />
+              ) : schedule.length === 0 ? (
+                <EmptyState title="Belum ada jadwal install" description="Tambah lewat tombol di atas (alat harus terdaftar dulu di Instalasi Alat)." />
+              ) : (
+                <InstallScheduleTable schedule={schedule} />
+              )}
+            </CardContent>
+          </Card>
+        }
+        laporan={
+          <Card>
+            <CardHeader className="flex items-center justify-between pb-2">
+              <CardTitle className="text-base">Laporan Terbaru</CardTitle>
+              <AddReportSheet />
+            </CardHeader>
+            <CardContent>
+              {!reports ? (
+                <EmptyState title="Data tidak tersedia" description="Pastikan apps/api jalan." />
+              ) : reports.length === 0 ? (
+                <EmptyState title="Belum ada laporan" description="Tambah manual lewat tombol di atas, atau lewat #install/#servis/#training/#kalibrasi di WA." />
+              ) : (
+                <TeknisiReportsTable reports={reports} />
+              )}
+            </CardContent>
+          </Card>
+        }
+      />
     </>
   );
 }
