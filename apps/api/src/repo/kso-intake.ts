@@ -166,10 +166,17 @@ export function blokGpm(d: Pick<DraftTampil, "angka" | "volume_estimasi" | "harg
   const out = [`\nGPM deal ${persen(a.gpm)}${a.biaya_per_tes != null ? ` (biaya ${rp(a.biaya_per_tes)}/tes termasuk cicilan alat)` : ""}`];
   if (a.harga_am != null && a.harga_hod != null && a.harga_forum != null && d.volume_estimasi)
     out.push(`· Harga minimum di ${d.volume_estimasi} tes/bln: AM ${rp(bulat(a.harga_am))} · 2 HOD ${rp(bulat(a.harga_hod))} · Forum ${rp(bulat(a.harga_forum))}`);
-  if (d.harga_per_test != null)
-    out.push(a.volume_min_forum != null
-      ? `· Volume minimum zona Forum di ${rp(d.harga_per_test)}: ${Math.ceil(a.volume_min_forum)} tes/bln`
-      : `· Di ${rp(d.harga_per_test)} zona Forum tidak tercapai di volume berapa pun — biaya reagen terlalu tinggi`);
+  if (d.harga_per_test != null) {
+    const v = a.volume_min_forum, vol = d.volume_estimasi ?? 0;
+    // Harga yang nyaris sama dengan biaya reagen membuat penyebut rumus mendekati nol → volume
+    // minimum meledak (mis. 75.139 tes/bln). Di atas 10× volume usulan ditulis "tidak realistis",
+    // sama dengan layar detail rencana (rencana-dialog.tsx HargaZona).
+    out.push(v == null
+      ? `· Di ${rp(d.harga_per_test)} zona Forum tidak tercapai di volume berapa pun — biaya reagen terlalu tinggi`
+      : vol > 0 && v > vol * 10
+        ? `· Di ${rp(d.harga_per_test)} zona Forum baru tercapai di atas 10× volume usulan — tidak realistis; naikkan harga atau turunkan biaya`
+        : `· Volume minimum zona Forum di ${rp(d.harga_per_test)}: ${Math.ceil(v)} tes/bln`);
+  }
   return out;
 }
 

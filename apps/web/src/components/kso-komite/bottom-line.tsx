@@ -215,7 +215,12 @@ function BarisModel({ b, judul, onBuka }: { b: Baris; judul: boolean; onBuka: (k
         <td className="p-2 text-right tabular-nums">{b.volume ? `${angka(b.volume)} ${satuan}` : "—"}</td>
         <td className="p-2 text-right tabular-nums">{angka(b.biaya_di_volume ?? b.biaya_per_tes)}</td>
         <td className="p-2"><div className="flex items-center gap-1.5"><PillZona z={b.zona_realisasi} hd={b.hd} />{!b.hd && <span className="text-xs tabular-nums">{persen(b.gpm_realisasi)}</span>}</div></td>
-        <td className="p-2 text-right tabular-nums">{b.hd ? "—" : b.volume_min?.forum ? angka(b.volume_min.forum) : b.hpp != null && b.harga_acuan ? <span className="text-xs text-red-700 dark:text-red-400">tak tercapai</span> : "—"}</td>
+        <td className="p-2 text-right tabular-nums">{b.hd ? "—" : b.volume_min?.forum
+          // > 10× volume acuan = tak realistis (penyebut rumus mendekati nol) — sama dengan layar detail rencana
+          ? b.volume && b.volume_min.forum > b.volume * 10
+            ? <span className="text-xs text-red-700 dark:text-red-400" title={`${angka(b.volume_min.forum)} ${satuan}/bln`}>tak realistis</span>
+            : angka(b.volume_min.forum)
+          : b.hpp != null && b.harga_acuan ? <span className="text-xs text-red-700 dark:text-red-400">tak tercapai</span> : "—"}</td>
         <td className="p-2 text-right tabular-nums">{angka(b.bottom)}</td>
         <td className="text-primary p-2 text-right font-bold tabular-nums">{b.bottom_final ? angka(b.bottom_final) : "—"}</td>
         <td className="p-2">{b.keputusan?.keputusan
