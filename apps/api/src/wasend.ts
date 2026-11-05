@@ -65,9 +65,9 @@ export function bolehKirimKe(target: string, allowed: Set<string>): boolean {
 //
 // services/ai membalas teks "[DRY RUN — tanpa LLM]\n\nSYSTEM:…\n\nUSER:…"
 // setiap kali LLM tidak dipanggil — sengaja (AI_DRY_RUN / OPENROUTER_API_KEY tak
-// terbaca, model "dry-run") maupun gagal (model "dry-run-fallback"). callAi di
-// main belum menolak keduanya (penjaga #1428 baru ada di dev), jadi keduanya
-// lolos ke pemanggil. 5 Nov 2026: Daily Summary mengirim dump itu ke grup — isinya
+// terbaca, model "dry-run") maupun gagal (model "dry-run-fallback"). callAi
+// menolak yang kedua (#1428), tapi yang pertama sah di sisi services/ai dan lolos
+// ke pemanggil. 5 Nov 2026: Daily Summary mengirim dump itu ke grup — isinya
 // laporan harian mentah berformat `nama|c:|t:|h:|nx:` plus system prompt.
 //
 // Isi seperti itu TIDAK PERNAH layak sampai ke WA, dari pemanggil mana pun.
