@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { KSO_BANTUAN, blokGpm, formatBalasanDraft, parseKsoPerintah, perkiraanZona, pertanyaanKurang, pilihAlat, teksZonaForum, terjemahGalatKso, type DraftTampil } from "./kso-intake.js";
+import { KSO_BANTUAN, blokGpm, formatBalasanDraft, parseKsoPerintah, perkiraanZona, pertanyaanKurang, balasanVolumeTurun, pilihAlat, teksZonaForum, terjemahGalatKso, volumeDariTeks, type DraftTampil } from "./kso-intake.js";
 import { detectKind } from "./inbound.js";
 
 test("parseKsoPerintah: rencana baru, lengkapi, kirim, kelonggaran, kalah, kosong", () => {
@@ -180,4 +180,25 @@ test("teksZonaForum: zona Forum yang naik hanya karena bukti volume belum diperi
   assert.equal(teksZonaForum({ ...dasar, zona_dasar: "direktur", belum_hijau: [] }).label, "ZONA DIREKTUR");
   // sudah Forum (bukti disahkan) → Forum tanpa catatan
   assert.deepEqual(teksZonaForum({ zona: "forum", zona_dasar: "forum", alasan_forum: null, belum_hijau: [], gerbang2: "hijau" }), { label: "ZONA FORUM", catatan: null });
+});
+
+test("volumeDariTeks: angka sesudah kata volume, titik = ribuan; tanpa kata volume = null", () => {
+  assert.equal(volumeDariTeks("volume 900"), 900);
+  assert.equal(volumeDariTeks("RS bilang volume turun jadi 1.100 tes/bln"), 1100);
+  assert.equal(volumeDariTeks("Volume: 2.400"), 2400);
+  assert.equal(volumeDariTeks("tenor 36 bulan"), null);
+  assert.equal(volumeDariTeks("volume belum pasti"), null);
+});
+
+test("balasanVolumeTurun: toleransi, dihitung ulang (tiga harga), ditarik ke forum", () => {
+  assert.match(balasanVolumeTurun("D12", { hasil: "toleransi", volume_dasar: 900, volume_batas: 720, volume_baru: 800 }),
+    /volume 800 tes\/bln masih dalam toleransi \(≥ 720, 80% dari 900\)\. Mandat tetap\./);
+  const ulang = balasanVolumeTurun("D12", { hasil: "dihitung_ulang", volume_dasar: 900, volume_baru: 600, pembuka: 18500, target: 11000, lantai: 10000,
+    volume_minimum: 480, berlaku_sampai: "2026-12-05" });
+  assert.match(ulang, /turun dari 900 ke 600 tes\/bln \(> 20%\) — mandat dihitung ulang/);
+  assert.match(ulang, /harga pembuka Rp\s?18\.500, target Rp\s?11\.000, batas bawah Rp\s?10\.000\/test, volume minimum 480/);
+  assert.match(balasanVolumeTurun("D12", { hasil: "ke_forum", volume_dasar: 900, volume_baru: 300, zona: "direktur", tanpa_angka: false }),
+    /GPM turun ke zona Direktur\. Mandat lama gugur; usulan masuk agenda forum berikutnya/);
+  assert.match(balasanVolumeTurun("D12", { hasil: "ke_forum", volume_dasar: 900, volume_baru: 300, zona: "forum", tanpa_angka: true }),
+    /angka GPM belum lengkap/);
 });
