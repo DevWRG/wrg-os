@@ -11,6 +11,17 @@ export const aiBaseUrl = (): string => process.env.AI_URL ?? "http://localhost:8
 export const aiDryRun = (): boolean =>
   (process.env.AI_DRY_RUN ?? "").toLowerCase() === "true";
 
+// Batas tunggu satu panggilan ke services/ai. Tanpa ini, services/ai yang
+// menggantung ikut menggantungkan pemanggilnya — termasuk processUnprocessed
+// yang di-await oleh POST /webhooks/wa (port #1044 dari dev).
+//
+// Default 130s, BUKAN 30s seperti di dev: di main semua panggilan sebelumnya
+// tanpa batas, dan generasi terjadwal yang panjang (daily-summary max_tokens
+// 4000, rekap, resume, weekend-briefing, exec) bisa wajar >30 dtk — services/ai
+// sendiri memberi 60 dtk per model × 2 model. 130s = di atas itu, jadi batas ini
+// hanya memotong yang memang menggantung.
+const AI_TIMEOUT_MS = Number(process.env.AI_TIMEOUT_MS ?? 130_000);
+
 // Nilai `model` yang dipakai services/ai saat LLM SEHARUSNYA jalan tapi gagal
 // (key ditolak, kuota habis, semua model error) dan ia balas template.
 //
@@ -34,12 +45,18 @@ export interface CallAiOpts {
    *  sebagai error. HANYA untuk pemanggil yang templatenya memang produk yang
    *  sah. Default false — lihat catatan di callAi. */
   izinkanTemplate?: boolean;
-  /** Batas tunggu khusus panggilan ini (ms). Tanpa opsi ini perilaku lama
-   *  (tanpa batas) dipertahankan untuk semua pemanggil lain. */
+  /** Batas tunggu khusus panggilan ini (ms). Default AI_TIMEOUT_MS. */
   timeoutMs?: number;
 }
 
 // Call services/ai dan parse JSON (untuk pemanggil yang perlu hasil terstruktur).
+//
+// TIDAK PERNAH melempar (port #1044). services/ai mati / tak terjangkau / timeout
+// / balasan bukan JSON dilaporkan sebagai status 503, bukan exception. Semua
+// pemanggil sudah punya cabang `if (status >= 400)`, tapi tidak semua menangkap
+// exception — fetch yang melempar merambat naik sampai membatalkan seluruh batch
+// pemanggilnya (mis. satu #KLAIM berfoto saat services/ai mati membatalkan sisa
+// batch processUnprocessed, padahal barisnya sudah ditandai processed_at).
 //
 // HASIL TERDEGRADASI DIPERLAKUKAN SEBAGAI ERROR (port #1428 dari dev, 5 Nov 2026).
 //
@@ -58,13 +75,30 @@ export async function callAi(
   body: unknown,
   opts: CallAiOpts = {},
 ): Promise<{ status: number; data: Record<string, unknown> }> {
-  const res = await fetch(`${aiBaseUrl()}${aiPath}`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-    ...(opts.timeoutMs ? { signal: AbortSignal.timeout(opts.timeoutMs) } : {}),
-  });
-  const data = (await res.json()) as Record<string, unknown>;
+  let res: Response;
+  try {
+    res = await fetch(`${aiBaseUrl()}${aiPath}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(opts.timeoutMs ?? AI_TIMEOUT_MS),
+    });
+  } catch (e) {
+    const err = e as Error;
+    const alasan = err.name === "TimeoutError" || err.name === "AbortError" ? `timeout ${opts.timeoutMs ?? AI_TIMEOUT_MS}ms` : err.message;
+    return { status: 503, data: { error: `services/ai tak terjangkau (${aiPath}): ${alasan}` } };
+  }
+  let data: Record<string, unknown>;
+  try {
+    data = (await res.json()) as Record<string, unknown>;
+  } catch {
+    // Status HTTP-nya dipertahankan bila sudah error; hanya balasan 2xx yang
+    // tak-JSON yang perlu dipetakan ke 503 (kontrak "data selalu objek").
+    return {
+      status: res.ok ? 503 : res.status,
+      data: { error: `services/ai ${aiPath} balas non-JSON (status ${res.status})` },
+    };
+  }
   if (res.ok && data.model === MODEL_DEGRADASI) {
     degradasi.total += 1;
     degradasi.terakhirPath = aiPath;

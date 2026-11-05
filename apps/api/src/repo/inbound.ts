@@ -2007,7 +2007,26 @@ export async function processUnprocessed(
       await sql`UPDATE wa_message SET processed_kind = 'group-skip' WHERE id = ${r.id}`;
       continue;
     }
-    const out = await processInboundMessage(r as unknown as WaRow);
+    // Satu baris yang melempar TIDAK boleh membatalkan sisa batch (port #1044).
+    // Barisnya sudah di-klaim (processed_at ter-set di atas) jadi tak akan
+    // diulang; tanpa penjaga ini pesan-pesan sesudahnya ikut tertunda padahal
+    // tak bersalah, dan kegagalannya tak meninggalkan jejak apa pun di DB.
+    // processed_kind = 'error' membuatnya bisa dicari:
+    //   SELECT * FROM wa_message WHERE processed_kind = 'error';
+    let out: Record<string, unknown>;
+    try {
+      out = await processInboundMessage(r as unknown as WaRow);
+    } catch (e) {
+      const pesan = (e as Error).message;
+      console.error(`[inbound] baris ${r.id} gagal diproses:`, pesan);
+      await sql`
+        UPDATE wa_message SET processed_kind = 'error',
+          processed_result = ${sql.json({ error: pesan })}
+        WHERE id = ${r.id}
+      `;
+      results.push({ id: String(r.id), kind: "error", error: pesan });
+      continue;
+    }
     results.push(out);
     processed += 1;
     const reply = out.reply as WaSendResult | undefined;
