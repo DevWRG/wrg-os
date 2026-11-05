@@ -8,6 +8,7 @@ export const dynamic = "force-dynamic";
 interface Note {
   id: string;
   am_id: string;
+  am_name: string | null;
   period: string | null;
   strengths: string[];
   gaps: string[];
@@ -49,7 +50,7 @@ export default async function CoachingPage() {
             <Card key={n.id}>
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                 <CardTitle className="text-base">
-                  {n.am_id}{" "}
+                  {n.am_name ?? `AM ${n.am_id}`}{" "}
                   <span className="text-muted-foreground text-xs font-normal">{n.period ?? ""}</span>
                 </CardTitle>
                 <Badge variant={scoreVariant(n.score)}>skor {n.score ?? "—"}</Badge>
