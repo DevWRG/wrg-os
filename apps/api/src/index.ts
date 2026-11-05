@@ -227,6 +227,7 @@ import {
 import { salesRange, reportRevenue, reportSalesAr, salesOverview, customersRevenue, customerMonthly, dormantCustomers, churnCustomers, targetPacing, reportSalesPerformance } from "./repo/sales.js";
 import { streamRange, reportRevenueByStream } from "./repo/revenue-stream.js";
 import { resolveScope } from "./repo/access-scope.js";
+import { type AktorKlaim, listKlaim, getKlaim, updateKategori, decideKlaim, markDibayar, createKlaimManual, deleteKlaim } from "./repo/doc-klaim.js";
 import { getRaportList, getRaportDetail } from "./repo/raport.js";
 import { generateRaportNarrative, runRaportNarrative } from "./repo/raportnarrative.js";
 import {
@@ -4777,6 +4778,98 @@ app.post("/wa/messages", async (c) => {
 // openclaw (single | array | {messages:[...]} | {events:[...]}). Idempoten
 // (skip duplikat by input_hash). Jika WA_WEBHOOK_SECRET di-set, header
 // x-wa-secret wajib cocok.
+// ── DOC #KLAIM Invoice Claim OCR (Fase A) — ingestion via WA, review manual ──
+// Identitas pemutus klaim dari user login (BFF meneruskan x-user-id). Tanpa
+// user (panggilan service-token mentah) → null: keputusan uang wajib punya pelaku.
+async function aktorKlaim(userId: string | undefined): Promise<AktorKlaim | null> {
+  if (!userId || !/^[0-9a-f-]{36}$/i.test(userId)) return null;
+  const scope = await resolveScope(userId);
+  if (!scope.userId) return null;
+  const eff = await effectivePermissions(userId);
+  return {
+    userId,
+    amId: scope.amId,
+    hodKey: scope.hodKey ?? null,
+    role: scope.role ?? null,
+    superuser: scope.superuser,
+    finance: eff.groups.some((g) => g.key === "finance-hod"),
+  };
+}
+app.get("/doc-klaim", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const status = c.req.query("status") ?? undefined;
+  return c.json({ klaim: await listKlaim(status) });
+});
+// Input manual via web (buat coba tanpa kirim WA sungguhan) — TANPA OCR.
+app.post("/doc-klaim", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const body = await c.req.json().catch(() => ({}));
+  const result = await createKlaimManual(body);
+  if ("ok" in result && !result.ok) return c.json({ error: result.error }, 400);
+  return c.json({ klaim: result }, 201);
+});
+app.delete("/doc-klaim/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const result = await deleteKlaim(c.req.param("id"));
+  if (!result.ok) return c.json({ error: result.error }, 400);
+  return c.json(result);
+});
+app.get("/doc-klaim/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const k = await getKlaim(c.req.param("id"));
+  return k ? c.json({ klaim: k }) : c.json({ error: "klaim tidak ditemukan" }, 404);
+});
+// Foto nota klaim. Path diambil dari DB berdasarkan id klaim — klien tak
+// pernah mengirim path (beda dari /media?p=, yang menerima path apa pun di
+// bawah root). Tetap dicek di dalam MEDIA_ROOT sebagai lapis kedua.
+app.get("/doc-klaim/:id/foto", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const k = await getKlaim(c.req.param("id"));
+  if (!k) return c.json({ error: "klaim tidak ditemukan" }, 404);
+  if (!k.media_path) return c.json({ error: "klaim ini tanpa foto" }, 404);
+  const abs = resolve(k.media_path);
+  if (abs !== MEDIA_ROOT && !abs.startsWith(MEDIA_ROOT + "/")) {
+    return c.json({ error: "foto di luar root media" }, 403);
+  }
+  try {
+    const buf = await readFile(abs);
+    const ext = abs.split(".").pop()?.toLowerCase() ?? "";
+    return c.body(buf, 200, { "content-type": MIME[ext] ?? "application/octet-stream" });
+  } catch {
+    return c.json({ error: "berkas foto tak ditemukan di server" }, 404);
+  }
+});
+app.patch("/doc-klaim/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const body = await c.req.json().catch(() => ({}));
+  const result = await updateKategori(c.req.param("id"), body.kategori ?? null);
+  if ("ok" in result && !result.ok) return c.json({ error: result.error }, 400);
+  return c.json({ klaim: result });
+});
+app.post("/doc-klaim/:id/decide", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const body = await c.req.json().catch(() => ({}));
+  const decision = body.decision;
+  if (decision !== "disetujui" && decision !== "ditolak") return c.json({ error: "decision harus disetujui/ditolak" }, 400);
+  const aktor = await aktorKlaim(c.req.header("x-user-id"));
+  if (!aktor) return c.json({ error: "hanya user login yang boleh memutus klaim" }, 403);
+  const result = await decideKlaim(c.req.param("id"), {
+    decision,
+    nominal_disetujui: body.nominal_disetujui ?? null,
+    catatan: body.catatan ?? null,
+  }, aktor);
+  if (!result.ok) return c.json({ error: result.error }, 400);
+  return c.json(result);
+});
+app.post("/doc-klaim/:id/bayar", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const aktor = await aktorKlaim(c.req.header("x-user-id"));
+  if (!aktor) return c.json({ error: "hanya user login yang boleh menandai dibayar" }, 403);
+  const result = await markDibayar(c.req.param("id"), aktor);
+  if (!result.ok) return c.json({ error: result.error }, 400);
+  return c.json(result);
+});
+
 // ── F-CASHIN Mitigasi Uang Masuk Harian (rekening koran) ─────────────────────
 // Ingest lewat dua jalur: WA #KORAN (inbound.ts) dan upload di menu web (POST
 // /cashin/upload). Klasifikasi + pencocokan puteran jalan otomatis tiap ingest.

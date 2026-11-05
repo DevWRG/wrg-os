@@ -7,6 +7,7 @@ import { balasanKampanye, scopeDariPengirim } from "./campaign.js";
 import { balasanBrief } from "./customer-intel.js";
 import { balasanJadwal } from "./jadwal-teknisi.js";
 import { resolveSender } from "./master.js";
+import { pengajuDariAmId, ingestKlaim, type DocKlaimRow } from "./doc-klaim.js";
 import { balasanOrder } from "./order-wa.js";
 import { upsertDailyTodo, computeIsLate } from "./todo.js";
 import { createReminder } from "./reminder.js";
@@ -84,6 +85,7 @@ export type InboundKind =
   | "leads"
   | "update"
   | "sales"
+  | "klaim"
   | "koran"
   | "overtime"
   | "faktur"
@@ -110,13 +112,15 @@ export type InboundKind =
 // penyaring, jadi #FAKTUR teks di main tak pernah diproses sama sekali.
 // (dev menutup kelas bug ini dengan INBOUND_HASHTAGS sebagai sumber tunggal.)
 export const INBOUND_FILTER_KINDS = [
-  "plan", "report", "leads", "update", "sales", "koran", "overtime", "faktur", "approve", "reject", "call", "note",
+  "plan", "report", "leads", "update", "sales", "klaim", "koran", "overtime", "faktur", "approve", "reject", "call", "note",
   "kirim", "terima", "bast", "bukti", "demo", "trial", "kampanye", "brief", "kso", "jadwal", "order",
 ] as const;
 export const inboundHashtagPattern = (): string => `#\\s*(${INBOUND_FILTER_KINDS.join("|")})`;
 
 const LEADS_UPDATE_LINE = /^\s*#\s*(leads|update)\b/i;
 const SALES_LINE = /^\s*#\s*sales\b/i;
+// DOC #KLAIM — klaim reimburse karyawan + foto nota (repo/doc-klaim.ts).
+const KLAIM_LINE = /^\s*#\s*klaim\b/i;
 // F-CASHIN — setoran rekening koran harian dari admin Finance.
 const KORAN_LINE = /^\s*#\s*koran\b/i;
 // #OVERTIME — pengajuan lembur SEBELUM lembur (migrasi 199, repo/overtime.ts).
@@ -161,6 +165,7 @@ export function detectKind(body: string | null): InboundKind {
       const m = line.match(LEADS_UPDATE_LINE);
       if (m) return m[1].toLowerCase() as "leads" | "update";
       if (SALES_LINE.test(line)) return "sales";
+      if (KLAIM_LINE.test(line)) return "klaim";
       if (KORAN_LINE.test(line)) return "koran";
       const ar = line.match(APPROVE_REJECT_LINE);
       if (ar) return ar[1].toLowerCase() as "approve" | "reject";
@@ -1364,6 +1369,61 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
     if (!amx) return finish({ skipped: "unknown-sender", sender_name: row.sender_name });
     const reply = await sendViaWaGateway(target, `ℹ️ #${kind.toUpperCase()} belum tersedia di wrg-os (menyusul).`);
     return finish({ note: "not-implemented", via: amx.via, reply });
+  }
+
+  // #KLAIM — DOC #KLAIM Fase A. Sender BEBAS teks (tak butuh roster, pola
+  // sama kurir F12/F93) — klaim bisa datang dari siapa pun, bukan cuma AM.
+  // Wajib foto; #KLAIM tanpa foto dibalas error jelas (bukan silent-skip).
+  if (kind === "klaim") {
+    if (!(String(row.message_type ?? "").toLowerCase().startsWith("image") && row.media_path)) {
+      const reply = await sendViaWaGateway(target, "⚠️ #KLAIM wajib disertai foto dokumen (invoice/faktur/struk).");
+      return finish({ error: "no-photo", reply });
+    }
+    // Pengirim wajib karyawan terdaftar (keputusan user 15 Okt 2026): klaim
+    // reimburse harus punya pemilik jelas supaya bisa diputus HoD-nya. Di grup
+    // nomor tak tersedia — dikenali lewat alias/pushname roster (ketat).
+    const pengirim = await resolveSender({ senderJid: row.sender_jid, groupJid: row.group_jid, pushname: row.sender_name, ketat: true });
+    if (!pengirim?.am_id) {
+      const reply = await sendViaWaGateway(
+        target,
+        "⚠️ #KLAIM hanya untuk karyawan terdaftar — nomor/nama WA ini belum dikenali sistem. Hubungi admin untuk didaftarkan.",
+      );
+      return finish({ skipped: "unknown-sender", sender_name: row.sender_name, reply });
+    }
+    const pengaju = await pengajuDariAmId(pengirim.am_id, row.sender_jid);
+    const caption = extractHashtagArg(row.body, KLAIM_LINE) || null;
+    const result = await ingestKlaim({
+      wa_message_id: row.id,
+      sender_jid: row.sender_jid,
+      sender_name: pengirim.nama ?? row.sender_name,
+      media_path: row.media_path,
+      caption,
+      pengaju,
+    });
+    if ("ok" in result && result.ok === false) {
+      const reply = await sendViaWaGateway(target, `⚠️ Gagal proses #KLAIM: ${result.error}`);
+      return finish({ error: result.error, reply });
+    }
+    const k = result as DocKlaimRow;
+    const msg = k.ocr_dry_run
+      ? `📥 Foto #KLAIM tersimpan, tapi teksnya belum bisa dibaca otomatis — HoD akan mengisi dari foto.`
+      : [
+          "✅ #KLAIM diterima, foto tersimpan.",
+          k.nomor_dokumen ? `No. Dokumen: ${k.nomor_dokumen}` : null,
+          k.tanggal_dokumen ? `Tanggal: ${k.tanggal_dokumen}` : null,
+          k.nominal ? `Nominal: ${k.nominal}` : null,
+          k.pihak ? `Pihak: ${k.pihak}` : null,
+          // OCR lokal (Tesseract) sering tak menemukan total di nota tulisan
+          // tangan/foto buram — beri tahu, jangan diam.
+          k.nominal ? null : "Nominal belum terbaca otomatis — HoD akan mengisi dari foto.",
+          k.hod_nama
+            ? `Menunggu persetujuan HoD: ${k.hod_nama}.`
+            : "HoD-mu belum tercatat — klaim akan diputus Direktur/admin.",
+        ]
+          .filter(Boolean)
+          .join("\n");
+    const reply = await sendViaWaGateway(target, msg);
+    return finish({ klaim_id: k.id, ocr_dry_run: k.ocr_dry_run, reply });
   }
 
   if (kind === "koran") {

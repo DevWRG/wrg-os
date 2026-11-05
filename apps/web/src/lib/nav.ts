@@ -3,7 +3,7 @@
 // sini → muncul di sidebar DAN bisa langsung di-sync jadi fitur yg bisa di-gate.
 // feature.key = slug route (lihat featureKey()), selaras infra/postgres/init/044_rbac.sql.
 
-import { CalendarCheck,
+import { CalendarCheck, ScanText,
   LayoutDashboard, LayoutGrid, Building2, Package, Boxes, ShoppingCart, Truck,
   Factory, Workflow, Receipt, BarChart3, ClipboardCheck, History, Settings,
   Send, FileText, ScrollText, GraduationCap, UsersRound, Network,
@@ -330,6 +330,14 @@ export const NAV: NavGroup[] = [
       // F36 Inbound Receiving — checklist verifikasi gudang per Penerimaan
       // Barang Accurate (migrasi 206), dibuat otomatis oleh sinkron.
       { title: "Inbound Receiving", url: "/inbound-receiving", icon: PackageCheck, badge: "NEW" },
+    ],
+  },
+  {
+    // DOC #KLAIM (FR-DOC-01) — domain board literally "DOC", tak cocok masuk
+    // grup existing manapun, grup sendiri (pola sama F139 bikin grup "GA").
+    label: "DOC",
+    items: [
+      { title: "Klaim OCR", url: "/doc-klaim", icon: ScanText, badge: "NEW" },
     ],
   },
   {

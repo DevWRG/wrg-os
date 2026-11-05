@@ -1,3 +1,4 @@
+import base64
 import json
 from typing import Optional
 import os
@@ -39,6 +40,8 @@ from .senin import bersihkan_narasi, buang_kalimat_pelanggar, build_senin_system
 from .salesdoc import build_salesdoc_system, build_salesdoc_user, doc_title, template_doc
 from .schemas import (
     CollectionDraftRequest,
+    KlaimOcrRequest,
+    KlaimOcrResponse,
     KoranLine,
     KoranParseRequest,
     KoranParseResponse,
@@ -75,6 +78,7 @@ from .schemas import (
     WeekendBriefingResponse,
 )
 from .executive import NAMA_PERUSAHAAN
+from .klaim import ekstrak_klaim, jalankan_tesseract
 
 # System prompt stabil (cache-friendly) — port dari legacy/crm wrg-daily SKILL.md.
 DAILY_SYSTEM_PROMPT = """Kamu adalah WRG CRM Daily Summary Generator.
@@ -736,6 +740,38 @@ def raport_narrative(req: RaportNarrativeRequest) -> RaportNarrativeResponse:
     )
     data = parse_raport(text, fallback)
     return RaportNarrativeResponse(**data, model=model, dry_run=model == "dry-run-fallback")
+
+
+@app.post("/ocr-klaim", response_model=KlaimOcrResponse)
+def ocr_klaim(req: KlaimOcrRequest) -> KlaimOcrResponse:
+    """DOC #KLAIM: baca foto nota dengan Tesseract LOKAL (tanpa token LLM —
+    keputusan user 15 Okt 2026), lalu cari nomor/tanggal/nominal/pihak dengan
+    pola (app/klaim.py). Field yang tak yakin = null, bukan tebakan.
+
+    `dry_run` sengaja diabaikan: Tesseract gratis & lokal, tak ada biaya yang
+    perlu dicegah. Gagal (binary tak ada / gambar rusak) → dry_run=True supaya
+    apps/api tetap menyimpan fotonya untuk ditindaklanjuti manual."""
+    ext = {"image/png": ".png", "image/webp": ".webp", "image/jpeg": ".jpg", "image/jpg": ".jpg"}.get(
+        (req.mime_type or "").lower(), ".jpg"
+    )
+    try:
+        image = base64.b64decode(req.image_base64)
+        _, teks = jalankan_tesseract(image, ext)
+        fields = ekstrak_klaim(teks)
+    except Exception as e:  # noqa: BLE001 — degradasi ke dry-run, endpoint tetap 200
+        print(f"[ocr-klaim] tesseract gagal, simpan sebagai dry-run: {e}", flush=True)
+        return KlaimOcrResponse(model="tesseract-gagal", dry_run=True)
+    if not fields["raw_text"]:
+        return KlaimOcrResponse(model="tesseract", dry_run=False)
+    return KlaimOcrResponse(
+        raw_text=fields["raw_text"],
+        nomor_dokumen=fields["nomor_dokumen"],
+        tanggal_dokumen=fields["tanggal_dokumen"],
+        nominal=fields["nominal"],
+        pihak=fields["pihak"],
+        model="tesseract",
+        dry_run=False,
+    )
 
 
 def _koran_response(res: dict, **over) -> KoranParseResponse:
