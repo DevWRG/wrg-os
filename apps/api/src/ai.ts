@@ -14,8 +14,15 @@ export const aiDryRun = (): boolean =>
 // Batas tunggu satu panggilan ke services/ai. Tanpa ini, services/ai yang
 // menggantung ikut menggantungkan pemanggilnya — termasuk processUnprocessed
 // yang di-await oleh POST /webhooks/wa, jadi satu foto #KLAIM bisa membekukan
-// webhook WA. 30s = sama dengan timeout execFile di infra/wa-bridge.
-const AI_TIMEOUT_MS = Number(process.env.AI_TIMEOUT_MS ?? 30000);
+// webhook WA.
+//
+// Default 130s (dulu 30s; disamakan dengan main #2011, 5 Nov 2026). 30s
+// memotong generasi terjadwal yang sah — daily-summary max_tokens 4000, rekap,
+// resume, weekend-briefing, exec — sementara services/ai sendiri memberi 60 dtk
+// per model × 2 model. 130s = di atas itu, jadi batas ini hanya memotong yang
+// memang menggantung. (30s lama "sama dengan execFile wa-bridge" — itu timeout
+// skrip OCR di bridge, bukan batas webhook.)
+const AI_TIMEOUT_MS = Number(process.env.AI_TIMEOUT_MS ?? 130_000);
 
 // Nilai `model` yang dipakai services/ai saat LLM SEHARUSNYA jalan tapi gagal
 // (key ditolak, kuota habis, semua model error) dan ia balas template.
@@ -40,8 +47,7 @@ export interface CallAiOpts {
    *  sebagai error. HANYA untuk pemanggil yang templatenya memang produk yang
    *  sah. Default false — lihat catatan di callAi. */
   izinkanTemplate?: boolean;
-  /** Batas tunggu khusus panggilan ini (ms). Default AI_TIMEOUT_MS. Untuk
-   *  generasi panjang terjadwal (bukan jalur webhook) yang wajar >30 dtk. */
+  /** Batas tunggu khusus panggilan ini (ms). Default AI_TIMEOUT_MS (130 dtk). */
   timeoutMs?: number;
 }
 
