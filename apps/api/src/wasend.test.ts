@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { bolehKirimKe, parseAllowedTargets, sendViaWaGateway } from "./wasend.js";
+import { adalahDumpPrompt, bolehKirimKe, parseAllowedTargets, sendViaWaGateway } from "./wasend.js";
 
 // Lapis 3 pemisahan environment. Tumpukan dev membalas lewat bridge yang SAMA
 // dengan prod, jadi secara teknis ia bisa mengirim ke grup mana pun — satu bug
@@ -140,5 +140,35 @@ test("WA_TEST_TARGET dialihkan DULU, lalu tujuan hasil alihan yang dinilai", asy
     assert.equal(dipanggil, 0);
   } finally {
     globalThis.fetch = fetchAsli;
+  }
+});
+// ── Penjaga dump prompt services/ai ───────────────────────────────────────
+// 5 Nov 2026: Daily Summary mengirim "[DRY RUN — tanpa LLM] SYSTEM:… USER:…"
+// ke grup — laporan harian mentah `nama|c:|t:|h:|nx:` + system prompt.
+
+const DUMP = "📊 *Daily Summary — Rabu, 5 November 2026*\n[DRY RUN — tanpa LLM]\n\nSYSTEM:\n...\n\nUSER:\nDATA INPUT (compressed):\n[SBY 2]\nBudi|c:|t:-|h:Rekap stok : selesai|nx:";
+
+test("dump prompt dikenali walau baris pertamanya sudah ditimpa header", () => {
+  assert.equal(adalahDumpPrompt(DUMP), true);
+  assert.equal(adalahDumpPrompt("📊 *Daily Summary — Rabu*\n\n*Overview*\n• 30 laporan masuk"), false);
+});
+
+test("live dengan isi dump prompt → sent:false, TIDAK ada fetch", async () => {
+  const fetchAsli = globalThis.fetch;
+  const errAsli = console.error;
+  let dipanggil = 0;
+  globalThis.fetch = (async () => { dipanggil += 1; return { ok: true, status: 200, text: async () => "" }; }) as unknown as typeof fetch;
+  console.error = () => {};
+  try {
+    const res = await withEnv(
+      { WA_SEND_URL: "http://127.0.0.1:18080/send", WA_DRY_RUN: "false", WA_SEND_ALLOWED_TARGETS: undefined, WA_TEST_TARGET: undefined },
+      () => sendViaWaGateway(SALES, DUMP),
+    );
+    assert.equal(res.sent, false);
+    assert.match(String(res.error), /dump prompt/);
+    assert.equal(dipanggil, 0, "gateway tak boleh dihubungi sama sekali");
+  } finally {
+    globalThis.fetch = fetchAsli;
+    console.error = errAsli;
   }
 });

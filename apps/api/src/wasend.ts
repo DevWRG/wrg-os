@@ -61,6 +61,24 @@ export function bolehKirimKe(target: string, allowed: Set<string>): boolean {
   return false;
 }
 
+// ── Penjaga dump prompt ───────────────────────────────────────────────────
+//
+// services/ai membalas teks "[DRY RUN — tanpa LLM]\n\nSYSTEM:…\n\nUSER:…"
+// setiap kali LLM tidak dipanggil — sengaja (AI_DRY_RUN / OPENROUTER_API_KEY tak
+// terbaca, model "dry-run") maupun gagal (model "dry-run-fallback"). callAi di
+// main belum menolak keduanya (penjaga #1428 baru ada di dev), jadi keduanya
+// lolos ke pemanggil. 5 Nov 2026: Daily Summary mengirim dump itu ke grup — isinya
+// laporan harian mentah berformat `nama|c:|t:|h:|nx:` plus system prompt.
+//
+// Isi seperti itu TIDAK PERNAH layak sampai ke WA, dari pemanggil mana pun.
+// Ditolak di chokepoint ini supaya pemanggil yang lupa mengecek dry_run gagal
+// ke arah aman. Hanya untuk mode live; stub/dry-run tetap mencetaknya ke log.
+export const PENANDA_DUMP_PROMPT = "[DRY RUN — tanpa LLM]";
+
+export function adalahDumpPrompt(body: string): boolean {
+  return String(body ?? "").includes(PENANDA_DUMP_PROMPT);
+}
+
 function isDryRun(): boolean {
   // default: dry-run AKTIF (aman). Hanya live bila eksplisit "false".
   return (process.env.WA_DRY_RUN ?? "true").toLowerCase() !== "false";
@@ -91,6 +109,14 @@ export async function sendViaWaGateway(to: string, body: string): Promise<WaSend
         "Pesan TIDAK dikirim. Kalau tujuan ini memang sah, tambahkan ke daftar itu.",
     );
     return { sent: false, stub: false, error: `tujuan di luar allowlist: ${target}`, to: target };
+  }
+
+  if (adalahDumpPrompt(body)) {
+    console.error(
+      `[wa] DITOLAK — pesan ke "${target}" berisi dump prompt services/ai (${PENANDA_DUMP_PROMPT}). ` +
+        "LLM tidak dipanggil; cek OPENROUTER_API_KEY / AI_DRY_RUN di services/ai.",
+    );
+    return { sent: false, stub: false, error: "isi pesan = dump prompt services/ai (LLM tidak dipanggil)", to: target };
   }
 
   // Mode 3: live
