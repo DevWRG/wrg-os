@@ -132,3 +132,57 @@ test("status error dari services/ai tidak berubah maknanya", async () => {
     pulih();
   }
 });
+
+// ── Tahan services/ai mati (#1044) ────────────────────────────────────────
+// callAi TIDAK PERNAH melempar: pemanggil mengandalkan cabang status >= 400.
+
+test("services/ai tak terjangkau → 503, bukan exception", async () => {
+  const asli = globalThis.fetch;
+  globalThis.fetch = (async () => { throw new TypeError("fetch failed"); }) as unknown as typeof fetch;
+  try {
+    const r = await callAi("/rekap", {});
+    assert.equal(r.status, 503);
+    assert.match(String(r.data.error), /tak terjangkau.*fetch failed/);
+  } finally {
+    globalThis.fetch = asli;
+  }
+});
+
+test("timeout → 503 yang menyebut batas waktunya", async () => {
+  const asli = globalThis.fetch;
+  globalThis.fetch = ((_u: unknown, init?: RequestInit) =>
+    new Promise((_res, rej) => {
+      init?.signal?.addEventListener("abort", () => rej(init.signal?.reason));
+    })) as unknown as typeof fetch;
+  // Timer AbortSignal.timeout di Node di-unref: kalau tak ada kerja lain,
+  // event loop habis SEBELUM abort sempat jalan → "Promise resolution is still
+  // pending but the event loop has already resolved". Selalu gagal di Node 22
+  // (CI) bila file ini jalan sendirian; lolos di Node 24 lokal. Interval ini
+  // menahan event loop sampai callAi selesai.
+  const jaga = setInterval(() => {}, 1000);
+  try {
+    const r = await callAi("/rekap", {}, { timeoutMs: 20 });
+    assert.equal(r.status, 503);
+    assert.match(String(r.data.error), /timeout 20ms/);
+  } finally {
+    clearInterval(jaga);
+    globalThis.fetch = asli;
+  }
+});
+
+test("balasan 2xx non-JSON → 503; status error non-JSON dipertahankan", async () => {
+  const asli = globalThis.fetch;
+  let status = 200;
+  globalThis.fetch = (async () => ({
+    ok: status < 300,
+    status,
+    json: async () => { throw new SyntaxError("Unexpected token <"); },
+  })) as unknown as typeof fetch;
+  try {
+    assert.equal((await callAi("/rekap", {})).status, 503);
+    status = 502;
+    assert.equal((await callAi("/rekap", {})).status, 502);
+  } finally {
+    globalThis.fetch = asli;
+  }
+});
