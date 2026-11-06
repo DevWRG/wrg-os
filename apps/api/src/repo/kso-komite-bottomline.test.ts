@@ -91,7 +91,7 @@ test("izin: superuser semua; role admin TIDAK otomatis; direktur lewat gate lama
 
 // ---------------------------------------------------------------- Tinjauan Portofolio (F170 Fase D)
 
-const P = { tenor: 36, zona: { am: 0.55, hod: 0.5, forum: 0.45 } };
+const P = { tenor: 36, hariKerja: 25, zona: { am: 0.55, hod: 0.5, forum: 0.45 } };
 const AP = { reagen: 6000, tetap: 1_500_000, qc: 500_000, hpp: 63_250_000 }; // fiktif — biaya Rp 9.415/tes di 1.100 tes
 const HARI_INI = new Date(Date.UTC(2026, 10, 5)); // 5 Nov 2026
 const unitDasar: BarisPortofolio = { account_id: 1, mulai: "2025-06-01", omzet: [19_470_000, 19_470_000, 19_470_000], omzet_terakhir: "2026-10-01", piutang_hari: 10 };
