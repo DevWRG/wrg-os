@@ -1,5 +1,6 @@
 import { readFile, writeFile, mkdir, unlink } from "node:fs/promises";
 import { resolve } from "node:path";
+import { isInsideRoot, rootDariScope } from "./media-akses.js";
 import { homedir } from "node:os";
 
 import { serve } from "@hono/node-server";
@@ -2379,8 +2380,12 @@ app.get("/visits/:id", async (c) => {
   return v ? c.json(v) : c.json({ error: "visit tak ditemukan" }, 404);
 });
 
-// Serve file media (foto kunjungan) dari capture openclaw — HANYA di bawah
-// MEDIA_ROOT (default ~/.openclaw/media), path-validated anti traversal.
+// Serve file media (foto kunjungan dari capture openclaw, ATAU berkas aset GA
+// F132 / BA relokasi) — HANYA di bawah root yang diizinkan BFF lewat header
+// `x-media-scope` ("wa" = MEDIA_ROOT, "ga" = GA_UPLOAD_ROOT; lihat media-akses.ts),
+// path-validated anti traversal. BFF menentukan scope dari izin menu (Visits /
+// Aset GA / Relokasi); tanpa header = tak ada root (403). Dulu hanya MEDIA_ROOT,
+// jadi tautan foto/dokumen/BA aset GA selalu 403.
 const MEDIA_ROOT = resolve(process.env.MEDIA_ROOT ?? `${homedir()}/.openclaw/media`);
 const MIME: Record<string, string> = {
   jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", webp: "image/webp",
@@ -2390,8 +2395,9 @@ app.get("/media", async (c) => {
   const p = c.req.query("p");
   if (!p) return c.json({ error: "param p wajib" }, 400);
   const abs = resolve(p);
-  if (abs !== MEDIA_ROOT && !abs.startsWith(MEDIA_ROOT + "/")) {
-    return c.json({ error: "path di luar MEDIA_ROOT" }, 403);
+  const roots = rootDariScope(c.req.header("x-media-scope"), { wa: MEDIA_ROOT, ga: GA_UPLOAD_ROOT });
+  if (!roots.some((root) => isInsideRoot(abs, root))) {
+    return c.json({ error: "path di luar root media yang diizinkan" }, 403);
   }
   try {
     const buf = await readFile(abs);
