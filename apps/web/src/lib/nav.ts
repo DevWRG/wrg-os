@@ -11,7 +11,7 @@ import {
   Bell, MapPin, ListChecks, Swords, CalendarOff, CalendarDays, CalendarRange,
   Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, Tags, SlidersHorizontal, Microscope, MonitorCheck, FileSignature, Gavel,
   Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, BookOpen, Calculator, Presentation, Megaphone, Library,
-  Wallet, Coins, Route, Radio, Printer, ScanText,
+  Wallet, Coins, Route, Printer, ScanText,
   Wrench,
   CalendarClock,
   Ticket,
@@ -347,10 +347,6 @@ export const NAV: NavGroup[] = [
   {
     label: "Aftersales",
     items: [
-      // F23 — klaim internal saat alat + cartridge menunjukkan error pembacaan
-      // RFID. Role min Karyawan (kerja teknisi lapangan sehari-hari, bukan data
-      // finansial sensitif), tanpa `show` gate (default tampil ke semua login).
-      { title: "RFID/Cartridge Error Claim", url: "/rfid-cartridge-claims", icon: Radio, badge: "NEW" },
       { title: "Instalasi Alat", url: "/installations", icon: Wrench, badge: "NEW" },
       { title: "Service Tickets", url: "/service-tickets", icon: Ticket, badge: "NEW" },
       { title: "PM & Kalibrasi", url: "/maintenance", icon: CalendarClock, badge: "NEW" },
@@ -578,7 +574,6 @@ export const DEV_ONLY_URLS: ReadonlySet<string> = new Set([
   "/maintenance",
   "/proficiency-tests",
   "/readiness-board",
-  "/rfid-cartridge-claims",
   "/service-tickets",
   "/supplier-eta",
 ]);
