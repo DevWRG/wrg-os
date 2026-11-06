@@ -41,6 +41,8 @@ export interface PipelineDeal {
   estimate_amount: number | null;
   qty_num: number | null;
   unit_price: number | null;
+  /** F170 (280): mandat Komite KSO aktif untuk faskes + alat deal KSO — harga per tes tak boleh di bawah lantai. */
+  mandat_kso: { nomor: string; lantai: number; berlaku_sampai: string } | null;
   weighted: number;
   pic_hod: string | null;
   cabang: string | null;
@@ -528,6 +530,14 @@ export function PipelineBoard({ data, isAdmin = false, bolehDemo = false }: { da
                           : d.stale && <span title="Mangkrak >2 minggu" className="text-rose-500 text-xs shrink-0">●</span>}
                       </div>
                       <div className="text-xs text-muted-foreground mt-1 line-clamp-1">{[d.brand, d.product].filter(Boolean).join(" · ") || "—"}</div>
+                      {d.mandat_kso && (
+                        <div className="mt-1">
+                          <span title={`Mandat Komite KSO ${d.mandat_kso.nomor} — harga di bawah batas bawah ditolak`}
+                            className="text-[10px] px-1.5 py-0.5 rounded border border-amber-500/60 bg-amber-500/10 text-amber-800 dark:text-amber-300 font-medium">
+                            Mandat {d.mandat_kso.nomor} · ≥ Rp {Math.round(d.mandat_kso.lantai).toLocaleString("id-ID")}/tes
+                          </span>
+                        </div>
+                      )}
                       {d.opsi_grup && (
                         <div className="mt-1">
                           <span title={d.opsi_utama ? "Opsi utama — nilainya dihitung di pipeline" : "Opsi alternatif — nilainya tidak dihitung"}
@@ -602,6 +612,13 @@ export function PipelineBoard({ data, isAdmin = false, bolehDemo = false }: { da
               <div className="mt-2 rounded-md border border-violet-300 px-3 py-2 text-xs text-violet-900 dark:border-violet-500/40 dark:text-violet-200">
                 {sel.days_idle ?? DORMANT_HARI} hari tanpa pergerakan. Status Dormant lepas sendiri begitu ada catatan follow-up (kolom di Riwayat bawah),
                 #REPORT untuk faskes ini, tahapnya dipindah, atau deal diedit. Tetap diam sampai {tglPendek(sel.gugur_at)} → otomatis <b>Lost</b> (alasan: tidak bergerak).
+              </div>
+            )}
+            {sel.mandat_kso && (
+              <div className="mt-4 rounded-md border-l-4 border-amber-500 bg-amber-500/10 px-3 py-2 text-sm text-amber-900 dark:text-amber-200">
+                <b>Mandat Komite KSO {sel.mandat_kso.nomor}</b> — batas bawah Rp {Math.round(sel.mandat_kso.lantai).toLocaleString("id-ID")}/tes,
+                berlaku s/d {tglPendek(sel.mandat_kso.berlaku_sampai)}. Harga deal di bawah batas bawah ditolak; minta kelonggaran lewat
+                WhatsApp <code>#KSO kelonggaran {sel.mandat_kso.nomor} &lt;alasan&gt;</code>.
               </div>
             )}
             <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1.5 mt-4 text-sm">
