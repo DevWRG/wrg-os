@@ -9,6 +9,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 
+import { biayaOtomatisHemato } from "@/lib/kso/biaya-otomatis";
+import type { KsoAnalyzer } from "@/lib/kso/types";
+
 import { kirim, rp, rpJt, waktu } from "./types";
 
 // F172 Bottom Line Alat — model GPM (Pedoman Komite KSO Forum v01, 27 Okt 2026).
@@ -36,7 +39,7 @@ interface Baris {
 }
 interface Jenis { jenis: string; kelompok: string; satuan: string; rupiah_per_tes_manual: string | null; margin_kotor: string | null }
 interface Izin { putus: boolean; angka: boolean; realLihat: boolean; realCatat: boolean }
-interface Param { tenor: number; gpm_am: number; gpm_hod: number; gpm_forum: number; diubah_at: string | null }
+interface Param { tenor: number; hari_kerja: number; gpm_am: number; gpm_hod: number; gpm_forum: number; diubah_at: string | null }
 interface Data { izin: Izin; parameter: Param; periode: { dari: string; sampai: string } | null; jenis: Jenis[]; baris: Baris[] }
 interface DukunganBaris {
   id: number; model_key: string; jenis_dukungan: "promo" | "prinsipal" | "qc_gratis"; beli_x: number | null; gratis_y: number | null;
@@ -146,6 +149,7 @@ export function BottomLinePanel() {
         ))}
       </div>
       <Parameter p={p} boleh={d.izin.putus} onBerubah={muat} />
+      {d.izin.angka && <HitungPriceBook onBerubah={muat} />}
 
       <div className="flex flex-wrap items-end gap-2">
         <label className="text-muted-foreground flex flex-col gap-1 text-xs">Kelompok
@@ -234,19 +238,20 @@ function BarisModel({ b, judul, onBuka }: { b: Baris; judul: boolean; onBuka: (k
 function Parameter({ p, boleh, onBerubah }: { p: Param; boleh: boolean; onBerubah: () => void }) {
   const pc = (x: number) => String(Math.round(x * 1000) / 10);
   const [tenor, setTenor] = useState(String(p.tenor));
+  const [hk, setHk] = useState(String(p.hari_kerja ?? 25));
   const [am, setAm] = useState(pc(p.gpm_am)), [hod, setHod] = useState(pc(p.gpm_hod)), [forum, setForum] = useState(pc(p.gpm_forum));
   const [pesan, setPesan] = useState<string | null>(null);
   const simpan = async () => {
     setPesan(null);
     try {
-      await post("parameter", { tenor: Number(tenor), gpm_am: Number(am) / 100, gpm_hod: Number(hod) / 100, gpm_forum: Number(forum) / 100 });
+      await post("parameter", { tenor: Number(tenor), hari_kerja: Number(hk), gpm_am: Number(am) / 100, gpm_hod: Number(hod) / 100, gpm_forum: Number(forum) / 100 });
       setPesan("Parameter tersimpan."); onBerubah();
     } catch (e) { setPesan((e as Error).message); }
   };
-  const isian: [string, string, (s: string) => void][] = [["Tenor (bln)", tenor, setTenor], ["Zona AM ≥ %", am, setAm], ["Zona 2 HOD ≥ %", hod, setHod], ["Zona Forum ≥ %", forum, setForum]];
+  const isian: [string, string, (s: string) => void][] = [["Tenor (bln)", tenor, setTenor], ["Hari kerja/bln", hk, setHk], ["Zona AM ≥ %", am, setAm], ["Zona 2 HOD ≥ %", hod, setHod], ["Zona Forum ≥ %", forum, setForum]];
   return (
     <div className="bg-card flex flex-wrap items-end gap-x-5 gap-y-3 rounded-lg border p-3">
-      <code className="text-xs">GPM = 1 − (reagen/tes + (reagen tetap + QC)/volume + HPP/(tenor × volume)) ÷ harga/tes</code>
+      <code className="text-xs">GPM = 1 − (reagen/tes + (reagen harian × hari kerja + QC)/volume + HPP/(tenor × volume)) ÷ harga/tes</code>
       {isian.map(([l, v, set]) => (
         <label key={l} className="text-muted-foreground flex items-center gap-1.5 text-xs">{l}
           <Input type="number" step="1" className="h-8 w-20 tabular-nums" value={v} disabled={!boleh} onChange={(e) => set(e.target.value)} />
@@ -257,6 +262,35 @@ function Parameter({ p, boleh, onBerubah }: { p: Param; boleh: boolean; onBeruba
       <div className="flex w-full flex-wrap gap-2 text-xs">
         {(Object.keys(ZONA) as Zona[]).map((z) => <Pill key={z} cls={ZONA[z][1]}>{ZONA[z][0]}{z === "am" ? ` ≥ ${am}%` : z === "hod" ? ` ${hod}–${am}%` : z === "forum" ? ` ${forum}–${hod}%` : ` < ${forum}%`}</Pill>)}
       </div>
+    </div>
+  );
+}
+
+// 281 — Finance: biaya reagen hematologi dari rumus Simulator KSO × HPP Price Book terbaru. Reagen per tes +
+// reagen harian (startup/shutdown) disimpan; bottom per tes lalu ikut test/bulan, hari kerja, dan masa KSO.
+// Model yang biayanya diisi tangan Finance tidak ditimpa (API).
+function HitungPriceBook({ onBerubah }: { onBerubah: () => void }) {
+  const [sibuk, setSibuk] = useState(false);
+  const [pesan, setPesan] = useState<string | null>(null);
+  const jalan = async () => {
+    setSibuk(true); setPesan(null);
+    try {
+      const bahan = await kirim<{ hariKerja: number; analyzers: KsoAnalyzer[] }>("/api/kso-komite/bottom-line/bahan-otomatis");
+      const { baris, kurang } = biayaOtomatisHemato(bahan.analyzers, bahan.hariKerja);
+      const r = baris.length ? await post("otomatis", { baris }) as { disimpan: string[]; dilewati: string[] } : { disimpan: [], dilewati: [] };
+      setPesan([
+        `${r.disimpan.length} model diperbarui`,
+        r.dilewati.length ? `${r.dilewati.length} dilewati (biaya diisi tangan Finance)` : null,
+        kurang.length ? `HPP Price Book belum lengkap: ${kurang.map((k) => `${k.alat} (${k.reagen.join(", ")})`).join("; ")}` : null,
+      ].filter(Boolean).join(" · "));
+      onBerubah();
+    } catch (e) { setPesan((e as Error).message); } finally { setSibuk(false); }
+  };
+  return (
+    <div className="bg-card flex flex-wrap items-center gap-3 rounded-lg border p-3 text-xs">
+      <span className="text-muted-foreground">Biaya reagen hematologi = rumus Simulator KSO × HPP Price Book terbaru (reagen per tes + reagen harian).</span>
+      <Button size="sm" variant="outline" onClick={jalan} disabled={sibuk}>{sibuk ? "Menghitung…" : "Hitung ulang dari Price Book"}</Button>
+      {pesan && <span>{pesan}</span>}
     </div>
   );
 }
