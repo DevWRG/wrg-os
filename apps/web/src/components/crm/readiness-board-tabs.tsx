@@ -38,7 +38,8 @@ export function ReadinessBoardTabs({
 
   return (
     <Tabs value={tab} onValueChange={(v) => pindah(String(v))} className="gap-4">
-      <TabsList>
+      {/* Layar sempit (375px): tiga label tak muat → geser horizontal, bukan melebarkan halaman. */}
+      <TabsList className="max-w-full justify-start overflow-x-auto">
         <TabsTrigger value={TAB_KAPASITAS}>{label("Kapasitas Teknisi", jumlah.kapasitas)}</TabsTrigger>
         <TabsTrigger value={TAB_JADWAL}>{label("Install Schedule", jumlah.jadwal)}</TabsTrigger>
         <TabsTrigger value={TAB_LAPORAN}>{label("Laporan Terbaru", jumlah.laporan)}</TabsTrigger>
