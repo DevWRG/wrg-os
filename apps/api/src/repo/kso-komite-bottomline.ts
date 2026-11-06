@@ -19,6 +19,7 @@
 import { db } from "../db.js";
 import { effectivePermissions, type Action, type Effective } from "./rbac.js";
 import { GalatKso, bacaPengguna, type PenggunaKso } from "./kso-komite.js";
+import { master as ksoMaster } from "./kso.js";
 
 export const FITUR_BOTTOMLINE = "kso-komite-bottomline";
 export const FITUR_ANGKA = "kso-komite-bottomline-angka";
@@ -147,18 +148,22 @@ export async function aksesBottomLine(userId: string): Promise<IzinBottomLine> {
   return izinBottomLine(u, await effectivePermissions(userId));
 }
 
-interface Param { tenor: number; zona: Zona }
+interface Param { tenor: number; zona: Zona; hariKerja: number }
 async function bacaParam(): Promise<Param & { diubah_at: string | null }> {
-  const [p] = await db()`SELECT bulan, gpm_am, gpm_hod, gpm_forum, diubah_at::text AS diubah_at FROM kso_bottomline_parameter WHERE id = 1`;
+  const [p] = await db()`SELECT bulan, gpm_am, gpm_hod, gpm_forum, hari_kerja, diubah_at::text AS diubah_at FROM kso_bottomline_parameter WHERE id = 1`;
   return {
     tenor: Number(p?.bulan ?? 36),
+    hariKerja: Number(p?.hari_kerja ?? 25),
     zona: { am: Number(p?.gpm_am ?? 0.55), hod: Number(p?.gpm_hod ?? 0.5), forum: Number(p?.gpm_forum ?? 0.45) },
     diubah_at: (p?.diubah_at as string) ?? null,
   };
 }
 
-const angkaDari = (m: Record<string, unknown>): Angka => ({
-  reagen: n(m.biaya_per_tes), tetap: n(m.biaya_tetap_bulan) ?? 0, qc: n(m.qc_bulan) ?? 0, hpp: n(m.hpp),
+/** Angka satu model. Reagen tetap: harian × hari kerja (281, biaya dari Price Book) bila ada, kalau tidak per bulan. */
+const angkaDari = (m: Record<string, unknown>, hariKerja: number): Angka => ({
+  reagen: n(m.biaya_per_tes),
+  tetap: n(m.biaya_tetap_harian) != null ? n(m.biaya_tetap_harian)! * hariKerja : n(m.biaya_tetap_bulan) ?? 0,
+  qc: n(m.qc_bulan) ?? 0, hpp: n(m.hpp),
 });
 
 /** Harga acuan zona = harga pasar terendah (konservatif); kalau belum diisi, realisasi Rp/tes OS. */
@@ -204,7 +209,7 @@ export async function bacaBottomLine(userId: string) {
   const baris = models.map((m) => {
     const key = String(m.model_key);
     const d = kepMap.get(key);
-    const a = angkaDari(m);
+    const a = angkaDari(m, p.hariKerja);
     const hd = m.satuan === "tindakan";
     const rpt = n(m.rupiah_per_tes), volHist = n(m.volume);
     const volAcuan = n(d?.volume) ?? volHist;
@@ -239,7 +244,7 @@ export async function bacaBottomLine(userId: string) {
   const periode = models[0] ? { dari: String(models[0].periode_dari).slice(0, 10), sampai: String(models[0].periode_sampai).slice(0, 10) } : null;
   return {
     izin: { putus: iz.putus, angka: iz.angka, realLihat: iz.realLihat, realCatat: iz.realCatat },
-    parameter: { tenor: p.tenor, gpm_am: p.zona.am, gpm_hod: p.zona.hod, gpm_forum: p.zona.forum, diubah_at: p.diubah_at },
+    parameter: { tenor: p.tenor, hari_kerja: p.hariKerja, gpm_am: p.zona.am, gpm_hod: p.zona.hod, gpm_forum: p.zona.forum, diubah_at: p.diubah_at },
     periode, jenis, baris,
   };
 }
@@ -272,7 +277,7 @@ export async function bacaReal(userId: string) {
   }
   const model = models.filter((m) => perModel.has(String(m.model_key))).map((m) => {
     const key = String(m.model_key);
-    const real = angkaReal(angkaDari(m), perModel.get(key)!);
+    const real = angkaReal(angkaDari(m, p.hariKerja), perModel.get(key)!);
     const vol = volKep.get(key) ?? n(m.volume);
     return { model_key: key, model: m.model, hpp_real: real.hpp, qc_real: real.qc, ...turunan(real, hargaAcuan(m), vol, p, m.satuan === "tindakan") };
   });
@@ -311,11 +316,15 @@ export async function simpanParameter(userId: string, b: Record<string, unknown>
   if (tenor == null || !Number.isInteger(tenor)) throw new GalatKso(400, "Tenor harus bilangan bulat bulan.");
   const am = pecahan(b.gpm_am, "Batas zona AM"), hod = pecahan(b.gpm_hod, "Batas zona HOD"), forum = pecahan(b.gpm_forum, "Batas zona Forum");
   if (!(am > hod && hod > forum)) throw new GalatKso(400, "Batas zona harus berurutan: AM > HOD > Forum.");
+  const hk = b.hari_kerja == null || b.hari_kerja === "" ? (await bacaParam()).hariKerja : angka(b.hari_kerja, "Hari kerja");
+  if (hk == null || !Number.isInteger(hk) || hk < 1 || hk > 31) throw new GalatKso(400, "Hari kerja harus bilangan bulat 1–31.");
   return db().begin(async (tx) => {
     await tx`UPDATE kso_bottomline_parameter SET bulan = ${tenor}, gpm_am = ${am}, gpm_hod = ${hod}, gpm_forum = ${forum},
-                    diubah_oleh = ${u.id}, diubah_at = now() WHERE id = 1`;
+                    hari_kerja = ${hk}, diubah_oleh = ${u.id}, diubah_at = now() WHERE id = 1`;
+    // reagen tetap hitungan harian ikut hari kerja baru (kolom bulan = cermin harian × hari kerja)
+    await tx`UPDATE kso_bottomline_biaya SET biaya_tetap_bulan = round(biaya_tetap_harian * ${hk}) WHERE biaya_tetap_harian IS NOT NULL`;
     await tx`INSERT INTO kso_bottomline_log (jenis_ubah, kunci, isi, oleh)
-             VALUES ('parameter', 'global', ${tx.json({ tenor, gpm_am: am, gpm_hod: hod, gpm_forum: forum })}, ${u.id})`;
+             VALUES ('parameter', 'global', ${tx.json({ tenor, gpm_am: am, gpm_hod: hod, gpm_forum: forum, hari_kerja: hk })}, ${u.id})`;
     return { ok: true };
   });
 }
@@ -329,7 +338,7 @@ export async function simpanKeputusan(userId: string, b: Record<string, unknown>
   const catatan = typeof b.catatan === "string" ? b.catatan.trim().slice(0, 1000) : "";
   const m = await modelAda(key);
   const p = await bacaParam();
-  const bottom = m.satuan === "tindakan" ? null : hargaMin(angkaDari(m), volume ?? n(m.volume), p.zona.forum, p.tenor);
+  const bottom = m.satuan === "tindakan" ? null : hargaMin(angkaDari(m, p.hariKerja), volume ?? n(m.volume), p.zona.forum, p.tenor);
   const isi = { volume, lantai_final: lantaiFinal, lantai_hitung: bottom == null ? null : Math.round(bottom), keputusan, catatan };
   return db().begin(async (tx) => {
     // hpp & k (model lantai lama, 256) dikosongkan: HPP sekarang milik Finance (angka), K tak dipakai
@@ -360,7 +369,11 @@ export async function simpanAngka(userId: string, b: Record<string, unknown>) {
   };
   if (isi.harga_pasar_min != null && isi.harga_pasar_max != null && isi.harga_pasar_max < isi.harga_pasar_min)
     throw new GalatKso(400, "Harga pasar tertinggi tidak boleh di bawah yang terendah.");
-  return db().begin(async (tx) => {
+  const sql = db();
+  const otomatisTetap = sql`kso_bottomline_biaya.sumber LIKE 'otomatis%'
+    AND kso_bottomline_biaya.biaya_per_tes IS NOT DISTINCT FROM excluded.biaya_per_tes
+    AND abs(coalesce(kso_bottomline_biaya.biaya_tetap_harian * ${(await bacaParam()).hariKerja}, 0) - coalesce(excluded.biaya_tetap_bulan, 0)) < 1`;
+  return sql.begin(async (tx) => {
     await tx`INSERT INTO kso_bottomline_biaya (model_key, hpp_standar, biaya_per_tes, biaya_tetap_bulan, qc_bulan,
                                                harga_pasar_min, harga_pasar_max, sumber, keyakinan, diubah_oleh)
              VALUES (${key}, ${isi.hpp_standar}, ${isi.biaya_per_tes}, ${isi.biaya_tetap_bulan}, ${isi.qc_bulan},
@@ -368,7 +381,11 @@ export async function simpanAngka(userId: string, b: Record<string, unknown>) {
              ON CONFLICT (model_key) DO UPDATE SET hpp_standar = excluded.hpp_standar, biaya_per_tes = excluded.biaya_per_tes,
                biaya_tetap_bulan = excluded.biaya_tetap_bulan, qc_bulan = excluded.qc_bulan,
                harga_pasar_min = excluded.harga_pasar_min, harga_pasar_max = excluded.harga_pasar_max,
-               sumber = excluded.sumber, keyakinan = excluded.keyakinan, diubah_oleh = excluded.diubah_oleh, diubah_at = now()`;
+               keyakinan = excluded.keyakinan, diubah_oleh = excluded.diubah_oleh, diubah_at = now(),
+               -- 281: reagen/tes atau reagen tetap diubah tangan → isian manual menang atas hitungan harian otomatis;
+               -- simpan HPP/harga pasar saja (biaya sama) → hitungan otomatis & sumbernya tetap
+               sumber = CASE WHEN ${otomatisTetap} THEN kso_bottomline_biaya.sumber ELSE excluded.sumber END,
+               biaya_tetap_harian = CASE WHEN ${otomatisTetap} THEN kso_bottomline_biaya.biaya_tetap_harian END`;
     await tx`INSERT INTO kso_bottomline_log (jenis_ubah, kunci, isi, oleh) VALUES ('angka', ${key}, ${tx.json(isi)}, ${u.id})`;
     return { ok: true };
   });
@@ -478,7 +495,7 @@ export async function bacaPortofolio(userId: string) {
   const sql = db();
   const p = await bacaParam();
   const [models, rows] = await Promise.all([
-    sql`SELECT model_key, satuan, rupiah_per_tes, biaya_per_tes, biaya_tetap_bulan, qc_bulan, hpp FROM kso_bottomline_model_v`,
+    sql`SELECT model_key, satuan, rupiah_per_tes, biaya_per_tes, biaya_tetap_bulan, biaya_tetap_harian, qc_bulan, hpp FROM kso_bottomline_model_v`,
     sql`SELECT asset_id::text, account_id::text, faskes, sn_key, skema, jenis, model, model_key, mulai::text, cabang, am_nama,
                bulan_1::text, bulan_2::text, bulan_3::text, omzet_1::float8, omzet_2::float8, omzet_3::float8,
                omzet_terakhir::text, piutang_hari::int, piutang_nilai::float8
@@ -489,7 +506,7 @@ export async function bacaPortofolio(userId: string) {
   let gpmTersedia = 0;
   const unit = rows.map((r) => {
     const m = mod.get(String(r.model_key)) ?? {};
-    const a = angkaDari(m as Record<string, unknown>);
+    const a = angkaDari(m as Record<string, unknown>, p.hariKerja);
     const hd = String((m as Record<string, unknown>).satuan ?? "tes") !== "tes";
     const h = nilaiUnitPortofolio(
       { account_id: r.account_id as string | null, mulai: r.mulai as string | null, omzet: [n(r.omzet_1), n(r.omzet_2), n(r.omzet_3)],
@@ -513,4 +530,49 @@ export async function bacaPortofolio(userId: string) {
     },
     unit,
   };
+}
+
+// ---------------------------------------------------------------- biaya otomatis dari Price Book (281)
+//
+// Tombol "Hitung ulang dari Price Book" di tab Bottom Line: layar menjalankan rumus Simulator KSO (apps/web/src/lib/kso)
+// dengan harga beli = HPP Price Book (kso_reagent_hpp_v), lalu mengirim per model reagen/tes + reagen harian.
+// Disimpan HANYA ke model yang belum diisi manual (sumber kosong / berawalan "otomatis") — isian Finance tak ditimpa.
+export const SUMBER_OTOMATIS = "otomatis: rumus Simulator × HPP Price Book";
+
+/** Bahan tombol: master Simulator (alat hematologi yang tertaut model Bottom Line) + hari kerja default. Izin = ubah angka. */
+export async function bacaBahanOtomatis(userId: string) {
+  await wajib(userId, "angka", "Hanya Finance (centang ubah angka Bottom Line) yang menghitung ulang biaya.");
+  const [m, p] = await Promise.all([ksoMaster(), bacaParam()]);
+  return { hariKerja: p.hariKerja, analyzers: m.analyzers.filter((a) => a.kategori === "HEMATO" && a.modelKey) };
+}
+
+export async function simpanBiayaOtomatis(userId: string, b: Record<string, unknown>) {
+  const u = await wajib(userId, "angka", "Hanya Finance (centang ubah angka Bottom Line) yang menghitung ulang biaya.");
+  const baris = Array.isArray(b.baris) ? (b.baris as Record<string, unknown>[]) : [];
+  if (baris.length === 0 || baris.length > 200) throw new GalatKso(400, "Tidak ada hasil hitungan untuk disimpan.");
+  const p = await bacaParam();
+  return db().begin(async (tx) => {
+    const disimpan: string[] = [], dilewati: string[] = [];
+    for (const r of baris) {
+      const key = typeof r.model_key === "string" ? r.model_key : "";
+      const reagen = angka(r.biaya_per_tes, "Reagen per tes", { boleh0: true });
+      const harian = angka(r.biaya_tetap_harian, "Reagen harian", { boleh0: true }) ?? 0;
+      if (!key || reagen == null) continue;
+      const [ada] = await tx`SELECT 1 FROM kso_bottomline_model_v WHERE model_key = ${key}`;
+      if (!ada) { dilewati.push(key); continue; }
+      const hasil = await tx`
+        INSERT INTO kso_bottomline_biaya (model_key, biaya_per_tes, biaya_tetap_harian, biaya_tetap_bulan, sumber, keyakinan, diubah_oleh)
+        VALUES (${key}, ${reagen}, ${harian}, ${Math.round(harian * p.hariKerja)}, ${SUMBER_OTOMATIS}, 'Med', ${u.id})
+        ON CONFLICT (model_key) DO UPDATE SET biaya_per_tes = excluded.biaya_per_tes, biaya_tetap_harian = excluded.biaya_tetap_harian,
+          biaya_tetap_bulan = excluded.biaya_tetap_bulan, sumber = excluded.sumber, keyakinan = excluded.keyakinan,
+          diubah_oleh = excluded.diubah_oleh, diubah_at = now()
+        WHERE kso_bottomline_biaya.biaya_per_tes IS NULL OR kso_bottomline_biaya.sumber IS NULL
+           OR kso_bottomline_biaya.sumber LIKE 'otomatis%'
+        RETURNING model_key`;
+      (hasil.length ? disimpan : dilewati).push(key);
+    }
+    await tx`INSERT INTO kso_bottomline_log (jenis_ubah, kunci, isi, oleh)
+             VALUES ('otomatis', 'price-book', ${tx.json({ disimpan, dilewati, hari_kerja: p.hariKerja })}, ${u.id})`;
+    return { ok: true, disimpan, dilewati };
+  });
 }

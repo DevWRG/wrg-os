@@ -38,6 +38,8 @@ export interface KsoAnalyzer {
   /** HPP alat F172 (HPP standar Finance / aset tetap cocok SN) — basis harga beli. */
   hppAlat: number | null;
   hppSumber: string | null;
+  /** 281: model Bottom Line Alat (F172) — kunci biaya otomatis. */
+  modelKey?: string | null;
   presets: number[];
   meta: KsoMeta;
   reagents: KsoReagent[];
