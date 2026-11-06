@@ -78,6 +78,28 @@ export class DealError extends Error {
   }
 }
 
+const rpTes = (n: number) => `Rp ${Math.round(n).toLocaleString("id-ID")}`;
+
+/**
+ * F170 Komite KSO (migrasi 280) — Pedoman: "pipeline terkunci di bawah batas bawah". Deal ber-model KSO yang
+ * faskes + alatnya cocok dengan mandat aktif (kso_mandat_untuk_deal) tak boleh berharga per tes di bawah batas
+ * bawah mandat. Hanya jalur tulis UI/API (buat, ubah, opsi) — importer & job tidak, supaya satu baris tak
+ * menggagalkan satu batch. Keputusan user 6 Nov 2026: tautan otomatis per faskes + alat.
+ */
+export async function cekMandatKso(d: { account_id: unknown; coop_model: unknown; brand: unknown; product: unknown; unit_price: unknown }): Promise<void> {
+  if (String(d.coop_model ?? "").trim().toUpperCase() !== "KSO") return;
+  const harga = d.unit_price == null || d.unit_price === "" ? null : Number(d.unit_price);
+  if (harga == null || !Number.isFinite(harga) || d.account_id == null || d.account_id === "") return;
+  const teks = [d.brand, d.product].filter((x) => x != null && String(x).trim()).join(" ");
+  if (!teks) return;
+  const [m] = await db()`SELECT nomor, lantai::float8 AS lantai, berlaku_sampai::text AS sampai
+                           FROM kso_mandat_untuk_deal(${Number(d.account_id)}, ${teks})`;
+  if (m && harga < Number(m.lantai)) {
+    throw new DealError(409, `Harga ${rpTes(harga)}/tes di bawah batas bawah mandat ${m.nomor} (${rpTes(Number(m.lantai))}/tes, berlaku s/d ${m.sampai}). `
+      + `Minta kelonggaran lewat WhatsApp: #KSO kelonggaran ${m.nomor} <alasan>.`);
+  }
+}
+
 // Write-guard: boleh ubah deal kalau superuser, ATAU deal miliknya (am_id match),
 // ATAU deal di cabang yg dia pegang (HoD via cabangScope). Reuse resolveScope shape.
 function canWrite(scope: DataScope, deal: { am_id: string | null; cabang: string | null }): boolean {
@@ -188,6 +210,8 @@ export interface PipelineDeal {
   // atau consumable, dan tak ada cara membedakannya (#1178).
   qty_unit: string | null;
   unit_price: number | null;           // harga per test / unit
+  /** F170 (280): mandat Komite KSO aktif untuk faskes + alat deal KSO ini — harga tak boleh di bawah `lantai`. */
+  mandat_kso: { nomor: string; lantai: number; berlaku_sampai: string } | null;
   weighted: number;                    // estimate_amount × probability(stage)
   pic_hod: string | null;
   cabang: string | null;
@@ -245,6 +269,9 @@ export async function getPipeline(
     GREATEST(0, EXTRACT(DAY FROM (now() - stage_entered_at))::int) AS days_in_stage,
     dormant_at, COALESCE(on_hold, false) AS on_hold, ${lastActivitySql(sql)} AS last_activity_at,
     opsi_grup, opsi_no, opsi_utama,
+    CASE WHEN upper(coop_model) = 'KSO' AND account_id IS NOT NULL THEN
+      (SELECT json_build_object('nomor', m.nomor, 'lantai', m.lantai, 'berlaku_sampai', m.berlaku_sampai)
+         FROM kso_mandat_untuk_deal(account_id, concat_ws(' ', brand, product)) m) END AS mandat_kso,
     CASE WHEN opsi_grup IS NULL THEN 1 ELSE count(*) FILTER (WHERE loss_status IS DISTINCT FROM 'dropped') OVER (PARTITION BY opsi_grup) END AS opsi_jumlah`;
   // Opsi yang di-drop (opsi lain Won) bukan kekalahan dan bukan pekerjaan — tak ditampilkan
   // di board. Riwayatnya tetap ada di spt_state_log.
@@ -305,6 +332,7 @@ export async function getPipeline(
       qty_num: r.qty_num != null ? Number(r.qty_num) : null,
       qty_unit: r.qty_unit ? String(r.qty_unit) : null,
       unit_price: r.unit_price != null ? Number(r.unit_price) : null,
+      mandat_kso: r.mandat_kso ? (r.mandat_kso as { nomor: string; lantai: number; berlaku_sampai: string }) : null,
       weighted,
       pic_hod: r.pic_hod ? String(r.pic_hod) : null,
       cabang: r.cabang ? String(r.cabang) : null,
@@ -1072,6 +1100,12 @@ export async function createDeal(scope: DataScope, input: Record<string, unknown
   fields.prospect_category = meta.prospect || null;
   fields.probability = meta.prob;
   fields.forecast_category = meta.forecast;
+  // F170: harga KSO tak boleh di bawah batas bawah mandat — akun faskes dicari dengan resolver yang sama
+  // dengan tautkanAkunDeal (dijalankan sesudah INSERT).
+  if (String(fields.coop_model ?? "").trim().toUpperCase() === "KSO" && fields.unit_price != null) {
+    const acc = await accountIdDariTulisan(String(name), fields.city ? String(fields.city) : null).catch(() => null);
+    await cekMandatKso({ account_id: acc, coop_model: fields.coop_model, brand: fields.brand, product: fields.product, unit_price: fields.unit_price });
+  }
   // stage sengaja tak di-set → pakai default kolom 'Prospecting'.
   const rows = await sql`INSERT INTO deal ${sql(fields)} RETURNING deal_id, stage`;
   const dealId = String(rows[0].deal_id);
@@ -1123,6 +1157,13 @@ export async function updateDeal(dealId: string, scope: DataScope, input: Record
   cekSumberLead(fields);
   if (fields.customer_name != null) fields.customer_id = custId(String(fields.customer_name));
   applyEstimate(fields);
+  if (["unit_price", "product", "brand", "coop_model"].some((k) => k in fields)) {
+    const [d] = await sql`SELECT account_id, coop_model, brand, product, unit_price, COALESCE(NULLIF(facility_name,''), customer_name) AS nama, city
+                            FROM deal WHERE deal_id = ${dealId}`;
+    const gabung = { ...d, ...fields } as Record<string, unknown>;
+    const acc = d?.account_id ?? (await accountIdDariTulisan(gabung.nama ? String(gabung.nama) : null, gabung.city ? String(gabung.city) : null).catch(() => null));
+    await cekMandatKso({ account_id: acc, coop_model: gabung.coop_model, brand: gabung.brand, product: gabung.product, unit_price: gabung.unit_price });
+  }
   await sql`UPDATE deal SET ${sql(fields)}, updated_at = now() WHERE deal_id = ${dealId}`;
   if (fields.facility_name !== undefined || fields.customer_name !== undefined || fields.city !== undefined) {
     await tautkanAkunDeal(dealId);
@@ -1354,6 +1395,8 @@ export async function tambahOpsi(dealId: string, scope: DataScope, input: Record
       throw new DealError(403, "tidak berwenang mengubah deal ini");
     }
     if (!TERBUKA(String(asal.stage))) throw new DealError(409, "opsi hanya bisa ditambah dari deal yang masih berjalan");
+    await cekMandatKso({ account_id: asal.account_id, coop_model: isian.coop_model ?? asal.coop_model, brand: isian.brand ?? asal.brand,
+                         product: isian.product ?? asal.product, unit_price: isian.unit_price ?? asal.unit_price });
     const grup = asal.opsi_grup ? String(asal.opsi_grup) : String(asal.deal_id);
     const anggota = asal.opsi_grup
       ? await tx`SELECT opsi_no, stage::text AS stage FROM deal WHERE opsi_grup = ${grup} FOR UPDATE`
