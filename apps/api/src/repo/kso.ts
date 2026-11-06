@@ -40,6 +40,8 @@ export interface KsoAnalyzer {
   /** HPP alat dari F172 (HPP standar Finance / aset tetap cocok SN) lewat kso_analyzer.model_key. */
   hppAlat: number | null;
   hppSumber: string | null;
+  /** 281: model Bottom Line Alat (F172) — kunci biaya otomatis. */
+  modelKey?: string | null;
   presets: number[];
   meta: Record<string, unknown>;
   reagents: KsoReagent[];
@@ -82,15 +84,17 @@ export async function master(): Promise<KsoMaster> {
     sql<Record<string, unknown>[]>`
       SELECT a.id, a.kategori, a.kode, a.label, a.brand, a.default_capex, a.default_capex_pl,
              a.default_disc, a.default_kso_bulan, a.default_markup, a.default_tests, a.presets, a.meta,
-             m.hpp AS hpp_alat, m.hpp_sumber
+             m.hpp AS hpp_alat, m.hpp_sumber, a.model_key
         FROM kso_analyzer a
         LEFT JOIN kso_bottomline_model_v m ON m.model_key = a.model_key
        WHERE a.aktif
        ORDER BY a.urutan, a.kategori, a.kode`,
     sql<Record<string, unknown>[]>`
-      SELECT analyzer_id, kode, jenis, nama, pack, vol, yield_test, harga_dp, harga_pl, harga_beli, flags
-        FROM kso_reagent
-       ORDER BY analyzer_id, urutan, kode`,
+      SELECT r.analyzer_id, r.kode, r.jenis, r.nama, r.pack, r.vol, r.yield_test, r.harga_dp, r.harga_pl,
+             COALESCE(r.harga_beli, h.hpp) AS harga_beli, r.flags
+        FROM kso_reagent r
+        LEFT JOIN kso_reagent_hpp_v h ON h.reagent_id = r.id   -- 281: harga beli = HPP Price Book bila tak diisi manual
+       ORDER BY r.analyzer_id, r.urutan, r.kode`,
     sql<Record<string, unknown>[]>`
       SELECT grup, no, nama, panel, pack, tests_per_kit, harga_dp, harga_pl, harga_beli, flags
         FROM kso_parameter
@@ -132,6 +136,7 @@ export async function master(): Promise<KsoMaster> {
       defaultTests: num(a.default_tests),
       hppAlat: numOrNull(a.hpp_alat),
       hppSumber: (a.hpp_sumber as string) ?? null,
+      modelKey: (a.model_key as string) ?? null,
       presets: Array.isArray(a.presets) ? (a.presets as number[]).map(Number) : [],
       meta: obj(a.meta),
       reagents: perAnalyzer.get(Number(a.id)) ?? [],
