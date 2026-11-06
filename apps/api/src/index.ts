@@ -1,5 +1,6 @@
 import { readFile, writeFile, mkdir, unlink } from "node:fs/promises";
-import { resolve, relative, isAbsolute } from "node:path";
+import { resolve } from "node:path";
+import { isInsideRoot, rootDariScope } from "./media-akses.js";
 import { homedir } from "node:os";
 
 import { serve } from "@hono/node-server";
@@ -3358,10 +3359,10 @@ app.get("/visits/:id", async (c) => {
 });
 
 // Serve file media (foto kunjungan dari capture openclaw, ATAU upload aset
-// GA F132) — HANYA di bawah salah satu ROOT yang di-allow-list, path-validated
-// anti traversal. Dua root beda sumber & makna: MEDIA_ROOT = media MASUK
-// (WA inbound, read-only dari sisi kita), GA_UPLOAD_ROOT = file yang ADMIN
-// upload manual lewat form web (F132 foto/dokumen aset).
+// GA F132) — HANYA di bawah root yang diizinkan BFF lewat header `x-media-scope`
+// ("wa" = MEDIA_ROOT, "ga" = GA_UPLOAD_ROOT; lihat media-akses.ts), path-validated
+// anti traversal. BFF menentukan scope dari izin menu (Visits / Aset GA / Relokasi);
+// tanpa header = tak ada root (403).
 const MEDIA_ROOT = resolve(process.env.MEDIA_ROOT ?? `${homedir()}/.openclaw/media`);
 const MIME: Record<string, string> = {
   jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", webp: "image/webp",
@@ -3371,8 +3372,9 @@ app.get("/media", async (c) => {
   const p = c.req.query("p");
   if (!p) return c.json({ error: "param p wajib" }, 400);
   const abs = resolve(p);
-  if (!MEDIA_ROOTS.some((root) => isInsideRoot(abs, root))) {
-    return c.json({ error: "path di luar root media yang di-allow-list" }, 403);
+  const roots = rootDariScope(c.req.header("x-media-scope"), { wa: MEDIA_ROOT, ga: GA_UPLOAD_ROOT });
+  if (!roots.some((root) => isInsideRoot(abs, root))) {
+    return c.json({ error: "path di luar root media yang diizinkan" }, 403);
   }
   try {
     const buf = await readFile(abs);
@@ -8690,13 +8692,6 @@ app.post("/vehicles/alerts/run", async (c) => {
 // perlu lebih besar/format lain.
 const GA_UPLOAD_ROOT = resolve(process.env.GA_UPLOAD_DIR ?? `${homedir()}/.wrg-os/uploads/ga-assets`);
 const MEDIA_ROOTS = [MEDIA_ROOT, GA_UPLOAD_ROOT];
-// `abs.startsWith(root + "/")` gagal di Windows (path pakai backslash) —
-// path.relative aman lintas-platform: "di luar root" kalau hasilnya absolut
-// atau mulai dengan "..".
-function isInsideRoot(abs: string, root: string): boolean {
-  const rel = relative(root, abs);
-  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
-}
 // ── F132 GA Aset Master ──────────────────────────────────────────────────
 app.get("/ga-asset-categories", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
