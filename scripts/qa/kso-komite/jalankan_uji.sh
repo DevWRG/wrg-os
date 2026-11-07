@@ -36,7 +36,8 @@ for f in "$INIT"/224_kso_komite_skema.sql "$INIT"/225_kso_komite_fungsi.sql \
          "$INIT"/281_kso_bottom_dinamis_pricebook.sql \
          "$INIT"/282_kso_komite_hari_kerja_am.sql \
          "$INIT"/284_kso_biaya_kk_bg.sql \
-         "$INIT"/285_kso_agenda_a_terverifikasi.sql; do
+         "$INIT"/285_kso_agenda_a_terverifikasi.sql \
+         "$INIT"/286_kso_bottomline_alat_baru.sql; do
   psql -d $DB -q -1 -v ON_ERROR_STOP=1 -f "$f" >/dev/null
 done
 psql -d $DB -q -v ON_ERROR_STOP=1 -f 004_data_contoh.sql >/dev/null
