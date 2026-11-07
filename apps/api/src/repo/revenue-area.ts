@@ -16,7 +16,7 @@ import { db } from "../db.js";
 import { cabangEffSql, joinAmFromSalesman } from "./salesman-am.js";
 import { cabangRegionMap, type Region } from "./sales.js";
 import { KANTOR_PUSAT } from "./biaya-area-rules.js";
-import { muatBiayaInput, type BiayaInput } from "./biaya-area.js";
+import { hppMencurigakan, muatBiayaInput, type BiayaInput, type HppMencurigakan } from "./biaya-area.js";
 
 export type Periode = "bulan" | "kuartal" | "tahun";
 export const PERIODES: readonly Periode[] = ["bulan", "kuartal", "tahun"];
@@ -37,9 +37,10 @@ export interface RevenueAreaRow {
   sharePct: number;
   /** Biaya operasional (6200) area ini pada periode berjalan; null bila belum ada data biaya. */
   biaya: number | null;
-  /** Laba kotor = revenue netto − HPP, hanya atas revenue ber-HPP tak ambigu (lihat hppCakupanPct). */
+  /** Laba kotor = revenue netto − HPP, hanya atas revenue ber-HPP tak ambigu & wajar (lihat hppCakupanPct).
+   *  Tersedia bila biaya diminta, walau data biaya belum ada; null bila biaya tak diminta. */
   labaKotor: number | null;
-  /** % revenue area yang punya HPP tak ambigu; null bila tak ada revenue / data biaya. */
+  /** % revenue area yang punya HPP tak ambigu & wajar; null bila tak ada revenue / biaya tak diminta. */
   hppCakupanPct: number | null;
   /** labaKotor − biaya; null bila salah satunya tak tersedia. Parsial bila hppCakupanPct < 100. */
   profit: number | null;
@@ -70,6 +71,8 @@ export interface RevenueAreaResult {
   /** % biaya operasional yang sudah bertanda area (wajib tampil, keputusan Direktur). */
   cakupan: BiayaInput["cakupan"] | null;
   terakhirSyncBiaya: string | null;
+  /** Item yang HPP-nya dikeluarkan pagar kewajaran (RASIO_HPP_MAKS). Hanya akses penuh + biaya diminta; selain itu null. */
+  hppMencurigakan: HppMencurigakan[] | null;
 }
 
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
@@ -124,7 +127,8 @@ export function susunRevenueArea(raw: RawRow[], regionMap: Record<string, Region
     .map((r) => {
       const biaya = biayaTersedia ? bulat(bi!.biaya.get(r.cabang) ?? 0) : null;
       const h = bi?.hpp.get(r.cabang);
-      const labaKotor = h ? bulat(h.gp) : biayaTersedia ? 0 : null;
+      // Tak bergantung data biaya. Area tanpa faktur periode ini (tak ada di hpp) = 0.
+      const labaKotor = bi ? bulat(h?.gp ?? 0) : null;
       return {
         cabang: r.cabang,
         region: regionMap[r.cabang] ?? ("OFFICE" as Region),
@@ -165,6 +169,9 @@ export function susunRevenueArea(raw: RawRow[], regionMap: Record<string, Region
   };
 }
 
+// Murni (diuji): daftar HPP mencurigakan memuat nama item + HPP → hanya akses penuh yang meminta biaya.
+export const bolehLihatHppMencurigakan = (opts: { biaya?: boolean; hodKey?: string | null }): boolean => !!opts.biaya && !opts.hodKey;
+
 const wibToday = (): string => new Date(Date.now() + 7 * 3600_000).toISOString().slice(0, 10);
 
 /**
@@ -178,7 +185,8 @@ export async function getRevenueArea(opts: { periode?: string; asOf?: string; ho
   const { cur, prev } = windowsFor(periode, asOf);
   const sql = db();
 
-  const [rows, regionMap, hodRows, bi] = await Promise.all([
+  const penuh = bolehLihatHppMencurigakan(opts);
+  const [rows, regionMap, hodRows, bi, curiga] = await Promise.all([
     sql`
       SELECT COALESCE(${cabangEffSql(sql)}, 'Tanpa cabang') AS cabang,
              COALESCE(sum(ai.total - COALESCE(ai.tax_amount,0)) FILTER (WHERE ai.tanggal BETWEEN ${cur.from} AND ${cur.to}), 0)::numeric AS cur,
@@ -192,6 +200,12 @@ export async function getRevenueArea(opts: { periode?: string; asOf?: string; ho
     cabangRegionMap(sql),
     opts.hodKey ? sql<{ cabang: string }[]>`SELECT cabang FROM hod_territory WHERE hod_key = ${opts.hodKey}` : Promise.resolve(null),
     opts.biaya ? muatBiayaInput(cur) : Promise.resolve(null),
+    penuh
+      ? hppMencurigakan(cur).catch((e) => {
+          console.error("[revenue-area] daftar HPP mencurigakan gagal:", (e as Error)?.message);
+          return null;
+        })
+      : Promise.resolve(null),
   ]);
 
   const raw: RawRow[] = rows.map((r) => ({
@@ -200,5 +214,5 @@ export async function getRevenueArea(opts: { periode?: string; asOf?: string; ho
     prev: Number((r as Record<string, unknown>).prev ?? 0),
   }));
   const body = susunRevenueArea(raw, regionMap, hodRows ? hodRows.map((h) => h.cabang) : null, bi);
-  return { periode, asOf, cur, prev, ...body };
+  return { periode, asOf, cur, prev, ...body, hppMencurigakan: curiga };
 }
