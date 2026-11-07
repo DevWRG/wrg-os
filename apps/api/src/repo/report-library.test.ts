@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { adalahKeyLaporan, angka, dariRasio, BARIS_PRATINJAU, KEY_LAPORAN, nilaiMetrik, persen, pratinjau, rp, teks } from "./report-library.js";
+import { adalahKeyLaporan, angka, dariRasio, BARIS_PRATINJAU, dealTertutup, KEY_LAPORAN, nilaiMetrik, persen, pratinjau, rp, teks, urutDealLaporan, waktuWib } from "./report-library.js";
 
 test("adalahKeyLaporan hanya menerima 6 key resmi", () => {
   assert.equal(KEY_LAPORAN.length, 6);
@@ -34,4 +34,25 @@ test("pratinjau memotong ke BARIS_PRATINJAU tapi menyimpan total", () => {
   const p = pratinjau({ key: "stok", judul: "x", ringkasan: [], header: ["n"], baris });
   assert.equal(p.baris.length, BARIS_PRATINJAU);
   assert.equal(p.total_baris, 25);
+});
+
+test("waktuWib: ISO UTC → tanggal & jam WIB terbaca; kosong '-'; bukan tanggal apa adanya", () => {
+  assert.equal(waktuWib("2026-11-07T15:04:58.405Z"), "7 Nov 2026, 22.04 WIB");
+  assert.equal(waktuWib("2026-12-31T17:30:00Z"), "1 Jan 2027, 00.30 WIB");
+  assert.equal(waktuWib(null), "-");
+  assert.equal(waktuWib(""), "-");
+  assert.equal(waktuWib("W45"), "W45");
+});
+
+test("urutDealLaporan: deal berjalan dulu (nilai desc), Won/Lost di belakang", () => {
+  const d = [
+    { id: 1, stage: "Closing-Lost", estimate_amount: 900 },
+    { id: 2, stage: "Presentation", estimate_amount: 100 },
+    { id: 3, stage: "Closing-Won", estimate_amount: 500 },
+    { id: 4, stage: "Negotiation", estimate_amount: 300 },
+  ];
+  assert.deepEqual(urutDealLaporan(d).map((x) => x.id), [4, 2, 1, 3]);
+  assert.equal(dealTertutup("closing-won"), true);
+  assert.equal(dealTertutup("Closing"), false);
+  assert.equal(d[0].id, 1); // input tak diubah
 });
