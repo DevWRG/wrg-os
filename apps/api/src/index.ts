@@ -58,7 +58,7 @@ import { listAsetTetap, ringkasanAsetTetap, jadwalAsetTetap, simpanOverrideAsetT
 import { pratinjauRekon, terapkanRekon, batalkanTautanOtomatis, cariAlatKso } from "./repo/asetTetapRekon.js";
 import { mirrorFreshness } from "./repo/mirror-health.js";
 import { insertAuditEvent } from "./repo/audit.js";
-import { salesCommand, SalesCommandError } from "./repo/sales-command.js";
+import { salesCommand, SalesCommandError, runRekapKualitas, regionUntukScope } from "./repo/sales-command.js";
 import { upsertDealsFromPlan, logReportToDeals, getPipeline, getPipelineReport, getPipelineLeaderboard, transitionStage, DealError, listPendingLosses, decideLoss, getDealTimeline, createDeal, updateDeal, deleteDeal, addDealNote, tambahOpsi, jadikanOpsiUtama } from "./repo/deal.js";
 import {
   PameranError, buatAcara as pmBuatAcara, daftarPublik as pmDaftarPublik, hapusPengunjung as pmHapusPengunjung, infoPublik as pmInfoPublik,
@@ -3518,6 +3518,19 @@ app.get("/executive/command", async (c) => {
 // Sales Command Center (#1979) — cockpit HoD per region. Gerbang menu di BFF
 // (requireFeature); di sini aturan region: HoD terkunci ke region timnya,
 // Direktur/admin/superuser memilih ?region=East|West, selain itu 403.
+// Pratinjau rekap WA mingguan kualitas data ke HoD (dry-run, tak mengirim). Region
+// mengikuti akses yang sama dengan /sales-command (HoD terkunci ke region timnya).
+app.get("/sales-command/rekap-kualitas-pratinjau", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const region = await regionUntukScope(await scopeOf(c), c.req.query("region") ?? null);
+    const r = await runRekapKualitas({ dryRun: true, region });
+    return c.json(r.regions[0] ?? { region, skipped: "—" });
+  } catch (e) {
+    if (e instanceof SalesCommandError) return c.json({ error: e.message }, e.status);
+    throw e;
+  }
+});
 app.get("/sales-command", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   try {
