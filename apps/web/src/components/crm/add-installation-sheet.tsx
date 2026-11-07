@@ -80,9 +80,10 @@ export function AddInstallationSheet() {
         <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col">
           <div className="flex flex-1 flex-col gap-4 overflow-y-auto px-4">
             <div className="grid gap-1.5">
-              <Label htmlFor="iu-alat">Alat * <span className="text-muted-foreground text-xs">(dari katalog Accurate)</span></Label>
+              <Label htmlFor="iu-alat">Alat * <span className="text-muted-foreground text-xs">(katalog Accurate — alat saja, tanpa reagen/sparepart)</span></Label>
               <CatalogPicker
                 entity="items"
+                jenis="alat"
                 inputId="iu-alat"
                 required
                 value={alat}
