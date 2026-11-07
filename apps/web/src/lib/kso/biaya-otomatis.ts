@@ -2,13 +2,19 @@
 // HPP Price Book. Murni (tanpa React) supaya bisa diuji. Hanya hematologi: rumusnya memisah reagen per tes
 // (siklus) dan reagen harian (startup/shutdown/probe) — yang harian dibagi volume harian, jadi bottom per tes
 // ikut test/bulan, hari kerja, dan masa KSO (Pedoman Komite KSO Forum v01).
-import { hematoCost, perUnitOf } from "./formula";
+import { ccDetergent, hematoCost, perUnitOf } from "./formula";
 import type { HargaInput, KsoAnalyzer } from "./types";
 
 /** Volume acuan untuk memisah komponen harian; komponen tetap per tes × (volume ÷ hari kerja) = rupiah per hari. */
 const VOL_ACUAN = 1000;
 
-export interface BarisOtomatis { model_key: string; biaya_per_tes: number; biaya_tetap_harian: number }
+export interface BarisOtomatis {
+  model_key: string; biaya_per_tes: number; biaya_tetap_harian: number;
+  /** 284: pilihan kemasan cartridge BG — reagen/tes di volume V = min(max(per_tes, min_bulan ÷ V)). */
+  biaya_tangga?: { per_tes: number; min_bulan: number }[];
+  /** keterangan sumber (ikut tersimpan di kolom sumber) */
+  rincian?: string;
+}
 export interface HasilOtomatis { baris: BarisOtomatis[]; kurang: { alat: string; reagen: string[] }[] }
 
 /** Reagen yang ikut rumus alat ini (kontribusi ≠ 0 saat semua harga = 1). */
@@ -40,4 +46,90 @@ export function biayaOtomatisHemato(analyzers: KsoAnalyzer[], hariKerja: number)
     if (!lama || b.biaya_per_tes + b.biaya_tetap_harian > lama.biaya_per_tes + lama.biaya_tetap_harian) per.set(a.modelKey, b);
   }
   return { baris: [...per.values()], kurang };
+}
+
+// ── Kimia Klinik (284) ──────────────────────────────────────────────────────
+
+/** Baris campuran tes riil per SKU (API kso_parameter_mix_v): kit reagen terkirim 12 bulan ke faskes yang memakai alat ini. */
+export interface MixKk { analyzer: string; parameter: string; sku: string; tesPerKemasan: number; kit12bln: number; hpp: number | null }
+
+/** Batch per hari bawaan Simulator (kk-panel: kosong = 5 sesi). */
+const BATCH_KK = 5;
+
+/**
+ * Kimia Klinik: reagen per tes = Σ(kit × HPP) ÷ Σ(kit × tes per kit) atas kiriman 12 bulan (campuran tes riil, keputusan
+ * user 7 Nov) + detergent per tes; detergent tetap per hari (startup/shutdown, per batch) → reagen harian.
+ * Simulator membagi detergent harian dengan 30 hari kalender; di Bottom Line dikalikan HARI KERJA (alat dicuci saat dipakai),
+ * konsisten dengan hematologi.
+ */
+export function biayaOtomatisKk(analyzers: KsoAnalyzer[], mix: MixKk[], hariKerja: number): HasilOtomatis {
+  const baris: BarisOtomatis[] = [];
+  const kurang: HasilOtomatis["kurang"] = [];
+  for (const a of analyzers) {
+    if (a.kategori !== "CC" || !a.modelKey) continue;
+    const terkirim = mix.filter((m) => m.analyzer === a.kode && m.kit12bln > 0 && m.tesPerKemasan > 0);
+    const tanpaHpp = terkirim.filter((m) => m.hpp == null);
+    const byKode = new Map(a.reagents.map((r) => [r.kode, r]));
+    const deterKurang = ["conc", "probe_d"].filter((k) => byKode.get(k)?.hargaBeli == null).map((k) => byKode.get(k)?.nama ?? k);
+    if (terkirim.length === 0) { kurang.push({ alat: a.label, reagen: ["belum ada kiriman reagen 12 bulan (campuran tes)"] }); continue; }
+    if (tanpaHpp.length || deterKurang.length) {
+      kurang.push({ alat: a.label, reagen: [...tanpaHpp.map((m) => `${m.parameter} (${m.sku})`), ...deterKurang] });
+      continue;
+    }
+    const tes = terkirim.reduce((t, m) => t + m.kit12bln * m.tesPerKemasan, 0);
+    const rupiah = terkirim.reduce((t, m) => t + m.kit12bln * (m.hpp ?? 0), 0);
+    const harga: Record<string, HargaInput> = Object.fromEntries(a.reagents.map((r) => [r.kode, { price: r.hargaBeli ?? 0, disc: 0 }]));
+    const u = perUnitOf(a, harga);
+    // detergent per tes = A ÷ D + B (D = tes per hari) → A = rupiah per hari, B = rupiah per tes
+    const det = (d: number) => ccDetergent(a.kode, d * 30, hariKerja, u.perMl("conc"), u.perMl("probe_d"), BATCH_KK)?.total ?? 0;
+    const t1 = det(100), t2 = det(200);
+    const perTesDet = 2 * t2 - t1, harianDet = (t1 - perTesDet) * 100;
+    baris.push({
+      model_key: a.modelKey,
+      biaya_per_tes: Math.round((rupiah / tes + perTesDet) * 100) / 100,
+      biaya_tetap_harian: Math.round(harianDet),
+      rincian: `campuran tes riil: ${terkirim.length} SKU, ${Math.round(tes).toLocaleString("id-ID")} tes terkirim 12 bln`,
+    });
+  }
+  return { baris, kurang };
+}
+
+// ── Blood Gas (284) ─────────────────────────────────────────────────────────
+
+/**
+ * Blood Gas: cartridge kedaluwarsa `meta.stability` hari sesudah dibuka → residu terbuang dihitung (mode CPRR Simulator,
+ * keputusan user 7 Nov). Tiap ukuran cartridge ber-HPP = satu pilihan {per_tes = harga ÷ kapasitas, min_bulan = harga × 30
+ * ÷ masa pakai}; Bottom Line memilih yang termurah di volume usulan. biaya_per_tes = per tes cartridge paling efisien.
+ */
+export function biayaOtomatisBg(analyzers: KsoAnalyzer[]): HasilOtomatis {
+  const baris: BarisOtomatis[] = [];
+  const kurang: HasilOtomatis["kurang"] = [];
+  for (const a of analyzers) {
+    if (a.kategori !== "BG" || !a.modelKey) continue;
+    const stab = Number(a.meta?.stability ?? 0);
+    const cart = a.reagents.filter((r) => r.jenis === "cartridge" && (r.yieldTest ?? 0) > 0);
+    const ada = cart.filter((r) => r.hargaBeli != null);
+    if (!stab || ada.length === 0) {
+      kurang.push({ alat: a.label, reagen: !stab ? ["masa pakai cartridge belum diisi"] : cart.map((r) => r.nama) });
+      continue;
+    }
+    const tangga = ada.map((r) => ({
+      per_tes: Math.round((r.hargaBeli! / r.yieldTest!) * 100) / 100,
+      min_bulan: Math.round((r.hargaBeli! * 30) / stab),
+    }));
+    baris.push({
+      model_key: a.modelKey,
+      biaya_per_tes: Math.min(...tangga.map((t) => t.per_tes)),
+      biaya_tetap_harian: 0,
+      biaya_tangga: tangga,
+      rincian: `${tangga.length} ukuran cartridge, masa pakai ${stab} hari (residu dihitung)`,
+    });
+  }
+  return { baris, kurang };
+}
+
+/** Semua kategori yang bisa dihitung otomatis. */
+export function biayaOtomatis(b: { analyzers: KsoAnalyzer[]; hariKerja: number; mixKk?: MixKk[] }): HasilOtomatis {
+  const h = [biayaOtomatisHemato(b.analyzers, b.hariKerja), biayaOtomatisKk(b.analyzers, b.mixKk ?? [], b.hariKerja), biayaOtomatisBg(b.analyzers)];
+  return { baris: h.flatMap((x) => x.baris), kurang: h.flatMap((x) => x.kurang) };
 }

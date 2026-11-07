@@ -134,3 +134,20 @@ test("portofolio: cicilan HPP berhenti sesudah masa tenor sejak alat ditempatkan
   assert.ok((lama.gpm[0] ?? 0) > 0.55); // tanpa cicilan Rp 1.597/tes → 55,8%
   assert.equal(nilaiUnitPortofolio(unitDasar, AP, 17_700, false, P, HARI_INI).cicilan_dihitung, true);
 });
+
+// 284: pilihan kemasan (cartridge BG, residu terbuang) — angka FIKTIF
+test("tangga kemasan: reagen = termurah dari max(per tes, minimum ÷ volume); volume minimum per kemasan terbaik", async () => {
+  const { reagenTes } = await import("./kso-komite-bottomline.js");
+  const T: Angka = { reagen: 60, tetap: 200_000, qc: 300_000, hpp: 36_000_000, tangga: [{ perTes: 60, minBulan: 150_000 }, { perTes: 100, minBulan: 90_000 }] };
+  assert.equal(reagenTes(T, 900), 100);            // kecil: max(100, 100) < besar: max(60, 166,7)
+  assert.equal(reagenTes(T, 3000), 60);            // besar: max(60, 50)
+  assert.ok(Math.abs(biayaTes(T, 900)! - (100 + 500_000 / 900)) < 1e-9);
+  // S = 18.500 × 0,55 = 10.175; F = 500 rb + 1 jt = 1,5 jt → besar 162,16 · kecil 156,27
+  assert.ok(Math.abs(volumeMin(T, 18_500, 0.45, 36)! - 1_590_000 / 10_175) < 1e-9);
+  // tanpa tangga = rumus lama
+  assert.equal(reagenTes({ ...T, tangga: null }, 900), 60);
+  assert.equal(volumeMin({ ...T, tangga: null }, 18_500, 0.45, 36), 1_500_000 / (10_175 - 60));
+  // volume minimum konsisten dengan GPM: tepat di batas → GPM = 45%
+  const v = volumeMin(T, 18_500, 0.45, 36)!;
+  assert.ok(Math.abs(gpm(T, 18_500, v, 36)! - 0.45) < 1e-9);
+});
