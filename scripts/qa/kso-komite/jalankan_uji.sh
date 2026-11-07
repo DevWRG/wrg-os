@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# F170 Komite KSO (v2 GPM + zona sejak 265/266) — uji alur (900) + hak akses (901) + referensi OS (902) + lengkapi draft (903) + peran Akses Grup (904) + jadwal (905) + label & KPI (906) + tautan HOD (907) + Sekretariat & Susunan (908) + akses zona v2 (909) + zona ulang & pembuka Direksi (910) + pembuka ≥ usulan AM (911) + volume turun (912) + mandat untuk deal Pipeline (913) + bottom dinamis (914) + hari kerja AM (915) terhadap BERKAS MIGRASI ASLI 224–233 + 242.
+# F170 Komite KSO (v2 GPM + zona sejak 265/266) — uji alur (900) + hak akses (901) + referensi OS (902) + lengkapi draft (903) + peran Akses Grup (904) + jadwal (905) + label & KPI (906) + tautan HOD (907) + Sekretariat & Susunan (908) + akses zona v2 (909) + zona ulang & pembuka Direksi (910) + pembuka ≥ usulan AM (911) + volume turun (912) + mandat untuk deal Pipeline (913) + bottom dinamis (914) + hari kerja AM (915) + tangga cartridge (916) terhadap BERKAS MIGRASI ASLI 224–233 + 242.
 #
 # Pakai: PGHOST=... PGPORT=... PGUSER=... bash scripts/qa/kso-komite/jalankan_uji.sh
 # Membuat database sekali pakai `kso_komite_uji` (DROP + CREATE), tidak menyentuh database lain.
@@ -34,7 +34,8 @@ for f in "$INIT"/224_kso_komite_skema.sql "$INIT"/225_kso_komite_fungsi.sql \
          "$INIT"/269_kso_komite_zona_ulang_pembuka.sql "$INIT"/272_kso_komite_pembuka_min_usulan_am.sql \
          "$INIT"/278_kso_komite_volume_turun.sql "$INIT"/280_kso_mandat_untuk_deal.sql \
          "$INIT"/281_kso_bottom_dinamis_pricebook.sql \
-         "$INIT"/282_kso_komite_hari_kerja_am.sql; do
+         "$INIT"/282_kso_komite_hari_kerja_am.sql \
+         "$INIT"/284_kso_biaya_kk_bg.sql; do
   psql -d $DB -q -1 -v ON_ERROR_STOP=1 -f "$f" >/dev/null
 done
 psql -d $DB -q -v ON_ERROR_STOP=1 -f 004_data_contoh.sql >/dev/null
@@ -77,5 +78,7 @@ strip() { sed -E -e 's/^psql:[^:]+:[0-9]+: NOTICE: +//' \
   psql -d $DB -q -v ON_ERROR_STOP=1 -f 914_uji_bottom_dinamis.sql 2>&1 | strip \
     | grep -vE "^ *$|^-+$|^\(1 row\)|^ *(cek|harus_gagal|set_config) *$|^ *[a-z0-9-]{3,40} *$|^UPDATE [0-9]+$" || true
   psql -d $DB -q -v ON_ERROR_STOP=1 -f 915_uji_hari_kerja_am.sql 2>&1 | strip \
+    | grep -vE "^ *$|^-+$|^\(1 row\)|^ *(cek|harus_gagal|set_config|lengkapi_draft) *$|^ *[a-z0-9-]{3,40} *$|^UPDATE [0-9]+$" || true
+  psql -d $DB -q -v ON_ERROR_STOP=1 -f 916_uji_biaya_tangga.sql 2>&1 | strip \
     | grep -vE "^ *$|^-+$|^\(1 row\)|^ *(cek|harus_gagal|set_config|lengkapi_draft) *$|^ *[a-z0-9-]{3,40} *$|^UPDATE [0-9]+$" || true
 } | tee /dev/stderr | awk '/^LULUS/{l++} /^GAGAL/{g++} END{printf "\nRingkasan: %d LULUS, %d GAGAL\n", l, g; exit (g>0 || l==0)}'

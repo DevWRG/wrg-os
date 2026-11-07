@@ -48,15 +48,28 @@ export function izinBottomLine(u: PenggunaKso, eff: Effective): IzinBottomLine {
 
 // ---------------------------------------------------------------- rumus (murni, diuji)
 
-/** Angka biaya satu model. `hpp` null = belum tercatat (cicilan tak terhitung). */
-export interface Angka { reagen: number | null; tetap: number; qc: number; hpp: number | null }
+/** Satu pilihan kemasan (284, cartridge BG): reagen/tes di volume v = max(perTes, minBulan ÷ v). */
+export interface Kemasan { perTes: number; minBulan: number }
+/** Angka biaya satu model. `hpp` null = belum tercatat (cicilan tak terhitung). `tangga` = pilihan kemasan (kosong = reagen). */
+export interface Angka { reagen: number | null; tetap: number; qc: number; hpp: number | null; tangga?: Kemasan[] | null }
 export interface Zona { am: number; hod: number; forum: number }
 export type KodeZona = "am" | "hod" | "forum" | "direktur";
 
+const pilihan = (a: Angka): Kemasan[] | null =>
+  a.tangga?.length ? a.tangga : a.reagen == null ? null : [{ perTes: a.reagen, minBulan: 0 }];
+
+/** Reagen per tes di volume v: kemasan termurah dari max(per tes, minimum per bulan ÷ v) — residu cartridge terbuang ikut. */
+export function reagenTes(a: Angka, v: number | null): number | null {
+  const k = pilihan(a);
+  if (!k || !v || v <= 0) return null;
+  return Math.min(...k.map((x) => Math.max(x.perTes, x.minBulan / v)));
+}
+
 /** Biaya per tes di volume v tanpa cicilan alat: reagen + (reagen tetap + QC) ÷ v. */
 export function biayaTes(a: Angka, v: number | null): number | null {
-  if (a.reagen == null || !v || v <= 0) return null;
-  return a.reagen + (a.tetap + a.qc) / v;
+  const r = reagenTes(a, v);
+  if (r == null) return null;
+  return r + (a.tetap + a.qc) / v!;
 }
 
 /** Cicilan alat per tes: HPP ÷ (tenor × v). */
@@ -81,10 +94,12 @@ export function hargaMin(a: Angka, v: number | null, g: number, tenor: number): 
 
 /** Volume minimum per bulan agar GPM ≥ g di harga ini. null = tidak tercapai di volume berapa pun. */
 export function volumeMin(a: Angka, harga: number | null, g: number, tenor: number): number | null {
-  if (a.reagen == null || a.hpp == null || !harga || harga <= 0) return null;
-  const sisa = harga * (1 - g) - a.reagen;
-  if (sisa <= 0) return null;
-  return (a.tetap + a.qc + a.hpp / tenor) / sisa;
+  const k = pilihan(a);
+  if (!k || a.hpp == null || !harga || harga <= 0) return null;
+  // per kemasan: V ≥ max(F ÷ (S − per tes), (minimum + F) ÷ S); ambil kemasan terbaik
+  const S = harga * (1 - g), F = a.tetap + a.qc + a.hpp / tenor;
+  const v = k.filter((x) => S > x.perTes).map((x) => Math.max(F / (S - x.perTes), (x.minBulan + F) / S));
+  return v.length ? Math.min(...v) : null;
 }
 
 /** HPP alat tertinggi agar GPM ≥ g di harga & volume ini (bahan negosiasi ke prinsipal). ≤ 0 → 0. */
@@ -163,8 +178,16 @@ async function bacaParam(): Promise<Param & { diubah_at: string | null }> {
 const angkaDari = (m: Record<string, unknown>, hariKerja: number): Angka => ({
   reagen: n(m.biaya_per_tes),
   tetap: n(m.biaya_tetap_harian) != null ? n(m.biaya_tetap_harian)! * hariKerja : n(m.biaya_tetap_bulan) ?? 0,
-  qc: n(m.qc_bulan) ?? 0, hpp: n(m.hpp),
+  qc: n(m.qc_bulan) ?? 0, hpp: n(m.hpp), tangga: tanggaDari(m.biaya_tangga),
 });
+
+/** biaya_tangga jsonb [{per_tes, min_bulan}] → Kemasan[] (284); rusak/kosong → null. */
+function tanggaDari(v: unknown): Kemasan[] | null {
+  if (!Array.isArray(v)) return null;
+  const k = v.map((x) => ({ perTes: Number((x as Record<string, unknown>)?.per_tes), minBulan: Number((x as Record<string, unknown>)?.min_bulan) }))
+    .filter((x) => Number.isFinite(x.perTes) && x.perTes >= 0 && Number.isFinite(x.minBulan) && x.minBulan >= 0);
+  return k.length ? k : null;
+}
 
 /** Harga acuan zona = harga pasar terendah (konservatif); kalau belum diisi, realisasi Rp/tes OS. */
 const hargaAcuan = (m: Record<string, unknown>) => n(m.harga_pasar_min) ?? n(m.rupiah_per_tes);
@@ -224,7 +247,7 @@ export async function bacaBottomLine(userId: string) {
       hpp: a.hpp, hpp_aset: n(m.hpp_aset), hpp_tgl: m.hpp_tgl ? String(m.hpp_tgl).slice(0, 10) : null, hpp_median: n(m.hpp_median),
       hpp_sumber: m.hpp_sumber, unit_ber_hpp: Number(m.unit_ber_hpp),
       rupiah_per_tes: rpt, rupiah_per_tes_sumber: m.rupiah_per_tes_sumber, volume: volHist, volume_acuan: volAcuan,
-      biaya_per_tes: a.reagen, biaya_tetap_bulan: a.tetap, qc_bulan: a.qc,
+      biaya_per_tes: a.reagen, biaya_tetap_bulan: a.tetap, qc_bulan: a.qc, biaya_tangga: a.tangga ?? null,
       biaya_sumber: m.biaya_sumber, biaya_keyakinan: m.biaya_keyakinan,
       harga_pasar_min: n(m.harga_pasar_min), harga_pasar_max: n(m.harga_pasar_max), harga_acuan: harga,
       harga_acuan_sumber: n(m.harga_pasar_min) != null ? "harga pasar terendah" : rpt != null ? "realisasi OS" : null,
@@ -385,7 +408,8 @@ export async function simpanAngka(userId: string, b: Record<string, unknown>) {
                -- 281: reagen/tes atau reagen tetap diubah tangan → isian manual menang atas hitungan harian otomatis;
                -- simpan HPP/harga pasar saja (biaya sama) → hitungan otomatis & sumbernya tetap
                sumber = CASE WHEN ${otomatisTetap} THEN kso_bottomline_biaya.sumber ELSE excluded.sumber END,
-               biaya_tetap_harian = CASE WHEN ${otomatisTetap} THEN kso_bottomline_biaya.biaya_tetap_harian END`;
+               biaya_tetap_harian = CASE WHEN ${otomatisTetap} THEN kso_bottomline_biaya.biaya_tetap_harian END,
+               biaya_tangga = CASE WHEN ${otomatisTetap} THEN kso_bottomline_biaya.biaya_tangga END`;
     await tx`INSERT INTO kso_bottomline_log (jenis_ubah, kunci, isi, oleh) VALUES ('angka', ${key}, ${tx.json(isi)}, ${u.id})`;
     return { ok: true };
   });
@@ -495,7 +519,7 @@ export async function bacaPortofolio(userId: string) {
   const sql = db();
   const p = await bacaParam();
   const [models, rows] = await Promise.all([
-    sql`SELECT model_key, satuan, rupiah_per_tes, biaya_per_tes, biaya_tetap_bulan, biaya_tetap_harian, qc_bulan, hpp FROM kso_bottomline_model_v`,
+    sql`SELECT model_key, satuan, rupiah_per_tes, biaya_per_tes, biaya_tetap_bulan, biaya_tetap_harian, biaya_tangga, qc_bulan, hpp FROM kso_bottomline_model_v`,
     sql`SELECT asset_id::text, account_id::text, faskes, sn_key, skema, jenis, model, model_key, mulai::text, cabang, am_nama,
                bulan_1::text, bulan_2::text, bulan_3::text, omzet_1::float8, omzet_2::float8, omzet_3::float8,
                omzet_terakhir::text, piutang_hari::int, piutang_nilai::float8
@@ -539,11 +563,24 @@ export async function bacaPortofolio(userId: string) {
 // Disimpan HANYA ke model yang belum diisi manual (sumber kosong / berawalan "otomatis") — isian Finance tak ditimpa.
 export const SUMBER_OTOMATIS = "otomatis: rumus Simulator × HPP Price Book";
 
-/** Bahan tombol: master Simulator (alat hematologi yang tertaut model Bottom Line) + hari kerja default. Izin = ubah angka. */
+const KATEGORI_OTOMATIS = new Set(["HEMATO", "CC", "BG"]);
+
+/** Bahan tombol: master Simulator (alat hematologi, kimia klinik, blood gas yang tertaut model Bottom Line) + hari kerja
+ *  default + campuran tes riil Kimia Klinik (284: kit reagen DO 12 bulan × tes per kit, HPP Price Book per SKU). Izin = ubah angka. */
 export async function bacaBahanOtomatis(userId: string) {
   await wajib(userId, "angka", "Hanya Finance (centang ubah angka Bottom Line) yang menghitung ulang biaya.");
-  const [m, p] = await Promise.all([ksoMaster(), bacaParam()]);
-  return { hariKerja: p.hariKerja, analyzers: m.analyzers.filter((a) => a.kategori === "HEMATO" && a.modelKey) };
+  const sql = db();
+  const [m, p, mix] = await Promise.all([
+    ksoMaster(), bacaParam(),
+    sql`SELECT analyzer, parameter, sku_kode, tes_per_kemasan::float8 AS tes_per_kemasan, kit_12bln::float8 AS kit_12bln, hpp::float8 AS hpp
+          FROM kso_parameter_mix_v ORDER BY analyzer, parameter, sku_kode`.catch(() => []),
+  ]);
+  return {
+    hariKerja: p.hariKerja,
+    analyzers: m.analyzers.filter((a) => KATEGORI_OTOMATIS.has(a.kategori) && a.modelKey),
+    mixKk: mix.map((r) => ({ analyzer: String(r.analyzer), parameter: String(r.parameter), sku: String(r.sku_kode),
+      tesPerKemasan: n(r.tes_per_kemasan) ?? 0, kit12bln: n(r.kit_12bln) ?? 0, hpp: n(r.hpp) })),
+  };
 }
 
 export async function simpanBiayaOtomatis(userId: string, b: Record<string, unknown>) {
@@ -557,13 +594,21 @@ export async function simpanBiayaOtomatis(userId: string, b: Record<string, unkn
       const key = typeof r.model_key === "string" ? r.model_key : "";
       const reagen = angka(r.biaya_per_tes, "Reagen per tes", { boleh0: true });
       const harian = angka(r.biaya_tetap_harian, "Reagen harian", { boleh0: true }) ?? 0;
+      // 284: pilihan kemasan (cartridge BG) — maks 10, angka ≥ 0
+      const tangga = Array.isArray(r.biaya_tangga) ? tanggaDari(r.biaya_tangga) : null;
+      if (Array.isArray(r.biaya_tangga) && (!tangga || tangga.length !== r.biaya_tangga.length || tangga.length > 10))
+        throw new GalatKso(400, "Pilihan kemasan tidak sah.");
+      const rincian = typeof r.rincian === "string" && r.rincian.trim() ? ` — ${r.rincian.trim().slice(0, 160)}` : "";
       if (!key || reagen == null) continue;
       const [ada] = await tx`SELECT 1 FROM kso_bottomline_model_v WHERE model_key = ${key}`;
       if (!ada) { dilewati.push(key); continue; }
       const hasil = await tx`
-        INSERT INTO kso_bottomline_biaya (model_key, biaya_per_tes, biaya_tetap_harian, biaya_tetap_bulan, sumber, keyakinan, diubah_oleh)
-        VALUES (${key}, ${reagen}, ${harian}, ${Math.round(harian * p.hariKerja)}, ${SUMBER_OTOMATIS}, 'Med', ${u.id})
+        INSERT INTO kso_bottomline_biaya (model_key, biaya_per_tes, biaya_tetap_harian, biaya_tetap_bulan, biaya_tangga, sumber, keyakinan, diubah_oleh)
+        VALUES (${key}, ${reagen}, ${harian}, ${Math.round(harian * p.hariKerja)},
+                ${tangga ? tx.json(tangga.map((x) => ({ per_tes: x.perTes, min_bulan: x.minBulan }))) : null},
+                ${SUMBER_OTOMATIS + rincian}, 'Med', ${u.id})
         ON CONFLICT (model_key) DO UPDATE SET biaya_per_tes = excluded.biaya_per_tes, biaya_tetap_harian = excluded.biaya_tetap_harian,
+          biaya_tangga = excluded.biaya_tangga,
           biaya_tetap_bulan = excluded.biaya_tetap_bulan, sumber = excluded.sumber, keyakinan = excluded.keyakinan,
           diubah_oleh = excluded.diubah_oleh, diubah_at = now()
         WHERE kso_bottomline_biaya.biaya_per_tes IS NULL OR kso_bottomline_biaya.sumber IS NULL
