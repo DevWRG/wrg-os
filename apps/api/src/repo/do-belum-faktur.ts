@@ -16,11 +16,13 @@
 //     tetap “Dikirim”). Campuran / REGULAR / kosong / RUTIN / PL → tab Tagih.
 //   • Terlambat = lewat N hari kerja sejak tanggal DO (param ambang_hari_kerja,
 //     default 3; Sabtu/Minggu + Kalender Libur F14 dilewati).
-//   • Rekap WA menyusul (belum ada job).
+//   • Rekap WA mingguan ke grup Finance (runRekapDoBelumFaktur, saklar default mati).
 //
 // Gerbang menu “/do-belum-faktur” (lihat / ubah ambang) diperiksa di BFF.
 
 import { db } from "../db.js";
+import { sendViaWaGateway } from "../wasend.js";
+import { isoWeek } from "./faktur.js";
 import { amLabelSql, cabangEffSql, joinAmFromSalesman } from "./salesman-am.js";
 
 export class DoFakturError extends Error {
@@ -180,3 +182,67 @@ export async function listDoBelumFaktur(f: FilterDo) {
     items: cocok.slice(offset, offset + limit),
   };
 }
+
+// ---------------------------------------------------------------- rekap WA mingguan
+
+// Grup tujuan: DO_BELUM_FAKTUR_WA_TARGET, cadangan grup Finance yang sama dengan
+// rekap overdue F91 (INVOICE_REMINDER_FINANCE_TARGET). Saklar job di scheduler
+// (DO_BELUM_FAKTUR_REKAP_ENABLED, default mati). Dicek tiap hari kerja, terkirim
+// SEKALI per minggu ISO (notif_state) — Senin libur = terkirim Selasa.
+// Hanya tab Tagih yang TERLAMBAT; DO KSO tak pernah ikut.
+
+export const REKAP_MAKS_BARIS = 15;
+const rpJt = (n: number) => `Rp${(n / 1e6).toLocaleString("id-ID", { maximumFractionDigits: 1 })} jt`;
+const tglPanjang = (ymd: string) =>
+  new Date(`${ymd}T00:00:00+07:00`).toLocaleDateString("id-ID", { timeZone: "Asia/Jakarta", weekday: "long", day: "numeric", month: "short", year: "numeric" });
+
+/** Teks rekap (murni, diuji). `terlambat` = baris tab Tagih yang terlambat, urut paling lama dulu. */
+export function buildRekapWa(terlambat: BarisDo[], ringkas: { do: number; nilai: number }, ambang: number, today: string, maks = REKAP_MAKS_BARIS): string {
+  const nilai = terlambat.reduce((s, x) => s + (x.nilai ?? 0), 0);
+  const perCabang = new Map<string, number>();
+  for (const x of terlambat) perCabang.set(x.cabang ?? "Tanpa cabang", (perCabang.get(x.cabang ?? "Tanpa cabang") ?? 0) + 1);
+  const cabang = [...perCabang].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  const urut = [...terlambat].sort((a, b) => b.hari_kerja - a.hari_kerja || a.nomor.localeCompare(b.nomor));
+  const baris = urut.slice(0, maks).map((x, i) =>
+    `${i + 1}. ${x.nomor} · ${x.customer} · ${x.hari_kerja} hari kerja${x.nilai != null ? ` · ${rpJt(x.nilai)}` : ""} · ${x.am}`);
+  return [
+    `🧾 *DO Belum Difaktur* — ${tglPanjang(today)}`,
+    `${terlambat.length} DO terkirim sudah lewat ${ambang} hari kerja tanpa faktur · perkiraan ${rpJt(nilai)} (dari ${ringkas.do} DO yang belum difaktur, ${rpJt(ringkas.nilai)}).`,
+    "",
+    `Per cabang: ${cabang.slice(0, 8).map(([c, n]) => `${c} ${n}`).join(" · ")}${cabang.length > 8 ? " · …" : ""}`,
+    "",
+    "Paling lama:",
+    ...baris,
+    ...(urut.length > maks ? [`… dan ${urut.length - maks} lainnya.`] : []),
+    "",
+    "Rincian & ekspor Excel: menu Finance → DO Belum Difaktur. DO KSO tidak ikut (ditagih bulanan lewat form KSO).",
+  ].join("\n");
+}
+
+export interface RekapResult { week: string; terlambat: number; sent: boolean; dryRun: boolean; skipped?: string; error?: string; payload?: string }
+
+export async function runRekapDoBelumFaktur(opts: { dryRun?: boolean } = {}): Promise<RekapResult> {
+  const today = hariIniWibDo();
+  const week = isoWeek(today);
+  const base = { week, dryRun: Boolean(opts.dryRun) };
+  const target = (process.env.DO_BELUM_FAKTUR_WA_TARGET ?? "").trim() || (process.env.INVOICE_REMINDER_FINANCE_TARGET ?? "").trim();
+  if (!target && !opts.dryRun) return { ...base, terlambat: 0, sent: false, skipped: "DO_BELUM_FAKTUR_WA_TARGET / INVOICE_REMINDER_FINANCE_TARGET kosong" };
+  const key = `do-belum-faktur-rekap:${week}`;
+  if (!opts.dryRun) {
+    const [done] = await db()`SELECT 1 FROM notif_state WHERE key = ${key}`;
+    if (done) return { ...base, terlambat: 0, sent: false, skipped: `sudah terkirim minggu ${week}` };
+  }
+  const d = await listDoBelumFaktur({ tab: "tagih", hanya_terlambat: true, limit: 1000 });
+  if (!d.items.length) return { ...base, terlambat: 0, sent: false, skipped: "tidak ada DO terlambat" };
+  const text = buildRekapWa(d.items, d.ringkasan.tagih, d.ambang_hari_kerja, today);
+  if (opts.dryRun) return { ...base, terlambat: d.items.length, sent: false, payload: text };
+  const w = await sendViaWaGateway(target, text);
+  const real = w.sent && !w.stub && !w.dryRun; // stub & dry-run gateway juga sent=true
+  if (real) {
+    await db()`INSERT INTO notif_state (key, signature, count, sent_at) VALUES (${key}, ${today}, 1, now())
+      ON CONFLICT (key) DO UPDATE SET signature = EXCLUDED.signature, count = notif_state.count + 1, sent_at = now()`;
+  }
+  return { ...base, terlambat: d.items.length, sent: real, error: w.error };
+}
+
+const hariIniWibDo = () => new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Jakarta" });
