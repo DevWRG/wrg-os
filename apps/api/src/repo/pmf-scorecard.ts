@@ -189,12 +189,48 @@ interface BarisDeal {
   dari_log: boolean;
 }
 
-/** Scorecard kuartal (default: kuartal WIB berjalan). Hanya SELECT. */
-export async function getPmfScorecard(tahunIn?: number, kuartalIn?: number): Promise<PmfScorecard> {
+/** Validasi param kuartal dari query. null = tak diisi; string = pesan galat (400). */
+export function bacaParamKuartal(tahunRaw: string | undefined, kuartalRaw: string | undefined):
+  { tahun: number | null; kuartal: number | null } | string {
+  const kosong = (v: string | undefined) => v === undefined || v.trim() === "";
+  const tahun = kosong(tahunRaw) ? null : Number(tahunRaw);
+  const kuartal = kosong(kuartalRaw) ? null : Number(kuartalRaw);
+  if (tahun !== null && !(Number.isInteger(tahun) && tahun >= 2000 && tahun <= 2100)) return "tahun harus angka 2000-2100";
+  if (kuartal !== null && !(Number.isInteger(kuartal) && kuartal >= 1 && kuartal <= 4)) return "kuartal harus 1-4";
+  return { tahun, kuartal };
+}
+
+/**
+ * Kuartal default saat user tak memilih: kuartal deal tertutup TERAKHIR, maksimal kuartal berjalan.
+ * Kuartal berjalan hampir selalu kosong di awal kuartal — halaman pertama yang kosong menyesatkan.
+ * Belum ada deal tertutup sama sekali → kuartal berjalan.
+ */
+export function kuartalDefault(hariIni: string, tutupTerakhir: string | null): { tahun: number; kuartal: number } {
+  const sekarang = kuartalDari(hariIni);
+  if (!tutupTerakhir) return sekarang;
+  const t = kuartalDari(tutupTerakhir);
+  return t.tahun * 10 + t.kuartal > sekarang.tahun * 10 + sekarang.kuartal ? sekarang : t;
+}
+
+/** Scorecard kuartal (default: kuartal deal tertutup terakhir, lihat kuartalDefault). Hanya SELECT. */
+export async function getPmfScorecard(tahunIn?: number | null, kuartalIn?: number | null): Promise<PmfScorecard> {
   const sql = db();
-  const sekarang = kuartalDari(wibToday().toISOString().slice(0, 10));
-  const tahun = tahunIn && tahunIn >= 2000 && tahunIn <= 2100 ? Math.trunc(tahunIn) : sekarang.tahun;
-  const kuartal = kuartalIn && kuartalIn >= 1 && kuartalIn <= 4 ? Math.trunc(kuartalIn) : sekarang.kuartal;
+  const hariIni = wibToday().toISOString().slice(0, 10);
+  let def = kuartalDari(hariIni);
+  if (tahunIn == null && kuartalIn == null) {
+    const [r] = await sql<{ tgl: string | null }[]>`
+      SELECT max((coalesce(x.tgl_log, d.stage_entered_at) AT TIME ZONE 'Asia/Jakarta')::date)::text AS tgl
+      FROM deal d
+      CROSS JOIN LATERAL (
+        SELECT (SELECT max(l.occurred_at) FROM spt_state_log l
+                 WHERE l.deal_id = d.deal_id AND l.to_stage = d.stage::text) AS tgl_log
+      ) x
+      WHERE d.stage IN ('Closing-Won', 'Closing-Lost') AND d.opsi_utama
+        AND NOT EXISTS (SELECT 1 FROM spt_state_log l WHERE l.deal_id = d.deal_id AND l.changed_by = 'import-pameran')`;
+    def = kuartalDefault(hariIni, r?.tgl ?? null);
+  }
+  const tahun = tahunIn ?? (kuartalIn == null ? def.tahun : kuartalDari(hariIni).tahun);
+  const kuartal = kuartalIn ?? def.kuartal;
   const { dari, sampai } = rentangKuartal(tahun, kuartal);
 
   const [rows, peta] = await Promise.all([

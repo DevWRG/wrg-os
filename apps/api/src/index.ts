@@ -280,7 +280,7 @@ import {
   DocTrackerError, cabutStempel, getDocTracker, lepasFaktur, listDocTracker, parseHari as parseHariDoc, parseSoId, parseState,
   setDokumen, stampTahap, tautkanFaktur,
 } from "./repo/doc-tracker.js";
-import { getPmfScorecard } from "./repo/pmf-scorecard.js";
+import { bacaParamKuartal, getPmfScorecard } from "./repo/pmf-scorecard.js";
 import { getSoPacing, runSoPacingAlert } from "./repo/so-pacing.js";
 import { listBriefingMingguan, runWeeklyBriefing } from "./repo/weekly-briefing.js";
 import { getLeadSource, getRetensi } from "./repo/kohort.js";
@@ -2904,9 +2904,9 @@ app.get("/bukti-pembayaran/:id/file", async (c) => {
 // tanpa LLM/WA/snapshot. ?tahun=YYYY&kuartal=1-4 opsional (default kuartal WIB berjalan).
 app.get("/pmf-scorecard", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  const t = Number(c.req.query("tahun"));
-  const k = Number(c.req.query("kuartal"));
-  return c.json(await getPmfScorecard(Number.isFinite(t) ? t : undefined, Number.isFinite(k) ? k : undefined));
+  const p = bacaParamKuartal(c.req.query("tahun"), c.req.query("kuartal"));
+  if (typeof p === "string") return c.json({ error: p }, 400);
+  return c.json(await getPmfScorecard(p.tahun, p.kuartal));
 });
 
 // F21 — pacing sales bulan berjalan per region (faktur netto + SO terbuka vs
