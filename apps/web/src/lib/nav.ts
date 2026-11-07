@@ -12,7 +12,7 @@ import { CalendarCheck,
   Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, BookOpen, Calculator, Presentation, Megaphone, Library,
   Wallet, Coins, Banknote, Car, QrCode, PenLine, PackagePlus, PackageMinus,
   Handshake, Archive, Ticket, Printer, Route, ArrowLeftRight,
-  TrendingUp, CalendarClock, PackageSearch, type LucideIcon,
+  TrendingUp, CalendarClock, PackageSearch, FileClock, type LucideIcon,
   Hourglass, ShieldAlert, Landmark, ClipboardList, PackageCheck,
 } from "lucide-react";
 
@@ -29,6 +29,7 @@ import { canViewKsoKontrak } from "@/lib/kso-kontrak-access";
 import { canViewArsipDokumen } from "@/lib/arsip-dokumen-access";
 import { FITUR_BOTTOMLINE, FITUR_SUSUNAN, TAB_KSO, canViewKsoKomite } from "@/lib/kso-komite-access";
 import { canViewAsetTetap } from "@/lib/aset-tetap-access";
+import { canViewDoBelumFaktur } from "@/lib/do-belum-faktur-access";
 import { canViewRaportList } from "@/lib/raport-access";
 import { canViewExecutive } from "@/lib/executive-access";
 import { canViewSalesCommand } from "@/lib/sales-command-access";
@@ -422,6 +423,9 @@ export const NAV: NavGroup[] = [
       // F34 Aset Tetap — cermin register Accurate. Kunci izin sendiri
       // (featureKey = "aset-tetap"), default tertutup: butuh Sync Fitur + centang.
       { title: "Aset Tetap", url: "/aset-tetap", icon: Landmark, badge: "NEW", show: canViewAsetTetap },
+      // F149 (dipersempit) — DO/SJ terkirim yang belum difakturkan, dari cermin Accurate.
+      // Kunci izin sendiri ("do-belum-faktur"), default tertutup: butuh Sync Fitur + centang.
+      { title: "DO Belum Difaktur", url: "/do-belum-faktur", icon: FileClock, badge: "NEW", show: canViewDoBelumFaktur },
     ],
   },
   {

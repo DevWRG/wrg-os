@@ -81,6 +81,7 @@ import {
   PermintaanError, analisa as ppAnalisa, cariSku as ppCariSku, catatPermintaan, listPermintaan, listReview as ppListReview,
   opsi as ppOpsi, putuskan as ppPutuskan, simpanKelompok as ppSimpanKelompok, ubahParam as ppUbahParam, ubahPermintaan, usulkan as ppUsulkan, bacaParam as ppBacaParam,
 } from "./repo/permintaan-produk.js";
+import { DoFakturError, listDoBelumFaktur, ubahAmbang as doFakturUbahAmbang } from "./repo/do-belum-faktur.js";
 import { ArsipError, bacaBerkasArsip, hapusArsip, listArsip, listBuku as arsipListBuku, simpanBuku as arsipSimpanBuku, ubahArsip, unggahArsip } from "./repo/arsip-dokumen.js";
 import {
   ingestInvoices,
@@ -5124,6 +5125,26 @@ const ppErr = (c: Context, e: unknown) => {
 };
 const ppOleh = (b: Record<string, unknown>) => (typeof b.oleh === "string" && b.oleh.trim() ? b.oleh.trim() : null);
 const ppJson = async (c: Context) => ((await c.req.json().catch(() => null)) as Record<string, unknown> | null) ?? {};
+// F149 (dipersempit) DO belum difaktur (migrasi 283, issue #2052) — baca cermin Accurate.
+// Gerbang menu "/do-belum-faktur" (lihat / ubah ambang) DIPERIKSA DI BFF; `oleh` dari sesi.
+const doFakturErr = (c: Context, e: unknown) => {
+  if (e instanceof DoFakturError) return c.json({ error: e.message }, e.status as 400);
+  console.error("[do-belum-faktur]", e);
+  return c.json({ error: "Gagal memuat DO belum difaktur." }, 500);
+};
+app.get("/do-belum-faktur", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const n = (k: string) => { const v = Number(c.req.query(k)); return Number.isFinite(v) && v >= 0 ? v : undefined; };
+  try {
+    return c.json(await listDoBelumFaktur({ tab: c.req.query("tab"), q: c.req.query("q"), cabang: c.req.query("cabang"),
+      hanya_terlambat: c.req.query("hanya_terlambat") === "1", limit: n("limit"), offset: n("offset") }));
+  } catch (e) { return doFakturErr(c, e); }
+});
+app.patch("/do-belum-faktur/param", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const b = ((await c.req.json().catch(() => null)) as Record<string, unknown> | null) ?? {};
+  try { return c.json(await doFakturUbahAmbang(b.ambang_hari_kerja, typeof b.oleh === "string" ? b.oleh : null)); } catch (e) { return doFakturErr(c, e); }
+});
 // F156 Arsip Dokumen (migrasi 279) — berkas di Google Drive PRIVAT, diunduh lewat sini.
 // Gerbang menu "/arsip-dokumen" (lihat/buat/ubah/hapus) + kode buku (admin) DIPERIKSA DI BFF;
 // service token mem-bypass JWT di sini. `oleh` diisi BFF dari sesi.
