@@ -242,6 +242,7 @@ export async function bacaBottomLine(userId: string) {
     const gReal = hd ? null : gpm(a, rpt, volHist, p.tenor);
     return {
       model_key: key, kelompok: m.kelompok, jenis: m.jenis, model: m.model, satuan: m.satuan, hd,
+      alat_baru: m.alat_baru === true, // 286: alat katalog tanpa unit terpasang (HPP dari Price Book)
       unit: Number(m.unit), idle: Number(m.idle), tanpa_faskes: Number(m.tanpa_faskes),
       omzet_12: n(m.omzet_12), omzet_unit_bln: n(m.omzet_unit_bln),
       hpp: a.hpp, hpp_aset: n(m.hpp_aset), hpp_tgl: m.hpp_tgl ? String(m.hpp_tgl).slice(0, 10) : null, hpp_median: n(m.hpp_median),

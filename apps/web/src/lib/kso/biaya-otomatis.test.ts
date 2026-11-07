@@ -91,3 +91,12 @@ test("biayaOtomatis menggabungkan hematologi, KK, BG", () => {
   const h = biayaOtomatis({ analyzers: [z3(), exc(), pt()], hariKerja: 25, mixKk: [mix({})] });
   assert.deepEqual(h.baris.map((b) => b.model_key), ["m-z3", "m-exc", "m-bg"]);
 });
+
+test("KK alat baru (tanpa kiriman sendiri) → campuran tes alat sejenis dijumlah per SKU (286)", () => {
+  const e4 = exc({ kode: "EXC400", label: "EXC400", modelKey: "m-e4" });
+  const m = [mix({ kit12bln: 3 }), mix({ analyzer: "EXC220", kit12bln: 1 }), mix({ analyzer: "EXC400", kit12bln: 0 })];
+  const { baris, kurang } = biayaOtomatisKk([e4], m, 25);
+  assert.deepEqual(kurang, []);
+  assert.match(baris[0].rincian ?? "", /alat sejenis \(EXC200, EXC220\): 1 SKU, 400 tes/);
+  assert.equal(baris[0].biaya_per_tes, 10.02); // 1.000 ÷ 100 tes + detergent EXC400 0,2 × 0,1
+});

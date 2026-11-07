@@ -27,6 +27,8 @@ interface Unit { faskes: string | null; skema: string; status: "Jalan" | "Idle" 
 interface Keputusan { volume: number | null; lantai_final: number | null; keputusan: string | null; catatan: string; diputus_at: string; diputus_nama: string | null }
 interface Baris {
   model_key: string; kelompok: string; jenis: string; model: string; satuan: "tes" | "tindakan"; hd: boolean;
+  /** 286: alat katalog #KSO tanpa unit terpasang — HPP dari Price Book unit alat. */
+  alat_baru?: boolean;
   unit: number; idle: number; tanpa_faskes: number; omzet_unit_bln: number | null;
   hpp: number | null; hpp_aset: number | null; hpp_tgl: string | null; hpp_median: number | null; hpp_sumber: string; unit_ber_hpp: number;
   rupiah_per_tes: number | null; rupiah_per_tes_sumber: string | null; volume: number | null; volume_acuan: number | null;
@@ -227,7 +229,8 @@ function BarisModel({ b, judul, onBuka }: { b: Baris; judul: boolean; onBuka: (k
       {judul && <tr className="border-b"><td colSpan={11} className="bg-accent/40 p-2 text-xs font-bold uppercase tracking-wide">{b.kelompok}</td></tr>}
       <tr className="hover:bg-accent/30 cursor-pointer border-b last:border-0" tabIndex={0} onClick={() => onBuka(b.model_key)}
         onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onBuka(b.model_key); } }}>
-        <td className="p-2"><div className="font-semibold">{b.model}</div><div className="text-muted-foreground text-xs">{b.jenis}</div></td>
+        <td className="p-2"><div className="font-semibold">{b.model}{b.alat_baru && <Pill cls="ml-1.5 bg-sky-500/10 text-sky-700 dark:text-sky-400">Alat baru</Pill>}</div>
+          <div className="text-muted-foreground text-xs">{b.jenis}{b.alat_baru ? " · belum ada unit terpasang" : ""}</div></td>
         <td className="p-2 text-right tabular-nums">{b.unit}
           {b.idle > 0 && <div className="text-xs text-red-700 dark:text-red-400">{b.idle} idle</div>}
           {b.tanpa_faskes > 0 && <div className="text-muted-foreground text-xs">{b.tanpa_faskes} tanpa faskes</div>}
