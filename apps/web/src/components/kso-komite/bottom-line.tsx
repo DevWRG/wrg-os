@@ -309,7 +309,7 @@ function HitungPriceBook({ onBerubah }: { onBerubah: () => void }) {
   };
   return (
     <div className="bg-card flex flex-wrap items-center gap-3 rounded-lg border p-3 text-xs">
-      <span className="text-muted-foreground">Biaya reagen = rumus Simulator KSO × HPP Price Book terbaru — hematologi (reagen per tes + harian), kimia klinik (campuran tes riil dari kiriman reagen 12 bulan + detergent), blood gas (cartridge, residu terbuang dihitung).</span>
+      <span className="text-muted-foreground">Biaya reagen = rumus Simulator KSO × HPP Price Book terbaru — hematologi (reagen per tes + harian), kimia klinik (campuran tes riil dari kiriman reagen 12 bulan + detergent), blood gas (cartridge, residu terbuang dihitung), elektrolit DN-X6 (paket cartridge). Imunologi (CLIA) diisi manual — sebagian besar reagennya belum ada di Price Book.</span>
       <Button size="sm" variant="outline" onClick={jalan} disabled={sibuk}>{sibuk ? "Menghitung…" : "Hitung ulang dari Price Book"}</Button>
       {pesan && <span>{pesan}</span>}
     </div>
