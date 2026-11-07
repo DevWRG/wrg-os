@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { TransactionSql } from "postgres";
 import { db } from "../db.js";
+import { effectivePermissions } from "./rbac.js";
 
 // F33 Kas Station Reconcile Harian Cabang. Station = kas cabang (kunci = teks
 // `cabang` huruf besar). Alur: kas harian (kas_station_harian + _transaksi) →
@@ -9,7 +10,11 @@ import { db } from "../db.js";
 //
 // Yang SENGAJA tidak ditetapkan di sini karena belum ada keputusan bisnis:
 // toleransi selisih, tenggat pengisian/pengajuan, rumus nominal pengajuan /
-// realisasi (realisasi_nominal diisi manual), pembatasan cabang per user.
+// realisasi (realisasi_nominal diisi manual).
+//
+// Cakupan cabang: user station hanya cabangnya sendiri (master_user.cabang lewat
+// app_user.am_id); pusat (kas-station-review view / superuser / admin / direktur)
+// semua cabang. Pengaju rekap tidak boleh memutus rekapnya sendiri.
 // saldo_akhir tidak disimpan — dihitung dari saldo_awal + masuk − keluar.
 
 export const JENIS_TRANSAKSI = ["masuk", "keluar"] as const;
@@ -167,6 +172,51 @@ export function statusSesudah(status: StatusRekap, aksi: AksiRekap): StatusRekap
     case "reject": return status === "submitted" ? "rejected" : null;
     case "realisasi": return status === "approved" ? "approved" : null;
   }
+}
+
+// Pengaju tak boleh memutus rekapnya sendiri. Pengaju = submitted_by, atau created_by
+// bila submitted_by kosong. Aktor/pengaju kosong → tak bisa dibandingkan → false.
+export function pemutusSamaPengaju(
+  actor: string | null | undefined, rekap: { submitted_by: string | null; created_by: string | null },
+): boolean {
+  const a = (actor ?? "").trim().toLowerCase();
+  const p = (rekap.submitted_by ?? rekap.created_by ?? "").trim().toLowerCase();
+  return a !== "" && a === p;
+}
+
+// ───────────────────────── Cakupan cabang ─────────────────────────
+
+export type CakupanKas = { semua: true } | { semua: false; cabang: string | null };
+
+export interface IdentitasKas {
+  role: string | null;
+  superuser: boolean;
+  /** Punya kas-station-review (aktif + view) di matriks Akses Grup. */
+  reviewView: boolean;
+  /** master_user.cabang user (lewat app_user.am_id). */
+  cabang: string | null;
+}
+
+// headerAda=false → panggilan service-token tanpa x-user-id (skrip operator) → semua.
+// Header ada tapi user tak dikenal → tanpa cabang (lihat kosong, tulis ditolak).
+export function putuskanCakupan(headerAda: boolean, u: IdentitasKas | null): CakupanKas {
+  if (!headerAda) return { semua: true };
+  if (!u) return { semua: false, cabang: null };
+  const role = (u.role ?? "").trim().toLowerCase();
+  if (u.superuser || role === "admin" || role === "direktur" || u.reviewView) return { semua: true };
+  return { semua: false, cabang: normCabang(u.cabang) || null };
+}
+
+/** Boleh melihat/menyentuh record milik `cabang`? (null = record tak ada → tidak). */
+export const bolehCabang = (cak: CakupanKas, cabang: string | null): boolean =>
+  cak.semua || (cak.cabang != null && cabang != null && normCabang(cabang) === cak.cabang);
+
+/** Penjaga POST (cabang dari body). Cabang kosong dibiarkan — validasi repo yang menolak (400). */
+export function cekCabangTulis(cak: CakupanKas, cabangInput: unknown): void {
+  if (cak.semua) return;
+  if (!cak.cabang) throw new KasStationError(403, "akun Anda belum punya cabang — minta admin mengisi cabang di Users");
+  const c = normCabang(cabangInput);
+  if (c && c !== cak.cabang) throw new KasStationError(403, `hanya boleh untuk cabang Anda (${cak.cabang})`);
 }
 
 // ───────────────────────── Tipe & mapper ─────────────────────────
@@ -406,6 +456,46 @@ function limitValid(v: number | undefined): number {
 
 // ───────────────────────── Baca ─────────────────────────
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const FITUR_REVIEW = "kas-station-review";
+
+// userId = header x-user-id apa adanya (undefined = header tidak dikirim).
+export async function cakupanKasStation(userId: string | undefined): Promise<CakupanKas> {
+  if (userId === undefined) return putuskanCakupan(false, null);
+  const id = userId.trim();
+  if (!UUID_RE.test(id)) return putuskanCakupan(true, null);
+  const sql = db();
+  const [u] = await sql`
+    SELECT u.role,
+           (SELECT upper(btrim(m.cabang)) FROM master_user m
+             WHERE m.am_id = u.am_id AND btrim(coalesce(m.cabang, '')) <> '' LIMIT 1) AS cabang
+    FROM app_user u WHERE u.id = ${id}
+  `;
+  if (!u) return putuskanCakupan(true, null);
+  const eff = await effectivePermissions(id);
+  const p = eff.permissions[FITUR_REVIEW];
+  return putuskanCakupan(true, {
+    role: str(u.role), superuser: eff.superuser, reviewView: !!p && p.active && p.view, cabang: str(u.cabang),
+  });
+}
+
+/** Cabang pemilik catatan harian; null bila id tak valid / tak ada. */
+export async function cabangHarian(id: string): Promise<string | null> {
+  if (!UUID_RE.test(id)) return null;
+  const sql = db();
+  const [r] = await sql`SELECT cabang FROM kas_station_harian WHERE id = ${id}`;
+  return r ? String(r.cabang) : null;
+}
+
+/** Cabang pemilik rekap; null bila id tak valid / tak ada. */
+export async function cabangRekap(id: string): Promise<string | null> {
+  if (!UUID_RE.test(id)) return null;
+  const sql = db();
+  const [r] = await sql`SELECT cabang FROM kas_station_rekap WHERE id = ${id}`;
+  return r ? String(r.cabang) : null;
+}
+
 export async function listCabang(): Promise<string[]> {
   const sql = db();
   const rows = await sql`
@@ -459,8 +549,6 @@ async function fetchHarian(sql: Tx, id: string): Promise<(HarianRow & { transaks
   `;
   return { ...mapHarian(rows[0]), transaksi: trx.map(mapTransaksi) };
 }
-
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export async function getHarian(id: string): Promise<(HarianRow & { transaksi: TransaksiRow[] }) | null> {
   if (!UUID_RE.test(id)) return null;
@@ -901,7 +989,10 @@ export async function buatRekap(input: BuatRekapInput): Promise<RekapDetail> {
   return detail;
 }
 
-interface RekapLock { id: string; cabang: string; periode_awal: string; status: StatusRekap; realisasi_at: string | null }
+interface RekapLock {
+  id: string; cabang: string; periode_awal: string; status: StatusRekap; realisasi_at: string | null;
+  submitted_by: string | null; created_by: string | null;
+}
 
 // Muat rekap + kunci per-cabang. Baca ulang setelah lock supaya keputusan dua
 // aktor yang berbarengan terserialisasi (yang kedua melihat status terbaru).
@@ -910,10 +1001,13 @@ async function muatRekapTerkunci(tx: Tx, id: string): Promise<RekapLock | null> 
   if (!awal) return null;
   await lockCabang(tx, String(awal.cabang));
   const [r] = await tx`
-    SELECT id, cabang, periode_awal::text AS periode_awal, status, realisasi_at::text AS realisasi_at
+    SELECT id, cabang, periode_awal::text AS periode_awal, status, realisasi_at::text AS realisasi_at, submitted_by, created_by
     FROM kas_station_rekap WHERE id = ${id}
   `;
-  return r ? { id: String(r.id), cabang: String(r.cabang), periode_awal: String(r.periode_awal), status: r.status as StatusRekap, realisasi_at: str(r.realisasi_at) } : null;
+  return r ? {
+    id: String(r.id), cabang: String(r.cabang), periode_awal: String(r.periode_awal), status: r.status as StatusRekap,
+    realisasi_at: str(r.realisasi_at), submitted_by: str(r.submitted_by), created_by: str(r.created_by),
+  } : null;
 }
 
 export async function submitRekap(id: string, actorRaw?: string | null): Promise<RekapDetail | null> {
@@ -957,6 +1051,9 @@ export async function decideRekap(
     if (!r) return false;
     const baru = statusSesudah(r.status, decision);
     if (!baru) throw new KasStationError(409, `rekap berstatus ${r.status}, hanya yang submitted yang bisa diputuskan`);
+    if (pemutusSamaPengaju(actor, r)) {
+      throw new KasStationError(403, "pengaju tidak boleh memutus rekapnya sendiri — minta pusat/penyetuju lain");
+    }
     const updated = await tx`
       UPDATE kas_station_rekap SET status = ${baru}, decided_by = ${actor}, decided_at = now(),
         decision_note = ${catatan}, updated_at = now()

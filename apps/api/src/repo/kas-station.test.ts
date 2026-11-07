@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
-  KasStationError, awalMinggu, mengandungNul, hariTanpaCatatan, hitungSaldoAkhir, hitungSelisih, isSenin, normCabang,
+  KasStationError, awalMinggu, bolehCabang, cekCabangTulis, pemutusSamaPengaju, putuskanCakupan, mengandungNul, hariTanpaCatatan, hitungSaldoAkhir, hitungSelisih, isSenin, normCabang,
   parseNominal, parseTanggal, rollupMinggu, round2, statusSesudah, tambahHari, wibHariIni,
-  type BarisHarian, type StatusRekap,
+  type BarisHarian, type IdentitasKas, type StatusRekap,
 } from "./kas-station.js";
 
 const h = (over: Partial<BarisHarian> = {}): BarisHarian => ({
@@ -179,4 +179,50 @@ test("mengandungNul: teks, array, objek bersarang, kunci; teks `\\u0000` literal
   assert.equal(mengandungNul(null), false);
   assert.equal(mengandungNul(undefined), false);
   assert.equal(mengandungNul(42), false);
+});
+
+test("pemutusSamaPengaju: banding trim + tanpa beda huruf; fallback created_by", () => {
+  assert.equal(pemutusSamaPengaju("a@x.id", { submitted_by: " A@X.ID ", created_by: null }), true);
+  assert.equal(pemutusSamaPengaju("b@x.id", { submitted_by: "a@x.id", created_by: "b@x.id" }), false);
+  assert.equal(pemutusSamaPengaju("b@x.id", { submitted_by: null, created_by: "B@x.id" }), true);
+  assert.equal(pemutusSamaPengaju("b@x.id", { submitted_by: null, created_by: null }), false);
+  assert.equal(pemutusSamaPengaju(null, { submitted_by: null, created_by: null }), false);
+  assert.equal(pemutusSamaPengaju("  ", { submitted_by: "  ", created_by: null }), false);
+});
+
+const ident = (over: Partial<IdentitasKas> = {}): IdentitasKas => ({
+  role: "user", superuser: false, reviewView: false, cabang: " Madiun ", ...over,
+});
+
+test("putuskanCakupan: tanpa header = semua; user tak dikenal = tanpa cabang", () => {
+  assert.deepEqual(putuskanCakupan(false, null), { semua: true });
+  assert.deepEqual(putuskanCakupan(true, null), { semua: false, cabang: null });
+});
+
+test("putuskanCakupan: pusat (review/superuser/admin/direktur) = semua; station = cabangnya", () => {
+  assert.deepEqual(putuskanCakupan(true, ident({ reviewView: true })), { semua: true });
+  assert.deepEqual(putuskanCakupan(true, ident({ superuser: true })), { semua: true });
+  assert.deepEqual(putuskanCakupan(true, ident({ role: " Admin " })), { semua: true });
+  assert.deepEqual(putuskanCakupan(true, ident({ role: "direktur", cabang: null })), { semua: true });
+  assert.deepEqual(putuskanCakupan(true, ident()), { semua: false, cabang: "MADIUN" });
+  assert.deepEqual(putuskanCakupan(true, ident({ cabang: "  " })), { semua: false, cabang: null });
+  assert.deepEqual(putuskanCakupan(true, ident({ role: null, cabang: null })), { semua: false, cabang: null });
+});
+
+test("bolehCabang: semua lolos; station hanya cabangnya; record tak ada ditolak", () => {
+  assert.equal(bolehCabang({ semua: true }, "SBY 2"), true);
+  assert.equal(bolehCabang({ semua: false, cabang: "MADIUN" }, "MADIUN"), true);
+  assert.equal(bolehCabang({ semua: false, cabang: "MADIUN" }, "SBY 2"), false);
+  assert.equal(bolehCabang({ semua: false, cabang: "MADIUN" }, null), false);
+  assert.equal(bolehCabang({ semua: false, cabang: null }, "MADIUN"), false);
+});
+
+test("cekCabangTulis: 403 untuk cabang lain / akun tanpa cabang", () => {
+  assert.doesNotThrow(() => cekCabangTulis({ semua: true }, "SBY 2"));
+  assert.doesNotThrow(() => cekCabangTulis({ semua: false, cabang: "SBY 2" }, " sby 2 "));
+  assert.doesNotThrow(() => cekCabangTulis({ semua: false, cabang: "SBY 2" }, "")); // kosong → 400 di repo
+  const status403 = (fn: () => void, pesan: RegExp) =>
+    assert.throws(fn, (e: unknown) => e instanceof KasStationError && e.status === 403 && pesan.test(e.message));
+  status403(() => cekCabangTulis({ semua: false, cabang: "SBY 2" }, "MADIUN"), /cabang Anda \(SBY 2\)/);
+  status403(() => cekCabangTulis({ semua: false, cabang: null }, "MADIUN"), /belum punya cabang/);
 });

@@ -62,6 +62,9 @@ Pusat **tidak** input atau merekap ulang — hanya meninjau dan memutuskan.
 | `actor` maks. 100 karakter (kolom `audit_log.human_actor` varchar(100)) | 400 |
 | Body kosong dianggap `{}` (mis. submit tanpa isian) | — |
 | Akumulasi total melebihi `numeric(16,2)` saat merekap | 422 |
+| Pengaju memutus (approve/reject) rekapnya sendiri | 403 |
+| User station mencatat/merekap untuk cabang lain, atau akunnya belum punya cabang | 403 |
+| User station membuka/mengubah record cabang lain lewat id | 404 |
 | Tabel belum dimigrasi | 503 `migration_pending` |
 
 Setiap perubahan ditulis ke `audit_log` (`event_type` `kas_station.*`, `agent_id` pinjam `'A3'` seperti F11/F60).
@@ -80,6 +83,12 @@ Sebelum Sync Fitur, fallback identitas hanya `direktur`/`admin`/`superuser` (`ca
 Izin ditegakkan di BFF `app/api/kas-station/[[...path]]` (peta method+path → izin di
 `lib/kas-station-access.ts`, rute tak dikenal ditolak, `actor` ditimpa dari sesi).
 
+**Cakupan cabang** (API, dari header `x-user-id` yang diteruskan BFF): user station hanya melihat & menulis
+cabangnya sendiri = `master_user.cabang` lewat `app_user.am_id`. Pusat (`kas-station-review` view, superuser,
+role admin/direktur) melihat semua. Daftar dipaksa ke cabangnya, `POST` cabang lain → 403, record cabang lain
+by id → 404; akun tanpa cabang = daftar kosong + tulis 403. Tanpa header (skrip operator) = semua.
+**Pengaju ≠ penyetuju**: pemutus rekap yang sama dengan `submitted_by` (fallback `created_by`) → 403.
+
 Endpoint API (`apps/api`, prefix `/kas-station`): `GET cabang`, `GET|POST harian`, `GET|PATCH|DELETE harian/:id`,
 `POST harian/:id/transaksi`, `PATCH|DELETE harian/:id/transaksi/:trxId`, `GET|POST rekap`, `GET rekap/:id`,
 `POST rekap/:id/{submit,decide,realisasi}`.
@@ -88,18 +97,15 @@ Endpoint API (`apps/api`, prefix `/kas-station`): `GET cabang`, `GET|POST harian
 
 - Toleransi selisih, tenggat pengisian/pengajuan, hari wajib isi.
 - Rumus nominal pengajuan / realisasi (realisasi diisi manual; rekap hanya menyimpan hasil roll-up).
-- Pembatasan cabang per user (user ber-izin `kas-station` bisa mencatat untuk cabang mana pun yang terdaftar).
-- Pemisahan tugas (pengaju ≠ penyetuju), multi-level approval, notifikasi WhatsApp, scheduler/cron.
+- Multi-level approval, notifikasi WhatsApp, scheduler/cron.
 - Unggah berkas bukti, accounting/GL, rekonsiliasi bank, budgeting.
 
 ## Perlu dikonfirmasi ke Direktur
 
 1. Siapa yang mengisi di cabang dan siapa yang approve di pusat (→ centang grup di Akses Grup).
 2. Isi nominal pengajuan/realisasi: mengikuti total kas keluar, saldo akhir, atau input manual?
-3. Apakah user station dibatasi ke cabangnya sendiri? (butuh sumber cabang per user)
-4. Apakah perlu toleransi selisih, tenggat, atau pengingat (WA/dashboard)?
-5. Bukti transaksi: cukup referensi teks, atau perlu unggah berkas?
-6. Apakah pengaju boleh sekaligus menjadi penyetuju?
+3. Apakah perlu toleransi selisih, tenggat, atau pengingat (WA/dashboard)?
+4. Bukti transaksi: cukup referensi teks, atau perlu unggah berkas?
 
 ## Pasca-deploy
 
@@ -109,6 +115,6 @@ Endpoint API (`apps/api`, prefix `/kas-station`): `GET cabang`, `GET|POST harian
 
 ## Uji
 
-- `apps/api/src/repo/kas-station.test.ts` — logika murni (saldo, selisih, tanggal/minggu, roll-up, mesin status, parse nominal).
+- `apps/api/src/repo/kas-station.test.ts` — logika murni (saldo, selisih, tanggal/minggu, roll-up, mesin status, parse nominal, pengaju ≠ penyetuju, cakupan cabang).
 - `apps/web/src/lib/kas-station-access.test.ts` — gate akses dan peta rute BFF.
 - Uji integrasi ke DB dummy dijalankan dengan skrip sekali pakai (tidak masuk repo karena butuh DB): tingkat repo 90 cek, tingkat HTTP 200 cek, jam disimulasikan (tengah minggu, Jumat, batas 00:00 WIB), data historis (lintas tahun, kabisat), race paralel, performa (2000 catatan), constraint skema langsung, migrasi seluruh rantai di DB kosong, BFF, dan UI Chrome headless (41 cek).
