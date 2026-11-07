@@ -69,6 +69,7 @@ import { runRekapKesehatanKso } from "./repo/kso-kesehatan.js";
 import { runRekapSuplaiKso } from "./repo/kso-suplai.js";
 import { susunDraft, bulanDepan } from "./repo/jadwal-teknisi.js";
 import { runInvoiceReminder, runOverdueRecap } from "./repo/faktur.js";
+import { runRekapDoBelumFaktur } from "./repo/do-belum-faktur.js";
 import { terapkanKpiBulan } from "./repo/kpi-measure.js";
 
 // Penjadwal agen in-process (Blueprint v2.3). Default MATI — aktif hanya bila
@@ -1897,6 +1898,31 @@ export function startScheduler(): ScheduleStatus {
       { timezone },
     );
     live.push(`invoice-overdue-recap=${overdueRecapExpr}`);
+  }
+
+  // do-belum-faktur-rekap (F149) — DO terkirim yang lewat ambang hari kerja tanpa faktur
+  // → grup Finance (DO_BELUM_FAKTUR_WA_TARGET, cadangan INVOICE_REMINDER_FINANCE_TARGET).
+  // Saklar sendiri DO_BELUM_FAKTUR_REKAP_ENABLED (default mati). Dicek tiap hari kerja,
+  // terkirim SEKALI per minggu ISO (notif_state) → Senin libur = terkirim Selasa.
+  const doRekapEnabled = process.env.DO_BELUM_FAKTUR_REKAP_ENABLED === "true";
+  const doRekapExpr = process.env.DO_BELUM_FAKTUR_REKAP_CRON ?? "10 8 * * 1-5";
+  if (doRekapEnabled && cron.validate(doRekapExpr)) {
+    cron.schedule(
+      doRekapExpr,
+      async () => {
+        const startedAt = new Date().toISOString();
+        try {
+          if (!(await isWorkday())) return;
+          const r = await runRekapDoBelumFaktur();
+          if (r.skipped?.startsWith("sudah terkirim")) return; // hari kerja ke-2..5: diam
+          console.log(`[scheduler] do-belum-faktur-rekap @ ${startedAt} ${JSON.stringify({ ...r, payload: undefined })}`);
+        } catch (e) {
+          console.error(`[scheduler] do-belum-faktur-rekap gagal @ ${startedAt}:`, e);
+        }
+      },
+      { timezone },
+    );
+    live.push(`do-belum-faktur-rekap=${doRekapExpr}`);
   }
 
   console.log(`[scheduler] aktif (TZ=${timezone}): ${live.join(", ") || "(tidak ada job valid)"}`);

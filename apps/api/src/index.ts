@@ -44,7 +44,7 @@ import {
   PermintaanError, analisa as ppAnalisa, cariSku as ppCariSku, catatPermintaan, listPermintaan, listReview as ppListReview,
   opsi as ppOpsi, putuskan as ppPutuskan, simpanKelompok as ppSimpanKelompok, ubahParam as ppUbahParam, ubahPermintaan, usulkan as ppUsulkan, bacaParam as ppBacaParam,
 } from "./repo/permintaan-produk.js";
-import { DoFakturError, listDoBelumFaktur, ubahAmbang as doFakturUbahAmbang } from "./repo/do-belum-faktur.js";
+import { DoFakturError, listDoBelumFaktur, runRekapDoBelumFaktur, ubahAmbang as doFakturUbahAmbang } from "./repo/do-belum-faktur.js";
 import { ArsipError, bacaBerkasArsip, hapusArsip, listArsip, listBuku as arsipListBuku, simpanBuku as arsipSimpanBuku, ubahArsip, unggahArsip } from "./repo/arsip-dokumen.js";
 import {
   PameranError, buatAcara as pmBuatAcara, daftarPublik as pmDaftarPublik, hapusPengunjung as pmHapusPengunjung, infoPublik as pmInfoPublik,
@@ -6552,6 +6552,11 @@ app.get("/do-belum-faktur", async (c) => {
     return c.json(await listDoBelumFaktur({ tab: c.req.query("tab"), q: c.req.query("q"), cabang: c.req.query("cabang"),
       hanya_terlambat: c.req.query("hanya_terlambat") === "1", limit: n("limit"), offset: n("offset") }));
   } catch (e) { return doFakturErr(c, e); }
+});
+// Pratinjau rekap WA mingguan (dry-run, tak mengirim apa pun). BFF: izin ubah.
+app.get("/do-belum-faktur/rekap-pratinjau", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try { return c.json(await runRekapDoBelumFaktur({ dryRun: true })); } catch (e) { return doFakturErr(c, e); }
 });
 app.patch("/do-belum-faktur/param", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);

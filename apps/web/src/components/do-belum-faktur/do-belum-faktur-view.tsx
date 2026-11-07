@@ -48,6 +48,7 @@ export function DoBelumFakturView({ bolehUbah }: { bolehUbah: boolean }) {
   const [hanyaTelat, setHanyaTelat] = useState(false);
   const [offset, setOffset] = useState(0);
   const [aturAmbang, setAturAmbang] = useState(false);
+  const [pratinjau, setPratinjau] = useState<string | null>(null);
 
   const qs = useCallback((limit: number, off: number) => {
     const p = new URLSearchParams({ tab, limit: String(limit), offset: String(off) });
@@ -81,7 +82,16 @@ export function DoBelumFakturView({ bolehUbah }: { bolehUbah: boolean }) {
       ) : d && (
         <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-900 dark:text-amber-200">
           <span>Terlambat = lewat <b>{d.ambang_hari_kerja} hari kerja</b> sejak tanggal DO (Sabtu, Minggu, dan hari di Kalender Libur tidak dihitung).</span>
-          {bolehUbah && <Button size="sm" variant="outline" onClick={() => setAturAmbang(true)}>Ubah ambang</Button>}
+          {bolehUbah && (
+            <span className="flex gap-2">
+              <Button size="sm" variant="outline" onClick={() => setAturAmbang(true)}>Ubah ambang</Button>
+              <Button size="sm" variant="outline" onClick={() => {
+                kirim<{ payload?: string; skipped?: string }>("/api/do-belum-faktur/rekap-pratinjau")
+                  .then((x) => setPratinjau(x.payload ?? `Tidak ada yang dikirim: ${x.skipped ?? "—"}`))
+                  .catch((e: Error) => setPratinjau(`Gagal memuat pratinjau: ${e.message}`));
+              }}>Pratinjau rekap WA</Button>
+            </span>
+          )}
         </div>
       )}
 
@@ -171,6 +181,16 @@ export function DoBelumFakturView({ bolehUbah }: { bolehUbah: boolean }) {
             </span>
           </div>
         </>
+      )}
+      {pratinjau !== null && (
+        <div className="bg-card space-y-2 rounded-lg border p-3">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-sm font-medium">Pratinjau rekap WA mingguan (belum dikirim)</span>
+            <Button size="sm" variant="ghost" onClick={() => setPratinjau(null)}>Tutup</Button>
+          </div>
+          <pre className="text-xs whitespace-pre-wrap">{pratinjau}</pre>
+          <p className="text-muted-foreground text-xs">Dikirim otomatis sekali seminggu (hari kerja pertama, pukul 08.10) ke grup Finance bila saklar rekap dinyalakan admin sistem. Hanya DO di tab Perlu ditagih yang terlambat.</p>
+        </div>
       )}
       {aturAmbang && d && <AmbangDialog awal={d.ambang_hari_kerja} onClose={() => setAturAmbang(false)} onTersimpan={() => { setAturAmbang(false); muat(); }} />}
     </section>
