@@ -609,10 +609,24 @@ export async function runLeadAging(): Promise<{ am: number; hod: number; lewati:
 
 export interface DealTerbuka { deal_id: string; nama: string; stage: string; am_id: string | null; am_nama: string | null }
 
-/** Deal TERBUKA (bukan Won/Lost) yang tampaknya faskes yang sama — penyaring sama dengan cariDuplikat. */
-export async function dealTerbukaFaskes(facility: string): Promise<DealTerbuka[]> {
+/**
+ * Kota dua faskes bertentangan? true hanya bila KEDUANYA terisi dan berbeda setelah normKota
+ * ("Kab. Malang" = "Malang"). Satu sisi kosong → tak bisa dibantah, jadi tidak dianggap beda.
+ * Dipakai #LEADS: nama mirip di kota lain ("RS Islam Surabaya" vs "RS Islam Malang") bukan faskes yang sama.
+ */
+export function kotaBertentangan(a: string | null | undefined, b: string | null | undefined): boolean {
+  const x = normKota(a);
+  const y = normKota(b);
+  return Boolean(x && y && x !== y);
+}
+
+/**
+ * Deal TERBUKA (bukan Won/Lost) yang tampaknya faskes yang sama — penyaring sama dengan cariDuplikat,
+ * ditambah kota: deal di kota lain dibuang (kotaBertentangan).
+ */
+export async function dealTerbukaFaskes(facility: string, city: string | null = null): Promise<DealTerbuka[]> {
   const rows = await db()`
-    SELECT d.deal_id::text, COALESCE(d.facility_name, d.customer_name) AS nama, d.stage::text AS stage, d.am_id,
+    SELECT d.deal_id::text, COALESCE(d.facility_name, d.customer_name) AS nama, d.stage::text AS stage, d.am_id, d.city,
            COALESCE(NULLIF(mu.panggilan,''), NULLIF(mu.nama,'')) AS am_nama
     FROM deal d LEFT JOIN master_user mu ON mu.am_id = d.am_id
     WHERE d.stage::text NOT IN ('Closing-Won','Closing-Lost')
@@ -620,8 +634,8 @@ export async function dealTerbukaFaskes(facility: string): Promise<DealTerbuka[]
            OR similarity(faskes_inti(COALESCE(d.facility_name, d.customer_name)), faskes_inti(${facility})) >= 0.5)
       AND faskes_cocok(${facility}, COALESCE(d.facility_name, d.customer_name))
     ORDER BY d.updated_at DESC NULLS LAST
-    LIMIT 3`;
-  return rows.map((r) => ({
+    LIMIT 10`;
+  return rows.filter((r) => !kotaBertentangan(city, r.city ? String(r.city) : null)).slice(0, 3).map((r) => ({
     deal_id: String(r.deal_id), nama: String(r.nama), stage: String(r.stage),
     am_id: r.am_id ? String(r.am_id) : null, am_nama: r.am_nama ? String(r.am_nama) : null,
   }));
@@ -651,7 +665,7 @@ export async function leadsJadiDeal(
   const sumber = input.sumber_lead && SUMBER_LEAD_LABEL[input.sumber_lead] ? input.sumber_lead : null;
   const asal = `#LEADS dari ${meta.pengirim}${sumber ? ` [sumber ${SUMBER_LEAD_LABEL[sumber]}]` : ""}${kebutuhan ? `: ${kebutuhan}` : ""}`;
 
-  const ada = await dealTerbukaFaskes(facility);
+  const ada = await dealTerbukaFaskes(facility, city);
   if (ada.length) {
     // Satu pesan = satu catatan per deal faskes itu (paling banyak 3). Stage &
     // updated_at TIDAK diubah: info pihak ketiga bukan aktivitas AM, jadi tak
