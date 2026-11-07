@@ -37,7 +37,7 @@ import { PipError, addCheckin as addPipCheckin, addGoal as addPipGoal, addMilest
 import { OnboardingError, cancelCase as cancelOnboarding, createTemplate as createOnboardingTemplate, getCase as getOnboardingCase, listCandidates as listOnboardingCandidates, listCases as listOnboardingCases, listTemplates as listOnboardingTemplates, startCase as startOnboarding, updateItem as updateOnboardingItem, updateTemplate as updateOnboardingTemplate } from "./repo/onboarding.js";
 import { MateriError, buatMateri, listMateri, ubahMateri, type BerkasMasuk } from "./repo/materi.js";
 import { DriveError, driveSiap } from "./gdrive.js";
-import { CnError, buatKontrak as buatKontrakCn, buatPengajuan as buatPengajuanCn, cariCustomer as cariCustomerCn, getPengajuan as getPengajuanCn, laporan as laporanCn, listFakturKandidat, listKontrak as listKontrakCn, listPengajuan as listPengajuanCn, pindahStatus as pindahStatusCn, ubahStatusKontrakCn } from "./repo/cn.js";
+import { CnError, buatKontrak as buatKontrakCn, buatPengajuan as buatPengajuanCn, cariCustomer as cariCustomerCn, getPengajuan as getPengajuanCn, laporan as laporanCn, listFakturKandidat, listKontrak as listKontrakCn, listPengajuan as listPengajuanCn, peranCn, pindahStatus as pindahStatusCn, ubahStatusKontrakCn } from "./repo/cn.js";
 import { CampaignError, buatKampanye, cariItem, detailKampanye, listKampanye, opsiBrand, ubahKampanye } from "./repo/campaign.js";
 import { listDemoTrial, getDemoTrial, bukaDemoTrial, ubahDemoTrial, tutupDemoTrial, rekapKonversi, resolusiFaskes, dealTerlihat, DemoTrialError } from "./repo/demo-trial.js";
 import {
@@ -7052,6 +7052,11 @@ const cnBody = async (c: { req: { json: () => Promise<unknown> } }): Promise<Rec
   return b as Record<string, unknown>;
 };
 const cnOleh = (b: Record<string, unknown>): string | null => (typeof b.oleh === "string" && b.oleh.trim() ? b.oleh.trim() : null);
+app.get("/cn/peran", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try { return c.json(await peranCn()); }
+  catch (e) { return cnErr(c, e); }
+});
 app.get("/cn/customers", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   try { return c.json({ items: await cariCustomerCn(c.req.query("q") ?? null) }); }

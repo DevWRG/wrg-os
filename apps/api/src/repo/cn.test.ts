@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { CnError, bolehPindah, cekBuktiUrl, cekDaftarFaktur, cekFakturKontrak, cekKontrak, cekPindah, hitungNilaiCn, tujuanBerikut } from "./cn.js";
+import { CnError, bolehPindah, cekBuktiUrl, cekDaftarFaktur, cekFakturKontrak, cekKontrak, cekPindah, hitungNilaiCn, klasifikasiPeranCn, tujuanBerikut } from "./cn.js";
 
 // F151 — logika murni CN (Kredit Note).
 
@@ -95,4 +95,39 @@ test("form kontrak: validasi tarif, periode, tautan", () => {
   salah(() => cekKontrak({ ...ok, customer_id: "x" }), 400, "customer_id");
   salah(() => cekKontrak({ ...ok, periode_selesai: "2025-12-31" }), 400, "periode_selesai");
   salah(() => cekKontrak({ ...ok, file_url: "ftp://x" }), 400, "file_url");
+});
+
+// ── Peran CN dari master_hod (tanpa nama di kode) ───────────────────────────
+const hod = (hod_key: string, peran: string | null, aktif = true) => ({ hod_key, nama: hod_key.toUpperCase(), peran, aktif });
+const dataDev = [
+  hod("rocky", "Sales East"), hod("yogi", "Sales West"), hod("mufid", "Business IVD"), hod("arman", "Business Medical & HD"),
+  hod("muhid", "Aftersales"), hod("ika", "Finance & SC"), hod("fafa", "Accounting & Tax"), hod("husni", "BD & GA"),
+];
+
+test("klasifikasiPeranCn: data master_hod dev → sales/business/finance/ga, urutan dipertahankan", () => {
+  const p = klasifikasiPeranCn(dataDev);
+  assert.deepEqual(p.hod_sales.map((h) => h.key), ["rocky", "yogi"]);
+  assert.deepEqual(p.hod_business.map((h) => h.key), ["mufid", "arman"]);
+  assert.deepEqual(p.finance_hod_keys, ["ika"]);
+  assert.deepEqual(p.ga_hod_keys, ["husni"]);
+  assert.deepEqual(p.hod_sales[0], { key: "rocky", nama: "ROCKY", peran: "Sales East" });
+});
+
+test("klasifikasiPeranCn: baris tidak aktif dibuang", () => {
+  const p = klasifikasiPeranCn([hod("a", "Sales East", false), hod("b", "Sales West"), hod("c", "Finance", false), hod("d", "GA", false)]);
+  assert.deepEqual(p.hod_sales.map((h) => h.key), ["b"]);
+  assert.deepEqual(p.finance_hod_keys, []);
+  assert.deepEqual(p.ga_hod_keys, []);
+});
+
+test("klasifikasiPeranCn: 'ga' harus kata utuh, tak peka huruf", () => {
+  const p = klasifikasiPeranCn([hod("a", "Gabungan"), hod("b", "Agama"), hod("c", "ga"), hod("d", "HR/GA"), hod("e", "SALES x"), hod("f", "head of FINANCE")]);
+  assert.deepEqual(p.ga_hod_keys, ["c", "d"]);
+  assert.deepEqual(p.hod_sales.map((h) => h.key), ["e"]);
+  assert.deepEqual(p.finance_hod_keys, ["f"]);
+});
+
+test("klasifikasiPeranCn: input kosong / peran null", () => {
+  assert.deepEqual(klasifikasiPeranCn([]), { hod_sales: [], hod_business: [], finance_hod_keys: [], ga_hod_keys: [] });
+  assert.deepEqual(klasifikasiPeranCn([hod("x", null)]), { hod_sales: [], hod_business: [], finance_hod_keys: [], ga_hod_keys: [] });
 });

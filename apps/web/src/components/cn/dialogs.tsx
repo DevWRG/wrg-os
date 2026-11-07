@@ -12,11 +12,29 @@ import { langkahCn, type AccessUser } from "@/lib/cn-access";
 import { cn } from "@/lib/utils";
 
 import {
-  AKSI_LABEL, HOD_BUSINESS, HOD_NAMA, HOD_SALES, STATUS_CLS, STATUS_LABEL, jsonInit, kirim, rupiah, tarifLabel, tglId,
-  type CnDetail, type CnJenis, type CnStatus, type FakturKandidat, type KontrakRow,
+  AKSI_LABEL, STATUS_CLS, STATUS_LABEL, jsonInit, kirim, rupiah, tarifLabel, tglId,
+  type CnDetail, type CnJenis, type CnStatus, type FakturKandidat, type KontrakRow, type PeranCnResp,
 } from "./types";
 
 const SELECT_CLS = "border-input bg-background h-9 w-full rounded-md border px-3 text-sm";
+
+// Daftar HoD per peran dari master_hod (GET /api/cn/peran); dimuat saat `aktif`.
+function usePeranCn(aktif: boolean): { peran: PeranCnResp | null; galat: string | null } {
+  const [peran, setPeran] = useState<PeranCnResp | null>(null);
+  const [galat, setGalat] = useState<string | null>(null);
+  useEffect(() => {
+    if (!aktif) return;
+    let batal = false;
+    kirim<PeranCnResp>("/api/cn/peran")
+      .then((r) => { if (!batal) { setPeran(r); setGalat(null); } })
+      .catch((e) => { if (!batal) setGalat((e as Error).message); });
+    return () => { batal = true; };
+  }, [aktif]);
+  return { peran, galat };
+}
+
+const namaHod = (peran: PeranCnResp | null, key: string): string =>
+  [...(peran?.hod_sales ?? []), ...(peran?.hod_business ?? [])].find((h) => h.key === key)?.nama ?? key;
 
 // ── Kontrak baru ─────────────────────────────────────────────────────────────
 
@@ -127,6 +145,8 @@ export function PengajuanDialog({ open, onClose, kontrak }: { open: boolean; onC
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const k = kontrak.find((x) => String(x.id) === kid) ?? null;
+  const { peran, galat: galatPeran } = usePeranCn(open);
+  const opsiHod = (l: PeranCnResp["hod_sales"] | undefined) => (l ?? []).map((h) => ({ value: h.key, label: `${h.nama} — HoD ${h.peran}` }));
 
   useEffect(() => {
     if (!kid) return;
@@ -171,6 +191,7 @@ export function PengajuanDialog({ open, onClose, kontrak }: { open: boolean; onC
         </DialogHeader>
         <DialogBody className="space-y-3">
           {err && <p className="text-destructive text-sm">{err}</p>}
+          {galatPeran && <p className="text-destructive text-sm">Daftar HoD gagal dimuat: {galatPeran}</p>}
           <div className="space-y-1"><Label htmlFor="pg-k">Kontrak</Label>
             <select id="pg-k" className={SELECT_CLS} value={kid} onChange={(e) => { setKid(e.target.value); setFaktur([]); setPilih(new Set()); }}>
               <option value="">— pilih kontrak aktif —</option>
@@ -195,11 +216,11 @@ export function PengajuanDialog({ open, onClose, kontrak }: { open: boolean; onC
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1"><Label htmlFor="pg-hs">HoD Sales (approver akhir)</Label>
               <select id="pg-hs" className={SELECT_CLS} value={hodSales} onChange={(e) => setHodSales(e.target.value)}>
-                <option value="">— pilih —</option>{HOD_SALES.map((h) => <option key={h.value} value={h.value}>{h.label}</option>)}
+                <option value="">— pilih —</option>{opsiHod(peran?.hod_sales).map((h) => <option key={h.value} value={h.value}>{h.label}</option>)}
               </select></div>
             <div className="space-y-1"><Label htmlFor="pg-hb">Lewat HoD Business dulu?</Label>
               <select id="pg-hb" className={SELECT_CLS} value={hodBiz} onChange={(e) => setHodBiz(e.target.value)}>
-                <option value="">Tidak — langsung ke HoD Sales</option>{HOD_BUSINESS.map((h) => <option key={h.value} value={h.value}>{h.label}</option>)}
+                <option value="">Tidak — langsung ke HoD Sales</option>{opsiHod(peran?.hod_business).map((h) => <option key={h.value} value={h.value}>{h.label}</option>)}
               </select></div>
           </div>
           <div className="space-y-1"><Label htmlFor="pg-cat">Catatan</Label><Textarea id="pg-cat" rows={2} value={catatan} onChange={(e) => setCatatan(e.target.value)} /></div>
@@ -223,6 +244,7 @@ export function DetailDialog({ id, onClose, bolehUbah, pelaku, me }: { id: numbe
   const [tglReal, setTglReal] = useState("");
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const { peran } = usePeranCn(true);
 
   useEffect(() => {
     let batal = false;
@@ -247,7 +269,7 @@ export function DetailDialog({ id, onClose, bolehUbah, pelaku, me }: { id: numbe
     }
   }
 
-  const langkah = d && bolehUbah ? langkahCn(me, d, pelaku) : [];
+  const langkah = d && bolehUbah ? langkahCn(me, d, pelaku, peran ? { finance_hod_keys: peran.finance_hod_keys, ga_hod_keys: peran.ga_hod_keys } : undefined) : [];
   const perluAlasan = (ke: CnStatus) => ke === "ditolak" || ke === "dibatalkan";
   const adaRealisasi = langkah.includes("terealisasi");
 
@@ -257,8 +279,8 @@ export function DetailDialog({ id, onClose, bolehUbah, pelaku, me }: { id: numbe
         <DialogHeader>
           <DialogTitle>{d ? `CN ${d.kode} — ${d.customer_name}` : "Pengajuan CN"}</DialogTitle>
           {d && <DialogDescription>
-            {tarifLabel(d.jenis, d.tarif)} · HoD Sales {HOD_NAMA[d.hod_sales_key] ?? d.hod_sales_key}
-            {d.hod_business_key ? ` · lewat HoD Business ${HOD_NAMA[d.hod_business_key] ?? d.hod_business_key}` : ""}
+            {tarifLabel(d.jenis, d.tarif)} · HoD Sales {namaHod(peran, d.hod_sales_key)}
+            {d.hod_business_key ? ` · lewat HoD Business ${namaHod(peran, d.hod_business_key)}` : ""}
           </DialogDescription>}
         </DialogHeader>
         <DialogBody className="space-y-4">

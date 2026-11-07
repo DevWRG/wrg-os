@@ -24,9 +24,8 @@ export const KONTRAK_STATUS = ["draft", "aktif", "dibatalkan"] as const;
 export type KontrakStatus = (typeof KONTRAK_STATUS)[number];
 export type CnJenis = "persen" | "nominal";
 
-/** HoD Sales = approver akhir (rocky East / yogi West); HoD Business = peninjau opsional (mufid IVD / arman Medical). */
-export const HOD_SALES_KEYS = ["rocky", "yogi"] as const;
-export const HOD_BUSINESS_KEYS = ["mufid", "arman"] as const;
+// Siapa HoD Sales (approver akhir) / HoD Business (peninjau opsional) / Finance / GA TIDAK ditulis di kode:
+// diturunkan dari master_hod.peran (diedit lewat UI) oleh klasifikasiPeranCn — lihat peranCn().
 export const FAKTUR_MAKS = 100;
 export const FAKTUR_CARI_LIMIT = 200;
 const TEXT_MAX = 500;
@@ -74,6 +73,29 @@ export function hitungNilaiCn(jenis: CnJenis, tarif: number, dpp: readonly numbe
     sisa -= 1;
   }
   return lantai;
+}
+
+export interface HodCn { key: string; nama: string; peran: string }
+export interface PeranCn { hod_sales: HodCn[]; hod_business: HodCn[]; finance_hod_keys: string[]; ga_hod_keys: string[] }
+
+/**
+ * Klasifikasi baris master_hod (aktif saja, urutan dipertahankan) menurut kolom `peran`, tanpa peka huruf:
+ * sales = diawali "sales", business = diawali "business", finance = memuat kata "finance",
+ * ga = memuat kata "ga" berdiri sendiri ("BD & GA" ya; "Gabungan"/"Agama" tidak).
+ */
+export function klasifikasiPeranCn(rows: readonly { hod_key: string; nama: string | null; peran: string | null; aktif: boolean | null }[]): PeranCn {
+  const out: PeranCn = { hod_sales: [], hod_business: [], finance_hod_keys: [], ga_hod_keys: [] };
+  for (const r of rows) {
+    if (!r.aktif) continue;
+    const peran = (r.peran ?? "").trim();
+    const p = peran.toLowerCase();
+    const h: HodCn = { key: r.hod_key, nama: (r.nama ?? "").trim() || r.hod_key, peran };
+    if (p.startsWith("sales")) out.hod_sales.push(h);
+    if (p.startsWith("business")) out.hod_business.push(h);
+    if (/(^|[^a-z0-9])finance([^a-z0-9]|$)/.test(p)) out.finance_hod_keys.push(r.hod_key);
+    if (/(^|[^a-z0-9])ga([^a-z0-9]|$)/.test(p)) out.ga_hod_keys.push(r.hod_key);
+  }
+  return out;
 }
 
 /** Pengajuan lewat HoD Business bila hod_business_key terisi. */
@@ -301,6 +323,12 @@ const mapFaktur = (r: Record<string, unknown>): FakturKandidat => ({
   salesman_name: s(r.salesman_name), sudah_dicakup: Boolean(r.sudah_dicakup),
 });
 
+/** Peran CN dari master_hod (sumber kebenaran, diedit lewat UI). */
+export async function peranCn(): Promise<PeranCn> {
+  const rows = await db()`SELECT hod_key, nama, peran, aktif FROM master_hod ORDER BY urutan, hod_key`;
+  return klasifikasiPeranCn(rows.map((r) => ({ hod_key: String(r.hod_key), nama: s(r.nama), peran: s(r.peran), aktif: Boolean(r.aktif) })));
+}
+
 /**
  * Ajukan CN. Tarif & jenis di-SNAPSHOT dari kontrak; nilai per faktur dihitung SERVER dari DPP mirror
  * (angka dari klien diabaikan). Kontrak harus aktif dan periodenya mencakup tiap faktur.
@@ -310,9 +338,13 @@ export async function buatPengajuan(input: Record<string, unknown>, oleh: string
   const kontrakId = idPositif(input.kontrak_id);
   if (Number.isNaN(kontrakId)) throw new CnError(400, "kontrak wajib dipilih", "kontrak_id");
   const hodSales = clean(input.hod_sales_key, 30);
-  if (!hodSales || !(HOD_SALES_KEYS as readonly string[]).includes(hodSales)) throw new CnError(400, `hod_sales_key harus salah satu: ${HOD_SALES_KEYS.join(", ")}`, "hod_sales_key");
   const hodBiz = clean(input.hod_business_key, 30);
-  if (hodBiz && !(HOD_BUSINESS_KEYS as readonly string[]).includes(hodBiz)) throw new CnError(400, `hod_business_key harus salah satu: ${HOD_BUSINESS_KEYS.join(", ")}`, "hod_business_key");
+  const peran = await peranCn();
+  const salesKeys = peran.hod_sales.map((h) => h.key);
+  if (salesKeys.length === 0) throw new CnError(422, "daftar HoD Sales di master_hod kosong (peran diawali \"Sales\")", "hod_sales_key");
+  if (!hodSales || !salesKeys.includes(hodSales)) throw new CnError(400, `hod_sales_key harus salah satu: ${salesKeys.join(", ")}`, "hod_sales_key");
+  const bizKeys = peran.hod_business.map((h) => h.key);
+  if (hodBiz && !bizKeys.includes(hodBiz)) throw new CnError(400, bizKeys.length ? `hod_business_key harus salah satu: ${bizKeys.join(", ")}` : "daftar HoD Business di master_hod kosong", "hod_business_key");
   const ids = cekDaftarFaktur(input.invoice_ids);
   const catatan = clean(input.catatan);
   const sql = db();
