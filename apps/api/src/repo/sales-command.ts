@@ -292,6 +292,10 @@ export async function salesCommand(scope: DataScope, regionDiminta: string | nul
 // jumlah deal yang perlu diperbarui. Penerima = HoD pemilik cabang region di
 // hod_territory → waHod (tak ada nama orang di kode). Saklar SCC_KUALITAS_REKAP_ENABLED
 // (default mati); sekali per minggu ISO per region (notif_state).
+// Grup per region (SCC_KUALITAS_REKAP_TARGET_EAST / _WEST, ID grup @g.us) dipakai bila
+// diisi, alih-alih DM HoD: openclaw prod memakai dmPolicy allowlist yang juga memblokir
+// DM KELUAR ke nomor di luar allowFrom (pengingat Dormant ke AM tak sampai karena ini) —
+// keputusan user 7 Nov: kirim ke grup.
 
 export const REKAP_MAKS_AM = 12;
 
@@ -332,6 +336,10 @@ export async function kualitasRegion(region: RegionSales) {
   return { k, cabang, hod_keys: hod.map((h) => String(h.hod_key)) };
 }
 
+/** Grup tujuan rekap region dari env (kosong = DM HoD). */
+export const grupRekapKualitas = (region: RegionSales, env: NodeJS.ProcessEnv = process.env): string | null =>
+  (env[`SCC_KUALITAS_REKAP_TARGET_${region.toUpperCase()}`] ?? "").trim() || null;
+
 export interface RekapKualitasRegion { region: RegionSales; masalah: number; penerima: string[]; sent: boolean; skipped?: string; error?: string; payload?: string }
 
 export async function runRekapKualitas(opts: { dryRun?: boolean; region?: RegionSales } = {}): Promise<{ week: string; dryRun: boolean; regions: RekapKualitasRegion[] }> {
@@ -349,9 +357,12 @@ export async function runRekapKualitas(opts: { dryRun?: boolean; region?: Region
     const masalah = k.bulan_lewat + k.tanpa_bulan + k.tanpa_nilai;
     if (!masalah) { out.push({ region, masalah, penerima: [], sent: false, skipped: "tak ada deal bermasalah" }); continue; }
     const text = buildRekapKualitas(region, k);
-    const tujuan = (await Promise.all(hod_keys.map((h) => waHod(h)))).filter((x): x is { nama: string; wa: string } => !!x);
+    const grup = grupRekapKualitas(region);
+    const tujuan = grup
+      ? [{ nama: `grup ${grup}`, wa: grup }]
+      : (await Promise.all(hod_keys.map((h) => waHod(h)))).filter((x): x is { nama: string; wa: string } => !!x);
     if (opts.dryRun) { out.push({ region, masalah, penerima: tujuan.map((t) => t.nama), sent: false, payload: text }); continue; }
-    if (!tujuan.length) { out.push({ region, masalah, penerima: [], sent: false, skipped: "nomor WA HoD region tak ditemukan" }); continue; }
+    if (!tujuan.length) { out.push({ region, masalah, penerima: [], sent: false, skipped: "nomor WA HoD region tak ditemukan (isi SCC_KUALITAS_REKAP_TARGET_" + region.toUpperCase() + " untuk kirim ke grup)" }); continue; }
     let terkirim = false; let error: string | undefined;
     for (const t of tujuan) {
       const w = await sendViaWaGateway(t.wa, text);

@@ -1941,7 +1941,7 @@ export function startScheduler(): ScheduleStatus {
           const r = await runRekapKualitas();
           if (r.regions.every((x) => x.skipped?.startsWith("sudah terkirim"))) return; // hari kerja ke-2..5: diam
           console.log(`[scheduler] scc-kualitas-rekap @ ${startedAt} ${JSON.stringify(r.regions.map((x) => ({ ...x, payload: undefined })))}`);
-          for (const x of r.regions) if (x.skipped === "nomor WA HoD region tak ditemukan") console.error(`[scheduler] scc-kualitas-rekap ${x.region}: ${x.skipped}`);
+          for (const x of r.regions) if (x.skipped?.startsWith("nomor WA HoD region tak ditemukan")) console.error(`[scheduler] scc-kualitas-rekap ${x.region}: ${x.skipped}`);
         } catch (e) {
           console.error(`[scheduler] scc-kualitas-rekap gagal @ ${startedAt}:`, e);
         }
