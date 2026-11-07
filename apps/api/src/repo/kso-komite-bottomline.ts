@@ -564,9 +564,9 @@ export async function bacaPortofolio(userId: string) {
 // Disimpan HANYA ke model yang belum diisi manual (sumber kosong / berawalan "otomatis") — isian Finance tak ditimpa.
 export const SUMBER_OTOMATIS = "otomatis: rumus Simulator × HPP Price Book";
 
-const KATEGORI_OTOMATIS = new Set(["HEMATO", "CC", "BG"]);
+const KATEGORI_OTOMATIS = new Set(["HEMATO", "CC", "BG", "ELEKTRO"]);
 
-/** Bahan tombol: master Simulator (alat hematologi, kimia klinik, blood gas yang tertaut model Bottom Line) + hari kerja
+/** Bahan tombol: master Simulator (alat hematologi, kimia klinik, blood gas, elektrolit yang tertaut model Bottom Line) + hari kerja
  *  default + campuran tes riil Kimia Klinik (284: kit reagen DO 12 bulan × tes per kit, HPP Price Book per SKU). Izin = ubah angka. */
 export async function bacaBahanOtomatis(userId: string) {
   await wajib(userId, "angka", "Hanya Finance (centang ubah angka Bottom Line) yang menghitung ulang biaya.");
