@@ -6,7 +6,9 @@ import {
   MIN_DEAL,
   TANPA_BRAND,
   TANPA_REGION,
+  bacaParamKuartal,
   hitungScorecard,
+  kuartalDefault,
   kuartalDari,
   regionDariCabang,
   rentangKuartal,
@@ -118,4 +120,22 @@ test("tanpa region & tanggal fallback ikut dilaporkan; kosong tidak dibagi nol",
   assert.equal(kosong.ringkasan.n, 0);
   assert.equal(kosong.ringkasan.win_rate, null);
   assert.deepEqual(kosong.sel, []);
+});
+
+test("kuartalDefault: kuartal deal tertutup terakhir, dibatasi kuartal berjalan", () => {
+  assert.deepEqual(kuartalDefault("2026-11-07", "2026-09-28"), { tahun: 2026, kuartal: 3 });
+  assert.deepEqual(kuartalDefault("2026-11-07", "2026-10-02"), { tahun: 2026, kuartal: 4 });
+  assert.deepEqual(kuartalDefault("2026-01-05", "2025-12-30"), { tahun: 2025, kuartal: 4 });
+  assert.deepEqual(kuartalDefault("2026-11-07", "2027-02-01"), { tahun: 2026, kuartal: 4 }); // tanggal masa depan tak melompati kuartal berjalan
+  assert.deepEqual(kuartalDefault("2026-11-07", null), { tahun: 2026, kuartal: 4 });
+});
+
+test("bacaParamKuartal: kosong = null; di luar rentang / bukan angka = pesan galat", () => {
+  assert.deepEqual(bacaParamKuartal(undefined, undefined), { tahun: null, kuartal: null });
+  assert.deepEqual(bacaParamKuartal("2026", "3"), { tahun: 2026, kuartal: 3 });
+  assert.deepEqual(bacaParamKuartal("", " "), { tahun: null, kuartal: null });
+  assert.equal(bacaParamKuartal("2026", "9"), "kuartal harus 1-4");
+  assert.equal(bacaParamKuartal("2026", "2.5"), "kuartal harus 1-4");
+  assert.equal(bacaParamKuartal("abc", "1"), "tahun harus angka 2000-2100");
+  assert.equal(bacaParamKuartal("1999", "1"), "tahun harus angka 2000-2100");
 });
