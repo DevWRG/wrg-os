@@ -129,6 +129,43 @@ export async function installationOptions(accountId: number | null) {
   return { cabang, cabang_customer: cabangCustomer };
 }
 
+// Saran SN untuk form Instalasi: SN di Populasi Alat (kso_asset) yang nama
+// alatnya terpetakan ke item terpilih (alat_item_map, migrasi 286). Item alat di
+// Accurate TIDAK ber-Serial Number, jadi stok gudang belum bisa jadi sumber.
+// Hanya saran — SN tetap boleh diketik (alat baru dari gudang belum di populasi).
+export interface SaranSn {
+  sn: string;
+  customer: string | null;
+  kota: string | null;
+  aktif: boolean;
+  /** SN ini sudah tercatat di unit Instalasi lain (akan ditolak sebagai duplikat). */
+  sudah_terpakai: boolean;
+}
+
+export async function saranSnInstalasi(productId: number): Promise<{ item_no: string | null; saran: SaranSn[] }> {
+  const sql = db();
+  const [item] = await sql<{ no: string | null }[]>`SELECT no FROM accurate_item WHERE id = ${productId}`;
+  const no = item?.no ? String(item.no).trim() : null;
+  if (!no) return { item_no: null, saran: [] };
+  const rows = await sql<{ sn: string; customer: string | null; kota: string | null; aktif: boolean; sudah_terpakai: boolean }[]>`
+    SELECT DISTINCT ON (lower(btrim(COALESCE(NULLIF(btrim(k.sn_raw), ''), k.sn_key))))
+      btrim(COALESCE(NULLIF(btrim(k.sn_raw), ''), k.sn_key)) AS sn,
+      COALESCE(ac.name, k.customer_raw) AS customer,
+      k.kota,
+      k.aktif,
+      EXISTS (
+        SELECT 1 FROM installation_unit iu
+        WHERE lower(btrim(iu.serial_number)) = lower(btrim(COALESCE(NULLIF(btrim(k.sn_raw), ''), k.sn_key)))
+      ) AS sudah_terpakai
+    FROM alat_item_map m
+    JOIN kso_asset k ON lower(btrim(k.nama_alat)) = m.nama_alat_key
+    LEFT JOIN accurate_customer ac ON ac.id = k.account_id
+    WHERE upper(m.item_no) = upper(${no})
+      AND NULLIF(btrim(COALESCE(k.sn_raw, k.sn_key)), '') IS NOT NULL
+    ORDER BY lower(btrim(COALESCE(NULLIF(btrim(k.sn_raw), ''), k.sn_key))), k.aktif DESC`;
+  return { item_no: no, saran: rows.map((r) => ({ ...r, sn: String(r.sn) })) };
+}
+
 export async function createInstallation(input: InstallationInput): Promise<CreateInstallationResult> {
   const sql = db();
 

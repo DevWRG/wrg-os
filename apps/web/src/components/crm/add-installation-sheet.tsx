@@ -26,6 +26,14 @@ import { Combobox } from "@/components/ui/combobox";
 // Customer: dari mirror Accurate, ATAU "customer baru" yang belum ada di Accurate
 // (keputusan user 7 Nov 2026) — dikirim sebagai nama, disimpan tanpa account_id.
 // Cabang: dropdown dari daftar cabang wilayah, terisi otomatis dari customer.
+interface SaranSn {
+  sn: string;
+  customer: string | null;
+  kota: string | null;
+  aktif: boolean;
+  sudah_terpakai: boolean;
+}
+
 const blank = () => ({ serial_number: "", cabang: "", po_number: "" });
 
 export function AddInstallationSheet() {
@@ -37,6 +45,20 @@ export function AddInstallationSheet() {
   const [alat, setAlat] = useState<CatalogChoice | null>(null);
   const [cust, setCust] = useState<CatalogChoice | null>(null);
   const [cabangList, setCabangList] = useState<string[]>([]);
+  const [snData, setSnData] = useState<{ pid: number; saran: SaranSn[] } | null>(null);
+  // Saran milik alat yang SEDANG dipilih saja — balasan untuk alat sebelumnya diabaikan.
+  const saranSn = alat?.id != null && snData?.pid === alat.id ? snData.saran : [];
+
+  // Saran SN = SN di Populasi Alat untuk alat terpilih (Accurate tak menyimpan
+  // SN alat). Hanya saran: SN alat baru dari gudang tetap diketik.
+  useEffect(() => {
+    const pid = alat?.id;
+    if (pid == null) return;
+    fetch(`/api/installations/sn-options?product_id=${pid}`, { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => setSnData({ pid, saran: Array.isArray(d?.saran) ? d.saran : [] }))
+      .catch(() => setSnData({ pid, saran: [] }));
+  }, [alat?.id]);
 
   // Daftar cabang + cabang wilayah customer. Dimuat ulang tiap customer berganti;
   // cabang hanya diisi otomatis kalau user belum memilih sendiri.
@@ -79,6 +101,7 @@ export function AddInstallationSheet() {
       setAlat(null);
       setCust(null);
       setCabangList([]);
+      setSnData(null);
       setOpen(false);
       router.refresh();
     } catch (err) {
@@ -113,8 +136,34 @@ export function AddInstallationSheet() {
               />
             </div>
             <div className="grid gap-1.5">
-              <Label htmlFor="iu-serial">Serial number *</Label>
-              <Input id="iu-serial" required value={f.serial_number} onChange={(e) => setF((p) => ({ ...p, serial_number: e.target.value }))} />
+              <Label htmlFor="iu-serial">
+                Serial number *{" "}
+                <span className="text-muted-foreground text-xs">
+                  {!alat
+                    ? "(pilih alat dulu)"
+                    : saranSn.length
+                      ? `(${saranSn.length} SN di Populasi Alat — pilih, atau ketik SN baru)`
+                      : "(belum ada SN alat ini di Populasi Alat — ketik SN)"}
+                </span>
+              </Label>
+              <Input
+                id="iu-serial"
+                required
+                list="iu-serial-saran"
+                autoComplete="off"
+                placeholder={saranSn.length ? "ketik untuk mencari SN…" : undefined}
+                value={f.serial_number}
+                onChange={(e) => setF((p) => ({ ...p, serial_number: e.target.value }))}
+              />
+              <datalist id="iu-serial-saran">
+                {saranSn.map((s) => (
+                  <option
+                    key={s.sn}
+                    value={s.sn}
+                    label={[s.customer, s.kota].filter(Boolean).join(" · ") + (s.sudah_terpakai ? " — sudah tercatat di Instalasi" : s.aktif ? "" : " — nonaktif")}
+                  />
+                ))}
+              </datalist>
             </div>
             <div className="grid gap-1.5">
               <Label htmlFor="iu-customer">Customer * <span className="text-muted-foreground text-xs">(Accurate, atau ketik nama customer baru)</span></Label>

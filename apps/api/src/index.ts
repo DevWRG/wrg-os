@@ -181,6 +181,7 @@ import {
   markTrainingDone,
   markBast,
   installationOptions,
+  saranSnInstalasi,
 } from "./repo/installation.js";
 import { recordCompetitor, listCompetitor, competitorSummary } from "./repo/competitor.js";
 import { kesehatanKso, runRekapKesehatanKso } from "./repo/kso-kesehatan.js";
@@ -3716,6 +3717,14 @@ app.get("/installations/options", async (c) => {
   const raw = c.req.query("account_id");
   const acc = raw && /^\d+$/.test(raw) ? Number(raw) : null;
   return c.json(await installationOptions(acc));
+});
+
+// Saran SN dari Populasi Alat untuk item terpilih (migrasi 286). Sebelum /:id.
+app.get("/installations/sn-options", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const raw = c.req.query("product_id");
+  if (!raw || !/^\d+$/.test(raw)) return c.json({ error: "product_id wajib angka" }, 400);
+  return c.json(await saranSnInstalasi(Number(raw)));
 });
 
 app.get("/installations", async (c) => {
