@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { ambangSah, buildRekapWa, tabDari, terlambat, type BarisDo } from "./do-belum-faktur.js";
+import { ambangSah, buildRekapWa, rpRingkas, tabDari, terlambat, type BarisDo } from "./do-belum-faktur.js";
 
 test("tabDari: hanya DO yang SEMUA barisnya KSO masuk tab KSO", () => {
   assert.equal(tabDari(["KSO", "kso "]), "kso");
@@ -50,4 +50,11 @@ test("buildRekapWa: urut paling lama, per cabang, batas baris, tanpa <...>", () 
   assert.match(daftar[1], /^2\. SJ-C .* 8 hari kerja · Rp2,5 jt · AM Satu$/);
   assert.match(t, /… dan 1 lainnya\./);
   assert.doesNotMatch(t, /<[^>]+>/); // placeholder <...> hilang di WA
+});
+
+test("rpRingkas & nilai 0 tak ditulis di rekap", () => {
+  assert.equal(rpRingkas(2_500_000), "Rp2,5 jt");
+  assert.equal(rpRingkas(850_000), "Rp850 rb");
+  const t = buildRekapWa([baris({ nomor: "SJ-0", nilai: 0 })], { do: 1, nilai: 0 }, 3, "2026-11-09");
+  assert.match(t, /^1\. SJ-0 · RS A · 5 hari kerja · AM Satu$/m);
 });

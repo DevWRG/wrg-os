@@ -192,7 +192,9 @@ export async function listDoBelumFaktur(f: FilterDo) {
 // Hanya tab Tagih yang TERLAMBAT; DO KSO tak pernah ikut.
 
 export const REKAP_MAKS_BARIS = 15;
-const rpJt = (n: number) => `Rp${(n / 1e6).toLocaleString("id-ID", { maximumFractionDigits: 1 })} jt`;
+/** Rupiah ringkas untuk WA: ≥ 1 jt → “Rp2,5 jt”, di bawahnya → “Rp850 rb”. */
+export const rpRingkas = (n: number) =>
+  n >= 1e6 ? `Rp${(n / 1e6).toLocaleString("id-ID", { maximumFractionDigits: 1 })} jt` : `Rp${Math.round(n / 1e3).toLocaleString("id-ID")} rb`;
 const tglPanjang = (ymd: string) =>
   new Date(`${ymd}T00:00:00+07:00`).toLocaleDateString("id-ID", { timeZone: "Asia/Jakarta", weekday: "long", day: "numeric", month: "short", year: "numeric" });
 
@@ -204,10 +206,10 @@ export function buildRekapWa(terlambat: BarisDo[], ringkas: { do: number; nilai:
   const cabang = [...perCabang].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
   const urut = [...terlambat].sort((a, b) => b.hari_kerja - a.hari_kerja || a.nomor.localeCompare(b.nomor));
   const baris = urut.slice(0, maks).map((x, i) =>
-    `${i + 1}. ${x.nomor} · ${x.customer} · ${x.hari_kerja} hari kerja${x.nilai != null ? ` · ${rpJt(x.nilai)}` : ""} · ${x.am}`);
+    `${i + 1}. ${x.nomor} · ${x.customer} · ${x.hari_kerja} hari kerja${x.nilai ? ` · ${rpRingkas(x.nilai)}` : ""} · ${x.am}`);
   return [
     `🧾 *DO Belum Difaktur* — ${tglPanjang(today)}`,
-    `${terlambat.length} DO terkirim sudah lewat ${ambang} hari kerja tanpa faktur · perkiraan ${rpJt(nilai)} (dari ${ringkas.do} DO yang belum difaktur, ${rpJt(ringkas.nilai)}).`,
+    `${terlambat.length} DO terkirim sudah lewat ${ambang} hari kerja tanpa faktur · perkiraan ${rpRingkas(nilai)} (dari ${ringkas.do} DO yang belum difaktur, ${rpRingkas(ringkas.nilai)}).`,
     "",
     `Per cabang: ${cabang.slice(0, 8).map(([c, n]) => `${c} ${n}`).join(" · ")}${cabang.length > 8 ? " · …" : ""}`,
     "",
