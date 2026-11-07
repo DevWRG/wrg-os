@@ -10,6 +10,7 @@ import { StatCard } from "@/components/dashboard/stat-card";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
+import { PratinjauRekapKualitas } from "@/components/sales-command/pratinjau-rekap-kualitas";
 
 export const dynamic = "force-dynamic";
 
@@ -194,7 +195,7 @@ export default async function SalesCommandPage({ searchParams }: { searchParams:
         </CardContent>
       </Card>
 
-      <KartuKualitasData k={d.kualitas_data} />
+      <KartuKualitasData k={d.kualitas_data} region={d.region} />
 
       <div className="grid gap-3 lg:grid-cols-2">
         <Card>
@@ -249,7 +250,7 @@ const BULAN = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "O
 // Kualitas data pipeline — prasyarat forecast per region (Fase B ditunda sampai data
 // layak: cek prod 4 Nov 2026, 75% estimasi bulan beli sudah lewat). Tiap deal menaut ke
 // board Pipeline (?deal=) supaya AM/HoD langsung memperbarui bulan beli & nilainya.
-function KartuKualitasData({ k }: { k: Data["kualitas_data"] }) {
+function KartuKualitasData({ k, region }: { k: Data["kualitas_data"]; region: "East" | "West" }) {
   const pct = (n: number) => (k.terbuka ? Math.round((n / k.terbuka) * 100) : 0);
   return (
     <Card>
@@ -267,6 +268,7 @@ function KartuKualitasData({ k }: { k: Data["kualitas_data"] }) {
           Forecast per region menunggu data ini layak: deal yang masih jalan tapi estimasi bulan belinya sudah lewat, kosong,
           atau tanpa nilai tak bisa dipakai memperkirakan penjualan. Perbarui lewat tombol Edit di detail deal.
         </p>
+        <PratinjauRekapKualitas region={region} />
         {k.per_am.length > 0 && (
           <div className="overflow-x-auto">
             <Table>
