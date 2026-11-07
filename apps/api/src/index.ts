@@ -5843,7 +5843,8 @@ app.get("/accurate/:entity", async (c) => {
   const limit = Math.min(Math.max(Number(c.req.query("limit")) || 100, 1), 10000);
   // ?q= → cari by no/nama DI DB (sumber dropdown pilih-dari-katalog F22).
   // Tanpa q, perilaku lama dipertahankan: potongan terbaru by last_synced_at.
-  const rows = await listMirror(entity, limit, c.req.query("q") || undefined);
+  // ?jenis=alat → hanya item berkode alat (IDS./ADR.) — pengisi Instalasi Alat.
+  const rows = await listMirror(entity, limit, c.req.query("q") || undefined, { hanyaAlat: c.req.query("jenis") === "alat" });
   return c.json({ entity, count: rows.length, rows });
 });
 

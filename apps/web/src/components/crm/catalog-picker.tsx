@@ -25,6 +25,8 @@ export interface CatalogChoice {
 
 interface Props {
   entity: "items" | "customers";
+  /** items saja: "alat" = hanya kode alat (IDS./ADR.), reagen/sparepart disembunyikan. */
+  jenis?: "alat";
   value: CatalogChoice | null;
   onChange: (v: CatalogChoice | null) => void;
   placeholder?: string;
@@ -38,7 +40,7 @@ interface MirrorRow {
   name?: string | null;
 }
 
-export function CatalogPicker({ entity, value, onChange, placeholder, inputId, required }: Props) {
+export function CatalogPicker({ entity, jenis, value, onChange, placeholder, inputId, required }: Props) {
   const [q, setQ] = useState("");
   const [rows, setRows] = useState<MirrorRow[]>([]);
   const [open, setOpen] = useState(false);
@@ -63,6 +65,7 @@ export function CatalogPicker({ entity, value, onChange, placeholder, inputId, r
       setErr(null);
       const qs = new URLSearchParams({ entity, limit: "50" });
       if (q.trim()) qs.set("q", q.trim());
+      if (jenis) qs.set("jenis", jenis);
       fetch(`/api/accurate-catalog?${qs.toString()}`, { cache: "no-store" })
         .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
         .then((d) => setRows(Array.isArray(d?.rows) ? d.rows : []))
@@ -70,7 +73,7 @@ export function CatalogPicker({ entity, value, onChange, placeholder, inputId, r
         .finally(() => setLoading(false));
     }, 250);
     return () => clearTimeout(t);
-  }, [q, entity, open]);
+  }, [q, entity, jenis, open]);
 
   const labelOf = (r: MirrorRow) => {
     // Nama mirror bisa empty-string (bukan NULL) — fallback ke `no` supaya opsi

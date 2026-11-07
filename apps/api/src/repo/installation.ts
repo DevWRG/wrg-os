@@ -1,4 +1,5 @@
 import { db } from "../db.js";
+import { isKodeAlat, KODE_ALAT_PREFIX } from "./accurateMirror.js";
 import { cariDoAccurateSegar } from "./shipment-tracking.js";
 
 // postgres.js parse kolom timestamptz jadi objek Date — String(dateObj) hasilnya
@@ -114,6 +115,12 @@ export async function createInstallation(input: InstallationInput): Promise<Crea
     return {
       ok: false,
       error: `Alat id ${input.product_id} tak ada di katalog Accurate. Kalau ini barang baru, sinkronkan katalog dulu (menu Products → Sync).`,
+    };
+  }
+  if (!isKodeAlat(String(item.no ?? ""))) {
+    return {
+      ok: false,
+      error: `"${item.name}" (${item.no}) bukan alat — Instalasi hanya untuk item berkode ${KODE_ALAT_PREFIX.map((p) => p + ".").join("/")}, reagen & sparepart tidak dicatat di sini.`,
     };
   }
   const [cust] = await sql`SELECT id, no, name FROM accurate_customer WHERE id = ${input.account_id}`;
