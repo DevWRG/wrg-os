@@ -42,6 +42,18 @@ interface Cakupan {
   perDasar: { dasar: string; jumlah: number }[];
 }
 
+interface HppMencurigakan {
+  item_no: string | null;
+  item_name: string;
+  kode: string | null;
+  hpp: number;
+  qty: number;
+  unit: string | null;
+  net: number;
+  harga_per_qty: number | null;
+  rasio: number | null;
+}
+
 interface Hasil {
   periode: Periode;
   asOf: string;
@@ -56,6 +68,8 @@ interface Hasil {
   kantorPusat: KantorPusat | null;
   cakupan: Cakupan | null;
   terakhirSyncBiaya: string | null;
+  /** Hanya akses penuh; null untuk HoD / tanpa biaya. */
+  hppMencurigakan?: HppMencurigakan[] | null;
 }
 
 const PERIODES: { key: Periode; label: string }[] = [
@@ -116,6 +130,9 @@ export function RevenueAreaView({ endpoint, tampilkanBiaya = false }: { endpoint
   // (akses penuh) — selain itu tetap revenue saja.
   const data = hasil?.data ?? null;
   const showBiaya = tampilkanBiaya || data?.biayaTersedia === true;
+  // Laba kotor tak bergantung data biaya: tampil bila respons membawanya.
+  const showLaba = showBiaya || (data?.rows.some((r) => r.labaKotor != null) ?? false);
+  const curiga = data?.hppMencurigakan ?? [];
   const err = loading ? null : (hasil?.err ?? null);
 
   return (
@@ -183,9 +200,9 @@ export function RevenueAreaView({ endpoint, tampilkanBiaya = false }: { endpoint
                       <TableHead className="text-right">Periode lalu</TableHead>
                       <TableHead className="text-right">Δ</TableHead>
                       <TableHead className="text-right">Porsi</TableHead>
+                      {showLaba ? <TableHead className="text-right">Laba kotor</TableHead> : null}
                       {showBiaya ? (
                         <>
-                          <TableHead className="text-right">Laba kotor</TableHead>
                           <TableHead className="text-right">Biaya operasional</TableHead>
                           <TableHead className="text-right">Profit / rugi</TableHead>
                         </>
@@ -210,16 +227,18 @@ export function RevenueAreaView({ endpoint, tampilkanBiaya = false }: { endpoint
                             <span className="w-12 tabular-nums">{r.sharePct.toFixed(1)}%</span>
                           </div>
                         </TableCell>
+                        {showLaba ? (
+                          <TableCell className="text-right">
+                            <Rp v={r.labaKotor} />
+                            {r.hppCakupanPct != null && r.hppCakupanPct < 100 ? (
+                              <div className="text-muted-foreground text-[11px]" title="Porsi revenue yang punya HPP tak ambigu & wajar di tabel HPP">
+                                HPP {r.hppCakupanPct.toFixed(0)}% revenue
+                              </div>
+                            ) : null}
+                          </TableCell>
+                        ) : null}
                         {showBiaya ? (
                           <>
-                            <TableCell className="text-right">
-                              <Rp v={r.labaKotor} />
-                              {r.hppCakupanPct != null && r.hppCakupanPct < 100 ? (
-                                <div className="text-muted-foreground text-[11px]" title="Porsi revenue yang punya HPP tak ambigu di tabel HPP">
-                                  HPP {r.hppCakupanPct.toFixed(0)}% revenue
-                                </div>
-                              ) : null}
-                            </TableCell>
                             <TableCell className="text-right">
                               <Rp v={r.biaya} />
                             </TableCell>
@@ -258,7 +277,7 @@ export function RevenueAreaView({ endpoint, tampilkanBiaya = false }: { endpoint
             </p>
           ) : null}
 
-          {showBiaya && data.biayaTersedia ? (
+          {showLaba ? (
             <div className="space-y-2">
               {data.cakupan ? (
                 <Card>
@@ -283,11 +302,56 @@ export function RevenueAreaView({ endpoint, tampilkanBiaya = false }: { endpoint
                 </Card>
               ) : null}
               <p className="text-muted-foreground text-xs">
-                Laba kotor = revenue netto − HPP (tabel HPP wrg-os; hanya item ber-HPP tak ambigu, jadi parsial). Biaya = akun 6200 saja. Profit = laba kotor − biaya
-                operasional.
+                Laba kotor = revenue netto − HPP (tabel HPP wrg-os; hanya item ber-HPP tak ambigu dan wajar, jadi parsial). Biaya = akun 6200 saja. Profit = laba
+                kotor − biaya operasional.
                 {data.terakhirSyncBiaya ? ` Biaya terakhir disinkron ${new Date(data.terakhirSyncBiaya).toLocaleString("id-ID")}.` : ""}
               </p>
             </div>
+          ) : null}
+
+          {curiga.length > 0 ? (
+            <Card>
+              <CardHeader className="pb-1">
+                <CardTitle className="text-sm font-medium">HPP perlu dicek satuannya</CardTitle>
+                <p className="text-muted-foreground text-xs">
+                  Baris faktur yang HPP × qty-nya lebih dari 3× nilai jual dikeluarkan dari laba kotor — kemungkinan HPP di Setup Harga per kemasan
+                  sedangkan faktur per satuan kecil.
+                </p>
+              </CardHeader>
+              <CardContent className="p-0">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Kode / Item</TableHead>
+                      <TableHead className="text-right">HPP</TableHead>
+                      <TableHead className="text-right">Harga jual per qty</TableHead>
+                      <TableHead className="text-right">Qty</TableHead>
+                      <TableHead className="text-right">Rasio</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {curiga.map((c, i) => (
+                      <TableRow key={`${c.item_no ?? c.item_name}-${i}`}>
+                        <TableCell>
+                          <div className="font-medium">{c.kode ?? c.item_no ?? "—"}</div>
+                          <div className="text-muted-foreground text-xs">{c.item_name}</div>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Rp v={c.hpp} />
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Rp v={c.harga_per_qty} />
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          {c.qty.toLocaleString("id-ID")} {c.unit ?? ""}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">{c.rasio != null ? `${c.rasio.toLocaleString("id-ID")}×` : "—"}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
           ) : null}
         </>
       ) : null}

@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { shiftMonths, susunRevenueArea, windowsFor } from "./revenue-area.js";
+import { bolehLihatHppMencurigakan, shiftMonths, susunRevenueArea, windowsFor } from "./revenue-area.js";
 
 test("shiftMonths: clamp ke akhir bulan & lintas tahun", () => {
   assert.equal(shiftMonths("2026-05-31", -3), "2026-02-28");
@@ -101,4 +101,23 @@ test("susunRevenueArea tanpa data biaya: biaya/profit null (bukan nol)", () => {
   assert.equal(r.biayaTersedia, false);
   assert.deepEqual([r.rows[0].biaya, r.rows[0].labaKotor, r.rows[0].profit], [null, null, null]);
   assert.equal(r.kantorPusat, null);
+});
+
+test("susunRevenueArea: laba kotor tetap tampil walau data biaya kosong (profit tetap null)", () => {
+  const kosong = biaya({ biaya: new Map(), cakupan: { total: 0, tertandai: 0, pct: null, perDasar: [] } });
+  const r = susunRevenueArea([{ cabang: "SBY", cur: 300, prev: 0 }, { cabang: "JAKARTA", cur: 0, prev: 50 }], regionMap, null, kosong);
+  assert.equal(r.biayaTersedia, false);
+  const sby = r.rows.find((x) => x.cabang === "SBY")!;
+  assert.deepEqual([sby.labaKotor, sby.hppCakupanPct, sby.biaya, sby.profit], [60, 50, null, null]);
+  const jkt = r.rows.find((x) => x.cabang === "JAKARTA")!; // tak ada faktur periode ini
+  assert.deepEqual([jkt.labaKotor, jkt.hppCakupanPct], [0, null]);
+  assert.equal(r.kantorPusat, null);
+  assert.equal(r.cakupan, null);
+});
+
+test("bolehLihatHppMencurigakan: hanya biaya diminta & bukan HoD", () => {
+  assert.equal(bolehLihatHppMencurigakan({ biaya: true, hodKey: null }), true);
+  assert.equal(bolehLihatHppMencurigakan({ biaya: true, hodKey: "hod-contoh" }), false);
+  assert.equal(bolehLihatHppMencurigakan({ biaya: false, hodKey: null }), false);
+  assert.equal(bolehLihatHppMencurigakan({}), false);
 });
