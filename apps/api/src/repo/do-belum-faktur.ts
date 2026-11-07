@@ -85,8 +85,15 @@ async function semua(): Promise<BarisDo[]> {
              upper(NULLIF(btrim(si.raw->>'charField1'), '')) AS kat,
              NULLIF(si.raw->>'salesman1Id', '')::bigint AS sid,
              (si.raw->>'dppAmount')::numeric / NULLIF(si.qty, 0) AS netto_per_unit,
-             COALESCE((SELECT sum(ii.qty) FROM accurate_invoice_item ii
-                        WHERE ii.raw->>'deliveryOrderDetailId' = di.raw->>'id'), 0)::numeric AS qty_faktur
+             -- Hanya DO “Difaktur Sebagian” yang punya faktur; “Dikirim” pasti 0. CASE
+             -- mencegah subkueri jalan untuk ratusan DO lain, dan syarat raw ? … membuat
+             -- indeks parsial migrasi 283 terpakai (tanpa itu: baca raw SEMUA baris faktur
+             -- per baris DO — uji dev 7 Nov: > 1 menit).
+             CASE WHEN o.status = 'Difaktur Sebagian' THEN
+               COALESCE((SELECT sum(ii.qty) FROM accurate_invoice_item ii
+                          WHERE ii.raw ? 'deliveryOrderDetailId'
+                            AND ii.raw->>'deliveryOrderDetailId' = di.raw->>'id'), 0)
+             ELSE 0 END::numeric AS qty_faktur
       FROM accurate_delivery_order_item di
       JOIN accurate_delivery_order o ON o.id = di.delivery_id
       LEFT JOIN accurate_sales_order_item si ON si.line_id = di.sales_order_detail_id
