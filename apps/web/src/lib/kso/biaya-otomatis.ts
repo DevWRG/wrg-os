@@ -67,7 +67,19 @@ export function biayaOtomatisKk(analyzers: KsoAnalyzer[], mix: MixKk[], hariKerj
   const kurang: HasilOtomatis["kurang"] = [];
   for (const a of analyzers) {
     if (a.kategori !== "CC" || !a.modelKey) continue;
-    const terkirim = mix.filter((m) => m.analyzer === a.kode && m.kit12bln > 0 && m.tesPerKemasan > 0);
+    let terkirim = mix.filter((m) => m.analyzer === a.kode && m.kit12bln > 0 && m.tesPerKemasan > 0);
+    // 286: alat baru (belum ada unit terpasang) → campuran tes alat sejenis (reagen Zybio KK sama), dijumlah per SKU
+    let sejenis: string[] = [];
+    if (terkirim.length === 0) {
+      const lain = mix.filter((m) => m.analyzer !== a.kode && m.kit12bln > 0 && m.tesPerKemasan > 0);
+      sejenis = [...new Set(lain.map((m) => m.analyzer))];
+      const perSku = new Map<string, MixKk>();
+      for (const m of lain) {
+        const x = perSku.get(m.sku);
+        perSku.set(m.sku, x ? { ...x, kit12bln: x.kit12bln + m.kit12bln } : { ...m, analyzer: a.kode });
+      }
+      terkirim = [...perSku.values()];
+    }
     const tanpaHpp = terkirim.filter((m) => m.hpp == null);
     const byKode = new Map(a.reagents.map((r) => [r.kode, r]));
     const deterKurang = ["conc", "probe_d"].filter((k) => byKode.get(k)?.hargaBeli == null).map((k) => byKode.get(k)?.nama ?? k);
@@ -88,7 +100,7 @@ export function biayaOtomatisKk(analyzers: KsoAnalyzer[], mix: MixKk[], hariKerj
       model_key: a.modelKey,
       biaya_per_tes: Math.round((rupiah / tes + perTesDet) * 100) / 100,
       biaya_tetap_harian: Math.round(harianDet),
-      rincian: `campuran tes riil: ${terkirim.length} SKU, ${Math.round(tes).toLocaleString("id-ID")} tes terkirim 12 bln`,
+      rincian: `campuran tes riil${sejenis.length ? ` alat sejenis (${sejenis.join(", ")})` : ""}: ${terkirim.length} SKU, ${Math.round(tes).toLocaleString("id-ID")} tes terkirim 12 bln`,
     });
   }
   return { baris, kurang };
