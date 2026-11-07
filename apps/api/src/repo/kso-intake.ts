@@ -82,6 +82,7 @@ export const KSO_BANTUAN =
   "#KSO\n1. Faskes: RSUD ... (kota)\n2. Alat: Zybio Z52 (baru / relokasi idle / tambah unit)\n" +
   "3. Harga deal per tes: Rp 12.000 (harga pesaing: Rp 10.500, merek ...)\n4. Volume per bulan: 1.200 sampel\n" +
   "5. Bukti volume: rekap LIS 6 bulan / PO reagen RS / surat RS\n6. Tenor & klausul: 36 bulan, tanpa klausul khusus\n" +
+  "   (opsional) Hari kerja alat: 26 hari/bulan — tak disebut = default Bottom Line\n" +
   "7. Alasan strategis: (kosongkan bila tidak ada)\nPendukung: dr. Rina SpPK, kepala instalasi lab\n\n" +
   "Perkiraan lisan tidak diterima sebagai bukti volume untuk zona Forum. Sistem membalas GPM & zona sebelum kamu kirim.\n" +
   `Boleh juga kirim "#KSO" lalu voice note dalam ${KSO_JENDELA_SUARA_MENIT} menit.\n` +
@@ -132,6 +133,9 @@ export interface DraftTampil {
   harga_standar: number | null;
   kategori: string;
   tenor_bulan: number | null;
+  /** 282: hari kerja alat/bulan yang disebut AM; null = default parameter Bottom Line. */
+  hari_kerja?: number | null;
+  hari_kerja_default?: number;
   unit_status: string | null;
   klausul: string[];
   kolom_dinyatakan: string[];
@@ -297,6 +301,10 @@ export function formatBalasanDraft(
     out.push(`· Harga: ${rp(d.harga_per_test)}/test${pesaing ? ` (pesaing ${pesaing})` : ""}`);
   }
   if (d.tenor_bulan != null) out.push(`· Tenor: ${d.tenor_bulan} bulan`);
+  // 282: hari kerja ikut menentukan GPM (reagen harian × hari kerja) — selalu dibacakan supaya AM bisa koreksi
+  if (d.hari_kerja != null) out.push(`· Hari kerja alat: ${d.hari_kerja} hari/bulan`);
+  else if (d.hari_kerja_default != null)
+    out.push(`· Hari kerja alat: ${d.hari_kerja_default} hari/bulan (default — koreksi: #KSO ${ref} hari kerja 26)`);
   if (d.unit_status) out.push(`· Status unit: ${d.unit_status.replace(/_/g, " ")}`);
   if (d.kolom_dinyatakan.includes("klausul"))
     out.push(`· Klausul khusus: ${d.klausul.length ? d.klausul.map((k) => LABEL_KLAUSUL[k] ?? k).join(", ") : "tidak ada"}`);
@@ -350,7 +358,9 @@ async function bacaDraft(tx: Tx, id: number): Promise<DraftTampil | null> {
   const [r] = await tx`
     select r.id::int, r.nomor, r.status::text, f.nama as faskes, f.cabang, a.nama as alat, a.kode as alat_kode,
            r.jumlah, r.volume_estimasi, r.volume_sumber, r.harga_per_test::float8, k.harga_standar_per_test::float8 as harga_standar,
-           k.label as kategori, r.tenor_bulan, r.unit_status::text, r.kolom_dinyatakan,
+           k.label as kategori, r.tenor_bulan, r.hari_kerja,
+           coalesce((select p.hari_kerja from public.kso_bottomline_parameter p where p.id = 1), 25)::int as hari_kerja_default,
+           r.unit_status::text, r.kolom_dinyatakan,
            coalesce((select array_agg(klausul_kode order by klausul_kode) from kso.rencana_klausul where rencana_id = r.id), '{}') as klausul,
            coalesce((select json_agg(json_build_object('nama', nama, 'tipe', tipe) order by id) from kso.rencana_pendukung where rencana_id = r.id), '[]') as pendukung,
            coalesce((select json_agg(json_build_object('no', no, 'nama', nama, 'status', status, 'nilai', nilai) order by no) from kso.gerbang_hasil where rencana_id = r.id), '[]') as gerbang,
@@ -418,6 +428,7 @@ interface Isian {
   harga_per_test?: number | null;
   pakai_harga_daftar?: boolean | null;
   tenor_bulan?: number | null;
+  hari_kerja?: number | null;
   unit_status?: string | null;
   biaya_instalasi?: number | null;
   klausul_khusus?: string[] | null;
@@ -453,7 +464,7 @@ export async function transkripSuara(mediaPath: string): Promise<string | null> 
 /** Ubah hasil ekstraksi jadi p_isian lengkapi_draft: HANYA kunci yang bernilai. */
 function isianLengkapi(x: Isian, hargaStandar: number | null): Record<string, unknown> {
   const o: Record<string, unknown> = {};
-  const salin = ["jumlah", "volume_estimasi", "volume_sumber", "harga_per_test", "tenor_bulan", "unit_status", "biaya_instalasi",
+  const salin = ["jumlah", "volume_estimasi", "volume_sumber", "harga_per_test", "tenor_bulan", "hari_kerja", "unit_status", "biaya_instalasi",
     "kompetitor_alat", "kompetitor_kontrak_habis", "risiko_catatan", "lead_asal", "harga_pesaing", "alasan_strategis"] as const;
   for (const k of salin) if (x[k] != null) o[k] = x[k];
   if (o.harga_per_test == null && x.pakai_harga_daftar === true && hargaStandar != null) o.harga_per_test = hargaStandar;
