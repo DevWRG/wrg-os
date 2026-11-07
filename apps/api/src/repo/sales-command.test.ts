@@ -95,3 +95,10 @@ test("buildRekapKualitas: ringkasan region, AM terurut, batas baris, tanpa <...>
   assert.match(t, /… dan 1 AM lainnya\./); // Budi & Dedi sisa satu (Cici bersih tak dihitung)
   assert.doesNotMatch(t, /<[^>]+>/);
 });
+
+test("grupRekapKualitas: grup per region dari env, kosong = DM HoD", async () => {
+  const { grupRekapKualitas } = await import("./sales-command.js");
+  assert.equal(grupRekapKualitas("East", { SCC_KUALITAS_REKAP_TARGET_EAST: " 123-456@g.us " }), "123-456@g.us");
+  assert.equal(grupRekapKualitas("West", { SCC_KUALITAS_REKAP_TARGET_EAST: "123-456@g.us" }), null);
+  assert.equal(grupRekapKualitas("West", { SCC_KUALITAS_REKAP_TARGET_WEST: "" }), null);
+});
