@@ -26,6 +26,9 @@ import { getPipeline } from "./deal.js";
 import { keaslianPipeline } from "./pipeline-keaslian.js";
 import { arAgingByCustomer } from "./ar.js";
 import { listAlerts } from "./sales-analytics-config.js";
+import { waHod } from "./hod-wa.js";
+import { isoWeek } from "./faktur.js";
+import { sendViaWaGateway } from "../wasend.js";
 
 export type RegionSales = "East" | "West";
 export const REGION_SALES: RegionSales[] = ["East", "West"];
@@ -279,4 +282,93 @@ export async function salesCommand(scope: DataScope, regionDiminta: string | nul
     alert_aktif: alerts.filter((a) => a.active && a.last_state === "breach")
       .map((a) => ({ id: a.id, nama: a.alert_name, metrik: a.metric_key })),
   };
+}
+
+// ---------------------------------------------------------------- rekap WA mingguan ke HoD
+
+// Kartu Kualitas data pipeline (4 Nov) tak menggerakkan data: cek prod 7 Nov, 0 deal
+// terbuka diubah sejak kartu live, 77% (East) / 71% (West) estimasi bulan beli sudah
+// lewat. Keputusan user 7 Nov: rekap WA mingguan ke HoD tiap region — daftar AM dan
+// jumlah deal yang perlu diperbarui. Penerima = HoD pemilik cabang region di
+// hod_territory → waHod (tak ada nama orang di kode). Saklar SCC_KUALITAS_REKAP_ENABLED
+// (default mati); sekali per minggu ISO per region (notif_state).
+
+export const REKAP_MAKS_AM = 12;
+
+/** Teks rekap per region (murni, diuji). */
+export function buildRekapKualitas(region: RegionSales, k: ReturnType<typeof kualitasDataPipeline>, maks = REKAP_MAKS_AM): string {
+  const pct = (n: number) => (k.terbuka ? Math.round((n / k.terbuka) * 100) : 0);
+  const am = k.per_am.slice(0, maks).map((a, i) => {
+    const bagian = [a.bulan_lewat && `${a.bulan_lewat} bulan beli lewat`, a.tanpa_bulan && `${a.tanpa_bulan} bulan beli kosong`, a.tanpa_nilai && `${a.tanpa_nilai} tanpa nilai`].filter(Boolean);
+    return `${i + 1}. ${a.nama} — ${bagian.join(" · ")} (dari ${a.terbuka} deal)`;
+  });
+  return [
+    `📋 *Kualitas data pipeline — Sales ${region}*`,
+    `${k.terbuka} deal terbuka: ${k.bulan_lewat} bulan beli sudah lewat (${pct(k.bulan_lewat)}%), ${k.tanpa_bulan} bulan beli kosong, ${k.tanpa_nilai} tanpa nilai.`,
+    "",
+    "AM yang perlu memperbarui deal-nya:",
+    ...am,
+    ...(k.per_am.length > maks ? [`… dan ${k.per_am.length - maks} AM lainnya.`] : []),
+    "",
+    "Minta AM membuka deal-nya di Pipeline → Edit → perbarui estimasi bulan beli dan nilai. Daftar deal per AM: menu Sales Command Center → kartu Kualitas data pipeline (klik deal untuk langsung membuka detailnya). Forecast penjualan per region baru bisa dibuat setelah data ini layak.",
+  ].join("\n");
+}
+
+/** Kualitas data deal terbuka satu region — sumber sama dengan kartu di salesCommand(). */
+export async function kualitasRegion(region: RegionSales) {
+  const sql = db();
+  const peta = Object.fromEntries(Object.entries(await cabangRegionMap(sql)).map(([c, r]) => [upper(c), r]));
+  const cabang = Object.entries(peta).filter(([, r]) => r === region).map(([c]) => c);
+  const sc: DataScope = { ...FULL_SCOPE, cabangScope: cabang };
+  const pipe = await getPipeline(sc);
+  const deals = pipe.stages.flatMap((s) => s.deals)
+    .filter((d) => d.opsi_utama && d.stage !== "Closing-Won" && d.stage !== "Closing-Lost");
+  const k = kualitasDataPipeline(deals.map((d) => ({
+    deal_id: d.deal_id, am_id: d.am_id, am: d.am_name ?? d.am_id, faskes: d.facility_name || d.customer_name,
+    stage: d.stage, purchase_month: d.purchase_month, purchase_year: d.purchase_year, nilai: d.estimate_amount })),
+  hariIniWib().slice(0, 7));
+  const hod = await sql<{ hod_key: string }[]>`
+    SELECT DISTINCT hod_key FROM hod_territory WHERE upper(btrim(cabang)) = ANY(${cabang}::text[]) ORDER BY hod_key`;
+  return { k, cabang, hod_keys: hod.map((h) => String(h.hod_key)) };
+}
+
+export interface RekapKualitasRegion { region: RegionSales; masalah: number; penerima: string[]; sent: boolean; skipped?: string; error?: string; payload?: string }
+
+export async function runRekapKualitas(opts: { dryRun?: boolean; region?: RegionSales } = {}): Promise<{ week: string; dryRun: boolean; regions: RekapKualitasRegion[] }> {
+  const sql = db();
+  const today = hariIniWib();
+  const week = isoWeek(today);
+  const out: RekapKualitasRegion[] = [];
+  for (const region of opts.region ? [opts.region] : REGION_SALES) {
+    const key = `scc-kualitas-rekap:${region}:${week}`;
+    if (!opts.dryRun) {
+      const [done] = await sql`SELECT 1 FROM notif_state WHERE key = ${key}`;
+      if (done) { out.push({ region, masalah: 0, penerima: [], sent: false, skipped: `sudah terkirim minggu ${week}` }); continue; }
+    }
+    const { k, hod_keys } = await kualitasRegion(region);
+    const masalah = k.bulan_lewat + k.tanpa_bulan + k.tanpa_nilai;
+    if (!masalah) { out.push({ region, masalah, penerima: [], sent: false, skipped: "tak ada deal bermasalah" }); continue; }
+    const text = buildRekapKualitas(region, k);
+    const tujuan = (await Promise.all(hod_keys.map((h) => waHod(h)))).filter((x): x is { nama: string; wa: string } => !!x);
+    if (opts.dryRun) { out.push({ region, masalah, penerima: tujuan.map((t) => t.nama), sent: false, payload: text }); continue; }
+    if (!tujuan.length) { out.push({ region, masalah, penerima: [], sent: false, skipped: "nomor WA HoD region tak ditemukan" }); continue; }
+    let terkirim = false; let error: string | undefined;
+    for (const t of tujuan) {
+      const w = await sendViaWaGateway(t.wa, text);
+      if (w.sent && !w.stub && !w.dryRun) terkirim = true; // stub & dry-run gateway juga sent=true
+      if (w.error) error = w.error;
+    }
+    if (terkirim) {
+      await sql`INSERT INTO notif_state (key, signature, count, sent_at) VALUES (${key}, ${today}, 1, now())
+        ON CONFLICT (key) DO UPDATE SET signature = EXCLUDED.signature, count = notif_state.count + 1, sent_at = now()`;
+    }
+    out.push({ region, masalah, penerima: tujuan.map((t) => t.nama), sent: terkirim, error });
+  }
+  return { week, dryRun: Boolean(opts.dryRun), regions: out };
+}
+
+/** Region yang boleh dilihat pemanggil (aturan sama dengan salesCommand). */
+export async function regionUntukScope(scope: DataScope, diminta: string | null): Promise<RegionSales> {
+  const peta = Object.fromEntries(Object.entries(await cabangRegionMap(db())).map(([c, r]) => [upper(c), r]));
+  return tentukanRegion(scope, diminta, peta).region;
 }
