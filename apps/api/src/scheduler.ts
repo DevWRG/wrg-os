@@ -60,6 +60,7 @@ import { runRekapSuplaiKso } from "./repo/kso-suplai.js";
 import { susunDraft, bulanDepan } from "./repo/jadwal-teknisi.js";
 import { runPreVisitCheck } from "./repo/pickup-plan.js";
 import { runRekapDoBelumFaktur } from "./repo/do-belum-faktur.js";
+import { runRekapKualitas } from "./repo/sales-command.js";
 
 // Penjadwal agen in-process (Blueprint v2.3). Default MATI — aktif hanya bila
 // AGENT_SCHEDULE_ENABLED=true. Tiap run tetap menulis ke audit_log via repo
@@ -1584,6 +1585,31 @@ export function startScheduler(): ScheduleStatus {
       { timezone },
     );
     live.push(`do-belum-faktur-rekap=${doRekapExpr}`);
+  }
+
+  // scc-kualitas-rekap (Sales Command Center) — kualitas data pipeline per region ke HoD
+  // (DM, penerima dari hod_territory → waHod). Saklar SCC_KUALITAS_REKAP_ENABLED (default
+  // mati). Dicek tiap hari kerja, terkirim SEKALI per minggu ISO per region (notif_state).
+  const sccRekapEnabled = process.env.SCC_KUALITAS_REKAP_ENABLED === "true";
+  const sccRekapExpr = process.env.SCC_KUALITAS_REKAP_CRON ?? "30 7 * * 1-5";
+  if (sccRekapEnabled && cron.validate(sccRekapExpr)) {
+    cron.schedule(
+      sccRekapExpr,
+      async () => {
+        const startedAt = new Date().toISOString();
+        try {
+          if (!(await isWorkday())) return;
+          const r = await runRekapKualitas();
+          if (r.regions.every((x) => x.skipped?.startsWith("sudah terkirim"))) return; // hari kerja ke-2..5: diam
+          console.log(`[scheduler] scc-kualitas-rekap @ ${startedAt} ${JSON.stringify(r.regions.map((x) => ({ ...x, payload: undefined })))}`);
+          for (const x of r.regions) if (x.skipped === "nomor WA HoD region tak ditemukan") console.error(`[scheduler] scc-kualitas-rekap ${x.region}: ${x.skipped}`);
+        } catch (e) {
+          console.error(`[scheduler] scc-kualitas-rekap gagal @ ${startedAt}:`, e);
+        }
+      },
+      { timezone },
+    );
+    live.push(`scc-kualitas-rekap=${sccRekapExpr}`);
   }
 
   console.log(`[scheduler] aktif (TZ=${timezone}): ${live.join(", ") || "(tidak ada job valid)"}`);

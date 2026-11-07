@@ -78,3 +78,20 @@ test("kualitasDataPipeline: bulan lewat / kosong / tanpa nilai, per AM, deal ber
   assert.deepEqual(k.deals.map((x) => x.deal_id).sort(), ["a", "c", "f"]);
   assert.deepEqual(k.per_am.map((a) => [a.am_id, a.bulan_lewat, a.tanpa_bulan, a.tanpa_nilai]), [["A1", 1, 1, 1], ["A2", 1, 0, 1]]);
 });
+
+test("buildRekapKualitas: ringkasan region, AM terurut, batas baris, tanpa <...>", async () => {
+  const { buildRekapKualitas, kualitasDataPipeline } = await import("./sales-command.js");
+  const d = (am: string, m: number | null, y: number | null, nilai: number | null) =>
+    ({ deal_id: `${am}${m}${nilai}`, am_id: am, am, faskes: "RS", stage: "Prospecting", purchase_month: m, purchase_year: y, nilai });
+  const k = kualitasDataPipeline([
+    d("Ani", 9, 2026, 0), d("Ani", 10, 2026, 5), d("Budi", null, null, 5), d("Cici", 12, 2026, 5), d("Dedi", 8, 2026, 5),
+  ], "2026-11");
+  const t = buildRekapKualitas("East", k, 2);
+  assert.match(t, /^📋 \*Kualitas data pipeline — Sales East\*/);
+  assert.match(t, /5 deal terbuka: 3 bulan beli sudah lewat \(60%\), 1 bulan beli kosong, 1 tanpa nilai\./);
+  const baris = t.split("\n").filter((l) => /^\d+\. /.test(l));
+  assert.equal(baris.length, 2);
+  assert.equal(baris[0], "1. Ani — 2 bulan beli lewat · 1 tanpa nilai (dari 2 deal)");
+  assert.match(t, /… dan 1 AM lainnya\./); // Budi & Dedi sisa satu (Cici bersih tak dihitung)
+  assert.doesNotMatch(t, /<[^>]+>/);
+});
