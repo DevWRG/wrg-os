@@ -93,7 +93,7 @@ export function KomiteView({ tabs, bottomLine = false }: { tabs: TabBoleh[]; bot
                 </>
               ) : t.tab === "sekretariat" ? (
                 <>
-                  <Bagian judul="Verifikasi bukti volume — zona Forum & Direktur" catatan="Bukti tertulis (rekap LIS/SIMRS, pembelian reagen RS, surat RS) dicek sebelum forum. Perkiraan lisan tidak diterima."
+                  <Bagian judul="Verifikasi bukti volume — zona Forum & Direktur" catatan="Bukti tertulis (rekap LIS/SIMRS, pembelian reagen RS, surat RS) dicek sebelum forum. Usulan yang belum dicek tidak masuk Agenda A — ia ikut forum sesudah diverifikasi. Perkiraan lisan tidak diterima."
                     nada="amber" baris={d.verifikasi ?? []} onBuka={setBuka} pilih={buka} />
                   <Bagian judul="Mandat berlaku — terbitkan penawaran" catatan="Terbit pagi setelah putusan. Harga awal = harga pembuka; di bawah batas bawah ditolak sistem."
                     nada="sky" baris={(d.baris ?? []).filter((b) => b.antrean === "Sekretariat · Terbitkan Penawaran")} onBuka={setBuka} pilih={buka} />
