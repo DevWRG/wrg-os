@@ -4,11 +4,22 @@
 // 044_rbac.sql), bukan individu hod_key — supaya pergeseran jabatan cukup
 // diurus lewat menu Akses Grup, tanpa sentuh data finding. Lihat catatan
 // lengkap di kepala migrasi 191_audit_finding_tracker.sql.
+//
+// Sejak migrasi 255 penutupan berjalan di mesin approval F11 (alur
+// 'audit-finding', tahap target 'grup'): panel config membaca/menulis
+// approval_chain_config engine, pengajuan = approval_request dengan ref
+// audit_finding. Tabel audit_finding_approval_* tinggal riwayat pra-255.
 
 import { createHash } from "node:crypto";
 
 import { db, isDbEnabled } from "../db.js";
 import { sendViaWaGateway } from "../wasend.js";
+import {
+  buatRequestDalamTx,
+  daftarKonsumen,
+  decideFromDashboard,
+  notifyCurrentStep as notifyEngine,
+} from "./approval.js";
 
 type Sql = ReturnType<typeof db>;
 
@@ -34,14 +45,18 @@ export interface ChainConfigRow {
   groupCanView: boolean;
 }
 
+export const JENIS_AUDIT_FINDING = "audit-finding";
+const REF_TABEL = "audit_finding";
+
 export async function listChainConfig(): Promise<ChainConfigRow[]> {
   const sql = db();
   const rows = await sql`
-    SELECT c.urutan, c.label, c.access_group_id, c.enabled, g.name AS group_name,
+    SELECT c.urutan, c.label, g.id AS access_group_id, c.aktif AS enabled, g.name AS group_name,
            (g.superuser OR COALESCE(p.active AND p.can_view, false)) AS group_can_view
-    FROM audit_finding_approval_chain_config c
-    LEFT JOIN access_group g ON g.id = c.access_group_id
-    LEFT JOIN access_permission p ON p.group_id = c.access_group_id AND p.feature_key = 'audit-findings'
+    FROM approval_chain_config c
+    LEFT JOIN access_group g ON g.key = c.group_key
+    LEFT JOIN access_permission p ON p.group_id = g.id AND p.feature_key = 'audit-findings'
+    WHERE c.jenis = ${JENIS_AUDIT_FINDING}
     ORDER BY c.urutan
   `;
   return rows.map((r) => ({
@@ -61,18 +76,22 @@ export interface ChainConfigPatch {
 
 export async function updateChainConfigStep(urutan: number, patch: ChainConfigPatch): Promise<ActionResult> {
   const sql = db();
-  const rows = await sql`SELECT urutan FROM audit_finding_approval_chain_config WHERE urutan = ${urutan}`;
+  const rows = await sql`SELECT urutan FROM approval_chain_config WHERE jenis = ${JENIS_AUDIT_FINDING} AND urutan = ${urutan}`;
   if (rows.length === 0) return { ok: false, error: `tahap urutan ${urutan} tidak ditemukan` };
-  if (patch.accessGroupId != null) {
-    const [g] = await sql`SELECT id FROM access_group WHERE id = ${patch.accessGroupId}`;
+  // Panel memilih grup lewat id; engine menyimpan key grup.
+  let groupKey: string | null | undefined = undefined;
+  if (patch.accessGroupId === null) groupKey = null;
+  else if (patch.accessGroupId !== undefined) {
+    const [g] = await sql`SELECT key FROM access_group WHERE id = ${patch.accessGroupId}`;
     if (!g) return { ok: false, error: "access_group tidak ditemukan" };
+    groupKey = String(g.key);
   }
   await sql`
-    UPDATE audit_finding_approval_chain_config SET
-      access_group_id = ${patch.accessGroupId === undefined ? sql`access_group_id` : patch.accessGroupId},
-      enabled = ${patch.enabled === undefined ? sql`enabled` : patch.enabled},
+    UPDATE approval_chain_config SET
+      group_key = ${groupKey === undefined ? sql`group_key` : groupKey},
+      aktif = ${patch.enabled === undefined ? sql`aktif` : patch.enabled},
       updated_at = now()
-    WHERE urutan = ${urutan}
+    WHERE jenis = ${JENIS_AUDIT_FINDING} AND urutan = ${urutan}
   `;
   return { ok: true };
 }
@@ -292,7 +311,50 @@ export interface ApprovalRequestDetail {
   steps: ApprovalStepRow[];
 }
 
+// Pengajuan di engine (migrasi 255) disajikan dalam bentuk yang sama dengan
+// pengajuan F60 lama supaya UI & aturan tombol di web tak perlu tahu bedanya.
+async function getEngineRequest(id: string): Promise<ApprovalRequestDetail | null> {
+  if (!/^[0-9a-f-]{36}$/i.test(id)) return null;
+  const sql = db();
+  const [r] = await sql`
+    SELECT id, ref_id, requested_by_user_id, requested_by, created_at, status, current_urutan, decided_at
+    FROM approval_request WHERE id = ${id} AND jenis = ${JENIS_AUDIT_FINDING}
+  `;
+  if (!r) return null;
+  const stepRows = await sql`
+    SELECT s.id, s.urutan, s.label, g.id AS group_id, g.name AS group_name, s.status, s.notified_at,
+           s.decided_by_user_id, s.decided_by, s.decided_at, s.decision_note
+    FROM approval_step s LEFT JOIN access_group g ON g.key = s.group_key
+    WHERE s.request_id = ${id} ORDER BY s.urutan
+  `;
+  return {
+    id: String(r.id),
+    findingId: String(r.ref_id),
+    requestedBy: r.requested_by_user_id ? String(r.requested_by_user_id) : null,
+    requestedByName: r.requested_by ? String(r.requested_by) : null,
+    requestedAt: toIsoTs(r.created_at),
+    status: String(r.status),
+    currentUrutan: Number(r.current_urutan),
+    decidedAt: toIsoTsOrNull(r.decided_at),
+    steps: stepRows.map((s) => ({
+      id: Number(s.id),
+      urutan: Number(s.urutan),
+      label: String(s.label),
+      accessGroupId: s.group_id != null ? Number(s.group_id) : null,
+      accessGroupName: s.group_name ? String(s.group_name) : null,
+      status: String(s.status),
+      notifiedAt: toIsoTsOrNull(s.notified_at),
+      decidedBy: s.decided_by_user_id ? String(s.decided_by_user_id) : null,
+      decidedByName: s.decided_by ? String(s.decided_by) : null,
+      decidedAt: toIsoTsOrNull(s.decided_at),
+      decisionNote: s.decision_note ? String(s.decision_note) : null,
+    })),
+  };
+}
+
 export async function getApprovalRequest(id: string): Promise<ApprovalRequestDetail | null> {
+  const engine = await getEngineRequest(id);
+  if (engine) return engine;
   const sql = db();
   const rows = await sql`
     SELECT r.*, u.name AS requested_by_name
@@ -337,6 +399,10 @@ export async function getApprovalRequest(id: string): Promise<ApprovalRequestDet
 
 export async function getActiveApprovalRequest(findingId: string): Promise<ApprovalRequestDetail | null> {
   const sql = db();
+  const [eng] = await sql`
+    SELECT id FROM approval_request WHERE ref_tabel = ${REF_TABEL} AND ref_id = ${String(findingId)} AND status = 'pending'
+  `;
+  if (eng) return getEngineRequest(String(eng.id));
   const [row] = await sql`SELECT id FROM audit_finding_approval_request WHERE finding_id = ${findingId} AND status = 'pending'`;
   if (!row) return null;
   return getApprovalRequest(String(row.id));
@@ -363,6 +429,10 @@ export interface NotifyResult {
 // grup WA) — pola sama notifyCurrentStep F11 tapi broadcast ke N anggota
 // grup, bukan 1 individu.
 export async function notifyCurrentStep(requestId: string): Promise<NotifyResult> {
+  if (await getEngineRequest(requestId)) {
+    const n = await notifyEngine(requestId);
+    return n.ok ? { ok: true, sent: n.terkirim ?? 1 } : { ok: false, error: n.error };
+  }
   const sql = db();
   const [req] = await sql`
     SELECT r.id, r.status, r.current_urutan, r.finding_id, f.kode, f.title
@@ -414,39 +484,34 @@ export async function requestClosure(findingId: string, requestedBy: string | nu
   const missingGroup = chain.find((c) => c.accessGroupId == null);
   if (missingGroup) return { ok: false, error: `tahap "${missingGroup.label}" aktif tapi belum ada grup — atur di panel config` };
 
-  // Satu transaksi + kunci baris finding: request, semua step, dan perubahan
-  // status jadi atomik (tak ada request setengah jadi tanpa step) dan dua klik
-  // "Ajukan" bersamaan tidak saling balapan.
-  const r = await sql.begin(async (tx): Promise<RequestClosureResult> => {
-    const [finding] = await tx`SELECT status FROM audit_finding WHERE id = ${findingId} FOR UPDATE`;
+  // Satu transaksi + kunci baris finding: approval engine + perubahan status
+  // jadi atomik dan dua klik "Ajukan" bersamaan tidak saling balapan.
+  const r = await sql.begin(async (txRaw): Promise<RequestClosureResult> => {
+    const tx = txRaw as unknown as Parameters<typeof buatRequestDalamTx>[0];
+    const [finding] = await tx`SELECT status, kode, title FROM audit_finding WHERE id = ${findingId} FOR UPDATE`;
     if (!finding) return { ok: false, error: "finding tidak ditemukan" };
     if (finding.status !== "in_progress") {
       return { ok: false, error: `finding berstatus "${finding.status}" — hanya "in_progress" yang bisa diajukan penutupan` };
     }
-    const [existing] = await tx`SELECT id FROM audit_finding_approval_request WHERE finding_id = ${findingId} AND status = 'pending'`;
-    if (existing) return { ok: false, error: "sudah ada pengajuan penutupan yang masih berjalan" };
-
-    const [reqRow] = await tx`
-      INSERT INTO audit_finding_approval_request (finding_id, requested_by, current_urutan)
-      VALUES (${findingId}, ${requestedBy}, 1)
-      RETURNING id
-    `;
-    const requestId = String(reqRow.id);
-    let urutan = 1;
-    for (const c of chain) {
-      await tx`
-        INSERT INTO audit_finding_approval_step (request_id, urutan, label, access_group_id)
-        VALUES (${requestId}, ${urutan}, ${c.label}, ${c.accessGroupId})
-      `;
-      urutan += 1;
+    const [u] = requestedBy ? await tx`SELECT name, email FROM app_user WHERE id = ${requestedBy}` : [];
+    const apr = await buatRequestDalamTx(tx, {
+      jenis: JENIS_AUDIT_FINDING,
+      title: `Penutupan temuan ${finding.kode}: ${finding.title}`.slice(0, 200),
+      requestedBy: u ? String(u.name ?? u.email) : "PIC temuan",
+      requestedByUserId: requestedBy,
+      refTabel: REF_TABEL,
+      refId: String(findingId),
+    });
+    if (!apr.ok) {
+      return { ok: false, error: /sudah ada approval berjalan/.test(apr.error) ? "sudah ada pengajuan penutupan yang masih berjalan" : apr.error };
     }
-    await tx`UPDATE audit_finding SET status = 'pending_closure', updated_at = now() WHERE id = ${findingId}`;
-    return { ok: true, requestId };
+    await tx`UPDATE audit_finding SET status = 'pending_closure', approval_request_id = ${apr.id}, updated_at = now() WHERE id = ${findingId}`;
+    return { ok: true, requestId: apr.id };
   });
   if (!r.ok || !r.requestId) return r;
 
   await logAudit("audit_finding.request_closure", requestedBy, { finding_id: findingId, request_id: r.requestId, steps: chain.length }, "create");
-  await notifyCurrentStep(r.requestId);
+  await notifyEngine(r.requestId);
   return r;
 }
 
@@ -495,6 +560,18 @@ export function decideBlockReason(input: DecideGuardInput): string | null {
 // berikutnya terlewat dan temuan bisa closed dengan tahap tengah masih pending
 // (terbukti 6/6 di uji dev 11 Okt 2026). Notifikasi WA dikirim SESUDAH commit.
 export async function decideStep(input: DecideStepInput): Promise<DecideResult> {
+  // Pengajuan di engine: keanggotaan grup, pengaju, satu-orang-satu-tahap,
+  // dan klik basi ditegakkan engine; status finding diubah penangan konsumen.
+  if (await getEngineRequest(input.requestId)) {
+    const r = await decideFromDashboard(input.requestId, input.action, input.deciderUserId, input.note ?? null, undefined, {
+      expectedUrutan: input.expectedUrutan ?? null,
+    });
+    if (!r.ok) return { ok: false, error: r.error };
+    if (r.status === "approved") {
+      await logAudit("audit_finding.closed", input.deciderUserId, { request_id: input.requestId }, "close");
+    }
+    return { ok: true, status: r.status };
+  }
   const sql = db();
   const out = await sql.begin(async (tx): Promise<DecideResult & { notify?: boolean; findingId?: string; urutan?: number }> => {
     const [req] = await tx`
@@ -623,3 +700,18 @@ async function logAudit(eventType: string, actor: string | null | undefined, pay
     VALUES ('D1', ${`f60-${hash.slice(0, 8)}`}, 'A3', 5, ${eventType}, 'R2', ${hash}, ${hash}, ${sql.json(payload as unknown as Parameters<typeof sql.json>[0])}, ${actor ?? null}, ${decision})
   `;
 }
+
+// Penangan konsumen engine — status temuan ikut keputusan penutupan (di
+// transaksi keputusan). Disetujui semua tahap → closed; ditolak/batal →
+// kembali in_progress supaya PIC bisa memperbaiki & mengajukan ulang.
+daftarKonsumen(REF_TABEL, async (tx, h) => {
+  const [f] = await tx`
+    SELECT status FROM audit_finding WHERE id = ${h.refId} AND approval_request_id = ${h.requestId} FOR UPDATE
+  `;
+  if (!f || f.status !== "pending_closure") return;
+  if (h.status === "approved") {
+    await tx`UPDATE audit_finding SET status = 'closed', closed_at = now(), updated_at = now() WHERE id = ${h.refId}`;
+  } else {
+    await tx`UPDATE audit_finding SET status = 'in_progress', updated_at = now() WHERE id = ${h.refId}`;
+  }
+});

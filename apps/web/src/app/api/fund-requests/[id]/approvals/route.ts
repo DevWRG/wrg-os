@@ -31,6 +31,19 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
   if (!frRes.ok) return relay(frRes);
   const fr = await frRes.json();
 
+  // Pengajuan di mesin F11 (migrasi 248): wewenang ditegakkan engine dari
+  // akun sesi (user_id) — termasuk larangan memutus pengajuan sendiri, yang
+  // dulu tak ada. Admin tak lagi bisa mewakili; pakai Config Approval bila
+  // approver berhalangan.
+  if (fr.approval_request_id) {
+    const res = await gatewayFetch(`/fund-requests/${encodeURIComponent(id)}/approvals/${role}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ decision: body.decision, user_id: me.id, note: body.note ?? undefined }),
+    });
+    return relay(res);
+  }
+
   if (!canDecideFundRequestApprovalRole(me, fr, role as ApproverRole)) {
     return Response.json({ error: "forbidden — bukan approver yang berwenang utk tier ini" }, { status: 403 });
   }

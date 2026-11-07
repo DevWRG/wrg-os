@@ -133,7 +133,7 @@ test("status error dari services/ai tidak berubah maknanya", async () => {
   }
 });
 
-// ── Tahan services/ai mati (port #1044) ──────────────────────────────────
+// ── Tahan services/ai mati (#1044) ────────────────────────────────────────
 // callAi TIDAK PERNAH melempar: pemanggil mengandalkan cabang status >= 400.
 
 test("services/ai tak terjangkau → 503, bukan exception", async () => {

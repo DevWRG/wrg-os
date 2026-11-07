@@ -27,7 +27,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       body: JSON.stringify({
         action: body.action,
         note: body.note,
-        actor: { name: u.name || u.email, hodKey: u.hod_key ?? null, privileged },
+        // userId → keputusan lewat approval engine (migrasi 251) dengan wewenang
+        // engine; privileged hanya berlaku untuk pengajuan tanpa approval.
+        actor: { name: u.name || u.email, hodKey: u.hod_key ?? null, privileged, userId: u.id },
       }),
     });
     return Response.json(await res.json(), { status: res.status });

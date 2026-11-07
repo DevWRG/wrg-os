@@ -3,17 +3,41 @@
 // sini → muncul di sidebar DAN bisa langsung di-sync jadi fitur yg bisa di-gate.
 // feature.key = slug route (lihat featureKey()), selaras infra/postgres/init/044_rbac.sql.
 
-import { CalendarCheck,
+import {
+  Banknote,
   LayoutDashboard, LayoutGrid, Building2, Package, Boxes, ShoppingCart, Truck,
   Factory, Workflow, Receipt, BarChart3, ClipboardCheck, History, Settings,
   Send, FileText, ScrollText, GraduationCap, UsersRound, Network,
   Bell, MapPin, ListChecks, Swords, CalendarOff, CalendarDays, CalendarRange,
   Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, Tags, SlidersHorizontal, Microscope, MonitorCheck, FileSignature, Gavel,
   Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, BookOpen, Calculator, Presentation, Megaphone, Library,
-  Wallet, Coins, Banknote, Car, QrCode, PenLine, PackagePlus, PackageMinus,
-  Handshake, Archive, Ticket, Printer, Route, ArrowLeftRight,
-  TrendingUp, CalendarClock, PackageSearch, FileClock, type LucideIcon,
-  Hourglass, ShieldAlert, Landmark, ClipboardList, PackageCheck,
+  Wallet, Coins, Route, Printer, ScanText,
+  Wrench,
+  CalendarClock,
+  Ticket,
+  PackageCheck,
+  PenLine,
+  PackagePlus, PackageMinus,
+  CalendarCheck,
+  Hourglass,
+  FileCheck2,
+  Car,
+  ArrowLeftRight,
+  Archive,
+  Handshake,
+  ClipboardList,
+  HardHat,
+  QrCode,
+  Stamp,
+  TrendingUp,
+  ShieldAlert,
+  Landmark,
+  Scale,
+  Inbox,
+  FileBarChart,
+  PackageSearch,
+  FileClock,
+  type LucideIcon,
 } from "lucide-react";
 
 import { can, canOrLegacy, hasPerms } from "@/lib/perms";
@@ -22,25 +46,36 @@ import { canViewOnboarding } from "@/lib/onboarding-access";
 import { canViewPricebook, canViewPricebookSummary } from "@/lib/pricebook-access";
 import { canViewKlasifikasi } from "@/lib/klasifikasi-access";
 import { canViewJadwalTeknisi } from "@/lib/jadwal-teknisi-access";
+import { canViewBonSparepart } from "@/lib/bon-sparepart-access";
 import { canViewOrderWa } from "@/lib/order-wa-access";
 import { canViewProductScorecard } from "@/lib/product-scorecard-access";
 import { FITUR_PUTUSAN as FITUR_PUTUSAN_PERMINTAAN, canViewPermintaanProduk } from "@/lib/permintaan-produk-access";
 import { canViewKsoKontrak } from "@/lib/kso-kontrak-access";
 import { canViewArsipDokumen } from "@/lib/arsip-dokumen-access";
+import { canViewCn } from "@/lib/cn-access";
+import { canViewApThreeWay } from "@/lib/ap-three-way-access";
 import { FITUR_BOTTOMLINE, FITUR_SUSUNAN, TAB_KSO, canViewKsoKomite } from "@/lib/kso-komite-access";
 import { canViewAsetTetap } from "@/lib/aset-tetap-access";
 import { canViewDoBelumFaktur } from "@/lib/do-belum-faktur-access";
+import { canViewPmfScorecard } from "@/lib/pmf-access";
+import { canViewDirekturInbox } from "@/lib/direktur-inbox-access";
+import { canViewReportLibrary } from "@/lib/report-library";
+import { canViewKohort } from "@/lib/kohort-access";
+import { canViewDocTracker } from "@/lib/doc-tracker-access";
 import { canViewRaportList } from "@/lib/raport-access";
 import { canViewExecutive } from "@/lib/executive-access";
 import { canViewSalesCommand } from "@/lib/sales-command-access";
 import { FITUR_HARGA_BELI, canBukaDaftarAlat, canViewKso } from "@/lib/kso-access";
 import { canViewNpkAm, canViewNpkAmSelf } from "@/lib/npk-access";
 import { canViewInsentifTim } from "@/lib/insentif-access";
-import { canViewOvertime } from "@/lib/overtime-access";
-import { canViewAuditFindings } from "@/lib/audit-finding-access";
 import { canViewDanaOps } from "@/lib/dana-ops-access";
 import { canViewVendorManagement } from "@/lib/vendor-management-access";
 import { canViewGaReporting } from "@/lib/ga-reporting-access";
+import { canViewAuditFindings } from "@/lib/audit-finding-access";
+import { canViewOvertime } from "@/lib/overtime-access";
+import { canViewKasStation } from "@/lib/kas-station-access";
+import { canViewBuktiPembayaran } from "@/lib/bukti-pembayaran-access";
+import { canViewProfitabilitasArea } from "@/lib/profitabilitas-area-access";
 
 // exact: sorot aktif hanya saat path persis (untuk route induk yg punya child,
 // mis. /pricelist vs /pricelist/setup).
@@ -49,6 +84,12 @@ import { canViewGaReporting } from "@/lib/ga-reporting-access";
 // menang (lihat navVisible di bawah + canOrLegacy di lib/perms).
 export interface NavItem {
   title: string; url: string; icon: LucideIcon; badge?: string; exact?: boolean;
+  // Prefix URL LAIN yang juga dianggap "sedang di menu ini" — dipakai saat sub-halaman
+  // sebuah fitur hidup di route sendiri, bukan di bawah `url` (mis. "/sph/new" dibuat
+  // dari menu "Sales Docs" tapi tak pernah otomatis nyorot krn beda prefix — /sph tak
+  // startsWith /sales-docs). Tanpa ini sidebar diam total pas ada di sub-halamannya,
+  // padahal user masih di alur fitur yang sama (ditemukan user 2026-09-07).
+  matchPrefix?: string[];
   show?: (me: AccessUser | null) => boolean;
   // Menu KHUSUS admin/superuser: data/utilitas internal yang server-nya hanya melayani
   // admin. Matriks Akses Grup TIDAK bisa membukanya untuk grup lain dan menu ini tak
@@ -152,7 +193,7 @@ export const NAV: NavGroup[] = [
       { title: "Customers", url: "/customers", icon: Building2 },
       { title: "Accounts", url: "/accounts", icon: Contact, badge: "NEW" },
       { title: "AR Aging", url: "/ar", icon: Receipt },
-      { title: "Sales Docs", url: "/sales-docs", icon: FileText },
+      { title: "Sales Docs", url: "/sales-docs", icon: FileText, matchPrefix: ["/sph"] },
       { title: "Collection Drafts", url: "/collection-drafts", icon: Send },
       // Simulator KSO — running cost alat lab per test, hasil penggabungan
       // aplikasi terpisah `runningcost-zybio` jadi satu menu di sini. Beda dari
@@ -239,12 +280,30 @@ export const NAV: NavGroup[] = [
         title: "Setup Harga", url: "/pricebook/setup", icon: SlidersHorizontal,
         feature: "pricelist-setup", show: canEditPricelistSetup,
       },
+      // F20 — status klik per tender LPSE/E-Catalog (pesan masuk -> barang
+      // dikirim -> selesai) + reminder kalau macet. Tak ada hashtag WA.
+      { title: "LPSE / E-Catalog", url: "/lpse-tender", icon: FileCheck2, badge: "NEW" },
+    ],
+  },
+  {
+    // Domain BUSINESS per board Roadmap (arahan user 15 Okt 2026) — dipisah dari "Sales".
+    label: "Business",
+    items: [
+      // F48 PMF Scorecard — win-rate deal per brand x region. Kunci izin sendiri
+      // (featureKey = "pmf-scorecard"), default tertutup: butuh Sync Fitur + centang Direktur/HoD Sales.
+      { title: "PMF Scorecard", url: "/pmf-scorecard", icon: Target, badge: "NEW", show: canViewPmfScorecard },
     ],
   },
   {
     label: "Analytics",
     items: [
       // NPK (F66) — gate identitas: Direktur = admin/superuser; self-view = HoD (hod_key).
+      // F92 — 6 laporan eksekutif + Export PDF. Izin 'report-library': fallback Direktur/HoD/admin;
+      // butuh Sync Fitur setelah deploy. Tiap laporan tetap ikut izin menu sumbernya.
+      { title: "Report Library", url: "/report-library", icon: FileBarChart, badge: "NEW", show: canViewReportLibrary },
+      // F96 Kohort & Lead Source — retensi customer per kohort kuartal + pipeline lead per sumber. Hanya baca,
+      // agregat. Kunci izin "kohort", default tertutup: Sync Fitur + centang grup; sebelum itu fallback Direktur/HoD/admin.
+      { title: "Kohort & Lead Source", url: "/kohort", icon: TrendingUp, badge: "NEW", show: canViewKohort },
       { title: "NPK HOD", url: "/npk", icon: Award, badge: "NEW", exact: true, show: (me) => me?.role === "admin" || me?.superuser === true },
       { title: "NPK Saya", url: "/npk/self", icon: UserCheck, badge: "NEW", show: (me) => !!me?.hod_key },
       // NPK level AM (078): matrix semua AM untuk Direktur+HoD, self-view untuk staff AM.
@@ -265,6 +324,9 @@ export const NAV: NavGroup[] = [
       // admin/superuser yang melihatnya (anti-lockout can()).
       { title: "SOP & Otomasi", url: "/sop-otomasi", icon: ClipboardCheck, badge: "NEW" },
       { title: "Executive Briefings", url: "/briefings", icon: ScrollText },
+      // F59 — antrean approval yang menunggu Direktur. Izin 'direktur-inbox': fallback
+      // role direktur/admin/superuser; butuh Sync Fitur + centang grup Direktur setelah deploy.
+      { title: "Direktur Inbox", url: "/direktur-inbox", icon: Inbox, badge: "NEW", show: canViewDirekturInbox },
       { title: "Coaching Notes", url: "/coaching", icon: GraduationCap },
       // Revenue per lini produk — dasar metric `revstream` (kartu Fafa, WatchPoint).
       { title: "Revenue per Lini", url: "/revenue-stream", icon: Coins, badge: "NEW" },
@@ -281,6 +343,19 @@ export const NAV: NavGroup[] = [
     ],
   },
   {
+    label: "Aftersales",
+    items: [
+      { title: "Instalasi Alat", url: "/installations", icon: Wrench, badge: "NEW" },
+      { title: "Service Tickets", url: "/service-tickets", icon: Ticket, badge: "NEW" },
+      { title: "PM & Kalibrasi", url: "/maintenance", icon: CalendarClock, badge: "NEW" },
+      // F25 Uji Profisiensi Document Registry — sertifikat per RS, tracking
+      // ED (annual renewal). Role min Karyawan, tanpa `show` (semua role login
+      // boleh), pola sama dgn F39/F134.
+      { title: "Uji Profisiensi", url: "/proficiency-tests", icon: FileCheck2, badge: "NEW" },
+      { title: "Readiness Board", url: "/readiness-board", icon: HardHat, badge: "NEW" },
+    ],
+  },
+  {
     label: "Operations",
     items: [
       { title: "Products", url: "/products", icon: Package },
@@ -293,52 +368,64 @@ export const NAV: NavGroup[] = [
       { title: "Shipments", url: "/shipments", icon: Truck },
       { title: "Suppliers", url: "/suppliers", icon: Factory },
       { title: "HITL Review", url: "/hitl", icon: ClipboardCheck },
+      // F11 — base/generic approval engine (chain HoD Sales→Bisnis→After
+      // Sales→Supply Chain→Direktur), bukan spesifik 1 proses OPS — badge NEW
+      // krn baru & kontak per-tahap masih perlu diisi manual (lihat /config).
+      { title: "Approval Requests", url: "/approval-requests", icon: Stamp, badge: "NEW" },
       // F154 Jadwal Kunjungan Rutin Teknisi — izin sendiri, tertutup default (Sync Fitur).
       { title: "Jadwal Teknisi", url: "/jadwal-teknisi", icon: CalendarClock, badge: "NEW", show: canViewJadwalTeknisi },
+      // F155 Bon Sparepart Teknisi (#BON/#OPNAME) — izin sendiri, tertutup default (Sync Fitur).
+      { title: "Bon Sparepart", url: "/bon-sparepart", icon: Wrench, badge: "NEW", show: canViewBonSparepart },
     ],
   },
   {
-    // Domain Shipping (F44) — standalone. Dipromosikan per-fitur dari dev
-    // (12 Okt 2026); menu Shipping lain menyusul satu per satu.
+    // Domain Shipping (F43/F44) — standalone, tidak tergantung shipment_tracking/
+    // pickup_plan (branch F12/F42/F45/F93 belum merge ke dev). Role min
+    // Karyawan: semua tim boleh mencatat & lihat performa pengiriman /
+    // mendefinisikan standar cetak dokumen.
     label: "Shipping",
     items: [
-      { title: "Spesifikasi Cetak Dokumen", url: "/print-spec", icon: Printer, badge: "NEW" },
-      // F12/F42/F93 + F43 — 13 Okt 2026: data 100% dari WA #KIRIM/#TERIMA/
-      // #BAST/#BUKTI (SJ dari DO Accurate), kedua menu baca-saja.
-      { title: "Tracking Pengiriman", url: "/shipment-tracking", icon: Route, badge: "NEW" },
       { title: "Kurir Performance", url: "/courier-performance", icon: Route, badge: "NEW" },
-      // F45 — rencana trip kurir + cek H-1 (libur & PIC), tersambung ke
-      // #KIRIM/#TERIMA/#BAST/#BUKTI lewat No. SJ. Jadwal KE DEPAN, beda dari
-      // Tracking Pengiriman (kejadian nyata dari WA).
+      { title: "Spesifikasi Cetak Dokumen", url: "/print-spec", icon: Printer, badge: "NEW" },
+      { title: "Tracking Pengiriman", url: "/shipment-tracking", icon: Route, badge: "NEW" },
+      // DOC — rekap dokumen per transaksi (9 state: Draft → … → Closed), dihitung dari SO/SJ/BAST/faktur.
+      { title: "Document Tracker", url: "/doc-tracker", icon: FileCheck2, badge: "NEW", show: canViewDocTracker },
+      // F45 — rencana trip kurir + cek H-1 (libur & PIC). Beda dari Shipments
+      // (mirror delivery-order Accurate, sudah terjadi): ini jadwal KE DEPAN.
       { title: "Jadwal Kirim-Tagih", url: "/pickup-plan", icon: CalendarCheck, badge: "NEW" },
     ],
   },
   {
     // Domain PURCHASING per board Roadmap — dipisah dari "Operations" (keranjang
-    // mirror Accurate) atas arahan Direktur. Dipromosikan per-fitur dari dev
-    // (12 Okt 2026); menu Purchasing lain menyusul satu per satu.
+    // mirror Accurate) atas arahan Direktur, supaya sidebar cermin domain fitur.
     label: "Purchasing",
     items: [
       // F37 — route berdiri sendiri, dipisah dari /inventory (yang dulu 1
       // halaman 2 tab). Key RBAC-nya sendiri (`stok-gudang`, auto dari URL),
       // jadi bisa digrant terpisah dari izin Inventory di Akses Grup.
       { title: "Stok Gudang", url: "/stok-gudang", icon: Boxes, badge: "NEW" },
+      { title: "Supplier ETA", url: "/supplier-eta", icon: CalendarClock, badge: "NEW" },
+      { title: "Inbound Receiving", url: "/inbound-receiving", icon: PackageCheck, badge: "NEW" },
       // F38 — sama perlakuan spt Stok Gudang: dulu tab ketiga di /inventory,
       // sekarang route sendiri dgn key RBAC sendiri (`ed-watch`).
       { title: "ED & Kedaluwarsa", url: "/ed-watch", icon: Hourglass, badge: "NEW" },
-      // F13 PO Tracker — cermin PO Accurate (migrasi 205): PO, approval, dan
-      // penerimaan dibuat di Accurate, halaman ini memantau (telat, sisa qty).
+      // F13 PO Tracker + Sistem Barang Masuk — satu PO ke vendor + riwayat
+      // penerimaan barang per item (migrasi 078), bukan Accurate mirror.
       { title: "PO Tracker", url: "/purchase-orders", icon: ClipboardList, badge: "NEW" },
-      // F36 Inbound Receiving — checklist verifikasi gudang per Penerimaan
-      // Barang Accurate (migrasi 206), dibuat otomatis oleh sinkron.
-      { title: "Inbound Receiving", url: "/inbound-receiving", icon: PackageCheck, badge: "NEW" },
+      // F19 — scan buffer (di sini) + ED (F38) → usulan forecast, Supply
+      // Chain review/edit, ajukan ke approval berjenjang F11. Ditaruh
+      // Purchasing (bukan CRM spt label blueprint) krn pemakainya
+      // Supply Chain + datanya dari Stok Gudang/ED Watch section ini.
+      { title: "Forecast Submission", url: "/forecast-submission", icon: TrendingUp, badge: "NEW" },
     ],
   },
   {
-    // F156 Arsip Dokumen — domain board "DOC", grup sendiri (pola sama F139
-    // bikin grup "GA"). Kunci izin sendiri ("arsip-dokumen"), default tertutup.
+    // DOC #KLAIM (FR-DOC-01) — domain board literally "DOC", tak cocok masuk
+    // grup existing manapun, grup sendiri (pola sama F139 bikin grup "GA").
     label: "DOC",
     items: [
+      { title: "Klaim OCR", url: "/doc-klaim", icon: ScanText, badge: "NEW" },
+      // F156 Arsip Dokumen — kunci izin sendiri ("arsip-dokumen"), default tertutup.
       { title: "Arsip Dokumen", url: "/arsip-dokumen", icon: Archive, badge: "NEW", show: canViewArsipDokumen },
     ],
   },
@@ -350,9 +437,10 @@ export const NAV: NavGroup[] = [
     // biasa yang default terbuka utk semua Karyawan.
     label: "Governance",
     items: [
-      // /audit-findings/config ikut gerbang menu ini lewat pencocokan prefix
-      // findNavItem (url + "/"), tak perlu matchPrefix di main.
-      { title: "Audit Findings", url: "/audit-findings", icon: ShieldAlert, badge: "NEW", show: canViewAuditFindings },
+      {
+        title: "Audit Findings", url: "/audit-findings", icon: ShieldAlert, badge: "NEW",
+        matchPrefix: ["/audit-findings/config"], show: canViewAuditFindings,
+      },
     ],
   },
   {
@@ -400,7 +488,8 @@ export const NAV: NavGroup[] = [
       // F53 Stiker Aset & F50 Kendaraan Operasional — dulu di grup Operations,
       // dipindah ke General Affairs atas arahan user 5 Okt 2026 (pengelolanya
       // tim GA). Key fitur tak berubah (diturunkan dari url), hanya `section`.
-      // Relokasi aset GA + berita acara bertanda tangan (13 Okt 2026).
+      // Relokasi aset GA + berita acara bertanda tangan (13 Okt 2026) —
+      // menggantikan F40 "Relokasi Inventaris" (teks bebas, batch magang).
       { title: "Relokasi Aset", url: "/ga-relokasi", icon: ArrowLeftRight, badge: "NEW" },
       { title: "Stiker Aset", url: "/asset-tag", icon: QrCode, badge: "NEW" },
       { title: "Kendaraan Operasional", url: "/vehicles", icon: Car, badge: "NEW" },
@@ -426,6 +515,27 @@ export const NAV: NavGroup[] = [
       // F149 (dipersempit) — DO/SJ terkirim yang belum difakturkan, dari cermin Accurate.
       // Kunci izin sendiri ("do-belum-faktur"), default tertutup: butuh Sync Fitur + centang.
       { title: "DO Belum Difaktur", url: "/do-belum-faktur", icon: FileClock, badge: "NEW", show: canViewDoBelumFaktur },
+      // F151 CN (Kredit Note) — rebate customer per kontrak, dasar faktur; Sales → HoD → Finance → GA.
+      // Kunci izin sendiri ("cn", featureKey dari url), default tertutup: butuh Sync Fitur + centang.
+      { title: "Kredit Note (CN)", url: "/cn", icon: Receipt, badge: "NEW", show: canViewCn },
+      // F152 3-Way Match Faktur Pembelian (AP) — faktur vendor Accurate vs PO vs penerimaan, toleransi 0%.
+      // Read-only. Kunci izin sendiri ("ap-three-way", featureKey dari url), default tertutup: Sync Fitur + centang.
+      { title: "3-Way Match AP", url: "/ap-three-way", icon: ClipboardCheck, badge: "NEW", show: canViewApThreeWay },
+      // F33 Kas Station — kas harian cabang → rekap mingguan → approval pusat → realisasi.
+      // Dua kunci izin: "kas-station" (station: catat & ajukan) dan "kas-station-review"
+      // (pusat: lihat rekap, approve/reject, realisasi). Default tertutup: butuh Sync Fitur +
+      // centang grup; sebelum itu fallback direktur/admin/superuser.
+      { title: "Kas Station", url: "/kas-station", icon: Wallet, badge: "NEW", show: canViewKasStation,
+        features: [{ key: "kas-station-review", name: "Kas Station — review pusat (approve & realisasi)" }] },
+      // F32 Bukti Pembayaran — foto bukti bayar + kode pengajuan, diunggah admin di dashboard
+      // (tanpa OCR/WA/Accurate). Kunci izin "bukti-pembayaran" (view/create), default tertutup:
+      // butuh Sync Fitur + centang grup; sebelum itu fallback Direktur/Finance/admin.
+      { title: "Bukti Pembayaran", url: "/bukti-pembayaran", icon: FileCheck2, badge: "NEW", show: canViewBuktiPembayaran },
+      // F150 Profitabilitas Area — biaya operasional vs revenue netto per area. Tahap 1: revenue
+      // hidup, biaya/profit menunggu data Accurate. Kunci izin "profitabilitas-area", default
+      // tertutup: butuh Sync Fitur + centang grup; sebelum itu fallback Direktur/admin (penuh)
+      // dan HoD (cabang sendiri).
+      { title: "Profitabilitas Area", url: "/profitabilitas-area", icon: Scale, badge: "NEW", show: canViewProfitabilitasArea },
     ],
   },
   {
@@ -446,6 +556,32 @@ export const NAV: NavGroup[] = [
     ],
   },
 ];
+
+// Menu yang SUDAH ada di `dev` tapi BELUM ada di `main`/prod (antrean promosi
+// #1282). Sidebar memasang badge "DEV" di menu ini supaya penguji di tumpukan dev
+// (:3300) tahu mana yang belum live — lihat devOnlyBadge(). Badge TIDAK pernah
+// tampil di build produksi (NEXT_PUBLIC_BUILD_CHANNEL === "production", yaitu build
+// dari `main`), jadi Set ini aman ikut terbawa saat promosi.
+// Dicocokkan manual lawan nav.ts di `main` (audit katalog 30 Sep 2026: 33 menu).
+// Rawat: saat satu menu dipromosikan satuan ke main → hapus url-nya dari sini;
+// saat #1282 merge → kosongkan Set ini.
+export const DEV_ONLY_URLS: ReadonlySet<string> = new Set([
+  "/sales-command",
+  "/approval-requests",
+  "/doc-klaim",
+  "/forecast-submission",
+  "/installations",
+  "/lpse-tender",
+  "/maintenance",
+  "/proficiency-tests",
+  "/readiness-board",
+  "/service-tickets",
+  "/supplier-eta",
+]);
+
+export function devOnlyBadge(url: string, buildChannel: string | undefined): boolean {
+  return buildChannel !== "production" && DEV_ONLY_URLS.has(url);
+}
 
 // Fitur (RBAC) per item = slug route: /monitor/rekap → "monitor-rekap" (= feature.key).
 export const featureKey = (url: string) => url.replace(/^\//, "").replace(/\//g, "-");
@@ -491,10 +627,27 @@ export function homePath(me: AccessUser | null): string {
 export function findNavItem(pathname: string): NavItem | null {
   const path = pathname.replace(/\/+$/, "") || "/";
   let best: NavItem | null = null;
+  let bestLen = -1;
   for (const g of NAV) {
     for (const it of g.items) {
-      if (path !== it.url && !path.startsWith(`${it.url}/`)) continue;
-      if (!best || it.url.length > best.url.length) best = it;
+      // `matchPrefix` WAJIB ikut dipertimbangkan, bukan cuma `url`. Ia menyatakan
+      // "rute ini milik menu ini" — dan karena gate rute di (dashboard)/layout.tsx
+      // memakai fungsi ini, prefiks yang tak ikut dihitung = rute yang TIDAK
+      // di-gate sama sekali (findNavItem → null → layout melewatinya).
+      //
+      // Kejadian nyatanya: "/sph/new" (form SPH) milik menu Sales Docs
+      // (url "/sales-docs", matchPrefix ["/sph"]). Karena dulu hanya `url` yang
+      // dicocokkan, halaman itu terbuka untuk SIAPA PUN yang bisa login —
+      // termasuk viewer — walau menunya tersembunyi. Menyembunyikan menu bukan
+      // gerbang; ketik URL-nya langsung tetap tembus.
+      for (const p of [it.url, ...(it.matchPrefix ?? [])]) {
+        if (path !== p && !path.startsWith(`${p}/`)) continue;
+        // prefiks terpanjang menang (mis. "/insentif/tim" mengalahkan "/insentif")
+        if (p.length > bestLen) {
+          best = it;
+          bestLen = p.length;
+        }
+      }
     }
   }
   return best;

@@ -88,6 +88,25 @@ export async function getPricelistByProduct(productId: string | number): Promise
 
 export async function upsertPricelist(input: PricelistInput): Promise<PricelistRow | null> {
   const sql = db();
+  // Bug ditemukan sesi QA jalur tulis 2026-08-27: dulu ON CONFLICT DO UPDATE
+  // pakai `EXCLUDED.<kolom>` — kolom yang TIDAK dikirim di payload jatuh ke
+  // default VALUES-nya (0/false), jadi partial-PATCH lewat endpoint ini
+  // (mis. cuma kirim hpp) diam-diam NGE-RESET semua kolom lain ke 0/false,
+  // termasuk pada baris yang sudah `published`. Fix: SET pakai
+  // COALESCE(<nilai baru-atau-null>, pricelist.<kolom lama>) — kolom yang
+  // tak dikirim (undefined → null) mempertahankan nilai lama, bukan ketimpa
+  // default. VALUES tetap default 0/false utk baris BENAR-BENAR baru (belum
+  // ada row lama buat di-COALESCE-kan).
+  //
+  // price_list DIKECUALIKAN dari pola COALESCE di atas (issue #1074, tindak
+  // lanjut fix di atas): `??` tak bisa bedakan "field tak dikirim" dari
+  // "sengaja dikirim null" — utk kolom LAIN itu gak masalah (NOT NULL,
+  // NULL tak pernah valid), tapi price_list justru NULL BERMAKNA ("gak ada
+  // angka override, hitung dari margin" — lihat 076_pricelist_price_list.sql).
+  // COALESCE bikin `{price_list: null}` gak pernah benar2 ngosongin kolom
+  // (ketiban nilai lama lagi). Fix: cek eksplisit apakah field-nya ADA di
+  // payload (bukan cuma nilainya), CASE WHEN bukan COALESCE.
+  const priceListSent = Object.prototype.hasOwnProperty.call(input, "price_list");
   const rows = await sql<{ product_id: string }[]>`
     INSERT INTO pricelist (
       product_id, hpp, margin_pct, diskon_pct, price_list,
@@ -104,13 +123,21 @@ export async function upsertPricelist(input: PricelistInput): Promise<PricelistR
       ${input.created_by ?? null}
     )
     ON CONFLICT (product_id) DO UPDATE SET
-      hpp = EXCLUDED.hpp, margin_pct = EXCLUDED.margin_pct, diskon_pct = EXCLUDED.diskon_pct,
-      price_list = EXCLUDED.price_list,
-      pct_wrg = EXCLUDED.pct_wrg, pct_promosi = EXCLUDED.pct_promosi, pct_hod_sales = EXCLUDED.pct_hod_sales,
-      total_point = EXCLUDED.total_point, min_incentive_pts = EXCLUDED.min_incentive_pts,
-      max_incentive_pts = EXCLUDED.max_incentive_pts, min_redemption = EXCLUDED.min_redemption,
-      cutoff_days = EXCLUDED.cutoff_days, west_area_confirmation = EXCLUDED.west_area_confirmation,
-      east_area_confirmation = EXCLUDED.east_area_confirmation, updated_at = now()
+      hpp = COALESCE(${input.hpp ?? null}, pricelist.hpp),
+      margin_pct = COALESCE(${input.margin_pct ?? null}, pricelist.margin_pct),
+      diskon_pct = COALESCE(${input.diskon_pct ?? null}, pricelist.diskon_pct),
+      price_list = CASE WHEN ${priceListSent} THEN ${input.price_list ?? null} ELSE pricelist.price_list END,
+      pct_wrg = COALESCE(${input.pct_wrg ?? null}, pricelist.pct_wrg),
+      pct_promosi = COALESCE(${input.pct_promosi ?? null}, pricelist.pct_promosi),
+      pct_hod_sales = COALESCE(${input.pct_hod_sales ?? null}, pricelist.pct_hod_sales),
+      total_point = COALESCE(${input.total_point ?? null}, pricelist.total_point),
+      min_incentive_pts = COALESCE(${input.min_incentive_pts ?? null}, pricelist.min_incentive_pts),
+      max_incentive_pts = COALESCE(${input.max_incentive_pts ?? null}, pricelist.max_incentive_pts),
+      min_redemption = COALESCE(${input.min_redemption ?? null}, pricelist.min_redemption),
+      cutoff_days = COALESCE(${input.cutoff_days ?? null}, pricelist.cutoff_days),
+      west_area_confirmation = COALESCE(${input.west_area_confirmation ?? null}, pricelist.west_area_confirmation),
+      east_area_confirmation = COALESCE(${input.east_area_confirmation ?? null}, pricelist.east_area_confirmation),
+      updated_at = now()
     RETURNING product_id::text`;
   const pid = rows[0]?.product_id;
   return pid == null ? null : getPricelistByProduct(pid);

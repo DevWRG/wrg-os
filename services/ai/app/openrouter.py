@@ -105,6 +105,13 @@ def extract_models() -> List[str]:
     return [primary, fallback]
 
 
+def ticket_triage_models() -> List[str]:
+    """Model OpenRouter untuk F26 ticket triage (token tier LOW → Haiku)."""
+    primary = os.environ.get("TICKET_TRIAGE_MODEL_PRIMARY", "anthropic/claude-haiku-4.5")
+    fallback = os.environ.get("TICKET_TRIAGE_MODEL_FALLBACK", "deepseek/deepseek-v3.2")
+    return [primary, fallback]
+
+
 def exec_models() -> List[str]:
     """Model OpenRouter untuk A10 executive synthesis, growth-levers,
     weekend-briefing, pola-profile (Haiku — Sonnet tak sepadan biayanya)."""
@@ -117,6 +124,19 @@ def raport_models() -> List[str]:
     """Model OpenRouter untuk narasi Raport 360 (Haiku — Sonnet tak sepadan biayanya)."""
     primary = os.environ.get("RAPORT_MODEL_PRIMARY", "anthropic/claude-haiku-4.5")
     fallback = os.environ.get("RAPORT_MODEL_FALLBACK", "deepseek/deepseek-v3.2")
+    return [primary, fallback]
+
+
+def klaim_models() -> List[str]:
+    """Model OpenRouter (vision) untuk DOC #KLAIM OCR. Default Gemini (blueprint
+    minta "Gemini Vision" eksplisit), fallback varian Gemini lain — bukan
+    Claude/DeepSeek spt fitur teks lain, krn keduanya butuh dukungan image input."""
+    # Slug lama ('google/gemini-2.0-flash-001' / 'gemini-flash-1.5') SUDAH TIDAK
+    # ADA di katalog OpenRouter → 404. Dampaknya sama persis dengan yang menimpa
+    # pembaca rekening koran 18 Sep 2026: OCR nota #KLAIM gagal SENYAP, dan
+    # gejalanya terlihat seperti dokumennya yang bermasalah. Lihat koran_models().
+    primary = os.environ.get("KLAIM_MODEL_PRIMARY", "google/gemini-3.8-flash")
+    fallback = os.environ.get("KLAIM_MODEL_FALLBACK", "google/gemini-3.5-flash")
     return [primary, fallback]
 
 
@@ -218,6 +238,7 @@ def chat_vision(
     mime_type: str,
     max_tokens: int = 1500,
     models: Optional[List[str]] = None,
+    reasoning_effort: Optional[str] = None,
 ) -> Tuple[str, str, Optional[int], Optional[int]]:
     """Sama seperti chat(), tapi `content` user berupa multi-part (teks + gambar
     data-URI base64) — format OpenRouter/OpenAI vision, dipakai model yg
@@ -233,7 +254,7 @@ def chat_vision(
     headers = {"Authorization": f"Bearer {key}", "content-type": "application/json"}
     last_err: Optional[Exception] = None
     with httpx.Client(timeout=60) as client:
-        for model in models or koran_models():
+        for model in models or klaim_models():
             try:
                 resp = _post(client,
                     OPENROUTER_URL,
@@ -254,11 +275,23 @@ def chat_vision(
                             },
                         ],
                         "max_tokens": max_tokens,
+                        # Gemini 3.x berpikir dulu, dan token reasoning MEMAKAN
+                        # max_tokens: nota #KLAIM 14 Okt 2026 = 1.440 dari 1.500
+                        # habis buat reasoning → JSON terpotong, semua field
+                        # kosong tanpa error. Pemanggil yang tugasnya transkripsi
+                        # (bukan penalaran) boleh membatasinya. Reasoning TAK bisa
+                        # dimatikan total untuk model ini (OpenRouter balas 400).
+                        # Default None = perilaku lama (dipakai pembaca koran).
+                        **({"reasoning": {"effort": reasoning_effort}} if reasoning_effort else {}),
                     },
                 )
                 resp.raise_for_status()
                 data = resp.json()
                 text = data["choices"][0]["message"]["content"]
+                if reasoning_effort and (data["choices"][0].get("finish_reason") or "") == "length":
+                    # Jawaban terpotong plafon token — jangan diperlakukan
+                    # sebagai hasil sah; coba model berikutnya.
+                    raise RuntimeError(f"{model}: jawaban terpotong max_tokens={max_tokens}")
                 usage = data.get("usage") or {}
                 return (
                     text,
@@ -275,7 +308,7 @@ def chat_vision(
 def kso_models() -> List[str]:
     """F170 #KSO — ekstraksi rencana KSO dari pesan AM. ENV terpisah dari fitur teks lain:
     model ekstraktor yang mengarang satu kolom merusak integritas seluruh antrean komite.
-    Fallback BUKAN model penalaran (deepseek-r1 di daily_models) — token berpikirnya
+    Fallback BUKAN model penalaran (seperti deepseek-r1 yang dulu di daily_models) — token berpikirnya
     memakan max_tokens dan memotong JSON."""
     primary = os.environ.get("KSO_MODEL_PRIMARY", "anthropic/claude-haiku-4.5")
     fallback = os.environ.get("KSO_MODEL_FALLBACK", "google/gemini-3.8-flash")

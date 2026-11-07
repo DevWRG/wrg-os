@@ -2,13 +2,8 @@ import { db } from "../db.js";
 import { sendViaWaGateway } from "../wasend.js";
 import { accurateConfigured, syncAccurateInvoices } from "./accurateSync.js";
 import { deriveInvoiceStatus, invoiceDetail, normalizeAccurateDate, type InvoiceStatus } from "./ar.js";
+import { fmtRupiah, fmtTanggal } from "./cek.js";
 import { joinAmFromSalesman } from "./salesman-am.js";
-
-// Di main, cek.ts (#CEK, batch magang) belum ada — dua helper format yang dipakai
-// F91 didefinisikan lokal, identik dengan versi cek.ts di dev.
-const fmtTanggal = (iso: string | null): string =>
-  iso ? new Date(iso).toLocaleDateString("id-ID", { day: "2-digit", month: "short", year: "numeric" }) : "-";
-const fmtRupiah = (n: number | null): string | null => (n == null ? null : `Rp${n.toLocaleString("id-ID")}`);
 
 // F91 Invoice Status Check (#FAKTUR). Dua bagian, satu definisi status
 // (deriveInvoiceStatus di ar.ts, juga dipakai dialog detail invoice web):

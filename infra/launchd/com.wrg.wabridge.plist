@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.wrg.wabridge</string>
+  <key>ProgramArguments</key>
+  <array><string>/Users/development/DevWRG/wrg-os/scripts/ops/wa-bridge-standalone.sh</string></array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+
+  <!-- WAJIB: tanpa ini launchd memberi QoS latar + I/O prioritas rendah, dan
+       `openclaw message send` melambat 4x (62 detik vs 14 detik) sampai
+       melewati timeout bridge. Terukur 21 Sep 2026. Sama persis sebabnya
+       dengan kegagalan di bawah pm2. -->
+  <key>ProcessType</key><string>Interactive</string>
+  <key>LowPriorityIO</key><false/>
+  <key>LowPriorityBackgroundIO</key><false/>
+
+  <key>StandardOutPath</key><string>/Users/development/.pm2/logs/wrg-prod-wabridge-out.log</string>
+  <key>StandardErrorPath</key><string>/Users/development/.pm2/logs/wrg-prod-wabridge-error.log</string>
+</dict></plist>

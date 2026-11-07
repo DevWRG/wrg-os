@@ -334,7 +334,7 @@ async function manualTerakhir(): Promise<Map<string, number>> {
   return new Map(rows.map((r) => [String(r.hod_key), Number(r.umur)]));
 }
 
-async function direkturTarget(): Promise<string | null> {
+export async function direkturTarget(): Promise<string | null> {
   const env = process.env.SENIN_BRIEF_TARGET?.trim();
   if (env) return env;
   // Sama dengan approval.ts: akun direktur tertua yang punya nomor WA.
@@ -420,9 +420,6 @@ export async function runSeninBrief(opts: {
 
   // Narasi LLM — konteks angka WatchPoint ikut dikirim supaya pertanyaan kritis
   // berpijak pada metric sungguhan, bukan karangan.
-  // callAi di main bisa MELEMPAR (services/ai mati / timeout / balasan bukan
-  // JSON). Ditangkap di sini: narasi gagal tak boleh membatalkan brief — bagian
-  // deterministik tetap disimpan & dikirim ke Direktur.
   const { status, data } = await callAi("/senin-brief", {
     minggu_label: label,
     minggu_rapat: labelRapat,
@@ -440,6 +437,12 @@ export async function runSeninBrief(opts: {
     }),
     dry_run: aiDryRun(),
   }, { timeoutMs: 120_000 }).catch((e: unknown) => ({
+    // services/ai tak terjangkau (mati / timeout / DNS) MELEMPAR, bukan membalas
+    // status. Tanpa penangkap ini seluruh generasi Senin Brief gagal — padahal
+    // tabel & cek deterministik di atas sudah dihitung dari data dan tetap
+    // berguna tanpa narasi. Dipetakan ke 503 supaya jatuh ke cabang
+    // `status !== 200` yang sudah ada: brief tetap terbit, narasinya diganti
+    // peringatan. (Dari `main`, hilang di `dev` — lihat PR back-merge ini.)
     status: 503,
     data: { error: `services/ai tak terjangkau (/senin-brief): ${e instanceof Error ? e.message : String(e)}` } as Record<string, unknown>,
   }));
@@ -514,13 +517,8 @@ export interface SeninBriefRow {
   generated_at: string;
 }
 
-export async function listSeninBriefs(limit = 12): Promise<SeninBriefRow[]> {
-  const rows = await db()`
-    SELECT id::text, iso_year, iso_week, periode, health, checks, content, narasi_ok, model_used,
-           wa_sent_at::text, wa_error, generated_at::text
-    FROM senin_brief ORDER BY iso_year DESC, iso_week DESC LIMIT ${limit}
-  `;
-  return rows.map((r) => ({
+function mapRow(r: Record<string, unknown>): SeninBriefRow {
+  return {
     id: String(r.id), iso_year: Number(r.iso_year), iso_week: Number(r.iso_week),
     periode: String(r.periode), health: r.health as Health, checks: (r.checks ?? []) as HodBrief[],
     content: String(r.content), narasi_ok: Boolean(r.narasi_ok),
@@ -529,5 +527,73 @@ export async function listSeninBriefs(limit = 12): Promise<SeninBriefRow[]> {
     wa_sent_at: r.wa_sent_at ? String(r.wa_sent_at) : null,
     wa_error: r.wa_error ? String(r.wa_error) : null,
     generated_at: String(r.generated_at),
-  }));
+  };
+}
+
+export async function listSeninBriefs(limit = 12): Promise<SeninBriefRow[]> {
+  const rows = await db()`
+    SELECT id::text, iso_year, iso_week, periode, health, checks, content, narasi_ok, model_used,
+           wa_sent_at::text, wa_error, generated_at::text
+    FROM senin_brief ORDER BY iso_year DESC, iso_week DESC LIMIT ${limit}
+  `;
+  return rows.map(mapRow);
+}
+
+/** Satu brief (untuk PDF F110). Tanpa argumen = brief terbaru; null bila tak ada. */
+export async function getSeninBrief(isoYear?: number, isoWeek?: number): Promise<SeninBriefRow | null> {
+  const rows = isoYear && isoWeek
+    ? await db()`
+        SELECT id::text, iso_year, iso_week, periode, health, checks, content, narasi_ok, model_used,
+               wa_sent_at::text, wa_error, generated_at::text
+        FROM senin_brief WHERE iso_year = ${isoYear} AND iso_week = ${isoWeek}`
+    : await db()`
+        SELECT id::text, iso_year, iso_week, periode, health, checks, content, narasi_ok, model_used,
+               wa_sent_at::text, wa_error, generated_at::text
+        FROM senin_brief ORDER BY iso_year DESC, iso_week DESC LIMIT 1`;
+  return rows.length ? mapRow(rows[0]) : null;
+}
+
+// ── #BRIEFING (WA) — F110 ────────────────────────────────────────
+
+export type ArgBriefing = { tahun?: number; minggu?: number } | { error: string };
+
+/**
+ * Argumen hashtag: kosong = brief terbaru; `W41` / `41` = minggu itu di tahun
+ * ISO berjalan; `2026 W41` = tahun eksplisit. Minggu ISO 1–53.
+ */
+export function parseBriefingArg(arg: string, tahunIni: number): ArgBriefing {
+  const t = arg.trim();
+  if (!t) return {};
+  const m = /^(?:(\d{4})\s*[-/ ]?\s*)?w?\s*(\d{1,2})$/i.exec(t);
+  if (!m) return { error: "format" };
+  const minggu = Number(m[2]);
+  if (minggu < 1 || minggu > 53) return { error: "format" };
+  return { tahun: m[1] ? Number(m[1]) : tahunIni, minggu };
+}
+
+/** Balasan WA untuk #BRIEFING: ringkasan F85 yang sama dgn WA Senin + jejak waktu susun. */
+export function formatBalasanBriefing(b: SeninBriefRow, link: string | null): string {
+  const label = `W${b.iso_week}`;
+  const baris = [formatWa(label, b.periode, b.health, b.checks, link)];
+  const disusun = new Date(b.generated_at).toLocaleString("id-ID", {
+    timeZone: "Asia/Jakarta", dateStyle: "medium", timeStyle: "short",
+  });
+  baris.push("", `_Disusun ${disusun}${b.narasi_ok ? "" : " · narasi AI tak tersedia"}_`);
+  return baris.join("\n");
+}
+
+/** Dipanggil handler #BRIEFING (pengirim sudah divalidasi Direktur/admin oleh inbound). */
+export async function balasanBriefing(arg: string): Promise<string> {
+  const parsed = parseBriefingArg(arg, currentWeek().isoYear);
+  if ("error" in parsed) {
+    return "⚠️ Format #BRIEFING: kirim #BRIEFING untuk brief terbaru, atau #BRIEFING W41 untuk minggu tertentu.";
+  }
+  const brief = await getSeninBrief(parsed.tahun, parsed.minggu);
+  if (!brief) {
+    return parsed.minggu
+      ? `Belum ada Senin Brief untuk W${parsed.minggu} ${parsed.tahun}.`
+      : "Belum ada Senin Brief. Job senin-brief menyusunnya tiap Senin 06:30.";
+  }
+  const base = (process.env.WEB_PUBLIC_URL || "").replace(/\/$/, "");
+  return formatBalasanBriefing(brief, base ? `${base}/briefings?tab=senin` : null);
 }

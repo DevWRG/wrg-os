@@ -411,7 +411,7 @@ function SendWaButton({ hod }: { hod: HodWatch }) {
           <DialogTitle>Kirim WatchPoint — {hod.name}</DialogTitle>
           <DialogDescription>Kirim ringkasan status {hod.name} ke nomor/JID WA tujuan.</DialogDescription>
         </DialogHeader>
-        <form onSubmit={submit}>
+        <form onSubmit={submit} className="contents">
           <DialogBody className="grid gap-3">
             <div className="grid gap-1.5">
               <Label htmlFor={`wa-${hod.key}`}>Nomor / JID tujuan *</Label>

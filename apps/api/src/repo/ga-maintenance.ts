@@ -1,5 +1,10 @@
+import type { TransactionSql } from "postgres";
+
 import { db } from "../db.js";
 import { sendGaWa } from "../wasend.js";
+import { buatRequestDalamTx, daftarKonsumen, decideFromDashboard, notifyCurrentStep, type NotifyResult } from "./approval.js";
+
+type Tx = TransactionSql<Record<string, unknown>>;
 
 // Round-trip lewat toISOString() (bukan cuma cek Number.isNaN) — JS Date
 // TOLERAN overflow kalender (mis. "2027-02-30" diam-diam jadi "2027-03-02"),
@@ -26,6 +31,18 @@ export interface ActionResult {
 
 // Ambang approval Finance (Rp) — RACI brief F137: "Finance C (>Rp 5jt)".
 const FINANCE_THRESHOLD = Number(process.env.GA_MAINTENANCE_FINANCE_THRESHOLD) || 5_000_000;
+
+// Approval Finance lewat mesin F11 (migrasi 249), alur 'ga-maintenance'.
+export const JENIS_GA_MAINTENANCE = "ga-maintenance";
+const REF_TABEL = "ga_maintenance_schedules";
+
+// Pure — apakah penyelesaian ini butuh approval Finance. Jadwal yang pernah
+// DITOLAK Finance selalu butuh approval lagi berapa pun biayanya: tanpa itu,
+// menurunkan cost_actual di bawah ambang jadi jalan pintas melewati Finance.
+export function perluApprovalFinance(costActual: number, sudahDisetujui: boolean, pernahDitolak: boolean): boolean {
+  if (sudahDisetujui) return false;
+  return costActual > FINANCE_THRESHOLD || pernahDitolak;
+}
 
 // ───────────────────────── Vendor ─────────────────────────
 
@@ -139,6 +156,10 @@ export interface GaMaintenanceRow {
   started_at: string | null;
   completed_at: string | null;
   created_at: string;
+  // Approval Finance terakhir di mesin F11 (null = tak pernah butuh / data lama).
+  approval_request_id: string | null;
+  approval_kode: string | null;
+  notify?: NotifyResult;
 }
 
 function mapScheduleRow(r: Record<string, unknown>): GaMaintenanceRow {
@@ -165,6 +186,8 @@ function mapScheduleRow(r: Record<string, unknown>): GaMaintenanceRow {
     started_at: r.started_at ? toIsoTs(r.started_at) : null,
     completed_at: r.completed_at ? toIsoTs(r.completed_at) : null,
     created_at: toIsoTs(r.created_at),
+    approval_request_id: r.approval_request_id ? String(r.approval_request_id) : null,
+    approval_kode: r.approval_kode ? String(r.approval_kode) : null,
   };
 }
 
@@ -177,7 +200,8 @@ export interface ListSchedulesFilter {
 export async function listSchedules(filter: ListSchedulesFilter = {}): Promise<GaMaintenanceRow[]> {
   const sql = db();
   const rows = await sql`
-    SELECT m.*, a.asset_code, a.nama AS asset_nama, v.nama AS vendor_nama
+    SELECT m.*, a.asset_code, a.nama AS asset_nama, v.nama AS vendor_nama,
+           (SELECT r.kode FROM approval_request r WHERE r.id = m.approval_request_id) AS approval_kode
     FROM ga_maintenance_schedules m
     JOIN ga_assets a ON a.id = m.asset_id
     LEFT JOIN ga_vendor v ON v.id = m.vendor_id
@@ -192,7 +216,8 @@ export async function listSchedules(filter: ListSchedulesFilter = {}): Promise<G
 export async function getSchedule(id: string): Promise<GaMaintenanceRow | null> {
   const sql = db();
   const rows = await sql`
-    SELECT m.*, a.asset_code, a.nama AS asset_nama, v.nama AS vendor_nama
+    SELECT m.*, a.asset_code, a.nama AS asset_nama, v.nama AS vendor_nama,
+           (SELECT r.kode FROM approval_request r WHERE r.id = m.approval_request_id) AS approval_kode
     FROM ga_maintenance_schedules m
     JOIN ga_assets a ON a.id = m.asset_id
     LEFT JOIN ga_vendor v ON v.id = m.vendor_id
@@ -302,9 +327,13 @@ export async function cancelSchedule(id: string, notes?: string | null): Promise
 
 // Buat kemunculan berikutnya (recur_months>0) — dipanggil setiap kali jadwal
 // BENAR-BENAR completed (langsung atau lewat approval Finance).
-async function spawnRecurrence(row: { id: string; asset_id: string; maint_type: string; due_date: string | null; cost_budget: number; vendor_id: string | null; recur_months: number; notes: string | null }): Promise<void> {
+async function spawnRecurrence(
+  row: { id: string; asset_id: string; maint_type: string; due_date: string | null; cost_budget: number; vendor_id: string | null; recur_months: number; notes: string | null },
+  tx?: Tx,
+): Promise<void> {
   if (!row.recur_months || row.recur_months <= 0 || !row.due_date) return;
-  const sql = db();
+  // Sql & TransactionSql tak bisa dipanggil sebagai union — samakan tipenya.
+  const sql = (tx ?? db()) as unknown as Tx;
   const next = new Date(`${row.due_date}T00:00:00Z`);
   next.setUTCMonth(next.getUTCMonth() + row.recur_months);
   await sql`
@@ -316,57 +345,93 @@ async function spawnRecurrence(row: { id: string; asset_id: string; maint_type: 
 export interface CompleteInput {
   cost_actual?: number | null;
   notes?: string | null;
+  // Akun yang menyelesaikan (sesi web) — jadi pengaju approval Finance;
+  // pengaju tak boleh memutus approval-nya sendiri.
+  actor_user_id?: string | null;
+  actor_name?: string | null;
 }
 
-// Selesaikan jadwal. Kalau cost_actual > ambang Finance DAN belum
-// approved_by → status jatuh ke 'pending_finance' (BUKAN 'done'),
-// menunggu approveSchedule(). Recurrence baru CUMA dibuat begitu status
-// benar-benar 'done' (langsung atau lewat approval).
+function recurOf(row: Record<string, unknown>) {
+  return {
+    id: String(row.id), asset_id: String(row.asset_id), maint_type: String(row.maint_type),
+    due_date: toIsoDate(row.due_date), cost_budget: Number(row.cost_budget), vendor_id: row.vendor_id ? String(row.vendor_id) : null,
+    recur_months: Number(row.recur_months), notes: row.notes ? String(row.notes) : null,
+  };
+}
+
+// Selesaikan jadwal. Kalau butuh approval Finance (perluApprovalFinance) →
+// status 'pending_finance' + approval_request alur 'ga-maintenance' dalam
+// satu transaksi; WA ke Finance sesudah commit. Recurrence baru CUMA dibuat
+// begitu status benar-benar 'done' (langsung, atau lewat penangan konsumen).
 export async function completeSchedule(id: string, input: CompleteInput): Promise<GaMaintenanceRow | ActionResult> {
   const sql = db();
-  const rows = await sql`SELECT * FROM ga_maintenance_schedules WHERE id = ${id}`;
-  if (rows.length === 0) return { ok: false, error: "jadwal tidak ditemukan" };
-  const row = rows[0];
-  // Harus lewat start() dulu (in_progress) — tanpa guard ini, jadwal "pending"
-  // bisa langsung di-complete (skip-start), DAN jadwal "pending_finance" yang
-  // nunggu approveSchedule() bisa di-complete ULANG dgn biaya lebih rendah utk
-  // mem-bypass approval Finance sepenuhnya (approved_by/approved_at tak pernah
-  // terisi tapi status tetap jatuh ke "done").
-  if (row.status !== "in_progress") {
-    return { ok: false, error: `hanya bisa complete dari status "in_progress", saat ini "${row.status}"` };
-  }
   if (input.cost_actual != null && (!Number.isFinite(input.cost_actual) || input.cost_actual < 0)) {
     return { ok: false, error: "cost_actual tidak boleh negatif" };
   }
-
-  const costActual = input.cost_actual ?? Number(row.cost_actual ?? 0);
-  const needsFinance = costActual > FINANCE_THRESHOLD && !row.approved_by;
-  const newStatus = needsFinance ? "pending_finance" : "done";
-
-  await sql`
-    UPDATE ga_maintenance_schedules SET
-      cost_actual = ${costActual}, notes = COALESCE(${input.notes ?? null}, notes),
-      status = ${newStatus}, completed_at = now(), updated_at = now()
-    WHERE id = ${id}
-  `;
-  if (newStatus === "done") {
-    await spawnRecurrence({
-      id: String(row.id), asset_id: String(row.asset_id), maint_type: String(row.maint_type),
-      due_date: toIsoDate(row.due_date), cost_budget: Number(row.cost_budget), vendor_id: row.vendor_id ? String(row.vendor_id) : null,
-      recur_months: Number(row.recur_months), notes: row.notes ? String(row.notes) : null,
+  const out = await sql.begin(async (txRaw): Promise<ActionResult & { aprId?: string }> => {
+    const tx = txRaw as unknown as Tx;
+    const rows = await tx`
+      SELECT s.*, a.asset_code, a.nama AS asset_nama FROM ga_maintenance_schedules s JOIN ga_assets a ON a.id = s.asset_id
+      WHERE s.id = ${id} FOR UPDATE OF s
+    `;
+    if (rows.length === 0) return { ok: false, error: "jadwal tidak ditemukan" };
+    const row = rows[0];
+    // Harus lewat start() dulu (in_progress) — tanpa guard ini, jadwal "pending"
+    // bisa langsung di-complete (skip-start), DAN jadwal "pending_finance" yang
+    // menunggu Finance bisa di-complete ULANG dgn biaya lebih rendah utk
+    // mem-bypass approval Finance sepenuhnya.
+    if (row.status !== "in_progress") {
+      return { ok: false, error: `hanya bisa complete dari status "in_progress", saat ini "${row.status}"` };
+    }
+    const costActual = input.cost_actual ?? Number(row.cost_actual ?? 0);
+    const [tolak] = await tx`
+      SELECT 1 FROM approval_request WHERE ref_tabel = ${REF_TABEL} AND ref_id = ${id} AND status = 'rejected' LIMIT 1
+    `;
+    const needsFinance = perluApprovalFinance(costActual, !!row.approved_by, !!tolak);
+    const newStatus = needsFinance ? "pending_finance" : "done";
+    await tx`
+      UPDATE ga_maintenance_schedules SET
+        cost_actual = ${costActual}, notes = COALESCE(${input.notes ?? null}, notes),
+        status = ${newStatus}, completed_at = now(), updated_at = now()
+      WHERE id = ${id}
+    `;
+    if (!needsFinance) {
+      await spawnRecurrence(recurOf(row), tx);
+      return { ok: true };
+    }
+    const apr = await buatRequestDalamTx(tx, {
+      jenis: JENIS_GA_MAINTENANCE,
+      title: `Maintenance GA: ${row.asset_code} — ${row.asset_nama} (${row.maint_type})`.slice(0, 200),
+      description: [tolak ? "Diajukan ulang setelah ditolak Finance." : null, input.notes ?? (row.notes ? String(row.notes) : null)]
+        .filter(Boolean).join("\n") || null,
+      nominal: costActual,
+      requestedBy: input.actor_name?.trim() || "GA",
+      requestedByUserId: input.actor_user_id ?? null,
+      refTabel: REF_TABEL,
+      refId: id,
     });
-  }
-  return (await getSchedule(id))!;
+    if (!apr.ok) throw new Error(`gagal membuat approval Finance: ${apr.error}`);
+    await tx`UPDATE ga_maintenance_schedules SET approval_request_id = ${apr.id} WHERE id = ${id}`;
+    return { ok: true, aprId: apr.id };
+  });
+  if (!out.ok) return out;
+  const notify = out.aprId ? await notifyCurrentStep(out.aprId) : undefined;
+  const row = (await getSchedule(id))!;
+  return notify ? { ...row, notify } : row;
 }
 
 export interface ApproveInput {
   approved_by: string;
+  // Jalur lama (tanpa approval_request_id): BFF sudah memeriksa gerbang
+  // "Approve Finance" (canApproveGaFinance). Jalur engine tak memakainya —
+  // wewenangnya keanggotaan grup tahap approval.
+  legacy_allowed?: boolean;
 }
 
-// Approval Finance — HANYA valid dari status 'pending_finance'. Guard SIAPA
-// boleh manggil ini ada di WEB layer (ga-maintenance-access.ts,
-// canApproveGaFinance), bukan di sini — konsisten pola admin-gate repo ini
-// (CLAUDE.md: gate identitas di layer web, bukan api).
+// Approval Finance dari tombol di /ga-aset. Jadwal yang punya approval di
+// mesin F11 diputus lewat engine (wewenang = anggota grup tahap itu, bukan
+// pengaju); approved_by = id akun sesi. Jalur langsung di bawah hanya untuk
+// baris lama tanpa approval_request_id.
 export async function approveSchedule(id: string, input: ApproveInput): Promise<GaMaintenanceRow | ActionResult> {
   const sql = db();
   const rows = await sql`SELECT * FROM ga_maintenance_schedules WHERE id = ${id}`;
@@ -374,14 +439,43 @@ export async function approveSchedule(id: string, input: ApproveInput): Promise<
   const row = rows[0];
   if (row.status !== "pending_finance") return { ok: false, error: `hanya bisa approve dari status "pending_finance", saat ini "${row.status}"` };
 
+  if (row.approval_request_id) {
+    const r = await decideFromDashboard(String(row.approval_request_id), "approve", input.approved_by);
+    if (!r.ok) return { ok: false, error: r.error };
+    return (await getSchedule(id))!;
+  }
+
+  if (!input.legacy_allowed) return { ok: false, error: "forbidden (Approve Finance: admin/Finance/Akses Grup ga-finance-approval)" };
   await sql`UPDATE ga_maintenance_schedules SET status = 'done', approved_by = ${input.approved_by}, approved_at = now(), updated_at = now() WHERE id = ${id}`;
-  await spawnRecurrence({
-    id: String(row.id), asset_id: String(row.asset_id), maint_type: String(row.maint_type),
-    due_date: toIsoDate(row.due_date), cost_budget: Number(row.cost_budget), vendor_id: row.vendor_id ? String(row.vendor_id) : null,
-    recur_months: Number(row.recur_months), notes: row.notes ? String(row.notes) : null,
-  });
+  await spawnRecurrence(recurOf(row));
   return (await getSchedule(id))!;
 }
+
+// Penangan konsumen engine — jalan di transaksi keputusan approval.
+//   approved → done + approved_by + jadwal berikutnya
+//   rejected → kembali in_progress (GA memperbaiki lalu menyelesaikan ulang;
+//              approval Finance wajib lagi, lihat perluApprovalFinance)
+// Hanya bertindak bila approval itu masih yang aktif untuk jadwal ini.
+daftarKonsumen(REF_TABEL, async (tx, h) => {
+  const [row] = await tx`
+    SELECT * FROM ga_maintenance_schedules
+    WHERE id = ${h.refId} AND status = 'pending_finance' AND approval_request_id = ${h.requestId}
+    FOR UPDATE
+  `;
+  if (!row) return;
+  if (h.status === "approved") {
+    await tx`
+      UPDATE ga_maintenance_schedules SET status = 'done', approved_by = ${h.olehUserId}, approved_at = now(), updated_at = now()
+      WHERE id = ${h.refId}
+    `;
+    await spawnRecurrence(recurOf(row), tx);
+  } else {
+    await tx`
+      UPDATE ga_maintenance_schedules SET status = 'in_progress', completed_at = NULL, updated_at = now()
+      WHERE id = ${h.refId}
+    `;
+  }
+});
 
 // ── Cron: alert due-date mendekati/lewat (pola F24 reminder — naggy by
 // design, tanpa penanda anti-spam persisten, cek ulang tiap run). ──

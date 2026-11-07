@@ -46,6 +46,9 @@ export async function upsertMembers(rows: MonitorMemberInput[]): Promise<number>
 
 // ── Digest (rekap / resume) ──
 export interface DigestInput {
+  // 'cashin' = resume uang masuk harian F-CASHIN. Kolom monitor_digest.kind
+  // varchar(10) tanpa CHECK, jadi cukup melebarkan union ini (6 karakter, aman
+  // dari overflow — pola sama seperti peringatan panjang kolom `waktu`).
   kind: "rekap" | "resume" | "daily" | "weekly" | "briefing" | "cashin";
   tanggal: string;
   waktu?: string | null;

@@ -22,11 +22,12 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   // disembunyikan tak menutup endpoint: gatewayFetch menyuntik service token
   // yg mem-bypass JWT di apps/api, jadi tanpa cek ini siapa pun yg login bisa
   // meng-approve maintenance >Rp5jt lewat POST langsung.
-  if (me) {
-    if (!canApproveGaFinance(me)) {
-      return Response.json({ error: "forbidden (Approve Finance: admin/Finance/Akses Grup ga-finance-approval)" }, { status: 403 });
-    }
-  } else if ((process.env.AUTH_ENABLED ?? "").toLowerCase() === "true") {
+  //
+  // Sejak migrasi 249 jadwal yang menunggu Finance punya approval di mesin
+  // F11: wewenangnya = anggota grup tahap itu (dicek engine dari akun sesi),
+  // jadi gerbang lokal di bawah hanya berlaku untuk baris lama
+  // (legacy_allowed). Engine juga menolak pengaju memutus sendiri.
+  if (!me && (process.env.AUTH_ENABLED ?? "").toLowerCase() === "true") {
     return Response.json({ error: "unauthenticated" }, { status: 401 });
   }
   const approvedBy = me?.id ?? body.approved_by;
@@ -36,7 +37,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       await gatewayFetch(`/ga-maintenance/${encodeURIComponent(id)}/approve`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ approved_by: approvedBy }),
+        body: JSON.stringify({ approved_by: approvedBy, legacy_allowed: me ? canApproveGaFinance(me) : true }),
       }),
     );
   } catch {

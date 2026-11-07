@@ -21,8 +21,10 @@ export interface DealFormInit {
   product_category?: string | null;
   estimate_amount?: number | null;
   qty_num?: number | null;
+  qty_unit?: string | null;
   unit_price?: number | null;
   coop_model?: string | null;
+  sumber_lead?: string | null;
   cabang?: string | null;
   city?: string | null;
   province?: string | null;
@@ -45,7 +47,7 @@ const uniqSorted = (arr: (string | null | undefined)[]) =>
 
 const INPUT_CLS = "mt-0.5 w-full rounded-md border border-input bg-background px-2 py-1";
 // Isian yang dikirim saat menambah opsi — pembeda tawaran saja (backend menyalin sisanya).
-const OPSI_FIELDS = ["brand", "product", "product_category", "coop_model", "qty_num", "unit_price",
+const OPSI_FIELDS = ["brand", "product", "product_category", "coop_model", "qty_num", "qty_unit", "unit_price",
   "purchase_month", "purchase_year", "notes"];
 function Lbl({ children }: { children: React.ReactNode }) {
   return <span className="text-xs text-muted-foreground">{children}</span>;
@@ -177,8 +179,10 @@ export function DealFormModal({ mode, deal, onClose, brands = [], cabangs = [], 
     product: kosongkan(str(deal?.product)),
     product_category: str(deal?.product_category),
     qty_num: kosongkan(deal?.qty_num != null ? String(deal.qty_num) : ""),
+    qty_unit: kosongkan(str(deal?.qty_unit)),
     unit_price: kosongkan(deal?.unit_price != null ? String(deal.unit_price) : ""),
     coop_model: kosongkan(str(deal?.coop_model)),
+    sumber_lead: str(deal?.sumber_lead),
     cabang: str(deal?.cabang),
     city: str(deal?.city),
     province: str(deal?.province),
@@ -310,6 +314,16 @@ export function DealFormModal({ mode, deal, onClose, brands = [], cabangs = [], 
             </select>
           </label>
           {!opsi && (<>
+          <label className="text-sm"><Lbl>Sumber Lead</Lbl>
+            <select value={form.sumber_lead} onChange={(e) => set("sumber_lead", e.target.value)} className={inputCls}>
+              <option value="">— (Lainnya)</option>
+              <option value="tender">Tender</option>
+              <option value="referensi">Referensi customer</option>
+              <option value="vendor">Vendor (principal merekomendasikan faskes)</option>
+              <option value="pameran">Trade show</option>
+              <option value="cold_call">Cold call</option>
+            </select>
+          </label>
           <label className="text-sm"><Lbl>Cabang</Lbl>
             <select value={form.cabang} onChange={(e) => set("cabang", e.target.value)} className={inputCls}>
               <option value="">—</option>
@@ -357,6 +371,13 @@ export function DealFormModal({ mode, deal, onClose, brands = [], cabangs = [], 
 
           <label className="text-sm"><Lbl>QTY / Test per-bulan</Lbl>
             <input type="number" inputMode="numeric" value={form.qty_num} onChange={(e) => set("qty_num", e.target.value)} className={inputCls} />
+          </label>
+          {/* Satuan qty. Tanpa ini, qty_num "50" bisa berarti 50 mesin atau 50
+              consumable, dan baris tak bisa dijumlah lintas deal (#1178). Kedua
+              importer sudah mengisinya dari teks asli ("50 unit" -> "unit"),
+              jadi field ini menutup jalur tulis web yang selama ini melewatkannya. */}
+          <label className="text-sm"><Lbl>Satuan QTY</Lbl>
+            <input value={form.qty_unit} onChange={(e) => set("qty_unit", e.target.value)} placeholder="unit / test / box" className={inputCls} />
           </label>
           <label className="text-sm"><Lbl>Harga per Test/Unit (Rp)</Lbl>
             <input type="number" inputMode="numeric" value={form.unit_price} onChange={(e) => set("unit_price", e.target.value)} className={inputCls} />

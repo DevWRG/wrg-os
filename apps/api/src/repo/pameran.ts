@@ -392,12 +392,12 @@ export async function jadikanDeal(pengunjungId: number, scope: DataScope, b: Rec
   // jadi tak pernah ada deal kembar dan tak perlu menghapus deal yang sudah telanjur dibuat.
   const klaim = await sql`update pameran_pengunjung set deal_id = ${PROSES} where id = ${pengunjungId} and deal_id is null returning id`;
   if (!klaim.length) throw new PameranError(409, "Pengunjung ini baru saja dijadikan deal oleh orang lain.");
-  // main belum punya deal.sumber_lead (migrasi 252, F96 hanya di dev) → asal "pameran" dicatat di notes.
-  const catatan = `[Sumber: pameran] Pengunjung pameran ${r.pameran}: ${r.nama} (${hpTampil(String(r.no_hp))}), kupon ${r.kode_kupon}.`;
+  const catatan = `Pengunjung pameran ${r.pameran}: ${r.nama} (${hpTampil(String(r.no_hp))}), kupon ${r.kode_kupon}.`;
   let deal: { deal_id: string };
   try {
     deal = await createDeal(scope, {
-      facility_name: String(r.institusi), product_category: KATEGORI_DEAL[r.divisi as Divisi],       ...(r.kab_kota ? { city: String(r.kab_kota), province: String(r.provinsi) } : {}),
+      facility_name: String(r.institusi), product_category: KATEGORI_DEAL[r.divisi as Divisi], sumber_lead: "pameran",
+      ...(r.kab_kota ? { city: String(r.kab_kota), province: String(r.provinsi) } : {}),
       notes: teks(b.catatan, 500) ? `${catatan}\n${teks(b.catatan, 500)}` : catatan,
       ...(typeof b.am_id === "string" && b.am_id ? { am_id: b.am_id } : {}),
     });

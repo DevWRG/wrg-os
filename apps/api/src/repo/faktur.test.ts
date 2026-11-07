@@ -174,17 +174,6 @@ test("buildOverdueRecap: total, ember umur, N terbesar", () => {
   assert.match(txt, /3 invoice terbesar sudah dicek ulang/);
 });
 
-// Di main, test filter kind (inbound-kind-filter.test.ts) belum ada — kasus
-// #FAKTUR dijaga di sini: `\b` mencegah #FAKTURIS/#FAKTUR123 ikut terpicu.
-test("detectKind: #FAKTUR terpicu, #FAKTURIS/#FAKTUR123 tidak", async () => {
-  const { detectKind } = await import("./inbound.js");
-  assert.equal(detectKind("#FAKTUR SI.2026.09.00123"), "faktur");
-  assert.equal(detectKind("#faktur si.2026.09.00123 tolong dicek"), "faktur");
-  assert.equal(detectKind("pagi tim\n# FAKTUR SI-1"), "faktur");
-  assert.equal(detectKind("#FAKTURIS rapat jam 3"), "none");
-  assert.equal(detectKind("#FAKTUR123"), "none");
-});
-
 test("nominal berpecahan sen dibulatkan (rekap prod 11 Okt: Rp…,942)", () => {
   const rows = [
     row({ id: 1, number: "OD-A", stage: "od", days_to_due: -5, outstanding: 1000.471 }),
@@ -196,6 +185,16 @@ test("nominal berpecahan sen dibulatkan (rekap prod 11 Okt: Rp…,942)", () => {
   const d = buildReminderDigest([row({ outstanding: 1234.5 })], "fin", TODAY);
   assert.match(d.text, /sisa Rp1\.235 /);
 });
+test("detectKind: #FAKTUR terpicu, #FAKTURIS/#FAKTUR123 tidak", async () => {
+  const { detectKind } = await import("./inbound.js");
+  assert.equal(detectKind("#FAKTUR SI.2026.09.00123"), "faktur");
+  assert.equal(detectKind("#faktur si.2026.09.00123 tolong dicek"), "faktur");
+  assert.equal(detectKind("pagi tim\n# FAKTUR SI-1"), "faktur");
+  assert.equal(detectKind("#FAKTURIS rapat jam 3"), "none");
+  assert.equal(detectKind("#FAKTUR123"), "none");
+});
+
+
 test("reminderAmAktif: DM ke AM default mati, nyala hanya bila INVOICE_REMINDER_AM_ENABLED=true", () => {
   assert.equal(reminderAmAktif({}), false);
   assert.equal(reminderAmAktif({ INVOICE_REMINDER_AM_ENABLED: "false" }), false);

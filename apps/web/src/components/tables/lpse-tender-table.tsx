@@ -1,0 +1,84 @@
+"use client";
+
+import { Badge } from "@/components/ui/badge";
+import { DataTable, type DataColumn } from "@/components/ui/data-table";
+import { LpseTenderAdvanceActions } from "@/components/crm/lpse-tender-advance-actions";
+import { LpseTenderTimelineButton } from "@/components/crm/lpse-tender-timeline-button";
+import { EditLpseTenderButton } from "@/components/crm/edit-lpse-tender-button";
+import type { EmployeeOption } from "@/components/crm/add-lpse-tender-button";
+
+export interface LpseTender {
+  id: string;
+  tender_no: string | null;
+  judul: string;
+  instansi: string;
+  platform: string;
+  pic_employee_id: string | null;
+  pic_nama: string | null;
+  dept_label: string | null;
+  status: string;
+  pesan_masuk_at: string;
+  barang_dikirim_at: string | null;
+  selesai_at: string | null;
+  notes: string | null;
+}
+
+const STATUS_LABEL: Record<string, string> = {
+  pesan_masuk: "Pesan Masuk",
+  barang_dikirim: "Barang Dikirim",
+  selesai: "Selesai",
+};
+const STATUS_VARIANT: Record<string, "outline" | "secondary" | "default"> = {
+  pesan_masuk: "outline",
+  barang_dikirim: "secondary",
+  selesai: "default",
+};
+const PLATFORM_LABEL: Record<string, string> = { lpse: "LPSE", e_catalog: "E-Catalog" };
+
+const fmt = (iso: string) => new Date(iso).toLocaleDateString("id-ID", { day: "2-digit", month: "short", year: "numeric" });
+
+export function LpseTenderTable({ tenders, employees }: { tenders: LpseTender[]; employees: EmployeeOption[] }) {
+  const columns: DataColumn<LpseTender>[] = [
+    {
+      id: "tender",
+      header: "Tender",
+      sortable: true,
+      accessor: (t) => t.judul,
+      cell: (t) => (
+        <div className="max-w-[20rem]">
+          <div className="truncate font-medium" title={t.judul}>{t.judul}</div>
+          <div className="text-muted-foreground truncate text-xs">
+            {t.tender_no ? `${t.tender_no} · ` : ""}
+            {PLATFORM_LABEL[t.platform] ?? t.platform}
+          </div>
+        </div>
+      ),
+    },
+    { id: "instansi", header: "Instansi", sortable: true, accessor: (t) => t.instansi, cell: (t) => <span className="block max-w-[12rem] truncate" title={t.instansi}>{t.instansi}</span> },
+    {
+      id: "pic",
+      header: "PIC",
+      cell: (t) => <span>{t.pic_nama ?? "-"}{t.dept_label ? ` (${t.dept_label})` : ""}</span>,
+    },
+    {
+      id: "status",
+      header: "Status",
+      cell: (t) => <Badge variant={STATUS_VARIANT[t.status] ?? "outline"}>{STATUS_LABEL[t.status] ?? t.status}</Badge>,
+    },
+    { id: "masuk", header: "Pesan Masuk", cell: (t) => fmt(t.pesan_masuk_at) },
+    {
+      id: "aksi",
+      header: "Aksi",
+      align: "right",
+      cell: (t) => (
+        <div className="flex items-center justify-end gap-1">
+          <EditLpseTenderButton tender={t} employees={employees} />
+          <LpseTenderAdvanceActions tenderId={t.id} status={t.status} />
+          <LpseTenderTimelineButton tenderId={t.id} judul={t.judul} />
+        </div>
+      ),
+    },
+  ];
+
+  return <DataTable columns={columns} data={tenders} getKey={(t) => t.id} searchPlaceholder="Cari tender/instansi…" pageSize={25} />;
+}

@@ -7,7 +7,8 @@ import { ingestAccurateWebhook, normalizeAccurateDate, refreshAgingFromAccurate,
 import {
   upsertVendors, upsertItems, upsertSalesOrders, upsertDeliveryOrders, upsertCustomers,
   replaceSalesOrderItems, replaceDeliveryOrderItems, pendingItemDocs, countPendingItemDocs,
-  warehouseAccurateMap, ringkasStokPerGudang, replaceItemStockBranch, pendingStockItems, countPendingStockItems,
+  warehouseAccurateMap, ringkasStokPerGudang, replaceItemStockBranch,
+  pendingStockItems, countPendingStockItems,
 } from "./accurateMirror.js";
 import { upsertFixedAssetDetail, pruneFixedAssets, recordFixedAssetSyncState, markFixedAssetSyncStarted } from "./asetTetap.js";
 import {
@@ -18,6 +19,10 @@ import {
   upsertAccurateReceipts, pendingAccurateReceiptDetails, countPendingAccurateReceiptDetails, replaceAccurateReceiptLines,
   type AccurateReceiptHeader, type AccurateReceiptLine,
 } from "./inbound-receiving.js";
+import {
+  upsertAccurateInvoices, pendingInvoiceDetails, countPendingInvoiceDetails, replaceInvoiceLines, petakanBarisDetail, pruneInvoices, AP_SYNC_ENTITY,
+  type AccurateInvoiceHeader,
+} from "./ap-three-way.js";
 
 // Puller Accurate Online (pengganti legacy sync_accurate.sh). Tarik sales-invoice
 // header+items dari zeus.accurate.id → mirror penuh accurate_* + refresh ar_aging.
@@ -28,13 +33,13 @@ import {
 // ACCURATE_SIGNATURE_SECRET (+ACCURATE_HOST), atau file ACCURATE_CRED_FILE
 // (default ~/.openclaw/credentials/accurate.json).
 
-interface Creds {
+export interface Creds {
   token: string;
   secret: string;
   host: string;
 }
 
-function loadCreds(): Creds | null {
+export function loadCreds(): Creds | null {
   const host = process.env.ACCURATE_HOST || "zeus.accurate.id";
   const envTok = process.env.ACCURATE_ACCESS_TOKEN;
   const envSec = process.env.ACCURATE_SIGNATURE_SECRET;
@@ -59,7 +64,7 @@ function wibTimestamp(): string {
   return `${p(d.getUTCDate())}/${p(d.getUTCMonth() + 1)}/${d.getUTCFullYear()} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}`;
 }
 
-async function accGet(creds: Creds, path: string, qs?: string): Promise<{ s?: boolean; d?: unknown }> {
+export async function accGet(creds: Creds, path: string, qs?: string): Promise<{ s?: boolean; d?: unknown }> {
   const ts = wibTimestamp();
   const sig = createHmac("sha256", creds.secret).update(ts).digest("hex");
   const url = `https://${creds.host}${path}${qs ? `?${qs}` : ""}`;
@@ -230,12 +235,35 @@ export interface AccurateSyncResult {
 
 // Sync sales-invoice. invoiceId → satu invoice; selainnya incremental (window
 // `days` hari, recent-first, stop saat transDate < threshold).
+// Batas halaman pada syncer master (vendor/customer/item) ADA supaya loop tak
+// pernah tak berujung kalau API mengembalikan halaman penuh selamanya. Tapi
+// sampai #1177 batas itu BERHENTI DIAM-DIAM: `break` karena batas dan `break`
+// karena halaman terakhir sama-sama keluar dari loop dan sama-sama membalas
+// `ok: true`, jadi hasil terpotong menyamar jadi sapuan lengkap.
+//
+// Itu bukan hipotesis — persis begitu yang terjadi pada backfill faktur:
+// berhenti di 10.000 dari 11.323 baris, responsnya tetap ok, dan runner-nya
+// mencetak hijau. Katalog item sekarang 5.893 dari kapasitas 10.000 (59%),
+// jadi jarak ke batas itu tidak besar.
+//
+// Helper ini menyeragamkan pelaporannya: kalau batas yang menghentikan, hasilnya
+// ditandai `cappedByPages` DAN dicatat ke log. Yang memotong wajib terlihat.
+export function laporBatasHalaman(nama: string, page: number, maxPages: number, perPage: number): boolean {
+  if (page < maxPages) return false;
+  console.warn(
+    `[accurate-sync] ${nama}: BERHENTI di batas ${maxPages} halaman (${maxPages * perPage} baris) — ` +
+    "hasil kemungkinan TERPOTONG, bukan selesai. Naikkan batasnya kalau data memang lebih banyak.",
+  );
+  return true;
+}
+
 // Tarik master vendor (vendor/list.do) → mirror accurate_vendor. Paginated (100/hal).
-export async function syncVendors(): Promise<{ ok: boolean; synced: number; error?: string }> {
+export async function syncVendors(): Promise<{ ok: boolean; synced: number; error?: string; cappedByPages?: boolean }> {
   const creds = loadCreds();
   if (!creds) return { ok: false, synced: 0, error: "kredensial Accurate tak tersedia" };
   let page = 1;
   let synced = 0;
+  let capped = false;
   for (;;) {
     const list = await accGet(creds, "/accurate/api/vendor/list.do", `sp.page=${page}&sp.pageSize=100&fields=id,name,vendorBranchName`);
     const rows = Array.isArray(list.d) ? (list.d as Array<Record<string, unknown>>) : [];
@@ -249,20 +277,22 @@ export async function syncVendors(): Promise<{ ok: boolean; synced: number; erro
       })),
     );
     synced += rows.length;
-    if (rows.length < 100 || page >= 50) break;
+    if (rows.length < 100) break;
+    if (laporBatasHalaman("vendor", page, 50, 100)) { capped = true; break; }
     page += 1;
   }
-  return { ok: true, synced };
+  return { ok: true, synced, ...(capped ? { cappedByPages: true } : {}) };
 }
 
 // Tarik master customer (customer/list.do) → mirror accurate_customer (id/no/name).
 // Backfill nama yg kosong (mirror cuma diisi dari raw invoice yg kadang tanpa nama).
 // Paginated 100/hal. Guard upsert COALESCE(NULLIF(...)) → gak nge-blank nama yg udah ada.
-export async function syncCustomers(): Promise<{ ok: boolean; synced: number; error?: string }> {
+export async function syncCustomers(): Promise<{ ok: boolean; synced: number; error?: string; cappedByPages?: boolean }> {
   const creds = loadCreds();
   if (!creds) return { ok: false, synced: 0, error: "kredensial Accurate tak tersedia" };
   let page = 1;
   let synced = 0;
+  let capped = false;
   for (;;) {
     const list = await accGet(creds, "/accurate/api/customer/list.do", `sp.page=${page}&sp.pageSize=100&fields=id,name,customerNo`);
     const rows = Array.isArray(list.d) ? (list.d as Array<Record<string, unknown>>) : [];
@@ -276,20 +306,22 @@ export async function syncCustomers(): Promise<{ ok: boolean; synced: number; er
       })),
     );
     synced += rows.length;
-    if (rows.length < 100 || page >= 100) break;
+    if (rows.length < 100) break;
+    if (laporBatasHalaman("customer", page, 100, 100)) { capped = true; break; }
     page += 1;
     await new Promise((r) => setTimeout(r, 150));
   }
-  return { ok: true, synced };
+  return { ok: true, synced, ...(capped ? { cappedByPages: true } : {}) };
 }
 
 // Tarik full katalog item (item/list.do) + STOK → mirror accurate_item.
 // Paginated (100/hal, ~58 hal utk 5.794 item). Untuk menu Inventory & Products.
-export async function syncItems(): Promise<{ ok: boolean; synced: number; error?: string }> {
+export async function syncItems(): Promise<{ ok: boolean; synced: number; error?: string; cappedByPages?: boolean }> {
   const creds = loadCreds();
   if (!creds) return { ok: false, synced: 0, error: "kredensial Accurate tak tersedia" };
   let page = 1;
   let synced = 0;
+  let capped = false;
   for (;;) {
     const list = await accGet(creds, "/accurate/api/item/list.do", `sp.page=${page}&sp.pageSize=100&fields=id,no,name,itemType,unitPrice,quantity,availableToSell,unit1`);
     const rows = Array.isArray(list.d) ? (list.d as Array<Record<string, unknown>>) : [];
@@ -308,11 +340,12 @@ export async function syncItems(): Promise<{ ok: boolean; synced: number; error?
       })),
     );
     synced += rows.length;
-    if (rows.length < 100 || page >= 100) break;
+    if (rows.length < 100) break;
+    if (laporBatasHalaman("item", page, 100, 100)) { capped = true; break; }
     page += 1;
     await new Promise((r) => setTimeout(r, 150));
   }
-  return { ok: true, synced };
+  return { ok: true, synced, ...(capped ? { cappedByPages: true } : {}) };
 }
 
 // Tarik sales-order TERBARU (sales-order/list.do, sort transDate desc) → mirror
@@ -327,7 +360,7 @@ function allOlderThan(rows: { trans_date?: string | null }[], sinceDays: number)
   return dated.length > 0 && dated.every((d) => d < cutoff);
 }
 
-export async function syncSalesOrders(opts: { maxPages?: number; sinceDays?: number } = {}): Promise<{ ok: boolean; synced: number; error?: string }> {
+export async function syncSalesOrders(opts: { maxPages?: number; sinceDays?: number } = {}): Promise<{ ok: boolean; synced: number; error?: string; cappedByPages?: boolean }> {
   const creds = loadCreds();
   if (!creds) return { ok: false, synced: 0, error: "kredensial Accurate tak tersedia" };
   // Batas halaman tetap ada sebagai pagar, tapi yang menentukan berhenti adalah
@@ -339,6 +372,7 @@ export async function syncSalesOrders(opts: { maxPages?: number; sinceDays?: num
   const sinceDays = opts.sinceDays ?? 120;
   let page = 1;
   let synced = 0;
+  let capped = false;
   let cutoffReached = false;
   for (; page <= maxPages && !cutoffReached; page++) {
     const list = await accGet(
@@ -373,20 +407,26 @@ export async function syncSalesOrders(opts: { maxPages?: number; sinceDays?: num
     synced += rows.length;
     cutoffReached = allOlderThan(mapped, sinceDays);
     if (rows.length < 100) break;
+    // Loop berhenti krn batas halaman TANPA pernah menyentuh cutoff = hasil
+    // terpotong, bukan "sudah mundur cukup jauh". Bedanya penting: yang kedua
+    // memang tujuannya (recent-only by design), yang pertama kehilangan data
+    // dalam jendela yang diminta.
+    if (page >= maxPages && !cutoffReached) capped = laporBatasHalaman("sales-order", page, maxPages, 100);
     await sleep(150);
   }
-  return { ok: true, synced };
+  return { ok: true, synced, ...(capped ? { cappedByPages: true } : {}) };
 }
 
 // Tarik delivery-order TERBARU (delivery-order/list.do, sort transDate desc) →
 // mirror accurate_delivery_order utk menu Shipments. Volume ~11.9rb → recent saja.
-export async function syncDeliveryOrders(opts: { maxPages?: number; sinceDays?: number } = {}): Promise<{ ok: boolean; synced: number; error?: string }> {
+export async function syncDeliveryOrders(opts: { maxPages?: number; sinceDays?: number } = {}): Promise<{ ok: boolean; synced: number; error?: string; cappedByPages?: boolean }> {
   const creds = loadCreds();
   if (!creds) return { ok: false, synced: 0, error: "kredensial Accurate tak tersedia" };
   const maxPages = opts.maxPages ?? 40;
   const sinceDays = opts.sinceDays ?? 120;
   let page = 1;
   let synced = 0;
+  let capped = false;
   let cutoffReached = false;
   for (; page <= maxPages && !cutoffReached; page++) {
     const list = await accGet(
@@ -418,9 +458,14 @@ export async function syncDeliveryOrders(opts: { maxPages?: number; sinceDays?: 
     synced += rows.length;
     cutoffReached = allOlderThan(mapped, sinceDays);
     if (rows.length < 100) break;
+    // Loop berhenti krn batas halaman TANPA pernah menyentuh cutoff = hasil
+    // terpotong, bukan "sudah mundur cukup jauh". Bedanya penting: yang kedua
+    // memang tujuannya (recent-only by design), yang pertama kehilangan data
+    // dalam jendela yang diminta.
+    if (page >= maxPages && !cutoffReached) capped = laporBatasHalaman("delivery-order", page, maxPages, 100);
     await sleep(150);
   }
-  return { ok: true, synced };
+  return { ok: true, synced, ...(capped ? { cappedByPages: true } : {}) };
 }
 
 // ── Tarik baris item SO/DO ke mirror (migrasi 081) ────────────────
@@ -1019,11 +1064,7 @@ async function syncFixedAssetsInner(opts: { maxPages?: number }): Promise<FixedA
         if (id > 0) ids.push(id);
       }
       if (rows.length < perPage || (rowCount != null && ids.length >= rowCount)) break;
-      if (page >= maxPages) {
-        console.warn(`[accurate-sync] fixed-asset: BERHENTI di batas ${maxPages} halaman — daftar TERPOTONG`);
-        capped = true;
-        break;
-      }
+      if (laporBatasHalaman("fixed-asset", page, maxPages, perPage)) { capped = true; break; }
       await sleep(150);
     }
   } catch (e) {
@@ -1059,28 +1100,6 @@ async function syncFixedAssetsInner(opts: { maxPages?: number }): Promise<FixedA
   return res;
 }
 
-// Batas halaman pada syncer master (vendor/customer/item) ADA supaya loop tak
-// pernah tak berujung kalau API mengembalikan halaman penuh selamanya. Tapi
-// sampai #1177 batas itu BERHENTI DIAM-DIAM: `break` karena batas dan `break`
-// karena halaman terakhir sama-sama keluar dari loop dan sama-sama membalas
-// `ok: true`, jadi hasil terpotong menyamar jadi sapuan lengkap.
-//
-// Itu bukan hipotesis — persis begitu yang terjadi pada backfill faktur:
-// berhenti di 10.000 dari 11.323 baris, responsnya tetap ok, dan runner-nya
-// mencetak hijau. Katalog item sekarang 5.893 dari kapasitas 10.000 (59%),
-// jadi jarak ke batas itu tidak besar.
-//
-// Helper ini menyeragamkan pelaporannya: kalau batas yang menghentikan, hasilnya
-// ditandai `cappedByPages` DAN dicatat ke log. Yang memotong wajib terlihat.
-export function laporBatasHalaman(nama: string, page: number, maxPages: number, perPage: number): boolean {
-  if (page < maxPages) return false;
-  console.warn(
-    `[accurate-sync] ${nama}: BERHENTI di batas ${maxPages} halaman (${maxPages * perPage} baris) — ` +
-    "hasil kemungkinan TERPOTONG, bukan selesai. Naikkan batasnya kalau data memang lebih banyak.",
-  );
-  return true;
-}
-
 // ── F13 PO Tracker = cermin Accurate (migrasi 205) ─────────────────────────
 //
 // Probe 12 Okt 2026: purchase-order/list.do MENGHORMATI fields= (number,
@@ -1104,13 +1123,13 @@ const PO_SINCE = "2026-01-01";
 const PO_OPEN_STATUSES = new Set(["Menunggu diproses", "Sebagian diproses"]);
 
 /** "dd/mm/yyyy" → "yyyy-mm-dd" (null kalau bentuknya lain). */
-function accDate(v: unknown): string | null {
+export function accDate(v: unknown): string | null {
   const m = /^(\d{2})\/(\d{2})\/(\d{4})/.exec(String(v ?? ""));
   return m ? `${m[3]}-${m[2]}-${m[1]}` : null;
 }
 
 /** "dd/mm/yyyy HH:MM:SS" (WIB) → ISO dengan offset +07:00. */
-function accDateTime(v: unknown): string | null {
+export function accDateTime(v: unknown): string | null {
   const m = /^(\d{2})\/(\d{2})\/(\d{4}) (\d{2}):(\d{2}):(\d{2})$/.exec(String(v ?? ""));
   return m ? `${m[3]}-${m[2]}-${m[1]}T${m[4]}:${m[5]}:${m[6]}+07:00` : null;
 }
@@ -1257,6 +1276,7 @@ async function syncPurchaseOrdersInner(
         qty_shipped: num(it.shipQuantity),
         unit: it.itemUnit?.name != null ? String(it.itemUnit.name) : null,
         unit_price: it.unitPrice != null ? Number(it.unitPrice) : null,
+        disc_raw: it.itemDiscPercent != null ? String(it.itemDiscPercent).trim() : null,
         warehouse_name: it.warehouse?.name != null ? String(it.warehouse.name) : null,
         notes: it.detailNotes != null && String(it.detailNotes).trim() ? String(it.detailNotes) : null,
       }));
@@ -1450,6 +1470,185 @@ async function syncReceiveItemsInner(
     pending_details: await countPendingAccurateReceiptDetails(),
     full,
     since,
+    ...(capped ? { cappedByPages: true } : {}),
+  };
+}
+
+// ── F152 Faktur Pembelian Accurate → cermin 3-way match (migrasi 240) ──────
+//
+// Probe 19 Okt 2026: purchase-invoice/list.do menghormati fields= (id, number, billNumber, transDate,
+// dueDate, lastUpdate, statusName, approvalStatus, totalAmount, vendor, description) dan sort
+// lastUpdate|desc — pola inkremental sama dengan syncPurchaseOrders/syncReceiveItems.
+// detail.do membawa id PO & penerimaan sampai tingkat BARIS (purchaseOrderDetailId, receiveItemDetailId).
+//
+// Cakupan: faktur bertanggal >= AP_ACCURATE_SINCE (default = INBOUND_ACCURATE_SINCE, 2026-10-01) + yang sudah
+// ada di cermin. Disamakan dengan cakupan penerimaan: faktur atas penerimaan yang tak tercermin hanya
+// akan jadi "belum sinkron".
+
+export interface PurchaseInvoiceSyncResult {
+  ok: boolean;
+  error?: string;
+  headers: number;
+  skipped_scope: number;
+  details: number;
+  detail_failed: number;
+  lines: number;
+  pending_details: number;
+  full: boolean;
+  since: string;
+  pruned?: number;
+  prune_skipped?: boolean;
+  cappedByPages?: boolean;
+}
+
+let invoiceSyncRunning = false;
+export const purchaseInvoiceSyncBusy = () => invoiceSyncRunning;
+
+function invoiceSince(): string {
+  const v = process.env.AP_ACCURATE_SINCE ?? "";
+  return /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : inboundSince();
+}
+
+export async function syncPurchaseInvoices(opts: { full?: boolean; detailLimit?: number; maxPages?: number } = {}): Promise<PurchaseInvoiceSyncResult> {
+  const since = invoiceSince();
+  const empty = { headers: 0, skipped_scope: 0, details: 0, detail_failed: 0, lines: 0, pending_details: 0, full: !!opts.full, since };
+  if (invoiceSyncRunning) return { ok: false, error: "sinkron faktur pembelian sedang berjalan", ...empty };
+  const creds = loadCreds();
+  if (!creds) return { ok: false, error: "kredensial Accurate tak tersedia", ...empty };
+  invoiceSyncRunning = true;
+  try {
+    const res = await syncPurchaseInvoicesInner(creds, since, opts);
+    await recordInvoiceSyncState(res);
+    return res;
+  } catch (e) {
+    const res = { ok: false, error: String((e as Error)?.message ?? e), ...empty };
+    await recordInvoiceSyncState(res).catch(() => {});
+    return res;
+  } finally {
+    invoiceSyncRunning = false;
+  }
+}
+
+async function recordInvoiceSyncState(res: PurchaseInvoiceSyncResult): Promise<void> {
+  const sql = db();
+  const summary = JSON.parse(JSON.stringify(res));
+  await sql`
+    INSERT INTO accurate_sync_state (entity, last_synced_at, last_run_ok, last_run_summary)
+    VALUES (${AP_SYNC_ENTITY}, now(), ${res.ok}, ${sql.json(summary)})
+    ON CONFLICT (entity) DO UPDATE SET last_synced_at = now(), last_run_ok = ${res.ok},
+      last_run_summary = ${sql.json(summary)}
+  `;
+}
+
+const textOrNull = (v: unknown): string | null => (v != null && String(v).trim() ? String(v) : null);
+const idOrNull = (v: unknown): number | null => {
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? n : null;
+};
+
+async function syncPurchaseInvoicesInner(
+  creds: Creds,
+  since: string,
+  opts: { full?: boolean; detailLimit?: number; maxPages?: number },
+): Promise<PurchaseInvoiceSyncResult> {
+  const sql = db();
+  const maxPages = opts.maxPages ?? 60;
+  const detailLimit = opts.detailLimit ?? 300;
+  const [wm] = await sql`SELECT max(accurate_last_update)::text AS w FROM accurate_purchase_invoice`;
+  const full = opts.full || !wm?.w;
+  // Mundur 1 jam: lastUpdate per detik, dua faktur bisa berbagi detik di batas halaman (upsert idempoten).
+  const watermark = full ? null : new Date(new Date(String(wm.w)).getTime() - 3600_000);
+
+  let headers = 0;
+  let skippedScope = 0;
+  let capped = false;
+  // Sapuan penuh yang tuntas (halaman habis, tak terpotong) → boleh prune faktur yang hilang di Accurate.
+  let tuntas = false;
+  const seen: number[] = [];
+  for (let page = 1; page <= maxPages; page++) {
+    const list = await accGet(
+      creds,
+      "/accurate/api/purchase-invoice/list.do",
+      `sp.page=${page}&sp.pageSize=100&sp.sort=lastUpdate|desc&fields=id,number,billNumber,transDate,dueDate,lastUpdate,statusName,approvalStatus,totalAmount,vendor,description`,
+    );
+    if (list.s !== true) throw new Error(`purchase-invoice/list.do gagal di halaman ${page}`);
+    const rows = Array.isArray(list.d) ? (list.d as Array<Record<string, unknown>>) : [];
+    if (rows.length === 0) { tuntas = true; break; }
+    for (const r of rows) seen.push(Number(r.id));
+
+    const ids = rows.map((r) => Number(r.id));
+    const existing = new Set(
+      (await sql`SELECT accurate_id FROM accurate_purchase_invoice WHERE accurate_id = ANY(${ids}::bigint[])`).map((r) => Number(r.accurate_id)),
+    );
+    const mapped: AccurateInvoiceHeader[] = [];
+    let allOlder = true;
+    for (const v of rows) {
+      const lastUpdate = accDateTime(v.lastUpdate);
+      if (!watermark || !lastUpdate || new Date(lastUpdate) >= watermark) allOlder = false;
+      const transDate = accDate(v.transDate);
+      if (!transDate || !(existing.has(Number(v.id)) || transDate >= since)) { skippedScope++; continue; }
+      const vendor = v.vendor && typeof v.vendor === "object" ? (v.vendor as { id?: unknown; name?: unknown }) : null;
+      mapped.push({
+        accurate_id: Number(v.id),
+        number: String(v.number ?? `PI-${v.id}`),
+        bill_number: textOrNull(v.billNumber),
+        vendor_id: idOrNull(vendor?.id),
+        vendor_name: vendor?.name != null ? String(vendor.name) : "(vendor tak diketahui)",
+        trans_date: transDate,
+        due_date: accDate(v.dueDate),
+        status_name: textOrNull(v.statusName),
+        approval_status: textOrNull(v.approvalStatus),
+        total_amount: v.totalAmount != null && v.totalAmount !== "" ? Number(v.totalAmount) : null,
+        description: textOrNull(v.description),
+        last_update: lastUpdate,
+        opt_lock: null,
+      });
+    }
+    headers += await upsertAccurateInvoices(mapped);
+    if (rows.length < 100) { tuntas = true; break; }
+    if (!full && allOlder) break;
+    if (page >= maxPages) capped = laporBatasHalaman("purchase-invoice", page, maxPages, 100);
+    await sleep(150);
+  }
+
+  let pruned = 0;
+  let pruneSkipped = false;
+  if (full && tuntas && !capped) {
+    const p = await pruneInvoices(seen, since);
+    pruned = p.pruned;
+    pruneSkipped = p.skipped && seen.length > 0;
+  }
+
+  let details = 0;
+  let detailFailed = 0;
+  let lines = 0;
+  for (const inv of await pendingInvoiceDetails(detailLimit)) {
+    const det = await accGet(creds, "/accurate/api/purchase-invoice/detail.do", `id=${inv.accurate_id}`);
+    if (det?.s !== true) {
+      // Faktur bermasalah tak boleh menghentikan sisanya; items_last_update tetap basi → dicoba lagi.
+      detailFailed++;
+      await sleep(150);
+      continue;
+    }
+    const d = det.d as Detail;
+    const items = petakanBarisDetail(d);
+    lines += await replaceInvoiceLines(inv.accurate_id, inv.last_update, d?.optLock != null ? Number(d.optLock) : null, items);
+    details++;
+    await sleep(150);
+  }
+
+  return {
+    ok: true,
+    headers,
+    skipped_scope: skippedScope,
+    details,
+    detail_failed: detailFailed,
+    lines,
+    pending_details: await countPendingInvoiceDetails(),
+    full,
+    since,
+    ...(pruned ? { pruned } : {}),
+    ...(pruneSkipped ? { prune_skipped: true } : {}),
     ...(capped ? { cappedByPages: true } : {}),
   };
 }
