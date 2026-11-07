@@ -138,6 +138,9 @@ begin
 
   -- === forum ===
   perform uji.harus_gagal('Forum hanya Selasa/Kamis', 'select kso.susun_agenda(''2026-10-21'')', 'FORUM_HANYA_SELASA_KAMIS');
+  -- 285: Agenda A hanya memuat bukti volume yang sudah diperiksa Sekretaris — uji alur ini menganggapnya sudah diperiksa
+  -- (penahanan sebelum verifikasi diuji di 917)
+  update kso.rencana_kso set volume_terverifikasi = true where volume_sumber_label = 'data' and volume_terverifikasi is null;
   fr1 := kso.susun_agenda('2026-10-20', clock_timestamp());  -- batas eksplisit: uji tak boleh kedaluwarsa karena kalender
   perform uji.cek('Agenda A maks 3, urut capex terbesar (C pertama)',
      (select count(*)=3 from kso.agenda_item where forum_id=fr1 and jenis='A')
