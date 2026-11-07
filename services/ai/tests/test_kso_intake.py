@@ -59,6 +59,20 @@ class BersihkanTest(unittest.TestCase):
         h = bersihkan({"tenor_bulan": 36}, "minta tenor 3 tahun")
         self.assertEqual(h["tenor_bulan"], 36)
 
+    # 282: hari kerja alat per bulan — disebut AM, bukan tebakan model
+    def test_hari_kerja_disebut(self):
+        self.assertEqual(bersihkan({"hari_kerja": 30}, "#KSO D12 hari kerja 30")["hari_kerja"], 30)
+        self.assertEqual(bersihkan({"hari_kerja": 26}, "lab buka 26 hari sebulan")["hari_kerja"], 26)
+
+    def test_hari_kerja_seminggu_dihitung(self):
+        self.assertEqual(bersihkan({"hari_kerja": None}, "lab buka 6 hari seminggu")["hari_kerja"], 26)
+        self.assertEqual(bersihkan({}, "5 hari kerja per minggu")["hari_kerja"], 22)
+
+    def test_hari_kerja_tebakan_dibuang(self):
+        self.assertIsNone(bersihkan({"hari_kerja": 25}, CONTOH_A)["hari_kerja"])  # tak diucapkan
+        self.assertIsNone(bersihkan({"hari_kerja": 36}, "tenor 36 bulan")["hari_kerja"])  # bukan hari, > 31
+        self.assertIsNone(bersihkan({"hari_kerja": 10}, "ketemu 10 Okt, volume 900")["hari_kerja"])  # angka bukan hari
+
     def test_unit_status_tanpa_kata_dibuang(self):
         h = bersihkan(dict(LLM_A, unit_status="baru"), CONTOH_A)
         self.assertIsNone(h["unit_status"])

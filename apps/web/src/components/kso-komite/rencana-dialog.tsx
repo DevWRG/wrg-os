@@ -145,7 +145,7 @@ function Blok({ judul, children }: { judul: string; children: React.ReactNode })
   );
 }
 
-/** Kisi angka kunci (CAPEX · VOLUME · HARGA/TEST · TENOR · GPM · ZONA). */
+/** Kisi angka kunci (CAPEX · VOLUME · HARGA/TEST · TENOR · HARI KERJA · GPM · ZONA). */
 function AngkaKunci({ d }: { d: Detail }) {
   const r = d.rencana, g = d.angka_gpm;
   const isi: [string, React.ReactNode][] = [
@@ -153,6 +153,7 @@ function AngkaKunci({ d }: { d: Detail }) {
     ["Volume", r.volume_estimasi != null ? `${r.volume_estimasi.toLocaleString("id-ID")} test/bln` : "—"],
     ["Harga/test", rp(r.harga_per_test)],
     ["Tenor", r.tenor_bulan != null ? `${r.tenor_bulan} bln` : "—"],
+    ["Hari kerja", r.hari_kerja != null ? `${r.hari_kerja} hari/bln` : r.hari_kerja_default != null ? `${r.hari_kerja_default} hari/bln (default)` : "—"],
     ["GPM deal", g?.hd ? "Hemodialisa" : persen(g?.gpm ?? r.gpm_deal)],
     ["Zona", r.zona ? <span className={cn("rounded-full px-2 py-0.5 text-xs font-semibold", ZONA_CLS[r.zona])}>{LABEL_ZONA[r.zona]}</span> : "—"],
   ];

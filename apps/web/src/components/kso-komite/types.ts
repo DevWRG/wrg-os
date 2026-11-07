@@ -51,6 +51,8 @@ export interface Detail {
     harga_per_test: number | null; tenor_bulan: number | null; alasan_forum: string | null; payback_bulan: number | null;
     zona?: Zona | null; zona_dasar?: Zona | null; gpm_deal?: number | null; alasan_strategis?: string | null; harga_pesaing?: number | null;
     volume_terverifikasi?: boolean | null; volume_verifikasi_catatan?: string | null; volume_verifikasi_at?: string | null;
+    /** 282: hari kerja alat/bulan dari AM; null = default parameter Bottom Line. */
+    hari_kerja?: number | null; hari_kerja_default?: number | null;
   };
   gerbang: { no: number; nama: string; status: string; nilai: string | null }[];
   pendukung: { nama: string; tipe: string; kontak_terakhir_tanggal: string | null; kontak_terakhir_cara: string | null }[];
