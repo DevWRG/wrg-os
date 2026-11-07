@@ -11,6 +11,8 @@ export interface InstallationUnit {
   alat_name: string;
   serial_number: string | null;
   customer_name: string;
+  /** null = customer baru yang belum ada di Accurate. */
+  account_id?: number | null;
   cabang: string | null;
   po_number: string | null;
   po_control_done: boolean;
@@ -72,7 +74,10 @@ export function InstallationsTable({ units }: { units: InstallationUnit[] }) {
       accessor: (u) => u.customer_name,
       cell: (u) => (
         <div>
-          <div>{u.customer_name}</div>
+          <div>
+            {u.customer_name}
+            {u.account_id == null && <Badge variant="outline" className="ml-1.5 align-middle text-[10px]">belum di Accurate</Badge>}
+          </div>
           {u.cabang && <div className="text-muted-foreground text-xs">{u.cabang}</div>}
         </div>
       ),

@@ -29,7 +29,10 @@ const toIsoTs = (x: unknown): string => new Date(x as string | Date).toISOString
 
 export interface InstallationInput {
   product_id: number;
-  account_id: number;
+  /** null = customer baru yang belum ada di Accurate (wajib `customer_baru`). */
+  account_id: number | null;
+  /** Nama customer baru (belum di Accurate). Diabaikan kalau account_id diisi. */
+  customer_baru?: string | null;
   serial_number?: string | null;
   cabang?: string | null;
   po_number?: string | null;
@@ -103,11 +106,49 @@ export type CreateInstallationResult = { ok: true; row: InstallationRow } | { ok
 // Validasi id → snapshot nama → insert. Nama TIDAK diterima dari klien: kalau
 // klien boleh mengirim nama sendiri, seluruh gunanya memilih dari katalog hilang
 // (nama bisa dikarang lagi walau id-nya benar). Nama SELALU dibaca dari mirror.
+// Daftar cabang = cabang wilayah di area_kota (sumber yang sama dengan
+// area_customer(), jadi cabang isian otomatis selalu ada di daftar). DEMO bukan
+// cabang fisik.
+export async function listCabangInstalasi(): Promise<string[]> {
+  const rows = await db()<{ cabang: string }[]>`
+    SELECT DISTINCT upper(btrim(cabang)) AS cabang FROM area_kota
+    WHERE NULLIF(btrim(cabang), '') IS NOT NULL AND upper(btrim(cabang)) <> 'DEMO'
+    ORDER BY 1`;
+  return rows.map((r) => r.cabang);
+}
+
+/** Opsi form Instalasi: daftar cabang + cabang wilayah customer terpilih (kalau ada). */
+export async function installationOptions(accountId: number | null) {
+  const cabang = await listCabangInstalasi();
+  let cabangCustomer: string | null = null;
+  if (accountId != null) {
+    const [r] = await db()<{ area: string | null }[]>`SELECT area_customer(${accountId}::bigint) AS area`;
+    const a = r?.area ? r.area.trim().toUpperCase() : null;
+    cabangCustomer = a && cabang.includes(a) ? a : null;
+  }
+  return { cabang, cabang_customer: cabangCustomer };
+}
+
 export async function createInstallation(input: InstallationInput): Promise<CreateInstallationResult> {
   const sql = db();
 
-  if (!Number.isInteger(input.product_id) || !Number.isInteger(input.account_id)) {
-    return { ok: false, error: "alat & customer wajib dipilih dari katalog (product_id/account_id harus angka)" };
+  if (!Number.isInteger(input.product_id)) {
+    return { ok: false, error: "alat wajib dipilih dari katalog (product_id harus angka)" };
+  }
+  // Customer: dari mirror Accurate (account_id), ATAU customer baru yang belum
+  // ada di Accurate (keputusan user 7 Nov 2026 — instalasi bisa di customer baru).
+  // Customer baru disimpan account_id NULL = penanda "belum di Accurate".
+  const custBaru = input.account_id == null ? (input.customer_baru ?? "").trim().replace(/\s+/g, " ") : "";
+  if (input.account_id != null && !Number.isInteger(input.account_id)) {
+    return { ok: false, error: "account_id harus angka — customer dipilih dari katalog" };
+  }
+  if (input.account_id == null && (custBaru.length < 3 || custBaru.length > 200)) {
+    return { ok: false, error: "customer wajib: pilih dari katalog Accurate, atau isi nama customer baru (3–200 karakter)" };
+  }
+  const cabangList = await listCabangInstalasi();
+  const cabangIn = input.cabang?.trim().toUpperCase() || null;
+  if (cabangIn && !cabangList.includes(cabangIn)) {
+    return { ok: false, error: `cabang "${input.cabang}" tak dikenal — pilih dari daftar (${cabangList.join(", ")})` };
   }
 
   const [item] = await sql`SELECT id, no, name FROM accurate_item WHERE id = ${input.product_id}`;
@@ -123,18 +164,25 @@ export async function createInstallation(input: InstallationInput): Promise<Crea
       error: `"${item.name}" (${item.no}) bukan alat — Instalasi hanya untuk item berkode ${KODE_ALAT_PREFIX.map((p) => p + ".").join("/")}, reagen & sparepart tidak dicatat di sini.`,
     };
   }
-  const [cust] = await sql`SELECT id, no, name FROM accurate_customer WHERE id = ${input.account_id}`;
-  if (!cust) {
+  const [cust] = input.account_id == null
+    ? [null]
+    : await sql`SELECT id, no, name, area_customer(id) AS area FROM accurate_customer WHERE id = ${input.account_id}`;
+  if (input.account_id != null && !cust) {
     return {
       ok: false,
-      error: `Customer id ${input.account_id} tak ada di mirror Accurate. Kalau ini customer baru, sinkronkan dulu (menu Customers → Sync).`,
+      error: `Customer id ${input.account_id} tak ada di mirror Accurate. Kalau ini customer baru, pilih "Customer baru" di daftar.`,
     };
   }
 
   // Nama mirror bisa berupa empty-string, bukan NULL — COALESCE saja tak cukup
   // (jebakan yang sudah tercatat di CLAUDE.md untuk resolusi nama Accurate).
   const alatName = String(item.name ?? "").trim() || String(item.no ?? "") || `Item #${input.product_id}`;
-  const custName = String(cust.name ?? "").trim() || String(cust.no ?? "") || `Customer #${input.account_id}`;
+  const custName = cust
+    ? String(cust.name ?? "").trim() || String(cust.no ?? "") || `Customer #${input.account_id}`
+    : custBaru;
+  // Cabang kosong → ikut wilayah customer (area_customer), sama dengan tiket servis.
+  const areaCust = cust?.area ? String(cust.area).trim().toUpperCase() : null;
+  const cabang = cabangIn ?? (areaCust && cabangList.includes(areaCust) ? areaCust : null);
 
   // serial_number instrumen fisik semestinya unik (dicatat sejak QA 09-02
   // sbg observasi, terbukti reproducible lewat curl 09-04) — dicek di sini
@@ -170,7 +218,7 @@ export async function createInstallation(input: InstallationInput): Promise<Crea
         (product_id, account_id, alat_name, serial_number, customer_name, cabang, po_number, created_by)
       VALUES
         (${input.product_id}, ${input.account_id}, ${alatName}, ${serial || null},
-         ${custName}, ${input.cabang ?? null}, ${input.po_number?.trim() || null}, ${input.created_by ?? null})
+         ${custName}, ${cabang}, ${input.po_number?.trim() || null}, ${input.created_by ?? null})
       RETURNING *
     `;
   });

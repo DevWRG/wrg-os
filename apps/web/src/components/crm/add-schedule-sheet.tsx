@@ -18,9 +18,8 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet";
+import { Combobox } from "@/components/ui/combobox";
 
-const selectCls =
-  "h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50";
 
 interface Unit {
   id: string;
@@ -99,32 +98,26 @@ export function AddScheduleSheet() {
           <div className="flex flex-1 flex-col gap-4 overflow-y-auto px-4">
             <div className="grid gap-1.5">
               <Label htmlFor="is-unit">Alat *</Label>
-              <select
+              <Combobox
                 id="is-unit"
-                required
-                className={selectCls}
                 value={f.installation_unit_id}
-                onChange={(e) => setF((p) => ({ ...p, installation_unit_id: e.target.value }))}
-              >
-                <option value="" disabled>{units.length === 0 ? "tidak ada alat eligible" : "pilih alat…"}</option>
-                {units.map((u) => (
-                  <option key={u.id} value={u.id}>{u.alat_name} — {u.customer_name}</option>
-                ))}
-              </select>
+                onChange={(v) => setF((p) => ({ ...p, installation_unit_id: v }))}
+                options={units.map((u) => ({ value: u.id, label: `${u.alat_name} — ${u.customer_name}` }))}
+                placeholder={units.length === 0 ? "tidak ada alat eligible" : "pilih alat…"}
+                disabled={units.length === 0}
+              />
+              <input type="text" required value={f.installation_unit_id} onChange={() => {}} className="sr-only" tabIndex={-1} aria-hidden />
             </div>
             <div className="grid gap-1.5">
               <Label htmlFor="is-teknisi">Teknisi</Label>
-              <select
+              <Combobox
                 id="is-teknisi"
-                className={selectCls}
                 value={f.teknisi_id}
-                onChange={(e) => setF((p) => ({ ...p, teknisi_id: e.target.value }))}
-              >
-                <option value="">belum ditentukan</option>
-                {teknisi.filter((t) => t.aktif).map((t) => (
-                  <option key={t.id} value={t.id}>{t.nama}</option>
-                ))}
-              </select>
+                onChange={(v) => setF((p) => ({ ...p, teknisi_id: v }))}
+                options={teknisi.filter((t) => t.aktif).map((t) => ({ value: t.id, label: t.nama }))}
+                emptyOption="belum ditentukan"
+                placeholder="belum ditentukan"
+              />
             </div>
             <div className="grid gap-1.5">
               <Label htmlFor="is-date">Tanggal *</Label>
