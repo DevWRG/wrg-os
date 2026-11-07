@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { biayaOtomatis, biayaOtomatisBg, biayaOtomatisHemato, biayaOtomatisKk, type MixKk } from "./biaya-otomatis";
+import { biayaOtomatis, biayaOtomatisBg, biayaOtomatisElektro, biayaOtomatisHemato, biayaOtomatisKk, type MixKk } from "./biaya-otomatis";
 import type { KsoAnalyzer, KsoReagent } from "./types";
 
 // angka FIKTIF (repo publik)
@@ -99,4 +99,15 @@ test("KK alat baru (tanpa kiriman sendiri) → campuran tes alat sejenis dijumla
   assert.deepEqual(kurang, []);
   assert.match(baris[0].rincian ?? "", /alat sejenis \(EXC200, EXC220\): 1 SKU, 400 tes/);
   assert.equal(baris[0].biaya_per_tes, 10.02); // 1.000 ÷ 100 tes + detergent EXC400 0,2 × 0,1
+});
+
+test("Elektrolit DN-X6: paket cartridge → reagen/tes = 0,8 mL × harga/mL, harian = 21 mL × harga/mL (288)", () => {
+  const dn = z3({ kategori: "ELEKTRO", kode: "DNX6", label: "DN-X6", modelKey: "m-dn",
+    reagents: [reagen({ kode: "cart_reagen", nama: "Cartridge Reagen", vol: 650, hargaBeli: 65000 })] });
+  const { baris, kurang } = biayaOtomatisElektro([dn], 25);
+  assert.deepEqual(kurang, []);
+  assert.equal(baris[0].biaya_per_tes, 80);          // 0,8 × 100
+  assert.equal(baris[0].biaya_tetap_harian, 2100);   // 21 × 100
+  const tanpa = z3({ kategori: "ELEKTRO", kode: "DNX6", label: "DN-X6", modelKey: "m-dn", reagents: [] });
+  assert.equal(biayaOtomatisElektro([tanpa], 25).kurang[0].alat, "DN-X6");
 });

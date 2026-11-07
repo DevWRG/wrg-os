@@ -2,7 +2,7 @@
 // HPP Price Book. Murni (tanpa React) supaya bisa diuji. Hanya hematologi: rumusnya memisah reagen per tes
 // (siklus) dan reagen harian (startup/shutdown/probe) — yang harian dibagi volume harian, jadi bottom per tes
 // ikut test/bulan, hari kerja, dan masa KSO (Pedoman Komite KSO Forum v01).
-import { ccDetergent, hematoCost, perUnitOf } from "./formula";
+import { ccDetergent, elektroCost, hematoCost, perUnitOf } from "./formula";
 import type { HargaInput, KsoAnalyzer } from "./types";
 
 /** Volume acuan untuk memisah komponen harian; komponen tetap per tes × (volume ÷ hari kerja) = rupiah per hari. */
@@ -140,8 +140,38 @@ export function biayaOtomatisBg(analyzers: KsoAnalyzer[]): HasilOtomatis {
   return { baris, kurang };
 }
 
+// ── Elektrolit (288) ────────────────────────────────────────────────────────
+
+/** Kode baris reagen paket Cartridge DN-X6 (migrasi 288). */
+const REAGEN_ELEKTRO = "cart_reagen";
+
+/**
+ * Elektrolit (DN-X6, mode Cartridge): rumus Simulator elektroCost — Cal A habis 21 mL per hari kerja + 0,8 mL per tes,
+ * paket diganti saat Cal A habis. Biaya per tes = A ÷ D + B (D = tes per hari kerja) → B = reagen/tes, A = reagen harian.
+ */
+export function biayaOtomatisElektro(analyzers: KsoAnalyzer[], hariKerja: number): HasilOtomatis {
+  const baris: BarisOtomatis[] = [];
+  const kurang: HasilOtomatis["kurang"] = [];
+  for (const a of analyzers) {
+    if (a.kategori !== "ELEKTRO" || !a.modelKey) continue;
+    const r = a.reagents.find((x) => x.kode === REAGEN_ELEKTRO);
+    if (!r || r.hargaBeli == null || !r.vol) { kurang.push({ alat: a.label, reagen: [r?.nama ?? "paket reagen cartridge"] }); continue; }
+    const cpt = (d: number) => elektroCost(d * hariKerja, hariKerja, r.vol!, r.hargaBeli!)?.cpt ?? 0;
+    const t1 = cpt(10), t2 = cpt(20);
+    const perTes = 2 * t2 - t1, harian = (t1 - perTes) * 10;
+    baris.push({
+      model_key: a.modelKey,
+      biaya_per_tes: Math.round(perTes * 100) / 100,
+      biaya_tetap_harian: Math.round(harian),
+      rincian: `paket cartridge ${Number(r.vol).toLocaleString("id-ID")} mL Cal A (21 mL/hari + 0,8 mL/tes)`,
+    });
+  }
+  return { baris, kurang };
+}
+
 /** Semua kategori yang bisa dihitung otomatis. */
 export function biayaOtomatis(b: { analyzers: KsoAnalyzer[]; hariKerja: number; mixKk?: MixKk[] }): HasilOtomatis {
-  const h = [biayaOtomatisHemato(b.analyzers, b.hariKerja), biayaOtomatisKk(b.analyzers, b.mixKk ?? [], b.hariKerja), biayaOtomatisBg(b.analyzers)];
+  const h = [biayaOtomatisHemato(b.analyzers, b.hariKerja), biayaOtomatisKk(b.analyzers, b.mixKk ?? [], b.hariKerja),
+    biayaOtomatisBg(b.analyzers), biayaOtomatisElektro(b.analyzers, b.hariKerja)];
   return { baris: h.flatMap((x) => x.baris), kurang: h.flatMap((x) => x.kurang) };
 }
