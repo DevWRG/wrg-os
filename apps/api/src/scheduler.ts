@@ -70,6 +70,7 @@ import { runRekapSuplaiKso } from "./repo/kso-suplai.js";
 import { susunDraft, bulanDepan } from "./repo/jadwal-teknisi.js";
 import { runInvoiceReminder, runOverdueRecap } from "./repo/faktur.js";
 import { runRekapDoBelumFaktur } from "./repo/do-belum-faktur.js";
+import { runCekFakturisDiam, runRekapFakturis } from "./repo/fakturis-diam.js";
 import { runRekapKualitas } from "./repo/sales-command.js";
 import { terapkanKpiBulan } from "./repo/kpi-measure.js";
 
@@ -292,6 +293,8 @@ export function startScheduler(): ScheduleStatus {
   const dealDormantEnabled = (process.env.DEAL_DORMANT_ENABLED ?? "false").toLowerCase() === "true";
   // F170 Komite KSO — irama forum Selasa/Kamis + lewat batas HOD + penawaran pagi + verifikasi bulan-6.
   const ksoJadwalEnabled = (process.env.KSO_JADWAL_ENABLED ?? "false").toLowerCase() === "true";
+  // F10 — alarm fakturis diam (sesudah accurate-sync) + rekap mingguan beban akun fakturis. Default MATI.
+  const fakturisDiamEnabled = (process.env.F10_SPOF_ENABLED ?? "false").toLowerCase() === "true";
   // F91 — reminder jatuh tempo invoice (D-7/D-day/overdue) ke Finance + AM.
   const invoiceReminderEnabled = (process.env.INVOICE_REMINDER_ENABLED ?? "false").toLowerCase() === "true";
   // accurate-stock-sync (F2) — refresh accurate_item.quantity tiap 5 menit,
@@ -871,6 +874,16 @@ export function startScheduler(): ScheduleStatus {
           }
           const r = await syncAccurateInvoices({});
           console.log(`[scheduler] accurate-sync @ ${startedAt} ${JSON.stringify(r).slice(0, 200)}`);
+          // F10 — alarm fakturis diam, menempel di sini karena faktur baru hanya terlihat sesudah
+          // sync. Hanya bila sync sukses: mirror basi = alarm palsu. Libur sudah dilewati di atas.
+          if (fakturisDiamEnabled && r.ok) {
+            try {
+              const d = await runCekFakturisDiam();
+              if (d.aksi !== "normal") console.log(`[scheduler] f10-fakturis-diam ${JSON.stringify(d)}`);
+            } catch (e4) {
+              console.error(`[scheduler] f10-fakturis-diam gagal @ ${startedAt}:`, e4);
+            }
+          }
           // Mirror sales-order/delivery-order utk menu Orders/Shipments. Paginasi
           // berhenti berdasarkan tanggal (sinceDays), bukan jumlah halaman.
           try {
@@ -918,6 +931,7 @@ export function startScheduler(): ScheduleStatus {
       { timezone },
     );
     live.push(`accurate-sync=${accExpr}`);
+    if (fakturisDiamEnabled) live.push(`f10-fakturis-diam=sesudah accurate-sync`);
   }
 
   // mirror-freshness — pengawas kesegaran mirror Accurate. Bukan penarik data;
@@ -1924,6 +1938,28 @@ export function startScheduler(): ScheduleStatus {
       { timezone },
     );
     live.push(`do-belum-faktur-rekap=${doRekapExpr}`);
+  }
+
+  // f10-fakturis-rekap — beban faktur per akun minggu lalu + kejadian diam → grup Finance.
+  // Ikut saklar F10_SPOF_ENABLED. Dicek tiap hari kerja, terkirim SEKALI per minggu ISO.
+  const fakturisRekapExpr = process.env.F10_REKAP_CRON ?? "15 8 * * 1-5";
+  if (fakturisDiamEnabled && cron.validate(fakturisRekapExpr)) {
+    cron.schedule(
+      fakturisRekapExpr,
+      async () => {
+        const startedAt = new Date().toISOString();
+        try {
+          if (!(await isWorkday())) return;
+          const r = await runRekapFakturis();
+          if ("skipped" in r && r.skipped) return;
+          console.log(`[scheduler] f10-fakturis-rekap @ ${startedAt} ${JSON.stringify(r)}`);
+        } catch (e) {
+          console.error(`[scheduler] f10-fakturis-rekap gagal @ ${startedAt}:`, e);
+        }
+      },
+      { timezone },
+    );
+    live.push(`f10-fakturis-rekap=${fakturisRekapExpr}`);
   }
 
   // scc-kualitas-rekap (Sales Command Center) — kualitas data pipeline per region ke HoD
