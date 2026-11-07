@@ -177,7 +177,8 @@ export async function detailRencana(userId: string, tab: TabKso, id: number): Pr
     // isi PKS (migrasi 242) tidak ada di v_rencana — dibaca dari tabelnya (RLS boleh_lihat sama)
     const [pks] = await tx`select harga_deal::float8 as harga_deal, pks_tenor_bulan, pks_volume_minimum, pks_klausul,
                                   zona, zona_dasar, gpm_deal::float8 as gpm_deal, alasan_strategis, harga_pesaing::float8 as harga_pesaing,
-                                  volume_terverifikasi, volume_verifikasi_catatan, volume_verifikasi_at::text as volume_verifikasi_at
+                                  volume_terverifikasi, volume_verifikasi_catatan, volume_verifikasi_at::text as volume_verifikasi_at,
+                                  hari_kerja, coalesce((select p.hari_kerja from public.kso_bottomline_parameter p where p.id = 1), 25)::int as hari_kerja_default
                              from kso.rencana_kso where id = ${id}`;
     Object.assign(r, pks ?? {});
     // angka GPM per zona (268) — hanya untuk rencana yang boleh dilihat peran tab ini
