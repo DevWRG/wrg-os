@@ -1,4 +1,4 @@
--- 286 — Pemetaan nama alat di Populasi Alat (kso_asset.nama_alat, teks bebas
+-- 287 — Pemetaan nama alat di Populasi Alat (kso_asset.nama_alat, teks bebas
 -- dari sheet) → kode item Accurate. Dipakai form Instalasi: setelah alat dipilih
 -- dari katalog Accurate, daftar SN yang disarankan = SN populasi dengan nama
 -- alat yang terpetakan ke item itu (keputusan user 7 Nov 2026).
@@ -84,4 +84,4 @@ FROM (VALUES
 ) AS v(nama, item_no, yakin)
 ON CONFLICT (nama_alat_key) DO NOTHING;
 
-COMMENT ON TABLE alat_item_map IS 'Nama alat Populasi (kso_asset.nama_alat) → kode item Accurate; sumber saran SN di form Instalasi (286).';
+COMMENT ON TABLE alat_item_map IS 'Nama alat Populasi (kso_asset.nama_alat) → kode item Accurate; sumber saran SN di form Instalasi (287).';

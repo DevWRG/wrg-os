@@ -3719,7 +3719,7 @@ app.get("/installations/options", async (c) => {
   return c.json(await installationOptions(acc));
 });
 
-// Saran SN dari Populasi Alat untuk item terpilih (migrasi 286). Sebelum /:id.
+// Saran SN dari Populasi Alat untuk item terpilih (migrasi 287). Sebelum /:id.
 app.get("/installations/sn-options", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const raw = c.req.query("product_id");
