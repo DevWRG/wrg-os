@@ -24,7 +24,8 @@ insert into public.kso_analyzer (kode, label, kategori, aktif, model_key) values
 
 create table if not exists public.kso_bottomline_model_v (
   model_key text primary key, hpp numeric, biaya_per_tes numeric, biaya_tetap_bulan numeric, qc_bulan numeric, satuan text,
-  biaya_tetap_harian numeric);  -- 281: kosong = pakai biaya_tetap_bulan
+  biaya_tetap_harian numeric,   -- 281: kosong = pakai biaya_tetap_bulan
+  biaya_tangga jsonb);          -- 284: pilihan kemasan cartridge
 insert into public.kso_bottomline_model_v values
   ('M-Z3',  36000000,   3000, 200000,  300000, 'tes'),
   ('M-Z52', 72000000,   5500,      0,  600000, 'tes'),

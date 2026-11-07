@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 
-import { biayaOtomatisHemato } from "@/lib/kso/biaya-otomatis";
+import { biayaOtomatis, type MixKk } from "@/lib/kso/biaya-otomatis";
 import type { KsoAnalyzer } from "@/lib/kso/types";
 
 import { kirim, rp, rpJt, waktu } from "./types";
@@ -31,6 +31,8 @@ interface Baris {
   hpp: number | null; hpp_aset: number | null; hpp_tgl: string | null; hpp_median: number | null; hpp_sumber: string; unit_ber_hpp: number;
   rupiah_per_tes: number | null; rupiah_per_tes_sumber: string | null; volume: number | null; volume_acuan: number | null;
   biaya_per_tes: number | null; biaya_tetap_bulan: number; qc_bulan: number; biaya_sumber: string | null; biaya_keyakinan: string | null;
+  /** 284: pilihan kemasan cartridge (BG) — residu terbuang dihitung. */
+  biaya_tangga?: { perTes: number; minBulan: number }[] | null;
   harga_pasar_min: number | null; harga_pasar_max: number | null; harga_acuan: number | null; harga_acuan_sumber: string | null;
   biaya_di_volume: number | null; cicilan_di_volume: number | null;
   gpm_realisasi: number | null; zona_realisasi: Zona | null; gpm: number | null; zona: Zona | null;
@@ -70,19 +72,35 @@ const post = (jenis: string, body: Record<string, unknown>) =>
   kirim(`/api/kso-komite/bottom-line/${jenis}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
 
 // ---- rumus (salinan API) ----
-interface Angka { reagen: number | null; tetap: number; qc: number; hpp: number | null }
+interface Kemasan { perTes: number; minBulan: number }
+interface Angka { reagen: number | null; tetap: number; qc: number; hpp: number | null; tangga?: Kemasan[] | null }
+const pilihan = (a: Angka): Kemasan[] | null =>
+  a.tangga?.length ? a.tangga : a.reagen == null ? null : [{ perTes: a.reagen, minBulan: 0 }];
+/** Reagen per tes di volume v: kemasan termurah dari max(per tes, minimum per bulan ÷ v) (284: residu cartridge). */
+function reagenDi(a: Angka, v: number): number | null {
+  const k = pilihan(a);
+  return !k || v <= 0 ? null : Math.min(...k.map((x) => Math.max(x.perTes, x.minBulan / v)));
+}
+function biayaDi(a: Angka, v: number): number | null {
+  const r = reagenDi(a, v);
+  return r == null ? null : r + (a.tetap + a.qc) / v;
+}
 function gpmDi(a: Angka, harga: number, v: number, tenor: number): number | null {
-  if (a.reagen == null || a.hpp == null || v <= 0 || harga <= 0) return null;
-  return 1 - (a.reagen + (a.tetap + a.qc) / v + a.hpp / (tenor * v)) / harga;
+  const b = biayaDi(a, v);
+  if (b == null || a.hpp == null || v <= 0 || harga <= 0) return null;
+  return 1 - (b + a.hpp / (tenor * v)) / harga;
 }
 function hargaMinDi(a: Angka, v: number | null, g: number, tenor: number): number | null {
-  if (a.reagen == null || a.hpp == null || !v || v <= 0) return null;
-  return (a.reagen + (a.tetap + a.qc) / v + a.hpp / (tenor * v)) / (1 - g);
+  const b = v ? biayaDi(a, v) : null;
+  if (b == null || a.hpp == null || !v) return null;
+  return (b + a.hpp / (tenor * v)) / (1 - g);
 }
 function volumeMinDi(a: Angka, harga: number | null, g: number, tenor: number): number | null {
-  if (a.reagen == null || a.hpp == null || !harga) return null;
-  const sisa = harga * (1 - g) - a.reagen;
-  return sisa <= 0 ? null : (a.tetap + a.qc + a.hpp / tenor) / sisa;
+  const k = pilihan(a);
+  if (!k || a.hpp == null || !harga) return null;
+  const S = harga * (1 - g), F = a.tetap + a.qc + a.hpp / tenor;
+  const v = k.filter((x) => S > x.perTes).map((x) => Math.max(F / (S - x.perTes), (x.minBulan + F) / S));
+  return v.length ? Math.min(...v) : null;
 }
 const zonaDari = (g: number | null, p: Param): Zona | null =>
   g == null ? null : g >= p.gpm_am ? "am" : g >= p.gpm_hod ? "hod" : g >= p.gpm_forum ? "forum" : "direktur";
@@ -275,8 +293,8 @@ function HitungPriceBook({ onBerubah }: { onBerubah: () => void }) {
   const jalan = async () => {
     setSibuk(true); setPesan(null);
     try {
-      const bahan = await kirim<{ hariKerja: number; analyzers: KsoAnalyzer[] }>("/api/kso-komite/bottom-line/bahan-otomatis");
-      const { baris, kurang } = biayaOtomatisHemato(bahan.analyzers, bahan.hariKerja);
+      const bahan = await kirim<{ hariKerja: number; analyzers: KsoAnalyzer[]; mixKk?: MixKk[] }>("/api/kso-komite/bottom-line/bahan-otomatis");
+      const { baris, kurang } = biayaOtomatis(bahan);
       const r = baris.length ? await post("otomatis", { baris }) as { disimpan: string[]; dilewati: string[] } : { disimpan: [], dilewati: [] };
       setPesan([
         `${r.disimpan.length} model diperbarui`,
@@ -288,7 +306,7 @@ function HitungPriceBook({ onBerubah }: { onBerubah: () => void }) {
   };
   return (
     <div className="bg-card flex flex-wrap items-center gap-3 rounded-lg border p-3 text-xs">
-      <span className="text-muted-foreground">Biaya reagen hematologi = rumus Simulator KSO × HPP Price Book terbaru (reagen per tes + reagen harian).</span>
+      <span className="text-muted-foreground">Biaya reagen = rumus Simulator KSO × HPP Price Book terbaru — hematologi (reagen per tes + harian), kimia klinik (campuran tes riil dari kiriman reagen 12 bulan + detergent), blood gas (cartridge, residu terbuang dihitung).</span>
       <Button size="sm" variant="outline" onClick={jalan} disabled={sibuk}>{sibuk ? "Menghitung…" : "Hitung ulang dari Price Book"}</Button>
       {pesan && <span>{pesan}</span>}
     </div>
@@ -315,12 +333,15 @@ function DetailModel({ b, p, izin, onClose, onBerubah }: { b: Baris; p: Param; i
   const [sibuk, setSibuk] = useState(false);
 
   // angka yang sedang diketik ikut ke peta & tiga angka forum
-  const a: Angka = { reagen: reagen === "" ? null : Number(reagen), tetap: Number(tetap) || 0, qc: Number(qc) || 0, hpp: Number(hpp) || b.hpp_aset };
+  // pilihan kemasan (284) hanya berlaku selama reagen/tes belum diubah tangan
+  const tanggaBerlaku = b.biaya_tangga && b.biaya_tangga.length > 0 && reagen === String(b.biaya_per_tes) ? b.biaya_tangga : null;
+  const a: Angka = { reagen: reagen === "" ? null : Number(reagen), tetap: Number(tetap) || 0, qc: Number(qc) || 0, hpp: Number(hpp) || b.hpp_aset, tangga: tanggaBerlaku };
   const volU = Number(vol) || b.volume;
   const harga = Number(pmin) || b.rupiah_per_tes;
   const zonaBaris: [Zona, number][] = [["am", p.gpm_am], ["hod", p.gpm_hod], ["forum", p.gpm_forum]];
   const bottom = hargaMinDi(a, volU, p.gpm_forum, p.tenor);
-  const hppMaks = a.reagen != null && harga && volU ? Math.max(0, (harga * (1 - p.gpm_forum) - (a.reagen + (a.tetap + a.qc) / volU)) * p.tenor * volU) : null;
+  const biayaU = volU ? biayaDi(a, volU) : null;
+  const hppMaks = biayaU != null && harga && volU ? Math.max(0, (harga * (1 - p.gpm_forum) - biayaU) * p.tenor * volU) : null;
 
   const simpan = async (jenis: string, body: Record<string, unknown>, ok: string) => {
     setSibuk(true); setPesan(null);
@@ -370,7 +391,8 @@ function DetailModel({ b, p, izin, onClose, onBerubah }: { b: Baris; p: Param; i
                   <span className="text-muted-foreground text-xs"> (bahan negosiasi ke prinsipal)</span></p>
                 <p className="text-muted-foreground text-xs">Harga acuan: {Number(pmin) ? "harga pasar terendah" : b.harga_acuan_sumber ?? "—"}. HPP: {b.hpp_sumber}
                   {b.hpp_aset != null && fin ? ` (aset tetap ${rpJt(b.hpp_aset)})` : ""} · {b.unit_ber_hpp}/{b.unit} unit cocok SN.
-                  {" "}Biaya reagen: {b.biaya_sumber ?? "belum diisi"}{b.biaya_keyakinan ? ` · keyakinan ${b.biaya_keyakinan}` : ""}.</p>
+                  {" "}Biaya reagen: {b.biaya_sumber ?? "belum diisi"}{b.biaya_keyakinan ? ` · keyakinan ${b.biaya_keyakinan}` : ""}.
+                  {tanggaBerlaku && <> Reagen per tes mengikuti volume: {tanggaBerlaku.length} pilihan cartridge, dipilih yang termurah — di volume rendah sisa cartridge yang kedaluwarsa ikut dihitung.</>}</p>
               </div>
             )}
 
