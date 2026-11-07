@@ -15,7 +15,7 @@ export function PratinjauRekapKualitas({ region }: { region: "East" | "West" }) 
       const d = (await res.json().catch(() => ({}))) as { payload?: string; skipped?: string; penerima?: string[]; error?: string };
       if (!res.ok) setTeks(`Gagal memuat pratinjau: ${d.error ?? res.status}`);
       else setTeks(d.payload
-        ? `${d.payload}\n\n— penerima: ${d.penerima?.length ? d.penerima.join(", ") : "nomor WA HoD region belum ditemukan"}`
+        ? `${d.payload}\n\n— penerima: ${d.penerima?.length ? d.penerima.join(", ") : "belum ada — atur grup region atau nomor WA HoD"}`
         : `Tidak ada yang dikirim: ${d.skipped ?? "—"}`);
     } finally { setSibuk(false); }
   };
@@ -25,7 +25,7 @@ export function PratinjauRekapKualitas({ region }: { region: "East" | "West" }) 
       {teks !== null && (
         <div className="rounded-lg border p-3">
           <pre className="text-xs whitespace-pre-wrap">{teks}</pre>
-          <p className="text-muted-foreground mt-2 text-xs">Dikirim otomatis sekali seminggu (hari kerja pertama, 07.30) ke WhatsApp pribadi HoD region bila saklarnya dinyalakan admin sistem.</p>
+          <p className="text-muted-foreground mt-2 text-xs">Dikirim otomatis sekali seminggu (hari kerja pertama, 07.30) ke grup WhatsApp region yang diatur admin sistem (atau WhatsApp pribadi HoD bila grup belum diatur), bila saklarnya dinyalakan.</p>
         </div>
       )}
     </div>
