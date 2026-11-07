@@ -66,6 +66,12 @@ test("formatBalasanDraft: empat bagian, urutan tetap; lengkap → ajakan kirim",
   assert.match(t, /· GPM deal: nilai 1\n· Relokasi: nilai 3\n· Piutang faskes: nilai 5/);
 });
 
+test("formatBalasanDraft: hari kerja — disebut AM dibacakan, kosong = default + cara koreksi (282)", () => {
+  assert.match(formatBalasanDraft(draft({ hari_kerja: 30, hari_kerja_default: 25 }), { baru: false, nama: "Budi" }), /· Hari kerja alat: 30 hari\/bulan\n/);
+  const t = formatBalasanDraft(draft({ hari_kerja: null, hari_kerja_default: 25 }), { baru: false, nama: "Budi" });
+  assert.match(t, /· Hari kerja alat: 25 hari\/bulan \(default — koreksi: #KSO D12 hari kerja 26\)/);
+});
+
 test("formatBalasanDraft: tenor tak disebut → ditanyakan, bukan diisi; tanpa ajakan kirim", () => {
   const t = formatBalasanDraft(draft({ tenor_bulan: null, kolom_dinyatakan: ["jumlah", "klausul"] }), { baru: true, nama: "Budi" });
   assert.match(t, /Kurang satu:\nTenor berapa bulan/);

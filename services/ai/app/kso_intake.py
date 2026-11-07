@@ -32,6 +32,7 @@ Aturan:
 - volume_sumber: salin kalimat AM apa adanya tentang DARI MANA angka volume berasal, jangan dirapikan atau diterjemahkan ke kategori.
 - volume rentang ("800-1000") → volume_estimasi = batas bawah, volume_kalimat_asli = kalimat aslinya.
 - tenor dalam tahun → ubah ke bulan (3 tahun = 36).
+- hari_kerja: jumlah hari alat dipakai per BULAN di RS bila AM menyebutnya ("hari kerja 30", "26 hari sebulan"). "x hari seminggu" → null (dihitung sistem). Tidak disebut → null.
 - harga dalam ribuan ("18,5 rb", "18.500") → angka rupiah penuh (18500).
 - faskes_teks dan alat_teks: kembalikan teks yang diucapkan AM. Pencocokan ke master dilakukan sistem, bukan kamu.
 - pendukung: satu objek per ORANG. "dr. Rina SpPK, kepala instalasi lab" = SATU orang (nama "dr. Rina SpPK", tipe kepala_instalasi) — jabatan sesudah koma bukan orang kedua. tipe dari jabatan yang disebut, bukan dari gelar "dr.". tipe hanya salah satu dari manajemen, dokter_user, kepala_instalasi, analis_perawat, pengadaan; kalau tidak jelas, null. tanggal kontak format YYYY-MM-DD bila disebut.
@@ -49,7 +50,7 @@ Aturan:
 Kembalikan JSON SAJA (tanpa markdown), persis kunci berikut:
 {"faskes_teks": str|null, "alat_teks": str|null, "jumlah": int|null, "volume_estimasi": int|null,
  "volume_kalimat_asli": str|null, "volume_sumber": str|null, "harga_per_test": number|null,
- "pakai_harga_daftar": bool|null, "tenor_bulan": int|null, "unit_status": str|null,
+ "pakai_harga_daftar": bool|null, "tenor_bulan": int|null, "hari_kerja": int|null, "unit_status": str|null,
  "biaya_instalasi": number|null, "klausul_khusus": [str]|null,
  "pendukung": [{"nama": str, "tipe": str|null, "tanggal": str|null, "cara": str|null}],
  "kompetitor_alat": str|null, "kompetitor_kontrak_habis": str|null, "risiko_catatan": str|null,
@@ -208,6 +209,7 @@ def bersihkan(d: Dict[str, Any], teks: str) -> Dict[str, Any]:
         "harga_per_test": (lambda h: h if h is not None and h >= 100 else None)(_angka(d.get("harga_per_test"), ta)),
         "pakai_harga_daftar": harga_daftar,
         "tenor_bulan": _angka(d.get("tenor_bulan"), ta, bulat=True),
+        "hari_kerja": _hari_kerja(d.get("hari_kerja"), ta, tl),
         "unit_status": unit,
         "biaya_instalasi": _angka(d.get("biaya_instalasi"), ta),
         "klausul_khusus": klausul,
@@ -220,6 +222,16 @@ def bersihkan(d: Dict[str, Any], teks: str) -> Dict[str, Any]:
         "harga_pesaing": (lambda h: h if h is not None and h >= 100 else None)(_angka(d.get("harga_pesaing"), ta)),
         "alasan_strategis": _alasan(d.get("alasan_strategis"), tn),
     }
+
+
+def _hari_kerja(v: Any, ta: Set[float], tl: str) -> Optional[int]:
+    """Hari kerja alat per bulan (281/282): angka harus terlacak di teks dan 1–31. "6 hari seminggu" (tak bisa
+    dilacak sebagai angka bulanan) dihitung di sini: × 52/12, dibulatkan (6 → 26, 5 → 22)."""
+    h = _angka(v, ta, bulat=True)
+    if h is not None and 1 <= h <= 31 and re.search(rf"\b{int(h)}\s*hari\b(?!\s*(?:kerja\s*)?(?:per\s*|se|/\s*)?minggu)|hari\s*kerja\D{{0,12}}\b{int(h)}\b", tl):
+        return int(h)
+    m = re.search(r"\b([1-7])\s*hari\s*(?:kerja\s*)?(?:per\s*|se|/\s*|dalam\s*(?:se|satu\s*)?)minggu", tl)
+    return round(int(m.group(1)) * 52 / 12) if m else None
 
 
 def _alasan(v: Any, tn: str) -> Optional[str]:
