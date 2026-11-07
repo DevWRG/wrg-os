@@ -6,7 +6,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { normKota, pilihAmWilayah, parseLeads, balasanLeadsDeal, pesanAging, BANT_LOLOS } from "./lead.js";
+import { kotaBertentangan, normKota, pilihAmWilayah, parseLeads, balasanLeadsDeal, pesanAging, BANT_LOLOS } from "./lead.js";
 import { detectKind } from "./inbound.js";
 
 test("normKota menyamakan prefiks & tanda baca", () => {
@@ -101,4 +101,13 @@ test("pesan aging: AM vs HoD, dipotong 15 baris", () => {
 
 test("ambang BANT = 3 (keputusan user 13 Okt)", () => {
   assert.equal(BANT_LOLOS, 3);
+});
+
+test("kotaBertentangan: dua kota terisi & beda → true; awalan Kab./Kota diabaikan; satu kosong → false", () => {
+  assert.equal(kotaBertentangan("Jember", "Malang"), true);
+  assert.equal(kotaBertentangan("Kab. Malang", "Malang"), false);
+  assert.equal(kotaBertentangan("Kota Surabaya", "SURABAYA"), false);
+  assert.equal(kotaBertentangan("Madiun", null), false);
+  assert.equal(kotaBertentangan("", "Kediri"), false);
+  assert.equal(kotaBertentangan(undefined, undefined), false);
 });
