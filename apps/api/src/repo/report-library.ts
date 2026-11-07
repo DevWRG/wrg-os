@@ -52,6 +52,26 @@ export const persen = (n: number | null | undefined, desimal = 1): string =>
 export const dariRasio = (r: number | null | undefined, desimal = 1): string =>
   r === null || r === undefined || !Number.isFinite(Number(r)) ? "-" : persen(Number(r) * 100, desimal);
 
+/** Waktu ISO → "7 Nov 2026, 22.05 WIB" (laporan dibaca orang, bukan mesin). Bukan tanggal sah → apa adanya. */
+export function waktuWib(v: unknown): string {
+  if (v === null || v === undefined || v === "") return "-";
+  const d = new Date(String(v));
+  if (Number.isNaN(d.getTime())) return String(v);
+  const tgl = d.toLocaleDateString(ID, { timeZone: "Asia/Jakarta", day: "numeric", month: "short", year: "numeric" });
+  const jam = d.toLocaleTimeString(ID, { timeZone: "Asia/Jakarta", hour: "2-digit", minute: "2-digit", hour12: false });
+  return `${tgl}, ${jam} WIB`;
+}
+
+/** Deal sudah ditutup (Won/Lost) — di laporan diletakkan SESUDAH deal yang masih berjalan. */
+export const dealTertutup = (stage: unknown): boolean => /^closing-(won|lost)$/i.test(String(stage ?? "").trim());
+
+/** Urutan baris pipeline: deal berjalan dulu (nilai terbesar di atas), lalu deal tertutup (nilai terbesar di atas). */
+export function urutDealLaporan<T extends { stage?: unknown; estimate_amount?: unknown }>(deals: readonly T[]): T[] {
+  return [...deals].sort((a, b) =>
+    Number(dealTertutup(a.stage)) - Number(dealTertutup(b.stage)) ||
+    Number(b.estimate_amount ?? 0) - Number(a.estimate_amount ?? 0));
+}
+
 export const teks = (v: unknown): string => (v === null || v === undefined || v === "" ? "-" : String(v));
 
 /** Nilai metrik WatchPoint menurut satuannya: rupiah / persen / angka biasa. */
@@ -75,7 +95,7 @@ async function kpiHod(): Promise<Laporan> {
     judul: "KPI per HoD",
     ringkasan: [
       { label: "Periode", nilai: teks(b.generatedFor) },
-      { label: "Per tanggal", nilai: teks(b.asOf) },
+      { label: "Per tanggal", nilai: waktuWib(b.asOf) },
       { label: "HoD", nilai: String(b.hods.length) },
       { label: "Hijau / Kuning / Merah", nilai: `${n("GREEN")} / ${n("YELLOW")} / ${n("RED")}` },
     ],
@@ -92,7 +112,8 @@ async function kpiHod(): Promise<Laporan> {
 
 async function pipeline(scope: DataScope): Promise<Laporan> {
   const p = await getPipeline(scope);
-  const deals = p.stages.flatMap((s) => s.deals).sort((a, b) => Number(b.estimate_amount ?? 0) - Number(a.estimate_amount ?? 0));
+  // Deal berjalan dulu: 10 teratas pratinjau = deal yang masih bisa dikejar, bukan yang sudah Lost.
+  const deals = urutDealLaporan(p.stages.flatMap((s) => s.deals));
   return {
     key: "pipeline",
     judul: "Sales Pipeline",
