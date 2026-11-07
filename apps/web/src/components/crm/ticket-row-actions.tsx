@@ -19,6 +19,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { Combobox } from "@/components/ui/combobox";
 
 interface TicketRow {
   id: string;
@@ -28,8 +29,6 @@ interface TicketRow {
   assigned_teknisi_name?: string | null;
 }
 
-const selectCls =
-  "h-9 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50";
 
 // Penugasan manual (uji E7, 13 Okt 2026): tiket "perlu review" dulu tak punya
 // aksi lanjutan. Juga untuk mengganti teknisi tiket yang masih open.
@@ -93,10 +92,13 @@ function AssignTicketButton({ row }: { row: TicketRow }) {
           <DialogBody className="grid gap-3">
             <div className="grid gap-1.5">
               <Label htmlFor={`st-tk-${row.id}`}>Teknisi</Label>
-              <select id={`st-tk-${row.id}`} className={selectCls} value={value} onChange={(e) => setValue(e.target.value)}>
-                <option value="" disabled>{teknisi.length === 0 ? "memuat roster…" : "pilih teknisi…"}</option>
-                {teknisi.map((t) => <option key={t.id} value={t.id}>{t.nama}</option>)}
-              </select>
+              <Combobox
+                id={`st-tk-${row.id}`}
+                value={value}
+                onChange={setValue}
+                options={teknisi.map((t) => ({ value: t.id, label: t.nama }))}
+                placeholder={teknisi.length === 0 ? "memuat roster…" : "pilih teknisi…"}
+              />
               <p className="text-muted-foreground text-xs">Teknisi akan dikirimi WA ringkasan tiket; tanda &quot;perlu review&quot; dilepas.</p>
             </div>
             {error && <p className="text-destructive text-sm">{error}</p>}

@@ -19,14 +19,19 @@ import { Input } from "@/components/ui/input";
 // dicari, lalu dropdown melapor "tak ketemu" untuk barang yang sebenarnya ada.
 
 export interface CatalogChoice {
-  id: number;
+  /** null = entri baru yang belum ada di mirror Accurate (lihat `izinkanBaru`). */
+  id: number | null;
   label: string;
+  baru?: boolean;
 }
 
 interface Props {
   entity: "items" | "customers";
   /** items saja: "alat" = hanya kode alat (IDS./ADR.), reagen/sparepart disembunyikan. */
   jenis?: "alat";
+  /** Kalau diisi (mis. "Customer baru"), muncul baris "+ <teks>: «ketikan»" untuk
+   *  data yang belum ada di Accurate → dipilih dengan id null + baru:true. */
+  izinkanBaru?: string;
   value: CatalogChoice | null;
   onChange: (v: CatalogChoice | null) => void;
   placeholder?: string;
@@ -40,7 +45,7 @@ interface MirrorRow {
   name?: string | null;
 }
 
-export function CatalogPicker({ entity, jenis, value, onChange, placeholder, inputId, required }: Props) {
+export function CatalogPicker({ entity, jenis, izinkanBaru, value, onChange, placeholder, inputId, required }: Props) {
   const [q, setQ] = useState("");
   const [rows, setRows] = useState<MirrorRow[]>([]);
   const [open, setOpen] = useState(false);
@@ -92,6 +97,7 @@ export function CatalogPicker({ entity, jenis, value, onChange, placeholder, inp
       <div className="flex items-center gap-2">
         <span className="min-w-0 flex-1 truncate rounded-md border border-input bg-muted/40 px-2 py-1.5 text-sm">
           {value.label}
+          {value.baru && <span className="text-muted-foreground ml-1.5 text-xs">(baru — belum di Accurate)</span>}
         </span>
         <button
           type="button"
@@ -132,7 +138,9 @@ export function CatalogPicker({ entity, jenis, value, onChange, placeholder, inp
           {!loading && !err && rows.length === 0 && (
             <p className="text-muted-foreground px-2 py-1.5 text-xs">
               {q.trim()
-                ? "tak ada yang cocok — kalau ini data baru, sinkronkan katalog Accurate dulu"
+                ? izinkanBaru
+                  ? "tak ada yang cocok di Accurate"
+                  : "tak ada yang cocok — kalau ini data baru, sinkronkan katalog Accurate dulu"
                 : "ketik untuk mencari"}
             </p>
           )}
@@ -149,6 +157,18 @@ export function CatalogPicker({ entity, jenis, value, onChange, placeholder, inp
               {labelOf(r)}
             </button>
           ))}
+          {izinkanBaru && q.trim().length >= 3 && !loading && (
+            <button
+              type="button"
+              className="hover:bg-accent text-primary block w-full truncate border-t border-border px-2 py-1.5 text-left text-sm font-medium"
+              onClick={() => {
+                onChange({ id: null, label: q.trim().replace(/\s+/g, " "), baru: true });
+                setOpen(false);
+              }}
+            >
+              + {izinkanBaru}: «{q.trim()}» <span className="text-muted-foreground font-normal">(belum di Accurate)</span>
+            </button>
+          )}
         </div>
       )}
     </div>

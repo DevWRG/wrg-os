@@ -180,6 +180,7 @@ import {
   markTeknisiAssign,
   markTrainingDone,
   markBast,
+  installationOptions,
 } from "./repo/installation.js";
 import { recordCompetitor, listCompetitor, competitorSummary } from "./repo/competitor.js";
 import { kesehatanKso, runRekapKesehatanKso } from "./repo/kso-kesehatan.js";
@@ -3677,7 +3678,8 @@ app.post("/installations", async (c) => {
   // createInstallation) supaya klien tak bisa mengarang nama utk id yang benar.
   let body: {
     product_id?: number;
-    account_id?: number;
+    account_id?: number | null;
+    customer_baru?: string;
     serial_number?: string;
     cabang?: string;
     po_number?: string;
@@ -3688,15 +3690,16 @@ app.post("/installations", async (c) => {
   } catch {
     return c.json({ error: "invalid JSON body" }, 400);
   }
-  if (body.product_id == null || body.account_id == null) {
-    return c.json({ error: "product_id + account_id wajib — alat & customer dipilih dari katalog" }, 400);
+  if (body.product_id == null || (body.account_id == null && !body.customer_baru?.trim())) {
+    return c.json({ error: "product_id + (account_id ATAU customer_baru) wajib — alat dari katalog, customer dari katalog atau customer baru" }, 400);
   }
   if (!body.serial_number?.trim()) {
     return c.json({ error: "serial_number wajib" }, 400);
   }
   const r = await createInstallation({
     product_id: Number(body.product_id),
-    account_id: Number(body.account_id),
+    account_id: body.account_id == null ? null : Number(body.account_id),
+    customer_baru: body.customer_baru ?? null,
     serial_number: body.serial_number,
     cabang: body.cabang,
     po_number: body.po_number,
@@ -3704,6 +3707,15 @@ app.post("/installations", async (c) => {
   });
   if (!r.ok) return c.json({ error: r.error }, 400);
   return c.json(r.row, 201);
+});
+
+// Opsi form Instalasi (daftar cabang + cabang wilayah customer). Didaftarkan
+// SEBELUM /installations/:id supaya "options" tak dibaca sebagai id.
+app.get("/installations/options", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const raw = c.req.query("account_id");
+  const acc = raw && /^\d+$/.test(raw) ? Number(raw) : null;
+  return c.json(await installationOptions(acc));
 });
 
 app.get("/installations", async (c) => {

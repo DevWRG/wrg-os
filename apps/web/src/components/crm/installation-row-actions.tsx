@@ -19,9 +19,8 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { Combobox } from "@/components/ui/combobox";
 
-const selectCls =
-  "h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50";
 
 interface InstallationUnit {
   id: string;
@@ -170,20 +169,17 @@ export function InstallationRowActions({ row }: { row: InstallationUnit }) {
             <div className="grid gap-1.5">
               <Label htmlFor={`iu-step-${row.id}`}>{step.fieldLabel}</Label>
               {step.sourceFromRoster ? (
-                <select
-                  id={`iu-step-${row.id}`}
-                  required={step.required}
-                  className={selectCls}
-                  value={value}
-                  onChange={(e) => setValue(e.target.value)}
-                >
-                  <option value="" disabled>
-                    {teknisi.length === 0 ? "roster teknisi kosong — isi dulu di menu Readiness Board" : "pilih teknisi…"}
-                  </option>
-                  {teknisi.map((t) => (
-                    <option key={t.id} value={t.id}>{t.nama}</option>
-                  ))}
-                </select>
+                <>
+                  <Combobox
+                    id={`iu-step-${row.id}`}
+                    value={value}
+                    onChange={setValue}
+                    options={teknisi.map((t) => ({ value: t.id, label: t.nama }))}
+                    placeholder={teknisi.length === 0 ? "roster teknisi kosong — isi dulu di menu Readiness Board" : "pilih teknisi…"}
+                    disabled={teknisi.length === 0}
+                  />
+                  {step.required && <input type="text" required value={value} onChange={() => {}} className="sr-only" tabIndex={-1} aria-hidden />}
+                </>
               ) : (
                 <>
                   <Input

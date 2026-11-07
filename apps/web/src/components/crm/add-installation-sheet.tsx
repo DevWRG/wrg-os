@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Plus } from "lucide-react";
 
@@ -18,11 +18,14 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { CatalogPicker, type CatalogChoice } from "@/components/crm/catalog-picker";
+import { Combobox } from "@/components/ui/combobox";
 
-// Alat & customer TIDAK lagi diketik bebas — wajib dipilih dari mirror Accurate
-// (keputusan Direktur 2026-08-28). Yang dikirim ke API adalah id-nya; nama
-// di-snapshot server-side dari mirror, jadi klien tak bisa mengarang nama untuk
-// id yang benar.
+// Alat TIDAK diketik bebas — wajib dipilih dari mirror Accurate (keputusan
+// Direktur 2026-08-28). Yang dikirim ke API adalah id-nya; nama di-snapshot
+// server-side dari mirror, jadi klien tak bisa mengarang nama untuk id yang benar.
+// Customer: dari mirror Accurate, ATAU "customer baru" yang belum ada di Accurate
+// (keputusan user 7 Nov 2026) — dikirim sebagai nama, disimpan tanpa account_id.
+// Cabang: dropdown dari daftar cabang wilayah, terisi otomatis dari customer.
 const blank = () => ({ serial_number: "", cabang: "", po_number: "" });
 
 export function AddInstallationSheet() {
@@ -33,6 +36,22 @@ export function AddInstallationSheet() {
   const [f, setF] = useState(blank());
   const [alat, setAlat] = useState<CatalogChoice | null>(null);
   const [cust, setCust] = useState<CatalogChoice | null>(null);
+  const [cabangList, setCabangList] = useState<string[]>([]);
+
+  // Daftar cabang + cabang wilayah customer. Dimuat ulang tiap customer berganti;
+  // cabang hanya diisi otomatis kalau user belum memilih sendiri.
+  useEffect(() => {
+    if (!open) return;
+    const qs = cust?.id != null ? `?account_id=${cust.id}` : "";
+    fetch(`/api/installations/options${qs}`, { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: { cabang?: string[]; cabang_customer?: string | null } | null) => {
+        if (!d) return;
+        setCabangList(Array.isArray(d.cabang) ? d.cabang : []);
+        if (d.cabang_customer) setF((p) => (p.cabang ? p : { ...p, cabang: d.cabang_customer as string }));
+      })
+      .catch(() => {});
+  }, [open, cust?.id]);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -40,14 +59,15 @@ export function AddInstallationSheet() {
     setError(null);
     try {
       if (!alat || !cust) {
-        throw new Error("Alat & customer wajib dipilih dari katalog Accurate");
+        throw new Error("Alat & customer wajib dipilih (customer boleh customer baru)");
       }
       const res = await fetch("/api/installations", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           product_id: alat.id,
-          account_id: cust.id,
+          account_id: cust.baru ? null : cust.id,
+          customer_baru: cust.baru ? cust.label : undefined,
           serial_number: f.serial_number.trim() || undefined,
           cabang: f.cabang.trim() || undefined,
           po_number: f.po_number.trim() || undefined,
@@ -58,6 +78,7 @@ export function AddInstallationSheet() {
       setF(blank());
       setAlat(null);
       setCust(null);
+      setCabangList([]);
       setOpen(false);
       router.refresh();
     } catch (err) {
@@ -96,19 +117,30 @@ export function AddInstallationSheet() {
               <Input id="iu-serial" required value={f.serial_number} onChange={(e) => setF((p) => ({ ...p, serial_number: e.target.value }))} />
             </div>
             <div className="grid gap-1.5">
-              <Label htmlFor="iu-customer">Customer * <span className="text-muted-foreground text-xs">(dari mirror Accurate)</span></Label>
+              <Label htmlFor="iu-customer">Customer * <span className="text-muted-foreground text-xs">(Accurate, atau ketik nama customer baru)</span></Label>
               <CatalogPicker
                 entity="customers"
                 inputId="iu-customer"
                 required
+                izinkanBaru="Customer baru"
                 value={cust}
-                onChange={setCust}
+                onChange={(v) => {
+                  setCust(v);
+                  if (!v) setF((p) => ({ ...p, cabang: "" }));
+                }}
                 placeholder="cari nama/kode customer…"
               />
             </div>
             <div className="grid gap-1.5">
-              <Label htmlFor="iu-cabang">Cabang</Label>
-              <Input id="iu-cabang" value={f.cabang} onChange={(e) => setF((p) => ({ ...p, cabang: e.target.value }))} />
+              <Label htmlFor="iu-cabang">Cabang <span className="text-muted-foreground text-xs">(otomatis dari wilayah customer, bisa diganti)</span></Label>
+              <Combobox
+                id="iu-cabang"
+                value={f.cabang}
+                onChange={(v) => setF((p) => ({ ...p, cabang: v }))}
+                options={cabangList.map((c) => ({ value: c, label: c }))}
+                emptyOption="— belum ditentukan —"
+                placeholder="pilih cabang…"
+              />
             </div>
             <div className="grid gap-1.5">
               <Label htmlFor="iu-po">No. PO</Label>

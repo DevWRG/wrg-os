@@ -17,9 +17,8 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet";
+import { Combobox } from "@/components/ui/combobox";
 
-const selectCls =
-  "h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50";
 
 interface Teknisi {
   id: string;
@@ -84,21 +83,23 @@ export function AddReportSheet() {
           <div className="flex flex-1 flex-col gap-4 overflow-y-auto px-4">
             <div className="grid gap-1.5">
               <Label htmlFor="ar-teknisi">Teknisi</Label>
-              <select id="ar-teknisi" className={selectCls} value={f.teknisi_id} onChange={(e) => setF((p) => ({ ...p, teknisi_id: e.target.value }))}>
-                <option value="">tidak diketahui</option>
-                {teknisi.map((t) => (
-                  <option key={t.id} value={t.id}>{t.nama}</option>
-                ))}
-              </select>
+              <Combobox
+                id="ar-teknisi"
+                value={f.teknisi_id}
+                onChange={(v) => setF((p) => ({ ...p, teknisi_id: v }))}
+                options={teknisi.map((t) => ({ value: t.id, label: t.nama }))}
+                emptyOption="tidak diketahui"
+                placeholder="tidak diketahui"
+              />
             </div>
             <div className="grid gap-1.5">
               <Label htmlFor="ar-jenis">Jenis *</Label>
-              <select id="ar-jenis" className={selectCls} value={f.report_type} onChange={(e) => setF((p) => ({ ...p, report_type: e.target.value }))}>
-                <option value="install">#install</option>
-                <option value="servis">#servis</option>
-                <option value="training">#training</option>
-                <option value="kalibrasi">#kalibrasi</option>
-              </select>
+              <Combobox
+                id="ar-jenis"
+                value={f.report_type}
+                onChange={(v) => setF((p) => ({ ...p, report_type: v || p.report_type }))}
+                options={["install", "servis", "training", "kalibrasi"].map((j) => ({ value: j, label: `#${j}` }))}
+              />
             </div>
             <div className="grid gap-1.5">
               <Label htmlFor="ar-body">Isi laporan *</Label>
