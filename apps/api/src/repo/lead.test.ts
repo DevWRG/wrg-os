@@ -6,7 +6,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { normKota, pilihAmWilayah, parseLeads, balasanLeadsDeal, pesanAging, BANT_LOLOS } from "./lead.js";
+import { kotaBertentangan, normKota, pilihAmWilayah, parseLeads, balasanLeadsDeal, pesanAging, BANT_LOLOS } from "./lead.js";
 import { detectKind } from "./inbound.js";
 
 test("normKota menyamakan prefiks & tanda baca", () => {
@@ -122,4 +122,13 @@ test("parseLeads: sumber tak dikenal / tanpa sumber → tak ada sumber_lead; tek
   const b = parseLeads("#LEADS RS B, Malang: sumber dana APBD, pagu 2027") as { sumber_lead?: string; kebutuhan: string };
   assert.equal(b.sumber_lead, undefined);
   assert.equal(b.kebutuhan, "sumber dana APBD, pagu 2027");
+});
+
+test("kotaBertentangan: dua kota terisi & beda → true; awalan Kab./Kota diabaikan; satu kosong → false", () => {
+  assert.equal(kotaBertentangan("Jember", "Malang"), true);
+  assert.equal(kotaBertentangan("Kab. Malang", "Malang"), false);
+  assert.equal(kotaBertentangan("Kota Surabaya", "SURABAYA"), false);
+  assert.equal(kotaBertentangan("Madiun", null), false);
+  assert.equal(kotaBertentangan("", "Kediri"), false);
+  assert.equal(kotaBertentangan(undefined, undefined), false);
 });
