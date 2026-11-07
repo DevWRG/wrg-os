@@ -6,19 +6,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { deriveInvoiceStatus } from "./ar.js";
-import {
-  buildOverdueRecap,
-  buildReminderDigest,
-  byUrgency,
-  formatFakturReply,
-  isoWeek,
-  overdueRecapKey,
-  parseFakturArg,
-  reminderKey,
-  reminderStage,
-  statusLine,
-  type ReminderRow,
-} from "./faktur.js";
+import { buildOverdueRecap, buildReminderDigest, byUrgency, formatFakturReply, isoWeek, overdueRecapKey, parseFakturArg, reminderKey, reminderStage, statusLine, type ReminderRow, reminderAmAktif } from "./faktur.js";
 
 const TODAY = "2026-09-28";
 
@@ -207,4 +195,10 @@ test("nominal berpecahan sen dibulatkan (rekap prod 11 Okt: Rp…,942)", () => {
   assert.doesNotMatch(txt, /Rp[\d.]+,\d/);
   const d = buildReminderDigest([row({ outstanding: 1234.5 })], "fin", TODAY);
   assert.match(d.text, /sisa Rp1\.235 /);
+});
+test("reminderAmAktif: DM ke AM default mati, nyala hanya bila INVOICE_REMINDER_AM_ENABLED=true", () => {
+  assert.equal(reminderAmAktif({}), false);
+  assert.equal(reminderAmAktif({ INVOICE_REMINDER_AM_ENABLED: "false" }), false);
+  assert.equal(reminderAmAktif({ INVOICE_REMINDER_AM_ENABLED: "TRUE " }), true);
+  assert.equal(reminderAmAktif({ INVOICE_REMINDER_AM_ENABLED: "1" }), false);
 });
