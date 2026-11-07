@@ -8,7 +8,7 @@
 // selalu lolos lewat canOrLegacy):
 //   LIHAT  : Direktur + Finance
 //   UNGGAH : Finance saja (admin/superuser lewat anti-lockout) — Direktur hanya membaca
-// Finance = hod_key 'ika' / title finance (pola cn-access.ts).
+// Finance = grup 'finance-hod' / title finance (pola cn-access.ts; tanpa peran master_hod karena sinkron).
 // Tak ada aksi ubah/hapus: bukti append-only (lihat migrasi 238).
 
 import { isFinanceCn } from "@/lib/cn-access";

@@ -23,9 +23,9 @@ export interface Ringkasan { total: number; per_status: Record<CnStatus, number>
 export interface FakturKandidat { invoice_id: number; invoice_number: string; tanggal: string; customer_id: number | null; dpp: number; salesman_name: string | null }
 export interface LaporanBaris { kunci: string; label: string; jumlah_pengajuan: number; total_dpp: number; total_cn: number; total_terealisasi: number }
 
-export const HOD_SALES = [{ value: "rocky", label: "Rocky — HoD Sales East" }, { value: "yogi", label: "Yogi — HoD Sales West" }];
-export const HOD_BUSINESS = [{ value: "mufid", label: "Mufid — HoD Business IVD" }, { value: "arman", label: "Arman — HoD Business Medical" }];
-export const HOD_NAMA: Record<string, string> = { rocky: "Rocky", yogi: "Yogi", mufid: "Mufid", arman: "Arman" };
+/** Daftar HoD per peran CN dari master_hod (GET /api/cn/peran) — nama orang tidak ditulis di kode. */
+export interface HodCn { key: string; nama: string; peran: string }
+export interface PeranCnResp { hod_sales: HodCn[]; hod_business: HodCn[]; finance_hod_keys: string[]; ga_hod_keys: string[] }
 
 export const STATUS_LABEL: Record<CnStatus, string> = {
   diajukan: "Diajukan", ditinjau: "Ditinjau HoD Business", disetujui: "Disetujui HoD Sales", divalidasi: "Divalidasi Finance",
