@@ -6,19 +6,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { deriveInvoiceStatus } from "./ar.js";
-import {
-  buildOverdueRecap,
-  buildReminderDigest,
-  byUrgency,
-  formatFakturReply,
-  isoWeek,
-  overdueRecapKey,
-  parseFakturArg,
-  reminderKey,
-  reminderStage,
-  statusLine,
-  type ReminderRow,
-} from "./faktur.js";
+import { buildOverdueRecap, buildReminderDigest, byUrgency, formatFakturReply, isoWeek, overdueRecapKey, parseFakturArg, reminderKey, reminderStage, statusLine, type ReminderRow, reminderAmAktif } from "./faktur.js";
 
 const TODAY = "2026-09-28";
 
@@ -206,3 +194,10 @@ test("detectKind: #FAKTUR terpicu, #FAKTURIS/#FAKTUR123 tidak", async () => {
   assert.equal(detectKind("#FAKTUR123"), "none");
 });
 
+
+test("reminderAmAktif: DM ke AM default mati, nyala hanya bila INVOICE_REMINDER_AM_ENABLED=true", () => {
+  assert.equal(reminderAmAktif({}), false);
+  assert.equal(reminderAmAktif({ INVOICE_REMINDER_AM_ENABLED: "false" }), false);
+  assert.equal(reminderAmAktif({ INVOICE_REMINDER_AM_ENABLED: "TRUE " }), true);
+  assert.equal(reminderAmAktif({ INVOICE_REMINDER_AM_ENABLED: "1" }), false);
+});
