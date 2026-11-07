@@ -16,9 +16,11 @@
 //   6. DO tanpa item tersinkron tetap di tab Tagih dengan nilai kosong.
 //   7. Ubah ambang → status terlambat ikut berubah; ambang tak sah ditolak.
 //   8. Filter cari/cabang/hanya terlambat + total_rows server.
+//   9. Rekap WA: pratinjau memuat DO terlambat saja (tanpa KSO); tanpa target → dilewati;
+//      kiriman stub/dry-run gateway TIDAK menandai minggu ini terkirim.
 
 import { db } from "../../apps/api/src/db.js";
-import { listDoBelumFaktur, ubahAmbang } from "../../apps/api/src/repo/do-belum-faktur.js";
+import { listDoBelumFaktur, runRekapDoBelumFaktur, ubahAmbang } from "../../apps/api/src/repo/do-belum-faktur.js";
 
 if (/prod/i.test(process.env.DATABASE_URL ?? "")) {
   console.error("DATABASE_URL menyebut prod — uji ini hanya untuk DB dev.");
@@ -151,6 +153,20 @@ async function main() {
     cek("pagination server: count ≤ limit, total_rows = semua", hal.count <= 2 && hal.total_rows >= 5, { c: hal.count, t: hal.total_rows });
     cek("urutan: terlambat dulu", !hal.items.length || hal.items[0].terlambat || !t.items.some((x) => x.terlambat));
     cek("ringkasan KSO tanpa terlambat", t.ringkasan.kso.terlambat === 0 && t.ringkasan.kso.do >= 1);
+
+    console.log("9. Rekap WA");
+    const pr = await runRekapDoBelumFaktur({ dryRun: true });
+    cek("pratinjau memuat DO terlambat, bukan yang belum terlambat / KSO", !!pr.payload?.includes("DO-U283-REG-LAMA") && !pr.payload?.includes("DO-U283-REG-BARU") && !pr.payload?.includes("DO-U283-KSO"), pr.payload?.slice(0, 200));
+    const simpanT = [process.env.DO_BELUM_FAKTUR_WA_TARGET, process.env.INVOICE_REMINDER_FINANCE_TARGET];
+    delete process.env.DO_BELUM_FAKTUR_WA_TARGET; delete process.env.INVOICE_REMINDER_FINANCE_TARGET;
+    const tanpa = await runRekapDoBelumFaktur();
+    cek("tanpa target → dilewati", tanpa.sent === false && /kosong/.test(tanpa.skipped ?? ""), tanpa);
+    process.env.DO_BELUM_FAKTUR_WA_TARGET = "uji283@g.us";
+    const stub = await runRekapDoBelumFaktur();
+    const [tanda] = await sql`SELECT count(*)::int AS n FROM notif_state WHERE key = ${"do-belum-faktur-rekap:" + stub.week}`;
+    cek("gateway stub/dry-run → sent=false & minggu ini tak ditandai", stub.sent === false && Number(tanda.n) === 0, { stub, n: tanda.n });
+    if (simpanT[0] === undefined) delete process.env.DO_BELUM_FAKTUR_WA_TARGET; else process.env.DO_BELUM_FAKTUR_WA_TARGET = simpanT[0];
+    if (simpanT[1] !== undefined) process.env.INVOICE_REMINDER_FINANCE_TARGET = simpanT[1];
   } finally {
     await bersih();
     await sql.end();
