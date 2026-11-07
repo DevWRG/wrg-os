@@ -11,7 +11,9 @@ import { joinAmFromSalesman } from "./salesman-am.js";
 //   1. `#FAKTUR <no_invoice>` → status Open/Paid/Overdue + jatuh tempo + nominal
 //      + customer. Siapa pun yang dikenal & aktif boleh (setara #CEK).
 //   2. Cron reminder harian D-7 / D-day → digest ke Finance
-//      (INVOICE_REMINDER_FINANCE_TARGET) + tiap AM (DM master_user.wa_number).
+//      (INVOICE_REMINDER_FINANCE_TARGET) + tiap AM (DM master_user.wa_number) —
+//      DM ke AM punya saklar sendiri INVOICE_REMINDER_AM_ENABLED (default mati,
+//      keputusan user 7 Nov 2026: nyalakan ke grup Finance dulu, AM menyusul).
 //   3. Rekap overdue MINGGUAN → Finance saja (bukan AM, bukan harian).
 //
 // Kenapa overdue dipisah (keputusan user 11 Okt 2026): di prod ada ±1.260
@@ -250,11 +252,16 @@ interface Job {
   key: string;
 }
 
+/** DM pengingat ke AM hanya bila INVOICE_REMINDER_AM_ENABLED=true (default mati). */
+export const reminderAmAktif = (env: NodeJS.ProcessEnv = process.env): boolean =>
+  (env.INVOICE_REMINDER_AM_ENABLED ?? "false").trim().toLowerCase() === "true";
+
 async function pendingJobs(rows: ReminderRow[], finTarget: string): Promise<Job[]> {
   const all: Job[] = [];
+  const keAm = reminderAmAktif();
   for (const row of rows) {
     if (finTarget) all.push({ row, audience: "fin", key: reminderKey(row.stage, row.id, "fin") });
-    if (row.am_wa) all.push({ row, audience: "am", key: reminderKey(row.stage, row.id, "am") });
+    if (keAm && row.am_wa) all.push({ row, audience: "am", key: reminderKey(row.stage, row.id, "am") });
   }
   if (!all.length) return [];
   const sent = await db()`SELECT key FROM notif_state WHERE key = ANY(${all.map((j) => j.key)}::text[])`;
