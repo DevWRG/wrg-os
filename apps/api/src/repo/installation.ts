@@ -130,7 +130,7 @@ export async function installationOptions(accountId: number | null) {
 }
 
 // Saran SN untuk form Instalasi: SN di Populasi Alat (kso_asset) yang nama
-// alatnya terpetakan ke item terpilih (alat_item_map, migrasi 286). Item alat di
+// alatnya terpetakan ke item terpilih (alat_item_map, migrasi 287). Item alat di
 // Accurate TIDAK ber-Serial Number, jadi stok gudang belum bisa jadi sumber.
 // Hanya saran — SN tetap boleh diketik (alat baru dari gudang belum di populasi).
 export interface SaranSn {
