@@ -390,7 +390,7 @@ export const NAV: NavGroup[] = [
       { title: "Kurir Performance", url: "/courier-performance", icon: Route, badge: "NEW" },
       { title: "Spesifikasi Cetak Dokumen", url: "/print-spec", icon: Printer, badge: "NEW" },
       { title: "Tracking Pengiriman", url: "/shipment-tracking", icon: Route, badge: "NEW" },
-      // DOC — rekap dokumen per transaksi (9 state: Draft → … → Closed), dihitung dari SO/SJ/BAST/faktur.
+      // DOC — rekap dokumen per transaksi (7 state: Draft → … → Closed), dihitung dari SO/SJ/BAST/faktur/Arsip.
       { title: "Document Tracker", url: "/doc-tracker", icon: FileCheck2, badge: "NEW", show: canViewDocTracker },
       // F45 — rencana trip kurir + cek H-1 (libur & PIC). Beda dari Shipments
       // (mirror delivery-order Accurate, sudah terjadi): ini jadwal KE DEPAN.

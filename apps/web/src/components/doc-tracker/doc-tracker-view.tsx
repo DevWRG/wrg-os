@@ -117,7 +117,7 @@ export function DocTrackerView({ data: awal, canEdit }: { data: DocTrackerList; 
           <h3 className="text-sm font-semibold">Tahap transaksi</h3>
           <span className="text-muted-foreground text-xs">Klik salah satu tahap untuk menyaring tabel di bawah · klik lagi untuk membatalkan</span>
         </div>
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-9">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-7">
           {STATES.map((s, i) => {
             const aktif = state === s;
             const n = data.funnel[s];
@@ -171,7 +171,7 @@ export function DocTrackerView({ data: awal, canEdit }: { data: DocTrackerList; 
 
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-muted-foreground text-xs">
-          Klik baris atau tombol <strong>Lihat detail</strong> untuk melihat rantai dokumen{canEdit ? ", mencatat stempel Review/Approved, dan mengisi checklist dokumen" : ""}.
+          Klik baris atau tombol <strong>Lihat detail</strong> untuk melihat rantai dokumen{canEdit ? ", mengisi checklist dokumen, dan menautkan faktur" : ""}.
         </p>
         <ExportButton filename="document-tracker" columns={kolomExport} data={tampil} label="Export CSV" />
       </div>
@@ -187,10 +187,10 @@ export function DocTrackerView({ data: awal, canEdit }: { data: DocTrackerList; 
       </Card>
 
       <p className="text-muted-foreground text-xs">
-        State = tahap terjauh yang buktinya ada — SO, SJ/DO Accurate (DO terbit = Sent), terima/BAST (F12/F42), faktur (tertaut otomatis
-        dari Accurate atau manual), stempel Review/Approved, dan checklist dokumen. Tahap di bawahnya yang belum berbukti tidak menahan,
-        hanya ditulis &quot;belum tercatat&quot;. SO sebelum {data.stempel_mulai} dianggap Review/Approved tersirat bila tahap berikutnya sudah
-        ada. &quot;Dokumen kurang&quot; = sudah lunas tetapi dokumen wajib belum lengkap. TTF tidak dilacak (keputusan Direktur).
+        State = tahap terjauh yang buktinya ada — SO, SJ/DO Accurate (DO terbit = Sent), terima/BAST (WA #BAST atau BAST Instalasi
+        Aftersales), faktur (tertaut otomatis dari Accurate atau manual), dan checklist dokumen (centang manual atau otomatis dari scan
+        di Arsip Dokumen). Tahap di bawahnya yang belum berbukti tidak menahan, hanya ditulis &quot;belum tercatat&quot;. &quot;Dokumen
+        kurang&quot; = sudah lunas tetapi dokumen wajib belum lengkap. TTF tidak dilacak (keputusan Direktur).
       </p>
 
       <DocDetailDialog key={buka ?? "tutup"} soId={buka} canEdit={canEdit} onClose={() => setBuka(null)} onBerubah={segarkan} />

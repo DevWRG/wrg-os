@@ -8,9 +8,9 @@ import type { DocTrackerList } from "@/components/doc-tracker/types";
 
 export const dynamic = "force-dynamic";
 
-// DOC Document Tracker — 9 state per Sales Order: Draft → Review → Approved → Sent → Received → Executed → Billed → Paid → Closed.
-// Dihitung dari data yang sudah ada (SO/SJ/BAST/faktur); hanya stempel Review/Approved, checklist ttd, dan tautan faktur yang dicatat.
-// Kunci izin sendiri 'doc-tracker' (lib/doc-tracker-access.ts); menstempel = aksi edit.
+// DOC Document Tracker — 7 state per Sales Order: Draft → Sent → Received → Executed → Billed → Paid → Closed.
+// Dihitung dari data yang sudah ada (SO/SJ/BAST WA & Instalasi/faktur/Arsip); hanya checklist ttd manual dan tautan faktur
+// manual yang dicatat. Kunci izin sendiri 'doc-tracker' (lib/doc-tracker-access.ts); mencatat = aksi edit.
 export default async function DocTrackerPage() {
   const me = await sessionUser();
   if (!canViewDocTracker(me)) {

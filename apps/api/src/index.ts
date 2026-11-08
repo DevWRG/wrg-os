@@ -281,8 +281,8 @@ import { namaFileTabelPdf, tabelPdf, tabelPdfGabungan } from "./repo/tabel-pdf.j
 import { adalahKeyLaporan, pratinjau as pratinjauLaporan, susunLaporan } from "./repo/report-library.js";
 import { listDirekturInbox, runDirekturInbox } from "./repo/direktur-inbox.js";
 import {
-  DocTrackerError, cabutStempel, getDocTracker, lepasFaktur, listDocTracker, parseHari as parseHariDoc, parseSoId, parseState,
-  setDokumen, stampTahap, tautkanFaktur,
+  DocTrackerError, getDocTracker, lepasFaktur, listDocTracker, parseHari as parseHariDoc, parseSoId, parseState,
+  setDokumen, tautkanFaktur,
 } from "./repo/doc-tracker.js";
 import { bacaParamKuartal, getPmfScorecard } from "./repo/pmf-scorecard.js";
 import { getSoPacing, runSoPacingAlert } from "./repo/so-pacing.js";
@@ -2953,10 +2953,10 @@ app.get("/direktur-inbox", async (c) => {
   return c.json(await listDirekturInbox());
 });
 
-// DOC — Document Tracker 9-state (Draft → Review → Approved → Sent → Received → Executed → Billed → Paid → Closed).
-// State dihitung dari mirror Accurate + shipment_tracking; hanya stempel Review/Approved, checklist ttd dan tautan
-// faktur yang ditulis. Izin & identitas pemberi stempel (`by`) ditentukan BFF dari SESI. Param salah → 400,
-// SO tak ada → 404, urutan salah → 409, tabel belum ada (42P01) → 503 migration_pending.
+// DOC — Document Tracker 7-state (Draft → Sent → Received → Executed → Billed → Paid → Closed; Review/Approved
+// dihapus 8 Nov 2026). State dihitung dari mirror Accurate + shipment_tracking + Instalasi + Arsip; hanya checklist
+// dokumen dan tautan faktur manual yang ditulis. Izin & identitas pelaku (`by`) ditentukan BFF dari SESI. Param salah
+// → 400, SO tak ada → 404, konflik tautan → 409, tabel belum ada (42P01) → 503 migration_pending.
 const docTrackerError = (c: Context, e: unknown) => {
   if (e instanceof DocTrackerError) return c.json({ error: e.message }, e.status as 400);
   if ((e as { code?: string })?.code === "42P01") return c.json({ error: "migration_pending" }, 503);
@@ -2992,29 +2992,6 @@ app.get("/doc-tracker/:soId", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   try {
     return c.json(await getDocTracker(parseSoId(c.req.param("soId"))));
-  } catch (e) {
-    return docTrackerError(c, e);
-  }
-});
-
-app.post("/doc-tracker/:soId/stamp", async (c) => {
-  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  try {
-    const b = await bodyDocTracker(c);
-    await stampTahap(parseSoId(c.req.param("soId")), b.tahap as "review" | "approved", String(b.by ?? ""), b.catatan == null ? null : String(b.catatan));
-    return c.json({ ok: true });
-  } catch (e) {
-    return docTrackerError(c, e);
-  }
-});
-
-app.post("/doc-tracker/:soId/stamp/cabut", async (c) => {
-  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  try {
-    const b = await bodyDocTracker(c);
-    if (b.tahap !== "review" && b.tahap !== "approved") throw new DocTrackerError(400, "tahap harus review atau approved");
-    await cabutStempel(parseSoId(c.req.param("soId")), b.tahap);
-    return c.json({ ok: true });
   } catch (e) {
     return docTrackerError(c, e);
   }

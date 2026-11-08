@@ -1,6 +1,6 @@
 // Gerbang bersama route BFF DOC Document Tracker. gatewayFetch menyuntik x-service-token yang mem-bypass
 // JWT di apps/api, jadi izin menu WAJIB dicek di sini (requireFeature "/doc-tracker": view = baca,
-// edit = stempel/checklist/tautan faktur). Pemberi stempel `by` SELALU dari sesi, tak pernah dari body.
+// edit = checklist/tautan faktur). Pelaku `by` SELALU dari sesi, tak pernah dari body.
 import { gatewayFetch, relay } from "@/lib/gateway";
 import { requireFeature, actorName } from "@/lib/feature-guard";
 import type { Action } from "@/lib/perms";

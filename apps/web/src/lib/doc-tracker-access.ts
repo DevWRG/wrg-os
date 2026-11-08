@@ -4,7 +4,7 @@
 // Sales Admin/Shipping/Finance. Fallback identitas (selama grup belum punya baris izinnya): role
 // direktur / admin / superuser SAJA. Begitu Sync Fitur dijalankan, matriks Akses Grup yang menang
 // (canOrLegacy) — jadi Sales Admin/Shipping/Finance dicentang di grupnya setelah Sync Fitur.
-// Menstempel Review/Approved & mengisi checklist = aksi `edit` pada fitur ini (feature-guard).
+// Mengisi checklist & menautkan faktur = aksi `edit` pada fitur ini (feature-guard).
 
 import { can, canOrLegacy } from "@/lib/perms";
 import { type AccessUser } from "@/lib/pricelist-access";

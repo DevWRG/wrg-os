@@ -1,17 +1,16 @@
 // Tipe di-mirror dari apps/api/src/repo/doc-tracker.ts & doc-tracker-state.ts.
-export const STATES = ["draft", "review", "approved", "sent", "received", "executed", "billed", "paid", "closed"] as const;
+// 7 state — Review/Approved dihapus 8 Nov 2026 (Accurate meng-APPROVED semua SO; persetujuan terjadi di SPH/pipeline).
+export const STATES = ["draft", "sent", "received", "executed", "billed", "paid", "closed"] as const;
 export type DocState = (typeof STATES)[number];
 
 export const LABEL_STATE: Record<DocState, string> = {
-  draft: "Draft", review: "Review", approved: "Approved", sent: "Sent", received: "Received",
+  draft: "Draft", sent: "Sent", received: "Received",
   executed: "Executed", billed: "Billed", paid: "Paid", closed: "Closed",
 };
 
 /** Arti tiap state untuk orang lapangan (bukan istilah teknis state machine). */
 export const KETERANGAN_STATE: Record<DocState, string> = {
   draft: "Order masuk sistem",
-  review: "Sudah direview",
-  approved: "Disetujui",
   sent: "SJ dikirim",
   received: "Diterima customer",
   executed: "BAST / penyerahan",
@@ -52,13 +51,23 @@ export interface DocTrackerList {
   asOf: string;
   hari: number;
   hari_billing_risiko: number;
-  stempel_mulai: string;
   funnel: Record<DocState, number>;
   ringkas: { total: number; anomali: number; billing_risiko: number; dikirim_belum_dibayar: number };
   rows: DocRow[];
 }
 
-export interface TahapInfo { selesai: boolean; at: string | null; tersirat?: boolean }
+export interface TahapInfo { selesai: boolean; at: string | null }
+
+export interface SjBukti {
+  nomor: string;
+  tanggal?: string | null;
+  kirimAt: string | null;
+  terimaAt: string | null;
+  /** BAST WA #BAST. */
+  bastAt: string | null;
+  /** BAST Instalasi Aftersales untuk nomor SJ ini. */
+  bastInstalasiAt?: string | null;
+}
 
 export interface DocDetail {
   so: { id: number; number: string; tanggal: string; customer: string; customer_id: number | null; total: number | null; status: string | null };
@@ -72,11 +81,13 @@ export interface DocDetail {
     umurHari: number | null;
     hitungan: Hitungan;
   };
-  sj: { nomor: string; tanggal?: string | null; kirimAt: string | null; terimaAt: string | null; bastAt: string | null }[];
+  sj: SjBukti[];
   /** otomatis = dari rujukan SO di faktur Accurate (tak bisa dilepas); false = tautan manual. */
   faktur: { invoice_id: number; nomor: string; tanggal: string; lunas: boolean; otomatis: boolean }[];
-  stempel: Record<"review" | "approved", { at: string; by: string; catatan: string | null } | null>;
+  /** Centang MANUAL. Centang efektif = manual ATAU dokumen_arsip. */
   dokumen: Record<JenisDokumen, { ada: boolean; by: string; at: string } | null>;
+  /** Tercentang otomatis dari Arsip F156 → nomor arsip sumbernya; tak bisa dibatalkan dari sini. */
+  dokumen_arsip: Partial<Record<JenisDokumen, string[]>>;
   dokumen_wajib: JenisDokumen[];
   kandidat_faktur: { invoice_id: number; nomor: string; tanggal: string; total: number }[];
 }

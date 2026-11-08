@@ -1,28 +1,29 @@
-// DOC — Document Tracker 9-state machine. Logika MURNI (tanpa DB), diuji di doc-tracker-state.test.ts.
+// DOC — Document Tracker 7-state machine. Logika MURNI (tanpa DB), diuji di doc-tracker-state.test.ts.
 //
-// 9 state (urutan dari foto rapat 2026-10-27, dikonfirmasi user):
-//   Draft → Review → Approved → Sent → Received → Executed → Billed → Paid → Closed
+// 7 state (keputusan user 8 Nov 2026 — Review & Approved dihapus dari 9 state rapat 2026-10-27):
+//   Draft → Sent → Received → Executed → Billed → Paid → Closed
+// Alasan Review/Approved dihapus: Accurate menandai SEMUA SO approvalStatus=APPROVED (tak ada alur
+// persetujuan), stempel manual hampir tak pernah dipakai, dan persetujuan sebenarnya terjadi di hulu
+// (SPH/pipeline). Tabel doc_tracker_stamp (migrasi 258) tak lagi dibaca/ditulis.
 // Unit = satu Sales Order Accurate. State BUKAN disimpan: dihitung dari bukti yang sudah ada
-// (SJ/pengiriman/BAST/faktur dari mirror + shipment_tracking) plus dua stempel manual
-// (Review, Approved) dan checklist tanda tangan dokumen.
+// (SJ/pengiriman/BAST/faktur dari mirror + shipment_tracking + installation_unit) plus checklist dokumen
+// (manual ∪ otomatis dari Arsip F156).
 //
-// Aturan (keputusan user 8 Nov 2026, menggantikan aturan "berurutan"): state = tahap TERJAUH yang
-// buktinya ada (Draft selalu). Tahap di antaranya yang tak berbukti TIDAK menahan SO — didaftar di
-// `belumTercatat` (informasi). Alasannya data lapangan: stempel Review/Approved jarang diisi dan data
-// terima/BAST dari WA kebanyakan kosong, sehingga aturan berurutan membuat 499/500 SO macet di Draft.
+// Aturan: state = tahap TERJAUH yang buktinya ada (Draft selalu). Tahap di antaranya yang tak berbukti
+// TIDAK menahan SO — didaftar di `belumTercatat` (informasi).
 // Sent = SJ (DO) Accurate untuk SO itu sudah terbit — DO terbit = barang keluar dari sudut pandang
-// sistem; kirim_at WA hanya menambah waktu. Received/Executed tetap butuh terima_at/bast_at SEMUA SJ.
+// sistem; kirim_at WA hanya menambah waktu. Received/Executed tetap butuh terima_at/BAST SEMUA SJ.
+// BAST satu SJ = BAST WA (#BAST, shipment_tracking.bast_at) ATAU BAST Instalasi Aftersales
+// (installation_unit.bast_done) — mana yang lebih dulu.
 // Paid bila SEMUA faktur lunas; Closed = Paid + dokumen wajib lengkap.
 // Anomali tinggal satu jenis: sudah lunas tetapi dokumen wajib belum lengkap (yang menahan Closed).
 // TTF sengaja tidak ada (keputusan Direktur di F12/F42/F31).
 
-export const STATES = ["draft", "review", "approved", "sent", "received", "executed", "billed", "paid", "closed"] as const;
+export const STATES = ["draft", "sent", "received", "executed", "billed", "paid", "closed"] as const;
 export type DocState = (typeof STATES)[number];
 
 export const LABEL_STATE: Record<DocState, string> = {
   draft: "Draft",
-  review: "Review",
-  approved: "Approved",
   sent: "Sent",
   received: "Received",
   executed: "Executed",
@@ -56,7 +57,10 @@ export interface SjBukti {
   tanggal?: string | null;
   kirimAt: string | null;
   terimaAt: string | null;
+  /** BAST dari WA #BAST (shipment_tracking.bast_at). */
   bastAt: string | null;
+  /** BAST dari Instalasi Aftersales (installation_unit.bast_at, bast_done=true) untuk nomor SJ ini. */
+  bastInstalasiAt?: string | null;
 }
 
 export interface FakturBukti {
@@ -68,16 +72,10 @@ export interface FakturBukti {
 
 export interface Snapshot {
   soTanggal: string; // YYYY-MM-DD
-  reviewAt: string | null;
-  approvedAt: string | null;
   sj: SjBukti[];
   faktur: FakturBukti[];
+  /** Sudah digabung: centang manual ATAU otomatis dari Arsip (lihat gabungDokumen). */
   dokumen: Partial<Record<JenisDokumen, boolean>>;
-  /**
-   * true = Review/Approved hanya dari stempel. false (SO sebelum tracker hidup) = dianggap TERSIRAT bila
-   * bukti hilir ada (tidak masuk belumTercatat).
-   */
-  stempelWajib: boolean;
   today: string; // YYYY-MM-DD (WIB)
 }
 
@@ -85,8 +83,6 @@ export interface TahapInfo {
   selesai: boolean;
   /** Kapan tahap terpenuhi (ISO/tanggal); null bila tak diketahui. */
   at: string | null;
-  /** Terpenuhi karena tahap hilir ada, bukan karena stempel (hanya Review/Approved SO lama). */
-  tersirat?: boolean;
 }
 
 export interface HasilState {
@@ -123,11 +119,22 @@ export function selisihHari(dari: string, sampai: string): number {
   return Math.floor((Date.parse(`${sampai}T00:00:00Z`) - Date.parse(`${dari}T00:00:00Z`)) / 86_400_000);
 }
 
+/** BAST satu SJ: WA atau Instalasi, yang lebih dulu. */
+export function bastSj(x: SjBukti): { at: string | null; sumber: "wa" | "instalasi" | null } {
+  const wa = x.bastAt ?? null;
+  const ins = x.bastInstalasiAt ?? null;
+  if (wa && ins) return Date.parse(ins) < Date.parse(wa) ? { at: ins, sumber: "instalasi" } : { at: wa, sumber: "wa" };
+  if (wa) return { at: wa, sumber: "wa" };
+  if (ins) return { at: ins, sumber: "instalasi" };
+  return { at: null, sumber: null };
+}
+
 export function hitungState(s: Snapshot): HasilState {
   const n = s.sj.length;
   const kirim = s.sj.filter((x) => x.kirimAt).length;
   const terima = s.sj.filter((x) => x.terimaAt).length;
-  const bast = s.sj.filter((x) => x.bastAt).length;
+  const bastAt = s.sj.map((x) => bastSj(x).at);
+  const bast = bastAt.filter((x) => x).length;
   const lunas = s.faktur.filter((f) => f.lunas).length;
   const hitungan = { sj: n, kirim, terima, bast, faktur: s.faktur.length, lunas };
 
@@ -136,32 +143,18 @@ export function hitungState(s: Snapshot): HasilState {
   const bukti: Record<"sent" | "received" | "executed" | "billed" | "paid", TahapInfo> = {
     sent: { selesai: n > 0, at: n > 0 ? maxStr(s.sj.map((x) => x.kirimAt ?? x.tanggal ?? null)) : null },
     received: { selesai: n > 0 && terima === n, at: n > 0 && terima === n ? maxStr(s.sj.map((x) => x.terimaAt)) : null },
-    executed: { selesai: n > 0 && bast === n, at: n > 0 && bast === n ? maxStr(s.sj.map((x) => x.bastAt)) : null },
+    executed: { selesai: n > 0 && bast === n, at: n > 0 && bast === n ? maxStr(bastAt) : null },
     billed: { selesai: s.faktur.length > 0, at: minStr(s.faktur.map((f) => f.tanggal)) },
     paid: {
       selesai: s.faktur.length > 0 && lunas === s.faktur.length,
       at: s.faktur.length > 0 && lunas === s.faktur.length ? maxStr(s.faktur.map((f) => f.lunasAt ?? null)) : null,
     },
   };
-  const hilirAda = bukti.sent.selesai || bukti.received.selesai || bukti.executed.selesai || bukti.billed.selesai || bukti.paid.selesai || kirim + terima + bast > 0;
-
-  // SO lama (stempelWajib=false): tahap stempel dianggap TERSIRAT bila ada penanda yang melampauinya — tahap hilir
-  // ada, atau (khusus Review) Approved sudah distempel. SO baru: hanya stempel; tanpa stempel → belumTercatat.
-  const stempel = (at: string | null, adaPenanda: boolean): TahapInfo => {
-    if (at) return { selesai: true, at };
-    if (!s.stempelWajib && adaPenanda) return { selesai: true, at: null, tersirat: true };
-    return { selesai: false, at: null };
-  };
-  const review = stempel(s.reviewAt, hilirAda || s.approvedAt != null);
-  const approved = stempel(s.approvedAt, hilirAda);
-
   const dokumenKurang = DOKUMEN_WAJIB.filter((j) => !s.dokumen[j]);
   const closedSelesai = bukti.paid.selesai && dokumenKurang.length === 0;
 
   const tahap: Record<DocState, TahapInfo> = {
     draft: { selesai: true, at: s.soTanggal },
-    review,
-    approved,
     sent: bukti.sent,
     received: bukti.received,
     executed: bukti.executed,
@@ -187,4 +180,57 @@ export function hitungState(s: Snapshot): HasilState {
   const at = tahap[state].at;
   const tgl = tanggalWib(at);
   return { state, tahap, anomali, belumTercatat, dokumenKurang, billingRisiko, umurHari: tgl ? Math.max(0, selisihHari(tgl, s.today)) : null, hitungan };
+}
+
+// ── Checklist dokumen otomatis dari Arsip F156 ─────────────────────────────────────────────────────────
+
+/** Satu baris arsip_dokumen (belum dihapus) yang rujukannya cocok dengan SJ/faktur SO. */
+export interface ArsipRujukan {
+  nomor: string;
+  buku_kode: string;
+  ref_sj: string | null;
+  ref_po: string | null;
+  ref_faktur: string | null;
+}
+
+/** Nomor dokumen untuk dicocokkan: dipangkas + tak peka huruf. */
+export const kunciNomor = (v: string | null | undefined): string => (v ?? "").trim().toUpperCase();
+
+/**
+ * Jenis dokumen yang tercentang otomatis dari Arsip, beserta nomor arsip sumbernya.
+ * - Scan SJ ber-ttd (buku SJ, ref_sj = nomor SJ SO) → sj_ttd_gudang/sales/kepala_sales sekaligus (satu scan
+ *   SJ bertanda tangan mewakili ketiganya). SO dengan beberapa SJ: SEMUA SJ harus punya arsip SJ.
+ * - Arsip (buku apa pun) yang membawa ref_po DAN merujuk SJ atau faktur SO ini → po_customer.
+ * ttd Teknisi tidak pernah otomatis (informasi, diisi manual).
+ */
+export function dokumenDariArsip(sjNomor: string[], fakturNomor: string[], arsip: ArsipRujukan[]): Partial<Record<JenisDokumen, string[]>> {
+  const sjSet = new Set(sjNomor.map(kunciNomor).filter(Boolean));
+  const fakSet = new Set(fakturNomor.map(kunciNomor).filter(Boolean));
+  const hasil: Partial<Record<JenisDokumen, string[]>> = {};
+
+  const arsipSj = arsip.filter((a) => kunciNomor(a.buku_kode) === "SJ" && sjSet.has(kunciNomor(a.ref_sj)));
+  const sjTerarsip = new Set(arsipSj.map((a) => kunciNomor(a.ref_sj)));
+  if (sjSet.size > 0 && [...sjSet].every((n) => sjTerarsip.has(n))) {
+    const nomor = [...new Set(arsipSj.map((a) => a.nomor))].sort();
+    hasil.sj_ttd_gudang = nomor;
+    hasil.sj_ttd_sales = nomor;
+    hasil.sj_ttd_kepala_sales = nomor;
+  }
+
+  const po = arsip.filter((a) => kunciNomor(a.ref_po) !== "" && (sjSet.has(kunciNomor(a.ref_sj)) || fakSet.has(kunciNomor(a.ref_faktur))));
+  if (po.length) hasil.po_customer = [...new Set(po.map((a) => a.nomor))].sort();
+  return hasil;
+}
+
+/** Centang akhir = manual ATAU Arsip. Manual "tidak ada" tak bisa membatalkan bukti Arsip. */
+export function gabungDokumen(
+  manual: Partial<Record<JenisDokumen, boolean>>,
+  arsip: Partial<Record<JenisDokumen, string[]>>,
+): Partial<Record<JenisDokumen, boolean>> {
+  const out: Partial<Record<JenisDokumen, boolean>> = {};
+  for (const j of JENIS_DOKUMEN) {
+    const v = manual[j] === true || (arsip[j]?.length ?? 0) > 0;
+    if (v || j in manual) out[j] = v;
+  }
+  return out;
 }

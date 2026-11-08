@@ -1,8 +1,12 @@
-// DOC — Document Tracker 9-state machine (baca + stempel). Aturan state ada di doc-tracker-state.ts
-// (murni, diuji). Di sini: memuat bukti dari mirror Accurate + shipment_tracking, lalu stempel manual.
+// DOC — Document Tracker 7-state machine (baca + checklist + tautan faktur). Aturan state ada di
+// doc-tracker-state.ts (murni, diuji). Di sini: memuat bukti dari mirror Accurate + shipment_tracking +
+// installation_unit + arsip_dokumen. Stempel Review/Approved DIHAPUS (8 Nov 2026) — doc_tracker_stamp
+// (migrasi 258) tak lagi dibaca/ditulis; datanya dibiarkan, bisa di-drop kelak.
 //
 // Unit = satu Sales Order Accurate (accurate_sales_order). SO↔SJ lewat accurate_delivery_order_item.
-// sales_order_id; SJ↔pengiriman lewat shipment_tracking.sj_number (nomor DO kanonik, tak peka huruf).
+// sales_order_id; SJ↔pengiriman lewat shipment_tracking.sj_number (nomor DO kanonik, tak peka huruf);
+// SJ↔instalasi lewat installation_unit.sj_number (BAST Instalasi = Executed); SJ/faktur↔arsip lewat
+// arsip_dokumen.ref_sj / ref_faktur (centang otomatis checklist dokumen).
 // Faktur↔SO: gabungan tautan OTOMATIS (accurate_invoice_so, migrasi 296 — diturunkan trigger dari
 // detailItem[].salesOrderId faktur Accurate; raw tak pernah dibaca di sini) dan tautan MANUAL
 // (doc_tracker_faktur) untuk faktur tanpa rujukan SO. Tautan tak pernah ditebak dari nama customer/tanggal.
@@ -14,8 +18,12 @@ import {
   DOKUMEN_WAJIB,
   JENIS_DOKUMEN,
   STATES,
+  dokumenDariArsip,
+  gabungDokumen,
   hariBillingRisiko,
   hitungState,
+  kunciNomor,
+  type ArsipRujukan,
   type DocState,
   type FakturBukti,
   type HasilState,
@@ -33,12 +41,6 @@ export class DocTrackerError extends Error {
 export const HARI_DEFAULT = 120;
 export const HARI_MAKS = 365;
 const BATAS_SO = 500;
-
-/** SO bertanggal sebelum ini: Review/Approved dianggap tersirat (tracker belum hidup saat itu). */
-export const stempelMulai = (): string => {
-  const v = process.env.DOC_TRACKER_STEMPEL_MULAI ?? "";
-  return /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : "2026-11-01";
-};
 
 const wibToday = (): string => new Date(Date.now() + 7 * 3600_000).toISOString().slice(0, 10);
 const iso = (v: unknown): string | null => (v == null ? null : new Date(v as string | Date).toISOString());
@@ -82,7 +84,6 @@ export interface DocTrackerList {
   asOf: string;
   hari: number;
   hari_billing_risiko: number;
-  stempel_mulai: string;
   funnel: Record<DocState, number>;
   ringkas: { total: number; anomali: number; billing_risiko: number; dikirim_belum_dibayar: number };
   rows: DocRow[];
@@ -92,21 +93,38 @@ interface Bundle {
   snapshots: Map<number, Snapshot>;
   sj: Map<number, SjBukti[]>;
   faktur: Map<number, FakturTaut[]>;
+  /** Jenis dokumen tercentang otomatis dari Arsip F156 → nomor arsip sumbernya. */
+  arsip: Map<number, Partial<Record<JenisDokumen, string[]>>>;
 }
 
 type FakturTaut = FakturBukti & { invoice_id: number; otomatis: boolean };
 
-/** Muat semua bukti untuk daftar SO sekaligus (4 kueri, bukan per-SO). */
+// installation_unit (migrasi 130) & arsip_dokumen (279) milik fitur lain — bila tabelnya belum ada
+// (mis. saat tracker dipromosikan ke cabang yang belum punya fitur itu) sumbernya dilewati, bukan 503.
+// Hanya hasil "ada" yang di-cache: tabel tak akan hilang setelah dibuat.
+const tabelAda = new Set<string>();
+async function cekTabel(): Promise<{ instalasi: boolean; arsip: boolean }> {
+  if (!(tabelAda.has("installation_unit") && tabelAda.has("arsip_dokumen"))) {
+    const [r] = await db()`
+      SELECT to_regclass('installation_unit') IS NOT NULL AS instalasi, to_regclass('arsip_dokumen') IS NOT NULL AS arsip`;
+    if (r?.instalasi) tabelAda.add("installation_unit");
+    if (r?.arsip) tabelAda.add("arsip_dokumen");
+  }
+  return { instalasi: tabelAda.has("installation_unit"), arsip: tabelAda.has("arsip_dokumen") };
+}
+
+/** Muat semua bukti untuk daftar SO sekaligus (kueri per sumber untuk SELURUH daftar, bukan per-SO). */
 async function muatBukti(so: { id: number; trans_date: string }[], today: string): Promise<Bundle> {
   const sql = db();
   const ids = so.map((s) => s.id);
   const snapshots = new Map<number, Snapshot>();
   const sjMap = new Map<number, SjBukti[]>();
   const fakMap = new Map<number, FakturTaut[]>();
-  if (!ids.length) return { snapshots, sj: sjMap, faktur: fakMap };
+  const arsipMap = new Map<number, Partial<Record<JenisDokumen, string[]>>>();
+  if (!ids.length) return { snapshots, sj: sjMap, faktur: fakMap, arsip: arsipMap };
 
-  const [stamps, dok, sjRows, fakRows] = await Promise.all([
-    sql`SELECT so_id, tahap, at FROM doc_tracker_stamp WHERE so_id = ANY(${ids}::bigint[])`,
+  const [ada, dok, sjRows, fakRows] = await Promise.all([
+    cekTabel(),
     sql`SELECT so_id, jenis, ada FROM doc_tracker_dokumen WHERE so_id = ANY(${ids}::bigint[])`,
     sql`
       SELECT x.so_id, x.nomor, x.tanggal, st.kirim_at, st.terima_at, st.bast_at
@@ -128,8 +146,35 @@ async function muatBukti(so: { id: number; trans_date: string }[], today: string
       GROUP BY l.so_id, ai.id`,
   ]);
 
-  const stampBy = new Map<string, string>();
-  for (const r of stamps) stampBy.set(`${r.so_id}:${r.tahap}`, new Date(r.at as string).toISOString());
+  // Tahap kedua: sumber yang dicocokkan lewat NOMOR SJ/faktur (sekali untuk seluruh daftar).
+  const sjKunci = [...new Set(sjRows.map((r) => kunciNomor(String(r.nomor))).filter(Boolean))];
+  const fakKunci = [...new Set(fakRows.map((r) => kunciNomor(String(r.number))).filter(Boolean))];
+  const [instRows, arsipRows] = await Promise.all([
+    ada.instalasi && sjKunci.length
+      ? // installation_unit.sj_number bisa ketikan lama (migrasi 159) → dipangkas di sini; tabelnya kecil.
+        sql`
+          SELECT upper(btrim(sj_number)) AS kunci, min(coalesce(bast_at, updated_at)) AS bast_at
+          FROM installation_unit
+          WHERE bast_done AND upper(btrim(sj_number)) = ANY(${sjKunci}::text[])
+          GROUP BY 1`
+      : Promise.resolve([]),
+    ada.arsip && (sjKunci.length || fakKunci.length)
+      ? // ref_* arsip sudah dipangkas saat simpan (arsip-dokumen.ts teks()) → upper() saja agar indeks upper(ref_*) terpakai.
+        sql`
+          SELECT nomor, buku_kode, ref_sj, ref_po, ref_faktur
+          FROM arsip_dokumen
+          WHERE dihapus_at IS NULL
+            AND (upper(ref_sj) = ANY(${sjKunci}::text[]) OR upper(ref_faktur) = ANY(${fakKunci}::text[]))`
+      : Promise.resolve([]),
+  ]);
+
+  const instBy = new Map<string, string>();
+  for (const r of instRows) if (r.bast_at) instBy.set(String(r.kunci), iso(r.bast_at)!);
+  const arsipList: ArsipRujukan[] = arsipRows.map((r) => ({
+    nomor: String(r.nomor), buku_kode: String(r.buku_kode),
+    ref_sj: (r.ref_sj as string | null) ?? null, ref_po: (r.ref_po as string | null) ?? null, ref_faktur: (r.ref_faktur as string | null) ?? null,
+  }));
+
   const dokBy = new Map<number, Partial<Record<JenisDokumen, boolean>>>();
   for (const r of dok) {
     const m = dokBy.get(Number(r.so_id)) ?? {};
@@ -138,7 +183,10 @@ async function muatBukti(so: { id: number; trans_date: string }[], today: string
   }
   for (const r of sjRows) {
     const a = sjMap.get(Number(r.so_id)) ?? [];
-    a.push({ nomor: String(r.nomor), tanggal: (r.tanggal as string | null) ?? null, kirimAt: iso(r.kirim_at), terimaAt: iso(r.terima_at), bastAt: iso(r.bast_at) });
+    a.push({
+      nomor: String(r.nomor), tanggal: (r.tanggal as string | null) ?? null, kirimAt: iso(r.kirim_at), terimaAt: iso(r.terima_at), bastAt: iso(r.bast_at),
+      bastInstalasiAt: instBy.get(kunciNomor(String(r.nomor))) ?? null,
+    });
     sjMap.set(Number(r.so_id), a);
   }
   for (const r of fakRows) {
@@ -148,20 +196,20 @@ async function muatBukti(so: { id: number; trans_date: string }[], today: string
     fakMap.set(Number(r.so_id), a);
   }
 
-  const mulai = stempelMulai();
   for (const s of so) {
+    const sj = sjMap.get(s.id) ?? [];
+    const faktur = fakMap.get(s.id) ?? [];
+    const dariArsip = arsipList.length ? dokumenDariArsip(sj.map((x) => x.nomor), faktur.map((f) => f.nomor), arsipList) : {};
+    arsipMap.set(s.id, dariArsip);
     snapshots.set(s.id, {
       soTanggal: s.trans_date,
-      reviewAt: stampBy.get(`${s.id}:review`) ?? null,
-      approvedAt: stampBy.get(`${s.id}:approved`) ?? null,
-      sj: sjMap.get(s.id) ?? [],
-      faktur: fakMap.get(s.id) ?? [],
-      dokumen: dokBy.get(s.id) ?? {},
-      stempelWajib: s.trans_date >= mulai,
+      sj,
+      faktur,
+      dokumen: gabungDokumen(dokBy.get(s.id) ?? {}, dariArsip),
       today,
     });
   }
-  return { snapshots, sj: sjMap, faktur: fakMap };
+  return { snapshots, sj: sjMap, faktur: fakMap, arsip: arsipMap };
 }
 
 const kosongFunnel = (): Record<DocState, number> => Object.fromEntries(STATES.map((s) => [s, 0])) as Record<DocState, number>;
@@ -211,7 +259,7 @@ export async function listDocTracker(opts: { hari?: number; state?: DocState | n
   const rows = semua.filter(
     (r) => (!opts.state || r.state === opts.state) && (!opts.billingRisiko || r.billing_risiko) && (!opts.dikirimBelumDibayar || r.dikirim_belum_dibayar),
   );
-  return { asOf: today, hari, hari_billing_risiko: hariBillingRisiko(), stempel_mulai: stempelMulai(), funnel, ringkas, rows };
+  return { asOf: today, hari, hari_billing_risiko: hariBillingRisiko(), funnel, ringkas, rows };
 }
 
 export interface DocDetail {
@@ -220,8 +268,10 @@ export interface DocDetail {
   sj: SjBukti[];
   /** otomatis = dari rujukan SO di faktur Accurate (tak bisa dilepas); false = tautan manual. */
   faktur: { invoice_id: number; nomor: string; tanggal: string; lunas: boolean; otomatis: boolean }[];
-  stempel: Record<"review" | "approved", { at: string; by: string; catatan: string | null } | null>;
+  /** Centang MANUAL (doc_tracker_dokumen). Centang efektif = manual ATAU dokumen_arsip. */
   dokumen: Record<JenisDokumen, { ada: boolean; by: string; at: string } | null>;
+  /** Jenis dokumen yang tercentang otomatis dari Arsip F156 → nomor arsip sumbernya (tak bisa dibatalkan manual). */
+  dokumen_arsip: Partial<Record<JenisDokumen, string[]>>;
   dokumen_wajib: readonly JenisDokumen[];
   /** Faktur customer yang sama (180 hari) belum tertaut ke SO ini dan tanpa rujukan SO otomatis — kandidat tautan manual. */
   kandidat_faktur: { invoice_id: number; nomor: string; tanggal: string; total: number }[];
@@ -234,9 +284,8 @@ export async function getDocTracker(soId: number): Promise<DocDetail> {
     FROM accurate_sales_order WHERE id = ${soId}`;
   if (!so) throw new DocTrackerError(404, "SO tidak ditemukan");
   const today = wibToday();
-  const { snapshots, sj, faktur } = await muatBukti([{ id: soId, trans_date: String(so.trans_date) }], today);
-  const [stamps, dok, kandidat] = await Promise.all([
-    sql`SELECT tahap, at, by, catatan FROM doc_tracker_stamp WHERE so_id = ${soId}`,
+  const { snapshots, sj, faktur, arsip } = await muatBukti([{ id: soId, trans_date: String(so.trans_date) }], today);
+  const [dok, kandidat] = await Promise.all([
     sql`SELECT jenis, ada, by, at FROM doc_tracker_dokumen WHERE so_id = ${soId}`,
     so.customer_id == null
       ? Promise.resolve([])
@@ -250,8 +299,6 @@ export async function getDocTracker(soId: number): Promise<DocDetail> {
             AND NOT EXISTS (SELECT 1 FROM accurate_invoice_so a WHERE a.invoice_id = ai.id)
           ORDER BY ai.tanggal DESC LIMIT 30`,
   ]);
-  const stempel = { review: null, approved: null } as DocDetail["stempel"];
-  for (const r of stamps) stempel[String(r.tahap) as "review" | "approved"] = { at: new Date(r.at as string).toISOString(), by: String(r.by), catatan: (r.catatan as string | null) ?? null };
   const dokumen = Object.fromEntries(JENIS_DOKUMEN.map((j) => [j, null])) as DocDetail["dokumen"];
   for (const r of dok) dokumen[String(r.jenis) as JenisDokumen] = { ada: Boolean(r.ada), by: String(r.by), at: new Date(r.at as string).toISOString() };
   return {
@@ -259,51 +306,24 @@ export async function getDocTracker(soId: number): Promise<DocDetail> {
     hasil: hitungState(snapshots.get(soId)!),
     sj: sj.get(soId) ?? [],
     faktur: (faktur.get(soId) ?? []).map((f) => ({ invoice_id: f.invoice_id, nomor: f.nomor, tanggal: f.tanggal, lunas: f.lunas, otomatis: f.otomatis })),
-    stempel,
     dokumen,
+    dokumen_arsip: arsip.get(soId) ?? {},
     dokumen_wajib: DOKUMEN_WAJIB,
     kandidat_faktur: kandidat.map((r) => ({ invoice_id: Number(r.invoice_id), nomor: String(r.number), tanggal: String(r.tanggal), total: Number(r.total) || 0 })),
   };
 }
 
-async function pastikanSo(soId: number): Promise<{ trans_date: string }> {
-  const [so] = await db()`SELECT trans_date::text AS trans_date FROM accurate_sales_order WHERE id = ${soId}`;
+async function pastikanSo(soId: number): Promise<void> {
+  const [so] = await db()`SELECT 1 FROM accurate_sales_order WHERE id = ${soId}`;
   if (!so) throw new DocTrackerError(404, "SO tidak ditemukan");
-  return { trans_date: String(so.trans_date) };
 }
 
 const cleanBy = (by: string): string => {
   const b = (by ?? "").trim();
-  if (!b) throw new DocTrackerError(400, "identitas pemberi stempel kosong");
+  if (!b) throw new DocTrackerError(400, "identitas pengguna kosong");
   return b.slice(0, 120);
 };
 const cleanCatatan = (c?: string | null): string | null => (c && c.trim() ? c.trim().slice(0, 500) : null);
-
-/** Review dulu, baru Approved (SO sebelum tracker hidup boleh langsung Approved — Review tersirat). */
-export async function stampTahap(soId: number, tahap: "review" | "approved", by: string, catatan?: string | null): Promise<void> {
-  if (tahap !== "review" && tahap !== "approved") throw new DocTrackerError(400, "tahap harus review atau approved");
-  const sql = db();
-  const so = await pastikanSo(soId);
-  const pembuat = cleanBy(by);
-  if (tahap === "approved" && so.trans_date >= stempelMulai()) {
-    const [r] = await sql`SELECT 1 FROM doc_tracker_stamp WHERE so_id = ${soId} AND tahap = 'review'`;
-    if (!r) throw new DocTrackerError(409, "Approved butuh Review lebih dulu");
-  }
-  await sql`
-    INSERT INTO doc_tracker_stamp (so_id, tahap, by, catatan) VALUES (${soId}, ${tahap}, ${pembuat}, ${cleanCatatan(catatan)})
-    ON CONFLICT (so_id, tahap) DO NOTHING`;
-}
-
-/** Cabut stempel TERAKHIR saja (Approved dulu; Review hanya bila Approved tak ada). */
-export async function cabutStempel(soId: number, tahap: "review" | "approved"): Promise<void> {
-  const sql = db();
-  await pastikanSo(soId);
-  if (tahap === "review") {
-    const [a] = await sql`SELECT 1 FROM doc_tracker_stamp WHERE so_id = ${soId} AND tahap = 'approved'`;
-    if (a) throw new DocTrackerError(409, "Cabut Approved dulu sebelum Review");
-  }
-  await sql`DELETE FROM doc_tracker_stamp WHERE so_id = ${soId} AND tahap = ${tahap}`;
-}
 
 export async function setDokumen(soId: number, jenis: string, ada: boolean, by: string, catatan?: string | null): Promise<void> {
   if (!(JENIS_DOKUMEN as readonly string[]).includes(jenis)) throw new DocTrackerError(400, `jenis dokumen tidak dikenal (${JENIS_DOKUMEN.join(", ")})`);
