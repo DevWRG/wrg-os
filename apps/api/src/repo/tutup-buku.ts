@@ -1,4 +1,4 @@
-// F61 Tutup Buku Bulanan Countdown (migrasi 292, issue #1774).
+// F61 Tutup Buku Bulanan Countdown (migrasi 295, issue #1774).
 //
 // Menjelang tutup buku, penjualan bulan berjalan yang BELUM DIFAKTUR akan meleset ke
 // bulan berikutnya. Keputusan user 8 Nov 2026:

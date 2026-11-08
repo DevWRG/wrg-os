@@ -1,4 +1,4 @@
-// Uji F61 Tutup Buku Countdown (#1774, migrasi 292) — MANUAL, butuh DB dev. Bukan bagian CI.
+// Uji F61 Tutup Buku Countdown (#1774, migrasi 295) — MANUAL, butuh DB dev. Bukan bagian CI.
 //
 //   env -u WA_SEND_URL DATABASE_URL="postgres:///wrg_os_dev" npx tsx scripts/qa/uji-tutup-buku.ts
 //

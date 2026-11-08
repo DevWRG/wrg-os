@@ -6603,7 +6603,7 @@ app.put("/fakturis-diam/akun", async (c) => {
   const b = ((await c.req.json().catch(() => null)) as Record<string, unknown> | null) ?? {};
   try { return c.json(await simpanLabelAkun(b)); } catch (e) { return fakturisErr(c, e); }
 });
-// F61 Tutup Buku Countdown (migrasi 292). Gerbang menu "/do-belum-faktur" di BFF:
+// F61 Tutup Buku Countdown (migrasi 295). Gerbang menu "/do-belum-faktur" di BFF:
 // lihat = ringkasan; ubah = geser tanggal & pratinjau WA. `oleh` dari sesi.
 const tutupBukuErr = (c: Context, e: unknown) => {
   if (e instanceof TutupBukuError) return c.json({ error: e.message }, e.status as 400);
