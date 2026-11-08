@@ -1,7 +1,7 @@
 # F175 — Plan & Report Teknisi (format WA khusus Aftersales)
 
 WA `#PLAN` / `#REPORT` untuk role **Teknisi** dengan format per alat, bukan format sales. Pengganti bertahap
-Google Form "Kegiatan Teknisi". Status: **spesifikasi** (disetujui user 6 Nov 2026), belum dibangun.
+Google Form "Kegiatan Teknisi". Status: **Fase 1 bagian 1 dibangun** (8 Nov 2026, lihat "Status pembangunan"); spesifikasi disetujui user 6 Nov 2026.
 
 ## Masalah (keadaan dev 6 Nov 2026)
 
@@ -149,3 +149,26 @@ Terpisah dari `sales_plan` / `activity_log` supaya metrik kunjungan sales tak te
   Catatan / Foto) + identitas alat + Status; dukung dua cara identitas (nomor plan ATAU RS/Alat/SN); banyak alat satu
   faskes = blok bernomor dalam satu pesan.
 - **Belum diputuskan**: foto wajib untuk jenis tertentu (PM/Install)? · urutan kerja terhadap promosi modul Aftersales ke main.
+
+## Status pembangunan
+
+**Fase 1 bagian 1 (8 Nov 2026)** — di belakang saklar `TEKNISI_PLAN_REPORT_ENABLED` (default mati; mati = Teknisi
+tetap lewat format sales seperti sebelumnya):
+- Migrasi `291_teknisi_plan_report.sql`: empat tabel di bagian Data. Rujukan ke tabel modul Aftersales bertipe `uuid`
+  tanpa FK, supaya migrasi bisa dipromosikan sebelum modul itu sampai main.
+- Parser `parsers/teknisi.ts` (+ tes): #PLAN, #REPORT tiga bentuk, alias label/jenis/status, galat yang jelas.
+  Format salah = **tidak disimpan sama sekali**, bot membalas daftar galat + contoh.
+- `repo/teknisi-plan-report.ts`: pencocokan faskes (`accountIdDariTulisan`), alat (`kso_asset` lewat SN penuh/ekor
+  3–6 karakter atau nama alat di faskes itu; potongan SN alfanumerik di kolom alat ikut dicoba sebagai SN; lalu
+  `installation_unit` bila kolom `account_id`-nya ada), rujukan `jadwal_rutin` bulan itu. Kirim ulang #PLAN mengganti
+  item yang belum dilaporkan. Nomor plan + SN yang menunjuk alat berbeda → tak ditautkan ke mana pun, `perlu_cek`.
+  Report sebagai caption foto → foto kunjungan umum. Report ganda (wa_message_id sama) diabaikan.
+- Routing di `inbound.ts` sebelum syarat "daftar bernomor" jalur sales.
+- `reportPerOrang` (plandash): Teknisi dibaca dari `teknisi_plan_item` bila ada isinya, kalau tidak dari `sales_plan`
+  (sebelumnya salah dibaca dari counter `sales_todo` → ≈0). `unmatched` Teknisi = alat `perlu_cek`.
+
+**Belum (bagian 2):** efek ke `jadwal_rutin` / `maintenance_schedule` / `service_ticket` / `install_schedule`
+(saklar sendiri), pencocokan tiket servis (tabel tiket tak punya nomor `T-`; dicocokkan lewat unit + faskes), job
+Plan Tidak Realisasi, foto susulan per alat (caption nomor blok / digit SN), shortcut `#install/#servis/…` ke format
+baru.
+

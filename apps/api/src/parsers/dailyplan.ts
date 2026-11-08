@@ -27,7 +27,7 @@ const MONTHS: Record<string, number> = {
 // Cari tanggal di sebuah teks. Dukungan: DD/MM/YYYY, DD-MM-YYYY, DD-MM-YY,
 // DD <bulan> YYYY (ID/EN). Return {iso, matched} atau null.
 // Tahun divalidasi di buildIso (parsers/tanggal.ts) — bareng am.ts.
-function findDate(text: string, nowMs?: number): { iso: string; matched: string } | null {
+export function findDate(text: string, nowMs?: number): { iso: string; matched: string } | null {
   // DD <month-word> [YYYY]
   const m1 = text.match(/(\d{1,2})\s+([A-Za-z]{3,9})\.?\s*(\d{2,4})?/);
   if (m1) {
