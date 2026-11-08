@@ -13,7 +13,7 @@ import { CalendarCheck,
   Wallet, Coins, Banknote, Car, QrCode, PenLine, PackagePlus, PackageMinus,
   Handshake, Archive, Ticket, Printer, Route, ArrowLeftRight,
   TrendingUp, CalendarClock, PackageSearch, FileClock, type LucideIcon,
-  Hourglass, ShieldAlert, Landmark, ClipboardList, PackageCheck,
+  Hourglass, ShieldAlert, Landmark, Scale, ClipboardList, PackageCheck,
 } from "lucide-react";
 
 import { can, canOrLegacy, hasPerms } from "@/lib/perms";
@@ -41,6 +41,7 @@ import { canViewAuditFindings } from "@/lib/audit-finding-access";
 import { canViewDanaOps } from "@/lib/dana-ops-access";
 import { canViewVendorManagement } from "@/lib/vendor-management-access";
 import { canViewGaReporting } from "@/lib/ga-reporting-access";
+import { canViewProfitabilitasArea } from "@/lib/profitabilitas-area-access";
 
 // exact: sorot aktif hanya saat path persis (untuk route induk yg punya child,
 // mis. /pricelist vs /pricelist/setup).
@@ -426,6 +427,11 @@ export const NAV: NavGroup[] = [
       // F149 (dipersempit) — DO/SJ terkirim yang belum difakturkan, dari cermin Accurate.
       // Kunci izin sendiri ("do-belum-faktur"), default tertutup: butuh Sync Fitur + centang.
       { title: "DO Belum Difaktur", url: "/do-belum-faktur", icon: FileClock, badge: "NEW", show: canViewDoBelumFaktur },
+      // F150 Profitabilitas Area — biaya operasional vs revenue netto per area. Kunci izin
+      // "profitabilitas-area", default tertutup: butuh Sync Fitur + centang grup; sebelum itu
+      // fallback Direktur/admin/superuser saja (HoD baru melihat cabangnya sendiri setelah
+      // grupnya dicentang di Akses Grup).
+      { title: "Profitabilitas Area", url: "/profitabilitas-area", icon: Scale, badge: "NEW", show: canViewProfitabilitasArea },
     ],
   },
   {
