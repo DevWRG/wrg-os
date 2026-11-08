@@ -57,16 +57,18 @@ export interface MasterUserRow {
   aktif: boolean;
   wajib_plan_report: boolean;
   golongan: Golongan | null; // jenjang karir AM (SK Pasal 2.1); null = belum di-assessment
+  inisial: string | null; // dari Data Karyawan (employee.inisial) via am_id; null = belum tertaut/belum diisi
 }
 
 export async function listUsers(opts: { role?: string; aktif?: boolean } = {}): Promise<MasterUserRow[]> {
   const sql = db();
   const rows = await sql`
-    SELECT am_id, nama, panggilan, wa_number, role, posisi, cabang, area, aktif, wajib_plan_report, golongan
-    FROM master_user
-    WHERE ${opts.role ? sql`role = ${opts.role}` : sql`true`}
-      AND ${opts.aktif === undefined ? sql`true` : sql`aktif = ${opts.aktif}`}
-    ORDER BY cabang NULLS LAST, nama
+    SELECT m.am_id, m.nama, m.panggilan, m.wa_number, m.role, m.posisi, m.cabang, m.area, m.aktif, m.wajib_plan_report, m.golongan,
+           (SELECT e.inisial FROM employee e WHERE e.am_id = m.am_id::text AND e.inisial IS NOT NULL ORDER BY e.id LIMIT 1) AS inisial
+    FROM master_user m
+    WHERE ${opts.role ? sql`m.role = ${opts.role}` : sql`true`}
+      AND ${opts.aktif === undefined ? sql`true` : sql`m.aktif = ${opts.aktif}`}
+    ORDER BY m.cabang NULLS LAST, m.nama
   `;
   return rows.map((r) => ({
     am_id: String(r.am_id),
@@ -80,6 +82,7 @@ export async function listUsers(opts: { role?: string; aktif?: boolean } = {}): 
     aktif: Boolean(r.aktif),
     wajib_plan_report: Boolean(r.wajib_plan_report),
     golongan: isGolongan(r.golongan) ? r.golongan : null,
+    inisial: r.inisial ? String(r.inisial) : null,
   }));
 }
 
