@@ -223,7 +223,12 @@ function bacaJudul(b: TeknisiReportBlok, judul: string): string | null {
   return null;
 }
 
-export function parseTeknisiReport(body: string, nowMs?: number): TeknisiReportParse {
+export function parseTeknisiReport(
+  body: string,
+  nowMs?: number,
+  // Shortcut #install/#servis/#training/#kalibrasi: jenis dari hashtag bila blok tak menulisnya.
+  opts: { jenisDefault?: JenisTeknisi } = {},
+): TeknisiReportParse {
   const lines = stripInvisible(body ?? "").split(/\r?\n/);
   const out: TeknisiReportParse = { tanggal: null, faskes: null, catatan: null, blok: [], errors: [] };
   const h = lines.findIndex((l) => HASH_LINE.test(l));
@@ -328,6 +333,7 @@ export function parseTeknisiReport(body: string, nowMs?: number): TeknisiReportP
   }
 
   for (const b of out.blok) {
+    if (!b.jenis && opts.jenisDefault) b.jenis = opts.jenisDefault;
     if (b.planNo == null && !b.sn && !b.alat) {
       out.errors.push(`Blok ${b.nomor}: identitas alat kosong — tulis nomor plan (\`#1\`) atau \`SN:\`/\`Alat:\`.`);
     }
@@ -406,7 +412,8 @@ export function balasanPlanTeknisi(input: {
 
 export function balasanReportTeknisi(input: {
   faskes: string | null;
-  alat: { nomor: number; alatLabel: string | null; sn: string | null; jenis: string | null; status: string; alasan: string | null; masalah: string | null }[];
+  alat: { nomor: number; alatLabel: string | null; sn: string | null; jenis: string | null; status: string; alasan: string | null; masalah: string | null; efek?: string | null }[];
+  foto?: number;
 }): string {
   const n = input.alat.length;
   const baris = [`✅ ${input.faskes ?? "Kunjungan"} — ${n} alat tercatat`];
@@ -416,7 +423,9 @@ export function balasanReportTeknisi(input: {
     const status = a.alasan && a.status !== "Selesai" ? `${a.status} ${a.alasan}` : a.status;
     baris.push(`${a.nomor}. ${nama} · ${a.jenis ?? "jenis ?"} · ${status}`);
     if (a.masalah) baris.push(`   ⚠️ perlu cek: ${a.masalah}`);
+    if (a.efek) baris.push(`   ↳ ${a.efek}`);
   }
+  if (input.foto) baris.push(`📷 ${input.foto} foto terlampir`);
   return baris.join("\n");
 }
 

@@ -15,7 +15,8 @@ import { balasanBonTeknisi, balasanOpnameWa } from "./bon-sparepart.js";
 import { listStockBranch } from "./stock-branch.js";
 import { balasanBriefing } from "./senin-brief.js";
 import { parseTeknisiPlan, parseTeknisiReport, balasanPlanTeknisi, balasanReportTeknisi, balasanFormatSalah } from "../parsers/teknisi.js";
-import { teknisiPlanReportAktif, isTeknisi, simpanPlanTeknisi, simpanReportTeknisi } from "./teknisi-plan-report.js";
+import { teknisiPlanReportAktif, isTeknisi, simpanPlanTeknisi, simpanReportTeknisi, tempelFotoTeknisi } from "./teknisi-plan-report.js";
+import type { JenisTeknisi } from "../parsers/teknisi.js";
 import { upsertDailyTodo, computeIsLate } from "./todo.js";
 import { createReminder } from "./reminder.js";
 import {
@@ -507,6 +508,8 @@ async function handleTeknisiPlanReport(
   kind: "plan" | "report",
   am: { am_id: string; nama: string; role?: string | null; via?: string },
   target: string,
+  // Shortcut #install/#servis/…: body sudah ditulis ulang ke #REPORT + jenis default.
+  shortcut?: { body: string; jenis: JenisTeknisi },
 ): Promise<Record<string, unknown>> {
   const sql = db();
   const [{ tgl_pesan }] = await sql<{ tgl_pesan: string }[]>`
@@ -529,7 +532,9 @@ async function handleTeknisiPlanReport(
     const reply = await sendViaWaGateway(target, body);
     return { am_id: am.am_id, via: am.via, mode: "teknisi", tanggal, items: r.items.length, dilewati: r.dilewati, late: r.late, reply };
   }
-  const rp = parseTeknisiReport(row.body ?? "");
+  const rp = shortcut
+    ? parseTeknisiReport(shortcut.body, undefined, { jenisDefault: shortcut.jenis })
+    : parseTeknisiReport(row.body ?? "");
   if (rp.errors.length) {
     const reply = await sendViaWaGateway(target, balasanFormatSalah("report", am.nama, rp.errors));
     return { error: "teknisi-report-format", errors: rp.errors, via: am.via, mode: "teknisi", reply };
@@ -538,15 +543,17 @@ async function handleTeknisiPlanReport(
   const mediaPath = /^image/i.test(row.message_type ?? "") && row.media_path ? row.media_path : null;
   const r = await simpanReportTeknisi({
     teknisiId: am.am_id, tanggal, parse: rp, waMessageId: row.message_id, receivedAt: row.received_at, mediaPath,
+    pengirim: { groupJid: row.group_jid, senderName: row.sender_name },
   });
   if (r.duplikat) return { skipped: "teknisi-report-duplikat", am_id: am.am_id, mode: "teknisi" };
-  let body = balasanReportTeknisi({ faskes: r.faskes, alat: r.alat });
+  let body = balasanReportTeknisi({ faskes: r.faskes, alat: r.alat, foto: r.foto });
   const peringatan = buildPeringatanTanggal(tanggal, String(tgl_pesan));
   if (peringatan) body += peringatan;
   const reply = await sendViaWaGateway(target, body);
   return {
     am_id: am.am_id, via: am.via, mode: "teknisi", tanggal, alat: r.alat.length,
-    perlu_cek: r.alat.filter((a) => a.masalah).length, foto: mediaPath ? 1 : 0, reply,
+    perlu_cek: r.alat.filter((a) => a.masalah).length, foto: r.foto,
+    efek: r.alat.filter((a) => a.efek).map((a) => ({ nomor: a.nomor, efek: a.efek })), reply,
   };
 }
 
@@ -1480,6 +1487,16 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
   // (teknisi_capacity F8 — sejak 246 cermin master_user role Teknisi).
   if (kind === "install" || kind === "servis" || kind === "training" || kind === "kalibrasi") {
     if (!aftersalesWaAktif()) return finish({ skipped: "aftersales-wa-off" });
+    // F175: shortcut berformat #REPORT (ada baris `Status:`) dari Teknisi → jalur per
+    // alat dengan jenis dari hashtag. Teks bebas lama tetap ke teknisi_report di bawah.
+    if (teknisiPlanReportAktif() && /^\s*status\s*:/im.test(row.body ?? "")) {
+      const tek = await resolveSender({ senderJid: row.sender_jid, groupJid: row.group_jid, pushname: row.sender_name });
+      if (tek?.aktif && isTeknisi(tek.role)) {
+        const jenis = ({ install: "Install", servis: "Service", training: "Training", kalibrasi: "Kalibrasi" } as const)[kind];
+        const body = stripInvisible(row.body ?? "").replace(/^(\s*)#\s*(install|servis|training|kalibrasi)\b/im, "$1#REPORT");
+        return finish(await handleTeknisiPlanReport(row, "report", tek, row.group_jid, { body, jenis }), "report");
+      }
+    }
     const teknisi = await matchTeknisi({ pushname: row.sender_name, senderJid: row.sender_jid, groupJid: row.group_jid });
     if (!teknisi) return finish({ skipped: "unknown-sender", sender_name: row.sender_name });
     // Isi laporan = body SETELAH hashtag-nya dibuang. Cek `!row.body?.trim()`
@@ -1536,6 +1553,16 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
         return finish({ skipped: "am-photo-non-alliance", am_id: amp.am_id }, "photo");
       }
       await sql`UPDATE master_user SET last_active_group = ${row.group_jid}, last_active_at = now() WHERE am_id = ${amp.am_id}`;
+      // F175: foto susulan Teknisi → kunjungan #REPORT terakhirnya (caption = nomor
+      // blok / ekor SN). Tanpa kunjungan dalam jendela → jalur foto lama. Diam (tanpa
+      // balasan): satu kunjungan bisa berbelas foto.
+      if (teknisiPlanReportAktif() && isTeknisi(amp.role)) {
+        const tf = await tempelFotoTeknisi({
+          teknisiId: amp.am_id, mediaPath: row.media_path, caption: row.body,
+          waMessageId: row.message_id, receivedAt: row.received_at,
+        });
+        if (tf) return finish({ via: amp.via, mode: "teknisi", ...tf }, "photo");
+      }
       const r = await photoFollowup(row, amp);
       return finish({ via: amp.via, ...r }, "photo");
     }
