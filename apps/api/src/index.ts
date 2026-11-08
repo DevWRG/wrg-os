@@ -89,6 +89,10 @@ import { RevisiError, daftarRevisi, tutupManual } from "./repo/revisi-faktur.js"
 import { CekError, buatCek, daftarCek, runCekHarian, ubahDraft, ubahStatus } from "./repo/cek-keluar.js";
 import { ArsipError, bacaBerkasArsip, hapusArsip, listArsip, listBuku as arsipListBuku, simpanBuku as arsipSimpanBuku, ubahArsip, unggahArsip } from "./repo/arsip-dokumen.js";
 import {
+  DocTrackerError, getDocTracker, lepasFaktur, listDocTracker, parseHari as parseHariDoc, parseSoId, parseState,
+  setDokumen, tautkanFaktur,
+} from "./repo/doc-tracker.js";
+import {
   ingestInvoices,
   ingestAccurateWebhook,
   getAging,
@@ -5349,6 +5353,85 @@ app.patch("/do-belum-faktur/param", async (c) => {
   const b = ((await c.req.json().catch(() => null)) as Record<string, unknown> | null) ?? {};
   try { return c.json(await doFakturUbahAmbang(b.ambang_hari_kerja, typeof b.oleh === "string" ? b.oleh : null)); } catch (e) { return doFakturErr(c, e); }
 });
+
+// DOC — Document Tracker 7-state (Draft → Sent → Received → Executed → Billed → Paid → Closed; Review/Approved
+// dihapus 8 Nov 2026). State dihitung dari mirror Accurate + shipment_tracking + Instalasi + Arsip; hanya checklist
+// dokumen dan tautan faktur manual yang ditulis. Izin & identitas pelaku (`by`) ditentukan BFF dari SESI. Param salah
+// → 400, SO tak ada → 404, konflik tautan → 409, tabel belum ada (42P01) → 503 migration_pending.
+const docTrackerError = (c: Context, e: unknown) => {
+  if (e instanceof DocTrackerError) return c.json({ error: e.message }, e.status as 400);
+  if ((e as { code?: string })?.code === "42P01") return c.json({ error: "migration_pending" }, 503);
+  throw e;
+};
+const bodyDocTracker = async (c: Context): Promise<Record<string, unknown>> => {
+  try {
+    const b = await c.req.json();
+    return b && typeof b === "object" ? (b as Record<string, unknown>) : {};
+  } catch {
+    throw new DocTrackerError(400, "body bukan JSON");
+  }
+};
+
+app.get("/doc-tracker", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    return c.json(
+      await listDocTracker({
+        hari: parseHariDoc(c.req.query("hari")),
+        state: parseState(c.req.query("state")),
+        q: c.req.query("q"),
+        billingRisiko: c.req.query("billing") === "1",
+        dikirimBelumDibayar: c.req.query("dikirim_belum_dibayar") === "1",
+      }),
+    );
+  } catch (e) {
+    return docTrackerError(c, e);
+  }
+});
+
+app.get("/doc-tracker/:soId", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    return c.json(await getDocTracker(parseSoId(c.req.param("soId"))));
+  } catch (e) {
+    return docTrackerError(c, e);
+  }
+});
+
+app.post("/doc-tracker/:soId/dokumen", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const b = await bodyDocTracker(c);
+    if (typeof b.ada !== "boolean") throw new DocTrackerError(400, "ada harus true/false");
+    await setDokumen(parseSoId(c.req.param("soId")), String(b.jenis ?? ""), b.ada, String(b.by ?? ""), b.catatan == null ? null : String(b.catatan));
+    return c.json({ ok: true });
+  } catch (e) {
+    return docTrackerError(c, e);
+  }
+});
+
+app.post("/doc-tracker/:soId/faktur", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const b = await bodyDocTracker(c);
+    await tautkanFaktur(parseSoId(c.req.param("soId")), parseSoId(String(b.invoice_id ?? "")), String(b.by ?? ""));
+    return c.json({ ok: true });
+  } catch (e) {
+    return docTrackerError(c, e);
+  }
+});
+
+app.post("/doc-tracker/:soId/faktur/lepas", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const b = await bodyDocTracker(c);
+    await lepasFaktur(parseSoId(c.req.param("soId")), parseSoId(String(b.invoice_id ?? "")));
+    return c.json({ ok: true });
+  } catch (e) {
+    return docTrackerError(c, e);
+  }
+});
+
 // F156 Arsip Dokumen (migrasi 279) — berkas di Google Drive PRIVAT, diunduh lewat sini.
 // Gerbang menu "/arsip-dokumen" (lihat/buat/ubah/hapus) + kode buku (admin) DIPERIKSA DI BFF;
 // service token mem-bypass JWT di sini. `oleh` diisi BFF dari sesi.
