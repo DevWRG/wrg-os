@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 
 import {
   normalizeJenis, parseStatus, parseTeknisiPlan, parseTeknisiReport, pisahJenisTiket, pisahSnAlat,
-  balasanPlanTeknisi, balasanReportTeknisi, balasanFormatSalah,
+  balasanPlanTeknisi, balasanReportTeknisi, balasanFormatSalah, CONTOH_PLAN_TEKNISI, CONTOH_REPORT_TEKNISI,
 } from "./teknisi.js";
 
 const NOW = Date.parse("2026-11-07T01:00:00Z"); // 7 Nov 2026 08:00 WIB
@@ -198,3 +198,11 @@ test("balasan report: baris efek + jumlah foto", () => {
   });
   assert.equal(t, "✅ RS A — 1 alat tercatat\n1. EXC200 (…0832) · PM · Selesai\n   ↳ jadwal rutin bulan ini selesai\n📷 2 foto terlampir");
 });
+
+test("teks galat tanpa kurung sudut — WhatsApp membuang <...>", () => {
+  const r = parseTeknisiReport("#REPORT\nRS: RS A\n\n1) ??? | ???\nStatus: mantap\n\n2) SN 1234\nKegiatan: x");
+  assert.ok(r.errors.length >= 2);
+  for (const e of r.errors) assert.doesNotMatch(e, /<[^>]*>/, e);
+  for (const t of [CONTOH_PLAN_TEKNISI, CONTOH_REPORT_TEKNISI]) assert.doesNotMatch(t, /<[^>]*>/);
+});
+
