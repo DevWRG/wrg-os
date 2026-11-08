@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { Plus } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -15,24 +14,22 @@ import { useConfirm } from "@/components/ui/use-confirm";
 import { cn } from "@/lib/utils";
 import { useKasData } from "./use-kas-data";
 import {
-  STATUS_LABEL, awalMinggu, hariIniWib, kasApi, rp, selCls, tambahHari, tgl, waktu,
+  STATUS_LABEL, kasApi, rp, rpSelisih, selCls, tgl, waktu,
   type IzinKasStation, type Rekap, type RekapDetail, type StatusRekap,
 } from "./types";
 
-const STATUS_VARIAN: Record<StatusRekap, "default" | "secondary" | "destructive" | "outline"> = {
+export const STATUS_VARIAN: Record<StatusRekap, "default" | "secondary" | "destructive" | "outline"> = {
   draft: "outline", submitted: "secondary", approved: "default", rejected: "destructive",
 };
 const selisihCls = (n: number) => (n === 0 ? "" : n < 0 ? "text-destructive font-semibold" : "text-amber-600 font-semibold");
-const MINGGU_PILIHAN = 8;
 
-export function RekapTab({ izin, cabangOpsi }: { izin: IzinKasStation; cabangOpsi: string[] }) {
+export function RiwayatRekap({ izin, cabangOpsi }: { izin: IzinKasStation; cabangOpsi: string[] }) {
   const [cabang, setCabang] = useState("");
   const [status, setStatus] = useState("");
   const qs = new URLSearchParams({ limit: "200" });
   if (cabang) qs.set("cabang", cabang);
   if (status) qs.set("status", status);
   const { data, galat, loading, muatUlang } = useKasData<{ rows: Rekap[] }>(`rekap?${qs.toString()}`);
-  const [buat, setBuat] = useState(false);
   const [detailId, setDetailId] = useState<string | null>(null);
   const rows = data?.rows ?? [];
 
@@ -45,7 +42,7 @@ export function RekapTab({ izin, cabangOpsi }: { izin: IzinKasStation; cabangOps
     { id: "akhir", header: "Saldo akhir", align: "right", sortable: true, searchable: false, accessor: (r) => r.saldo_akhir, cell: (r) => <span className="font-medium">{rp(r.saldo_akhir)}</span> },
     {
       id: "selisih", header: "Selisih", align: "right", searchable: false, accessor: (r) => r.total_selisih,
-      cell: (r) => <span className={selisihCls(r.total_selisih)}>{r.jumlah_hari_selisih === 0 && r.total_selisih === 0 ? "Cocok" : rp(r.total_selisih)}</span>,
+      cell: (r) => <span className={selisihCls(r.total_selisih)}>{r.jumlah_hari_selisih === 0 && r.total_selisih === 0 ? "Cocok" : rpSelisih(r.total_selisih)}</span>,
     },
     {
       id: "status", header: "Status", sortable: true, accessor: (r) => STATUS_LABEL[r.status],
@@ -70,7 +67,6 @@ export function RekapTab({ izin, cabangOpsi }: { izin: IzinKasStation; cabangOps
             <option value="">Semua</option>
             {(Object.keys(STATUS_LABEL) as StatusRekap[]).map((s) => <option key={s} value={s}>{STATUS_LABEL[s]}</option>)}
           </select></div>
-        {izin.stationCreate && <Button onClick={() => setBuat(true)}><Plus /> Buat / segarkan rekap</Button>}
       </div>
 
       {galat ? (
@@ -78,63 +74,18 @@ export function RekapTab({ izin, cabangOpsi }: { izin: IzinKasStation; cabangOps
       ) : loading && !data ? (
         <p className="text-muted-foreground text-sm">Memuat…</p>
       ) : rows.length === 0 ? (
-        <EmptyState title="Belum ada rekap" description={izin.stationCreate ? "Rekap mingguan dibuat dari catatan kas harian lewat tombol di atas." : "Belum ada rekap yang cocok dengan filter."} />
+        <EmptyState title="Belum ada rekap" description="Belum ada rekap yang cocok dengan filter." />
       ) : (
         <DataTable columns={kolom} data={rows} getKey={(r) => r.id} pageSize={10} initialSort={{ id: "periode", dir: "desc" }}
           searchPlaceholder="Cari station…" onRowClick={(r) => setDetailId(r.id)} />
       )}
 
-      {buat && (
-        <BuatRekapDialog cabangOpsi={cabangOpsi} onClose={() => setBuat(false)}
-          onSelesai={(id) => { setBuat(false); muatUlang(); setDetailId(id); }} />
-      )}
       {detailId && <DetailRekapDialog id={detailId} izin={izin} onClose={() => setDetailId(null)} onUbah={muatUlang} />}
     </div>
   );
 }
 
-function BuatRekapDialog({ cabangOpsi, onClose, onSelesai }: { cabangOpsi: string[]; onClose: () => void; onSelesai: (id: string) => void }) {
-  const senin = awalMinggu(hariIniWib());
-  const pilihan = Array.from({ length: MINGGU_PILIHAN }, (_, i) => tambahHari(senin, -7 * i));
-  const [cabang, setCabang] = useState(cabangOpsi[0] ?? "");
-  const [periode, setPeriode] = useState(pilihan[0]);
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-
-  async function buat() {
-    setBusy(true); setErr(null);
-    try {
-      const r = await kasApi<RekapDetail>("rekap", { method: "POST", body: { cabang, periode_awal: periode } });
-      onSelesai(r.id);
-    } catch (e) { setErr(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
-  }
-
-  return (
-    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DialogContent className="max-w-md">
-        <DialogHeader>
-          <DialogTitle>Buat / segarkan rekap mingguan</DialogTitle>
-          <DialogDescription>Sistem menjumlahkan catatan kas harian satu minggu (Senin–Minggu). Rekap yang sudah diajukan atau disetujui tidak bisa dibuat ulang.</DialogDescription>
-        </DialogHeader>
-        <DialogBody className="space-y-3">
-          {err && <p role="alert" className="text-destructive text-sm">{err}</p>}
-          <div className="space-y-1"><Label htmlFor="br-cabang">Station *</Label>
-            <select id="br-cabang" className={selCls} value={cabang} onChange={(e) => setCabang(e.target.value)}>
-              {cabangOpsi.map((c) => <option key={c} value={c}>{c}</option>)}</select></div>
-          <div className="space-y-1"><Label htmlFor="br-periode">Minggu *</Label>
-            <select id="br-periode" className={selCls} value={periode} onChange={(e) => setPeriode(e.target.value)}>
-              {pilihan.map((p) => <option key={p} value={p}>{tgl(p)} – {tgl(tambahHari(p, 6))}{p === senin ? " (minggu ini)" : ""}</option>)}</select></div>
-        </DialogBody>
-        <DialogFooter>
-          <Button variant="ghost" onClick={onClose}>Batal</Button>
-          <Button onClick={buat} disabled={busy || !cabang}>{busy ? "Memproses…" : "Buat rekap"}</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function DetailRekapDialog({ id, izin, onClose, onUbah }: { id: string; izin: IzinKasStation; onClose: () => void; onUbah: () => void }) {
+export function DetailRekapDialog({ id, izin, onClose, onUbah }: { id: string; izin: IzinKasStation; onClose: () => void; onUbah: () => void }) {
   const { data: r, galat, loading, muatUlang } = useKasData<RekapDetail>(`rekap/${encodeURIComponent(id)}`);
   const { confirm, dialog } = useConfirm();
   const [tolak, setTolak] = useState(false);
@@ -181,7 +132,7 @@ function DetailRekapDialog({ id, izin, onClose, onUbah }: { id: string; izin: Iz
               </dl>
 
               {r.status === "draft" || r.status === "rejected" ? (
-                <p className="rounded-md border bg-muted/40 px-3 py-2 text-sm">
+                <p className="rounded-md border bg-card px-3 py-2 text-sm text-muted-foreground">
                   Angka ini snapshot sementara; saat diajukan, sistem menghitung ulang dari catatan harian terbaru.
                 </p>
               ) : null}
@@ -222,7 +173,7 @@ function DetailRekapDialog({ id, izin, onClose, onUbah }: { id: string; izin: Iz
                         <td className="px-3 py-2 text-right tabular-nums">{rp(h.total_masuk)}</td>
                         <td className="px-3 py-2 text-right tabular-nums">{rp(h.total_keluar)}</td>
                         <td className="px-3 py-2 text-right font-medium tabular-nums">{rp(h.saldo_akhir)}</td>
-                        <td className={cn("px-3 py-2 text-right tabular-nums", h.selisih !== null && selisihCls(h.selisih))}>{h.selisih === null ? "—" : h.selisih === 0 ? "Cocok" : rp(h.selisih)}</td>
+                        <td className={cn("px-3 py-2 text-right tabular-nums", h.selisih !== null && selisihCls(h.selisih))}>{h.selisih === null ? "—" : rpSelisih(h.selisih)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -259,7 +210,7 @@ function DetailRekapDialog({ id, izin, onClose, onUbah }: { id: string; izin: Iz
           )}
           {bisaPutuskan && !tolak && (
             <>
-              <Button variant="outline" disabled={busy} onClick={() => setTolak(true)}>Tolak…</Button>
+              <Button variant="soft" disabled={busy} onClick={() => setTolak(true)}>Tolak…</Button>
               <Button disabled={busy} onClick={() => confirm({ title: "Setujui rekap ini?", description: "Setelah disetujui, dana dapat direalisasikan ke station.", confirmLabel: "Setujui" },
                 () => void jalankan("decide", { decision: "approve" }))}>Setujui</Button>
             </>

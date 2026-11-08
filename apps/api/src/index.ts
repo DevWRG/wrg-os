@@ -431,6 +431,7 @@ import {
   listCabang as listKasCabang,
   listHarian as listKasHarian,
   listRekap as listKasRekap,
+  ringkasanStation as ringkasanKasStation,
   realisasiRekap as realisasiKasRekap,
   submitRekap as submitKasRekap,
   updateHarian as updateKasHarian,
@@ -8197,6 +8198,14 @@ async function kasFilterCabang(c: Context): Promise<string | undefined | null> {
 app.get("/kas-station/cabang", (c) => kasStationJalankan(c, async () => {
   const cak = await kasCakupan(c);
   return c.json({ cabang: cak.semua ? await listKasCabang() : cak.cabang ? [cak.cabang] : [] });
+}));
+
+// Ringkasan per station (saldo terakhir, aktivitas 7 hari, rekap menunggu/belum realisasi).
+// User station hanya melihat cabangnya; akun tanpa cabang = daftar kosong.
+app.get("/kas-station/ringkasan", (c) => kasStationJalankan(c, async () => {
+  const cabang = await kasFilterCabang(c);
+  if (cabang === null) return c.json({ rows: [] });
+  return c.json({ rows: await ringkasanKasStation(cabang) });
 }));
 
 app.get("/kas-station/harian", (c) => kasStationJalankan(c, async () => {

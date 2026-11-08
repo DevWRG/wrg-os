@@ -30,11 +30,39 @@ export interface IzinKasStation {
   reviewView: boolean; reviewEdit: boolean;
 }
 
+/** Selaras RingkasanStation di API (GET /kas-station/ringkasan). */
+export interface RingkasanStation {
+  cabang: string; tanggal_terakhir: string | null; saldo_akhir: number | null; selisih: number | null;
+  hari_7: number; rekap_menunggu: number; rekap_belum_realisasi: number; rekap_ditolak: number;
+}
+
 export const STATUS_LABEL: Record<StatusRekap, string> = {
   draft: "Draft", submitted: "Menunggu review pusat", approved: "Disetujui", rejected: "Ditolak",
 };
 
 export const rp = (n: number): string => `Rp ${n.toLocaleString("id-ID")}`;
+
+/** Selisih bertanda: "+Rp 5.000" / "−Rp 5.000" / "Cocok". */
+export const rpSelisih = (n: number): string => (n === 0 ? "Cocok" : `${n > 0 ? "+" : "−"}${rp(Math.abs(n))}`);
+
+export const NAMA_HARI = ["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"] as const;
+
+/** Jumlah hari dari `dari` ke `ke` (YYYY-MM-DD). */
+export const selisihHari = (dari: string, ke: string): number =>
+  Math.round((Date.parse(`${ke}T00:00:00Z`) - Date.parse(`${dari}T00:00:00Z`)) / 86_400_000);
+
+export const tglPendek = (t: string): string =>
+  new Date(`${t.slice(0, 10)}T00:00:00Z`).toLocaleDateString("id-ID", { day: "numeric", month: "short", timeZone: "UTC" });
+
+/** "2–8 Nov 2026" untuk satu minggu Senin–Minggu. */
+export const labelMinggu = (senin: string): string => {
+  const akhir = tambahHari(senin, 6);
+  const a = new Date(`${senin}T00:00:00Z`); const b = new Date(`${akhir}T00:00:00Z`);
+  const bln = (d: Date) => d.toLocaleDateString("id-ID", { month: "short", timeZone: "UTC" });
+  return a.getUTCMonth() === b.getUTCMonth()
+    ? `${a.getUTCDate()}–${b.getUTCDate()} ${bln(b)} ${b.getUTCFullYear()}`
+    : `${a.getUTCDate()} ${bln(a)} – ${b.getUTCDate()} ${bln(b)} ${b.getUTCFullYear()}`;
+};
 
 /** Tanggal WIB hari ini (YYYY-MM-DD), sama dengan wibHariIni di API. */
 export const hariIniWib = (): string => new Date(Date.now() + 7 * 3600_000).toISOString().slice(0, 10);

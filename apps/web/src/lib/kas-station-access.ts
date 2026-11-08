@@ -55,6 +55,7 @@ const REKAP_LIHAT: Izin = [[FITUR_STATION, "view"], [FITUR_REVIEW, "view"]];
 const RUTE: Record<string, ReadonlyArray<readonly [RegExp, Izin]>> = {
   GET: [
     [re("cabang"), REKAP_LIHAT],
+    [re("ringkasan"), REKAP_LIHAT],
     [re("harian"), STATION_LIHAT],
     [re(`harian/${SEGMEN}`), STATION_LIHAT],
     [re("rekap"), REKAP_LIHAT],

@@ -24,7 +24,7 @@ export default async function KasStationPage() {
     <>
       <PageHeader
         title="Kas Station"
-        description="Kas harian cabang direkap otomatis per minggu, lalu diajukan ke pusat untuk disetujui dan direalisasikan."
+        description="Cabang mencatat uang kas masuk/keluar tiap hari; tiap minggu rekapnya diajukan ke pusat untuk disetujui dan dananya direalisasikan."
       />
       <KasStationView
         izin={{
