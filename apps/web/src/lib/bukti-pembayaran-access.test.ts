@@ -9,11 +9,11 @@ const izin = (p: Partial<EffectivePerm>): EffectivePerm => ({ active: true, view
 test("tanpa matriks: Direktur & Finance melihat; AM, HoD lain, anonim tidak", () => {
   assert.equal(canViewBuktiPembayaran({ role: "direktur" }), true);
   assert.equal(canViewBuktiPembayaran({ role: "hod", groups: [{ id: 1, key: "finance-hod", name: "Finance HoD" }] }), true);
-  assert.equal(canViewBuktiPembayaran({ role: "hod", hod_key: "ika" }), false); // tak ada hod_key di kode
+  assert.equal(canViewBuktiPembayaran({ role: "hod", hod_key: "hod-fin" }), false); // tak ada hod_key di kode
   assert.equal(canViewBuktiPembayaran({ role: "staff", title: "Finance" }), true);
   assert.equal(canViewBuktiPembayaran({ role: "admin" }), true);
   assert.equal(canViewBuktiPembayaran({ role: "am" }), false);
-  assert.equal(canViewBuktiPembayaran({ role: "hod", hod_key: "rocky" }), false);
+  assert.equal(canViewBuktiPembayaran({ role: "hod", hod_key: "hod-s1" }), false);
   assert.equal(canViewBuktiPembayaran(null), false);
 });
 
