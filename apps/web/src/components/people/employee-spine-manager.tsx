@@ -13,13 +13,13 @@ import { SpineDetailEditor, type DetailInit } from "@/components/people/spine-de
 
 export interface Dept { key: string; label: string; color: string | null; weights: Record<string, number>; count: number }
 export interface EmployeeItem {
-  id: string; nama: string; dept: string | null; dept_label: string | null; dept_color: string | null;
+  id: string; nama: string; inisial: string | null; dept: string | null; dept_label: string | null; dept_color: string | null;
   role: string | null; cabang: string | null; lokasi: string | null; roster_pending: boolean; kpi_count: number;
 }
 export interface HodOpt { key: string; name: string; role: string }
 interface Kpi { id: string; name: string; target: string | null; frequency: string | null; perspective: string | null; lower_better: boolean }
 interface Profile {
-  id: string; nama: string; dept: string | null; dept_label: string | null; dept_color: string | null; role: string | null;
+  id: string; nama: string; inisial: string | null; dept: string | null; dept_label: string | null; dept_color: string | null; role: string | null;
   atasan_raw: string | null; lokasi: string | null; masa: string | null; panggilan: string | null; cabang: string | null;
   whatsapp: string | null; roster_pending: boolean; quote: string | null; okr_objective: string | null; hod_key: string | null;
   weights: Record<string, number>; tools: string[]; tasks: string[]; bsc: Record<string, string[]>;
@@ -71,7 +71,7 @@ export function EmployeeSpineManager({ departments, employees, hods = [] }: { de
     const term = q.trim().toLowerCase();
     return employees.filter((e) =>
       (!dept || e.dept === dept) &&
-      (!term || e.nama.toLowerCase().includes(term) || (e.role ?? "").toLowerCase().includes(term) || (e.cabang ?? "").toLowerCase().includes(term)),
+      (!term || e.nama.toLowerCase().includes(term) || (e.inisial ?? "").toLowerCase() === term || (e.role ?? "").toLowerCase().includes(term) || (e.cabang ?? "").toLowerCase().includes(term)),
     );
   }, [employees, dept, q]);
 
@@ -107,7 +107,7 @@ export function EmployeeSpineManager({ departments, employees, hods = [] }: { de
         {departments.map((d) => (
           <button key={d.key} onClick={() => setDept(d.key)} className={`rounded-full px-3 py-1 text-xs font-medium ${dept === d.key ? "bg-primary text-primary-foreground" : "bg-muted hover:bg-muted/70"}`}>{d.label} ({d.count})</button>
         ))}
-        <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari nama/role/cabang…" className="h-8 w-56 bg-card border-border" />
+        <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari nama/inisial/role/cabang…" className="h-8 w-56 bg-card border-border" />
         {loading && <LoadingInline />}
         <Button size="sm" className="ml-auto" onClick={() => { setCreating((v) => !v); setErr(null); }}>{creating ? "Batal" : "+ Tambah Karyawan"}</Button>
       </div>
@@ -126,7 +126,10 @@ export function EmployeeSpineManager({ departments, employees, hods = [] }: { de
         {filtered.map((e) => (
           <button key={e.id} onClick={() => open(e.id)} className="rounded-xl border bg-card p-3 text-left transition hover:shadow-md" style={{ borderLeft: `4px solid ${e.dept_color ?? "#94a3b8"}` }}>
             <div className="flex items-start justify-between gap-2">
-              <div className="font-semibold leading-tight">{e.nama}</div>
+              <div className="font-semibold leading-tight">
+                {e.inisial && <span className="text-muted-foreground mr-1.5 font-mono text-xs">{e.inisial}</span>}
+                {e.nama}
+              </div>
               {e.roster_pending && <Badge variant="outline" className="text-amber-600">pending</Badge>}
             </div>
             <div className="text-muted-foreground mt-1 line-clamp-2 text-xs">{e.role ?? "—"}</div>
@@ -223,7 +226,10 @@ function ProfileView({ p, departments, hods, onBack, onUpdated }: { p: Profile; 
       </div>
       <div className="flex items-center justify-between">
         <div>
-          <h3 className="text-lg font-semibold">{p.nama}{p.panggilan ? ` (${p.panggilan})` : ""}</h3>
+          <h3 className="text-lg font-semibold">
+            {p.inisial && <span className="text-muted-foreground mr-2 font-mono text-base">{p.inisial}</span>}
+            {p.nama}{p.panggilan ? ` (${p.panggilan})` : ""}
+          </h3>
           <div className="text-muted-foreground text-sm">{p.role ?? "—"} · {p.dept_label ?? "—"}{p.cabang ? ` · ${p.cabang}` : ""}</div>
         </div>
         <div className="flex gap-2">
@@ -371,15 +377,15 @@ function profileToDetail(p: Profile): DetailInit {
 
 // ── Form CRUD karyawan (dipakai create & edit) ──
 interface EmpFormData {
-  nama: string; dept: string; role: string; panggilan: string; cabang: string; lokasi: string;
+  nama: string; inisial: string; dept: string; role: string; panggilan: string; cabang: string; lokasi: string;
   whatsapp: string; masa: string; atasan_raw: string; okr_objective: string; quote: string; roster_pending: boolean; hod_key: string;
 }
 function emptyForm(): EmpFormData {
-  return { nama: "", dept: "", role: "", panggilan: "", cabang: "", lokasi: "", whatsapp: "", masa: "", atasan_raw: "", okr_objective: "", quote: "", roster_pending: false, hod_key: "" };
+  return { nama: "", inisial: "", dept: "", role: "", panggilan: "", cabang: "", lokasi: "", whatsapp: "", masa: "", atasan_raw: "", okr_objective: "", quote: "", roster_pending: false, hod_key: "" };
 }
 function profileToForm(p: Profile): EmpFormData {
   return {
-    nama: p.nama ?? "", dept: p.dept ?? "", role: p.role ?? "", panggilan: p.panggilan ?? "",
+    nama: p.nama ?? "", inisial: p.inisial ?? "", dept: p.dept ?? "", role: p.role ?? "", panggilan: p.panggilan ?? "",
     cabang: p.cabang ?? "", lokasi: p.lokasi ?? "", whatsapp: p.whatsapp ?? "", masa: p.masa ?? "",
     atasan_raw: p.atasan_raw ?? "", okr_objective: p.okr_objective ?? "", quote: p.quote ?? "", roster_pending: p.roster_pending, hod_key: p.hod_key ?? "",
   };
@@ -417,6 +423,10 @@ function EmployeeForm({ departments, hods, initial, submitting, onCancel, onSubm
             {hods.map((h) => <option key={h.key} value={h.key}>{h.name} · {h.role}</option>)}
           </select>
         </label>
+        <label className="grid gap-1 text-sm">
+          <span className="text-muted-foreground text-xs">Inisial (3 huruf)</span>
+          <Input value={f.inisial} maxLength={3} onChange={(e) => set("inisial", e.target.value.toUpperCase().replace(/[^A-Z]/g, ""))} className="h-8 font-mono uppercase" placeholder="ABC" />
+        </label>
         {field("Panggilan", "panggilan")}
         {field("Role / Jabatan", "role")}
         {field("Cabang", "cabang")}
@@ -432,7 +442,7 @@ function EmployeeForm({ departments, hods, initial, submitting, onCancel, onSubm
         </label>
       </div>
       <div className="flex gap-2">
-        <Button size="sm" disabled={submitting || !f.nama.trim()} onClick={() => onSubmit({ ...f, nama: f.nama.trim() })}>{submitting ? "Menyimpan…" : "Simpan"}</Button>
+        <Button size="sm" disabled={submitting || !f.nama.trim() || (f.inisial.length > 0 && f.inisial.length !== 3)} onClick={() => onSubmit({ ...f, nama: f.nama.trim() })}>{submitting ? "Menyimpan…" : "Simpan"}</Button>
         <Button size="sm" variant="outline" onClick={onCancel}>Batal</Button>
       </div>
     </div>
