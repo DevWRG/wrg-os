@@ -15,9 +15,11 @@ interface User {
   area: string | null;
   aktif: boolean;
   wajib_plan_report: boolean;
+  inisial: string | null;
 }
 
 const columns: DataColumn<User>[] = [
+  { id: "inisial", header: "Inisial", sortable: true, accessor: (u) => u.inisial ?? "", cell: (u) => <span className="font-mono text-xs">{u.inisial ?? "—"}</span> },
   { id: "panggilan", header: "Panggilan", sortable: true, accessor: (u) => u.panggilan ?? u.am_id, cell: (u) => <span className="font-medium">{u.panggilan ?? u.am_id}</span> },
   { id: "nama", header: "Nama", sortable: true, accessor: (u) => u.nama, cell: (u) => <span className="text-muted-foreground">{u.nama}</span> },
   { id: "role", header: "Role", sortable: true, accessor: (u) => u.role, cell: (u) => <Badge variant="outline">{u.role}</Badge> },
@@ -40,5 +42,5 @@ const columns: DataColumn<User>[] = [
 ];
 
 export function UsersTable({ users }: { users: User[] }) {
-  return <DataTable columns={columns} data={users} getKey={(u) => u.am_id} searchPlaceholder="Cari nama / cabang / role…" pageSize={25} />;
+  return <DataTable columns={columns} data={users} getKey={(u) => u.am_id} searchPlaceholder="Cari nama / inisial / cabang / role…" pageSize={25} />;
 }
