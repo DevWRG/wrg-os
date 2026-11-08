@@ -134,6 +134,10 @@ export async function reportPerOrang(from: string, to: string): Promise<OrangRow
       COALESCE(st.todo_unmatched,0)::int AS todo_unmatched,
       COALESCE(st.todo_late,0)::int     AS todo_late,
       COALESCE(act.unmatched_activity,0)::int AS unmatched_activity,
+      COALESCE(tp.tek_items,0)::int     AS tek_items,
+      COALESCE(tp.tek_reported,0)::int  AS tek_reported,
+      COALESCE(tp.tek_late,0)::int      AS tek_late,
+      COALESCE(tp.tek_perlu_cek,0)::int AS tek_perlu_cek,
       COALESCE(d.active_days,0)::int    AS active_days
     FROM master_user mu
     LEFT JOIN LATERAL (
@@ -163,11 +167,23 @@ export async function reportPerOrang(from: string, to: string): Promise<OrangRow
       SELECT count(*) FILTER (WHERE is_unmatched) AS unmatched_activity
       FROM activity_log WHERE am_id = mu.am_id AND tanggal BETWEEN ${from} AND ${to}
     ) act ON true
+    -- F175: plan per alat Teknisi (teknisi_plan_item). perlu_cek = alat yang
+    -- dilaporkan tapi faskes/alatnya belum bisa dipastikan.
+    LEFT JOIN LATERAL (
+      SELECT count(*) AS tek_items,
+             count(*) FILTER (WHERE reported_at IS NOT NULL) AS tek_reported,
+             count(*) FILTER (WHERE is_late) AS tek_late,
+             (SELECT count(*) FROM teknisi_kunjungan k JOIN teknisi_kunjungan_alat ka ON ka.kunjungan_id = k.id
+              WHERE k.teknisi_id = mu.am_id AND k.tanggal BETWEEN ${from} AND ${to} AND ka.perlu_cek) AS tek_perlu_cek
+      FROM teknisi_plan_item WHERE teknisi_id = mu.am_id AND tanggal BETWEEN ${from} AND ${to}
+    ) tp ON true
     LEFT JOIN LATERAL (
       SELECT count(DISTINCT t) AS active_days FROM (
         SELECT tanggal t FROM sales_plan  WHERE am_id = mu.am_id AND tanggal BETWEEN ${from} AND ${to}
         UNION SELECT tanggal FROM sales_todo  WHERE am_id = mu.am_id AND tanggal BETWEEN ${from} AND ${to}
         UNION SELECT tanggal FROM activity_log WHERE am_id = mu.am_id AND tanggal BETWEEN ${from} AND ${to}
+        UNION SELECT tanggal FROM teknisi_plan_item WHERE teknisi_id = mu.am_id AND tanggal BETWEEN ${from} AND ${to}
+        UNION SELECT tanggal FROM teknisi_kunjungan WHERE teknisi_id = mu.am_id AND tanggal BETWEEN ${from} AND ${to}
       ) u
     ) d ON true
     WHERE mu.aktif AND mu.wajib_plan_report
@@ -175,10 +191,16 @@ export async function reportPerOrang(from: string, to: string): Promise<OrangRow
   `;
   return rows.map((r) => {
     const isAm = String(r.role) === "AM";
-    const plan_count = isAm ? Number(r.plan_visits) : Number(r.todo_items);
-    const report_count = isAm ? Number(r.plan_reported) : Number(r.todo_matched);
-    const late = Number(r.plan_late) + Number(r.todo_late);
-    const unmatched = isAm ? Number(r.unmatched_activity) : Number(r.todo_unmatched);
+    // Teknisi: sebelum F175 lewat jalur AM (sales_plan) — dulu dibaca dari
+    // counter sales_todo sehingga angkanya ≈0. Sesudah F175 (saklar nyala) plan
+    // mereka di teknisi_plan_item; mana yang berisi, itu yang dipakai.
+    const isTeknisi = String(r.role).trim().toUpperCase() === "TEKNISI";
+    const tek = isTeknisi && Number(r.tek_items) > 0;
+    const viaSalesPlan = isAm || (isTeknisi && !tek);
+    const plan_count = tek ? Number(r.tek_items) : viaSalesPlan ? Number(r.plan_visits) : Number(r.todo_items);
+    const report_count = tek ? Number(r.tek_reported) : viaSalesPlan ? Number(r.plan_reported) : Number(r.todo_matched);
+    const late = Number(r.plan_late) + Number(r.todo_late) + Number(r.tek_late);
+    const unmatched = tek ? Number(r.tek_perlu_cek) : viaSalesPlan ? Number(r.unmatched_activity) : Number(r.todo_unmatched);
     return {
       am_id: String(r.am_id),
       panggilan: r.panggilan ? String(r.panggilan) : null,
