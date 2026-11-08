@@ -27,6 +27,7 @@ import { canViewProductScorecard } from "@/lib/product-scorecard-access";
 import { FITUR_PUTUSAN as FITUR_PUTUSAN_PERMINTAAN, canViewPermintaanProduk } from "@/lib/permintaan-produk-access";
 import { canViewKsoKontrak } from "@/lib/kso-kontrak-access";
 import { canViewArsipDokumen } from "@/lib/arsip-dokumen-access";
+import { canViewDocTracker } from "@/lib/doc-tracker-access";
 import { FITUR_BOTTOMLINE, FITUR_SUSUNAN, TAB_KSO, canViewKsoKomite } from "@/lib/kso-komite-access";
 import { canViewAsetTetap } from "@/lib/aset-tetap-access";
 import { canViewDoBelumFaktur } from "@/lib/do-belum-faktur-access";
@@ -312,6 +313,8 @@ export const NAV: NavGroup[] = [
       // #BAST/#BUKTI (SJ dari DO Accurate), kedua menu baca-saja.
       { title: "Tracking Pengiriman", url: "/shipment-tracking", icon: Route, badge: "NEW" },
       { title: "Kurir Performance", url: "/courier-performance", icon: Route, badge: "NEW" },
+      // DOC — rekap dokumen per transaksi (7 state: Draft → … → Closed), dihitung dari SO/SJ/BAST/faktur/Arsip.
+      { title: "Document Tracker", url: "/doc-tracker", icon: FileCheck2, badge: "NEW", show: canViewDocTracker },
       // F45 — rencana trip kurir + cek H-1 (libur & PIC), tersambung ke
       // #KIRIM/#TERIMA/#BAST/#BUKTI lewat No. SJ. Jadwal KE DEPAN, beda dari
       // Tracking Pengiriman (kejadian nyata dari WA).
