@@ -45,6 +45,7 @@ import {
   opsi as ppOpsi, putuskan as ppPutuskan, simpanKelompok as ppSimpanKelompok, ubahParam as ppUbahParam, ubahPermintaan, usulkan as ppUsulkan, bacaParam as ppBacaParam,
 } from "./repo/permintaan-produk.js";
 import { DoFakturError, listDoBelumFaktur, runRekapDoBelumFaktur, ubahAmbang as doFakturUbahAmbang } from "./repo/do-belum-faktur.js";
+import { TutupBukuError, geserTutupBuku, ringkasTutupBuku, runTutupBukuCountdown } from "./repo/tutup-buku.js";
 import { FakturisError, runCekFakturisDiam, runRekapFakturis, simpanLabelAkun, statusFakturis } from "./repo/fakturis-diam.js";
 import { RevisiError, daftarRevisi, tutupManual } from "./repo/revisi-faktur.js";
 import { ArsipError, bacaBerkasArsip, hapusArsip, listArsip, listBuku as arsipListBuku, simpanBuku as arsipSimpanBuku, ubahArsip, unggahArsip } from "./repo/arsip-dokumen.js";
@@ -6601,6 +6602,30 @@ app.get("/fakturis-diam/pratinjau", async (c) => {
 app.put("/fakturis-diam/akun", async (c) => {
   const b = ((await c.req.json().catch(() => null)) as Record<string, unknown> | null) ?? {};
   try { return c.json(await simpanLabelAkun(b)); } catch (e) { return fakturisErr(c, e); }
+});
+// F61 Tutup Buku Countdown (migrasi 295). Gerbang menu "/do-belum-faktur" di BFF:
+// lihat = ringkasan; ubah = geser tanggal & pratinjau WA. `oleh` dari sesi.
+const tutupBukuErr = (c: Context, e: unknown) => {
+  if (e instanceof TutupBukuError) return c.json({ error: e.message }, e.status as 400);
+  console.error("[tutup-buku]", e);
+  return c.json({ error: "Gagal memproses tutup buku." }, 500);
+};
+app.get("/tutup-buku", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try { return c.json(await ringkasTutupBuku()); } catch (e) { return tutupBukuErr(c, e); }
+});
+app.patch("/tutup-buku/:bulan", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const b = ((await c.req.json().catch(() => null)) as Record<string, unknown> | null) ?? {};
+  try { return c.json(await geserTutupBuku(c.req.param("bulan"), b, typeof b.oleh === "string" ? b.oleh : null)); } catch (e) { return tutupBukuErr(c, e); }
+});
+// Pratinjau pengingat (dry-run). ?sisa=7|3|1 memaksa teks H-n tanpa menunggu jadwal.
+app.get("/tutup-buku/pratinjau", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const sisa = Number(c.req.query("sisa"));
+  try {
+    return c.json(await runTutupBukuCountdown({ dryRun: true, paksaSisa: [7, 3, 1].includes(sisa) ? sisa : 3 }));
+  } catch (e) { return tutupBukuErr(c, e); }
 });
 app.get("/do-belum-faktur/rekap-pratinjau", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
