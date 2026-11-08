@@ -16,12 +16,14 @@ import {
   Loader2,
   PenLine,
   Send,
+  ShieldAlert,
   ShieldCheck,
   Stamp,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -31,6 +33,7 @@ import { useConfirm } from "@/components/ui/use-confirm";
 import {
   PelacakAlur,
   StatusSphBadge,
+  TierBadge,
   ambilJson,
   pesanRamah,
   rupiah,
@@ -48,7 +51,13 @@ import { cn } from "@/lib/utils";
 // Aksi apa yang boleh = GET /api/sph/:id/konteks (apps/api lib/sph-alur.ts,
 // aturan yang sama dengan gerbang aksi). Gerbang sesungguhnya tetap di route
 // aksi (review / approve / send / cancel / syarat / penanda-tangan /
-// confirm-variant) — layar ini hanya mengikuti & menampilkan pesannya.
+// confirm-variant / direktur) — layar ini hanya mengikuti & menampilkan pesannya.
+//
+// Diskon berjenjang (migrasi 301): baris & diskon tambahan di atas batas
+// ditampilkan mencolok; review HoD untuk SPH ber-pengecualian lewat dialog yang
+// mewajibkan centang persetujuan (boleh menurunkan diskon tambahan); bila ada
+// jenjang Direktur, langkah "Persetujuan Direktur" muncul di pelacak dan Direktur
+// mendapat aksi utamanya sendiri. Info jenjang TIDAK dicetak di PDF customer.
 
 interface Syarat {
   pembayaran: string;
@@ -68,7 +77,12 @@ interface SphItem {
   nettPpn: number;
   variantConfirmed: boolean;
   variantConfirmedBy: string | null;
+  diskonMaksSnapshot: number;
+  tier: Tier;
+  tierAlasan: string;
 }
+
+type Tier = "normal" | "hod" | "direktur";
 
 interface SphDetail {
   id: string;
@@ -85,7 +99,16 @@ interface SphDetail {
   penandaTangan: { nama: string; jabatan: string | null } | null;
   penandaTanganUserId: string | null;
   items: SphItem[];
-  total: { priceList: number; nett: number; ppn: number };
+  total: { priceList: number; nett: number; diskonTambahan: number; dpp: number; ppnRp: number; ppn: number };
+  tier: Tier;
+  diskonTambahan: { tipe: "persen" | "nominal"; nilai: number; rp: number } | null;
+  diskonTambahanTier: Tier;
+  diskonTambahanAlasan: string | null;
+  diskonEfektifTotal: number;
+  pengecualianDisetujuiBy: string | null;
+  pengecualianDisetujuiAt: string | null;
+  direkturApprovedBy: string | null;
+  direkturApprovedAt: string | null;
 }
 
 interface Riwayat {
@@ -99,7 +122,7 @@ interface Riwayat {
 interface Konteks {
   aksi: AksiSph;
   pembuat: string | null;
-  saya: { isCreator: boolean; bolehReviewPeran: boolean; bisaEdit: boolean };
+  saya: { isCreator: boolean; bolehReviewPeran: boolean; bisaEdit: boolean; bolehDirekturPeran?: boolean };
   riwayat: Riwayat[];
 }
 
@@ -133,6 +156,7 @@ const PERAN: Record<string, string> = {
 };
 
 const pdfUrl = (id: string) => `/api/sph/${encodeURIComponent(id)}/pdf`;
+const persenTeks = (f: number) => `${(Math.round(f * 10000) / 100).toLocaleString("id-ID")}%`;
 
 // "6281234567890" → "0812-3456-7890" (tampilan saja).
 function formatWa(n: string): string {
@@ -154,7 +178,7 @@ export default function SphDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [syarat, setSyarat] = useState<Syarat | null>(null);
-  const [dialog, setDialog] = useState<null | "approve" | "ttd" | "kirim">(null);
+  const [dialog, setDialog] = useState<null | "approve" | "ttd" | "kirim" | "review">(null);
 
   const muat = useCallback(async () => {
     const [detail, konteks] = await Promise.all([
@@ -229,12 +253,25 @@ export default function SphDetailPage() {
   const kirimEv = terakhir("sales.doc.send");
   const batalEv = terakhir("sales.doc.cancel");
 
+  const perluDirektur = d.tier === "direktur";
+  const pengecualian = d.items.filter((it) => it.tier !== "normal");
+  const adaPengecualian = d.tier !== "normal";
   const langkah = [
     { judul: "SPH dibuat", oleh: k?.pembuat, waktu: d.createdAt },
-    { judul: "Review HoD Business", oleh: d.hodReviewedBy, waktu: d.hodReviewedAt },
+    {
+      judul: "Review HoD Business",
+      oleh: d.hodReviewedBy,
+      waktu: d.hodReviewedAt,
+      ket: d.pengecualianDisetujuiBy ? "pengecualian diskon disetujui" : null,
+    },
+    ...(perluDirektur ? [{ judul: "Persetujuan Direktur", oleh: d.direkturApprovedBy, waktu: d.direkturApprovedAt }] : []),
     { judul: "Approve & nomor", oleh: d.approvedBy && d.approvedAt ? d.approvedBy : null, waktu: d.approvedAt, ket: d.nomorDokumen },
     { judul: "Terkirim ke customer", oleh: kirimEv?.oleh, waktu: kirimEv?.waktu, ket: kirimEv?.keterangan },
   ];
+  // Jumlah langkah selesai bila ada langkah Direktur (5 langkah).
+  const sampai = perluDirektur
+    ? ({ draft: 1, hod_review: d.direkturApprovedAt ? 3 : 2, approved: 4, sent: 5 } as Record<string, number>)[d.status]
+    : undefined;
 
   // ── Aksi utama untuk penonton ini ──
   const utama = (() => {
@@ -243,8 +280,14 @@ export default function SphDetailPage() {
       case "review":
         return {
           judul: "SPH ini menunggu review Anda",
-          isi: "Periksa produk, harga, dan syarat. Setelah Anda setujui, SPH lanjut ke approve & penomoran.",
-          tombol: (
+          isi: adaPengecualian
+            ? `Ada diskon di atas batas${perluDirektur ? " (juga perlu persetujuan Direktur)" : ""}. Periksa daftar pengecualian, lalu setujui secara eksplisit.`
+            : "Periksa produk, harga, dan syarat. Setelah Anda setujui, SPH lanjut ke approve & penomoran.",
+          tombol: adaPengecualian ? (
+            <Button className="w-full" size="lg" disabled={!!busy} onClick={() => setDialog("review")}>
+              <ShieldAlert /> Tinjau pengecualian diskon
+            </Button>
+          ) : (
             <Button
               className="w-full"
               size="lg"
@@ -264,6 +307,33 @@ export default function SphDetailPage() {
               }
             >
               {busy === "review" ? <Loader2 className="animate-spin" /> : <ShieldCheck />} Setujui review
+            </Button>
+          ),
+        };
+      case "direktur":
+        return {
+          judul: "Perlu persetujuan Direktur",
+          isi: "SPH ini memuat diskon di atas jatah HoD Business. Setelah Anda setujui, SPH bisa di-approve & diberi nomor.",
+          tombol: (
+            <Button
+              className="w-full"
+              size="lg"
+              disabled={!!busy}
+              onClick={() =>
+                confirm(
+                  {
+                    title: "Setujui diskon SPH ini sebagai Direktur?",
+                    description: `SPH untuk ${d.customerName ?? "customer"} (${rupiah(d.total.ppn)}), diskon efektif ${persenTeks(d.diskonEfektifTotal)}. Persetujuan Anda dicatat di riwayat.`,
+                    confirmLabel: "Ya, setujui",
+                  },
+                  () =>
+                    void jalankan("direktur", `/api/sph/${encodeURIComponent(d.id)}/direktur`, { method: "POST", body: "{}" }, "Disetujui Direktur", () =>
+                      "SPH sekarang bisa di-approve & diberi nomor.",
+                    ),
+                )
+              }
+            >
+              {busy === "direktur" ? <Loader2 className="animate-spin" /> : <ShieldCheck />} Setujui sebagai Direktur
             </Button>
           ),
         };
@@ -335,6 +405,9 @@ export default function SphDetailPage() {
                 <span className="text-muted-foreground rounded-md border border-dashed px-2 py-0.5 text-xs font-semibold tracking-wide">DRAF · belum bernomor</span>
               )}
               <StatusSphBadge status={d.status} />
+              {adaPengecualian && d.status !== "canceled" && (
+                <TierBadge tier={aksi?.direkturPending ? "direktur" : d.tier} className={aksi?.direkturPending ? undefined : "opacity-90"} />
+              )}
             </div>
             <h1 className="text-2xl font-semibold break-words">{d.customerName ?? "—"}</h1>
             <p className="text-muted-foreground text-sm">
@@ -354,7 +427,7 @@ export default function SphDetailPage() {
       {/* Pelacak tahap */}
       <Card>
         <CardContent className="space-y-3">
-          <PelacakAlur status={d.status} langkah={langkah} />
+          <PelacakAlur status={d.status} langkah={langkah} sampai={sampai} />
           {d.status === "canceled" && (
             <p className="text-muted-foreground flex items-center gap-2 border-t pt-3 text-sm">
               <Ban className="size-4" /> Dibatalkan{batalEv?.oleh ? ` oleh ${batalEv.oleh}` : ""}
@@ -481,6 +554,44 @@ export default function SphDetailPage() {
               <CardTitle>Produk ({d.items.length})</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
+              {adaPengecualian && (
+                <div
+                  className={cn(
+                    "space-y-2 rounded-lg border px-3 py-2.5 text-sm",
+                    d.tier === "direktur"
+                      ? "border-red-300 bg-red-50 text-red-900 dark:border-red-700 dark:bg-red-950/60 dark:text-red-100"
+                      : "border-amber-400 bg-amber-50 text-amber-900 dark:border-amber-600 dark:bg-amber-950/60 dark:text-amber-100",
+                  )}
+                >
+                  <p className="flex flex-wrap items-center gap-2 font-semibold">
+                    <ShieldAlert className="size-4" /> Diskon di atas batas — {pengecualian.length} produk
+                    {d.diskonTambahan && d.diskonTambahanTier !== "normal" ? " + diskon tambahan" : ""}
+                  </p>
+                  <ul className="list-disc space-y-0.5 pl-5 text-xs">
+                    {pengecualian.map((it) => (
+                      <li key={it.id}>
+                        <span className="font-medium">{it.nama}</span> — diskon {persenTeks(it.diskonRequested)} (batas {persenTeks(it.diskonMaksSnapshot)}):{" "}
+                        {it.tierAlasan.toLowerCase()}
+                      </li>
+                    ))}
+                    {d.diskonTambahan && d.diskonTambahanTier !== "normal" && (
+                      <li>
+                        <span className="font-medium">Diskon tambahan {rupiah(d.diskonTambahan.rp)}</span> — diskon efektif{" "}
+                        {persenTeks(d.diskonEfektifTotal)}: {(d.diskonTambahanAlasan ?? "").toLowerCase()}
+                      </li>
+                    )}
+                  </ul>
+                  <p className="text-xs">
+                    {d.pengecualianDisetujuiBy
+                      ? `Pengecualian disetujui HoD: ${d.pengecualianDisetujuiBy}${d.pengecualianDisetujuiAt ? ` · ${tglWaktu(d.pengecualianDisetujuiAt)}` : ""}.`
+                      : "Menunggu persetujuan HoD Business saat review."}
+                    {perluDirektur &&
+                      (d.direkturApprovedBy
+                        ? ` Disetujui Direktur: ${d.direkturApprovedBy}${d.direkturApprovedAt ? ` · ${tglWaktu(d.direkturApprovedAt)}` : ""}.`
+                        : " Perlu persetujuan Direktur sebelum approve & nomor.")}
+                  </p>
+                </div>
+              )}
               {pending.length > 0 && (
                 <p className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
                   <CircleAlert className="mt-0.5 size-3.5 shrink-0" />
@@ -506,6 +617,7 @@ export default function SphDetailPage() {
                         <td className="py-2 pr-2">
                           <p className="font-medium">{it.nama}</p>
                           <p className="text-muted-foreground text-xs">{it.kemasan ?? "—"}</p>
+                          {it.tier !== "normal" && <TierBadge tier={it.tier} className="mt-1" />}
                           {/* ponsel: kolom harga disembunyikan → ringkas di bawah nama */}
                           <p className="text-muted-foreground text-xs tabular-nums sm:hidden">
                             {rupiah(it.hargaNett)}/unit
@@ -556,9 +668,23 @@ export default function SphDetailPage() {
                   <dt className="text-muted-foreground">Subtotal</dt>
                   <dd className="tabular-nums">{rupiah(d.total.nett)}</dd>
                 </div>
+                {d.diskonTambahan && (
+                  <>
+                    <div className="flex justify-between gap-4">
+                      <dt className="text-muted-foreground">
+                        Diskon tambahan{d.diskonTambahan.tipe === "persen" ? ` (${d.diskonTambahan.nilai}%)` : ""}
+                      </dt>
+                      <dd className="tabular-nums">−{rupiah(d.diskonTambahan.rp)}</dd>
+                    </div>
+                    <div className="flex justify-between gap-4">
+                      <dt className="text-muted-foreground">Subtotal setelah diskon</dt>
+                      <dd className="tabular-nums">{rupiah(d.total.dpp)}</dd>
+                    </div>
+                  </>
+                )}
                 <div className="flex justify-between gap-4">
                   <dt className="text-muted-foreground">PPN 11%</dt>
-                  <dd className="tabular-nums">{rupiah(d.total.ppn - d.total.nett)}</dd>
+                  <dd className="tabular-nums">{rupiah(d.total.ppn - d.total.dpp)}</dd>
                 </div>
                 <div className="flex justify-between gap-4 border-t pt-1.5 text-base font-semibold">
                   <dt>Total</dt>
@@ -681,6 +807,26 @@ export default function SphDetailPage() {
                     { method: "PUT", body: JSON.stringify({ user_id: userId, jabatan }) },
                     "Penanda tangan diganti",
                   );
+            if (ok) setDialog(null);
+          }}
+        />
+      )}
+      {dialog === "review" && (
+        <DialogReview
+          d={d}
+          busy={busy}
+          onClose={() => setDialog(null)}
+          onSubmit={async (diskonBaru) => {
+            const ok = await jalankan(
+              "review",
+              `/api/sph/${encodeURIComponent(d.id)}/review`,
+              {
+                method: "POST",
+                body: JSON.stringify({ setuju_pengecualian: true, ...(diskonBaru !== undefined ? { diskon_tambahan: diskonBaru } : {}) }),
+              },
+              "Review disetujui",
+              () => (perluDirektur ? "Pengecualian disetujui. Menunggu persetujuan Direktur." : "Pengecualian disetujui. SPH menunggu approve & nomor."),
+            );
             if (ok) setDialog(null);
           }}
         />
@@ -903,6 +1049,117 @@ function DialogKirim({
           </Button>
           <Button disabled={sibuk || !terpilih} onClick={() => terpilih && onSubmit(terpilih.hpWa, terpilih.nama)}>
             {sibuk ? <Loader2 className="animate-spin" /> : <Send />} Kirim sekarang
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// Review HoD untuk SPH ber-pengecualian: daftar baris di atas batas tampil
+// mencolok, centang persetujuan WAJIB (server menolak tanpa itu), dan diskon
+// tambahan boleh DITURUNKAN (tidak dinaikkan) sebelum disetujui.
+function DialogReview({
+  d,
+  busy,
+  onClose,
+  onSubmit,
+}: {
+  d: SphDetail;
+  busy: string | null;
+  onClose: () => void;
+  onSubmit: (diskonBaru: { tipe: "persen" | "nominal"; nilai: number } | null | undefined) => void;
+}) {
+  const [setuju, setSetuju] = useState(false);
+  const [ubah, setUbah] = useState(false);
+  const [nilai, setNilai] = useState<number>(d.diskonTambahan?.nilai ?? 0);
+  const sibuk = busy === "review";
+  const pengecualian = d.items.filter((it) => it.tier !== "normal");
+  const dt = d.diskonTambahan;
+  // Pratinjau Rupiah sama rumus server (lib/sph-diskon.ts hitungDiskonTambahan).
+  const rpBaru = !dt ? 0 : dt.tipe === "persen" ? Math.round((d.total.nett * (Math.round(nilai * 100) / 100)) / 100) : Math.round(nilai);
+  const naik = !!dt && rpBaru > dt.rp;
+  const salahNilai = !Number.isFinite(nilai) || nilai < 0 || (dt?.tipe === "persen" && nilai >= 100) || naik;
+  return (
+    <Dialog open onOpenChange={(v) => !v && !sibuk && onClose()}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Tinjau pengecualian diskon</DialogTitle>
+          <DialogDescription>
+            SPH untuk {d.customerName ?? "customer"} · total {rupiah(d.total.ppn)} · diskon efektif {persenTeks(d.diskonEfektifTotal)}
+          </DialogDescription>
+        </DialogHeader>
+        <DialogBody className="space-y-4">
+          <ul className="space-y-2">
+            {pengecualian.map((it) => (
+              <li key={it.id} className="bg-card rounded-lg border p-2.5 text-sm shadow-[var(--shadow-card)]">
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <span className="min-w-0 font-medium break-words">{it.nama}</span>
+                  <TierBadge tier={it.tier} />
+                </div>
+                <p className="text-muted-foreground mt-1 text-xs">
+                  Diskon {persenTeks(it.diskonRequested)} · batas {persenTeks(it.diskonMaksSnapshot)} · {it.qty.toLocaleString("id-ID")} ×{" "}
+                  {rupiah(it.hargaNett)}
+                </p>
+              </li>
+            ))}
+            {dt && (
+              <li className="bg-card rounded-lg border p-2.5 text-sm shadow-[var(--shadow-card)]">
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <span className="font-medium">
+                    Diskon tambahan {dt.tipe === "persen" ? `${dt.nilai}% ` : ""}({rupiah(dt.rp)})
+                  </span>
+                  <TierBadge tier={d.diskonTambahanTier} />
+                </div>
+                {d.diskonTambahanAlasan && <p className="text-muted-foreground mt-1 text-xs">{d.diskonTambahanAlasan}</p>}
+                {!ubah ? (
+                  <Button size="sm" variant="soft" className="mt-2" onClick={() => setUbah(true)} disabled={sibuk}>
+                    Turunkan diskon tambahan
+                  </Button>
+                ) : (
+                  <div className="mt-2 flex flex-wrap items-end gap-2">
+                    <div className="w-36">
+                      <Label htmlFor="rv-dt" className="mb-1 block text-xs">
+                        {dt.tipe === "persen" ? "Diskon baru (%)" : "Potongan baru (Rp)"}
+                      </Label>
+                      <Input
+                        id="rv-dt"
+                        type="number"
+                        inputMode="decimal"
+                        min={0}
+                        className="h-8 tabular-nums"
+                        value={Number.isNaN(nilai) ? "" : nilai}
+                        aria-invalid={salahNilai}
+                        onChange={(e) => setNilai(e.target.value === "" ? 0 : Number(e.target.value))}
+                      />
+                    </div>
+                    <p className="pb-1.5 text-xs tabular-nums">= {rupiah(rpBaru)}</p>
+                    {naik && <p className="text-destructive w-full text-xs">Hanya boleh diturunkan, tidak dinaikkan.</p>}
+                  </div>
+                )}
+              </li>
+            )}
+          </ul>
+          {d.tier === "direktur" && (
+            <p className="rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-900 dark:border-red-700 dark:bg-red-950/60 dark:text-red-100">
+              Setelah Anda setujui, SPH masih perlu persetujuan Direktur sebelum approve & penomoran (kecuali diskon tambahan diturunkan
+              hingga tak lagi butuh Direktur).
+            </p>
+          )}
+          <label className="bg-card flex cursor-pointer items-start gap-3 rounded-lg border px-3 py-2.5 text-sm shadow-[var(--shadow-card)]">
+            <Checkbox checked={setuju} onCheckedChange={(v: boolean) => setSetuju(v)} className="mt-0.5" aria-label="Setujui pengecualian diskon" />
+            <span>Saya menyetujui pengecualian diskon di atas sebagai HoD Business.</span>
+          </label>
+        </DialogBody>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={sibuk}>
+            Batal
+          </Button>
+          <Button
+            disabled={sibuk || !setuju || (ubah && salahNilai)}
+            onClick={() => onSubmit(ubah && dt ? (nilai > 0 ? { tipe: dt.tipe, nilai } : null) : undefined)}
+          >
+            {sibuk ? <Loader2 className="animate-spin" /> : <ShieldCheck />} Setujui review
           </Button>
         </DialogFooter>
       </DialogContent>

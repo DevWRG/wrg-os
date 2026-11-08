@@ -4,8 +4,11 @@
 // hasil identik di semua perangkat, file .pdf betulan (bukan dialog print).
 // Semua angka diambil APA ADANYA dari SphDetail (snapshot sph_line_item) — tak
 // ada harga yang dihitung ulang di sini selain penjumlahan baris yang sama
-// dengan getSphDetail. PPN = Σ round(nett×1,11)×qty − Σ nett×qty, persis rumus
-// draft_text, supaya PDF, pratinjau, dan kiriman WA tak pernah beda angka.
+// dengan getSphDetail. Ringkasan angka = SphDetail.total (lib/sph-diskon.ts
+// totalSph, rumus yang sama dgn draft_text): tanpa diskon tambahan PPN =
+// Σ round(nett×1,11)×qty − Σ nett×qty; dengan diskon tambahan baris "Diskon
+// tambahan" muncul di antara Subtotal dan PPN, PPN dari DPP setelah diskon.
+// Jenjang persetujuan diskon (HoD/Direktur) TIDAK dicetak — urusan internal.
 //
 // SPH yang belum difinalisasi tetap bisa dicetak untuk ditinjau, tapi tiap
 // halamannya bertanda DRAF besar dan tanpa nomor surat.
@@ -16,6 +19,7 @@ import { fileURLToPath } from "node:url";
 import PDFDocumentKlass from "pdfkit";
 
 import { KUNCI_SYARAT, LABEL_SYARAT, NOMOR_DRAF, tanggalIndo, terbilangRupiah } from "../lib/sph-cetak.js";
+import { totalSph } from "../lib/sph-diskon.js";
 import { bersih } from "./senin-brief-pdf.js";
 import type { SphDetail } from "./sph.js";
 
@@ -46,7 +50,8 @@ export type SphCetak = Pick<
   | "syarat"
   | "penandaTangan"
   | "items"
->;
+> &
+  Partial<Pick<SphDetail, "total">>;
 
 export function sphFinal(d: Pick<SphDetail, "status">): boolean {
   return d.status === "approved" || d.status === "sent";
@@ -79,9 +84,10 @@ export async function sphPdf(d: SphCetak, opts: { oleh?: string | null } = {}): 
     jumlah: it.hargaNett * it.qty,
   }));
   const adaDiskon = baris.some((b) => b.diskon > 0);
-  const subtotal = d.items.reduce((n, it) => n + it.hargaNett * it.qty, 0);
-  const total = d.items.reduce((n, it) => n + it.nettPpn * it.qty, 0);
-  const ppn = total - subtotal;
+  const t = d.total ?? totalSph(d.items);
+  const subtotal = t.nett;
+  const total = t.ppn;
+  const ppn = t.ppnRp;
 
   // Kolom: dengan diskon → Harga Satuan = price list, kolom Diskon tampil, Jumlah
   // = nett × qty. Tanpa diskon kolom Diskon disembunyikan dan lebarnya diberikan
@@ -216,25 +222,31 @@ export async function sphPdf(d: SphCetak, opts: { oleh?: string | null } = {}): 
   });
 
   // ── Ringkasan angka (rata kanan, sejajar kolom Jumlah) ──
-  const TINGGI_RINGKAS = 3 * 16 + 30;
+  const ringkas: [string, number, boolean][] = [
+    ["Subtotal", subtotal, false],
+    ...(t.diskonTambahan > 0
+      ? ([
+          ["Diskon tambahan", -t.diskonTambahan, false],
+          ["Subtotal setelah diskon", t.dpp, false],
+        ] as [string, number, boolean][])
+      : []),
+    ["PPN 11%", ppn, false],
+    ["Total", total, true],
+  ];
+  const TINGGI_RINGKAS = ringkas.length * 16 + 30;
   if (y + TINGGI_RINGKAS > BAWAH) y = halamanBaru();
   const lebarNilai = kolom[kolom.length - 1].lebar;
   const xNilai = MARGIN + LEBAR - lebarNilai;
   const lebarLabel = 150;
   const xLabel = xNilai - lebarLabel;
   y += 6;
-  const ringkas: [string, number, boolean][] = [
-    ["Subtotal", subtotal, false],
-    ["PPN 11%", ppn, false],
-    ["Total", total, true],
-  ];
   for (const [label, n, tebal] of ringkas) {
     if (tebal) {
       doc.save().rect(xLabel, y - 3, lebarLabel + lebarNilai, 18).fill("#e6f2f1").restore();
     }
     doc.fillColor(C.teks).font(tebal ? "Helvetica-Bold" : "Helvetica").fontSize(9.5);
     doc.text(label, xLabel + PAD, y + 1, { width: lebarLabel - PAD * 2, align: "right", lineBreak: false });
-    doc.text(rp(n), xNilai + PAD, y + 1, { width: lebarNilai - PAD * 2, align: "right", lineBreak: false });
+    doc.text(n < 0 ? `- ${rp(-n)}` : rp(n), xNilai + PAD, y + 1, { width: lebarNilai - PAD * 2, align: "right", lineBreak: false });
     y += 16;
   }
   y += 4;

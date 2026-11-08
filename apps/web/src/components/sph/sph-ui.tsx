@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Check, CircleAlert, CircleCheck, Clock, X } from "lucide-react";
+import { Check, CircleAlert, CircleCheck, Clock, ShieldAlert, ShieldCheck, X } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
@@ -24,7 +24,9 @@ export interface AksiSph {
   kirim: PutusanAksi;
   batal: PutusanAksi;
   ubahSyarat: PutusanAksi;
-  utama: "review" | "approve" | "konfirmasiVarian" | "kirim" | null;
+  direktur: PutusanAksi;
+  direkturPending: boolean;
+  utama: "review" | "direktur" | "approve" | "konfirmasiVarian" | "kirim" | null;
   petunjuk: string;
   perluAksiSaya: boolean;
 }
@@ -186,7 +188,52 @@ export function useToast() {
   return { toast, node };
 }
 
-// ── Pelacak alur: Dibuat → Review HoD → Approve & nomor → Terkirim ──
+// ── Jenjang diskon (migrasi 301): hijau / kuning / merah ──
+// Warna dipilih agar tetap terbaca di mode terang & gelap (teks -800/-900 di
+// atas -50; -200/-300 di atas -950).
+export type TierTampil = "normal" | "hod" | "direktur" | "tolak";
+
+export const TIER_SPH: Record<TierTampil, { label: string; pendek: string; kelas: string }> = {
+  normal: {
+    label: "Dalam batas",
+    pendek: "Dalam batas",
+    kelas: "border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-700 dark:bg-emerald-950/70 dark:text-emerald-200",
+  },
+  hod: {
+    label: "Perlu persetujuan HoD",
+    pendek: "HoD",
+    kelas: "border-amber-400 bg-amber-50 text-amber-900 dark:border-amber-600 dark:bg-amber-950/70 dark:text-amber-200",
+  },
+  direktur: {
+    label: "Perlu persetujuan Direktur",
+    pendek: "Direktur",
+    kelas: "border-red-300 bg-red-50 text-red-800 dark:border-red-700 dark:bg-red-950/70 dark:text-red-200",
+  },
+  tolak: {
+    label: "Melebihi batas",
+    pendek: "Ditolak",
+    kelas: "border-red-700 bg-red-700 text-white dark:border-red-500 dark:bg-red-600 dark:text-white",
+  },
+};
+
+export function TierBadge({ tier, pendek, className }: { tier: string; pendek?: boolean; className?: string }) {
+  const m = TIER_SPH[(tier as TierTampil) in TIER_SPH ? (tier as TierTampil) : "normal"];
+  const Ikon = tier === "normal" ? ShieldCheck : ShieldAlert;
+  return (
+    <span
+      className={cn(
+        "inline-flex h-6 shrink-0 items-center gap-1 rounded-full border px-2 text-xs font-medium whitespace-nowrap",
+        m.kelas,
+        className,
+      )}
+    >
+      <Ikon className="size-3.5" aria-hidden />
+      {pendek ? m.pendek : m.label}
+    </span>
+  );
+}
+
+// ── Pelacak alur: Dibuat → Review HoD → (Direktur) → Approve & nomor → Terkirim ──
 export interface LangkahAlur {
   judul: string;
   oleh?: string | null;
@@ -198,12 +245,21 @@ export function urutanStatus(s: string): number {
   return { draft: 1, hod_review: 2, approved: 3, sent: 4 }[s] ?? 0;
 }
 
-export function PelacakAlur({ status, langkah }: { status: string; langkah: LangkahAlur[] }) {
+export function PelacakAlur({
+  status,
+  langkah,
+  sampai: sampaiTimpa,
+}: {
+  status: string;
+  langkah: LangkahAlur[];
+  /** Jumlah langkah selesai bila tak sama dgn urutanStatus (mis. ada langkah Direktur). */
+  sampai?: number;
+}) {
   // langkah[0] = dibuat (selalu selesai); indeks i selesai bila i < urutanStatus.
   const batal = status === "canceled";
-  const sampai = batal ? langkah.filter((l) => l.waktu || l.oleh).length : urutanStatus(status);
+  const sampai = batal ? langkah.filter((l) => l.waktu || l.oleh).length : (sampaiTimpa ?? urutanStatus(status));
   return (
-    <ol className="grid grid-cols-1 gap-3 sm:grid-cols-4 sm:gap-0">
+    <ol className={cn("grid grid-cols-1 gap-3 sm:gap-0", langkah.length === 5 ? "sm:grid-cols-5" : "sm:grid-cols-4")}>
       {langkah.map((l, i) => {
         const selesai = i < sampai;
         const sekarang = !batal && i === sampai;

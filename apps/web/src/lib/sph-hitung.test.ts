@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { hitungBaris, ringkasSph } from "./sph-hitung";
+import { ATURAN_TIER_DEFAULT, hitungBaris, hitungDiskonTambahan, klasifikasiTier, ringkasSph } from "./sph-hitung";
 
 test("hitungBaris: nett & PPN dibulatkan spt server", () => {
   const h = hitungBaris({ priceList: 1000, diskonMaks: 0.1, qty: 3, diskonPersen: 5 });
@@ -61,4 +61,58 @@ test("pratinjauNomorSph: format, reset tahunan, validasi", async () => {
   assert.ok(pratinjauNomorSph({ kodeTengah: "A/B", nomorBerikutnya: 1, resetTahunan: false, tahunBerjalan: null }).masalah);
   assert.ok(pratinjauNomorSph({ kodeTengah: "A", nomorBerikutnya: 0, resetTahunan: false, tahunBerjalan: null }).masalah);
   assert.ok(pratinjauNomorSph({ kodeTengah: "A", nomorBerikutnya: 1.5, resetTahunan: false, tahunBerjalan: null }).masalah);
+});
+
+// ── Diskon berjenjang & diskon tambahan (migrasi 301) — angka sintetis ──
+
+const A = ATURAN_TIER_DEFAULT;
+
+test("hitungBaris + aturan: jenjang normal/hod/direktur/tolak", () => {
+  const b = { priceList: 1000, diskonMaks: 0.1, qty: 1 };
+  assert.equal(hitungBaris({ ...b, diskonPersen: 10 }, A).tier, "normal");
+  const hod = hitungBaris({ ...b, diskonPersen: 12 }, A);
+  assert.equal(hod.tier, "hod");
+  assert.equal(hod.masalahDiskon, null); // boleh diajukan
+  assert.match(hod.alasanTier, /HoD Business/);
+  assert.equal(hitungBaris({ ...b, diskonPersen: 25 }, A).tier, "direktur");
+  const tolak = hitungBaris({ ...b, diskonPersen: 26 }, A);
+  assert.equal(tolak.tier, "tolak");
+  assert.ok(tolak.masalahDiskon);
+});
+
+test("klasifikasiTier web = server (batas 7,5% + 5 + 10)", () => {
+  assert.equal(klasifikasiTier(0.125, 0.075, A).tier, "hod");
+  assert.equal(klasifikasiTier(0.1251, 0.075, A).tier, "direktur");
+  assert.equal(klasifikasiTier(0.2251, 0.075, A).tier, "tolak");
+});
+
+test("hitungDiskonTambahan: persen/nominal & validasi", () => {
+  assert.deepEqual(hitungDiskonTambahan(1000, null), { rp: 0, masalah: null });
+  assert.deepEqual(hitungDiskonTambahan(1000, { tipe: "persen", nilai: 2.5 }), { rp: 25, masalah: null });
+  assert.deepEqual(hitungDiskonTambahan(1000, { tipe: "nominal", nilai: 100 }), { rp: 100, masalah: null });
+  assert.ok(hitungDiskonTambahan(1000, { tipe: "nominal", nilai: 1000 }).masalah);
+  assert.ok(hitungDiskonTambahan(1000, { tipe: "persen", nilai: 100 }).masalah);
+});
+
+test("ringkasSph + diskon tambahan: PPN dari DPP, jenjang diskon tambahan", () => {
+  const baris = [
+    { priceList: 100_000, diskonMaks: 0.1, qty: 2, diskonPersen: 10 },
+    { priceList: 50_000, diskonMaks: 0, qty: 1, diskonPersen: 0 },
+  ];
+  const tanpa = ringkasSph(baris, { aturan: A });
+  assert.equal(tanpa.total, 99_900 * 2 + 55_500);
+  assert.equal(tanpa.tier, "normal");
+  const r = ringkasSph(baris, { aturan: A, diskonTambahan: { tipe: "nominal", nilai: 30_000 } });
+  assert.equal(r.subtotal, 230_000);
+  assert.equal(r.dpp, 200_000);
+  assert.equal(r.ppn, 22_000);
+  assert.equal(r.total, 222_000);
+  assert.equal(r.tierTambahan, "direktur"); // 8% → 20% = +12 poin
+  assert.equal(r.tier, "direktur");
+  assert.equal(r.adaMasalah, false);
+  assert.equal(ringkasSph(baris, { aturan: A, diskonTambahan: { tipe: "nominal", nilai: 10_000 } }).tierTambahan, "hod");
+  const tolak = ringkasSph(baris, { aturan: A, diskonTambahan: { tipe: "nominal", nilai: 40_000 } });
+  assert.equal(tolak.tierTambahan, "tolak");
+  assert.equal(tolak.adaMasalah, true);
+  assert.ok(tolak.masalahTambahan);
 });

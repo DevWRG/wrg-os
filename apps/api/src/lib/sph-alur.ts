@@ -13,6 +13,11 @@
 //   · kirim (approved → sent): edit Sales Docs, ke kontak WA customer;
 //   · batalkan: edit Sales Docs, selama belum terkirim/dibatalkan;
 //   · ubah syarat: edit Sales Docs, selama draft/hod_review.
+//   · persetujuan Direktur (diskon jenjang "direktur", migrasi 301): status
+//     hod_review, role direktur / superuser, BUKAN pembuat; selama belum ada,
+//     approve tahap 2 tertahan (lib/sph-diskon.ts).
+
+import type { TierDiskon } from "./sph-diskon.js";
 
 export type StatusSph = "draft" | "hod_review" | "approved" | "sent" | "canceled";
 
@@ -30,6 +35,12 @@ export interface InputAksiSph {
   bisaEdit: boolean;
   /** Jumlah baris nama-varian-kembar yang belum dikonfirmasi. */
   variantPending: number;
+  /** Jenjang persetujuan diskon SPH (sales_doc.tier_persetujuan). Kosong = normal. */
+  tier?: TierDiskon;
+  /** Direktur sudah menyetujui (sales_doc.direktur_approved_at terisi). */
+  direkturSudah?: boolean;
+  /** role direktur atau superuser — syarat peran persetujuan Direktur. */
+  bolehDirekturPeran?: boolean;
 }
 
 export interface AksiSph {
@@ -40,8 +51,12 @@ export interface AksiSph {
   kirim: PutusanAksi;
   batal: PutusanAksi;
   ubahSyarat: PutusanAksi;
+  /** Persetujuan Direktur atas diskon jenjang "direktur". */
+  direktur: PutusanAksi;
+  /** true = SPH ini butuh persetujuan Direktur dan belum disetujui. */
+  direkturPending: boolean;
   /** Aksi utama untuk penonton ini (null = tak ada yang perlu ia lakukan). */
-  utama: "review" | "approve" | "konfirmasiVarian" | "kirim" | null;
+  utama: "review" | "direktur" | "approve" | "konfirmasiVarian" | "kirim" | null;
   /** Petunjuk satu baris untuk daftar/detail, sudut pandang penonton. */
   petunjuk: string;
   /** true = ada yang perlu dikerjakan penonton ini sekarang. */
@@ -62,6 +77,18 @@ export const LABEL_STATUS_SPH: Record<StatusSph, string> = {
 export function aksiSph(i: InputAksiSph): AksiSph {
   const s = i.status;
   const tanpaEdit = "Butuh izin ubah (edit) menu Sales Docs";
+  const tier = i.tier ?? "normal";
+  const perluDirektur = tier === "direktur";
+  const direkturPending = perluDirektur && !i.direkturSudah && (s === "draft" || s === "hod_review");
+
+  let direktur: PutusanAksi;
+  if (!perluDirektur) direktur = tidak("Diskon SPH ini tidak perlu persetujuan Direktur");
+  else if (i.direkturSudah) direktur = tidak("Sudah disetujui Direktur");
+  else if (s === "draft") direktur = tidak("Tunggu review HoD Business dulu");
+  else if (s !== "hod_review") direktur = tidak("SPH sudah tidak menunggu persetujuan");
+  else if (i.isCreator) direktur = tidak("Anda pembuat SPH ini — persetujuan harus oleh Direktur lain");
+  else if (!i.bolehDirekturPeran) direktur = tidak("Persetujuan diskon ini hanya untuk Direktur");
+  else direktur = ya;
 
   let review: PutusanAksi;
   if (s !== "draft") review = tidak("Hanya untuk SPH yang menunggu review");
@@ -73,6 +100,7 @@ export function aksiSph(i: InputAksiSph): AksiSph {
   let approve: PutusanAksi;
   if (s !== "hod_review") approve = tidak(s === "draft" ? "Tunggu review HoD Business dulu" : "Hanya untuk SPH yang menunggu approve");
   else if (i.isCreator) approve = tidak(finalPembuat);
+  else if (direkturPending) approve = tidak("Tunggu persetujuan Direktur atas diskon di atas batas");
   else if (!i.bisaEdit) approve = tidak(tanpaEdit);
   else if (i.variantPending > 0) approve = tidak(`Konfirmasi ${i.variantPending} item nama-kembar dulu`);
   else approve = ya;
@@ -111,15 +139,21 @@ export function aksiSph(i: InputAksiSph): AksiSph {
   if (s === "draft") {
     if (review.boleh) {
       utama = "review";
-      petunjuk = "Perlu review Anda";
-    } else petunjuk = "Menunggu review HoD Business";
+      petunjuk = tier === "normal" ? "Perlu review Anda" : "Perlu review Anda · diskon di atas batas";
+    } else petunjuk = perluDirektur ? "Menunggu review HoD · lalu persetujuan Direktur" : "Menunggu review HoD Business";
   } else if (s === "hod_review") {
-    if (approve.boleh) {
+    if (direktur.boleh) {
+      utama = "direktur";
+      petunjuk = "Perlu persetujuan Direktur (Anda)";
+    } else if (approve.boleh) {
       utama = "approve";
       petunjuk = "Perlu approve Anda";
     } else if (konfirmasiVarian.boleh) {
+      // Varian boleh dikonfirmasi paralel selagi menunggu Direktur.
       utama = "konfirmasiVarian";
       petunjuk = "Perlu konfirmasi varian";
+    } else if (direkturPending) {
+      petunjuk = "Perlu persetujuan Direktur";
     } else petunjuk = "Menunggu approve & nomor surat";
   } else if (s === "approved") {
     if (kirim.boleh) {
@@ -130,7 +164,20 @@ export function aksiSph(i: InputAksiSph): AksiSph {
   else if (s === "canceled") petunjuk = "Dibatalkan";
   else petunjuk = s;
 
-  return { review, approve, konfirmasiVarian, gantiTtd, kirim, batal, ubahSyarat, utama, petunjuk, perluAksiSaya: utama !== null };
+  return {
+    review,
+    approve,
+    konfirmasiVarian,
+    gantiTtd,
+    kirim,
+    batal,
+    ubahSyarat,
+    direktur,
+    direkturPending,
+    utama,
+    petunjuk,
+    perluAksiSaya: utama !== null,
+  };
 }
 
 // Kata kunci pencarian daftar SPH → pola ILIKE aman. `%`, `_` dan `\`

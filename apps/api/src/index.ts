@@ -95,6 +95,7 @@ import {
   createSphDraft,
   getSphDetail,
   hodReviewSph,
+  direkturSetujuiSph,
   confirmSphVariant,
   pelakuDariUser,
   getPengaturanSph,
@@ -135,6 +136,7 @@ import {
   listSetup as listPricebookSetup, setupSummary as pricebookSetupSummary,
   updateSetupRow as updatePricebookSetupRow, publishSetup as publishPricebookSetup,
   unpublishSetup as unpublishPricebookSetup, listPublishedKeagenan,
+  pratinjauMassalDiskon, terapkanMassalDiskon,
   type SetupPatch as PricebookSetupPatch,
 } from "./repo/pricebook.js";
 import { pricelistPdf } from "./repo/pricelist-pdf.js";
@@ -2491,7 +2493,17 @@ app.post("/sph", async (c) => {
   //
   // customer_name TIDAK lagi diwajibkan: nama di-derive server-side dari
   // mirror di createSphDraft, jadi nama kiriman klien tak dipercaya.
-  if (!body?.customer_id) {
+  // Pengecualian: calon customer yang BELUM ada di Accurate (`customer_baru: true`)
+  // — nama ketikan dipakai (dirapikan, 3–120 huruf), customer_id dikosongkan.
+  // SPH semacam ini tak punya kontak di Accounts, jadi tak bisa dikirim lewat WA.
+  const calonBaru = (body as { customer_baru?: unknown } | undefined)?.customer_baru === true;
+  if (body && calonBaru) {
+    const nama = String(body.customer_name ?? "").trim().replace(/\s+/g, " ");
+    if (nama.length < 3 || nama.length > 120) {
+      return c.json({ error: "nama calon customer wajib 3–120 huruf" }, 400);
+    }
+    body = { ...body, customer_id: null, customer_name: nama };
+  } else if (!body?.customer_id) {
     return c.json({ error: "customer_id wajib — pilih customer dari katalog Accurate" }, 400);
   }
   // Pembuat = pelaku sesi (x-user-id dari BFF), bukan created_by kiriman klien.
@@ -2627,12 +2639,34 @@ app.put("/sph/:id/penanda-tangan", async (c) => {
 // Tahap 1/2 approval SPH (HOD Business). draft → hod_review. Tahap 2 pakai
 // endpoint sama dgn doc_type lain: POST /sales/docs/:id/approve.
 // Peninjau = pelaku sesi (x-user-id); syarat HoD Business aktif / admin /
-// superuser + bukan pembuat ditegakkan di hodReviewSph. Body diabaikan.
+// superuser + bukan pembuat ditegakkan di hodReviewSph. Body (migrasi 301):
+// { setuju_pengecualian?: boolean — wajib true bila ada diskon di atas batas,
+//   diskon_tambahan?: {tipe, nilai} | null — hanya boleh MENURUNKAN }.
 app.post("/sph/:id/review", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const pelaku = await pelakuDariUser(c.req.header("x-user-id"));
   if (!pelaku) return c.json({ error: "identitas pengguna (sesi) wajib" }, 401);
-  const r = await hodReviewSph(c.req.param("id"), pelaku);
+  let body: Record<string, unknown> = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    /* body opsional */
+  }
+  const r = await hodReviewSph(c.req.param("id"), pelaku, {
+    setujuPengecualian: body.setuju_pengecualian === true,
+    diskonTambahan: "diskon_tambahan" in body ? body.diskon_tambahan : undefined,
+  });
+  return c.json(r, r.ok ? 200 : r.forbidden ? 403 : 400);
+});
+
+// Persetujuan Direktur atas diskon jenjang "direktur" (migrasi 301), di antara
+// review HoD dan approve tahap 2. Pelaku = sesi; role direktur / superuser,
+// bukan pembuat — ditegakkan di direkturSetujuiSph. Body diabaikan.
+app.post("/sph/:id/direktur", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const pelaku = await pelakuDariUser(c.req.header("x-user-id"));
+  if (!pelaku) return c.json({ error: "identitas pengguna (sesi) wajib" }, 401);
+  const r = await direkturSetujuiSph(c.req.param("id"), pelaku);
   return c.json(r, r.ok ? 200 : r.forbidden ? 403 : 400);
 });
 
@@ -5484,6 +5518,7 @@ app.get("/pricebook/items", async (c) => {
   const rows = await listPricebookItems({
     periode: q.periode, lini: q.lini, brand: q.brand, kategori: q.kategori,
     q: q.q, limit: q.limit ? Number(q.limit) : undefined,
+    efektif: q.efektif === "1",
   });
   return c.json({ count: rows.length, rows });
 });
@@ -5706,6 +5741,34 @@ app.patch("/pricebook/setup", async (c) => {
   try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
   const res = await updatePricebookSetupRow(body);
   return res.ok ? c.json(res.row) : c.json({ error: res.error }, 400);
+});
+
+// Atur batas diskon massal per brand/kategori. Gate SAMA dgn PATCH satu baris
+// (BFF canEditPricelistSetup); updatedBy diisi BFF dari sesi. GET = pratinjau.
+// Query/body: brand?, kategori?, lini?, periode?, diskon (fraksi) | null = kembali ke Price Book.
+const diskonMassal = (v: unknown): number | null =>
+  v === null || v === undefined || v === "" || v === "null" ? null : Number(v);
+app.get("/pricebook/setup/massal", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const q = c.req.query();
+  const r = await pratinjauMassalDiskon({
+    periode: q.periode || undefined, brand: q.brand, kategori: q.kategori, lini: q.lini, diskon: diskonMassal(q.diskon),
+  });
+  return r.ok ? c.json(r.hasil) : c.json({ error: r.error }, 400);
+});
+
+app.patch("/pricebook/setup/massal", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const b = await c.req.json().catch(() => ({}) as Record<string, unknown>);
+  const r = await terapkanMassalDiskon({
+    periode: (b.periode as string) || undefined,
+    brand: typeof b.brand === "string" ? b.brand : null,
+    kategori: typeof b.kategori === "string" ? b.kategori : null,
+    lini: typeof b.lini === "string" ? b.lini : null,
+    diskon: diskonMassal(b.diskon),
+    updatedBy: (b.updatedBy as string) ?? null,
+  });
+  return r.ok ? c.json(r) : c.json({ error: r.error }, 400);
 });
 
 app.post("/pricebook/setup/publish", async (c) => {

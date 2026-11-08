@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Hash, Loader2, Lock, RotateCcw, Save } from "lucide-react";
+import { ArrowLeft, ExternalLink, Hash, Layers, Loader2, Lock, RotateCcw, Save } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -11,7 +11,7 @@ import { Label } from "@/components/ui/label";
 import { SkeletonCardGrid } from "@/components/ui/loading";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import { ambilJson, pesanRamah, tglWaktu, useToast } from "@/components/sph/sph-ui";
+import { TierBadge, ambilJson, pesanRamah, tglWaktu, useToast } from "@/components/sph/sph-ui";
 import { adalahAdmin } from "@/lib/nav";
 import { pratinjauNomorSph } from "@/lib/sph-hitung";
 import { useSession } from "@/lib/use-session";
@@ -21,6 +21,10 @@ import { useSession } from "@/lib/use-session";
 // boleh melihat; yang boleh MENGUBAH hanya admin/superuser (BFF + apps/api).
 // Pratinjau nomor berubah seketika saat mengetik (lib/sph-hitung.ts, salinan
 // aturan server); nomor sesungguhnya tetap diberikan server saat approve.
+//
+// Sejak migrasi 301 juga: jenjang diskon (jatah HoD Business & Direktur di atas
+// batas SKU, batas diskon tambahan) + tautan ke Setup Harga, sumber batas
+// diskon per SKU (nilai terbit).
 
 interface Syarat {
   pembayaran: string;
@@ -35,6 +39,9 @@ interface Pengaturan {
   resetTahunan: boolean;
   tahunBerjalan: number | null;
   syaratDefault: Syarat;
+  tambahanHodPp: number;
+  tambahanDirekturPp: number;
+  diskonTotalMaksPct: number;
   updatedBy: string | null;
   updatedAt: string | null;
   contohNomor: string;
@@ -47,6 +54,14 @@ const LABEL: Record<keyof Syarat, string> = {
   harga: "Keterangan harga",
 };
 const KUNCI = Object.keys(LABEL) as (keyof Syarat)[];
+
+type KunciTier = "tambahanHodPp" | "tambahanDirekturPp" | "diskonTotalMaksPct";
+const TIER_ISIAN: { k: KunciTier; label: string; bantu: string }[] = [
+  { k: "tambahanHodPp", label: "Jatah HoD Business (poin %)", bantu: "Di atas batas produk sampai sebanyak ini → perlu persetujuan HoD saat review." },
+  { k: "tambahanDirekturPp", label: "Jatah Direktur (poin %)", bantu: "Setelah jatah HoD, sampai sebanyak ini lagi → perlu persetujuan Direktur. Di atasnya ditolak." },
+  { k: "diskonTotalMaksPct", label: "Diskon tambahan tanpa persetujuan (poin %)", bantu: "0 = setiap diskon tambahan seluruh SPH minimal perlu persetujuan HoD." },
+];
+const tierSalah = (n: number) => !Number.isFinite(n) || n < 0 || n >= 100;
 
 export default function SphPengaturanPage() {
   const me = useSession();
@@ -79,10 +94,12 @@ export default function SphPengaturanPage() {
       (p.kodeTengah !== form.kodeTengah ||
         p.nomorBerikutnya !== form.nomorBerikutnya ||
         p.resetTahunan !== form.resetTahunan ||
+        TIER_ISIAN.some(({ k }) => p[k] !== form[k]) ||
         KUNCI.some((k) => p.syaratDefault[k] !== form.syaratDefault[k])),
     [p, form],
   );
   const syaratKosong = !!form && KUNCI.some((k) => !form.syaratDefault[k].trim());
+  const tierTakSah = !!form && TIER_ISIAN.some(({ k }) => tierSalah(form[k]));
 
   async function simpan() {
     if (!form) return;
@@ -96,6 +113,9 @@ export default function SphPengaturanPage() {
           nomorBerikutnya: form.nomorBerikutnya,
           resetTahunan: form.resetTahunan,
           syaratDefault: form.syaratDefault,
+          tambahanHodPp: form.tambahanHodPp,
+          tambahanDirekturPp: form.tambahanDirekturPp,
+          diskonTotalMaksPct: form.diskonTotalMaksPct,
         }),
       });
       const baru = await ambilJson<Pengaturan>("/api/sph/pengaturan");
@@ -199,6 +219,68 @@ export default function SphPengaturanPage() {
 
           <Card>
             <CardHeader>
+              <CardTitle>Diskon berjenjang</CardTitle>
+              <CardDescription>
+                Batas diskon tiap produk mengikuti Setup Harga (nilai yang sudah dipublikasikan). Diskon di atas batas tetap bisa diajukan
+                dengan persetujuan berjenjang:
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <ol className="grid gap-2 text-sm sm:grid-cols-2">
+                <li className="flex flex-wrap items-center gap-2"><TierBadge tier="normal" /> ≤ batas produk</li>
+                <li className="flex flex-wrap items-center gap-2">
+                  <TierBadge tier="hod" /> ≤ batas + {Number.isFinite(form.tambahanHodPp) ? form.tambahanHodPp : "…"} poin
+                </li>
+                <li className="flex flex-wrap items-center gap-2">
+                  <TierBadge tier="direktur" /> ≤ batas +{" "}
+                  {Number.isFinite(form.tambahanHodPp + form.tambahanDirekturPp)
+                    ? Math.round((form.tambahanHodPp + form.tambahanDirekturPp) * 100) / 100
+                    : "…"}{" "}
+                  poin
+                </li>
+                <li className="flex flex-wrap items-center gap-2"><TierBadge tier="tolak" /> di atasnya — ditolak</li>
+              </ol>
+              <div className="grid gap-4 md:grid-cols-3">
+                {TIER_ISIAN.map(({ k, label, bantu }) => (
+                  <div key={k} className="min-w-0">
+                    <Label htmlFor={`tier-${k}`} className="mb-1.5 block">
+                      {label}
+                    </Label>
+                    <Input
+                      id={`tier-${k}`}
+                      type="number"
+                      inputMode="decimal"
+                      min={0}
+                      max={99.99}
+                      step={0.5}
+                      value={Number.isNaN(form[k]) ? "" : form[k]}
+                      disabled={!admin}
+                      className="tabular-nums"
+                      aria-invalid={tierSalah(form[k])}
+                      onChange={(e) => setForm({ ...form, [k]: e.target.value === "" ? Number.NaN : Number(e.target.value) })}
+                    />
+                    <p className={tierSalah(form[k]) ? "text-destructive mt-1 text-xs" : "text-muted-foreground mt-1 text-xs"}>
+                      {tierSalah(form[k]) ? "Isi 0 sampai kurang dari 100" : bantu}
+                    </p>
+                  </div>
+                ))}
+              </div>
+              <div className="bg-card flex flex-col gap-3 rounded-lg border px-3 py-3 shadow-[var(--shadow-card)] sm:flex-row sm:items-center sm:justify-between">
+                <span className="text-sm">
+                  <span className="block font-medium">Batas diskon per produk</span>
+                  <span className="text-muted-foreground text-xs">
+                    Diatur HoD Business di Setup Harga — termasuk atur massal per brand/kategori. Hanya nilai yang sudah dipublikasikan yang dipakai SPH.
+                  </span>
+                </span>
+                <Button variant="soft" className="w-full sm:w-auto" render={<Link href="/pricebook/setup" />}>
+                  <Layers /> Buka Setup Harga <ExternalLink />
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
               <CardTitle>Syarat standar SPH baru</CardTitle>
               <CardDescription>Terisi otomatis di setiap SPH baru (form web maupun #SPH WhatsApp). AM tetap bisa mengubahnya per SPH.</CardDescription>
             </CardHeader>
@@ -245,15 +327,21 @@ export default function SphPengaturanPage() {
                 </p>
               )}
               {admin && (
-                <div className="flex gap-2 pt-1">
+                // Ditumpuk lebar penuh (utama di atas) — kartu samping sempit, dua
+                // tombol sebaris bisa terpotong.
+                <div className="flex flex-col gap-2 pt-1">
+                  <Button
+                    className="w-full"
+                    disabled={busy || !berubah || !!pratinjau?.masalah || syaratKosong || tierTakSah}
+                    onClick={() => void simpan()}
+                  >
+                    {busy ? <Loader2 className="animate-spin" /> : <Save />} {busy ? "Menyimpan…" : "Simpan pengaturan"}
+                  </Button>
                   {berubah && (
-                    <Button variant="outline" onClick={() => setForm(p)} disabled={busy}>
+                    <Button variant="outline" className="w-full" onClick={() => setForm(p)} disabled={busy}>
                       <RotateCcw /> Reset
                     </Button>
                   )}
-                  <Button className="flex-1" disabled={busy || !berubah || !!pratinjau?.masalah || syaratKosong} onClick={() => void simpan()}>
-                    {busy ? <Loader2 className="animate-spin" /> : <Save />} {busy ? "Menyimpan…" : "Simpan pengaturan"}
-                  </Button>
                 </div>
               )}
               {admin && syaratKosong && <p className="text-destructive text-xs">Semua syarat standar wajib diisi.</p>}

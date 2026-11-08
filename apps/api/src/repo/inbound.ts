@@ -2352,6 +2352,9 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
       items: [{ pricelist_item_id: match.id, qty: parsed.qty, diskon_requested: parsed.diskonRequested }],
       created_by: ams.nama ?? ams.via,
       created_by_am_id: ams.am_id ?? null, // larangan pembuat review/finalisasi sendiri
+      // Tetap ketat: di atas batas SKU efektif ditolak (jenjang HoD/Direktur
+      // hanya lewat form web yang bisa menjelaskan pengecualiannya).
+      ketat: true,
     });
     if (!r.ok) {
       const reply = await sendViaWaGateway(target, `⚠️ #SPH ditolak, ${ams.nama}: ${r.error}`);

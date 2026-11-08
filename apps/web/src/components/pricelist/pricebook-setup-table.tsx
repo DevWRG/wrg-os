@@ -8,9 +8,9 @@
 // handover Direktur) dan margin cuma turunan (1 - HPP/Price List) — jadi tidak
 // ada tombol edit harga: angka harga milik price book, diubah lewat import ulang.
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { AlertTriangle, RotateCcw, Send } from "lucide-react";
+import { AlertTriangle, Layers, Loader2, RotateCcw, Send } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -48,6 +48,7 @@ export interface PricebookSetupRow {
   status: string;
   publishedAt: string | null;
   kategori: string | null;
+  kategoriPricebook: string | null; // product_pricelist.kategori — pengelompok aksi massal
   productLine: string | null;
   klas: string | null;
   subClass: string | null;
@@ -113,6 +114,7 @@ export function PricebookSetupTable({
   const [edit, setEdit] = useState<PricebookSetupRow | null>(null);
   const [busy, setBusy] = useState(false);
   const [konfirmPublishAll, setKonfirmPublishAll] = useState(false);
+  const [massal, setMassal] = useState(false);
 
   async function publishSemua() {
     setBusy(true);
@@ -347,6 +349,9 @@ export function PricebookSetupTable({
         onRowClick={(r) => setEdit(r)}
         toolbar={
           <>
+            <Button size="sm" variant="soft" onClick={() => setMassal(true)}>
+              <Layers /> Atur diskon massal
+            </Button>
             {canPublish && (
               <Button size="sm" variant="outline" disabled={busy || (ringkas?.draft ?? 0) === 0}
                       onClick={() => setKonfirmPublishAll(true)}>
@@ -406,6 +411,17 @@ export function PricebookSetupTable({
         onSaved={() => { setEdit(null); router.refresh(); }}
       />
 
+      {massal && (
+        <MassalDiskonDialog
+          rows={rows}
+          onClose={() => setMassal(false)}
+          onSaved={() => {
+            setMassal(false);
+            router.refresh();
+          }}
+        />
+      )}
+
       <ConfirmDialog
         open={konfirmPublishAll}
         onOpenChange={setKonfirmPublishAll}
@@ -414,6 +430,242 @@ export function PricebookSetupTable({
         confirmLabel="Publish Semua"
         onConfirm={() => void publishSemua()}
       />
+    </div>
+  );
+}
+
+// ── Atur batas diskon massal per brand / kategori ──────────────────────────
+// Pratinjau dihitung SERVER (GET /api/pricebook/setup/massal) supaya jumlah &
+// angka yang dilihat = yang akan ditulis. Simpan = PATCH setup/massal: gerbang
+// & jejak penyetel sama dgn simpan satu baris; status Draft/Published tidak
+// berubah (baris Published langsung berlaku ke AM & SPH, Draft setelah Publish).
+interface PratinjauMassal {
+  jumlah: number;
+  berubah: number;
+  published: number;
+  draft: number;
+  rows: {
+    rowNo: number;
+    nama: string;
+    brand: string;
+    kategori: string | null;
+    status: string;
+    diskonAsli: number;
+    diskonSekarang: number;
+    diskonBaru: number;
+  }[];
+}
+
+const selectKelas =
+  "border-input bg-card focus-visible:border-primary focus-visible:ring-primary-soft h-9 w-full min-w-0 rounded-lg border px-2.5 text-sm outline-none focus-visible:ring-3 dark:bg-input/30";
+
+function MassalDiskonDialog({
+  rows, onClose, onSaved,
+}: {
+  rows: PricebookSetupRow[];
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [brand, setBrand] = useState("");
+  const [kategori, setKategori] = useState("");
+  const [mode, setMode] = useState<"set" | "reset">("set");
+  const [persen, setPersen] = useState("");
+  const [prevMentah, setPrev] = useState<PratinjauMassal | null>(null);
+  const [memuat, setMemuat] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  // Pilihan saling menyaring: kategori yang ada di brand terpilih, dan sebaliknya.
+  const brandOpsi = useMemo(
+    () => [...new Set(rows.filter((r) => !kategori || r.kategoriPricebook === kategori).map((r) => r.brand))].sort(),
+    [rows, kategori],
+  );
+  const kategoriOpsi = useMemo(
+    () =>
+      [...new Set(rows.filter((r) => !brand || r.brand === brand).map((r) => r.kategoriPricebook).filter(Boolean) as string[])].sort(),
+    [rows, brand],
+  );
+
+  const nPersen = Number(persen.replace(",", "."));
+  const persenSalah =
+    mode === "set" && (persen.trim() === "" || !Number.isFinite(nPersen) || nPersen < 0 || nPersen >= 100)
+      ? "Isi diskon 0 sampai kurang dari 100%"
+      : null;
+  const adaFilter = !!brand || !!kategori;
+  const diskon = mode === "reset" ? null : +(nPersen / 100).toFixed(4);
+  // Pratinjau lama tak dipakai bila pilihan sekarang tak sah.
+  const prev = adaFilter && !persenSalah ? prevMentah : null;
+
+  useEffect(() => {
+    if (!adaFilter || persenSalah) return;
+    let aktif = true;
+    const t = window.setTimeout(async () => {
+      setMemuat(true);
+      setErr(null);
+      try {
+        const qs = new URLSearchParams();
+        if (brand) qs.set("brand", brand);
+        if (kategori) qs.set("kategori", kategori);
+        qs.set("diskon", diskon === null ? "null" : String(diskon));
+        const res = await fetch(`/api/pricebook/setup/massal?${qs.toString()}`, { cache: "no-store" });
+        const d = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(d.error ?? "pratinjau gagal");
+        if (aktif) setPrev(d as PratinjauMassal);
+      } catch (e) {
+        if (aktif) setErr(String(e instanceof Error ? e.message : e));
+      } finally {
+        if (aktif) setMemuat(false);
+      }
+    }, 300);
+    return () => {
+      aktif = false;
+      window.clearTimeout(t);
+    };
+  }, [brand, kategori, diskon, adaFilter, persenSalah]);
+
+  async function simpan() {
+    setBusy(true);
+    setErr(null);
+    try {
+      const res = await fetch("/api/pricebook/setup/massal", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ brand: brand || null, kategori: kategori || null, diskon }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(d.error ?? "gagal menyimpan");
+      onSaved();
+    } catch (e) {
+      setErr(String(e instanceof Error ? e.message : e));
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Dialog open onOpenChange={(v) => !v && !busy && onClose()}>
+      <DialogContent className="sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>Atur diskon maks massal</DialogTitle>
+          <DialogDescription>
+            Setel Diskon Maks untuk semua SKU satu brand dan/atau kategori sekaligus — sama seperti menyimpan tiap baris satu per satu.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogBody className="space-y-4">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="grid min-w-0 gap-1.5">
+              <Label htmlFor="m-brand">Brand</Label>
+              <select id="m-brand" className={selectKelas} value={brand} onChange={(e) => setBrand(e.target.value)}>
+                <option value="">Semua brand</option>
+                {brandOpsi.map((b) => (
+                  <option key={b} value={b}>{b}</option>
+                ))}
+              </select>
+            </div>
+            <div className="grid min-w-0 gap-1.5">
+              <Label htmlFor="m-kat">Kategori</Label>
+              <select id="m-kat" className={selectKelas} value={kategori} onChange={(e) => setKategori(e.target.value)}>
+                <option value="">Semua kategori</option>
+                {kategoriOpsi.map((k) => (
+                  <option key={k} value={k}>{k}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="grid gap-2 sm:grid-cols-2" role="radiogroup" aria-label="Jenis perubahan">
+            {([
+              ["set", "Setel diskon maks", "Semua SKU terpilih memakai angka yang sama."],
+              ["reset", "Kembalikan ke Price Book", "Hapus setelan manual; pakai angka handover."],
+            ] as const).map(([k, judul, isi]) => (
+              <button
+                key={k}
+                type="button"
+                role="radio"
+                aria-checked={mode === k}
+                onClick={() => setMode(k)}
+                className={`bg-card rounded-lg border p-3 text-left text-sm shadow-[var(--shadow-card)] transition-colors ${mode === k ? "border-primary ring-primary/30 ring-2" : "hover:border-primary/50"}`}
+              >
+                <span className="block font-medium">{judul}</span>
+                <span className="text-muted-foreground text-xs">{isi}</span>
+              </button>
+            ))}
+          </div>
+
+          {mode === "set" && (
+            <div className="grid max-w-[12rem] gap-1.5">
+              <Label htmlFor="m-persen">Diskon maks baru (%)</Label>
+              <Input id="m-persen" inputMode="decimal" value={persen} placeholder="mis. 12,5"
+                     aria-invalid={!!persenSalah && persen !== ""} onChange={(e) => setPersen(e.target.value)} />
+              {persenSalah && persen !== "" && <p className="text-destructive text-xs">{persenSalah}</p>}
+            </div>
+          )}
+
+          {!adaFilter ? (
+            <p className="text-muted-foreground text-sm">Pilih brand dan/atau kategori untuk melihat SKU yang terdampak.</p>
+          ) : memuat && !prev ? (
+            <p className="text-muted-foreground flex items-center gap-2 text-sm"><Loader2 className="size-4 animate-spin" /> Menghitung…</p>
+          ) : prev ? (
+            <div className="space-y-2">
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                <Ringkas label="SKU terpilih" nilai={fmtNum(prev.jumlah)} />
+                <Ringkas label="Akan berubah" nilai={fmtNum(prev.berubah)} tebal />
+                <Ringkas label="Published" nilai={fmtNum(prev.published)} sub="langsung berlaku" />
+                <Ringkas label="Draft" nilai={fmtNum(prev.draft)} sub="berlaku setelah Publish" />
+              </div>
+              <div className="max-h-64 overflow-y-auto rounded-lg border">
+                <table className="w-full text-xs">
+                  <thead className="bg-card sticky top-0">
+                    <tr className="text-muted-foreground border-b text-left">
+                      <th className="px-2 py-1.5 font-medium">Produk</th>
+                      <th className="px-2 py-1.5 text-right font-medium">Sekarang</th>
+                      <th className="px-2 py-1.5 text-right font-medium">Baru</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {prev.rows.slice(0, 100).map((r) => {
+                      const beda = Math.abs(r.diskonBaru - r.diskonSekarang) > 1e-9;
+                      return (
+                        <tr key={r.rowNo} className="border-b last:border-0">
+                          <td className="max-w-0 px-2 py-1.5">
+                            <span className="block truncate" title={r.nama}>{r.nama}</span>
+                            <span className="text-muted-foreground block truncate">
+                              {r.brand}{r.kategori ? ` · ${r.kategori}` : ""} · {r.status === "published" ? "Published" : "Draft"}
+                            </span>
+                          </td>
+                          <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">{fmtPct(r.diskonSekarang)}</td>
+                          <td className={`px-2 py-1.5 text-right tabular-nums whitespace-nowrap ${beda ? "font-semibold" : "text-muted-foreground"}`}>
+                            {fmtPct(r.diskonBaru)}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              {prev.jumlah > 100 && <p className="text-muted-foreground text-xs">Menampilkan 100 dari {fmtNum(prev.jumlah)} SKU.</p>}
+            </div>
+          ) : null}
+
+          {err && <p className="text-sm text-red-600 dark:text-red-400">{err}</p>}
+        </DialogBody>
+        <DialogFooter className="gap-2">
+          <Button variant="outline" onClick={onClose} disabled={busy}>Batal</Button>
+          <Button onClick={() => void simpan()} disabled={busy || memuat || !prev || prev.berubah === 0 || !!persenSalah}>
+            {busy ? <Loader2 className="animate-spin" /> : <Layers />}
+            {prev && prev.berubah > 0 ? `Terapkan ke ${fmtNum(prev.berubah)} SKU` : "Terapkan"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function Ringkas({ label, nilai, sub, tebal }: { label: string; nilai: string; sub?: string; tebal?: boolean }) {
+  return (
+    <div className="bg-card rounded-lg border px-2.5 py-2 shadow-[var(--shadow-card)]">
+      <div className="text-muted-foreground text-[11px]">{label}</div>
+      <div className={`text-base tabular-nums ${tebal ? "font-semibold" : ""}`}>{nilai}</div>
+      {sub && <div className="text-muted-foreground text-[10px]">{sub}</div>}
     </div>
   );
 }
