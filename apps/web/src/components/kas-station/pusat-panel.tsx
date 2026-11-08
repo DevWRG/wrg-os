@@ -162,17 +162,22 @@ export function PusatPanel({ izin, cabangOpsi }: { izin: IzinKasStation; cabangO
         </Card>
       )}
 
-      <div className="space-y-2">
-        <h3 className="text-sm font-semibold">Semua station</h3>
-        {ring.galat ? <p className="text-destructive text-sm">{ring.galat}</p>
-          : ring.loading && !ring.data ? <p className="text-muted-foreground text-sm">Memuat…</p>
-          : <DataTable columns={kolom} data={stations} getKey={(s) => s.cabang} pageSize={25} initialSort={{ id: "cabang", dir: "asc" }} searchPlaceholder="Cari station…" />}
-      </div>
+      {/* Kartu putih: tanpa kartu, tabel menyatu dengan latar halaman (--background). */}
+      <Card>
+        <CardHeader><CardTitle className="text-base font-semibold">Semua station</CardTitle></CardHeader>
+        <CardContent>
+          {ring.galat ? <p className="text-destructive text-sm">{ring.galat}</p>
+            : ring.loading && !ring.data ? <p className="text-muted-foreground text-sm">Memuat…</p>
+            : <DataTable columns={kolom} data={stations} getKey={(s) => s.cabang} pageSize={25} initialSort={{ id: "cabang", dir: "asc" }} searchPlaceholder="Cari station…" />}
+        </CardContent>
+      </Card>
 
-      <div className="space-y-2">
-        <h3 className="text-sm font-semibold">Riwayat rekap</h3>
-        <RiwayatRekap key={versiRiwayat} izin={izin} cabangOpsi={cabangOpsi} />
-      </div>
+      <Card>
+        <CardHeader><CardTitle className="text-base font-semibold">Riwayat rekap</CardTitle></CardHeader>
+        <CardContent>
+          <RiwayatRekap key={versiRiwayat} izin={izin} cabangOpsi={cabangOpsi} />
+        </CardContent>
+      </Card>
 
       {detail && <DetailRekapDialog id={detail} izin={izin} onClose={() => setDetail(null)} onUbah={muatUlang} />}
       {tolak && <TolakDialog r={tolak} busy={busy === tolak.id} onClose={() => setTolak(null)} onTolak={(note) => void putuskan(tolak, { decision: "reject", note })} />}
