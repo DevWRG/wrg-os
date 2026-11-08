@@ -283,6 +283,33 @@ import {
   MAKS_DOKUMEN, perpanjangKontrak, ubahKontrak, ubahStatusKontrak, unggahDokumen,
 } from "./repo/kso-kontrak.js";
 import { BuktiError, bacaBukti, daftarBukti, MAKS_BUKTI, unggahBukti } from "./repo/bukti-pembayaran.js";
+import {
+  KasStationError,
+  type CakupanKas,
+  bolehCabang as bolehKasCabang,
+  cabangHarian as cabangKasHarian,
+  cabangRekap as cabangKasRekap,
+  cakupanKasStation,
+  cekCabangTulis as cekKasCabangTulis,
+  addTransaksi as addKasTransaksi,
+  buatRekap as buatKasRekap,
+  createHarian as createKasHarian,
+  decideRekap as decideKasRekap,
+  deleteHarian as deleteKasHarian,
+  deleteTransaksi as deleteKasTransaksi,
+  getHarian as getKasHarian,
+  getRekap as getKasRekap,
+  isMigrationPending as isKasMigrationPending,
+  mengandungNul as kasMengandungNul,
+  isNumericOverflow as isKasNumericOverflow,
+  listCabang as listKasCabang,
+  listHarian as listKasHarian,
+  listRekap as listKasRekap,
+  realisasiRekap as realisasiKasRekap,
+  submitRekap as submitKasRekap,
+  updateHarian as updateKasHarian,
+  updateTransaksi as updateKasTransaksi,
+} from "./repo/kas-station.js";
 import { GalatKso, daftarTab, detailRencana, isAksiKso, isTabKso, jalankanAksi, tabBoleh } from "./repo/kso-komite.js";
 import { bacaSusunan, simpanJabatan, simpanPemegang } from "./repo/kso-komite-susunan.js";
 import { aksesBottomLine, bacaBahanOtomatis, bacaBottomLine, bacaPortofolio, bacaReal, simpanAngka, simpanBiayaOtomatis, simpanDukungan, simpanJenis, simpanKeputusan, simpanParameter } from "./repo/kso-komite-bottomline.js";
@@ -6450,6 +6477,177 @@ app.delete("/dana-ops/:id/items/:itemId", async (c) => {
   const r = await deleteDanaOpsItem(c.req.param("id"), c.req.param("itemId"));
   return c.json(r, r.deleted ? 200 : 404);
 });
+
+// ── F33 Kas Station Reconcile Harian Cabang (Finance) — kas harian per station →
+// rekap mingguan (Senin–Minggu) → pengajuan ke pusat → approve/reject → realisasi.
+// Izin ditegakkan di BFF (apps/web/src/app/api/kas-station/**); pelaku dikirim BFF
+// lewat body (`actor`). Tabel belum dimigrasi → 503 migration_pending.
+// Cakupan cabang ditegakkan di sini dari x-user-id (cakupanKasStation): user station
+// hanya cabangnya; record cabang lain = 404 (tidak membocorkan keberadaan).
+async function kasStationBody(c: Context): Promise<Record<string, unknown>> {
+  let body: unknown;
+  try {
+    // Body kosong = objek kosong (mis. submit tanpa isian), bukan galat.
+    const teks = await c.req.text();
+    body = teks.trim() === "" ? {} : JSON.parse(teks);
+  } catch { throw new KasStationError(400, "invalid JSON body"); }
+  if (body == null || typeof body !== "object" || Array.isArray(body)) throw new KasStationError(400, "body harus berupa objek JSON");
+  if (kasMengandungNul(body)) throw new KasStationError(400, "teks tidak boleh mengandung karakter NUL (\\u0000)");
+  return body as Record<string, unknown>;
+}
+
+async function kasStationJalankan(c: Context, fn: () => Promise<Response>): Promise<Response> {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  if (kasMengandungNul(c.req.query())) return c.json({ error: "parameter tidak boleh mengandung karakter NUL" }, 400);
+  try {
+    return await fn();
+  } catch (e) {
+    if (e instanceof KasStationError) return c.json({ error: e.message }, e.status as 400 | 403 | 404 | 409 | 422);
+    if (isKasMigrationPending(e)) return c.json({ error: "migration_pending" }, 503);
+    if (isKasNumericOverflow(e)) return c.json({ error: "total nominal melebihi batas yang didukung" }, 422);
+    throw e;
+  }
+}
+
+const kasStationLimit = (c: Context): number | undefined => {
+  const v = c.req.query("limit");
+  return v === undefined ? undefined : Number(v);
+};
+
+const kasCakupan = (c: Context): Promise<CakupanKas> => cakupanKasStation(c.req.header("x-user-id"));
+
+// Record (by id) di luar cabang user → 404, sama dengan tidak ada.
+async function kasPastikanCabang(c: Context, muatCabang: (id: string) => Promise<string | null>): Promise<void> {
+  const cak = await kasCakupan(c);
+  if (cak.semua) return;
+  if (!bolehKasCabang(cak, await muatCabang(c.req.param("id") ?? ""))) throw new KasStationError(404, "tidak ditemukan");
+}
+
+// Filter cabang daftar: user station dipaksa ke cabangnya (param query diabaikan);
+// null = tanpa cabang → hasil kosong.
+async function kasFilterCabang(c: Context): Promise<string | undefined | null> {
+  const cak = await kasCakupan(c);
+  return cak.semua ? c.req.query("cabang") || undefined : cak.cabang;
+}
+
+app.get("/kas-station/cabang", (c) => kasStationJalankan(c, async () => {
+  const cak = await kasCakupan(c);
+  return c.json({ cabang: cak.semua ? await listKasCabang() : cak.cabang ? [cak.cabang] : [] });
+}));
+
+app.get("/kas-station/harian", (c) => kasStationJalankan(c, async () => {
+  const cabang = await kasFilterCabang(c);
+  if (cabang === null) return c.json({ count: 0, rows: [] });
+  const rows = await listKasHarian({
+    cabang,
+    dari: c.req.query("dari") || undefined,
+    sampai: c.req.query("sampai") || undefined,
+    limit: kasStationLimit(c),
+  });
+  return c.json({ count: rows.length, rows });
+}));
+
+app.post("/kas-station/harian", (c) => kasStationJalankan(c, async () => {
+  const body = await kasStationBody(c);
+  cekKasCabangTulis(await kasCakupan(c), body.cabang);
+  const row = await createKasHarian({
+    cabang: body.cabang, tanggal: body.tanggal, saldo_awal: body.saldo_awal, saldo_fisik: body.saldo_fisik,
+    keterangan: body.keterangan, transaksi: body.transaksi as never, created_by: body.actor as string | undefined,
+  });
+  return c.json(row, 201);
+}));
+
+app.get("/kas-station/harian/:id", (c) => kasStationJalankan(c, async () => {
+  await kasPastikanCabang(c, cabangKasHarian);
+  const row = await getKasHarian(c.req.param("id"));
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+}));
+
+app.patch("/kas-station/harian/:id", (c) => kasStationJalankan(c, async () => {
+  const body = await kasStationBody(c);
+  await kasPastikanCabang(c, cabangKasHarian);
+  const row = await updateKasHarian(c.req.param("id"), {
+    saldo_fisik: body.saldo_fisik, keterangan: body.keterangan, saldo_awal: body.saldo_awal,
+    updated_by: body.actor as string | undefined,
+  });
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+}));
+
+app.delete("/kas-station/harian/:id", (c) => kasStationJalankan(c, async () => {
+  await kasPastikanCabang(c, cabangKasHarian);
+  const r = await deleteKasHarian(c.req.param("id"), c.req.query("actor"));
+  return c.json(r, r.deleted ? 200 : 404);
+}));
+
+app.post("/kas-station/harian/:id/transaksi", (c) => kasStationJalankan(c, async () => {
+  const body = await kasStationBody(c);
+  await kasPastikanCabang(c, cabangKasHarian);
+  const row = await addKasTransaksi(c.req.param("id"), {
+    jenis: body.jenis, nominal: body.nominal, uraian: body.uraian, bukti_ref: body.bukti_ref,
+    created_by: body.actor as string | undefined,
+  });
+  return row ? c.json(row, 201) : c.json({ error: "catatan kas harian tidak ditemukan" }, 404);
+}));
+
+app.patch("/kas-station/harian/:id/transaksi/:trxId", (c) => kasStationJalankan(c, async () => {
+  const body = await kasStationBody(c);
+  await kasPastikanCabang(c, cabangKasHarian);
+  const row = await updateKasTransaksi(c.req.param("id"), c.req.param("trxId"), {
+    jenis: body.jenis, nominal: body.nominal, uraian: body.uraian, bukti_ref: body.bukti_ref,
+    updated_by: body.actor as string | undefined,
+  });
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+}));
+
+app.delete("/kas-station/harian/:id/transaksi/:trxId", (c) => kasStationJalankan(c, async () => {
+  await kasPastikanCabang(c, cabangKasHarian);
+  const r = await deleteKasTransaksi(c.req.param("id"), c.req.param("trxId"), c.req.query("actor"));
+  return c.json(r, r.deleted ? 200 : 404);
+}));
+
+app.get("/kas-station/rekap", (c) => kasStationJalankan(c, async () => {
+  const cabang = await kasFilterCabang(c);
+  if (cabang === null) return c.json({ count: 0, rows: [] });
+  const rows = await listKasRekap({
+    cabang,
+    status: c.req.query("status") || undefined,
+    limit: kasStationLimit(c),
+  });
+  return c.json({ count: rows.length, rows });
+}));
+
+app.post("/kas-station/rekap", (c) => kasStationJalankan(c, async () => {
+  const body = await kasStationBody(c);
+  cekKasCabangTulis(await kasCakupan(c), body.cabang);
+  const row = await buatKasRekap({ cabang: body.cabang, periode_awal: body.periode_awal, created_by: body.actor as string | undefined });
+  return c.json(row, 201);
+}));
+
+app.get("/kas-station/rekap/:id", (c) => kasStationJalankan(c, async () => {
+  await kasPastikanCabang(c, cabangKasRekap);
+  const row = await getKasRekap(c.req.param("id"));
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+}));
+
+app.post("/kas-station/rekap/:id/submit", (c) => kasStationJalankan(c, async () => {
+  const body = await kasStationBody(c);
+  await kasPastikanCabang(c, cabangKasRekap);
+  const row = await submitKasRekap(c.req.param("id"), body.actor as string | undefined);
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+}));
+
+// decide & realisasi = aksi pusat (BFF: kas-station-review edit) → tanpa cakupan cabang.
+app.post("/kas-station/rekap/:id/decide", (c) => kasStationJalankan(c, async () => {
+  const body = await kasStationBody(c);
+  const row = await decideKasRekap(c.req.param("id"), body.decision, body.note, body.actor as string | undefined);
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+}));
+
+app.post("/kas-station/rekap/:id/realisasi", (c) => kasStationJalankan(c, async () => {
+  const body = await kasStationBody(c);
+  const row = await realisasiKasRekap(c.req.param("id"), body.realisasi_nominal, body.actor as string | undefined);
+  return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
+}));
 
 // ── F134 ATK Master (General Affairs) — Categories + Suppliers + Items ──
 app.get("/atk/categories", async (c) => {

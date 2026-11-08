@@ -34,6 +34,7 @@ import { canViewPenerbitanFaktur } from "@/lib/penerbitan-faktur-access";
 import { canViewRegisterCek } from "@/lib/register-cek-access";
 import { canViewCn } from "@/lib/cn-access";
 import { canViewBuktiPembayaran } from "@/lib/bukti-pembayaran-access";
+import { canViewKasStation } from "@/lib/kas-station-access";
 import { canViewRaportList } from "@/lib/raport-access";
 import { canViewExecutive } from "@/lib/executive-access";
 import { canViewSalesCommand } from "@/lib/sales-command-access";
@@ -449,6 +450,12 @@ export const NAV: NavGroup[] = [
       // (tanpa OCR/WA/Accurate). Kunci izin "bukti-pembayaran" (view/create), default tertutup:
       // butuh Sync Fitur + centang grup; sebelum itu fallback Direktur/Finance/admin.
       { title: "Bukti Pembayaran", url: "/bukti-pembayaran", icon: FileCheck2, badge: "NEW", show: canViewBuktiPembayaran },
+      // F33 Kas Station — kas harian cabang → rekap mingguan → approval pusat → realisasi.
+      // Dua kunci izin: "kas-station" (station: catat & ajukan) dan "kas-station-review"
+      // (pusat: lihat rekap, approve/reject, realisasi). Default tertutup: butuh Sync Fitur +
+      // centang grup; sebelum itu fallback direktur/admin/superuser.
+      { title: "Kas Station", url: "/kas-station", icon: Wallet, badge: "NEW", show: canViewKasStation,
+        features: [{ key: "kas-station-review", name: "Kas Station — review pusat (approve & realisasi)" }] },
     ],
   },
   {
