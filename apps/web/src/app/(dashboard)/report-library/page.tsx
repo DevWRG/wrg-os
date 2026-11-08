@@ -8,7 +8,7 @@ import { PageHeader } from "@/components/dashboard/page-header";
 import { EmptyState } from "@/components/ui/empty-state";
 import { buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { TabelLaporan } from "@/components/report-library/tabel-laporan";
 import { cn } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
@@ -91,25 +91,7 @@ export default async function ReportLibraryPage() {
                     {data.total_baris === 0 ? (
                       <p className="text-muted-foreground text-sm">Belum ada data.</p>
                     ) : (
-                      <>
-                        <div className="overflow-x-auto">
-                          <Table>
-                            <TableHeader>
-                              <TableRow>{data.header.map((h) => <TableHead key={h}>{h}</TableHead>)}</TableRow>
-                            </TableHeader>
-                            <TableBody>
-                              {data.baris.map((b, i) => (
-                                <TableRow key={i}>{b.map((s, k) => <TableCell key={k} className="whitespace-nowrap">{s}</TableCell>)}</TableRow>
-                              ))}
-                            </TableBody>
-                          </Table>
-                        </div>
-                        <p className="text-muted-foreground text-xs">
-                          {data.total_baris > data.baris.length
-                            ? `Menampilkan ${data.baris.length} dari ${data.total_baris} baris — PDF memuat semuanya.`
-                            : `${data.total_baris} baris.`}
-                        </p>
-                      </>
+                      <TabelLaporan laporanKey={l.key} header={data.header} barisAwal={data.baris} total={data.total_baris} />
                     )}
                   </>
                 )}

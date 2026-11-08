@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { adalahKeyLaporan, angka, dariRasio, BARIS_PRATINJAU, dealTertutup, KEY_LAPORAN, nilaiMetrik, persen, pratinjau, rp, teks, urutDealLaporan, waktuWib } from "./report-library.js";
+import { PER_HALAMAN, adalahKeyLaporan, angka, dariRasio, BARIS_PRATINJAU, dealTertutup, KEY_LAPORAN, nilaiMetrik, persen, pratinjau, rp, teks, urutDealLaporan, waktuWib } from "./report-library.js";
 
 test("adalahKeyLaporan hanya menerima 6 key resmi", () => {
   assert.equal(KEY_LAPORAN.length, 6);
@@ -55,4 +55,17 @@ test("urutDealLaporan: deal berjalan dulu (nilai desc), Won/Lost di belakang", (
   assert.equal(dealTertutup("closing-won"), true);
   assert.equal(dealTertutup("Closing"), false);
   assert.equal(d[0].id, 1); // input tak diubah
+});
+
+test("pratinjau: halaman & ukuran halaman, total tetap jumlah sebenarnya", () => {
+  const baris = Array.from({ length: 57 }, (_, i) => [String(i + 1)]);
+  const l = { key: "stok" as const, judul: "x", ringkasan: [], header: ["n"], baris };
+  const p2 = pratinjau(l, 2, 25);
+  assert.deepEqual([p2.hal, p2.per, p2.total_baris, p2.baris.length, p2.baris[0][0]], [2, 25, 57, 7, "51"]);
+  const lewat = pratinjau(l, 99, 50);
+  assert.deepEqual([lewat.hal, lewat.baris[0][0]], [1, "51"]);
+  const aneh = pratinjau(l, -3, 7);
+  assert.deepEqual([aneh.hal, aneh.per, aneh.baris.length], [0, 10, 10]);
+  assert.equal(pratinjau({ ...l, baris: [] }, 5, 25).hal, 0);
+  assert.deepEqual([...PER_HALAMAN], [10, 25, 50, 100]);
 });

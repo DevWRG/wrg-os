@@ -229,7 +229,21 @@ export function susunLaporan(key: KeyLaporan, scope: DataScope): Promise<Laporan
   }
 }
 
-/** Bentuk JSON untuk layar: ringkasan + BARIS_PRATINJAU baris pertama + jumlah baris sebenarnya. */
-export function pratinjau(l: Laporan) {
-  return { key: l.key, judul: l.judul, ringkasan: l.ringkasan, header: l.header, total_baris: l.baris.length, baris: l.baris.slice(0, BARIS_PRATINJAU) };
+/** Pilihan baris per halaman di layar (sama dengan DataTable). */
+export const PER_HALAMAN = [10, 25, 50, 100] as const;
+
+/**
+ * Bentuk JSON untuk layar: ringkasan + satu halaman baris + jumlah baris sebenarnya.
+ * Paginasi di server supaya `total_baris` selalu jumlah sebenarnya, bukan panjang
+ * potongan yang dikirim. `per` di luar PER_HALAMAN → BARIS_PRATINJAU; `hal` (basis 0)
+ * di-clamp ke halaman terakhir.
+ */
+export function pratinjau(l: Laporan, hal = 0, per: number = BARIS_PRATINJAU) {
+  const n = (PER_HALAMAN as readonly number[]).includes(per) ? per : BARIS_PRATINJAU;
+  const jumlahHal = Math.max(1, Math.ceil(l.baris.length / n));
+  const h = Number.isInteger(hal) && hal > 0 ? Math.min(hal, jumlahHal - 1) : 0;
+  return {
+    key: l.key, judul: l.judul, ringkasan: l.ringkasan, header: l.header,
+    total_baris: l.baris.length, hal: h, per: n, baris: l.baris.slice(h * n, (h + 1) * n),
+  };
 }
