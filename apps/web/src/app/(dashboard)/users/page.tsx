@@ -17,6 +17,7 @@ interface User {
   area: string | null;
   aktif: boolean;
   wajib_plan_report: boolean;
+  inisial: string | null;
 }
 
 async function getUsers(): Promise<User[] | null> {
