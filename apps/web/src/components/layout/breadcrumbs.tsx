@@ -53,10 +53,17 @@ const LABELS: Record<string, string> = {
 const PATH_LABELS: Record<string, string> = {
   "/approval-requests/config": "Setup Kontak Approval",
   "/forecast-submission/config": "Setup Buffer Stok",
+  // F15 — tanpa ini tampil "Sph" / "New".
+  "/sph": "SPH",
+  "/sph/new": "Buat SPH",
+  "/sph/pengaturan": "Pengaturan SPH",
 };
 
+// Segmen id (uuid) tak bermakna untuk dibaca — tampil "Detail".
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 const labelOf = (seg: string, href: string) =>
-  PATH_LABELS[href] ?? LABELS[seg] ?? seg.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+  PATH_LABELS[href] ?? LABELS[seg] ?? (UUID_RE.test(seg) ? "Detail" : null) ?? seg.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 
 export function Breadcrumbs() {
   const pathname = usePathname();

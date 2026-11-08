@@ -1,19 +1,26 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { ArrowLeft, Hash, Loader2, Lock, RotateCcw, Save } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SkeletonCardGrid } from "@/components/ui/loading";
+import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
+import { ambilJson, pesanRamah, tglWaktu, useToast } from "@/components/sph/sph-ui";
 import { adalahAdmin } from "@/lib/nav";
+import { pratinjauNomorSph } from "@/lib/sph-hitung";
 import { useSession } from "@/lib/use-session";
 
 // F15 — Pengaturan SPH: penomoran surat (kode tengah, nomor berikutnya, reset
 // tahunan) + syarat default untuk SPH baru. Siapa pun ber-akses Sales Docs
 // boleh melihat; yang boleh MENGUBAH hanya admin/superuser (BFF + apps/api).
+// Pratinjau nomor berubah seketika saat mengetik (lib/sph-hitung.ts, salinan
+// aturan server); nomor sesungguhnya tetap diberikan server saat approve.
 
 interface Syarat {
   pembayaran: string;
@@ -36,187 +43,230 @@ interface Pengaturan {
 const LABEL: Record<keyof Syarat, string> = {
   pembayaran: "Pembayaran",
   pengiriman: "Pengiriman",
-  masaBerlaku: "Masa berlaku",
-  harga: "Harga",
+  masaBerlaku: "Masa berlaku penawaran",
+  harga: "Keterangan harga",
 };
 const KUNCI = Object.keys(LABEL) as (keyof Syarat)[];
 
 export default function SphPengaturanPage() {
   const me = useSession();
   const admin = adalahAdmin(me as Parameters<typeof adalahAdmin>[0]);
+  const { toast, node: toastNode } = useToast();
   const [p, setP] = useState<Pengaturan | null>(null);
   const [form, setForm] = useState<Pengaturan | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [pesan, setPesan] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     let aktif = true;
-    (async () => {
-      try {
-        const res = await fetch("/api/sph/pengaturan", { cache: "no-store" });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error ?? "gagal memuat pengaturan");
-        if (aktif) {
-          setP(data);
-          setForm(data);
-        }
-      } catch (e) {
-        if (aktif) setError(String(e));
-      }
-    })();
+    ambilJson<Pengaturan>("/api/sph/pengaturan")
+      .then((data) => {
+        if (!aktif) return;
+        setP(data);
+        setForm(data);
+      })
+      .catch((e) => aktif && setError(pesanRamah(e, "Pengaturan tidak bisa dimuat.")));
     return () => {
       aktif = false;
     };
   }, []);
 
+  const pratinjau = useMemo(() => (form ? pratinjauNomorSph(form) : null), [form]);
+  const berubah = useMemo(
+    () =>
+      !!p &&
+      !!form &&
+      (p.kodeTengah !== form.kodeTengah ||
+        p.nomorBerikutnya !== form.nomorBerikutnya ||
+        p.resetTahunan !== form.resetTahunan ||
+        KUNCI.some((k) => p.syaratDefault[k] !== form.syaratDefault[k])),
+    [p, form],
+  );
+  const syaratKosong = !!form && KUNCI.some((k) => !form.syaratDefault[k].trim());
+
   async function simpan() {
     if (!form) return;
     setBusy(true);
-    setError(null);
-    setPesan(null);
     try {
-      const res = await fetch("/api/sph/pengaturan", {
+      await ambilJson("/api/sph/pengaturan", {
         method: "PUT",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          kodeTengah: form.kodeTengah,
+          kodeTengah: form.kodeTengah.trim(),
           nomorBerikutnya: form.nomorBerikutnya,
           resetTahunan: form.resetTahunan,
           syaratDefault: form.syaratDefault,
         }),
       });
-      const data = await res.json();
-      if (!res.ok || data.ok === false) throw new Error(data.error ?? "gagal menyimpan");
-      const ulang = await fetch("/api/sph/pengaturan", { cache: "no-store" });
-      const baru = await ulang.json();
-      if (ulang.ok) {
-        setP(baru);
-        setForm(baru);
-      }
-      setPesan("Pengaturan tersimpan.");
+      const baru = await ambilJson<Pengaturan>("/api/sph/pengaturan");
+      setP(baru);
+      setForm(baru);
+      toast("sukses", "Pengaturan tersimpan", `Nomor berikutnya: ${baru.contohNomor}`);
     } catch (e) {
-      setError(String(e));
+      toast("gagal", "Belum tersimpan", pesanRamah(e));
     } finally {
       setBusy(false);
     }
   }
 
-  if (error && !p) return <p className="text-destructive p-6 text-sm">{error}</p>;
+  if (error && !p) {
+    return <p className="border-destructive/40 bg-card text-destructive m-4 rounded-lg border px-3 py-2 text-sm sm:m-6">{error}</p>;
+  }
   if (!p || !form) {
     return (
-      <div className="p-6">
+      <div className="p-4 sm:p-6">
         <SkeletonCardGrid count={2} />
       </div>
     );
   }
 
   return (
-    <div className="space-y-6 p-6">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold">Pengaturan SPH</h1>
-          <p className="text-muted-foreground text-sm">
-            Penomoran Surat Penawaran Harga & syarat default. {admin ? "" : "Hanya admin yang dapat mengubah."}
-          </p>
-        </div>
-        <Link href="/sales-docs">
-          <Button size="sm" variant="outline">
-            Sales Docs
-          </Button>
+    <div className="space-y-5 p-4 sm:p-6">
+      {toastNode}
+      <div className="space-y-1">
+        <Link href="/sph" className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 text-xs">
+          <ArrowLeft className="size-3.5" /> Daftar SPH
         </Link>
+        <h1 className="text-2xl font-semibold">Pengaturan SPH</h1>
+        <p className="text-muted-foreground text-sm">Format nomor surat dan syarat standar untuk SPH baru.</p>
       </div>
 
-      {error && <p className="text-destructive text-sm">{error}</p>}
-      {pesan && <p className="text-sm text-emerald-700 dark:text-emerald-400">{pesan}</p>}
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Penomoran</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3 text-sm">
-          <p>
-            Nomor yang akan diberikan pada finalisasi berikutnya:{" "}
-            <span className="font-mono font-semibold">{p.contohNomor}</span>
-          </p>
-          <div className="flex flex-wrap items-end gap-3">
-            <div className="w-56">
-              <Label htmlFor="sph-kode" className="mb-1 block text-xs">
-                Kode tengah
-              </Label>
-              <Input
-                id="sph-kode"
-                value={form.kodeTengah}
-                disabled={!admin}
-                maxLength={30}
-                onChange={(e) => setForm({ ...form, kodeTengah: e.target.value })}
-              />
-            </div>
-            <div className="w-44">
-              <Label htmlFor="sph-nomor" className="mb-1 block text-xs">
-                Nomor berikutnya
-              </Label>
-              <Input
-                id="sph-nomor"
-                type="number"
-                min={1}
-                value={form.nomorBerikutnya}
-                disabled={!admin}
-                onChange={(e) => setForm({ ...form, nomorBerikutnya: Number(e.target.value) })}
-              />
-            </div>
-            <label className="flex items-center gap-2 pb-2">
-              <input
-                type="checkbox"
-                checked={form.resetTahunan}
-                disabled={!admin}
-                onChange={(e) => setForm({ ...form, resetTahunan: e.target.checked })}
-              />
-              Reset ke 00001 tiap pergantian tahun
-            </label>
-          </div>
-          <p className="text-muted-foreground text-xs">
-            Format: urut 5 digit / kode tengah / bulan Romawi / tahun (tanggal finalisasi, WIB). Isi &quot;nomor
-            berikutnya&quot; agar melanjutkan urutan manual yang sedang dipakai. Default tidak reset (urut terus
-            lintas tahun). Nomor yang sudah terpakai tidak bisa diberikan lagi — bila diset mundur, finalisasi akan
-            ditolak.
-          </p>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Syarat default SPH baru</CardTitle>
-        </CardHeader>
-        <CardContent className="grid gap-3 md:grid-cols-2">
-          {KUNCI.map((k) => (
-            <div key={k}>
-              <Label htmlFor={`sd-${k}`} className="mb-1 block text-xs">
-                {LABEL[k]}
-              </Label>
-              <Input
-                id={`sd-${k}`}
-                value={form.syaratDefault[k]}
-                maxLength={300}
-                disabled={!admin}
-                onChange={(e) => setForm({ ...form, syaratDefault: { ...form.syaratDefault, [k]: e.target.value } })}
-              />
-            </div>
-          ))}
-        </CardContent>
-      </Card>
-
-      {admin && (
-        <Button disabled={busy} onClick={() => void simpan()}>
-          {busy ? "Menyimpan…" : "Simpan pengaturan"}
-        </Button>
-      )}
-      {p.updatedBy && (
-        <p className="text-muted-foreground text-xs">
-          Terakhir diubah oleh {p.updatedBy}
-          {p.updatedAt ? ` · ${new Date(p.updatedAt).toLocaleString("id-ID")}` : ""}
+      {!admin && (
+        <p className="bg-card flex items-center gap-2 rounded-lg border px-3 py-2 text-sm">
+          <Lock className="text-muted-foreground size-4" /> Hanya admin yang dapat mengubah pengaturan ini.
         </p>
       )}
+
+      <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
+        <div className="min-w-0 space-y-5">
+          <Card>
+            <CardHeader>
+              <CardTitle>Penomoran surat</CardTitle>
+              <CardDescription>Format: urut 5 digit / kode tengah / bulan Romawi / tahun — memakai tanggal approve (WIB).</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div>
+                  <Label htmlFor="sph-kode" className="mb-1.5 block">
+                    Kode tengah
+                  </Label>
+                  <Input
+                    id="sph-kode"
+                    value={form.kodeTengah}
+                    disabled={!admin}
+                    maxLength={30}
+                    className="font-mono"
+                    aria-invalid={!!pratinjau?.masalah && /Kode/.test(pratinjau.masalah)}
+                    onChange={(e) => setForm({ ...form, kodeTengah: e.target.value })}
+                  />
+                  <p className="text-muted-foreground mt-1 text-xs">Huruf, angka, titik, atau strip. Tanpa garis miring.</p>
+                </div>
+                <div>
+                  <Label htmlFor="sph-nomor" className="mb-1.5 block">
+                    Nomor urut berikutnya
+                  </Label>
+                  <Input
+                    id="sph-nomor"
+                    type="number"
+                    inputMode="numeric"
+                    min={1}
+                    value={Number.isNaN(form.nomorBerikutnya) ? "" : form.nomorBerikutnya}
+                    disabled={!admin}
+                    className="tabular-nums"
+                    aria-invalid={!!pratinjau?.masalah && /Nomor/.test(pratinjau.masalah)}
+                    onChange={(e) => setForm({ ...form, nomorBerikutnya: e.target.value === "" ? Number.NaN : Number(e.target.value) })}
+                  />
+                  <p className="text-muted-foreground mt-1 text-xs">Isi untuk melanjutkan urutan manual yang sedang dipakai.</p>
+                </div>
+              </div>
+              <div className="bg-card flex items-start justify-between gap-4 rounded-lg border px-3 py-3">
+                <span className="text-sm">
+                  <span className="block font-medium">Mulai lagi dari 00001 tiap tahun baru</span>
+                  <span className="text-muted-foreground text-xs">Mati = nomor urut terus lintas tahun.</span>
+                </span>
+                <Switch
+                  checked={form.resetTahunan}
+                  disabled={!admin}
+                  onCheckedChange={(v: boolean) => setForm({ ...form, resetTahunan: v })}
+                  aria-label="Reset nomor tiap tahun"
+                />
+              </div>
+              <p className="text-muted-foreground text-xs">
+                Nomor yang sudah terpakai tidak bisa diberikan lagi — bila diset mundur ke nomor lama, approve berikutnya akan ditolak.
+              </p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Syarat standar SPH baru</CardTitle>
+              <CardDescription>Terisi otomatis di setiap SPH baru (form web maupun #SPH WhatsApp). AM tetap bisa mengubahnya per SPH.</CardDescription>
+            </CardHeader>
+            <CardContent className="grid gap-4 md:grid-cols-2">
+              {KUNCI.map((k) => (
+                <div key={k}>
+                  <Label htmlFor={`sd-${k}`} className="mb-1.5 block">
+                    {LABEL[k]}
+                  </Label>
+                  <Textarea
+                    id={`sd-${k}`}
+                    rows={2}
+                    value={form.syaratDefault[k]}
+                    maxLength={300}
+                    disabled={!admin}
+                    aria-invalid={!form.syaratDefault[k].trim()}
+                    onChange={(e) => setForm({ ...form, syaratDefault: { ...form.syaratDefault, [k]: e.target.value } })}
+                  />
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+        </div>
+
+        <aside className="space-y-5 lg:sticky lg:top-20">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Hash className="text-primary size-4" /> Nomor berikutnya
+              </CardTitle>
+              <CardDescription>Akan diberikan pada SPH berikutnya yang di-approve.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="border-primary-dark/50 bg-primary-soft rounded-lg border px-3 py-3 text-center dark:border-primary/50">
+                {pratinjau?.nomor ? (
+                  <p className="font-mono text-base font-semibold break-all">{pratinjau.nomor}</p>
+                ) : (
+                  <p className="text-destructive text-sm">{pratinjau?.masalah}</p>
+                )}
+              </div>
+              {berubah && pratinjau?.nomor && pratinjau.nomor !== p.contohNomor && (
+                <p className="text-muted-foreground text-xs">
+                  Sebelumnya: <span className="font-mono">{p.contohNomor}</span>
+                </p>
+              )}
+              {admin && (
+                <div className="flex gap-2 pt-1">
+                  {berubah && (
+                    <Button variant="outline" onClick={() => setForm(p)} disabled={busy}>
+                      <RotateCcw /> Reset
+                    </Button>
+                  )}
+                  <Button className="flex-1" disabled={busy || !berubah || !!pratinjau?.masalah || syaratKosong} onClick={() => void simpan()}>
+                    {busy ? <Loader2 className="animate-spin" /> : <Save />} {busy ? "Menyimpan…" : "Simpan pengaturan"}
+                  </Button>
+                </div>
+              )}
+              {admin && syaratKosong && <p className="text-destructive text-xs">Semua syarat standar wajib diisi.</p>}
+              {p.updatedBy && (
+                <p className="text-muted-foreground border-t pt-3 text-xs">
+                  Terakhir diubah {p.updatedBy}
+                  {p.updatedAt ? ` · ${tglWaktu(p.updatedAt)}` : ""}
+                </p>
+              )}
+            </CardContent>
+          </Card>
+        </aside>
+      </div>
     </div>
   );
 }
