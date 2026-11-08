@@ -91,7 +91,19 @@ import {
   sendSalesDoc,
   cancelSalesDoc,
 } from "./repo/salesdoc.js";
-import { createSphDraft, getSphDetail, hodReviewSph, confirmSphVariant, pelakuDariUser } from "./repo/sph.js";
+import {
+  createSphDraft,
+  getSphDetail,
+  hodReviewSph,
+  confirmSphVariant,
+  pelakuDariUser,
+  getPengaturanSph,
+  ubahPengaturanSph,
+  ubahSyaratSph,
+  kandidatPenandaTangan,
+  setPenandaTanganSph,
+} from "./repo/sph.js";
+import { namaFileSph, sphPdf } from "./repo/sph-pdf.js";
 import { getProductIntelligence } from "./repo/product.js";
 import { listAnnotations } from "./repo/sentiment.js";
 import { getNetworkInput, computeNetwork } from "./repo/network.js";
@@ -2107,14 +2119,19 @@ app.get("/sales/docs", async (c) => {
 // sesi + meneruskan x-user-id. Pelaku dari x-user-id menang atas body.
 app.post("/sales/docs/:id/approve", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let body: { approver_id?: string } = {};
+  let body: { approver_id?: string; penanda_tangan_user_id?: string; penanda_tangan_jabatan?: string } = {};
   try {
     body = await c.req.json();
   } catch {
     /* body opsional */
   }
   const pelaku = await pelakuDariUser(c.req.header("x-user-id"));
-  const r = await approveSalesDoc(c.req.param("id"), pelaku?.nama ?? body.approver_id, pelaku);
+  // SPH: pilihan penanda tangan (opsional, default approver) — divalidasi
+  // terhadap daftar kandidat di finalisasiSph, bukan dipercaya mentah.
+  const r = await approveSalesDoc(c.req.param("id"), pelaku?.nama ?? body.approver_id, pelaku, {
+    userId: body.penanda_tangan_user_id,
+    jabatan: body.penanda_tangan_jabatan,
+  });
   return c.json(r, r.ok ? 200 : r.forbidden ? 403 : 400);
 });
 
@@ -2484,11 +2501,87 @@ app.post("/sph", async (c) => {
   return c.json(r, r.ok ? 201 : 400);
 });
 
+// F15 dokumen cetak — pengaturan penomoran + syarat default (migrasi 300).
+// Didaftarkan SEBELUM /sph/:id supaya "pengaturan" tak dibaca sbg id.
+// Ubah: hanya admin/superuser (dicek BFF + ubahPengaturanSph dari x-user-id).
+app.get("/sph/pengaturan", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const p = await getPengaturanSph();
+  if (!p) return c.json({ error: "pengaturan SPH belum ada (migrasi 300 belum dijalankan)" }, 404);
+  return c.json(p);
+});
+
+app.put("/sph/pengaturan", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: Record<string, unknown> = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const pelaku = await pelakuDariUser(c.req.header("x-user-id"));
+  if (!pelaku) return c.json({ error: "identitas pengguna (sesi) wajib" }, 401);
+  const r = await ubahPengaturanSph(body, pelaku);
+  return c.json(r, r.ok ? 200 : r.forbidden ? 403 : 400);
+});
+
 app.get("/sph/:id", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const detail = await getSphDetail(c.req.param("id"));
   if (!detail) return c.json({ error: "dokumen tidak ditemukan" }, 404);
   return c.json(detail);
+});
+
+// PDF resmi SPH (A4, kop surat). Draft tetap bisa dicetak, bertanda DRAF &
+// tanpa nomor. `oleh` (nama pencetak) diisi BFF dari sesi. inline → dibuka di
+// tab browser, tetap bisa diunduh dari viewer.
+app.get("/sph/:id/pdf", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const detail = await getSphDetail(c.req.param("id"));
+  if (!detail) return c.json({ error: "dokumen tidak ditemukan" }, 404);
+  const pdf = await sphPdf(detail, { oleh: c.req.query("oleh") ?? null });
+  return c.body(new Uint8Array(pdf), 200, {
+    "content-type": "application/pdf",
+    "content-disposition": `inline; filename="${namaFileSph(detail)}"`,
+  });
+});
+
+// Syarat per SPH (draft/hod_review saja). Body: { pembayaran?, pengiriman?,
+// masaBerlaku?, harga? }. Izin edit Sales Docs dicek BFF.
+app.put("/sph/:id/syarat", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const pelaku = await pelakuDariUser(c.req.header("x-user-id"));
+  if (!pelaku) return c.json({ error: "identitas pengguna (sesi) wajib" }, 401);
+  const r = await ubahSyaratSph(c.req.param("id"), body, pelaku);
+  return c.json(r, r.ok ? 200 : r.forbidden ? 403 : 400);
+});
+
+// Daftar pilihan penanda tangan (approver sesi ditandai 'approver' = default).
+app.get("/sph/:id/penanda-tangan", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const pelaku = await pelakuDariUser(c.req.header("x-user-id"));
+  return c.json({ kandidat: await kandidatPenandaTangan(c.req.param("id"), pelaku) });
+});
+
+// Ganti penanda tangan (hod_review/approved). Body: { user_id, jabatan? }.
+app.put("/sph/:id/penanda-tangan", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { user_id?: string; jabatan?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const pelaku = await pelakuDariUser(c.req.header("x-user-id"));
+  if (!pelaku) return c.json({ error: "identitas pengguna (sesi) wajib" }, 401);
+  const r = await setPenandaTanganSph(c.req.param("id"), { userId: body.user_id, jabatan: body.jabatan }, pelaku);
+  return c.json(r, r.ok ? 200 : r.forbidden ? 403 : 400);
 });
 
 // Tahap 1/2 approval SPH (HOD Business). draft → hod_review. Tahap 2 pakai

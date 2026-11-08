@@ -13,6 +13,22 @@ import { callAi, aiDryRun } from "../ai.js";
 import { PPN_PRICEBOOK, PERIODE_DEFAULT } from "./pricebook.js";
 import { effectivePermissions } from "./rbac.js";
 import { bolehFinalSph, bolehReviewSph, samaOrang, type IdentitasPelaku } from "../lib/sales-doc-gate.js";
+import {
+  NOMOR_DRAF,
+  SYARAT_DEFAULT,
+  ambilNomor,
+  formatNomorSph,
+  gabungSyarat,
+  kakiSurat,
+  kodeTengahSah,
+  nomorUrutSah,
+  perbaruiTeksSph,
+  syaratDariInputLama,
+  tanggalIndo,
+  tanggalWib,
+  type PenandaTangan,
+  type SyaratSph,
+} from "../lib/sph-cetak.js";
 
 const rnd = (v: number) => Math.round(v); // half-up, sama konvensi pricebook.ts
 
@@ -47,16 +63,20 @@ export interface CreateSphInput {
   // sendiri" (lib/sales-doc-gate.ts). Web: app_user.id sesi; WA #SPH: am_id pengirim.
   created_by_user_id?: string | null;
   created_by_am_id?: string | null;
-  // Opsional krn jalur #SPH WA (format 1-baris, lihat parsers/sph.ts) tak
-  // punya tempat utk ini — default "(diisi Admin Penawaran)" dipakai kalau
-  // kosong. Jalur form web WAJIB isi (lihat validasi di apps/web /sph/new).
+  // Opsional. Kosong → syarat default dari sph_pengaturan (diatur admin), jadi
+  // jalur #SPH WA (format 1-baris, tak punya tempat utk syarat) tetap dapat
+  // syarat yang layak cetak, bukan placeholder. `terms` = bentuk lama form
+  // /sph/new; `syarat` = bentuk baru (lib/sph-cetak.ts SyaratSph). Keduanya
+  // masih bisa diubah per SPH selama draft/hod_review (ubahSyaratSph).
   terms?: { paymentTerms?: string; shippingTerms?: string; validityDays?: number };
+  syarat?: Partial<SyaratSph>;
 }
 
 export interface SphLineItemRow {
   id: number;
   pricelist_item_id: number;
   nama: string;
+  kemasan: string | null; // satuan/kemasan snapshot (null utk SPH sebelum migrasi 300)
   qty: number;
   diskonRequested: number;
   diskonMaksSnapshot: number;
@@ -82,6 +102,15 @@ export interface SphDetail {
   hodReviewedBy: string | null;
   hodReviewedAt: string | null;
   createdAt: string;
+  approvedAt: string | null;
+  nomorDokumen: string | null;
+  // Syarat tersimpan digabung ke default — SPH lama (sebelum migrasi 300) tak
+  // punya kolom ini, jadi tampil dgn default yang berlaku sekarang.
+  syarat: SyaratSph;
+  penandaTangan: PenandaTangan | null;
+  penandaTanganUserId: string | null;
+  customerAlamat: string | null;
+  customerKota: string | null;
   items: SphLineItemRow[];
   total: { priceList: number; nett: number; ppn: number };
 }
@@ -127,45 +156,20 @@ function priceTableBlock(items: SphLineItemRow[], total: SphDetail["total"]): st
   );
 }
 
-const BULAN_ID = [
-  "Januari", "Februari", "Maret", "April", "Mei", "Juni",
-  "Juli", "Agustus", "September", "Oktober", "November", "Desember",
-];
-// WIB (+7) — pola sama dgn wibDate() di inbound.ts/reminder.ts, hindari
-// jebakan `current_date`/`new Date()` UTC yg beda hari dgn WIB dini hari.
-function tanggalIndoWib(): string {
-  const d = new Date(Date.now() + 7 * 3600 * 1000);
-  return `${d.getUTCDate()} ${BULAN_ID[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
-}
-
-export interface SphTerms {
-  // "Nomor SPH" BELUM ada skema penomoran resmi dari Direktur (beda dari
-  // tanggal yg bisa dipastikan dari server) — dibiarkan actionable-placeholder,
-  // BUKAN ditebak sendiri (nomor dokumen biasanya terikat sistem
-  // penomoran/register fisik perusahaan, bukan hal yg aman diasumsikan).
-  nomor?: string;
-  paymentTerms: string;
-  shippingTerms: string;
-  validityDays?: number; // default 14
-}
-
 // Header/footer surat SELALU ditulis sistem (bukan AI) — nomor/tanggal/syarat
 // itu FAKTA, bukan prosa, jadi tak pernah didelegasikan ke LLM (pelajaran dari
 // insiden tabel dobel: apa pun yg dibiarkan AI tulis sendiri, LLM cenderung
 // tetap menulisnya walau sudah dibilang "jangan", risikonya nomor/tanggal beda
 // dgn yang sebenarnya).
-function letterHeader(customerName: string, nomor?: string): string {
-  return `SURAT PENAWARAN HARGA (SPH)\nNomor: ${nomor || "[diisi Admin Penawaran]"} | Tanggal: ${tanggalIndoWib()}\n\nKepada Yth. ${customerName}\n`;
+//
+// Nomor surat resmi baru diberikan saat finalisasi (finalisasiSph) — draft
+// bertuliskan NOMOR_DRAF, lalu baris "Nomor: … | Tanggal: …" dan bagian
+// "Syarat & Ketentuan" diganti utuh lewat perbaruiTeksSph (lib/sph-cetak.ts).
+function letterHeader(customerName: string): string {
+  return `SURAT PENAWARAN HARGA (SPH)\nNomor: ${NOMOR_DRAF} | Tanggal: ${tanggalIndo(new Date())}\n\nKepada Yth. ${customerName}\n`;
 }
-function letterFooter(terms: SphTerms): string {
-  const hari = terms.validityDays ?? 14;
-  return (
-    `\nSyarat & Ketentuan:\n` +
-    `- Pembayaran: ${terms.paymentTerms}\n` +
-    `- Pengiriman: ${terms.shippingTerms}\n` +
-    `- Masa berlaku penawaran: ${hari} hari sejak tanggal di atas\n\n` +
-    `Hormat kami,\nTim Penjualan WRG\n`
-  );
+function letterFooter(syarat: SyaratSph): string {
+  return kakiSurat(syarat);
 }
 
 // Draft deterministik penuh (fallback kalau AI tak terjangkau/mati).
@@ -173,10 +177,10 @@ function renderSphTextFallback(
   customerName: string,
   items: SphLineItemRow[],
   total: SphDetail["total"],
-  terms: SphTerms,
+  terms: SyaratSph,
 ): string {
   return (
-    `${letterHeader(customerName, terms.nomor)}\n` +
+    `${letterHeader(customerName)}\n` +
     `Bersama ini PT Wahana Rizky Gumilang (WRG) menyampaikan penawaran harga sebagai berikut:\n\n` +
     `${priceTableBlock(items, total)}\n` +
     letterFooter(terms)
@@ -192,7 +196,7 @@ async function draftSphText(
   customerName: string,
   items: SphLineItemRow[],
   total: SphDetail["total"],
-  terms: SphTerms,
+  terms: SyaratSph,
 ): Promise<{ text: string; model: string | null }> {
   const table = priceTableBlock(items, total);
   try {
@@ -212,7 +216,7 @@ async function draftSphText(
     const intro = String(data.draft_text ?? "").trim();
     if (!intro) throw new Error("draft_text kosong");
     return {
-      text: `${letterHeader(customerName, terms.nomor)}\n${intro}\n\n${table}\n${letterFooter(terms)}`,
+      text: `${letterHeader(customerName)}\n${intro}\n\n${table}\n${letterFooter(terms)}`,
       model: (data.model as string | undefined) ?? null,
     };
   } catch {
@@ -259,7 +263,7 @@ export async function createSphDraft(input: CreateSphInput): Promise<CreateSphRe
 
   const ids = input.items.map((it) => it.pricelist_item_id);
   const rows = await sql<Record<string, unknown>[]>`
-    SELECT id, nama, brand, price_list, diskon_maks
+    SELECT id, nama, brand, kemasan, price_list, diskon_maks
     FROM product_pricelist
     WHERE periode = ${periode} AND id = ANY(${ids})
   `;
@@ -306,6 +310,7 @@ export async function createSphDraft(input: CreateSphInput): Promise<CreateSphRe
       diskonMaksSnapshot: diskonMaks,
       priceList,
       priceListRaw: priceList,
+      kemasan: row.kemasan ? String(row.kemasan).trim() || null : null,
       hargaNett,
       nettPpn,
       belowFloor: hargaNett < floor,
@@ -322,17 +327,18 @@ export async function createSphDraft(input: CreateSphInput): Promise<CreateSphRe
     }),
     { priceList: 0, nett: 0, ppn: 0 },
   );
-  const terms: SphTerms = {
-    paymentTerms: input.terms?.paymentTerms?.trim() || "(diisi Admin Penawaran)",
-    shippingTerms: input.terms?.shippingTerms?.trim() || "(diisi Admin Penawaran)",
-    validityDays: input.terms?.validityDays,
-  };
+  const terms = gabungSyarat(
+    await syaratDefaultSph(),
+    syaratDariInputLama(input.terms),
+    input.syarat as Record<string, unknown> | undefined,
+  );
   const { text: draftText, model } = await draftSphText(customerName, lineItems, total, terms);
   const title = `SPH — ${customerName}`;
 
   const docRows = await sql`
-    INSERT INTO sales_doc (deal_id, customer_id, customer_name, doc_type, title, draft_text, status, generated_by, model_used)
-    VALUES (${input.deal_id ?? null}, ${customerId}, ${customerName}, 'sph', ${title}, ${draftText}, 'draft', 'A6', ${model})
+    INSERT INTO sales_doc (deal_id, customer_id, customer_name, doc_type, title, draft_text, status, generated_by, model_used, syarat)
+    VALUES (${input.deal_id ?? null}, ${customerId}, ${customerName}, 'sph', ${title}, ${draftText}, 'draft', 'A6', ${model},
+            ${sql.json(terms as unknown as Parameters<typeof sql.json>[0])})
     RETURNING id
   `;
   const docId = docRows[0].id as string;
@@ -340,9 +346,9 @@ export async function createSphDraft(input: CreateSphInput): Promise<CreateSphRe
   for (const it of lineItems) {
     await sql`
       INSERT INTO sph_line_item
-        (sales_doc_id, pricelist_item_id, qty, diskon_requested, nama_snapshot, price_list, diskon_maks_snapshot, harga_nett, nett_ppn, variant_confirmed)
+        (sales_doc_id, pricelist_item_id, qty, diskon_requested, nama_snapshot, price_list, diskon_maks_snapshot, harga_nett, nett_ppn, variant_confirmed, kemasan_snapshot)
       VALUES
-        (${docId}, ${it.pricelist_item_id}, ${it.qty}, ${it.diskonRequested}, ${it.nama}, ${it.priceListRaw}, ${it.diskonMaksSnapshot}, ${it.hargaNett}, ${it.nettPpn}, ${it.variantConfirmed})
+        (${docId}, ${it.pricelist_item_id}, ${it.qty}, ${it.diskonRequested}, ${it.nama}, ${it.priceListRaw}, ${it.diskonMaksSnapshot}, ${it.hargaNett}, ${it.nettPpn}, ${it.variantConfirmed}, ${it.kemasan})
     `;
   }
 
@@ -368,17 +374,30 @@ export async function createSphDraft(input: CreateSphInput): Promise<CreateSphRe
 export async function getSphDetail(id: string): Promise<SphDetail | null> {
   const sql = db();
   const docRows = await sql`
-    SELECT id, deal_id, customer_name, status, title, draft_text, approved_by,
-           hod_reviewed_by, hod_reviewed_at::text, created_at::text
-    FROM sales_doc WHERE id = ${id} AND doc_type = 'sph'
+    SELECT sd.id, sd.deal_id, sd.customer_name, sd.status, sd.title, sd.draft_text, sd.approved_by,
+           sd.hod_reviewed_by, sd.hod_reviewed_at::text, sd.created_at::text, sd.approved_at::text,
+           sd.nomor_dokumen, sd.syarat, sd.penanda_tangan_nama, sd.penanda_tangan_jabatan,
+           sd.penanda_tangan_user_id::text AS penanda_tangan_user_id,
+           -- Alamat hanya bila mirror Accurate membawanya (raw saat ini belum
+           -- selalu memuat billStreet/billCity) — kosong = tak dicetak.
+           NULLIF(trim(ac.raw->>'billStreet'), '') AS alamat,
+           NULLIF(trim(ac.raw->>'billCity'), '') AS kota
+    FROM sales_doc sd
+    LEFT JOIN accurate_customer ac
+      -- CASE (bukan AND) supaya cast tak pernah dievaluasi utk nama teks dari #SPH.
+      ON ac.id = CASE WHEN sd.customer_id ~ '^[0-9]{1,18}$' THEN sd.customer_id::bigint END
+    WHERE sd.id = ${id} AND sd.doc_type = 'sph'
   `;
   if (docRows.length === 0) return null;
   const d = docRows[0];
 
   const itemRows = await sql`
-    SELECT id, pricelist_item_id, nama_snapshot, qty, diskon_requested, diskon_maks_snapshot,
-           price_list, harga_nett, nett_ppn, variant_confirmed, variant_confirmed_by
-    FROM sph_line_item WHERE sales_doc_id = ${id} ORDER BY id
+    SELECT li.id, li.pricelist_item_id, li.nama_snapshot, li.qty, li.diskon_requested, li.diskon_maks_snapshot,
+           li.price_list, li.harga_nett, li.nett_ppn, li.variant_confirmed, li.variant_confirmed_by,
+           COALESCE(li.kemasan_snapshot, NULLIF(trim(pp.kemasan), '')) AS kemasan
+    FROM sph_line_item li
+    LEFT JOIN product_pricelist pp ON pp.id = li.pricelist_item_id
+    WHERE li.sales_doc_id = ${id} ORDER BY li.id
   `;
   const items: SphLineItemRow[] = itemRows.map((r) => {
     const diskonMaks = Number(r.diskon_maks_snapshot);
@@ -389,6 +408,7 @@ export async function getSphDetail(id: string): Promise<SphDetail | null> {
       id: Number(r.id),
       pricelist_item_id: Number(r.pricelist_item_id),
       nama: String(r.nama_snapshot),
+      kemasan: r.kemasan ? String(r.kemasan) : null,
       qty: Number(r.qty),
       diskonRequested: Number(r.diskon_requested),
       diskonMaksSnapshot: diskonMaks,
@@ -420,6 +440,15 @@ export async function getSphDetail(id: string): Promise<SphDetail | null> {
     hodReviewedBy: d.hod_reviewed_by ? String(d.hod_reviewed_by) : null,
     hodReviewedAt: d.hod_reviewed_at ? String(d.hod_reviewed_at) : null,
     createdAt: String(d.created_at),
+    approvedAt: d.approved_at ? String(d.approved_at) : null,
+    nomorDokumen: d.nomor_dokumen ? String(d.nomor_dokumen) : null,
+    syarat: gabungSyarat(await syaratDefaultSph(), d.syarat as Record<string, unknown> | null),
+    penandaTangan: d.penanda_tangan_nama
+      ? { nama: String(d.penanda_tangan_nama), jabatan: d.penanda_tangan_jabatan ? String(d.penanda_tangan_jabatan) : null }
+      : null,
+    penandaTanganUserId: d.penanda_tangan_user_id ? String(d.penanda_tangan_user_id) : null,
+    customerAlamat: d.alamat ? String(d.alamat) : null,
+    customerKota: d.kota ? String(d.kota) : null,
     items,
     total,
   };
@@ -572,4 +601,294 @@ export async function findPricelistByKode(
   // treat sbg "tak ketemu", arahkan AM pakai form web yg bisa cari+pilih.
   if (rows.length !== 1) return null;
   return { id: Number(rows[0].id), nama: String(rows[0].nama), diskonMaks: Number(rows[0].diskon_maks) };
+}
+
+// ── Dokumen cetak: pengaturan, syarat, penanda tangan, nomor (migrasi 300) ──
+
+export interface PengaturanSph {
+  kodeTengah: string;
+  nomorBerikutnya: number;
+  resetTahunan: boolean;
+  tahunBerjalan: number | null;
+  syaratDefault: SyaratSph;
+  updatedBy: string | null;
+  updatedAt: string | null;
+  // Pratinjau nomor yg AKAN diberikan bila SPH difinalisasi sekarang.
+  contohNomor: string;
+}
+
+// Baris tunggal sph_pengaturan. null = migrasi 300 belum jalan.
+async function bacaPengaturanRow(): Promise<Record<string, unknown> | null> {
+  const sql = db();
+  try {
+    const [r] = await sql`
+      SELECT kode_tengah, nomor_berikutnya, reset_tahunan, tahun_berjalan, syarat_default, updated_by, updated_at::text
+      FROM sph_pengaturan WHERE id = 1`;
+    return r ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export async function syaratDefaultSph(): Promise<SyaratSph> {
+  const r = await bacaPengaturanRow();
+  return gabungSyarat(SYARAT_DEFAULT, (r?.syarat_default as Record<string, unknown> | undefined) ?? null);
+}
+
+export async function getPengaturanSph(): Promise<PengaturanSph | null> {
+  const r = await bacaPengaturanRow();
+  if (!r) return null;
+  const state = {
+    nomorBerikutnya: Number(r.nomor_berikutnya),
+    resetTahunan: r.reset_tahunan === true,
+    tahunBerjalan: r.tahun_berjalan == null ? null : Number(r.tahun_berjalan),
+  };
+  const t = tanggalWib(new Date());
+  const { dipakai } = ambilNomor(state, t.tahun);
+  return {
+    kodeTengah: String(r.kode_tengah),
+    ...state,
+    syaratDefault: gabungSyarat(SYARAT_DEFAULT, r.syarat_default as Record<string, unknown> | null),
+    updatedBy: r.updated_by ? String(r.updated_by) : null,
+    updatedAt: r.updated_at ? String(r.updated_at) : null,
+    contohNomor: formatNomorSph(dipakai, String(r.kode_tengah), t.bulan, t.tahun),
+  };
+}
+
+export interface UbahPengaturanInput {
+  kodeTengah?: unknown;
+  nomorBerikutnya?: unknown;
+  resetTahunan?: unknown;
+  syaratDefault?: unknown;
+}
+
+// Hanya admin/superuser (dicek di sini dari pelaku sesi, dan di BFF).
+export async function ubahPengaturanSph(input: UbahPengaturanInput, pelaku: PelakuSesi): Promise<SphActionResult> {
+  if (!(pelaku.superuser || /^admin$/i.test(String(pelaku.role ?? "")))) {
+    return { ok: false, error: "pengaturan SPH hanya untuk admin/superuser", forbidden: true };
+  }
+  const now = await getPengaturanSph();
+  if (!now) return { ok: false, error: "tabel sph_pengaturan belum ada (migrasi 300 belum dijalankan)" };
+  let kode = now.kodeTengah;
+  if (input.kodeTengah !== undefined) {
+    kode = String(input.kodeTengah ?? "").trim();
+    if (!kodeTengahSah(kode)) return { ok: false, error: "kode tengah hanya huruf/angka/titik/strip, 1-30 karakter, tanpa garis miring" };
+  }
+  let nomor = now.nomorBerikutnya;
+  if (input.nomorBerikutnya !== undefined) {
+    const n = Number(input.nomorBerikutnya);
+    if (!nomorUrutSah(n)) return { ok: false, error: "nomor berikutnya harus bilangan bulat 1 - 9.999.999" };
+    nomor = n;
+  }
+  const reset = input.resetTahunan === undefined ? now.resetTahunan : input.resetTahunan === true;
+  const syarat =
+    input.syaratDefault && typeof input.syaratDefault === "object"
+      ? gabungSyarat(now.syaratDefault, input.syaratDefault as Record<string, unknown>)
+      : now.syaratDefault;
+  const sql = db();
+  await sql`
+    UPDATE sph_pengaturan SET kode_tengah = ${kode}, nomor_berikutnya = ${nomor}, reset_tahunan = ${reset},
+      syarat_default = ${sql.json(syarat as unknown as Parameters<typeof sql.json>[0])},
+      updated_by = ${pelaku.nama}, updated_at = now()
+    WHERE id = 1`;
+  await logHumanAction(
+    "sph.pengaturan.ubah",
+    pelaku.nama,
+    { sebelum: { ...now, contohNomor: undefined }, sesudah: { kodeTengah: kode, nomorBerikutnya: nomor, resetTahunan: reset, syaratDefault: syarat } },
+    "update",
+  );
+  return { ok: true };
+}
+
+// Syarat per SPH — boleh diubah selama draft/hod_review (izin edit Sales Docs
+// dicek di BFF), terkunci setelah approved. draft_text ikut diperbarui supaya
+// pratinjau & kiriman WA sama dengan PDF.
+export async function ubahSyaratSph(id: string, input: unknown, pelaku: PelakuSesi): Promise<SphActionResult> {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return { ok: false, error: "syarat wajib berupa objek" };
+  const sql = db();
+  const [d] = await sql`
+    SELECT status, doc_type, syarat, draft_text, penanda_tangan_nama, penanda_tangan_jabatan
+    FROM sales_doc WHERE id = ${id}`;
+  if (!d) return { ok: false, error: "dokumen tidak ditemukan" };
+  if (d.doc_type !== "sph") return { ok: false, error: "bukan dokumen SPH" };
+  if (d.status !== "draft" && d.status !== "hod_review") {
+    return { ok: false, error: `syarat terkunci — dokumen sudah ${d.status}` };
+  }
+  const dasar = gabungSyarat(await syaratDefaultSph(), d.syarat as Record<string, unknown> | null);
+  const baru = gabungSyarat(dasar, input as Record<string, unknown>);
+  const ttd = d.penanda_tangan_nama
+    ? { nama: String(d.penanda_tangan_nama), jabatan: d.penanda_tangan_jabatan ? String(d.penanda_tangan_jabatan) : null }
+    : null;
+  const teks = perbaruiTeksSph(String(d.draft_text ?? ""), { syarat: baru, ttd });
+  // Status dicek ulang di WHERE: approve yg jalan serentak tak boleh kebobolan
+  // perubahan syarat sesudah nomor diberikan.
+  const upd = await sql`
+    UPDATE sales_doc SET syarat = ${sql.json(baru as unknown as Parameters<typeof sql.json>[0])}, draft_text = ${teks}
+    WHERE id = ${id} AND status IN ('draft', 'hod_review') RETURNING id`;
+  if (upd.length === 0) return { ok: false, error: "status dokumen berubah — muat ulang" };
+  await logHumanAction("sph.syarat.ubah", pelaku.nama, { doc_id: id, sebelum: dasar, sesudah: baru }, "update");
+  return { ok: true };
+}
+
+export interface KandidatTtd {
+  userId: string;
+  nama: string;
+  jabatan: string | null;
+  peran: string[]; // 'approver' | 'hod_review' | 'pembuat' — label pilihan
+}
+
+// Pilihan penanda tangan: pengguna AKTIF yang ber-akses menu Sales Docs
+// (admin, superuser, atau grup dgn izin lihat 'sales-docs') + peninjau HoD
+// tahap 1 + pembuat SPH (AM, walau tak ber-akses Sales Docs). Jabatan dari
+// app_user.title, cadangan master_user.posisi; boleh diubah saat memilih.
+export async function kandidatPenandaTangan(docId: string, pelaku: PelakuSesi | null): Promise<KandidatTtd[]> {
+  const sql = db();
+  const [rev] = await sql`
+    SELECT payload->>'reviewer_user_id' AS uid FROM audit_log
+    WHERE event_type = 'sph.hod_review' AND payload->>'doc_id' = ${docId}
+    ORDER BY occurred_at DESC LIMIT 1`;
+  const pembuat = await pembuatSph(docId);
+  const ids = new Set<string>();
+  const hodId = rev?.uid && UUID_RE.test(String(rev.uid)) ? String(rev.uid) : null;
+  if (hodId) ids.add(hodId);
+  let pembuatId = pembuat?.userId && UUID_RE.test(pembuat.userId) ? pembuat.userId : null;
+  if (!pembuatId && pembuat?.amId) {
+    const [u] = await sql`SELECT id::text AS id FROM app_user WHERE am_id = ${pembuat.amId} AND active LIMIT 1`;
+    pembuatId = u ? String(u.id) : null;
+  }
+  if (pembuatId) ids.add(pembuatId);
+  const rows = await sql`
+    SELECT u.id::text AS id, COALESCE(NULLIF(trim(u.name), ''), u.email) AS nama,
+           COALESCE(NULLIF(trim(u.title), ''), NULLIF(trim(mu.posisi), '')) AS jabatan
+    FROM app_user u
+    LEFT JOIN master_user mu ON mu.am_id = u.am_id
+    WHERE u.active AND (
+      u.id = ANY(${[...ids]}::uuid[])
+      OR u.role = 'admin'
+      OR EXISTS (SELECT 1 FROM app_user_group m JOIN access_group g ON g.id = m.group_id
+                 WHERE m.user_id = u.id AND g.superuser)
+      OR EXISTS (SELECT 1 FROM app_user_group m JOIN access_permission ap ON ap.group_id = m.group_id
+                 WHERE m.user_id = u.id AND ap.feature_key = 'sales-docs' AND ap.active AND ap.can_view)
+    )
+    ORDER BY 2`;
+  const out = rows.map((r) => {
+    const peran: string[] = [];
+    if (pelaku && r.id === pelaku.userId) peran.push("approver");
+    if (r.id === hodId) peran.push("hod_review");
+    if (r.id === pembuatId) peran.push("pembuat");
+    return { userId: String(r.id), nama: String(r.nama), jabatan: r.jabatan ? String(r.jabatan) : null, peran };
+  });
+  // Urutan pilihan: approver (default) → HoD → pembuat → sisanya alfabetis.
+  const bobot = (k: KandidatTtd) =>
+    k.peran.includes("approver") ? 0 : k.peran.includes("hod_review") ? 1 : k.peran.includes("pembuat") ? 2 : 3;
+  return out.sort((a, b) => bobot(a) - bobot(b));
+}
+
+export interface PilihanTtd {
+  userId?: unknown;
+  jabatan?: unknown;
+}
+
+// Pilihan → penanda tangan tervalidasi. Nama SELALU dari app_user (tak bisa
+// diketik bebas — mencegah nama karangan di surat resmi); jabatan boleh
+// diubah teks (cadangan: jabatan master). userId kosong → approver sendiri.
+async function resolusiTtd(
+  docId: string,
+  pelaku: PelakuSesi,
+  pilihan: PilihanTtd | null | undefined,
+): Promise<{ ok: true; ttd: PenandaTangan; userId: string } | { ok: false; error: string }> {
+  const kandidat = await kandidatPenandaTangan(docId, pelaku);
+  const uid = String(pilihan?.userId ?? "").trim() || pelaku.userId;
+  let k = kandidat.find((x) => x.userId === uid);
+  if (!k && uid === pelaku.userId) {
+    // Approver lolos gerbang edit di BFF walau mungkin tak tercantum di daftar
+    // (mis. izin lewat jalur lama) — dirinya sendiri selalu boleh.
+    k = { userId: pelaku.userId, nama: pelaku.nama, jabatan: null, peran: ["approver"] };
+  }
+  if (!k) return { ok: false, error: "penanda tangan harus dipilih dari daftar pengguna yang tersedia" };
+  const jabatanTeks = typeof pilihan?.jabatan === "string" ? pilihan.jabatan.replace(/\s+/g, " ").trim().slice(0, 100) : "";
+  return { ok: true, ttd: { nama: k.nama, jabatan: jabatanTeks || k.jabatan }, userId: k.userId };
+}
+
+// Ganti penanda tangan sebelum dicetak/dikirim: status hod_review atau approved.
+export async function setPenandaTanganSph(id: string, pilihan: PilihanTtd, pelaku: PelakuSesi): Promise<SphActionResult> {
+  const sql = db();
+  const [d] = await sql`SELECT status, doc_type, syarat, draft_text FROM sales_doc WHERE id = ${id}`;
+  if (!d) return { ok: false, error: "dokumen tidak ditemukan" };
+  if (d.doc_type !== "sph") return { ok: false, error: "bukan dokumen SPH" };
+  if (d.status !== "hod_review" && d.status !== "approved") {
+    return { ok: false, error: `penanda tangan hanya bisa dipilih saat hod_review/approved (sekarang ${d.status})` };
+  }
+  const tolak = await cekFinalSph(id, pelaku);
+  if (tolak) return { ok: false, error: tolak, forbidden: true };
+  const r = await resolusiTtd(id, pelaku, pilihan);
+  if (!r.ok) return { ok: false, error: r.error };
+  const syarat = gabungSyarat(await syaratDefaultSph(), d.syarat as Record<string, unknown> | null);
+  const teks = perbaruiTeksSph(String(d.draft_text ?? ""), { syarat, ttd: r.ttd });
+  const upd = await sql`
+    UPDATE sales_doc SET penanda_tangan_nama = ${r.ttd.nama}, penanda_tangan_jabatan = ${r.ttd.jabatan},
+      penanda_tangan_user_id = ${r.userId}, draft_text = ${teks}
+    WHERE id = ${id} AND status IN ('hod_review', 'approved') RETURNING id`;
+  if (upd.length === 0) return { ok: false, error: "status dokumen berubah — muat ulang" };
+  await logHumanAction("sph.penanda_tangan", pelaku.nama, { doc_id: id, user_id: r.userId, ...r.ttd }, "update");
+  return { ok: true };
+}
+
+// Tahap 2 SPH: beri nomor surat + kunci syarat + simpan penanda tangan +
+// status approved — SATU transaksi. Baris sph_pengaturan dikunci FOR UPDATE
+// sehingga dua finalisasi serentak antre (tak ada nomor kembar); baris
+// sales_doc juga dikunci & status dicek ulang di dalam transaksi supaya dua
+// klik "Approve" tak menghabiskan dua nomor. Gerbang (pembuat, varian kembar)
+// sudah dicek pemanggil (approveSalesDoc) sebelum masuk sini.
+export async function finalisasiSph(
+  id: string,
+  pelaku: PelakuSesi,
+  pilihan: PilihanTtd | null | undefined,
+): Promise<SphActionResult & { nomor?: string }> {
+  const r = await resolusiTtd(id, pelaku, pilihan);
+  if (!r.ok) return { ok: false, error: r.error };
+  const sqlRoot = db();
+  const syaratDefault = await syaratDefaultSph();
+  try {
+    return await sqlRoot.begin(async (txRaw) => {
+      const tx = txRaw as unknown as typeof sqlRoot;
+      const [d] = await tx`SELECT status, syarat, draft_text FROM sales_doc WHERE id = ${id} FOR UPDATE`;
+      if (!d) return { ok: false, error: "dokumen tidak ditemukan" };
+      if (d.status !== "hod_review") return { ok: false, error: `dokumen sudah ${d.status} (butuh status "hod_review")` };
+      const [p] = await tx`
+        SELECT kode_tengah, nomor_berikutnya, reset_tahunan, tahun_berjalan FROM sph_pengaturan WHERE id = 1 FOR UPDATE`;
+      if (!p) return { ok: false, error: "pengaturan penomoran SPH belum ada (migrasi 300)" };
+      const now = new Date();
+      const t = tanggalWib(now);
+      const { dipakai, sesudah } = ambilNomor(
+        {
+          nomorBerikutnya: Number(p.nomor_berikutnya),
+          resetTahunan: p.reset_tahunan === true,
+          tahunBerjalan: p.tahun_berjalan == null ? null : Number(p.tahun_berjalan),
+        },
+        t.tahun,
+      );
+      const nomor = formatNomorSph(dipakai, String(p.kode_tengah), t.bulan, t.tahun);
+      const syarat = gabungSyarat(syaratDefault, d.syarat as Record<string, unknown> | null);
+      const teks = perbaruiTeksSph(String(d.draft_text ?? ""), { nomor, tanggal: tanggalIndo(now), syarat, ttd: r.ttd });
+      await tx`
+        UPDATE sph_pengaturan SET nomor_berikutnya = ${sesudah.nomorBerikutnya}, tahun_berjalan = ${sesudah.tahunBerjalan}
+        WHERE id = 1`;
+      await tx`
+        UPDATE sales_doc SET status = 'approved', approved_by = ${pelaku.nama}, approved_at = ${now},
+          nomor_dokumen = ${nomor}, syarat = ${tx.json(syarat as unknown as Parameters<typeof tx.json>[0])},
+          penanda_tangan_nama = ${r.ttd.nama}, penanda_tangan_jabatan = ${r.ttd.jabatan},
+          penanda_tangan_user_id = ${r.userId}, draft_text = ${teks}
+        WHERE id = ${id}`;
+      return { ok: true, status: "approved", nomor };
+    });
+  } catch (e) {
+    // 23505 = unique_violation pada sales_doc_nomor_dokumen_uq: "nomor
+    // berikutnya" diset mundur ke angka yg sudah terpakai. Transaksi batal →
+    // counter tak bergeser; admin perlu membetulkan pengaturan.
+    if ((e as { code?: string }).code === "23505") {
+      return { ok: false, error: "nomor SPH berikutnya sudah pernah dipakai — periksa 'nomor berikutnya' di Pengaturan SPH" };
+    }
+    throw e;
+  }
 }

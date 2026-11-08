@@ -19,6 +19,7 @@ interface SalesDoc {
   model_used: string | null;
   approved_by: string | null;
   hod_reviewed_by: string | null;
+  nomor_dokumen?: string | null;
   created_at: string;
 }
 
@@ -180,7 +181,12 @@ export default function SalesDocsPage() {
               {s === "all" ? "Semua" : s}
             </Button>
           ))}
-          <Link href="/sph/new" className="ml-2">
+          <Link href="/sph/pengaturan" className="ml-2">
+            <Button size="sm" variant="outline">
+              Pengaturan SPH
+            </Button>
+          </Link>
+          <Link href="/sph/new">
             <Button size="sm">+ Buat SPH</Button>
           </Link>
         </div>
@@ -208,14 +214,35 @@ export default function SalesDocsPage() {
                 <pre className="bg-muted/50 max-h-48 overflow-auto rounded-md p-3 text-xs whitespace-pre-wrap">
                   {d.draft_text}
                 </pre>
-                <a
-                  href={`/api/export/sales-doc/${d.id}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-primary text-xs underline"
-                >
-                  🖨️ Export / Print PDF
-                </a>
+                {d.doc_type === "sph" ? (
+                  // F15: SPH punya PDF resmi berkop (nomor, tabel, syarat, tanda
+                  // tangan); syarat & penanda tangan diatur di halaman detail.
+                  <div className="flex flex-wrap items-center gap-3 text-xs">
+                    <span className="text-muted-foreground">
+                      {d.nomor_dokumen ? `No. ${d.nomor_dokumen}` : "DRAF — belum bernomor"}
+                    </span>
+                    <a
+                      href={`/api/sph/${d.id}/pdf`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-primary underline"
+                    >
+                      Cetak / Unduh PDF
+                    </a>
+                    <Link href={`/sph/${d.id}`} className="text-primary underline">
+                      Detail · Syarat · Penanda tangan
+                    </Link>
+                  </div>
+                ) : (
+                  <a
+                    href={`/api/export/sales-doc/${d.id}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-primary text-xs underline"
+                  >
+                    🖨️ Export / Print PDF
+                  </a>
+                )}
                 {d.status === "draft" && (
                   <div className="flex gap-2">
                     <Button
@@ -242,7 +269,8 @@ export default function SalesDocsPage() {
                     <div className="space-y-2">
                       <p className="text-muted-foreground text-xs">
                         Sudah direview HOD Business{d.hod_reviewed_by ? ` (${d.hod_reviewed_by})` : ""} — tahap 2:
-                        finalisasi Admin Penawaran.
+                        finalisasi Admin Penawaran. Finalisasi memberi nomor surat; penanda tangan default = Anda
+                        (pilih orang lain di halaman Detail).
                       </p>
                       {pending.length > 0 && (
                         <div className="rounded-md border border-amber-300 bg-amber-50 p-2 text-xs dark:border-amber-800 dark:bg-amber-950">
