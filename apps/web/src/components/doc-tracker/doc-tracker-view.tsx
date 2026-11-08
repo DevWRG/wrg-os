@@ -4,6 +4,7 @@ import { useCallback, useMemo, useState } from "react";
 import { ChevronRight } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
 import { ExportButton, type ExportColumn } from "@/components/ui/export-button";
@@ -31,7 +32,7 @@ const buatKolom = (onBuka: (soId: number) => void): DataColumn<DocRow>[] => [
     id: "state", header: "State", sortable: true, accessor: (r) => STATES.indexOf(r.state),
     cell: (r) => (
       <span className="flex flex-col items-start gap-0.5">
-        <Badge variant={r.state === "closed" ? "outline" : "secondary"}>{LABEL_STATE[r.state]}</Badge>
+        <Badge variant="outline" className={r.state === "closed" ? "border-emerald-500 text-emerald-700 dark:text-emerald-400" : undefined}>{LABEL_STATE[r.state]}</Badge>
         {r.belum_tercatat.length > 0 && <span className="text-muted-foreground text-[11px] leading-tight">belum tercatat: {labelTahap(r.belum_tercatat)}</span>}
       </span>
     ),
@@ -54,7 +55,7 @@ const buatKolom = (onBuka: (soId: number) => void): DataColumn<DocRow>[] => [
     cell: (r) => (
       <span className="flex flex-wrap gap-1">
         {r.billing_risiko && <Badge variant="destructive">Berisiko ditagih</Badge>}
-        {r.dikirim_belum_dibayar && <Badge variant="secondary">Belum dibayar</Badge>}
+        {r.dikirim_belum_dibayar && <Badge variant="outline" className="border-sky-500 text-sky-700 dark:text-sky-400">Belum dibayar</Badge>}
         {r.anomali.length > 0 && <Badge variant="outline" className="border-amber-500 text-amber-700">{r.anomali.length} dokumen kurang</Badge>}
       </span>
     ),
@@ -174,11 +175,16 @@ export function DocTrackerView({ data: awal, canEdit }: { data: DocTrackerList; 
         </p>
         <ExportButton filename="document-tracker" columns={kolomExport} data={tampil} label="Export CSV" />
       </div>
-      <DataTable
-        columns={kolom} data={tampil} getKey={(r) => String(r.so_id)} pageSize={25}
-        searchPlaceholder="Cari nomor SO atau customer…" empty="Tidak ada transaksi pada filter ini."
-        onRowClick={(r) => setBuka(r.so_id)} initialSort={{ id: "tanggal", dir: "desc" }}
-      />
+      {/* Kartu putih: latar halaman (--background) & label secondary nyaris sewarna — tanpa kartu tabel menyatu. */}
+      <Card>
+        <CardContent className="pt-6">
+          <DataTable
+            columns={kolom} data={tampil} getKey={(r) => String(r.so_id)} pageSize={25}
+            searchPlaceholder="Cari nomor SO atau customer…" empty="Tidak ada transaksi pada filter ini."
+            onRowClick={(r) => setBuka(r.so_id)} initialSort={{ id: "tanggal", dir: "desc" }}
+          />
+        </CardContent>
+      </Card>
 
       <p className="text-muted-foreground text-xs">
         State = tahap terjauh yang buktinya ada — SO, SJ/DO Accurate (DO terbit = Sent), terima/BAST (F12/F42), faktur (tertaut otomatis
