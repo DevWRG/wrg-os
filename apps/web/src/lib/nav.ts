@@ -12,7 +12,7 @@ import { CalendarCheck,
   Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, BookOpen, Calculator, Presentation, Megaphone, Library,
   Wallet, Coins, Banknote, Car, QrCode, PenLine, PackagePlus, PackageMinus,
   Handshake, Archive, Ticket, Printer, Route, ArrowLeftRight,
-  TrendingUp, CalendarClock, PackageSearch, FileClock, type LucideIcon,
+  TrendingUp, CalendarClock, PackageSearch, FileClock, FileBarChart, type LucideIcon,
   Hourglass, ShieldAlert, Landmark, Scale, ClipboardList, PackageCheck, FileCheck2,
 } from "lucide-react";
 
@@ -36,6 +36,7 @@ import { canViewRegisterCek } from "@/lib/register-cek-access";
 import { canViewCn } from "@/lib/cn-access";
 import { canViewBuktiPembayaran } from "@/lib/bukti-pembayaran-access";
 import { canViewRaportList } from "@/lib/raport-access";
+import { canViewReportLibrary } from "@/lib/report-library";
 import { canViewExecutive } from "@/lib/executive-access";
 import { canViewSalesCommand } from "@/lib/sales-command-access";
 import { FITUR_HARGA_BELI, canBukaDaftarAlat, canViewKso } from "@/lib/kso-access";
@@ -250,6 +251,9 @@ export const NAV: NavGroup[] = [
   {
     label: "Analytics",
     items: [
+      // F92 — 6 laporan eksekutif + Export PDF. Izin 'report-library': fallback Direktur/HoD/admin;
+      // butuh Sync Fitur setelah deploy. Tiap laporan tetap ikut izin menu sumbernya.
+      { title: "Report Library", url: "/report-library", icon: FileBarChart, badge: "NEW", show: canViewReportLibrary },
       // NPK (F66) — gate identitas: Direktur = admin/superuser; self-view = HoD (hod_key).
       { title: "NPK HOD", url: "/npk", icon: Award, badge: "NEW", exact: true, show: (me) => me?.role === "admin" || me?.superuser === true },
       { title: "NPK Saya", url: "/npk/self", icon: UserCheck, badge: "NEW", show: (me) => !!me?.hod_key },
