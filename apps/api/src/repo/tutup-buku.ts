@@ -7,8 +7,10 @@
 //     SO "Sebagian diproses" sengaja tak dihitung: sisanya terwakili DO-nya.
 //   • tanggal tutup buku = hari kerja terakhir bulan (Sabtu/Minggu + master_holiday
 //     dilewati), kecuali digeser per bulan di tabel tutup_buku_bulan (layar Finance).
-//   • pengingat H-7 / H-3 / H-1 hari kerja ke grup sales per region
-//     (TUTUP_BUKU_TARGET_EAST / _WEST), H-1 juga eskalasi ke grup HoD
+//   • pengingat H-7 / H-3 / H-1 hari kerja ke grup WA PENJUALAN per cabang
+//     (TUTUP_BUKU_TARGET_CABANG = "CABANG=jid;CABANG=jid", beberapa cabang boleh satu
+//     grup → satu pesan). Cabang tanpa grup jatuh ke grup region
+//     (TUTUP_BUKU_TARGET_EAST / _WEST) bila diatur. H-1 juga eskalasi ke grup HoD
 //     (TUTUP_BUKU_ESKALASI_TARGET). WA pribadi ke AM tak dipakai — openclaw prod
 //     memblokir DM keluar di luar allowFrom (audit 8 Nov).
 //   Saklar job TUTUP_BUKU_COUNTDOWN_ENABLED (default mati), sekali per (bulan, H-n,
@@ -57,7 +59,10 @@ export function hariKerjaSampai(dari: string, ke: string, libur: Set<string>): n
 }
 
 export interface BarisAm { am: string; so: number; so_nilai: number; do_: number; do_nilai: number; do_terlambat: number }
-export interface RingkasRegion { region: Region | "LAIN"; so: number; so_nilai: number; do_: number; do_nilai: number; per_am: BarisAm[] }
+/** `label` menggantikan "Sales <region>" di judul pesan (mis. "Cab. MADURA, KEDIRI"). */
+export interface RingkasRegion { region: Region | "LAIN"; label?: string; so: number; so_nilai: number; do_: number; do_nilai: number; per_am: BarisAm[] }
+/** Satu baris penjualan belum difaktur (SO atau DO) — bahan semua pengelompokan. */
+export interface BarisJual { region: Region | "LAIN"; cabang: string; am: string; jenis: "so" | "do"; nilai: number; terlambat?: boolean }
 
 const rpRingkas = (n: number) =>
   n >= 1e6 ? `Rp${(n / 1e6).toLocaleString("id-ID", { maximumFractionDigits: 1 })} jt` : `Rp${Math.round(n / 1e3).toLocaleString("id-ID")} rb`;
@@ -79,7 +84,7 @@ export function buildPengingat(r: RingkasRegion, bulan: string, tanggal: string,
     return `${i + 1}. ${a.am} — ${bag}`;
   });
   return [
-    `⏳ *Tutup buku ${namaBulan(bulan)} — ${tglPanjang(tanggal)} (${kapan})*${r.region === "LAIN" ? "" : ` · Sales ${r.region}`}`,
+    `⏳ *Tutup buku ${namaBulan(bulan)} — ${tglPanjang(tanggal)} (${kapan})*${r.label ? ` · ${r.label}` : r.region === "LAIN" ? "" : ` · Sales ${r.region}`}`,
     `Penjualan yang belum jadi faktur: ${r.so} SO belum dikirim (${rpRingkas(r.so_nilai)}) dan ${r.do_} DO terkirim belum difaktur (${rpRingkas(r.do_nilai)}). Yang belum difaktur sampai tutup buku masuk ke bulan berikutnya.`,
     "",
     "Per AM:",
@@ -99,8 +104,68 @@ export function buildEskalasi(regions: RingkasRegion[], bulan: string, tanggal: 
     "Penjualan berikut belum jadi faktur dan akan masuk ke bulan berikutnya bila tidak selesai besok:",
     ...baris,
     "",
-    "Rincian per AM sudah dikirim ke grup sales masing-masing region.",
+    "Rincian per AM sudah dikirim ke grup penjualan masing-masing cabang.",
   ].join("\n");
+}
+
+/** Kumpulkan baris jadi satu ringkasan (murni). AM diurut nilai terbesar. */
+export function ringkasBaris(rows: BarisJual[], region: Region | "LAIN", label?: string): RingkasRegion {
+  const r: RingkasRegion = { region, ...(label ? { label } : {}), so: 0, so_nilai: 0, do_: 0, do_nilai: 0, per_am: [] };
+  for (const b of rows) {
+    let a = r.per_am.find((x) => x.am === b.am);
+    if (!a) { a = { am: b.am, so: 0, so_nilai: 0, do_: 0, do_nilai: 0, do_terlambat: 0 }; r.per_am.push(a); }
+    if (b.jenis === "so") { r.so++; r.so_nilai += b.nilai; a.so++; a.so_nilai += b.nilai; }
+    else { r.do_++; r.do_nilai += b.nilai; a.do_++; a.do_nilai += b.nilai; if (b.terlambat) a.do_terlambat++; }
+  }
+  r.per_am.sort((x, y) => (y.so_nilai + y.do_nilai) - (x.so_nilai + x.do_nilai) || x.am.localeCompare(y.am));
+  return r;
+}
+
+export const normCabang = (c: string | null | undefined) => (c ?? "").trim().toUpperCase() || "TANPA CABANG";
+
+/** "MADURA=jid; KEDIRI=jid" (pemisah ; atau baris baru) → peta CABANG → jid. */
+export function petaGrupCabang(env: NodeJS.ProcessEnv = process.env): Map<string, string> {
+  const m = new Map<string, string>();
+  for (const bag of (env.TUTUP_BUKU_TARGET_CABANG ?? "").split(/[;\n]/)) {
+    const i = bag.lastIndexOf("=");
+    if (i <= 0) continue;
+    const cabang = normCabang(bag.slice(0, i)); const jid = bag.slice(i + 1).trim();
+    if (jid) m.set(cabang, jid);
+  }
+  return m;
+}
+
+export interface RencanaKirim { tujuan: string; to: string | null; kunci: string; ringkas: RingkasRegion }
+
+/**
+ * Rencana kirim (murni): satu pesan per grup cabang (cabang segrup digabung);
+ * cabang tanpa grup → satu pesan per region ke grup region (to null bila belum diatur).
+ * Cabang tanpa region & tanpa grup tak dikirimi (tetap muncul di eskalasi HoD).
+ */
+export function rencanaKirim(rows: BarisJual[], peta: Map<string, string>, grupRegion: (r: Region) => string | null): RencanaKirim[] {
+  const perGrup = new Map<string, BarisJual[]>();
+  const sisa = new Map<Region, BarisJual[]>();
+  for (const b of rows) {
+    const jid = peta.get(b.cabang);
+    if (jid) { if (!perGrup.has(jid)) perGrup.set(jid, []); perGrup.get(jid)!.push(b); }
+    else if (b.region !== "LAIN") { if (!sisa.has(b.region)) sisa.set(b.region, []); sisa.get(b.region)!.push(b); }
+  }
+  const out: RencanaKirim[] = [];
+  for (const [jid, bs] of perGrup) {
+    const cabang = [...new Set(bs.map((b) => b.cabang))].sort();
+    const region = bs[0].region;
+    const label = `Cab. ${cabang.join(", ")}`;
+    out.push({ tujuan: label, to: jid, kunci: `g:${jid}`, ringkas: ringkasBaris(bs, region, label) });
+  }
+  out.sort((a, b) => a.tujuan.localeCompare(b.tujuan));
+  for (const region of REGION) {
+    const bs = sisa.get(region);
+    if (!bs?.length) continue;
+    const cabang = [...new Set(bs.map((b) => b.cabang))].sort();
+    const label = `Sales ${region} (${cabang.join(", ")})`;
+    out.push({ tujuan: `${label} — grup region`, to: grupRegion(region), kunci: region, ringkas: ringkasBaris(bs, region, label) });
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------- data
@@ -143,12 +208,12 @@ async function tanggalTutupBukuRingkas(bulan: string) {
   return { bulan, tanggal: t.tanggal, digeser: t.digeser, catatan: t.catatan, sisa_hari_kerja: hariKerjaSampai(hari, t.tanggal, t.libur) };
 }
 
-/** SO terbuka + DO belum difaktur per AM per region. */
-export async function ringkasPerRegion(): Promise<RingkasRegion[]> {
+/** SO terbuka + DO belum difaktur, satu baris per dokumen, dengan cabang & region. */
+export async function barisPenjualan(): Promise<BarisJual[]> {
   const sql = db();
-  const peta = Object.fromEntries(Object.entries(await cabangRegionMap(sql)).map(([c, r]) => [c.trim().toUpperCase(), r]));
-  const regionDari = (cabang: string | null): Region | "LAIN" => {
-    const r = cabang ? peta[cabang.trim().toUpperCase()] : undefined;
+  const peta = Object.fromEntries(Object.entries(await cabangRegionMap(sql)).map(([c, r]) => [normCabang(c), r]));
+  const regionDari = (cabang: string): Region | "LAIN" => {
+    const r = peta[cabang];
     return r === "East" || r === "West" ? r : "LAIN";
   };
   const so = await sql<{ am: string; cabang: string | null; nilai: number }[]>`
@@ -167,27 +232,26 @@ export async function ringkasPerRegion(): Promise<RingkasRegion[]> {
     LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
     ${joinAmFromSalesman(sql)}`;
   const dob = await listDoBelumFaktur({ tab: "tagih", limit: 1000 });
-
-  const peg = new Map<string, RingkasRegion>();
-  const ambil = (region: Region | "LAIN") => {
-    if (!peg.has(region)) peg.set(region, { region, so: 0, so_nilai: 0, do_: 0, do_nilai: 0, per_am: [] });
-    return peg.get(region)!;
-  };
-  const amDi = (r: RingkasRegion, am: string) => {
-    let a = r.per_am.find((x) => x.am === am);
-    if (!a) { a = { am, so: 0, so_nilai: 0, do_: 0, do_nilai: 0, do_terlambat: 0 }; r.per_am.push(a); }
-    return a;
-  };
+  const rows: BarisJual[] = [];
   for (const s of so) {
-    const r = ambil(regionDari(s.cabang)); const a = amDi(r, String(s.am));
-    r.so++; r.so_nilai += Number(s.nilai); a.so++; a.so_nilai += Number(s.nilai);
+    const cabang = normCabang(s.cabang);
+    rows.push({ region: regionDari(cabang), cabang, am: String(s.am), jenis: "so", nilai: Number(s.nilai) });
   }
   for (const d of dob.items) {
-    const r = ambil(regionDari(d.cabang)); const a = amDi(r, d.am);
-    r.do_++; r.do_nilai += d.nilai ?? 0; a.do_++; a.do_nilai += d.nilai ?? 0; if (d.terlambat) a.do_terlambat++;
+    const cabang = normCabang(d.cabang);
+    rows.push({ region: regionDari(cabang), cabang, am: d.am, jenis: "do", nilai: d.nilai ?? 0, terlambat: d.terlambat });
   }
-  for (const r of peg.values()) r.per_am.sort((x, y) => (y.so_nilai + y.do_nilai) - (x.so_nilai + x.do_nilai) || x.am.localeCompare(y.am));
-  return [...peg.values()].sort((a, b) => a.region.localeCompare(b.region));
+  return rows;
+}
+
+/** Ringkasan per region (layar & eskalasi HoD). */
+export function ringkasPerRegionDari(rows: BarisJual[]): RingkasRegion[] {
+  const regions = [...new Set(rows.map((b) => b.region))].sort();
+  return regions.map((g) => ringkasBaris(rows.filter((b) => b.region === g), g));
+}
+
+export async function ringkasPerRegion(): Promise<RingkasRegion[]> {
+  return ringkasPerRegionDari(await barisPenjualan());
 }
 
 /** Ringkasan untuk layar: tanggal tutup buku, sisa hari kerja, total per region. */
@@ -210,7 +274,7 @@ export const targetRegion = (region: Region, env: NodeJS.ProcessEnv = process.en
 export const targetEskalasi = (env: NodeJS.ProcessEnv = process.env): string | null =>
   (env.TUTUP_BUKU_ESKALASI_TARGET ?? "").trim() || null;
 
-export interface HasilKirim { tujuan: string; sent: boolean; skipped?: string; error?: string; payload?: string }
+export interface HasilKirim { tujuan: string; sent: boolean; skipped?: string; error?: string; payload?: string; catatan?: string }
 
 /**
  * Dicek tiap hari kerja; kirim hanya bila sisa hari kerja ke tutup buku ∈ {7,3,1}.
@@ -227,10 +291,11 @@ export async function runTutupBukuCountdown(opts: { dryRun?: boolean; paksaSisa?
   if (opts.paksaSisa == null && !(HARI_PENGINGAT as readonly number[]).includes(sisaNyata)) {
     return { ...base, hasil: [] as HasilKirim[], skipped: `bukan hari pengingat (sisa ${sisaNyata} hari kerja)` };
   }
-  const regions = await ringkasPerRegion();
+  const rows = await barisPenjualan();
+  const regions = ringkasPerRegionDari(rows);
   const hasil: HasilKirim[] = [];
   const kirim = async (tujuanLabel: string, to: string | null, key: string, text: string) => {
-    if (opts.dryRun) { hasil.push({ tujuan: tujuanLabel, sent: false, payload: text }); return; }
+    if (opts.dryRun) { hasil.push({ tujuan: tujuanLabel, sent: false, payload: text, ...(to ? {} : { catatan: "grup belum diatur" }) }); return; }
     if (!to) { hasil.push({ tujuan: tujuanLabel, sent: false, skipped: "tujuan grup belum diatur" }); return; }
     const [done] = await sql`SELECT 1 FROM notif_state WHERE key = ${key}`;
     if (done) { hasil.push({ tujuan: tujuanLabel, sent: false, skipped: "sudah terkirim" }); return; }
@@ -242,10 +307,11 @@ export async function runTutupBukuCountdown(opts: { dryRun?: boolean; paksaSisa?
     }
     hasil.push({ tujuan: tujuanLabel, sent: real, error: w.sent ? undefined : (w.error ?? "gagal kirim") });
   };
-  for (const region of opts.region ? [opts.region] : REGION) {
-    const r = regions.find((x) => x.region === region);
-    if (!r || r.so + r.do_ === 0) { hasil.push({ tujuan: `Sales ${region}`, sent: false, skipped: "tak ada penjualan belum difaktur" }); continue; }
-    await kirim(`Sales ${region}`, targetRegion(region), `tutup-buku:${bulan}:H${sisa}:${region}`, buildPengingat(r, bulan, t.tanggal, sisa));
+  const pilih = opts.region ? rows.filter((b) => b.region === opts.region) : rows;
+  const rencana = rencanaKirim(pilih, petaGrupCabang(), (g) => targetRegion(g));
+  if (!rencana.length) hasil.push({ tujuan: "Sales", sent: false, skipped: "tak ada penjualan belum difaktur" });
+  for (const p of rencana) {
+    await kirim(p.tujuan, p.to, `tutup-buku:${bulan}:H${sisa}:${p.kunci}`, buildPengingat(p.ringkas, bulan, t.tanggal, sisa));
   }
   if (sisa === 1 && !opts.region) {
     await kirim("Eskalasi HoD", targetEskalasi(), `tutup-buku:${bulan}:H1:eskalasi`, buildEskalasi(regions, bulan, t.tanggal));

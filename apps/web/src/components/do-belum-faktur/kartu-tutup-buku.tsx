@@ -45,9 +45,9 @@ export function KartuTutupBuku({ bolehUbah }: { bolehUbah: boolean }) {
   };
   const lihat = async (sisa: number) => {
     const r = await fetch(`/api/tutup-buku/pratinjau?sisa=${sisa}`);
-    const x = (await r.json().catch(() => ({}))) as { hasil?: { tujuan: string; payload?: string; skipped?: string }[]; error?: string };
+    const x = (await r.json().catch(() => ({}))) as { hasil?: { tujuan: string; payload?: string; skipped?: string; catatan?: string }[]; error?: string };
     if (!r.ok) { setPratinjau(`Gagal memuat pratinjau: ${x.error ?? r.status}`); return; }
-    setPratinjau((x.hasil ?? []).map((h) => `— ${h.tujuan} —\n${h.payload ?? `(tidak dikirim: ${h.skipped ?? "—"})`}`).join("\n\n") || "Tidak ada yang dikirim.");
+    setPratinjau((x.hasil ?? []).map((h) => `— ${h.tujuan}${h.catatan ? ` (${h.catatan})` : ""} —\n${h.payload ?? `(tidak dikirim: ${h.skipped ?? "—"})`}`).join("\n\n") || "Tidak ada yang dikirim.");
   };
 
   if (err) return <p className="text-destructive text-sm">Tutup buku: {err}</p>;
