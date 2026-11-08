@@ -6,10 +6,14 @@
 // (SJ/pengiriman/BAST/faktur dari mirror + shipment_tracking) plus dua stempel manual
 // (Review, Approved) dan checklist tanda tangan dokumen.
 //
-// Aturan: state = tahap BERURUTAN terjauh yang buktinya lengkap. Bukti di tahap lebih jauh
-// sementara tahap sebelumnya kosong = ANOMALI ("dokumen kurang") — inti cross-check-nya
-// ("sudah dikirim, sudah dibayar belum"). SO dengan banyak SJ/faktur: tahap pengiriman baru
-// terpenuhi bila SEMUA SJ-nya sudah melewatinya; Paid bila SEMUA faktur lunas.
+// Aturan (keputusan user 8 Nov 2026, menggantikan aturan "berurutan"): state = tahap TERJAUH yang
+// buktinya ada (Draft selalu). Tahap di antaranya yang tak berbukti TIDAK menahan SO — didaftar di
+// `belumTercatat` (informasi). Alasannya data lapangan: stempel Review/Approved jarang diisi dan data
+// terima/BAST dari WA kebanyakan kosong, sehingga aturan berurutan membuat 499/500 SO macet di Draft.
+// Sent = SJ (DO) Accurate untuk SO itu sudah terbit — DO terbit = barang keluar dari sudut pandang
+// sistem; kirim_at WA hanya menambah waktu. Received/Executed tetap butuh terima_at/bast_at SEMUA SJ.
+// Paid bila SEMUA faktur lunas; Closed = Paid + dokumen wajib lengkap.
+// Anomali tinggal satu jenis: sudah lunas tetapi dokumen wajib belum lengkap (yang menahan Closed).
 // TTF sengaja tidak ada (keputusan Direktur di F12/F42/F31).
 
 export const STATES = ["draft", "review", "approved", "sent", "received", "executed", "billed", "paid", "closed"] as const;
@@ -31,6 +35,13 @@ export type JenisDokumen = "po_customer" | "sj_ttd_gudang" | "sj_ttd_sales" | "s
 export const JENIS_DOKUMEN: readonly JenisDokumen[] = ["po_customer", "sj_ttd_gudang", "sj_ttd_sales", "sj_ttd_kepala_sales", "sj_ttd_teknisi"];
 /** Wajib untuk Closed. Teknisi hanya informasi (khusus alat). Asumsi — konfirmasi Husni. */
 export const DOKUMEN_WAJIB: readonly JenisDokumen[] = ["po_customer", "sj_ttd_gudang", "sj_ttd_sales", "sj_ttd_kepala_sales"];
+const LABEL_DOKUMEN: Record<JenisDokumen, string> = {
+  po_customer: "PO customer",
+  sj_ttd_gudang: "SJ ttd Gudang",
+  sj_ttd_sales: "SJ ttd Sales",
+  sj_ttd_kepala_sales: "SJ ttd Kepala Sales",
+  sj_ttd_teknisi: "ttd Teknisi",
+};
 
 /** Hari setelah BAST tanpa faktur sebelum ditandai berisiko ditagih terlambat (override env DOC_TRACKER_BILLING_HARI). */
 export const HARI_BILLING_RISIKO = 3;
@@ -41,6 +52,8 @@ export const hariBillingRisiko = (): number => {
 
 export interface SjBukti {
   nomor: string;
+  /** Tanggal DO Accurate (YYYY-MM-DD) — waktu Sent bila kirim_at WA kosong. */
+  tanggal?: string | null;
   kirimAt: string | null;
   terimaAt: string | null;
   bastAt: string | null;
@@ -61,8 +74,8 @@ export interface Snapshot {
   faktur: FakturBukti[];
   dokumen: Partial<Record<JenisDokumen, boolean>>;
   /**
-   * true = Review/Approved wajib bertanda. false (SO sebelum tracker hidup) = dianggap TERSIRAT bila
-   * bukti hilir ada — kalau tidak, ±500 SO lama semuanya "Draft" dengan anomali palsu.
+   * true = Review/Approved hanya dari stempel. false (SO sebelum tracker hidup) = dianggap TERSIRAT bila
+   * bukti hilir ada (tidak masuk belumTercatat).
    */
   stempelWajib: boolean;
   today: string; // YYYY-MM-DD (WIB)
@@ -80,6 +93,8 @@ export interface HasilState {
   state: DocState;
   tahap: Record<DocState, TahapInfo>;
   anomali: string[];
+  /** Tahap sebelum state sekarang yang buktinya tak ada — informasi, tidak menahan state. */
+  belumTercatat: DocState[];
   dokumenKurang: JenisDokumen[];
   billingRisiko: boolean;
   /** Hari sejak masuk state sekarang; null bila waktunya tak diketahui. */
@@ -116,8 +131,10 @@ export function hitungState(s: Snapshot): HasilState {
   const lunas = s.faktur.filter((f) => f.lunas).length;
   const hitungan = { sj: n, kirim, terima, bast, faktur: s.faktur.length, lunas };
 
+  // Sent: DO terbit = terkirim dari sudut pandang sistem (kirim_at WA kebanyakan kosong).
+  // Waktu = kirim_at bila ada, kalau tidak tanggal DO; diambil yang terakhir di antara SJ.
   const bukti: Record<"sent" | "received" | "executed" | "billed" | "paid", TahapInfo> = {
-    sent: { selesai: n > 0 && kirim === n, at: n > 0 && kirim === n ? maxStr(s.sj.map((x) => x.kirimAt)) : null },
+    sent: { selesai: n > 0, at: n > 0 ? maxStr(s.sj.map((x) => x.kirimAt ?? x.tanggal ?? null)) : null },
     received: { selesai: n > 0 && terima === n, at: n > 0 && terima === n ? maxStr(s.sj.map((x) => x.terimaAt)) : null },
     executed: { selesai: n > 0 && bast === n, at: n > 0 && bast === n ? maxStr(s.sj.map((x) => x.bastAt)) : null },
     billed: { selesai: s.faktur.length > 0, at: minStr(s.faktur.map((f) => f.tanggal)) },
@@ -129,7 +146,7 @@ export function hitungState(s: Snapshot): HasilState {
   const hilirAda = bukti.sent.selesai || bukti.received.selesai || bukti.executed.selesai || bukti.billed.selesai || bukti.paid.selesai || kirim + terima + bast > 0;
 
   // SO lama (stempelWajib=false): tahap stempel dianggap TERSIRAT bila ada penanda yang melampauinya — tahap hilir
-  // ada, atau (khusus Review) Approved sudah distempel. SO baru: stempel wajib, tanpa tersirat.
+  // ada, atau (khusus Review) Approved sudah distempel. SO baru: hanya stempel; tanpa stempel → belumTercatat.
   const stempel = (at: string | null, adaPenanda: boolean): TahapInfo => {
     if (at) return { selesai: true, at };
     if (!s.stempelWajib && adaPenanda) return { selesai: true, at: null, tersirat: true };
@@ -153,16 +170,14 @@ export function hitungState(s: Snapshot): HasilState {
     closed: { selesai: closedSelesai, at: closedSelesai ? bukti.paid.at : null },
   };
 
-  let idx = 0;
-  while (idx + 1 < STATES.length && tahap[STATES[idx + 1]].selesai) idx++;
+  // State = tahap TERJAUH yang berbukti; tahap kosong di bawahnya hanya dicatat, tidak menahan.
+  const idx = STATES.reduce((acc, st, i) => (tahap[st].selesai ? i : acc), 0);
   const state = STATES[idx];
+  const belumTercatat = STATES.slice(1, idx).filter((st) => !tahap[st].selesai);
 
-  // Anomali: bukti pada tahap lebih jauh daripada state berurutan. Closed tak dihitung (turunan Paid + dokumen).
-  const terjauh = STATES.reduce((acc, st, i) => (st !== "closed" && tahap[st].selesai ? i : acc), 0);
   const anomali: string[] = [];
-  for (let i = idx + 1; i < terjauh; i++) {
-    const st = STATES[i];
-    if (!tahap[st].selesai) anomali.push(`${LABEL_STATE[STATES[terjauh]]} tercatat tetapi ${LABEL_STATE[st]} belum`);
+  if (bukti.paid.selesai && dokumenKurang.length > 0) {
+    anomali.push(`Lunas tetapi dokumen wajib belum lengkap: ${dokumenKurang.map((j) => LABEL_DOKUMEN[j]).join(", ")}`);
   }
 
   const tglBast = tanggalWib(bukti.executed.at);
@@ -171,5 +186,5 @@ export function hitungState(s: Snapshot): HasilState {
 
   const at = tahap[state].at;
   const tgl = tanggalWib(at);
-  return { state, tahap, anomali, dokumenKurang, billingRisiko, umurHari: tgl ? Math.max(0, selisihHari(tgl, s.today)) : null, hitungan };
+  return { state, tahap, anomali, belumTercatat, dokumenKurang, billingRisiko, umurHari: tgl ? Math.max(0, selisihHari(tgl, s.today)) : null, hitungan };
 }

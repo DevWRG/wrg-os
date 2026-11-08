@@ -43,6 +43,8 @@ export interface DocRow {
   dokumen_kurang: JenisDokumen[];
   billing_risiko: boolean;
   dikirim_belum_dibayar: boolean;
+  /** Tahap sebelum state yang buktinya tak ada — informasi, tidak menahan state. */
+  belum_tercatat: DocState[];
   hitungan: Hitungan;
 }
 
@@ -64,13 +66,15 @@ export interface DocDetail {
     state: DocState;
     tahap: Record<DocState, TahapInfo>;
     anomali: string[];
+    belumTercatat: DocState[];
     dokumenKurang: JenisDokumen[];
     billingRisiko: boolean;
     umurHari: number | null;
     hitungan: Hitungan;
   };
-  sj: { nomor: string; kirimAt: string | null; terimaAt: string | null; bastAt: string | null }[];
-  faktur: { invoice_id: number; nomor: string; tanggal: string; lunas: boolean }[];
+  sj: { nomor: string; tanggal?: string | null; kirimAt: string | null; terimaAt: string | null; bastAt: string | null }[];
+  /** otomatis = dari rujukan SO di faktur Accurate (tak bisa dilepas); false = tautan manual. */
+  faktur: { invoice_id: number; nomor: string; tanggal: string; lunas: boolean; otomatis: boolean }[];
   stempel: Record<"review" | "approved", { at: string; by: string; catatan: string | null } | null>;
   dokumen: Record<JenisDokumen, { ada: boolean; by: string; at: string } | null>;
   dokumen_wajib: JenisDokumen[];
@@ -83,6 +87,8 @@ export async function ambil<T>(url: string, init?: RequestInit): Promise<T> {
   if (!res.ok) throw new Error(body?.error === "migration_pending" ? "Migrasi 258 belum diterapkan." : (body?.error ?? `HTTP ${res.status}`));
   return body;
 }
+
+export const labelTahap = (xs: DocState[]) => xs.map((s) => LABEL_STATE[s]).join(", ");
 
 export const rp = (n: number | null | undefined) => (n == null ? "—" : `Rp ${Math.round(n).toLocaleString("id-ID")}`);
 export const waktu = (iso: string | null) =>
