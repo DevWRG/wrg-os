@@ -82,3 +82,13 @@ test("rencanaKirim: per grup cabang (cabang segrup digabung), sisa ke grup regio
   const reg = ringkasPerRegionDari(rows);
   assert.deepEqual(reg.map((r) => [r.region, r.so, r.do_]), [["East", 2, 2], ["LAIN", 0, 1], ["West", 1, 0]]);
 });
+
+test("teks: bagian nol tak ditulis, DO tanpa nilai = \"nilai belum ada\"", () => {
+  const x: RingkasRegion = { region: "West", label: "Cab. X", so: 0, so_nilai: 0, do_: 1, do_nilai: 0,
+    per_am: [{ am: "AM Nol", so: 0, so_nilai: 0, do_: 1, do_nilai: 0, do_terlambat: 0 }] };
+  const t = buildPengingat(x, "2026-11", "2026-11-30", 7);
+  assert.match(t, /belum jadi faktur: 1 DO terkirim belum difaktur \(nilai belum ada\)\. /);
+  assert.match(t, /1\. AM Nol — 1 DO belum difaktur \(nilai belum ada\)/);
+  assert.doesNotMatch(t, /0 SO|Rp0/);
+  assert.match(buildEskalasi([x], "2026-11", "2026-11-30"), /• Sales West: 1 DO belum difaktur \(nilai belum ada\) — /);
+});
