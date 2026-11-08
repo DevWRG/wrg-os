@@ -33,7 +33,7 @@ Satu kode boleh punya beberapa bukti (tiap unggahan = satu baris).
 ## Akses
 Kunci `bukti-pembayaran`: **view** = lihat & unduh, **create** = unggah. Tertutup default setelah deploy:
 jalankan **Sync Fitur** lalu centang grup di Akses Grup. Fallback sebelum matriks diatur (admin/superuser selalu lolos):
-- lihat: Direktur + Finance (`hod_key='ika'` / title finance),
+- lihat: Direktur + Finance (grup `finance-hod` / title finance),
 - unggah: Finance (Direktur hanya membaca).
 
 ## Endpoint
