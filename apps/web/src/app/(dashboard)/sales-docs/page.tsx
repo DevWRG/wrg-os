@@ -116,10 +116,11 @@ export default function SalesDocsPage() {
       // F15: "review" (tahap 1/2 HOD Business) punya endpoint sendiri di
       // bawah /api/sph, sisanya tetap lewat /api/sales/docs (dipakai semua doc_type).
       const path = action === "review" ? `/api/sph/${id}/review` : `/api/sales/docs/${id}/${action}`;
-      const body: Record<string, string> = action === "review" ? { reviewer_id: "web-ui" } : { approver_id: "web-ui" };
+      // Pelaku (approver/reviewer) diisi server dari sesi — tak dikirim dari sini.
+      const body: Record<string, string> = {};
       if (action === "send") {
         const to = (toInputs[id] ?? "").trim();
-        if (!to) throw new Error("isi tujuan (nomor/jid) dulu");
+        if (!to) throw new Error("isi nomor WA kontak customer dulu");
         body.to = to;
       }
       const res = await fetch(path, {
@@ -144,7 +145,7 @@ export default function SalesDocsPage() {
       const res = await fetch(`/api/sph/${docId}/confirm-variant`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ line_item_id: lineItemId, confirmed_by: "web-ui" }),
+        body: JSON.stringify({ line_item_id: lineItemId }),
       });
       const data = await res.json();
       if (!res.ok || data.ok === false) throw new Error(data.error ?? "gagal konfirmasi varian");
@@ -287,7 +288,7 @@ export default function SalesDocsPage() {
                 {d.status === "approved" && (
                   <div className="space-y-2">
                     <Input
-                      placeholder="Tujuan (mis. 628xxx@c.us / email)"
+                      placeholder="No. WA kontak customer di Accounts (mis. 0812xxxx)"
                       value={toInputs[d.id] ?? ""}
                       onChange={(e) =>
                         setToInputs((prev) => ({ ...prev, [d.id]: e.target.value }))

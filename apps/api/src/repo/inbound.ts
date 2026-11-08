@@ -2351,6 +2351,7 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
       am_id: ams.am_id,
       items: [{ pricelist_item_id: match.id, qty: parsed.qty, diskon_requested: parsed.diskonRequested }],
       created_by: ams.nama ?? ams.via,
+      created_by_am_id: ams.am_id ?? null, // larangan pembuat review/finalisasi sendiri
     });
     if (!r.ok) {
       const reply = await sendViaWaGateway(target, `⚠️ #SPH ditolak, ${ams.nama}: ${r.error}`);
