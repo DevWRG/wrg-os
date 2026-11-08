@@ -162,7 +162,19 @@ async function evalAlert(
   return null;
 }
 
-export interface AlertEvalResult { enabled: boolean; evaluated: number; breached: number; sent: number; skipped: number }
+export interface AlertEvalResult { enabled: boolean; evaluated: number; breached: number; sent: number; skipped: number; gagal: number }
+
+/**
+ * Hasil kirim WA → nasib status alert (murni, diuji). Dulu hasil kirim diabaikan: alert
+ * dicatat breach (edge sudah "dipakai") walau WA DITOLAK — mis. openclaw prod dmPolicy
+ * allowlist memblokir DM keluar ke owner yang nomornya tak ada di allowFrom (audit 8 Nov
+ * 2026). Sekarang: ditolak/gagal → status TIDAK diubah, jadi evaluasi berikutnya mencoba
+ * lagi; stub / dry-run gateway (dev) tetap dianggap tertangani supaya tak berulang tiap run.
+ */
+export function nasibKirim(w: { sent: boolean; stub: boolean; dryRun?: boolean }): "terkirim" | "uji" | "gagal" {
+  if (!w.sent) return "gagal";
+  return w.stub || w.dryRun ? "uji" : "terkirim";
+}
 
 export async function evaluateSalesAlerts(): Promise<AlertEvalResult> {
   const sql = db();
@@ -173,7 +185,7 @@ export async function evaluateSalesAlerts(): Promise<AlertEvalResult> {
     FROM sales_analytics_alert sa
     LEFT JOIN app_user au ON au.id = sa.owner_user_id
     WHERE sa.active`;
-  let sent = 0, breachedN = 0, skipped = 0;
+  let sent = 0, breachedN = 0, skipped = 0, gagal = 0;
 
   for (const a of alerts) {
     const res = await evalAlert(sql, {
@@ -194,12 +206,23 @@ export async function evaluateSalesAlerts(): Promise<AlertEvalResult> {
       // punya wa_number & wa_target_jid kosong → JANGAN kirim (warn), bukan ke grup.
       const target = (a.wa_target_jid && String(a.wa_target_jid)) || (a.owner_wa_number && String(a.owner_wa_number)) || "";
       const msg = `🚨 *Alert: ${a.alert_name}*\n${a.metric_key} = ${res.valStr} ${res.thrStr} (window ${a.window_days}h)`;
-      if (target) { await sendViaWaGateway(target, msg); sent++; }
-      else { console.warn(`[sales-alert-eval] alert ${a.id} "${a.alert_name}" breach tapi tanpa target (wa_target_jid & owner wa_number kosong) → tidak dikirim`); }
+      if (target) {
+        const w = await sendViaWaGateway(target, msg);
+        const nasib = nasibKirim(w);
+        if (nasib === "gagal") {
+          // Status dibiarkan → dicoba lagi di evaluasi berikutnya; alasan tercatat di log.
+          gagal++;
+          console.error(`[sales-alert-eval] alert ${a.id} "${a.alert_name}" breach tapi WA gagal/ditolak (${a.wa_target_jid ? "grup/tujuan alert" : "WA pribadi owner"}): ${w.error ?? "tanpa keterangan"} — status tak diubah, dicoba lagi`);
+          continue;
+        }
+        if (nasib === "terkirim") sent++;
+      } else {
+        console.warn(`[sales-alert-eval] alert ${a.id} "${a.alert_name}" breach tapi tanpa target (wa_target_jid & owner wa_number kosong) → tidak dikirim`);
+      }
       await sql`UPDATE sales_analytics_alert SET last_state = 'breach', last_triggered_at = now() WHERE id = ${a.id}`;
     } else {
       await sql`UPDATE sales_analytics_alert SET last_state = ${res.breach ? "breach" : "ok"} WHERE id = ${a.id}`;
     }
   }
-  return { enabled: true, evaluated: alerts.length, breached: breachedN, sent, skipped };
+  return { enabled: true, evaluated: alerts.length, breached: breachedN, sent, skipped, gagal };
 }
