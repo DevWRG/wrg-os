@@ -50,7 +50,7 @@ const hariKerja = (ymd: string, libur: ReadonlySet<string>) => ![0, 6].includes(
 export function tambahMenitKerja(mulai: Date, menit: number, jk: JamKerja, libur: ReadonlySet<string>): Date {
   let sisa = menit * 60000;
   let ymd = ymdWib(mulai);
-  let t = mulai.getTime();
+  const t = mulai.getTime();
   for (let i = 0; i < 400; i++, ymd = besok(ymd)) {
     if (!hariKerja(ymd, libur)) continue;
     const a = Math.max(t, jamWib(ymd, jk.mulai));
