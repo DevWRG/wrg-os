@@ -42,6 +42,20 @@ interface CartRow {
   diskonRequested: number; // fraksi
 }
 
+interface Syarat {
+  pembayaran: string;
+  pengiriman: string;
+  masaBerlaku: string;
+  harga: string;
+}
+
+const LABEL_SYARAT: Record<keyof Syarat, string> = {
+  pembayaran: "Pembayaran",
+  pengiriman: "Pengiriman",
+  masaBerlaku: "Masa berlaku",
+  harga: "Harga",
+};
+
 const rupiah = (n: number) => `Rp${Math.round(n).toLocaleString("id-ID")}`;
 
 export default function SphNewPage() {
@@ -57,12 +71,24 @@ export default function SphNewPage() {
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [createdId, setCreatedId] = useState<string | null>(null);
 
-  // Sistem gak punya data syarat bayar/kirim di mana pun (gak ada kolom itu
-  // di Price Book) — WAJIB diisi AM per quote, bukan di-default sistem
-  // (beda customer bisa beda syarat, salah tebak lebih bahaya dari kosong).
-  const [paymentTerms, setPaymentTerms] = useState("");
-  const [shippingTerms, setShippingTerms] = useState("");
-  const [validityDays, setValidityDays] = useState(14);
+  // Syarat diisi dari default (Pengaturan SPH, diatur admin) dan boleh diubah
+  // per SPH di sini maupun nanti di halaman detail selama draft/hod_review.
+  // Kosong = server memakai default, jadi tak ada lagi placeholder
+  // "(diisi Admin Penawaran)" di surat.
+  const [syarat, setSyarat] = useState<Syarat>({ pembayaran: "", pengiriman: "", masaBerlaku: "", harga: "" });
+
+  useEffect(() => {
+    let aktif = true;
+    fetch("/api/sph/pengaturan", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((p) => {
+        if (aktif && p?.syaratDefault) setSyarat(p.syaratDefault as Syarat);
+      })
+      .catch(() => {});
+    return () => {
+      aktif = false;
+    };
+  }, []);
 
   const search = useCallback(async () => {
     setSearching(true);
@@ -128,10 +154,6 @@ export default function SphNewPage() {
       setSubmitError("tambah minimal 1 item");
       return;
     }
-    if (!paymentTerms.trim() || !shippingTerms.trim()) {
-      setSubmitError("isi syarat pembayaran & pengiriman dulu — beda customer bisa beda syarat, sistem tak bisa nebak");
-      return;
-    }
     setSubmitting(true);
     try {
       const res = await fetch("/api/sph", {
@@ -147,7 +169,7 @@ export default function SphNewPage() {
             qty: r.qty,
             diskon_requested: r.diskonRequested,
           })),
-          terms: { paymentTerms, shippingTerms, validityDays },
+          syarat,
         }),
       });
       const data = await res.json();
@@ -166,12 +188,15 @@ export default function SphNewPage() {
       <div className="space-y-4 p-6">
         <h1 className="text-2xl font-semibold">SPH dibuat ✅</h1>
         <p className="text-muted-foreground">
-          Draft SPH utk {customer?.label ?? "customer terpilih"} sudah tersimpan (status: draft). Lanjut review di
-          halaman Sales Docs.
+          Draft SPH utk {customer?.label ?? "customer terpilih"} sudah tersimpan (status: draft, belum bernomor).
+          Lanjut review di halaman Sales Docs; nomor surat diberikan saat finalisasi.
         </p>
         <div className="flex gap-2">
+          <Link href={`/sph/${createdId}`}>
+            <Button>Buka detail SPH</Button>
+          </Link>
           <Link href="/sales-docs">
-            <Button>Buka Sales Docs</Button>
+            <Button variant="outline">Sales Docs</Button>
           </Link>
           <Button variant="outline" onClick={() => setCreatedId(null)}>
             Buat SPH lain
@@ -364,32 +389,25 @@ export default function SphNewPage() {
         <CardHeader>
           <CardTitle className="text-base">Syarat & Ketentuan</CardTitle>
         </CardHeader>
-        <CardContent className="flex flex-wrap items-end gap-3">
-          <div className="min-w-64 flex-1">
-            <Label className="mb-1 block text-xs">Syarat Pembayaran *</Label>
-            <Input
-              value={paymentTerms}
-              onChange={(e) => setPaymentTerms(e.target.value)}
-              placeholder="mis. Net 30 hari setelah barang diterima"
-            />
+        <CardContent className="space-y-2">
+          <div className="grid gap-3 md:grid-cols-2">
+            {(Object.keys(LABEL_SYARAT) as (keyof Syarat)[]).map((k) => (
+              <div key={k}>
+                <Label htmlFor={`sph-syarat-${k}`} className="mb-1 block text-xs">
+                  {LABEL_SYARAT[k]}
+                </Label>
+                <Input
+                  id={`sph-syarat-${k}`}
+                  value={syarat[k]}
+                  maxLength={300}
+                  onChange={(e) => setSyarat({ ...syarat, [k]: e.target.value })}
+                />
+              </div>
+            ))}
           </div>
-          <div className="min-w-64 flex-1">
-            <Label className="mb-1 block text-xs">Syarat Pengiriman *</Label>
-            <Input
-              value={shippingTerms}
-              onChange={(e) => setShippingTerms(e.target.value)}
-              placeholder="mis. FOB Surabaya, 3-5 hari kerja"
-            />
-          </div>
-          <div className="w-36">
-            <Label className="mb-1 block text-xs">Masa Berlaku (hari)</Label>
-            <Input
-              type="number"
-              min={1}
-              value={validityDays}
-              onChange={(e) => setValidityDays(Number(e.target.value) || 14)}
-            />
-          </div>
+          <p className="text-muted-foreground text-xs">
+            Terisi dari syarat default. Bisa diubah lagi di halaman detail SPH sampai SPH difinalisasi.
+          </p>
         </CardContent>
       </Card>
 
